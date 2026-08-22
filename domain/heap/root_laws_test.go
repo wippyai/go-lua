@@ -14,6 +14,7 @@ import (
 	linkproject "github.com/wippyai/go-lua/analysis/program/link/project"
 	"github.com/wippyai/go-lua/analysis/program/target/compiler"
 	"github.com/wippyai/go-lua/analysis/program/target/declaration"
+	"github.com/wippyai/go-lua/analysis/schema/programmount"
 	"github.com/wippyai/go-lua/domain/composite"
 	heapdomain "github.com/wippyai/go-lua/domain/heap"
 	"github.com/wippyai/go-lua/domain/materialization"
@@ -22,7 +23,7 @@ import (
 
 // Keep the law prose compact while making the test's dependency direction
 // explicit: this root suite is an external consumer of Heap's public seam.
-type ArtifactMount = heapdomain.ArtifactMount
+type MountedArtifact = programmount.MountedArtifact
 type CellState = heapdomain.CellState
 type Containment = heapdomain.Containment
 type Key = heapdomain.Key
@@ -56,20 +57,20 @@ const (
 )
 
 var (
-	NewArtifactMount  = heapdomain.NewArtifactMount
-	SealWithArtifacts = heapdomain.SealWithArtifacts
-	Same              = heapdomain.Same
-	Equal             = heapdomain.Equal
-	LessOrEq          = heapdomain.LessOrEq
-	Join              = heapdomain.Join
-	Widen             = heapdomain.Widen
-	NewWidenRank      = heapdomain.NewWidenRank
+	NewMountedArtifact = programmount.MountedArtifactFromSnapshot
+	SealWithArtifacts  = heapdomain.SealWithArtifacts
+	Same               = heapdomain.Same
+	Equal              = heapdomain.Equal
+	LessOrEq           = heapdomain.LessOrEq
+	Join               = heapdomain.Join
+	Widen              = heapdomain.Widen
+	NewWidenRank       = heapdomain.NewWidenRank
 )
 
 // compactHeapFixture deliberately enters through the current artifact-native
 // seal seam.  It is intentionally small: the root laws below exercise the
 // published Heap carrier, not a legacy Link/Flow fixture helper.
-func compactHeapFixture(t testing.TB, name, source string, spec *declaration.Spec) (*proglink.Link, Schema, []ArtifactMount) {
+func compactHeapFixture(t testing.TB, name, source string, spec *declaration.Spec) (*proglink.Link, Schema, []MountedArtifact) {
 	t.Helper()
 	program, err := lualower.Lower(lualower.Source{Name: name + ".lua", Text: []byte(source)})
 	if err != nil {
@@ -93,13 +94,12 @@ func compactHeapFixture(t testing.TB, name, source string, spec *declaration.Spe
 		t.Fatal("program schema receipt")
 	}
 	projectMounts := linked.Project().Mounts()
-	mounts := make([]ArtifactMount, projectMounts.Count())
+	mounts := make([]MountedArtifact, projectMounts.Count())
 	for index := 0; index < projectMounts.Count(); index++ {
 		shard, shardOK := projectMounts.At(index)
 		program, programOK := projectMounts.Program(shard)
 		module, moduleOK := linked.Project().ModuleKey(shard)
-		programID, programIDOK := projectMounts.ProgramID(shard)
-		if !shardOK || !programOK || program == nil || !moduleOK || !programIDOK {
+		if !shardOK || !programOK || program == nil || !moduleOK {
 			t.Fatal("artifact mount source")
 		}
 		artifact, failure := artifactcompiler.CompileDetailed(program, executionSchemaID, issuance)
@@ -107,7 +107,7 @@ func compactHeapFixture(t testing.TB, name, source string, spec *declaration.Spe
 			t.Fatalf("artifact compile: %v", failure)
 		}
 		var mountOK bool
-		mounts[index], mountOK = NewArtifactMount(snapshottest.MustLower(t, artifact), module, programID)
+		mounts[index], mountOK = NewMountedArtifact(snapshottest.MustLower(t, artifact), module)
 		if !mountOK {
 			t.Fatal("artifact mount")
 		}
@@ -700,16 +700,16 @@ func TestHeapKeyIDInverseLaws(t *testing.T) {
 	if len(mounts) == 0 || linked == nil || !schema.Valid() {
 		t.Fatal("heap key inverse fixture")
 	}
-	if schema.ArtifactMountCount() != len(mounts) {
-		t.Fatalf("mount denominator=%d, want %d", schema.ArtifactMountCount(), len(mounts))
+	if schema.MountedArtifactCount() != len(mounts) {
+		t.Fatalf("mount denominator=%d, want %d", schema.MountedArtifactCount(), len(mounts))
 	}
 	for index, want := range mounts {
-		got, ok := schema.ArtifactMountAt(index)
-		if !ok || got.Module() != want.Module() || got.ProgramID() != want.ProgramID() || got.Snapshot() != want.Snapshot() {
+		got, ok := schema.MountedArtifactAt(index)
+		if !ok || got.ModuleKey != want.ModuleKey || got.ProgramID != want.ProgramID || got.Snapshot != want.Snapshot {
 			t.Fatalf("mount %d is not the owner-issued row", index)
 		}
 	}
-	if _, ok := schema.ArtifactMountAt(len(mounts)); ok {
+	if _, ok := schema.MountedArtifactAt(len(mounts)); ok {
 		t.Fatal("mount directory admitted an out-of-range row")
 	}
 

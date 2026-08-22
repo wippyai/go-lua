@@ -497,6 +497,9 @@ func TestTypeEqualsInterface(t *testing.T) {
 	if typeEquals(i1, i3) {
 		t.Error("interfaces with different names should not be equal")
 	}
+	if !i1.Equals(NewAlias("IAlias", i2)) {
+		t.Error("Interface.Equals must use the alias-transparent canonical equality machine")
+	}
 }
 
 func TestTypeEqualsInterfaceMethodOrder(t *testing.T) {

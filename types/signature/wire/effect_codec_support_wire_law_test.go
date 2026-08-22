@@ -276,7 +276,6 @@ func TestEffectLabelWireSerializes(t *testing.T) {
 		Protocol:     "protocol",
 		From:         "from",
 		To:           "to",
-		Final:        "final",
 		Finals:       []string{"final"},
 	}
 	if _, err := json.Marshal(populated); err != nil {

@@ -17,6 +17,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/program/target/contract"
 	"github.com/wippyai/go-lua/analysis/program/target/declaration"
 	programschema "github.com/wippyai/go-lua/analysis/schema/program"
+	"github.com/wippyai/go-lua/analysis/schema/programmount"
 	schematype "github.com/wippyai/go-lua/analysis/schema/typecontract"
 	"github.com/wippyai/go-lua/domain/composite"
 	effectfactor "github.com/wippyai/go-lua/domain/effect/factor"
@@ -39,7 +40,7 @@ type effectFactorFixture struct {
 	linked      *link.Link
 	statics     *staticdomain.Authority
 	packs       *pack.Schema
-	packMounts  []pack.ArtifactMount
+	packMounts  []programmount.MountedArtifact
 	factor      *effectfactor.Algebra
 	mounts      []effectfactor.MountedArtifact
 	owner       vocabulary.Operation
@@ -70,7 +71,7 @@ func newEffectFactorFixture(t testing.TB, spec declaration.Spec, source string) 
 	}
 
 	projectMounts := linked.Project().Mounts()
-	packMounts := make([]pack.ArtifactMount, projectMounts.Count())
+	packMounts := make([]programmount.MountedArtifact, projectMounts.Count())
 	effectMounts := make([]effectfactor.MountedArtifact, projectMounts.Count())
 	staticMounts := make([]staticdomain.MountedProgram, projectMounts.Count())
 	artifacts := make([]*programartifact.Artifact, projectMounts.Count())
@@ -78,7 +79,7 @@ func newEffectFactorFixture(t testing.TB, spec declaration.Spec, source string) 
 		shard, shardOK := projectMounts.At(index)
 		program, programOK := projectMounts.Program(shard)
 		module, moduleOK := linked.Project().ModuleKey(shard)
-		programID, programIDOK := projectMounts.ProgramID(shard)
+		_, programIDOK := projectMounts.ProgramID(shard)
 		if !shardOK || !programOK || program == nil || !moduleOK || !programIDOK {
 			t.Fatalf("effect fixture mount %d", index)
 		}
@@ -87,7 +88,7 @@ func newEffectFactorFixture(t testing.TB, spec declaration.Spec, source string) 
 			t.Fatalf("compile effect artifact %d: %s", index, failure.Error())
 		}
 		artifacts[index] = artifact
-		packMounts[index], ok = pack.NewArtifactMount(snapshottest.MustLower(t, artifact), module, programID)
+		packMounts[index], ok = programmount.MountedArtifactFromSnapshot(snapshottest.MustLower(t, artifact), module)
 		if !ok {
 			t.Fatalf("pack artifact mount %d", index)
 		}
@@ -167,8 +168,10 @@ func effectFactorSpec(rowTail vocabulary.RowTail, callback bool) declaration.Spe
 
 func effectKnownAtom(t testing.TB, fixture effectFactorFixture) effectfactor.Atom {
 	t.Helper()
-	atom, ok := fixture.factor.CallEffectAtom(fixture.root, fixture.application, fixture.owner, 0)
-	if !ok {
+	formal, formalOK := fixture.factor.FormalCallEffectAtom(fixture.mountedCall, fixture.owner, 0)
+	binding, bindingOK := fixture.factor.BindFormalCallEffectAtom(fixture.root, fixture.mountedCall, fixture.owner, 0, formal)
+	atom, atomOK := binding.Atom()
+	if !formalOK || !bindingOK || !atomOK {
 		t.Fatal("known ordinary effect")
 	}
 	return atom
@@ -191,11 +194,8 @@ func TestEffectFactorMountedOwnerAndRootLaws(t *testing.T) {
 	if fixture.factor.RootCount() == 0 || fixture.factor.MountedCallCount() == 0 {
 		t.Fatal("mounted Effect fixture is empty")
 	}
-	if got, ok := fixture.factor.RootForCallID(fixture.application); !ok || got != fixture.root {
+	if got, ok := fixture.factor.RootForMountedCall(fixture.mountedCall); !ok || got != fixture.root {
 		t.Fatal("mounted call identity did not resolve its Effect root")
-	}
-	if !fixture.factor.ContainsCallID(fixture.root, fixture.application) {
-		t.Fatal("mounted call did not remain fenced to its root")
 	}
 	if !fixture.factor.Admit(fixture.root, fixture.factor.Bottom()) {
 		t.Fatal("bottom was not admitted at mounted root")
@@ -280,13 +280,12 @@ func TestEffectFactorMountedFormalAndOpenRowLaws(t *testing.T) {
 	if !ok {
 		t.Fatal("opaque operation")
 	}
-	unknown, ok := open.factor.OpenOperationUnknown(open.root, open.application, opaque)
+	unknownValue, ok := open.factor.SelectedMountedCallOpaque(open.root, open.mountedCall, opaque)
 	if !ok {
 		t.Fatal("open-row unknown effect")
 	}
 	known := effectKnownAtom(t, open)
 	knownValue, _ := open.factor.Singleton(known)
-	unknownValue, _ := open.factor.Singleton(unknown)
 	joined, ok := open.factor.Join(knownValue, unknownValue)
 	if !ok || !open.factor.LessOrEq(knownValue, joined) || !open.factor.LessOrEq(unknownValue, joined) {
 		t.Fatal("open-row known/unknown join law")

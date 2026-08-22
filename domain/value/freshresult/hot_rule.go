@@ -151,7 +151,7 @@ func (rule *HotRule) resolveOperand(coords engine.OperandCoords) (valuedomain.Fr
 	return rule.values.Schema().FreshResultCallFor(key)
 }
 
-// Count implements rule.LinkCatalog by filtering Heap's canonical FreshAt
+// Count implements rule.OccurrenceCatalog by filtering Heap's canonical FreshAt
 // order to the fixed CallResultValue rows admitted by Value.
 func (rule *HotRule) Count() int {
 	if rule == nil || rule.values == nil || rule.values.Schema() == nil || !rule.values.Schema().Valid() {

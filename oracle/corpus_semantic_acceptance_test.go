@@ -5,6 +5,7 @@ import (
 	"math"
 	"os"
 	"path/filepath"
+	"regexp"
 	"sort"
 	"strconv"
 	"strings"
@@ -27,7 +28,114 @@ import (
 // resource enforcement. A runner timeout is therefore a failed acceptance
 // invocation, never a successful fixture result.
 func TestCanonicalCorpusSemanticAcceptance(t *testing.T) {
-	corpusHarnessWalk(t, corpusHarnessProjects(t), corpusSemanticAcceptanceMode())
+	projects := corpusHarnessProjects(t)
+	outcomes := corpusHarnessWalk(t, projects, corpusSemanticAcceptanceMode())
+	unsupported := corpusSemanticUnsupportedLedgerOf(t, projects)
+	t.Log(corpusHarnessShardReceipt("acceptance", outcomes) + "\n" + unsupported.summary())
+	t.Run("unsupported", func(t *testing.T) { unsupported.report(t) })
+}
+
+// corpusSemanticUnsupportedFixture is one fixture's unsupported contract: the
+// rows the acceptance mode cannot express, and the diagnostic codes named in
+// them. The codes are carried separately because they are the work queue: a
+// code here is a judgment a fixture declares and the analyzer does not compose.
+type corpusSemanticUnsupportedFixture struct {
+	project string
+	rows    []string
+	codes   []string
+}
+
+// corpusSemanticUnsupportedLedger is the corpus-wide unsupported answer. It is
+// derived from the fixture manifests and the sealed declaration table alone,
+// so it is exact whether or not a fixture reached its solve, and a repair
+// anywhere else in the analyzer cannot quiet it.
+type corpusSemanticUnsupportedLedger struct {
+	fixtures []corpusSemanticUnsupportedFixture
+	// codes counts how many fixtures name each uncomposed code, and owners
+	// carries the register's answer for it.
+	codes  map[string]int
+	owners map[string]string
+}
+
+func (ledger corpusSemanticUnsupportedLedger) summary() string {
+	return fmt.Sprintf("acceptance unsupported: fixtures=%d codes=%d", len(ledger.fixtures), len(ledger.codes))
+}
+
+// corpusSemanticUnsupportedCodePattern recovers the code a policy row names.
+// The rows are authored below with the code quoted, which is what makes the
+// list a work queue rather than prose.
+var corpusSemanticUnsupportedCodePattern = regexp.MustCompile(`"([^"]+)" has no current collector`)
+
+// corpusSemanticUnsupportedLedgerOf reads every fixture's unsupported contract
+// without running it. Both fences the acceptance mode applies - the input
+// contract fence before compile and the policy fence at solve - are decided
+// from the manifest and the sealed table, so the whole list is knowable here
+// and cannot be shortened by a walk that stopped early.
+func corpusSemanticUnsupportedLedgerOf(t *testing.T, projects []corpusHarnessProject) corpusSemanticUnsupportedLedger {
+	t.Helper()
+	compilation, compilationOK := composite.Build()
+	if !compilationOK {
+		t.Fatal("sealed composition unavailable")
+	}
+	ledger := corpusSemanticUnsupportedLedger{codes: make(map[string]int), owners: make(map[string]string)}
+	for _, project := range projects {
+		rows := corpusSemanticFixtureInputUnsupported(project.expectation)
+		_, policyRows := corpusSemanticAcceptancePolicy(compilation, project.expectation)
+		rows = append(rows, policyRows...)
+		if len(rows) == 0 {
+			continue
+		}
+		seen := make(map[string]bool, len(rows))
+		codes := make([]string, 0, len(rows))
+		for _, row := range rows {
+			match := corpusSemanticUnsupportedCodePattern.FindStringSubmatch(row)
+			if match == nil || seen[match[1]] {
+				continue
+			}
+			seen[match[1]] = true
+			codes = append(codes, match[1])
+			ledger.codes[match[1]]++
+			status, declared := composite.DiagnosticCodeAnswer(compilation, anadiag.DiagnosticCode(match[1]))
+			switch status {
+			case composite.DiagnosticCodeDeclared:
+				ledger.owners[match[1]] = declared.Owner
+			default:
+				ledger.owners[match[1]] = "unregistered"
+			}
+		}
+		sort.Strings(codes)
+		ledger.fixtures = append(ledger.fixtures, corpusSemanticUnsupportedFixture{project: project.name, rows: rows, codes: codes})
+	}
+	return ledger
+}
+
+// report is the failing sub-test. It names every unsupported fixture with the
+// codes that have no collector and the surface each one is owed by, then fails
+// once per fixture. There is deliberately no allowlist: the printed list is the
+// work queue, and it shortens only when a producer is composed.
+func (ledger corpusSemanticUnsupportedLedger) report(t *testing.T) {
+	t.Helper()
+	if len(ledger.fixtures) == 0 {
+		return
+	}
+	for _, fixture := range ledger.fixtures {
+		named := fixture.codes
+		if len(named) == 0 {
+			named = []string{"(no diagnostic code; an input contract)"}
+		}
+		t.Errorf("fixture %s declares an unsupported contract: %s\n  %s", fixture.project, strings.Join(named, " "), strings.Join(fixture.rows, "\n  "))
+	}
+	codes := make([]string, 0, len(ledger.codes))
+	for code := range ledger.codes {
+		codes = append(codes, code)
+	}
+	sort.Strings(codes)
+	var summary strings.Builder
+	fmt.Fprintf(&summary, "%s\nuncomposed codes by owner:", ledger.summary())
+	for _, code := range codes {
+		fmt.Fprintf(&summary, "\n  %-40s fixtures=%-3d owner=%s", code, ledger.codes[code], ledger.owners[code])
+	}
+	t.Error(summary.String())
 }
 
 // corpusSemanticAcceptanceMode is the authoritative corpus judgment. The
@@ -127,6 +235,110 @@ func corpusSemanticAcceptanceJudgment(run *corpusHarnessRun) []string {
 	return nil
 }
 
+// TestCorpusSemanticUnsupportedLedgerNamesEveryFencedContract is the harness
+// law behind the failing sub-test. It proves the three properties the work
+// queue rests on: a fixture whose declared code has no collector is listed with
+// that code named, a fixture fenced before compile by an input contract is
+// listed too, and a fixture the analyzer can judge is absent. Without this a
+// quiet ledger would read the same as a supported corpus, which is the exact
+// failure the sub-test exists to end.
+func TestCorpusSemanticUnsupportedLedgerNamesEveryFencedContract(t *testing.T) {
+	projects := corpusHarnessProjects(t)
+	ledger := corpusSemanticUnsupportedLedgerOf(t, projects)
+	listed := make(map[string]corpusSemanticUnsupportedFixture, len(ledger.fixtures))
+	for _, fixture := range ledger.fixtures {
+		listed[fixture.project] = fixture
+	}
+	compilation, compilationOK := composite.Build()
+	if !compilationOK {
+		t.Fatal("sealed composition unavailable")
+	}
+	for _, project := range projects {
+		rows := corpusSemanticFixtureInputUnsupported(project.expectation)
+		_, policyRows := corpusSemanticAcceptancePolicy(compilation, project.expectation)
+		fixture, isListed := listed[project.name]
+		if len(rows)+len(policyRows) == 0 {
+			if isListed {
+				t.Errorf("fixture %s is listed as unsupported and declares no fenced contract", project.name)
+			}
+			continue
+		}
+		if !isListed {
+			t.Errorf("fixture %s declares a fenced contract and is absent from the unsupported list: %v %v", project.name, rows, policyRows)
+			continue
+		}
+		if len(fixture.rows) != len(rows)+len(policyRows) {
+			t.Errorf("fixture %s lists %d unsupported rows, its contract fences %d", project.name, len(fixture.rows), len(rows)+len(policyRows))
+		}
+		for _, code := range fixture.codes {
+			if status, _ := composite.DiagnosticCodeAnswer(compilation, anadiag.DiagnosticCode(code)); status == composite.DiagnosticCodeComposed {
+				t.Errorf("fixture %s lists composed code %q as having no collector", project.name, code)
+			}
+		}
+	}
+	if len(ledger.fixtures) == 0 {
+		return
+	}
+	// Every named code carries an owner, so the queue is addressed. An owner of
+	// "unregistered" is itself a failure of the registry law above, reported
+	// there by name rather than silently rendered here.
+	for code, owner := range ledger.owners {
+		if owner == "" {
+			t.Errorf("unsupported code %q is rendered with no owner", code)
+		}
+	}
+}
+
+// TestCorpusFixtureDiagnosticCodesAreComposedOrDeclared is the registry law
+// applied to the corpus. Every diagnostic code any fixture names - as an
+// expected finding or as a policy rule - is either composed by the sealed
+// declaration table or carried by the declared-not-composed register with an
+// owner. A code in neither is a name nothing in the analyzer answers, which is
+// the silence this law exists to make impossible: a fixture may declare a
+// judgment the analyzer does not yet decide, but never one nobody owes.
+//
+// The register is not an allowlist for the acceptance gate. An entry here still
+// fails the unsupported sub-test above; what it adds is the owner, so the
+// failing list is addressed to someone.
+func TestCorpusFixtureDiagnosticCodesAreComposedOrDeclared(t *testing.T) {
+	compilation, compilationOK := composite.Build()
+	if !compilationOK {
+		t.Fatal("sealed composition unavailable")
+	}
+	catalog, err := frozenCorpusDiagnosticExpectationCatalog(t)
+	if err != nil {
+		t.Fatal(err)
+	}
+	referenced := make(map[string]struct{}, len(catalog.inventory.structuredCodes)+len(catalog.inventory.ruleCodes))
+	for code := range catalog.inventory.structuredCodes {
+		referenced[code] = struct{}{}
+	}
+	for code := range catalog.inventory.ruleCodes {
+		referenced[code] = struct{}{}
+	}
+	names := make([]string, 0, len(referenced))
+	for code := range referenced {
+		names = append(names, code)
+	}
+	sort.Strings(names)
+	composed, declared := 0, 0
+	for _, code := range names {
+		status, row := composite.DiagnosticCodeAnswer(compilation, anadiag.DiagnosticCode(code))
+		switch status {
+		case composite.DiagnosticCodeComposed:
+			composed++
+		case composite.DiagnosticCodeDeclared:
+			declared++
+			if row.Owner == "" {
+				t.Errorf("fixture diagnostic code %q is registered without an owner", code)
+			}
+		default:
+			t.Errorf("fixture diagnostic code %q is neither composed by the sealed declaration table nor carried by the declared-not-composed register. Compose a producer for it, or register it with the surface that owes the judgment.", code)
+		}
+	}
+	t.Logf("fixture diagnostic codes: referenced=%d composed=%d declared-not-composed=%d", len(names), composed, declared)
+}
+
 // corpusSemanticFixtureInputUnsupported fences contracts the current
 // Program-owned fixture adapter cannot preserve. The strict frozen catalog is
 // the only source of this classification. In particular, this acceptance gate
@@ -223,13 +435,36 @@ func TestCorpusSemanticFixtureInputSupportsDeclaredHostModulePaths(t *testing.T)
 	if got := corpusSemanticFixtureInputUnsupported(supported); len(got) != 0 {
 		t.Fatalf("declared packages fenced as unsupported: %v", got)
 	}
+	absent := corpusSemanticUndeclaredHostModulePath(t)
 	undeclared := &corpusDiagnosticProjectExpectations{manifest: &corpusDiagnosticManifest{
-		Packages: []string{"time"},
+		Packages: []string{absent},
 	}}
 	got := corpusSemanticFixtureInputUnsupported(undeclared)
-	if len(got) != 1 || !strings.Contains(got[0], `"time"`) {
-		t.Fatalf("undeclared package fence = %v, want exactly one row naming \"time\"", got)
+	if len(got) != 1 || !strings.Contains(got[0], strconv.Quote(absent)) {
+		t.Fatalf("undeclared package fence = %v, want exactly one row naming %q", got, absent)
 	}
+}
+
+// corpusSemanticUndeclaredHostModulePath is a module path the canonical fixture
+// Target provably does not declare. It is derived from the declaration table
+// rather than spelled here: a provider addition made a hand-picked name a
+// declared module and turned the fence law into a false red, which is the same
+// drift the fence itself exists to avoid. The probe fails loudly if the derived
+// name is ever declared, so it cannot silently stop testing the fence.
+func corpusSemanticUndeclaredHostModulePath(t *testing.T) string {
+	t.Helper()
+	declared, err := corpusSemanticDeclaredHostModulePaths()
+	if err != nil {
+		t.Fatalf("declared host module paths: %v", err)
+	}
+	for ordinal := 0; ordinal <= len(declared); ordinal++ {
+		candidate := fmt.Sprintf("no-such-host-module-%d", ordinal)
+		if _, ok := declared[candidate]; !ok {
+			return candidate
+		}
+	}
+	t.Fatal("every derived probe name is a declared host module path")
+	return ""
 }
 
 type corpusSemanticNativeRow struct {
@@ -796,12 +1031,13 @@ func TestCorpusSemanticFixtureContractPreflight(t *testing.T) {
 	if len(unsupported) != 2 {
 		t.Fatalf("unsupported fixture contracts=%v, want the two unpreserved non-input surfaces", unsupported)
 	}
+	absent := corpusSemanticUndeclaredHostModulePath(t)
 	unknownPackage := corpusSemanticFixtureInputUnsupported(&corpusDiagnosticProjectExpectations{
 		name:     "unknown-package",
-		manifest: &corpusDiagnosticManifest{Packages: []string{"time"}},
+		manifest: &corpusDiagnosticManifest{Packages: []string{absent}},
 	})
-	if len(unknownPackage) != 1 || !strings.Contains(unknownPackage[0], `"time"`) {
-		t.Fatalf("unknown package preflight = %v, want one fenced package contract", unknownPackage)
+	if len(unknownPackage) != 1 || !strings.Contains(unknownPackage[0], strconv.Quote(absent)) {
+		t.Fatalf("unknown package preflight = %v, want one fenced package contract naming %q", unknownPackage, absent)
 	}
 }
 

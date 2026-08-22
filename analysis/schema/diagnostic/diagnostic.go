@@ -239,7 +239,10 @@ const (
 	RequiresSubject Requirement = 1 << iota >> 1
 	RequiresTarget
 	RequiresClaimForm
-	RequiresProofLocation
+	// RequiresWitness is the located witness roster a row's non-primary anchors
+	// read. A row declares how many witnesses its producer supplies; an anchor
+	// names one of them by ordinal.
+	RequiresWitness
 	RequiresHandled
 	RequiresMissing
 	// RequiresActual is the spelling of the value that was observed: its exact
@@ -391,9 +394,13 @@ const (
 	AnchorInvalid Anchor = iota
 	// AnchorPrimary is the finding's own location.
 	AnchorPrimary
-	// AnchorProof is the already-authenticated proof location the payload
-	// carries.
-	AnchorProof
+	// AnchorWitness is one already-authenticated location the payload carries
+	// beside the finding's own: the earlier guard a proof came from, the write
+	// that overwrote a value, the birth site of a table. The row declares how
+	// many such locations its producer supplies and each reference names one by
+	// ordinal, so a judgment whose proof spans several places states every one
+	// of them rather than collapsing them into the finding's own site.
+	AnchorWitness
 	anchorLimit
 )
 
@@ -401,8 +408,8 @@ func (anchor Anchor) Available() bool { return anchor > AnchorInvalid && anchor 
 
 // Requires is the payload field one anchor reads.
 func (anchor Anchor) Requires() Requirement {
-	if anchor == AnchorProof {
-		return RequiresProofLocation
+	if anchor == AnchorWitness {
+		return RequiresWitness
 	}
 	return RequiresInvalid
 }
@@ -417,37 +424,47 @@ const (
 	SectionLocation
 	SectionSource
 	SectionEvidence
+	// SectionContext is the surrounding place a finding is decided in rather
+	// than the place it is reported at: the loop a read is invariant across,
+	// the construct a judgment ranges over. It renders one declared witness.
+	SectionContext
 	SectionHelp
 	sectionLimit
 )
 
 func (section Section) Available() bool { return section > SectionInvalid && section < sectionLimit }
 
-// Evidence is one authored proof line of a row.
+// Evidence is one authored proof line of a row. Witness names which declared
+// witness the line is anchored at, and is read only under AnchorWitness.
 type Evidence struct {
 	Anchor              Anchor
+	Witness             uint8
 	Kind, Trust, Reason string
 	Detail              Text
 }
 
-// Label is one authored source label of a row.
+// Label is one authored source label of a row. Witness names which declared
+// witness the label is attached to, and is read only under AnchorWitness.
 type Label struct {
-	Anchor Anchor
-	Text   Text
+	Anchor  Anchor
+	Witness uint8
+	Text    Text
 }
 
 // EvidenceRow is one admitted proof line: the authored classification and the
 // parsed detail line.
 type EvidenceRow struct {
 	Anchor              Anchor
+	Witness             uint8
 	Kind, Trust, Reason string
 	Detail              Line
 }
 
 // LabelRow is one admitted source label.
 type LabelRow struct {
-	Anchor Anchor
-	Text   Line
+	Anchor  Anchor
+	Witness uint8
+	Text    Line
 }
 
 // Variant is one authored presentation of a row, selected by the verdict its
@@ -541,6 +558,16 @@ type Spec struct {
 	// Fact names the declaration whose facts decide this row. A solver-observed
 	// row names one; a static row reads no fact and names none.
 	Fact Reference
+	// Witnesses is how many located witnesses this row's producer supplies
+	// beside the finding's own location. Every AnchorWitness reference names one
+	// of them by ordinal, and every declared witness is named by at least one
+	// reference, so a row can neither read a location its producer does not
+	// supply nor oblige a producer to locate something nothing renders.
+	Witnesses uint8
+	// Context is the witness the "where" section renders: the surrounding place
+	// the finding is decided in. A row declares one exactly when it renders that
+	// section.
+	Context uint8
 	// Requirements is the typed payload a producer must supply. It is exactly
 	// the set the row's own presentation reads.
 	Requirements  Requirement
@@ -566,6 +593,8 @@ type Entry struct {
 	collection      Reference
 	sites           []Site
 	fact            Reference
+	witnesses       uint8
+	context         uint8
 	requirements    Requirement
 	message, help   Line
 	evidence        []EvidenceRow
@@ -627,6 +656,8 @@ func New(spec Spec) (*Entry, bool) {
 		collection:      spec.Collection,
 		sites:           append([]Site(nil), spec.Sites...),
 		fact:            spec.Fact,
+		witnesses:       spec.Witnesses,
+		context:         spec.Context,
 		requirements:    spec.Requirements,
 		message:         message,
 		help:            help,
@@ -641,6 +672,9 @@ func New(spec Spec) (*Entry, bool) {
 		return nil, false
 	}
 	entry.render = append([]Section(nil), spec.Render...)
+	if !entry.witnessRosterAdmissible() {
+		return nil, false
+	}
 	return entry, entry.EntryAvailable()
 }
 
@@ -663,6 +697,8 @@ func newVariantEntry(spec Spec) (*Entry, bool) {
 		collection:      spec.Collection,
 		sites:           append([]Site(nil), spec.Sites...),
 		fact:            spec.Fact,
+		witnesses:       spec.Witnesses,
+		context:         spec.Context,
 	}
 	declared := make(map[uint16]struct{}, len(spec.Variants))
 	for _, variant := range spec.Variants {
@@ -698,7 +734,68 @@ func newVariantEntry(spec Spec) (*Entry, bool) {
 		return nil, false
 	}
 	entry.render = append([]Section(nil), spec.Render...)
+	if !entry.witnessRosterAdmissible() {
+		return nil, false
+	}
 	return entry, entry.EntryAvailable()
+}
+
+// witnessRosterAdmissible states the located-witness contract of one row, in
+// both directions. A reference may name only a witness the producer supplies,
+// and a supplied witness must be named by something that renders it: the first
+// half stops a presentation reading a location that does not exist, the second
+// stops a row obliging its producer to locate a place nothing shows. The
+// context witness is a reference like any other, and it exists exactly when the
+// row renders the section that shows it.
+func (entry *Entry) witnessRosterAdmissible() bool {
+	named := make([]bool, int(entry.witnesses)+1)
+	reference := func(anchor Anchor, witness uint8) bool {
+		if anchor != AnchorWitness {
+			return witness == 0
+		}
+		if witness == 0 || witness > entry.witnesses {
+			return false
+		}
+		named[witness] = true
+		return true
+	}
+	for _, evidence := range entry.evidence {
+		if !reference(evidence.Anchor, evidence.Witness) {
+			return false
+		}
+	}
+	for _, label := range entry.labels {
+		if !reference(label.Anchor, label.Witness) {
+			return false
+		}
+	}
+	for _, variant := range entry.variants {
+		for _, evidence := range variant.evidence {
+			if !reference(evidence.Anchor, evidence.Witness) {
+				return false
+			}
+		}
+		for _, label := range variant.labels {
+			if !reference(label.Anchor, label.Witness) {
+				return false
+			}
+		}
+	}
+	if (entry.context != 0) != entry.Renders(SectionContext) {
+		return false
+	}
+	if entry.context != 0 {
+		if entry.context > entry.witnesses {
+			return false
+		}
+		named[entry.context] = true
+	}
+	for witness := uint8(1); witness <= entry.witnesses; witness++ {
+		if !named[witness] {
+			return false
+		}
+	}
+	return true
 }
 
 // requirementsCover states the payload contract in both directions: a field a
@@ -714,7 +811,7 @@ func admitEvidence(specs []Evidence) ([]EvidenceRow, bool) {
 		if !detailOK || !evidence.Anchor.Available() || evidence.Kind == "" || evidence.Trust == "" || evidence.Reason == "" {
 			return nil, false
 		}
-		rows = append(rows, EvidenceRow{Anchor: evidence.Anchor, Kind: evidence.Kind, Trust: evidence.Trust, Reason: evidence.Reason, Detail: detail})
+		rows = append(rows, EvidenceRow{Anchor: evidence.Anchor, Witness: evidence.Witness, Kind: evidence.Kind, Trust: evidence.Trust, Reason: evidence.Reason, Detail: detail})
 	}
 	return rows, true
 }
@@ -726,7 +823,7 @@ func admitLabels(specs []Label) ([]LabelRow, bool) {
 		if !textOK || !label.Anchor.Available() {
 			return nil, false
 		}
-		rows = append(rows, LabelRow{Anchor: label.Anchor, Text: text})
+		rows = append(rows, LabelRow{Anchor: label.Anchor, Witness: label.Witness, Text: text})
 	}
 	return rows, true
 }
@@ -827,6 +924,14 @@ func (entry *Entry) Sited(site Site) bool {
 func (entry *Entry) Fact() Reference { return entry.fact }
 
 func (entry *Entry) Requirements() Requirement { return entry.requirements }
+
+// Witnesses is how many located witnesses this row's producer supplies beside
+// the finding's own location.
+func (entry *Entry) Witnesses() uint8 { return entry.witnesses }
+
+// Context is the witness the "where" section renders, or zero when the row
+// renders no such section.
+func (entry *Entry) Context() uint8 { return entry.context }
 
 func (entry *Entry) Message() Line { return entry.message }
 
@@ -946,6 +1051,12 @@ func (entry *Entry) EntryContent(content *framing.Writer) error {
 	if err := referenceContent(content, entry.fact); err != nil {
 		return err
 	}
+	if err := content.Uint(uint64(entry.witnesses)); err != nil {
+		return err
+	}
+	if err := content.Uint(uint64(entry.context)); err != nil {
+		return err
+	}
 	if err := content.Uint(uint64(entry.requirements)); err != nil {
 		return err
 	}
@@ -1030,6 +1141,9 @@ func evidenceContent(content *framing.Writer, rows []EvidenceRow) error {
 		if err := content.Uint(uint64(evidence.Anchor)); err != nil {
 			return err
 		}
+		if err := content.Uint(uint64(evidence.Witness)); err != nil {
+			return err
+		}
 		if err := content.String(evidence.Kind); err != nil {
 			return err
 		}
@@ -1057,6 +1171,9 @@ func labelContent(content *framing.Writer, rows []LabelRow) error {
 		if err := content.Uint(uint64(label.Anchor)); err != nil {
 			return err
 		}
+		if err := content.Uint(uint64(label.Witness)); err != nil {
+			return err
+		}
 		if err := content.String(string(label.Text.text)); err != nil {
 			return err
 		}
@@ -1072,7 +1189,14 @@ func (entry *Entry) reads() Requirement {
 	if !available {
 		return RequiresInvalid
 	}
-	return presentation.reads()
+	reads := presentation.reads()
+	// The context section reads a located witness whether or not any evidence
+	// line or label happens to name one, so the payload contract states it here
+	// rather than leaving it to a coincidence of authoring.
+	if entry.context != 0 {
+		reads |= RequiresWitness
+	}
+	return reads
 }
 
 // surface is the diagnostic contribution to the analyzer declaration root.

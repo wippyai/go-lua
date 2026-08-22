@@ -109,10 +109,24 @@ func TestPlacementLatticeRejectsOutOfDomainValues(t *testing.T) {
 				"widen-left":  Widen(outside, inside),
 				"widen-right": Widen(inside, outside),
 			} {
-				if got != Unknown {
-					t.Fatalf("%s(%v,%v) = %v, want fail-closed Unknown", name, outside, inside, got)
+				if got == Unknown || validAnalysisPlacement(got) {
+					t.Fatalf("%s(%v,%v) = %v, want invalid refusal sentinel", name, outside, inside, got)
 				}
 			}
+		}
+	}
+}
+
+func TestPlacementCheckedLatticeRefusesOutOfDomainValues(t *testing.T) {
+	for _, outside := range []Placement{Interpreter, Register, Placement(255)} {
+		if got, ok := JoinChecked(outside, Stack); ok || got != invalidPlacementResult {
+			t.Fatalf("JoinChecked(%v,stack) = %v/%t, want refusal", outside, got, ok)
+		}
+		if got, ok := MeetChecked(Stack, outside); ok || got != invalidPlacementResult {
+			t.Fatalf("MeetChecked(stack,%v) = %v/%t, want refusal", outside, got, ok)
+		}
+		if got, ok := WidenChecked(Stack, outside); ok || got != invalidPlacementResult {
+			t.Fatalf("WidenChecked(stack,%v) = %v/%t, want refusal", outside, got, ok)
 		}
 	}
 }

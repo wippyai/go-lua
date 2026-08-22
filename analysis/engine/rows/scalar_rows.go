@@ -6,7 +6,10 @@
 // Links and mounted repeatedly without rebuilding the Program interior.
 package rows
 
-import "github.com/wippyai/go-lua/analysis/identity"
+import (
+	"github.com/wippyai/go-lua/analysis/identity"
+	"github.com/wippyai/go-lua/analysis/schema"
+)
 
 // ArtifactStructuralArm is the engine-neutral structural-edge arm vocabulary.
 type ArtifactStructuralArm uint8
@@ -37,39 +40,6 @@ const (
 	ArtifactEventExit
 )
 
-// ArtifactRuleStage is the engine-neutral scalar encoding of the execution
-// cut sealed by ProgramArtifact. It is retained as proof metadata; the mounting
-// owner does not infer it from transports or interpret a domain rule name.
-type ArtifactRuleStage uint8
-
-const (
-	ArtifactRuleStageInvalid ArtifactRuleStage = iota
-	ArtifactRuleStageBase
-	ArtifactRuleStageLocal
-	// Issued native cuts. Schema structure CategoryIssuanceStage owns
-	// spelling and predecessor; these are the dense ordinals that table
-	// numbers.
-	ArtifactRuleStageIssued3
-	ArtifactRuleStageIssued4
-	ArtifactRuleStageIssued5
-)
-
-func (stage ArtifactRuleStage) Valid() bool {
-	return stage >= ArtifactRuleStageBase && stage <= ArtifactRuleStageIssued5
-}
-
-// ArtifactStageLaw is one declared execution-cut relation: whether the stage
-// is a native-call cut and which stage must already own its input point.
-type ArtifactStageLaw struct {
-	Stage       ArtifactRuleStage
-	Native      bool
-	Predecessor ArtifactRuleStage
-}
-
-func (law ArtifactStageLaw) Valid() bool {
-	return law.Stage.Valid() && (!law.Predecessor.Valid() || law.Predecessor != law.Stage)
-}
-
 // ArtifactScalarRole is one opaque Program-owned role in a reusable artifact
 // template. A mounting owner compares the role identity but never interprets it
 // as a domain producer tag.
@@ -79,11 +49,21 @@ type ArtifactScalarRole struct {
 
 func (role ArtifactScalarRole) Available() bool { return role.semantic.Available() }
 
+// ArtifactScalarFactor is one canonical Factor identity transported by a
+// reusable Program artifact. It is deliberately distinct from a Rule role:
+// local transfer semantics name the Factor itself, never a representative
+// Rule whose output would have to be re-derived later.
+type ArtifactScalarFactor struct {
+	semantic identity.ContentID
+}
+
+func (factor ArtifactScalarFactor) Available() bool { return factor.semantic.Available() }
+
 // ArtifactScalarCapacity reserves the exact immutable row planes one builder
 // will fill. It is allocation shape only; final admission still validates
 // every row and relation.
 type ArtifactScalarCapacity struct {
-	Roles, Points, Edges, Transfers, Regions, Events, Rules, Bodies int
+	Roles, Factors, Points, Edges, Transfers, Regions, Events, Rules, Bodies int
 }
 
 type ArtifactScalarPoint struct {
@@ -103,7 +83,7 @@ type ArtifactScalarEdge struct {
 type ArtifactScalarTransfer struct {
 	ID, From, To identity.ContentID
 	Full         bool
-	Factors      []ArtifactScalarRole
+	Factors      []ArtifactScalarFactor
 }
 
 type ArtifactScalarRegion struct {
@@ -120,9 +100,10 @@ type ArtifactScalarEvent struct {
 
 type ArtifactScalarRule struct {
 	Role             ArtifactScalarRole
-	Stage            ArtifactRuleStage
+	Stage            schema.Key
 	Point, Input, ID identity.ContentID
 	Route            identity.ContentID
+	Native           bool
 }
 
 // ArtifactScalarBody is the engine-neutral body transport. It carries only the

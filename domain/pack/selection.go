@@ -83,6 +83,7 @@ func (schema *Schema) TableScalarSelection(values Values, index TableIndex) (Sca
 	selection := ScalarSelection{schema: schema.state, values: values, kind: scalarSelectionTableIndex, tableIndex: index, sealed: true}
 	return selection, selection.valid()
 }
+
 type ScalarObservation struct {
 	owner               *algebra
 	scalars             []Scalar
@@ -129,7 +130,7 @@ func (schema *Schema) ObserveScalar(root Root, value Value, values Values, selec
 	if value.top {
 		return finishScalarObservation(ScalarObservation{owner: schema.state.owner, top: true})
 	}
-	port := schema.state.values[values.index].port
+	port := schema.state.roots[root.index].port
 	scalars := make([]Scalar, 0, len(value.cases))
 	for _, c := range value.cases {
 		term, ok := casePortTerm(c, port)
@@ -357,12 +358,12 @@ func (value InputObservation) Start() (int, bool) {
 }
 
 func (payload Payload) ScalarMayRuntimeKinds(s Scalar) (runtimekind.Set, bool) {
-	if payload.schema == nil || !s.valid() {
+	if !payload.valid() || !s.valid() {
 		return 0, false
 	}
 	class, ok := s.Class()
 	if !ok {
 		return 0, false
 	}
-	return payload.schema.owner.classes.MayRuntimeKinds(class)
+	return payload.selection.schema.owner.classes.MayRuntimeKinds(class)
 }

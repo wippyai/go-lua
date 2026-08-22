@@ -14,15 +14,15 @@ import (
 const (
 	// GrammarABIVersion is the cold schema/artifact contract. It is data in
 	// every CompileKey, not an ambient package assumption.
-	GrammarABIVersion = uint64(5)
+	GrammarABIVersion = uint64(6)
 
-	artifactFormat = uint64(33)
-	// Dead structural Boundary, StaticTypeArgument, and duplicated Static node
-	// field metadata projections no longer survive the compiler.
-	// Module rows now participate in the canonical Program/Artifact identity
-	// and seal contract. Keep the existing compile-key shape and advance the
-	// compiler law so older artifacts cannot be reused under the new geometry.
-	compilerLawVersion     = uint64(6)
+	artifactFormat = uint64(34)
+	// Issuance is now one sealed schema-driven machine. Rule stages and inputs
+	// are exact schema keys, stage identity/transport is declaration data, and
+	// the compiler emits final receipts atomically from the generic schedule.
+	// Advance both laws so artifacts from the ordinal/mirror representation can
+	// never be admitted under the new geometry.
+	compilerLawVersion     = uint64(7)
 	operatorLawVersion     = uint64(1)
 	substitutionLawVersion = uint64(1)
 	summaryLawVersion      = uint64(1)
@@ -35,7 +35,7 @@ const (
 	// admitted. Keep this generic occurrence law separate from Pack's row law:
 	// changing Heap rows must invalidate only the reusable
 	// occurrence/artifact identity contract.
-	occurrenceLawVersion  = uint64(13)
+	occurrenceLawVersion  = uint64(14)
 	compileKeyDomain      = "analysis/program-artifact/compile-key"
 	artifactIDDomain      = "analysis/program-artifact/artifact"
 	executionSchemaDomain = "analysis/program-artifact/execution-schema"

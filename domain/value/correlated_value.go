@@ -69,6 +69,17 @@ func (schema *Schema) Bottom() Value {
 // Default is the sparse Value Factor default.
 func (schema *Schema) Default() Value { return schema.Bottom() }
 
+// AuthenticateFactorCell accepts exactly the two representations a solved
+// Value factor can publish: a present owner-fenced fact, or the owner's
+// sparse Bottom default. Presence metadata never manufactures Bottom, and an
+// unavailable, foreign, zero, or sparse non-Bottom value is refused.
+func (schema *Schema) AuthenticateFactorCell(value Value, present, available bool) (Value, bool) {
+	if schema == nil || !available || !schema.Equal(value, value) || !present && !schema.Equal(value, schema.Bottom()) {
+		return Value{}, false
+	}
+	return value, true
+}
+
 // Top is the constant all-alternatives image.  It is never expanded into an
 // atom×capability matrix in hot State.
 func (schema *Schema) Top() Value {

@@ -677,7 +677,9 @@ func TestCanonicalRuleCellThreadsLargeSummaryReadThroughProductAndEvidence(t *te
 
 type summaryLawOperand struct{}
 
-func (summaryLawOperand) SummaryKeys() ([]uint64, bool) { return []uint64{0}, true }
+func (summaryLawOperand) SummaryKeyCount() int { return 1 }
+
+func (summaryLawOperand) SummaryKeyAt(index int) (uint64, bool) { return 0, index == 0 }
 
 func runCanonicalRuleSummaryThreadLaw(t testing.TB, base uint64, keyEnd uint64) {
 	t.Helper()
@@ -739,7 +741,7 @@ func runCanonicalRuleSummaryThreadLaw(t testing.TB, base uint64, keyEnd uint64) 
 		t.Fatal("summary mapping crossed the binding authority")
 	}
 	conflictingKeys := *mapped[0].summary
-	conflictingKeys.keys = []uint64{1}
+	conflictingKeys.keys = summaryKeyVector{keys: []uint64{1}, valid: true}
 	if _, accepted := appendDeclaredSummary(summaries, &conflictingKeys, binding.state, binding.state.authority); accepted {
 		t.Fatal("summary mapping accepted a conflicting key vector")
 	}

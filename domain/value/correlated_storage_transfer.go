@@ -289,12 +289,11 @@ func (schema *valueBuilder) sealStorageTransfersWithFailure() SealFailure {
 		if !shardOK || !moduleOK || !mountOK || !mount.Available() {
 			return SealFailureStorageTransferMount
 		}
-		artifact := mount.Snapshot()
-		program := artifact.Program()
+		program := mount.Program.Program
 		state, stateOK := program.ColdState()
 		view, viewOK := lifecycle.NewView(state)
 		lifetimeProof, lifetimeOK := storageLifetimeProofForProgram(view)
-		if !stateOK || !viewOK || !lifetimeOK || !artifact.ArtifactID().Available() {
+		if !stateOK || !viewOK || !lifetimeOK || !program.ArtifactID.Available() {
 			return SealFailureStorageTransferMount
 		}
 		lifetimeProof.global = globalCells[module]
@@ -326,7 +325,7 @@ func (schema *valueBuilder) sealStorageTransfersWithFailure() SealFailure {
 			// StorageTransferRef is the single authority on which
 			// (kind, position) tuples name a relation; a non-positional
 			// family carrying a list position is refused there.
-			if failure := schema.addArtifactStorageTransfer(module, artifact.ArtifactID(), kind, row.ID(), position, fromID, toID, lifetimeProof); failure != SealFailureNone {
+			if failure := schema.addArtifactStorageTransfer(module, program.ArtifactID, kind, row.ID(), position, fromID, toID, lifetimeProof); failure != SealFailureNone {
 				return failure
 			}
 		}
@@ -657,7 +656,7 @@ func (schema *valueBuilder) explicitGlobalStorageCells() (map[identity.ContentID
 		if !moduleOK || !programOK || !ownerOK || owner == nil {
 			continue
 		}
-		if _, exactOK := globals.ForProgramCell(shard, owner, cell); !exactOK {
+		if _, exactOK := globals.ForProgramCell(shard, owner, cell, analysis); !exactOK {
 			continue
 		}
 		candidate, candidateOK := lifecycle.StorageCellIdentity(programID, cell)

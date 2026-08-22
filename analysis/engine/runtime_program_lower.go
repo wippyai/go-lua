@@ -5,6 +5,8 @@ import (
 	"github.com/wippyai/go-lua/analysis/engine/internal/equation"
 	"github.com/wippyai/go-lua/analysis/engine/rows"
 	"github.com/wippyai/go-lua/analysis/identity"
+	"github.com/wippyai/go-lua/analysis/schema"
+	"github.com/wippyai/go-lua/analysis/schema/executioncontext"
 	"github.com/wippyai/go-lua/internal/canonical"
 )
 
@@ -73,8 +75,7 @@ type artifactMountedRuleOccurrence struct {
 }
 
 type artifactNativeCallStage struct {
-	stage        rows.ArtifactRuleStage
-	native       bool
+	stage        schema.Key
 	point        identity.ContentID
 	input        identity.ContentID
 	mountedPoint identity.ContentID
@@ -104,14 +105,14 @@ func (handle programCallRow) resolve() (artifactNativeCallStage, bool) {
 		return artifactNativeCallStage{}, false
 	}
 	row, ok := handle.program.nativeCallStages[handle.key]
-	return row, ok && row == handle.stage && row.native && row.point.Available() && row.input.Available() && row.mountedPoint.Available() && row.mountedInput.Available()
+	return row, ok && row == handle.stage && row.point.Available() && row.input.Available() && row.mountedPoint.Available() && row.mountedInput.Available()
 }
 
 func (handle programCallRow) Available() bool { _, ok := handle.resolve(); return ok }
-func (handle programCallRow) Stage() rows.ArtifactRuleStage {
+func (handle programCallRow) Stage() schema.Key {
 	row, ok := handle.resolve()
 	if !ok {
-		return rows.ArtifactRuleStageInvalid
+		return ""
 	}
 	return row.stage
 }
@@ -164,7 +165,10 @@ func (handle programCallRow) RuleMember() (ProgramMember, bool) {
 // through the constructor's private row workspace; the geometry those sealed
 // rows fold into is derived by the pure constructor, which owns the schedule
 // gate, the duplicate-identity refusal and the published directory.
-func assembleSealedProgramMounts(binding *SchemaBinding, mounts []sealedProgramMount, admission MountedProgramAdmission, bootstrap LinkBootstrapWitness) (*CommittedProgram, programSealFailure, ProgramAdmissionStage, programAssemblyFailure, topologyConstructionRefusal, bool) {
+func assembleSealedProgramMounts(binding *SchemaBinding, mounts []sealedProgramMount, contexts executioncontext.Directory, admission MountedProgramAdmission, pointTransitions []ProgramPointTransitionAdmission, bootstrap LinkBootstrapWitness) (*CommittedProgram, programSealFailure, ProgramAdmissionStage, programAssemblyFailure, topologyConstructionRefusal, bool) {
+	if !contexts.Available() || !bootstrap.Available() || contexts.LinkID() != bootstrap.OwnerID() {
+		return nil, programSealFailure{}, ProgramAdmissionNone, programAssemblyFailureInput, topologyConstructionRefusal{}, false
+	}
 	rowsWorkspace, lowering, assembled := assembleProgramRows(binding, mounts, bootstrap)
 	if !assembled || rowsWorkspace == nil {
 		return nil, programSealFailure{}, ProgramAdmissionNone, lowering, topologyConstructionRefusal{}, false
@@ -174,7 +178,7 @@ func assembleSealedProgramMounts(binding *SchemaBinding, mounts []sealedProgramM
 	if len(admission.Queries) == 0 {
 		return nil, programSealFailure{}, ProgramAdmissionQuery, programAssemblyFailureNone, topologyConstructionRefusal{}, false
 	}
-	declaration, seal, stage, declared := declareMountedProgram(rowsWorkspace, mounts, bootstrap, admission)
+	declaration, seal, stage, declared := declareMountedProgram(rowsWorkspace, mounts, contexts, bootstrap, admission, pointTransitions)
 	if !declared {
 		return nil, seal, stage, programAssemblyFailureNone, topologyConstructionRefusal{}, false
 	}
@@ -585,14 +589,14 @@ func buildMountedArtifactRows(mounts []sealedProgramMount, schemaID identity.Con
 			if !transferOK {
 				return nil, programAssemblyFailureSnapshotNamespace
 			}
-			for _, role := range transfer.Factors {
-				capability, capabilityOK := sealedRoleCapability(mount.capabilities, role)
-				if !capabilityOK || capability.state != bindingState || capability.authority != bindingState.authority {
+			for _, factor := range transfer.Factors {
+				capability, capabilityOK := mount.factors[factor]
+				if _, factorOK := capability.semantic(bindingState, bindingState.authority); !capabilityOK || !factorOK {
 					return nil, programAssemblyFailureSnapshotNamespace
 				}
 			}
 		}
-		if !appendMountedProgramMount(result, mount.module, template, mount.capabilities) {
+		if !appendMountedProgramMount(result, mount.module, template, mount.capabilities, mount.factors) {
 			return nil, programAssemblyFailureSnapshotNamespace
 		}
 	}
@@ -626,7 +630,7 @@ func sealedRoleCapability(capabilities map[rows.ArtifactScalarRole]RuleSlotCapab
 // shared mounted planes. Scalar relations were closed once by
 // artifact.NewArtifactScalarTemplate; this pass only resolves Link roles, substitutes
 // mount-qualified IDs, and checks that those substitutions stay in the mount.
-func appendMountedProgramMount(rows *mountedArtifactRows, mount identity.ContentID, template *rows.ArtifactScalarTemplate, capabilities map[rows.ArtifactScalarRole]RuleSlotCapability) bool {
+func appendMountedProgramMount(rows *mountedArtifactRows, mount identity.ContentID, template *rows.ArtifactScalarTemplate, capabilities map[rows.ArtifactScalarRole]RuleSlotCapability, factors map[rows.ArtifactScalarFactor]FactorSlotCapability) bool {
 	if rows == nil || rows.pointMeta == nil || rows.ruleSet == nil || template == nil || !template.Available() || !mount.Available() {
 		return false
 	}
@@ -684,8 +688,9 @@ func appendMountedProgramMount(rows *mountedArtifactRows, mount identity.Content
 		if !transferOK {
 			return false
 		}
-		for _, role := range transfer.Factors {
-			if _, capabilityOK := sealedRoleCapability(capabilities, role); !capabilityOK {
+		for _, factor := range transfer.Factors {
+			capability, capabilityOK := factors[factor]
+			if !capabilityOK || !capability.Available() {
 				return false
 			}
 		}
@@ -707,7 +712,7 @@ func appendMountedProgramMount(rows *mountedArtifactRows, mount identity.Content
 		}
 		capability, capabilityOK := sealedRoleCapability(capabilities, rule.Role)
 		_, pointOK := points[rule.Point]
-		if !capabilityOK || !rule.Stage.Valid() || !pointOK {
+		if !capabilityOK || !rule.Stage.Available() || !pointOK {
 			return false
 		}
 		if rule.Input.Available() {

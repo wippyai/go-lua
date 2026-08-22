@@ -4,6 +4,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/engine/internal/composition"
 	"github.com/wippyai/go-lua/analysis/engine/internal/equation"
 	"github.com/wippyai/go-lua/analysis/identity"
+	"github.com/wippyai/go-lua/analysis/schema/executioncontext"
 )
 
 // exactObservationWriteMember is the narrow structural proof required to turn
@@ -91,7 +92,7 @@ func indexObservationPoints(graph *equation.Graph) (map[composition.Key]equation
 	return result, len(result) != 0
 }
 
-func bindSummaryObservationRow[V, R any](plane *programPlane, implementation *SummaryQueryImplementation[V, R], id identity.ContentID, member equation.RuleMember, point equation.Point) (observationRow, bool) {
+func bindSummaryObservationRow[V, R any](plane *programPlane, implementation *SummaryQueryImplementation[V, R], id identity.ContentID, member equation.RuleMember, point equation.Point, context executioncontext.Context) (observationRow, bool) {
 	row, ok := implementation.sealedRow()
 	if !ok || plane == nil || plane.runtime == nil || !plane.runtime.graph.OwnsMember(member) {
 		return observationRow{}, false
@@ -104,10 +105,10 @@ func bindSummaryObservationRow[V, R any](plane *programPlane, implementation *Su
 	if _, ok := implementation.topologySummaryMapping(surface); !ok {
 		return observationRow{}, false
 	}
-	return bindObservationRow(plane, id, point, row.state, row.ordinal, row.factorOrdinal, surface, composition.QueryFactorSummary, row.projection.materialize)
+	return bindObservationRow(plane, id, point, context, row.state, row.ordinal, row.factorOrdinal, surface, composition.QueryFactorSummary, row.projection.materialize)
 }
 
-func bindExactObservationRow[V, R any](plane *programPlane, implementation *ExactQueryImplementation[V, R], id identity.ContentID, member equation.RuleMember, point equation.Point) (observationRow, bool) {
+func bindExactObservationRow[V, R any](plane *programPlane, implementation *ExactQueryImplementation[V, R], id identity.ContentID, member equation.RuleMember, point equation.Point, context executioncontext.Context) (observationRow, bool) {
 	row, ok := implementation.sealedRow()
 	if !ok || plane == nil || plane.runtime == nil || !plane.runtime.graph.OwnsMember(member) {
 		return observationRow{}, false
@@ -120,14 +121,18 @@ func bindExactObservationRow[V, R any](plane *programPlane, implementation *Exac
 	if !ok {
 		return observationRow{}, false
 	}
-	return bindObservationRow(plane, id, point, row.state, row.ordinal, row.factorOrdinal, surface, composition.QueryFactorExact, row.projection.materialize)
+	return bindObservationRow(plane, id, point, context, row.state, row.ordinal, row.factorOrdinal, surface, composition.QueryFactorExact, row.projection.materialize)
 }
 
 // bindObservationRow performs the one binding-generation fence and lowers the
 // request to direct runtimeProgram handles. No state, authority, graph object,
 // or factor interface is retained by the row.
-func bindObservationRow(plane *programPlane, id identity.ContentID, point equation.Point, state *schemaBindingState, queryOrdinal, factorOrdinal uint64, surface equation.Surface, kind composition.QueryProjectionKind, exec queryExec) (observationRow, bool) {
+func bindObservationRow(plane *programPlane, id identity.ContentID, point equation.Point, context executioncontext.Context, state *schemaBindingState, queryOrdinal, factorOrdinal uint64, surface equation.Surface, kind composition.QueryProjectionKind, exec queryExec) (observationRow, bool) {
 	if plane == nil || !plane.frozen || plane.runtime == nil || plane.runtime.graph == nil || state == nil || state != plane.runtime.state || state.authority != plane.runtime.authority || !id.Available() || !plane.runtime.graph.OwnsPoint(point) || exec == nil || factorOrdinal >= uint64(len(plane.factors)) {
+		return observationRow{}, false
+	}
+	stateOrdinal, stateOK := plane.observationState(point, context)
+	if !stateOK {
 		return observationRow{}, false
 	}
 	shape, shapeOK := state.schema.queryShapeAt(queryOrdinal)
@@ -141,6 +146,6 @@ func bindObservationRow(plane *programPlane, id identity.ContentID, point equati
 	if !unitOK || !pointOK {
 		return observationRow{}, false
 	}
-	row := observationRow{id: id, queryOrdinal: queryOrdinal, factorOrdinal: factorOrdinal, point: int32(pointIndex), unit: unit, exec: exec}
+	row := observationRow{id: id, queryOrdinal: queryOrdinal, factorOrdinal: factorOrdinal, point: int32(pointIndex), state: stateOrdinal, contextID: context.ID(), unit: unit, exec: exec}
 	return row, row.valid()
 }

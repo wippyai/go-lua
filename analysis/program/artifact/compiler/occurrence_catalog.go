@@ -350,9 +350,14 @@ func (compiler *compiler) copyOccurrenceCatalogFailure() CompileFailure {
 			}
 			pointPaths = compiler.input.Flow().LocalWTO().PointPathsForSite(finish)
 		}
-		appended := compiler.appendOccurrence(programschema.OccurrenceValues, values.ID(), values.BodyPathID(), nil, nil, 0)
+		// A Values row has exactly one occurrence identity. The path-bearing
+		// append already publishes that row; do not first append an empty
+		// geometry row, because the issuance owner rejects duplicate geometry.
+		var appended bool
 		if pointPaths.Available() {
 			appended = compiler.appendOccurrencePaths(programschema.OccurrenceValues, values.ID(), values.BodyPathID(), causal.SitePointPaths{}, pointPaths, nil, 0)
+		} else {
+			appended = compiler.appendOccurrence(programschema.OccurrenceValues, values.ID(), values.BodyPathID(), nil, nil, 0)
 		}
 		if !appended {
 			return compileFailure(CompileStageOccurrences, CompileRowOccurrence, valuesIndex, -1, CompileReasonOccurrenceValues)

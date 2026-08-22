@@ -15,6 +15,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/program/target/compiler"
 	"github.com/wippyai/go-lua/analysis/program/target/declaration"
 	programschema "github.com/wippyai/go-lua/analysis/schema/program"
+	"github.com/wippyai/go-lua/analysis/schema/programmount"
 	"github.com/wippyai/go-lua/domain/composite"
 	heapdomain "github.com/wippyai/go-lua/domain/heap"
 	allocationcatalog "github.com/wippyai/go-lua/domain/heap/allocation/catalog"
@@ -75,7 +76,7 @@ func TestHotAllocationRuleBindsCarryReceiptAndRejectsForeignBinding(t *testing.T
 type allocationFixtureState struct {
 	schema     *valuedomain.Schema
 	heaps      heapdomain.Schema
-	mounts     []heapdomain.ArtifactMount
+	mounts     []programmount.MountedArtifact
 	module     identity.ContentID
 	occurrence identity.ContentID
 }
@@ -106,18 +107,18 @@ func allocationFixture(t testing.TB, name string) *allocationFixtureState {
 	}
 	shard, shardOK := linked.Project().Mounts().At(0)
 	module, moduleOK := linked.Project().ModuleKey(shard)
-	programID, programIDOK := linked.Project().Mounts().ProgramID(shard)
-	heapMount, heapMountOK := heapdomain.NewArtifactMount(snapshottest.MustLower(t, artifact), module, programID)
-	valueMount, valueMountOK := valuedomain.NewArtifactMount(snapshottest.MustLower(t, artifact), module, programID)
+	_, programIDOK := linked.Project().Mounts().ProgramID(shard)
+	heapMount, heapMountOK := programmount.MountedArtifactFromSnapshot(snapshottest.MustLower(t, artifact), module)
+	valueMount, valueMountOK := programmount.MountedArtifactFromSnapshot(snapshottest.MustLower(t, artifact), module)
 	if !shardOK || !moduleOK || !programIDOK || !heapMountOK || !valueMountOK {
 		t.Fatal("artifact mount")
 	}
-	heaps, heapFailure := heapdomain.SealWithArtifacts(linked, []heapdomain.ArtifactMount{heapMount})
+	heaps, heapFailure := heapdomain.SealWithArtifacts(linked, []programmount.MountedArtifact{heapMount})
 	structural, structuralOK := composite.StructureVocabulary(receipt)
 	if !structuralOK {
 		t.Fatal("structure vocabulary")
 	}
-	schema, valueFailure := valuedomain.SealWithFailure(linked, heaps, []valuedomain.ArtifactMount{valueMount}, structural)
+	schema, valueFailure := valuedomain.SealWithFailure(linked, heaps, []programmount.MountedArtifact{valueMount}, structural)
 	if heapFailure != heapdomain.SealFailureNone || valueFailure != valuedomain.SealFailureNone {
 		t.Fatalf("schema seal heap=%s value=%s", heapFailure, valueFailure)
 	}
@@ -137,7 +138,7 @@ func allocationFixture(t testing.TB, name string) *allocationFixtureState {
 	if !occurrence.Available() {
 		t.Fatal("allocation occurrence")
 	}
-	return &allocationFixtureState{schema: schema, heaps: heaps, mounts: []heapdomain.ArtifactMount{heapMount}, module: module, occurrence: occurrence}
+	return &allocationFixtureState{schema: schema, heaps: heaps, mounts: []programmount.MountedArtifact{heapMount}, module: module, occurrence: occurrence}
 }
 
 func allocationColdSchema(t testing.TB) (*engine.Schema, *valueowner.SchemaFragment, *allocation.SchemaFragment, *engine.QuerySlot[bool]) {

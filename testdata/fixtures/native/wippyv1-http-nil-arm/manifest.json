@@ -1,0 +1,10 @@
+{
+  "description": "The seven nil-carrying results of the Wippy v1 http surface - Request.query, Request.header, Request.content_type, Request.param and MultipartFile.header, which answer an optional string, and the two optional collections of a parsed multipart form - are each read twice: unguarded, where the declared nil reaches a consumer that cannot take it, and behind the test that rules it out, which the declaration exists to require and which must be silent.",
+  "packages": ["http"],
+  "files": [
+    "main.lua"
+  ],
+  "run": {
+    "skip": "host-surface diagnostic fixture; the http module has no fixture runtime"
+  }
+}

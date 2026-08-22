@@ -63,7 +63,7 @@ func FinalizeRule[A ruleAuthorities](context rule.Finalization[A, *HotRule]) boo
 		context.Rule.owner.Schema() == schema
 }
 
-func LinkCatalog(hot *HotRule) (rule.LinkCatalog, bool) {
+func OccurrenceCatalog(hot *HotRule) (rule.OccurrenceCatalog, bool) {
 	if hot == nil || hot.owner == nil || hot.owner.Schema() == nil {
 		return nil, false
 	}

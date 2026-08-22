@@ -1,0 +1,43 @@
+{
+  "description": "time.parse answers an instant with no error or nil with the module error, so reading a method off the first slot without ruling the nil arm out uses a value the declaration says may be nil.",
+  "packages": ["time"],
+  "files": ["main.lua"],
+  "check": {
+    "diagnostics": [
+      {
+        "file": "main.lua",
+        "line": 8,
+        "column": 12,
+        "severity": "error",
+        "code": "type.nil.unsafe_use",
+        "message_contains": ["parsed", "may be nil"],
+        "min_evidence": 1,
+        "evidence_contains": [
+          "parsed reaches use at main.lua:8",
+          "method call on possibly-nil value"
+        ],
+        "render_contains": [
+          "error[type.nil.unsafe_use]:",
+          "parsed:format_rfc3339()",
+          "because:",
+          "reaches use"
+        ],
+        "render_not_contains": ["^~", "where:", "internal", "summary", "want "],
+        "help_contains": ["Guard parsed against nil before the method call"],
+        "min_labels": 1,
+        "label_contains": ["possibly-nil value"],
+        "labels": [
+          {
+            "file": "main.lua",
+            "line": 8,
+            "column": 12,
+            "contains": ["possibly-nil value"]
+          }
+        ]
+      }
+    ]
+  },
+  "run": {
+    "skip": "diagnostic-only fixture"
+  }
+}

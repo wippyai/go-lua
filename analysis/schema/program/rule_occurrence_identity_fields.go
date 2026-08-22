@@ -18,15 +18,15 @@ func (row Program) WriteRuleOccurrenceIdentityFields(writer identity.StringIdent
 		occurrence, occurrenceOK := rule.Occurrence()
 		input, inputOK := rule.InputPoint()
 		route, routeOK := rule.PredecessorRouteID()
+		native, nativeOK := rule.Native()
 		key, writes := rule.Key(), rule.Writes()
-		if !held || !rule.Available() || !occurrenceOK ||
-			(!inputOK && rule.InputKind() != RuleInputNone) ||
-			(!routeOK && rule.InputKind() == RuleInputPredecessor) ||
+		if !held || !rule.Available() || !occurrenceOK || !nativeOK ||
+			(inputOK != input.Available()) || (routeOK != route.Available()) ||
 			!key.Available() || !writes.Available() ||
 			!writer.WriteString(string(key)) || !writer.WriteString(string(writes)) ||
 			!writer.WriteUint(uint64(occurrence)) || !writer.WriteContentID(rule.PointID()) ||
-			!writer.WriteContentID(input) || !writer.WriteUint(uint64(rule.Stage())) ||
-			!writer.WriteUint(uint64(rule.InputKind())) || !writer.WriteContentID(route) {
+			!writer.WriteContentID(input) || !writer.WriteString(string(rule.Stage())) ||
+			!writer.WriteString(string(rule.InputSpec())) || !writer.WriteContentID(route) || !writer.WriteBool(native) {
 			return false
 		}
 	}

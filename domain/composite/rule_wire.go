@@ -18,12 +18,12 @@ type ActivationRule interface {
 // catalog retains only rule.Template values; these hooks live in the schema
 // composition root and are never carried by a catalog declaration.
 type RuleContributor[P, A any] struct {
-	declare     func(*engine.SchemaBuilder, vocabulary.Roles, P) (rule.Cell, bool)
-	register    func(*engine.SchemaBinding, rule.Cell) (engine.RuleSlotCapability, bool)
-	pair        func(*engine.SchemaBinding, rule.Cell, func(schema.Key) (engine.RuleSlotCapability, bool)) bool
-	bind        func(*engine.SchemaBinding, A, rule.Cell) (rule.Cell, ActivationRule, bool)
-	finalize    func(A, rule.Cell) bool
-	linkCatalog func(rule.Cell) (rule.LinkCatalog, bool)
+	declare           func(*engine.SchemaBuilder, vocabulary.Roles, P) (rule.Cell, bool)
+	register          func(*engine.SchemaBinding, rule.Cell) (engine.RuleSlotCapability, bool)
+	pair              func(*engine.SchemaBinding, rule.Cell, func(schema.Key) (engine.RuleSlotCapability, bool)) bool
+	bind              func(*engine.SchemaBinding, A, rule.Cell) (rule.Cell, ActivationRule, bool)
+	finalize          func(A, rule.Cell) bool
+	occurrenceCatalog func(rule.Cell) (rule.OccurrenceCatalog, bool)
 }
 
 func (contributor RuleContributor[P, A]) Declare(builder *engine.SchemaBuilder, roles vocabulary.Roles, principals P) (rule.Cell, bool) {
@@ -55,11 +55,11 @@ func (contributor RuleContributor[P, A]) Finalize(authorities A, holder rule.Cel
 	return contributor.finalize == nil || contributor.finalize(authorities, holder)
 }
 
-func (contributor RuleContributor[P, A]) LinkCatalog(holder rule.Cell) (rule.LinkCatalog, bool) {
-	if contributor.linkCatalog == nil {
+func (contributor RuleContributor[P, A]) OccurrenceCatalog(holder rule.Cell) (rule.OccurrenceCatalog, bool) {
+	if contributor.occurrenceCatalog == nil {
 		return nil, false
 	}
-	return contributor.linkCatalog(holder)
+	return contributor.occurrenceCatalog(holder)
 }
 
 func (contributor RuleContributor[P, A]) complete(template *rule.Template) bool {
@@ -69,10 +69,10 @@ func (contributor RuleContributor[P, A]) complete(template *rule.Template) bool 
 	if template == nil {
 		return false
 	}
-	if template.Lane() == rule.LaneLink {
-		return contributor.linkCatalog != nil
+	if template.Lane() == rule.LaneLink || template.Lane() == rule.LaneMountedPoint {
+		return contributor.occurrenceCatalog != nil
 	}
-	return contributor.linkCatalog == nil
+	return contributor.occurrenceCatalog == nil
 }
 
 // WireRule binds a domain's typed declaration, owner registration, and hot
@@ -86,7 +86,7 @@ func WireRule[P, A, F, H any](
 	pair func(*engine.SchemaBinding, rule.Pairing[F], func(schema.Key) (engine.RuleSlotCapability, bool)) bool,
 	bind func(*engine.SchemaBinding, rule.Binding[A, F]) (H, bool),
 	finalize func(rule.Finalization[A, H]) bool,
-	catalog func(H) (rule.LinkCatalog, bool),
+	catalog func(H) (rule.OccurrenceCatalog, bool),
 	activation func(H) ActivationRule,
 ) (*rule.Template, RuleContributor[P, A], bool) {
 	if declare == nil || register == nil || bind == nil {
@@ -151,7 +151,7 @@ func WireRule[P, A, F, H any](
 		}
 	}
 	if catalog != nil {
-		contributor.linkCatalog = func(holder rule.Cell) (rule.LinkCatalog, bool) {
+		contributor.occurrenceCatalog = func(holder rule.Cell) (rule.OccurrenceCatalog, bool) {
 			hot, hotOK := rule.Payload[H](holder)
 			if !hotOK {
 				return nil, false

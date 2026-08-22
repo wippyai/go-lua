@@ -8,10 +8,11 @@ import (
 	"github.com/wippyai/go-lua/analysis/program/keyspace"
 )
 
-// resultFormat is part of the Result identity preimage.  The normalized
-// family/point tables are a different wire shape from the old flat row
-// projection, so they must never share an identity with an older Result.
-const resultFormat uint64 = 11
+// resultFormat is part of the Result identity preimage. The normalized
+// family/point tables and context-qualified detached points are a different
+// wire shape from older projections, so they must never share an identity with
+// an older Result.
+const resultFormat uint64 = 12
 
 // Result is a detached projection of canonical body/root geometry and generic
 // query publications.  Query family contracts and point geometry are stored
@@ -42,13 +43,25 @@ type resultRoot struct {
 	family keyspace.Family
 }
 
-// resultPoint owns the mount-qualified point identity and the body ordinals
-// reached by that point.  Body ordinals are one-based so zero remains the
-// invalid value in every detached table.
+// resultPoint owns the context- and mount-qualified point identity and the
+// body ordinals reached by that point.  Context is retained only on detached
+// publication geometry; the generic Geometry plane remains mount/point
+// qualified. Body ordinals are one-based so zero remains the invalid value in
+// every detached table.
 type resultPoint struct {
-	mount  identity.ContentID
-	point  identity.ContentID
-	bodies []uint32
+	context identity.ContentID
+	mount   identity.ContentID
+	point   identity.ContentID
+	bodies  []uint32
+}
+
+// detachedPointKey is the identity used by the detached point table. Keep it
+// separate from Point: Point is also the generic, context-free Geometry key
+// used to resolve mounted body membership.
+type detachedPointKey struct {
+	context identity.ContentID
+	mount   identity.ContentID
+	point   identity.ContentID
 }
 
 type Body struct {
@@ -171,10 +184,10 @@ func (result *Result) validPayload() bool {
 		}
 	}
 
-	seenPoints := make(map[Point]struct{}, len(result.points))
+	seenPoints := make(map[detachedPointKey]struct{}, len(result.points))
 	for _, point := range result.points {
-		key := Point{Mount: point.mount, Point: point.point}
-		if !point.mount.Available() || !point.point.Available() {
+		key := detachedPointKey{context: point.context, mount: point.mount, point: point.point}
+		if !point.context.Available() || !point.mount.Available() || !point.point.Available() {
 			return false
 		}
 		if _, duplicate := seenPoints[key]; duplicate {
@@ -286,7 +299,8 @@ func analysisResultIDWithPublication(
 		return identity.ContentID{}, false
 	}
 	for _, point := range points {
-		if !point.mount.Available() || !point.point.Available() || !write(point.mount[:]) || !write(point.point[:]) {
+		if !point.context.Available() || !point.mount.Available() || !point.point.Available() ||
+			!write(point.context[:]) || !write(point.mount[:]) || !write(point.point[:]) {
 			return identity.ContentID{}, false
 		}
 		binary.BigEndian.PutUint64(count[:], uint64(len(point.bodies)))

@@ -1,30 +1,25 @@
 package static
 
 import (
-	"bytes"
-	"context"
 	"crypto/sha256"
 	"encoding/binary"
 	"errors"
 	"fmt"
 	"math"
 
-	"github.com/wippyai/go-lua/analysis/program/target/vocabulary"
-
 	"github.com/wippyai/go-lua/analysis/identity"
 	"github.com/wippyai/go-lua/analysis/lattice"
 	"github.com/wippyai/go-lua/analysis/program/target/contract"
 	programschema "github.com/wippyai/go-lua/analysis/schema/program"
-	"github.com/wippyai/go-lua/domain/runtimekind"
 	typeauthority "github.com/wippyai/go-lua/domain/type/authority"
-	"github.com/wippyai/go-lua/domain/type/subtype"
+	typekind "github.com/wippyai/go-lua/domain/type/kind"
 	"github.com/wippyai/go-lua/domain/type/typ"
 )
 
 // evaluatorLaw is part of Static's sealed identity.  Mounted-artifact
 // admission is a production contract change, so advance the live evaluator
 // law monotonically and use the same constant for every identity projection.
-const evaluatorLaw = "wippy.analysis.static/evaluator/v10"
+const evaluatorLaw = "wippy.analysis.static/evaluator/v11"
 
 func staticLawContentID(targetID identity.ContentID) (id identity.ContentID) {
 	if !targetID.Available() {
@@ -38,25 +33,11 @@ func staticLawContentID(targetID identity.ContentID) (id identity.ContentID) {
 	return id
 }
 
-type evaluationKey struct {
-	reference typeauthority.StaticTypeRef
-	resolver  identity.ContentID
-	env       identity.ContentID
-	operation vocabulary.Operation
-}
-
-type evaluationBase struct {
-	reference typeauthority.StaticTypeRef
-	resolver  identity.ContentID
-}
-
 // coordinateKey is the complete, portable meaning of one Static query cell.
 // The dense Coordinate that exposes it remains authority-local.
 type coordinateKey struct {
-	reference   typeauthority.StaticTypeRef
-	namespace   identity.ContentID
-	environment identity.ContentID
-	operation   vocabulary.Operation
+	reference typeauthority.StaticTypeRef
+	namespace identity.ContentID
 }
 
 type coordinateRow struct {
@@ -76,25 +57,19 @@ type Authority struct {
 	target *contract.Contract
 	lawID  identity.ContentID
 
-	results          []resultRow // 0=bottom, 1=top, semantic values follow.
-	closedByBytes    map[string]Value
-	symbolicByKey    map[Symbolic]Value
-	ranks            []uint64
-	valueClasses     []Class
-	classCanonical   []Value
-	memo             map[evaluationKey]Value
-	coordinates      []coordinateRow
-	coordinateIndex  map[coordinateKey]uint32
-	typeOfOutputs    map[identity.ContentID]Coordinate
-	operands         map[identity.ContentID]ContainedOperand
-	namespaceIDs     map[identity.ContentID]struct{}
-	runtimeKinds     runtimeKindTable
-	runtimeKindMask  []runtimekind.Set // exact RuntimeTypeOf masks by Static result.
-	runtimeKindValue []bool            // exact RuntimeTypeOf result membership.
-	typeArguments    typeArgumentFormalTable
+	results           []resultRow // 0=bottom, 1=top, semantic values follow.
+	closedByCanonical map[identity.ContentID]Value
+	symbolicByKey     map[Symbolic]Value
+	ranks             []uint64
+	valueClasses      []Class
+	classCanonical    []Value
+	coordinates       []coordinateRow
+	coordinateIndex   map[coordinateKey]uint32
+	typeOfOutputs     map[identity.ContentID]Coordinate
+	operands          map[identity.ContentID]ContainedOperand
+	typeArguments     typeArgumentSequenceTable
 
 	classes *ClassSet
-	runtime *typeauthority.Runtime
 	mounts  []MountedProgram
 }
 
@@ -112,11 +87,10 @@ func sealMounted(context MountContext, types *typeauthority.Authority, mounts []
 	}
 	a := &Authority{
 		linkID: context.LinkID, types: types,
-		results:       []resultRow{{kind: KindBottom}, {kind: KindTop}},
-		closedByBytes: make(map[string]Value), symbolicByKey: make(map[Symbolic]Value),
-		memo:            make(map[evaluationKey]Value),
+		results:           []resultRow{{kind: KindBottom}, {kind: KindTop}},
+		closedByCanonical: make(map[identity.ContentID]Value), symbolicByKey: make(map[Symbolic]Value),
 		coordinateIndex: make(map[coordinateKey]uint32), operands: make(map[identity.ContentID]ContainedOperand),
-		namespaceIDs: make(map[identity.ContentID]struct{}), mounts: append([]MountedProgram(nil), mounts...),
+		mounts: append([]MountedProgram(nil), mounts...),
 	}
 	targetID := context.Target.ContentID()
 	a.target = context.Target
@@ -136,35 +110,25 @@ func sealMounted(context MountContext, types *typeauthority.Authority, mounts []
 	if err := a.sealTypeOfOutputs(); err != nil {
 		return nil, nil, err
 	}
-	if len(mounts) == 0 || !a.sealMountedTypeArgumentFormals() {
+	if len(mounts) == 0 || !a.sealMountedTypeArgumentSequences() {
 		return nil, nil, errors.New("static: malformed call type-argument formal relation")
 	}
-	runtimeKinds, err := sealRuntimeKinds(a)
-	if err != nil {
-		return nil, nil, err
-	}
-	a.runtimeKinds = runtimeKinds
 	classes, runtime, err := sealClassSet(a)
 	if err != nil {
 		return nil, nil, err
 	}
 	a.classes = classes
-	a.runtime = runtime
-	for index := range a.results {
-		a.results[index].runtime = typeauthority.RuntimeInput{}
-	}
 	if err := a.sealClassProjection(); err != nil {
 		return nil, nil, err
+	}
+	for index := range a.results {
+		a.results[index].runtime = typeauthority.RuntimeInput{}
 	}
 	// Drop every construction-only index. Hot Static retains only semantic
 	// result bytes, sealed query coordinates, and finite relations.
 	a.types = nil
-	if len(mounts) != 0 && !types.DetachConstructionAuthority() {
-		return nil, nil, errors.New("static: failed to detach type construction authority")
-	}
-	a.closedByBytes = nil
+	a.closedByCanonical = nil
 	a.symbolicByKey = nil
-	a.memo = nil
 	a.operands = nil
 	a.typeOfOutputs = nil
 	a.mounts = nil
@@ -291,70 +255,6 @@ func (a *Authority) Fingerprint(value Value) uint64 {
 	return uint64(value.index) + 1
 }
 
-func (a *Authority) ClosedType(value Value) (typ.Type, bool) {
-	if a == nil || value.owner != a || !value.IsClosed() {
-		return nil, false
-	}
-	if value.isDerived() {
-		if value.class.descriptor == nil || len(value.class.descriptor.closed) == 0 {
-			return nil, false
-		}
-		decoded, err := typ.DecodeCanonicalStructural(context.Background(), value.class.descriptor.closed)
-		return decoded, err == nil && decoded != nil
-	}
-	decoded, err := typ.DecodeCanonicalStructural(context.Background(), a.results[value.index].closed)
-	return decoded, err == nil && decoded != nil
-}
-
-// Compatibility proves the two distinct closed-type judgments needed by
-// Static occurrence Rules.  Both operands must be exact Values issued by this
-// Authority; equal-content Values from an independently resealed Authority
-// are foreign even when their Link and result bytes match.  Static releases
-// its construction-time typ graph at Seal, so this is an intentionally cold
-// projection through the already-admitted canonical bytes.  It retains no
-// pair relation or decoded graph: the raw checker remains the sole proof
-// owner, and recursive termination is supplied by that checker.
-//
-// The first result is subtype.IsSubtype's strict-subtype judgment (including
-// its existing equality/coinductive laws); the second is the separate
-// fresh-constructor assignment judgment.  Fresh assignment subsumes a proved
-// subtype, so the common positive path performs only the first proof.
-func (a *Authority) Compatibility(sub, super Value) (strictSubtype, freshAssignment bool) {
-	if a == nil || !a.Owns(sub) || !a.Owns(super) || !sub.IsClosed() || !super.IsClosed() {
-		return false, false
-	}
-	if sub.isDerived() || super.isDerived() {
-		leftClass, leftOK := a.classes.ClassForStatic(sub)
-		rightClass, rightOK := a.classes.ClassForStatic(super)
-		if !leftOK || !rightOK {
-			return false, false
-		}
-		if a.classes.Equal(leftClass, rightClass) {
-			return true, true
-		}
-		if a.classes.LessOrEq(leftClass, rightClass) {
-			return true, true
-		}
-		return false, false
-	}
-	// A repeated exact owner handle is the sealed equality case.  This keeps
-	// the hot equality path allocation-free without manufacturing a relation
-	// table or decoding a graph that cannot affect the answer.
-	if sub.index == super.index {
-		return true, true
-	}
-	left, leftOK := a.ClosedType(sub)
-	right, rightOK := a.ClosedType(super)
-	if !leftOK || !rightOK {
-		return false, false
-	}
-	strictSubtype = subtype.IsSubtype(left, right)
-	if strictSubtype {
-		return true, true
-	}
-	return false, subtype.IsFreshAssignable(left, right)
-}
-
 func (a *Authority) Bottom() Value { return Value{owner: a, index: 0} }
 func (a *Authority) Top() Value    { return Value{owner: a, index: 1} }
 
@@ -369,6 +269,23 @@ func (a *Authority) Equal(left, right Value) bool {
 }
 func (a *Authority) Same(left, right Value) bool { return a.Equal(left, right) }
 
+func (a *Authority) classOf(value Value) (Class, bool) {
+	if a == nil || a.classes == nil || value.owner != a {
+		return Class{}, false
+	}
+	if value.isDerived() {
+		return value.class, a.classes.owns(value.class)
+	}
+	if value.index == 1 {
+		return a.classes.AnyValue(), true
+	}
+	if value.index == 0 || uint64(value.index) >= uint64(len(a.valueClasses)) {
+		return Class{}, false
+	}
+	class := a.valueClasses[value.index]
+	return class, a.classes.owns(class)
+}
+
 func (a *Authority) LessOrEq(left, right Value) bool {
 	if a == nil || left.owner != a || right.owner != a || !a.Owns(left) || !a.Owns(right) {
 		return false
@@ -380,8 +297,8 @@ func (a *Authority) LessOrEq(left, right Value) bool {
 		return false
 	}
 	if left.isDerived() || right.isDerived() {
-		leftClass, leftOK := a.classes.ClassForStatic(left)
-		rightClass, rightOK := a.classes.ClassForStatic(right)
+		leftClass, leftOK := a.classOf(left)
+		rightClass, rightOK := a.classOf(right)
 		return leftOK && rightOK && a.classes.LessOrEq(leftClass, rightClass)
 	}
 	if left.index == right.index {
@@ -424,24 +341,12 @@ func (a *Authority) Join(left, right Value) Value {
 	if !left.IsClosed() || !right.IsClosed() {
 		return a.Top()
 	}
-	leftClass, leftOK := a.classes.ClassForStatic(left)
-	rightClass, rightOK := a.classes.ClassForStatic(right)
+	leftClass, leftOK := a.classOf(left)
+	rightClass, rightOK := a.classOf(right)
 	if !leftOK || !rightOK {
 		panic("static: Static value lacks ClassSet projection")
 	}
 	joinedClass := a.classes.Join(leftClass, rightClass)
-	if !left.isDerived() && !right.isDerived() && uint64(left.index) < uint64(len(a.runtimeKindMask)) && uint64(right.index) < uint64(len(a.runtimeKindMask)) {
-		leftKinds, rightKinds := a.runtimeKindMask[left.index], a.runtimeKindMask[right.index]
-		if leftKinds != 0 && rightKinds != 0 {
-			kinds := leftKinds | rightKinds
-			if result, ok := a.runtimeKinds.lookup(a, kinds); ok {
-				candidate, candidateOK := a.classes.ClassForStatic(result)
-				if candidateOK && a.classes.Equal(joinedClass, candidate) {
-					return result
-				}
-			}
-		}
-	}
 	if !a.classes.owns(joinedClass) {
 		panic("static: malformed ClassSet union")
 	}
@@ -491,22 +396,37 @@ func (a *Authority) sealClassProjection() error {
 	if a == nil || a.classes == nil {
 		return errors.New("static: ClassSet projection unavailable")
 	}
-	a.valueClasses = make([]Class, len(a.results))
+	valueClasses, ok := a.classes.takeStaticProjection(len(a.results))
+	if !ok {
+		return errors.New("static: ClassSet projection handoff failed")
+	}
+	a.valueClasses = valueClasses
 	a.classCanonical = make([]Value, len(a.classes.rows))
-	unknown, _ := typ.EncodeCanonical(context.Background(), typ.Unknown)
 	for index := 2; index < len(a.results); index++ {
 		if a.results[index].kind != KindClosed {
 			continue
 		}
 		value := Value{owner: a, index: uint32(index)}
-		class, ok := a.classes.ClassForStatic(value)
-		if !ok {
+		class := a.valueClasses[index]
+		if !a.classes.owns(class) {
 			return fmt.Errorf("static: result %d lacks ClassSet projection", index)
 		}
 		a.valueClasses[index] = class
 		prior := a.classCanonical[class.index]
-		if prior.owner == nil || (bytes.Equal(a.results[index].closed, unknown) && !bytes.Equal(a.results[prior.index].closed, unknown)) ||
-			(!bytes.Equal(a.results[index].closed, unknown) && !bytes.Equal(a.results[prior.index].closed, unknown) && bytes.Compare(a.results[index].closed, a.results[prior.index].closed) < 0) {
+		form, formOK := a.results[index].runtime.RootKind()
+		if !formOK {
+			return errors.New("static: closed result root form unavailable")
+		}
+		choose := prior.owner == nil
+		if !choose {
+			priorForm, priorFormOK := a.results[prior.index].runtime.RootKind()
+			if !priorFormOK {
+				return errors.New("static: prior closed result root form unavailable")
+			}
+			choose = form == typekind.Unknown ||
+				(priorForm != typekind.Unknown && string(a.results[index].canonical[:]) < string(a.results[prior.index].canonical[:]))
+		}
+		if choose {
 			a.classCanonical[class.index] = value
 		}
 	}
@@ -571,21 +491,22 @@ func staticExactRank(classRank uint64, noncanonical bool) (uint64, bool) {
 }
 
 func (a *Authority) addClosed(value typ.Type) (Value, error) {
-	if value == nil || typ.ContainsTypeParam(value) || !typ.IsGraphClosed(value) || typ.ValidateStaticGenericRecurrence(value) != nil {
-		return Value{}, errors.New("static: non-closed type reached result admission")
-	}
 	runtimeInput, runtimeOK := a.types.RuntimeInputForType(value)
 	if !runtimeOK {
-		return Value{}, errors.New("static: closed type lacks scoped Runtime input")
+		return Value{}, errors.New("static: typeauthority refused closed Runtime input")
 	}
-	encoded, err := typ.EncodeCanonical(context.Background(), value)
-	if err != nil {
-		return Value{}, fmt.Errorf("static: encode closed result: %w", err)
+	return a.addClosedInput(runtimeInput)
+}
+
+func (a *Authority) addClosedInput(runtimeInput typeauthority.RuntimeInput) (Value, error) {
+	if a == nil || a.types == nil {
+		return Value{}, errors.New("static: closed input authority unavailable")
 	}
-	if len(encoded) == 0 {
-		return Value{}, errors.New("static: empty closed result encoding")
+	canonicalID, identityOK := runtimeInput.CanonicalIdentity()
+	if !identityOK {
+		return Value{}, errors.New("static: closed type identity unavailable")
 	}
-	if existing, ok := a.closedByBytes[string(encoded)]; ok {
+	if existing, ok := a.closedByCanonical[canonicalID]; ok {
 		return existing, nil
 	}
 	index, err := denseOrdinal(len(a.results))
@@ -593,8 +514,8 @@ func (a *Authority) addClosed(value typ.Type) (Value, error) {
 		return Value{}, fmt.Errorf("static: closed result handle: %w", err)
 	}
 	result := Value{owner: a, index: index}
-	a.results = append(a.results, resultRow{kind: KindClosed, closed: append([]byte(nil), encoded...), runtime: runtimeInput})
-	a.closedByBytes[string(encoded)] = result
+	a.results = append(a.results, resultRow{kind: KindClosed, canonical: canonicalID, runtime: runtimeInput})
+	a.closedByCanonical[canonicalID] = result
 	return result, nil
 }
 
@@ -668,10 +589,6 @@ func (a *Authority) contentID() (id identity.ContentID) {
 		binary.BigEndian.PutUint64(word[:], uint64(rank))
 		h.Write(word[:])
 	}
-	for _, result := range a.runtimeKinds.result {
-		binary.BigEndian.PutUint64(word[:], uint64(result))
-		h.Write(word[:])
-	}
 	binary.BigEndian.PutUint64(word[:], uint64(len(a.coordinates)))
 	h.Write(word[:])
 	for _, coordinate := range a.coordinates {
@@ -700,10 +617,7 @@ func staticResultIdentity(value Value) (identity.ContentID, bool) {
 	h := sha256.New()
 	_, _ = h.Write([]byte("wippy.analysis.static/result\x00\x01"))
 	_, _ = h.Write([]byte{byte(row.kind), byte(row.fault), byte(row.symbolic.reason)})
-	var word [8]byte
-	binary.BigEndian.PutUint64(word[:], uint64(len(row.closed)))
-	_, _ = h.Write(word[:])
-	_, _ = h.Write(row.closed)
+	_, _ = h.Write(row.canonical[:])
 	if row.kind == KindSymbolic || row.kind == KindInvalid {
 		writeSymbolic(h, row.symbolic)
 	}

@@ -63,6 +63,24 @@ func TestMountedAdmissionsMatchSealedIngressPlacements(t *testing.T) {
 			t.Fatalf("placement %q/%v missing from sealed-row admissions", key.key, key.occurrence)
 		}
 	}
+	bodies := record.CallAlgebra.Bodies()
+	if bodies.Count() == 0 {
+		t.Fatal("fixture sealed no canonical Call body denominator")
+	}
+	for activationIndex, admission := range activations {
+		if len(admission.Candidates) != bodies.Count() {
+			t.Fatalf("activation %d candidates=%d, canonical Call bodies=%d", activationIndex, len(admission.Candidates), bodies.Count())
+		}
+		for bodyIndex, candidate := range admission.Candidates {
+			body, bodyOK := bodies.At(bodyIndex)
+			module, moduleOK := body.ModuleKey()
+			path, pathOK := body.BodyPath()
+			if !bodyOK || !moduleOK || !pathOK || candidate.Mount != module || candidate.Body != path ||
+				!candidate.Target.Available() || !candidate.Endpoint.Available() || candidate.Target == candidate.Endpoint {
+				t.Fatalf("activation %d candidate %d is not the precomputed image of canonical Call body %d", activationIndex, bodyIndex, bodyIndex)
+			}
+		}
+	}
 }
 
 // TestOwnerRejectedCallShapeIsNeverPlaced states the placement half of the
@@ -120,7 +138,7 @@ func TestLinkAdmissionsWalkDeclaredCatalogs(t *testing.T) {
 	expected := 0
 	seen := make(map[identity.ContentID]bool, len(admitted))
 	for _, key := range LinkKeys(bound.Compilation()) {
-		catalog, catalogOK := rules.LinkCatalogByKey(key)
+		catalog, catalogOK := rules.OccurrenceCatalogByKey(key)
 		if !catalogOK {
 			t.Fatalf("link catalog %q", key)
 		}
@@ -151,6 +169,62 @@ func TestLinkAdmissionsWalkDeclaredCatalogs(t *testing.T) {
 			t.Fatalf("admission occurrence %v is not a unique catalog identity", row.Occurrence)
 		}
 		seen[row.Occurrence] = true
+	}
+}
+
+// TestMountedPointAdmissionsWalkDeclaredCatalogs states the artifact-independent
+// admission half of the Placement containment migration. The containment
+// occurrence comes from its owner-issued catalog, then the engine expands that
+// one occurrence over every mounted Point; it is not a Link admission and it
+// has no artifact RuleOccurrence row to walk.
+func TestMountedPointAdmissionsWalkDeclaredCatalogs(t *testing.T) {
+	record := mountedRecord(t, "mounted-point-admission", "local function identity(value) return value end; return identity(1)")
+	bound := materializerBinding(t, record)
+	rules := bound.Rules()
+	if rules == nil {
+		t.Fatal("sealed rule binding")
+	}
+	admitted, ok := rules.MountedPointAdmissions()
+	if !ok {
+		t.Fatal("mounted-point admissions refused")
+	}
+	const containmentKey schema.Key = "placement-containment"
+	pointKeys := mountedPointKeys(bound.Compilation().catalog)
+	if len(pointKeys) != 1 || pointKeys[0] != containmentKey {
+		t.Fatalf("mounted-point inventory = %v, want [%q]", pointKeys, containmentKey)
+	}
+	for _, key := range LinkKeys(bound.Compilation()) {
+		if key == containmentKey {
+			t.Fatal("mounted-point containment leaked into LinkKeys")
+		}
+	}
+
+	catalog, catalogOK := rules.OccurrenceCatalogByKey(containmentKey)
+	if !catalogOK || catalog == nil || catalog.Count() == 0 {
+		t.Fatal("mounted-point containment has no owner-issued occurrence catalog")
+	}
+	expected := make(map[identity.ContentID]bool, catalog.Count())
+	for index := 0; index < catalog.Count(); index++ {
+		occurrence, occurrenceOK := catalog.IDAt(index)
+		if !occurrenceOK || !occurrence.Available() {
+			t.Fatalf("mounted-point catalog row %d", index)
+		}
+		expected[occurrence] = false
+	}
+	if len(admitted) != len(expected) {
+		t.Fatalf("mounted-point admissions=%d owner occurrences=%d", len(admitted), len(expected))
+	}
+	for _, row := range admitted {
+		key := capabilityKey(t, bound.Compilation(), rules, row.Capability)
+		cell, cellOK := rules.cellByKey(key)
+		if key != containmentKey || !row.Capability.MountedPoint() || !row.Occurrence.Available() || !cellOK || !cell.Available() {
+			t.Fatalf("mounted-point admission row: key=%q capability=%t occurrence=%t cell=%t", key, row.Capability.MountedPoint(), row.Occurrence.Available(), cellOK && cell.Available())
+		}
+		marked, known := expected[row.Occurrence]
+		if !known || marked {
+			t.Fatalf("mounted-point admission occurrence %v is not a unique owner catalog identity", row.Occurrence)
+		}
+		expected[row.Occurrence] = true
 	}
 }
 
@@ -238,7 +312,7 @@ func TestBodylessPlacementQueryRetainsAnAbsentSummary(t *testing.T) {
 	if bound.PlacementQuery() == nil {
 		t.Fatal("bodyless Placement query implementation is unavailable")
 	}
-	sites, sitesOK := SelectedQuerySites(bound.Compilation(), record.Artifacts)
+	sites, sitesOK := SelectedQuerySites(bound.Compilation(), record.Artifacts, record.Source.ContextDirectory())
 	if !sitesOK || len(sites) == 0 {
 		t.Fatal("bodyless fixture issued no selected query sites")
 	}

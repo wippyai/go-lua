@@ -1,6 +1,7 @@
 package program
 
 import (
+	"github.com/wippyai/go-lua/analysis/program/keyspace"
 	programschema "github.com/wippyai/go-lua/analysis/schema/program"
 )
 
@@ -23,6 +24,20 @@ func (input *Program) CallIdentityAt(index int) (programschema.CallIdentitySet, 
 	contracts := input.Static().Contracts().Calls()
 	typeCount, typeCountOK := contracts.TypeArgumentCount(call)
 	typeArguments, typeArgumentsOK := contracts.TypeArgumentID(call)
+	bodyPath, bodyPathOK := flowView.BodyPath(owner)
+	callPath, callPathOK := flowView.CallPath(call)
+	valuesWidth, valuesOpen, valuesShapeOK := flowView.ValuesShape(actuals)
+	var typeTerms []keyspace.Term
+	typeTermsOK := typeCountOK && typeCount >= 0
+	if typeTermsOK {
+		typeTerms = make([]keyspace.Term, typeCount)
+		for typeIndex := range typeTerms {
+			typeTerms[typeIndex], typeTermsOK = contracts.TypeArgumentAt(call, typeIndex)
+			if !typeTermsOK {
+				break
+			}
+		}
+	}
 	form := programschema.CallFormPlain
 	if receiver != 0 {
 		form = programschema.CallFormMethod
@@ -31,10 +46,24 @@ func (input *Program) CallIdentityAt(index int) (programschema.CallIdentitySet, 
 		!valuesOK || !valuesID.Available() || !typeCountOK || typeCount < 0 || !typeArgumentsOK || !typeArguments.Available() {
 		return programschema.CallIdentitySet{}, false
 	}
+	formalGeometryKnown := bodyPathOK && callPathOK && valuesShapeOK && valuesWidth >= 0 &&
+		uint64(valuesWidth) <= uint64(^uint32(0)) && typeTermsOK
 	identities, identitiesOK := programschema.CallIdentities(programschema.CallIdentityInput{
 		ProgramID: input.ContentID(), Call: call, Form: form, Body: bodyContext, Span: spanID,
 		Callee: callee, Receiver: receiver, Actuals: actuals, Values: valuesID,
-		TypeArgumentCount: typeCount, TypeArguments: typeArguments,
+		TypeArgumentCount: typeCount, TypeArguments: typeArguments, BodyPath: bodyPath, CallPath: callPath,
+		ValuesWidth: valuesWidth, ValuesOpen: valuesOpen, TypeArgumentTerms: typeTerms,
+		FormalGeometryKnown: formalGeometryKnown,
 	})
-	return identities, identitiesOK && identities.Call.Available()
+	complete := identitiesOK && identities.Call.Available() && identities.TypeArguments.Available() &&
+		identities.Formal.Available() && len(identities.TypeArgumentAt) == typeCount
+	if complete {
+		for _, argumentID := range identities.TypeArgumentAt {
+			if !argumentID.Available() {
+				complete = false
+				break
+			}
+		}
+	}
+	return identities, complete
 }

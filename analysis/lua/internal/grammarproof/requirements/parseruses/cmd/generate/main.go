@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 
+	"github.com/wippyai/go-lua/analysis/lua/census"
 	"github.com/wippyai/go-lua/analysis/lua/internal/grammarproof/requirements/parserproducts"
 	"github.com/wippyai/go-lua/analysis/lua/internal/grammarproof/requirements/parseruses"
 )
@@ -37,7 +38,11 @@ func run(arguments []string) error {
 	if err != nil {
 		return fmt.Errorf("sealed parser products: %w", err)
 	}
-	return parseruses.Generate(products, *out, *check)
+	inventory, err := census.Current(absoluteRoot)
+	if err != nil {
+		return fmt.Errorf("sealed parser census: %w", err)
+	}
+	return parseruses.Generate(products, inventory, *out, *check)
 }
 
 func fail(format string, arguments ...any) {

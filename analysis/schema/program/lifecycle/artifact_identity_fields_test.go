@@ -59,16 +59,18 @@ func TestArtifactIdentityFieldsCommitStorageLifetime(t *testing.T) {
 	cell := lifecycleLawID(t, "artifact-identity-cell")
 	frame, frameOK := NewStorageCellLifetime(cell, StorageLifetimeFrame)
 	module, moduleOK := NewStorageCellLifetime(cell, StorageLifetimeModule)
-	if !frameOK || !moduleOK {
+	closure, closureOK := NewStorageCellLifetime(cell, StorageLifetimeClosure)
+	if !frameOK || !moduleOK || !closureOK {
 		t.Fatal("storage lifetime")
 	}
 	frameView := lifecycleLawView(t, Publication{StorageCellLifetimes: []StorageCellLifetime{frame}}, lifecycleLawID(t, "artifact-identity-frame"))
 	moduleView := lifecycleLawView(t, Publication{StorageCellLifetimes: []StorageCellLifetime{module}}, lifecycleLawID(t, "artifact-identity-module"))
-	var frameFields, moduleFields artifactIdentityOperations
-	if !frameView.WriteArtifactIdentityFields(&frameFields) || !moduleView.WriteArtifactIdentityFields(&moduleFields) {
+	closureView := lifecycleLawView(t, Publication{StorageCellLifetimes: []StorageCellLifetime{closure}}, lifecycleLawID(t, "artifact-identity-closure"))
+	var frameFields, moduleFields, closureFields artifactIdentityOperations
+	if !frameView.WriteArtifactIdentityFields(&frameFields) || !moduleView.WriteArtifactIdentityFields(&moduleFields) || !closureView.WriteArtifactIdentityFields(&closureFields) {
 		t.Fatal("write lifecycle identity fields")
 	}
-	if reflect.DeepEqual(frameFields, moduleFields) {
+	if reflect.DeepEqual(frameFields, moduleFields) || reflect.DeepEqual(frameFields, closureFields) || reflect.DeepEqual(moduleFields, closureFields) {
 		t.Fatal("storage lifetime change did not change lifecycle identity stream")
 	}
 }

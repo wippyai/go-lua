@@ -4,6 +4,7 @@ import (
 	"testing"
 
 	artifactcompiler "github.com/wippyai/go-lua/analysis/program/artifact/compiler"
+	"github.com/wippyai/go-lua/analysis/schema/programmount"
 	"github.com/wippyai/go-lua/domain/composite"
 	"github.com/wippyai/go-lua/domain/composite/snapshottest"
 	heapdomain "github.com/wippyai/go-lua/domain/heap"
@@ -135,7 +136,7 @@ func recentAllocationFixture(t testing.TB) (heapdomain.Schema, *valuedomain.Sche
 	shard, shardOK := mounts.At(0)
 	program, programOK := mounts.Program(shard)
 	module, moduleOK := linked.Project().ModuleKey(shard)
-	programID, programIDOK := mounts.ProgramID(shard)
+	_, programIDOK := mounts.ProgramID(shard)
 	if !compilationOK || !grammar.Available() || !issuanceOK || !structuralOK || mounts.Count() != 1 || !shardOK || !programOK || program == nil || !moduleOK || !programIDOK {
 		t.Fatal("exact Recent fixture mount")
 	}
@@ -144,16 +145,16 @@ func recentAllocationFixture(t testing.TB) (heapdomain.Schema, *valuedomain.Sche
 		t.Fatalf("compile exact Recent fixture: %s", failure.Error())
 	}
 	snapshot := snapshottest.MustLower(t, artifact)
-	heapMount, heapMountOK := heapdomain.NewArtifactMount(snapshot, module, programID)
-	valueMount, valueMountOK := valuedomain.NewArtifactMount(snapshot, module, programID)
+	heapMount, heapMountOK := programmount.MountedArtifactFromSnapshot(snapshot, module)
+	valueMount, valueMountOK := programmount.MountedArtifactFromSnapshot(snapshot, module)
 	if !heapMountOK || !valueMountOK {
 		t.Fatal("exact Recent artifact mounts")
 	}
-	heaps, heapFailure := heapdomain.SealWithArtifacts(linked, []heapdomain.ArtifactMount{heapMount})
+	heaps, heapFailure := heapdomain.SealWithArtifacts(linked, []programmount.MountedArtifact{heapMount})
 	if heapFailure != heapdomain.SealFailureNone {
 		t.Fatalf("exact Recent heap seal: %s", heapFailure)
 	}
-	values, valueFailure := valuedomain.SealWithFailure(linked, heaps, []valuedomain.ArtifactMount{valueMount}, structural)
+	values, valueFailure := valuedomain.SealWithFailure(linked, heaps, []programmount.MountedArtifact{valueMount}, structural)
 	if valueFailure != valuedomain.SealFailureNone || values == nil {
 		t.Fatalf("exact Recent Value seal: %s", valueFailure)
 	}

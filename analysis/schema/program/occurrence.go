@@ -80,34 +80,6 @@ func SpanResultOccurrence(kind OccurrenceKind) bool {
 	return kind == OccurrenceBinaryArithmetic || kind == OccurrenceBinaryEquality || kind == OccurrenceBinaryOrder
 }
 
-// RuleStage is the closed reusable execution cut owned by Program. Its
-// ordinals are part of the sealed schema vocabulary and are not Link-derived.
-type RuleStage uint8
-
-const (
-	RuleStageInvalid RuleStage = iota
-	RuleStageBase
-	RuleStageLocal
-	RuleStageCallDispatch
-	RuleStageCallSummary
-	RuleStageCallEffect
-)
-
-func (stage RuleStage) Valid() bool { return stage >= RuleStageBase && stage <= RuleStageCallEffect }
-
-// RuleInputKind preserves the owner-issued placement polarity of a rule input.
-type RuleInputKind uint8
-
-const (
-	RuleInputInvalid RuleInputKind = iota
-	RuleInputNone
-	RuleInputFinish
-	RuleInputEntry
-	RuleInputPredecessor
-)
-
-func (kind RuleInputKind) Valid() bool { return kind >= RuleInputNone && kind <= RuleInputPredecessor }
-
 // Occurrence is one immutable parent row. Point and input memberships are
 // dense child planes named by half-open spans. The parent does not retain
 // slices, maps, or indexes.
@@ -243,26 +215,24 @@ type RuleOccurrence struct {
 	occurrence uint32
 	point      identity.ContentID
 	input      identity.ContentID
-	stage      RuleStage
-	inputKind  RuleInputKind
+	stage      schema.Key
+	inputSpec  schema.Key
 	route      identity.ContentID
+	native     bool
 }
 
-func NewRuleOccurrence(key, writes schema.Key, occurrence uint32, point, input identity.ContentID, stage RuleStage, inputKind RuleInputKind, route identity.ContentID) (RuleOccurrence, bool) {
-	row := RuleOccurrence{key: key, writes: writes, occurrence: occurrence, point: point, input: input, stage: stage, inputKind: inputKind, route: route}
+func NewRuleOccurrence(key, writes schema.Key, occurrence uint32, point, input identity.ContentID, stage, inputSpec schema.Key, route identity.ContentID, native bool) (RuleOccurrence, bool) {
+	row := RuleOccurrence{key: key, writes: writes, occurrence: occurrence, point: point, input: input, stage: stage, inputSpec: inputSpec, route: route, native: native}
 	return row, row.Available()
 }
 func (row RuleOccurrence) Available() bool {
-	if !row.key.Available() || !row.writes.Available() || !row.point.Available() || !row.stage.Valid() || !row.inputKind.Valid() || row.occurrence == ^uint32(0) {
+	if !row.key.Available() || !row.writes.Available() || !row.point.Available() || !row.stage.Available() || !row.inputSpec.Available() || row.occurrence == ^uint32(0) {
 		return false
 	}
-	if (row.inputKind == RuleInputNone) == row.input.Available() {
-		return false
+	if !row.input.Available() {
+		return !row.route.Available() && !row.native
 	}
-	if row.inputKind == RuleInputPredecessor {
-		return row.route.Available()
-	}
-	return !row.route.Available()
+	return true
 }
 func (row RuleOccurrence) Key() schema.Key {
 	if !row.Available() {
@@ -290,20 +260,21 @@ func (row RuleOccurrence) PointID() identity.ContentID {
 	return row.point
 }
 func (row RuleOccurrence) InputPoint() (identity.ContentID, bool) {
-	return row.input, row.Available() && row.inputKind != RuleInputNone
+	return row.input, row.Available() && row.input.Available()
 }
-func (row RuleOccurrence) InputKind() RuleInputKind {
+func (row RuleOccurrence) InputSpec() schema.Key {
 	if !row.Available() {
-		return RuleInputInvalid
+		return ""
 	}
-	return row.inputKind
+	return row.inputSpec
 }
-func (row RuleOccurrence) Stage() RuleStage {
+func (row RuleOccurrence) Stage() schema.Key {
 	if !row.Available() {
-		return RuleStageInvalid
+		return ""
 	}
 	return row.stage
 }
+func (row RuleOccurrence) Native() (bool, bool) { return row.native, row.Available() }
 func (row RuleOccurrence) PredecessorRouteID() (identity.ContentID, bool) {
-	return row.route, row.Available() && row.inputKind == RuleInputPredecessor
+	return row.route, row.Available() && row.route.Available()
 }

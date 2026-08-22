@@ -9,7 +9,7 @@ import (
 
 // TestPlacementSummaryEvidenceBatchKeepsPublishedSourceDetached exercises the
 // ownership boundary used by the suspension fold: clone the current summary
-// once, refine that producer-owned copy in place, and leave the published
+// once, refine that producer-owned copy in place, and leave the unpublished
 // source untouched.
 func TestPlacementSummaryEvidenceBatchKeepsPublishedSourceDetached(t *testing.T) {
 	fixture := newDeepFrozenValueFixture(t)
@@ -27,8 +27,8 @@ func TestPlacementSummaryEvidenceBatchKeepsPublishedSourceDetached(t *testing.T)
 		t.Fatal("published Placement summary changed through detached evidence fold")
 	}
 	key := fixture.allocations[0]
-	if got, ok := placementdomain.PlacementSummaryEvidence(fixture.placement, source, key); !ok || got.DiesBeforeSuspension != placementdomain.EvidenceUnknown {
-		t.Fatalf("published source evidence = %v/%t, want unknown/true", got.DiesBeforeSuspension, ok)
+	if _, ok := placementdomain.PlacementSummaryEvidence(fixture.placement, source, key); ok {
+		t.Fatal("unpublished source evidence was exposed as explicit Unknown")
 	}
 	if got, ok := placementdomain.PlacementSummaryEvidence(fixture.placement, working, key); !ok || got.DiesBeforeSuspension != placementdomain.EvidenceProven {
 		t.Fatalf("detached working evidence = %v/%t, want proven/true", got.DiesBeforeSuspension, ok)

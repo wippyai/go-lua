@@ -14,6 +14,7 @@ import (
 	effectowner "github.com/wippyai/go-lua/domain/effect/owner"
 	executionowner "github.com/wippyai/go-lua/domain/execution/owner"
 	allocationcatalog "github.com/wippyai/go-lua/domain/heap/allocation/catalog"
+	contextowner "github.com/wippyai/go-lua/domain/heap/context/owner"
 	heapowner "github.com/wippyai/go-lua/domain/heap/owner"
 	packowner "github.com/wippyai/go-lua/domain/pack/owner"
 	placementowner "github.com/wippyai/go-lua/domain/placement/owner"
@@ -33,6 +34,7 @@ const (
 	axisKeyHeap                  schema.Key = "heap"
 	axisKeyPlacement             schema.Key = "placement"
 	axisKeyPlacementEvidence     schema.Key = "placement-suspension-evidence"
+	axisKeyContext               schema.Key = "context"
 	axisKeyCall                  schema.Key = "call"
 	axisKeyEffect                schema.Key = "effect"
 	axisKeyExecutionReachability schema.Key = "execution-reachability"
@@ -127,6 +129,7 @@ func axisTemplates() ([]*axisTemplate, []axisContributor, bool) {
 	addBound(wireAxis(effectowner.AxisEntry[LinkInputs](), effectowner.DeclareAxis, effectowner.BindAxis[LinkInputs], effectowner.AlgebraAxis))
 	addBound(wireAxis(placementowner.AxisEntry[LinkInputs](), placementowner.DeclareAxis, placementowner.BindAxis[LinkInputs], placementowner.AlgebraAxis))
 	addBound(wireAxis(placementsuspension.AxisEntry[LinkInputs](), placementsuspension.DeclareAxis, placementsuspension.BindAxis[LinkInputs], placementsuspension.AlgebraAxis))
+	addBound(wireAxis(contextowner.AxisEntry[LinkInputs](), contextowner.DeclareAxis, contextowner.BindAxis[LinkInputs], contextowner.AlgebraAxis))
 	// Engine-published axes are declared after the factor axes so artifact
 	// lane ordinals keep the prefix they address. Snapshot slots are assigned
 	// separately: engine-published outputs lead that range, and the first
@@ -136,6 +139,7 @@ func axisTemplates() ([]*axisTemplate, []axisContributor, bool) {
 	addPublishedSpec(programmount.AxisEntry[LinkInputs]())
 	addPublishedSpec(modulecomposition.ImportAxisEntry[LinkInputs]())
 	addPublishedSpec(modulecomposition.CacheAxisEntry[LinkInputs]())
+	addPublishedSpec(modulecomposition.ModuleCallTransitionAxisEntry[LinkInputs]())
 	addPublishedSpec(modulecomposition.GenerationAxisEntry[LinkInputs]())
 	addPublishedSpec(modulecomposition.OutcomeAxisEntry[LinkInputs]())
 	addPublishedSpec(modulecomposition.TerminalAxisEntry[LinkInputs]())
@@ -410,13 +414,14 @@ func (cells axisCells) coldPrincipals(state *catalog) (principals, bool) {
 	call, callOK := axisPayloadForKey[*callowner.SchemaFragment](state, cells, axisKeyCall)
 	heap, heapOK := axisPayloadForKey[*heapowner.SchemaFragment](state, cells, axisKeyHeap)
 	placement, placementOK := axisPayloadForKey[*placementowner.SchemaFragment](state, cells, axisKeyPlacement)
+	context, contextOK := axisPayloadForKey[*contextowner.SchemaFragment](state, cells, axisKeyContext)
 	evidence, evidenceOK := axisPayloadForKey[*placementsuspension.EvidenceFactorFragment](state, cells, axisKeyPlacementEvidence)
 	pack, packOK := axisPayloadForKey[*packowner.SchemaFragment](state, cells, axisKeyPack)
 	effect, effectOK := axisPayloadForKey[*effectowner.SchemaFragment](state, cells, axisKeyEffect)
-	if !valueOK || !callOK || !heapOK || !placementOK || !evidenceOK || !packOK || !effectOK {
+	if !valueOK || !callOK || !heapOK || !placementOK || !contextOK || !evidenceOK || !packOK || !effectOK {
 		return principals{}, false
 	}
-	set := principals{value: value, call: call, heap: heap, placement: placement, evidence: evidence, pack: pack, effect: effect}
+	set := principals{value: value, call: call, heap: heap, placement: placement, context: context, evidence: evidence, pack: pack, effect: effect}
 	return set, set.available()
 }
 
@@ -428,16 +433,17 @@ func (cells axisCells) hotPrincipals(state *catalog, inputs LinkInputs, allocati
 	call, callOK := axisPayloadForKey[*callowner.HotOwner](state, cells, axisKeyCall)
 	heap, heapOK := axisPayloadForKey[*heapowner.HotOwner](state, cells, axisKeyHeap)
 	placement, placementOK := axisPayloadForKey[*placementowner.HotOwner](state, cells, axisKeyPlacement)
+	context, contextOK := axisPayloadForKey[*contextowner.HotOwner](state, cells, axisKeyContext)
 	evidence, evidenceOK := axisPayloadForKey[*placementsuspension.EvidenceOwner](state, cells, axisKeyPlacementEvidence)
 	pack, packOK := axisPayloadForKey[*packowner.HotOwner](state, cells, axisKeyPack)
 	effect, effectOK := axisPayloadForKey[*effectowner.HotOwner](state, cells, axisKeyEffect)
-	if !valueOK || !callOK || !heapOK || !placementOK || !evidenceOK || !packOK || !effectOK {
+	if !valueOK || !callOK || !heapOK || !placementOK || !contextOK || !evidenceOK || !packOK || !effectOK {
 		return authorities{}, false
 	}
 	set := authorities{
-		value: value, call: call, heap: heap, placement: placement, evidence: evidence, pack: pack, effect: effect,
+		value: value, call: call, heap: heap, placement: placement, context: context, evidence: evidence, pack: pack, effect: effect,
 		valueSchema: inputs.ValueSchema, heapSchema: inputs.HeapSchema, placementSchema: inputs.PlacementSchema, packSchema: inputs.PackSchema,
-		topology: inputs.topology, allocations: allocations, activation: inputs.activation,
+		contextSchema: inputs.contextSchema, topology: inputs.topology, allocations: allocations,
 		targetContract: inputs.targetContract,
 	}
 	return set, set.available() && mountedActualsComplete(inputs.CallAlgebra, inputs.PackSchema)

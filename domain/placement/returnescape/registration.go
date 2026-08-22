@@ -28,7 +28,7 @@ func RuleEntry[P rulePrincipals, A ruleAuthorities]() rule.Spec {
 		Key:      "placement-return-escape",
 		Writes:   "placement",
 		Owner:    "placement",
-		Issues:   []rule.Issuance{{Occurrence: "occurrence/return-boundary", Requirement: "requirement/unrestricted", Form: "issuance/local-successor", Input: "input/finish", Stage: "stage/local"}},
+		Issues:   []rule.Issuance{{Occurrence: "occurrence/return-boundary", Requirement: "program-requirement/unrestricted", Form: "program-form/local-successor"}},
 		Lane:     rule.LaneMounted,
 		Semantic: "semantic/rule/placement/return-escape",
 		Roles:    []schema.Key{"semantic/operand/placement/return-escape"},

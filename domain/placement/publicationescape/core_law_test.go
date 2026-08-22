@@ -5,8 +5,84 @@ import (
 
 	"github.com/wippyai/go-lua/analysis/identity"
 	"github.com/wippyai/go-lua/analysis/program/target/vocabulary"
+	heapdomain "github.com/wippyai/go-lua/domain/heap"
 	"github.com/wippyai/go-lua/domain/placement"
 )
+
+var lazyAllRootAllocationSink int
+
+func TestAllRootsWithRequirementIsLazyAndOwnerBacked(t *testing.T) {
+	fixture := newPublicationEscapeFixture(t)
+	routes, ok := broadcastAllRoots(fixture.placement, placement.SharedHeap)
+	if !ok || !routes.allRoot {
+		t.Fatalf("broadcast all-root plan = %#v/%t, want lazy owner plan", routes, ok)
+	}
+	if routes.count != 0 || routes.overflow != nil {
+		t.Fatalf("lazy all-root plan copied exact routes: count=%d overflow=%v", routes.count, routes.overflow)
+	}
+	allocationCount := 0
+	for dense := 0; dense < fixture.placement.DenseKeyCount(); dense++ {
+		key, keyOK := fixture.placement.KeyAt(dense)
+		if keyOK && key.Kind() == heapdomain.RootAllocation {
+			allocationCount++
+		}
+	}
+	if allocationCount == 0 || routes.len() != allocationCount {
+		t.Fatalf("lazy all-root length=%d, owner allocation roots=%d", routes.len(), allocationCount)
+	}
+	for index := 0; index < routes.len(); index++ {
+		route, routeOK := routes.at(index)
+		if !routeOK || route.unknown || route.required != placement.SharedHeap || route.key.Kind() != heapdomain.RootAllocation {
+			t.Fatalf("lazy all-root route[%d]=%#v/%t, want SharedHeap root", index, route, routeOK)
+		}
+	}
+	allocations := testing.AllocsPerRun(100, func() {
+		planned, plannedOK := broadcastAllRoots(fixture.placement, placement.SharedHeap)
+		if plannedOK {
+			lazyAllRootAllocationSink = planned.len()
+		}
+	})
+	if allocations != 0 {
+		t.Fatalf("lazy all-root planning allocations = %v, want zero", allocations)
+	}
+}
+
+func TestAllRootAtRetainsDefensiveNonPrefixScan(t *testing.T) {
+	fixture := newPublicationEscapeFixture(t)
+	routes, ok := broadcastAllRoots(fixture.placement, placement.SharedHeap)
+	if !ok || !routes.allRoot || !routes.allRootPrefix {
+		t.Fatalf("fixture did not establish validated allocation prefix: %#v/%t", routes, ok)
+	}
+	prefixRoutes := routes
+	routes.allRootPrefix = false
+	for index := 0; index < routes.len(); index++ {
+		want, wantOK := prefixRoutes.at(index)
+		got, gotOK := routes.at(index)
+		if !wantOK || !gotOK || got.key != want.key || got.tag != want.tag || got.required != want.required || got.unknown != want.unknown {
+			t.Fatalf("non-prefix fallback route[%d]=%#v/%t, prefix route=%#v/%t", index, got, gotOK, want, wantOK)
+		}
+	}
+}
+
+func TestAllRootRouteSetIsAllocationFree(t *testing.T) {
+	fixture := newPublicationEscapeFixture(t)
+	prepared := &preparedBatch{
+		rows:     []publicationRow{{id: identity.ContentID{3}, requirement: placement.SharedHeap, operation: 1, subjectOpen: true}},
+		byTag:    map[sourceTag]sourceSpec{},
+		prepared: true,
+	}
+	rule := fixture.rule()
+	gate := operationGateForTest(1)
+	allocations := testing.AllocsPerRun(100, func() {
+		routes, routesOK := rule.routeSet(fixture.placement, prepared, gate, factBuffer{})
+		if routesOK {
+			lazyAllRootAllocationSink = routes.len()
+		}
+	})
+	if allocations != 0 {
+		t.Fatalf("all-root routeSet allocations = %v, want zero", allocations)
+	}
+}
 
 func TestRequirementForEscapeIsNarrowAndConservative(t *testing.T) {
 	cases := []struct {
@@ -67,7 +143,7 @@ func TestOperationGateExcludesUnselectedPublicationSources(t *testing.T) {
 	}
 }
 
-func TestOpaqueCallGateLeavesNonKnownRowsForCanonicalWidening(t *testing.T) {
+func TestOpaqueCallGateLeavesNonKnownRowsWithoutPublicationAuthority(t *testing.T) {
 	gate := operationGateForTest(vocabulary.Operation(1))
 	gate.opaque = true
 	if !gate.admits(vocabulary.Operation(1)) || gate.admits(vocabulary.Operation(2)) || !gate.opaque {
@@ -76,7 +152,7 @@ func TestOpaqueCallGateLeavesNonKnownRowsForCanonicalWidening(t *testing.T) {
 	prepared := &preparedBatch{sources: []sourceSpec{{operation: vocabulary.Operation(2)}}}
 	sources := prepared.sourcesForGate(gate)
 	if sources.len() != 0 {
-		t.Fatal("opaque non-known row incorrectly requested an exact Value read")
+		t.Fatal("opaque non-known row incorrectly requested an exact publication Value read")
 	}
 }
 

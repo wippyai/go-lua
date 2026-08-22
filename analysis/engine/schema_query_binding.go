@@ -116,7 +116,7 @@ func validBindingQueryInstance(schema *Schema, ordinal uint64, query equation.Qu
 
 func duplicateBindingQuery(rows []equation.QueryInstance, query equation.QueryInstance) bool {
 	for _, prior := range rows {
-		if prior.Family != query.Family || prior.Point != query.Point || len(prior.Surfaces) != len(query.Surfaces) {
+		if prior.Context != query.Context || prior.Family != query.Family || prior.Point != query.Point || len(prior.Surfaces) != len(query.Surfaces) {
 			continue
 		}
 		match := true

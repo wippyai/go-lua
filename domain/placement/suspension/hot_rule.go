@@ -156,7 +156,7 @@ func (rule *HotRule) locateRoutes(context engine.SelectorContext, candidate oper
 		return false
 	}
 	if canonical.key.Kind() == heapdomain.RootAllocation {
-		index, indexOK := rule.owner.Schema().Heap().KeyIndex(canonical.key)
+		index, indexOK := rule.owner.Schema().Heap().AllocationKeyIndex(canonical.key)
 		if !indexOK || index < 0 {
 			return false
 		}
@@ -225,7 +225,7 @@ func (rule *HotRule) fold(frame engine.Frame[placementdomain.Placement, operand]
 		if !selectedOK || selectedCount != 0 {
 			return engine.RuleResult[placementdomain.Placement]{}
 		}
-		index, indexOK := rule.owner.Schema().Heap().KeyIndex(canonical.key)
+		index, indexOK := rule.owner.Schema().Heap().AllocationKeyIndex(canonical.key)
 		if !indexOK || index < 0 {
 			return engine.RuleResult[placementdomain.Placement]{}
 		}
@@ -260,18 +260,16 @@ func (rule *HotRule) fold(frame engine.Frame[placementdomain.Placement, operand]
 	return engine.Routed(frame, placementSelection, func(tag routeTag, prior engine.OrderedCells[placementdomain.Placement]) (placementdomain.Placement, bool) {
 		_, routeOK := routeAtTag(plan, tag)
 		if !routeOK || prior.Count() != 1 {
-			return placementdomain.Bottom, false
+			return placementdomain.Placement(0), false
 		}
 		current, currentPresent, currentAvailable := prior.At(0)
-		if !currentAvailable || currentPresent && !validPlacement(current) {
-			return placementdomain.Bottom, false
-		}
-		if !currentPresent {
-			current = placementdomain.Bottom
+		current, currentOK := placementdomain.AuthenticateFactorCell(current, currentPresent, currentAvailable)
+		if !currentOK {
+			return placementdomain.Placement(0), false
 		}
 		want, wantOK := PlacementForState(canonical.state)
 		if !wantOK {
-			return placementdomain.Bottom, false
+			return placementdomain.Placement(0), false
 		}
 		if plan.widened() {
 			return placementdomain.Unknown, true

@@ -118,22 +118,6 @@ func TestProgramVocabularyIsTheSealedTable(t *testing.T) {
 	}
 	counted(t, table, structure.CategoryOutcome, uint16(programschema.OutcomeCancel), "programschema.OutcomeCancel")
 
-	for _, member := range []struct {
-		key      schema.Key
-		spelling string
-		ordinal  programschema.RuleStage
-		foreign  string
-	}{
-		{"stage/base", "base", programschema.RuleStageBase, "programschema.RuleStageBase"},
-		{"stage/local", "local", programschema.RuleStageLocal, "programschema.RuleStageLocal"},
-		{"stage/call-dispatch", "call-dispatch", programschema.RuleStageCallDispatch, "programschema.RuleStageCallDispatch"},
-		{"stage/call-summary", "call-summary", programschema.RuleStageCallSummary, "programschema.RuleStageCallSummary"},
-		{"stage/call-effect", "call-effect", programschema.RuleStageCallEffect, "programschema.RuleStageCallEffect"},
-	} {
-		pinned(t, table, structure.CategoryIssuanceStage, uint16(member.ordinal), member.key, member.foreign)
-		spelled(t, table, structure.CategoryIssuanceStage, uint16(member.ordinal), member.spelling)
-	}
-	counted(t, table, structure.CategoryIssuanceStage, uint16(programschema.RuleStageCallEffect), "programschema.RuleStageCallEffect")
 }
 
 // TestEngineArtifactVocabularyIsTheSealedTable pins the engine boundary
@@ -173,54 +157,6 @@ func TestEngineArtifactVocabularyIsTheSealedTable(t *testing.T) {
 	}
 	counted(t, table, structure.CategoryEvent, uint16(rows.ArtifactEventExit), "rows.ArtifactEventExit")
 
-	for _, member := range []struct {
-		key      schema.Key
-		spelling string
-		ordinal  rows.ArtifactRuleStage
-		foreign  string
-	}{
-		{"stage/base", "base", rows.ArtifactRuleStageBase, "rows.ArtifactRuleStageBase"},
-		{"stage/local", "local", rows.ArtifactRuleStageLocal, "rows.ArtifactRuleStageLocal"},
-		{"stage/call-dispatch", "call-dispatch", rows.ArtifactRuleStageIssued3, "rows.ArtifactRuleStageIssued3"},
-		{"stage/call-summary", "call-summary", rows.ArtifactRuleStageIssued4, "rows.ArtifactRuleStageIssued4"},
-		{"stage/call-effect", "call-effect", rows.ArtifactRuleStageIssued5, "rows.ArtifactRuleStageIssued5"},
-	} {
-		pinned(t, table, structure.CategoryIssuanceStage, uint16(member.ordinal), member.key, member.foreign)
-		spelled(t, table, structure.CategoryIssuanceStage, uint16(member.ordinal), member.spelling)
-	}
-	counted(t, table, structure.CategoryIssuanceStage, uint16(rows.ArtifactRuleStageIssued5), "rows.ArtifactRuleStageIssued5")
-}
-
-// TestIssuanceStagePredecessorIsTheSealedTable pins the native-call
-// predecessor chain as declared structure data. Engine admission reads this
-// relation rather than naming CallDispatch, CallSummary, and CallEffect.
-func TestIssuanceStagePredecessorIsTheSealedTable(t *testing.T) {
-	_, table := sealedVocabulary(t)
-	stage := func(ordinal rows.ArtifactRuleStage) *structure.Entry {
-		t.Helper()
-		entry, ok := table.At(structure.CategoryIssuanceStage, uint16(ordinal))
-		if !ok {
-			t.Fatalf("issuance stage %d is not sealed", ordinal)
-		}
-		return entry
-	}
-	base, local := stage(rows.ArtifactRuleStageBase), stage(rows.ArtifactRuleStageLocal)
-	dispatch, summary, effect := stage(rows.ArtifactRuleStageIssued3), stage(rows.ArtifactRuleStageIssued4), stage(rows.ArtifactRuleStageIssued5)
-	if base.Native() || base.Predecessor().Available() {
-		t.Fatalf("stage/base native=%v predecessor=%q", base.Native(), base.Predecessor())
-	}
-	if local.Native() || local.Predecessor().Available() {
-		t.Fatalf("stage/local native=%v predecessor=%q", local.Native(), local.Predecessor())
-	}
-	if !dispatch.Native() || dispatch.Predecessor().Available() {
-		t.Fatalf("stage/call-dispatch native=%v predecessor=%q", dispatch.Native(), dispatch.Predecessor())
-	}
-	if !summary.Native() || summary.Predecessor() != dispatch.Key() {
-		t.Fatalf("stage/call-summary predecessor %q, want %q", summary.Predecessor(), dispatch.Key())
-	}
-	if !effect.Native() || effect.Predecessor() != summary.Key() {
-		t.Fatalf("stage/call-effect predecessor %q, want %q", effect.Predecessor(), summary.Key())
-	}
 }
 
 // TestDiagnosticSeverityVocabularyIsTheSealedTable pins the policy severity

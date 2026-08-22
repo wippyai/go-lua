@@ -44,6 +44,10 @@ func (c *Contract) Protocols() protocolvalue.Table {
 // second graph authority: each row is a cached canonical descriptor indexed
 // only by the existing dense Target tables.
 type identityColumns struct {
+	// contractContentID is the identity of the whole sealed contract. It is
+	// the same kind of column as the rows below: derived once over the
+	// published read surface at seal, then read.
+	contractContentID    identity.ContentID
 	operationContentIDs  []identity.ContentID
 	callbackSelectors    []identity.ContentID
 	callbackContentIDs   []identity.ContentID

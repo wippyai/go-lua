@@ -31,7 +31,7 @@ func RuleEntry[P rulePrincipals, A any]() rule.Spec {
 		Key:      "placement-publication-escape",
 		Writes:   "placement",
 		Owner:    "placement",
-		Issues:   []rule.Issuance{{Occurrence: "occurrence/call", Requirement: "requirement/unrestricted", Form: "issuance/call-stage", Input: "input/finish", Stage: "stage/call-effect"}},
+		Issues:   []rule.Issuance{{Occurrence: "occurrence/call", Requirement: "program-requirement/unrestricted", Form: "program-form/call-effect"}},
 		Lane:     rule.LaneMounted,
 		Semantic: "semantic/rule/placement/publication-escape",
 		Roles:    []schema.Key{"semantic/operand/placement/publication-escape"},

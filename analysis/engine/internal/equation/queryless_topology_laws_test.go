@@ -94,14 +94,14 @@ func TestObservationTopologyDefersOnlyAllQueryFamilies(t *testing.T) {
 		t.Fatal("ordinary topology accepted missing declared query families")
 	}
 	partial := zero
-	partial.Queries = []QueryInstance{{Family: first, Point: PointAt(0), Surfaces: []Surface{{Factor: factor, Form: SurfaceReadExact, Local: 1}}}}
+	partial.Queries = []QueryInstance{{Context: boundaryContext(11), Family: first, Point: PointAt(0), Surfaces: []Surface{{Factor: factor, Form: SurfaceReadExact, Local: 1}}}}
 	if topology, _, deferred := SealObservationTopologyWithFailure(source, partial); deferred || topology != nil {
 		t.Fatal("observation topology accepted a partial ordinary query inventory")
 	}
 	full := zero
 	full.Queries = []QueryInstance{
-		{Family: first, Point: PointAt(0), Surfaces: []Surface{{Factor: factor, Form: SurfaceReadExact, Local: 1}}},
-		{Family: second, Point: PointAt(0), Surfaces: []Surface{{Factor: factor, Form: SurfaceReadExact, Local: 1}}},
+		{Context: boundaryContext(11), Family: first, Point: PointAt(0), Surfaces: []Surface{{Factor: factor, Form: SurfaceReadExact, Local: 1}}},
+		{Context: boundaryContext(11), Family: second, Point: PointAt(0), Surfaces: []Surface{{Factor: factor, Form: SurfaceReadExact, Local: 1}}},
 	}
 	strict, strictOK := SealTopology(source, full)
 	if !strictOK || strict == nil {

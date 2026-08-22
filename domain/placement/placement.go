@@ -29,41 +29,69 @@ func LessOrEq(a, b Placement) bool {
 	return leftOK && rightOK && left <= right
 }
 
-// Join is the least upper bound of the placement chain.
-func Join(a, b Placement) Placement {
+// JoinChecked is the least upper bound of the Placement chain. The checked
+// form is the producer-facing API: invalid/JIT values are rejected instead
+// of being turned into Unknown, because Unknown is a real semantic top.
+func JoinChecked(a, b Placement) (Placement, bool) {
 	left, leftOK := placementRank(a)
 	right, rightOK := placementRank(b)
 	if !leftOK || !rightOK {
-		// Values outside the analysis vocabulary are not another point in the
-		// chain. Refuse the operation at this boundary instead of allowing a
-		// JIT/invalid value to acquire Unknown's rank and leak into the factor.
-		return Unknown
+		return invalidPlacementResult, false
 	}
 	if left > right {
-		return a
+		return a, true
 	}
-	return b
+	return b, true
 }
 
-// Meet is the greatest lower bound of the placement chain.
-func Meet(a, b Placement) Placement {
+// Join is the lattice callback spelling of JoinChecked. Lattice callbacks
+// cannot return an error, so an invalid input produces the private invalid
+// sentinel. It is intentionally not Unknown and is rejected by every
+// producer-facing checked seam before publication.
+func Join(a, b Placement) Placement {
+	joined, ok := JoinChecked(a, b)
+	if !ok {
+		return invalidPlacementResult
+	}
+	return joined
+}
+
+// MeetChecked is the checked greatest lower bound of the Placement chain.
+func MeetChecked(a, b Placement) (Placement, bool) {
 	left, leftOK := placementRank(a)
 	right, rightOK := placementRank(b)
 	if !leftOK || !rightOK {
-		// There is no lattice result for an out-of-domain value. Unknown is the
-		// fail-closed publication value; the invalid operand never participates
-		// in a rank comparison.
-		return Unknown
+		return invalidPlacementResult, false
 	}
 	if left < right {
-		return a
+		return a, true
 	}
-	return b
+	return b, true
 }
 
-// Widen equals Join because the placement lattice has finite height.
+// Meet is the lattice callback spelling of MeetChecked. Invalid input is
+// represented by the private invalid sentinel, never by Unknown.
+func Meet(a, b Placement) Placement {
+	met, ok := MeetChecked(a, b)
+	if !ok {
+		return invalidPlacementResult
+	}
+	return met
+}
+
+// WidenChecked equals JoinChecked because the Placement lattice has finite
+// height.
+func WidenChecked(prev, next Placement) (Placement, bool) {
+	return JoinChecked(prev, next)
+}
+
+// Widen is the lattice callback spelling of WidenChecked.
 func Widen(prev, next Placement) Placement {
-	return Join(prev, next)
+	widened, ok := WidenChecked(prev, next)
+	if !ok {
+		return invalidPlacementResult
+	}
+	return widened
 }
 
 // Equal is lattice equivalence.
@@ -92,3 +120,9 @@ func placementRank(v Placement) (int, bool) {
 		return 0, false
 	}
 }
+
+// invalidPlacementResult is deliberately outside the analysis vocabulary.
+// Placement has no error value in the generic lattice callback interface, so
+// this sentinel preserves failure without manufacturing a semantic Unknown
+// fact. Checked producer APIs must be used whenever invalid input is possible.
+const invalidPlacementResult Placement = ^Placement(0)

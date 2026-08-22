@@ -26,6 +26,21 @@ func canonicalActualTag(index int) (actualTag, bool) {
 	return actualTag(tag), true
 }
 
+// actualOrdinal recovers the authored actual position from a selected route
+// tag. Engine Selection rows are ordered by resolved Unit, so physical
+// SelectionAt ordinals are not actual ordinals. Every actual tag must name one
+// and only one position in the mounted projection.
+func actualOrdinal(tag actualTag, count int) (int, bool) {
+	if tag == 0 || count < 0 {
+		return 0, false
+	}
+	index := uint64(tag - 1)
+	if index >= uint64(count) || index > uint64(int(^uint(0)>>1)) {
+		return 0, false
+	}
+	return int(index), true
+}
+
 // HotRule is the receipt-native Target FormalEffectFreeze consumer. It
 // retains only owner-fenced schemas, Call's mounted invocation receipts,
 // Pack's direct mounted-actual projection authority, and the already-sealed
@@ -206,18 +221,23 @@ func (rule *HotRule) selectorObservations(context engine.SelectorContext, actual
 	if !countOK || count != actual.ActualCount() || len(observations) != count {
 		return false
 	}
-	for ordinal := 0; ordinal < count; ordinal++ {
-		tag, cells, selected := engine.SelectorSelectionAt(context, selection, ordinal)
-		expectedTag, expectedTagOK := canonicalActualTag(ordinal)
-		if !expectedTagOK || tag != expectedTag || !selected || cells.Count() != 1 {
+	for physical := 0; physical < count; physical++ {
+		tag, cells, selected := engine.SelectorSelectionAt(context, selection, physical)
+		ordinal, ordinalOK := actualOrdinal(tag, count)
+		if !ordinalOK || observations[ordinal].valid || !selected || cells.Count() != 1 {
 			return false
 		}
 		fact, present, available := cells.At(0)
 		coordinate, coordinateOK := rule.coordinateForActual(actual, ordinal)
-		if !available || !coordinateOK || present && !rule.values.Schema().AdmitsCoordinate(coordinate, fact) {
+		if !available || !rule.values.Schema().Equal(fact, fact) || !present && !rule.values.Schema().Equal(fact, rule.values.Schema().Bottom()) || !coordinateOK || present && !rule.values.Schema().AdmitsCoordinate(coordinate, fact) {
 			return false
 		}
 		observations[ordinal] = actualObservation{fact: fact, present: present, valid: true}
+	}
+	for _, observation := range observations {
+		if !observation.valid {
+			return false
+		}
 	}
 	return true
 }
@@ -303,18 +323,23 @@ func (rule *HotRule) accessObservations(frame engine.Frame[heapdomain.Value, ope
 	if !countOK || count != actual.ActualCount() || len(observations) != count {
 		return false
 	}
-	for ordinal := 0; ordinal < count; ordinal++ {
-		tag, cells, selected := engine.SelectionAt(frame, selection, ordinal)
-		expectedTag, expectedTagOK := canonicalActualTag(ordinal)
-		if !expectedTagOK || tag != expectedTag || !selected || cells.Count() != 1 {
+	for physical := 0; physical < count; physical++ {
+		tag, cells, selected := engine.SelectionAt(frame, selection, physical)
+		ordinal, ordinalOK := actualOrdinal(tag, count)
+		if !ordinalOK || observations[ordinal].valid || !selected || cells.Count() != 1 {
 			return false
 		}
 		fact, present, available := cells.At(0)
 		coordinate, coordinateOK := rule.coordinateForActual(actual, ordinal)
-		if !available || !coordinateOK || present && !rule.values.Schema().AdmitsCoordinate(coordinate, fact) {
+		if !available || !rule.values.Schema().Equal(fact, fact) || !present && !rule.values.Schema().Equal(fact, rule.values.Schema().Bottom()) || !coordinateOK || present && !rule.values.Schema().AdmitsCoordinate(coordinate, fact) {
 			return false
 		}
 		observations[ordinal] = actualObservation{fact: fact, present: present, valid: true}
+	}
+	for _, observation := range observations {
+		if !observation.valid {
+			return false
+		}
 	}
 	return true
 }

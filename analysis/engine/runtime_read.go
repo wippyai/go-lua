@@ -3,6 +3,7 @@
 package engine
 
 import (
+	"slices"
 	"sort"
 
 	"github.com/wippyai/go-lua/analysis/engine/internal/carrier"
@@ -71,13 +72,21 @@ type stagedRoute[Tag selectionTag] struct {
 	tag  Tag
 }
 
+type stagedRouteMode uint8
+
+const (
+	stagedRouteSequence stagedRouteMode = iota + 1
+	stagedRouteSet
+)
+
 // stagedRouteSink is installed only while one locator is running. The typed
-// emission assertion makes a mismatched tag type fail closed. Duplicate
-// (Unit,Tag) routes are rejected during canonicalization, after every locator
-// emission is collected but before any Product state is retained.
+// emission assertion makes a mismatched tag type fail closed. Sequence reads
+// reject duplicate (Unit,Tag) routes; relation-set reads canonicalize them as
+// one member before any Product state is retained.
 type stagedRouteSink[V any, Tag selectionTag] struct {
 	target stagedFactor[V]
 	routes []stagedRoute[Tag]
+	mode   stagedRouteMode
 }
 
 func (sink *stagedRouteSink[V, Tag]) accept(emission selectorEmission) bool {
@@ -88,6 +97,14 @@ func (sink *stagedRouteSink[V, Tag]) accept(emission selectorEmission) bool {
 	if !ok || route.ref == nil {
 		return false
 	}
+	mode := stagedRouteSequence
+	if route.set {
+		mode = stagedRouteSet
+	}
+	if sink.mode != 0 && sink.mode != mode {
+		return false
+	}
+	sink.mode = mode
 	unit, resolved := sink.target.stagedUnit(route.ref)
 	if !resolved || unit == (carrier.Unit{}) {
 		return false
@@ -114,12 +131,38 @@ type typedStagedSelectionSession[V, S any, Tag selectionTag] struct {
 	routeScratch []stagedRoute[Tag]
 	routeUnits   []carrier.Unit
 	routeIndices []int
+	routeMode    stagedRouteMode
 	frame        selectorFrame
 }
 
 type stagedPartial[S any] struct {
 	mask   support.Mask
 	values []S
+}
+
+// stagedBranch owns the value vector of the one parent partial a staged unit
+// round consumes. The round is the sole reader of that vector and no observer
+// retains it, so the first branch takes the parent vector itself and every
+// further branch takes a clone. Siblings differ only at `slot`, which each
+// branch overwrites, so a donated vector carries no distinction its clones
+// could lose.
+type stagedBranch[S any] struct {
+	parent  []S
+	slot    int
+	donated bool
+}
+
+func (branch *stagedBranch[S]) values(value S) ([]S, bool) {
+	if branch == nil || branch.slot < 0 || branch.slot >= len(branch.parent) {
+		return nil, false
+	}
+	values := branch.parent
+	if branch.donated {
+		values = slices.Clone(branch.parent)
+	}
+	branch.donated = true
+	values[branch.slot] = value
+	return values, true
 }
 
 type stagedDemandKey struct {
@@ -204,11 +247,17 @@ func (runtime *stagedReadRuntime[V, S, Tag]) refine(session *productSession, ind
 			selected.values = append(selected.values, nil)
 			continue
 		}
-		units, routeUnits, indexed := selected.indexRoutes(sink.routes)
-		if !indexed || len(units) == 0 || len(routeUnits) != len(sink.routes) {
+		if !selected.acceptRouteMode(sink.mode) {
 			selected.close()
 			return false
 		}
+		routes, units, routeUnits, indexed := selected.indexRoutes(sink.routes, sink.mode == stagedRouteSet)
+		if !indexed || len(units) == 0 || len(routeUnits) != len(routes) {
+			selected.close()
+			return false
+		}
+		sink.routes = routes
+		selected.routeScratch = routes
 		for _, unit := range units {
 			selected.addDynamic(runtime.input, unit)
 		}
@@ -258,6 +307,17 @@ func (runtime *stagedReadRuntime[V, S, Tag]) refine(session *productSession, ind
 	return true
 }
 
+func (session *typedStagedSelectionSession[V, S, Tag]) acceptRouteMode(mode stagedRouteMode) bool {
+	if session == nil || (mode != stagedRouteSequence && mode != stagedRouteSet) {
+		return false
+	}
+	if session.routeMode == 0 {
+		session.routeMode = mode
+		return true
+	}
+	return session.routeMode == mode
+}
+
 // refineStagedSource composes selected exact Unit partitions in canonical
 // Unit order. This is the exact guarded cross-product required for
 // correlation; it intentionally performs no quotient because canonical route
@@ -277,6 +337,7 @@ func (runtime *stagedReadRuntime[V, S, Tag]) refineStagedSource(session *product
 				return nil, false
 			}
 			before := len(next)
+			branch := stagedBranch[S]{parent: partial.values, slot: unitIndex}
 			observed := runtime.target.stagedObserve(session.work, session.inputs[runtime.input], unit, partial.mask, func(observation factbinding.Observation[V], region support.Mask) bool {
 				if !session.requireCheckpoint() || !observation.Valid() || !region.Valid() || support.Empty(region) {
 					return false
@@ -294,8 +355,11 @@ func (runtime *stagedReadRuntime[V, S, Tag]) refineStagedSource(session *product
 					cells[cellIndex] = summaryCell[V]{value: value, present: present}
 				}
 				record := newOrderedCellsRecord(cells)
-				values := append([]S(nil), partial.values...)
-				values[unitIndex] = runtime.normalize(OrderedCells[V]{record: record})
+				values, branched := branch.values(runtime.normalize(OrderedCells[V]{record: record}))
+				if !branched {
+					record.revoke()
+					return false
+				}
 				selected.records = append(selected.records, record)
 				next = append(next, stagedPartial[S]{mask: region, values: values})
 				return true
@@ -310,31 +374,57 @@ func (runtime *stagedReadRuntime[V, S, Tag]) refineStagedSource(session *product
 }
 
 // indexRoutes canonicalizes the observable semantic route order by (Unit,
-// numeric tag), rejects duplicate semantic routes, and derives its physical
-// Unit partition in one O(K log K) sort plus O(K) scan. Its scratch belongs
-// to the execution-local selection session, so it neither allocates a map nor
-// reintroduces a quadratic route path.
-func (session *typedStagedSelectionSession[V, S, Tag]) indexRoutes(routes []stagedRoute[Tag]) ([]carrier.Unit, []int, bool) {
+// numeric tag), rejects sequence duplicates or compacts relation-set
+// duplicates, and derives its physical Unit partition in one O(K log K) sort
+// plus O(K) scan. Its scratch belongs to the execution-local selection session,
+// so it neither allocates a map nor reintroduces a quadratic route path.
+func (session *typedStagedSelectionSession[V, S, Tag]) indexRoutes(routes []stagedRoute[Tag], set bool) ([]stagedRoute[Tag], []carrier.Unit, []int, bool) {
 	if session == nil || len(routes) == 0 {
-		return nil, nil, false
+		return nil, nil, nil, false
 	}
+	for _, route := range routes {
+		if route.unit == (carrier.Unit{}) {
+			return nil, nil, nil, false
+		}
+	}
+	slices.SortFunc(routes, func(left, right stagedRoute[Tag]) int {
+		leftUnit, rightUnit := left.unit, right.unit
+		if leftUnit.Same(rightUnit) {
+			switch {
+			case left.tag < right.tag:
+				return -1
+			case left.tag > right.tag:
+				return 1
+			default:
+				return 0
+			}
+		}
+		if leftUnit.Less(rightUnit) {
+			return -1
+		}
+		if rightUnit.Less(leftUnit) {
+			return 1
+		}
+		return 0
+	})
+	write := 0
+	for _, route := range routes {
+		if write != 0 && routes[write-1].unit.Same(route.unit) && routes[write-1].tag == route.tag {
+			if !set {
+				return nil, nil, nil, false
+			}
+			continue
+		}
+		routes[write] = route
+		write++
+	}
+	clear(routes[write:])
+	routes = routes[:write]
 	if cap(session.routeIndices) < len(routes) {
 		session.routeIndices = make([]int, len(routes))
 	} else {
 		session.routeIndices = session.routeIndices[:len(routes)]
 	}
-	for _, route := range routes {
-		if route.unit == (carrier.Unit{}) {
-			return nil, nil, false
-		}
-	}
-	sort.Slice(routes, func(left, right int) bool {
-		leftUnit, rightUnit := routes[left].unit, routes[right].unit
-		if leftUnit.Same(rightUnit) {
-			return routes[left].tag < routes[right].tag
-		}
-		return leftUnit.Less(rightUnit)
-	})
 	session.routeUnits = session.routeUnits[:0]
 	var previous carrier.Unit
 	havePrevious := false
@@ -344,10 +434,10 @@ func (session *typedStagedSelectionSession[V, S, Tag]) indexRoutes(routes []stag
 		if havePrevious {
 			if previous.Same(unit) {
 				if previousTag >= route.tag {
-					return nil, nil, false
+					return nil, nil, nil, false
 				}
 			} else if !previous.Less(unit) {
-				return nil, nil, false
+				return nil, nil, nil, false
 			}
 		}
 		unitIndex := len(session.routeUnits) - 1
@@ -358,7 +448,7 @@ func (session *typedStagedSelectionSession[V, S, Tag]) indexRoutes(routes []stag
 		session.routeIndices[routeIndex] = unitIndex
 		previous, previousTag, havePrevious = unit, route.tag, true
 	}
-	return session.routeUnits, session.routeIndices, len(session.routeUnits) != 0
+	return routes, session.routeUnits, session.routeIndices, len(session.routeUnits) != 0
 }
 
 func (session *typedStagedSelectionSession[V, S, Tag]) addDynamic(input int, unit carrier.Unit) {
@@ -408,6 +498,7 @@ func (session *typedStagedSelectionSession[V, S, Tag]) close() {
 	session.routeScratch = nil
 	session.routeUnits = nil
 	session.routeIndices = nil
+	session.routeMode = 0
 	session.frame.routes = nil
 }
 

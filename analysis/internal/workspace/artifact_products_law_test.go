@@ -33,14 +33,14 @@ func TestArtifactsCloseReleasesEveryOwnedProductReference(t *testing.T) {
 
 	artifacts := NewArtifacts()
 	product, compiled := artifacts.Compile(input, compilation)
-	if !compiled || product.Artifact == nil || product.Snapshot == nil || product.Template == nil || product.Roles == nil {
+	if !compiled || product.Artifact == nil || product.Snapshot == nil || product.Template == nil || product.Bindings == nil {
 		issuance, issuanceOK := composite.ArtifactIssuanceDirectory(compilation)
 		_, failure := artifactcompiler.CompileDetailed(input, grammar, issuance)
-		t.Fatalf("workspace artifact product did not compile: compiled=%v artifact=%t snapshot=%t template=%t roles=%t issuance=%v failure=%v", compiled, product.Artifact != nil, product.Snapshot != nil, product.Template != nil, product.Roles != nil, issuanceOK, failure)
+		t.Fatalf("workspace artifact product did not compile: compiled=%v artifact=%t snapshot=%t template=%t bindings=%t issuance=%v failure=%v", compiled, product.Artifact != nil, product.Snapshot != nil, product.Template != nil, product.Bindings != nil, issuanceOK, failure)
 	}
 	artifacts.mu.Lock()
 	entry := artifacts.entries[key.ID()]
-	retained := entry != nil && entry.valid && entry.product.Artifact == product.Artifact && entry.product.Snapshot == product.Snapshot && entry.product.Template == product.Template && entry.product.Roles == product.Roles
+	retained := entry != nil && entry.valid && entry.product.Artifact == product.Artifact && entry.product.Snapshot == product.Snapshot && entry.product.Template == product.Template && entry.product.Bindings == product.Bindings
 	artifacts.mu.Unlock()
 	if !retained {
 		t.Fatal("workspace did not retain its compiled product")

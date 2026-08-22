@@ -11,22 +11,24 @@ import (
 // SelectedStructuralFactorEdge is one candidate-local transport admitted
 // only for an accepted activation Member. It never mutates the base Graph.
 type SelectedStructuralFactorEdge struct {
-	key    composition.Key
-	source Point
-	target Point
-	input  Input
-	factor composition.Key
+	key     composition.Key
+	source  Point
+	target  Point
+	input   Input
+	factor  composition.Key
+	context ActivationContext
 }
 
 func (edge SelectedStructuralFactorEdge) Available() bool {
-	return edge.key.Available() && edge.source.Available() && edge.target.Available() && edge.input.Available() && edge.factor.Available()
+	return edge.key.Available() && edge.source.Available() && edge.target.Available() && edge.input.Available() && edge.factor.Available() && edge.context.WellFormed()
 }
 
-func (edge SelectedStructuralFactorEdge) Key() composition.Key    { return edge.key }
-func (edge SelectedStructuralFactorEdge) Source() Point           { return edge.source }
-func (edge SelectedStructuralFactorEdge) Target() Point           { return edge.target }
-func (edge SelectedStructuralFactorEdge) Input() Input            { return edge.input }
-func (edge SelectedStructuralFactorEdge) Factor() composition.Key { return edge.factor }
+func (edge SelectedStructuralFactorEdge) Key() composition.Key       { return edge.key }
+func (edge SelectedStructuralFactorEdge) Source() Point              { return edge.source }
+func (edge SelectedStructuralFactorEdge) Target() Point              { return edge.target }
+func (edge SelectedStructuralFactorEdge) Input() Input               { return edge.input }
+func (edge SelectedStructuralFactorEdge) Factor() composition.Key    { return edge.factor }
+func (edge SelectedStructuralFactorEdge) Context() ActivationContext { return edge.context }
 
 // SelectedStructuralFactorEdges lowers only the direct transport bindings
 // owned by accepted Members. It does not enumerate inactive candidates, and
@@ -47,8 +49,12 @@ func (topology *Topology) SelectedStructuralFactorEdges(base *Graph, accepted []
 			if !found {
 				return nil, false
 			}
+			locator, locatorOK := member.Locator()
+			if !locatorOK {
+				return nil, false
+			}
 			for _, transport := range transports {
-				edge, edgeOK := topology.selectedDirectActivationEdge(base, member.Binding(), acceptedMember.Premise(), transport)
+				edge, edgeOK := topology.selectedDirectActivationEdge(base, member.Binding(), acceptedMember.Premise(), locator.Context, transport)
 				if !edgeOK {
 					return nil, false
 				}
@@ -178,8 +184,11 @@ func cloneIntRows(rows [][]int) [][]int {
 	return result
 }
 
-func (topology *Topology) selectedDirectActivationEdge(base *Graph, binding composition.Key, premise Expr, transport DirectActivationTransport) (SelectedStructuralFactorEdge, bool) {
+func (topology *Topology) selectedDirectActivationEdge(base *Graph, binding composition.Key, premise Expr, context ActivationContext, transport DirectActivationTransport) (SelectedStructuralFactorEdge, bool) {
 	if topology == nil || base == nil || !premise.Available() || !binding.Available() || !transport.Factor.Available() || transport.Source == 0 || transport.Target == 0 {
+		return SelectedStructuralFactorEdge{}, false
+	}
+	if !context.WellFormed() {
 		return SelectedStructuralFactorEdge{}, false
 	}
 	if _, known := topology.source.FactorIndex(transport.Factor); !known {
@@ -224,12 +233,12 @@ func (topology *Topology) selectedDirectActivationEdge(base *Graph, binding comp
 	}
 	input.point = source
 	key, keyed := identityKey("analysis/engine/equation/factor-edge", func(writer *canonical.DigestWriter) bool {
-		return writeKey(writer, input.Key()) && writePoint(writer, target) && writeKey(writer, transport.Factor)
+		return writeKey(writer, input.Key()) && writePoint(writer, target) && writeKey(writer, transport.Factor) && writeActivationContext(writer, context)
 	})
 	if !keyed {
 		return SelectedStructuralFactorEdge{}, false
 	}
-	return SelectedStructuralFactorEdge{key: key, source: source, target: target, input: input, factor: transport.Factor}, true
+	return SelectedStructuralFactorEdge{key: key, source: source, target: target, input: input, factor: transport.Factor, context: context}, true
 }
 
 func (topology *Topology) directCandidatePoint(base *Graph, ref PointRef) (Point, bool) {

@@ -55,8 +55,8 @@ func TestDecodeCanonicalFormalsRoundTripsScopedCorpus(t *testing.T) {
 				t.Fatalf("DecodeCanonicalFormals: %v", err)
 			}
 			roundTrip, err := EncodeCanonicalFormals(context.Background(), decoded, []*TypeParam{receiverExternal})
-			if err != nil || !bytes.Equal(encoded, roundTrip) {
-				t.Fatalf("scoped bytes changed: %x / %x / %v", encoded, roundTrip, err)
+			if err != nil || !bytes.Equal(encoded.Bytes(), roundTrip.Bytes()) {
+				t.Fatalf("scoped bytes changed: %x / %x / %v", encoded.Bytes(), roundTrip.Bytes(), err)
 			}
 		})
 	}
@@ -99,8 +99,8 @@ func TestDecodeCanonicalFormalsRoundTripsRawIEEEFloatLiterals(t *testing.T) {
 			t.Fatalf("scoped decode lost %#x: %#v", bits, decoded)
 		}
 		roundTrip, err := EncodeCanonicalFormals(context.Background(), decoded, nil)
-		if err != nil || !bytes.Equal(encoded, roundTrip) {
-			t.Fatalf("scoped bytes changed for %#x: %x / %x / %v", bits, encoded, roundTrip, err)
+		if err != nil || !bytes.Equal(encoded.Bytes(), roundTrip.Bytes()) {
+			t.Fatalf("scoped bytes changed for %#x: %x / %x / %v", bits, encoded.Bytes(), roundTrip.Bytes(), err)
 		}
 	}
 }
@@ -116,21 +116,29 @@ func TestDecodeCanonicalFormalsRejectsAuthorityAndWireMismatches(t *testing.T) {
 
 	cases := []struct {
 		name    string
-		encoded []byte
+		receipt CanonicalFormalsReceipt
 		formals []*TypeParam
 	}{
 		{"wrong external count", encoded, nil},
 		{"foreign external constraint", encoded, []*TypeParam{wrongConstraint}},
 		{"nil external formal", encoded, []*TypeParam{nil}},
 		{"duplicate external formal", encoded, []*TypeParam{duplicate, duplicate}},
-		{"trailing data", append(append([]byte(nil), encoded...), 0), []*TypeParam{source}},
-		{"wrong framing", appendCanonicalFormalDefinition(nil, 0, []byte{canonicalString}, 0), nil},
 	}
 	for _, test := range cases {
 		t.Run(test.name, func(t *testing.T) {
-			decoded, err := DecodeCanonicalFormals(context.Background(), test.encoded, test.formals)
+			decoded, err := DecodeCanonicalFormals(context.Background(), test.receipt, test.formals)
 			if decoded != nil || !errors.Is(err, ErrInvalidCanonicalType) {
 				t.Fatalf("DecodeCanonicalFormals = %T, %v; want invalid canonical error", decoded, err)
+			}
+		})
+	}
+	for name, raw := range map[string][]byte{
+		"trailing data": append(append([]byte(nil), encoded.Bytes()...), 0),
+		"wrong framing": appendCanonicalFormalDefinition(nil, 0, []byte{canonicalString}, 0),
+	} {
+		t.Run(name, func(t *testing.T) {
+			if _, err := AdmitCanonicalFormals(context.Background(), raw, 1); !errors.Is(err, ErrInvalidCanonicalType) {
+				t.Fatalf("AdmitCanonicalFormals = %v; want invalid canonical error", err)
 			}
 		})
 	}
@@ -138,8 +146,8 @@ func TestDecodeCanonicalFormalsRejectsAuthorityAndWireMismatches(t *testing.T) {
 	badLocalOwner := appendCanonicalFormalsVersion(nil)
 	badLocalOwner = appendCanonicalFormalDefinition(badLocalOwner, 0, []byte{canonicalTypeParam, canonicalScopedLocalFormal, 0, 0}, 1)
 	badLocalOwner = appendCanonicalFormalReference(badLocalOwner, 0)
-	if decoded, err := DecodeCanonicalFormals(context.Background(), badLocalOwner, nil); decoded != nil || !errors.Is(err, ErrInvalidCanonicalType) {
-		t.Fatalf("malformed local owner = %T, %v", decoded, err)
+	if _, err := AdmitCanonicalFormals(context.Background(), badLocalOwner, 0); !errors.Is(err, ErrInvalidCanonicalType) {
+		t.Fatalf("malformed local owner = %v", err)
 	}
 }
 
@@ -174,8 +182,8 @@ func TestCanonicalFormalsRejectEscapedLocalBinders(t *testing.T) {
 	}
 	formal, owner := newOwner("Owner")
 	direct := NewTuple(formal, owner)
-	if encoded, err := EncodeCanonicalFormals(context.Background(), direct, nil); err == nil || encoded != nil {
-		t.Fatalf("direct local-formal escape encoded as %x, %v", encoded, err)
+	if receipt, err := EncodeCanonicalFormals(context.Background(), direct, nil); err == nil || receipt.Valid() {
+		t.Fatalf("direct local-formal escape encoded as %x, %v", receipt.Bytes(), err)
 	}
 	// Canonical bytes emitted by the previous encoder for direct. Keeping the
 	// artifact fixed proves the shared raw validator, not only source encoding,
@@ -184,11 +192,8 @@ func TestCanonicalFormalsRejectEscapedLocalBinders(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := ValidateCanonicalFormals(unsafe, 0); !errors.Is(err, ErrInvalidCanonicalType) {
-		t.Fatalf("validator accepted direct local-formal escape: %v", err)
-	}
-	if decoded, err := DecodeCanonicalFormals(context.Background(), unsafe, nil); decoded != nil || !errors.Is(err, ErrInvalidCanonicalType) {
-		t.Fatalf("decoder accepted direct local-formal escape as %T, %v", decoded, err)
+	if _, err := AdmitCanonicalFormals(context.Background(), unsafe, 0); !errors.Is(err, ErrInvalidCanonicalType) {
+		t.Fatalf("admitter accepted direct local-formal escape: %v", err)
 	}
 	// p is the graph root and reaches its owner through the local-owner edge.
 	// Checking only owner-dominates-predecessor would miss this virtual use.
@@ -201,22 +206,19 @@ func TestCanonicalFormalsRejectEscapedLocalBinders(t *testing.T) {
 	rootFormal = appendCanonicalFormalReference(rootFormal, 0)
 	rootFormal = appendCanonicalFormalDefinition(rootFormal, 2, []byte{canonicalArray}, 1)
 	rootFormal = appendCanonicalFormalReference(rootFormal, 0)
-	if err := ValidateCanonicalFormals(rootFormal, 0); !errors.Is(err, ErrInvalidCanonicalType) {
-		t.Fatalf("validator accepted root local formal: %v", err)
-	}
-	if decoded, err := DecodeCanonicalFormals(context.Background(), rootFormal, nil); decoded != nil || !errors.Is(err, ErrInvalidCanonicalType) {
-		t.Fatalf("decoder accepted root local formal as %T, %v", decoded, err)
+	if _, err := AdmitCanonicalFormals(context.Background(), rootFormal, 0); !errors.Is(err, ErrInvalidCanonicalType) {
+		t.Fatalf("admitter accepted root local formal: %v", err)
 	}
 
 	formal, left := newOwner("Left")
 	right := NewGeneric("Right", nil, NewArray(formal))
-	if encoded, err := EncodeCanonicalFormals(context.Background(), NewTuple(left, right), nil); err == nil || encoded != nil {
-		t.Fatalf("cross-sibling local-formal escape encoded as %x, %v", encoded, err)
+	if receipt, err := EncodeCanonicalFormals(context.Background(), NewTuple(left, right), nil); err == nil || receipt.Valid() {
+		t.Fatalf("cross-sibling local-formal escape encoded as %x, %v", receipt.Bytes(), err)
 	}
 
 	formal, nestedOwner := newOwner("Nested")
-	if encoded, err := EncodeCanonicalFormals(context.Background(), NewTuple(NewArray(formal), nestedOwner), nil); err == nil || encoded != nil {
-		t.Fatalf("later-owner local-formal escape encoded as %x, %v", encoded, err)
+	if receipt, err := EncodeCanonicalFormals(context.Background(), NewTuple(NewArray(formal), nestedOwner), nil); err == nil || receipt.Valid() {
+		t.Fatalf("later-owner local-formal escape encoded as %x, %v", receipt.Bytes(), err)
 	}
 }
 
@@ -233,8 +235,8 @@ func TestCanonicalFormalsAcceptNestedAndRecursiveLocalScopes(t *testing.T) {
 			if err != nil {
 				t.Fatalf("EncodeCanonicalFormals: %v", err)
 			}
-			if err := ValidateCanonicalFormals(encoded, 0); err != nil {
-				t.Fatalf("ValidateCanonicalFormals: %v", err)
+			if _, err := AdmitCanonicalFormals(context.Background(), encoded.Bytes(), 0); err != nil {
+				t.Fatalf("AdmitCanonicalFormals: %v", err)
 			}
 		})
 	}
@@ -244,11 +246,11 @@ func TestCanonicalFormalsRejectNonMuFormalConstraintCycle(t *testing.T) {
 	formal := NewTypeParam("T", nil)
 	formal.Constraint = formal // Deliberately malformed mutable construction.
 	owner := NewGeneric("Owner", []*TypeParam{formal}, NewArray(formal))
-	if encoded, err := EncodeCanonicalFormals(context.Background(), owner, nil); err == nil || encoded != nil {
-		t.Fatalf("self-constrained local formal encoded as %x, %v", encoded, err)
+	if receipt, err := EncodeCanonicalFormals(context.Background(), owner, nil); err == nil || receipt.Valid() {
+		t.Fatalf("self-constrained local formal encoded as %x, %v", receipt.Bytes(), err)
 	}
-	if encoded, err := EncodeCanonicalFormals(context.Background(), formal, []*TypeParam{formal}); err == nil || encoded != nil {
-		t.Fatalf("self-constrained external formal encoded as %x, %v", encoded, err)
+	if receipt, err := EncodeCanonicalFormals(context.Background(), formal, []*TypeParam{formal}); err == nil || receipt.Valid() {
+		t.Fatalf("self-constrained external formal encoded as %x, %v", receipt.Bytes(), err)
 	}
 
 	rootScalar := appendFrameString([]byte{canonicalGeneric}, "Owner")
@@ -262,11 +264,8 @@ func TestCanonicalFormalsRejectNonMuFormalConstraintCycle(t *testing.T) {
 	wire = appendCanonicalFormalReference(wire, 1) // formal constraint itself
 	wire = appendCanonicalFormalDefinition(wire, 2, []byte{canonicalArray}, 1)
 	wire = appendCanonicalFormalReference(wire, 1)
-	if err := ValidateCanonicalFormals(wire, 0); !errors.Is(err, ErrInvalidCanonicalType) {
-		t.Fatalf("validator accepted non-Mu formal cycle: %v", err)
-	}
-	if decoded, err := DecodeCanonicalFormals(context.Background(), wire, nil); decoded != nil || !errors.Is(err, ErrInvalidCanonicalType) {
-		t.Fatalf("decoder accepted non-Mu formal cycle as %T, %v", decoded, err)
+	if _, err := AdmitCanonicalFormals(context.Background(), wire, 0); !errors.Is(err, ErrInvalidCanonicalType) {
+		t.Fatalf("admitter accepted non-Mu formal cycle: %v", err)
 	}
 }
 
@@ -285,8 +284,8 @@ func TestDecodeCanonicalFormalsAllowsExplicitMuConstraintBoundary(t *testing.T) 
 		t.Fatalf("DecodeCanonicalFormals explicit Mu boundary: %v", err)
 	}
 	roundTrip, err := EncodeCanonicalFormals(context.Background(), decoded, nil)
-	if err != nil || !bytes.Equal(encoded, roundTrip) {
-		t.Fatalf("explicit Mu bytes changed: %x / %x / %v", encoded, roundTrip, err)
+	if err != nil || !bytes.Equal(encoded.Bytes(), roundTrip.Bytes()) {
+		t.Fatalf("explicit Mu bytes changed: %x / %x / %v", encoded.Bytes(), roundTrip.Bytes(), err)
 	}
 }
 
@@ -297,8 +296,8 @@ func TestCanonicalFormalsRejectMutualGenericRecurrence(t *testing.T) {
 	second := NewGeneric("G1", []*TypeParam{secondParam}, nil)
 	first.SetBody(second)
 	second.SetBody(NewTuple(first, Any))
-	if encoded, err := EncodeCanonicalFormals(context.Background(), first, nil); err == nil || encoded != nil {
-		t.Fatalf("mutual Generic recurrence encoded as %x, %v", encoded, err)
+	if receipt, err := EncodeCanonicalFormals(context.Background(), first, nil); err == nil || receipt.Valid() {
+		t.Fatalf("mutual Generic recurrence encoded as %x, %v", receipt.Bytes(), err)
 	}
 
 	firstScalar := appendFrameString([]byte{canonicalGeneric}, "G0")
@@ -318,8 +317,8 @@ func TestCanonicalFormalsRejectMutualGenericRecurrence(t *testing.T) {
 	wire = appendCanonicalFormalDefinition(wire, 4, []byte{canonicalTuple, 2}, 2)
 	wire = appendCanonicalFormalReference(wire, 0)
 	wire = appendCanonicalFormalDefinition(wire, 5, []byte{canonicalAny}, 0)
-	if err := ValidateCanonicalFormals(wire, 0); !errors.Is(err, ErrInvalidCanonicalType) {
-		t.Fatalf("validator accepted mutual Generic recurrence: %v", err)
+	if _, err := AdmitCanonicalFormals(context.Background(), wire, 0); !errors.Is(err, ErrInvalidCanonicalType) {
+		t.Fatalf("admitter accepted mutual Generic recurrence: %v", err)
 	}
 }
 
@@ -369,8 +368,8 @@ func TestDecodeCanonicalFormalsDefersNewlyReadyGenericCandidate(t *testing.T) {
 		t.Fatalf("dependent Generic captured open body state: %#v", tuple.Elements[1])
 	}
 	roundTrip, err := EncodeCanonicalFormals(context.Background(), decoded, nil)
-	if err != nil || !bytes.Equal(encoded, roundTrip) {
-		t.Fatalf("direct-body scheduling bytes changed: %x / %x / %v", encoded, roundTrip, err)
+	if err != nil || !bytes.Equal(encoded.Bytes(), roundTrip.Bytes()) {
+		t.Fatalf("direct-body scheduling bytes changed: %x / %x / %v", encoded.Bytes(), roundTrip.Bytes(), err)
 	}
 }
 
@@ -389,8 +388,8 @@ func TestCanonicalFormalsRejectCyclesWithoutMaterializableHead(t *testing.T) {
 		"generic-sibling": NewTuple(genericSibling, optional),
 	} {
 		t.Run(name, func(t *testing.T) {
-			if encoded, err := EncodeCanonicalFormals(context.Background(), value, nil); err == nil || encoded != nil {
-				t.Fatalf("unheaded cycle encoded as %x, %v", encoded, err)
+			if receipt, err := EncodeCanonicalFormals(context.Background(), value, nil); err == nil || receipt.Valid() {
+				t.Fatalf("unheaded cycle encoded as %x, %v", receipt.Bytes(), err)
 			}
 		})
 	}
@@ -398,11 +397,8 @@ func TestCanonicalFormalsRejectCyclesWithoutMaterializableHead(t *testing.T) {
 	wire := appendCanonicalFormalsVersion(nil)
 	wire = appendCanonicalFormalDefinition(wire, 0, []byte{canonicalOptional}, 1)
 	wire = appendCanonicalFormalReference(wire, 0)
-	if err := ValidateCanonicalFormals(wire, 0); !errors.Is(err, ErrInvalidCanonicalType) {
-		t.Fatalf("validator accepted unheaded cycle: %v", err)
-	}
-	if decoded, err := DecodeCanonicalFormals(context.Background(), wire, nil); decoded != nil || !errors.Is(err, ErrInvalidCanonicalType) {
-		t.Fatalf("decoder accepted unheaded cycle as %T, %v", decoded, err)
+	if _, err := AdmitCanonicalFormals(context.Background(), wire, 0); !errors.Is(err, ErrInvalidCanonicalType) {
+		t.Fatalf("admitter accepted unheaded cycle: %v", err)
 	}
 }
 
@@ -435,12 +431,13 @@ func TestDecodeCanonicalFormalsCancellationAndDeepGraph(t *testing.T) {
 		t.Fatalf("deep DecodeCanonicalFormals (optional depth %d): %v", depth, err)
 	}
 	roundTrip, err := EncodeCanonicalFormals(context.Background(), decoded, nil)
-	if err != nil || !bytes.Equal(encoded, roundTrip) {
+	if err != nil || !bytes.Equal(encoded.Bytes(), roundTrip.Bytes()) {
 		at := 0
-		for at < len(encoded) && at < len(roundTrip) && encoded[at] == roundTrip[at] {
+		encodedBytes, roundTripBytes := encoded.Bytes(), roundTrip.Bytes()
+		for at < len(encodedBytes) && at < len(roundTripBytes) && encodedBytes[at] == roundTripBytes[at] {
 			at++
 		}
-		t.Fatalf("deep bytes changed: %d / %d at %d: %v", len(encoded), len(roundTrip), at, err)
+		t.Fatalf("deep bytes changed: %d / %d at %d: %v", len(encodedBytes), len(roundTripBytes), at, err)
 	}
 }
 
@@ -560,7 +557,7 @@ func TestCanonicalFormalCancellationCheckpointsInsideCanonicalQuotient(t *testin
 	}
 	t.Run("tarjan-edge-fanout", func(t *testing.T) {
 		ctx := &canonicalFormalCancelAfterContext{Context: context.Background(), allowedErrCalls: 2, done: make(chan struct{})}
-		encoder := &CanonicalEncoder{nodes: []canonicalTypeNode{node}, ctx: ctx}
+		encoder := &canonicalEncoder{nodes: []canonicalTypeNode{node}, ctx: ctx}
 		finder, err := newCanonicalSCCFinder(encoder)
 		if err != nil {
 			t.Fatalf("new finder: %v", err)
@@ -571,7 +568,7 @@ func TestCanonicalFormalCancellationCheckpointsInsideCanonicalQuotient(t *testin
 	})
 	t.Run("refinement-predecessors", func(t *testing.T) {
 		ctx := &canonicalFormalCancelAfterContext{Context: context.Background(), allowedErrCalls: 1, done: make(chan struct{})}
-		encoder := &CanonicalEncoder{nodes: []canonicalTypeNode{node}, classes: []int{-1}, ctx: ctx}
+		encoder := &canonicalEncoder{nodes: []canonicalTypeNode{node}, classes: []int{-1}, ctx: ctx}
 		if _, err := encoder.refineStratum([]int{0}, []int{-1}, 0); !errors.Is(err, context.Canceled) {
 			t.Fatalf("refinement cancellation = %v", err)
 		}
@@ -579,7 +576,7 @@ func TestCanonicalFormalCancellationCheckpointsInsideCanonicalQuotient(t *testin
 	t.Run("class-representatives", func(t *testing.T) {
 		classes := make([]int, edges)
 		ctx := &canonicalFormalCancelAfterContext{Context: context.Background(), allowedErrCalls: 1, done: make(chan struct{})}
-		encoder := &CanonicalEncoder{classes: classes, ctx: ctx}
+		encoder := &canonicalEncoder{classes: classes, ctx: ctx}
 		if err := encoder.buildClassRepresentatives(); !errors.Is(err, context.Canceled) {
 			t.Fatalf("representatives cancellation = %v", err)
 		}
@@ -691,13 +688,13 @@ func TestCanonicalEncoderCancellationCheckpointsInsideEncodingAndInitialization(
 		formals[index] = NewTypeParam("T", nil)
 	}
 	t.Run("external-formals", func(t *testing.T) {
-		encoder := &CanonicalEncoder{ctx: newContext(), formals: make(map[*TypeParam]uint64)}
+		encoder := &canonicalEncoder{ctx: newContext(), formals: make(map[*TypeParam]uint64)}
 		if err := encoder.installFormals(formals); !errors.Is(err, context.Canceled) {
 			t.Fatalf("install formals cancellation = %v", err)
 		}
 	})
 	t.Run("binder-parameters", func(t *testing.T) {
-		encoder := &CanonicalEncoder{ctx: newContext(), scoped: true, formals: make(map[*TypeParam]uint64), binders: make(map[*TypeParam]canonicalFormalBinder)}
+		encoder := &canonicalEncoder{ctx: newContext(), scoped: true, formals: make(map[*TypeParam]uint64), binders: make(map[*TypeParam]canonicalFormalBinder)}
 		if err := encoder.registerBinder(String, formals); !errors.Is(err, context.Canceled) {
 			t.Fatalf("register binder cancellation = %v", err)
 		}
@@ -707,7 +704,7 @@ func TestCanonicalEncoderCancellationCheckpointsInsideEncodingAndInitialization(
 		for index := range fields {
 			fields[index] = Field{Name: "field", Type: String}
 		}
-		encoder := &CanonicalEncoder{ctx: newContext()}
+		encoder := &canonicalEncoder{ctx: newContext()}
 		if _, _, err := encoder.canonicalRecordParts(&Record{Fields: fields}); !errors.Is(err, context.Canceled) {
 			t.Fatalf("record parts cancellation = %v", err)
 		}
@@ -717,14 +714,14 @@ func TestCanonicalEncoderCancellationCheckpointsInsideEncodingAndInitialization(
 		for index := range params {
 			params[index] = Param{Type: String}
 		}
-		encoder := &CanonicalEncoder{ctx: newContext()}
+		encoder := &canonicalEncoder{ctx: newContext()}
 		if _, _, err := encoder.canonicalFunctionParts(&Function{Params: params}); !errors.Is(err, context.Canceled) {
 			t.Fatalf("function parts cancellation = %v", err)
 		}
 	})
 	t.Run("scc-index-initialization", func(t *testing.T) {
 		nodes := make([]canonicalTypeNode, width)
-		encoder := &CanonicalEncoder{ctx: newContext(), nodes: nodes}
+		encoder := &canonicalEncoder{ctx: newContext(), nodes: nodes}
 		if _, err := newCanonicalSCCFinder(encoder); !errors.Is(err, context.Canceled) {
 			t.Fatalf("SCC initialization cancellation = %v", err)
 		}
@@ -738,7 +735,7 @@ func TestCanonicalEncoderCancellationCheckpointsInsideEncodingAndInitialization(
 			nodes[index].scalar = []byte{canonicalString}
 		}
 		starts[width] = width
-		encoder := &CanonicalEncoder{ctx: newContext()}
+		encoder := &canonicalEncoder{ctx: newContext()}
 		encoder.nodes = nodes
 		if err := encoder.classifyByRank(starts, members, sccOf); !errors.Is(err, context.Canceled) {
 			t.Fatalf("class initialization cancellation = %v", err)
@@ -754,7 +751,7 @@ func TestCanonicalQuotientSparseKeyOrderingLaw(t *testing.T) {
 		// must order only these touched keys, never scan an integer universe.
 		keys[index] = 1<<30 - index*131071
 	}
-	encoder := &CanonicalEncoder{ctx: context.Background()}
+	encoder := &canonicalEncoder{ctx: context.Background()}
 	if err := encoder.sortCanonicalIntKeys(keys); err != nil {
 		t.Fatal(err)
 	}
@@ -764,7 +761,7 @@ func TestCanonicalQuotientSparseKeyOrderingLaw(t *testing.T) {
 		}
 	}
 	ctx := &canonicalFormalCancelAfterContext{Context: context.Background(), allowedErrCalls: 1, done: make(chan struct{})}
-	if err := (&CanonicalEncoder{ctx: ctx}).sortCanonicalIntKeys(append([]int(nil), keys...)); !errors.Is(err, context.Canceled) {
+	if err := (&canonicalEncoder{ctx: ctx}).sortCanonicalIntKeys(append([]int(nil), keys...)); !errors.Is(err, context.Canceled) {
 		t.Fatalf("checkpointed sparse merge cancellation = %v", err)
 	}
 }
@@ -776,7 +773,7 @@ func TestCanonicalFormalsRejectsUnrepresentableChildDeclarationBeforeAllocation(
 	wire := appendCanonicalFormalsVersion(nil)
 	scalar := appendCount([]byte{canonicalTuple}, maxInt())
 	wire = appendCanonicalFormalDefinition(wire, 0, scalar, uint64(maxInt()))
-	if err := ValidateCanonicalFormals(wire, 0); !errors.Is(err, ErrInvalidCanonicalType) {
+	if _, err := AdmitCanonicalFormals(context.Background(), wire, 0); !errors.Is(err, ErrInvalidCanonicalType) {
 		t.Fatalf("unrepresentable edge declaration = %v", err)
 	}
 
@@ -785,7 +782,7 @@ func TestCanonicalFormalsRejectsUnrepresentableChildDeclarationBeforeAllocation(
 	// child-count representability check, before an int conversion or make.
 	overflow := appendCanonicalFormalsVersion(nil)
 	overflow = appendCanonicalFormalDefinition(overflow, 0, appendCount([]byte{canonicalTuple}, 0), uint64(maxInt())+1)
-	if err := ValidateCanonicalFormals(overflow, 0); !errors.Is(err, ErrInvalidCanonicalType) {
+	if _, err := AdmitCanonicalFormals(context.Background(), overflow, 0); !errors.Is(err, ErrInvalidCanonicalType) {
 		t.Fatalf("overflowing edge declaration = %v", err)
 	}
 }
@@ -796,8 +793,8 @@ func TestCanonicalFormalsEncoderDropsOversizedScratch(t *testing.T) {
 	for range depth {
 		value = &Optional{Inner: value}
 	}
-	encoder := &CanonicalEncoder{}
-	if _, err := encoder.EncodeFormals(context.Background(), value, nil); err != nil {
+	encoder := &canonicalEncoder{}
+	if _, err := encoder.encodeFormals(context.Background(), value, nil); err != nil {
 		t.Fatal(err)
 	}
 	if cap(encoder.nodes)*64 > canonicalFormalsRetainBytes || cap(encoder.out) > canonicalFormalsRetainBytes || cap(encoder.discoveryStack)*32 > canonicalFormalsRetainBytes {
@@ -811,7 +808,7 @@ func FuzzDecodeCanonicalFormals(f *testing.F) {
 	if err != nil {
 		f.Fatal(err)
 	}
-	f.Add(seed, uint8(1))
+	f.Add(seed.Bytes(), uint8(1))
 	f.Add([]byte{}, uint8(0))
 	f.Add([]byte{0xff, 0x80, 0x00}, uint8(2))
 	f.Fuzz(func(t *testing.T, encoded []byte, count uint8) {
@@ -819,6 +816,9 @@ func FuzzDecodeCanonicalFormals(f *testing.F) {
 		for index := range formals {
 			formals[index] = NewTypeParam("T", nil)
 		}
-		_, _ = DecodeCanonicalFormals(context.Background(), encoded, formals)
+		receipt, err := AdmitCanonicalFormals(context.Background(), encoded, int(count))
+		if err == nil {
+			_, _ = DecodeCanonicalFormals(context.Background(), receipt, formals)
+		}
 	})
 }

@@ -44,44 +44,6 @@ func (role TargetRoleID) ContentID() (identity.ContentID, bool) {
 	return role.id, true
 }
 
-// TargetRole is an owner-issued hot proof for one TargetRoleID. Equal role
-// IDs from equivalent Algebras intentionally remain distinct proofs because
-// owner identity is retained here, outside the portable ID.
-type TargetRole struct {
-	owner    *Algebra
-	id       TargetRoleID
-	selector selector
-}
-
-func (role TargetRole) Valid() bool {
-	if role.owner == nil || !role.id.Valid() || !role.selector.valid() || uint64(role.selector) > uint64(len(role.owner.targets)) || role.owner.roleIndex[role.id] != role.selector {
-		return false
-	}
-	return role.owner.targets[role.selector-1].role == role.id
-}
-
-func (role TargetRole) ID() (TargetRoleID, bool) {
-	if !role.Valid() {
-		return TargetRoleID{}, false
-	}
-	return role.id, true
-}
-
-// Target projects the exact owner-fenced target capability represented by
-// this role proof. It does not expose the selector ordinal.
-func (role TargetRole) Target() (Target, bool) {
-	if !role.Valid() {
-		return Target{}, false
-	}
-	return Target{owner: role.owner, selector: role.selector}, true
-}
-
-// OwnsRole authenticates both the hot Algebra owner and the canonical role
-// index. A role from an equal-but-foreign Algebra therefore fails closed.
-func (algebra *Algebra) OwnsRole(role TargetRole) bool {
-	return algebra != nil && role.owner == algebra && role.Valid()
-}
-
 // RoleID projects a target capability into its stable semantic role identity.
 func (target Target) RoleID() (TargetRoleID, bool) {
 	if !target.Valid() {
@@ -90,42 +52,26 @@ func (target Target) RoleID() (TargetRoleID, bool) {
 	return target.owner.targets[target.selector-1].role, true
 }
 
-// Role issues the owner-authenticated role proof for one target capability.
-func (target Target) Role() (TargetRole, bool) {
-	if !target.Valid() {
-		return TargetRole{}, false
-	}
-	id, ok := target.RoleID()
-	if !ok || !id.Valid() {
-		return TargetRole{}, false
-	}
-	return TargetRole{owner: target.owner, id: id, selector: target.selector}, true
-}
-
 // RoleID projects a Body capability using its exact target row. It is useful
 // to callers that intentionally retain only the body role identity.
 func (body Body) RoleID() (TargetRoleID, bool) {
 	if !body.Valid() || body.owner == nil {
 		return TargetRoleID{}, false
 	}
-	selector := body.owner.targetIndex[targetKey{kind: targetBody, moduleKey: body.module, bodyContext: body.context}]
-	if !selector.valid() || uint64(selector) > uint64(len(body.owner.targets)) {
-		return TargetRoleID{}, false
-	}
-	target := Target{owner: body.owner, selector: selector}
+	target := Target{owner: body.owner, selector: body.selector}
 	return target.RoleID()
 }
 
-// TargetForRole replays a portable role ID into this exact Algebra owner.
-// Equivalent Algebras may accept the same ID, but the returned proof and
-// Target remain owned by this Algebra and cannot cross the original owner.
-func (algebra *Algebra) TargetForRole(id TargetRoleID) (TargetRole, bool) {
+// TargetForRole replays a portable role ID directly into this exact Algebra's
+// owner-fenced target capability. The role index is the sole inverse; no
+// role-specific hot wrapper is introduced between the identity and Target.
+func (algebra *Algebra) TargetForRole(id TargetRoleID) (Target, bool) {
 	if algebra == nil || !algebra.Valid() || !id.Valid() {
-		return TargetRole{}, false
+		return Target{}, false
 	}
 	selector := algebra.roleIndex[id]
 	if !selector.valid() || uint64(selector) > uint64(len(algebra.targets)) || algebra.targets[selector-1].role != id {
-		return TargetRole{}, false
+		return Target{}, false
 	}
-	return TargetRole{owner: algebra, id: id, selector: selector}, true
+	return Target{owner: algebra, selector: selector}, true
 }

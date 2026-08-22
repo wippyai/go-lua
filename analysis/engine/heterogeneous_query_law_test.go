@@ -8,6 +8,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/engine/rows"
 	"github.com/wippyai/go-lua/analysis/identity"
 	"github.com/wippyai/go-lua/analysis/lattice"
+	programissuance "github.com/wippyai/go-lua/analysis/schema/program/issuance"
 )
 
 type heterogeneousQueryLawResult struct {
@@ -229,7 +230,6 @@ func newHeterogeneousQueryLawFixture(t testing.TB) heterogeneousQueryLawFixture 
 	spec, specOK := rows.NewArtifactScalarSpec(artifactID, programID, identity.ContentID(schema.ID().Digest()), rows.ArtifactScalarCapacity{Roles: 2, Points: 2, Regions: 1, Events: 8, Rules: 2, Bodies: 1})
 	roleA, roleAOK := spec.DeclareRole(heterogeneousQueryLawID(4))
 	roleB, roleBOK := spec.DeclareRole(heterogeneousQueryLawID(5))
-	stageOK := spec.InstallStageLaws([]rows.ArtifactStageLaw{{Stage: rows.ArtifactRuleStageIssued3, Native: true}})
 	pointInitial, pointOutput := heterogeneousQueryLawID(6), heterogeneousQueryLawID(7)
 	pointInitialOK := func() bool {
 		_, ok := spec.AddPoint(rows.ArtifactScalarPoint{ID: pointInitial, Initial: true})
@@ -249,24 +249,26 @@ func newHeterogeneousQueryLawFixture(t testing.TB) heterogeneousQueryLawFixture 
 	eventsOK = eventsOK && spec.AddEvent(rows.ArtifactScalarEvent{Kind: rows.ArtifactEventExit, Region: heterogeneousQueryLawID(8)})
 	body, bodyOK := spec.AddBody(rows.ArtifactScalarBody{ID: heterogeneousQueryLawID(9)})
 	bodyOK = bodyOK && spec.AddBodyEntry(body, pointInitial) && spec.AddBodyExit(body, pointOutput)
-	ruleRowsOK := spec.AddRule(rows.ArtifactScalarRule{Role: roleA, Stage: rows.ArtifactRuleStageIssued3, Point: pointOutput, Input: pointInitial, ID: heterogeneousQueryLawID(10)})
-	ruleRowsOK = ruleRowsOK && spec.AddRule(rows.ArtifactScalarRule{Role: roleB, Stage: rows.ArtifactRuleStageIssued3, Point: pointOutput, Input: pointInitial, ID: heterogeneousQueryLawID(11)})
+	ruleRowsOK := spec.AddRule(rows.ArtifactScalarRule{Role: roleA, Stage: programissuance.StageCallDispatch, Point: pointOutput, Input: pointInitial, ID: heterogeneousQueryLawID(10), Native: true})
+	ruleRowsOK = ruleRowsOK && spec.AddRule(rows.ArtifactScalarRule{Role: roleB, Stage: programissuance.StageCallDispatch, Point: pointOutput, Input: pointInitial, ID: heterogeneousQueryLawID(11), Native: true})
 	template, templateOK := rows.NewArtifactScalarTemplate(spec)
 	bootstrap, bootstrapOK := NewProgramBootstrap(heterogeneousQueryLawID(12), heterogeneousQueryLawID(13))
 	cellA, cellAOK := ruleImplementationA.sealedRuleCell()
 	cellB, cellBOK := ruleImplementationB.sealedRuleCell()
-	if !specOK || !roleAOK || !roleBOK || !stageOK || !pointInitialOK || !pointOutputOK || !regionOK || !eventsOK || !bodyOK || !ruleRowsOK || !templateOK || !capabilityAOK || !capabilityBOK || !bootstrapOK || !cellAOK || cellA == nil || !cellBOK || cellB == nil {
-		t.Fatalf("heterogeneous artifact spec=%t roles=%t/%t stage=%t points=%t/%t region=%t events=%t body=%t rules=%t template=%t caps=%t/%t bootstrap=%t cells=%t/%t", specOK, roleAOK, roleBOK, stageOK, pointInitialOK, pointOutputOK, regionOK, eventsOK, bodyOK, ruleRowsOK, templateOK, capabilityAOK, capabilityBOK, bootstrapOK, cellAOK, cellBOK)
+	if !specOK || !roleAOK || !roleBOK || !pointInitialOK || !pointOutputOK || !regionOK || !eventsOK || !bodyOK || !ruleRowsOK || !templateOK || !capabilityAOK || !capabilityBOK || !bootstrapOK || !cellAOK || cellA == nil || !cellBOK || cellB == nil {
+		t.Fatalf("heterogeneous artifact spec=%t roles=%t/%t points=%t/%t region=%t events=%t body=%t rules=%t template=%t caps=%t/%t bootstrap=%t cells=%t/%t", specOK, roleAOK, roleBOK, pointInitialOK, pointOutputOK, regionOK, eventsOK, bodyOK, ruleRowsOK, templateOK, capabilityAOK, capabilityBOK, bootstrapOK, cellAOK, cellBOK)
 	}
 	mount := MountedProgramArtifact{Template: template, Roles: []MountedProgramRole{{Scalar: roleA, Capability: capabilityA}, {Scalar: roleB, Capability: capabilityB}}, Module: mountID}
 	queryID, observationID := heterogeneousQueryLawID(14), heterogeneousQueryLawID(15)
-	queryAdmission, queryAdmissionOK := NewHeterogeneousQueryAdmission(implementation, queryID, mountID, pointOutput)
-	observationAdmission, observationAdmissionOK := NewHeterogeneousObservationAdmission(implementation, observationID, capabilityA, mountID, pointOutput, heterogeneousQueryLawID(10))
+	contexts := explicitTestContextDirectory(t, heterogeneousQueryLawID(12), []identity.ContentID{mountID}, heterogeneousQueryLawID(16), heterogeneousQueryLawID(17))
+	queryAdmission, queryAdmissionOK := NewHeterogeneousQueryAdmission(implementation, queryID, mountID, pointOutput, explicitTestContext(t, contexts, mountID))
+	observationAdmission, observationAdmissionOK := NewHeterogeneousObservationAdmission(implementation, observationID, capabilityA, mountID, pointOutput, heterogeneousQueryLawID(10), explicitTestContext(t, contexts, mountID))
 	if !queryAdmissionOK || !observationAdmissionOK {
 		t.Fatal("heterogeneous admissions")
 	}
 	program, refusal, constructed := ConstructProgram(ProgramDeclaration{
 		Binding: binding, Mounts: []MountedProgramArtifact{mount}, Bootstrap: bootstrap,
+		Contexts: contexts,
 		Admission: MountedProgramAdmission{
 			Mounted: []MountedRuleAdmission{
 				{Capability: capabilityA, Mount: mountID, Point: pointOutput, Occurrence: heterogeneousQueryLawID(10)},
@@ -285,6 +287,10 @@ func newHeterogeneousQueryLawFixture(t testing.TB) heterogeneousQueryLawFixture 
 	queryHandle, queryHandleOK := program.Query(queryID)
 	if !queryHandleOK {
 		t.Fatal("heterogeneous query handle")
+	}
+	contextRow, contextOK := program.contexts.ContextAt(0)
+	if !contextOK || queryHandle.ContextID() != contextRow.ID() {
+		t.Fatalf("heterogeneous query context=%v want=%v", queryHandle.ContextID(), contextRow.ID())
 	}
 	return heterogeneousQueryLawFixture{solver: solver, query: queryHandle, observation: observationAdmission, queryID: queryID, observationID: observationID, implementation: implementation, program: program, freezeRuns: freezeRuns, exactVisits: exactVisits}
 }

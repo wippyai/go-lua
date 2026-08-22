@@ -30,6 +30,23 @@ func cacheIngressID(row CacheIngress) identity.ContentID {
 		"analysis/schema/module-composition/cache-ingress/v1",
 		idPart(row.link), idPart(row.importID), idPart(row.requestID), idPart(row.sourceModuleKey), idPart(row.targetModuleKey),
 		idPart(row.fromRootID), idPart(row.toRootID), idPart(row.actorID), idPart(row.representativeInstanceID),
+		idPart(row.fromContextID), idPart(row.toContextID),
+	)
+	return id
+}
+
+func moduleCallTransitionID(row ModuleCallTransition) identity.ContentID {
+	if !row.link.Available() || !row.cacheIngressID.Available() || !row.sourceModuleKey.Available() || !row.sourcePointID.Available() ||
+		!row.artifactID.Available() || !row.programID.Available() || !row.importID.Available() ||
+		!row.callID.Available() || !row.generationID.Available() || !row.transitionID.Available() || !row.fromContextID.Available() ||
+		!row.toContextID.Available() {
+		return identity.ContentID{}
+	}
+	id, _ := identity.DeriveContentID(
+		"analysis/schema/module-composition/module-call-transition/v2",
+		idPart(row.link), idPart(row.cacheIngressID), idPart(row.sourceModuleKey),
+		idPart(row.sourcePointID), idPart(row.artifactID), idPart(row.programID), idPart(row.importID), idPart(row.callID),
+		idPart(row.generationID), idPart(row.transitionID), idPart(row.fromContextID), idPart(row.toContextID),
 	)
 	return id
 }
@@ -58,6 +75,35 @@ func initTerminalID(row InitTerminal) identity.ContentID {
 	return id
 }
 
+func moduleExportCallableOriginKeyID(transitionID, allocationID identity.ContentID) identity.ContentID {
+	if !transitionID.Available() || !allocationID.Available() {
+		return identity.ContentID{}
+	}
+	id, _ := identity.DeriveContentID(
+		"analysis/schema/module-composition/module-export-callable-origin-key/v1",
+		idPart(transitionID), idPart(allocationID),
+	)
+	return id
+}
+
+func moduleExportCallableOriginID(row ModuleExportCallableOrigin) identity.ContentID {
+	if !row.link.Available() || !row.transitionID.Available() || !row.fromContextID.Available() || !row.toContextID.Available() ||
+		!row.generationID.Available() || !row.outcomeID.Available() || !row.entryID.Available() || !row.exportID.Available() ||
+		!row.functionID.Available() || !row.allocationID.Available() || !row.bodyID.Available() || !row.bodyContextID.Available() ||
+		!row.formalID.Available() || !row.moduleKey.Available() || !row.artifactID.Available() || !row.programID.Available() || !row.kind.valid() {
+		return identity.ContentID{}
+	}
+	id, _ := identity.DeriveContentID(
+		"analysis/schema/module-composition/module-export-callable-origin/v1",
+		idPart(row.link), idPart(row.transitionID), idPart(row.fromContextID), idPart(row.toContextID),
+		idPart(row.generationID), idPart(row.outcomeID), idPart(row.entryID), idPart(row.exportID),
+		idPart(row.functionID), idPart(row.allocationID), idPart(row.bodyID), idPart(row.bodyContextID),
+		idPart(row.formalID), idPart(row.moduleKey), idPart(row.artifactID), idPart(row.programID),
+		kindPartModuleExportCallableOrigin(row.kind),
+	)
+	return id
+}
+
 func idPart(id identity.ContentID) []byte { return id[:] }
 
 func keyPart(key uint32) []byte {
@@ -72,4 +118,8 @@ func ordinalPart(ordinal uint32) []byte {
 	var part [4]byte
 	binary.BigEndian.PutUint32(part[:], ordinal)
 	return part[:]
+}
+
+func kindPartModuleExportCallableOrigin(kind ModuleExportCallableOriginKind) []byte {
+	return []byte{byte(kind)}
 }

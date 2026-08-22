@@ -124,7 +124,7 @@ func TestRuntimeSealsOnePublicationPlanForEveryEpoch(t *testing.T) {
 	if plan.binding == nil || !plan.binding.Sealed() || !plan.queryWrite.Available() || !plan.obsWrite.Available() || !plan.pointWrite.Available() {
 		t.Fatal("sealed plan lost its column writes")
 	}
-	if len(plan.queryKeys) == 0 || !plan.pointDenominator.Available() || len(plan.pointMembers) == 0 {
+	if len(plan.queryKeys) == 0 || !plan.pointDenominator.Available() || len(plan.pointKeys) == 0 {
 		t.Fatal("sealed plan lost its key universes")
 	}
 	epoch, epochOK := newRuntimeEpoch(solver.runtime, solver.relation, context.Background())

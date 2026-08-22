@@ -5,7 +5,6 @@ import (
 	"testing"
 
 	"github.com/wippyai/go-lua/analysis/program/target/vocabulary"
-	"github.com/wippyai/go-lua/domain/heap"
 	"github.com/wippyai/go-lua/domain/placement"
 )
 
@@ -13,8 +12,10 @@ var (
 	formalSelectorRangeResult    formalSelectorRange
 	formalRouteBenchmarkResult   route
 	formalRouteBenchmarkOK       bool
-	formalRouteSealBenchmarkPlan routePlan
-	formalRouteSealBenchmarkOK   bool
+	formalDenseSealBenchmarkPlan routePlan
+	formalDenseSealBenchmarkOK   bool
+	formalPlannerBenchmarkPlan   routePlan
+	formalPlannerBenchmarkOK     bool
 	formalObservationBufferLen   int
 	formalObservationBufferOK    bool
 )
@@ -29,7 +30,7 @@ func TestFormalObservationBufferSelection(t *testing.T) {
 	}{
 		{name: "empty-inline", count: 0, inline: true, wantOK: true, wantLength: 0},
 		{name: "common-inline", count: 8, inline: true, wantOK: true, wantLength: 8},
-		{name: "wide-fallback", count: 9, inline: false, wantOK: true, wantLength: 9},
+		{name: "wide-overflow", count: 9, inline: false, wantOK: true, wantLength: 9},
 		{name: "negative-rejected", count: -1, wantOK: false},
 	} {
 		t.Run(test.name, func(t *testing.T) {
@@ -45,7 +46,7 @@ func TestFormalObservationBufferSelection(t *testing.T) {
 				t.Fatalf("inline buffer capacity = %d, want %d", cap(observations), formalObservationInlineWidth)
 			}
 			if !test.inline && cap(observations) < test.count {
-				t.Fatalf("fallback buffer capacity = %d, want at least %d", cap(observations), test.count)
+				t.Fatalf("overflow buffer capacity = %d, want at least %d", cap(observations), test.count)
 			}
 			if test.count > 0 {
 				observations[0].valid = true
@@ -100,11 +101,17 @@ func BenchmarkFormalRouteLookup(b *testing.B) {
 	for _, width := range []int{1, 16, 128, 1024, 16384} {
 		width := width
 		b.Run(strconv.Itoa(width), func(b *testing.B) {
-			plan := routePlan{routes: make([]route, width)}
-			for index := range plan.routes {
-				plan.routes[index].tag = routeTag(uint64(index+1)<<routeTagShift | 1)
+			var plan routePlan
+			for index := 0; index < width; index++ {
+				if !plan.appendRoute(route{tag: routeTag(uint64(index+1)<<routeTagShift | 1)}) {
+					b.Fatalf("append route %d", index)
+				}
 			}
-			tag := plan.routes[width/2].tag
+			selected, selectedOK := plan.routeAt(width / 2)
+			if !selectedOK {
+				b.Fatal("lookup fixture route")
+			}
+			tag := selected.tag
 			b.ReportAllocs()
 			b.ResetTimer()
 			for index := 0; index < b.N; index++ {
@@ -114,36 +121,72 @@ func BenchmarkFormalRouteLookup(b *testing.B) {
 	}
 }
 
-// BenchmarkFormalRoutePlanSeal measures the hot formal demand reduction at
-// the requested widths. The input map is deliberately populated in reverse
-// dense order; seal must emit Heap order without sorting the R demanded roots.
-// A single large owner-fenced schema keeps fixture construction outside the
-// timed region while exposing the linear dense walk for every sub-benchmark.
+// BenchmarkFormalRoutePlanSeal exercises the planner's invocation-local
+// dense demand set and authenticated Value/Pack all-root widening. The
+// all-root case is included because an open Value or Pack runtime tail must
+// not allocate one route per Heap root.
 func BenchmarkFormalRoutePlanSeal(b *testing.B) {
 	schema := routePlanFixtureSchema(b, 1024)
 	keys := routePlanAllocationKeys(b, schema)
 	for _, width := range []int{1, 16, 128, 1024} {
 		width := width
 		if width > len(keys) {
-			b.Fatalf("route-plan fixture roots=%d, want at least %d", len(keys), width)
+			b.Fatalf("dense route-plan fixture roots=%d, want at least %d", len(keys), width)
 		}
 		b.Run(strconv.Itoa(width), func(b *testing.B) {
-			demands := make(map[heap.Key]routeDemand, width)
+			var demands denseDemandScratch
 			for index := width - 1; index >= 0; index-- {
 				escape := placement.Retain
 				if index%2 != 0 {
 					escape = placement.Send
 				}
-				demands[keys[index]] = routeDemand{escape: escape, unknown: index%7 == 0}
+				if !planAddDenseDemand(schema, keys[index], escape, index%7 == 0, &demands) {
+					b.Fatalf("dense demand %d", index)
+				}
 			}
 			b.ReportAllocs()
 			b.ResetTimer()
 			for index := 0; index < b.N; index++ {
-				formalRouteSealBenchmarkPlan, formalRouteSealBenchmarkOK = (&routePlan{}).seal(schema, demands)
+				formalDenseSealBenchmarkPlan, formalDenseSealBenchmarkOK = (&routePlan{}).seal(schema, &demands)
 			}
-			if !formalRouteSealBenchmarkOK || len(formalRouteSealBenchmarkPlan.routes) != width {
-				b.Fatalf("sealed route plan = %t/%d, want %d", formalRouteSealBenchmarkOK, len(formalRouteSealBenchmarkPlan.routes), width)
+			if !formalDenseSealBenchmarkOK || formalDenseSealBenchmarkPlan.routeCount() != width {
+				b.Fatalf("dense sealed route plan = %t/%d, want %d", formalDenseSealBenchmarkOK, formalDenseSealBenchmarkPlan.routeCount(), width)
 			}
 		})
+	}
+	{
+		var demands denseDemandScratch
+		if !addUnknownAllDense(schema, &demands) {
+			b.Fatal("dense all-root demand")
+		}
+		b.Run("all-root", func(b *testing.B) {
+			b.ReportAllocs()
+			b.ResetTimer()
+			for index := 0; index < b.N; index++ {
+				formalDenseSealBenchmarkPlan, formalDenseSealBenchmarkOK = (&routePlan{}).seal(schema, &demands)
+			}
+			if !formalDenseSealBenchmarkOK || formalDenseSealBenchmarkPlan.routeCount() != len(keys) || !formalDenseSealBenchmarkPlan.allUnknown {
+				b.Fatalf("dense all-root route plan = %t/%d/%t, want %d/true", formalDenseSealBenchmarkOK, formalDenseSealBenchmarkPlan.routeCount(), formalDenseSealBenchmarkPlan.allUnknown, len(keys))
+			}
+		})
+	}
+}
+
+// BenchmarkFormalPlannerOpaqueDispatch covers the authenticated opaque Call
+// boundary. The opaque arm has no Target/formal authority, so this benchmark
+// measures the allocation-free no-route reduction after owner-fenced
+// Call/Pack/Value checks. Fixture sealing is outside the timed region.
+func BenchmarkFormalPlannerOpaqueDispatch(b *testing.B) {
+	fixture := newOpaqueDispatchLawFixture(b, "formal-planner-benchmark")
+	callFact := mustOpenDispatchValue(b, fixture.calls, fixture.key)
+	b.ReportAllocs()
+	b.ResetTimer()
+	for index := 0; index < b.N; index++ {
+		formalPlannerBenchmarkPlan, formalPlannerBenchmarkOK = planFor(
+			fixture.packs, fixture.calls, fixture.placement, fixture.values,
+			fixture.contract, fixture.mounted, callFact, fixture.observations)
+	}
+	if !formalPlannerBenchmarkOK || formalPlannerBenchmarkPlan.routeCount() != 0 {
+		b.Fatalf("planner result = %t/%d", formalPlannerBenchmarkOK, formalPlannerBenchmarkPlan.routeCount())
 	}
 }

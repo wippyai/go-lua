@@ -236,34 +236,13 @@ func (rule *HotRule) fold(frame engine.Frame[placementdomain.Placement, effectfa
 		return engine.NoSelection(frame, placementSelection)
 	}
 	return engine.Routed(frame, placementSelection, func(tag routeTag, cells engine.OrderedCells[placementdomain.Placement]) (placementdomain.Placement, bool) {
-		var route plannedRoute
-		found := false
-		for index := 0; index < routes.len(); index++ {
-			candidate, candidateOK := routes.at(index)
-			if !candidateOK {
-				return placementdomain.Bottom, false
-			}
-			if candidate.tag == tag {
-				route, found = candidate, true
-				break
-			}
-		}
+		route, found := routes.find(tag)
 		if !found || cells.Count() != 1 {
 			return placementdomain.Bottom, false
 		}
 		current, present, available := cells.At(0)
-		if !available {
-			return placementdomain.Bottom, false
-		}
-		if !placementdomain.Equal(current, current) {
-			// A malformed/JIT Placement is not an analysis fact.  It cannot be
-			// converted to Unknown by the displacement helper.
-			return placementdomain.Bottom, false
-		}
-		if !present && !placementdomain.Equal(current, placementdomain.Bottom) {
-			// The owner supplies its exact Factor Default with a sparse cell.  A
-			// missing row with any other value is an incomplete join, not a seed
-			// that this rule may replace with Bottom.
+		current, currentOK := placementdomain.AuthenticateFactorCell(current, present, available)
+		if !currentOK {
 			return placementdomain.Bottom, false
 		}
 		return applyRoute(route, current)

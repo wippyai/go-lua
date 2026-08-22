@@ -28,6 +28,11 @@ type typeColumns struct {
 	// closed reports that every Recursive placeholder reachable from the node
 	// already has a body.
 	closed bool
+	// declarationsClosed reports that every Generic declaration reachable
+	// from the node already has a body. It stays separate from closed so
+	// IsGraphClosed retains its recursive-placeholder contract while caches
+	// can require the complete immutable-graph proof.
+	declarationsClosed bool
 }
 
 // merge folds a subtree's own column into this one. bound drops the free
@@ -39,6 +44,7 @@ func (c *typeColumns) merge(other typeColumns, bound bool) {
 	c.containsInstantiated = c.containsInstantiated || other.containsInstantiated
 	c.containsGeneric = c.containsGeneric || other.containsGeneric
 	c.closed = c.closed && other.closed
+	c.declarationsClosed = c.declarationsClosed && other.declarationsClosed
 	if !bound && other.containsFreeFormal {
 		c.containsFreeFormal = true
 	}
@@ -78,6 +84,7 @@ func (c *typeColumns) includeConstruction(t Type, bound bool) {
 		containsInstantiated: containsInstantiated,
 		containsGeneric:      cachedContainsGeneric(t),
 		closed:               true,
+		declarationsClosed:   true,
 	}, bound)
 }
 
@@ -100,16 +107,17 @@ func knownContainsOpenRecursive(t Type) bool {
 func columnsOf(t Type) typeColumns {
 	t = unwrapAnnotatedOrNil(t)
 	if t == nil {
-		return typeColumns{closed: true}
+		return typeColumns{closed: true, declarationsClosed: true}
 	}
 	if recursive, ok := t.(*Recursive); ok {
 		if recursive == nil {
 			// A typed nil placeholder reaches no body, so nothing closes below it.
 			return typeColumns{}
 		}
-	} else if !knownContainsRecursive(t) {
-		// No reachable placeholder: the construction fold is the answer.
-		columns := typeColumns{closed: true}
+	} else if !knownContainsRecursive(t) && !knownContainsGeneric(t) {
+		// No reachable mutable declaration: the construction fold is the
+		// complete answer.
+		columns := typeColumns{closed: true, declarationsClosed: true}
 		columns.includeIntrinsic(t, false)
 		columns.includeConstruction(t, false)
 		return columns
@@ -137,8 +145,7 @@ type columnWork struct {
 // SetBody can still introduce a marker, and a Generic body can even introduce
 // the first recursive placeholder, which would falsify closed as well.
 func deriveColumns(root Type) (typeColumns, bool) {
-	columns := typeColumns{closed: true}
-	declarationsClosed := true
+	columns := typeColumns{closed: true, declarationsClosed: true}
 	// One visited set per binder scope: a node reached both free and bound
 	// contributes different formal containment and must be visited in each.
 	seen := [2]map[Type]bool{0: make(map[Type]bool)}
@@ -182,10 +189,10 @@ func deriveColumns(root Type) (typeColumns, bool) {
 		// decision about descending.
 		columns.includeIntrinsic(current, item.bound)
 		if declarationOpen(current) {
-			declarationsClosed = false
+			columns.declarationsClosed = false
 		}
 
-		if !knownContainsRecursive(current) {
+		if !knownContainsRecursive(current) && !knownContainsGeneric(current) {
 			columns.includeConstruction(current, item.bound)
 			continue
 		}
@@ -206,7 +213,7 @@ func deriveColumns(root Type) (typeColumns, bool) {
 		})
 	}
 
-	return columns, columns.closed && declarationsClosed
+	return columns, columns.closed && columns.declarationsClosed
 }
 
 // declarationOpen reports a generic declaration still awaiting SetBody. Such a
@@ -228,7 +235,7 @@ func publishedColumns(t Type) *typeColumns {
 	if recursive, ok := t.(*Recursive); ok {
 		return recursive.columnsMemo.Load()
 	}
-	return columnProperties(t).loadColumns()
+	return nodeProperties(t).loadColumns()
 }
 
 func publishColumns(t Type, columns typeColumns) {
@@ -236,13 +243,13 @@ func publishColumns(t Type, columns typeColumns) {
 		recursive.columnsMemo.Store(&columns)
 		return
 	}
-	columnProperties(t).storeColumns(&columns)
+	nodeProperties(t).storeColumns(&columns)
 }
 
-// columnProperties returns the atomic immutable-memo slot each product node
-// carries. The node structure itself is immutable once built; a memo record is
-// published whole and never mutated afterwards.
-func columnProperties(t Type) *typeProperties {
+// nodeProperties is the one product-node inventory for construction facts and
+// immutable derived columns. Consumers keep only their semantic exceptions;
+// they do not repeat this dispatch.
+func nodeProperties(t Type) *typeProperties {
 	switch n := t.(type) {
 	case *Optional:
 		return &n.typeProperties

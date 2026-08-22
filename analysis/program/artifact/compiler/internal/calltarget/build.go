@@ -93,3 +93,31 @@ func Build(input Input) ([]calltarget.Target, programconstruction.Fault) {
 	}
 	return rows, programconstruction.Fault{}
 }
+
+// ClosureCaptureProofs issues the exact positive-capture conclusion adjacent
+// to target construction. The generic issuance machine consumes only these
+// identities; it never scans allocation, target, body, or capture rows.
+func ClosureCaptureProofs(input Input, targets []calltarget.Target) ([]identity.ContentID, programconstruction.Fault) {
+	if input.Bodies == nil {
+		return nil, programconstruction.New(programcatalog.CallTarget(), programconstruction.IssueCallTargetUnavailable, -1, -1)
+	}
+	proofs := make([]identity.ContentID, 0, len(targets))
+	for index, target := range targets {
+		boundary, boundaryOK := input.Bodies.FunctionBoundaryForBody(target.BodyID())
+		if !target.Available() || !boundaryOK {
+			return nil, programconstruction.New(programcatalog.CallTarget(), programconstruction.IssueCallTargetUnavailable, index, -1)
+		}
+		if boundary.CaptureCount() == 0 {
+			continue
+		}
+		for captureIndex := 0; captureIndex < boundary.CaptureCount(); captureIndex++ {
+			capture, captureOK := input.Bodies.FunctionCaptureAt(boundary, captureIndex)
+			position, positionOK := capture.Position()
+			if !captureOK || !positionOK || position != captureIndex || capture.InnerBodyID() != boundary.BodyID() {
+				return nil, programconstruction.New(programcatalog.CallTarget(), programconstruction.IssueCallTargetUnavailable, index, captureIndex)
+			}
+		}
+		proofs = append(proofs, target.AllocationID())
+	}
+	return proofs, programconstruction.Fault{}
+}

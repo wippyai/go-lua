@@ -91,16 +91,18 @@ func (compiler *compiler) appendOccurrencePaths(kind programschema.OccurrenceKin
 
 func (compiler *compiler) appendOccurrencePathsPayload(kind programschema.OccurrenceKind, id, body identity.ContentID, first, second causal.SitePointPaths, inputs []identity.ContentID, code uint64, literalFamily keyspace.Family, literal keyspace.LiteralValue, literalOK bool) bool {
 	points, ok := compiler.pointPathScratch(first, second)
-	return ok && compiler.appendOccurrencePayloadCanonical(kind, id, body, points, inputs, code, literalFamily, literal, literalOK)
+	entry, entryOK := copyOptionalPointPaths(first)
+	finish, finishOK := copyOptionalPointPaths(second)
+	return ok && entryOK && finishOK && compiler.appendOccurrencePayloadCanonical(kind, id, body, points, inputs, code, literalFamily, literal, literalOK, entry, finish)
 }
 
 func (compiler *compiler) appendOccurrencePayload(kind programschema.OccurrenceKind, id, body identity.ContentID, points, inputs []identity.ContentID, code uint64, literalFamily keyspace.Family, literal keyspace.LiteralValue, literalOK bool) bool {
 	points = canonicalPoints(points)
-	return compiler.appendOccurrencePayloadCanonical(kind, id, body, points, inputs, code, literalFamily, literal, literalOK)
+	return compiler.appendOccurrencePayloadCanonical(kind, id, body, points, inputs, code, literalFamily, literal, literalOK, nil, points)
 }
 
-func (compiler *compiler) appendOccurrencePayloadCanonical(kind programschema.OccurrenceKind, id, body identity.ContentID, points, inputs []identity.ContentID, code uint64, literalFamily keyspace.Family, literal keyspace.LiteralValue, literalOK bool) bool {
-	if compiler == nil || !fitsUint32(len(compiler.publication.Occurrences)) || !fitsUint32(len(compiler.publication.OccurrencePoints)) || !fitsUint32(len(compiler.publication.OccurrenceInputs)) {
+func (compiler *compiler) appendOccurrencePayloadCanonical(kind programschema.OccurrenceKind, id, body identity.ContentID, points, inputs []identity.ContentID, code uint64, literalFamily keyspace.Family, literal keyspace.LiteralValue, literalOK bool, entry, finish []identity.ContentID) bool {
+	if compiler == nil || compiler.issuanceRows == nil || !fitsUint32(len(compiler.publication.Occurrences)) || !fitsUint32(len(compiler.publication.OccurrencePoints)) || !fitsUint32(len(compiler.publication.OccurrenceInputs)) {
 		return false
 	}
 	if !fitsUint32(len(points)) || !fitsUint32(len(inputs)) ||
@@ -117,6 +119,9 @@ func (compiler *compiler) appendOccurrencePayloadCanonical(kind programschema.Oc
 		if !inputID.Available() {
 			return false
 		}
+	}
+	if !compiler.issuanceRows.AddGeometry(kind, id, entry, finish) {
+		return false
 	}
 	pointOffset, inputOffset := uint32(len(compiler.publication.OccurrencePoints)), uint32(len(compiler.publication.OccurrenceInputs))
 	row, rowOK := programschema.NewOccurrence(kind, id, body, code, pointOffset, uint32(len(points)), inputOffset, uint32(len(inputs)), literalFamily, literal, literalOK)
@@ -141,6 +146,13 @@ func (compiler *compiler) appendOccurrencePayloadCanonical(kind programschema.Oc
 	return true
 }
 
+func copyOptionalPointPaths(paths causal.SitePointPaths) ([]identity.ContentID, bool) {
+	if !paths.Available() {
+		return nil, true
+	}
+	return copyPointPaths(paths)
+}
+
 func copyPointPaths(paths causal.SitePointPaths) ([]identity.ContentID, bool) {
 	if !paths.Available() {
 		return nil, false
@@ -156,39 +168,16 @@ func copyPointPaths(paths causal.SitePointPaths) ([]identity.ContentID, bool) {
 	return points, true
 }
 
-func (compiler *compiler) recordOccurrencePaths(kind programschema.OccurrenceKind, id identity.ContentID, entry, finish causal.SitePointPaths) bool {
-	if compiler == nil || compiler.occurrenceSpans == nil || !kind.Valid() || !id.Available() || finish.Count() == 0 {
-		return false
-	}
-	key := occurrenceLookup{kind: kind, id: id}
-	if _, duplicate := compiler.occurrenceSpans[key]; duplicate {
-		return false
-	}
-	entryPoints, entryOK := []identity.ContentID(nil), true
-	if entry.Available() {
-		entryPoints, entryOK = copyPointPaths(entry)
-	}
-	finishPoints, finishOK := copyPointPaths(finish)
-	if !entryOK || !finishOK {
-		return false
-	}
-	// Causal seals each Site→Point range as an injective canonical sequence.
-	// These exact slices become the occurrence geometry; copying them again
-	// would create a second temporary representation without adding a law.
-	compiler.occurrenceSpans[key] = occurrenceSpanGeometry{entry: entryPoints, finish: finishPoints}
-	return true
-}
-
 func (compiler *compiler) recordOccurrencePredecessorPaths(kind programschema.OccurrenceKind, id, route identity.ContentID, finish causal.SitePointPaths) bool {
 	finishPoints, finishOK := copyPointPaths(finish)
 	return finishOK && compiler.recordOccurrencePredecessor(kind, id, route, finishPoints)
 }
 
-func (compiler *compiler) appendRuleOccurrence(key, writes schema.Key, occurrence uint32, point, input identity.ContentID, stage programschema.RuleStage, inputKind programschema.RuleInputKind, route identity.ContentID) bool {
+func (compiler *compiler) appendRuleOccurrence(key, writes schema.Key, occurrence uint32, point, input identity.ContentID, stage, inputSpec schema.Key, route identity.ContentID, native bool) bool {
 	if compiler == nil || !fitsUint32(len(compiler.publication.RuleOccurrences)) {
 		return false
 	}
-	row, rowOK := programschema.NewRuleOccurrence(key, writes, occurrence, point, input, stage, inputKind, route)
+	row, rowOK := programschema.NewRuleOccurrence(key, writes, occurrence, point, input, stage, inputSpec, route, native)
 	if !rowOK {
 		return false
 	}
@@ -196,54 +185,26 @@ func (compiler *compiler) appendRuleOccurrence(key, writes schema.Key, occurrenc
 	return true
 }
 
-func (compiler *compiler) replaceRuleOccurrenceInput(index int, input identity.ContentID) bool {
-	if compiler == nil || index < 0 || index >= len(compiler.publication.RuleOccurrences) || !input.Available() {
+func (compiler *compiler) recordOccurrencePredecessor(kind programschema.OccurrenceKind, id, route identity.ContentID, finish []identity.ContentID) bool {
+	if compiler == nil || compiler.issuanceRows == nil || !kind.Valid() || !id.Available() || !route.Available() || len(finish) == 0 {
 		return false
 	}
-	row := compiler.publication.RuleOccurrences[index]
-	occurrence, occurrenceOK := row.Occurrence()
-	if !occurrenceOK {
+	routeIndex, found := compiler.environmentByRoute[route]
+	edgeOrdinal, unique := routeIndex.uniqueAt(len(compiler.environment))
+	if !found || !unique {
 		return false
 	}
-	replaced, replacedOK := programschema.NewRuleOccurrence(row.Key(), row.Writes(), occurrence, row.PointID(), input, row.Stage(), row.InputKind(), func() identity.ContentID {
-		route, _ := row.PredecessorRouteID()
-		return route
-	}())
-	if !replacedOK {
+	edge := compiler.environment[edgeOrdinal]
+	expectedID := environmentRouteOccurrenceID(compiler.input.ContentID(), route, edge.arm)
+	if !edge.Available() || edge.route != route || edge.id != expectedID || !edge.to.Available() {
 		return false
 	}
-	compiler.publication.RuleOccurrences[index] = replaced
-	return true
-}
-
-func (compiler *compiler) recordOccurrenceSpan(kind programschema.OccurrenceKind, id identity.ContentID, entry, finish []identity.ContentID) bool {
-	if compiler == nil || compiler.occurrenceSpans == nil || !kind.Valid() || !id.Available() || len(finish) == 0 {
-		return false
-	}
-	key := occurrenceLookup{kind: kind, id: id}
-	if _, duplicate := compiler.occurrenceSpans[key]; duplicate {
-		return false
-	}
-	entry = canonicalPoints(entry)
-	finish = canonicalPoints(finish)
-	for _, point := range append(append([]identity.ContentID(nil), entry...), finish...) {
-		if !point.Available() {
-			return false
+	for _, point := range finish {
+		if point == edge.to {
+			return compiler.issuanceRows.AddPredecessor(id, route, edge.to)
 		}
 	}
-	compiler.occurrenceSpans[key] = occurrenceSpanGeometry{entry: append([]identity.ContentID(nil), entry...), finish: append([]identity.ContentID(nil), finish...)}
-	return true
-}
-
-func (compiler *compiler) recordOccurrencePredecessor(kind programschema.OccurrenceKind, id, route identity.ContentID, finish []identity.ContentID) bool {
-	if !compiler.recordOccurrenceSpan(kind, id, nil, finish) || !route.Available() {
-		return false
-	}
-	key := occurrenceLookup{kind: kind, id: id}
-	geometry := compiler.occurrenceSpans[key]
-	geometry.route = route
-	compiler.occurrenceSpans[key] = geometry
-	return true
+	return false
 }
 
 func canonicalPoints(points []identity.ContentID) []identity.ContentID {

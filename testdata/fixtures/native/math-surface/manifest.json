@@ -1,0 +1,15 @@
+{
+  "description": "The whole declared math surface grouped by what each member answers, including the two subtype-sensitive members: tointeger answers nothing for a value with no integer representation and type answers nothing for a value that is not a number, so both nil arms are read.",
+  "packages": [
+    "math"
+  ],
+  "files": [
+    "main.lua"
+  ],
+  "check": {
+    "errors": 0
+  },
+  "run": {
+    "skip": "declaration-surface fixture"
+  }
+}

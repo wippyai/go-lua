@@ -14,6 +14,7 @@ import (
 	linkproject "github.com/wippyai/go-lua/analysis/program/link/project"
 	"github.com/wippyai/go-lua/analysis/program/target/compiler"
 	"github.com/wippyai/go-lua/analysis/program/target/declaration"
+	"github.com/wippyai/go-lua/analysis/schema/programmount"
 	"github.com/wippyai/go-lua/domain/composite"
 	heapdomain "github.com/wippyai/go-lua/domain/heap"
 	allocationcatalog "github.com/wippyai/go-lua/domain/heap/allocation/catalog"
@@ -115,8 +116,8 @@ func ingressHotSchema(t testing.TB) (*engine.Schema, *heapowner.SchemaFragment, 
 type ingressFixtureMounts struct {
 	linked      *link.Link
 	compilation composite.Compilation
-	heap        []heapdomain.ArtifactMount
-	value       []valuedomain.ArtifactMount
+	heap        []programmount.MountedArtifact
+	value       []programmount.MountedArtifact
 }
 
 func ingressFixture(t testing.TB) (heapdomain.Schema, *valuedomain.Schema, ingressFixtureMounts) {
@@ -140,12 +141,12 @@ func ingressFixture(t testing.TB) (heapdomain.Schema, *valuedomain.Schema, ingre
 		t.Fatal("ingress artifact receipt")
 	}
 	projectMounts := linked.Project().Mounts()
-	mounts := ingressFixtureMounts{linked: linked, compilation: compilation, heap: make([]heapdomain.ArtifactMount, projectMounts.Count()), value: make([]valuedomain.ArtifactMount, projectMounts.Count())}
+	mounts := ingressFixtureMounts{linked: linked, compilation: compilation, heap: make([]programmount.MountedArtifact, projectMounts.Count()), value: make([]programmount.MountedArtifact, projectMounts.Count())}
 	for index := 0; index < projectMounts.Count(); index++ {
 		shard, shardOK := projectMounts.At(index)
 		program, programOK := projectMounts.Program(shard)
 		module, moduleOK := linked.Project().ModuleKey(shard)
-		programID, programIDOK := projectMounts.ProgramID(shard)
+		_, programIDOK := projectMounts.ProgramID(shard)
 		if !shardOK || !programOK || program == nil || !moduleOK || !programIDOK {
 			t.Fatal("ingress artifact mount")
 		}
@@ -154,8 +155,8 @@ func ingressFixture(t testing.TB) (heapdomain.Schema, *valuedomain.Schema, ingre
 			t.Fatalf("ingress artifact compile: %v", failure)
 		}
 		var heapOK, valueOK bool
-		mounts.heap[index], heapOK = heapdomain.NewArtifactMount(snapshottest.MustLower(t, artifact), module, programID)
-		mounts.value[index], valueOK = valuedomain.NewArtifactMount(snapshottest.MustLower(t, artifact), module, programID)
+		mounts.heap[index], heapOK = programmount.MountedArtifactFromSnapshot(snapshottest.MustLower(t, artifact), module)
+		mounts.value[index], valueOK = programmount.MountedArtifactFromSnapshot(snapshottest.MustLower(t, artifact), module)
 		if !heapOK || !valueOK {
 			t.Fatal("ingress artifact mount receipt")
 		}

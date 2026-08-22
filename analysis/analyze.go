@@ -5,6 +5,7 @@ import (
 	"runtime"
 	"sync"
 
+	analysiscatalog "github.com/wippyai/go-lua/analysis/catalog"
 	anadiag "github.com/wippyai/go-lua/analysis/diagnostic"
 	"github.com/wippyai/go-lua/analysis/engine"
 	"github.com/wippyai/go-lua/analysis/identity"
@@ -69,27 +70,31 @@ type compiledState struct {
 	queryPublications []composite.QueryPublication
 	sourceID          identity.ContentID
 	composition       snapshot.Snapshot
-	selectColumn      snapshot.Axis[identity.ContentID, channelselect.CaseFact]
-	selectSites       []anadiag.SelectSite
-	selectHandlers    []selectapply.Handler
-	vocabulary        structure.Table
-	declarations      schemadiag.Table
-	collections       composite.DiagnosticCollections
-	admitted          bool
-	runtimeOnce       sync.Once
-	runtimeOK         bool
-	runtimeDetail     engine.ProgramAssembleRefusal
-	runtimeStage      anadiag.AnalyzeDiagnosticAssembleStage
-	runtimeRule       anadiag.AnalyzeDiagnosticRule
-	ordinaryOnce      sync.Once
-	ordinary          *engine.Solver
-	ordinaryOK        bool
-	lifecycleMu       sync.Mutex
-	lifecycleCond     *sync.Cond
-	leases            uint64
-	closing           bool
-	closed            bool
-	releaseOnce       sync.Once
+	// contextDirectory is copied from Link only after the Link-lifetime
+	// composition prefix has published successfully. Runtime construction then
+	// consumes this exact sealed value; it never rebuilds contexts from Module.
+	contextDirectory executioncontext.Directory
+	selectColumn     snapshot.Axis[identity.ContentID, channelselect.CaseFact]
+	selectSites      []anadiag.SelectSite
+	selectHandlers   []selectapply.Handler
+	vocabulary       structure.Table
+	declarations     schemadiag.Table
+	collections      composite.DiagnosticCollections
+	admitted         bool
+	runtimeOnce      sync.Once
+	runtimeOK        bool
+	runtimeDetail    engine.ProgramAssembleRefusal
+	runtimeStage     anadiag.AnalyzeDiagnosticAssembleStage
+	runtimeRule      anadiag.AnalyzeDiagnosticRule
+	ordinaryOnce     sync.Once
+	ordinary         *engine.Solver
+	ordinaryOK       bool
+	lifecycleMu      sync.Mutex
+	lifecycleCond    *sync.Cond
+	leases           uint64
+	closing          bool
+	closed           bool
+	releaseOnce      sync.Once
 }
 
 // PlacementSchema returns the exact Link-bound authority that encoded this
@@ -216,11 +221,13 @@ func (workspace *Workspace) compileWithDiagnostics(source *link.Link) (*Plan, Co
 		return nil, CompileUnsupported, diagnostics
 	}
 	state.binding = binding
-	if !state.publishComposition(source.Module()) {
+	contextDirectory := source.ContextDirectory()
+	if !state.publishComposition(source.Module(), contextDirectory) {
 		state.release()
 		diagnostics.FailCurrentPhase()
 		return nil, CompileUnsupported, diagnostics
 	}
+	state.contextDirectory = contextDirectory
 	state.admitted = true
 	plan := &Plan{state: state, workspace: workspace}
 	runtime.SetFinalizer(plan, func(value *Plan) { _ = value.Close() })
@@ -369,7 +376,7 @@ func (plan *Plan) solveWithPolicy(ctx context.Context, options engine.SolveDiagn
 		Column:    state.selectColumn,
 		Sites:     state.selectSites,
 		Handlers:  state.selectHandlers,
-	}, state.vocabulary, state.declarations, state.collections)
+	}, state.vocabulary, state.declarations, state.collections, state.contextDirectory)
 	if !detached || projection == nil || projection.Result == nil {
 		diagnostics.Fail(anadiag.AnalyzeDiagnosticReasonDetach)
 		return nil, nil, AnalyzeIncomplete, diagnostics
@@ -428,11 +435,11 @@ func (state *compiledState) buildRuntimeSolver(policy *anadiag.DiagnosticPolicy)
 	if !published || len(publications) != len(state.querySites) {
 		return nil, nil, engine.ProgramSealFailure(runtimeSealPhasePublications), false
 	}
-	observations, observationFailure, observed := anadiag.ValueObservations(state.committed, binding, geometry.BranchObservations, geometry.ConformanceObservations)
+	observations, observationFailure, observed := anadiag.ValueObservations(state.committed, binding, state.contextDirectory, geometry.BranchObservations, geometry.ConformanceObservations)
 	if !observed {
 		return nil, nil, observationFailure, false
 	}
-	effectObservations, effectObserved := binding.EffectPublicationObservations(state.committed, state.mounts)
+	effectObservations, effectObserved := binding.EffectPublicationObservations(state.committed, state.mounts, state.contextDirectory)
 	if !effectObserved {
 		return nil, nil, engine.ObservationSealArguments(), false
 	}
@@ -540,6 +547,7 @@ func (state *compiledState) release() {
 		state.mounts = nil
 		state.geometry = result.Geometry{}
 		state.binding = nil
+		state.contextDirectory = executioncontext.Directory{}
 		state.composition = snapshot.Snapshot{}
 		state.selectColumn = snapshot.Axis[identity.ContentID, channelselect.CaseFact]{}
 		state.selectSites = nil
@@ -610,29 +618,32 @@ func (state *compiledState) assembleCommittedProgram() (*engine.CommittedProgram
 	}
 	inputs := make([]engine.MountedProgramArtifact, 0, len(state.artifacts.mounts))
 	rolesByArtifact := make(map[identity.ContentID][]engine.MountedProgramRole, len(state.artifacts.mounts))
+	factorsByArtifact := make(map[identity.ContentID][]engine.MountedProgramFactor, len(state.artifacts.mounts))
 	for _, mount := range state.artifacts.mounts {
 		if !mount.Available() {
 			return nil, nil, anadiag.AnalyzeDiagnosticAssembleStageMount, anadiag.AnalyzeDiagnosticRuleUnknown, engine.ProgramAssembleRefusal{}, false
 		}
 		artifactID := mount.Snapshot.ArtifactID()
 		roles, have := rolesByArtifact[artifactID]
+		factors := factorsByArtifact[artifactID]
 		if !have {
 			product, productOK := state.artifacts.products[mount.ProgramID]
 			if !productOK {
 				return nil, nil, anadiag.AnalyzeDiagnosticAssembleStageMount, anadiag.AnalyzeDiagnosticRuleUnknown, engine.ProgramAssembleRefusal{}, false
 			}
-			bound, boundOK := mountedProgramRoles(product.Roles, binding)
+			boundRoles, boundFactors, boundOK := mountedProgramBindings(product.Bindings, binding)
 			if !boundOK {
 				return nil, nil, anadiag.AnalyzeDiagnosticAssembleStageMount, anadiag.AnalyzeDiagnosticRuleUnknown, engine.ProgramAssembleRefusal{}, false
 			}
-			roles = bound
+			roles, factors = boundRoles, boundFactors
 			rolesByArtifact[artifactID] = roles
+			factorsByArtifact[artifactID] = factors
 		}
 		product, productOK := state.artifacts.products[mount.ProgramID]
 		if !productOK || product.Template == nil || !product.Template.Available() {
 			return nil, nil, anadiag.AnalyzeDiagnosticAssembleStageMount, anadiag.AnalyzeDiagnosticRuleUnknown, engine.ProgramAssembleRefusal{}, false
 		}
-		inputs = append(inputs, engine.MountedProgramArtifact{Template: product.Template, Roles: roles, Module: mount.ModuleKey})
+		inputs = append(inputs, engine.MountedProgramArtifact{Template: product.Template, Roles: roles, Factors: factors, Module: mount.ModuleKey})
 	}
 	sealed := state.artifacts.mounts
 	sealedOK := len(sealed) != 0
@@ -640,13 +651,17 @@ func (state *compiledState) assembleCommittedProgram() (*engine.CommittedProgram
 	if !sealedOK || rules == nil {
 		return nil, nil, anadiag.AnalyzeDiagnosticAssembleStageBinding, anadiag.AnalyzeDiagnosticRuleUnknown, engine.ProgramAssembleRefusal{}, false
 	}
-	sites, queryOK := composite.SelectedQuerySites(state.compilation, sealed)
+	sites, queryOK := composite.SelectedQuerySites(state.compilation, sealed, state.contextDirectory)
 	if !queryOK {
 		return nil, nil, anadiag.AnalyzeDiagnosticAssembleStageQueryPlan, anadiag.AnalyzeDiagnosticRuleUnknown, engine.ProgramAssembleRefusal{}, false
 	}
 	linkAdmissions, linkOK := rules.LinkAdmissions()
 	if !linkOK {
 		return nil, nil, anadiag.AnalyzeDiagnosticAssembleStageBootstrapRules, anadiag.AnalyzeDiagnosticRuleUnknown, engine.ProgramAssembleRefusal{}, false
+	}
+	mountedPoint, mountedPointOK := rules.MountedPointAdmissions()
+	if !mountedPointOK {
+		return nil, nil, anadiag.AnalyzeDiagnosticAssembleStageArtifactRules, anadiag.AnalyzeDiagnosticRuleUnknown, engine.ProgramAssembleRefusal{}, false
 	}
 	mounted, activations, artifactRule, mountedOK := rules.MountedAdmissions(sealed)
 	if !mountedOK {
@@ -656,17 +671,24 @@ func (state *compiledState) assembleCommittedProgram() (*engine.CommittedProgram
 	if !queriesOK {
 		return nil, nil, anadiag.AnalyzeDiagnosticAssembleStageQueryRows, anadiag.AnalyzeDiagnosticRuleUnknown, engine.ProgramAssembleRefusal{}, false
 	}
+	pointTransitions, pointTransitionsOK := state.pointTransitionAdmissions()
+	if !pointTransitionsOK {
+		return nil, nil, anadiag.AnalyzeDiagnosticAssembleStageCommit, anadiag.AnalyzeDiagnosticRuleUnknown, engine.ProgramAssembleRefusal{}, false
+	}
 	admission := engine.MountedProgramAdmission{
-		Link:       linkAdmissions,
-		Mounted:    mounted,
-		Activation: activations,
-		Queries:    queries,
+		Link:         linkAdmissions,
+		Mounted:      mounted,
+		MountedPoint: mountedPoint,
+		Activation:   activations,
+		Queries:      queries,
 	}
 	program, refusal, committed := engine.ConstructProgram(engine.ProgramDeclaration{
-		Binding:   binding.SchemaBinding(),
-		Mounts:    inputs,
-		Bootstrap: witness,
-		Admission: admission,
+		Binding:          binding.SchemaBinding(),
+		Mounts:           inputs,
+		Bootstrap:        witness,
+		Contexts:         state.contextDirectory,
+		Admission:        admission,
+		PointTransitions: pointTransitions,
 	})
 	if !committed {
 		if refusal.Lowered() {
@@ -694,6 +716,50 @@ func (state *compiledState) assembleCommittedProgram() (*engine.CommittedProgram
 		return nil, nil, anadiag.AnalyzeDiagnosticAssembleStageCommit, anadiag.AnalyzeDiagnosticRuleUnknown, refusal, false
 	}
 	return program, sites, anadiag.AnalyzeDiagnosticAssembleStageCommit, anadiag.AnalyzeDiagnosticRuleUnknown, engine.ProgramAssembleRefusal{}, true
+}
+
+// pointTransitionAdmissions reads the exact module-call and initialization
+// rows back from the sealed Link composition. The Snapshot remains the sole
+// row authority: compiledState does not retain a parallel transition slice,
+// and the engine receives only pairs whose GenerationID join is present in
+// the published typed columns.
+func (state *compiledState) pointTransitionAdmissions() ([]engine.ProgramPointTransitionAdmission, bool) {
+	if state == nil || !state.composition.Published() {
+		return nil, false
+	}
+	publication, publicationOK := state.compilation.Publication()
+	transitionAxis, transitionAxisOK := analysiscatalog.ProjectAxis[identity.ContentID, modulecomposition.ModuleCallTransition](publication, modulecomposition.ModuleCallTransitionOutputKey)
+	generationAxis, generationAxisOK := analysiscatalog.ProjectAxis[identity.ContentID, modulecomposition.InitGeneration](publication, modulecomposition.GenerationOutputKey)
+	if !publicationOK || !transitionAxisOK || !generationAxisOK {
+		return nil, false
+	}
+	transitionCount, transitionsPublished := snapshot.MemberCountAtAxis(&state.composition, transitionAxis)
+	generationCount, generationsPublished := snapshot.MemberCountAtAxis(&state.composition, generationAxis)
+	if !transitionsPublished || !generationsPublished || transitionCount != generationCount {
+		return nil, false
+	}
+	rows := make([]engine.ProgramPointTransitionAdmission, 0, transitionCount)
+	seenGenerations := make(map[identity.ContentID]struct{}, generationCount)
+	for index := 0; index < transitionCount; index++ {
+		transitionID, memberOK := snapshot.MemberAtAxis(&state.composition, transitionAxis, index)
+		transition, transitionOK := modulecomposition.ModuleCallTransitionAt(&state.composition, transitionAxis, transitionID)
+		generation, generationOK := modulecomposition.GenerationAt(&state.composition, generationAxis, transition.GenerationID())
+		if !memberOK || !transitionOK || !generationOK || transition.ID() != transitionID || generation.ID() != transition.GenerationID() {
+			return nil, false
+		}
+		if _, duplicate := seenGenerations[generation.ID()]; duplicate {
+			return nil, false
+		}
+		seenGenerations[generation.ID()] = struct{}{}
+		rows = append(rows, engine.ProgramPointTransitionAdmission{Transition: transition, Generation: generation})
+	}
+	for index := 0; index < generationCount; index++ {
+		generationID, memberOK := snapshot.MemberAtAxis(&state.composition, generationAxis, index)
+		if _, consumed := seenGenerations[generationID]; !memberOK || !consumed {
+			return nil, false
+		}
+	}
+	return rows, true
 }
 
 func (state *compiledState) instantiateRuntimeTopology() (engine.ProgramAssembleRefusal, anadiag.AnalyzeDiagnosticAssembleStage, anadiag.AnalyzeDiagnosticRule, bool) {

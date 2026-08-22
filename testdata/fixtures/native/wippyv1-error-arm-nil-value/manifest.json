@@ -1,0 +1,10 @@
+{
+  "description": "One representative fallible member of each mounted Wippy v1 module - store.get, Store.has, process.send, json.decode, expr.eval and http.request - is read on both sides of its error test. The v1 runtime answers nil for the value whenever it reports an error (store/store.go pushes nil with invalidError(\"store is released\"); process/module.go answers pushProcessError(l, lua.LNil, ...); the json, expr and http modules each push lua.LNil before the error), and tests/app/src/test/store/errors.lua asserts exactly that arm, so the unguarded read is a nil the caller cannot take and the guarded read is the idiom the surface is shaped around.",
+  "packages": ["store", "process", "json", "expr", "http"],
+  "files": [
+    "main.lua"
+  ],
+  "run": {
+    "skip": "host-surface diagnostic fixture; these modules have no fixture runtime"
+  }
+}

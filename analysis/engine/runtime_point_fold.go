@@ -6,6 +6,7 @@ import (
 	"sort"
 
 	"github.com/wippyai/go-lua/analysis/engine/internal/carrier"
+	"github.com/wippyai/go-lua/analysis/engine/internal/contextfiber"
 	"github.com/wippyai/go-lua/analysis/engine/internal/demand"
 	"github.com/wippyai/go-lua/analysis/engine/internal/equation"
 	"github.com/wippyai/go-lua/analysis/engine/internal/facts/support"
@@ -21,7 +22,7 @@ import (
 // certify as unmoved, and every entry of a cache that has installed no
 // candidate, is transported again.
 func (epoch *executorEpoch) inputs(producer *runtimeProducer, cache *producerEpoch) ([]carrier.PointState, bool) {
-	if epoch == nil || epoch.work == nil || cache == nil || len(producer.inputs) != producer.group.InputCount() || len(cache.inputs) != producer.group.InputCount() {
+	if epoch == nil || epoch.work == nil || producer == nil || cache == nil || len(producer.inputs) != producer.group.InputCount() || len(cache.inputs) != producer.group.InputCount() {
 		return nil, false
 	}
 	values := cache.inputs
@@ -29,23 +30,56 @@ func (epoch *executorEpoch) inputs(producer *runtimeProducer, cache *producerEpo
 		if cache.rememberAt != 0 && epoch.work.OwnsPointState(values[index]) && !epoch.producerInputChanged(producer.index, index, cache.rememberAt) {
 			continue
 		}
-		input, inputOK := producer.group.InputAt(index)
-		pointIndex, indexed := epoch.runtime.graph.PointIndex(input.Point())
-		if !inputOK || !indexed || pointIndex < 0 || pointIndex >= len(epoch.points) {
-			return nil, false
-		}
-		current := epoch.points[pointIndex]
-		if !current.Valid() {
-			return nil, false
-		}
-		transport := producer.inputs[index]
-		point, ok := epoch.work.TransportPointState(current, transport.pre, transport.plan, transport.post)
-		if !transport.valid() || !ok || !point.Valid() || !point.Scope().Same(producer.outputScope) {
+		point, ok := epoch.transportProducerInput(producer, cache, index)
+		if !ok {
 			return nil, false
 		}
 		values[index] = point
 	}
 	return values, true
+}
+
+// transportProducerInput is the one runtime input transport authority.  The
+// evaluator and the artifact read-registration fence must derive the same
+// contextual source StateOrdinal, read the same published PointState, and
+// cross the same pre/reindex/post transport.  Keeping that sequence here
+// prevents registration from validating a graph-point approximation of the
+// value the Rule actually consumed.
+func (epoch *executorEpoch) transportProducerInput(producer *runtimeProducer, cache *producerEpoch, index int) (carrier.PointState, bool) {
+	if epoch == nil || epoch.runtime == nil || epoch.runtime.graph == nil || epoch.work == nil || producer == nil || cache == nil || producer.group.InputCount() < 0 || index < 0 || index >= producer.group.InputCount() || len(producer.inputs) != producer.group.InputCount() {
+		return carrier.PointState{}, false
+	}
+	stateIndex, sourceOK := epoch.producerInputSourceState(producer, cache, index)
+	if !sourceOK || stateIndex < 0 || stateIndex >= len(epoch.points) || !epoch.activeState(stateIndex) {
+		return carrier.PointState{}, false
+	}
+	current := epoch.points[stateIndex]
+	if !epoch.work.OwnsPointState(current) || !current.Valid() {
+		return carrier.PointState{}, false
+	}
+	transport := producer.inputs[index]
+	point, ok := epoch.work.TransportPointState(current, transport.pre, transport.plan, transport.post)
+	if !transport.valid() || !ok || !point.Valid() || !point.Scope().Same(producer.outputScope) {
+		return carrier.PointState{}, false
+	}
+	return point, true
+}
+
+// producerInputSourceState authenticates the contextual source address for a
+// Group input. It intentionally does not inspect the current PointState: read
+// registration uses this address both before and after transporting the value,
+// while transportProducerInput adds the carrier-owned value checks.
+func (epoch *executorEpoch) producerInputSourceState(producer *runtimeProducer, cache *producerEpoch, index int) (int, bool) {
+	if epoch == nil || epoch.runtime == nil || epoch.runtime.graph == nil || producer == nil || cache == nil || producer.group.InputCount() < 0 || index < 0 || index >= producer.group.InputCount() {
+		return 0, false
+	}
+	input, inputOK := producer.group.InputAt(index)
+	pointIndex, indexed := epoch.runtime.graph.PointIndex(input.Point())
+	if !inputOK || !indexed || pointIndex < 0 || pointIndex >= epoch.runtime.graph.PointCount() {
+		return 0, false
+	}
+	stateIndex, stateOK := epoch.runtime.stateForGraphPoint(int(cache.state), pointIndex)
+	return stateIndex, stateOK
 }
 
 func (epoch *executorEpoch) environment(producer *runtimeProducer) (carrier.PointState, bool) {
@@ -54,10 +88,24 @@ func (epoch *executorEpoch) environment(producer *runtimeProducer) (carrier.Poin
 	}
 	input, inputOK := producer.group.EnvironmentInput()
 	pointIndex, indexed := epoch.runtime.graph.PointIndex(input.Point())
-	if !inputOK || !indexed || pointIndex < 0 || pointIndex >= len(epoch.points) {
+	if !inputOK || !indexed || pointIndex < 0 || pointIndex >= epoch.runtime.graph.PointCount() {
 		return carrier.PointState{}, false
 	}
-	current := epoch.points[pointIndex]
+	stateIndex := pointIndex
+	if epoch.runtime.artifactBacked {
+		if epoch.currentState < 0 {
+			return carrier.PointState{}, false
+		}
+		var stateOK bool
+		stateIndex, stateOK = epoch.runtime.stateForGraphPoint(epoch.currentState, pointIndex)
+		if !stateOK {
+			return carrier.PointState{}, false
+		}
+	}
+	if stateIndex < 0 || stateIndex >= len(epoch.points) {
+		return carrier.PointState{}, false
+	}
+	current := epoch.points[stateIndex]
 	if !current.Valid() {
 		return carrier.PointState{}, false
 	}
@@ -126,7 +174,17 @@ func (epoch *executorEpoch) evaluate(producer *runtimeProducer, cache *producerE
 		if epoch.canceled() {
 			return carrier.RuleContribution{}, nil, false
 		}
-		result := row.member.execute(epoch.work, base, cache.inputStates, within)
+		var result memberResult
+		if contextual, contextualMember := row.member.(contextualRuntimeMember); contextualMember && epoch.runtime.artifactBacked {
+			_, _, contextOrdinal, contextOK := epoch.graphPoint(epoch.currentState)
+			contextID, contextIDOK := epoch.runtime.contextIndex.ContextID(contextOrdinal)
+			if !contextOK || !contextIDOK {
+				return carrier.RuleContribution{}, nil, false
+			}
+			result = contextual.executeAt(epoch.work, base, cache.inputStates, within, contextID)
+		} else {
+			result = row.member.execute(epoch.work, base, cache.inputStates, within)
+		}
 		if !result.valid {
 			// The failing member's identity is recovered from the Group the
 			// producer already holds; the hot row carries only its position.
@@ -186,7 +244,18 @@ func (epoch *executorEpoch) evaluate(producer *runtimeProducer, cache *producerE
 }
 
 func (epoch *executorEpoch) pointBase(point equation.Point, pointIndex int) (carrier.PointRHS, bool) {
-	if epoch == nil || epoch.runtime == nil || pointIndex < 0 || pointIndex >= len(epoch.runtime.pointScopes) || pointIndex >= len(epoch.runtime.pointInitials) || !epoch.runtime.pointScopes[pointIndex].Valid() {
+	if epoch == nil || epoch.runtime == nil || pointIndex < 0 {
+		return carrier.PointRHS{}, false
+	}
+	graphPointIndex := pointIndex
+	if epoch.runtime.artifactBacked {
+		_, resolved, _, resolvedOK := epoch.runtime.graphPointAtState(pointIndex)
+		if !resolvedOK {
+			return carrier.PointRHS{}, false
+		}
+		graphPointIndex = resolved
+	}
+	if graphPointIndex >= len(epoch.runtime.pointScopes) || graphPointIndex >= len(epoch.runtime.pointInitials) || !epoch.runtime.pointScopes[graphPointIndex].Valid() {
 		return carrier.PointRHS{}, false
 	}
 	feasible, ok := support.FromGuard(epoch.runtime.carrier.Guards(), epoch.runtime.carrier.Guards().False())
@@ -198,12 +267,12 @@ func (epoch *executorEpoch) pointBase(point equation.Point, pointIndex int) (car
 		return carrier.PointRHS{}, false
 	}
 	if disposition == equation.InitPresent {
-		feasible = epoch.runtime.pointInitials[pointIndex]
+		feasible = epoch.runtime.pointInitials[graphPointIndex]
 		if !feasible.Valid() {
 			return carrier.PointRHS{}, false
 		}
 	}
-	state, ok := carrier.NewState(epoch.runtime.carrier, epoch.runtime.pointScopes[pointIndex], feasible)
+	state, ok := carrier.NewState(epoch.runtime.carrier, epoch.runtime.pointScopes[graphPointIndex], feasible)
 	if !ok {
 		return carrier.PointRHS{}, false
 	}
@@ -222,11 +291,59 @@ func (epoch *executorEpoch) pointFoldEnvironmentEdge(edgeIndex int) (carrier.Poi
 		return carrier.PointState{}, false
 	}
 	edge := epoch.runtime.environments[edgeIndex]
-	if edge.source < 0 || edge.source >= len(epoch.points) || edge.target < 0 || edge.target >= len(epoch.points) || !edge.input.valid() {
+	if edge.source < 0 || edge.source >= epoch.runtime.graph.PointCount() || edge.target < 0 || edge.target >= epoch.runtime.graph.PointCount() || !edge.input.valid() {
 		return carrier.PointState{}, false
 	}
-	transported, ok := epoch.work.TransportPointState(epoch.points[edge.source], edge.input.pre, edge.input.plan, edge.input.post)
+	stateIndex := edge.source
+	if epoch.runtime.artifactBacked {
+		if epoch.currentState < 0 {
+			return carrier.PointState{}, false
+		}
+		var stateOK bool
+		stateIndex, stateOK = epoch.runtime.stateForGraphPoint(epoch.currentState, edge.source)
+		if !stateOK {
+			return carrier.PointState{}, false
+		}
+	}
+	transported, ok := epoch.work.TransportPointState(epoch.points[stateIndex], edge.input.pre, edge.input.plan, edge.input.post)
 	if !ok || !epoch.work.OwnsPointState(transported) {
+		return carrier.PointState{}, false
+	}
+	return transported, true
+}
+
+// pointFoldContextTransport resolves one authenticated Link transport by its
+// exact source and target StateOrdinal. It never asks the graph for another
+// occurrence of either endpoint and never fans a source value to a sibling
+// context.
+func (epoch *executorEpoch) pointFoldContextTransport(transportIndex int) (carrier.PointState, bool) {
+	if epoch == nil || epoch.runtime == nil || epoch.work == nil || !epoch.runtime.artifactBacked ||
+		transportIndex < 0 || transportIndex >= len(epoch.runtime.contextTransports) || epoch.currentState < 0 {
+		return carrier.PointState{}, false
+	}
+	transport := epoch.runtime.contextTransports[transportIndex]
+	if transport.to != epoch.currentState || transport.from < 0 || transport.from >= len(epoch.points) ||
+		transport.targetPoint < 0 || transport.targetPoint >= epoch.runtime.graph.PointCount() ||
+		transport.targetPoint >= len(epoch.runtime.pointScopes) {
+		return carrier.PointState{}, false
+	}
+	_, targetPoint, targetContext, targetOK := epoch.runtime.graphPointAtState(transport.to)
+	if !targetOK || targetPoint != transport.targetPoint || targetContext != transport.targetContext {
+		return carrier.PointState{}, false
+	}
+	_, sourcePoint, sourceContext, sourceOK := epoch.runtime.graphPointAtState(transport.from)
+	if !sourceOK || sourcePoint != transport.sourcePoint || sourceContext != transport.sourceContext {
+		return carrier.PointState{}, false
+	}
+	if sourceState, sourceStateOK := epoch.runtime.contextTransportSourceState(transport.to, transport.sourcePoint); !sourceStateOK || sourceState != transport.from {
+		return carrier.PointState{}, false
+	}
+	source := epoch.points[transport.from]
+	if !source.Valid() || !transport.validFor(epoch.runtime.carrier, epoch.runtime.stateCount(), epoch.runtime.graph.PointCount()) {
+		return carrier.PointState{}, false
+	}
+	transported, ok := epoch.work.TransportPointState(source, transport.pre, transport.plan, transport.post)
+	if !ok || !transported.Valid() || !transported.Scope().Same(epoch.runtime.pointScopes[transport.targetPoint]) {
 		return carrier.PointState{}, false
 	}
 	return transported, true
@@ -241,18 +358,39 @@ func (epoch *executorEpoch) addPointFoldEnvironmentEdge(edgeIndex int) bool {
 // transport, and one transaction admission while returning only the failed
 // boundary for the owning refresh diagnostic.
 func (epoch *executorEpoch) pointFoldFactorEdgeWithBoundary(edgeIndex int) (carrier.PointState, solveBoundary, bool) {
-	if epoch == nil || epoch.runtime == nil || epoch.work == nil || edgeIndex < 0 || edgeIndex >= len(epoch.runtime.factorEdges) {
+	if epoch == nil || epoch.runtime == nil || epoch.work == nil || edgeIndex < 0 {
+		return carrier.PointState{}, refused(SolveFailureFamilyRefresh, "acyclic-fold-factor-validation"), false
+	}
+	stateIndex := edgeIndex
+	if epoch.runtime.artifactBacked {
+		if edgeIndex >= len(epoch.runtime.stateFactorRows) {
+			return carrier.PointState{}, refused(SolveFailureFamilyRefresh, "acyclic-fold-factor-validation"), false
+		}
+		row := epoch.runtime.stateFactorRows[edgeIndex]
+		if row.edge < 0 || row.edge >= len(epoch.runtime.factorEdges) || row.source < 0 || row.source >= len(epoch.points) {
+			return carrier.PointState{}, refused(SolveFailureFamilyRefresh, "acyclic-fold-factor-state"), false
+		}
+		edgeIndex = row.edge
+		stateIndex = row.source
+	}
+	if edgeIndex >= len(epoch.runtime.factorEdges) {
 		return carrier.PointState{}, refused(SolveFailureFamilyRefresh, "acyclic-fold-factor-validation"), false
 	}
 	edge := epoch.runtime.factorEdges[edgeIndex]
-	if edge.source < 0 || edge.source >= len(epoch.points) || edge.target < 0 || edge.target >= len(epoch.points) || !edge.input.valid() {
+	if edge.source < 0 || edge.source >= epoch.runtime.graph.PointCount() || edge.target < 0 || edge.target >= epoch.runtime.graph.PointCount() || !edge.input.valid() {
 		return carrier.PointState{}, refused(SolveFailureFamilyRefresh, "acyclic-fold-factor-validation"), false
 	}
 	// Factor projection commutes with the point boundary: support and guard
 	// transport are shared by every plane, while typed reindex is factor-local.
 	// Project first so a one-Factor edge never reconstructs the unrelated
 	// Factor roots merely to discard them afterward.
-	projected, ok := epoch.work.ProjectPointState(epoch.points[edge.source], edge.slot)
+	if !epoch.runtime.artifactBacked {
+		stateIndex = edge.source
+	}
+	if stateIndex < 0 || stateIndex >= len(epoch.points) {
+		return carrier.PointState{}, refused(SolveFailureFamilyRefresh, "acyclic-fold-factor-state"), false
+	}
+	projected, ok := epoch.work.ProjectPointState(epoch.points[stateIndex], edge.slot)
 	if !ok || !epoch.work.OwnsPointState(projected) {
 		return carrier.PointState{}, refused(SolveFailureFamilyRefresh, "acyclic-fold-factor-projection"), false
 	}
@@ -277,15 +415,61 @@ func (epoch *executorEpoch) addPointFoldFactorEdgeWithBoundary(edgeIndex int) (s
 // pointFoldGroupState closes one owner-issued RuleContribution at the single
 // RuleContribution -> PointState boundary used by point folding.  Region
 // ingress validation and fold admission both consume this exact PointState.
-func (epoch *executorEpoch) pointFoldGroupState(group int) (carrier.PointState, bool) {
-	if epoch == nil || epoch.work == nil || group < 0 || group >= len(epoch.producers) || !epoch.producers[group].hasValue {
+//
+// The operand it is given is a compact producer-cache ordinal. Region producer
+// rows are minted in that ordinal by the owner that binds them -- by
+// liftStateRegions for a mounted frontier, and by bindRuntimeRegions for the
+// graph-point runtime, where the row ordinal and the Group ordinal coincide --
+// and buildStateOperandPlane transposes the same axis. Resolving the ordinal a
+// second time as a graph Group would read a different plane.
+func (epoch *executorEpoch) pointFoldGroupState(row int) (carrier.PointState, bool) {
+	if epoch == nil || epoch.work == nil || epoch.runtime == nil || !epoch.runtime.producerRows.valid() ||
+		row < 0 || row >= len(epoch.producers) || row >= len(epoch.runtime.producerRows.rows) {
 		return carrier.PointState{}, false
 	}
-	return epoch.work.PointStateFromRuleContribution(epoch.producers[group].candidate)
+	// A Region folds only its own head, so every producer operand row it
+	// publishes is owned by the head's state. A row minted for another state is
+	// a sibling context's contribution and is refused.
+	if epoch.currentState < 0 || epoch.runtime.producerRows.rows[row].state != contextfiber.StateOrdinal(epoch.currentState) {
+		return carrier.PointState{}, false
+	}
+	state := &epoch.producers[row]
+	if !state.hasValue {
+		return carrier.PointState{}, false
+	}
+	return epoch.work.PointStateFromRuleContribution(state.candidate)
 }
 
 func (epoch *executorEpoch) addPointFoldGroup(group int) bool {
-	return epoch != nil && group >= 0 && group < len(epoch.producers) && epoch.producers[group].hasValue && epoch.work.AddPointFoldRule(epoch.producers[group].candidate) && !epoch.canceled()
+	if epoch == nil || epoch.runtime == nil || group < 0 {
+		return false
+	}
+	var state *producerEpoch
+	if epoch.runtime.artifactBacked {
+		if epoch.currentState < 0 {
+			return false
+		}
+		rowIndex, rowOK := epoch.runtime.producerRows.row(contextfiber.StateOrdinal(epoch.currentState), group)
+		if !rowOK {
+			return false
+		}
+		row := epoch.runtime.producerRows.rows[rowIndex]
+		if row.group < 0 || row.group >= len(epoch.runtime.producers) {
+			return false
+		}
+		group = row.group
+		var ok bool
+		state, ok = epoch.producerCache(contextfiber.StateOrdinal(epoch.currentState), group)
+		if !ok {
+			return false
+		}
+	} else {
+		if group >= len(epoch.producers) {
+			return false
+		}
+		state = &epoch.producers[group]
+	}
+	return state.hasValue && epoch.work.AddPointFoldRule(state.candidate) && !epoch.canceled()
 }
 
 // foldPointInputs is the runtime's one canonical fixed-order RHS assembly.
@@ -312,12 +496,22 @@ func (epoch *executorEpoch) foldPointWithBoundary(reference carrier.PointState, 
 		return carrier.PointRHS{}, carrier.ChangeSet{}, refused(SolveFailureFamilyRefresh, "acyclic-fold-point"), false
 	}
 	pointIndex, indexed := epoch.runtime.graph.PointIndex(point)
-	if !indexed || pointIndex < 0 || pointIndex >= len(epoch.runtime.environmentIncoming) || pointIndex >= len(epoch.runtime.factorIncoming) {
+	if !indexed || pointIndex < 0 || pointIndex >= len(epoch.runtime.environmentIncoming) || (!epoch.runtime.artifactBacked && pointIndex >= len(epoch.runtime.factorIncoming)) || (epoch.runtime.artifactBacked && (pointIndex >= len(epoch.runtime.stateFactorIncoming) || epoch.currentState < 0 || epoch.currentState >= len(epoch.points))) {
 		return carrier.PointRHS{}, carrier.ChangeSet{}, refused(SolveFailureFamilyRefresh, "acyclic-fold-point"), false
 	}
+	factors := epoch.runtime.factorIncoming[pointIndex]
+	if epoch.runtime.artifactBacked {
+		factors = epoch.runtime.stateFactorIncoming[epoch.currentState]
+	}
 	sets := pointFoldTermSets{
-		first: pointFoldTermSet{environments: epoch.runtime.environmentIncoming[pointIndex], factors: epoch.runtime.factorIncoming[pointIndex]},
+		first: pointFoldTermSet{environments: epoch.runtime.environmentIncoming[pointIndex], factors: factors},
 		count: 1,
+	}
+	if epoch.runtime.artifactBacked {
+		if epoch.currentState < 0 || epoch.currentState >= len(epoch.runtime.contextTransportIncoming) {
+			return carrier.PointRHS{}, carrier.ChangeSet{}, refused(SolveFailureFamilyRefresh, "acyclic-fold-context-transport"), false
+		}
+		sets.first.transports = epoch.runtime.contextTransportIncoming[epoch.currentState]
 	}
 	return epoch.foldPointTermSetsWithBoundary(reference, base, sets, point)
 }
@@ -333,6 +527,7 @@ func (epoch *executorEpoch) foldPointTerms(reference carrier.PointState, base ca
 type pointFoldTermSet struct {
 	environments []int
 	factors      []int
+	transports   []int
 	groups       []int
 }
 
@@ -374,9 +569,9 @@ func (epoch *executorEpoch) foldPointTermSetsWithBoundary(reference carrier.Poin
 	if producerPoint.Available() {
 		producerCount = epoch.runtime.graph.ProducerCount(producerPoint)
 	}
-	termCount := len(sets.first.environments) + len(sets.first.factors)
+	termCount := len(sets.first.environments) + len(sets.first.factors) + len(sets.first.transports)
 	if sets.count > 1 {
-		termCount += len(sets.second.environments) + len(sets.second.factors)
+		termCount += len(sets.second.environments) + len(sets.second.factors) + len(sets.second.transports)
 	}
 	if termCount == 0 && producerCount == 0 {
 		return base, carrier.ChangeSet{}, boundaryNone, true
@@ -418,6 +613,16 @@ func (epoch *executorEpoch) foldPointTermSetsWithBoundary(reference carrier.Poin
 			}
 			if !epoch.work.AddPointFoldEnvironment(term) || epoch.canceled() {
 				boundary = refused(SolveFailureFamilyRefresh, "acyclic-fold-factor-admission")
+				return carrier.PointRHS{}, carrier.ChangeSet{}, boundary, false
+			}
+		}
+		boundary = refused(SolveFailureFamilyRefresh, "acyclic-fold-context-transport")
+		for _, transport := range set.transports {
+			term, termOK := epoch.pointFoldContextTransport(transport)
+			if !termOK {
+				return carrier.PointRHS{}, carrier.ChangeSet{}, boundary, false
+			}
+			if !epoch.work.AddPointFoldEnvironment(term) || epoch.canceled() {
 				return carrier.PointRHS{}, carrier.ChangeSet{}, boundary, false
 			}
 		}

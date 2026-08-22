@@ -16,7 +16,6 @@ import (
 func TestCanonicalOwnsEveryTypedCoordinate(t *testing.T) {
 	baseline := clone(Generated)
 	helperIndex, returnIndex := firstHelperReturn(t, baseline)
-	sequenceIndex, segmentIndex := firstSequenceSegment(t, baseline)
 	first, second := baseline.Canonical(), baseline.Canonical()
 	if len(first) == 0 || !bytes.Equal(first, second) {
 		t.Fatal("equivalent parser-products evidence has nondeterministic canonical bytes")
@@ -39,7 +38,6 @@ func TestCanonicalOwnsEveryTypedCoordinate(t *testing.T) {
 		{"product", func(e *Evidence) { e.Products[0].States[0]++ }},
 		{"product-action", func(e *Evidence) { e.ProductLaws[0].ActionDigest = "other" }},
 		{"helper-return", func(e *Evidence) { e.HelperLaws[helperIndex].Returns[returnIndex].Values[0]++ }},
-		{"sequence", func(e *Evidence) { e.Sequences[sequenceIndex].Segments[segmentIndex].Term++ }},
 		{"mutation", func(e *Evidence) { e.Mutations[0].Edit.Value++ }},
 		{"term", func(e *Evidence) { e.ActionTerms.Terms[0].Slot++ }},
 		{"guard-symbol", func(e *Evidence) { e.ActionTerms.GuardSymbols[0]++ }},
@@ -67,17 +65,6 @@ func firstHelperReturn(t *testing.T, evidence Evidence) (int, int) {
 		}
 	}
 	t.Fatal("missing helper return value")
-	return 0, 0
-}
-
-func firstSequenceSegment(t *testing.T, evidence Evidence) (int, int) {
-	t.Helper()
-	for sequenceIndex, law := range evidence.Sequences {
-		if len(law.Segments) != 0 {
-			return sequenceIndex, 0
-		}
-	}
-	t.Fatal("missing sequence segment")
 	return 0, 0
 }
 

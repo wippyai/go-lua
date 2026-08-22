@@ -7,6 +7,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/engine/internal/composition"
 	"github.com/wippyai/go-lua/analysis/engine/rows"
 	"github.com/wippyai/go-lua/analysis/identity"
+	programissuance "github.com/wippyai/go-lua/analysis/schema/program/issuance"
 )
 
 // programQueryMatrixFixture is a sealed-row fixture. Every member, query and
@@ -219,8 +220,7 @@ func buildReceiptQueryMatrixFixtureWithOptions(t testing.TB, count int, observed
 		Roles: 1, Points: count + 1, Regions: 1, Events: count + 3, Rules: count, Bodies: 1,
 	})
 	role, roleOK := spec.DeclareRole(programMatrixID(4))
-	stageLawsOK := spec.InstallStageLaws([]rows.ArtifactStageLaw{{Stage: rows.ArtifactRuleStageIssued3, Native: true}})
-	if !specOK || !roleOK || !stageLawsOK {
+	if !specOK || !roleOK {
 		t.Fatal("sealed matrix artifact header")
 	}
 	pointIDs := make([]identity.ContentID, count+1)
@@ -253,7 +253,7 @@ func buildReceiptQueryMatrixFixtureWithOptions(t testing.TB, count int, observed
 		t.Fatal("sealed matrix body")
 	}
 	for index := 0; index < count; index++ {
-		if !spec.AddRule(rows.ArtifactScalarRule{Role: role, Stage: rows.ArtifactRuleStageIssued3, Point: pointIDs[index+1], Input: pointIDs[0], ID: programMatrixID(60 + index)}) {
+		if !spec.AddRule(rows.ArtifactScalarRule{Role: role, Stage: programissuance.StageCallDispatch, Point: pointIDs[index+1], Input: pointIDs[0], ID: programMatrixID(60 + index), Native: true}) {
 			t.Fatal("sealed matrix artifact rule")
 		}
 	}
@@ -271,16 +271,17 @@ func buildReceiptQueryMatrixFixtureWithOptions(t testing.TB, count int, observed
 	for index := 0; index < count; index++ {
 		admission.Mounted = append(admission.Mounted, MountedRuleAdmission{Capability: capability, Mount: mountID, Point: pointIDs[index+1], Occurrence: programMatrixID(60 + index)})
 	}
+	contexts := explicitTestContextDirectory(t, programMatrixID(70), []identity.ContentID{mountID}, programMatrixID(72), programMatrixID(73))
 	queryAdmissions := make([]ProgramQueryAdmission, 0, count)
 	for index := 0; index < count; index++ {
-		admitted, admittedOK := NewExactQueryAdmission(queryImplementation, programMatrixID(110+index), mountID, pointIDs[index+1])
+		admitted, admittedOK := NewExactQueryAdmission(queryImplementation, programMatrixID(110+index), mountID, pointIDs[index+1], explicitTestContext(t, contexts, mountID))
 		if !admittedOK {
 			t.Fatal("sealed matrix query admission")
 		}
 		queryAdmissions = append(queryAdmissions, admitted)
 	}
 	admission.Queries = queryAdmissions
-	program, refusal, constructed := ConstructProgram(ProgramDeclaration{Binding: binding, Mounts: []MountedProgramArtifact{mount}, Bootstrap: bootstrap, Admission: admission})
+	program, refusal, constructed := ConstructProgram(ProgramDeclaration{Binding: binding, Mounts: []MountedProgramArtifact{mount}, Bootstrap: bootstrap, Contexts: contexts, Admission: admission})
 	if !constructed || program == nil {
 		t.Fatalf("sealed matrix ConstructProgram stage=%v seal=%v commit=%v", refusal.Stage(), refusal.Seal(), refusal.Commit())
 	}
@@ -289,7 +290,7 @@ func buildReceiptQueryMatrixFixtureWithOptions(t testing.TB, count int, observed
 	if observed {
 		for index := 0; index < count; index++ {
 			id := programMatrixID(160 + index)
-			row, rowOK := NewExactObservationAdmission(queryImplementation, id, capability, mountID, pointIDs[index+1], programMatrixID(60+index))
+			row, rowOK := NewExactObservationAdmission(queryImplementation, id, capability, mountID, pointIDs[index+1], programMatrixID(60+index), explicitTestContext(t, contexts, mountID))
 			if !rowOK {
 				t.Fatal("sealed matrix observation admission")
 			}

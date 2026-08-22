@@ -5,7 +5,6 @@ import (
 	"testing"
 
 	"github.com/wippyai/go-lua/analysis/engine/internal/composition"
-	"github.com/wippyai/go-lua/analysis/engine/internal/schedule"
 	"github.com/wippyai/go-lua/analysis/snapshot"
 )
 
@@ -26,18 +25,17 @@ func TestSolveSealsPrivatePointStateSnapshot(t *testing.T) {
 		t.Fatal("the fixture solver has no graph")
 	}
 	count := 0
-	for index := 0; index < solver.runtime.graph.PointCount(); index++ {
-		if !solver.runtime.activePoints[index] {
+	for state := 0; state < solver.runtime.stateCount(); state++ {
+		if !solver.runtime.activeState(state) {
 			continue
 		}
-		point, ok := solver.runtime.graph.PointAt(schedule.Node(index))
-		if !ok || !point.Key().Available() {
-			t.Fatalf("active point %d does not resolve", index)
+		if state >= len(solver.runtime.publication.pointKeys) {
+			t.Fatalf("active state %d has no sealed publication key", state)
 		}
-		key := point.Key()
+		key := solver.runtime.publication.pointKeys[state]
 		held, readable := readPointState(published, key)
 		if !readable || !held.Valid() {
-			t.Fatalf("point %x is not a published point state", key.ID[:4])
+			t.Fatalf("state %d key %x is not a published point state", state, key.ID[:4])
 		}
 		count++
 	}
@@ -54,15 +52,14 @@ func TestNewDeltaInheritsSealedPointState(t *testing.T) {
 		t.Fatal("completed solve did not seal a point-state axis")
 	}
 	var key composition.Key
-	for index := 0; index < solver.runtime.graph.PointCount(); index++ {
-		if !solver.runtime.activePoints[index] {
+	for state := 0; state < solver.runtime.stateCount(); state++ {
+		if !solver.runtime.activeState(state) {
 			continue
 		}
-		point, ok := solver.runtime.graph.PointAt(schedule.Node(index))
-		if !ok || !point.Key().Available() {
-			t.Fatalf("active point %d does not resolve", index)
+		if state >= len(solver.runtime.publication.pointKeys) {
+			t.Fatalf("active state %d has no sealed publication key", state)
 		}
-		key = point.Key()
+		key = solver.runtime.publication.pointKeys[state]
 		break
 	}
 	if !key.Available() {
@@ -85,7 +82,7 @@ func TestNewDeltaInheritsSealedPointState(t *testing.T) {
 	if !opened || publication == nil {
 		t.Fatal("begin solved publication")
 	}
-	if publication.plan == nil || !canDeltaSolvedPublication(solver.lastSolved, publication.solved.schema, solver.store, generation, publication.plan.queryKeys, publication.plan.observationKeys, publication.plan.pointMembers) {
+	if publication.plan == nil || !canDeltaSolvedPublication(solver.lastSolved, publication.solved.schema, solver.store, generation, publication.plan.queryKeys, publication.plan.observationKeys, publication.plan.pointKeys) {
 		t.Fatal("successor generation is not a delta")
 	}
 	overlay, status := snapshot.ReadOverlay(&publication.builder, publication.pointAxis, key)

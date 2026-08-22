@@ -80,7 +80,8 @@ func cacheEqualityHash(t Type, value uint64, interior bool) {
 	if cache == nil {
 		return
 	}
-	if !equalityHashGraphClosed(t) {
+	columns := columnsOf(t)
+	if !columns.closed || !columns.declarationsClosed {
 		return
 	}
 	cache.store(value, interior)
@@ -99,48 +100,4 @@ func equalityHashCacheFor(t Type) *equalityHashCache {
 	default:
 		return nil
 	}
-}
-
-// equalityHashGraphClosed reports whether every recursive or generic
-// declaration reachable from t already has a body. An unresolved placeholder
-// is intentionally not cached: SetBody may still supply either body.
-func equalityHashGraphClosed(t Type) bool {
-	seen := make(map[Type]bool)
-	work := []Type{t}
-	for len(work) != 0 {
-		last := len(work) - 1
-		current := unwrapAnnotated(work[last])
-		work = work[:last]
-		if current == nil || seen[current] {
-			continue
-		}
-		seen[current] = true
-
-		// A node whose equality-hash cache is already published was proven
-		// closed the moment it was cached (cacheEqualityHash only stores after
-		// this same walk succeeded for its whole subtree), and bodies are
-		// write-once so that proof is permanent. Trusting it here instead of
-		// re-walking is what keeps closure proof linear rather than quadratic
-		// in the depth of a chain of nested Function/Record/Generic/
-		// Instantiated nodes.
-		if _, ok := cachedEqualityHash(current); ok {
-			continue
-		}
-
-		switch node := current.(type) {
-		case *Recursive:
-			if node.Body == nil {
-				return false
-			}
-		case *Generic:
-			if node.Body == nil {
-				return false
-			}
-		}
-		WalkChildren(current, func(child Type) bool {
-			work = append(work, child)
-			return false
-		})
-	}
-	return true
 }

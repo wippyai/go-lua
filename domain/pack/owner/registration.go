@@ -63,22 +63,21 @@ func mountPackSchema[A axisInputs](inputs A) (*pack.Schema, MountRejection, bool
 	if source == nil || authority == nil || count == 0 {
 		return nil, MountRejectionInput, false
 	}
-	mounts := make([]pack.ArtifactMount, 0, count)
+	mounts := make([]programmount.MountedArtifact, 0, count)
 	seen := make(map[identity.ContentID]struct{}, count)
 	for index := 0; index < count; index++ {
 		row, rowOK := inputs.MountedArtifactAt(index)
 		if !rowOK {
 			return nil, MountRejectionInput, false
 		}
-		mount, mountOK := pack.NewArtifactMount(row.Snapshot, row.ModuleKey, row.ProgramID)
-		if !mountOK {
+		if !row.Available() {
 			return nil, MountRejectionInput, false
 		}
-		if _, duplicate := seen[mount.Module()]; duplicate {
+		if _, duplicate := seen[row.ModuleKey]; duplicate {
 			return nil, MountRejectionInput, false
 		}
-		seen[mount.Module()] = struct{}{}
-		mounts = append(mounts, mount)
+		seen[row.ModuleKey] = struct{}{}
+		mounts = append(mounts, row)
 	}
 	schema, sealed := pack.SealMountedArtifacts(source, authority, mounts)
 	if !sealed || schema == nil {

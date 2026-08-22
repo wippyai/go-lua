@@ -444,20 +444,94 @@ func TestDiagnosticRequirementsCoverPlaceholders(t *testing.T) {
 	}
 }
 
-// TestDiagnosticProofAnchorRequiresProofLocation states that a row anchoring
-// evidence or a label at its proof site requires the proof location, so the
-// anchor a reader is shown is always one the payload carries.
-func TestDiagnosticProofAnchorRequiresProofLocation(t *testing.T) {
+// TestDiagnosticWitnessAnchorRequiresTheWitnessRoster states that a row
+// anchoring evidence or a label at a located witness requires that roster, so
+// the place a reader is shown is always one the payload carries.
+func TestDiagnosticWitnessAnchorRequiresTheWitnessRoster(t *testing.T) {
 	spec := scratchSpec("advice.redundant_claim", scratchFamilyAdvice)
-	spec.Evidence[0].Anchor = AnchorProof
+	spec.Witnesses = 1
+	spec.Evidence[0].Anchor, spec.Evidence[0].Witness = AnchorWitness, 1
 	entry := mustEntry(t, spec)
 	failure := sealEntries(t, []*Entry{entry})
 	if failure.Law != LawRequirementCovered || failure.Disposition != schema.DispositionIncomplete {
-		t.Fatalf("proof-anchored evidence without a proof location sealed: law=%d disposition=%s", failure.Law, failure.Disposition)
+		t.Fatalf("witness-anchored evidence without the witness roster sealed: law=%d disposition=%s", failure.Law, failure.Disposition)
 	}
-	spec.Requirements = RequiresSubject | RequiresProofLocation
+	spec.Requirements = RequiresSubject | RequiresWitness
 	if failure = sealEntries(t, []*Entry{mustEntry(t, spec)}); failure.Available() {
-		t.Fatalf("proof-anchored evidence with a proof location rejected: law=%d", failure.Law)
+		t.Fatalf("witness-anchored evidence with the witness roster rejected: law=%d", failure.Law)
+	}
+}
+
+// TestDiagnosticWitnessOrdinalIsDeclared states the first half of the roster
+// contract: a reference may name only a witness the row's producer supplies.
+// Naming one it does not is a presentation reading a location that will never
+// exist, so the row is refused rather than left to fail at render time.
+func TestDiagnosticWitnessOrdinalIsDeclared(t *testing.T) {
+	for _, undeclared := range []uint8{0, 2} {
+		spec := scratchSpec("advice.redundant_claim", scratchFamilyAdvice)
+		spec.Witnesses = 1
+		spec.Requirements = RequiresSubject | RequiresWitness
+		spec.Evidence[0].Anchor, spec.Evidence[0].Witness = AnchorWitness, undeclared
+		if _, admitted := New(spec); admitted {
+			t.Fatalf("evidence naming undeclared witness %d was admitted", undeclared)
+		}
+	}
+	// A primary-anchored line names no witness at all; carrying an ordinal it
+	// never reads would leave two authored answers for one location.
+	spec := scratchSpec("advice.redundant_claim", scratchFamilyAdvice)
+	spec.Witnesses = 1
+	spec.Requirements = RequiresSubject | RequiresWitness
+	spec.Labels = append(spec.Labels, Label{Anchor: AnchorWitness, Witness: 1, Text: "proven value"})
+	spec.Evidence[0].Anchor, spec.Evidence[0].Witness = AnchorPrimary, 1
+	if _, admitted := New(spec); admitted {
+		t.Fatal("primary-anchored evidence carrying a witness ordinal was admitted")
+	}
+}
+
+// TestDiagnosticWitnessRosterHasNoDeadMember states the other half: a witness
+// the producer is obliged to locate must be shown by something. A roster member
+// nothing names is work demanded of every producer and rendered to no reader.
+func TestDiagnosticWitnessRosterHasNoDeadMember(t *testing.T) {
+	spec := scratchSpec("advice.redundant_claim", scratchFamilyAdvice)
+	spec.Witnesses = 2
+	spec.Requirements = RequiresSubject | RequiresWitness
+	spec.Evidence[0].Anchor, spec.Evidence[0].Witness = AnchorWitness, 1
+	if _, admitted := New(spec); admitted {
+		t.Fatal("row declaring a witness no line or label names was admitted")
+	}
+}
+
+// TestDiagnosticContextSectionNamesADeclaredWitness states that the "where"
+// section and the witness it renders are declared together: a row that shows a
+// surrounding place names which located witness that place is, and a row that
+// names one shows it.
+func TestDiagnosticContextSectionNamesADeclaredWitness(t *testing.T) {
+	withContext := func() Spec {
+		spec := scratchSpec("advice.redundant_claim", scratchFamilyAdvice)
+		spec.Witnesses = 1
+		spec.Context = 1
+		spec.Requirements = RequiresSubject | RequiresWitness
+		spec.Render = append(append([]Section(nil), spec.Render...), SectionContext)
+		return spec
+	}
+	spec := withContext()
+	if _, admitted := New(spec); !admitted {
+		t.Fatal("row rendering a context witness it declares was refused")
+	}
+	unrendered := withContext()
+	unrendered.Render = scratchSpec("advice.redundant_claim", scratchFamilyAdvice).Render
+	if _, admitted := New(unrendered); admitted {
+		t.Fatal("row naming a context witness it never renders was admitted")
+	}
+	unnamed := withContext()
+	unnamed.Context = 0
+	if _, admitted := New(unnamed); admitted {
+		t.Fatal("row rendering the context section without naming a witness was admitted")
+	}
+	beyond := withContext()
+	beyond.Context = 2
+	if _, admitted := New(beyond); admitted {
+		t.Fatal("row naming a context witness beyond its roster was admitted")
 	}
 }
 

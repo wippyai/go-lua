@@ -7,7 +7,6 @@ import (
 	"github.com/wippyai/go-lua/analysis/schema/axis"
 	"github.com/wippyai/go-lua/analysis/schema/programmount"
 	calldomain "github.com/wippyai/go-lua/domain/call"
-	callactivation "github.com/wippyai/go-lua/domain/call/activation"
 	effectfactor "github.com/wippyai/go-lua/domain/effect/factor"
 	heapindex "github.com/wippyai/go-lua/domain/heap/index"
 	packdomain "github.com/wippyai/go-lua/domain/pack"
@@ -76,13 +75,12 @@ func TestMountScopeCarriesNoUndeclaredAuthority(t *testing.T) {
 		CallAlgebra:     &calldomain.Algebra{},
 		EffectAlgebra:   &effectfactor.Algebra{},
 		topology:        &heapindex.Topology{},
-		activation:      &callactivation.TargetBatchCatalog{},
 	}
 	neutral := inputs.neutral()
 	if neutral.ValueSchema != nil || neutral.PlacementSchema.Valid() || neutral.PackSchema != nil || neutral.CallAlgebra != nil || neutral.EffectAlgebra != nil {
 		t.Fatalf("the phase's neutral input half carried a mounted factor authority")
 	}
-	if neutral.HeapSchema.Valid() || neutral.topology != nil || neutral.activation != nil {
+	if neutral.HeapSchema.Valid() || neutral.topology != nil {
 		t.Fatalf("the phase's neutral input half carried a derived authority")
 	}
 	if neutral.StaticAuthority == nil || len(neutral.Artifacts) != len(inputs.Artifacts) {

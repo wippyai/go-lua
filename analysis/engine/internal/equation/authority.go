@@ -4,6 +4,7 @@ import (
 	"sort"
 
 	"github.com/wippyai/go-lua/analysis/engine/internal/composition"
+	"github.com/wippyai/go-lua/analysis/identity"
 	"github.com/wippyai/go-lua/internal/canonical"
 )
 
@@ -394,7 +395,7 @@ func (topology *Topology) ownsMember(member Member) bool {
 	}
 	if topology.activation != nil {
 		row, found := topology.activation.row(member.binding)
-		return found && row.locator.application == member.locator.Application && row.locator.target == member.locator.Target && row.locator.endpoint == member.locator.Endpoint
+		return found && row.locator.application == member.locator.Application && row.locator.target == member.locator.Target && row.locator.endpoint == member.locator.Endpoint && row.locator.context.Same(member.locator.Context)
 	}
 	return false
 }
@@ -420,17 +421,36 @@ func (topology *Topology) SelectActivationMember(trigger composition.Key, locato
 		return Member{}, false
 	}
 	if topology.activation != nil {
+		var selected activationDirectoryRow
+		found := false
 		for _, row := range topology.activation.rows {
 			if row.locator.triggerOrdinal < 0 || row.locator.triggerOrdinal >= len(topology.instanceKeys) || topology.instanceKeys[row.locator.triggerOrdinal] != trigger {
 				continue
 			}
-			if row.locator.application == locator.Application && row.locator.target == locator.Target && row.locator.endpoint == locator.Endpoint {
-				return Member{owner: topology, binding: row.key, locator: locator}, true
+			if row.locator.application == locator.Application && row.locator.target == locator.Target && row.locator.endpoint == locator.Endpoint && row.locator.context.Same(locator.Context) {
+				if found {
+					return Member{}, false
+				}
+				selected, found = row, true
 			}
+		}
+		if found {
+			return Member{owner: topology, binding: selected.key, locator: PairLocator{Application: selected.locator.application, Target: selected.locator.target, Endpoint: selected.locator.endpoint, Context: selected.locator.context}}, true
 		}
 		return Member{}, false
 	}
 	return Member{}, false
+}
+
+// SelectActivationMemberForContext is the explicit context-qualified
+// selection boundary. The locator must carry the complete transition tuple;
+// the separate source argument is only a consistency check and is never used
+// to infer a target context.
+func (topology *Topology) SelectActivationMemberForContext(trigger composition.Key, locator PairLocator, fromContextID identity.ContentID) (Member, bool) {
+	if topology == nil || !trigger.Available() || !locator.Available() || !fromContextID.Available() || !locator.Context.Available() || locator.Context.FromContextID != fromContextID {
+		return Member{}, false
+	}
+	return topology.SelectActivationMember(trigger, locator)
 }
 
 func (topology *Topology) deriveKey(base composition.Key) (composition.Key, bool) {

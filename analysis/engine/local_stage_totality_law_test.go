@@ -9,6 +9,7 @@ import (
 
 	"github.com/wippyai/go-lua/analysis/engine/rows"
 	"github.com/wippyai/go-lua/analysis/identity"
+	programissuance "github.com/wippyai/go-lua/analysis/schema/program/issuance"
 )
 
 func stageTotalityID(value int) identity.ContentID {
@@ -92,24 +93,31 @@ func stageTotalityConstruct(t testing.TB, carryMounted bool) (*CommittedProgram,
 		!RegisterRuleSlot(binding, linkRule, linkCapability) || !binding.Seal() {
 		t.Fatal("stage totality capabilities")
 	}
+	stagedFactorCapability, stagedFactorCapabilityOK := FactorCapabilityForSemantic(binding, coldKey(991_000))
+	carriedFactorCapability, carriedFactorCapabilityOK := FactorCapabilityForSemantic(binding, coldKey(991_001))
+	furtherFactorCapability, furtherFactorCapabilityOK := FactorCapabilityForSemantic(binding, coldKey(991_002))
+	if !stagedFactorCapabilityOK || !carriedFactorCapabilityOK || !furtherFactorCapabilityOK {
+		t.Fatal("stage totality factor capabilities")
+	}
 	queryImplementation, queryImplementationOK := ExactQueryImplementationAt[uint64, uint64](binding, query)
 	if !queryImplementationOK || queryImplementation == nil {
 		t.Fatal("stage totality query implementation")
 	}
 	mountID := stageTotalityID(1)
 	artifact, artifactOK := rows.NewArtifactScalarSpec(stageTotalityID(2), stageTotalityID(3), identity.ContentID(schema.ID().Digest()), rows.ArtifactScalarCapacity{
-		Roles: 3, Points: 2, Regions: 1, Events: 4, Rules: 1, Bodies: 1, Transfers: 1,
+		Roles: 1, Factors: 3, Points: 2, Regions: 1, Events: 4, Rules: 1, Bodies: 1, Transfers: 1,
 	})
 	stagedRole, stagedRoleOK := artifact.DeclareRole(stageTotalityID(4))
-	carriedRole, carriedRoleOK := artifact.DeclareRole(stageTotalityID(5))
-	furtherRole, furtherRoleOK := artifact.DeclareRole(stageTotalityID(6))
+	stagedFactor, stagedFactorOK := artifact.DeclareFactor(stageTotalityID(19))
+	carriedFactor, carriedFactorOK := artifact.DeclareFactor(stageTotalityID(20))
+	furtherFactor, furtherFactorOK := artifact.DeclareFactor(stageTotalityID(21))
 	base, stage := stageTotalityID(7), stageTotalityID(8)
 	_, baseOK := artifact.AddPoint(rows.ArtifactScalarPoint{ID: base, Initial: true})
 	_, stageOK := artifact.AddPoint(rows.ArtifactScalarPoint{ID: stage})
 	transfer, transferOK := artifact.AddTransfer(rows.ArtifactScalarTransfer{ID: stageTotalityID(9), From: base, To: stage})
-	transferOK = transferOK && artifact.AddTransferFactor(transfer, carriedRole)
+	transferOK = transferOK && artifact.AddTransferFactor(transfer, carriedFactor)
 	if carryMounted {
-		transferOK = transferOK && artifact.AddTransferFactor(transfer, furtherRole)
+		transferOK = transferOK && artifact.AddTransferFactor(transfer, furtherFactor)
 	}
 	region, regionOK := artifact.AddRegion(rows.ArtifactScalarRegion{ID: stageTotalityID(10), Head: base})
 	regionOK = regionOK && artifact.AddRegionMember(region, base) && artifact.AddRegionMember(region, stage)
@@ -120,14 +128,15 @@ func stageTotalityConstruct(t testing.TB, carryMounted bool) (*CommittedProgram,
 	body, bodyOK := artifact.AddBody(rows.ArtifactScalarBody{ID: stageTotalityID(11)})
 	bodyOK = bodyOK && artifact.AddBodyEntry(body, base) && artifact.AddBodyExit(body, stage)
 	occurrence := stageTotalityID(12)
-	ruleRowOK := artifact.AddRule(rows.ArtifactScalarRule{Role: stagedRole, Stage: rows.ArtifactRuleStageLocal, Point: stage, Input: base, ID: occurrence})
+	ruleRowOK := artifact.AddRule(rows.ArtifactScalarRule{Role: stagedRole, Stage: programissuance.StageLocal, Point: stage, Input: base, ID: occurrence})
 	template, templateOK := rows.NewArtifactScalarTemplate(artifact)
 	bootstrapOccurrence := stageTotalityID(13)
 	bootstrap, bootstrapOK := NewProgramBootstrap(stageTotalityID(14), stageTotalityID(15), ProgramBootstrapCatalog{
 		Capability: linkCapability, Occurrences: []identity.ContentID{bootstrapOccurrence},
 	})
-	queryAdmission, queryAdmissionOK := NewExactQueryAdmission(queryImplementation, stageTotalityID(16), mountID, stage)
-	if !artifactOK || !stagedRoleOK || !carriedRoleOK || !furtherRoleOK || !baseOK || !stageOK || !transferOK || !regionOK ||
+	contexts := explicitTestContextDirectory(t, stageTotalityID(14), []identity.ContentID{mountID}, stageTotalityID(17), stageTotalityID(18))
+	queryAdmission, queryAdmissionOK := NewExactQueryAdmission(queryImplementation, stageTotalityID(16), mountID, stage, explicitTestContext(t, contexts, mountID))
+	if !artifactOK || !stagedRoleOK || !stagedFactorOK || !carriedFactorOK || !furtherFactorOK || !baseOK || !stageOK || !transferOK || !regionOK ||
 		!eventsOK || !bodyOK || !ruleRowOK || !templateOK || !bootstrapOK || !queryAdmissionOK {
 		t.Fatal("stage totality artifact")
 	}
@@ -137,12 +146,16 @@ func stageTotalityConstruct(t testing.TB, carryMounted bool) (*CommittedProgram,
 			Template: template,
 			Roles: []MountedProgramRole{
 				{Scalar: stagedRole, Capability: stagedCapability},
-				{Scalar: carriedRole, Capability: carriedCapability},
-				{Scalar: furtherRole, Capability: furtherCapability},
+			},
+			Factors: []MountedProgramFactor{
+				{Scalar: stagedFactor, Capability: stagedFactorCapability},
+				{Scalar: carriedFactor, Capability: carriedFactorCapability},
+				{Scalar: furtherFactor, Capability: furtherFactorCapability},
 			},
 			Module: mountID,
 		}},
 		Bootstrap: bootstrap,
+		Contexts:  contexts,
 		Admission: MountedProgramAdmission{
 			Link:    []LinkRuleAdmission{{Capability: linkCapability, Occurrence: bootstrapOccurrence}},
 			Mounted: []MountedRuleAdmission{{Capability: stagedCapability, Mount: mountID, Point: stage, Occurrence: occurrence}},

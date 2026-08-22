@@ -7,7 +7,6 @@ import (
 	"sort"
 	"strconv"
 
-	"github.com/wippyai/go-lua/analysis/lua/internal/grammarproof"
 	"github.com/wippyai/go-lua/analysis/lua/parsersource"
 )
 
@@ -988,25 +987,24 @@ func negatedGuard(guard Guard) (Guard, error) {
 	return Guard{Atoms: []GuardAtom{atom}}, nil
 }
 
-// deriveTypedRelations consumes grammarproof's ephemeral syntax visitors and
+// deriveTypedRelations consumes parser source's ephemeral syntax visitors and
 // emits all parser action rows into one ActionTerms arena.
-func deriveTypedRelations(root string, schema parsersource.Schema) ([]ProductLaw, []HelperLaw, []SequenceLaw, []FieldMutation, ActionTerms, error) {
+func deriveTypedRelations(root string, schema parsersource.Schema) ([]ProductLaw, []HelperLaw, []FieldMutation, ActionTerms, error) {
 	templates, err := parsersource.HelperTemplates(root)
 	if err != nil {
-		return nil, nil, nil, nil, ActionTerms{}, err
+		return nil, nil, nil, ActionTerms{}, err
 	}
 	if len(templates) != 19 {
-		return nil, nil, nil, nil, ActionTerms{}, fmt.Errorf("parser products: helper denominator = %d, want 19", len(templates))
+		return nil, nil, nil, ActionTerms{}, fmt.Errorf("parser products: helper denominator = %d, want 19", len(templates))
 	}
 	helperNames := make(map[string]bool, len(templates))
 	for _, template := range templates {
 		if helperNames[template.Name] {
-			return nil, nil, nil, nil, ActionTerms{}, fmt.Errorf("parser products: duplicate helper %s", template.Name)
+			return nil, nil, nil, ActionTerms{}, fmt.Errorf("parser products: duplicate helper %s", template.Name)
 		}
 		helperNames[template.Name] = true
 	}
 	builder := newActionTermBuilder(helperNames)
-	helperSyntax := make(map[string]*goast.FuncDecl, len(templates))
 	helperLaws := make([]HelperLaw, 0, len(templates))
 	semanticHelpers := 0
 	metadataHelpers := 0
@@ -1014,7 +1012,6 @@ func deriveTypedRelations(root string, schema parsersource.Schema) ([]ProductLaw
 	acceptedReturns := 0
 	rejectRows := 0
 	if err := parsersource.VisitHelperSyntax(root, func(template parsersource.HelperTemplate, function *goast.FuncDecl) error {
-		helperSyntax[template.Name] = function
 		formals, formErr := helperFormalNames(function)
 		if formErr != nil {
 			return fmt.Errorf("helper %s: %w", template.Name, formErr)
@@ -1058,26 +1055,17 @@ func deriveTypedRelations(root string, schema parsersource.Schema) ([]ProductLaw
 		helperLaws = append(helperLaws, law)
 		return nil
 	}); err != nil {
-		return nil, nil, nil, nil, ActionTerms{}, err
+		return nil, nil, nil, ActionTerms{}, err
 	}
 	if semanticHelpers != 15 || metadataHelpers != 3 || diagnosticHelpers != 1 {
-		return nil, nil, nil, nil, ActionTerms{}, fmt.Errorf("parser products: helper dispositions semantic=%d metadata=%d diagnostic=%d, want 15/3/1", semanticHelpers, metadataHelpers, diagnosticHelpers)
+		return nil, nil, nil, ActionTerms{}, fmt.Errorf("parser products: helper dispositions semantic=%d metadata=%d diagnostic=%d, want 15/3/1", semanticHelpers, metadataHelpers, diagnosticHelpers)
 	}
 	if acceptedReturns != 18 || rejectRows != 5 {
-		return nil, nil, nil, nil, ActionTerms{}, fmt.Errorf("parser products: helper control rows returns=%d rejects=%d, want 18/5", acceptedReturns, rejectRows)
+		return nil, nil, nil, ActionTerms{}, fmt.Errorf("parser products: helper control rows returns=%d rejects=%d, want 18/5", acceptedReturns, rejectRows)
 	}
 	sort.Slice(helperLaws, func(left, right int) bool { return helperLaws[left].Scope < helperLaws[right].Scope })
 
-	carriers, err := grammarproof.SequenceCarriers(root)
-	if err != nil {
-		return nil, nil, nil, nil, ActionTerms{}, err
-	}
-	byTag := make(map[string][]grammarproof.SequenceCarrier)
-	for _, carrier := range carriers {
-		byTag[carrier.Tag] = append(byTag[carrier.Tag], carrier)
-	}
 	var productLaws []ProductLaw
-	var sequences []SequenceLaw
 	var mutations []FieldMutation
 	if err := parsersource.VisitActionSyntax(root, func(template parsersource.ActionTemplate, block *goast.BlockStmt) error {
 		scope := builder.scope(ActionScopeProduction, template.Key, uint16(len(template.RHS)), 1, nil)
@@ -1110,21 +1098,15 @@ func deriveTypedRelations(root string, schema parsersource.Schema) ([]ProductLaw
 		for _, edit := range analyzer.relation.mutations {
 			mutations = append(mutations, FieldMutation{Production: template.Key, Edit: edit})
 		}
-		if rows, sequenceErr := deriveActionSequences(template, block, builder, &scope, byTag[template.ResultTag], helperSyntax); sequenceErr != nil {
-			return fmt.Errorf("%s sequences: %w", template.Key, sequenceErr)
-		} else {
-			sequences = append(sequences, rows...)
-		}
 		builder.closeScope(scope)
 		return nil
 	}); err != nil {
-		return nil, nil, nil, nil, ActionTerms{}, err
+		return nil, nil, nil, ActionTerms{}, err
 	}
 	sortProductLaws(productLaws)
 	if err := validateProductLawOrder(productLaws); err != nil {
-		return nil, nil, nil, nil, ActionTerms{}, err
+		return nil, nil, nil, ActionTerms{}, err
 	}
-	sort.Slice(sequences, func(left, right int) bool { return sequenceLess(sequences[left], sequences[right]) })
 	sort.Slice(mutations, func(left, right int) bool {
 		if mutations[left].Production != mutations[right].Production {
 			return mutations[left].Production < mutations[right].Production
@@ -1134,9 +1116,9 @@ func deriveTypedRelations(root string, schema parsersource.Schema) ([]ProductLaw
 	remap := builder.finalize()
 	remapActionSymbols(productLaws, helperLaws, mutations, remap)
 	if err := builder.terms.Validate(); err != nil {
-		return nil, nil, nil, nil, ActionTerms{}, err
+		return nil, nil, nil, ActionTerms{}, err
 	}
-	return productLaws, helperLaws, sequences, mutations, builder.terms, nil
+	return productLaws, helperLaws, mutations, builder.terms, nil
 }
 
 func helperMetadataOnly(name string) bool {

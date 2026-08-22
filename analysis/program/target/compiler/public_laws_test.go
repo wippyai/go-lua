@@ -265,6 +265,12 @@ func writeOperationSnapshot(t *testing.T, out *strings.Builder, contract *contra
 	fmt.Fprintf(out, "input=%d/%v:%s;", input, inputOK, publicValuesSnapshot(t, contract, input, inputOK))
 	fmt.Fprintf(out, "type-formals=%d,value-formals=%d,values-vars=%d,row-formals=%d;",
 		contract.Operations.TypeFormalCount(op), contract.Operations.ValueFormalCount(op), contract.Operations.ValuesVarCount(op), contract.Operations.RowFormalCount(op))
+	formalTail, formalTailOK := contract.Operations.FormalEffectTail(op)
+	fmt.Fprintf(out, "formal-effects=%d,formal-tail=%d/%v;", contract.Operations.FormalEffectCount(op), formalTail, formalTailOK)
+	for index := 0; index < contract.Operations.FormalEffectCount(op); index++ {
+		formal, formalOK := contract.Operations.FormalEffectAt(op, index)
+		fmt.Fprintf(out, "formal-effect[%d]=%d/%d/%d/%d/%t/%v;", index, formal.Kind, formal.Param, formal.FromParam, formal.Into, formal.HasInto, formalOK)
+	}
 	for index := 0; index < contract.Operations.ValuesVarCount(op); index++ {
 		class, ok := contract.Operations.ValuesVarType(op, vocabulary.ValuesVar(index))
 		fmt.Fprintf(out, "values-var-type[%d]=%d/%v:%s;", index, class, ok, publicTypeDigest(t, contract, class, ok))

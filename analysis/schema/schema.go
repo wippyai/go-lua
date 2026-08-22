@@ -56,6 +56,10 @@ const (
 	SurfaceKindInvalid SurfaceKind = iota
 	SurfaceKindStructure
 	SurfaceKindAxis
+	// SurfaceKindIssuance owns the declarative construction machine used to
+	// place authored Program occurrences. It follows axes, whose writer keys a
+	// placement names, and precedes rules, whose issuance rows reference it.
+	SurfaceKindIssuance
 	SurfaceKindRule
 	SurfaceKindDiagnostic
 	SurfaceKindComposite

@@ -19,7 +19,9 @@ func TestCorpusPlacementAdapterUsesCanonicalMonotoneJoin(t *testing.T) {
 	for _, current := range values {
 		for _, next := range values {
 			row := corpusPlacementAllocation{present: true, class: current}
-			corpusPlacementJoinAllocation(&row, next)
+			if !corpusPlacementJoinAllocation(&row, next) {
+				t.Fatalf("join(%s,%s) refused", current, next)
+			}
 			want := placementdomain.Join(current, next)
 			if !row.present || row.class != want {
 				t.Fatalf("join(%s,%s)=%s/%t, want %s/true", current, next, row.class, row.present, want)
@@ -28,10 +30,11 @@ func TestCorpusPlacementAdapterUsesCanonicalMonotoneJoin(t *testing.T) {
 	}
 }
 
-func TestCorpusPlacementAdapterEvidenceJoinPreservesUnknownSemantics(t *testing.T) {
-	row := corpusPlacementAllocation{}
+func TestCorpusPlacementAdapterRetainsTemporalEvidencePerPosition(t *testing.T) {
 	owner := placementCodecIDForOracle(7)
 	first := placementdomain.AllocationEvidence{
+		Class:                placementdomain.Stack,
+		HasClass:             true,
 		Kind:                 placementdomain.AllocationKindTable,
 		HasKind:              true,
 		OwnerIdentity:        owner,
@@ -43,7 +46,9 @@ func TestCorpusPlacementAdapterEvidenceJoinPreservesUnknownSemantics(t *testing.
 		DeepFrozen:           placementdomain.EvidenceProven,
 	}
 	second := placementdomain.AllocationEvidence{
-		Kind:                 placementdomain.AllocationKindClosure,
+		Class:                placementdomain.Stack,
+		HasClass:             true,
+		Kind:                 placementdomain.AllocationKindTable,
 		HasKind:              true,
 		OwnerIdentity:        owner,
 		HasOwnerIdentity:     true,
@@ -53,22 +58,37 @@ func TestCorpusPlacementAdapterEvidenceJoinPreservesUnknownSemantics(t *testing.
 		DiesBeforeSuspension: placementdomain.EvidenceProven,
 		DeepFrozen:           placementdomain.EvidenceUnknown,
 	}
-	corpusPlacementJoinEvidence(&row, first)
-	corpusPlacementJoinEvidence(&row, second)
-	if row.evidence.HasKind || row.evidence.Kind != placementdomain.AllocationKindUnknown {
-		t.Fatalf("conflicting kind evidence was treated as known: %v/%v", row.evidence.Kind, row.evidence.HasKind)
+	positions := []corpusPlacementPosition{{query: 1, present: true, class: placementdomain.Stack, evidence: first}, {query: 2, present: true, class: placementdomain.Stack, evidence: second}}
+	aggregate, ok := corpusPlacementAggregateEvidence(corpusPlacementAllocation{present: true, class: placementdomain.Stack}, positions)
+	if !ok {
+		t.Fatal("position-scoped temporal evidence was rejected as one conflicting fact")
 	}
-	if !row.evidence.HasOwnerIdentity || row.evidence.OwnerIdentity != owner {
+	if aggregate.Kind != placementdomain.AllocationKindTable || !aggregate.HasKind {
+		t.Fatalf("allocation kind invariant = %v/%v", aggregate.Kind, aggregate.HasKind)
+	}
+	if !aggregate.HasOwnerIdentity || aggregate.OwnerIdentity != owner {
 		t.Fatal("matching owner identity evidence was not retained")
 	}
-	if row.evidence.HasDepth || row.evidence.Depth != 0 {
-		t.Fatalf("conflicting depth evidence was treated as known: %d/%v", row.evidence.Depth, row.evidence.HasDepth)
+	if aggregate.Depth != 3 || !aggregate.HasDepth {
+		t.Fatalf("temporal depth maximum = %d/%v, want 3/true", aggregate.Depth, aggregate.HasDepth)
 	}
-	if row.evidence.FrameLocal != placementdomain.EvidenceUnknown || row.evidence.DiesBeforeSuspension != placementdomain.EvidenceProven {
-		t.Fatalf("proof evidence did not preserve conservative joins: frame=%v dies=%v", row.evidence.FrameLocal, row.evidence.DiesBeforeSuspension)
+	if aggregate.FrameLocal != placementdomain.EvidenceProven || aggregate.DiesBeforeSuspension != placementdomain.EvidenceProven {
+		t.Fatalf("existential temporal proofs = frame:%v dies:%v", aggregate.FrameLocal, aggregate.DiesBeforeSuspension)
 	}
-	if row.evidence.DeepFrozen != placementdomain.EvidenceProven {
-		t.Fatalf("deep-frozen proof was not consumed by the adapter evidence join: %v", row.evidence.DeepFrozen)
+	if aggregate.DeepFrozen != placementdomain.EvidenceProven {
+		t.Fatalf("deep-frozen proof was not retained across positions: %v", aggregate.DeepFrozen)
+	}
+
+	foreignKind := second
+	foreignKind.Kind = placementdomain.AllocationKindClosure
+	if _, ok := corpusPlacementAggregateEvidence(corpusPlacementAllocation{present: true, class: placementdomain.Stack}, []corpusPlacementPosition{{query: 1, present: true, class: placementdomain.Stack, evidence: first}, {query: 2, present: true, class: placementdomain.Stack, evidence: foreignKind}}); ok {
+		t.Fatal("allocation kind changed across positions")
+	}
+
+	absent := second
+	absent.Class, absent.HasClass = placementdomain.Bottom, false
+	if _, ok := corpusPlacementAggregateEvidence(corpusPlacementAllocation{present: true, class: placementdomain.Stack}, []corpusPlacementPosition{{query: 1, present: false, evidence: absent}, {query: 2, present: true, class: placementdomain.Stack, evidence: second}}); !ok {
+		t.Fatal("an absent class at one position erased a later position-scoped class")
 	}
 }
 

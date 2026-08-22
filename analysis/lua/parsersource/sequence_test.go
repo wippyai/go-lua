@@ -1,9 +1,30 @@
 package parsersource
 
 import (
+	goast "go/ast"
 	"path/filepath"
 	"testing"
 )
+
+func TestSequenceInputDistinguishesExactOperandsFromProjections(t *testing.T) {
+	scope := &actionScope{kind: ProductScopeProduction}
+	if got := directSequenceInput(scope, goast.NewIdent("Arg2"), nil); got != 2 {
+		t.Fatalf("exact input = %d, want 2", got)
+	}
+	projected := &goast.SelectorExpr{X: goast.NewIdent("Arg2"), Sel: goast.NewIdent("Field")}
+	if got := directSequenceInput(scope, projected, nil); got != 0 {
+		t.Fatalf("projected input = %d, want no exact input", got)
+	}
+	indexed := &goast.IndexExpr{X: goast.NewIdent("Arg2"), Index: &goast.BasicLit{}}
+	if got := directSequenceInput(scope, indexed, nil); got != 0 {
+		t.Fatalf("indexed input = %d, want no exact input", got)
+	}
+	frame := &helperFrame{actuals: map[string]goast.Expr{"value": goast.NewIdent("Arg3")}, caller: scope}
+	helper := &actionScope{kind: ProductScopeHelper}
+	if got := directSequenceInput(helper, goast.NewIdent("value"), frame); got != 3 {
+		t.Fatalf("forwarded exact input = %d, want 3", got)
+	}
+}
 
 // TestSequenceCarriersAreDerivedFromDeclaredArms states where the list
 // denominator comes from. A result tag carries a list because its %union arm is

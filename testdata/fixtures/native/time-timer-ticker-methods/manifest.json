@@ -1,0 +1,15 @@
+{
+  "description": "time.Ticker and time.Timer are reachable only through their fallible constructors, so each is built, its nil arm is read, and every declared method is called; both delivery channels carry time.Time because a tick is the instant it fired.",
+  "packages": [
+    "time"
+  ],
+  "files": [
+    "main.lua"
+  ],
+  "check": {
+    "errors": 0
+  },
+  "run": {
+    "skip": "declaration-surface fixture"
+  }
+}

@@ -28,6 +28,13 @@ func TestStorageLifetimeRowsKeepUnknownDistinctFromInvalid(t *testing.T) {
 	if StorageLifetimeInvalid.Valid() || StorageLifetimeUnknown.Valid() == false {
 		t.Fatal("storage lifetime validity boundary moved")
 	}
+	closure, ok := NewStorageCellLifetime(id, StorageLifetimeClosure)
+	if !ok || !closure.Available() || closure.Lifetime() != StorageLifetimeClosure || closure.Lifetime().String() != "closure" {
+		t.Fatal("closure storage lifetime was not preserved as a valid row")
+	}
+	if closure.Lifetime() == StorageLifetimeModule {
+		t.Fatal("closure storage lifetime collapsed into module ownership")
+	}
 }
 
 func TestStorageLifetimeFamilyRejectsIncompleteRows(t *testing.T) {

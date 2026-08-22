@@ -19,23 +19,17 @@ type Target struct {
 }
 
 // Body is an opaque capability for one canonical executable Program body
-// target.  It deliberately retains the exact Project Shard/body term rather
-// than Call's private target selector (or any selector ordinal).  Only
-// Target.Body can issue one; the capability exposes only compact body
-// identities and the issuing Algebra owner fence.
+// target. It retains only Call's private target coordinate; all semantic
+// fields remain in the target row that owns them. Only Target.Body can issue
+// one.
 //
 // Keeping the capability opaque is important at the Call/Effect boundary:
 // callers can transport a proven body target, but cannot manufacture a body
 // from a raw Program term or turn Call's dense target layout into a second
 // semantic vocabulary.
 type Body struct {
-	owner      *Algebra
-	module     identity.ContentID
-	artifactID identity.ContentID
-	programID  identity.ContentID
-	bodyPath   identity.ContentID
-	formalID   identity.ContentID
-	context    identity.ContentID
+	owner    *Algebra
+	selector selector
 }
 
 // Bodies is Call's one global executable-function-body view.  It carries
@@ -110,9 +104,8 @@ func (bodies Bodies) Index(body Body) (int, bool) {
 	if bodies.owner == nil || body.owner != bodies.owner || !body.Valid() {
 		return 0, false
 	}
-	selected := bodies.owner.targetIndex[targetKey{kind: targetBody, moduleKey: body.module, bodyContext: body.context}]
-	index := int(selected) - 1
-	if !selected.valid() || index < 0 || index >= bodies.Count() {
+	index := int(body.selector) - 1
+	if index < 0 || index >= bodies.Count() {
 		return 0, false
 	}
 	projected, ok := bodies.At(index)
@@ -148,16 +141,13 @@ func (capability Target) Body() (Body, bool) {
 		return Body{}, false
 	}
 	row := capability.owner.targets[capability.selector-1]
-	if row.key.kind != targetBody || !row.key.moduleKey.Available() || !row.bodyContext.Available() ||
-		!row.programID.Available() || !row.bodyPath.Available() || !row.formalID.Available() {
+	if row.kind != targetBody || !row.bodyPath.Available() {
 		return Body{}, false
 	}
-	body := Body{
-		owner: capability.owner, module: row.key.moduleKey,
-		artifactID: row.artifactID, programID: row.programID,
-		bodyPath: row.bodyPath, formalID: row.formalID,
-		context: row.bodyContext,
+	if _, mountOK := capability.owner.mountRow(row.mount); !mountOK {
+		return Body{}, false
 	}
+	body := Body{owner: capability.owner, selector: capability.selector}
 	return body, body.Valid()
 }
 
@@ -165,36 +155,19 @@ func (capability Target) Body() (Body, bool) {
 // the Algebra that issued it.  The check includes the canonical target map,
 // so a package-internal forged Body cannot cross the owner fence.
 func (body Body) Valid() bool {
-	if body.owner == nil || !body.owner.Valid() || !body.module.Available() || !body.context.Available() ||
-		!body.programID.Available() || !body.bodyPath.Available() || !body.formalID.Available() {
+	if body.owner == nil || !body.owner.Valid() || !body.selector.valid() || uint64(body.selector) > uint64(len(body.owner.targets)) {
 		return false
 	}
-	selector := body.owner.targetIndex[targetKey{kind: targetBody, moduleKey: body.module, bodyContext: body.context}]
-	if !selector.valid() || uint64(selector) > uint64(len(body.owner.targets)) {
-		return false
-	}
-	row := body.owner.targets[selector-1]
-	return row.key.kind == targetBody && row.key.moduleKey == body.module && row.bodyContext == body.context &&
-		row.artifactID == body.artifactID && row.programID == body.programID &&
-		row.bodyPath == body.bodyPath && row.formalID == body.formalID
+	row := body.owner.targets[body.selector-1]
+	_, mountOK := body.owner.mountRow(row.mount)
+	return row.kind == targetBody && row.bodyPath.Available() && mountOK
 }
 
 // Same proves exact body-capability identity.  Equal source terms from
 // equivalent Links remain distinct hot authorities, just like every other
 // Call capability.
 func (body Body) Same(other Body) bool {
-	return body.Valid() && other.Valid() && body.owner == other.owner && body.module == other.module && body.context == other.context
-}
-
-// ContentID returns the portable identity of the exact Program body target.
-// It is derived from the sealed Program content and body term, never from
-// Call's selector or any raw target ordinal. This is the identity used by
-// body-call Rule operands and cold derivation evidence.
-func (body Body) ContentID() (identity.ContentID, bool) {
-	if !body.Valid() {
-		return identity.ContentID{}, false
-	}
-	return body.formalID, body.formalID.Available()
+	return body.Valid() && other.Valid() && body.owner == other.owner && body.selector == other.selector
 }
 
 // ModuleKey returns Project's already-issued mount identity for this exact
@@ -204,22 +177,27 @@ func (body Body) ModuleKey() (identity.ContentID, bool) {
 	if !body.Valid() || body.owner == nil {
 		return identity.ContentID{}, false
 	}
-	return body.module, true
-}
-
-// ArtifactID returns the mounted reusable artifact identity copied at seal.
-func (body Body) ArtifactID() (identity.ContentID, bool) {
-	return body.artifactID, body.Valid() && body.artifactID.Available()
+	row := body.owner.targets[body.selector-1]
+	mount, ok := body.owner.mountRow(row.mount)
+	return mount.moduleID, ok
 }
 
 // ProgramID returns the source identity attached to this body row.
 func (body Body) ProgramID() (identity.ContentID, bool) {
-	return body.programID, body.Valid() && body.programID.Available()
+	if !body.Valid() {
+		return identity.ContentID{}, false
+	}
+	row := body.owner.targets[body.selector-1]
+	mount, ok := body.owner.mountRow(row.mount)
+	return mount.programID, ok
 }
 
 // BodyPath returns the artifact body identity; it is not a dense ordinal.
 func (body Body) BodyPath() (identity.ContentID, bool) {
-	return body.bodyPath, body.Valid() && body.bodyPath.Available()
+	if !body.Valid() {
+		return identity.ContentID{}, false
+	}
+	return body.owner.targets[body.selector-1].bodyPath, true
 }
 
 // Operation projects the exact sealed target operation of one known seed
@@ -230,7 +208,7 @@ func (capability Target) Operation() (vocabulary.Operation, bool) {
 		return 0, false
 	}
 	row := capability.owner.targets[capability.selector-1]
-	if row.key.kind != targetSeed {
+	if row.kind != targetSeed {
 		return 0, false
 	}
 	return row.seedOperation, row.seedOperation != 0
@@ -246,7 +224,7 @@ func (capability Target) IsScopedLoader() bool {
 		return false
 	}
 	row := capability.owner.targets[capability.selector-1]
-	return row.key.kind == targetSeed && row.scopedLoader
+	return row.kind == targetSeed && row.scopedLoader
 }
 
 func (value Value) knownTargetCount() int {

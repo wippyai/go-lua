@@ -4,6 +4,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/engine"
 	"github.com/wippyai/go-lua/analysis/identity"
 	"github.com/wippyai/go-lua/analysis/schema"
+	"github.com/wippyai/go-lua/analysis/schema/executioncontext"
 	valuedomain "github.com/wippyai/go-lua/domain/value"
 )
 
@@ -19,24 +20,24 @@ type BranchValueObservationAttachment struct {
 	mount       identity.ContentID
 	point       identity.ContentID
 	producer    schema.Key
+	context     executioncontext.Context
 }
 
 // BranchValueObservationID is the Snapshot row address of one mounted branch
-// evidence observation. Attach and detach both derive this identity; neither
-// retains a second publication table.
-func BranchValueObservationID(mount, point identity.ContentID, producer schema.Key) (identity.ContentID, bool) {
-	if !mount.Available() || !point.Available() || !producer.Available() {
+// evidence observation owned by one exact execution Context. Attach and
+// detach both derive this identity; neither retains a second publication
+// table. Context is part of the canonical preimage so same-module actors can
+// never collapse into one row.
+func BranchValueObservationID(mount, point identity.ContentID, producer schema.Key, context executioncontext.Context) (identity.ContentID, bool) {
+	if !mount.Available() || !point.Available() || !producer.Available() || !context.Available() || context.ModuleKey() != mount {
 		return identity.ContentID{}, false
 	}
-	return identity.DeriveContentID("analysis/branch-value-observation/v1", mount[:], point[:], []byte(producer))
-}
-
-func branchValueObservationAttachmentID(mount, point identity.ContentID, producer schema.Key) (identity.ContentID, bool) {
-	return BranchValueObservationID(mount, point, producer)
+	contextID := context.ID()
+	return identity.DeriveContentID("analysis/branch-value-observation/v2", mount[:], point[:], contextID[:], []byte(producer))
 }
 
 func (attachment BranchValueObservationAttachment) valid() bool {
-	want, ok := branchValueObservationAttachmentID(attachment.mount, attachment.point, attachment.producer)
+	want, ok := BranchValueObservationID(attachment.mount, attachment.point, attachment.producer, attachment.context)
 	return ok && attachment.id == want && attachment.observation.Available() && attachment.observation.ID == attachment.id
 }
 
@@ -61,22 +62,23 @@ func DeclareBranchValueObservation(
 	role engine.RuleSlotCapability,
 	producer schema.Key,
 	mount, point, occurrence identity.ContentID,
+	context executioncontext.Context,
 ) (BranchValueObservationAttachment, engine.SolveFailure, bool) {
 	if committed == nil || query == nil {
 		return BranchValueObservationAttachment{}, engine.ObservationSealArguments(), false
 	}
-	id, idOK := branchValueObservationAttachmentID(mount, point, producer)
+	id, idOK := BranchValueObservationID(mount, point, producer, context)
 	if !idOK {
 		return BranchValueObservationAttachment{}, engine.ObservationSealArguments(), false
 	}
 	if !MemberPublished(committed, role, mount, point, occurrence) {
 		return BranchValueObservationAttachment{}, engine.ObservationSealPoint(), false
 	}
-	observation, declared := engine.NewSummaryObservationAdmission[valuedomain.Value, valuedomain.ValueSummaryObservation](query, id, role, mount, point, occurrence)
+	observation, declared := engine.NewSummaryObservationAdmission[valuedomain.Value, valuedomain.ValueSummaryObservation](query, id, role, mount, point, occurrence, context)
 	if !declared {
 		return BranchValueObservationAttachment{}, engine.ObservationSealArguments(), false
 	}
-	attachment := BranchValueObservationAttachment{observation: observation, id: id, mount: mount, point: point, producer: producer}
+	attachment := BranchValueObservationAttachment{observation: observation, id: id, mount: mount, point: point, producer: producer, context: context}
 	if !attachment.valid() {
 		return BranchValueObservationAttachment{}, engine.ObservationSealArguments(), false
 	}

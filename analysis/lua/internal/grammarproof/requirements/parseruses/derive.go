@@ -4,23 +4,44 @@ import (
 	"fmt"
 	"sort"
 
+	"github.com/wippyai/go-lua/analysis/lua/census"
 	"github.com/wippyai/go-lua/analysis/lua/internal/grammarproof/astcodec"
 	"github.com/wippyai/go-lua/analysis/lua/internal/grammarproof/requirements/parserproducts"
 	"github.com/wippyai/go-lua/analysis/lua/parsersource"
 )
 
-// sequenceIndex validates the one parserproducts-owned sequence authority.
+// sequenceIndex validates and indexes the canonical census sequence authority.
 // Consumers retain only coordinates into that authority; no list action or
 // parallel composition plane exists here.
-func sequenceIndex(products []parserproducts.ProductLaw, laws []parserproducts.SequenceLaw) (map[SequenceCoordinate]parserproducts.SequenceLaw, error) {
-	productions := make(map[string]bool, len(products))
+func sequenceIndex(products []parserproducts.ProductLaw, inventory census.Census) (map[SequenceCoordinate]parsersource.ActionSequence, error) {
+	productions := make(map[string]parserproducts.ProductLaw, len(products))
 	for _, product := range products {
-		productions[product.Production] = true
+		if _, exists := productions[product.Production]; exists {
+			return nil, fmt.Errorf("parser uses: duplicate parser-product law %s", product.Production)
+		}
+		productions[product.Production] = product
 	}
-	result := make(map[SequenceCoordinate]parserproducts.SequenceLaw, len(laws))
-	for _, law := range laws {
-		key := SequenceCoordinate{Production: law.Production, Tag: law.Destination.Tag, Field: law.Destination.Field}
-		if !productions[law.Production] || key.Tag == "" || law.Construction == parserproducts.SequenceConstructionInvalid {
+	declared := make(map[string]parsersource.ActionTemplate, len(inventory.Productions))
+	for _, production := range inventory.Productions {
+		if _, exists := declared[production.Key]; exists {
+			return nil, fmt.Errorf("parser uses: duplicate parser-census production %s", production.Key)
+		}
+		declared[production.Key] = production
+	}
+	if len(declared) != len(productions) {
+		return nil, fmt.Errorf("parser uses: parser census and products have different production denominators")
+	}
+	for key, product := range productions {
+		production, exists := declared[key]
+		if !exists || product.Nonterminal != production.Nonterminal || product.ActionDigest != production.ActionDigest || !sameStrings(product.RHS, production.RHS) {
+			return nil, fmt.Errorf("parser uses: parser census and product law disagree at %s", key)
+		}
+	}
+	result := make(map[SequenceCoordinate]parsersource.ActionSequence, len(inventory.Sequences))
+	for _, law := range inventory.Sequences {
+		key := SequenceCoordinate{Production: law.Production, Tag: law.Tag, Field: law.Field}
+		product, exists := productions[law.Production]
+		if !exists || key.Tag == "" || !validSequence(law, len(product.RHS)) {
 			return nil, fmt.Errorf("parser uses: invalid sequence authority coordinate")
 		}
 		if _, exists := result[key]; exists {
@@ -31,9 +52,50 @@ func sequenceIndex(products []parserproducts.ProductLaw, laws []parserproducts.S
 	return result, nil
 }
 
-// buildValuesTails projects segment positions from SequenceLaw. It does not
-// infer a list from a yacc carrier or from expression spelling.
-func buildValuesTails(products []parserproducts.ProductLaw, sequences map[SequenceCoordinate]parserproducts.SequenceLaw) ([]ValuesTail, error) {
+func sameStrings(left, right []string) bool {
+	if len(left) != len(right) {
+		return false
+	}
+	for index := range left {
+		if left[index] != right[index] {
+			return false
+		}
+	}
+	return true
+}
+
+func validSequence(law parsersource.ActionSequence, inputCount int) bool {
+	if law.Construction <= parsersource.SequenceConstructionInvalid || law.Construction > parsersource.SequenceConstructionAppend {
+		return false
+	}
+	if law.Construction == parsersource.SequenceConstructionNil && len(law.Segments) != 0 {
+		return false
+	}
+	for index, segment := range law.Segments {
+		if segment.Ordinal != index+1 || segment.Kind < parsersource.SequenceElement || segment.Kind > parsersource.SequenceSpread || segment.Input < 0 || segment.Input > inputCount {
+			return false
+		}
+		if segment.Kind == parsersource.SequenceSpread && law.Construction == parsersource.SequenceConstructionLiteral {
+			return false
+		}
+		if segment.Kind == parsersource.SequenceSpread && law.Construction == parsersource.SequenceConstructionAppend && index != 0 && index != len(law.Segments)-1 {
+			return false
+		}
+		for _, symbol := range segment.Symbols {
+			if symbol <= 0 || symbol > inputCount {
+				return false
+			}
+		}
+		if segment.Input != 0 && (len(segment.Symbols) != 1 || segment.Symbols[0] != segment.Input) {
+			return false
+		}
+	}
+	return true
+}
+
+// buildValuesTails projects segment positions from canonical census rows. It
+// does not infer a list from a yacc carrier or from expression spelling.
+func buildValuesTails(products []parserproducts.ProductLaw, sequences map[SequenceCoordinate]parsersource.ActionSequence) ([]ValuesTail, error) {
 	byProduction := make(map[string]parserproducts.ProductLaw, len(products))
 	for _, law := range products {
 		byProduction[law.Production] = law
@@ -45,12 +107,12 @@ func buildValuesTails(products []parserproducts.ProductLaw, sequences map[Sequen
 			continue
 		}
 		for index, segment := range law.Segments {
-			if segment.Kind != parserproducts.SequenceElement {
+			if segment.Kind != parsersource.SequenceElement {
 				continue
 			}
 			tail := ValuesTail{Sequence: SequenceCoordinate{Production: coordinate.Production, Tag: coordinate.Tag, Field: coordinate.Field, Segment: index + 1}, Position: ValuesPositionFinalOpen}
 			for successor := index + 1; successor < len(law.Segments); successor++ {
-				if law.Segments[successor].Kind == parserproducts.SequenceElement {
+				if law.Segments[successor].Kind == parsersource.SequenceElement {
 					tail.Position, tail.Successor = ValuesPositionNonFinal, successor+1
 					break
 				}
@@ -79,7 +141,7 @@ func valuesPosition(target ProgramUseClass, child string) ValuesPosition {
 	return ValuesPositionScalar
 }
 
-func buildLValuePaths(laws []parserproducts.ProductLaw, paths []UsePath, sequences map[SequenceCoordinate]parserproducts.SequenceLaw, terms parserproducts.ActionTerms) ([]LValuePath, error) {
+func buildLValuePaths(laws []parserproducts.ProductLaw, paths []UsePath, sequences map[SequenceCoordinate]parsersource.ActionSequence, terms parserproducts.ActionTerms) ([]LValuePath, error) {
 	byProduction := make(map[string]parserproducts.ProductLaw, len(laws))
 	for _, law := range laws {
 		byProduction[law.Production] = law
@@ -100,16 +162,16 @@ func buildLValuePaths(laws []parserproducts.ProductLaw, paths []UsePath, sequenc
 		list := law.RHS[argument-1]
 		for coordinate, sequence := range sequences {
 			composition, exists := byProduction[coordinate.Production]
-			if !exists || composition.Nonterminal != list || sequence.Scope != composition.Scope {
+			if !exists || composition.Nonterminal != list {
 				continue
 			}
 			for segmentIndex, segment := range sequence.Segments {
-				if segment.Kind != parserproducts.SequenceElement {
+				if segment.Kind != parsersource.SequenceElement {
 					continue
 				}
-				memberArgument, ok := inputOrdinal(terms, segment.Term, composition.Scope)
-				if !ok || memberArgument > len(composition.RHS) {
-					return nil, fmt.Errorf("parser uses: invalid lvalue sequence element")
+				memberArgument := segment.Input
+				if memberArgument <= 0 || memberArgument > len(composition.RHS) {
+					return nil, fmt.Errorf("parser uses: lvalue sequence element is not an exact parser input")
 				}
 				member := composition.RHS[memberArgument-1]
 				for _, terminal := range laws {

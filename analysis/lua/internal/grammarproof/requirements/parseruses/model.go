@@ -117,10 +117,9 @@ const (
 	ValuesPositionFinalOpen
 )
 
-// SequenceCoordinate names one parserproducts.SequenceLaw operand without
-// copying its construction, segment tag, or action formula. ProductLaw joins
-// make Production the identity boundary; Destination disambiguates a
-// parser-private field within that production.
+// SequenceCoordinate names one canonical census sequence operand without
+// copying its construction, segment tag, or provenance. ProductLaw joins make
+// Production the identity boundary; Tag and Field disambiguate its carrier.
 type SequenceCoordinate struct {
 	Production string
 	Tag        string
@@ -131,7 +130,7 @@ type SequenceCoordinate struct {
 // ValuesTail records one exact ProgramUseValues projection of a sealed
 // sequence operand. Successor is another segment coordinate in the same
 // sequence, present only when this operand is made non-final by that later
-// operand. Its term and segment kind remain parserproducts authority.
+// operand. Segment semantics remain parser-census authority.
 type ValuesTail struct {
 	Sequence  SequenceCoordinate
 	Position  ValuesPosition
@@ -142,7 +141,7 @@ type ValuesTail struct {
 // through one sealed sequence element coordinate to a terminal constructor. It
 // makes AttrGet/identifier target context explicit without giving their
 // Object or Key children lvalue status. Sequence carries only a source coordinate;
-// parserproducts remains the sole owner of sequence semantics.
+// the parser census remains the sole owner of sequence semantics.
 type LValuePath struct {
 	SeedProduction     string
 	SeedOrdinal        int
@@ -228,10 +227,11 @@ type MutationUsePath struct {
 	LValue     LValueAxis
 }
 
-// Evidence is the parser-use proof. It depends on exactly one parser-product
-// evidence identity and retains no source-grammar or foreign-owner copy.
+// Evidence is the parser-use proof. It depends on the parser-product arena and
+// canonical parser-census identities, retaining no foreign-owner rows.
 type Evidence struct {
 	ProductsDigest   string
+	CensusDigest     string
 	Digest           string
 	UseSlots         []UseSlot
 	UsePaths         []UsePath

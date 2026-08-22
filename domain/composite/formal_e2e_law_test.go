@@ -16,6 +16,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/schema/ingress"
 	programschema "github.com/wippyai/go-lua/analysis/schema/program"
 	programcatalog "github.com/wippyai/go-lua/analysis/schema/program/catalog"
+	programissuance "github.com/wippyai/go-lua/analysis/schema/program/issuance"
 	"github.com/wippyai/go-lua/analysis/schema/programmount"
 	"github.com/wippyai/go-lua/analysis/snapshot"
 	calldomain "github.com/wippyai/go-lua/domain/call"
@@ -163,9 +164,9 @@ return { owned = owned, shared = shared }
 	if !sealedOK || sealed == nil {
 		t.Fatalf("seal formal Placement program: %v", sealFailure)
 	}
-	state, solveStatus := sealed.Solve(context.Background())
+	state, solveStatus, solveReport := sealed.SolveWithReport(context.Background())
 	if solveStatus != engine.SolveComplete || state == nil {
-		t.Fatalf("solve formal Placement program: status=%v state=%v", solveStatus, state)
+		t.Fatalf("solve formal Placement program: status=%v state=%v reason=%v failure=%v point=%v group=%v member=%v rule=%v", solveStatus, state, solveReport.Reason(), solveReport.Failure(), solveReport.Point(), solveReport.Group(), solveReport.Member(), solveReport.Rule())
 	}
 	published, publishedOK := sealed.PublishedSnapshot(state)
 	if !publishedOK {
@@ -489,7 +490,7 @@ func formalCallEffectPoint(t testing.TB, record LinkInputs, mounted calldomain.M
 		for index := 0; index < count; index++ {
 			row, rowOK := program.RuleOccurrenceAt(index)
 			rowOccurrence, rowOccurrenceOK := row.Occurrence()
-			if !rowOK || !rowOccurrenceOK || int(rowOccurrence) != occurrenceOrdinal || string(row.Key()) != "placement-formal" || row.Stage() != programschema.RuleStageCallEffect {
+			if !rowOK || !rowOccurrenceOK || int(rowOccurrence) != occurrenceOrdinal || string(row.Key()) != "placement-formal" || row.Stage() != programissuance.StageCallEffect {
 				continue
 			}
 			candidate := row.PointID()
@@ -529,13 +530,13 @@ func decodeFormalPlacementRows(t testing.TB, result placementdomain.SummaryResul
 		if _, duplicate := rows[id]; duplicate {
 			t.Fatalf("typed Placement allocation row %s is duplicated", id)
 		}
-		class := placementdomain.Bottom
-		if allocation.Present() {
-			decoded, classOK := allocation.Placement()
-			if !classOK {
-				t.Fatalf("typed Placement allocation row %d is present without a class", index)
-			}
-			class = decoded
+		present, presentOK := allocation.Present()
+		if !presentOK || !present {
+			t.Fatalf("typed Placement allocation row %d has no published class", index)
+		}
+		class, classOK := allocation.Placement()
+		if !classOK {
+			t.Fatalf("typed Placement allocation row %d is present without a class", index)
 		}
 		rows[id] = class
 	}

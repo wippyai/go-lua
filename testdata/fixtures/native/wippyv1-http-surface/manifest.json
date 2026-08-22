@@ -1,0 +1,13 @@
+{
+  "description": "Every declared member of the Wippy v1 http module is called against the reference host surface: the two module members, the eighteen Request methods, the eight Response methods, the four MultipartFile methods, the six Stream methods and all four constant tables, with each fallible result read on both of its arms and every optional string tested before use.",
+  "packages": ["http"],
+  "files": [
+    "main.lua"
+  ],
+  "check": {
+    "errors": 0
+  },
+  "run": {
+    "skip": "host-surface coverage fixture; the http module has no fixture runtime"
+  }
+}

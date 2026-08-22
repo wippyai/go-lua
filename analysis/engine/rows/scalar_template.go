@@ -15,17 +15,14 @@ type ArtifactScalarTemplate struct {
 	schema   identity.ContentID
 	sealed   bool
 	roles    []ArtifactScalarRole
+	factors  []ArtifactScalarFactor
 	points   []ArtifactScalarPoint
 	edges    []ArtifactScalarEdge
 	local    []ArtifactScalarTransfer
 	regions  []ArtifactScalarRegion
 	events   []ArtifactScalarEvent
 	rules    []ArtifactScalarRule
-	// native is the sealed row-local projection of ArtifactStageLaw.Native.
-	// Runtime consumers must read this projection rather than infer native
-	// stages from the opaque stage ordinal.
-	native []bool
-	bodies []ArtifactScalarBody
+	bodies   []ArtifactScalarBody
 }
 
 func NewArtifactScalarTemplate(spec *ArtifactScalarSpec) (*ArtifactScalarTemplate, bool) {
@@ -33,23 +30,44 @@ func NewArtifactScalarTemplate(spec *ArtifactScalarSpec) (*ArtifactScalarTemplat
 		return nil, false
 	}
 	state := spec.state
-	native := make([]bool, len(state.Rules))
-	for index, rule := range state.Rules {
-		law, lawOK := state.stageLaw(rule.Stage)
-		native[index] = lawOK && law.Native
-	}
-	template := &ArtifactScalarTemplate{artifact: state.ArtifactID, program: state.ProgramID, schema: state.SchemaID, sealed: true, roles: state.Roles, points: state.Points, edges: state.Edges, local: state.Transfers, regions: state.Regions, events: state.Events, rules: state.Rules, native: native, bodies: state.Bodies}
+	template := &ArtifactScalarTemplate{artifact: state.ArtifactID, program: state.ProgramID, schema: state.SchemaID, sealed: true, roles: state.Roles, factors: state.Factors, points: state.Points, edges: state.Edges, local: state.Transfers, regions: state.Regions, events: state.Events, rules: state.Rules, bodies: state.Bodies}
 	state.consumed = true
 	state.Roles = nil
+	state.Factors = nil
 	state.Points = nil
 	state.Edges = nil
 	state.Transfers = nil
 	state.Regions = nil
 	state.Events = nil
 	state.Rules = nil
-	state.stageLaws = nil
 	state.Bodies = nil
 	return template, true
+}
+
+func (template *ArtifactScalarTemplate) FactorCount() int {
+	if !template.Available() {
+		return 0
+	}
+	return len(template.factors)
+}
+
+func (template *ArtifactScalarTemplate) FactorAt(index int) (ArtifactScalarFactor, bool) {
+	if !template.Available() || index < 0 || index >= len(template.factors) {
+		return ArtifactScalarFactor{}, false
+	}
+	return template.factors[index], true
+}
+
+func (template *ArtifactScalarTemplate) OwnsFactor(factor ArtifactScalarFactor) bool {
+	if !template.Available() || !factor.Available() {
+		return false
+	}
+	for _, candidate := range template.factors {
+		if candidate == factor {
+			return true
+		}
+	}
+	return false
 }
 
 func (template *ArtifactScalarTemplate) Available() bool {
@@ -184,16 +202,6 @@ func (template *ArtifactScalarTemplate) RuleAt(index int) (ArtifactScalarRule, b
 		return ArtifactScalarRule{}, false
 	}
 	return template.rules[index], true
-}
-
-// RuleNativeAt returns the declared native bit sealed alongside one rule row.
-// The second result is an address check, not a stage classification: a false
-// native bit is a valid declaration for structural (base/local) rows.
-func (template *ArtifactScalarTemplate) RuleNativeAt(index int) (bool, bool) {
-	if !template.Available() || index < 0 || index >= len(template.rules) || index >= len(template.native) {
-		return false, false
-	}
-	return template.native[index], true
 }
 
 func (template *ArtifactScalarTemplate) BodyCount() int {

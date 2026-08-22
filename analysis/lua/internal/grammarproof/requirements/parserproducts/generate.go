@@ -73,7 +73,6 @@ func expectedGeneratedFiles() []string {
 		"evidence_gen_mutations.go",
 		"evidence_gen_products.go",
 		"evidence_gen_recursion.go",
-		"evidence_gen_sequences.go",
 		"evidence_gen_terms.go",
 		"evidence_gen_terms_control.go",
 		"evidence_gen_terms_expression.go",
@@ -170,7 +169,6 @@ func renderFiles(e Evidence) (map[string][]byte, error) {
 	raw["evidence_gen_fields.go"] = renderFields(e.Fields)
 	raw["evidence_gen_products.go"] = renderProductsFile(e.Products)
 	raw["evidence_gen_helpers.go"] = renderHelpersFile(e.HelperLaws)
-	raw["evidence_gen_sequences.go"] = renderSequencesFile(e.Sequences)
 	raw["evidence_gen_mutations.go"] = renderMutationsFile(e.Mutations)
 	raw["evidence_gen_carriers.go"] = renderCarriersFile(e.Carriers)
 	raw["evidence_gen_recursion.go"] = renderRecursionFile(e.Recursion)
@@ -207,7 +205,7 @@ func renderAssembly(e Evidence) string {
 	fmt.Fprintf(&out, "\t\tDigest: %q,\n", e.Digest)
 	out.WriteString("\t\tFields: generatedFields(),\n\t\tProducts: generatedProducts(),\n")
 	out.WriteString("\t\tProductLaws: generatedProductLaws(),\n\t\tHelperLaws: generatedHelperLaws(),\n")
-	out.WriteString("\t\tSequences: generatedSequences(),\n\t\tMutations: generatedMutations(),\n")
+	out.WriteString("\t\tMutations: generatedMutations(),\n")
 	out.WriteString("\t\tActionTerms: generatedActionTerms(),\n\t\tCarriers: generatedCarriers(),\n\t\tRecursion: generatedRecursion(),\n")
 	out.WriteString("\t}\n")
 	return out.String()
@@ -250,19 +248,6 @@ func renderHelpersFile(rows []HelperLaw) string {
 	for _, row := range rows {
 		renderHelperLaw(&out, row)
 		out.WriteString(",\n")
-	}
-	out.WriteString("} }\n")
-	return out.String()
-}
-
-func renderSequencesFile(rows []SequenceLaw) string {
-	var out strings.Builder
-	out.WriteString(generatedHeader())
-	out.WriteString("\nfunc generatedSequences() []SequenceLaw { return []SequenceLaw{\n")
-	for _, row := range rows {
-		fmt.Fprintf(&out, "{Production:%q, Scope:ActionScopeID(%d), Destination:SequenceDestination{Tag:%q, Field:%q}, Construction:SequenceConstruction(%d), Segments:", row.Production, row.Scope, row.Destination.Tag, row.Destination.Field, row.Construction)
-		renderSegments(&out, row.Segments)
-		out.WriteString("},\n")
 	}
 	out.WriteString("} }\n")
 	return out.String()
@@ -559,18 +544,6 @@ func renderChains(out *strings.Builder, rows []ChainLaw) {
 		fmt.Fprintf(out, "{\nScope: ActionScopeID(%d),\nGuard: ", row.Scope)
 		renderGuard(out, row.Guard)
 		fmt.Fprintf(out, ",\nInput: ActionTermID(%d),\nSeed: ActionTermID(%d),\nLinkField: ActionSymbolID(%d),\nTailStart: %d,\nTailCount: %d,\n},\n", row.Input, row.Seed, row.LinkField, row.TailStart, row.TailCount)
-	}
-	out.WriteByte('}')
-}
-
-func renderSegments(out *strings.Builder, rows []SequenceSegment) {
-	if len(rows) == 0 {
-		out.WriteString("[]SequenceSegment{}")
-		return
-	}
-	out.WriteString("[]SequenceSegment{")
-	for _, row := range rows {
-		fmt.Fprintf(out, "{Kind: SequenceSegmentKind(%d), Term: ActionTermID(%d)},", row.Kind, row.Term)
 	}
 	out.WriteByte('}')
 }

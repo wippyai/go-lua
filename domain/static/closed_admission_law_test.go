@@ -3,13 +3,14 @@ package static
 import (
 	"testing"
 
+	"github.com/wippyai/go-lua/analysis/identity"
 	"github.com/wippyai/go-lua/domain/type/typ"
 )
 
 func TestStaticClosedAdmissionRejectsDanglingRecursiveGraphs(t *testing.T) {
 	authority := &Authority{
-		results:       []resultRow{{kind: KindBottom}, {kind: KindTop}},
-		closedByBytes: make(map[string]Value),
+		results:           []resultRow{{kind: KindBottom}, {kind: KindTop}},
+		closedByCanonical: make(map[identity.ContentID]Value),
 	}
 	dangling := typ.NewRecursivePlaceholder("Dangling")
 	for _, value := range []struct {
@@ -27,8 +28,8 @@ func TestStaticClosedAdmissionRejectsDanglingRecursiveGraphs(t *testing.T) {
 
 func TestStaticClosedAdmissionRejectsUnissuedProductiveRecursiveGraph(t *testing.T) {
 	authority := &Authority{
-		results:       []resultRow{{kind: KindBottom}, {kind: KindTop}},
-		closedByBytes: make(map[string]Value),
+		results:           []resultRow{{kind: KindBottom}, {kind: KindTop}},
+		closedByCanonical: make(map[identity.ContentID]Value),
 	}
 	closed := typ.NewRecursive("Node", func(self typ.Type) typ.Type {
 		return typ.NewArray(self)

@@ -2,65 +2,29 @@ package static
 
 import (
 	"errors"
-	"github.com/wippyai/go-lua/analysis/program/target/vocabulary"
 
 	"github.com/wippyai/go-lua/analysis/identity"
 	"github.com/wippyai/go-lua/domain/type/authority"
-	"github.com/wippyai/go-lua/domain/type/typ"
 )
 
-// evaluationMachine is intentionally small: ProgramArtifact already owns the
-// complete static graph and typeauthority owns its detached typ projection.
-// Static only admits that projection and records the exact contextual result.
-type evaluationMachine struct {
-	authority *Authority
-	operation vocabulary.Operation
-	err       error
-}
-
-func newEvaluationMachine(authority *Authority, operation vocabulary.Operation) *evaluationMachine {
-	return &evaluationMachine{authority: authority, operation: operation}
-}
-
-func (a *Authority) evaluate(ref typeauthority.StaticTypeRef, namespace identity.ContentID, environment Environment, operation vocabulary.Operation) (Value, error) {
+// evaluate consumes the type owner's sealed projection and records the exact
+// namespace-scoped result. It owns no evaluator state machine or placeholder
+// context dimensions.
+func (a *Authority) evaluate(ref typeauthority.StaticTypeRef, namespace identity.ContentID) (Value, error) {
 	if a == nil || a.types == nil || !ref.Valid() || !namespace.Available() {
 		return Value{}, errors.New("static: foreign evaluation coordinate")
 	}
-	value, ok := a.types.Resolve(ref)
-	if !ok || value == nil {
-		return Value{}, errors.New("static: artifact reference did not resolve")
+	projection, ok := a.types.Projection(ref)
+	if !ok {
+		return Value{}, errors.New("static: artifact reference projection unavailable")
 	}
-	if typ.ContainsTypeParam(value) {
-		site := Symbolic{reference: ref, sourceOwner: ref.Owner(), source: ref.NodeID(), namespace: namespace, environment: environment.ContentID(), operation: operation, law: a.lawID, dependency: ref.Owner(), reason: ReasonOpenFormal}
+	if projection.Open() {
+		site := Symbolic{reference: ref, sourceOwner: ref.Owner(), source: ref.NodeID(), namespace: namespace, law: a.lawID, dependency: ref.Owner(), reason: ReasonOpenFormal}
 		return a.addSymbolic(site)
 	}
-	return a.addClosed(value)
-}
-
-func (m *evaluationMachine) fail(err error) {
-	if m != nil && m.err == nil {
-		m.err = err
+	input, inputOK := projection.ClosedInput()
+	if !inputOK {
+		return Value{}, errors.New("static: closed reference input unavailable")
 	}
-}
-
-func (m *evaluationMachine) symbolic(site Symbolic) Value {
-	if m == nil || m.authority == nil {
-		return Value{}
-	}
-	value, err := m.authority.addSymbolic(site)
-	if err != nil {
-		m.fail(err)
-	}
-	return value
-}
-
-func (m *evaluationMachine) invalid(site Symbolic, fault Fault) Value {
-	if m == nil || m.authority == nil {
-		return Value{}
-	}
-	value, err := m.authority.addInvalid(site, fault)
-	if err != nil {
-		m.fail(err)
-	}
-	return value
+	return a.addClosedInput(input)
 }

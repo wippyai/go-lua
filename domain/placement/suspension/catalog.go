@@ -100,17 +100,17 @@ func sealCatalog(schema placementdomain.Schema, values *valuedomain.Schema, evid
 	if !schema.Valid() || values == nil || !values.Valid() || !values.OwnsHeapSchema(schema.Heap()) {
 		return nil, false
 	}
-	mounts := schema.Heap().ArtifactMounts()
+	mounts := schema.Heap().MountedArtifacts()
 	catalog := &Catalog{
 		schema: schema, values: values,
 		ids: make([]identity.ContentID, 0), rows: make(map[identity.ContentID]catalogRow),
 	}
 	for _, mount := range mounts {
-		if !mount.Available() || mount.Snapshot() == nil {
+		if !mount.Available() || mount.Snapshot == nil {
 			return nil, false
 		}
-		module := mount.Module()
-		program := mount.Snapshot().Program()
+		module := mount.ModuleKey
+		program := mount.Snapshot.Program()
 		if !program.Available() {
 			return nil, false
 		}
@@ -155,7 +155,11 @@ func sealCatalog(schema placementdomain.Schema, values *valuedomain.Schema, evid
 			}
 			candidate.id = id
 			canonical, candidateOK := operandForCatalog(schema, values, candidate)
-			if !candidateOK || !validPlacement(mustPlacement(canonical.state)) {
+			if !candidateOK {
+				return nil, false
+			}
+			placement, placementOK := PlacementForState(canonical.state)
+			if !placementOK || !validPlacement(placement) {
 				return nil, false
 			}
 			if evidence {
@@ -521,7 +525,7 @@ func (catalog *Catalog) operandForID(id identity.ContentID) (operand, bool) {
 		return operand{}, false
 	}
 	// SealCatalog canonicalized this private immutable row against the exact
-	// schema/value owner pair retained above. Reopening ArtifactMounts or
+	// schema/value owner pair retained above. Reopening mounted artifacts or
 	// rewriting the source slice on every hot lookup is both redundant and
 	// unsafe under concurrent reads.
 	return row.operand, true

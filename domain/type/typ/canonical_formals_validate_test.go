@@ -8,7 +8,7 @@ import (
 	"testing"
 )
 
-func TestValidateCanonicalFormalsAcceptsEncoderCorpus(t *testing.T) {
+func TestAdmitCanonicalFormalsAcceptsEncoderCorpus(t *testing.T) {
 	external := NewTypeParam("\x00external\xff", LiteralString("constraint\x00\xff"))
 	local := NewTypeParam("local", nil)
 	function := Func().TypeParamRef(local).Param("value", local).Returns(external, local).Build()
@@ -64,18 +64,22 @@ func TestValidateCanonicalFormalsAcceptsEncoderCorpus(t *testing.T) {
 	}
 	for _, test := range corpus {
 		t.Run(test.name, func(t *testing.T) {
-			encoded, err := EncodeCanonicalFormals(context.Background(), test.value, test.formals)
+			receipt, err := EncodeCanonicalFormals(context.Background(), test.value, test.formals)
 			if err != nil {
 				t.Fatalf("EncodeCanonicalFormals: %v", err)
 			}
-			if err := ValidateCanonicalFormals(encoded, test.formalN); err != nil {
-				t.Fatalf("ValidateCanonicalFormals rejected encoder bytes: %v\n%x", err, encoded)
+			admitted, err := AdmitCanonicalFormals(context.Background(), receipt.Bytes(), test.formalN)
+			if err != nil {
+				t.Fatalf("AdmitCanonicalFormals rejected encoder bytes: %v\n%x", err, receipt.Bytes())
+			}
+			if !admitted.Valid() {
+				t.Fatal("AdmitCanonicalFormals returned an invalid receipt")
 			}
 		})
 	}
 }
 
-func TestValidateCanonicalFormalsScopeLaws(t *testing.T) {
+func TestAdmitCanonicalFormalsScopeLaws(t *testing.T) {
 	leftFormal := NewTypeParam("T", LiteralString("\x00\xff"))
 	rightFormal := NewTypeParam("Renamed", LiteralString("\x00\xff"))
 	left, err := EncodeCanonicalFormals(context.Background(), NewTuple(leftFormal, NewArray(leftFormal)), []*TypeParam{leftFormal})
@@ -86,16 +90,16 @@ func TestValidateCanonicalFormalsScopeLaws(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !bytes.Equal(left, right) {
-		t.Fatalf("alpha-equivalent bytes differ:\n%x\n%x", left, right)
+	if !bytes.Equal(left.Bytes(), right.Bytes()) {
+		t.Fatalf("alpha-equivalent bytes differ:\n%x\n%x", left.Bytes(), right.Bytes())
 	}
-	if err := ValidateCanonicalFormals(left, 1); err != nil {
+	if _, err := AdmitCanonicalFormals(context.Background(), left.Bytes(), 1); err != nil {
 		t.Fatalf("alpha-invariant bytes rejected: %v", err)
 	}
-	if err := ValidateCanonicalFormals(left, 0); !errors.Is(err, ErrInvalidCanonicalType) {
+	if _, err := AdmitCanonicalFormals(context.Background(), left.Bytes(), 0); !errors.Is(err, ErrInvalidCanonicalType) {
 		t.Fatalf("external formal outside receiver scope = %v", err)
 	}
-	if err := ValidateCanonicalFormals(left, -1); !errors.Is(err, ErrInvalidCanonicalType) {
+	if _, err := AdmitCanonicalFormals(context.Background(), left.Bytes(), -1); !errors.Is(err, ErrInvalidCanonicalType) {
 		t.Fatalf("negative receiver scope = %v", err)
 	}
 
@@ -109,17 +113,17 @@ func TestValidateCanonicalFormalsScopeLaws(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if bytes.Equal(forward, reversed) {
+	if bytes.Equal(forward.Bytes(), reversed.Bytes()) {
 		t.Fatal("formal order lost its semantic ordinal")
 	}
-	for _, encoded := range [][]byte{forward, reversed} {
-		if err := ValidateCanonicalFormals(encoded, 2); err != nil {
+	for _, receipt := range []CanonicalFormalsReceipt{forward, reversed} {
+		if _, err := AdmitCanonicalFormals(context.Background(), receipt.Bytes(), 2); err != nil {
 			t.Fatalf("formal-order encoding rejected: %v", err)
 		}
 	}
 }
 
-func TestValidateCanonicalFormalsRejectsMalformedAndNoncanonicalBytes(t *testing.T) {
+func TestAdmitCanonicalFormalsRejectsMalformedAndNoncanonicalBytes(t *testing.T) {
 	valid, err := EncodeCanonicalFormals(context.Background(), NewTuple(String, Number), nil)
 	if err != nil {
 		t.Fatal(err)
@@ -170,7 +174,7 @@ func TestValidateCanonicalFormalsRejectsMalformedAndNoncanonicalBytes(t *testing
 	badInterface = appendCanonicalFormalDefinition(badInterface, 1, []byte{canonicalString}, 0)
 
 	// Two identical String definitions are grammatically complete but are not
-	// the quotient emitted by CanonicalEncoder; the second use must be a ref.
+	// the quotient emitted by canonicalEncoder; the second use must be a ref.
 	nonCanonicalDuplicate := appendCanonicalFormalsDomain(nil)
 	nonCanonicalDuplicate = binary.AppendUvarint(nonCanonicalDuplicate, canonicalScopedTypeVersion)
 	nonCanonicalDuplicate = appendCanonicalFormalDefinition(nonCanonicalDuplicate, 0, []byte{canonicalTuple, 2}, 2)
@@ -183,7 +187,7 @@ func TestValidateCanonicalFormalsRejectsMalformedAndNoncanonicalBytes(t *testing
 		"non-minimal graph ordinal":  nonMinimalGraphOrdinal,
 		"non-minimal scalar count":   nonMinimalScalarCount,
 		"non-minimal formal ordinal": nonMinimalFormalOrdinal,
-		"trailing byte":              append(append([]byte(nil), valid...), 0),
+		"trailing byte":              append(append([]byte(nil), valid.Bytes()...), 0),
 		"unknown graph opcode":       append(appendCanonicalFormalsVersion(nil), 2, 0),
 		"forward root reference":     appendCanonicalFormalReference(appendCanonicalFormalsVersion(nil), 0),
 		"bad scalar arity":           badScalarArity,
@@ -199,34 +203,35 @@ func TestValidateCanonicalFormalsRejectsMalformedAndNoncanonicalBytes(t *testing
 	}
 	for name, encoded := range tests {
 		t.Run(name, func(t *testing.T) {
-			if err := ValidateCanonicalFormals(encoded, 1); !errors.Is(err, ErrInvalidCanonicalType) {
-				t.Fatalf("ValidateCanonicalFormals(%x) = %v, want invalid canonical error", encoded, err)
+			if _, err := AdmitCanonicalFormals(context.Background(), encoded, 1); !errors.Is(err, ErrInvalidCanonicalType) {
+				t.Fatalf("AdmitCanonicalFormals(%x) = %v, want invalid canonical error", encoded, err)
 			}
 		})
 	}
-	for index := 0; index < len(valid); index++ {
-		if err := ValidateCanonicalFormals(valid[:index], 0); !errors.Is(err, ErrInvalidCanonicalType) {
+	validBytes := valid.Bytes()
+	for index := 0; index < len(validBytes); index++ {
+		if _, err := AdmitCanonicalFormals(context.Background(), validBytes[:index], 0); !errors.Is(err, ErrInvalidCanonicalType) {
 			t.Fatalf("truncated valid[:%d] = %v", index, err)
 		}
 	}
 }
 
-func TestValidateCanonicalFormalsDeepGraphUsesNoGoStack(t *testing.T) {
+func TestAdmitCanonicalFormalsDeepGraphUsesNoGoStack(t *testing.T) {
 	const depth = 100_001
 	var value Type = String
 	for range depth {
 		value = &Optional{Inner: value}
 	}
-	encoded, err := EncodeCanonicalFormals(context.Background(), value, nil)
+	receipt, err := EncodeCanonicalFormals(context.Background(), value, nil)
 	if err != nil {
 		t.Fatalf("EncodeCanonicalFormals: %v", err)
 	}
-	if err := ValidateCanonicalFormals(encoded, 0); err != nil {
-		t.Fatalf("ValidateCanonicalFormals deep graph: %v", err)
+	if _, err := AdmitCanonicalFormals(context.Background(), receipt.Bytes(), 0); err != nil {
+		t.Fatalf("AdmitCanonicalFormals deep graph: %v", err)
 	}
 }
 
-func FuzzValidateCanonicalFormals(f *testing.F) {
+func FuzzAdmitCanonicalFormals(f *testing.F) {
 	seed := appendCanonicalFormalsVersion(nil)
 	seed = appendCanonicalFormalDefinition(seed, 0, []byte{canonicalString}, 0)
 	f.Add(seed, uint8(0))
@@ -234,7 +239,7 @@ func FuzzValidateCanonicalFormals(f *testing.F) {
 	f.Add([]byte{0xff, 0x80, 0x00}, uint8(3))
 
 	f.Fuzz(func(t *testing.T, encoded []byte, externalCount uint8) {
-		_ = ValidateCanonicalFormals(encoded, int(externalCount))
+		_, _ = AdmitCanonicalFormals(context.Background(), encoded, int(externalCount))
 	})
 }
 

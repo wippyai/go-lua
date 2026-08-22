@@ -88,6 +88,10 @@ var diagnosticRender = []diagnostic.Section{
 	diagnostic.SectionHelp,
 }
 
+// diagnosticClaimProofWitness is the redundant-claim row's one located
+// witness: the place the value was already proven to be the claimed type.
+const diagnosticClaimProofWitness uint8 = 1
+
 func diagnosticEvidence(anchor diagnostic.Anchor, detail diagnostic.Text) diagnostic.Evidence {
 	return diagnostic.Evidence{
 		Anchor: anchor,
@@ -95,6 +99,19 @@ func diagnosticEvidence(anchor diagnostic.Anchor, detail diagnostic.Text) diagno
 		Trust:  diagnosticEvidenceTrust,
 		Reason: diagnosticEvidenceReason,
 		Detail: detail,
+	}
+}
+
+// diagnosticWitnessEvidence is one proof line established at a located witness
+// the producer supplies rather than at the finding's own site.
+func diagnosticWitnessEvidence(witness uint8, detail diagnostic.Text) diagnostic.Evidence {
+	return diagnostic.Evidence{
+		Anchor:  diagnostic.AnchorWitness,
+		Witness: witness,
+		Kind:    diagnosticEvidenceKind,
+		Trust:   diagnosticEvidenceTrust,
+		Reason:  diagnosticEvidenceReason,
+		Detail:  detail,
 	}
 }
 
@@ -148,16 +165,17 @@ func analyzerDiagnosticSpecs() []diagnostic.Spec {
 			Code: DiagnosticCodeRedundantClaim, Family: declaredMember(diagnosticFamilyAdvice),
 			DefaultSeverity: diagnostic.SeverityHint,
 			Lane:            diagnostic.LaneDeclared,
-			Requirements:    diagnostic.RequiresSubject | diagnostic.RequiresTarget | diagnostic.RequiresClaimForm | diagnostic.RequiresProofLocation,
+			Witnesses:       1,
+			Requirements:    diagnostic.RequiresSubject | diagnostic.RequiresTarget | diagnostic.RequiresClaimForm | diagnostic.RequiresWitness,
 			Message:         "{claim} is redundant; value is already {target}",
 			Help:            "Remove the runtime type claim when the proven source type is sufficient.",
 			Evidence: []diagnostic.Evidence{
-				diagnosticEvidence(diagnostic.AnchorProof, "{subject} is proven to be {target} before the claim"),
+				diagnosticWitnessEvidence(diagnosticClaimProofWitness, "{subject} is proven to be {target} before the claim"),
 				diagnosticEvidence(diagnostic.AnchorPrimary, "claim checks {target} at this site"),
 			},
 			Labels: []diagnostic.Label{
 				{Anchor: diagnostic.AnchorPrimary, Text: "claim site"},
-				{Anchor: diagnostic.AnchorProof, Text: "proven value"},
+				{Anchor: diagnostic.AnchorWitness, Witness: diagnosticClaimProofWitness, Text: "proven value"},
 			},
 			Render: diagnosticRender,
 		},

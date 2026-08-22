@@ -178,7 +178,7 @@ func sameContentLink(t testing.TB, original *link.Link) *link.Link {
 
 func staticTopologyFixture(t testing.TB) (heapdomain.Schema, *valuedomain.Schema, *calldomain.Algebra, *link.Link, heapdomain.Key, heapdomain.IndexAccess, indexFixtureMounts) {
 	t.Helper()
-	p, err := lower.Lower(lower.Source{Name: "heap_index_topology.lua", Text: []byte(`local table = {}; return table.field`)})
+	p, err := lower.Lower(lower.Source{Name: "heap_index_topology.lua", Text: []byte(`local table = {}; table.field = nil; return table.field`)})
 	if err != nil {
 		t.Fatal(err)
 	}

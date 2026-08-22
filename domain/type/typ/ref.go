@@ -178,11 +178,5 @@ func (m *Meta) Kind() kind.Kind { return kind.Meta }
 func (m *Meta) String() string {
 	return m.strCache.get(func() string { return renderTypeString(m) })
 }
-func (m *Meta) Hash() uint64 { return m.hash }
-func (m *Meta) Equals(other Type) bool {
-	if other.Kind() != kind.Meta {
-		return false
-	}
-
-	return m.Of.Equals(other.(*Meta).Of)
-}
+func (m *Meta) Hash() uint64           { return m.hash }
+func (m *Meta) Equals(other Type) bool { return typeEquals(m, other) }

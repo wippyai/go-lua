@@ -20,8 +20,7 @@ func (compiler *compiler) copyAllocations() CompileFailure {
 		entryPoints := compiler.input.Flow().LocalWTO().PointPathsForSite(entry)
 		finishPoints := compiler.input.Flow().LocalWTO().PointPathsForSite(finish)
 		if entryPoints.Count() == 0 || finishPoints.Count() == 0 || !allocationOK || !entryOK || !finishOK || !occurrenceOK || !templateOK || !formOK ||
-			!compiler.appendOccurrencePaths(programschema.OccurrenceAllocation, template, identity.ContentID{}, entryPoints, finishPoints, []identity.ContentID{template, occurrence}, uint64(form)) ||
-			!compiler.recordOccurrencePaths(programschema.OccurrenceAllocation, template, entryPoints, finishPoints) {
+			!compiler.appendOccurrencePaths(programschema.OccurrenceAllocation, template, identity.ContentID{}, entryPoints, finishPoints, []identity.ContentID{template, occurrence}, uint64(form)) {
 			return compileFailure(CompileStageOccurrences, CompileRowOccurrence, index, -1, CompileReasonOccurrenceAllocation)
 		}
 		for fieldIndex := 0; fieldIndex < allocation.FieldCount(); fieldIndex++ {
@@ -68,9 +67,7 @@ func (compiler *compiler) copyCalls() CompileFailure {
 		}
 		if entryPoints.Count() == 0 || finishPoints.Count() == 0 ||
 			!compiler.appendOccurrencePaths(programschema.OccurrenceCall, call.id, call.bodyPath, entryPoints, finishPoints, inputs, disposition) ||
-			!compiler.recordOccurrencePaths(programschema.OccurrenceCall, call.id, entryPoints, finishPoints) ||
-			!compiler.appendOccurrencePaths(programschema.OccurrenceCallActivation, call.id, call.bodyPath, causal.SitePointPaths{}, finishPoints, inputs, disposition) ||
-			!compiler.recordOccurrencePaths(programschema.OccurrenceCallActivation, call.id, causal.SitePointPaths{}, finishPoints) {
+			!compiler.appendOccurrencePaths(programschema.OccurrenceCallActivation, call.id, call.bodyPath, causal.SitePointPaths{}, finishPoints, inputs, disposition) {
 			return compileFailure(CompileStageOccurrences, CompileRowOccurrence, index, -1, CompileReasonOccurrenceCall)
 		}
 		for argIndex, argument := range call.arguments {

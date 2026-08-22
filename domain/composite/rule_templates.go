@@ -14,6 +14,7 @@ import (
 	heapempty "github.com/wippyai/go-lua/domain/heap/allocation/empty"
 	heapingress "github.com/wippyai/go-lua/domain/heap/allocation/ingress"
 	heapbootstrap "github.com/wippyai/go-lua/domain/heap/bootstrap"
+	contextowner "github.com/wippyai/go-lua/domain/heap/context/owner"
 	heapformalfreeze "github.com/wippyai/go-lua/domain/heap/formalfreeze"
 	heapindex "github.com/wippyai/go-lua/domain/heap/index"
 	heapowner "github.com/wippyai/go-lua/domain/heap/owner"
@@ -22,16 +23,15 @@ import (
 	packowner "github.com/wippyai/go-lua/domain/pack/owner"
 	packsource "github.com/wippyai/go-lua/domain/pack/source"
 	placementdomain "github.com/wippyai/go-lua/domain/placement"
-	placementallocation "github.com/wippyai/go-lua/domain/placement/allocation"
 	placementcapture "github.com/wippyai/go-lua/domain/placement/capture"
 	placementcontainment "github.com/wippyai/go-lua/domain/placement/containment"
 	placementformal "github.com/wippyai/go-lua/domain/placement/formal"
-	placementfresh "github.com/wippyai/go-lua/domain/placement/fresh"
 	placementowner "github.com/wippyai/go-lua/domain/placement/owner"
 	placementpublicationescape "github.com/wippyai/go-lua/domain/placement/publicationescape"
 	placementreturnescape "github.com/wippyai/go-lua/domain/placement/returnescape"
 	placementstore "github.com/wippyai/go-lua/domain/placement/store"
 	placementsuspension "github.com/wippyai/go-lua/domain/placement/suspension"
+	placementtransfer "github.com/wippyai/go-lua/domain/placement/transfer"
 	valuedomain "github.com/wippyai/go-lua/domain/value"
 	valueallocation "github.com/wippyai/go-lua/domain/value/allocation"
 	valuearithmetic "github.com/wippyai/go-lua/domain/value/arithmetic"
@@ -50,6 +50,7 @@ type Principals interface {
 	ValuePrincipal() *valueowner.SchemaFragment
 	CallPrincipal() *callowner.SchemaFragment
 	HeapPrincipal() *heapowner.SchemaFragment
+	ContextPrincipal() *contextowner.SchemaFragment
 	PlacementPrincipal() *placementowner.SchemaFragment
 	EvidencePrincipal() *placementsuspension.EvidenceFactorFragment
 	PackPrincipal() *packowner.SchemaFragment
@@ -60,6 +61,7 @@ type Authorities interface {
 	ValueAuthority() *valueowner.HotOwner
 	CallAuthority() *callowner.HotOwner
 	HeapAuthority() *heapowner.HotOwner
+	ContextAuthority() *contextowner.HotOwner
 	PlacementAuthority() *placementowner.HotOwner
 	EvidenceAuthority() *placementsuspension.EvidenceOwner
 	PackAuthority() *packowner.HotOwner
@@ -70,7 +72,6 @@ type Authorities interface {
 	PackSchema() *packdomain.Schema
 	Topology() *heapindex.Topology
 	Allocations() *allocationcatalog.Catalog
-	ActivationCatalog() *callactivation.TargetBatchCatalog
 	TargetContract() *contract.Contract
 }
 
@@ -106,52 +107,44 @@ func RuleTemplates[P Principals, A Authorities]() ([]*rule.Template, []RuleContr
 	add(WireRule(callsite.BodyEntry[P, A](), callsite.DeclareBody[P], callsite.RegisterBody, nil, callsite.BindBody[A], callsite.FinalizeBody[A], nil, nil))
 	add(WireRule(callactivation.RuleEntry[P, A](), callactivation.DeclareRule[P], callactivation.RegisterRule, nil, callactivation.BindRule[A], nil, nil, activationRule))
 	add(WireRule(valueruntimekind.RuleEntry[P, A](), valueruntimekind.DeclareRule[P], valueruntimekind.RegisterRule, nil, valueruntimekind.BindRule[A], nil, nil, nil))
-	add(WireRule(valuebootstrap.RuleEntry[P, A](), valuebootstrap.DeclareRule[P], valuebootstrap.RegisterRule, nil, valuebootstrap.BindRule[A], valuebootstrap.FinalizeRule[A], valuebootstrap.LinkCatalog, nil))
-	add(WireRule(heapbootstrap.RuleEntry[P, A](), heapbootstrap.DeclareRule[P], heapbootstrap.RegisterRule, heapbootstrap.PairRule, heapbootstrap.BindRule[A], heapbootstrap.FinalizeRule[A], heapbootstrap.LinkCatalog, nil))
+	add(WireRule(valuebootstrap.RuleEntry[P, A](), valuebootstrap.DeclareRule[P], valuebootstrap.RegisterRule, nil, valuebootstrap.BindRule[A], valuebootstrap.FinalizeRule[A], valuebootstrap.OccurrenceCatalog, nil))
+	add(WireRule(heapbootstrap.RuleEntry[P, A](), heapbootstrap.DeclareRule[P], heapbootstrap.RegisterRule, heapbootstrap.PairRule, heapbootstrap.BindRule[A], heapbootstrap.FinalizeRule[A], heapbootstrap.OccurrenceCatalog, nil))
 	add(WireRule(valuetransfer.RuleEntry[P, A](), valuetransfer.DeclareRule[P], valuetransfer.RegisterRule, nil, valuetransfer.BindRule[A], nil, nil, nil))
 	add(WireRule(valuearithmetic.RuleEntry[P, A](), valuearithmetic.DeclareRule[P], valuearithmetic.RegisterRule, nil, valuearithmetic.BindRule[A], nil, nil, nil))
 	add(WireRule(valueequality.RuleEntry[P, A](), valueequality.DeclareRule[P], valueequality.RegisterRule, nil, valueequality.BindRule[A], nil, nil, nil))
 	add(WireRule(valueorder.RuleEntry[P, A](), valueorder.DeclareRule[P], valueorder.RegisterRule, nil, valueorder.BindRule[A], nil, nil, nil))
 	add(WireRule(valuerefinement.RuleEntry[P, A](), valuerefinement.DeclareRule[P], valuerefinement.RegisterRule, nil, valuerefinement.BindRule[A], nil, nil, nil))
-	add(WireRule(placementallocation.RuleEntry[P, A](), placementallocation.DeclareRule[P], placementallocation.RegisterRule, nil, placementallocation.BindRule[A], nil, nil, nil))
-	// Keep newly admitted mounted rules at the end of the declaration list:
-	// artifact role ordinals address every preceding slot directly.
+	// Placement displacement consumers follow the value/call/heap producers
+	// whose sealed facts they read.
 	add(WireRule(placementreturnescape.RuleEntry[P, A](), placementreturnescape.DeclareRule[P], placementreturnescape.RegisterRule, nil, placementreturnescape.BindRule[A], nil, nil, nil))
 	add(WireRule(placementcapture.RuleEntry[P, A](), placementcapture.DeclareRule[P], placementcapture.RegisterRule, nil, placementcapture.BindRule[A], placementcapture.FinalizeRule[A], nil, nil))
 	add(WireRule(placementformal.RuleEntry[P, A](), placementformal.DeclareRule[P], placementformal.RegisterRule, nil, placementformal.BindRule[A], placementformal.FinalizeRule[A], nil, nil))
-	// Containment starts Placement's append-only Link tail.
-	add(WireRule(placementcontainment.RuleEntry[P, A](), placementcontainment.DeclareRule[P], placementcontainment.RegisterRule, nil, placementcontainment.BindRule[A], placementcontainment.FinalizeRule[A], placementcontainment.LinkCatalog, nil))
-	// Storage lifetime is the final mounted Placement consumer. Appending this
-	// declaration preserves every existing rule ordinal and keeps its neutral
-	// Program/Value prerequisite explicit.
+	// Containment is the singleton declarative rule expanded at every mounted point.
+	add(WireRule(placementcontainment.RuleEntry[P, A](), placementcontainment.DeclareRule[P], placementcontainment.RegisterRule, nil, placementcontainment.BindRule[A], placementcontainment.FinalizeRule[A], placementcontainment.OccurrenceCatalog, nil))
+	// Storage lifetime keeps its neutral Program/Value prerequisite explicit.
 	add(WireRule(placementstore.RuleEntry[P, A](), placementstore.DeclareRule[P], placementstore.RegisterRule, nil, placementstore.BindRule[A], nil, nil, nil))
-	// Suspension consumes the neutral
-	// Program liveness rows through the owner-fenced Value/Placement bridge;
-	// its established ordinal remains fixed as later Link producers are added.
-	add(WireRule(placementsuspension.RuleEntry[P, A](), placementsuspension.DeclareRule[P], placementsuspension.RegisterRule, nil, placementsuspension.BindRule[A], placementsuspension.FinalizeRule[A], placementsuspension.LinkCatalog, nil))
+	// Suspension consumes neutral Program liveness rows through the
+	// owner-fenced Value/Placement bridge.
+	add(WireRule(placementsuspension.RuleEntry[P, A](), placementsuspension.DeclareRule[P], placementsuspension.RegisterRule, nil, placementsuspension.BindRule[A], placementsuspension.FinalizeRule[A], placementsuspension.OccurrenceCatalog, nil))
 	// Suspension evidence is a separate Link producer with its own typed
 	// Heap-aligned Factor receipt. Keeping it adjacent to the class producer
-	// makes the ordered projection's source explicit while preserving all
-	// preceding rule ordinals.
-	add(WireRule(placementsuspension.EvidenceRuleEntry[P, A](), placementsuspension.DeclareEvidenceRule[P], placementsuspension.RegisterEvidenceRule, nil, placementsuspension.BindEvidenceRule[A], placementsuspension.FinalizeEvidenceRule[A], placementsuspension.LinkEvidenceCatalog, nil))
-	// Fresh roots are a separate zero-input Link denominator. Appending this
-	// producer preserves every existing rule ordinal while keeping it disjoint
-	// from the mounted Program-allocation seed above.
-	add(WireRule(placementfresh.RuleEntry[P, A](), placementfresh.DeclareRule[P], placementfresh.RegisterRule, nil, placementfresh.BindRule[A], placementfresh.FinalizeRule[A], placementfresh.LinkCatalog, nil))
-	// Module-load result projection is appended so every existing rule ordinal
-	// remains stable. Its Call/Value reads are exact and its write is an
+	// makes the ordered projection's source explicit.
+	add(WireRule(placementsuspension.EvidenceRuleEntry[P, A](), placementsuspension.DeclareEvidenceRule[P], placementsuspension.RegisterEvidenceRule, nil, placementsuspension.BindEvidenceRule[A], placementsuspension.FinalizeEvidenceRule[A], placementsuspension.EvidenceOccurrenceCatalog, nil))
+	// Module-load result projection has exact Call/Value reads and writes an
 	// existing mounted Program CallResultValue coordinate.
 	add(WireRule(valuemoduleload.RuleEntry[P, A](), valuemoduleload.DeclareRule[P], valuemoduleload.RegisterRule, nil, valuemoduleload.BindRule[A], nil, nil, nil))
-	// Formal freeze is the terminal mounted Heap transition. It consumes the
-	// existing call-effect cut and appends without renumbering any established
-	// rule slot.
+	// Formal freeze is a terminal mounted Heap transition over the existing
+	// call-effect cut.
 	add(WireRule(heapformalfreeze.RuleEntry[P, A](), heapformalfreeze.DeclareRule[P], heapformalfreeze.RegisterRule, nil, heapformalfreeze.BindRule[A], heapformalfreeze.FinalizeRule[A], nil, nil))
-	// Publication escape is the terminal mounted Placement consumer. Append
-	// it so every established rule ordinal remains unchanged.
+	// Publication escape is the terminal mounted Placement consumer.
 	add(WireRule(placementpublicationescape.RuleEntry[P, A](), placementpublicationescape.DeclareRule[P], placementpublicationescape.RegisterRule, nil, placementpublicationescape.BindRule[A], nil, nil, nil))
-	// Publication FreezeSeal is the terminal mounted Heap consumer. It is
-	// appended after publication escape so no established rule ordinal moves.
+	// Publication FreezeSeal is the terminal mounted Heap consumer and follows
+	// the Placement publication demand it witnesses.
 	add(WireRule(heappublicationfreeze.RuleEntry[P, A](), heappublicationfreeze.DeclareRule[P], heappublicationfreeze.RegisterRule, nil, heappublicationfreeze.BindRule[A], heappublicationfreeze.FinalizeRule[A], nil, nil))
+	// Target-transfer is appended to preserve established rule ordinals. It is
+	// a mounted invocation consumer: Call and Pack actuals are read, Target is
+	// joined through Link's exact Contract, and only Placement is written.
+	add(WireRule(placementtransfer.RuleEntry[P, A](), placementtransfer.DeclareRule[P], placementtransfer.RegisterRule, nil, placementtransfer.BindRule[A], placementtransfer.FinalizeRule[A], nil, nil))
 
 	return admitted, contributors, !rejected && len(admitted) > 0
 }

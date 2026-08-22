@@ -11,7 +11,6 @@ package formal
 
 import (
 	"crypto/sha256"
-	"sort"
 
 	"github.com/wippyai/go-lua/analysis/identity"
 	"github.com/wippyai/go-lua/analysis/program/target/contract"
@@ -97,10 +96,12 @@ type formalSelectorRange struct {
 	end     int
 	unknown bool
 	owns    bool
-	// valid distinguishes an authenticated empty/non-displacing selector from
-	// an authored selector that cannot be redeemed at this mounted actual
-	// cut.  Unknown is reserved for a real open boundary (the mounted Pack
-	// tail), never for a fixed coordinate that happened to be unavailable.
+	// valid distinguishes an authenticated selector from a malformed authored
+	// spelling.  A formal parameter ordinal belongs to the callee declaration
+	// and is independent of any one call site's arity, so an ordinal at or
+	// past this mounted call's actual prefix is an authenticated empty
+	// selector: Lua binds the parameter to nil and nil holds no allocation.
+	// Unknown is reserved for a real open boundary (the mounted Pack tail).
 	valid bool
 }
 
@@ -114,14 +115,11 @@ func resolveFormalSelectorRange(spec vocabulary.FormalEffectSpec, actualCount in
 	case vocabulary.FormalEffectBorrowAll:
 		return result
 	case vocabulary.FormalEffectBorrow, vocabulary.FormalEffectFreeze:
-		// Borrow and Freeze do not write Placement, but their fixed selector is
-		// still part of the authenticated formal row.  A missing fixed actual
-		// is a refusal, not evidence for an all-root route.  The -1 form is an
-		// authored unresolved/non-displacing selector and carries no route.
-		if spec.Param == -1 {
-			return result
-		}
-		if spec.Param < 0 || int(spec.Param) >= actualCount {
+		// Borrow and Freeze do not write Placement.  The -1 form is an authored
+		// unresolved/non-displacing selector, and an ordinal past this call's
+		// actual prefix names a parameter Lua bound to nil; both carry no
+		// route.  Only a negative authored spelling is malformed.
+		if spec.Param < -1 {
 			result.valid = false
 		}
 		return result
@@ -137,11 +135,12 @@ func resolveFormalSelectorRange(spec vocabulary.FormalEffectSpec, actualCount in
 				return result
 			}
 			if actualCount == 0 {
-				result.valid = false
-			} else {
-				result.start = actualCount - 1
-				result.end = actualCount
+				// The authored trailing selector names no supplied actual, so
+				// it selects nothing.
+				return result
 			}
+			result.start = actualCount - 1
+			result.end = actualCount
 			return result
 		}
 		if spec.Param < 0 {
@@ -149,15 +148,12 @@ func resolveFormalSelectorRange(spec vocabulary.FormalEffectSpec, actualCount in
 			return result
 		}
 		if int(spec.Param) >= actualCount {
-			// A mounted open Pack tail is the only authority that can make an
-			// otherwise unavailable fixed ordinal redeemable.  Keep the
-			// selector unresolved and widen only because that boundary is
-			// explicitly authenticated by Pack.
-			if runtimeTail {
-				result.unknown = true
-				return result
-			}
-			result.valid = false
+			// A mounted open Pack tail is the only authority that can place an
+			// actual at this ordinal, and it widens the selector.  With a
+			// closed actual list the ordinal is provably unsupplied: Lua binds
+			// the parameter to nil, nil holds no allocation, and the selector
+			// is therefore empty rather than malformed.
+			result.unknown = runtimeTail
 			return result
 		}
 		result.start = int(spec.Param)
@@ -170,13 +166,11 @@ func resolveFormalSelectorRange(spec vocabulary.FormalEffectSpec, actualCount in
 			return result
 		}
 		if int(spec.FromParam) > actualCount {
-			if runtimeTail {
-				result.start = actualCount
-				result.end = actualCount
-				result.unknown = true
-				return result
-			}
-			result.valid = false
+			// A suffix that begins past the supplied prefix sends nothing
+			// unless Pack authenticates a runtime tail behind it.
+			result.start = actualCount
+			result.end = actualCount
+			result.unknown = runtimeTail
 			return result
 		}
 		result.start = int(spec.FromParam)
@@ -227,7 +221,100 @@ type route struct {
 }
 
 type routePlan struct {
-	routes []route
+	// The common formal call has only a handful of allocation routes. Keep
+	// those routes in the plan value itself; wider exact plans spill only the
+	// suffix. The plan is returned by value and never retained by HotRule, so
+	// this is invocation-local storage rather than shared mutable state.
+	inline [formalRouteInlineWidth]route
+	extra  []route
+	count  int
+
+	// An authenticated Pack runtime tail or Value open/Top projection can widen
+	// every allocation root. Retaining that fact as a mode, instead of
+	// materializing one route per root, keeps the conservative path
+	// allocation-free even for a wide Heap. An opaque Call arm never sets this
+	// bit: it has no formal Target/Value identity authority. schema remains the
+	// sole coordinate authority; it is not a copied root directory.
+	allUnknown bool
+	schema     placement.Schema
+}
+
+const formalRouteInlineWidth = 8
+
+func (plan routePlan) routeCount() int {
+	if plan.count < 0 {
+		return 0
+	}
+	return plan.count
+}
+
+func (plan routePlan) routeAt(index int) (route, bool) {
+	if index < 0 || index >= plan.count {
+		return route{}, false
+	}
+	if plan.allUnknown {
+		// All-root plans are normally consumed by the dense iteration in
+		// HotRule. Direct indexed access derives the same route from the owner
+		// schema without introducing a second allocation-root index.
+		if !plan.schema.Valid() {
+			return route{}, false
+		}
+		ordinal := 0
+		for dense := 0; dense < plan.schema.DenseKeyCount(); dense++ {
+			key, keyOK := plan.schema.KeyAt(dense)
+			if !keyOK {
+				return route{}, false
+			}
+			if key.Kind() != heap.RootAllocation {
+				continue
+			}
+			if ordinal == index {
+				tag, tagOK := routeTagForDense(plan.schema, key, dense, placement.None, true)
+				if !tagOK {
+					return route{}, false
+				}
+				return route{key: key, unknown: true, tag: tag}, true
+			}
+			ordinal++
+		}
+		return route{}, false
+	}
+	if index < len(plan.inline) {
+		return plan.inline[index], true
+	}
+	overflow := index - len(plan.inline)
+	if overflow < 0 || overflow >= len(plan.extra) {
+		return route{}, false
+	}
+	return plan.extra[overflow], true
+}
+
+// appendRoute appends in canonical dense order. Dense scratch sealing walks
+// Heap coordinates in that order, so no route sort or second coordinate
+// directory is needed.
+func (plan *routePlan) appendRoute(candidate route) bool {
+	if plan == nil || plan.allUnknown || plan.count < 0 {
+		return false
+	}
+	if plan.count < len(plan.inline) {
+		plan.inline[plan.count] = candidate
+		plan.count++
+		return true
+	}
+	plan.extra = append(plan.extra, candidate)
+	plan.count++
+	return true
+}
+
+func (plan *routePlan) prepare(count int) bool {
+	if plan == nil || count < 0 || plan.count != 0 || plan.allUnknown {
+		return false
+	}
+	if count <= len(plan.inline) {
+		return true
+	}
+	plan.extra = make([]route, 0, count-len(plan.inline))
+	return true
 }
 
 const (
@@ -242,9 +329,23 @@ func routeTagFor(schema placement.Schema, key heap.Key, escape placement.Escape,
 	if !schema.Valid() || !key.Valid() || key.Kind() != heap.RootAllocation || !schema.Heap().OwnsKey(key) {
 		return 0, false
 	}
-	dense, denseOK := schema.Heap().KeyIndex(key)
+	dense, denseOK := schema.Heap().AllocationKeyIndex(key)
+	if !denseOK || dense < 0 {
+		return 0, false
+	}
+	return routeTagForDense(schema, key, dense, escape, unknown)
+}
+
+// routeTagForDense is the checked dense-coordinate spelling used by the
+// invocation-local demand scratch. Heap remains the issuer of both the key
+// and its dense ordinal; the canonical KeyAt check rejects foreign or forged
+// coordinates before a tag is emitted.
+func routeTagForDense(schema placement.Schema, key heap.Key, dense int, escape placement.Escape, unknown bool) (routeTag, bool) {
+	if !schema.Valid() || !key.Valid() || key.Kind() != heap.RootAllocation || !schema.Heap().OwnsKey(key) || dense < 0 || dense >= schema.DenseKeyCount() {
+		return 0, false
+	}
 	canonical, canonicalOK := schema.KeyAt(dense)
-	if !denseOK || !canonicalOK || canonical != key || dense < 0 {
+	if !canonicalOK || canonical != key {
 		return 0, false
 	}
 	code := uint64(escape) + 1
@@ -254,7 +355,11 @@ func routeTagFor(schema placement.Schema, key heap.Key, escape placement.Escape,
 	if code == 0 || code > routeTagMask {
 		return 0, false
 	}
-	return routeTag((uint64(dense)+1)<<routeTagShift | code), true
+	coordinate := uint64(dense) + 1
+	if coordinate > (^uint64(0) >> routeTagShift) {
+		return 0, false
+	}
+	return routeTag(coordinate<<routeTagShift | code), true
 }
 
 func strongerEscape(left, right placement.Escape) placement.Escape {
@@ -281,213 +386,335 @@ func strongerEscape(left, right placement.Escape) placement.Escape {
 	return left
 }
 
-type routeDemand struct {
+// formalDemandInlineWidth bounds the invocation-local dense demand set. The
+// ordinary path is a small set of exact allocation roots, so this prefix
+// keeps both demand replacement and route reduction on the caller's stack. An
+// unusually wide exact demand set spills only its suffix; Value/Pack all-root
+// widening does not need the suffix at all.
+const formalDemandInlineWidth = 16
+
+type denseRouteDemand struct {
+	dense   int
 	escape  placement.Escape
 	unknown bool
 }
 
-func (plan routePlan) seal(schema placement.Schema, demands map[heap.Key]routeDemand) (routePlan, bool) {
-	if !schema.Valid() {
+// denseDemandScratch is deliberately not stored on HotRule. locate and fold
+// can execute concurrently on the same immutable Rule, so every invocation
+// owns its own scratch value. Dense is Heap's canonical coordinate, not a
+// second key index.
+type denseDemandScratch struct {
+	inline     [formalDemandInlineWidth]denseRouteDemand
+	extra      []denseRouteDemand
+	count      int
+	allUnknown bool
+}
+
+func (scratch denseDemandScratch) at(index int) (denseRouteDemand, bool) {
+	if index < 0 || index >= scratch.count {
+		return denseRouteDemand{}, false
+	}
+	if index < len(scratch.inline) {
+		return scratch.inline[index], true
+	}
+	overflow := index - len(scratch.inline)
+	if overflow < 0 || overflow >= len(scratch.extra) {
+		return denseRouteDemand{}, false
+	}
+	return scratch.extra[overflow], true
+}
+
+// add joins one demand into canonical dense order. Formal rows are traversed
+// in authored order, not Heap order, so insertion keeps sealing deterministic
+// without map iteration or a second sort/index structure.
+func (scratch *denseDemandScratch) add(candidate denseRouteDemand) bool {
+	if scratch == nil || scratch.count < 0 || candidate.dense < 0 {
+		return false
+	}
+	position := 0
+	for position < scratch.count {
+		current, ok := scratch.at(position)
+		if !ok {
+			return false
+		}
+		switch {
+		case current.dense == candidate.dense:
+			if current.unknown || candidate.unknown || scratch.allUnknown {
+				current.unknown = true
+			} else {
+				current.escape = strongerEscape(current.escape, candidate.escape)
+			}
+			scratch.set(position, current)
+			return true
+		case current.dense > candidate.dense:
+			goto insert
+		default:
+			position++
+		}
+	}
+
+insert:
+	if scratch.count < len(scratch.inline) {
+		for index := scratch.count; index > position; index-- {
+			scratch.inline[index] = scratch.inline[index-1]
+		}
+		if scratch.allUnknown {
+			candidate.unknown = true
+		}
+		scratch.inline[position] = candidate
+		scratch.count++
+		return true
+	}
+	if position < len(scratch.inline) {
+		carried := scratch.inline[len(scratch.inline)-1]
+		for index := len(scratch.inline) - 1; index > position; index-- {
+			scratch.inline[index] = scratch.inline[index-1]
+		}
+		if scratch.allUnknown {
+			candidate.unknown = true
+		}
+		scratch.inline[position] = candidate
+		scratch.extra = append(scratch.extra, denseRouteDemand{})
+		copy(scratch.extra[1:], scratch.extra[:len(scratch.extra)-1])
+		scratch.extra[0] = carried
+	} else {
+		overflow := position - len(scratch.inline)
+		if overflow < 0 || overflow > len(scratch.extra) {
+			return false
+		}
+		if scratch.allUnknown {
+			candidate.unknown = true
+		}
+		scratch.extra = append(scratch.extra, denseRouteDemand{})
+		copy(scratch.extra[overflow+1:], scratch.extra[overflow:len(scratch.extra)-1])
+		scratch.extra[overflow] = candidate
+	}
+	scratch.count++
+	return true
+}
+
+func (scratch *denseDemandScratch) set(index int, value denseRouteDemand) bool {
+	if scratch == nil || index < 0 || index >= scratch.count {
+		return false
+	}
+	if index < len(scratch.inline) {
+		scratch.inline[index] = value
+		return true
+	}
+	overflow := index - len(scratch.inline)
+	if overflow < 0 || overflow >= len(scratch.extra) {
+		return false
+	}
+	scratch.extra[overflow] = value
+	return true
+}
+
+func denseDemandKey(schema placement.Schema, key heap.Key) (int, bool) {
+	if !schema.Valid() || !key.Valid() || key.Kind() != heap.RootAllocation || !schema.Heap().OwnsKey(key) {
+		return 0, false
+	}
+	dense, denseOK := schema.Heap().AllocationKeyIndex(key)
+	if !denseOK || dense < 0 || dense >= schema.DenseKeyCount() {
+		return 0, false
+	}
+	canonical, canonicalOK := schema.KeyAt(dense)
+	return dense, canonicalOK && canonical == key
+}
+
+func addUnknownAllDense(schema placement.Schema, demands *denseDemandScratch) bool {
+	// This is an identity-denominator operation, not a generic uncertainty
+	// fallback. Callers may reach it only after Pack has authenticated a runtime
+	// tail or Value has authenticated Top/opaque allocation identity. Call's
+	// opaque dispatch arm has no path to this helper.
+	if !schema.Valid() || demands == nil {
+		return false
+	}
+	demands.allUnknown = true
+	return true
+}
+
+func planAddDenseDemand(schema placement.Schema, key heap.Key, escape placement.Escape, unknown bool, demands *denseDemandScratch) bool {
+	if demands == nil {
+		return false
+	}
+	dense, denseOK := denseDemandKey(schema, key)
+	if !denseOK {
+		return false
+	}
+	return demands.add(denseRouteDemand{dense: dense, escape: escape, unknown: unknown || demands.allUnknown})
+}
+
+func addFactDemandDense(schema placement.Schema, values *valuedomain.Schema, observation actualObservation, escape placement.Escape, demands *denseDemandScratch) (unknown bool, ok bool) {
+	if demands == nil || values == nil {
+		return false, false
+	}
+	fact, factOK := values.AuthenticateFactorCell(observation.fact, observation.present, observation.valid)
+	if !factOK {
+		return false, false
+	}
+	projection, projectionOK := placement.ProjectValueAllocations(schema, values, fact)
+	if !projectionOK {
+		return false, false
+	}
+	if projection.IsTop() {
+		return true, true
+	}
+	for index := 0; index < projection.ExactCount(); index++ {
+		key, keyOK := projection.ExactAt(index)
+		if !keyOK || !planAddDenseDemand(schema, key, escape, false, demands) {
+			return false, false
+		}
+	}
+	return projection.HasOpaque(), true
+}
+
+func addOpenTailDemandDense(schema placement.Schema, values *valuedomain.Schema, fact valuedomain.Value, demands *denseDemandScratch) bool {
+	if demands == nil {
+		return false
+	}
+	projection, projectionOK := placement.ProjectValueAllocations(schema, values, fact)
+	if !projectionOK {
+		return false
+	}
+	if projection.IsTop() {
+		return addUnknownAllDense(schema, demands)
+	}
+	for index := 0; index < projection.ExactCount(); index++ {
+		key, keyOK := projection.ExactAt(index)
+		if !keyOK || !planAddDenseDemand(schema, key, placement.None, true, demands) {
+			return false
+		}
+	}
+	if projection.HasOpaque() {
+		return addUnknownAllDense(schema, demands)
+	}
+	return true
+}
+
+func addUnknownOpenTailObservationDemandDense(schema placement.Schema, values *valuedomain.Schema, observation actualObservation, demands *denseDemandScratch) bool {
+	if values == nil {
+		return false
+	}
+	fact, factOK := values.AuthenticateFactorCell(observation.fact, observation.present, observation.valid)
+	if !factOK {
+		return false
+	}
+	return addOpenTailDemandDense(schema, values, fact, demands)
+}
+
+func (plan routePlan) seal(schema placement.Schema, demands *denseDemandScratch) (routePlan, bool) {
+	if !schema.Valid() || demands == nil || demands.count < 0 {
 		return routePlan{}, false
 	}
-	// Demands are an ephemeral reduction directory: they deduplicate roots
-	// while formal rows are being joined, but they do not define route order.
-	// Emit by walking Heap's canonical dense coordinates once. This preserves
-	// the routeTag order required by routeForTag without sorting the map's R
-	// entries (and without retaining a second dense index).
-	//
-	// Keep the expected count so a foreign, malformed, or non-allocation key
-	// cannot be silently dropped merely because it is absent from the dense
-	// Heap walk. The zero key is the private all-root sentinel and is excluded
-	// exactly as in the previous map iteration.
-	expected := len(demands)
-	if _, sentinel := demands[heap.Key{}]; sentinel {
-		expected--
+	if demands.allUnknown {
+		sealed := routePlan{allUnknown: true, schema: schema}
+		for dense := 0; dense < schema.DenseKeyCount(); dense++ {
+			key, keyOK := schema.KeyAt(dense)
+			if !keyOK {
+				return routePlan{}, false
+			}
+			if key.Kind() == heap.RootAllocation {
+				sealed.count++
+			}
+		}
+		return sealed, true
 	}
-	if expected < 0 {
+	var sealed routePlan
+	if !sealed.prepare(demands.count) {
 		return routePlan{}, false
 	}
-	sealed := routePlan{routes: make([]route, 0, expected)}
-	for dense := 0; dense < schema.DenseKeyCount(); dense++ {
-		key, keyOK := schema.KeyAt(dense)
-		if !keyOK {
+	for index := 0; index < demands.count; index++ {
+		demand, demandOK := demands.at(index)
+		if !demandOK {
 			return routePlan{}, false
 		}
-		if key.Kind() != heap.RootAllocation {
-			continue
-		}
-		demand, demanded := demands[key]
-		if !demanded {
-			continue
-		}
-		tag, tagOK := routeTagFor(schema, key, demand.escape, demand.unknown)
-		if !tagOK {
+		key, keyOK := schema.KeyAt(demand.dense)
+		if !keyOK || key.Kind() != heap.RootAllocation {
 			return routePlan{}, false
 		}
-		sealed.routes = append(sealed.routes, route{key: key, escape: demand.escape, unknown: demand.unknown, tag: tag})
-	}
-	if len(sealed.routes) != expected {
-		return routePlan{}, false
+		tag, tagOK := routeTagForDense(schema, key, demand.dense, demand.escape, demand.unknown)
+		if !tagOK || !sealed.appendRoute(route{key: key, escape: demand.escape, unknown: demand.unknown, tag: tag}) {
+			return routePlan{}, false
+		}
 	}
 	return sealed, true
 }
 
-func addUnknownAll(schema placement.Schema, demands map[heap.Key]routeDemand) bool {
-	if !schema.Valid() || demands == nil {
+// addFormalOperationDemand reduces one explicitly selected Target operation's
+// formal rows into the invocation-local demand set. Formal rows only describe
+// ownership of values supplied at the mounted call boundary: they do not issue
+// an independent Heap root. An ordinal this call site does not supply selects
+// nothing and contributes no demand; it is never compensated with an all-root
+// demand.
+func addFormalOperationDemand(
+	schema placement.Schema,
+	values *valuedomain.Schema,
+	targetContract *contract.Contract,
+	operation vocabulary.Operation,
+	actualCount int,
+	runtimeTail bool,
+	observations []actualObservation,
+	demands *denseDemandScratch,
+) bool {
+	if !schema.Valid() || values == nil || !values.Valid() || targetContract == nil || operation == 0 || demands == nil {
 		return false
 	}
-	// A zero Heap key is never issued. Keep it as a private sentinel so
-	// repeated conservative-widening requests become O(1) after the first
-	// all-root pass; the sentinel is stripped before route sealing.
-	if _, alreadyUnknown := demands[heap.Key{}]; alreadyUnknown {
-		return true
+	declared, declaredOK := targetContract.Operations.OperationAt(int(operation) - 1)
+	if !declaredOK || declared != operation {
+		return false
 	}
-	// Widen directly over Heap's dense coordinate space. This is the same
-	// canonical order used by routePlan.seal, so widening needs no temporary
-	// allocation-key slice and does not create a second root index.
-	for dense := 0; dense < schema.DenseKeyCount(); dense++ {
-		key, keyOK := schema.KeyAt(dense)
-		if !keyOK {
+	tail, tailOK := targetContract.Operations.FormalEffectTail(operation)
+	if !tailOK || (tail != vocabulary.RowClosed && tail != vocabulary.RowUnknownOpen) {
+		return false
+	}
+	for effectIndex := 0; effectIndex < targetContract.Operations.FormalEffectCount(operation); effectIndex++ {
+		spec, specOK := targetContract.Operations.FormalEffectAt(operation, effectIndex)
+		if !specOK {
 			return false
 		}
-		if key.Kind() != heap.RootAllocation {
+		selection := resolveFormalSelectorRange(spec, actualCount, runtimeTail)
+		if !selection.valid {
+			return false
+		}
+		escape, owns := FormalEscape(spec.Kind)
+		if !owns {
 			continue
 		}
-		previous := demands[key]
-		previous.unknown = true
-		demands[key] = previous
-	}
-	demands[heap.Key{}] = routeDemand{unknown: true}
-	return true
-}
-
-func addFactDemand(schema placement.Schema, values *valuedomain.Schema, fact valuedomain.Value, present bool, escape placement.Escape, demands map[heap.Key]routeDemand) (unknown bool, ok bool) {
-	if schema.Valid() == false || values == nil || !values.Valid() || !values.OwnsHeapSchema(schema.Heap()) || demands == nil {
-		return false, false
-	}
-	// Presence is a Value observation fact, not a conservative seed.  An
-	// absent fixed actual cannot identify a root and therefore refuses the
-	// formal plan.  Authenticate the Value before honoring Top as a widening
-	// witness; a foreign Top must not cross this factor's owner fence.
-	if !present || !values.Equal(fact, fact) {
-		return false, false
-	}
-	if fact.IsTop() {
-		return true, true
-	}
-	heapSchema := schema.Heap()
-	valid := true
-atoms:
-	for atomIndex, atomCount := 0, values.ValueAtomCount(fact); atomIndex < atomCount; atomIndex++ {
-		atom, atomOK := values.ValueAtomAt(fact, atomIndex)
-		if !atomOK {
-			valid = false
-			break
-		}
-		classification, classificationOK := placement.ClassifyAtom(values, atom)
-		if !classificationOK || !classification.Valid() {
-			valid = false
-			break atoms
-		}
-		switch classification.Class {
-		case placement.AtomClassAllocation:
-			key := classification.Key
-			if !heapSchema.OwnsKey(key) || key.Kind() != heap.RootAllocation {
-				valid = false
-				break atoms
+		if selection.unknown {
+			// The only source of a selector unknown is Pack's authenticated
+			// runtime tail.  That tail can carry any owner-issued Value root,
+			// so the complete allocation denominator is required here.
+			if !addUnknownAllDense(schema, demands) {
+				return false
 			}
-			if !planAddDemand(schema, key, escape, false, demands) {
-				valid = false
-				break atoms
+		}
+		for actualIndex := selection.start; actualIndex < selection.end; actualIndex++ {
+			if actualIndex < 0 || actualIndex >= len(observations) {
+				return false
 			}
-		case placement.AtomClassOpaque:
-			unknown = true
-		}
-	}
-	return unknown, valid
-}
-
-// addOpenTailDemand projects one fixed actual under an unknown formal tail.
-// It mirrors the conservative tail rule while traversing Value atoms
-// directly, avoiding a temporary atom slice on every actual.
-func addOpenTailDemand(schema placement.Schema, values *valuedomain.Schema, fact valuedomain.Value, demands map[heap.Key]routeDemand) bool {
-	if !schema.Valid() || values == nil || !values.Valid() || !values.OwnsHeapSchema(schema.Heap()) || demands == nil {
-		return false
-	}
-	// Top is a lawful widening witness only after the actual Value has been
-	// authenticated against this exact Value schema.
-	if !values.Equal(fact, fact) {
-		return false
-	}
-	if fact.IsTop() {
-		return addUnknownAll(schema, demands)
-	}
-	heapSchema := schema.Heap()
-	valid := true
-atoms:
-	for atomIndex, atomCount := 0, values.ValueAtomCount(fact); atomIndex < atomCount; atomIndex++ {
-		atom, atomOK := values.ValueAtomAt(fact, atomIndex)
-		if !atomOK {
-			valid = false
-			break
-		}
-		classification, classificationOK := placement.ClassifyAtom(values, atom)
-		if !classificationOK || !classification.Valid() {
-			valid = false
-			break atoms
-		}
-		switch classification.Class {
-		case placement.AtomClassAllocation:
-			key := classification.Key
-			if !heapSchema.OwnsKey(key) || key.Kind() != heap.RootAllocation || !planAddDemand(schema, key, placement.None, true, demands) {
-				valid = false
-				break atoms
+			observation := observations[actualIndex]
+			unknown, observationOK := addFactDemandDense(schema, values, observation, escape, demands)
+			if !observationOK {
+				return false
 			}
-		case placement.AtomClassOpaque:
-			if !addUnknownAll(schema, demands) {
-				valid = false
-				break atoms
+			if unknown && !addUnknownAllDense(schema, demands) {
+				return false
 			}
 		}
 	}
-	return valid
-}
-
-// addUnknownOpenTailObservationDemand applies the unknown formal tail to one
-// present, authenticated fixed actual. Missing observations refuse the plan;
-// an open Pack tail is widened only by planFor's separate authenticated tail
-// branch.
-func addUnknownOpenTailObservationDemand(schema placement.Schema, values *valuedomain.Schema, observation actualObservation, demands map[heap.Key]routeDemand) bool {
-	// An open formal row can widen an authenticated fixed Value, but it cannot
-	// turn a missing/ill-shaped observation into an all-root claim.  Pack's
-	// independently authenticated open actual tail is handled by planFor's
-	// explicit runtimeTail branch.
-	if !observation.valid || !observation.present {
-		return false
+	if tail == vocabulary.RowUnknownOpen {
+		// A formal open tail ranges over every fixed actual.  If Pack also
+		// authenticates a runtime actual tail, that unrepresented suffix is
+		// an arbitrary Value source and therefore widens the full denominator.
+		if runtimeTail && !addUnknownAllDense(schema, demands) {
+			return false
+		}
+		for _, observation := range observations {
+			if !addUnknownOpenTailObservationDemandDense(schema, values, observation, demands) {
+				return false
+			}
+		}
 	}
-	return addOpenTailDemand(schema, values, observation.fact, demands)
-}
-
-func planAddDemand(schema placement.Schema, key heap.Key, escape placement.Escape, unknown bool, demands map[heap.Key]routeDemand) bool {
-	if !schema.Valid() || !key.Valid() || key.Kind() != heap.RootAllocation || !schema.Heap().OwnsKey(key) || demands == nil {
-		return false
-	}
-	allUnknown := false
-	if _, marked := demands[heap.Key{}]; marked {
-		allUnknown = true
-	}
-	previous, found := demands[key]
-	if !found {
-		demands[key] = routeDemand{escape: escape, unknown: unknown || allUnknown}
-		return true
-	}
-	if previous.unknown || unknown || allUnknown {
-		previous.unknown = true
-		demands[key] = previous
-		return true
-	}
-	previous.escape = strongerEscape(previous.escape, escape)
-	demands[key] = previous
 	return true
 }
 
@@ -510,20 +737,20 @@ func planFor(packs *packdomain.Schema, calls *calldomain.Algebra, schema placeme
 		!calls.OwnsTargetContract(targetContract) || len(observations) != actualCount || !calls.Admits(key, callFact) {
 		return routePlan{}, false
 	}
-	demands := make(map[heap.Key]routeDemand, len(observations))
-	// Call uncertainty is not a Placement witness.  An open/Top dispatch
-	// value does not authenticate a Target operation or its formal rows, so a
-	// route must be refused rather than compensated with all-root Unknown.
-	if callFact.IsTop() || callFact.HasOpaqueAlternative() {
-		return routePlan{}, false
-	}
-	// Every fixed actual participating in this selected-read cut must carry a
-	// present, owner-authenticated Value observation.  Missing rows are an
-	// unavailable planner input, never a request to manufacture all-root
-	// Unknown.  Authenticated open Pack tails are widened only by the explicit
-	// runtimeTail branch below.
+	var demands denseDemandScratch
+	// An open/Top Call value is authenticated Call uncertainty, but the opaque
+	// arm does not issue a Target capability.  Formal rows are owned by an
+	// explicitly selected operation Target, so uncertainty cannot be turned
+	// into a synthetic operation/support enumeration or an all-root demand.
+	// Known alternatives (including known+opaque values) are reduced below;
+	// opaque-only dispatch consequently yields a valid no-route plan.
+	// Every fixed actual participating in this selected-read cut must carry an
+	// owner-authenticated Value factor cell. Sparse Bottom is the owner's exact
+	// no-alternative default and contributes no route; it is not an unavailable
+	// planner input or a request to manufacture all-root Unknown. Authenticated
+	// open Pack tails are widened only by the explicit runtimeTail branch below.
 	for _, observation := range observations {
-		if !observation.valid || !observation.present || !values.Equal(observation.fact, observation.fact) {
+		if _, observationOK := values.AuthenticateFactorCell(observation.fact, observation.present, observation.valid); !observationOK {
 			return routePlan{}, false
 		}
 	}
@@ -538,86 +765,53 @@ func planFor(packs *packdomain.Schema, calls *calldomain.Algebra, schema placeme
 			// not carry formal ownership metadata.
 			continue
 		}
-		if operation == 0 {
+		if !addFormalOperationDemand(schema, values, targetContract, operation, actualCount, runtimeTail, observations, &demands) {
 			return routePlan{}, false
-		}
-		declared, declaredOK := targetContract.Operations.OperationAt(int(operation) - 1)
-		if !declaredOK || declared != operation {
-			return routePlan{}, false
-		}
-		tail, tailOK := targetContract.Operations.FormalEffectTail(operation)
-		if !tailOK || (tail != vocabulary.RowClosed && tail != vocabulary.RowUnknownOpen) {
-			return routePlan{}, false
-		}
-		for effectIndex := 0; effectIndex < targetContract.Operations.FormalEffectCount(operation); effectIndex++ {
-			spec, specOK := targetContract.Operations.FormalEffectAt(operation, effectIndex)
-			if !specOK {
-				return routePlan{}, false
-			}
-			selection := resolveFormalSelectorRange(spec, actualCount, runtimeTail)
-			if !selection.valid {
-				// Fixed formal coordinates and malformed selector geometry fail
-				// closed.  Only selection.unknown, which is set by an
-				// authenticated mounted Pack tail, may widen all roots.
-				return routePlan{}, false
-			}
-			escape, owns := FormalEscape(spec.Kind)
-			if !owns {
-				continue
-			}
-			if selection.unknown {
-				if !addUnknownAll(schema, demands) {
-					return routePlan{}, false
-				}
-			}
-			for actualIndex := selection.start; actualIndex < selection.end; actualIndex++ {
-				if actualIndex < 0 || actualIndex >= len(observations) {
-					// The selector/observation shape was not jointly
-					// redeemable.  This is a planner failure, not an open
-					// boundary, so refuse instead of compensating with an
-					// all-root Unknown demand.
-					return routePlan{}, false
-				}
-				observation := observations[actualIndex]
-				unknown, observationOK := addFactDemand(schema, values, observation.fact, observation.present && observation.valid, escape, demands)
-				if !observationOK {
-					return routePlan{}, false
-				}
-				if unknown && !addUnknownAll(schema, demands) {
-					return routePlan{}, false
-				}
-			}
-		}
-		if tail == vocabulary.RowUnknownOpen {
-			// If the mounted call itself has an open actual tail, that tail is
-			// not represented by a fixed Value coordinate. A tracked allocation
-			// may therefore enter through the runtime suffix, so widen every
-			// Placement root before inspecting the fixed prefix.
-			if runtimeTail && !addUnknownAll(schema, demands) {
-				return routePlan{}, false
-			}
-			// The unknown formal tail is an unknown ownership effect over all
-			// fixed actuals, but it does not fabricate a Value for an
-			// unrepresented runtime tail member.
-			for _, observation := range observations {
-				if !addUnknownOpenTailObservationDemand(schema, values, observation, demands) {
-					return routePlan{}, false
-				}
-			}
 		}
 	}
-	return (&routePlan{}).seal(schema, demands)
+	return (&routePlan{}).seal(schema, &demands)
 }
 
 func routeForTag(plan routePlan, tag routeTag) (route, bool) {
-	// routePlan.seal sorts by Heap dense coordinate, and routeTagFor embeds
-	// that coordinate above the low escape bits. Use the sorted invariant so
-	// checker lookups remain logarithmic for all-root widening plans.
-	index := sort.Search(len(plan.routes), func(index int) bool {
-		return plan.routes[index].tag >= tag
-	})
-	if index < len(plan.routes) && plan.routes[index].tag == tag {
-		return plan.routes[index], true
+	if plan.allUnknown {
+		if !plan.schema.Valid() {
+			return route{}, false
+		}
+		raw := uint64(tag)
+		if raw == 0 || raw&routeTagMask != routeCodeUnknown {
+			return route{}, false
+		}
+		coordinate := raw >> routeTagShift
+		if coordinate == 0 || coordinate-1 > uint64(^uint(0)>>1) {
+			return route{}, false
+		}
+		dense := int(coordinate - 1)
+		key, keyOK := plan.schema.KeyAt(dense)
+		if !keyOK || key.Kind() != heap.RootAllocation {
+			return route{}, false
+		}
+		return route{key: key, unknown: true, tag: tag}, true
+	}
+	// routePlan sealing emits exact demands by Heap dense coordinate, so the
+	// route tags are sorted. Keep lookup allocation-free and logarithmic.
+	left, right := 0, plan.routeCount()
+	for left < right {
+		middle := left + (right-left)/2
+		candidate, candidateOK := plan.routeAt(middle)
+		if !candidateOK {
+			return route{}, false
+		}
+		if candidate.tag < tag {
+			left = middle + 1
+		} else {
+			right = middle
+		}
+	}
+	if left < plan.routeCount() {
+		candidate, candidateOK := plan.routeAt(left)
+		if candidateOK && candidate.tag == tag {
+			return candidate, true
+		}
 	}
 	return route{}, false
 }

@@ -7,7 +7,7 @@ import (
 
 // rowComponent places one canonical static node in the strongly connected
 // component of the node dependency graph. Component membership is a
-// transaction-local index; the authority retains only the canonical Programs.
+// immutable owner index; the authority retains it with the canonical Programs.
 type rowComponent struct {
 	id     int
 	cyclic bool
@@ -28,7 +28,7 @@ func canonicalRowDependencies(row programstaticnode.StaticTypeNode, location can
 
 // componentsOfRows decomposes the canonical row graph into strongly
 // connected components with an iterative Tarjan walk. locations is a
-// transient owner/index lookup; the resulting authority keeps only components.
+// owner/index lookup used by the resulting authority and its component column.
 func componentsOfRows(locations map[identity.ContentID]canonicalRowLocation) (map[identity.ContentID]rowComponent, bool) {
 	edges := make(map[identity.ContentID][]identity.ContentID, len(locations))
 	for id, location := range locations {

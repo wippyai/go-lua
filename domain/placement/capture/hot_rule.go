@@ -22,6 +22,11 @@ type HotRule struct {
 	placementRead  engine.Read[engine.Selection[routeTag, engine.OrderedCells[placementdomain.Placement]]]
 }
 
+// Capture source rows are normally short. Keep the authored-order fact plane
+// and its physical-row coverage bitmap on the invocation stack; genuinely
+// wide captures spill explicitly and are never retained by HotRule.
+const captureFactInlineCapacity = 8
+
 // BindHot binds the parent exact read, selected captured Value routes, and
 // selected Placement route-write lane to the exact owner-fenced schemas.
 func BindHot(binding *engine.SchemaBinding, fragment *SchemaFragment, owner *placementowner.HotOwner, values *valueowner.HotOwner, valueSchema *valuedomain.Schema, schema placementdomain.Schema) (*HotRule, bool) {
@@ -127,20 +132,41 @@ func (rule *HotRule) locateRoutes(context engine.SelectorContext, candidate oper
 	if count != len(candidate.sources) || count == 0 {
 		return false
 	}
-	facts := make([]sourceFact, count)
-	for index := 0; index < count; index++ {
-		tag, cells, selectedOK := engine.SelectorSelectionAt(context, selection, index)
-		if !selectedOK || tag != candidate.sources[index].tag || cells.Count() != 1 {
+	var factsInline [captureFactInlineCapacity]sourceFact
+	var seenInline [captureFactInlineCapacity]bool
+	var facts []sourceFact
+	var seen []bool
+	if count <= captureFactInlineCapacity {
+		facts = factsInline[:count]
+		seen = seenInline[:count]
+	} else {
+		facts = make([]sourceFact, count)
+		seen = make([]bool, count)
+	}
+	for physical := 0; physical < count; physical++ {
+		tag, cells, selectedOK := engine.SelectorSelectionAt(context, selection, physical)
+		logical, logicalOK := sourceOrdinal(candidate, tag)
+		if !logicalOK || seen[logical] || !selectedOK || cells.Count() != 1 {
 			return false
 		}
 		fact, present, available := cells.At(0)
-		facts[index] = sourceFact{fact: fact, present: present, available: available}
+		facts[logical] = sourceFact{fact: fact, present: present, available: available}
+		seen[logical] = true
+	}
+	for _, present := range seen {
+		if !present {
+			return false
+		}
 	}
 	plan, planOK := routePlanForFacts(rule.schema, rule.valueSchema, facts)
 	if !planOK {
 		return false
 	}
-	for _, item := range plan.routes {
+	for index := 0; index < plan.routeCount(); index++ {
+		item, itemOK := plan.routeAt(index)
+		if !itemOK {
+			return false
+		}
 		if !placementowner.SelectRouteTyped(rule.owner, context, item.key, item.tag) {
 			return false
 		}
@@ -161,18 +187,18 @@ func (rule *HotRule) fold(frame engine.Frame[placementdomain.Placement, operand]
 	}
 	parent, parentPresent, parentAvailable := oneOrderedCell(parentCells)
 	if !parentAvailable || !parentPresent {
-		return engine.RuleResult[placementdomain.Placement]{}
+		return engine.NoCandidate(frame)
 	}
 	if !validPlacement(parent) {
 		return engine.RuleResult[placementdomain.Placement]{}
 	}
 	parentPlacement := parent
-	_, plan, factsOK := rule.transferFacts(frame, valueSelection, candidate)
+	plan, factsOK := rule.transferFacts(frame, valueSelection, candidate)
 	if !factsOK {
 		return engine.RuleResult[placementdomain.Placement]{}
 	}
 	count, countOK := engine.SelectionCount(frame, placementSelection)
-	if !countOK || count != len(plan.routes) {
+	if !countOK || count != plan.routeCount() {
 		return engine.RuleResult[placementdomain.Placement]{}
 	}
 	if count == 0 {
@@ -183,34 +209,52 @@ func (rule *HotRule) fold(frame engine.Frame[placementdomain.Placement, operand]
 		if !routeOK || prior.Count() != 1 {
 			return placementdomain.Bottom, false
 		}
-		current, currentPresent, currentAvailable := prior.At(0)
-		if !currentAvailable || !currentPresent || !validPlacement(current) {
-			return placementdomain.Bottom, false
-		}
 		if expected.key.Kind() != heapdomain.RootAllocation {
 			return placementdomain.Bottom, false
 		}
-		return captureValue(parentPlacement, current), true
+		current, currentPresent, currentAvailable := prior.At(0)
+		current, currentOK := placementdomain.AuthenticateFactorCell(current, currentPresent, currentAvailable)
+		if !currentOK {
+			return placementdomain.Bottom, false
+		}
+		return captureValue(parentPlacement, current)
 	})
 }
 
-func (rule *HotRule) transferFacts(frame engine.Frame[placementdomain.Placement, operand], selection engine.Selection[routeTag, engine.OrderedCells[valuedomain.Value]], candidate operand) ([]sourceFact, routePlan, bool) {
+func (rule *HotRule) transferFacts(frame engine.Frame[placementdomain.Placement, operand], selection engine.Selection[routeTag, engine.OrderedCells[valuedomain.Value]], candidate operand) (routePlan, bool) {
 	count, countOK := engine.SelectionCount(frame, selection)
 	if !countOK || count != len(candidate.sources) || count == 0 {
-		return nil, routePlan{}, false
+		return routePlan{}, false
 	}
-	facts := make([]sourceFact, count)
-	for index := 0; index < count; index++ {
-		tag, cells, selectedOK := engine.SelectionAt(frame, selection, index)
-		if !selectedOK || tag != candidate.sources[index].tag || cells.Count() != 1 {
-			return nil, routePlan{}, false
+	var factsInline [captureFactInlineCapacity]sourceFact
+	var seenInline [captureFactInlineCapacity]bool
+	var facts []sourceFact
+	var seen []bool
+	if count <= captureFactInlineCapacity {
+		facts = factsInline[:count]
+		seen = seenInline[:count]
+	} else {
+		facts = make([]sourceFact, count)
+		seen = make([]bool, count)
+	}
+	for physical := 0; physical < count; physical++ {
+		tag, cells, selectedOK := engine.SelectionAt(frame, selection, physical)
+		logical, logicalOK := sourceOrdinal(candidate, tag)
+		if !logicalOK || seen[logical] || !selectedOK || cells.Count() != 1 {
+			return routePlan{}, false
 		}
 		fact, present, available := cells.At(0)
-		facts[index] = sourceFact{fact: fact, present: present, available: available}
+		facts[logical] = sourceFact{fact: fact, present: present, available: available}
+		seen[logical] = true
+	}
+	for _, present := range seen {
+		if !present {
+			return routePlan{}, false
+		}
 	}
 	plan, planOK := routePlanForFacts(rule.schema, rule.valueSchema, facts)
 	if !planOK {
-		return facts, routePlan{}, false
+		return routePlan{}, false
 	}
-	return facts, plan, true
+	return plan, true
 }

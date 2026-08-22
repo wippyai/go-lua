@@ -39,7 +39,7 @@ return second
 
 // mountedRecord seals one Link and runs the mount phase over it. The record it
 // returns is the phase's own output: every declared mount has sealed its
-// authority into it and both post-mount derivations have run, which is the only
+// authority into it and the post-mount derivations have run, which is the only
 // record the materializer admits.
 func mountedRecord(t testing.TB, name, source string) LinkInputs {
 	t.Helper()

@@ -44,11 +44,11 @@ func TestValidateStaticGenericRecurrenceAdmitsClosedBoxRoundTrip(t *testing.T) {
 	if err := ValidateStaticGenericRecurrence(box); err != nil {
 		t.Fatalf("source Box rejected: %v", err)
 	}
-	encoded, err := EncodeCanonical(context.Background(), box)
+	receipt, err := EncodeCanonicalFormals(context.Background(), box, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
-	decoded, err := DecodeCanonicalStructural(context.Background(), encoded)
+	decoded, err := DecodeCanonicalFormals(context.Background(), receipt, nil)
 	if err != nil {
 		t.Fatal(err)
 	}

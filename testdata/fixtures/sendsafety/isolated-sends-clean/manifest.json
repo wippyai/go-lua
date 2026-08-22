@@ -1,0 +1,11 @@
+{
+  "description": "The negative column of the send-safety family. Three correct sends, the closest cases a refutation must never reach: a fully owned unaliased payload admissible to the shared heap with no copy, a payload whose only aliases are local to the sending fiber and dead at the send, and a deeply frozen payload. No send-safety judgment may surface as a diagnostic here.",
+  "packages": ["process", "table"],
+  "files": ["main.lua"],
+  "check": {
+    "errors": 0
+  },
+  "run": {
+    "skip": "checker-only send-safety fixture"
+  }
+}

@@ -57,6 +57,31 @@ func (rules *RuleBinding) LinkAdmissions() ([]engine.LinkRuleAdmission, bool) {
 	return rows, true
 }
 
+// MountedPointAdmissions walks the artifact-independent mounted-point lane.
+// Each catalog occurrence is expanded by the engine over the sealed Point
+// plane, so this inventory remains independent of artifact point count.
+func (rules *RuleBinding) MountedPointAdmissions() ([]engine.MountedPointRuleAdmission, bool) {
+	if rules == nil {
+		return nil, false
+	}
+	keys := mountedPointKeys(rules.catalog)
+	if len(keys) == 0 {
+		return nil, false
+	}
+	rows := make([]engine.MountedPointRuleAdmission, 0, len(keys))
+	for _, key := range keys {
+		ids, idsOK := occurrenceIDs(rules, key)
+		capability, capabilityOK := rules.CapabilityByKey(key)
+		if !idsOK || !capabilityOK || !capability.MountedPoint() {
+			return nil, false
+		}
+		for _, id := range ids {
+			rows = append(rows, engine.MountedPointRuleAdmission{Capability: capability, Occurrence: id})
+		}
+	}
+	return rows, true
+}
+
 // BootstrapCatalogs is the Link-lane occurrence inventory assemble uses as the
 // bootstrap witness.
 func (rules *RuleBinding) BootstrapCatalogs() ([]engine.ProgramBootstrapCatalog, bool) {
@@ -69,7 +94,7 @@ func (rules *RuleBinding) BootstrapCatalogs() ([]engine.ProgramBootstrapCatalog,
 	}
 	catalogs := make([]engine.ProgramBootstrapCatalog, len(keys))
 	for index, key := range keys {
-		ids, idsOK := linkOccurrenceIDs(rules, key)
+		ids, idsOK := occurrenceIDs(rules, key)
 		capability, capabilityOK := rules.CapabilityByKey(key)
 		if !idsOK || !capabilityOK || !capability.Link() {
 			return nil, false
@@ -119,7 +144,7 @@ func walkLinkCatalogs(rules *RuleBinding, admit func(schema.Key, identity.Conten
 		return false
 	}
 	for _, key := range keys {
-		ids, ok := linkOccurrenceIDs(rules, key)
+		ids, ok := occurrenceIDs(rules, key)
 		if !ok {
 			return false
 		}
@@ -132,11 +157,11 @@ func walkLinkCatalogs(rules *RuleBinding, admit func(schema.Key, identity.Conten
 	return true
 }
 
-func linkOccurrenceIDs(rules *RuleBinding, key schema.Key) ([]identity.ContentID, bool) {
+func occurrenceIDs(rules *RuleBinding, key schema.Key) ([]identity.ContentID, bool) {
 	if rules == nil {
 		return nil, false
 	}
-	catalog, ok := rules.LinkCatalogByKey(key)
+	catalog, ok := rules.OccurrenceCatalogByKey(key)
 	if !ok {
 		return nil, false
 	}

@@ -14,30 +14,6 @@ func knownContainsRecursive(t Type) bool {
 	switch n := t.(type) {
 	case *Recursive:
 		return true
-	case *Optional:
-		return n.containsRecursive
-	case *Union:
-		return n.containsRecursive
-	case *Intersection:
-		return n.containsRecursive
-	case *Array:
-		return n.containsRecursive
-	case *Map:
-		return n.containsRecursive
-	case *ReadonlyMap:
-		return n.containsRecursive
-	case *Tuple:
-		return n.containsRecursive
-	case *Function:
-		return n.containsRecursive
-	case *Record:
-		return n.containsRecursive
-	case *Alias:
-		return n.containsRecursive
-	case *Meta:
-		return n.containsRecursive
-	case *Generic:
-		return n.containsRecursive
 	case *Instantiated:
 		// Read live rather than from the construction-time snapshot for the
 		// same reason as instantiatedContainsAny/Never: the Generic's own flag
@@ -51,11 +27,7 @@ func knownContainsRecursive(t Type) bool {
 			}
 		}
 		return false
-	case *TypeParam:
-		return n.containsRecursive
-	case *Interface:
-		return n.containsRecursive
-	default:
-		return false
 	}
+	properties := nodeProperties(t)
+	return properties != nil && properties.containsRecursive
 }

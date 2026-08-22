@@ -15,6 +15,7 @@ import (
 	linkproject "github.com/wippyai/go-lua/analysis/program/link/project"
 	"github.com/wippyai/go-lua/analysis/program/target/compiler"
 	"github.com/wippyai/go-lua/analysis/program/target/declaration"
+	"github.com/wippyai/go-lua/analysis/schema/programmount"
 	"github.com/wippyai/go-lua/domain/composite"
 	heapdomain "github.com/wippyai/go-lua/domain/heap"
 	"github.com/wippyai/go-lua/domain/materialization"
@@ -527,7 +528,7 @@ func TestHeapReceiptBootstrapRawAccessInitialPolicy(t *testing.T) {
 type semanticHeapFixtureRecord struct {
 	linked  *link.Link
 	schema  heapdomain.Schema
-	mount   heapdomain.ArtifactMount
+	mount   programmount.MountedArtifact
 	module  identity.ContentID
 	program identity.ContentID
 }
@@ -556,8 +557,8 @@ func newSemanticHeapFixture(t testing.TB, name, text string, spec declaration.Sp
 	executionSchemaID := compilation.ExecutionSchemaID()
 	issuance, issuanceOK := composite.ArtifactIssuanceDirectory(compilation)
 	compiled, failure := artifactcompiler.CompileDetailed(program, executionSchemaID, issuance)
-	mount, mountOK := heapdomain.NewArtifactMount(snapshottest.MustLower(t, compiled), module, programID)
-	schema, sealFailure := heapdomain.SealWithArtifacts(linked, []heapdomain.ArtifactMount{mount})
+	mount, mountOK := programmount.MountedArtifactFromSnapshot(snapshottest.MustLower(t, compiled), module)
+	schema, sealFailure := heapdomain.SealWithArtifacts(linked, []programmount.MountedArtifact{mount})
 	if !shardOK || !moduleOK || !programOK || !compilationOK || !executionSchemaID.Available() || !issuanceOK || failure.Available() || !mountOK || sealFailure != heapdomain.SealFailureNone {
 		t.Fatalf("receipt Heap fixture shard=%t module=%t program=%t compilation=%t artifact=%v mount=%t seal=%v", shardOK, moduleOK, programOK, compilationOK, failure, mountOK, sealFailure)
 	}

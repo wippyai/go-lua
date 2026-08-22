@@ -5,12 +5,15 @@ import (
 	"github.com/wippyai/go-lua/analysis/engine"
 	"github.com/wippyai/go-lua/analysis/identity"
 	"github.com/wippyai/go-lua/analysis/schema"
+	"github.com/wippyai/go-lua/analysis/schema/executioncontext"
 	"github.com/wippyai/go-lua/analysis/schema/programmount"
 	"github.com/wippyai/go-lua/analysis/schema/query"
 	"github.com/wippyai/go-lua/analysis/schema/rule"
 	callsite "github.com/wippyai/go-lua/domain/effect/callsite"
 	effectowner "github.com/wippyai/go-lua/domain/effect/owner"
 	allocationcatalog "github.com/wippyai/go-lua/domain/heap/allocation/catalog"
+	contextdomain "github.com/wippyai/go-lua/domain/heap/context"
+	contextowner "github.com/wippyai/go-lua/domain/heap/context/owner"
 	placementdomain "github.com/wippyai/go-lua/domain/placement"
 	placementquery "github.com/wippyai/go-lua/domain/placement/query"
 	valuedomain "github.com/wippyai/go-lua/domain/value"
@@ -32,14 +35,17 @@ type ProgramBinding struct {
 
 	// rules is the sealed rule table's Link-local projection. Every rule
 	// admission, attachment, and classification goes through it.
-	rules *RuleBinding
+	rules   *RuleBinding
+	factors map[schema.Key]engine.FactorSlotCapability
 
 	// allocations is the Link-owned allocation directory admitted with this
 	// binding.
-	allocations *allocationcatalog.Catalog
-	placement   placementdomain.Schema
+	allocations   *allocationcatalog.Catalog
+	placement     placementdomain.Schema
+	contextSchema contextdomain.Schema
 
-	value *valueowner.HotOwner
+	value   *valueowner.HotOwner
+	context *contextowner.HotOwner
 
 	// queries holds every declared query family's sealed implementation at its
 	// slot, opaque here and recovered at its type by the accessor the family's
@@ -50,8 +56,8 @@ type ProgramBinding struct {
 // Available states that this binding completed its transaction and sealed.
 func (bound *ProgramBinding) Available() bool {
 	return bound != nil && bound.binding != nil && bound.binding.Sealed() &&
-		bound.compilation.Available() && bound.catalog != nil && bound.rules != nil && bound.allocations != nil &&
-		bound.placement.Valid()
+		bound.compilation.Available() && bound.catalog != nil && bound.rules != nil && bound.factors != nil && bound.allocations != nil &&
+		bound.placement.Valid() && bound.context != nil && bound.contextSchema.Valid() && bound.contextSchema.Heap() == bound.placement.Heap()
 }
 
 // SchemaBinding is the one sealed engine binding this transaction produced.
@@ -90,6 +96,17 @@ func (bound *ProgramBinding) Rules() *RuleBinding {
 	return bound.rules
 }
 
+// FactorCapability resolves an axis directly to the exact sealed Factor slot
+// it owns. It is the mount substitution for local transfers; Rule identities
+// never stand in for Factor authority.
+func (bound *ProgramBinding) FactorCapability(axis schema.Key) (engine.FactorSlotCapability, bool) {
+	if bound == nil || !axis.Available() {
+		return engine.FactorSlotCapability{}, false
+	}
+	capability, ok := bound.factors[axis]
+	return capability, ok && capability.Available()
+}
+
 // ValueSchema is the sealed value schema this binding's principal carries. The
 // principal itself stays inside the binding.
 func (bound *ProgramBinding) ValueSchema() *valuedomain.Schema {
@@ -108,6 +125,26 @@ func (bound *ProgramBinding) PlacementSchema() (placementdomain.Schema, bool) {
 		return placementdomain.Schema{}, false
 	}
 	return bound.placement, true
+}
+
+// ContextSchema returns the exact Link-bound contextual Heap authority used by
+// this program binding. Contextual consumers must carry this value; a Heap
+// schema or Context ID alone cannot authorize a contextual reference.
+func (bound *ProgramBinding) ContextSchema() (contextdomain.Schema, bool) {
+	if bound == nil || !bound.Available() {
+		return contextdomain.Schema{}, false
+	}
+	return bound.contextSchema, true
+}
+
+// ContextAuthority returns the exact owner-fenced Context Factor authority.
+// Callers that need factor coordinates use this owner surface rather than
+// rebuilding a Factor binding from ContextSchema.
+func (bound *ProgramBinding) ContextAuthority() *contextowner.HotOwner {
+	if bound == nil || bound.context == nil {
+		return nil
+	}
+	return bound.context
 }
 
 // Query recovers the sealed implementation cell of one issued family. The
@@ -164,10 +201,22 @@ func (bound *ProgramBinding) EffectQuery() *effectowner.ExactQueryImplementation
 // EffectPublicationObservations walks the canonical mounted Program
 // occurrences and directly asks Effect's selected callsite rule for each
 // declared publication observation. No candidate or post-solve proof view is
-// retained in Composite; Effect owns the observation's construction.
-func (bound *ProgramBinding) EffectPublicationObservations(committed *engine.CommittedProgram, mounts []programmount.MountedArtifact) ([]engine.ProgramObservationAdmission, bool) {
-	if bound == nil || !bound.Available() || committed == nil || len(mounts) == 0 {
+// retained in Composite; Effect owns the observation's construction. The
+// supplied directory must carry Context rows from this binding's exact
+// Link-owned contextual authority.
+func (bound *ProgramBinding) EffectPublicationObservations(committed *engine.CommittedProgram, mounts []programmount.MountedArtifact, contexts executioncontext.Directory) ([]engine.ProgramObservationAdmission, bool) {
+	if bound == nil || !bound.Available() || committed == nil || len(mounts) == 0 || !contexts.Available() {
 		return nil, false
+	}
+	boundContexts := bound.contextSchema.Directory()
+	if !boundContexts.Available() || contexts.LinkID() != boundContexts.LinkID() {
+		return nil, false
+	}
+	for index := 0; index < contexts.ContextCount(); index++ {
+		context, contextOK := contexts.ContextAt(index)
+		if !contextOK || !bound.contextSchema.OwnsContext(context) {
+			return nil, false
+		}
 	}
 	query := bound.EffectQuery()
 	if query == nil {
@@ -184,27 +233,60 @@ func (bound *ProgramBinding) EffectPublicationObservations(committed *engine.Com
 		if ruleKey != "effect-selected" {
 			return true
 		}
-		admission, present, observationOK := selected.MountedPublicationObservation(committed, query, mount, occurrence)
-		if !observationOK {
+		mountedContexts, contextsOK := mountedEffectContexts(contexts, mount)
+		if !contextsOK {
 			return false
 		}
-		if !present {
-			return true
+		for _, context := range mountedContexts {
+			if !bound.contextSchema.OwnsContext(context) {
+				return false
+			}
+			admission, present, observationOK := selected.MountedPublicationObservation(committed, query, mount, occurrence, context)
+			if !observationOK {
+				return false
+			}
+			if !present {
+				continue
+			}
+			if !admission.Available() {
+				return false
+			}
+			if _, duplicate := seen[admission.ID]; duplicate {
+				return false
+			}
+			seen[admission.ID] = struct{}{}
+			observations = append(observations, admission)
 		}
-		if !admission.Available() {
-			return false
-		}
-		if _, duplicate := seen[admission.ID]; duplicate {
-			return false
-		}
-		seen[admission.ID] = struct{}{}
-		observations = append(observations, admission)
 		return true
 	})
 	if !walked {
 		return nil, false
 	}
 	return observations, true
+}
+
+// mountedEffectContexts is the owner-side bridge from a mounted occurrence to
+// its exact execution contexts. Effect's publication geometry names a mounted
+// occurrence but not a Context, so admission expands over every canonical
+// directory row whose ModuleKey is the mount. Directory order is canonical and
+// therefore makes the expansion deterministic; no first/default Context is
+// selected and no Context is reconstructed from its fields.
+func mountedEffectContexts(directory executioncontext.Directory, mount identity.ContentID) ([]executioncontext.Context, bool) {
+	if !directory.Available() || !mount.Available() {
+		return nil, false
+	}
+	result := make([]executioncontext.Context, 0, directory.ContextCount())
+	for index := 0; index < directory.ContextCount(); index++ {
+		context, ok := directory.ContextAt(index)
+		if !ok || !context.Available() {
+			return nil, false
+		}
+		if context.ModuleKey() != mount {
+			continue
+		}
+		result = append(result, context)
+	}
+	return result, len(result) != 0
 }
 
 // PlacementQuery is the sealed implementation of the placement-summary
@@ -229,8 +311,8 @@ func (bound *ProgramBinding) PlacementQuery() *engine.HeterogeneousQueryImplemen
 // implementation. Construction walks sealed issuance for sites; the sealed
 // family selects its owner's admission callback. Projection is descriptive
 // query geometry and is never used as a concrete implementation type tag.
-func (bound *ProgramBinding) QueryAdmission(id, mount, point identity.ContentID, family schema.Key) (engine.ProgramQueryAdmission, bool) {
-	if bound == nil {
+func (bound *ProgramBinding) QueryAdmission(id, mount, point identity.ContentID, family schema.Key, context executioncontext.Context) (engine.ProgramQueryAdmission, bool) {
+	if bound == nil || !context.Available() || context.ModuleKey() != mount {
 		return engine.ProgramQueryAdmission{}, false
 	}
 	position, ok := queryPositionForFamily(bound.catalog, family)
@@ -241,7 +323,7 @@ func (bound *ProgramBinding) QueryAdmission(id, mount, point identity.ContentID,
 	if !ok {
 		return engine.ProgramQueryAdmission{}, false
 	}
-	return bound.catalog.queryContributors[position].admit(bound.binding, cell, id, mount, point)
+	return bound.catalog.queryContributors[position].admit(bound.binding, cell, id, mount, point, context)
 }
 
 // BindProgram binds the complete compilation-owned schema in one SchemaBinding. The
@@ -259,15 +341,30 @@ func BindProgram(compilation Compilation, inputs LinkInputs) (*ProgramBinding, B
 	if failure.Available() {
 		return nil, failure
 	}
+	factors := make(map[schema.Key]engine.FactorSlotCapability)
+	for _, entry := range state.axes {
+		if entry == nil || !entry.Storage().Bound() {
+			continue
+		}
+		semantic, semanticOK := state.roles.Key(entry.Semantic())
+		capability, capabilityOK := engine.FactorCapabilityForSemantic(bound.binding, semantic)
+		if !semanticOK || !capabilityOK {
+			return nil, BindFailure{Stage: BindStagePrincipal}
+		}
+		factors[entry.Key()] = capability
+	}
 	return &ProgramBinding{
-		compilation: compilation,
-		catalog:     state,
-		binding:     bound.binding,
-		publication: publication,
-		rules:       bound.rules,
-		allocations: bound.allocations,
-		placement:   inputs.PlacementSchema,
-		value:       bound.value,
-		queries:     bound.queries,
+		compilation:   compilation,
+		catalog:       state,
+		binding:       bound.binding,
+		publication:   publication,
+		rules:         bound.rules,
+		factors:       factors,
+		allocations:   bound.allocations,
+		placement:     inputs.PlacementSchema,
+		contextSchema: inputs.contextSchema,
+		value:         bound.value,
+		context:       bound.context,
+		queries:       bound.queries,
 	}, BindFailure{}
 }

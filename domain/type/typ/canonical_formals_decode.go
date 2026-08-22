@@ -8,27 +8,34 @@ import (
 	"github.com/wippyai/go-lua/internal/hash"
 )
 
-// DecodeCanonicalFormals reconstructs a scoped canonical graph using exactly
-// the caller-owned external formal authority. External formal ordinals resolve
-// to the supplied pointers; nested Function and Generic formals are recreated
-// as fresh lexical binders. The wire format deliberately carries no
-// presentation names for formals, so decoded local names are private,
-// deterministic construction labels only and never semantic wire identity.
+// DecodeCanonicalFormals reconstructs a previously admitted scoped canonical
+// graph using exactly the caller-owned external formal authority. External
+// formal ordinals resolve to the supplied pointers; nested Function and
+// Generic formals are recreated as fresh lexical binders. The wire format
+// deliberately carries no presentation names for formals, so decoded local
+// names are private, deterministic construction labels only and never semantic
+// wire identity.
 //
 // This is a cold artifact/manifest boundary. It allocates the reconstructed
 // semantic graph once; hot analysis identities remain the caller's existing
 // dense authority handles rather than persistent local decoder handles.
 //
-// The decoder accepts only the unique bytes emitted by
-// EncodeCanonicalFormals. It rejects malformed framing, out-of-scope external
-// ordinals, malformed lexical ownership, cancellation, and any reconstruction
-// whose scoped re-encoding differs byte-for-byte.
-func DecodeCanonicalFormals(ctx context.Context, encoded []byte, formals []*TypeParam) (decoded Type, err error) {
+// The receipt is the owner-issued validation proof. Decode still parses the
+// admitted image and checks receiver formal authority, but it does not repeat
+// wire-law validation, source-graph recurrence validation, or a compensating
+// canonical re-encode.
+func DecodeCanonicalFormals(ctx context.Context, receipt CanonicalFormalsReceipt, formals []*TypeParam) (decoded Type, err error) {
 	if ctx == nil {
 		ctx = context.Background()
 	}
 	if err := ctx.Err(); err != nil {
 		return nil, err
+	}
+	if !receipt.valid() {
+		return nil, invalidCanonicalFormals("unavailable receipt")
+	}
+	if uint64(len(formals)) != uint64(receipt.externalFormals) {
+		return nil, invalidCanonicalFormals("formal authority count")
 	}
 	defer func() {
 		if recovered := recover(); recovered != nil {
@@ -36,14 +43,17 @@ func DecodeCanonicalFormals(ctx context.Context, encoded []byte, formals []*Type
 			err = fmt.Errorf("%w: %v", ErrInvalidCanonicalType, recovered)
 		}
 	}()
-	admission, err := newCanonicalFormalsAdmission(ctx, len(encoded))
+	if uint64(len(receipt.encoded)) > uint64(maxInt()) {
+		return nil, invalidCanonicalFormals("receipt length")
+	}
+	admission, err := newCanonicalFormalsAdmission(ctx, len(receipt.encoded))
 	if err != nil {
 		return nil, err
 	}
 	if err := validateCanonicalFormalAuthority(ctx, admission, formals); err != nil {
 		return nil, err
 	}
-	nodes, shapes, err := validatedCanonicalFormalsGraph(ctx, encoded, len(formals), admission)
+	nodes, shapes, _, err := parseCanonicalFormalsWire(ctx, receipt.encoded, len(formals), admission)
 	if err != nil {
 		return nil, err
 	}
@@ -51,40 +61,10 @@ func DecodeCanonicalFormals(ctx context.Context, encoded []byte, formals []*Type
 	if err != nil {
 		return nil, err
 	}
-	if err := ValidateStaticGenericRecurrenceWithFormals(decoded, formals); err != nil {
-		return nil, fmt.Errorf("%w: static generic recurrence: %v", ErrInvalidCanonicalType, err)
-	}
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
-	roundTrip, err := encodeCanonicalFormalsAdmission(ctx, decoded, formals, admission)
-	if err != nil {
-		return nil, fmt.Errorf("%w: reconstructed value cannot encode: %v", ErrInvalidCanonicalType, err)
-	}
-	equal, equalErr := canonicalFormalsEqual(ctx, admission, roundTrip, encoded)
-	if equalErr != nil {
-		return nil, equalErr
-	}
-	if !equal {
-		at, differenceErr := firstCanonicalByteDifference(ctx, admission, encoded, roundTrip)
-		if differenceErr != nil {
-			return nil, differenceErr
-		}
-		return nil, fmt.Errorf("%w: reconstructed value changed canonical bytes at %d", ErrInvalidCanonicalType, at)
-	}
 	return decoded, nil
-}
-
-func firstCanonicalByteDifference(ctx context.Context, admission *canonicalFormalsAdmission, left, right []byte) (int, error) {
-	var steps uint64
-	index := 0
-	for index < len(left) && index < len(right) && left[index] == right[index] {
-		if err := canonicalFormalsCheckpoint(ctx, admission, &steps); err != nil {
-			return 0, err
-		}
-		index++
-	}
-	return index, nil
 }
 
 func validateCanonicalFormalAuthority(ctx context.Context, admission *canonicalFormalsAdmission, formals []*TypeParam) error {
@@ -108,8 +88,8 @@ func validateCanonicalFormalAuthority(ctx context.Context, admission *canonicalF
 	return nil
 }
 
-// materializeCanonicalFormalsGraph uses the graph and relation checker shared
-// with ValidateCanonicalFormals. The explicit dependency walk has two
+// materializeCanonicalFormalsGraph reconstructs the graph behind an admitted
+// receipt. The explicit dependency walk has two
 // deliberate exceptions: a local TypeParam's owner edge is lexical evidence,
 // not a runtime child, and an external TypeParam resolves directly to its
 // authority pointer. Those exceptions make binder identity available without
@@ -176,8 +156,8 @@ func materializeCanonicalFormalsGraph(ctx context.Context, admission *canonicalF
 
 	// External parameters are already declaration identities. Their optional
 	// constraint child remains part of the verified wire graph, but is not a
-	// child of the receiver-owned TypeParam object; byte-equal re-encoding below
-	// proves that the supplied authority has the exact compatible constraint.
+	// child of the receiver-owned TypeParam object; the authority check below
+	// compares that decoded child with the supplied declaration constraint.
 	for index, shape := range shapes {
 		if err := canonicalDecodeCheckpoint(ctx, &steps); err != nil {
 			return nil, err
@@ -444,6 +424,34 @@ func materializeCanonicalFormalsGraph(ctx context.Context, admission *canonicalF
 				return nil, invalidCanonicalFormals("recursive body")
 			}
 			built[index].(*Recursive).SetBody(body)
+		}
+	}
+	for index, shape := range shapes {
+		if err := canonicalDecodeCheckpoint(ctx, &steps); err != nil {
+			return nil, err
+		}
+		if shape.tag != canonicalTypeParam || shape.formalMode != canonicalScopedExternalFormal {
+			continue
+		}
+		ordinal := shape.formalOrdinal
+		if ordinal >= uint64(len(formals)) {
+			return nil, invalidCanonicalFormals("external formal ordinal")
+		}
+		var encodedConstraint Type
+		if len(nodes[index].edges) == 1 {
+			constraintIndex := nodes[index].edges[0]
+			if constraintIndex < 0 || constraintIndex >= len(built) || !ready[constraintIndex] {
+				return nil, invalidCanonicalFormals("external formal constraint")
+			}
+			encodedConstraint = built[constraintIndex]
+		} else if len(nodes[index].edges) != 0 {
+			return nil, invalidCanonicalFormals("external formal child count")
+		}
+		if (encodedConstraint == nil) != (formals[ordinal].Constraint == nil) {
+			return nil, invalidCanonicalFormals("external formal constraint authority")
+		}
+		if encodedConstraint != nil && !TypeEquals(encodedConstraint, formals[ordinal].Constraint) {
+			return nil, invalidCanonicalFormals("external formal constraint authority")
 		}
 	}
 	return built[0], nil

@@ -123,13 +123,13 @@ type solvedResults struct {
 // solvedPublicationPlan is the runtime-owned publication authority.  It is
 // sealed with the runtime that owns the graph: the column binding and its
 // write capabilities, the two result key universes, and the point-state
-// denominator/key index all belong to this one immutable plan.  A solve opens
+// denominator universe all belong to this one immutable plan. A solve opens
 // a private builder against the plan; it never re-admits columns or
 // reconstructs a denominator authority.
 //
 // The point rows themselves are solve-local values and therefore cannot be
-// sealed here.  The point key universe, its dense key index, and the
-// denominator identity are structural and are sealed here once.
+// sealed here. The point key universe and denominator identity are structural
+// and are sealed here once.
 type solvedPublicationPlan struct {
 	sealed bool
 	schema identity.ContentID
@@ -145,16 +145,13 @@ type solvedPublicationPlan struct {
 	denominators     [solvedLaneWidth]identity.ContentID
 	pointAxis        snapshot.Axis[composition.Key, carrier.PointState]
 	pointDenominator identity.ContentID
-	pointMembers     []composition.Key
 	pointKeys        []composition.Key
-	pointIndex       map[composition.Key]int
 }
 
 func (plan *solvedPublicationPlan) available() bool {
 	return plan != nil && plan.sealed && plan.schema.Available() && plan.binding != nil && plan.binding.Sealed() &&
 		plan.queryWrite.Available() && plan.obsWrite.Available() && plan.pointWrite.Available() &&
-		plan.pointAxis.Available() && plan.pointDenominator.Available() && len(plan.pointMembers) != 0 &&
-		len(plan.pointIndex) == len(plan.pointMembers) && len(plan.pointKeys) > 0
+		plan.pointAxis.Available() && plan.pointDenominator.Available() && len(plan.pointKeys) != 0
 }
 
 // solvedAxis is one declared result lane: every row the lane declares, in the
@@ -253,7 +250,7 @@ func sealSolvedPublicationPlan(runtime *solverRuntime) (*solvedPublicationPlan, 
 	}
 	queryKeys, queryOK := declaredQueryKeys(runtime)
 	observationKeys, observationOK := declaredObservationKeys(runtime)
-	pointMembers, pointKeys, pointIndex, pointDenominator, pointOK := sealPointUniverse(runtime, schema)
+	pointKeys, pointDenominator, pointOK := sealPointUniverse(runtime, schema)
 	if !queryOK || !observationOK || !pointOK {
 		return nil, false
 	}
@@ -282,9 +279,7 @@ func sealSolvedPublicationPlan(runtime *solverRuntime) (*solvedPublicationPlan, 
 		observationKeys:  observationKeys,
 		pointAxis:        pointStateAxis(schema),
 		pointDenominator: pointDenominator,
-		pointMembers:     pointMembers,
 		pointKeys:        pointKeys,
-		pointIndex:       pointIndex,
 	}
 	plan.families[resultLaneQuery] = solvedAxisIdentity(schema, resultLaneQuery, solvedAxisFamily)
 	plan.families[resultLaneObservation] = solvedAxisIdentity(schema, resultLaneObservation, solvedAxisFamily)
@@ -338,7 +333,7 @@ func beginSolvedPublication(solver *Solver, epoch *executorEpoch, generation ide
 		pointWrite: plan.pointWrite,
 		pointAxis:  plan.pointAxis,
 	}
-	if canDeltaSolvedPublication(solver.lastSolved, plan.schema, solver.store, generation, plan.queryKeys, plan.observationKeys, plan.pointMembers) {
+	if canDeltaSolvedPublication(solver.lastSolved, plan.schema, solver.store, generation, plan.queryKeys, plan.observationKeys, plan.pointKeys) {
 		publication.builder = snapshot.NewDelta(solver.lastSolved.published, generation)
 		publication.solved.families = solver.lastSolved.families
 		publication.solved.queryPlan = solver.lastSolved.queryPlan
@@ -418,8 +413,8 @@ func declaredObservationKeys(runtime *solverRuntime) ([]identity.ContentID, bool
 	return keys, true
 }
 
-func canDeltaSolvedPublication(base SolvedSnapshot, schema identity.ContentID, store identity.StoreID, generation identity.Generation, queryKeys, obsKeys []identity.ContentID, pointMembers []composition.Key) bool {
-	return base.Available() && base.schema == schema && base.published.Store() == store && base.published.Generation().Precedes(generation) && base.queryPlan.Available() && base.observationPlan.Available() && base.pointAxis.Available() && publicationCovers(base.published, base.queryPlan.Axis(), queryKeys) && publicationCovers(base.published, base.observationPlan.Axis(), obsKeys) && publicationCovers(base.published, base.pointAxis, pointMembers)
+func canDeltaSolvedPublication(base SolvedSnapshot, schema identity.ContentID, store identity.StoreID, generation identity.Generation, queryKeys, obsKeys []identity.ContentID, pointKeys []composition.Key) bool {
+	return base.Available() && base.schema == schema && base.published.Store() == store && base.published.Generation().Precedes(generation) && base.queryPlan.Available() && base.observationPlan.Available() && base.pointAxis.Available() && publicationCovers(base.published, base.queryPlan.Axis(), queryKeys) && publicationCovers(base.published, base.observationPlan.Axis(), obsKeys) && publicationCovers(base.published, base.pointAxis, pointKeys)
 }
 
 func publicationCovers[K comparable, V any](published snapshot.Snapshot, axis snapshot.Axis[K, V], keys []K) bool {

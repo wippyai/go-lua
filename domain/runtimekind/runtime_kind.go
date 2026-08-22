@@ -22,8 +22,32 @@ const (
 	Count
 )
 
+// kindSpellings is the sole spelling authority for the closed vocabulary.
+// Its indices are Kind ordinals; structural registration and any diagnostic
+// projection read this owner-held description instead of restating the
+// Kind-to-name relation.
+var kindSpellings = [Count]string{
+	Nil:      "nil",
+	Boolean:  "boolean",
+	Number:   "number",
+	String:   "string",
+	Table:    "table",
+	Function: "function",
+	Thread:   "thread",
+	Userdata: "userdata",
+}
+
 // Valid reports membership in the closed vocabulary.
 func (kind Kind) Valid() bool { return kind > Invalid && kind < Count }
+
+// Spelling returns the exact string produced by Lua type() for kind. Invalid
+// kinds have no spelling.
+func (kind Kind) Spelling() string {
+	if !kind.Valid() {
+		return ""
+	}
+	return kindSpellings[kind]
+}
 
 // Set is a may-set over the closed runtime vocabulary. Bottom is zero and All
 // contains every known Lua runtime family.

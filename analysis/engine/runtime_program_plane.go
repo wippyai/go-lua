@@ -14,7 +14,9 @@ package engine
 import (
 	"github.com/wippyai/go-lua/analysis/engine/internal/carrier"
 	"github.com/wippyai/go-lua/analysis/engine/internal/composition"
+	"github.com/wippyai/go-lua/analysis/engine/internal/contextfiber"
 	"github.com/wippyai/go-lua/analysis/engine/internal/equation"
+	"github.com/wippyai/go-lua/analysis/schema/executioncontext"
 )
 
 // programPlane is the bound Factor universe of one graph. Its fields are the
@@ -26,9 +28,89 @@ type programPlane struct {
 	byKey   map[composition.Key]runtimeFactor
 	carrier *carrier.Composition
 	ordered []runtimeFactor
+	// Query context addressing is attached only by CommittedProgram.Seal. The
+	// ordinary factor plane remains reusable, while each sealed query row is
+	// resolved against the exact committed directory/index/layout rather than a
+	// process-wide or point-owner default.
+	contexts      executioncontext.Directory
+	contextIndex  contextfiber.Index
+	contextLayout contextfiber.Layout
+	pointOwners   []contextfiber.PointOwner
+	contextAuth   bool
 	// frozen records that the cold binding catalog was released while this plane
 	// was minted. A plane that never reached that cut binds nothing.
 	frozen bool
+}
+
+func (plane *programPlane) attachQueryContext(committed *CommittedProgram) bool {
+	if plane == nil || committed == nil || !committed.valid() || plane.runtime == nil || plane.runtime.graph != committed.graph {
+		return false
+	}
+	if committed.artifactBacked && !validQueryContextPlane(committed.graph, committed.contexts, committed.contextIndex, committed.contextLayout, committed.pointOwners) {
+		return false
+	}
+	plane.contexts = committed.contexts
+	plane.contextIndex = committed.contextIndex
+	plane.contextLayout = committed.contextLayout
+	plane.pointOwners = append([]contextfiber.PointOwner(nil), committed.pointOwners...)
+	plane.contextAuth = committed.artifactBacked
+	return true
+}
+
+// queryState resolves a mounted query through the complete context address
+// plane. Explicit engine-only construction has a separate graph-point state
+// address and does not mint a context alias for mounted execution.
+func (plane *programPlane) queryState(query equation.Query) (contextfiber.StateOrdinal, bool) {
+	if plane == nil || plane.runtime == nil || plane.runtime.graph == nil {
+		return 0, false
+	}
+	if !plane.contextAuth {
+		point, ok := plane.runtime.graph.PointIndex(query.Point())
+		if !ok || point < 0 {
+			return 0, false
+		}
+		// Explicit engine-only construction has no context plane by design. Its
+		// state address is the graph point itself; this branch is never used for
+		// a mounted artifact, which must resolve through the retained Layout.
+		return contextfiber.StateOrdinal(point), true
+	}
+	if !plane.contexts.Available() || !plane.contextIndex.Available() || !plane.contextLayout.Available() || len(plane.pointOwners) != plane.runtime.graph.PointCount() {
+		return 0, false
+	}
+	state, ok := queryStateOrdinalOwned(plane.runtime.graph, query, plane.contextIndex, plane.contextLayout)
+	return state, ok
+}
+
+// observationState resolves the exact compact state cell for a mounted
+// observation's execution Context and member-output Point. The observation
+// admission carries the typed Context explicitly; this helper never selects a
+// directory row by module or position.
+func (plane *programPlane) observationState(point equation.Point, context executioncontext.Context) (contextfiber.StateOrdinal, bool) {
+	if plane == nil || plane.runtime == nil || plane.runtime.graph == nil {
+		return 0, false
+	}
+	if !plane.contextAuth {
+		pointIndex, pointOK := plane.runtime.graph.PointIndex(point)
+		if !pointOK || pointIndex < 0 {
+			return 0, false
+		}
+		return contextfiber.StateOrdinal(pointIndex), true
+	}
+	if !plane.contexts.Available() || !plane.contextIndex.Available() || !plane.contextLayout.Available() ||
+		len(plane.pointOwners) != plane.runtime.graph.PointCount() || !context.Available() ||
+		context.LinkID() != plane.contexts.LinkID() {
+		return 0, false
+	}
+	canonical, canonicalOK := plane.contexts.Context(context.ID())
+	if !canonicalOK || !canonical.Available() || canonical.ID() != context.ID() || canonical.LinkID() != context.LinkID() || canonical.ModuleKey() != context.ModuleKey() {
+		return 0, false
+	}
+	contextOrdinal, contextOK := plane.contextIndex.ContextOrdinal(context.ID())
+	pointIndex, pointOK := plane.runtime.graph.PointIndex(point)
+	if !contextOK || !pointOK || pointIndex < 0 {
+		return 0, false
+	}
+	return plane.contextLayout.Lookup(contextOrdinal, contextfiber.PointOrdinal(pointIndex))
 }
 
 // bindProgramPlane is the sole mint of a plane. It enumerates the sealed

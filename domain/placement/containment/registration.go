@@ -24,15 +24,15 @@ type ruleAuthorities interface {
 	HeapSchema() heapdomain.Schema
 }
 
-// RuleEntry is the Link-lane Placement containment transport. Its parent
-// denominator is the complete Heap allocation-root view, not a mounted
-// program occurrence stream.
+// RuleEntry is the artifact-independent mounted-point Placement containment
+// transport. One owner-issued operand occurrence is expanded by the engine at
+// every mounted Point.
 func RuleEntry[P rulePrincipals, A ruleAuthorities]() rule.Spec {
 	return rule.Spec{
 		Key:      "placement-containment",
 		Writes:   "placement",
 		Owner:    "placement",
-		Lane:     rule.LaneLink,
+		Lane:     rule.LaneMountedPoint,
 		Semantic: "semantic/rule/placement/containment",
 		Roles:    []schema.Key{"semantic/operand/placement/containment"},
 	}
@@ -48,7 +48,7 @@ func DeclareRule[P rulePrincipals](builder *engine.SchemaBuilder, context rule.D
 }
 
 func RegisterRule(binding *engine.SchemaBinding, context rule.Registration[*SchemaFragment]) (engine.RuleSlotCapability, bool) {
-	return engine.RegisterLinkSlot(binding, context.Fragment.RuleSlot())
+	return engine.RegisterMountedPointSlot(binding, context.Fragment.RuleSlot())
 }
 
 func BindRule[A ruleAuthorities](binding *engine.SchemaBinding, context rule.Binding[A, *SchemaFragment]) (*HotRule, bool) {
@@ -58,10 +58,11 @@ func BindRule[A ruleAuthorities](binding *engine.SchemaBinding, context rule.Bin
 func FinalizeRule[A ruleAuthorities](context rule.Finalization[A, *HotRule]) bool {
 	return context.Rule != nil && context.Rule.owner == context.Authorities.PlacementAuthority() &&
 		context.Rule.heap == context.Authorities.HeapAuthority() &&
-		context.Authorities.HeapSchema() == context.Authorities.PlacementSchema().Heap()
+		context.Authorities.HeapSchema() == context.Authorities.PlacementSchema().Heap() &&
+		context.Rule.Count() == 1
 }
 
-func LinkCatalog(hot *HotRule) (rule.LinkCatalog, bool) {
+func OccurrenceCatalog(hot *HotRule) (rule.OccurrenceCatalog, bool) {
 	if hot == nil {
 		return nil, false
 	}

@@ -6,6 +6,7 @@ import (
 	linkhost "github.com/wippyai/go-lua/analysis/program/link/host"
 	linkmodule "github.com/wippyai/go-lua/analysis/program/link/module"
 	linkproject "github.com/wippyai/go-lua/analysis/program/link/project"
+	"github.com/wippyai/go-lua/analysis/schema/executioncontext"
 )
 
 // Project returns Link's sole immutable mount, exact-key, and Application
@@ -34,6 +35,16 @@ func (l *Link) Module() *linkmodule.Component {
 		return nil
 	}
 	return l.module
+}
+
+// ContextDirectory returns Link's detached, frozen execution-context
+// directory. Root IDs appear only on ingress rows; transitions and later
+// consumers resolve Context IDs from this scalar result.
+func (l *Link) ContextDirectory() executioncontext.Directory {
+	if l == nil || !l.contextDirectory.Available() {
+		return executioncontext.Directory{}
+	}
+	return l.contextDirectory
 }
 
 // Host is the sole provider/bootstrap/selector authority.

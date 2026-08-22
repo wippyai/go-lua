@@ -11,6 +11,7 @@ import (
 	linkproject "github.com/wippyai/go-lua/analysis/program/link/project"
 	linkstatic "github.com/wippyai/go-lua/analysis/program/link/static"
 	"github.com/wippyai/go-lua/analysis/program/target/contract"
+	"github.com/wippyai/go-lua/analysis/schema/executioncontext"
 )
 
 // Spec is consumed by Seal, including on failure.
@@ -42,5 +43,9 @@ type Link struct {
 	// is permitted to consume them.
 	module *linkmodule.Component
 	host   *linkhost.Component
-	id     identity.ContentID
+	// contextDirectory is detached scalar data built by Module once the Link
+	// identity is known. Link retains the sealed result; no later consumer
+	// reopens Module roots to reconstruct it.
+	contextDirectory executioncontext.Directory
+	id               identity.ContentID
 }

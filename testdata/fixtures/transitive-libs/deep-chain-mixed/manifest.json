@@ -1,12 +1,13 @@
 {
-  "description": "A 3+ frame chain (main -> mid.make -> lib.wrap) allocates a box whose fate is decided two frames up. One call path derives-then-drops (proven-local -> stack); another sends the box only on an input-dependent condition (deferred+promote -> runtime clone at boundary, counted as unknown in the aggregate).",
+  "description": "A 3+ frame chain (main -> mid.make -> lib.wrap) allocates a box whose fate is decided two frames up. One call path derives then drops; another conditionally publishes the box. The authenticated send raises that path to SharedHeap while the local path remains eligible for Stack; conditional copy strategy belongs to lowering and is not an Unknown Placement class.",
   "packages": ["process"],
   "files": ["lib.lua", "mid.lua", "main.lua"],
   "check": {
     "placement": {
-      "require_complete": false,
+      "require_complete": true,
       "min_stack": 1,
-      "max_unknown": 1
+      "min_shared_heap": 1,
+      "max_unknown": 0
     }
   },
   "run": {

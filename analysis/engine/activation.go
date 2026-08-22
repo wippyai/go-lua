@@ -16,9 +16,12 @@ import (
 // ActivationLocator is one immutable semantic relation requested by an
 // activation Fold. It carries no topology authority or resolved Member.
 type ActivationLocator struct {
-	application identity.SemanticKey
-	target      identity.SemanticKey
-	endpoint    identity.SemanticKey
+	application   identity.SemanticKey
+	target        identity.SemanticKey
+	endpoint      identity.SemanticKey
+	transitionID  identity.ContentID
+	fromContextID identity.ContentID
+	toContextID   identity.ContentID
 }
 
 // NewActivationLocator constructs one pure semantic activation relation.
@@ -27,6 +30,21 @@ func NewActivationLocator(application, target, endpoint identity.SemanticKey) (A
 		return ActivationLocator{}, false
 	}
 	return ActivationLocator{application: application, target: target, endpoint: endpoint}, true
+}
+
+// NewContextualActivationLocator constructs the owner-qualified locator used
+// by mounted activation. The complete transition tuple is carried alongside
+// the semantic relation; selection refuses when any component is missing or
+// disagrees with the executing source context.
+func NewContextualActivationLocator(application, target, endpoint identity.SemanticKey, transitionID, fromContextID, toContextID identity.ContentID) (ActivationLocator, bool) {
+	if !application.Available() || !target.Available() || !endpoint.Available() || !transitionID.Available() || !fromContextID.Available() || !toContextID.Available() {
+		return ActivationLocator{}, false
+	}
+	return ActivationLocator{application: application, target: target, endpoint: endpoint, transitionID: transitionID, fromContextID: fromContextID, toContextID: toContextID}, true
+}
+
+func (locator ActivationLocator) contextual() equation.ActivationContext {
+	return equation.ActivationContext{TransitionID: locator.transitionID, FromContextID: locator.fromContextID, ToContextID: locator.toContextID}
 }
 
 // ActivationResult is the opaque result of one activation Product row. Its
@@ -69,7 +87,7 @@ func Activated(value ActivationFrame, locators ...ActivationLocator) ActivationR
 	result := ActivationResult{execution: value.execution, epoch: value.epoch, call: value.call, row: value.row}
 	result.locators = append([]ActivationLocator(nil), locators...)
 	for _, locator := range result.locators {
-		if !locator.application.Available() || !locator.target.Available() || !locator.endpoint.Available() {
+		if !locator.application.Available() || !locator.target.Available() || !locator.endpoint.Available() || !locator.contextual().WellFormed() {
 			return ActivationResult{}
 		}
 	}
@@ -120,8 +138,12 @@ type activationExecution struct {
 	active     lifetime.Cell
 	activeCall lifetime.Cell
 	nextCall   lifetime.GenerationSequence
-	row        int
-	region     support.Mask
+	// fromContextID is the exact mounted source context for this execution.
+	// It is issued by the runtime state plan, never inferred from a module or
+	// application key.
+	fromContextID identity.ContentID
+	row           int
+	region        support.Mask
 }
 
 type activationSelection struct {
@@ -216,8 +238,15 @@ func (compiled *compiledActivationRule) dynamicReads() []demand.DynamicRead {
 }
 
 func (compiled *compiledActivationRule) execute(work *carrier.Work, base carrier.RuleContributionBase, inputs []carrier.State, within support.Mask) (selected []equation.AcceptedMember, reads []demand.Observation, accepted bool, boundary solveBoundary) {
+	return compiled.executeAt(work, base, inputs, within, identity.ContentID{})
+}
+
+func (compiled *compiledActivationRule) executeAt(work *carrier.Work, base carrier.RuleContributionBase, inputs []carrier.State, within support.Mask, fromContextID identity.ContentID) (selected []equation.AcceptedMember, reads []demand.Observation, accepted bool, boundary solveBoundary) {
 	if !compiled.executableInstance() {
 		return nil, nil, false, refused(SolveFailureFamilyExecution, "activation-instance")
+	}
+	if !fromContextID.Available() && fromContextID != (identity.ContentID{}) {
+		return nil, nil, false, refused(SolveFailureFamilyExecution, "activation-context")
 	}
 	if work == nil || !work.OwnsRuleContributionStates(base, inputs) {
 		return nil, nil, false, refused(SolveFailureFamilyExecution, "activation-contribution")
@@ -231,7 +260,7 @@ func (compiled *compiledActivationRule) execute(work *carrier.Work, base carrier
 	}
 	frame := &ruleExecution{owner: compiled, work: work, base: base, epoch: epoch}
 	frame.active.Open(epoch)
-	execution := &activationExecution{owner: compiled, frame: frame, epoch: epoch, row: -1}
+	execution := &activationExecution{owner: compiled, frame: frame, epoch: epoch, fromContextID: fromContextID, row: -1}
 	execution.active.Open(epoch)
 	defer func() {
 		if frame.product != nil {
@@ -302,11 +331,17 @@ func (compiled *compiledActivationRule) settleActivationResult(execution *activa
 		if !execution.frame.product.requireCheckpoint() {
 			return nil, false
 		}
-		member, selected := compiled.topology.SelectActivationMember(compiled.trigger, equation.PairLocator{
+		context := locator.contextual()
+		if execution.fromContextID.Available() && (!context.Available() || context.FromContextID != execution.fromContextID) {
+			return nil, false
+		}
+		pair := equation.PairLocator{
 			Application: compositionKeyOf(locator.application),
 			Target:      compositionKeyOf(locator.target),
 			Endpoint:    compositionKeyOf(locator.endpoint),
-		})
+			Context:     context,
+		}
+		member, selected := compiled.topology.SelectActivationMember(compiled.trigger, pair)
 		if !selected || !member.Available() {
 			return nil, false
 		}
@@ -357,20 +392,28 @@ func canonicalActivationLocators(values []ActivationLocator) ([]ActivationLocato
 		if compositionKeyOf(result[left].target) != compositionKeyOf(result[right].target) {
 			return lessRuntimeKey(compositionKeyOf(result[left].target), compositionKeyOf(result[right].target))
 		}
-		return lessRuntimeKey(compositionKeyOf(result[left].endpoint), compositionKeyOf(result[right].endpoint))
+		if compositionKeyOf(result[left].endpoint) != compositionKeyOf(result[right].endpoint) {
+			return lessRuntimeKey(compositionKeyOf(result[left].endpoint), compositionKeyOf(result[right].endpoint))
+		}
+		return activationLocatorContextKey(result[left]) < activationLocatorContextKey(result[right])
 	})
 	retained := 0
 	for _, locator := range result {
-		if !locator.application.Available() || !locator.target.Available() || !locator.endpoint.Available() {
+		if !locator.application.Available() || !locator.target.Available() || !locator.endpoint.Available() || !locator.contextual().WellFormed() {
 			return nil, false
 		}
-		if retained != 0 && compositionKeyOf(result[retained-1].application) == compositionKeyOf(locator.application) && compositionKeyOf(result[retained-1].target) == compositionKeyOf(locator.target) && compositionKeyOf(result[retained-1].endpoint) == compositionKeyOf(locator.endpoint) {
+		if retained != 0 && compositionKeyOf(result[retained-1].application) == compositionKeyOf(locator.application) && compositionKeyOf(result[retained-1].target) == compositionKeyOf(locator.target) && compositionKeyOf(result[retained-1].endpoint) == compositionKeyOf(locator.endpoint) && result[retained-1].contextual() == locator.contextual() {
 			continue
 		}
 		result[retained] = locator
 		retained++
 	}
 	return result[:retained], true
+}
+
+func activationLocatorContextKey(locator ActivationLocator) string {
+	context := locator.contextual()
+	return context.TransitionID.String() + context.FromContextID.String() + context.ToContextID.String()
 }
 
 func (compiled *compiledActivationRule) admitSelections(values []activationSelection, product *productSession) ([]equation.AcceptedMember, bool) {

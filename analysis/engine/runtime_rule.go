@@ -145,7 +145,8 @@ func (bound *boundRuleMember[V, O]) executeRule(work *carrier.Work, base carrier
 		product.current = row
 		frame := Frame[V, O]{execution: execution, owner: bound, epoch: epoch, row: row}
 		result := bound.fold(frame)
-		if execution.failed.Load() || !product.requireCheckpoint() || !bound.settleRuleResult(execution, epoch, row, result) || !product.requireCheckpoint() {
+		settled := bound.settleRuleResult(execution, epoch, row, result)
+		if execution.failed.Load() || !product.requireCheckpoint() || !settled || !product.requireCheckpoint() {
 			product.current = -1
 			return carrier.Patch{}, nil, false, false, refused(SolveFailureFamilyExecution, "fold")
 		}
@@ -188,6 +189,11 @@ func (bound *boundRuleMember[V, O]) settleRuleResult(execution *ruleExecution, e
 	case ruleResultStaged:
 		return bound.output.stage != nil && bound.output.stage(execution, epoch, row, result.value)
 	case ruleResultRouted:
+		if bound.output.routeRelease != nil {
+			defer func() {
+				_ = bound.output.routeRelease(execution, epoch, row, result.route.read, result.route.selectionID, result.route.lease)
+			}()
+		}
 		if len(result.route.refs) == 0 {
 			return bound.output.noSelection != nil && bound.output.noSelection(execution, epoch, row, result.route)
 		}

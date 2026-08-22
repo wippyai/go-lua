@@ -39,7 +39,7 @@ func RuleEntry[P rulePrincipals, A ruleAuthorities]() rule.Spec {
 		Key:      "heap-formal-freeze",
 		Writes:   "heap",
 		Owner:    "heap",
-		Issues:   []rule.Issuance{{Occurrence: "occurrence/call", Requirement: "requirement/unrestricted", Form: "issuance/call-stage", Input: "input/finish", Stage: "stage/call-effect"}},
+		Issues:   []rule.Issuance{{Occurrence: "occurrence/call", Requirement: "program-requirement/unrestricted", Form: "program-form/call-effect"}},
 		Lane:     rule.LaneMounted,
 		Semantic: "semantic/rule/heap/formal-freeze",
 		Roles:    []schema.Key{"semantic/operand/heap/formal-freeze"},

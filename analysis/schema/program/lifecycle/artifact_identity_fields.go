@@ -5,7 +5,9 @@ import "github.com/wippyai/go-lua/analysis/identity"
 // These versions are part of the Artifact identity preimage. Lifecycle owns
 // them with the row families whose field order they version.
 const (
-	StorageCellLifetimeLawVersion uint64 = 1
+	// Version 2 adds the explicit closure-environment lifetime class while
+	// retaining the existing ordinals for all prior classes.
+	StorageCellLifetimeLawVersion uint64 = 2
 	SubjectLivenessLawVersion     uint64 = 1
 	SubjectEventLawVersion        uint64 = 1
 	AliasRouteScopeLawVersion     uint64 = 1

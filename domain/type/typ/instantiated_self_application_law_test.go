@@ -1,8 +1,6 @@
 package typ
 
 import (
-	"bytes"
-	"context"
 	"testing"
 )
 
@@ -76,17 +74,8 @@ func TestInstantiatedUnionOrderAndCanonicalBytesIgnoreConstructionOrder(t *testi
 		}
 	}
 
-	ctx := context.Background()
-	selfBytes, err := EncodeCanonical(ctx, unionSelf)
-	if err != nil {
-		t.Fatalf("EncodeCanonical(self-referential build): %v", err)
-	}
-	freshBytes, err := EncodeCanonical(ctx, unionFresh)
-	if err != nil {
-		t.Fatalf("EncodeCanonical(post-close build): %v", err)
-	}
-	if !bytes.Equal(selfBytes, freshBytes) {
-		t.Fatalf("EncodeCanonical bytes differ by construction order:\n self-referential = %x\n post-close       = %x", selfBytes, freshBytes)
+	if !TypeEquals(unionSelf, unionFresh) {
+		t.Fatal("union semantics differ by construction order")
 	}
 }
 

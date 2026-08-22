@@ -31,7 +31,7 @@ func RuleEntry[P rulePrincipals, A ruleAuthorities]() rule.Spec {
 		Key:      "placement-closure-capture",
 		Writes:   "placement",
 		Owner:    "placement",
-		Issues:   []rule.Issuance{{Occurrence: "occurrence/allocation", Requirement: "requirement/closure-capture", Form: "issuance/local-successor", Input: "input/finish", Stage: "stage/local"}},
+		Issues:   []rule.Issuance{{Occurrence: "occurrence/allocation", Requirement: "program-requirement/closure-capture", Form: "program-form/local-successor"}},
 		Lane:     rule.LaneMounted,
 		Semantic: "semantic/rule/placement/closure-capture",
 		Roles:    []schema.Key{"semantic/operand/placement/closure-capture"},

@@ -5,6 +5,7 @@ import (
 
 	"github.com/wippyai/go-lua/analysis/engine/internal/carrier"
 	"github.com/wippyai/go-lua/analysis/engine/internal/composition"
+	"github.com/wippyai/go-lua/analysis/engine/internal/contextfiber"
 	demandpkg "github.com/wippyai/go-lua/analysis/engine/internal/demand"
 	"github.com/wippyai/go-lua/analysis/engine/internal/equation"
 	"github.com/wippyai/go-lua/analysis/engine/internal/schedule"
@@ -59,6 +60,21 @@ type preparedSelectedFactorOverlay struct {
 	regionChildren [][]int
 	pointRegion    []int
 	activeRegions  []bool
+	// Artifact counterparts are compact StateOrdinal rows. The graph-shaped
+	// fields above remain the non-artifact construction's view and detached
+	// metadata; mounted installation consumes only these lifted rows.
+	stateExecution       *schedule.Schedule
+	stateExecutionEvents []schedule.Event
+	stateTargets         []int
+	stateSelected        []int
+	stateActive          []bool
+	stateFactorIncoming  [][]int
+	stateFactorOutgoing  [][]int
+	stateFactorRows      []runtimeStateFactorRow
+	stateRegions         []runtimeRegion
+	stateRegionChildren  [][]int
+	statePointRegion     []int
+	stateActiveRegions   []bool
 }
 
 // preparedFactorCSRRow is one replacement for an existing runtime CSR row.
@@ -224,6 +240,50 @@ type selectedFactorDescriptor struct {
 	target int
 }
 
+// validSelectedActivationContext authenticates the complete transition tuple
+// against the sealed Link directory and resolves exactly one source/target
+// StateOrdinal pair. It never searches same-module contexts or fans out a
+// graph-point edge.
+func (runtime *solverRuntime) validSelectedActivationContext(context equation.ActivationContext, source, target int) bool {
+	if runtime == nil || !runtime.artifactBacked {
+		return context.Empty()
+	}
+	if runtime.graph == nil || runtime.executionPlan == nil || !runtime.executionPlan.Available() || !context.Available() || source < 0 || target < 0 || source >= runtime.graph.PointCount() || target >= runtime.graph.PointCount() {
+		return false
+	}
+	from, fromOK := runtime.contexts.Context(context.FromContextID)
+	to, toOK := runtime.contexts.Context(context.ToContextID)
+	transition, transitionOK := runtime.contexts.Transition(context.FromContextID, context.ToContextID)
+	if !fromOK || !toOK || !from.Available() || !to.Available() || !transitionOK || !transition.Available() ||
+		transition.ID() != context.TransitionID || transition.LinkID() != runtime.contexts.LinkID() {
+		return false
+	}
+	sourceOwner, sourceOwnerOK := runtime.contextLayout.PointOwnerAt(contextfiber.PointOrdinal(source))
+	targetOwner, targetOwnerOK := runtime.contextLayout.PointOwnerAt(contextfiber.PointOrdinal(target))
+	if !sourceOwnerOK || !targetOwnerOK || !sourceOwner.Mounted() || !targetOwner.Mounted() ||
+		sourceOwner.ModuleKey() != from.ModuleKey() || targetOwner.ModuleKey() != to.ModuleKey() {
+		return false
+	}
+	fromOrdinal, fromOrdinalOK := runtime.contextIndex.ContextOrdinal(context.FromContextID)
+	toOrdinal, toOrdinalOK := runtime.contextIndex.ContextOrdinal(context.ToContextID)
+	if !fromOrdinalOK || !toOrdinalOK {
+		return false
+	}
+	sourceState, sourceStateOK := runtime.executionPlan.Lookup(fromOrdinal, contextfiber.PointOrdinal(source))
+	targetState, targetStateOK := runtime.executionPlan.Lookup(toOrdinal, contextfiber.PointOrdinal(target))
+	if !sourceStateOK || !targetStateOK {
+		return false
+	}
+	sourceCell, sourceCellOK := runtime.executionPlan.StateAt(sourceState)
+	targetCell, targetCellOK := runtime.executionPlan.StateAt(targetState)
+	sourceContext, sourceContextOK := sourceCell.ContextOrdinal()
+	targetContext, targetContextOK := targetCell.ContextOrdinal()
+	sourcePoint, sourcePointOK := sourceCell.PointOrdinal()
+	targetPoint, targetPointOK := targetCell.PointOrdinal()
+	return sourceCellOK && targetCellOK && sourceContextOK && targetContextOK && sourcePointOK && targetPointOK &&
+		sourceContext == fromOrdinal && targetContext == toOrdinal && sourcePoint == contextfiber.PointOrdinal(source) && targetPoint == contextfiber.PointOrdinal(target)
+}
+
 func (runtime *solverRuntime) prevalidateSelectedFactorEdges(selected []equation.SelectedStructuralFactorEdge) ([]selectedFactorDescriptor, []schedule.Edge, map[[2]int]struct{}, bool, *schedule.Schedule, bool) {
 	if runtime == nil || runtime.graph == nil || len(selected) == 0 {
 		return nil, nil, nil, false, nil, false
@@ -241,6 +301,16 @@ func (runtime *solverRuntime) prevalidateSelectedFactorEdges(selected []equation
 		if !sourceOK || !targetOK || !factorOK || slot < 0 || int(slot) >= runtime.carrier.Count() || source < 0 || target < 0 || source >= runtime.graph.PointCount() || target >= runtime.graph.PointCount() {
 			return nil, nil, nil, false, nil, false
 		}
+		if !runtime.validSelectedActivationContext(edge.Context(), source, target) {
+			return nil, nil, nil, false, nil, false
+		}
+		// ContextTransport is the sole Link-owned authority for an exact
+		// cross-context Point pair. A selected structural factor is a later
+		// overlay admission and cannot add a second carrier for that pair, even
+		// when its factor or provenance differs from the authenticated transport.
+		if runtime.contextTransportOwnsPointPair(source, target) {
+			return nil, nil, nil, false, nil, false
+		}
 		if _, duplicate := seen[edge.Key()]; duplicate {
 			return nil, nil, nil, false, nil, false
 		}
@@ -252,6 +322,23 @@ func (runtime *solverRuntime) prevalidateSelectedFactorEdges(selected []equation
 		return nil, nil, nil, false, nil, false
 	}
 	return result, dependencies, dependencyAt, changed, execution, true
+}
+
+// contextTransportOwnsPointPair reports exact graph-point ownership by the
+// immutable Link transport table. It intentionally ignores module names,
+// contexts, factors, and provenance: selected admission is refused whenever
+// the pair is already semantically owned, so no second authority can be
+// installed through a dynamic overlay.
+func (runtime *solverRuntime) contextTransportOwnsPointPair(source, target int) bool {
+	if runtime == nil || source < 0 || target < 0 {
+		return false
+	}
+	for _, transport := range runtime.contextTransports {
+		if transport.sourcePoint == source && transport.targetPoint == target {
+			return true
+		}
+	}
+	return false
 }
 
 // combinedSelectedDependencyEdges performs one batched WTO construction. If
@@ -320,6 +407,16 @@ func (runtime *solverRuntime) bindSelectedFactorEdge(descriptor selectedFactorDe
 		return boundSelectedFactorEdge{}, false
 	}
 	planKey := input.Reindex().Key()
+	context := edge.Context()
+	var fromContext, toContext contextfiber.ContextOrdinal
+	if context.Available() {
+		var fromOK, toOK bool
+		fromContext, fromOK = runtime.contextIndex.ContextOrdinal(context.FromContextID)
+		toContext, toOK = runtime.contextIndex.ContextOrdinal(context.ToContextID)
+		if !fromOK || !toOK {
+			return boundSelectedFactorEdge{}, false
+		}
+	}
 	plan, planOK := runtime.overlay.reindexes.plan(input.Reindex())
 	if !planOK {
 		plan, planOK = runtime.overlay.latePlans[planKey]
@@ -336,11 +433,11 @@ func (runtime *solverRuntime) bindSelectedFactorEdge(descriptor selectedFactorDe
 	pre, preOK := runtimeFormula(runtime.carrier, sourceScope, input.Pre(), runtime.overlay.reindexes.decisions)
 	post, postOK := runtimeFormula(runtime.carrier, targetScope, input.Post(), runtime.overlay.reindexes.decisions)
 	bound := runtimeInput{key: input.Key(), provenance: input.Provenance(), pre: pre, plan: plan, post: post}
-	origin, originOK := runtimeFactorEdgeOrigin(descriptor.source, descriptor.target, edge.Factor(), input.Provenance(), planKey, post)
+	origin, originOK := runtimeFactorEdgeOrigin(descriptor.source, descriptor.target, edge.Factor(), input.Provenance(), planKey, post, context)
 	if !planKey.Available() || !planOK || !preOK || !postOK || !bound.valid() || !originOK {
 		return boundSelectedFactorEdge{}, false
 	}
-	return boundSelectedFactorEdge{edge: runtimeFactorEdge{key: edge.Key(), factor: edge.Factor(), source: descriptor.source, target: descriptor.target, input: bound, slot: slot}, origin: origin}, true
+	return boundSelectedFactorEdge{edge: runtimeFactorEdge{key: edge.Key(), factor: edge.Factor(), source: descriptor.source, target: descriptor.target, input: bound, slot: slot, context: context, fromContext: fromContext, toContext: toContext}, origin: origin}, true
 }
 
 func (prepared *preparedSelectedFactorOverlay) finalize(runtime *solverRuntime) bool {
@@ -477,7 +574,195 @@ func (prepared *preparedSelectedFactorOverlay) bindFeedbackRuntime(runtime *solv
 	prepared.regionChildren = children
 	prepared.pointRegion = pointRegion
 	prepared.activeRegions = active
+	if runtime.artifactBacked {
+		if !prepared.bindArtifactStateOverlay(runtime) {
+			return false
+		}
+	}
 	return true
+}
+
+// bindArtifactStateOverlay lifts one accepted graph overlay through the
+// retained execution plan.  Graph oracle rows above are cold derivation
+// metadata only; every schedule, demand row, factor occurrence, and wake
+// target used by a mounted epoch is produced here in StateOrdinal space.
+func (prepared *preparedSelectedFactorOverlay) bindArtifactStateOverlay(runtime *solverRuntime) bool {
+	if prepared == nil || runtime == nil || !runtime.artifactBacked || runtime.executionPlan == nil || !runtime.executionPlan.Available() {
+		return false
+	}
+	stateCount := runtime.stateCount()
+	if stateCount <= 0 || len(runtime.statePointRows) != runtime.graph.PointCount() {
+		return false
+	}
+	active := append([]bool(nil), runtime.activeStates...)
+	if len(active) != stateCount {
+		return false
+	}
+	targetStates := make(map[int]struct{}, len(prepared.additions)+len(prepared.replacements))
+	// Every selected edge carries its complete transition tuple. Resolve its
+	// one source and one target StateOrdinal directly; no graph-point row scan
+	// or same-module context fan-out is legal in the artifact runtime.
+	for _, edge := range selectedOverlayEdges(prepared) {
+		context := edge.context
+		if !context.Available() {
+			return false
+		}
+		from, fromOK := runtime.contextIndex.ContextOrdinal(context.FromContextID)
+		to, toOK := runtime.contextIndex.ContextOrdinal(context.ToContextID)
+		if !fromOK || !toOK {
+			return false
+		}
+		sourceState, sourceOK := runtime.executionPlan.Lookup(from, contextfiber.PointOrdinal(edge.source))
+		targetState, targetOK := runtime.executionPlan.Lookup(to, contextfiber.PointOrdinal(edge.target))
+		if !sourceOK || !targetOK || int(sourceState) >= stateCount || int(targetState) >= stateCount || !active[int(sourceState)] {
+			return false
+		}
+		active[int(targetState)] = true
+		targetStates[int(targetState)] = struct{}{}
+	}
+	selected := make([]int, 0, stateCount)
+	for stateIndex, admitted := range active {
+		if admitted {
+			selected = append(selected, stateIndex)
+		}
+	}
+
+	// Build the compact factor transpose over the complete next edge backing.
+	nextFactors := make([]runtimeFactorEdge, len(runtime.factorEdges)+len(prepared.additions))
+	copy(nextFactors, runtime.factorEdges)
+	for index, addition := range prepared.additions {
+		nextFactors[len(runtime.factorEdges)+index] = addition.edge
+	}
+	for _, replacement := range prepared.replacements {
+		if replacement.index < 0 || replacement.index >= len(nextFactors) {
+			return false
+		}
+		nextFactors[replacement.index] = replacement.edge
+	}
+	incoming, outgoing, factorRows, _, factorOK := buildStateFactorIndex(runtime.graph, runtime.executionPlan, nextFactors, true)
+	if !factorOK {
+		return false
+	}
+
+	// The immutable base plan supplies all static contextual edges. Selected
+	// direct edges are lifted only where their endpoint owners prove an exact
+	// state pair; mounted-to-global remains closed without a merge witness.
+	edges := runtime.executionPlan.Edges()
+	seen := make(map[[2]int]struct{}, len(edges)+len(prepared.additions)+len(prepared.replacements))
+	for _, edge := range edges {
+		seen[[2]int{int(edge.From), int(edge.To)}] = struct{}{}
+	}
+	for _, addition := range prepared.additions {
+		pairs, pairsOK := runtime.liftGraphPairStates(addition.edge.source, addition.edge.target, addition.edge.context)
+		if !pairsOK {
+			return false
+		}
+		for _, pair := range pairs {
+			key := [2]int{int(pair.From), int(pair.To)}
+			if _, duplicate := seen[key]; duplicate {
+				continue
+			}
+			seen[key] = struct{}{}
+			edges = append(edges, pair)
+		}
+	}
+	for _, replacement := range prepared.replacements {
+		pairs, pairsOK := runtime.liftGraphPairStates(replacement.edge.source, replacement.edge.target, replacement.edge.context)
+		if !pairsOK {
+			return false
+		}
+		for _, pair := range pairs {
+			key := [2]int{int(pair.From), int(pair.To)}
+			if _, duplicate := seen[key]; duplicate {
+				continue
+			}
+			seen[key] = struct{}{}
+			edges = append(edges, pair)
+		}
+	}
+	sort.Slice(edges, func(left, right int) bool {
+		if edges[left].From != edges[right].From {
+			return edges[left].From < edges[right].From
+		}
+		return edges[left].To < edges[right].To
+	})
+	execution, err := schedule.Prepare(stateCount, edges)
+	if err != nil || execution == nil {
+		return false
+	}
+	targets := make([]int, 0, len(targetStates))
+	for target := range targetStates {
+		if target < 0 || target >= stateCount || !active[target] {
+			return false
+		}
+		targets = append(targets, target)
+	}
+	sort.Ints(targets)
+	targets = uniqueInts(targets)
+	if len(targets) == 0 {
+		return false
+	}
+	stateRegions, stateChildren, pointRegion, activeRegions, stateEvents, lifted := liftStateRegions(runtime.graph, execution, active, runtime, factorRows, true)
+	if !lifted {
+		return false
+	}
+	prepared.stateExecution = execution
+	prepared.stateExecutionEvents = stateEvents
+	prepared.stateTargets = targets
+	prepared.stateSelected = selected
+	prepared.stateActive = active
+	prepared.stateFactorIncoming = incoming
+	prepared.stateFactorOutgoing = outgoing
+	prepared.stateFactorRows = factorRows
+	prepared.stateRegions = stateRegions
+	prepared.stateRegionChildren = stateChildren
+	prepared.statePointRegion = pointRegion
+	prepared.stateActiveRegions = activeRegions
+	return true
+}
+
+func selectedOverlayEdges(prepared *preparedSelectedFactorOverlay) []runtimeFactorEdge {
+	if prepared == nil {
+		return nil
+	}
+	result := make([]runtimeFactorEdge, 0, len(prepared.additions)+len(prepared.replacements))
+	for _, addition := range prepared.additions {
+		result = append(result, addition.edge)
+	}
+	for _, replacement := range prepared.replacements {
+		result = append(result, replacement.edge)
+	}
+	return result
+}
+
+func uniqueInts(values []int) []int {
+	if len(values) < 2 {
+		return values
+	}
+	result := values[:0]
+	for _, value := range values {
+		if len(result) == 0 || result[len(result)-1] != value {
+			result = append(result, value)
+		}
+	}
+	return result
+}
+
+func (runtime *solverRuntime) liftGraphPairStates(sourcePoint, targetPoint int, context equation.ActivationContext) ([]schedule.Edge, bool) {
+	if runtime == nil || !runtime.artifactBacked || runtime.executionPlan == nil || !context.Available() || !runtime.validSelectedActivationContext(context, sourcePoint, targetPoint) {
+		return nil, false
+	}
+	from, fromOK := runtime.contextIndex.ContextOrdinal(context.FromContextID)
+	to, toOK := runtime.contextIndex.ContextOrdinal(context.ToContextID)
+	if !fromOK || !toOK {
+		return nil, false
+	}
+	sourceState, sourceOK := runtime.executionPlan.Lookup(from, contextfiber.PointOrdinal(sourcePoint))
+	targetState, targetOK := runtime.executionPlan.Lookup(to, contextfiber.PointOrdinal(targetPoint))
+	if !sourceOK || !targetOK {
+		return nil, false
+	}
+	return []schedule.Edge{{From: schedule.Node(sourceState), To: schedule.Node(targetState)}}, true
 }
 
 func (prepared *preparedSelectedFactorOverlay) prepareEdgeBacking(runtime *solverRuntime) bool {

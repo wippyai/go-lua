@@ -25,12 +25,8 @@ const (
 )
 
 type keyRow struct {
-	kind          keyKind
-	applicationID identity.ContentID
-	operation     vocabulary.Operation
-	callback      vocabulary.CallbackID
-	resume        vocabulary.ResumeID
-	id            identity.ContentID
+	kind keyKind
+	id   identity.ContentID
 }
 
 // Algebra is the single Link-scoped owner of the complete Call Factor family.
@@ -40,7 +36,7 @@ type keyRow struct {
 // closed source sum (there is no B×Operation/Port product).
 type Algebra struct {
 	contract                   *contract.Contract
-	mountModules               []identity.ContentID
+	mounts                     []mountRow
 	mountModuleIndex           map[identity.ContentID]uint32
 	mountedCalls               []mountedCallRow
 	mountedCallIndex           map[identity.ContentID]uint32
@@ -51,9 +47,8 @@ type Algebra struct {
 	keys                       []keyRow
 	keyIndex                   map[identity.ContentID]uint32
 	targets                    []targetRow
-	targetIndex                map[targetKey]selector
+	seedIndex                  map[identity.ContentID]selector
 	roleIndex                  map[TargetRoleID]selector
-	functionIndex              map[functionTargetKey]selector
 	allocationIndex            map[allocationTargetKey]selector
 	bodyTargetCount            int
 	bottom                     Value
@@ -63,24 +58,24 @@ type Algebra struct {
 // mountedCallRow is the seal-time projection of Project's ordinary-call
 // relation. No Project/Shard/CallApplication authority is retained.
 type mountedCallRow struct {
-	applicationID identity.ContentID
-	callID        identity.ContentID
-	moduleID      identity.ContentID
-	calleeValueID identity.ContentID
-	loaderSeedID  identity.ContentID
+	callID         identity.ContentID
+	calleeValueID  identity.ContentID
+	mount          uint32
+	applicationKey uint32
+}
+
+// mountRow is the sole Call-owned projection of one Link mount. Module and
+// scoped-loader identity are issued once per mount and shared by every call
+// placed within it.
+type mountRow struct {
+	moduleID     identity.ContentID
+	programID    identity.ContentID
+	loaderSeedID identity.ContentID
 }
 
 type mountedCallOccurrenceRef struct {
 	moduleID identity.ContentID
 	callID   identity.ContentID
-}
-
-// mountedArtifactCallIndex is construction-only. Project owns the mounted
-// application relation, while Program owns the reusable authored-call rows;
-// call identities are resolved by scanning that canonical family and no
-// secondary call directory survives into Algebra.
-type mountedArtifactCallIndex struct {
-	program programschema.Program
 }
 
 // NewWithMountedArtifacts builds Call from Link-owned boundary/key facts plus
@@ -104,8 +99,8 @@ func NewWithMountedArtifacts(source *link.Link, mounts []MountedArtifact) (*Alge
 	}
 	algebra := &Algebra{
 		contract: contract, mountModuleIndex: make(map[identity.ContentID]uint32), mountedCallIndex: make(map[identity.ContentID]uint32), mountedCallOccurrenceIndex: make(map[mountedCallOccurrenceRef]uint32), linkOwner: linkOwner,
-		keyIndex: make(map[identity.ContentID]uint32), targetIndex: make(map[targetKey]selector), roleIndex: make(map[TargetRoleID]selector),
-		functionIndex: make(map[functionTargetKey]selector), allocationIndex: make(map[allocationTargetKey]selector),
+		keyIndex: make(map[identity.ContentID]uint32), seedIndex: make(map[identity.ContentID]selector), roleIndex: make(map[TargetRoleID]selector),
+		allocationIndex: make(map[allocationTargetKey]selector),
 	}
 	algebra.requireOperation, _ = boundary.RequireOperation()
 	// Content identity is independent of the target rows and is available
@@ -122,7 +117,7 @@ func NewWithMountedArtifacts(source *link.Link, mounts []MountedArtifact) (*Alge
 	if len(mounts) != mountsView.Count() {
 		return nil, false
 	}
-	artifactCalls := make(map[identity.ContentID]mountedArtifactCallIndex, len(mounts))
+	artifactCalls := make(map[identity.ContentID]programschema.Program, len(mounts))
 	for index := 0; index < mountsView.Count(); index++ {
 		shard, ok := mountsView.At(index)
 		moduleID, moduleOK := project.ModuleKey(shard)
@@ -152,9 +147,6 @@ func NewWithMountedArtifacts(source *link.Link, mounts []MountedArtifact) (*Alge
 				return nil, false
 			}
 		}
-		artifactCalls[moduleID] = mountedArtifactCallIndex{program: program}
-		algebra.mountModules = append(algebra.mountModules, moduleID)
-		algebra.mountModuleIndex[moduleID] = uint32(len(algebra.mountModules))
 		require, requireOK := boundary.Seeds().ScopedLoader(shard)
 		if !requireOK {
 			return nil, false
@@ -163,6 +155,9 @@ func NewWithMountedArtifacts(source *link.Link, mounts []MountedArtifact) (*Alge
 		if !seedOK || !seedID.Available() {
 			return nil, false
 		}
+		artifactCalls[moduleID] = program
+		algebra.mounts = append(algebra.mounts, mountRow{moduleID: moduleID, programID: programID, loaderSeedID: seedID})
+		algebra.mountModuleIndex[moduleID] = uint32(len(algebra.mounts))
 	}
 	if !algebra.buildTargets(mounts, boundary) || !algebra.buildKeys(project) {
 		return nil, false
@@ -188,17 +183,16 @@ func NewWithMountedArtifacts(source *link.Link, mounts []MountedArtifact) (*Alge
 			callee, calleeOK = boundary.Values().ForMountedSpan(moduleID, calleeOperand.SpanID())
 		}
 		calleeValueID, calleeIDOK := boundary.Values().ID(callee)
-		loader, loaderOK := boundary.Seeds().ScopedLoader(shard)
-		loaderSeedID, loaderIDOK := boundary.Seeds().ID(loader)
-		_, keyOK := algebra.KeyForApplicationID(applicationID)
-		if !applicationOK || !identityOK || issuedCallID != callID || !shardOK || !callIndexOK || !callRowOK || !calleeOperandOK || !calleeOK || !calleeIDOK || !loaderOK || !loaderIDOK || !keyOK || !callID.Available() || !calleeValueID.Available() || !loaderSeedID.Available() {
+		mountSlot := algebra.mountModuleIndex[moduleID]
+		applicationKey, keyOK := algebra.KeyForApplicationID(applicationID)
+		if !applicationOK || !identityOK || issuedCallID != callID || !shardOK || !callIndexOK || !callRowOK || !calleeOperandOK || !calleeOK || !calleeIDOK || !keyOK || mountSlot == 0 || !callID.Available() || !calleeValueID.Available() {
 			return nil, false
 		}
 		moduleIDFromShard, moduleIDOK := project.ModuleKey(shard)
 		if !moduleIDOK || !moduleIDFromShard.Available() || moduleIDFromShard != moduleID || algebra.mountedCallIndex[applicationID] != 0 || algebra.mountedCallOccurrenceIndex[mountedCallOccurrenceRef{moduleID: moduleID, callID: callID}] != 0 {
 			return nil, false
 		}
-		algebra.mountedCalls = append(algebra.mountedCalls, mountedCallRow{applicationID: applicationID, callID: callID, calleeValueID: calleeValueID, loaderSeedID: loaderSeedID, moduleID: moduleID})
+		algebra.mountedCalls = append(algebra.mountedCalls, mountedCallRow{callID: callID, calleeValueID: calleeValueID, mount: mountSlot, applicationKey: applicationKey.slot})
 		slot := uint32(len(algebra.mountedCalls))
 		algebra.mountedCallIndex[applicationID] = slot
 		algebra.mountedCallOccurrenceIndex[mountedCallOccurrenceRef{moduleID: moduleID, callID: callID}] = slot
@@ -208,21 +202,24 @@ func NewWithMountedArtifacts(source *link.Link, mounts []MountedArtifact) (*Alge
 	return algebra, true
 }
 
-func mountedArtifactCallAt(index map[identity.ContentID]mountedArtifactCallIndex, moduleID, callID identity.ContentID) (programschema.Program, int, bool) {
+// mountedArtifactCallAt is construction-only. Project owns the mounted
+// application relation, while Program owns the reusable authored-call rows;
+// no secondary call directory survives into Algebra.
+func mountedArtifactCallAt(index map[identity.ContentID]programschema.Program, moduleID, callID identity.ContentID) (programschema.Program, int, bool) {
 	if index == nil || !moduleID.Available() || !callID.Available() {
 		return programschema.Program{}, 0, false
 	}
-	mount, mountOK := index[moduleID]
-	if !mountOK || !mount.program.Available() {
+	program, mountOK := index[moduleID]
+	if !mountOK || !program.Available() {
 		return programschema.Program{}, 0, false
 	}
-	callCount, callsPublished := mount.program.CallCount()
+	callCount, callsPublished := program.CallCount()
 	if !callsPublished {
 		return programschema.Program{}, 0, false
 	}
 	callIndex := -1
 	for index := 0; index < callCount; index++ {
-		call, callOK := mount.program.CallAt(index)
+		call, callOK := program.CallAt(index)
 		if !callOK || call.ID() != callID {
 			continue
 		}
@@ -231,7 +228,7 @@ func mountedArtifactCallAt(index map[identity.ContentID]mountedArtifactCallIndex
 		}
 		callIndex = index
 	}
-	return mount.program, callIndex, callIndex >= 0
+	return program, callIndex, callIndex >= 0
 }
 
 func mountedCalleeOperand(program programschema.Program, callIndex int, call programschema.Call) (programschema.CallOperand, bool) {
@@ -260,13 +257,14 @@ func (algebra *Algebra) MountModuleCount() int {
 	if !algebra.Valid() {
 		return 0
 	}
-	return len(algebra.mountModules)
+	return len(algebra.mounts)
 }
 func (algebra *Algebra) MountModuleAt(index int) (identity.ContentID, bool) {
-	if !algebra.Valid() || index < 0 || index >= len(algebra.mountModules) {
+	if !algebra.Valid() || index < 0 || index >= len(algebra.mounts) {
 		return identity.ContentID{}, false
 	}
-	return algebra.mountModules[index], true
+	row := algebra.mounts[index]
+	return row.moduleID, row.moduleID.Available() && row.programID.Available() && row.loaderSeedID.Available()
 }
 func (algebra *Algebra) MountedCallCount() int {
 	if !algebra.Valid() {
@@ -309,7 +307,7 @@ func (algebra *Algebra) buildKeys(project *linkproject.Component) bool {
 		if !applicationOK {
 			return false
 		}
-		row := keyRow{kind: keyApplication, applicationID: applicationID, id: applicationID}
+		row := keyRow{kind: keyApplication, id: applicationID}
 		if !algebra.appendKey(row) {
 			return false
 		}
@@ -335,7 +333,7 @@ func (algebra *Algebra) buildKeys(project *linkproject.Component) bool {
 			if !present {
 				return false
 			}
-			if !algebra.appendKey(keyRow{kind: keyCallback, operation: operation, callback: callback, id: id}) {
+			if !algebra.appendKey(keyRow{kind: keyCallback, id: id}) {
 				return false
 			}
 		}
@@ -348,7 +346,7 @@ func (algebra *Algebra) buildKeys(project *linkproject.Component) bool {
 			if !present {
 				return false
 			}
-			if !algebra.appendKey(keyRow{kind: keyResume, operation: operation, resume: resume, id: id}) {
+			if !algebra.appendKey(keyRow{kind: keyResume, id: id}) {
 				return false
 			}
 		}
@@ -362,22 +360,9 @@ func (algebra *Algebra) appendKey(row keyRow) bool {
 	}
 	switch row.kind {
 	case keyApplication:
-		if !row.applicationID.Available() {
-			return false
-		}
-	case keyCallback:
-		if row.operation == 0 || row.callback == 0 {
-			return false
-		}
-	case keyResume:
-		if row.operation == 0 || row.resume == 0 {
-			return false
-		}
+	case keyCallback, keyResume:
 	default:
 		return false
-	}
-	if row.kind == keyApplication && row.id == (identity.ContentID{}) {
-		row.id = row.applicationID
 	}
 	if !row.id.Available() || algebra.keyIndex[row.id] != 0 {
 		return false
@@ -452,8 +437,8 @@ func (algebra *Algebra) OwnsKey(key Key) bool {
 	return algebra != nil && key.owner == algebra && algebra.validKey(key)
 }
 
-// KeyForApplicationID projects the compact application receipt produced at
-// seal time.  It deliberately has no Project reach-back.
+// KeyForApplicationID projects the compact application key row produced at
+// seal time. It deliberately has no Project reach-back.
 func (algebra *Algebra) KeyForApplicationID(id identity.ContentID) (Key, bool) {
 	if !algebra.Valid() || !id.Available() {
 		return Key{}, false
@@ -461,42 +446,6 @@ func (algebra *Algebra) KeyForApplicationID(id identity.ContentID) (Key, bool) {
 	// keyForID rechecks the closed source-sum discriminator; callback and
 	// resume content IDs therefore cannot be reinterpreted as applications.
 	return algebra.keyForID(id, keyApplication)
-}
-
-// KeyForCallback looks up one exact Target callback correspondence. The
-// issuing Contract pointer is an authority fence: equal numeric handles from
-// an equivalent Contract cannot be spliced into this Link.
-func (algebra *Algebra) KeyForCallback(issuing *contract.Contract, operation vocabulary.Operation, callback vocabulary.CallbackID) (Key, bool) {
-	if !algebra.Valid() {
-		return Key{}, false
-	}
-	contract := algebra.contract
-	if contract == nil || issuing == nil || issuing != contract {
-		return Key{}, false
-	}
-	id, ok := contract.CallbackContentID(operation, callback)
-	if !ok || !id.Available() {
-		return Key{}, false
-	}
-	return algebra.keyForID(id, keyCallback)
-}
-
-// KeyForResume looks up one exact Target resumption correspondence. The
-// issuing Contract pointer is an authority fence for the raw operation and
-// resume handles.
-func (algebra *Algebra) KeyForResume(issuing *contract.Contract, operation vocabulary.Operation, resume vocabulary.ResumeID) (Key, bool) {
-	if !algebra.Valid() {
-		return Key{}, false
-	}
-	contract := algebra.contract
-	if contract == nil || issuing == nil || issuing != contract {
-		return Key{}, false
-	}
-	id, ok := contract.ResumeContentID(operation, resume)
-	if !ok || !id.Available() {
-		return Key{}, false
-	}
-	return algebra.keyForID(id, keyResume)
 }
 
 func (algebra *Algebra) keyForID(id identity.ContentID, kind keyKind) (Key, bool) {
@@ -545,24 +494,20 @@ func (algebra *Algebra) SupportTargetAt(key Key, index int) (Target, bool) {
 }
 func (algebra *Algebra) OpaqueAdmitted(key Key) bool { return algebra.dynamic(key) }
 
-// TargetForFunction projects one sealed function receipt into an owner-bound
-// Call capability. The dense target identity never crosses this API.
-func (algebra *Algebra) TargetForFunction(moduleKey, functionContext identity.ContentID) (Target, bool) {
-	if algebra == nil || !algebra.Valid() || !moduleKey.Available() || !functionContext.Available() {
-		return Target{}, false
-	}
-	selector := algebra.functionIndex[functionTargetKey{moduleKey: moduleKey, functionContext: functionContext}]
-	return algebra.targetForSelector(selector)
-}
-
-// TargetForAllocation projects one exact compact closure-allocation receipt
+// TargetForAllocation projects one exact compact closure-allocation proof
 // into this Algebra. The mount and allocation identities are already
 // owner-fenced before the precomputed target lookup is used.
 func (algebra *Algebra) TargetForAllocation(moduleKey, allocationID identity.ContentID) (Target, bool) {
 	if algebra == nil || !algebra.Valid() || !moduleKey.Available() || !allocationID.Available() {
 		return Target{}, false
 	}
-	return algebra.targetForSelector(algebra.allocationIndex[allocationTargetKey{moduleKey: moduleKey, allocationID: allocationID}])
+	target, ok := algebra.targetForSelector(algebra.allocationIndex[allocationTargetKey{moduleKey: moduleKey, allocationID: allocationID}])
+	if !ok {
+		return Target{}, false
+	}
+	row := algebra.targets[target.selector-1]
+	mount, mountOK := algebra.mountRow(row.mount)
+	return target, row.kind == targetBody && mountOK && mount.moduleID == moduleKey
 }
 
 // OwnsTarget authenticates a capability against this exact Algebra owner.
@@ -578,84 +523,12 @@ func (algebra *Algebra) TargetForSeedID(seedID identity.ContentID) (Target, bool
 	if !algebra.Valid() || !seedID.Available() {
 		return Target{}, false
 	}
-	return algebra.targetForSelector(algebra.targetIndex[targetKey{kind: targetSeed, seedID: seedID}])
-}
-
-// Equivalent performs cold exact replay validation after the content prefilter.
-func (algebra *Algebra) Equivalent(other *Algebra) bool {
-	if !algebra.Valid() || !other.Valid() || algebra.content != other.content || len(algebra.mountModules) != len(other.mountModules) || len(algebra.mountedCalls) != len(other.mountedCalls) || len(algebra.keys) != len(other.keys) || len(algebra.targets) != len(other.targets) || algebra.bodyTargetCount != other.bodyTargetCount {
-		return false
+	target, ok := algebra.targetForSelector(algebra.seedIndex[seedID])
+	if !ok {
+		return Target{}, false
 	}
-	for index := range algebra.mountModules {
-		if algebra.mountModules[index] != other.mountModules[index] {
-			return false
-		}
-	}
-	for index := range algebra.mountedCalls {
-		left, right := algebra.mountedCalls[index], other.mountedCalls[index]
-		if left.applicationID != right.applicationID || left.callID != right.callID || left.moduleID != right.moduleID || left.calleeValueID != right.calleeValueID || left.loaderSeedID != right.loaderSeedID {
-			return false
-		}
-	}
-	for index := range algebra.keys {
-		left, right := algebra.keys[index], other.keys[index]
-		// Project Application handles are hot owner fences and cannot be
-		// compared across equivalent Links. Their stable ApplicationID is
-		// the replay relation used here.
-		if left.kind != right.kind || left.id != right.id {
-			return false
-		}
-		if left.kind == keyCallback && (left.operation != right.operation || left.callback != right.callback) {
-			return false
-		}
-		if left.kind == keyResume && (left.operation != right.operation || left.resume != right.resume) {
-			return false
-		}
-	}
-	for index := range algebra.targets {
-		if !equivalentTargetRow(algebra, algebra.targets[index], other, other.targets[index]) {
-			return false
-		}
-	}
-	return true
-}
-
-// equivalentTargetRow compares portable constituents only after Link content
-// has already matched.  Hot selector lookup still requires the exact Project
-// or Boundary handle; cold rebind must not compare those owner fences by raw
-// pointer, because equivalent independently sealed Links intentionally issue
-// distinct handles.
-func equivalentTargetRow(left *Algebra, leftRow targetRow, right *Algebra, rightRow targetRow) bool {
-	if left == nil || right == nil || leftRow.key.kind != rightRow.key.kind || leftRow.role != rightRow.role || leftRow.functionContext != rightRow.functionContext {
-		return false
-	}
-	switch leftRow.key.kind {
-	case targetBody:
-		if leftRow.bodyContext != rightRow.bodyContext {
-			return false
-		}
-		return leftRow.key.moduleKey.Available() && rightRow.key.moduleKey.Available() && leftRow.key.moduleKey == rightRow.key.moduleKey
-	case targetSeed:
-		return leftRow.key.seedID == rightRow.key.seedID && leftRow.seedFormalID == rightRow.seedFormalID && leftRow.scopedLoader == rightRow.scopedLoader
-	default:
-		return false
-	}
-}
-
-func (algebra *Algebra) Rebind(value Value) (Value, bool) {
-	if !algebra.Valid() || !value.valid() || !algebra.Equivalent(value.owner) {
-		return Value{}, false
-	}
-	if value.owner == algebra {
-		return value, true
-	}
-	if value.top {
-		return algebra.top, true
-	}
-	if !value.open && len(value.selectors) == 0 {
-		return algebra.bottom, true
-	}
-	return Value{owner: algebra, known: true, open: value.open, selectors: value.selectors}, true
+	row := algebra.targets[target.selector-1]
+	return target, row.kind == targetSeed && row.seedID == seedID
 }
 
 func algebraContentID(owner link.OwnerCapability) (id identity.ContentID) {

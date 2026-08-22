@@ -4,9 +4,9 @@ import (
 	"github.com/wippyai/go-lua/analysis/schema"
 	"github.com/wippyai/go-lua/analysis/schema/axis"
 	calldomain "github.com/wippyai/go-lua/domain/call"
-	callactivation "github.com/wippyai/go-lua/domain/call/activation"
 	effectfactor "github.com/wippyai/go-lua/domain/effect/factor"
 	heapdomain "github.com/wippyai/go-lua/domain/heap"
+	contextdomain "github.com/wippyai/go-lua/domain/heap/context"
 	heapindex "github.com/wippyai/go-lua/domain/heap/index"
 	packdomain "github.com/wippyai/go-lua/domain/pack"
 	placementdomain "github.com/wippyai/go-lua/domain/placement"
@@ -22,12 +22,11 @@ const (
 	MountStageInput
 	MountStageAxis
 	MountStageAdopt
-	// MountStageTopology, MountStageActivation, and MountStageFormal are the phase's own post-mount
+	// MountStageTopology and MountStageFormal are the phase's own post-mount
 	// derivations. Each names the derivation that refused, which is the whole of
 	// what a derivation over several sealed factors can blame: no axis owns one,
 	// so no axis is named beside it.
 	MountStageTopology
-	MountStageActivation
 	MountStageFormal
 )
 
@@ -43,8 +42,6 @@ func (stage MountStage) String() string {
 		return "adopt"
 	case MountStageTopology:
 		return "topology"
-	case MountStageActivation:
-		return "activation"
 	case MountStageFormal:
 		return "formal"
 	default:
@@ -136,9 +133,18 @@ func (inputs LinkInputs) derive() (LinkInputs, MountFailure) {
 	if !topologyOK {
 		return LinkInputs{}, MountFailure{Stage: MountStageTopology}
 	}
-	activation, activationOK := callactivation.SealMountedBatches(inputs.CallAlgebra, inputs.Artifacts)
-	if !activationOK {
-		return LinkInputs{}, MountFailure{Stage: MountStageActivation}
+	if inputs.Source == nil {
+		return LinkInputs{}, MountFailure{Stage: MountStageFormal}
+	}
+	// Contextual Heap authority is a bounded composition derivation. The exact
+	// Link directory is read from Source only after the Heap axis has mounted;
+	// callers cannot provide a substitute directory or schema.
+	contextSchema, contextOK := contextdomain.Seal(inputs.HeapSchema, inputs.Source.ContextDirectory())
+	if !contextOK {
+		// A valid Link/Heap mount always carries a matching directory. Keep the
+		// existing formal post-mount refusal boundary for malformed records so
+		// this foundation does not invent a transfer/result ABI or new verdict.
+		return LinkInputs{}, MountFailure{Stage: MountStageFormal}
 	}
 	// Target is read exactly once from Link's finalized Boundary. Mounted actual
 	// completeness is checked directly from Call's sealed MountedCall rows and
@@ -152,7 +158,7 @@ func (inputs LinkInputs) derive() (LinkInputs, MountFailure) {
 		return LinkInputs{}, MountFailure{Stage: MountStageFormal}
 	}
 	inputs.topology = topology
-	inputs.activation = activation
+	inputs.contextSchema = contextSchema
 	inputs.targetContract = target
 	return inputs, MountFailure{}
 }

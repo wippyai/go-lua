@@ -1,0 +1,91 @@
+{
+  "description": "The declared type of a package member is binding: string path, map loaded and array loaders each refuse a conflicting declared target. Declared types are transcribed from stdlib/package_manifest.go.",
+  "packages": [
+    "package"
+  ],
+  "files": [
+    "main.lua"
+  ],
+  "check": {
+    "diagnostics": [
+      {
+        "file": "main.lua",
+        "line": 5,
+        "severity": "error",
+        "code": "type.assignment",
+        "message_contains": [
+          "cannot assign"
+        ],
+        "min_evidence": 1,
+        "evidence_contains": [
+          "no proof on this path shows",
+          "satisfies number"
+        ],
+        "render_contains": [
+          "error[type.assignment]:",
+          "local path: number = package.path",
+          "because:"
+        ],
+        "help_contains": [
+          "change the target type"
+        ],
+        "label_contains": [
+          "assigned value"
+        ]
+      },
+      {
+        "file": "main.lua",
+        "line": 6,
+        "severity": "error",
+        "code": "type.assignment",
+        "message_contains": [
+          "cannot assign"
+        ],
+        "min_evidence": 1,
+        "evidence_contains": [
+          "no proof on this path shows",
+          "satisfies string"
+        ],
+        "render_contains": [
+          "error[type.assignment]:",
+          "local loaded: string = package.loaded",
+          "because:"
+        ],
+        "help_contains": [
+          "change the target type"
+        ],
+        "label_contains": [
+          "assigned value"
+        ]
+      },
+      {
+        "file": "main.lua",
+        "line": 7,
+        "severity": "error",
+        "code": "type.assignment",
+        "message_contains": [
+          "cannot assign"
+        ],
+        "min_evidence": 1,
+        "evidence_contains": [
+          "no proof on this path shows",
+          "satisfies string"
+        ],
+        "render_contains": [
+          "error[type.assignment]:",
+          "local loaders: string = package.loaders",
+          "because:"
+        ],
+        "help_contains": [
+          "change the target type"
+        ],
+        "label_contains": [
+          "assigned value"
+        ]
+      }
+    ]
+  },
+  "run": {
+    "skip": "diagnostic-only"
+  }
+}

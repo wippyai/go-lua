@@ -1,0 +1,15 @@
+{
+  "description": "The whole declared debug surface: every reader answers an optional whose absent arm is ruled out before the value is used, setmetatable answers the object it was given, and traceback always answers a string.",
+  "packages": [
+    "debug"
+  ],
+  "files": [
+    "main.lua"
+  ],
+  "check": {
+    "errors": 0
+  },
+  "run": {
+    "skip": "declaration-surface fixture"
+  }
+}

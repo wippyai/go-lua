@@ -1,6 +1,7 @@
 package typeauthority
 
 import (
+	"bytes"
 	"context"
 	"crypto/sha256"
 	"encoding/binary"
@@ -9,10 +10,10 @@ import (
 	"sort"
 
 	"github.com/wippyai/go-lua/analysis/identity"
+	"github.com/wippyai/go-lua/domain/runtimekind"
 	"github.com/wippyai/go-lua/domain/type/kind"
-	"github.com/wippyai/go-lua/domain/type/subst"
+	"github.com/wippyai/go-lua/domain/type/transform"
 	"github.com/wippyai/go-lua/domain/type/typ"
-	"github.com/wippyai/go-lua/domain/type/typeexpr"
 )
 
 // RuntimeInner is a dense, Runtime-owner-fenced exact structural type. Its
@@ -23,44 +24,13 @@ type RuntimeInner struct {
 	index uint32 // one-based into Runtime.rows
 }
 
-// RuntimeInput is a cold, ownership-isolated canonical closed type input. It
-// can only be minted by the selector Authority which owns the Link it will be
-// sealed against. The bytes are checked before publication and never retained
-// by Runtime after sealing.
+// RuntimeInput is a cold, ownership-isolated canonical graph receipt. It can
+// only be minted by the Authority which owns the Link it will be sealed
+// against. The receipt's source plane is consumed during sealing; Runtime
+// retains no typ graph or receipt after publication.
 type RuntimeInput struct {
 	authority *Authority
-	encoded   []byte
-	// value is a construction-only, ownership-isolated graph used to retain
-	// authored binder presentation (for example `T` rather than codec-local
-	// `scoped-local-1`). SealRuntime drops it with the builder.
-	value typ.Type
-}
-
-type RuntimeInputFailure uint8
-
-const (
-	RuntimeInputFailureNone RuntimeInputFailure = iota
-	RuntimeInputFailureAuthority
-	RuntimeInputFailureDecode
-	RuntimeInputFailureCanonical
-	RuntimeInputFailureOpenFormal
-)
-
-func (failure RuntimeInputFailure) String() string {
-	switch failure {
-	case RuntimeInputFailureNone:
-		return "none"
-	case RuntimeInputFailureAuthority:
-		return "authority"
-	case RuntimeInputFailureDecode:
-		return "decode"
-	case RuntimeInputFailureCanonical:
-		return "canonical"
-	case RuntimeInputFailureOpenFormal:
-		return "open-formal"
-	default:
-		return "invalid"
-	}
+	graph     typ.CanonicalGraphReceipt
 }
 
 type runtimeChild struct {
@@ -68,117 +38,51 @@ type runtimeChild struct {
 	present bool
 }
 
+// A range is intentionally retained only for the one structural plane that
+// has a production consumer: direct Union variants. All other source planes
+// are construction-only and are not copied into Runtime.
 type runtimeRange struct{ start, end uint32 }
 
-type runtimeNamedChild struct {
-	name      string
-	key       runtimeChild
-	child     runtimeChild
-	effective runtimeChild
-	optional  bool
-	readonly  bool
-}
-
-type runtimeStaticChild struct {
-	kind      typ.StaticMemberKind
-	stringKey bool
-	name      string
-	integer   int64
-	key       runtimeChild
-	child     runtimeChild
-	effective runtimeChild
-	optional  bool
-	readonly  bool
-}
-
-type runtimeTupleElement struct {
-	key   runtimeChild
-	child runtimeChild
-}
-
-type runtimeParameter struct {
-	name     string
-	child    runtimeChild
-	optional bool
-	receiver bool
-}
-
-type runtimeLiteral struct {
-	base kind.Kind
-	bits uint64
-	text string
-}
-
 type runtimeRow struct {
-	form   kind.Kind
-	closed bool
-	// encoded is the immutable canonical source identity of a closed row. It
-	// replaces the former retained typ.Type graph and is used only by cold
-	// sealing consumers which need a portable reconstruction.
-	encoded []byte
-	// atoms is the canonical semantic-union descriptor for this row.  A
-	// non-union row normally contributes one complete structural atom; union
-	// rows flatten their direct arms and remove subsumed/equivalent atoms at
-	// seal time.  Runtime never exposes the construction graph after seal.
-	atoms          []uint32
-	rank           uint32
-	element        runtimeChild
-	key            runtimeChild
-	value          runtimeChild
-	base           runtimeChild
-	inner          runtimeChild
-	returns        runtimeChild
-	variadic       runtimeChild
-	body           runtimeChild
-	metatable      runtimeChild
-	expansion      runtimeChild
-	fields         runtimeRange
-	staticMembers  runtimeRange
-	variants       runtimeRange
-	elements       runtimeRange
-	parameters     runtimeRange
-	results        runtimeRange
-	methods        runtimeRange
-	typeParameters runtimeRange
-	arguments      runtimeRange
-	name           string
-	literal        runtimeLiteral
+	form         kind.Kind
+	runtimeKinds runtimekind.Set
+	canonicalID  identity.ContentID
+	scopedID     identity.ContentID
+
+	inner    runtimeChild
+	variants runtimeRange
+	atoms    []uint32
+	rank     uint32
 }
 
-// Runtime is the immutable finite structural authority consumed by runtime
-// LType reflection. It is deliberately separate from Static's evaluator:
-// Static supplies already-evaluated canonical closed inputs; Runtime seals
-// their finite structural closure and has no evaluator or source AST path.
+// Runtime is the immutable finite structural authority consumed by Runtime
+// reflection. Its only retained structural feed is the direct Union variant
+// plane and the direct Optional inner edge used by descriptor formation.
+// Every other authored child is retained only by the temporary construction
+// graph used to seal the subtype relation.
 type Runtime struct {
-	sourceID identity.ContentID
-	id       identity.ContentID
+	sourceID              identity.ContentID
+	id                    identity.ContentID
+	runtimeKindsPublished bool
 
-	rows           []runtimeRow
-	fields         []runtimeNamedChild
-	staticMembers  []runtimeStaticChild
-	variants       []runtimeChild
-	elements       []runtimeTupleElement
-	parameters     []runtimeParameter
-	results        []runtimeChild
-	methods        []runtimeNamedChild
-	typeParameters []runtimeNamedChild
-	arguments      []RuntimeInner
+	rows     []runtimeRow
+	variants []runtimeChild
 
 	identities []identity.ContentID
 	canonical  []uint32
 
 	// The sealed subtype relation of the closed universe. closedPositions maps
-	// a one-based dense row onto its universe position (-1 for a bound/open
-	// row), closedRows is the inverse, and subtypeBits packs one bitset row of
-	// stride words per universe position.
+	// a one-based dense row onto its universe position (-1 for an open row),
+	// closedRows is the inverse, and subtypeBits packs one bitset row per
+	// universe position.
 	closedPositions []int32
 	closedRows      []uint32
 	subtypeStride   int
 	subtypeBits     []uint64
 
-	// Primitive rows are part of the same dense Runtime universe. They are
-	// sealed once so structural rules never synthesize typ nodes or use magic
-	// non-row identities during recurrent proofs.
+	// Primitive rows are part of the same dense Runtime universe. Their
+	// handles are discovered from the same graph receipt source plane as every
+	// input row; no synthetic Runtime row is installed.
 	nilRow     uint32
 	booleanRow uint32
 	numberRow  uint32
@@ -190,125 +94,118 @@ type Runtime struct {
 }
 
 // runtimeCanonicalInput records every caller position represented by one
-// canonical input identity. Runtime's dense universe must be a function of
-// the set of inputs, not the incidental Static result traversal that supplied
-// them; positions are restored only after the canonical closure is sealed.
+// canonical input identity. Runtime's dense universe is a function of the set
+// of receipts, not incidental traversal order; positions are restored only
+// after receipt source ordinals have been coalesced.
 type runtimeCanonicalInput struct {
 	input     RuntimeInput
-	identity  string
+	identity  identity.ContentID
 	positions []int
 }
 
-// RuntimeInput validates and ownership-isolates one canonical evaluated type
-// result. Ordinary canonical bytes are retained as the caller's existing type
-// wire language. The scoped validation rejects a free formal that ordinary
-// canonical encoding can represent by a presentation name alone; nested
-// Generic and Function binders remain valid closed roots.
-func (a *Authority) RuntimeInput(encoded []byte) (RuntimeInput, bool) {
-	input, failure := a.RuntimeInputWithFailure(encoded)
-	return input, failure == RuntimeInputFailureNone
+// Primitive Runtime rows are a fixed vocabulary, not a per-seal discovery
+// pass. Their owner-issued receipts are consumed once into immutable singleton
+// seed rows reused by every Runtime seal.
+type runtimePrimitiveSourceTable struct {
+	sources []runtimePrimitiveSource
+	err     error
 }
 
-func (a *Authority) RuntimeInputWithFailure(encoded []byte) (RuntimeInput, RuntimeInputFailure) {
-	if a == nil || !a.LinkID().Available() || len(encoded) == 0 {
-		return RuntimeInput{}, RuntimeInputFailureAuthority
-	}
-	value, err := typ.DecodeCanonicalStructural(context.Background(), encoded)
-	if err != nil || value == nil {
-		return RuntimeInput{}, RuntimeInputFailureDecode
-	}
-	canonical, err := typ.EncodeCanonical(context.Background(), value)
-	if err != nil || !sameBytes(canonical, encoded) {
-		return RuntimeInput{}, RuntimeInputFailureCanonical
-	}
-	input, ok := a.RuntimeInputForType(value)
-	if !ok {
-		return RuntimeInput{}, RuntimeInputFailureOpenFormal
-	}
-	return input, RuntimeInputFailureNone
+type runtimePrimitiveSource struct {
+	node  typ.CanonicalGraphNode
+	value typ.Type
 }
 
-// RuntimeInputForType seals the scoped canonical identity while the exact
-// evaluated closed graph is still live. Ordinary canonical bytes deliberately
-// omit binder ownership and therefore cannot faithfully reconstruct a graph
-// containing repeated applications of the same nested Generic declaration.
-// RuntimeInput remains opaque and construction-only; Runtime retains no typ
-// graph after SealRuntime.
+var runtimePrimitiveSources = makeRuntimePrimitiveSources()
+
+func makeRuntimePrimitiveSources() runtimePrimitiveSourceTable {
+	values := []typ.Type{typ.Nil, typ.Boolean, typ.Number, typ.Integer, typ.String, typ.Any, typ.Unknown, typ.Never}
+	sources := make([]runtimePrimitiveSource, len(values))
+	for index, value := range values {
+		graph, err := typ.EncodeCanonicalGraph(context.Background(), value)
+		if err != nil || !graph.Valid() {
+			if err == nil {
+				err = errors.New("typeauthority: primitive Runtime graph unavailable")
+			}
+			return runtimePrimitiveSourceTable{err: err}
+		}
+		nodes := graph.Nodes()
+		plane, planeOK := graph.TakeSourcePlane()
+		if !planeOK || len(nodes) != 1 || len(plane) != 1 || plane[0] == nil {
+			return runtimePrimitiveSourceTable{err: errors.New("typeauthority: primitive Runtime source unavailable")}
+		}
+		sources[index] = runtimePrimitiveSource{node: nodes[0], value: plane[0]}
+	}
+	return runtimePrimitiveSourceTable{sources: sources}
+}
+
+// RuntimeInputForType clones and admits one graph at the authority boundary.
+// The root disposition in the owner-issued receipt is authoritative: closed
+// roots may be sealed into Runtime, while roots retaining external lexical
+// formals remain open and are rejected as Runtime roots.
 func (a *Authority) RuntimeInputForType(value typ.Type) (RuntimeInput, bool) {
-	// A binder-owned formal inside a Generic/Function is structurally closed.
-	// ContainsTypeParam cannot distinguish it from a free formal, so closure is
-	// decided by IsGraphClosed and a valid generic declaration seals.
-	if a == nil || !a.LinkID().Available() || value == nil || !typ.IsGraphClosed(value) || typ.ValidateStaticGenericRecurrence(value) != nil {
+	if a == nil || !a.LinkID().Available() || value == nil {
 		return RuntimeInput{}, false
 	}
-	encoded, err := typ.EncodeCanonicalFormals(context.Background(), value, nil)
-	if err != nil || len(encoded) == 0 {
+	owned := transform.Clone(value)
+	graph, err := typ.EncodeCanonicalGraph(context.Background(), owned)
+	if err != nil || !graph.Valid() {
 		return RuntimeInput{}, false
 	}
-	// Zero external formals is the ownership boundary: the codec accepts
-	// binder-local Generic/Function formals, but rejects any parameter that
-	// was not introduced by the encoded root.
-	if typ.ValidateCanonicalFormals(encoded, 0) != nil {
+	root, rootOK := graph.Root()
+	if !rootOK || !root.Closed {
 		return RuntimeInput{}, false
 	}
-	decoded, err := typ.DecodeCanonicalFormals(context.Background(), encoded, nil)
-	if err != nil || decoded == nil {
+	if _, digestOK := graph.Digest(); !digestOK {
 		return RuntimeInput{}, false
 	}
-	reencoded, err := typ.EncodeCanonicalFormals(context.Background(), decoded, nil)
-	if err != nil || !sameBytes(reencoded, encoded) {
-		return RuntimeInput{}, false
-	}
-	return RuntimeInput{authority: a, encoded: append([]byte(nil), encoded...), value: value}, true
+	return RuntimeInput{authority: a, graph: graph}, true
 }
 
-// SealRuntime closes the direct structural children of Static's finite
-// canonical input set. Runtime owns structural rows only: occurrence-specific
-// TypeValue interpretation belongs to Static, which owns both the evaluated
-// result and its Boundary occurrence.
+// CanonicalIdentity is the owner-neutral identity of this admitted input.
+func (input RuntimeInput) CanonicalIdentity() (identity.ContentID, bool) {
+	if input.authority == nil || !input.graph.Valid() {
+		return identity.ContentID{}, false
+	}
+	digest, available := input.graph.Digest()
+	return identity.ContentID(digest), available && identity.ContentID(digest).Available()
+}
+
+// RootKind reports the root structural form admitted by this construction
+// token without exposing its detached graph.
+func (input RuntimeInput) RootKind() (kind.Kind, bool) {
+	if input.authority == nil || !input.graph.Valid() {
+		return 0, false
+	}
+	root, available := input.graph.Root()
+	return root.Kind, available
+}
+
+// SealRuntime closes the receipt source planes of Static's finite canonical
+// input set. Source nodes are sorted by their stable lexical identity and
+// coalesced linearly into dense rows. Direct authored Union children and the
+// direct Optional inner are the only structural feeds copied to Runtime.
 func SealRuntime(types *Authority, inputs []RuntimeInput) (*Runtime, []RuntimeInner, error) {
-	if types == nil || !types.ArtifactBacked() || !types.LinkID().Available() {
-		return nil, nil, errors.New("typeauthority: Runtime requires detached artifact authority")
+	if types == nil || types.artifact == nil || !types.LinkID().Available() {
+		return nil, nil, errors.New("typeauthority: Runtime requires sealed artifact authority")
 	}
-	runtime := &Runtime{
-		sourceID: types.LinkID(),
-		// Relation rows and semantic descriptors are populated by the one
-		// seal pass below.  No dense pair cache survives publication.
-	}
-	builder := runtimeBuilder{runtime: runtime, byIdentity: make(map[string]RuntimeInner)}
-	if err := builder.seedPrimitives(); err != nil {
-		return nil, nil, err
-	}
-	inners := make([]RuntimeInner, len(inputs))
+	runtime := &Runtime{sourceID: types.LinkID()}
+	builder := runtimeBuilder{runtime: runtime}
 	canonicalInputs, err := canonicalRuntimeInputs(types, inputs)
 	if err != nil {
 		return nil, nil, err
 	}
-	for _, input := range canonicalInputs {
-		value := input.input.value
-		if value == nil {
-			var err error
-			value, err = typ.DecodeCanonicalFormals(context.Background(), input.input.encoded, nil)
-			if err != nil || value == nil {
-				return nil, nil, errors.New("typeauthority: invalid Runtime input")
-			}
-		}
-		verified, verifyErr := typ.EncodeCanonicalFormals(context.Background(), value, nil)
-		if verifyErr != nil || !sameBytes(verified, input.input.encoded) {
-			return nil, nil, errors.New("typeauthority: invalid Runtime input")
-		}
-		inner, err := builder.add(runtimePending{value: value})
-		if err != nil {
-			return nil, nil, err
-		}
-		for _, position := range input.positions {
-			inners[position] = inner
-		}
-	}
-	if err := builder.close(); err != nil {
+	canonicalInners, err := builder.ingest(canonicalInputs)
+	if err != nil {
 		return nil, nil, err
 	}
-	if err := builder.describe(); err != nil {
+	inners := make([]RuntimeInner, len(inputs))
+	for index, input := range canonicalInputs {
+		for _, position := range input.positions {
+			inners[position] = canonicalInners[index]
+		}
+	}
+	if err := builder.sealRuntimeKinds(); err != nil {
 		return nil, nil, err
 	}
 	if err := builder.sealCanonical(); err != nil {
@@ -328,12 +225,13 @@ func SealRuntime(types *Authority, inputs []RuntimeInput) (*Runtime, []RuntimeIn
 	if err := runtime.sealIdentity(); err != nil {
 		return nil, nil, err
 	}
-	// The builder is deliberately the only owner of construction graphs and
-	// indexes. Runtime retains only dense rows/ranges, canonical source bytes,
-	// names, descriptors, and identities.
-	builder.pending = nil
+	// Reference projections are persistent scalar rows. Their canonical graph
+	// receipts are a one-shot construction handoff and die once this Runtime
+	// has installed the complete input denominator.
+	types.releaseRuntimeInputs()
+	// No receipt, source ordinal map, or construction graph crosses the seal.
 	builder.construction = nil
-	builder.byIdentity = nil
+	builder.sourceMaps = nil
 	return runtime, inners, nil
 }
 
@@ -341,85 +239,348 @@ func canonicalRuntimeInputs(types *Authority, inputs []RuntimeInput) ([]runtimeC
 	if types == nil {
 		return nil, errors.New("typeauthority: nil Runtime selector authority")
 	}
-	byIdentity := make(map[string]int, len(inputs))
-	unique := make([]runtimeCanonicalInput, 0, len(inputs))
+	ordered := make([]runtimeCanonicalInput, 0, len(inputs))
 	for position, input := range inputs {
-		if input.authority != types || len(input.encoded) == 0 {
+		if input.authority != types || !input.graph.Valid() {
 			return nil, errors.New("typeauthority: foreign Runtime input")
 		}
-		identity := string(input.encoded)
-		if index, duplicate := byIdentity[identity]; duplicate {
-			unique[index].positions = append(unique[index].positions, position)
+		root, rootOK := input.graph.Root()
+		if !rootOK || !root.Closed {
+			return nil, errors.New("typeauthority: Runtime input root is open")
+		}
+		digest, digestOK := input.graph.Digest()
+		canonicalID := identity.ContentID(digest)
+		if !digestOK || !canonicalID.Available() {
+			return nil, errors.New("typeauthority: Runtime input identity mismatch")
+		}
+		ordered = append(ordered, runtimeCanonicalInput{
+			input: input, identity: canonicalID, positions: []int{position},
+		})
+	}
+	sort.SliceStable(ordered, func(left, right int) bool {
+		return bytes.Compare(ordered[left].identity[:], ordered[right].identity[:]) < 0
+	})
+	unique := ordered[:0]
+	for _, input := range ordered {
+		if len(unique) != 0 && unique[len(unique)-1].identity == input.identity {
+			unique[len(unique)-1].positions = append(unique[len(unique)-1].positions, input.positions...)
 			continue
 		}
-		byIdentity[identity] = len(unique)
-		unique = append(unique, runtimeCanonicalInput{input: input, identity: identity, positions: []int{position}})
+		unique = append(unique, input)
 	}
-	sort.Slice(unique, func(left, right int) bool { return unique[left].identity < unique[right].identity })
 	return unique, nil
 }
 
-func sameBytes(left, right []byte) bool {
-	if len(left) != len(right) {
-		return false
+type runtimeSourceKey struct {
+	identity identity.ContentID
+	kind     kind.Kind
+	closed   bool
+	scope    identity.ContentID
+	formals  uint32
+	bound    bool
+	owner    identity.ContentID
+	ordinal  uint32
+}
+
+type runtimeSource struct {
+	input   int
+	ordinal uint32
+	seed    int
+	node    typ.CanonicalGraphNode
+	value   typ.Type
+	key     runtimeSourceKey
+	row     uint32
+}
+
+// runtimeBuilder is deliberately short-lived. It owns only the detached
+// source values needed by the relation prover and the receipt ordinal maps
+// needed to remap direct authored edges into dense handles.
+type runtimeBuilder struct {
+	runtime      *Runtime
+	construction []typ.Type
+	sourceMaps   [][]uint32
+}
+
+func (b *runtimeBuilder) ingest(inputs []runtimeCanonicalInput) ([]RuntimeInner, error) {
+	if b == nil || b.runtime == nil || len(b.runtime.rows) != 0 || len(b.construction) != 0 {
+		return nil, errors.New("typeauthority: invalid Runtime receipt builder")
 	}
-	for index := range left {
-		if left[index] != right[index] {
+	b.sourceMaps = make([][]uint32, len(inputs))
+	occurrences := make([]runtimeSource, 0)
+	if runtimePrimitiveSources.err != nil {
+		return nil, runtimePrimitiveSources.err
+	}
+	for seedIndex, source := range runtimePrimitiveSources.sources {
+		nodes := []typ.CanonicalGraphNode{source.node}
+		if err := validateRuntimeSourceNode(nodes, source.node); err != nil {
+			return nil, err
+		}
+		key, err := runtimeSourceKeyForNode(nodes, source.node)
+		if err != nil {
+			return nil, err
+		}
+		occurrences = append(occurrences, runtimeSource{input: -1, seed: seedIndex, node: source.node, value: runtimeSourceValue(source.value), key: key})
+	}
+	for inputIndex, input := range inputs {
+		nodes := input.input.graph.Nodes()
+		if len(nodes) == 0 {
+			return nil, errors.New("typeauthority: Runtime receipt source empty")
+		}
+		plane, planeOK := input.input.graph.TakeSourcePlane()
+		if !planeOK || len(plane) != len(nodes) {
+			return nil, errors.New("typeauthority: Runtime receipt source unavailable")
+		}
+		b.sourceMaps[inputIndex] = make([]uint32, len(nodes))
+		for ordinal, node := range nodes {
+			if err := validateRuntimeSourceNode(nodes, node); err != nil {
+				return nil, err
+			}
+			value := plane[ordinal]
+			if value == nil {
+				return nil, errors.New("typeauthority: Runtime receipt source unavailable")
+			}
+			key, err := runtimeSourceKeyForNode(nodes, node)
+			if err != nil {
+				return nil, err
+			}
+			occurrences = append(occurrences, runtimeSource{input: inputIndex, ordinal: uint32(ordinal), seed: -1, node: node, value: runtimeSourceValue(value), key: key})
+		}
+		root, rootOK := input.input.graph.RootOrdinal()
+		if !rootOK || uint64(root) >= uint64(len(nodes)) {
+			return nil, errors.New("typeauthority: Runtime receipt root ordinal")
+		}
+	}
+	if len(occurrences) == 0 {
+		return nil, errors.New("typeauthority: Runtime receipt source unavailable")
+	}
+	order := make([]int, len(occurrences))
+	for index := range occurrences {
+		order[index] = index
+	}
+	sort.SliceStable(order, func(left, right int) bool {
+		return runtimeSourceKeyCompare(occurrences[order[left]].key, occurrences[order[right]].key) < 0 ||
+			(runtimeSourceKeyCompare(occurrences[order[left]].key, occurrences[order[right]].key) == 0 && runtimeSourceTieLess(occurrences[order[left]], occurrences[order[right]]))
+	})
+	representatives := make([]runtimeSource, 0)
+	for cursor := 0; cursor < len(order); {
+		first := occurrences[order[cursor]]
+		rowOrdinal, err := runtimeDenseOrdinal(len(b.runtime.rows))
+		if err != nil {
+			return nil, err
+		}
+		representatives = append(representatives, first)
+		row := runtimeRow{form: first.node.Kind, canonicalID: identity.ContentID(first.node.Identity)}
+		if !first.node.Closed {
+			row.scopedID = runtimeSourceIdentity(first.key)
+		}
+		if !row.canonicalID.Available() || (!first.node.Closed && !row.scopedID.Available()) {
+			return nil, errors.New("typeauthority: Runtime source identity unavailable")
+		}
+		b.runtime.rows = append(b.runtime.rows, row)
+		b.construction = append(b.construction, runtimeSourceValue(first.value))
+		for cursor < len(order) && runtimeSourceKeyCompare(first.key, occurrences[order[cursor]].key) == 0 {
+			occurrence := &occurrences[order[cursor]]
+			occurrence.row = rowOrdinal
+			if occurrence.input >= 0 {
+				b.sourceMaps[occurrence.input][occurrence.ordinal] = rowOrdinal
+			}
+			cursor++
+		}
+	}
+	seedRows := make([]uint32, len(runtimePrimitiveSources.sources))
+	for _, occurrence := range occurrences {
+		if occurrence.seed >= 0 && occurrence.seed < len(seedRows) {
+			seedRows[occurrence.seed] = occurrence.row
+		}
+	}
+	if len(seedRows) != len(runtimePrimitiveSources.sources) {
+		return nil, errors.New("typeauthority: primitive Runtime row count")
+	}
+	b.runtime.nilRow, b.runtime.booleanRow, b.runtime.numberRow, b.runtime.integerRow = seedRows[0], seedRows[1], seedRows[2], seedRows[3]
+	b.runtime.stringRow, b.runtime.anyRow, b.runtime.unknownRow, b.runtime.neverRow = seedRows[4], seedRows[5], seedRows[6], seedRows[7]
+	for index, representative := range representatives {
+		if err := b.installReceiptEdges(index, representative); err != nil {
+			return nil, err
+		}
+	}
+	canonicalInners := make([]RuntimeInner, len(inputs))
+	for inputIndex, input := range inputs {
+		root, rootOK := input.input.graph.RootOrdinal()
+		if !rootOK || uint64(root) >= uint64(len(b.sourceMaps[inputIndex])) {
+			return nil, errors.New("typeauthority: Runtime receipt root mapping")
+		}
+		row := b.sourceMaps[inputIndex][root]
+		if row == 0 {
+			return nil, errors.New("typeauthority: Runtime receipt root unmapped")
+		}
+		canonicalInners[inputIndex] = RuntimeInner{owner: b.runtime, index: row}
+	}
+	return canonicalInners, nil
+}
+
+func runtimeSourceValue(value typ.Type) typ.Type {
+	return typ.UnwrapStructuralWrappers(value)
+}
+
+func validateRuntimeSourceNode(nodes []typ.CanonicalGraphNode, node typ.CanonicalGraphNode) error {
+	if !identity.ContentID(node.Identity).Available() {
+		return errors.New("typeauthority: Runtime source node identity unavailable")
+	}
+	for _, child := range node.Children {
+		if uint64(child) >= uint64(len(nodes)) {
+			return errors.New("typeauthority: Runtime source child ordinal")
+		}
+	}
+	if !node.Closed {
+		if !identity.ContentID(node.Scope.Token).Available() || node.Scope.Formals == 0 {
+			return errors.New("typeauthority: Runtime open source scope unavailable")
+		}
+	}
+	// Binding.Ordinal is local to Binding.Owner. Its validity is established
+	// once by the owner-issued immutable graph receipt; Scope.Formals belongs
+	// to this occurrence and is not that binder's local arity. Runtime retains
+	// only the owner bound needed before it indexes the source plane.
+	if node.Bound && uint64(node.Binding.Owner) >= uint64(len(nodes)) {
+		return errors.New("typeauthority: Runtime source binding owner")
+	}
+	return nil
+}
+
+func runtimeSourceKeyForNode(nodes []typ.CanonicalGraphNode, node typ.CanonicalGraphNode) (runtimeSourceKey, error) {
+	key := runtimeSourceKey{
+		identity: identity.ContentID(node.Identity), kind: node.Kind, closed: node.Closed,
+	}
+	if node.Closed {
+		return key, nil
+	}
+	key.scope = identity.ContentID(node.Scope.Token)
+	key.formals = node.Scope.Formals
+	key.bound = node.Bound
+	if node.Bound {
+		owner := nodes[node.Binding.Owner]
+		key.owner = identity.ContentID(owner.Identity)
+		key.ordinal = node.Binding.Ordinal
+	}
+	return key, nil
+}
+
+func runtimeSourceTieLess(left, right runtimeSource) bool {
+	if left.input != right.input {
+		if left.input < 0 {
+			return true
+		}
+		if right.input < 0 {
 			return false
 		}
+		return left.input < right.input
 	}
-	return true
+	return left.ordinal < right.ordinal
 }
 
-func runtimeScope(value typ.Type, external []*typ.TypeParam) identity.ContentID {
-	locals := make(map[*typ.TypeParam]struct{})
-	switch binder := value.(type) {
-	case *typ.Function:
-		for _, parameter := range binder.TypeParams {
-			locals[parameter] = struct{}{}
-		}
-	case *typ.Generic:
-		for _, parameter := range binder.TypeParams {
-			locals[parameter] = struct{}{}
-		}
+func runtimeSourceKeyCompare(left, right runtimeSourceKey) int {
+	if result := bytes.Compare(left.identity[:], right.identity[:]); result != 0 {
+		return result
 	}
-	outer := make([]*typ.TypeParam, 0, len(external))
-	for _, parameter := range external {
-		if _, local := locals[parameter]; !local {
-			outer = append(outer, parameter)
+	if left.kind != right.kind {
+		if left.kind < right.kind {
+			return -1
 		}
+		return 1
 	}
-	encoded, err := typ.EncodeCanonicalFormals(context.Background(), value, outer)
-	if err != nil {
-		return identity.ContentID{}
+	if left.closed != right.closed {
+		if !left.closed {
+			return -1
+		}
+		return 1
+	}
+	if result := bytes.Compare(left.scope[:], right.scope[:]); result != 0 {
+		return result
+	}
+	if left.formals != right.formals {
+		if left.formals < right.formals {
+			return -1
+		}
+		return 1
+	}
+	if left.bound != right.bound {
+		if !left.bound {
+			return -1
+		}
+		return 1
+	}
+	if result := bytes.Compare(left.owner[:], right.owner[:]); result != 0 {
+		return result
+	}
+	if left.ordinal < right.ordinal {
+		return -1
+	}
+	if left.ordinal > right.ordinal {
+		return 1
+	}
+	return 0
+}
+
+func runtimeSourceIdentity(key runtimeSourceKey) identity.ContentID {
+	if key.closed {
+		return key.identity
 	}
 	hash := sha256.New()
-	_, _ = hash.Write([]byte("wippy.analysis.typeauthority.runtime/formal-scope\x00\x01"))
-	_, _ = hash.Write(encoded)
-	var id identity.ContentID
-	copy(id[:], hash.Sum(nil))
-	return id
+	_, _ = hash.Write([]byte("wippy.analysis.typeauthority.runtime/scoped-row\x00\x02"))
+	_, _ = hash.Write(key.identity[:])
+	_, _ = hash.Write(key.scope[:])
+	writeRuntimeWord(hash, uint64(key.formals))
+	if key.bound {
+		_, _ = hash.Write([]byte{1})
+	} else {
+		_, _ = hash.Write([]byte{0})
+	}
+	_, _ = hash.Write(key.owner[:])
+	writeRuntimeWord(hash, uint64(key.ordinal))
+	var result identity.ContentID
+	copy(result[:], hash.Sum(nil))
+	return result
 }
 
-func runtimeCombinedFormals(outer, local []*typ.TypeParam) []*typ.TypeParam {
-	if len(outer) == 0 && len(local) == 0 {
-		return nil
+func (b *runtimeBuilder) installReceiptEdges(index int, source runtimeSource) error {
+	if b == nil || b.runtime == nil || index < 0 || index >= len(b.runtime.rows) {
+		return errors.New("typeauthority: Runtime receipt edge row")
 	}
-	combined := make([]*typ.TypeParam, 0, len(outer)+len(local))
-	seen := make(map[*typ.TypeParam]struct{}, len(outer)+len(local))
-	for _, group := range [][]*typ.TypeParam{outer, local} {
-		for _, parameter := range group {
-			if parameter == nil {
-				continue
-			}
-			if _, duplicate := seen[parameter]; duplicate {
-				continue
-			}
-			seen[parameter] = struct{}{}
-			combined = append(combined, parameter)
+	row := &b.runtime.rows[index]
+	if source.node.Kind != row.form {
+		return errors.New("typeauthority: Runtime receipt row kind")
+	}
+	child := func(ordinal uint32) (runtimeChild, error) {
+		if source.input < 0 || source.input >= len(b.sourceMaps) || uint64(ordinal) >= uint64(len(b.sourceMaps[source.input])) {
+			return runtimeChild{}, errors.New("typeauthority: Runtime receipt edge mapping")
 		}
+		index := b.sourceMaps[source.input][ordinal]
+		if index == 0 {
+			return runtimeChild{}, errors.New("typeauthority: Runtime receipt edge unmapped")
+		}
+		return runtimeChild{inner: RuntimeInner{owner: b.runtime, index: index}, present: true}, nil
 	}
-	return combined
+	switch row.form {
+	case kind.Union:
+		row.variants.start = uint32(len(b.runtime.variants))
+		for _, ordinal := range source.node.Children {
+			entry, err := child(ordinal)
+			if err != nil {
+				return err
+			}
+			b.runtime.variants = append(b.runtime.variants, entry)
+		}
+		row.variants.end = uint32(len(b.runtime.variants))
+	case kind.Optional:
+		if len(source.node.Children) != 1 {
+			return errors.New("typeauthority: Runtime Optional source arity")
+		}
+		entry, err := child(source.node.Children[0])
+		if err != nil {
+			return err
+		}
+		row.inner = entry
+	}
+	return nil
 }
 
 func runtimeDenseOrdinal(length int) (uint32, error) {
@@ -429,776 +590,45 @@ func runtimeDenseOrdinal(length int) (uint32, error) {
 	return uint32(length + 1), nil
 }
 
-type runtimePending struct {
-	value   typ.Type
-	formals []*typ.TypeParam
-	scope   identity.ContentID
-	closed  bool
-}
-
-// runtimeBuilder is deliberately short-lived. It is the only Runtime-side
-// owner of a typ graph, scoped byte key, or TypeParam pointer.
-type runtimeBuilder struct {
-	runtime      *Runtime
-	byIdentity   map[string]RuntimeInner
-	pending      []runtimePending
-	construction []typ.Type
-}
-
-func (b *runtimeBuilder) seedPrimitives() error {
-	if b == nil || b.runtime == nil || len(b.runtime.rows) != 0 {
-		return errors.New("typeauthority: invalid Runtime primitive seed")
+// sealRuntimeKinds publishes the owner-issued runtime-vocabulary column while
+// the receipt construction sources are still live.
+func (b *runtimeBuilder) sealRuntimeKinds() error {
+	if b == nil || b.runtime == nil || len(b.runtime.rows) != len(b.construction) || b.runtime.runtimeKindsPublished {
+		return errors.New("typeauthority: malformed Runtime kind source")
 	}
-	seeds := []struct {
-		value typ.Type
-		dest  *uint32
-	}{
-		{typ.Nil, &b.runtime.nilRow},
-		{typ.Boolean, &b.runtime.booleanRow},
-		{typ.Number, &b.runtime.numberRow},
-		{typ.Integer, &b.runtime.integerRow},
-		{typ.String, &b.runtime.stringRow},
-		{typ.Any, &b.runtime.anyRow},
-		{typ.Unknown, &b.runtime.unknownRow},
-		{typ.Never, &b.runtime.neverRow},
-	}
-	for _, seed := range seeds {
-		inner, err := b.add(runtimePending{value: seed.value})
-		if err != nil {
-			return err
+	for index, value := range b.construction {
+		kinds := runtimekind.All
+		if !b.runtime.rows[index].scopedID.Available() {
+			kinds = typ.MayRuntimeKinds(value)
 		}
-		*seed.dest = inner.index
+		if !kinds.Valid() {
+			return errors.New("typeauthority: invalid Runtime kind projection")
+		}
+		b.runtime.rows[index].runtimeKinds = kinds
 	}
+	b.runtime.runtimeKindsPublished = true
 	return nil
 }
 
-func (b *runtimeBuilder) add(input runtimePending) (RuntimeInner, error) {
-	if b == nil || b.runtime == nil {
-		return RuntimeInner{}, errors.New("typeauthority: nil Runtime builder")
-	}
-	value := typ.UnwrapStructuralWrappers(input.value)
-	if value == nil {
-		return RuntimeInner{}, errors.New("typeauthority: nil Runtime type")
-	}
-	input.value = value
-	if !runtimeSupportedNode(value) {
-		return RuntimeInner{}, errors.New("typeauthority: unsupported Runtime structural form")
-	}
-	input.closed = len(input.formals) == 0 || !typ.ContainsTypeParam(value)
-	var encoded []byte
-	var err error
-	keyPrefix := "runtime/closed\x00\x01"
-	if input.closed {
-		encoded, err = typ.EncodeCanonical(context.Background(), value)
-	} else {
-		if !input.scope.Available() {
-			return RuntimeInner{}, errors.New("typeauthority: scoped Runtime child lacks binder identity")
-		}
-		encoded, err = typ.EncodeCanonicalFormals(context.Background(), value, input.formals)
-		keyPrefix = "runtime/scoped\x00\x01" + string(input.scope[:])
-	}
-	if err != nil || len(encoded) == 0 {
-		return RuntimeInner{}, errors.New("typeauthority: Runtime type lacks canonical identity")
-	}
-	key := keyPrefix + string(encoded)
-	if inner, ok := b.byIdentity[key]; ok {
-		return inner, nil
-	}
-	ordinal, err := runtimeDenseOrdinal(len(b.runtime.rows))
-	if err != nil {
-		return RuntimeInner{}, err
-	}
-	inner := RuntimeInner{owner: b.runtime, index: ordinal}
-	row := runtimeRow{closed: input.closed}
-	if input.closed {
-		row.encoded = append([]byte(nil), encoded...)
-	}
-	b.runtime.rows = append(b.runtime.rows, row)
-	b.pending = append(b.pending, input)
-	b.construction = append(b.construction, value)
-	b.byIdentity[key] = inner
-	return inner, nil
-}
-
-func runtimeSupportedNode(value typ.Type) bool {
-	if value == nil {
-		return false
-	}
-	switch value.(type) {
-	case *typ.Array, *typ.Map, *typ.ReadonlyMap, *typ.Optional,
-		*typ.Function, *typ.Record, *typ.Union, *typ.Intersection,
-		*typ.Tuple, *typ.Interface, *typ.Generic, *typ.Instantiated,
-		*typ.Literal, *typ.Meta, *typ.Recursive, *typ.TypeParam:
-		return true
-	case *typ.Alias, *typ.Annotated, *typ.Ref:
-		return false
-	}
-	switch value.Kind() {
-	case kind.Nil, kind.Boolean, kind.Number, kind.Integer, kind.String,
-		kind.Any, kind.Unknown, kind.Never, kind.Self:
-		return true
-	default:
-		return false
-	}
-}
-
-func (b *runtimeBuilder) lookupInput(input RuntimeInput) (RuntimeInner, error) {
-	if b == nil || input.authority == nil || len(input.encoded) == 0 {
-		return RuntimeInner{}, errors.New("typeauthority: invalid Runtime input lookup")
-	}
-	value, err := typ.DecodeCanonicalFormals(context.Background(), input.encoded, nil)
-	if err != nil || value == nil {
-		return RuntimeInner{}, errors.New("typeauthority: invalid Runtime input lookup")
-	}
-	value = typ.UnwrapStructuralWrappers(value)
-	encoded, err := typ.EncodeCanonical(context.Background(), value)
-	if err != nil || len(encoded) == 0 {
-		return RuntimeInner{}, errors.New("typeauthority: invalid Runtime input identity")
-	}
-	inner, ok := b.byIdentity["runtime/closed\x00\x01"+string(encoded)]
-	if !ok {
-		return RuntimeInner{}, errors.New("typeauthority: unsealed Runtime descriptor input")
-	}
-	return inner, nil
-}
-
-func (b *runtimeBuilder) child(value typ.Type, formals []*typ.TypeParam, scope identity.ContentID) (RuntimeInner, error) {
-	before := len(b.runtime.rows)
-	inner, err := b.add(runtimePending{value: value, formals: formals, scope: scope})
-	if err != nil {
-		return RuntimeInner{}, err
-	}
-	if len(b.runtime.rows) != before {
-		return RuntimeInner{}, errors.New("typeauthority: incomplete Runtime structural closure")
-	}
-	return inner, nil
-}
-
-func (b *runtimeBuilder) close() error {
-	if b == nil || b.runtime == nil || len(b.runtime.rows) != len(b.pending) {
-		return errors.New("typeauthority: malformed Runtime closure")
-	}
-	// This finite index walk is the least direct-child closure. add installs a
-	// row before it is observed, so a recursive backedge reaches the existing
-	// dense handle rather than consuming a Go call stack or minting ancestry.
-	for index := 0; index < len(b.pending); index++ {
-		current := b.pending[index]
-		if err := b.enqueueChildren(current); err != nil {
-			return err
-		}
-	}
-	return nil
-}
-
-func (b *runtimeBuilder) enqueueChildren(current runtimePending) error {
-	child := func(value typ.Type, formals []*typ.TypeParam, scope identity.ContentID) error {
-		if value == nil {
-			return nil
-		}
-		_, err := b.add(runtimePending{value: value, formals: formals, scope: scope})
-		return err
-	}
-	switch value := current.value.(type) {
-	case *typ.Array:
-		return child(value.Element, current.formals, current.scope)
-	case *typ.Map:
-		if err := child(value.Key, current.formals, current.scope); err != nil {
-			return err
-		}
-		return child(value.Value, current.formals, current.scope)
-	case *typ.ReadonlyMap:
-		if err := child(value.Key, current.formals, current.scope); err != nil {
-			return err
-		}
-		return child(value.Value, current.formals, current.scope)
-	case *typ.Optional:
-		return child(value.Inner, current.formals, current.scope)
-	case *typ.Function:
-		formals := runtimeCombinedFormals(current.formals, value.TypeParams)
-		scope := runtimeScope(value, current.formals)
-		if !scope.Available() {
-			return errors.New("typeauthority: unavailable Runtime function binder identity")
-		}
-		for _, parameter := range value.TypeParams {
-			if parameter == nil {
-				return errors.New("typeauthority: nil Runtime function type parameter")
-			}
-			if err := child(parameter.Constraint, formals, scope); err != nil {
-				return err
-			}
-		}
-		for _, parameter := range value.Params {
-			if err := child(parameter.Type, formals, scope); err != nil {
-				return err
-			}
-		}
-		if err := child(value.Variadic, formals, scope); err != nil {
-			return err
-		}
-		for _, result := range value.Returns {
-			if err := child(result, formals, scope); err != nil {
-				return err
-			}
-		}
-		switch len(value.Returns) {
-		case 0:
-			return nil
-		case 1:
-			return child(value.Returns[0], formals, scope)
-		default:
-			return child(typ.NewTuple(value.Returns...), formals, scope)
-		}
-	case *typ.Record:
-		for _, field := range value.Fields {
-			if err := child(typ.LiteralString(field.Name), current.formals, current.scope); err != nil {
-				return err
-			}
-			if err := child(field.Type, current.formals, current.scope); err != nil {
-				return err
-			}
-			if field.Optional {
-				if err := child(typeexpr.Optional(field.Type), current.formals, current.scope); err != nil {
-					return err
-				}
-			}
-		}
-		for _, member := range value.StaticMembers {
-			var key typ.Type
-			switch member.Kind {
-			case typ.StaticMemberStringIndex:
-				key = typ.LiteralString(member.Name)
-			case typ.StaticMemberIntIndex:
-				key = typ.LiteralInt(member.Index)
-			default:
-				return errors.New("typeauthority: unsupported Runtime static member key")
-			}
-			if err := child(key, current.formals, current.scope); err != nil {
-				return err
-			}
-			if err := child(member.Type, current.formals, current.scope); err != nil {
-				return err
-			}
-			if member.Optional {
-				if err := child(typeexpr.Optional(member.Type), current.formals, current.scope); err != nil {
-					return err
-				}
-			}
-		}
-		if err := child(value.Metatable, current.formals, current.scope); err != nil {
-			return err
-		}
-		if value.HasMapComponent() {
-			if err := child(value.MapKey, current.formals, current.scope); err != nil {
-				return err
-			}
-			if err := child(value.MapValue, current.formals, current.scope); err != nil {
-				return err
-			}
-		}
-		return nil
-	case *typ.Union:
-		for _, member := range value.Members {
-			if err := child(member, current.formals, current.scope); err != nil {
-				return err
-			}
-		}
-		return nil
-	case *typ.Intersection:
-		for _, member := range value.Members {
-			if err := child(member, current.formals, current.scope); err != nil {
-				return err
-			}
-		}
-		return nil
-	case *typ.Tuple:
-		for index, element := range value.Elements {
-			if err := child(typ.LiteralInt(int64(index+1)), current.formals, current.scope); err != nil {
-				return err
-			}
-			if err := child(element, current.formals, current.scope); err != nil {
-				return err
-			}
-		}
-		return nil
-	case *typ.Interface:
-		for _, method := range value.Methods {
-			if method.Type == nil {
-				return errors.New("typeauthority: nil Runtime interface method")
-			}
-			if err := child(method.Type, current.formals, current.scope); err != nil {
-				return err
-			}
-		}
-		return nil
-	case *typ.Meta:
-		return child(value.Of, current.formals, current.scope)
-	case *typ.Recursive:
-		if value.Body == nil || value.Body == value {
-			return errors.New("typeauthority: malformed Runtime recursive body")
-		}
-		return child(value.Body, current.formals, current.scope)
-	case *typ.TypeParam:
-		return child(value.Constraint, current.formals, current.scope)
-	case *typ.Generic:
-		formals := runtimeCombinedFormals(current.formals, value.TypeParams)
-		scope := runtimeScope(value, current.formals)
-		if !scope.Available() {
-			return errors.New("typeauthority: unavailable Runtime generic binder identity")
-		}
-		for _, parameter := range value.TypeParams {
-			if parameter == nil {
-				return errors.New("typeauthority: nil Runtime generic parameter")
-			}
-			if err := child(parameter.Constraint, formals, scope); err != nil {
-				return err
-			}
-		}
-		if value.Body == nil {
-			return errors.New("typeauthority: Runtime generic lacks body")
-		}
-		return child(value.Body, formals, scope)
-	case *typ.Instantiated:
-		if value.Generic == nil || value.Generic.Body == nil || len(value.TypeArgs) != len(value.Generic.TypeParams) {
-			return errors.New("typeauthority: malformed Runtime instantiation")
-		}
-		if err := child(value.Generic, current.formals, current.scope); err != nil {
-			return err
-		}
-		for _, argument := range value.TypeArgs {
-			if err := child(argument, current.formals, current.scope); err != nil {
-				return err
-			}
-		}
-		expanded := subst.ExpandInstantiated(value)
-		if expanded == nil || expanded == value {
-			return errors.New("typeauthority: Runtime instantiation cannot expand")
-		}
-		return child(expanded, current.formals, current.scope)
-	}
-	return nil
-}
-
-func (b *runtimeBuilder) describe() error {
-	if b == nil || b.runtime == nil || len(b.runtime.rows) != len(b.pending) {
-		return errors.New("typeauthority: malformed Runtime description")
-	}
-	for index := range b.pending {
-		if err := b.describeOne(index); err != nil {
-			return err
-		}
-	}
-	return nil
-}
-
-func (b *runtimeBuilder) describeOne(index int) error {
-	if index < 0 || index >= len(b.pending) {
-		return errors.New("typeauthority: Runtime description index")
-	}
-	current := b.pending[index]
-	row := &b.runtime.rows[index]
-	row.form = current.value.Kind()
-	child := func(value typ.Type, formals []*typ.TypeParam, scope identity.ContentID) (runtimeChild, error) {
-		if value == nil {
-			return runtimeChild{}, nil
-		}
-		inner, err := b.child(value, formals, scope)
-		return runtimeChild{inner: inner, present: err == nil}, err
-	}
-	appendUnnamed := func(values *[]runtimeChild, value typ.Type, formals []*typ.TypeParam, scope identity.ContentID) error {
-		entry, err := child(value, formals, scope)
-		if err != nil {
-			return err
-		}
-		*values = append(*values, entry)
-		return nil
-	}
-	appendNamed := func(values *[]runtimeNamedChild, name string, value typ.Type, optional, readonly bool, formals []*typ.TypeParam, scope identity.ContentID) error {
-		entry, err := child(value, formals, scope)
-		if err != nil {
-			return err
-		}
-		*values = append(*values, runtimeNamedChild{name: name, child: entry, optional: optional, readonly: readonly})
-		return nil
-	}
-	switch value := current.value.(type) {
-	case *typ.Array:
-		var err error
-		row.element, err = child(value.Element, current.formals, current.scope)
-		return err
-	case *typ.Map:
-		var err error
-		if row.key, err = child(value.Key, current.formals, current.scope); err != nil {
-			return err
-		}
-		row.value, err = child(value.Value, current.formals, current.scope)
-		return err
-	case *typ.ReadonlyMap:
-		var err error
-		if row.key, err = child(value.Key, current.formals, current.scope); err != nil {
-			return err
-		}
-		row.value, err = child(value.Value, current.formals, current.scope)
-		return err
-	case *typ.Optional:
-		var err error
-		row.inner, err = child(value.Inner, current.formals, current.scope)
-		return err
-	case *typ.Function:
-		formals := runtimeCombinedFormals(current.formals, value.TypeParams)
-		scope := runtimeScope(value, current.formals)
-		if !scope.Available() {
-			return errors.New("typeauthority: unavailable Runtime function description scope")
-		}
-		if err := runtimeRangeStart(len(b.runtime.typeParameters), &row.typeParameters); err != nil {
-			return err
-		}
-		for _, parameter := range value.TypeParams {
-			if parameter == nil {
-				return errors.New("typeauthority: nil Runtime function type parameter")
-			}
-			if err := appendNamed(&b.runtime.typeParameters, parameter.Name, parameter.Constraint, false, false, formals, scope); err != nil {
-				return err
-			}
-		}
-		if err := runtimeRangeEnd(len(b.runtime.typeParameters), &row.typeParameters); err != nil {
-			return err
-		}
-		if err := runtimeRangeStart(len(b.runtime.parameters), &row.parameters); err != nil {
-			return err
-		}
-		for _, parameter := range value.Params {
-			entry, err := child(parameter.Type, formals, scope)
-			if err != nil {
-				return err
-			}
-			b.runtime.parameters = append(b.runtime.parameters, runtimeParameter{
-				name: parameter.Name, child: entry, optional: parameter.Optional, receiver: parameter.Receiver,
-			})
-		}
-		if err := runtimeRangeEnd(len(b.runtime.parameters), &row.parameters); err != nil {
-			return err
-		}
-		var err error
-		if row.variadic, err = child(value.Variadic, formals, scope); err != nil {
-			return err
-		}
-		if err := runtimeRangeStart(len(b.runtime.results), &row.results); err != nil {
-			return err
-		}
-		for _, result := range value.Returns {
-			if err := appendUnnamed(&b.runtime.results, result, formals, scope); err != nil {
-				return err
-			}
-		}
-		if err := runtimeRangeEnd(len(b.runtime.results), &row.results); err != nil {
-			return err
-		}
-		var result typ.Type
-		switch len(value.Returns) {
-		case 1:
-			result = value.Returns[0]
-		default:
-			if len(value.Returns) > 1 {
-				result = typ.NewTuple(value.Returns...)
-			}
-		}
-		row.returns, err = child(result, formals, scope)
-		return err
-	case *typ.Record:
-		if err := runtimeRangeStart(len(b.runtime.fields), &row.fields); err != nil {
-			return err
-		}
-		for fieldIndex, field := range value.Fields {
-			if fieldIndex != 0 && value.Fields[fieldIndex-1].Name >= field.Name {
-				return errors.New("typeauthority: Runtime record fields are not strictly sorted")
-			}
-			key, err := child(typ.LiteralString(field.Name), current.formals, current.scope)
-			if err != nil {
-				return err
-			}
-			entry, err := child(field.Type, current.formals, current.scope)
-			if err != nil {
-				return err
-			}
-			effective := entry
-			if field.Optional {
-				effective, err = child(typeexpr.Optional(field.Type), current.formals, current.scope)
-				if err != nil {
-					return err
-				}
-			}
-			b.runtime.fields = append(b.runtime.fields, runtimeNamedChild{
-				name: field.Name, key: key, child: entry, effective: effective,
-				optional: field.Optional, readonly: field.Readonly,
-			})
-		}
-		if err := runtimeRangeEnd(len(b.runtime.fields), &row.fields); err != nil {
-			return err
-		}
-		if err := runtimeRangeStart(len(b.runtime.staticMembers), &row.staticMembers); err != nil {
-			return err
-		}
-		for memberIndex, member := range value.StaticMembers {
-			if memberIndex != 0 && typ.CompareStaticMembers(value.StaticMembers[memberIndex-1], member) >= 0 {
-				return errors.New("typeauthority: Runtime record static members are not strictly sorted")
-			}
-			var keyType typ.Type
-			switch member.Kind {
-			case typ.StaticMemberStringIndex:
-				keyType = typ.LiteralString(member.Name)
-			case typ.StaticMemberIntIndex:
-				keyType = typ.LiteralInt(member.Index)
-			default:
-				return errors.New("typeauthority: unsupported Runtime static member key")
-			}
-			key, err := child(keyType, current.formals, current.scope)
-			if err != nil {
-				return err
-			}
-			entry, err := child(member.Type, current.formals, current.scope)
-			if err != nil {
-				return err
-			}
-			effective := entry
-			if member.Optional {
-				effective, err = child(typeexpr.Optional(member.Type), current.formals, current.scope)
-				if err != nil {
-					return err
-				}
-			}
-			b.runtime.staticMembers = append(b.runtime.staticMembers, runtimeStaticChild{
-				kind: member.Kind, stringKey: member.Kind == typ.StaticMemberStringIndex,
-				name: member.Name, integer: member.Index, key: key, child: entry, effective: effective,
-				optional: member.Optional, readonly: member.Readonly,
-			})
-		}
-		if err := runtimeRangeEnd(len(b.runtime.staticMembers), &row.staticMembers); err != nil {
-			return err
-		}
-		var err error
-		if row.metatable, err = child(value.Metatable, current.formals, current.scope); err != nil {
-			return err
-		}
-		if value.HasMapComponent() {
-			if row.key, err = child(value.MapKey, current.formals, current.scope); err != nil {
-				return err
-			}
-			if row.value, err = child(value.MapValue, current.formals, current.scope); err != nil {
-				return err
-			}
-		}
-		return nil
-	case *typ.Union:
-		if err := runtimeRangeStart(len(b.runtime.variants), &row.variants); err != nil {
-			return err
-		}
-		for _, member := range value.Members {
-			if err := appendUnnamed(&b.runtime.variants, member, current.formals, current.scope); err != nil {
-				return err
-			}
-		}
-		return runtimeRangeEnd(len(b.runtime.variants), &row.variants)
-	case *typ.Intersection:
-		if err := runtimeRangeStart(len(b.runtime.variants), &row.variants); err != nil {
-			return err
-		}
-		for _, member := range value.Members {
-			if err := appendUnnamed(&b.runtime.variants, member, current.formals, current.scope); err != nil {
-				return err
-			}
-		}
-		return runtimeRangeEnd(len(b.runtime.variants), &row.variants)
-	case *typ.Tuple:
-		if err := runtimeRangeStart(len(b.runtime.elements), &row.elements); err != nil {
-			return err
-		}
-		for index, element := range value.Elements {
-			key, err := child(typ.LiteralInt(int64(index+1)), current.formals, current.scope)
-			if err != nil {
-				return err
-			}
-			entry, err := child(element, current.formals, current.scope)
-			if err != nil {
-				return err
-			}
-			b.runtime.elements = append(b.runtime.elements, runtimeTupleElement{key: key, child: entry})
-		}
-		return runtimeRangeEnd(len(b.runtime.elements), &row.elements)
-	case *typ.Interface:
-		row.name = value.Name
-		if err := runtimeRangeStart(len(b.runtime.methods), &row.methods); err != nil {
-			return err
-		}
-		for _, method := range value.Methods {
-			if method.Type == nil {
-				return errors.New("typeauthority: nil Runtime interface method")
-			}
-			if err := appendNamed(&b.runtime.methods, method.Name, method.Type, false, true, current.formals, current.scope); err != nil {
-				return err
-			}
-		}
-		return runtimeRangeEnd(len(b.runtime.methods), &row.methods)
-	case *typ.Meta:
-		var err error
-		row.inner, err = child(value.Of, current.formals, current.scope)
-		return err
-	case *typ.Recursive:
-		row.name = value.Name
-		if value.Body == nil || value.Body == value {
-			return errors.New("typeauthority: malformed Runtime recursive body")
-		}
-		var err error
-		row.body, err = child(value.Body, current.formals, current.scope)
-		return err
-	case *typ.TypeParam:
-		row.name = value.Name
-		var err error
-		row.inner, err = child(value.Constraint, current.formals, current.scope)
-		return err
-	case *typ.Literal:
-		row.literal.base = value.Base()
-		switch value.Base() {
-		case kind.Boolean:
-			literal, ok := value.Value().(bool)
-			if !ok {
-				return errors.New("typeauthority: malformed Runtime boolean literal")
-			}
-			if literal {
-				row.literal.bits = 1
-			}
-		case kind.Integer:
-			literal, ok := value.Value().(int64)
-			if !ok {
-				return errors.New("typeauthority: malformed Runtime integer literal")
-			}
-			row.literal.bits = uint64(literal)
-		case kind.Number:
-			literal, ok := value.Value().(float64)
-			if !ok {
-				return errors.New("typeauthority: malformed Runtime number literal")
-			}
-			row.literal.bits = math.Float64bits(literal)
-		case kind.String:
-			literal, ok := value.Value().(string)
-			if !ok {
-				return errors.New("typeauthority: malformed Runtime string literal")
-			}
-			row.literal.text = literal
-		default:
-			return errors.New("typeauthority: unsupported Runtime literal base")
-		}
-		return nil
-	case *typ.Generic:
-		row.name = value.Name
-		formals := runtimeCombinedFormals(current.formals, value.TypeParams)
-		scope := runtimeScope(value, current.formals)
-		if !scope.Available() {
-			return errors.New("typeauthority: unavailable Runtime generic description scope")
-		}
-		if err := runtimeRangeStart(len(b.runtime.typeParameters), &row.typeParameters); err != nil {
-			return err
-		}
-		for _, parameter := range value.TypeParams {
-			if parameter == nil {
-				return errors.New("typeauthority: nil Runtime generic parameter")
-			}
-			if err := appendNamed(&b.runtime.typeParameters, parameter.Name, parameter.Constraint, false, false, formals, scope); err != nil {
-				return err
-			}
-		}
-		if err := runtimeRangeEnd(len(b.runtime.typeParameters), &row.typeParameters); err != nil {
-			return err
-		}
-		if value.Body == nil {
-			return errors.New("typeauthority: Runtime generic lacks body")
-		}
-		var err error
-		row.body, err = child(value.Body, formals, scope)
-		return err
-	case *typ.Instantiated:
-		if value.Generic == nil || value.Generic.Body == nil || len(value.TypeArgs) != len(value.Generic.TypeParams) {
-			return errors.New("typeauthority: malformed Runtime instantiation")
-		}
-		var err error
-		row.base, err = child(value.Generic, current.formals, current.scope)
-		if err != nil {
-			return err
-		}
-		if err := runtimeRangeStart(len(b.runtime.arguments), &row.arguments); err != nil {
-			return err
-		}
-		for _, argument := range value.TypeArgs {
-			inner, err := b.child(argument, current.formals, current.scope)
-			if err != nil {
-				return err
-			}
-			b.runtime.arguments = append(b.runtime.arguments, inner)
-		}
-		if err := runtimeRangeEnd(len(b.runtime.arguments), &row.arguments); err != nil {
-			return err
-		}
-		expanded := subst.ExpandInstantiated(value)
-		if expanded == nil || expanded == value {
-			return errors.New("typeauthority: Runtime instantiation cannot expand")
-		}
-		row.expansion, err = child(expanded, current.formals, current.scope)
-		return err
-	default:
-		// Every remaining supported node is a leaf: it carries no structural
-		// child and is described by its kind alone.
-		switch row.form {
-		case kind.Nil, kind.Boolean, kind.Number, kind.Integer, kind.String,
-			kind.Any, kind.Unknown, kind.Never, kind.Self:
-		default:
-			return errors.New("typeauthority: unsupported Runtime description")
-		}
-	}
-	return nil
-}
-
-func runtimeRangeStart(length int, target *runtimeRange) error {
-	if target == nil || length < 0 || uint64(length) > uint64(math.MaxUint32) {
-		return errors.New("typeauthority: Runtime reflection range overflow")
-	}
-	target.start = uint32(length)
-	return nil
-}
-
-func runtimeRangeEnd(length int, target *runtimeRange) error {
-	if target == nil || length < 0 || uint64(length) > uint64(math.MaxUint32) {
-		return errors.New("typeauthority: Runtime reflection range overflow")
-	}
-	target.end = uint32(length)
-	return nil
-}
-
-// sealCanonical publishes structural identity only. runtimeBuilder.add has
-// already interned equal canonical bytes into one dense row; assignability is
-// deliberately not an equality relation and must never rewrite this vector.
+// sealCanonical publishes exact structural identity. Rows are already
+// coalesced by owner-issued source key; no assignability relation rewrites the
+// vector.
 func (b *runtimeBuilder) sealCanonical() error {
 	if b == nil || b.runtime == nil || len(b.runtime.rows) != len(b.construction) {
 		return errors.New("typeauthority: malformed Runtime canonical source")
 	}
-	runtime := b.runtime
-	runtime.canonical = make([]uint32, len(runtime.rows)+1)
-	for index := range runtime.rows {
-		runtime.canonical[index+1] = uint32(index + 1)
-		if !runtime.rows[index].closed {
-			continue
-		}
-		encoded := runtime.rows[index].encoded
-		if len(encoded) == 0 {
+	b.runtime.canonical = make([]uint32, len(b.runtime.rows)+1)
+	for index := range b.runtime.rows {
+		b.runtime.canonical[index+1] = uint32(index + 1)
+		if !b.runtime.rows[index].canonicalID.Available() {
 			return errors.New("typeauthority: closed Runtime row lacks canonical structural identity")
 		}
 	}
 	return nil
 }
 
-// sealDescriptors derives the canonical finite semantic-union description of
-// every sealed row.  Runtime rows remain complete structural atoms; only
-// direct Union rows flatten into an antichain.  The construction graph is
-// released by SealRuntime, so this is the sole place where typ values are
-// interpreted for the descriptor algebra.
+// sealDescriptors derives the semantic union descriptor from only the direct
+// Union and Optional feeds installed from receipt source ordinals.
 func (b *runtimeBuilder) sealDescriptors() error {
 	if b == nil || b.runtime == nil || len(b.runtime.rows) != len(b.construction) || len(b.runtime.canonical) != len(b.runtime.rows)+1 {
 		return errors.New("typeauthority: malformed Runtime descriptor source")
@@ -1214,15 +644,11 @@ func (b *runtimeBuilder) sealDescriptors() error {
 			return runtime.rows[index].atoms, nil
 		}
 		if state[index] == 1 {
-			// A recursive union backedge is itself a complete atom. The
-			// subsequent antichain reduction observes the already sealed
-			// coinductive relation and removes it when a productive arm covers
-			// the cycle.
 			return []uint32{runtime.canonical[index+1]}, nil
 		}
 		state[index] = 1
-		atoms := make([]uint32, 0, 1)
 		row := runtime.rows[index]
+		atoms := make([]uint32, 0, 1)
 		switch row.form {
 		case kind.Union:
 			if row.variants.start > row.variants.end || uint64(row.variants.end) > uint64(len(runtime.variants)) {
@@ -1239,17 +665,14 @@ func (b *runtimeBuilder) sealDescriptors() error {
 				atoms = append(atoms, childAtoms...)
 			}
 		case kind.Optional:
-			// Optional is the canonical representation of nil|T. Keep the
-			// nil atom explicit so ClassSet's union algebra agrees with the
-			// authored nil and T classes.
-			for nilIndex, candidate := range runtime.rows {
-				if candidate.form != kind.Nil {
-					continue
-				}
-				atoms = append(atoms, runtime.canonical[uint32(nilIndex+1)])
-				break
+			if runtime.nilRow == 0 {
+				return nil, errors.New("typeauthority: Runtime Optional lacks nil row")
 			}
-			if row.inner.present && runtime.owns(row.inner.inner) {
+			atoms = append(atoms, runtime.canonical[runtime.nilRow])
+			if row.inner.present {
+				if !runtime.owns(row.inner.inner) {
+					return nil, errors.New("typeauthority: malformed Runtime Optional descriptor child")
+				}
 				childAtoms, err := visit(int(row.inner.inner.index - 1))
 				if err != nil {
 					return nil, err
@@ -1260,8 +683,7 @@ func (b *runtimeBuilder) sealDescriptors() error {
 		if len(atoms) == 0 {
 			atoms = append(atoms, runtime.canonical[index+1])
 		}
-		for atomIndex := range atoms {
-			atom := atoms[atomIndex]
+		for atomIndex, atom := range atoms {
 			if atom == 0 || uint64(atom) > uint64(len(runtime.rows)) {
 				return nil, errors.New("typeauthority: malformed Runtime semantic atom")
 			}
@@ -1289,16 +711,15 @@ func (b *runtimeBuilder) sealDescriptors() error {
 	return nil
 }
 
-// sealRanks assigns the exact-singleton instance of the structural finite-set
-// measure. Every closed row is one distinct atom, so each singleton has rank
-// 1+|P\\{atom}| = |P|. No assignability relation participates.
+// sealRanks assigns the exact-singleton finite-set measure. Every closed row
+// is one distinct atom, so each singleton has rank |P|.
 func (r *Runtime) sealRanks() error {
 	if r == nil || len(r.canonical) != len(r.rows)+1 {
 		return errors.New("typeauthority: malformed Runtime rank source")
 	}
 	closed := uint64(0)
 	for _, row := range r.rows {
-		if row.closed {
+		if !row.scopedID.Available() {
 			closed++
 		}
 	}
@@ -1306,7 +727,7 @@ func (r *Runtime) sealRanks() error {
 		return errors.New("typeauthority: Runtime rank universe overflow")
 	}
 	for index := range r.rows {
-		if r.rows[index].closed {
+		if !r.rows[index].scopedID.Available() {
 			r.rows[index].rank = uint32(closed)
 		}
 	}
@@ -1318,36 +739,36 @@ func (r *Runtime) sealIdentity() error {
 		return errors.New("typeauthority: unavailable Runtime identity source")
 	}
 	hash := sha256.New()
-	_, _ = hash.Write([]byte("wippy.analysis.typeauthority.runtime\x00\x04"))
+	// v6 is the explicit flash-cut identity domain: structural planes other
+	// than Union variants and Optional inner no longer contribute to Runtime.
+	_, _ = hash.Write([]byte("wippy.analysis.typeauthority.runtime\x00\x06"))
 	_, _ = hash.Write(r.sourceID[:])
 	writeRuntimeWord(hash, uint64(len(r.rows)))
 	for _, row := range r.rows {
 		writeRuntimeWord(hash, uint64(row.form))
-		if row.closed {
+		if row.scopedID.Available() {
+			_, _ = hash.Write([]byte{0})
+		} else {
 			_, _ = hash.Write([]byte{1})
+		}
+		writeRuntimeWord(hash, uint64(row.runtimeKinds))
+		if !row.canonicalID.Available() {
+			return errors.New("typeauthority: Runtime row canonical identity unavailable")
+		}
+		_, _ = hash.Write(row.canonicalID[:])
+		if row.scopedID.Available() {
+			_, _ = hash.Write([]byte{1})
+			_, _ = hash.Write(row.scopedID[:])
 		} else {
 			_, _ = hash.Write([]byte{0})
 		}
-		writeRuntimeWord(hash, uint64(len(row.encoded)))
-		_, _ = hash.Write(row.encoded)
-		writeRuntimeWord(hash, uint64(len(row.name)))
-		_, _ = hash.Write([]byte(row.name))
-		_, _ = hash.Write([]byte{byte(row.literal.base)})
-		writeRuntimeWord(hash, row.literal.bits)
-		writeRuntimeWord(hash, uint64(len(row.literal.text)))
-		_, _ = hash.Write([]byte(row.literal.text))
-		for _, child := range [...]runtimeChild{row.element, row.key, row.value, row.base, row.inner, row.returns, row.variadic, row.body, row.metatable, row.expansion} {
-			writeRuntimeWord(hash, uint64(child.inner.index))
-			if child.present {
-				_, _ = hash.Write([]byte{1})
-			} else {
-				_, _ = hash.Write([]byte{0})
-			}
-		}
-		for _, range_ := range [...]runtimeRange{row.fields, row.staticMembers, row.variants, row.elements, row.parameters, row.results, row.methods, row.typeParameters, row.arguments} {
-			writeRuntimeWord(hash, uint64(range_.start))
-			writeRuntimeWord(hash, uint64(range_.end))
-		}
+		writeRuntimeChild(hash, row.inner)
+		writeRuntimeWord(hash, uint64(row.variants.start))
+		writeRuntimeWord(hash, uint64(row.variants.end))
+	}
+	writeRuntimeWord(hash, uint64(len(r.variants)))
+	for _, child := range r.variants {
+		writeRuntimeChild(hash, child)
 	}
 	writeRuntimeWord(hash, uint64(len(r.canonical)))
 	for _, canonical := range r.canonical {
@@ -1359,18 +780,6 @@ func (r *Runtime) sealIdentity() error {
 			writeRuntimeWord(hash, uint64(atom))
 		}
 		writeRuntimeWord(hash, uint64(row.rank))
-	}
-	writeRuntimeNamedChildren(hash, r.fields)
-	writeRuntimeStaticChildren(hash, r.staticMembers)
-	writeRuntimeChildren(hash, r.variants)
-	writeRuntimeTupleElements(hash, r.elements)
-	writeRuntimeParameters(hash, r.parameters)
-	writeRuntimeChildren(hash, r.results)
-	writeRuntimeNamedChildren(hash, r.methods)
-	writeRuntimeNamedChildren(hash, r.typeParameters)
-	writeRuntimeWord(hash, uint64(len(r.arguments)))
-	for _, argument := range r.arguments {
-		writeRuntimeWord(hash, uint64(argument.index))
 	}
 	copy(r.id[:], hash.Sum(nil))
 	if !r.id.Available() {
@@ -1405,87 +814,7 @@ func writeRuntimeChild(hash interface{ Write([]byte) (int, error) }, child runti
 	}
 }
 
-func writeRuntimeChildren(hash interface{ Write([]byte) (int, error) }, values []runtimeChild) {
-	writeRuntimeWord(hash, uint64(len(values)))
-	for _, value := range values {
-		writeRuntimeChild(hash, value)
-	}
-}
-
-func writeRuntimeNamedChildren(hash interface{ Write([]byte) (int, error) }, values []runtimeNamedChild) {
-	writeRuntimeWord(hash, uint64(len(values)))
-	for _, value := range values {
-		writeRuntimeWord(hash, uint64(len(value.name)))
-		_, _ = hash.Write([]byte(value.name))
-		writeRuntimeChild(hash, value.key)
-		writeRuntimeChild(hash, value.child)
-		writeRuntimeChild(hash, value.effective)
-		if value.optional {
-			_, _ = hash.Write([]byte{1})
-		} else {
-			_, _ = hash.Write([]byte{0})
-		}
-		if value.readonly {
-			_, _ = hash.Write([]byte{1})
-		} else {
-			_, _ = hash.Write([]byte{0})
-		}
-	}
-}
-
-func writeRuntimeStaticChildren(hash interface{ Write([]byte) (int, error) }, values []runtimeStaticChild) {
-	writeRuntimeWord(hash, uint64(len(values)))
-	for _, value := range values {
-		_, _ = hash.Write([]byte{byte(value.kind)})
-		writeRuntimeWord(hash, uint64(len(value.name)))
-		_, _ = hash.Write([]byte(value.name))
-		writeRuntimeWord(hash, uint64(value.integer))
-		writeRuntimeChild(hash, value.key)
-		writeRuntimeChild(hash, value.child)
-		writeRuntimeChild(hash, value.effective)
-		if value.optional {
-			_, _ = hash.Write([]byte{1})
-		} else {
-			_, _ = hash.Write([]byte{0})
-		}
-		if value.readonly {
-			_, _ = hash.Write([]byte{1})
-		} else {
-			_, _ = hash.Write([]byte{0})
-		}
-	}
-}
-
-func writeRuntimeTupleElements(hash interface{ Write([]byte) (int, error) }, values []runtimeTupleElement) {
-	writeRuntimeWord(hash, uint64(len(values)))
-	for _, value := range values {
-		writeRuntimeChild(hash, value.key)
-		writeRuntimeChild(hash, value.child)
-	}
-}
-
-func writeRuntimeParameters(hash interface{ Write([]byte) (int, error) }, values []runtimeParameter) {
-	writeRuntimeWord(hash, uint64(len(values)))
-	for _, value := range values {
-		writeRuntimeWord(hash, uint64(len(value.name)))
-		_, _ = hash.Write([]byte(value.name))
-		writeRuntimeChild(hash, value.child)
-		if value.optional {
-			_, _ = hash.Write([]byte{1})
-		} else {
-			_, _ = hash.Write([]byte{0})
-		}
-		if value.receiver {
-			_, _ = hash.Write([]byte{1})
-		} else {
-			_, _ = hash.Write([]byte{0})
-		}
-	}
-}
-
-// LinkID identifies the exact sealed Link Runtime is fenced to. It is a
-// composition check, not a portable inner identity; Inner identity is always
-// derived from Runtime.ContentID plus the immutable dense row.
+// LinkID identifies the exact sealed Link Runtime is fenced to.
 func (r *Runtime) LinkID() identity.ContentID {
 	if r == nil {
 		return identity.ContentID{}
@@ -1507,9 +836,7 @@ func (r *Runtime) Count() int {
 	return len(r.rows)
 }
 
-// InnerAtIndex authenticates a Runtime-local one-based atom index. It is a
-// cold projection used by Static's descriptor builder; callers cannot mint a
-// handle because the Runtime owner remains private inside RuntimeInner.
+// InnerAtIndex authenticates a Runtime-local one-based atom index.
 func (r *Runtime) InnerAtIndex(index uint32) (RuntimeInner, bool) {
 	if r == nil || index == 0 || uint64(index) > uint64(len(r.rows)) {
 		return RuntimeInner{}, false
@@ -1528,11 +855,9 @@ func (r *Runtime) owns(inner RuntimeInner) bool {
 	return r != nil && inner.owner == r && inner.index != 0 && uint64(inner.index) <= uint64(len(r.rows))
 }
 
-func (r *Runtime) equal(left, right RuntimeInner) bool {
+func (r *Runtime) Equal(left, right RuntimeInner) bool {
 	return r.owns(left) && r.owns(right) && left.index == right.index
 }
-
-func (r *Runtime) Equal(left, right RuntimeInner) bool { return r.equal(left, right) }
 
 func (r *Runtime) Identity(inner RuntimeInner) (identity.ContentID, bool) {
 	if !r.owns(inner) || int(inner.index) > len(r.identities) {
@@ -1542,9 +867,7 @@ func (r *Runtime) Identity(inner RuntimeInner) (identity.ContentID, bool) {
 	return id, id.Available()
 }
 
-// Kind reports the structural category of one dense row. It is the same
-// enumeration the authored type graph uses, so a caller never translates
-// between a Runtime-local form vocabulary and typ.Type.Kind.
+// Kind reports the structural category of one dense row.
 func (r *Runtime) Kind(inner RuntimeInner) (kind.Kind, bool) {
 	if !r.owns(inner) {
 		return 0, false
@@ -1552,19 +875,28 @@ func (r *Runtime) Kind(inner RuntimeInner) (kind.Kind, bool) {
 	return r.rows[inner.index-1].form, true
 }
 
-// CanonicalEncoding returns an ownership-isolated portable reconstruction of
-// one closed row. Runtime never exposes or retains a typ.Type graph.
-func (r *Runtime) CanonicalEncoding(inner RuntimeInner) ([]byte, bool) {
-	if !r.owns(inner) || !r.rows[inner.index-1].closed || len(r.rows[inner.index-1].encoded) == 0 {
-		return nil, false
+// RuntimeKinds reports the owner-issued runtime-vocabulary projection.
+func (r *Runtime) RuntimeKinds(inner RuntimeInner) (runtimekind.Set, bool) {
+	if !r.owns(inner) || !r.runtimeKindsPublished {
+		return 0, false
 	}
-	return append([]byte(nil), r.rows[inner.index-1].encoded...), true
+	kinds := r.rows[inner.index-1].runtimeKinds
+	return kinds, kinds.Valid()
 }
 
-// StructuralEqual is a fully sealed three-valued structural judgment. A
-// scoped formal child is exact only against its own identity; a comparison to
-// another scoped child remains intentionally undecided rather than treating
-// two unrelated lexical binders as presentation-equal types.
+// CanonicalIdentity is the owner-neutral identity of one closed structural
+// row. Runtime issues it once so consumers never re-encode a source graph.
+func (r *Runtime) CanonicalIdentity(inner RuntimeInner) (identity.ContentID, bool) {
+	if !r.owns(inner) || r.rows[inner.index-1].scopedID.Available() || !r.rows[inner.index-1].canonicalID.Available() {
+		return identity.ContentID{}, false
+	}
+	id := r.rows[inner.index-1].canonicalID
+	return id, id.Available()
+}
+
+// StructuralEqual is the sealed structural judgment. Open rows are exact only
+// against their own owner-local identity; unlike closed rows they do not claim
+// an independent portable equality decision.
 func (r *Runtime) StructuralEqual(left, right RuntimeInner) (answer, decided bool) {
 	if !r.owns(left) || !r.owns(right) {
 		return false, false
@@ -1572,12 +904,10 @@ func (r *Runtime) StructuralEqual(left, right RuntimeInner) (answer, decided boo
 	if left.index == right.index {
 		return true, true
 	}
-	return false, r.rows[left.index-1].closed && r.rows[right.index-1].closed
+	return false, !r.rows[left.index-1].scopedID.Available() && !r.rows[right.index-1].scopedID.Available()
 }
 
-// Subtype is the sealed allocation-free owner-local subtype judgment. It is a
-// lookup into the relation materialized at seal from the canonical checker; a
-// bound/open row has no independent judgment and stays undecided.
+// Subtype is the sealed allocation-free owner-local subtype judgment.
 func (r *Runtime) Subtype(left, right RuntimeInner) (answer, decided bool) {
 	if !r.owns(left) || !r.owns(right) {
 		return false, false
@@ -1597,8 +927,7 @@ func (r *Runtime) Subtype(left, right RuntimeInner) (answer, decided bool) {
 }
 
 // Canonical returns the semantic-equivalence representative used by Runtime
-// descriptors. Exact Runtime identities remain distinct: this projection is
-// only the quotient consumed by union algebra (not StructuralEqual).
+// descriptors. Exact Runtime identities remain distinct.
 func (r *Runtime) Canonical(inner RuntimeInner) (RuntimeInner, bool) {
 	if !r.owns(inner) || len(r.canonical) != len(r.rows)+1 || r.canonical[inner.index] == 0 {
 		return RuntimeInner{}, false
@@ -1608,8 +937,6 @@ func (r *Runtime) Canonical(inner RuntimeInner) (RuntimeInner, bool) {
 
 // DescriptorCount and DescriptorAt expose Runtime's immutable semantic-union
 // descriptor without exposing dense row identities or construction graphs.
-// The descriptor is a cold seal artifact; callers should retain only the
-// returned atom handles they need for their own owner-fenced algebra.
 func (r *Runtime) DescriptorCount(inner RuntimeInner) int {
 	if !r.owns(inner) {
 		return 0

@@ -85,6 +85,16 @@ func storageTransferSourceCoordinate(schema *valuedomain.Schema, transfer valued
 	return uint64(index), ok && indexOK
 }
 
+// authenticatedSource accepts a present Value or the exact sparse Bottom
+// supplied by this Value owner. It never constructs a Bottom from metadata:
+// an unavailable, foreign, or non-Bottom absent cell is refused.
+func authenticatedSource(schema *valuedomain.Schema, fact valuedomain.Value, present, available bool) (valuedomain.Value, bool) {
+	if schema == nil || !available || !schema.Equal(fact, fact) || !present && !schema.Equal(fact, schema.Bottom()) {
+		return valuedomain.Value{}, false
+	}
+	return fact, true
+}
+
 func (rule *HotRule) locate(context engine.SelectorContext, transfer valuedomain.StorageTransfer) bool {
 	if rule == nil || rule.owner == nil || rule.values == nil {
 		return false
@@ -98,12 +108,16 @@ func (rule *HotRule) locate(context engine.SelectorContext, transfer valuedomain
 		return false
 	}
 	fact, present, available := cells.At(0)
-	if !available || !present {
-		return true
+	fact, factOK := authenticatedSource(rule.values.Schema(), fact, present, available)
+	if !factOK {
+		return false
 	}
 	plan, planOK := Plan(rule.owner.Schema(), rule.values.Schema(), fact)
-	if !planOK || plan.Bottom() {
+	if !planOK {
 		return false
+	}
+	if plan.Bottom() {
+		return true
 	}
 	for index := 0; index < plan.RouteCount(); index++ {
 		route, routeOK := plan.RouteAt(index)
@@ -129,14 +143,15 @@ func (rule *HotRule) fold(frame engine.Frame[placement.Placement, valuedomain.St
 		return engine.RuleResult[placement.Placement]{}
 	}
 	fact, present, available := cells.At(0)
-	if !available {
+	fact, factOK := authenticatedSource(rule.values.Schema(), fact, present, available)
+	if !factOK {
 		return engine.RuleResult[placement.Placement]{}
 	}
 	count, countOK := engine.SelectionCount(frame, selection)
 	if !countOK {
 		return engine.RuleResult[placement.Placement]{}
 	}
-	if !present || fact.IsBottom() {
+	if fact.IsBottom() {
 		if count != 0 {
 			return engine.RuleResult[placement.Placement]{}
 		}
@@ -157,14 +172,19 @@ func (rule *HotRule) fold(frame engine.Frame[placement.Placement, valuedomain.St
 	if !lifetimeOK {
 		return engine.RuleResult[placement.Placement]{}
 	}
+	storageLifetime := FromProgram(lifetime)
+	if !storageLifetime.Valid() {
+		return engine.RuleResult[placement.Placement]{}
+	}
 	return engine.Routed(frame, selection, func(tag uint64, prior engine.OrderedCells[placement.Placement]) (placement.Placement, bool) {
 		if _, routeOK := plan.routeAtTag(tag); !routeOK || prior.Count() != 1 {
 			return placement.Bottom, false
 		}
-		current, _, currentAvailable := prior.At(0)
-		if !currentAvailable {
+		current, present, currentAvailable := prior.At(0)
+		current, currentOK := placement.AuthenticateFactorCell(current, present, currentAvailable)
+		if !currentOK {
 			return placement.Bottom, false
 		}
-		return Apply(current, FromProgram(lifetime)), true
+		return Apply(current, storageLifetime)
 	})
 }

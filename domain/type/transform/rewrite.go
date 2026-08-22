@@ -3,6 +3,7 @@ package transform
 import (
 	"sync"
 
+	"github.com/wippyai/go-lua/domain/type/annotation"
 	"github.com/wippyai/go-lua/domain/type/kind"
 	typetable "github.com/wippyai/go-lua/domain/type/table"
 	"github.com/wippyai/go-lua/domain/type/typ"
@@ -22,6 +23,29 @@ func Rewrite(t typ.Type, fn func(typ.Type) (typ.Type, bool)) typ.Type {
 	defer putRewriteMemo(memo)
 	m := rewriteMachine{fn: fn, memo: memo}
 	root := m.newVisit(t, fn, memo)
+	m.stack = append(m.stack, root)
+	for len(m.stack) != 0 {
+		i := len(m.stack) - 1
+		work := m.stack[i]
+		m.stack = m.stack[:i]
+		m.step(work)
+	}
+	return root.result
+}
+
+// Clone makes an ownership-isolated copy of a type graph. Primitive singleton
+// values remain shared, while every mutable composite and binder is rebuilt.
+// The rewrite machine remains iterative and its memo preserves DAG sharing,
+// recursive placeholders, and binder references without a codec round-trip.
+func Clone(t typ.Type) typ.Type {
+	if t == nil {
+		return nil
+	}
+	memo := getRewriteMemo()
+	defer putRewriteMemo(memo)
+	noop := func(typ.Type) (typ.Type, bool) { return nil, false }
+	m := rewriteMachine{fn: noop, memo: memo, forceClone: true}
+	root := m.newVisit(t, noop, memo)
 	m.stack = append(m.stack, root)
 	for len(m.stack) != 0 {
 		i := len(m.stack) - 1
@@ -60,6 +84,7 @@ const (
 	rewriteRecursiveChildren
 	rewriteBinder
 	rewriteBinderFinish
+	rewriteAnnotated
 )
 
 type rewriteTask struct {
@@ -75,9 +100,10 @@ type rewriteTask struct {
 }
 
 type rewriteMachine struct {
-	fn    func(typ.Type) (typ.Type, bool)
-	memo  map[rewriteKey]typ.Type
-	stack []*rewriteTask
+	fn         func(typ.Type) (typ.Type, bool)
+	memo       map[rewriteKey]typ.Type
+	stack      []*rewriteTask
+	forceClone bool
 }
 
 func (m *rewriteMachine) newVisit(t typ.Type, fn func(typ.Type) (typ.Type, bool), memo map[rewriteKey]typ.Type) *rewriteTask {
@@ -117,17 +143,44 @@ func (m *rewriteMachine) step(w *rewriteTask) {
 	case rewriteBinderFinish:
 		p := w.t.(*typ.TypeParam)
 		constraint := w.children[0].result
-		if constraint == p.Constraint {
+		if !m.forceClone && constraint == p.Constraint {
 			w.result = p
 		} else {
 			w.result = typ.NewTypeParam(p.Name, constraint)
 		}
+	case rewriteAnnotated:
+		m.annotatedFinish(w)
 	}
 }
 
 func (m *rewriteMachine) visit(w *rewriteTask) {
 	if w.t == nil {
 		return
+	}
+	if m.forceClone {
+		if ref, ok := w.t.(*typ.Ref); ok && ref != nil {
+			w.key = rewriteKey{t: w.t}
+			if cached, ok := w.memo[w.key]; ok {
+				w.result = cached
+				return
+			}
+			cloned := typ.NewRef(ref.Module, ref.Name)
+			w.memo[w.key] = cloned
+			w.result = cloned
+			return
+		}
+		if annotated, ok := w.t.(*typ.Annotated); ok && annotated != nil {
+			w.key = rewriteKey{t: w.t}
+			if cached, ok := w.memo[w.key]; ok {
+				w.result = cached
+				return
+			}
+			w.memo[w.key] = w.t
+			w.phase = rewriteAnnotated
+			child := m.newVisit(annotated.Inner, w.fn, w.memo)
+			m.pushChildren(w, []*rewriteTask{child})
+			return
+		}
 	}
 	if !rewriteCanDescend(w.t) {
 		if r, ok := w.fn(w.t); ok {
@@ -240,7 +293,14 @@ func (m *rewriteMachine) visit(w *rewriteTask) {
 		m.pushChildren(w, []*rewriteTask{child(x.Target)})
 	case *typ.Instantiated:
 		w.phase = rewriteFinish
-		m.pushChildren(w, rewriteChildren(x.TypeArgs, child))
+		children := rewriteChildren(x.TypeArgs, child)
+		if m.forceClone {
+			// Generic declarations are graph nodes too. Include the declaration
+			// as the first child so a self-instantiated declaration can be
+			// replaced by its in-progress clone rather than retaining the source.
+			children = append([]*rewriteTask{child(x.Generic)}, children...)
+		}
+		m.pushChildren(w, children)
 	case *typ.Interface:
 		children := make([]*rewriteTask, len(x.Methods))
 		for i, method := range x.Methods {
@@ -281,7 +341,7 @@ func (m *rewriteMachine) functionBinders(w *rewriteTask) {
 	v := typ.UnwrapTransparentWrappers(w.t).(*typ.Function)
 	_, replacements, _ := binderResults(v.TypeParams, w.binders)
 	childFn := rewriteFnWithTypeParamScope(w.fn, v.TypeParams, replacements)
-	childMemo := rewriteMemoForTypeParamScope(w.memo, v.TypeParams, replacements)
+	childMemo := rewriteMemoForTypeParamScope(w.memo, v.TypeParams, replacements, m.forceClone)
 	children := make([]*rewriteTask, 0, len(v.Params)+len(v.Returns)+1)
 	for _, p := range v.Params {
 		children = append(children, m.newVisit(p.Type, childFn, childMemo))
@@ -302,6 +362,7 @@ func (m *rewriteMachine) functionChildren(w *rewriteTask) {
 	// The original node remains in w.t; binder results are read directly.
 	v := typ.UnwrapTransparentWrappers(w.t).(*typ.Function)
 	params, _, changed := binderResults(v.TypeParams, w.binders)
+	changed = changed || m.forceClone
 	i := 0
 	var newParams []typ.Param
 	for j := range v.Params {
@@ -356,8 +417,16 @@ func (m *rewriteMachine) functionChildren(w *rewriteTask) {
 func (m *rewriteMachine) genericBinders(w *rewriteTask) {
 	v := typ.UnwrapTransparentWrappers(w.t).(*typ.Generic)
 	params, replacements, _ := binderResults(v.TypeParams, w.binders)
+	if m.forceClone {
+		// Install the declaration placeholder before visiting its body. This
+		// is the generic analogue of the Recursive placeholder and preserves
+		// productive self-instantiation backedges.
+		placeholder := typ.NewGeneric(v.Name, params, nil)
+		w.result = placeholder
+		m.memo[w.key] = placeholder
+	}
 	childFn := rewriteFnWithTypeParamScope(w.fn, v.TypeParams, replacements)
-	childMemo := rewriteMemoForTypeParamScope(w.memo, v.TypeParams, replacements)
+	childMemo := rewriteMemoForTypeParamScope(w.memo, v.TypeParams, replacements, m.forceClone)
 	w.children = []*rewriteTask{m.newVisit(v.Body, childFn, childMemo)}
 	w.phase = rewriteGenericChildren
 	// params are recomputed in genericChildren; this keeps the work item compact.
@@ -369,6 +438,17 @@ func (m *rewriteMachine) genericChildren(w *rewriteTask) {
 	v := typ.UnwrapTransparentWrappers(w.t).(*typ.Generic)
 	params, _, changed := binderResults(v.TypeParams, w.binders)
 	body := w.children[0].result
+	if m.forceClone {
+		placeholder, ok := w.result.(*typ.Generic)
+		if !ok || placeholder == nil {
+			w.result = typ.NewGeneric(v.Name, params, body)
+		} else {
+			placeholder.SetBody(body)
+			w.result = placeholder
+		}
+		m.memo[w.key] = w.result
+		return
+	}
 	if body != v.Body {
 		changed = true
 	}
@@ -384,7 +464,7 @@ func (m *rewriteMachine) recursiveChildren(w *rewriteTask) {
 	v := typ.UnwrapTransparentWrappers(w.t).(*typ.Recursive)
 	replacement := w.memo[w.key].(*typ.Recursive)
 	body := w.children[0].result
-	if body == v.Body {
+	if !m.forceClone && body == v.Body {
 		w.result = w.t
 	} else {
 		replacement.SetBody(body)
@@ -427,55 +507,69 @@ func (m *rewriteMachine) finish(w *rewriteTask) {
 	result := w.t
 	switch x := v.(type) {
 	case *typ.Optional:
-		if w.children[0].result != x.Inner {
+		if m.forceClone || w.children[0].result != x.Inner {
 			result = typeexpr.Optional(w.children[0].result)
 		}
 	case *typ.Union:
-		if valuesChanged(x.Members, w.children) {
+		if m.forceClone || valuesChanged(x.Members, w.children) {
 			result = typeexpr.Union(taskResults(w.children)...)
 		}
 	case *typ.Intersection:
-		if valuesChanged(x.Members, w.children) {
+		if m.forceClone || valuesChanged(x.Members, w.children) {
 			result = typeexpr.Intersection(taskResults(w.children)...)
 		}
 	case *typ.Array:
-		if w.children[0].result != x.Element {
+		if m.forceClone || w.children[0].result != x.Element {
 			result = typ.NewArray(w.children[0].result)
 		}
 	case *typ.Map:
-		if w.children[0].result != x.Key || w.children[1].result != x.Value {
+		if m.forceClone || w.children[0].result != x.Key || w.children[1].result != x.Value {
 			result = typetable.NewMap(w.children[0].result, w.children[1].result)
 		}
 	case *typ.ReadonlyMap:
-		if w.children[0].result != x.Key || w.children[1].result != x.Value {
+		if m.forceClone || w.children[0].result != x.Key || w.children[1].result != x.Value {
 			result = typetable.NewReadonlyMap(w.children[0].result, w.children[1].result)
 		}
 	case *typ.Tuple:
-		if valuesChanged(x.Elements, w.children) {
+		if m.forceClone || valuesChanged(x.Elements, w.children) {
 			result = typ.NewTuple(taskResults(w.children)...)
 		}
 	case *typ.Record:
-		result = finishRecord(w, x)
+		result = finishRecord(w, x, m.forceClone)
 	case *typ.Meta:
-		if w.children[0].result != x.Of {
+		if m.forceClone || w.children[0].result != x.Of {
 			result = typ.NewMeta(w.children[0].result)
 		}
 	case *typ.TypeParam:
-		if w.children[0].result != x.Constraint {
+		if m.forceClone || w.children[0].result != x.Constraint {
 			result = typ.NewTypeParam(x.Name, w.children[0].result)
 		}
 	case *typ.Alias:
-		if w.children[0].result != x.Target {
+		if m.forceClone || w.children[0].result != x.Target {
 			result = typ.NewAlias(x.Name, w.children[0].result)
 		}
 	case *typ.Instantiated:
-		args := taskResults(w.children)
-		changed := valuesChanged(x.TypeArgs, w.children)
+		children := w.children
 		generic := x.Generic
-		if replacement, ok := w.fn(generic); ok {
-			if resolved, ok := replacement.(*typ.Generic); ok && resolved != nil {
+		if m.forceClone {
+			if len(children) == 0 {
+				w.result = w.t
+				m.memo[w.key] = w.result
+				return
+			}
+			if resolved, ok := children[0].result.(*typ.Generic); ok && resolved != nil {
 				generic = resolved
-				changed = true
+			}
+			children = children[1:]
+		}
+		args := taskResults(children)
+		changed := m.forceClone || valuesChanged(x.TypeArgs, children)
+		if !m.forceClone {
+			if replacement, ok := w.fn(generic); ok {
+				if resolved, ok := replacement.(*typ.Generic); ok && resolved != nil {
+					generic = resolved
+					changed = true
+				}
 			}
 		}
 		if changed {
@@ -483,7 +577,7 @@ func (m *rewriteMachine) finish(w *rewriteTask) {
 		}
 	case *typ.Interface:
 		var methods []typ.Method
-		changed := false
+		changed := m.forceClone
 		for i, c := range w.children {
 			if f, ok := c.result.(*typ.Function); ok && f != x.Methods[i].Type {
 				if methods == nil {
@@ -502,7 +596,18 @@ func (m *rewriteMachine) finish(w *rewriteTask) {
 	w.memo[w.key] = result
 }
 
-func finishRecord(w *rewriteTask, x *typ.Record) typ.Type {
+func (m *rewriteMachine) annotatedFinish(w *rewriteTask) {
+	annotated, ok := w.t.(*typ.Annotated)
+	if !ok || annotated == nil || len(w.children) != 1 {
+		w.result = w.t
+		return
+	}
+	annotations := append([]annotation.Annotation(nil), annotated.Annotations...)
+	w.result = typ.NewAnnotated(w.children[0].result, annotations)
+	w.memo[w.key] = w.result
+}
+
+func finishRecord(w *rewriteTask, x *typ.Record, forceClone bool) typ.Type {
 	i, changed := 0, false
 	var fields []typ.Field
 	for n := range x.Fields {
@@ -553,7 +658,7 @@ func finishRecord(w *rewriteTask, x *typ.Record) typ.Type {
 			changed = true
 		}
 	}
-	if !changed {
+	if !changed && !forceClone {
 		return w.t
 	}
 	fieldsSrc := x.Fields
@@ -624,8 +729,15 @@ func typeParamShadowsBinder(tp *typ.TypeParam, binders []*typ.TypeParam) bool {
 	return false
 }
 
-func rewriteMemoForTypeParamScope(memo map[rewriteKey]typ.Type, binders []*typ.TypeParam, replacements map[*typ.TypeParam]*typ.TypeParam) map[rewriteKey]typ.Type {
+func rewriteMemoForTypeParamScope(memo map[rewriteKey]typ.Type, binders []*typ.TypeParam, replacements map[*typ.TypeParam]*typ.TypeParam, forceClone bool) map[rewriteKey]typ.Type {
 	if len(binders) == 0 && len(replacements) == 0 {
+		return memo
+	}
+	if forceClone {
+		// Clone must retain in-progress graph placeholders (notably a Generic
+		// declaration whose body contains an Instantiated self-reference).
+		// Type-parameter replacement is handled by the scoped callback below;
+		// dropping the parent memo here would reconnect the body to its source.
 		return memo
 	}
 	return make(map[rewriteKey]typ.Type)

@@ -45,17 +45,13 @@ func RuleEntry[P rulePrincipals, A ruleAuthorities]() rule.Spec {
 		Issues: []rule.Issuance{
 			{
 				Occurrence:  "occurrence/call",
-				Requirement: "requirement/call-result-slot",
-				Form:        "issuance/call-stage",
-				Input:       "input/finish",
-				Stage:       "stage/call-summary",
+				Requirement: "program-requirement/call-result",
+				Form:        "program-form/call-summary",
 			},
 			{
 				Occurrence:  "occurrence/operation-predicate-refinement",
-				Requirement: "requirement/unrestricted",
-				Form:        "issuance/local-predecessor",
-				Input:       "input/predecessor",
-				Stage:       "stage/local",
+				Requirement: "program-requirement/unrestricted",
+				Form:        "program-form/local-predecessor",
 			},
 		},
 		Lane:     rule.LaneMounted,

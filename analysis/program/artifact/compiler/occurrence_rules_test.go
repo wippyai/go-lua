@@ -5,6 +5,7 @@ import (
 
 	"github.com/wippyai/go-lua/analysis/lua/lower"
 	programschema "github.com/wippyai/go-lua/analysis/schema/program"
+	programissuance "github.com/wippyai/go-lua/analysis/schema/program/issuance"
 	"github.com/wippyai/go-lua/domain/composite"
 )
 
@@ -49,7 +50,7 @@ return redundant
 		point := rule.PointID()
 		input, inputOK := rule.InputPoint()
 		if !ruleOK || !ordinalOK || !occurrenceOK || !bodyOK || occurrence.Kind() != programschema.OccurrenceBinaryPresenceRefinement || !routeInputOK || !predecessorOK || !point.Available() || !inputOK || predecessor != route ||
-			rule.InputKind() != programschema.RuleInputPredecessor || rule.Stage() != programschema.RuleStageLocal || point == input {
+			rule.InputSpec() != programissuance.InputPredecessorGeometry || rule.Stage() != programissuance.StagePredecessor || point == input {
 			t.Fatalf("refinement[%d] lost exact guarded predecessor/local placement", index)
 		}
 		count++

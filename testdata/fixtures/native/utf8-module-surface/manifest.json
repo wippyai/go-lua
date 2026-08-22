@@ -1,0 +1,15 @@
+{
+  "description": "The whole declared utf8 surface: len and offset answer optionals whose malformed-input arm is ruled out before the position is used, codes iterates the string it was given, and charpattern is a declared literal.",
+  "packages": [
+    "utf8"
+  ],
+  "files": [
+    "main.lua"
+  ],
+  "check": {
+    "errors": 0
+  },
+  "run": {
+    "skip": "declaration-surface fixture"
+  }
+}

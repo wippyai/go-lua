@@ -63,6 +63,9 @@ func (committed *CommittedProgram) seal(observations []ProgramObservationAdmissi
 	if !planeOK || plane == nil || plane.carrier == nil || plane.byKey == nil {
 		return nil, ProgramStageFailure(ProgramSealStageAdmission), false
 	}
+	if !plane.attachQueryContext(committed) {
+		return nil, ProgramStageFailure(ProgramSealStageAdmission), false
+	}
 	drafts, draftsOK := committed.bindMemberRows(plane)
 	if !draftsOK {
 		return nil, ProgramStageFailure(ProgramSealStageMemberBind), false
@@ -76,7 +79,7 @@ func (committed *CommittedProgram) seal(observations []ProgramObservationAdmissi
 	if observationFailure != observationSealFailureNone {
 		return nil, observationFailure.Failure(), false
 	}
-	runtime, assembled := assembleProgramRuntime(committed.state.schema, committed.graph, plane.carrier, plane.byKey, drafts, queries, observed)
+	runtime, assembled := assembleProgramRuntime(committed.state.schema, committed.graph, plane.carrier, plane.byKey, drafts, queries, observed, committed.contexts, committed.contextIndex, committed.contextLayout, committed.pointOwners, committed.pointTransitions, committed.artifactBacked)
 	if !assembled || runtime == nil {
 		return nil, ProgramStageFailure(ProgramSealStageProgramSeal), false
 	}
@@ -172,7 +175,10 @@ func (committed *CommittedProgram) bindObservationRows(plane *programPlane, obse
 	rows := make([]observationRow, 0, len(observations))
 	admitted := make(map[identity.ContentID]struct{}, len(observations))
 	for _, declared := range observations {
-		if declared.admit == nil || !declared.ID.Available() {
+		if declared.admit == nil || !declared.ID.Available() || !declared.Context.Available() || !declared.Mount.Available() {
+			return nil, observationSealFailureArguments
+		}
+		if !committed.ownsObservationContext(declared.Context, declared.Mount) {
 			return nil, observationSealFailureArguments
 		}
 		member, resolved := committed.MountedRuleMember(declared.Role, declared.Mount, declared.Point, declared.Occurrence)
@@ -186,7 +192,7 @@ func (committed *CommittedProgram) bindObservationRows(plane *programPlane, obse
 		if _, duplicate := admitted[declared.ID]; duplicate {
 			return nil, observationSealFailureDuplicate
 		}
-		row, ok := declared.admit.bindProgramObservation(plane, declared.ID, member.member, point)
+		row, ok := declared.admit.bindProgramObservation(plane, declared.ID, member.member, point, declared.Context)
 		if !ok || !row.valid() {
 			return nil, observationSealFailureFactor
 		}

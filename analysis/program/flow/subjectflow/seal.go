@@ -524,8 +524,8 @@ func (builder *sealBuilder) roots() error {
 func (builder *sealBuilder) valueDefinitions() error {
 	families := [...]keyspace.Family{
 		keyspace.FamilyNil, keyspace.FamilyBool, keyspace.FamilyInteger,
-		keyspace.FamilyFloat, keyspace.FamilyString, keyspace.FamilyLensExact,
-		keyspace.FamilyLensKey, keyspace.FamilyUnary, keyspace.FamilyBinary,
+		keyspace.FamilyFloat, keyspace.FamilyString, keyspace.FamilyUnary,
+		keyspace.FamilyBinary,
 		keyspace.FamilySelect, keyspace.FamilyFunction, keyspace.FamilyTable,
 		keyspace.FamilyValueClaim,
 	}
@@ -705,8 +705,11 @@ func (builder *sealBuilder) readsAndVarargs() error {
 		if sourceTerm == 0 {
 			return fmt.Errorf("%w: Read %v has no source", ErrMalformed, read)
 		}
-		if err := builder.addUse(sourceTerm, read, RoleOperand, 0); err != nil {
-			return err
+		sourceFamily := keyspace.TermFamily(sourceTerm)
+		if sourceFamily != keyspace.FamilyLensExact && sourceFamily != keyspace.FamilyLensKey {
+			if err := builder.addUse(sourceTerm, read, RoleOperand, 0); err != nil {
+				return err
+			}
 		}
 		if implicit {
 			// The cell/key spelling is structural, but implicit globals do not
@@ -827,6 +830,10 @@ func (builder *sealBuilder) assigns() error {
 				}
 			}
 			switch {
+			case keyspace.TermFamily(target) == keyspace.FamilyLensExact || keyspace.TermFamily(target) == keyspace.FamilyLensKey:
+				// A Lens is structural selector geometry. Heap/Index owns the
+				// store relation; SubjectFlow must not publish the selector itself
+				// as a mutable Value or alias candidate.
 			case position.Fixed != 0 && keyspace.TermFamily(target) == keyspace.FamilyCell:
 				if err := builder.add(EventAlias, RoleWrite, uint32(writeIndex), subjectKindForTerm(position.Fixed), position.Fixed, SubjectCell, target, write); err != nil {
 					return err

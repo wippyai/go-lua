@@ -12,6 +12,7 @@ import (
 	linkproject "github.com/wippyai/go-lua/analysis/program/link/project"
 	"github.com/wippyai/go-lua/analysis/program/target/compiler"
 	"github.com/wippyai/go-lua/analysis/program/target/declaration"
+	"github.com/wippyai/go-lua/analysis/schema/programmount"
 	"github.com/wippyai/go-lua/domain/composite"
 	heapdomain "github.com/wippyai/go-lua/domain/heap"
 	source "github.com/wippyai/go-lua/domain/heap/allocation/internal/source"
@@ -438,19 +439,19 @@ func sourceFixture(t testing.TB, text string) (heapdomain.Schema, *valuedomain.S
 	return heap, values, linked
 }
 
-func sourceHeapMounts(t testing.TB, linked *link.Link, compilation composite.Compilation) []heapdomain.ArtifactMount {
+func sourceHeapMounts(t testing.TB, linked *link.Link, compilation composite.Compilation) []programmount.MountedArtifact {
 	t.Helper()
-	heapMounts, _ := sourceArtifactMounts(t, linked, compilation)
+	heapMounts, _ := sourceMountedArtifacts(t, linked, compilation)
 	return heapMounts
 }
 
-func sourceValueMounts(t testing.TB, linked *link.Link, compilation composite.Compilation) []valuedomain.ArtifactMount {
+func sourceValueMounts(t testing.TB, linked *link.Link, compilation composite.Compilation) []programmount.MountedArtifact {
 	t.Helper()
-	_, valueMounts := sourceArtifactMounts(t, linked, compilation)
+	_, valueMounts := sourceMountedArtifacts(t, linked, compilation)
 	return valueMounts
 }
 
-func sourceArtifactMounts(t testing.TB, linked *link.Link, compilation composite.Compilation) ([]heapdomain.ArtifactMount, []valuedomain.ArtifactMount) {
+func sourceMountedArtifacts(t testing.TB, linked *link.Link, compilation composite.Compilation) ([]programmount.MountedArtifact, []programmount.MountedArtifact) {
 	t.Helper()
 	executionSchemaID := compilation.ExecutionSchemaID()
 	issuance, issuanceOK := composite.ArtifactIssuanceDirectory(compilation)
@@ -458,13 +459,13 @@ func sourceArtifactMounts(t testing.TB, linked *link.Link, compilation composite
 		t.Fatal("source artifact receipt")
 	}
 	projectMounts := linked.Project().Mounts()
-	heapMounts := make([]heapdomain.ArtifactMount, projectMounts.Count())
-	valueMounts := make([]valuedomain.ArtifactMount, projectMounts.Count())
+	heapMounts := make([]programmount.MountedArtifact, projectMounts.Count())
+	valueMounts := make([]programmount.MountedArtifact, projectMounts.Count())
 	for index := 0; index < projectMounts.Count(); index++ {
 		shard, shardOK := projectMounts.At(index)
 		program, programOK := projectMounts.Program(shard)
 		module, moduleOK := linked.Project().ModuleKey(shard)
-		programID, programIDOK := projectMounts.ProgramID(shard)
+		_, programIDOK := projectMounts.ProgramID(shard)
 		if !shardOK || !programOK || program == nil || !moduleOK || !programIDOK {
 			t.Fatal("source artifact mount")
 		}
@@ -473,8 +474,8 @@ func sourceArtifactMounts(t testing.TB, linked *link.Link, compilation composite
 			t.Fatalf("source artifact: %v", failure)
 		}
 		var heapOK, valueOK bool
-		heapMounts[index], heapOK = heapdomain.NewArtifactMount(snapshottest.MustLower(t, artifact), module, programID)
-		valueMounts[index], valueOK = valuedomain.NewArtifactMount(snapshottest.MustLower(t, artifact), module, programID)
+		heapMounts[index], heapOK = programmount.MountedArtifactFromSnapshot(snapshottest.MustLower(t, artifact), module)
+		valueMounts[index], valueOK = programmount.MountedArtifactFromSnapshot(snapshottest.MustLower(t, artifact), module)
 		if !heapOK || !valueOK {
 			t.Fatal("source artifact mount receipt")
 		}

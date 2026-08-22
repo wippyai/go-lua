@@ -29,10 +29,11 @@ func TestRouteSetProvenNilSubjectRoutesNothing(t *testing.T) {
 	}
 }
 
-// TestRouteSetUnknownSubjectWidensEveryAllocationRoot pins the unknown
-// reading. An actual tail may populate the subject formal, so the rule may not
-// conclude containment for any root: every allocation root widens to Unknown.
-func TestRouteSetUnknownSubjectWidensEveryAllocationRoot(t *testing.T) {
+// TestRouteSetOpenSubjectBroadcastsKnownRequirement pins the independent
+// identity/policy readings. An actual tail may populate the subject formal, so
+// every allocation root is possible; the authenticated Send row still requires
+// SharedHeap at each root rather than changing the policy to Unknown.
+func TestRouteSetOpenSubjectBroadcastsKnownRequirement(t *testing.T) {
 	fixture := newPublicationEscapeFixture(t)
 	prepared := &preparedBatch{
 		rows:     []publicationRow{{id: contentID(52), requirement: placementdomain.SharedHeap, operation: 1, subjectOpen: true}},
@@ -51,16 +52,16 @@ func TestRouteSetUnknownSubjectWidensEveryAllocationRoot(t *testing.T) {
 		}
 	}
 	if allocationCount == 0 || routes.len() != allocationCount {
-		t.Fatalf("unknown subject routes=%d, allocation roots=%d", routes.len(), allocationCount)
+		t.Fatalf("open subject routes=%d, allocation roots=%d", routes.len(), allocationCount)
 	}
 	for index := 0; index < routes.len(); index++ {
 		route, routeOK := routes.at(index)
-		if !routeOK || !route.unknown || route.required != placementdomain.Unknown {
-			t.Fatalf("unknown subject route=%#v, want Unknown", route)
+		if !routeOK || route.unknown || route.required != placementdomain.SharedHeap {
+			t.Fatalf("open subject route=%#v, want SharedHeap identity broadcast", route)
 		}
-		placement, applyOK := applyRoute(route, placementdomain.Bottom)
-		if !applyOK || placement != placementdomain.Unknown {
-			t.Fatalf("unknown subject applied placement=%v/%t, want Unknown", placement, applyOK)
+		placement, applyOK := applyRoute(route, placementdomain.Stack)
+		if !applyOK || placement != placementdomain.SharedHeap {
+			t.Fatalf("open subject applied placement=%v/%t, want SharedHeap", placement, applyOK)
 		}
 	}
 }

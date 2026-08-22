@@ -39,6 +39,40 @@ func (c *Component) HostRelationID() (identity.ContentID, bool) {
 	return c.authority.hostRelation, true
 }
 
+// TargetModuleForImport resolves one exact mounted sibling import through the
+// sealed Module composition relation. The caller supplies the source module
+// key and the Program-issued Import term; no module name/path lookup is
+// reconstructed here. This is the narrow handoff consumed by Value when a
+// require result crosses the module-cache boundary.
+func (c *Component) TargetModuleForImport(sourceModule identity.ContentID, importTerm keyspace.Term) (identity.ContentID, bool) {
+	if !live(c) || !sourceModule.Available() || keyspace.TermFamily(importTerm) != keyspace.FamilyImport || keyspace.TermOrdinal(importTerm) == 0 {
+		return identity.ContentID{}, false
+	}
+	entries, entriesOK := c.compositionEntries()
+	if !entriesOK {
+		return identity.ContentID{}, false
+	}
+	var target identity.ContentID
+	for _, entry := range entries {
+		module, moduleOK := c.authority.project.ModuleKey(entry.sourceShard)
+		root, rootOK := c.root(entry.toRootOrdinal)
+		targetModule, targetOK := c.authority.project.ModuleKey(root.shard)
+		if !moduleOK || !targetOK || !module.Available() || !targetModule.Available() || !rootOK {
+			return identity.ContentID{}, false
+		}
+		if module != sourceModule || entry.importTerm != importTerm {
+			continue
+		}
+		if target.Available() {
+			// One authored Import can have only one cache target. Refuse an
+			// ambiguous composition rather than widening the exported value.
+			return identity.ContentID{}, false
+		}
+		target = targetModule
+	}
+	return target, target.Available()
+}
+
 // compositionEntries is the private handoff from Module authority to the
 // publication phase.  It is deliberately not a public module query: resolved
 // rows belong to the general immutable Snapshot, while this relation is only

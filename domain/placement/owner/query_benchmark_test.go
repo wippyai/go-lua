@@ -53,6 +53,25 @@ func BenchmarkPlacementSummaryEncoding(b *testing.B) {
 	if !foldOK || observation.Rows == 0 {
 		b.Fatal("Placement summary fixture fold")
 	}
+	// The public codec refuses to turn an untouched zero evidence row into an
+	// unauthenticated Unknown. Publish the benchmark's explicit optional proof
+	// state before timing the wire projection.
+	for index := 0; index < schema.DenseKeyCount(); index++ {
+		key, keyOK := schema.KeyAt(index)
+		if !keyOK || key.Kind() != heapdomain.RootAllocation {
+			continue
+		}
+		id, idOK := key.ContentID()
+		if !idOK {
+			b.Fatal("Placement summary allocation identity")
+		}
+		observation, foldOK = placementdomain.WithPlacementSummaryEvidence(schema, observation, key, placementdomain.AllocationEvidence{
+			OwnerIdentity: id, HasOwnerIdentity: true, DeepFrozen: placementdomain.EvidenceUnknown,
+		})
+		if !foldOK {
+			b.Fatal("Placement summary evidence publication")
+		}
+	}
 
 	b.ReportAllocs()
 	b.ResetTimer()
@@ -76,15 +95,11 @@ func placementSummaryBenchmarkInputs(b testing.TB) (placementdomain.Schema, []pl
 		if !keyOK {
 			b.Fatalf("Placement summary key %d", index)
 		}
-		switch key.Kind() {
-		case heapdomain.RootBoot:
-			values[index], present[index] = placementdomain.Bottom, true
-		case heapdomain.RootAllocation:
-			values[index], present[index] = placementdomain.OwnedHeap, true
-			allocations++
-		default:
+		if key.Kind() != heapdomain.RootAllocation {
 			b.Fatalf("Placement summary key %d has unsupported kind %v", index, key.Kind())
 		}
+		values[index], present[index] = placementdomain.OwnedHeap, true
+		allocations++
 	}
 	if allocations == 0 {
 		b.Fatal("Placement summary fixture has no allocation roots")

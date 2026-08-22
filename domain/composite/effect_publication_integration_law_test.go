@@ -20,7 +20,7 @@ return identity(root)
 	bound := materializerBinding(t, record)
 	committed, _ := queryCanonicalProgram(t, record, bound)
 
-	observations, observationsOK := bound.EffectPublicationObservations(committed, record.Artifacts)
+	observations, observationsOK := bound.EffectPublicationObservations(committed, record.Artifacts, record.Source.ContextDirectory())
 	if !observationsOK || len(observations) != 0 {
 		t.Fatalf("missing authored publication descriptor inferred observations: %d/%t", len(observations), observationsOK)
 	}
@@ -28,7 +28,7 @@ return identity(root)
 	if !sealed || solver == nil {
 		t.Fatalf("seal descriptor-free effect inventory: %v", failure)
 	}
-	if _, observationsOK := bound.EffectPublicationObservations(committed, nil); observationsOK {
+	if _, observationsOK := bound.EffectPublicationObservations(committed, nil, record.Source.ContextDirectory()); observationsOK {
 		t.Fatal("publication observation enumeration accepted a missing mounted denominator")
 	}
 }

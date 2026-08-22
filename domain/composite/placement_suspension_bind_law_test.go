@@ -31,7 +31,7 @@ func TestPlacementSuspensionBindHotAdmitsAnEmptyMountedCatalog(t *testing.T) {
 		if !cellOK || !cell.Available() || !capabilityOK || !capability.Link() {
 			t.Fatalf("%q did not publish its sealed canonical Link cell and capability", key)
 		}
-		catalog, catalogOK := rules.LinkCatalogByKey(key)
+		catalog, catalogOK := rules.OccurrenceCatalogByKey(key)
 		if !catalogOK || catalog == nil || catalog.Count() != 0 {
 			count := -1
 			if catalog != nil {

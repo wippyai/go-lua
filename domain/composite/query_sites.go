@@ -4,13 +4,14 @@ import (
 	"github.com/wippyai/go-lua/analysis/engine"
 	"github.com/wippyai/go-lua/analysis/identity"
 	"github.com/wippyai/go-lua/analysis/schema"
+	"github.com/wippyai/go-lua/analysis/schema/executioncontext"
 	programschema "github.com/wippyai/go-lua/analysis/schema/program"
 	programcatalog "github.com/wippyai/go-lua/analysis/schema/program/catalog"
 	"github.com/wippyai/go-lua/analysis/schema/programmount"
 	"github.com/wippyai/go-lua/analysis/schema/query"
 )
 
-const querySiteFormula = "analysis/artifact-query/v1"
+const querySiteFormula = "analysis/artifact-query/v2"
 
 // QuerySite is one selected-point query identity derived from sealed ingress
 // bodies. Result reads Snapshot by the publication key attach captures for
@@ -18,6 +19,7 @@ const querySiteFormula = "analysis/artifact-query/v1"
 type QuerySite struct {
 	ID         identity.ContentID
 	Mount      identity.ContentID
+	Context    executioncontext.Context
 	Point      identity.ContentID
 	Family     schema.Key
 	Authority  schema.Key
@@ -72,20 +74,38 @@ func (publication QueryPublication) Contract() engine.CanonicalResultContract {
 
 func (publication QueryPublication) FamilyOrdinal() uint32 { return publication.ordinal }
 
-// SelectedQuerySites derives mount-qualified query identities from semantic
-// occurrences in selected sealed bodies. Non-callable roots are always
-// selected. A callable body is selected only when a sealed DirectFunctions
-// join from an already-selected body names it.
-func SelectedQuerySites(compilation Compilation, mounts []programmount.MountedArtifact) ([]QuerySite, bool) {
+// SelectedQuerySites derives mount- and context-qualified query identities
+// from semantic occurrences in selected sealed bodies. Non-callable roots are
+// always selected. A callable body is selected only when a sealed
+// DirectFunctions join from an already-selected body names it. Contexts are
+// expanded here, at the owner boundary; the engine receives one singular
+// context on every admitted query row.
+func SelectedQuerySites(compilation Compilation, mounts []programmount.MountedArtifact, contexts executioncontext.Directory) ([]QuerySite, bool) {
 	state := compilation.catalog
 	families, familiesOK := selectedPointQueryIssuance(state)
-	if !familiesOK || len(mounts) == 0 {
+	if !familiesOK || len(mounts) == 0 || !contexts.Available() {
 		return nil, false
 	}
 	sites := make([]QuerySite, 0)
 	expected := 0
 	for _, mount := range mounts {
 		if !mount.Available() {
+			return nil, false
+		}
+		eligibleContexts := make([]executioncontext.Context, 0, contexts.ContextCount())
+		for contextIndex := 0; contextIndex < contexts.ContextCount(); contextIndex++ {
+			context, contextOK := contexts.ContextAt(contextIndex)
+			if !contextOK || !context.Available() {
+				return nil, false
+			}
+			if context.ModuleKey() == mount.ModuleKey {
+				eligibleContexts = append(eligibleContexts, context)
+			}
+		}
+		// A mount with no exact context is not an admitted query lane. In
+		// particular, never synthesize a default context or borrow one from a
+		// different module.
+		if len(eligibleContexts) == 0 {
 			return nil, false
 		}
 		program := mount.Program
@@ -262,25 +282,31 @@ func SelectedQuerySites(compilation Compilation, mounts []programmount.MountedAr
 				observed[entry] = struct{}{}
 			}
 		}
-		for index := 0; index < pointCount; index++ {
-			point, ok := programschema.PointFamily().At(&program.Frozen, catalog, index)
-			if !ok || !point.ID().Available() {
+		for _, context := range eligibleContexts {
+			contextID := context.ID()
+			if !contextID.Available() {
 				return nil, false
 			}
-			pointID := point.ID()
-			if _, selected := observed[pointID]; !selected {
-				continue
-			}
-			expected++
-			for _, family := range families {
-				id, idOK := identity.DeriveContentID(querySiteFormula, mount.ModuleKey[:], pointID[:], []byte(family.Family))
-				if !idOK {
+			for index := 0; index < pointCount; index++ {
+				point, ok := programschema.PointFamily().At(&program.Frozen, catalog, index)
+				if !ok || !point.ID().Available() {
 					return nil, false
 				}
-				sites = append(sites, QuerySite{
-					ID: id, Mount: mount.ModuleKey, Point: pointID,
-					Family: family.Family, Authority: family.Authority, Projection: family.Projection,
-				})
+				pointID := point.ID()
+				if _, selected := observed[pointID]; !selected {
+					continue
+				}
+				expected++
+				for _, family := range families {
+					id, idOK := identity.DeriveContentID(querySiteFormula, mount.ModuleKey[:], contextID[:], pointID[:], []byte(family.Family))
+					if !idOK {
+						return nil, false
+					}
+					sites = append(sites, QuerySite{
+						ID: id, Mount: mount.ModuleKey, Context: context, Point: pointID,
+						Family: family.Family, Authority: family.Authority, Projection: family.Projection,
+					})
+				}
 			}
 		}
 	}
@@ -315,7 +341,10 @@ func (bound *ProgramBinding) QueryAdmissions(sites []QuerySite) ([]engine.Progra
 	}
 	rows := make([]engine.ProgramQueryAdmission, 0, len(sites))
 	for _, site := range sites {
-		admitted, ok := bound.QueryAdmission(site.ID, site.Mount, site.Point, site.Family)
+		if !site.Context.Available() || site.Context.ModuleKey() != site.Mount {
+			return nil, false
+		}
+		admitted, ok := bound.QueryAdmission(site.ID, site.Mount, site.Point, site.Family, site.Context)
 		if !ok {
 			return nil, false
 		}
@@ -333,6 +362,9 @@ func (bound *ProgramBinding) QueryPublications(committed *engine.CommittedProgra
 	}
 	publications := make([]QueryPublication, 0, len(sites))
 	for _, site := range sites {
+		if !site.Context.Available() || site.Context.ModuleKey() != site.Mount {
+			return nil, false
+		}
 		position, positioned := queryPositionForFamily(bound.catalog, site.Family)
 		if !positioned || position < 0 || bound.catalog == nil || position >= len(bound.catalog.queries) || position >= len(bound.catalog.queryContributors) {
 			return nil, false
@@ -348,6 +380,9 @@ func (bound *ProgramBinding) QueryPublications(committed *engine.CommittedProgra
 		}
 		query, resolved := committed.Query(site.ID)
 		if !resolved {
+			return nil, false
+		}
+		if query.ContextID() != site.Context.ID() {
 			return nil, false
 		}
 		key, keyed := query.PublicationKey()

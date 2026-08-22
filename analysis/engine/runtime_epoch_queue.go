@@ -3,6 +3,7 @@
 package engine
 
 import (
+	"github.com/wippyai/go-lua/analysis/engine/internal/contextfiber"
 	"github.com/wippyai/go-lua/analysis/engine/internal/equation"
 	"github.com/wippyai/go-lua/analysis/engine/internal/schedule"
 )
@@ -11,7 +12,7 @@ import (
 // no longer be reused. The row is deduplicated: a producer can be woken many
 // times before its Point gets another opportunity to prove its complete RHS.
 func (epoch *executorEpoch) markPostfixDirty(point int) bool {
-	if epoch == nil || epoch.runtime == nil || point < 0 || point >= len(epoch.postfixDirty) || point >= len(epoch.runtime.activePoints) || !epoch.runtime.activePoints[point] {
+	if epoch == nil || epoch.runtime == nil || point < 0 || point >= len(epoch.postfixDirty) || !epoch.activeState(point) {
 		return false
 	}
 	if epoch.postfixDirty[point] {
@@ -51,6 +52,26 @@ func (epoch *executorEpoch) markStructuralPoint(point equation.Point) bool {
 	}
 	epoch.structuralDirty[pointIndex] = true
 	return epoch.markPostfixDirty(pointIndex) && epoch.enqueuePoint(pointIndex)
+}
+
+// markStructuralState is the compact-state counterpart used by the mounted
+// acyclic vertical. It proves the underlying graph Point once, but records the
+// wake on the exact StateOrdinal row so two contexts cannot share a structural
+// dirty bit. Source rows are resolved later from the retained execution plan.
+func (epoch *executorEpoch) markStructuralState(state int, point equation.Point) bool {
+	if epoch == nil || epoch.runtime == nil || epoch.runtime.graph == nil || !point.Available() || !epoch.activeState(state) || state < 0 || state >= len(epoch.structuralDirty) {
+		return false
+	}
+	pointIndex, indexed := epoch.runtime.graph.PointIndex(point)
+	if !indexed || pointIndex < 0 || pointIndex >= epoch.runtime.graph.PointCount() {
+		return false
+	}
+	contextIncoming := state >= 0 && state < len(epoch.runtime.contextTransportIncoming) && len(epoch.runtime.contextTransportIncoming[state]) != 0
+	if len(epoch.runtime.environmentIncoming[pointIndex]) == 0 && ((!epoch.runtime.artifactBacked && len(epoch.runtime.factorIncoming[pointIndex]) == 0) || (epoch.runtime.artifactBacked && (state < 0 || state >= len(epoch.runtime.stateFactorIncoming) || len(epoch.runtime.stateFactorIncoming[state]) == 0) && !contextIncoming)) {
+		return true
+	}
+	epoch.structuralDirty[state] = true
+	return epoch.markPostfixDirty(state) && epoch.enqueuePoint(state)
 }
 
 // markStructuralSuccessors applies the same Point wake protocol to every
@@ -106,6 +127,135 @@ func (epoch *executorEpoch) markStructuralSuccessors(source equation.Point) bool
 		}
 		if !epoch.markDirty(groupIndex) {
 			return false
+		}
+	}
+	return true
+}
+
+// markStructuralSuccessorsState is the compact acyclic counterpart. Every
+// graph edge is resolved in the source state's context through executionPlan;
+// no graph Point row is used as a mutable target address.
+func (epoch *executorEpoch) markStructuralSuccessorsState(sourceState int, source equation.Point) bool {
+	if epoch == nil || epoch.runtime == nil || !epoch.runtime.artifactBacked || epoch.runtime.graph == nil || !epoch.activeState(sourceState) || !source.Available() {
+		return false
+	}
+	graph := epoch.runtime.graph
+	_, sourcePointIndex, sourceContext, sourceOK := epoch.runtime.graphPointAtState(sourceState)
+	if !sourceOK {
+		return false
+	}
+	providedSourceIndex, providedSourceOK := graph.PointIndex(source)
+	if !providedSourceOK || providedSourceIndex != sourcePointIndex {
+		return false
+	}
+	for index := 0; index < graph.EnvironmentOutgoingCount(source); index++ {
+		edge, ok := graph.EnvironmentOutgoingAt(source, index)
+		if !ok {
+			return false
+		}
+		if edge.TransportOnly() {
+			continue
+		}
+		targetIndex, indexed := graph.PointIndex(edge.Target())
+		if !indexed {
+			return false
+		}
+		targetStates, stateOK := epoch.runtime.stateRowsForGraphPoint(sourceState, targetIndex)
+		if !stateOK {
+			return false
+		}
+		for _, targetState := range targetStates {
+			if epoch.runtime.activeState(targetState) && !epoch.markStructuralState(targetState, edge.Target()) {
+				return false
+			}
+		}
+	}
+	if sourceState < 0 || sourceState >= len(epoch.runtime.stateFactorOutgoing) {
+		return false
+	}
+	for _, rowIndex := range epoch.runtime.stateFactorOutgoing[sourceState] {
+		if rowIndex < 0 || rowIndex >= len(epoch.runtime.stateFactorRows) {
+			return false
+		}
+		row := epoch.runtime.stateFactorRows[rowIndex]
+		if row.edge < 0 || row.edge >= len(epoch.runtime.factorEdges) || row.source != sourceState {
+			return false
+		}
+		edge := epoch.runtime.factorEdges[row.edge]
+		target, targetOK := graph.PointAt(schedule.Node(edge.target))
+		if !targetOK || row.target < 0 || row.target >= len(epoch.points) {
+			return false
+		}
+		if epoch.runtime.activeState(row.target) && !epoch.markStructuralState(row.target, target) {
+			return false
+		}
+	}
+	// Context transports carry an exact source PointState to one authenticated
+	// target StateOrdinal. Their wake is a direct state edge; no graph-point
+	// fan-out or module/context inference is allowed.
+	if sourceState >= 0 && sourceState < len(epoch.runtime.contextTransportOutgoing) {
+		for _, transportIndex := range epoch.runtime.contextTransportOutgoing[sourceState] {
+			if transportIndex < 0 || transportIndex >= len(epoch.runtime.contextTransports) {
+				return false
+			}
+			transport := epoch.runtime.contextTransports[transportIndex]
+			if transport.from != sourceState || transport.sourcePoint != sourcePointIndex || transport.sourceContext != sourceContext || transport.to < 0 || transport.to >= len(epoch.points) {
+				return false
+			}
+			mappedSource, mappedOK := epoch.runtime.contextTransportSourceState(transport.to, transport.sourcePoint)
+			if !mappedOK || mappedSource != transport.from {
+				return false
+			}
+			target, targetOK := graph.PointAt(schedule.Node(transport.targetPoint))
+			_, targetPointIndex, targetContext, targetStateOK := epoch.runtime.graphPointAtState(transport.to)
+			if !targetOK || !targetStateOK || targetPointIndex != transport.targetPoint || targetContext != transport.targetContext || epoch.runtime.activeState(transport.to) && !epoch.markStructuralState(transport.to, target) {
+				return false
+			}
+		}
+	}
+	// Ordinary Group inputs are semantic dependencies too. The singular Graph
+	// owns their consumer incidence, while the Link plan supplies the exact
+	// contextual output row to wake. Structural environment/factor edges above
+	// cannot substitute for this relation: omitting it lets a mounted summary
+	// consumer retain a clean candidate after its input StateOrdinal changes.
+	for index := 0; index < graph.ConsumerCount(source); index++ {
+		group, ok := graph.ConsumerAt(source, index)
+		if !ok {
+			return false
+		}
+		groupIndex, indexed := graph.GroupIndex(group)
+		outputIndex, outputIndexed := graph.PointIndex(group.Output())
+		if !indexed || !outputIndexed || groupIndex < 0 || groupIndex >= len(epoch.runtime.producers) {
+			return false
+		}
+		targetStates, stateOK := epoch.runtime.stateRowsForGraphPoint(sourceState, outputIndex)
+		if !stateOK {
+			return false
+		}
+		for _, targetState := range targetStates {
+			if epoch.runtime.activeState(targetState) && !epoch.markDirtyIfCleanForState(targetState, groupIndex) {
+				return false
+			}
+		}
+	}
+	for index := 0; index < graph.EnvironmentGroupCount(source); index++ {
+		group, ok := graph.EnvironmentGroupAt(source, index)
+		if !ok {
+			return false
+		}
+		groupIndex, indexed := graph.GroupIndex(group)
+		outputIndex, outputIndexed := graph.PointIndex(group.Output())
+		if !indexed || !outputIndexed || groupIndex < 0 || groupIndex >= len(epoch.runtime.producers) {
+			return false
+		}
+		targetStates, stateOK := epoch.runtime.stateRowsForGraphPoint(sourceState, outputIndex)
+		if !stateOK {
+			return false
+		}
+		for _, targetState := range targetStates {
+			if epoch.runtime.activeState(targetState) && !epoch.markDirtyForState(targetState, groupIndex) {
+				return false
+			}
 		}
 	}
 	return true
@@ -181,25 +331,66 @@ func (epoch *executorEpoch) rememberRegionPostfix(region int) bool {
 	return true
 }
 
+// markDirtyForState advances one compact producer occurrence. It is the only
+// artifact cache wake path: the static graph Group identifies metadata, while
+// the retained plan identifies the state row that owns the mutable candidate.
+func (epoch *executorEpoch) markDirtyForState(stateIndex, group int) bool {
+	if epoch == nil || epoch.runtime == nil || epoch.canceled() || !epoch.runtime.artifactBacked || stateIndex < 0 || !epoch.activeState(stateIndex) || group < 0 {
+		return false
+	}
+	state, ok := epoch.producerCache(contextfiber.StateOrdinal(stateIndex), group)
+	if !ok {
+		return false
+	}
+	if state.generation == ^uint64(0) {
+		return false
+	}
+	clean := state.applied == state.generation
+	if clean && !epoch.updateCandidatesPending(stateIndex, 1) {
+		return false
+	}
+	state.generation++
+	return epoch.markPostfixDirty(stateIndex) && epoch.enqueuePoint(stateIndex)
+}
+
 func (epoch *executorEpoch) markDirty(group int) bool {
 	if epoch == nil || epoch.runtime == nil || epoch.canceled() || group < 0 || group >= len(epoch.producers) {
 		return false
 	}
 	producer := &epoch.runtime.producers[group]
 	point, pointOK := epoch.runtime.graph.PointIndex(producer.group.Output())
-	if !pointOK || point < 0 || point >= len(epoch.runtime.activePoints) || !epoch.runtime.activePoints[point] {
+	if !pointOK || point < 0 || point >= epoch.runtime.graph.PointCount() {
 		return false
 	}
-	state := &epoch.producers[group]
+	stateIndex := point
+	var state *producerEpoch
+	if epoch.runtime.artifactBacked {
+		if epoch.currentState < 0 {
+			return false
+		}
+		stateIndex, pointOK = epoch.runtime.stateForGraphPoint(epoch.currentState, point)
+		if !pointOK {
+			return false
+		}
+		return epoch.markDirtyForState(stateIndex, group)
+	} else {
+		if !epoch.activeState(stateIndex) {
+			return false
+		}
+		state = &epoch.producers[group]
+	}
+	if !epoch.activeState(stateIndex) {
+		return false
+	}
 	clean := state.applied == state.generation
 	if state.generation == ^uint64(0) {
 		return false
 	}
-	if clean && !epoch.updateCandidatesPending(point, 1) {
+	if clean && !epoch.updateCandidatesPending(stateIndex, 1) {
 		return false
 	}
 	state.generation++
-	return epoch.markPostfixDirty(point) && epoch.enqueuePoint(point)
+	return epoch.markPostfixDirty(stateIndex) && epoch.enqueuePoint(stateIndex)
 }
 
 // markDirtyIfClean is used for published input-identity propagation. A pending
@@ -211,15 +402,42 @@ func (epoch *executorEpoch) markDirtyIfClean(group int) bool {
 		return false
 	}
 	state := &epoch.producers[group]
+	if epoch.runtime != nil && epoch.runtime.artifactBacked {
+		if epoch.currentState < 0 {
+			return false
+		}
+		return epoch.markDirtyIfCleanForState(epoch.currentState, group)
+	}
 	if state.applied != state.generation {
 		return true
 	}
 	return epoch.markDirty(group)
 }
 
+// markDirtyIfCleanForState is the contextual form of the published-input
+// deduplication law. Multiple input positions may name the same source, but a
+// producer occurrence already pending in this exact StateOrdinal will read
+// the newest point value and must not acquire a redundant generation.
+func (epoch *executorEpoch) markDirtyIfCleanForState(stateIndex, group int) bool {
+	if epoch == nil || epoch.runtime == nil || !epoch.runtime.artifactBacked || stateIndex < 0 || !epoch.activeState(stateIndex) || group < 0 {
+		return false
+	}
+	state, ok := epoch.producerCache(contextfiber.StateOrdinal(stateIndex), group)
+	if !ok {
+		return false
+	}
+	if state.applied != state.generation {
+		return true
+	}
+	return epoch.markDirtyForState(stateIndex, group)
+}
+
 func (epoch *executorEpoch) markPublishedInputConsumers(source equation.Point) bool {
 	if epoch == nil || epoch.runtime == nil || epoch.runtime.graph == nil || !source.Available() {
 		return false
+	}
+	if epoch.runtime.artifactBacked {
+		return true
 	}
 	graph := epoch.runtime.graph
 	for index := 0; index < graph.ConsumerCount(source); index++ {
@@ -245,7 +463,7 @@ func (epoch *executorEpoch) markPublishedInputConsumers(source equation.Point) b
 // underflow fences transactional: a rejected transition cannot leave one
 // ancestor observing a different count from another.
 func (epoch *executorEpoch) updateCandidatesPending(point, delta int) bool {
-	if epoch == nil || epoch.runtime == nil || point < 0 || point >= len(epoch.runtime.pointRegion) || point >= len(epoch.runtime.activePoints) || !epoch.runtime.activePoints[point] || delta != 1 && delta != -1 || len(epoch.candidatesPending) != len(epoch.runtime.regions) {
+	if epoch == nil || epoch.runtime == nil || point < 0 || point >= len(epoch.runtime.pointRegion) || !epoch.activeState(point) || delta != 1 && delta != -1 || len(epoch.candidatesPending) != len(epoch.runtime.regions) {
 		return false
 	}
 	region := epoch.runtime.pointRegion[point]
@@ -287,7 +505,7 @@ func (epoch *executorEpoch) activeRegion(region int) bool {
 }
 
 func (epoch *executorEpoch) updateNested(point int, delta int) bool {
-	if epoch == nil || epoch.runtime == nil || point < 0 || point >= len(epoch.runtime.pointRegion) || point >= len(epoch.runtime.activePoints) || !epoch.runtime.activePoints[point] || delta != 1 && delta != -1 || len(epoch.nested) != len(epoch.runtime.regions) {
+	if epoch == nil || epoch.runtime == nil || point < 0 || point >= len(epoch.runtime.pointRegion) || !epoch.activeState(point) || delta != 1 && delta != -1 || len(epoch.nested) != len(epoch.runtime.regions) {
 		return false
 	}
 	region := epoch.runtime.pointRegion[point]
@@ -320,7 +538,7 @@ func (epoch *executorEpoch) updateNested(point int, delta int) bool {
 }
 
 func (epoch *executorEpoch) enqueuePoint(point int) bool {
-	if epoch == nil || epoch.runtime == nil || point < 0 || point >= len(epoch.queue.ready) || point >= len(epoch.runtime.activePoints) || !epoch.runtime.activePoints[point] {
+	if epoch == nil || epoch.runtime == nil || point < 0 || point >= len(epoch.queue.ready) || !epoch.activeState(point) {
 		return false
 	}
 	if epoch.queue.ready[point] {
@@ -342,7 +560,7 @@ func (epoch *executorEpoch) enqueuePoint(point int) bool {
 }
 
 func (epoch *executorEpoch) takePoint(point int) bool {
-	if epoch == nil || epoch.runtime == nil || point < 0 || point >= len(epoch.queue.ready) || point >= len(epoch.runtime.activePoints) || !epoch.runtime.activePoints[point] || !epoch.queue.ready[point] {
+	if epoch == nil || epoch.runtime == nil || point < 0 || point >= len(epoch.queue.ready) || !epoch.activeState(point) || !epoch.queue.ready[point] {
 		return false
 	}
 	// Mirror enqueuePoint: a malformed counter must leave the ready bit set so

@@ -6,6 +6,7 @@ import (
 
 	"github.com/wippyai/go-lua/analysis/identity"
 	"github.com/wippyai/go-lua/analysis/schema"
+	issuanceschema "github.com/wippyai/go-lua/analysis/schema/issuance"
 	"github.com/wippyai/go-lua/analysis/schema/structure"
 	"github.com/wippyai/go-lua/analysis/schema/vocabulary"
 	"github.com/wippyai/go-lua/internal/framing"
@@ -38,7 +39,7 @@ const lawRuleCount = 20
 // lawIssuance is one admissible subscription. Every term names a member the
 // stand-in structural surface declares.
 func lawIssuance() Issuance {
-	return Issuance{Occurrence: lawOccurrenceKey, Form: lawFormKey, Input: lawInputKey, Stage: lawStageKey, Requirement: lawRequirementKey}
+	return Issuance{Occurrence: lawOccurrenceKey, Form: lawFormKey, Requirement: lawRequirementKey}
 }
 
 type lawPrincipals struct{ present bool }
@@ -162,14 +163,7 @@ type lawStructureSurface struct{}
 func (lawStructureSurface) Kind() schema.SurfaceKind { return schema.SurfaceKindStructure }
 
 func (lawStructureSurface) Entries() []schema.Entry {
-	specs := []structure.Spec{
-		{Key: lawOccurrenceKey, Category: structure.CategoryOccurrenceKind, Ordinal: 1, Spelling: "law-source", Accepted: true},
-		{Key: lawFormKey, Category: structure.CategoryIssuanceForm, Ordinal: 1, Spelling: "law-form", Accepted: true},
-		{Key: lawInputKey, Category: structure.CategoryIssuanceInput, Ordinal: 1, Spelling: "law-input", Accepted: true},
-		{Key: lawStageKey, Category: structure.CategoryIssuanceStage, Ordinal: 1, Spelling: "law-stage", Accepted: true},
-		{Key: lawRequirementKey, Category: structure.CategoryIssuanceRequirement, Ordinal: 1, Spelling: "law-requirement", Accepted: true},
-		{Key: lawNarrowRequirementKey, Category: structure.CategoryIssuanceRequirement, Ordinal: 2, Spelling: "law-narrow-requirement", Accepted: true},
-	}
+	specs := []structure.Spec{}
 	// The law table's rules are identified by declared roles, so the stand-in
 	// carries one row per rule plus the operand form one law shifts a rule onto.
 	roles := make([]string, 0, lawRuleCount+1)
@@ -204,9 +198,60 @@ func lawSurfaceFor(kind schema.SurfaceKind) schema.Surface {
 		return lawStructureSurface{}
 	case schema.SurfaceKindAxis:
 		return lawSiblingSurface{kind: kind, keys: []schema.Key{lawAxisKey}}
+	case schema.SurfaceKindIssuance:
+		return issuanceschema.NewSurface(lawIssuanceEntries())
 	default:
 		return lawSiblingSurface{kind: kind, keys: []schema.Key{"law-sibling"}}
 	}
+}
+
+func lawIssuanceEntries() []*issuanceschema.Entry {
+	specs := []issuanceschema.Spec{
+		{Key: issuanceschema.TypePoint, Kind: issuanceschema.KindType, Ordinal: 1},
+		{Key: issuanceschema.TypeEmission, Kind: issuanceschema.KindType, Ordinal: 2},
+		{Key: issuanceschema.TypePointIdentity, Kind: issuanceschema.KindType, Ordinal: 3},
+		{Key: issuanceschema.TypeRelationIndex, Kind: issuanceschema.KindType, Ordinal: 4},
+		{Key: "row/law-occurrence", Kind: issuanceschema.KindRowSpace, Ordinal: 1},
+		{Key: "row/law-geometry", Kind: issuanceschema.KindRowSpace, Ordinal: 2},
+		{Key: "field/law-occurrence-id", Kind: issuanceschema.KindField, Ordinal: 1, Space: "row/law-occurrence", Type: issuanceschema.IdentityType(issuanceschema.TypePointIdentity), Cardinality: issuanceschema.CardinalityOne},
+		{Key: "field/law-geometry-occurrence-id", Kind: issuanceschema.KindField, Ordinal: 2, Space: "row/law-geometry", Type: issuanceschema.IdentityType(issuanceschema.TypePointIdentity), Cardinality: issuanceschema.CardinalityOne},
+		{Key: "field/law-geometry-position", Kind: issuanceschema.KindField, Ordinal: 3, Space: "row/law-geometry", Type: issuanceschema.UintType(issuanceschema.TypeRelationIndex), Cardinality: issuanceschema.CardinalityOne},
+		{Key: "field/law-geometry-point", Kind: issuanceschema.KindField, Ordinal: 4, Space: "row/law-geometry", Type: issuanceschema.IdentityType(issuanceschema.TypePointIdentity), Cardinality: issuanceschema.CardinalityOne},
+		{Key: "relation/law-geometry", Kind: issuanceschema.KindRelation, Ordinal: 1, Space: "row/law-occurrence", Target: "row/law-geometry", Cardinality: issuanceschema.CardinalityMany,
+			Joins:   []issuanceschema.JoinField{{Source: "field/law-occurrence-id", Target: "field/law-geometry-occurrence-id", Missing: issuanceschema.JoinMissingNoEdge}},
+			Program: issuanceschema.Program{{Op: issuanceschema.OpLiteral, Out: 1, Type: issuanceschema.BoolType(), Literal: 1}}, Result: 1},
+		{Key: "output/law-occurrence", Kind: issuanceschema.KindOutput, Ordinal: 1,
+			Type: issuanceschema.DataType{Value: issuanceschema.ValueRow, Space: "row/law-occurrence", Cardinality: issuanceschema.CardinalityOne}},
+		{Key: lawOccurrenceKey, Kind: issuanceschema.KindFamily, Ordinal: 1, Space: "row/law-occurrence",
+			Program: issuanceschema.Program{{Op: issuanceschema.OpLiteral, Out: 1, Type: issuanceschema.BoolType(), Literal: 1}}, Result: 1},
+		{Key: lawRequirementKey, Kind: issuanceschema.KindRequirement, Ordinal: 1, Space: "row/law-occurrence",
+			Program: issuanceschema.Program{{Op: issuanceschema.OpCurrent, Out: 1}, {Op: issuanceschema.OpLiteral, Out: 2, Type: issuanceschema.BoolType(), Literal: 1}}, Result: 2,
+			Outputs: []issuanceschema.OutputBinding{{Output: "output/law-occurrence", Register: 1, Proof: 2}}},
+		{Key: lawNarrowRequirementKey, Kind: issuanceschema.KindRequirement, Ordinal: 2, Space: "row/law-occurrence",
+			Program: issuanceschema.Program{{Op: issuanceschema.OpCurrent, Out: 1}, {Op: issuanceschema.OpLiteral, Out: 2, Type: issuanceschema.BoolType(), Literal: 1}}, Result: 2,
+			Outputs: []issuanceschema.OutputBinding{{Output: "output/law-occurrence", Register: 1, Proof: 2}}},
+		{Key: lawInputKey, Kind: issuanceschema.KindInput, Ordinal: 1, Input: issuanceschema.InputFinish, InputSource: issuanceschema.InputSourceRelation, Source: "relation/law-geometry"},
+		{Key: lawStageKey, Kind: issuanceschema.KindStage, Ordinal: 1, Constructor: issuanceschema.StageConstructorPassthrough,
+			Parameters: []issuanceschema.DataType{{Value: issuanceschema.ValuePointRange, Name: issuanceschema.TypePoint, Cardinality: issuanceschema.CardinalityMany}}, Order: 1},
+		{Key: lawFormKey, Kind: issuanceschema.KindForm, Ordinal: 1, Empty: issuanceschema.EmptyRefuse, Subject: "output/law-occurrence", Requires: []schema.Key{"output/law-occurrence"},
+			Program: issuanceschema.Program{
+				{Op: issuanceschema.OpSelection, Out: 1, Ref: "output/law-occurrence"},
+				{Op: issuanceschema.OpFollow, Out: 2, Args: [6]uint16{1}, Ref: "relation/law-geometry"},
+				{Op: issuanceschema.OpProjectPoints, Out: 3, Args: [6]uint16{2}, Ref: "field/law-geometry-point", Aux: "field/law-geometry-position"},
+				{Op: issuanceschema.OpInput, Out: 4, Args: [6]uint16{3}, Ref: lawInputKey},
+				{Op: issuanceschema.OpRequestStage, Out: 5, Args: [6]uint16{3, 4}, Ref: lawStageKey},
+				{Op: issuanceschema.OpEmit, Out: 6, Args: [6]uint16{5}},
+			}, Emissions: []uint16{6}},
+	}
+	entries := make([]*issuanceschema.Entry, 0, len(specs))
+	for _, spec := range specs {
+		entry, ok := issuanceschema.New(spec)
+		if !ok {
+			return nil
+		}
+		entries = append(entries, entry)
+	}
+	return entries
 }
 
 type lawSiblingEntry struct{ key schema.Key }

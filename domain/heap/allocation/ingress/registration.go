@@ -34,7 +34,7 @@ func RuleEntry[P rulePrincipals, A ruleAuthorities]() rule.Spec {
 		Writes: "heap",
 		Owner:  "heap",
 		Issues: []rule.Issuance{
-			{Occurrence: "occurrence/allocation", Requirement: "requirement/unrestricted", Form: "issuance/base", Input: "input/none", Stage: "stage/base"},
+			{Occurrence: "occurrence/allocation", Requirement: "program-requirement/unrestricted", Form: "program-form/base-none"},
 		},
 		Lane:     rule.LaneMounted,
 		Semantic: "semantic/rule/heap/allocation-ingress",

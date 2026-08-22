@@ -93,15 +93,30 @@ func boundaryValueTag(index int) (valueTag, bool) {
 	return valueTag(uint64(index) + 1), true
 }
 
-func boundaryCoordinateForTag(boundary valuedomain.ReturnBoundary, tag valueTag) (valuedomain.Coordinate, bool) {
-	if tag == 0 {
-		return valuedomain.Coordinate{}, false
+// boundaryValueOrdinal recovers the authored member ordinal from the tag
+// carried by a Selection. SelectionAt is ordered by resolved engine Unit, not
+// by this logical member ordinal, so callers must validate the tag instead of
+// treating the physical selection index as the member index.
+func boundaryValueOrdinal(tag valueTag, count int) (int, bool) {
+	if tag == 0 || count < 0 {
+		return 0, false
 	}
 	index := uint64(tag - 1)
-	if index > uint64(int(^uint(0)>>1)) {
+	if index >= uint64(count) || index > uint64(int(^uint(0)>>1)) {
+		return 0, false
+	}
+	return int(index), true
+}
+
+func boundaryCoordinateForTag(boundary valuedomain.ReturnBoundary, tag valueTag) (valuedomain.Coordinate, bool) {
+	if boundary.MemberCount() < 0 {
 		return valuedomain.Coordinate{}, false
 	}
-	return boundary.MemberAt(int(index))
+	index, indexOK := boundaryValueOrdinal(tag, boundary.MemberCount())
+	if !indexOK {
+		return valuedomain.Coordinate{}, false
+	}
+	return boundary.MemberAt(index)
 }
 
 type returnFact struct {
@@ -128,6 +143,39 @@ func (facts *returnFacts) append(item returnFact) {
 		facts.spill = append(facts.spill, item)
 	}
 	facts.count++
+}
+
+// newReturnFacts reserves an indexed fact plane. The plane is deliberately
+// separate from append: Selection order is physical Unit order, while this
+// buffer is authored member order recovered from each tag.
+func newReturnFacts(count int) (returnFacts, bool) {
+	if count < 0 {
+		return returnFacts{}, false
+	}
+	facts := returnFacts{count: count}
+	if count > len(facts.inline) {
+		facts.spill = make([]returnFact, count-len(facts.inline))
+	}
+	return facts, true
+}
+
+func (facts *returnFacts) set(index int, item returnFact) bool {
+	if facts == nil || !item.available || index < 0 || index >= facts.count {
+		return false
+	}
+	if prior, priorOK := facts.at(index); priorOK && prior.available {
+		return false
+	}
+	if index < len(facts.inline) {
+		facts.inline[index] = item
+		return true
+	}
+	spillIndex := index - len(facts.inline)
+	if spillIndex < 0 || spillIndex >= len(facts.spill) {
+		return false
+	}
+	facts.spill[spillIndex] = item
+	return true
 }
 
 func (facts returnFacts) len() int { return facts.count }
@@ -166,74 +214,137 @@ type routePlan struct {
 	inline [4]route
 	spill  []route
 	count  int
+
+	// Widened plans are a view over the owner's immutable dense coordinates.
+	// They deliberately do not retain a copied allocation-root catalogue.
+	allRoot          bool
+	allRootPrefix    bool
+	allRootSchema    placementdomain.Schema
+	allRootDenseSize int
 }
 
 func (plan routePlan) widened() bool { return plan.class == routeWidened }
 
-func (plan routePlan) routeCount() int { return plan.count }
+func (plan routePlan) routeCount() int {
+	if plan.count < 0 {
+		return 0
+	}
+	return plan.count
+}
 
 func (plan routePlan) routeAt(index int) (route, bool) {
 	if index < 0 || index >= plan.count {
 		return route{}, false
 	}
-	if plan.spill != nil {
-		return plan.spill[index], true
+	if plan.allRoot {
+		return plan.allRootAt(index)
 	}
-	return plan.inline[index], true
+	if index < len(plan.inline) {
+		return plan.inline[index], true
+	}
+	spillIndex := index - len(plan.inline)
+	if spillIndex < 0 || spillIndex >= len(plan.spill) {
+		return route{}, false
+	}
+	return plan.spill[spillIndex], true
 }
 
-func (plan *routePlan) appendRoute(candidate route) {
-	if plan.spill != nil {
-		plan.spill = append(plan.spill, candidate)
-		plan.count++
-		return
+func (plan routePlan) allRootAt(index int) (route, bool) {
+	if !plan.allRoot || index < 0 || index >= plan.count || plan.allRootDenseSize < 0 || !plan.allRootSchema.Valid() {
+		return route{}, false
 	}
-	if plan.count < len(plan.inline) {
-		plan.inline[plan.count] = candidate
-		plan.count++
-		return
-	}
-	plan.spill = make([]route, len(plan.inline), len(plan.inline)+1)
-	copy(plan.spill, plan.inline[:])
-	plan.spill = append(plan.spill, candidate)
-	plan.count++
-}
-
-func (plan *routePlan) sortUnique() {
-	if plan == nil || plan.count < 2 {
-		return
-	}
-	routes := plan.inline[:plan.count]
-	if plan.spill != nil {
-		routes = plan.spill
-	}
-	// Keep the tiny exact-route case entirely on the caller's stack. Passing
-	// the slice through sort.Interface makes the compiler conservatively move
-	// the inline route plan to the heap even when one or two routes are all that
-	// can occur on this hot path. Exact Value alternatives are already bounded
-	// in practice, so insertion sort is both allocation-free and cheaper for
-	// the small route sets this planner receives.
-	for index := 1; index < len(routes); index++ {
-		candidate := routes[index]
-		cursor := index
-		for cursor > 0 && routes[cursor-1].tag > candidate.tag {
-			routes[cursor] = routes[cursor-1]
-			cursor--
+	if plan.allRootPrefix {
+		key, keyOK := plan.allRootSchema.KeyAt(index)
+		if !keyOK || key.Kind() != heap.RootAllocation {
+			return route{}, false
 		}
-		routes[cursor] = candidate
+		return route{key: key, tag: routeTag(uint64(index) + 1)}, true
 	}
-	unique := 0
-	for _, candidate := range routes {
-		if unique != 0 && routes[unique-1].tag == candidate.tag {
+	ordinal := 0
+	for dense := 0; dense < plan.allRootDenseSize; dense++ {
+		key, keyOK := plan.allRootSchema.KeyAt(dense)
+		if !keyOK {
+			return route{}, false
+		}
+		if key.Kind() != heap.RootAllocation {
 			continue
 		}
-		routes[unique] = candidate
-		unique++
+		if ordinal == index {
+			return route{key: key, tag: routeTag(uint64(dense) + 1)}, true
+		}
+		ordinal++
 	}
-	plan.count = unique
-	if plan.spill != nil {
-		plan.spill = plan.spill[:unique]
+	return route{}, false
+}
+
+func (plan routePlan) allRootAtTag(tag routeTag) (route, bool) {
+	if !plan.allRoot || tag == 0 || plan.allRootDenseSize < 0 || !plan.allRootSchema.Valid() {
+		return route{}, false
 	}
+	dense := uint64(tag - 1)
+	if dense >= uint64(plan.allRootDenseSize) {
+		return route{}, false
+	}
+	key, keyOK := plan.allRootSchema.KeyAt(int(dense))
+	if !keyOK || key.Kind() != heap.RootAllocation {
+		return route{}, false
+	}
+	return route{key: key, tag: tag}, true
+}
+
+// addRoute inserts one exact route in canonical dense-tag order and
+// deduplicates repeated allocation atoms. The first overflow route allocates
+// only the suffix; the inline prefix remains part of the returned plan value.
+func (plan *routePlan) addRoute(candidate route) bool {
+	if plan == nil || plan.allRoot || plan.count < 0 || candidate.tag == 0 {
+		return false
+	}
+	position := 0
+	for position < plan.count {
+		current, currentOK := plan.routeAt(position)
+		if !currentOK {
+			return false
+		}
+		if current.tag == candidate.tag {
+			return current.key == candidate.key
+		}
+		if current.tag > candidate.tag {
+			break
+		}
+		position++
+	}
+
+	if plan.count < len(plan.inline) {
+		for index := plan.count; index > position; index-- {
+			plan.inline[index] = plan.inline[index-1]
+		}
+		plan.inline[position] = candidate
+		plan.count++
+		return true
+	}
+	// Keep the inline prefix and append only the overflow suffix. Inserting
+	// before the boundary carries the old inline tail into that suffix; no
+	// second complete route slice is created.
+	if position < len(plan.inline) {
+		carried := plan.inline[len(plan.inline)-1]
+		for index := len(plan.inline) - 1; index > position; index-- {
+			plan.inline[index] = plan.inline[index-1]
+		}
+		plan.inline[position] = candidate
+		plan.spill = append(plan.spill, route{})
+		copy(plan.spill[1:], plan.spill[:len(plan.spill)-1])
+		plan.spill[0] = carried
+	} else {
+		spillIndex := position - len(plan.inline)
+		if spillIndex < 0 || spillIndex > len(plan.spill) {
+			return false
+		}
+		plan.spill = append(plan.spill, route{})
+		copy(plan.spill[spillIndex+1:], plan.spill[spillIndex:len(plan.spill)-1])
+		plan.spill[spillIndex] = candidate
+	}
+	plan.count++
+	return true
 }
 
 // routePlanFor derives the only lawful return projection. Exact allocation
@@ -242,66 +353,37 @@ func (plan *routePlan) sortUnique() {
 // handles) and scalars produce no local route; Bottom remains distinct so the
 // caller can reject the missing boundary value.
 func routePlanFor(schema placementdomain.Schema, values *valuedomain.Schema, fact valuedomain.Value) (routePlan, bool) {
-	if !schema.Valid() || values == nil || !values.Valid() || !values.OwnsHeapSchema(schema.Heap()) {
+	projection, projectionOK := placementdomain.ProjectValueAllocations(schema, values, fact)
+	if !projectionOK {
 		return routePlan{}, false
 	}
-	if fact.IsBottom() {
+	if projection.IsBottom() {
 		return routePlan{class: routeBottom}, true
 	}
-	if fact.IsTop() {
-		routes, ok := allAllocationRoutes(schema)
+	if projection.IsTop() {
+		routes, ok := allAllocationPlan(schema)
 		if !ok {
 			return routePlan{}, false
 		}
 		routes.class = routeWidened
 		return routes, true
 	}
-	if !values.Equal(fact, fact) {
-		return routePlan{}, false
-	}
-	// Keep exact rooted alternatives in the route representation itself. The
-	// old Atoms-plus-index-map path paid for multiple temporary collections before
-	// producing this same dense-tagged route set; sorting and compacting this
-	// one buffer preserves alias deduplication without widening the owner
-	// boundary.
+	// Keep exact rooted alternatives in the bounded route representation itself.
+	// Canonical insertion preserves dense-tag order and alias deduplication
+	// without a temporary map, sort, or copied prefix.
 	plan := routePlan{class: routeExact}
-	widen := false
-	heapSchema := schema.Heap()
-	validAtoms := true
-	for atomIndex, atomCount := 0, values.ValueAtomCount(fact); atomIndex < atomCount; atomIndex++ {
-		atom, atomOK := values.ValueAtomAt(fact, atomIndex)
-		if !atomOK {
-			validAtoms = false
-			break
+	for index := 0; index < projection.ExactCount(); index++ {
+		key, keyOK := projection.ExactAt(index)
+		if !keyOK {
+			return routePlan{}, false
 		}
-		classification, classificationOK := placementdomain.ClassifyAtom(values, atom)
-		if !classificationOK || !classification.Valid() {
-			validAtoms = false
-			break
-		}
-		switch classification.Class {
-		case placementdomain.AtomClassAllocation:
-			key := classification.Key
-			if !heapSchema.OwnsKey(key) || key.Kind() != heap.RootAllocation {
-				validAtoms = false
-				break
-			}
-			index, indexOK := heapSchema.KeyIndex(key)
-			canonical, canonicalOK := schema.KeyAt(index)
-			if !indexOK || index < 0 || !canonicalOK || canonical != key {
-				validAtoms = false
-				break
-			}
-			plan.appendRoute(route{key: key, tag: routeTag(uint64(index) + 1)})
-		case placementdomain.AtomClassOpaque:
-			widen = true
+		dense, denseOK := schema.Heap().AllocationKeyIndex(key)
+		if !denseOK || !plan.addRoute(route{key: key, tag: routeTag(uint64(dense) + 1)}) {
+			return routePlan{}, false
 		}
 	}
-	if !validAtoms {
-		return routePlan{}, false
-	}
-	if widen {
-		allRoutes, ok := allAllocationRoutes(schema)
+	if projection.HasOpaque() {
+		allRoutes, ok := allAllocationPlan(schema)
 		if !ok {
 			return routePlan{}, false
 		}
@@ -311,147 +393,135 @@ func routePlanFor(schema placementdomain.Schema, values *valuedomain.Schema, fac
 	if plan.routeCount() == 0 {
 		return routePlan{class: routeScalar}, true
 	}
-	plan.sortUnique()
 	return plan, true
 }
 
 // routePlanForFacts joins the complete fixed ReturnBoundary Value selection
 // into one Placement route plan. Exact allocation references are unioned
-// across root and members; an opaque alternative, unavailable selected cell,
-// Top fact, or open tail widens to every allocation root. This is the one
-// aggregate boundary where heterogeneous Value rows become a homogeneous
-// Placement route set.
+// across root and members; an opaque alternative, Top fact, or open tail
+// widens to every allocation root. Missing selected cells and malformed Value
+// facts are evidence failures, not semantic uncertainty: they refuse the
+// route plan instead of fabricating a conservative all-roots result. A sparse
+// cell is admissible only when Value supplied its exact owner-local Bottom;
+// that is the Factor default and contributes no concrete return route. This is
+// the one aggregate boundary where heterogeneous Value rows become a
+// homogeneous Placement route set.
 func routePlanForFacts(schema placementdomain.Schema, values *valuedomain.Schema, facts returnFacts, hasTail bool) (routePlan, bool) {
 	if !schema.Valid() || values == nil || !values.Valid() || !values.OwnsHeapSchema(schema.Heap()) {
 		return routePlan{}, false
 	}
-	if hasTail {
-		routes, ok := allAllocationRoutes(schema)
+	plan := routePlan{class: routeExact}
+	widen := false
+	for index := 0; index < facts.len(); index++ {
+		item, itemOK := facts.at(index)
+		if !itemOK {
+			return routePlan{}, false
+		}
+		if !authenticatedReturnFact(values, item.fact, item.present, item.available) {
+			return routePlan{}, false
+		}
+		factWiden, factOK := collectValueRoutes(schema, values, item.fact, &plan)
+		if !factOK {
+			return routePlan{}, false
+		}
+		if factWiden {
+			widen = true
+		}
+	}
+	if hasTail || widen {
+		routes, ok := allAllocationPlan(schema)
 		if !ok {
 			return routePlan{}, false
 		}
 		routes.class = routeWidened
 		return routes, true
 	}
-	plan := routePlan{class: routeExact}
-	for index := 0; index < facts.len(); index++ {
-		item, itemOK := facts.at(index)
-		if !itemOK {
-			return routePlan{}, false
-		}
-		if !item.available {
-			routes, ok := allAllocationRoutes(schema)
-			if !ok {
-				return routePlan{}, false
-			}
-			routes.class = routeWidened
-			return routes, true
-		}
-		if !item.present {
-			continue
-		}
-		widen, factOK := collectValueRoutes(schema, values, item.fact, &plan)
-		if !factOK {
-			routes, ok := allAllocationRoutes(schema)
-			if !ok {
-				return routePlan{}, false
-			}
-			routes.class = routeWidened
-			return routes, true
-		}
-		if widen {
-			routes, ok := allAllocationRoutes(schema)
-			if !ok {
-				return routePlan{}, false
-			}
-			routes.class = routeWidened
-			return routes, true
-		}
-	}
 	if plan.routeCount() == 0 {
 		return routePlan{class: routeScalar}, true
 	}
-	plan.sortUnique()
 	return plan, true
+}
+
+// authenticatedReturnFact admits a present owner-issued Value or the exact
+// sparse Bottom supplied by that same owner. It never constructs a Bottom from
+// presence metadata, and therefore refuses unavailable, foreign, zero, or
+// non-Bottom sparse cells.
+func authenticatedReturnFact(values *valuedomain.Schema, fact valuedomain.Value, present, available bool) bool {
+	if values == nil || !available || !values.Equal(fact, fact) {
+		return false
+	}
+	return present || values.Equal(fact, values.Bottom())
 }
 
 // collectValueRoutes joins one exact Value fact directly into a caller-owned
 // inline route plan. It preserves the Value non-smearing law and widens only
 // when the fact contains an opaque or untracked reference alternative.
 func collectValueRoutes(schema placementdomain.Schema, values *valuedomain.Schema, fact valuedomain.Value, plan *routePlan) (widen bool, ok bool) {
-	if !schema.Valid() || values == nil || !values.Valid() || !values.OwnsHeapSchema(schema.Heap()) || plan == nil {
+	if plan == nil {
 		return false, false
 	}
-	if fact.IsBottom() {
+	projection, projectionOK := placementdomain.ProjectValueAllocations(schema, values, fact)
+	if !projectionOK {
+		return false, false
+	}
+	if projection.IsBottom() {
 		return false, true
 	}
-	if fact.IsTop() {
+	if projection.IsTop() {
 		return true, true
 	}
-	if !values.Equal(fact, fact) {
-		return false, false
-	}
-	heapSchema := schema.Heap()
-	valid := true
-	for atomIndex, atomCount := 0, values.ValueAtomCount(fact); atomIndex < atomCount; atomIndex++ {
-		atom, atomOK := values.ValueAtomAt(fact, atomIndex)
-		if !atomOK {
-			valid = false
-			break
+	for index := 0; index < projection.ExactCount(); index++ {
+		key, keyOK := projection.ExactAt(index)
+		if !keyOK {
+			return false, false
 		}
-		classification, classificationOK := placementdomain.ClassifyAtom(values, atom)
-		if !classificationOK || !classification.Valid() {
-			valid = false
-			break
-		}
-		switch classification.Class {
-		case placementdomain.AtomClassAllocation:
-			key := classification.Key
-			if !heapSchema.OwnsKey(key) || key.Kind() != heap.RootAllocation {
-				valid = false
-				break
-			}
-			index, indexOK := heapSchema.KeyIndex(key)
-			canonical, canonicalOK := schema.KeyAt(index)
-			if !indexOK || index < 0 || !canonicalOK || canonical != key {
-				valid = false
-				break
-			}
-			plan.appendRoute(route{key: key, tag: routeTag(uint64(index) + 1)})
-		case placementdomain.AtomClassOpaque:
-			widen = true
+		dense, denseOK := schema.Heap().AllocationKeyIndex(key)
+		if !denseOK || !plan.addRoute(route{key: key, tag: routeTag(uint64(dense) + 1)}) {
+			return false, false
 		}
 	}
-	return widen, valid
+	return projection.HasOpaque(), true
 }
 
-func allAllocationRoutes(schema placementdomain.Schema) (routePlan, bool) {
+// allAllocationPlan keeps widening lazy. It counts and authenticates the
+// owner's allocation coordinates once, then routeAt/routeAtTag derive each
+// selected route from that same immutable schema without copying a root
+// catalogue.
+func allAllocationPlan(schema placementdomain.Schema) (routePlan, bool) {
 	if !schema.Valid() {
 		return routePlan{}, false
 	}
-	// AllocationAt is itself a dense Heap scan. Walking the allocation-only
-	// projection by ordinal would therefore rescan the prefix for every root.
-	// The widened path is allowed to enumerate cold roots, but it must do so in
-	// one dense pass and retain Heap's canonical order.
 	denseCount := schema.DenseKeyCount()
-	plan := routePlan{class: routeWidened}
+	if denseCount < 0 {
+		return routePlan{}, false
+	}
+	plan := routePlan{
+		allRoot:          true,
+		allRootPrefix:    true,
+		allRootSchema:    schema,
+		allRootDenseSize: denseCount,
+	}
 	for dense := 0; dense < denseCount; dense++ {
 		key, keyOK := schema.KeyAt(dense)
 		if !keyOK {
 			return routePlan{}, false
 		}
 		if key.Kind() != heap.RootAllocation {
+			plan.allRootPrefix = false
 			continue
 		}
-		plan.appendRoute(route{key: key, tag: routeTag(uint64(dense) + 1)})
+		plan.count++
 	}
 	return plan, true
 }
 
 func routeAtTag(plan routePlan, tag routeTag) (route, bool) {
-	// Exact and widened plans are emitted in Heap dense order, which is also
-	// the order of their one-based route tags. Preserve the zero-allocation
-	// route representation while avoiding an O(N) scan for every staged row.
+	if plan.allRoot {
+		return plan.allRootAtTag(tag)
+	}
+	// Exact plans are emitted in Heap dense order, which is also the order of
+	// their one-based route tags. Preserve the bounded route representation
+	// while avoiding a linear scan for every staged row.
 	low, high := 0, plan.routeCount()
 	for low < high {
 		middle := low + (high-low)/2
@@ -461,9 +531,9 @@ func routeAtTag(plan routePlan, tag routeTag) (route, bool) {
 		}
 		if candidate.tag < tag {
 			low = middle + 1
-			continue
+		} else {
+			high = middle
 		}
-		high = middle
 	}
 	index := low
 	if index < plan.routeCount() {
@@ -476,11 +546,12 @@ func routeAtTag(plan routePlan, tag routeTag) (route, bool) {
 }
 
 func returnValue(current placementdomain.Placement, present bool, plan routePlan) (placementdomain.Placement, bool) {
-	if plan.class == routeWidened {
-		return placementdomain.Unknown, true
+	current, currentOK := placementdomain.AuthenticateFactorCell(current, present, true)
+	if !currentOK {
+		return placementdomain.Bottom, false
 	}
-	if !present {
-		return placementdomain.Displace(placementdomain.Bottom, placementdomain.Return), true
-	}
-	return placementdomain.Displace(current, placementdomain.Return), true
+	// Widening means that the Value identity names every possible allocation
+	// root; it does not widen the known Return escape policy. Apply that policy
+	// to each predecessor independently.
+	return placementdomain.DisplaceChecked(current, placementdomain.Return)
 }

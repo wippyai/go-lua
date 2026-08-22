@@ -224,7 +224,14 @@ type Conformance struct {
 	// the one place the analyzer holds a member's authored spelling after the
 	// program's source arena is dropped. A site measured against an array
 	// element or a map value names no field and carries none.
-	Member   string
+	Member string
+	// Subject is the authored spelling of the measured expression: the binder
+	// name, access path, or call form the source wrote. It is published by the
+	// compiler that still holds the authored relations, because this layer
+	// holds none of them. A subject the authored projection does not spell -
+	// a dynamic key, a literal with no name of its own - carries none, and the
+	// finding names its subject by the geometry's own word instead.
+	Subject  string
 	Evidence []identity.ContentID
 	// Producers is the execution geometry of the measured value: the rule
 	// occurrences that produce it and the base evidence point each one anchors
@@ -246,7 +253,7 @@ func (payload Conformance) Available() bool {
 func (payload Conformance) empty() bool {
 	return !payload.Site.Declared() && !payload.Owner.Available() && !payload.Measured.Available() && !payload.Declared.Available() &&
 		!payload.Span.Available() && payload.Position == 0 && payload.Actual == 0 &&
-		payload.DeclaredMay == 0 && payload.Target == "" && payload.Member == "" &&
+		payload.DeclaredMay == 0 && payload.Target == "" && payload.Member == "" && payload.Subject == "" &&
 		len(payload.Evidence) == 0 && len(payload.Producers) == 0
 }
 
@@ -408,6 +415,7 @@ func ProjectSites(sites mounted.ObservationSites, mounts []programmount.MountedA
 				Declared: observation.DeclaredStaticTypeID(), Span: observation.SpanID(), Position: position,
 				Actual: valueIndex, DeclaredMay: declaredMay, Target: target,
 				Member:    conformanceMemberText(cold, observation),
+				Subject:   observation.Name(),
 				Evidence:  append([]identity.ContentID(nil), points...),
 				Producers: producers,
 			}

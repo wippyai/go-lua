@@ -320,6 +320,7 @@ func applicationLookupKey(key applicationKey) applicationKey {
 func canonicalMounts(input []Module) ([]mountRow, error) {
 	mounts := make([]mountRow, len(input))
 	names := make(map[string]struct{}, len(input))
+	keys := make(map[identity.ContentID]struct{}, len(input))
 	for index, item := range input {
 		if item.Name == "" {
 			return nil, fmt.Errorf("link/project: module %d has empty name", index)
@@ -339,6 +340,10 @@ func canonicalMounts(input []Module) ([]mountRow, error) {
 		if !key.Available() {
 			return nil, fmt.Errorf("link/project: module %q has unavailable ModuleKey", item.Name)
 		}
+		if _, duplicate := keys[key]; duplicate {
+			return nil, fmt.Errorf("link/project: duplicate ModuleKey for module %q", item.Name)
+		}
+		keys[key] = struct{}{}
 		mounts[index] = mountRow{name: item.Name, program: item.Program, id: id, key: key}
 	}
 	sort.Slice(mounts, func(left, right int) bool {

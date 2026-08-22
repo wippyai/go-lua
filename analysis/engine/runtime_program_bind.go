@@ -12,8 +12,10 @@ import (
 	"github.com/wippyai/go-lua/analysis/engine/internal/carrier"
 	"github.com/wippyai/go-lua/analysis/engine/internal/carrier/shape"
 	"github.com/wippyai/go-lua/analysis/engine/internal/composition"
+	"github.com/wippyai/go-lua/analysis/engine/internal/contextfiber"
 	"github.com/wippyai/go-lua/analysis/engine/internal/demand"
 	"github.com/wippyai/go-lua/analysis/engine/internal/equation"
+	"github.com/wippyai/go-lua/analysis/schema/executioncontext"
 )
 
 // memberFold is one Group's binder result: the ten cold per-member answers
@@ -153,7 +155,7 @@ func foldMemberDrafts(inputCount int, drafts []runtimeMember) (memberFold, bool)
 // program. It is total over the graph: every Group's members become rows, so
 // the sealed program describes the whole compiled program and a later demand
 // revision selects from it rather than rebuilding it.
-func bindRuntimeProgram(schema *Schema, graph *equation.Graph, runtime *carrier.Composition, factors map[composition.Key]runtimeFactor, drafts []runtimeMember, queries []queryRow, observations []observationRow) (*runtimeProgram, []memberFold, bool) {
+func bindRuntimeProgram(schema *Schema, graph *equation.Graph, runtime *carrier.Composition, factors map[composition.Key]runtimeFactor, drafts []runtimeMember, queries []queryRow, observations []observationRow, contexts executioncontext.Directory, contextIndex contextfiber.Index, contextLayout contextfiber.Layout, pointOwners []contextfiber.PointOwner, artifactBacked bool) (*runtimeProgram, []memberFold, bool) {
 	if schema == nil || !schema.Available() || graph == nil || runtime == nil || runtime.Guards() == nil || factors == nil {
 		return nil, nil, false
 	}
@@ -224,7 +226,7 @@ func bindRuntimeProgram(schema *Schema, graph *equation.Graph, runtime *carrier.
 	if len(byMember) != 0 {
 		return nil, nil, false
 	}
-	program, sealed := sealRuntimeProgram(schema, graph, runtime, rows, spans, records, owners, append([]queryRow(nil), queries...), append([]observationRow(nil), observations...))
+	program, sealed := sealRuntimeProgram(schema, graph, runtime, rows, spans, records, owners, append([]queryRow(nil), queries...), append([]observationRow(nil), observations...), contexts, contextIndex, contextLayout, pointOwners, artifactBacked)
 	if !sealed {
 		return nil, nil, false
 	}
@@ -234,12 +236,12 @@ func bindRuntimeProgram(schema *Schema, graph *equation.Graph, runtime *carrier.
 // assembleProgramRuntime is the one entry from attached drafts to an
 // executable runtime. It seals the program first and retains each canonical
 // runtime member only through the row's direct execute method value.
-func assembleProgramRuntime(schema *Schema, graph *equation.Graph, runtime *carrier.Composition, factors map[composition.Key]runtimeFactor, drafts []runtimeMember, queries []queryRow, observations []observationRow) (*solverRuntime, bool) {
-	program, folds, bound := bindRuntimeProgram(schema, graph, runtime, factors, drafts, queries, observations)
+func assembleProgramRuntime(schema *Schema, graph *equation.Graph, runtime *carrier.Composition, factors map[composition.Key]runtimeFactor, drafts []runtimeMember, queries []queryRow, observations []observationRow, contexts executioncontext.Directory, contextIndex contextfiber.Index, contextLayout contextfiber.Layout, pointOwners []contextfiber.PointOwner, pointTransitions []ProgramPointTransition, artifactBacked bool) (*solverRuntime, bool) {
+	program, folds, bound := bindRuntimeProgram(schema, graph, runtime, factors, drafts, queries, observations, contexts, contextIndex, contextLayout, pointOwners, artifactBacked)
 	if !bound {
 		return nil, false
 	}
-	return assembleRuntimeOwned(graph, runtime, program, folds)
+	return assembleRuntimeOwned(graph, runtime, program, folds, contexts, contextIndex, contextLayout, pointOwners, pointTransitions, artifactBacked)
 }
 
 // bindProgramFactorTable places every Factor at its Schema ordinal. This makes

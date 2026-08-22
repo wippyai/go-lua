@@ -11,6 +11,7 @@ import (
 	"github.com/wippyai/go-lua/domain/type/typ"
 	domaincontract "github.com/wippyai/go-lua/domain/type/typecontract"
 	"github.com/wippyai/go-lua/internal/testfixture"
+	"github.com/wippyai/go-lua/internal/testfixture/wippyv1"
 )
 
 // The canonical fixture Target declares the time, assert2 and resource host
@@ -207,6 +208,14 @@ func TestCorpusHostModuleFixturesLinkAgainstCanonicalTarget(t *testing.T) {
 		"modules/active-session-typed-time-sub",
 		"modules/imported-map-of-time-record-store",
 		"modules/imported-record-return-literal",
+		"native/wippyv1-error-arm-nil-value",
+		"native/wippyv1-expr-surface",
+		"native/wippyv1-http-nil-arm",
+		"native/wippyv1-http-surface",
+		"native/wippyv1-json-surface",
+		"native/wippyv1-process-nil-arm",
+		"native/wippyv1-process-surface",
+		"native/wippyv1-store-surface",
 		"narrowing/partitioning/websocket-echo-select-payload",
 		"realworld/agent-workflow-engine",
 		"realworld/agent-workflow-engine-soundness",
@@ -294,4 +303,28 @@ func hostValueType(t *testing.T, sealed *contract.Contract, values vocabulary.Va
 		t.Fatalf("decode value %d: %v", index, err)
 	}
 	return decoded
+}
+
+// TestFixtureTargetMountsEveryWippyV1ReferenceMember states what mounting the
+// reference half bought: every callable the v1 runtime declares for expr,
+// http, json, process and store is an operation of the canonical fixture
+// Target, reachable under the same manifest-local path the module registered
+// it under. A member the composed Target drops is a member the corpus cannot
+// call, and the fixture that calls it would measure the require-admission gate
+// instead of the judgment it was written to state.
+func TestFixtureTargetMountsEveryWippyV1ReferenceMember(t *testing.T) {
+	sealed := hostModuleTarget(t)
+	for _, module := range wippyv1.Modules() {
+		declaration := module.Declaration()
+		t.Run(module.Name, func(t *testing.T) {
+			if len(declaration.FunctionSignatures) == 0 {
+				t.Fatalf("the %s reference manifest declares no members", module.Name)
+			}
+			for member := range declaration.FunctionSignatures {
+				if _, ok := sealed.Operations.Lookup(hostMemberBinding(module.Name, member)); !ok {
+					t.Errorf("the sealed fixture Target holds no operation for %s.%s", module.Name, member)
+				}
+			}
+		})
+	}
 }

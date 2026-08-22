@@ -1,0 +1,18 @@
+{
+  "description": "The abstention column of the send-safety family. Both payloads are opaque parameters, so no placement is derived and no alias or escape is proved. With send.isolation enabled the family must publish nothing at all for either send: an unknown placement is the absence of an answer, not a verdict, and the runtime copy fallback needs no diagnostic to take effect.",
+  "packages": ["process"],
+  "files": ["main.lua"],
+  "check": {
+    "errors": 0,
+    "diagnostic_rules": [
+      {
+        "code": "send.isolation",
+        "enabled": true,
+        "severity": "hint"
+      }
+    ]
+  },
+  "run": {
+    "skip": "checker-only send-safety fixture"
+  }
+}

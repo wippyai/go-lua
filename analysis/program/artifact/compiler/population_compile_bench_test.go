@@ -59,9 +59,9 @@ func populationRepositoryRoot(tb testing.TB, start string) string {
 }
 
 // BenchmarkPopulationCompile compiles the fixtures above through the real
-// artifact compiler with the real, registry-sealed issuance.Directory (the
+// artifact compiler with the real, registry-sealed issuance Plan (the
 // same directory analysis/compile.go builds via
-// composite.ArtifactIssuanceDirectory, not the empty issuance.Directory{}
+// composite.ArtifactIssuanceDirectory, not an empty subscription set
 // cold_compile_bench_test.go uses). Gate on allocs/op and B/op; treat ns/op
 // as advisory below a 30% delta at this benchtime, per finding 10's amendment.
 func BenchmarkPopulationCompile(b *testing.B) {

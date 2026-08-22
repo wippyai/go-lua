@@ -67,7 +67,7 @@ func (schema *valueBuilder) sealComputedArithmeticAtoms() bool {
 		return false
 	}
 	for _, mount := range schema.artifacts {
-		program := mount.Program()
+		program := mount.Program.Program
 		if !program.Available() {
 			return false
 		}

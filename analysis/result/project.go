@@ -9,6 +9,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/identity"
 	"github.com/wippyai/go-lua/analysis/program/keyspace"
 	schemadiag "github.com/wippyai/go-lua/analysis/schema/diagnostic"
+	"github.com/wippyai/go-lua/analysis/schema/executioncontext"
 	"github.com/wippyai/go-lua/analysis/schema/programmount"
 	"github.com/wippyai/go-lua/analysis/schema/structure"
 	"github.com/wippyai/go-lua/analysis/snapshot"
@@ -46,14 +47,15 @@ func Detach(
 	vocabulary structure.Table,
 	declarations schemadiag.Table,
 	collections composite.DiagnosticCollections,
+	contexts executioncontext.Directory,
 ) (*Projection, bool) {
-	if !compilation.Available() || !geometry.Valid() || len(queries) == 0 || published == nil || !published.Published() || !queryPlan.Available() || !observationPlan.Available() || !declarations.Available() || !collections.Available() {
+	if !compilation.Available() || !geometry.Valid() || len(queries) == 0 || published == nil || !published.Published() || !queryPlan.Available() || !observationPlan.Available() || !declarations.Available() || !collections.Available() || !contexts.Available() {
 		return nil, false
 	}
 	if !anadiag.BindConditionCoordinates(geometry.BranchObservations, valueSchema) {
 		return nil, false
 	}
-	diagnosticObservations, publicationsOK := anadiag.Publications(compilation, geometry.BranchObservations)
+	diagnosticObservations, publicationsOK := anadiag.Publications(compilation, contexts, geometry.BranchObservations)
 	if !publicationsOK {
 		return nil, false
 	}
@@ -69,7 +71,7 @@ func Detach(
 	if policy != nil && len(policy.Enabled) != 0 {
 		report := anadiag.NewReport(result.SourceID(), result.ContentID(), compilation, vocabulary, declarations, collections)
 		if !anadiag.CollectReport(report, *policy, geometry.BranchObservations, geometry.ConformanceObservations, geometry.StaticObservations,
-			diagnosticObservations, len(geometry.values), valueSchema, published, observationPlan, selects) {
+			diagnosticObservations, len(geometry.values), valueSchema, published, observationPlan, selects, contexts) {
 			return nil, false
 		}
 		if !report.Available() {
@@ -111,13 +113,15 @@ func buildDetachedArtifactResult(
 	}
 
 	points := make([]resultPoint, 0)
-	pointOrdinals := make(map[Point]uint32)
+	pointOrdinals := make(map[detachedPointKey]uint32)
 	familiesByOrdinal := make(map[uint32]resultFamily)
 	maxFamilyOrdinal := uint32(0)
 	seenSites := make(map[identity.ContentID]struct{}, len(queries))
 	seenPublicationKeys := make(map[identity.ContentID]struct{}, len(queries))
 	for _, publication := range queries {
+		contextID := publication.Site.Context.ID()
 		if !publication.Site.ID.Available() || !publication.Site.Mount.Available() || !publication.Site.Point.Available() ||
+			!publication.Site.Context.Available() || !contextID.Available() || publication.Site.Context.ModuleKey() != publication.Site.Mount ||
 			!publication.Site.Family.Available() || !publication.Key.Available() {
 			return nil, false
 		}
@@ -138,10 +142,14 @@ func buildDetachedArtifactResult(
 		seenSites[publication.Site.ID] = struct{}{}
 		seenPublicationKeys[publication.Key] = struct{}{}
 
-		pointKey := Point{Mount: publication.Site.Mount, Point: publication.Site.Point}
+		// Geometry remains the generic mount/point plane. The detached Result
+		// point table must additionally retain the canonical context carried by
+		// this publication; never recover it from opaque SiteID or Key values.
+		geometryPointKey := Point{Mount: publication.Site.Mount, Point: publication.Site.Point}
+		pointKey := detachedPointKey{context: contextID, mount: publication.Site.Mount, point: publication.Site.Point}
 		pointOrdinal, pointKnown := pointOrdinals[pointKey]
 		if !pointKnown {
-			indexes := geometry.PointBodies[pointKey]
+			indexes := geometry.PointBodies[geometryPointKey]
 			bodyOrdinals := make([]uint32, len(indexes))
 			for index, bodyIndex := range indexes {
 				if bodyIndex < 0 || bodyIndex >= len(bodies) || uint64(bodyIndex+1) > uint64(^uint32(0)) {
@@ -154,7 +162,7 @@ func buildDetachedArtifactResult(
 			}
 			pointOrdinal = uint32(len(points) + 1)
 			pointOrdinals[pointKey] = pointOrdinal
-			points = append(points, resultPoint{mount: pointKey.Mount, point: pointKey.Point, bodies: bodyOrdinals})
+			points = append(points, resultPoint{context: pointKey.context, mount: pointKey.mount, point: pointKey.point, bodies: bodyOrdinals})
 		}
 
 		family, familyKnown := familiesByOrdinal[familyOrdinal]

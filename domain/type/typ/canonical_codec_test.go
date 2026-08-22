@@ -74,7 +74,7 @@ func TestCanonicalCodecMatchesTypeEqualsAcrossSemanticCorpus(t *testing.T) {
 	encoded := make([][]byte, len(corpus))
 	for index, value := range corpus {
 		var err error
-		encoded[index], err = EncodeCanonical(context.Background(), value)
+		encoded[index], err = encodeCanonicalTest(context.Background(), value)
 		if err != nil {
 			t.Fatalf("encode corpus[%d] %T: %v", index, value, err)
 		}
@@ -169,9 +169,9 @@ func TestCanonicalCodecIndependentConstructionPairs(t *testing.T) {
 	}
 }
 
-// These ordinary-domain bytes predate the iterative traversal rewrite. They
-// freeze representative scalar, binder, and recursive streams so a future
-// traversal optimization cannot silently redefine the canonical ABI.
+// These scoped-domain bytes freeze representative scalar, binder, and
+// recursive streams so a future traversal optimization cannot silently
+// redefine the portable authored-schema ABI.
 func TestCanonicalCodecRepresentativeBytesAreFrozen(t *testing.T) {
 	formal := NewTypeParam("T", String)
 	generic := NewGeneric("Box", []*TypeParam{formal}, RebuildRecord(RecordParts{Fields: []Field{{Name: "value", Type: formal}}}))
@@ -180,9 +180,9 @@ func TestCanonicalCodecRepresentativeBytesAreFrozen(t *testing.T) {
 		value Type
 		want  string
 	}{
-		{name: "composite", value: NewTuple(NewRef("m", "T"), NewMap(String, LiteralInt(-7))), want: "2177697070792e616e616c797369732e747970652e7479702e63616e6f6e6963616c020100021002020101050c016d015400010201120201030106000104030b030d00"},
-		{name: "generic", value: Instantiate(generic, Integer), want: "2177697070792e616e616c797369732e747970652e7479702e63616e6f6e6963616c020100021701020101071603426f780101020102041801540101010301060001040e1400010576616c756500000000000100020105010500"},
-		{name: "recursive", value: canonicalSelfRecord("Node"), want: "2177697070792e616e616c797369732e747970652e7479702e63616e6f6e6963616c02010002190101010115140002046e65787401000576616c75650000000000020102010d0100000103010600"},
+		{name: "composite", value: NewTuple(NewRef("m", "T"), NewMap(String, LiteralInt(-7))), want: "2977697070792e616e616c797369732e747970652e7479702e63616e6f6e6963616c2d666f726d616c73020100021002020101050c016d015400010201120201030106000104030b030d00"},
+		{name: "generic", value: Instantiate(generic, Integer), want: "2977697070792e616e616c797369732e747970652e7479702e63616e6f6e6963616c2d666f726d616c73020100021701020101071603426f7801010201020418020001020001010301060001040e1400010576616c756500000000000100020105010500"},
+		{name: "recursive", value: canonicalSelfRecord("Node"), want: "2977697070792e616e616c797369732e747970652e7479702e63616e6f6e6963616c2d666f726d616c7302010002190101010115140002046e65787401000576616c75650000000000020102010d0100000103010600"},
 	}
 	for _, test := range values {
 		t.Run(test.name, func(t *testing.T) {
@@ -198,14 +198,14 @@ func TestCanonicalCodecRejectsDuplicateRecursiveIdentity(t *testing.T) {
 	left := &Recursive{ID: 77, Name: "A", Body: Number}
 	right := &Recursive{ID: 77, Name: "B", Body: String}
 	value := NewTuple(left, right)
-	if encoded, err := EncodeCanonical(context.Background(), value); err == nil || encoded != nil {
+	if encoded, err := encodeCanonicalTest(context.Background(), value); err == nil || encoded != nil {
 		t.Fatalf("duplicate recursive ID encoded as %x, err=%v", encoded, err)
 	}
 }
 
 func TestCanonicalCodecRejectsUnsupportedImplementation(t *testing.T) {
 	value := &fakeType{id: "unsupported", hash: 1}
-	if encoded, err := EncodeCanonical(context.Background(), value); err == nil || encoded != nil {
+	if encoded, err := encodeCanonicalTest(context.Background(), value); err == nil || encoded != nil {
 		t.Fatalf("unsupported implementation encoded as %x, err=%v", encoded, err)
 	}
 }
@@ -215,7 +215,7 @@ func TestCanonicalCodecEncodesDeepTransparentAliasesExactly(t *testing.T) {
 	for range 257 {
 		deep = &Alias{Name: "transparent", Target: deep}
 	}
-	if encoded, err := EncodeCanonical(context.Background(), deep); err != nil || len(encoded) == 0 {
+	if encoded, err := encodeCanonicalTest(context.Background(), deep); err != nil || len(encoded) == 0 {
 		t.Fatalf("deep alias was not encoded exactly: %x, err=%v", encoded, err)
 	}
 	if !TypeEquals(deep, Number) {
@@ -223,7 +223,7 @@ func TestCanonicalCodecEncodesDeepTransparentAliasesExactly(t *testing.T) {
 	}
 
 	// Numeric singleton identity is raw-IEEE-bit exact, including NaN.
-	if encoded, err := EncodeCanonical(context.Background(), LiteralNumber(math.NaN())); err != nil || len(encoded) == 0 {
+	if encoded, err := encodeCanonicalTest(context.Background(), LiteralNumber(math.NaN())); err != nil || len(encoded) == 0 {
 		t.Fatalf("NaN literal encoded as %x, err=%v", encoded, err)
 	}
 }
@@ -237,11 +237,11 @@ func TestCanonicalCodecSeparatesNumericLiteralIdentity(t *testing.T) {
 	if bytes.Equal(leftBytes, rightBytes) {
 		t.Fatal("canonical bytes collapsed unequal legacy-hash collision")
 	}
-	leftDigest, err := DigestCanonical(context.Background(), left)
+	leftDigest, err := digestCanonicalTest(context.Background(), left)
 	if err != nil {
 		t.Fatal(err)
 	}
-	rightDigest, err := DigestCanonical(context.Background(), right)
+	rightDigest, err := digestCanonicalTest(context.Background(), right)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -256,11 +256,11 @@ func TestCanonicalCodecCancellationReturnsNoAuthority(t *testing.T) {
 		children[index] = NewTuple(LiteralInt(int64(index)), NewArray(String))
 	}
 	ctx := &canonicalCancelContext{remaining: 3}
-	if encoded, err := EncodeCanonical(ctx, NewTuple(children...)); err != context.Canceled || encoded != nil {
+	if encoded, err := encodeCanonicalTest(ctx, NewTuple(children...)); err != context.Canceled || encoded != nil {
 		t.Fatalf("canceled encoding = %x, %v", encoded, err)
 	}
 	ctx = &canonicalCancelContext{remaining: 3}
-	if digest, err := DigestCanonical(ctx, NewTuple(children...)); err != context.Canceled || digest != (CanonicalDigest{}) {
+	if digest, err := digestCanonicalTest(ctx, NewTuple(children...)); err != context.Canceled || digest != (CanonicalDigest{}) {
 		t.Fatalf("canceled digest = %x, %v", digest, err)
 	}
 }
@@ -271,19 +271,19 @@ func TestCanonicalCodecPollsCancellationThroughTransparentAnnotations(t *testing
 		value = NewAnnotated(value, []annotation.Annotation{{Name: "transparent"}})
 	}
 	ctx := &canonicalCancelContext{remaining: 2}
-	if encoded, err := EncodeCanonical(ctx, value); err != context.Canceled || encoded != nil {
+	if encoded, err := encodeCanonicalTest(ctx, value); err != context.Canceled || encoded != nil {
 		t.Fatalf("canceled transparent unwrap = %x, %v", encoded, err)
 	}
 }
 
 func TestCanonicalEncoderReuseIsOwnershipIsolated(t *testing.T) {
-	var encoder CanonicalEncoder
-	first, err := encoder.Encode(context.Background(), NewArray(String))
+	var encoder canonicalEncoder
+	first, err := encodeCanonicalWithEncoderTest(&encoder, context.Background(), NewArray(String))
 	if err != nil {
 		t.Fatal(err)
 	}
 	snapshot := append([]byte(nil), first...)
-	second, err := encoder.Encode(context.Background(), NewArray(Number))
+	second, err := encodeCanonicalWithEncoderTest(&encoder, context.Background(), NewArray(Number))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -295,19 +295,19 @@ func TestCanonicalEncoderReuseIsOwnershipIsolated(t *testing.T) {
 func TestCanonicalEncoderDirectCallsClearCallerReferences(t *testing.T) {
 	param := NewTypeParam("T", String)
 	value := NewTuple(param, canonicalSelfRecord("Direct"))
-	var encoder CanonicalEncoder
-	if encoded, err := encoder.EncodeFormals(context.Background(), value, []*TypeParam{param}); err != nil || len(encoded) == 0 {
-		t.Fatalf("direct scoped encode = %x, %v", encoded, err)
+	var encoder canonicalEncoder
+	if receipt, err := encoder.encodeFormals(context.Background(), value, []*TypeParam{param}); err != nil || !receipt.Valid() {
+		t.Fatalf("direct scoped encode = %x, %v", receipt.Bytes(), err)
 	}
 	assertCanonicalEncoderDetached(t, &encoder)
 
-	if encoded, err := encoder.Encode(context.Background(), &fakeType{id: "direct-error", hash: 1}); err == nil || encoded != nil {
+	if encoded, err := encodeCanonicalWithEncoderTest(&encoder, context.Background(), &fakeType{id: "direct-error", hash: 1}); err == nil || encoded != nil {
 		t.Fatalf("direct malformed encode = %x, %v", encoded, err)
 	}
 	assertCanonicalEncoderDetached(t, &encoder)
 
-	if encoded, err := encoder.EncodeFormals(context.Background(), String, []*TypeParam{param, param}); err == nil || encoded != nil {
-		t.Fatalf("direct duplicate-formal encode = %x, %v", encoded, err)
+	if receipt, err := encoder.encodeFormals(context.Background(), String, []*TypeParam{param, param}); err == nil || receipt.Valid() {
+		t.Fatalf("direct duplicate-formal encode = %x, %v", receipt.Bytes(), err)
 	}
 	assertCanonicalEncoderDetached(t, &encoder)
 }
@@ -317,9 +317,9 @@ func TestCanonicalEncoderCancellationDuringEmissionDoesNotPoisonReuse(t *testing
 	for range 4096 {
 		deep = &Optional{Inner: deep}
 	}
-	var encoder CanonicalEncoder
+	var encoder canonicalEncoder
 	ctx := &canonicalEmissionCancelContext{encoder: &encoder}
-	if encoded, err := encoder.Encode(ctx, deep); err != context.Canceled || encoded != nil {
+	if encoded, err := encodeCanonicalWithEncoderTest(&encoder, ctx, deep); err != context.Canceled || encoded != nil {
 		t.Fatalf("emission cancellation = %x, %v", encoded, err)
 	}
 	if !ctx.seenEmission {
@@ -328,7 +328,7 @@ func TestCanonicalEncoderCancellationDuringEmissionDoesNotPoisonReuse(t *testing
 	assertCanonicalEncoderDetached(t, &encoder)
 
 	want := mustCanonical(t, NewArray(String))
-	got, err := encoder.Encode(context.Background(), NewArray(String))
+	got, err := encodeCanonicalWithEncoderTest(&encoder, context.Background(), NewArray(String))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -338,7 +338,7 @@ func TestCanonicalEncoderCancellationDuringEmissionDoesNotPoisonReuse(t *testing
 	assertCanonicalEncoderDetached(t, &encoder)
 }
 
-func assertCanonicalEncoderDetached(t *testing.T, encoder *CanonicalEncoder) {
+func assertCanonicalEncoderDetached(t *testing.T, encoder *canonicalEncoder) {
 	t.Helper()
 	if len(encoder.nodes) != 0 || len(encoder.discoveryStack) != 0 || len(encoder.sccFrames) != 0 || len(encoder.emissionStack) != 0 {
 		t.Fatalf("encoder retained traversal stack: nodes=%d discovery=%d scc=%d emission=%d", len(encoder.nodes), len(encoder.discoveryStack), len(encoder.sccFrames), len(encoder.emissionStack))
@@ -363,16 +363,16 @@ func BenchmarkCanonicalEncoder(b *testing.B) {
 	b.Run("fresh", func(b *testing.B) {
 		b.ReportAllocs()
 		for range b.N {
-			if encoded, err := EncodeCanonical(context.Background(), value); err != nil || len(encoded) == 0 {
+			if encoded, err := encodeCanonicalTest(context.Background(), value); err != nil || len(encoded) == 0 {
 				b.Fatal(err)
 			}
 		}
 	})
 	b.Run("reused", func(b *testing.B) {
-		var encoder CanonicalEncoder
+		var encoder canonicalEncoder
 		b.ReportAllocs()
 		for range b.N {
-			if encoded, err := encoder.Encode(context.Background(), value); err != nil || len(encoded) == 0 {
+			if encoded, err := encodeCanonicalWithEncoderTest(&encoder, context.Background(), value); err != nil || len(encoded) == 0 {
 				b.Fatal(err)
 			}
 		}
@@ -383,11 +383,11 @@ func BenchmarkCanonicalEncoderRecursiveChain(b *testing.B) {
 	for _, size := range []int{64, 256, 1024} {
 		b.Run(fmt.Sprintf("n%d", size), func(b *testing.B) {
 			value := canonicalRecursiveChain(size)
-			var encoder CanonicalEncoder
+			var encoder canonicalEncoder
 			b.ReportAllocs()
 			b.ResetTimer()
 			for range b.N {
-				if encoded, err := encoder.Encode(context.Background(), value); err != nil || len(encoded) == 0 {
+				if encoded, err := encodeCanonicalWithEncoderTest(&encoder, context.Background(), value); err != nil || len(encoded) == 0 {
 					b.Fatal(err)
 				}
 			}
@@ -445,7 +445,7 @@ func canonicalMixedDAGCycle(reverse bool) Type {
 
 func mustCanonical(t *testing.T, value Type) []byte {
 	t.Helper()
-	encoded, err := EncodeCanonical(context.Background(), value)
+	encoded, err := encodeCanonicalTest(context.Background(), value)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -466,7 +466,7 @@ func (c *canonicalCancelContext) Err() error {
 }
 
 type canonicalEmissionCancelContext struct {
-	encoder      *CanonicalEncoder
+	encoder      *canonicalEncoder
 	seenEmission bool
 }
 
@@ -506,8 +506,8 @@ func canonicalRankMixedGraph() Type {
 // encoder uses internally must reproduce this stream byte for byte.
 func TestCanonicalCodecRankMixedGraphBytesAreFrozen(t *testing.T) {
 	const (
-		wantLength = 1935
-		wantDigest = "825afe5049b59ad2252d5a9ff383fc1edce61f587f418f469d9a8c3754a9e92b"
+		wantLength = 1943
+		wantDigest = "21b26307c6dbe85c5ca1159d2a9997cda2170e5a82944c39f98dd78b139d5257"
 	)
 	encoded := mustCanonical(t, canonicalRankMixedGraph())
 	digest := fmt.Sprintf("%x", sha256.Sum256(encoded))
@@ -577,11 +577,11 @@ func TestCanonicalCodecCyclicSCCMergesWithReachableSealedCycle(t *testing.T) {
 // cyclic region.
 func BenchmarkCanonicalEncoderRankMixedGraph(b *testing.B) {
 	value := canonicalRankMixedGraph()
-	var encoder CanonicalEncoder
+	var encoder canonicalEncoder
 	b.ReportAllocs()
 	b.ResetTimer()
 	for range b.N {
-		if encoded, err := encoder.Encode(context.Background(), value); err != nil || len(encoded) == 0 {
+		if encoded, err := encodeCanonicalWithEncoderTest(&encoder, context.Background(), value); err != nil || len(encoded) == 0 {
 			b.Fatal(err)
 		}
 	}

@@ -603,14 +603,14 @@ func (compiler *compiler) deriveArithmeticSummariesFailure() CompileFailure {
 		operandID, operandOK := programschema.OccurrenceInputID(row, compiler.publication.OccurrenceInputs, 0)
 		operand, operandRepresentationOK := states[operandID].representation()
 		result, resultRepresentationOK := states[row.ID()].representation()
-		geometry, geometryOK := compiler.occurrenceSpans[occurrenceLookup{kind: programschema.OccurrenceUnary, id: row.ID()}]
+		_, finish, geometryOK := compiler.issuanceRows.Geometry(programschema.OccurrenceUnary, row.ID())
 		// Each summary names an exact Program-issued finish point rather than
 		// making Link infer outputs from the occurrence's undifferentiated point
 		// membership set. Multi-context occurrences issue one row per output.
-		if !operandOK || !operandRepresentationOK || !resultRepresentationOK || !geometryOK || len(geometry.finish) == 0 {
+		if !operandOK || !operandRepresentationOK || !resultRepresentationOK || !geometryOK || len(finish) == 0 {
 			continue
 		}
-		for _, output := range geometry.finish {
+		for _, output := range finish {
 			body, bodyOK := row.BodyID()
 			if !bodyOK {
 				return compileFailure(CompileStageOccurrences, CompileRowOccurrence, index, -1, CompileReasonOccurrenceUnavailable)

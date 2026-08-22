@@ -11,6 +11,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/identity"
 	"github.com/wippyai/go-lua/analysis/schema"
 	"github.com/wippyai/go-lua/analysis/schema/ingress"
+	schemaissuance "github.com/wippyai/go-lua/analysis/schema/issuance"
 	programschema "github.com/wippyai/go-lua/analysis/schema/program"
 	programcatalog "github.com/wippyai/go-lua/analysis/schema/program/catalog"
 	"github.com/wippyai/go-lua/analysis/schema/structure"
@@ -20,51 +21,84 @@ import (
 // canonical identity owner frames both payload parts, so old artifact-role
 // semantics must never be accepted as the same role.
 const artifactScalarRoleIdentityDomain = "analysis/artifact-scalar-role/v2"
+const artifactScalarFactorIdentityDomain = "analysis/artifact-scalar-factor/v1"
 
 type roleBinding struct {
 	key    schema.Key
 	scalar rows.ArtifactScalarRole
 }
 
-// RoleDirectory is immutable Program-template metadata. It contains no
-// Link-local capability and is shared with the template cache.
-type RoleDirectory struct {
-	bindings []roleBinding
-	byKey    map[schema.Key]rows.ArtifactScalarRole
+type factorBinding struct {
+	key    schema.Key
+	scalar rows.ArtifactScalarFactor
+}
+
+// MountDirectory is immutable Program-template substitution metadata. Rule
+// keys and Factor-axis keys stay in distinct planes, so a transfer never
+// masquerades as a Rule merely to reach its canonical Factor at mount time.
+type MountDirectory struct {
+	roles    []roleBinding
+	byRule   map[schema.Key]rows.ArtifactScalarRole
+	factors  []factorBinding
+	byFactor map[schema.Key]rows.ArtifactScalarFactor
 }
 
 // Count reports the number of sealed structural roles.
-func (directory *RoleDirectory) Count() int {
+func (directory *MountDirectory) RoleCount() int {
 	if directory == nil {
 		return 0
 	}
-	return len(directory.bindings)
+	return len(directory.roles)
 }
 
 // At returns one role in the deterministic schema-key order retained by the
 // directory. It is the mount boundary's read-only enumeration surface.
-func (directory *RoleDirectory) At(index int) (schema.Key, rows.ArtifactScalarRole, bool) {
-	if directory == nil || index < 0 || index >= len(directory.bindings) {
+func (directory *MountDirectory) RoleAt(index int) (schema.Key, rows.ArtifactScalarRole, bool) {
+	if directory == nil || index < 0 || index >= len(directory.roles) {
 		return "", rows.ArtifactScalarRole{}, false
 	}
-	binding := directory.bindings[index]
+	binding := directory.roles[index]
 	return binding.key, binding.scalar, binding.scalar.Available()
 }
 
 // Role resolves one declared structural role by its schema key.
-func (directory *RoleDirectory) Role(key schema.Key) (rows.ArtifactScalarRole, bool) {
+func (directory *MountDirectory) Role(key schema.Key) (rows.ArtifactScalarRole, bool) {
 	if directory != nil && key.Available() {
-		role, ok := directory.byKey[key]
+		role, ok := directory.byRule[key]
 		return role, ok && role.Available()
 	}
 	return rows.ArtifactScalarRole{}, false
 }
 
+func (directory *MountDirectory) FactorCount() int {
+	if directory == nil {
+		return 0
+	}
+	return len(directory.factors)
+}
+
+func (directory *MountDirectory) FactorAt(index int) (schema.Key, rows.ArtifactScalarFactor, bool) {
+	if directory == nil || index < 0 || index >= len(directory.factors) {
+		return "", rows.ArtifactScalarFactor{}, false
+	}
+	binding := directory.factors[index]
+	return binding.key, binding.scalar, binding.scalar.Available()
+}
+
+func (directory *MountDirectory) Factor(key schema.Key) (rows.ArtifactScalarFactor, bool) {
+	if directory != nil && key.Available() {
+		factor, ok := directory.byFactor[key]
+		return factor, ok && factor.Available()
+	}
+	return rows.ArtifactScalarFactor{}, false
+}
+
 // Lower is the sole sealed-snapshot-to-engine structural boundary. It runs
-// once while publishing the content-addressed cache entry. Stage admission is
-// projected from the sealed schema declaration table, not from a composed
-// domain registry.
-func Lower(snapshot *ingress.Snapshot, vocabulary structure.Table) (*rows.ArtifactScalarTemplate, *RoleDirectory, bool) {
+// once while publishing the content-addressed cache entry. Stage semantics
+// have already been issued into each Program rule occurrence; lowering copies
+// that receipt without consulting or reconstructing its declaration. The plan
+// supplies only the closed Factor denominator used by artifact transfers.
+func Lower(snapshot *ingress.Snapshot, vocabulary structure.Table, machine schemaissuance.Plan) (*rows.ArtifactScalarTemplate, *MountDirectory, bool) {
 	if snapshot == nil || !snapshot.Available() {
 		return nil, nil, false
 	}
@@ -84,7 +118,13 @@ func Lower(snapshot *ingress.Snapshot, vocabulary structure.Table) (*rows.Artifa
 		!regionsPublished || !regionMembersPublished || !eventsPublished {
 		return nil, nil, false
 	}
-	usedKeys := make(map[schema.Key]struct{})
+	declaredFactors := make(map[schema.Key]struct{})
+	for _, key := range machine.Axes() {
+		if !key.Available() {
+			return nil, nil, false
+		}
+		declaredFactors[key] = struct{}{}
+	}
 	for index := 0; index < transferCount; index++ {
 		transfer, transferOK := program.LocalTransferAt(index)
 		if !transferOK {
@@ -96,33 +136,35 @@ func Lower(snapshot *ingress.Snapshot, vocabulary structure.Table) (*rows.Artifa
 			if !writeOK || !keyOK {
 				return nil, nil, false
 			}
-			usedKeys[key] = struct{}{}
+			if _, declared := declaredFactors[key]; !declared {
+				return nil, nil, false
+			}
 		}
 	}
 	ruleCount, rulesPublished := program.RuleOccurrenceCount()
 	if !rulesPublished {
 		return nil, nil, false
 	}
+	usedRules := make(map[schema.Key]struct{}, ruleCount)
 	for index := 0; index < ruleCount; index++ {
 		placement, placementOK := program.RuleOccurrenceAt(index)
 		if !placementOK || !placement.Key().Available() {
 			return nil, nil, false
 		}
-		usedKeys[placement.Key()] = struct{}{}
-	}
-	laws, lawsOK := stageLaws(vocabulary)
-	if !lawsOK {
-		return nil, nil, false
+		usedRules[placement.Key()] = struct{}{}
 	}
 	spec, specOK := rows.NewArtifactScalarSpec(snapshot.ArtifactID(), snapshot.ProgramID(), snapshot.SchemaID(), rows.ArtifactScalarCapacity{
-		Roles: len(usedKeys), Points: pointCount, Edges: edgeCount, Transfers: transferCount, Regions: regionCount, Events: eventCount, Rules: ruleCount, Bodies: bodyCount,
+		Roles: len(usedRules), Factors: len(declaredFactors), Points: pointCount, Edges: edgeCount, Transfers: transferCount, Regions: regionCount, Events: eventCount, Rules: ruleCount, Bodies: bodyCount,
 	})
-	if !specOK || !spec.InstallStageLaws(laws) {
+	if !specOK {
 		return nil, nil, false
 	}
-	directory := &RoleDirectory{bindings: make([]roleBinding, 0, len(usedKeys)), byKey: make(map[schema.Key]rows.ArtifactScalarRole, len(usedKeys))}
-	ordered := make([]schema.Key, 0, len(usedKeys))
-	for key := range usedKeys {
+	directory := &MountDirectory{
+		roles: make([]roleBinding, 0, len(usedRules)), byRule: make(map[schema.Key]rows.ArtifactScalarRole, len(usedRules)),
+		factors: make([]factorBinding, 0, len(declaredFactors)), byFactor: make(map[schema.Key]rows.ArtifactScalarFactor, len(declaredFactors)),
+	}
+	ordered := make([]schema.Key, 0, len(usedRules))
+	for key := range usedRules {
 		ordered = append(ordered, key)
 	}
 	sort.Slice(ordered, func(left, right int) bool { return ordered[left] < ordered[right] })
@@ -136,8 +178,25 @@ func Lower(snapshot *ingress.Snapshot, vocabulary structure.Table) (*rows.Artifa
 		if !roleOK {
 			return nil, nil, false
 		}
-		directory.bindings = append(directory.bindings, roleBinding{key: key, scalar: role})
-		directory.byKey[key] = role
+		directory.roles = append(directory.roles, roleBinding{key: key, scalar: role})
+		directory.byRule[key] = role
+	}
+	ordered = ordered[:0]
+	for key := range declaredFactors {
+		ordered = append(ordered, key)
+	}
+	sort.Slice(ordered, func(left, right int) bool { return ordered[left] < ordered[right] })
+	for _, key := range ordered {
+		scalar, scalarOK := identity.DeriveContentID(artifactScalarFactorIdentityDomain, artifactID[:], []byte(key))
+		if !scalarOK {
+			return nil, nil, false
+		}
+		factor, factorOK := spec.DeclareFactor(scalar)
+		if !factorOK {
+			return nil, nil, false
+		}
+		directory.factors = append(directory.factors, factorBinding{key: key, scalar: factor})
+		directory.byFactor[key] = factor
 	}
 	for index := 0; index < pointCount; index++ {
 		row, rowOK := programschema.PointFamily().At(&program.Frozen, catalog, index)
@@ -203,8 +262,8 @@ func Lower(snapshot *ingress.Snapshot, vocabulary structure.Table) (*rows.Artifa
 		for inner := 0; inner < row.WritesCount(); inner++ {
 			write, writeOK := program.LocalTransferWriteFor(index, inner)
 			key, keyOK := write.Key()
-			role, roleOK := directory.Role(key)
-			if !writeOK || !keyOK || !roleOK || !spec.AddTransferFactor(transfer, role) {
+			factor, factorOK := directory.Factor(key)
+			if !writeOK || !keyOK || !factorOK || !spec.AddTransferFactor(transfer, factor) {
 				return nil, nil, false
 			}
 		}
@@ -246,10 +305,11 @@ func Lower(snapshot *ingress.Snapshot, vocabulary structure.Table) (*rows.Artifa
 			return nil, nil, false
 		}
 		role, roleOK := directory.Role(row.Key())
-		stage, stageOK := ruleStage(uint8(row.Stage()))
-		input, _ := row.InputPoint()
-		route, _ := row.PredecessorRouteID()
-		if !roleOK || !stageOK || !row.Available() || !spec.AddRule(rows.ArtifactScalarRule{Role: role, Stage: stage, Point: row.PointID(), Input: input, ID: occurrenceID(program, row), Route: route}) {
+		input, hasInput := row.InputPoint()
+		route, hasRoute := row.PredecessorRouteID()
+		native, nativeOK := row.Native()
+		if !roleOK || !row.Available() || !nativeOK || hasInput != input.Available() || hasRoute != route.Available() ||
+			!spec.AddRule(rows.ArtifactScalarRule{Role: role, Stage: row.Stage(), Point: row.PointID(), Input: input, ID: occurrenceID(program, row), Route: route, Native: native}) {
 			return nil, nil, false
 		}
 	}
@@ -316,56 +376,6 @@ func occurrenceID(program programschema.Program, placement programschema.RuleOcc
 		return identity.ContentID{}
 	}
 	return row.ID()
-}
-
-func stageLaws(vocabulary structure.Table) ([]rows.ArtifactStageLaw, bool) {
-	count := vocabulary.Count(structure.CategoryIssuanceStage)
-	if count == 0 {
-		return nil, false
-	}
-	byKey := make(map[schema.Key]rows.ArtifactRuleStage, count)
-	for ordinal := uint16(1); int(ordinal) <= count; ordinal++ {
-		entry, entryOK := vocabulary.At(structure.CategoryIssuanceStage, ordinal)
-		if !entryOK || !entry.Key().Available() {
-			return nil, false
-		}
-		stage := rows.ArtifactRuleStage(entry.Ordinal())
-		if !stage.Valid() {
-			return nil, false
-		}
-		byKey[entry.Key()] = stage
-	}
-	laws := make([]rows.ArtifactStageLaw, 0, count)
-	for ordinal := uint16(1); int(ordinal) <= count; ordinal++ {
-		entry, entryOK := vocabulary.At(structure.CategoryIssuanceStage, ordinal)
-		if !entryOK {
-			return nil, false
-		}
-		if !entry.Native() && !entry.Predecessor().Available() {
-			continue
-		}
-		law := rows.ArtifactStageLaw{Stage: rows.ArtifactRuleStage(entry.Ordinal()), Native: entry.Native()}
-		if entry.Predecessor().Available() {
-			predecessor, predecessorOK := byKey[entry.Predecessor()]
-			if !predecessorOK {
-				return nil, false
-			}
-			law.Predecessor = predecessor
-		}
-		if !law.Valid() {
-			return nil, false
-		}
-		laws = append(laws, law)
-	}
-	return laws, len(laws) > 0
-}
-
-func ruleStage(stage uint8) (rows.ArtifactRuleStage, bool) {
-	converted := rows.ArtifactRuleStage(stage)
-	if !converted.Valid() {
-		return rows.ArtifactRuleStageInvalid, false
-	}
-	return converted, true
 }
 
 func acceptedOutcome(vocabulary structure.Table, kind programschema.OutcomeKind) bool {

@@ -7,6 +7,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/lua/lower"
 	"github.com/wippyai/go-lua/analysis/program/keyspace"
 	programschema "github.com/wippyai/go-lua/analysis/schema/program"
+	programissuance "github.com/wippyai/go-lua/analysis/schema/program/issuance"
 )
 
 func TestBoundedTailCallAssignmentUsesDistinctValueBeforeStorageCell(t *testing.T) {
@@ -19,7 +20,7 @@ return second
 		t.Fatal(err)
 	}
 	transaction := compiler{
-		input: compiled, key: testCompileKey(t, compiled), occurrenceSpans: make(map[occurrenceLookup]occurrenceSpanGeometry),
+		input: compiled, key: testCompileKey(t, compiled), issuanceRows: programissuance.NewBuilder(),
 	}
 	if failure := transaction.indexPointAttachmentsFailure(); failure.Available() {
 		t.Fatalf("index point attachments: %+v", failure)
@@ -178,7 +179,7 @@ func compileStorageTailTransaction(t *testing.T, source string) *compiler {
 		t.Fatal(err)
 	}
 	transaction := &compiler{
-		input: compiled, key: testCompileKey(t, compiled), occurrenceSpans: make(map[occurrenceLookup]occurrenceSpanGeometry),
+		input: compiled, key: testCompileKey(t, compiled), issuanceRows: programissuance.NewBuilder(),
 	}
 	if failure := transaction.indexPointAttachmentsFailure(); failure.Available() {
 		t.Fatalf("index point attachments: %+v", failure)

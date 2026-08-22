@@ -24,11 +24,8 @@ func TestMountedInputFixedZeroMemberClosedIsProvenNil(t *testing.T) {
 	if !inputOK || !input.Valid() {
 		t.Fatal("under-applied fixed formal refused a mounted input")
 	}
-	if input.Kind() != packtransfer.MountedInputFixed || input.MemberCount() != 0 || input.IsOpen() || !input.IsProvenNil() {
-		t.Fatalf("kind=%v members=%d open=%t provenNil=%t, want fixed/0/false/true", input.Kind(), input.MemberCount(), input.IsOpen(), input.IsProvenNil())
-	}
-	if _, ok := input.SemanticID(); ok {
-		t.Fatal("proven-nil fixed formal published a semantic member")
+	if input.MemberCount() != 0 || input.IsOpen() || !input.IsProvenNil() {
+		t.Fatalf("members=%d open=%t provenNil=%t, want 0/false/true", input.MemberCount(), input.IsOpen(), input.IsProvenNil())
 	}
 	if _, ok := input.MemberAt(0); ok {
 		t.Fatal("proven-nil fixed formal published a member row")
@@ -51,11 +48,8 @@ func TestMountedInputFixedZeroMemberOpenIsUnknown(t *testing.T) {
 	if !inputOK || !input.Valid() {
 		t.Fatal("tail-fed fixed formal refused a mounted input")
 	}
-	if input.Kind() != packtransfer.MountedInputFixed || input.MemberCount() != 0 || !input.IsOpen() || input.IsProvenNil() {
-		t.Fatalf("kind=%v members=%d open=%t provenNil=%t, want fixed/0/true/false", input.Kind(), input.MemberCount(), input.IsOpen(), input.IsProvenNil())
-	}
-	if _, ok := input.SemanticID(); ok {
-		t.Fatal("unknown fixed formal published a semantic member")
+	if input.MemberCount() != 0 || !input.IsOpen() || input.IsProvenNil() {
+		t.Fatalf("members=%d open=%t provenNil=%t, want 0/true/false", input.MemberCount(), input.IsOpen(), input.IsProvenNil())
 	}
 	for index := 0; index < input.MemberCount(); index++ {
 		member, ok := input.MemberAt(index)
@@ -74,7 +68,7 @@ func TestMountedInputFixedSingleMemberStaysClosed(t *testing.T) {
 	if !inputOK || !input.Valid() || input.MemberCount() != 1 || input.IsOpen() || input.IsProvenNil() {
 		t.Fatalf("applied fixed formal = valid=%t members=%d open=%t provenNil=%t", input.Valid(), input.MemberCount(), input.IsOpen(), input.IsProvenNil())
 	}
-	semantic, semanticOK := input.SemanticID()
+	semantic, semanticOK := input.MemberAt(0)
 	if !semanticOK || semantic != fixture.argument0 {
 		t.Fatal("applied fixed formal lost its exact semantic member")
 	}

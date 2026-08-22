@@ -96,47 +96,6 @@ func sameRecursiveIdentityGraph(a, b Type) bool {
 	})
 }
 
-// RecursiveIdentitySignature is a compact, order-independent signature of the
-// recursive identities reachable from a type. It is a filter, not structural
-// equality: callers must still compare the type bodies before accepting two
-// types as equal.
-type RecursiveIdentitySignature struct {
-	Small    [8]uint64
-	SmallLen int
-	Overflow bool
-}
-
-// RecursiveIdentitySignatureOf returns the recursive identity signature for t.
-// The ok result is false when t contains more recursive identities than the
-// inline representation can hold; callers can then fall back to graph traversal.
-func RecursiveIdentitySignatureOf(t Type) (RecursiveIdentitySignature, bool) {
-	var ids recursiveIdentitySet
-	var seen recursivePointerSet
-	collectRecursiveIdentities(t, &ids, &seen)
-	if ids.large != nil {
-		return RecursiveIdentitySignature{Overflow: true}, false
-	}
-	out := RecursiveIdentitySignature{SmallLen: ids.smallLen}
-	copy(out.Small[:], ids.small[:])
-	sort.Slice(out.Small[:out.SmallLen], func(i, j int) bool {
-		return out.Small[i] < out.Small[j]
-	})
-	return out, true
-}
-
-// Equal reports exact equality for two inline recursive identity signatures.
-func (s RecursiveIdentitySignature) Equal(other RecursiveIdentitySignature) bool {
-	if s.Overflow || other.Overflow || s.SmallLen != other.SmallLen {
-		return false
-	}
-	for i := 0; i < s.SmallLen; i++ {
-		if s.Small[i] != other.Small[i] {
-			return false
-		}
-	}
-	return true
-}
-
 type recursiveIdentitySet struct {
 	small    [8]uint64
 	smallLen int

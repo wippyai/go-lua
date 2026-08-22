@@ -1,0 +1,15 @@
+{
+  "description": "The pcall/error-shape half of assert2: throws answers the raised value, not_throws admits a returning body, the three error readers inspect a raised value, has_error and no_error read a pcall answer pair, and fail answers Never so the branch reaching it produces no value.",
+  "packages": [
+    "assert2"
+  ],
+  "files": [
+    "main.lua"
+  ],
+  "check": {
+    "errors": 0
+  },
+  "run": {
+    "skip": "declaration-surface fixture"
+  }
+}

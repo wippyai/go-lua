@@ -241,7 +241,7 @@ func loadRuntimeKinds(t Type) (runtimekind.Set, bool) {
 		}
 		raw = recursive.runtimeKinds.Load()
 	} else {
-		properties := columnProperties(t)
+		properties := nodeProperties(t)
 		if properties == nil {
 			return 0, false
 		}
@@ -261,7 +261,7 @@ func storeRuntimeKinds(t Type, kinds runtimekind.Set) {
 		}
 		return
 	}
-	if properties := columnProperties(t); properties != nil {
+	if properties := nodeProperties(t); properties != nil {
 		atomic.StoreUint32(&properties.runtimeKinds, raw)
 	}
 }

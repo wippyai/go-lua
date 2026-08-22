@@ -2,8 +2,8 @@ package callsite
 
 import (
 	"github.com/wippyai/go-lua/analysis/engine"
-	"github.com/wippyai/go-lua/analysis/engine/rows"
 	"github.com/wippyai/go-lua/analysis/identity"
+	programissuance "github.com/wippyai/go-lua/analysis/schema/program/issuance"
 )
 
 // MountedSelectedCallEffectStage returns the cold ProgramArtifact stage proof
@@ -20,5 +20,5 @@ func (rule *HotRule) MountedSelectedCallEffectStage(committed *engine.CommittedP
 		return engine.ProgramCallStage{}, false
 	}
 	stage, ok := committed.MountedNativeCallStage(capability, mountID, occurrenceID)
-	return stage, ok && stage.Kind() == rows.ArtifactRuleStageIssued5
+	return stage, ok && stage.Kind() == programissuance.StageCallEffect
 }

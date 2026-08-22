@@ -12,6 +12,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/engine/internal/equation"
 	"github.com/wippyai/go-lua/analysis/engine/rows"
 	"github.com/wippyai/go-lua/analysis/identity"
+	programissuance "github.com/wippyai/go-lua/analysis/schema/program/issuance"
 )
 
 func readLaneID(value int) identity.ContentID {
@@ -155,8 +156,7 @@ func constructReadLaneProgram(t testing.TB, binding *SchemaBinding, schema *Sche
 		Roles: 1, Points: 2, Regions: 1, Events: 4, Rules: 1, Bodies: 1,
 	})
 	role, roleOK := spec.DeclareRole(readLaneID(4))
-	stageLawsOK := spec.InstallStageLaws([]rows.ArtifactStageLaw{{Stage: rows.ArtifactRuleStageIssued3, Native: true}})
-	if !specOK || !roleOK || !stageLawsOK {
+	if !specOK || !roleOK {
 		t.Fatal("read lane artifact header")
 	}
 	entry, member := readLaneID(10), readLaneID(11)
@@ -175,16 +175,17 @@ func constructReadLaneProgram(t testing.TB, binding *SchemaBinding, schema *Sche
 	if !events || !bodyOK || !spec.AddBodyEntry(body, entry) || !spec.AddBodyExit(body, member) {
 		t.Fatal("read lane artifact body")
 	}
-	if !spec.AddRule(rows.ArtifactScalarRule{Role: role, Stage: rows.ArtifactRuleStageIssued3, Point: member, Input: entry, ID: readLaneID(60)}) {
+	if !spec.AddRule(rows.ArtifactScalarRule{Role: role, Stage: programissuance.StageCallDispatch, Point: member, Input: entry, ID: readLaneID(60), Native: true}) {
 		t.Fatal("read lane artifact rule")
 	}
 	template, templateOK := rows.NewArtifactScalarTemplate(spec)
 	bootstrap, bootstrapOK := NewProgramBootstrap(readLaneID(70), readLaneID(71))
+	contexts := explicitTestContextDirectory(t, readLaneID(70), []identity.ContentID{readLaneID(1)}, readLaneID(72), readLaneID(73))
 	cell, cellOK := implementation.sealedRuleCell()
 	if !templateOK || !bootstrapOK || !cellOK || cell == nil {
 		t.Fatal("read lane artifact seal")
 	}
-	queryAdmission, queryAdmissionOK := NewExactQueryAdmission(queryImplementation, readLaneID(110), readLaneID(1), member)
+	queryAdmission, queryAdmissionOK := NewExactQueryAdmission(queryImplementation, readLaneID(110), readLaneID(1), member, explicitTestContext(t, contexts, readLaneID(1)))
 	if !queryAdmissionOK {
 		t.Fatal("read lane query admission")
 	}
@@ -193,7 +194,7 @@ func constructReadLaneProgram(t testing.TB, binding *SchemaBinding, schema *Sche
 		Capability: capability, Mount: readLaneID(1),
 		Point: member, Occurrence: readLaneID(60),
 	}}, Queries: []ProgramQueryAdmission{queryAdmission}}
-	program, refusal, constructed := ConstructProgram(ProgramDeclaration{Binding: binding, Mounts: []MountedProgramArtifact{mount}, Bootstrap: bootstrap, Admission: admission})
+	program, refusal, constructed := ConstructProgram(ProgramDeclaration{Binding: binding, Mounts: []MountedProgramArtifact{mount}, Bootstrap: bootstrap, Contexts: contexts, Admission: admission})
 	if !constructed || program == nil {
 		t.Fatalf("read lane ConstructProgram stage=%v seal=%v commit=%v", refusal.Stage(), refusal.Seal(), refusal.Commit())
 	}

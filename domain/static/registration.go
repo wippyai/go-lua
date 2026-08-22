@@ -1,7 +1,6 @@
 // Package static owns the Link's sealed static inventory: the judgment one
-// authored static type reaches, the value classification those judgments are
-// compared under, and the dense interpretation of the runtime family vocabulary
-// as a judgment.
+// authored static type reaches and the value classification those judgments
+// are compared under.
 //
 // # What the domain owns
 //
@@ -9,20 +8,16 @@
 //
 //   - The result algebra. A judgment is closed, symbolic, or invalid, with a
 //     bottom and a top that exist only so the result can sit in a sparse factor
-//     carrier. A closed judgment retains canonical bytes and a scoped runtime
-//     input; a symbolic one retains a finite residual equation with the reason
-//     it stayed residual; an invalid one retains the structured site and the
-//     fault that named it.
+//     carrier. A closed judgment retains its owner-issued canonical identity;
+//     a symbolic one retains a finite residual equation with the reason it
+//     stayed residual; an invalid one retains the structured site and the fault
+//     that named it.
 //   - The classification. A ClassSet holds the sealed singleton rows and the
 //     owner-fenced lower-set descriptors derived from them, with the coverage
 //     identity, rank, and nil admission every relational judgment is recomputed
 //     against by finite scan.
-//   - The runtime-kind interpretation. Every subset of the Lua runtime family
-//     vocabulary is admitted as one static result before the authority seals its
-//     order, so a consumer reads a judgment for a may-set rather than assembling
-//     a union of its own.
-//   - The authored-side coordinates a judgment is keyed by: the type-argument
-//     formal identity, the evaluation environment, and the detached operand
+//   - The authored-side coordinates a judgment is keyed by: the type reference,
+//     mounted namespace, type-argument sequence identity, and detached operand
 //     disposition the evaluator issues.
 //
 // Everything above is sealed once, before the mount phase opens, and is
@@ -57,8 +52,7 @@
 //   - Denominator. A denominator names the surface entry whose universe it
 //     quantifies over, and that owner must be an entry on a surface sealed below
 //     the denominator surface. This domain owns no entry, so it has nothing to
-//     close a world around. The closed worlds it does carry - the eight-bit
-//     runtime-kind table and the finite descriptor universe - are closed by
+//     close a world around. Its finite descriptor universe is closed by
 //     construction inside one sealed authority, and a denominator over a table
 //     that is already total states nothing the seal has not.
 //   - Query. A query family reads declared coordinate spaces and publishes a
@@ -84,12 +78,6 @@
 // change.
 //
 // # Second spellings
-//
-// The runtime-kind seal selects its absorber by the opaque partition the runtime
-// family vocabulary declares, so the families the analyzer models no structure
-// for are named once, by their owner, and a family that joins or leaves that
-// partition moves this seal with it rather than leaving a member list behind
-// here to drift.
 //
 // One restatement remains, and it is recorded here rather than declared away,
 // because it needs an owner's decision before a row could be honest about it:

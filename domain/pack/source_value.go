@@ -2,17 +2,6 @@ package pack
 
 import "github.com/wippyai/go-lua/analysis/identity"
 
-type sourceOccurrenceRow struct {
-	module     identity.ContentID
-	occurrence identity.ContentID
-	root       uint32
-}
-
-type sourceOccurrenceRef struct {
-	module     identity.ContentID
-	occurrence identity.ContentID
-}
-
 // SourceValue returns the sealed value for an exact Pack Source row.
 // It returns the existing Value directly; no owner wrapper is created for the
 // read.
@@ -38,15 +27,36 @@ func (schema *Schema) SourceForMountedOccurrence(module, occurrence identity.Con
 	if schema == nil || schema.state == nil || !module.Available() || !occurrence.Available() {
 		return Source{}, false
 	}
-	slot := schema.state.sourceOccurrenceIndex[sourceOccurrenceRef{module: module, occurrence: occurrence}]
-	if slot == 0 || uint64(slot) > uint64(len(schema.state.sourceOccurrences)) {
+	valuesIndex, valuesFound := schema.state.artifactValues[artifactValuesKey{module: module, values: occurrence}]
+	callIndex, callFound := schema.state.artifactCalls[artifactCallKey{module: module, call: occurrence}]
+	if valuesFound == callFound {
 		return Source{}, false
 	}
-	row := schema.state.sourceOccurrences[slot-1]
-	if row.module != module || row.occurrence != occurrence || uint64(row.root) >= uint64(len(schema.state.roots)) {
+	var rootIndex uint32
+	if valuesFound {
+		if uint64(valuesIndex) >= uint64(len(schema.state.values)) {
+			return Source{}, false
+		}
+		row := schema.state.values[valuesIndex]
+		if row.moduleKey != module || row.occurrenceID != occurrence {
+			return Source{}, false
+		}
+		rootIndex = row.root
+	} else {
+		if uint64(callIndex) >= uint64(len(schema.state.calls)) {
+			return Source{}, false
+		}
+		row := schema.state.calls[callIndex]
+		if row.moduleKey != module || row.occurrenceID != occurrence {
+			return Source{}, false
+		}
+		rootIndex = row.root
+	}
+	issuedModule, issuedOccurrence, identityOK := schema.state.mountedSourceIdentity(rootIndex)
+	if !identityOK || issuedModule != module || issuedOccurrence != occurrence {
 		return Source{}, false
 	}
-	root := Root{schema: schema.state, index: row.root}
+	root := Root{schema: schema.state, index: rootIndex}
 	source, sourceOK := schema.Source(root)
 	if !sourceOK {
 		return Source{}, false
@@ -60,8 +70,7 @@ func (schema *Schema) sealSourceValues() bool {
 		return false
 	}
 	values := make([]Value, len(schema.state.roots))
-	occurrences := make([]sourceOccurrenceRow, 0)
-	occurrenceIndex := make(map[sourceOccurrenceRef]uint32)
+	seenOccurrences := make(map[struct{ module, occurrence identity.ContentID }]struct{})
 	for index := range schema.state.roots {
 		root := Root{schema: schema.state, index: uint32(index)}
 		source, sourceOK := schema.Source(root)
@@ -85,37 +94,17 @@ func (schema *Schema) sealSourceValues() bool {
 			return false
 		}
 		values[index] = value
-		rootRow := schema.state.roots[index]
-		var module, occurrence identity.ContentID
-		switch rootRow.kind {
-		case rootValues:
-			if uint64(rootRow.sourceIndex) >= uint64(len(schema.state.values)) {
-				return false
-			}
-			row := schema.state.values[rootRow.sourceIndex]
-			module, occurrence = row.moduleKey, row.occurrenceID
-		case rootCall:
-			if uint64(rootRow.sourceIndex) >= uint64(len(schema.state.calls)) {
-				return false
-			}
-			row := schema.state.calls[rootRow.sourceIndex]
-			module, occurrence = row.moduleKey, row.occurrenceID
-		default:
+		module, occurrence, identityOK := schema.state.mountedSourceIdentity(uint32(index))
+		if !identityOK {
 			return false
 		}
-		if !module.Available() || !occurrence.Available() {
+		ref := struct{ module, occurrence identity.ContentID }{module: module, occurrence: occurrence}
+		if _, duplicate := seenOccurrences[ref]; duplicate {
 			return false
 		}
-		ref := sourceOccurrenceRef{module: module, occurrence: occurrence}
-		if _, duplicate := occurrenceIndex[ref]; duplicate {
-			return false
-		}
-		occurrenceIndex[ref] = uint32(len(occurrences) + 1)
-		occurrences = append(occurrences, sourceOccurrenceRow{module: module, occurrence: occurrence, root: uint32(index)})
+		seenOccurrences[ref] = struct{}{}
 	}
 	schema.state.sourceValues = values
-	schema.state.sourceOccurrences = occurrences
-	schema.state.sourceOccurrenceIndex = occurrenceIndex
 	for index, value := range values {
 		if !value.valid() {
 			continue
@@ -128,6 +117,37 @@ func (schema *Schema) sealSourceValues() bool {
 		}
 	}
 	return true
+}
+
+func (state *schema) mountedSourceIdentity(rootIndex uint32) (identity.ContentID, identity.ContentID, bool) {
+	if state == nil || uint64(rootIndex) >= uint64(len(state.roots)) {
+		return identity.ContentID{}, identity.ContentID{}, false
+	}
+	root := state.roots[rootIndex]
+	var module, occurrence identity.ContentID
+	switch root.kind {
+	case rootValues:
+		if uint64(root.sourceIndex) >= uint64(len(state.values)) {
+			return identity.ContentID{}, identity.ContentID{}, false
+		}
+		row := state.values[root.sourceIndex]
+		if row.root != rootIndex {
+			return identity.ContentID{}, identity.ContentID{}, false
+		}
+		module, occurrence = row.moduleKey, row.occurrenceID
+	case rootCall:
+		if uint64(root.sourceIndex) >= uint64(len(state.calls)) {
+			return identity.ContentID{}, identity.ContentID{}, false
+		}
+		row := state.calls[root.sourceIndex]
+		if row.root != rootIndex {
+			return identity.ContentID{}, identity.ContentID{}, false
+		}
+		module, occurrence = row.moduleKey, row.occurrenceID
+	default:
+		return identity.ContentID{}, identity.ContentID{}, false
+	}
+	return module, occurrence, module.Available() && occurrence.Available()
 }
 
 func sealedSourceTerm(builder Builder, item SourceItem) (Term, bool) {

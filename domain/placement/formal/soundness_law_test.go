@@ -8,7 +8,6 @@ import (
 	"github.com/wippyai/go-lua/analysis/lua/lower"
 	programartifact "github.com/wippyai/go-lua/analysis/program/artifact"
 	artifactcompiler "github.com/wippyai/go-lua/analysis/program/artifact/compiler"
-	"github.com/wippyai/go-lua/analysis/program/artifact/issuance"
 	flowkind "github.com/wippyai/go-lua/analysis/program/flow/kind"
 	"github.com/wippyai/go-lua/analysis/program/link"
 	linkproject "github.com/wippyai/go-lua/analysis/program/link/project"
@@ -17,12 +16,15 @@ import (
 	"github.com/wippyai/go-lua/analysis/program/target/vocabulary"
 	"github.com/wippyai/go-lua/analysis/schema"
 	"github.com/wippyai/go-lua/analysis/schema/ingress"
+	"github.com/wippyai/go-lua/analysis/schema/programmount"
 	"github.com/wippyai/go-lua/analysis/schema/structure"
 	"github.com/wippyai/go-lua/domain/heap"
+	"github.com/wippyai/go-lua/domain/materialization"
 	"github.com/wippyai/go-lua/domain/placement"
 	"github.com/wippyai/go-lua/domain/runtimekind"
 	"github.com/wippyai/go-lua/domain/type/typecontract"
 	valuedomain "github.com/wippyai/go-lua/domain/value"
+	"github.com/wippyai/go-lua/internal/testfixture"
 )
 
 func TestFormalActualTagsAreCanonicalAndUnique(t *testing.T) {
@@ -68,11 +70,11 @@ func TestUnknownOpenTailUnavailableActualRefuses(t *testing.T) {
 		"unavailable": {valid: true, present: false},
 	} {
 		t.Run(name, func(t *testing.T) {
-			demands := make(map[heap.Key]routeDemand)
-			if addUnknownOpenTailObservationDemand(schema, values, observation, demands) {
+			var demands denseDemandScratch
+			if addUnknownOpenTailObservationDemandDense(schema, values, observation, &demands) {
 				t.Fatalf("missing unknown open-tail observation was accepted: %#v", demands)
 			}
-			if len(demands) != 0 {
+			if demands.count != 0 || demands.allUnknown {
 				t.Fatalf("rejected unknown open-tail observation mutated demands: %#v", demands)
 			}
 		})
@@ -81,19 +83,55 @@ func TestUnknownOpenTailUnavailableActualRefuses(t *testing.T) {
 	// An authenticated Value Top remains a lawful widening witness under an
 	// authenticated unknown formal tail. The distinction is the present,
 	// owner-fenced Value fact, not the absence of a selected cell.
-	demands := make(map[heap.Key]routeDemand)
+	var demands denseDemandScratch
 	top := values.Top()
-	if !addUnknownOpenTailObservationDemand(schema, values, actualObservation{fact: top, present: true, valid: true}, demands) {
+	if !addUnknownOpenTailObservationDemandDense(schema, values, actualObservation{fact: top, present: true, valid: true}, &demands) {
 		t.Fatal("authenticated Value Top was rejected under unknown open tail")
 	}
-	if _, widened := demands[heap.Key{}]; !widened {
-		t.Fatalf("authenticated Value Top demands = %#v, want all-root widening sentinel", demands)
+	if !demands.allUnknown {
+		t.Fatalf("authenticated Value Top demands = %#v, want all-root widening mode", demands)
+	}
+
+	// The owner-issued sparse Bottom is equally authenticated, but carries no
+	// allocation alternatives and therefore adds no demand.
+	demands = denseDemandScratch{}
+	if !addUnknownOpenTailObservationDemandDense(schema, values, actualObservation{fact: values.Bottom(), valid: true}, &demands) {
+		t.Fatal("owner-issued sparse Bottom was rejected under unknown open tail")
+	}
+	if demands.count != 0 || demands.allUnknown {
+		t.Fatalf("sparse Bottom open-tail demands = %#v, want empty exact demand", demands)
+	}
+}
+
+func TestDenseDemandExactAllocationUsesCanonicalHeapCoordinate(t *testing.T) {
+	schema, values := formalSoundnessSchemas(t)
+	keys := routePlanAllocationKeys(t, schema)
+	if len(keys) == 0 {
+		t.Fatal("soundness fixture has no allocation root")
+	}
+	atom, atomOK := values.Allocation(keys[0], materialization.Recent)
+	fact, factOK := values.Singleton(atom)
+	if !atomOK || !factOK {
+		t.Fatalf("allocation fact = %t/%t", atomOK, factOK)
+	}
+	var demands denseDemandScratch
+	unknown, demandOK := addFactDemandDense(schema, values, actualObservation{fact: fact, present: true, valid: true}, placement.Retain, &demands)
+	if unknown || !demandOK || demands.count != 1 {
+		t.Fatalf("exact dense demand = unknown:%t ok:%t count:%d", unknown, demandOK, demands.count)
+	}
+	plan, planOK := (&routePlan{}).seal(schema, &demands)
+	if !planOK || plan.routeCount() != 1 {
+		t.Fatalf("exact dense plan = %t/%d", planOK, plan.routeCount())
+	}
+	route, routeOK := plan.routeAt(0)
+	if !routeOK || route.unknown || route.escape != placement.Retain || route.key != keys[0] {
+		t.Fatalf("exact dense route = %#v/%t", route, routeOK)
 	}
 }
 
 func formalSoundnessSchemas(t testing.TB) (placement.Schema, *valuedomain.Schema) {
 	t.Helper()
-	program, err := lower.Lower(lower.Source{Name: "formal-soundness.lua", Text: []byte("return 1")})
+	program, err := lower.Lower(lower.Source{Name: "formal-soundness.lua", Text: []byte("return {}")})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -114,17 +152,17 @@ func formalSoundnessSchemas(t testing.TB) (placement.Schema, *valuedomain.Schema
 		t.Fatal(err)
 	}
 	grammar, grammarOK := programartifact.NewExecutionSchemaID(identity.ContentID{1}, identity.ContentID{2}, programartifact.GrammarABIVersion)
-	artifact, failure := artifactcompiler.CompileDetailed(program, grammar, issuance.Directory{})
+	artifact, failure := artifactcompiler.CompileDetailed(program, grammar, testfixture.EmptyProgramIssuancePlan(t))
 	shard, shardOK := linked.Project().Mounts().At(0)
 	module, moduleOK := linked.Project().ModuleKey(shard)
-	programID, programIDOK := linked.Project().Mounts().ProgramID(shard)
+	_, programIDOK := linked.Project().Mounts().ProgramID(shard)
 	structural := formalSoundnessStructuralVocabulary(t)
 	snapshot, lowered := ingress.Lower(artifact, structural)
-	mount, mountOK := heap.NewArtifactMount(snapshot, module, programID)
-	heapSchema, heapFailure := heap.SealWithArtifacts(linked, []heap.ArtifactMount{mount})
+	mount, mountOK := programmount.MountedArtifactFromSnapshot(snapshot, module)
+	heapSchema, heapFailure := heap.SealWithArtifacts(linked, []programmount.MountedArtifact{mount})
 	placementSchema, placementOK := placement.NewSchema(heapSchema)
-	valueMount, valueMountOK := valuedomain.NewArtifactMount(snapshot, module, programID)
-	values, valueFailure := valuedomain.SealWithFailure(linked, heapSchema, []valuedomain.ArtifactMount{valueMount}, structural)
+	valueMount, valueMountOK := programmount.MountedArtifactFromSnapshot(snapshot, module)
+	values, valueFailure := valuedomain.SealWithFailure(linked, heapSchema, []programmount.MountedArtifact{valueMount}, structural)
 	if !grammarOK || failure.Available() || artifact == nil || !lowered || !shardOK || !moduleOK || !programIDOK || !mountOK || !valueMountOK || heapFailure != heap.SealFailureNone || !placementOK || valueFailure != valuedomain.SealFailureNone || values == nil {
 		t.Fatalf("formal soundness fixture grammar=%t artifact=%v ingress=%t shard=%t module=%t program=%t mount=%t valueMount=%t heap=%v placement=%t value=%v", grammarOK, failure, lowered, shardOK, moduleOK, programIDOK, mountOK, valueMountOK, heapFailure, placementOK, valueFailure)
 	}
@@ -145,14 +183,6 @@ func formalSoundnessStructuralVocabulary(t testing.TB) structure.Table {
 			return int(runtimekind.Count) - 1
 		case structure.CategoryOccurrenceKind:
 			return 32
-		case structure.CategoryIssuanceForm:
-			return 5
-		case structure.CategoryIssuanceInput:
-			return 4
-		case structure.CategoryIssuanceStage:
-			return 5
-		case structure.CategoryIssuanceRequirement:
-			return 2
 		default:
 			return 1
 		}

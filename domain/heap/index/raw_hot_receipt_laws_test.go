@@ -7,6 +7,7 @@ import (
 
 	"github.com/wippyai/go-lua/analysis/engine/rows"
 	"github.com/wippyai/go-lua/analysis/program/target/vocabulary"
+	programissuance "github.com/wippyai/go-lua/analysis/schema/program/issuance"
 	"github.com/wippyai/go-lua/domain/composite/snapshottest"
 
 	"github.com/wippyai/go-lua/analysis/engine"
@@ -36,7 +37,9 @@ import (
 	linkproject "github.com/wippyai/go-lua/analysis/program/link/project"
 	"github.com/wippyai/go-lua/analysis/program/target/compiler"
 	"github.com/wippyai/go-lua/analysis/program/target/declaration"
+	"github.com/wippyai/go-lua/analysis/schema/executioncontext"
 	programschema "github.com/wippyai/go-lua/analysis/schema/program"
+	"github.com/wippyai/go-lua/analysis/schema/programmount"
 )
 
 type rawHotQueryObservation struct {
@@ -223,15 +226,18 @@ func TestRawHotMountedPathSolve(t *testing.T) {
 		engine.MountedRuleAdmission{Capability: getCap, Mount: fixture.mountID, Point: fixture.getPoint, Occurrence: fixture.getOccurrence},
 		engine.MountedRuleAdmission{Capability: setCap, Mount: fixture.mountID, Point: fixture.setPoint, Occurrence: fixture.setOccurrence},
 	)
-	valueQueryAdmission, valueQueryOK := engine.NewExactQueryAdmission(fixture.queryImplementation, fixture.queryID, fixture.mountID, fixture.getPoint)
-	heapQueryAdmission, heapQueryOK := engine.NewExactQueryAdmission(fixture.heapQueryImplementationA, fixture.heapQueryIDA, fixture.mountID, fixture.setPoint)
-	if !valueQueryOK || !heapQueryOK {
-		t.Fatalf("raw mounted query rows valueQuery=%t heapQuery=%t", valueQueryOK, heapQueryOK)
+	contexts := rawHotExecutionContextDirectory(t, rawHotID(50), []identity.ContentID{fixture.mountID}, rawHotID(52), rawHotID(53))
+	queryContext, contextOK := contexts.ContextAt(0)
+	valueQueryAdmission, valueQueryOK := engine.NewExactQueryAdmission(fixture.queryImplementation, fixture.queryID, fixture.mountID, fixture.getPoint, queryContext)
+	heapQueryAdmission, heapQueryOK := engine.NewExactQueryAdmission(fixture.heapQueryImplementationA, fixture.heapQueryIDA, fixture.mountID, fixture.setPoint, queryContext)
+	if !contextOK || queryContext.ModuleKey() != fixture.mountID || !valueQueryOK || !heapQueryOK {
+		t.Fatalf("raw mounted query rows context=%t valueQuery=%t heapQuery=%t", contextOK, valueQueryOK, heapQueryOK)
 	}
 	program, refusal, committed := engine.ConstructProgram(engine.ProgramDeclaration{
 		Binding:   fixture.binding,
 		Mounts:    []engine.MountedProgramArtifact{fixture.mount},
 		Bootstrap: fixture.bootstrap,
+		Contexts:  contexts,
 		Admission: engine.MountedProgramAdmission{
 			Mounted: mounted,
 			Queries: []engine.ProgramQueryAdmission{valueQueryAdmission, heapQueryAdmission},
@@ -299,6 +305,30 @@ func TestRawHotMountedPathSolve(t *testing.T) {
 	}
 }
 
+func rawHotExecutionContextDirectory(t testing.TB, owner identity.ContentID, modules []identity.ContentID, actorID, representativeID identity.ContentID) executioncontext.Directory {
+	t.Helper()
+	if !owner.Available() || len(modules) == 0 || !actorID.Available() || !representativeID.Available() {
+		t.Fatal("raw hot execution-context inputs")
+	}
+	contexts := make([]executioncontext.Context, 0, len(modules))
+	roots := make([]executioncontext.RootContext, 0, len(modules))
+	for _, moduleID := range modules {
+		row, rowOK := executioncontext.NewContext(owner, moduleID, actorID, representativeID)
+		rootID, rootIDOK := identity.DeriveContentID("domain/heap/index/test-context-root/v1", owner[:], moduleID[:], actorID[:], representativeID[:])
+		root, rootOK := executioncontext.NewRootContext(owner, rootID, row.ID())
+		if !moduleID.Available() || !rowOK || !rootIDOK || !rootOK {
+			t.Fatal("raw hot execution-context row")
+		}
+		contexts = append(contexts, row)
+		roots = append(roots, root)
+	}
+	directory, sealed := executioncontext.Seal(owner, contexts, roots, nil)
+	if !sealed || !directory.Available() {
+		t.Fatal("raw hot execution-context seal")
+	}
+	return directory
+}
+
 func rawHotValueSeedAdmission(mount identity.ContentID, seed rawHotValueSeed) (engine.MountedRuleAdmission, bool) {
 	if !seed.Capability.Mounted() || seed.Capability.Activation() {
 		return engine.MountedRuleAdmission{}, false
@@ -349,7 +379,7 @@ func rawHotRuleRows(artifact *programartifact.Artifact, key string) []rawHotRule
 	return rows
 }
 
-func buildRawHotMountedPlan(t testing.TB, linked *link.Link, module identity.ContentID, artifact *programartifact.Artifact, heapMount heapdomain.ArtifactMount, heapSchema heapdomain.Schema, valueSchema *valuedomain.Schema, packs *packdomain.Schema) rawHotMountedPlan {
+func buildRawHotMountedPlan(t testing.TB, linked *link.Link, module identity.ContentID, artifact *programartifact.Artifact, heapMount programmount.MountedArtifact, heapSchema heapdomain.Schema, valueSchema *valuedomain.Schema, packs *packdomain.Schema) rawHotMountedPlan {
 	t.Helper()
 	occurrenceMount, occurrenceMountOK := heapSchema.OccurrenceMountForModule(module)
 	if !occurrenceMountOK {
@@ -635,7 +665,7 @@ return b.source`)})
 	}
 	shard, shardOK := linked.Project().Mounts().At(0)
 	module, moduleOK := linked.Project().ModuleKey(shard)
-	programID, programIDOK := linked.Project().Mounts().ProgramID(shard)
+	_, programIDOK := linked.Project().Mounts().ProgramID(shard)
 	if !shardOK || !moduleOK || !programIDOK {
 		t.Fatal("mount identity")
 	}
@@ -643,21 +673,21 @@ return b.source`)})
 	if failure.Available() || artifact == nil {
 		t.Fatalf("artifact: %v", failure)
 	}
-	heapMount, heapMountOK := heapdomain.NewArtifactMount(snapshottest.MustLower(t, artifact), module, programID)
-	valueMount, valueMountOK := valuedomain.NewArtifactMount(snapshottest.MustLower(t, artifact), module, programID)
+	heapMount, heapMountOK := programmount.MountedArtifactFromSnapshot(snapshottest.MustLower(t, artifact), module)
+	valueMount, valueMountOK := programmount.MountedArtifactFromSnapshot(snapshottest.MustLower(t, artifact), module)
 	callMount := calldomain.MountedArtifact{Program: snapshottest.MustMount(t, artifact, module), Snapshot: snapshottest.MustLower(t, artifact)}
-	heapSchema, heapFailure := heapdomain.SealWithArtifacts(linked, []heapdomain.ArtifactMount{heapMount})
+	heapSchema, heapFailure := heapdomain.SealWithArtifacts(linked, []programmount.MountedArtifact{heapMount})
 	structural, structuralOK := composite.StructureVocabulary(compilation)
 	if !structuralOK {
 		t.Fatal("structure vocabulary")
 	}
-	valueSchema, valueFailure := valuedomain.SealWithFailure(linked, heapSchema, []valuedomain.ArtifactMount{valueMount}, structural)
+	valueSchema, valueFailure := valuedomain.SealWithFailure(linked, heapSchema, []programmount.MountedArtifact{valueMount}, structural)
 	calls, callsOK := calldomain.NewWithMountedArtifacts(linked, []calldomain.MountedArtifact{callMount})
-	packMount, packMountOK := packdomain.NewArtifactMount(snapshottest.MustLower(t, artifact), module, programID)
+	packMount, packMountOK := programmount.MountedArtifactFromSnapshot(snapshottest.MustLower(t, artifact), module)
 	staticMount := staticdomain.MountedProgram{Program: snapshottest.MustMount(t, artifact, module).Program, ModuleID: module, NamespaceID: module}
 	types, typeErr := typeauthority.SealProgramRows(linked.ContentID(), []programschema.Program{artifact.Program()})
 	statics, _, staticErr := staticdomain.SealMountedPrograms(staticdomain.MountContext{LinkID: linked.ContentID(), Target: contract}, types, []staticdomain.MountedProgram{staticMount})
-	packs, packsOK := packdomain.SealMountedArtifacts(linked, statics, []packdomain.ArtifactMount{packMount})
+	packs, packsOK := packdomain.SealMountedArtifacts(linked, statics, []programmount.MountedArtifact{packMount})
 	if !heapMountOK || !valueMountOK || !packMountOK || heapFailure != heapdomain.SealFailureNone || valueFailure != valuedomain.SealFailureNone || !callsOK || typeErr != nil || types == nil || staticErr != nil || statics == nil || !packsOK {
 		t.Fatalf("domain schemas heapMount=%t valueMount=%t packMount=%t heapFailure=%v valueFailure=%v calls=%t typeErr=%v types=%t staticErr=%v statics=%t packs=%t", heapMountOK, valueMountOK, packMountOK, heapFailure, valueFailure, callsOK, typeErr, types != nil, staticErr, statics != nil, packsOK)
 	}
@@ -843,11 +873,11 @@ func rawHotScalarMount(artifact *programartifact.Artifact, module identity.Conte
 	}
 	rules := make([]scalarRuleBinding, 0, len(valueSeeds)+len(heapSeeds)+2)
 	for _, seed := range append(append([]rawHotSeed(nil), valueSeeds...), heapSeeds...) {
-		rules = append(rules, scalarRuleBinding{capability: seed.Capability, rule: rows.ArtifactScalarRule{Stage: rows.ArtifactRuleStageBase, Point: seed.Point, ID: seed.Occurrence}})
+		rules = append(rules, scalarRuleBinding{capability: seed.Capability, rule: rows.ArtifactScalarRule{Stage: programissuance.StageBase, Point: seed.Point, ID: seed.Occurrence}})
 	}
 	rules = append(rules,
-		scalarRuleBinding{capability: getCapability, rule: rows.ArtifactScalarRule{Stage: rows.ArtifactRuleStageLocal, Point: getPoint, Input: setPoint, ID: getID}},
-		scalarRuleBinding{capability: setCapability, rule: rows.ArtifactScalarRule{Stage: rows.ArtifactRuleStageLocal, Point: setPoint, Input: seedPoint, ID: setID}},
+		scalarRuleBinding{capability: getCapability, rule: rows.ArtifactScalarRule{Stage: programissuance.StageLocal, Point: getPoint, Input: setPoint, ID: getID}},
+		scalarRuleBinding{capability: setCapability, rule: rows.ArtifactScalarRule{Stage: programissuance.StageLocal, Point: setPoint, Input: seedPoint, ID: setID}},
 	)
 	spec, specOK := rows.NewArtifactScalarSpec(artifact.ID(), artifact.CompileKey().ProgramID(), identity.ContentID(schemaID), rows.ArtifactScalarCapacity{Roles: len(rules), Points: len(points), Transfers: 2, Regions: 1, Events: 5, Rules: len(rules), Bodies: 1})
 	if !specOK {

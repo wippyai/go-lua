@@ -9,21 +9,21 @@ import (
 	placementowner "github.com/wippyai/go-lua/domain/placement/owner"
 )
 
-// SchemaFragment is the callback-free Link-lane containment Rule shape. The
-// two exact predecessor reads authenticate the parent coordinate and its
-// complete Heap relation; the selected Placement read is the sole routed-write
-// address source.
+// SchemaFragment is the callback-free mounted-point containment Rule shape.
+// Both predecessor reads are complete-vector summaries. The selected
+// Placement read is the sole routed-write address source; its dependencies
+// keep the two summary planes together in the cold schema.
 type SchemaFragment struct {
-	slot            *engine.RuleSlot[placement.Placement, operand]
-	input           engine.SchemaInput
-	parentPlacement engine.SchemaReadSlot[placement.Placement]
-	parentHeap      engine.SchemaReadSlot[heapdomain.Value]
-	routes          engine.SchemaReadSlot[placement.Placement]
-	carry           engine.SchemaCarrySlot[placement.Placement]
-	write           engine.SchemaWriteSlot[placement.Placement]
-	placementRef    engine.FactorRef[placement.Placement]
-	heapRef         engine.FactorRef[heapdomain.Value]
-	semantic        identity.SemanticKey
+	slot             *engine.RuleSlot[placement.Placement, operand]
+	input            engine.SchemaInput
+	placementSummary engine.SchemaReadSlot[placement.Placement]
+	heapSummary      engine.SchemaReadSlot[heapdomain.Value]
+	routes           engine.SchemaReadSlot[placement.Placement]
+	carry            engine.SchemaCarrySlot[placement.Placement]
+	write            engine.SchemaWriteSlot[placement.Placement]
+	placementRef     engine.FactorRef[placement.Placement]
+	heapRef          engine.FactorRef[heapdomain.Value]
+	semantic         identity.SemanticKey
 }
 
 func (fragment *SchemaFragment) RuleSlot() *engine.RuleSlot[placement.Placement, operand] {
@@ -33,9 +33,9 @@ func (fragment *SchemaFragment) RuleSlot() *engine.RuleSlot[placement.Placement,
 	return fragment.slot
 }
 
-// DeclareSchema records the exact parent-read/selected-child-read/routed-write
-// geometry. Dependencies are canonicalized by the engine from the two exact
-// reads, so hot code cannot attach a different route predecessor.
+// DeclareSchema records the exact summary-read/selected-child-read/routed-write
+// geometry. Dependencies are canonicalized by the engine from both summaries,
+// so hot code cannot attach a different route predecessor.
 func DeclareSchema(builder *engine.SchemaBuilder, semantic, operandFamily identity.SemanticKey, placementPrincipal *placementowner.SchemaFragment, heapPrincipal *heapowner.SchemaFragment) (*SchemaFragment, bool) {
 	if builder == nil || placementPrincipal == nil || heapPrincipal == nil || !identity.DistinctKeys(semantic, operandFamily) {
 		return nil, false
@@ -51,15 +51,15 @@ func DeclareSchema(builder *engine.SchemaBuilder, semantic, operandFamily identi
 	if !ok {
 		return nil, false
 	}
-	parentPlacement, ok := engine.SchemaRead[placement.Placement](slot, placementPrincipal.ExactRead(), input)
+	placementSummary, ok := engine.SchemaRead[placement.Placement](slot, placementPrincipal.FoldSummaryRead(), input)
 	if !ok {
 		return nil, false
 	}
-	parentHeap, ok := engine.SchemaRead[heapdomain.Value](slot, heapPrincipal.ExactRead(), input)
+	heapSummary, ok := engine.SchemaRead[heapdomain.Value](slot, heapPrincipal.SummaryRead(), input)
 	if !ok {
 		return nil, false
 	}
-	routes, ok := engine.SchemaSelectedRead[placement.Placement](slot, placementPrincipal.ExactRead(), input, parentPlacement.Ref(), parentHeap.Ref())
+	routes, ok := engine.SchemaSelectedRead[placement.Placement](slot, placementPrincipal.ExactRead(), input, placementSummary.Ref(), heapSummary.Ref())
 	if !ok {
 		return nil, false
 	}
@@ -72,7 +72,7 @@ func DeclareSchema(builder *engine.SchemaBuilder, semantic, operandFamily identi
 		return nil, false
 	}
 	return &SchemaFragment{
-		slot: slot, input: input, parentPlacement: parentPlacement, parentHeap: parentHeap,
+		slot: slot, input: input, placementSummary: placementSummary, heapSummary: heapSummary,
 		routes: routes, carry: carry, write: write, placementRef: placementPrincipal.Ref(),
 		heapRef: heapPrincipal.Ref(), semantic: semantic,
 	}, true

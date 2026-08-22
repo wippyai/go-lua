@@ -11,7 +11,6 @@ import (
 	"github.com/wippyai/go-lua/analysis/lua/lower"
 	"github.com/wippyai/go-lua/analysis/program"
 	programartifact "github.com/wippyai/go-lua/analysis/program/artifact"
-	"github.com/wippyai/go-lua/analysis/program/artifact/issuance"
 )
 
 // corpusFixturePath names one testdata/fixtures Lua source by its absolute
@@ -83,7 +82,7 @@ type corpusCompileOutcome struct {
 // Program. A migration commit passes two variants -- the pre-cut and
 // post-cut compile paths -- to corpusArtifactIDReport and diffs the two
 // reports as its A/B gate.
-type corpusCompileVariant func(published *program.Program, grammar programartifact.ExecutionSchemaID) corpusCompileOutcome
+type corpusCompileVariant func(t *testing.T, published *program.Program, grammar programartifact.ExecutionSchemaID) corpusCompileOutcome
 
 // corpusArtifactIDReport compiles every parser-valid fixture in
 // testdata/fixtures through one build variant and reports each fixture's
@@ -102,13 +101,13 @@ func corpusArtifactIDReport(t *testing.T, grammar programartifact.ExecutionSchem
 		if lowerErr != nil || published == nil || !published.Available() {
 			continue
 		}
-		report[fixture.relative] = build(published, grammar)
+		report[fixture.relative] = build(t, published, grammar)
 	}
 	return report
 }
 
-func corpusCompileDetailedVariant(published *program.Program, grammar programartifact.ExecutionSchemaID) corpusCompileOutcome {
-	artifact, failure := CompileDetailed(published, grammar, issuance.Directory{})
+func corpusCompileDetailedVariant(t *testing.T, published *program.Program, grammar programartifact.ExecutionSchemaID) corpusCompileOutcome {
+	artifact, failure := CompileDetailed(published, grammar, testIssuancePlan(t))
 	if failure.Available() {
 		return corpusCompileOutcome{failure: failure.Error()}
 	}

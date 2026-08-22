@@ -7,6 +7,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/engine/internal/factbinding"
 	"github.com/wippyai/go-lua/analysis/engine/internal/facts/support"
 	"github.com/wippyai/go-lua/analysis/identity"
+	"github.com/wippyai/go-lua/analysis/schema/executioncontext"
 )
 
 // QueryProjectionSpec is one typed member of a heterogeneous query fold. The
@@ -391,9 +392,9 @@ func materializeHeterogeneousQuery[R any](work *carrier.Work, state carrier.Stat
 	return &typedFrozenValue[R]{value: frozen, freeze: result}, boundaryNone, true
 }
 
-func (implementation *HeterogeneousQueryImplementation[R]) declareMountedQuery(state *schemaBindingState, authority *schemaBindingAuthority, id, mount, point identity.ContentID) (declaredQueryRow, []*ruleSummaryMapping, bool) {
+func (implementation *HeterogeneousQueryImplementation[R]) declareMountedQuery(state *schemaBindingState, authority *schemaBindingAuthority, context executioncontext.Context, id, mount, point identity.ContentID) (declaredQueryRow, []*ruleSummaryMapping, bool) {
 	row, ok := implementation.sealedRow()
-	if !ok || row.state != state || state.authority != authority || !id.Available() || !mount.Available() || !point.Available() {
+	if !ok || row.state != state || state.authority != authority || !context.Available() || !id.Available() || !mount.Available() || !point.Available() {
 		return declaredQueryRow{}, nil, false
 	}
 	family := state.schema.querySemanticAt(row.ordinal)
@@ -411,14 +412,14 @@ func (implementation *HeterogeneousQueryImplementation[R]) declareMountedQuery(s
 			surface.Form = equation.SurfaceReadSummary
 			surface.Semantic = projection.normalizer
 			surface.Normalizer = projection.normalizer
-			mappings = append(mappings, &ruleSummaryMapping{state: state, authority: authority, factor: projection.factor, normalizer: projection.normalizer, surface: surface, keys: append([]uint64(nil), projection.summaryKeys...)})
+			mappings = append(mappings, &ruleSummaryMapping{state: state, authority: authority, factor: projection.factor, normalizer: projection.normalizer, surface: surface, keys: newSummaryKeyVector(projection.summaryKeys)})
 		}
 		if !surface.Available() {
 			return declaredQueryRow{}, nil, false
 		}
 		surfaces[index] = surface
 	}
-	return declaredQueryRow{ID: id, Mount: mount, Point: point, Row: equation.QueryInstance{Family: family, Surfaces: surfaces}}, mappings, true
+	return declaredQueryRow{Context: context, ID: id, Mount: mount, Point: point, Row: equation.QueryInstance{Context: context.ID(), Family: family, Surfaces: surfaces}}, mappings, true
 }
 
 func (implementation *HeterogeneousQueryImplementation[R]) bindProgramQuery(plane *programPlane, query equation.Query) (queryRow, bool) {
@@ -461,23 +462,27 @@ func bindHeterogeneousProgramQueryRow[R any](plane *programPlane, query equation
 	if !pointOK {
 		return queryRow{}, false
 	}
+	stateOrdinal, stateOK := plane.queryState(query)
+	if !stateOK {
+		return queryRow{}, false
+	}
 	exec := func(work *carrier.Work, state carrier.State, program *runtimeProgram) (frozenValue, solveBoundary, bool) {
 		_ = program
 		return materializeHeterogeneousQuery(work, state, runners, result, begin, transferResult, pairs)
 	}
-	row := queryRow{queryOrdinal: queryOrdinal, point: int32(point), heterogeneous: &heterogeneousQueryRow{projections: pairs, exec: exec}}
+	row := queryRow{queryOrdinal: queryOrdinal, point: int32(point), state: stateOrdinal, heterogeneous: &heterogeneousQueryRow{projections: pairs, exec: exec}}
 	return row, row.valid()
 }
 
-func (implementation *HeterogeneousQueryImplementation[R]) bindProgramObservation(plane *programPlane, id identity.ContentID, member equation.RuleMember, point equation.Point) (observationRow, bool) {
+func (implementation *HeterogeneousQueryImplementation[R]) bindProgramObservation(plane *programPlane, id identity.ContentID, member equation.RuleMember, point equation.Point, context executioncontext.Context) (observationRow, bool) {
 	row, ok := implementation.sealedRow()
 	if !ok || plane == nil || plane.runtime == nil || !plane.runtime.graph.OwnsMember(member) {
 		return observationRow{}, false
 	}
-	return bindHeterogeneousObservationRow(plane, id, member, point, row.state, row.ordinal, row.projections, row.result, row.begin, row.transferResult)
+	return bindHeterogeneousObservationRow(plane, id, member, point, context, row.state, row.ordinal, row.projections, row.result, row.begin, row.transferResult)
 }
 
-func bindHeterogeneousObservationRow[R any](plane *programPlane, id identity.ContentID, member equation.RuleMember, point equation.Point, state *schemaBindingState, queryOrdinal uint64, projections []heterogeneousProjection[R], result FrozenResult[R], begin func() R, transferResult bool) (observationRow, bool) {
+func bindHeterogeneousObservationRow[R any](plane *programPlane, id identity.ContentID, member equation.RuleMember, point equation.Point, context executioncontext.Context, state *schemaBindingState, queryOrdinal uint64, projections []heterogeneousProjection[R], result FrozenResult[R], begin func() R, transferResult bool) (observationRow, bool) {
 	if plane == nil || !plane.frozen || plane.runtime == nil || plane.runtime.graph == nil || state == nil || state != plane.runtime.state || state.authority != plane.runtime.authority || !id.Available() || !plane.runtime.graph.OwnsPoint(point) || queryOrdinal >= state.schema.queryCount() {
 		return observationRow{}, false
 	}
@@ -534,28 +539,32 @@ func bindHeterogeneousObservationRow[R any](plane *programPlane, id identity.Con
 	if !pointOK {
 		return observationRow{}, false
 	}
+	stateOrdinal, stateOK := plane.observationState(point, context)
+	if !stateOK {
+		return observationRow{}, false
+	}
 	exec := func(work *carrier.Work, state carrier.State, program *runtimeProgram) (frozenValue, solveBoundary, bool) {
 		_ = program
 		return materializeHeterogeneousQuery(work, state, runners, result, begin, transferResult, pairs)
 	}
-	row := observationRow{id: id, queryOrdinal: queryOrdinal, point: int32(pointIndex), heterogeneous: &heterogeneousQueryRow{projections: pairs, exec: exec}}
+	row := observationRow{id: id, queryOrdinal: queryOrdinal, point: int32(pointIndex), state: stateOrdinal, contextID: context.ID(), heterogeneous: &heterogeneousQueryRow{projections: pairs, exec: exec}}
 	return row, row.valid()
 }
 
 // Program query and observation admissions retain only this interface, so the
 // concrete projection value types and the binding cell never cross the sealed
 // program boundary.
-func NewHeterogeneousQueryAdmission[R any](implementation *HeterogeneousQueryImplementation[R], id, mount, point identity.ContentID) (ProgramQueryAdmission, bool) {
-	if implementation == nil || !id.Available() || !mount.Available() || !point.Available() {
+func NewHeterogeneousQueryAdmission[R any](implementation *HeterogeneousQueryImplementation[R], id, mount, point identity.ContentID, context executioncontext.Context) (ProgramQueryAdmission, bool) {
+	if implementation == nil || !context.Available() || !id.Available() || !mount.Available() || !point.Available() {
 		return ProgramQueryAdmission{}, false
 	}
-	return ProgramQueryAdmission{admit: implementation, ID: id, Mount: mount, Point: point}, true
+	return ProgramQueryAdmission{admit: implementation, Context: context, ID: id, Mount: mount, Point: point}, true
 }
 
-func NewHeterogeneousObservationAdmission[R any](implementation *HeterogeneousQueryImplementation[R], id identity.ContentID, role RuleSlotCapability, mount, point, occurrence identity.ContentID) (ProgramObservationAdmission, bool) {
+func NewHeterogeneousObservationAdmission[R any](implementation *HeterogeneousQueryImplementation[R], id identity.ContentID, role RuleSlotCapability, mount, point, occurrence identity.ContentID, context executioncontext.Context) (ProgramObservationAdmission, bool) {
 	if implementation == nil {
 		return ProgramObservationAdmission{}, false
 	}
-	admission := ProgramObservationAdmission{admit: implementation, ID: id, Role: role, Mount: mount, Point: point, Occurrence: occurrence}
+	admission := ProgramObservationAdmission{admit: implementation, ID: id, Role: role, Mount: mount, Point: point, Occurrence: occurrence, Context: context}
 	return admission, admission.Available()
 }

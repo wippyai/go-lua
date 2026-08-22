@@ -44,6 +44,7 @@ func censusFromReadSurface(t *testing.T, contract *contract.Contract) map[schema
 		add(ids.TargetOperation, 1)
 		add(ids.TargetABI, 1)
 		add(ids.TargetOperationEffect, contract.Operations.EffectCount(op))
+		add(ids.TargetFormalEffect, contract.Operations.FormalEffectCount(op))
 		add(ids.TargetSubedge, contract.Operations.SubedgeCount(op))
 		add(ids.TargetBinding, contract.Operations.BindingCount(op))
 		add(ids.TargetResume, contract.Operations.ResumeCount(op))

@@ -14,6 +14,8 @@ type outputAccess[V any] struct {
 	stage          func(*ruleExecution, identity.Generation, int, V) bool
 	noCandidate    func(*ruleExecution, identity.Generation, int) bool
 	routePreflight func(*ruleExecution, identity.Generation, int, int, uint64) bool
+	routeReserve   func(*ruleExecution, identity.Generation, int, int, uint64, int) ([]exactRef, []V, uint64, bool)
+	routeRelease   func(*ruleExecution, identity.Generation, int, int, uint64, uint64) bool
 	stageSelection func(*ruleExecution, identity.Generation, int, routeOutputBatch[V]) bool
 	noSelection    func(*ruleExecution, identity.Generation, int, routeOutputBatch[V]) bool
 }
@@ -24,6 +26,7 @@ type outputAccess[V any] struct {
 type routeOutputBatch[V any] struct {
 	read        int
 	selectionID uint64
+	lease       uint64
 	refs        []exactRef
 	values      []V
 }
@@ -72,6 +75,30 @@ type resolvedRuleTarget struct {
 	raw    uint64
 }
 
+// forEachRouteGroup walks one already-authenticated canonical target vector.
+// Each values argument is a contiguous subslice of the original batch; the
+// visitor consumes it synchronously and cannot retain a route callback or
+// domain capability in the output batch.
+func forEachRouteGroup[V any](routes []resolvedRuleTarget, values []V, visit func(carrier.Target, []V) bool) bool {
+	if len(routes) == 0 || len(routes) != len(values) || visit == nil {
+		return false
+	}
+	target := routes[0].target
+	start := 0
+	for ordinal := 1; ordinal < len(routes); ordinal++ {
+		current := routes[ordinal].target
+		if current.Same(target) {
+			continue
+		}
+		if !visit(target, values[start:ordinal]) {
+			return false
+		}
+		target = current
+		start = ordinal
+	}
+	return visit(target, values[start:])
+}
+
 func (runtime *outputRuntime) targets(execution *ruleExecution, row int) ([]resolvedRuleTarget, bool) {
 	if runtime == nil || execution == nil || execution.product == nil || !execution.product.requireCheckpoint() || row != execution.product.current || row < 0 || row >= len(execution.product.values) || len(runtime.writes) == 0 {
 		return nil, false
@@ -90,14 +117,21 @@ func (runtime *outputRuntime) targets(execution *ruleExecution, row int) ([]reso
 }
 
 type typedOutput[K ~uint32 | ~uint64, V any] struct {
-	execution    *ruleExecution
-	binding      *factbinding.Binding[K, V]
-	targets      func(*ruleExecution, int) ([]resolvedRuleTarget, bool)
-	routeRead    uint64
-	routeTarget  func(exactRef) (carrier.Target, schemaFactorBinding, uint64, bool)
-	patch        *factbinding.Patch[K, V]
-	transform    typedCarryTransform[K, V]
-	routeScratch []V
+	execution           *ruleExecution
+	binding             *factbinding.Binding[K, V]
+	targets             func(*ruleExecution, int) ([]resolvedRuleTarget, bool)
+	routeRead           uint64
+	routeTarget         func(exactRef) (carrier.Target, schemaFactorBinding, uint64, bool)
+	patch               *factbinding.Patch[K, V]
+	transform           typedCarryTransform[K, V]
+	routeRefs           []exactRef
+	routeValues         []V
+	routeTargets        []resolvedRuleTarget
+	routeBusy           bool
+	routeLeaseRow       int
+	routeLeaseRead      int
+	routeLeaseSelection uint64
+	routeLease          uint64
 	// disposition is one execution-local byte per materialized Product row.
 	// It is allocated only when a transfer settles its first row, and records
 	// the sole legal outcome for that row: a staged value or an explicit empty
@@ -181,7 +215,7 @@ func newTypedOutputAccess[K ~uint32 | ~uint64, V any](output *boundFactor[K, V],
 				return nil
 			}
 			// A no-candidate Product must not create an empty Factor patch. Delay
-			// the binding scratch until the first actual StageValue.
+			// the binding scratch until the first actual Staged result.
 			typed := &typedOutput[K, V]{execution: execution, binding: output.binding, targets: projection.targets, transform: transform}
 			if routeOutput {
 				typed.routeRead = routeRead
@@ -212,6 +246,23 @@ func newTypedOutputAccess[K ~uint32 | ~uint64, V any](output *boundFactor[K, V],
 			}
 			typed, ok := execution.output.(*typedOutput[K, V])
 			return ok && typed.validRouteToken(execution, epoch, row, read, selectionID)
+		},
+		routeReserve: func(execution *ruleExecution, epoch identity.Generation, row, read int, selectionID uint64, count int) ([]exactRef, []V, uint64, bool) {
+			if execution == nil || execution.owner != owner {
+				return nil, nil, 0, false
+			}
+			typed, ok := execution.output.(*typedOutput[K, V])
+			if !ok {
+				return nil, nil, 0, false
+			}
+			return typed.reserveRoute(execution, epoch, row, read, selectionID, count)
+		},
+		routeRelease: func(execution *ruleExecution, epoch identity.Generation, row, read int, selectionID, lease uint64) bool {
+			if execution == nil || execution.owner != owner {
+				return false
+			}
+			typed, ok := execution.output.(*typedOutput[K, V])
+			return ok && typed.releaseRoute(execution, epoch, row, read, selectionID, lease)
 		},
 		stageSelection: func(execution *ruleExecution, epoch identity.Generation, row int, batch routeOutputBatch[V]) bool {
 			if execution == nil || execution.owner != owner {
@@ -250,7 +301,7 @@ func (output *typedOutput[K, V]) applyCarryTransform(execution *ruleExecution, w
 }
 
 func (output *typedOutput[K, V]) stage(execution *ruleExecution, epoch identity.Generation, row int, value V) bool {
-	if output == nil || output.closed || output.execution != execution || execution == nil || !execution.active.Holds(epoch) || execution.product == nil || !execution.product.requireCheckpoint() || row != execution.product.current || row < 0 || row >= len(execution.product.values) || output.disposition != nil && output.disposition[row] != outputUnset {
+	if output == nil || output.closed || output.routeBusy || output.execution != execution || execution == nil || !execution.active.Holds(epoch) || execution.product == nil || !execution.product.requireCheckpoint() || row != execution.product.current || row < 0 || row >= len(execution.product.values) || output.disposition != nil && output.disposition[row] != outputUnset {
 		return false
 	}
 	if output.routeRead != 0 || output.targets == nil || output.disposition != nil && output.disposition[row] != outputUnset {
@@ -289,10 +340,7 @@ func (output *typedOutput[K, V]) stage(execution *ruleExecution, epoch identity.
 }
 
 func (output *typedOutput[K, V]) noCandidate(execution *ruleExecution, epoch identity.Generation, row int) bool {
-	if output == nil || output.closed || output.execution != execution || execution == nil || !execution.active.Holds(epoch) || execution.product == nil || !execution.product.requireCheckpoint() || row != execution.product.current || row < 0 || row >= len(execution.product.values) || output.disposition != nil && output.disposition[row] != outputUnset {
-		return false
-	}
-	if output.routeRead != 0 {
+	if output == nil || output.closed || output.routeBusy || output.execution != execution || execution == nil || !execution.active.Holds(epoch) || execution.product == nil || !execution.product.requireCheckpoint() || row != execution.product.current || row < 0 || row >= len(execution.product.values) || output.disposition != nil && output.disposition[row] != outputUnset {
 		return false
 	}
 	when, ok := execution.product.rows.At(row)
@@ -317,7 +365,84 @@ func (output *typedOutput[K, V]) validRouteToken(execution *ruleExecution, epoch
 }
 
 func (output *typedOutput[K, V]) validRouteBatch(execution *ruleExecution, epoch identity.Generation, row int, batch routeOutputBatch[V]) bool {
-	return len(batch.refs) == len(batch.values) && output.validRouteToken(execution, epoch, row, batch.read, batch.selectionID)
+	if output == nil || !output.routeBusy || len(batch.refs) == 0 || len(batch.refs) != len(batch.values) || len(output.routeRefs) != len(batch.refs) || len(output.routeValues) != len(batch.values) {
+		return false
+	}
+	// Routed returns slices into this execution-local reservation.  A result
+	// cannot be settled after its reservation was released, nor can a foreign
+	// batch be mistaken for the currently leased scratch.  The backing-array
+	// identity check is deliberately only a fence; all Ref/value contents are
+	// still authenticated below before the Patch opens.
+	if &batch.refs[0] != &output.routeRefs[0] || &batch.values[0] != &output.routeValues[0] || batch.lease == 0 || batch.lease != output.routeLease {
+		return false
+	}
+	if !output.validRouteToken(execution, epoch, row, batch.read, batch.selectionID) {
+		return false
+	}
+	return true
+}
+
+// reserveRoute leases one execution-local pair of typed vectors to Routed.
+// The lease is held across the synchronous fold result and settlement, so a
+// second Routed call cannot overwrite a result that is still being consumed.
+// Capacity is retained only by this typedOutput; no pool or shared hot-rule
+// state is involved.
+func (output *typedOutput[K, V]) reserveRoute(execution *ruleExecution, epoch identity.Generation, row, read int, selectionID uint64, count int) ([]exactRef, []V, uint64, bool) {
+	if output == nil || output.closed || output.routeBusy || count <= 0 || !output.validRouteToken(execution, epoch, row, read, selectionID) {
+		return nil, nil, 0, false
+	}
+	lease := output.routeLease + 1
+	if lease == 0 {
+		return nil, nil, 0, false
+	}
+	if cap(output.routeRefs) < count {
+		output.routeRefs = make([]exactRef, count)
+	} else {
+		output.routeRefs = output.routeRefs[:count]
+	}
+	if cap(output.routeValues) < count {
+		output.routeValues = make([]V, count)
+	} else {
+		output.routeValues = output.routeValues[:count]
+	}
+	if cap(output.routeTargets) < count {
+		output.routeTargets = make([]resolvedRuleTarget, count)
+	} else {
+		output.routeTargets = output.routeTargets[:count]
+	}
+	output.routeLeaseRow = row
+	output.routeLeaseRead = read
+	output.routeLeaseSelection = selectionID
+	output.routeLease = lease
+	output.routeBusy = true
+	return output.routeRefs, output.routeValues, lease, true
+}
+
+// releaseRoute closes the one synchronous reservation.  Clearing both
+// vectors breaks references held by a failed or escaped result while keeping
+// their capacity available for the next Product row in this execution.
+func (output *typedOutput[K, V]) releaseRoute(execution *ruleExecution, epoch identity.Generation, row, read int, selectionID, lease uint64) bool {
+	if output == nil || !output.routeBusy || output.execution != execution || execution == nil || output.execution.epoch != epoch || !execution.active.Holds(epoch) || output.routeLeaseRow != row || output.routeLeaseRead != read || output.routeLeaseSelection != selectionID || output.routeLease != lease {
+		return false
+	}
+	output.clearRouteReservation()
+	return true
+}
+
+func (output *typedOutput[K, V]) clearRouteReservation() {
+	if output == nil {
+		return
+	}
+	clear(output.routeRefs)
+	clear(output.routeValues)
+	clear(output.routeTargets)
+	output.routeRefs = output.routeRefs[:0]
+	output.routeValues = output.routeValues[:0]
+	output.routeTargets = output.routeTargets[:0]
+	output.routeLeaseRow = -1
+	output.routeLeaseRead = -1
+	output.routeLeaseSelection = 0
+	output.routeBusy = false
 }
 
 // stageSelection applies one complete selected-route batch. It authenticates
@@ -332,7 +457,8 @@ func (output *typedOutput[K, V]) stageSelection(execution *ruleExecution, epoch 
 	if !ok || !when.Valid() {
 		return false
 	}
-	routes := make([]resolvedRuleTarget, len(batch.refs))
+	output.routeTargets = output.routeTargets[:len(batch.refs)]
+	routes := output.routeTargets
 	for ordinal := range batch.refs {
 		ref := batch.refs[ordinal]
 		current, row, raw, resolved := output.routeTarget(ref)
@@ -347,21 +473,9 @@ func (output *typedOutput[K, V]) stageSelection(execution *ruleExecution, epoch 
 	if !output.applyCarryTransform(execution, when) || !output.beginPatch(execution) {
 		return false
 	}
-	target := routes[0].target
-	output.routeScratch = append(output.routeScratch[:0], batch.values[0])
-	for ordinal := 1; ordinal < len(batch.refs); ordinal++ {
-		current := routes[ordinal].target
-		if current.Same(target) {
-			output.routeScratch = append(output.routeScratch, batch.values[ordinal])
-			continue
-		}
-		if !execution.product.requireCheckpoint() || !output.patch.WriteJoined(target, when, output.routeScratch) {
-			return false
-		}
-		target = current
-		output.routeScratch = append(output.routeScratch[:0], batch.values[ordinal])
-	}
-	if !execution.product.requireCheckpoint() || !output.patch.WriteJoined(target, when, output.routeScratch) {
+	if !forEachRouteGroup(routes, batch.values, func(target carrier.Target, values []V) bool {
+		return execution.product.requireCheckpoint() && output.patch.WriteJoined(target, when, values)
+	}) {
 		return false
 	}
 	if output.disposition == nil {
@@ -373,7 +487,7 @@ func (output *typedOutput[K, V]) stageSelection(execution *ruleExecution, epoch 
 }
 
 func (output *typedOutput[K, V]) noSelection(execution *ruleExecution, epoch identity.Generation, row int, batch routeOutputBatch[V]) bool {
-	if !output.validRouteBatch(execution, epoch, row, batch) || len(batch.refs) != 0 {
+	if output == nil || output.closed || output.routeBusy || batch.lease != 0 || len(batch.refs) != 0 || len(batch.values) != 0 || !output.validRouteToken(execution, epoch, row, batch.read, batch.selectionID) {
 		return false
 	}
 	when, ok := execution.product.rows.At(row)
@@ -388,7 +502,7 @@ func (output *typedOutput[K, V]) noSelection(execution *ruleExecution, epoch ide
 }
 
 func (output *typedOutput[K, V]) complete() bool {
-	if output == nil || output.closed || output.execution == nil || output.execution.product == nil || !output.execution.product.requireCheckpoint() {
+	if output == nil || output.closed || output.routeBusy || output.execution == nil || output.execution.product == nil || !output.execution.product.requireCheckpoint() {
 		return false
 	}
 	rows := len(output.execution.product.values)
@@ -411,7 +525,7 @@ func (output *typedOutput[K, V]) hasStaged() bool {
 }
 
 func (output *typedOutput[K, V]) publish() (carrier.Patch, bool) {
-	if output == nil || output.closed || output.execution == nil || output.execution.failed.Load() {
+	if output == nil || output.closed || output.routeBusy || output.execution == nil || output.execution.failed.Load() {
 		return carrier.Patch{}, false
 	}
 	output.closed = true
@@ -431,6 +545,9 @@ func (output *typedOutput[K, V]) discard() {
 		return
 	}
 	output.closed = true
+	if output.routeBusy {
+		output.clearRouteReservation()
+	}
 	if output.patch != nil {
 		output.patch.Discard()
 		output.patch = nil

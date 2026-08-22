@@ -201,14 +201,22 @@ func (closed Closed) CoordinateAt(index int) (valuedomain.Coordinate, bool) {
 	return closed.coords[index], true
 }
 
-// SummaryKeys returns the canonical dense Value-factor coordinates used by
-// this closed source. The returned slice is a fresh copy: the source owns the
-// issuance and callers can only consume the read-only snapshot.
-func (closed Closed) SummaryKeys() ([]uint64, bool) {
-	if !closed.valid() || len(closed.keys) == 0 {
-		return nil, false
+// SummaryKeyCount and SummaryKeyAt expose the canonical dense Value-factor
+// coordinates as an immutable scalar range. Closed remains the sole owner of
+// the key vector; rule issuance can validate and hash it without allocating a
+// copied slice for every mounted constructor occurrence.
+func (closed Closed) SummaryKeyCount() int {
+	if !closed.valid() {
+		return 0
 	}
-	return append([]uint64(nil), closed.keys...), true
+	return len(closed.keys)
+}
+
+func (closed Closed) SummaryKeyAt(index int) (uint64, bool) {
+	if !closed.valid() || index < 0 || index >= len(closed.keys) {
+		return 0, false
+	}
+	return closed.keys[index], true
 }
 
 // Field is one source-ordered scalar constructor input. It carries only cold

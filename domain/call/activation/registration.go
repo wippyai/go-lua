@@ -22,14 +22,14 @@ type rulePrincipals interface {
 
 // ruleAuthorities is the sealed authority set this rule binds against. The
 // activation plane transports every factor lane across a call boundary, so it
-// names all five factor authorities and its own target batch catalog.
+// names the five factor authorities. Its route keys are private bind-time
+// output derived from Call itself.
 type ruleAuthorities interface {
 	ValueAuthority() *valueowner.HotOwner
 	CallAuthority() *callowner.HotOwner
 	HeapAuthority() *heapowner.HotOwner
 	PackAuthority() *packowner.HotOwner
 	EffectAuthority() *effectowner.HotOwner
-	ActivationCatalog() *TargetBatchCatalog
 }
 
 // RuleEntry is this package's call-activation rule declaration. P and A are
@@ -41,7 +41,7 @@ func RuleEntry[P rulePrincipals, A ruleAuthorities]() rule.Spec {
 		Writes: "call",
 		Owner:  "call",
 		Issues: []rule.Issuance{
-			{Occurrence: "occurrence/call-activation", Requirement: "requirement/unrestricted", Form: "issuance/call-stage", Input: "input/finish", Stage: "stage/call-summary"},
+			{Occurrence: "occurrence/call-activation", Requirement: "program-requirement/unrestricted", Form: "program-form/call-summary"},
 		},
 		Lane:     rule.LaneActivation,
 		Semantic: "semantic/activation/call-body",
@@ -68,7 +68,7 @@ func RegisterRule(binding *engine.SchemaBinding, context rule.Registration[*Sche
 }
 
 func BindRule[A ruleAuthorities](_ *engine.SchemaBinding, context rule.Binding[A, *SchemaFragment]) (*HotRule, bool) {
-	hot, ok := BindHot(context.Fragment, context.Authorities.CallAuthority(), context.Authorities.ActivationCatalog())
+	hot, ok := BindHot(context.Fragment, context.Authorities.CallAuthority())
 	if !ok {
 		return nil, false
 	}

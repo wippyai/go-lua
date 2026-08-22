@@ -236,42 +236,6 @@ type Carrier struct {
 	Cardinality astcodec.FieldState
 }
 
-type SequenceConstruction uint8
-
-const (
-	SequenceConstructionInvalid SequenceConstruction = iota
-	SequenceConstructionNil
-	SequenceConstructionLiteral
-	SequenceConstructionForward
-	SequenceConstructionAppend
-)
-
-type SequenceSegmentKind uint8
-
-const (
-	SequenceSegmentInvalid SequenceSegmentKind = iota
-	SequenceElement
-	SequenceSpread
-)
-
-type SequenceSegment struct {
-	Kind SequenceSegmentKind
-	Term ActionTermID
-}
-
-type SequenceDestination struct {
-	Tag   string
-	Field string
-}
-
-type SequenceLaw struct {
-	Production   string
-	Scope        ActionScopeID
-	Destination  SequenceDestination
-	Construction SequenceConstruction
-	Segments     []SequenceSegment
-}
-
 // FieldMutation attributes a parser action edit to its owning production.
 type FieldMutation struct {
 	Production string
@@ -290,7 +254,6 @@ type Evidence struct {
 	Products           []Product
 	ProductLaws        []ProductLaw
 	HelperLaws         []HelperLaw
-	Sequences          []SequenceLaw
 	Mutations          []FieldMutation
 	ActionTerms        ActionTerms
 	Carriers           []Carrier

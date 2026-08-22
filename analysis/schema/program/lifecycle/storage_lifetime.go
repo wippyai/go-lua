@@ -3,8 +3,10 @@ package lifecycle
 import "github.com/wippyai/go-lua/analysis/identity"
 
 // StorageLifetime is the neutral, compiler-owned lifetime classification for
-// one authored storage Cell. Unknown is intentionally a sealed state: an
-// authored global is not promoted to process Shared storage until a mounted
+// one authored storage Cell. Closure is distinct from Module: a captured cell
+// outlives its introducing frame through a closure environment, but is not
+// owned by the module entry itself. Unknown is intentionally a sealed state:
+// an authored global is not promoted to process Shared storage until a mounted
 // Host authority proves cross-context ownership.
 type StorageLifetime uint8
 
@@ -15,10 +17,14 @@ const (
 	StorageLifetimeGlobal
 	StorageLifetimeExternal
 	StorageLifetimeUnknown
+	// StorageLifetimeClosure is retained by a closure environment. It is
+	// appended after Unknown so existing serialized lifetime ordinals remain
+	// stable while the new semantic class gets its own wire spelling.
+	StorageLifetimeClosure
 )
 
 func (lifetime StorageLifetime) Valid() bool {
-	return lifetime >= StorageLifetimeFrame && lifetime <= StorageLifetimeUnknown
+	return lifetime >= StorageLifetimeFrame && lifetime <= StorageLifetimeClosure
 }
 
 // String returns the stable schema spelling used by diagnostics and laws.
@@ -34,6 +40,8 @@ func (lifetime StorageLifetime) String() string {
 		return "external"
 	case StorageLifetimeUnknown:
 		return "unknown"
+	case StorageLifetimeClosure:
+		return "closure"
 	default:
 		return "lifetime(invalid)"
 	}

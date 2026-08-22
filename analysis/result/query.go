@@ -209,6 +209,14 @@ func (query Query) MountID() (identity.ContentID, bool) {
 	return point.mount, ok
 }
 
+// ContextID returns the exact canonical execution context carried by the
+// detached publication site. A generic or malformed context-free point does
+// not acquire a fallback context here.
+func (query Query) ContextID() (identity.ContentID, bool) {
+	point, ok := query.pointRow()
+	return point.context, ok && point.context.Available()
+}
+
 func (query Query) BodyCount() int {
 	point, ok := query.pointRow()
 	if !ok {

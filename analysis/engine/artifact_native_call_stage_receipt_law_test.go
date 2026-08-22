@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"github.com/wippyai/go-lua/analysis/identity"
+	programissuance "github.com/wippyai/go-lua/analysis/schema/program/issuance"
 )
 
 type nativeCallStageLawFixture struct {
@@ -107,15 +108,11 @@ func buildNativeCallStageLawOwner(t testing.TB, queried bool) nativeCallStageLaw
 
 func (fixture nativeCallStageLawFixture) scalarSpec(t testing.TB, rules []rows.ArtifactScalarRule, order []identity.ContentID) *rows.ArtifactScalarSpec {
 	t.Helper()
-	artifactID, program, schema := artifactScalarLawID(0x78), artifactScalarLawID(0x79), identity.ContentID(fixture.binding.Schema().ID().Digest())
+	artifactID, program, schemaID := artifactScalarLawID(0x78), artifactScalarLawID(0x79), identity.ContentID(fixture.binding.Schema().ID().Digest())
 	regionID, bodyID := artifactScalarLawID(0x7A), artifactScalarLawID(0x7B)
 	points := []rows.ArtifactScalarPoint{{ID: fixture.base, Initial: true}, {ID: fixture.dispatch}, {ID: fixture.summary}, {ID: fixture.effect}}
-	spec, ok := rows.NewArtifactScalarSpec(artifactID, program, schema, rows.ArtifactScalarCapacity{Roles: 1, Points: len(points), Regions: 1, Events: len(order) + 2, Rules: len(rules), Bodies: 1})
-	if !ok || !spec.InstallStageLaws([]rows.ArtifactStageLaw{
-		{Stage: rows.ArtifactRuleStageIssued3, Native: true},
-		{Stage: rows.ArtifactRuleStageIssued4, Native: true, Predecessor: rows.ArtifactRuleStageIssued3},
-		{Stage: rows.ArtifactRuleStageIssued5, Native: true, Predecessor: rows.ArtifactRuleStageIssued4},
-	}) {
+	spec, ok := rows.NewArtifactScalarSpec(artifactID, program, schemaID, rows.ArtifactScalarCapacity{Roles: 1, Points: len(points), Regions: 1, Events: len(order) + 2, Rules: len(rules), Bodies: 1})
+	if !ok {
 		t.Fatal("native Call stage scalar spec")
 	}
 	role, roleOK := spec.DeclareRole(artifactScalarLawID(0x6F))
@@ -164,9 +161,9 @@ func (fixture nativeCallStageLawFixture) rules() []rows.ArtifactScalarRule {
 	// Deliberately not stage order: admission must follow committed stage
 	// geometry, never input slice order.
 	return []rows.ArtifactScalarRule{
-		{Stage: rows.ArtifactRuleStageIssued5, Point: fixture.effect, Input: fixture.summary, ID: fixture.effectID},
-		{Stage: rows.ArtifactRuleStageIssued3, Point: fixture.dispatch, Input: fixture.base, ID: fixture.dispatchID},
-		{Stage: rows.ArtifactRuleStageIssued4, Point: fixture.summary, Input: fixture.dispatch, ID: fixture.summaryID},
+		{Stage: programissuance.StageCallEffect, Point: fixture.effect, Input: fixture.summary, ID: fixture.effectID, Native: true},
+		{Stage: programissuance.StageCallDispatch, Point: fixture.dispatch, Input: fixture.base, ID: fixture.dispatchID, Native: true},
+		{Stage: programissuance.StageCallSummary, Point: fixture.summary, Input: fixture.dispatch, ID: fixture.summaryID, Native: true},
 	}
 }
 
@@ -209,7 +206,7 @@ func TestArtifactNativeCallStageRejectsTamperAliasAndOrder(t *testing.T) {
 	}
 
 	tampered := fixture.rules()
-	tampered[0].Stage = rows.ArtifactRuleStageIssued4
+	tampered[0].Stage = programissuance.StageCallSummary
 	if mount, ok := fixture.scalarMount(t, tampered, fixture.order()); ok || mount.Template != nil {
 		t.Fatal("retagged Effect stage admitted")
 	}

@@ -17,6 +17,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/program/target/declaration"
 	programschema "github.com/wippyai/go-lua/analysis/schema/program"
 	programcatalog "github.com/wippyai/go-lua/analysis/schema/program/catalog"
+	"github.com/wippyai/go-lua/analysis/schema/programmount"
 	schematype "github.com/wippyai/go-lua/analysis/schema/typecontract"
 	"github.com/wippyai/go-lua/domain/composite"
 	heapdomain "github.com/wippyai/go-lua/domain/heap"
@@ -99,7 +100,7 @@ func selectorLawSchemaSource(t testing.TB, contract *contract.Contract, label, s
 	shard, shardOK := mounts.At(0)
 	program, programOK := mounts.Program(shard)
 	module, moduleOK := linked.Project().ModuleKey(shard)
-	programID, programIDOK := mounts.ProgramID(shard)
+	_, programIDOK := mounts.ProgramID(shard)
 	if !shardOK || !programOK || program == nil || !moduleOK || !programIDOK {
 		t.Fatal("selector mount")
 	}
@@ -115,19 +116,20 @@ func selectorLawSchemaSource(t testing.TB, contract *contract.Contract, label, s
 	if err != nil || statics == nil {
 		t.Fatalf("seal selector static: %v", err)
 	}
-	mount, mountOK := packdomain.NewArtifactMount(snapshottest.MustLower(t, artifact), module, programID)
+	snapshot := snapshottest.MustLower(t, artifact)
+	mount, mountOK := programmount.MountedArtifactFromSnapshot(snapshot, module)
 	if !mountOK {
 		t.Fatal("selector Pack mount")
 	}
-	schema, ok := packdomain.SealMountedArtifacts(linked, statics, []packdomain.ArtifactMount{mount})
+	schema, ok := packdomain.SealMountedArtifacts(linked, statics, []programmount.MountedArtifact{mount})
 	if !ok || schema == nil {
 		t.Fatal("seal selector Pack")
 	}
 	structural, structuralOK := composite.StructureVocabulary(receipt)
-	heapMount, heapMountOK := heapdomain.NewArtifactMount(snapshottest.MustLower(t, artifact), module, programID)
-	valueMount, valueMountOK := valuedomain.NewArtifactMount(snapshottest.MustLower(t, artifact), module, programID)
-	heaps, heapFailure := heapdomain.SealWithArtifacts(linked, []heapdomain.ArtifactMount{heapMount})
-	values, valueFailure := valuedomain.SealWithFailure(linked, heaps, []valuedomain.ArtifactMount{valueMount}, structural)
+	heapMount, heapMountOK := programmount.MountedArtifactFromSnapshot(snapshot, module)
+	valueMount, valueMountOK := programmount.MountedArtifactFromSnapshot(snapshot, module)
+	heaps, heapFailure := heapdomain.SealWithArtifacts(linked, []programmount.MountedArtifact{heapMount})
+	values, valueFailure := valuedomain.SealWithFailure(linked, heaps, []programmount.MountedArtifact{valueMount}, structural)
 	if !structuralOK || !heapMountOK || !valueMountOK || heapFailure != heapdomain.SealFailureNone || valueFailure != valuedomain.SealFailureNone || values == nil {
 		t.Fatalf("selector Value seal structural=%t heapMount=%t valueMount=%t heap=%v value=%v", structuralOK, heapMountOK, valueMountOK, heapFailure, valueFailure)
 	}
@@ -228,17 +230,6 @@ func TestInputSelectorsSealTargetABIWithoutRetainingTarget(t *testing.T) {
 	if !first.schema.OwnsInputSelector(receiver) || !first.schema.OwnsInputSelector(argument) || !first.schema.OwnsInputSelector(tail) || !first.schema.OwnsInputSelector(whole) {
 		t.Fatal("Target ABI selector ownership")
 	}
-	receiverSource, receiverSourceOK := first.schema.MountedInputSemanticSource(first.module, first.callID, receiver)
-	argumentSource, argumentSourceOK := first.schema.MountedInputSemanticSource(first.module, first.callID, argument)
-	if !receiverSourceOK || !argumentSourceOK || receiverSource.ID() != first.receiver || argumentSource.ID() != first.argument0 {
-		t.Fatal("method receiver-first fixed input projection")
-	}
-	if _, ok := first.schema.MountedInputSemanticSource(first.module, first.callID, tail); ok {
-		t.Fatal("tail selector fabricated structural semantic source")
-	}
-	if _, ok := first.schema.MountedInputSemanticSource(first.module, first.callID, whole); ok {
-		t.Fatal("whole selector fabricated structural semantic source")
-	}
 	if _, ok := first.schema.InputSelector(operation, vocabulary.InputSource{Kind: vocabulary.InputSourceValueFormal, Ordinal: 2}); ok {
 		t.Fatal("out-of-range fixed formal selected")
 	}
@@ -262,17 +253,8 @@ func TestInputSelectorsSealTargetABIWithoutRetainingTarget(t *testing.T) {
 	if second.schema.OwnsInputSelector(argument) {
 		t.Fatal("foreign selector crossed Pack owner fence")
 	}
-	if _, ok := first.schema.MountedInputSemanticSource(first.module, first.callID, resealed); ok {
-		t.Fatal("foreign schema selector crossed Pack call fence")
-	}
-	if _, ok := first.schema.MountedInputSemanticSource(second.module, first.callID, receiver); ok {
-		t.Fatal("foreign mounted module crossed Pack call fence")
-	}
 	if first.callID == second.callID {
 		t.Fatal("fixture did not issue distinct mounted call identities")
-	}
-	if _, ok := first.schema.MountedInputSemanticSource(first.module, second.callID, receiver); ok {
-		t.Fatal("foreign mounted call crossed Pack call fence")
 	}
 }
 

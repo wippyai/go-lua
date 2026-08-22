@@ -249,6 +249,17 @@ func TestModuleKeyIsOneDependencyLocalMountRow(t *testing.T) {
 
 	leftKey, leftIndex := keyForName(base, "left")
 	rightKey, _ := keyForName(base, "right")
+	resolvedLeft, resolvedLeftOK := base.Mounts().ForModuleKey(leftKey)
+	resolvedLeftKey, resolvedLeftKeyOK := base.ModuleKey(resolvedLeft)
+	if !resolvedLeftOK || !resolvedLeftKeyOK || resolvedLeftKey != leftKey {
+		t.Fatal("Project did not resolve its canonical ModuleKey to the exact Shard")
+	}
+	if _, ok := base.Mounts().ForModuleKey(identity.ContentID{}); ok {
+		t.Fatal("Project resolved an unavailable ModuleKey")
+	}
+	if _, ok := base.Mounts().ForModuleKey(identity.ContentID{255}); ok {
+		t.Fatal("Project resolved an unknown ModuleKey")
+	}
 	for label, component := range map[string]*Component{"permuted": permuted, "target": targetChanged, "expanded": expanded} {
 		gotLeft, gotLeftIndex := keyForName(component, "left")
 		gotRight, _ := keyForName(component, "right")

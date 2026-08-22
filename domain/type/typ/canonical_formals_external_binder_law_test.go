@@ -26,11 +26,8 @@ func TestCanonicalFormalsBindDeclarationReenteredFromItsOwnBody(t *testing.T) {
 	if err != nil {
 		t.Fatalf("EncodeCanonicalFormals: %v", err)
 	}
-	if len(encoded) == 0 {
-		t.Fatal("EncodeCanonicalFormals produced no bytes")
-	}
-	if err := ValidateCanonicalFormals(encoded, 1); err != nil {
-		t.Fatalf("ValidateCanonicalFormals: %v", err)
+	if !encoded.Valid() || len(encoded.Bytes()) == 0 {
+		t.Fatal("EncodeCanonicalFormals produced no valid receipt")
 	}
 
 	receiver := NewTypeParam("R", nil)
@@ -72,7 +69,7 @@ func TestCanonicalFormalsBindDeclarationReenteredFromItsOwnBody(t *testing.T) {
 	if err != nil {
 		t.Fatalf("EncodeCanonicalFormals(decoded): %v", err)
 	}
-	if !bytes.Equal(roundTrip, encoded) {
+	if !bytes.Equal(roundTrip.Bytes(), encoded.Bytes()) {
 		t.Fatal("scoped re-encoding of the decoded graph changed canonical bytes")
 	}
 }
@@ -95,9 +92,6 @@ func TestCanonicalFormalsBindInnerDeclarationAtNonZeroExternalOrdinal(t *testing
 	encoded, err := EncodeCanonicalFormals(context.Background(), body, scope)
 	if err != nil {
 		t.Fatalf("EncodeCanonicalFormals: %v", err)
-	}
-	if err := ValidateCanonicalFormals(encoded, len(scope)); err != nil {
-		t.Fatalf("ValidateCanonicalFormals: %v", err)
 	}
 
 	receivers := []*TypeParam{NewTypeParam("P", nil), NewTypeParam("Q", nil)}
@@ -129,7 +123,7 @@ func TestCanonicalFormalsBindInnerDeclarationAtNonZeroExternalOrdinal(t *testing
 	if err != nil {
 		t.Fatalf("EncodeCanonicalFormals(decoded): %v", err)
 	}
-	if !bytes.Equal(roundTrip, encoded) {
+	if !bytes.Equal(roundTrip.Bytes(), encoded.Bytes()) {
 		t.Fatal("scoped re-encoding of the decoded graph changed canonical bytes")
 	}
 }
@@ -148,8 +142,8 @@ func TestCanonicalFormalsRejectBinderMixingExternalAndLocalParameters(t *testing
 	root := NewTuple(external, declaration)
 
 	encoded, err := EncodeCanonicalFormals(context.Background(), root, []*TypeParam{external})
-	if err == nil || encoded != nil {
-		t.Fatalf("EncodeCanonicalFormals = %d bytes, %v; want a rejected mixed binder", len(encoded), err)
+	if err == nil || encoded.Valid() {
+		t.Fatalf("EncodeCanonicalFormals = valid=%t, %v; want a rejected mixed binder", encoded.Valid(), err)
 	}
 }
 
@@ -162,8 +156,8 @@ func TestCanonicalFormalsReportAbsentBinderParameterBeforeMixture(t *testing.T) 
 	root := NewTuple(external, declaration)
 
 	encoded, err := EncodeCanonicalFormals(context.Background(), root, []*TypeParam{external})
-	if err == nil || encoded != nil {
-		t.Fatalf("EncodeCanonicalFormals = %d bytes, %v; want a rejected binder frame", len(encoded), err)
+	if err == nil || encoded.Valid() {
+		t.Fatalf("EncodeCanonicalFormals = valid=%t, %v; want a rejected binder frame", encoded.Valid(), err)
 	}
 	if !strings.Contains(err.Error(), "nil local canonical formal") {
 		t.Fatalf("EncodeCanonicalFormals = %v; want the absent formal reported", err)
@@ -222,7 +216,7 @@ func TestCanonicalFormalsKeepLocalBinderIdentityForIntroducedParameters(t *testi
 			if err != nil {
 				t.Fatalf("EncodeCanonicalFormals(decoded): %v", err)
 			}
-			if !bytes.Equal(roundTrip, encoded) {
+			if !bytes.Equal(roundTrip.Bytes(), encoded.Bytes()) {
 				t.Fatal("scoped re-encoding of the decoded graph changed canonical bytes")
 			}
 		})

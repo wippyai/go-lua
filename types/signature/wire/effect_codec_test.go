@@ -134,12 +134,10 @@ func TestWireEffectLabelRoundTripCoversActiveReturnMatrix(t *testing.T) {
 		}}},
 		{"error return", "actively lowered by effectlowering", returns.ErrorReturn{ValueIndex: 0, ErrorIndex: 1}},
 		{"lifecycle acquire", "actively lowered by effectlowering", lifecycle.Acquire{
-			Target:   p0,
-			Protocol: typestate.Protocol("transaction"),
-			State:    typestate.State("active"),
-			Obligation: typestate.Obligation{
-				Final: typestate.State("finished"),
-			},
+			Target:     p0,
+			Protocol:   typestate.Protocol("transaction"),
+			State:      typestate.State("active"),
+			Obligation: testLifecycleObligation(t, typestate.State("finished")),
 		}},
 		{"lifecycle transition", "actively lowered by effectlowering", lifecycle.Transition{
 			Target:   p0,

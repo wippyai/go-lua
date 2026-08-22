@@ -13,7 +13,6 @@ import (
 	"github.com/wippyai/go-lua/domain/effect/ownership"
 	"github.com/wippyai/go-lua/domain/effect/postcondition"
 	"github.com/wippyai/go-lua/domain/effect/returns"
-	"github.com/wippyai/go-lua/domain/typestate"
 )
 
 // The effect vocabulary is the capability catalog's, and which entries a
@@ -357,8 +356,7 @@ var lifecycleAcquirePayload = effectLabelPayloadFor(
 			Target:   encodeParamRef(l.Target),
 			Protocol: protocol,
 			To:       to,
-			Final:    encodeOptionalLifecycleState(l.Obligation.Final),
-			Finals:   encodeOptionalLifecycleFinalStates(l.Obligation.Finals),
+			Finals:   encodeLifecycleObligation(l.Obligation),
 		}, nil
 	},
 	func(w effectLabelWire) (effect.Label, error) {
@@ -374,18 +372,15 @@ var lifecycleAcquirePayload = effectLabelPayloadFor(
 		if err != nil {
 			return nil, err
 		}
-		finals, err := decodeOptionalLifecycleFinalStates(w.Finals)
+		obligation, err := decodeLifecycleObligation(w.Finals)
 		if err != nil {
 			return nil, err
 		}
 		return lifecycle.Acquire{
-			Target:   target,
-			Protocol: protocol,
-			State:    to,
-			Obligation: typestate.Obligation{
-				Final:  decodeOptionalLifecycleState(w.Final),
-				Finals: finals,
-			},
+			Target:     target,
+			Protocol:   protocol,
+			State:      to,
+			Obligation: obligation,
 		}, nil
 	},
 )

@@ -5,14 +5,190 @@
 package engine
 
 import (
+	"github.com/wippyai/go-lua/analysis/engine/internal/contextfiber"
 	"github.com/wippyai/go-lua/analysis/engine/internal/equation"
 	"github.com/wippyai/go-lua/analysis/engine/internal/facts/change"
 	"github.com/wippyai/go-lua/analysis/engine/internal/schedule"
 )
 
-// operandKind names the seven region rows the recurrence reads. They are the
-// rows the epoch used to shadow with seven parallel version vectors; the
-// vectors are gone and the rows are now positions in one fused plane.
+// buildStateOperandPlane is the contextual counterpart of buildOperandPlane.
+// Its source axis is StateOrdinal and its producer axis is the compact
+// admitted stateGroupIndex row, so a mounted runtime never allocates a dense
+// StateCount×GroupCount operand product.
+func buildStateOperandPlane(runtime *solverRuntime, _ factorSourceColumn, regions []runtimeRegion) (*operandPlane, bool) {
+	if runtime == nil || !runtime.artifactBacked || runtime.graph == nil || !runtime.producerRows.valid() {
+		return nil, false
+	}
+	rowCount, points := len(runtime.producerRows.rows), runtime.stateCount()
+	if points <= 0 {
+		return nil, false
+	}
+	plane := &operandPlane{groupBase: make([]int32, rowCount+1), windows: make([]int32, len(regions)*int(operandKindCount)+1), ingressSource: make([]bool, points), regions: len(regions)}
+	total := 0
+	for rowIndex, row := range runtime.producerRows.rows {
+		plane.groupBase[rowIndex] = int32(total)
+		if row.group < 0 || row.group >= len(runtime.producers) {
+			return nil, false
+		}
+		width := runtime.producers[row.group].group.InputCount() + 1
+		if width <= 0 || total > operandPlaneMax-width {
+			return nil, false
+		}
+		total += width
+	}
+	plane.groupBase[rowCount] = int32(total)
+	for index, region := range regions {
+		for kind := operandKind(0); kind < operandKindCount; kind++ {
+			width := len(region.operandRow(kind))
+			at := index*int(operandKindCount) + int(kind)
+			plane.windows[at] = int32(total)
+			if total > operandPlaneMax-width {
+				return nil, false
+			}
+			total += width
+		}
+	}
+	plane.windows[len(regions)*int(operandKindCount)] = int32(total)
+	plane.total = total
+	pointCounts := make([]int32, points+1)
+	groupCounts := make([]int32, rowCount+1)
+	visit := func(record func(source int, byGroup bool, ordinal uint32, window int32) bool) bool {
+		for rowIndex, row := range runtime.producerRows.rows {
+			if row.state < 0 || int(row.state) >= points || row.group < 0 || row.group >= len(runtime.producers) {
+				return false
+			}
+			producer := runtime.producers[row.group]
+			base := plane.groupBase[rowIndex]
+			for inputIndex := 0; inputIndex < producer.group.InputCount(); inputIndex++ {
+				input, ok := producer.group.InputAt(inputIndex)
+				graphPoint, indexed := runtime.graph.PointIndex(input.Point())
+				source, sourceOK := runtime.stateForGraphPoint(int(row.state), graphPoint)
+				if !ok || !indexed || !sourceOK || source < 0 || source >= points || !record(source, false, uint32(base)+uint32(inputIndex), operandGroupWindow) {
+					return false
+				}
+			}
+			if producer.environment != nil {
+				input, ok := producer.group.EnvironmentInput()
+				graphPoint, indexed := runtime.graph.PointIndex(input.Point())
+				source, sourceOK := runtime.stateForGraphPoint(int(row.state), graphPoint)
+				if !ok || !indexed || !sourceOK || source < 0 || source >= points || !record(source, false, uint32(base)+uint32(producer.group.InputCount()), operandGroupWindow) {
+					return false
+				}
+			}
+		}
+		for regionIndex, region := range regions {
+			window := int32(regionIndex * int(operandKindCount))
+			for position, row := range region.external {
+				if row < 0 || row >= rowCount || !record(row, true, uint32(plane.windows[window+int32(operandExternalProducer)])+uint32(position), window+int32(operandExternalProducer)) {
+					return false
+				}
+			}
+			for position, row := range region.back {
+				if row < 0 || row >= rowCount || !record(row, true, uint32(plane.windows[window+int32(operandBackProducer)])+uint32(position), window+int32(operandBackProducer)) {
+					return false
+				}
+			}
+			environmentRows := [2]struct {
+				edges []int
+				kind  operandKind
+			}{{region.environmentExternal, operandExternalEnvironment}, {region.environmentBack, operandBackEnvironment}}
+			for _, inputRow := range environmentRows {
+				for position, edgeIndex := range inputRow.edges {
+					if edgeIndex < 0 || edgeIndex >= len(runtime.environments) {
+						return false
+					}
+					edge := runtime.environments[edgeIndex]
+					source, sourceOK := runtime.stateForGraphPoint(region.head, edge.source)
+					if !sourceOK || source < 0 || source >= points || !record(source, false, uint32(plane.windows[window+int32(inputRow.kind)])+uint32(position), window+int32(inputRow.kind)) {
+						return false
+					}
+				}
+			}
+			contextRows := [2]struct {
+				transports []int
+				kind       operandKind
+			}{{region.contextExternal, operandExternalContext}, {region.contextBack, operandBackContext}}
+			for _, inputRow := range contextRows {
+				for position, transportIndex := range inputRow.transports {
+					if transportIndex < 0 || transportIndex >= len(runtime.contextTransports) {
+						return false
+					}
+					transport := runtime.contextTransports[transportIndex]
+					source, sourceOK := runtime.contextTransportSourceState(transport.to, transport.sourcePoint)
+					if !sourceOK || source != transport.from {
+						return false
+					}
+					if source < 0 || source >= points || !record(source, false, uint32(plane.windows[window+int32(inputRow.kind)])+uint32(position), window+int32(inputRow.kind)) {
+						return false
+					}
+				}
+			}
+			factorRows := [2]struct {
+				edges []int
+				kind  operandKind
+			}{{region.factorExternal, operandExternalFactor}, {region.factorBack, operandBackFactor}}
+			for _, inputRow := range factorRows {
+				for position, factorRow := range inputRow.edges {
+					if factorRow < 0 || factorRow >= len(runtime.stateFactorRows) {
+						return false
+					}
+					source := runtime.stateFactorRows[factorRow].source
+					if source < 0 || source >= points || !record(source, false, uint32(plane.windows[window+int32(inputRow.kind)])+uint32(position), window+int32(inputRow.kind)) {
+						return false
+					}
+				}
+			}
+			for position, source := range region.points {
+				if source < 0 || source >= points || !record(source, false, uint32(plane.windows[window+int32(operandRegionPoint)])+uint32(position), window+int32(operandRegionPoint)) {
+					return false
+				}
+			}
+		}
+		return true
+	}
+	if !visit(func(source int, byGroup bool, _ uint32, _ int32) bool {
+		if byGroup {
+			groupCounts[source+1]++
+		} else {
+			pointCounts[source+1]++
+		}
+		return true
+	}) {
+		return nil, false
+	}
+	for index := 1; index < len(pointCounts); index++ {
+		pointCounts[index] += pointCounts[index-1]
+	}
+	for index := 1; index < len(groupCounts); index++ {
+		groupCounts[index] += groupCounts[index-1]
+	}
+	plane.byPoint = operandTranspose{offsets: pointCounts, operand: make([]uint32, pointCounts[points]), window: make([]int32, pointCounts[points])}
+	plane.byGroup = operandTranspose{offsets: groupCounts, operand: make([]uint32, groupCounts[rowCount]), window: make([]int32, groupCounts[rowCount])}
+	pointCursor, groupCursor := make([]int32, points), make([]int32, rowCount)
+	if !visit(func(source int, byGroup bool, ordinal uint32, window int32) bool {
+		transpose, cursor := &plane.byPoint, pointCursor
+		if byGroup {
+			transpose, cursor = &plane.byGroup, groupCursor
+		}
+		at := transpose.offsets[source] + cursor[source]
+		if at < transpose.offsets[source] || int(at) >= len(transpose.operand) || at >= transpose.offsets[source+1] {
+			return false
+		}
+		transpose.operand[at], transpose.window[at] = ordinal, window
+		if !byGroup && window >= 0 && operandKind(int(window)%int(operandKindCount)).ingress() {
+			plane.ingressSource[source] = true
+		}
+		cursor[source]++
+		return true
+	}) {
+		return nil, false
+	}
+	return plane, true
+}
+
+// operandKind names the nine region rows the recurrence reads. They are the
+// rows the epoch used to shadow with parallel version vectors; the vectors are
+// gone and the rows are now positions in one fused plane.
 type operandKind uint8
 
 const (
@@ -20,6 +196,8 @@ const (
 	operandBackProducer
 	operandExternalEnvironment
 	operandBackEnvironment
+	operandExternalContext
+	operandBackContext
 	operandExternalFactor
 	operandBackFactor
 	operandRegionPoint
@@ -30,11 +208,11 @@ const (
 // remaining producer/environment/factor rows are back ingress; the point row
 // is the Region's own interior publication surface.
 func (kind operandKind) external() bool {
-	return kind == operandExternalProducer || kind == operandExternalEnvironment || kind == operandExternalFactor
+	return kind == operandExternalProducer || kind == operandExternalEnvironment || kind == operandExternalContext || kind == operandExternalFactor
 }
 
 func (kind operandKind) back() bool {
-	return kind == operandBackProducer || kind == operandBackEnvironment || kind == operandBackFactor
+	return kind == operandBackProducer || kind == operandBackEnvironment || kind == operandBackContext || kind == operandBackFactor
 }
 
 // operandTranspose is the inverse of the forward operand rows, stored as
@@ -132,6 +310,10 @@ func (region *runtimeRegion) operandRow(kind operandKind) []int {
 		return region.environmentExternal
 	case operandBackEnvironment:
 		return region.environmentBack
+	case operandExternalContext:
+		return region.contextExternal
+	case operandBackContext:
+		return region.contextBack
 	case operandExternalFactor:
 		return region.factorExternal
 	case operandBackFactor:
@@ -649,6 +831,16 @@ func (epoch *executorEpoch) markGroupOperands(group int, evidence change.Set) bo
 	if epoch == nil || epoch.operands.plane == nil {
 		return false
 	}
+	if epoch.runtime != nil && epoch.runtime.artifactBacked {
+		if epoch.currentState < 0 {
+			return false
+		}
+		row, ok := epoch.runtime.producerRows.row(contextfiber.StateOrdinal(epoch.currentState), group)
+		if !ok {
+			return false
+		}
+		group = row
+	}
 	ordinals, windows, ok := epoch.operands.plane.groupOperandOrdinals(group)
 	if !ok {
 		return false
@@ -710,8 +902,18 @@ func (epoch *executorEpoch) changedRegionOperands(region int, kind operandKind, 
 // replaces the ordered input-version snapshot each cache used to copy and
 // diff elementwise.
 func (epoch *executorEpoch) producerInputChanged(group, position int, at uint64) bool {
-	if epoch == nil {
+	if epoch == nil || epoch.runtime == nil {
 		return false
+	}
+	if epoch.runtime.artifactBacked {
+		if epoch.currentState < 0 {
+			return false
+		}
+		row, ok := epoch.runtime.producerRows.row(contextfiber.StateOrdinal(epoch.currentState), group)
+		if !ok {
+			return false
+		}
+		group = row
 	}
 	ordinal, ok := epoch.operands.plane.groupOperandAt(group, position)
 	return ok && epoch.operands.changedSince(ordinal, at)
@@ -746,6 +948,15 @@ func (epoch *executorEpoch) regionContains(region int, point equation.Point) (bo
 	pointIndex, indexed := epoch.runtime.graph.PointIndex(point)
 	if !indexed || pointIndex < 0 || pointIndex >= len(epoch.runtime.pointRegion) {
 		return false, false
+	}
+	if epoch.runtime.artifactBacked {
+		if epoch.currentState < 0 {
+			return false, false
+		}
+		pointIndex, indexed = epoch.runtime.stateForGraphPoint(epoch.currentState, pointIndex)
+		if !indexed || pointIndex < 0 || pointIndex >= len(epoch.runtime.pointRegion) {
+			return false, false
+		}
 	}
 	at := epoch.runtime.pointRegion[pointIndex]
 	for steps := 0; at != schedule.NoRegion; steps++ {

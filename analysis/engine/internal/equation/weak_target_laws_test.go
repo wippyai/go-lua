@@ -57,7 +57,7 @@ func TestEquationRejectsStrongSurfaceAsWeakTarget(t *testing.T) {
 		}},
 		Points:      []PointSpec{{Site: site}},
 		Groups:      []Group{{Members: []RuleRef{RuleAt(0)}, Output: PointAt(0), Inputs: []Input{boundary}}},
-		Queries:     []QueryInstance{{Family: query, Point: PointAt(0), Surfaces: []Surface{read}}},
+		Queries:     []QueryInstance{{Context: boundaryContext(10), Family: query, Point: PointAt(0), Surfaces: []Surface{read}}},
 		WeakTargets: []WeakTargetMapping{{Surface: strong, Candidates: []Surface{read}}},
 	})
 	if sealed || topology != nil {

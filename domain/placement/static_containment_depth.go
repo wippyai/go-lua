@@ -141,11 +141,13 @@ func buildStaticHeapGraphRows(schema Schema, cellCount int, at func(int) (heapdo
 		}
 		value, present, available := at(dense)
 		// OrderedCells is a borrowed, generation-fenced capability. Every
-		// coordinate must be readable, present, valid, and admitted by this
-		// exact Heap owner before any semantic extreme is inspected. In
-		// particular, a foreign or revoked Top must never become an
+		// coordinate must be readable, valid, and admitted by this exact Heap
+		// owner before any semantic extreme is inspected. The engine retains
+		// that owner's exact lattice Bottom on a sparse cell; it is the
+		// authenticated empty relation. No other sparse payload is admissible.
+		// In particular, a foreign or revoked Top must never become an
 		// authenticated Unknown.
-		if !available || !present || !value.Valid() || !heapSchema.OwnsKey(key) || !heapSchema.Admits(key, value) {
+		if !available || !value.Valid() || !heapSchema.OwnsKey(key) || !heapSchema.Admits(key, value) || (!present && !value.IsBottom()) {
 			return staticHeapGraph{}, false
 		}
 		if value.IsTop() {
@@ -434,28 +436,6 @@ func (graph staticHeapGraph) deepStatesWithScratch(scratch *containmentSCCScratc
 	return finiteDeepFrozenStatesTrustedCanonicalWithScratch(graph.deepLocal, graph.adjacency, scratch)
 }
 
-// AccumulatePlacementSummaryContainment is the domain fold bridge used by the
-// heterogeneous Placement+Heap query. It consumes only the engine-issued
-// Heap vector and joins finite authenticated depth evidence into the already
-// accumulated Placement observation. The graph solver and evidence storage
-// remain private to this package. The query invokes projections synchronously,
-// so this bridge owns the current mutable fold plane and may refine it in
-// place; callers that need a detached answer use the frozen result boundary.
-func AccumulatePlacementSummaryContainment(schema Schema, observation PlacementSummaryObservation, cells engine.OrderedCells[heapdomain.Value]) (PlacementSummaryObservation, bool) {
-	if !summaryObservationShape(schema, observation) {
-		return PlacementSummaryObservation{}, false
-	}
-	graph, graphOK := buildStaticHeapGraph(schema, cells)
-	if !graphOK {
-		return PlacementSummaryObservation{}, false
-	}
-	projection, projectionOK := projectStaticContainmentGraph(graph)
-	if !projectionOK {
-		return PlacementSummaryObservation{}, false
-	}
-	return accumulateStaticContainmentProjection(schema, observation, projection)
-}
-
 // AccumulatePlacementSummaryContainmentCached is the owner-level query seam.
 // A cache miss is not permission to reinterpret the same borrowed vector via
 // another authority. The cache and the uncached builder are deliberately
@@ -475,11 +455,14 @@ func AccumulatePlacementSummaryContainmentCached(cache *StaticContainmentCache, 
 
 func accumulateStaticContainmentProjection(schema Schema, observation PlacementSummaryObservation, projection staticContainmentProjection) (PlacementSummaryObservation, bool) {
 	graph := projection.graph
-	if len(graph.evidence) != len(observation.evidence) {
+	if len(observation.evidence) != schema.KeyCount() || len(graph.allocationDense) != schema.KeyCount() {
 		return PlacementSummaryObservation{}, false
 	}
 	result := observation
 	for ordinal, dense := range graph.allocationDense {
+		if dense < 0 || dense >= len(graph.evidence) {
+			return PlacementSummaryObservation{}, false
+		}
 		evidence := graph.evidence[dense]
 		if ordinal < len(projection.knownDepth) && projection.knownDepth[ordinal] {
 			evidence.Depth = projection.depths[ordinal]
@@ -488,7 +471,7 @@ func accumulateStaticContainmentProjection(schema Schema, observation PlacementS
 		if dense < len(projection.deepStates) {
 			evidence.DeepFrozen = projection.deepStates[dense]
 		}
-		merged, mergedOK := ComposeAllocationEvidence(result.evidence[dense], evidence)
+		merged, mergedOK := mergeStaticContainmentEvidence(result.evidence[dense], evidence)
 		if !mergedOK {
 			return PlacementSummaryObservation{}, false
 		}
@@ -496,6 +479,44 @@ func accumulateStaticContainmentProjection(schema Schema, observation PlacementS
 		result.evidencePublished[dense] = true
 	}
 	return result, true
+}
+
+// mergeStaticContainmentEvidence is the producer-local reduction across the
+// complete Heap worlds observed for one query point. This is intentionally
+// distinct from generic evidence composition: repeated rows here belong to
+// one authenticated producer, so they are semantic alternatives rather than
+// duplicate authorities. Finite depth is their maximum, while DeepFrozen is
+// conjunctive across alternatives. Identity and kind remain strict under the
+// generic composition law.
+func mergeStaticContainmentEvidence(prior, next AllocationEvidence) (AllocationEvidence, bool) {
+	if !prior.Valid() || !next.Valid() || next.DeepFrozen == EvidenceAbsent {
+		return invalidAllocationEvidence(), false
+	}
+	priorPublished := prior.DeepFrozen != EvidenceAbsent
+	priorCore, nextCore := prior, next
+	priorCore.Depth, priorCore.HasDepth, priorCore.DeepFrozen = 0, false, EvidenceAbsent
+	nextCore.Depth, nextCore.HasDepth, nextCore.DeepFrozen = 0, false, EvidenceAbsent
+	merged, ok := ComposeAllocationEvidence(priorCore, nextCore)
+	if !ok {
+		return invalidAllocationEvidence(), false
+	}
+	if !priorPublished {
+		merged.Depth, merged.HasDepth = next.Depth, next.HasDepth
+		merged.DeepFrozen = next.DeepFrozen
+		return merged, merged.Valid()
+	}
+	if prior.HasDepth && next.HasDepth {
+		merged.HasDepth = true
+		merged.Depth = prior.Depth
+		if next.Depth > merged.Depth {
+			merged.Depth = next.Depth
+		}
+	}
+	merged.DeepFrozen = mergeDeepFrozenVerdict(prior.DeepFrozen, next.DeepFrozen)
+	if !merged.DeepFrozen.Valid() || merged.DeepFrozen == EvidenceAbsent || !merged.Valid() {
+		return invalidAllocationEvidence(), false
+	}
+	return merged, true
 }
 
 func sortUniqueInts(values []int) []int {

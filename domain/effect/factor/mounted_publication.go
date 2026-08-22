@@ -121,7 +121,7 @@ func (publication MountedPublication) valid() bool {
 	}
 	root, rootOK := publication.owner.RootForMountedCall(publication.mounted)
 	boundRoot, boundRootOK := publication.binding.Root()
-	if !rootOK || !boundRootOK || root != boundRoot || !publication.owner.callInRootID(root, application) {
+	if !rootOK || !boundRootOK || root != boundRoot {
 		return false
 	}
 	ownerID := publication.owner.LinkID()

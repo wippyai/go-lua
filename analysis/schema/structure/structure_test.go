@@ -123,18 +123,6 @@ func canonicalContributions() [][]Spec {
 	occurrences := []member{
 		{"occurrence/value-source", "value-source", true}, {"occurrence/call", "call", true},
 	}
-	issuanceForms := []member{
-		{"issuance/base", "base", true}, {"issuance/local", "local", true},
-	}
-	issuanceInputs := []member{
-		{"input/none", "none", true}, {"input/entry", "entry", true},
-	}
-	issuanceRequirements := []member{
-		{"requirement/unrestricted", "unrestricted", true}, {"requirement/narrowed", "narrowed", true},
-	}
-	issuanceStages := []member{
-		{"stage/base", "base", true}, {"stage/local", "local", true},
-	}
 	semanticRoles := []member{
 		{"semantic/factor/probe", "factor/probe", true},
 		{"semantic/rule/probe/source", "rule/probe/source", true},
@@ -173,10 +161,6 @@ func canonicalContributions() [][]Spec {
 		authored(CategoryDiagnosticFamily, publications),
 		authored(CategoryDiagnosticSeverity, severities),
 		authored(CategoryOccurrenceKind, occurrences),
-		authored(CategoryIssuanceForm, issuanceForms),
-		authored(CategoryIssuanceInput, issuanceInputs),
-		authored(CategoryIssuanceRequirement, issuanceRequirements),
-		authored(CategoryIssuanceStage, issuanceStages),
 		authored(CategorySemanticRole, semanticRoles),
 		authored(CategoryConformanceVerdict, verdicts),
 		NativePublicationSpecs(),
@@ -501,57 +485,6 @@ func TestCollectedDuplicateSpellingIsRejectedAtSeal(t *testing.T) {
 	}
 }
 
-// TestSealRejectsUnknownStagePredecessor states the predecessor law at the
-// public seal path: a stage may name only another issuance stage.
-func TestSealRejectsUnknownStagePredecessor(t *testing.T) {
-	var entries []*Entry
-	for _, contribution := range canonicalContributions() {
-		for _, spec := range contribution {
-			if spec.Category == CategoryIssuanceStage && spec.Key == "stage/local" {
-				spec.Predecessor = "stage/unknown"
-			}
-			entries = append(entries, mustEntry(t, spec))
-		}
-	}
-	_, failure := sealEntries(t, entries)
-	if failure.Law != LawStagePredecessor || failure.Disposition != schema.DispositionMalformed {
-		t.Fatalf("unknown stage predecessor sealed: law=%d disposition=%s", failure.Law, failure.Disposition)
-	}
-}
-
-// TestSealRejectsOneFramingOnTwoStagedCuts states the framing law at the
-// public seal path: a digest framing is a content address preimage, so it names
-// exactly one staged cut.
-func TestSealRejectsOneFramingOnTwoStagedCuts(t *testing.T) {
-	var entries []*Entry
-	for _, contribution := range canonicalContributions() {
-		for _, spec := range contribution {
-			if spec.Category == CategoryIssuanceForm && (spec.Key == "issuance/base" || spec.Key == "issuance/local") {
-				spec.Framing = "analysis/program-artifact/one-stage"
-			}
-			entries = append(entries, mustEntry(t, spec))
-		}
-	}
-	_, failure := sealEntries(t, entries)
-	if failure.Law != LawStageFraming || failure.Disposition != schema.DispositionDuplicate {
-		t.Fatalf("one framing on two staged cuts sealed: law=%d disposition=%s", failure.Law, failure.Disposition)
-	}
-}
-
-// TestNewRejectsAFramingOnACategoryThatStagesNothing keeps the column scoped to
-// the two vocabularies whose members name a staged execution cut.
-func TestNewRejectsAFramingOnACategoryThatStagesNothing(t *testing.T) {
-	if _, ok := New(Spec{Key: "arm/local", Category: CategoryArm, Ordinal: 1, Spelling: "local", Accepted: true, Framing: "analysis/program-artifact/local-stage"}); ok {
-		t.Fatal("a member of a vocabulary that stages nothing declared a digest framing")
-	}
-	if _, ok := New(Spec{Key: "issuance/local", Category: CategoryIssuanceForm, Ordinal: 2, Spelling: "local", Accepted: true, Framing: "analysis/program-artifact/local-stage"}); !ok {
-		t.Fatal("a placement form that stages a cut could not declare its framing")
-	}
-	if _, ok := New(Spec{Key: "stage/call-dispatch", Category: CategoryIssuanceStage, Ordinal: 3, Spelling: "call-dispatch", Accepted: true, Framing: "analysis/program-artifact/call-dispatch-stage"}); !ok {
-		t.Fatal("an issuance stage that stages a cut could not declare its framing")
-	}
-}
-
 // TestTwoContributorsCannotDeclareOneSemanticRole is the law that replaced the
 // closed semantic vocabulary's own distinctness check. Every identity the
 // analyzer binds under is a member of one category here, so the spelling law
@@ -685,15 +618,12 @@ func TestTableDigestCoversDeclaredContent(t *testing.T) {
 // violates a law yields no entry at all.
 func TestNewRejectsIncompleteSpec(t *testing.T) {
 	cases := map[string]Spec{
-		"key":                      {Category: CategoryArm, Ordinal: 1, Spelling: "local", Accepted: true},
-		"category":                 {Key: "arm/local", Ordinal: 1, Spelling: "local", Accepted: true},
-		"catalog":                  {Key: "arm/local", Category: categoryLimit, Ordinal: 1, Spelling: "local", Accepted: true},
-		"ordinal":                  {Key: "arm/local", Category: CategoryArm, Spelling: "local", Accepted: true},
-		"spelling":                 {Key: "arm/local", Category: CategoryArm, Ordinal: 1, Accepted: true},
-		"declared admission":       {Key: "arm/local", Category: CategoryArm, Ordinal: 1, Spelling: "local"},
-		"off-category native":      {Key: "arm/local", Category: CategoryArm, Ordinal: 1, Spelling: "local", Accepted: true, Native: true},
-		"off-category predecessor": {Key: "arm/local", Category: CategoryArm, Ordinal: 1, Spelling: "local", Accepted: true, Predecessor: "stage/base"},
-		"self predecessor":         {Key: "stage/local", Category: CategoryIssuanceStage, Ordinal: 2, Spelling: "local", Accepted: true, Predecessor: "stage/local"},
+		"key":                {Category: CategoryArm, Ordinal: 1, Spelling: "local", Accepted: true},
+		"category":           {Key: "arm/local", Ordinal: 1, Spelling: "local", Accepted: true},
+		"catalog":            {Key: "arm/local", Category: categoryLimit, Ordinal: 1, Spelling: "local", Accepted: true},
+		"ordinal":            {Key: "arm/local", Category: CategoryArm, Spelling: "local", Accepted: true},
+		"spelling":           {Key: "arm/local", Category: CategoryArm, Ordinal: 1, Accepted: true},
+		"declared admission": {Key: "arm/local", Category: CategoryArm, Ordinal: 1, Spelling: "local"},
 	}
 	for name, spec := range cases {
 		if entry, ok := New(spec); ok || entry != nil {

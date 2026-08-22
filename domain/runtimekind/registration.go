@@ -39,10 +39,10 @@ func BehaviorStructureSpecs() []structure.Spec {
 // vocabulary: one row per family type() distinguishes, in the domain's own
 // order.
 //
-// The ordinals are not invented here. A family's ordinal is its Kind constant,
-// which is also its bit position in Set, so the declaration adopts the
-// vocabulary the domain already carries rather than restating it: a family
-// added, removed, or reordered in Kind and not here is a rejected build.
+// Neither ordinals nor spellings are invented here. A family's ordinal is its
+// Kind constant, which is also its bit position in Set, and Spelling is owned
+// beside that Kind. Registration is only the structural projection of that
+// closed description.
 //
 // A row's key and its rendered spelling are both the string type(v) yields for
 // the family. That is the family's one spelling in the analyzer, so a consumer
@@ -52,19 +52,18 @@ func BehaviorStructureSpecs() []structure.Spec {
 // Every family is projected. type() yields any of them, so no member is held
 // back from the projection this vocabulary feeds.
 func StructureSpecs() []structure.Spec {
-	return []structure.Spec{
-		member(Nil, "nil"),
-		member(Boolean, "boolean"),
-		member(Number, "number"),
-		member(String, "string"),
-		member(Table, "table"),
-		member(Function, "function"),
-		member(Thread, "thread"),
-		member(Userdata, "userdata"),
+	specs := make([]structure.Spec, 0, All.Members())
+	for index := 0; ; index++ {
+		kind, ok := All.MemberAt(index)
+		if !ok {
+			return specs
+		}
+		specs = append(specs, member(kind))
 	}
 }
 
-func member(kind Kind, name schema.Key) structure.Spec {
+func member(kind Kind) structure.Spec {
+	name := schema.Key(kind.Spelling())
 	return structure.Spec{
 		Key:      name,
 		Category: structure.CategoryRuntimeKind,

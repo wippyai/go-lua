@@ -21,35 +21,12 @@ func cachedContainsFlags(t Type) (containsAny, containsNever, containsTypeParam,
 		return instantiatedContainsAny(n), instantiatedContainsNever(n), instantiatedContainsTypeParam(n), true
 	case *TypeParam:
 		return n.containsAny, n.containsNever, true, n.containsInstantiated
-	case *Optional:
-		return n.containsAny, n.containsNever, n.containsTypeParam, n.containsInstantiated
-	case *Union:
-		return n.containsAny, n.containsNever, n.containsTypeParam, n.containsInstantiated
-	case *Intersection:
-		return n.containsAny, n.containsNever, n.containsTypeParam, n.containsInstantiated
-	case *Array:
-		return n.containsAny, n.containsNever, n.containsTypeParam, n.containsInstantiated
-	case *Map:
-		return n.containsAny, n.containsNever, n.containsTypeParam, n.containsInstantiated
-	case *ReadonlyMap:
-		return n.containsAny, n.containsNever, n.containsTypeParam, n.containsInstantiated
-	case *Tuple:
-		return n.containsAny, n.containsNever, n.containsTypeParam, n.containsInstantiated
-	case *Function:
-		return n.containsAny, n.containsNever, n.containsTypeParam, n.containsInstantiated
-	case *Record:
-		return n.containsAny, n.containsNever, n.containsTypeParam, n.containsInstantiated
-	case *Alias:
-		return n.containsAny, n.containsNever, n.containsTypeParam, n.containsInstantiated
-	case *Meta:
-		return n.containsAny, n.containsNever, n.containsTypeParam, n.containsInstantiated
-	case *Generic:
-		return n.containsAny, n.containsNever, n.containsTypeParam, n.containsInstantiated
-	case *Interface:
-		return n.containsAny, n.containsNever, n.containsTypeParam, n.containsInstantiated
-	default:
+	}
+	properties := nodeProperties(t)
+	if properties == nil {
 		return false, false, false, false
 	}
+	return properties.containsAny, properties.containsNever, properties.containsTypeParam, properties.containsInstantiated
 }
 
 func knownContainsAny(t Type) bool {
@@ -233,33 +210,7 @@ func cachedContainsGeneric(t Type) bool {
 		return true
 	case *Instantiated:
 		return true
-	case *TypeParam:
-		return n.containsGeneric
-	case *Optional:
-		return n.containsGeneric
-	case *Union:
-		return n.containsGeneric
-	case *Intersection:
-		return n.containsGeneric
-	case *Array:
-		return n.containsGeneric
-	case *Map:
-		return n.containsGeneric
-	case *ReadonlyMap:
-		return n.containsGeneric
-	case *Tuple:
-		return n.containsGeneric
-	case *Function:
-		return n.containsGeneric
-	case *Record:
-		return n.containsGeneric
-	case *Alias:
-		return n.containsGeneric
-	case *Meta:
-		return n.containsGeneric
-	case *Interface:
-		return n.containsGeneric
-	default:
-		return false
 	}
+	properties := nodeProperties(t)
+	return properties != nil && properties.containsGeneric
 }

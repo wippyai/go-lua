@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"github.com/wippyai/go-lua/analysis/engine/internal/composition"
+	"github.com/wippyai/go-lua/analysis/identity"
 	"github.com/wippyai/go-lua/internal/canonical"
 )
 
@@ -17,7 +18,7 @@ import (
 // identityVersionFence is the version identityKey frames every equation
 // preimage under. Raising it declares every retained equation identity
 // unreadable, so it may only change together with the pinned digests below.
-const identityVersionFence = 17
+const identityVersionFence = 18
 
 // queryKeyDomainFence is the domain tag deriveQueryKey frames its preimage
 // under (identity.go, deriveQueryKey). The tag separates a Query key from every
@@ -27,14 +28,14 @@ const queryKeyDomainFence = "analysis/engine/equation/query"
 // queryKeyPreimageFenceHex pins the whole deriveQueryKey preimage in one
 // literal: the domain tag, identityVersion, and the event order
 //
-//	writeKey(Family), writeKey(point.key), writeScope(point.Scope()),
+//	writeContentID(Context), writeKey(Family), writeKey(point.key), writeScope(point.Scope()),
 //	Count(len(Surfaces)), then per surface in slice order
 //	writeSurface(surface) followed by writeSurfaceCatalog(surface, catalog)
 //
 // replayed over a fixed declaration. Any change to that order, to the framing
 // any writeKey/writeScope/writeSurface helper emits, or to identityVersion
 // moves this digest.
-const queryKeyPreimageFenceHex = "4f20527c7c91da828384c52d3f0820bf18addce17405f2be4dba431767e3346f"
+const queryKeyPreimageFenceHex = "4e03ca1388f9c360c545af66afd50e4503e61b42ddead82d6b6c1741b77ec14a"
 
 func TestEquationIdentityVersionIsFenced(t *testing.T) {
 	if identityVersion != identityVersionFence {
@@ -44,7 +45,7 @@ func TestEquationIdentityVersionIsFenced(t *testing.T) {
 
 // fenceQuerySurfaces is the fixed surface vector the preimage is pinned over.
 // It carries one ordinal-space exact read and one content-space anchored read,
-// which is the distinction identityVersion 17 exists for: writeSurfaceLocal
+// which is the distinction identityVersion 18 exists for: writeSurfaceLocal
 // must frame the space tag ahead of either payload, so the two spaces cannot
 // collide in one preimage.
 func fenceQuerySurfaces() []Surface {
@@ -68,6 +69,12 @@ func fenceContent(value byte) [32]byte {
 	return content
 }
 
+func fenceContext(value byte) identity.ContentID {
+	var content identity.ContentID
+	content[0] = value
+	return content
+}
+
 // TestQueryKeyPreimageShapeIsFenced replays deriveQueryKey's preimage through
 // the same identityKey framing and the same writer helpers, in the same order,
 // and pins the result. deriveQueryKey itself needs a sealed topology to reach;
@@ -77,7 +84,7 @@ func TestQueryKeyPreimageShapeIsFenced(t *testing.T) {
 	family, point := fenceIdentityKey(61), fenceIdentityKey(62)
 	surfaces := fenceQuerySurfaces()
 	key, ok := identityKey(queryKeyDomainFence, func(writer *canonical.DigestWriter) bool {
-		if !writeKey(writer, family) || !writeKey(writer, point) || !writeScope(writer, EmptyScope()) || writer.Count(uint64(len(surfaces))) != nil {
+		if !writeContentID(writer, fenceContext(60)) || !writeKey(writer, family) || !writeKey(writer, point) || !writeScope(writer, EmptyScope()) || writer.Count(uint64(len(surfaces))) != nil {
 			return false
 		}
 		for _, surface := range surfaces {
@@ -106,7 +113,7 @@ func TestQueryKeyPreimageIsPositional(t *testing.T) {
 	family, point := fenceIdentityKey(61), fenceIdentityKey(62)
 	derive := func(first, second composition.Key, surfaces []Surface) composition.Key {
 		key, ok := identityKey(queryKeyDomainFence, func(writer *canonical.DigestWriter) bool {
-			if !writeKey(writer, first) || !writeKey(writer, second) || !writeScope(writer, EmptyScope()) || writer.Count(uint64(len(surfaces))) != nil {
+			if !writeContentID(writer, fenceContext(60)) || !writeKey(writer, first) || !writeKey(writer, second) || !writeScope(writer, EmptyScope()) || writer.Count(uint64(len(surfaces))) != nil {
 				return false
 			}
 			for _, surface := range surfaces {

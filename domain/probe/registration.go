@@ -150,7 +150,7 @@ func RuleEntry[P, A any]() rule.Spec {
 		Writes: AxisKey,
 		Owner:  AxisKey,
 		Issues: []rule.Issuance{
-			{Occurrence: "occurrence/point-attachment", Requirement: "requirement/unrestricted", Form: "issuance/base", Input: "input/none", Stage: "stage/base"},
+			{Occurrence: "occurrence/point-attachment", Requirement: "program-requirement/unrestricted", Form: "program-form/base-none"},
 		},
 		Semantic: vocabulary.RoleKey(RuleRole),
 		Roles:    []schema.Key{vocabulary.RoleKey(OperandRole)},

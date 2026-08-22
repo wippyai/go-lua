@@ -23,7 +23,6 @@ func (a *Authority) sealHotProjections(contract *contract.Contract) error {
 		if !mount.NamespaceID.Available() {
 			return errors.New("static: unavailable mounted namespace")
 		}
-		a.namespaceIDs[mount.NamespaceID] = struct{}{}
 	}
 	return nil
 }
@@ -74,12 +73,12 @@ func (a *Authority) sealMountedContainedOperands() error {
 				}
 				operand.kind, operand.known = OperandKnown, closed
 			case staticquery.StaticOperandTypeValue:
-				ref, refOK := a.types.FindByReferenceID(row.OperandReferenceID())
-				value, valueOK := a.types.Resolve(ref)
-				if !refOK || !valueOK {
-					return errors.New("static: mounted TypeValue operand reference unavailable")
+				projection, projectionOK := a.types.ProjectionByReferenceID(row.OperandReferenceID())
+				input, inputOK := projection.ClosedInput()
+				if !projectionOK || !inputOK {
+					return errors.New("static: mounted TypeValue operand projection unavailable")
 				}
-				closed, err := a.addClosed(value)
+				closed, err := a.addClosedInput(input)
 				if err != nil {
 					return err
 				}

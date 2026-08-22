@@ -7,18 +7,20 @@ placement-relevant shape; the canonical semantics live in `domain/placement`.
 
 ## Status: CANONICAL STATIC PATH GREEN
 
-The declarative Placement axis, Heap-root denominator, seed rule, query family,
+The declarative Placement axis, allocation-root denominator with intrinsic
+`Stack` default, query family,
 domain-owned result codec, and schema-driven `manifest.allocation` projection
-are live. The bounded `./domain/placement/...` gate passes. Every manifest is
+are live. Every manifest is
 judged through the canonical Placement result surface; legacy run metadata is
 intentionally absent because the harness does not honor it.
 
-The remaining intentional uncertainty is capability-driven: live actor/thread
-and destination-context identity must come from an owner-authenticated runtime
-publication. Until that producer is mounted, affected transfers classify as
-`Unknown`; Placement does not fabricate a same-context or cross-context fact.
-This is an explicit external input boundary, not an unfinished static
-Placement consumer. The repository-wide acceptance runner is tracked
+An authenticated send declaration is sufficient to classify its payload as
+`SharedHeap`: publication has escaped the sender even when the live destination
+actor is not statically known. Live actor/thread and destination identities are
+still owner-authenticated runtime inputs, but they refine later move/share/copy
+strategy rather than weakening the static Placement class. Missing runtime
+identity is not converted into `Unknown`; only genuinely open or opaque
+semantic alternatives are. The repository-wide acceptance runner is tracked
 separately because its current memory profile is not this fixture gate.
 
 Fixtures with a complete static producer path pin `require_complete: true` and
@@ -33,7 +35,9 @@ The canonical allocation-root lattice is:
 
     Bottom < Stack < OwnedHeap < SharedHeap < Unknown
 
-`Bottom` is the absent/unreachable value; `Stack` is a frame-local allocation;
+`Bottom` is the lattice sentinel below the factor and is not a published
+allocation class; every allocation coordinate starts at the sparse `Stack`
+default. `Stack` is a frame-local allocation;
 `OwnedHeap` is retained within the owning actor/runtime; `SharedHeap` crosses a
 shared, actor, or thread boundary; and `Unknown` is conservative top for an
 open, opaque, or otherwise unresolved path. `Interpreter` and `Register` are
@@ -44,12 +48,12 @@ mint roots, and fields are not roots: containment propagates an escape through
 the referenced graph so a holder and its payload may receive different
 classes. Alternate paths join monotonically at the same root.
 
-The benchmark prose below retains the older descriptive labels (`Scalar`,
-`FrameLocal`, `ActorLocal`, `Shared`, and `deferred+promote`) to explain the
-fixture shape. Their manifest assertions use the canonical buckets: Scalar has
-no allocation row, FrameLocal maps to `stack`, ActorLocal maps to `owned_heap`,
-Shared maps to `shared_heap`, and an unresolved deferred case remains
-`unknown` until its static escape evidence is complete.
+The benchmark prose below uses descriptive lifetime labels (`Scalar`,
+`FrameLocal`, `ActorLocal`, and `Shared`) to explain the fixture shape. Their
+manifest assertions use the canonical buckets: Scalar has no allocation row,
+FrameLocal maps to `stack`, ActorLocal maps to `owned_heap`, and Shared maps to
+`shared_heap`. Only genuinely open or opaque static evidence maps to `unknown`;
+a conditional send is already an authenticated `SharedHeap` requirement.
 
 ## Benchmark fixtures (expected per-site class)
 

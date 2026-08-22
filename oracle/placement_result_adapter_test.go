@@ -21,35 +21,95 @@ type corpusPlacementAllocation struct {
 	evidence placementdomain.AllocationEvidence
 }
 
+type corpusPlacementPosition struct {
+	query    int
+	present  bool
+	class    placementdomain.Placement
+	evidence placementdomain.AllocationEvidence
+}
+
 // corpusPlacementJoinAllocation is the only class combination rule in the
 // adapter. Repeated rows for one allocation are a monotone lattice fold; a
 // later query can only move the class upward.
-func corpusPlacementJoinAllocation(row *corpusPlacementAllocation, class placementdomain.Placement) {
+func corpusPlacementJoinAllocation(row *corpusPlacementAllocation, class placementdomain.Placement) bool {
 	if row == nil {
-		return
+		return false
 	}
 	if !row.present {
+		if _, ok := placementdomain.JoinChecked(class, class); !ok {
+			return false
+		}
 		row.class = class
 		row.present = true
-		return
+		return true
 	}
-	row.class = placementdomain.Join(row.class, class)
+	joined, joinedOK := placementdomain.JoinChecked(row.class, class)
+	if !joinedOK {
+		return false
+	}
+	row.class = joined
+	return true
 }
 
-// corpusPlacementJoinEvidence folds one canonical evidence row for an
-// allocation.  The evidence plane is independent of Placement's class
-// lattice: optional scalar disagreements clear presence, and proof-state
-// disagreements remain explicitly unknown through AllocationEvidence.Merge.
-// The class copy is already folded by corpusPlacementJoinAllocation and is
-// therefore removed before merging so an alternate query point cannot erase a
-// valid class solely because its class differs.
-func corpusPlacementJoinEvidence(row *corpusPlacementAllocation, evidence placementdomain.AllocationEvidence) {
-	if row == nil || !evidence.Valid() {
-		return
+func corpusPlacementPositionValid(position corpusPlacementPosition) bool {
+	if position.query < 0 || !position.evidence.Valid() {
+		return false
 	}
-	evidence.Class = placementdomain.Bottom
-	evidence.HasClass = false
-	row.evidence = row.evidence.Merge(evidence)
+	if !position.present {
+		return position.class == placementdomain.Bottom && !position.evidence.HasClass
+	}
+	_, classOK := placementdomain.JoinChecked(position.class, position.class)
+	return classOK && position.evidence.HasClass && position.evidence.Class == position.class
+}
+
+// corpusPlacementAggregateEvidence reduces position-scoped evidence only for
+// corpus threshold accounting. Owner identity and allocation kind are root
+// invariants and must agree. Depth and proof columns are temporal: a later
+// program point may legitimately disagree with an earlier point, so they are
+// reduced explicitly instead of being passed through AllocationEvidence's
+// same-position composition law.
+func corpusPlacementAggregateEvidence(allocation corpusPlacementAllocation, positions []corpusPlacementPosition) (placementdomain.AllocationEvidence, bool) {
+	result := placementdomain.AllocationEvidence{}
+	if allocation.present {
+		result.Class, result.HasClass = allocation.class, true
+	}
+	proof := func(current, candidate placementdomain.EvidenceState) placementdomain.EvidenceState {
+		if candidate == placementdomain.EvidenceProven || current == placementdomain.EvidenceProven {
+			return placementdomain.EvidenceProven
+		}
+		if candidate == placementdomain.EvidenceUnknown || current == placementdomain.EvidenceUnknown {
+			return placementdomain.EvidenceUnknown
+		}
+		if candidate == placementdomain.EvidenceRefuted || current == placementdomain.EvidenceRefuted {
+			return placementdomain.EvidenceRefuted
+		}
+		return placementdomain.EvidenceAbsent
+	}
+	for _, position := range positions {
+		if !corpusPlacementPositionValid(position) {
+			return placementdomain.AllocationEvidence{}, false
+		}
+		evidence := position.evidence
+		if evidence.HasOwnerIdentity {
+			if result.HasOwnerIdentity && result.OwnerIdentity != evidence.OwnerIdentity {
+				return placementdomain.AllocationEvidence{}, false
+			}
+			result.OwnerIdentity, result.HasOwnerIdentity = evidence.OwnerIdentity, true
+		}
+		if evidence.HasKind {
+			if result.HasKind && result.Kind != evidence.Kind {
+				return placementdomain.AllocationEvidence{}, false
+			}
+			result.Kind, result.HasKind = evidence.Kind, true
+		}
+		if evidence.HasDepth && (!result.HasDepth || evidence.Depth > result.Depth) {
+			result.Depth, result.HasDepth = evidence.Depth, true
+		}
+		result.FrameLocal = proof(result.FrameLocal, evidence.FrameLocal)
+		result.DiesBeforeSuspension = proof(result.DiesBeforeSuspension, evidence.DiesBeforeSuspension)
+		result.DeepFrozen = proof(result.DeepFrozen, evidence.DeepFrozen)
+	}
+	return result, result.Valid()
 }
 
 // corpusPlacementObservation is the complete result of reading the one
@@ -58,6 +118,7 @@ func corpusPlacementJoinEvidence(row *corpusPlacementAllocation, evidence placem
 // is supplied by a declarative producer.
 type corpusPlacementObservation struct {
 	allocations          map[identity.ContentID]corpusPlacementAllocation
+	positions            map[identity.ContentID][]corpusPlacementPosition
 	classCounts          map[placementdomain.Placement]int
 	depthCounts          map[placementdomain.Placement]int
 	kindCounts           map[placementdomain.Placement]map[string]int
@@ -86,6 +147,7 @@ type corpusPlacementObservation struct {
 func corpusPlacementProjection(analysisResult *result.Result, expected placementdomain.Schema) corpusPlacementObservation {
 	observation := corpusPlacementObservation{
 		allocations: make(map[identity.ContentID]corpusPlacementAllocation),
+		positions:   make(map[identity.ContentID][]corpusPlacementPosition),
 		classCounts: make(map[placementdomain.Placement]int),
 		depthCounts: make(map[placementdomain.Placement]int),
 		kindCounts:  make(map[placementdomain.Placement]map[string]int),
@@ -188,19 +250,33 @@ func corpusPlacementProjection(analysisResult *result.Result, expected placement
 			}
 			ids[id] = struct{}{}
 			row := observation.allocations[id]
-			// Evidence is published for every denominator row, including an
-			// absent class row. Read it before the class branch so canonical
-			// owner/kind/depth facts are not discarded with an absent cell.
-			corpusPlacementJoinEvidence(&row, allocation.Evidence())
-			if allocation.Present() {
-				class, classOK := allocation.Placement()
-				if !classOK {
-					observation.operational = append(observation.operational, fmt.Sprintf("placement query %d allocation %s has no class", queryIndex, id))
+			present, presentOK := allocation.Present()
+			if !presentOK {
+				observation.operational = append(observation.operational, fmt.Sprintf("placement query %d allocation %s has unreadable presence", queryIndex, id))
+				continue
+			}
+			class, classOK := placementdomain.Bottom, true
+			if present {
+				class, classOK = allocation.Placement()
+			}
+			evidence, evidenceOK := allocation.Evidence()
+			if !classOK || !evidenceOK {
+				observation.operational = append(observation.operational, fmt.Sprintf("placement query %d allocation %s has unreadable class/evidence", queryIndex, id))
+				continue
+			}
+			position := corpusPlacementPosition{query: queryIndex, present: present, class: class, evidence: evidence}
+			if !corpusPlacementPositionValid(position) {
+				observation.operational = append(observation.operational, fmt.Sprintf("placement query %d allocation %s has inconsistent class/evidence", queryIndex, id))
+				continue
+			}
+			if present {
+				if !corpusPlacementJoinAllocation(&row, class) {
+					observation.operational = append(observation.operational, fmt.Sprintf("placement query %d allocation %s has invalid class", queryIndex, id))
 					continue
 				}
-				corpusPlacementJoinAllocation(&row, class)
 			}
 			observation.allocations[id] = row
+			observation.positions[id] = append(observation.positions[id], position)
 		}
 		if expectedIDs == nil {
 			expectedIDs = ids
@@ -215,6 +291,15 @@ func corpusPlacementProjection(analysisResult *result.Result, expected placement
 		}
 	}
 
+	for id, allocation := range observation.allocations {
+		evidence, evidenceOK := corpusPlacementAggregateEvidence(allocation, observation.positions[id])
+		if !evidenceOK {
+			observation.operational = append(observation.operational, fmt.Sprintf("placement allocation %s changed owner identity or allocation kind across positions", id))
+			continue
+		}
+		allocation.evidence = evidence
+		observation.allocations[id] = allocation
+	}
 	if defects := corpusPlacementObservationOperationalDefects(observation); len(defects) != 0 {
 		observation.operational = defects
 		return observation

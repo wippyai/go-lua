@@ -1,0 +1,15 @@
+{
+  "description": "Every declared assert2 classifier is called and its declared answer is read: the refuting members answer their subject refined, and each classifier answers the type its name asserts.",
+  "packages": [
+    "assert2"
+  ],
+  "files": [
+    "main.lua"
+  ],
+  "check": {
+    "errors": 0
+  },
+  "run": {
+    "skip": "declaration-surface fixture"
+  }
+}

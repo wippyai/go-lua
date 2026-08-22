@@ -64,9 +64,10 @@ func artifactResultLawBaseTables(t testing.TB) artifactResultLawTables {
 			{id: artifactResultLawID(3)},
 		},
 		points: []resultPoint{{
-			mount:  artifactResultLawID(4),
-			point:  artifactResultLawID(5),
-			bodies: []uint32{1},
+			context: artifactResultLawID(10),
+			mount:   artifactResultLawID(4),
+			point:   artifactResultLawID(5),
+			bodies:  []uint32{1},
 		}},
 		families: []resultFamily{
 			{
@@ -164,6 +165,9 @@ func TestArtifactResultFamiliesShareOnePointAndBodyRow(t *testing.T) {
 		if mount, ok := query.MountID(); !ok || mount != tables.points[0].mount {
 			t.Fatalf("family %d mount = %v/%t, want %v/true", familyIndex, mount, ok, tables.points[0].mount)
 		}
+		if context, ok := query.ContextID(); !ok || context != tables.points[0].context {
+			t.Fatalf("family %d context = %v/%t, want %v/true", familyIndex, context, ok, tables.points[0].context)
+		}
 		if point, ok := query.PointID(); !ok || point != tables.points[0].point {
 			t.Fatalf("family %d point = %v/%t, want %v/true", familyIndex, point, ok, tables.points[0].point)
 		}
@@ -238,6 +242,14 @@ func TestArtifactResultNormalizedIdentityIsStableAndComplete(t *testing.T) {
 		name   string
 		mutate func(artifactResultLawTables) artifactResultLawTables
 	}{
+		{
+			name: "point context",
+			mutate: func(tables artifactResultLawTables) artifactResultLawTables {
+				variant := artifactResultLawCloneTables(tables)
+				variant.points[0].context = artifactResultLawID(30)
+				return variant
+			},
+		},
 		{
 			name: "point membership",
 			mutate: func(tables artifactResultLawTables) artifactResultLawTables {

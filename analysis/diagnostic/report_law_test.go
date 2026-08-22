@@ -236,21 +236,21 @@ func diagnosticTemplateLawFinding(t *testing.T, fixture diagnosticTestFixture, c
 		if !subjectOK {
 			t.Fatal("unresolved type subject unavailable")
 		}
-		data = NewTemplateData(subject, EmptyTarget(), 0, DiagnosticLocation{})
+		data = NewTemplateData(subject, EmptyTarget(), 0)
 		severity = FindingSeverityError
 	case DiagnosticCodeUnresolvedValueReference:
 		subject, subjectOK := NewSemanticName("missing_count")
 		if !subjectOK {
 			t.Fatal("unresolved value subject unavailable")
 		}
-		data = NewTemplateData(subject, EmptyTarget(), 0, DiagnosticLocation{})
+		data = NewTemplateData(subject, EmptyTarget(), 0)
 		severity = FindingSeverityError
 	case DiagnosticCodeUnusedLocal:
 		subject, subjectOK := NewSemanticName("unused_local")
 		if !subjectOK {
 			t.Fatal("unused local subject unavailable")
 		}
-		data = NewTemplateData(subject, EmptyTarget(), 0, DiagnosticLocation{})
+		data = NewTemplateData(subject, EmptyTarget(), 0)
 	case DiagnosticCodeAlwaysTrueGuard, DiagnosticCodeAlwaysFalseGuard:
 	default:
 		t.Fatalf("test has no template payload for code %q", code.String())
@@ -324,9 +324,9 @@ func TestDiagnosticTemplateRowsRejectInvalidAndForeignPayloads(t *testing.T) {
 	rows := map[string]FindingRow{
 		"missing typed payload":    NewFindingRow(reportLawID(71), reportLawID(72), DiagnosticCodeUnresolvedTypeReference, FindingSeverityError, location, empty),
 		"foreign code":             NewFindingRow(reportLawID(71), reportLawID(72), DiagnosticCode("advice.undeclared_family"), FindingSeverityError, location, empty),
-		"malformed semantic name":  NewFindingRow(reportLawID(71), reportLawID(72), DiagnosticCodeUnresolvedValueReference, FindingSeverityError, location, UnsafeTemplateData("bad\nname", "", 0, DiagnosticLocation{})),
+		"malformed semantic name":  NewFindingRow(reportLawID(71), reportLawID(72), DiagnosticCodeUnresolvedValueReference, FindingSeverityError, location, UnsafeTemplateData("bad\nname", "", 0)),
 		"missing proof anchor":     NewFindingRow(reportLawID(71), reportLawID(72), DiagnosticCodeRedundantClaim, FindingSeverityHint, location, UnsafeTemplateData("typed", "string", TypeClaim(), DiagnosticLocation{})),
-		"unexpected template data": NewFindingRow(reportLawID(71), reportLawID(72), DiagnosticCodeAlwaysTrueGuard, FindingSeverityHint, location, UnsafeTemplateData("not-a-guard-payload", "", 0, DiagnosticLocation{})),
+		"unexpected template data": NewFindingRow(reportLawID(71), reportLawID(72), DiagnosticCodeAlwaysTrueGuard, FindingSeverityHint, location, UnsafeTemplateData("not-a-guard-payload", "", 0)),
 	}
 	for name, row := range rows {
 		t.Run(name, func(t *testing.T) {

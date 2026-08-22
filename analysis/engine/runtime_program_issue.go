@@ -15,6 +15,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/engine/internal/composition"
 	"github.com/wippyai/go-lua/analysis/engine/internal/equation"
 	"github.com/wippyai/go-lua/analysis/identity"
+	"github.com/wippyai/go-lua/analysis/schema/executioncontext"
 )
 
 // pendingRuleIssuance is one issuance between source admission and row
@@ -58,6 +59,7 @@ type declaredActivationCandidate struct {
 	Application composition.Key
 	Target      composition.Key
 	Endpoint    composition.Key
+	Context     equation.ActivationContext
 	Mount       identity.ContentID
 	Body        identity.ContentID
 	Trigger     artifactMountedPoint
@@ -84,8 +86,11 @@ func declaredRoleOwnsRuleSchema(state *schemaBindingState, role RuleSlotCapabili
 // declaration. Source capabilities are minted in inventory order - Link rows,
 // mounted rows, activation rows - the Batch is sealed once, and every equation
 // row is resolved against those sealed identities afterwards.
-func declareMountedProgram(rowsWorkspace *programRows, mounts []sealedProgramMount, bootstrap LinkBootstrapWitness, admission MountedProgramAdmission) (topologyDeclaration, programSealFailure, ProgramAdmissionStage, bool) {
+func declareMountedProgram(rowsWorkspace *programRows, mounts []sealedProgramMount, contexts executioncontext.Directory, bootstrap LinkBootstrapWitness, admission MountedProgramAdmission, pointTransitions []ProgramPointTransitionAdmission) (topologyDeclaration, programSealFailure, ProgramAdmissionStage, bool) {
 	if rowsWorkspace == nil || rowsWorkspace.binding == nil || rowsWorkspace.mountedRows == nil || rowsWorkspace.state == nil || rowsWorkspace.state.schema == nil {
+		return topologyDeclaration{}, artifactRowFailure(programArtifactRowFailureOwner, 0), ProgramAdmissionNone, false
+	}
+	if !contexts.Available() || !bootstrap.Available() || contexts.LinkID() != bootstrap.OwnerID() {
 		return topologyDeclaration{}, artifactRowFailure(programArtifactRowFailureOwner, 0), ProgramAdmissionNone, false
 	}
 	rows := rowsWorkspace.mountedRows
@@ -111,10 +116,23 @@ func declareMountedProgram(rowsWorkspace *programRows, mounts []sealedProgramMou
 	// whole assemble rather than being silently skipped here.
 	for ordinal, row := range admission.Mounted {
 		issuance, ok := admitMountedRuleIssuance(rowsWorkspace, rows, state, row)
-		if !ok || !claimAnchoredSurfaces(anchored, issuance.surfaces) {
+		claimedOK := ok && claimAnchoredSurfaces(anchored, issuance.surfaces)
+		if !claimedOK {
 			return topologyDeclaration{}, programSealFailure{phase: programSealFailureMountedIssuance, ordinal: uint32(ordinal)}, ProgramAdmissionMounted, false
 		}
 		pending = append(pending, issuance)
+	}
+	for ordinal, row := range admission.MountedPoint {
+		issuances, ok := admitMountedPointRuleIssuances(rowsWorkspace, rows, state, mounts, row)
+		if !ok {
+			return topologyDeclaration{}, programSealFailure{phase: programSealFailureMountedIssuance, ordinal: uint32(ordinal)}, ProgramAdmissionMounted, false
+		}
+		for _, issuance := range issuances {
+			if !claimAnchoredSurfaces(anchored, issuance.surfaces) {
+				return topologyDeclaration{}, programSealFailure{phase: programSealFailureMountedIssuance, ordinal: uint32(ordinal)}, ProgramAdmissionMounted, false
+			}
+			pending = append(pending, issuance)
+		}
 	}
 	for ordinal, row := range admission.Activation {
 		issuance, admitted, ok := admitActivationRuleIssuance(rowsWorkspace, rows, state, row)
@@ -135,9 +153,11 @@ func declareMountedProgram(rowsWorkspace *programRows, mounts []sealedProgramMou
 		binding:   rowsWorkspace.binding,
 		batch:     rowsWorkspace.batch,
 		mounts:    mounts,
+		contexts:  contexts,
 		bootstrap: bootstrap,
 		sites:     constructedSitePlane{mounted: rows.mounted, bootstrap: rows.bootstrap.site},
 	}
+	declaration.pointTransitions = append([]ProgramPointTransitionAdmission(nil), pointTransitions...)
 	declaration.members = make([]declaredMemberRow, 0, len(pending))
 	for ordinal, issuance := range pending {
 		member, summaries, ok := resolveDeclaredMemberRow(state, authority, issuance, declaration.summaries)
@@ -163,7 +183,7 @@ func declareMountedProgram(rowsWorkspace *programRows, mounts []sealedProgramMou
 		if row.admit == nil || !rows.hasMountedSite(row.Mount, row.Point) {
 			return topologyDeclaration{}, artifactRowFailure(programArtifactRowFailurePoint, uint32(ordinal)), ProgramAdmissionQuery, false
 		}
-		query, summaries, ok := row.admit.declareMountedQuery(state, authority, row.ID, row.Mount, row.Point)
+		query, summaries, ok := row.admit.declareMountedQuery(state, authority, row.Context, row.ID, row.Mount, row.Point)
 		if !ok {
 			return topologyDeclaration{}, programSealFailure{phase: programSealFailureQueryBatch, ordinal: uint32(ordinal)}, ProgramAdmissionQuery, false
 		}
@@ -180,6 +200,46 @@ func declareMountedProgram(rowsWorkspace *programRows, mounts []sealedProgramMou
 	return declaration, programSealFailure{}, ProgramAdmissionNone, true
 }
 
+// admitMountedPointRuleIssuances expands one closure occurrence over the
+// stable mount/template Point order. No artifact RuleOccurrence row is
+// consulted: the Point plane itself is this lane's complete denominator.
+func admitMountedPointRuleIssuances(rowsWorkspace *programRows, rows *mountedArtifactRows, state *schemaBindingState, mounts []sealedProgramMount, row MountedPointRuleAdmission) ([]pendingRuleIssuance, bool) {
+	if !row.Capability.mountedPoint() || !row.Occurrence.Available() {
+		return nil, false
+	}
+	binder, binderOK := resolveOrdinaryRuleCell(row.Capability)
+	if !binderOK {
+		return nil, false
+	}
+	var result []pendingRuleIssuance
+	for _, mount := range mounts {
+		if mount.template == nil || !mount.module.Available() {
+			return nil, false
+		}
+		for pointIndex := 0; pointIndex < mount.template.PointCount(); pointIndex++ {
+			point, pointOK := mount.template.PointAt(pointIndex)
+			site, sited := rows.mountedSite(mount.module, point.ID)
+			entity, entityOK := mountedPointRuleOccurrenceKey(row.Capability, mount.module, point.ID, row.Occurrence)
+			member := mountedPointRuleMemberID(row.Capability, mount.module, point.ID, row.Occurrence)
+			if !pointOK || !sited || !entityOK || !member.Available() {
+				return nil, false
+			}
+			coords := OperandCoords{Mount: mount.module, Point: point.ID, Occurrence: row.Occurrence}
+			issuance := pendingRuleIssuance{
+				plane: declaredMemberMountedPoint, role: row.Capability,
+				mount: mount.module, point: point.ID, occurrence: row.Occurrence,
+				member: member, binder: binder, coords: coords,
+			}
+			declared, ok := declareIssuanceSurfaces(rowsWorkspace, state, binder, coords, site, entity, issuance)
+			if !ok {
+				return nil, false
+			}
+			result = append(result, declared)
+		}
+	}
+	return result, len(result) != 0
+}
+
 // artifactRowFailure closes one artifact-row boundary a declaration could not
 // be addressed through.
 func artifactRowFailure(failure programArtifactRowFailure, ordinal uint32) programSealFailure {
@@ -187,7 +247,7 @@ func artifactRowFailure(failure programArtifactRowFailure, ordinal uint32) progr
 }
 
 func mountedIssuanceRole(issuance pendingRuleIssuance) RuleSlotCapability {
-	if issuance.plane == declaredMemberMount {
+	if issuance.plane == declaredMemberMount || issuance.plane == declaredMemberMountedPoint {
 		return issuance.role
 	}
 	return RuleSlotCapability{}
@@ -463,10 +523,19 @@ func declareActivationCandidates(schema *Schema, issuance pendingRuleIssuance) (
 			!candidate.Mount.Available() || !candidate.Body.Available() || !application.Available() {
 			return nil, false
 		}
+		context := equation.ActivationContext{
+			TransitionID:  candidate.TransitionID,
+			FromContextID: candidate.FromContextID,
+			ToContextID:   candidate.ToContextID,
+		}
+		if !context.WellFormed() {
+			return nil, false
+		}
 		declared = append(declared, declaredActivationCandidate{
 			Member: issuance.member, Family: shape.ActivationFamily, Application: application,
 			Target: compositionKeyOf(candidate.Target), Endpoint: compositionKeyOf(candidate.Endpoint),
-			Mount: candidate.Mount, Body: candidate.Body,
+			Context: context,
+			Mount:   candidate.Mount, Body: candidate.Body,
 			Trigger: artifactMountedPoint{mount: issuance.mount, reusable: issuance.point},
 			Imports: issuance.issuer.imports, Export: issuance.issuer.export,
 		})
@@ -486,15 +555,14 @@ func appendDeclaredSummary(summaries []equation.SummaryMapping, mapping *ruleSum
 		if existing.Surface != mapping.surface {
 			continue
 		}
-		if len(existing.Keys) != len(mapping.keys) {
+		if !sameSummaryKeySource(existing.Keys, mapping.keys) {
 			return nil, false
-		}
-		for index := range existing.Keys {
-			if existing.Keys[index] != mapping.keys[index] {
-				return nil, false
-			}
 		}
 		return summaries, true
 	}
-	return append(summaries, equation.SummaryMapping{Surface: mapping.surface, Keys: append([]uint64(nil), mapping.keys...)}), true
+	keys, keysOK := materializeSummaryKeys(mapping.keys)
+	if !keysOK {
+		return nil, false
+	}
+	return append(summaries, equation.SummaryMapping{Surface: mapping.surface, Keys: keys}), true
 }

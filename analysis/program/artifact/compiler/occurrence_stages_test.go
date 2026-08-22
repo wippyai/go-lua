@@ -11,6 +11,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/schema"
 	programschema "github.com/wippyai/go-lua/analysis/schema/program"
 	programcatalog "github.com/wippyai/go-lua/analysis/schema/program/catalog"
+	programissuance "github.com/wippyai/go-lua/analysis/schema/program/issuance"
 	"github.com/wippyai/go-lua/domain/composite"
 )
 
@@ -80,7 +81,7 @@ return total
 	point := rule.PointID()
 	input, inputOK := rule.InputPoint()
 	if !arithmeticOK || !bodyOK || !endpointsOK || !left.Available() || !right.Available() || op != flowkind.BinaryAdd ||
-		!ruleOK || !point.Available() || !inputOK || point == input || rule.Stage() != programschema.RuleStageLocal {
+		!ruleOK || !point.Available() || !inputOK || point == input || rule.Stage() != programissuance.StageComputation {
 		t.Fatalf("scalar arithmetic=%+v/%v rule=%+v/%v", arithmetic, arithmeticOK, rule, ruleOK)
 	}
 	for index := 0; index < exactCount; index++ {
@@ -360,7 +361,7 @@ return guard
 	orderInput, orderInputOK := orderRule.InputPoint()
 	if !storageOK || !orderRuleOK || !storagePoint.Available() || !storageInputOK || !orderPoint.Available() || !orderInputOK ||
 		storagePoint == storageInput || orderPoint == storagePoint || orderInput != storagePoint ||
-		orderRule.Stage() != programschema.RuleStageLocal || orderRule.InputKind() != programschema.RuleInputFinish {
+		orderRule.Stage() != programissuance.StageComputation || orderRule.InputSpec() != programissuance.InputPreviousStage {
 		t.Fatalf("local computation chain storage=%+v/%t order=%+v/%t", storageRule, storageOK, orderRule, orderRuleOK)
 	}
 
@@ -460,7 +461,7 @@ return guard
 	equalityPoint := equalityRule.PointID()
 	equalityInput, equalityInputOK := equalityRule.InputPoint()
 	if !order.Available() || !equality.Available() || !orderOK || !equalityOK || !orderPoint.Available() || !equalityPoint.Available() || !equalityInputOK ||
-		equalityInput != orderPoint || equalityPoint == orderPoint || equalityRule.InputKind() != programschema.RuleInputFinish {
+		equalityInput != orderPoint || equalityPoint == orderPoint || equalityRule.InputSpec() != programissuance.InputPreviousStage {
 		t.Fatalf("nested computation dependency order=%+v/%t equality=%+v/%t", orderRule, orderOK, equalityRule, equalityOK)
 	}
 	transferCount, transfersPublished := program.LocalTransferCount()

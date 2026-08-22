@@ -66,7 +66,7 @@ func derive(root string, snapshot grammarproof.Snapshot) (Evidence, error) {
 	if err != nil {
 		return Evidence{}, err
 	}
-	laws, helpers, sequences, mutations, terms, err := deriveTypedRelations(root, schema)
+	laws, helpers, mutations, terms, err := deriveTypedRelations(root, schema)
 	if err != nil {
 		return Evidence{}, err
 	}
@@ -89,7 +89,7 @@ func derive(root string, snapshot grammarproof.Snapshot) (Evidence, error) {
 		GrammarDigest: snapshot.Evidence.Digest, ParserSourceDigest: parserSourceDigest,
 		SchemaDigest: schema.Digest(), IngressDigest: snapshot.Evidence.IngressDigest,
 		Fields: fields, Products: products, ProductLaws: laws, HelperLaws: helpers,
-		Sequences: sequences, Mutations: mutations, ActionTerms: terms, Carriers: carriers,
+		Mutations: mutations, ActionTerms: terms, Carriers: carriers,
 		Recursion: append([]recursion.Obligation(nil), requiredRecursion.Required...),
 	}, nil
 }
@@ -127,9 +127,6 @@ func normalizeEvidenceSlices(evidence *Evidence) {
 	}
 	if evidence.HelperLaws == nil {
 		evidence.HelperLaws = []HelperLaw{}
-	}
-	if evidence.Sequences == nil {
-		evidence.Sequences = []SequenceLaw{}
 	}
 	if evidence.Mutations == nil {
 		evidence.Mutations = []FieldMutation{}
@@ -207,11 +204,6 @@ func normalizeEvidenceSlices(evidence *Evidence) {
 		}
 		if law.Summary.Presence == nil {
 			law.Summary.Presence = []ConditionalPresence{}
-		}
-	}
-	for index := range evidence.Sequences {
-		if evidence.Sequences[index].Segments == nil {
-			evidence.Sequences[index].Segments = []SequenceSegment{}
 		}
 	}
 	for index := range evidence.Mutations {
@@ -315,9 +307,6 @@ func validateEvidenceRows(evidence Evidence) error {
 		return err
 	}
 	if err := use.helperLaws(); err != nil {
-		return err
-	}
-	if err := use.sequences(); err != nil {
 		return err
 	}
 	if err := use.mutations(); err != nil {
@@ -691,31 +680,6 @@ func (use *evidenceUsage) exactMapItemInput(scope ActionScopeID) error {
 	}
 	if found != 1 {
 		return fmt.Errorf("parser products: map item scope must bind exactly one input")
-	}
-	return nil
-}
-
-func (use *evidenceUsage) sequences() error {
-	for index, row := range use.evidence.Sequences {
-		scope, ok := use.evidence.ActionTerms.Scope(row.Scope)
-		if !ok || scope.Kind != ActionScopeProduction || row.Production == "" || row.Destination.Tag == "" || row.Construction == SequenceConstructionInvalid || index != 0 && !sequenceLess(use.evidence.Sequences[index-1], row) {
-			return fmt.Errorf("parser products: invalid sequence law")
-		}
-		use.markScope(row.Scope)
-		if row.Construction == SequenceConstructionNil && len(row.Segments) != 0 {
-			return fmt.Errorf("parser products: nil sequence has operands")
-		}
-		for segmentIndex, segment := range row.Segments {
-			if segment.Kind == SequenceSegmentInvalid || segment.Term == 0 || segment.Kind == SequenceSpread && row.Construction == SequenceConstructionLiteral {
-				return fmt.Errorf("parser products: invalid sequence segment")
-			}
-			if err := use.term(segment.Term, row.Scope); err != nil {
-				return err
-			}
-			if segment.Kind == SequenceSpread && row.Construction == SequenceConstructionAppend && segmentIndex != 0 && segmentIndex != len(row.Segments)-1 {
-				return fmt.Errorf("parser products: nonterminal sequence spread")
-			}
-		}
 	}
 	return nil
 }
@@ -1137,7 +1101,7 @@ func (e Evidence) Canonical() []byte {
 			panic(err)
 		}
 	}
-	must(w.Reset(&out, "program.parserproducts.evidence", 4))
+	must(w.Reset(&out, "program.parserproducts.evidence", 5))
 	stringValue := func(value string) { must(w.String(value)) }
 	uintValue := func(value uint64) { must(w.Uint(value)) }
 	stringValue(e.GrammarDigest)
@@ -1176,20 +1140,6 @@ func (e Evidence) Canonical() []byte {
 		helperLawCanonical(&w, row, must)
 	}
 	must(w.Record(5))
-	must(w.Count(uint64(len(e.Sequences))))
-	for _, row := range e.Sequences {
-		stringValue(row.Production)
-		stringValue(row.Destination.Tag)
-		stringValue(row.Destination.Field)
-		uintValue(uint64(row.Scope))
-		uintValue(uint64(row.Construction))
-		must(w.Count(uint64(len(row.Segments))))
-		for _, segment := range row.Segments {
-			uintValue(uint64(segment.Kind))
-			uintValue(uint64(segment.Term))
-		}
-	}
-	must(w.Record(6))
 	must(w.Count(uint64(len(e.Mutations))))
 	for _, row := range e.Mutations {
 		stringValue(row.Production)

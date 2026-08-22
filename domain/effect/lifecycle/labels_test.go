@@ -7,16 +7,23 @@ import (
 	"github.com/wippyai/go-lua/domain/typestate"
 )
 
+func lifecycleObligation(t *testing.T, states ...typestate.State) typestate.Obligation {
+	t.Helper()
+	obligation, ok := typestate.NewObligation(states...)
+	if !ok {
+		t.Fatal("NewObligation rejected valid states")
+	}
+	return obligation
+}
+
 func TestLifecycleLabelsNormalizeAndCompareByFacts(t *testing.T) {
 	p0 := effect.ParamRef{Index: 0}
 	p1 := effect.ParamRef{Index: 1}
 	acquire := Acquire{
-		Target:   p0,
-		Protocol: typestate.Protocol("transaction"),
-		State:    typestate.State("active"),
-		Obligation: typestate.Obligation{
-			Final: typestate.State("finished"),
-		},
+		Target:     p0,
+		Protocol:   typestate.Protocol("transaction"),
+		State:      typestate.State("active"),
+		Obligation: lifecycleObligation(t, typestate.State("finished")),
 	}
 	if !acquire.Equals(&acquire) {
 		t.Fatalf("Acquire.Equals(pointer) = false")
@@ -50,23 +57,19 @@ func TestLifecycleLabelsExposeStableStrings(t *testing.T) {
 	}{
 		{
 			label: Acquire{
-				Target:   p0,
-				Protocol: typestate.Protocol("transaction"),
-				State:    typestate.State("active"),
-				Obligation: typestate.Obligation{
-					Final: typestate.State("finished"),
-				},
+				Target:     p0,
+				Protocol:   typestate.Protocol("transaction"),
+				State:      typestate.State("active"),
+				Obligation: lifecycleObligation(t, typestate.State("finished")),
 			},
 			want: "lifecycle.acquire(param[0], transaction:active -> finished)",
 		},
 		{
 			label: Acquire{
-				Target:   p0,
-				Protocol: typestate.Protocol("transaction"),
-				State:    typestate.State("active"),
-				Obligation: typestate.Obligation{
-					Finals: typestate.NewFinalStates(typestate.State("rolled_back"), typestate.State("committed")),
-				},
+				Target:     p0,
+				Protocol:   typestate.Protocol("transaction"),
+				State:      typestate.State("active"),
+				Obligation: lifecycleObligation(t, typestate.State("rolled_back"), typestate.State("committed")),
 			},
 			want: "lifecycle.acquire(param[0], transaction:active -> committed|rolled_back)",
 		},

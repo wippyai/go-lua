@@ -6,7 +6,8 @@ import (
 )
 
 func TestParserUsesGeneratorRendersDeterministicSemanticArtifact(t *testing.T) {
-	evidence, err := Build(testProducts())
+	products := testProducts()
+	evidence, err := Build(products, testCensus(products))
 	if err != nil {
 		t.Fatal(err)
 	}

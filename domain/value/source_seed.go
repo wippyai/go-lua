@@ -183,7 +183,7 @@ func (schema *valueBuilder) sealSourceSeedOccurrences() bool {
 		}
 		rows := &schema.sourceSeedMounts[mountIndex]
 		rows.occurrenceIndex = make(map[identity.ContentID]uint32)
-		program := mount.Program()
+		program := mount.Program.Program
 		count, countOK := program.OccurrenceCount()
 		if !countOK {
 			return false

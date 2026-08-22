@@ -5,6 +5,7 @@ import (
 
 	"github.com/wippyai/go-lua/analysis/identity"
 	"github.com/wippyai/go-lua/analysis/schema"
+	"github.com/wippyai/go-lua/analysis/schema/executioncontext"
 	programschema "github.com/wippyai/go-lua/analysis/schema/program"
 	programcatalog "github.com/wippyai/go-lua/analysis/schema/program/catalog"
 	"github.com/wippyai/go-lua/analysis/schema/programmount"
@@ -28,20 +29,25 @@ func TestQueryAdmissionDispatchesBySealedFamily(t *testing.T) {
 	if !pointOK || !pointID.Available() {
 		t.Fatal("sealed point")
 	}
-	summaryID, summaryIDOK := identity.DeriveContentID("analysis/artifact-query/v1", mount.ModuleKey[:], pointID[:], []byte(QueryFamilyValueSummary))
-	exactID, exactIDOK := identity.DeriveContentID("analysis/artifact-query/v1", mount.ModuleKey[:], pointID[:], []byte(QueryFamilyEffectExact))
-	placementID, placementIDOK := identity.DeriveContentID("analysis/artifact-query/v1", mount.ModuleKey[:], pointID[:], []byte(QueryFamilyPlacementSummary))
+	context := queryContextForMount(t, record.Source.ContextDirectory(), mount.ModuleKey)
+	contextID := context.ID()
+	summaryID, summaryIDOK := identity.DeriveContentID(querySiteFormula, mount.ModuleKey[:], contextID[:], pointID[:], []byte(QueryFamilyValueSummary))
+	exactID, exactIDOK := identity.DeriveContentID(querySiteFormula, mount.ModuleKey[:], contextID[:], pointID[:], []byte(QueryFamilyEffectExact))
+	placementID, placementIDOK := identity.DeriveContentID(querySiteFormula, mount.ModuleKey[:], contextID[:], pointID[:], []byte(QueryFamilyPlacementSummary))
 	if !summaryIDOK || !exactIDOK || !placementIDOK {
 		t.Fatal("query identities")
 	}
-	summary, summaryOK := bound.QueryAdmission(summaryID, mount.ModuleKey, pointID, QueryFamilyValueSummary)
-	exact, exactOK := bound.QueryAdmission(exactID, mount.ModuleKey, pointID, QueryFamilyEffectExact)
-	placement, placementOK := bound.QueryAdmission(placementID, mount.ModuleKey, pointID, QueryFamilyPlacementSummary)
+	summary, summaryOK := bound.QueryAdmission(summaryID, mount.ModuleKey, pointID, QueryFamilyValueSummary, context)
+	exact, exactOK := bound.QueryAdmission(exactID, mount.ModuleKey, pointID, QueryFamilyEffectExact, context)
+	placement, placementOK := bound.QueryAdmission(placementID, mount.ModuleKey, pointID, QueryFamilyPlacementSummary, context)
 	if !summaryOK || !exactOK || !placementOK {
 		t.Fatalf("query admission refused: summary=%v exact=%v placement=%v", summaryOK, exactOK, placementOK)
 	}
 	if summary.ID != summaryID || summary.Mount != mount.ModuleKey || summary.Point != pointID {
 		t.Fatal("summary admission lost the sealed site")
+	}
+	if summary.Context.ID() != context.ID() || exact.Context.ID() != context.ID() || placement.Context.ID() != context.ID() {
+		t.Fatal("query admission lost the sealed context")
 	}
 	if exact.ID != exactID || exact.Mount != mount.ModuleKey || exact.Point != pointID {
 		t.Fatal("exact admission lost the sealed site")
@@ -52,7 +58,7 @@ func TestQueryAdmissionDispatchesBySealedFamily(t *testing.T) {
 	if bound.PlacementQuery() == nil {
 		t.Fatal("sealed Placement query implementation is unavailable")
 	}
-	if _, ok := bound.QueryAdmission(summaryID, mount.ModuleKey, pointID, ""); ok {
+	if _, ok := bound.QueryAdmission(summaryID, mount.ModuleKey, pointID, "", context); ok {
 		t.Fatal("empty family admitted")
 	}
 }
@@ -67,7 +73,7 @@ return 42`)
 	if !compilationOK {
 		t.Fatal("compilation unavailable")
 	}
-	sites, ok := SelectedQuerySites(compilation, record.Artifacts)
+	sites, ok := SelectedQuerySites(compilation, record.Artifacts, record.Source.ContextDirectory())
 	if !ok || len(sites) == 0 {
 		t.Fatal("selected query sites")
 	}
@@ -156,7 +162,7 @@ return use(1)`)
 	if !compilationOK {
 		t.Fatal("compilation unavailable")
 	}
-	sites, ok := SelectedQuerySites(compilation, record.Artifacts)
+	sites, ok := SelectedQuerySites(compilation, record.Artifacts, record.Source.ContextDirectory())
 	if !ok || len(sites) == 0 {
 		t.Fatal("selected query sites")
 	}
@@ -204,7 +210,7 @@ func TestSelectedQuerySitesAdmitControlFaultRoots(t *testing.T) {
 			if !compilationOK {
 				t.Fatal("compilation unavailable")
 			}
-			sites, ok := SelectedQuerySites(compilation, record.Artifacts)
+			sites, ok := SelectedQuerySites(compilation, record.Artifacts, record.Source.ContextDirectory())
 			if !ok || len(sites) == 0 {
 				t.Fatalf("control-fault root has no selected query sites: ok=%t rows=%d", ok, len(sites))
 			}
@@ -218,7 +224,7 @@ func TestSelectedQuerySitesUseTheirOwnerAddressFormula(t *testing.T) {
 	if !compilationOK {
 		t.Fatal("compilation unavailable")
 	}
-	sites, ok := SelectedQuerySites(compilation, record.Artifacts)
+	sites, ok := SelectedQuerySites(compilation, record.Artifacts, record.Source.ContextDirectory())
 	if !ok || len(sites) == 0 {
 		t.Fatal("selected query sites")
 	}
@@ -230,11 +236,27 @@ func TestSelectedQuerySitesUseTheirOwnerAddressFormula(t *testing.T) {
 		if _, known := issued[site.Family]; !known {
 			t.Fatalf("site %d carries unissued family %q", index, site.Family)
 		}
-		want, derived := identity.DeriveContentID(querySiteFormula, site.Mount[:], site.Point[:], []byte(site.Family))
+		contextID := site.Context.ID()
+		want, derived := identity.DeriveContentID(querySiteFormula, site.Mount[:], contextID[:], site.Point[:], []byte(site.Family))
 		if !derived || site.ID != want {
 			t.Fatalf("site %d address %v is not the owner formula over (%v, %v, %q)", index, site.ID, site.Mount, site.Point, site.Family)
 		}
 	}
+}
+
+func queryContextForMount(t testing.TB, directory executioncontext.Directory, mount identity.ContentID) executioncontext.Context {
+	t.Helper()
+	if !directory.Available() || !mount.Available() {
+		t.Fatal("query context directory or mount is unavailable")
+	}
+	for index := 0; index < directory.ContextCount(); index++ {
+		context, ok := directory.ContextAt(index)
+		if ok && context.Available() && context.ModuleKey() == mount {
+			return context
+		}
+	}
+	t.Fatalf("no query context for mount %v", mount)
+	return executioncontext.Context{}
 }
 
 func selectedCallableOccurrencePoints(t *testing.T, program programmount.Program) map[identity.ContentID]map[identity.ContentID]struct{} {

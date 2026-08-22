@@ -84,6 +84,10 @@ func (trust NativePublicationTrust) String() string {
 // one row. All IDs are immutable scalar identities; it retains no Program,
 // Link, Engine, State, or domain handle.
 type NativePublicationProvenance struct {
+	// context is populated for context-qualified diagnostic branch rows. Native
+	// artifact/value rows retain the zero value because they are Link-global
+	// facts; an available context is part of the row identity when present.
+	context  identity.ContentID
 	mount    identity.ContentID
 	artifact identity.ContentID
 	local    identity.ContentID
@@ -92,6 +96,7 @@ type NativePublicationProvenance struct {
 	span     identity.ContentID
 }
 
+func (value NativePublicationProvenance) ContextID() identity.ContentID  { return value.context }
 func (value NativePublicationProvenance) MountID() identity.ContentID    { return value.mount }
 func (value NativePublicationProvenance) ArtifactID() identity.ContentID { return value.artifact }
 func (value NativePublicationProvenance) LocalID() identity.ContentID    { return value.local }
@@ -606,6 +611,9 @@ func nativePublicationRowID(row nativePublicationRow) (identity.ContentID, bool)
 		row.semantic[:], enums[:], flags[:], []byte(row.key), []byte(row.module), []byte(row.term), []byte(row.subject), []byte(row.occurrence),
 		row.provenance.mount[:], row.provenance.artifact[:], row.provenance.local[:], row.provenance.body[:], row.provenance.point[:], row.provenance.span[:],
 		row.validity.event[:], row.validity.established[:], row.validity.revoked[:], ordinals[:],
+	}
+	if row.provenance.context.Available() {
+		parts = append(parts, row.provenance.context[:])
 	}
 	return identity.DeriveContentID("analysis/native-publication/row/v2", append(parts, row.content.contentParts()...)...)
 }

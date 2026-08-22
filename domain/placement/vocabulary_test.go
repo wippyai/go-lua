@@ -20,6 +20,9 @@ func TestNameFrozenVocabulary(t *testing.T) {
 		if got := item.value.Name(); got != item.name {
 			t.Fatalf("escape name %d = %q, want %q", item.value, got, item.name)
 		}
+		if got := item.value.String(); got != item.name {
+			t.Fatalf("escape string %d = %q, want %q", item.value, got, item.name)
+		}
 	}
 
 	placements := []struct {

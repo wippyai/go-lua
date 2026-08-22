@@ -24,9 +24,7 @@ func (e Escape) ValidManifest() bool {
 
 // Name returns the stable manifest spelling. Return is included for
 // placement-policy diagnostics even though it has no standalone manifest wire
-// spelling. It is deliberately not String: the displaced integer enums
-// historically rendered numerically through fmt, and compatibility includes
-// retaining that incidental debug form.
+// spelling.
 func (e Escape) Name() string {
 	switch e {
 	case None:
@@ -49,6 +47,10 @@ func (e Escape) Name() string {
 		return "escape(invalid)"
 	}
 }
+
+// String returns the stable spelling used by diagnostics and formatted output.
+// It is presentation-only; Escape's numeric ordinals remain unchanged.
+func (e Escape) String() string { return e.Name() }
 
 // Placement returns the analysis placement required by this escape. None and
 // Borrow do not force a transition.

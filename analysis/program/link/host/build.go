@@ -899,25 +899,21 @@ func (a *authority) bootRows() error {
 		a.globalRanges[i] = edgeRange{uint32(start), uint32(at)}
 	}
 	// Build the sole Host-owned inverse after the canonical Global rows have
-	// reached their final dense order.  The key retains the exact Project Shard
-	// handle, while the value is only a Host-local row ordinal.  Rejecting a
-	// collision here is part of sealing: a lookup by (Shard, Cell) must never
-	// silently select one of multiple actor/root rows.
-	a.globalByShardCell = make(map[globalLookupKey]uint32, len(a.globals))
+	// reached their final dense order. A mounted Program can occur under more
+	// than one Module AnalysisRoot, so (Shard, Cell) is not unique. The Module
+	// root ordinal is the owner-issued context coordinate that keeps those
+	// rows distinct without copying or mutating the mounted Program.
+	a.globalByRootCell = make(map[globalLookupKey]uint32, len(a.globals))
 	for index, row := range a.globals {
-		shard, _, _, ok := roots.Mapping(row.analysis)
+		rootIndex, ok := roots.Index(row.analysis)
 		if !ok {
 			return errUnavailable
 		}
-		shardIndex, ok := a.project.Mounts().Index(shard)
-		if !ok {
+		lookup := globalLookupKey{root: uint32(rootIndex), cell: row.cell}
+		if _, duplicate := a.globalByRootCell[lookup]; duplicate {
 			return errUnavailable
 		}
-		lookup := globalLookupKey{shard: uint32(shardIndex), cell: row.cell}
-		if _, duplicate := a.globalByShardCell[lookup]; duplicate {
-			return errUnavailable
-		}
-		a.globalByShardCell[lookup] = uint32(index + 1)
+		a.globalByRootCell[lookup] = uint32(index + 1)
 	}
 	attachments := a.target.InitialMetatableAttachmentCount()
 	if uint64(actors.Count())*uint64(attachments) > uint64(^uint32(0)) {

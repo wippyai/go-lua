@@ -117,6 +117,21 @@ func (v Mounts) At(index int) (Shard, bool) {
 	}
 	return Shard{authority: v.authority, ordinal: uint32(index + 1)}, true
 }
+
+// ForModuleKey resolves the exact owner-fenced mount coordinate for one
+// Project-issued ModuleKey. ModuleKey uniqueness is admitted when the mount
+// relation is built, so consumers never rebuild a reverse directory.
+func (v Mounts) ForModuleKey(key identity.ContentID) (Shard, bool) {
+	if !v.live() || !key.Available() {
+		return Shard{}, false
+	}
+	for index, mount := range v.authority.mounts {
+		if mount.key == key {
+			return Shard{authority: v.authority, ordinal: uint32(index + 1)}, true
+		}
+	}
+	return Shard{}, false
+}
 func (v Mounts) Index(shard Shard) (int, bool) {
 	if !v.live() || shard.authority != v.authority || shard.ordinal == 0 || uint64(shard.ordinal) > uint64(len(v.authority.mounts)) {
 		return 0, false

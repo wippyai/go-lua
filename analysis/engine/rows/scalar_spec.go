@@ -15,6 +15,7 @@ type artifactScalarSpecState struct {
 	ProgramID  identity.ContentID
 	SchemaID   identity.ContentID
 	Roles      []ArtifactScalarRole
+	Factors    []ArtifactScalarFactor
 	Points     []ArtifactScalarPoint
 	Edges      []ArtifactScalarEdge
 	Transfers  []ArtifactScalarTransfer
@@ -22,12 +23,11 @@ type artifactScalarSpecState struct {
 	Events     []ArtifactScalarEvent
 	Rules      []ArtifactScalarRule
 	Bodies     []ArtifactScalarBody
-	stageLaws  []ArtifactStageLaw
 	consumed   bool
 }
 
 func NewArtifactScalarSpec(artifactID, programID, schemaID identity.ContentID, capacity ArtifactScalarCapacity) (*ArtifactScalarSpec, bool) {
-	if !artifactID.Available() || !programID.Available() || !schemaID.Available() || capacity.Roles < 0 || capacity.Points < 0 || capacity.Edges < 0 || capacity.Transfers < 0 || capacity.Regions < 0 || capacity.Events < 0 || capacity.Rules < 0 || capacity.Bodies < 0 {
+	if !artifactID.Available() || !programID.Available() || !schemaID.Available() || capacity.Roles < 0 || capacity.Factors < 0 || capacity.Points < 0 || capacity.Edges < 0 || capacity.Transfers < 0 || capacity.Regions < 0 || capacity.Events < 0 || capacity.Rules < 0 || capacity.Bodies < 0 {
 		return nil, false
 	}
 	return &ArtifactScalarSpec{state: &artifactScalarSpecState{
@@ -35,6 +35,7 @@ func NewArtifactScalarSpec(artifactID, programID, schemaID identity.ContentID, c
 		ProgramID:  programID,
 		SchemaID:   schemaID,
 		Roles:      make([]ArtifactScalarRole, 0, capacity.Roles),
+		Factors:    make([]ArtifactScalarFactor, 0, capacity.Factors),
 		Points:     make([]ArtifactScalarPoint, 0, capacity.Points),
 		Edges:      make([]ArtifactScalarEdge, 0, capacity.Edges),
 		Transfers:  make([]ArtifactScalarTransfer, 0, capacity.Transfers),
@@ -43,6 +44,34 @@ func NewArtifactScalarSpec(artifactID, programID, schemaID identity.ContentID, c
 		Rules:      make([]ArtifactScalarRule, 0, capacity.Rules),
 		Bodies:     make([]ArtifactScalarBody, 0, capacity.Bodies),
 	}}, true
+}
+
+// DeclareFactor admits one stable Program-issued Factor identity.
+func (spec *ArtifactScalarSpec) DeclareFactor(semantic identity.ContentID) (ArtifactScalarFactor, bool) {
+	state, ok := spec.writable()
+	if !ok || !semantic.Available() {
+		return ArtifactScalarFactor{}, false
+	}
+	for _, prior := range state.Factors {
+		if prior.semantic == semantic {
+			return ArtifactScalarFactor{}, false
+		}
+	}
+	factor := ArtifactScalarFactor{semantic: semantic}
+	state.Factors = append(state.Factors, factor)
+	return factor, true
+}
+
+func scalarSpecOwnsFactor(state *artifactScalarSpecState, factor ArtifactScalarFactor) bool {
+	if state == nil || !factor.Available() {
+		return false
+	}
+	for _, candidate := range state.Factors {
+		if candidate == factor {
+			return true
+		}
+	}
+	return false
 }
 
 // DeclareRole admits one stable Program-issued role identity. Role order is
@@ -126,9 +155,9 @@ func (spec *ArtifactScalarSpec) AddTransfer(row ArtifactScalarTransfer) (int, bo
 	return len(state.Transfers) - 1, true
 }
 
-func (spec *ArtifactScalarSpec) AddTransferFactor(transfer int, factor ArtifactScalarRole) bool {
+func (spec *ArtifactScalarSpec) AddTransferFactor(transfer int, factor ArtifactScalarFactor) bool {
 	state, ok := spec.writable()
-	if !ok || transfer < 0 || transfer >= len(state.Transfers) || !scalarSpecOwnsRole(state, factor) {
+	if !ok || transfer < 0 || transfer >= len(state.Transfers) || !scalarSpecOwnsFactor(state, factor) {
 		return false
 	}
 	state.Transfers[transfer].Factors = append(state.Transfers[transfer].Factors, factor)
@@ -160,41 +189,6 @@ func (spec *ArtifactScalarSpec) AddEvent(row ArtifactScalarEvent) bool {
 	}
 	state.Events = append(state.Events, row)
 	return true
-}
-
-// InstallStageLaws records the sealed issuance-stage predecessor relation.
-// Native-call rows are admitted only against this table.
-func (spec *ArtifactScalarSpec) InstallStageLaws(laws []ArtifactStageLaw) bool {
-	state, ok := spec.writable()
-	if !ok || len(laws) == 0 || state.stageLaws != nil {
-		return false
-	}
-	installed := make([]ArtifactStageLaw, 0, len(laws))
-	seen := make(map[ArtifactRuleStage]struct{}, len(laws))
-	for _, law := range laws {
-		if !law.Valid() {
-			return false
-		}
-		if _, duplicate := seen[law.Stage]; duplicate {
-			return false
-		}
-		seen[law.Stage] = struct{}{}
-		installed = append(installed, law)
-	}
-	state.stageLaws = installed
-	return true
-}
-
-func (state *artifactScalarSpecState) stageLaw(stage ArtifactRuleStage) (ArtifactStageLaw, bool) {
-	if state == nil {
-		return ArtifactStageLaw{}, false
-	}
-	for _, law := range state.stageLaws {
-		if law.Stage == stage {
-			return law, true
-		}
-	}
-	return ArtifactStageLaw{}, false
 }
 
 func (spec *ArtifactScalarSpec) AddRule(row ArtifactScalarRule) bool {

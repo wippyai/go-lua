@@ -73,7 +73,10 @@ func (compiler *compiler) indexReadAt(index int) (artifactIndexRead, bool) {
 		lensDomain = "program/transformer/index-lens-exact"
 	}
 	row.lensID = accessSubroleID(lensDomain, compiler.input, term, lens)
-	row.resultID = accessSubroleID("program/transformer/index-result", compiler.input, term, term)
+	// The read result is the existing evaluation Value, not a second
+	// compiler-private subrole. Link can mount the owner-issued Span identity
+	// directly and every downstream Value consumer sees the same coordinate.
+	row.resultID = resultSpan.ContextID()
 	return row, baseOK && resultOK && row.id.Available() && row.baseID.Available() && row.lensID.Available() && row.resultID.Available()
 }
 

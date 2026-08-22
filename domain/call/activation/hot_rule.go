@@ -6,27 +6,29 @@ import (
 	callowner "github.com/wippyai/go-lua/domain/call/owner"
 )
 
-// HotRule is Call activation's mounted callback. It retains only the
-// owner-sealed target-batch identity catalog; Program geometry is consumed
-// before this owner is bound.
+// HotRule is Call activation's mounted callback. It retains only activation's
+// private semantic-key column aligned with the canonical Call body order.
 type HotRule struct {
 	owner          *callowner.HotOwner
 	implementation *callowner.ActivationRuleImplementation
 	transport      *engine.MountedActivationCandidateIssuer
 	read           engine.Read[engine.OrderedCells[calldomain.Value]]
-	catalog        *TargetBatchCatalog
+	routes         []routeKeys
 }
 
 // BindHot attaches the one exact Call read and selector callback to its
-// callback-free schema fragment. The catalog is issued by the sealed Program
-// artifact/target-batch join; this binder neither accepts fabricable route
-// rows nor reopens Program or Flow state.
-func BindHot(fragment *SchemaFragment, owner *callowner.HotOwner, catalog *TargetBatchCatalog) (*HotRule, bool) {
+// callback-free schema fragment. Activation seals its semantic keys directly
+// from Call's owner once; no caller supplies a route catalog.
+func BindHot(fragment *SchemaFragment, owner *callowner.HotOwner) (*HotRule, bool) {
 	if fragment == nil || fragment.slot == nil || !fragment.semantic.Available() ||
-		owner == nil || owner.Algebra() == nil || !owner.Algebra().Valid() || !validHotCatalog(catalog, owner) {
+		owner == nil || owner.Algebra() == nil || !owner.Algebra().Valid() {
 		return nil, false
 	}
-	rule := &HotRule{owner: owner, catalog: catalog}
+	routes, routesOK := sealTargetRoutes(owner.Algebra())
+	if !routesOK {
+		return nil, false
+	}
+	rule := &HotRule{owner: owner, routes: routes}
 	implementation, read, bound := callowner.BindExactActivationRule(owner, fragment.slot, fragment.read, engine.HotActivationSpec{
 		Fold: rule.fold,
 	})
@@ -82,7 +84,7 @@ func (rule *HotRule) fold(frame engine.ActivationFrame) engine.ActivationResult 
 		return engine.ActivationResult{}
 	}
 	locators := make([]engine.ActivationLocator, 0)
-	if !rule.visit(value, func(item route) bool {
+	if !rule.visit(value, func(item routeKeys) bool {
 		locator, ok := engine.NewActivationLocator(application, item.target, item.endpoint)
 		if ok {
 			locators = append(locators, locator)
@@ -94,13 +96,13 @@ func (rule *HotRule) fold(frame engine.ActivationFrame) engine.ActivationResult 
 	return engine.Activated(frame, locators...)
 }
 
-func (rule *HotRule) visit(value calldomain.Value, apply func(route) bool) bool {
-	if rule == nil || rule.owner == nil || rule.owner.Algebra() == nil || !rule.catalog.valid() || apply == nil {
+func (rule *HotRule) visit(value calldomain.Value, apply func(routeKeys) bool) bool {
+	if !rule.routesValid() || apply == nil {
 		return false
 	}
 	if value.IsTop() {
-		for index := 0; index < rule.catalog.routeCount(); index++ {
-			item, ok := rule.catalog.routeAt(index)
+		for index := range rule.routes {
+			item, ok := rule.routeAt(index)
 			if !ok || !apply(item) {
 				return false
 			}
@@ -121,38 +123,22 @@ func (rule *HotRule) visit(value calldomain.Value, apply func(route) bool) bool 
 		if !indexOK {
 			return false
 		}
-		item, routeOK := rule.catalog.routeAt(bodyIndex)
-		if !routeOK || !item.body.Same(body) || !apply(item) {
+		item, routeOK := rule.routeAt(bodyIndex)
+		if !routeOK || !apply(item) {
 			return false
 		}
 	}
 	return true
 }
 
-func validHotCatalog(catalog *TargetBatchCatalog, owner *callowner.HotOwner) bool {
-	if catalog == nil || owner == nil || owner.Algebra() == nil || !catalog.valid() {
-		return false
+func (rule *HotRule) routesValid() bool {
+	return rule != nil && rule.owner != nil && rule.owner.Algebra() != nil && rule.owner.Algebra().Valid() && len(rule.routes) == rule.owner.Algebra().Bodies().Count()
+}
+
+func (rule *HotRule) routeAt(index int) (routeKeys, bool) {
+	if !rule.routesValid() || index < 0 || index >= len(rule.routes) {
+		return routeKeys{}, false
 	}
-	bodies := owner.Algebra().Bodies()
-	if bodies.Count() != len(catalog.rows) {
-		return false
-	}
-	for index := 0; index < bodies.Count(); index++ {
-		body, bodyOK := bodies.At(index)
-		item, itemOK := catalog.routeAt(index)
-		if !bodyOK || !itemOK || !item.body.Same(body) {
-			return false
-		}
-		bodyID, bodyIDOK := body.ContentID()
-		moduleKey, moduleKeyOK := body.ModuleKey()
-		bodyPath, bodyPathOK := body.BodyPath()
-		programID, programIDOK := body.ProgramID()
-		role, roleOK := body.RoleID()
-		row := catalog.rows[index]
-		if !bodyIDOK || !moduleKeyOK || !bodyPathOK || !programIDOK || !roleOK || row.moduleKey != moduleKey ||
-			row.bodyID != bodyID || row.role != role || row.bodyPath != bodyPath || row.programID != programID {
-			return false
-		}
-	}
-	return true
+	item := rule.routes[index]
+	return item, item.target.Available() && item.endpoint.Available()
 }

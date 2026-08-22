@@ -22,12 +22,8 @@ func encodeRequiredLifecycleState(state typestate.State, missing string) (string
 	return state.String(), nil
 }
 
-func encodeOptionalLifecycleState(state typestate.State) string {
-	return state.String()
-}
-
-func encodeOptionalLifecycleFinalStates(states typestate.FinalStates) []string {
-	return EncodeTypestateStates(states.States())
+func encodeLifecycleObligation(obligation typestate.Obligation) []string {
+	return EncodeTypestateStates(obligation.FinalStateList())
 }
 
 func decodeLifecycleProtocol(raw string, missing string) (typestate.Protocol, error) {
@@ -46,16 +42,16 @@ func decodeRequiredLifecycleState(raw string, missing string) (typestate.State, 
 	return state, nil
 }
 
-func decodeOptionalLifecycleState(raw string) typestate.State {
-	return typestate.OptionalStateFromString(raw)
-}
-
-func decodeOptionalLifecycleFinalStates(raw []string) (typestate.FinalStates, error) {
+func decodeLifecycleObligation(raw []string) (typestate.Obligation, error) {
 	states, err := DecodeTypestateStates(raw, "final state")
 	if err != nil {
-		return "", err
+		return typestate.Obligation{}, err
 	}
-	return typestate.NewFinalStates(states...), nil
+	obligation, ok := typestate.NewObligation(states...)
+	if !ok {
+		return typestate.Obligation{}, errors.New("signature/wire: lifecycle obligation contains an empty final state")
+	}
+	return obligation, nil
 }
 
 // EncodeTypestateStates writes a state set as its sorted spellings, so the same

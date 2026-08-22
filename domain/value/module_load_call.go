@@ -9,6 +9,8 @@ import (
 	"github.com/wippyai/go-lua/analysis/program/target/contract"
 	"github.com/wippyai/go-lua/analysis/program/target/vocabulary"
 	programschema "github.com/wippyai/go-lua/analysis/schema/program"
+	"github.com/wippyai/go-lua/domain/heap"
+	"github.com/wippyai/go-lua/domain/materialization"
 )
 
 // ModuleLoadCall is Value's sealed interpretation of one mounted call-result
@@ -25,14 +27,19 @@ type ModuleLoadCall struct {
 	expected Value
 	fact     Value
 	require  vocabulary.Operation
+	// composed is true only when Program's authored Import term was resolved
+	// through Module composition. Path/boot projection is deliberately not an
+	// export proof for dynamic fresh-result routing.
+	composed bool
 }
 
 // moduleLoadFactKey is a cold-only factor key. Repeated require calls for the
 // same mounted module and authored path reuse one actor-local root reduction
 // instead of rescanning Module roots and rejoining the same Value atoms.
 type moduleLoadFactKey struct {
-	module identity.ContentID
-	path   string
+	module     identity.ContentID
+	path       string
+	importTerm keyspace.Term
 }
 
 func (schema *Schema) ModuleLoadCall(module, occurrence identity.ContentID) (ModuleLoadCall, bool) {
@@ -164,11 +171,7 @@ func (schema *valueBuilder) sealModuleLoadRows() bool {
 		coordinateByIndex[row.coordinate] = coordinateProjection{id: id, row: row}
 	}
 	for module, mount := range schema.artifacts {
-		snapshot := mount.Snapshot()
-		if snapshot == nil || !snapshot.Available() {
-			return false
-		}
-		program := snapshot.Program()
+		program := mount.Program.Program
 		if !program.Available() {
 			return false
 		}
@@ -224,11 +227,35 @@ func (schema *valueBuilder) sealModuleLoadRows() bool {
 			if family, literal, literalOK := schema.sourceLiteralID(projection.id); literalOK && family == keyspace.FamilyString && literal.Kind == keyspace.LiteralString {
 				path = literal.String
 			}
-			fact, _ := schema.moduleLoadFact(module, path)
+			fact := Value{}
+			composed := false
+			importTerm, importFound, importGeometryOK := moduleImportTermForCall(program, call.ID())
+			if !importGeometryOK {
+				return false
+			}
+			if importFound {
+				// A Program Import has two canonical target authorities. Module
+				// composition owns mounted sibling exports; a host-module Import
+				// has no composition edge and is resolved by Target's exact
+				// initial-root/Host boot relation. Select the authority by the
+				// sealed composition edge, never by a widened value or a name
+				// fallback after a sibling edge has been admitted. A mounted
+				// sibling without that edge is malformed composition, not a host
+				// request that may borrow Target by spelling.
+				_, composed = schema.sealModule().TargetModuleForImport(module, importTerm)
+				if composed {
+					fact, _ = schema.moduleLoadFactForImport(module, importTerm)
+				} else {
+					fact, _ = schema.moduleLoadFact(module, path)
+				}
+			}
+			if !importFound {
+				fact, _ = schema.moduleLoadFact(module, path)
+			}
 			content := computationContent(schema.linkID, "val-callresult-moduleload!", module, call.ID(), uint64(require))
 			row := ModuleLoadCall{
 				schema: schema.Schema, key: computationKey{module: module, occurrence: call.ID()}, content: content,
-				result: resultCoordinate, argument: argumentCoordinate, expected: expected, fact: fact, require: require,
+				result: resultCoordinate, argument: argumentCoordinate, expected: expected, fact: fact, require: require, composed: composed,
 			}
 			if !row.valid() {
 				return false
@@ -240,6 +267,62 @@ func (schema *valueBuilder) sealModuleLoadRows() bool {
 		}
 	}
 	return true
+}
+
+// mountedModuleForPath is the sealed Project-name partition used only to
+// distinguish a host-module Import from an unresolved mounted sibling. It
+// does not resolve a target; Module composition remains the sole sibling
+// authority and Target's initial-root relation remains the sole host
+// authority.
+func (schema *valueBuilder) mountedModuleForPath(path string) (identity.ContentID, bool) {
+	if schema == nil || schema.sealProject() == nil || path == "" {
+		return identity.ContentID{}, false
+	}
+	mounts := schema.sealProject().Mounts()
+	for index := 0; index < mounts.Count(); index++ {
+		shard, shardOK := mounts.At(index)
+		name, nameOK := mounts.Name(shard)
+		module, moduleOK := schema.sealProject().ModuleKey(shard)
+		if !shardOK || !nameOK || !moduleOK || !module.Available() {
+			return identity.ContentID{}, false
+		}
+		if name == path {
+			return module, true
+		}
+	}
+	return identity.ContentID{}, false
+}
+
+// moduleImportTermForCall returns the exact Program Import term whose scoped
+// require call produces this result. Import order is the canonical Program
+// term ordinal used by Module's composition relation; no request string or
+// module name is reconstructed here.
+func moduleImportTermForCall(program programschema.Program, callID identity.ContentID) (keyspace.Term, bool, bool) {
+	if !program.Available() || !callID.Available() {
+		return 0, false, false
+	}
+	count, published := program.ModuleImportCount()
+	if !published {
+		return 0, false, false
+	}
+	var term keyspace.Term
+	for index := 0; index < count; index++ {
+		row, rowOK := program.ModuleImportAt(index)
+		candidate := keyspace.MakeTerm(keyspace.FamilyImport, uint32(index+1))
+		if !rowOK || !row.Available() || candidate == 0 {
+			return 0, false, false
+		}
+		if row.CallID() != callID {
+			continue
+		}
+		if term != 0 {
+			// Duplicate Import ownership is malformed canonical geometry. A
+			// caller must not turn the ambiguity into a widened module value.
+			return 0, false, false
+		}
+		term = candidate
+	}
+	return term, term != 0, true
 }
 
 func normalResultID(target *contract.Contract, require vocabulary.Operation) (identity.ContentID, bool) {
@@ -266,6 +349,13 @@ func normalResultID(target *contract.Contract, require vocabulary.Operation) (id
 // introduced.
 func (schema *valueBuilder) moduleLoadFact(moduleID identity.ContentID, path string) (Value, bool) {
 	if schema == nil || !moduleID.Available() || path == "" || schema.sealModule() == nil || schema.sealHost() == nil || schema.sealBoundary() == nil || schema.moduleFacts == nil {
+		return Value{}, false
+	}
+	// A mounted Project name is a sibling namespace. Its only admissible
+	// authority is the exact Module composition row consumed above; Target's
+	// initial-root relation cannot be used as a spelling-based fallback for an
+	// unresolved sibling Import.
+	if _, mountedSibling := schema.mountedModuleForPath(path); mountedSibling {
 		return Value{}, false
 	}
 	cacheKey := moduleLoadFactKey{module: moduleID, path: path}
@@ -328,4 +418,190 @@ func (schema *valueBuilder) moduleLoadFact(moduleID identity.ContentID, path str
 	}
 	schema.moduleFacts[cacheKey] = projected
 	return projected, true
+}
+
+// moduleLoadFactForImport projects one mounted sibling module's exported root
+// table into the existing Value reference atoms. Module's sealed composition
+// relation resolves the source Import to the target module; Program's
+// ModuleEntryMember.TableID then identifies the exact target table allocation.
+// No path lookup, export-name heuristic, or finite fallback is admitted.
+func (schema *valueBuilder) moduleLoadFactForImport(moduleID identity.ContentID, importTerm keyspace.Term) (Value, bool) {
+	if schema == nil || !moduleID.Available() || keyspace.TermFamily(importTerm) != keyspace.FamilyImport || keyspace.TermOrdinal(importTerm) == 0 ||
+		schema.sealModule() == nil || schema.module == nil || schema.heap.LinkContentID() != schema.linkID || schema.moduleFacts == nil {
+		return Value{}, false
+	}
+	cacheKey := moduleLoadFactKey{module: moduleID, importTerm: importTerm}
+	if fact, cached := schema.moduleFacts[cacheKey]; cached {
+		return fact, fact.valid()
+	}
+	targetModule, targetOK := schema.module.TargetModuleForImport(moduleID, importTerm)
+	if !targetOK {
+		return Value{}, false
+	}
+	mount, mountOK := schema.artifacts[targetModule]
+	if !mountOK || !mount.Available() || mount.ModuleKey != targetModule {
+		return Value{}, false
+	}
+	program := mount.Program.Program
+	entryCount, entriesOK := program.ModuleEntryCount()
+	if !entriesOK {
+		return Value{}, false
+	}
+	issuer, issuerOK := schema.heap.OccurrenceMountForModule(targetModule)
+	if !issuerOK {
+		return Value{}, false
+	}
+
+	// A module can have multiple executable Return entries. Each selected
+	// first-level member contributes the same root table allocation for that
+	// entry; joining distinct table allocations preserves legitimate return
+	// unions without admitting nested table children.
+	keys := make(map[heap.Key]struct{})
+	for entryIndex := 0; entryIndex < entryCount; entryIndex++ {
+		entry, entryOK := program.ModuleEntryAt(entryIndex)
+		rootCellOffset, rootCellCount, rootCellSpanOK := entry.RootCellSpan()
+		memberOffset, memberCount, spanOK := entry.MemberSpan()
+		if !entryOK || !rootCellSpanOK || !spanOK ||
+			uint64(rootCellOffset)+uint64(rootCellCount) > uint64(^uint32(0)) ||
+			uint64(memberOffset)+uint64(memberCount) > uint64(^uint32(0)) {
+			return Value{}, false
+		}
+		for childIndex := uint32(0); childIndex < rootCellCount; childIndex++ {
+			cell, cellOK := program.ModuleEntryRootCellAt(int(rootCellOffset + childIndex))
+			if !cellOK || !cell.Available() || cell.EntryID() != entry.ID() {
+				return Value{}, false
+			}
+			// Only the first returned Values position is the module export
+			// object. Other root cells are legitimate return values, but cannot
+			// establish the require result's table receiver.
+			if cell.Position() != 0 {
+				continue
+			}
+			cellKeys, cellProjectionOK := schema.moduleRootTableKeysForCell(targetModule, cell.CellID())
+			if !cellProjectionOK {
+				return Value{}, false
+			}
+			for key := range cellKeys {
+				keys[key] = struct{}{}
+			}
+		}
+		for childIndex := uint32(0); childIndex < memberCount; childIndex++ {
+			member, memberOK := program.ModuleEntryMemberAt(int(memberOffset + childIndex))
+			if !memberOK || !member.Available() || member.EntryID() != entry.ID() {
+				return Value{}, false
+			}
+			// Only the first returned Values position is the module export
+			// object. Other positions remain valid ModuleEntry geometry, but
+			// cannot establish the require result's table receiver.
+			if member.Position() != 0 {
+				continue
+			}
+			parentID := member.ParentID()
+			tableID := member.TableID()
+			// Root members name the returned table itself as both ParentID and
+			// TableID. Nested members retain their parent FieldID and are not
+			// eligible to establish the module result root.
+			if parentID != tableID {
+				continue
+			}
+			key, keyOK := issuer.AllocationRootForOccurrence(tableID)
+			module, _, _, kind, _, originOK := schema.heap.AllocationOriginForKey(key)
+			if !keyOK || !originOK || module != targetModule || kind != heap.AllocationTable {
+				return Value{}, false
+			}
+			keys[key] = struct{}{}
+		}
+	}
+	if len(keys) == 0 {
+		return Value{}, false
+	}
+
+	var projected Value
+	first := true
+	for key := range keys {
+		reference := schema.allocRefs[key]
+		if reference == 0 {
+			return Value{}, false
+		}
+		for _, role := range []materialization.Role{materialization.Recent, materialization.Summary} {
+			atomID, atomOK := schema.referenceAtom(reference, role)
+			atom, atomValid := schema.Singleton(Atom{schema: schema.Schema, id: atomID})
+			if !atomOK || !atomValid {
+				return Value{}, false
+			}
+			if first {
+				projected, first = atom, false
+				continue
+			}
+			var joinOK bool
+			projected, joinOK = schema.Join(projected, atom)
+			if !joinOK {
+				return Value{}, false
+			}
+		}
+	}
+	if first || !projected.valid() {
+		return Value{}, false
+	}
+	schema.moduleFacts[cacheKey] = projected
+	return projected, true
+}
+
+// moduleRootTableKeysForCell is the bounded Value/Heap composition seam for
+// a returned module root held in a storage Cell. Program's ModuleEntry only
+// authenticates the cell; Value's sealed StorageTransfer names the exact
+// persistent write into it, and Heap's AllocationRootValueID names the
+// existing Value coordinate of each table allocation. Joining those two
+// coordinates recovers only table roots written to this cell. No fresh-root
+// application, operation, path, or handwritten arity is consulted.
+func (schema *valueBuilder) moduleRootTableKeysForCell(moduleID, cellID identity.ContentID) (map[heap.Key]struct{}, bool) {
+	if schema == nil || !moduleID.Available() || !cellID.Available() || schema.heap.LinkContentID() != schema.linkID {
+		return nil, false
+	}
+	cell, cellOK := schema.CoordinateForMountedSemantic(moduleID, cellID)
+	cellIndex, cellIndexOK := schema.CoordinateIndex(cell)
+	if !cellOK || !cellIndexOK {
+		return nil, false
+	}
+
+	// Build the existing allocation-root Value-coordinate inverse once for
+	// this module. AllocationRootValueID is Heap's canonical root projection;
+	// CoordinateForID is the Value owner handoff for that same Boundary Value.
+	allocationByCoordinate := make(map[uint32]heap.Key)
+	for index := 0; index < schema.heap.AllocationKeyCount(); index++ {
+		key, keyOK := schema.heap.AllocationKeyAt(index)
+		module, _, _, kind, _, originOK := schema.heap.AllocationOriginForKey(key)
+		if !keyOK || !originOK || module != moduleID || kind != heap.AllocationTable {
+			continue
+		}
+		rootID, rootOK := schema.heap.AllocationRootValueID(key)
+		rootCoordinate, coordinateOK := schema.CoordinateForID(rootID)
+		rootIndex, indexOK := schema.CoordinateIndex(rootCoordinate)
+		if !rootOK || !coordinateOK || !indexOK {
+			return nil, false
+		}
+		if prior, duplicate := allocationByCoordinate[rootIndex]; duplicate && prior != key {
+			return nil, false
+		}
+		allocationByCoordinate[rootIndex] = key
+	}
+
+	keys := make(map[heap.Key]struct{})
+	for index := 0; index < schema.StorageTransferCount(); index++ {
+		transfer, transferOK := schema.StorageTransferAt(index)
+		module, _, occurrenceOK := transfer.Occurrence()
+		if !transferOK || !occurrenceOK || module != moduleID || !transfer.Persistent() {
+			continue
+		}
+		from, to, endpointsOK := transfer.Endpoints()
+		toIndex, toIndexOK := schema.CoordinateIndex(to)
+		fromIndex, fromIndexOK := schema.CoordinateIndex(from)
+		if !endpointsOK || !toIndexOK || !fromIndexOK || toIndex != cellIndex {
+			continue
+		}
+		if key, found := allocationByCoordinate[fromIndex]; found {
+			keys[key] = struct{}{}
+		}
+	}
+	return keys, true
 }

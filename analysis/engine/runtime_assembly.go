@@ -6,12 +6,15 @@ import (
 	"github.com/wippyai/go-lua/analysis/engine/internal/carrier"
 	"github.com/wippyai/go-lua/analysis/engine/internal/carrier/shape"
 	"github.com/wippyai/go-lua/analysis/engine/internal/composition"
+	"github.com/wippyai/go-lua/analysis/engine/internal/contextfiber"
 	"github.com/wippyai/go-lua/analysis/engine/internal/demand"
 	"github.com/wippyai/go-lua/analysis/engine/internal/equation"
 	"github.com/wippyai/go-lua/analysis/engine/internal/facts/support"
 	"github.com/wippyai/go-lua/analysis/engine/internal/guard"
+	"github.com/wippyai/go-lua/analysis/engine/internal/linkexecutionplan"
 	"github.com/wippyai/go-lua/analysis/engine/internal/schedule"
 	"github.com/wippyai/go-lua/analysis/identity"
+	"github.com/wippyai/go-lua/analysis/schema/executioncontext"
 )
 
 // runtimeProducer is static Group metadata. Its candidate is explicitly
@@ -74,6 +77,8 @@ type runtimeRegion struct {
 	back                []int
 	environmentExternal []int
 	environmentBack     []int
+	contextExternal     []int
+	contextBack         []int
 	factorExternal      []int
 	factorBack          []int
 	widen               carrier.MergeScope
@@ -93,6 +98,22 @@ type solverRuntime struct {
 	topology *equation.Topology
 	carrier  *carrier.Composition
 	graph    *equation.Graph
+	// contexts, contextIndex, and contextLayout are the Link-owned execution
+	// address plane retained from the committed Program. The equation Graph and
+	// its reusable point metadata remain singular; mutable semantic state is
+	// addressed through contextLayout.StateOrdinal by the contextual executor.
+	// A non-artifact engine program has none of these rows and is a distinct
+	// engine construction, never a default context for mounted execution.
+	contexts       executioncontext.Directory
+	contextIndex   contextfiber.Index
+	contextLayout  contextfiber.Layout
+	pointOwners    []contextfiber.PointOwner
+	artifactBacked bool
+	// executionPlan is the immutable Link-owned projection from singular graph
+	// points onto compact contextual state rows. It is derived once from the
+	// committed point-transition witnesses; later executor migration consumes
+	// this authority rather than reconstructing actor/library placement.
+	executionPlan *linkexecutionplan.LinkExecutionPlan
 	// program is the sealed row model: the member rows the executor folds, the
 	// Factor records the overlay resolves, and the query and observation tables
 	// the result readers project.
@@ -102,20 +123,52 @@ type solverRuntime struct {
 	// set. It contains no semantic facts; the live carrier remains unchanged.
 	execution       *schedule.Schedule
 	executionDemand *equation.Demand
-	points          *equation.Demand
-	producers       []runtimeProducer
-	environments    []runtimeEnvironment
-	factorEdges     []runtimeFactorEdge
+	// stateExecution is the contextual schedule for an installed dynamic
+	// overlay.  The immutable base schedule remains executionPlan.Schedule;
+	// this view is built only by lifting an accepted overlay through that plan
+	// and is never a graph-point schedule in artifact mode.
+	stateExecution *schedule.Schedule
+	// stateExecutionEvents is the demanded event view over stateExecution. The
+	// immutable schedule retains every admitted state; this compact view keeps
+	// inactive contextual regions out of the executor bracket walk.
+	stateExecutionEvents []schedule.Event
+	points               *equation.Demand
+	producers            []runtimeProducer
+	// producerRows is the compact admitted (StateOrdinal, GroupOrdinal)
+	// mapping used by artifact epochs. The static producers slice remains one
+	// row per singular graph Group and is never multiplied by state count.
+	producerRows stateGroupIndex
+	environments []runtimeEnvironment
+	factorEdges  []runtimeFactorEdge
 	// Incoming structural rows are canonical dense edge indices, assembled
 	// once from the sealed Graph. Hot Point folding never resolves an edge by
 	// semantic key or scans the global edge table.
 	environmentIncoming [][]int
 	factorIncoming      [][]int
-	overlay             runtimeStructuralOverlay
-	demand              *demand.Plan
-	pointScopes         []carrier.Scope
-	pointInitials       []support.Mask
-	regions             []runtimeRegion
+	// stateFactorRows is the compact contextual transpose of factor edges.
+	// Each row retains the singular graph edge metadata plus its exact source
+	// and target StateOrdinal; artifact folds and wakes consult these rows,
+	// while the graph CSR above remains metadata for the non-artifact engine
+	// construction and detached compatibility inspection.
+	stateFactorRows     []runtimeStateFactorRow
+	stateFactorIncoming [][]int
+	stateFactorOutgoing [][]int
+	statePointRows      [][]int
+	// contextTransports is the runtime lowering of the immutable Link plan's
+	// authenticated cross-context transports. Incoming/outgoing rows are keyed
+	// by exact StateOrdinal; no graph-point or module fallback is permitted.
+	contextTransports        []runtimeContextTransport
+	contextTransportIncoming [][]int
+	contextTransportOutgoing [][]int
+	// contextTransportSource is the sealed inverse at the source-selection
+	// cut: (target StateOrdinal, source graph Point) names exactly one
+	// authenticated source StateOrdinal. It is not a graph/global fallback.
+	contextTransportSource map[[2]int]int
+	overlay                runtimeStructuralOverlay
+	demand                 *demand.Plan
+	pointScopes            []carrier.Scope
+	pointInitials          []support.Mask
+	regions                []runtimeRegion
 	// operands is the sealed transpose of the recurrence and Group-input
 	// operand rows. It is re-derived wherever those rows are, and it is the
 	// sole authority for which reader a published value makes stale.
@@ -123,7 +176,11 @@ type solverRuntime struct {
 	regionChildren [][]int // operational traversal cache derived from immutable Region.Parent
 	pointRegion    []int
 	activePoints   []bool
+	activeStates   []bool
 	activeRegions  []bool
+	// stateSelected is the artifact demand closure. It is a compact list of
+	// admitted StateOrdinal rows, not a Context×Point or State×Group product.
+	stateSelected []int
 	// publication is the sealed Snapshot authority for this runtime generation:
 	// its column writes, result key universes, and point denominator/index are
 	// all constructed once at assembly and borrowed by every solve epoch.
@@ -141,13 +198,43 @@ type runtimeEnvironment struct {
 }
 
 type runtimeFactorEdge struct {
-	index  int
-	key    composition.Key
-	factor composition.Key
+	index                  int
+	key                    composition.Key
+	factor                 composition.Key
+	source                 int
+	target                 int
+	input                  runtimeInput
+	slot                   shape.Slot
+	context                equation.ActivationContext
+	fromContext, toContext contextfiber.ContextOrdinal
+}
+
+// runtimeStateFactorRow is one admitted contextual occurrence of a singular
+// runtime factor edge.  The edge index points back to immutable graph-edge
+// metadata; source/target are the mutable executor coordinates.
+type runtimeStateFactorRow struct {
+	edge   int
 	source int
 	target int
-	input  runtimeInput
-	slot   shape.Slot
+}
+
+// runtimeContextTransport is one exact Link-bound semantic transport after the
+// equation relation has crossed the single equation-to-carrier cut. The source
+// and target StateOrdinal rows are immutable addresses; the carrier plan is
+// lowered from the authenticated ContextTransport reindex and carries no
+// caller-selected context or graph-point fallback.
+type runtimeContextTransport struct {
+	from, to                     int
+	sourcePoint, targetPoint     int
+	sourceContext, targetContext contextfiber.ContextOrdinal
+	plan                         carrier.ReindexPlan
+	pre, post                    support.Mask
+}
+
+func (transport runtimeContextTransport) validFor(runtime *carrier.Composition, stateCount, pointCount int) bool {
+	return runtime != nil && transport.from >= 0 && transport.to >= 0 && transport.from < stateCount && transport.to < stateCount &&
+		transport.sourcePoint >= 0 && transport.targetPoint >= 0 && transport.sourcePoint < pointCount && transport.targetPoint < pointCount &&
+		transport.plan.Valid() && transport.pre.Valid() && transport.post.Valid() && transport.pre.Manager() == runtime.Guards() && transport.post.Manager() == runtime.Guards()
 }
 
 // runtimeFactorOrigin is the stable structural identity of one selected
@@ -159,6 +246,7 @@ type runtimeFactorOrigin struct {
 	factor, provenance composition.Key
 	reindex            composition.Key
 	post               guard.FormulaID
+	context            equation.ActivationContext
 }
 
 // runtimeStructuralOverlay owns only executable selected-edge indexing.  It
@@ -185,22 +273,49 @@ type runtimeStructuralOverlay struct {
 	generation identity.Generation
 }
 
-func runtimeFactorEdgeOrigin(source, target int, factor, provenance, reindex composition.Key, post support.Mask) (runtimeFactorOrigin, bool) {
+func runtimeFactorEdgeOrigin(source, target int, factor, provenance, reindex composition.Key, post support.Mask, context equation.ActivationContext) (runtimeFactorOrigin, bool) {
 	postIdentity, postOK := post.Identity()
-	origin := runtimeFactorOrigin{source: source, target: target, factor: factor, provenance: provenance, reindex: reindex, post: postIdentity}
-	return origin, source >= 0 && target >= 0 && factor.Available() && provenance.Available() && reindex.Available() && postOK && origin.available()
+	origin := runtimeFactorOrigin{source: source, target: target, factor: factor, provenance: provenance, reindex: reindex, post: postIdentity, context: context}
+	return origin, source >= 0 && target >= 0 && factor.Available() && provenance.Available() && reindex.Available() && postOK && context.WellFormed() && origin.available()
 }
 
 func (origin runtimeFactorOrigin) available() bool {
-	return origin.source >= 0 && origin.target >= 0 && origin.factor.Available() && origin.provenance.Available() && origin.reindex.Available() && origin.post.Available()
+	return origin.source >= 0 && origin.target >= 0 && origin.factor.Available() && origin.provenance.Available() && origin.reindex.Available() && origin.post.Available() && origin.context.WellFormed()
 }
 
 // assembleRuntimeOwned lowers one sealed program into the executable runtime.
 // Every member answer it needs has already been taken by the binder: the folds
 // carry the Group aggregates, the program carries the rows, and no draft
 // reaches this pass.
-func assembleRuntimeOwned(graph *equation.Graph, runtime *carrier.Composition, program *runtimeProgram, folds []memberFold) (*solverRuntime, bool) {
+func assembleRuntimeOwned(graph *equation.Graph, runtime *carrier.Composition, program *runtimeProgram, folds []memberFold, contexts executioncontext.Directory, contextIndex contextfiber.Index, contextLayout contextfiber.Layout, pointOwners []contextfiber.PointOwner, pointTransitions []ProgramPointTransition, artifactBacked bool) (*solverRuntime, bool) {
 	if graph == nil || runtime == nil || runtime.Guards() == nil || !program.valid() || len(folds) != graph.GroupCount() || program.groupCount() != graph.GroupCount() {
+		return nil, false
+	}
+	var executionPlan *linkexecutionplan.LinkExecutionPlan
+	if artifactBacked {
+		generation := contextLayout.Generation()
+		if !contexts.Available() || len(pointOwners) != graph.PointCount() || !generation.Available() ||
+			!contextIndex.OwnedBy(contexts, graph.PointCount(), generation) ||
+			!contextLayout.OwnedBy(contextIndex, contexts, pointOwners, generation) {
+			return nil, false
+		}
+		boundEdges := make([]linkexecutionplan.BoundEdge, len(pointTransitions))
+		for index, transition := range pointTransitions {
+			if !transition.available() {
+				return nil, false
+			}
+			edge, bound := linkexecutionplan.NewBoundEdge(graph, contextLayout, contexts, transition.SourcePoint(), transition.TargetPoint(), transition.Transition(), transition.Generation())
+			if !bound {
+				return nil, false
+			}
+			boundEdges[index] = edge
+		}
+		var planned bool
+		executionPlan, planned = linkexecutionplan.New(graph, contextLayout, contexts, boundEdges)
+		if !planned {
+			return nil, false
+		}
+	} else if contexts.Available() || contextIndex.Available() || contextLayout.Available() || len(pointOwners) != 0 || len(pointTransitions) != 0 {
 		return nil, false
 	}
 	observationPoints := make([]equation.Point, program.observationCount())
@@ -238,6 +353,16 @@ func assembleRuntimeOwned(graph *equation.Graph, runtime *carrier.Composition, p
 			return nil, false
 		}
 		pointScopes[index], pointInitials[index] = scope, mask
+	}
+	var contextTransports []runtimeContextTransport
+	var contextTransportIncoming, contextTransportOutgoing [][]int
+	var contextTransportSource map[[2]int]int
+	if artifactBacked {
+		var transportsOK bool
+		contextTransports, contextTransportIncoming, contextTransportOutgoing, contextTransportSource, transportsOK = bindRuntimeContextTransports(graph, executionPlan, runtime, plans)
+		if !transportsOK {
+			return nil, false
+		}
 	}
 	producers := make([]runtimeProducer, graph.GroupCount())
 	environments := make([]runtimeEnvironment, graph.EnvironmentEdgeTotal())
@@ -288,7 +413,7 @@ func assembleRuntimeOwned(graph *equation.Graph, runtime *carrier.Composition, p
 		if !bound.valid() {
 			return nil, false
 		}
-		origin, originOK := runtimeFactorEdgeOrigin(sourcePoint, targetPoint, edge.Factor(), edge.Input().Provenance(), edge.Input().Reindex().Key(), bound.post)
+		origin, originOK := runtimeFactorEdgeOrigin(sourcePoint, targetPoint, edge.Factor(), edge.Input().Provenance(), edge.Input().Reindex().Key(), bound.post, equation.ActivationContext{})
 		if !originOK {
 			return nil, false
 		}
@@ -367,6 +492,10 @@ func assembleRuntimeOwned(graph *equation.Graph, runtime *carrier.Composition, p
 		}
 		producers[index] = runtimeProducer{index: index, group: group, plan: plan, span: span, inputs: inputTransports, environment: environment, outputScope: outputScope, premise: premise, reads: fold.initialReads, dynamicReads: fold.dynamicReads, carries: fold.carries, footprint: fold.footprint}
 	}
+	stateFactorIncoming, stateFactorOutgoing, stateFactorRows, statePointRows, stateFactorOK := buildStateFactorIndex(graph, executionPlan, factorEdges, artifactBacked)
+	if !stateFactorOK {
+		return nil, false
+	}
 	regions, regionChildren, recurrenceOK := bindRuntimeRegions(graph, activeRegions, runtime, producers, plans)
 	if !recurrenceOK {
 		return nil, false
@@ -436,8 +565,44 @@ func assembleRuntimeOwned(graph *equation.Graph, runtime *carrier.Composition, p
 	if !dependencyOK {
 		return nil, false
 	}
-	assembled := &solverRuntime{carrier: runtime, graph: graph, program: program, points: points, producers: producers, environments: environments, factorEdges: factorEdges, environmentIncoming: environmentIncoming, factorIncoming: factorIncoming, overlay: runtimeStructuralOverlay{staticOrigins: staticOrigins, originAt: make(map[runtimeFactorOrigin]int), directAt: make(map[int]equation.SelectedStructuralFactorEdge), factorOutgoing: factorOutgoing, dependencyEdges: dependencyEdges, dependencyAt: dependencyAt, reindexes: plans, latePlans: make(map[composition.Key]carrier.ReindexPlan), generation: 1}, demand: demandPlan, pointScopes: pointScopes, pointInitials: pointInitials, regions: regions, regionChildren: regionChildren, pointRegion: pointRegion, activePoints: activePoints, activeRegions: activeRegions}
-	operands, planed := buildOperandPlane(graph, producers, environments, installedFactorSources(factorEdges), regions)
+	producerRows, activeStates, producerRowsOK := buildStateGroupIndex(graph, executionPlan, artifactBacked, activePoints)
+	if !producerRowsOK {
+		return nil, false
+	}
+	stateSelected := []int(nil)
+	if artifactBacked {
+		var demandOK bool
+		activeStates, activePoints, stateSelected, demandOK = buildArtifactStateDemand(graph, program, executionPlan, activePoints)
+		if !demandOK {
+			return nil, false
+		}
+	}
+	assembled := &solverRuntime{carrier: runtime, graph: graph, program: program, contexts: contexts, contextIndex: contextIndex, contextLayout: contextLayout, pointOwners: append([]contextfiber.PointOwner(nil), pointOwners...), artifactBacked: artifactBacked, executionPlan: executionPlan, points: points, producers: producers, environments: environments, factorEdges: factorEdges, environmentIncoming: environmentIncoming, factorIncoming: factorIncoming, stateFactorRows: stateFactorRows, stateFactorIncoming: stateFactorIncoming, stateFactorOutgoing: stateFactorOutgoing, statePointRows: statePointRows, contextTransports: contextTransports, contextTransportIncoming: contextTransportIncoming, contextTransportOutgoing: contextTransportOutgoing, contextTransportSource: contextTransportSource, overlay: runtimeStructuralOverlay{staticOrigins: staticOrigins, originAt: make(map[runtimeFactorOrigin]int), directAt: make(map[int]equation.SelectedStructuralFactorEdge), factorOutgoing: factorOutgoing, dependencyEdges: dependencyEdges, dependencyAt: dependencyAt, reindexes: plans, latePlans: make(map[composition.Key]carrier.ReindexPlan), generation: 1}, demand: demandPlan, pointScopes: pointScopes, pointInitials: pointInitials, regions: regions, regionChildren: regionChildren, pointRegion: pointRegion, activePoints: activePoints, activeRegions: activeRegions}
+	assembled.producerRows = producerRows
+	assembled.activeStates = activeStates
+	assembled.stateSelected = stateSelected
+	if artifactBacked {
+		stateRegions, stateChildren, statePointRegion, stateActiveRegions, stateEvents, lifted := liftStateRegions(graph, executionPlan.Schedule(), activeStates, assembled, stateFactorRows, false)
+		if !lifted {
+			return nil, false
+		}
+		assembled.regions = stateRegions
+		assembled.regionChildren = stateChildren
+		assembled.pointRegion = statePointRegion
+		assembled.activeRegions = stateActiveRegions
+		assembled.stateExecutionEvents = stateEvents
+	}
+	operandRegions := regions
+	if artifactBacked {
+		operandRegions = assembled.regions
+	}
+	var operands *operandPlane
+	var planed bool
+	if artifactBacked {
+		operands, planed = buildStateOperandPlane(assembled, installedFactorSources(factorEdges), operandRegions)
+	} else {
+		operands, planed = buildOperandPlane(graph, producers, environments, installedFactorSources(factorEdges), operandRegions)
+	}
 	if !planed {
 		return nil, false
 	}

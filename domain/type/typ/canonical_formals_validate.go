@@ -8,66 +8,47 @@ import (
 	"github.com/wippyai/go-lua/domain/type/kind"
 )
 
-// ValidateCanonicalFormals accepts only the exact scoped canonical bytes
-// emitted by EncodeCanonicalFormals for a caller-owned formal scope of the
-// supplied size. It validates the wire graph without materializing Type values
-// or consulting a source type graph.
+// AdmitCanonicalFormals is the sole raw scoped-formal ingress. It validates
+// the exact canonical bytes against the supplied receiver scope without
+// materializing a Type graph, then returns an immutable owner receipt. A
+// caller must pass that receipt to DecodeCanonicalFormals; raw bytes never
+// cross the trusted decode boundary.
 //
 // The formal count is part of the receiving scope, rather than part of the
 // payload: an external formal ordinal is valid only when it names one of those
 // positions. The encoding itself carries no presentation names for formals.
-func ValidateCanonicalFormals(encoded []byte, externalFormalCount int) (err error) {
-	// A form this process already admitted at this external scope is valid, and
-	// the bytes are the form's whole identity, so there is nothing left to
-	// re-derive from them.
-	if canonicalValidatedWireForms.admits(encoded, externalFormalCount) {
-		return nil
+func AdmitCanonicalFormals(ctx context.Context, encoded []byte, externalFormalCount int) (receipt CanonicalFormalsReceipt, err error) {
+	if externalFormalCount < 0 || uint64(externalFormalCount) > uint64(^uint32(0)) {
+		return CanonicalFormalsReceipt{}, invalidCanonicalFormals("external formal count")
 	}
 	defer func() {
 		if recovered := recover(); recovered != nil {
+			receipt = CanonicalFormalsReceipt{}
 			err = fmt.Errorf("%w: validator panic: %v", ErrInvalidCanonicalType, recovered)
 		}
 	}()
-	admission, admissionErr := newCanonicalFormalsAdmission(context.Background(), len(encoded))
+	admission, admissionErr := newCanonicalFormalsAdmission(ctx, len(encoded))
 	if admissionErr != nil {
-		return admissionErr
+		return CanonicalFormalsReceipt{}, admissionErr
 	}
-	_, _, err = validatedCanonicalFormalsGraph(nil, encoded, externalFormalCount, admission)
-	return err
+	if _, _, err = validatedCanonicalFormalsGraph(ctx, encoded, externalFormalCount, admission); err != nil {
+		return CanonicalFormalsReceipt{}, err
+	}
+	owned, cloneErr := canonicalFormalsClone(ctx, admission, encoded)
+	if cloneErr != nil {
+		return CanonicalFormalsReceipt{}, cloneErr
+	}
+	return newCanonicalFormalsReceipt(owned, uint32(externalFormalCount)), nil
 }
 
 // validatedCanonicalFormalsGraph returns the one canonical scoped graph after
-// checking its framing, lexical formal relations, and quotient form.  Both the
-// public validator and scoped decoder use this path so a decoded value cannot
-// silently accept a broader wire language than a validated artifact.
+// checking its framing, lexical formal relations, and quotient form. It is
+// used only by raw admission; receipt decoding consumes the already admitted
+// image through the framing parser below.
 func validatedCanonicalFormalsGraph(ctx context.Context, encoded []byte, externalFormalCount int, admission *canonicalFormalsAdmission) ([]canonicalTypeNode, []canonicalFormalNodeShape, error) {
-	if externalFormalCount < 0 {
-		return nil, nil, invalidCanonicalFormals("negative external formal count")
-	}
-
-	reader := canonicalRawReader{raw: encoded}
-	domain, ok := reader.frame()
-	if !ok || !bytes.Equal(domain, []byte(canonicalScopedTypeDomain)) {
-		return nil, nil, invalidCanonicalFormals("domain")
-	}
-	version, ok := reader.uvarint()
-	if !ok || version != canonicalScopedTypeVersion {
-		return nil, nil, invalidCanonicalFormals("version")
-	}
-	graphStart := reader.at
-
-	nodes, shapes, err := parseCanonicalFormalsGraph(ctx, admission, &reader, uint64(externalFormalCount))
+	nodes, shapes, graphStart, err := parseCanonicalFormalsWire(ctx, encoded, externalFormalCount, admission)
 	if err != nil {
 		return nil, nil, err
-	}
-	if reader.at != len(reader.raw) {
-		return nil, nil, invalidCanonicalFormals("trailing bytes")
-	}
-	// The graph is parsed on every call because the caller may need its nodes,
-	// but the laws below judge the byte string, not this parse of it. An
-	// already admitted form carries their verdict.
-	if canonicalValidatedWireForms.admits(encoded, externalFormalCount) {
-		return nodes, shapes, nil
 	}
 	if err := validateCanonicalFormalRelations(ctx, admission, nodes, shapes); err != nil {
 		return nil, nil, err
@@ -89,7 +70,7 @@ func validatedCanonicalFormalsGraph(ctx context.Context, encoded []byte, externa
 	// emitter rather than a second decoder model. This rejects duplicate
 	// definitions, noncanonical preorder choices, and every other graph-level
 	// variation that would encode to different canonical bytes.
-	regenerated := CanonicalEncoder{nodes: nodes, ctx: ctx, admission: admission, scoped: true}
+	regenerated := canonicalEncoder{nodes: nodes, ctx: ctx, admission: admission, scoped: true}
 	if err := regenerated.refine(); err != nil {
 		return nil, nil, fmt.Errorf("%w: graph refinement: %v", ErrInvalidCanonicalType, err)
 	}
@@ -110,8 +91,35 @@ func validatedCanonicalFormalsGraph(ctx context.Context, encoded []byte, externa
 	if !equal {
 		return nil, nil, invalidCanonicalFormals("noncanonical graph")
 	}
-	canonicalValidatedWireForms.admit(encoded, externalFormalCount)
 	return nodes, shapes, nil
+}
+
+// parseCanonicalFormalsWire performs only the framed graph parse needed by
+// both raw admission and trusted receipt materialization. Raw callers must
+// still use AdmitCanonicalFormals, which runs every scoped law after this
+// parse; a receipt caller is already past that admission boundary.
+func parseCanonicalFormalsWire(ctx context.Context, encoded []byte, externalFormalCount int, admission *canonicalFormalsAdmission) ([]canonicalTypeNode, []canonicalFormalNodeShape, int, error) {
+	if externalFormalCount < 0 || uint64(externalFormalCount) > uint64(^uint32(0)) {
+		return nil, nil, 0, invalidCanonicalFormals("external formal count")
+	}
+	reader := canonicalRawReader{raw: encoded}
+	domain, ok := reader.frame()
+	if !ok || !bytes.Equal(domain, []byte(canonicalScopedTypeDomain)) {
+		return nil, nil, 0, invalidCanonicalFormals("domain")
+	}
+	version, ok := reader.uvarint()
+	if !ok || version != canonicalScopedTypeVersion {
+		return nil, nil, 0, invalidCanonicalFormals("version")
+	}
+	graphStart := reader.at
+	nodes, shapes, err := parseCanonicalFormalsGraph(ctx, admission, &reader, uint64(externalFormalCount))
+	if err != nil {
+		return nil, nil, 0, err
+	}
+	if reader.at != len(reader.raw) {
+		return nil, nil, 0, invalidCanonicalFormals("trailing bytes")
+	}
+	return nodes, shapes, graphStart, nil
 }
 
 type canonicalFormalNodeShape struct {
@@ -120,11 +128,6 @@ type canonicalFormalNodeShape struct {
 	formalMode    byte
 	formalOrdinal uint64
 	binderParams  uint64
-}
-
-type canonicalFormalParseFrame struct {
-	node      int
-	remaining uint64
 }
 
 // validateCanonicalFormalNodeGraph is the encoder-side counterpart of the raw
@@ -186,7 +189,7 @@ func parseCanonicalFormalsGraph(ctx context.Context, admission *canonicalFormals
 	if err := canonicalFormalsPreflight(ctx, admission, nil, 16, canonicalFormalsFrameBytes); err != nil {
 		return nil, nil, err
 	}
-	stack := make([]canonicalFormalParseFrame, 0, 16)
+	stack := make([]canonicalGraphFrame, 0, 16)
 	root := -1
 	var steps uint64
 	var appendErr error
@@ -195,50 +198,33 @@ func parseCanonicalFormalsGraph(ctx context.Context, admission *canonicalFormals
 		if err := canonicalFormalsCheckpoint(ctx, admission, &steps); err != nil {
 			return nil, nil, err
 		}
-		opcode, ok := reader.byte()
-		if !ok {
-			return nil, nil, invalidCanonicalFormals("missing graph node")
+		event, err := reader.graphEvent()
+		if err != nil {
+			return nil, nil, err
 		}
-		ordinal, ok := reader.uvarint()
-		if !ok || ordinal > uint64(maxInt()) {
-			return nil, nil, invalidCanonicalFormals("node ordinal")
-		}
-		index := int(ordinal)
-		definition := false
-		var childCount uint64
+		index := event.ordinal
 
-		switch opcode {
-		case 0:
+		if !event.definition {
 			if index >= len(nodes) {
 				return nil, nil, invalidCanonicalFormals("forward node reference")
 			}
-		case 1:
+		} else {
 			if index != len(nodes) {
 				return nil, nil, invalidCanonicalFormals("non-dense node definition")
 			}
-			scalar, framed := reader.frame()
-			if !framed || len(scalar) == 0 {
-				return nil, nil, invalidCanonicalFormals("node scalar")
-			}
-			childCount, ok = reader.uvarint()
-			// Every immediate child event has at least an opcode and an ordinal.
-			// This is a representational bound, not a caller-tunable decode cap.
-			if !ok || childCount > uint64(maxInt()) || childCount > uint64((len(reader.raw)-reader.at)/2) {
-				return nil, nil, invalidCanonicalFormals("child count")
-			}
-			shape, shapeErr := validateCanonicalFormalScalar(ctx, admission, &steps, scalar, externalFormalCount)
+			shape, shapeErr := validateCanonicalFormalScalar(ctx, admission, &steps, event.scalar, externalFormalCount)
 			if shapeErr != nil {
 				return nil, nil, shapeErr
 			}
-			if shape.children != childCount {
+			if shape.children != event.childCount {
 				return nil, nil, invalidCanonicalFormals("scalar child count")
 			}
-			if err := canonicalFormalsPreflight(ctx, admission, &steps, int(childCount), canonicalFormalsIntBytes); err != nil {
+			if err := canonicalFormalsPreflight(ctx, admission, &steps, int(event.childCount), canonicalFormalsIntBytes); err != nil {
 				return nil, nil, err
 			}
 			node := canonicalTypeNode{
-				scalar: scalar,
-				edges:  make([]int, 0, int(childCount)),
+				scalar: event.scalar,
+				edges:  make([]int, 0, int(event.childCount)),
 			}
 			nodes, appendErr = canonicalFormalsAppend(ctx, admission, &steps, nodes, node, canonicalFormalsNodeBytes)
 			if appendErr != nil {
@@ -248,13 +234,10 @@ func parseCanonicalFormalsGraph(ctx context.Context, admission *canonicalFormals
 			if appendErr != nil {
 				return nil, nil, appendErr
 			}
-			definition = true
-		default:
-			return nil, nil, invalidCanonicalFormals("graph opcode")
 		}
 
 		if root < 0 {
-			if !definition || index != 0 {
+			if !event.definition || index != 0 {
 				return nil, nil, invalidCanonicalFormals("root is not definition zero")
 			}
 			root = index
@@ -270,11 +253,11 @@ func parseCanonicalFormalsGraph(ctx context.Context, admission *canonicalFormals
 			parent.remaining--
 		}
 
-		if definition && childCount != 0 {
+		if event.definition && event.childCount != 0 {
 			if err := canonicalFormalsPreflight(ctx, admission, &steps, 1, canonicalFormalsFrameBytes); err != nil {
 				return nil, nil, err
 			}
-			stack, appendErr = canonicalFormalsAppend(ctx, admission, &steps, stack, canonicalFormalParseFrame{node: index, remaining: childCount}, canonicalFormalsFrameBytes)
+			stack, appendErr = canonicalFormalsAppend(ctx, admission, &steps, stack, canonicalGraphFrame{node: index, remaining: event.childCount}, canonicalFormalsFrameBytes)
 			if appendErr != nil {
 				return nil, nil, appendErr
 			}

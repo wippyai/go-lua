@@ -5,11 +5,15 @@ import (
 	"testing"
 
 	"github.com/wippyai/go-lua/analysis/engine"
+	"github.com/wippyai/go-lua/analysis/identity"
 	"github.com/wippyai/go-lua/analysis/program/target/contract"
 	"github.com/wippyai/go-lua/analysis/program/target/vocabulary"
+	"github.com/wippyai/go-lua/analysis/snapshot"
+	calldomain "github.com/wippyai/go-lua/domain/call"
 	manifesttarget "github.com/wippyai/go-lua/domain/composite/manifesttarget"
 	"github.com/wippyai/go-lua/domain/effect"
 	"github.com/wippyai/go-lua/domain/effect/dispatch"
+	placementdomain "github.com/wippyai/go-lua/domain/placement"
 	"github.com/wippyai/go-lua/domain/type/typ"
 	"github.com/wippyai/go-lua/manifest"
 	manifestwire "github.com/wippyai/go-lua/manifest/wire"
@@ -20,8 +24,9 @@ import (
 // TestManifestPublicationEffectCompletesMountedTransition proves the positive
 // composition seam. A provider-owned global callable carries an explicit
 // publication occurrence in its manifest; Lua calls that global through the
-// real Link/Program mount; and Effect issues one exact selected-call
-// observation. No runtime delivery or placement conclusion is inferred here.
+// real Link/Program mount; and Effect issues the complete pre-solve call-site
+// observation denominator. The solved selected call then drives Placement's
+// publication escape rule, proving the payload allocation is SharedHeap.
 func TestManifestPublicationEffectCompletesMountedTransition(t *testing.T) {
 	target := sealManifestPublicationTarget(t)
 	record, failure, mounted := mountFormalTargetRecord(t, target, "publication-manifest-e2e", `
@@ -51,10 +56,14 @@ return api.publish(payload, destination)
 	}
 
 	bound := materializerBinding(t, record)
-	committed, _ := queryCanonicalProgram(t, record, bound)
-	observations, observationsOK := bound.EffectPublicationObservations(committed, record.Artifacts)
-	if !observationsOK || len(observations) != 1 {
-		t.Fatalf("manifest publication observations = %d/%t, want one exact admission", len(observations), observationsOK)
+	committed, sites := queryCanonicalProgram(t, record, bound)
+	observations, observationsOK := bound.EffectPublicationObservations(committed, record.Artifacts, record.Source.ContextDirectory())
+	// Observation admission precedes Call solving. Boundary deliberately owns a
+	// factorized Application x Operation may-envelope, so both executable calls
+	// (require and publish) need exact observation coordinates. Only the solved
+	// publish call may contribute a publication effect or Placement widening.
+	if !observationsOK || len(observations) != 2 {
+		t.Fatalf("manifest publication observations = %d/%t, want the two-call may-envelope", len(observations), observationsOK)
 	}
 	for index, observation := range observations {
 		if !observation.Available() {
@@ -69,6 +78,71 @@ return api.publish(payload, destination)
 	if solveStatus != engine.SolveComplete || state == nil {
 		t.Fatalf("solve manifest publication observation: status=%v state=%v reason=%v failure=%v point=%v group=%v member=%v rule=%v", solveStatus, state, solveReport.Reason(), solveReport.Failure(), solveReport.Point(), solveReport.Group(), solveReport.Member(), solveReport.Rule())
 	}
+	assertManifestPublicationPayloadShared(t, record, bound, committed, sealed, state, sites)
+}
+
+func assertManifestPublicationPayloadShared(t testing.TB, record LinkInputs, bound *ProgramBinding, committed *engine.CommittedProgram, sealed *engine.Solver, state *engine.State, sites []QuerySite) {
+	t.Helper()
+	var publicationCall calldomain.MountedCall
+	for index := 0; index < record.CallAlgebra.MountedCallCount(); index++ {
+		mounted, mountedOK := record.CallAlgebra.MountedCallAtHandle(index)
+		actuals, actualsOK := mountedActualProjectionFor(record.CallAlgebra, record.PackSchema, mounted)
+		if !mountedOK || !actualsOK {
+			t.Fatalf("mounted publication call %d is unavailable", index)
+		}
+		if actuals.ActualCount() != 2 {
+			continue
+		}
+		if publicationCall.Valid() {
+			t.Fatal("manifest fixture has more than one two-actual publication call")
+		}
+		publicationCall = mounted
+	}
+	if !publicationCall.Valid() {
+		t.Fatal("manifest fixture has no two-actual publication call")
+	}
+	_, occurrence, module, _, _, identityOK := record.CallAlgebra.MountedCallIdentity(publicationCall)
+	capability, capabilityOK := bound.Rules().CapabilityByKey("placement-publication-escape")
+	stage, stageOK := committed.MountedNativeCallStage(capability, module, occurrence)
+	if !identityOK || !capabilityOK || !stageOK || !stage.PointID().Available() {
+		t.Fatal("publication call has no exact Placement publication-escape stage")
+	}
+
+	published, publishedOK := sealed.PublishedSnapshot(state)
+	if !publishedOK {
+		t.Fatal("manifest publication solve published no snapshot")
+	}
+	view := published.Snapshot()
+	queryPlan, queryPlanOK := snapshot.OpenQuery[identity.ContentID, engine.Answer](&view, published.QueryFamily())
+	publications, publicationsOK := bound.QueryPublications(committed, sites)
+	if !queryPlanOK || !publicationsOK {
+		t.Fatal("open manifest publication Placement query surface")
+	}
+	allocationRoots := formalAllocationRoots(t, record)
+	if len(allocationRoots) != 2 {
+		t.Fatalf("manifest publication authored allocation roots = %d, want payload and destination", len(allocationRoots))
+	}
+	payloadID := allocationRoots[0].id
+	for _, publication := range publications {
+		if publication.Site.Family != QueryFamilyPlacementSummary || publication.Site.Point != stage.PointID() {
+			continue
+		}
+		answer, status := snapshot.Query(&view, queryPlan, publication.Key)
+		if status != snapshot.ReadHit || !answer.Available() {
+			t.Fatalf("publication Placement answer = %s, want hit", status)
+		}
+		cell, cellOK := publication.CanonicalCell(answer)
+		result, resultOK := placementdomain.DecodeSummaryResult(record.PlacementSchema, cell.Present(), cell.RowCount(), cell.Payload())
+		if !cellOK || !resultOK {
+			t.Fatal("decode publication Placement result")
+		}
+		rows := decodeFormalPlacementRows(t, result)
+		if got := rows[payloadID]; got != placementdomain.SharedHeap {
+			t.Fatalf("published payload placement = %s, want SharedHeap", got)
+		}
+		return
+	}
+	t.Fatal("publication call stage has no typed Placement summary")
 }
 
 func sealManifestPublicationTarget(t testing.TB) *contract.Contract {

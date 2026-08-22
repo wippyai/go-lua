@@ -5,6 +5,7 @@ import (
 
 	"github.com/wippyai/go-lua/analysis/lua/lower"
 	programschema "github.com/wippyai/go-lua/analysis/schema/program"
+	programissuance "github.com/wippyai/go-lua/analysis/schema/program/issuance"
 	"github.com/wippyai/go-lua/domain/composite"
 )
 
@@ -78,21 +79,25 @@ return move
 			placements++
 			point := rule.PointID()
 			input, inputOK := rule.InputPoint()
-			if !point.Available() || !inputOK || point == input || rule.Stage() != programschema.RuleStageLocal {
+			expectedStage := programissuance.StageLocal
+			if kind == programschema.OccurrenceStorageWrite {
+				expectedStage = programissuance.StagePredecessor
+			}
+			if !point.Available() || !inputOK || point == input || rule.Stage() != expectedStage {
 				t.Fatalf("kind=%d rule=%d is not a distinct Local placement", kind, ruleIndex)
 			}
 			switch kind {
 			case programschema.OccurrenceStorageRead:
-				if rule.InputKind() != programschema.RuleInputEntry {
+				if rule.InputSpec() != programissuance.InputEntryGeometry {
 					t.Fatalf("kind=%d rule=%d did not retain Program Entry", kind, ruleIndex)
 				}
 			case programschema.OccurrenceStorageBindTransfer:
-				if rule.InputKind() != programschema.RuleInputFinish {
+				if rule.InputSpec() != programissuance.InputPreviousStage {
 					t.Fatalf("bind rule=%d did not retain the ordinary Local cut as its Finish input", ruleIndex)
 				}
 			case programschema.OccurrenceStorageWrite:
 				route, routeOK := rule.PredecessorRouteID()
-				if rule.InputKind() != programschema.RuleInputPredecessor || !routeOK || !route.Available() {
+				if rule.InputSpec() != programissuance.InputPredecessorGeometry || !routeOK || !route.Available() {
 					t.Fatalf("write rule=%d did not retain exact predecessor route", ruleIndex)
 				}
 			}

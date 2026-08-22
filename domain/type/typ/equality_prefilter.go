@@ -26,40 +26,10 @@ func mayContainOpenRecursive(t Type) bool {
 	if t == nil {
 		return false
 	}
-	switch n := t.(type) {
+	switch t.(type) {
 	case *Recursive:
 		return true
-	case *Optional:
-		return n.containsOpenRecursive
-	case *Union:
-		return n.containsOpenRecursive
-	case *Intersection:
-		return n.containsOpenRecursive
-	case *Array:
-		return n.containsOpenRecursive
-	case *Map:
-		return n.containsOpenRecursive
-	case *ReadonlyMap:
-		return n.containsOpenRecursive
-	case *Tuple:
-		return n.containsOpenRecursive
-	case *Function:
-		return n.containsOpenRecursive
-	case *Record:
-		return n.containsOpenRecursive
-	case *Alias:
-		return n.containsOpenRecursive
-	case *Meta:
-		return n.containsOpenRecursive
-	case *Generic:
-		return n.containsOpenRecursive
-	case *Instantiated:
-		return n.containsOpenRecursive
-	case *TypeParam:
-		return n.containsOpenRecursive
-	case *Interface:
-		return n.containsOpenRecursive
-	default:
-		return false
 	}
+	properties := nodeProperties(t)
+	return properties != nil && properties.containsOpenRecursive
 }

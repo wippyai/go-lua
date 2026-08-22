@@ -5,6 +5,7 @@ import (
 
 	artifactcompiler "github.com/wippyai/go-lua/analysis/program/artifact/compiler"
 	programschema "github.com/wippyai/go-lua/analysis/schema/program"
+	"github.com/wippyai/go-lua/analysis/schema/programmount"
 	"github.com/wippyai/go-lua/domain/composite"
 	"github.com/wippyai/go-lua/domain/composite/snapshottest"
 	heapdomain "github.com/wippyai/go-lua/domain/heap"
@@ -35,7 +36,7 @@ func TestRuntimeKindCallUsesMountedCallGeometry(t *testing.T) {
 	shard, shardOK := mounts.At(0)
 	program, programOK := mounts.Program(shard)
 	module, moduleOK := linked.Project().ModuleKey(shard)
-	programID, programIDOK := mounts.ProgramID(shard)
+	_, programIDOK := mounts.ProgramID(shard)
 	if mounts.Count() != 1 || !shardOK || !programOK || program == nil || !moduleOK || !programIDOK {
 		t.Fatal("mount")
 	}
@@ -44,17 +45,17 @@ func TestRuntimeKindCallUsesMountedCallGeometry(t *testing.T) {
 		t.Fatalf("compile artifact: %s", failure.Error())
 	}
 	snapshot := snapshottest.MustLower(t, artifact)
-	heapMount, heapMountOK := heapdomain.NewArtifactMount(snapshot, module, programID)
-	valueMount, valueMountOK := valuedomain.NewArtifactMount(snapshot, module, programID)
+	heapMount, heapMountOK := programmount.MountedArtifactFromSnapshot(snapshot, module)
+	valueMount, valueMountOK := programmount.MountedArtifactFromSnapshot(snapshot, module)
 	if !heapMountOK || !valueMountOK {
 		t.Fatal("artifact mounts")
 	}
-	heaps, heapFailure := heapdomain.SealWithArtifacts(linked, []heapdomain.ArtifactMount{heapMount})
+	heaps, heapFailure := heapdomain.SealWithArtifacts(linked, []programmount.MountedArtifact{heapMount})
 	structural, structuralOK := composite.StructureVocabulary(compilation)
 	if !structuralOK {
 		t.Fatal("structure vocabulary")
 	}
-	values, valueFailure := valuedomain.SealWithFailure(linked, heaps, []valuedomain.ArtifactMount{valueMount}, structural)
+	values, valueFailure := valuedomain.SealWithFailure(linked, heaps, []programmount.MountedArtifact{valueMount}, structural)
 	if heapFailure != heapdomain.SealFailureNone || valueFailure != valuedomain.SealFailureNone || values == nil {
 		t.Fatalf("seal schemas heap=%s value=%s", heapFailure, valueFailure)
 	}
@@ -121,7 +122,7 @@ func TestRuntimeKindPredicateOperandIsMountedSpan(t *testing.T) {
 	shard, shardOK := mounts.At(0)
 	program, programOK := mounts.Program(shard)
 	module, moduleOK := linked.Project().ModuleKey(shard)
-	programID, programIDOK := mounts.ProgramID(shard)
+	_, programIDOK := mounts.ProgramID(shard)
 	if mounts.Count() != 1 || !shardOK || !programOK || program == nil || !moduleOK || !programIDOK {
 		t.Fatal("mount")
 	}
@@ -130,17 +131,17 @@ func TestRuntimeKindPredicateOperandIsMountedSpan(t *testing.T) {
 		t.Fatalf("compile artifact: %s", failure.Error())
 	}
 	snapshot := snapshottest.MustLower(t, artifact)
-	heapMount, heapMountOK := heapdomain.NewArtifactMount(snapshot, module, programID)
-	valueMount, valueMountOK := valuedomain.NewArtifactMount(snapshot, module, programID)
+	heapMount, heapMountOK := programmount.MountedArtifactFromSnapshot(snapshot, module)
+	valueMount, valueMountOK := programmount.MountedArtifactFromSnapshot(snapshot, module)
 	if !heapMountOK || !valueMountOK {
 		t.Fatal("artifact mounts")
 	}
-	heaps, heapFailure := heapdomain.SealWithArtifacts(linked, []heapdomain.ArtifactMount{heapMount})
+	heaps, heapFailure := heapdomain.SealWithArtifacts(linked, []programmount.MountedArtifact{heapMount})
 	structural, structuralOK := composite.StructureVocabulary(compilation)
 	if !structuralOK {
 		t.Fatal("structure vocabulary")
 	}
-	values, valueFailure := valuedomain.SealWithFailure(linked, heaps, []valuedomain.ArtifactMount{valueMount}, structural)
+	values, valueFailure := valuedomain.SealWithFailure(linked, heaps, []programmount.MountedArtifact{valueMount}, structural)
 	if heapFailure != heapdomain.SealFailureNone || valueFailure != valuedomain.SealFailureNone || values == nil {
 		t.Fatalf("seal schemas heap=%s value=%s", heapFailure, valueFailure)
 	}

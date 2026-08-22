@@ -19,13 +19,14 @@ var (
 func BenchmarkStorageDemand(b *testing.B) {
 	var demand placement.Placement
 	var forced bool
+	var ok bool
 	b.ReportAllocs()
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		demand, forced = Demand(Lifetime(i%int(LifetimeUnknown) + 1))
+		demand, forced, ok = Demand(Lifetime(i%int(LifetimeClosure) + 1))
 	}
-	demand, forced = Demand(LifetimeUnknown)
-	if !forced || demand != placement.Unknown {
+	demand, forced, ok = Demand(LifetimeUnknown)
+	if !ok || !forced || demand != placement.Unknown {
 		b.Fatal("storage demand")
 	}
 }
@@ -37,7 +38,11 @@ func BenchmarkStorageApply(b *testing.B) {
 	b.ReportAllocs()
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		storeBenchmarkPlacement = Apply(placement.Stack, lifetime)
+		var ok bool
+		storeBenchmarkPlacement, ok = Apply(placement.Stack, lifetime)
+		if !ok {
+			b.Fatal("storage placement input")
+		}
 	}
 	if storeBenchmarkPlacement != placement.SharedHeap {
 		b.Fatal("storage placement")
@@ -49,11 +54,13 @@ func BenchmarkStorageApply(b *testing.B) {
 // route set for each settled row.
 func BenchmarkRoutePlanRouteAtTag(b *testing.B) {
 	const width = 128
-	plan := RoutePlan{routes: make([]Route, width)}
-	for index := range plan.routes {
-		plan.routes[index].Tag = uint64(index + 1)
+	var plan RoutePlan
+	for index := 0; index < width; index++ {
+		if !plan.addExact(Route{Tag: uint64(index + 1)}) {
+			b.Fatal("route plan setup")
+		}
 	}
-	tag := plan.routes[width/2].Tag
+	tag := uint64(width/2 + 1)
 	b.ReportAllocs()
 	b.ResetTimer()
 	for index := 0; index < b.N; index++ {

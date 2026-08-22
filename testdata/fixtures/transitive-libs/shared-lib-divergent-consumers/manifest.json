@@ -1,6 +1,6 @@
 {
-  "description": "One library allocation site (lib.lua box) analyzed once yields a relational escape/placement summary over boundary placeholders; three consumers with divergent escape profiles each substitute their own facts and reach different placement conclusions for the same box (send -> Shared, local derive-then-drop -> proven-local, ownership.store -> ActorLocal retained).",
-  "packages": ["process", "ownership"],
+  "description": "One library allocation site (lib.lua box) analyzed once yields a relational escape/placement summary over boundary placeholders; three consumers with divergent escape profiles each substitute their own facts and reach different placement conclusions for the same box (send -> Shared, local derive-then-drop -> proven-local, table.insert -> ActorLocal retained).",
+  "packages": ["process"],
   "files": ["lib.lua", "consumer_send.lua", "consumer_local.lua", "consumer_store.lua", "main.lua"],
   "check": {
     "placement": {

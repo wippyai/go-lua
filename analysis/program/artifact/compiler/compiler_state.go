@@ -7,12 +7,13 @@ import (
 	"github.com/wippyai/go-lua/analysis/program/artifact/compiler/internal/allocation"
 	"github.com/wippyai/go-lua/analysis/program/artifact/compiler/internal/bodyboundary"
 	"github.com/wippyai/go-lua/analysis/program/artifact/compiler/internal/exactscalar"
+	issuanceexecutor "github.com/wippyai/go-lua/analysis/program/artifact/compiler/internal/issuance"
 	"github.com/wippyai/go-lua/analysis/program/artifact/compiler/internal/localtransfer"
-	stageplan "github.com/wippyai/go-lua/analysis/program/artifact/compiler/internal/stage"
-	"github.com/wippyai/go-lua/analysis/program/artifact/issuance"
 	"github.com/wippyai/go-lua/analysis/program/keyspace"
 	"github.com/wippyai/go-lua/analysis/schema/denominator"
+	schemaissuance "github.com/wippyai/go-lua/analysis/schema/issuance"
 	"github.com/wippyai/go-lua/analysis/schema/program"
+	programissuance "github.com/wippyai/go-lua/analysis/schema/program/issuance"
 	programpublication "github.com/wippyai/go-lua/analysis/schema/program/publication"
 )
 
@@ -31,12 +32,12 @@ type compiler struct {
 	bodyBoundary       *bodyboundary.Bundle
 	allocations        *allocation.Bundle
 	exactScalar        *exactscalar.Bundle
-	issuance           issuance.Directory
+	issuance           schemaissuance.Plan
+	issuanceRows       *programissuance.Builder
+	issuanceSchedule   issuanceexecutor.Schedule
 	pointGeometry      map[identity.ContentID]pointDraft
-	occurrenceSpans    map[occurrenceLookup]occurrenceSpanGeometry
 	pointScratch       []identity.ContentID
 	pointScratchSeen   map[identity.ContentID]struct{}
-	stages             *stageplan.Builder
 	environmentByRoute map[identity.ContentID]environmentRouteIndex
 }
 

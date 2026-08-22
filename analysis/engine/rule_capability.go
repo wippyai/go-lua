@@ -27,6 +27,7 @@ const (
 	ruleCapabilityInvalid ruleCapabilityKind = iota
 	ruleCapabilityMounted
 	ruleCapabilityLink
+	ruleCapabilityMountedPoint
 )
 
 func (capability RuleSlotCapability) available() bool {
@@ -39,6 +40,8 @@ func (capability RuleSlotCapability) Mounted() bool { return capability.mounted(
 
 func (capability RuleSlotCapability) Link() bool { return capability.link() }
 
+func (capability RuleSlotCapability) MountedPoint() bool { return capability.mountedPoint() }
+
 func (capability RuleSlotCapability) Activation() bool {
 	return capability.mounted() && capability.activation
 }
@@ -49,6 +52,10 @@ func (capability RuleSlotCapability) mounted() bool {
 
 func (capability RuleSlotCapability) link() bool {
 	return capability.available() && capability.kind == ruleCapabilityLink
+}
+
+func (capability RuleSlotCapability) mountedPoint() bool {
+	return capability.available() && capability.kind == ruleCapabilityMountedPoint
 }
 
 // IssueMountedRuleCapability issues an opaque capability for an ordinary
@@ -77,6 +84,15 @@ func IssueLinkRuleCapability[V, O any](binding *SchemaBinding, slot *RuleSlot[V,
 		return RuleSlotCapability{}, false
 	}
 	return issueRuleSlotCapability(binding, slot.cell.schema, slot.cell.ordinal, ruleCapabilityLink, false)
+}
+
+// IssueMountedPointRuleCapability issues the artifact-independent capability
+// whose member is instantiated once at every mounted Point.
+func IssueMountedPointRuleCapability[V, O any](binding *SchemaBinding, slot *RuleSlot[V, O]) (RuleSlotCapability, bool) {
+	if slot == nil || slot.cell == nil {
+		return RuleSlotCapability{}, false
+	}
+	return issueRuleSlotCapability(binding, slot.cell.schema, slot.cell.ordinal, ruleCapabilityMountedPoint, false)
 }
 
 func issueRuleSlotCapability(binding *SchemaBinding, schema *Schema, ordinal uint64, kind ruleCapabilityKind, activation bool) (RuleSlotCapability, bool) {
@@ -113,6 +129,15 @@ func RegisterMountedSlot[V, O any](binding *SchemaBinding, slot *RuleSlot[V, O])
 // RegisterLinkSlot is the Link-lane handoff.
 func RegisterLinkSlot[V, O any](binding *SchemaBinding, slot *RuleSlot[V, O]) (RuleSlotCapability, bool) {
 	capability, ok := IssueLinkRuleCapability(binding, slot)
+	if !ok || !RegisterRuleSlot(binding, slot, capability) {
+		return RuleSlotCapability{}, false
+	}
+	return capability, true
+}
+
+// RegisterMountedPointSlot is the mounted-point closure handoff.
+func RegisterMountedPointSlot[V, O any](binding *SchemaBinding, slot *RuleSlot[V, O]) (RuleSlotCapability, bool) {
+	capability, ok := IssueMountedPointRuleCapability(binding, slot)
 	if !ok || !RegisterRuleSlot(binding, slot, capability) {
 		return RuleSlotCapability{}, false
 	}
@@ -189,6 +214,9 @@ func BindingRuleSlot(binding *SchemaBinding, semantic identity.SemanticKey) (Rul
 	if role, candidate, found := lookupRuleSlotCapabilityLocked(state, ordinal, ruleCapabilityLink, false); found && candidate == key {
 		return role, true
 	}
+	if role, candidate, found := lookupRuleSlotCapabilityLocked(state, ordinal, ruleCapabilityMountedPoint, false); found && candidate == key {
+		return role, true
+	}
 	return RuleSlotCapability{}, false
 }
 
@@ -216,6 +244,13 @@ func LinkCapabilityForSlot[V, O any](binding *SchemaBinding, slot *RuleSlot[V, O
 		return RuleSlotCapability{}, false
 	}
 	return capabilityForSlot(binding, slot.cell.schema, slot.cell.ordinal, ruleCapabilityLink, false)
+}
+
+func MountedPointCapabilityForSlot[V, O any](binding *SchemaBinding, slot *RuleSlot[V, O]) (RuleSlotCapability, bool) {
+	if slot == nil || slot.cell == nil {
+		return RuleSlotCapability{}, false
+	}
+	return capabilityForSlot(binding, slot.cell.schema, slot.cell.ordinal, ruleCapabilityMountedPoint, false)
 }
 
 func capabilityForSlot(binding *SchemaBinding, schema *Schema, ordinal uint64, kind ruleCapabilityKind, activation bool) (RuleSlotCapability, bool) {

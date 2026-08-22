@@ -60,8 +60,8 @@ func NewGeneric(name string, params []*TypeParam, body Type) *Generic {
 	// h is computed eagerly and, when body is non-nil, published immediately:
 	// body cannot reference g (g's pointer does not exist until this literal
 	// returns), so a body supplied here directly can never make g
-	// self-referential, and a body-less placeholder is caught by
-	// equalityHashGraphClosed and left unpublished until SetBody. A
+	// self-referential, and a body-less placeholder is caught by the canonical
+	// columns closure proof and left unpublished until SetBody. A
 	// self-referential declaration is only reachable through SetBody, whose
 	// own comment covers why publishing there is instead left to Hash's
 	// close-gated fallback.

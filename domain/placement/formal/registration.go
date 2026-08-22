@@ -45,7 +45,7 @@ func RuleEntry[P rulePrincipals, A ruleAuthorities]() rule.Spec {
 		Writes: "placement",
 		Owner:  "placement",
 		Issues: []rule.Issuance{
-			{Occurrence: "occurrence/call", Requirement: "requirement/unrestricted", Form: "issuance/call-stage", Input: "input/finish", Stage: "stage/call-effect"},
+			{Occurrence: "occurrence/call", Requirement: "program-requirement/unrestricted", Form: "program-form/call-effect"},
 		},
 		Lane:     rule.LaneMounted,
 		Semantic: "semantic/rule/placement/formal",

@@ -7,6 +7,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/program/link/mounted"
 	programsource "github.com/wippyai/go-lua/analysis/program/source"
 	programschema "github.com/wippyai/go-lua/analysis/schema/program"
+	programissuance "github.com/wippyai/go-lua/analysis/schema/program/issuance"
 	"github.com/wippyai/go-lua/analysis/schema/program/programdiagnostic"
 	"github.com/wippyai/go-lua/analysis/schema/program/staticnode"
 	"github.com/wippyai/go-lua/analysis/schema/structure"
@@ -155,10 +156,10 @@ func TestEveryPublishedPlacementNamesTheAxisItWrites(t *testing.T) {
 	if !pointOK || !inputOK {
 		t.Fatal("derive placement coordinates")
 	}
-	if _, sealed := programschema.NewRuleOccurrence("value-source", "", 0, point, input, programschema.RuleStageLocal, programschema.RuleInputFinish, identity.ContentID{}); sealed {
+	if _, sealed := programschema.NewRuleOccurrence("value-source", "", 0, point, input, programissuance.StageLocal, programissuance.InputPreviousStage, identity.ContentID{}, false); sealed {
 		t.Fatal("a placement sealed without the axis it writes")
 	}
-	if _, sealed := programschema.NewRuleOccurrence("value-source", "value", 0, point, input, programschema.RuleStageLocal, programschema.RuleInputFinish, identity.ContentID{}); !sealed {
+	if _, sealed := programschema.NewRuleOccurrence("value-source", "value", 0, point, input, programissuance.StageLocal, programissuance.InputPreviousStage, identity.ContentID{}, false); !sealed {
 		t.Fatal("a placement naming the axis it writes is refused")
 	}
 }

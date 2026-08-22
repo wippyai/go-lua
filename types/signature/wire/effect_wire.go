@@ -30,7 +30,6 @@ type effectLabelWire struct {
 	Protocol string   `json:"protocol,omitempty"`
 	From     string   `json:"from,omitempty"`
 	To       string   `json:"to,omitempty"`
-	Final    string   `json:"final,omitempty"`
 	Finals   []string `json:"finals,omitempty"`
 }
 

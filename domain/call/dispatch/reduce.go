@@ -10,25 +10,25 @@ import (
 // reduce maps one exact Value callee to Call's direct selected-target
 // relation. It is the only cross-domain completeness judgment; Call core
 // receives only owner-fenced Target capabilities at the final seam.
-func reduce(bound site, callee valuedomain.Value) (calldomain.Value, bool) {
-	algebra := bound.algebraOwner()
-	coordinate, coordinateOK := bound.valueCoordinate()
-	key, keyOK := bound.callKey()
-	values := bound.valueSchema()
-	if algebra == nil || !keyOK || !coordinateOK || values == nil || !values.AdmitsCoordinate(coordinate, callee) {
+func reduce(rule *HotRule, mounted calldomain.MountedCall, bound dispatchRow, callee valuedomain.Value) (calldomain.Value, bool) {
+	if rule == nil || !rule.valid() {
+		return calldomain.Value{}, false
+	}
+	algebra := rule.calls.Algebra()
+	values := rule.values.Schema()
+	if !bound.key.Valid() || !bound.coordinate.Valid() || !values.AdmitsCoordinate(bound.coordinate, callee) {
 		return calldomain.Value{}, false
 	}
 	if callee.IsTop() {
 		return algebra.Top(), true
 	}
 	if callee.IsBottom() {
-		return algebra.DispatchValue(key, nil, false)
+		return algebra.DispatchValue(bound.key, nil, false)
 	}
-
 	targets := make([]calldomain.Target, 0, 2)
 	unknown := false
 	if !values.VisitAtoms(callee, func(atom valuedomain.Atom) bool {
-		capability, known, callable := dispatchAtom(bound, atom)
+		capability, known, callable := dispatchAtom(rule, mounted, bound, atom)
 		if known {
 			targets = append(targets, capability)
 		}
@@ -39,16 +39,16 @@ func reduce(bound site, callee valuedomain.Value) (calldomain.Value, bool) {
 	}) {
 		return calldomain.Value{}, false
 	}
-	return algebra.DispatchValue(key, targets, unknown)
+	return algebra.DispatchValue(bound.key, targets, unknown)
 }
 
 // dispatchAtom maps one exact Value atom. known means one admitted target;
 // callable means an unresolved callable alternative requiring Call's opaque
 // arm. Known non-functions contribute no target and no opaque alternative.
-func dispatchAtom(bound site, atom valuedomain.Atom) (capability calldomain.Target, known, callable bool) {
-	algebra := bound.algebraOwner()
-	values := bound.valueSchema()
-	if algebra == nil || values == nil || !values.OwnsAtom(atom) {
+func dispatchAtom(rule *HotRule, mounted calldomain.MountedCall, bound dispatchRow, atom valuedomain.Atom) (capability calldomain.Target, known, callable bool) {
+	algebra := rule.calls.Algebra()
+	values := rule.values.Schema()
+	if !values.OwnsAtom(atom) {
 		return calldomain.Target{}, false, true
 	}
 	reference, _, rooted := atom.Reference()
@@ -57,13 +57,12 @@ func dispatchAtom(bound site, atom valuedomain.Atom) (capability calldomain.Targ
 	}
 	if require, scopedLoader := reference.ScopedLoader(); scopedLoader {
 		boundaryRequire, hasRequire := algebra.RequireOperation()
-		key, keyOK := bound.callKey()
-		if !hasRequire || boundaryRequire != require || !keyOK || !key.IsApplication() {
+		if !hasRequire || boundaryRequire != require || !bound.key.IsApplication() {
 			return calldomain.Target{}, false, true
 		}
-		seedID := bound.requireSeedID
+		_, _, _, _, seedID, identityOK := algebra.MountedCallIdentity(mounted)
 		capability, admitted := algebra.TargetForSeedID(seedID)
-		admitted = admitted && seedID.Available()
+		admitted = admitted && identityOK && seedID.Available()
 		if !admitted {
 			return calldomain.Target{}, false, true
 		}
@@ -71,10 +70,10 @@ func dispatchAtom(bound site, atom valuedomain.Atom) (capability calldomain.Targ
 	}
 
 	if key, allocation := reference.AllocationKey(); allocation {
-		if !values.OwnsHeapSchema(bound.heaps) {
+		if !values.OwnsHeapSchema(rule.heaps) {
 			return calldomain.Target{}, false, true
 		}
-		module, _, allocationID, kind, _, programAllocation := bound.heaps.AllocationOriginForKey(key)
+		module, _, allocationID, kind, _, programAllocation := rule.heaps.AllocationOriginForKey(key)
 		if programAllocation && kind == heapdomain.AllocationClosure {
 			capability, admitted := algebra.TargetForAllocation(module, allocationID)
 			if !admitted {

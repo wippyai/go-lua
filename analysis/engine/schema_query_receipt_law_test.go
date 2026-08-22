@@ -98,7 +98,7 @@ func TestProgramExactQueryEvidenceRejectsForeignBindingAndGraph(t *testing.T) {
 	query, queryOK := fixture.graph.Query(programMatrixID(110))
 	plane, planeOK := bindProgramPlane(fixture.graph.state, fixture.graph.graph)
 	implementation := fixture.queryImplementations[0]
-	if !queryOK || !planeOK || plane == nil || implementation == nil {
+	if !queryOK || !planeOK || plane == nil || implementation == nil || !plane.attachQueryContext(fixture.graph) {
 		t.Fatal("exact query evidence plane")
 	}
 	if joined, accepted := implementation.bindProgramQuery(plane, query.identity); !accepted || !joined.valid() {

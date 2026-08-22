@@ -82,7 +82,7 @@ func TestCanonicalFormalsOwnedMaterializersPreserveCanonicalSemantics(t *testing
 	}
 	for _, test := range values {
 		value := test.value
-		encoded, err := EncodeCanonicalFormals(context.Background(), value, test.formals)
+		receipt, err := EncodeCanonicalFormals(context.Background(), value, test.formals)
 		if err != nil {
 			t.Fatalf("EncodeCanonicalFormals(%T): %v", value, err)
 		}
@@ -90,7 +90,7 @@ func TestCanonicalFormalsOwnedMaterializersPreserveCanonicalSemantics(t *testing
 		if len(test.formals) != 0 {
 			receiver = []*TypeParam{NewTypeParam("U", String)}
 		}
-		decoded, err := DecodeCanonicalFormals(context.Background(), encoded, receiver)
+		decoded, err := DecodeCanonicalFormals(context.Background(), receipt, receiver)
 		if err != nil {
 			t.Fatalf("DecodeCanonicalFormals(%T): %v", value, err)
 		}
@@ -98,8 +98,8 @@ func TestCanonicalFormalsOwnedMaterializersPreserveCanonicalSemantics(t *testing
 		if err != nil {
 			t.Fatalf("re-encode(%T): %v", value, err)
 		}
-		if !bytes.Equal(encoded, roundTrip) {
-			t.Fatalf("owned materializer changed %T:\n%x\n%x", value, encoded, roundTrip)
+		if !bytes.Equal(receipt.Bytes(), roundTrip.Bytes()) {
+			t.Fatalf("owned materializer changed %T:\n%x\n%x", value, receipt.Bytes(), roundTrip.Bytes())
 		}
 	}
 }

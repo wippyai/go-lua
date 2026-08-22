@@ -6,9 +6,10 @@
 package localtransfer
 
 import (
+	"sort"
+
 	"github.com/wippyai/go-lua/analysis/identity"
 	artifactdigest "github.com/wippyai/go-lua/analysis/program/artifact/digest"
-	"github.com/wippyai/go-lua/analysis/program/artifact/issuance"
 	"github.com/wippyai/go-lua/analysis/schema"
 	programschema "github.com/wippyai/go-lua/analysis/schema/program"
 	programcatalog "github.com/wippyai/go-lua/analysis/schema/program/catalog"
@@ -55,7 +56,7 @@ func (builder *Builder) Append(domain string, from, to identity.ContentID, full 
 		return programconstruction.New(programcatalog.LocalTransfer(), programconstruction.IssueLocalTransferUnavailable, -1, -1)
 	}
 	rowIndex := len(builder.rows)
-	ordered, orderedOK := issuance.OrderedKeys(writes)
+	ordered, orderedOK := orderedKeys(writes)
 	if !orderedOK {
 		return programconstruction.New(programcatalog.LocalTransfer(), programconstruction.IssueLocalTransferUnavailable, rowIndex, -1)
 	}
@@ -78,6 +79,17 @@ func (builder *Builder) Append(domain string, from, to identity.ContentID, full 
 	}
 	builder.rows = append(builder.rows, row)
 	return programconstruction.Fault{}
+}
+
+func orderedKeys(keys []schema.Key) ([]schema.Key, bool) {
+	ordered := append([]schema.Key(nil), keys...)
+	sort.Slice(ordered, func(left, right int) bool { return ordered[left] < ordered[right] })
+	for index, key := range ordered {
+		if !key.Available() || index > 0 && ordered[index-1] == key {
+			return nil, false
+		}
+	}
+	return ordered, true
 }
 
 // Seal canonically orders the drafts and rejects duplicate transport IDs. The

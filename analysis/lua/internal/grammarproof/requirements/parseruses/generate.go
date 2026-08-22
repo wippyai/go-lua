@@ -3,17 +3,19 @@ package parseruses
 import (
 	"bytes"
 	"fmt"
+	"go/format"
 	"os"
 	"strings"
 
+	"github.com/wippyai/go-lua/analysis/lua/census"
 	"github.com/wippyai/go-lua/analysis/lua/internal/grammarproof/requirements/parserproducts"
 )
 
-// Generate rebuilds or checks the cold parser-use artifact from an already
-// sealed parser-products artifact. It cannot discover a root or inspect
-// source; callers must inject the proof they want this artifact to consume.
-func Generate(products parserproducts.Evidence, out string, check bool) error {
-	evidence, err := Build(products)
+// Generate rebuilds or checks the cold parser-use artifact from the already
+// sealed product and census owners. It cannot discover a root or inspect
+// source; callers inject the exact artifacts it consumes.
+func Generate(products parserproducts.Evidence, inventory census.Census, out string, check bool) error {
+	evidence, err := Build(products, inventory)
 	if err != nil {
 		return err
 	}
@@ -43,6 +45,7 @@ func render(e Evidence) ([]byte, error) {
 	out.WriteString("\t\"github.com/wippyai/go-lua/analysis/lua/internal/grammarproof/requirements/parserproducts\"\n")
 	out.WriteString(")\n\nvar Generated = Evidence{\n")
 	writeQuoted(&out, "\t\t", "ProductsDigest", e.ProductsDigest)
+	writeQuoted(&out, "\t\t", "CensusDigest", e.CensusDigest)
 	writeQuoted(&out, "\t\t", "Digest", e.Digest)
 	renderSlots(&out, e.UseSlots)
 	renderDirect(&out, e.UsePaths)
@@ -51,7 +54,11 @@ func render(e Evidence) ([]byte, error) {
 	renderTails(&out, e.ValuesTails)
 	renderLValues(&out, e.LValuePaths)
 	out.WriteString("\t}\n")
-	return []byte(out.String()), nil
+	formatted, err := format.Source([]byte(out.String()))
+	if err != nil {
+		return nil, fmt.Errorf("parser uses: format generated evidence: %w", err)
+	}
+	return formatted, nil
 }
 
 func renderSlots(out *strings.Builder, rows []UseSlot) {

@@ -33,17 +33,12 @@ func mountedCallRows(binding *engine.SchemaBinding, calls *callowner.HotOwner, e
 	application, module, occurrence, effectIdentityOK := effectAlgebra.MountedCallIdentity(mounted)
 	ordinal, ordinalOK := effectAlgebra.MountedCallOrdinalForOccurrence(module, occurrence)
 	canonicalEffect, canonicalEffectOK := effectAlgebra.MountedCallAt(ordinal)
-	callMounted, callMountedOK := callAlgebra.MountedCallForOccurrence(module, occurrence)
-	canonicalCall, canonicalCallOK := callAlgebra.MountedCallForApplication(application)
-	callApplication, callOccurrence, callModule, _, _, callIdentityOK := callAlgebra.MountedCallIdentity(callMounted)
-	key, keyOK := callAlgebra.KeyForApplicationID(application)
+	callMounted, key, callMountedOK := callAlgebra.MountedCallKeyForOccurrence(module, occurrence)
 	keyApplication, keyApplicationOK := key.ApplicationID()
 	root, rootOK := effectAlgebra.RootForMountedCall(mounted)
 	rootID, rootIDOK := effectAlgebra.RootID(root)
 	if !effectIdentityOK || !ordinalOK || ordinal < 0 || !canonicalEffectOK || canonicalEffect != mounted ||
-		!callMountedOK || !canonicalCallOK || canonicalCall != callMounted || !callIdentityOK ||
-		callApplication != application || callModule != module || callOccurrence != occurrence || !callAlgebra.OwnsMountedModule(module) ||
-		!keyOK || !keyApplicationOK || keyApplication != application || !callAlgebra.OwnsKey(key) ||
+		!callMountedOK || !keyApplicationOK || keyApplication != application ||
 		!rootOK || !rootIDOK || !rootID.Available() || !effectAlgebra.Admit(root, effectAlgebra.Bottom()) {
 		return calldomain.MountedCall{}, calldomain.Key{}, effectfactor.Root{}, false
 	}
@@ -70,7 +65,7 @@ func mountedOperandID(domain string, calls *calldomain.Algebra, effects *effectf
 
 // HotRule is the Selected or Opaque Call-to-Effect Rule binder. Its operand
 // is Effect's canonical mounted row. Reduction joins that row to Call's
-// TargetRole rows and Effect's formal/publication rows without a second
+// target-role identities and Effect's formal/publication rows without a second
 // mounted-call directory or target map.
 type HotRule struct {
 	implementation *effectowner.RuleImplementation[effectfactor.MountedCall]
@@ -204,9 +199,8 @@ func (rule *HotRule) reduce(mounted effectfactor.MountedCall, key calldomain.Key
 	for index := 0; index < value.KnownTargetCount(); index++ {
 		target, targetOK := value.KnownTargetAt(index)
 		role, roleOK := target.RoleID()
-		canonicalRole, canonicalRoleOK := rule.calls.Algebra().TargetForRole(role)
-		canonicalTarget, canonicalTargetOK := canonicalRole.Target()
-		if !targetOK || !roleOK || !canonicalRoleOK || !canonicalTargetOK || !canonicalTarget.Same(target) {
+		canonicalTarget, canonicalTargetOK := rule.calls.Algebra().TargetForRole(role)
+		if !targetOK || !roleOK || !canonicalTargetOK || !canonicalTarget.Same(target) {
 			return effectfactor.Value{}, false
 		}
 		if role.Kind() == calldomain.TargetRoleBody {

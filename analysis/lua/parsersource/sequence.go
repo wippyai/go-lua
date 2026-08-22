@@ -91,6 +91,11 @@ func (k SequenceSegmentKind) String() string {
 type SequenceSegment struct {
 	Ordinal int
 	Kind    SequenceSegmentKind
+	// Input is the exact positional parser operand when this segment is that
+	// operand itself. Projections, indexes, assertions, locals, constructions,
+	// and other expressions remain zero even when their provenance reaches an
+	// operand. This is the canonical directness fact consumed by grammar laws.
+	Input   int
 	Origins []UseOrigin
 	Sources []int
 	Symbols []int
@@ -370,7 +375,29 @@ func (b *productBuilder) sequenceExpression(scope *actionScope, ordinals map[sit
 
 func (b *productBuilder) sequenceSegment(scope *actionScope, ordinals map[siteID]int, ordinal int, kind SequenceSegmentKind, expression goast.Expr, frame *helperFrame) SequenceSegment {
 	origins, sources, symbols := b.originsIn(scope, expression, ordinals, frame)
-	return SequenceSegment{Ordinal: ordinal, Kind: kind, Origins: origins, Sources: sources, Symbols: symbols}
+	return SequenceSegment{Ordinal: ordinal, Kind: kind, Input: directSequenceInput(scope, expression, frame), Origins: origins, Sources: sources, Symbols: symbols}
+}
+
+func directSequenceInput(scope *actionScope, expression goast.Expr, frame *helperFrame) int {
+	for {
+		switch current := expression.(type) {
+		case *goast.ParenExpr:
+			expression = current.X
+			continue
+		case *goast.Ident:
+			if frame != nil {
+				if actual, ok := frame.actuals[current.Name]; ok {
+					return directSequenceInput(frame.caller, actual, nil)
+				}
+			}
+			if scope.kind != ProductScopeProduction {
+				return 0
+			}
+			return operandSlot(current.Name)
+		default:
+			return 0
+		}
+	}
 }
 
 // resultDispositions reads the top-level dispositions one action states for its

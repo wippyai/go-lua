@@ -14,6 +14,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/program/target/compiler"
 	"github.com/wippyai/go-lua/analysis/program/target/declaration"
 	programschema "github.com/wippyai/go-lua/analysis/schema/program"
+	"github.com/wippyai/go-lua/analysis/schema/programmount"
 	schematype "github.com/wippyai/go-lua/analysis/schema/typecontract"
 	"github.com/wippyai/go-lua/domain/composite"
 	effectfactor "github.com/wippyai/go-lua/domain/effect/factor"
@@ -60,7 +61,7 @@ func newEffectMembershipFixture(t testing.TB) effectMembershipFixture {
 	shard, shardOK := mounts.At(0)
 	program, programOK := mounts.Program(shard)
 	module, moduleOK := linked.Project().ModuleKey(shard)
-	programID, programIDOK := mounts.ProgramID(shard)
+	_, programIDOK := mounts.ProgramID(shard)
 	if !shardOK || !programOK || program == nil || !moduleOK || !programIDOK {
 		t.Fatal("effect observation mount")
 	}
@@ -76,8 +77,8 @@ func newEffectMembershipFixture(t testing.TB) effectMembershipFixture {
 	if err != nil || statics == nil {
 		t.Fatalf("seal statics: %v", err)
 	}
-	packMount, packOK := pack.NewArtifactMount(snapshottest.MustLower(t, artifact), module, programID)
-	packs, packsOK := pack.SealMountedArtifacts(linked, statics, []pack.ArtifactMount{packMount})
+	packMount, packOK := programmount.MountedArtifactFromSnapshot(snapshottest.MustLower(t, artifact), module)
+	packs, packsOK := pack.SealMountedArtifacts(linked, statics, []programmount.MountedArtifact{packMount})
 	algebra, algebraOK := effectfactor.NewWithMountedArtifacts(linked, packs, contract, []effectfactor.MountedArtifact{{ModuleKey: module, Snapshot: snapshottest.MustLower(t, artifact)}})
 	owner, ownerOK := contract.Operations.Lookup(vocabulary.BindingSpec{Namespace: vocabulary.BindingBuiltin, Member: []string{"sink"}})
 	mounted, mountedOK := algebra.MountedCallAt(0)

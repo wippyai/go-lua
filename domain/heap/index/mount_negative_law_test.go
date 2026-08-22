@@ -3,15 +3,10 @@ package index_test
 import (
 	"testing"
 
-	"github.com/wippyai/go-lua/analysis/program/target/vocabulary"
-
 	"github.com/wippyai/go-lua/analysis/lua/lower"
-	flowkind "github.com/wippyai/go-lua/analysis/program/flow/kind"
 	"github.com/wippyai/go-lua/analysis/program/link"
 	linkproject "github.com/wippyai/go-lua/analysis/program/link/project"
-	"github.com/wippyai/go-lua/analysis/program/target/compiler"
-	"github.com/wippyai/go-lua/analysis/program/target/declaration"
-	domaincontract "github.com/wippyai/go-lua/domain/type/typecontract"
+	"github.com/wippyai/go-lua/internal/testfixture"
 )
 
 func TestMountedCallDispatchRetainsItsModuleScopedLoader(t *testing.T) {
@@ -54,16 +49,15 @@ func twoModuleRequireLink(t testing.TB) *link.Link {
 	if err != nil {
 		t.Fatal(err)
 	}
-	contract, err := compiler.Seal(&declaration.Spec{Semantics: domaincontract.NewSemantics(), Operations: []vocabulary.OperationSpec{{
-		Bindings: []vocabulary.BindingSpec{{Namespace: vocabulary.BindingBuiltin, Member: []string{"require"}}},
-		Input:    vocabulary.ValuesSpec{Tail: vocabulary.ValuesClosed},
-		Outcomes: []vocabulary.OutcomeSpec{{Kind: flowkind.OutcomeNormal, Values: vocabulary.ValuesSpec{Tail: vocabulary.ValuesClosed}}},
-		Effects:  vocabulary.RowSpec{Tail: vocabulary.RowClosed},
-	}}})
+	moduleProgram, err := lower.Lower(lower.Source{Name: "heap_index_module.lua", Text: []byte(`return true`)})
 	if err != nil {
 		t.Fatal(err)
 	}
-	linked, err := link.Seal(&link.Spec{Target: contract, Modules: []linkproject.Module{{Name: "main", Program: program}, {Name: "second", Program: program}}})
+	contract, err := testfixture.StandardLibraryTarget()
+	if err != nil {
+		t.Fatal(err)
+	}
+	linked, err := link.Seal(&link.Spec{Target: contract, Modules: []linkproject.Module{{Name: "main", Program: program}, {Name: "x", Program: moduleProgram}}})
 	if err != nil {
 		t.Fatal(err)
 	}

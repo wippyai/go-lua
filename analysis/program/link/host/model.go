@@ -163,16 +163,17 @@ type globalBindingRow struct {
 }
 
 // globalLookupKey is the owner-local inverse key for one canonical Program
-// global occurrence. Its shard field is the sealed Project mount slot, not a
-// portable coordinate; query admission still requires the exact opaque Shard
-// and mounted Program handles. A Host may issue at most one GlobalBinding for
-// a (Shard, Cell) pair.
+// global occurrence. A mounted Program may be named by more than one
+// AnalysisRoot (for example, one shared library mounted in two actor
+// contexts), so the root is part of the key. The root field is the dense
+// ordinal issued by this exact Module authority; it is not a portable
+// coordinate and query admission still requires the exact opaque root,
+// Shard, and mounted Program handles.
 type globalLookupKey struct {
-	// shard is the canonical zero-based Project mount slot.  It is an
-	// owner-local index coordinate, never a portable identity; query admission
-	// must still present the exact Shard and mounted Program handles.
-	shard uint32
-	cell  keyspace.Term
+	// root is a canonical zero-based Module root slot. It is an owner-local
+	// index coordinate, never a portable identity.
+	root uint32
+	cell keyspace.Term
 }
 type bootAttachmentRow struct {
 	base vocabulary.InitialValueKind
@@ -194,12 +195,12 @@ type authority struct {
 	attachments        []bootAttachmentRow
 	globals            []globalBindingRow
 	globalRanges       []edgeRange
-	// globalByShardCell is a sealed derived inverse. Its values are Host-local
+	// globalByRootCell is a sealed derived inverse. Its values are Host-local
 	// dense ordinals (not portable identities) and its keys are canonical
-	// Project mount slots; query-time Shard and Program fences prevent equivalent
-	// foreign authorities from matching.
-	globalByShardCell map[globalLookupKey]uint32
-	content           identity.ContentID
+	// Module root slots; query-time root, Shard, and Program fences prevent
+	// equivalent foreign authorities from matching.
+	globalByRootCell map[globalLookupKey]uint32
+	content          identity.ContentID
 	// replay is the sole portable construction contract retained after sealing.
 	// Authored coordinates are reduced to this relation before content is made.
 	replay ReplaySpec

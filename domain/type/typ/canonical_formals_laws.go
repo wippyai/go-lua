@@ -75,56 +75,9 @@ func validateCanonicalFormalConstraintCycles(ctx context.Context, admission *can
 			}
 		}
 	}
-	order, err := canonicalFormalFinishOrder(ctx, admission, forward, &steps)
+	component, componentSize, err := canonicalFormalAssignComponents(ctx, admission, forward, reverse, &steps)
 	if err != nil {
 		return err
-	}
-	component := make([]int, len(nodes))
-	for index := range component {
-		component[index] = -1
-	}
-	componentSize := make([]int, 0, len(nodes))
-	for orderIndex := len(order) - 1; orderIndex >= 0; orderIndex-- {
-		if err := canonicalFormalValidationCheckpoint(ctx, admission, &steps); err != nil {
-			return err
-		}
-		root := order[orderIndex]
-		if component[root] >= 0 {
-			continue
-		}
-		identifier := len(componentSize)
-		var stack []int
-		stack, appendErr = canonicalFormalsAppend(ctx, admission, &steps, stack, root, canonicalFormalsIntBytes)
-		if appendErr != nil {
-			return appendErr
-		}
-		component[root] = identifier
-		size := 0
-		for len(stack) != 0 {
-			if err := canonicalFormalValidationCheckpoint(ctx, admission, &steps); err != nil {
-				return err
-			}
-			current := stack[len(stack)-1]
-			stack = stack[:len(stack)-1]
-			size++
-			for _, parent := range reverse[current] {
-				if err := canonicalFormalValidationCheckpoint(ctx, admission, &steps); err != nil {
-					return err
-				}
-				if component[parent] >= 0 {
-					continue
-				}
-				component[parent] = identifier
-				stack, appendErr = canonicalFormalsAppend(ctx, admission, &steps, stack, parent, canonicalFormalsIntBytes)
-				if appendErr != nil {
-					return appendErr
-				}
-			}
-		}
-		componentSize, appendErr = canonicalFormalsAppend(ctx, admission, &steps, componentSize, size, canonicalFormalsIntBytes)
-		if appendErr != nil {
-			return appendErr
-		}
 	}
 	for formal, shape := range shapes {
 		if err := canonicalFormalValidationCheckpoint(ctx, admission, &steps); err != nil {
@@ -306,6 +259,13 @@ func canonicalFormalStrongComponents(ctx context.Context, admission *canonicalFo
 			}
 		}
 	}
+	return canonicalFormalAssignComponents(ctx, admission, forward, reverse, steps)
+}
+
+func canonicalFormalAssignComponents(ctx context.Context, admission *canonicalFormalsAdmission, forward, reverse [][]int, steps *uint64) ([]int, []int, error) {
+	if len(forward) != len(reverse) {
+		return nil, nil, invalidCanonicalFormals("graph shape")
+	}
 	order, err := canonicalFormalFinishOrder(ctx, admission, forward, steps)
 	if err != nil {
 		return nil, nil, err
@@ -315,6 +275,7 @@ func canonicalFormalStrongComponents(ctx context.Context, admission *canonicalFo
 		component[index] = -1
 	}
 	sizes := make([]int, 0, len(forward))
+	var appendErr error
 	for orderIndex := len(order) - 1; orderIndex >= 0; orderIndex-- {
 		if err := canonicalFormalValidationCheckpoint(ctx, admission, steps); err != nil {
 			return nil, nil, err

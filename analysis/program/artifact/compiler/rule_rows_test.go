@@ -7,6 +7,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/lua/lower"
 	programschema "github.com/wippyai/go-lua/analysis/schema/program"
 	programcatalog "github.com/wippyai/go-lua/analysis/schema/program/catalog"
+	programissuance "github.com/wippyai/go-lua/analysis/schema/program/issuance"
 	"github.com/wippyai/go-lua/domain/composite"
 )
 
@@ -278,7 +279,7 @@ return run
 				if !ruleOK {
 					t.Fatalf("placement %d unavailable", ruleIndex)
 				}
-				if rule.Stage() == programschema.RuleStageBase {
+				if rule.Stage() == programissuance.StageBase {
 					continue
 				}
 				point := rule.PointID()

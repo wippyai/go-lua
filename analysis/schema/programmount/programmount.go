@@ -95,10 +95,28 @@ type MountedArtifact struct {
 	Snapshot *ingress.Snapshot
 }
 
+// MountedArtifactFromSnapshot is the sole raw-Snapshot admission path for a
+// mounted Program row. Program identity is issued by the Snapshot and module
+// placement is supplied once; callers cannot provide a parallel ProgramID to
+// keep in agreement.
+func MountedArtifactFromSnapshot(source *ingress.Snapshot, module identity.ContentID) (MountedArtifact, bool) {
+	program, programOK := ProgramFromSnapshot(source, module)
+	if !programOK {
+		return MountedArtifact{}, false
+	}
+	row := MountedArtifact{Program: program, Snapshot: source}
+	return row, row.Available()
+}
+
 func (row MountedArtifact) Available() bool {
-	return row.Program.Available() && row.Snapshot != nil && row.Snapshot.Available() &&
-		row.Snapshot.ProgramID() == row.ProgramID && row.Snapshot.ArtifactID() == row.ArtifactID &&
-		row.Snapshot.EntryBodyID() == row.EntryBodyID
+	if !row.Program.Available() || row.Snapshot == nil || !row.Snapshot.Available() {
+		return false
+	}
+	canonical := row.Snapshot.Program()
+	return canonical.Available() && row.ProgramID == canonical.ProgramID && row.ArtifactID == canonical.ArtifactID &&
+		row.SchemaID == canonical.SchemaID && row.EntryBodyID == canonical.EntryBodyID &&
+		row.Frozen.Schema() == canonical.Frozen.Schema() && row.Frozen.Store() == canonical.Frozen.Store() &&
+		row.Frozen.Generation() == canonical.Frozen.Generation() && row.Frozen.Columns() == canonical.Frozen.Columns()
 }
 
 // AxisEntry is this package's axis declaration. A is the composition's own

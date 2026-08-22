@@ -33,7 +33,7 @@ func TestWriteArtifactIdentityFieldsReplaysEveryDiagnosticPayload(t *testing.T) 
 	branch, branchOK := NewDiagnosticObservationBranchCondition(programDiagnosticLawID(t, "branch"), span, 0, 1, programDiagnosticLawID(t, "decision"), programDiagnosticLawID(t, "value"))
 	typeReference, typeReferenceOK := NewDiagnosticObservationTypeReferenceUnresolved(programDiagnosticLawID(t, "type-reference"), span, 0, 2, programDiagnosticLawID(t, "reference"), programDiagnosticLawID(t, "root"))
 	valueReference, valueReferenceOK := NewDiagnosticObservationValueReferenceUnresolved(programDiagnosticLawID(t, "value-reference"), span, programDiagnosticLawID(t, "read"), programDiagnosticLawID(t, "cell"), "missing")
-	conformance, conformanceOK := NewDiagnosticObservationTypeConformance(programDiagnosticLawID(t, "conformance"), span, 1, 1, DiagnosticObservationSiteAssignment, programDiagnosticLawID(t, "owner"), programDiagnosticLawID(t, "measured"), programDiagnosticLawID(t, "declared"), programDiagnosticLawID(t, "span"), 3)
+	conformance, conformanceOK := NewDiagnosticObservationTypeConformance(programDiagnosticLawID(t, "conformance"), span, 1, 1, DiagnosticObservationSiteAssignment, programDiagnosticLawID(t, "owner"), programDiagnosticLawID(t, "measured"), programDiagnosticLawID(t, "declared"), programDiagnosticLawID(t, "span"), 3, "opened.id")
 	if !branchOK || !typeReferenceOK || !valueReferenceOK || !conformanceOK {
 		t.Fatal("diagnostic fixture construction failed")
 	}

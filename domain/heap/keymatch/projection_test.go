@@ -14,6 +14,7 @@ import (
 	linkproject "github.com/wippyai/go-lua/analysis/program/link/project"
 	"github.com/wippyai/go-lua/analysis/program/target/compiler"
 	"github.com/wippyai/go-lua/analysis/program/target/declaration"
+	"github.com/wippyai/go-lua/analysis/schema/programmount"
 	"github.com/wippyai/go-lua/domain/composite"
 	heapdomain "github.com/wippyai/go-lua/domain/heap"
 	keymatch "github.com/wippyai/go-lua/domain/heap/keymatch"
@@ -379,19 +380,19 @@ func sourceAtom(t testing.TB, values *valuedomain.Schema, linked *link.Link, mat
 	return valuedomain.Atom{}
 }
 
-func keymatchHeapMounts(t testing.TB, linked *link.Link, compilation composite.Compilation) []heapdomain.ArtifactMount {
+func keymatchHeapMounts(t testing.TB, linked *link.Link, compilation composite.Compilation) []programmount.MountedArtifact {
 	t.Helper()
-	heapMounts, _ := keymatchArtifactMounts(t, linked, compilation)
+	heapMounts, _ := keymatchMountedArtifacts(t, linked, compilation)
 	return heapMounts
 }
 
-func keymatchValueMounts(t testing.TB, linked *link.Link, compilation composite.Compilation) []valuedomain.ArtifactMount {
+func keymatchValueMounts(t testing.TB, linked *link.Link, compilation composite.Compilation) []programmount.MountedArtifact {
 	t.Helper()
-	_, valueMounts := keymatchArtifactMounts(t, linked, compilation)
+	_, valueMounts := keymatchMountedArtifacts(t, linked, compilation)
 	return valueMounts
 }
 
-func keymatchArtifactMounts(t testing.TB, linked *link.Link, compilation composite.Compilation) ([]heapdomain.ArtifactMount, []valuedomain.ArtifactMount) {
+func keymatchMountedArtifacts(t testing.TB, linked *link.Link, compilation composite.Compilation) ([]programmount.MountedArtifact, []programmount.MountedArtifact) {
 	t.Helper()
 	executionSchemaID := compilation.ExecutionSchemaID()
 	issuance, issuanceOK := composite.ArtifactIssuanceDirectory(compilation)
@@ -399,13 +400,13 @@ func keymatchArtifactMounts(t testing.TB, linked *link.Link, compilation composi
 		t.Fatal("keymatch artifact receipt")
 	}
 	projectMounts := linked.Project().Mounts()
-	heapMounts := make([]heapdomain.ArtifactMount, projectMounts.Count())
-	valueMounts := make([]valuedomain.ArtifactMount, projectMounts.Count())
+	heapMounts := make([]programmount.MountedArtifact, projectMounts.Count())
+	valueMounts := make([]programmount.MountedArtifact, projectMounts.Count())
 	for index := 0; index < projectMounts.Count(); index++ {
 		shard, shardOK := projectMounts.At(index)
 		program, programOK := projectMounts.Program(shard)
 		module, moduleOK := linked.Project().ModuleKey(shard)
-		programID, programIDOK := projectMounts.ProgramID(shard)
+		_, programIDOK := projectMounts.ProgramID(shard)
 		if !shardOK || !programOK || program == nil || !moduleOK || !programIDOK {
 			t.Fatal("keymatch artifact mount")
 		}
@@ -414,8 +415,8 @@ func keymatchArtifactMounts(t testing.TB, linked *link.Link, compilation composi
 			t.Fatalf("keymatch artifact: %v", failure)
 		}
 		var heapOK, valueOK bool
-		heapMounts[index], heapOK = heapdomain.NewArtifactMount(snapshottest.MustLower(t, artifact), module, programID)
-		valueMounts[index], valueOK = valuedomain.NewArtifactMount(snapshottest.MustLower(t, artifact), module, programID)
+		heapMounts[index], heapOK = programmount.MountedArtifactFromSnapshot(snapshottest.MustLower(t, artifact), module)
+		valueMounts[index], valueOK = programmount.MountedArtifactFromSnapshot(snapshottest.MustLower(t, artifact), module)
 		if !heapOK || !valueOK {
 			t.Fatal("keymatch artifact mount receipt")
 		}

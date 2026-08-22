@@ -31,13 +31,18 @@ func buildNativeBranchPublication(
 	if !geometry.Valid() || schema == nil || published == nil || !published.Published() || !observationPlan.Available() {
 		return nil, false
 	}
-	observed := make(map[Point]valuedomain.ValueSummaryObservation, len(selected))
+	type observedKey struct {
+		point   Point
+		context identity.ContentID
+	}
+	observed := make(map[observedKey]valuedomain.ValueSummaryObservation, len(selected))
 	for _, selectedObservation := range selected {
 		key := Point{Mount: selectedObservation.Mount, Point: selectedObservation.Point}
-		if !key.Mount.Available() || !key.Point.Available() {
+		if !key.Mount.Available() || !key.Point.Available() || !selectedObservation.Context.Available() {
 			return nil, false
 		}
-		if _, duplicate := observed[key]; duplicate {
+		lookup := observedKey{point: key, context: selectedObservation.Context}
+		if _, duplicate := observed[lookup]; duplicate {
 			return nil, false
 		}
 		observationID := selectedObservation.Key
@@ -45,57 +50,77 @@ func buildNativeBranchPublication(
 		if !observationID.Available() || !readable || !validNativeValueSummary(observation, len(geometry.values)) {
 			return nil, false
 		}
-		observed[key] = observation
+		observed[lookup] = observation
 	}
 	rows := make([]nativePublicationRow, 0)
 	byID := make(map[identity.ContentID]struct{})
 	if !appendNativeArtifactSummaryRows(&rows, byID, mounts) {
 		return nil, false
 	}
-	expected := make(map[Point]struct{})
+	expected := make(map[observedKey]struct{})
 	for _, subject := range geometry.BranchObservations {
 		if subject.Kind != structure.DiagnosticObservationBranchCondition || !subject.Available() || int(subject.ValueIndex) >= len(geometry.values) {
 			return nil, false
 		}
-		truth := valuedomain.TruthNone
-		complete := true
-		var subjectBody identity.ContentID
+		// One projected branch row may be read under several exact actor
+		// Contexts. The selected observation keys are the owner-issued context
+		// inventory; process every lane rather than choosing a representative.
+		contexts := make(map[identity.ContentID]struct{})
 		for _, point := range subject.Points {
 			key := Point{Mount: subject.Mount, Point: point}
-			expected[key] = struct{}{}
-			body, bodyOK := nativePublicationBodyAt(geometry, key)
-			if !bodyOK || subjectBody.Available() && subjectBody != body {
+			if _, bodyOK := nativePublicationBodyAt(geometry, key); !bodyOK {
 				return nil, false
 			}
-			subjectBody = body
-			observation, ok := observed[key]
-			if !ok {
-				return nil, false
+			for candidate := range observed {
+				if candidate.point == key {
+					contexts[candidate.context] = struct{}{}
+				}
 			}
-			if observation.Rows == 0 {
-				complete = false
-				continue
-			}
-			condition := int(subject.ValueIndex)
-			if !observation.Present[condition] {
-				complete = false
-				continue
-			}
-			// A branch observation authenticates the condition coordinate. Other
-			// cells share its point snapshot but are not native-publication uses;
-			// publishing them globally leaks path-local literals across merges.
-			if !appendNativeScalarRows(&rows, byID, schema, observation.Values[condition], geometry.values[condition], subject, subjectBody, point) {
-				return nil, false
-			}
-			pointTruth := schema.Truthiness(observation.Values[condition])
-			if pointTruth == valuedomain.TruthNone {
-				complete = false
-				continue
-			}
-			truth |= pointTruth
 		}
-		if !appendNativeBranchRows(&rows, byID, subject, subjectBody, truth, complete) {
+		if len(contexts) == 0 {
 			return nil, false
+		}
+		for context := range contexts {
+			truth := valuedomain.TruthNone
+			complete := true
+			var subjectBody identity.ContentID
+			for _, point := range subject.Points {
+				key := Point{Mount: subject.Mount, Point: point}
+				expected[observedKey{point: key, context: context}] = struct{}{}
+				body, bodyOK := nativePublicationBodyAt(geometry, key)
+				if !bodyOK || subjectBody.Available() && subjectBody != body {
+					return nil, false
+				}
+				subjectBody = body
+				observation, ok := observed[observedKey{point: key, context: context}]
+				if !ok {
+					return nil, false
+				}
+				if observation.Rows == 0 {
+					complete = false
+					continue
+				}
+				condition := int(subject.ValueIndex)
+				if !observation.Present[condition] {
+					complete = false
+					continue
+				}
+				// A branch observation authenticates the condition coordinate. Other
+				// cells share its point snapshot but are not native-publication uses;
+				// publishing them globally leaks path-local literals across merges.
+				if !appendNativeScalarRows(&rows, byID, schema, observation.Values[condition], geometry.values[condition], subject, subjectBody, point, context) {
+					return nil, false
+				}
+				pointTruth := schema.Truthiness(observation.Values[condition])
+				if pointTruth == valuedomain.TruthNone {
+					complete = false
+					continue
+				}
+				truth |= pointTruth
+			}
+			if !appendNativeBranchRows(&rows, byID, subject, subjectBody, truth, complete, context) {
+				return nil, false
+			}
 		}
 	}
 	if len(observed) != len(expected) {
@@ -335,7 +360,7 @@ func validNativeValueSummary(observation valuedomain.ValueSummaryObservation, wi
 	return observation.Valid && observation.Rows <= 1 && len(observation.Values) == width && len(observation.Present) == width
 }
 
-func appendNativeScalarRows(rows *[]nativePublicationRow, seen map[identity.ContentID]struct{}, schema *valuedomain.Schema, value valuedomain.Value, coordinate identity.ContentID, subject anadiag.Observation, body, point identity.ContentID) bool {
+func appendNativeScalarRows(rows *[]nativePublicationRow, seen map[identity.ContentID]struct{}, schema *valuedomain.Schema, value valuedomain.Value, coordinate identity.ContentID, subject anadiag.Observation, body, point, context identity.ContentID) bool {
 	scalar, exact := schema.ExactScalar(value)
 	if !exact {
 		return true
@@ -346,17 +371,17 @@ func appendNativeScalarRows(rows *[]nativePublicationRow, seen map[identity.Cont
 		return true
 	}
 	if !appendNativeBranchRow(rows, seen, nativePublicationFamilyConstantValue, subject, body, point, coordinate,
-		nativePublicationContent{literal: literal, scalar: representation, points: evidence}) {
+		nativePublicationContent{literal: literal, scalar: representation, points: evidence}, context) {
 		return false
 	}
 	return appendNativeBranchRow(rows, seen, nativePublicationFamilyRepresentation, subject, body, point, coordinate,
-		nativePublicationContent{exact: true, scalar: representation, points: evidence})
+		nativePublicationContent{exact: true, scalar: representation, points: evidence}, context)
 }
 
 // appendNativeBranchRows publishes the branch condition's verdict over its
 // whole evidence set. The set is the row's content, so a condition folded over
 // several points publishes all of them rather than one representative.
-func appendNativeBranchRows(rows *[]nativePublicationRow, seen map[identity.ContentID]struct{}, subject anadiag.Observation, body identity.ContentID, truth valuedomain.Truth, complete bool) bool {
+func appendNativeBranchRows(rows *[]nativePublicationRow, seen map[identity.ContentID]struct{}, subject anadiag.Observation, body identity.ContentID, truth valuedomain.Truth, complete bool, context identity.ContentID) bool {
 	class, partition, deadArm, deadArmProved := nativeBranchVerdict(truth, complete)
 	evidence, evidenceOK := nativeEvidencePoints(subject.Points...)
 	if !class.Available() || !partition.Available() || !evidenceOK || deadArmProved != deadArm.Available() {
@@ -368,17 +393,20 @@ func appendNativeBranchRows(rows *[]nativePublicationRow, seen map[identity.Cont
 	// the verdict was folded over is published as content.
 	point, coordinate := subject.Points[0], subject.ID
 	if !appendNativeBranchRow(rows, seen, nativePublicationFamilyTruthinessClass, subject, body, point, coordinate,
-		nativePublicationContent{truthiness: class, points: evidence}) {
+		nativePublicationContent{truthiness: class, points: evidence}, context) {
 		return false
 	}
 	return appendNativeBranchRow(rows, seen, nativePublicationFamilyBranchPartition, subject, body, point, coordinate,
-		nativePublicationContent{partition: partition, deadArm: deadArm, points: evidence})
+		nativePublicationContent{partition: partition, deadArm: deadArm, points: evidence}, context)
 }
 
-func appendNativeBranchRow(rows *[]nativePublicationRow, seen map[identity.ContentID]struct{}, family nativePublicationFamily, subject anadiag.Observation, body, point, coordinate identity.ContentID, content nativePublicationContent) bool {
+func appendNativeBranchRow(rows *[]nativePublicationRow, seen map[identity.ContentID]struct{}, family nativePublicationFamily, subject anadiag.Observation, body, point, coordinate identity.ContentID, content nativePublicationContent, context identity.ContentID) bool {
 	semantic, semanticOK := family.semanticID()
 	span, spanOK := nativePublicationSpanID(subject.Location)
 	if !semanticOK || !spanOK || !coordinate.Available() || !body.Available() || !point.Available() || !content.valid(family) {
+		return false
+	}
+	if !context.Available() {
 		return false
 	}
 	row := nativePublicationRow{
@@ -386,7 +414,7 @@ func appendNativeBranchRow(rows *[]nativePublicationRow, seen map[identity.Conte
 		lane:     NativePublicationLaneValues, kind: NativePublicationKindValue, family: family, trust: NativePublicationTrustProven,
 		key: family.String() + "/" + coordinate.String() + "/" + point.String(), module: subject.Location.File,
 		term: coordinate.String(), subject: coordinate.String(), occurrence: subject.ID.String(), content: content,
-		provenance:   NativePublicationProvenance{mount: subject.Mount, artifact: subject.Artifact, local: coordinate, body: body, point: point, span: span},
+		provenance:   NativePublicationProvenance{context: context, mount: subject.Mount, artifact: subject.Artifact, local: coordinate, body: body, point: point, span: span},
 		provenanceOK: true, validityOK: true,
 	}
 	return appendNativePublicationRow(rows, seen, row)

@@ -670,6 +670,7 @@ func buildQueries(source *composition.Composition, declared map[PointRef]Point, 
 	}
 	queries := make([]Query, len(rows))
 	seen := make([]bool, len(families))
+	seenKeys := make(map[composition.Key]struct{}, len(rows))
 	for index, row := range rows {
 		point, ok := declared[row.Point]
 		if !ok || !validQueryInstance(source, row) {
@@ -683,8 +684,12 @@ func buildQueries(source *composition.Composition, declared map[PointRef]Point, 
 		if !ok {
 			return nil, false
 		}
+		if _, duplicate := seenKeys[key]; duplicate {
+			return nil, false
+		}
+		seenKeys[key] = struct{}{}
 		seen[familyIndex] = true
-		queries[index] = Query{key: key, point: point, family: row.Family, surfaces: append([]Surface(nil), row.Surfaces...)}
+		queries[index] = Query{key: key, context: row.Context, point: point, family: row.Family, surfaces: append([]Surface(nil), row.Surfaces...)}
 	}
 	for _, present := range seen {
 		if !present {
@@ -762,7 +767,13 @@ func assembleGraph(source *composition.Composition, points []Point, built []buil
 				return nil, false
 			}
 			graph.consumers[from] = append(graph.consumers[from], groupIndex)
-			edges[schedule.Edge{From: from, To: output}] = struct{}{}
+			// A same-Point input is a local monotone closure inside the Point's
+			// own carrier fixed point. It remains a consumer incidence so an
+			// ascent wakes the Group, but it is not an inter-Point schedule edge
+			// and must not invent a recurrence absent from the artifact WTO.
+			if from != output {
+				edges[schedule.Edge{From: from, To: output}] = struct{}{}
+			}
 		}
 		if row.environmentInput.Available() {
 			environmentSource, ok := graph.pointAt[row.environmentInput.point.key]
@@ -1009,7 +1020,7 @@ func cloneMembers(rows []RuleMember) []RuleMember {
 }
 
 func validQueryInstance(source *composition.Composition, query QueryInstance) bool {
-	if !query.Family.Available() {
+	if !query.Context.Available() || !query.Family.Available() {
 		return false
 	}
 	index, ok := source.QueryIndex(query.Family)
@@ -1290,6 +1301,34 @@ func (graph *Graph) Schedule() *schedule.Schedule {
 	}
 	return graph.schedule
 }
+
+// InfluenceEdgeCount reports the exact normalized Point influence relation
+// sealed with this Graph's schedule.
+func (graph *Graph) InfluenceEdgeCount() int {
+	if !graph.valid() {
+		return 0
+	}
+	return graph.schedule.EdgeCount()
+}
+
+// InfluenceEdgeAt returns one exact sealed Point influence edge.
+func (graph *Graph) InfluenceEdgeAt(index int) (schedule.Edge, bool) {
+	if !graph.valid() {
+		return schedule.Edge{}, false
+	}
+	return graph.schedule.EdgeAt(index)
+}
+
+// InfluenceEdges returns a detached copy of the exact sealed Point influence
+// relation. Callers must lift these edges; Group and transport incidences are
+// not equivalent schedule authority.
+func (graph *Graph) InfluenceEdges() []schedule.Edge {
+	if !graph.valid() {
+		return nil
+	}
+	return graph.schedule.Edges()
+}
+
 func (graph *Graph) PointCount() int {
 	if !graph.valid() {
 		return 0

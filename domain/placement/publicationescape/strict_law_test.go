@@ -73,6 +73,20 @@ func TestRouteSetRefusesInvalidInputsBeforeOpaqueWidening(t *testing.T) {
 	}
 }
 
+func TestRouteSetRefusesForeignPlacementSchemaBeforeBroadcast(t *testing.T) {
+	fixture := newPublicationEscapeFixture(t)
+	foreign := newPublicationEscapeFixture(t)
+	prepared := &preparedBatch{
+		rows:     []publicationRow{{id: identity.ContentID{45}, requirement: placementdomain.SharedHeap, operation: 1, subjectOpen: true}},
+		byTag:    map[sourceTag]sourceSpec{},
+		prepared: true,
+	}
+	routes, ok := fixture.rule().routeSet(foreign.placement, prepared, operationGateForTest(1), factBuffer{})
+	if ok || routes.len() != 0 {
+		t.Fatalf("foreign Placement schema produced routes=%d ok=%t", routes.len(), ok)
+	}
+}
+
 // A present Value fact must be owned by the exact Value schema. A malformed
 // fact is rejected at the join boundary rather than being treated as absent
 // and allowing a later widening branch to hide it.

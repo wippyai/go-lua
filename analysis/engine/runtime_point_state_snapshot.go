@@ -3,6 +3,7 @@ package engine
 import (
 	"github.com/wippyai/go-lua/analysis/engine/internal/carrier"
 	"github.com/wippyai/go-lua/analysis/engine/internal/composition"
+	"github.com/wippyai/go-lua/analysis/engine/internal/contextfiber"
 	"github.com/wippyai/go-lua/analysis/engine/internal/schedule"
 	"github.com/wippyai/go-lua/analysis/identity"
 	"github.com/wippyai/go-lua/analysis/snapshot"
@@ -11,6 +12,7 @@ import (
 
 const (
 	pointStateDenominatorDomain = "engine/point-state-snapshot-denominator"
+	pointStateRowDomain         = "engine/point-state-snapshot-row"
 	pointStateIdentityVersion   = 1
 )
 
@@ -27,37 +29,87 @@ func pointStateDenominatorIdentity(schema identity.ContentID) identity.ContentID
 	})
 }
 
-// sealPointUniverse freezes the complete graph Point key universe. The dense
-// pointKeys vector lets publication writes address a Point without asking the
-// graph again, while pointIndex proves the key belongs to exactly one Point.
-// Initial publication may leave an inactive key absent, but the denominator
-// already proves that absence so a later widened epoch can fill the same row.
-// The denominator identity is minted once for this schema.
-func sealPointUniverse(runtime *solverRuntime, schema identity.ContentID) ([]composition.Key, []composition.Key, map[composition.Key]int, identity.ContentID, bool) {
+// sealPointUniverse freezes the complete point-state key universe. Explicit
+// engine-only construction keeps its historical graph-point keys. An artifact
+// plan instead mints one context-qualified key per compact StateOrdinal, so
+// two occurrences of the same graph Point in different contexts are distinct
+// publication rows rather than an implicit duplicate refusal. The denominator
+// is structural and is minted once for this schema.
+func sealPointUniverse(runtime *solverRuntime, schema identity.ContentID) ([]composition.Key, identity.ContentID, bool) {
 	if runtime == nil || runtime.graph == nil || !schema.Available() || len(runtime.activePoints) != runtime.graph.PointCount() {
-		return nil, nil, nil, identity.ContentID{}, false
-	}
-	pointKeys := make([]composition.Key, runtime.graph.PointCount())
-	pointMembers := make([]composition.Key, 0, runtime.graph.PointCount())
-	pointIndex := make(map[composition.Key]int)
-	for index := range pointKeys {
-		point, ok := runtime.graph.PointAt(schedule.Node(index))
-		if !ok || !point.Key().Available() {
-			return nil, nil, nil, identity.ContentID{}, false
+		if runtime == nil || runtime.graph == nil || !schema.Available() || !runtime.artifactBacked {
+			return nil, identity.ContentID{}, false
 		}
-		key := point.Key()
-		if _, duplicate := pointIndex[key]; duplicate {
-			return nil, nil, nil, identity.ContentID{}, false
+	}
+	pointCount := runtime.graph.PointCount()
+	if runtime.artifactBacked {
+		pointCount = runtime.stateCount()
+		if pointCount == 0 || len(runtime.activeStates) != pointCount || runtime.executionPlan == nil {
+			return nil, identity.ContentID{}, false
+		}
+	}
+	pointKeys := make([]composition.Key, pointCount)
+	seen := make(map[composition.Key]struct{}, len(pointKeys))
+	for index := range pointKeys {
+		var key composition.Key
+		if runtime.artifactBacked {
+			var keyOK bool
+			key, keyOK = artifactStatePointKey(runtime, index)
+			if !keyOK {
+				return nil, identity.ContentID{}, false
+			}
+		} else {
+			point, ok := runtime.graph.PointAt(schedule.Node(index))
+			if !ok || !point.Key().Available() {
+				return nil, identity.ContentID{}, false
+			}
+			key = point.Key()
+		}
+		if _, duplicate := seen[key]; duplicate {
+			return nil, identity.ContentID{}, false
 		}
 		pointKeys[index] = key
-		pointIndex[key] = index
-		pointMembers = append(pointMembers, key)
+		seen[key] = struct{}{}
 	}
 	denominator := pointStateDenominatorIdentity(schema)
-	if len(pointMembers) == 0 || !denominator.Available() {
-		return nil, nil, nil, identity.ContentID{}, false
+	if len(pointKeys) == 0 || !denominator.Available() {
+		return nil, identity.ContentID{}, false
 	}
-	return pointMembers, pointKeys, pointIndex, denominator, true
+	return pointKeys, denominator, true
+}
+
+// artifactStatePointKey is the publication adapter for one exact compact
+// state. It retains the graph point only as metadata in the framed key; the
+// StateOrdinal and (when mounted) exact ContextID are part of the row identity.
+func artifactStatePointKey(runtime *solverRuntime, state int) (composition.Key, bool) {
+	if runtime == nil || !runtime.artifactBacked || runtime.executionPlan == nil || state < 0 || state >= runtime.stateCount() {
+		return composition.Key{}, false
+	}
+	point, pointIndex, _, pointOK := runtime.graphPointAtState(state)
+	pointKey := point.Key()
+	if !pointOK || pointIndex < 0 || !pointKey.Available() {
+		return composition.Key{}, false
+	}
+	cell, cellOK := runtime.executionPlan.StateAt(contextfiber.StateOrdinal(state))
+	if !cellOK {
+		return composition.Key{}, false
+	}
+	compositionID := runtime.graph.CompositionID()
+	if !compositionID.Available() {
+		return composition.Key{}, false
+	}
+	contextID := identity.ContentID{}
+	if contextOrdinal, mounted := cell.ContextOrdinal(); mounted {
+		contextID, _ = runtime.executionPlan.Layout().ContextID(contextOrdinal)
+	}
+	key, keyOK := framedCompositionKey(pointStateRowDomain, pointStateIdentityVersion, func(writer *canonical.DigestWriter) bool {
+		return writer.Bytes(compositionID[:]) == nil &&
+			writer.Uint(uint64(state)) == nil &&
+			writer.Bytes(pointKey.ID[:]) == nil &&
+			writer.Uint(pointKey.Version) == nil &&
+			writer.Bytes(contextID[:]) == nil
+	})
+	return key, keyOK
 }
 
 // collectActivePointRows collects only solve-local active Point values. Its
@@ -65,39 +117,52 @@ func sealPointUniverse(runtime *solverRuntime, schema identity.ContentID) ([]com
 // plan; this map is needed only when a fresh builder first declares the point
 // column.
 func collectActivePointRows(plan *solvedPublicationPlan, epoch *executorEpoch) (map[composition.Key]carrier.PointState, bool) {
-	if plan == nil || epoch == nil || epoch.runtime == nil || epoch.runtime.graph == nil || len(plan.pointKeys) != epoch.runtime.graph.PointCount() || len(plan.pointMembers) == 0 || len(epoch.points) != len(plan.pointKeys) {
+	if plan == nil || epoch == nil || epoch.runtime == nil || epoch.runtime.graph == nil || len(plan.pointKeys) == 0 || len(epoch.points) != epoch.runtime.stateCount() {
 		return nil, false
 	}
-	rows := make(map[composition.Key]carrier.PointState, len(plan.pointMembers))
-	for index, key := range plan.pointKeys {
-		if !key.Available() {
+	if epoch.runtime.artifactBacked {
+		if len(plan.pointKeys) != epoch.runtime.stateCount() || epoch.runtime.executionPlan == nil {
+			return nil, false
+		}
+	} else if len(plan.pointKeys) != epoch.runtime.graph.PointCount() {
+		return nil, false
+	}
+	rows := make(map[composition.Key]carrier.PointState, len(plan.pointKeys))
+	for state := range epoch.points {
+		if !epoch.runtime.activeState(state) {
 			continue
 		}
-		if index >= len(epoch.runtime.activePoints) {
+		keyIndex := state
+		if !epoch.runtime.artifactBacked {
+			_, pointIndex, _, pointOK := epoch.runtime.graphPointAtState(state)
+			if !pointOK || pointIndex < 0 || pointIndex >= len(plan.pointKeys) {
+				return nil, false
+			}
+			keyIndex = pointIndex
+		}
+		if keyIndex < 0 || keyIndex >= len(plan.pointKeys) {
 			return nil, false
 		}
-		if !epoch.runtime.activePoints[index] {
-			continue
-		}
-		if index >= len(epoch.points) || !epoch.points[index].Valid() {
+		key := plan.pointKeys[keyIndex]
+		if !key.Available() || !epoch.points[state].Valid() {
 			return nil, false
 		}
-		if pointIndex, indexed := plan.pointIndex[key]; !indexed || pointIndex != index {
+		if _, present := rows[key]; present {
 			return nil, false
 		}
-		rows[key] = epoch.points[index]
+		rows[key] = epoch.points[state]
 	}
 	return rows, len(rows) != 0
 }
 
 func declarePointColumnFromPlan(plan *solvedPublicationPlan, builder *snapshot.Builder, rows map[composition.Key]carrier.PointState) (snapshot.Axis[composition.Key, carrier.PointState], bool) {
-	if plan == nil || builder == nil || !plan.pointAxis.Available() || !plan.pointDenominator.Available() || len(plan.pointMembers) == 0 || len(rows) == 0 || len(rows) > len(plan.pointMembers) || !plan.pointWrite.Available() {
+	if plan == nil || builder == nil || !plan.pointAxis.Available() || !plan.pointDenominator.Available() || len(plan.pointKeys) == 0 || len(rows) == 0 || len(rows) > len(plan.pointKeys) || !plan.pointWrite.Available() {
 		return snapshot.Axis[composition.Key, carrier.PointState]{}, false
 	}
 	err := PublishColumn(plan.pointWrite, builder, snapshot.Content[composition.Key, carrier.PointState]{
 		Rows:        rows,
 		Denominator: plan.pointDenominator,
-		Members:     plan.pointMembers,
+		Members:     plan.pointKeys,
 	})
 	return plan.pointAxis, err == nil
 }
@@ -129,14 +194,22 @@ func (publication *solvedPublication) writePoint(epoch *executorEpoch, point int
 }
 
 func (publication *solvedPublication) pointKey(epoch *executorEpoch, point int) (composition.Key, bool) {
-	if publication == nil || epoch == nil || epoch.runtime == nil || epoch.runtime.publication != publication.plan || publication.plan == nil || !publication.plan.pointAxis.Available() || point < 0 || point >= len(publication.plan.pointKeys) {
+	if publication == nil || epoch == nil || epoch.runtime == nil || epoch.runtime.publication != publication.plan || publication.plan == nil || !publication.plan.pointAxis.Available() || point < 0 || point >= len(epoch.points) {
 		return composition.Key{}, false
 	}
-	key := publication.plan.pointKeys[point]
+	keyIndex := point
+	if !epoch.runtime.artifactBacked {
+		_, pointIndex, _, pointOK := epoch.runtime.graphPointAtState(point)
+		if !pointOK || pointIndex < 0 || pointIndex >= len(publication.plan.pointKeys) {
+			return composition.Key{}, false
+		}
+		keyIndex = pointIndex
+	}
+	if keyIndex < 0 || keyIndex >= len(publication.plan.pointKeys) {
+		return composition.Key{}, false
+	}
+	key := publication.plan.pointKeys[keyIndex]
 	if !key.Available() {
-		return composition.Key{}, false
-	}
-	if indexed, ok := publication.plan.pointIndex[key]; !ok || indexed != point {
 		return composition.Key{}, false
 	}
 	_, status := snapshot.ReadOverlay(&publication.builder, publication.pointAxis, key)

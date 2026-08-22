@@ -10,11 +10,10 @@ import (
 // typeauthority exactly once. ClassSet keeps only its Pack carrier after this
 // call; no runtime reflection graph or mutable bridge points back into Static.
 func (s *ClassSet) sealRuntime() (*typeauthority.Runtime, error) {
-	if s == nil || s.authority == nil || s.authority.types == nil {
+	if s == nil || s.types == nil {
 		return nil, errors.New("static: Runtime seal source unavailable")
 	}
 	inputs := make([]typeauthority.RuntimeInput, 0, len(s.rows))
-	inputByClass := make(map[uint32]typeauthority.RuntimeInput, len(s.rows))
 	classByInput := make([]uint32, 0, len(s.rows))
 	for index := 1; index < len(s.rows); index++ {
 		row := s.rows[index]
@@ -23,11 +22,10 @@ func (s *ClassSet) sealRuntime() (*typeauthority.Runtime, error) {
 		}
 		input := row.input
 		inputs = append(inputs, input)
-		inputByClass[uint32(index)] = input
 		classByInput = append(classByInput, uint32(index))
 	}
 
-	runtime, mapped, err := typeauthority.SealRuntime(s.authority.types, inputs)
+	runtime, mapped, err := typeauthority.SealRuntime(s.types, inputs)
 	if err != nil {
 		return nil, err
 	}

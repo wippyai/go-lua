@@ -36,6 +36,24 @@ type preparationState struct {
 	used          bool
 }
 
+// installStructuralPaths installs the parent-issued semantic path view used
+// by final route rows. Paths are parallel to the Source family denominators;
+// zero entries are rejected when a route later requires that role.
+func (r *Result) installStructuralPaths(paths *semanticpath.CausalPaths) bool {
+	if r == nil || paths == nil || r.structuralPaths != nil || !paths.Matches(r.sourceID, r.flowID, r.staticID, r.moduleID) {
+		return false
+	}
+	// The certificate already checked the exact Source family denominator.
+	// Causal's denominator must agree before it retains the opaque projection.
+	for family := keyspace.Family(1); family < keyspace.FamilyCount; family++ {
+		if int(r.index.familyCounts[family])+1 == 0 {
+			return false
+		}
+	}
+	r.structuralPaths = paths
+	return true
+}
+
 // PrepareRoutePlanWithStructuralPaths is Flow's production route transaction.
 // The structural term path plane was sealed immediately after Source commit;
 // Causal installs its immutable view before it emits or binds any final route.
@@ -155,9 +173,8 @@ func finalizePrepared(state *sealState, plan *routeplan.Plan, recur *recurrence.
 		return nil, err
 	}
 	// The nested hierarchy is a second one-shot recurrence certificate. It is
-	// deliberately consumed before the component directory closes; publication
-	// of semantic Site/Region rows is deferred until Flow has issued every
-	// structural path, never reconstructed from the final Causal rows.
+	// deliberately consumed before the component directory closes; WTO
+	// publication waits until Flow has issued every structural path.
 	hierarchy, ok := binding.CompleteAndTakeHierarchy(plan)
 	if !ok || hierarchy.Count() == 0 {
 		return nil, errors.New("program/flow/causal: nested hierarchy binding was not consumed exactly once")
@@ -187,9 +204,6 @@ func finalizePrepared(state *sealState, plan *routeplan.Plan, recur *recurrence.
 	}
 	if err := state.pub.result.finalizeLocalWTO(); err != nil {
 		return nil, err
-	}
-	if !state.pub.result.buildLocal() {
-		return nil, errors.New("program/flow/causal: local recurrence projection is malformed")
 	}
 	return state.pub.result, nil
 }

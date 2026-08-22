@@ -5,23 +5,28 @@ import (
 	"github.com/wippyai/go-lua/analysis/identity"
 	declschema "github.com/wippyai/go-lua/analysis/schema"
 	schemadiag "github.com/wippyai/go-lua/analysis/schema/diagnostic"
+	"github.com/wippyai/go-lua/analysis/schema/executioncontext"
 	"github.com/wippyai/go-lua/analysis/schema/structure"
 	"github.com/wippyai/go-lua/analysis/snapshot"
 	valuedomain "github.com/wippyai/go-lua/domain/value"
 )
 
 type pointKey struct {
-	mount, point identity.ContentID
+	mount, point, context identity.ContentID
 }
 
 // ObservationKey is one Snapshot row address for a mounted evidence point.
 type ObservationKey struct {
 	Mount, Point, Key identity.ContentID
+	// Context is the exact execution Context that owns Key. It is part of the
+	// canonical observation address and is never inferred by a consumer.
+	Context identity.ContentID
 }
 
 // GuardSubject is one branch-condition site the polarity collector reads.
 type GuardSubject struct {
 	ID, TrueFindingID, FalseFindingID, Mount identity.ContentID
+	Context                                  executioncontext.Context
 	Location                                 DiagnosticLocation
 	ValueIndex                               uint32
 	Points                                   []identity.ContentID
@@ -121,19 +126,23 @@ func CollectGuardPolarity(
 	}
 	expected := make(map[pointKey]struct{})
 	for _, subject := range subjects {
-		if !subject.ID.Available() || !subject.Mount.Available() || !subject.Location.Available() || len(subject.Points) == 0 {
+		if !subject.ID.Available() || !subject.Mount.Available() || !subject.Context.Available() || !subject.Location.Available() || len(subject.Points) == 0 {
 			return false
 		}
 		for _, point := range subject.Points {
 			if !point.Available() {
 				return false
 			}
-			expected[pointKey{mount: subject.Mount, point: point}] = struct{}{}
+			expected[pointKey{mount: subject.Mount, point: point, context: subject.Context.ID()}] = struct{}{}
 		}
 	}
 	observations := make(map[pointKey]valuedomain.ValueSummaryObservation, len(expected))
 	for _, row := range selected {
-		key := pointKey{mount: row.Mount, point: row.Point}
+		if !row.Context.Available() {
+			report.SetCollectionFailure(DiagnosticCollectionSubjectQueryAbsent)
+			return true
+		}
+		key := pointKey{mount: row.Mount, point: row.Point, context: row.Context}
 		if _, want := expected[key]; !want {
 			report.SetCollectionFailure(DiagnosticCollectionSubjectQueryAbsent)
 			return true
@@ -165,7 +174,7 @@ func CollectGuardPolarity(
 		truths := make([]valuedomain.Truth, 0, len(subject.Points))
 		invalidEvidence := false
 		for _, point := range subject.Points {
-			observation, observed := observations[pointKey{mount: subject.Mount, point: point}]
+			observation, observed := observations[pointKey{mount: subject.Mount, point: point, context: subject.Context.ID()}]
 			if !observed {
 				report.SetCollectionFailure(DiagnosticCollectionSubjectQueryAbsent)
 				invalidEvidence = true
@@ -287,15 +296,16 @@ func CollectReport(
 	published *snapshot.Snapshot,
 	observationPlan snapshot.QueryPlan[identity.ContentID, engine.Answer],
 	selects ChannelSelectInput,
+	contexts executioncontext.Directory,
 ) bool {
-	if report == nil {
+	if report == nil || !contexts.Available() {
 		return false
 	}
-	guards, guardsOK := GuardSubjects(branches)
+	guards, guardsOK := GuardSubjects(branches, contexts)
 	if !guardsOK {
 		return false
 	}
-	subjects, subjectsOK := conformanceSubjects(conformances)
+	subjects, subjectsOK := conformanceSubjects(conformances, contexts)
 	if !subjectsOK {
 		return false
 	}
@@ -314,7 +324,10 @@ func CollectReport(
 }
 
 // GuardSubjects projects sealed branch rows into polarity subjects.
-func GuardSubjects(rows []Observation) ([]GuardSubject, bool) {
+func GuardSubjects(rows []Observation, contexts executioncontext.Directory) ([]GuardSubject, bool) {
+	if !contexts.Available() {
+		return nil, false
+	}
 	subjects := make([]GuardSubject, 0, len(rows))
 	for _, row := range rows {
 		if row.Kind != structure.DiagnosticObservationBranchCondition {
@@ -329,16 +342,25 @@ func GuardSubjects(rows []Observation) ([]GuardSubject, bool) {
 		if !locationOK || !trueOK || !falseOK {
 			return nil, false
 		}
-		subjects = append(subjects, GuardSubject{
-			ID: row.ID, TrueFindingID: trueID, FalseFindingID: falseID,
-			Mount: row.Mount, Location: location, ValueIndex: row.ValueIndex,
-			Points: append([]identity.ContentID(nil), row.Points...),
-		})
+		eligible, eligibleOK := observationContexts(contexts, row.Mount)
+		if !eligibleOK {
+			return nil, false
+		}
+		for _, context := range eligible {
+			subjects = append(subjects, GuardSubject{
+				ID: row.ID, TrueFindingID: trueID, FalseFindingID: falseID,
+				Mount: row.Mount, Context: context, Location: location, ValueIndex: row.ValueIndex,
+				Points: append([]identity.ContentID(nil), row.Points...),
+			})
+		}
 	}
 	return subjects, true
 }
 
-func conformanceSubjects(rows []Observation) ([]ConformanceSubject, bool) {
+func conformanceSubjects(rows []Observation, contexts executioncontext.Directory) ([]ConformanceSubject, bool) {
+	if !contexts.Available() {
+		return nil, false
+	}
 	subjects := make([]ConformanceSubject, 0, len(rows))
 	for _, row := range rows {
 		if row.Kind != structure.DiagnosticObservationTypeConformance {
@@ -352,12 +374,19 @@ func conformanceSubjects(rows []Observation) ([]ConformanceSubject, bool) {
 		if !locationOK || !idOK {
 			return nil, false
 		}
-		subjects = append(subjects, ConformanceSubject{
-			ID: row.ID, FindingID: id, Mount: row.Mount,
-			Location: location, Site: row.Site, Actual: row.Actual,
-			DeclaredMay: row.DeclaredMay, Target: row.Target, Member: row.Conformance.Member,
-			Points: conformanceProducerPoints(row.Conformance.Producers),
-		})
+		eligible, eligibleOK := observationContexts(contexts, row.Mount)
+		if !eligibleOK {
+			return nil, false
+		}
+		for _, context := range eligible {
+			subjects = append(subjects, ConformanceSubject{
+				ID: row.ID, FindingID: id, Mount: row.Mount, Context: context,
+				Location: location, Site: row.Site, Actual: row.Actual,
+				DeclaredMay: row.DeclaredMay, Target: row.Target, Member: row.Conformance.Member,
+					Subject: row.Conformance.Subject,
+				Points: conformanceProducerPoints(row.Conformance.Producers),
+			})
+		}
 	}
 	return subjects, true
 }

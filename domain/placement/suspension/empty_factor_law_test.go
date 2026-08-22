@@ -11,6 +11,7 @@ import (
 	targetcompiler "github.com/wippyai/go-lua/analysis/program/target/compiler"
 	"github.com/wippyai/go-lua/analysis/program/target/declaration"
 	"github.com/wippyai/go-lua/analysis/schema/ingress"
+	"github.com/wippyai/go-lua/analysis/schema/programmount"
 	"github.com/wippyai/go-lua/analysis/schema/vocabulary"
 	"github.com/wippyai/go-lua/domain/composite"
 	heapdomain "github.com/wippyai/go-lua/domain/heap"
@@ -42,14 +43,14 @@ func TestEvidenceEmptyHeapKeepsZeroWidthFactorAndSummary(t *testing.T) {
 	}
 	shard, shardOK := linked.Project().Mounts().At(0)
 	module, moduleOK := linked.Project().ModuleKey(shard)
-	programID, programIDOK := linked.Project().Mounts().ProgramID(shard)
+	_, programIDOK := linked.Project().Mounts().ProgramID(shard)
 	structural, structuralOK := composite.StructureVocabulary(receipt)
 	snapshot, lowered := ingress.Lower(artifact, structural)
-	mount, mountOK := heapdomain.NewArtifactMount(snapshot, module, programID)
+	mount, mountOK := programmount.MountedArtifactFromSnapshot(snapshot, module)
 	if !shardOK || !moduleOK || !programIDOK || !structuralOK || !lowered || !mountOK {
 		t.Fatalf("empty suspension evidence mount shard=%t module=%t program=%t structural=%t lowered=%t mount=%t", shardOK, moduleOK, programIDOK, structuralOK, lowered, mountOK)
 	}
-	heapSchema, heapFailure := heapdomain.SealWithArtifacts(linked, []heapdomain.ArtifactMount{mount})
+	heapSchema, heapFailure := heapdomain.SealWithArtifacts(linked, []programmount.MountedArtifact{mount})
 	placementSchema, placementOK := placementdomain.NewSchema(heapSchema)
 	if heapFailure != heapdomain.SealFailureNone || !placementOK || placementSchema.KeyCount() != 0 {
 		t.Fatalf("empty suspension evidence authority heap=%v placement=%t keys=%d", heapFailure, placementOK, placementSchema.KeyCount())

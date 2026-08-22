@@ -4,7 +4,6 @@ import (
 	"testing"
 
 	"github.com/wippyai/go-lua/analysis/engine/internal/carrier"
-	"github.com/wippyai/go-lua/analysis/engine/internal/facts/change"
 	"github.com/wippyai/go-lua/analysis/engine/internal/schedule"
 )
 
@@ -52,11 +51,11 @@ func TestAcyclicRefoldBelowItsPredecessorIsClassifiedAndRecordedAsDescent(t *tes
 		t.Fatalf("point %d refolded below its published state classified order=%d, want publicationMayDescend", pointIndex, order)
 	}
 
-	published, publishable := epoch.work.PublishPointRHS(base)
+	published, changes, publishable := epoch.work.ReplacePointWithRHS(current, base)
 	if !publishable {
 		t.Fatalf("point %d descending RHS was not publishable", pointIndex)
 	}
-	changed, publishedOK := epoch.publishAcyclicExact(pointIndex, current, published, order, change.Classified())
+	changed, publishedOK := epoch.publishAcyclicExact(pointIndex, current, published, order, changes)
 	if !publishedOK || !changed {
 		t.Fatalf("point %d descending publication changed=%t ok=%t", pointIndex, changed, publishedOK)
 	}

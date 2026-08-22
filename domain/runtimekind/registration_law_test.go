@@ -58,6 +58,9 @@ func TestSealedVocabularyIsTheClosedRuntimeKindSet(t *testing.T) {
 		if !entry.Accepted() {
 			t.Fatalf("sealed member %q is held back from the projection its vocabulary feeds", entry.Key())
 		}
+		if entry.Spelling() != kind.Spelling() || string(entry.Key()) != kind.Spelling() {
+			t.Fatalf("sealed member %d spells key=%q rendering=%q, owner declared %q", kind, entry.Key(), entry.Spelling(), kind.Spelling())
+		}
 	}
 }
 

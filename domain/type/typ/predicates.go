@@ -133,7 +133,7 @@ func (w *predicateWork) publish() {
 const predicatePublished uint32 = 1 << 8
 
 func loadPredicate(t Type, which predicateKind) (bool, bool) {
-	properties := columnProperties(t)
+	properties := nodeProperties(t)
 	if properties == nil {
 		return false, false
 	}
@@ -145,7 +145,7 @@ func loadPredicate(t Type, which predicateKind) (bool, bool) {
 }
 
 func storePredicate(t Type, which predicateKind, value bool) {
-	properties := columnProperties(t)
+	properties := nodeProperties(t)
 	if properties == nil {
 		return
 	}

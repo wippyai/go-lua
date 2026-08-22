@@ -19,6 +19,7 @@ package rule
 import (
 	"github.com/wippyai/go-lua/analysis/identity"
 	"github.com/wippyai/go-lua/analysis/schema"
+	issuanceschema "github.com/wippyai/go-lua/analysis/schema/issuance"
 	"github.com/wippyai/go-lua/analysis/schema/structure"
 	"github.com/wippyai/go-lua/analysis/schema/vocabulary"
 	"github.com/wippyai/go-lua/internal/framing"
@@ -80,7 +81,9 @@ const (
 // Lane is the closed admission lane of one rule. Mounted rules enter through a
 // reusable Program artifact row. Activation is the mounted structural lane
 // whose members are attached by their own owner rather than a generic graph
-// row. Link rules are Link-owned and never appear in an artifact.
+// row. Link rules are Link-owned and execute at the bootstrap point.
+// Mounted-point rules are artifact-independent closures instantiated once at
+// every mounted Point; they declare no artifact issuance row of their own.
 type Lane uint8
 
 const (
@@ -88,9 +91,10 @@ const (
 	LaneMounted
 	LaneActivation
 	LaneLink
+	LaneMountedPoint
 )
 
-func (lane Lane) Available() bool { return lane >= LaneMounted && lane <= LaneLink }
+func (lane Lane) Available() bool { return lane >= LaneMounted && lane <= LaneMountedPoint }
 
 // Mounted reports whether the lane is materialized from an artifact row.
 func (lane Lane) Mounted() bool { return lane == LaneMounted || lane == LaneActivation }
@@ -134,30 +138,21 @@ type Finalization[A, H any] struct {
 	Authorities A
 }
 
-// LinkCatalog is the Link-owned occurrence inventory a Link-lane rule
-// publishes. It is the neutral shape a plan needs to enumerate the occurrences
-// it must admit.
-type LinkCatalog interface {
+// OccurrenceCatalog is the owner-issued inventory for a rule lane whose
+// occurrences are not issued by authored program rows. It is the neutral shape
+// construction uses to enumerate the occurrences it must admit.
+type OccurrenceCatalog interface {
 	Count() int
 	IDAt(index int) (identity.ContentID, bool)
 }
 
-// Issuance is one program-occurrence subscription: the occurrence family whose
-// compiled rows issue an occurrence of this rule, the operand shape it requires
-// those rows to carry, the placement form that issuance takes, the operand
-// polarity it reads, and the execution cut it is placed at. Every term names a
-// member of the structural vocabulary, so a subscription is declared data and
-// resolves against the sealed table.
-//
-// What a form does with the program's geometry stays with the compiler that
-// places it; what this record states is which rows issue this rule and in what
-// shape, which is the mapping that used to be a switch over a foreign role
-// catalog.
+// Issuance is one program-occurrence subscription. Occurrence names a sealed
+// family predicate, Requirement names its admitted selection ABI, and Form
+// names one closed geometry/stage/input program. Inputs and stages are not
+// independently combinable here: impossible tuples are unrepresentable.
 type Issuance struct {
 	Occurrence schema.Key
 	Form       schema.Key
-	Input      schema.Key
-	Stage      schema.Key
 	// Requirement is the operand shape this rule consumes at this issuance: the
 	// structural admissibility a compiled row must carry for the placement to be
 	// one the owner can seal an operand for. It is the shared denominator of
@@ -165,16 +160,10 @@ type Issuance struct {
 	// its occurrence family names the unrestricted member rather than leaving
 	// the term absent.
 	Requirement schema.Key
-	// Code, when declared, narrows the subscription to occurrence rows carrying
-	// this payload code. It is the one payload predicate the placement needs and
-	// it is exact: a row whose code differs issues nothing.
-	Code    uint64
-	HasCode bool
 }
 
 func (issuance Issuance) Available() bool {
 	return issuance.Occurrence.Available() && issuance.Form.Available() &&
-		issuance.Input.Available() && issuance.Stage.Available() &&
 		issuance.Requirement.Available()
 }
 
@@ -434,19 +423,7 @@ func (template *Template) EntryContent(content *framing.Writer) error {
 		if err := content.String(string(issuance.Form)); err != nil {
 			return err
 		}
-		if err := content.String(string(issuance.Input)); err != nil {
-			return err
-		}
-		if err := content.String(string(issuance.Stage)); err != nil {
-			return err
-		}
 		if err := content.String(string(issuance.Requirement)); err != nil {
-			return err
-		}
-		if err := content.Bool(issuance.HasCode); err != nil {
-			return err
-		}
-		if err := content.Uint(issuance.Code); err != nil {
 			return err
 		}
 	}
@@ -536,34 +513,38 @@ func (contribution surface) Seal(view schema.View, sealed schema.Sealed) schema.
 	return schema.SealFailure{}
 }
 
-// sealIssuance resolves one subscription's four vocabulary references. Each
-// names a member of its own category, so a term that names another category is
-// a member of the wrong vocabulary rather than an unresolved one, and the
-// structural surface states that difference once for every surface above it.
+// sealIssuance resolves the complete subscription against the issuance
+// machine. It also proves that the chosen requirement publishes every output
+// the chosen form reads, preventing a downstream form from reconstructing a
+// selection the admission program did not issue.
 func sealIssuance(entry schema.EntryID, issuance Issuance, sealed schema.Sealed) schema.SealFailure {
-	references := [...]struct {
-		key      schema.Key
-		category structure.Category
-	}{
-		{issuance.Occurrence, structure.CategoryOccurrenceKind},
-		{issuance.Form, structure.CategoryIssuanceForm},
-		{issuance.Input, structure.CategoryIssuanceInput},
-		{issuance.Stage, structure.CategoryIssuanceStage},
+	view, viewOK := sealed.Surface(schema.SurfaceKindIssuance)
+	table, tableOK := issuanceschema.NewTable(view)
+	if !viewOK || !tableOK {
+		return schema.SurfaceLawFailure(schema.SurfaceKindRule, entry, LawIssuanceResolves, schema.DispositionIncomplete)
 	}
-	for _, reference := range references {
-		if _, disposition := structure.Resolve(sealed, reference.key, reference.category); disposition != schema.DispositionAccepted {
-			return schema.SurfaceLawFailure(schema.SurfaceKindRule, entry, LawIssuanceResolves, disposition)
-		}
-	}
-	// The operand shape is stated apart from the four placement terms. Those
-	// four say where an occurrence lands; this one says which rows are the
-	// rule's to begin with, and an absent one is the silence that lets a
-	// placement set outgrow the operands its owner seals.
-	if !issuance.Requirement.Available() {
+	if !issuance.Available() {
 		return schema.SurfaceLawFailure(schema.SurfaceKindRule, entry, LawIssuanceRequirementDeclared, schema.DispositionIncomplete)
 	}
-	if _, disposition := structure.Resolve(sealed, issuance.Requirement, structure.CategoryIssuanceRequirement); disposition != schema.DispositionAccepted {
-		return schema.SurfaceLawFailure(schema.SurfaceKindRule, entry, LawIssuanceRequirementResolves, disposition)
+	if _, ok := table.Entry(issuance.Occurrence, issuanceschema.KindFamily); !ok {
+		return schema.SurfaceLawFailure(schema.SurfaceKindRule, entry, LawIssuanceResolves, schema.DispositionMalformed)
+	}
+	form, formOK := table.Entry(issuance.Form, issuanceschema.KindForm)
+	requirement, requirementOK := table.Entry(issuance.Requirement, issuanceschema.KindRequirement)
+	if !formOK {
+		return schema.SurfaceLawFailure(schema.SurfaceKindRule, entry, LawIssuanceResolves, schema.DispositionMalformed)
+	}
+	if !requirementOK {
+		return schema.SurfaceLawFailure(schema.SurfaceKindRule, entry, LawIssuanceRequirementResolves, schema.DispositionMalformed)
+	}
+	published := make(map[schema.Key]struct{}, len(requirement.Outputs()))
+	for _, output := range requirement.Outputs() {
+		published[output.Output] = struct{}{}
+	}
+	for _, required := range form.Requires() {
+		if _, ok := published[required]; !ok {
+			return schema.SurfaceLawFailure(schema.SurfaceKindRule, entry, LawIssuanceRequirementResolves, schema.DispositionIncomplete)
+		}
 	}
 	return schema.SealFailure{}
 }

@@ -27,31 +27,45 @@ import (
 // preceding layout must never be reused as this schema.
 const contentIDCodecVersion = 26
 
-// ContentID derives the SHA-256 identity of the complete observable sealed
+// ContentID is the SHA-256 identity of the complete observable sealed
 // contract. It encodes no authoring references, Go object identities, lookup
 // indices, capacities, or other derived implementation caches.
-func (c *Contract) ContentID() (id identity.ContentID) {
+//
+// The identity is derived once, by sealContentID, over the same immutable read
+// surface every consumer sees, and is carried as a sealed identity column. A
+// sealed Contract cannot change, so reading the column is the whole answer.
+func (c *Contract) ContentID() identity.ContentID {
+	if c == nil {
+		return identity.ContentID{}
+	}
+	return c.contractContentID
+}
+
+// sealContentID derives the whole-contract identity during finalization. It
+// runs after every table the canonical encoding reads is final, and its answer
+// becomes the contract's sealed identity column.
+func (c *Contract) sealContentID() (id identity.ContentID, err error) {
 	// Contract is intentionally unconstructable outside this package, but this
 	// boundary must still fail closed for a partially assembled internal value.
 	// The recovery also keeps a future decoder bug from publishing a digest for
 	// a panicking malformed table.
 	defer func() {
 		if recover() != nil {
-			id = identity.ContentID{}
+			id, err = identity.ContentID{}, errors.New("target: malformed contract table")
 		}
 	}()
 	opaque, opaqueOK := c.Operations.Opaque()
 	if c == nil || !c.sealed || !opaqueOK || uint64(opaque) != uint64(c.Operations.OperationCount()) {
-		return identity.ContentID{}
+		return identity.ContentID{}, errors.New("target: unsealed or malformed operation core")
 	}
 	hash := sha256.New()
 	if err := encodeContractCanonical(hash, c); err != nil {
-		return identity.ContentID{}
+		return identity.ContentID{}, err
 	}
 	if sum := hash.Sum(id[:0]); len(sum) != len(id) {
-		return identity.ContentID{}
+		return identity.ContentID{}, errors.New("target: malformed contract digest width")
 	}
-	return id
+	return id, nil
 }
 
 // Record kinds are part of target-contract/v1. They are intentionally local

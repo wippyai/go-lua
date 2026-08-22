@@ -11,19 +11,19 @@ import (
 // schemaFormat is the Placement-family discriminator. Placement has no
 // independent coordinate directory: its cold identity is derived solely from
 // the Heap schema it projects.
-const schemaFormat uint64 = 0x706c6163656d2d31 // "placem-1"
+const schemaFormat uint64 = 0x706c6163656d2d32 // "placem-2"
 
 // Schema is Placement's immutable cold authority. It wraps exactly one valid
-// Heap schema and projects its dense root coordinates without issuing a
-// second index or retaining a copy of Heap's rows.
+// Heap schema and projects only Heap's dense allocation-root coordinates.
+// Boot roots are not allocation decisions and therefore have no Placement
+// cell.
 type Schema struct {
 	heap heap.Schema
 	id   identity.ContentID
 }
 
 // NewSchema derives Placement's cold authority from one already sealed Heap
-// authority. The Heap schema remains the sole source of coordinate order and
-// root identity.
+// authority. Heap remains the sole source of allocation order and identity.
 func NewSchema(source heap.Schema) (Schema, bool) {
 	if !source.Valid() {
 		return Schema{}, false
@@ -73,23 +73,22 @@ func (schema Schema) Heap() heap.Schema {
 	return schema.heap
 }
 
-// KeyCount returns Heap's dense root-coordinate count. Placement does not
-// maintain a second coordinate index.
+// KeyCount returns Heap's dense allocation-root count. Placement does not
+// maintain a second coordinate index and never allocates inert Boot cells.
 func (schema Schema) KeyCount() int {
 	if !schema.valid() {
 		return 0
 	}
-	return schema.heap.KeyCount()
+	return schema.heap.AllocationKeyCount()
 }
 
-// DenseKeyCount names the same Heap-aligned coordinate count for callers that
-// also use Placement's allocation-only projection.
+// DenseKeyCount names the same allocation-root coordinate count.
 func (schema Schema) DenseKeyCount() int { return schema.KeyCount() }
 
-// KeyAt delegates dense coordinate issuance to the wrapped Heap schema.
+// KeyAt delegates dense allocation-coordinate issuance to Heap.
 func (schema Schema) KeyAt(index int) (heap.Key, bool) {
 	if !schema.valid() {
 		return heap.Key{}, false
 	}
-	return schema.heap.KeyAt(index)
+	return schema.heap.AllocationKeyAt(index)
 }

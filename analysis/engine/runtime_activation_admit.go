@@ -5,10 +5,13 @@ import "github.com/wippyai/go-lua/analysis/identity"
 // MountedActivationCandidate is one sealed body route the activation
 // occurrence must instantiate.
 type MountedActivationCandidate struct {
-	Target   identity.SemanticKey
-	Endpoint identity.SemanticKey
-	Mount    identity.ContentID
-	Body     identity.ContentID
+	Target        identity.SemanticKey
+	Endpoint      identity.SemanticKey
+	Mount         identity.ContentID
+	Body          identity.ContentID
+	TransitionID  identity.ContentID
+	FromContextID identity.ContentID
+	ToContextID   identity.ContentID
 }
 
 // MountedActivationAdmit is the declared issuance of one mounted activation

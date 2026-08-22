@@ -87,10 +87,10 @@ func (rule *EvidenceHotRule) anchorCoordinate(candidate operand) (uint64, bool) 
 			}
 		}
 	}
-	if schema.CoordinateCount() == 0 {
-		return 0, false
-	}
-	return 0, true
+	// The selected-read predecessor is structural, but it still needs an
+	// authenticated coordinate. A zero coordinate is not a legal synthetic
+	// anchor for an operand with no source join.
+	return 0, false
 }
 
 func (rule *EvidenceHotRule) operandContent(candidate operand) (operand, [32]byte, bool) {
@@ -153,7 +153,7 @@ func (rule *EvidenceHotRule) locateEvidence(context engine.SelectorContext, cand
 		return false
 	}
 	if canonical.key.Kind() == heapdomain.RootAllocation {
-		index, indexOK := rule.owner.Schema().Heap().KeyIndex(canonical.key)
+		index, indexOK := rule.owner.Schema().Heap().AllocationKeyIndex(canonical.key)
 		if !indexOK || index < 0 {
 			return false
 		}
@@ -239,11 +239,11 @@ func (rule *EvidenceHotRule) fold(frame engine.Frame[Evidence, operand]) engine.
 			return EvidenceMissing, false
 		}
 		current, present, available := prior.At(0)
-		if !available || present && !current.Valid() {
+		if !available || !present || !current.Valid() || current == EvidenceMissing {
+			// Missing evidence is not an identity supplied by the runtime.
+			// The selected predecessor must be present and explicit before
+			// this rule can refine it with the authenticated liveness fact.
 			return EvidenceMissing, false
-		}
-		if !present {
-			current = EvidenceMissing
 		}
 		want, wantOK := suspensionEvidenceForState(canonical.state)
 		if !wantOK {
@@ -254,7 +254,7 @@ func (rule *EvidenceHotRule) fold(frame engine.Frame[Evidence, operand]) engine.
 			// this is the one non-error path that intentionally publishes top.
 			want = EvidenceUnknown
 		}
-		return current.Join(want), true
+		return current.JoinChecked(want)
 	})
 }
 
@@ -264,7 +264,7 @@ func (rule *EvidenceHotRule) transferPlan(frame engine.Frame[Evidence, operand],
 		return routePlan{}, false
 	}
 	if canonical.key.Kind() == heapdomain.RootAllocation {
-		index, indexOK := rule.owner.Schema().Heap().KeyIndex(canonical.key)
+		index, indexOK := rule.owner.Schema().Heap().AllocationKeyIndex(canonical.key)
 		if !indexOK || index < 0 || selectedCount != 0 {
 			return routePlan{}, false
 		}

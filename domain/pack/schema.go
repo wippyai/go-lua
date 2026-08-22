@@ -3,10 +3,9 @@ package pack
 import (
 	"github.com/wippyai/go-lua/analysis/identity"
 	"github.com/wippyai/go-lua/analysis/lattice"
-	flowkind "github.com/wippyai/go-lua/analysis/program/flow/kind"
 	"github.com/wippyai/go-lua/analysis/program/link"
 	"github.com/wippyai/go-lua/analysis/program/target/vocabulary"
-	"github.com/wippyai/go-lua/analysis/schema/program"
+	"github.com/wippyai/go-lua/domain/static"
 )
 
 // Root and Values are Pack-private selectors over direct Program topology.
@@ -30,11 +29,26 @@ func (values Values) valid() bool {
 		return false
 	}
 	row := values.schema.values[values.index]
-	if !row.moduleKey.Available() || !row.occurrenceID.Available() || !row.port.valid() || row.port.owner != values.schema.owner || uint64(row.root) >= uint64(len(values.schema.roots)) {
+	if !row.moduleKey.Available() || !row.occurrenceID.Available() || uint64(row.root) >= uint64(len(values.schema.roots)) {
 		return false
 	}
 	root := values.schema.roots[row.root]
-	return root.kind == rootValues && root.sourceIndex == values.index && root.port == row.port && root.id == mountedArtifactRootID(rootValues, row.moduleKey, row.occurrenceID)
+	if root.kind != rootValues || root.sourceIndex != values.index || !root.port.valid() || root.port.owner != values.schema.owner || root.id != mountedArtifactRootID(rootValues, row.moduleKey, row.occurrenceID) {
+		return false
+	}
+	_, tailOK := values.schema.tailPort(row.tailRoot)
+	return row.hasTail && tailOK || !row.hasTail && row.tailRoot == 0
+}
+
+func (state *schema) tailPort(rootIndex uint32) (Port, bool) {
+	if state == nil || uint64(rootIndex) >= uint64(len(state.roots)) {
+		return Port{}, false
+	}
+	root := state.roots[rootIndex]
+	if root.kind != rootTail || !root.port.valid() || root.port.owner != state.owner || uint64(root.sourceIndex) >= uint64(len(state.tails)) || state.tails[root.sourceIndex].root != rootIndex {
+		return Port{}, false
+	}
+	return root.port, true
 }
 
 type rootKind uint8
@@ -44,12 +58,6 @@ const (
 	rootValues
 	rootCall
 	rootTail
-	// The following roots are the small P0 boundary plane.  They are still
-	// Pack roots (and consequently carry exactly one whole-Pack equation); the
-	// source terms which identify them remain cold in the descriptor rows.
-	rootBind
-	rootBody
-	rootOutcome
 )
 
 type rootRow struct {
@@ -63,9 +71,9 @@ type valuesRow struct {
 	root         uint32
 	moduleKey    identity.ContentID
 	occurrenceID identity.ContentID
-	port         Port
 	fixed        []Endpoint
-	tail         Port
+	tailRoot     uint32
+	hasTail      bool
 }
 
 type inputSelectorKey struct {
@@ -74,80 +82,21 @@ type inputSelectorKey struct {
 }
 
 type callRow struct {
-	root         uint32
-	mountedID    identity.ContentID
-	occurrenceID identity.ContentID
-	valuesID     identity.ContentID
-	receiverID   identity.ContentID
-	typesID      identity.ContentID
-	form         programschema.CallForm
-	moduleKey    identity.ContentID
-	formalID     identity.ContentID
-	typeFormal   FormalCallTypeArguments
-	resultTail   uint32
-	hasResult    bool
-	actualTailID identity.ContentID
-	tailContext  identity.ContentID
-	port         Port
-	fixed        []Endpoint
-	tail         Port
+	root          uint32
+	occurrenceID  identity.ContentID
+	moduleKey     identity.ContentID
+	formalID      identity.ContentID
+	typeArguments static.TypeArgumentSequence
+	tailRoot      uint32
+	hasTail       bool
+	fixed         []Endpoint
 }
 
 type tailRow struct {
 	root      uint32
 	moduleKey identity.ContentID
 	valueID   identity.ContentID
-	port      Port
 	kind      TailProducerKind
-	sealed    bool
-}
-
-// bindRow is the exact Source.BindOrder/Flow Bind occurrence descriptor.  A
-// bind does not own Cell values; it only names the existing Cell endpoints
-// which a Pack adjustment may expose.  The Value source remains a separate
-// root and Value owns the Cell transfer itself.
-type bindRow struct {
-	root      uint32
-	moduleKey identity.ContentID
-	bindID    identity.ContentID
-	bodyID    identity.ContentID
-	values    Values
-	port      Port
-	cells     []Endpoint
-}
-
-// bodyRow is one executable Program Body.  It deliberately has no caller or
-// Application dimension: Call's Body capability is the only interprocedural
-// selector.  Formal Cells and the Flow entry port are cold descriptors used
-// by the body-boundary rules.
-type bodyRow struct {
-	root          uint32
-	bodyID        identity.ContentID
-	context       identity.ContentID
-	moduleKey     identity.ContentID
-	port          Port
-	formals       []Endpoint
-	formalIDs     []identity.ContentID
-	normal        uint32
-	returnOutcome uint32
-	hasReturn     bool
-	sealed        bool
-}
-
-// outcomeRow names one Flow Body Outcome. Normal completion has no Values;
-// an explicit return keeps every executable authored Values alternative in
-// order. Outcome is a Flow-owned derived term; Pack stores only the exact
-// occurrence descriptor and the Pack port issued for it.
-type outcomeRow struct {
-	root       uint32
-	bodyIndex  uint32
-	moduleKey  identity.ContentID
-	bodyID     identity.ContentID
-	outcomeID  identity.ContentID
-	kind       flowkind.OutcomeKind
-	valueRoots []uint32
-	port       Port
-	sealed     bool
 }
 
 type schema struct {
@@ -159,34 +108,18 @@ type schema struct {
 	values    []valuesRow
 	calls     []callRow
 	tails     []tailRow
-	binds     []bindRow
-	bodies    []bodyRow
-	outcomes  []outcomeRow
 	// sourceValues is the sealed Pack value column for each source-producing
 	// root. Source and Root remain the canonical descriptors in roots; this
 	// column stores the Value directly and never wraps it in a transport object.
 	sourceValues []Value
-	// sourceOccurrences is the compact mounted Program occurrence inverse
-	// sealed beside sourceValues; no raw Program proof survives publication.
-	// sourceOccurrenceIndex is its direct address, so mounted owners resolve
-	// the existing Source row without rebuilding a directory of their own.
-	sourceOccurrences     []sourceOccurrenceRow
-	sourceOccurrenceIndex map[sourceOccurrenceRef]uint32
 
-	relationIndex map[*relation]uint32
 	// endpointSources is Pack-owned replay data.  The old Boundary values
 	// were a retained Link -> Project -> Program reachability edge; they are
 	// intentionally absent after this seal boundary.
 	endpointSources []SemanticSource
 	endpointIndex   map[SemanticSource]Endpoint
-	// semanticEndpoints is construction-complete mounted substitution data.
-	// Its keys are opaque ModuleKey/semantic IDs, never Shard/Term pairs.
-	semanticEndpoints map[artifactValuesKey]Endpoint
-	artifactValues    map[artifactValuesKey]uint32
-	artifactTails     map[artifactValuesKey]uint32
-	artifactCalls     map[artifactCallKey]uint32
-	artifactBodies    map[artifactBodyKey]uint32
-	artifactOutcomes  map[artifactOutcomeKey]uint32
+	artifactValues  map[artifactValuesKey]uint32
+	artifactCalls   map[artifactCallKey]uint32
 	// inputSelectors is the sealed Target-ABI projection consumed by Effect.
 	// It contains only Pack-owned interpretation templates: neither Target nor
 	// any Link/Boundary handle survives construction.
@@ -246,7 +179,7 @@ func (schema *Schema) Port(values Values) (Port, bool) {
 	if schema == nil || schema.state == nil || !values.valid() || values.schema != schema.state {
 		return Port{}, false
 	}
-	port := schema.state.values[values.index].port
+	port := schema.state.roots[schema.state.values[values.index].root].port
 	return port, port.valid()
 }
 
@@ -260,7 +193,8 @@ func (schema *Schema) OwnsSemanticSource(source SemanticSource) bool {
 		return false
 	}
 	endpoint, ok := schema.state.endpointIndex[source]
-	return ok && endpoint.valid() && endpoint.owner == schema.state.owner
+	issued, issuedOK := schema.state.sourceForEndpoint(endpoint)
+	return ok && issuedOK && issued == source
 }
 
 // ScalarSource projects an exact Pack endpoint to its detached mounted
@@ -271,12 +205,19 @@ func (schema *Schema) ScalarSource(scalar Scalar) (SemanticSource, bool) {
 		return SemanticSource{}, false
 	}
 	endpoint, ok := scalar.Endpoint()
-	if !ok || endpoint.index == 0 || uint64(endpoint.index) > uint64(len(schema.state.endpointSources)) {
+	if !ok {
 		return SemanticSource{}, false
 	}
-	source := schema.state.endpointSources[endpoint.index-1]
-	_, valid := schema.state.endpointIndex[source]
-	return source, valid && source.Available()
+	return schema.state.sourceForEndpoint(endpoint)
+}
+
+func (state *schema) sourceForEndpoint(endpoint Endpoint) (SemanticSource, bool) {
+	if state == nil || !endpoint.valid() || endpoint.owner != state.owner || endpoint.index == 0 || uint64(endpoint.index) > uint64(len(state.endpointSources)) {
+		return SemanticSource{}, false
+	}
+	source := state.endpointSources[endpoint.index-1]
+	indexed, ok := state.endpointIndex[source]
+	return source, ok && source.Available() && indexed == endpoint
 }
 
 func (schema *Schema) relation(root Root) (*relation, bool) {
@@ -398,7 +339,11 @@ func (item SourceItem) row() ([]Endpoint, Port, Port, bool) {
 		}
 		row := item.schema.values[root.sourceIndex]
 		if row.root == item.root.index {
-			return row.fixed, row.port, row.tail, true
+			if !row.hasTail {
+				return row.fixed, root.port, Port{}, true
+			}
+			tail, tailOK := item.schema.tailPort(row.tailRoot)
+			return row.fixed, root.port, tail, tailOK
 		}
 	case rootCall:
 		if uint64(root.sourceIndex) >= uint64(len(item.schema.calls)) {
@@ -406,7 +351,11 @@ func (item SourceItem) row() ([]Endpoint, Port, Port, bool) {
 		}
 		row := item.schema.calls[root.sourceIndex]
 		if row.root == item.root.index {
-			return row.fixed, row.port, row.tail, true
+			if !row.hasTail {
+				return row.fixed, root.port, Port{}, true
+			}
+			tail, tailOK := item.schema.tailPort(row.tailRoot)
+			return row.fixed, root.port, tail, tailOK
 		}
 	}
 	return nil, Port{}, Port{}, false
@@ -435,282 +384,13 @@ func (item SourceItem) Tail() (Port, Offset, bool) {
 	return tail, offset, offsetOK
 }
 
-// RootKind reports the cold occurrence family which issued root.  It is a
-// diagnostic selector only; callers still need the typed descriptor accessors
-// below before constructing a Rule operand.
-type RootKind uint8
-
-const (
-	RootInvalid RootKind = iota
-	RootValues
-	RootCall
-	RootTail
-	RootBind
-	RootBody
-	RootOutcome
-)
-
-func (schema *Schema) RootKind(root Root) (RootKind, bool) {
-	if schema == nil || schema.state == nil || !root.valid() || root.schema != schema.state {
-		return RootInvalid, false
-	}
-	switch schema.state.roots[root.index].kind {
-	case rootValues:
-		return RootValues, true
-	case rootCall:
-		return RootCall, true
-	case rootTail:
-		return RootTail, true
-	case rootBind:
-		return RootBind, true
-	case rootBody:
-		return RootBody, true
-	case rootOutcome:
-		return RootOutcome, true
-	default:
-		return RootInvalid, false
-	}
-}
-
-// PackOnly reports whether a root's complete relation consists of exactly one
-// whole-Pack target.  Scalar-adjustment and splice rules require this shape;
-// Bind/body-entry rules intentionally use the richer scalar-plus-Pack shape.
-func (schema *Schema) PackOnly(root Root) bool {
-	if schema == nil || schema.state == nil || !root.valid() || root.schema != schema.state {
+func (state *schema) validMountedCall(index uint32, row callRow) bool {
+	if state == nil || !row.moduleKey.Available() || !row.occurrenceID.Available() || !row.formalID.Available() || !row.typeArguments.Available() || uint64(row.root) >= uint64(len(state.roots)) {
 		return false
 	}
-	relation, ok := schema.relation(root)
-	return ok && len(relation.targets) == 1 && relation.targets[0].kind == EquationPack
-}
-
-// Bind is one executable fixed Cell-binding occurrence. It carries no Value
-// fact and no copied authored row; all source order is reissued from the
-// sealed descriptor.
-type Bind struct {
-	schema *schema
-	index  uint32
-}
-
-func (bind Bind) valid() bool {
-	if bind.schema == nil || uint64(bind.index) >= uint64(len(bind.schema.binds)) {
-		return false
-	}
-	row := bind.schema.binds[bind.index]
-	if !row.moduleKey.Available() || !row.bindID.Available() || !row.bodyID.Available() || !row.port.valid() || row.port.owner != bind.schema.owner || uint64(row.root) >= uint64(len(bind.schema.roots)) {
-		return false
-	}
-	root := bind.schema.roots[row.root]
-	if root.kind != rootBind || root.sourceIndex != bind.index || root.port != row.port || root.id != mountedArtifactRootID(rootBind, row.moduleKey, row.bindID) || !row.values.valid() {
-		return false
-	}
-	for _, cell := range row.cells {
-		if !cell.valid() || cell.owner != bind.schema.owner {
-			return false
-		}
-	}
-	return true
-}
-func (bind Bind) Root() (Root, bool) {
-	if !bind.valid() {
-		return Root{}, false
-	}
-	root := Root{schema: bind.schema, index: bind.schema.binds[bind.index].root}
-	return root, root.valid()
-}
-func (bind Bind) Input() (Values, bool) {
-	if !bind.valid() {
-		return Values{}, false
-	}
-	values := bind.schema.binds[bind.index].values
-	return values, values.valid()
-}
-func (bind Bind) InputRoot() (Root, bool) {
-	if !bind.valid() {
-		return Root{}, false
-	}
-	values := bind.schema.binds[bind.index].values
-	return Root{schema: bind.schema, index: values.schema.values[values.index].root}, true
-}
-func (bind Bind) Port() (Port, bool) {
-	if !bind.valid() {
-		return Port{}, false
-	}
-	port := bind.schema.binds[bind.index].port
-	return port, port.valid()
-}
-func (bind Bind) CellCount() int {
-	if !bind.valid() {
-		return 0
-	}
-	return len(bind.schema.binds[bind.index].cells)
-}
-func (bind Bind) CellAt(index int) (Endpoint, bool) {
-	if !bind.valid() || index < 0 || index >= len(bind.schema.binds[bind.index].cells) {
-		return Endpoint{}, false
-	}
-	endpoint := bind.schema.binds[bind.index].cells[index]
-	return endpoint, endpoint.valid()
-}
-
-// Body is one Call-owned executable function Body projected into Pack's
-// boundary schema. The capability itself is issued by Call; this descriptor
-// merely adds the exact Pack entry/normal-exit ports.
-type Body struct {
-	schema *schema
-	index  uint32
-}
-
-func (body Body) valid() bool {
-	if body.schema == nil || uint64(body.index) >= uint64(len(body.schema.bodies)) {
-		return false
-	}
-	row := body.schema.bodies[body.index]
-	if !row.sealed || !row.bodyID.Available() || !row.context.Available() || !row.moduleKey.Available() || !row.port.valid() || row.port.owner != body.schema.owner || len(row.formals) != len(row.formalIDs) || uint64(row.root) >= uint64(len(body.schema.roots)) {
-		return false
-	}
-	root := body.schema.roots[row.root]
-	if root.kind != rootBody || root.sourceIndex != body.index || root.port != row.port || root.id != mountedArtifactRootID(rootBody, row.moduleKey, row.bodyID) {
-		return false
-	}
-	if row.normal >= uint32(len(body.schema.outcomes)) {
-		return false
-	}
-	normal := Outcome{schema: body.schema, index: row.normal}
-	if !normal.valid() || body.schema.outcomes[row.normal].bodyIndex != body.index || body.schema.outcomes[row.normal].kind != flowkind.OutcomeNormal {
-		return false
-	}
-	if row.hasReturn {
-		if row.returnOutcome >= uint32(len(body.schema.outcomes)) {
-			return false
-		}
-		returned := Outcome{schema: body.schema, index: row.returnOutcome}
-		if !returned.valid() || body.schema.outcomes[row.returnOutcome].bodyIndex != body.index || body.schema.outcomes[row.returnOutcome].kind != flowkind.OutcomeReturn {
-			return false
-		}
-	} else if row.returnOutcome != 0 {
-		return false
-	}
-	return true
-}
-
-// Outcome is one Body Flow Outcome projected into a Pack port. Outcome
-// values remain Flow-owned; Pack only carries their whole-Pack expressions.
-type Outcome struct {
-	schema *schema
-	index  uint32
-}
-
-func (outcome Outcome) valid() bool {
-	if outcome.schema == nil || uint64(outcome.index) >= uint64(len(outcome.schema.outcomes)) {
-		return false
-	}
-	row := outcome.schema.outcomes[outcome.index]
-	if !row.sealed || !row.moduleKey.Available() || !row.bodyID.Available() || !row.outcomeID.Available() || row.kind != flowkind.OutcomeNormal && row.kind != flowkind.OutcomeReturn || !row.port.valid() || row.port.owner != outcome.schema.owner || uint64(row.root) >= uint64(len(outcome.schema.roots)) || uint64(row.bodyIndex) >= uint64(len(outcome.schema.bodies)) {
-		return false
-	}
-	root := outcome.schema.roots[row.root]
-	body := outcome.schema.bodies[row.bodyIndex]
-	if root.kind != rootOutcome || root.sourceIndex != outcome.index || root.port != row.port || root.id != mountedArtifactRootID(rootOutcome, row.moduleKey, row.outcomeID) || !body.sealed || body.moduleKey != row.moduleKey || body.bodyID != row.bodyID {
-		return false
-	}
-	return row.kind == flowkind.OutcomeNormal && len(row.valueRoots) == 0 || row.kind == flowkind.OutcomeReturn && len(row.valueRoots) > 0
-}
-
-func (outcome Outcome) Root() (Root, bool) {
-	if !outcome.valid() {
-		return Root{}, false
-	}
-	root := Root{schema: outcome.schema, index: outcome.schema.outcomes[outcome.index].root}
-	return root, root.valid() && outcome.schema.roots[root.index].sourceIndex == outcome.index
-}
-func (outcome Outcome) Kind() flowkind.OutcomeKind {
-	if !outcome.valid() {
-		return 0
-	}
-	return outcome.schema.outcomes[outcome.index].kind
-}
-func (outcome Outcome) Values() (Values, bool) {
-	if !outcome.valid() {
-		return Values{}, false
-	}
-	row := outcome.schema.outcomes[outcome.index]
-	if len(row.valueRoots) != 1 || uint64(row.valueRoots[0]) >= uint64(len(outcome.schema.roots)) {
-		return Values{}, false
-	}
-	root := outcome.schema.roots[row.valueRoots[0]]
-	if root.kind != rootValues || uint64(root.sourceIndex) >= uint64(len(outcome.schema.values)) || outcome.schema.values[root.sourceIndex].root != row.valueRoots[0] {
-		return Values{}, false
-	}
-	values := Values{schema: outcome.schema, index: root.sourceIndex}
-	return values, values.valid()
-}
-func (outcome Outcome) ValuesCount() int {
-	if !outcome.valid() {
-		return 0
-	}
-	return len(outcome.schema.outcomes[outcome.index].valueRoots)
-}
-func (outcome Outcome) Port() (Port, bool) {
-	if !outcome.valid() {
-		return Port{}, false
-	}
-	port := outcome.schema.outcomes[outcome.index].port
-	return port, port.valid()
-}
-func (body Body) Root() (Root, bool) {
-	if !body.valid() {
-		return Root{}, false
-	}
-	root := Root{schema: body.schema, index: body.schema.bodies[body.index].root}
-	return root, root.valid()
-}
-func (body Body) Port() (Port, bool) {
-	if !body.valid() {
-		return Port{}, false
-	}
-	port := body.schema.bodies[body.index].port
-	return port, port.valid()
-}
-func (body Body) FormalCount() int {
-	if !body.valid() {
-		return 0
-	}
-	return len(body.schema.bodies[body.index].formals)
-}
-func (body Body) FormalAt(index int) (Endpoint, bool) {
-	if !body.valid() || index < 0 || index >= len(body.schema.bodies[body.index].formals) {
-		return Endpoint{}, false
-	}
-	endpoint := body.schema.bodies[body.index].formals[index]
-	return endpoint, endpoint.valid()
-}
-func (body Body) Normal() (Outcome, bool) {
-	if !body.valid() {
-		return Outcome{}, false
-	}
-	outcome := Outcome{schema: body.schema, index: body.schema.bodies[body.index].normal}
-	return outcome, outcome.valid() && outcome.schema.outcomes[outcome.index].bodyID == body.schema.bodies[body.index].bodyID && outcome.schema.outcomes[outcome.index].moduleKey == body.schema.bodies[body.index].moduleKey
-}
-func (body Body) Return() (Outcome, bool) {
-	if !body.valid() || !body.schema.bodies[body.index].hasReturn {
-		return Outcome{}, false
-	}
-	outcome := Outcome{schema: body.schema, index: body.schema.bodies[body.index].returnOutcome}
-	return outcome, outcome.valid() && outcome.Kind() == flowkind.OutcomeReturn && outcome.schema.outcomes[outcome.index].bodyID == body.schema.bodies[body.index].bodyID && outcome.schema.outcomes[outcome.index].moduleKey == body.schema.bodies[body.index].moduleKey
-}
-
-// Same is an owner-fenced capability comparison. Invalid or foreign
-// descriptors are never considered equal merely because their coordinates
-// happen to match.
-func (body Body) Same(other Body) bool {
-	return body.valid() && other.valid() && body.schema == other.schema && body.index == other.index
-}
-func (outcome Outcome) Same(other Outcome) bool {
-	return outcome.valid() && other.valid() && outcome.schema == other.schema && outcome.index == other.index
-}
-
-func (state *schema) validMountedCall(row callRow) bool {
-	return state != nil && row.moduleKey.Available() && row.mountedID.Available() && row.occurrenceID.Available() && row.valuesID.Available() && row.typesID.Available() && row.formalID.Available() && row.typeFormal.Available() && row.form.Valid() && row.port.valid() && row.port.owner == state.owner
+	root := state.roots[row.root]
+	_, tailOK := state.tailPort(row.tailRoot)
+	return root.kind == rootCall && root.sourceIndex == index && root.port.valid() && root.port.owner == state.owner && root.id.Available() && (row.hasTail && tailOK || !row.hasTail && row.tailRoot == 0)
 }
 
 type inputSelectionKind uint8
@@ -802,11 +482,11 @@ func (producer TailProducer) valid() bool {
 		return false
 	}
 	row := producer.schema.tails[producer.index]
-	if !row.sealed || !row.moduleKey.Available() || !row.valueID.Available() || row.kind != TailProducerCall && row.kind != TailProducerVararg || !row.port.valid() || row.port.owner != producer.schema.owner || uint64(row.root) >= uint64(len(producer.schema.roots)) {
+	if !row.moduleKey.Available() || !row.valueID.Available() || row.kind != TailProducerCall && row.kind != TailProducerVararg || uint64(row.root) >= uint64(len(producer.schema.roots)) {
 		return false
 	}
 	root := producer.schema.roots[row.root]
-	return root.kind == rootTail && root.sourceIndex == producer.index && root.port == row.port && root.id == mountedArtifactRootID(rootTail, row.moduleKey, row.valueID)
+	return root.kind == rootTail && root.sourceIndex == producer.index && root.port.valid() && root.port.owner == producer.schema.owner && root.id == mountedArtifactRootID(rootTail, row.moduleKey, row.valueID)
 }
 func (schema *Schema) TailProducer(root Root) (TailProducer, bool) {
 	if schema == nil || schema.state == nil || !root.valid() || root.schema != schema.state || schema.state.roots[root.index].kind != rootTail {
@@ -827,7 +507,7 @@ func (producer TailProducer) Port() (Port, bool) {
 	if !producer.valid() {
 		return Port{}, false
 	}
-	port := producer.schema.tails[producer.index].port
+	port := producer.schema.roots[producer.schema.tails[producer.index].root].port
 	return port, port.valid()
 }
 func (producer TailProducer) ContentID() (identity.ContentID, bool) {
@@ -846,67 +526,45 @@ func (producer TailProducer) Kind() TailProducerKind {
 }
 
 // Payload is the direct Program-Values marginal consumed by Heap.
-type PayloadRequest struct {
-	Values Values
-	Index  int
-}
 type Payload struct {
-	schema    *schema
-	root      Root
-	values    Values
 	selection ScalarSelection
-	sources   []SemanticSource
 }
 
-func (schema *Schema) Payloads(requests []PayloadRequest) ([]Payload, bool) {
-	if schema == nil || schema.state == nil {
-		return nil, false
-	}
-	out := make([]Payload, len(requests))
-	for i, request := range requests {
-		if request.Index < 0 || !request.Values.valid() || request.Values.schema != schema.state {
-			return nil, false
-		}
-		row := schema.state.values[request.Values.index]
-		index, ok := schema.TableIndex(int64(request.Index))
-		if !ok {
-			return nil, false
-		}
-		selection := ScalarSelection{schema: schema.state, values: request.Values, kind: scalarSelectionTableIndex, tableIndex: index, sealed: true}
-		sources := make([]SemanticSource, 0, len(row.fixed))
-		for _, endpoint := range row.fixed {
-			value, valueOK := schema.ScalarSource(Scalar{owner: endpoint.owner, kind: ScalarEndpoint, endpoint: endpoint, class: endpoint.class, sealed: true})
-			if !valueOK {
-				return nil, false
-			}
-			sources = append(sources, value)
-		}
-		out[i] = Payload{schema: schema.state, root: Root{schema.state, row.root}, values: request.Values, selection: selection, sources: sources}
-	}
-	return out, true
-}
+func (payload Payload) valid() bool { return payload.selection.valid() }
 func (payload Payload) Root() (Root, bool) {
-	return payload.root, payload.schema != nil && payload.root.valid()
+	if !payload.valid() {
+		return Root{}, false
+	}
+	row := payload.selection.schema.values[payload.selection.values.index]
+	root := Root{payload.selection.schema, row.root}
+	return root, root.valid()
 }
 
 // Values returns the opaque mounted Values handle associated with this exact
 // Pack payload. It carries no Shard or Program Term and is required to apply
 // the owner-fenced scalar observation at Heap's selected offset.
 func (payload Payload) Values() (Values, bool) {
-	return payload.values, payload.schema != nil && payload.values.valid() && payload.values.schema == payload.schema
+	if !payload.valid() {
+		return Values{}, false
+	}
+	return payload.selection.values, true
 }
 func (payload Payload) Selection() (ScalarSelection, bool) {
-	return payload.selection, payload.selection.valid()
+	return payload.selection, payload.valid()
 }
 func (payload Payload) SourceCount() int {
-	if payload.schema == nil {
+	if !payload.valid() {
 		return 0
 	}
-	return len(payload.sources)
+	return len(payload.selection.schema.values[payload.selection.values.index].fixed)
 }
 func (payload Payload) SourceAt(index int) (SemanticSource, bool) {
-	if payload.schema == nil || index < 0 || index >= len(payload.sources) {
+	if !payload.valid() {
 		return SemanticSource{}, false
 	}
-	return payload.sources[index], true
+	row := payload.selection.schema.values[payload.selection.values.index]
+	if index < 0 || index >= len(row.fixed) {
+		return SemanticSource{}, false
+	}
+	return payload.selection.schema.sourceForEndpoint(row.fixed[index])
 }

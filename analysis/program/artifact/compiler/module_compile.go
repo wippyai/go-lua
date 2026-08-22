@@ -274,9 +274,13 @@ func (compiler *compiler) copyModuleEntriesFailure() programconstruction.Fault {
 		if ownerActivation != 0 || !executable.Contains(returned) {
 			continue
 		}
-		valuesOwner, tail, valuesOwnerOK := authored.Values().Get(valuesTerm)
+		valuesOwner, _, valuesOwnerOK := authored.Values().Get(valuesTerm)
 		fixedCount, fixedOK := authored.Values().Len(valuesTerm)
-		if !valuesOwnerOK || valuesOwner != owner || tail != 0 || !fixedOK || fixedCount < 0 || !fitsUint32(fixedCount) {
+		// ModuleEntry owns only the fixed root prefix. An open Values tail is a
+		// valid Return shape, but it has no statically addressable Cell,
+		// Function, or table-member position and therefore contributes no child
+		// row here. Values remains the sole owner of that tail.
+		if !valuesOwnerOK || valuesOwner != owner || !fixedOK || fixedCount < 0 || !fitsUint32(fixedCount) {
 			return programconstruction.New(programcatalog.ModuleEntry(), programconstruction.IssueModuleEntry, index, -1)
 		}
 		// The entry identity names the authored Return occurrence. ReturnID

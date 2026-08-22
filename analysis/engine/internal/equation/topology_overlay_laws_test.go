@@ -81,7 +81,7 @@ func TestGraphSummaryKeyRangeRetainsSealedOwnerAndOrder(t *testing.T) {
 	topology, sealed := SealTopology(fixture.source, TopologySpec{
 		Batch:     fixture.actuals,
 		Points:    []PointSpec{{Site: fixture.actualInput}, {Site: fixture.actualOutput}},
-		Queries:   []QueryInstance{{Family: fixture.query, Point: PointAt(0), Surfaces: []Surface{surface}}},
+		Queries:   []QueryInstance{{Context: boundaryContext(12), Family: fixture.query, Point: PointAt(0), Surfaces: []Surface{surface}}},
 		Summaries: []SummaryMapping{{Surface: surface, Keys: keys}},
 	})
 	if !sealed || topology == nil {

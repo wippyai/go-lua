@@ -4,7 +4,7 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/wippyai/go-lua/domain/type/kind"
+	"github.com/wippyai/go-lua/analysis/identity"
 	"github.com/wippyai/go-lua/domain/type/subtype"
 	typetable "github.com/wippyai/go-lua/domain/type/table"
 	"github.com/wippyai/go-lua/domain/type/typ"
@@ -102,9 +102,9 @@ func TestRuntimeSealedRelationDecidesNamedCrossKindRules(t *testing.T) {
 	}
 }
 
-// TestRuntimeInstantiatedRowsPreserveBaseAndInvariantArguments keeps the dense
-// instantiation description exact: base rows are shared by structural
-// identity, arguments stay invariant, and the sealed relation reads them.
+// TestRuntimeInstantiatedRowsPreserveSubtype keeps instantiation identity in
+// the canonical relation. Runtime no longer publishes the old base/argument
+// structural planes; those source edges remain construction-only.
 func TestRuntimeInstantiatedRowsPreserveBaseAndInvariantArguments(t *testing.T) {
 	parameter := typ.NewTypeParam("T", nil)
 	base := typ.NewGeneric("Const", []*typ.TypeParam{parameter}, typ.String)
@@ -121,31 +121,6 @@ func TestRuntimeInstantiatedRowsPreserveBaseAndInvariantArguments(t *testing.T) 
 		{name: "other-const-number", value: typ.Instantiate(otherBase, typ.Number)},
 	}
 	runtime, inners, _ := runtimeRelationFixture(fixture)
-
-	for _, instance := range []struct {
-		fixtureIndex int
-		argument     int
-	}{
-		{fixtureIndex: 2, argument: 0},
-		{fixtureIndex: 3, argument: 1},
-		{fixtureIndex: 4, argument: 1},
-		{fixtureIndex: 5, argument: 1},
-	} {
-		row := runtime.rows[inners[instance.fixtureIndex].index-1]
-		if row.form != kind.Instantiated || !row.base.present || row.arguments.end-row.arguments.start != 1 {
-			t.Fatalf("%s row lost base/arguments", fixture[instance.fixtureIndex].name)
-		}
-		if argument := runtime.arguments[row.arguments.start]; !runtime.Equal(argument, inners[instance.argument]) {
-			t.Fatalf("%s argument points at the wrong dense row", fixture[instance.fixtureIndex].name)
-		}
-	}
-	baseRow := runtime.rows[inners[2].index-1].base.inner.index
-	if runtime.rows[inners[3].index-1].base.inner.index != baseRow || runtime.rows[inners[4].index-1].base.inner.index != baseRow {
-		t.Fatal("structurally equal generic bases did not share one authoritative row")
-	}
-	if runtime.rows[inners[5].index-1].base.inner.index == baseRow {
-		t.Fatal("distinct generic bases collapsed")
-	}
 
 	for _, test := range []struct {
 		name        string
@@ -491,23 +466,35 @@ func runtimeRelationCorpus() []runtimeRelationFixtureType {
 // bitset is built from the construction graphs and then those graphs are the
 // only thing the test keeps, as the canonical oracle input.
 func runtimeRelationFixture(values []runtimeRelationFixtureType) (*Runtime, []RuntimeInner, []typ.Type) {
-	runtime := &Runtime{}
-	builder := runtimeBuilder{runtime: runtime, byIdentity: make(map[string]RuntimeInner)}
-	if err := builder.seedPrimitives(); err != nil {
+	authority := &Authority{linkID: identity.ContentID{3}, artifact: &artifactAuthority{}}
+	inputs := make([]RuntimeInput, len(values))
+	for index, value := range values {
+		input, ok := authority.RuntimeInputForType(value.value)
+		if !ok {
+			panic("mint RuntimeInput")
+		}
+		inputs[index] = input
+	}
+	canonical, err := canonicalRuntimeInputs(authority, inputs)
+	if err != nil {
+		panic(err)
+	}
+	runtime := &Runtime{sourceID: authority.LinkID()}
+	builder := runtimeBuilder{runtime: runtime}
+	canonicalInners, err := builder.ingest(canonical)
+	if err != nil {
 		panic(err)
 	}
 	inners := make([]RuntimeInner, len(values))
-	for index, value := range values {
-		inner, err := builder.add(runtimePending{value: value.value})
-		if err != nil {
-			panic(err)
+	for canonicalIndex, input := range canonical {
+		for _, position := range input.positions {
+			inners[position] = canonicalInners[canonicalIndex]
 		}
-		inners[index] = inner
 	}
-	for _, step := range []func() error{builder.close, builder.describe, builder.sealCanonical, builder.sealDescriptors, builder.sealSubtypeRelation} {
+	for _, step := range []func() error{builder.sealRuntimeKinds, builder.sealCanonical, builder.sealDescriptors, runtime.sealRanks, builder.sealSubtypeRelation} {
 		if err := step(); err != nil {
 			panic(err)
 		}
 	}
-	return runtime, inners, builder.construction
+	return runtime, inners, append([]typ.Type(nil), builder.construction...)
 }

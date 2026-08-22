@@ -9,6 +9,7 @@ import (
 	schemacomposite "github.com/wippyai/go-lua/analysis/schema/composite"
 	"github.com/wippyai/go-lua/analysis/schema/denominator"
 	"github.com/wippyai/go-lua/analysis/schema/diagnostic"
+	issuanceschema "github.com/wippyai/go-lua/analysis/schema/issuance"
 	"github.com/wippyai/go-lua/analysis/schema/observation"
 	"github.com/wippyai/go-lua/analysis/schema/programmount"
 	"github.com/wippyai/go-lua/analysis/schema/query"
@@ -331,20 +332,19 @@ func TestL12ZeroEditWalk(t *testing.T) {
 		if !issuanceOK {
 			t.Fatal("the probe's declared subscription is not readable from its sealed row")
 		}
-		terms := [...]struct {
-			key      schema.Key
-			category structure.Category
-		}{
-			{issuance.Occurrence, structure.CategoryOccurrenceKind},
-			{issuance.Form, structure.CategoryIssuanceForm},
-			{issuance.Input, structure.CategoryIssuanceInput},
-			{issuance.Stage, structure.CategoryIssuanceStage},
+		view, viewOK := sealed.Surface(schema.SurfaceKindIssuance)
+		table, tableOK := issuanceschema.NewTable(view)
+		if !viewOK || !tableOK {
+			t.Fatal("the sealed issuance machine is unavailable")
 		}
-		for _, term := range terms {
-			walkStructureMember(t, sealed, term.key, term.category)
+		if _, ok := table.Entry(issuance.Occurrence, issuanceschema.KindFamily); !ok {
+			t.Fatal("the probe occurrence family is not a sealed predicate")
 		}
-		if issuance.HasCode {
-			t.Fatal("the probe declared a payload predicate it does not need")
+		if _, ok := table.Entry(issuance.Form, issuanceschema.KindForm); !ok {
+			t.Fatal("the probe form is not a sealed construction program")
+		}
+		if _, ok := table.Entry(issuance.Requirement, issuanceschema.KindRequirement); !ok {
+			t.Fatal("the probe requirement is not a sealed admission program")
 		}
 	})
 }

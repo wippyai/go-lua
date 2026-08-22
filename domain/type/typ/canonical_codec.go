@@ -11,77 +11,61 @@ import (
 	"sync"
 )
 
-// CanonicalDigest is the full collision-resistant digest of one framed
-// canonical type graph. Canonical bytes, rather than this digest, remain the
-// final authority when a consumer must distinguish adversarial collisions.
+// CanonicalDigest is the full collision-resistant identity issued with one
+// admitted canonical graph or scoped wire receipt.
 type CanonicalDigest [sha256.Size]byte
 
 const (
-	canonicalTypeDomain = "wippy.analysis.type.typ.canonical"
 	// Version 2 makes numeric literal identity raw-IEEE-bit exact. Version 1
 	// rejected NaNs and normalized signed zero, so accepting it under the new
 	// equality relation would make old portable bytes ambiguous.
-	canonicalTypeVersion       = uint64(2)
 	canonicalScopedTypeDomain  = "wippy.analysis.type.typ.canonical-formals"
 	canonicalScopedTypeVersion = uint64(2)
 )
 
 var canonicalEncoderPool = sync.Pool{
-	New: func() any { return &CanonicalEncoder{} },
+	New: func() any { return &canonicalEncoder{} },
 }
 
-// EncodeCanonical encodes the TypeEquals semantic graph without consulting
-// node addresses, recursive IDs, cached hashes, revisions, or String output.
-// Unsupported or malformed graphs fail closed and return no bytes.
-func EncodeCanonical(ctx context.Context, t Type) ([]byte, error) {
-	encoder := canonicalEncoderPool.Get().(*CanonicalEncoder)
-	out, err := encoder.Encode(ctx, t)
-	canonicalEncoderPool.Put(encoder)
-	return out, err
-}
-
-// DigestCanonical returns the typed full digest of EncodeCanonical.
-func DigestCanonical(ctx context.Context, t Type) (CanonicalDigest, error) {
-	encoder := canonicalEncoderPool.Get().(*CanonicalEncoder)
-	digest, err := encoder.Digest(ctx, t)
-	canonicalEncoderPool.Put(encoder)
-	return digest, err
-}
-
-// EncodeCanonicalFormals encodes t using the same canonical graph quotient as
-// EncodeCanonical, but binds formals by their supplied ordinal rather than by
-// presentation name. It is intended for portable authored schemas: a caller
+// EncodeCanonicalFormals admits t through the canonical graph quotient and
+// binds formals by their supplied ordinal rather than by presentation name.
+// It is intended for portable authored schemas: a caller
 // supplies the free parameters of t in semantic order; nested Function and
-// Generic binders are discovered from t itself. The scoped framing is distinct
-// from ordinary canonical bytes and must never be compared across domains.
-func EncodeCanonicalFormals(ctx context.Context, t Type, formals []*TypeParam) ([]byte, error) {
+// Generic binders are discovered from t itself. Its scoped framing is the sole
+// portable canonical byte domain.
+//
+// The returned receipt is the only trusted scoped-formal image. Callers that
+// need a raw wire image must request an ownership-isolated copy from Bytes;
+// receipt consumers must not pass a source graph back through a receipt to
+// bypass its own graph admission.
+func EncodeCanonicalFormals(ctx context.Context, t Type, formals []*TypeParam) (CanonicalFormalsReceipt, error) {
 	admission, err := newCanonicalFormalsAdmission(ctx, 0)
 	if err != nil {
-		return nil, err
+		return CanonicalFormalsReceipt{}, err
 	}
-	return encodeCanonicalFormalsAdmission(ctx, t, formals, admission)
+	if uint64(len(formals)) > uint64(^uint32(0)) {
+		return CanonicalFormalsReceipt{}, invalidCanonicalFormals("external formal count")
+	}
+	encoded, err := encodeCanonicalFormalsAdmission(ctx, t, formals, admission)
+	if err != nil {
+		return CanonicalFormalsReceipt{}, err
+	}
+	if err := admission.checkpoint(); err != nil {
+		return CanonicalFormalsReceipt{}, err
+	}
+	return newCanonicalFormalsReceipt(encoded, uint32(len(formals))), nil
 }
 
 func encodeCanonicalFormalsAdmission(ctx context.Context, t Type, formals []*TypeParam, admission *canonicalFormalsAdmission) ([]byte, error) {
-	encoder := canonicalEncoderPool.Get().(*CanonicalEncoder)
+	encoder := canonicalEncoderPool.Get().(*canonicalEncoder)
 	out, err := encoder.encodeFormalsAdmission(ctx, t, formals, admission)
 	canonicalEncoderPool.Put(encoder)
 	return out, err
 }
 
-// DigestCanonicalFormals returns the typed full digest of
-// EncodeCanonicalFormals.
-func DigestCanonicalFormals(ctx context.Context, t Type, formals []*TypeParam) (CanonicalDigest, error) {
-	encoder := canonicalEncoderPool.Get().(*CanonicalEncoder)
-	digest, err := encoder.DigestFormals(ctx, t, formals)
-	canonicalEncoderPool.Put(encoder)
-	return digest, err
-}
-
-// CanonicalEncoder retains traversal scratch across calls. It is not safe for
-// concurrent use. Returned byte slices are ownership-isolated from the
-// encoder and remain valid after the next call.
-type CanonicalEncoder struct {
+// canonicalEncoder retains traversal scratch across calls. It is not safe for
+// concurrent use.
+type canonicalEncoder struct {
 	nodes           []canonicalTypeNode
 	seen            map[Type]int
 	transparent     map[Type]bool
@@ -110,27 +94,27 @@ type CanonicalEncoder struct {
 	binders         map[*TypeParam]canonicalFormalBinder
 }
 
-// Encode is the reusable form of EncodeCanonical.
-func (e *CanonicalEncoder) Encode(ctx context.Context, t Type) ([]byte, error) {
-	if e == nil {
-		return nil, fmt.Errorf("typ: nil canonical encoder")
-	}
-	e.reset(ctx, false, nil)
-	defer e.release()
-	return e.encode(t, canonicalTypeDomain, canonicalTypeVersion)
-}
-
 // EncodeFormals is the reusable form of EncodeCanonicalFormals. Like Encode,
 // it retains only scratch and is not safe for concurrent use.
-func (e *CanonicalEncoder) EncodeFormals(ctx context.Context, t Type, formals []*TypeParam) ([]byte, error) {
+func (e *canonicalEncoder) encodeFormals(ctx context.Context, t Type, formals []*TypeParam) (CanonicalFormalsReceipt, error) {
 	admission, err := newCanonicalFormalsAdmission(ctx, 0)
 	if err != nil {
-		return nil, err
+		return CanonicalFormalsReceipt{}, err
 	}
-	return e.encodeFormalsAdmission(ctx, t, formals, admission)
+	if uint64(len(formals)) > uint64(^uint32(0)) {
+		return CanonicalFormalsReceipt{}, invalidCanonicalFormals("external formal count")
+	}
+	encoded, err := e.encodeFormalsAdmission(ctx, t, formals, admission)
+	if err != nil {
+		return CanonicalFormalsReceipt{}, err
+	}
+	if err := admission.checkpoint(); err != nil {
+		return CanonicalFormalsReceipt{}, err
+	}
+	return newCanonicalFormalsReceipt(encoded, uint32(len(formals))), nil
 }
 
-func (e *CanonicalEncoder) encodeFormalsAdmission(ctx context.Context, t Type, formals []*TypeParam, admission *canonicalFormalsAdmission) ([]byte, error) {
+func (e *canonicalEncoder) encodeFormalsAdmission(ctx context.Context, t Type, formals []*TypeParam, admission *canonicalFormalsAdmission) ([]byte, error) {
 	if e == nil {
 		return nil, fmt.Errorf("typ: nil canonical encoder")
 	}
@@ -140,10 +124,10 @@ func (e *CanonicalEncoder) encodeFormalsAdmission(ctx context.Context, t Type, f
 		e.abort()
 		return nil, err
 	}
-	return e.encode(t, canonicalScopedTypeDomain, canonicalScopedTypeVersion)
+	return e.encode(t)
 }
 
-func (e *CanonicalEncoder) encode(t Type, domain string, version uint64) ([]byte, error) {
+func (e *canonicalEncoder) encode(t Type) ([]byte, error) {
 	root, err := e.discover(t)
 	if err != nil {
 		e.abort()
@@ -165,11 +149,11 @@ func (e *CanonicalEncoder) encode(t Type, domain string, version uint64) ([]byte
 	}
 	rootClass := e.classes[root]
 	e.out = e.out[:0]
-	if err := e.appendCanonicalOutputFrameString(domain); err != nil {
+	if err := e.appendCanonicalOutputFrameString(canonicalScopedTypeDomain); err != nil {
 		e.abort()
 		return nil, err
 	}
-	if err := e.appendCanonicalOutputUvarint(version); err != nil {
+	if err := e.appendCanonicalOutputUvarint(canonicalScopedTypeVersion); err != nil {
 		e.abort()
 		return nil, err
 	}
@@ -215,42 +199,24 @@ func (e *CanonicalEncoder) encode(t Type, domain string, version uint64) ([]byte
 // carrying that violation, so those bytes are never a form any validator
 // admitted, and an already admitted byte string is the canonical spelling of a
 // lawful graph bisimilar to this one.
-func (e *CanonicalEncoder) admitScopedForm(t Type) error {
-	if canonicalValidatedGraphForms.admits(e.out, len(e.formals)) {
-		return nil
-	}
+func (e *canonicalEncoder) admitScopedForm(t Type) error {
 	if err := validateCanonicalFormalNodeGraph(e.ctx, e.admission, e.nodes, uint64(len(e.formals))); err != nil {
 		return err
 	}
 	if err := ValidateStaticGenericRecurrenceWithFormals(t, e.formalScope); err != nil {
 		return fmt.Errorf("%w: static generic recurrence: %v", ErrInvalidCanonicalType, err)
 	}
-	canonicalValidatedGraphForms.admit(e.out, len(e.formals))
 	return nil
-}
-
-// Digest is the reusable form of DigestCanonical.
-func (e *CanonicalEncoder) Digest(ctx context.Context, t Type) (CanonicalDigest, error) {
-	encoded, err := e.Encode(ctx, t)
-	if err != nil {
-		return CanonicalDigest{}, err
-	}
-	return CanonicalDigest(sha256.Sum256(encoded)), nil
-}
-
-// DigestFormals is the reusable form of DigestCanonicalFormals.
-func (e *CanonicalEncoder) DigestFormals(ctx context.Context, t Type, formals []*TypeParam) (CanonicalDigest, error) {
-	encoded, err := e.EncodeFormals(ctx, t, formals)
-	if err != nil {
-		return CanonicalDigest{}, err
-	}
-	return CanonicalDigest(sha256.Sum256(encoded)), nil
 }
 
 type canonicalTypeNode struct {
 	scalar    []byte
 	edges     []int
 	typeParam *TypeParam
+	// source is construction-only provenance for owner-issued graph receipts.
+	// It is cleared with encoder scratch after the receipt has copied the
+	// quotient metadata.  Canonical bytes never depend on this field.
+	source Type
 }
 
 type canonicalDiscoveryFrame struct {
@@ -302,7 +268,7 @@ const (
 	canonicalScopedLocalFormal
 )
 
-func (e *CanonicalEncoder) reset(ctx context.Context, scoped bool, admission *canonicalFormalsAdmission) {
+func (e *canonicalEncoder) reset(ctx context.Context, scoped bool, admission *canonicalFormalsAdmission) {
 	e.clearCallState()
 	e.ctx = ctx
 	e.admission = admission
@@ -310,7 +276,7 @@ func (e *CanonicalEncoder) reset(ctx context.Context, scoped bool, admission *ca
 	e.scoped = scoped
 }
 
-func (e *CanonicalEncoder) abort() {
+func (e *canonicalEncoder) abort() {
 	e.clearCallState()
 	e.steps = 0
 	e.ctx = nil
@@ -321,7 +287,7 @@ func (e *CanonicalEncoder) abort() {
 // clearCallState clears every graph-bearing slot while retaining capacity for
 // future calls. It is used by reset, abort, and release: a direct reusable
 // encoder has the same non-retention guarantee as the package pool.
-func (e *CanonicalEncoder) clearCallState() {
+func (e *canonicalEncoder) clearCallState() {
 	// Never clear an oversized caller-derived buffer: clear itself is an
 	// uninterruptible linear walk.  Dropping the backing array releases every
 	// caller reference without retaining it in the package pool.
@@ -409,11 +375,11 @@ func (e *CanonicalEncoder) clearCallState() {
 	e.foldedClasses = nil
 }
 
-func (e *CanonicalEncoder) reserve(count, elementBytes int) error {
+func (e *canonicalEncoder) reserve(count, elementBytes int) error {
 	return canonicalFormalsPreflight(e.ctx, e.admission, &e.steps, count, elementBytes)
 }
 
-func (e *CanonicalEncoder) ensureDiscoveryMaps() error {
+func (e *canonicalEncoder) ensureDiscoveryMaps() error {
 	if e.seen == nil {
 		if err := e.reserve(16, canonicalFormalsMapEntryBytes); err != nil {
 			return err
@@ -437,11 +403,11 @@ func (e *CanonicalEncoder) ensureDiscoveryMaps() error {
 
 // release drops references to caller-owned type graphs before the reusable
 // scratch is retained for a subsequent direct call or returned to the pool.
-func (e *CanonicalEncoder) release() {
+func (e *canonicalEncoder) release() {
 	e.abort()
 }
 
-func (e *CanonicalEncoder) checkpoint() error {
+func (e *canonicalEncoder) checkpoint() error {
 	if e.admission != nil {
 		return e.admission.checkpoint()
 	}
@@ -455,7 +421,7 @@ func (e *CanonicalEncoder) checkpoint() error {
 // discover builds the entire Type graph with an explicit DFS stack. Canonical
 // graph discovery may receive adversarially deep schemas, so no host call
 // frame is proportional to graph depth.
-func (e *CanonicalEncoder) discover(input Type) (int, error) {
+func (e *canonicalEncoder) discover(input Type) (int, error) {
 	if err := e.ensureDiscoveryMaps(); err != nil {
 		return 0, err
 	}
@@ -503,7 +469,7 @@ func (e *CanonicalEncoder) discover(input Type) (int, error) {
 // discoverNode creates one graph node and returns its child slots. The caller
 // owns scheduling those slots; inserting the node into seen before returning
 // preserves cycles exactly as the former recursive traversal did.
-func (e *CanonicalEncoder) discoverNode(input Type) (int, bool, []Type, error) {
+func (e *canonicalEncoder) discoverNode(input Type) (int, bool, []Type, error) {
 	if err := e.checkpoint(); err != nil {
 		return 0, false, nil, err
 	}
@@ -538,6 +504,7 @@ func (e *CanonicalEncoder) discoverNode(input Type) (int, bool, []Type, error) {
 		return 0, false, nil, appendErr
 	}
 	node := &e.nodes[index]
+	node.source = t
 	var children []Type
 
 	switch value := t.(type) {
@@ -751,7 +718,7 @@ func (e *CanonicalEncoder) discoverNode(input Type) (int, bool, []Type, error) {
 // installFormals installs the one caller-owned scope for a scoped encoding.
 // A pointer is an identity only while encoding: no pointer-derived value is
 // emitted, and release clears the map before this encoder can be reused.
-func (e *CanonicalEncoder) installFormals(formals []*TypeParam) error {
+func (e *canonicalEncoder) installFormals(formals []*TypeParam) error {
 	e.formalScope = formals
 	if e.formals == nil {
 		if err := e.reserve(len(formals), canonicalFormalsMapEntryBytes); err != nil {
@@ -787,7 +754,7 @@ func (e *CanonicalEncoder) installFormals(formals []*TypeParam) error {
 // That binder re-enters the external scope instead of introducing parameters,
 // so its parameters keep their external ordinals and the claim recorded here
 // is read back only for a binder-local parameter.
-func (e *CanonicalEncoder) registerBinder(owner Type, params []*TypeParam) error {
+func (e *canonicalEncoder) registerBinder(owner Type, params []*TypeParam) error {
 	if !e.scoped {
 		return nil
 	}
@@ -825,7 +792,7 @@ func (e *CanonicalEncoder) registerBinder(owner Type, params []*TypeParam) error
 // would leave a parameter without a single owner. A frame is classified only
 // once each of its parameters is a parameter, so an absent one is reported as
 // itself rather than as the mixture it produces.
-func (e *CanonicalEncoder) externalScopeBinder(params []*TypeParam) error {
+func (e *canonicalEncoder) externalScopeBinder(params []*TypeParam) error {
 	installed := 0
 	for ordinal, param := range params {
 		if err := e.checkpoint(); err != nil {
@@ -848,7 +815,7 @@ func (e *CanonicalEncoder) externalScopeBinder(params []*TypeParam) error {
 // after discovery has found every reachable binder. Owner edges make lexical
 // scope structural: an inner binder's ordinal zero cannot be mistaken for an
 // outer binder's ordinal zero by bisimulation.
-func (e *CanonicalEncoder) finalizeScopedTypeParams() error {
+func (e *canonicalEncoder) finalizeScopedTypeParams() error {
 	for index := range e.nodes {
 		if err := e.checkpoint(); err != nil {
 			return err
@@ -901,7 +868,7 @@ func (e *CanonicalEncoder) finalizeScopedTypeParams() error {
 	return nil
 }
 
-func (e *CanonicalEncoder) unwrapTransparent(t Type) (Type, error) {
+func (e *canonicalEncoder) unwrapTransparent(t Type) (Type, error) {
 	var path []Type
 	defer func() {
 		for _, wrapper := range path {
@@ -1035,7 +1002,7 @@ func canonicalLiteralScalarSize(literal *Literal) (int, error) {
 	}
 }
 
-func (e *CanonicalEncoder) canonicalRecordParts(record *Record) ([]byte, []Type, error) {
+func (e *canonicalEncoder) canonicalRecordParts(record *Record) ([]byte, []Type, error) {
 	scalarBytes := 2 + canonicalFormalsUvarintSize(uint64(len(record.Fields))) + canonicalFormalsUvarintSize(uint64(len(record.StaticMembers)))
 	for _, field := range record.Fields {
 		if err := e.checkpoint(); err != nil {
@@ -1096,7 +1063,7 @@ func (e *CanonicalEncoder) canonicalRecordParts(record *Record) ([]byte, []Type,
 	return out, children, nil
 }
 
-func (e *CanonicalEncoder) canonicalFunctionParts(function *Function) ([]byte, []Type, error) {
+func (e *canonicalEncoder) canonicalFunctionParts(function *Function) ([]byte, []Type, error) {
 	scalarBytes := 1 + canonicalFormalsUvarintSize(uint64(len(function.TypeParams))) + canonicalFormalsUvarintSize(uint64(len(function.Params))) + len(function.Params)*2 + 1 + canonicalFormalsUvarintSize(uint64(len(function.Returns)))
 	if err := e.reserve(scalarBytes, 1); err != nil {
 		return nil, nil, err
@@ -1138,7 +1105,7 @@ func (e *CanonicalEncoder) canonicalFunctionParts(function *Function) ([]byte, [
 	return out, children, nil
 }
 
-func (e *CanonicalEncoder) refine() error {
+func (e *canonicalEncoder) refine() error {
 	finder, err := newCanonicalSCCFinder(e)
 	if err != nil {
 		return err
@@ -1174,7 +1141,7 @@ func (e *CanonicalEncoder) refine() error {
 }
 
 type canonicalSCCFinder struct {
-	encoder        *CanonicalEncoder
+	encoder        *canonicalEncoder
 	next           int
 	indices        []int
 	low            []int
@@ -1191,7 +1158,7 @@ type canonicalSCCFrame struct {
 	nextEdge int
 }
 
-func newCanonicalSCCFinder(encoder *CanonicalEncoder) (canonicalSCCFinder, error) {
+func newCanonicalSCCFinder(encoder *canonicalEncoder) (canonicalSCCFinder, error) {
 	count := len(encoder.nodes)
 	if err := encoder.reserve(count, canonicalFormalsIntBytes*4+canonicalFormalsBoolBytes+canonicalFormalsFrameBytes*2); err != nil {
 		return canonicalSCCFinder{}, err
@@ -1362,7 +1329,7 @@ const canonicalRankUnbounded = math.MinInt
 // Stratifying by rank rather than by component is what lets a cyclic component
 // merge with a bisimilar cycle it reaches: equal rank puts both in one
 // refinement, where no per-component canonical key could relate them.
-func (e *CanonicalEncoder) classifyByRank(componentStart, members, sccOf []int) error {
+func (e *canonicalEncoder) classifyByRank(componentStart, members, sccOf []int) error {
 	count := len(e.nodes)
 	componentCount := len(componentStart) - 1
 	if err := e.reserve(count, canonicalFormalsIntBytes); err != nil {
@@ -1464,7 +1431,7 @@ func (e *CanonicalEncoder) classifyByRank(componentStart, members, sccOf []int) 
 // scalar and its children's final class ids, and reports whether the node
 // minted the candidate class rather than joining an existing one. childBytes is
 // the encoded width of the child class ids, measured while the node was ranked.
-func (e *CanonicalEncoder) foldWellFoundedNode(nodeIndex, childBytes, candidate int) (bool, error) {
+func (e *canonicalEncoder) foldWellFoundedNode(nodeIndex, childBytes, candidate int) (bool, error) {
 	node := e.nodes[nodeIndex]
 	keyBytes := canonicalFormalsUvarintSize(uint64(len(node.scalar))) + len(node.scalar) + canonicalFormalsUvarintSize(uint64(len(node.edges))) + childBytes
 	if err := e.reserve(keyBytes, 1); err != nil {
@@ -1498,7 +1465,7 @@ func (e *CanonicalEncoder) foldWellFoundedNode(nodeIndex, childBytes, candidate 
 // first. Ranks are bucketed rather than sorted: an unbounded rank is the lowest
 // stratum, and a finite rank never exceeds the node count because it grows by
 // at most one per well-founded level.
-func (e *CanonicalEncoder) refineRankStrata(count, componentCount int, componentStart, members []int, wellFounded []bool, rank []int, deferred, maxStratum, nextClass int) error {
+func (e *canonicalEncoder) refineRankStrata(count, componentCount int, componentStart, members []int, wellFounded []bool, rank []int, deferred, maxStratum, nextClass int) error {
 	if err := e.reserve(2*(maxStratum+2)+deferred+count, canonicalFormalsIntBytes); err != nil {
 		return err
 	}
@@ -1592,7 +1559,7 @@ type canonicalPredecessor struct {
 // stratum are already final and enter the initial key by class id; Hopcroft's
 // smaller-half schedule then splits on in-stratum edges by edge position, so a
 // class fixes both the scalar and the whole child class vector.
-func (e *CanonicalEncoder) refineStratum(stratum, localIndex []int, classBase int) (int, error) {
+func (e *canonicalEncoder) refineStratum(stratum, localIndex []int, classBase int) (int, error) {
 	size := len(stratum)
 	if err := e.reserve(size, canonicalFormalsIntBytes*2+canonicalFormalsBoolBytes*2+canonicalFormalsFrameBytes*4); err != nil {
 		return 0, err
@@ -1806,7 +1773,7 @@ func (e *CanonicalEncoder) refineStratum(stratum, localIndex []int, classBase in
 // sortCanonicalIntKeys orders sparse refinement keys without creating an
 // uninterruptible cancellation island. Chunks are deliberately bounded; merge
 // passes checkpoint each copied key and retain ordinary O(k log k) behavior.
-func (e *CanonicalEncoder) sortCanonicalIntKeys(keys []int) error {
+func (e *canonicalEncoder) sortCanonicalIntKeys(keys []int) error {
 	const chunk = 256
 	for start := 0; start < len(keys); start += chunk {
 		if err := e.checkpoint(); err != nil {
@@ -1874,7 +1841,7 @@ func (e *CanonicalEncoder) sortCanonicalIntKeys(keys []int) error {
 	return nil
 }
 
-func (e *CanonicalEncoder) buildClassRepresentatives() error {
+func (e *canonicalEncoder) buildClassRepresentatives() error {
 	classCount := 0
 	for _, class := range e.classes {
 		if err := e.checkpoint(); err != nil {
@@ -1913,7 +1880,7 @@ type canonicalEmissionFrame struct {
 // emitClass writes the existing preorder reference/definition stream with an
 // explicit stack. A definition is written before its children exactly as in
 // the prior recursive encoder, so ordinary Canonical bytes remain unchanged.
-func (e *CanonicalEncoder) emitClass(class int, ordinals map[int]uint64) error {
+func (e *canonicalEncoder) emitClass(class int, ordinals map[int]uint64) error {
 	if err := e.emitEnter(class, ordinals); err != nil {
 		return err
 	}
@@ -1934,7 +1901,7 @@ func (e *CanonicalEncoder) emitClass(class int, ordinals map[int]uint64) error {
 	return nil
 }
 
-func (e *CanonicalEncoder) emitEnter(class int, ordinals map[int]uint64) error {
+func (e *canonicalEncoder) emitEnter(class int, ordinals map[int]uint64) error {
 	if err := e.checkpoint(); err != nil {
 		return err
 	}
@@ -1976,7 +1943,7 @@ func (e *CanonicalEncoder) emitEnter(class int, ordinals map[int]uint64) error {
 	return nil
 }
 
-func (e *CanonicalEncoder) appendCanonicalOutput(parts ...[]byte) error {
+func (e *canonicalEncoder) appendCanonicalOutput(parts ...[]byte) error {
 	out, err := canonicalFormalsAppendBytes(e.ctx, e.admission, &e.steps, e.out, parts...)
 	if err != nil {
 		return err
@@ -1985,19 +1952,19 @@ func (e *CanonicalEncoder) appendCanonicalOutput(parts ...[]byte) error {
 	return nil
 }
 
-func (e *CanonicalEncoder) appendCanonicalOutputUvarint(value uint64) error {
+func (e *canonicalEncoder) appendCanonicalOutputUvarint(value uint64) error {
 	var encoded [binary.MaxVarintLen64]byte
 	count := binary.PutUvarint(encoded[:], value)
 	return e.appendCanonicalOutput(encoded[:count])
 }
 
-func (e *CanonicalEncoder) appendCanonicalOutputFrame(value []byte) error {
+func (e *canonicalEncoder) appendCanonicalOutputFrame(value []byte) error {
 	var length [binary.MaxVarintLen64]byte
 	count := binary.PutUvarint(length[:], uint64(len(value)))
 	return e.appendCanonicalOutput(length[:count], value)
 }
 
-func (e *CanonicalEncoder) appendCanonicalOutputFrameString(value string) error {
+func (e *canonicalEncoder) appendCanonicalOutputFrameString(value string) error {
 	var length [binary.MaxVarintLen64]byte
 	count := binary.PutUvarint(length[:], uint64(len(value)))
 	return e.appendCanonicalOutput(length[:count], []byte(value))

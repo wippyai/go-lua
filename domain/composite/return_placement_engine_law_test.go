@@ -7,6 +7,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/engine"
 	"github.com/wippyai/go-lua/analysis/identity"
 	programschema "github.com/wippyai/go-lua/analysis/schema/program"
+	programissuance "github.com/wippyai/go-lua/analysis/schema/program/issuance"
 	"github.com/wippyai/go-lua/analysis/snapshot"
 	heapdomain "github.com/wippyai/go-lua/domain/heap"
 	placementdomain "github.com/wippyai/go-lua/domain/placement"
@@ -40,9 +41,9 @@ func TestReturnPlacementPublishesOwnedHeapThroughTheCompositeEngine(t *testing.T
 			if !ok || sealed == nil {
 				t.Fatalf("seal: %v", failure)
 			}
-			state, status := sealed.Solve(context.Background())
+			state, status, report := sealed.SolveWithReport(context.Background())
 			if status != engine.SolveComplete || state == nil {
-				t.Fatalf("solve: %v", status)
+				t.Fatalf("solve: status=%v reason=%v failure=%v point=%v group=%v member=%v rule=%v", status, report.Reason(), report.Failure(), report.Point(), report.Group(), report.Member(), report.Rule())
 			}
 			published, ok := sealed.PublishedSnapshot(state)
 			if !ok {
@@ -147,7 +148,7 @@ func returnEscapeTargetsForLaw(t testing.TB, record LinkInputs) []returnEscapeTa
 		}
 		for index := 0; index < count; index++ {
 			row, ok := mount.Program.RuleOccurrenceAt(index)
-			if !ok || string(row.Key()) != "placement-return-escape" || row.Stage() != programschema.RuleStageLocal {
+			if !ok || string(row.Key()) != "placement-return-escape" || row.Stage() != programissuance.StageSuccessor {
 				continue
 			}
 			point := row.PointID()
@@ -206,13 +207,13 @@ func placementRowsForReturnLaw(t testing.TB, result placementdomain.SummaryResul
 		if !allocation.Available() {
 			t.Fatal("typed Placement allocation row is unavailable")
 		}
-		class := placementdomain.Bottom
-		if allocation.Present() {
-			decoded, decodedOK := allocation.Placement()
-			if !decodedOK {
-				t.Fatal("typed Placement allocation row has no class")
-			}
-			class = decoded
+		present, presentOK := allocation.Present()
+		if !presentOK || !present {
+			t.Fatal("typed Placement allocation row has no published class")
+		}
+		class, decodedOK := allocation.Placement()
+		if !decodedOK {
+			t.Fatal("typed Placement allocation row has no class")
 		}
 		id := allocation.AllocationID()
 		if _, duplicate := rows[id]; duplicate {

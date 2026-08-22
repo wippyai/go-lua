@@ -34,7 +34,7 @@ func (a *Algebra) mountedCallRow(mounted MountedCall) (mountedCallRow, bool) {
 		return mountedCallRow{}, false
 	}
 	row := a.mountedCalls[mounted.slot-1]
-	return row, row.applicationID.Available() && row.moduleID.Available() && row.contextID.Available()
+	return row, row.applicationID.Available() && row.moduleID.Available() && row.contextID.Available() && row.root != 0 && uint64(row.root) <= uint64(len(a.roots))
 }
 
 // MountedCallOrdinalForOccurrence is the sole exported dense inverse from a
@@ -54,32 +54,17 @@ func (a *Algebra) MountedCallOrdinalForOccurrence(moduleID, occurrenceID identit
 	return int(slot) - 1, true
 }
 
-func (a *Algebra) mountedCallForApplication(applicationID identity.ContentID) (MountedCall, bool) {
-	if !a.Valid() || !applicationID.Available() {
-		return MountedCall{}, false
-	}
-	row, ok := a.callRows[applicationID]
-	if !ok {
-		return MountedCall{}, false
-	}
-	slot := a.mountedCallIndex[mountedCallRef{moduleID: row.moduleID, contextID: row.context}]
-	mounted := MountedCall{owner: a, slot: slot}
-	issued, issuedOK := a.mountedCallRow(mounted)
-	return mounted, issuedOK && issued.applicationID == applicationID
-}
-
 func (a *Algebra) RootForMountedCall(mounted MountedCall) (Root, bool) {
 	row, ok := a.mountedCallRow(mounted)
 	if !ok {
 		return Root{}, false
 	}
-	root, ok := a.RootForCallID(row.applicationID)
-	return root, ok && a.callInRootID(root, row.applicationID)
+	return Root{owner: a, slot: row.root}, true
 }
 
 func (a *Algebra) selectedMountedCall(root Root, mounted MountedCall, operation vocabulary.Operation) bool {
 	row, ok := a.mountedCallRow(mounted)
-	if !ok || !a.callInRootID(root, row.applicationID) {
+	if !ok || !a.ownsRoot(root) || row.root != root.slot {
 		return false
 	}
 	if _, ok := a.applicationOperation(row.applicationID, operation); !ok {
@@ -128,7 +113,7 @@ func (a *Algebra) MountedCallOpaqueUnknown(root Root, calls *call.Algebra, mount
 		return Atom{}, false
 	}
 	key, ok := calls.KeyForApplicationID(row.applicationID)
-	if !ok || !calls.Admits(key, value) || !a.callInRootID(root, row.applicationID) {
+	if !ok || !calls.Admits(key, value) || !a.ownsRoot(root) || row.root != root.slot {
 		return Atom{}, false
 	}
 	return Atom{owner: a, root: root.slot, id: a.unknownID}, true

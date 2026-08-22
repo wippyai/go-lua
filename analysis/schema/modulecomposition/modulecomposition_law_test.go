@@ -5,10 +5,13 @@ import (
 
 	"github.com/wippyai/go-lua/analysis/identity"
 	"github.com/wippyai/go-lua/analysis/program/keyspace"
+	"github.com/wippyai/go-lua/analysis/schema"
 	"github.com/wippyai/go-lua/analysis/schema/axis"
+	"github.com/wippyai/go-lua/analysis/schema/executioncontext"
 	modulecomposition "github.com/wippyai/go-lua/analysis/schema/modulecomposition"
 	programschema "github.com/wippyai/go-lua/analysis/schema/program"
 	programcatalog "github.com/wippyai/go-lua/analysis/schema/program/catalog"
+	programissuance "github.com/wippyai/go-lua/analysis/schema/program/issuance"
 	programpublication "github.com/wippyai/go-lua/analysis/schema/program/publication"
 	"github.com/wippyai/go-lua/analysis/schema/programmount"
 	"github.com/wippyai/go-lua/analysis/snapshot"
@@ -74,12 +77,30 @@ func makeLawProgram(t *testing.T) lawProgram {
 	if !ok {
 		t.Fatal("return entry")
 	}
+	dispatchPointID := lawID(t, "call-dispatch-point")
+	basePointID := lawID(t, "call-base-point")
+	callOccurrence, ok := programschema.NewOccurrence(programschema.OccurrenceCall, callID, bodyID, 0, 0, 1, 0, 0, keyspace.FamilyInvalid, keyspace.LiteralValue{}, false)
+	if !ok {
+		t.Fatal("call occurrence")
+	}
+	dispatchPoint, ok := programschema.NewOccurrencePoint(dispatchPointID)
+	if !ok {
+		t.Fatal("call dispatch occurrence point")
+	}
+	basePoint, basePointOK := programschema.NewOccurrencePoint(basePointID)
+	dispatchRule, ok := programschema.NewRuleOccurrence(schema.Key("module-call-transition-law"), schema.Key("module-call-transition-law-axis"), 0, dispatchPointID, basePointID, programissuance.StageCallDispatch, programissuance.InputPreviousStage, identity.ContentID{}, true)
+	if !ok || !basePointOK {
+		t.Fatal("call dispatch rule occurrence")
+	}
 	frozen, ok := (programpublication.Publication{
-		ModuleImports:  []programschema.ModuleImport{importRow},
-		ModuleRequests: []programschema.ModuleRequest{request},
-		Bodies:         []programschema.Body{body},
-		Outcomes:       []programschema.Outcome{normal, returned, thrown, yielded, canceled},
-		ModuleEntries:  []programschema.ModuleEntry{entry},
+		ModuleImports:    []programschema.ModuleImport{importRow},
+		ModuleRequests:   []programschema.ModuleRequest{request},
+		Occurrences:      []programschema.Occurrence{callOccurrence},
+		OccurrencePoints: []programschema.OccurrencePoint{basePoint, dispatchPoint},
+		RuleOccurrences:  []programschema.RuleOccurrence{dispatchRule},
+		Bodies:           []programschema.Body{body},
+		Outcomes:         []programschema.Outcome{normal, returned, thrown, yielded, canceled},
+		ModuleEntries:    []programschema.ModuleEntry{entry},
 	}).Seal(catalogID, store)
 	if !ok {
 		t.Fatal("program publication")
@@ -106,7 +127,13 @@ func makeGeneration(t *testing.T) (lawProgram, modulecomposition.ResolvedImport,
 	if !ok {
 		t.Fatal("resolved import")
 	}
-	cache, ok := modulecomposition.NewCacheIngress(resolved, lawID(t, "from-root"), lawID(t, "to-root"), lawID(t, "actor"), lawID(t, "representative-instance"))
+	actorID, representativeID := lawID(t, "actor"), lawID(t, "representative-instance")
+	fromContext, fromContextOK := executioncontext.NewContext(linkID, program.mount.ModuleKey, actorID, representativeID)
+	toContext, toContextOK := executioncontext.NewContext(linkID, program.targetMount.ModuleKey, actorID, representativeID)
+	if !fromContextOK || !toContextOK {
+		t.Fatal("execution contexts")
+	}
+	cache, ok := modulecomposition.NewCacheIngress(resolved, lawID(t, "from-root"), lawID(t, "to-root"), fromContext, toContext)
 	if !ok {
 		t.Fatal("cache ingress")
 	}
@@ -150,7 +177,13 @@ func TestResolvedRowsAreCanonicalAndLinkQualified(t *testing.T) {
 	if cache.RepresentativeInstanceID() != lawID(t, "representative-instance") {
 		t.Fatal("cache ingress lost the source representative identity")
 	}
-	otherCache, ok := modulecomposition.NewCacheIngress(resolved, cache.FromRootID(), cache.ToRootID(), cache.ActorID(), lawID(t, "other-representative"))
+	otherRepresentative := lawID(t, "other-representative")
+	otherFromContext, fromContextOK := executioncontext.NewContext(cache.LinkID(), cache.SourceModuleKey(), cache.ActorID(), otherRepresentative)
+	otherToContext, toContextOK := executioncontext.NewContext(cache.LinkID(), cache.TargetModuleKey(), cache.ActorID(), otherRepresentative)
+	if !fromContextOK || !toContextOK {
+		t.Fatal("other execution contexts")
+	}
+	otherCache, ok := modulecomposition.NewCacheIngress(resolved, cache.FromRootID(), cache.ToRootID(), otherFromContext, otherToContext)
 	if !ok || otherCache.ID() == cache.ID() {
 		t.Fatal("cache ingress identity ignored its representative")
 	}
@@ -188,6 +221,40 @@ func TestResolvedImportRejectsARequestFromAnotherProgram(t *testing.T) {
 	}
 	if _, ok := modulecomposition.NewResolvedImport(lawID(t, "link"), program.mount, foreign, lawID(t, "target")); ok {
 		t.Fatal("request from another Program joined the mount")
+	}
+}
+
+func TestCacheIngressRejectsForeignOrMisplacedTargetContext(t *testing.T) {
+	program := makeLawProgram(t)
+	linkID := lawID(t, "link")
+	resolved, ok := modulecomposition.NewResolvedImport(linkID, program.mount, program.request, program.targetMount.ModuleKey)
+	if !ok {
+		t.Fatal("resolved import")
+	}
+	actorID, representativeID := lawID(t, "actor"), lawID(t, "representative-instance")
+	fromContext, fromOK := executioncontext.NewContext(linkID, program.mount.ModuleKey, actorID, representativeID)
+	foreignTarget, foreignOK := executioncontext.NewContext(lawID(t, "foreign-link"), program.targetMount.ModuleKey, actorID, representativeID)
+	if !fromOK || !foreignOK {
+		t.Fatal("contexts")
+	}
+	if _, ok := modulecomposition.NewCacheIngress(resolved, lawID(t, "from-root"), lawID(t, "to-root"), fromContext, foreignTarget); ok {
+		t.Fatal("foreign target context crossed the Link fence")
+	}
+	misplacedTarget, misplacedOK := executioncontext.NewContext(linkID, program.mount.ModuleKey, actorID, lawID(t, "other-representative"))
+	if !misplacedOK {
+		t.Fatal("misplaced target")
+	}
+	if _, ok := modulecomposition.NewCacheIngress(resolved, lawID(t, "from-root-2"), lawID(t, "to-root-2"), fromContext, misplacedTarget); ok {
+		t.Fatal("target context for source module crossed the endpoint fence")
+	}
+	targetRepresentative := lawID(t, "target-representative")
+	exactTarget, exactOK := executioncontext.NewContext(linkID, program.targetMount.ModuleKey, actorID, targetRepresentative)
+	if !exactOK {
+		t.Fatal("exact target context")
+	}
+	cache, cacheOK := modulecomposition.NewCacheIngress(resolved, lawID(t, "from-root-3"), lawID(t, "to-root-3"), fromContext, exactTarget)
+	if !cacheOK || cache.ToContextID() != exactTarget.ID() {
+		t.Fatal("target representative was reconstructed from source context")
 	}
 }
 
@@ -358,6 +425,7 @@ func TestAxesAreFrozenLinkLifetimeSparseAndSelfWritten(t *testing.T) {
 	}{
 		{"import", asAny(modulecomposition.ImportAxisEntry[modulecomposition.ResolvedImport]())},
 		{"cache", asAny(modulecomposition.CacheAxisEntry[modulecomposition.CacheIngress]())},
+		{"module-call-transition", asAny(modulecomposition.ModuleCallTransitionAxisEntry[modulecomposition.ModuleCallTransition]())},
 		{"generation", asAny(modulecomposition.GenerationAxisEntry[modulecomposition.InitGeneration]())},
 		{"outcome", asAny(modulecomposition.OutcomeAxisEntry[modulecomposition.InitOutcome]())},
 		{"terminal", asAny(modulecomposition.TerminalAxisEntry[modulecomposition.InitTerminal]())},
@@ -379,6 +447,9 @@ func TestAxesAreFrozenLinkLifetimeSparseAndSelfWritten(t *testing.T) {
 	}
 	if got := asAny(modulecomposition.CacheAxisEntry[modulecomposition.CacheIngress]()).Dependencies; len(got) != 1 || got[0] != modulecomposition.ImportAxisKey {
 		t.Fatal("cache axis dependency is not resolved import")
+	}
+	if got := asAny(modulecomposition.ModuleCallTransitionAxisEntry[modulecomposition.ModuleCallTransition]()).Dependencies; len(got) != 2 || got[0] != modulecomposition.CacheAxisKey || got[1] != programmount.AxisKey {
+		t.Fatal("module-call transition axis dependency chain is incomplete")
 	}
 	if got := asAny(modulecomposition.GenerationAxisEntry[modulecomposition.InitGeneration]()).Dependencies; len(got) != 2 || got[0] != modulecomposition.CacheAxisKey || got[1] != programmount.AxisKey {
 		t.Fatal("generation axis dependency chain is incomplete")

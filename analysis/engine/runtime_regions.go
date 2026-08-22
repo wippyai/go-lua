@@ -12,73 +12,31 @@ import (
 )
 
 // runtimeStaticDependencyEdges copies the already sealed Point influence
-// relation once into dense form.  Selected structural edges are appended to
+// relation once into dense form. Selected structural edges are appended to
 // this relation only while preparing an overlay; schedule.Prepare then gives
 // one batched cycle proof for static plus previously selected plus new edges.
-// Group input and designated environment input dependencies both target the
-// Group output, while direct Environment/Factor rows target their own Point.
+// The equation Graph owns this relation; runtime must not re-derive it from
+// Group/transport incidences because same-Point carrier closure is not a
+// schedule edge.
 func runtimeStaticDependencyEdges(graph *equation.Graph) ([]schedule.Edge, map[[2]int]struct{}, bool) {
 	if graph == nil || graph.Schedule() == nil || graph.PointCount() == 0 {
 		return nil, nil, false
 	}
-	seen := make(map[[2]int]struct{})
-	edges := make([]schedule.Edge, 0, graph.EnvironmentEdgeTotal()+graph.FactorEdgeTotal()+graph.GroupCount())
-	appendEdge := func(source, target int) bool {
-		if source < 0 || target < 0 || source >= graph.PointCount() || target >= graph.PointCount() {
-			return false
-		}
-		key := [2]int{source, target}
-		if _, duplicate := seen[key]; !duplicate {
-			seen[key] = struct{}{}
-			edges = append(edges, schedule.Edge{From: schedule.Node(source), To: schedule.Node(target)})
-		}
-		return true
+	edges := graph.InfluenceEdges()
+	if len(edges) != graph.InfluenceEdgeCount() {
+		return nil, nil, false
 	}
-	for sourceIndex := 0; sourceIndex < graph.PointCount(); sourceIndex++ {
-		source, sourceOK := graph.PointAt(schedule.Node(sourceIndex))
-		if !sourceOK || !graph.OwnsPoint(source) {
+	seen := make(map[[2]int]struct{}, len(edges))
+	for _, edge := range edges {
+		if edge.From < 0 || edge.To < 0 || int(edge.From) >= graph.PointCount() || int(edge.To) >= graph.PointCount() {
 			return nil, nil, false
 		}
-		for index := 0; index < graph.ConsumerCount(source); index++ {
-			group, groupOK := graph.ConsumerAt(source, index)
-			target, targetOK := group.Output(), graph.OwnsGroup(group)
-			targetIndex, indexed := graph.PointIndex(target)
-			if !groupOK || !targetOK || !indexed || !appendEdge(sourceIndex, targetIndex) {
-				return nil, nil, false
-			}
+		key := [2]int{int(edge.From), int(edge.To)}
+		if _, duplicate := seen[key]; duplicate {
+			return nil, nil, false
 		}
-		for index := 0; index < graph.EnvironmentGroupCount(source); index++ {
-			group, groupOK := graph.EnvironmentGroupAt(source, index)
-			target, targetOK := group.Output(), graph.OwnsGroup(group)
-			targetIndex, indexed := graph.PointIndex(target)
-			if !groupOK || !targetOK || !indexed || !appendEdge(sourceIndex, targetIndex) {
-				return nil, nil, false
-			}
-		}
-		for index := 0; index < graph.EnvironmentOutgoingCount(source); index++ {
-			edge, edgeOK := graph.EnvironmentOutgoingAt(source, index)
-			if edgeOK && edge.TransportOnly() {
-				continue
-			}
-			targetIndex, indexed := graph.PointIndex(edge.Target())
-			if !edgeOK || !indexed || !appendEdge(sourceIndex, targetIndex) {
-				return nil, nil, false
-			}
-		}
-		for index := 0; index < graph.FactorOutgoingCount(source); index++ {
-			edge, edgeOK := graph.FactorOutgoingAt(source, index)
-			targetIndex, indexed := graph.PointIndex(edge.Target())
-			if !edgeOK || !indexed || !appendEdge(sourceIndex, targetIndex) {
-				return nil, nil, false
-			}
-		}
+		seen[key] = struct{}{}
 	}
-	sort.Slice(edges, func(left, right int) bool {
-		if edges[left].From != edges[right].From {
-			return edges[left].From < edges[right].From
-		}
-		return edges[left].To < edges[right].To
-	})
 	return edges, seen, true
 }
 

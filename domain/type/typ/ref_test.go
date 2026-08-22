@@ -124,6 +124,10 @@ func TestMetaEquality(t *testing.T) {
 	if m1.Hash() != m2.Hash() {
 		t.Error("equal metas should have same hash")
 	}
+
+	if !m1.Equals(NewAlias("MetaAlias", m2)) {
+		t.Error("Meta.Equals must use the alias-transparent canonical equality machine")
+	}
 }
 
 func TestRefNotEqualToPrimitive(t *testing.T) {

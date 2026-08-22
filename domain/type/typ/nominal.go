@@ -55,22 +55,4 @@ func (i *Interface) String() string {
 
 func (i *Interface) Hash() uint64 { return i.hash }
 
-func (i *Interface) Equals(other Type) bool {
-	if other.Kind() != kind.Interface {
-		return false
-	}
-
-	oi := other.(*Interface)
-	if i.Name != oi.Name || len(i.Methods) != len(oi.Methods) {
-		return false
-	}
-
-	for j, m := range i.Methods {
-		om := oi.Methods[j]
-		if m.Name != om.Name || !m.Type.Equals(om.Type) {
-			return false
-		}
-	}
-
-	return true
-}
+func (i *Interface) Equals(other Type) bool { return typeEquals(i, other) }

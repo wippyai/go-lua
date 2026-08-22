@@ -77,15 +77,8 @@ type Algebra struct {
 	content              identity.ContentID
 	applicationOps       map[identity.ContentID]map[vocabulary.Operation]int
 	applicationCount     uint64
-	callRows             map[identity.ContentID]callRow
 	mountedCalls         []mountedCallRow
 	mountedCallIndex     map[mountedCallRef]uint32
-}
-
-type callRow struct {
-	moduleID identity.ContentID
-	context  identity.ContentID
-	root     uint32
 }
 
 type artifactCallRow struct {
@@ -130,6 +123,7 @@ type mountedCallRow struct {
 	applicationID identity.ContentID
 	moduleID      identity.ContentID
 	contextID     identity.ContentID
+	root          uint32
 }
 
 type mountedCallRef struct {
@@ -152,7 +146,7 @@ func NewWithMountedArtifacts(source *link.Link, packs *pack.Schema, contract *co
 	if !ok || linked != contract {
 		return nil, false
 	}
-	a := &Algebra{linkOwner: owner, packs: packs, contract: contract, rootContextIndex: make(map[rootContextRef]uint32), rootBodyIndex: make(map[rootBodyRef]uint32), rootMountedBodyIndex: make(map[rootMountedBodyRef]uint32), applicationOps: make(map[identity.ContentID]map[vocabulary.Operation]int), callRows: make(map[identity.ContentID]callRow), mountedCallIndex: make(map[mountedCallRef]uint32)}
+	a := &Algebra{linkOwner: owner, packs: packs, contract: contract, rootContextIndex: make(map[rootContextRef]uint32), rootBodyIndex: make(map[rootBodyRef]uint32), rootMountedBodyIndex: make(map[rootMountedBodyRef]uint32), applicationOps: make(map[identity.ContentID]map[vocabulary.Operation]int), mountedCallIndex: make(map[mountedCallRef]uint32)}
 	project := source.Project()
 	if project == nil {
 		return nil, false
@@ -221,15 +215,11 @@ func (a *Algebra) captureApplicationOps(project *linkproject.Component, boundary
 			if applicationID != id || !artifactOK || artifact.root == 0 || uint64(artifact.root) > uint64(len(a.roots)) || !moduleID.Available() || !contextID.Available() {
 				return false
 			}
-			if _, duplicate := a.callRows[id]; duplicate {
-				return false
-			}
 			ref := mountedCallRef{moduleID: moduleID, contextID: contextID}
 			if _, duplicate := a.mountedCallIndex[ref]; duplicate {
 				return false
 			}
-			a.callRows[id] = callRow{moduleID: moduleID, context: contextID, root: artifact.root}
-			a.mountedCalls = append(a.mountedCalls, mountedCallRow{applicationID: id, moduleID: moduleID, contextID: contextID})
+			a.mountedCalls = append(a.mountedCalls, mountedCallRow{applicationID: id, moduleID: moduleID, contextID: contextID, root: artifact.root})
 			a.mountedCallIndex[ref] = uint32(len(a.mountedCalls))
 		}
 	}
@@ -305,19 +295,6 @@ func (a *Algebra) RootForMountedBodyID(moduleKey, programID, bodyID identity.Con
 	return Root{owner: a, slot: slot}, true
 }
 
-// RootForCall derives the exact containing Effect body for one existing
-// ordinary Project Call. It retains no application index or site relation.
-func (a *Algebra) RootForCallID(applicationID identity.ContentID) (Root, bool) {
-	if !a.Valid() || !applicationID.Available() {
-		return Root{}, false
-	}
-	row, ok := a.callRows[applicationID]
-	if !ok || !row.moduleID.Available() || !row.context.Available() || row.root == 0 || uint64(row.root) > uint64(len(a.roots)) {
-		return Root{}, false
-	}
-	return Root{owner: a, slot: row.root}, true
-}
-
 func (a *Algebra) RootIndex(root Root) (int, bool) {
 	if !a.ownsRoot(root) {
 		return 0, false
@@ -333,39 +310,6 @@ func (a *Algebra) RootID(root Root) (identity.ContentID, bool) {
 	}
 	row := a.roots[root.slot-1]
 	return row.id, row.id.Available()
-}
-
-// ContainsCallID validates an existing detached ordinary-call identity.
-func (a *Algebra) ContainsCallID(root Root, applicationID identity.ContentID) bool {
-	return a.callInRootID(root, applicationID)
-}
-
-// OpenOperationUnknown requires an exact selected operation with its explicit
-// unknown-open effect row. Row variables remain unsupported and fail closed.
-func (a *Algebra) OpenOperationUnknown(root Root, applicationID identity.ContentID, owner vocabulary.Operation) (Atom, bool) {
-	if !a.ownsRoot(root) || !a.selectedCall(root, applicationID, owner) {
-		return Atom{}, false
-	}
-	tail, _, ok := a.contract.Operations.EffectTail(owner)
-	if !ok || tail != vocabulary.RowUnknownOpen {
-		return Atom{}, false
-	}
-	return Atom{owner: a, root: root.slot, id: a.unknownID}, true
-}
-
-// CallEffectAtom validates one selected ordinary-call effect. Row variables and
-// row arguments fail closed; explicit closed/open rows retain known atoms.
-func (a *Algebra) CallEffectAtom(root Root, applicationID identity.ContentID, owner vocabulary.Operation, effect int) (Atom, bool) {
-	mounted, mountedOK := a.mountedCallForApplication(applicationID)
-	if !mountedOK || !a.selectedMountedCall(root, mounted, owner) {
-		return Atom{}, false
-	}
-	formal, formalOK := a.FormalCallEffectAtom(mounted, owner, effect)
-	binding, bindingOK := a.bindFormalAtom(root, mounted, formal, formal)
-	if !formalOK || !bindingOK {
-		return Atom{}, false
-	}
-	return binding.Atom()
 }
 
 func (a *Algebra) Bottom() Value {
@@ -724,33 +668,6 @@ func (a *Algebra) sealCapacity() bool {
 	} // +1 rank must fit.
 	a.capacity = capacity
 	return true
-}
-
-func (a *Algebra) selectedCall(root Root, applicationID identity.ContentID, owner vocabulary.Operation) bool {
-	if _, available := a.applicationOperation(applicationID, owner); !available {
-		return false
-	}
-	if !a.callInRootID(root, applicationID) {
-		return false
-	}
-	row, rowOK := a.callRows[applicationID]
-	packRoot, ok := a.packs.CallRootForMountedSemantic(row.moduleID, row.context)
-	if !rowOK || !ok {
-		return false
-	}
-	_, ok = a.packs.RootID(packRoot)
-	return ok
-}
-
-func (a *Algebra) callInRootID(root Root, applicationID identity.ContentID) bool {
-	if !a.ownsRoot(root) {
-		return false
-	}
-	row, rowOK := a.callRows[applicationID]
-	if !rowOK || !row.moduleID.Available() || !row.context.Available() || row.root == 0 || uint64(row.root) > uint64(len(a.roots)) {
-		return false
-	}
-	return Root{owner: a, slot: row.root} == root
 }
 
 // inputTailArgument reports which position of an effect's Values argument

@@ -29,9 +29,9 @@ func RuleEntry[P rulePrincipals, A ruleAuthorities]() rule.Spec {
 		Writes: "placement",
 		Owner:  "placement",
 		Issues: []rule.Issuance{
-			{Occurrence: "occurrence/storage-bind-transfer", Requirement: "requirement/unrestricted", Form: "issuance/local", Input: "input/entry", Stage: "stage/local"},
-			{Occurrence: "occurrence/storage-bind-transfer", Requirement: "requirement/call-result-slot", Form: "issuance/call-stage", Input: "input/finish", Stage: "stage/call-effect"},
-			{Occurrence: "occurrence/storage-write", Requirement: "requirement/unrestricted", Form: "issuance/local-predecessor", Input: "input/predecessor", Stage: "stage/local"},
+			{Occurrence: "occurrence/storage-bind-transfer", Requirement: "program-requirement/unrestricted", Form: "program-form/local-successor"},
+			{Occurrence: "occurrence/storage-bind-transfer", Requirement: "program-requirement/tail-transfer-result", Form: "program-form/call-effect"},
+			{Occurrence: "occurrence/storage-write", Requirement: "program-requirement/unrestricted", Form: "program-form/local-predecessor"},
 		},
 		Lane:     rule.LaneMounted,
 		Semantic: "semantic/rule/placement/storage",

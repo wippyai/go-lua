@@ -14,6 +14,7 @@ import (
 	linkproject "github.com/wippyai/go-lua/analysis/program/link/project"
 	"github.com/wippyai/go-lua/analysis/program/target/compiler"
 	"github.com/wippyai/go-lua/analysis/program/target/declaration"
+	"github.com/wippyai/go-lua/analysis/schema/programmount"
 	"github.com/wippyai/go-lua/domain/composite"
 	heapdomain "github.com/wippyai/go-lua/domain/heap"
 	allocationcatalog "github.com/wippyai/go-lua/domain/heap/allocation/catalog"
@@ -142,7 +143,7 @@ func emptyFixture(t testing.TB) (heapdomain.Schema, *valuedomain.Schema, emptyFi
 	if err != nil {
 		t.Fatal(err)
 	}
-	mounts := emptyArtifactMounts(t, linked)
+	mounts := emptyMountedArtifacts(t, linked)
 	heapSchema, heapFailure := heapdomain.SealWithArtifacts(linked, mounts.heap)
 	structural, structuralOK := composite.StructureVocabulary(mounts.compilation)
 	if !structuralOK {
@@ -158,11 +159,11 @@ func emptyFixture(t testing.TB) (heapdomain.Schema, *valuedomain.Schema, emptyFi
 type emptyFixtureMounts struct {
 	linked      *link.Link
 	compilation composite.Compilation
-	heap        []heapdomain.ArtifactMount
-	value       []valuedomain.ArtifactMount
+	heap        []programmount.MountedArtifact
+	value       []programmount.MountedArtifact
 }
 
-func emptyArtifactMounts(t testing.TB, linked *link.Link) emptyFixtureMounts {
+func emptyMountedArtifacts(t testing.TB, linked *link.Link) emptyFixtureMounts {
 	t.Helper()
 	compilation, compilationOK := composite.Build()
 	executionSchemaID := compilation.ExecutionSchemaID()
@@ -171,12 +172,12 @@ func emptyArtifactMounts(t testing.TB, linked *link.Link) emptyFixtureMounts {
 		t.Fatal("empty artifact receipt")
 	}
 	projectMounts := linked.Project().Mounts()
-	mounts := emptyFixtureMounts{linked: linked, compilation: compilation, heap: make([]heapdomain.ArtifactMount, projectMounts.Count()), value: make([]valuedomain.ArtifactMount, projectMounts.Count())}
+	mounts := emptyFixtureMounts{linked: linked, compilation: compilation, heap: make([]programmount.MountedArtifact, projectMounts.Count()), value: make([]programmount.MountedArtifact, projectMounts.Count())}
 	for index := 0; index < projectMounts.Count(); index++ {
 		shard, shardOK := projectMounts.At(index)
 		program, programOK := projectMounts.Program(shard)
 		module, moduleOK := linked.Project().ModuleKey(shard)
-		programID, programIDOK := projectMounts.ProgramID(shard)
+		_, programIDOK := projectMounts.ProgramID(shard)
 		if !shardOK || !programOK || program == nil || !moduleOK || !programIDOK {
 			t.Fatal("empty artifact mount")
 		}
@@ -185,8 +186,8 @@ func emptyArtifactMounts(t testing.TB, linked *link.Link) emptyFixtureMounts {
 			t.Fatalf("empty artifact compile: %v", failure)
 		}
 		var heapOK, valueOK bool
-		mounts.heap[index], heapOK = heapdomain.NewArtifactMount(snapshottest.MustLower(t, artifact), module, programID)
-		mounts.value[index], valueOK = valuedomain.NewArtifactMount(snapshottest.MustLower(t, artifact), module, programID)
+		mounts.heap[index], heapOK = programmount.MountedArtifactFromSnapshot(snapshottest.MustLower(t, artifact), module)
+		mounts.value[index], valueOK = programmount.MountedArtifactFromSnapshot(snapshottest.MustLower(t, artifact), module)
 		if !heapOK || !valueOK {
 			t.Fatal("empty artifact mount receipt")
 		}

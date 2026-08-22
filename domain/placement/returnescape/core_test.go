@@ -8,7 +8,6 @@ import (
 	"github.com/wippyai/go-lua/analysis/lua/lower"
 	programartifact "github.com/wippyai/go-lua/analysis/program/artifact"
 	artifactcompiler "github.com/wippyai/go-lua/analysis/program/artifact/compiler"
-	"github.com/wippyai/go-lua/analysis/program/artifact/issuance"
 	"github.com/wippyai/go-lua/analysis/program/link"
 	linkproject "github.com/wippyai/go-lua/analysis/program/link/project"
 	"github.com/wippyai/go-lua/analysis/program/target/compiler"
@@ -16,6 +15,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/schema"
 	"github.com/wippyai/go-lua/analysis/schema/ingress"
 	programschema "github.com/wippyai/go-lua/analysis/schema/program"
+	"github.com/wippyai/go-lua/analysis/schema/programmount"
 	"github.com/wippyai/go-lua/analysis/schema/structure"
 	"github.com/wippyai/go-lua/domain/heap"
 	"github.com/wippyai/go-lua/domain/materialization"
@@ -23,6 +23,7 @@ import (
 	"github.com/wippyai/go-lua/domain/runtimekind"
 	domaincontract "github.com/wippyai/go-lua/domain/type/typecontract"
 	valuedomain "github.com/wippyai/go-lua/domain/value"
+	"github.com/wippyai/go-lua/internal/testfixture"
 )
 
 type returnPlanFixture struct {
@@ -111,6 +112,72 @@ func TestReturnRoutePlanTopAndOpaqueWidenEveryAllocationRoot(t *testing.T) {
 	}
 }
 
+func TestReturnRoutePlanFactsRequiresEvidenceAndOnlyAuthenticatedWidening(t *testing.T) {
+	fixture := newReturnPlanFixture(t)
+
+	var unavailable returnFacts
+	unavailable.append(returnFact{available: false})
+	if plan, ok := routePlanForFacts(fixture.placement, fixture.values, unavailable, false); ok {
+		t.Fatalf("missing selected return cell fabricated plan: %#v", plan)
+	}
+	var absent returnFacts
+	absent.append(returnFact{available: true})
+	if plan, ok := routePlanForFacts(fixture.placement, fixture.values, absent, false); ok {
+		t.Fatalf("absent selected return fact fabricated plan: %#v", plan)
+	}
+	var sparseBottom returnFacts
+	sparseBottom.append(returnFact{fact: fixture.values.Bottom(), available: true})
+	if plan, ok := routePlanForFacts(fixture.placement, fixture.values, sparseBottom, false); !ok || plan.class != routeScalar || plan.routeCount() != 0 {
+		t.Fatalf("owner-authenticated sparse Bottom return fact = %#v/%t, want scalar no-route plan", plan, ok)
+	}
+
+	var malformed returnFacts
+	malformed.append(returnFact{present: true, available: true})
+	if plan, ok := routePlanForFacts(fixture.placement, fixture.values, malformed, false); ok {
+		t.Fatalf("malformed Value fact fabricated plan: %#v", plan)
+	}
+	if plan, ok := routePlanForFacts(fixture.placement, fixture.values, malformed, true); ok {
+		t.Fatalf("malformed Value fact bypassed authenticated open-tail widening: %#v", plan)
+	}
+
+	var top returnFacts
+	top.append(returnFact{fact: fixture.values.Top(), present: true, available: true})
+	if plan, ok := routePlanForFacts(fixture.placement, fixture.values, top, false); !ok || plan.class != routeWidened || plan.routeCount() != len(fixture.allocations) {
+		t.Fatalf("authenticated Top return fact = %#v/%t", plan, ok)
+	}
+
+	opaqueAtom, opaqueOK := fixture.values.OpaqueReference(valuedomain.ReferenceTable)
+	if !opaqueOK {
+		t.Fatal("opaque reference atom")
+	}
+	opaque, opaqueOK := fixture.values.Singleton(opaqueAtom)
+	if !opaqueOK {
+		t.Fatal("opaque reference value")
+	}
+	var opaqueFacts returnFacts
+	opaqueFacts.append(returnFact{fact: opaque, present: true, available: true})
+	if plan, ok := routePlanForFacts(fixture.placement, fixture.values, opaqueFacts, false); !ok || plan.class != routeWidened || plan.routeCount() != len(fixture.allocations) {
+		t.Fatalf("authenticated opaque return fact = %#v/%t", plan, ok)
+	}
+
+	if plan, ok := routePlanForFacts(fixture.placement, fixture.values, returnFacts{}, true); !ok || plan.class != routeWidened || plan.routeCount() != len(fixture.allocations) {
+		t.Fatalf("authenticated open-tail return fact = %#v/%t", plan, ok)
+	}
+
+	foreign := newReturnPlanFixture(t)
+	if plan, ok := routePlanFor(fixture.placement, fixture.values, foreign.values.Bottom()); ok {
+		t.Fatalf("foreign Bottom Value fabricated plan: %#v", plan)
+	}
+	if plan, ok := routePlanFor(fixture.placement, fixture.values, foreign.values.Top()); ok {
+		t.Fatalf("foreign Top Value fabricated plan: %#v", plan)
+	}
+	var foreignFacts returnFacts
+	foreignFacts.append(returnFact{fact: foreign.values.Top(), present: true, available: true})
+	if plan, ok := routePlanForFacts(fixture.placement, fixture.values, foreignFacts, false); ok {
+		t.Fatalf("foreign Top selected Value fabricated plan: %#v", plan)
+	}
+}
+
 func TestReturnPlacementDemandPreservesMonotoneDisplacement(t *testing.T) {
 	fixture := newReturnPlanFixture(t)
 	atom, atomOK := fixture.values.Allocation(fixture.allocations[0], materialization.Recent)
@@ -139,13 +206,22 @@ func TestReturnPlacementDemandPreservesMonotoneDisplacement(t *testing.T) {
 			t.Fatalf("return demand(%s) = %s/%t, want %s", item.current, got, ok, item.want)
 		}
 	}
+	if got, ok := returnValue(placement.Bottom, true, plan); ok || got != placement.Bottom {
+		t.Fatalf("missing Bottom placement seed = %s/%t, want bottom/false", got, ok)
+	}
+	if got, ok := returnValue(placement.Stack, false, plan); !ok || got != placement.OwnedHeap {
+		t.Fatalf("sparse Placement default = %s/%t, want owned-heap/true", got, ok)
+	}
 	topPlan, topOK := routePlanFor(fixture.placement, fixture.values, fixture.values.Top())
 	if !topOK || topPlan.class != routeWidened {
 		t.Fatal("top return plan")
 	}
 	got, ok := returnValue(placement.Stack, true, topPlan)
-	if !ok || got != placement.Unknown {
-		t.Fatalf("widened return demand = %s/%t, want unknown", got, ok)
+	if !ok || got != placement.OwnedHeap {
+		t.Fatalf("widened return demand = %s/%t, want OwnedHeap", got, ok)
+	}
+	if got, ok := returnValue(placement.Bottom, true, topPlan); ok || got != placement.Bottom {
+		t.Fatalf("missing Bottom seed on widened return = %s/%t, want bottom/false", got, ok)
 	}
 }
 
@@ -170,7 +246,7 @@ func TestReturnBoundaryOperandUsesCanonicalValueRow(t *testing.T) {
 
 func newReturnPlanFixture(t testing.TB) returnPlanFixture {
 	t.Helper()
-	program, err := lower.Lower(lower.Source{Name: "placement_returnescape.lua", Text: []byte("local first = {}; local second = {}; return first")})
+	program, err := lower.Lower(lower.Source{Name: "placement_returnescape.lua", Text: []byte("local first = {}; local second = {}; local third = {}; local fourth = {}; local fifth = {}; local sixth = {}; local seventh = {}; local eighth = {}; local ninth = {}; return first")})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -186,13 +262,13 @@ func newReturnPlanFixture(t testing.TB) returnPlanFixture {
 	if !grammarOK {
 		t.Fatal("artifact grammar")
 	}
-	artifact, failure := artifactcompiler.CompileDetailed(program, grammar, issuance.Directory{})
+	artifact, failure := artifactcompiler.CompileDetailed(program, grammar, testfixture.EmptyProgramIssuancePlan(t))
 	if failure.Available() || artifact == nil {
 		t.Fatalf("compile artifact: %s", failure.Error())
 	}
 	shard, shardOK := linked.Project().Mounts().At(0)
 	module, moduleOK := linked.Project().ModuleKey(shard)
-	programID, programIDOK := linked.Project().Mounts().ProgramID(shard)
+	_, programIDOK := linked.Project().Mounts().ProgramID(shard)
 	if !shardOK || !moduleOK || !programIDOK {
 		t.Fatal("mounted module")
 	}
@@ -201,16 +277,16 @@ func newReturnPlanFixture(t testing.TB) returnPlanFixture {
 	if !lowered {
 		t.Fatal("ingress lower")
 	}
-	mount, mountOK := heap.NewArtifactMount(snapshot, module, programID)
+	mount, mountOK := programmount.MountedArtifactFromSnapshot(snapshot, module)
 	if !mountOK {
 		t.Fatal("heap artifact mount")
 	}
-	valueMount, valueMountOK := valuedomain.NewArtifactMount(snapshot, module, programID)
+	valueMount, valueMountOK := programmount.MountedArtifactFromSnapshot(snapshot, module)
 	if !valueMountOK {
 		t.Fatal("value artifact mount")
 	}
-	heapSchema, heapFailure := heap.SealWithArtifacts(linked, []heap.ArtifactMount{mount})
-	values, valueFailure := valuedomain.SealWithFailure(linked, heapSchema, []valuedomain.ArtifactMount{valueMount}, structural)
+	heapSchema, heapFailure := heap.SealWithArtifacts(linked, []programmount.MountedArtifact{mount})
+	values, valueFailure := valuedomain.SealWithFailure(linked, heapSchema, []programmount.MountedArtifact{valueMount}, structural)
 	if heapFailure != heap.SealFailureNone || valueFailure != valuedomain.SealFailureNone || values == nil {
 		t.Fatalf("schema seal heap=%v value=%v", heapFailure, valueFailure)
 	}
@@ -266,14 +342,6 @@ func syntheticStructuralVocabulary(t testing.TB) structure.Table {
 			return int(runtimekind.Count) - 1
 		case structure.CategoryOccurrenceKind:
 			return 32
-		case structure.CategoryIssuanceForm:
-			return 5
-		case structure.CategoryIssuanceInput:
-			return 4
-		case structure.CategoryIssuanceStage:
-			return 5
-		case structure.CategoryIssuanceRequirement:
-			return 2
 		default:
 			return 1
 		}
@@ -324,15 +392,16 @@ func (surface emptySurface) Seal(schema.View, schema.Sealed) schema.SealFailure 
 	return schema.SealFailure{}
 }
 
-// BenchmarkAllAllocationRoutesDensePass keeps the widened cold enumeration on
-// the direct KeyAt path. AllocationAt is intentionally not part of this hot
-// benchmark: its allocation-only ordinal API rescans the Heap prefix.
-func BenchmarkAllAllocationRoutesDensePass(b *testing.B) {
+// BenchmarkAllAllocationRoutesDensePass measures the one-time owner-schema
+// validation/counting pass. Route materialization remains lazy after this
+// setup, so the widened plan does not retain a copied root catalogue.
+func BenchmarkReturnAllRootPlanDensePass(b *testing.B) {
 	fixture := newReturnPlanFixture(b)
 	b.ReportAllocs()
+	b.ResetTimer()
 	for index := 0; index < b.N; index++ {
-		if routes, ok := allAllocationRoutes(fixture.placement); !ok || routes.routeCount() != len(fixture.allocations) {
-			b.Fatal("dense allocation route enumeration")
+		if plan, ok := allAllocationPlan(fixture.placement); !ok || !plan.allRoot || plan.routeCount() != len(fixture.allocations) {
+			b.Fatal("dense allocation route plan")
 		}
 	}
 }
@@ -361,8 +430,8 @@ func BenchmarkReturnRoutePlanExact(b *testing.B) {
 }
 
 // BenchmarkReturnRoutePlanExactTwo covers the bounded two-alternative route
-// case. It keeps sorting and Value atom pulls on the caller's stack just like
-// the one-route benchmark above.
+// case. It keeps canonical insertion and Value atom pulls on the caller's
+// stack just like the one-route benchmark above.
 func BenchmarkReturnRoutePlanExactTwo(b *testing.B) {
 	fixture := newReturnPlanFixture(b)
 	if len(fixture.allocations) < 2 {
@@ -383,6 +452,99 @@ func BenchmarkReturnRoutePlanExactTwo(b *testing.B) {
 		plan, planOK := routePlanFor(fixture.placement, fixture.values, fact)
 		if !planOK || plan.class != routeExact || plan.routeCount() != 2 {
 			b.Fatal("two exact routes")
+		}
+	}
+}
+
+// BenchmarkReturnRoutePlanExactScaling exercises an exact Value with enough
+// allocation alternatives to cross the bounded inline route prefix. Only the
+// suffix is heap-backed; the four-route common prefix remains in the plan.
+func BenchmarkReturnRoutePlanExactScaling(b *testing.B) {
+	fixture := newReturnPlanFixture(b)
+	if len(fixture.allocations) <= len((routePlan{}).inline) {
+		b.Skip("fixture has no exact spill width")
+	}
+	atoms := make([]valuedomain.Atom, 0, len(fixture.allocations))
+	for _, key := range fixture.allocations {
+		atom, atomOK := fixture.values.Allocation(key, materialization.Recent)
+		if !atomOK {
+			b.Fatal("allocation atom")
+		}
+		atoms = append(atoms, atom)
+	}
+	fact, factOK := fixture.values.Alternatives(atoms...)
+	if !factOK {
+		b.Fatal("wide exact value")
+	}
+	b.ReportAllocs()
+	b.ResetTimer()
+	for index := 0; index < b.N; index++ {
+		plan, planOK := routePlanFor(fixture.placement, fixture.values, fact)
+		if !planOK || plan.class != routeExact || plan.routeCount() != len(fixture.allocations) || len(plan.spill) != len(fixture.allocations)-len(plan.inline) {
+			b.Fatal("wide exact route plan")
+		}
+	}
+}
+
+// BenchmarkReturnRoutePlanTop measures the widened return planner without
+// charging a copied route catalogue. The returned plan retains only the
+// immutable owner schema and dense root count.
+func BenchmarkReturnRoutePlanTop(b *testing.B) {
+	fixture := newReturnPlanFixture(b)
+	top := fixture.values.Top()
+	b.ReportAllocs()
+	b.ResetTimer()
+	for index := 0; index < b.N; index++ {
+		plan, planOK := routePlanFor(fixture.placement, fixture.values, top)
+		if !planOK || plan.class != routeWidened || !plan.allRoot || plan.spill != nil || plan.routeCount() != len(fixture.allocations) {
+			b.Fatal("top widened route plan")
+		}
+	}
+}
+
+// BenchmarkReturnRoutePlanOpaque measures the same lazy widened path for an
+// authenticated opaque reference alternative.
+func BenchmarkReturnRoutePlanOpaque(b *testing.B) {
+	fixture := newReturnPlanFixture(b)
+	atom, atomOK := fixture.values.OpaqueReference(valuedomain.ReferenceTable)
+	if !atomOK {
+		b.Fatal("opaque reference atom")
+	}
+	opaque, opaqueOK := fixture.values.Singleton(atom)
+	if !opaqueOK {
+		b.Fatal("opaque reference value")
+	}
+	b.ReportAllocs()
+	b.ResetTimer()
+	for index := 0; index < b.N; index++ {
+		plan, planOK := routePlanFor(fixture.placement, fixture.values, opaque)
+		if !planOK || plan.class != routeWidened || !plan.allRoot || plan.spill != nil || plan.routeCount() != len(fixture.allocations) {
+			b.Fatal("opaque widened route plan")
+		}
+	}
+}
+
+// BenchmarkReturnRoutePlanWidenedSelectionScaling walks every route in one
+// lazy widened plan. It keeps the selection side of widening visible as the
+// mounted allocation denominator grows, rather than measuring only setup.
+func BenchmarkReturnRoutePlanWidenedSelectionScaling(b *testing.B) {
+	fixture := newReturnPlanFixture(b)
+	plan, planOK := routePlanFor(fixture.placement, fixture.values, fixture.values.Top())
+	if !planOK || plan.class != routeWidened || !plan.allRoot {
+		b.Fatal("top widened route plan")
+	}
+	b.ReportAllocs()
+	b.ResetTimer()
+	for iteration := 0; iteration < b.N; iteration++ {
+		for routeIndex := 0; routeIndex < plan.routeCount(); routeIndex++ {
+			candidate, candidateOK := plan.routeAt(routeIndex)
+			if !candidateOK {
+				b.Fatal("lazy widened route")
+			}
+			byTag, byTagOK := routeAtTag(plan, candidate.tag)
+			if !byTagOK || byTag != candidate {
+				b.Fatal("lazy widened tag lookup")
+			}
 		}
 	}
 }

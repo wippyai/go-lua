@@ -1,0 +1,10 @@
+{
+  "description": "The four nil-carrying results of the Wippy v1 process surface - Event.payload, which answers an optional value, and the optional result, error and reason fields of an Event - are each read twice: unguarded, where the declared nil reaches a consumer that cannot take it, and behind the test that rules it out, which must be silent. Semantics follow runtime/lua/modules/process/types.go, where the event record declares those three fields optional because which one an event carries depends on the kind that raised it.",
+  "packages": ["process"],
+  "files": [
+    "main.lua"
+  ],
+  "run": {
+    "skip": "host-surface diagnostic fixture; the process module has no fixture runtime"
+  }
+}

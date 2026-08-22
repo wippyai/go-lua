@@ -315,19 +315,19 @@ func TestFrozenCorpusDiagnosticExpectationInventory(t *testing.T) {
 	}
 	inventory := catalog.inventory
 
-	if inventory.projects != 912 || inventory.luaFiles != 1178 || inventory.manifests != 531 || inventory.annotatedFiles != 185 {
+	if inventory.projects != 939 || inventory.luaFiles != 1206 || inventory.manifests != 558 || inventory.annotatedFiles != 188 {
 		t.Fatalf("fixture denominator changed: projects=%d lua=%d manifests=%d annotated=%d", inventory.projects, inventory.luaFiles, inventory.manifests, inventory.annotatedFiles)
 	}
-	if inventory.inlineErrors != 710 || inventory.inlineWarnings != 4 {
+	if inventory.inlineErrors != 727 || inventory.inlineWarnings != 4 {
 		t.Fatalf("inline diagnostic denominator changed: errors=%d warnings=%d", inventory.inlineErrors, inventory.inlineWarnings)
 	}
-	if inventory.structuredManifests != 70 || inventory.structuredFindings != 133 || inventory.structuredErrors != 92 || inventory.structuredWarnings != 15 || inventory.structuredHints != 26 {
+	if inventory.structuredManifests != 73 || inventory.structuredFindings != 140 || inventory.structuredErrors != 96 || inventory.structuredWarnings != 18 || inventory.structuredHints != 26 {
 		t.Fatalf("structured diagnostic denominator changed: manifests=%d findings=%d errors=%d warnings=%d hints=%d", inventory.structuredManifests, inventory.structuredFindings, inventory.structuredErrors, inventory.structuredWarnings, inventory.structuredHints)
 	}
-	if inventory.errorCountManifests != 234 || !reflect.DeepEqual(inventory.errorCounts, map[int]int{0: 222, 1: 7, 2: 3, 3: 1, 4: 1}) {
+	if inventory.errorCountManifests != 252 || !reflect.DeepEqual(inventory.errorCounts, map[int]int{0: 240, 1: 7, 2: 3, 3: 1, 4: 1}) {
 		t.Fatalf("legacy error-count denominator changed: manifests=%d counts=%v", inventory.errorCountManifests, inventory.errorCounts)
 	}
-	if inventory.ruleCount != 20 || inventory.enabledRuleCount != 19 || inventory.disabledRuleCount != 1 {
+	if inventory.ruleCount != 21 || inventory.enabledRuleCount != 20 || inventory.disabledRuleCount != 1 {
 		t.Fatalf("diagnostic policy denominator changed: rules=%d enabled=%d disabled=%d", inventory.ruleCount, inventory.enabledRuleCount, inventory.disabledRuleCount)
 	}
 
@@ -342,14 +342,14 @@ func TestFrozenCorpusDiagnosticExpectationInventory(t *testing.T) {
 		"channel.select.exhaustiveness":      1,
 		"channel.send.closed":                2,
 		"effect.freeze.mutation":             5,
-		"effect.lifecycle.unreleased":        2,
+		"effect.lifecycle.unreleased":        5,
 		"lint.claim.unproven":                2,
 		"lint.condition.redundant":           4,
 		"lint.dead.assignment":               2,
 		"lint.union.exhaustiveness":          2,
 		"lint.unused.local":                  1,
 		"send.isolation":                     9,
-		"type.assignment":                    44,
+		"type.assignment":                    47,
 		"type.assignment.optional_target":    1,
 		"type.call.direct.argument_type":     17,
 		"type.call.direct.not_callable":      4,
@@ -358,7 +358,7 @@ func TestFrozenCorpusDiagnosticExpectationInventory(t *testing.T) {
 		"type.call.optional_receiver":        1,
 		"type.for.numeric_operand":           1,
 		"type.member.missing":                6,
-		"type.nil.unsafe_use":                4,
+		"type.nil.unsafe_use":                5,
 		"type.operator.concat_operand":       4,
 		"type.reference.unresolved":          1,
 		"type.return.contract":               2,
@@ -382,7 +382,7 @@ func TestFrozenCorpusDiagnosticExpectationInventory(t *testing.T) {
 		"lint.dead.assignment":            1,
 		"lint.union.exhaustiveness":       3,
 		"lint.unused.local":               1,
-		"send.isolation":                  2,
+		"send.isolation":                  3,
 		"type.operator.concat_operand":    1,
 	}
 	if !reflect.DeepEqual(inventory.ruleCodes, wantRuleCodes) {
@@ -409,7 +409,7 @@ func TestFrozenCorpusDiagnosticExpectationInventory(t *testing.T) {
 			t.Fatalf("structured diagnostic anchor is ambiguous: project=%q code=%q file=%q line=%d severity=%q rows=%d", key.project, key.code, key.file, key.line, key.severity, len(refs))
 		}
 	}
-	if len(catalog.projects) != 912 || indexedInline != 714 || len(catalog.structuredByCode) != 34 || indexedStructured != 133 || len(catalog.structuredByLocation) != 133 || indexedStructuredLocations != 133 {
+	if len(catalog.projects) != 939 || indexedInline != 731 || len(catalog.structuredByCode) != 34 || indexedStructured != 140 || len(catalog.structuredByLocation) != 140 || indexedStructuredLocations != 140 {
 		t.Fatalf("scalable diagnostic indexes changed: projects=%d inline=%d codes=%d structured=%d structured-anchors=%d/%d", len(catalog.projects), indexedInline, len(catalog.structuredByCode), indexedStructured, len(catalog.structuredByLocation), indexedStructuredLocations)
 	}
 }
@@ -448,7 +448,7 @@ func TestFrozenCorpusFullManifestContractInventory(t *testing.T) {
 		stdlibManifests, renderOptionManifests            int
 		nativeManifests, nativeFacts, nativeInvalidations int
 		placementManifests                                int
-	}{335, 600, 95, 107, 1, 8, 177, 764, 30, 52}
+	}{359, 625, 123, 141, 1, 8, 177, 764, 30, 51}
 	if got.declaredFileManifests != want.declaredFileManifests || got.declaredFiles != want.declaredFiles ||
 		got.packageManifests != want.packageManifests || got.packageDeclarations != want.packageDeclarations ||
 		got.stdlibManifests != want.stdlibManifests || got.renderOptionManifests != want.renderOptionManifests ||

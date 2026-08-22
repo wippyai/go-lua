@@ -69,7 +69,7 @@ func FinalizeRule[A ruleAuthorities](context rule.Finalization[A, *HotRule]) boo
 		context.Rule.Count() == context.Authorities.HeapSchema().BootCount()
 }
 
-func LinkCatalog(hot *HotRule) (rule.LinkCatalog, bool) {
+func OccurrenceCatalog(hot *HotRule) (rule.OccurrenceCatalog, bool) {
 	return hot, hot != nil
 }
 

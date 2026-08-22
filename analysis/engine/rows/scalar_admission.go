@@ -4,6 +4,7 @@ import (
 	"bytes"
 
 	"github.com/wippyai/go-lua/analysis/identity"
+	"github.com/wippyai/go-lua/analysis/schema"
 )
 
 // ValidArtifactScalarEdgeProof is the scalar route proof of one structural
@@ -98,8 +99,8 @@ func validArtifactScalarSpec(spec *ArtifactScalarSpec) bool {
 			return false
 		}
 		edgeIDs[edge.ID] = struct{}{}
-		for _, role := range edge.Factors {
-			if !scalarSpecOwnsRole(state, role) {
+		for _, factor := range edge.Factors {
+			if !scalarSpecOwnsFactor(state, factor) {
 				return false
 			}
 		}
@@ -144,7 +145,7 @@ func validArtifactScalarSpec(spec *ArtifactScalarSpec) bool {
 		}
 	}
 	type artifactStageGeometry struct {
-		stage ArtifactRuleStage
+		stage schema.Key
 		input identity.ContentID
 	}
 	stageGeometry := make(map[identity.ContentID]artifactStageGeometry)
@@ -154,7 +155,7 @@ func validArtifactScalarSpec(spec *ArtifactScalarSpec) bool {
 	}
 	nativeOccurrences := make(map[artifactTemplateRuleOccurrence]struct{})
 	for _, rule := range state.Rules {
-		if !scalarSpecOwnsRole(state, rule.Role) || !rule.Stage.Valid() || !rule.Point.Available() || !rule.ID.Available() {
+		if !scalarSpecOwnsRole(state, rule.Role) || !rule.Stage.Available() || !rule.Point.Available() || !rule.ID.Available() {
 			return false
 		}
 		if _, pointOK := points[rule.Point]; !pointOK {
@@ -165,21 +166,16 @@ func validArtifactScalarSpec(spec *ArtifactScalarSpec) bool {
 				return false
 			}
 		}
-		law, lawOK := state.stageLaw(rule.Stage)
-		switch rule.Stage {
-		case ArtifactRuleStageBase:
-			if rule.Input.Available() || rule.Route.Available() {
+		if !rule.Input.Available() {
+			if rule.Native || rule.Route.Available() {
 				return false
 			}
-		case ArtifactRuleStageLocal:
-			// Local predecessor issuance may follow a WTO back-edge.
-			if !rule.Input.Available() || rule.Input == rule.Point {
+		} else {
+			if rule.Input == rule.Point {
 				return false
 			}
-		default:
-			if !lawOK || !law.Native || law.Stage != rule.Stage {
-				return false
-			}
+		}
+		if rule.Native {
 			inputRank, inputOK := pointRank[rule.Input]
 			outputRank, pointOK := pointRank[rule.Point]
 			if !rule.Input.Available() || rule.Input == rule.Point || !inputOK || !pointOK || inputRank >= outputRank {
@@ -191,7 +187,7 @@ func validArtifactScalarSpec(spec *ArtifactScalarSpec) bool {
 			}
 			stageGeometry[rule.Point] = geometry
 		}
-		if lawOK && law.Native {
+		if rule.Native {
 			key := artifactTemplateRuleOccurrence{role: rule.Role, id: rule.ID}
 			if _, duplicate := nativeOccurrences[key]; duplicate {
 				return false
@@ -208,23 +204,6 @@ func validArtifactScalarSpec(spec *ArtifactScalarSpec) bool {
 			}
 		}
 	}
-	for point, geometry := range stageGeometry {
-		law, lawOK := state.stageLaw(geometry.stage)
-		if !lawOK || !law.Native {
-			return false
-		}
-		owner, staged := stageGeometry[geometry.input]
-		if law.Predecessor.Valid() {
-			if !staged || owner.stage != law.Predecessor || point == geometry.input {
-				return false
-			}
-			continue
-		}
-		if pred, predOK := state.stageLaw(owner.stage); predOK && pred.Native {
-			return false
-		}
-	}
-
 	bodies := make(map[identity.ContentID]struct{}, len(state.Bodies))
 	for _, body := range state.Bodies {
 		if !body.ID.Available() || len(body.Entry) == 0 || len(body.Exits) == 0 {

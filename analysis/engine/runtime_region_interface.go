@@ -4,6 +4,7 @@ package engine
 
 import (
 	"github.com/wippyai/go-lua/analysis/engine/internal/carrier"
+	"github.com/wippyai/go-lua/analysis/engine/internal/contextfiber"
 	"github.com/wippyai/go-lua/analysis/engine/internal/equation"
 	"github.com/wippyai/go-lua/analysis/engine/internal/facts/change"
 	"github.com/wippyai/go-lua/analysis/engine/internal/schedule"
@@ -67,18 +68,20 @@ func regionAccumulatorEvidenceAdmits(episode *regionEpoch) bool {
 func (epoch *executorEpoch) regionOperandTerms(point equation.Point, pointIndex, regionIndex int, region *runtimeRegion, episode *regionEpoch) (carrier.PointRHS, pointFoldTermSets, bool) {
 	dbgRegionReuseRefusal(epoch, episode)
 	if regionAccumulatorEvidenceAdmits(episode) && epoch.work.OwnsPointRHS(episode.accumulator) {
-		rows := [6]struct {
+		rows := [8]struct {
 			kind    operandKind
 			members []int
 		}{
 			{operandExternalEnvironment, region.environmentExternal},
 			{operandExternalFactor, region.factorExternal},
+			{operandExternalContext, region.contextExternal},
 			{operandExternalProducer, region.external},
 			{operandBackEnvironment, region.environmentBack},
 			{operandBackFactor, region.factorBack},
+			{operandBackContext, region.contextBack},
 			{operandBackProducer, region.back},
 		}
-		var bounds [7]int
+		var bounds [9]int
 		scratch, admitted := epoch.operandScratch[:0], true
 		for index, row := range rows {
 			bounds[index] = len(scratch)
@@ -88,28 +91,30 @@ func (epoch *executorEpoch) regionOperandTerms(point equation.Point, pointIndex,
 				break
 			}
 		}
-		bounds[6] = len(scratch)
+		bounds[len(rows)] = len(scratch)
 		epoch.operandScratch = scratch
 		if admitted {
 			dbgEngine.ReuseAdmit++
-			dbgEngine.ReuseTerms += uint64(bounds[6])
+			dbgEngine.ReuseTerms += uint64(bounds[len(rows)])
 			return episode.accumulator, pointFoldTermSets{
 				first: pointFoldTermSet{
 					environments: scratch[bounds[0]:bounds[1]],
 					factors:      scratch[bounds[1]:bounds[2]],
-					groups:       scratch[bounds[2]:bounds[3]],
+					transports:   scratch[bounds[2]:bounds[3]],
+					groups:       scratch[bounds[3]:bounds[4]],
 				},
 				second: pointFoldTermSet{
-					environments: scratch[bounds[3]:bounds[4]],
-					factors:      scratch[bounds[4]:bounds[5]],
-					groups:       scratch[bounds[5]:bounds[6]],
+					environments: scratch[bounds[4]:bounds[5]],
+					factors:      scratch[bounds[5]:bounds[6]],
+					transports:   scratch[bounds[6]:bounds[7]],
+					groups:       scratch[bounds[7]:bounds[8]],
 				},
 				count: 2,
 			}, true
 		}
 	}
 	dbgEngine.ReuseRefuse++
-	dbgEngine.RebuildTerms += uint64(len(region.environmentExternal) + len(region.factorExternal) + len(region.external) + len(region.environmentBack) + len(region.factorBack) + len(region.back))
+	dbgEngine.RebuildTerms += uint64(len(region.environmentExternal) + len(region.factorExternal) + len(region.contextExternal) + len(region.external) + len(region.environmentBack) + len(region.factorBack) + len(region.contextBack) + len(region.back))
 	base, ok := epoch.pointBase(point, pointIndex)
 	if !ok {
 		return carrier.PointRHS{}, pointFoldTermSets{}, false
@@ -118,11 +123,13 @@ func (epoch *executorEpoch) regionOperandTerms(point equation.Point, pointIndex,
 		first: pointFoldTermSet{
 			environments: region.environmentExternal,
 			factors:      region.factorExternal,
+			transports:   region.contextExternal,
 			groups:       region.external,
 		},
 		second: pointFoldTermSet{
 			environments: region.environmentBack,
 			factors:      region.factorBack,
+			transports:   region.contextBack,
 			groups:       region.back,
 		},
 		count: 2,
@@ -141,7 +148,8 @@ func (epoch *executorEpoch) regionSelected(current carrier.PointState, region *r
 	if !ok {
 		return carrier.PointRHS{}, false
 	}
-	return epoch.foldPointInputs(current, currentRHS, region.environmentBack, region.factorBack, region.back) // P = X \sqcup B
+	result, _, _, ok := epoch.foldPointTermSetsWithBoundary(current, currentRHS, pointFoldTermSets{first: pointFoldTermSet{environments: region.environmentBack, factors: region.factorBack, transports: region.contextBack, groups: region.back}, count: 1}, equation.Point{}) // P = X \sqcup B
+	return result, ok
 }
 
 // regionExternalIngressChanged reads the one stamp the operand plane keeps
@@ -436,7 +444,7 @@ func (epoch *executorEpoch) restartRegion(region int, callSite solveDiagnosticRe
 		if pointIndex < 0 || pointIndex >= len(epoch.points) || !epoch.work.OwnsPointState(epoch.points[pointIndex]) {
 			return false
 		}
-		point, pointOK := epoch.runtime.graph.PointAt(schedule.Node(pointIndex))
+		point, _, _, pointOK := epoch.runtime.graphPointAtState(pointIndex)
 		base, baseOK := epoch.pointBase(point, pointIndex)
 		if !pointOK || !baseOK {
 			return false
@@ -473,17 +481,29 @@ func (epoch *executorEpoch) restartRegion(region int, callSite solveDiagnosticRe
 		}
 	}
 	for _, pointIndex := range bound.points {
-		point, pointOK := epoch.runtime.graph.PointAt(schedule.Node(pointIndex))
+		point, _, _, pointOK := epoch.runtime.graphPointAtState(pointIndex)
 		if !pointOK {
 			return false
 		}
 		for producerIndex := 0; producerIndex < epoch.runtime.graph.ProducerCount(point); producerIndex++ {
 			group, groupOK := epoch.runtime.graph.ProducerAt(point, producerIndex)
 			groupIndex, indexed := epoch.runtime.graph.GroupIndex(group)
-			if !groupOK || !indexed || groupIndex < 0 || groupIndex >= len(epoch.producers) || epoch.runtime.producers[groupIndex].group.Output() != point {
+			if !groupOK || !indexed || groupIndex < 0 || groupIndex >= len(epoch.runtime.producers) || epoch.runtime.producers[groupIndex].group.Output() != point {
 				return false
 			}
-			cache := &epoch.producers[groupIndex]
+			var cache *producerEpoch
+			if epoch.runtime.artifactBacked {
+				var cacheOK bool
+				cache, cacheOK = epoch.producerCache(contextfiber.StateOrdinal(pointIndex), groupIndex)
+				if !cacheOK {
+					return false
+				}
+			} else {
+				if groupIndex >= len(epoch.producers) {
+					return false
+				}
+				cache = &epoch.producers[groupIndex]
+			}
 			if cache.generation == 0 {
 				continue
 			}
@@ -492,7 +512,11 @@ func (epoch *executorEpoch) restartRegion(region int, callSite solveDiagnosticRe
 			// transition; if it was already pending, the wake is deduplicated by
 			// the same generation/applied relation.  Clearing applied first would
 			// hide that transition and undercount every restarted ancestor.
-			if !epoch.markDirty(groupIndex) {
+			if epoch.runtime.artifactBacked {
+				if !epoch.markDirtyForState(pointIndex, groupIndex) {
+					return false
+				}
+			} else if !epoch.markDirty(groupIndex) {
 				return false
 			}
 			if epoch.diagnostics != nil && epoch.diagnostics.restartEnabled() {
@@ -506,13 +530,23 @@ func (epoch *executorEpoch) restartRegion(region int, callSite solveDiagnosticRe
 			cache.patchRows = cache.patchRows[:0]
 			// Demand owns the live reverse relation independently of this cache.
 			// Retract it before dropping cached observations so no pre-reset Product
-			// read can wake the fresh region episode before its next refold.
-			if epoch.demand == nil || !epoch.demand.Replace(groupIndex, nil) {
+			// read can wake the fresh region episode before its next refold. Mounted
+			// epochs keep the same relation in their exact sparse StateOrdinal/Unit
+			// inverse, because the graph-point demand table has no contextual row.
+			if epoch.runtime.artifactBacked {
+				if !epoch.clearArtifactProducerReads(pointIndex, groupIndex) {
+					return false
+				}
+			} else if epoch.demand == nil || !epoch.demand.Replace(groupIndex, nil) {
 				return false
 			}
 			cache.reads = cache.reads[:0]
 		}
-		if !epoch.markStructuralPoint(point) {
+		if epoch.runtime.artifactBacked {
+			if !epoch.markStructuralState(pointIndex, point) {
+				return false
+			}
+		} else if !epoch.markStructuralPoint(point) {
 			return false
 		}
 	}
@@ -568,7 +602,7 @@ func (epoch *executorEpoch) regionPostfixed(regionIndex int) (bool, bool) {
 		_ = epoch.invalidateRegionPostfix(regionIndex)
 		return false, epoch.enqueuePoint(region.head)
 	}
-	_, headOK := epoch.runtime.graph.PointAt(schedule.Node(region.head))
+	_, _, _, headOK := epoch.runtime.graphPointAtState(region.head)
 	if region.head < 0 || region.head >= len(epoch.points) {
 		return false, false
 	}
@@ -604,15 +638,18 @@ func (epoch *executorEpoch) demandedPostfix() (bool, bool) {
 	if epoch == nil || epoch.canceled() || epoch.runtime == nil || epoch.runtime.points == nil {
 		return false, false
 	}
+	previousState := epoch.currentState
+	defer func() { epoch.currentState = previousState }()
 	for {
 		pointIndex, pending := epoch.postfixPoint()
 		if !pending {
 			return !epoch.canceled(), !epoch.canceled()
 		}
-		if pointIndex < 0 || pointIndex >= len(epoch.points) || pointIndex >= len(epoch.runtime.activePoints) || !epoch.runtime.activePoints[pointIndex] {
+		if pointIndex < 0 || pointIndex >= len(epoch.points) || !epoch.activeState(pointIndex) {
 			return false, false
 		}
-		point, pointOK := epoch.runtime.graph.PointAt(schedule.Node(pointIndex))
+		epoch.currentState = pointIndex
+		point, _, _, pointOK := epoch.runtime.graphPointAtState(pointIndex)
 		if !pointOK {
 			return false, false
 		}
@@ -622,7 +659,19 @@ func (epoch *executorEpoch) demandedPostfix() (bool, bool) {
 			if !groupOK || !groupIndexed || groupIndex < 0 || groupIndex >= len(epoch.producers) {
 				return false, false
 			}
-			cache := epoch.producers[groupIndex]
+			var cache producerEpoch
+			if epoch.runtime.artifactBacked {
+				cached, cacheOK := epoch.producerCache(contextfiber.StateOrdinal(pointIndex), groupIndex)
+				if !cacheOK {
+					return false, false
+				}
+				cache = *cached
+			} else {
+				if groupIndex < 0 || groupIndex >= len(epoch.producers) {
+					return false, false
+				}
+				cache = epoch.producers[groupIndex]
+			}
 			if cache.generation != 0 && cache.applied != cache.generation {
 				return false, epoch.enqueuePoint(pointIndex)
 			}

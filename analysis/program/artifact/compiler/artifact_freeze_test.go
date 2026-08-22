@@ -41,6 +41,33 @@ func TestArtifactFreezePublishesOneAvailableIdentity(t *testing.T) {
 	}
 }
 
+func TestModuleEntryRetainsOnlyTheFixedPrefixOfAnOpenReturn(t *testing.T) {
+	published, err := lower.Lower(lower.Source{Name: "module-entry-open-return.lua", Text: []byte(`
+local function identity(value)
+  return value
+end
+return identity(1)
+`)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	compilation, ok := composite.Build()
+	if !ok {
+		t.Fatal("artifact grammar unavailable")
+	}
+	artifact, failure := compileArtifactForTest(t, published, compilation)
+	if failure.Available() || artifact == nil || !artifact.Available() {
+		t.Fatalf("compile open module Return: artifact=%v failure=%s", artifact != nil, failure.Error())
+	}
+	program := artifact.Program()
+	count, publishedEntries := program.ModuleEntryCount()
+	entry, held := program.ModuleEntryAt(0)
+	width, widthOK := entry.RootWidth()
+	if !publishedEntries || count != 1 || !held || !widthOK || width != 0 {
+		t.Fatalf("open module Return entry = published:%v count:%d held:%v width:%d/%v; want one entry with an empty fixed prefix", publishedEntries, count, held, width, widthOK)
+	}
+}
+
 func TestModuleEntriesJoinTheRootActivationReturnOutcome(t *testing.T) {
 	published, err := lower.Lower(lower.Source{Name: "module-entry-return.lua", Text: []byte(`
 local condition = ...

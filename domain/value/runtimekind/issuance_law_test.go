@@ -6,6 +6,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/identity"
 	artifactcompiler "github.com/wippyai/go-lua/analysis/program/artifact/compiler"
 	"github.com/wippyai/go-lua/analysis/schema"
+	"github.com/wippyai/go-lua/analysis/schema/programmount"
 	"github.com/wippyai/go-lua/analysis/schema/rule"
 	"github.com/wippyai/go-lua/analysis/schema/structure"
 	callowner "github.com/wippyai/go-lua/domain/call/owner"
@@ -67,17 +68,17 @@ func TestRuntimeKindRuleSubscribesToEveryOccurrenceFamilyItSeals(t *testing.T) {
 		t.Fatalf("compile artifact: %s", failure.Error())
 	}
 	snapshot := snapshottest.MustLower(t, artifact)
-	heapMount, heapMountOK := heapdomain.NewArtifactMount(snapshot, module, programID)
-	valueMount, valueMountOK := valuedomain.NewArtifactMount(snapshot, module, programID)
+	heapMount, heapMountOK := programmount.MountedArtifactFromSnapshot(snapshot, module)
+	valueMount, valueMountOK := programmount.MountedArtifactFromSnapshot(snapshot, module)
 	if !heapMountOK || !valueMountOK {
 		t.Fatal("artifact mounts")
 	}
-	heaps, heapFailure := heapdomain.SealWithArtifacts(linked, []heapdomain.ArtifactMount{heapMount})
+	heaps, heapFailure := heapdomain.SealWithArtifacts(linked, []programmount.MountedArtifact{heapMount})
 	structural, structuralOK := composite.StructureVocabulary(compilation)
 	if !structuralOK {
 		t.Fatal("structure vocabulary")
 	}
-	values, valueFailure := valuedomain.SealWithFailure(linked, heaps, []valuedomain.ArtifactMount{valueMount}, structural)
+	values, valueFailure := valuedomain.SealWithFailure(linked, heaps, []programmount.MountedArtifact{valueMount}, structural)
 	if heapFailure != heapdomain.SealFailureNone || valueFailure != valuedomain.SealFailureNone || values == nil {
 		t.Fatalf("seal schemas heap=%s value=%s", heapFailure, valueFailure)
 	}

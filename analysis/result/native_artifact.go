@@ -4,6 +4,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/identity"
 	"github.com/wippyai/go-lua/analysis/schema/ingress"
 	programschema "github.com/wippyai/go-lua/analysis/schema/program"
+	programissuance "github.com/wippyai/go-lua/analysis/schema/program/issuance"
 	"github.com/wippyai/go-lua/analysis/schema/programmount"
 )
 
@@ -83,7 +84,7 @@ func exactNativeScalarRulePoint(snapshot *ingress.Snapshot, program programschem
 		if parent.ID() != occurrence {
 			continue
 		}
-		if found || row.Stage() != programschema.RuleStageLocal {
+		if found || row.Stage() != programissuance.StageComputation {
 			return identity.ContentID{}, false
 		}
 		point, found = candidate, true

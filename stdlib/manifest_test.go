@@ -240,6 +240,17 @@ func TestBaseTypeProviderDeclaresNeutralRuntimeKindBehavior(t *testing.T) {
 	if predicate.Outcome != 0 || predicate.Result != 0 || predicate.Subject != (modulemanifest.InputSource{Kind: modulemanifest.InputSourceValue, Ordinal: 0}) || predicate.Relation != string(runtimekind.RuntimeKindPredicateRelationKey) {
 		t.Fatalf("base.type predicate row = %#v, want normal result 0 over input 0 and the runtime-kind predicate relation key", predicate)
 	}
+
+	union, ok := luaRuntimeTypeName.(*typ.Union)
+	if !ok || len(union.Members) != runtimekind.All.Members() {
+		t.Fatalf("base.type result vocabulary = %#v, want %d runtime-family names", luaRuntimeTypeName, runtimekind.All.Members())
+	}
+	for index := 0; index < runtimekind.All.Members(); index++ {
+		kind, memberOK := runtimekind.All.MemberAt(index)
+		if !memberOK || !union.Contains(typ.LiteralString(kind.Spelling())) {
+			t.Fatalf("base.type result vocabulary omitted runtime family %d (%q)", kind, kind.Spelling())
+		}
+	}
 }
 
 func TestEveryDirectCallableIsExportedWithAnAuditedEffectRow(t *testing.T) {

@@ -61,6 +61,11 @@ func (query Query) SiteID() (identity.ContentID, bool) { return query.query.Site
 // MountID returns the mount identity for this query row.
 func (query Query) MountID() (identity.ContentID, bool) { return query.query.MountID() }
 
+// ContextID returns the exact canonical execution context carried by the
+// detached placement publication site. It never derives or defaults a
+// context from the opaque SiteID or publication key.
+func (query Query) ContextID() (identity.ContentID, bool) { return query.query.ContextID() }
+
 // PointID returns the point identity for this query row.
 func (query Query) PointID() (identity.ContentID, bool) { return query.query.PointID() }
 

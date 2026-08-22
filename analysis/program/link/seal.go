@@ -98,6 +98,14 @@ func seal(spec *Spec, replay *linkhost.ReplaySpec) (*Link, error) {
 	if !link.id.Available() {
 		return nil, errors.New("link: unavailable content identity")
 	}
+	// Context IDs are Link-qualified, so the Module child builds its detached
+	// scalar root-to-context directory only after this enclosing identity is
+	// known. The result retains no Project/Boundary owner graph.
+	contextDirectory, contextOK := module.BuildContextDirectory(link.id)
+	if !contextOK {
+		return nil, errors.New("link: unavailable execution-context directory")
+	}
+	link.contextDirectory = contextDirectory
 	// Issue the exact owner witness only after the complete Link identity is
 	// sealed. The witness state is detached and contains no Link graph pointer.
 	link.owner = &ownerState{id: link.id}

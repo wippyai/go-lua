@@ -9,6 +9,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/engine/internal/carrier"
 	"github.com/wippyai/go-lua/analysis/engine/internal/carrier/shape"
 	"github.com/wippyai/go-lua/analysis/engine/internal/composition"
+	"github.com/wippyai/go-lua/analysis/engine/internal/contextfiber"
 	"github.com/wippyai/go-lua/analysis/engine/internal/demand"
 	"github.com/wippyai/go-lua/analysis/engine/internal/equation"
 	"github.com/wippyai/go-lua/analysis/engine/internal/facts/change"
@@ -20,20 +21,33 @@ import (
 // producerEpoch is an epoch-local candidate cache in graph Group order. A
 // generation marks it dirty; the runnable identity is always its output Point.
 type producerEpoch struct {
+	state      contextfiber.StateOrdinal
+	group      int
 	generation uint64
 	applied    uint64
 	candidate  carrier.RuleContribution
 	hasValue   bool
-	// rememberAt stamps the operand clock at the candidate install this cache
+	// rememberAt stamps the operand clock at the closed input epoch this cache
 	// holds. Every input operand marked after that stamp is a changed input,
 	// so the cache retains no ordered input-version snapshot to diff against.
-	// Zero means no candidate has been installed yet.
+	// A stale read-registration cut deliberately retains its earlier transport
+	// stamp for the next generation; zero means no reusable input epoch exists.
 	rememberAt  uint64
 	inputs      []carrier.PointState
 	inputStates []carrier.State
 	patches     []carrier.Patch
 	patchRows   []contributionPatch
 	reads       []demand.Observation
+	// artifactReadKeys is the exact sparse inverse membership currently
+	// contributed by this completed producer occurrence. It is kept apart from
+	// reads because evaluate replaces reads before the contextual inverse has
+	// authenticated and committed its new rows.
+	artifactReadKeys []artifactProducerReadKey
+	// artifactReadFactorKeys is the matching sparse factor-publication
+	// membership. A FactorRegion can intentionally carry no UnitRegion rows;
+	// its slot still identifies the exact factor whose completed exact reads
+	// must be reconsidered in this StateOrdinal.
+	artifactReadFactorKeys []artifactProducerReadFactorKey
 }
 
 // contributionPatch keeps carrier admission order separate from Rule callback
@@ -186,6 +200,11 @@ type executorEpoch struct {
 	activationPending bool
 	activations       []equation.AcceptedMember
 	storePub          *solvedPublication
+	currentState      int
+	// artifactProducerReads is the epoch-local sparse inverse for completed
+	// exact reads. It is intentionally absent from the sealed runtime: exact
+	// Units discovered by a Product belong to this solve generation only.
+	artifactProducerReads artifactProducerReadIndex
 }
 
 func (epoch *executorEpoch) recordFailure(reason SolveFailureReason, boundary solveBoundary, point, group, member, rule composition.Key) {
@@ -324,6 +343,18 @@ func newRuntimeEpoch(runtime *solverRuntime, relation equation.Relation, ctx con
 		len(runtime.overlay.factorOutgoing) != pointCount {
 		return nil, false
 	}
+	stateCount := runtime.stateCount()
+	if stateCount <= 0 || !runtime.producerRows.valid() {
+		return nil, false
+	}
+	if runtime.artifactBacked {
+		if runtime.executionPlan == nil || !runtime.executionPlan.Available() || runtime.executionPlan.Schedule() == nil {
+			return nil, false
+		}
+		if len(runtime.pointRegion) != stateCount || len(runtime.activeStates) != stateCount || len(runtime.stateExecutionEvents) == 0 {
+			return nil, false
+		}
+	}
 	work, ok := runtime.carrier.NewWork()
 	if !ok {
 		return nil, false
@@ -358,20 +389,25 @@ func newRuntimeEpoch(runtime *solverRuntime, relation equation.Relation, ctx con
 		ctx:               ctx,
 		work:              work,
 		demand:            demandEpoch,
-		points:            make([]carrier.PointState, runtime.graph.PointCount()),
-		producers:         make([]producerEpoch, runtime.graph.GroupCount()),
+		points:            make([]carrier.PointState, stateCount),
+		producers:         make([]producerEpoch, len(runtime.producerRows.rows)),
 		regions:           make([]regionEpoch, len(runtime.regions)),
 		candidatesPending: make([]uint64, len(runtime.regions)),
-		queue:             newPointQueue(runtime.graph.PointCount()),
-		structuralDirty:   make([]bool, runtime.graph.PointCount()),
+		queue:             newPointQueue(stateCount),
+		structuralDirty:   make([]bool, stateCount),
 		structural: structuralEpoch{
-			pointDescent: make([]uint64, runtime.graph.PointCount()),
+			pointDescent: make([]uint64, stateCount),
 		},
-		postfixDirty:   make([]bool, runtime.graph.PointCount()),
-		postfixPending: make([]int, 0, runtime.graph.PointCount()),
+		postfixDirty:   make([]bool, stateCount),
+		postfixPending: make([]int, 0, stateCount),
 		frames:         make([]pointWTOFrame, 0, regionCount),
 		nested:         make([]int, regionCount),
 		regionScratch:  make([]int, 0, regionCount),
+		currentState:   -1,
+	}
+	if runtime.artifactBacked {
+		epoch.artifactProducerReads.byKey = make(map[artifactProducerReadKey][]stateGroupKey)
+		epoch.artifactProducerReads.byFactor = make(map[artifactProducerReadFactorKey][]stateGroupKey)
 	}
 	epoch.terminal.Store(epochRunning)
 	if !work.SetCheckpoint(epoch.checkpoint) {
@@ -393,12 +429,12 @@ func newRuntimeEpoch(runtime *solverRuntime, relation equation.Relation, ctx con
 		epoch.regions[index].phase = phaseAscent
 		epoch.regions[index].episode = 1
 	}
-	for pointIndex, active := range runtime.activePoints {
-		if !active {
+	for stateIndex := 0; stateIndex < stateCount; stateIndex++ {
+		if !runtime.activeState(stateIndex) {
 			continue
 		}
-		point, pointOK := runtime.graph.PointAt(schedule.Node(pointIndex))
-		if !pointOK || pointIndex < 0 || pointIndex >= len(epoch.points) {
+		point, pointIndex, _, pointOK := runtime.graphPointAtState(stateIndex)
+		if !pointOK || stateIndex < 0 || stateIndex >= len(epoch.points) {
 			return nil, false
 		}
 		if pointIndex >= len(runtime.pointScopes) || !runtime.pointScopes[pointIndex].Valid() {
@@ -429,28 +465,36 @@ func newRuntimeEpoch(runtime *solverRuntime, relation equation.Relation, ctx con
 		}
 		// The initial point is a base install, not a publication: it carries no
 		// classified transition.
-		if !epoch.installPoint(pointIndex, initial, change.Set{}) {
+		if !epoch.installPoint(stateIndex, initial, change.Set{}) {
 			return nil, false
 		}
-		if !epoch.markPostfixDirty(pointIndex) {
+		if !epoch.markPostfixDirty(stateIndex) {
 			return nil, false
 		}
 		for producerIndex := 0; producerIndex < runtime.graph.ProducerCount(point); producerIndex++ {
 			group, groupOK := runtime.graph.ProducerAt(point, producerIndex)
 			groupIndex, indexed := runtime.graph.GroupIndex(group)
-			if !groupOK || !indexed || groupIndex < 0 || groupIndex >= len(epoch.producers) || runtime.producers[groupIndex].group.Output() != point {
+			if !groupOK || !indexed || groupIndex < 0 || groupIndex >= len(runtime.producers) || runtime.producers[groupIndex].group.Output() != point {
 				return nil, false
 			}
-			if epoch.producers[groupIndex].generation == 0 {
+			cache, cacheOK := epoch.producerCache(contextfiber.StateOrdinal(stateIndex), groupIndex)
+			if !cacheOK {
+				return nil, false
+			}
+			if cache.generation == 0 {
 				metadata := &runtime.producers[groupIndex]
 				inputCount := metadata.group.InputCount()
-				epoch.producers[groupIndex] = producerEpoch{generation: 1, inputs: make([]carrier.PointState, inputCount), inputStates: make([]carrier.State, inputCount), patches: make([]carrier.Patch, 0, metadata.span.count()), patchRows: make([]contributionPatch, 0, metadata.span.count()), reads: make([]demand.Observation, 0, len(metadata.reads))}
+				*cache = producerEpoch{state: contextfiber.StateOrdinal(stateIndex), group: groupIndex, generation: 1, inputs: make([]carrier.PointState, inputCount), inputStates: make([]carrier.State, inputCount), patches: make([]carrier.Patch, 0, metadata.span.count()), patchRows: make([]contributionPatch, 0, metadata.span.count()), reads: make([]demand.Observation, 0, len(metadata.reads))}
 			}
-			if !epoch.enqueuePoint(pointIndex) {
+			if !epoch.enqueuePoint(stateIndex) {
 				return nil, false
 			}
 		}
-		if !epoch.markStructuralPoint(point) {
+		if runtime.artifactBacked {
+			if !epoch.markStructuralState(stateIndex, point) {
+				return nil, false
+			}
+		} else if !epoch.markStructuralPoint(point) {
 			return nil, false
 		}
 	}
@@ -467,10 +511,10 @@ func newRuntimeEpoch(runtime *solverRuntime, relation equation.Relation, ctx con
 		}
 		var pending uint64
 		for _, pointIndex := range region.points {
-			if pointIndex < 0 || pointIndex >= runtime.graph.PointCount() {
+			if pointIndex < 0 || pointIndex >= stateCount {
 				return nil, false
 			}
-			point, pointOK := runtime.graph.PointAt(schedule.Node(pointIndex))
+			point, _, _, pointOK := runtime.graphPointAtState(pointIndex)
 			if !pointOK {
 				return nil, false
 			}
@@ -490,6 +534,19 @@ func (runtime *solverRuntime) executionEventCount() int {
 	if runtime == nil {
 		return 0
 	}
+	if runtime.artifactBacked {
+		if runtime.stateExecutionEvents != nil {
+			return len(runtime.stateExecutionEvents)
+		}
+		execution := runtime.stateExecution
+		if execution == nil && runtime.executionPlan != nil {
+			execution = runtime.executionPlan.Schedule()
+		}
+		if execution == nil {
+			return 0
+		}
+		return execution.EventCount()
+	}
 	if runtime.executionDemand != nil {
 		return runtime.executionDemand.EventCount()
 	}
@@ -502,6 +559,22 @@ func (runtime *solverRuntime) executionEventCount() int {
 func (runtime *solverRuntime) executionEventAt(index int) (schedule.Event, bool) {
 	if runtime == nil {
 		return schedule.Event{}, false
+	}
+	if runtime.artifactBacked {
+		if runtime.stateExecutionEvents != nil {
+			if index < 0 || index >= len(runtime.stateExecutionEvents) {
+				return schedule.Event{}, false
+			}
+			return runtime.stateExecutionEvents[index], true
+		}
+		execution := runtime.stateExecution
+		if execution == nil && runtime.executionPlan != nil {
+			execution = runtime.executionPlan.Schedule()
+		}
+		if execution == nil {
+			return schedule.Event{}, false
+		}
+		return execution.EventAt(index)
 	}
 	if runtime.executionDemand != nil {
 		event, _, ok := runtime.executionDemand.EventAt(index)
@@ -517,6 +590,16 @@ func (runtime *solverRuntime) executionEventAt(index int) (schedule.Event, bool)
 func (runtime *solverRuntime) executionRegionAt(index int) (schedule.Region, bool) {
 	if runtime == nil {
 		return schedule.Region{}, false
+	}
+	if runtime.artifactBacked {
+		execution := runtime.stateExecution
+		if execution == nil && runtime.executionPlan != nil {
+			execution = runtime.executionPlan.Schedule()
+		}
+		if execution == nil {
+			return schedule.Region{}, false
+		}
+		return execution.RegionAt(index)
 	}
 	if runtime.execution != nil {
 		return runtime.execution.RegionAt(index)

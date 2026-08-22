@@ -119,7 +119,7 @@ func (compiler *compiler) copyComputations() CompileFailure {
 		}
 		entryPoints := compiler.input.Flow().LocalWTO().PointPathsForSite(entry)
 		finishPoints := compiler.input.Flow().LocalWTO().PointPathsForSite(finish)
-		if entryPoints.Count() == 0 || finishPoints.Count() == 0 || !compiler.recordOccurrencePaths(programschema.OccurrenceBinaryArithmetic, span.ContextID(), entryPoints, finishPoints) {
+		if entryPoints.Count() == 0 || finishPoints.Count() == 0 {
 			return compileFailure(CompileStageOccurrences, CompileRowOccurrence, index, -1, CompileReasonOccurrenceAttachment)
 		}
 		if !compiler.appendOccurrencePaths(programschema.OccurrenceBinaryArithmetic, span.ContextID(), body.PathID(), entryPoints, finishPoints, []identity.ContentID{leftID, rightID}, uint64(operation.Op)) {
@@ -149,7 +149,7 @@ func (compiler *compiler) copyComputations() CompileFailure {
 		}
 		entryPoints := compiler.input.Flow().LocalWTO().PointPathsForSite(entry)
 		finishPoints := compiler.input.Flow().LocalWTO().PointPathsForSite(finish)
-		if entryPoints.Count() == 0 || finishPoints.Count() == 0 || !compiler.recordOccurrencePaths(programschema.OccurrenceBinaryEquality, span.ContextID(), entryPoints, finishPoints) {
+		if entryPoints.Count() == 0 || finishPoints.Count() == 0 {
 			return compileFailure(CompileStageOccurrences, CompileRowOccurrence, index, -1, CompileReasonOccurrenceAttachment)
 		}
 		inputs := []identity.ContentID{leftID, rightID}
@@ -189,7 +189,7 @@ func (compiler *compiler) copyComputations() CompileFailure {
 		}
 		entryPoints := compiler.input.Flow().LocalWTO().PointPathsForSite(entry)
 		finishPoints := compiler.input.Flow().LocalWTO().PointPathsForSite(finish)
-		if entryPoints.Count() == 0 || finishPoints.Count() == 0 || !compiler.recordOccurrencePaths(programschema.OccurrenceBinaryOrder, span.ContextID(), entryPoints, finishPoints) {
+		if entryPoints.Count() == 0 || finishPoints.Count() == 0 {
 			return compileFailure(CompileStageOccurrences, CompileRowOccurrence, index, -1, CompileReasonOccurrenceAttachment)
 		}
 		if !compiler.appendOccurrencePaths(programschema.OccurrenceBinaryOrder, span.ContextID(), body.PathID(), entryPoints, finishPoints, []identity.ContentID{leftID, rightID}, uint64(operation.Op)) {
@@ -222,7 +222,7 @@ func (compiler *compiler) copyComputations() CompileFailure {
 		}
 		entryPoints := compiler.input.Flow().LocalWTO().PointPathsForSite(entry)
 		finishPoints := compiler.input.Flow().LocalWTO().PointPathsForSite(finish)
-		if entryPoints.Count() == 0 || finishPoints.Count() == 0 || !compiler.recordOccurrencePaths(programschema.OccurrenceBinaryConcat, span.ContextID(), entryPoints, finishPoints) {
+		if entryPoints.Count() == 0 || finishPoints.Count() == 0 {
 			return compileFailure(CompileStageOccurrences, CompileRowOccurrence, index, -1, CompileReasonOccurrenceAttachment)
 		}
 		if !compiler.appendOccurrencePaths(programschema.OccurrenceBinaryConcat, span.ContextID(), body.PathID(), entryPoints, finishPoints, []identity.ContentID{leftID, rightID}, uint64(op)) {
@@ -250,7 +250,6 @@ func (compiler *compiler) copyComputations() CompileFailure {
 		entryPoints := compiler.input.Flow().LocalWTO().PointPathsForSite(entry)
 		finishPoints := compiler.input.Flow().LocalWTO().PointPathsForSite(finish)
 		if entryPoints.Count() == 0 || finishPoints.Count() == 0 ||
-			!compiler.recordOccurrencePaths(programschema.OccurrenceUnary, span.ContextID(), entryPoints, finishPoints) ||
 			!compiler.appendOccurrencePaths(programschema.OccurrenceUnary, span.ContextID(), body.PathID(), entryPoints, finishPoints, []identity.ContentID{operandID}, uint64(op)) {
 			return compileFailure(CompileStageOccurrences, CompileRowOccurrence, index, -1, CompileReasonOccurrenceUnavailable)
 		}
@@ -325,8 +324,7 @@ func (compiler *compiler) copyComputations() CompileFailure {
 		}
 		entryPoints := compiler.input.Flow().LocalWTO().PointPathsForSite(entry)
 		finishPoints := compiler.input.Flow().LocalWTO().PointPathsForSite(finish)
-		if entryPoints.Count() == 0 || finishPoints.Count() == 0 ||
-			!compiler.recordOccurrencePaths(programschema.OccurrenceReturnBoundary, span.ContextID(), entryPoints, finishPoints) {
+		if entryPoints.Count() == 0 || finishPoints.Count() == 0 {
 			return compileFailure(CompileStageOccurrences, CompileRowOccurrence, index, -1, CompileReasonOccurrenceAttachment)
 		}
 		if !compiler.appendOccurrencePaths(programschema.OccurrenceReturnBoundary, span.ContextID(), body.PathID(), entryPoints, finishPoints, []identity.ContentID{valuesID}, 0) {

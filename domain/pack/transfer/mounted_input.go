@@ -10,26 +10,7 @@ import (
 	valuedomain "github.com/wippyai/go-lua/domain/value"
 )
 
-const mountedInputDomain = "wippy.analysis.pack.mounted-input-source.v1\x00"
-
-// MountedInputKind is the source shape of one operation InputSource after it
-// has been checked against Pack's mounted call directory.  The kind describes
-// how the Target selector was authored; members/open are the call-specific
-// projection of that selector.  In particular, Tail and Whole are not
-// intrinsically open: a mounted call with no actual tail projects a closed
-// finite member vector for either source.
-type MountedInputKind uint8
-
-const (
-	MountedInputInvalid MountedInputKind = iota
-	MountedInputFixed
-	MountedInputTail
-	MountedInputWhole
-)
-
-func (kind MountedInputKind) Valid() bool {
-	return kind >= MountedInputFixed && kind <= MountedInputWhole
-}
+const mountedInputDomain = "wippy.analysis.pack.mounted-input-source.v2\x00"
 
 // MountedInput is the minimal neutral row joining one Target InputSource to a
 // mounted Pack call. It retains only scalar provenance and the exact ordered
@@ -45,7 +26,6 @@ type MountedInput struct {
 	call      identity.ContentID
 	operation vocabulary.Operation
 	source    vocabulary.InputSource
-	kind      MountedInputKind
 	members   []identity.ContentID
 	open      bool
 	owner     identity.ContentID
@@ -53,8 +33,8 @@ type MountedInput struct {
 	sealed    bool
 }
 
-func mountedInputID(owner, module, call identity.ContentID, members []identity.ContentID, open bool, operation vocabulary.Operation, source vocabulary.InputSource, kind MountedInputKind) identity.ContentID {
-	if !owner.Available() || !module.Available() || !call.Available() || !kind.Valid() {
+func mountedInputID(owner, module, call identity.ContentID, members []identity.ContentID, open bool, operation vocabulary.Operation, source vocabulary.InputSource) identity.ContentID {
+	if !owner.Available() || !module.Available() || !call.Available() || !mountedInputSourceValid(source) {
 		return identity.ContentID{}
 	}
 	for _, member := range members {
@@ -83,23 +63,17 @@ func mountedInputID(owner, module, call identity.ContentID, members []identity.C
 	binary.BigEndian.PutUint32(scalar[4:8], uint32(source.Kind))
 	binary.BigEndian.PutUint32(scalar[8:12], source.Ordinal)
 	_, _ = hash.Write(scalar[:])
-	_, _ = hash.Write([]byte{byte(kind)})
 	return identity.ContentID(sha256.Sum256(hash.Sum(nil)))
 }
 
-func mountedInputKind(source vocabulary.InputSource) (MountedInputKind, bool) {
+func mountedInputSourceValid(source vocabulary.InputSource) bool {
 	switch source.Kind {
-	case vocabulary.InputSourceValueFormal:
-		return MountedInputFixed, true
-	case vocabulary.InputSourceValuesVar:
-		return MountedInputTail, true
+	case vocabulary.InputSourceValueFormal, vocabulary.InputSourceValuesVar:
+		return true
 	case vocabulary.InputSourceAllInputs:
-		if source.Ordinal != 0 {
-			return MountedInputInvalid, false
-		}
-		return MountedInputWhole, true
+		return source.Ordinal == 0
 	default:
-		return MountedInputInvalid, false
+		return false
 	}
 }
 
@@ -123,9 +97,8 @@ func NewMountedInput(schema *packdomain.Schema, module, call identity.ContentID,
 	if _, callOK := schema.CallRootForMountedSemantic(module, call); !callOK {
 		return MountedInput{}, false
 	}
-	kind, kindOK := mountedInputKind(source)
 	selector, selectorOK := schema.InputSelector(operation, source)
-	if !kindOK || !selectorOK || !schema.OwnsInputSelector(selector) {
+	if !mountedInputSourceValid(source) || !selectorOK || !schema.OwnsInputSelector(selector) {
 		return MountedInput{}, false
 	}
 	actual, actualOK := schema.MountedActualProjection(module, call)
@@ -134,7 +107,7 @@ func NewMountedInput(schema *packdomain.Schema, module, call identity.ContentID,
 	}
 	members := make([]identity.ContentID, 0, 1)
 	open := false
-	if kind == MountedInputFixed {
+	if source.Kind == vocabulary.InputSourceValueFormal {
 		start, startOK := selector.Start()
 		if !startOK || start < 0 {
 			return MountedInput{}, false
@@ -167,21 +140,17 @@ func NewMountedInput(schema *packdomain.Schema, module, call identity.ContentID,
 		_, open = actual.TailID()
 	}
 	owner := schema.LinkOwner().ContentID()
-	row := MountedInput{module: module, call: call, operation: operation, source: source, kind: kind, members: members, open: open, owner: owner}
-	row.id = mountedInputID(owner, module, call, members, open, operation, source, kind)
+	row := MountedInput{module: module, call: call, operation: operation, source: source, members: members, open: open, owner: owner}
+	row.id = mountedInputID(owner, module, call, members, open, operation, source)
 	row.sealed = row.id.Available()
 	return row, row.Valid()
 }
 
 func (input MountedInput) valid() bool {
-	if !input.sealed || !input.owner.Available() || !input.module.Available() || !input.call.Available() || input.operation == 0 || !input.kind.Valid() || !input.id.Available() {
+	if !input.sealed || !input.owner.Available() || !input.module.Available() || !input.call.Available() || input.operation == 0 || !mountedInputSourceValid(input.source) || !input.id.Available() {
 		return false
 	}
-	expectedKind, sourceOK := mountedInputKind(input.source)
-	if !sourceOK || expectedKind != input.kind {
-		return false
-	}
-	if input.kind == MountedInputFixed {
+	if input.source.Kind == vocabulary.InputSourceValueFormal {
 		switch len(input.members) {
 		case 1:
 			// A position filled by a fixed actual cannot also be reached by
@@ -201,7 +170,7 @@ func (input MountedInput) valid() bool {
 			return false
 		}
 	}
-	return input.id == mountedInputID(input.owner, input.module, input.call, input.members, input.open, input.operation, input.source, input.kind)
+	return input.id == mountedInputID(input.owner, input.module, input.call, input.members, input.open, input.operation, input.source)
 }
 
 // Valid reports that the row was issued by NewMountedInput and its scalar
@@ -227,10 +196,6 @@ func (input MountedInput) Module() (identity.ContentID, bool) {
 	return input.module, input.valid()
 }
 
-func (input MountedInput) Call() (identity.ContentID, bool) {
-	return input.call, input.valid()
-}
-
 // OwnerID is the Link owner identity admitted by Pack when this row was
 // issued. Consumers use it as the scalar cross-schema fence before asking
 // Value for a mounted coordinate.
@@ -238,29 +203,8 @@ func (input MountedInput) OwnerID() (identity.ContentID, bool) {
 	return input.owner, input.valid()
 }
 
-func (input MountedInput) Operation() (vocabulary.Operation, bool) {
-	return input.operation, input.valid()
-}
-
 func (input MountedInput) Source() (vocabulary.InputSource, bool) {
 	return input.source, input.valid()
-}
-
-func (input MountedInput) Kind() MountedInputKind {
-	if !input.valid() {
-		return MountedInputInvalid
-	}
-	return input.kind
-}
-
-// SemanticID returns the exact mounted Value semantic identity for a fixed
-// ValueFormal. ValuesVar/AllInputs remain member projections even when their
-// finite member count happens to be one; callers must use MemberCount/At.
-func (input MountedInput) SemanticID() (identity.ContentID, bool) {
-	if !input.valid() || input.kind != MountedInputFixed || input.open || len(input.members) != 1 {
-		return identity.ContentID{}, false
-	}
-	return input.members[0], true
 }
 
 func (input MountedInput) IsOpen() bool {
@@ -274,7 +218,7 @@ func (input MountedInput) IsOpen() bool {
 // never as an unknown. A ValuesVar/AllInputs projection with no member selects
 // an empty value list, which is a different fact and never reported here.
 func (input MountedInput) IsProvenNil() bool {
-	return input.valid() && input.kind == MountedInputFixed && len(input.members) == 0 && !input.open
+	return input.valid() && input.source.Kind == vocabulary.InputSourceValueFormal && len(input.members) == 0 && !input.open
 }
 
 // MemberCount reports the exact number of fixed semantic-source members in
@@ -292,34 +236,6 @@ func (input MountedInput) MemberAt(index int) (identity.ContentID, bool) {
 		return identity.ContentID{}, false
 	}
 	return input.members[index], true
-}
-
-// MemberIDAt is the explicit-ID alias for MemberAt used by source-plane
-// consumers that distinguish semantic IDs from richer member rows.
-func (input MountedInput) MemberIDAt(index int) (identity.ContentID, bool) {
-	return input.MemberAt(index)
-}
-
-// Members returns a defensive copy of the exact fixed member order. The open
-// tail, when present, is represented only by IsOpen.
-func (input MountedInput) Members() []identity.ContentID {
-	if !input.valid() {
-		return nil
-	}
-	return append([]identity.ContentID(nil), input.members...)
-}
-
-// MemberIDs is the explicit-ID alias for Members.
-func (input MountedInput) MemberIDs() []identity.ContentID {
-	return input.Members()
-}
-
-// SourceCount is the source-plane alias for MemberCount.
-func (input MountedInput) SourceCount() int { return input.MemberCount() }
-
-// SourceAt is the source-plane alias for MemberAt.
-func (input MountedInput) SourceAt(index int) (identity.ContentID, bool) {
-	return input.MemberAt(index)
 }
 
 // CoordinateForInput joins one closed neutral Pack input row with exactly one

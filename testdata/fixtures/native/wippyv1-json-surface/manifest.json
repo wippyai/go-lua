@@ -1,0 +1,13 @@
+{
+  "description": "Every declared member of the Wippy v1 json module - encode, decode, validate and validate_string - is called against the reference host surface, with the schema parameter supplied in both admitted forms and every fallible result read on both of its arms.",
+  "packages": ["json"],
+  "files": [
+    "main.lua"
+  ],
+  "check": {
+    "errors": 0
+  },
+  "run": {
+    "skip": "host-surface coverage fixture; the json module has no fixture runtime"
+  }
+}

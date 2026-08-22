@@ -22,10 +22,13 @@ package engine
 
 import (
 	"github.com/wippyai/go-lua/analysis/engine/internal/composition"
+	"github.com/wippyai/go-lua/analysis/engine/internal/contextfiber"
 	"github.com/wippyai/go-lua/analysis/engine/internal/equation"
 	"github.com/wippyai/go-lua/analysis/engine/internal/schedule"
 	"github.com/wippyai/go-lua/analysis/engine/rows"
 	"github.com/wippyai/go-lua/analysis/identity"
+	"github.com/wippyai/go-lua/analysis/schema"
+	"github.com/wippyai/go-lua/analysis/schema/executioncontext"
 )
 
 // declaredPointRow is one owner-declared Point. Programs with mounted
@@ -50,6 +53,9 @@ const (
 	// declaredMemberLink derives identity from the Link bootstrap witness
 	// under role+occurrence.
 	declaredMemberLink
+	// declaredMemberMountedPoint is an artifact-independent same-Point closure
+	// instantiated once for each Point in the mounted template plane.
+	declaredMemberMountedPoint
 )
 
 // declaredMemberRow is one rule row of the declaration. Row is the sealed
@@ -85,10 +91,11 @@ type declaredMemberRow struct {
 // address: the constructor resolves the coordinate against its own point
 // plane, so a query never names a second point authority.
 type declaredQueryRow struct {
-	ID    identity.ContentID
-	Mount identity.ContentID
-	Point identity.ContentID
-	Row   equation.QueryInstance
+	Context executioncontext.Context
+	ID      identity.ContentID
+	Mount   identity.ContentID
+	Point   identity.ContentID
+	Row     equation.QueryInstance
 	// Admit is the sealed query cell that mints this row's runtime query.
 	Admit programQueryAdmit
 }
@@ -109,11 +116,13 @@ type topologyDeclaration struct {
 	binding            *SchemaBinding
 	batch              *equation.Batch
 	mounts             []sealedProgramMount
+	contexts           executioncontext.Directory
 	bootstrap          LinkBootstrapWitness
 	sites              constructedSitePlane
 	points             []declaredPointRow
 	members            []declaredMemberRow
 	queries            []declaredQueryRow
+	pointTransitions   []ProgramPointTransitionAdmission
 	environmentEdges   []equation.EnvironmentEdge
 	factorEdges        []equation.FactorEdge
 	summaries          []equation.SummaryMapping
@@ -262,6 +271,7 @@ type constructedMountPlane struct {
 type constructedPointPlane struct {
 	specs             []equation.PointSpec
 	ranks             []int
+	pointOwners       []contextfiber.PointOwner
 	refByID           map[identity.ContentID]equation.PointRef
 	idBySite          map[equation.Site]identity.ContentID
 	decisions         map[identity.ContentID][]constructedDecision
@@ -375,7 +385,8 @@ func constructSourcePlane(declaration topologyDeclaration) (constructedSourcePla
 	// A mounted program's point plane is the parent's; an owner-declared point
 	// row alongside it would be a second point authority.
 	if declaration.mounted() {
-		if len(declaration.points) != 0 || !declaration.bootstrap.Available() || declaration.sites.mounted == nil {
+		if len(declaration.points) != 0 || !declaration.bootstrap.Available() || declaration.sites.mounted == nil ||
+			!declaration.contexts.Available() || declaration.contexts.LinkID() != declaration.bootstrap.OwnerID() {
 			return constructedSourcePlane{}, refuseAdmission(topologyConstructionStepDeclarationShape, 0)
 		}
 	} else if len(declaration.points) == 0 {
@@ -486,8 +497,9 @@ func constructMountPlane(declaration topologyDeclaration, source constructedSour
 			if !transferOK {
 				return constructedMountPlane{}, refuseAdmission(topologyConstructionStepMountRow, index)
 			}
-			for _, role := range transfer.Factors {
-				if _, capabilityOK := constructedRoleCapability(source, mount, role); !capabilityOK {
+			for _, factor := range transfer.Factors {
+				capability, capabilityOK := mount.factors[factor]
+				if _, factorOK := capability.semantic(source.state, source.authority); !capabilityOK || !factorOK {
 					return constructedMountPlane{}, refuseAdmission(topologyConstructionStepMountRow, index)
 				}
 			}
@@ -509,8 +521,7 @@ func constructMountPlane(declaration topologyDeclaration, source constructedSour
 				return constructedMountPlane{}, refuseAdmission(topologyConstructionStepMountRow, index)
 			}
 			capability, capabilityOK := constructedRoleCapability(source, mount, rule.Role)
-			native, nativeOK := template.RuleNativeAt(ruleIndex)
-			if !capabilityOK || !rule.Stage.Valid() || !nativeOK {
+			if !capabilityOK || !rule.Stage.Available() {
 				return constructedMountPlane{}, refuseAdmission(topologyConstructionStepMountRow, index)
 			}
 			key := artifactMountedRule{role: capability, mount: mount.module, point: rule.Point, occurrence: rule.ID}
@@ -518,7 +529,7 @@ func constructMountPlane(declaration topologyDeclaration, source constructedSour
 				return constructedMountPlane{}, refuseAdmission(topologyConstructionStepMountRow, index)
 			}
 			plane.rules[key] = constructedRuleHandle{mount: index, rule: ruleIndex}
-			if !native {
+			if !rule.Native {
 				continue
 			}
 			// The native stage inverse is the one row-shaped value a committed
@@ -529,7 +540,7 @@ func constructMountPlane(declaration topologyDeclaration, source constructedSour
 				return constructedMountPlane{}, refuseAdmission(topologyConstructionStepMountRow, index)
 			}
 			stage := artifactNativeCallStage{
-				stage: rule.Stage, native: native, point: rule.Point, input: rule.Input,
+				stage: rule.Stage, point: rule.Point, input: rule.Input,
 				mountedPoint: mountedArtifactID("analysis/engine/artifact-point/v1", mount.module, template.ArtifactID(), rule.Point),
 				mountedInput: mountedArtifactID("analysis/engine/artifact-point/v1", mount.module, template.ArtifactID(), rule.Input),
 			}
@@ -562,8 +573,11 @@ func constructPointPlane(declaration topologyDeclaration, source constructedSour
 		idBySite:  make(map[equation.Site]identity.ContentID),
 		decisions: make(map[identity.ContentID][]constructedDecision),
 	}
-	place := func(id identity.ContentID, site equation.Site) bool {
+	place := func(id identity.ContentID, site equation.Site, owner contextfiber.PointOwner, retainOwner bool) bool {
 		if !id.Available() || !site.Available() || !source.batch.OwnsSite(site) {
+			return false
+		}
+		if retainOwner && !owner.Available() {
 			return false
 		}
 		if _, duplicate := plane.refByID[id]; duplicate {
@@ -575,11 +589,14 @@ func constructPointPlane(declaration topologyDeclaration, source constructedSour
 		plane.refByID[id] = equation.PointAt(len(plane.specs))
 		plane.idBySite[site] = id
 		plane.specs = append(plane.specs, equation.PointSpec{Site: site})
+		if retainOwner {
+			plane.pointOwners = append(plane.pointOwners, owner)
+		}
 		return true
 	}
 	if !declaration.mounted() {
 		for ordinal, point := range declaration.points {
-			if !place(point.ID, point.Site) {
+			if !place(point.ID, point.Site, contextfiber.PointOwner{}, false) {
 				return constructedPointPlane{}, refuseAdmission(topologyConstructionStepPointRow, ordinal)
 			}
 		}
@@ -597,7 +614,8 @@ func constructPointPlane(declaration topologyDeclaration, source constructedSour
 			id := mountedArtifactID("analysis/engine/artifact-point/v1", mount.module, artifactID, row.ID)
 			handle := artifactMountedPoint{mount: mount.module, reusable: row.ID}
 			site, siteOK := declaration.sites.mounted[handle]
-			if _, duplicate := plane.idByMounted[handle]; !siteOK || duplicate || !place(id, site) {
+			owner, ownerOK := contextfiber.Mounted(mount.module)
+			if _, duplicate := plane.idByMounted[handle]; !siteOK || duplicate || !ownerOK || !place(id, site, owner, true) {
 				return constructedPointPlane{}, refuseAdmission(topologyConstructionStepPointRow, pointIndex)
 			}
 			plane.idByMounted[handle] = id
@@ -615,7 +633,8 @@ func constructPointPlane(declaration topologyDeclaration, source constructedSour
 	}
 	mountedPointCount := len(plane.specs)
 	semantic := linkBootstrapPointSemanticID(mounts.owner, mounts.point.PointID)
-	if !place(semantic, declaration.sites.bootstrap) {
+	owner, ownerOK := contextfiber.LinkGlobal(mounts.owner)
+	if !ownerOK || !place(semantic, declaration.sites.bootstrap, owner, true) {
 		return constructedPointPlane{}, refuseAdmission(topologyConstructionStepPointRow, mountedPointCount)
 	}
 	plane.bootstrapSemantic, plane.bootstrapRef = semantic, plane.refByID[semantic]
@@ -839,9 +858,9 @@ func constructTransferEdge(declaration topologyDeclaration, source constructedSo
 	}
 	edges := make([]equation.FactorEdge, 0, len(transfer.Factors))
 	seen := make(map[composition.Key]struct{}, len(transfer.Factors))
-	for _, role := range transfer.Factors {
-		capability, capabilityOK := constructedRoleCapability(source, mount, role)
-		semantic, factorOK := constructedTransportFactor(source, capability, true)
+	for _, factor := range transfer.Factors {
+		capability, capabilityOK := mount.factors[factor]
+		semantic, factorOK := capability.semantic(source.state, source.authority)
 		if _, duplicate := seen[semantic]; !capabilityOK || !factorOK || duplicate || !bindingOwnsFactorSchema(source.schema, semantic) {
 			return equation.EnvironmentEdge{}, nil, refuseAdmission(topologyConstructionStepEdgeRow, ordinal)
 		}
@@ -1049,6 +1068,18 @@ func resolveMemberCoordinates(declaration topologyDeclaration, mounts constructe
 			return memberCoordinates{}, refuseAdmission(topologyConstructionStepMemberIssuance, ordinal)
 		}
 		return memberCoordinates{member: id}, topologyConstructionRefusal{}
+	case declaredMemberMountedPoint:
+		if !declaration.mounted() || !member.Role.mountedPoint() || !member.Mount.Available() || !member.Point.Available() || !member.Occurrence.Available() {
+			return memberCoordinates{}, refuseAdmission(topologyConstructionStepMemberIssuance, ordinal)
+		}
+		site, sited := declaration.sites.mounted[artifactMountedPoint{mount: member.Mount, reusable: member.Point}]
+		id := mountedPointRuleMemberID(member.Role, member.Mount, member.Point, member.Occurrence)
+		if !sited || !site.Available() || !id.Available() {
+			return memberCoordinates{}, refuseAdmission(topologyConstructionStepMemberIssuance, ordinal)
+		}
+		return memberCoordinates{
+			member: id, mount: member.Mount, inputSite: site, inputPoint: member.Point,
+		}, topologyConstructionRefusal{}
 	}
 	return memberCoordinates{}, refuseAdmission(topologyConstructionStepMemberIssuance, ordinal)
 }
@@ -1085,6 +1116,12 @@ func constructMemberGroup(declaration topologyDeclaration, source constructedSou
 		} else if !inputPoint.Available() || !inputSite.Available() {
 			return equation.Group{}, refuseAdmission(topologyConstructionStepMemberGroup, ordinal)
 		}
+		if member.Plane == declaredMemberMountedPoint {
+			mountedInput, mountedInputOK := points.idByMounted[artifactMountedPoint{mount: member.Mount, reusable: inputPoint}]
+			if !mountedInputOK || !target.Same(inputSite) || pointID != mountedInput {
+				return equation.Group{}, refuseAdmission(topologyConstructionStepMemberGroup, ordinal)
+			}
+		}
 		if member.Plane == declaredMemberMount && coordinates.routed {
 			// A routed member's predecessor proof is the parent's route row:
 			// the member's input must be the exact Point that route lands on,
@@ -1100,6 +1137,8 @@ func constructMemberGroup(declaration topologyDeclaration, source constructedSou
 			var provenanceOK bool
 			if member.Plane == declaredMemberLink {
 				provenance, provenanceOK = linkRuleInputKey(member.Role, declaration.bootstrap.OwnerID(), inputPoint, member.Occurrence, slot)
+			} else if member.Plane == declaredMemberMountedPoint {
+				provenance, provenanceOK = mountedPointRuleInputKey(member.Role, member.Mount, member.Point, member.Occurrence, slot)
 			} else {
 				provenance, provenanceOK = mountedRuleInputKey(coordinates.member, inputPoint, slot)
 			}
@@ -1137,7 +1176,16 @@ func constructQueryPlane(declaration topologyDeclaration, source constructedSour
 	}
 	for ordinal, query := range declaration.queries {
 		row := query.Row
+		if !query.Context.Available() || !row.Context.Available() || query.Context.ID() != row.Context {
+			return constructedQueryPlane{}, refuseAdmission(topologyConstructionStepQueryRow, ordinal)
+		}
 		if declaration.mounted() {
+			context, contextOK := declaration.contexts.Context(query.Context.ID())
+			if !contextOK || !context.Available() || context.ModuleKey() != query.Mount {
+				return constructedQueryPlane{}, refuseAdmission(topologyConstructionStepQueryRow, ordinal)
+			}
+			query.Context = context
+			row.Context = context.ID()
 			point, pointOK := constructedMountedPoint(points, query.Mount, query.Point)
 			if !pointOK {
 				return constructedQueryPlane{}, refuseAdmission(topologyConstructionStepQueryRow, ordinal)
@@ -1187,6 +1235,7 @@ func constructActivationPlane(declaration topologyDeclaration, source constructe
 		trigger             equation.RuleRef
 		application, target composition.Key
 		endpoint            composition.Key
+		context             equation.ActivationContext
 	}
 	tupleAt := make(map[activationTuple]struct{}, len(declared))
 	plane := constructedActivationPlane{rows: make([]equation.ActivationRowSpec, 0, len(declared))}
@@ -1204,7 +1253,7 @@ func constructActivationPlane(declaration topologyDeclaration, source constructe
 			!row.Family.Available() || !row.Application.Available() || !row.Target.Available() || !row.Endpoint.Available() || row.Target == row.Endpoint {
 			return constructedActivationPlane{}, refuseAdmission(topologyConstructionStepCandidateRow, ordinal)
 		}
-		tuple := activationTuple{trigger: ref, application: row.Application, target: row.Target, endpoint: row.Endpoint}
+		tuple := activationTuple{trigger: ref, application: row.Application, target: row.Target, endpoint: row.Endpoint, context: row.Context}
 		if _, duplicate := tupleAt[tuple]; duplicate {
 			return constructedActivationPlane{}, refuseAdmission(topologyConstructionStepCandidateRow, ordinal)
 		}
@@ -1246,20 +1295,50 @@ func constructDeclaredCandidates(declaration topologyDeclaration, mounts constru
 			}
 			transports[artifactMountedBody{mount: candidate.Mount, body: candidate.Body}] = transport
 		}
-		built = append(built, equation.ActivationRowSpec{
-			TriggerOrdinal: int(uint64(ref)) - 1,
-			Family:         candidate.Family,
-			Application:    candidate.Application,
-			Target:         candidate.Target,
-			Endpoint:       candidate.Endpoint,
-			Trigger:        trigger,
-			Entries:        append([]equation.PointRef(nil), transport.entries...),
-			Exits:          append([]equation.PointRef(nil), transport.exits...),
-			Imports:        append([]composition.Key(nil), candidate.Imports...),
-			Export:         candidate.Export,
-		})
+		contexts, contextsOK := declaredActivationCandidateContexts(declaration, candidate)
+		if !contextsOK {
+			return nil, refuseAdmission(topologyConstructionStepCandidateRow, ordinal)
+		}
+		for _, context := range contexts {
+			built = append(built, equation.ActivationRowSpec{
+				TriggerOrdinal: int(uint64(ref)) - 1,
+				Family:         candidate.Family,
+				Application:    candidate.Application,
+				Target:         candidate.Target,
+				Endpoint:       candidate.Endpoint,
+				Context:        context,
+				Trigger:        trigger,
+				Entries:        append([]equation.PointRef(nil), transport.entries...),
+				Exits:          append([]equation.PointRef(nil), transport.exits...),
+				Imports:        append([]composition.Key(nil), candidate.Imports...),
+				Export:         candidate.Export,
+			})
+		}
 	}
 	return built, topologyConstructionRefusal{}
+}
+
+// declaredActivationCandidateContexts authenticates the complete transition
+// tuple already supplied by the callable-origin owner. It intentionally does
+// not derive or enumerate contexts from ProgramPointTransition geometry:
+// those rows describe transport edges, not which activation candidate a
+// higher-order library value selected. Missing candidate context is therefore
+// a hard admission refusal.
+func declaredActivationCandidateContexts(declaration topologyDeclaration, candidate declaredActivationCandidate) ([]equation.ActivationContext, bool) {
+	if !candidate.Context.Available() || !declaration.contexts.Available() {
+		return nil, false
+	}
+	from, fromOK := declaration.contexts.Context(candidate.Context.FromContextID)
+	to, toOK := declaration.contexts.Context(candidate.Context.ToContextID)
+	transition, transitionOK := declaration.contexts.Transition(candidate.Context.FromContextID, candidate.Context.ToContextID)
+	if !fromOK || !toOK || !from.Available() || !to.Available() || !transitionOK || !transition.Available() ||
+		from.LinkID() != declaration.contexts.LinkID() || to.LinkID() != declaration.contexts.LinkID() ||
+		transition.ID() != candidate.Context.TransitionID || transition.LinkID() != declaration.contexts.LinkID() ||
+		transition.FromContextID() != candidate.Context.FromContextID || transition.ToContextID() != candidate.Context.ToContextID ||
+		from.ModuleKey() != candidate.Trigger.mount || to.ModuleKey() != candidate.Mount {
+		return nil, false
+	}
+	return []equation.ActivationContext{candidate.Context}, true
 }
 
 type constructedActivationTransport struct {
@@ -1346,6 +1425,43 @@ func constructSemanticRows(points constructedPointPlane, members constructedMemb
 	}, topologyConstructionRefusal{}
 }
 
+// graphPointOwners resolves the disposable PointRef order back through the
+// sealed Topology and Graph, then places each retained owner at the Graph's
+// canonical point index. Equation sealing sorts Point rows by their issued
+// identity, so retaining the PointSpec order here would attach a context to a
+// different point whenever those orders diverge.
+func graphPointOwners(topology *equation.Topology, graph *equation.Graph, points constructedPointPlane) ([]contextfiber.PointOwner, bool) {
+	if topology == nil || graph == nil || graph.PointCount() != len(points.specs) || len(points.pointOwners) != len(points.specs) {
+		return nil, false
+	}
+	owners := make([]contextfiber.PointOwner, graph.PointCount())
+	seen := make([]bool, graph.PointCount())
+	for index := range points.specs {
+		ref := equation.PointAt(index)
+		locator, locatorOK := topology.PointRow(ref)
+		if !locatorOK {
+			return nil, false
+		}
+		point, pointOK := locator.Resolve(graph)
+		if !pointOK {
+			return nil, false
+		}
+		graphIndex, graphIndexOK := graph.PointIndex(point)
+		owner := points.pointOwners[index]
+		if !graphIndexOK || graphIndex < 0 || graphIndex >= len(owners) || !owner.Available() || seen[graphIndex] {
+			return nil, false
+		}
+		owners[graphIndex] = owner
+		seen[graphIndex] = true
+	}
+	for index := range seen {
+		if !seen[index] || !owners[index].Available() {
+			return nil, false
+		}
+	}
+	return owners, true
+}
+
 // sealConstructedTopology commits the derived planes: it seals the equation
 // Topology, resolves the initial Graph, runs the composition schedule gate
 // against the parent WTO certificate, and publishes the semantic directory.
@@ -1386,6 +1502,39 @@ func sealConstructedTopology(declaration topologyDeclaration, source constructed
 			return constructedTopology{}, refuseTopologySeal(topologyConstructionStepSchedule, ordinal)
 		}
 	}
+	var graphOwners []contextfiber.PointOwner
+	var contextIndex contextfiber.Index
+	var contextLayout contextfiber.Layout
+	if declaration.mounted() {
+		var ownersOK bool
+		graphOwners, ownersOK = graphPointOwners(topology, graph, points)
+		if !ownersOK {
+			return constructedTopology{}, refuseTopologySeal(topologyConstructionStepDirectory, 0)
+		}
+		var indexOK bool
+		contextIndex, indexOK = contextfiber.New(declaration.contexts, graph.PointCount(), relation.Generation())
+		if !indexOK {
+			return constructedTopology{}, refuseTopologySeal(topologyConstructionStepDirectory, 0)
+		}
+		var layoutOK bool
+		contextLayout, layoutOK = contextfiber.NewLayoutForGraph(contextIndex, declaration.contexts, graphOwners, relation.Generation(), graph)
+		if !layoutOK {
+			return constructedTopology{}, refuseTopologySeal(topologyConstructionStepDirectory, 0)
+		}
+		// Every retained query is singularly qualified: its exact Context and
+		// graph Point must name an executable cell in the sealed compact layout.
+		// The layout is the final authority for this pair; no query is expanded
+		// across other contexts and no unavailable/default context is selected.
+		for queryIndex := 0; queryIndex < graph.QueryCount(); queryIndex++ {
+			query, queryOK := graph.QueryAt(queryIndex)
+			contextOrdinal, contextOK := contextIndex.ContextOrdinal(query.ContextID())
+			pointIndex, pointOK := graph.PointIndex(query.Point())
+			_, executable := contextLayout.Lookup(contextOrdinal, contextfiber.PointOrdinal(pointIndex))
+			if !queryOK || !contextOK || !pointOK || !executable {
+				return constructedTopology{}, refuseTopologySeal(topologyConstructionStepDirectory, queryIndex)
+			}
+		}
+	}
 	directory, directoryOK := sealSemanticDirectory(topology, source.state, source.authority, semantic)
 	if !directoryOK {
 		return constructedTopology{}, refuseTopologySeal(topologyConstructionStepDirectory, 0)
@@ -1395,8 +1544,9 @@ func sealConstructedTopology(declaration topologyDeclaration, source constructed
 		return constructedTopology{}, refuseTopologySeal(topologyConstructionStepDirectory, 0)
 	}
 	committed := &CommittedProgram{
-		graph: graph, topology: topology, state: source.state, authority: source.authority,
-		directory: directory, nativeCallStages: stages,
+		graph: graph, topology: topology, relation: relation, state: source.state, authority: source.authority,
+		directory: directory, contexts: declaration.contexts, contextIndex: contextIndex, contextLayout: contextLayout,
+		pointOwners: append([]contextfiber.PointOwner(nil), graphOwners...), nativeCallStages: stages,
 		members: members.bindings, queries: declaredQueryBindings(declaration.queries),
 		artifactBacked: declaration.mounted(),
 	}
@@ -1406,8 +1556,14 @@ func sealConstructedTopology(declaration topologyDeclaration, source constructed
 		committed.bootstrapPoint = mounts.point.PointID
 		committed.bootstrapSemantic = points.bootstrapSemantic
 	}
+	pointTransitions, pointTransitionsOK := constructProgramPointTransitions(committed, declaration, mounts)
+	if !pointTransitionsOK {
+		return constructedTopology{}, refuseTopologySeal(topologyConstructionStepDirectory, 0)
+	}
+	committed.pointTransitions = pointTransitions
+	programAdmitted := committed.sealProgramAdmission()
 	addressed, addressedOK := committed.publishedQueryKeys()
-	if !committed.valid() || !addressedOK {
+	if !programAdmitted || !addressedOK {
 		return constructedTopology{}, refuseTopologySeal(topologyConstructionStepDirectory, 0)
 	}
 	committed.addressed = addressed
@@ -1499,11 +1655,11 @@ func constructedScheduleValid(source constructedSourcePlane, mounts constructedM
 		return offendingRank, true
 	}
 	stageBase := make(map[identity.ContentID]identity.ContentID, len(mounts.stages))
-	stageKind := make(map[identity.ContentID]rows.ArtifactRuleStage, len(mounts.stages))
+	stageKind := make(map[identity.ContentID]schema.Key, len(mounts.stages))
 	for _, stage := range mounts.stages {
 		baseRank, baseOK := rank[stage.mountedInput]
 		stageRank, stageOK := rank[stage.mountedPoint]
-		if !stage.native || !baseOK || !stageOK || baseRank >= stageRank {
+		if !baseOK || !stageOK || baseRank >= stageRank {
 			observe(stageRank)
 		}
 	}
@@ -1525,14 +1681,13 @@ func constructedScheduleValid(source constructedSourcePlane, mounts constructedM
 	localStages := make(map[identity.ContentID]map[composition.Key]struct{})
 	for key, handle := range mounts.rules {
 		rule, ruleOK := mounts.mounts[handle.mount].template.RuleAt(handle.rule)
-		native, nativeOK := mounts.mounts[handle.mount].template.RuleNativeAt(handle.rule)
 		staged, located := points.idByMounted[artifactMountedPoint{mount: key.mount, reusable: key.point}]
-		if !ruleOK || !nativeOK || !located {
+		if !ruleOK || !located {
 			return 0, false
 		}
 		switch {
-		case rule.Stage == rows.ArtifactRuleStageBase:
-		case rule.Stage == rows.ArtifactRuleStageLocal:
+		case !rule.Input.Available():
+		case !rule.Native:
 			factor, factorOK := ruleOutputFactor(key.role)
 			if _, native := stageKind[staged]; native || !factorOK {
 				observe(rank[staged])
@@ -1544,7 +1699,7 @@ func constructedScheduleValid(source constructedSourcePlane, mounts constructedM
 				localStages[staged] = written
 			}
 			written[factor] = struct{}{}
-		case native:
+		case rule.Native:
 			if owner, native := stageKind[staged]; !native || owner != rule.Stage {
 				observe(rank[staged])
 			}
@@ -1556,8 +1711,8 @@ func constructedScheduleValid(source constructedSourcePlane, mounts constructedM
 		return ordinal, false
 	}
 	localOwners := make(map[identity.ContentID]identity.ContentID, len(localStages))
-	inventory := mountedEnvironmentFactors(source)
 	for mountIndex, mount := range mounts.mounts {
+		inventory := mount.template.FactorCount()
 		template := mount.template
 		for transferIndex := 0; transferIndex < template.TransferCount(); transferIndex++ {
 			transfer, transferOK := template.TransferAt(transferIndex)
@@ -1659,23 +1814,6 @@ func constructedRegionContained(points constructedPointPlane, stageBase map[iden
 	return false
 }
 
-// mountedEnvironmentFactors is the Factor inventory an artifact's environment
-// plane carries. Only mounted rule capabilities write into a template Point,
-// so a Factor owned solely by the Link lane never crosses a template transfer
-// and is not part of what a mounted stage must account for.
-func mountedEnvironmentFactors(source constructedSourcePlane) int {
-	if source.state == nil {
-		return 0
-	}
-	factors := make(map[composition.Key]struct{}, len(source.state.roleSlots))
-	for capability := range source.state.roleSlots {
-		if factor, factorOK := ruleOutputFactor(capability); factorOK {
-			factors[factor] = struct{}{}
-		}
-	}
-	return len(factors)
-}
-
 // constructedCompleteTransfer verifies the explicit schema-derived complement
 // for a strong-write stage. The engine validates the closed factor inventory;
 // it does not infer which domain facts should cross the boundary.
@@ -1687,16 +1825,16 @@ func constructedCompleteTransfer(source constructedSourcePlane, mounts construct
 	for factor := range written {
 		seen[factor] = struct{}{}
 	}
-	for _, role := range transfer.Factors {
-		capability, capabilityOK := constructedRoleCapability(source, mounts.mounts[mountIndex], role)
-		factor, factorOK := ruleOutputFactor(capability)
+	for _, scalar := range transfer.Factors {
+		capability, capabilityOK := mounts.mounts[mountIndex].factors[scalar]
+		factor, factorOK := capability.semantic(source.state, source.authority)
 		_, duplicate := seen[factor]
 		if !capabilityOK || !factorOK || duplicate {
 			return false
 		}
 		seen[factor] = struct{}{}
 	}
-	return len(seen) == schemaFactorCount(source.schema)
+	return len(seen) == inventory
 }
 
 // ruleOutputFactor resolves the Factor one mounted rule capability writes.

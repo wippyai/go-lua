@@ -29,6 +29,10 @@ type ActivationRowSpec struct {
 	Application    composition.Key
 	Target         composition.Key
 	Endpoint       composition.Key
+	// Context is the exact owner-authenticated context transition for a
+	// mounted row.  Empty is retained only for unqualified programs; a
+	// mounted row must carry the complete transition tuple.
+	Context ActivationContext
 
 	Binding TemplateBinding
 	Sites   []Site
@@ -47,6 +51,7 @@ type activationRowLocator struct {
 	application    composition.Key
 	target         composition.Key
 	endpoint       composition.Key
+	context        ActivationContext
 }
 
 type activationTransportRow struct {
@@ -126,7 +131,7 @@ func sealActivationRowDirectory(source *composition.Composition, base *Batch, sp
 	byKey := make(map[composition.Key]int, len(specs))
 	byTuple := make(map[activationRowLocator]composition.Key, len(specs))
 	for index, spec := range specs {
-		locator := activationRowLocator{triggerOrdinal: spec.TriggerOrdinal, family: spec.Family, application: spec.Application, target: spec.Target, endpoint: spec.Endpoint}
+		locator := activationRowLocator{triggerOrdinal: spec.TriggerOrdinal, family: spec.Family, application: spec.Application, target: spec.Target, endpoint: spec.Endpoint, context: spec.Context}
 		if _, duplicate := byTuple[locator]; duplicate {
 			return nil, false
 		}
@@ -175,7 +180,7 @@ func sealActivationRowDirectory(source *composition.Composition, base *Batch, sp
 }
 
 func activationRowSpecShape(spec ActivationRowSpec) bool {
-	if spec.TriggerOrdinal < 0 || !spec.Family.Available() || !spec.Application.Available() || !spec.Target.Available() || !spec.Endpoint.Available() || spec.Target == spec.Endpoint {
+	if spec.TriggerOrdinal < 0 || !spec.Family.Available() || !spec.Application.Available() || !spec.Target.Available() || !spec.Endpoint.Available() || spec.Target == spec.Endpoint || !spec.Context.WellFormed() {
 		return false
 	}
 	if !spec.Binding.Available() && (spec.Trigger == 0 || len(spec.Entries) == 0 || len(spec.Exits) == 0 || len(spec.Imports) == 0 || !spec.Export.Available()) {
@@ -242,7 +247,7 @@ func activationTransportRowKey(source, target PointRef, factor composition.Key) 
 
 func activationDirectoryRowKey(locator activationRowLocator, target *Batch, transport []activationTransportRow) (composition.Key, bool) {
 	return identityKey("analysis/engine/equation/activation-row", func(writer *canonical.DigestWriter) bool {
-		if writer.Uint(uint64(locator.triggerOrdinal)) != nil || !writeKey(writer, locator.family) || !writeKey(writer, locator.application) || !writeKey(writer, locator.target) || !writeKey(writer, locator.endpoint) {
+		if writer.Uint(uint64(locator.triggerOrdinal)) != nil || !writeKey(writer, locator.family) || !writeKey(writer, locator.application) || !writeKey(writer, locator.target) || !writeKey(writer, locator.endpoint) || !writeActivationContext(writer, locator.context) {
 			return false
 		}
 		if target == nil {
@@ -377,6 +382,7 @@ func cloneActivationRowSpecs(values []ActivationRowSpec) []ActivationRowSpec {
 			Application:    value.Application,
 			Target:         value.Target,
 			Endpoint:       value.Endpoint,
+			Context:        value.Context,
 			Binding:        value.Binding,
 			Sites:          append([]Site(nil), value.Sites...),
 			Inputs:         append([]Input(nil), value.Inputs...),
@@ -393,7 +399,7 @@ func cloneActivationRowSpecs(values []ActivationRowSpec) []ActivationRowSpec {
 func cloneQueryInstances(rows []QueryInstance) []QueryInstance {
 	result := make([]QueryInstance, len(rows))
 	for index, row := range rows {
-		result[index] = QueryInstance{Family: row.Family, Point: row.Point, Surfaces: append([]Surface(nil), row.Surfaces...)}
+		result[index] = QueryInstance{Context: row.Context, Family: row.Family, Point: row.Point, Surfaces: append([]Surface(nil), row.Surfaces...)}
 	}
 	return result
 }

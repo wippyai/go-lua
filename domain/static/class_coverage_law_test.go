@@ -5,7 +5,6 @@ import (
 	"testing"
 
 	"github.com/wippyai/go-lua/analysis/identity"
-	"github.com/wippyai/go-lua/domain/runtimekind"
 )
 
 // coverageFixtureAtom declares one member of the finite observation universe
@@ -413,7 +412,6 @@ func buildCoverageFixtureSet(atoms []coverageFixtureAtom, classes []coverageFixt
 		key := "\x00" + atom.name
 		universeRows = append(universeRows, descriptorUniverseRow{atom: handle, key: key, id: descriptorAtomID(key)})
 	}
-	set.unknownAtom = atomOf["unknown"]
 	if err := set.installDescriptorUniverse(universeRows); err != nil {
 		return coverageFixtureSet{}, err
 	}
@@ -432,7 +430,7 @@ func buildCoverageFixtureSet(atoms []coverageFixtureAtom, classes []coverageFixt
 	}
 
 	total := make([]uint64, set.coverageStride)
-	for position := range set.universe {
+	for position := 0; position < set.universeSize; position++ {
 		coverageSet(total, position)
 	}
 	set.descriptors = []classDescriptor{{owner: set, coverage: total}}
@@ -455,17 +453,10 @@ func buildCoverageFixtureSet(atoms []coverageFixtureAtom, classes []coverageFixt
 	if set.nil.owner == nil {
 		return coverageFixtureSet{}, errors.New("static: coverage fixture lacks a nil class")
 	}
-	set.ranks = make([]uint64, len(set.rows))
-	set.nilable = make([]bool, len(set.rows))
 	if err := set.finalizeDescriptors(); err != nil {
 		return coverageFixtureSet{}, err
 	}
-	set.runtimeKinds = make([]runtimekind.Set, len(set.rows))
-	set.runtimeKinds[0] = runtimekind.All
 	set.id = coverageFixtureSetID(set)
-	if err := set.sealClassIdentities(); err != nil {
-		return coverageFixtureSet{}, err
-	}
 
 	// Coverage-equal rows merge, so fixture handles are resolved through the
 	// sealed coverage index rather than kept at their declared ordinals.
@@ -475,8 +466,15 @@ func buildCoverageFixtureSet(atoms []coverageFixtureAtom, classes []coverageFixt
 		if !found {
 			return coverageFixtureSet{}, errors.New("static: coverage fixture class " + name + " lost its sealed row")
 		}
-		byName[name] = class
+		// Coverage fixtures exercise the descriptor algebra without constructing
+		// a typeauthority Runtime. Address the already-finalized descriptor
+		// directly so runtime-kind join homomorphism is still present without a
+		// fake Runtime row or a parallel scalar table.
+		byName[name] = Class{owner: set, index: ^uint32(0), descriptor: &set.descriptors[class.index]}
 	}
+	// Exercise every algebra law against the same hot representation as a
+	// production seal: no atom relation or reverse-position table survives.
+	set.construction = nil
 	return coverageFixtureSet{set: set, universeID: set.universeID, byName: byName}, nil
 }
 

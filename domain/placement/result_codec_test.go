@@ -18,10 +18,13 @@ func TestEncodeSummaryResultRejectsUnavailableAndUnownedObservations(t *testing.
 	if _, _, _, ok := EncodeSummaryResult(PlacementSummaryObservation{}); ok {
 		t.Fatal("unavailable Placement observation encoded")
 	}
-	if _, ok := placementFromWireOrdinal(5); ok {
+	if _, ok := placementFromWireOrdinal(4); ok {
 		t.Fatal("unknown Placement wire ordinal admitted")
 	}
-	for _, value := range []Placement{Bottom, Stack, OwnedHeap, SharedHeap, Unknown} {
+	if _, ok := placementWireOrdinal(Bottom); ok {
+		t.Fatal("Bottom admitted as a public allocation class")
+	}
+	for _, value := range []Placement{Stack, OwnedHeap, SharedHeap, Unknown} {
 		ordinal, ok := placementWireOrdinal(value)
 		if !ok {
 			t.Fatalf("valid Placement %v lacks wire ordinal", value)
@@ -43,8 +46,33 @@ func TestEncodeSummaryResultRejectsUnavailableAndUnownedObservations(t *testing.
 	if got, present, ok := placementFromWireState(0); !ok || present || got != Bottom {
 		t.Fatalf("absent state decode = %v/%v/%v", got, present, ok)
 	}
-	if _, _, ok := placementFromWireState(6); ok {
+	if _, _, ok := placementFromWireState(5); ok {
 		t.Fatal("unknown Placement state admitted")
+	}
+}
+
+func TestUnavailableSummaryAllocationDoesNotFabricateEvidence(t *testing.T) {
+	allocation := SummaryResultAllocation{}
+	if present, ok := allocation.Present(); ok || present {
+		t.Fatalf("unavailable allocation presence = %t/%t, want refusal", present, ok)
+	}
+	if class, ok := allocation.Placement(); ok || class == Bottom || validAnalysisPlacement(class) {
+		t.Fatalf("unavailable allocation placement = %v/%t, want refusal", class, ok)
+	}
+	if evidence, ok := allocation.Evidence(); ok || evidence.Valid() {
+		t.Fatalf("unavailable allocation evidence = %#v/%t, want refusal", evidence, ok)
+	}
+	if state, ok := allocation.FrameLocal(); ok || state.Valid() {
+		t.Fatalf("unavailable frame-local evidence = %v/%t, want refusal", state, ok)
+	}
+	if state, ok := allocation.DiesBeforeSuspension(); ok || state.Valid() {
+		t.Fatalf("unavailable suspension evidence = %v/%t, want refusal", state, ok)
+	}
+	if state, ok := allocation.DeepFrozen(); ok || state.Valid() {
+		t.Fatalf("unavailable deep-frozen evidence = %v/%t, want refusal", state, ok)
+	}
+	if state, ok := (SummaryResult{}).DeepFrozenFor(placementCodecID(1)); ok || state.Valid() {
+		t.Fatalf("unavailable summary deep-frozen lookup = %v/%t, want refusal", state, ok)
 	}
 }
 
@@ -57,12 +85,11 @@ func TestPlacementSummaryEncoderEvidenceFenceRejectsWrongOwner(t *testing.T) {
 	}
 
 	canonical := AllocationEvidence{OwnerIdentity: coordinateID, HasOwnerIdentity: true}
-	merged := canonical.Merge(hostile)
-	if !merged.Valid() {
-		t.Fatal("conservative evidence merge unexpectedly produced an invalid row")
+	if merged, ok := ComposeAllocationEvidence(canonical, hostile); ok || merged.Valid() {
+		t.Fatalf("foreign owner evidence was composed: %#v/%t", merged, ok)
 	}
-	if placementSummaryEvidenceFenced(coordinateID, hostile) || placementSummaryEvidenceFenced(coordinateID, merged) {
-		t.Fatal("encoder evidence fence admitted a wrong owner before or after merge")
+	if placementSummaryEvidenceFenced(coordinateID, hostile) {
+		t.Fatal("encoder evidence fence admitted a wrong owner")
 	}
 	if !placementSummaryEvidenceFenced(coordinateID, canonical) {
 		t.Fatal("encoder evidence fence rejected the canonical owner row")

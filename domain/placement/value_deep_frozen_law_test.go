@@ -10,6 +10,7 @@ import (
 	linkproject "github.com/wippyai/go-lua/analysis/program/link/project"
 	targetcompiler "github.com/wippyai/go-lua/analysis/program/target/compiler"
 	"github.com/wippyai/go-lua/analysis/program/target/declaration"
+	"github.com/wippyai/go-lua/analysis/schema/programmount"
 	"github.com/wippyai/go-lua/domain/composite"
 	"github.com/wippyai/go-lua/domain/composite/snapshottest"
 	heapdomain "github.com/wippyai/go-lua/domain/heap"
@@ -276,19 +277,19 @@ func newDeepFrozenValueFixture(t testing.TB) deepFrozenValueFixture {
 	}
 	shard, shardOK := linked.Project().Mounts().At(0)
 	module, moduleOK := linked.Project().ModuleKey(shard)
-	programID, programIDOK := linked.Project().Mounts().ProgramID(shard)
+	_, programIDOK := linked.Project().Mounts().ProgramID(shard)
 	if !shardOK || !moduleOK || !programIDOK {
 		t.Fatal("mounted program identity")
 	}
 	snapshot := snapshottest.MustLower(t, artifact)
-	heapMount, heapMountOK := heapdomain.NewArtifactMount(snapshot, module, programID)
-	valueMount, valueMountOK := valuedomain.NewArtifactMount(snapshot, module, programID)
+	heapMount, heapMountOK := programmount.MountedArtifactFromSnapshot(snapshot, module)
+	valueMount, valueMountOK := programmount.MountedArtifactFromSnapshot(snapshot, module)
 	structural, structuralOK := composite.StructureVocabulary(receipt)
 	if !heapMountOK || !valueMountOK || !structuralOK {
 		t.Fatal("artifact mount or structural vocabulary")
 	}
-	heapSchema, heapFailure := heapdomain.SealWithArtifacts(linked, []heapdomain.ArtifactMount{heapMount})
-	values, valueFailure := valuedomain.SealWithFailure(linked, heapSchema, []valuedomain.ArtifactMount{valueMount}, structural)
+	heapSchema, heapFailure := heapdomain.SealWithArtifacts(linked, []programmount.MountedArtifact{heapMount})
+	values, valueFailure := valuedomain.SealWithFailure(linked, heapSchema, []programmount.MountedArtifact{valueMount}, structural)
 	if heapFailure != heapdomain.SealFailureNone || valueFailure != valuedomain.SealFailureNone || values == nil {
 		t.Fatalf("schema seal heap=%v value=%v", heapFailure, valueFailure)
 	}
@@ -344,38 +345,39 @@ func (fixture deepFrozenValueFixture) encodedSummary(t testing.TB, states map[he
 	return present, rows, payload
 }
 
-// TestPlacementSummaryRefusesUnpublishedAllocationRows keeps sparse-factor
-// absence separate from the authenticated Bottom/Unknown vocabulary. An
-// allocation coordinate must be present in the Placement fold before it can
-// receive evidence or cross the result boundary.
-func TestPlacementSummaryRefusesUnpublishedAllocationRows(t *testing.T) {
+// TestPlacementSummaryProjectsSparseOwnerStackAsACompleteAllocationClass
+// keeps the Factor cell's sparse transport separate from the result row's
+// semantic presence. The owner-issued Stack is the exact allocation baseline,
+// so the complete allocation denominator publishes it explicitly. A sparse
+// non-default payload remains malformed.
+func TestPlacementSummaryProjectsSparseOwnerStackAsACompleteAllocationClass(t *testing.T) {
 	fixture := newDeepFrozenValueFixture(t)
 	observation := placementdomain.BeginPlacementSummary(fixture.placement)
 	count := fixture.placement.DenseKeyCount()
-	_, foldOK := placementdomain.AccumulatePlacementSummaryRows(fixture.placement, observation, count, func(index int) (placementdomain.Placement, bool, bool) {
-		key, keyOK := fixture.placement.KeyAt(index)
-		if !keyOK {
+	folded, foldOK := placementdomain.AccumulatePlacementSummaryRows(fixture.placement, observation, count, func(index int) (placementdomain.Placement, bool, bool) {
+		if _, keyOK := fixture.placement.KeyAt(index); !keyOK {
 			return placementdomain.Bottom, false, false
 		}
-		if key.Kind() == heapdomain.RootAllocation {
-			return placementdomain.Bottom, false, true
-		}
-		return placementdomain.Bottom, true, true
+		return placementdomain.Stack, false, true
 	})
-	if foldOK {
-		t.Fatal("Placement fold accepted an absent allocation factor cell")
+	if !foldOK || folded.Rows != 1 {
+		t.Fatal("Placement fold refused the owner-authenticated sparse Stack denominator")
 	}
-
 	for _, key := range fixture.allocations {
 		index, indexOK := fixture.placement.Heap().KeyIndex(key)
 		if !indexOK {
 			t.Fatal("allocation summary coordinate")
 		}
-		observation.Values[index] = placementdomain.OwnedHeap
-		observation.Present[index] = true
+		if !folded.Present[index] || folded.Values[index] != placementdomain.Stack {
+			t.Fatalf("sparse allocation %d = %v/%t, want explicit Stack", index, folded.Values[index], folded.Present[index])
+		}
 	}
-	observation.Rows = 1
-	if _, _, _, encodedOK := placementdomain.EncodeSummaryResult(observation); encodedOK {
+	if _, malformedOK := placementdomain.AccumulatePlacementSummaryRows(fixture.placement, observation, count, func(index int) (placementdomain.Placement, bool, bool) {
+		return placementdomain.Bottom, false, true
+	}); malformedOK {
+		t.Fatal("Placement fold accepted a sparse non-default allocation cell")
+	}
+	if _, _, _, encodedOK := placementdomain.EncodeSummaryResult(folded); encodedOK {
 		t.Fatal("Placement encoder published an un-authenticated evidence row")
 	}
 }

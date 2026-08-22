@@ -25,7 +25,7 @@ type ArtifactProduct struct {
 	Artifact *programartifact.Artifact
 	Snapshot *ingress.Snapshot
 	Template *rows.ArtifactScalarTemplate
-	Roles    *scalarlower.RoleDirectory
+	Bindings *scalarlower.MountDirectory
 }
 
 type artifactEntry struct {
@@ -137,8 +137,8 @@ func compileArtifactProduct(input *program.Program, compileKey programartifact.C
 	if !lowered {
 		return ArtifactProduct{}, false
 	}
-	template, roles, lowered := scalarlower.Lower(snapshot, structural)
-	product := ArtifactProduct{Artifact: artifact, Snapshot: snapshot, Template: template, Roles: roles}
+	template, bindings, lowered := scalarlower.Lower(snapshot, structural, issuance)
+	product := ArtifactProduct{Artifact: artifact, Snapshot: snapshot, Template: template, Bindings: bindings}
 	return product, lowered && artifactProductMatches(product, compileKey, programID, executionSchemaID)
 }
 
@@ -154,12 +154,19 @@ func artifactProductMatches(product ArtifactProduct, compileKey programartifact.
 		product.Template != nil && product.Template.Available() &&
 		product.Template.ArtifactID() == product.Artifact.ID() &&
 		product.Template.ProgramID() == programID && product.Template.SchemaID() == executionSchemaID &&
-		product.Roles != nil && product.Roles.Count() == product.Template.RoleCount()) {
+		product.Bindings != nil && product.Bindings.RoleCount() == product.Template.RoleCount() &&
+		product.Bindings.FactorCount() == product.Template.FactorCount()) {
 		return false
 	}
-	for index := 0; index < product.Roles.Count(); index++ {
-		key, role, available := product.Roles.At(index)
+	for index := 0; index < product.Bindings.RoleCount(); index++ {
+		key, role, available := product.Bindings.RoleAt(index)
 		if !available || !key.Available() || !role.Available() || !product.Template.OwnsRole(role) {
+			return false
+		}
+	}
+	for index := 0; index < product.Bindings.FactorCount(); index++ {
+		key, factor, available := product.Bindings.FactorAt(index)
+		if !available || !key.Available() || !factor.Available() || !product.Template.OwnsFactor(factor) {
 			return false
 		}
 	}

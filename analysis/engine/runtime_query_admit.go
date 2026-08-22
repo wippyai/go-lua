@@ -4,17 +4,18 @@ import (
 	"github.com/wippyai/go-lua/analysis/engine/internal/composition"
 	"github.com/wippyai/go-lua/analysis/engine/internal/equation"
 	"github.com/wippyai/go-lua/analysis/identity"
+	"github.com/wippyai/go-lua/analysis/schema/executioncontext"
 )
 
 // declareMountedQuery states one mounted query row. The row is addressed by
 // the mount and reusable artifact point ID; the dense point handle is resolved
 // only when runtimeProgram is built.
-func (implementation *SummaryQueryImplementation[V, R]) declareMountedQuery(state *schemaBindingState, authority *schemaBindingAuthority, id, mount, point identity.ContentID) (declaredQueryRow, []*ruleSummaryMapping, bool) {
+func (implementation *SummaryQueryImplementation[V, R]) declareMountedQuery(state *schemaBindingState, authority *schemaBindingAuthority, context executioncontext.Context, id, mount, point identity.ContentID) (declaredQueryRow, []*ruleSummaryMapping, bool) {
 	row, ok := implementation.sealedRow()
-	if !ok || row.state != state || state.authority != authority {
+	if !ok || row.state != state || state.authority != authority || !context.Available() {
 		return declaredQueryRow{}, nil, false
 	}
-	declared, surface, ok := declareMountedQueryRow(state, row.ordinal, id, mount, point, composition.QueryFactorSummary)
+	declared, surface, ok := declareMountedQueryRow(state, row.ordinal, context, id, mount, point, composition.QueryFactorSummary)
 	if !ok {
 		return declaredQueryRow{}, nil, false
 	}
@@ -25,21 +26,21 @@ func (implementation *SummaryQueryImplementation[V, R]) declareMountedQuery(stat
 	projection, _ := state.schema.queryProjectionShapeAt(row.ordinal, 0)
 	return declared, []*ruleSummaryMapping{{
 		state: state, authority: authority, factor: projection.Factor, normalizer: projection.Normalizer,
-		surface: mapping.Surface, keys: mapping.Keys,
+		surface: mapping.Surface, keys: newSummaryKeyVector(mapping.Keys),
 	}}, true
 }
 
-func (implementation *ExactQueryImplementation[V, R]) declareMountedQuery(state *schemaBindingState, authority *schemaBindingAuthority, id, mount, point identity.ContentID) (declaredQueryRow, []*ruleSummaryMapping, bool) {
+func (implementation *ExactQueryImplementation[V, R]) declareMountedQuery(state *schemaBindingState, authority *schemaBindingAuthority, context executioncontext.Context, id, mount, point identity.ContentID) (declaredQueryRow, []*ruleSummaryMapping, bool) {
 	row, ok := implementation.sealedRow()
-	if !ok || row.state != state || state.authority != authority {
+	if !ok || row.state != state || state.authority != authority || !context.Available() {
 		return declaredQueryRow{}, nil, false
 	}
-	declared, _, ok := declareMountedQueryRow(state, row.ordinal, id, mount, point, composition.QueryFactorExact)
+	declared, _, ok := declareMountedQueryRow(state, row.ordinal, context, id, mount, point, composition.QueryFactorExact)
 	return declared, nil, ok
 }
 
-func declareMountedQueryRow(state *schemaBindingState, ordinal uint64, id, mount, reusable identity.ContentID, kind composition.QueryProjectionKind) (declaredQueryRow, equation.Surface, bool) {
-	if state == nil || state.schema == nil || !id.Available() || !mount.Available() || !reusable.Available() || ordinal >= state.schema.queryCount() {
+func declareMountedQueryRow(state *schemaBindingState, ordinal uint64, context executioncontext.Context, id, mount, reusable identity.ContentID, kind composition.QueryProjectionKind) (declaredQueryRow, equation.Surface, bool) {
+	if state == nil || state.schema == nil || !context.Available() || !id.Available() || !mount.Available() || !reusable.Available() || ordinal >= state.schema.queryCount() {
 		return declaredQueryRow{}, equation.Surface{}, false
 	}
 	family := state.schema.querySemanticAt(ordinal)
@@ -57,8 +58,8 @@ func declareMountedQueryRow(state *schemaBindingState, ordinal uint64, id, mount
 		return declaredQueryRow{}, equation.Surface{}, false
 	}
 	return declaredQueryRow{
-		ID: id, Mount: mount, Point: reusable,
-		Row: equation.QueryInstance{Family: family, Surfaces: []equation.Surface{surface}},
+		Context: context, ID: id, Mount: mount, Point: reusable,
+		Row: equation.QueryInstance{Context: context.ID(), Family: family, Surfaces: []equation.Surface{surface}},
 	}, surface, true
 }
 
@@ -101,7 +102,11 @@ func bindProgramQueryRow(plane *programPlane, query equation.Query, state *schem
 	if !unitOK || !pointOK {
 		return queryRow{}, false
 	}
-	row := queryRow{queryOrdinal: queryOrdinal, factorOrdinal: factorOrdinal, point: int32(point), unit: unit, exec: exec}
+	stateOrdinal, stateOK := plane.queryState(query)
+	if !stateOK {
+		return queryRow{}, false
+	}
+	row := queryRow{queryOrdinal: queryOrdinal, factorOrdinal: factorOrdinal, point: int32(point), state: stateOrdinal, unit: unit, exec: exec}
 	return row, row.valid()
 }
 

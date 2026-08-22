@@ -38,10 +38,20 @@ type Class struct {
 }
 
 type classRow struct {
-	kind    ClassKind
-	encoded []byte
-	input   typeauthority.RuntimeInput
-	inner   typeauthority.RuntimeInner // construction-only; zero for opaque/AnyValue.
+	kind        ClassKind
+	canonicalID identity.ContentID
+	opaqueID    []byte
+	input       typeauthority.RuntimeInput
+	inner       typeauthority.RuntimeInner // construction-only; zero for opaque/AnyValue.
+}
+
+// descriptorConstruction is the one seal-time atom relation plane. It is
+// released atomically once every canonical descriptor has been issued.
+type descriptorConstruction struct {
+	universe             []uint64
+	runtimeAtomPositions []int32
+	opaqueAtomPositions  []int32
+	principals           []uint64
 }
 
 // ClassSet is the Link-scoped Pack value classification. Sealed singleton
@@ -50,33 +60,20 @@ type classRow struct {
 // relational judgment is recomputed by a finite scan. It owns no Pack
 // values and derives declaration classes directly from Target.
 type ClassSet struct {
-	authority        *Authority
-	id               identity.ContentID
-	rows             []classRow // zero is AnyValue
-	byBytes          map[string]Class
-	byStatic         map[uint32]Class
-	byTarget         map[vocabulary.Type]Class
-	nilable          []bool
-	runtimeKinds     []runtimekind.Set // sealed Class index -> may-runtime-kind mask.
-	runtimeAtomKinds []runtimekind.Set // sealed Runtime atom index -> may-runtime-kind mask.
-	ranks            []uint64
-	universe         []uint64             // structurally ordered finite observation universe P.
-	universeIDs      []identity.ContentID // portable identity parallel to universe.
-	universeID       identity.ContentID   // identity of the ordered universe as a whole.
-	unknownAtom      uint64               // preferred representative of universal principals.
-
-	// Direct atom-to-position tables over the dense universe, indexed by the
-	// Runtime row and the opaque Class row respectively; -1 is absent.
-	runtimeAtomPositions []int32
-	opaqueAtomPositions  []int32
-
-	// The sealed principal relation. principals packs one coverage row D(a)
-	// per universe position, principalSizes is its popcount, and opaqueMask
-	// marks the opaque positions.
+	linkID       identity.ContentID
+	target       *contract.Contract
+	types        *typeauthority.Authority // construction-only; released after Runtime seal.
+	id           identity.ContentID
+	rows         []classRow // zero is AnyValue
+	byCanonical  map[identity.ContentID]Class
+	byStatic     map[uint32]Class
+	byTarget     map[vocabulary.Type]Class
+	universeID   identity.ContentID // identity of the ordered universe as a whole.
+	universeSize int
+	// Hot descriptor geometry retained after the construction plane is released.
 	coverageStride int
-	principals     []uint64
-	principalSizes []uint32
 	opaqueMask     []uint64
+	construction   *descriptorConstruction
 
 	runtime     *typeauthority.Runtime
 	descriptors []classDescriptor
@@ -84,12 +81,11 @@ type ClassSet struct {
 	// probes it without materializing its result.
 	coverageIndex map[uint64][]uint32
 	nil           Class
-	identities    []identity.ContentID
 }
 
 func sealClassSet(authority *Authority) (*ClassSet, *typeauthority.Runtime, error) {
-	set := &ClassSet{authority: authority, rows: []classRow{{kind: ClassAnyValue}},
-		byBytes: make(map[string]Class), byStatic: make(map[uint32]Class),
+	set := &ClassSet{linkID: authority.linkID, target: authority.target, types: authority.types, rows: []classRow{{kind: ClassAnyValue}},
+		byCanonical: make(map[identity.ContentID]Class), byStatic: make(map[uint32]Class),
 		byTarget: make(map[vocabulary.Type]Class)}
 	nilClass, err := set.addConcrete(typ.Nil)
 	if err != nil {
@@ -100,28 +96,12 @@ func sealClassSet(authority *Authority) (*ClassSet, *typeauthority.Runtime, erro
 		row := authority.results[index]
 		switch row.kind {
 		case KindClosed:
-			decoded, decodeErr := typ.DecodeCanonicalStructural(context.Background(), row.closed)
-			if decodeErr != nil {
-				return nil, nil, decodeErr
-			}
-			class, addErr := set.addConcreteInput(decoded, row.runtime)
+			class, addErr := set.addConcreteCanonical(row.canonical, row.runtime)
 			if addErr != nil {
 				return nil, nil, addErr
 			}
 			set.byStatic[uint32(index)] = class
 		case KindSymbolic:
-			if row.symbolic.reason == ReasonOpenFormal && row.symbolic.reference.Valid() {
-				materialized, found := authority.types.Resolve(row.symbolic.reference)
-				input, closed := authority.types.RuntimeInputForType(materialized)
-				if found && closed {
-					class, addErr := set.addConcreteInput(materialized, input)
-					if addErr != nil {
-						return nil, nil, fmt.Errorf("static: materialize open class: %w", addErr)
-					}
-					set.byStatic[uint32(index)] = class
-					continue
-				}
-			}
 			h := sha256.New()
 			writeSymbolic(h, row.symbolic)
 			ordinal, ordinalErr := denseOrdinal(len(set.rows))
@@ -129,7 +109,7 @@ func sealClassSet(authority *Authority) (*ClassSet, *typeauthority.Runtime, erro
 				return nil, nil, fmt.Errorf("static: opaque class handle: %w", ordinalErr)
 			}
 			class := Class{owner: set, index: ordinal}
-			set.rows = append(set.rows, classRow{kind: ClassOpaque, encoded: h.Sum(nil)})
+			set.rows = append(set.rows, classRow{kind: ClassOpaque, opaqueID: h.Sum(nil)})
 			set.byStatic[uint32(index)] = class
 		}
 	}
@@ -170,21 +150,12 @@ func sealClassSet(authority *Authority) (*ClassSet, *typeauthority.Runtime, erro
 	if !set.id.Available() {
 		return nil, nil, errors.New("static: unavailable ClassSet identity")
 	}
-	if err := set.finalizeDescriptorIdentities(); err != nil {
-		return nil, nil, err
-	}
-	if err := set.sealClassIdentities(); err != nil {
-		return nil, nil, err
-	}
-	if err := set.sealRuntimeKinds(); err != nil {
-		return nil, nil, err
-	}
-	if err := set.sealRuntimeAtomKinds(); err != nil {
-		return nil, nil, err
-	}
-	set.byBytes = nil
+	set.byCanonical = nil
+	set.types = nil
+	set.construction = nil
 	for index := range set.rows {
-		set.rows[index].encoded = nil
+		set.rows[index].canonicalID = identity.ContentID{}
+		set.rows[index].opaqueID = nil
 		set.rows[index].input = typeauthority.RuntimeInput{}
 		set.rows[index].inner = typeauthority.RuntimeInner{}
 	}
@@ -219,28 +190,30 @@ func (s *ClassSet) Kind(class Class) (ClassKind, bool) {
 	}
 	return s.rows[class.index].kind, true
 }
-func (s *ClassSet) ClassForStatic(value Value) (Class, bool) {
-	if s == nil || value.owner != s.authority {
-		return Class{}, false
+
+// takeStaticProjection transfers the construction-time exact Value-to-Class
+// relation to its Value owner. ClassSet retains no parallel query route after
+// the handoff.
+func (s *ClassSet) takeStaticProjection(count int) ([]Class, bool) {
+	if s == nil || s.byStatic == nil || count < 2 {
+		return nil, false
 	}
-	if value.isDerived() && value.class.owner == s {
-		return value.class, true
+	projection := make([]Class, count)
+	for index, class := range s.byStatic {
+		if uint64(index) >= uint64(len(projection)) || !s.owns(class) {
+			return nil, false
+		}
+		projection[index] = class
 	}
-	if value.index == 1 {
-		return s.AnyValue(), true
-	}
-	if value.index == 0 {
-		return Class{}, false
-	}
-	class, ok := s.byStatic[value.index]
-	return class, ok
+	s.byStatic = nil
+	return projection, true
 }
 
 // ClassForTarget projects a Target-owned type handle. The Contract pointer is
 // part of the capability: the raw ordinal alone is not an owner identity and
 // must not admit an equal-numbered type from another sealed Target.
 func (s *ClassSet) ClassForTarget(contract *contract.Contract, value vocabulary.Type) (Class, bool) {
-	if s == nil || s.authority == nil || contract == nil || contract != s.authority.target {
+	if s == nil || contract == nil || contract != s.target {
 		return Class{}, false
 	}
 	class, ok := s.byTarget[value]
@@ -307,7 +280,12 @@ func (s *ClassSet) Join(left, right Class) Class {
 	if joined, found := s.classForJoinedCoverage(leftCoverage, rightCoverage); found {
 		return joined
 	}
-	return s.derivedJoin(leftCoverage, rightCoverage)
+	leftKinds, leftKindsOK := s.MayRuntimeKinds(left)
+	rightKinds, rightKindsOK := s.MayRuntimeKinds(right)
+	if !leftKindsOK || !rightKindsOK {
+		panic("static: ClassSet join lacks owner-issued runtime kinds")
+	}
+	return s.derivedJoin(leftCoverage, rightCoverage, leftKinds|rightKinds)
 }
 func (s *ClassSet) Rank(class Class) uint64 {
 	if !s.owns(class) {
@@ -316,10 +294,10 @@ func (s *ClassSet) Rank(class Class) uint64 {
 	if class.descriptor != nil {
 		return uint64(class.descriptor.rank)
 	}
-	if uint64(class.index) >= uint64(len(s.ranks)) {
+	if uint64(class.index) >= uint64(len(s.descriptors)) {
 		return 0
 	}
-	return uint64(s.ranks[class.index])
+	return uint64(s.descriptors[class.index].rank)
 }
 
 func (s *ClassSet) CanBeNil(class Class) bool {
@@ -338,13 +316,12 @@ func (s *ClassSet) CanBeNil(class Class) bool {
 	if s.Equal(s.nil, class) {
 		return true
 	}
-	return s.nilable[class.index]
+	return s.descriptors[class.index].nilable
 }
 
-// MayRuntimeKinds returns the presealed Lua runtime-kind over-approximation
-// for one exact Class.  The query is an immutable slice lookup: it never
-// decodes types, walks recursive graphs, or allocates during recurrent solve
-// work.  Applied classes share their declared row's runtime representation.
+// MayRuntimeKinds returns the Runtime-owner-issued Lua runtime-kind
+// over-approximation for one exact Class. The query never decodes types, walks
+// recursive graphs, or allocates during recurrent solve work.
 //
 // A zero mask is a valid answer for a concrete bottom class.  The bool only
 // distinguishes that result from a foreign or malformed Class handle.
@@ -355,10 +332,15 @@ func (s *ClassSet) MayRuntimeKinds(class Class) (runtimekind.Set, bool) {
 	if class.descriptor != nil {
 		return class.descriptor.derivedKinds, true
 	}
-	if uint64(class.index) >= uint64(len(s.runtimeKinds)) {
+	row := s.rows[class.index]
+	switch row.kind {
+	case ClassAnyValue, ClassOpaque:
+		return runtimekind.All, true
+	case ClassConcrete:
+		return s.runtime.RuntimeKinds(row.inner)
+	default:
 		return 0, false
 	}
-	return s.runtimeKinds[class.index], true
 }
 
 func (s *ClassSet) owns(class Class) bool {
@@ -366,7 +348,8 @@ func (s *ClassSet) owns(class Class) bool {
 		return false
 	}
 	if class.descriptor != nil {
-		return class.descriptor.owner == s && len(class.descriptor.coverage) == s.coverageStride && class.descriptor.covered != 0
+		return class.descriptor.owner == s && len(class.descriptor.coverage) == s.coverageStride &&
+			class.descriptor.rank != 0 && class.descriptor.identity.Available()
 	}
 	return uint64(class.index) < uint64(len(s.rows))
 }
@@ -393,23 +376,29 @@ func (s *ClassSet) addConcrete(value typ.Type) (Class, error) {
 	if value == nil {
 		return Class{}, errors.New("static: nil concrete class")
 	}
-	input, ok := s.authority.types.RuntimeInputForType(value)
+	if s.types == nil {
+		return Class{}, errors.New("static: concrete class type authority unavailable")
+	}
+	input, ok := s.types.RuntimeInputForType(value)
 	if !ok {
 		return Class{}, errors.New("static: concrete class lacks scoped Runtime input")
 	}
-	return s.addConcreteInput(value, input)
+	return s.addConcreteInput(input)
 }
 
-func (s *ClassSet) addConcreteInput(value typ.Type, input typeauthority.RuntimeInput) (Class, error) {
-	value = typ.UnwrapStructuralWrappers(value)
-	if value == nil {
-		return Class{}, errors.New("static: nil concrete class")
+func (s *ClassSet) addConcreteInput(input typeauthority.RuntimeInput) (Class, error) {
+	canonicalID, ok := input.CanonicalIdentity()
+	if !ok {
+		return Class{}, errors.New("static: concrete class identity unavailable")
 	}
-	encoded, err := typ.EncodeCanonical(context.Background(), value)
-	if err != nil {
-		return Class{}, err
+	return s.addConcreteCanonical(canonicalID, input)
+}
+
+func (s *ClassSet) addConcreteCanonical(canonicalID identity.ContentID, input typeauthority.RuntimeInput) (Class, error) {
+	if !canonicalID.Available() {
+		return Class{}, errors.New("static: concrete class lacks canonical identity")
 	}
-	if class, ok := s.byBytes[string(encoded)]; ok {
+	if class, ok := s.byCanonical[canonicalID]; ok {
 		return class, nil
 	}
 	index, err := denseOrdinal(len(s.rows))
@@ -417,8 +406,8 @@ func (s *ClassSet) addConcreteInput(value typ.Type, input typeauthority.RuntimeI
 		return Class{}, fmt.Errorf("static: concrete class handle: %w", err)
 	}
 	class := Class{owner: s, index: index}
-	s.rows = append(s.rows, classRow{kind: ClassConcrete, encoded: append([]byte(nil), encoded...), input: input})
-	s.byBytes[string(encoded)] = class
+	s.rows = append(s.rows, classRow{kind: ClassConcrete, canonicalID: canonicalID, input: input})
+	s.byCanonical[canonicalID] = class
 	return class, nil
 }
 
@@ -454,7 +443,7 @@ func (s *ClassSet) addTarget(contract *contract.Contract, value vocabulary.Type)
 		return fmt.Errorf("static: Target class handle: %w", ordinalErr)
 	}
 	class := Class{owner: s, index: index}
-	s.rows = append(s.rows, classRow{kind: ClassOpaque, encoded: identity})
+	s.rows = append(s.rows, classRow{kind: ClassOpaque, opaqueID: identity})
 	s.byTarget[value] = class
 	return nil
 }
@@ -584,11 +573,10 @@ func (s *ClassSet) contentID(runtime *typeauthority.Runtime, operations map[voca
 		return identity.ContentID{}
 	}
 	h := sha256.New()
-	// v10 states the coverage descriptor law: a Class identity is its
+	// v11 states the coverage descriptor law: a Class identity is its
 	// extensional coverage over the sealed universe, not an ordered basis.
-	h.Write([]byte("wippy.analysis.static/class-set/v10"))
-	linkID := s.authority.LinkID()
-	h.Write(linkID[:])
+	h.Write([]byte("wippy.analysis.static/class-set/v11"))
+	h.Write(s.linkID[:])
 	runtimeID := runtime.ContentID()
 	h.Write(runtimeID[:])
 	var word [8]byte
@@ -604,11 +592,11 @@ func (s *ClassSet) contentID(runtime *typeauthority.Runtime, operations map[voca
 			h.Write(innerID[:])
 			continue
 		}
-		binary.BigEndian.PutUint64(word[:], uint64(len(row.encoded)))
+		binary.BigEndian.PutUint64(word[:], uint64(len(row.opaqueID)))
 		h.Write(word[:])
-		h.Write(row.encoded)
+		h.Write(row.opaqueID)
 	}
-	contract := s.authority.target
+	contract := s.target
 	if contract == nil {
 		return identity.ContentID{}
 	}
@@ -625,43 +613,14 @@ func (s *ClassSet) contentID(runtime *typeauthority.Runtime, operations map[voca
 			h.Write(operationID[:])
 		}
 	}
-	// The raw structurally canonical universe is part of the algebra: coverage
-	// and rank are interpreted over exactly this finite P.
-	binary.BigEndian.PutUint64(word[:], uint64(len(s.universeIDs)))
-	h.Write(word[:])
-	for _, atomID := range s.universeIDs {
-		h.Write(atomID[:])
-	}
+	// The universe receipt commits the exact ordered atom vocabulary once.
+	h.Write(s.universeID[:])
 	// Extensional coverage descriptors, rather than declaration-order pair
 	// tables or ordered bases, are the complete Pack carrier identity.
 	binary.BigEndian.PutUint64(word[:], uint64(len(s.descriptors)))
 	h.Write(word[:])
 	for _, descriptor := range s.descriptors {
 		h.Write(descriptor.coverageID[:])
-	}
-	nilableCount := 0
-	for _, answer := range s.nilable {
-		if answer {
-			nilableCount++
-		}
-	}
-	binary.BigEndian.PutUint64(word[:], uint64(nilableCount))
-	h.Write(word[:])
-	for index, answer := range s.nilable {
-		if answer {
-			if index >= len(s.descriptors) {
-				return identity.ContentID{}
-			}
-			h.Write(s.descriptors[index].coverageID[:])
-		}
-	}
-	for index, rank := range s.ranks {
-		if index >= len(s.descriptors) {
-			return identity.ContentID{}
-		}
-		h.Write(s.descriptors[index].coverageID[:])
-		binary.BigEndian.PutUint64(word[:], uint64(rank))
-		h.Write(word[:])
 	}
 	copy(id[:], h.Sum(nil))
 	return id

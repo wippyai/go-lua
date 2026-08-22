@@ -19,12 +19,11 @@ func (rule *HotRule) MountedAdmit(mountID, reusablePointID, occurrenceID identit
 	if algebra == nil {
 		return engine.MountedActivationAdmit{}, false
 	}
-	mounted, mountedOK := algebra.MountedCallForOccurrence(mountID, occurrenceID)
-	applicationID, _, _, _, _, identityOK := algebra.MountedCallIdentity(mounted)
-	key, keyOK := algebra.KeyForApplicationID(applicationID)
+	_, key, mountedOK := algebra.MountedCallKeyForOccurrence(mountID, occurrenceID)
+	applicationID, applicationIDOK := key.ApplicationID()
 	application, applicationOK := identity.NewSemanticKey([32]byte(applicationID), 1)
-	operandOK := mountedOK && identityOK && keyOK && applicationOK && application.Available()
-	if !operandOK || rule.catalog == nil || !rule.catalog.valid() {
+	operandOK := mountedOK && applicationIDOK && applicationOK && application.Available()
+	if !operandOK || !rule.routesValid() {
 		return engine.MountedActivationAdmit{}, false
 	}
 	capability, capabilityOK := rule.implementation.MountedCapability()
@@ -39,10 +38,18 @@ func (rule *HotRule) MountedAdmit(mountID, reusablePointID, occurrenceID identit
 	if !refOK || !readOK {
 		return engine.MountedActivationAdmit{}, false
 	}
-	candidates := make([]engine.MountedActivationCandidate, len(rule.catalog.rows))
-	for index, row := range rule.catalog.rows {
+	bodies := algebra.Bodies()
+	candidates := make([]engine.MountedActivationCandidate, bodies.Count())
+	for index := 0; index < bodies.Count(); index++ {
+		body, bodyOK := bodies.At(index)
+		moduleKey, moduleOK := body.ModuleKey()
+		bodyPath, pathOK := body.BodyPath()
+		item, routeOK := rule.routeAt(index)
+		if !bodyOK || !moduleOK || !pathOK || !routeOK {
+			return engine.MountedActivationAdmit{}, false
+		}
 		candidates[index] = engine.MountedActivationCandidate{
-			Target: row.target, Endpoint: row.endpoint, Mount: row.moduleKey, Body: row.bodyPath,
+			Target: item.target, Endpoint: item.endpoint, Mount: moduleKey, Body: bodyPath,
 		}
 	}
 	return engine.MountedActivationAdmit{

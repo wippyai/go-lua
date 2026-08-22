@@ -6,6 +6,7 @@ import (
 	flowkind "github.com/wippyai/go-lua/analysis/program/flow/kind"
 	"github.com/wippyai/go-lua/analysis/program/target/declaration"
 	"github.com/wippyai/go-lua/analysis/program/target/vocabulary"
+	"github.com/wippyai/go-lua/analysis/schema/denominator"
 )
 
 func formalEffectOperation(occurrences []vocabulary.FormalEffectSpec, tail vocabulary.RowTail) vocabulary.OperationSpec {
@@ -51,6 +52,14 @@ func TestFormalEffectsCanonicalSetAndIdentity(t *testing.T) {
 	}
 	if got := leftContract.Operations.FormalEffectCount(leftOp); got != 4 {
 		t.Fatalf("formal effect count = %d, want 4", got)
+	}
+	rows := leftContract.CountRows()
+	formalID := denominator.GeneratedTargetIDs().TargetFormalEffect
+	if got, ok := rows.Value(formalID); !ok || got != 4 {
+		t.Fatalf("formal effect denominator = %d/%v, want 4/true", got, ok)
+	}
+	if !denominator.GeneratedCountRowsCompleteForOwners(rows, denominator.RelationOwnerTarget) {
+		t.Fatal("formal effect count did not retain complete Target owner census")
 	}
 	want := []vocabulary.FormalEffectSpec{
 		{Kind: vocabulary.FormalEffectBorrow, Param: -1},

@@ -92,7 +92,7 @@ func TestArtifactIDSealsEveryDiagnosticObservationPayload(t *testing.T) {
 	}
 	if _, admitted := programdiagnostic.NewDiagnosticObservationTypeConformance(
 		identity.ContentID{6}, span, 0, 0, programdiagnostic.DiagnosticObservationSiteInvalid,
-		identity.ContentID{}, identity.ContentID{}, identity.ContentID{}, identity.ContentID{}, 0,
+		identity.ContentID{}, identity.ContentID{}, identity.ContentID{}, identity.ContentID{}, 0, "",
 	); admitted {
 		t.Fatal("canonical conformance constructor accepted an invalid site/evidence span")
 	}

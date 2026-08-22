@@ -3,6 +3,7 @@ package composite
 import (
 	"github.com/wippyai/go-lua/analysis/engine"
 	allocationcatalog "github.com/wippyai/go-lua/domain/heap/allocation/catalog"
+	contextowner "github.com/wippyai/go-lua/domain/heap/context/owner"
 	valueowner "github.com/wippyai/go-lua/domain/value/owner"
 )
 
@@ -92,12 +93,13 @@ type catalogBinding struct {
 	rules       *RuleBinding
 	allocations *allocationcatalog.Catalog
 	value       *valueowner.HotOwner
+	context     *contextowner.HotOwner
 	queries     queryCells
 }
 
 func (bound catalogBinding) available() bool {
 	return bound.binding != nil && bound.binding.Sealed() && bound.rules != nil && bound.allocations != nil &&
-		bound.value != nil && bound.catalog != nil && bound.queries.available(bound.catalog.queries)
+		bound.value != nil && bound.context != nil && bound.catalog != nil && bound.queries.available(bound.catalog.queries)
 }
 
 // bind is the one hot binding transaction for one compilation-owned catalog. It
@@ -137,7 +139,7 @@ func bind(compilation Compilation, inputs LinkInputs) (catalogBinding, BindFailu
 	// The mount set the allocation catalog joins is the heap schema's own: it
 	// sealed those mounts, so the list is read back from it rather than carried
 	// beside it as a second copy.
-	allocations, allocationFailure := allocationcatalog.BeginWithFailure(inputs.HeapSchema, inputs.ValueSchema, inputs.HeapSchema.ArtifactMounts())
+	allocations, allocationFailure := allocationcatalog.BeginWithFailure(inputs.HeapSchema, inputs.ValueSchema, inputs.HeapSchema.MountedArtifacts())
 	if allocationFailure != allocationcatalog.SealFailureNone {
 		return catalogBinding{}, BindFailure{Stage: BindStageAllocationCatalog, Allocation: allocationFailure}
 	}
@@ -187,8 +189,12 @@ func bind(compilation Compilation, inputs LinkInputs) (catalogBinding, BindFailu
 	// The sealed query fragments are the canonical query rows. Their typed
 	// implementations remain owned by the same sealed binding; no second
 	// post-seal receipt table is recovered or retained.
-	bound := catalogBinding{catalog: state, binding: binding, rules: rules, allocations: allocations, value: value, queries: fragments}
-	if !bound.available() {
+	context, contextOK := set.ContextAuthority(), true
+	if context == nil {
+		contextOK = false
+	}
+	bound := catalogBinding{catalog: state, binding: binding, rules: rules, allocations: allocations, value: value, context: context, queries: fragments}
+	if !contextOK || !bound.available() {
 		return catalogBinding{}, BindFailure{Stage: BindStageSeal}
 	}
 	return bound, BindFailure{}

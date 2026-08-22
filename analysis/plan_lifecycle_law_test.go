@@ -110,7 +110,7 @@ return ephemeral_workspace_probe`, contract)
 	firstWorkspace.lifecycleMu.Lock()
 	owned := firstWorkspace.ephemeral && firstWorkspace.closing && !firstWorkspace.closed && firstWorkspace.plans == 1 && firstWorkspace.artifacts != nil
 	firstWorkspace.lifecycleMu.Unlock()
-	if !owned || firstArtifact == nil || firstMount.Snapshot == nil || firstProduct.Template == nil || firstProduct.Roles == nil {
+	if !owned || firstArtifact == nil || firstMount.Snapshot == nil || firstProduct.Template == nil || firstProduct.Bindings == nil {
 		t.Fatal("convenience Plan did not own one live ephemeral Workspace product")
 	}
 	if !first.Close() {
@@ -131,7 +131,7 @@ return ephemeral_workspace_probe`, contract)
 	secondProduct := second.state.artifacts.products[mounted.ContentID()]
 	secondArtifact := secondProduct.Artifact
 	secondMount := second.state.artifacts.mounts[0]
-	if secondArtifact == nil || secondArtifact == firstArtifact || secondMount.Snapshot == firstMount.Snapshot || secondProduct.Template == firstProduct.Template || secondProduct.Roles == firstProduct.Roles {
+	if secondArtifact == nil || secondArtifact == firstArtifact || secondMount.Snapshot == firstMount.Snapshot || secondProduct.Template == firstProduct.Template || secondProduct.Bindings == firstProduct.Bindings {
 		t.Fatal("unrelated convenience Compiles shared one Workspace product")
 	}
 	if secondArtifact.ID() != firstArtifact.ID() || secondMount.Snapshot.ArtifactID() != firstMount.Snapshot.ArtifactID() || secondProduct.Template.ArtifactID() != firstProduct.Template.ArtifactID() {
@@ -178,7 +178,7 @@ return retained_cache_probe`, contract)
 		t.Fatal("first compile retained no mounted artifact")
 	}
 	firstTemplate := firstProduct.Template
-	firstRoles := firstProduct.Roles
+	firstBindings := firstProduct.Bindings
 	if firstArtifact == nil || !first.Close() {
 		t.Fatal("first Plan did not retain a closable cached artifact")
 	}
@@ -192,7 +192,7 @@ return retained_cache_probe`, contract)
 	if len(second.state.artifacts.mounts) == 0 {
 		t.Fatal("second compile retained no mounted artifact")
 	}
-	if secondArtifact != firstArtifact || secondProduct.Template != firstTemplate || secondProduct.Roles != firstRoles {
+	if secondArtifact != firstArtifact || secondProduct.Template != firstTemplate || secondProduct.Bindings != firstBindings {
 		t.Fatal("sequential Workspace Compile→Plan.Close→Compile did not reuse the immutable product")
 	}
 }
@@ -331,7 +331,7 @@ return shared_template_probe(43)`
 	rightProduct := right.state.artifacts.products[rightMount.ProgramID]
 	leftArtifact := leftProduct.Artifact
 	rightArtifact := rightProduct.Artifact
-	if leftArtifact == nil || leftArtifact != rightArtifact || leftProduct.Template == nil || leftProduct.Template != rightProduct.Template || leftProduct.Roles == nil || leftProduct.Roles != rightProduct.Roles {
+	if leftArtifact == nil || leftArtifact != rightArtifact || leftProduct.Template == nil || leftProduct.Template != rightProduct.Template || leftProduct.Bindings == nil || leftProduct.Bindings != rightProduct.Bindings {
 		t.Fatal("equal Programs in independent Links did not share one content-addressed template")
 	}
 	leftBoundaryCount, leftBoundariesPublished := leftMount.Program.FunctionBoundaryCount()

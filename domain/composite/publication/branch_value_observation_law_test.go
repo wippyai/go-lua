@@ -7,6 +7,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/engine"
 	"github.com/wippyai/go-lua/analysis/identity"
 	"github.com/wippyai/go-lua/analysis/schema"
+	"github.com/wippyai/go-lua/analysis/schema/executioncontext"
 )
 
 func publicationLawID(label string) identity.ContentID {
@@ -21,7 +22,11 @@ func sealedBranchValueObservationAttachment() BranchValueObservationAttachment {
 		point: publicationLawID("branch-observation/point"),
 	}
 	attachment.producer = branchValueObservationLawProducer
-	attachment.id, _ = branchValueObservationAttachmentID(attachment.mount, attachment.point, attachment.producer)
+	attachment.context, _ = executioncontext.NewContext(
+		publicationLawID("branch-observation/link"), attachment.mount,
+		publicationLawID("branch-observation/actor"), publicationLawID("branch-observation/representative"),
+	)
+	attachment.id, _ = BranchValueObservationID(attachment.mount, attachment.point, attachment.producer, attachment.context)
 	return attachment
 }
 
@@ -51,13 +56,20 @@ func TestBranchValueObservationAttachmentScalarSealLaw(t *testing.T) {
 			value.producer = "effect-exact"
 			return value
 		},
+		"context": func(value BranchValueObservationAttachment) BranchValueObservationAttachment {
+			value.context, _ = executioncontext.NewContext(
+				publicationLawID("branch-observation/link-foreign"), value.mount,
+				publicationLawID("branch-observation/actor"), publicationLawID("branch-observation/representative"),
+			)
+			return value
+		},
 	}
 	for name, mutate := range mutations {
-		if want, ok := branchValueObservationAttachmentID(attachment.mount, attachment.point, attachment.producer); !ok || want != attachment.id {
+		if want, ok := BranchValueObservationID(attachment.mount, attachment.point, attachment.producer, attachment.context); !ok || want != attachment.id {
 			t.Fatal("attachment identity derivation")
 		}
 		mutated := mutate(attachment)
-		if want, ok := branchValueObservationAttachmentID(mutated.mount, mutated.point, mutated.producer); ok && want == mutated.id {
+		if want, ok := BranchValueObservationID(mutated.mount, mutated.point, mutated.producer, mutated.context); ok && want == mutated.id {
 			t.Fatalf("attachment scalar mutation kept its identity binding field=%s", name)
 		}
 		if mutated.Valid() {
@@ -95,7 +107,7 @@ func TestBranchValueObservationAttachmentObservationLaw(t *testing.T) {
 // derived.
 func TestBranchValueObservationAttachmentIssuanceLaw(t *testing.T) {
 	mount, point, occurrence := publicationLawID("issuance/mount"), publicationLawID("issuance/point"), publicationLawID("issuance/occurrence")
-	attachment, failure, ok := DeclareBranchValueObservation(nil, nil, engine.RuleSlotCapability{}, branchValueObservationLawProducer, mount, point, occurrence)
+	attachment, failure, ok := DeclareBranchValueObservation(nil, nil, engine.RuleSlotCapability{}, branchValueObservationLawProducer, mount, point, occurrence, executioncontext.Context{})
 	if ok {
 		t.Fatal("attachment issued without a committed program and query")
 	}
@@ -115,18 +127,40 @@ func TestBranchValueObservationAttachmentIssuanceLaw(t *testing.T) {
 // so one mount's evidence cannot answer for another's.
 func TestBranchValueObservationAttachmentCoordinateLaw(t *testing.T) {
 	mount, point := publicationLawID("coordinate/branch-mount"), publicationLawID("coordinate/branch-point")
+	context, contextOK := executioncontext.NewContext(publicationLawID("coordinate/link"), mount, publicationLawID("coordinate/actor"), publicationLawID("coordinate/representative"))
+	if !contextOK {
+		t.Fatal("coordinate context")
+	}
 	for index, absent := range [][2]identity.ContentID{
 		{identity.ContentID{}, point},
 		{mount, identity.ContentID{}},
 		{identity.ContentID{}, identity.ContentID{}},
 	} {
-		if _, ok := branchValueObservationAttachmentID(absent[0], absent[1], branchValueObservationLawProducer); ok {
+		if _, ok := BranchValueObservationID(absent[0], absent[1], branchValueObservationLawProducer, context); ok {
 			t.Fatalf("absent coordinate derived an attachment identity index=%d", index)
 		}
 	}
-	first, firstOK := branchValueObservationAttachmentID(mount, point, branchValueObservationLawProducer)
-	swapped, swappedOK := branchValueObservationAttachmentID(point, mount, branchValueObservationLawProducer)
-	if !firstOK || !swappedOK || first == swapped {
+	first, firstOK := BranchValueObservationID(mount, point, branchValueObservationLawProducer, context)
+	swappedContext, swappedContextOK := executioncontext.NewContext(publicationLawID("coordinate/swapped-link"), point, publicationLawID("coordinate/actor"), publicationLawID("coordinate/representative"))
+	swapped, swappedOK := BranchValueObservationID(point, mount, branchValueObservationLawProducer, swappedContext)
+	if !firstOK || !swappedContextOK || !swappedOK || first == swapped {
 		t.Fatal("attachment identity ignored the coordinate positions")
+	}
+}
+
+func TestBranchValueObservationContextAddressIsDistinct(t *testing.T) {
+	mount := publicationLawID("context/mount")
+	point := publicationLawID("context/point")
+	first := publicationLawID("context/first")
+	second := publicationLawID("context/second")
+	firstContext, firstOK := executioncontext.NewContext(publicationLawID("context/link"), mount, first, publicationLawID("context/first-representative"))
+	secondContext, secondOK := executioncontext.NewContext(firstContext.LinkID(), mount, second, publicationLawID("context/second-representative"))
+	if !firstOK || !secondOK {
+		t.Fatal("construct context-qualified observation rows")
+	}
+	left, leftOK := BranchValueObservationID(mount, point, branchValueObservationLawProducer, firstContext)
+	right, rightOK := BranchValueObservationID(mount, point, branchValueObservationLawProducer, secondContext)
+	if !leftOK || !rightOK || left == right {
+		t.Fatal("same-module contexts collapsed the observation address")
 	}
 }

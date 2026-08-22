@@ -73,6 +73,11 @@ type Schedule struct {
 	nodes   int
 	events  []Event
 	regions []Region
+	// edges is the normalized, duplicate-free influence relation used to
+	// construct this immutable schedule. Keeping the relation beside the
+	// event stream lets graph owners project the exact sealed topology
+	// without rebuilding dependencies from higher-level rows.
+	edges []Edge
 }
 
 // Prepare constructs a schedule using the dense Node identity as its semantic
@@ -98,7 +103,19 @@ func PrepareOrdered(nodeCount int, edges []Edge, semanticRanks []int) (*Schedule
 	if err != nil {
 		return nil, err
 	}
-	schedule := &Schedule{nodes: nodeCount}
+	normalizedEdges := make([]Edge, 0)
+	for from, targets := range graph {
+		for _, to := range targets {
+			normalizedEdges = append(normalizedEdges, Edge{From: Node(from), To: to})
+		}
+	}
+	sort.Slice(normalizedEdges, func(left, right int) bool {
+		if normalizedEdges[left].From != normalizedEdges[right].From {
+			return normalizedEdges[left].From < normalizedEdges[right].From
+		}
+		return normalizedEdges[left].To < normalizedEdges[right].To
+	})
+	schedule := &Schedule{nodes: nodeCount, edges: normalizedEdges}
 	if err := schedule.buildWTO(graph, order); err != nil {
 		return nil, err
 	}
@@ -166,6 +183,31 @@ func (s *Schedule) NodeCount() int {
 		return 0
 	}
 	return s.nodes
+}
+
+// EdgeCount reports the exact normalized influence relation used to build
+// this schedule.
+func (s *Schedule) EdgeCount() int {
+	if s == nil {
+		return 0
+	}
+	return len(s.edges)
+}
+
+// EdgeAt returns one normalized influence edge.
+func (s *Schedule) EdgeAt(index int) (Edge, bool) {
+	if s == nil || index < 0 || index >= len(s.edges) {
+		return Edge{}, false
+	}
+	return s.edges[index], true
+}
+
+// Edges returns a detached copy of the exact normalized influence relation.
+func (s *Schedule) Edges() []Edge {
+	if s == nil {
+		return nil
+	}
+	return append([]Edge(nil), s.edges...)
 }
 
 // EventCount reports the number of enter/node/exit actions.

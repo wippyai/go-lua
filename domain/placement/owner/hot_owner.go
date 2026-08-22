@@ -6,8 +6,9 @@ import (
 	"github.com/wippyai/go-lua/domain/placement"
 )
 
-// HotOwner is Placement's Link-local Factor owner. Its dense coordinate is
-// exactly Heap's coordinate at the same ordinal; no second index is retained.
+// HotOwner is Placement's Link-local allocation-root Factor owner. Its dense
+// coordinate is Heap's allocation coordinate at the same ordinal; no second
+// index is retained.
 type HotOwner struct {
 	binding          *engine.SchemaBinding
 	fragment         *SchemaFragment
@@ -44,9 +45,12 @@ func (owner *HotOwner) FactorSpec() (engine.HotFactorSpec[coordinate, placement.
 		return engine.HotFactorSpec[coordinate, placement.Placement]{}, false
 	}
 	return engine.HotFactorSpec[coordinate, placement.Placement]{
-		KeyEnd:      uint64(keyEnd),
-		Lattice:     placement.Lattice(),
-		Default:     placement.Bottom,
+		KeyEnd:  uint64(keyEnd),
+		Lattice: placement.Lattice(),
+		// Every admitted coordinate is an allocation root, whose least escaped
+		// placement is Stack. Displacement rules only move this value upward;
+		// procedural allocation/fresh seed rules would be duplicate authority.
+		Default:     placement.Stack,
 		AdmitAt:     owner.admits,
 		Fingerprint: func(value placement.Placement) uint64 { return value.Hash() },
 		WidenRank: engine.Measure[coordinate, placement.Placement]{
@@ -115,19 +119,6 @@ func (owner *HotOwner) ExactWrite() engine.SchemaWriteForm[placement.Placement] 
 	return owner.fragment.ExactWrite()
 }
 
-// BindExactWriteRule binds one zero-input Placement write through this
-// owner's Factor. It is the minimal rule lane shared by allocation-root seed
-// rules.
-func BindExactWriteRule[O any](owner *HotOwner, slot *engine.RuleSlot[placement.Placement, O], write engine.SchemaWriteSlot[placement.Placement], spec engine.HotRuleSpec[placement.Placement, O], projectWrite func(O) (uint64, bool)) (*RuleImplementation[O], bool) {
-	if owner == nil || owner.binding == nil || owner.fragment == nil || slot == nil {
-		return nil, false
-	}
-	if !engine.BindRule[coordinate](owner.binding, slot, write, owner.fragment.slot, spec, projectWrite) {
-		return nil, false
-	}
-	return &RuleImplementation[O]{owner: owner, slot: slot}, true
-}
-
 // BindSelectedRuleDirect installs a selected direct-write Placement rule.
 func BindSelectedRuleDirect[O any](owner *HotOwner, slot *engine.RuleSlot[placement.Placement, O], write engine.SchemaWriteSlot[placement.Placement], spec engine.HotRuleSpec[placement.Placement, O], projectWrite func(O) (uint64, bool)) (*RuleImplementation[O], bool) {
 	if owner == nil || owner.binding == nil || owner.fragment == nil || slot == nil {
@@ -194,6 +185,22 @@ func (issuer *RuleImplementation[O]) LinkCapability() (engine.RuleSlotCapability
 	return engine.LinkCapabilityForSlot(issuer.owner.binding, issuer.slot)
 }
 
+func (issuer *RuleImplementation[O]) MountedPointCapability() (engine.RuleSlotCapability, bool) {
+	if issuer == nil || issuer.owner == nil || issuer.slot == nil {
+		return engine.RuleSlotCapability{}, false
+	}
+	return engine.MountedPointCapabilityForSlot(issuer.owner.binding, issuer.slot)
+}
+
+// AddSelectedRuleDirectSummaryRead installs a complete-vector predecessor at
+// its declared cold ordinal on a selected Placement rule.
+func AddSelectedRuleDirectSummaryRead[O, RV, S any](issuer *RuleImplementation[O], slot engine.SchemaReadSlot[RV], factor engine.FactorRef[RV], form engine.SchemaReadForm[RV]) (engine.Read[S], bool) {
+	if issuer == nil || issuer.owner == nil || issuer.slot == nil {
+		return engine.Read[S]{}, false
+	}
+	return engine.BindSelectedRuleDirectSummaryRead[coordinate, placement.Placement, O, RV, S](issuer.owner.binding, issuer.slot, slot, factor, form)
+}
+
 // ResolveRuleImplementation issues the engine rule receipt after sealing.
 func ResolveRuleImplementation[O any](issuer *RuleImplementation[O]) (*engine.RuleImplementation[coordinate, placement.Placement, O], bool) {
 	if issuer == nil || issuer.owner == nil || issuer.slot == nil {
@@ -222,7 +229,7 @@ func (owner *HotOwner) Ref(key heap.Key) (engine.Ref[coordinate], bool) {
 	if owner == nil || owner.binding == nil || owner.fragment == nil || !owner.schema.Valid() || !owner.schema.Heap().OwnsKey(key) {
 		return engine.Ref[coordinate]{}, false
 	}
-	index, ok := owner.schema.Heap().KeyIndex(key)
+	index, ok := owner.schema.Heap().AllocationKeyIndex(key)
 	if !ok || index < 0 || uint64(index) > uint64(^uint32(0)) || index >= owner.schema.KeyCount() {
 		return engine.Ref[coordinate]{}, false
 	}
@@ -235,10 +242,18 @@ func (owner *HotOwner) Ref(key heap.Key) (engine.Ref[coordinate], bool) {
 
 // SelectRoute emits one exact Placement route through this owner-native
 // receipt. The numeric tag is transport evidence only; the target remains the
-// owner-issued Heap-aligned coordinate.
+// owner-issued allocation coordinate.
 func (owner *HotOwner) SelectRoute(context engine.SelectorContext, key heap.Key, tag uint64) bool {
 	ref, ok := owner.Ref(key)
 	return ok && engine.SelectRoute(context, ref, tag)
+}
+
+// SelectRouteSet emits one member of a declarative Placement relation. Exact
+// duplicate members are idempotent and are canonicalized in execution-owned
+// selector scratch.
+func (owner *HotOwner) SelectRouteSet(context engine.SelectorContext, key heap.Key, tag uint64) bool {
+	ref, ok := owner.Ref(key)
+	return ok && engine.SelectRouteSet(context, ref, tag)
 }
 
 // SelectRouteTyped preserves a child rule's exact route-tag type at the
@@ -255,11 +270,8 @@ func (owner *HotOwner) admits(index coordinate, fact placement.Placement) bool {
 	if !ok {
 		return false
 	}
-	if key.Kind() == heap.RootBoot {
-		return fact == placement.Bottom
-	}
 	_, valid := placementRank(fact)
-	return key.Kind() == heap.RootAllocation && valid
+	return key.Kind() == heap.RootAllocation && fact != placement.Bottom && valid
 }
 
 func (owner *HotOwner) widenRank(index coordinate, fact placement.Placement, component int) uint64 {

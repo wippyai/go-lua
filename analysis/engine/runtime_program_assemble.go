@@ -2,9 +2,11 @@ package engine
 
 import (
 	"github.com/wippyai/go-lua/analysis/engine/internal/composition"
+	"github.com/wippyai/go-lua/analysis/engine/internal/contextfiber"
 	"github.com/wippyai/go-lua/analysis/engine/internal/equation"
 	"github.com/wippyai/go-lua/analysis/engine/rows"
 	"github.com/wippyai/go-lua/analysis/identity"
+	"github.com/wippyai/go-lua/analysis/schema/executioncontext"
 )
 
 // MountedProgramRole is one template role bound to this Link's mounted
@@ -14,11 +16,19 @@ type MountedProgramRole struct {
 	Capability RuleSlotCapability
 }
 
+// MountedProgramFactor binds one template Factor identity directly to the
+// exact Factor slot of this Link's sealed SchemaBinding.
+type MountedProgramFactor struct {
+	Scalar     rows.ArtifactScalarFactor
+	Capability FactorSlotCapability
+}
+
 // MountedProgramArtifact is one sealed template plus this Link's mounted
 // role capabilities and mount identity.
 type MountedProgramArtifact struct {
 	Template *rows.ArtifactScalarTemplate
 	Roles    []MountedProgramRole
+	Factors  []MountedProgramFactor
 	Module   identity.ContentID
 }
 
@@ -48,44 +58,53 @@ type MountedRuleAdmission struct {
 	Occurrence identity.ContentID
 }
 
+// MountedPointRuleAdmission is one artifact-independent closure occurrence.
+// Construction expands it once over every sealed mounted Point.
+type MountedPointRuleAdmission struct {
+	Capability RuleSlotCapability
+	Occurrence identity.ContentID
+}
+
 // programQueryAdmit is the erased mounted query row. Implementations live on
 // the sealed query cells; the declaration pass states the row and the
 // constructor resolves the Point it is anchored at.
 type programQueryAdmit interface {
-	declareMountedQuery(state *schemaBindingState, authority *schemaBindingAuthority, id, mount, point identity.ContentID) (declaredQueryRow, []*ruleSummaryMapping, bool)
+	declareMountedQuery(state *schemaBindingState, authority *schemaBindingAuthority, context executioncontext.Context, id, mount, point identity.ContentID) (declaredQueryRow, []*ruleSummaryMapping, bool)
 	bindProgramQuery(plane *programPlane, query equation.Query) (queryRow, bool)
 }
 
 // ProgramQueryAdmission is one mounted query row to admit.
 type ProgramQueryAdmission struct {
-	admit programQueryAdmit
-	ID    identity.ContentID
-	Mount identity.ContentID
-	Point identity.ContentID
+	admit   programQueryAdmit
+	ID      identity.ContentID
+	Mount   identity.ContentID
+	Point   identity.ContentID
+	Context executioncontext.Context
 }
 
 // NewSummaryQueryAdmission seals one summary query row.
-func NewSummaryQueryAdmission[V, R any](implementation *SummaryQueryImplementation[V, R], id, mount, point identity.ContentID) (ProgramQueryAdmission, bool) {
-	if implementation == nil || !id.Available() || !mount.Available() || !point.Available() {
+func NewSummaryQueryAdmission[V, R any](implementation *SummaryQueryImplementation[V, R], id, mount, point identity.ContentID, context executioncontext.Context) (ProgramQueryAdmission, bool) {
+	if implementation == nil || !context.Available() || !id.Available() || !mount.Available() || !point.Available() {
 		return ProgramQueryAdmission{}, false
 	}
-	return ProgramQueryAdmission{admit: implementation, ID: id, Mount: mount, Point: point}, true
+	return ProgramQueryAdmission{admit: implementation, Context: context, ID: id, Mount: mount, Point: point}, true
 }
 
 // NewExactQueryAdmission seals one exact query row.
-func NewExactQueryAdmission[V, R any](implementation *ExactQueryImplementation[V, R], id, mount, point identity.ContentID) (ProgramQueryAdmission, bool) {
-	if implementation == nil || !id.Available() || !mount.Available() || !point.Available() {
+func NewExactQueryAdmission[V, R any](implementation *ExactQueryImplementation[V, R], id, mount, point identity.ContentID, context executioncontext.Context) (ProgramQueryAdmission, bool) {
+	if implementation == nil || !context.Available() || !id.Available() || !mount.Available() || !point.Available() {
 		return ProgramQueryAdmission{}, false
 	}
-	return ProgramQueryAdmission{admit: implementation, ID: id, Mount: mount, Point: point}, true
+	return ProgramQueryAdmission{admit: implementation, Context: context, ID: id, Mount: mount, Point: point}, true
 }
 
 // MountedProgramAdmission is the sealed admit inventory for one assemble.
 type MountedProgramAdmission struct {
-	Link       []LinkRuleAdmission
-	Mounted    []MountedRuleAdmission
-	Activation []MountedActivationAdmit
-	Queries    []ProgramQueryAdmission
+	Link         []LinkRuleAdmission
+	Mounted      []MountedRuleAdmission
+	MountedPoint []MountedPointRuleAdmission
+	Activation   []MountedActivationAdmit
+	Queries      []ProgramQueryAdmission
 }
 
 // sealedProgramMount is one template plus this Link's sealed role
@@ -93,6 +112,7 @@ type MountedProgramAdmission struct {
 type sealedProgramMount struct {
 	template     *rows.ArtifactScalarTemplate
 	capabilities map[rows.ArtifactScalarRole]RuleSlotCapability
+	factors      map[rows.ArtifactScalarFactor]FactorSlotCapability
 	module       identity.ContentID
 }
 
@@ -104,10 +124,16 @@ type CommittedProgram struct {
 	self              *CommittedProgram
 	graph             *equation.Graph
 	topology          *equation.Topology
+	relation          equation.Relation
 	state             *schemaBindingState
 	authority         *schemaBindingAuthority
 	directory         *semanticDirectory
+	contexts          executioncontext.Directory
+	contextIndex      contextfiber.Index
+	contextLayout     contextfiber.Layout
+	pointOwners       []contextfiber.PointOwner
 	nativeCallStages  map[artifactMountedRuleOccurrence]artifactNativeCallStage
+	pointTransitions  []ProgramPointTransition
 	members           []programMemberBinding
 	queries           []programQueryBinding
 	addressed         []composition.Key
@@ -115,22 +141,62 @@ type CommittedProgram struct {
 	bootstrapOwner    identity.ContentID
 	bootstrapPoint    identity.ContentID
 	bootstrapSemantic identity.ContentID
+	// admitted is the ownership verdict sealProgramAdmission reached once, on
+	// the finished value. Accessors read it instead of re-deriving the whole
+	// topology/context-plane proof - including the Index and Layout owner
+	// digests - on every call. The zero value carries the false verdict, and
+	// the self fence keeps a copied CommittedProgram out of the verdict.
+	admitted bool
 }
 
+// sealProgramAdmission takes the committed program's ownership verdict exactly
+// once, on the finished value. It is the sole writer of admitted and the sole
+// caller of deriveAdmission.
+func (committed *CommittedProgram) sealProgramAdmission() bool {
+	if committed == nil {
+		return false
+	}
+	committed.admitted = committed.deriveAdmission()
+	return committed.admitted
+}
+
+// valid reports the verdict sealProgramAdmission already took. The self fence
+// stays on the read path so a copy of the sealed value is never admitted.
 func (committed *CommittedProgram) valid() bool {
+	return committed != nil && committed.self == committed && committed.admitted
+}
+
+// deriveAdmission proves the whole committed shape: topology/graph/state
+// ownership, the equation Relation's graph, and - for an artifact-backed
+// program - the bootstrap identities and the exact compact context plane. It
+// runs once, at the seal.
+func (committed *CommittedProgram) deriveAdmission() bool {
 	if committed == nil || committed.self != committed || committed.graph == nil || committed.topology == nil || committed.state == nil || committed.authority == nil || committed.directory == nil ||
 		!committed.directory.ownedBy(committed.topology, committed.state, committed.authority) ||
 		committed.state.phase != schemaBindingSealed || committed.state.authority != committed.authority || committed.state.schema == nil ||
 		!committed.topology.OwnsComposition(committed.state.schema.cold) || !committed.graph.OwnsComposition(committed.state.schema.cold) ||
-		!committed.topology.OwnsGraph(committed.graph) {
+		!committed.topology.OwnsGraph(committed.graph) || !committed.relation.OwnedBy(committed.topology) {
+		return false
+	}
+	expectedGraph, graphOK := committed.topology.Graph(committed.relation)
+	if !graphOK || expectedGraph != committed.graph {
 		return false
 	}
 	ownerAvailable, pointAvailable, semanticAvailable := committed.bootstrapOwner.Available(), committed.bootstrapPoint.Available(), committed.bootstrapSemantic.Available()
 	if !committed.artifactBacked {
-		return !ownerAvailable && !pointAvailable && !semanticAvailable
+		return !committed.contexts.Available() && !committed.contextIndex.Available() && !committed.contextLayout.Available() && len(committed.pointOwners) == 0 &&
+			!ownerAvailable && !pointAvailable && !semanticAvailable
 	}
-	if !ownerAvailable || !pointAvailable || !semanticAvailable || linkBootstrapPointSemanticID(committed.bootstrapOwner, committed.bootstrapPoint) != committed.bootstrapSemantic {
+	if !ownerAvailable || !pointAvailable || !semanticAvailable || linkBootstrapPointSemanticID(committed.bootstrapOwner, committed.bootstrapPoint) != committed.bootstrapSemantic ||
+		!committed.contexts.Available() || committed.contexts.LinkID() != committed.bootstrapOwner || len(committed.pointOwners) != committed.graph.PointCount() ||
+		!committed.contextIndex.OwnedBy(committed.contexts, committed.graph.PointCount(), committed.relation.Generation()) ||
+		!committed.contextLayout.OwnedBy(committed.contextIndex, committed.contexts, committed.pointOwners, committed.relation.Generation()) {
 		return false
+	}
+	for _, transition := range committed.pointTransitions {
+		if !transition.available() {
+			return false
+		}
 	}
 	_, found := committed.directory.point(committed.bootstrapSemantic)
 	return found
@@ -159,9 +225,35 @@ type ProgramQuery struct {
 	key      identity.ContentID
 }
 
+// ContextID returns the exact execution context that owns this query's
+// retained equation identity. Context is part of the equation query key, so
+// two otherwise equal observations in different contexts remain distinct
+// published rows.
+func (query ProgramQuery) ContextID() identity.ContentID {
+	if query.program == nil || !query.program.valid() || !query.identity.Key().Available() {
+		return identity.ContentID{}
+	}
+	return query.identity.ContextID()
+}
+
 // PublicationKey is the snapshot row identity this query is sealed under.
 func (query ProgramQuery) PublicationKey() (identity.ContentID, bool) {
 	return query.key, query.key.Available()
+}
+
+// StateOrdinal returns the compact execution-state row retained for this
+// exact query Context and graph Point. It is a read-only projection of the
+// committed Link context plane; callers cannot mint or substitute a state
+// row, and no Context is inferred from the mounted Point owner.
+func (query ProgramQuery) StateOrdinal() (uint64, bool) {
+	if query.program == nil || !query.program.valid() {
+		return 0, false
+	}
+	state, ok := queryStateOrdinalOwned(query.program.graph, query.identity, query.program.contextIndex, query.program.contextLayout)
+	if !ok {
+		return 0, false
+	}
+	return uint64(state), true
 }
 
 // ProgramMember is the committed graph-owned rule member handle.
@@ -220,11 +312,34 @@ func (committed *CommittedProgram) MountedRuleMember(role RuleSlotCapability, mo
 	return committed.lookupRuleMember(mountedRuleMemberID(role, mount, point, occurrence))
 }
 
+// ownsObservationContext authenticates the typed Context carried by an
+// observation admission against this committed program's exact Link-owned
+// directory and mounted module. A Context with a matching module but a foreign
+// Link, a zero row, or an identity absent from the directory is refused; no
+// directory position or first same-module row is substituted.
+func (committed *CommittedProgram) ownsObservationContext(context executioncontext.Context, mount identity.ContentID) bool {
+	if committed == nil || !committed.valid() || !committed.artifactBacked || !committed.contexts.Available() || !context.Available() || !mount.Available() ||
+		context.LinkID() != committed.contexts.LinkID() || context.ModuleKey() != mount {
+		return false
+	}
+	canonical, ok := committed.contexts.Context(context.ID())
+	return ok && canonical.Available() && canonical.ID() == context.ID() && canonical.LinkID() == context.LinkID() && canonical.ModuleKey() == context.ModuleKey()
+}
+
 func (committed *CommittedProgram) LinkRuleMember(role RuleSlotCapability, occurrence identity.ContentID) (ProgramMember, bool) {
 	if !role.link() || !committed.valid() || role.state != committed.state || role.authority != committed.authority || !committed.bootstrapOwner.Available() || !committed.bootstrapPoint.Available() {
 		return ProgramMember{}, false
 	}
 	return committed.lookupRuleMember(linkRuleMemberID(role, committed.bootstrapOwner, committed.bootstrapPoint, occurrence))
+}
+
+// MountedPointRuleMember resolves one artifact-independent closure member at
+// its exact mounted Point.
+func (committed *CommittedProgram) MountedPointRuleMember(role RuleSlotCapability, mount, point, occurrence identity.ContentID) (ProgramMember, bool) {
+	if committed == nil || !role.mountedPoint() {
+		return ProgramMember{}, false
+	}
+	return committed.lookupRuleMember(mountedPointRuleMemberID(role, mount, point, occurrence))
 }
 
 func (committed *CommittedProgram) MountedNativeCallStage(role RuleSlotCapability, mount, occurrence identity.ContentID) (ProgramCallStage, bool) {
@@ -415,14 +530,24 @@ func NewProgramBootstrap(owner, pointID identity.ContentID, catalogs ...ProgramB
 
 // ProgramDeclaration is the sealed construction input: one sealed Binding, the
 // artifact templates this Link mounts with their role capabilities, the Link
-// bootstrap witness, and the admission inventory the owners sealed. Every
-// field is finished before the construction reads it, and the construction
-// retains none of them.
+// bootstrap witness, the required Link execution-context directory, and the
+// admission inventory the owners sealed. Every field is finished before the
+// construction reads it; the committed program retains the directory and its
+// graph-aligned compact context layout as immutable owner state.
 type ProgramDeclaration struct {
 	Binding   *SchemaBinding
 	Mounts    []MountedProgramArtifact
 	Bootstrap ProgramBootstrap
+	// Contexts is the required Link-owned execution-context directory for an
+	// artifact-backed construction. It is never inferred from mounts or
+	// replaced with a synthetic single context.
+	Contexts  executioncontext.Directory
 	Admission MountedProgramAdmission
+	// PointTransitions is the sole schema-row admission for cross-module point
+	// geometry. Each pair carries the exact ModuleCallTransition and its
+	// authenticated InitGeneration; ConstructProgram resolves all graph points
+	// from those rows after the semantic directory is sealed.
+	PointTransitions []ProgramPointTransitionAdmission
 }
 
 // ConstructProgram folds one sealed declaration into the committed program:
@@ -433,11 +558,17 @@ func ConstructProgram(declaration ProgramDeclaration) (*CommittedProgram, Progra
 	if declaration.Binding == nil || !declaration.Binding.Sealed() {
 		return nil, ProgramAssembleRefusal{lowering: programAssemblyFailureInput}, false
 	}
+	// ConstructProgram currently admits artifact-backed programs only. Keep
+	// the directory boundary explicit here so a missing or foreign directory
+	// cannot be mistaken for a later topology failure or silently defaulted.
+	if len(declaration.Mounts) != 0 && (!declaration.Contexts.Available() || !declaration.Bootstrap.witness.Available() || declaration.Contexts.LinkID() != declaration.Bootstrap.witness.OwnerID()) {
+		return nil, ProgramAssembleRefusal{lowering: programAssemblyFailureInput}, false
+	}
 	sealed, sealedOK := sealMountedProgramArtifacts(declaration.Mounts)
 	if !sealedOK {
 		return nil, ProgramAssembleRefusal{lowering: programAssemblyFailureInput}, false
 	}
-	program, seal, stage, lowering, construction, committed := assembleSealedProgramMounts(declaration.Binding, sealed, declaration.Admission, declaration.Bootstrap.witness)
+	program, seal, stage, lowering, construction, committed := assembleSealedProgramMounts(declaration.Binding, sealed, declaration.Contexts, declaration.Admission, declaration.PointTransitions, declaration.Bootstrap.witness)
 	if !committed || program == nil {
 		return nil, ProgramAssembleRefusal{stage: stage, lowering: lowering, construction: construction, seal: seal}, false
 	}
@@ -459,10 +590,13 @@ func sealMountedProgramArtifacts(mounts []MountedProgramArtifact) ([]sealedProgr
 			if existing.template != mount.Template {
 				return nil, false
 			}
-			sealed = append(sealed, sealedProgramMount{template: existing.template, capabilities: existing.capabilities, module: mount.Module})
+			sealed = append(sealed, sealedProgramMount{template: existing.template, capabilities: existing.capabilities, factors: existing.factors, module: mount.Module})
 			continue
 		}
 		if len(mount.Roles) != mount.Template.RoleCount() {
+			return nil, false
+		}
+		if len(mount.Factors) != mount.Template.FactorCount() {
 			return nil, false
 		}
 		capabilities := make(map[rows.ArtifactScalarRole]RuleSlotCapability, mount.Template.RoleCount())
@@ -490,7 +624,29 @@ func sealMountedProgramArtifacts(mounts []MountedProgramArtifact) ([]sealedProgr
 				return nil, false
 			}
 		}
-		row := sealedProgramMount{template: mount.Template, capabilities: capabilities, module: mount.Module}
+		factors := make(map[rows.ArtifactScalarFactor]FactorSlotCapability, mount.Template.FactorCount())
+		seenFactors := make(map[FactorSlotCapability]struct{}, mount.Template.FactorCount())
+		for _, factor := range mount.Factors {
+			if !mount.Template.OwnsFactor(factor.Scalar) || !factor.Capability.Available() {
+				return nil, false
+			}
+			if _, duplicate := factors[factor.Scalar]; duplicate {
+				return nil, false
+			}
+			if _, duplicate := seenFactors[factor.Capability]; duplicate {
+				return nil, false
+			}
+			factors[factor.Scalar] = factor.Capability
+			seenFactors[factor.Capability] = struct{}{}
+		}
+		for index := 0; index < mount.Template.FactorCount(); index++ {
+			declared, declaredOK := mount.Template.FactorAt(index)
+			capability, ok := factors[declared]
+			if !declaredOK || !ok || !capability.Available() {
+				return nil, false
+			}
+		}
+		row := sealedProgramMount{template: mount.Template, capabilities: capabilities, factors: factors, module: mount.Module}
 		byArtifact[artifactID] = row
 		sealed = append(sealed, row)
 	}

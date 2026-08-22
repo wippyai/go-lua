@@ -84,7 +84,8 @@ func runSelector(frame *selectorFrame, invoke func(SelectorContext) bool) bool {
 		frame.poison()
 		return false
 	}
-	return invoke(SelectorContext{frame: frame, call: call}) && !frame.execution.failed.Load()
+	invoked := invoke(SelectorContext{frame: frame, call: call})
+	return invoked && !frame.execution.failed.Load()
 }
 
 func (frame *selectorFrame) declaresRead(index int) bool {
@@ -146,13 +147,14 @@ type selectionTag interface {
 type emittedRoute[Tag selectionTag] struct {
 	ref exactRef
 	tag Tag
+	set bool
 }
 
 func (emittedRoute[Tag]) selectorEmission() {}
 
 // SelectRoute emits one owner-issued exact target Ref and typed opaque tag for
-// the current staged read row. Duplicate (Ref,Tag) routes fail closed; the
-// same Ref with distinct tags is retained as distinct semantic evidence.
+// the current staged read row. Duplicate resolved (Unit,Tag) routes fail
+// closed; the same Unit with distinct tags is retained as distinct evidence.
 func SelectRoute[K ~uint32 | ~uint64, Tag selectionTag](context SelectorContext, ref Ref[K], tag Tag) bool {
 	frame := context.frame
 	if !context.valid() || !frame.rowLive() || frame.read == nil || frame.routes == nil {
@@ -160,6 +162,24 @@ func SelectRoute[K ~uint32 | ~uint64, Tag selectionTag](context SelectorContext,
 		return false
 	}
 	if !frame.routes.accept(emittedRoute[Tag]{ref: ref, tag: tag}) {
+		frame.poison()
+		return false
+	}
+	return true
+}
+
+// SelectRouteSet emits one member of a mathematical route relation. Repeated
+// emission of the same resolved (Unit,Tag) member is idempotent;
+// canonicalization removes it in execution-owned scratch after ordering. A
+// locator must use either SelectRoute or SelectRouteSet for one selected read,
+// never both.
+func SelectRouteSet[K ~uint32 | ~uint64, Tag selectionTag](context SelectorContext, ref Ref[K], tag Tag) bool {
+	frame := context.frame
+	if !context.valid() || !frame.rowLive() || frame.read == nil || frame.routes == nil {
+		frame.poison()
+		return false
+	}
+	if !frame.routes.accept(emittedRoute[Tag]{ref: ref, tag: tag, set: true}) {
 		frame.poison()
 		return false
 	}

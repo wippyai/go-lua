@@ -1,0 +1,15 @@
+{
+  "description": "process.send answers one boolean, delivered or rejected, and both arms are read here, so the rejection the declaration states is observed rather than discarded at the call.",
+  "packages": [
+    "process"
+  ],
+  "files": [
+    "main.lua"
+  ],
+  "check": {
+    "errors": 0
+  },
+  "run": {
+    "skip": "declaration-surface fixture"
+  }
+}

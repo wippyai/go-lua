@@ -42,14 +42,10 @@ func TestProductionHostSurfaceSealsIntoOneTarget(t *testing.T) {
 	}
 }
 
-// TestProductionHostSurfaceDeclaresNoTransfer records what the production
-// manifests state about cross-actor payloads: nothing. Every process member
-// that forwards a variadic payload into another actor - send, the four spawn
-// variants, exec, upgrade - is declared as an ordinary call. A checker that
-// wants to admit or reject a payload on those calls has no declared evidence
-// to read, and this test fails the moment that changes, which is the moment
-// the send-safety question becomes answerable from the manifest.
-func TestProductionHostSurfaceDeclaresNoTransfer(t *testing.T) {
+// TestProductionHostSurfaceDeclaresOnlyAuthenticatedTransfers proves that
+// process.send owns its cross-actor semantics in the V1 manifest while no
+// generic forwarding fallback invents the same semantics for other members.
+func TestProductionHostSurfaceDeclaresOnlyAuthenticatedTransfers(t *testing.T) {
 	target, err := wippyv1.Target()
 	if err != nil {
 		t.Fatalf("seal wippy v1 host target: %v", err)
@@ -60,14 +56,18 @@ func TestProductionHostSurfaceDeclaresNoTransfer(t *testing.T) {
 			if !ok {
 				t.Fatalf("process.%s is not a target operation", member)
 			}
-			if got := target.Operations.TransferCount(operation); got != 0 {
-				t.Fatalf("process.%s publishes %d transfers; the v1 manifest declares none, so the target invented them", member, got)
+			want := 0
+			if member == "send" {
+				want = 1
 			}
-			if got := target.Operations.EffectCount(operation); got != 0 {
-				t.Fatalf("process.%s publishes %d publication effects; the v1 manifest declares none", member, got)
+			if got := target.Operations.TransferCount(operation); got != want {
+				t.Fatalf("process.%s transfer count = %d, want %d", member, got, want)
 			}
-			if got := target.Operations.FormalEffectCount(operation); got != 0 {
-				t.Fatalf("process.%s publishes %d formal effects; the v1 manifest declares none", member, got)
+			if got := target.Operations.EffectCount(operation); got != want {
+				t.Fatalf("process.%s publication effect count = %d, want %d", member, got, want)
+			}
+			if got := target.Operations.FormalEffectCount(operation); got != want {
+				t.Fatalf("process.%s formal effect count = %d, want %d", member, got, want)
 			}
 		})
 	}

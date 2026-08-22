@@ -58,7 +58,7 @@ func (target Target) BehaviorPredicateAt(index int) (outcome, result uint32, sub
 
 // behaviorOperation is the only Target-to-behavior conversion. Operation()
 // already authenticates the existing target row and rejects body targets;
-// this helper adds no second capability or receipt vocabulary.
+// this helper adds no second capability or transport vocabulary.
 func (target Target) behaviorOperation() (vocabulary.Operation, bool) {
 	if !target.Valid() || target.owner.contract == nil {
 		return 0, false

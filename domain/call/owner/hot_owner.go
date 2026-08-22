@@ -32,7 +32,7 @@ func (owner *HotOwner) LinkID() identity.ContentID {
 	return owner.LinkOwner().ContentID()
 }
 
-// RuleImplementation is a Call-owned pending Factor-output Rule receipt. The
+// RuleImplementation is a Call-owned pending Factor-output Rule binding. The
 // private coordinate and Factor slot remain behind this owner boundary.
 type RuleImplementation[O any] struct {
 	owner *HotOwner
@@ -66,7 +66,7 @@ func (issuer *HeterogeneousRuleImplementation[RV, O]) MountedCapability() (engin
 }
 
 // ActivationRuleImplementation is Call owner's opaque issuer for one
-// receipt-native structural activation Rule.  It deliberately retains neither
+// structural activation Rule. It deliberately retains neither
 // an engine slot nor a graph capability outside this owner package.
 type ActivationRuleImplementation struct {
 	owner *HotOwner
@@ -162,7 +162,7 @@ func BindExactWriteRule[O any](owner *HotOwner, slot *engine.RuleSlot[call.Value
 }
 
 // BindExactReadRule binds a heterogeneous exact-read Rule while retaining
-// Call's pending typed implementation for mounted receipt attachment.
+// Call's pending typed implementation for mounted rule attachment.
 func BindExactReadRule[O any](owner *HotOwner, slot *engine.RuleSlot[call.Value, O], read engine.SchemaReadSlot[call.Value], readFactor engine.FactorRef[call.Value], write engine.SchemaWriteSlot[call.Value], writeFactor engine.FactorRef[call.Value], spec engine.HotRuleSpec[call.Value, O], projectRead func(O) (uint64, bool), projectWrite func(O) (uint64, bool)) (*RuleImplementation[O], engine.Read[engine.OrderedCells[call.Value]], bool) {
 	if owner == nil || owner.binding == nil || owner.fragment == nil || slot == nil {
 		return nil, engine.Read[engine.OrderedCells[call.Value]]{}, false
@@ -196,7 +196,7 @@ func ResolveHeterogeneousRuleImplementation[RV, O any](issuer *HeterogeneousRule
 	return implementation, true
 }
 
-// ResolveRuleImplementation issues the exact receipt after the shared
+// ResolveRuleImplementation resolves the exact implementation after the shared
 // SchemaBinding seals.
 func ResolveRuleImplementation[O any](issuer *RuleImplementation[O]) (*engine.RuleImplementation[coordinate, call.Value, O], bool) {
 	if issuer == nil || issuer.owner == nil || issuer.slot == nil {
@@ -241,7 +241,7 @@ func BindExactActivationRule(owner *HotOwner, slot *engine.SchemaActivationRuleS
 }
 
 // BindMountedActivationCandidateIssuer binds the exact CallActivation slot to
-// the factor transport vector its receipt-native body transport declares: the
+// the factor transport vector its mounted body transport declares: the
 // lanes imported into a mounted body and the one lane exported back out. The
 // engine keeps the resulting issuer opaque; child packages cannot submit
 // point/factor edge rows themselves.
@@ -252,7 +252,7 @@ func BindMountedActivationCandidateIssuer(issuer *ActivationRuleImplementation, 
 	return engine.BindMountedActivationCandidateIssuer(issuer.owner.binding, issuer.slot, imports, export)
 }
 
-// ResolveActivationRuleImplementation issues the engine receipt only after
+// ResolveActivationRuleImplementation resolves the engine implementation only after
 // the exact shared Binding seals.  Equal schema content from another Binding
 // cannot cross the owner pointer fence.
 func ResolveActivationRuleImplementation(issuer *ActivationRuleImplementation) (*engine.ActivationRuleImplementation, bool) {
@@ -263,7 +263,7 @@ func ResolveActivationRuleImplementation(issuer *ActivationRuleImplementation) (
 }
 
 // ResolveActivationRuleImplementationFor additionally requires the exact
-// Call HotOwner that issued the child receipt.
+// Call HotOwner that issued the child implementation.
 func ResolveActivationRuleImplementationFor(owner *HotOwner, issuer *ActivationRuleImplementation) (*engine.ActivationRuleImplementation, bool) {
 	if owner == nil || issuer == nil || issuer.owner != owner {
 		return nil, false
@@ -290,7 +290,7 @@ func (owner *HotOwner) Ref(key call.Key) (engine.Ref[coordinate], bool) {
 }
 
 // SelectRoute emits one exact Call route through this owner's sealed Factor
-// receipt. It keeps Call's private carrier coordinate out of child binders.
+// surface. It keeps Call's private carrier coordinate out of child binders.
 func (owner *HotOwner) SelectRoute(context engine.SelectorContext, key call.Key, tag uint64) bool {
 	ref, ok := owner.Ref(key)
 	return ok && engine.SelectRoute(context, ref, tag)

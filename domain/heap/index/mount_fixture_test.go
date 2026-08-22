@@ -8,6 +8,7 @@ import (
 	artifactcompiler "github.com/wippyai/go-lua/analysis/program/artifact/compiler"
 	"github.com/wippyai/go-lua/analysis/program/link"
 	programschema "github.com/wippyai/go-lua/analysis/schema/program"
+	"github.com/wippyai/go-lua/analysis/schema/programmount"
 	calldomain "github.com/wippyai/go-lua/domain/call"
 	"github.com/wippyai/go-lua/domain/composite"
 	heapdomain "github.com/wippyai/go-lua/domain/heap"
@@ -20,10 +21,10 @@ import (
 
 type indexFixtureMounts struct {
 	compilation composite.Compilation
-	heap        []heapdomain.ArtifactMount
-	value       []valuedomain.ArtifactMount
+	heap        []programmount.MountedArtifact
+	value       []programmount.MountedArtifact
 	call        []calldomain.MountedArtifact
-	pack        []packdomain.ArtifactMount
+	pack        []programmount.MountedArtifact
 	packs       *packdomain.Schema
 }
 
@@ -38,16 +39,16 @@ func indexMounts(t testing.TB, linked *link.Link) indexFixtureMounts {
 	projectMounts := linked.Project().Mounts()
 	result := indexFixtureMounts{
 		compilation: compilation,
-		heap:        make([]heapdomain.ArtifactMount, projectMounts.Count()),
-		value:       make([]valuedomain.ArtifactMount, projectMounts.Count()),
+		heap:        make([]programmount.MountedArtifact, projectMounts.Count()),
+		value:       make([]programmount.MountedArtifact, projectMounts.Count()),
 		call:        make([]calldomain.MountedArtifact, projectMounts.Count()),
-		pack:        make([]packdomain.ArtifactMount, projectMounts.Count()),
+		pack:        make([]programmount.MountedArtifact, projectMounts.Count()),
 	}
 	for index := 0; index < projectMounts.Count(); index++ {
 		shard, shardOK := projectMounts.At(index)
 		program, programOK := projectMounts.Program(shard)
 		module, moduleOK := linked.Project().ModuleKey(shard)
-		programID, programIDOK := projectMounts.ProgramID(shard)
+		_, programIDOK := projectMounts.ProgramID(shard)
 		if !shardOK || !programOK || program == nil || !moduleOK || !programIDOK {
 			t.Fatal("index fixture mount")
 		}
@@ -56,9 +57,9 @@ func indexMounts(t testing.TB, linked *link.Link) indexFixtureMounts {
 			t.Fatalf("index fixture artifact: %v", failure)
 		}
 		var heapOK, valueOK, packOK bool
-		result.heap[index], heapOK = heapdomain.NewArtifactMount(snapshottest.MustLower(t, artifact), module, programID)
-		result.value[index], valueOK = valuedomain.NewArtifactMount(snapshottest.MustLower(t, artifact), module, programID)
-		result.pack[index], packOK = packdomain.NewArtifactMount(snapshottest.MustLower(t, artifact), module, programID)
+		result.heap[index], heapOK = programmount.MountedArtifactFromSnapshot(snapshottest.MustLower(t, artifact), module)
+		result.value[index], valueOK = programmount.MountedArtifactFromSnapshot(snapshottest.MustLower(t, artifact), module)
+		result.pack[index], packOK = programmount.MountedArtifactFromSnapshot(snapshottest.MustLower(t, artifact), module)
 		result.call[index] = calldomain.MountedArtifact{Program: snapshottest.MustMount(t, artifact, module), Snapshot: snapshottest.MustLower(t, artifact)}
 		if !heapOK || !valueOK || !packOK {
 			t.Fatal("index fixture mount receipt")

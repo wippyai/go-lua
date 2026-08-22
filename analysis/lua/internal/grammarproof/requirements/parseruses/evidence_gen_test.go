@@ -11,6 +11,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/wippyai/go-lua/analysis/lua/census"
 	"github.com/wippyai/go-lua/analysis/lua/internal/grammarproof/astcodec"
 	"github.com/wippyai/go-lua/analysis/lua/internal/grammarproof/requirements/occurrence"
 	"github.com/wippyai/go-lua/analysis/lua/internal/grammarproof/requirements/parserproducts"
@@ -19,11 +20,12 @@ import (
 
 func TestBuildConsumesOnlySealedProducts(t *testing.T) {
 	products := testProducts()
-	evidence, err := Build(products)
+	inventory := testCensus(products)
+	evidence, err := Build(products, inventory)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := evidence.Validate(products); err != nil {
+	if err := evidence.Validate(products, inventory); err != nil {
 		t.Fatal(err)
 	}
 	if evidence.ProductsDigest != products.Digest || len(evidence.UsePaths) != 2 {
@@ -38,28 +40,55 @@ func TestBuildConsumesOnlySealedProducts(t *testing.T) {
 	}
 }
 
+func TestGeneratedCanonicalDigest(t *testing.T) {
+	sum := sha256.Sum256(Generated.Canonical())
+	want := hex.EncodeToString(sum[:])
+	if Generated.Digest != want {
+		t.Fatalf("generated digest = %s, want %s", Generated.Digest, want)
+	}
+}
+
+func TestGeneratedRendererMatchesArtifact(t *testing.T) {
+	rendered, err := render(Generated)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, file, _, ok := runtime.Caller(0)
+	if !ok {
+		t.Fatal("locate generated artifact")
+	}
+	current, err := os.ReadFile(filepath.Join(filepath.Dir(file), "evidence_gen.go"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(current, rendered) {
+		t.Fatal("generated parser-use artifact differs from its renderer")
+	}
+}
+
 func TestEvidenceRejectsProductsDriftAndReorderedRoutes(t *testing.T) {
 	products := testProducts()
-	evidence, err := Build(products)
+	inventory := testCensus(products)
+	evidence, err := Build(products, inventory)
 	if err != nil {
 		t.Fatal(err)
 	}
 	stale := products
 	stale.Digest = "other-products"
-	if err := evidence.Validate(stale); err == nil {
+	if err := evidence.Validate(stale, inventory); err == nil {
 		t.Fatal("stale parser-products evidence was accepted")
 	}
 	reordered := evidence
 	reordered.UsePaths = append([]UsePath(nil), evidence.UsePaths...)
 	reordered.UsePaths[0], reordered.UsePaths[1] = reordered.UsePaths[1], reordered.UsePaths[0]
 	reordered.Digest = digest(reordered)
-	if err := reordered.Validate(products); err == nil {
+	if err := reordered.Validate(products, inventory); err == nil {
 		t.Fatal("reordered parser-use routes were accepted")
 	}
 	missing := evidence
 	missing.UsePaths = missing.UsePaths[1:]
 	missing.Digest = digest(missing)
-	if err := missing.Validate(products); err == nil {
+	if err := missing.Validate(products, inventory); err == nil {
 		t.Fatal("missing direct route was accepted")
 	}
 }
@@ -69,14 +98,15 @@ func TestTypedTermsRejectMissingCarrierRoute(t *testing.T) {
 	products.ProductLaws[0].Products[0].Fields[0].Kind = parserproducts.ActionValueZero
 	products.ProductLaws[0].Products[0].Fields[0].Term = 0
 	products = sealProducts(products)
-	if _, err := Build(products); err == nil {
+	if _, err := Build(products, testCensus(products)); err == nil {
 		t.Fatal("missing typed direct route was accepted")
 	}
 }
 
 func TestRendererChecksArtifactAndCurrentDetaches(t *testing.T) {
 	products := testProducts()
-	evidence, err := Build(products)
+	inventory := testCensus(products)
+	evidence, err := Build(products, inventory)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -93,19 +123,19 @@ func TestRendererChecksArtifactAndCurrentDetaches(t *testing.T) {
 	if err := os.WriteFile(path, rendered, 0o644); err != nil {
 		t.Fatal(err)
 	}
-	if err := Generate(products, path, true); err != nil {
+	if err := Generate(products, inventory, path, true); err != nil {
 		t.Fatal(err)
 	}
 	if err := os.WriteFile(path, []byte("stale"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	if err := Generate(products, path, true); err == nil {
+	if err := Generate(products, inventory, path, true); err == nil {
 		t.Fatal("stale generated evidence was accepted")
 	}
 	prior := Generated
 	defer func() { Generated = prior }()
 	Generated = evidence
-	current, err := Current(products)
+	current, err := Current(products, inventory)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -116,12 +146,15 @@ func TestRendererChecksArtifactAndCurrentDetaches(t *testing.T) {
 }
 
 func TestGeneratedProductsPreserveTypedHelperAndEditEvidence(t *testing.T) {
-	evidence, err := Build(parserproducts.Generated)
+	evidence, err := Build(parserproducts.Generated, census.Generated)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := evidence.Validate(parserproducts.Generated); err != nil {
+	if err := evidence.Validate(parserproducts.Generated, census.Generated); err != nil {
 		t.Fatal(err)
+	}
+	if Generated.Digest != evidence.Digest || !bytes.Equal(Generated.Canonical(), evidence.Canonical()) {
+		t.Fatal("generated parser uses differ canonically from their two sealed owners")
 	}
 	if len(evidence.HelperUsePaths) == 0 || len(evidence.MutationUsePaths) == 0 {
 		t.Fatal("generated parser products lost helper or edit routes")
@@ -144,21 +177,30 @@ func TestSealedProductsIntegration(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	evidence, err := Build(products)
+	inventory, err := census.Current(root)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := evidence.Validate(products); err != nil || len(evidence.Canonical()) == 0 {
+	evidence, err := Build(products, inventory)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := evidence.Validate(products, inventory); err != nil || len(evidence.Canonical()) == 0 {
 		t.Fatalf("sealed parser-products integration failed: %v", err)
 	}
 }
 
 func TestGeneratedEvidenceMatchesSealedProducts(t *testing.T) {
-	products, err := parserproducts.Current(parserUsesRepositoryRoot(t))
+	root := parserUsesRepositoryRoot(t)
+	products, err := parserproducts.Current(root)
 	if err != nil {
 		t.Fatal(err)
 	}
-	expected, err := Build(products)
+	inventory, err := census.Current(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	expected, err := Build(products, inventory)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -203,7 +245,6 @@ func testProducts() parserproducts.Evidence {
 			Production: "form", Nonterminal: "form", RHS: []string{"expr", "expr"}, ActionDigest: "action", Scope: 1, Form: parserproducts.ActionFormDirectConstruct,
 			Products: []parserproducts.ConstructorProduct{{Ordinal: 1, Constructor: "Form", Fields: []parserproducts.ProductField{{Field: "Left", Kind: parserproducts.ActionValueTerm, Term: 1}, {Field: "Right", Kind: parserproducts.ActionValueTerm, Term: 2}}}},
 		}},
-		Sequences: []parserproducts.SequenceLaw{{Production: "form", Scope: 1, Destination: parserproducts.SequenceDestination{Tag: "form"}, Construction: parserproducts.SequenceConstructionForward, Segments: []parserproducts.SequenceSegment{}}},
 		Carriers: []parserproducts.Carrier{
 			{Form: "Form", Field: "Left", Class: parsersource.ConstructorExpression, ChildType: "Expr", Cardinality: astcodec.FieldStatePresent},
 			{Form: "Form", Field: "Right", Class: parsersource.ConstructorExpression, ChildType: "Expr", Cardinality: astcodec.FieldStatePresent},
@@ -226,6 +267,21 @@ func testProducts() parserproducts.Evidence {
 		},
 	}
 	return sealProducts(products)
+}
+
+func testCensus(products parserproducts.Evidence) census.Census {
+	inventory := census.Census{
+		GrammarSourceDigest: products.ParserSourceDigest,
+		Productions: []parsersource.ActionTemplate{{
+			Key: "form", Nonterminal: "form", ResultTag: "form", RHS: []string{"expr", "expr"}, ActionDigest: "action",
+		}},
+		Sequences: []parsersource.ActionSequence{{
+			Production: "form", Tag: "form", Construction: parsersource.SequenceConstructionForward, Segments: []parsersource.SequenceSegment{},
+		}},
+	}
+	sum := sha256.Sum256(inventory.Canonical())
+	inventory.Digest = hex.EncodeToString(sum[:])
+	return inventory
 }
 
 func sealProducts(products parserproducts.Evidence) parserproducts.Evidence {

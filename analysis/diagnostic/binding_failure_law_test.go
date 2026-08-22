@@ -6,6 +6,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/identity"
 	"github.com/wippyai/go-lua/analysis/schema"
 	schemadiag "github.com/wippyai/go-lua/analysis/schema/diagnostic"
+	"github.com/wippyai/go-lua/analysis/schema/executioncontext"
 	"github.com/wippyai/go-lua/analysis/schema/structure"
 	"github.com/wippyai/go-lua/domain/composite"
 	"github.com/wippyai/go-lua/domain/runtimekind"
@@ -76,23 +77,22 @@ func TestMountPhaseWithoutAnAxisNamesNoAxisVerdict(t *testing.T) {
 	}
 }
 
-// TestPostMountDerivationKeepsItsOwnVerdict states that moving the two
-// post-mount derivations into the mount phase kept this boundary's evidence:
-// a topology that did not seal and an activation catalog that did not seal are
-// each still their own verdict, distinct from every axis authority and from the
-// phase's input rejection.
+// TestPostMountDerivationKeepsItsOwnVerdict states that each surviving
+// post-mount derivation remains its own boundary evidence: topology and formal
+// refusal are distinct from every axis authority and from the phase's input
+// rejection.
 func TestPostMountDerivationKeepsItsOwnVerdict(t *testing.T) {
 	verdicts := map[composite.MountStage]ProgramBindingFailure{
-		composite.MountStageTopology:   ProgramBindingFailureHeapIndex,
-		composite.MountStageActivation: ProgramBindingFailureTargetCatalog,
+		composite.MountStageTopology: ProgramBindingFailureHeapIndex,
+		composite.MountStageFormal:   ProgramBindingFailureTarget,
 	}
 	for stage, want := range verdicts {
 		if verdict := ProgramBindingFailureFromMount(composite.MountFailure{Stage: stage}); verdict != want {
 			t.Fatalf("derivation stage %q projected onto %q, not %q", stage, verdict, want)
 		}
 	}
-	if ProgramBindingFailureHeapIndex.String() != "heap-index" || ProgramBindingFailureTargetCatalog.String() != "target-catalog" {
-		t.Fatalf("a derivation verdict lost its own name: %q %q", ProgramBindingFailureHeapIndex, ProgramBindingFailureTargetCatalog)
+	if ProgramBindingFailureHeapIndex.String() != "heap-index" || ProgramBindingFailureTarget.String() != "target" {
+		t.Fatalf("a derivation verdict lost its own name: %q %q", ProgramBindingFailureHeapIndex, ProgramBindingFailureTarget)
 	}
 }
 
@@ -157,15 +157,19 @@ func TestConformanceSubjectsAddressTheirOwnProducer(t *testing.T) {
 		t.Fatal("sealed compilation unavailable")
 	}
 	mount := identity.ContentID{20}
-	first, firstOK := ValueObservationAddress(compilation, structure.DiagnosticObservationTypeConformance, mount, identity.ContentID{21})
-	second, secondOK := ValueObservationAddress(compilation, structure.DiagnosticObservationTypeConformance, mount, identity.ContentID{22})
+	context, contextOK := executioncontext.NewContext(identity.ContentID{30}, mount, identity.ContentID{31}, identity.ContentID{32})
+	if !contextOK {
+		t.Fatal("observation context")
+	}
+	first, firstOK := ValueObservationAddress(compilation, structure.DiagnosticObservationTypeConformance, mount, identity.ContentID{21}, context)
+	second, secondOK := ValueObservationAddress(compilation, structure.DiagnosticObservationTypeConformance, mount, identity.ContentID{22}, context)
 	if !firstOK || !secondOK || !first.Available() || !second.Available() {
 		t.Fatal("the type-conformance population issues no observation address")
 	}
 	if first == second {
 		t.Fatal("two producing occurrences of one mount share an observation address")
 	}
-	branch, branchOK := ValueObservationAddress(compilation, structure.DiagnosticObservationBranchCondition, mount, identity.ContentID{21})
+	branch, branchOK := ValueObservationAddress(compilation, structure.DiagnosticObservationBranchCondition, mount, identity.ContentID{21}, context)
 	if !branchOK || branch != first {
 		t.Fatal("one produced value at one occurrence is published on two columns")
 	}

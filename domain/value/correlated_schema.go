@@ -4,7 +4,6 @@ import (
 	"math"
 
 	"github.com/wippyai/go-lua/analysis/identity"
-	"github.com/wippyai/go-lua/analysis/schema/ingress"
 	programschema "github.com/wippyai/go-lua/analysis/schema/program"
 	"github.com/wippyai/go-lua/analysis/schema/structure"
 	"github.com/wippyai/go-lua/domain/heap"
@@ -435,6 +434,11 @@ type Schema struct {
 	// that key to Call's operation and the existing Boundary Value coordinate.
 	freshResultCalls    map[heap.Key]FreshResultCall
 	freshResultCallKeys []heap.Key
+	// moduleExportFresh is the narrow composition proof for a fresh require
+	// result. Its roots are existing Heap allocation keys recovered from an
+	// authored Module Import's exported root fact; it is not an operation×root
+	// dispatch table and is consumed only by Heap index topology sealing.
+	moduleExportFresh map[heap.Key]moduleExportFreshRow
 	// mountedCallResultSlots is the immutable, Value-owned projection of
 	// admitted Program CallResultSlot geometry. It carries only the mounted
 	// semantic IDs and the already-issued Value coordinate; the canonical
@@ -510,7 +514,7 @@ type valueBuilder struct {
 	mountedCallResultSlotOrder []mountedCallResultSlotKey
 	// artifacts is the exact reusable ProgramArtifact substitution directory.
 	// It is cold builder state and cannot survive into the published Schema.
-	artifacts map[identity.ContentID]ArtifactMount
+	artifacts map[identity.ContentID]programmount.MountedArtifact
 	// formalSources is the construction-only set of Program-issued formal
 	// storage coordinates that receive Value Top at callable entry.
 	formalSources map[identity.ContentID]struct{}
@@ -532,7 +536,7 @@ func (builder *valueBuilder) sealModule() *linkmodule.Component     { return bui
 // used by consumers: their cold inverses are linear scans, while these
 // directories keep fresh-result and mounted-slot reads O(1) after one O(n)
 // seal walk. Duplicate module/call(/ordinal) keys or any mismatch between the
-// ArtifactMount's placement row and its Snapshot fail closed.
+// mounted Program row's placement and immutable publication fail closed.
 func (builder *valueBuilder) sealMountedCallResultGeometry() bool {
 	if builder == nil || builder.Schema == nil || builder.sealProject() == nil || builder.artifacts == nil || builder.mountedCallResultSlots != nil {
 		return false
@@ -544,19 +548,14 @@ func (builder *valueBuilder) sealMountedCallResultGeometry() bool {
 		shard, shardOK := mounts.At(mountIndex)
 		module, moduleOK := builder.sealProject().ModuleKey(shard)
 		mount := builder.artifacts[module]
-		if !shardOK || !moduleOK || !module.Available() || !mount.Available() || mount.Module() != module {
+		if !shardOK || !moduleOK || !module.Available() || !mount.Available() || mount.ModuleKey != module {
 			return false
 		}
-		mounted := mount.Program()
-		snapshot := mount.Snapshot()
-		if snapshot == nil || !snapshot.Available() {
+		mounted := mount.Program
+		if !mounted.Available() || mounted.ModuleKey != module {
 			return false
 		}
-		program := snapshot.Program()
-		if !mounted.Available() || mounted.ModuleKey != module || !program.Available() ||
-			mounted.ProgramID != program.ProgramID || mounted.ArtifactID != program.ArtifactID || mounted.SchemaID != program.SchemaID {
-			return false
-		}
+		program := mounted.Program
 		count, published := program.CallResultCount()
 		slotCount, slotsPublished := program.CallResultSlotCount()
 		if !published || !slotsPublished || count < 0 || slotCount < 0 {
@@ -614,54 +613,6 @@ func (builder *valueBuilder) sealMountedCallResultGeometry() bool {
 	builder.mountedCallResultSlots = slots
 	builder.mountedCallResultSlotOrder = slotOrder
 	return true
-}
-
-// ArtifactMount binds one immutable reusable compiled Program to one concrete
-// Link mount. Module is the mount qualifier: equal Programs may be
-// mounted more than once without positional joins or shared occurrence IDs.
-type ArtifactMount struct {
-	snapshot *ingress.Snapshot
-	module   identity.ContentID
-	program  programmount.Program
-}
-
-func NewArtifactMount(snapshot *ingress.Snapshot, module, programID identity.ContentID) (ArtifactMount, bool) {
-	if snapshot == nil || !snapshot.Available() || !module.Available() || !programID.Available() || snapshot.ProgramID() != programID {
-		return ArtifactMount{}, false
-	}
-	program, programOK := programmount.ProgramFromSnapshot(snapshot, module)
-	if !programOK || program.ProgramID != programID {
-		return ArtifactMount{}, false
-	}
-	return ArtifactMount{snapshot: snapshot, module: module, program: program}, true
-}
-
-func (mount ArtifactMount) Available() bool {
-	return mount.snapshot != nil && mount.snapshot.Available() && mount.module.Available() && mount.program.Available() && mount.program.ModuleKey == mount.module && mount.snapshot.ProgramID() == mount.program.ProgramID && mount.snapshot.ArtifactID() == mount.program.ArtifactID
-}
-func (mount ArtifactMount) Module() identity.ContentID {
-	if !mount.Available() {
-		return identity.ContentID{}
-	}
-	return mount.module
-}
-func (mount ArtifactMount) ProgramID() identity.ContentID {
-	if !mount.Available() {
-		return identity.ContentID{}
-	}
-	return mount.program.ProgramID
-}
-func (mount ArtifactMount) Snapshot() *ingress.Snapshot {
-	if !mount.Available() {
-		return nil
-	}
-	return mount.snapshot
-}
-func (mount ArtifactMount) Program() programmount.Program {
-	if !mount.Available() {
-		return programmount.Program{}
-	}
-	return mount.program
 }
 
 // LinkID is the detached owner identity for this sealed Value schema. Hot
@@ -825,26 +776,26 @@ func (failure SealFailure) String() string {
 // Seal derives the complete finite Value alternative vocabulary from the
 // already-sealed Link.  It does not inspect AST/binder state, materialize a
 // candidate product, or create a second raw Program identity.
-func SealWithFailure(source *link.Link, heaps heap.Schema, mounts []ArtifactMount, structural structure.Table) (*Schema, SealFailure) {
+func SealWithFailure(source *link.Link, heaps heap.Schema, mounts []programmount.MountedArtifact, structural structure.Table) (*Schema, SealFailure) {
 	if source == nil || !source.ContentID().Available() || !heaps.LinkOwner().Matches(source.OwnerCapability()) || heaps.LinkContentID() != source.ContentID() || len(mounts) != source.Project().Mounts().Count() || structural.Count(structure.CategoryRuntimeKind) != int(runtimekind.Count)-1 {
 		return nil, SealFailureInput
 	}
-	artifacts := make(map[identity.ContentID]ArtifactMount, len(mounts))
+	artifacts := make(map[identity.ContentID]programmount.MountedArtifact, len(mounts))
 	for _, mount := range mounts {
 		if !mount.Available() {
 			return nil, SealFailureInput
 		}
-		if _, duplicate := artifacts[mount.Module()]; duplicate {
+		if _, duplicate := artifacts[mount.ModuleKey]; duplicate {
 			return nil, SealFailureInput
 		}
-		artifacts[mount.Module()] = mount
+		artifacts[mount.ModuleKey] = mount
 	}
 	for index := 0; index < source.Project().Mounts().Count(); index++ {
 		shard, shardOK := source.Project().Mounts().At(index)
 		module, moduleOK := source.Project().ModuleKey(shard)
 		programID, programOK := source.Project().Mounts().ProgramID(shard)
 		mount := artifacts[module]
-		if !shardOK || !moduleOK || !programOK || !mount.Available() || mount.ProgramID() != programID {
+		if !shardOK || !moduleOK || !programOK || !mount.Available() || mount.ProgramID != programID {
 			return nil, SealFailureInput
 		}
 	}
@@ -872,6 +823,7 @@ func SealWithFailure(source *link.Link, heaps heap.Schema, mounts []ArtifactMoun
 		valueClaims:                make(map[computationKey]ValueClaim),
 		returnBoundaries:           make(map[computationKey]ReturnBoundary),
 		freshResultCalls:           make(map[heap.Key]FreshResultCall),
+		moduleExportFresh:          make(map[heap.Key]moduleExportFreshRow),
 		mountedCallResultSlots:     make(map[mountedCallResultSlotKey]MountedCallResultSlot),
 		allocRefs:                  make(map[heap.Key]uint32),
 		globalResults:              make(map[identity.ContentID]*GlobalBootstrapResult),
@@ -931,6 +883,7 @@ func SealWithFailure(source *link.Link, heaps heap.Schema, mounts []ArtifactMoun
 		{SealFailureFinish, builder.sealTargetInitialResults},
 		{SealFailureAllocationResults, builder.sealAllocationResults},
 		{SealFailureFreshResultCalls, builder.sealFreshResultCalls},
+		{SealFailureFreshResultCalls, builder.sealModuleExportFreshRows},
 		{SealFailureSourceValues, builder.sealSourceValues},
 		{SealFailureSourceOccurrences, builder.sealSourceSeedOccurrences},
 		{SealFailureGlobalBootstrapResults, func() bool { return builder.sealGlobalBootstrapResults(source.Module()) }},
@@ -951,11 +904,7 @@ func (schema *valueBuilder) sealFormalSourceDirectory() bool {
 	}
 	schema.formalSources = make(map[identity.ContentID]struct{})
 	for module, mount := range schema.artifacts {
-		artifact := mount.Snapshot()
-		if artifact == nil {
-			return false
-		}
-		program := artifact.Program()
+		program := mount.Program.Program
 		count, countOK := program.OccurrenceKindCount(programschema.OccurrenceFormalEntry)
 		if !countOK {
 			return false
@@ -1484,11 +1433,7 @@ func (schema *valueBuilder) sealLiteralSourceDirectory() bool {
 		return false
 	}
 	for module, mount := range schema.artifacts {
-		artifact := mount.Snapshot()
-		if artifact == nil {
-			return false
-		}
-		program := artifact.Program()
+		program := mount.Program.Program
 		count, countOK := program.OccurrenceCount()
 		if !countOK {
 			return false
@@ -1652,8 +1597,7 @@ func (schema *valueBuilder) forEachExecutableTypeValue(visit func(identity.Conte
 		return false
 	}
 	for module, mount := range schema.artifacts {
-		artifact := mount.Snapshot()
-		program := artifact.Program()
+		program := mount.Program.Program
 		count, countOK := program.OccurrenceCount()
 		if !countOK {
 			return false

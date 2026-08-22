@@ -4,15 +4,17 @@ import (
 	"github.com/wippyai/go-lua/analysis/program/link"
 	"github.com/wippyai/go-lua/analysis/program/target/contract"
 	"github.com/wippyai/go-lua/analysis/schema"
+	"github.com/wippyai/go-lua/analysis/schema/executioncontext"
 	"github.com/wippyai/go-lua/analysis/schema/programmount"
 	"github.com/wippyai/go-lua/analysis/schema/structure"
 	calldomain "github.com/wippyai/go-lua/domain/call"
-	callactivation "github.com/wippyai/go-lua/domain/call/activation"
 	callowner "github.com/wippyai/go-lua/domain/call/owner"
 	effectfactor "github.com/wippyai/go-lua/domain/effect/factor"
 	effectowner "github.com/wippyai/go-lua/domain/effect/owner"
 	heapdomain "github.com/wippyai/go-lua/domain/heap"
 	allocationcatalog "github.com/wippyai/go-lua/domain/heap/allocation/catalog"
+	contextdomain "github.com/wippyai/go-lua/domain/heap/context"
+	contextowner "github.com/wippyai/go-lua/domain/heap/context/owner"
 	heapindex "github.com/wippyai/go-lua/domain/heap/index"
 	heapowner "github.com/wippyai/go-lua/domain/heap/owner"
 	packdomain "github.com/wippyai/go-lua/domain/pack"
@@ -33,13 +35,14 @@ type principals struct {
 	call      *callowner.SchemaFragment
 	heap      *heapowner.SchemaFragment
 	placement *placementowner.SchemaFragment
+	context   *contextowner.SchemaFragment
 	evidence  *placementsuspension.EvidenceFactorFragment
 	pack      *packowner.SchemaFragment
 	effect    *effectowner.SchemaFragment
 }
 
 func (set principals) available() bool {
-	return set.value != nil && set.call != nil && set.heap != nil && set.placement != nil && set.evidence != nil && set.pack != nil && set.effect != nil
+	return set.value != nil && set.call != nil && set.heap != nil && set.placement != nil && set.context != nil && set.evidence != nil && set.pack != nil && set.effect != nil
 }
 
 // The principal getters are the record's read surface. An owning domain names
@@ -53,6 +56,8 @@ func (set principals) CallPrincipal() *callowner.SchemaFragment { return set.cal
 func (set principals) HeapPrincipal() *heapowner.SchemaFragment { return set.heap }
 
 func (set principals) PlacementPrincipal() *placementowner.SchemaFragment { return set.placement }
+
+func (set principals) ContextPrincipal() *contextowner.SchemaFragment { return set.context }
 
 func (set principals) EvidencePrincipal() *placementsuspension.EvidenceFactorFragment {
 	return set.evidence
@@ -75,6 +80,8 @@ func (set principals) writes(key schema.Key) bool {
 		return set.heap != nil
 	case axisKeyPlacement:
 		return set.placement != nil
+	case axisKeyContext:
+		return set.context != nil
 	case axisKeyPlacementEvidence:
 		return set.evidence != nil
 	case axisKeyPack:
@@ -94,6 +101,7 @@ type authorities struct {
 	call      *callowner.HotOwner
 	heap      *heapowner.HotOwner
 	placement *placementowner.HotOwner
+	context   *contextowner.HotOwner
 	evidence  *placementsuspension.EvidenceOwner
 	pack      *packowner.HotOwner
 	effect    *effectowner.HotOwner
@@ -102,9 +110,12 @@ type authorities struct {
 	heapSchema      heapdomain.Schema
 	placementSchema placementdomain.Schema
 	packSchema      *packdomain.Schema
-	topology        *heapindex.Topology
-	allocations     *allocationcatalog.Catalog
-	activation      *callactivation.TargetBatchCatalog
+	// contextSchema is the one Link-local contextual Heap authority. It is
+	// derived by the mount phase from the exact Link directory and mounted Heap;
+	// callers never supply a contextual directory or schema alongside inputs.
+	contextSchema contextdomain.Schema
+	topology      *heapindex.Topology
+	allocations   *allocationcatalog.Catalog
 	// targetContract is the exact immutable Target authority retained by the
 	// Link Boundary. Mounted actual geometry remains owned by Pack and is
 	// authenticated directly against the exact Call rows when consumed.
@@ -112,9 +123,10 @@ type authorities struct {
 }
 
 func (set authorities) available() bool {
-	return set.value != nil && set.call != nil && set.heap != nil && set.placement != nil && set.evidence != nil && set.pack != nil && set.effect != nil &&
+	return set.value != nil && set.call != nil && set.heap != nil && set.placement != nil && set.context != nil && set.evidence != nil && set.pack != nil && set.effect != nil &&
 		set.valueSchema != nil && set.heapSchema.Valid() && set.placementSchema.Valid() && set.packSchema != nil &&
-		set.topology != nil && set.allocations != nil && set.activation != nil && set.targetContract != nil
+		set.contextSchema.Valid() && set.contextSchema.Heap() == set.heapSchema &&
+		set.topology != nil && set.allocations != nil && set.targetContract != nil
 }
 
 // writes is the sealed half of the same question: whether the axis a rule
@@ -129,6 +141,8 @@ func (set authorities) writes(key schema.Key) bool {
 		return set.heap != nil
 	case axisKeyPlacement:
 		return set.placement != nil
+	case axisKeyContext:
+		return set.context != nil
 	case axisKeyPlacementEvidence:
 		return set.evidence != nil
 	case axisKeyPack:
@@ -152,6 +166,8 @@ func (set authorities) HeapAuthority() *heapowner.HotOwner { return set.heap }
 
 func (set authorities) PlacementAuthority() *placementowner.HotOwner { return set.placement }
 
+func (set authorities) ContextAuthority() *contextowner.HotOwner { return set.context }
+
 func (set authorities) EvidenceAuthority() *placementsuspension.EvidenceOwner { return set.evidence }
 
 func (set authorities) PackAuthority() *packowner.HotOwner { return set.pack }
@@ -166,11 +182,18 @@ func (set authorities) PlacementSchema() placementdomain.Schema { return set.pla
 
 func (set authorities) PackSchema() *packdomain.Schema { return set.packSchema }
 
+// ContextSchema returns the exact contextual Heap authority derived for this
+// Link. The zero value is returned if the authority join did not seal.
+func (set authorities) ContextSchema() contextdomain.Schema {
+	if !set.contextSchema.Valid() {
+		return contextdomain.Schema{}
+	}
+	return set.contextSchema
+}
+
 func (set authorities) Topology() *heapindex.Topology { return set.topology }
 
 func (set authorities) Allocations() *allocationcatalog.Catalog { return set.allocations }
-
-func (set authorities) ActivationCatalog() *callactivation.TargetBatchCatalog { return set.activation }
 
 // TargetContract returns the exact Target contract issued by the Link
 // Boundary. Consumers receive this sealed authority directly; they never
@@ -209,13 +232,14 @@ type LinkInputs struct {
 	// domain declaration state and not a second runtime-kind list.
 	vocabulary structure.Table
 
-	// topology and activation are the mount phase's own post-mount derivations.
-	// Each is a derivation over several sealed factors at once, so neither is any
-	// one axis's authority to mount and neither is a caller's to supply: the
-	// phase derives both from the authorities it sealed and writes them here for
-	// the binding transaction that follows.
-	topology   *heapindex.Topology
-	activation *callactivation.TargetBatchCatalog
+	// topology is the mount phase's post-mount derivation over several sealed
+	// factors. Activation owns and seals its own private Call projection during
+	// binding, so no activation state is retained in this root record.
+	topology *heapindex.Topology
+	// contextSchema is the mount phase's private contextual authority. It is
+	// never a caller input: derive seals it from Source.ContextDirectory and
+	// the mounted Heap schema after all factor axes have sealed.
+	contextSchema contextdomain.Schema
 	// These are mount-phase derivations. They remain private to the neutral
 	// LinkInputs record and are projected into typed authorities only after all
 	// factor axes have sealed.
@@ -249,7 +273,56 @@ func (inputs LinkInputs) available() bool {
 	return inputs.mountable() && inputs.ValueSchema != nil && inputs.CallAlgebra != nil && inputs.CallAlgebra.Valid() &&
 		inputs.HeapSchema.Valid() && inputs.PlacementSchema.Valid() && inputs.PackSchema != nil &&
 		inputs.EffectAlgebra != nil && inputs.EffectAlgebra.Valid() && inputs.topology != nil &&
-		inputs.activation != nil && inputs.targetContract != nil && mountedActualsComplete(inputs.CallAlgebra, inputs.PackSchema)
+		inputs.contextAuthorityAvailable() &&
+		inputs.targetContract != nil && mountedActualsComplete(inputs.CallAlgebra, inputs.PackSchema)
+}
+
+// contextAuthorityAvailable is the LinkInputs identity fence. The contextual
+// schema must retain the exact mounted Heap issuer and the exact Link-scoped
+// directory rows from Source; a content digest or caller-rebuilt directory is
+// not enough to authorize this record.
+func (inputs LinkInputs) contextAuthorityAvailable() bool {
+	if inputs.Source == nil || !inputs.HeapSchema.Valid() || !inputs.contextSchema.Valid() ||
+		inputs.contextSchema.Heap() != inputs.HeapSchema {
+		return false
+	}
+	directory := inputs.Source.ContextDirectory()
+	return inputs.Source.ContentID().Available() && directory.Available() && directory.LinkID() == inputs.Source.ContentID() &&
+		sameContextDirectory(inputs.contextSchema.Directory(), directory)
+}
+
+func sameContextDirectory(left, right executioncontext.Directory) bool {
+	if !left.Available() || !right.Available() || left.LinkID() != right.LinkID() ||
+		left.ContextCount() != right.ContextCount() || left.RootCount() != right.RootCount() ||
+		left.TransitionCount() != right.TransitionCount() {
+		return false
+	}
+	for index := 0; index < left.ContextCount(); index++ {
+		leftRow, leftOK := left.ContextAt(index)
+		rightRow, rightOK := right.ContextAt(index)
+		if !leftOK || !rightOK || leftRow.ID() != rightRow.ID() || leftRow.LinkID() != rightRow.LinkID() ||
+			leftRow.ModuleKey() != rightRow.ModuleKey() || leftRow.ActorID() != rightRow.ActorID() ||
+			leftRow.RepresentativeCacheInstanceID() != rightRow.RepresentativeCacheInstanceID() {
+			return false
+		}
+	}
+	for index := 0; index < left.RootCount(); index++ {
+		leftRow, leftOK := left.RootAt(index)
+		rightRow, rightOK := right.RootAt(index)
+		if !leftOK || !rightOK || leftRow.ID() != rightRow.ID() || leftRow.LinkID() != rightRow.LinkID() ||
+			leftRow.AnalysisRootID() != rightRow.AnalysisRootID() || leftRow.ContextID() != rightRow.ContextID() {
+			return false
+		}
+	}
+	for index := 0; index < left.TransitionCount(); index++ {
+		leftRow, leftOK := left.TransitionAt(index)
+		rightRow, rightOK := right.TransitionAt(index)
+		if !leftOK || !rightOK || leftRow.ID() != rightRow.ID() || leftRow.LinkID() != rightRow.LinkID() ||
+			leftRow.FromContextID() != rightRow.FromContextID() || leftRow.ToContextID() != rightRow.ToContextID() {
+			return false
+		}
+	}
+	return true
 }
 
 // The mount input getters are the record's read surface for the mount pass. A
@@ -279,6 +352,11 @@ func (inputs LinkInputs) CallInput() *calldomain.Algebra { return inputs.CallAlg
 func (inputs LinkInputs) HeapInput() heapdomain.Schema { return inputs.HeapSchema }
 
 func (inputs LinkInputs) PlacementInput() placementdomain.Schema { return inputs.PlacementSchema }
+
+// ContextInput returns the mount-derived contextual Heap authority. It is
+// private in LinkInputs and therefore cannot be caller-supplied; Context's
+// axis binds only against this exact issuer.
+func (inputs LinkInputs) ContextInput() contextdomain.Schema { return inputs.contextSchema }
 
 func (inputs LinkInputs) StructureInput() structure.Table { return inputs.vocabulary }
 

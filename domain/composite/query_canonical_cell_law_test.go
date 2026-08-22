@@ -9,12 +9,14 @@ import (
 	"github.com/wippyai/go-lua/analysis/engine/rows"
 	"github.com/wippyai/go-lua/analysis/engine/rows/scalarlower"
 	"github.com/wippyai/go-lua/analysis/identity"
+	"github.com/wippyai/go-lua/analysis/schema/modulecomposition"
 	"github.com/wippyai/go-lua/analysis/snapshot"
 )
 
 // queryCanonicalProgram is the small test-only mirror of the analyzer's
 // assemble boundary. It deliberately uses the same sealed artifact rows,
-// owner admissions, and bootstrap witness as production, then stops at the
+// owner admissions, bootstrap witness, Link context directory, and
+// module-composition transition declarations as production, then stops at the
 // committed program so this law can read the borrowed query answers.
 func queryCanonicalProgram(t testing.TB, record LinkInputs, bound *ProgramBinding) (*engine.CommittedProgram, []QuerySite) {
 	t.Helper()
@@ -30,12 +32,17 @@ func queryCanonicalProgram(t testing.TB, record LinkInputs, bound *ProgramBindin
 	if !vocabularyOK {
 		t.Fatal("sealed structure vocabulary")
 	}
+	issuance, issuanceOK := ArtifactIssuanceDirectory(compilation)
+	if !issuanceOK {
+		t.Fatal("sealed issuance vocabulary")
+	}
 	rules := bound.Rules()
 	if rules == nil {
 		t.Fatal("sealed rule binding")
 	}
 	templates := make(map[identity.ContentID]*rows.ArtifactScalarTemplate, len(record.Artifacts))
 	roles := make(map[identity.ContentID][]engine.MountedProgramRole, len(record.Artifacts))
+	factors := make(map[identity.ContentID][]engine.MountedProgramFactor, len(record.Artifacts))
 	mounts := make([]engine.MountedProgramArtifact, 0, len(record.Artifacts))
 	for index, mount := range record.Artifacts {
 		if !mount.Available() {
@@ -44,25 +51,35 @@ func queryCanonicalProgram(t testing.TB, record LinkInputs, bound *ProgramBindin
 		artifactID := mount.Snapshot.ArtifactID()
 		template := templates[artifactID]
 		if template == nil {
-			var directory *scalarlower.RoleDirectory
+			var directory *scalarlower.MountDirectory
 			var lowered bool
-			template, directory, lowered = scalarlower.Lower(mount.Snapshot, vocabulary)
+			template, directory, lowered = scalarlower.Lower(mount.Snapshot, vocabulary, issuance)
 			if !lowered || template == nil || directory == nil || !template.Available() {
 				t.Fatalf("lower artifact %d into a scalar template", index)
 			}
-			boundRoles := make([]engine.MountedProgramRole, 0, directory.Count())
-			for roleIndex := 0; roleIndex < directory.Count(); roleIndex++ {
-				key, scalar, roleOK := directory.At(roleIndex)
-				capability, capabilityOK := rules.CapabilityByKey(key)
+			boundRoles := make([]engine.MountedProgramRole, 0, directory.RoleCount())
+			for roleIndex := 0; roleIndex < directory.RoleCount(); roleIndex++ {
+				key, scalar, roleOK := directory.RoleAt(roleIndex)
+				capability, capabilityOK := rules.MountedCapabilityForArtifactRole(key)
 				if !roleOK || !capabilityOK || !capability.Mounted() {
 					t.Fatalf("artifact %d role %q has no mounted capability", index, key)
 				}
 				boundRoles = append(boundRoles, engine.MountedProgramRole{Scalar: scalar, Capability: capability})
 			}
+			boundFactors := make([]engine.MountedProgramFactor, 0, directory.FactorCount())
+			for factorIndex := 0; factorIndex < directory.FactorCount(); factorIndex++ {
+				key, scalar, factorOK := directory.FactorAt(factorIndex)
+				capability, capabilityOK := bound.FactorCapability(key)
+				if !factorOK || !capabilityOK {
+					t.Fatalf("artifact %d factor %q has no sealed capability", index, key)
+				}
+				boundFactors = append(boundFactors, engine.MountedProgramFactor{Scalar: scalar, Capability: capability})
+			}
 			templates[artifactID] = template
 			roles[artifactID] = boundRoles
+			factors[artifactID] = boundFactors
 		}
-		mounts = append(mounts, engine.MountedProgramArtifact{Template: template, Roles: roles[artifactID], Module: mount.ModuleKey})
+		mounts = append(mounts, engine.MountedProgramArtifact{Template: template, Roles: roles[artifactID], Factors: factors[artifactID], Module: mount.ModuleKey})
 	}
 
 	sourceID := record.Source.ContentID()
@@ -78,13 +95,21 @@ func queryCanonicalProgram(t testing.TB, record LinkInputs, bound *ProgramBindin
 	if !witnessOK {
 		t.Fatal("link bootstrap witness")
 	}
-	sites, sitesOK := SelectedQuerySites(compilation, record.Artifacts)
+	contexts := record.Source.ContextDirectory()
+	if !contexts.Available() || contexts.LinkID() != sourceID {
+		t.Fatal("query canonical context directory")
+	}
+	sites, sitesOK := SelectedQuerySites(compilation, record.Artifacts, contexts)
 	if !sitesOK || len(sites) == 0 {
 		t.Fatal("selected query sites")
 	}
 	linkAdmissions, linkOK := rules.LinkAdmissions()
 	if !linkOK {
 		t.Fatal("link admissions")
+	}
+	mountedPoint, mountedPointOK := rules.MountedPointAdmissions()
+	if !mountedPointOK {
+		t.Fatal("mounted-point admissions")
 	}
 	mounted, activations, _, mountedOK := rules.MountedAdmissions(record.Artifacts)
 	if !mountedOK {
@@ -94,20 +119,55 @@ func queryCanonicalProgram(t testing.TB, record LinkInputs, bound *ProgramBindin
 	if !queriesOK {
 		t.Fatal("query admissions")
 	}
+	// Reuse Module's sealed composition rows, then perform the same
+	// GenerationID join as production pointTransitionAdmissions. The mirror
+	// must not mint a second transition or context authority.
+	_, _, transitions, generations, _, _, compositionOK := record.Source.Module().BuildCompositionRows(sourceID, record.Artifacts, contexts)
+	if !compositionOK || len(transitions) != len(generations) {
+		t.Fatal("query canonical composition admissions")
+	}
+	generationByID := make(map[identity.ContentID]modulecomposition.InitGeneration, len(generations))
+	for index, generation := range generations {
+		if !generation.Available() || !generation.ID().Available() {
+			t.Fatalf("query canonical generation admission %d", index)
+		}
+		if _, duplicate := generationByID[generation.ID()]; duplicate {
+			t.Fatalf("query canonical duplicate generation admission %d", index)
+		}
+		generationByID[generation.ID()] = generation
+	}
+	pointTransitions := make([]engine.ProgramPointTransitionAdmission, 0, len(transitions))
+	seenGenerations := make(map[identity.ContentID]struct{}, len(transitions))
+	for index, transition := range transitions {
+		generation, generationOK := generationByID[transition.GenerationID()]
+		if !transition.Available() || !generationOK || transition.GenerationID() != generation.ID() {
+			t.Fatalf("query canonical composition admission %d", index)
+		}
+		if _, duplicate := seenGenerations[generation.ID()]; duplicate {
+			t.Fatalf("query canonical duplicate transition admission %d", index)
+		}
+		seenGenerations[generation.ID()] = struct{}{}
+		pointTransitions = append(pointTransitions, engine.ProgramPointTransitionAdmission{Transition: transition, Generation: generation})
+	}
+	if len(seenGenerations) != len(generationByID) {
+		t.Fatal("query canonical composition generations are not all joined")
+	}
 	program, refusal, committed := engine.ConstructProgram(engine.ProgramDeclaration{
-		Binding:   bound.SchemaBinding(),
-		Mounts:    mounts,
-		Bootstrap: witness,
-		Admission: engine.MountedProgramAdmission{Link: linkAdmissions, Mounted: mounted, Activation: activations, Queries: queries},
+		Binding:          bound.SchemaBinding(),
+		Mounts:           mounts,
+		Bootstrap:        witness,
+		Contexts:         contexts,
+		Admission:        engine.MountedProgramAdmission{Link: linkAdmissions, Mounted: mounted, MountedPoint: mountedPoint, Activation: activations, Queries: queries},
+		PointTransitions: pointTransitions,
 	})
 	if !committed || program == nil {
-		t.Fatalf("construct committed query program: stage=%v lowered=%t lowering=%v construction=%v", refusal.Stage(), refusal.Lowered(), refusal.LoweringFailure(), refusal.Commit())
+		t.Fatalf("construct committed query program: stage=%v lowered=%t lowering=%v seal=%v construction=%v", refusal.Stage(), refusal.Lowered(), refusal.LoweringFailure(), refusal.Seal(), refusal.Commit())
 	}
 	return program, sites
 }
 
 func TestQueryPublicationsSealFamilyCodecAndCanonicalizeBorrowedAnswers(t *testing.T) {
-	record := mountedRecord(t, "query-canonical-cell", "local root = {}; local function identity(value) return value end; return identity(root)")
+	record := mountedRecord(t, "query-canonical-cell", "local root = {}; return root")
 	bound := materializerBinding(t, record)
 	catalogState := bound.Compilation().catalog
 	committed, sites := queryCanonicalProgram(t, record, bound)

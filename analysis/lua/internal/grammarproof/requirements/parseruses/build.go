@@ -7,13 +7,14 @@ import (
 	"fmt"
 	"reflect"
 
+	"github.com/wippyai/go-lua/analysis/lua/census"
 	"github.com/wippyai/go-lua/analysis/lua/internal/grammarproof/requirements/parserproducts"
 	"github.com/wippyai/go-lua/internal/framing"
 )
 
 const (
 	canonicalDomain  = "program.grammarproof.requirements.parseruses"
-	canonicalVersion = 3
+	canonicalVersion = 4
 
 	recordProducts = 1
 	recordSlot     = 2
@@ -22,37 +23,41 @@ const (
 	recordMutation = 5
 	recordTail     = 6
 	recordLValue   = 7
+	recordCensus   = 8
 )
 
-// Build derives every parser-consumption coordinate from one already sealed
-// parser-products proof. The products proof is injected: this package never
-// reopens parser source, grammar declarations, or action templates.
-func Build(products parserproducts.Evidence) (Evidence, error) {
+// Build derives parser-consumption coordinates from the sealed typed product
+// arena and the sealed canonical parser census. Both owners are injected; this
+// package never reopens parser source or reconstructs a sequence law.
+func Build(products parserproducts.Evidence, inventory census.Census) (Evidence, error) {
 	if err := validateProducts(products); err != nil {
 		return Evidence{}, err
 	}
-	evidence, err := derive(products)
+	if err := validateCensus(products, inventory); err != nil {
+		return Evidence{}, err
+	}
+	evidence, err := derive(products, inventory)
 	if err != nil {
 		return Evidence{}, err
 	}
 	evidence.Digest = digest(evidence)
-	if err := evidence.Validate(products); err != nil {
+	if err := evidence.Validate(products, inventory); err != nil {
 		return Evidence{}, err
 	}
 	return evidence, nil
 }
 
-// Current validates generated parser-use evidence against the supplied sealed
-// parser-products artifact. Gate code obtains and validates that artifact from
-// its owner before calling this function.
-func Current(products parserproducts.Evidence) (Evidence, error) {
-	if err := Generated.Validate(products); err != nil {
+// Current validates generated parser-use evidence against both supplied sealed
+// owner artifacts. Gate code establishes their source freshness before calling
+// this function.
+func Current(products parserproducts.Evidence, inventory census.Census) (Evidence, error) {
+	if err := Generated.Validate(products, inventory); err != nil {
 		return Evidence{}, err
 	}
 	return clone(Generated), nil
 }
 
-func derive(products parserproducts.Evidence) (Evidence, error) {
+func derive(products parserproducts.Evidence, inventory census.Census) (Evidence, error) {
 	carriers, err := carrierIndex(products.Carriers)
 	if err != nil {
 		return Evidence{}, err
@@ -61,7 +66,7 @@ func derive(products parserproducts.Evidence) (Evidence, error) {
 	if err != nil {
 		return Evidence{}, err
 	}
-	sequences, err := sequenceIndex(products.ProductLaws, products.Sequences)
+	sequences, err := sequenceIndex(products.ProductLaws, inventory)
 	if err != nil {
 		return Evidence{}, err
 	}
@@ -90,6 +95,7 @@ func derive(products parserproducts.Evidence) (Evidence, error) {
 	}
 	return Evidence{
 		ProductsDigest:   products.Digest,
+		CensusDigest:     inventory.Digest,
 		UseSlots:         slots,
 		UsePaths:         paths,
 		HelperUsePaths:   helperPaths,
@@ -101,14 +107,20 @@ func derive(products parserproducts.Evidence) (Evidence, error) {
 
 // Validate requires structural equality with a fresh derivation. Cardinality
 // is evidence, never an existential completion proxy.
-func (e Evidence) Validate(products parserproducts.Evidence) error {
+func (e Evidence) Validate(products parserproducts.Evidence, inventory census.Census) error {
 	if err := validateProducts(products); err != nil {
 		return err
 	}
 	if e.ProductsDigest != products.Digest {
 		return fmt.Errorf("parser uses: stale parser-products identity")
 	}
-	expected, err := derive(products)
+	if err := validateCensus(products, inventory); err != nil {
+		return err
+	}
+	if e.CensusDigest != inventory.Digest {
+		return fmt.Errorf("parser uses: stale parser-census identity")
+	}
+	expected, err := derive(products, inventory)
 	if err != nil {
 		return err
 	}
@@ -151,6 +163,12 @@ func encodeCanonical(e Evidence) ([]byte, error) {
 		return nil, err
 	}
 	if err := writer.String(e.ProductsDigest); err != nil {
+		return nil, err
+	}
+	if err := writer.Record(recordCensus); err != nil {
+		return nil, err
+	}
+	if err := writer.String(e.CensusDigest); err != nil {
 		return nil, err
 	}
 	if err := writeSlots(&writer, e.UseSlots); err != nil {
@@ -480,11 +498,27 @@ func validateProducts(products parserproducts.Evidence) error {
 	if products.Digest != hex.EncodeToString(sum[:]) {
 		return fmt.Errorf("parser uses: invalid parser-products digest")
 	}
-	if len(products.Carriers) == 0 || len(products.ProductLaws) == 0 || len(products.Sequences) == 0 {
+	if len(products.Carriers) == 0 || len(products.ProductLaws) == 0 {
 		return fmt.Errorf("parser uses: incomplete parser-products denominator")
 	}
 	if err := products.ActionTerms.Validate(); err != nil {
 		return fmt.Errorf("parser uses: invalid parser-products action arena: %w", err)
+	}
+	return nil
+}
+
+// validateCensus authenticates the owner-issued sequence denominator and
+// proves it belongs to the same parser source as the typed product arena.
+func validateCensus(products parserproducts.Evidence, inventory census.Census) error {
+	if inventory.Digest == "" || inventory.GrammarSourceDigest == "" || len(inventory.Sequences) == 0 {
+		return fmt.Errorf("parser uses: incomplete parser census")
+	}
+	sum := sha256.Sum256(inventory.Canonical())
+	if inventory.Digest != hex.EncodeToString(sum[:]) {
+		return fmt.Errorf("parser uses: invalid parser-census digest")
+	}
+	if inventory.GrammarSourceDigest != products.ParserSourceDigest {
+		return fmt.Errorf("parser uses: parser census and products describe different parser sources")
 	}
 	return nil
 }

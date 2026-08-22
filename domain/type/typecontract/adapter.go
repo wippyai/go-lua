@@ -53,11 +53,8 @@ const (
 // second graph codec. All composite and open types use the domain's existing
 // scoped canonical graph codec.
 func Encode(ctx context.Context, value typ.Type, formals []*typ.TypeParam) (schematype.Type, error) {
-	formalCount, err := portableFormalCount(formals)
+	receipt, err := authoringReceipt(ctx, value, formals)
 	if err != nil {
-		return schematype.Type{}, err
-	}
-	if err := ValidateAuthoring(ctx, value, formals); err != nil {
 		return schematype.Type{}, err
 	}
 	if primitive, ok := primitiveOf(value); ok {
@@ -67,11 +64,7 @@ func Encode(ctx context.Context, value typ.Type, formals []*typ.TypeParam) (sche
 		}
 		return encoded, nil
 	}
-	encoded, err := typ.EncodeCanonicalFormals(ctx, value, formals)
-	if err != nil {
-		return schematype.Type{}, fmt.Errorf("typecontract: encode: %w", err)
-	}
-	portable, ok := schematype.NewEncoded(encoded, formalCount)
+	portable, ok := schematype.NewEncoded(receipt.Bytes(), receipt.ExternalFormals())
 	if !ok {
 		return schematype.Type{}, errors.New("typecontract: encoded envelope unavailable")
 	}
@@ -84,18 +77,11 @@ func Encode(ctx context.Context, value typ.Type, formals []*typ.TypeParam) (sche
 // decoder; primitive atoms therefore retain their canonical domain bytes at
 // this storage boundary instead of the compact primitive spelling.
 func EncodeStorage(ctx context.Context, value typ.Type, formals []*typ.TypeParam) (schematype.Type, error) {
-	formalCount, err := portableFormalCount(formals)
+	receipt, err := authoringReceipt(ctx, value, formals)
 	if err != nil {
 		return schematype.Type{}, err
 	}
-	if err := ValidateAuthoring(ctx, value, formals); err != nil {
-		return schematype.Type{}, err
-	}
-	encoded, err := typ.EncodeCanonicalFormals(ctx, value, formals)
-	if err != nil {
-		return schematype.Type{}, fmt.Errorf("typecontract: encode storage: %w", err)
-	}
-	portable, ok := schematype.NewEncoded(encoded, formalCount)
+	portable, ok := schematype.NewEncoded(receipt.Bytes(), receipt.ExternalFormals())
 	if !ok {
 		return schematype.Type{}, errors.New("typecontract: encoded storage envelope unavailable")
 	}
@@ -133,11 +119,11 @@ func Decode(ctx context.Context, value schematype.Type, formals []*typ.TypeParam
 	} else if value.ExternalFormals() != formalCount {
 		return nil, fmt.Errorf("typecontract: external formal count %d, want %d", value.ExternalFormals(), len(formals))
 	}
-	encoded := value.Bytes()
-	if err := typ.ValidateCanonicalFormals(encoded, len(decodeFormals)); err != nil {
+	receipt, err := typ.AdmitCanonicalFormals(ctx, value.Bytes(), len(decodeFormals))
+	if err != nil {
 		return nil, fmt.Errorf("typecontract: invalid encoded type: %w", err)
 	}
-	decoded, err := typ.DecodeCanonicalFormals(ctx, encoded, decodeFormals)
+	decoded, err := typ.DecodeCanonicalFormals(ctx, receipt, decodeFormals)
 	if err != nil {
 		return nil, fmt.Errorf("typecontract: decode: %w", err)
 	}
@@ -149,26 +135,35 @@ func Decode(ctx context.Context, value schematype.Type, formals []*typ.TypeParam
 // links iteratively, then delegates canonical graph validity and scope laws to
 // typ's one canonical codec. No second type representation is built here.
 func ValidateAuthoring(ctx context.Context, value typ.Type, formals []*typ.TypeParam) error {
+	_, err := authoringReceipt(ctx, value, formals)
+	return err
+}
+
+// authoringReceipt performs the domain-owned authoring admission once and
+// returns the canonical scoped receipt used by every portable representation.
+// The explicit graph walk rejects domain-level nonportable links before the
+// canonical encoder supplies the trusted immutable image.
+func authoringReceipt(ctx context.Context, value typ.Type, formals []*typ.TypeParam) (typ.CanonicalFormalsReceipt, error) {
 	if ctx == nil {
 		ctx = context.Background()
 	}
 	if err := ctx.Err(); err != nil {
-		return err
+		return typ.CanonicalFormalsReceipt{}, err
 	}
 	if _, err := portableFormalCount(formals); err != nil {
-		return err
+		return typ.CanonicalFormalsReceipt{}, err
 	}
 	if err := validateGraph(ctx, value); err != nil {
-		return err
+		return typ.CanonicalFormalsReceipt{}, err
 	}
-	encoded, err := typ.EncodeCanonicalFormals(ctx, value, formals)
+	receipt, err := typ.EncodeCanonicalFormals(ctx, value, formals)
 	if err != nil {
-		return fmt.Errorf("typecontract: canonical authoring: %w", err)
+		return typ.CanonicalFormalsReceipt{}, fmt.Errorf("typecontract: canonical authoring: %w", err)
 	}
-	if err := typ.ValidateCanonicalFormals(encoded, len(formals)); err != nil {
-		return fmt.Errorf("typecontract: canonical authoring validation: %w", err)
+	if !receipt.Valid() {
+		return typ.CanonicalFormalsReceipt{}, errors.New("typecontract: canonical authoring receipt unavailable")
 	}
-	return nil
+	return receipt, nil
 }
 
 func portableFormalCount(formals []*typ.TypeParam) (uint32, error) {

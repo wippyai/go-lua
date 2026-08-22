@@ -36,7 +36,7 @@ func RuleEntry[P rulePrincipals, A ruleAuthorities]() rule.Spec {
 		Writes: "value",
 		Owner:  "value",
 		Issues: []rule.Issuance{
-			{Occurrence: "occurrence/allocation", Requirement: "requirement/unrestricted", Form: "issuance/local", Input: "input/entry", Stage: "stage/local"},
+			{Occurrence: "occurrence/allocation", Requirement: "program-requirement/unrestricted", Form: "program-form/local-entry"},
 		},
 		Lane:     rule.LaneMounted,
 		Semantic: "semantic/rule/value/allocation",

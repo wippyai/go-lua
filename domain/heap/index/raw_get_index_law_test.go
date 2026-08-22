@@ -18,6 +18,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/program/target/declaration"
 	programschema "github.com/wippyai/go-lua/analysis/schema/program"
 	programcatalog "github.com/wippyai/go-lua/analysis/schema/program/catalog"
+	"github.com/wippyai/go-lua/analysis/schema/programmount"
 	"github.com/wippyai/go-lua/domain/composite"
 	heapdomain "github.com/wippyai/go-lua/domain/heap"
 	indexdomain "github.com/wippyai/go-lua/domain/heap/index"
@@ -108,23 +109,24 @@ func rawSemanticSourceFrontierFixture(t testing.TB, count int) rawSemanticSource
 	}
 	shard, shardOK := linked.Project().Mounts().At(0)
 	module, moduleOK := linked.Project().ModuleKey(shard)
-	programID, programIDOK := linked.Project().Mounts().ProgramID(shard)
+	_, programIDOK := linked.Project().Mounts().ProgramID(shard)
 	artifact, failure := artifactcompiler.CompileDetailed(program, executionSchemaID, issuance)
-	heapMount, heapMountOK := heapdomain.NewArtifactMount(snapshottest.MustLower(t, artifact), module, programID)
-	valueMount, valueMountOK := valuedomain.NewArtifactMount(snapshottest.MustLower(t, artifact), module, programID)
-	packMount, packMountOK := packdomain.NewArtifactMount(snapshottest.MustLower(t, artifact), module, programID)
+	snapshot := snapshottest.MustLower(t, artifact)
+	heapMount, heapMountOK := programmount.MountedArtifactFromSnapshot(snapshot, module)
+	valueMount, valueMountOK := programmount.MountedArtifactFromSnapshot(snapshot, module)
+	packMount, packMountOK := programmount.MountedArtifactFromSnapshot(snapshot, module)
 	if !shardOK || !moduleOK || !programIDOK || failure.Available() || artifact == nil || !heapMountOK || !valueMountOK || !packMountOK {
 		t.Fatalf("mounted semantic-source artifact shard=%t module=%t program=%t failure=%v artifact=%t heap=%t value=%t pack=%t", shardOK, moduleOK, programIDOK, failure, artifact != nil, heapMountOK, valueMountOK, packMountOK)
 	}
-	heapSchema, heapFailure := heapdomain.SealWithArtifacts(linked, []heapdomain.ArtifactMount{heapMount})
+	heapSchema, heapFailure := heapdomain.SealWithArtifacts(linked, []programmount.MountedArtifact{heapMount})
 	structural, structuralOK := composite.StructureVocabulary(compilation)
 	if !structuralOK {
 		t.Fatal("structure vocabulary")
 	}
-	valueSchema, valueFailure := valuedomain.SealWithFailure(linked, heapSchema, []valuedomain.ArtifactMount{valueMount}, structural)
+	valueSchema, valueFailure := valuedomain.SealWithFailure(linked, heapSchema, []programmount.MountedArtifact{valueMount}, structural)
 	types, typeErr := typeauthority.SealProgramRows(linked.ContentID(), []programschema.Program{artifact.Program()})
 	statics, _, staticErr := staticdomain.SealMountedPrograms(staticdomain.MountContext{LinkID: linked.ContentID(), Target: contract}, types, []staticdomain.MountedProgram{{Program: snapshottest.MustMount(t, artifact, module).Program, ModuleID: module, NamespaceID: module}})
-	packs, packsOK := packdomain.SealMountedArtifacts(linked, statics, []packdomain.ArtifactMount{packMount})
+	packs, packsOK := packdomain.SealMountedArtifacts(linked, statics, []programmount.MountedArtifact{packMount})
 	if heapFailure != heapdomain.SealFailureNone || valueFailure != valuedomain.SealFailureNone || typeErr != nil || staticErr != nil || statics == nil || !packsOK || packs == nil {
 		t.Fatalf("mounted semantic-source schemas heap=%v value=%v type=%v static=%v statics=%t packs=%t", heapFailure, valueFailure, typeErr, staticErr, statics != nil, packsOK)
 	}

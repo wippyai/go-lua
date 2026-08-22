@@ -143,6 +143,19 @@ func globalInverseFixture(t testing.TB) (*linkproject.Component, *linkboundary.C
 	return project, boundary, module, p, shard, cell
 }
 
+func analysisRootForShard(t testing.TB, module *linkmodule.Component, shard linkproject.Shard) linkmodule.AnalysisRoot {
+	t.Helper()
+	for index := 0; index < module.Roots().Count(); index++ {
+		root, rootOK := module.Roots().At(index)
+		rootShard, _, _, mappingOK := module.Roots().Mapping(root)
+		if rootOK && mappingOK && rootShard == shard {
+			return root
+		}
+	}
+	t.Fatalf("missing AnalysisRoot for Shard")
+	return linkmodule.AnalysisRoot{}
+}
+
 func TestGlobalsForProgramCellExactInverseAndOwnerFence(t *testing.T) {
 	project, boundary, module, p, shard, cell := globalInverseFixture(t)
 	draft, err := Build(Input{Project: project, Boundary: boundary, Module: module})
@@ -157,28 +170,29 @@ func TestGlobalsForProgramCellExactInverseAndOwnerFence(t *testing.T) {
 	if globals.Count() == 0 {
 		t.Fatal("fixture Host has no globals")
 	}
-	first, ok := globals.ForProgramCell(shard, p, cell)
+	root := analysisRootForShard(t, module, shard)
+	first, ok := globals.ForProgramCell(shard, p, cell, root)
 	if !ok {
 		t.Fatal("first global inverse lookup failed")
 	}
-	last, ok := globals.ForProgramCell(shard, p, cell)
+	last, ok := globals.ForProgramCell(shard, p, cell, root)
 	if !ok || last != first {
 		t.Fatal("repeat global inverse lookup changed its owner-local handle")
 	}
-	if _, ok := globals.ForProgramCell(shard, nil, cell); ok {
+	if _, ok := globals.ForProgramCell(shard, nil, cell, root); ok {
 		t.Fatal("nil Program owner admitted")
 	}
-	if _, ok := globals.ForProgramCell(shard, p, 0); ok {
+	if _, ok := globals.ForProgramCell(shard, p, 0, root); ok {
 		t.Fatal("zero Cell admitted")
 	}
-	if _, ok := globals.ForProgramCell(shard, p, cell+1); ok {
+	if _, ok := globals.ForProgramCell(shard, p, cell+1, root); ok {
 		t.Fatal("absent Cell admitted")
 	}
 	equivalent, err := lower.Lower(lower.Source{Name: "global-inverse-equivalent", Text: []byte("return require")})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, ok := globals.ForProgramCell(shard, equivalent, cell); ok {
+	if _, ok := globals.ForProgramCell(shard, equivalent, cell, root); ok {
 		t.Fatal("equivalent foreign Program admitted")
 	}
 	var wrongShard linkproject.Shard
@@ -194,7 +208,7 @@ func TestGlobalsForProgramCellExactInverseAndOwnerFence(t *testing.T) {
 	if !wrongShardOK {
 		t.Fatal("missing wrong-shard fixture")
 	}
-	if _, ok := globals.ForProgramCell(wrongShard, p, cell); ok {
+	if _, ok := globals.ForProgramCell(wrongShard, p, cell, root); ok {
 		t.Fatal("wrong mounted Shard admitted")
 	}
 	foreignProjectDraft, err := linkproject.Build(linkproject.Input{Target: mustTarget(boundary), Modules: []linkproject.Module{{Name: "main", Program: p}}})
@@ -209,7 +223,7 @@ func TestGlobalsForProgramCellExactInverseAndOwnerFence(t *testing.T) {
 	if !ok {
 		t.Fatal("missing foreign shard")
 	}
-	if _, ok := globals.ForProgramCell(foreignShard, p, cell); ok {
+	if _, ok := globals.ForProgramCell(foreignShard, p, cell, root); ok {
 		t.Fatal("foreign same-ordinal Project Shard admitted")
 	}
 	otherDraft, err := Build(Input{Project: project, Boundary: boundary, Module: module})
@@ -220,7 +234,7 @@ func TestGlobalsForProgramCellExactInverseAndOwnerFence(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	otherBinding, ok := other.Globals().ForProgramCell(shard, p, cell)
+	otherBinding, ok := other.Globals().ForProgramCell(shard, p, cell, root)
 	if !ok {
 		t.Fatal("equivalent Host inverse lookup failed")
 	}
@@ -228,27 +242,32 @@ func TestGlobalsForProgramCellExactInverseAndOwnerFence(t *testing.T) {
 		t.Fatal("equivalent foreign Host binding crossed owner fence")
 	}
 	if allocations := testing.AllocsPerRun(100, func() {
-		_, _ = globals.ForProgramCell(shard, p, cell)
+		_, _ = globals.ForProgramCell(shard, p, cell, root)
 	}); allocations != 0 {
 		t.Fatalf("ForProgramCell allocated: %g", allocations)
 	}
 }
 
-func TestGlobalsForProgramCellRejectsDuplicateCollisionAtSeal(t *testing.T) {
-	project, boundary, _, _, _, _ := globalInverseFixture(t)
+func TestGlobalsForProgramCellKeepsDistinctRootOccurrences(t *testing.T) {
+	project, boundary, _, p, shard, cell := globalInverseFixture(t)
 	md, err := linkmodule.Build(linkmodule.Input{
 		Project: project, Boundary: boundary,
 		Spec: linkmodule.Spec{
-			Actors: []linkmodule.ActorSpec{{Name: "actor"}},
+			Actors: []linkmodule.ActorSpec{{Name: "actor-a"}, {Name: "actor-b"}},
 			ModuleCacheAliases: []linkmodule.ModuleCacheAliasClassSpec{{
-				Actor: "actor", Instances: []string{"instance-main"}, Representative: "instance-main",
+				Actor: "actor-a", Instances: []string{"instance-main-a"}, Representative: "instance-main-a",
 			}, {
-				Actor: "actor", Instances: []string{"instance-other"}, Representative: "instance-other",
+				Actor: "actor-a", Instances: []string{"instance-other-a"}, Representative: "instance-other-a",
+			}, {
+				Actor: "actor-b", Instances: []string{"instance-main-b"}, Representative: "instance-main-b",
+			}, {
+				Actor: "actor-b", Instances: []string{"instance-other-b"}, Representative: "instance-other-b",
 			}},
 			AnalysisRoots: []linkmodule.AnalysisRootSpec{
-				{Name: "first", Module: "main", Actor: "actor", Instance: "instance-main"},
-				{Name: "other", Module: "other", Actor: "actor", Instance: "instance-other"},
-				{Name: "second", Module: "main", Actor: "actor", Instance: "instance-main"},
+				{Name: "first", Module: "main", Actor: "actor-a", Instance: "instance-main-a"},
+				{Name: "other-a", Module: "other", Actor: "actor-a", Instance: "instance-other-a"},
+				{Name: "second", Module: "main", Actor: "actor-b", Instance: "instance-main-b"},
+				{Name: "other-b", Module: "other", Actor: "actor-b", Instance: "instance-other-b"},
 			},
 		},
 	})
@@ -259,7 +278,35 @@ func TestGlobalsForProgramCellRejectsDuplicateCollisionAtSeal(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := Build(Input{Project: project, Boundary: boundary, Module: duplicateModule}); err == nil {
-		t.Fatal("duplicate (Shard, Cell) global collision was admitted")
+	draft, err := Build(Input{Project: project, Boundary: boundary, Module: duplicateModule})
+	if err != nil {
+		t.Fatalf("same Program cell under two actor roots was rejected: %v", err)
+	}
+	host, err := draft.Finalize()
+	if err != nil {
+		t.Fatal(err)
+	}
+	globals := host.Globals()
+	if globals.Count() != 2 {
+		t.Fatalf("same Program cell emitted %d globals, want one per actor root", globals.Count())
+	}
+	var bindings []GlobalBinding
+	for index := 0; index < duplicateModule.Roots().Count(); index++ {
+		root, rootOK := duplicateModule.Roots().At(index)
+		rootShard, _, _, mappingOK := duplicateModule.Roots().Mapping(root)
+		if !rootOK || !mappingOK || rootShard != shard {
+			continue
+		}
+		binding, bindingOK := globals.ForProgramCell(shard, p, cell, root)
+		if !bindingOK {
+			t.Fatalf("root %d global inverse lookup failed", index)
+		}
+		bindings = append(bindings, binding)
+	}
+	if len(bindings) != 2 || bindings[0] == bindings[1] {
+		t.Fatalf("root-qualified global rows collapsed: %d/%v", len(bindings), bindings)
+	}
+	if _, ok := globals.ForProgramCell(shard, p, cell, linkmodule.AnalysisRoot{}); ok {
+		t.Fatal("zero AnalysisRoot admitted")
 	}
 }

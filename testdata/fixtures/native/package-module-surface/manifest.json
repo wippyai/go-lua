@@ -1,0 +1,15 @@
+{
+  "description": "The stdlib package module's declared surface: loadlib and seeall plus the preload, loaders, loaded, path, cpath and config values, each bound at the type the package manifest declares for it. Binding a member at its declared type carries no refutation. Members are transcribed from stdlib/package_manifest.go; the vendored Lua 5.1 conformance suite (deleted at c03a54362c) exercised six of the eight at runtime and is the historical precedent, but its VM-execution form carries no declaration expectation.",
+  "packages": [
+    "package"
+  ],
+  "files": [
+    "main.lua"
+  ],
+  "check": {
+    "errors": 0
+  },
+  "run": {
+    "skip": "declaration-surface fixture"
+  }
+}

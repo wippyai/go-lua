@@ -10,13 +10,13 @@ import (
 	calltargetcompile "github.com/wippyai/go-lua/analysis/program/artifact/compiler/internal/calltarget"
 	"github.com/wippyai/go-lua/analysis/program/artifact/compiler/internal/diagnostic"
 	"github.com/wippyai/go-lua/analysis/program/artifact/compiler/internal/localtransfer"
-	stageplan "github.com/wippyai/go-lua/analysis/program/artifact/compiler/internal/stage"
-	"github.com/wippyai/go-lua/analysis/program/artifact/issuance"
+	schemaissuance "github.com/wippyai/go-lua/analysis/schema/issuance"
+	programissuance "github.com/wippyai/go-lua/analysis/schema/program/issuance"
 )
 
 // CompileDetailed compiles one immutable Program under an execution schema and
 // issuance directory. It is the sole diagnostic compilation entry point.
-func CompileDetailed(input *program.Program, executionSchema programartifact.ExecutionSchemaID, issuance issuance.Directory) (*programartifact.Artifact, CompileFailure) {
+func CompileDetailed(input *program.Program, executionSchema programartifact.ExecutionSchemaID, issuance schemaissuance.Plan) (*programartifact.Artifact, CompileFailure) {
 	if !input.Available() {
 		return nil, compileFailure(CompileStageAuthority, CompileRowAuthority, -1, -1, CompileReasonProgramUnavailable)
 	}
@@ -33,7 +33,7 @@ func CompileDetailed(input *program.Program, executionSchema programartifact.Exe
 	}
 	transaction := compiler{
 		input: input, key: key, counts: counts, issuance: issuance, pointGeometry: make(map[identity.ContentID]pointDraft),
-		occurrenceSpans: make(map[occurrenceLookup]occurrenceSpanGeometry), stages: stageplan.New(artifactFormat()), localTransfer: localtransfer.New(artifactFormat()),
+		issuanceRows: programissuance.NewBuilder(), localTransfer: localtransfer.New(artifactFormat()),
 		environmentByRoute: make(map[identity.ContentID]environmentRouteIndex),
 	}
 	if failure := transaction.indexPointAttachmentsFailure(); failure.Available() {
@@ -103,17 +103,12 @@ func CompileDetailed(input *program.Program, executionSchema programartifact.Exe
 	if failure := transaction.deriveRuleOccurrencesFailure(); failure.Available() {
 		return nil, failure
 	}
-	// Rule issuance has consumed occurrence span geometry and the original
-	// route index generation. Stage installation rebuilds its own route index
-	// after it rewrites environment sources.
-	transaction.occurrenceSpans = nil
 	transaction.environmentByRoute = nil
 	if failure := transaction.installLocalStagesFailure(); failure.Available() {
 		return nil, failure
 	}
 	// Synthetic stage directories and the post-rewrite route indexes are now
 	// fully reflected in canonical points, routes, WTO events, and rule rows.
-	transaction.stages = nil
 	transaction.environmentByRoute = nil
 	if transaction.publication.RuleOccurrences == nil {
 		return nil, compileFailure(CompileStageOccurrences, CompileRowOccurrence, -1, -1, CompileReasonOccurrenceUnavailable)
@@ -144,13 +139,24 @@ func (compiler *compiler) copyCallTargetsFailure() CompileFailure {
 	if fault.Available() {
 		return CompileFailure{construction: fault}
 	}
+	proofs, proofFault := calltargetcompile.ClosureCaptureProofs(calltargetcompile.Input{
+		Program: compiler.input, Allocations: compiler.allocations, Bodies: compiler.bodyBoundary,
+	}, rows)
+	if proofFault.Available() {
+		return CompileFailure{construction: proofFault}
+	}
+	for _, occurrence := range proofs {
+		if compiler.issuanceRows == nil || !compiler.issuanceRows.AddClosureProof(occurrence) {
+			return compileFailure(CompileStageOccurrences, CompileRowOccurrence, -1, -1, CompileReasonOccurrenceUnavailable)
+		}
+	}
 	compiler.publication.CallTargets = rows
 	return CompileFailure{}
 }
 
 // Compile compiles one sealed Program under the supplied execution schema and
 // reports whether the immutable artifact was published.
-func Compile(input *program.Program, executionSchema programartifact.ExecutionSchemaID, issuance issuance.Directory) (*programartifact.Artifact, bool) {
+func Compile(input *program.Program, executionSchema programartifact.ExecutionSchemaID, issuance schemaissuance.Plan) (*programartifact.Artifact, bool) {
 	result, failure := CompileDetailed(input, executionSchema, issuance)
 	return result, result != nil && !failure.Available()
 }

@@ -162,23 +162,29 @@ func (epoch *executorEpoch) visitPoints() (visited bool, ok bool) {
 			if (len(frames) == 0 && event.Region != schedule.NoRegion) || (len(frames) != 0 && event.Region != frames[len(frames)-1].region) {
 				return false, false
 			}
-			point, pointOK := epoch.runtime.graph.PointAt(event.Node)
-			pointIndex, indexed := epoch.runtime.graph.PointIndex(point)
-			if !pointOK || !indexed || pointIndex < 0 || pointIndex >= len(epoch.runtime.activePoints) || !epoch.runtime.activePoints[pointIndex] {
+			stateIndex := int(event.Node)
+			point, _, _, pointOK := epoch.runtime.graphPointAtState(stateIndex)
+			if !pointOK {
 				return false, false
+			}
+			// The retained plan schedule is static over all compact states. Demand
+			// activation is epoch-local, so an event for a non-admitted state is a
+			// valid schedule row with no work in this epoch.
+			if !epoch.activeState(stateIndex) {
+				continue
 			}
 			if event.Region != schedule.NoRegion {
 				if !epoch.activeRegion(event.Region) {
 					return false, false
 				}
-				if epoch.runtime.regions[event.Region].head == pointIndex && epoch.nested[event.Region] != 0 {
+				if epoch.runtime.regions[event.Region].head == stateIndex && epoch.nested[event.Region] != 0 {
 					// The child frame owns progress first. Leaving this Point queued
 					// makes the next iterative WTO pass revisit the parent head only
 					// after all nested readiness has drained.
 					continue
 				}
 			}
-			if !epoch.takePoint(pointIndex) {
+			if !epoch.takePoint(stateIndex) {
 				continue
 			}
 			visited = true
@@ -188,11 +194,11 @@ func (epoch *executorEpoch) visitPoints() (visited bool, ok bool) {
 					return false, false
 				}
 				candidate := &epoch.runtime.regions[event.Region]
-				if candidate.head == pointIndex {
+				if candidate.head == stateIndex {
 					headRegion = event.Region
 				}
 			}
-			if _, pointOK := epoch.refreshPoint(point, pointIndex, headRegion); !pointOK {
+			if _, pointOK := epoch.refreshPoint(point, stateIndex, headRegion); !pointOK {
 				epoch.recordPointFailure(SolveFailureReasonExecution, point)
 				return false, false
 			}
@@ -520,14 +526,14 @@ func (solver *Solver) solve(ctx context.Context, report *SolveReport, diagnostic
 			}
 			row, rowOK := runtime.program.queryAt(index)
 			query, queryOK := runtime.graph.QueryAt(index)
-			if !rowOK || !queryOK || !query.Key().Available() || row.point < 0 || int(row.point) >= len(epoch.points) {
+			if !rowOK || !queryOK || !query.Key().Available() || row.point < 0 || int(row.point) >= runtime.graph.PointCount() || uint64(row.state) >= uint64(len(epoch.points)) {
 				epoch.incomplete()
 				epoch.discard()
 				reportFailureQuery(report, SolveFailureReasonQuery, identity.SemanticKey{})
 				return nil, SolveIncomplete
 			}
 			point := query.Point()
-			held, heldOK := publication.readPoint(epoch, int(row.point))
+			held, heldOK := publication.readPoint(epoch, int(row.state))
 			if !heldOK {
 				epoch.incomplete()
 				epoch.discard()
@@ -571,21 +577,21 @@ func (solver *Solver) solve(ctx context.Context, report *SolveReport, diagnostic
 				return nil, SolveCanceled
 			}
 			observation, observed := runtime.program.observationAt(index)
-			if !observed || !observation.valid() || observation.point < 0 || int(observation.point) >= len(epoch.points) {
+			if !observed || !observation.valid() || observation.point < 0 || int(observation.point) >= runtime.graph.PointCount() || uint64(observation.state) >= uint64(len(epoch.points)) {
 				epoch.incomplete()
 				epoch.discard()
 				reportFailureQuery(report, SolveFailureReasonQuery, identity.SemanticKey{})
 				return nil, SolveIncomplete
 			}
 			id := observation.id
-			point, pointOK := runtime.graph.PointAt(schedule.Node(observation.point))
-			if !id.Available() || !pointOK {
+			point, pointIndex, _, pointOK := runtime.graphPointAtState(int(observation.state))
+			if !id.Available() || !pointOK || pointIndex != int(observation.point) {
 				epoch.incomplete()
 				epoch.discard()
 				reportFailureQuery(report, SolveFailureReasonQuery, reportedSemanticKey(point.Key()))
 				return nil, SolveIncomplete
 			}
-			held, heldOK := publication.readPoint(epoch, int(observation.point))
+			held, heldOK := publication.readPoint(epoch, int(observation.state))
 			if !heldOK {
 				epoch.incomplete()
 				epoch.discard()

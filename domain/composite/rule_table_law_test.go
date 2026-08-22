@@ -54,8 +54,9 @@ func TestRuleTableCoversEveryDeclarationKeyExactlyOnce(t *testing.T) {
 			mounted++
 		}
 	}
-	if RuleCount(compilation) != mounted+len(LinkKeys(compilation)) {
-		t.Fatalf("table = %d rules, mounted = %d, link = %d", RuleCount(compilation), mounted, len(LinkKeys(compilation)))
+	mountedPoint := len(mountedPointKeys(compilation.catalog))
+	if RuleCount(compilation) != mounted+len(LinkKeys(compilation))+mountedPoint {
+		t.Fatalf("table = %d rules, mounted = %d, mounted-point = %d, link = %d", RuleCount(compilation), mounted, mountedPoint, len(LinkKeys(compilation)))
 	}
 }
 
@@ -124,7 +125,11 @@ func TestRuleTableDrivesEveryDerivedView(t *testing.T) {
 		if links[key] != (entry.Lane() == rule.LaneLink) {
 			t.Fatalf("key %q lane membership disagrees with the link projection", key)
 		}
-		if entry.Lane().Mounted() != !links[key] {
+		mountedPoint := entry.Lane() == rule.LaneMountedPoint
+		if mountedPoint != containsSchemaKey(mountedPointKeys(state), key) {
+			t.Fatalf("key %q lane membership disagrees with the mounted-point projection", key)
+		}
+		if entry.Lane().Mounted() != !links[key] && !mountedPoint {
 			t.Fatalf("key %q is neither mounted nor link owned", key)
 		}
 	}
@@ -141,6 +146,15 @@ func TestRuleTableDrivesEveryDerivedView(t *testing.T) {
 	if DiagnosticRuleForKey(compilation, "") != DiagnosticRuleUnknown {
 		t.Fatal("the empty key was classified")
 	}
+}
+
+func containsSchemaKey(keys []schema.Key, want schema.Key) bool {
+	for _, key := range keys {
+		if key == want {
+			return true
+		}
+	}
+	return false
 }
 
 // TestRuleTableOwnerNamesABoundPrincipal is the schema join of the operand
@@ -244,6 +258,17 @@ func TestLinkKeysNameTheLinkLane(t *testing.T) {
 	}
 	if MountedRuleKey(compilation, "no-such-rule") {
 		t.Fatal("unknown key classified as mounted")
+	}
+	for _, key := range mountedPointKeys(state) {
+		entry, ok := templateForKey(state, key)
+		if !ok || entry.Lane() != rule.LaneMountedPoint || MountedRuleKey(compilation, key) {
+			t.Fatalf("mounted-point key %q lost its lane ownership", key)
+		}
+		for _, link := range keys {
+			if link == key {
+				t.Fatalf("mounted-point key %q appeared in LinkKeys", key)
+			}
+		}
 	}
 }
 

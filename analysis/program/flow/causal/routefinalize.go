@@ -316,3 +316,15 @@ func (s *sealState) installComponentDirectory(components []recurrence.Component)
 	}
 	return nil
 }
+
+func (r *Result) componentPath(head keyspace.Term) (identity.ContentID, bool) {
+	if r == nil || !r.componentIssued(head) {
+		return identity.ContentID{}, false
+	}
+	index, ok := r.componentIndex[head]
+	if !ok || uint64(index) >= uint64(len(r.componentPaths)) {
+		return identity.ContentID{}, false
+	}
+	path := r.componentPaths[index]
+	return path, path.Available()
+}

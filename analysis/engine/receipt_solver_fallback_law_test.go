@@ -7,6 +7,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/engine/internal/equation"
 	"github.com/wippyai/go-lua/analysis/engine/rows"
 	"github.com/wippyai/go-lua/analysis/identity"
+	programissuance "github.com/wippyai/go-lua/analysis/schema/program/issuance"
 )
 
 type selectedOverlayLawFixture struct {
@@ -191,13 +192,6 @@ func newSelectedOverlayLawFixtureWithOptions(t testing.TB, options selectedOverl
 	if !artifactOK {
 		t.Fatal("selected overlay artifact header")
 	}
-	if !artifact.InstallStageLaws([]rows.ArtifactStageLaw{
-		{Stage: rows.ArtifactRuleStageIssued3, Native: true},
-		{Stage: rows.ArtifactRuleStageIssued4, Native: true, Predecessor: rows.ArtifactRuleStageIssued3},
-		{Stage: rows.ArtifactRuleStageIssued5, Native: true, Predecessor: rows.ArtifactRuleStageIssued4},
-	}) {
-		t.Fatal("selected overlay artifact stage laws")
-	}
 	ordinaryRole, ordinaryRoleOK := artifact.DeclareRole(selectedOverlayLawID(998_640))
 	activationRole, activationRoleOK := artifact.DeclareRole(selectedOverlayLawID(998_641))
 	points := []identity.ContentID{selectedOverlayLawID(triggerPoint), selectedOverlayLawID(targetPoint), selectedOverlayLawID(bodyPoint)}
@@ -224,11 +218,11 @@ func newSelectedOverlayLawFixtureWithOptions(t testing.TB, options selectedOverl
 	if !artifact.AddEvent(rows.ArtifactScalarEvent{Kind: rows.ArtifactEventExit, Region: selectedOverlayLawID(998_642)}) {
 		t.Fatal("selected overlay artifact exit")
 	}
-	triggerRule := rows.ArtifactScalarRule{Role: activationRole, Stage: rows.ArtifactRuleStageBase, Point: points[0], ID: selectedOverlayLawID(triggerOccurrence)}
+	triggerRule := rows.ArtifactScalarRule{Role: activationRole, Stage: programissuance.StageBase, Point: points[0], ID: selectedOverlayLawID(triggerOccurrence)}
 	if options.nativeStage {
-		triggerRule = rows.ArtifactScalarRule{Role: activationRole, Stage: rows.ArtifactRuleStageIssued3, Point: points[2], Input: points[0], ID: selectedOverlayLawID(triggerOccurrence)}
+		triggerRule = rows.ArtifactScalarRule{Role: activationRole, Stage: programissuance.StageCallDispatch, Point: points[2], Input: points[0], ID: selectedOverlayLawID(triggerOccurrence), Native: true}
 	}
-	if !ordinaryRoleOK || !activationRoleOK || !artifact.AddRule(triggerRule) || !artifact.AddRule(rows.ArtifactScalarRule{Role: ordinaryRole, Stage: rows.ArtifactRuleStageLocal, Point: points[1], Input: points[0], ID: selectedOverlayLawID(targetOccurrence)}) || !artifact.AddRule(rows.ArtifactScalarRule{Role: ordinaryRole, Stage: rows.ArtifactRuleStageBase, Point: points[2], ID: selectedOverlayLawID(bodyOccurrence)}) {
+	if !ordinaryRoleOK || !activationRoleOK || !artifact.AddRule(triggerRule) || !artifact.AddRule(rows.ArtifactScalarRule{Role: ordinaryRole, Stage: programissuance.StageLocal, Point: points[1], Input: points[0], ID: selectedOverlayLawID(targetOccurrence)}) || !artifact.AddRule(rows.ArtifactScalarRule{Role: ordinaryRole, Stage: programissuance.StageBase, Point: points[2], ID: selectedOverlayLawID(bodyOccurrence)}) {
 		t.Fatal("selected overlay artifact rules")
 	}
 	body, bodyOK := artifact.AddBody(rows.ArtifactScalarBody{ID: selectedOverlayLawID(bodyID)})
@@ -257,7 +251,8 @@ func newSelectedOverlayLawFixtureWithOptions(t testing.TB, options selectedOverl
 		activationAdmit.Application = coldKey(activationApplication + 1)
 		admission.Activation = append(admission.Activation, activationAdmit)
 	}
-	queryAdmission, queryAdmissionOK := NewExactQueryAdmission(queryImplementation, selectedOverlayLawID(queryID), selectedOverlayLawID(mountID), points[1])
+	contexts := explicitTestContextDirectory(t, selectedOverlayLawID(ownerID), []identity.ContentID{selectedOverlayLawID(mountID)}, selectedOverlayLawID(ownerID+1), selectedOverlayLawID(ownerID+2))
+	queryAdmission, queryAdmissionOK := NewExactQueryAdmission(queryImplementation, selectedOverlayLawID(queryID), selectedOverlayLawID(mountID), points[1], explicitTestContext(t, contexts, selectedOverlayLawID(mountID)))
 	if !queryAdmissionOK {
 		t.Fatal("selected overlay query admission")
 	}
@@ -266,7 +261,7 @@ func newSelectedOverlayLawFixtureWithOptions(t testing.TB, options selectedOverl
 	if !activationIdentity.Available() {
 		t.Fatal("selected overlay activation identity")
 	}
-	program, refusal, constructed := ConstructProgram(ProgramDeclaration{Binding: binding, Mounts: []MountedProgramArtifact{mount}, Bootstrap: bootstrap, Admission: admission})
+	program, refusal, constructed := ConstructProgram(ProgramDeclaration{Binding: binding, Mounts: []MountedProgramArtifact{mount}, Bootstrap: bootstrap, Contexts: contexts, Admission: admission})
 	if duplicateApplication {
 		if constructed || program != nil || !refusal.Commit().Available() {
 			t.Fatal("conflicting activation applications crossed the sealed trigger fence")
@@ -277,7 +272,7 @@ func newSelectedOverlayLawFixtureWithOptions(t testing.TB, options selectedOverl
 		t.Fatalf("selected overlay ConstructProgram stage=%v lower=%v lowerFailure=%v commit=%v constructionStep=%v constructionOrdinal=%d seal=%v", refusal.Stage(), refusal.Lowered(), refusal.LoweringFailure(), refusal.Commit(), refusal.construction.Step(), refusal.construction.Ordinal(), refusal.Seal())
 	}
 	observationIdentity := selectedOverlayLawID(observationID)
-	observation, observationOK := NewExactObservationAdmission(queryImplementation, observationIdentity, ordinaryCapability, selectedOverlayLawID(mountID), points[1], selectedOverlayLawID(targetOccurrence))
+	observation, observationOK := NewExactObservationAdmission(queryImplementation, observationIdentity, ordinaryCapability, selectedOverlayLawID(mountID), points[1], selectedOverlayLawID(targetOccurrence), explicitTestContext(t, contexts, selectedOverlayLawID(mountID)))
 	if !observationOK {
 		t.Fatal("selected overlay observation admission")
 	}

@@ -9,7 +9,6 @@ import (
 	"github.com/wippyai/go-lua/analysis/lua/lower"
 	programartifact "github.com/wippyai/go-lua/analysis/program/artifact"
 	artifactcompiler "github.com/wippyai/go-lua/analysis/program/artifact/compiler"
-	"github.com/wippyai/go-lua/analysis/program/artifact/issuance"
 	"github.com/wippyai/go-lua/analysis/program/link"
 	linkproject "github.com/wippyai/go-lua/analysis/program/link/project"
 	"github.com/wippyai/go-lua/analysis/program/target/compiler"
@@ -17,6 +16,7 @@ import (
 	targetvocabulary "github.com/wippyai/go-lua/analysis/program/target/vocabulary"
 	"github.com/wippyai/go-lua/analysis/schema"
 	"github.com/wippyai/go-lua/analysis/schema/ingress"
+	"github.com/wippyai/go-lua/analysis/schema/programmount"
 	"github.com/wippyai/go-lua/analysis/schema/structure"
 	schemavocabulary "github.com/wippyai/go-lua/analysis/schema/vocabulary"
 	heapdomain "github.com/wippyai/go-lua/domain/heap"
@@ -27,6 +27,7 @@ import (
 	typecontract "github.com/wippyai/go-lua/domain/type/typecontract"
 	valuedomain "github.com/wippyai/go-lua/domain/value"
 	valueowner "github.com/wippyai/go-lua/domain/value/owner"
+	"github.com/wippyai/go-lua/internal/testfixture"
 )
 
 // TestPublicationEscapeOperationGateDoesNotCrossApplyCandidates proves that
@@ -53,10 +54,12 @@ func TestPublicationEscapeOperationGateDoesNotCrossApplyCandidates(t *testing.T)
 	}
 }
 
-// TestPublicationEscapeOpaqueCallWidensEveryAllocationRoot proves the Top /
-// open Call widening boundary. It must not guess which publication candidate ran: each
-// allocation root is emitted with Unknown.
-func TestPublicationEscapeOpaqueCallWidensEveryAllocationRoot(t *testing.T) {
+// TestPublicationEscapeOpaqueCallDoesNotInventPublicationRoutes proves that
+// Call's opaque arm is not an Effect publication receipt. The synthesized
+// opaque operation owns unknown formal/transfer tails, but it has no authored
+// publication descriptor, so publicationescape must not compensate with an
+// all-root Unknown route.
+func TestPublicationEscapeOpaqueCallDoesNotInventPublicationRoutes(t *testing.T) {
 	fixture := newPublicationEscapeFixture(t)
 	rule := fixture.rule()
 	prepared := &preparedBatch{
@@ -68,6 +71,63 @@ func TestPublicationEscapeOpaqueCallWidensEveryAllocationRoot(t *testing.T) {
 	if !ok {
 		t.Fatal("opaque Call route set was rejected")
 	}
+	if routes.len() != 0 || routes.allRoot {
+		t.Fatalf("opaque Call routes=%d allRoot=%t, want no publication routes", routes.len(), routes.allRoot)
+	}
+}
+
+// TestPublicationEscapeKnownPublicationSurvivesOpaqueSibling proves that an
+// authenticated known publication remains precise when Call also carries an
+// opaque alternative. The unknown sibling is not a reason to widen the known
+// descriptor's payload to unrelated Heap roots.
+func TestPublicationEscapeKnownPublicationSurvivesOpaqueSibling(t *testing.T) {
+	fixture := newPublicationEscapeFixture(t)
+	if len(fixture.allocations) == 0 {
+		t.Fatal("fixture has no allocation root")
+	}
+	atom, atomOK := fixture.values.Allocation(fixture.allocations[0], materialization.Recent)
+	if !atomOK {
+		t.Fatal("Value allocation atom")
+	}
+	fact, factOK := fixture.values.Singleton(atom)
+	if !factOK {
+		t.Fatal("Value allocation singleton")
+	}
+	rowID := contentID(6)
+	gate := operationGateForTest(1)
+	gate.opaque = true
+	routes, ok := fixture.rule().routeSet(fixture.placement, &preparedBatch{
+		rows: []publicationRow{{id: rowID, requirement: placementdomain.SharedHeap, operation: 1}},
+	}, gate, factBufferForTest(
+		map[identity.ContentID]valuedomain.Value{rowID: fact},
+		map[identity.ContentID]bool{rowID: true},
+	))
+	if !ok || routes.allRoot || routes.len() != 1 {
+		t.Fatalf("known+opaque publication routes=%#v/%t, want one exact route", routes, ok)
+	}
+	route, routeOK := routes.at(0)
+	if !routeOK || route.key != fixture.allocations[0] || route.required != placementdomain.SharedHeap || route.unknown {
+		t.Fatalf("known+opaque publication route=%#v/%t, want exact SharedHeap payload route", route, routeOK)
+	}
+}
+
+// TestPublicationEscapeTopValueBroadcastsKnownRequirement proves that Value
+// identity uncertainty is independent from the publication policy. A known
+// Send row broadcasts Value Top to every allocation root, but every route
+// retains SharedHeap and remains an exact placement displacement.
+func TestPublicationEscapeTopValueBroadcastsKnownRequirement(t *testing.T) {
+	fixture := newPublicationEscapeFixture(t)
+	rowID := contentID(4)
+	prepared := &preparedBatch{
+		rows: []publicationRow{{id: rowID, requirement: placementdomain.SharedHeap, operation: 1}},
+	}
+	routes, ok := fixture.rule().routeSet(fixture.placement, prepared, operationGateForTest(1), factBufferForTest(
+		map[identity.ContentID]valuedomain.Value{rowID: fixture.values.Top()},
+		map[identity.ContentID]bool{rowID: true},
+	))
+	if !ok {
+		t.Fatal("Value Top route set was rejected")
+	}
 	allocationCount := 0
 	for dense := 0; dense < fixture.placement.DenseKeyCount(); dense++ {
 		key, keyOK := fixture.placement.KeyAt(dense)
@@ -75,16 +135,115 @@ func TestPublicationEscapeOpaqueCallWidensEveryAllocationRoot(t *testing.T) {
 			allocationCount++
 		}
 	}
-	if routes.len() != allocationCount || allocationCount == 0 {
-		t.Fatalf("opaque Call routes=%d, allocation roots=%d", routes.len(), allocationCount)
+	if allocationCount == 0 || routes.len() != allocationCount {
+		t.Fatalf("Value Top routes=%d, allocation roots=%d", routes.len(), allocationCount)
 	}
 	for index := 0; index < routes.len(); index++ {
 		route, routeOK := routes.at(index)
-		if !routeOK {
-			t.Fatal("opaque Call route buffer entry missing")
+		if !routeOK || route.unknown || route.required != placementdomain.SharedHeap {
+			t.Fatalf("Value Top route=%#v, want SharedHeap identity broadcast", route)
 		}
-		if !route.unknown || route.required != placementdomain.Unknown {
-			t.Fatalf("opaque Call route=%#v, want Unknown", route)
+		placement, applyOK := applyRoute(route, placementdomain.Stack)
+		if !applyOK || placement != placementdomain.SharedHeap {
+			t.Fatalf("Value Top applied placement=%v/%t, want SharedHeap", placement, applyOK)
+		}
+	}
+}
+
+func TestPublicationEscapeOpaqueValueBroadcastsKnownRequirement(t *testing.T) {
+	fixture := newPublicationEscapeFixture(t)
+	atom, atomOK := fixture.values.OpaqueReference(valuedomain.ReferenceTable)
+	if !atomOK {
+		t.Fatal("opaque Value reference")
+	}
+	fact, factOK := fixture.values.Singleton(atom)
+	if !factOK {
+		t.Fatal("opaque Value singleton")
+	}
+	rowID := contentID(5)
+	routes, ok := fixture.rule().routeSet(fixture.placement, &preparedBatch{
+		rows: []publicationRow{{id: rowID, requirement: placementdomain.OwnedHeap, operation: 2}},
+	}, operationGateForTest(2), factBufferForTest(
+		map[identity.ContentID]valuedomain.Value{rowID: fact},
+		map[identity.ContentID]bool{rowID: true},
+	))
+	if !ok {
+		t.Fatal("opaque Value route set was rejected")
+	}
+	if routes.len() == 0 {
+		t.Fatal("opaque Value broadcast selected no allocation roots")
+	}
+	for index := 0; index < routes.len(); index++ {
+		route, routeOK := routes.at(index)
+		if !routeOK || route.unknown || route.required != placementdomain.OwnedHeap {
+			t.Fatalf("opaque Value route=%#v, want OwnedHeap identity broadcast", route)
+		}
+	}
+}
+
+// TestPublicationEscapeLazyAllRootMergeKeepsExactOverridesMonotone proves
+// that a lazy identity broadcast does not erase a stronger exact Value route
+// on one root, nor does it weaken the all-root default on the other roots.
+func TestPublicationEscapeLazyAllRootMergeKeepsExactOverridesMonotone(t *testing.T) {
+	fixture := newPublicationEscapeFixture(t)
+	if len(fixture.allocations) == 0 {
+		t.Fatal("fixture has no allocation root")
+	}
+	atom, atomOK := fixture.values.Allocation(fixture.allocations[0], materialization.Recent)
+	if !atomOK {
+		t.Fatal("Value allocation atom")
+	}
+	fact, factOK := fixture.values.Singleton(atom)
+	if !factOK {
+		t.Fatal("Value allocation singleton")
+	}
+	exactID, openID := contentID(61), contentID(62)
+	prepared := &preparedBatch{
+		rows: []publicationRow{
+			{id: exactID, requirement: placementdomain.OwnedHeap, operation: 2},
+			{id: openID, requirement: placementdomain.SharedHeap, operation: 1, subjectOpen: true},
+		},
+		byTag:    map[sourceTag]sourceSpec{},
+		prepared: true,
+	}
+	routes, ok := fixture.rule().routeSet(fixture.placement, prepared, operationGateForTest(1, 2), factBufferForTest(
+		map[identity.ContentID]valuedomain.Value{exactID: fact},
+		map[identity.ContentID]bool{exactID: true},
+	))
+	if !ok || !routes.allRoot {
+		t.Fatalf("mixed exact/all-root route set=%#v/%t, want lazy all-root plan", routes, ok)
+	}
+	for index := 0; index < routes.len(); index++ {
+		route, routeOK := routes.at(index)
+		if !routeOK || route.required != placementdomain.SharedHeap || route.unknown {
+			t.Fatalf("mixed Shared/Owned route[%d]=%#v/%t, want SharedHeap", index, route, routeOK)
+		}
+	}
+
+	// Reverse the policy strengths: the exact Send route overrides an
+	// all-root Return/Callback policy only at its named allocation root.
+	prepared.rows = []publicationRow{
+		{id: openID, requirement: placementdomain.OwnedHeap, operation: 1, subjectOpen: true},
+		{id: exactID, requirement: placementdomain.SharedHeap, operation: 2},
+	}
+	routes, ok = fixture.rule().routeSet(fixture.placement, prepared, operationGateForTest(1, 2), factBufferForTest(
+		map[identity.ContentID]valuedomain.Value{exactID: fact},
+		map[identity.ContentID]bool{exactID: true},
+	))
+	if !ok || !routes.allRoot {
+		t.Fatalf("mixed Owned/Shared route set=%#v/%t, want lazy all-root plan", routes, ok)
+	}
+	for index := 0; index < routes.len(); index++ {
+		route, routeOK := routes.at(index)
+		if !routeOK || route.unknown {
+			t.Fatalf("mixed Owned/Shared route[%d]=%#v/%t", index, route, routeOK)
+		}
+		want := placementdomain.OwnedHeap
+		if route.key == fixture.allocations[0] {
+			want = placementdomain.SharedHeap
+		}
+		if route.required != want {
+			t.Fatalf("mixed Owned/Shared route[%d]=%#v, want %v", index, route, want)
 		}
 	}
 }
@@ -213,10 +372,14 @@ func (fixture publicationEscapeFixture) rule() *HotRule {
 }
 
 func newPublicationEscapeFixture(t testing.TB) publicationEscapeFixture {
+	return newPublicationEscapeFixtureSource(t, "local first = {}; local second = {}; return first")
+}
+
+func newPublicationEscapeFixtureSource(t testing.TB, sourceText string) publicationEscapeFixture {
 	t.Helper()
 	program, err := lower.Lower(lower.Source{
 		Name: "placement-publication-escape.lua",
-		Text: []byte("local first = {}; local second = {}; return first"),
+		Text: []byte(sourceText),
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -242,22 +405,22 @@ func newPublicationEscapeFixture(t testing.TB) publicationEscapeFixture {
 	if !grammarOK {
 		t.Fatal("artifact grammar")
 	}
-	artifact, failure := artifactcompiler.CompileDetailed(program, grammar, issuance.Directory{})
+	artifact, failure := artifactcompiler.CompileDetailed(program, grammar, testfixture.EmptyProgramIssuancePlan(t))
 	if failure.Available() || artifact == nil {
 		t.Fatalf("compile artifact: %s", failure.Error())
 	}
 	shard, shardOK := linked.Project().Mounts().At(0)
 	module, moduleOK := linked.Project().ModuleKey(shard)
-	programID, programIDOK := linked.Project().Mounts().ProgramID(shard)
+	_, programIDOK := linked.Project().Mounts().ProgramID(shard)
 	if !shardOK || !moduleOK || !programIDOK {
 		t.Fatal("mounted module")
 	}
 	structural := publicationEscapeStructuralVocabulary(t)
 	snapshot, lowered := ingress.Lower(artifact, structural)
-	mount, mountOK := heapdomain.NewArtifactMount(snapshot, module, programID)
-	valueMount, valueMountOK := valuedomain.NewArtifactMount(snapshot, module, programID)
-	heapSchema, heapFailure := heapdomain.SealWithArtifacts(linked, []heapdomain.ArtifactMount{mount})
-	values, valueFailure := valuedomain.SealWithFailure(linked, heapSchema, []valuedomain.ArtifactMount{valueMount}, structural)
+	mount, mountOK := programmount.MountedArtifactFromSnapshot(snapshot, module)
+	valueMount, valueMountOK := programmount.MountedArtifactFromSnapshot(snapshot, module)
+	heapSchema, heapFailure := heapdomain.SealWithArtifacts(linked, []programmount.MountedArtifact{mount})
+	values, valueFailure := valuedomain.SealWithFailure(linked, heapSchema, []programmount.MountedArtifact{valueMount}, structural)
 	projected, projectedOK := placementdomain.NewSchema(heapSchema)
 	if !lowered || !mountOK || !valueMountOK || heapFailure != heapdomain.SealFailureNone || valueFailure != valuedomain.SealFailureNone || values == nil || !projectedOK {
 		t.Fatalf("fixture lowered=%t mount=%t valueMount=%t heap=%v value=%v placement=%t", lowered, mountOK, valueMountOK, heapFailure, valueFailure, projectedOK)
@@ -313,14 +476,6 @@ func publicationEscapeStructuralVocabulary(t testing.TB) structure.Table {
 			return int(runtimekind.Count) - 1
 		case structure.CategoryOccurrenceKind:
 			return 32
-		case structure.CategoryIssuanceForm:
-			return 5
-		case structure.CategoryIssuanceInput:
-			return 4
-		case structure.CategoryIssuanceStage:
-			return 5
-		case structure.CategoryIssuanceRequirement:
-			return 2
 		default:
 			return 1
 		}

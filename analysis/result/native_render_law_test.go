@@ -206,9 +206,10 @@ func TestNativeBranchVerdictSeparatesProvedDynamicFromUnobservedLaw(t *testing.T
 	}
 	subject := nativeLawBranchObservation(t)
 	body := nativeLawID(t, "body")
+	context := nativeLawID(t, "context")
 	dynamicRows, unobservedRows := make([]nativePublicationRow, 0, 2), make([]nativePublicationRow, 0, 2)
-	if !appendNativeBranchRows(&dynamicRows, make(map[identity.ContentID]struct{}), subject, body, valuedomain.TruthTrue|valuedomain.TruthFalse, true) ||
-		!appendNativeBranchRows(&unobservedRows, make(map[identity.ContentID]struct{}), subject, body, valuedomain.TruthTrue, false) {
+	if !appendNativeBranchRows(&dynamicRows, make(map[identity.ContentID]struct{}), subject, body, valuedomain.TruthTrue|valuedomain.TruthFalse, true, context) ||
+		!appendNativeBranchRows(&unobservedRows, make(map[identity.ContentID]struct{}), subject, body, valuedomain.TruthTrue, false, context) {
 		t.Fatal("a branch condition published no verdict")
 	}
 	if len(dynamicRows) != 2 || len(unobservedRows) != 2 {

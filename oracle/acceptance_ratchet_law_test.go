@@ -71,9 +71,16 @@ const acceptanceHighWaterPath = "oracle/testdata/acceptance_highwater.json"
 
 // acceptanceTally is one fixture's or one family's acceptance count.
 type acceptanceTally struct {
-	projects          int
-	clean             int
-	unjudged          int
+	projects int
+	clean    int
+	unjudged int
+	// unsupported is the fixtures whose declared contract the analyzer cannot
+	// express at all. It is a strict subset of unjudged, reported beside it so
+	// the receipt distinguishes a fixture the analyzer failed on from one it was
+	// never asked to judge. It is not gated: the acceptance law's unsupported
+	// sub-test fails on the named list, which is a stronger contract than a
+	// ceiling.
+	unsupported       int
 	missingInline     int
 	missingStructured int
 	unexpected        int
@@ -88,6 +95,7 @@ func (tally *acceptanceTally) add(other acceptanceTally) {
 	tally.projects += other.projects
 	tally.clean += other.clean
 	tally.unjudged += other.unjudged
+	tally.unsupported += other.unsupported
 	tally.missingInline += other.missingInline
 	tally.missingStructured += other.missingStructured
 	tally.unexpected += other.unexpected
@@ -219,12 +227,24 @@ func acceptanceRatchetWalk(t *testing.T, projects []corpusHarnessProject) map[st
 		}()
 	}
 	walkers.Wait()
+	unsupported := corpusSemanticUnsupportedLedgerOf(t, projects)
+	unsupportedByProject := make(map[string]struct{}, len(unsupported.fixtures))
+	for _, fixture := range unsupported.fixtures {
+		unsupportedByProject[fixture.project] = struct{}{}
+	}
 	families := make(map[string]acceptanceTally, 32)
 	for _, project := range projects {
 		verdict, reached := verdicts[project.name]
 		family := acceptanceFamily(project.name)
 		tally := families[family]
-		tally.add(acceptanceFixtureTally(project, verdict, reached))
+		fixture := acceptanceFixtureTally(project, verdict, reached)
+		// The unsupported column is read from the fixture's declared contract
+		// rather than from the verdict, so a fixture whose contract is fenced
+		// before compile is counted the same as one fenced at policy time.
+		if _, fenced := unsupportedByProject[project.name]; fenced {
+			fixture.unsupported = 1
+		}
+		tally.add(fixture)
 		families[family] = tally
 	}
 	return families
@@ -329,15 +349,16 @@ func acceptanceRatchetReceipt(mark acceptanceHighWater, families map[string]acce
 		total.add(tally)
 	}
 	var receipt strings.Builder
-	fmt.Fprintf(&receipt, "acceptance: fixtures=%d clean=%d unjudged=%d missing-inline=%d missing-structured=%d unexpected=%d other=%d (mark measured %s)",
-		total.projects, total.clean, total.unjudged, total.missingInline, total.missingStructured, total.unexpected, total.other, mark.Measured)
+	fmt.Fprintf(&receipt, "acceptance: fixtures=%d clean=%d unjudged=%d unsupported=%d missing-inline=%d missing-structured=%d unexpected=%d other=%d (mark measured %s)",
+		total.projects, total.clean, total.unjudged, total.unsupported, total.missingInline, total.missingStructured, total.unexpected, total.other, mark.Measured)
 	for _, family := range acceptanceRatchetNames(families) {
 		tally := families[family]
 		row := mark.Families[family]
-		fmt.Fprintf(&receipt, "\n  %-22s fixtures=%d clean=%d/%d unjudged=%d/%d missing-inline=%d/%d missing-structured=%d/%d unexpected=%d/%d other=%d",
+		fmt.Fprintf(&receipt, "\n  %-22s fixtures=%d clean=%d/%d unjudged=%d/%d unsupported=%d missing-inline=%d/%d missing-structured=%d/%d unexpected=%d/%d other=%d",
 			family, tally.projects,
 			tally.clean, row.CleanMin,
 			tally.unjudged, row.UnjudgedMax,
+			tally.unsupported,
 			tally.missingInline, row.MissingInlineMax,
 			tally.missingStructured, row.MissingStructureMax,
 			tally.unexpected, row.UnexpectedMax,

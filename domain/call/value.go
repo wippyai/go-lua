@@ -30,7 +30,8 @@ func (value Value) valid() bool {
 // hotValid checks only the immutable representation header. Selector support
 // was proved once by the package-private constructors; rescanning it in every
 // lattice operation would turn the Factor width into avoidable validation
-// cost. The full valid check remains on cold rebind and public projections.
+// cost. The full valid check remains on cold construction and public
+// projections.
 func (value Value) hotValid() bool {
 	if value.owner == nil || !value.owner.Valid() {
 		return false

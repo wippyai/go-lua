@@ -1,0 +1,13 @@
+{
+  "description": "Every declared member of the Wippy v1 process module is called against the reference host surface: the twenty-three module members, the three registry members, the eleven spawn-builder members, the three Message methods and the Event payload reader, with each fallible result read on both of its arms.",
+  "packages": ["process"],
+  "files": [
+    "main.lua"
+  ],
+  "check": {
+    "errors": 0
+  },
+  "run": {
+    "skip": "host-surface coverage fixture; the process module has no fixture runtime"
+  }
+}

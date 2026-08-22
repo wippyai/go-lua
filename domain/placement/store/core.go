@@ -3,7 +3,8 @@
 // Heap containment and Program storage are different edges.  An object write
 // is a graph edge whose child inherits the destination allocation's current
 // placement; a write to a Program cell is a lifetime edge whose consequence
-// depends on the cell's owner (frame, module, Link-global, or external).
+// depends on the cell's owner (frame, module, retained closure, Link-global,
+// or external).
 // Keeping these operations separate is important: treating every storage
 // transfer as Store would promote ordinary local assignments and hide the
 // actual escape boundary.
@@ -40,11 +41,15 @@ const (
 	// LifetimeUnknown means that the neutral storage-lifetime proof was absent
 	// or widened.  It is deliberately not treated as frame-local.
 	LifetimeUnknown
+	// LifetimeClosure is retained by a closure environment. It outlives the
+	// introducing frame but is not module-entry state, so it demands an owned
+	// heap placement without claiming module ownership.
+	LifetimeClosure
 )
 
 // Valid reports whether the lifetime is a closed Placement storage class.
 func (lifetime Lifetime) Valid() bool {
-	return lifetime >= LifetimeFrame && lifetime <= LifetimeUnknown
+	return lifetime >= LifetimeFrame && lifetime <= LifetimeClosure
 }
 
 // String returns the stable diagnostic spelling of a lifetime class.
@@ -60,6 +65,8 @@ func (lifetime Lifetime) String() string {
 		return "external"
 	case LifetimeUnknown:
 		return "unknown"
+	case LifetimeClosure:
+		return "closure"
 	default:
 		return "lifetime(invalid)"
 	}
@@ -80,51 +87,63 @@ func FromProgram(lifetime lifecycle.StorageLifetime) Lifetime {
 		return LifetimeExternal
 	case lifecycle.StorageLifetimeUnknown:
 		return LifetimeUnknown
+	case lifecycle.StorageLifetimeClosure:
+		return LifetimeClosure
 	default:
 		return LifetimeInvalid
 	}
 }
 
-// Demand is the least Placement required by a storage destination.  Frame
-// storage has no escape demand and therefore returns (Bottom, false).  The
-// distinction matters: Bottom here means "no transition", never "the value
-// is known to be stack-local".
-func Demand(lifetime Lifetime) (placement.Placement, bool) {
+// Demand is the least Placement required by a storage destination.  The
+// second result says whether a transition is required and the third says
+// whether lifetime was a valid authenticated storage class.  Frame storage
+// has no escape demand and therefore returns (Bottom, false, true).  An
+// invalid lifetime returns (Bottom, false, false); it must never be turned
+// into Placement.Unknown, because Unknown is a real authenticated semantic
+// state, not a malformed-input sentinel.
+func Demand(lifetime Lifetime) (placement.Placement, bool, bool) {
 	switch lifetime {
 	case LifetimeFrame:
-		return placement.Bottom, false
+		return placement.Bottom, false, true
 	case LifetimeModule:
-		return placement.OwnedHeap, true
+		return placement.OwnedHeap, true, true
+	case LifetimeClosure:
+		return placement.OwnedHeap, true, true
 	case LifetimeGlobal:
-		return placement.SharedHeap, true
+		return placement.SharedHeap, true, true
 	case LifetimeExternal, LifetimeUnknown:
-		return placement.Unknown, true
+		return placement.Unknown, true, true
 	default:
-		return placement.Unknown, true
+		return placement.Bottom, false, false
 	}
 }
 
 // Apply applies one Program-cell lifetime demand to the current source
 // placement.  It is monotone and never promotes a proven frame-local write.
 // Unknown destination evidence is conservative Unknown; it is not silently
-// converted to Frame or Stack.
-func Apply(current placement.Placement, lifetime Lifetime) placement.Placement {
+// converted to Frame or Stack.  The boolean reports whether both inputs were
+// valid and the transition was produced.  On failure the Placement result is
+// only a Bottom sentinel and must be ignored.
+func Apply(current placement.Placement, lifetime Lifetime) (placement.Placement, bool) {
 	if !validPlacement(current) || !lifetime.Valid() {
-		return placement.Unknown
+		return placement.Bottom, false
 	}
-	demand, forced := Demand(lifetime)
+	demand, forced, demandOK := Demand(lifetime)
+	if !demandOK {
+		return placement.Bottom, false
+	}
 	if !forced {
-		return current
+		return current, true
 	}
 	switch demand {
 	case placement.OwnedHeap:
-		return placement.Displace(current, placement.Retain)
+		return placement.DisplaceChecked(current, placement.Retain)
 	case placement.SharedHeap:
-		return placement.Displace(current, placement.Send)
+		return placement.DisplaceChecked(current, placement.Send)
 	case placement.Unknown:
-		return placement.Unknown
+		return placement.Unknown, true
 	default:
-		return placement.Unknown
+		return placement.Bottom, false
 	}
 }
 
@@ -133,11 +152,13 @@ func Apply(current placement.Placement, lifetime Lifetime) placement.Placement {
 // source's current placement is joined so this operation cannot lower a
 // demand established by another path.  It is intentionally independent from
 // Apply: ordinary object writes do not imply a Program-cell lifetime escape.
-func ObjectStore(destination, source placement.Placement) placement.Placement {
+// The boolean reports whether both Placement inputs were valid.  Invalid
+// inputs are refused rather than widened to Unknown.
+func ObjectStore(destination, source placement.Placement) (placement.Placement, bool) {
 	if !validPlacement(destination) || !validPlacement(source) {
-		return placement.Unknown
+		return placement.Bottom, false
 	}
-	return placement.Join(destination, source)
+	return placement.JoinChecked(destination, source)
 }
 
 func validPlacement(value placement.Placement) bool {

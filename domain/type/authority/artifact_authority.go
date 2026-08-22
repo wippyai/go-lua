@@ -1,6 +1,7 @@
 package typeauthority
 
 import (
+	"context"
 	"errors"
 	"math"
 
@@ -10,11 +11,13 @@ import (
 	statictypes "github.com/wippyai/go-lua/analysis/program/static/types"
 	programschema "github.com/wippyai/go-lua/analysis/schema/program"
 	programstaticnode "github.com/wippyai/go-lua/analysis/schema/program/staticnode"
+	"github.com/wippyai/go-lua/domain/runtimekind"
+	"github.com/wippyai/go-lua/domain/type/kind"
 	"github.com/wippyai/go-lua/domain/type/typ"
 	"github.com/wippyai/go-lua/domain/type/typeexpr"
 )
 
-// ArtifactAuthority is the detached type-graph constructor. It admits only
+// artifactAuthority is the detached type-graph constructor. It admits only
 // canonical Program rows and retains no Link, Artifact, Flow, or authored Term.
 // It is intentionally separate from the legacy Link constructor while the
 // Static evaluator migration is completed.
@@ -22,9 +25,24 @@ import (
 // The rows form a content-addressed graph. Sealing decomposes that graph into
 // strongly connected components once, so every later materialization knows
 // which rows lie on a cycle before it builds anything.
-type ArtifactAuthority struct {
-	views     []programstaticnode.View
-	component map[identity.ContentID]rowComponent
+type artifactAuthority struct {
+	views      []programstaticnode.View
+	location   map[identity.ContentID]canonicalRowLocation
+	component  map[identity.ContentID]rowComponent
+	projection map[identity.ContentID]artifactReferenceProjection
+}
+
+// artifactReferenceProjection is the seal-local image from which the Link
+// authority mints its public scalar projection. A closed row carries the one
+// owner-issued graph receipt used to mint RuntimeInput; it is released after
+// the Link projection directory is bound.
+type artifactReferenceProjection struct {
+	semantic identity.ContentID
+	root     kind.Kind
+	may      runtimekind.Set
+	name     string
+	open     bool
+	graph    typ.CanonicalGraphReceipt
 }
 
 // artifactResolver is transaction-local. Artifact rows are immutable after
@@ -39,7 +57,7 @@ type ArtifactAuthority struct {
 // it. A value that still names an open binder is therefore never handed to an
 // unrelated caller.
 type artifactResolver struct {
-	authority *ArtifactAuthority
+	authority *artifactAuthority
 	built     map[identity.ContentID]typ.Type
 	scope     *componentScope
 }
@@ -72,7 +90,7 @@ type componentScope struct {
 	outer     *componentScope
 }
 
-func SealPrograms(programs []programschema.Program) (*ArtifactAuthority, error) {
+func sealPrograms(programs []programschema.Program, retainValues bool) (*artifactAuthority, error) {
 	if len(programs) == 0 {
 		return nil, errors.New("typeauthority: no programs")
 	}
@@ -111,58 +129,111 @@ func SealPrograms(programs []programschema.Program) (*ArtifactAuthority, error) 
 	if !componentsOK {
 		return nil, errors.New("typeauthority: malformed canonical static graph")
 	}
-	a := &ArtifactAuthority{views: views, component: components}
+	a := &artifactAuthority{
+		views:      views,
+		location:   locations,
+		component:  components,
+		projection: make(map[identity.ContentID]artifactReferenceProjection, len(locations)),
+	}
+	resolver := &artifactResolver{authority: a, built: make(map[identity.ContentID]typ.Type)}
+	for _, view := range views {
+		count, countOK := view.StaticTypeNodeCount()
+		if !countOK {
+			return nil, errors.New("typeauthority: unavailable program static graph")
+		}
+		for index := 0; index < count; index++ {
+			row, rowOK := view.StaticTypeNodeAt(index)
+			if !rowOK {
+				return nil, errors.New("typeauthority: malformed program type row")
+			}
+			value, valueOK := resolver.resolve(row.ID())
+			if !valueOK {
+				continue
+			}
+			graph, graphErr := typ.EncodeCanonicalGraph(context.Background(), value)
+			if graphErr != nil || !graph.Valid() {
+				continue
+			}
+			digest, digestOK := graph.Digest()
+			if !digestOK {
+				continue
+			}
+			root, rootOK := graph.Root()
+			if !rootOK {
+				continue
+			}
+			projection := artifactReferenceProjection{
+				semantic: identity.ContentID(digest),
+				root:     root.Kind,
+				may:      typ.MayRuntimeKinds(value),
+				name:     referenceTypeName(value),
+				open:     !root.Closed,
+			}
+			if retainValues && !projection.open {
+				projection.graph = graph
+			}
+			a.projection[row.ID()] = projection
+		}
+	}
 	return a, nil
 }
 
-func (a *ArtifactAuthority) Row(id identity.ContentID) (programstaticnode.StaticTypeNode, bool) {
+func (a *artifactAuthority) referenceProjection(id identity.ContentID) (artifactReferenceProjection, bool) {
+	if a == nil || !id.Available() {
+		return artifactReferenceProjection{}, false
+	}
+	projection, ok := a.projection[id]
+	return projection, ok && projection.semantic.Available() && projection.may.Valid()
+}
+
+func (a *artifactAuthority) releaseProjectionGraphs() {
 	if a == nil {
+		return
+	}
+	for id, projection := range a.projection {
+		projection.graph = typ.CanonicalGraphReceipt{}
+		a.projection[id] = projection
+	}
+}
+
+func referenceTypeName(value typ.Type) string {
+	switch named := value.(type) {
+	case *typ.Alias:
+		return named.Name
+	case *typ.Interface:
+		return named.Name
+	case *typ.Generic:
+		return named.Name
+	case *typ.Recursive:
+		return named.Name
+	}
+	return ""
+}
+
+func (a *artifactAuthority) row(id identity.ContentID) (programstaticnode.StaticTypeNode, bool) {
+	if a == nil || !id.Available() {
 		return programstaticnode.StaticTypeNode{}, false
 	}
-	for _, view := range a.views {
-		count, countOK := view.StaticTypeNodeCount()
-		if !countOK {
-			continue
-		}
-		for index := 0; index < count; index++ {
-			row, ok := view.StaticTypeNodeAt(index)
-			if ok && row.ID() == id {
-				return row, true
-			}
-		}
+	location, ok := a.location[id]
+	if !ok {
+		return programstaticnode.StaticTypeNode{}, false
 	}
-	return programstaticnode.StaticTypeNode{}, false
+	row, ok := location.view.StaticTypeNodeAt(location.index)
+	return row, ok && row.ID() == id
 }
 
-func (a *ArtifactAuthority) programFor(id identity.ContentID) (programstaticnode.View, int, bool) {
-	for _, view := range a.views {
-		count, countOK := view.StaticTypeNodeCount()
-		if !countOK {
-			continue
-		}
-		for index := 0; index < count; index++ {
-			row, ok := view.StaticTypeNodeAt(index)
-			if ok && row.ID() == id {
-				return view, index, true
-			}
-		}
-	}
-	return programstaticnode.View{}, 0, false
-}
-func (a *ArtifactAuthority) Resolve(id identity.ContentID) (typ.Type, bool) {
+func (a *artifactAuthority) programFor(id identity.ContentID) (programstaticnode.View, int, bool) {
 	if a == nil || !id.Available() {
-		return nil, false
+		return programstaticnode.View{}, 0, false
 	}
-	resolver := &artifactResolver{authority: a, built: make(map[identity.ContentID]typ.Type)}
-	value, ok := resolver.resolve(id)
-	if !ok || value == nil {
-		return nil, false
+	location, ok := a.location[id]
+	if !ok {
+		return programstaticnode.View{}, 0, false
 	}
-	return value, true
+	return location.view, location.index, true
 }
-
 func (a *artifactResolver) resolve(id identity.ContentID) (typ.Type, bool) {
-	row, ok := a.authority.Row(id)
+	row, ok := a.authority.row(id)
 	if !ok {
 		return nil, false
 	}
@@ -231,7 +302,7 @@ func (a *artifactResolver) resolveReference(row programstaticnode.StaticTypeNode
 		if !targetOK {
 			return nil, false
 		}
-		next, ok := a.authority.Row(target)
+		next, ok := a.authority.row(target)
 		if !ok {
 			return nil, false
 		}
@@ -628,7 +699,7 @@ func (a *artifactResolver) construct(id identity.ContentID, row programstaticnod
 }
 
 // staticReferenceResolutionShape is the sole TypeRef edge-cardinality gate
-// used by ArtifactAuthority. Keeping resolution and arity in one predicate
+// used by artifactAuthority. Keeping resolution and arity in one predicate
 // prevents an unknown enum or an extra target edge from being accepted merely
 // because ChildAt(0) happens to resolve.
 func staticReferenceResolutionShape(resolution staticrefs.Resolution, childCount int) (unresolved bool, ok bool) {

@@ -12,8 +12,10 @@ import (
 	"github.com/wippyai/go-lua/analysis/engine/internal/carrier"
 	"github.com/wippyai/go-lua/analysis/engine/internal/carrier/shape"
 	"github.com/wippyai/go-lua/analysis/engine/internal/composition"
+	"github.com/wippyai/go-lua/analysis/engine/internal/contextfiber"
 	"github.com/wippyai/go-lua/analysis/engine/internal/equation"
 	"github.com/wippyai/go-lua/analysis/identity"
+	"github.com/wippyai/go-lua/analysis/schema/executioncontext"
 )
 
 // memberRow retains exactly one canonical runtime member. Scheduling metadata,
@@ -71,6 +73,11 @@ type queryRow struct {
 	queryOrdinal  uint64
 	factorOrdinal uint64
 	point         int32
+	// state is the compact executable-state address for this query's exact
+	// (ContextID, Point) pair. It is authenticated at bind and checked again at
+	// the program seal; point remains alongside it for the current materializer
+	// until the executor's epoch storage is context-addressed.
+	state         contextfiber.StateOrdinal
 	unit          carrier.Unit
 	exec          queryExec
 	heterogeneous *heterogeneousQueryRow
@@ -103,6 +110,17 @@ type observationRow struct {
 	queryOrdinal  uint64
 	factorOrdinal uint64
 	point         int32
+	// state is the compact executable-state address for this observation's
+	// exact (ContextID, member-output Point) pair. It is resolved while the
+	// committed directory/index/layout are attached and is retained as the
+	// only context coordinate needed by the later materialization seam.
+	state         contextfiber.StateOrdinal
+	// contextID is the admission context that authenticated the observation.
+	// StateOrdinal alone is insufficient at Seal: a same-point row from another
+	// mounted context must not be interchangeable with this row. Link-global
+	// state remains singular, but its observation admission is still checked
+	// against this exact directory context.
+	contextID     identity.ContentID
 	unit          carrier.Unit
 	exec          queryExec
 	heterogeneous *heterogeneousQueryRow
@@ -156,9 +174,20 @@ type runtimeProgram struct {
 
 // sealRuntimeProgram is the sole Seal and the sole writer of a runtimeProgram.
 // It takes the one program-level validity decision: either every table is
-// mutually consistent and the program is sealed, or no program exists.
-func sealRuntimeProgram(schema *Schema, graph *equation.Graph, runtime *carrier.Composition, rows []memberRow, spans []memberSpan, factors []factorRecord, owners []runtimeFactor, queries []queryRow, observations []observationRow) (*runtimeProgram, bool) {
+// mutually consistent and the program is sealed, or no program exists. An
+// artifact-backed row must carry the StateOrdinal resolved from its exact
+// context plane; the graph-point StateOrdinal rule is reserved for the
+// explicitly non-artifact construction.
+func sealRuntimeProgram(schema *Schema, graph *equation.Graph, runtime *carrier.Composition, rows []memberRow, spans []memberSpan, factors []factorRecord, owners []runtimeFactor, queries []queryRow, observations []observationRow, contexts executioncontext.Directory, contextIndex contextfiber.Index, contextLayout contextfiber.Layout, pointOwners []contextfiber.PointOwner, artifactBacked bool) (*runtimeProgram, bool) {
 	if schema == nil || !schema.Available() || graph == nil || runtime == nil || graph.CompositionID() != schema.coldID() || len(factors) != len(owners) || len(factors) != schemaFactorCount(schema) || len(queries) != graph.QueryCount() {
+		return nil, false
+	}
+	contextPlanePresent := contexts.Available() || contextIndex.Available() || contextLayout.Available() || len(pointOwners) != 0
+	if artifactBacked {
+		if !validQueryContextPlane(graph, contexts, contextIndex, contextLayout, pointOwners) {
+			return nil, false
+		}
+	} else if contextPlanePresent {
 		return nil, false
 	}
 	next := int32(0)
@@ -215,7 +244,11 @@ func sealRuntimeProgram(schema *Schema, graph *equation.Graph, runtime *carrier.
 	for index, row := range queries {
 		query, queryOK := graph.QueryAt(index)
 		point, pointOK := graph.PointIndex(query.Point())
-		if !queryOK || !row.valid() || !pointOK || int(row.point) != point || row.queryOrdinal >= schema.queryCount() || schema.querySemanticAt(row.queryOrdinal) != query.Family() {
+		state, stateOK := contextfiber.StateOrdinal(point), pointOK
+		if artifactBacked {
+			state, stateOK = queryStateOrdinalOwned(graph, query, contextIndex, contextLayout)
+		}
+		if !queryOK || !row.valid() || !pointOK || int(row.point) != point || !stateOK || row.state != state || row.queryOrdinal >= schema.queryCount() || schema.querySemanticAt(row.queryOrdinal) != query.Family() {
 			return nil, false
 		}
 		shape, shapeOK := schema.queryShapeAt(row.queryOrdinal)
@@ -243,6 +276,18 @@ func sealRuntimeProgram(schema *Schema, graph *equation.Graph, runtime *carrier.
 	}
 	for _, row := range observations {
 		if !row.valid() || int(row.point) >= graph.PointCount() || row.queryOrdinal >= schema.queryCount() {
+			return nil, false
+		}
+		stateOK := row.state == contextfiber.StateOrdinal(row.point)
+		if artifactBacked {
+			contextOrdinal, contextOK := contextIndex.ContextOrdinal(row.contextID)
+			canonicalContext, canonicalContextOK := contextLayout.ContextID(contextOrdinal)
+			stateCell, cellOK := contextLayout.StateAt(row.state)
+			statePoint, pointStateOK := stateCell.PointOrdinal()
+			stateContext, stateContextOK := stateCell.ContextOrdinal()
+			stateOK = row.contextID.Available() && contextOK && canonicalContextOK && canonicalContext == row.contextID && cellOK && pointStateOK && uint64(statePoint) == uint64(row.point) && stateContextOK && stateContext == contextOrdinal
+		}
+		if !stateOK {
 			return nil, false
 		}
 		shape, shapeOK := schema.queryShapeAt(row.queryOrdinal)
@@ -288,6 +333,48 @@ func validRuntimeQueryProjection(schema *Schema, factors []factorRecord, runtime
 		return false
 	}
 	return projection.Kind == composition.QueryFactorExact && pair.unit.Kind() == carrier.ExactUnit || projection.Kind == composition.QueryFactorSummary && pair.unit.Kind() == carrier.SummaryUnit
+}
+
+// validQueryContextPlane authenticates the exact compact address plane a
+// committed mounted program supplied. Query rows are allowed to retain a
+// StateOrdinal only when the Index and Layout still belong to the same sealed
+// directory, point shape, owner vector, and generation. A partially supplied
+// plane is never completed with a default or an alias.
+func validQueryContextPlane(graph *equation.Graph, contexts executioncontext.Directory, contextIndex contextfiber.Index, contextLayout contextfiber.Layout, pointOwners []contextfiber.PointOwner) bool {
+	if graph == nil || !contexts.Available() || !contextIndex.Available() || !contextLayout.Available() || len(pointOwners) != graph.PointCount() {
+		return false
+	}
+	generation := contextLayout.Generation()
+	return generation != 0 && contextIndex.OwnedBy(contexts, graph.PointCount(), generation) && contextLayout.OwnedBy(contextIndex, contexts, pointOwners, generation)
+}
+
+// queryStateOrdinal resolves one retained equation Query through the exact
+// context index and compact layout. Context identity is never inferred from a
+// point owner, a module alias, or a default context. The caller must already
+// have authenticated the plane with validQueryContextPlane when it is sealing
+// a table; repeating the bounded coordinate checks here keeps direct binders
+// fail-closed as well.
+func queryStateOrdinal(graph *equation.Graph, query equation.Query, contexts executioncontext.Directory, contextIndex contextfiber.Index, contextLayout contextfiber.Layout, pointOwners []contextfiber.PointOwner) (contextfiber.StateOrdinal, bool) {
+	if graph == nil || !validQueryContextPlane(graph, contexts, contextIndex, contextLayout, pointOwners) {
+		return 0, false
+	}
+	return queryStateOrdinalOwned(graph, query, contextIndex, contextLayout)
+}
+
+// queryStateOrdinalOwned is the O(1) coordinate step after the context plane
+// has been authenticated for this graph. Keeping plane authentication outside
+// the query loop prevents a wide query family from multiplying the point-owner
+// proof while retaining the same fail-closed identity checks.
+func queryStateOrdinalOwned(graph *equation.Graph, query equation.Query, contextIndex contextfiber.Index, contextLayout contextfiber.Layout) (contextfiber.StateOrdinal, bool) {
+	if graph == nil || !graph.OwnsQuery(query) || !query.ContextID().Available() {
+		return 0, false
+	}
+	contextOrdinal, contextOK := contextIndex.ContextOrdinal(query.ContextID())
+	pointIndex, pointOK := graph.PointIndex(query.Point())
+	if !contextOK || !pointOK || pointIndex < 0 {
+		return 0, false
+	}
+	return contextLayout.Lookup(contextOrdinal, contextfiber.PointOrdinal(pointIndex))
 }
 
 // valid reports the one decision sealRuntimeProgram already took. No later

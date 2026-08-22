@@ -37,6 +37,14 @@ type runtimeMember interface {
 	execute(*carrier.Work, carrier.RuleContributionBase, []carrier.State, support.Mask) memberResult
 }
 
+// contextualRuntimeMember is the narrow engine-only extension for mounted
+// activation rows. Ordinary rules retain the runtimeMember contract; an
+// artifact epoch supplies the exact source Context ID only to members that
+// can consume it. No implementation may infer context from module identity.
+type contextualRuntimeMember interface {
+	executeAt(*carrier.Work, carrier.RuleContributionBase, []carrier.State, support.Mask, identity.ContentID) memberResult
+}
+
 type memberResult struct {
 	patch       carrier.Patch
 	wrote       bool
@@ -422,10 +430,14 @@ func (bound *boundActivationMember) routeNarrow() bool { return false }
 func (bound *boundActivationMember) writesOutput() bool { return false }
 
 func (bound *boundActivationMember) execute(work *carrier.Work, base carrier.RuleContributionBase, inputs []carrier.State, within support.Mask) memberResult {
+	return bound.executeAt(work, base, inputs, within, identity.ContentID{})
+}
+
+func (bound *boundActivationMember) executeAt(work *carrier.Work, base carrier.RuleContributionBase, inputs []carrier.State, within support.Mask, fromContextID identity.ContentID) memberResult {
 	if bound == nil || bound.rule == nil {
 		return memberResult{}
 	}
-	selected, reads, ok, phase := bound.rule.execute(work, base, inputs, within)
+	selected, reads, ok, phase := bound.rule.executeAt(work, base, inputs, within, fromContextID)
 	return memberResult{activations: selected, reads: reads, boundary: phase, valid: ok}
 }
 

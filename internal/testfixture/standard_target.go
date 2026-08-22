@@ -32,6 +32,14 @@ import (
 // provider set, so every caller asks the same question, and a sealed Contract
 // is immutable: sealing it again re-derives byte-identical rows, identities and
 // canonical bytes for each caller that would otherwise have shared the first.
+//
+// The provider set has two halves. The wippyv1 package carries the reference
+// half: the host modules the v1 runtime declares in production, transcribed
+// from the manifests it ships. The declarations below carry the preview half:
+// surfaces the runtime has no manifest for, which exist to state a contract the
+// corpus measures. A module path belongs to exactly one half. Where the
+// reference declares a path, the preview half declares nothing for it, because
+// two declarations of one boundary are two authorities for one answer.
 func StandardLibraryTarget() (*contract.Contract, error) {
 	return standardLibraryTarget()
 }
@@ -40,6 +48,7 @@ var standardLibraryTarget = sync.OnceValues(sealStandardLibraryTarget)
 
 func sealStandardLibraryTarget() (*contract.Contract, error) {
 	providers := stdlib.Providers()
+	providers = append(providers, wippyv1.Providers()...)
 	providers = append(providers, manifest.Provider{
 		Identity:    "testfixture.wippy.host",
 		Mount:       manifest.MountGlobals,
@@ -49,21 +58,9 @@ func sealStandardLibraryTarget() (*contract.Contract, error) {
 		Mount:       manifest.MountModule,
 		Declaration: channelHostManifest,
 	}, manifest.Provider{
-		Identity:    "testfixture.wippy.process",
-		Mount:       manifest.MountModule,
-		Declaration: processHostManifest,
-	}, manifest.Provider{
 		Identity:    "testfixture.wippy.uuid",
 		Mount:       manifest.MountModule,
 		Declaration: uuidHostManifest,
-	}, manifest.Provider{
-		Identity:    "testfixture.wippy.expr",
-		Mount:       manifest.MountModule,
-		Declaration: exprHostManifest,
-	}, manifest.Provider{
-		Identity:    "testfixture.wippy.json",
-		Mount:       manifest.MountModule,
-		Declaration: jsonHostManifest,
 	}, manifest.Provider{
 		Identity:    "testfixture.wippy.time",
 		Mount:       manifest.MountModule,
@@ -76,6 +73,10 @@ func sealStandardLibraryTarget() (*contract.Contract, error) {
 		Identity:    "testfixture.wippy.resource",
 		Mount:       manifest.MountModule,
 		Declaration: resourceHostManifest,
+	}, manifest.Provider{
+		Identity:    "testfixture.wippy.ownership",
+		Mount:       manifest.MountModule,
+		Declaration: ownershipHostManifest,
 	})
 	catalogue, err := manifest.Seal(providers...)
 	if err != nil {
@@ -120,91 +121,6 @@ func uuidHostManifest() *manifestwire.Manifest {
 	declaration.SetExport(typetable.NewRecord().
 		Field("v7", v7Type).
 		Build())
-	return declaration
-}
-
-// exprHostManifest declares the expression evaluator surface the corpus
-// fixtures require. Only eval is declared, because that is the only member
-// the fixture corpus calls; the evaluated value and the error are plain
-// returned values and the call carries no ownership, dispatch, or transfer
-// effect.
-func exprHostManifest() *manifestwire.Manifest {
-	evalType := typ.Func().Param("source", typ.String).Param("env", typ.Any).Returns(typ.Any, typ.Any).Build()
-	declaration := manifestwire.New("expr")
-	declaration.DefineFunctionSignature("eval", signature.Function{Type: evalType})
-	declaration.SetExport(typetable.NewRecord().
-		Field("eval", evalType).
-		Build())
-	return declaration
-}
-
-// jsonHostManifest declares the module identity the corpus fixtures require
-// through require("json") without dereferencing a member. It carries no
-// members because the fixture corpus never calls one.
-func jsonHostManifest() *manifestwire.Manifest {
-	declaration := manifestwire.New("json")
-	declaration.SetExport(typetable.NewRecord().Build())
-	return declaration
-}
-
-func processHostManifest() *manifestwire.Manifest {
-	channelType := typ.Instantiate(ambient.ChannelGeneric(), typ.Any)
-	sendType := typ.Func().
-		Param("pid", typ.String).
-		Param("topic", typ.String).
-		Variadic(typ.Any).
-		Returns(typ.Boolean).
-		Build()
-	declaration := manifestwire.New("process")
-	declaration.DefineFunctionSignature("send", signature.Function{
-		Type:   sendType,
-		Effect: effect.Empty.With(ownership.Send{FromParam: 2}),
-	})
-	listenType := typ.Func().Param("topic", typ.String).OptParam("options", typ.Any).Returns(channelType).Build()
-	listenNestedType := typ.Func().Param("topic", typ.String).OptParam("options", typ.Any).Returns(channelType).Build()
-	receiveMapType := typ.Func().Param("channel", channelType).Param("transform", typ.Any).Returns(typ.Any).Build()
-	runType := typ.Func().Param("config", typ.Any).Returns(typ.Any, typ.Any).Build()
-	declaration.DefineFunctionSignature("listen", signature.Function{Type: listenType})
-	declaration.DefineFunctionSignature("listen_nested", signature.Function{Type: listenNestedType})
-	declaration.DefineFunctionSignature("receive_map", signature.Function{Type: receiveMapType})
-	declaration.DefineFunctionSignature("run", signature.Function{Type: runType})
-	declaration.SetExport(typetable.NewRecord().
-		Field("send", sendType).
-		Field("listen", listenType).
-		Field("listen_nested", listenNestedType).
-		Field("receive_map", receiveMapType).
-		Field("run", runType).
-		Build())
-	declaration.DefineFunctionOperation("send", manifestwire.Operation{
-		Effects: manifestwire.RowSpec{
-			Occurrences: []manifestwire.EffectSpec{{
-				Target:     "process.send",
-				ValueArgs:  []manifestwire.ValueFormal{0, 1},
-				ValuesArgs: []manifestwire.ValuesVar{0},
-				Publication: &manifestwire.PublicationEffectSpec{
-					Kind:        manifestwire.PublicationEffectSendTransfer,
-					Subject:     manifestwire.InputSource{Kind: manifestwire.InputSourceValues, Ordinal: 0},
-					Destination: manifestwire.PublicationDestinationValueFormal,
-					Context:     0,
-					Escape:      manifestwire.PublicationEscapeSendTransfer,
-					Mutability:  manifestwire.PublicationMutabilityCopyOnWrite,
-					Lifetime:    manifestwire.PublicationLifetimePreserve,
-				},
-			}},
-			Tail: manifestwire.RowClosed,
-		},
-		Transfers: []manifestwire.TransferSpec{{
-			Endpoint:     manifestwire.TransferEndpoint{Kind: manifestwire.TransferEndpointExternal},
-			Payload:      manifestwire.InputSource{Kind: manifestwire.InputSourceValues},
-			Alias:        manifestwire.InputSource{Kind: manifestwire.InputSourceValues},
-			Identity:     manifestwire.TransferIdentityUnspecified,
-			Capabilities: manifestwire.TransferCapabilitiesUnspecified,
-			Outcomes: []manifestwire.TransferOutcomeSpec{
-				{Outcome: 0, Possibility: manifestwire.TransferMayDeliver},
-				{Outcome: 1, Possibility: manifestwire.TransferMayReject},
-			},
-		}},
-	})
 	return declaration
 }
 
@@ -545,6 +461,35 @@ func resourceHostManifest() *manifestwire.Manifest {
 		Field("query", queryType).
 		Field("begin", beginType).
 		Field("commit", commitType).
+		Build())
+	return declaration
+}
+
+// ownershipHostManifest declares the ownership-transfer surface the placement
+// and send-safety fixtures require. Wippy v1 ships no such module: it is a
+// checker-only affordance whose whole purpose is to state one escape, so it
+// declares exactly the member that corpus calls.
+//
+// store names the value it hands to a longer-lived owner and the owner it
+// hands it to. That relation is the ownership.Store label, which is the same
+// escape table.insert declares for the element it appends, so the placement
+// store rule reads one vocabulary rather than a second spelling of it. The
+// member answers nothing: a fixture that bound a result would be claiming a
+// return the module does not declare.
+func ownershipHostManifest() *manifestwire.Manifest {
+	storeType := typ.Func().
+		Param("value", typ.Any).
+		Param("into", typ.Any).
+		Build()
+	declaration := manifestwire.New("ownership")
+	declaration.DefineFunctionSignature("store", signature.Function{
+		Type: storeType,
+		Effect: effect.Empty.With(
+			ownership.Store{Param: effect.ParamRef{Index: 0}, Into: effect.ParamRef{Index: 1}},
+		),
+	})
+	declaration.SetExport(typetable.NewRecord().
+		Field("store", storeType).
 		Build())
 	return declaration
 }

@@ -471,21 +471,21 @@ func (v Globals) For(root linkmodule.AnalysisRoot, cell keyspace.Term) (GlobalBi
 }
 
 // ForProgramCell is the exact inverse for one canonical Program global
-// occurrence. It is intentionally owned by Host: callers provide the exact
-// Project Shard, the exact mounted Program owner, and authored Cell term,
-// while Host retains the only derived lookup from that triple to its sealed
-// GlobalBinding. A Shard from an equivalent foreign Project, or an equivalent
-// but separately sealed Program, is rejected before the map is consulted.
+// occurrence. The Module-issued AnalysisRoot is mandatory: it names the
+// actor/context in which the occurrence executes. A mounted Program may have
+// multiple roots in one Link, so a Shard+Cell pair is deliberately not enough
+// to select a row.
 //
-// The inverse is unique by construction.  Host admission rejects a duplicate
-// (Shard, Cell) collision, so a false result means that this exact occurrence
-// is not part of this Host rather than that a caller should scan the rows.
-func (v Globals) ForProgramCell(shard linkproject.Shard, owner *program.Program, cell keyspace.Term) (GlobalBinding, bool) {
+// Host retains the only derived lookup from the exact Project Shard, mounted
+// Program owner, Module root, and authored Cell to its sealed GlobalBinding.
+// A Shard, Program, or AnalysisRoot from an equivalent foreign authority is
+// rejected before the owner-local inverse is consulted.
+func (v Globals) ForProgramCell(shard linkproject.Shard, owner *program.Program, cell keyspace.Term, root linkmodule.AnalysisRoot) (GlobalBinding, bool) {
 	c := v.component
 	if !live(c) || owner == nil || cell == 0 {
 		return GlobalBinding{}, false
 	}
-	shardIndex, ok := c.authority.project.Mounts().Index(shard)
+	_, ok := c.authority.project.Mounts().Index(shard)
 	if !ok {
 		return GlobalBinding{}, false
 	}
@@ -493,8 +493,13 @@ func (v Globals) ForProgramCell(shard linkproject.Shard, owner *program.Program,
 	if !ok || mounted != owner {
 		return GlobalBinding{}, false
 	}
-	ordinal, ok := c.authority.globalByShardCell[globalLookupKey{shard: uint32(shardIndex), cell: cell}]
-	if !ok || ordinal == 0 || uint64(ordinal) > uint64(len(c.authority.globals)) {
+	rootIndex, rootOK := c.authority.module.Roots().Index(root)
+	rootShard, _, _, mappingOK := c.authority.module.Roots().Mapping(root)
+	if !rootOK || !mappingOK || rootShard != shard {
+		return GlobalBinding{}, false
+	}
+	ordinal, found := c.authority.globalByRootCell[globalLookupKey{root: uint32(rootIndex), cell: cell}]
+	if !found || ordinal == 0 || uint64(ordinal) > uint64(len(c.authority.globals)) {
 		return GlobalBinding{}, false
 	}
 	return GlobalBinding{c, ordinal}, true

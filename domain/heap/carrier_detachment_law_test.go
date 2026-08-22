@@ -9,6 +9,8 @@ import (
 	"runtime"
 	"strings"
 	"testing"
+
+	"github.com/wippyai/go-lua/analysis/schema/programmount"
 )
 
 // TestPublishedHeapRowsRetainNoLinkCoordinates is a recursive publication
@@ -20,7 +22,7 @@ import (
 func TestPublishedHeapRowsRetainNoLinkCoordinates(t *testing.T) {
 	roots := []reflect.Type{
 		reflect.TypeOf(schema{}),
-		reflect.TypeOf(ArtifactMount{}),
+		reflect.TypeOf(programmount.MountedArtifact{}),
 		reflect.TypeOf(rootRow{}),
 		reflect.TypeOf(allocationSource{}),
 		reflect.TypeOf(slotRow{}),

@@ -9,6 +9,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/schema"
 	programschema "github.com/wippyai/go-lua/analysis/schema/program"
 	programcatalog "github.com/wippyai/go-lua/analysis/schema/program/catalog"
+	programissuance "github.com/wippyai/go-lua/analysis/schema/program/issuance"
 	programpublication "github.com/wippyai/go-lua/analysis/schema/program/publication"
 )
 
@@ -162,7 +163,7 @@ func TestEnvironmentAndLocalTransferIdentityFieldsPreserveWitnessAndKeyOrder(t *
 
 func TestRuleOccurrenceIdentityFieldsPreserveKeyAndOptionalPayloadOrder(t *testing.T) {
 	pointID := genericIdentityID(31)
-	rule, ruleOK := programschema.NewRuleOccurrence(schema.Key("rule-key"), schema.Key("writes-key"), 0, pointID, identity.ContentID{}, programschema.RuleStageBase, programschema.RuleInputNone, identity.ContentID{})
+	rule, ruleOK := programschema.NewRuleOccurrence(schema.Key("rule-key"), schema.Key("writes-key"), 0, pointID, identity.ContentID{}, programissuance.StageBase, programissuance.InputNone, identity.ContentID{}, false)
 	if !ruleOK {
 		t.Fatal("rule occurrence")
 	}
@@ -176,9 +177,34 @@ func TestRuleOccurrenceIdentityFieldsPreserveKeyAndOptionalPayloadOrder(t *testi
 	}
 	u := func(value uint64) genericIdentityOperation { return genericIdentityOperation{kind: 'u', value: value} }
 	s := func(value string) genericIdentityOperation { return genericIdentityOperation{kind: 's', text: value} }
-	want := genericIdentityOperations{u(1), s("rule-key"), s("writes-key"), u(0), i(pointID), i(identity.ContentID{}), u(uint64(programschema.RuleStageBase)), u(uint64(programschema.RuleInputNone)), i(identity.ContentID{})}
+	b := func(value bool) genericIdentityOperation {
+		if value {
+			return genericIdentityOperation{kind: 'b', value: 1}
+		}
+		return genericIdentityOperation{kind: 'b'}
+	}
+	want := genericIdentityOperations{u(1), s("rule-key"), s("writes-key"), u(0), i(pointID), i(identity.ContentID{}), s(string(programissuance.StageBase)), s(string(programissuance.InputNone)), i(identity.ContentID{}), b(false)}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("rule identity operations = %#v, want %#v", got, want)
+	}
+}
+
+func TestRuleOccurrenceNativeBitParticipatesInIdentity(t *testing.T) {
+	pointID, inputID := genericIdentityID(32), genericIdentityID(33)
+	ordinary, ordinaryOK := programschema.NewRuleOccurrence(schema.Key("rule-key"), schema.Key("writes-key"), 0, pointID, inputID, programissuance.StageCallDispatch, programissuance.InputPreviousStage, identity.ContentID{}, false)
+	native, nativeOK := programschema.NewRuleOccurrence(schema.Key("rule-key"), schema.Key("writes-key"), 0, pointID, inputID, programissuance.StageCallDispatch, programissuance.InputPreviousStage, identity.ContentID{}, true)
+	if !ordinaryOK || !nativeOK {
+		t.Fatal("rule occurrence variants")
+	}
+	var ordinaryFields, nativeFields genericIdentityOperations
+	if !genericIdentityProgram(t, programpublication.Publication{RuleOccurrences: []programschema.RuleOccurrence{ordinary}}).WriteRuleOccurrenceIdentityFields(&ordinaryFields) ||
+		!genericIdentityProgram(t, programpublication.Publication{RuleOccurrences: []programschema.RuleOccurrence{native}}).WriteRuleOccurrenceIdentityFields(&nativeFields) {
+		t.Fatal("write rule identity variants")
+	}
+	if reflect.DeepEqual(ordinaryFields, nativeFields) || len(ordinaryFields) != len(nativeFields) ||
+		ordinaryFields[len(ordinaryFields)-1] != (genericIdentityOperation{kind: 'b'}) ||
+		nativeFields[len(nativeFields)-1] != (genericIdentityOperation{kind: 'b', value: 1}) {
+		t.Fatalf("native bit did not exclusively change the canonical rule identity: ordinary=%#v native=%#v", ordinaryFields, nativeFields)
 	}
 }
 

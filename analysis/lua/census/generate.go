@@ -173,7 +173,7 @@ func writeSegments(out *strings.Builder, rows []parsersource.SequenceSegment) {
 	}
 	out.WriteString("[]parsersource.SequenceSegment{\n")
 	for _, row := range rows {
-		fmt.Fprintf(out, "{Ordinal: %d, Kind: parsersource.SequenceSegmentKind(%d), Origins: ", row.Ordinal, row.Kind)
+		fmt.Fprintf(out, "{Ordinal: %d, Kind: parsersource.SequenceSegmentKind(%d), Input: %d, Origins: ", row.Ordinal, row.Kind, row.Input)
 		writeOrigins(out, row.Origins)
 		out.WriteString(", Sources: ")
 		writeOrdinals(out, row.Sources)

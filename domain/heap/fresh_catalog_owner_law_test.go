@@ -70,11 +70,11 @@ func TestHeapFreshOwnerEnumerationIsStableAndKeyIDRoundTrips(t *testing.T) {
 		if !mount.Available() {
 			t.Fatal("fixture returned an unavailable artifact mount")
 		}
-		program := mount.Snapshot().Program()
+		program := mount.Snapshot.Program()
 		if !program.Available() {
 			t.Fatal("fixture artifact mount returned an unavailable Program")
 		}
-		programs[mount.Module()] = program
+		programs[mount.ModuleKey] = program
 	}
 	applications := linked.Project().Applications().Calls()
 	for applicationIndex := 0; applicationIndex < applications.Count(); applicationIndex++ {

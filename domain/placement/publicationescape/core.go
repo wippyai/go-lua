@@ -353,9 +353,43 @@ type routeBuffer struct {
 	inline   [inlineRouteCapacity]plannedRoute
 	count    int
 	overflow []plannedRoute
+
+	// allRoot is a lazy owner-schema route plan.  The schema is already the
+	// Placement authority's immutable Heap projection, so retaining it here
+	// carries the complete allocation-root denominator without copying that
+	// catalogue into a route slice.  count/overflow remain the exact-route
+	// override set when an all-root plan is joined with exact Value roots.
+	allRoot       bool
+	allRootSchema placementdomain.Schema
+	allRootCount  int
+	// allRootPrefix is set only after the owner schema has been validated as
+	// having every allocation root in dense prefix order.  A defensive
+	// non-prefix schema uses allRootAt's sparse scan instead; no root index is
+	// copied for that exceptional shape.
+	allRootPrefix   bool
+	allRootRequired placementdomain.Placement
 }
 
 func (routes *routeBuffer) at(index int) (plannedRoute, bool) {
+	if routes == nil || index < 0 {
+		return plannedRoute{}, false
+	}
+	if routes.allRoot {
+		if index >= routes.allRootCount {
+			return plannedRoute{}, false
+		}
+		return routes.allRootAt(index)
+	}
+	if index >= routes.count {
+		return plannedRoute{}, false
+	}
+	return routes.exactAt(index)
+}
+
+// exactAt reads only the bounded exact Value route set.  It deliberately does
+// not use at: in lazy all-root mode at indexes the owner schema's roots,
+// whereas add/set must index the exact override storage.
+func (routes *routeBuffer) exactAt(index int) (plannedRoute, bool) {
 	if routes == nil || index < 0 || index >= routes.count {
 		return plannedRoute{}, false
 	}
@@ -371,7 +405,110 @@ func (routes *routeBuffer) at(index int) (plannedRoute, bool) {
 	return plannedRoute{}, false
 }
 
-func (routes routeBuffer) len() int { return routes.count }
+func (routes routeBuffer) len() int {
+	if routes.allRoot {
+		return routes.allRootCount
+	}
+	return routes.count
+}
+
+// allRootAt lazily projects the index-th allocation root from the owner
+// schema.  Exact routes are retained as small overrides and joined only for
+// the root they name; this preserves the ordinary routeBuffer's monotone
+// merge when an all-root policy and an exact Value fact overlap.
+func (routes *routeBuffer) allRootAt(index int) (plannedRoute, bool) {
+	if routes == nil || !routes.allRoot || index < 0 || index >= routes.allRootCount || !routes.allRootSchema.Valid() {
+		return plannedRoute{}, false
+	}
+	if routes.allRootPrefix {
+		key, keyOK := routes.allRootSchema.KeyAt(index)
+		if !keyOK || key.Kind() != heapdomain.RootAllocation {
+			return plannedRoute{}, false
+		}
+		tag, tagOK := routeTagFor(routes.allRootSchema, key)
+		if !tagOK {
+			return plannedRoute{}, false
+		}
+		return routes.allRootRoute(key, tag)
+	}
+	rootIndex := 0
+	for dense := 0; dense < routes.allRootSchema.DenseKeyCount(); dense++ {
+		key, keyOK := routes.allRootSchema.KeyAt(dense)
+		if !keyOK {
+			return plannedRoute{}, false
+		}
+		if key.Kind() != heapdomain.RootAllocation {
+			continue
+		}
+		tag, tagOK := routeTagFor(routes.allRootSchema, key)
+		if !tagOK {
+			return plannedRoute{}, false
+		}
+		if rootIndex != index {
+			rootIndex++
+			continue
+		}
+		return routes.allRootRoute(key, tag)
+	}
+	return plannedRoute{}, false
+}
+
+func (routes *routeBuffer) allRootRoute(key heapdomain.Key, tag routeTag) (plannedRoute, bool) {
+	if routes == nil || !routes.allRoot || !key.Valid() || tag == 0 {
+		return plannedRoute{}, false
+	}
+	route := plannedRoute{
+		key:      key,
+		tag:      tag,
+		required: routes.allRootRequired,
+	}
+	for overrideIndex := 0; overrideIndex < routes.count; overrideIndex++ {
+		override, overrideOK := routes.exactAt(overrideIndex)
+		if !overrideOK {
+			return plannedRoute{}, false
+		}
+		if override.key == key {
+			route = mergeRoute(route, override)
+			break
+		}
+	}
+	return route, true
+}
+
+// find resolves a routed tag without walking all roots.  routeTag is the
+// canonical dense Placement coordinate, so an all-root plan can validate and
+// project the selected owner row directly from the schema.
+func (routes *routeBuffer) find(tag routeTag) (plannedRoute, bool) {
+	if routes == nil || tag == 0 {
+		return plannedRoute{}, false
+	}
+	if !routes.allRoot {
+		for index := 0; index < routes.count; index++ {
+			candidate, candidateOK := routes.exactAt(index)
+			if candidateOK && candidate.tag == tag {
+				return candidate, true
+			}
+		}
+		return plannedRoute{}, false
+	}
+	if !routes.allRootSchema.Valid() {
+		return plannedRoute{}, false
+	}
+	dense64 := uint64(tag) - 1
+	if dense64 >= uint64(routes.allRootSchema.DenseKeyCount()) {
+		return plannedRoute{}, false
+	}
+	dense := int(dense64)
+	key, keyOK := routes.allRootSchema.KeyAt(dense)
+	if !keyOK || key.Kind() != heapdomain.RootAllocation {
+		return plannedRoute{}, false
+	}
+	canonicalTag, canonicalOK := routeTagFor(routes.allRootSchema, key)
+	if !canonicalOK || canonicalTag != tag {
+		return plannedRoute{}, false
+	}
+	return routes.allRootRoute(key, tag)
+}
 
 func (routes *routeBuffer) set(index int, route plannedRoute) bool {
 	if routes == nil || index < 0 || index >= routes.count {
@@ -395,7 +532,7 @@ func (routes *routeBuffer) add(candidate plannedRoute) {
 		return
 	}
 	for index := 0; index < routes.count; index++ {
-		prior, _ := routes.at(index)
+		prior, _ := routes.exactAt(index)
 		if prior.key == candidate.key {
 			routes.set(index, mergeRoute(prior, candidate))
 			return
@@ -403,7 +540,7 @@ func (routes *routeBuffer) add(candidate plannedRoute) {
 	}
 	insert := routes.count
 	for index := 0; index < routes.count; index++ {
-		prior, _ := routes.at(index)
+		prior, _ := routes.exactAt(index)
 		if candidate.tag < prior.tag {
 			insert = index
 			break
@@ -411,7 +548,7 @@ func (routes *routeBuffer) add(candidate plannedRoute) {
 	}
 	if routes.count < inlineRouteCapacity {
 		for index := routes.count; index > insert; index-- {
-			prior, _ := routes.at(index - 1)
+			prior, _ := routes.exactAt(index - 1)
 			routes.inline[index] = prior
 		}
 		routes.inline[insert] = candidate
@@ -480,7 +617,7 @@ func routeTagFor(schema placementdomain.Schema, key heapdomain.Key) (routeTag, b
 	if !schema.Valid() || !key.Valid() || key.Kind() != heapdomain.RootAllocation || !schema.Heap().OwnsKey(key) {
 		return 0, false
 	}
-	index, ok := schema.Heap().KeyIndex(key)
+	index, ok := schema.Heap().AllocationKeyIndex(key)
 	if !ok || index < 0 || uint64(index) >= uint64(^uint32(0)) {
 		return 0, false
 	}
@@ -491,83 +628,100 @@ func routeTagFor(schema placementdomain.Schema, key heapdomain.Key) (routeTag, b
 	return routeTag(uint64(index) + 1), true
 }
 
-// widenAllRoots is invoked only after one of the three authenticated widening
-// proofs has been established: an open MountedInput, an opaque Call gate, or
-// an actual Value Top/opaque-reference fact.  It is never an error recovery
-// path for a missing or malformed predecessor.
-func widenAllRoots(schema placementdomain.Schema) (routeBuffer, bool) {
+// broadcastAllRoots preserves a known publication placement requirement while
+// widening only the allocation identity. An open MountedInput or a Value Top /
+// opaque-reference fact therefore broadcasts Send as SharedHeap (or Return /
+// Callback as OwnedHeap) instead of manufacturing a Placement.Unknown policy.
+func broadcastAllRoots(schema placementdomain.Schema, requirement placementdomain.Placement) (routeBuffer, bool) {
+	if !validRequirement(requirement) {
+		return routeBuffer{}, false
+	}
+	return allRootsWithRequirement(schema, requirement)
+}
+
+// allRootsWithRequirement validates the complete owner denominator once, then
+// retains only the owner schema and the policy metadata.  It deliberately does
+// not issue one plannedRoute per allocation root: exact Value roots remain the
+// only routes that use routeBuffer's inline/spill catalogue.
+func allRootsWithRequirement(schema placementdomain.Schema, requirement placementdomain.Placement) (routeBuffer, bool) {
 	var routes routeBuffer
 	if !schema.Valid() {
 		return routes, false
 	}
+	if !validRequirement(requirement) {
+		return routes, false
+	}
+	rootCount := 0
+	prefixCount := 0
+	prefix := true
 	for dense := 0; dense < schema.DenseKeyCount(); dense++ {
 		key, ok := schema.KeyAt(dense)
 		if !ok {
 			return routeBuffer{}, false
 		}
 		if key.Kind() != heapdomain.RootAllocation {
+			prefix = false
 			continue
 		}
-		tag, ok := routeTagFor(schema, key)
-		if !ok {
+		if _, ok := routeTagFor(schema, key); !ok {
 			return routeBuffer{}, false
 		}
-		routes.add(plannedRoute{key: key, tag: tag, required: placementdomain.Unknown, unknown: true})
+		rootCount++
+		if prefix {
+			prefixCount++
+		}
 	}
+	routes.allRoot = true
+	routes.allRootSchema = schema
+	routes.allRootCount = rootCount
+	routes.allRootPrefix = prefixCount == rootCount
+	routes.allRootRequired = requirement
 	return routes, true
 }
 
-// rootsForValue is intentionally local. placement/store.Plan has the same
-// atom walk but its package owns Program storage/lifetime semantics; this rule
-// only needs the neutral Value-to-Heap projection.
+// mergeAllRoot joins a lazy all-root policy into the current route plan.  The
+// exact route storage is intentionally retained as overrides: if an exact
+// Value root has a stronger requirement than an all-root default, at/find
+// joins it for that root only instead of widening the entire catalogue.
+func (routes *routeBuffer) mergeAllRoot(candidate routeBuffer) bool {
+	if routes == nil || !candidate.allRoot || !candidate.allRootSchema.Valid() {
+		return false
+	}
+	if !routes.allRoot {
+		routes.allRoot = true
+		routes.allRootSchema = candidate.allRootSchema
+		routes.allRootCount = candidate.allRootCount
+		routes.allRootPrefix = candidate.allRootPrefix
+		routes.allRootRequired = candidate.allRootRequired
+		return true
+	}
+	if routes.allRootSchema != candidate.allRootSchema || routes.allRootCount != candidate.allRootCount || routes.allRootPrefix != candidate.allRootPrefix {
+		return false
+	}
+	joined, joinedOK := placementdomain.JoinChecked(routes.allRootRequired, candidate.allRootRequired)
+	if !joinedOK {
+		return false
+	}
+	routes.allRootRequired = joined
+	return true
+}
+
+// rootsForValue remains local because publicationescape owns its route-buffer
+// and escape requirement. The Value-to-allocation-root authentication itself
+// is Placement-owned and shared with the other route consumers.
 func rootsForValue(schema placementdomain.Schema, values *valuedomain.Schema, fact valuedomain.Value) (roots keyBuffer, unknown, ok bool) {
-	if !schema.Valid() || values == nil || !values.Valid() || !values.OwnsHeapSchema(schema.Heap()) {
+	projection, projectionOK := placementdomain.ProjectValueAllocations(schema, values, fact)
+	if !projectionOK {
 		return roots, false, false
 	}
-	// Check ownership before the lattice extremes.  IsBottom/IsTop are
-	// intentionally owner-local, but a foreign schema can still carry a valid
-	// extreme and must not be accepted as a local publication fact.
-	if !values.Equal(fact, fact) {
-		return roots, false, false
-	}
-	if fact.IsBottom() {
-		return roots, false, true
-	}
-	if fact.IsTop() {
-		return roots, true, true
-	}
-	valid := true
-atoms:
-	for atomIndex, atomCount := 0, values.ValueAtomCount(fact); atomIndex < atomCount; atomIndex++ {
-		atom, atomOK := values.ValueAtomAt(fact, atomIndex)
-		if !atomOK {
-			valid = false
-			break
+	for index := 0; index < projection.ExactCount(); index++ {
+		key, keyOK := projection.ExactAt(index)
+		if !keyOK {
+			return keyBuffer{}, false, false
 		}
-		classification, classificationOK := placementdomain.ClassifyAtom(values, atom)
-		if !classificationOK || !classification.Valid() {
-			valid = false
-			break atoms
-		}
-		switch classification.Class {
-		case placementdomain.AtomClassAllocation:
-			key := classification.Key
-			if !schema.Heap().OwnsKey(key) || key.Kind() != heapdomain.RootAllocation {
-				valid = false
-				break atoms
-			}
-			index, indexOK := schema.Heap().KeyIndex(key)
-			canonical, canonicalOK := schema.KeyAt(index)
-			if !indexOK || !canonicalOK || canonical != key {
-				valid = false
-				break atoms
-			}
-			roots.add(key)
-		case placementdomain.AtomClassOpaque:
-			unknown = true
-		}
+		roots.add(key)
 	}
-	return roots, unknown, valid
+	return roots, projection.Widened(), true
 }
 
 func mergeRoute(prior, candidate plannedRoute) plannedRoute {
@@ -713,8 +867,9 @@ func (prepared *preparedBatch) sourcesForGate(gate operationGate) sourceView {
 	sources := sourceView{byTag: prepared.byTag, gate: gate}
 	for _, source := range prepared.sources {
 		// Opaque Call alternatives do not select a Value source. Their
-		// publication rows are widened only at the authenticated opaque Call
-		// boundary in routeSet; no source or coordinate is fabricated here.
+		// publication rows have no typed Effect receipt, so no source or
+		// coordinate is fabricated here; only exact known operation rows enter
+		// the Value predecessor lane.
 		if !gate.admits(source.operation) {
 			continue
 		}
@@ -947,26 +1102,24 @@ func (rule *HotRule) routeSet(schema placementdomain.Schema, prepared *preparedB
 	if rule == nil || prepared == nil || !schema.Valid() || rule.values == nil || rule.values.Schema() == nil {
 		return routeBuffer{}, false
 	}
-	if !validPreparedRoutes(prepared, rule.values.Schema()) || !facts.valid(rule.values.Schema()) {
+	valuesSchema := rule.values.Schema()
+	if !valuesSchema.Valid() || !valuesSchema.OwnsHeapSchema(schema.Heap()) {
+		return routeBuffer{}, false
+	}
+	if !validPreparedRoutes(prepared, valuesSchema) || !facts.valid(valuesSchema) {
 		return routeBuffer{}, false
 	}
 	var routes routeBuffer
 	for _, row := range prepared.rows {
 		if !gate.admits(row.operation) {
-			if !gate.opaque {
-				continue
-			}
-			all, ok := widenAllRoots(schema)
-			if !ok {
-				return routeBuffer{}, false
-			}
-			for index := 0; index < all.len(); index++ {
-				candidate, candidateOK := all.at(index)
-				if !candidateOK {
-					return routeBuffer{}, false
-				}
-				routes.add(candidate)
-			}
+			// An opaque Call alternative is not a publication receipt.  Effect
+			// only issues rows for authenticated Target publication descriptors;
+			// the synthesized opaque operation instead carries unknown formal /
+			// transfer tails, which are consumed by their own lanes.  Treating
+			// that missing descriptor as an all-root Unknown publication would
+			// duplicate those lanes and invent affected roots without a canonical
+			// payload/formal actual.  A known operation remains routed below even
+			// when the Call value also retains its opaque alternative.
 			continue
 		}
 		if row.subjectNil {
@@ -999,16 +1152,9 @@ func (rule *HotRule) routeSet(schema placementdomain.Schema, prepared *preparedB
 				// row cannot self-attest that authority.
 				return routeBuffer{}, false
 			}
-			all, ok := widenAllRoots(schema)
-			if !ok {
+			all, ok := broadcastAllRoots(schema, row.requirement)
+			if !ok || !routes.mergeAllRoot(all) {
 				return routeBuffer{}, false
-			}
-			for index := 0; index < all.len(); index++ {
-				candidate, candidateOK := all.at(index)
-				if !candidateOK {
-					return routeBuffer{}, false
-				}
-				routes.add(candidate)
 			}
 			continue
 		}
@@ -1032,21 +1178,14 @@ func (rule *HotRule) routeSet(schema placementdomain.Schema, prepared *preparedB
 		if fact.IsBottom() {
 			continue
 		}
-		roots, unknown, ok := rootsForValue(schema, rule.values.Schema(), fact)
+		roots, unknown, ok := rootsForValue(schema, valuesSchema, fact)
 		if !ok {
 			return routeBuffer{}, false
 		}
 		if unknown {
-			all, allOK := widenAllRoots(schema)
-			if !allOK {
+			all, allOK := broadcastAllRoots(schema, row.requirement)
+			if !allOK || !routes.mergeAllRoot(all) {
 				return routeBuffer{}, false
-			}
-			for index := 0; index < all.len(); index++ {
-				candidate, candidateOK := all.at(index)
-				if !candidateOK {
-					return routeBuffer{}, false
-				}
-				routes.add(candidate)
 			}
 			continue
 		}

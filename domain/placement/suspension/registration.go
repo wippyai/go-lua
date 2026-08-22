@@ -47,8 +47,8 @@ func RuleEntry[P rulePrincipals, A ruleAuthorities]() rule.Spec {
 func EvidenceRuleEntry[P rulePrincipals, A ruleAuthorities]() rule.Spec {
 	return rule.Spec{
 		Key:      "placement-suspension-evidence",
-		Writes:   "placement",
-		Owner:    "placement",
+		Writes:   "placement-suspension-evidence",
+		Owner:    "placement-suspension-evidence",
 		Lane:     rule.LaneLink,
 		Semantic: "semantic/rule/placement/suspension-evidence",
 		Roles:    []schema.Key{"semantic/operand/placement/suspension-evidence"},
@@ -97,14 +97,14 @@ func FinalizeEvidenceRule[A ruleAuthorities](context rule.Finalization[A, *Evide
 	return context.Rule != nil && context.Rule.Catalog() != nil && context.Rule.Catalog().FencedTo(context.Authorities.PlacementSchema(), context.Authorities.ValueSchema())
 }
 
-func LinkCatalog(hot *HotRule) (rule.LinkCatalog, bool) {
+func OccurrenceCatalog(hot *HotRule) (rule.OccurrenceCatalog, bool) {
 	if hot == nil || hot.Catalog() == nil {
 		return nil, false
 	}
 	return hot.Catalog(), true
 }
 
-func LinkEvidenceCatalog(hot *EvidenceHotRule) (rule.LinkCatalog, bool) {
+func EvidenceOccurrenceCatalog(hot *EvidenceHotRule) (rule.OccurrenceCatalog, bool) {
 	if hot == nil || hot.Catalog() == nil {
 		return nil, false
 	}

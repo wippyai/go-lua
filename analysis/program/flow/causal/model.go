@@ -312,7 +312,8 @@ type Result struct {
 	// its well-formedness per successor reference.
 	rowsSealed bool
 	// components is the exact ordered recurrence-issued component directory.
-	// It retains only heads, never node/arc/SCC topology, and seeds Flow.Local.
+	// It retains only heads, never node/arc/SCC topology, and authenticates WTO
+	// and route recurrence projections.
 	components     []keyspace.Term
 	componentIndex map[keyspace.Term]uint32
 	// componentPaths are Source/Flow-issued semantic region paths, parallel to
@@ -321,7 +322,6 @@ type Result struct {
 	componentPaths []identity.ContentID
 	// structuralPaths is the sole semanticpath-owned projection for authored
 	structuralPaths *semanticpath.CausalPaths
-	local           localStore
 	wto             wtoStore
 	// pendingWTO is the recurrence-issued, owner-private node bracket stream.
 	// It exists only between causal sealing and Flow's semantic-path

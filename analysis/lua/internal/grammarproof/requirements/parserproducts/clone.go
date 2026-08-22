@@ -24,11 +24,6 @@ func clone(source Evidence) Evidence {
 	for index, law := range source.HelperLaws {
 		result.HelperLaws[index] = cloneHelperLaw(law)
 	}
-	result.Sequences = make([]SequenceLaw, len(source.Sequences))
-	for index, row := range source.Sequences {
-		result.Sequences[index] = row
-		result.Sequences[index].Segments = append([]SequenceSegment(nil), row.Segments...)
-	}
 	result.Mutations = make([]FieldMutation, len(source.Mutations))
 	for index, row := range source.Mutations {
 		result.Mutations[index] = row

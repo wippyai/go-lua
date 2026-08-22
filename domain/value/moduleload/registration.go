@@ -30,10 +30,8 @@ func RuleEntry[P rulePrincipals, A ruleAuthorities]() rule.Spec {
 		Owner:  "value",
 		Issues: []rule.Issuance{{
 			Occurrence:  "occurrence/call",
-			Requirement: "requirement/call-result-slot",
-			Form:        "issuance/call-stage",
-			Input:       "input/finish",
-			Stage:       "stage/call-summary",
+			Requirement: "program-requirement/module-load-call-result",
+			Form:        "program-form/call-summary",
 		}},
 		Lane:     rule.LaneMounted,
 		Semantic: "semantic/rule/value/callresult-moduleload",

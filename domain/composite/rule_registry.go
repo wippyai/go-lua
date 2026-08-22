@@ -11,11 +11,15 @@ import (
 	"github.com/wippyai/go-lua/analysis/schema/composite"
 	"github.com/wippyai/go-lua/analysis/schema/denominator"
 	"github.com/wippyai/go-lua/analysis/schema/diagnostic"
+	issuanceschema "github.com/wippyai/go-lua/analysis/schema/issuance"
 	"github.com/wippyai/go-lua/analysis/schema/observation"
+	programschema "github.com/wippyai/go-lua/analysis/schema/program"
+	programissuance "github.com/wippyai/go-lua/analysis/schema/program/issuance"
 	"github.com/wippyai/go-lua/analysis/schema/query"
 	"github.com/wippyai/go-lua/analysis/schema/rule"
 	"github.com/wippyai/go-lua/analysis/schema/structure"
 	"github.com/wippyai/go-lua/analysis/schema/vocabulary"
+	heapdomain "github.com/wippyai/go-lua/domain/heap"
 )
 
 // ruleTableLimit is one past the last declaration slot (slots are 1-based).
@@ -47,6 +51,14 @@ func newCatalog() (*catalog, schema.SealFailure) {
 	axes, axisContributors, axesOK := axisTemplates()
 	if !axesOK {
 		state.failure = schema.SealFailure{Contributor: schema.SurfaceKindAxis, Law: schema.LawEntryAdmissible, Disposition: schema.DispositionMalformed}
+		return state, state.failure
+	}
+	issuanceEntries, issuanceOK := programissuance.Entries(
+		programissuance.CodeFamily{Key: "occurrence/allocation-empty", Kind: programschema.OccurrenceAllocation, Code: uint64(heapdomain.AllocationFormEmpty)},
+		programissuance.CodeFamily{Key: "occurrence/allocation-closed", Kind: programschema.OccurrenceAllocation, Code: uint64(heapdomain.AllocationFormClosed)},
+	)
+	if !issuanceOK {
+		state.failure = schema.SealFailure{Contributor: schema.SurfaceKindIssuance, Law: schema.LawEntryAdmissible, Disposition: schema.DispositionMalformed}
 		return state, state.failure
 	}
 	templates, ruleContributors, ok := RuleTemplates[principals, authorities]()
@@ -88,6 +100,7 @@ func newCatalog() (*catalog, schema.SealFailure) {
 	declarations := analysiscatalog.NewDeclarations()
 	declarations.Register(structure.NewSurface(structures))
 	declarations.Register(axis.NewSurface(axes))
+	declarations.Register(issuanceschema.NewSurface(issuanceEntries))
 	declarations.Register(rule.NewSurface(templates))
 	declarations.Register(diagnostic.NewSurface(diagnostics))
 	declarations.Register(composite.NewSurface(composites))
@@ -247,6 +260,19 @@ func linkKeys(state *catalog) []schema.Key {
 	}
 	for _, entry := range state.templates {
 		if entry != nil && entry.Lane() == rule.LaneLink {
+			keys = append(keys, entry.Key())
+		}
+	}
+	return keys
+}
+
+func mountedPointKeys(state *catalog) []schema.Key {
+	var keys []schema.Key
+	if state == nil {
+		return nil
+	}
+	for _, entry := range state.templates {
+		if entry != nil && entry.Lane() == rule.LaneMountedPoint {
 			keys = append(keys, entry.Key())
 		}
 	}
@@ -471,6 +497,19 @@ func (rules *RuleBinding) CapabilityByKey(key schema.Key) (engine.RuleSlotCapabi
 	return rules.capabilityAtSlot(slot)
 }
 
+// MountedCapabilityForArtifactRole resolves the capability for one canonical
+// scalar artifact role. Lowering has already replaced every transfer axis with
+// its declaration-owned transport rule key, so this boundary performs one
+// authenticated rule-key lookup and never guesses whether the spelling is an
+// axis or a rule.
+func (rules *RuleBinding) MountedCapabilityForArtifactRole(key schema.Key) (engine.RuleSlotCapability, bool) {
+	if rules == nil || !key.Available() {
+		return engine.RuleSlotCapability{}, false
+	}
+	capability, capabilityOK := rules.CapabilityByKey(key)
+	return capability, capabilityOK && capability.Mounted()
+}
+
 // capabilityAtSlot resolves one rule's sealed slot capability by its slot.
 func (rules *RuleBinding) capabilityAtSlot(slot int) (engine.RuleSlotCapability, bool) {
 	entry, entryOK := templateAtSlot(rules.catalog, slot)
@@ -482,14 +521,14 @@ func (rules *RuleBinding) capabilityAtSlot(slot int) (engine.RuleSlotCapability,
 		return engine.RuleSlotCapability{}, false
 	}
 	capability, ok := engine.BindingRuleSlot(rules.binding, semantic)
-	return capability, ok && (capability.Mounted() || capability.Link())
+	return capability, ok && (capability.Mounted() || capability.Link() || capability.MountedPoint())
 }
 
 // DiagnosticForCapability classifies one Engine rule capability against the
 // table. It replaces the per-lane capability scans that each rebuilt their own
 // role inventory.
 func (rules *RuleBinding) DiagnosticForCapability(capability engine.RuleSlotCapability) DiagnosticRule {
-	if rules == nil || !(capability.Mounted() || capability.Link()) {
+	if rules == nil || !(capability.Mounted() || capability.Link() || capability.MountedPoint()) {
 		return DiagnosticRuleUnknown
 	}
 	for position := range rules.catalog.templates {
@@ -501,13 +540,13 @@ func (rules *RuleBinding) DiagnosticForCapability(capability engine.RuleSlotCapa
 	return DiagnosticRuleUnknown
 }
 
-func (rules *RuleBinding) LinkCatalogByKey(key schema.Key) (rule.LinkCatalog, bool) {
+func (rules *RuleBinding) OccurrenceCatalogByKey(key schema.Key) (rule.OccurrenceCatalog, bool) {
 	hot, hotOK := rules.cellByKey(key)
 	contributor, contributorOK := ruleContributorFor(rules.catalog, key)
 	if !hotOK || !contributorOK {
 		return nil, false
 	}
-	return contributor.LinkCatalog(hot)
+	return contributor.OccurrenceCatalog(hot)
 }
 
 func ruleContributorFor(state *catalog, key schema.Key) (RuleContributor[principals, authorities], bool) {
@@ -586,7 +625,7 @@ func bindRules(state *catalog, binding *engine.SchemaBinding, fragments ruleCell
 			return engine.RuleSlotCapability{}, false
 		}
 		capability := issued[slot]
-		return capability, capability.Mounted() || capability.Link()
+		return capability, capability.Mounted() || capability.Link() || capability.MountedPoint()
 	}
 	for position := range state.templates {
 		slot := position + 1
@@ -603,7 +642,9 @@ func bindRules(state *catalog, binding *engine.SchemaBinding, fragments ruleCell
 	for position, entry := range state.templates {
 		slot := position + 1
 		capability, ok := rules.capabilityAtSlot(slot)
-		if !ok || entry.Lane().Mounted() != capability.Mounted() || (entry.Lane() == rule.LaneLink) != capability.Link() {
+		if !ok || entry.Lane().Mounted() != capability.Mounted() ||
+			(entry.Lane() == rule.LaneLink) != capability.Link() ||
+			(entry.Lane() == rule.LaneMountedPoint) != capability.MountedPoint() {
 			return nil, DiagnosticRule(slot), RuleBindStageCapability
 		}
 	}

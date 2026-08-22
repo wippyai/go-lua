@@ -4,6 +4,7 @@ package engine
 
 import (
 	"github.com/wippyai/go-lua/analysis/engine/internal/carrier"
+	"github.com/wippyai/go-lua/analysis/engine/internal/contextfiber"
 	"github.com/wippyai/go-lua/analysis/engine/internal/equation"
 	"github.com/wippyai/go-lua/analysis/engine/internal/facts/change"
 	"github.com/wippyai/go-lua/analysis/engine/internal/schedule"
@@ -83,13 +84,23 @@ func (epoch *executorEpoch) publish(point int, current, next carrier.PointState,
 			return false, epoch.fail()
 		}
 		var sourceOK bool
-		sourcePoint, sourceOK = epoch.runtime.graph.PointAt(schedule.Node(point))
+		sourcePoint, _, _, sourceOK = epoch.runtime.graphPointAtState(point)
 		if !sourceOK {
 			return false, epoch.fail()
 		}
-		if !epoch.markStructuralSuccessors(sourcePoint) {
+		if epoch.runtime.artifactBacked {
+			if !epoch.markStructuralSuccessorsState(point, sourcePoint) {
+				return false, epoch.fail()
+			}
+		} else if !epoch.markStructuralSuccessors(sourcePoint) {
 			return false, epoch.fail()
 		}
+	}
+	if epoch.runtime.artifactBacked {
+		if !epoch.markArtifactProducerReadConsumers(point, changes) {
+			return false, epoch.fail()
+		}
+		return changed, true
 	}
 	// Semantic and coverage evidence share one accumulator, so a Group reached
 	// through both channels arrives once. There is no cross-channel comparison
@@ -112,24 +123,21 @@ func (epoch *executorEpoch) publish(point int, current, next carrier.PointState,
 	return changed, true
 }
 
-// publishAcyclicExact installs one already-complete PointRHS without deriving
-// an old-to-new typed ChangeSet. Acyclic scheduling already owns the exact
-// static consumer incidence: conservatively waking that row is semantically
-// equivalent to routing every changed Unit, while avoiding a second FDD
-// zipper solely for invalidation evidence. This changes scheduling precision,
-// never abstract-state precision. Recurrence publication retains the exact
-// ChangeSet path above for its phase/order proofs.
-func (epoch *executorEpoch) publishAcyclicExact(point int, current, next carrier.PointState, order pointPublication, evidence change.Set) (bool, bool) {
+// publishAcyclicExact installs one already-complete PointRHS and consumes the
+// exact carrier ChangeSet issued by the final publication cut. Acyclic
+// scheduling still owns the static graph wake, but artifact execution also
+// uses this sparse exact-Unit route to reactivate only producer rows that
+// completed a matching read in this StateOrdinal context.
+func (epoch *executorEpoch) publishAcyclicExact(point int, current, next carrier.PointState, order pointPublication, changes carrier.ChangeSet) (bool, bool) {
 	if epoch == nil || epoch.canceled() || point < 0 || point >= len(epoch.points) || point >= len(epoch.structural.pointDescent) ||
-		!epoch.work.OwnsPointState(current) || !epoch.work.OwnsPointState(next) || order != publicationAscending && order != publicationMayDescend {
+		epoch.runtime == nil || epoch.runtime.carrier == nil || !epoch.work.OwnsPointState(current) || !epoch.work.OwnsPointState(next) || !epoch.runtime.carrier.OwnsChangeSet(changes) || order != publicationAscending && order != publicationMayDescend {
 		return false, false
 	}
+	evidence := changes.Evidence()
 	semanticChanged := !epoch.work.EqualPointState(current, next)
 	// See publish: raw compact-C replacement is a versioned structural event
-	// even when the lifted Point value is equal. The acyclic path installs the
-	// evidence its producing operation classified but routes no typed
-	// ChangeSet, so its conservative graph wake remains the barrier that
-	// prevents a stale cursor from bridging the representation change.
+	// even when the lifted Point value is equal. The final ChangeSet is the
+	// publication evidence and the exact-Unit wake source for mounted rows.
 	changed := !epoch.work.ExactSamePointRepresentation(current, next)
 	if epoch.diagnostics != nil {
 		epoch.diagnostics.recordPublication(semanticChanged, changed)
@@ -147,10 +155,10 @@ func (epoch *executorEpoch) publishAcyclicExact(point int, current, next carrier
 	if !changed {
 		return semanticChanged, true
 	}
-	// A Region accumulator reads this value only through an ingress operand,
-	// and it needs both axes classified: the fold ChangeSet carries the state
-	// axis, so the authored-coverage direction is derived here and nowhere
-	// else. Every other acyclic publication keeps its single traversal.
+	// A Region accumulator reads this value only through an ingress operand;
+	// derive the authored-coverage direction here and union it into the one
+	// ChangeSet evidence surface. Every other acyclic publication keeps its
+	// single traversal.
 	if epoch.operands.classifiesCoverage(point) {
 		coverageChanges, coverageOK := epoch.work.CoverageWakeChangesPointStates(current, next)
 		if !coverageOK {
@@ -167,12 +175,25 @@ func (epoch *executorEpoch) publishAcyclicExact(point int, current, next carrier
 	if order == publicationMayDescend && semanticChanged && !epoch.recordPointDescent(point) {
 		return false, epoch.fail()
 	}
-	sourcePoint, sourceOK := epoch.runtime.graph.PointAt(schedule.Node(point))
-	if !sourceOK || !epoch.markStructuralSuccessors(sourcePoint) {
+	sourcePoint, _, _, sourceOK := epoch.runtime.graphPointAtState(point)
+	if !sourceOK {
+		return false, epoch.fail()
+	}
+	if epoch.runtime.artifactBacked {
+		if !epoch.markStructuralSuccessorsState(point, sourcePoint) {
+			return false, epoch.fail()
+		}
+	} else if !epoch.markStructuralSuccessors(sourcePoint) {
 		return false, epoch.fail()
 	}
 	if !epoch.markPostfixDirty(point) || !epoch.invalidatePostfixAncestors(point) {
 		return false, epoch.fail()
+	}
+	if epoch.runtime.artifactBacked {
+		if !epoch.markArtifactProducerReadConsumers(point, changes) {
+			return false, epoch.fail()
+		}
+		return changed, true
 	}
 	// Every exact or dynamic typed read of this Point belongs to one ordinary
 	// graph consumer. Waking the canonical consumer row subsumes unit/factor
@@ -201,12 +222,18 @@ func (epoch *executorEpoch) acyclicPublicationOrder(current carrier.PointState, 
 // their complete RHS even while enclosed by the same WTO region.
 func (epoch *executorEpoch) refreshPoint(point equation.Point, pointIndex, regionIndex int) (changed, ok bool) {
 	refreshBoundary := refused(SolveFailureFamilyRefresh, "validation")
+	previousState := -1
+	if epoch != nil {
+		previousState = epoch.currentState
+		epoch.currentState = pointIndex
+		defer func() { epoch.currentState = previousState }()
+	}
 	defer func() {
 		if !ok {
 			epoch.recordRefreshPointFailure(refreshBoundary, point)
 		}
 	}()
-	if epoch == nil || epoch.canceled() || !point.Available() || pointIndex < 0 || pointIndex >= len(epoch.points) || pointIndex >= len(epoch.runtime.activePoints) || !epoch.runtime.activePoints[pointIndex] {
+	if epoch == nil || epoch.canceled() || !point.Available() || pointIndex < 0 || pointIndex >= len(epoch.points) || !epoch.activeState(pointIndex) {
 		return false, false
 	}
 	if epoch.diagnostics != nil {
@@ -229,20 +256,24 @@ func (epoch *executorEpoch) refreshPoint(point equation.Point, pointIndex, regio
 	if !appendedOK {
 		return false, false
 	}
-	// An RHS that never leaves its predecessor is a classified no-movement
-	// publication. Each overlay unions its own issued evidence into this
-	// accumulator; a branch that publishes no transition contributes an
-	// unclassified Set and the accumulation stays unclassified.
-	appendEvidence := change.Classified()
 	refreshBoundary = refused(SolveFailureFamilyRefresh, "candidate")
 	for index := 0; index < epoch.runtime.graph.ProducerCount(point); index++ {
 		group, groupOK := epoch.runtime.graph.ProducerAt(point, index)
 		groupIndex, indexed := epoch.runtime.graph.GroupIndex(group)
-		if !groupOK || !indexed || groupIndex < 0 || groupIndex >= len(epoch.producers) {
+		if !groupOK || !indexed || groupIndex < 0 || groupIndex >= len(epoch.runtime.producers) {
 			return false, false
 		}
 		producer := &epoch.runtime.producers[groupIndex]
-		state := &epoch.producers[groupIndex]
+		var state *producerEpoch
+		if epoch.runtime.artifactBacked {
+			var stateOK bool
+			state, stateOK = epoch.producerCache(contextfiber.StateOrdinal(pointIndex), groupIndex)
+			if !stateOK {
+				return false, false
+			}
+		} else {
+			state = &epoch.producers[groupIndex]
+		}
 		if producer.group.Output() != point || state.applied == state.generation {
 			continue
 		}
@@ -251,6 +282,9 @@ func (epoch *executorEpoch) refreshPoint(point equation.Point, pointIndex, regio
 			if !ok {
 				epoch.recordGroupFailure(SolveFailureReasonExecution, point, producer.group)
 			}
+			return false, false
+		}
+		if epoch.runtime.artifactBacked && !epoch.replaceArtifactProducerReads(pointIndex, groupIndex, reads) {
 			return false, false
 		}
 		// The only acyclic append proof is carrier-owned. Let its success prove
@@ -392,7 +426,7 @@ func (epoch *executorEpoch) refreshPoint(point equation.Point, pointIndex, regio
 			}
 		}
 		refreshBoundary = refused(SolveFailureFamilyRefresh, "demand-commit")
-		if epoch.canceled() || !epoch.demand.Replace(groupIndex, reads) {
+		if epoch.canceled() || !epoch.runtime.artifactBacked && !epoch.demand.Replace(groupIndex, reads) {
 			return false, false
 		}
 		// Candidate identity is State+C, not merely its lifted extensional
@@ -427,12 +461,10 @@ func (epoch *executorEpoch) refreshPoint(point equation.Point, pointIndex, regio
 			// order below. This is one Point RHS authority, not a side cache.
 			if regionIndex == schedule.NoRegion && !structuralChanged && !candidateRequiresCanonicalFold {
 				var merged bool
-				var appendChanges carrier.ChangeSet
-				appended, appendChanges, merged = epoch.work.AddRuleContribution(appended, next)
+				appended, _, merged = epoch.work.AddRuleContribution(appended, next)
 				if !merged || epoch.canceled() {
 					return false, false
 				}
-				appendEvidence = appendEvidence.Union(appendChanges.Evidence())
 			}
 		}
 		if epoch.canceled() {
@@ -447,7 +479,6 @@ func (epoch *executorEpoch) refreshPoint(point equation.Point, pointIndex, regio
 	}
 	if regionIndex == schedule.NoRegion {
 		rhs := appended
-		evidence := appendEvidence
 		order := publicationAscending
 		if structuralChanged || candidateRequiresCanonicalFold {
 			refreshBoundary = refused(SolveFailureFamilyRefresh, "acyclic-point-base")
@@ -457,24 +488,23 @@ func (epoch *executorEpoch) refreshPoint(point equation.Point, pointIndex, regio
 			}
 			refreshBoundary = refused(SolveFailureFamilyRefresh, "acyclic-fold-point")
 			foldBoundary := boundaryNone
-			var foldChanges carrier.ChangeSet
-			rhs, foldChanges, foldBoundary, ok = epoch.foldPointWithBoundary(current, base, point)
+			rhs, _, foldBoundary, ok = epoch.foldPointWithBoundary(current, base, point)
 			if !ok {
 				refreshBoundary = foldBoundary
 				return false, false
 			}
-			// The canonical fold committed reference==current to this RHS, so
-			// its own ChangeSet is exactly this publication's evidence and
-			// replaces whatever the abandoned append accumulated.
-			evidence = foldChanges.Evidence()
 			order = epoch.acyclicPublicationOrder(current, rhs)
 		}
 		refreshBoundary = refused(SolveFailureFamilyRefresh, "acyclic-publication")
-		published, ok := epoch.work.PublishPointRHS(rhs)
+		// ReplacePointWithRHS is the sole acyclic publication cut. Its owned
+		// ChangeSet carries exact factor Units to the mounted producer-read
+		// inverse; PublishPointRHS would discard that route and leave capture
+		// readers dormant after a later factor publication.
+		published, changes, ok := epoch.work.ReplacePointWithRHS(current, rhs)
 		if !ok || epoch.canceled() {
 			return false, false
 		}
-		changed, publishedOK := epoch.publishAcyclicExact(pointIndex, current, published, order, evidence)
+		changed, publishedOK := epoch.publishAcyclicExact(pointIndex, current, published, order, changes)
 		if !publishedOK || !epoch.settlePostfix(pointIndex) {
 			return false, false
 		}

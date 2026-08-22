@@ -212,7 +212,7 @@ func TestObservationPublicationsDeriveFromSealedGeometry(t *testing.T) {
 			// as many producers as it has measured values, so an anchor may
 			// repeat while an address may not.
 			for _, population := range [][]anadiag.Observation{geometry.BranchObservations, geometry.ConformanceObservations} {
-				got, ok := anadiag.Publications(testCase.state.compilation, population)
+				got, ok := anadiag.Publications(testCase.state.compilation, testCase.state.contextDirectory, population)
 				if !ok {
 					t.Fatal("observation publications")
 				}
@@ -233,13 +233,19 @@ func TestObservationPublicationsDeriveFromSealedGeometry(t *testing.T) {
 						anchors[point] = struct{}{}
 					}
 					for _, producer := range producers {
-						want, wantOK := anadiag.ValueObservationAddress(testCase.state.compilation, observation.Kind, observation.Mount, producer.Point)
-						anchor, published := seen[want]
-						if !wantOK || !published {
-							t.Fatalf("producing occurrence %s has no publication", producer.Point)
-						}
-						if _, based := anchors[anchor]; !based {
-							t.Fatalf("publication of %s is indexed by %s, which is no evidence point of its row", producer.Point, anchor)
+						for contextIndex := 0; contextIndex < testCase.state.contextDirectory.ContextCount(); contextIndex++ {
+							context, contextOK := testCase.state.contextDirectory.ContextAt(contextIndex)
+							if !contextOK || context.ModuleKey() != observation.Mount {
+								continue
+							}
+							want, wantOK := anadiag.ValueObservationAddress(testCase.state.compilation, observation.Kind, observation.Mount, producer.Point, context)
+							anchor, published := seen[want]
+							if !wantOK || !published {
+								t.Fatalf("producing occurrence %s has no publication for context %s", producer.Point, context.ID())
+							}
+							if _, based := anchors[anchor]; !based {
+								t.Fatalf("publication of %s is indexed by %s, which is no evidence point of its row", producer.Point, anchor)
+							}
 						}
 					}
 				}

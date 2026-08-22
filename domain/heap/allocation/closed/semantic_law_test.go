@@ -11,6 +11,7 @@ import (
 	linkproject "github.com/wippyai/go-lua/analysis/program/link/project"
 	"github.com/wippyai/go-lua/analysis/program/target/compiler"
 	"github.com/wippyai/go-lua/analysis/program/target/declaration"
+	"github.com/wippyai/go-lua/analysis/schema/programmount"
 	"github.com/wippyai/go-lua/domain/composite"
 	heapdomain "github.com/wippyai/go-lua/domain/heap"
 	"github.com/wippyai/go-lua/domain/heap/allocation/internal/source"
@@ -182,16 +183,16 @@ func closedSemanticFixture(t testing.TB, text string) (heapdomain.Schema, *value
 	issuance, issuanceOK := composite.ArtifactIssuanceDirectory(compilation)
 	shard, shardOK := linked.Project().Mounts().At(0)
 	module, moduleOK := linked.Project().ModuleKey(shard)
-	programID, programIDOK := linked.Project().Mounts().ProgramID(shard)
+	_, programIDOK := linked.Project().Mounts().ProgramID(shard)
 	artifact, failure := artifactcompiler.CompileDetailed(program, executionSchemaID, issuance)
-	mount, mountOK := heapdomain.NewArtifactMount(snapshottest.MustLower(t, artifact), module, programID)
-	heap, heapFailure := heapdomain.SealWithArtifacts(linked, []heapdomain.ArtifactMount{mount})
+	mount, mountOK := programmount.MountedArtifactFromSnapshot(snapshottest.MustLower(t, artifact), module)
+	heap, heapFailure := heapdomain.SealWithArtifacts(linked, []programmount.MountedArtifact{mount})
 	if !compilationOK || !executionSchemaID.Available() || !issuanceOK || !shardOK || !moduleOK || !programIDOK || failure.Available() || !mountOK || heapFailure != heapdomain.SealFailureNone {
 		t.Fatal("closed semantic artifact admission")
 	}
 	// Value's canonical mount is issued from the same artifact receipt; keep
 	// this conversion local so the law never uses the retired Link fixture.
-	valueMount, valueMountOK := valuedomain.NewArtifactMount(snapshottest.MustLower(t, artifact), module, programID)
+	valueMount, valueMountOK := programmount.MountedArtifactFromSnapshot(snapshottest.MustLower(t, artifact), module)
 	if !valueMountOK {
 		t.Fatal("closed semantic Value mount")
 	}
@@ -199,7 +200,7 @@ func closedSemanticFixture(t testing.TB, text string) (heapdomain.Schema, *value
 	if !structuralOK {
 		t.Fatal("structure vocabulary")
 	}
-	values, valueFailure := valuedomain.SealWithFailure(linked, heap, []valuedomain.ArtifactMount{valueMount}, structural)
+	values, valueFailure := valuedomain.SealWithFailure(linked, heap, []programmount.MountedArtifact{valueMount}, structural)
 	if valueFailure != valuedomain.SealFailureNone {
 		t.Fatal("closed semantic Value seal")
 	}

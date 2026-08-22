@@ -408,11 +408,7 @@ func (schema *valueBuilder) sealComputationRows() bool {
 		return false
 	}
 	for module, mount := range schema.artifacts {
-		artifact := mount.Snapshot()
-		if artifact == nil {
-			return false
-		}
-		program := artifact.Program()
+		program := mount.Program.Program
 		topologies, topologiesOK := sealReturnBoundaryTopologies(program)
 		if !topologiesOK {
 			return false

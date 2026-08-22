@@ -18,23 +18,23 @@ import (
 	heapempty "github.com/wippyai/go-lua/domain/heap/allocation/empty"
 	heapingress "github.com/wippyai/go-lua/domain/heap/allocation/ingress"
 	heapbootstrap "github.com/wippyai/go-lua/domain/heap/bootstrap"
+	contextowner "github.com/wippyai/go-lua/domain/heap/context/owner"
 	heapformalfreeze "github.com/wippyai/go-lua/domain/heap/formalfreeze"
 	heapindex "github.com/wippyai/go-lua/domain/heap/index"
 	heapowner "github.com/wippyai/go-lua/domain/heap/owner"
 	heappublicationfreeze "github.com/wippyai/go-lua/domain/heap/publicationfreeze"
 	packowner "github.com/wippyai/go-lua/domain/pack/owner"
 	packsource "github.com/wippyai/go-lua/domain/pack/source"
-	placementallocation "github.com/wippyai/go-lua/domain/placement/allocation"
 	placementcapture "github.com/wippyai/go-lua/domain/placement/capture"
 	placementcontainment "github.com/wippyai/go-lua/domain/placement/containment"
 	placementformal "github.com/wippyai/go-lua/domain/placement/formal"
-	placementfresh "github.com/wippyai/go-lua/domain/placement/fresh"
 	placementowner "github.com/wippyai/go-lua/domain/placement/owner"
 	placementpublicationescape "github.com/wippyai/go-lua/domain/placement/publicationescape"
 	placementquery "github.com/wippyai/go-lua/domain/placement/query"
 	placementreturnescape "github.com/wippyai/go-lua/domain/placement/returnescape"
 	placementstore "github.com/wippyai/go-lua/domain/placement/store"
 	placementsuspension "github.com/wippyai/go-lua/domain/placement/suspension"
+	placementtransfer "github.com/wippyai/go-lua/domain/placement/transfer"
 	"github.com/wippyai/go-lua/domain/runtimekind"
 	typedomain "github.com/wippyai/go-lua/domain/type"
 	valueallocation "github.com/wippyai/go-lua/domain/value/allocation"
@@ -142,25 +142,6 @@ func occurrenceVocabulary() []structure.Spec {
 		"value-claim", "binary-arithmetic", "binary-equality", "binary-order",
 		"binary-presence-refinement", "return-boundary", "formal-entry", "operation-predicate-refinement",
 		"binary-concat")
-	declare(structure.CategoryIssuanceForm, "base")
-	specs = append(specs,
-		structure.Spec{Key: "issuance/local", Category: structure.CategoryIssuanceForm, Ordinal: 2, Spelling: "local", Accepted: true, Framing: "analysis/program-artifact/local-stage"},
-		structure.Spec{Key: "issuance/computation", Category: structure.CategoryIssuanceForm, Ordinal: 3, Spelling: "computation", Accepted: true, Framing: "analysis/program-artifact/local-computation-stage"},
-		structure.Spec{Key: "issuance/local-predecessor", Category: structure.CategoryIssuanceForm, Ordinal: 4, Spelling: "local-predecessor", Accepted: true, Framing: "analysis/program-artifact/local-predecessor-stage"},
-		structure.Spec{Key: "issuance/call-stage", Category: structure.CategoryIssuanceForm, Ordinal: 5, Spelling: "call-stage", Accepted: true},
-		structure.Spec{Key: "issuance/local-successor", Category: structure.CategoryIssuanceForm, Ordinal: 6, Spelling: "local-successor", Accepted: true, Framing: "analysis/program-artifact/local-successor-stage"},
-	)
-	declare(structure.CategoryIssuanceInput,
-		"none", "finish", "entry", "predecessor")
-	declare(structure.CategoryIssuanceRequirement,
-		"unrestricted", "call-plain-unary", "closure-capture", "call-result-slot")
-	declare(structure.CategoryIssuanceStage,
-		"base", "local")
-	specs = append(specs,
-		structure.Spec{Key: "stage/call-dispatch", Category: structure.CategoryIssuanceStage, Ordinal: 3, Spelling: "call-dispatch", Accepted: true, Native: true, Framing: "analysis/program-artifact/call-dispatch-stage"},
-		structure.Spec{Key: "stage/call-summary", Category: structure.CategoryIssuanceStage, Ordinal: 4, Spelling: "call-summary", Accepted: true, Native: true, Predecessor: "stage/call-dispatch", Framing: "analysis/program-artifact/call-summary-stage"},
-		structure.Spec{Key: "stage/call-effect", Category: structure.CategoryIssuanceStage, Ordinal: 5, Spelling: "call-effect", Accepted: true, Native: true, Predecessor: "stage/call-summary", Framing: "analysis/program-artifact/call-effect-stage"},
-	)
 	return specs
 }
 
@@ -172,14 +153,6 @@ func occurrenceCategoryPrefix(category structure.Category) string {
 	switch category {
 	case structure.CategoryOccurrenceKind:
 		return "occurrence/"
-	case structure.CategoryIssuanceForm:
-		return "issuance/"
-	case structure.CategoryIssuanceInput:
-		return "input/"
-	case structure.CategoryIssuanceStage:
-		return "stage/"
-	case structure.CategoryIssuanceRequirement:
-		return "requirement/"
 	default:
 		return ""
 	}
@@ -202,6 +175,7 @@ func semanticRoleVocabulary() []structure.Spec {
 		valueowner.StructureSpecs(),
 		packowner.StructureSpecs(),
 		heapowner.StructureSpecs(),
+		contextowner.StructureSpecs(),
 		placementowner.StructureSpecs(),
 		placementquery.StructureSpecs(),
 		callowner.StructureSpecs(),
@@ -211,7 +185,6 @@ func semanticRoleVocabulary() []structure.Spec {
 		packsource.StructureSpecs(),
 		heapingress.StructureSpecs(),
 		valueallocation.StructureSpecs(),
-		placementallocation.StructureSpecs(),
 		heapempty.StructureSpecs(),
 		heapclosed.StructureSpecs(),
 		heapindex.StructureSpecs(),
@@ -237,13 +210,11 @@ func semanticRoleVocabulary() []structure.Spec {
 		placementcontainment.StructureSpecs(),
 		placementstore.StructureSpecs(),
 		placementsuspension.StructureSpecs(),
-		// Keep the fresh-root Link producer's role identities at the end so
-		// existing semantic-role ordinals remain stable.
-		placementfresh.StructureSpecs(),
 		valuemoduleload.StructureSpecs(),
 		heapformalfreeze.StructureSpecs(),
 		placementpublicationescape.StructureSpecs(),
 		heappublicationfreeze.StructureSpecs(),
+		placementtransfer.StructureSpecs(),
 	}
 	var specs []structure.Spec
 	for _, contribution := range contributions {

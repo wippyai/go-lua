@@ -49,6 +49,48 @@ func TestEqualityHashCacheWaitsForGenericSetBody(t *testing.T) {
 	}
 }
 
+func TestColumnsWaitForGenericBodyBeforePublishingContainment(t *testing.T) {
+	gen := NewGeneric("Later", nil, nil)
+	fn := Func().Param("value", gen).Build()
+
+	before := columnsOf(fn)
+	if !before.closed || before.declarationsClosed {
+		t.Fatalf("open generic columns = %#v", before)
+	}
+	if fn.typeProperties.loadColumns() != nil {
+		t.Fatal("columns derived across an open generic were published")
+	}
+
+	gen.SetBody(Any)
+	after := columnsOf(fn)
+	if !after.closed || !after.declarationsClosed || !after.containsAny {
+		t.Fatalf("sealed generic columns = %#v", after)
+	}
+	if fn.typeProperties.loadColumns() == nil {
+		t.Fatal("closed generic columns were not published")
+	}
+}
+
+func TestRecursiveHashWaitsForNestedGenericBody(t *testing.T) {
+	gen := NewGeneric("Later", nil, nil)
+	rec := NewRecursivePlaceholder("Node")
+	rec.SetBody(Func().Returns(gen).Build())
+
+	before := rec.Hash()
+	if rec.hashMemo.Load() != nil {
+		t.Fatal("recursive hash was published across an open generic")
+	}
+
+	gen.SetBody(Any)
+	after := rec.Hash()
+	if before == after {
+		t.Fatal("recursive hash did not incorporate the sealed generic body")
+	}
+	if rec.hashMemo.Load() == nil {
+		t.Fatal("recursive hash was not published after the generic graph closed")
+	}
+}
+
 func TestTypeEqualsAndEqualityHashTraverseDeepGenericFunctionProducts(t *testing.T) {
 	const depth = 12_000
 

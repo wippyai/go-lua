@@ -22,11 +22,11 @@ func (s *ClassSet) sealClassOrder(runtime *typeauthority.Runtime) error {
 		row := s.rows[index]
 		switch row.kind {
 		case ClassConcrete:
-			if !runtime.Equal(row.inner, row.inner) || len(row.encoded) == 0 {
+			if !runtime.Equal(row.inner, row.inner) || !row.canonicalID.Available() {
 				return errors.New("static: malformed concrete Class row")
 			}
 		case ClassOpaque:
-			if len(row.encoded) == 0 {
+			if len(row.opaqueID) == 0 {
 				return errors.New("static: malformed opaque Class row")
 			}
 		default:
@@ -38,7 +38,10 @@ func (s *ClassSet) sealClassOrder(runtime *typeauthority.Runtime) error {
 		if first.kind != second.kind {
 			return first.kind < second.kind
 		}
-		return bytes.Compare(first.encoded, second.encoded) < 0
+		if first.kind == ClassConcrete {
+			return bytes.Compare(first.canonicalID[:], second.canonicalID[:]) < 0
+		}
+		return bytes.Compare(first.opaqueID, second.opaqueID) < 0
 	})
 
 	oldToNew := make([]uint32, len(s.rows))

@@ -4,6 +4,7 @@ package catalog
 
 import (
 	"github.com/wippyai/go-lua/analysis/identity"
+	"github.com/wippyai/go-lua/analysis/schema/programmount"
 	heapdomain "github.com/wippyai/go-lua/domain/heap"
 	"github.com/wippyai/go-lua/domain/heap/allocation/internal/source"
 	valuedomain "github.com/wippyai/go-lua/domain/value"
@@ -91,21 +92,21 @@ func (catalog *Catalog) FencedToHeap(heap heapdomain.Schema) bool {
 
 // Seal joins each exact mounted Program Allocation proof to Heap's already
 // issued key once. No raw term, ordinal, or engine authority is retained.
-func Seal(heap heapdomain.Schema, values *valuedomain.Schema, mounts []heapdomain.ArtifactMount) (*Catalog, bool) {
+func Seal(heap heapdomain.Schema, values *valuedomain.Schema, mounts []programmount.MountedArtifact) (*Catalog, bool) {
 	catalog, failure := SealWithFailure(heap, values, mounts)
 	return catalog, failure == SealFailureNone
 }
 
 // SealWithFailure is the single-call form for callers that do not need to
 // interleave catalog construction with SchemaBinding registration.
-func SealWithFailure(heap heapdomain.Schema, values *valuedomain.Schema, mounts []heapdomain.ArtifactMount) (*Catalog, SealFailure) {
+func SealWithFailure(heap heapdomain.Schema, values *valuedomain.Schema, mounts []programmount.MountedArtifact) (*Catalog, SealFailure) {
 	return BeginWithFailure(heap, values, mounts)
 }
 
 // BeginWithFailure seals the mount owner fence while the shared
 // SchemaBinding remains open. Heap already owns the allocation occurrence
 // inverse; this catalog retains no key/artifact-occurrence reconstruction.
-func BeginWithFailure(heap heapdomain.Schema, values *valuedomain.Schema, mounts []heapdomain.ArtifactMount) (*Catalog, SealFailure) {
+func BeginWithFailure(heap heapdomain.Schema, values *valuedomain.Schema, mounts []programmount.MountedArtifact) (*Catalog, SealFailure) {
 	if !heap.Valid() || values == nil || !values.Valid() || !values.OwnsHeapSchema(heap) || !values.LinkOwner().Matches(heap.LinkOwner()) || len(mounts) != values.MountCount() {
 		return nil, SealFailureInput
 	}
@@ -114,16 +115,16 @@ func BeginWithFailure(heap heapdomain.Schema, values *valuedomain.Schema, mounts
 		if !mounted.Available() {
 			return nil, SealFailureMount
 		}
-		module := mounted.Module()
+		module := mounted.ModuleKey
 		if _, duplicate := result.mounts[module]; duplicate {
 			return nil, SealFailureDuplicateMount
 		}
-		canonical, canonicalOK := heap.ArtifactMountForModule(module)
-		if !canonicalOK || canonical.ProgramID() != mounted.ProgramID() || canonical.Snapshot() != mounted.Snapshot() {
+		canonical, canonicalOK := heap.MountedArtifactForModule(module)
+		if !canonicalOK || canonical.ProgramID != mounted.ProgramID || canonical.Snapshot != mounted.Snapshot {
 			return nil, SealFailureMount
 		}
 		occurrence, occurrenceOK := heap.OccurrenceMountForModule(module)
-		if !occurrenceOK || occurrence.ProgramID() != mounted.ProgramID() {
+		if !occurrenceOK || occurrence.ProgramID() != mounted.ProgramID {
 			return nil, SealFailureMount
 		}
 		// Heap has already admitted every Program allocation and sealed the
@@ -161,7 +162,7 @@ func BeginWithFailure(heap heapdomain.Schema, values *valuedomain.Schema, mounts
 			if !closedOK || !closed.FencedTo(result.heap, result.values) {
 				return nil, SealFailureClosed
 			}
-			if _, keysOK := closed.SummaryKeys(); !keysOK {
+			if closed.SummaryKeyCount() == 0 {
 				return nil, SealFailureCoordinate
 			}
 			rows.closed[index] = closed

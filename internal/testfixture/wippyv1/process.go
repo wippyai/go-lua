@@ -3,6 +3,8 @@ package wippyv1
 import (
 	"sort"
 
+	"github.com/wippyai/go-lua/domain/effect"
+	"github.com/wippyai/go-lua/domain/effect/ownership"
 	"github.com/wippyai/go-lua/domain/type/ambient"
 	typetable "github.com/wippyai/go-lua/domain/type/table"
 	"github.com/wippyai/go-lua/domain/type/typ"
@@ -14,14 +16,12 @@ import (
 // ProcessManifest transcribes the v1 process module: the actor surface that
 // spawns, links, monitors and messages other processes.
 //
-// It is the module the send-safety question is really about, and the
-// transcription answers that question by what it does not contain. v1 declares
-// send as pid, topic and a variadic payload answering a boolean and an error,
-// and it declares nothing else: no ownership label on the payload, no transfer
-// endpoint, no publication, no freeze. The same holds for every spawn variant
-// that forwards a variadic payload into a new actor. Whatever admission rule
-// the checker applies to a cross-actor payload, the v1 manifest supplies no
-// evidence for it.
+// It is the module the send-safety question is really about. The callable
+// surface is transcribed from v1, while process.send also declares the runtime
+// semantics that surface owns: its variadic payload is published across an
+// external actor boundary and may be delivered or rejected. The other spawn
+// and forwarding members retain only the facts v1 currently authenticates;
+// no common forwarding fallback is inferred for them.
 //
 // The one behavioral declaration v1 does make on this surface is on listen: a
 // contract spec whose return type is refined to a Message channel when the
@@ -181,9 +181,43 @@ func ProcessManifest() *manifestwire.Manifest {
 	}
 	sort.Strings(names)
 	for _, name := range names {
-		declaration.DefineFunctionSignature(name, signature.Function{Type: members[name]})
+		function := signature.Function{Type: members[name]}
+		if name == "send" {
+			function.Effect = effect.Empty.With(ownership.Send{FromParam: 2})
+		}
+		declaration.DefineFunctionSignature(name, function)
 		export = export.Field(name, members[name])
 	}
+	declaration.DefineFunctionOperation("send", manifestwire.Operation{
+		Effects: manifestwire.RowSpec{
+			Occurrences: []manifestwire.EffectSpec{{
+				Target:     "process.send",
+				ValueArgs:  []manifestwire.ValueFormal{0, 1},
+				ValuesArgs: []manifestwire.ValuesVar{0},
+				Publication: &manifestwire.PublicationEffectSpec{
+					Kind:        manifestwire.PublicationEffectSendTransfer,
+					Subject:     manifestwire.InputSource{Kind: manifestwire.InputSourceValues, Ordinal: 0},
+					Destination: manifestwire.PublicationDestinationValueFormal,
+					Context:     0,
+					Escape:      manifestwire.PublicationEscapeSendTransfer,
+					Mutability:  manifestwire.PublicationMutabilityCopyOnWrite,
+					Lifetime:    manifestwire.PublicationLifetimePreserve,
+				},
+			}},
+			Tail: manifestwire.RowClosed,
+		},
+		Transfers: []manifestwire.TransferSpec{{
+			Endpoint:     manifestwire.TransferEndpoint{Kind: manifestwire.TransferEndpointExternal},
+			Payload:      manifestwire.InputSource{Kind: manifestwire.InputSourceValues},
+			Alias:        manifestwire.InputSource{Kind: manifestwire.InputSourceValues},
+			Identity:     manifestwire.TransferIdentityUnspecified,
+			Capabilities: manifestwire.TransferCapabilitiesUnspecified,
+			Outcomes: []manifestwire.TransferOutcomeSpec{
+				{Outcome: 0, Possibility: manifestwire.TransferMayDeliver},
+				{Outcome: 1, Possibility: manifestwire.TransferMayReject},
+			},
+		}},
+	})
 	declaration.SetExport(export.Build())
 	return declaration
 }

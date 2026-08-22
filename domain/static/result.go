@@ -2,7 +2,6 @@ package static
 
 import (
 	"github.com/wippyai/go-lua/analysis/identity"
-	"github.com/wippyai/go-lua/analysis/program/target/vocabulary"
 	"github.com/wippyai/go-lua/domain/type/authority"
 )
 
@@ -47,15 +46,12 @@ func (s RuntimeSubject) SourceFrontier() (identity.ContentID, int, bool) {
 
 // Symbolic is a finite residual equation, not an approximation to any/unknown.
 // Its identity is the authored static root, immutable resolver namespace, and
-// optional exact runtime subject. Environment and operation remain internal
-// evaluator provenance and are currently the canonical zero context.
+// optional exact runtime subject.
 type Symbolic struct {
 	reference   typeauthority.StaticTypeRef
 	sourceOwner identity.ContentID
 	source      identity.ContentID
 	namespace   identity.ContentID
-	environment identity.ContentID
-	operation   vocabulary.Operation
 	law         identity.ContentID
 	dependency  identity.ContentID
 	reason      Reason
@@ -64,8 +60,6 @@ type Symbolic struct {
 
 func (s Symbolic) Reference() typeauthority.StaticTypeRef { return s.reference }
 func (s Symbolic) Namespace() identity.ContentID          { return s.namespace }
-func (s Symbolic) Environment() identity.ContentID        { return s.environment }
-func (s Symbolic) Operation() vocabulary.Operation        { return s.operation }
 func (s Symbolic) Law() identity.ContentID                { return s.law }
 func (s Symbolic) Dependency() identity.ContentID         { return s.dependency }
 func (s Symbolic) Reason() Reason                         { return s.reason }
@@ -92,11 +86,11 @@ func (s Symbolic) exactOperand() bool {
 }
 
 type resultRow struct {
-	kind     Kind
-	closed   []byte
-	runtime  typeauthority.RuntimeInput
-	symbolic Symbolic
-	fault    Fault
+	kind      Kind
+	canonical identity.ContentID
+	runtime   typeauthority.RuntimeInput
+	symbolic  Symbolic
+	fault     Fault
 }
 
 // Value is a homogeneous, owner-fenced handle. It contains no typ graph,
@@ -124,7 +118,7 @@ func (v Value) Kind() (Kind, bool) {
 }
 
 func (v Value) isDerived() bool {
-	return v.owner != nil && v.index == ^uint32(0) && v.class.owner != nil && v.class.descriptor != nil && v.class.owner.authority == v.owner
+	return v.owner != nil && v.index == ^uint32(0) && v.class.owner == v.owner.classes && v.class.descriptor != nil
 }
 func (v Value) IsClosed() bool   { kind, ok := v.Kind(); return ok && kind == KindClosed }
 func (v Value) IsSymbolic() bool { kind, ok := v.Kind(); return ok && kind == KindSymbolic }
@@ -161,20 +155,6 @@ func (v Value) InvalidNamespace() (identity.ContentID, bool) {
 	}
 	value := v.owner.results[v.index].symbolic.namespace
 	return value, value.Available()
-}
-
-func (v Value) InvalidEnvironment() (identity.ContentID, bool) {
-	if !v.IsInvalid() {
-		return identity.ContentID{}, false
-	}
-	return v.owner.results[v.index].symbolic.environment, true
-}
-
-func (v Value) InvalidOperation() (vocabulary.Operation, bool) {
-	if !v.IsInvalid() {
-		return 0, false
-	}
-	return v.owner.results[v.index].symbolic.operation, true
 }
 
 func (v Value) InvalidLaw() (identity.ContentID, bool) {

@@ -12,7 +12,7 @@ import (
 	"github.com/wippyai/go-lua/domain/placement"
 )
 
-// Evidence is the private Heap-aligned state produced by the suspension
+// Evidence is the private allocation-aligned state produced by the suspension
 // producer. Missing is the sparse Factor default; it remains distinct from
 // Unknown until the query projects the complete route result into the public
 // allocation evidence plane.
@@ -339,7 +339,7 @@ func (owner *EvidenceOwner) Ref(key heap.Key) (engine.Ref[coordinate], bool) {
 	if owner == nil || owner.binding == nil || owner.fragment == nil || !owner.schema.Valid() || !owner.schema.Heap().OwnsKey(key) {
 		return engine.Ref[coordinate]{}, false
 	}
-	index, ok := owner.schema.Heap().KeyIndex(key)
+	index, ok := owner.schema.Heap().AllocationKeyIndex(key)
 	if !ok || index < 0 || index >= owner.schema.KeyCount() {
 		return engine.Ref[coordinate]{}, false
 	}

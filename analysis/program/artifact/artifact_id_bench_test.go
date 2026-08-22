@@ -7,7 +7,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/lua/lower"
 	programartifact "github.com/wippyai/go-lua/analysis/program/artifact"
 	artifactcompiler "github.com/wippyai/go-lua/analysis/program/artifact/compiler"
-	"github.com/wippyai/go-lua/analysis/program/artifact/issuance"
+	"github.com/wippyai/go-lua/internal/testfixture"
 )
 
 func BenchmarkCompileDetailed(b *testing.B) {
@@ -22,7 +22,7 @@ func BenchmarkCompileDetailed(b *testing.B) {
 	b.ReportAllocs()
 	b.ResetTimer()
 	for index := 0; index < b.N; index++ {
-		artifact, failure := artifactcompiler.CompileDetailed(published, grammar, issuance.Directory{})
+		artifact, failure := artifactcompiler.CompileDetailed(published, grammar, testfixture.EmptyProgramIssuancePlan(b))
 		if failure.Available() || artifact == nil || !artifact.Available() {
 			b.Fatalf("artifact compile failed: %s", failure.Error())
 		}

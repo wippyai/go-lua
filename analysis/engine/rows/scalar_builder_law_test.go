@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/wippyai/go-lua/analysis/identity"
+	"github.com/wippyai/go-lua/analysis/schema"
 )
 
 // TestArtifactScalarTemplateConsumesPrivateBuilderStorageExactlyOnce pins the
@@ -35,7 +36,7 @@ func TestArtifactScalarTemplateConsumesPrivateBuilderStorageExactlyOnce(t *testi
 
 // artifactScalarLawSpec fills one admissible builder and returns it together
 // with a copied handle that shares the same private state.
-func TestArtifactScalarTemplateAdmitsLocalPredecessorStage(t *testing.T) {
+func TestArtifactScalarTemplateAdmitsRoutedNonNativeRule(t *testing.T) {
 	routeFrom, base, stage := artifactScalarLawID(4), artifactScalarLawID(7), artifactScalarLawID(8)
 	regionID, bodyID := artifactScalarLawID(5), artifactScalarLawID(6)
 	spec, specOK := NewArtifactScalarSpec(artifactScalarLawID(1), artifactScalarLawID(2), artifactScalarLawID(3), ArtifactScalarCapacity{
@@ -62,7 +63,7 @@ func TestArtifactScalarTemplateAdmitsLocalPredecessorStage(t *testing.T) {
 	role, roleOK := spec.DeclareRole(artifactScalarLawID(20))
 	if !roleOK || !spec.AddRule(ArtifactScalarRule{
 		Role:  role,
-		Stage: ArtifactRuleStageLocal,
+		Stage: schema.Key("test-stage/non-native"),
 		Point: stage,
 		Input: base,
 		ID:    artifactScalarLawID(21),
@@ -83,23 +84,21 @@ func TestArtifactScalarTemplateAdmitsLocalPredecessorStage(t *testing.T) {
 	if !ok || template == nil || !template.Available() {
 		t.Fatal("local predecessor stage must seal")
 	}
-	if native, rowOK := template.RuleNativeAt(0); !rowOK || native {
-		t.Fatalf("local rule native projection=(%v,%v), want (false,true)", native, rowOK)
+	if rule, rowOK := template.RuleAt(0); !rowOK || rule.Native {
+		t.Fatalf("local rule receipt=(%+v,%v), want non-native", rule, rowOK)
 	}
 }
 
-func TestArtifactScalarTemplateSealsDeclaredNativeProjection(t *testing.T) {
+func TestArtifactScalarTemplateSealsIssuedNativeReceipt(t *testing.T) {
 	spec := artifactScalarTwoPointRegion(t)
-	if !spec.InstallStageLaws(artifactCallStageLaws()) {
-		t.Fatal("call stage laws")
-	}
 	role, roleOK := spec.DeclareRole(artifactScalarLawID(20))
 	if !roleOK || !spec.AddRule(ArtifactScalarRule{
-		Role:  role,
-		Stage: ArtifactRuleStageIssued3,
-		Point: artifactScalarLawID(7),
-		Input: artifactScalarLawID(4),
-		ID:    artifactScalarLawID(21),
+		Role:   role,
+		Stage:  schema.Key("test-stage/native"),
+		Point:  artifactScalarLawID(7),
+		Input:  artifactScalarLawID(4),
+		ID:     artifactScalarLawID(21),
+		Native: true,
 	}) {
 		t.Fatal("native rule")
 	}
@@ -107,51 +106,26 @@ func TestArtifactScalarTemplateSealsDeclaredNativeProjection(t *testing.T) {
 	if !templateOK || template == nil {
 		t.Fatal("native template")
 	}
-	if native, rowOK := template.RuleNativeAt(0); !rowOK || !native {
-		t.Fatalf("native rule projection=(%v,%v), want (true,true)", native, rowOK)
-	}
-	if _, rowOK := template.RuleNativeAt(1); rowOK {
-		t.Fatal("out-of-range native projection")
+	if rule, rowOK := template.RuleAt(0); !rowOK || !rule.Native {
+		t.Fatalf("native rule receipt=(%+v,%v), want native", rule, rowOK)
 	}
 }
 
-func TestArtifactScalarTemplateRejectsCallStageBackEdge(t *testing.T) {
+func TestArtifactScalarTemplateRejectsNativeBackEdge(t *testing.T) {
 	spec := artifactScalarTwoPointRegion(t)
-	if !spec.InstallStageLaws(artifactCallStageLaws()) {
-		t.Fatal("call stage laws")
-	}
 	role, roleOK := spec.DeclareRole(artifactScalarLawID(20))
 	if !roleOK || !spec.AddRule(ArtifactScalarRule{
-		Role:  role,
-		Stage: ArtifactRuleStageIssued3,
-		Point: artifactScalarLawID(4),
-		Input: artifactScalarLawID(7),
-		ID:    artifactScalarLawID(21),
+		Role:   role,
+		Stage:  schema.Key("test-stage/native"),
+		Point:  artifactScalarLawID(4),
+		Input:  artifactScalarLawID(7),
+		ID:     artifactScalarLawID(21),
+		Native: true,
 	}) {
-		t.Fatal("call back-edge rule")
+		t.Fatal("native back-edge rule")
 	}
 	if template, ok := NewArtifactScalarTemplate(spec); ok || template != nil {
-		t.Fatal("call-stage back-edge must stay refused")
-	}
-}
-
-func TestArtifactScalarTemplateEnforcesDeclaredStagePredecessor(t *testing.T) {
-	spec := artifactScalarTwoPointRegion(t)
-	if !spec.InstallStageLaws(artifactCallStageLaws()) {
-		t.Fatal("call stage laws")
-	}
-	role, roleOK := spec.DeclareRole(artifactScalarLawID(20))
-	if !roleOK || !spec.AddRule(ArtifactScalarRule{
-		Role:  role,
-		Stage: ArtifactRuleStageIssued4,
-		Point: artifactScalarLawID(7),
-		Input: artifactScalarLawID(4),
-		ID:    artifactScalarLawID(21),
-	}) {
-		t.Fatal("summary without dispatch predecessor")
-	}
-	if template, ok := NewArtifactScalarTemplate(spec); ok || template != nil {
-		t.Fatal("summary stage must require the declared dispatch predecessor")
+		t.Fatal("native back-edge must stay refused")
 	}
 }
 
@@ -184,14 +158,6 @@ func artifactScalarTwoPointRegion(t testing.TB) *ArtifactScalarSpec {
 	return spec
 }
 
-func artifactCallStageLaws() []ArtifactStageLaw {
-	return []ArtifactStageLaw{
-		{Stage: ArtifactRuleStageIssued3, Native: true},
-		{Stage: ArtifactRuleStageIssued4, Native: true, Predecessor: ArtifactRuleStageIssued3},
-		{Stage: ArtifactRuleStageIssued5, Native: true, Predecessor: ArtifactRuleStageIssued4},
-	}
-}
-
 func artifactScalarLawSpec(t testing.TB) (*ArtifactScalarSpec, *ArtifactScalarSpec) {
 	t.Helper()
 	artifactID, program, schema := artifactScalarLawID(1), artifactScalarLawID(2), artifactScalarLawID(3)
@@ -220,8 +186,8 @@ func artifactScalarLawID(value byte) identity.ContentID {
 	return identity.ContentID(sha256.Sum256([]byte{0xA5, value}))
 }
 
-// TestScalarRowsDoNotNameDomainCallStages is the rows floor: schema structure
-// owns Call spelling. This package carries opaque issued ordinals.
+// TestScalarRowsDoNotNameDomainCallStages is the rows floor: the issuance
+// schema owns stage keys and this package interprets only their declared laws.
 func TestScalarRowsDoNotNameDomainCallStages(t *testing.T) {
 	src, err := os.ReadFile("scalar_rows.go")
 	if err != nil {

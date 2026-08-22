@@ -67,6 +67,6 @@ func appendStaticUnresolvedFinding(report *DiagnosticReport, subject StaticSubje
 	if !nameOK || !subject.Location.Available() {
 		return false
 	}
-	report.AppendFinding(NewFindingRow(subject.FindingID, subject.ID, code, severity, subject.Location, NewTemplateData(name, EmptyTarget(), 0, DiagnosticLocation{})))
+	report.AppendFinding(NewFindingRow(subject.FindingID, subject.ID, code, severity, subject.Location, NewTemplateData(name, EmptyTarget(), 0)))
 	return true
 }

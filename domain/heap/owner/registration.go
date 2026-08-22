@@ -37,22 +37,21 @@ func mountHeapSchema[A axisInputs](inputs A) (heap.Schema, heap.SealFailure, boo
 	}
 	// The artifact view is read first so a row this domain cannot place is
 	// reported as the mount it is, and an absent Link stays the source verdict.
-	mounts := make([]heap.ArtifactMount, 0, count)
+	mounts := make([]programmount.MountedArtifact, 0, count)
 	seen := make(map[identity.ContentID]struct{}, count)
 	for index := 0; index < count; index++ {
 		row, rowOK := inputs.MountedArtifactAt(index)
 		if !rowOK {
 			return heap.Schema{}, heap.SealFailureProgramAllocations, false
 		}
-		mount, mountOK := heap.NewArtifactMount(row.Snapshot, row.ModuleKey, row.ProgramID)
-		if !mountOK {
+		if !row.Available() {
 			return heap.Schema{}, heap.SealFailureProgramAllocations, false
 		}
-		if _, duplicate := seen[mount.Module()]; duplicate {
+		if _, duplicate := seen[row.ModuleKey]; duplicate {
 			return heap.Schema{}, heap.SealFailureProgramAllocations, false
 		}
-		seen[mount.Module()] = struct{}{}
-		mounts = append(mounts, mount)
+		seen[row.ModuleKey] = struct{}{}
+		mounts = append(mounts, row)
 	}
 	if source == nil {
 		return heap.Schema{}, heap.SealFailureSource, false

@@ -1,0 +1,15 @@
+{
+  "description": "Every declared method of time.Time, time.Duration and time.Location is called on a value the module produced, and each answer is read as the declared type: an instant answers an instant, a difference answers a duration, and a reading off either answers a scalar.",
+  "packages": [
+    "time"
+  ],
+  "files": [
+    "main.lua"
+  ],
+  "check": {
+    "errors": 0
+  },
+  "run": {
+    "skip": "declaration-surface fixture"
+  }
+}

@@ -48,7 +48,7 @@ func RawGetEntry[P rawGetPrincipals, A rawGetAuthorities]() rule.Spec {
 			// computation successor and read the predecessor finish; this gives
 			// the receiver a complete local Value before raw-get writes the
 			// indexed result that Call dispatch consumes.
-			{Occurrence: "occurrence/index-read", Requirement: "requirement/unrestricted", Form: "issuance/computation", Input: "input/finish", Stage: "stage/local"},
+			{Occurrence: "occurrence/index-read", Requirement: "program-requirement/unrestricted", Form: "program-form/computation"},
 		},
 		Lane:     rule.LaneMounted,
 		Semantic: "semantic/rule/heap/index-get-raw",
@@ -98,7 +98,11 @@ func RawSetEntry[P rawSetPrincipals, A rawSetAuthorities]() rule.Spec {
 		Writes: "heap",
 		Owner:  "heap",
 		Issues: []rule.Issuance{
-			{Occurrence: "occurrence/index-write", Requirement: "requirement/unrestricted", Form: "issuance/local-predecessor", Input: "input/predecessor", Stage: "stage/local"},
+			// The receiver/key/RHS Value producers run at the occurrence's Local
+			// cut. RawSet must therefore consume the canonical post-Local state;
+			// a predecessor placement observes an absent receiver on acyclic
+			// branches and only appears to work when recurrence replays the point.
+			{Occurrence: "occurrence/index-write", Requirement: "program-requirement/unrestricted", Form: "program-form/local-successor"},
 		},
 		Lane:     rule.LaneMounted,
 		Semantic: "semantic/rule/heap/index-set-raw",

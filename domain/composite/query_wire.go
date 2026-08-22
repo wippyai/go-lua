@@ -3,6 +3,7 @@ package composite
 import (
 	"github.com/wippyai/go-lua/analysis/engine"
 	"github.com/wippyai/go-lua/analysis/identity"
+	"github.com/wippyai/go-lua/analysis/schema/executioncontext"
 	"github.com/wippyai/go-lua/analysis/schema/query"
 	"github.com/wippyai/go-lua/analysis/schema/vocabulary"
 )
@@ -11,11 +12,11 @@ import (
 // Schema registrations are declarative; these hooks are selected by family
 // key when the table is composed.
 type queryContributor struct {
-	declare func(*engine.SchemaBuilder, query.Subjects) (query.Cell, bool)
-	bind    func(*engine.SchemaBinding, query.Cell, query.Subjects) bool
-	recover func(*engine.SchemaBinding, query.Cell) (query.Cell, bool)
-	admit   func(*engine.SchemaBinding, query.Cell, identity.ContentID, identity.ContentID, identity.ContentID) (engine.ProgramQueryAdmission, bool)
-	encode  func(engine.Answer) (bool, uint64, []byte, bool)
+	declare  func(*engine.SchemaBuilder, query.Subjects) (query.Cell, bool)
+	bind     func(*engine.SchemaBinding, query.Cell, query.Subjects) bool
+	recover  func(*engine.SchemaBinding, query.Cell) (query.Cell, bool)
+	admit    func(*engine.SchemaBinding, query.Cell, identity.ContentID, identity.ContentID, identity.ContentID, executioncontext.Context) (engine.ProgramQueryAdmission, bool)
+	encode   func(engine.Answer) (bool, uint64, []byte, bool)
 	contract engine.CanonicalResultContract
 }
 
@@ -29,7 +30,7 @@ func wireQuery[F, R any](
 	declare func(*engine.SchemaBuilder, query.Declaration) (F, bool),
 	bind func(*engine.SchemaBinding, query.Binding[F]) bool,
 	recover func(*engine.SchemaBinding, query.Sealed[F]) (R, bool),
-	admit func(R, identity.ContentID, identity.ContentID, identity.ContentID) (engine.ProgramQueryAdmission, bool),
+	admit func(R, identity.ContentID, identity.ContentID, identity.ContentID, executioncontext.Context) (engine.ProgramQueryAdmission, bool),
 	encode func(engine.Answer) (bool, uint64, []byte, bool),
 ) (*query.Registration, queryContributor, bool) {
 	if declare == nil || bind == nil || recover == nil || admit == nil || encode == nil {
@@ -74,7 +75,7 @@ func wireQuery[F, R any](
 			}
 			return query.NewCell(implementation), true
 		},
-		admit: func(binding *engine.SchemaBinding, holder query.Cell, id, mount, point identity.ContentID) (engine.ProgramQueryAdmission, bool) {
+		admit: func(binding *engine.SchemaBinding, holder query.Cell, id, mount, point identity.ContentID, context executioncontext.Context) (engine.ProgramQueryAdmission, bool) {
 			fragment, ok := query.Payload[F](holder)
 			if !ok {
 				return engine.ProgramQueryAdmission{}, false
@@ -83,9 +84,9 @@ func wireQuery[F, R any](
 			if !ok {
 				return engine.ProgramQueryAdmission{}, false
 			}
-			return admit(implementation, id, mount, point)
+			return admit(implementation, id, mount, point, context)
 		},
-		encode: encode,
+		encode:   encode,
 		contract: contract,
 	}
 	return registration, contributor, contributor.complete()

@@ -9,6 +9,7 @@ import (
 	"sync"
 
 	"github.com/wippyai/go-lua/analysis/identity"
+	"github.com/wippyai/go-lua/analysis/program/target/vocabulary"
 	calldomain "github.com/wippyai/go-lua/domain/call"
 	heapdomain "github.com/wippyai/go-lua/domain/heap"
 	"github.com/wippyai/go-lua/domain/heap/keymatch"
@@ -38,9 +39,13 @@ type Topology struct {
 	freshByRoot map[heapdomain.Key]uint32
 	freshApps   []freshApplication
 	freshByApp  map[identity.ContentID]uint32
-	indexRows   map[heapdomain.IndexAccess]*indexRow
-	staticByTag map[heapdomain.RawRouteTag]uint32
-	scratch     sync.Pool
+	// moduleExports is keyed only by the existing fresh-root Heap key. Each
+	// row is an owner-issued Value proof for one composed require result; it
+	// is not a selected-operation×root relation.
+	moduleExports map[heapdomain.Key]moduleExportRoute
+	indexRows     map[heapdomain.IndexAccess]*indexRow
+	staticByTag   map[heapdomain.RawRouteTag]uint32
+	scratch       sync.Pool
 }
 
 // SealFailure is the closed phase at which Heap index topology admission
@@ -113,6 +118,11 @@ type freshRoot struct {
 type freshApplication struct {
 	applicationID identity.ContentID
 	tag           uint32
+}
+
+type moduleExportRoute struct {
+	operation vocabulary.Operation
+	roots     []heapdomain.Key
 }
 
 // routeScratch is reusable implementation storage, never semantic State.
@@ -244,7 +254,7 @@ func SealWithFailure(heap heapdomain.Schema, values *valuedomain.Schema, calls *
 		if _, duplicate := seenModules[module]; duplicate {
 			return nil, sealDiagnostic(SealFailureBoundary, mountIndex, -1)
 		}
-		if _, mountOK := heap.ArtifactMountForModule(module); !mountOK {
+		if _, mountOK := heap.OccurrenceMountForModule(module); !mountOK {
 			return nil, sealDiagnostic(SealFailureBoundary, mountIndex, -1)
 		}
 		seenModules[module] = struct{}{}
@@ -253,8 +263,11 @@ func SealWithFailure(heap heapdomain.Schema, values *valuedomain.Schema, calls *
 	if !selectorsOK {
 		return nil, sealDiagnostic(SealFailureValidity, -1, -1)
 	}
-	topology := &Topology{heap: heap, values: values, calls: calls, packs: packs, selectors: selectors, freshByRoot: make(map[heapdomain.Key]uint32), freshByApp: make(map[identity.ContentID]uint32)}
+	topology := &Topology{heap: heap, values: values, calls: calls, packs: packs, selectors: selectors, freshByRoot: make(map[heapdomain.Key]uint32), freshByApp: make(map[identity.ContentID]uint32), moduleExports: make(map[heapdomain.Key]moduleExportRoute)}
 	if !topology.build() {
+		return nil, sealDiagnostic(SealFailureRoots, -1, -1)
+	}
+	if !topology.buildModuleExports() {
 		return nil, sealDiagnostic(SealFailureRoots, -1, -1)
 	}
 	if !topology.buildIndexRows() {
@@ -297,7 +310,7 @@ func (topology *Topology) valid() bool {
 
 func (topology *Topology) baseValid() bool {
 	return topology != nil && topology.values != nil && topology.values.Valid() && topology.calls != nil && topology.packs != nil && topology.selectors != nil && topology.values.LinkOwner().Available() && topology.values.LinkOwner().Matches(topology.heap.LinkOwner()) && topology.values.LinkOwner().Matches(topology.calls.LinkOwner()) && topology.values.LinkOwner().Matches(topology.packs.LinkOwner()) &&
-		topology.values.CoordinateCount() != 0 &&
+		topology.values.CoordinateCount() != 0 && topology.moduleExports != nil &&
 		topology.values.OwnsHeapSchema(topology.heap) && topology.heap.ContentID().Available()
 }
 
@@ -353,6 +366,47 @@ func (topology *Topology) build() bool {
 		default:
 			return false
 		}
+	}
+	return true
+}
+
+// buildModuleExports copies only the Value-owned composition proof into this
+// Topology's detached owner. The fresh Heap denominator remains canonical;
+// this pass merely validates and retains the already-issued table roots for
+// exact routing. Missing proofs are valid and leave generic fresh behavior
+// unchanged.
+func (topology *Topology) buildModuleExports() bool {
+	if topology == nil || topology.values == nil || topology.moduleExports == nil {
+		return false
+	}
+	for index := 0; index < topology.heap.FreshCount(); index++ {
+		_, key, keyOK := topology.heap.FreshAt(index)
+		if !keyOK {
+			return false
+		}
+		operation, operationOK := topology.values.ModuleExportFreshOperation(key)
+		if !operationOK {
+			continue
+		}
+		count := topology.values.ModuleExportFreshRootCount(key)
+		if count == 0 {
+			return false
+		}
+		roots := make([]heapdomain.Key, 0, count)
+		seen := make(map[heapdomain.Key]struct{}, count)
+		for rootIndex := 0; rootIndex < count; rootIndex++ {
+			root, rootOK := topology.values.ModuleExportFreshRootAt(key, rootIndex)
+			_, _, _, kind, _, originOK := topology.heap.AllocationOriginForKey(root)
+			if !rootOK || !originOK || kind != heapdomain.AllocationTable {
+				return false
+			}
+			if _, duplicate := seen[root]; duplicate {
+				return false
+			}
+			seen[root] = struct{}{}
+			roots = append(roots, root)
+		}
+		topology.moduleExports[key] = moduleExportRoute{operation: operation, roots: roots}
 	}
 	return true
 }
@@ -811,6 +865,37 @@ func (topology *Topology) visitFresh(fresh freshRoot, role materialization.Role,
 	}
 	if state.IsEmpty() {
 		return true
+	}
+	if route, proved := topology.moduleExports[fresh.key]; proved {
+		matched, unknown := false, state.HasOpaqueAlternative()
+		for index := 0; index < state.KnownTargetCount(); index++ {
+			target, targetOK := state.KnownTargetAt(index)
+			operation, operationOK := target.Operation()
+			// The numeric operation is necessary but not sufficient: an
+			// ordinary seed with the same Target operation must not masquerade
+			// as the scoped loader that authored the Module Import proof.
+			if !targetOK || !operationOK || !target.IsScopedLoader() || operation != route.operation {
+				unknown = true
+				continue
+			}
+			matched = true
+		}
+		if matched {
+			emitted := false
+			for _, root := range route.roots {
+				if _, referenceOK := topology.heap.Reference(root, role); !referenceOK {
+					unknown = true
+					continue
+				}
+				emitted = true
+				if !emit(topology.rootRoute(root, role)) {
+					return false
+				}
+			}
+			if emitted && !unknown {
+				return true
+			}
+		}
 	}
 	return emit(topology.unknownRoute())
 }

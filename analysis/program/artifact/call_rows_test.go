@@ -7,9 +7,9 @@ import (
 	"github.com/wippyai/go-lua/analysis/lua/lower"
 	programartifact "github.com/wippyai/go-lua/analysis/program/artifact"
 	artifactcompiler "github.com/wippyai/go-lua/analysis/program/artifact/compiler"
-	"github.com/wippyai/go-lua/analysis/program/artifact/issuance"
 	programschema "github.com/wippyai/go-lua/analysis/schema/program"
 	programcatalog "github.com/wippyai/go-lua/analysis/schema/program/catalog"
+	"github.com/wippyai/go-lua/internal/testfixture"
 )
 
 func TestCallRowsExposeOnlyAvailableChildRanges(t *testing.T) {
@@ -27,7 +27,7 @@ return identity(1)
 	if !ok {
 		t.Fatal("valid grammar identity was rejected")
 	}
-	artifact, failure := artifactcompiler.CompileDetailed(published, grammar, issuance.Directory{})
+	artifact, failure := artifactcompiler.CompileDetailed(published, grammar, testfixture.EmptyProgramIssuancePlan(t))
 	if failure.Available() || artifact == nil || !artifact.Available() {
 		t.Fatalf("call fixture did not compile: %s", failure.Error())
 	}
@@ -116,7 +116,7 @@ return result
 	if !ok {
 		t.Fatal("valid grammar identity was rejected")
 	}
-	artifact, failure := artifactcompiler.CompileDetailed(published, grammar, issuance.Directory{})
+	artifact, failure := artifactcompiler.CompileDetailed(published, grammar, testfixture.EmptyProgramIssuancePlan(t))
 	if failure.Available() || artifact == nil || !artifact.Available() {
 		t.Fatalf("bounded result fixture did not compile: %s", failure.Error())
 	}
@@ -161,7 +161,7 @@ return false
 	if !ok {
 		t.Fatal("valid grammar identity was rejected")
 	}
-	artifact, failure := artifactcompiler.CompileDetailed(published, grammar, issuance.Directory{})
+	artifact, failure := artifactcompiler.CompileDetailed(published, grammar, testfixture.EmptyProgramIssuancePlan(t))
 	if failure.Available() || artifact == nil || !artifact.Available() {
 		t.Fatalf("scalar result fixture did not compile: %s", failure.Error())
 	}
@@ -201,7 +201,7 @@ return expected == classify(5)
 	if !ok {
 		t.Fatal("valid grammar identity was rejected")
 	}
-	artifact, failure := artifactcompiler.CompileDetailed(published, grammar, issuance.Directory{})
+	artifact, failure := artifactcompiler.CompileDetailed(published, grammar, testfixture.EmptyProgramIssuancePlan(t))
 	if failure.Available() || artifact == nil || !artifact.Available() {
 		t.Fatalf("right scalar result fixture did not compile: %s", failure.Error())
 	}
@@ -235,7 +235,7 @@ return true
 	if !ok {
 		t.Fatal("valid grammar identity was rejected")
 	}
-	artifact, failure := artifactcompiler.CompileDetailed(published, grammar, issuance.Directory{})
+	artifact, failure := artifactcompiler.CompileDetailed(published, grammar, testfixture.EmptyProgramIssuancePlan(t))
 	if failure.Available() || artifact == nil || !artifact.Available() {
 		t.Fatalf("discarded result fixture did not compile: %s", failure.Error())
 	}

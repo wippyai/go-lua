@@ -21,6 +21,22 @@ func TestCommittedProgramSealMintsIndependentSolvers(t *testing.T) {
 	if first.runtime.graph != second.runtime.graph || first.runtime.topology != second.runtime.topology || first.runtime.graph != fixture.graph.graph {
 		t.Fatal("a revision rebound different committed geometry")
 	}
+	for _, runtime := range []*solverRuntime{first.runtime, second.runtime} {
+		if !runtime.artifactBacked || !runtime.contexts.Available() ||
+			!runtime.contextIndex.OwnedBy(runtime.contexts, runtime.graph.PointCount(), runtime.contextLayout.Generation()) ||
+			!runtime.contextLayout.OwnedBy(runtime.contextIndex, runtime.contexts, runtime.pointOwners, runtime.contextLayout.Generation()) ||
+			len(runtime.pointOwners) != runtime.graph.PointCount() || runtime.executionPlan == nil || !runtime.executionPlan.Available() ||
+			runtime.executionPlan.Graph() != runtime.graph || runtime.executionPlan.Generation() != runtime.contextLayout.Generation() ||
+			runtime.executionPlan.StateCount() != runtime.contextLayout.StateCount() {
+			t.Fatal("sealed runtime dropped or rebound the committed execution-context plane")
+		}
+	}
+	if first.runtime.executionPlan == second.runtime.executionPlan {
+		t.Fatal("two program seals shared one execution-plan owner")
+	}
+	if &first.runtime.pointOwners[0] == &fixture.graph.pointOwners[0] || &second.runtime.pointOwners[0] == &fixture.graph.pointOwners[0] {
+		t.Fatal("sealed runtime retained the committed point-owner slice")
+	}
 }
 
 // TestActivationRevisionRebindsFromSealedInputsOnly proves a second Seal

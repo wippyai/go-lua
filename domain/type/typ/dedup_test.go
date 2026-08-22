@@ -86,7 +86,7 @@ func TestSortHashedTypesStableForSameHashSameStringCollision(t *testing.T) {
 	}
 }
 
-func TestRecursiveIdentitySignatureAndUnionDedupTraverseDeepFiniteProducts(t *testing.T) {
+func TestUnionDedupTraversesDeepFiniteProducts(t *testing.T) {
 	const depth = 12_000
 
 	rec := NewRecursivePlaceholder("Leaf")
@@ -100,10 +100,6 @@ func TestRecursiveIdentitySignatureAndUnionDedupTraverseDeepFiniteProducts(t *te
 	}
 
 	left, right := build(), build()
-	signature, ok := RecursiveIdentitySignatureOf(left)
-	if !ok || signature.SmallLen != 1 || signature.Small[0] != rec.ID {
-		t.Fatalf("deep finite product signature = %#v, %t; want recursive identity %d", signature, ok, rec.ID)
-	}
 	if survivors, _ := deduplicateTypesWithHashes([]Type{left, right}); len(survivors) != 1 {
 		t.Fatalf("deep equivalent products survived union dedup %d times, want 1", len(survivors))
 	}
@@ -112,7 +108,7 @@ func TestRecursiveIdentitySignatureAndUnionDedupTraverseDeepFiniteProducts(t *te
 	}
 }
 
-func TestRecursiveIdentitySignatureAndUnionDedupTraverseDeepCycles(t *testing.T) {
+func TestUnionDedupTraversesDeepCycles(t *testing.T) {
 	const depth = 12_000
 
 	build := func() *Recursive {
@@ -126,14 +122,6 @@ func TestRecursiveIdentitySignatureAndUnionDedupTraverseDeepCycles(t *testing.T)
 	}
 
 	left, right := build(), build()
-	leftSignature, leftOK := RecursiveIdentitySignatureOf(left)
-	rightSignature, rightOK := RecursiveIdentitySignatureOf(right)
-	if !leftOK || !rightOK || leftSignature.SmallLen != 1 || rightSignature.SmallLen != 1 {
-		t.Fatalf("deep cyclic signatures = %#v/%#v, ok=%t/%t; want one inline identity each", leftSignature, rightSignature, leftOK, rightOK)
-	}
-	if leftSignature.Equal(rightSignature) {
-		t.Fatal("distinct bisimilar recursive declarations shared an identity signature")
-	}
 	if survivors, _ := deduplicateTypesWithHashes([]Type{left, right}); len(survivors) != 2 {
 		t.Fatalf("distinct deep cyclic identity graphs collapsed in union dedup: %d survivors", len(survivors))
 	}

@@ -1,6 +1,6 @@
 package pack
 
-// This file is the receipt-native Pack construction path. It accepts mounted
+// This file is Pack's mounted-row sealing path. It accepts mounted
 // artifacts plus Link-owned substitution authorities and never reopens the
 // source graph after sealing.
 
@@ -15,93 +15,43 @@ import (
 	"github.com/wippyai/go-lua/analysis/identity"
 	"github.com/wippyai/go-lua/analysis/program/link"
 	"github.com/wippyai/go-lua/analysis/program/target/contract"
-	"github.com/wippyai/go-lua/analysis/schema/ingress"
 	"github.com/wippyai/go-lua/analysis/schema/programmount"
 	"github.com/wippyai/go-lua/domain/static"
 )
 
-// ArtifactMount is Pack's exact Link-local placement of one reusable artifact.
-// Module is opaque and keeps repeated Program artifacts mounted at distinct
-// Link locations without introducing a Shard coordinate.
-type ArtifactMount struct {
-	snapshot   *ingress.Snapshot
-	programRow programmount.Program
-	module     identity.ContentID
-	program    identity.ContentID
-}
-
-func NewArtifactMount(snapshot *ingress.Snapshot, module, program identity.ContentID) (ArtifactMount, bool) {
-	if snapshot == nil || !snapshot.Available() || !module.Available() || !program.Available() || snapshot.ProgramID() != program {
-		return ArtifactMount{}, false
-	}
-	mounted, mountedOK := programmount.ProgramFromSnapshot(snapshot, module)
-	if !mountedOK {
-		return ArtifactMount{}, false
-	}
-	return ArtifactMount{snapshot: snapshot, programRow: mounted, module: module, program: program}, true
-}
-func (mount ArtifactMount) Available() bool {
-	return mount.snapshot != nil && mount.snapshot.Available() && mount.programRow.Available() && mount.module.Available() && mount.program.Available() && mount.snapshot.ProgramID() == mount.program
-}
-func (mount ArtifactMount) Module() identity.ContentID {
-	if !mount.Available() {
-		return identity.ContentID{}
-	}
-	return mount.module
-}
-func (mount ArtifactMount) Snapshot() *ingress.Snapshot {
-	if !mount.Available() {
-		return nil
-	}
-	return mount.snapshot
-}
-
-func (mount ArtifactMount) Program() programmount.Program {
-	if !mount.Available() {
-		return programmount.Program{}
-	}
-	return mount.programRow
-}
-
 type artifactValuesKey struct{ module, values identity.ContentID }
 type artifactCallKey struct{ module, call identity.ContentID }
-type artifactBodyKey struct{ module, body identity.ContentID }
-type artifactOutcomeKey struct{ module, outcome identity.ContentID }
 
-// FormalCallRoot and FormalCallTypeArguments are portable Pack receipts. They
-// are issued only from the mounted artifact constructor below; no Program
-// proof-taking compatibility method remains.
+func endpointForMountedSemantic(state *schema, module, id identity.ContentID) (Endpoint, bool) {
+	if state == nil || state.owner == nil || !state.owner.valid() {
+		return Endpoint{}, false
+	}
+	source, sourceOK := newSemanticSource(module, id)
+	if !sourceOK {
+		return Endpoint{}, false
+	}
+	endpoint, found := state.endpointIndex[source]
+	if !found {
+		return Endpoint{}, false
+	}
+	issued, issuedOK := state.sourceForEndpoint(endpoint)
+	return endpoint, issuedOK && issued == source
+}
+
+// FormalCallRoot is Pack's portable call identity. Type-argument sequence
+// semantics are issued by Static and retained directly; Pack does not wrap or
+// re-hash them.
 type FormalCallRoot struct {
-	call, id identity.ContentID
-	sealed   bool
+	id     identity.ContentID
+	sealed bool
 }
 
 func (root FormalCallRoot) Valid() bool {
-	return root.sealed && root.call.Available() && root.id.Available()
+	return root.sealed && root.id.Available()
 }
 func (root FormalCallRoot) ContentID() (identity.ContentID, bool) { return root.id, root.Valid() }
 func (root FormalCallRoot) Same(other FormalCallRoot) bool {
 	return root.Valid() && other.Valid() && root == other
-}
-
-type FormalCallTypeArguments struct {
-	id     identity.ContentID
-	count  uint32
-	sealed bool
-}
-
-func (formal FormalCallTypeArguments) Available() bool { return formal.sealed && formal.id.Available() }
-func (formal FormalCallTypeArguments) ContentID() (identity.ContentID, bool) {
-	return formal.id, formal.Available()
-}
-func (formal FormalCallTypeArguments) Count() int {
-	if !formal.Available() {
-		return 0
-	}
-	return int(formal.count)
-}
-func (formal FormalCallTypeArguments) Same(other FormalCallTypeArguments) bool {
-	return formal.Available() && other.Available() && formal == other
 }
 
 func formalCallRootID(call identity.ContentID) identity.ContentID {
@@ -112,23 +62,6 @@ func formalCallRootID(call identity.ContentID) identity.ContentID {
 	_, _ = hash.Write([]byte("wippy.analysis.pack.formal-call-root.v1\x00"))
 	_, _ = hash.Write(call[:])
 	return identity.ContentID(sha256.Sum256(hash.Sum(nil)))
-}
-
-func sealMountedFormalCallTypeArguments(arguments static.MountedTypeArguments) (FormalCallTypeArguments, bool) {
-	if !arguments.Available() || arguments.Count() < 0 || uint64(arguments.Count()) > uint64(^uint32(0)) {
-		return FormalCallTypeArguments{}, false
-	}
-	hash := sha256.New()
-	_, _ = hash.Write([]byte("wippy.analysis.pack.formal-call-type-arguments.v1\x00"))
-	for index := 0; index < arguments.Count(); index++ {
-		argument, ok := arguments.At(index)
-		id, idOK := argument.ContentID()
-		if !ok || !idOK {
-			return FormalCallTypeArguments{}, false
-		}
-		_, _ = hash.Write(id[:])
-	}
-	return FormalCallTypeArguments{id: identity.ContentID(sha256.Sum256(hash.Sum(nil))), count: uint32(arguments.Count()), sealed: true}, true
 }
 
 // MountedPayload is Heap's closed mounted Values projection. Exactly one
@@ -147,23 +80,34 @@ type MountedPayload struct {
 	kind    MountedPayloadKind
 	fixed   SemanticSource
 	payload Payload
+	sealed  bool
 }
 
-func (payload MountedPayload) Available() bool {
-	if payload.schema == nil {
+func (payload MountedPayload) available() bool {
+	return payload.sealed && payload.schema != nil && payload.schema.owner != nil && payload.schema.owner.valid() &&
+		(payload.kind == MountedPayloadFixed || payload.kind == MountedPayloadTail || payload.kind == MountedPayloadNil)
+}
+
+// valid is the construction-only union proof. Published descriptors are
+// immutable, so accessors need not replay endpoint or selection validation.
+func (payload MountedPayload) valid() bool {
+	if !payload.available() {
 		return false
 	}
 	switch payload.kind {
 	case MountedPayloadFixed:
-		return payload.fixed.Available()
+		endpoint, ok := payload.schema.endpointIndex[payload.fixed]
+		issued, issuedOK := payload.schema.sourceForEndpoint(endpoint)
+		return ok && issuedOK && issued == payload.fixed && payload.payload == (Payload{})
 	case MountedPayloadTail:
-		return payload.payload.schema == payload.schema
+		return !payload.fixed.Available() && payload.payload.valid() && payload.payload.selection.schema == payload.schema
 	case MountedPayloadNil:
-		return !payload.fixed.Available() && payload.payload.schema == nil
+		return !payload.fixed.Available() && payload.payload == (Payload{})
 	default:
 		return false
 	}
 }
+func (payload MountedPayload) Available() bool { return payload.available() }
 func (payload MountedPayload) Kind() MountedPayloadKind {
 	if !payload.Available() {
 		return MountedPayloadInvalid
@@ -189,20 +133,30 @@ func (schema *Schema) PayloadForMounted(module, valuesID identity.ContentID, off
 	}
 	row := schema.state.values[index]
 	if offset < len(row.fixed) {
-		endpoint := row.fixed[offset]
-		if endpoint.index == 0 || uint64(endpoint.index) > uint64(len(schema.state.endpointSources)) {
+		fixed, fixedOK := schema.state.sourceForEndpoint(row.fixed[offset])
+		if !fixedOK {
 			return MountedPayload{}, false
 		}
-		return MountedPayload{schema: schema.state, kind: MountedPayloadFixed, fixed: schema.state.endpointSources[endpoint.index-1]}, true
+		mounted := MountedPayload{schema: schema.state, kind: MountedPayloadFixed, fixed: fixed, sealed: true}
+		return mounted, mounted.valid()
 	}
-	if row.tail.valid() {
-		payloads, ok := schema.Payloads([]PayloadRequest{{Values: Values{schema: schema.state, index: index}, Index: offset}})
-		if !ok || len(payloads) != 1 {
+	if row.hasTail {
+		values := Values{schema: schema.state, index: index}
+		table, tableOK := schema.TableIndex(int64(offset))
+		if !values.valid() || !tableOK {
 			return MountedPayload{}, false
 		}
-		return MountedPayload{schema: schema.state, kind: MountedPayloadTail, payload: payloads[0]}, true
+		for _, endpoint := range row.fixed {
+			if _, sourceOK := schema.state.sourceForEndpoint(endpoint); !sourceOK {
+				return MountedPayload{}, false
+			}
+		}
+		selection := ScalarSelection{schema: schema.state, values: values, kind: scalarSelectionTableIndex, tableIndex: table, sealed: true}
+		mounted := MountedPayload{schema: schema.state, kind: MountedPayloadTail, payload: Payload{selection: selection}, sealed: true}
+		return mounted, mounted.valid()
 	}
-	return MountedPayload{schema: schema.state, kind: MountedPayloadNil}, true
+	mounted := MountedPayload{schema: schema.state, kind: MountedPayloadNil, sealed: true}
+	return mounted, mounted.valid()
 }
 
 // CallRootForMountedSemantic replaces the Project/Program proof projection
@@ -219,53 +173,28 @@ func (schema *Schema) CallRootForMountedSemantic(module, callID identity.Content
 	return root, root.valid()
 }
 
-// MountedInputSemanticSource projects one exact fixed call input into the
-// mounted semantic-source plane. It accepts only this Schema's presealed
-// scalar selector and never manufactures a fixed source from an open actual
-// tail. This is cold operand evidence for later Effect publication admission,
-// not a runtime allocation or placement proof.
-func (schema *Schema) MountedInputSemanticSource(module, callID identity.ContentID, selector InputSelector) (SemanticSource, bool) {
-	if schema == nil || schema.state == nil || !module.Available() || !callID.Available() || !schema.OwnsInputSelector(selector) || selector.kind != inputSelectionScalar {
-		return SemanticSource{}, false
-	}
-	index, found := schema.state.artifactCalls[artifactCallKey{module, callID}]
-	if !found || uint64(index) >= uint64(len(schema.state.calls)) {
-		return SemanticSource{}, false
-	}
-	row := schema.state.calls[index]
-	if !schema.state.validMountedCall(row) || row.moduleKey != module || row.occurrenceID != callID || selector.start < 0 || selector.start >= len(row.fixed) {
-		return SemanticSource{}, false
-	}
-	endpoint := row.fixed[selector.start]
-	if !endpoint.valid() || endpoint.owner != schema.state.owner || endpoint.index == 0 || uint64(endpoint.index) > uint64(len(schema.state.endpointSources)) {
-		return SemanticSource{}, false
-	}
-	source := schema.state.endpointSources[endpoint.index-1]
-	return source, source.Available() && source.module == module
-}
-
 func (schema *Schema) FormalCallRootForMountedSemantic(module, callID identity.ContentID) (FormalCallRoot, bool) {
 	root, ok := schema.CallRootForMountedSemantic(module, callID)
 	if !ok {
 		return FormalCallRoot{}, false
 	}
 	row := schema.state.calls[schema.state.roots[root.index].sourceIndex]
-	formal := FormalCallRoot{call: row.formalID, id: formalCallRootID(row.formalID), sealed: true}
+	formal := FormalCallRoot{id: formalCallRootID(row.formalID), sealed: true}
 	return formal, formal.Valid()
 }
-func (schema *Schema) FormalTypeArgumentsForMountedSemantic(module, callID identity.ContentID) (FormalCallTypeArguments, bool) {
+func (schema *Schema) TypeArgumentSequenceForMountedSemantic(module, callID identity.ContentID) (static.TypeArgumentSequence, bool) {
 	root, ok := schema.CallRootForMountedSemantic(module, callID)
 	if !ok {
-		return FormalCallTypeArguments{}, false
+		return static.TypeArgumentSequence{}, false
 	}
 	row := schema.state.calls[schema.state.roots[root.index].sourceIndex]
-	return row.typeFormal, row.typeFormal.Available()
+	return row.typeArguments, row.typeArguments.Available()
 }
 
 // SealMountedArtifacts is the sole Pack production constructor.  Artifact
 // rows are the complete Program fact plane; Boundary and Static only issue
 // their existing opaque mounted substitutions.
-func SealMountedArtifacts(source *link.Link, authority *static.Authority, mounts []ArtifactMount) (*Schema, bool) {
+func SealMountedArtifacts(source *link.Link, authority *static.Authority, mounts []programmount.MountedArtifact) (*Schema, bool) {
 	if source == nil || authority == nil || authority.LinkID() != source.ContentID() || len(mounts) == 0 || source.Boundary() == nil || source.Project() == nil || authority.Classes() == nil {
 		return nil, false
 	}
@@ -301,11 +230,11 @@ func SealMountedArtifacts(source *link.Link, authority *static.Authority, mounts
 		if !mountedArtifactMatchesLink(source, index, mount) {
 			return nil, false
 		}
-		if _, duplicate := seenModules[mount.module]; duplicate {
+		if _, duplicate := seenModules[mount.ModuleKey]; duplicate {
 			return nil, false
 		}
-		seenModules[mount.module] = struct{}{}
-		mountedProgram := mount.Program()
+		seenModules[mount.ModuleKey] = struct{}{}
+		mountedProgram := mount.Program
 		if !mountedProgram.Available() {
 			return nil, false
 		}
@@ -333,33 +262,6 @@ func SealMountedArtifacts(source *link.Link, authority *static.Authority, mounts
 				maximum = position
 			}
 		}
-		occurrenceCount, occurrencePublished := mountedProgram.OccurrenceKindCount(programschema.OccurrenceStorageBind)
-		if !occurrencePublished {
-			return nil, false
-		}
-		for i := 0; i < occurrenceCount; i++ {
-			row, ok := mountedProgram.OccurrenceKindAt(programschema.OccurrenceStorageBind, i)
-			_, inputCount, spanOK := row.InputSpan()
-			if !ok || !spanOK || inputCount == 0 {
-				return nil, false
-			}
-			if width := int(inputCount) - 1; width > maximum {
-				maximum = width
-			}
-		}
-		boundaryCount, boundariesOK := mountedProgram.FunctionBoundaryCount()
-		if !boundariesOK {
-			return nil, false
-		}
-		for i := 0; i < boundaryCount; i++ {
-			row, ok := mountedProgram.FunctionBoundaryAt(i)
-			if !ok {
-				return nil, false
-			}
-			if row.FormalCount() > maximum {
-				maximum = row.FormalCount()
-			}
-		}
 	}
 	if maximum < 0 {
 		return nil, false
@@ -373,8 +275,9 @@ func SealMountedArtifacts(source *link.Link, authority *static.Authority, mounts
 		return nil, false
 	}
 	state := &schema{linkOwner: source.OwnerCapability(), owner: owner,
-		relationIndex: make(map[*relation]uint32), endpointIndex: make(map[SemanticSource]Endpoint), semanticEndpoints: make(map[artifactValuesKey]Endpoint), artifactValues: make(map[artifactValuesKey]uint32), artifactTails: make(map[artifactValuesKey]uint32), artifactCalls: make(map[artifactCallKey]uint32), artifactBodies: make(map[artifactBodyKey]uint32), artifactOutcomes: make(map[artifactOutcomeKey]uint32), inputSelectors: make(map[inputSelectorKey]InputSelector),
+		endpointIndex: make(map[SemanticSource]Endpoint), artifactValues: make(map[artifactValuesKey]uint32), artifactCalls: make(map[artifactCallKey]uint32), inputSelectors: make(map[inputSelectorKey]InputSelector),
 	}
+	tailIndex := make(map[artifactValuesKey]uint32)
 	if !sealInputSelectors(state, contract) {
 		return nil, false
 	}
@@ -385,11 +288,11 @@ func SealMountedArtifacts(source *link.Link, authority *static.Authority, mounts
 	}
 	sealed := &Schema{state: state}
 	for _, mount := range mounts {
-		if !sealMountedArtifactValues(sealed, mount) || !sealMountedArtifactBodies(sealed, mount) || !sealMountedArtifactBinds(sealed, mount) || !sealMountedArtifactCalls(sealed, authority, mount) {
+		if !sealMountedArtifactValues(sealed, mount, tailIndex) || !sealMountedArtifactCalls(sealed, authority, mount, tailIndex) {
 			return nil, false
 		}
 	}
-	if len(state.roots) == 0 || !sealed.sealSourceValues() {
+	if !sealed.sealSourceValues() {
 		return nil, false
 	}
 	return sealed, true
@@ -458,7 +361,7 @@ func sealInputSelectors(state *schema, contract *contract.Contract) bool {
 // mountedArtifactMatchesLink authenticates one caller-supplied artifact
 // against the exact owner-fenced Project mount position. It reads only the
 // canonical ModuleKey and ProgramID; it never opens the mounted Program.
-func mountedArtifactMatchesLink(source *link.Link, index int, mount ArtifactMount) bool {
+func mountedArtifactMatchesLink(source *link.Link, index int, mount programmount.MountedArtifact) bool {
 	if source == nil || source.Project() == nil || index < 0 || !mount.Available() {
 		return false
 	}
@@ -469,12 +372,15 @@ func mountedArtifactMatchesLink(source *link.Link, index int, mount ArtifactMoun
 	shard, shardOK := mounts.At(index)
 	module, moduleOK := source.Project().ModuleKey(shard)
 	program, programOK := mounts.ProgramID(shard)
-	return shardOK && moduleOK && programOK && module == mount.module && program == mount.program
+	return shardOK && moduleOK && programOK && module == mount.ModuleKey && program == mount.ProgramID
 }
 
-func sealMountedArtifactValues(schema *Schema, mount ArtifactMount) bool {
+func sealMountedArtifactValues(schema *Schema, mount programmount.MountedArtifact, tailIndex map[artifactValuesKey]uint32) bool {
+	if tailIndex == nil {
+		return false
+	}
 	state := schema.state
-	program := mount.Program().Program
+	program := mount.Program.Program
 	catalog, catalogOK := programcatalog.CatalogID(program.SchemaID)
 	valuesCount, valuesPublished := programschema.ValuesFamily().Count(&program.Frozen, catalog)
 	if !program.Available() || !catalogOK || !valuesPublished {
@@ -485,34 +391,34 @@ func sealMountedArtifactValues(schema *Schema, mount ArtifactMount) bool {
 		if !ok {
 			return false
 		}
-		key := artifactValuesKey{mount.module, row.ID()}
+		key := artifactValuesKey{mount.ModuleKey, row.ID()}
 		if _, duplicate := state.artifactValues[key]; duplicate {
 			return false
 		}
-		rootID := mountedArtifactRootID(rootValues, mount.module, row.ID())
-		root, port, ok := state.addRootWithID(state.owner.classes, rootRow{kind: rootValues, id: rootID})
+		rootID := mountedArtifactRootID(rootValues, mount.ModuleKey, row.ID())
+		root, _, ok := state.addRootWithID(state.owner.classes, rootRow{kind: rootValues, id: rootID})
 		if !ok {
 			return false
 		}
-		out := valuesRow{root: root, moduleKey: mount.module, occurrenceID: row.ID(), port: port}
+		out := valuesRow{root: root, moduleKey: mount.ModuleKey, occurrenceID: row.ID()}
 		memberOffset, memberCount, membersOK := row.MemberSpan()
 		if !membersOK {
 			return false
 		}
 		for member := 0; member < int(memberCount); member++ {
 			m, memberOK := programschema.ValuesMemberFamily().At(&program.Frozen, catalog, int(memberOffset)+member)
-			endpoint, endpointOK := state.semanticEndpoints[artifactValuesKey{mount.module, m.ID()}]
+			endpoint, endpointOK := endpointForMountedSemantic(state, mount.ModuleKey, m.ID())
 			if !memberOK || !endpointOK {
 				return false
 			}
 			out.fixed = append(out.fixed, endpoint)
 		}
 		if tail, open := row.Tail(); open {
-			port, tailOK := sealMountedArtifactTail(schema, mount.module, tail)
+			tailRoot, tailOK := sealMountedArtifactTail(schema, mount.ModuleKey, tail, tailIndex)
 			if !tailOK {
 				return false
 			}
-			out.tail = port
+			out.tailRoot, out.hasTail = tailRoot, true
 		}
 		state.artifactValues[key] = uint32(len(state.values))
 		state.values = append(state.values, out)
@@ -521,17 +427,27 @@ func sealMountedArtifactValues(schema *Schema, mount ArtifactMount) bool {
 	return true
 }
 
-func sealMountedArtifactTail(schema *Schema, module identity.ContentID, tail programschema.ValuesTail) (Port, bool) {
+func sealMountedArtifactTail(schema *Schema, module identity.ContentID, tail programschema.ValuesTail, tailIndex map[artifactValuesKey]uint32) (uint32, bool) {
+	if tailIndex == nil {
+		return 0, false
+	}
 	state := schema.state
 	id := tail.ID()
-	endpoint, endpointOK := state.semanticEndpoints[artifactValuesKey{module, id}]
+	endpoint, endpointOK := endpointForMountedSemantic(state, module, id)
 	if !tail.Present() || !id.Available() || !endpointOK {
-		return Port{}, false
+		return 0, false
 	}
 	key := artifactValuesKey{module, id}
-	if index, exists := state.artifactTails[key]; exists {
+	if index, exists := tailIndex[key]; exists {
+		if uint64(index) >= uint64(len(state.tails)) {
+			return 0, false
+		}
 		row := state.tails[index]
-		return row.port, row.sealed && row.port.valid() && row.valueID == id
+		if uint64(row.root) >= uint64(len(state.roots)) {
+			return 0, false
+		}
+		port := state.roots[row.root].port
+		return row.root, port.valid() && row.valueID == id
 	}
 	kind := TailProducerInvalid
 	switch tail.Kind() {
@@ -540,207 +456,25 @@ func sealMountedArtifactTail(schema *Schema, module identity.ContentID, tail pro
 	case programschema.ValuesTailVararg:
 		kind = TailProducerVararg
 	default:
-		return Port{}, false
+		return 0, false
 	}
-	root, port, ok := state.addRootWithID(state.owner.classes, rootRow{kind: rootTail, id: mountedArtifactRootID(rootTail, module, id)})
+	root, _, ok := state.addRootWithID(state.owner.classes, rootRow{kind: rootTail, id: mountedArtifactRootID(rootTail, module, id)})
 	if !ok || !endpoint.valid() {
-		return Port{}, false
+		return 0, false
 	}
 	index := uint32(len(state.tails))
-	state.artifactTails[key] = index
-	state.tails = append(state.tails, tailRow{root: root, moduleKey: module, valueID: id, port: port, kind: kind, sealed: true})
+	tailIndex[key] = index
+	state.tails = append(state.tails, tailRow{root: root, moduleKey: module, valueID: id, kind: kind})
 	state.roots[root].sourceIndex = index
-	return port, true
+	return root, true
 }
 
-func (state *schema) addArtifactRoot(classes *static.ClassSet, kind rootKind, module, id identity.ContentID, port Port, scalars []Endpoint) (uint32, bool) {
-	if state == nil || classes == nil || !id.Available() || !port.valid() || port.owner != state.owner {
-		return 0, false
-	}
-	index := uint32(len(state.roots))
-	state.roots = append(state.roots, rootRow{kind: kind, id: mountedArtifactRootID(kind, module, id), port: port})
-	targets := make([]equationTarget, 0, len(scalars)+1)
-	for _, endpoint := range scalars {
-		if !endpoint.valid() || endpoint.owner != state.owner {
-			return 0, false
-		}
-		targets = append(targets, equationTarget{kind: EquationScalar, index: endpoint.index})
-	}
-	targets = append(targets, equationTarget{kind: EquationPack, index: port.index})
-	relation, ok := sealRelation(state.owner, index+1, targets)
-	if !ok {
-		return 0, false
-	}
-	state.relations = append(state.relations, relation)
-	state.relationIndex[relation] = index
-	return index, true
-}
-
-func sealMountedArtifactBinds(schema *Schema, mount ArtifactMount) bool {
-	state := schema.state
-	program := mount.Program()
-	occurrenceCount, occurrencePublished := program.OccurrenceKindCount(programschema.OccurrenceStorageBind)
-	if !occurrencePublished {
+func sealMountedArtifactCalls(schema *Schema, authority *static.Authority, mount programmount.MountedArtifact, tailIndex map[artifactValuesKey]uint32) bool {
+	if tailIndex == nil {
 		return false
 	}
-	for i := 0; i < occurrenceCount; i++ {
-		row, ok := program.OccurrenceKindAt(programschema.OccurrenceStorageBind, i)
-		ordinal, ordinalOK := program.OccurrenceOrdinalForID(programschema.OccurrenceStorageBind, row.ID())
-		_, inputCount, spanOK := row.InputSpan()
-		if !ok || !ordinalOK || !spanOK || inputCount == 0 {
-			return false
-		}
-		valuesInput, valuesOK := program.OccurrenceInputFor(ordinal, 0)
-		valuesID := valuesInput.InputID()
-		bodyID, bodyOK := row.BodyID()
-		if !valuesOK || !valuesInput.Available() || !valuesID.Available() || !bodyOK {
-			return false
-		}
-		valuesIndex, exists := state.artifactValues[artifactValuesKey{mount.module, valuesID}]
-		if !exists {
-			return false
-		}
-		cells := make([]Endpoint, int(inputCount)-1)
-		for j := range cells {
-			input, inputOK := program.OccurrenceInputFor(ordinal, j+1)
-			id := input.InputID()
-			endpoint, endpointOK := state.semanticEndpoints[artifactValuesKey{mount.module, id}]
-			if !inputOK || !input.Available() || !id.Available() || !endpointOK {
-				return false
-			}
-			cells[j] = endpoint
-		}
-		port, portOK := newPort(state.owner, uint32(len(state.roots)+1), state.owner.classes.AnyValue(), false)
-		if !portOK {
-			return false
-		}
-		root, rootOK := state.addArtifactRoot(state.owner.classes, rootBind, mount.module, row.ID(), port, cells)
-		if !rootOK {
-			return false
-		}
-		state.binds = append(state.binds, bindRow{root: root, moduleKey: mount.module, bindID: row.ID(), bodyID: bodyID, values: Values{schema: state, index: valuesIndex}, port: port, cells: cells})
-		state.roots[root].sourceIndex = uint32(len(state.binds) - 1)
-	}
-	return true
-}
-
-// Bodies are mounted directly from the canonical Artifact Body and callable
-// boundary columns. Pack retains only its runtime substitution state.
-func sealMountedArtifactBodies(schema *Schema, mount ArtifactMount) bool {
-	state := schema.state
-	program := mount.Program()
-	if !program.Available() {
-		return false
-	}
-	bodyCount, bodiesOK := program.BodyCount()
-	if !bodiesOK {
-		return false
-	}
-	for i := 0; i < bodyCount; i++ {
-		row, rowOK := program.BodyAt(i)
-		if !rowOK {
-			return false
-		}
-		key := artifactBodyKey{mount.module, row.ID()}
-		if _, duplicate := state.artifactBodies[key]; duplicate {
-			return false
-		}
-		boundary, callable := program.FunctionBoundaryForBody(row.ID())
-		if row.Callable() != callable {
-			return false
-		}
-		formalCount := 0
-		if callable {
-			formalCount = boundary.FormalCount()
-		}
-		formals := make([]Endpoint, formalCount)
-		formalIDs := make([]identity.ContentID, formalCount)
-		if callable {
-			formalOffset, _, formalSpanOK := boundary.FormalSpan()
-			if !formalSpanOK {
-				return false
-			}
-			for j := range formals {
-				formal, formalOK := program.FunctionFormalAt(int(formalOffset) + j)
-				endpoint, endpointOK := state.semanticEndpoints[artifactValuesKey{mount.module, formal.StorageCellID()}]
-				if !formalOK || !endpointOK {
-					return false
-				}
-				formals[j], formalIDs[j] = endpoint, formal.ID()
-			}
-		}
-		port, portOK := newPort(state.owner, uint32(len(state.roots)+1), state.owner.classes.AnyValue(), true)
-		if !portOK {
-			return false
-		}
-		root, rootOK := state.addArtifactRoot(state.owner.classes, rootBody, mount.module, row.ID(), port, formals)
-		if !rootOK {
-			return false
-		}
-		state.artifactBodies[key] = uint32(len(state.bodies))
-		state.bodies = append(state.bodies, bodyRow{root: root, bodyID: row.ID(), context: row.ContextID(), moduleKey: mount.module, port: port, formals: formals, formalIDs: formalIDs, sealed: true})
-		state.roots[root].sourceIndex = uint32(len(state.bodies) - 1)
-	}
-	// Outcomes have no scalar targets.  Return Values are already values-root
-	// identities; retain only the root links needed by boundary rules.
-	outcomeCount, outcomesOK := program.OutcomeCount()
-	if !outcomesOK {
-		return false
-	}
-	for i := 0; i < outcomeCount; i++ {
-		row, rowOK := program.OutcomeAt(i)
-		if !rowOK {
-			return false
-		}
-		bodyIndex, bodyOK := state.artifactBodies[artifactBodyKey{mount.module, row.BodyID()}]
-		if !bodyOK {
-			return false
-		}
-		// Pack owns only normal and return boundary roots. The artifact owns
-		// other terminal geometry; validate Body ownership but mint no Pack root.
-		if row.Kind() != programschema.OutcomeNormal && row.Kind() != programschema.OutcomeReturn {
-			continue
-		}
-		key := artifactOutcomeKey{mount.module, row.ID()}
-		if _, duplicate := state.artifactOutcomes[key]; duplicate {
-			return false
-		}
-		port, portOK := newPort(state.owner, uint32(len(state.roots)+1), state.owner.classes.AnyValue(), false)
-		if !portOK {
-			return false
-		}
-		root, rootOK := state.addArtifactRoot(state.owner.classes, rootOutcome, mount.module, row.ID(), port, nil)
-		if !rootOK {
-			return false
-		}
-		out := outcomeRow{root: root, bodyIndex: bodyIndex, moduleKey: mount.module, bodyID: row.BodyID(), outcomeID: row.ID(), port: port, sealed: true}
-		switch row.Kind() {
-		case programschema.OutcomeNormal:
-			out.kind = 1
-		case programschema.OutcomeReturn:
-			out.kind = 2
-		}
-		if out.kind == 2 {
-			for j := 0; j < row.ReturnValueCount(); j++ {
-				value, valueOK := program.OutcomeReturnValueFor(i, j)
-				valuesIndex, valuesOK := state.artifactValues[artifactValuesKey{mount.module, value.ID()}]
-				if !valueOK || !valuesOK {
-					return false
-				}
-				out.valueRoots = append(out.valueRoots, state.values[valuesIndex].root)
-			}
-		}
-		state.artifactOutcomes[key] = uint32(len(state.outcomes))
-		state.outcomes = append(state.outcomes, out)
-		state.roots[root].sourceIndex = uint32(len(state.outcomes) - 1)
-	}
-	return true
-}
-
-func sealMountedArtifactCalls(schema *Schema, authority *static.Authority, mount ArtifactMount) bool {
-	state, artifact := schema.state, mount.snapshot
-	program, programOK := programmount.ProgramFromSnapshot(artifact, mount.module)
-	if !programOK {
+	state, program := schema.state, mount.Program
+	if !mount.Available() || !program.Available() {
 		return false
 	}
 	callCount, callsOK := program.CallCount()
@@ -752,52 +486,46 @@ func sealMountedArtifactCalls(schema *Schema, authority *static.Authority, mount
 		if !rowOK {
 			return false
 		}
-		key := artifactCallKey{mount.module, row.ID()}
+		key := artifactCallKey{mount.ModuleKey, row.ID()}
 		if _, duplicate := state.artifactCalls[key]; duplicate {
 			return false
 		}
-		types, typesOK := authority.MountedCallTypeArguments(mount.module, row.TypeArgumentsID())
-		typeFormal, typeFormalOK := sealMountedFormalCallTypeArguments(types)
-		if !typesOK || !typeFormalOK {
+		typeArguments, typeArgumentsOK := authority.MountedCallTypeArgumentSequence(mount.ModuleKey, row.TypeArgumentsID())
+		if !typeArgumentsOK {
 			return false
 		}
-		rootID := mountedCallRootID(mount.module, row.FormalID())
-		root, port, rootOK := state.addRootWithID(state.owner.classes, rootRow{kind: rootCall, id: rootID})
+		rootID := mountedCallRootID(mount.ModuleKey, row.FormalID())
+		root, _, rootOK := state.addRootWithID(state.owner.classes, rootRow{kind: rootCall, id: rootID})
 		if !rootOK {
 			return false
 		}
-		out := callRow{root: root, mountedID: row.ID(), occurrenceID: row.ID(), valuesID: row.ValuesID(), typesID: row.TypeArgumentsID(), form: row.Form(), moduleKey: mount.module, formalID: row.FormalID(), typeFormal: typeFormal, port: port}
+		out := callRow{root: root, occurrenceID: row.ID(), moduleKey: mount.ModuleKey, formalID: row.FormalID(), typeArguments: typeArguments}
 		if row.Form() == programschema.CallFormMethod {
 			receiverID, receiverOK := row.ReceiverID()
-			endpoint, endpointOK := state.semanticEndpoints[artifactValuesKey{mount.module, receiverID}]
+			endpoint, endpointOK := endpointForMountedSemantic(state, mount.ModuleKey, receiverID)
 			if !receiverOK || !endpointOK {
 				return false
 			}
-			out.receiverID = receiverID
 			out.fixed = append(out.fixed, endpoint)
 		}
 		for j := 0; j < row.ArgumentCount(); j++ {
 			argument, argumentOK := program.CallArgumentFor(i, j)
-			endpoint, endpointOK := state.semanticEndpoints[artifactValuesKey{mount.module, argument.ValueID()}]
+			endpoint, endpointOK := endpointForMountedSemantic(state, mount.ModuleKey, argument.ValueID())
 			if !argumentOK || !endpointOK {
 				return false
 			}
 			out.fixed = append(out.fixed, endpoint)
 		}
 		if tailID, open := row.TailID(); open {
-			tailIndex, tailOK := state.artifactTails[artifactValuesKey{mount.module, tailID}]
-			if !tailOK {
+			tailRowIndex, tailOK := tailIndex[artifactValuesKey{mount.ModuleKey, tailID}]
+			if !tailOK || uint64(tailRowIndex) >= uint64(len(state.tails)) {
 				return false
 			}
-			out.actualTailID = tailID
-			out.tailContext = tailID
-			out.tail = state.tails[tailIndex].port
-		}
-		// A call-result tail is identified by the artifact's exact producer
-		// occurrence ID. Boundary Value IDs are a different namespace and must
-		// never be guessed as Pack tail lookup keys.
-		if tailIndex, tailOK := state.artifactTails[artifactValuesKey{mount.module, row.ID()}]; tailOK {
-			out.resultTail, out.hasResult = state.tails[tailIndex].root, true
+			tail := state.tails[tailRowIndex]
+			if _, tailPortOK := state.tailPort(tail.root); !tailPortOK || tail.moduleKey != mount.ModuleKey || tail.valueID != tailID {
+				return false
+			}
+			out.tailRoot, out.hasTail = tail.root, true
 		}
 		state.artifactCalls[key] = uint32(len(state.calls))
 		state.calls = append(state.calls, out)
@@ -834,7 +562,6 @@ func (state *schema) addRootWithID(classes *static.ClassSet, row rootRow) (uint3
 		return 0, Port{}, false
 	}
 	state.relations = append(state.relations, relation)
-	state.relationIndex[relation] = index
 	return index, port, true
 }
 
@@ -842,18 +569,18 @@ func mountedCallRootID(module, formal identity.ContentID) identity.ContentID {
 	return mountedArtifactRootID(rootCall, module, formal)
 }
 
-func sealMountedSemanticEndpoints(state *schema, mount ArtifactMount) bool {
+func sealMountedSemanticEndpoints(state *schema, mount programmount.MountedArtifact) bool {
 	if state == nil || !mount.Available() {
 		return false
 	}
 	add := func(id identity.ContentID) bool {
-		source, sourceOK := newSemanticSource(mount.module, id)
+		source, sourceOK := newSemanticSource(mount.ModuleKey, id)
 		if !sourceOK {
 			return false
 		}
-		key := artifactValuesKey{mount.module, id}
-		if _, exists := state.semanticEndpoints[key]; exists {
-			return true
+		if endpoint, exists := state.endpointIndex[source]; exists {
+			return endpoint.valid() && endpoint.owner == state.owner && endpoint.index != 0 &&
+				uint64(endpoint.index) <= uint64(len(state.endpointSources)) && state.endpointSources[endpoint.index-1] == source
 		}
 		if uint64(len(state.endpointSources)) >= uint64(^uint32(0)) {
 			return false
@@ -864,10 +591,9 @@ func sealMountedSemanticEndpoints(state *schema, mount ArtifactMount) bool {
 		}
 		state.endpointSources = append(state.endpointSources, source)
 		state.endpointIndex[source] = endpoint
-		state.semanticEndpoints[key] = endpoint
 		return true
 	}
-	program := mount.Program()
+	program := mount.Program
 	if !program.Available() {
 		return false
 	}
@@ -894,45 +620,6 @@ func sealMountedSemanticEndpoints(state *schema, mount ArtifactMount) bool {
 		}
 		if tail, open := row.Tail(); open && !add(tail.ID()) {
 			return false
-		}
-	}
-	occurrenceCount, occurrencePublished := program.OccurrenceKindCount(programschema.OccurrenceStorageBind)
-	if !occurrencePublished {
-		return false
-	}
-	for i := 0; i < occurrenceCount; i++ {
-		row, ok := program.OccurrenceKindAt(programschema.OccurrenceStorageBind, i)
-		ordinal, ordinalOK := program.OccurrenceOrdinalForID(programschema.OccurrenceStorageBind, row.ID())
-		_, inputCount, spanOK := row.InputSpan()
-		if !ok || !ordinalOK || !spanOK || inputCount == 0 {
-			return false
-		}
-		for j := 1; j < int(inputCount); j++ {
-			input, inputOK := program.OccurrenceInputFor(ordinal, j)
-			id := input.InputID()
-			if !inputOK || !input.Available() || !id.Available() || !add(id) {
-				return false
-			}
-		}
-	}
-	boundaryCount, boundariesOK := program.FunctionBoundaryCount()
-	if !boundariesOK {
-		return false
-	}
-	for i := 0; i < boundaryCount; i++ {
-		row, ok := program.FunctionBoundaryAt(i)
-		if !ok {
-			return false
-		}
-		formalOffset, _, formalSpanOK := row.FormalSpan()
-		if !formalSpanOK {
-			return false
-		}
-		for j := 0; j < row.FormalCount(); j++ {
-			formal, formalOK := program.FunctionFormalAt(int(formalOffset) + j)
-			if !formalOK || !add(formal.StorageCellID()) {
-				return false
-			}
 		}
 	}
 	callCount, callsOK := program.CallCount()

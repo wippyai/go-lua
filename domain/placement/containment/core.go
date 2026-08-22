@@ -2,62 +2,74 @@ package containment
 
 import (
 	"github.com/wippyai/go-lua/analysis/identity"
-	heapdomain "github.com/wippyai/go-lua/domain/heap"
 	"github.com/wippyai/go-lua/domain/placement"
 )
 
-// operand is the one canonical parent allocation-root proof consumed by the
-// Link-lane rule. Placement never mints a second root identity: key and id are
-// both projected from Heap's sealed root row and are retained only together so
-// the hot rule can authenticate the pair.
+// operand is the singleton owner-issued closure proof consumed by the
+// mounted-point rule. The Placement schema identity fences both ordered
+// summary reads; its dense allocation coordinates are retained as the
+// source-owned summary range rather than rebuilt for each mounted issuance.
 type operand struct {
-	key heapdomain.Key
-	id  identity.ContentID
+	id          identity.ContentID
+	summaryKeys []uint64
 }
 
-func operandForSchema(schema placement.Schema, key heapdomain.Key) (operand, bool) {
-	if !schema.Valid() {
+// summaryKeysForSchema issues the one dense coordinate plane Placement
+// projects from Heap. It is created at the owner bind boundary; runtime
+// admissions borrow the retained range through scalar access instead of
+// manufacturing a denominator or coordinate directory of their own.
+func summaryKeysForSchema(schema placement.Schema) ([]uint64, bool) {
+	if !schema.Valid() || !schema.ContentID().Available() || schema.KeyCount() < 0 {
+		return nil, false
+	}
+	count := schema.KeyCount()
+	keys := make([]uint64, count)
+	for index := range keys {
+		keys[index] = uint64(index)
+	}
+	return keys, true
+}
+
+func operandForSchema(schema placement.Schema) (operand, bool) {
+	keys, keysOK := summaryKeysForSchema(schema)
+	if !keysOK {
 		return operand{}, false
 	}
-	heap := schema.Heap()
-	if !heap.Valid() || !heap.OwnsKey(key) || key.Kind() != heapdomain.RootAllocation {
-		return operand{}, false
+	return operand{id: schema.ContentID(), summaryKeys: keys}, true
+}
+
+func completeSummaryKeys(schema placement.Schema, keys []uint64) bool {
+	if !schema.Valid() || len(keys) != schema.KeyCount() {
+		return false
 	}
-	index, indexOK := heap.KeyIndex(key)
-	canonical, canonicalOK := schema.KeyAt(index)
-	id, idOK := key.ContentID()
-	if !indexOK || index < 0 || !canonicalOK || canonical != key || !idOK || !id.Available() {
-		return operand{}, false
+	for index, key := range keys {
+		if key != uint64(index) {
+			return false
+		}
 	}
-	// Heap shares RootAllocation's carrier between mounted Program roots and
-	// Target fresh roots. Fresh roots have no constructor fields and therefore
-	// are intentionally omitted from containment's parent denominator; the
-	// separate Placement/fresh seed owns their unconditional Stack write.
-	// Program roots retain the existing origin validation below.
-	_, _, _, freshOK := key.FreshResultID()
-	if freshOK {
-		return operand{}, false
-	}
-	_, _, allocationID, kind, form, originOK := heap.AllocationOriginForKey(key)
-	if !originOK || !allocationID.Available() || !kind.Valid() || !form.Valid() {
-		return operand{}, false
-	}
-	return operand{key: key, id: id}, true
+	return true
 }
 
 func operandContentForSchema(schema placement.Schema, candidate operand) (operand, [32]byte, bool) {
-	canonical, ok := operandForSchema(schema, candidate.key)
-	if !ok || candidate.id != canonical.id {
+	if !schema.Valid() || !schema.ContentID().Available() || candidate.id != schema.ContentID() || candidate.summaryKeys == nil || !completeSummaryKeys(schema, candidate.summaryKeys) {
 		return operand{}, [32]byte{}, false
 	}
-	return canonical, [32]byte(canonical.id), true
+	return candidate, [32]byte(candidate.id), true
 }
 
-func operandCoordinateForSchema(schema placement.Schema, candidate operand) (uint64, bool) {
-	canonical, _, ok := operandContentForSchema(schema, candidate)
-	if !ok {
+// SummaryKeyCount and SummaryKeyAt implement the engine's read-only
+// source-owned summary seam. Only scalar reads cross the package boundary;
+// the owner-retained slice is never exposed to selector admission.
+func (candidate operand) SummaryKeyCount() int {
+	if !candidate.id.Available() || candidate.summaryKeys == nil {
+		return -1
+	}
+	return len(candidate.summaryKeys)
+}
+
+func (candidate operand) SummaryKeyAt(index int) (uint64, bool) {
+	if candidate.SummaryKeyCount() < 0 || index < 0 || index >= len(candidate.summaryKeys) {
 		return 0, false
 	}
-	index, indexOK := schema.Heap().KeyIndex(canonical.key)
-	return uint64(index), indexOK && index >= 0 && index < schema.KeyCount()
+	return candidate.summaryKeys[index], true
 }

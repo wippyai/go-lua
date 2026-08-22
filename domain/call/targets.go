@@ -20,18 +20,6 @@ const (
 	targetSeed
 )
 
-type targetKey struct {
-	kind        targetKind
-	moduleKey   identity.ContentID
-	bodyContext identity.ContentID
-	seedID      identity.ContentID
-}
-
-type functionTargetKey struct {
-	moduleKey       identity.ContentID
-	functionContext identity.ContentID
-}
-
 // allocationTargetKey is the sealed Program allocation proof lookup used by
 // dispatch. The allocation ID is owner-neutral; TargetForAllocation applies
 // the exact mounted Program owner fence before projecting it to Call.
@@ -49,25 +37,25 @@ type MountedArtifact struct {
 }
 
 type targetRow struct {
-	key             targetKey
-	role            TargetRoleID
-	functionContext identity.ContentID
-	bodyContext     identity.ContentID
-	artifactID      identity.ContentID
-	programID       identity.ContentID
-	bodyPath        identity.ContentID
-	formalID        identity.ContentID
-	seedOperation   vocabulary.Operation
-	seedFormalID    identity.ContentID
-	seedKind        uint8
-	scopedLoader    bool
+	kind          targetKind
+	mount         uint32
+	role          TargetRoleID
+	bodyPath      identity.ContentID
+	seedID        identity.ContentID
+	seedOperation vocabulary.Operation
+	scopedLoader  bool
 }
 
 func (algebra *Algebra) buildTargets(mounts []MountedArtifact, boundary *linkboundary.Component) bool {
 	if algebra == nil || boundary == nil {
 		return false
 	}
+	type bodySource struct {
+		moduleKey   identity.ContentID
+		bodyContext identity.ContentID
+	}
 	seenMounts := make(map[identity.ContentID]struct{}, len(mounts))
+	seenBodies := make(map[bodySource]struct{})
 	for _, mount := range mounts {
 		if mount.Snapshot == nil || !mount.Snapshot.Available() || !mount.Program.Available() {
 			return false
@@ -80,6 +68,11 @@ func (algebra *Algebra) buildTargets(mounts []MountedArtifact, boundary *linkbou
 			return false
 		}
 		seenMounts[mount.ModuleKey] = struct{}{}
+		mountSlot := algebra.mountModuleIndex[mount.ModuleKey]
+		mountRow, mountOK := algebra.mountRow(mountSlot)
+		if !mountOK || mountRow.programID != programID {
+			return false
+		}
 		bodyCount, bodiesPublished := mount.Program.BodyCount()
 		if !bodiesPublished {
 			return false
@@ -109,15 +102,19 @@ func (algebra *Algebra) buildTargets(mounts []MountedArtifact, boundary *linkbou
 			if !ok || !target.Available() || !bodyOK || !body.Callable() || !functionOK || !formalOK || target.ContextID() != body.ContextID() || target.FunctionID() != function || target.FormalID() != formal {
 				return false
 			}
-			key := targetKey{kind: targetBody, moduleKey: mount.ModuleKey, bodyContext: target.ContextID()}
+			ref := bodySource{moduleKey: mount.ModuleKey, bodyContext: target.ContextID()}
+			_, duplicateBody := seenBodies[ref]
+			role, roleOK := bodyTargetRoleID(mount.ModuleKey, target.FormalID())
 			if !programID.Available() || !target.BodyID().Available() || !target.FormalID().Available() || !target.ContextID().Available() ||
-				algebra.targetIndex[key].valid() || !algebra.appendTarget(targetRow{
-				key: key, functionContext: target.FunctionID(), bodyContext: target.ContextID(),
-				artifactID: mount.ArtifactID, programID: programID,
-				bodyPath: target.BodyID(), formalID: target.FormalID(),
+				!roleOK || duplicateBody || !algebra.appendTarget(targetRow{
+				kind:     targetBody,
+				mount:    mountSlot,
+				role:     role,
+				bodyPath: target.BodyID(),
 			}) {
 				return false
 			}
+			seenBodies[ref] = struct{}{}
 			if algebra.allocationIndex[allocationTargetKey{moduleKey: mount.ModuleKey, allocationID: target.AllocationID()}].valid() {
 				return false
 			}
@@ -154,7 +151,8 @@ func (algebra *Algebra) buildTargets(mounts []MountedArtifact, boundary *linkbou
 		if loader && operationValue == 0 {
 			operationValue = algebra.requireOperation
 		}
-		if !seedIDOK || !formalOK || !formalIDOK || !seedID.Available() || !algebra.appendTarget(targetRow{key: targetKey{kind: targetSeed, seedID: seedID}, seedOperation: operationValue, seedFormalID: formalID, seedKind: uint8(formal.Kind()), scopedLoader: loader}) {
+		role, roleOK := seedTargetRoleID(seedID, formalID, uint8(formal.Kind()))
+		if !seedIDOK || !formalOK || !formalIDOK || !seedID.Available() || !roleOK || !algebra.appendTarget(targetRow{kind: targetSeed, seedID: seedID, role: role, seedOperation: operationValue, scopedLoader: loader}) {
 			return false
 		}
 	}
@@ -162,78 +160,57 @@ func (algebra *Algebra) buildTargets(mounts []MountedArtifact, boundary *linkbou
 }
 
 func (algebra *Algebra) appendTarget(row targetRow) bool {
-	if algebra == nil || len(algebra.targets) == int(^selector(0)) || algebra.targetIndex[row.key].valid() {
+	if algebra == nil || len(algebra.targets) == int(^selector(0)) {
 		return false
 	}
-	role, roleOK := algebra.roleIDForTarget(row)
-	if !roleOK || algebra.roleIndex[role].valid() {
+	if !row.role.Valid() || algebra.roleIndex[row.role].valid() {
 		return false
 	}
-	functionKey := functionTargetKey{}
-	if row.key.kind == targetBody {
-		functionKey = functionTargetKey{moduleKey: row.key.moduleKey, functionContext: row.functionContext}
-		if !row.functionContext.Available() || !row.bodyContext.Available() || !row.programID.Available() ||
-			!row.bodyPath.Available() || !row.formalID.Available() || algebra.functionIndex[functionKey].valid() {
+	switch row.kind {
+	case targetBody:
+		if _, mountOK := algebra.mountRow(row.mount); !mountOK || !row.bodyPath.Available() || row.seedID.Available() || row.seedOperation != 0 || row.scopedLoader || row.role.Kind() != TargetRoleBody || len(algebra.seedIndex) != 0 {
 			return false
 		}
+	case targetSeed:
+		if row.mount != 0 || row.bodyPath.Available() || !row.seedID.Available() || row.role.Kind() != TargetRoleSeed || algebra.seedIndex[row.seedID].valid() {
+			return false
+		}
+	default:
+		return false
 	}
 	selector := selector(len(algebra.targets) + 1)
-	row.role = role
 	algebra.targets = append(algebra.targets, row)
-	algebra.targetIndex[row.key] = selector
-	algebra.roleIndex[role] = selector
-	if row.key.kind == targetBody {
-		algebra.functionIndex[functionKey] = selector
+	if row.kind == targetSeed {
+		algebra.seedIndex[row.seedID] = selector
 	}
+	algebra.roleIndex[row.role] = selector
 	return true
 }
 
-// roleIDForTarget derives the stable semantic role identity for one sealed
-// target row. It deliberately excludes Call's selector ordinal and every live
-// owner pointer. Body roles are framed from Project's stable ModuleKey and
-// Program's formal Body target; seeds use Boundary's explicit formal target.
-func (algebra *Algebra) roleIDForTarget(row targetRow) (TargetRoleID, bool) {
-	if algebra == nil {
+// Role identities are issued before their raw construction inputs are
+// discarded. They exclude Call's selector ordinal and every live owner.
+func bodyTargetRoleID(moduleID, formalID identity.ContentID) (TargetRoleID, bool) {
+	if !moduleID.Available() || !formalID.Available() {
 		return TargetRoleID{}, false
 	}
-	switch row.key.kind {
-	case targetBody:
-		if !row.key.moduleKey.Available() || !row.bodyContext.Available() {
-			return TargetRoleID{}, false
-		}
-		moduleID := row.key.moduleKey
-		if !moduleID.Available() || !row.bodyContext.Available() {
-			return TargetRoleID{}, false
-		}
-		formalID := row.formalID
-		if !formalID.Available() {
-			return TargetRoleID{}, false
-		}
-		// Fixed frame: domain tag (8), version (8), ModuleKey (32),
-		// Program-owned formal Body target ID (32). No raw term, mount name,
-		// selector, or owner pointer participates in the mounted identity.
-		var payload [80]byte
-		copy(payload[:8], []byte("callbody"))
-		binary.BigEndian.PutUint64(payload[8:16], 1)
-		copy(payload[16:48], moduleID[:])
-		copy(payload[48:80], formalID[:])
-		id := identity.ContentID(sha256.Sum256(payload[:]))
-		return newTargetRoleID(TargetRoleBody, id)
-	case targetSeed:
-		if !row.key.seedID.Available() || !row.seedFormalID.Available() {
-			return TargetRoleID{}, false
-		}
-		formalID := row.seedFormalID
-		// Boundary formal kind is framed into the mounted role so operation
-		// and external seed categories cannot alias through equal payloads.
-		var payload [8 + 8 + 1 + 32]byte
-		copy(payload[:8], []byte("callseed"))
-		binary.BigEndian.PutUint64(payload[8:16], 1)
-		payload[16] = row.seedKind
-		copy(payload[17:], formalID[:])
-		id := identity.ContentID(sha256.Sum256(payload[:]))
-		return newTargetRoleID(TargetRoleSeed, id)
-	default:
+	var payload [80]byte
+	copy(payload[:8], []byte("callbody"))
+	binary.BigEndian.PutUint64(payload[8:16], 1)
+	copy(payload[16:48], moduleID[:])
+	copy(payload[48:80], formalID[:])
+	id := identity.ContentID(sha256.Sum256(payload[:]))
+	return newTargetRoleID(TargetRoleBody, id)
+}
+
+func seedTargetRoleID(seedID, formalID identity.ContentID, seedKind uint8) (TargetRoleID, bool) {
+	if !seedID.Available() || !formalID.Available() || seedKind == 0 {
 		return TargetRoleID{}, false
 	}
+	var payload [8 + 8 + 1 + 32]byte
+	copy(payload[:8], []byte("callseed"))
+	binary.BigEndian.PutUint64(payload[8:16], 1)
+	payload[16] = seedKind
+	copy(payload[17:], formalID[:])
+	id := identity.ContentID(sha256.Sum256(payload[:]))
+	return newTargetRoleID(TargetRoleSeed, id)
 }

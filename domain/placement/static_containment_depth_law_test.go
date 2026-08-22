@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"github.com/wippyai/go-lua/analysis/engine"
+	"github.com/wippyai/go-lua/analysis/identity"
 	heapdomain "github.com/wippyai/go-lua/domain/heap"
 )
 
@@ -40,6 +41,45 @@ func TestSharedStaticHeapGraphProjectsAllocationDepthAndBootFreezeIndependently(
 	}
 	if !reflect.DeepEqual(graph.adjacency, wantAdjacency) || !reflect.DeepEqual(graph.allocationAdjacency, wantAllocationAdjacency) {
 		t.Fatalf("shared graph mutated: dense=%#v allocation=%#v", graph.adjacency, graph.allocationAdjacency)
+	}
+}
+
+func TestStaticContainmentEvidenceReducesAlternativeWorldsAtItsOwner(t *testing.T) {
+	base := AllocationEvidence{
+		Kind:             AllocationKindTable,
+		HasKind:          true,
+		OwnerIdentity:    identity.ContentID{1},
+		HasOwnerIdentity: true,
+	}
+	first := base
+	first.Depth, first.HasDepth = 1, true
+	first.DeepFrozen = EvidenceProven
+	second := base
+	second.Depth, second.HasDepth = 3, true
+	second.DeepFrozen = EvidenceRefuted
+
+	merged, ok := mergeStaticContainmentEvidence(first, second)
+	if !ok || !merged.Valid() || !merged.HasDepth || merged.Depth != 3 || merged.DeepFrozen != EvidenceRefuted {
+		t.Fatalf("alternative Heap worlds = %#v/%t, want maximum depth and conjunctive refutation", merged, ok)
+	}
+	otherProducer := base
+	otherProducer.DiesBeforeSuspension = EvidenceProven
+	merged, ok = mergeStaticContainmentEvidence(otherProducer, second)
+	if !ok || merged.DiesBeforeSuspension != EvidenceProven || merged.Depth != second.Depth || merged.DeepFrozen != second.DeepFrozen {
+		t.Fatalf("first containment row did not preserve independent evidence: %#v/%t", merged, ok)
+	}
+
+	unknownDepth := base
+	unknownDepth.DeepFrozen = EvidenceUnknown
+	merged, ok = mergeStaticContainmentEvidence(first, unknownDepth)
+	if !ok || merged.HasDepth || merged.Depth != 0 || merged.DeepFrozen != EvidenceUnknown {
+		t.Fatalf("world with unknown depth = %#v/%t, want absent exact depth and authenticated Unknown", merged, ok)
+	}
+
+	foreign := second
+	foreign.OwnerIdentity = identity.ContentID{2}
+	if merged, ok = mergeStaticContainmentEvidence(first, foreign); ok || merged.Valid() {
+		t.Fatalf("foreign containment evidence crossed owner reduction: %#v/%t", merged, ok)
 	}
 }
 
@@ -80,12 +120,32 @@ func TestStaticContainmentDepthEvidenceRejectsUnavailableSchemaAndMissingRootInp
 
 	// Applying against an unavailable schema cannot manufacture a complete
 	// relation or turn a missing root into a negative fact.
-	if _, ok := AccumulatePlacementSummaryContainment(Schema{}, PlacementSummaryObservation{}, engine.OrderedCells[heapdomain.Value]{}); ok {
+	if _, ok := AccumulatePlacementSummaryContainmentCached(nil, Schema{}, PlacementSummaryObservation{}, engine.OrderedCells[heapdomain.Value]{}); ok {
 		t.Fatal("unavailable schema accepted a depth application")
 	}
 	depths, known := finiteContainmentDepths([][]int{{1}, {99}})
-	if known[0] || known[1] || depths[0] != 0 || depths[1] != 0 {
-		t.Fatalf("missing root edge = %#v/%#v, want all unknown", depths, known)
+	if depths != nil || known != nil {
+		t.Fatalf("missing root edge produced %#v/%#v; want refusal", depths, known)
+	}
+}
+
+func TestStaticContainmentProjectionRefusesIncompleteGraph(t *testing.T) {
+	cases := []staticHeapGraph{
+		{cellsComplete: false},
+		{
+			cellsComplete:       true,
+			evidence:            []AllocationEvidence{{}},
+			allocationOrdinal:   []int{0},
+			allocationDense:     []int{0},
+			adjacency:           [][]int{{}},
+			deepLocal:           nil,
+			allocationAdjacency: [][]int{{}},
+		},
+	}
+	for index, graph := range cases {
+		if projection, ok := projectStaticContainmentGraph(graph); ok || projection.deepStates != nil {
+			t.Fatalf("malformed graph %d produced projection %#v/%t; want refusal", index, projection, ok)
+		}
 	}
 }
 
@@ -109,16 +169,14 @@ func TestFiniteContainmentDepthsSparseBottomRowsAreKnownRoots(t *testing.T) {
 	}
 }
 
-func TestFiniteContainmentDepthsDuplicateEdgesRemainDeterministic(t *testing.T) {
-	// The authenticated visitor normally canonicalizes each adjacency row
-	// before invoking the solver. Keep this direct law defensive: even if a
-	// future visitor repeats one exact edge, indegree accounting and longest
-	// path depth must remain sound.
-	depths, known := finiteContainmentDepths([][]int{{1, 1, 2}, {2}, {}})
-	want := []uint32{0, 1, 2}
-	for index, expected := range want {
-		if !known[index] || depths[index] != expected {
-			t.Fatalf("duplicate-edge depth[%d] = %d/%v, want %d/true", index, depths[index], known[index], expected)
+func TestFiniteContainmentDepthsRejectsNonCanonicalEdges(t *testing.T) {
+	for _, adjacency := range [][][]int{
+		{{1, 1, 2}, {2}, {}},
+		{{2, 1}, {}, {}},
+	} {
+		depths, known := finiteContainmentDepths(adjacency)
+		if depths != nil || known != nil {
+			t.Fatalf("non-canonical edges %#v produced %#v/%#v; want refusal", adjacency, depths, known)
 		}
 	}
 }

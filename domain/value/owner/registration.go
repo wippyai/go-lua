@@ -39,22 +39,21 @@ func mountValueSchema[A axisInputs](inputs A) (*value.Schema, value.SealFailure,
 	if source == nil || count == 0 {
 		return nil, value.SealFailureInput, false
 	}
-	mounts := make([]value.ArtifactMount, 0, count)
+	mounts := make([]programmount.MountedArtifact, 0, count)
 	seen := make(map[identity.ContentID]struct{}, count)
 	for index := 0; index < count; index++ {
 		row, rowOK := inputs.MountedArtifactAt(index)
 		if !rowOK {
 			return nil, value.SealFailureInput, false
 		}
-		mount, mountOK := value.NewArtifactMount(row.Snapshot, row.ModuleKey, row.ProgramID)
-		if !mountOK {
+		if !row.Available() {
 			return nil, value.SealFailureInput, false
 		}
-		if _, duplicate := seen[mount.Module()]; duplicate {
+		if _, duplicate := seen[row.ModuleKey]; duplicate {
 			return nil, value.SealFailureInput, false
 		}
-		seen[mount.Module()] = struct{}{}
-		mounts = append(mounts, mount)
+		seen[row.ModuleKey] = struct{}{}
+		mounts = append(mounts, row)
 	}
 	schema, failure := value.SealWithFailure(source, inputs.HeapInput(), mounts, inputs.StructureInput())
 	if failure != value.SealFailureNone {

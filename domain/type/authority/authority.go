@@ -10,7 +10,6 @@ import (
 
 	"github.com/wippyai/go-lua/analysis/identity"
 	programschema "github.com/wippyai/go-lua/analysis/schema/program"
-	"github.com/wippyai/go-lua/domain/type/typ"
 )
 
 // StaticTypeRef is the exact canonical Program node coordinate. It
@@ -30,18 +29,20 @@ func (ref StaticTypeRef) NodeID() identity.ContentID { return ref.node }
 type Selector uint32
 
 type entry struct {
-	ref StaticTypeRef
+	ref        StaticTypeRef
+	projection ReferenceProjection
 }
 
 // Authority is immutable after SealProgramRows. All semantic materialization
-// is delegated to the detached ArtifactAuthority; no Program, Flow, Link, or
+// is delegated to the detached artifact authority; no Program, Flow, Link, or
 // authored Term is reachable from this object.
 type Authority struct {
 	linkID        identity.ContentID
 	entries       []entry
 	byRef         map[StaticTypeRef]Selector
 	byReferenceID map[identity.ContentID]Selector
-	artifact      *ArtifactAuthority
+	runtimeInputs []RuntimeInput
+	artifact      *artifactAuthority
 }
 
 // SealProgramRows constructs the selector directory directly from canonical
@@ -51,7 +52,7 @@ func SealProgramRows(linkID identity.ContentID, programs []programschema.Program
 	if !linkID.Available() {
 		return nil, errors.New("typeauthority: unavailable program link identity")
 	}
-	artifact, err := SealPrograms(programs)
+	artifact, err := sealPrograms(programs, true)
 	if err != nil {
 		return nil, err
 	}
@@ -87,14 +88,45 @@ func SealProgramRows(linkID identity.ContentID, programs []programschema.Program
 		linkID: linkID, artifact: artifact, entries: make([]entry, len(rows)),
 		byRef:         make(map[StaticTypeRef]Selector, len(rows)),
 		byReferenceID: make(map[identity.ContentID]Selector, len(rows)),
+		runtimeInputs: make([]RuntimeInput, len(rows)),
 	}
 	for i, item := range rows {
 		ref := StaticTypeRef{owner: item.owner, node: item.node}
-		a.entries[i] = entry{ref: ref}
+		projection, runtimeInput, projectionOK := bindReferenceProjection(a, ref, artifact)
+		if !projectionOK {
+			return nil, errors.New("typeauthority: static reference projection unavailable")
+		}
+		a.entries[i] = entry{ref: ref, projection: projection}
+		if !projection.open {
+			a.runtimeInputs[i] = runtimeInput
+		}
 		a.byRef[ref] = Selector(i + 1)
 		a.byReferenceID[item.node] = Selector(i + 1)
 	}
+	artifact.releaseProjectionGraphs()
 	return a, nil
+}
+
+func (a *Authority) runtimeInput(ref StaticTypeRef, semantic identity.ContentID) (RuntimeInput, bool) {
+	if a == nil || !ref.Valid() || !semantic.Available() {
+		return RuntimeInput{}, false
+	}
+	selector, ok := a.byRef[ref]
+	if !ok || selector == 0 || uint64(selector) > uint64(len(a.runtimeInputs)) {
+		return RuntimeInput{}, false
+	}
+	input := a.runtimeInputs[uint32(selector)-1]
+	if input.authority != a {
+		return RuntimeInput{}, false
+	}
+	inputIdentity, identityOK := input.CanonicalIdentity()
+	return input, identityOK && inputIdentity == semantic
+}
+
+func (a *Authority) releaseRuntimeInputs() {
+	if a != nil {
+		a.runtimeInputs = nil
+	}
 }
 
 func (a *Authority) LinkID() identity.ContentID {
@@ -102,16 +134,6 @@ func (a *Authority) LinkID() identity.ContentID {
 		return identity.ContentID{}
 	}
 	return a.linkID
-}
-
-// ArtifactBacked is retained as a compatibility predicate for callers while
-// the migration is completed. It is always true for a valid Authority.
-func (a *Authority) ArtifactBacked() bool { return a != nil && a.artifact != nil }
-
-// DetachConstructionAuthority is an explicit lifecycle fence. Construction
-// state is never retained, so detachment is a validity check only.
-func (a *Authority) DetachConstructionAuthority() bool {
-	return a != nil && a.artifact != nil && a.linkID.Available()
 }
 
 func (a *Authority) Count() int {
@@ -161,37 +183,6 @@ func (a *Authority) FindByReferenceID(id identity.ContentID) (StaticTypeRef, boo
 	}
 	entry, ok := a.entry(selector)
 	return entry.ref, ok && entry.ref.Valid()
-}
-
-func (a *Authority) Resolve(ref StaticTypeRef) (typ.Type, bool) {
-	selector, ok := a.Lookup(ref)
-	if !ok {
-		return nil, false
-	}
-	return a.Materialize(selector)
-}
-
-func (a *Authority) Materialize(selector Selector) (typ.Type, bool) {
-	if a == nil || a.artifact == nil {
-		return nil, false
-	}
-	entry, ok := a.entry(selector)
-	if !ok || !entry.ref.NodeID().Available() {
-		return nil, false
-	}
-	value, ok := a.artifact.Resolve(entry.ref.NodeID())
-	if !ok || value == nil {
-		return nil, false
-	}
-	// A selector addresses one artifact node, not one declaration. A formal
-	// annotation node and every reference to it are lawfully open, and their
-	// consumer admits them as open results at its own boundary. The closed
-	// recurrence law therefore applies only to a node that is already closed
-	// here; an open node carries its formals to that boundary intact.
-	if !typ.ContainsTypeParam(value) && typ.ValidateStaticGenericRecurrence(value) != nil {
-		return nil, false
-	}
-	return value, true
 }
 
 func (a *Authority) entry(selector Selector) (entry, bool) {

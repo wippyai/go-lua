@@ -9,11 +9,14 @@ import (
 )
 
 // SummaryResultFamily is the canonical query family key for Placement
-// summaries. Placement is a dense Heap-aligned summary, not an exact scalar
+// summaries. Placement is a dense allocation-root summary, not an exact scalar
 // result family.
 const SummaryResultFamily schema.Key = "placement-summary"
 
-// placementSummaryResultFormat is the current evidence-aware wire revision.
+// placementSummaryResultFormat is the current allocation-factor wire revision.
+// Revision 9 removes Bottom from public allocation rows: Stack is the factor's
+// owner-issued default and every encoded allocation is present at Stack or a
+// monotone displacement above it.
 // Revision 8 gives every proof column a fourth state: the raw EvidenceState
 // ordinals in the evidence record now spell absence, unknown, refuted, proven,
 // so an unwritten column no longer occupies the ordinal that means "a producer
@@ -27,7 +30,7 @@ const SummaryResultFamily schema.Key = "placement-summary"
 // made the public allocation denominator canonical: complete allocation rows
 // are ordered by their owner-issued ContentID. Draft class-only images and
 // revision-3 declaration-order images are not part of this contract.
-const SummaryResultFormat uint64 = 8
+const SummaryResultFormat uint64 = 9
 
 const placementSummaryResultFormat uint64 = SummaryResultFormat
 
@@ -42,10 +45,10 @@ const (
 )
 
 // EncodeSummaryResult canonically detaches one Placement summary. The wire
-// denominator contains allocation roots only: Heap Boot roots remain internal
-// coordinates and never become public Placement rows. Every allocation root
+// denominator contains allocation roots only: Heap Boot roots never enter the
+// factor or become public Placement rows. Every allocation root
 // carries its stable Heap KeyID and one fixed state byte: every allocation row
-// must be present and nonzero, while the row's class encodes Bottom through
+// must be present and nonzero, while the row's class encodes Stack through
 // Unknown explicitly. Revision 8 carries one fixed-width AllocationEvidence
 // record for every row; an evidence record is emitted only after a producer
 // has authenticated/published that row. A proof column inside a published
@@ -192,8 +195,8 @@ func placementSummaryPayloadSize(count int) (int, bool) {
 	return size + count*rowBytes, true
 }
 
-// placementSummaryCoordinates validates the exact dense Heap shape and builds
-// the allocation-only public denominator in one KeyAt pass. In particular, it
+// placementSummaryCoordinates validates the exact dense allocation shape in
+// one KeyAt pass. In particular, it
 // never rescans mounted Program allocations through OccurrenceMount.AllocationAt.
 func placementSummaryCoordinates(schemaOwner Schema, observation PlacementSummaryObservation) ([]placementSummaryCoordinate, bool, bool) {
 	if !summaryObservationBase(schemaOwner, observation) || !schemaOwner.ContentID().Available() {
@@ -208,18 +211,11 @@ func placementSummaryCoordinates(schemaOwner Schema, observation PlacementSummar
 			return nil, false, false
 		}
 		present := observation.Present[index]
-		if present && !validAnalysisPlacement(observation.Values[index]) {
+		if present && (!validAnalysisPlacement(observation.Values[index]) || observation.Values[index] == Bottom) {
 			return nil, false, false
 		}
-		kind := key.Kind()
-		if present && kind == heapdomain.RootBoot && observation.Values[index] != Bottom {
+		if key.Kind() != heapdomain.RootAllocation {
 			return nil, false, false
-		}
-		if kind != heapdomain.RootAllocation && kind != heapdomain.RootBoot {
-			return nil, false, false
-		}
-		if kind != heapdomain.RootAllocation {
-			continue
 		}
 		// A public denominator row is complete only when its Placement
 		// factor published the coordinate. Do not encode state zero for an
@@ -259,27 +255,25 @@ func encodeAllocationEvidence(payload []byte, evidence AllocationEvidence) bool 
 }
 
 // placementWireOrdinal is the frozen Placement class mapping used inside the
-// v7 state byte. It is deliberately explicit: raw Placement enum values are
+// v9 state byte. It is deliberately explicit: raw Placement enum values are
 // not wire values.
 func placementWireOrdinal(value Placement) (byte, bool) {
 	switch value {
-	case Bottom:
-		return 0, true
 	case Stack:
-		return 1, true
+		return 0, true
 	case OwnedHeap:
-		return 2, true
+		return 1, true
 	case SharedHeap:
-		return 3, true
+		return 2, true
 	case Unknown:
-		return 4, true
+		return 3, true
 	default:
 		return 0, false
 	}
 }
 
-// placementWireState maps the public presence/class pair to the v7 fixed row
-// state. State zero is reserved for absence, so present Bottom is state one.
+// placementWireState maps the public presence/class pair to the v9 fixed row
+// state. State zero is reserved for absence, so present Stack is state one.
 func placementWireState(value Placement, present bool) (byte, bool) {
 	if !present {
 		return 0, true
@@ -302,14 +296,12 @@ func placementFromWireState(state byte) (Placement, bool, bool) {
 func placementFromWireOrdinal(ordinal byte) (Placement, bool) {
 	switch ordinal {
 	case 0:
-		return Bottom, true
-	case 1:
 		return Stack, true
-	case 2:
+	case 1:
 		return OwnedHeap, true
-	case 3:
+	case 2:
 		return SharedHeap, true
-	case 4:
+	case 3:
 		return Unknown, true
 	default:
 		return Bottom, false

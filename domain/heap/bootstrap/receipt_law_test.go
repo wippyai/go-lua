@@ -16,6 +16,7 @@ import (
 	linkproject "github.com/wippyai/go-lua/analysis/program/link/project"
 	"github.com/wippyai/go-lua/analysis/program/target/compiler"
 	"github.com/wippyai/go-lua/analysis/program/target/declaration"
+	"github.com/wippyai/go-lua/analysis/schema/programmount"
 	"github.com/wippyai/go-lua/domain/composite"
 	heapdomain "github.com/wippyai/go-lua/domain/heap"
 	bootstrap "github.com/wippyai/go-lua/domain/heap/bootstrap"
@@ -159,7 +160,7 @@ func TestBootstrapReceiptNativeHeaderAndRawAbsence(t *testing.T) {
 
 type bootstrapFixtureMounts struct {
 	linked *link.Link
-	heap   []heapdomain.ArtifactMount
+	heap   []programmount.MountedArtifact
 }
 
 func bootstrapFixture(t testing.TB) (heapdomain.Schema, bootstrapFixtureMounts) {
@@ -194,12 +195,12 @@ func bootstrapFixture(t testing.TB) (heapdomain.Schema, bootstrapFixtureMounts) 
 		t.Fatal("bootstrap artifact receipt")
 	}
 	projectMounts := linked.Project().Mounts()
-	mounts := bootstrapFixtureMounts{linked: linked, heap: make([]heapdomain.ArtifactMount, projectMounts.Count())}
+	mounts := bootstrapFixtureMounts{linked: linked, heap: make([]programmount.MountedArtifact, projectMounts.Count())}
 	for index := 0; index < projectMounts.Count(); index++ {
 		shard, shardOK := projectMounts.At(index)
 		program, programOK := projectMounts.Program(shard)
 		module, moduleOK := linked.Project().ModuleKey(shard)
-		programID, programIDOK := projectMounts.ProgramID(shard)
+		_, programIDOK := projectMounts.ProgramID(shard)
 		if !shardOK || !programOK || program == nil || !moduleOK || !programIDOK {
 			t.Fatal("bootstrap artifact mount")
 		}
@@ -208,7 +209,7 @@ func bootstrapFixture(t testing.TB) (heapdomain.Schema, bootstrapFixtureMounts) 
 			t.Fatalf("bootstrap artifact compile: %v", failure)
 		}
 		var mountOK bool
-		mounts.heap[index], mountOK = heapdomain.NewArtifactMount(snapshottest.MustLower(t, artifact), module, programID)
+		mounts.heap[index], mountOK = programmount.MountedArtifactFromSnapshot(snapshottest.MustLower(t, artifact), module)
 		if !mountOK {
 			t.Fatal("bootstrap artifact mount receipt")
 		}

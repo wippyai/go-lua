@@ -1,7 +1,6 @@
 package static
 
 import (
-	"context"
 	"crypto/sha256"
 	"encoding/binary"
 	"errors"
@@ -12,8 +11,6 @@ import (
 	"github.com/wippyai/go-lua/domain/runtimekind"
 	"github.com/wippyai/go-lua/domain/type/authority"
 	"github.com/wippyai/go-lua/domain/type/kind"
-	"github.com/wippyai/go-lua/domain/type/typ"
-	"github.com/wippyai/go-lua/domain/type/typeexpr"
 )
 
 // Descriptor atoms are Runtime structural identities or opaque Target
@@ -28,7 +25,6 @@ const opaqueAtomBit uint64 = 1 << 63
 type classDescriptor struct {
 	owner      *ClassSet
 	coverage   []uint64 // packed bitset over dense universe positions.
-	covered    uint64   // popcount of coverage.
 	coverageID identity.ContentID
 	identity   identity.ContentID
 	rank       uint64
@@ -37,7 +33,6 @@ type classDescriptor struct {
 	derivedKinds runtimekind.Set
 	nilable      bool
 	fingerprint  uint64
-	closed       []byte // optional exact union encoding for derived closed values.
 }
 
 func opaqueClassAtom(index uint32) uint64 { return opaqueAtomBit | uint64(index) }
@@ -58,39 +53,40 @@ func (s *ClassSet) sealDescriptorUniverse(runtime *typeauthority.Runtime) error 
 		return errors.New("static: descriptor universe source unavailable")
 	}
 	rows := make([]descriptorUniverseRow, 0, runtime.Count()+len(s.rows))
+	unknownFound := false
 	for index := 1; index <= runtime.Count(); index++ {
 		inner, ok := runtime.InnerAtIndex(uint32(index))
 		if !ok {
 			return errors.New("static: Runtime universe row unavailable")
 		}
-		encoded, closed := runtime.CanonicalEncoding(inner)
+		canonicalID, closed := runtime.CanonicalIdentity(inner)
 		if !closed {
 			// A bound/open structural child cannot participate in Runtime.Subtype
 			// as an independent judgment. Its enclosing closed row remains in P.
 			continue
 		}
-		key := "\x00" + string(encoded)
+		key := "\x00" + string(canonicalID[:])
 		rows = append(rows, descriptorUniverseRow{
 			atom: runtimeClassAtom(uint32(index)),
 			key:  key,
 			id:   descriptorAtomID(key),
 		})
 		if rowKind, valid := runtime.Kind(inner); valid && rowKind == kind.Unknown {
-			s.unknownAtom = runtimeClassAtom(uint32(index))
+			unknownFound = true
 		}
 	}
 	for index := 1; index < len(s.rows); index++ {
 		if s.rows[index].kind != ClassOpaque {
 			continue
 		}
-		key := "\x01" + string(s.rows[index].encoded)
+		key := "\x01" + string(s.rows[index].opaqueID)
 		rows = append(rows, descriptorUniverseRow{
 			atom: opaqueClassAtom(uint32(index)),
 			key:  key,
 			id:   descriptorAtomID(key),
 		})
 	}
-	if s.unknownAtom == 0 {
+	if !unknownFound {
 		return errors.New("static: top-less descriptor universe")
 	}
 	if err := s.installDescriptorUniverse(rows); err != nil {
@@ -124,39 +120,43 @@ func (s *ClassSet) installDescriptorUniverse(rows []descriptorUniverseRow) error
 			maximumRuntime = row.atom
 		}
 	}
-	s.universe = make([]uint64, len(rows))
-	s.universeIDs = make([]identity.ContentID, len(rows))
-	s.runtimeAtomPositions = make([]int32, maximumRuntime+1)
-	s.opaqueAtomPositions = make([]int32, maximumOpaque+1)
-	for index := range s.runtimeAtomPositions {
-		s.runtimeAtomPositions[index] = -1
+	construction := &descriptorConstruction{
+		universe:             make([]uint64, len(rows)),
+		runtimeAtomPositions: make([]int32, maximumRuntime+1),
+		opaqueAtomPositions:  make([]int32, maximumOpaque+1),
 	}
-	for index := range s.opaqueAtomPositions {
-		s.opaqueAtomPositions[index] = -1
+	for index := range construction.runtimeAtomPositions {
+		construction.runtimeAtomPositions[index] = -1
 	}
+	for index := range construction.opaqueAtomPositions {
+		construction.opaqueAtomPositions[index] = -1
+	}
+	atomIDs := make([]identity.ContentID, len(rows))
 	for index, row := range rows {
 		if !row.id.Available() {
 			return errors.New("static: malformed descriptor universe identity")
 		}
-		table, offset := s.runtimeAtomPositions, row.atom
+		table, offset := construction.runtimeAtomPositions, row.atom
 		if row.atom&opaqueAtomBit != 0 {
-			table, offset = s.opaqueAtomPositions, row.atom&^opaqueAtomBit
+			table, offset = construction.opaqueAtomPositions, row.atom&^opaqueAtomBit
 		}
 		if table[offset] >= 0 {
 			return errors.New("static: duplicate descriptor universe atom")
 		}
 		table[offset] = int32(index)
-		s.universe[index] = row.atom
-		s.universeIDs[index] = row.id
+		construction.universe[index] = row.atom
+		atomIDs[index] = row.id
 	}
+	s.construction = construction
+	s.universeSize = len(rows)
 	s.coverageStride = (len(rows) + 63) / 64
 	s.opaqueMask = make([]uint64, s.coverageStride)
-	for index, atom := range s.universe {
+	for index, atom := range construction.universe {
 		if atom&opaqueAtomBit != 0 {
 			coverageSet(s.opaqueMask, index)
 		}
 	}
-	s.universeID = descriptorUniverseID(s.universeIDs)
+	s.universeID = descriptorUniverseID(atomIDs)
 	if !s.universeID.Available() {
 		return errors.New("static: unavailable descriptor universe identity")
 	}
@@ -167,15 +167,15 @@ func (s *ClassSet) installDescriptorUniverse(rows []descriptorUniverseRow) error
 // bitset row. It is the only consumer of the atom relation: after this pass
 // no ClassSet judgment asks a subtype question.
 func (s *ClassSet) sealDescriptorPrincipals(relation func(left, right uint64) (bool, bool)) error {
-	if s == nil || relation == nil || len(s.universe) == 0 || s.coverageStride == 0 {
+	if s == nil || s.construction == nil || relation == nil || len(s.construction.universe) == 0 || s.coverageStride == 0 {
 		return errors.New("static: descriptor principal source unavailable")
 	}
-	s.principals = make([]uint64, len(s.universe)*s.coverageStride)
-	s.principalSizes = make([]uint32, len(s.universe))
-	for upper, upperAtom := range s.universe {
-		row := s.principals[upper*s.coverageStride : (upper+1)*s.coverageStride]
+	universe := s.construction.universe
+	s.construction.principals = make([]uint64, len(universe)*s.coverageStride)
+	for upper, upperAtom := range universe {
+		row := s.construction.principals[upper*s.coverageStride : (upper+1)*s.coverageStride]
 		size := uint32(0)
-		for lower, lowerAtom := range s.universe {
+		for lower, lowerAtom := range universe {
 			answer, decided := relation(lowerAtom, upperAtom)
 			if !decided {
 				return errors.New("static: undecided descriptor atom relation")
@@ -189,7 +189,6 @@ func (s *ClassSet) sealDescriptorPrincipals(relation func(left, right uint64) (b
 		if size == 0 {
 			return errors.New("static: non-reflexive descriptor principal")
 		}
-		s.principalSizes[upper] = size
 	}
 	return nil
 }
@@ -226,12 +225,10 @@ func (s *ClassSet) sealDescriptors(runtime *typeauthority.Runtime) error {
 		return err
 	}
 	s.descriptors = make([]classDescriptor, len(s.rows))
-	s.ranks = make([]uint64, len(s.rows))
-	s.nilable = make([]bool, len(s.rows))
 
 	// ClassAnyValue is the total finite coverage, not an empty descriptor.
 	total := make([]uint64, s.coverageStride)
-	for position := range s.universe {
+	for position := 0; position < s.universeSize; position++ {
 		coverageSet(total, position)
 	}
 	s.descriptors[0] = classDescriptor{owner: s, coverage: total}
@@ -278,7 +275,7 @@ func (s *ClassSet) sealDescriptors(runtime *typeauthority.Runtime) error {
 // extensionally equal rows, and publishes the coverage index the hot join
 // probes.
 func (s *ClassSet) finalizeDescriptors() error {
-	if s == nil || len(s.descriptors) != len(s.rows) || len(s.ranks) != len(s.rows) || len(s.nilable) != len(s.rows) {
+	if s == nil || len(s.descriptors) != len(s.rows) {
 		return errors.New("static: malformed descriptor finalization source")
 	}
 	if uint64(s.nil.index) >= uint64(len(s.descriptors)) || s.descriptors[s.nil.index].coverage == nil {
@@ -290,17 +287,19 @@ func (s *ClassSet) finalizeDescriptors() error {
 		if !valid {
 			return errors.New("static: descriptor portable identity unavailable")
 		}
-		descriptor.covered = coveragePopcount(descriptor.coverage)
-		rank, ranked := s.coverageRank(descriptor.covered)
+		covered := coveragePopcount(descriptor.coverage)
+		rank, ranked := s.coverageRank(covered)
 		if !ranked {
 			return errors.New("static: descriptor ideal-complement rank unavailable")
 		}
 		descriptor.coverageID = id
+		descriptor.identity = classIdentityID(id)
 		descriptor.rank = rank
 		descriptor.fingerprint = descriptorFingerprint(id)
-		s.ranks[index] = rank
 		descriptor.nilable = index == 0 || s.coverageNilable(descriptor.coverage)
-		s.nilable[index] = descriptor.nilable
+		if !descriptor.identity.Available() {
+			return errors.New("static: descriptor class identity unavailable")
+		}
 	}
 	if err := s.mergeEquivalentDescriptors(); err != nil {
 		return err
@@ -318,12 +317,12 @@ func (s *ClassSet) finalizeDescriptors() error {
 // universePosition is the direct atom-to-position table that replaces the
 // former linear universe scan.
 func (s *ClassSet) universePosition(atom uint64) (int, bool) {
-	if s == nil {
+	if s == nil || s.construction == nil {
 		return 0, false
 	}
-	table, offset := s.runtimeAtomPositions, atom
+	table, offset := s.construction.runtimeAtomPositions, atom
 	if atom&opaqueAtomBit != 0 {
-		table, offset = s.opaqueAtomPositions, atom&^opaqueAtomBit
+		table, offset = s.construction.opaqueAtomPositions, atom&^opaqueAtomBit
 	}
 	if offset >= uint64(len(table)) || table[offset] < 0 {
 		return 0, false
@@ -333,10 +332,10 @@ func (s *ClassSet) universePosition(atom uint64) (int, bool) {
 
 func (s *ClassSet) addPrincipal(coverage []uint64, atom uint64) bool {
 	position, ok := s.universePosition(atom)
-	if !ok || len(coverage) != s.coverageStride {
+	if !ok || s.construction == nil || len(coverage) != s.coverageStride {
 		return false
 	}
-	row := s.principals[position*s.coverageStride : (position+1)*s.coverageStride]
+	row := s.construction.principals[position*s.coverageStride : (position+1)*s.coverageStride]
 	for index := range coverage {
 		coverage[index] |= row[index]
 	}
@@ -379,10 +378,10 @@ func (s *ClassSet) atomSubtype(left, right uint64) (answer, decided bool) {
 // coverageRank is 1+|P\C|. Strict coverage growth strictly increases the
 // popcount and therefore strictly descends this measure.
 func (s *ClassSet) coverageRank(covered uint64) (uint64, bool) {
-	if s == nil || len(s.universe) == 0 || covered == 0 || covered > uint64(len(s.universe)) {
+	if s == nil || s.universeSize == 0 || covered == 0 || covered > uint64(s.universeSize) {
 		return 0, false
 	}
-	return 1 + uint64(len(s.universe)) - covered, true
+	return 1 + uint64(s.universeSize) - covered, true
 }
 
 func (s *ClassSet) coverageHasOpaque(coverage []uint64) bool {
@@ -438,7 +437,7 @@ func (s *ClassSet) coverageIdentity(coverage []uint64) (identity.ContentID, bool
 // remapped. Coverage identity is the merge key and the retained coverage is
 // compared word for word, so a digest is never treated as equality.
 func (s *ClassSet) mergeEquivalentDescriptors() error {
-	if s == nil || len(s.rows) != len(s.descriptors) || len(s.ranks) != len(s.rows) || len(s.nilable) != len(s.rows) {
+	if s == nil || len(s.rows) != len(s.descriptors) {
 		return errors.New("static: malformed descriptor merge source")
 	}
 	keys := make(map[identity.ContentID]uint32, len(s.rows))
@@ -465,13 +464,9 @@ func (s *ClassSet) mergeEquivalentDescriptors() error {
 	}
 	rows := make([]classRow, len(keepers))
 	descriptors := make([]classDescriptor, len(keepers))
-	ranks := make([]uint64, len(keepers))
-	nilable := make([]bool, len(keepers))
 	for next, old := range keepers {
 		rows[next] = s.rows[old]
 		descriptors[next] = s.descriptors[old]
-		ranks[next] = s.ranks[old]
-		nilable[next] = s.nilable[old]
 	}
 	remap := func(class Class) (Class, error) {
 		if class.owner != s || uint64(class.index) >= uint64(len(oldToNew)) {
@@ -498,8 +493,8 @@ func (s *ClassSet) mergeEquivalentDescriptors() error {
 		return err
 	}
 	s.nil = nilClass
-	s.rows, s.descriptors, s.ranks, s.nilable = rows, descriptors, ranks, nilable
-	s.byBytes = nil
+	s.rows, s.descriptors = rows, descriptors
+	s.byCanonical = nil
 	return nil
 }
 
@@ -534,17 +529,17 @@ func (s *ClassSet) classForJoinedCoverage(left, right []uint64) (Class, bool) {
 	return Class{}, false
 }
 
-func (s *ClassSet) derivedJoin(left, right []uint64) Class {
+func (s *ClassSet) derivedJoin(left, right []uint64, runtimeKinds runtimekind.Set) Class {
 	coverage := make([]uint64, s.coverageStride)
 	if !coverageOr(coverage, left, right) {
 		panic("static: malformed ClassSet descriptor join")
 	}
-	return s.derivedClass(coverage)
+	return s.derivedClass(coverage, runtimeKinds)
 }
 
 // derivedClass takes ownership of one freshly built coverage. A derived class
 // exists only for a coverage no sealed row already states.
-func (s *ClassSet) derivedClass(coverage []uint64) Class {
+func (s *ClassSet) derivedClass(coverage []uint64, runtimeKinds runtimekind.Set) Class {
 	if existing, found := s.classForCoverage(coverage); found {
 		return existing
 	}
@@ -557,141 +552,15 @@ func (s *ClassSet) derivedClass(coverage []uint64) Class {
 	if !ranked {
 		panic("static: derived descriptor ideal-complement rank unavailable")
 	}
-	basis, valid := s.coverageBasis(coverage)
-	if !valid {
-		panic("static: derived descriptor basis unavailable")
-	}
 	descriptor := &classDescriptor{
 		owner:        s,
 		coverage:     coverage,
-		covered:      covered,
 		coverageID:   id,
-		identity:     classIdentityDescriptorID(id),
+		identity:     classIdentityID(id),
 		rank:         rank,
-		derivedKinds: s.basisRuntimeKinds(basis),
+		derivedKinds: runtimeKinds,
 		nilable:      s.coverageNilable(coverage),
 		fingerprint:  descriptorFingerprint(id),
-		closed:       s.derivedDescriptorEncoding(basis),
 	}
 	return Class{owner: s, index: ^uint32(0), descriptor: descriptor}
-}
-
-// coverageBasis reconstructs the deterministic maximal principal basis of one
-// coverage. Coverage is down-closed, so a candidate principal is exactly a
-// covered atom, and one principal contains another exactly when the sealed
-// relation states the atom subtype. Larger principals are visited first, so
-// each candidate is compared only with the retained maximal frontier; equal
-// principals put Unknown first and then take the portable universe order as
-// their deterministic representative.
-//
-// This is the presentation projection, not the descriptor: it is derived from
-// final coverage alone and never from join history.
-func (s *ClassSet) coverageBasis(coverage []uint64) ([]uint64, bool) {
-	if s == nil || len(coverage) != s.coverageStride || len(s.universe) == 0 {
-		return nil, false
-	}
-	candidates := make([]int, 0, 8)
-	for position := range s.universe {
-		if coverageContains(coverage, position) {
-			candidates = append(candidates, position)
-		}
-	}
-	if len(candidates) == 0 {
-		return nil, false
-	}
-	sort.SliceStable(candidates, func(left, right int) bool {
-		leftPosition, rightPosition := candidates[left], candidates[right]
-		if s.principalSizes[leftPosition] != s.principalSizes[rightPosition] {
-			return s.principalSizes[leftPosition] > s.principalSizes[rightPosition]
-		}
-		leftUnknown := s.universe[leftPosition] == s.unknownAtom
-		rightUnknown := s.universe[rightPosition] == s.unknownAtom
-		if leftUnknown != rightUnknown {
-			return leftUnknown
-		}
-		return leftPosition < rightPosition
-	})
-	basis := make([]int, 0, 4)
-	for _, candidate := range candidates {
-		maximal := true
-		for _, prior := range basis {
-			if s.principalContains(prior, candidate) {
-				maximal = false
-				break
-			}
-		}
-		if maximal {
-			basis = append(basis, candidate)
-		}
-	}
-	sort.Ints(basis)
-	rebuilt := make([]uint64, s.coverageStride)
-	atoms := make([]uint64, len(basis))
-	for index, position := range basis {
-		atoms[index] = s.universe[position]
-		row := s.principals[position*s.coverageStride : (position+1)*s.coverageStride]
-		for word := range rebuilt {
-			rebuilt[word] |= row[word]
-		}
-	}
-	if !coverageEqual(rebuilt, coverage) {
-		return nil, false
-	}
-	return atoms, true
-}
-
-// principalContains states D(candidate) subset of D(upper). Both principals
-// are down-sets of a transitive relation, so containment is exactly the
-// sealed atom subtype bit.
-func (s *ClassSet) principalContains(upper, candidate int) bool {
-	return coverageContains(s.principals[upper*s.coverageStride:(upper+1)*s.coverageStride], candidate)
-}
-
-func (s *ClassSet) basisRuntimeKinds(atoms []uint64) runtimekind.Set {
-	var kinds runtimekind.Set
-	for _, atom := range atoms {
-		if atom&opaqueAtomBit != 0 {
-			// Opaque Target/formal atoms have no proven runtime shape.
-			kinds |= runtimekind.All
-			continue
-		}
-		if uint64(atom) < uint64(len(s.runtimeAtomKinds)) {
-			kinds |= s.runtimeAtomKinds[atom]
-		}
-	}
-	return kinds
-}
-
-// derivedDescriptorEncoding reconstructs a closed representative only when
-// every maximal basis atom is Runtime-owned. Opaque residuals remain exact
-// Classes but intentionally have no ClosedType projection.
-func (s *ClassSet) derivedDescriptorEncoding(atoms []uint64) []byte {
-	if s == nil || s.runtime == nil || len(atoms) == 0 {
-		return nil
-	}
-	members := make([]typ.Type, 0, len(atoms))
-	for _, atom := range atoms {
-		if atom&opaqueAtomBit != 0 {
-			return nil
-		}
-		inner, ok := s.runtime.InnerAtIndex(uint32(atom))
-		if !ok {
-			return nil
-		}
-		encoded, ok := s.runtime.CanonicalEncoding(inner)
-		if !ok || len(encoded) == 0 {
-			return nil
-		}
-		member, err := typ.DecodeCanonicalStructural(context.Background(), encoded)
-		if err != nil || member == nil {
-			return nil
-		}
-		members = append(members, member)
-	}
-	union := typeexpr.Union(members...)
-	encoded, err := typ.EncodeCanonical(context.Background(), union)
-	if err != nil || len(encoded) == 0 {
-		return nil
-	}
-	return encoded
 }

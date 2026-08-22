@@ -104,17 +104,24 @@ func TestTargetBehaviorProjection(t *testing.T) {
 	if _, _, _, _, ok := known.BehaviorPredicateAt(1); ok {
 		t.Fatal("predicate index beyond descriptor accepted")
 	}
+	if _, ok := left.TargetForSeedID(identity.ContentID{1}); !ok {
+		t.Fatal("canonical seed target missing")
+	}
+	left.seedIndex[identity.ContentID{1}] = 2
+	if _, ok := left.TargetForSeedID(identity.ContentID{1}); ok {
+		t.Fatal("corrupted seed inverse returned a different target")
+	}
 }
 
 func behaviorTestAlgebra(contract *contractvalue.Contract, owner link.OwnerCapability, operation, plain vocabulary.Operation) *Algebra {
-	firstKey := targetKey{kind: targetSeed, seedID: identity.ContentID{1}}
-	secondKey := targetKey{kind: targetSeed, seedID: identity.ContentID{2}}
+	firstID := identity.ContentID{1}
+	secondID := identity.ContentID{2}
 	return &Algebra{
 		contract: contract, linkOwner: owner, content: algebraContentID(owner),
 		targets: []targetRow{
-			{key: firstKey, seedOperation: operation, seedFormalID: identity.ContentID{3}, seedKind: 1},
-			{key: secondKey, seedOperation: plain, seedFormalID: identity.ContentID{4}, seedKind: 1},
+			{kind: targetSeed, seedID: firstID, seedOperation: operation},
+			{kind: targetSeed, seedID: secondID, seedOperation: plain},
 		},
-		targetIndex: map[targetKey]selector{firstKey: 1, secondKey: 2},
+		seedIndex: map[identity.ContentID]selector{firstID: 1, secondID: 2},
 	}
 }

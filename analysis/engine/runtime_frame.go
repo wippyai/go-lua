@@ -236,11 +236,11 @@ func Staged[V, O any](frame Frame[V, O], value V) RuleResult[V] {
 	return RuleResult[V]{execution: frame.execution, epoch: frame.epoch, row: frame.row, kind: ruleResultStaged, value: value}
 }
 
-// StageSelection is the sole route-output capability. It consumes every
+// Routed is the sole route-output capability. It consumes every
 // selected ordinal of exactly one preceding Selection and stages one atomic
 // row batch of authenticated target/value pairs. A transfer cannot select a
 // different Ref, omit a nonempty route, or send a value through the ordinary
-// StageValue path.
+// direct Staged path.
 func Routed[V, O any, Tag selectionTag, S any](frame Frame[V, O], selection Selection[Tag, S], derive func(Tag, S) (V, bool)) RuleResult[V] {
 	if derive == nil || !validSelection(frame, selection) || selection.count == nil || selection.at == nil || selection.route == nil {
 		poisonFrame(frame)
@@ -255,8 +255,24 @@ func Routed[V, O any, Tag selectionTag, S any](frame Frame[V, O], selection Sele
 		poisonFrame(frame)
 		return RuleResult[V]{}
 	}
-	refs := make([]exactRef, count)
-	values := make([]V, count)
+	if frame.owner.output.routeReserve == nil {
+		poisonFrame(frame)
+		return RuleResult[V]{}
+	}
+	refs, values, lease, reserved := frame.owner.output.routeReserve(frame.execution, frame.epoch, frame.row, selection.read, selection.selectionID, count)
+	if !reserved || lease == 0 || len(refs) != count || len(values) != count {
+		if reserved && frame.owner.output.routeRelease != nil {
+			_ = frame.owner.output.routeRelease(frame.execution, frame.epoch, frame.row, selection.read, selection.selectionID, lease)
+		}
+		poisonFrame(frame)
+		return RuleResult[V]{}
+	}
+	keepReservation := false
+	defer func() {
+		if !keepReservation && frame.owner.output.routeRelease != nil {
+			_ = frame.owner.output.routeRelease(frame.execution, frame.epoch, frame.row, selection.read, selection.selectionID, lease)
+		}
+	}()
 	for ordinal := 0; ordinal < count; ordinal++ {
 		if !validSelection(frame, selection) || !frame.execution.product.requireCheckpoint() || !frame.owner.output.routePreflight(frame.execution, frame.epoch, frame.row, selection.read, selection.selectionID) {
 			poisonFrame(frame)
@@ -279,8 +295,9 @@ func Routed[V, O any, Tag selectionTag, S any](frame Frame[V, O], selection Sele
 		}
 		refs[ordinal], values[ordinal] = ref, output
 	}
+	keepReservation = true
 	return RuleResult[V]{execution: frame.execution, epoch: frame.epoch, row: frame.row, kind: ruleResultRouted, route: routeOutputBatch[V]{
-		read: selection.read, selectionID: selection.selectionID,
+		read: selection.read, selectionID: selection.selectionID, lease: lease,
 		refs: refs, values: values,
 	}}
 }
@@ -303,7 +320,7 @@ func NoSelection[V, O any, Tag selectionTag, S any](frame Frame[V, O], selection
 
 // NoCandidate settles one Product row with an explicit empty successor. It
 // is not a sparse write of Default or Bottom: it publishes no Fact update.
-// Like StageValue, it is row-, owner-, and epoch-fenced, and a row may take
+// Like Staged, it is row-, owner-, and epoch-fenced, and a row may take
 // exactly one of the two dispositions.
 func NoCandidate[V, O any](frame Frame[V, O]) RuleResult[V] {
 	if !validFrame(frame) {

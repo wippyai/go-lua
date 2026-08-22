@@ -8,6 +8,7 @@ import (
 	"sort"
 
 	"github.com/wippyai/go-lua/analysis/engine/internal/composition"
+	"github.com/wippyai/go-lua/analysis/identity"
 	"github.com/wippyai/go-lua/internal/canonical"
 )
 
@@ -16,7 +17,7 @@ import (
 // carries its space tag ahead of either a declared ordinal or a full-width
 // content identity, so a summary or anchored coordinate no longer reaches
 // identity through a truncated ordinal.
-const identityVersion = 17
+const identityVersion = 18
 
 // RuleRef and PointRef name rows in one transient Builder input only. They
 // are intentionally not semantic identities and never survive compilation.
@@ -584,11 +585,13 @@ type FactorEdge struct {
 	Factor composition.Key
 }
 
-// QueryInstance is one concrete observation declaration. Point is an input
+// QueryInstance is one concrete observation declaration. Context is the
+// semantic execution-context owner of the observation. Point is an input
 // specification rather than a fabricated point identity; Key is derived from
-// Family, the resolved observed Point, and its positional resolved surfaces.
-// Structural support queries carry an empty surface vector.
+// Context, Family, the resolved observed Point, and its positional resolved
+// surfaces. Structural support queries carry an empty surface vector.
 type QueryInstance struct {
+	Context  identity.ContentID
 	Family   composition.Key
 	Point    PointRef
 	Surfaces []Surface
@@ -661,15 +664,17 @@ type ActivationTriggerBinding struct {
 type Query struct {
 	graph    *Graph
 	key      composition.Key
+	context  identity.ContentID
 	point    Point
 	family   composition.Key
 	surfaces []Surface
 }
 
-func (query Query) Key() composition.Key    { return query.key }
-func (query Query) Point() Point            { return query.point }
-func (query Query) Family() composition.Key { return query.family }
-func (query Query) Surfaces() []Surface     { return append([]Surface(nil), query.surfaces...) }
+func (query Query) Key() composition.Key          { return query.key }
+func (query Query) ContextID() identity.ContentID { return query.context }
+func (query Query) Point() Point                  { return query.point }
+func (query Query) Family() composition.Key       { return query.family }
+func (query Query) Surfaces() []Surface           { return append([]Surface(nil), query.surfaces...) }
 
 type canonicalInstance struct {
 	key composition.Key
@@ -751,7 +756,7 @@ func derivePoint(site Site) (Point, bool) {
 
 func deriveQueryKey(row QueryInstance, point Point, catalog topologyCatalog) (composition.Key, bool) {
 	return identityKey("analysis/engine/equation/query", func(writer *canonical.DigestWriter) bool {
-		if !writeKey(writer, row.Family) || !writeKey(writer, point.key) || !writeScope(writer, point.Scope()) || writer.Count(uint64(len(row.Surfaces))) != nil {
+		if !writeContentID(writer, row.Context) || !writeKey(writer, row.Family) || !writeKey(writer, point.key) || !writeScope(writer, point.Scope()) || writer.Count(uint64(len(row.Surfaces))) != nil {
 			return false
 		}
 		for _, surface := range row.Surfaces {
@@ -777,6 +782,10 @@ func identityKey(domain string, encode func(*canonical.DigestWriter) bool) (comp
 
 func writeKey(writer *canonical.DigestWriter, key composition.Key) bool {
 	return writer.Bytes(key.ID[:]) == nil && writer.Uint(key.Version) == nil
+}
+
+func writeContentID(writer *canonical.DigestWriter, id identity.ContentID) bool {
+	return id.Available() && writer.Bytes(id[:]) == nil
 }
 
 func writeSite(writer *canonical.DigestWriter, site Site) bool {

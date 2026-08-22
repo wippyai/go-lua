@@ -38,7 +38,7 @@ func TestFrozenCorpusCatalogReturnsDefensiveViews(t *testing.T) {
 		t.Fatal(err)
 	}
 	first := corpus.Projects()
-	if len(first) != 912 || len(first[0].files) == 0 {
+	if len(first) != FrozenCorpusProjectCount || len(first[0].files) == 0 {
 		t.Fatalf("unexpected frozen corpus denominator: projects=%d", len(first))
 	}
 	wantName, wantFile := first[0].relative, first[0].files[0]
@@ -46,7 +46,7 @@ func TestFrozenCorpusCatalogReturnsDefensiveViews(t *testing.T) {
 	first[0].files[0] = "forged.lua"
 
 	second := corpus.Projects()
-	if len(second) != 912 || second[0].relative != wantName || second[0].files[0] != wantFile {
+	if len(second) != FrozenCorpusProjectCount || second[0].relative != wantName || second[0].files[0] != wantFile {
 		t.Fatal("caller mutation changed the loaded corpus catalog")
 	}
 	project, err := corpus.Project(wantName)

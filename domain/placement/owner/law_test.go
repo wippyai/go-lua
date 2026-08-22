@@ -11,6 +11,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/program/target/compiler"
 	"github.com/wippyai/go-lua/analysis/program/target/declaration"
 	"github.com/wippyai/go-lua/analysis/schema/axis"
+	"github.com/wippyai/go-lua/analysis/schema/programmount"
 	"github.com/wippyai/go-lua/analysis/schema/vocabulary"
 	"github.com/wippyai/go-lua/domain/composite"
 	"github.com/wippyai/go-lua/domain/composite/snapshottest"
@@ -50,7 +51,7 @@ func placementHeapFixture(t testing.TB) heap.Schema {
 	if !ok {
 		t.Fatal("module key")
 	}
-	programID, ok := linked.Project().Mounts().ProgramID(shard)
+	_, ok = linked.Project().Mounts().ProgramID(shard)
 	if !ok {
 		t.Fatal("program id")
 	}
@@ -64,11 +65,11 @@ func placementHeapFixture(t testing.TB) heap.Schema {
 	if failure.Available() || artifact == nil {
 		t.Fatalf("compile artifact: %v", failure)
 	}
-	mount, ok := heap.NewArtifactMount(snapshottest.MustLower(t, artifact), module, programID)
+	mount, ok := programmount.MountedArtifactFromSnapshot(snapshottest.MustLower(t, artifact), module)
 	if !ok {
 		t.Fatal("heap artifact mount")
 	}
-	schema, sealFailure := heap.SealWithArtifacts(linked, []heap.ArtifactMount{mount})
+	schema, sealFailure := heap.SealWithArtifacts(linked, []programmount.MountedArtifact{mount})
 	if sealFailure != heap.SealFailureNone || !schema.Valid() {
 		t.Fatalf("heap seal: %v", sealFailure)
 	}
@@ -120,12 +121,12 @@ func TestPlacementSchemaKeepsHeapOwnerFenceAndOrdinal(t *testing.T) {
 	if _, ok := placement.NewSchema(heap.Schema{}); ok {
 		t.Fatal("Placement admitted an unavailable Heap schema")
 	}
-	if projected.KeyCount() != heaps.KeyCount() || projected.DenseKeyCount() != heaps.KeyCount() {
-		t.Fatalf("placement dense count=%d/%d, heap=%d", projected.KeyCount(), projected.DenseKeyCount(), heaps.KeyCount())
+	if projected.KeyCount() != heaps.AllocationKeyCount() || projected.DenseKeyCount() != heaps.AllocationKeyCount() {
+		t.Fatalf("placement dense count=%d/%d, heap allocations=%d", projected.KeyCount(), projected.DenseKeyCount(), heaps.AllocationKeyCount())
 	}
-	for index := 0; index < heaps.KeyCount(); index++ {
+	for index := 0; index < heaps.AllocationKeyCount(); index++ {
 		left, leftOK := projected.KeyAt(index)
-		right, rightOK := heaps.KeyAt(index)
+		right, rightOK := heaps.AllocationKeyAt(index)
 		if !leftOK || !rightOK || left.Kind() != right.Kind() {
 			t.Fatalf("placement ordinal %d diverged from Heap", index)
 		}
@@ -160,12 +161,12 @@ func TestPlacementEmptyHeapKeepsZeroWidthFactorAndSummary(t *testing.T) {
 	}
 	shard, shardOK := linked.Project().Mounts().At(0)
 	module, moduleOK := linked.Project().ModuleKey(shard)
-	programID, programIDOK := linked.Project().Mounts().ProgramID(shard)
-	mount, mountOK := heap.NewArtifactMount(snapshottest.MustLower(t, artifact), module, programID)
+	_, programIDOK := linked.Project().Mounts().ProgramID(shard)
+	mount, mountOK := programmount.MountedArtifactFromSnapshot(snapshottest.MustLower(t, artifact), module)
 	if !shardOK || !moduleOK || !programIDOK || !mountOK {
 		t.Fatalf("empty Placement mount shard=%t module=%t program=%t mount=%t", shardOK, moduleOK, programIDOK, mountOK)
 	}
-	heaps, heapFailure := heap.SealWithArtifacts(linked, []heap.ArtifactMount{mount})
+	heaps, heapFailure := heap.SealWithArtifacts(linked, []programmount.MountedArtifact{mount})
 	projected, projectedOK := placement.NewSchema(heaps)
 	if heapFailure != heap.SealFailureNone || !projectedOK || projected.KeyCount() != 0 {
 		t.Fatalf("empty Placement authority heap=%v placement=%t keys=%d", heapFailure, projectedOK, projected.KeyCount())
@@ -203,33 +204,24 @@ func TestPlacementEmptyHeapKeepsZeroWidthFactorAndSummary(t *testing.T) {
 	}
 }
 
-func TestPlacementAdmitsBootOnlyAtBottomAndRejectsJIT(t *testing.T) {
+func TestPlacementFactorContainsOnlyAllocationsWithStackDefault(t *testing.T) {
 	projected, algebra := placementOwnerFixture(t)
-	foundBoot := false
 	foundAllocation := false
 	for index := 0; index < projected.KeyCount(); index++ {
 		key, ok := projected.KeyAt(index)
-		if !ok {
-			continue
+		if !ok || key.Kind() != heap.RootAllocation {
+			t.Fatalf("placement ordinal %d is not an allocation root", index)
 		}
-		switch key.Kind() {
-		case heap.RootBoot:
-			foundBoot = true
-			if !algebra.AdmitAt(uint64(index), placement.Bottom) || algebra.AdmitAt(uint64(index), placement.Stack) || algebra.AdmitAt(uint64(index), placement.Unknown) {
-				t.Fatalf("boot ordinal %d accepted a non-Bottom placement", index)
-			}
-		case heap.RootAllocation:
-			foundAllocation = true
-			if algebra.AdmitAt(uint64(index), placement.Interpreter) || algebra.AdmitAt(uint64(index), placement.Register) {
-				t.Fatalf("allocation ordinal %d admitted a JIT placement", index)
-			}
+		foundAllocation = true
+		if algebra.AdmitAt(uint64(index), placement.Bottom) || algebra.AdmitAt(uint64(index), placement.Interpreter) || algebra.AdmitAt(uint64(index), placement.Register) {
+			t.Fatalf("allocation ordinal %d admitted a non-placement value", index)
 		}
-	}
-	if !foundBoot {
-		t.Skip("fixture has no Link boot root")
 	}
 	if !foundAllocation {
 		t.Fatal("fixture has no allocation root")
+	}
+	if algebra.Default != placement.Stack {
+		t.Fatalf("Placement default = %v, want Stack", algebra.Default)
 	}
 }
 
@@ -249,8 +241,8 @@ func TestPlacementLatticeAndOneComponentRank(t *testing.T) {
 	if allocationIndex < 0 {
 		t.Fatal("placement fixture has no allocation coordinate")
 	}
-	values := []placement.Placement{placement.Bottom, placement.Stack, placement.OwnedHeap, placement.SharedHeap, placement.Unknown}
-	wantRanks := []uint64{4, 3, 2, 1, 0}
+	values := []placement.Placement{placement.Stack, placement.OwnedHeap, placement.SharedHeap, placement.Unknown}
+	wantRanks := []uint64{3, 2, 1, 0}
 	for index, value := range values {
 		if !algebra.AdmitAt(uint64(allocationIndex), value) {
 			t.Fatalf("allocation coordinate rejected %v", value)

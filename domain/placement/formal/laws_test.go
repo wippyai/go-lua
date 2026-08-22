@@ -55,17 +55,20 @@ func TestFormalSelectorInjectionRuntimeLastAndSuffix(t *testing.T) {
 	if openLast.start != 0 || openLast.end != 0 || !openLast.unknown || !openLast.owns {
 		t.Fatalf("open runtime-last selector = %#v", openLast)
 	}
+	// A trailing selector at a zero-actual call names no supplied actual, so
+	// it selects nothing.
 	zeroLast := resolveFormalSelectorRange(vocabulary.FormalEffectSpec{Kind: vocabulary.FormalEffectRetain, Param: -1}, 0, false)
-	if zeroLast.start != 0 || zeroLast.end != 0 || zeroLast.unknown || !zeroLast.owns || zeroLast.valid {
-		t.Fatalf("empty runtime-last selector = %#v, want invalid", zeroLast)
+	if zeroLast.start != 0 || zeroLast.end != 0 || zeroLast.unknown || !zeroLast.owns || !zeroLast.valid {
+		t.Fatalf("empty runtime-last selector = %#v, want a valid empty selector", zeroLast)
 	}
 	openSuffix := resolveFormalSelectorRange(vocabulary.FormalEffectSpec{Kind: vocabulary.FormalEffectSendSuffix, FromParam: 2}, 3, true)
 	if openSuffix.start != 2 || openSuffix.end != 3 || !openSuffix.unknown || !openSuffix.owns {
 		t.Fatalf("open suffix selector = %#v", openSuffix)
 	}
+	// A suffix that begins past the supplied prefix sends nothing.
 	closedEmptySuffix := resolveFormalSelectorRange(vocabulary.FormalEffectSpec{Kind: vocabulary.FormalEffectSendSuffix, FromParam: 9}, 3, false)
-	if closedEmptySuffix.unknown || !closedEmptySuffix.owns || closedEmptySuffix.valid {
-		t.Fatalf("closed out-of-range suffix selector = %#v, want invalid", closedEmptySuffix)
+	if closedEmptySuffix.unknown || !closedEmptySuffix.owns || !closedEmptySuffix.valid || closedEmptySuffix.start != 3 || closedEmptySuffix.end != 3 {
+		t.Fatalf("closed out-of-range suffix selector = %#v, want a valid empty suffix", closedEmptySuffix)
 	}
 }
 
@@ -84,7 +87,7 @@ func TestFormalSelectorRangeSemantics(t *testing.T) {
 		{name: "fixed", spec: vocabulary.FormalEffectSpec{Kind: vocabulary.FormalEffectStore, Param: 1}, actuals: 3, start: 1, end: 2, owns: true, valid: true},
 		{name: "runtime-last", spec: vocabulary.FormalEffectSpec{Kind: vocabulary.FormalEffectSendParam, Param: -1}, actuals: 3, runtimeTail: true, start: 0, end: 0, unknown: true, owns: true, valid: true},
 		{name: "suffix", spec: vocabulary.FormalEffectSpec{Kind: vocabulary.FormalEffectSendSuffix, FromParam: 1}, actuals: 3, start: 1, end: 3, owns: true, valid: true},
-		{name: "empty-suffix", spec: vocabulary.FormalEffectSpec{Kind: vocabulary.FormalEffectSendSuffix, FromParam: 9}, actuals: 3, owns: true},
+		{name: "empty-suffix", spec: vocabulary.FormalEffectSpec{Kind: vocabulary.FormalEffectSendSuffix, FromParam: 9}, actuals: 3, start: 3, end: 3, owns: true, valid: true},
 		{name: "open-suffix", spec: vocabulary.FormalEffectSpec{Kind: vocabulary.FormalEffectSendSuffix, FromParam: 1}, actuals: 3, runtimeTail: true, start: 1, end: 3, unknown: true, owns: true, valid: true},
 		{name: "negative-count", spec: vocabulary.FormalEffectSpec{Kind: vocabulary.FormalEffectRetain, Param: 0}, actuals: -1},
 	}
@@ -196,20 +199,21 @@ func TestManifestFormalEffectDisplacementContract(t *testing.T) {
 		if !owns || !escape.ValidManifest() {
 			t.Fatalf("formal row %d escaped as %v/%v, want a manifest escape", index, escape, owns)
 		}
-		if gotPlacement := placement.Displace(placement.OwnedHeap, escape); gotPlacement != expected.placement {
-			t.Fatalf("formal row %d displacement = %v, want %v", index, gotPlacement, expected.placement)
+		if gotPlacement, displacementOK := placement.DisplaceChecked(placement.OwnedHeap, escape); !displacementOK || gotPlacement != expected.placement {
+			t.Fatalf("formal row %d displacement = %v/%t, want %v/true", index, gotPlacement, displacementOK, expected.placement)
 		}
 	}
-	if got := placement.Displace(placement.OwnedHeap, placement.Return); got != placement.OwnedHeap {
-		t.Fatalf("independent return displacement = %v, want owned-heap", got)
+	if got, ok := placement.DisplaceChecked(placement.OwnedHeap, placement.Return); !ok || got != placement.OwnedHeap {
+		t.Fatalf("independent return displacement = %v/%t, want owned-heap/true", got, ok)
 	}
 
-	// An authored coordinate that is unavailable at the mounted call cut is
-	// not silently dropped or widened. The formal selector refuses it.
-	unavailable := vocabulary.FormalEffectSpec{Kind: vocabulary.FormalEffectStore, Param: 7}
-	selection := resolveFormalSelectorRange(unavailable, 3, false)
-	if selection.valid || selection.unknown || !selection.owns {
-		t.Fatalf("unavailable formal coordinate selected %#v, want invalid owned selector", selection)
+	// An authored coordinate this call site does not supply is bound to nil by
+	// Lua, so it selects nothing. The selector stays valid and owned: it is
+	// neither widened to every allocation root nor refused.
+	unsupplied := vocabulary.FormalEffectSpec{Kind: vocabulary.FormalEffectStore, Param: 7}
+	selection := resolveFormalSelectorRange(unsupplied, 3, false)
+	if !selection.valid || selection.unknown || !selection.owns || selection.start != selection.end {
+		t.Fatalf("unsupplied formal coordinate selected %#v, want a valid empty owned selector", selection)
 	}
 	openTail := resolveFormalSelectorRange(vocabulary.FormalEffectSpec{Kind: vocabulary.FormalEffectSendParam, Param: -1}, 2, true)
 	if !openTail.unknown || !openTail.owns || openTail.start != 0 || openTail.end != 0 {

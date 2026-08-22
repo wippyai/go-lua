@@ -11,6 +11,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/program/link"
 	linkproject "github.com/wippyai/go-lua/analysis/program/link/project"
 	"github.com/wippyai/go-lua/analysis/schema/ingress"
+	"github.com/wippyai/go-lua/analysis/schema/programmount"
 	calldomain "github.com/wippyai/go-lua/domain/call"
 	callowner "github.com/wippyai/go-lua/domain/call/owner"
 	"github.com/wippyai/go-lua/domain/composite"
@@ -18,11 +19,9 @@ import (
 	heapdomain "github.com/wippyai/go-lua/domain/heap"
 	heapowner "github.com/wippyai/go-lua/domain/heap/owner"
 	placementdomain "github.com/wippyai/go-lua/domain/placement"
-	allocation "github.com/wippyai/go-lua/domain/placement/allocation"
 	capture "github.com/wippyai/go-lua/domain/placement/capture"
 	containment "github.com/wippyai/go-lua/domain/placement/containment"
 	formal "github.com/wippyai/go-lua/domain/placement/formal"
-	fresh "github.com/wippyai/go-lua/domain/placement/fresh"
 	placementowner "github.com/wippyai/go-lua/domain/placement/owner"
 	returnescape "github.com/wippyai/go-lua/domain/placement/returnescape"
 	store "github.com/wippyai/go-lua/domain/placement/store"
@@ -42,16 +41,14 @@ func TestPlacementRuleBindersRejectEqualSchemaForeignAuthorities(t *testing.T) {
 	valueFragment, valueOK := valueowner.DeclareSchema(builder, placementBindingLawSemantic(3), placementBindingLawSemantic(4), placementBindingLawSemantic(5))
 	heapFragment, heapOK := heapowner.DeclareSchema(builder, placementBindingLawSemantic(6), placementBindingLawSemantic(7))
 	callFragment, callOK := callowner.DeclareSchema(builder, placementBindingLawSemantic(8))
-	allocationFragment, allocationOK := allocation.DeclareSchema(builder, placementBindingLawSemantic(9), placementBindingLawSemantic(10), placementFragment)
 	captureFragment, captureOK := capture.DeclareSchema(builder, placementBindingLawSemantic(11), placementBindingLawSemantic(12), valueFragment, placementFragment)
 	containmentFragment, containmentOK := containment.DeclareSchema(builder, placementBindingLawSemantic(13), placementBindingLawSemantic(14), placementFragment, heapFragment)
 	formalFragment, formalOK := formal.DeclareSchema(builder, placementBindingLawSemantic(15), placementBindingLawSemantic(16), valueFragment, callFragment, placementFragment)
-	freshFragment, freshOK := fresh.DeclareSchema(builder, placementBindingLawSemantic(17), placementBindingLawSemantic(18), placementFragment)
 	returnFragment, returnOK := returnescape.DeclareSchema(builder, placementBindingLawSemantic(19), placementBindingLawSemantic(20), valueFragment, placementFragment)
 	storeFragment, storeOK := store.DeclareSchema(builder, placementBindingLawSemantic(21), placementBindingLawSemantic(22), valueFragment, placementFragment)
 	cold, coldOK := builder.Seal()
-	if !placementOK || !valueOK || !heapOK || !callOK || !allocationOK || !captureOK || !containmentOK || !formalOK || !freshOK || !returnOK || !storeOK || !coldOK || cold == nil {
-		t.Fatalf("Placement binding-law declaration placement=%t value=%t heap=%t call=%t allocation=%t capture=%t containment=%t formal=%t fresh=%t return=%t store=%t cold=%t", placementOK, valueOK, heapOK, callOK, allocationOK, captureOK, containmentOK, formalOK, freshOK, returnOK, storeOK, coldOK)
+	if !placementOK || !valueOK || !heapOK || !callOK || !captureOK || !containmentOK || !formalOK || !returnOK || !storeOK || !coldOK || cold == nil {
+		t.Fatalf("Placement binding-law declaration placement=%t value=%t heap=%t call=%t capture=%t containment=%t formal=%t return=%t store=%t cold=%t", placementOK, valueOK, heapOK, callOK, captureOK, containmentOK, formalOK, returnOK, storeOK, coldOK)
 	}
 	localBinding := engine.NewSchemaBinding(cold)
 	foreignBinding := engine.NewSchemaBinding(cold)
@@ -71,10 +68,6 @@ func TestPlacementRuleBindersRejectEqualSchemaForeignAuthorities(t *testing.T) {
 		name string
 		bind func() bool
 	}{
-		{name: "allocation placement", bind: func() bool {
-			_, ok := allocation.BindHot(localBinding, allocationFragment, foreignPlacement, heapSchema)
-			return ok
-		}},
 		{name: "capture placement", bind: func() bool {
 			_, ok := capture.BindHot(localBinding, captureFragment, foreignPlacement, localValues, values, placementSchema)
 			return ok
@@ -85,10 +78,6 @@ func TestPlacementRuleBindersRejectEqualSchemaForeignAuthorities(t *testing.T) {
 		}},
 		{name: "formal placement", bind: func() bool {
 			_, ok := formal.BindHot(localBinding, formalFragment, foreignPlacement, localValues, localCalls, nil, nil)
-			return ok
-		}},
-		{name: "fresh placement", bind: func() bool {
-			_, ok := fresh.BindHot(localBinding, freshFragment, foreignPlacement, placementSchema)
 			return ok
 		}},
 		{name: "return placement", bind: func() bool {
@@ -154,14 +143,14 @@ func placementBindingLawSchemas(t testing.TB) (placementdomain.Schema, *valuedom
 	artifact, failure := artifactcompiler.CompileDetailed(program, grammar, issuance)
 	shard, shardOK := linked.Project().Mounts().At(0)
 	module, moduleOK := linked.Project().ModuleKey(shard)
-	programID, programIDOK := linked.Project().Mounts().ProgramID(shard)
+	_, programIDOK := linked.Project().Mounts().ProgramID(shard)
 	structural, structuralOK := composite.StructureVocabulary(receipt)
 	snapshot, lowered := ingress.Lower(artifact, structural)
-	heapMount, heapMountOK := heapdomain.NewArtifactMount(snapshot, module, programID)
-	heapSchema, heapFailure := heapdomain.SealWithArtifacts(linked, []heapdomain.ArtifactMount{heapMount})
+	heapMount, heapMountOK := programmount.MountedArtifactFromSnapshot(snapshot, module)
+	heapSchema, heapFailure := heapdomain.SealWithArtifacts(linked, []programmount.MountedArtifact{heapMount})
 	placementSchema, placementOK := placementdomain.NewSchema(heapSchema)
-	valueMount, valueMountOK := valuedomain.NewArtifactMount(snapshot, module, programID)
-	values, valueFailure := valuedomain.SealWithFailure(linked, heapSchema, []valuedomain.ArtifactMount{valueMount}, structural)
+	valueMount, valueMountOK := programmount.MountedArtifactFromSnapshot(snapshot, module)
+	values, valueFailure := valuedomain.SealWithFailure(linked, heapSchema, []programmount.MountedArtifact{valueMount}, structural)
 	mountedProgram := snapshottest.MustMount(t, artifact, module)
 	calls, callsOK := calldomain.NewWithMountedArtifacts(linked, []calldomain.MountedArtifact{{Program: mountedProgram, Snapshot: snapshot}})
 	if !receiptOK || !grammarOK || !issuanceOK || failure.Available() || artifact == nil || !lowered || !shardOK || !moduleOK || !programIDOK || !structuralOK || !heapMountOK || heapFailure != heapdomain.SealFailureNone || !placementOK || !valueMountOK || valueFailure != valuedomain.SealFailureNone || values == nil || !callsOK || calls == nil {

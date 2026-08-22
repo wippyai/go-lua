@@ -75,11 +75,12 @@ func anchoredRouteWriteSurface(state *schemaBindingState, authority *schemaBindi
 }
 
 // summaryKeySource is the engine-private seam for source operands that own
-// their canonical dense Value-key issuance. The domain exposes only the
-// read-only method; no receipt, callback, or engine reference vector crosses
-// the package boundary.
+// their canonical Value-key issuance. The domain exposes only scalar
+// read-only access; no mutable slice, receipt, callback, or engine reference
+// vector crosses the package boundary.
 type summaryKeySource interface {
-	SummaryKeys() ([]uint64, bool)
+	SummaryKeyCount() int
+	SummaryKeyAt(index int) (uint64, bool)
 }
 
 func readSummarySurface(state *schemaBindingState, authority *schemaBindingAuthority, row *schemaRuleReadRow, operand any) (RuleReadSurface, bool) {
@@ -87,11 +88,7 @@ func readSummarySurface(state *schemaBindingState, authority *schemaBindingAutho
 	if !ok {
 		return RuleReadSurface{}, false
 	}
-	keys, keysOK := provider.SummaryKeys()
-	if !keysOK {
-		return RuleReadSurface{}, false
-	}
-	return summaryReadSurface(state, authority, row, keys)
+	return summaryReadSurface(state, authority, row, provider)
 }
 
 // resolveDeclaredRuleInstance folds one issuance's declared surfaces into the
@@ -165,13 +162,16 @@ func declaredSummaryMappings(surfaces declaredRuleSurfaces) []RuleReadSurface {
 }
 
 const (
-	mountedRuleMemberDomain     = "analysis/engine/rule-member"
-	mountedRuleActivationDomain = "analysis/engine/activation-member"
-	mountedRuleInputDomain      = "analysis/engine/rule-input"
-	mountedRuleOccurrenceDomain = "analysis/engine/rule-occurrence"
-	linkRuleOccurrenceDomain    = "analysis/engine/link-rule-occurrence"
-	linkRuleMemberDomain        = "analysis/engine/link-rule-member"
-	linkRuleInputDomain         = "analysis/engine/link-rule-input"
+	mountedRuleMemberDomain          = "analysis/engine/rule-member"
+	mountedRuleActivationDomain      = "analysis/engine/activation-member"
+	mountedRuleInputDomain           = "analysis/engine/rule-input"
+	mountedRuleOccurrenceDomain      = "analysis/engine/rule-occurrence"
+	linkRuleOccurrenceDomain         = "analysis/engine/link-rule-occurrence"
+	linkRuleMemberDomain             = "analysis/engine/link-rule-member"
+	linkRuleInputDomain              = "analysis/engine/link-rule-input"
+	mountedPointRuleOccurrenceDomain = "analysis/engine/mounted-point-rule-occurrence"
+	mountedPointRuleMemberDomain     = "analysis/engine/mounted-point-rule-member"
+	mountedPointRuleInputDomain      = "analysis/engine/mounted-point-rule-input"
 
 	ruleSourceIdentityVersion uint64 = 3
 )
@@ -245,6 +245,41 @@ func linkRuleMemberID(role RuleSlotCapability, owner, point, occurrence identity
 	return framedContentID(linkRuleMemberDomain, ruleSourceIdentityVersion, func(writer *canonical.DigestWriter) bool {
 		return writeRuleSlotCapability(writer, role) && writeContentIDs(writer, owner, point, occurrence)
 	})
+}
+
+func mountedPointRuleOccurrenceKey(role RuleSlotCapability, mount, point, occurrence identity.ContentID) (composition.Key, bool) {
+	if !role.mountedPoint() || !mount.Available() || !point.Available() || !occurrence.Available() {
+		return composition.Key{}, false
+	}
+	id := framedContentID(mountedPointRuleOccurrenceDomain, ruleSourceIdentityVersion, func(writer *canonical.DigestWriter) bool {
+		return writeRuleSlotCapability(writer, role) && writeContentIDs(writer, mount, point, occurrence)
+	})
+	if !id.Available() {
+		return composition.Key{}, false
+	}
+	return artifactSourceKey(artifactOccurrenceSource, id)
+}
+
+func mountedPointRuleMemberID(role RuleSlotCapability, mount, point, occurrence identity.ContentID) identity.ContentID {
+	if !role.mountedPoint() || !mount.Available() || !point.Available() || !occurrence.Available() {
+		return identity.ContentID{}
+	}
+	return framedContentID(mountedPointRuleMemberDomain, ruleSourceIdentityVersion, func(writer *canonical.DigestWriter) bool {
+		return writeRuleSlotCapability(writer, role) && writeContentIDs(writer, mount, point, occurrence)
+	})
+}
+
+func mountedPointRuleInputKey(role RuleSlotCapability, mount, point, occurrence identity.ContentID, slot uint64) (composition.Key, bool) {
+	if !role.mountedPoint() || !mount.Available() || !point.Available() || !occurrence.Available() {
+		return composition.Key{}, false
+	}
+	id := framedContentID(mountedPointRuleInputDomain, ruleSourceIdentityVersion, func(writer *canonical.DigestWriter) bool {
+		return writeRuleSlotCapability(writer, role) && writeContentIDs(writer, mount, point, occurrence) && writer.Uint(slot) == nil
+	})
+	if !id.Available() {
+		return composition.Key{}, false
+	}
+	return artifactSourceKey(artifactOccurrenceSource, id)
 }
 
 // mountedRuleOccurrenceKey keeps the Batch occurrence entity family-local.

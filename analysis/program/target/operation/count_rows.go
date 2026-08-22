@@ -16,7 +16,7 @@ func (core Core) CountRows() denominator.CountRows {
 		return denominator.CountRows{}
 	}
 	ids := denominator.GeneratedTargetIDs()
-	counts := make([]denominator.CountRow, 0, 25)
+	counts := make([]denominator.CountRow, 0, 26)
 	add := func(id schema.EntryID, value int) bool {
 		if value < 0 {
 			return false
@@ -31,6 +31,7 @@ func (core Core) CountRows() denominator.CountRows {
 	bindingCount := 0
 	outcomeCount := 0
 	operationEffects := 0
+	formalEffects := 0
 	callbackEffects := 0
 	publicationEffects := 0
 	callbackReleases := 0
@@ -43,6 +44,7 @@ func (core Core) CountRows() denominator.CountRows {
 		bindingCount += geometry.bindings.Len()
 		outcomeCount += geometry.outcomes.Len()
 		operationEffects += len(query.effects)
+		formalEffects += len(query.formalEffects)
 		callbackReleases += query.callbackReleases.len()
 		for _, handle := range query.effects {
 			if handle < 0 || handle >= len(core.query.effects) {
@@ -94,6 +96,7 @@ func (core Core) CountRows() denominator.CountRows {
 		!add(ids.TargetBinding, bindingCount) ||
 		!add(ids.TargetOutcome, outcomeCount) ||
 		!add(ids.TargetOperationEffect, operationEffects) ||
+		!add(ids.TargetFormalEffect, formalEffects) ||
 		!add(ids.TargetCallbackEffect, callbackEffects) ||
 		!add(ids.TargetPublicationEffect, publicationEffects) ||
 		!add(ids.TargetCallback, core.geometry.callbacks.Count()) ||

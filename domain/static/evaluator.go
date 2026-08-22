@@ -3,8 +3,6 @@ package static
 import (
 	"errors"
 
-	"github.com/wippyai/go-lua/analysis/program/target/vocabulary"
-
 	"github.com/wippyai/go-lua/analysis/identity"
 	staticquery "github.com/wippyai/go-lua/analysis/program/static/query"
 	typeauthority "github.com/wippyai/go-lua/domain/type/authority"
@@ -31,8 +29,6 @@ type ContainedOperand struct {
 	owner          identity.ContentID
 	source         identity.ContentID
 	namespace      identity.ContentID
-	environment    identity.ContentID
-	operation      vocabulary.Operation
 	law            identity.ContentID
 	dependency     identity.ContentID
 	site           identity.ContentID
@@ -57,8 +53,6 @@ func (o ContainedOperand) Source() (identity.ContentID, identity.ContentID, bool
 	return o.owner, o.source, o.owner.Available() && o.source.Available()
 }
 func (o ContainedOperand) Namespace() identity.ContentID          { return o.namespace }
-func (o ContainedOperand) Environment() identity.ContentID        { return o.environment }
-func (o ContainedOperand) Operation() vocabulary.Operation        { return o.operation }
 func (o ContainedOperand) Law() identity.ContentID                { return o.law }
 func (o ContainedOperand) Dependency() identity.ContentID         { return o.dependency }
 func (o ContainedOperand) StaticSite() (identity.ContentID, bool) { return o.site, o.site.Available() }
@@ -120,7 +114,7 @@ func (a *Authority) sealMountedCoordinates() error {
 			if !ok {
 				return errors.New("static: mounted expression reference unavailable")
 			}
-			if err := a.addCoordinate(ref, mount.NamespaceID, Environment{}, 0); err != nil {
+			if err := a.addCoordinate(ref, mount.NamespaceID); err != nil {
 				return err
 			}
 		}
@@ -128,15 +122,15 @@ func (a *Authority) sealMountedCoordinates() error {
 	return nil
 }
 
-func (a *Authority) addCoordinate(ref typeauthority.StaticTypeRef, namespace identity.ContentID, environment Environment, operation vocabulary.Operation) error {
+func (a *Authority) addCoordinate(ref typeauthority.StaticTypeRef, namespace identity.ContentID) error {
 	if !namespace.Available() {
 		return errors.New("static: invalid namespace")
 	}
-	key := coordinateKey{reference: ref, namespace: namespace, environment: environment.ContentID(), operation: operation}
+	key := coordinateKey{reference: ref, namespace: namespace}
 	if _, duplicate := a.coordinateIndex[key]; duplicate {
 		return nil
 	}
-	value, err := a.evaluate(ref, namespace, environment, operation)
+	value, err := a.evaluate(ref, namespace)
 	if err != nil {
 		return err
 	}

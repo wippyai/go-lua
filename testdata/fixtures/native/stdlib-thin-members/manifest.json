@@ -1,0 +1,18 @@
+{
+  "description": "The declared stdlib members no other fixture calls: the two table length readers, the three raw and metatable readers, the two binary string members, the three coroutine control readers, and the two error readers.",
+  "packages": [
+    "table",
+    "coroutine",
+    "string",
+    "errors"
+  ],
+  "files": [
+    "main.lua"
+  ],
+  "check": {
+    "errors": 0
+  },
+  "run": {
+    "skip": "declaration-surface fixture"
+  }
+}

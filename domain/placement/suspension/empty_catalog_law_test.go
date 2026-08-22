@@ -8,6 +8,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/program/link"
 	linkproject "github.com/wippyai/go-lua/analysis/program/link/project"
 	"github.com/wippyai/go-lua/analysis/schema/ingress"
+	"github.com/wippyai/go-lua/analysis/schema/programmount"
 	"github.com/wippyai/go-lua/domain/composite"
 	"github.com/wippyai/go-lua/domain/heap"
 	placementdomain "github.com/wippyai/go-lua/domain/placement"
@@ -41,14 +42,14 @@ func TestSuspensionCatalogAdmitsAProgramWithoutSuspensionSubjects(t *testing.T) 
 	artifact, failure := artifactcompiler.CompileDetailed(program, grammar, issuance)
 	shard, shardOK := linked.Project().Mounts().At(0)
 	module, moduleOK := linked.Project().ModuleKey(shard)
-	programID, programIDOK := linked.Project().Mounts().ProgramID(shard)
+	_, programIDOK := linked.Project().Mounts().ProgramID(shard)
 	structural, structuralOK := composite.StructureVocabulary(receipt)
 	snapshot, lowered := ingress.Lower(artifact, structural)
-	mount, mountOK := heap.NewArtifactMount(snapshot, module, programID)
-	heapSchema, heapFailure := heap.SealWithArtifacts(linked, []heap.ArtifactMount{mount})
+	mount, mountOK := programmount.MountedArtifactFromSnapshot(snapshot, module)
+	heapSchema, heapFailure := heap.SealWithArtifacts(linked, []programmount.MountedArtifact{mount})
 	placementSchema, placementOK := placementdomain.NewSchema(heapSchema)
-	valueMount, valueMountOK := valuedomain.NewArtifactMount(snapshot, module, programID)
-	values, valueFailure := valuedomain.SealWithFailure(linked, heapSchema, []valuedomain.ArtifactMount{valueMount}, structural)
+	valueMount, valueMountOK := programmount.MountedArtifactFromSnapshot(snapshot, module)
+	values, valueFailure := valuedomain.SealWithFailure(linked, heapSchema, []programmount.MountedArtifact{valueMount}, structural)
 	if !receiptOK || !grammarOK || !issuanceOK || failure.Available() || artifact == nil || !lowered || !shardOK || !moduleOK || !programIDOK || !structuralOK || !mountOK || !valueMountOK || heapFailure != heap.SealFailureNone || !placementOK || valueFailure != valuedomain.SealFailureNone || values == nil {
 		t.Fatalf("suspension fixture grammar=%t failure=%v artifact=%v ingress=%t shard=%t module=%t program=%t structural=%t mount=%t valueMount=%t heap=%v placement=%t value=%v", grammarOK, failure, artifact, lowered, shardOK, moduleOK, programIDOK, structuralOK, mountOK, valueMountOK, heapFailure, placementOK, valueFailure)
 	}

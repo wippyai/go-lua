@@ -134,6 +134,7 @@ func TestAxisTableDrivesEveryDerivedView(t *testing.T) {
 		axisKeyHeap:                  "semantic/factor/heap",
 		axisKeyPlacement:             "semantic/factor/placement",
 		axisKeyPlacementEvidence:     "semantic/factor/placement/suspension-evidence",
+		axisKeyContext:               "semantic/factor/context",
 		axisKeyCall:                  "semantic/factor/call",
 		axisKeyEffect:                "semantic/factor/effect",
 		axisKeyExecutionReachability: "semantic/axis/execution-reachability",

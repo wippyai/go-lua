@@ -5,6 +5,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/program/target/contract"
 	calldomain "github.com/wippyai/go-lua/domain/call"
 	callowner "github.com/wippyai/go-lua/domain/call/owner"
+	"github.com/wippyai/go-lua/domain/heap"
 	packdomain "github.com/wippyai/go-lua/domain/pack"
 	"github.com/wippyai/go-lua/domain/placement"
 	placementowner "github.com/wippyai/go-lua/domain/placement/owner"
@@ -17,8 +18,8 @@ type actualTag uint64
 // formalObservationInlineWidth bounds the fixed footprint of the two
 // selector-stage consumers below. Ordinary mounted calls have a small formal
 // actual prefix; eight cells cover that common case while keeping the hot
-// frame bounded. Wider calls use an explicit per-invocation fallback rather
-// than retaining state on HotRule or sharing scratch between engine stages.
+// frame bounded. Wider calls use explicit per-invocation overflow storage;
+// HotRule retains no state and engine stages share no mutable scratch.
 const formalObservationInlineWidth = 8
 
 // canonicalActualTag is the one-based authored actual ordinal carried by the
@@ -201,8 +202,27 @@ func (rule *HotRule) locatePlacement(context engine.SelectorContext, candidate o
 	if !planOK {
 		return false
 	}
-	for _, route := range plan.routes {
-		if !placementowner.SelectRouteTyped(rule.owner, context, route.key, route.tag) {
+	if plan.allUnknown {
+		selected := 0
+		for dense := 0; dense < plan.schema.DenseKeyCount(); dense++ {
+			key, keyOK := plan.schema.KeyAt(dense)
+			if !keyOK {
+				return false
+			}
+			if key.Kind() != heap.RootAllocation {
+				continue
+			}
+			tag, tagOK := routeTagForDense(plan.schema, key, dense, placement.None, true)
+			if !tagOK || !placementowner.SelectRouteTyped(rule.owner, context, key, tag) {
+				return false
+			}
+			selected++
+		}
+		return selected == plan.routeCount()
+	}
+	for index := 0; index < plan.routeCount(); index++ {
+		route, routeOK := plan.routeAt(index)
+		if !routeOK || !placementowner.SelectRouteTyped(rule.owner, context, route.key, route.tag) {
 			return false
 		}
 	}
@@ -286,7 +306,7 @@ func (rule *HotRule) fold(frame engine.Frame[placement.Placement, operand]) engi
 		return engine.RuleResult[placement.Placement]{}
 	}
 	plan, planOK := planFor(rule.packs, rule.calls.Algebra(), rule.owner.Schema(), rule.values.Schema(), rule.contract, candidate.mounted, callFact, observations)
-	if !planOK || count != len(plan.routes) {
+	if !planOK || count != plan.routeCount() {
 		return engine.RuleResult[placement.Placement]{}
 	}
 	if count == 0 {
@@ -298,20 +318,14 @@ func (rule *HotRule) fold(frame engine.Frame[placement.Placement, operand]) engi
 			return placement.Bottom, false
 		}
 		current, present, available := cells.At(0)
-		if !available {
+		current, currentOK := placement.AuthenticateFactorCell(current, present, available)
+		if !currentOK {
 			return placement.Bottom, false
 		}
 		if route.unknown {
 			return placement.Unknown, true
 		}
-		if !present {
-			// A missing Placement seed is an unavailable producer row, not a
-			// Bottom placement that can be widened by compensation. Refuse this
-			// route; only an explicitly authenticated route.unknown may publish
-			// Placement.Unknown.
-			return placement.Bottom, false
-		}
-		return placement.Displace(current, route.escape), true
+		return placement.DisplaceChecked(current, route.escape)
 	})
 }
 

@@ -139,19 +139,33 @@ func (rule *HotRule) collectFacts(context engine.SelectorContext, selection engi
 	if !countOK || count != expectedCount {
 		return returnFacts{}, false
 	}
-	var facts returnFacts
-	for index := 0; index < expectedCount; index++ {
-		tag, cells, selected := engine.SelectorSelectionAt(context, selection, index)
-		expectedTag, tagOK := boundaryValueTag(index)
-		coordinate, coordinateOK := boundaryCoordinateForTag(boundary, tag)
-		if !tagOK || tag != expectedTag || !selected || cells.Count() != 1 || !coordinateOK {
+	facts, factsOK := newReturnFacts(expectedCount)
+	if !factsOK {
+		return returnFacts{}, false
+	}
+	for physical := 0; physical < expectedCount; physical++ {
+		tag, cells, selected := engine.SelectorSelectionAt(context, selection, physical)
+		logical, logicalOK := boundaryValueOrdinal(tag, expectedCount)
+		if !logicalOK || !selected || cells.Count() != 1 {
+			return returnFacts{}, false
+		}
+		coordinate, coordinateOK := boundary.MemberAt(logical)
+		if !coordinateOK {
 			return returnFacts{}, false
 		}
 		fact, present, available := cells.At(0)
-		if !available || (present && !rule.values.Schema().AdmitsCoordinate(coordinate, fact)) {
+		if !authenticatedReturnFact(rule.values.Schema(), fact, present, available) || present && !rule.values.Schema().AdmitsCoordinate(coordinate, fact) {
 			return returnFacts{}, false
 		}
-		facts.append(returnFact{fact: fact, present: present, available: available})
+		if !facts.set(logical, returnFact{fact: fact, present: present, available: available}) {
+			return returnFacts{}, false
+		}
+	}
+	for logical := 0; logical < expectedCount; logical++ {
+		item, itemOK := facts.at(logical)
+		if !itemOK || !item.available {
+			return returnFacts{}, false
+		}
 	}
 	return facts, true
 }
@@ -166,19 +180,33 @@ func (rule *HotRule) collectFactsFrame(frame engine.Frame[placementdomain.Placem
 	if !countOK || count != expectedCount {
 		return returnFacts{}, false
 	}
-	var facts returnFacts
-	for index := 0; index < expectedCount; index++ {
-		tag, cells, selected := engine.SelectionAt(frame, selection, index)
-		expectedTag, tagOK := boundaryValueTag(index)
-		coordinate, coordinateOK := boundaryCoordinateForTag(boundary, tag)
-		if !tagOK || tag != expectedTag || !selected || cells.Count() != 1 || !coordinateOK {
+	facts, factsOK := newReturnFacts(expectedCount)
+	if !factsOK {
+		return returnFacts{}, false
+	}
+	for physical := 0; physical < expectedCount; physical++ {
+		tag, cells, selected := engine.SelectionAt(frame, selection, physical)
+		logical, logicalOK := boundaryValueOrdinal(tag, expectedCount)
+		if !logicalOK || !selected || cells.Count() != 1 {
+			return returnFacts{}, false
+		}
+		coordinate, coordinateOK := boundary.MemberAt(logical)
+		if !coordinateOK {
 			return returnFacts{}, false
 		}
 		fact, present, available := cells.At(0)
-		if !available || (present && !rule.values.Schema().AdmitsCoordinate(coordinate, fact)) {
+		if !authenticatedReturnFact(rule.values.Schema(), fact, present, available) || present && !rule.values.Schema().AdmitsCoordinate(coordinate, fact) {
 			return returnFacts{}, false
 		}
-		facts.append(returnFact{fact: fact, present: present, available: available})
+		if !facts.set(logical, returnFact{fact: fact, present: present, available: available}) {
+			return returnFacts{}, false
+		}
+	}
+	for logical := 0; logical < expectedCount; logical++ {
+		item, itemOK := facts.at(logical)
+		if !itemOK || !item.available {
+			return returnFacts{}, false
+		}
 	}
 	return facts, true
 }
@@ -201,8 +229,8 @@ func (rule *HotRule) fold(frame engine.Frame[placementdomain.Placement, operand]
 	if !factsOK || anchorCells.Count() != 1 {
 		return engine.RuleResult[placementdomain.Placement]{}
 	}
-	_, _, anchorAvailable := anchorCells.At(0)
-	if !anchorAvailable {
+	anchor, anchorPresent, anchorAvailable := anchorCells.At(0)
+	if !authenticatedReturnFact(rule.values.Schema(), anchor, anchorPresent, anchorAvailable) || anchorPresent && !rule.values.Schema().AdmitsCoordinate(operand.root, anchor) {
 		return engine.RuleResult[placementdomain.Placement]{}
 	}
 	count, countOK := engine.SelectionCount(frame, placementSelection)

@@ -17,6 +17,14 @@ import (
 	"github.com/wippyai/go-lua/domain/type/typ"
 )
 
+func encodeCanonicalTest(ctx context.Context, value typ.Type) ([]byte, error) {
+	receipt, err := typ.EncodeCanonicalFormals(ctx, value, nil)
+	if err != nil {
+		return nil, err
+	}
+	return receipt.Bytes(), nil
+}
+
 func TestArtifactAuthorityResolvesUnresolvedReferenceAsUnknown(t *testing.T) {
 	artifact := compileArtifactForAuthorityTest(t, `
 if true then
@@ -25,7 +33,7 @@ end
 local p: LocalPoint = {x = 1}
 return p
 `)
-	authority, err := typeauthority.SealPrograms([]programschema.Program{authorityProgram(artifact)})
+	authority, err := typeauthority.SealProgramsForTest([]programschema.Program{authorityProgram(artifact)})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -39,11 +47,11 @@ return p
 		if _, targetOK := row.ReferenceTarget(); targetOK {
 			t.Fatal("unresolved reference retained a target child")
 		}
-		value, resolved := authority.Resolve(row.ID())
+		value, resolved := typeauthority.ResolveForTest(authority, row.ID())
 		if !resolved || value != typ.Unknown {
 			t.Fatalf("unresolved reference resolved as %T/%v, want typ.Unknown", value, resolved)
 		}
-		fresh, freshOK := authority.Resolve(row.ID())
+		fresh, freshOK := typeauthority.ResolveForTest(authority, row.ID())
 		if !freshOK || fresh != typ.Unknown {
 			t.Fatal("unresolved reference did not deterministically replay Unknown")
 		}
@@ -59,7 +67,7 @@ type DeclaredPoint = {x: number}
 local p: DeclaredPoint = {x = 1}
 return p
 `)
-	authority, err := typeauthority.SealPrograms([]programschema.Program{authorityProgram(artifact)})
+	authority, err := typeauthority.SealProgramRows(artifact.CompileKey().ProgramID(), []programschema.Program{authorityProgram(artifact)})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -74,10 +82,27 @@ return p
 		if !childOK {
 			t.Fatal("declaration reference sole child unavailable")
 		}
-		value, resolved := authority.Resolve(row.ID())
-		childValue, childResolved := authority.Resolve(childID)
+		ref, refOK := authority.FindByReferenceID(row.ID())
+		childRef, childRefOK := authority.FindByReferenceID(childID)
+		value, resolved := typeauthority.ResolveForTest(authority, ref)
+		childValue, childResolved := typeauthority.ResolveForTest(authority, childRef)
 		if !resolved || !childResolved || !typ.TypeEquals(value, childValue) {
 			t.Fatalf("declaration reference did not preserve its sole target: reference=%T/%v child=%T/%v", value, resolved, childValue, childResolved)
+		}
+		referenceProjection, referenceProjectionOK := authority.ProjectionByReferenceID(row.ID())
+		targetProjection, targetProjectionOK := authority.ProjectionByReferenceID(childID)
+		referenceIdentity, referenceIdentityOK := referenceProjection.SemanticIdentity()
+		targetIdentity, targetIdentityOK := targetProjection.SemanticIdentity()
+		if !refOK || !childRefOK || !referenceIdentityOK || !targetIdentityOK || referenceIdentity != targetIdentity {
+			t.Fatal("declaration reference and its transparent target did not share semantic identity")
+		}
+		referenceInput, referenceInputOK := referenceProjection.ClosedInput()
+		targetInput, targetInputOK := targetProjection.ClosedInput()
+		referenceInputID, _ := referenceInput.CanonicalIdentity()
+		targetInputID, _ := targetInput.CanonicalIdentity()
+		if !referenceProjectionOK || !targetProjectionOK || !referenceInputOK || !targetInputOK ||
+			referenceInputID != referenceIdentity || targetInputID != targetIdentity {
+			t.Fatal("closed reference projection did not carry its canonical Runtime input")
 		}
 	}
 	if found != 1 {
@@ -92,7 +117,7 @@ interface Service
   function empty<T: string>(value: T): ()
 end
 `)
-	authority, err := typeauthority.SealPrograms([]programschema.Program{authorityProgram(artifact)})
+	authority, err := typeauthority.SealProgramsForTest([]programschema.Program{authorityProgram(artifact)})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -113,7 +138,7 @@ end
 		}
 		found[caseIndex] = true
 
-		value, ok := authority.Resolve(row.ID())
+		value, ok := typeauthority.ResolveForTest(authority, row.ID())
 		if !ok {
 			t.Fatalf("Resolve(TypeFunction returns-known=%v) failed", known)
 		}
@@ -132,7 +157,7 @@ end
 			t.Fatalf("TypeFunction returns-known=%v returns=%v, want empty", known, function.Returns)
 		}
 
-		fresh, ok := authority.Resolve(row.ID())
+		fresh, ok := typeauthority.ResolveForTest(authority, row.ID())
 		if !ok {
 			t.Fatalf("second Resolve(TypeFunction returns-known=%v) failed", known)
 		}
@@ -227,7 +252,7 @@ type C = A
 	for _, testCase := range cases {
 		t.Run(testCase.name, func(t *testing.T) {
 			artifact := compileArtifactForAuthorityTest(t, testCase.source)
-			authority, err := typeauthority.SealPrograms([]programschema.Program{authorityProgram(artifact)})
+			authority, err := typeauthority.SealProgramsForTest([]programschema.Program{authorityProgram(artifact)})
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -238,7 +263,7 @@ type C = A
 				if !ok || row.Kind() != staticnode.StaticNodeAlias {
 					continue
 				}
-				value, resolved := authority.Resolve(row.ID())
+				value, resolved := typeauthority.ResolveForTest(authority, row.ID())
 				if !resolved {
 					t.Fatalf("alias %q did not resolve", row.Name())
 				}
@@ -257,7 +282,7 @@ type C = A
 				if got := value.String(); got != testCase.text[name] {
 					t.Fatalf("alias %q String()=%q, want %q", name, got, testCase.text[name])
 				}
-				fresh, freshOK := authority.Resolve(rows[name].ID())
+				fresh, freshOK := typeauthority.ResolveForTest(authority, rows[name].ID())
 				if !freshOK || !typ.TypeEquals(value, fresh) {
 					t.Fatalf("alias %q changed TypeEquals across repeated observation", name)
 				}
@@ -295,7 +320,7 @@ local c: Counter = {
 }
 return c
 `)
-	authority, err := typeauthority.SealPrograms([]programschema.Program{authorityProgram(artifact)})
+	authority, err := typeauthority.SealProgramsForTest([]programschema.Program{authorityProgram(artifact)})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -306,7 +331,7 @@ return c
 			continue
 		}
 		interior++
-		value, resolved := authority.Resolve(row.ID())
+		value, resolved := typeauthority.ResolveForTest(authority, row.ID())
 		if !resolved || value == nil {
 			t.Fatalf("interior reference row %d of a recursive declaration did not resolve", index)
 		}
@@ -345,13 +370,20 @@ return identity
 		if !refOK {
 			t.Fatalf("formal row %d has no artifact reference", index)
 		}
-		value, resolved := authority.Resolve(ref)
+		value, resolved := typeauthority.ResolveForTest(authority, ref)
 		if !resolved {
 			t.Fatalf("formal row %d did not materialize", index)
 		}
 		formal, formalOK := value.(*typ.TypeParam)
 		if !formalOK || formal.Name != row.Name() {
 			t.Fatalf("formal row %d = %T/%v, want the free formal %q", index, value, value, row.Name())
+		}
+		projection, projectionOK := authority.Projection(ref)
+		if !projectionOK || !projection.Open() {
+			t.Fatalf("formal row %d was not issued as an open projection", index)
+		}
+		if _, closed := projection.ClosedInput(); closed {
+			t.Fatalf("formal row %d carried a closed Runtime input", index)
 		}
 	}
 	if formals == 0 {
@@ -369,7 +401,7 @@ local function route(primary: Missing<number>): number
 end
 return route
 `)
-	authority, err := typeauthority.SealPrograms([]programschema.Program{authorityProgram(artifact)})
+	authority, err := typeauthority.SealProgramsForTest([]programschema.Program{authorityProgram(artifact)})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -380,7 +412,7 @@ return route
 			continue
 		}
 		applications++
-		value, resolved := authority.Resolve(row.ID())
+		value, resolved := typeauthority.ResolveForTest(authority, row.ID())
 		if !resolved || value != typ.Unknown {
 			t.Fatalf("application row %d = %T/%v resolved=%t, want typ.Unknown", index, value, value, resolved)
 		}
@@ -401,7 +433,7 @@ local function route(primary: Plain<number>): number
 end
 return route
 `)
-	authority, err := typeauthority.SealPrograms([]programschema.Program{authorityProgram(artifact)})
+	authority, err := typeauthority.SealProgramsForTest([]programschema.Program{authorityProgram(artifact)})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -412,7 +444,7 @@ return route
 			continue
 		}
 		applications++
-		value, resolved := authority.Resolve(row.ID())
+		value, resolved := typeauthority.ResolveForTest(authority, row.ID())
 		if resolved || value != nil {
 			t.Fatalf("application row %d = %T/%v resolved=%t, want no value", index, value, value, resolved)
 		}
@@ -431,7 +463,7 @@ func TestArtifactAuthorityMutualDeclarationCycleHasOneCanonicalIdentity(t *testi
 type A = { next: B }
 type B = { next: A }
 `)
-	authority, err := typeauthority.SealPrograms([]programschema.Program{authorityProgram(artifact)})
+	authority, err := typeauthority.SealProgramsForTest([]programschema.Program{authorityProgram(artifact)})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -445,11 +477,11 @@ type B = { next: A }
 		if !ok || row.Kind() != staticnode.StaticNodeRecord {
 			continue
 		}
-		value, resolved := authority.Resolve(row.ID())
+		value, resolved := typeauthority.ResolveForTest(authority, row.ID())
 		if !resolved {
 			t.Fatalf("interior row %d did not resolve", index)
 		}
-		encoded, encodeErr := typ.EncodeCanonical(context.Background(), value)
+		encoded, encodeErr := encodeCanonicalTest(context.Background(), value)
 		if encodeErr != nil || len(encoded) == 0 {
 			t.Fatalf("interior row %d has no canonical identity: %v", index, encodeErr)
 		}
@@ -480,7 +512,7 @@ local c: Counter = {
 }
 return c
 `)
-	authority, err := typeauthority.SealPrograms([]programschema.Program{authorityProgram(artifact)})
+	authority, err := typeauthority.SealProgramsForTest([]programschema.Program{authorityProgram(artifact)})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -490,11 +522,11 @@ return c
 		if !ok || (row.Kind() != staticnode.StaticNodeAlias && row.Kind() != staticnode.StaticNodeRecord) {
 			continue
 		}
-		value, resolved := authority.Resolve(row.ID())
+		value, resolved := typeauthority.ResolveForTest(authority, row.ID())
 		if !resolved {
 			t.Fatalf("row %d (%v) did not resolve", index, row.Kind())
 		}
-		encoded, encodeErr := typ.EncodeCanonical(context.Background(), value)
+		encoded, encodeErr := encodeCanonicalTest(context.Background(), value)
 		if encodeErr != nil || len(encoded) == 0 {
 			t.Fatalf("row %d (%v) has no canonical identity: %v", index, row.Kind(), encodeErr)
 		}
@@ -528,7 +560,7 @@ type Node = Text | Group
 local n: Node = {kind = "text", value = "a"}
 return n
 `)
-	authority, err := typeauthority.SealPrograms([]programschema.Program{authorityProgram(artifact)})
+	authority, err := typeauthority.SealProgramsForTest([]programschema.Program{authorityProgram(artifact)})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -539,7 +571,7 @@ return n
 		if !ok {
 			continue
 		}
-		value, resolved := authority.Resolve(row.ID())
+		value, resolved := typeauthority.ResolveForTest(authority, row.ID())
 		if !resolved || value == nil || !typ.IsGraphClosed(value) || typ.ContainsTypeParam(value) {
 			continue
 		}
@@ -547,17 +579,18 @@ return n
 			recursions++
 		}
 		erased, erasedErr := typ.EncodeCanonicalFormals(context.Background(), value, nil)
-		if erasedErr != nil || len(erased) == 0 {
+		erasedBytes := erased.Bytes()
+		if erasedErr != nil || !erased.Valid() || len(erasedBytes) == 0 {
 			continue
 		}
-		exact, exactErr := typ.EncodeCanonical(context.Background(), value)
+		exact, exactErr := encodeCanonicalTest(context.Background(), value)
 		if exactErr != nil || len(exact) == 0 {
 			t.Fatalf("row %d has no structural canonical identity: %v", index, exactErr)
 		}
-		if structural[string(erased)] == nil {
-			structural[string(erased)] = make(map[string]struct{})
+		if structural[string(erasedBytes)] == nil {
+			structural[string(erasedBytes)] = make(map[string]struct{})
 		}
-		structural[string(erased)][string(exact)] = struct{}{}
+		structural[string(erasedBytes)][string(exact)] = struct{}{}
 	}
 	if recursions == 0 {
 		t.Fatal("fixture published no recursive fixed point")
@@ -588,7 +621,7 @@ type Pair = { left: A, right: B }
 local p: Pair = {left = {next = {next = nil}}, right = {next = nil}}
 return p
 `)
-	authority, err := typeauthority.SealPrograms([]programschema.Program{authorityProgram(artifact)})
+	authority, err := typeauthority.SealProgramsForTest([]programschema.Program{authorityProgram(artifact)})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -599,12 +632,12 @@ return p
 		if !ok {
 			continue
 		}
-		value, resolved := authority.Resolve(row.ID())
+		value, resolved := typeauthority.ResolveForTest(authority, row.ID())
 		if !resolved {
 			continue
 		}
 		if row.Kind() == staticnode.StaticNodeAlias && (row.Name() == "A" || row.Name() == "B") {
-			encoded, encodeErr := typ.EncodeCanonical(context.Background(), value)
+			encoded, encodeErr := encodeCanonicalTest(context.Background(), value)
 			if encodeErr != nil {
 				t.Fatalf("declaration %q has no canonical identity: %v", row.Name(), encodeErr)
 			}
@@ -622,8 +655,8 @@ return p
 			t.Fatalf("field %q is not a closed graph: %s", field.Name, field.Type)
 		}
 	}
-	left, leftErr := typ.EncodeCanonical(context.Background(), pair.Fields[0].Type)
-	right, rightErr := typ.EncodeCanonical(context.Background(), pair.Fields[1].Type)
+	left, leftErr := encodeCanonicalTest(context.Background(), pair.Fields[0].Type)
+	right, rightErr := encodeCanonicalTest(context.Background(), pair.Fields[1].Type)
 	if leftErr != nil || rightErr != nil {
 		t.Fatalf("pair members have no canonical identity: %v / %v", leftErr, rightErr)
 	}
@@ -660,7 +693,7 @@ local c: Counter = {
 }
 return c
 `)
-	authority, err := typeauthority.SealPrograms([]programschema.Program{authorityProgram(artifact)})
+	authority, err := typeauthority.SealProgramsForTest([]programschema.Program{authorityProgram(artifact)})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -671,11 +704,11 @@ return c
 			declaration = row.ID()
 		}
 	}
-	declared, ok := authority.Resolve(declaration)
+	declared, ok := typeauthority.ResolveForTest(authority, declaration)
 	if !ok {
 		t.Fatal("declaration row did not resolve")
 	}
-	declaredBytes, declaredErr := typ.EncodeCanonical(context.Background(), declared)
+	declaredBytes, declaredErr := encodeCanonicalTest(context.Background(), declared)
 	if declaredErr != nil {
 		t.Fatalf("declaration has no canonical identity: %v", declaredErr)
 	}
@@ -690,14 +723,14 @@ return c
 			continue
 		}
 		references++
-		value, resolved := authority.Resolve(row.ID())
+		value, resolved := typeauthority.ResolveForTest(authority, row.ID())
 		if !resolved {
 			t.Fatalf("reference row %d did not resolve", index)
 		}
 		if value.String() != declared.String() {
 			t.Fatalf("interior entry spells a second binder:\n  reference   = %s\n  declaration = %s", value, declared)
 		}
-		encoded, encodeErr := typ.EncodeCanonical(context.Background(), value)
+		encoded, encodeErr := encodeCanonicalTest(context.Background(), value)
 		if encodeErr != nil || !bytes.Equal(encoded, declaredBytes) {
 			t.Fatalf("interior entry carries a second identity: %v", encodeErr)
 		}
@@ -739,7 +772,7 @@ type List<T> = { head: T, tail: List<T> }
 local x: List<number> = {head = 1}
 return x
 `)
-	authority, err := typeauthority.SealPrograms([]programschema.Program{authorityProgram(artifact)})
+	authority, err := typeauthority.SealProgramsForTest([]programschema.Program{authorityProgram(artifact)})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -749,7 +782,7 @@ return x
 		if !ok {
 			continue
 		}
-		value, resolved := authority.Resolve(row.ID())
+		value, resolved := typeauthority.ResolveForTest(authority, row.ID())
 		if !resolved {
 			continue
 		}

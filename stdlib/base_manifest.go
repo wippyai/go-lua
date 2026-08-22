@@ -13,12 +13,18 @@ import (
 	moduleio "github.com/wippyai/go-lua/manifest/wire"
 )
 
-var luaRuntimeTypeName = typ.MaterializeUnion([]typ.Type{
-	typ.LiteralString("nil"), typ.LiteralString("boolean"),
-	typ.LiteralString("number"), typ.LiteralString("string"),
-	typ.LiteralString("table"), typ.LiteralString("function"),
-	typ.LiteralString("thread"), typ.LiteralString("userdata"),
-})
+var luaRuntimeTypeName = luaRuntimeTypeNameUnion()
+
+func luaRuntimeTypeNameUnion() typ.Type {
+	members := make([]typ.Type, 0, runtimekind.All.Members())
+	for index := 0; ; index++ {
+		kind, ok := runtimekind.All.MemberAt(index)
+		if !ok {
+			return typ.MaterializeUnion(members)
+		}
+		members = append(members, typ.LiteralString(kind.Spelling()))
+	}
+}
 
 func baseDeclaration() declaration {
 	return declaration{detached: baseDetachedFunctions(),

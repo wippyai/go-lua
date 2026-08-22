@@ -1,9 +1,72 @@
 package equation
 
 import (
+	"bytes"
+
 	"github.com/wippyai/go-lua/analysis/engine/internal/composition"
+	"github.com/wippyai/go-lua/analysis/identity"
 	"github.com/wippyai/go-lua/internal/canonical"
 )
+
+// ActivationContext is the owner-issued context transition on which one
+// mounted activation row is valid.  The three identities are deliberately a
+// single unit: an activation may be unqualified (all three unavailable) or
+// it must carry the authenticated transition and both exact endpoints.  A
+// partially populated value is never a valid selector.
+//
+// The equation package does not infer or resolve these IDs.  The engine
+// construction boundary authenticates them against executioncontext.Directory
+// before issuing the row; equation only retains the exact identity tuple.
+type ActivationContext struct {
+	TransitionID  identity.ContentID
+	FromContextID identity.ContentID
+	ToContextID   identity.ContentID
+}
+
+func (context ActivationContext) Empty() bool {
+	return !context.TransitionID.Available() && !context.FromContextID.Available() && !context.ToContextID.Available()
+}
+
+func (context ActivationContext) Available() bool {
+	return context.TransitionID.Available() && context.FromContextID.Available() && context.ToContextID.Available()
+}
+
+func (context ActivationContext) WellFormed() bool {
+	return context.Empty() || context.Available()
+}
+
+func (context ActivationContext) Same(other ActivationContext) bool {
+	return context.WellFormed() && other.WellFormed() && context == other
+}
+
+func compareActivationContext(left, right ActivationContext) int {
+	if left.Empty() {
+		if right.Empty() {
+			return 0
+		}
+		return -1
+	}
+	if right.Empty() {
+		return 1
+	}
+	if comparison := bytes.Compare(left.TransitionID[:], right.TransitionID[:]); comparison != 0 {
+		return comparison
+	}
+	if comparison := bytes.Compare(left.FromContextID[:], right.FromContextID[:]); comparison != 0 {
+		return comparison
+	}
+	return bytes.Compare(left.ToContextID[:], right.ToContextID[:])
+}
+
+func writeActivationContext(writer *canonical.DigestWriter, context ActivationContext) bool {
+	if !context.WellFormed() {
+		return false
+	}
+	if context.Empty() {
+		return writer.Uint(0) == nil
+	}
+	return writer.Uint(1) == nil && writeContentID(writer, context.TransitionID) && writeContentID(writer, context.FromContextID) && writeContentID(writer, context.ToContextID)
+}
 
 // PairLocator is the closed symbolic locator for one dynamic relation. It is
 // deliberately only a seal input: a caller may describe a triple, but only a
@@ -12,10 +75,11 @@ type PairLocator struct {
 	Application composition.Key
 	Target      composition.Key
 	Endpoint    composition.Key
+	Context     ActivationContext
 }
 
 func (locator PairLocator) Available() bool {
-	return locator.Application.Available() && locator.Target.Available() && locator.Endpoint.Available()
+	return locator.Application.Available() && locator.Target.Available() && locator.Endpoint.Available() && locator.Context.WellFormed()
 }
 
 // Member is an unforgeable topology-owned solver tuple. Its identity is the
@@ -32,18 +96,19 @@ type memberTuple struct {
 	application composition.Key
 	target      composition.Key
 	endpoint    composition.Key
+	context     ActivationContext
 }
 
 func memberToken(member Member) memberTuple {
 	if !member.Available() {
 		return memberTuple{}
 	}
-	return memberTuple{binding: member.binding, application: member.locator.Application, target: member.locator.Target, endpoint: member.locator.Endpoint}
+	return memberTuple{binding: member.binding, application: member.locator.Application, target: member.locator.Target, endpoint: member.locator.Endpoint, context: member.locator.Context}
 }
 
 func writeMemberTuple(writer *canonical.DigestWriter, member Member) bool {
 	tuple := memberToken(member)
-	return tuple.binding.Available() && writeKey(writer, tuple.binding) && writeKey(writer, tuple.application) && writeKey(writer, tuple.target) && writeKey(writer, tuple.endpoint)
+	return tuple.binding.Available() && writeKey(writer, tuple.binding) && writeKey(writer, tuple.application) && writeKey(writer, tuple.target) && writeKey(writer, tuple.endpoint) && writeActivationContext(writer, tuple.context)
 }
 
 func (member Member) Available() bool {
@@ -82,7 +147,10 @@ func compareMember(left, right Member) int {
 	if comparison := compareKey(left.locator.Target, right.locator.Target); comparison != 0 {
 		return comparison
 	}
-	return compareKey(left.locator.Endpoint, right.locator.Endpoint)
+	if comparison := compareKey(left.locator.Endpoint, right.locator.Endpoint); comparison != 0 {
+		return comparison
+	}
+	return compareActivationContext(left.locator.Context, right.locator.Context)
 }
 
 func sameMember(left, right Member) bool {

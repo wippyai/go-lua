@@ -34,7 +34,7 @@ func SelectedEntry[P rulePrincipals, A ruleAuthorities]() rule.Spec {
 		Writes: "effect",
 		Owner:  "effect",
 		Issues: []rule.Issuance{
-			{Occurrence: "occurrence/call", Requirement: "requirement/unrestricted", Form: "issuance/call-stage", Input: "input/finish", Stage: "stage/call-effect"},
+			{Occurrence: "occurrence/call", Requirement: "program-requirement/unrestricted", Form: "program-form/call-effect"},
 		},
 		Lane:     rule.LaneMounted,
 		Semantic: "semantic/rule/effect/callsite-selected",
@@ -71,7 +71,7 @@ func OpaqueEntry[P rulePrincipals, A ruleAuthorities]() rule.Spec {
 		Writes: "effect",
 		Owner:  "effect",
 		Issues: []rule.Issuance{
-			{Occurrence: "occurrence/call", Requirement: "requirement/unrestricted", Form: "issuance/call-stage", Input: "input/finish", Stage: "stage/call-effect"},
+			{Occurrence: "occurrence/call", Requirement: "program-requirement/unrestricted", Form: "program-form/call-effect"},
 		},
 		Lane:     rule.LaneMounted,
 		Semantic: "semantic/rule/effect/callsite-opaque",
@@ -108,7 +108,7 @@ func BodyEntry[P rulePrincipals, A ruleAuthorities]() rule.Spec {
 		Writes: "effect",
 		Owner:  "effect",
 		Issues: []rule.Issuance{
-			{Occurrence: "occurrence/call", Requirement: "requirement/unrestricted", Form: "issuance/call-stage", Input: "input/finish", Stage: "stage/call-effect"},
+			{Occurrence: "occurrence/call", Requirement: "program-requirement/unrestricted", Form: "program-form/call-effect"},
 		},
 		Lane:     rule.LaneMounted,
 		Semantic: "semantic/rule/effect/callsite-body",

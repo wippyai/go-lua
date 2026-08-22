@@ -13,7 +13,6 @@ import (
 	staticdomain "github.com/wippyai/go-lua/domain/static"
 	"github.com/wippyai/go-lua/domain/type/authority"
 	"github.com/wippyai/go-lua/domain/type/channelselect"
-	"github.com/wippyai/go-lua/domain/type/typ"
 
 	"github.com/wippyai/go-lua/analysis/identity"
 	analysisworkspace "github.com/wippyai/go-lua/analysis/internal/workspace"
@@ -22,7 +21,7 @@ import (
 	linkmodule "github.com/wippyai/go-lua/analysis/program/link/module"
 	"github.com/wippyai/go-lua/analysis/program/link/mounted"
 	"github.com/wippyai/go-lua/analysis/result"
-	"github.com/wippyai/go-lua/analysis/schema"
+	"github.com/wippyai/go-lua/analysis/schema/executioncontext"
 	"github.com/wippyai/go-lua/analysis/schema/ingress"
 	"github.com/wippyai/go-lua/analysis/schema/modulecomposition"
 	programschema "github.com/wippyai/go-lua/analysis/schema/program"
@@ -49,29 +48,33 @@ func diagnosticRuleForLinkRole(binding *composite.ProgramBinding, role engine.Ru
 	return rules.DiagnosticForCapability(role)
 }
 
-func mountedCapability(binding *composite.ProgramBinding, key schema.Key) (engine.RuleSlotCapability, bool) {
+func mountedProgramBindings(directory *scalarlower.MountDirectory, binding *composite.ProgramBinding) ([]engine.MountedProgramRole, []engine.MountedProgramFactor, bool) {
+	if directory == nil || binding == nil {
+		return nil, nil, false
+	}
 	rules := binding.Rules()
 	if rules == nil {
-		return engine.RuleSlotCapability{}, false
+		return nil, nil, false
 	}
-	capability, ok := rules.CapabilityByKey(key)
-	return capability, ok && capability.Mounted()
-}
-
-func mountedProgramRoles(directory *scalarlower.RoleDirectory, binding *composite.ProgramBinding) ([]engine.MountedProgramRole, bool) {
-	if directory == nil || binding == nil {
-		return nil, false
-	}
-	roles := make([]engine.MountedProgramRole, 0, directory.Count())
-	for index := 0; index < directory.Count(); index++ {
-		key, scalar, rowOK := directory.At(index)
-		capability, capabilityOK := mountedCapability(binding, key)
+	roles := make([]engine.MountedProgramRole, 0, directory.RoleCount())
+	for index := 0; index < directory.RoleCount(); index++ {
+		key, scalar, rowOK := directory.RoleAt(index)
+		capability, capabilityOK := rules.MountedCapabilityForArtifactRole(key)
 		if !rowOK || !capabilityOK {
-			return nil, false
+			return nil, nil, false
 		}
 		roles = append(roles, engine.MountedProgramRole{Scalar: scalar, Capability: capability})
 	}
-	return roles, true
+	factors := make([]engine.MountedProgramFactor, 0, directory.FactorCount())
+	for index := 0; index < directory.FactorCount(); index++ {
+		key, scalar, rowOK := directory.FactorAt(index)
+		capability, capabilityOK := binding.FactorCapability(key)
+		if !rowOK || !capabilityOK {
+			return nil, nil, false
+		}
+		factors = append(factors, engine.MountedProgramFactor{Scalar: scalar, Capability: capability})
+	}
+	return roles, factors, true
 }
 
 func linkBootstrapWitness(state *compiledState, binding *composite.ProgramBinding) (engine.ProgramBootstrap, bool) {
@@ -122,8 +125,8 @@ func (state *compiledState) newProgramBinding(source *link.Link, compilation com
 		return nil, anadiag.ProgramBindingFailureStatic, composite.MountFailure{}, composite.BindFailure{}
 	}
 	static, _, err := staticdomain.SealMountedPrograms(staticdomain.MountContext{
-		LinkID:   state.sourceID,
-		Target:   staticTarget,
+		LinkID: state.sourceID,
+		Target: staticTarget,
 	}, types, staticMounts)
 	if err != nil || static == nil {
 		return nil, anadiag.ProgramBindingFailureStatic, composite.MountFailure{}, composite.BindFailure{}
@@ -137,10 +140,10 @@ func (state *compiledState) newProgramBinding(source *link.Link, compilation com
 		Artifacts:       state.artifacts.mounts,
 		StaticAuthority: static,
 	})
-	// Topology and the activation catalog are derivations over several sealed
-	// factors at once, so neither is any one axis's authority to mount. The mount
-	// phase derives both itself, after every mount has sealed, and names the
-	// derivation that refused in its own verdict.
+	// Topology and formal mounted-actual completeness are derivations over
+	// several sealed factors at once, so neither is any one axis's authority to
+	// mount. The mount phase derives both after every mount has sealed and names
+	// the derivation that refused in its own verdict.
 	if mountFailure.Available() {
 		return nil, anadiag.ProgramBindingFailureFromMount(mountFailure), mountFailure, composite.BindFailure{}
 	}
@@ -153,8 +156,9 @@ func (state *compiledState) newProgramBinding(source *link.Link, compilation com
 
 // publishComposition writes the Link-lifetime StorageEngine prefix. ChannelSelect
 // occupies snapshot slot 0, so a select-only column seals without factor facts.
-func (state *compiledState) publishComposition(module *linkmodule.Component) bool {
-	if state == nil || module == nil || state.binding == nil || state.binding.SchemaBinding() == nil || state.artifacts == nil {
+func (state *compiledState) publishComposition(module *linkmodule.Component, contextDirectory executioncontext.Directory) bool {
+	if state == nil || module == nil || state.binding == nil || state.binding.SchemaBinding() == nil || state.artifacts == nil ||
+		!contextDirectory.Available() || contextDirectory.LinkID() != state.sourceID {
 		return false
 	}
 	publication, publicationOK := state.compilation.Publication()
@@ -189,31 +193,37 @@ func (state *compiledState) publishComposition(module *linkmodule.Component) boo
 	if !directoryOK {
 		return false
 	}
-	imports, caches, generations, outcomes, terminals, compositionOK := module.BuildCompositionRows(state.sourceID, state.artifacts.mounts)
+	imports, caches, transitions, generations, outcomes, terminals, origins, compositionOK := module.BuildCompositionRows(state.sourceID, state.artifacts.mounts, contextDirectory)
 	if !compositionOK {
 		return false
 	}
 	importDenominator, importDenominatorOK := modulecomposition.ImportDenominatorID(state.sourceID)
 	cacheDenominator, cacheDenominatorOK := modulecomposition.CacheDenominatorID(state.sourceID)
+	transitionDenominator, transitionDenominatorOK := modulecomposition.ModuleCallTransitionDenominatorID(state.sourceID)
 	generationDenominator, generationDenominatorOK := modulecomposition.GenerationDenominatorID(state.sourceID)
 	outcomeDenominator, outcomeDenominatorOK := modulecomposition.OutcomeDenominatorID(state.sourceID)
 	terminalDenominator, terminalDenominatorOK := modulecomposition.TerminalDenominatorID(state.sourceID)
+	originDenominator, originDenominatorOK := modulecomposition.ModuleExportCallableOriginDenominatorID(state.sourceID)
 	importContent, importContentOK := modulecomposition.ImportContent(imports, importDenominator)
 	cacheContent, cacheContentOK := modulecomposition.CacheContent(caches, cacheDenominator)
+	transitionContent, transitionContentOK := modulecomposition.ModuleCallTransitionContent(transitions, transitionDenominator)
 	generationContent, generationContentOK := modulecomposition.GenerationContent(generations, generationDenominator)
 	outcomeContent, outcomeContentOK := modulecomposition.OutcomeContent(outcomes, outcomeDenominator)
 	terminalContent, terminalContentOK := modulecomposition.TerminalContent(terminals, terminalDenominator)
-	if !importDenominatorOK || !cacheDenominatorOK || !generationDenominatorOK || !outcomeDenominatorOK || !terminalDenominatorOK ||
-		!importContentOK || !cacheContentOK || !generationContentOK || !outcomeContentOK || !terminalContentOK {
+	originContent, originContentOK := modulecomposition.ModuleExportCallableOriginContent(origins, originDenominator)
+	if !importDenominatorOK || !cacheDenominatorOK || !transitionDenominatorOK || !generationDenominatorOK || !outcomeDenominatorOK || !terminalDenominatorOK || !originDenominatorOK ||
+		!importContentOK || !cacheContentOK || !transitionContentOK || !generationContentOK || !outcomeContentOK || !terminalContentOK || !originContentOK {
 		return false
 	}
 	importWrite, importMinted := engine.MintColumnWrite[identity.ContentID, modulecomposition.ResolvedImport](state.binding.SchemaBinding(), modulecomposition.ImportOutputKey, modulecomposition.ImportAxisKey)
 	cacheWrite, cacheMinted := engine.MintColumnWrite[identity.ContentID, modulecomposition.CacheIngress](state.binding.SchemaBinding(), modulecomposition.CacheOutputKey, modulecomposition.CacheAxisKey)
+	transitionWrite, transitionMinted := engine.MintColumnWrite[identity.ContentID, modulecomposition.ModuleCallTransition](state.binding.SchemaBinding(), modulecomposition.ModuleCallTransitionOutputKey, modulecomposition.ModuleCallTransitionAxisKey)
 	generationWrite, generationMinted := engine.MintColumnWrite[identity.ContentID, modulecomposition.InitGeneration](state.binding.SchemaBinding(), modulecomposition.GenerationOutputKey, modulecomposition.GenerationAxisKey)
 	outcomeWrite, outcomeMinted := engine.MintColumnWrite[identity.ContentID, modulecomposition.InitOutcome](state.binding.SchemaBinding(), modulecomposition.OutcomeOutputKey, modulecomposition.OutcomeAxisKey)
 	terminalWrite, terminalMinted := engine.MintColumnWrite[identity.ContentID, modulecomposition.InitTerminal](state.binding.SchemaBinding(), modulecomposition.TerminalOutputKey, modulecomposition.TerminalAxisKey)
-	if !importMinted || !cacheMinted || !generationMinted || !outcomeMinted || !terminalMinted ||
-		!importWrite.Available() || !cacheWrite.Available() || !generationWrite.Available() || !outcomeWrite.Available() || !terminalWrite.Available() {
+	originWrite, originMinted := engine.MintColumnWrite[identity.ContentID, modulecomposition.ModuleExportCallableOrigin](state.binding.SchemaBinding(), modulecomposition.ModuleExportCallableOriginOutputKey, modulecomposition.ModuleExportCallableOriginAxisKey)
+	if !importMinted || !cacheMinted || !transitionMinted || !generationMinted || !outcomeMinted || !terminalMinted || !originMinted ||
+		!importWrite.Available() || !cacheWrite.Available() || !transitionWrite.Available() || !generationWrite.Available() || !outcomeWrite.Available() || !terminalWrite.Available() || !originWrite.Available() {
 		return false
 	}
 	builder := snapshot.NewBuilder(schemaID, store, identity.Generation(1))
@@ -229,6 +239,9 @@ func (state *compiledState) publishComposition(module *linkmodule.Component) boo
 	if err := engine.PublishColumn(cacheWrite, &builder, cacheContent); err != nil {
 		return false
 	}
+	if err := engine.PublishColumn(transitionWrite, &builder, transitionContent); err != nil {
+		return false
+	}
 	if err := engine.PublishColumn(generationWrite, &builder, generationContent); err != nil {
 		return false
 	}
@@ -236,6 +249,9 @@ func (state *compiledState) publishComposition(module *linkmodule.Component) boo
 		return false
 	}
 	if err := engine.PublishColumn(terminalWrite, &builder, terminalContent); err != nil {
+		return false
+	}
+	if err := engine.PublishColumn(originWrite, &builder, originContent); err != nil {
 		return false
 	}
 	sealed, err := builder.Seal()
@@ -358,35 +374,19 @@ func (artifacts *compiledArtifactSet) sealDeclaredConformanceTypes() bool {
 // earned no such abstention, so publishing that mask for it would prove
 // conformance the declaration never stated.
 func declaredTypeProjection(types *typeauthority.Authority, declared identity.ContentID) (anadiag.DeclaredType, bool) {
-	ref, referenced := types.FindByReferenceID(declared)
-	value, resolved := types.Resolve(ref)
-	if !referenced || !resolved || value == nil {
+	projection, projected := types.ProjectionByReferenceID(declared)
+	may, mayOK := projection.MayRuntimeKinds()
+	name, nameOK := projection.Name()
+	root, rootOK := projection.RootKind()
+	if !projected || !mayOK || !nameOK || !rootOK {
 		return anadiag.DeclaredType{}, false
 	}
-	row := anadiag.DeclaredType{May: staticdomain.MayRuntimeKinds(value), Spelling: declaredTypeSpelling(value)}
-	return row, row.Available()
-}
-
-// declaredTypeSpelling names a declaration the way a finding refers to it: by
-// the name it was declared under when it carries one, and by its structural
-// form otherwise. A report payload admits one token, so a name the payload
-// cannot render falls back to the form rather than dropping the finding.
-func declaredTypeSpelling(value typ.Type) string {
-	name := ""
-	switch named := value.(type) {
-	case *typ.Alias:
-		name = named.Name
-	case *typ.Interface:
-		name = named.Name
-	case *typ.Generic:
-		name = named.Name
-	case *typ.Recursive:
-		name = named.Name
-	}
+	spelling := root.String()
 	if _, renderable := anadiag.NewTargetType(name); renderable {
-		return name
+		spelling = name
 	}
-	return typ.UnwrapStructuralWrappers(value).Kind().String()
+	row := anadiag.DeclaredType{May: may, Spelling: spelling}
+	return row, row.Available()
 }
 
 // compileProgramArtifacts compiles each distinct ProgramID once and records

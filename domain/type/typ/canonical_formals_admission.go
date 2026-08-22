@@ -236,7 +236,7 @@ func canonicalFormalsUvarintSize(value uint64) int {
 	return size
 }
 
-func (e *CanonicalEncoder) appendCanonicalTypes(destination, source []Type) ([]Type, error) {
+func (e *canonicalEncoder) appendCanonicalTypes(destination, source []Type) ([]Type, error) {
 	need := len(destination) + len(source)
 	if need < len(destination) || need < len(source) {
 		return nil, invalidCanonicalFormals("child admission")

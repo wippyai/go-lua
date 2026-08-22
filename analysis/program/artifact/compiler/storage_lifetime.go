@@ -13,12 +13,15 @@ import (
 //
 //   - a local Cell owned by the parentless module Body is module-owned;
 //   - a local Cell owned by another proven Body is frame-local;
+//   - a local Cell participating in a proven closure capture is closure-owned
+//     retained storage, because its environment must outlive the introducing
+//     frame without becoming module-entry state;
 //   - a global Cell remains Unknown until a mounted Host mapping proves
 //     cross-context authority.
 //
-// In particular, this pass never treats the CellGlobal spelling as proof of
-// process-global storage. Unknown is safer than silently leaving a retained
-// allocation Stack or inventing a Shared owner.
+// Unknown is therefore an authenticated semantic state for an authored global
+// whose external owner has not yet been joined. It is never a default for a
+// malformed Cell, unavailable Body, or invalid capture relation.
 func (compiler *compiler) copyStorageCellLifetimesFailure() CompileFailure {
 	if compiler == nil || compiler.input == nil || !compiler.input.Available() {
 		return compileFailure(CompileStageBodyOutcomes, CompileRowBody, -1, -1, CompileReasonBodyUnavailable)
@@ -29,14 +32,32 @@ func (compiler *compiler) copyStorageCellLifetimesFailure() CompileFailure {
 	}
 
 	view := compiler.input.Flow()
+	if !view.ContentID().Available() || !view.Authored().ContentID().Available() {
+		return compileFailure(CompileStageBodyOutcomes, CompileRowBody, -1, -1, CompileReasonBodyUnavailable)
+	}
 	cells := view.Authored().Storage().Cells()
 	bodyForest := view.Body()
-	// A local Cell participating in a closure capture is not proven to die
-	// with the Body that introduced it.  Flow currently publishes the capture
-	// edge, but does not publish a non-escape certificate for the captured
-	// storage itself.  Keep those cells Unknown until such a proof exists;
-	// treating them as Frame would allow a retained closure to point at a
-	// reclaimed frame allocation.
+	if bodyForest == nil {
+		return compileFailure(CompileStageBodyOutcomes, CompileRowBody, -1, -1, CompileReasonBodyUnavailable)
+	}
+	entry, entryOK := bodyForest.Entry()
+	if !entryOK || entry == 0 {
+		return compileFailure(CompileStageBodyOutcomes, CompileRowBody, -1, -1, CompileReasonBodyUnavailable)
+	}
+	validBody := func(body keyspace.Term) bool {
+		if body == entry {
+			return true
+		}
+		_, ok := bodyForest.Activation(body)
+		return ok
+	}
+	// A capture is positive evidence that the closure environment, rather
+	// than the introducing frame, owns the captured storage. The environment
+	// remains within the mounted module until a later publication/return rule
+	// proves a stronger boundary, so Closure is the least sound class in this
+	// neutral vocabulary. This avoids both an unsound Frame result and an
+	// unauthenticated Unknown result without conflating the closure with the
+	// module entry owner.
 	captured := make(map[keyspace.Term]struct{})
 	functions := view.Authored().Functions()
 	for functionIndex := 0; functionIndex < functions.Count(); functionIndex++ {
@@ -53,14 +74,22 @@ func (compiler *compiler) copyStorageCellLifetimesFailure() CompileFailure {
 			if !captureOK {
 				return compileFailure(CompileStageBodyOutcomes, CompileRowBody, functionIndex, captureIndex, CompileReasonBodyUnavailable)
 			}
+			innerKind, innerBody, innerKey, innerOK := cells.Get(inner)
+			outerKind, outerBody, outerKey, outerOK := cells.Get(outer)
+			if !innerOK || !outerOK || inner == outer ||
+				innerKind != authored.CellLocal || outerKind != authored.CellLocal ||
+				innerKey != 0 || outerKey != 0 || innerBody == 0 || outerBody == 0 {
+				return compileFailure(CompileStageBodyOutcomes, CompileRowBody, functionIndex, captureIndex, CompileReasonBodyUnavailable)
+			}
+			if !validBody(innerBody) {
+				return compileFailure(CompileStageBodyOutcomes, CompileRowBody, functionIndex, captureIndex, CompileReasonBodyUnavailable)
+			}
+			if !validBody(outerBody) {
+				return compileFailure(CompileStageBodyOutcomes, CompileRowBody, functionIndex, captureIndex, CompileReasonBodyUnavailable)
+			}
 			captured[inner] = struct{}{}
 			captured[outer] = struct{}{}
 		}
-	}
-	var entry keyspace.Term
-	entryOK := false
-	if bodyForest != nil {
-		entry, entryOK = bodyForest.Entry()
 	}
 	compiler.publication.Lifecycle.StorageCellLifetimes = make([]lifecycle.StorageCellLifetime, 0, cells.Count())
 	for index := 0; index < cells.Count(); index++ {
@@ -68,8 +97,11 @@ func (compiler *compiler) copyStorageCellLifetimesFailure() CompileFailure {
 		if !termOK {
 			return compileFailure(CompileStageBodyOutcomes, CompileRowBody, index, -1, CompileReasonBodyUnavailable)
 		}
-		kind, body, _, cellOK := cells.Get(term)
+		kind, body, key, cellOK := cells.Get(term)
 		if !cellOK {
+			return compileFailure(CompileStageBodyOutcomes, CompileRowBody, index, -1, CompileReasonBodyUnavailable)
+		}
+		if kind != authored.CellLocal && kind != authored.CellGlobal {
 			return compileFailure(CompileStageBodyOutcomes, CompileRowBody, index, -1, CompileReasonBodyUnavailable)
 		}
 		cellID, idOK := rowidentity.StorageCellID(programID, view, term)
@@ -77,36 +109,39 @@ func (compiler *compiler) copyStorageCellLifetimesFailure() CompileFailure {
 			return compileFailure(CompileStageBodyOutcomes, CompileRowBody, index, -1, CompileReasonBodyUnavailable)
 		}
 
-		lifetime := lifecycle.StorageLifetimeUnknown
 		switch kind {
 		case authored.CellLocal:
-			// The exact module entry Body is the only lexical owner proven to
-			// outlive a frame. A valid non-entry Body is frame-local; malformed
-			// or unavailable Body evidence stays Unknown.
-			if entryOK && body == entry {
+			if key != 0 || body == 0 {
+				return compileFailure(CompileStageBodyOutcomes, CompileRowBody, index, -1, CompileReasonBodyUnavailable)
+			}
+			if !validBody(body) {
+				return compileFailure(CompileStageBodyOutcomes, CompileRowBody, index, -1, CompileReasonBodyUnavailable)
+			}
+			lifetime := lifecycle.StorageLifetimeFrame
+			if body == entry {
 				lifetime = lifecycle.StorageLifetimeModule
 			} else if _, escapes := captured[term]; escapes {
-				// Capture membership is positive escape evidence, not a
-				// lifetime classification.  Without an explicit non-escape
-				// proof, preserve Unknown for both sides of the edge.
-				lifetime = lifecycle.StorageLifetimeUnknown
-			} else if bodyForest != nil {
-				if _, validBody := bodyForest.Activation(body); validBody {
-					lifetime = lifecycle.StorageLifetimeFrame
-				}
+				lifetime = lifecycle.StorageLifetimeClosure
 			}
+			row, rowOK := lifecycle.NewStorageCellLifetime(cellID, lifetime)
+			if !rowOK {
+				return compileFailure(CompileStageBodyOutcomes, CompileRowBody, index, -1, CompileReasonBodyUnavailable)
+			}
+			compiler.publication.Lifecycle.StorageCellLifetimes = append(compiler.publication.Lifecycle.StorageCellLifetimes, row)
 		case authored.CellGlobal:
+			if body != 0 || key == 0 {
+				return compileFailure(CompileStageBodyOutcomes, CompileRowBody, index, -1, CompileReasonBodyUnavailable)
+			}
 			// Host/global authority is Link-owned and is intentionally joined
 			// later by Value. CellGlobal alone is not process-global proof.
-			lifetime = lifecycle.StorageLifetimeUnknown
+			row, rowOK := lifecycle.NewStorageCellLifetime(cellID, lifecycle.StorageLifetimeUnknown)
+			if !rowOK {
+				return compileFailure(CompileStageBodyOutcomes, CompileRowBody, index, -1, CompileReasonBodyUnavailable)
+			}
+			compiler.publication.Lifecycle.StorageCellLifetimes = append(compiler.publication.Lifecycle.StorageCellLifetimes, row)
 		default:
-			lifetime = lifecycle.StorageLifetimeUnknown
-		}
-		row, rowOK := lifecycle.NewStorageCellLifetime(cellID, lifetime)
-		if !rowOK {
 			return compileFailure(CompileStageBodyOutcomes, CompileRowBody, index, -1, CompileReasonBodyUnavailable)
 		}
-		compiler.storageCellLifetimes = append(compiler.storageCellLifetimes, row)
 	}
 	return CompileFailure{}
 }

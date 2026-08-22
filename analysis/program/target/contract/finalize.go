@@ -40,5 +40,13 @@ func New(input Input) (*Contract, error) {
 		return nil, err
 	}
 	contract.counts = counts
+	// The whole-contract identity is derived here, once, after every table the
+	// canonical encoding reads is final. A contract whose identity cannot be
+	// derived is malformed and never escapes this constructor.
+	id, err := contract.sealContentID()
+	if err != nil {
+		return nil, err
+	}
+	contract.contractContentID = id
 	return contract, nil
 }

@@ -7,6 +7,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/identity"
 	"github.com/wippyai/go-lua/analysis/program/target/vocabulary"
 	"github.com/wippyai/go-lua/domain/pack"
+	"github.com/wippyai/go-lua/domain/static"
 )
 
 const (
@@ -50,14 +51,6 @@ func (atom FormalAtom) ContentID() (identity.ContentID, bool) {
 		return identity.ContentID{}, false
 	}
 	return atom.id, true
-}
-
-// CallRoot returns the reusable Pack call-root template consumed by beta.
-func (atom FormalAtom) CallRoot() (pack.FormalCallRoot, bool) {
-	if !atom.Valid() {
-		return pack.FormalCallRoot{}, false
-	}
-	return atom.call, true
 }
 
 // Same compares the complete typed formal capability, not only its semantic
@@ -354,21 +347,21 @@ func (a *Algebra) bindFormalAtom(root Root, mounted MountedCall, formal, expecte
 	return binding, binding.valid()
 }
 
-func (a *Algebra) formalCallRoot(mounted MountedCall, owner vocabulary.Operation) (pack.FormalCallRoot, pack.FormalCallTypeArguments, identity.ContentID, bool) {
+func (a *Algebra) formalCallRoot(mounted MountedCall, owner vocabulary.Operation) (pack.FormalCallRoot, static.TypeArgumentSequence, identity.ContentID, bool) {
 	application, module, occurrence, ok := a.MountedCallIdentity(mounted)
-	root, rootOK := a.RootForMountedCall(mounted)
-	if !ok || !a.Valid() || !rootOK || !a.callInRootID(root, application) {
-		return pack.FormalCallRoot{}, pack.FormalCallTypeArguments{}, identity.ContentID{}, false
+	_, rootOK := a.RootForMountedCall(mounted)
+	if !ok || !a.Valid() || !rootOK {
+		return pack.FormalCallRoot{}, static.TypeArgumentSequence{}, identity.ContentID{}, false
 	}
 	if _, available := a.applicationOperation(application, owner); !available {
-		return pack.FormalCallRoot{}, pack.FormalCallTypeArguments{}, identity.ContentID{}, false
+		return pack.FormalCallRoot{}, static.TypeArgumentSequence{}, identity.ContentID{}, false
 	}
 	formal, formalOK := a.packs.FormalCallRootForMountedSemantic(module, occurrence)
-	types, typesOK := a.packs.FormalTypeArgumentsForMountedSemantic(module, occurrence)
+	types, typesOK := a.packs.TypeArgumentSequenceForMountedSemantic(module, occurrence)
 	return formal, types, application, formalOK && typesOK
 }
 
-func (a *Algebra) ordinaryTypeFormalDescriptor(applicationID identity.ContentID, arguments pack.FormalCallTypeArguments, owner vocabulary.Operation, effect int) (identity.ContentID, bool) {
+func (a *Algebra) ordinaryTypeFormalDescriptor(applicationID identity.ContentID, arguments static.TypeArgumentSequence, owner vocabulary.Operation, effect int) (identity.ContentID, bool) {
 	count := a.contract.Operations.EffectTypeArgumentCount(owner, effect)
 	positions := make([]vocabulary.TypeFormal, count)
 	for index := range positions {
@@ -381,7 +374,7 @@ func (a *Algebra) ordinaryTypeFormalDescriptor(applicationID identity.ContentID,
 	return a.selectedTypeFormalDescriptor(applicationID, arguments, owner, positions)
 }
 
-func (a *Algebra) callbackTypeFormalDescriptor(applicationID identity.ContentID, arguments pack.FormalCallTypeArguments, owner vocabulary.Operation, callback vocabulary.CallbackID, effect int) (identity.ContentID, bool) {
+func (a *Algebra) callbackTypeFormalDescriptor(applicationID identity.ContentID, arguments static.TypeArgumentSequence, owner vocabulary.Operation, callback vocabulary.CallbackID, effect int) (identity.ContentID, bool) {
 	count := a.contract.Operations.CallbackEffectTypeArgumentCount(callback, effect)
 	positions := make([]vocabulary.TypeFormal, count)
 	for index := range positions {
@@ -395,10 +388,10 @@ func (a *Algebra) callbackTypeFormalDescriptor(applicationID identity.ContentID,
 }
 
 // selectedTypeFormalDescriptor uses Boundary only as the exact live
-// call/Target-ABI admission proof. Reusable bytes contain Pack's ordered
-// canonical semantic type descriptor plus Target formal positions; Boundary's
-// Program/Static-fenced correspondence ID and raw Terms never enter them.
-func (a *Algebra) selectedTypeFormalDescriptor(applicationID identity.ContentID, formalArguments pack.FormalCallTypeArguments, owner vocabulary.Operation, positions []vocabulary.TypeFormal) (identity.ContentID, bool) {
+// call/Target-ABI admission proof. Reusable bytes contain Static's canonical
+// semantic sequence identity plus Target formal positions; Boundary's
+// Program-fenced correspondence ID and raw Terms never enter them.
+func (a *Algebra) selectedTypeFormalDescriptor(applicationID identity.ContentID, formalArguments static.TypeArgumentSequence, owner vocabulary.Operation, positions []vocabulary.TypeFormal) (identity.ContentID, bool) {
 	if len(positions) == 0 {
 		return identity.ContentID{}, true
 	}
