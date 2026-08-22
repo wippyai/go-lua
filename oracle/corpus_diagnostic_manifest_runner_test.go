@@ -6,6 +6,7 @@ import (
 	anadiag "github.com/wippyai/go-lua/analysis/diagnostic"
 	"os"
 	"path/filepath"
+	"reflect"
 	"sort"
 	"strings"
 	"testing"
@@ -762,8 +763,12 @@ func TestCorpusDiagnosticManifestRunnerCensusPathLaw(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if catalog.inventory.projects != 914 || catalog.inventory.structuredFindings != 136 || catalog.inventory.inlineErrors+catalog.inventory.inlineWarnings != 714 {
-		t.Fatalf("census = projects:%d structured:%d inline:%d", catalog.inventory.projects, catalog.inventory.structuredFindings, catalog.inventory.inlineErrors+catalog.inventory.inlineWarnings)
+	inventory, err := frozenCorpusDiagnosticExpectationInventory(t)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(catalog.inventory, inventory) {
+		t.Fatalf("runner census diverged from the shared fixture inventory: runner=%+v shared=%+v", catalog.inventory, inventory)
 	}
 	// Keep this path cheap: it must not compile or solve any unsupported family.
 	if len(catalog.structuredByCode) != 34 {

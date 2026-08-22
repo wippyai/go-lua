@@ -536,6 +536,7 @@ func corpusHarnessExecuteLink(t testing.TB, run *corpusHarnessRun, mode corpusHa
 		run.cost.compile = time.Since(started)
 		run.compileDiagnostics = compileDiagnostics
 		if compileStatus != analysis.CompileComplete || plan == nil {
+			run.status = corpusHarnessAnalyzeStatusForCompile(compileStatus)
 			return run, "compile", fmt.Errorf("compile=%v plan=%t stage=%v binding=%v axis=%v seal=%v schedule=%d diagnostics=%+v",
 				compileStatus, plan != nil, compileDiagnostics.AssembleStage, compileDiagnostics.Binding, compileDiagnostics.Axis,
 				compileDiagnostics.AssembleSeal, compileDiagnostics.AssembleScheduleOrdinal, compileDiagnostics)
@@ -922,6 +923,39 @@ func corpusHarnessStatusName(status analysis.AnalyzeStatus) string {
 		return "complete"
 	default:
 		return fmt.Sprintf("unknown(%d)", status)
+	}
+}
+
+// corpusHarnessAnalyzeStatusForCompile preserves the public Analyze contract
+// on harness paths that retain a compiled Plan for diagnostic inspection.
+// CompileInvalid is invalid input; every other unsuccessful compile is an
+// unsupported analyzer surface. A complete compile is not a complete analysis
+// until solve and detach have succeeded.
+func corpusHarnessAnalyzeStatusForCompile(status analysis.CompileStatus) analysis.AnalyzeStatus {
+	switch status {
+	case analysis.CompileInvalid:
+		return analysis.AnalyzeInvalid
+	case analysis.CompileUnsupported, analysis.CompileComplete:
+		return analysis.AnalyzeUnsupported
+	default:
+		return analysis.AnalyzeUnsupported
+	}
+}
+
+func TestCorpusHarnessCompileStatusPreservesAnalyzeContract(t *testing.T) {
+	tests := []struct {
+		compile analysis.CompileStatus
+		want    analysis.AnalyzeStatus
+	}{
+		{analysis.CompileInvalid, analysis.AnalyzeInvalid},
+		{analysis.CompileUnsupported, analysis.AnalyzeUnsupported},
+		// Compilation alone never proves a complete analysis.
+		{analysis.CompileComplete, analysis.AnalyzeUnsupported},
+	}
+	for _, test := range tests {
+		if got := corpusHarnessAnalyzeStatusForCompile(test.compile); got != test.want {
+			t.Fatalf("compile status %d maps to analyze status %d, want %d", test.compile, got, test.want)
+		}
 	}
 }
 
