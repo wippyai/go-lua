@@ -47,7 +47,7 @@ func buildNativeBranchPublication(
 		}
 		observationID := selectedObservation.Key
 		observation, readable := publishedObservation[valuedomain.ValueSummaryObservation](published, observationPlan, observationID)
-		if !observationID.Available() || !readable || !validNativeValueSummary(observation, len(geometry.values)) {
+		if !observationID.Available() || !readable || !validNativeValueSummary(observation, schema.CoordinateCount()) {
 			return nil, false
 		}
 		observed[lookup] = observation
