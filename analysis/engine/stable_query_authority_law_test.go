@@ -257,6 +257,7 @@ func buildReceiptQueryMatrixFixtureWithOptions(t testing.TB, count int, observed
 			t.Fatal("sealed matrix artifact rule")
 		}
 	}
+	installArtifactStageTable(t, spec)
 	template, templateOK := rows.NewArtifactScalarTemplate(spec)
 	mount := MountedProgramArtifact{Template: template, Roles: []MountedProgramRole{{Scalar: role, Capability: capability}}, Module: mountID}
 	bootstrap, bootstrapOK := NewProgramBootstrap(programMatrixID(70), programMatrixID(71))

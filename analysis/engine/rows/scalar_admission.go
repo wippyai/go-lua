@@ -5,6 +5,7 @@ import (
 
 	"github.com/wippyai/go-lua/analysis/identity"
 	"github.com/wippyai/go-lua/analysis/schema"
+	schemaissuance "github.com/wippyai/go-lua/analysis/schema/issuance"
 )
 
 // ValidArtifactScalarEdgeProof is the scalar route proof of one structural
@@ -158,6 +159,17 @@ func validArtifactScalarSpec(spec *ArtifactScalarSpec) bool {
 		if !scalarSpecOwnsRole(state, rule.Role) || !rule.Stage.Available() || !rule.Point.Available() || !rule.ID.Available() {
 			return false
 		}
+		stage, stageOK := state.stages.Entry(rule.Stage, schemaissuance.KindStage)
+		if state.stagesSet {
+			if !stageOK || stage.Native() != rule.Native || stage.ConsumesInput() != rule.Input.Available() {
+				return false
+			}
+		} else if rule.Native {
+			// Native rows are interpreted by the engine after mounting. They
+			// therefore require the canonical schema witness at this seal; an
+			// opaque key plus a caller-supplied bool is not authority.
+			return false
+		}
 		if _, pointOK := points[rule.Point]; !pointOK {
 			return false
 		}
@@ -202,6 +214,32 @@ func validArtifactScalarSpec(spec *ArtifactScalarSpec) bool {
 			if !predecessorOK || predecessor.To != rule.Input {
 				return false
 			}
+		}
+	}
+	for _, geometry := range stageGeometry {
+		stage, stageOK := state.stages.Entry(geometry.stage, schemaissuance.KindStage)
+		if !stageOK || !stage.Native() {
+			return false
+		}
+		predecessors := stage.Predecessors()
+		if len(predecessors) == 0 {
+			return false
+		}
+		owner, inputIsNative := stageGeometry[geometry.input]
+		admitted := false
+		for _, predecessorKey := range predecessors {
+			predecessor, predecessorOK := state.stages.Entry(predecessorKey, schemaissuance.KindStage)
+			if !predecessorOK {
+				return false
+			}
+			if predecessor.Native() {
+				admitted = admitted || inputIsNative && owner.stage == predecessorKey
+			} else {
+				admitted = admitted || !inputIsNative
+			}
+		}
+		if !admitted {
+			return false
 		}
 	}
 	bodies := make(map[identity.ContentID]struct{}, len(state.Bodies))

@@ -237,6 +237,9 @@ func newSelectedOverlayLawFixtureWithOptions(t testing.TB, options selectedOverl
 	if !ordinaryRoleOK || !activationRoleOK || !artifact.AddRule(triggerRule) || !artifact.AddRule(rows.ArtifactScalarRule{Role: ordinaryRole, Stage: programissuance.StageLocal, Point: points[1], Input: points[0], ID: selectedOverlayLawID(targetOccurrence)}) || !artifact.AddRule(rows.ArtifactScalarRule{Role: ordinaryRole, Stage: programissuance.StageBase, Point: points[2], ID: selectedOverlayLawID(bodyOccurrence)}) {
 		t.Fatal("selected overlay artifact rules")
 	}
+	if options.nativeStage {
+		installArtifactStageTable(t, artifact)
+	}
 	body, bodyOK := artifact.AddBody(rows.ArtifactScalarBody{ID: selectedOverlayLawID(bodyID)})
 	if !bodyOK || !artifact.AddBodyEntry(body, points[1]) || !artifact.AddBodyExit(body, points[2]) {
 		t.Fatal("selected overlay artifact body")

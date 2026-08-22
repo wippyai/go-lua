@@ -251,6 +251,7 @@ func newHeterogeneousQueryLawFixture(t testing.TB) heterogeneousQueryLawFixture 
 	bodyOK = bodyOK && spec.AddBodyEntry(body, pointInitial) && spec.AddBodyExit(body, pointOutput)
 	ruleRowsOK := spec.AddRule(rows.ArtifactScalarRule{Role: roleA, Stage: programissuance.StageCallDispatch, Point: pointOutput, Input: pointInitial, ID: heterogeneousQueryLawID(10), Native: true})
 	ruleRowsOK = ruleRowsOK && spec.AddRule(rows.ArtifactScalarRule{Role: roleB, Stage: programissuance.StageCallDispatch, Point: pointOutput, Input: pointInitial, ID: heterogeneousQueryLawID(11), Native: true})
+	installArtifactStageTable(t, spec)
 	template, templateOK := rows.NewArtifactScalarTemplate(spec)
 	bootstrap, bootstrapOK := NewProgramBootstrap(heterogeneousQueryLawID(12), heterogeneousQueryLawID(13))
 	cellA, cellAOK := ruleImplementationA.sealedRuleCell()

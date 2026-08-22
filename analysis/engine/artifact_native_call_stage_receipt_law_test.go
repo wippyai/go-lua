@@ -115,6 +115,7 @@ func (fixture nativeCallStageLawFixture) scalarSpec(t testing.TB, rules []rows.A
 	if !ok {
 		t.Fatal("native Call stage scalar spec")
 	}
+	installArtifactStageTable(t, spec)
 	role, roleOK := spec.DeclareRole(artifactScalarLawID(0x6F))
 	if !roleOK {
 		t.Fatal("native Call stage scalar role")

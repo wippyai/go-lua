@@ -156,7 +156,7 @@ func Lower(snapshot *ingress.Snapshot, vocabulary structure.Table, machine schem
 	spec, specOK := rows.NewArtifactScalarSpec(snapshot.ArtifactID(), snapshot.ProgramID(), snapshot.SchemaID(), rows.ArtifactScalarCapacity{
 		Roles: len(usedRules), Factors: len(declaredFactors), Points: pointCount, Edges: edgeCount, Transfers: transferCount, Regions: regionCount, Events: eventCount, Rules: ruleCount, Bodies: bodyCount,
 	})
-	if !specOK {
+	if !specOK || !spec.InstallStageTable(machine.Table()) {
 		return nil, nil, false
 	}
 	directory := &MountDirectory{

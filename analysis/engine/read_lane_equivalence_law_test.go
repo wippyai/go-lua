@@ -178,6 +178,7 @@ func constructReadLaneProgram(t testing.TB, binding *SchemaBinding, schema *Sche
 	if !spec.AddRule(rows.ArtifactScalarRule{Role: role, Stage: programissuance.StageCallDispatch, Point: member, Input: entry, ID: readLaneID(60), Native: true}) {
 		t.Fatal("read lane artifact rule")
 	}
+	installArtifactStageTable(t, spec)
 	template, templateOK := rows.NewArtifactScalarTemplate(spec)
 	bootstrap, bootstrapOK := NewProgramBootstrap(readLaneID(70), readLaneID(71))
 	contexts := explicitTestContextDirectory(t, readLaneID(70), []identity.ContentID{readLaneID(1)}, readLaneID(72), readLaneID(73))

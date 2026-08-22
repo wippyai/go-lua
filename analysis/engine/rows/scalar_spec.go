@@ -1,6 +1,9 @@
 package rows
 
-import "github.com/wippyai/go-lua/analysis/identity"
+import (
+	"github.com/wippyai/go-lua/analysis/identity"
+	schemaissuance "github.com/wippyai/go-lua/analysis/schema/issuance"
+)
 
 // ArtifactScalarSpec is a single-use neutral template builder. Its state is
 // private and shared by copied handles, so consuming any handle closes all of
@@ -23,6 +26,8 @@ type artifactScalarSpecState struct {
 	Events     []ArtifactScalarEvent
 	Rules      []ArtifactScalarRule
 	Bodies     []ArtifactScalarBody
+	stages     schemaissuance.Table
+	stagesSet  bool
 	consumed   bool
 }
 
@@ -108,6 +113,19 @@ func (spec *ArtifactScalarSpec) writable() (*artifactScalarSpecState, bool) {
 		return nil, false
 	}
 	return spec.state, true
+}
+
+// InstallStageTable supplies the canonical sealed issuance declarations used
+// exactly once when the scalar template is sealed. The table is not copied
+// into the reusable template: runtime rows retain only their opaque stage key
+// and the row-local Native projection after this boundary has proved both.
+func (spec *ArtifactScalarSpec) InstallStageTable(table schemaissuance.Table) bool {
+	state, ok := spec.writable()
+	if !ok || state.stagesSet || len(table.Entries(schemaissuance.KindStage)) == 0 {
+		return false
+	}
+	state.stages, state.stagesSet = table, true
+	return true
 }
 
 func (spec *ArtifactScalarSpec) AddPoint(row ArtifactScalarPoint) (int, bool) {

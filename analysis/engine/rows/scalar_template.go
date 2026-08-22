@@ -1,6 +1,9 @@
 package rows
 
-import "github.com/wippyai/go-lua/analysis/identity"
+import (
+	"github.com/wippyai/go-lua/analysis/identity"
+	schemaissuance "github.com/wippyai/go-lua/analysis/schema/issuance"
+)
 
 // ArtifactScalarTemplate is the sealed, reusable Program structural input.
 // It retains no binding, schema, or capability authority, so one exact template
@@ -41,6 +44,8 @@ func NewArtifactScalarTemplate(spec *ArtifactScalarSpec) (*ArtifactScalarTemplat
 	state.Events = nil
 	state.Rules = nil
 	state.Bodies = nil
+	state.stages = schemaissuance.Table{}
+	state.stagesSet = false
 	return template, true
 }
 

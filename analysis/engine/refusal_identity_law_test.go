@@ -103,6 +103,7 @@ func newIssuanceRefusalFixture(t testing.TB) issuanceRefusalFixture {
 	bodyOK = bodyOK && spec.AddBodyEntry(body, initial) && spec.AddBodyExit(body, output)
 	occurrence := issuanceRefusalID(9)
 	ruleRowOK := spec.AddRule(rows.ArtifactScalarRule{Role: role, Stage: programissuance.StageCallDispatch, Point: output, Input: initial, ID: occurrence, Native: true})
+	installArtifactStageTable(t, spec)
 	template, templateOK := rows.NewArtifactScalarTemplate(spec)
 	bootstrap, bootstrapOK := NewProgramBootstrap(issuanceRefusalID(10), issuanceRefusalID(11))
 	contexts := explicitTestContextDirectory(t, issuanceRefusalID(10), []identity.ContentID{mountID}, issuanceRefusalID(13), issuanceRefusalID(14))
