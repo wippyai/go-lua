@@ -35,7 +35,7 @@ import (
 
 func diagnosticRuleForMountedRole(binding *composite.ProgramBinding, role engine.RuleSlotCapability) anadiag.AnalyzeDiagnosticRule {
 	rules := binding.Rules()
-	if rules == nil || !role.Mounted() {
+	if rules == nil || !(role.Mounted() || role.MountedPoint()) {
 		return anadiag.AnalyzeDiagnosticRuleUnknown
 	}
 	return rules.DiagnosticForCapability(role)

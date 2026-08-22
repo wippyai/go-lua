@@ -62,10 +62,11 @@ func summaryFactorKeyEnd(state *schemaBindingState, factor composition.Key) (uin
 	return row.schemaFactorAlgebra().KeyEnd(), true
 }
 
-// summaryKeysAllowed admits an empty vector only for the one schema Factor
-// whose sealed algebra has no coordinates. Non-empty vectors must be strict,
-// in-range ordered coordinates owned by that Factor; malformed, unsorted, or
-// out-of-range source rows refuse before their digest is issued.
+// summaryKeysAllowed admits the strict, in-range ordered coordinates one
+// schema Factor owns; malformed, unsorted, or out-of-range source rows refuse
+// before their digest is issued. A Factor's coordinate universe is fixed at
+// seal, so the empty vector is that Factor's sealed empty projection - the
+// limit of the proper subsets already admitted - and reads a constant.
 func summaryKeysAllowed(state *schemaBindingState, factor composition.Key, keys summaryKeySource) bool {
 	if keys == nil {
 		return false
@@ -77,9 +78,6 @@ func summaryKeysAllowed(state *schemaBindingState, factor composition.Key, keys 
 	keyEnd, keyEndOK := summaryFactorKeyEnd(state, factor)
 	if !keyEndOK {
 		return false
-	}
-	if count == 0 {
-		return keyEnd == 0
 	}
 	var previous uint64
 	for index := 0; index < count; index++ {

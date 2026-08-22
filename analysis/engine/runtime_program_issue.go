@@ -106,7 +106,7 @@ func declareMountedProgram(rowsWorkspace *programRows, mounts []sealedProgramMou
 	for ordinal, row := range admission.Link {
 		issuance, ok := admitLinkRuleIssuance(rowsWorkspace, rows, state, row, claimedLink)
 		if !ok || !claimAnchoredSurfaces(anchored, issuance.surfaces) {
-			return topologyDeclaration{}, programSealFailure{phase: programSealFailureLinkIssuance, ordinal: uint32(ordinal)}, ProgramAdmissionLink, false
+			return topologyDeclaration{}, programSealFailure{phase: programSealFailureLinkIssuance, ordinal: uint32(ordinal), link: row.Capability}, ProgramAdmissionLink, false
 		}
 		pending = append(pending, issuance)
 	}
@@ -118,18 +118,18 @@ func declareMountedProgram(rowsWorkspace *programRows, mounts []sealedProgramMou
 		issuance, ok := admitMountedRuleIssuance(rowsWorkspace, rows, state, row)
 		claimedOK := ok && claimAnchoredSurfaces(anchored, issuance.surfaces)
 		if !claimedOK {
-			return topologyDeclaration{}, programSealFailure{phase: programSealFailureMountedIssuance, ordinal: uint32(ordinal)}, ProgramAdmissionMounted, false
+			return topologyDeclaration{}, programSealFailure{phase: programSealFailureMountedIssuance, ordinal: uint32(ordinal), mounted: row.Capability}, ProgramAdmissionMounted, false
 		}
 		pending = append(pending, issuance)
 	}
 	for ordinal, row := range admission.MountedPoint {
 		issuances, ok := admitMountedPointRuleIssuances(rowsWorkspace, rows, state, mounts, row)
 		if !ok {
-			return topologyDeclaration{}, programSealFailure{phase: programSealFailureMountedIssuance, ordinal: uint32(ordinal)}, ProgramAdmissionMounted, false
+			return topologyDeclaration{}, programSealFailure{phase: programSealFailureMountedIssuance, ordinal: uint32(ordinal), mounted: row.Capability}, ProgramAdmissionMounted, false
 		}
 		for _, issuance := range issuances {
 			if !claimAnchoredSurfaces(anchored, issuance.surfaces) {
-				return topologyDeclaration{}, programSealFailure{phase: programSealFailureMountedIssuance, ordinal: uint32(ordinal)}, ProgramAdmissionMounted, false
+				return topologyDeclaration{}, programSealFailure{phase: programSealFailureMountedIssuance, ordinal: uint32(ordinal), mounted: row.Capability}, ProgramAdmissionMounted, false
 			}
 			pending = append(pending, issuance)
 		}
@@ -137,7 +137,7 @@ func declareMountedProgram(rowsWorkspace *programRows, mounts []sealedProgramMou
 	for ordinal, row := range admission.Activation {
 		issuance, admitted, ok := admitActivationRuleIssuance(rowsWorkspace, rows, state, row)
 		if !ok || !claimAnchoredSurfaces(anchored, issuance.surfaces) {
-			return topologyDeclaration{}, programSealFailure{phase: programSealFailureActivationIssuance, ordinal: uint32(ordinal)}, ProgramAdmissionMounted, false
+			return topologyDeclaration{}, programSealFailure{phase: programSealFailureActivationIssuance, ordinal: uint32(ordinal), mounted: row.Capability}, ProgramAdmissionMounted, false
 		}
 		if !admitted {
 			continue

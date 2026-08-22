@@ -126,10 +126,24 @@ func (failure programSealFailure) Source() (programSourceSealFailure, bool) {
 	return failure.source, failure.phase == programSealFailureSources && failure.source.Available()
 }
 func (failure programSealFailure) MountedCapability() (RuleSlotCapability, bool) {
-	return failure.mounted, failure.phase == programSealFailureRuleRow && failure.mounted.mounted() && !failure.link.available()
+	return failure.mounted, failure.namesRule() && failure.mounted.mountedLane() && !failure.link.available()
 }
 func (failure programSealFailure) LinkCapability() (RuleSlotCapability, bool) {
-	return failure.link, failure.phase == programSealFailureRuleRow && failure.link.link() && !failure.mounted.available()
+	return failure.link, failure.namesRule() && failure.link.link() && !failure.mounted.available()
+}
+
+// namesRule reports the seal phases that admit one declared rule and can
+// therefore name the rule they refused. The row resolution phase and every
+// issuance lane hold that rule; a source-seal or artifact-row refusal reached
+// no rule and publishes none.
+func (failure programSealFailure) namesRule() bool {
+	switch failure.phase {
+	case programSealFailureRuleRow, programSealFailureLinkIssuance,
+		programSealFailureMountedIssuance, programSealFailureActivationIssuance:
+		return true
+	default:
+		return false
+	}
 }
 func (failure programSealFailure) ArtifactRow() (programArtifactRowFailure, bool) {
 	return failure.artifact, failure.phase == programSealFailureArtifactRows && failure.artifact != programArtifactRowFailureNone

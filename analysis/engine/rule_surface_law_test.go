@@ -58,9 +58,8 @@ func TestSummaryAdmissionRejectsMalformedScalarRanges(t *testing.T) {
 		keyEnd = uint64(4)
 	)
 	cases := map[string][]uint64{
-		"empty-nonempty-factor": nil,
-		"unsorted":              {0, 2, 1},
-		"out-of-range":          {0, keyEnd},
+		"unsorted":     {0, 2, 1},
+		"out-of-range": {0, keyEnd},
 	}
 	nextBase := base
 	for name, keys := range cases {
@@ -87,6 +86,28 @@ func TestSummaryAdmissionRejectsMalformedScalarRanges(t *testing.T) {
 	shortBinding, shortMapping := summaryAdmissionLawFixture(t, base+1, keyEnd, shortSummaryRange{})
 	if _, accepted := appendDeclaredSummary(nil, shortMapping, shortBinding.state, shortBinding.state.authority); accepted {
 		t.Fatal("scalar summary range with a missing coordinate was admitted")
+	}
+}
+
+// TestSummaryAdmissionAdmitsSealedEmptyProjection states that the empty key
+// vector is the sealed empty projection of a Factor, not a malformed range. A
+// Factor's coordinate universe is fixed at seal, so a rule whose owner-issued
+// range selects none of it reads a constant and depends on no coordinate. A
+// proper subset of a Factor's coordinates is already admissible; the empty
+// subset is that same projection at its limit.
+func TestSummaryAdmissionAdmitsSealedEmptyProjection(t *testing.T) {
+	const (
+		base   = uint64(998_014)
+		keyEnd = uint64(4)
+	)
+	source := &lawSummaryRange{}
+	binding, mapping := summaryAdmissionLawFixture(t, base, keyEnd, source)
+	summaries, accepted := appendDeclaredSummary(nil, mapping, binding.state, binding.state.authority)
+	if !accepted {
+		t.Fatal("sealed empty projection of a populated Factor was refused")
+	}
+	if len(summaries) != 1 || len(summaries[0].Keys) != 0 || summaries[0].Surface != mapping.surface {
+		t.Fatal("sealed empty projection did not materialize its own summary row")
 	}
 }
 

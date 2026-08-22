@@ -705,9 +705,17 @@ func (state *compiledState) assembleCommittedProgram() (*engine.CommittedProgram
 		}
 		switch refusal.Stage() {
 		case engine.ProgramAdmissionLink:
-			return nil, nil, anadiag.AnalyzeDiagnosticAssembleStageBootstrapRules, anadiag.AnalyzeDiagnosticRuleUnknown, refusal, false
+			linkRule := anadiag.AnalyzeDiagnosticRuleUnknown
+			if role, roleOK := refusal.LinkRole(); roleOK {
+				linkRule = diagnosticRuleForLinkRole(binding, role)
+			}
+			return nil, nil, anadiag.AnalyzeDiagnosticAssembleStageBootstrapRules, linkRule, refusal, false
 		case engine.ProgramAdmissionMounted:
-			return nil, nil, anadiag.AnalyzeDiagnosticAssembleStageArtifactRules, anadiag.AnalyzeDiagnosticRuleUnknown, refusal, false
+			mountedRule := anadiag.AnalyzeDiagnosticRuleUnknown
+			if role, roleOK := refusal.MountedRole(); roleOK {
+				mountedRule = diagnosticRuleForMountedRole(binding, role)
+			}
+			return nil, nil, anadiag.AnalyzeDiagnosticAssembleStageArtifactRules, mountedRule, refusal, false
 		case engine.ProgramAdmissionQuery:
 			return nil, nil, anadiag.AnalyzeDiagnosticAssembleStageQueryRows, anadiag.AnalyzeDiagnosticRuleUnknown, refusal, false
 		case engine.ProgramAdmissionSeal:

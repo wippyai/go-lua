@@ -58,6 +58,13 @@ func (capability RuleSlotCapability) mountedPoint() bool {
 	return capability.available() && capability.kind == ruleCapabilityMountedPoint
 }
 
+// mountedLane reports whether this capability is issued on one of the two
+// artifact-addressed lanes: an ordinary mounted row, or a mounted-point row
+// the engine expands over the sealed Point plane.
+func (capability RuleSlotCapability) mountedLane() bool {
+	return capability.mounted() || capability.mountedPoint()
+}
+
 // IssueMountedRuleCapability issues an opaque capability for an ordinary
 // mounted Rule slot.  It is intentionally issued by the schema boundary, not
 // from a domain enum or caller-supplied code.

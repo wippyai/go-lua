@@ -245,6 +245,37 @@ func TestConstructionRowSurvivesOffTheScheduleStep(t *testing.T) {
 	}
 }
 
+// TestRefusedMountedIssuanceNamesItsRule states that a refused issuance row
+// publishes the rule capability it stopped on, not only the row ordinal. The
+// declaration pass knows which rule it was admitting at every issuance lane -
+// ordinary mounted, mounted-point and activation - so an analysis envelope
+// must be able to name that rule instead of rendering an anonymous refusal.
+func TestRefusedMountedIssuanceNamesItsRule(t *testing.T) {
+	fixture := sealMountedPointCapabilityLawFixture(t, newMountedPointCapabilityLawFixture(t, true))
+	phases := []programSealFailurePhase{
+		programSealFailureMountedIssuance,
+		programSealFailureActivationIssuance,
+		programSealFailureRuleRow,
+	}
+	for _, phase := range phases {
+		refusal := ProgramAssembleRefusal{
+			stage: ProgramAdmissionMounted,
+			seal:  programSealFailure{phase: phase, ordinal: 3, mounted: fixture.cap},
+		}
+		role, named := refusal.MountedRole()
+		if !named || role != fixture.cap {
+			t.Fatalf("phase %d published mounted role %v/%t", phase, role, named)
+		}
+		if row, published := refusal.AdmissionRow(); phase != programSealFailureRuleRow && (!published || row != 3) {
+			t.Fatalf("phase %d published admission row %d/%t", phase, row, published)
+		}
+	}
+	anonymous := ProgramAssembleRefusal{stage: ProgramAdmissionMounted, seal: programSealFailure{phase: programSealFailureMountedIssuance, ordinal: 3}}
+	if role, named := anonymous.MountedRole(); named {
+		t.Fatalf("a refusal that reached no rule published role %v", role)
+	}
+}
+
 // TestAdmissionRowNamesTheRejectedIssuanceRow states that a Link, Mounted, or
 // Query stage refusal publishes the exact declared admission row it stopped
 // on beside its boundary identity, the same law ConstructionRow already
