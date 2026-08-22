@@ -453,6 +453,11 @@ func (state *compiledState) buildRuntimeSolver(policy *anadiag.DiagnosticPolicy)
 	if !observed {
 		return nil, nil, observationFailure, false
 	}
+	callObservations, callObserved := binding.CallCalleeSetObservations(state.committed, state.mounts, state.contextDirectory)
+	if !callObserved {
+		return nil, nil, engine.ObservationSealArguments(), false
+	}
+	observations = append(observations, callObservations...)
 	effectObservations, effectObserved := binding.EffectPublicationObservations(state.committed, state.mounts, state.contextDirectory)
 	if !effectObserved {
 		return nil, nil, engine.ObservationSealArguments(), false
