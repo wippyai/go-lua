@@ -31,13 +31,13 @@ func TestRequirementForEscapeIsNarrowAndConservative(t *testing.T) {
 }
 
 func TestApplyRouteUsesOnlyEscapeDisplacement(t *testing.T) {
-	if got := applyRoute(plannedRoute{required: placement.OwnedHeap}, placement.Stack); got != placement.OwnedHeap {
+	if got, ok := applyRoute(plannedRoute{required: placement.OwnedHeap}, placement.Stack); !ok || got != placement.OwnedHeap {
 		t.Fatalf("owned route from stack = %v, want owned heap", got)
 	}
-	if got := applyRoute(plannedRoute{required: placement.SharedHeap}, placement.OwnedHeap); got != placement.SharedHeap {
+	if got, ok := applyRoute(plannedRoute{required: placement.SharedHeap}, placement.OwnedHeap); !ok || got != placement.SharedHeap {
 		t.Fatalf("send route from owned heap = %v, want shared heap", got)
 	}
-	if got := applyRoute(plannedRoute{required: placement.Unknown, unknown: true}, placement.Stack); got != placement.Unknown {
+	if got, ok := applyRoute(plannedRoute{required: placement.Unknown, unknown: true}, placement.Stack); !ok || got != placement.Unknown {
 		t.Fatalf("unknown route from stack = %v, want unknown", got)
 	}
 }

@@ -255,9 +255,17 @@ func (rule *HotRule) fold(frame engine.Frame[placementdomain.Placement, effectfa
 		if !available {
 			return placementdomain.Bottom, false
 		}
-		if !present {
-			current = placementdomain.Bottom
+		if !placementdomain.Equal(current, current) {
+			// A malformed/JIT Placement is not an analysis fact.  It cannot be
+			// converted to Unknown by the displacement helper.
+			return placementdomain.Bottom, false
 		}
-		return applyRoute(route, current), true
+		if !present && !placementdomain.Equal(current, placementdomain.Bottom) {
+			// The owner supplies its exact Factor Default with a sparse cell.  A
+			// missing row with any other value is an incomplete join, not a seed
+			// that this rule may replace with Bottom.
+			return placementdomain.Bottom, false
+		}
+		return applyRoute(route, current)
 	})
 }

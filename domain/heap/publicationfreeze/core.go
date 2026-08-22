@@ -523,6 +523,10 @@ func planFor(schema heapdomain.Schema, values *valuedomain.Schema, prepared *pre
 				tags = []sourceTag{row.subjectTag}
 			}
 			if len(tags) == 0 {
+				// A subject with no mounted semantic source is either proven nil
+				// by Lua under-application or statically unknown behind an actual
+				// tail. Neither authorizes a strong freeze, and both leave a valid
+				// empty plan rather than refusing the batch.
 				return routePlan{}, true
 			}
 			for _, tag := range tags {

@@ -19,11 +19,13 @@ import (
 	programcatalog "github.com/wippyai/go-lua/analysis/schema/program/catalog"
 	schematype "github.com/wippyai/go-lua/analysis/schema/typecontract"
 	"github.com/wippyai/go-lua/domain/composite"
+	heapdomain "github.com/wippyai/go-lua/domain/heap"
 	packdomain "github.com/wippyai/go-lua/domain/pack"
 	packtransfer "github.com/wippyai/go-lua/domain/pack/transfer"
 	staticdomain "github.com/wippyai/go-lua/domain/static"
 	typeauthority "github.com/wippyai/go-lua/domain/type/authority"
 	domaincontract "github.com/wippyai/go-lua/domain/type/typecontract"
+	valuedomain "github.com/wippyai/go-lua/domain/value"
 )
 
 func portableAnyTypes(count int) []schematype.Type {
@@ -59,6 +61,7 @@ func selectorLawContract(t testing.TB) (*contract.Contract, vocabulary.Operation
 
 type selectorLawFixture struct {
 	schema    *packdomain.Schema
+	values    *valuedomain.Schema
 	module    identity.ContentID
 	callID    identity.ContentID
 	receiver  identity.ContentID
@@ -67,7 +70,15 @@ type selectorLawFixture struct {
 
 func selectorLawSchema(t testing.TB, contract *contract.Contract, label string) selectorLawFixture {
 	t.Helper()
-	published, err := lower.Lower(lower.Source{Name: "pack_selector_" + label + ".lua", Text: []byte("local receiver = {}\nreceiver:send(1, 2)\n")})
+	return selectorLawSchemaSource(t, contract, label, "local receiver = {}\nreceiver:send(1, 2)\n")
+}
+
+// selectorLawSchemaSource seals the same Pack/Value stack over an arbitrary
+// method-call source, so a fixture can author an under-applied or tail-fed
+// call row instead of the fully applied default.
+func selectorLawSchemaSource(t testing.TB, contract *contract.Contract, label, source string) selectorLawFixture {
+	t.Helper()
+	published, err := lower.Lower(lower.Source{Name: "pack_selector_" + label + ".lua", Text: []byte(source)})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -112,6 +123,14 @@ func selectorLawSchema(t testing.TB, contract *contract.Contract, label string) 
 	if !ok || schema == nil {
 		t.Fatal("seal selector Pack")
 	}
+	structural, structuralOK := composite.StructureVocabulary(receipt)
+	heapMount, heapMountOK := heapdomain.NewArtifactMount(snapshottest.MustLower(t, artifact), module, programID)
+	valueMount, valueMountOK := valuedomain.NewArtifactMount(snapshottest.MustLower(t, artifact), module, programID)
+	heaps, heapFailure := heapdomain.SealWithArtifacts(linked, []heapdomain.ArtifactMount{heapMount})
+	values, valueFailure := valuedomain.SealWithFailure(linked, heaps, []valuedomain.ArtifactMount{valueMount}, structural)
+	if !structuralOK || !heapMountOK || !valueMountOK || heapFailure != heapdomain.SealFailureNone || valueFailure != valuedomain.SealFailureNone || values == nil {
+		t.Fatalf("selector Value seal structural=%t heapMount=%t valueMount=%t heap=%v value=%v", structuralOK, heapMountOK, valueMountOK, heapFailure, valueFailure)
+	}
 	coldProgram := artifact.Program()
 	catalog, catalogOK := programcatalog.CatalogID(coldProgram.SchemaID)
 	if !coldProgram.Available() || !catalogOK || !catalog.Available() {
@@ -127,15 +146,67 @@ func selectorLawSchema(t testing.TB, contract *contract.Contract, label string) 
 			continue
 		}
 		receiver, receiverOK := call.ReceiverID()
-		argumentRow, argumentOK := coldProgram.CallArgumentFor(index, 0)
-		argument := argumentRow.ValueID()
-		if !receiverOK || !argumentOK {
-			t.Fatal("selector method operands")
+		if !receiverOK {
+			t.Fatal("selector method receiver")
 		}
-		return selectorLawFixture{schema: schema, module: module, callID: call.ID(), receiver: receiver, argument0: argument}
+		var argument identity.ContentID
+		if argumentRow, argumentOK := coldProgram.CallArgumentFor(index, 0); argumentOK {
+			argument = argumentRow.ValueID()
+		}
+		return selectorLawFixture{schema: schema, values: values, module: module, callID: call.ID(), receiver: receiver, argument0: argument}
 	}
 	t.Fatal("selector method call")
 	return selectorLawFixture{}
+}
+
+// TestMountedInputSummaryRefusesIncompleteFixedMembers keeps the Value/Pack
+// join fail-closed. A missing fixed summary cell is not a Bottom fact and
+// cannot be turned into a readable aggregate; only MountedInput.IsOpen, which
+// is issued from Pack's authenticated tail row, may justify widening.
+func TestMountedInputSummaryRefusesIncompleteFixedMembers(t *testing.T) {
+	contract, operation := selectorLawContract(t)
+	fixture := selectorLawSchema(t, contract, "summary_missing_member")
+	input, inputOK := packtransfer.NewMountedInput(fixture.schema, fixture.module, fixture.callID, operation, vocabulary.InputSource{Kind: vocabulary.InputSourceValueFormal, Ordinal: 0})
+	if !inputOK || !input.Valid() || input.MemberCount() != 1 || input.IsOpen() {
+		t.Fatal("fixed mounted input")
+	}
+	summary := valuedomain.BeginValueSummary(fixture.values)
+	if _, present, readable := packtransfer.SummaryValueAtInputMember(fixture.values, summary, input, 0); present || readable {
+		t.Fatalf("missing fixed member reported present/readable = %t/%t", present, readable)
+	}
+	if _, present, readable := packtransfer.SummaryValuesAtInput(fixture.values, summary, input); present || readable {
+		t.Fatalf("incomplete fixed aggregate reported present/readable = %t/%t", present, readable)
+	}
+}
+
+// TestMountedInputSummaryAcceptsCompleteFixedMembers ensures strictness does
+// not reject an authenticated, complete Value summary. The Bottom value is a
+// real Value fact here; it is not synthesized by the Pack bridge.
+func TestMountedInputSummaryAcceptsCompleteFixedMembers(t *testing.T) {
+	contract, operation := selectorLawContract(t)
+	fixture := selectorLawSchema(t, contract, "summary_complete_member")
+	input, inputOK := packtransfer.NewMountedInput(fixture.schema, fixture.module, fixture.callID, operation, vocabulary.InputSource{Kind: vocabulary.InputSourceValueFormal, Ordinal: 0})
+	if !inputOK || !input.Valid() {
+		t.Fatal("fixed mounted input")
+	}
+	coordinate, coordinateOK := packtransfer.CoordinateForInputMember(fixture.values, input, 0)
+	if !coordinateOK {
+		t.Fatal("fixed member coordinate")
+	}
+	index, indexOK := fixture.values.CoordinateIndex(coordinate)
+	if !indexOK || int(index) >= len(valuedomain.BeginValueSummary(fixture.values).Values) {
+		t.Fatal("fixed member coordinate index")
+	}
+	summary := valuedomain.BeginValueSummary(fixture.values)
+	summary.Values[index] = fixture.values.Bottom()
+	summary.Present[index] = true
+	summary.Rows = 1
+	if _, present, readable := packtransfer.SummaryValueAtInputMember(fixture.values, summary, input, 0); !present || !readable {
+		t.Fatalf("complete fixed member reported present/readable = %t/%t", present, readable)
+	}
+	if fact, present, readable := packtransfer.SummaryValuesAtInput(fixture.values, summary, input); !present || !readable || !fixture.values.Equal(fact, fixture.values.Bottom()) {
+		t.Fatalf("complete fixed aggregate = %#v/%t/%t", fact, present, readable)
+	}
 }
 
 func TestInputSelectorsSealTargetABIWithoutRetainingTarget(t *testing.T) {

@@ -31,7 +31,12 @@ type publicationRow struct {
 	id          identity.ContentID
 	requirement placementdomain.Placement
 	subjectOpen bool
-	operation   vocabulary.Operation
+	// subjectNil records Pack's proven-nil subject: the mounted call authors no
+	// fixed actual at the descriptor's formal position and no actual tail can
+	// reach it.  A nil subject reaches no allocation root, so the row routes
+	// nothing.  It is mutually exclusive with subjectOpen.
+	subjectNil bool
+	operation  vocabulary.Operation
 }
 
 type preparedBatch struct {
@@ -186,8 +191,9 @@ func (facts *factBuffer) set(entry factEntry) bool {
 }
 
 // merge folds exact fixed members of one heterogeneous publication subject.
-// Every member is observed independently; a missing member remains absent,
-// while present members join under the Value schema's own algebra.
+// Every member is observed independently.  An owner-authenticated sparse
+// Bottom is neutral to the aggregate; if every member is sparse the aggregate
+// remains absent/Bottom, while present members join under Value's algebra.
 func (facts *factBuffer) merge(schema *valuedomain.Schema, entry factEntry) bool {
 	if facts == nil || schema == nil || !schema.Valid() || !entry.rowID.Available() {
 		return false
@@ -211,11 +217,17 @@ func (facts *factBuffer) merge(schema *valuedomain.Schema, entry factEntry) bool
 			continue
 		}
 		if !entry.present {
-			prior.present = false
-			return facts.setAt(index, prior)
+			// The owner-issued sparse Bottom is the neutral element of a
+			// heterogeneous subject join.  It must not erase a present member
+			// that was already authenticated for this publication row.
+			return true
 		}
 		if !prior.present {
-			return true
+			// An authenticated sparse Bottom contributes no Value atoms; the
+			// first present member therefore becomes the aggregate fact.
+			prior.value = entry.value
+			prior.present = true
+			return facts.setAt(index, prior)
 		}
 		joined, ok := schema.Join(prior.value, entry.value)
 		if !ok {
@@ -649,6 +661,9 @@ func (rule *HotRule) prepareBatch(batch effectfactor.MountedPublicationBatch) (*
 		if subject.IsOpen() {
 			row.subjectOpen = true
 		}
+		if subject.IsProvenNil() {
+			row.subjectNil = true
+		}
 		for member := 0; member < subject.MemberCount(); member++ {
 			coordinate, coordinateOK := packtransfer.CoordinateForInputMember(rule.values.Schema(), subject, member)
 			tag, tagOK := sourceTagForMember(rowID, member)
@@ -659,7 +674,9 @@ func (rule *HotRule) prepareBatch(batch effectfactor.MountedPublicationBatch) (*
 		}
 		// Context is validated and mapped for the future actor-equivalence
 		// proof, but it never changes this rule's route policy and is not a
-		// selected Value predecessor in this first rule.
+		// selected Value predecessor in this first rule.  A proven-nil or
+		// tail-fed destination therefore has no member to map and leaves the
+		// requirement at its conservative escape disposition.
 		if hasContext {
 			for member := 0; member < context.MemberCount(); member++ {
 				if _, coordinateOK := packtransfer.CoordinateForInputMember(rule.values.Schema(), context, member); !coordinateOK {
@@ -722,11 +739,7 @@ func (rule *HotRule) callValueSelector(context engine.SelectorContext, batch eff
 	if !available || !keyOK {
 		return calldomain.Value{}, false, false
 	}
-	if !present {
-		bottom := rule.calls.Algebra().Bottom()
-		return bottom, false, rule.calls.Algebra().Admits(key, bottom)
-	}
-	return value, true, rule.calls.Algebra().Admits(key, value)
+	return admitCallCell(rule.calls.Algebra(), key, value, present)
 }
 
 func (rule *HotRule) callValueFrame(frame engine.Frame[placementdomain.Placement, effectfactor.MountedPublicationBatch], batch effectfactor.MountedPublicationBatch) (calldomain.Value, bool, bool) {
@@ -742,11 +755,23 @@ func (rule *HotRule) callValueFrame(frame engine.Frame[placementdomain.Placement
 	if !available || !keyOK {
 		return calldomain.Value{}, false, false
 	}
-	if !present {
-		bottom := rule.calls.Algebra().Bottom()
-		return bottom, false, rule.calls.Algebra().Admits(key, bottom)
+	return admitCallCell(rule.calls.Algebra(), key, value, present)
+}
+
+// admitCallCell authenticates the exact typed Call predecessor before any
+// consumer treats its sparse bit as semantic state.  Call's owner supplies its
+// Factor Default in an absent observation; this rule accepts that sparse form
+// only when the observed value is equal under the same Algebra to its exact
+// Bottom.  A missing/malformed row has no value to authenticate and refuses;
+// this helper never manufactures Bottom from the read metadata.
+func admitCallCell(algebra *calldomain.Algebra, key calldomain.Key, value calldomain.Value, present bool) (calldomain.Value, bool, bool) {
+	if algebra == nil || !algebra.Valid() || !key.Valid() || !algebra.Admits(key, value) {
+		return calldomain.Value{}, false, false
 	}
-	return value, true, rule.calls.Algebra().Admits(key, value)
+	if !present && !algebra.Equal(value, algebra.Bottom()) {
+		return calldomain.Value{}, false, false
+	}
+	return value, present, true
 }
 
 func (rule *HotRule) locateValues(context engine.SelectorContext, batch effectfactor.MountedPublicationBatch) bool {
@@ -849,6 +874,11 @@ func validPreparedRoutes(prepared *preparedBatch, values *valuedomain.Schema) bo
 		if !row.id.Available() || row.operation == 0 || !validRequirement(row.requirement) {
 			return false
 		}
+		// A subject is either statically absent and proven nil or reachable by
+		// an actual tail and unknown. Both bits together describe no call.
+		if row.subjectNil && row.subjectOpen {
+			return false
+		}
 		for priorIndex := 0; priorIndex < rowIndex; priorIndex++ {
 			if prepared.rows[priorIndex].id == row.id {
 				return false
@@ -867,6 +897,11 @@ func validPreparedRoutes(prepared *preparedBatch, values *valuedomain.Schema) bo
 		}
 		row, rowOK := preparedRowByID(prepared.rows, source.rowID)
 		if !rowOK || row.operation != source.operation {
+			return false
+		}
+		// A proven-nil subject selects no mounted semantic source, so a source
+		// claiming that row contradicts the row itself.
+		if row.subjectNil {
 			return false
 		}
 	}
@@ -923,6 +958,17 @@ func (rule *HotRule) routeSet(schema placementdomain.Schema, prepared *preparedB
 			}
 			continue
 		}
+		if row.subjectNil {
+			if !prepared.prepared {
+				// The proven-nil bit suppresses a route, so it is admissible only
+				// when it came from the authenticated MountedInput retained by
+				// prepareBatch. A hand-built row cannot self-attest that authority.
+				return routeBuffer{}, false
+			}
+			// Lua under-application proves the subject nil. A nil value holds no
+			// allocation root, so this publication escapes nothing.
+			continue
+		}
 		if row.subjectOpen {
 			if !prepared.prepared {
 				// The open bit is widening authority only when it came from the
@@ -950,7 +996,17 @@ func (rule *HotRule) routeSet(schema placementdomain.Schema, prepared *preparedB
 			// all-root Unknown route.
 			return routeBuffer{}, false
 		}
-		if !factPresent || fact.IsBottom() {
+		if !factPresent {
+			// A sparse cell is admissible only when the typed Value owner supplied
+			// its exact schema Bottom as the Factor Default.  The exact equality
+			// check is repeated at the route boundary so a hand-built buffer cannot
+			// turn an arbitrary missing row into a no-route result.
+			if !rule.values.Schema().Equal(fact, rule.values.Schema().Bottom()) {
+				return routeBuffer{}, false
+			}
+			continue
+		}
+		if fact.IsBottom() {
 			continue
 		}
 		roots, unknown, ok := rootsForValue(schema, rule.values.Schema(), fact)
@@ -987,16 +1043,16 @@ func (rule *HotRule) routeSet(schema placementdomain.Schema, prepared *preparedB
 	return routes, true
 }
 
-func applyRoute(route plannedRoute, current placementdomain.Placement) placementdomain.Placement {
+func applyRoute(route plannedRoute, current placementdomain.Placement) (placementdomain.Placement, bool) {
 	if route.unknown || route.required == placementdomain.Unknown {
-		return placementdomain.Unknown
+		return placementdomain.Unknown, true
 	}
 	switch route.required {
 	case placementdomain.OwnedHeap:
-		return placementdomain.Displace(current, placementdomain.Retain)
+		return placementdomain.DisplaceChecked(current, placementdomain.Retain)
 	case placementdomain.SharedHeap:
-		return placementdomain.Displace(current, placementdomain.Send)
+		return placementdomain.DisplaceChecked(current, placementdomain.Send)
 	default:
-		return placementdomain.Unknown
+		return placementdomain.Bottom, false
 	}
 }

@@ -33,9 +33,10 @@ func RuleEntry[P rulePrincipals, A ruleAuthorities]() rule.Spec {
 		Writes: "value",
 		Owner:  "value",
 		// The runtime-kind projection reads the sole actual of a strict unary
-		// plain call: Value seals an operand for exactly that geometry, so the
-		// subscription requires it and a method, nullary, multi-argument, or
-		// tail-expanded call issues nothing here.
+		// plain call and writes the call result: Value seals an operand for
+		// exactly that geometry with a finite result slot, so the subscription
+		// requires it. A method, nullary, multi-argument, tail-expanded, or
+		// result-discarding call issues nothing here.
 		//
 		// The guarded arm of the same call is its own occurrence family, and
 		// Value seals a refinement operand for every row of it, so the rule
@@ -44,7 +45,7 @@ func RuleEntry[P rulePrincipals, A ruleAuthorities]() rule.Spec {
 		Issues: []rule.Issuance{
 			{
 				Occurrence:  "occurrence/call",
-				Requirement: "requirement/call-plain-unary",
+				Requirement: "requirement/call-result-slot",
 				Form:        "issuance/call-stage",
 				Input:       "input/finish",
 				Stage:       "stage/call-summary",

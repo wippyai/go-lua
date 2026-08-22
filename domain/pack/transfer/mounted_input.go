@@ -107,11 +107,15 @@ func mountedInputKind(source vocabulary.InputSource) (MountedInputKind, bool) {
 // call. It is the source-plane constructor used when a caller needs to map a
 // transfer payload/alias independently of a scalar runtime binding.
 //
-// ValueFormal selects exactly one closed member. ValuesVar selects the exact
-// ordered fixed actual suffix beginning at selector.start and sets open only
-// when the call has an authenticated actual tail. AllInputs follows the same
-// rule from selector.start (zero). The actual tail identity is deliberately
-// used only as the open witness; it is never published as a Value member.
+// ValueFormal selects exactly one closed member when the call authors a fixed
+// actual at that position. When it does not, the projection has no member and
+// its open bit carries the exact Lua reading: open when an actual tail may
+// populate the position, closed when under-application proves the formal nil.
+// ValuesVar selects the exact ordered fixed actual suffix beginning at
+// selector.start and sets open only when the call has an authenticated actual
+// tail. AllInputs follows the same rule from selector.start (zero). The actual
+// tail identity is deliberately used only as the open witness; it is never
+// published as a Value member.
 func NewMountedInput(schema *packdomain.Schema, module, call identity.ContentID, operation vocabulary.Operation, source vocabulary.InputSource) (MountedInput, bool) {
 	if schema == nil || !module.Available() || !call.Available() || operation == 0 {
 		return MountedInput{}, false
@@ -132,11 +136,22 @@ func NewMountedInput(schema *packdomain.Schema, module, call identity.ContentID,
 	open := false
 	if kind == MountedInputFixed {
 		start, startOK := selector.Start()
-		member, memberOK := actual.ActualAt(start)
-		if !startOK || !memberOK || !member.Available() || member.Module() != module {
+		if !startOK || start < 0 {
 			return MountedInput{}, false
 		}
-		members = append(members, member.ID())
+		if start < actual.ActualCount() {
+			member, memberOK := actual.ActualAt(start)
+			if !memberOK || !member.Available() || member.Module() != module {
+				return MountedInput{}, false
+			}
+			members = append(members, member.ID())
+		} else {
+			// The call authors no fixed actual at this formal position. An
+			// actual tail reaches every position past the fixed row, so its
+			// presence makes the formal statically unknown; without one, Lua
+			// under-application proves the formal nil.
+			_, open = actual.TailID()
+		}
 	} else {
 		start, startOK := selector.Start()
 		if !startOK {
@@ -167,7 +182,17 @@ func (input MountedInput) valid() bool {
 		return false
 	}
 	if input.kind == MountedInputFixed {
-		if input.open || len(input.members) != 1 {
+		switch len(input.members) {
+		case 1:
+			// A position filled by a fixed actual cannot also be reached by
+			// the tail, so exactly-one-member is always closed.
+			if input.open {
+				return false
+			}
+		case 0:
+			// Zero members closed is the proven-nil formal; zero members open
+			// is the tail-fed formal whose value is statically unknown.
+		default:
 			return false
 		}
 	}
@@ -240,6 +265,16 @@ func (input MountedInput) SemanticID() (identity.ContentID, bool) {
 
 func (input MountedInput) IsOpen() bool {
 	return input.valid() && input.open
+}
+
+// IsProvenNil reports the Lua under-application shape: the mounted call
+// authors no fixed actual at this ValueFormal position and carries no actual
+// tail that could reach it, so the formal holds nil. This is a positive fact
+// about the call, not a missing join; a consumer reads it as the nil value and
+// never as an unknown. A ValuesVar/AllInputs projection with no member selects
+// an empty value list, which is a different fact and never reported here.
+func (input MountedInput) IsProvenNil() bool {
+	return input.valid() && input.kind == MountedInputFixed && len(input.members) == 0 && !input.open
 }
 
 // MemberCount reports the exact number of fixed semantic-source members in
@@ -345,7 +380,10 @@ func SummaryValueAtInput(values *valuedomain.Schema, summary valuedomain.ValueSu
 
 // SummaryValueAtInputMember reads one exact fixed member from Value's
 // detached summary vector. Open inputs intentionally have no readable tail
-// fact; known fixed members remain readable when an input is open.
+// fact; known fixed members remain readable when an input is open. A missing
+// fixed summary cell is an unavailable join, not a Bottom value: callers may
+// widen only from input.IsOpen(), which is an independently authenticated
+// Pack tail fact.
 func SummaryValueAtInputMember(values *valuedomain.Schema, summary valuedomain.ValueSummaryObservation, input MountedInput, memberIndex int) (valuedomain.Value, bool, bool) {
 	if values == nil || !values.Valid() || !values.OwnsSummaryObservation(summary) || !input.Valid() {
 		return valuedomain.Value{}, false, false
@@ -356,7 +394,7 @@ func SummaryValueAtInputMember(values *valuedomain.Schema, summary valuedomain.V
 		return valuedomain.Value{}, false, false
 	}
 	if !summary.Present[index] {
-		return valuedomain.Value{}, false, true
+		return valuedomain.Value{}, false, false
 	}
 	fact := summary.Values[index]
 	return fact, true, values.AdmitsCoordinate(coordinate, fact)
@@ -364,10 +402,10 @@ func SummaryValueAtInputMember(values *valuedomain.Schema, summary valuedomain.V
 
 // SummaryValuesAtInput folds every exact fixed member into one Value fact.
 // Presence is true only when every fixed member has a present summary cell;
-// a missing member is never replaced by a guessed tail value. If the input is
-// also open, the returned finite-member fact remains useful evidence, while
-// callers must separately inspect IsOpen before treating the aggregate as
-// exhaustive.
+// an incomplete fixed-member join is unavailable, never replaced by Bottom or
+// a guessed tail value. If the input is also open, the returned finite-member
+// fact remains useful evidence, while callers must separately inspect IsOpen
+// before treating the aggregate as exhaustive.
 func SummaryValuesAtInput(values *valuedomain.Schema, summary valuedomain.ValueSummaryObservation, input MountedInput) (valuedomain.Value, bool, bool) {
 	if values == nil || !values.Valid() || !values.OwnsSummaryObservation(summary) || !input.Valid() {
 		return valuedomain.Value{}, false, false
@@ -377,15 +415,16 @@ func SummaryValuesAtInput(values *valuedomain.Schema, summary valuedomain.ValueS
 	}
 	var result valuedomain.Value
 	haveResult := false
-	present := true
 	for index := 0; index < input.MemberCount(); index++ {
 		fact, memberPresent, readable := SummaryValueAtInputMember(values, summary, input, index)
 		if !readable {
 			return valuedomain.Value{}, false, false
 		}
 		if !memberPresent {
-			present = false
-			continue
+			// SummaryValueAtInputMember currently reports this as unavailable;
+			// retain the explicit guard so a future member reader cannot turn an
+			// incomplete heterogeneous row into an aggregate Bottom.
+			return valuedomain.Value{}, false, false
 		}
 		if !haveResult {
 			result = fact
@@ -398,8 +437,8 @@ func SummaryValuesAtInput(values *valuedomain.Schema, summary valuedomain.ValueS
 		}
 		result = joined
 	}
-	if !present {
-		return values.Bottom(), false, true
+	if !haveResult {
+		return valuedomain.Value{}, false, false
 	}
 	return result, true, true
 }
