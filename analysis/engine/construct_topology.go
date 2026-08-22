@@ -1556,6 +1556,7 @@ func constructedScheduleValid(source constructedSourcePlane, mounts constructedM
 		return ordinal, false
 	}
 	localOwners := make(map[identity.ContentID]identity.ContentID, len(localStages))
+	inventory := mountedEnvironmentFactors(source)
 	for mountIndex, mount := range mounts.mounts {
 		template := mount.template
 		for transferIndex := 0; transferIndex < template.TransferCount(); transferIndex++ {
@@ -1577,7 +1578,7 @@ func constructedScheduleValid(source constructedSourcePlane, mounts constructedM
 			if _, duplicate := localOwners[staged]; duplicate {
 				return transferIndex, false
 			}
-			if !transfer.Full && !constructedCompleteTransfer(source, mounts, mountIndex, transfer, written) {
+			if !transfer.Full && !constructedCompleteTransfer(source, mounts, mountIndex, transfer, written, inventory) {
 				return transferIndex, false
 			}
 			localOwners[staged], stageBase[staged] = base, base
@@ -1658,10 +1659,27 @@ func constructedRegionContained(points constructedPointPlane, stageBase map[iden
 	return false
 }
 
+// mountedEnvironmentFactors is the Factor inventory an artifact's environment
+// plane carries. Only mounted rule capabilities write into a template Point,
+// so a Factor owned solely by the Link lane never crosses a template transfer
+// and is not part of what a mounted stage must account for.
+func mountedEnvironmentFactors(source constructedSourcePlane) int {
+	if source.state == nil {
+		return 0
+	}
+	factors := make(map[composition.Key]struct{}, len(source.state.roleSlots))
+	for capability := range source.state.roleSlots {
+		if factor, factorOK := ruleOutputFactor(capability); factorOK {
+			factors[factor] = struct{}{}
+		}
+	}
+	return len(factors)
+}
+
 // constructedCompleteTransfer verifies the explicit schema-derived complement
 // for a strong-write stage. The engine validates the closed factor inventory;
 // it does not infer which domain facts should cross the boundary.
-func constructedCompleteTransfer(source constructedSourcePlane, mounts constructedMountPlane, mountIndex int, transfer rows.ArtifactScalarTransfer, written map[composition.Key]struct{}) bool {
+func constructedCompleteTransfer(source constructedSourcePlane, mounts constructedMountPlane, mountIndex int, transfer rows.ArtifactScalarTransfer, written map[composition.Key]struct{}, inventory int) bool {
 	if transfer.Full || len(written) == 0 || len(transfer.Factors) == 0 {
 		return false
 	}
