@@ -28,6 +28,7 @@ import (
 	"github.com/wippyai/go-lua/manifest"
 	manifestwire "github.com/wippyai/go-lua/manifest/wire"
 	"github.com/wippyai/go-lua/stdlib"
+	"github.com/wippyai/go-lua/types/signature"
 )
 
 // ErrorType is the structured error interface every fallible Wippy member
@@ -36,7 +37,7 @@ import (
 // and installed as each manifest's ErrorType.
 func ErrorType() typ.Type { return errorType }
 
-var errorType, _ = declaredObject("Error", func(self typ.Type) []typ.Method {
+var errorType, _ = DeclaredObject("Error", func(self typ.Type) []typ.Method {
 	return []typ.Method{
 		{Name: "kind", Type: typ.Func().Param("self", self).Returns(typ.String).Build()},
 		{Name: "retryable", Type: typ.Func().Param("self", self).Returns(typ.Boolean).Build()},
@@ -92,8 +93,10 @@ func Target() (*contract.Contract, error) {
 	return manifesttarget.SealCatalogue(catalogue)
 }
 
-// declaredObject builds one of v1's named object types and returns both the
-// type and the method list it was built from.
+// DeclaredObject builds one named object type and returns both the type and
+// the method list it was built from. The canonical fixture Target authors its
+// host object types through the same constructor, so a declared object has one
+// shape wherever it is stated.
 //
 // v1 spells the receiver of every such method as typ.Self. Self names whichever
 // receiver a call site happens to hold, so it is meaningful only inside a scope
@@ -102,13 +105,21 @@ func Target() (*contract.Contract, error) {
 // that reason. The receiver of store.Store:get is store.Store, and a recursive
 // node is how that is said without a scope: the builder receives the type being
 // declared and uses it wherever v1 wrote Self.
-func declaredObject(name string, build func(self typ.Type) []typ.Method) (typ.Type, []typ.Method) {
+func DeclaredObject(name string, build func(self typ.Type) []typ.Method) (typ.Type, []typ.Method) {
 	var methods []typ.Method
 	declared := typ.NewRecursive(name, func(self typ.Type) typ.Type {
 		methods = build(self)
 		return typ.NewInterface(name, methods)
 	})
 	return declared, methods
+}
+
+// DefineMethods registers one declared object type's methods as manifest-local
+// callables under the "Type.member" path the catalogue splits into a binding.
+func DefineMethods(declaration *manifestwire.Manifest, typeName string, methods []typ.Method) {
+	for _, method := range methods {
+		declaration.DefineFunctionSignature(typeName+"."+method.Name, signature.Function{Type: method.Type})
+	}
 }
 
 // newManifest starts a module declaration with the shared Wippy error type

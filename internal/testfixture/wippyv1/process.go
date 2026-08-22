@@ -33,7 +33,7 @@ func ProcessManifest() *manifestwire.Manifest {
 
 	optionalError := typeexpr.Optional(errorType)
 
-	messageType, messageMethods := declaredObject("process.Message", func(self typ.Type) []typ.Method {
+	messageType, messageMethods := DeclaredObject("process.Message", func(self typ.Type) []typ.Method {
 		return []typ.Method{
 			{Name: "from", Type: typ.Func().Param("self", self).Returns(typ.String).Build()},
 			{Name: "topic", Type: typ.Func().Param("self", self).Returns(typ.String).Build()},
@@ -48,7 +48,7 @@ func ProcessManifest() *manifestwire.Manifest {
 		OptField("error", typ.Any).
 		OptField("reason", typ.String).
 		Build()
-	eventMethodsType, eventMethods := declaredObject("process.EventMethods", func(self typ.Type) []typ.Method {
+	eventMethodsType, eventMethods := DeclaredObject("process.EventMethods", func(self typ.Type) []typ.Method {
 		return []typ.Method{
 			{Name: "payload", Type: typ.Func().Param("self", self).Returns(typeexpr.Optional(typ.Any)).Build()},
 		}
@@ -130,9 +130,9 @@ func ProcessManifest() *manifestwire.Manifest {
 	declaration.DefineType("Event", eventType)
 	declaration.DefineType("Options", optionsType)
 	declaration.DefineType("SpawnBuilder", spawnBuilderType)
-	defineMethods(declaration, "Message", messageMethods)
-	defineMethods(declaration, "SpawnBuilder", builderMethods)
-	defineMethods(declaration, "Event", eventMethods)
+	DefineMethods(declaration, "Message", messageMethods)
+	DefineMethods(declaration, "SpawnBuilder", builderMethods)
+	DefineMethods(declaration, "Event", eventMethods)
 
 	moduleSpawn := func() *typ.Function {
 		return typ.Func().

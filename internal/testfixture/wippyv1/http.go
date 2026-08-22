@@ -11,7 +11,7 @@ import (
 // streamType is the byte-stream handle v1 declares once in the stream module
 // and shares with http and fs. It is declared here because the http surface
 // references it directly.
-var streamType, streamMethods = declaredObject("stream.Stream", func(self typ.Type) []typ.Method {
+var streamType, streamMethods = DeclaredObject("stream.Stream", func(self typ.Type) []typ.Method {
 	optionalError := typeexpr.Optional(errorType)
 	return []typ.Method{
 		{Name: "read", Type: typ.Func().Param("self", self).OptParam("n", typ.Number).Returns(typ.String, optionalError).Build()},
@@ -38,7 +38,7 @@ func HTTPManifest() *manifestwire.Manifest {
 	optionalError := typeexpr.Optional(errorType)
 	optionalString := typeexpr.Optional(typ.String)
 
-	multipartFileType, multipartFileMethods := declaredObject("http.MultipartFile", func(self typ.Type) []typ.Method {
+	multipartFileType, multipartFileMethods := DeclaredObject("http.MultipartFile", func(self typ.Type) []typ.Method {
 		return []typ.Method{
 			{Name: "stream", Type: typ.Func().Param("self", self).Returns(streamType, optionalError).Build()},
 			{Name: "size", Type: typ.Func().Param("self", self).Returns(typ.Number, optionalError).Build()},
@@ -51,7 +51,7 @@ func HTTPManifest() *manifestwire.Manifest {
 		OptField("files", typ.NewMap(typ.String, typ.NewArray(multipartFileType))).
 		Build()
 
-	requestType, requestMethods := declaredObject("http.Request", func(self typ.Type) []typ.Method {
+	requestType, requestMethods := DeclaredObject("http.Request", func(self typ.Type) []typ.Method {
 		return []typ.Method{
 			{Name: "method", Type: typ.Func().Param("self", self).Returns(typ.String, optionalError).Build()},
 			{Name: "path", Type: typ.Func().Param("self", self).Returns(typ.String, optionalError).Build()},
@@ -74,7 +74,7 @@ func HTTPManifest() *manifestwire.Manifest {
 		}
 	})
 
-	responseType, responseMethods := declaredObject("http.Response", func(self typ.Type) []typ.Method {
+	responseType, responseMethods := DeclaredObject("http.Response", func(self typ.Type) []typ.Method {
 		return []typ.Method{
 			{Name: "set_status", Type: typ.Func().Param("self", self).Param("status", typ.Number).Returns(optionalError).Build()},
 			{Name: "set_header", Type: typ.Func().Param("self", self).Param("name", typ.String).Param("value", typ.String).Returns(optionalError).Build()},
@@ -93,10 +93,10 @@ func HTTPManifest() *manifestwire.Manifest {
 	declaration.DefineType("MultipartForm", multipartFormType)
 	declaration.DefineType("Stream", streamType)
 
-	defineMethods(declaration, "Request", requestMethods)
-	defineMethods(declaration, "Response", responseMethods)
-	defineMethods(declaration, "MultipartFile", multipartFileMethods)
-	defineMethods(declaration, "Stream", streamMethods)
+	DefineMethods(declaration, "Request", requestMethods)
+	DefineMethods(declaration, "Response", responseMethods)
+	DefineMethods(declaration, "MultipartFile", multipartFileMethods)
+	DefineMethods(declaration, "Stream", streamMethods)
 
 	methodConst := typetable.NewRecord().
 		Field("GET", typ.String).
@@ -164,12 +164,4 @@ func HTTPManifest() *manifestwire.Manifest {
 		Field("TRANSFER", transferConst).
 		Build())
 	return declaration
-}
-
-// defineMethods registers one declared object type's methods as manifest-local
-// callables under the "Type.member" path the catalogue splits into a binding.
-func defineMethods(declaration *manifestwire.Manifest, typeName string, methods []typ.Method) {
-	for _, method := range methods {
-		declaration.DefineFunctionSignature(typeName+"."+method.Name, signature.Function{Type: method.Type})
-	}
 }

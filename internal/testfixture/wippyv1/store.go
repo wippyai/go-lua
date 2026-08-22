@@ -60,7 +60,7 @@ func StoreManifest() *manifestwire.Manifest {
 		Build()
 
 	optionalError := typeexpr.Optional(errorType)
-	storeType, storeMethods := declaredObject("store.Store", func(self typ.Type) []typ.Method {
+	storeType, storeMethods := DeclaredObject("store.Store", func(self typ.Type) []typ.Method {
 		return []typ.Method{
 			{Name: "info", Type: typ.Func().Param("self", self).Returns(infoType, optionalError).Build()},
 			{Name: "get", Type: typ.Func().Param("self", self).Param("key", typ.String).Returns(typ.Any, optionalError).Build()},
@@ -80,7 +80,7 @@ func StoreManifest() *manifestwire.Manifest {
 	declaration.DefineType("Page", pageType)
 	declaration.DefineType("ListOptions", listOptionsType)
 	declaration.DefineType("PutOptions", putOptionsType)
-	defineMethods(declaration, "Store", storeMethods)
+	DefineMethods(declaration, "Store", storeMethods)
 
 	moduleGet := typ.Func().Param("name", typ.String).Returns(storeType, optionalError).Build()
 	declaration.DefineFunctionSignature("get", signature.Function{Type: moduleGet})

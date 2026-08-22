@@ -16,7 +16,7 @@ import (
 func ExprManifest() *manifestwire.Manifest {
 	declaration := newManifest("expr")
 
-	programType, programMethods := declaredObject("expr.Program", func(self typ.Type) []typ.Method {
+	programType, programMethods := DeclaredObject("expr.Program", func(self typ.Type) []typ.Method {
 		return []typ.Method{
 			{Name: "run", Type: typ.Func().
 				Param("self", self).
@@ -26,7 +26,7 @@ func ExprManifest() *manifestwire.Manifest {
 		}
 	})
 	declaration.DefineType("Program", programType)
-	defineMethods(declaration, "Program", programMethods)
+	DefineMethods(declaration, "Program", programMethods)
 
 	compile := typ.Func().
 		Param("text", typ.String).
