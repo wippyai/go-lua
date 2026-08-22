@@ -60,7 +60,14 @@ var diagnosticDeclaredCodes = []DiagnosticDeclaredCode{
 	{DiagnosticCodeDeadAssignment, diagnosticOwnerComposite, "no dead-assignment observation is composed"},
 	{DiagnosticCodeUnionExhaustiveness, diagnosticOwnerType, "no union-exhaustiveness observation is composed"},
 	{DiagnosticCodeUnusedLocal, diagnosticOwnerComposite, "declared-lane row; no declared-lane collector is installed"},
-	{DiagnosticCodeSendIsolation, diagnosticOwnerOwnership, "no send-isolation observation is composed"},
+	// The immutable, isolated and copy-fallback arms are decided by
+	// domain/sendsafety over the published placement summary; what is missing
+	// for them is the send-payload observation population that would carry a
+	// subject to decide. The escaping arm is missing a fact, not a
+	// population: the summary publishes the joined placement class, and
+	// Store-then-Send joins to the same SharedHeap that Send alone produces,
+	// so no escape provenance is recoverable from it in either direction.
+	{DiagnosticCodeSendIsolation, diagnosticOwnerOwnership, "no send-payload observation is composed; the escaping arm additionally awaits an escape-provenance column on the placement summary"},
 	{DiagnosticCodeAssignmentOptionalTarget, diagnosticOwnerType, "no optional-target conformance verdict is composed"},
 	{DiagnosticCodeCallNotCallable, diagnosticOwnerType, "no callability verdict is composed"},
 	{DiagnosticCodeCallResultAssignment, diagnosticOwnerType, "no call-result conformance verdict is composed"},
