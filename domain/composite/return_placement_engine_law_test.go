@@ -37,7 +37,7 @@ func TestReturnPlacementPublishesOwnedHeapThroughTheCompositeEngine(t *testing.T
 		t.Run(fixture.name, func(t *testing.T) {
 			record := mountedRecord(t, "return-placement-engine-"+fixture.name, fixture.source)
 			bound := materializerBinding(t, record)
-			committed, sites := queryCanonicalProgram(t, record, bound)
+			committed, table := queryCanonicalProgram(t, record, bound)
 			sealed, failure, ok := committed.Seal(nil)
 			if !ok || sealed == nil {
 				t.Fatalf("seal: %v", failure)
@@ -55,7 +55,7 @@ func TestReturnPlacementPublishesOwnedHeapThroughTheCompositeEngine(t *testing.T
 			if !ok {
 				t.Fatal("query plan")
 			}
-			publications, ok := bound.QueryPublications(committed, sites)
+			publications, ok := bound.QueryPublications(committed, table)
 			if !ok {
 				t.Fatal("query publications")
 			}

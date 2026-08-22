@@ -148,9 +148,13 @@ return { owned = owned, shared = shared }
 	formalExpectations := formalPlacementExpectations(t, record, formalInvocations)
 
 	bound := materializerBinding(t, record)
-	committed, sites := queryCanonicalProgram(t, record, bound)
+	committed, table := queryCanonicalProgram(t, record, bound)
 	formalQuerySites := make(map[identity.ContentID]struct{}, len(formalExpectations))
-	for _, site := range sites {
+	for index := 0; index < table.Count(); index++ {
+		site, siteOK := table.At(index)
+		if !siteOK {
+			t.Fatalf("selected query site %d is unavailable", index)
+		}
 		if site.Family == QueryFamilyPlacementSummary {
 			if _, formal := formalExpectations[site.Point]; formal {
 				formalQuerySites[site.Point] = struct{}{}
@@ -177,7 +181,7 @@ return { owned = owned, shared = shared }
 	if !queryPlanOK {
 		t.Fatal("open typed Placement query publication")
 	}
-	publications, publicationsOK := bound.QueryPublications(committed, sites)
+	publications, publicationsOK := bound.QueryPublications(committed, table)
 	if !publicationsOK {
 		t.Fatal("resolve typed Placement query publications")
 	}

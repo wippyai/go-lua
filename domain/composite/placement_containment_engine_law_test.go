@@ -56,7 +56,7 @@ return third
 	if bindFailure.Available() || bound == nil || !bound.Available() || bound.PlacementQuery() == nil {
 		t.Fatalf("bind the canonical Placement/Heap query: %v", bindFailure)
 	}
-	committed, sites := queryCanonicalProgram(t, record, bound)
+	committed, table := queryCanonicalProgram(t, record, bound)
 
 	sealed, sealFailure, sealedOK := committed.Seal(nil)
 	if !sealedOK || sealed == nil {
@@ -75,7 +75,7 @@ return third
 	if !queryPlanOK {
 		t.Fatal("open the engine's published query family")
 	}
-	publications, publicationsOK := bound.QueryPublications(committed, sites)
+	publications, publicationsOK := bound.QueryPublications(committed, table)
 	if !publicationsOK {
 		t.Fatal("resolve typed query publications from the committed program")
 	}

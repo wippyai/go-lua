@@ -11,6 +11,19 @@ import (
 	"github.com/wippyai/go-lua/analysis/schema/programmount"
 )
 
+func selectedQueryRows(t testing.TB, table SelectedQueryTable) []QuerySite {
+	t.Helper()
+	rows := make([]QuerySite, table.Count())
+	for index := range rows {
+		row, ok := table.At(index)
+		if !ok {
+			t.Fatalf("selected query table row %d/%d is unavailable", index, table.Count())
+		}
+		rows[index] = row
+	}
+	return rows
+}
+
 func TestQueryAdmissionDispatchesBySealedFamily(t *testing.T) {
 	record := mountedRecord(t, "query-admission", "local function identity(value) return value end; return identity(1)")
 	bound := materializerBinding(t, record)
@@ -74,7 +87,7 @@ return 42`)
 		t.Fatal("compilation unavailable")
 	}
 	sites, ok := SelectedQuerySites(compilation, record.Artifacts, record.Source.ContextDirectory())
-	if !ok || len(sites) == 0 {
+	if !ok || sites.Count() == 0 {
 		t.Fatal("selected query sites")
 	}
 	callable := make(map[identity.ContentID]struct{})
@@ -129,7 +142,7 @@ return 42`)
 		t.Fatal("fixture issued no callable/root occurrence points")
 	}
 	perPoint := make(map[identity.ContentID]int)
-	for _, site := range sites {
+	for _, site := range selectedQueryRows(t, sites) {
 		if _, forbidden := callablePoints[site.Point]; forbidden {
 			t.Fatal("uncalled callable interior became a query site")
 		}
@@ -163,7 +176,7 @@ return use(1)`)
 		t.Fatal("compilation unavailable")
 	}
 	sites, ok := SelectedQuerySites(compilation, record.Artifacts, record.Source.ContextDirectory())
-	if !ok || len(sites) == 0 {
+	if !ok || sites.Count() == 0 {
 		t.Fatal("selected query sites")
 	}
 	points := selectedCallableOccurrencePoints(t, record.Artifacts[0].Program)
@@ -175,7 +188,7 @@ return use(1)`)
 		t.Fatal("callable bodies published no occurrence points")
 	}
 	selected := make(map[identity.ContentID]int)
-	for _, site := range sites {
+	for _, site := range selectedQueryRows(t, sites) {
 		if _, forbidden := points[sibling][site.Point]; forbidden {
 			t.Fatal("uncalled sibling became a query site")
 		}
@@ -211,8 +224,8 @@ func TestSelectedQuerySitesAdmitControlFaultRoots(t *testing.T) {
 				t.Fatal("compilation unavailable")
 			}
 			sites, ok := SelectedQuerySites(compilation, record.Artifacts, record.Source.ContextDirectory())
-			if !ok || len(sites) == 0 {
-				t.Fatalf("control-fault root has no selected query sites: ok=%t rows=%d", ok, len(sites))
+			if !ok || sites.Count() == 0 {
+				t.Fatalf("control-fault root has no selected query sites: ok=%t rows=%d", ok, sites.Count())
 			}
 		})
 	}
@@ -225,14 +238,14 @@ func TestSelectedQuerySitesUseTheirOwnerAddressFormula(t *testing.T) {
 		t.Fatal("compilation unavailable")
 	}
 	sites, ok := SelectedQuerySites(compilation, record.Artifacts, record.Source.ContextDirectory())
-	if !ok || len(sites) == 0 {
+	if !ok || sites.Count() == 0 {
 		t.Fatal("selected query sites")
 	}
 	issued := make(map[schema.Key]struct{})
 	for _, family := range QueryIssuance(compilation) {
 		issued[family.Family] = struct{}{}
 	}
-	for index, site := range sites {
+	for index, site := range selectedQueryRows(t, sites) {
 		if _, known := issued[site.Family]; !known {
 			t.Fatalf("site %d carries unissued family %q", index, site.Family)
 		}

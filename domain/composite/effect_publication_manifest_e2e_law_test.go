@@ -56,7 +56,7 @@ return api.publish(payload, destination)
 	}
 
 	bound := materializerBinding(t, record)
-	committed, sites := queryCanonicalProgram(t, record, bound)
+	committed, table := queryCanonicalProgram(t, record, bound)
 	observations, observationsOK := bound.EffectPublicationObservations(committed, record.Artifacts, record.Source.ContextDirectory())
 	// Observation admission precedes Call solving. Boundary deliberately owns a
 	// factorized Application x Operation may-envelope, so both executable calls
@@ -78,10 +78,10 @@ return api.publish(payload, destination)
 	if solveStatus != engine.SolveComplete || state == nil {
 		t.Fatalf("solve manifest publication observation: status=%v state=%v reason=%v failure=%v point=%v group=%v member=%v rule=%v", solveStatus, state, solveReport.Reason(), solveReport.Failure(), solveReport.Point(), solveReport.Group(), solveReport.Member(), solveReport.Rule())
 	}
-	assertManifestPublicationPayloadShared(t, record, bound, committed, sealed, state, sites)
+	assertManifestPublicationPayloadShared(t, record, bound, committed, sealed, state, table)
 }
 
-func assertManifestPublicationPayloadShared(t testing.TB, record LinkInputs, bound *ProgramBinding, committed *engine.CommittedProgram, sealed *engine.Solver, state *engine.State, sites []QuerySite) {
+func assertManifestPublicationPayloadShared(t testing.TB, record LinkInputs, bound *ProgramBinding, committed *engine.CommittedProgram, sealed *engine.Solver, state *engine.State, table SelectedQueryTable) {
 	t.Helper()
 	var publicationCall calldomain.MountedCall
 	for index := 0; index < record.CallAlgebra.MountedCallCount(); index++ {
@@ -114,7 +114,7 @@ func assertManifestPublicationPayloadShared(t testing.TB, record LinkInputs, bou
 	}
 	view := published.Snapshot()
 	queryPlan, queryPlanOK := snapshot.OpenQuery[identity.ContentID, engine.Answer](&view, published.QueryFamily())
-	publications, publicationsOK := bound.QueryPublications(committed, sites)
+	publications, publicationsOK := bound.QueryPublications(committed, table)
 	if !queryPlanOK || !publicationsOK {
 		t.Fatal("open manifest publication Placement query surface")
 	}

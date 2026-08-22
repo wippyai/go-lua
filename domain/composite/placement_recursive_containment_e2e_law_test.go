@@ -87,7 +87,7 @@ func assertPlacementContainmentGraph(t testing.TB, name, source string, wantAllo
 	t.Helper()
 	record := mountedRecord(t, name, source)
 	bound := materializerBinding(t, record)
-	committed, sites := queryCanonicalProgram(t, record, bound)
+	committed, table := queryCanonicalProgram(t, record, bound)
 	sealed, failure, sealedOK := committed.Seal(nil)
 	if !sealedOK || sealed == nil {
 		t.Fatalf("seal recursive Placement program: %v", failure)
@@ -102,7 +102,7 @@ func assertPlacementContainmentGraph(t testing.TB, name, source string, wantAllo
 	}
 	view := published.Snapshot()
 	plan, planOK := snapshot.OpenQuery[identity.ContentID, engine.Answer](&view, published.QueryFamily())
-	publications, publicationsOK := bound.QueryPublications(committed, sites)
+	publications, publicationsOK := bound.QueryPublications(committed, table)
 	if !planOK || !publicationsOK {
 		t.Fatal("recursive Placement query publication unavailable")
 	}

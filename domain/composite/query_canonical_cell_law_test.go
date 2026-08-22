@@ -18,7 +18,7 @@ import (
 // owner admissions, bootstrap witness, Link context directory, and
 // module-composition transition declarations as production, then stops at the
 // committed program so this law can read the borrowed query answers.
-func queryCanonicalProgram(t testing.TB, record LinkInputs, bound *ProgramBinding) (*engine.CommittedProgram, []QuerySite) {
+func queryCanonicalProgram(t testing.TB, record LinkInputs, bound *ProgramBinding) (*engine.CommittedProgram, SelectedQueryTable) {
 	t.Helper()
 	if bound == nil || !bound.Available() || record.Source == nil || len(record.Artifacts) == 0 {
 		t.Fatal("query canonical fixture has no sealed binding")
@@ -99,8 +99,8 @@ func queryCanonicalProgram(t testing.TB, record LinkInputs, bound *ProgramBindin
 	if !contexts.Available() || contexts.LinkID() != sourceID {
 		t.Fatal("query canonical context directory")
 	}
-	sites, sitesOK := SelectedQuerySites(compilation, record.Artifacts, contexts)
-	if !sitesOK || len(sites) == 0 {
+	table, tableOK := SelectedQuerySites(compilation, record.Artifacts, contexts)
+	if !tableOK || table.Count() == 0 {
 		t.Fatal("selected query sites")
 	}
 	linkAdmissions, linkOK := rules.LinkAdmissions()
@@ -115,7 +115,7 @@ func queryCanonicalProgram(t testing.TB, record LinkInputs, bound *ProgramBindin
 	if mountedFailure.Available() {
 		t.Fatalf("mounted admissions refused: %s", mountedFailure)
 	}
-	queries, queriesOK := bound.QueryAdmissions(sites)
+	queries, queriesOK := bound.QueryAdmissions(table)
 	if !queriesOK {
 		t.Fatal("query admissions")
 	}
@@ -163,18 +163,18 @@ func queryCanonicalProgram(t testing.TB, record LinkInputs, bound *ProgramBindin
 	if !committed || program == nil {
 		t.Fatalf("construct committed query program: stage=%v lowered=%t lowering=%v seal=%v construction=%v", refusal.Stage(), refusal.Lowered(), refusal.LoweringFailure(), refusal.Seal(), refusal.Commit())
 	}
-	return program, sites
+	return program, table
 }
 
 func TestQueryPublicationsSealFamilyCodecAndCanonicalizeBorrowedAnswers(t *testing.T) {
 	record := mountedRecord(t, "query-canonical-cell", "local root = {}; return root")
 	bound := materializerBinding(t, record)
 	catalogState := bound.Compilation().catalog
-	committed, sites := queryCanonicalProgram(t, record, bound)
+	committed, table := queryCanonicalProgram(t, record, bound)
 
-	publications, published := bound.QueryPublications(committed, sites)
-	if !published || len(publications) != len(sites) {
-		t.Fatalf("query publications = %d/%t, sites = %d", len(publications), published, len(sites))
+	publications, published := bound.QueryPublications(committed, table)
+	if !published || len(publications) != table.Count() {
+		t.Fatalf("query publications = %d/%t, sites = %d", len(publications), published, table.Count())
 	}
 	valuePublications := make([]QueryPublication, 0, 1)
 	effectPublications := make([]QueryPublication, 0, 1)
