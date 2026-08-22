@@ -111,7 +111,7 @@ func queryCanonicalProgram(t testing.TB, record LinkInputs, bound *ProgramBindin
 	if !mountedPointOK {
 		t.Fatal("mounted-point admissions")
 	}
-	mounted, activations, _, mountedOK := rules.MountedAdmissions(record.Artifacts)
+	mounted, activations, _, mountedOK := rules.MountedAdmissions(record.Artifacts, contexts)
 	if !mountedOK {
 		t.Fatal("mounted admissions")
 	}
@@ -122,7 +122,7 @@ func queryCanonicalProgram(t testing.TB, record LinkInputs, bound *ProgramBindin
 	// Reuse Module's sealed composition rows, then perform the same
 	// GenerationID join as production pointTransitionAdmissions. The mirror
 	// must not mint a second transition or context authority.
-	_, _, transitions, generations, _, _, compositionOK := record.Source.Module().BuildCompositionRows(sourceID, record.Artifacts, contexts)
+	_, _, transitions, generations, _, _, _, compositionOK := record.Source.Module().BuildCompositionRows(sourceID, record.Artifacts, contexts)
 	if !compositionOK || len(transitions) != len(generations) {
 		t.Fatal("query canonical composition admissions")
 	}

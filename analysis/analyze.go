@@ -672,7 +672,7 @@ func (state *compiledState) assembleCommittedProgram() (*engine.CommittedProgram
 	if !mountedPointOK {
 		return nil, nil, anadiag.AnalyzeDiagnosticAssembleStageArtifactRules, anadiag.AnalyzeDiagnosticRuleUnknown, engine.ProgramAssembleRefusal{}, false
 	}
-	mounted, activations, artifactRule, mountedOK := rules.MountedAdmissions(sealed)
+	mounted, activations, artifactRule, mountedOK := rules.MountedAdmissions(sealed, state.contextDirectory)
 	if !mountedOK {
 		return nil, nil, anadiag.AnalyzeDiagnosticAssembleStageArtifactRules, artifactRule, engine.ProgramAssembleRefusal{}, false
 	}

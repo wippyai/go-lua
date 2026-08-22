@@ -4,6 +4,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/engine"
 	"github.com/wippyai/go-lua/analysis/identity"
 	"github.com/wippyai/go-lua/analysis/schema"
+	"github.com/wippyai/go-lua/analysis/schema/executioncontext"
 	"github.com/wippyai/go-lua/analysis/schema/rule"
 	"github.com/wippyai/go-lua/analysis/schema/vocabulary"
 )
@@ -11,7 +12,7 @@ import (
 // ActivationRule is the typed mounted activation admission surface retained
 // by the composed binding. Ordinary operand rules never implement it.
 type ActivationRule interface {
-	MountedAdmit(mount, point, occurrence identity.ContentID) (engine.MountedActivationAdmit, bool)
+	MountedAdmit(mount, point, occurrence identity.ContentID, contexts executioncontext.Directory) (engine.MountedActivationAdmit, bool)
 }
 
 // RuleContributor is the compose-owned typed pass for one catalog row. The

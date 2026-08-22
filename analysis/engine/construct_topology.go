@@ -1319,11 +1319,14 @@ func constructDeclaredCandidates(declaration topologyDeclaration, mounts constru
 }
 
 // declaredActivationCandidateContexts authenticates the complete transition
-// tuple already supplied by the callable-origin owner. It intentionally does
-// not derive or enumerate contexts from ProgramPointTransition geometry:
-// those rows describe transport edges, not which activation candidate a
-// higher-order library value selected. Missing candidate context is therefore
-// a hard admission refusal.
+// tuple the activation owner supplied against the Link's sealed directory. It
+// intentionally does not derive or enumerate contexts from
+// ProgramPointTransition geometry: those rows describe transport edges, not
+// which activation candidate a higher-order library value selected. Missing
+// candidate context is therefore a hard admission refusal. The tuple is one
+// edge per admitted row because the owner already expanded a multi-context
+// module into one candidate per admissible pair; the callable-origin plane
+// covers cross-module imports only and never supplies an intra-module route.
 func declaredActivationCandidateContexts(declaration topologyDeclaration, candidate declaredActivationCandidate) ([]equation.ActivationContext, bool) {
 	if !candidate.Context.Available() || !declaration.contexts.Available() {
 		return nil, false

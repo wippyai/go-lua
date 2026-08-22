@@ -7,6 +7,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/engine/internal/equation"
 	"github.com/wippyai/go-lua/analysis/engine/rows"
 	"github.com/wippyai/go-lua/analysis/identity"
+	"github.com/wippyai/go-lua/analysis/schema/executioncontext"
 	programissuance "github.com/wippyai/go-lua/analysis/schema/program/issuance"
 )
 
@@ -25,6 +26,10 @@ type selectedOverlayLawFixture struct {
 	activationMount      identity.ContentID
 	activationPoint      identity.ContentID
 	activationOccurrence identity.ContentID
+	// constructed and constructionRefusal are the raw construction outcome,
+	// carried only for a law that admitted a refusal.
+	constructed         bool
+	constructionRefusal ProgramAssembleRefusal
 }
 
 // selectedOverlayLawOptions selects the trigger geometry one law needs.
@@ -33,6 +38,13 @@ type selectedOverlayLawFixture struct {
 type selectedOverlayLawOptions struct {
 	candidateCount       int
 	duplicateApplication bool
+	// candidateContext rewrites the execution-context tuple a candidate
+	// declares. Only a law that states the admission fence supplies one; the
+	// fixture otherwise carries the directory's own edge.
+	candidateContext func(executioncontext.Directory, MountedActivationCandidate) MountedActivationCandidate
+	// admitConstructionRefusal hands the construction outcome back instead of
+	// failing, so a refusal law can read the exact step it refused at.
+	admitConstructionRefusal bool
 	// nativeStage places the trigger on a native issuance cut instead of the
 	// base cut, which is the geometry a mounted call stage is addressed under.
 	nativeStage bool
@@ -241,9 +253,26 @@ func newSelectedOverlayLawFixtureWithOptions(t testing.TB, options selectedOverl
 			{Capability: ordinaryCapability, Mount: selectedOverlayLawID(mountID), Point: points[2], Occurrence: selectedOverlayLawID(bodyOccurrence)},
 		},
 	}
+	contexts := explicitTestContextDirectory(t, selectedOverlayLawID(ownerID), []identity.ContentID{selectedOverlayLawID(mountID)}, selectedOverlayLawID(ownerID+1), selectedOverlayLawID(ownerID+2))
+	// Every candidate body of this fixture lives in the mount that carries the
+	// trigger, so the route it declares is that Context's canonical reflexive
+	// local edge - the one Seal issues for every sealed Context.
+	mountContext := explicitTestContext(t, contexts, selectedOverlayLawID(mountID))
+	localTransition, localTransitionOK := contexts.Transition(mountContext.ID(), mountContext.ID())
+	if !localTransitionOK || !localTransition.Available() {
+		t.Fatal("selected overlay local execution edge")
+	}
 	candidates := make([]MountedActivationCandidate, 0, candidateCount)
 	for index := 0; index < candidateCount; index++ {
-		candidates = append(candidates, MountedActivationCandidate{Target: coldKey(activationTarget + uint64(index)), Endpoint: coldKey(activationEndpoint + uint64(index)), Mount: selectedOverlayLawID(mountID), Body: selectedOverlayLawID(bodyID)})
+		candidate := MountedActivationCandidate{
+			Target: coldKey(activationTarget + uint64(index)), Endpoint: coldKey(activationEndpoint + uint64(index)),
+			Mount: selectedOverlayLawID(mountID), Body: selectedOverlayLawID(bodyID),
+			TransitionID: localTransition.ID(), FromContextID: mountContext.ID(), ToContextID: mountContext.ID(),
+		}
+		if options.candidateContext != nil {
+			candidate = options.candidateContext(contexts, candidate)
+		}
+		candidates = append(candidates, candidate)
 	}
 	activationAdmit := MountedActivationAdmit{Transport: issuer, Capability: activationCapability, Mount: selectedOverlayLawID(mountID), Point: triggerRule.Point, Occurrence: selectedOverlayLawID(triggerOccurrence), Application: application, Candidates: candidates}
 	admission.Activation = []MountedActivationAdmit{activationAdmit}
@@ -251,7 +280,6 @@ func newSelectedOverlayLawFixtureWithOptions(t testing.TB, options selectedOverl
 		activationAdmit.Application = coldKey(activationApplication + 1)
 		admission.Activation = append(admission.Activation, activationAdmit)
 	}
-	contexts := explicitTestContextDirectory(t, selectedOverlayLawID(ownerID), []identity.ContentID{selectedOverlayLawID(mountID)}, selectedOverlayLawID(ownerID+1), selectedOverlayLawID(ownerID+2))
 	queryAdmission, queryAdmissionOK := NewExactQueryAdmission(queryImplementation, selectedOverlayLawID(queryID), selectedOverlayLawID(mountID), points[1], explicitTestContext(t, contexts, selectedOverlayLawID(mountID)))
 	if !queryAdmissionOK {
 		t.Fatal("selected overlay query admission")
@@ -267,6 +295,9 @@ func newSelectedOverlayLawFixtureWithOptions(t testing.TB, options selectedOverl
 			t.Fatal("conflicting activation applications crossed the sealed trigger fence")
 		}
 		return selectedOverlayLawFixture{activationID: activationIdentity}
+	}
+	if options.admitConstructionRefusal {
+		return selectedOverlayLawFixture{constructed: constructed, constructionRefusal: refusal, activationID: activationIdentity}
 	}
 	if !constructed || program == nil {
 		t.Fatalf("selected overlay ConstructProgram stage=%v lower=%v lowerFailure=%v commit=%v constructionStep=%v constructionOrdinal=%d seal=%v", refusal.Stage(), refusal.Lowered(), refusal.LoweringFailure(), refusal.Commit(), refusal.construction.Step(), refusal.construction.Ordinal(), refusal.Seal())

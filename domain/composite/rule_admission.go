@@ -4,6 +4,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/engine"
 	"github.com/wippyai/go-lua/analysis/identity"
 	"github.com/wippyai/go-lua/analysis/schema"
+	"github.com/wippyai/go-lua/analysis/schema/executioncontext"
 	"github.com/wippyai/go-lua/analysis/schema/programmount"
 )
 
@@ -106,16 +107,18 @@ func (rules *RuleBinding) BootstrapCatalogs() ([]engine.ProgramBootstrapCatalog,
 
 // MountedAdmissions walks sealed ingress placements into engine admission rows.
 // Activation and ordinary mounted rules stay on separate inventories because
-// the engine admits them through different construction-plane requests.
-func (rules *RuleBinding) MountedAdmissions(mounts []programmount.MountedArtifact) ([]engine.MountedRuleAdmission, []engine.MountedActivationAdmit, DiagnosticRule, bool) {
-	if rules == nil {
+// the engine admits them through different construction-plane requests. The
+// Link's sealed execution-context directory reaches activation admission
+// because each candidate body route names the context edge it runs on.
+func (rules *RuleBinding) MountedAdmissions(mounts []programmount.MountedArtifact, contexts executioncontext.Directory) ([]engine.MountedRuleAdmission, []engine.MountedActivationAdmit, DiagnosticRule, bool) {
+	if rules == nil || !contexts.Available() {
 		return nil, nil, DiagnosticRuleUnknown, false
 	}
 	mounted := make([]engine.MountedRuleAdmission, 0)
 	activations := make([]engine.MountedActivationAdmit, 0)
 	key, ok := WalkSealedPlacements(mounts, func(key schema.Key, mount, point, occurrence identity.ContentID) bool {
 		if key == "call-activation" && rules.activation != nil {
-			admit, admitOK := rules.activation.MountedAdmit(mount, point, occurrence)
+			admit, admitOK := rules.activation.MountedAdmit(mount, point, occurrence, contexts)
 			if !admitOK {
 				return false
 			}

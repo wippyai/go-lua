@@ -446,3 +446,22 @@ func (directory Directory) Transition(fromID, toID identity.ContentID) (Transiti
 	}
 	return Transition{}, false
 }
+
+// ContextsForModule resolves every sealed Context one module holds. Directory
+// order is canonical, so the result is permutation-independent and no first
+// or default Context is selected. A module with no Context is not a caller
+// error to recover from: the boolean states that the directory has nothing to
+// say about it.
+func (directory Directory) ContextsForModule(moduleKey identity.ContentID) ([]Context, bool) {
+	if !directory.Available() || !moduleKey.Available() {
+		return nil, false
+	}
+	rows := make([]Context, 0, len(directory.contexts))
+	for _, row := range directory.contexts {
+		if row.ModuleKey() != moduleKey {
+			continue
+		}
+		rows = append(rows, row)
+	}
+	return rows, len(rows) != 0
+}

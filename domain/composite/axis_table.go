@@ -143,6 +143,7 @@ func axisTemplates() ([]*axisTemplate, []axisContributor, bool) {
 	addPublishedSpec(modulecomposition.GenerationAxisEntry[LinkInputs]())
 	addPublishedSpec(modulecomposition.OutcomeAxisEntry[LinkInputs]())
 	addPublishedSpec(modulecomposition.TerminalAxisEntry[LinkInputs]())
+	addPublishedSpec(modulecomposition.ModuleExportCallableOriginAxisEntry[LinkInputs]())
 	addPublishedSpec(executionowner.AxisEntry[LinkInputs]())
 	addPublishedSpec(denominatorpublication.AxisEntry[LinkInputs]())
 

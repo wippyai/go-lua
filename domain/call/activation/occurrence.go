@@ -3,12 +3,15 @@ package activation
 import (
 	"github.com/wippyai/go-lua/analysis/engine"
 	"github.com/wippyai/go-lua/analysis/identity"
+	"github.com/wippyai/go-lua/analysis/schema/executioncontext"
 )
 
 // MountedAdmit is the sealed activation admission request. The construction
-// plane holds the assembly; this owner supplies only declaration-owned rows.
-func (rule *HotRule) MountedAdmit(mountID, reusablePointID, occurrenceID identity.ContentID) (engine.MountedActivationAdmit, bool) {
-	if rule == nil || rule.owner == nil || rule.implementation == nil {
+// plane holds the assembly; this owner supplies only declaration-owned rows,
+// including the execution-context edge each candidate body route runs on,
+// which it reads from the Link's sealed directory.
+func (rule *HotRule) MountedAdmit(mountID, reusablePointID, occurrenceID identity.ContentID, contexts executioncontext.Directory) (engine.MountedActivationAdmit, bool) {
+	if rule == nil || rule.owner == nil || rule.implementation == nil || !contexts.Available() {
 		return engine.MountedActivationAdmit{}, false
 	}
 	// Call's Algebra is the canonical owner of mounted occurrence rows. Its
@@ -39,7 +42,7 @@ func (rule *HotRule) MountedAdmit(mountID, reusablePointID, occurrenceID identit
 		return engine.MountedActivationAdmit{}, false
 	}
 	bodies := algebra.Bodies()
-	candidates := make([]engine.MountedActivationCandidate, bodies.Count())
+	candidates := make([]engine.MountedActivationCandidate, 0, bodies.Count())
 	for index := 0; index < bodies.Count(); index++ {
 		body, bodyOK := bodies.At(index)
 		moduleKey, moduleOK := body.ModuleKey()
@@ -48,8 +51,15 @@ func (rule *HotRule) MountedAdmit(mountID, reusablePointID, occurrenceID identit
 		if !bodyOK || !moduleOK || !pathOK || !routeOK {
 			return engine.MountedActivationAdmit{}, false
 		}
-		candidates[index] = engine.MountedActivationCandidate{
-			Target: item.target, Endpoint: item.endpoint, Mount: moduleKey, Body: bodyPath,
+		edges, edgesOK := activationRouteEdges(contexts, mountID, moduleKey)
+		if !edgesOK {
+			return engine.MountedActivationAdmit{}, false
+		}
+		for _, edge := range edges {
+			candidates = append(candidates, engine.MountedActivationCandidate{
+				Target: item.target, Endpoint: item.endpoint, Mount: moduleKey, Body: bodyPath,
+				TransitionID: edge.ID(), FromContextID: edge.FromContextID(), ToContextID: edge.ToContextID(),
+			})
 		}
 	}
 	return engine.MountedActivationAdmit{
@@ -62,4 +72,30 @@ func (rule *HotRule) MountedAdmit(mountID, reusablePointID, occurrenceID identit
 		Read:        read,
 		Candidates:  candidates,
 	}, true
+}
+
+// activationRouteEdges resolves the execution-context edges one candidate body
+// route may run on: from a Context of the trigger's module to a Context of the
+// body's module. A module can hold several Contexts, so the route is admitted
+// once per declared edge and the directory's Transition relation - not the
+// producer - decides which pairs exist. A body in the trigger's own module
+// therefore rides the canonical reflexive local edge Seal issues for every
+// Context. A route the directory connects by no edge is not admissible.
+func activationRouteEdges(contexts executioncontext.Directory, triggerModuleID, bodyModuleID identity.ContentID) ([]executioncontext.Transition, bool) {
+	from, fromOK := contexts.ContextsForModule(triggerModuleID)
+	to, toOK := contexts.ContextsForModule(bodyModuleID)
+	if !fromOK || !toOK {
+		return nil, false
+	}
+	edges := make([]executioncontext.Transition, 0, len(from))
+	for _, source := range from {
+		for _, target := range to {
+			edge, ok := contexts.Transition(source.ID(), target.ID())
+			if !ok || !edge.Available() {
+				continue
+			}
+			edges = append(edges, edge)
+		}
+	}
+	return edges, len(edges) != 0
 }

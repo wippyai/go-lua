@@ -233,7 +233,7 @@ func (bound *ProgramBinding) EffectPublicationObservations(committed *engine.Com
 		if ruleKey != "effect-selected" {
 			return true
 		}
-		mountedContexts, contextsOK := mountedEffectContexts(contexts, mount)
+		mountedContexts, contextsOK := contexts.ContextsForModule(mount)
 		if !contextsOK {
 			return false
 		}
@@ -263,30 +263,6 @@ func (bound *ProgramBinding) EffectPublicationObservations(committed *engine.Com
 		return nil, false
 	}
 	return observations, true
-}
-
-// mountedEffectContexts is the owner-side bridge from a mounted occurrence to
-// its exact execution contexts. Effect's publication geometry names a mounted
-// occurrence but not a Context, so admission expands over every canonical
-// directory row whose ModuleKey is the mount. Directory order is canonical and
-// therefore makes the expansion deterministic; no first/default Context is
-// selected and no Context is reconstructed from its fields.
-func mountedEffectContexts(directory executioncontext.Directory, mount identity.ContentID) ([]executioncontext.Context, bool) {
-	if !directory.Available() || !mount.Available() {
-		return nil, false
-	}
-	result := make([]executioncontext.Context, 0, directory.ContextCount())
-	for index := 0; index < directory.ContextCount(); index++ {
-		context, ok := directory.ContextAt(index)
-		if !ok || !context.Available() {
-			return nil, false
-		}
-		if context.ModuleKey() != mount {
-			continue
-		}
-		result = append(result, context)
-	}
-	return result, len(result) != 0
 }
 
 // PlacementQuery is the sealed implementation of the placement-summary
