@@ -7,6 +7,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/identity"
 	linkproject "github.com/wippyai/go-lua/analysis/program/link/project"
 	"github.com/wippyai/go-lua/analysis/result"
+	"github.com/wippyai/go-lua/analysis/schema/plane"
 	"github.com/wippyai/go-lua/domain/value"
 )
 
@@ -49,22 +50,18 @@ func TestCompiledPlanMultiValueCallPublishesTypedSummary(t *testing.T) {
 			continue
 		}
 		cell, cellOK := query.Cell()
-		summary, summaryOK := value.DecodeSummaryResult(cell.Present(), cell.RowCount(), cell.Payload())
-		if !cellOK || !summaryOK || !summary.Available() {
-			t.Fatalf("value query %d hit has no typed summary", queryIndex)
+		view, refusal := plane.Admit(value.SummaryResultLayout, cell.Present(), cell.RowCount(), cell.Payload())
+		if !cellOK || refusal.Available() {
+			t.Fatalf("value query %d hit has no typed summary: %s", queryIndex, refusal)
 		}
 		hits++
-		coordinateCount = summary.CoordinateCount()
-		iterator := summary.Coordinates()
-		for {
-			coordinate, coordinateOK := iterator.Next()
-			if !coordinateOK {
-				break
-			}
-			if !coordinate.Available() || !coordinate.ID().Available() {
+		coordinateCount = view.RowCount()
+		for index := 0; index < view.RowCount(); index++ {
+			row, rowOK := view.At(index)
+			if !rowOK || !row.ID().Available() {
 				t.Fatalf("value query %d summary coordinate has no identity", queryIndex)
 			}
-			seen[coordinate.ID()] = true
+			seen[row.ID()] = true
 		}
 	}
 	if hits == 0 {

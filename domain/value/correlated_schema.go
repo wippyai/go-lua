@@ -394,6 +394,14 @@ type Schema struct {
 	// Suffix rows are declaration-only dynamic coordinates and carry no source
 	// atom; they are named by Program's derived portable slot identity.
 	coordinates map[identity.ContentID]coordinateRow
+	// coordinateOrder is the canonical publication order of the coordinate
+	// range: ascending by portable identity, with the dense factor position of
+	// each row beside it. A detached result is content addressed, so the order
+	// its rows are published in must be a function of the coordinates it holds
+	// and never of the private declaration position they were sealed at. It is
+	// built once with the range and read by every publication, so a publisher
+	// neither sorts nor allocates.
+	coordinateOrder []canonicalCoordinate
 	// mountedCoordinates is the detached semantic lookup consumed by downstream
 	// domains after the Boundary source graph has been released.
 	mountedCoordinates map[mountedCoordinateKey]uint32
@@ -847,6 +855,12 @@ func SealWithFailure(source *link.Link, heaps heap.Schema, mounts []programmount
 	if !builder.sealMountedCallResultSlots() {
 		return nil, SealFailureCoordinates
 	}
+	// The mounted finite tail slots reserve the last coordinates of the range,
+	// so the canonical publication order is derived once the range is complete
+	// and never again.
+	if !builder.Schema.installCanonicalCoordinateOrder() {
+		return nil, SealFailureCoordinates
+	}
 	if !builder.sealFormalSourceDirectory() {
 		return nil, SealFailureCoordinates
 	}
@@ -1047,6 +1061,47 @@ func (schema *valueBuilder) sealCoordinates() bool {
 		schema.coordinates[id] = coordinateRow{coordinate: uint32(index + 1)}
 	}
 	return len(schema.coordinates) == schema.sealBoundary().Values().Count()
+}
+
+// installCanonicalCoordinateOrder derives the canonical publication order from
+// the sealed coordinate range: ascending by portable identity, with the dense
+// factor position of each row beside it. It is derived once with the range and
+// read by every publication, so a publisher neither sorts nor allocates, and
+// the order a detached result is written in is a function of its own content
+// rather than of the position a coordinate happened to be sealed at.
+func (schema *Schema) installCanonicalCoordinateOrder() bool {
+	if schema == nil || schema.coordinateOrder != nil {
+		return false
+	}
+	// A Link with no boundary Value range is a sealed schema with an empty
+	// coordinate order, not a hole: the order is derived from the range, and a
+	// range of none derives an order of none.
+	count := len(schema.coordinates)
+	order := make([]canonicalCoordinate, 0, count)
+	occupied := make([]bool, count)
+	for id, row := range schema.coordinates {
+		if !id.Available() || row.coordinate == 0 || uint64(row.coordinate) > uint64(count) || occupied[row.coordinate-1] {
+			return false
+		}
+		occupied[row.coordinate-1] = true
+		order = append(order, canonicalCoordinate{id: id, dense: row.coordinate - 1})
+	}
+	identity.SortByContentID(order, func(row canonicalCoordinate) identity.ContentID { return row.id })
+	for index := 1; index < len(order); index++ {
+		if order[index-1].id == order[index].id {
+			return false
+		}
+	}
+	schema.coordinateOrder = order
+	return true
+}
+
+// canonicalCoordinate is one row of the canonical publication order: the
+// portable identity a consumer names the coordinate by, and the dense factor
+// position the fact for it is held at.
+type canonicalCoordinate struct {
+	id    identity.ContentID
+	dense uint32
 }
 
 func validCoordinateCount(count int) bool {
@@ -2231,6 +2286,18 @@ func (schema *Schema) CoordinateAt(index int) (Coordinate, bool) {
 		return Coordinate{}, false
 	}
 	return Coordinate{schema: schema, index: uint32(index + 1)}, true
+}
+
+// CanonicalCoordinateAt returns one coordinate in the schema's canonical
+// publication order: the portable identity it is named by and the dense factor
+// position its fact is held at. The order is ascending by identity, so a
+// detached result's row order is a function of its own content.
+func (schema *Schema) CanonicalCoordinateAt(index int) (identity.ContentID, uint32, bool) {
+	if schema == nil || index < 0 || index >= len(schema.coordinateOrder) {
+		return identity.ContentID{}, 0, false
+	}
+	row := schema.coordinateOrder[index]
+	return row.id, row.dense, true
 }
 
 // CoordinateForID returns the preissued local coordinate for one portable

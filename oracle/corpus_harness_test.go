@@ -22,6 +22,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/program/target/contract"
 	"github.com/wippyai/go-lua/analysis/result"
 	"github.com/wippyai/go-lua/analysis/schema/modulecomposition"
+	"github.com/wippyai/go-lua/analysis/schema/plane"
 	"github.com/wippyai/go-lua/analysis/schema/programmount"
 	"github.com/wippyai/go-lua/analysis/snapshot"
 	"github.com/wippyai/go-lua/domain/composite"
@@ -679,19 +680,17 @@ func corpusHarnessResultDefect(analysisResult *result.Result, sourceID identity.
 			// remains valid without asking the domain facade to decode a cell.
 		case result.QueryHit:
 			cell, cellOK := query.Cell()
-			summary, summaryOK := value.DecodeSummaryResult(cell.Present(), cell.RowCount(), cell.Payload())
-			if !cellOK || !summaryOK || !summary.Available() {
-				return fmt.Errorf("value query %d summary payload is unreadable", queryIndex)
+			view, refusal := plane.Admit(value.SummaryResultLayout, cell.Present(), cell.RowCount(), cell.Payload())
+			if !cellOK || refusal.Available() {
+				return fmt.Errorf("value query %d summary payload is unreadable: %s", queryIndex, refusal)
 			}
-			coordinates := summary.Coordinates()
-			for coordinateIndex := 0; coordinateIndex < summary.CoordinateCount(); coordinateIndex++ {
-				coordinate, coordinateOK := coordinates.Next()
-				id := coordinate.ID()
-				if !coordinateOK || !coordinate.Available() || !id.Available() {
+			for coordinateIndex := 0; coordinateIndex < view.RowCount(); coordinateIndex++ {
+				row, rowOK := view.At(coordinateIndex)
+				if !rowOK || !row.ID().Available() {
 					return fmt.Errorf("value query %d coordinate %d has no available identity", queryIndex, coordinateIndex)
 				}
 			}
-			if _, trailing := coordinates.Next(); trailing {
+			if _, trailing := view.At(view.RowCount()); trailing {
 				return fmt.Errorf("value query %d summary has trailing coordinates", queryIndex)
 			}
 		default:
@@ -722,12 +721,13 @@ func corpusHarnessResultDefect(analysisResult *result.Result, sourceID identity.
 			// value family.
 		case result.QueryHit:
 			cell, cellOK := query.Cell()
-			effect, effectOK := factor.DecodeResult(cell.Present(), cell.RowCount(), cell.Payload())
-			if !cellOK || !effectOK || !effect.Available() {
-				return fmt.Errorf("effect query %d effect payload is unreadable", queryIndex)
+			view, refusal := plane.Admit(factor.ExactResultLayout, cell.Present(), cell.RowCount(), cell.Payload())
+			row, rowOK := view.At(0)
+			if !cellOK || refusal.Available() || !rowOK {
+				return fmt.Errorf("effect query %d effect payload is unreadable: %s", queryIndex, refusal)
 			}
-			for atomIndex := 0; atomIndex < effect.AtomCount(); atomIndex++ {
-				id, atomOK := effect.AtomAt(atomIndex)
+			for atomIndex := 0; atomIndex < row.Count(); atomIndex++ {
+				id, atomOK := row.AtomAt(atomIndex)
 				if !atomOK || !id.Available() {
 					return fmt.Errorf("effect query %d atom %d has no available identity", queryIndex, atomIndex)
 				}

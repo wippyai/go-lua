@@ -5,7 +5,41 @@ import (
 	"testing"
 
 	"github.com/wippyai/go-lua/analysis/identity"
+	"github.com/wippyai/go-lua/analysis/schema/plane"
 )
+
+// The wire offsets this family's payload is read at are derived from its
+// sealed layout, never spelled: format, layout digest, owner identity, row
+// count, then the coordinate plane, the row records, the tail extents and the
+// compact word images.
+const (
+	valueSummaryHeaderSize       = 8 + 32 + 8 + 32
+	valueSummaryOwnerAt          = 8 + 32
+	valueSummaryCoordinateIDSize = 32
+)
+
+func valueSummaryRowAt(coordinates, index int) int {
+	return valueSummaryHeaderSize + coordinates*valueSummaryCoordinateIDSize + index*SummaryResultLayout.RowWidth()
+}
+
+func valueSummaryOffsetsAt(coordinates int) int {
+	return valueSummaryRowAt(coordinates, coordinates)
+}
+
+// TestSummaryResultLayoutSeals states that the family's declaration is
+// admissible: an unsealed layout would refuse every answer at publication.
+func TestSummaryResultLayoutSeals(t *testing.T) {
+	if !SummaryResultLayout.Available() || SummaryResultLayout.Family() != SummaryResultFamily {
+		t.Fatal("the value-summary layout did not seal")
+	}
+	if SummaryResultLayout.RowWidth() != 2 {
+		t.Fatalf("row width = %d, want the state byte plus the top flag", SummaryResultLayout.RowWidth())
+	}
+	variable, declared := SummaryResultLayout.Variable()
+	if !declared || variable != SummaryColumnImage {
+		t.Fatalf("variable column = %d/%v, want the declared compact image", variable, declared)
+	}
+}
 
 func summaryCodecID(seed byte) identity.ContentID {
 	var id identity.ContentID
@@ -27,14 +61,14 @@ func TestEncodeSummaryResultOwnsCompactCorrelatedImage(t *testing.T) {
 		Present: []bool{true, true}, Rows: 1, Valid: true, owner: schema,
 	}
 	present, rows, payload, ok := EncodeSummaryResult(observation)
-	if !ok || !present || rows != 1 || binary.BigEndian.Uint64(payload[:8]) != valueSummaryResultFormat {
+	if !ok || !present || rows != 1 || binary.BigEndian.Uint64(payload[:8]) != plane.Format {
 		t.Fatal("value summary codec refused canonical observation")
 	}
-	if got := identity.ContentID(payload[8:40]); got != schema.LinkID() {
+	if got := identity.ContentID(payload[valueSummaryOwnerAt : valueSummaryOwnerAt+32]); got != schema.LinkID() {
 		t.Fatal("value summary codec lost Link owner identity")
 	}
 	for index, want := range []identity.ContentID{firstID, secondID} {
-		start := valueSummaryResultHeaderSize + index*valueSummaryCoordinateIDSize
+		start := valueSummaryHeaderSize + index*valueSummaryCoordinateIDSize
 		if got := identity.ContentID(payload[start : start+valueSummaryCoordinateIDSize]); got != want {
 			t.Fatalf("coordinate %d encoded at the wrong dense ordinal", index)
 		}
@@ -83,17 +117,17 @@ func TestEncodeSummaryResultRowZeroRetainsOwnerAndCoordinateSlots(t *testing.T) 
 		owner:   schema,
 	}
 	present, rows, payload, ok := EncodeSummaryResult(observation)
-	if !ok || present || rows != 0 || identity.ContentID(payload[8:40]) != schema.LinkID() {
+	if !ok || present || rows != 0 || identity.ContentID(payload[valueSummaryOwnerAt:valueSummaryOwnerAt+32]) != schema.LinkID() {
 		t.Fatal("row-zero summary observation was rejected")
 	}
 	for index, want := range []identity.ContentID{firstID, secondID} {
-		start := valueSummaryResultHeaderSize + index*valueSummaryCoordinateIDSize
+		start := valueSummaryHeaderSize + index*valueSummaryCoordinateIDSize
 		if got := identity.ContentID(payload[start : start+valueSummaryCoordinateIDSize]); got != want {
 			t.Fatalf("row-zero coordinate %d lost its identity", index)
 		}
 	}
 	for index := 0; index < len(observation.Values); index++ {
-		if payload[valueSummaryResultHeaderSize+len(observation.Values)*valueSummaryCoordinateIDSize+index] != 0 {
+		if payload[valueSummaryRowAt(len(observation.Values), index)] != 0 {
 			t.Fatal("row-zero summary encoded coordinate presence")
 		}
 	}
@@ -136,5 +170,6 @@ func summaryCodecSchemaWithOrdinals(coordinates map[identity.ContentID]uint32) *
 	for id, ordinal := range coordinates {
 		schema.coordinates[id] = coordinateRow{coordinate: ordinal}
 	}
+	schema.installCanonicalCoordinateOrder()
 	return schema
 }

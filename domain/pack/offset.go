@@ -295,22 +295,3 @@ func natLimbFromRight(value nat, index int) uint64 {
 	}
 	return uint64(value.limbs[len(value.limbs)-1-index])
 }
-
-// offsetBytes is cold-only schema/artifact support. It never backs a map key
-// or Fact payload; callers receive a copy so the immutable table cannot be
-// mutated through an external slice.
-func offsetBytes(owner *algebra, offset Offset) ([]byte, bool) {
-	if owner == nil || !offset.valid() || offset.owner != owner {
-		return nil, false
-	}
-	limbs := owner.offsets[offset.index].limbs
-	bytesValue := make([]byte, len(limbs)*4)
-	for index, limb := range limbs {
-		at := index * 4
-		bytesValue[at] = byte(limb >> 24)
-		bytesValue[at+1] = byte(limb >> 16)
-		bytesValue[at+2] = byte(limb >> 8)
-		bytesValue[at+3] = byte(limb)
-	}
-	return bytesValue, true
-}

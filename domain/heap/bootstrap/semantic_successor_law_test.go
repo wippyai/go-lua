@@ -10,6 +10,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/program/link"
 	linkproject "github.com/wippyai/go-lua/analysis/program/link/project"
 	analysisresult "github.com/wippyai/go-lua/analysis/result"
+	"github.com/wippyai/go-lua/analysis/schema/plane"
 	"github.com/wippyai/go-lua/domain/value"
 	"github.com/wippyai/go-lua/internal/testfixture"
 )
@@ -73,24 +74,20 @@ func bootstrapPublishedValuePresence(t testing.TB, input *analysisresult.Result,
 				continue
 			}
 			cell, cellOK := query.Cell()
-			summary, summaryOK := value.DecodeSummaryResult(cell.Present(), cell.RowCount(), cell.Payload())
-			if !cellOK || !summaryOK {
-				t.Fatalf("bootstrap value query[%d] summary unavailable", queryIndex)
+			view, refusal := plane.Admit(value.SummaryResultLayout, cell.Present(), cell.RowCount(), cell.Payload())
+			if !cellOK || refusal.Available() {
+				t.Fatalf("bootstrap value query[%d] summary unavailable: %s", queryIndex, refusal)
 			}
-			iterator := summary.Coordinates()
-			for {
-				coordinate, coordinateOK := iterator.Next()
-				if !coordinateOK {
-					break
-				}
-				if !coordinate.Available() {
+			for index := 0; index < view.RowCount(); index++ {
+				row, rowOK := view.At(index)
+				if !rowOK {
 					t.Fatalf("bootstrap value query[%d] coordinate unavailable", queryIndex)
 				}
-				coordinateID := coordinate.ID()
+				coordinateID := row.ID()
 				if !coordinateID.Available() {
 					t.Fatalf("bootstrap value query[%d] coordinate has no identity", queryIndex)
 				}
-				if coordinate.Present() {
+				if row.Written() {
 					presence[coordinateID] = true
 				} else if _, seen := presence[coordinateID]; !seen {
 					presence[coordinateID] = false

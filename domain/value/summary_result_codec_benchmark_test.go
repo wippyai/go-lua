@@ -5,11 +5,12 @@ import (
 	"testing"
 
 	"github.com/wippyai/go-lua/analysis/identity"
+	"github.com/wippyai/go-lua/analysis/schema/plane"
 )
 
 var (
 	summaryResultCodecPayloadSink    []byte
-	summaryResultCodecDecodeSink     SummaryResult
+	summaryResultCodecDecodeSink     plane.View
 	summaryResultCodecDecodeOKSink   bool
 	summaryResultCodecCoordinateSink identity.ContentID
 	summaryResultCodecWordSink       uint64
@@ -38,9 +39,9 @@ func BenchmarkEncodeSummaryResult(b *testing.B) {
 
 // BenchmarkDecodeSummaryResult measures opening and walking the detached wire
 // image at the same coordinate widths as BenchmarkEncodeSummaryResult.  The
-// payload is encoded before timing so the benchmark covers DecodeSummaryResult
-// and the complete coordinate/word iteration only.
-func BenchmarkDecodeSummaryResult(b *testing.B) {
+// payload is encoded before timing so the benchmark covers admission and the
+// complete coordinate/word iteration only.
+func BenchmarkAdmitSummaryResult(b *testing.B) {
 	for _, coordinates := range []int{1, 16, 128} {
 		coordinates := coordinates
 		b.Run("coordinates="+strconv.Itoa(coordinates), func(b *testing.B) {
@@ -53,22 +54,21 @@ func BenchmarkDecodeSummaryResult(b *testing.B) {
 			b.ReportAllocs()
 			b.ResetTimer()
 			for iteration := 0; iteration < b.N; iteration++ {
-				result, decodedOK := DecodeSummaryResult(present, rows, encoded)
-				summaryResultCodecDecodeSink = result
-				summaryResultCodecDecodeOKSink = decodedOK && result.Available() &&
-					result.CoordinateCount() == coordinates
+				view, refusal := plane.Admit(SummaryResultLayout, present, rows, encoded)
+				summaryResultCodecDecodeSink = view
+				summaryResultCodecDecodeOKSink = !refusal.Available() &&
+					view.RowCount() == coordinates
 				var coordinateCount int
-				iterator := result.Coordinates()
-				for {
-					coordinate, found := iterator.Next()
+				for index := 0; index < view.RowCount(); index++ {
+					coordinate, found := view.At(index)
 					if !found {
 						break
 					}
 					coordinateCount++
 					summaryResultCodecCoordinateSink = coordinate.ID()
-					present := coordinate.Present()
-					top := coordinate.Top()
-					wordCount := coordinate.WordCount()
+					present := coordinate.Written()
+					top := coordinate.Flag(SummaryColumnTop)
+					wordCount := coordinate.Count()
 					if !present || top || wordCount == 0 {
 						summaryResultCodecDecodeOKSink = false
 					}
@@ -123,6 +123,7 @@ func summaryResultCodecBenchmarkObservation(coordinates int) ValueSummaryObserva
 		values[index] = Value{schema: schema, image: image[index : index+1]}
 		present[index] = true
 	}
+	schema.installCanonicalCoordinateOrder()
 	return ValueSummaryObservation{Values: values, Present: present, Rows: 1, Valid: true, owner: schema}
 }
 

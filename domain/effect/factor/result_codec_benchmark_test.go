@@ -5,11 +5,12 @@ import (
 	"testing"
 
 	"github.com/wippyai/go-lua/analysis/identity"
+	"github.com/wippyai/go-lua/analysis/schema/plane"
 )
 
 var (
 	effectResultCodecPayloadSink  []byte
-	effectResultCodecDecodeSink   Result
+	effectResultCodecDecodeSink   plane.View
 	effectResultCodecDecodeOKSink bool
 	effectResultCodecAtomSink     identity.ContentID
 )
@@ -35,11 +36,11 @@ func BenchmarkEncodeResult(b *testing.B) {
 	}
 }
 
-// BenchmarkDecodeResult measures opening and walking the detached wire image
-// at the same atom widths as BenchmarkEncodeResult.  The payload is encoded
-// before timing so the benchmark covers DecodeResult and the complete atom
-// iteration only.
-func BenchmarkDecodeResult(b *testing.B) {
+// BenchmarkAdmitResult measures opening and walking the detached wire image at
+// the same atom widths as BenchmarkEncodeResult.  The payload is encoded before
+// timing so the benchmark covers admission and the complete atom iteration
+// only.
+func BenchmarkAdmitResult(b *testing.B) {
 	for _, atoms := range []int{1, 16, 128} {
 		atoms := atoms
 		b.Run("atoms="+strconv.Itoa(atoms), func(b *testing.B) {
@@ -52,12 +53,13 @@ func BenchmarkDecodeResult(b *testing.B) {
 			b.ReportAllocs()
 			b.ResetTimer()
 			for iteration := 0; iteration < b.N; iteration++ {
-				result, decodedOK := DecodeResult(present, rows, encoded)
-				effectResultCodecDecodeSink = result
-				effectResultCodecDecodeOKSink = decodedOK && result.Available() &&
-					result.Present() && result.AtomCount() == atoms
+				view, refusal := plane.Admit(ExactResultLayout, present, rows, encoded)
+				row, rowOK := view.At(0)
+				effectResultCodecDecodeSink = view
+				effectResultCodecDecodeOKSink = !refusal.Available() && rowOK &&
+					row.Written() && row.Count() == atoms
 				for atomIndex := 0; atomIndex < atoms; atomIndex++ {
-					atom, atomOK := result.AtomAt(atomIndex)
+					atom, atomOK := row.AtomAt(atomIndex)
 					effectResultCodecAtomSink = atom
 					if !atomOK || !atom.Available() {
 						effectResultCodecDecodeOKSink = false

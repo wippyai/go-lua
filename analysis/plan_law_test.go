@@ -13,6 +13,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/program/link"
 	linkproject "github.com/wippyai/go-lua/analysis/program/link/project"
 	"github.com/wippyai/go-lua/analysis/result"
+	"github.com/wippyai/go-lua/analysis/schema/plane"
 	"github.com/wippyai/go-lua/domain/value"
 	"github.com/wippyai/go-lua/internal/testfixture"
 )
@@ -221,20 +222,16 @@ func TestCompiledPlanZeroRowOutcomeDoesNotMaskLiteralReturn(t *testing.T) {
 			continue
 		}
 		cell, cellOK := query.Cell()
-		summary, summaryOK := value.DecodeSummaryResult(cell.Present(), cell.RowCount(), cell.Payload())
-		if !cellOK || !summaryOK || !summary.Available() {
-			t.Fatal("literal return hit has no typed value summary")
+		view, refusal := plane.Admit(value.SummaryResultLayout, cell.Present(), cell.RowCount(), cell.Payload())
+		if !cellOK || refusal.Available() {
+			t.Fatalf("literal return hit has no typed value summary: %s", refusal)
 		}
-		iterator := summary.Coordinates()
-		for {
-			coordinate, coordinateOK := iterator.Next()
-			if !coordinateOK {
-				break
-			}
-			if !coordinate.Available() || !coordinate.ID().Available() {
+		for index := 0; index < view.RowCount(); index++ {
+			row, rowOK := view.At(index)
+			if !rowOK || !row.ID().Available() {
 				t.Fatal("literal return summary coordinate")
 			}
-			seen[coordinate.ID()] = true
+			seen[row.ID()] = true
 		}
 		found = true
 		break

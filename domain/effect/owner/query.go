@@ -5,6 +5,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/identity"
 	"github.com/wippyai/go-lua/analysis/schema"
 	"github.com/wippyai/go-lua/analysis/schema/axis"
+	"github.com/wippyai/go-lua/analysis/schema/plane"
 	"github.com/wippyai/go-lua/analysis/schema/query"
 	"github.com/wippyai/go-lua/domain/effect/factor"
 )
@@ -134,3 +135,8 @@ func exactQuerySpec(algebra *factor.Algebra, freezer identity.SemanticKey) engin
 		},
 	}
 }
+
+// ExactResultLayout is the sealed publication layout the answers of this family
+// are detached under. It is exposed beside the query declaration so the family
+// key and the layout that carries it are read from one place.
+func ExactResultLayout() *plane.Sealed { return factor.ExactResultLayout }

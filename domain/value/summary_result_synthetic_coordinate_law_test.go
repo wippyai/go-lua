@@ -4,6 +4,7 @@ import (
 	"testing"
 
 	artifactcompiler "github.com/wippyai/go-lua/analysis/program/artifact/compiler"
+	"github.com/wippyai/go-lua/analysis/schema/plane"
 	"github.com/wippyai/go-lua/analysis/schema/programmount"
 	"github.com/wippyai/go-lua/domain/composite"
 	"github.com/wippyai/go-lua/domain/composite/snapshottest"
@@ -51,19 +52,18 @@ func TestSummaryResultEncodesSyntheticTailCoordinates(t *testing.T) {
 		t.Fatalf("encoded summary present=%t rows=%d, want a single present row", present, rows)
 	}
 
-	result, decoded := valuedomain.DecodeSummaryResult(present, rows, string(payload))
-	if !decoded || !result.Available() {
-		t.Fatal("encoded summary is not decodable")
+	view, refusal := plane.Admit(valuedomain.SummaryResultLayout, present, rows, string(payload))
+	if refusal.Available() {
+		t.Fatalf("encoded summary is not decodable: %s", refusal)
 	}
-	if result.CoordinateCount() != schema.CoordinateCount() {
-		t.Fatalf("decoded coordinate count = %d, want the sealed coordinate count %d", result.CoordinateCount(), schema.CoordinateCount())
+	if view.RowCount() != schema.CoordinateCount() {
+		t.Fatalf("decoded coordinate count = %d, want the sealed coordinate count %d", view.RowCount(), schema.CoordinateCount())
 	}
-	coordinates := result.Coordinates()
-	seen := make(map[[32]byte]struct{}, result.CoordinateCount())
-	for index := 0; index < result.CoordinateCount(); index++ {
-		coordinate, coordinateOK := coordinates.Next()
-		id := coordinate.ID()
-		if !coordinateOK || !id.Available() {
+	seen := make(map[[32]byte]struct{}, view.RowCount())
+	for index := 0; index < view.RowCount(); index++ {
+		row, rowOK := view.At(index)
+		id := row.ID()
+		if !rowOK || !id.Available() {
 			t.Fatalf("decoded coordinate %d carries no portable identity", index)
 		}
 		if _, duplicate := seen[id]; duplicate {
@@ -98,17 +98,16 @@ func TestSyntheticTailCoordinateResolvesByPortableIdentity(t *testing.T) {
 	if !encoded || present || rows != 0 {
 		t.Fatalf("all-absent encode = present:%t rows:%d ok:%t", present, rows, encoded)
 	}
-	result, decoded := valuedomain.DecodeSummaryResult(present, rows, string(payload))
-	if !decoded {
-		t.Fatal("all-absent summary is not decodable")
+	view, refusal := plane.Admit(valuedomain.SummaryResultLayout, present, rows, string(payload))
+	if refusal.Available() {
+		t.Fatalf("all-absent summary is not decodable: %s", refusal)
 	}
-	coordinates := result.Coordinates()
-	for index := 0; index < result.CoordinateCount(); index++ {
-		coordinate, coordinateOK := coordinates.Next()
-		if !coordinateOK {
+	for index := 0; index < view.RowCount(); index++ {
+		row, rowOK := view.At(index)
+		if !rowOK {
 			t.Fatalf("coordinate %d unreadable", index)
 		}
-		local, resolved := schema.CoordinateForID(coordinate.ID())
+		local, resolved := schema.CoordinateForID(row.ID())
 		if !resolved || !local.Valid() {
 			t.Fatalf("coordinate %d identity does not resolve back to a sealed coordinate", index)
 		}

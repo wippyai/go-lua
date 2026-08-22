@@ -1,29 +1,57 @@
 package value
 
 import (
-	"encoding/binary"
-
 	"github.com/wippyai/go-lua/analysis/schema"
+	"github.com/wippyai/go-lua/analysis/schema/plane"
 )
 
 // SummaryResultFamily is the canonical query family key for value summaries.
 const SummaryResultFamily schema.Key = "value-summary"
 
-const valueSummaryResultFormat uint64 = 1
-
+// The declaration positions of this family's published columns, and the one
+// class a written coordinate row is published at. A coordinate either carries a
+// Value or no producer wrote it, so the state vocabulary names exactly that one
+// class rather than encoding presence as a number.
 const (
-	valueSummaryResultHeaderSize = 8 + 32 + 8
-	valueSummaryCoordinateIDSize = 32
+	SummaryColumnTop = iota
+	SummaryColumnImage
 )
 
+// SummaryClassHeld is the class of a coordinate row a producer wrote.
+const SummaryClassHeld schema.Key = "held"
+
+// SummaryResultLayout is the sealed declaration one Value summary is published
+// under. The payload keeps Value's compact atom/capability word image rather
+// than expanding it into structural objects, so the image is declared as the
+// row's one variable column. Present values must belong to one exact Link
+// schema, and that Link identity is the coordinate space the rows are fenced
+// by: it is what makes the private word ordinals readable.
+var SummaryResultLayout = summaryResultLayout()
+
+func summaryResultLayout() *plane.Sealed {
+	sealed, _ := plane.Seal(plane.Layout{
+		Family: SummaryResultFamily,
+		Keyed:  true,
+		States: []schema.Key{SummaryClassHeld},
+		Columns: []plane.Column{
+			{Key: "top", Carrier: plane.CarrierFlag},
+			{Key: "image", Carrier: plane.CarrierWords},
+		},
+	})
+	return sealed
+}
+
 // EncodeSummaryResult canonically detaches the complete correlated Value
-// summary. The payload keeps Value's compact atom/capability word image rather
-// than expanding it into structural objects. Present values must belong to one
-// exact Link schema; that Link identity fences the private word ordinals.
+// summary onto the family's sealed layout. Rows are published in the schema's
+// canonical coordinate order, which is ascending by portable identity, so the
+// detached image is a function of the coordinates it holds and not of the
+// declaration position they were sealed at.
 func EncodeSummaryResult(observation ValueSummaryObservation) (present bool, rows uint64, payload []byte, ok bool) {
 	count := len(observation.Values)
 	owner := observation.owner
-	if owner == nil || !summaryObservationOwned(owner, observation) || count == 0 || len(observation.Present) != count || observation.Rows > 1 || !owner.LinkID().Available() {
+	if owner == nil || !summaryObservationOwned(owner, observation) || count == 0 ||
+		len(observation.Present) != count || observation.Rows > 1 || !owner.LinkID().Available() ||
+		owner.CoordinateCount() != count {
 		return false, 0, nil, false
 	}
 	words := 0
@@ -39,93 +67,33 @@ func EncodeSummaryResult(observation ValueSummaryObservation) (present bool, row
 		words += len(value.image)
 		any = true
 	}
-	if any != (observation.Rows == 1) || owner.CoordinateCount() != count {
+	if any != (observation.Rows == 1) {
 		return false, 0, nil, false
 	}
-	// format + owner + coordinate count, then one raw portable coordinate ID
-	// slot per coordinate followed by one presence byte per coordinate; a
-	// present coordinate adds top + word count + its compact word image.
-	size := valueSummaryResultHeaderSize + count*valueSummaryCoordinateIDSize + count + words*8
-	for _, held := range observation.Present {
-		if held {
-			size += 1 + 8
-		}
-	}
-	payload = make([]byte, size)
-	cursor := 0
-	putUint := func(value uint64) {
-		binary.BigEndian.PutUint64(payload[cursor:cursor+8], value)
-		cursor += 8
-	}
-	putUint(valueSummaryResultFormat)
-	link := owner.LinkID()
-	copy(payload[cursor:cursor+32], link[:])
-	cursor += 32
-	putUint(uint64(count))
-	if !fillSummaryCoordinateIDs(payload, owner, count) {
+	writer, begun := plane.Begin(SummaryResultLayout, owner.LinkID(), count, words)
+	if !begun {
 		return false, 0, nil, false
 	}
-	cursor += count * valueSummaryCoordinateIDSize
-	for _, held := range observation.Present {
-		if held {
-			payload[cursor] = 1
+	for position := 0; position < count; position++ {
+		id, dense, resolved := owner.CanonicalCoordinateAt(position)
+		if !resolved || uint64(dense) >= uint64(count) {
+			return false, 0, nil, false
 		}
-		cursor++
-	}
-	for index, held := range observation.Present {
-		if !held {
-			continue
+		written := true
+		if !observation.Present[dense] {
+			written = writer.Absent(id)
+		} else {
+			written = writer.Row(id, SummaryClassHeld)
+			value := observation.Values[dense]
+			written = written && writer.Flag(value.top)
+			for _, word := range value.image {
+				written = written && writer.Word(word)
+			}
+			written = written && writer.CloseColumn()
 		}
-		value := observation.Values[index]
-		if value.top {
-			payload[cursor] = 1
-		}
-		cursor++
-		putUint(uint64(len(value.image)))
-		for _, word := range value.image {
-			putUint(word)
-		}
-	}
-	return any, uint64(observation.Rows), payload, cursor == len(payload)
-}
-
-// fillSummaryCoordinateIDs writes each sealed portable Value identity into
-// the slot named by its one-based dense coordinate ordinal. The payload is
-// zeroed when allocated, so each slot also provides the no-allocation marker
-// needed to reject duplicate ordinals while the map is traversed.
-func fillSummaryCoordinateIDs(payload []byte, owner *Schema, count int) bool {
-	if owner == nil || len(owner.coordinates) != count {
-		return false
-	}
-	filled := 0
-	for id, row := range owner.coordinates {
-		if !id.Available() || row.coordinate == 0 || uint64(row.coordinate) > uint64(count) {
-			return false
-		}
-		ordinal := int(row.coordinate - 1)
-		start := valueSummaryResultHeaderSize + ordinal*valueSummaryCoordinateIDSize
-		slot := payload[start : start+valueSummaryCoordinateIDSize]
-		if !summaryCoordinateIDSlotEmpty(slot) {
-			return false
-		}
-		copy(slot, id[:])
-		filled++
-	}
-	if filled != count {
-		return false
-	}
-	for ordinal := 0; ordinal < count; ordinal++ {
-		start := valueSummaryResultHeaderSize + ordinal*valueSummaryCoordinateIDSize
-		if summaryCoordinateIDSlotEmpty(payload[start : start+valueSummaryCoordinateIDSize]) {
-			return false
+		if !written || !writer.EndRow() {
+			return false, 0, nil, false
 		}
 	}
-	return true
-}
-
-func summaryCoordinateIDSlotEmpty(slot []byte) bool {
-	return binary.BigEndian.Uint64(slot[:8])|
-		binary.BigEndian.Uint64(slot[8:16])|
-		binary.BigEndian.Uint64(slot[16:24])|
-		binary.BigEndian.Uint64(slot[24:32]) == 0
+	return writer.Finish(uint64(observation.Rows))
 }

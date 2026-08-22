@@ -6,6 +6,7 @@ import (
 
 	"github.com/wippyai/go-lua/analysis/engine"
 	"github.com/wippyai/go-lua/analysis/identity"
+	"github.com/wippyai/go-lua/analysis/schema/plane"
 	programschema "github.com/wippyai/go-lua/analysis/schema/program"
 	programissuance "github.com/wippyai/go-lua/analysis/schema/program/issuance"
 	"github.com/wippyai/go-lua/analysis/snapshot"
@@ -238,23 +239,30 @@ func returnBoundaryValueStateForLaw(t testing.TB, view *snapshot.Snapshot, plan 
 	if !cellOK {
 		return "cell-invalid"
 	}
-	result, resultOK := valuedomain.DecodeSummaryResult(cell.Present(), cell.RowCount(), cell.Payload())
-	if !resultOK {
+	summaryView, refusal := plane.Admit(valuedomain.SummaryResultLayout, cell.Present(), cell.RowCount(), cell.Payload())
+	if refusal.Available() {
 		return "decode-invalid"
 	}
-	iterator := result.Coordinates()
-	for ordinal := uint32(0); ordinal <= index; ordinal++ {
-		row, next := iterator.Next()
-		if !next {
+	// A published row is addressed by the portable identity it carries, never
+	// by the schema's private dense position: the wire's row order is a
+	// function of the coordinates it holds, so the two orders are unrelated.
+	for position := 0; position < summaryView.RowCount(); position++ {
+		row, rowOK := summaryView.At(position)
+		if !rowOK {
 			return "coordinate-missing"
 		}
-		if ordinal != index {
+		local, resolved := schema.CoordinateForID(row.ID())
+		if !resolved {
+			return "coordinate-unresolved"
+		}
+		dense, denseOK := schema.CoordinateIndex(local)
+		if !denseOK || dense != index {
 			continue
 		}
-		if !row.Present() {
+		if !row.Written() {
 			return "absent"
 		}
-		if row.Top() {
+		if row.Flag(valuedomain.SummaryColumnTop) {
 			return "top"
 		}
 		return "present"

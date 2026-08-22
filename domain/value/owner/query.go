@@ -5,6 +5,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/identity"
 	"github.com/wippyai/go-lua/analysis/schema"
 	"github.com/wippyai/go-lua/analysis/schema/axis"
+	"github.com/wippyai/go-lua/analysis/schema/plane"
 	"github.com/wippyai/go-lua/analysis/schema/query"
 	"github.com/wippyai/go-lua/domain/value"
 )
@@ -138,3 +139,8 @@ func summaryQuerySpec(schema *value.Schema, freezer identity.SemanticKey) engine
 		},
 	}
 }
+
+// SummaryResultLayout is the sealed publication layout the answers of this
+// family are detached under. It is exposed beside the query declaration so the
+// family key and the layout that carries it are read from one place.
+func SummaryResultLayout() *plane.Sealed { return value.SummaryResultLayout }

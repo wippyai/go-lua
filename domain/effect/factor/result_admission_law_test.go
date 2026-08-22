@@ -5,9 +5,15 @@ import (
 	"testing"
 
 	"github.com/wippyai/go-lua/analysis/identity"
+	"github.com/wippyai/go-lua/analysis/schema/plane"
 )
 
-func TestDecodeResultRoundTrip(t *testing.T) {
+// A published Effect answer is read through the generic plane codec against
+// this family's sealed layout. There is no Effect-side decoder: a domain
+// wrapper over the layout would be a second reading of bytes the seal already
+// describes.
+
+func TestAdmitResultRoundTrip(t *testing.T) {
 	atoms := []identity.ContentID{decodeResultTestID(1), decodeResultTestID(67)}
 	observation := EffectObservation{
 		Atoms: atoms, Rows: 1, Present: true, Valid: true, seal: sealAtoms(atoms),
@@ -16,25 +22,26 @@ func TestDecodeResultRoundTrip(t *testing.T) {
 	if !ok {
 		t.Fatal("EncodeResult rejected round-trip observation")
 	}
-	result, ok := DecodeResult(present, rows, string(payload))
-	if !ok || !result.Available() || !result.Present() || result.Top() || result.AtomCount() != len(atoms) {
-		t.Fatalf("decoded result metadata = available:%v present:%v top:%v atoms:%d", result.Available(), result.Present(), result.Top(), result.AtomCount())
+	view, refusal := plane.Admit(ExactResultLayout, present, rows, string(payload))
+	row, rowOK := view.At(0)
+	if refusal.Available() || !rowOK || !row.Written() || row.Flag(ExactColumnTop) || row.Count() != len(atoms) {
+		t.Fatalf("admitted result = refusal:%s written:%v top:%v atoms:%d", refusal, row.Written(), row.Flag(ExactColumnTop), row.Count())
 	}
 	for index, want := range atoms {
-		got, found := result.AtomAt(index)
+		got, found := row.AtomAt(index)
 		if !found || got != want {
-			t.Fatalf("decoded atom %d = %v/%v, want %v/true", index, got, found, want)
+			t.Fatalf("admitted atom %d = %v/%v, want %v/true", index, got, found, want)
 		}
 	}
-	if _, found := result.AtomAt(-1); found {
-		t.Fatal("decoded result accepted a negative atom index")
+	if _, found := row.AtomAt(-1); found {
+		t.Fatal("admitted result accepted a negative atom index")
 	}
-	if _, found := result.AtomAt(result.AtomCount()); found {
-		t.Fatal("decoded result accepted an out-of-range atom index")
+	if _, found := row.AtomAt(row.Count()); found {
+		t.Fatal("admitted result accepted an out-of-range atom index")
 	}
 }
 
-func TestDecodeResultRoundTripsTopAndAbsent(t *testing.T) {
+func TestAdmitResultRoundTripsTopAndAbsent(t *testing.T) {
 	tests := []struct {
 		name    string
 		rows    uint32
@@ -53,15 +60,37 @@ func TestDecodeResultRoundTripsTopAndAbsent(t *testing.T) {
 			if !ok {
 				t.Fatal("EncodeResult rejected round-trip observation")
 			}
-			result, ok := DecodeResult(present, rows, string(payload))
-			if !ok || !result.Available() || result.Present() != test.present || result.Top() != test.top || result.AtomCount() != 0 {
-				t.Fatalf("decoded result = available:%v present:%v top:%v atoms:%d", result.Available(), result.Present(), result.Top(), result.AtomCount())
+			view, refusal := plane.Admit(ExactResultLayout, present, rows, string(payload))
+			row, rowOK := view.At(0)
+			if refusal.Available() || !rowOK || row.Written() != test.present || row.Flag(ExactColumnTop) != test.top || row.Count() != 0 {
+				t.Fatalf("admitted result = refusal:%s written:%v top:%v atoms:%d", refusal, row.Written(), row.Flag(ExactColumnTop), row.Count())
 			}
 		})
 	}
 }
 
-func TestDecodeResultRejectsMalformedPayloads(t *testing.T) {
+// TestEncodeResultRefusesAnIncoherentObservation states Effect's own two
+// cross-column laws over the layout: an answer no producer wrote decides
+// nothing, and the algebra's top value subsumes every atom rather than listing
+// them. Neither is a shape the sealed layout can express, so both belong to the
+// one writer of that layout rather than being restated by every reader.
+func TestEncodeResultRefusesAnIncoherentObservation(t *testing.T) {
+	atoms := []identity.ContentID{decodeResultTestID(5)}
+	cases := map[string]EffectObservation{
+		"absent carrying top":   {Rows: 1, Top: true, Valid: true},
+		"absent carrying atoms": {Rows: 1, Atoms: atoms, Valid: true, seal: sealAtoms(atoms)},
+		"top carrying atoms":    {Rows: 1, Present: true, Top: true, Atoms: atoms, Valid: true, seal: sealAtoms(atoms)},
+	}
+	for name, observation := range cases {
+		t.Run(name, func(t *testing.T) {
+			if _, _, _, ok := EncodeResult(observation); ok {
+				t.Fatal("an incoherent Effect observation reached the wire")
+			}
+		})
+	}
+}
+
+func TestAdmitResultRejectsMalformedPayloads(t *testing.T) {
 	atoms := []identity.ContentID{decodeResultTestID(1)}
 	observation := EffectObservation{
 		Atoms: atoms, Rows: 1, Present: true, Valid: true, seal: sealAtoms(atoms),
@@ -70,48 +99,52 @@ func TestDecodeResultRejectsMalformedPayloads(t *testing.T) {
 	if !ok {
 		t.Fatal("EncodeResult rejected malformed-payload fixture")
 	}
-
 	mutate := func(change func([]byte)) string {
 		copyPayload := append([]byte(nil), payload...)
 		change(copyPayload)
 		return string(copyPayload)
 	}
-	reject := func(name string, metadataPresent bool, metadataRows uint64, encoded string) {
+	reject := func(name string, metadataPresent bool, metadataRows uint64, encoded string, want plane.Refusal) {
 		t.Run(name, func(t *testing.T) {
-			if result, ok := DecodeResult(metadataPresent, metadataRows, encoded); ok || result.Available() {
-				t.Fatal("DecodeResult accepted malformed payload")
+			view, refusal := plane.Admit(ExactResultLayout, metadataPresent, metadataRows, encoded)
+			if refusal != want || view.Available() {
+				t.Fatalf("refusal = %v (%s), want %v (%s)", refusal, refusal, want, want)
 			}
 		})
 	}
 
-	reject("truncated header", present, rows, string(payload[:effectResultHeaderSize-1]))
-	reject("truncated atom", present, rows, string(payload[:len(payload)-1]))
-	trailing := append(append([]byte(nil), payload...), 0)
-	reject("trailing bytes", present, rows, string(trailing))
-	reject("version", present, rows, mutate(func(raw []byte) { binary.BigEndian.PutUint64(raw[:8], effectResultFormat+1) }))
-	reject("present metadata mismatch", !present, rows, string(payload))
-	reject("rows above one", present, 2, string(payload))
-	reject("present boolean byte", present, rows, mutate(func(raw []byte) { raw[8] = 2 }))
-	reject("top boolean byte", present, rows, mutate(func(raw []byte) { raw[9] = 2 }))
-	reject("absent top", false, rows, mutate(func(raw []byte) {
-		raw[8], raw[9], raw[10], raw[11], raw[12], raw[13], raw[14], raw[15], raw[16], raw[17] = 0, 1, 0, 0, 0, 0, 0, 0, 0, 0
-	}))
-	reject("absent atoms", false, rows, mutate(func(raw []byte) { raw[8] = 0 }))
-	reject("top atoms", true, rows, mutate(func(raw []byte) { raw[9] = 1 }))
+	reject("truncated header", present, rows, string(payload[:effectHeaderSize-1]), plane.RefusalTruncated)
+	reject("truncated atom", present, rows, string(payload[:len(payload)-1]), plane.RefusalTail)
+	reject("trailing bytes", present, rows, string(append(append([]byte(nil), payload...), 0)), plane.RefusalTail)
+	reject("foreign revision", present, rows, mutate(func(raw []byte) {
+		binary.BigEndian.PutUint64(raw[:8], plane.Format+1)
+	}), plane.RefusalLayout)
+	reject("present metadata mismatch", !present, rows, string(payload), plane.RefusalMetadata)
+	reject("rows above one", present, 2, string(payload), plane.RefusalMetadata)
+	reject("present without a result row", present, 0, string(payload), plane.RefusalMetadata)
+	reject("undeclared row state", present, rows, mutate(func(raw []byte) {
+		raw[effectStateAt] = 2
+	}), plane.RefusalState)
+	reject("top boolean byte", present, rows, mutate(func(raw []byte) {
+		raw[effectTopAt] = 2
+	}), plane.RefusalColumn)
+	reject("absent row carrying a column", present, rows, mutate(func(raw []byte) {
+		raw[effectStateAt], raw[effectTopAt] = 0, 1
+	}), plane.RefusalAbsentRow)
 	reject("unavailable atom", present, rows, mutate(func(raw []byte) {
-		for index := effectResultHeaderSize; index < len(raw); index++ {
+		for index := effectTailAt; index < len(raw); index++ {
 			raw[index] = 0
 		}
-	}))
+	}), plane.RefusalColumn)
 }
 
 var (
-	decodeResultSink     Result
-	decodeResultIDSink   identity.ContentID
-	decodeResultBoolSink bool
+	admitResultViewSink plane.View
+	admitResultIDSink   identity.ContentID
+	admitResultBoolSink bool
 )
 
-func TestDecodeResultAllocatesZero(t *testing.T) {
+func TestAdmitResultAllocatesZero(t *testing.T) {
 	atoms := []identity.ContentID{decodeResultTestID(33)}
 	observation := EffectObservation{
 		Atoms: atoms, Rows: 1, Present: true, Valid: true, seal: sealAtoms(atoms),
@@ -122,14 +155,15 @@ func TestDecodeResultAllocatesZero(t *testing.T) {
 	}
 	payloadString := string(payload)
 	allocations := testing.AllocsPerRun(100, func() {
-		result, decodedOK := DecodeResult(present, rows, payloadString)
-		atom, atomOK := result.AtomAt(0)
-		decodeResultSink = result
-		decodeResultIDSink = atom
-		decodeResultBoolSink = decodedOK && result.Available() && result.Present() && atomOK
+		view, refusal := plane.Admit(ExactResultLayout, present, rows, payloadString)
+		row, rowOK := view.At(0)
+		atom, atomOK := row.AtomAt(0)
+		admitResultViewSink = view
+		admitResultIDSink = atom
+		admitResultBoolSink = !refusal.Available() && rowOK && row.Written() && atomOK
 	})
 	if allocations != 0 {
-		t.Fatalf("DecodeResult allocations = %v, want zero", allocations)
+		t.Fatalf("plane.Admit allocations = %v, want zero", allocations)
 	}
 }
 

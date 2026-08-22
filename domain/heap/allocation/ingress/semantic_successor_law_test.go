@@ -9,6 +9,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/program/link"
 	linkproject "github.com/wippyai/go-lua/analysis/program/link/project"
 	analysisresult "github.com/wippyai/go-lua/analysis/result"
+	"github.com/wippyai/go-lua/analysis/schema/plane"
 	"github.com/wippyai/go-lua/domain/value"
 	"github.com/wippyai/go-lua/internal/testfixture"
 )
@@ -78,24 +79,20 @@ func assertIngressValuePublicationReadable(t testing.TB, input *analysisresult.R
 			continue
 		}
 		cell, cellOK := query.Cell()
-		summary, summaryOK := value.DecodeSummaryResult(cell.Present(), cell.RowCount(), cell.Payload())
-		if !cellOK || !summaryOK || !summary.Available() || !summary.LinkID().Available() || summary.CoordinateCount() == 0 {
-			t.Fatalf("ingress value query[%d] summary unavailable or incomplete", queryIndex)
+		view, refusal := plane.Admit(value.SummaryResultLayout, cell.Present(), cell.RowCount(), cell.Payload())
+		if !cellOK || refusal.Available() || !view.Owner().Available() || view.RowCount() == 0 {
+			t.Fatalf("ingress value query[%d] summary unavailable or incomplete: %s", queryIndex, refusal)
 		}
-		iterator := summary.Coordinates()
 		coordinateCount := 0
-		for {
-			coordinate, coordinateOK := iterator.Next()
-			if !coordinateOK {
-				break
-			}
-			if !coordinate.Available() || !coordinate.ID().Available() {
+		for index := 0; index < view.RowCount(); index++ {
+			row, rowOK := view.At(index)
+			if !rowOK || !row.ID().Available() {
 				t.Fatalf("ingress value query[%d] coordinate unavailable or unidentified", queryIndex)
 			}
 			coordinateCount++
 		}
-		if coordinateCount != summary.CoordinateCount() {
-			t.Fatalf("ingress value query[%d] coordinates=%d summary=%d", queryIndex, coordinateCount, summary.CoordinateCount())
+		if coordinateCount != view.RowCount() {
+			t.Fatalf("ingress value query[%d] coordinates=%d summary=%d", queryIndex, coordinateCount, view.RowCount())
 		}
 	}
 	if selectedBodyReferences == 0 {
