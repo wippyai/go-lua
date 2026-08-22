@@ -34,21 +34,11 @@ func sealValueSemanticIDs(table *valueTable, p *program.Program, mount uint32) e
 			return errors.New("link/boundary: semantic value crossed mount boundary")
 		}
 		key := valueSemanticKey{mount: mount, id: id}
-		if existing, duplicate := table.semantic[key]; duplicate {
-			if existing == ordinal {
-				return nil
-			}
-			return errors.New("link/boundary: semantic value maps to distinct Boundary ordinals")
+		if _, duplicate := table.semantic[key]; duplicate {
+			return errors.New("link/boundary: duplicate semantic value identity")
 		}
 		table.semantic[key] = ordinal
 		return nil
-	}
-	addSpan := func(label string, id identity.ContentID, span program.Span, spanOK bool) error {
-		ordinal, ordinalOK := boundaryValueForProgramSpan(table, mount, span)
-		if !spanOK || !ordinalOK {
-			return errors.New("link/boundary: semantic " + label + " has no Boundary ordinal")
-		}
-		return add(id, ordinal, true)
 	}
 	addTerm := func(label string, id identity.ContentID, term keyspace.Term, termOK bool) error {
 		ordinal, ordinalOK := table.index.Lookup(radix.Index(mount), uint32(term))
@@ -190,10 +180,8 @@ func sealValueSemanticIDs(table *valueTable, p *program.Program, mount uint32) e
 			return err
 		}
 	}
-	// Computation and return rows are artifact-issued from the exact authored
-	// Span identities. The passes below state each family's structural law
-	// against the canonical authored Flow relations; only the transient
-	// Span/Body ownership proofs come from Program queries.
+	// Computation and Return rows assert via assertMountedSpanSemantic below,
+	// rather than publish: the span directory above already named them.
 	computationSpan := func(term keyspace.Term) (program.Span, bool) {
 		span, spanOK := input.Span(term)
 		body, bodyOK := input.ContainingBody(term)
@@ -213,10 +201,10 @@ func sealValueSemanticIDs(table *valueTable, p *program.Program, mount uint32) e
 		if !relationOK || !spanOK || !operandSpanOK || !input.OwnsSpan(operandSpan) {
 			return errors.New("link/boundary: malformed semantic Unary row")
 		}
-		if err := addSpan("Unary", span.ContextID(), span, true); err != nil {
+		if err := assertMountedSpanSemantic(table, mount, "Unary", span); err != nil {
 			return errors.New("link/boundary: malformed semantic Unary row")
 		}
-		if err := addSpan("Unary operand", operandSpan.ContextID(), operandSpan, true); err != nil {
+		if err := assertMountedSpanSemantic(table, mount, "Unary operand", operandSpan); err != nil {
 			return errors.New("link/boundary: malformed semantic Unary row")
 		}
 	}
@@ -233,13 +221,13 @@ func sealValueSemanticIDs(table *valueTable, p *program.Program, mount uint32) e
 		if !relationOK || !spanOK || !leftSpanOK || !rightSpanOK || !input.OwnsSpan(leftSpan) || !input.OwnsSpan(rightSpan) {
 			return errors.New("link/boundary: malformed semantic Select row")
 		}
-		if err := addSpan("Select", span.ContextID(), span, true); err != nil {
+		if err := assertMountedSpanSemantic(table, mount, "Select", span); err != nil {
 			return errors.New("link/boundary: malformed semantic Select row")
 		}
-		if err := addSpan("Select left", leftSpan.ContextID(), leftSpan, true); err != nil {
+		if err := assertMountedSpanSemantic(table, mount, "Select left", leftSpan); err != nil {
 			return errors.New("link/boundary: malformed semantic Select row")
 		}
-		if err := addSpan("Select right", rightSpan.ContextID(), rightSpan, true); err != nil {
+		if err := assertMountedSpanSemantic(table, mount, "Select right", rightSpan); err != nil {
 			return errors.New("link/boundary: malformed semantic Select row")
 		}
 	}
@@ -255,10 +243,10 @@ func sealValueSemanticIDs(table *valueTable, p *program.Program, mount uint32) e
 		if !relationOK || !spanOK || !operandSpanOK || !input.OwnsSpan(operandSpan) {
 			return errors.New("link/boundary: malformed semantic Claim row")
 		}
-		if err := addSpan("Claim", span.ContextID(), span, true); err != nil {
+		if err := assertMountedSpanSemantic(table, mount, "Claim", span); err != nil {
 			return errors.New("link/boundary: malformed semantic Claim row")
 		}
-		if err := addSpan("Claim operand", operandSpan.ContextID(), operandSpan, true); err != nil {
+		if err := assertMountedSpanSemantic(table, mount, "Claim operand", operandSpan); err != nil {
 			return errors.New("link/boundary: malformed semantic Claim row")
 		}
 	}
@@ -285,7 +273,7 @@ func sealValueSemanticIDs(table *valueTable, p *program.Program, mount uint32) e
 		// Return span itself through valuePairs is a category error: the value
 		// universe intentionally contains the derived Outcome terminal, not the
 		// authored Return control term.
-		if err := addSpan("Return values", valuesSpan.ContextID(), valuesSpan, true); err != nil {
+		if err := assertMountedSpanSemantic(table, mount, "Return values", valuesSpan); err != nil {
 			return err
 		}
 	}
@@ -347,9 +335,21 @@ func sealValueSemanticIDs(table *valueTable, p *program.Program, mount uint32) e
 		if !termOK || !spanOK || !input.OwnsSpan(span) {
 			return errors.New("link/boundary: malformed semantic IndexRead row")
 		}
-		if err := addSpan("IndexRead", span.ContextID(), span, true); err != nil {
+		if err := assertMountedSpanSemantic(table, mount, "IndexRead", span); err != nil {
 			return errors.New("link/boundary: malformed semantic IndexRead row")
 		}
+	}
+	return nil
+}
+
+// assertMountedSpanSemantic never writes table.semantic: it asserts span
+// already resolves, at the same ordinal, under its own context published by
+// sealValueSemanticIDs's span-directory pass.
+func assertMountedSpanSemantic(table *valueTable, mount uint32, label string, span program.Span) error {
+	ordinal, ordinalOK := boundaryValueForProgramSpan(table, mount, span)
+	published, publishedOK := table.semantic[valueSemanticKey{mount: mount, id: span.ContextID()}]
+	if !ordinalOK || !publishedOK || published != ordinal {
+		return errors.New("link/boundary: semantic " + label + " has no Boundary ordinal")
 	}
 	return nil
 }
