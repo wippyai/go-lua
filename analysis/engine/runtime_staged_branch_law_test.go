@@ -150,3 +150,36 @@ func BenchmarkStagedBranchSingleRegionRound1024(b *testing.B) {
 		}
 	}
 }
+
+// benchmarkStagedBranchWidth is the profiled staged shape: one source row whose
+// selection resolves W exact units, each observation refining its parent into a
+// single region. The round count and the vector width are both W, so an
+// unconditional per-observation copy is quadratic in W while donation is flat.
+const benchmarkStagedBranchWidth = 1024
+
+func BenchmarkStagedBranchRowDonated(b *testing.B) {
+	b.ReportAllocs()
+	b.ResetTimer()
+	for iteration := 0; iteration < b.N; iteration++ {
+		parent := make([]uint64, benchmarkStagedBranchWidth)
+		for slot := 0; slot < benchmarkStagedBranchWidth; slot++ {
+			branch := stagedBranch[uint64]{parent: parent, slot: slot}
+			values, ok := branch.values(uint64(slot))
+			if !ok {
+				b.Fatal("staged branch")
+			}
+			parent = values
+		}
+	}
+}
+
+func BenchmarkStagedBranchRowCopied(b *testing.B) {
+	b.ReportAllocs()
+	b.ResetTimer()
+	for iteration := 0; iteration < b.N; iteration++ {
+		parents := [][]uint64{make([]uint64, benchmarkStagedBranchWidth)}
+		for slot := 0; slot < benchmarkStagedBranchWidth; slot++ {
+			parents = stagedBranchSpecification(parents, slot, []uint64{uint64(slot)})
+		}
+	}
+}
