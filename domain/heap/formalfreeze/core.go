@@ -93,10 +93,13 @@ func operandForOccurrence(packs *packdomain.Schema, algebra *calldomain.Algebra,
 	return operand{packs: packs, mounted: mounted, key: key, id: id}, id.Available()
 }
 
+// actualObservation is one mounted actual as the read boundary delivered it.
+// It carries no presence bit: the read declares Value's default at an unwritten
+// coordinate, so an observation always holds a value, and Bottom is refused by
+// exactRecentAllocation on its own merits rather than by presence metadata.
 type actualObservation struct {
-	fact    valuedomain.Value
-	present bool
-	valid   bool
+	fact  valuedomain.Value
+	valid bool
 }
 
 // recentplan is Heap-owned so formal and publication freeze share one exact
@@ -115,7 +118,7 @@ func exactRecentAllocation(values *valuedomain.Schema, observation actualObserva
 	if !observation.valid {
 		return heap.Key{}, false
 	}
-	return values.ExactRecentAllocation(observation.fact, observation.present)
+	return values.ExactRecentAllocation(observation.fact, true)
 }
 
 // freezeParamSet is the allocation-free representation of one target's exact

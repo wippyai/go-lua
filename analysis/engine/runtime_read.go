@@ -28,6 +28,7 @@ type typedReadRuntime[K ~uint32 | ~uint64, V, S any] struct {
 	normalize     func(OrderedCells[V]) S
 	equal         func(S, S) bool
 	fingerprint   func(S) uint64
+	policy        readCellPolicy[V]
 }
 
 type typedReadSession[V, S any] struct {
@@ -43,6 +44,15 @@ type stagedFactor[V any] interface {
 	stagedUnit(exactRef) (carrier.Unit, bool)
 	stagedObserve(*carrier.Work, carrier.State, carrier.Unit, support.Mask, func(factbinding.Observation[V], support.Mask) bool) bool
 	stagedSlot() (shape.Slot, bool)
+	// stagedRow is the sealed Factor row this target belongs to. The read
+	// boundary authenticates it once at binding so a Fold never re-proves that
+	// an observed value came from its own Factor.
+	stagedRow() schemaFactorBinding
+	// stagedDefault and stagedTop are the sealed algebra endpoints the read
+	// contract substitutes: the declared default at an unwritten coordinate,
+	// and Top for a read whose alternative set is opaque.
+	stagedDefault() (V, bool)
+	stagedTop() (V, bool)
 }
 
 // stagedTargetProvider is the typed, owner-local projection needed by a
@@ -64,6 +74,8 @@ type stagedReadRuntime[V, S any, Tag selectionTag] struct {
 	target    stagedFactor[V]
 	locate    func(SelectorContext) bool
 	normalize func(OrderedCells[V]) S
+	contract  ReadContract
+	policy    readCellPolicy[V]
 }
 
 type stagedRoute[Tag selectionTag] struct {
@@ -87,11 +99,19 @@ type stagedRouteSink[V any, Tag selectionTag] struct {
 	target stagedFactor[V]
 	routes []stagedRoute[Tag]
 	mode   stagedRouteMode
+	// opaque records that this row's locator reported an alternative of its
+	// dispatch set it cannot address. The read's declared ReadOpaque decides
+	// the disposition; the locator never decides it.
+	opaque bool
 }
 
 func (sink *stagedRouteSink[V, Tag]) accept(emission selectorEmission) bool {
 	if sink == nil || sink.target == nil {
 		return false
+	}
+	if _, opaque := emission.(emittedOpaque); opaque {
+		sink.opaque = true
+		return true
 	}
 	route, ok := emission.(emittedRoute[Tag])
 	if !ok || route.ref == nil {
@@ -131,8 +151,13 @@ type typedStagedSelectionSession[V, S any, Tag selectionTag] struct {
 	routeScratch []stagedRoute[Tag]
 	routeUnits   []carrier.Unit
 	routeIndices []int
-	routeMode    stagedRouteMode
-	frame        selectorFrame
+	// memberOrder is the execution-local presentation permutation of one row's
+	// canonical routes. It is scratch, reused per source row, so a declared
+	// member order costs no allocation per row.
+	memberOrder []int
+	routeMode   stagedRouteMode
+	tagOrdered  bool
+	frame       selectorFrame
 }
 
 type stagedPartial[S any] struct {
@@ -211,8 +236,9 @@ func (runtime *stagedReadRuntime[V, S, Tag]) refine(session *productSession, ind
 		}
 	}
 	selected := &typedStagedSelectionSession[V, S, Tag]{
-		values: make([][]stagedSelectionValue[Tag, S], 0, len(session.values)),
-		frame:  selectorFrame{execution: session.execution, epoch: session.execution.epoch, read: runtime.selector, product: session, row: -1},
+		values:     make([][]stagedSelectionValue[Tag, S], 0, len(session.values)),
+		tagOrdered: runtime.contract.Order == ReadOrderByTag,
+		frame:      selectorFrame{execution: session.execution, epoch: session.execution.epoch, read: runtime.selector, product: session, row: -1},
 	}
 	refinement := session.rows.BeginRefineWithCheckpoint(session.checkpoint)
 	if refinement == nil {
@@ -239,6 +265,17 @@ func (runtime *stagedReadRuntime[V, S, Tag]) refine(session *productSession, ind
 			selected.close()
 			return false
 		}
+		// The declared ReadOpaque, not the locator, disposes of an opaque
+		// alternative: a widening read delivers the Factor's Top at every
+		// coordinate, and a refusing read stops here under one named boundary.
+		policy := runtime.policy
+		if sink.opaque {
+			if runtime.contract.OnOpaque != ReadOpaqueWiden {
+				selected.close()
+				return false
+			}
+			policy = policy.widen()
+		}
 		if len(sink.routes) == 0 {
 			if !refinement.Add(source, within) {
 				selected.close()
@@ -256,12 +293,17 @@ func (runtime *stagedReadRuntime[V, S, Tag]) refine(session *productSession, ind
 			selected.close()
 			return false
 		}
+		members, ordered := selected.orderMembers(routes, runtime.contract.Order)
+		if !ordered || len(members) != len(routes) {
+			selected.close()
+			return false
+		}
 		sink.routes = routes
 		selected.routeScratch = routes
 		for _, unit := range units {
 			selected.addDynamic(runtime.input, unit)
 		}
-		partials, refined := runtime.refineStagedSource(session, within, units, selected)
+		partials, refined := runtime.refineStagedSource(session, within, units, selected, policy)
 		if !refined || len(partials) == 0 {
 			selected.close()
 			return false
@@ -271,14 +313,19 @@ func (runtime *stagedReadRuntime[V, S, Tag]) refine(session *productSession, ind
 				selected.close()
 				return false
 			}
-			values := make([]stagedSelectionValue[Tag, S], len(sink.routes))
-			for routeIndex, route := range sink.routes {
+			values := make([]stagedSelectionValue[Tag, S], len(members))
+			for position, routeIndex := range members {
+				if routeIndex < 0 || routeIndex >= len(sink.routes) {
+					selected.close()
+					return false
+				}
+				route := sink.routes[routeIndex]
 				unitIndex := routeUnits[routeIndex]
 				if unitIndex < 0 || unitIndex >= len(partial.values) {
 					selected.close()
 					return false
 				}
-				values[routeIndex] = stagedSelectionValue[Tag, S]{ref: route.ref, tag: route.tag, value: partial.values[unitIndex]}
+				values[position] = stagedSelectionValue[Tag, S]{ref: route.ref, tag: route.tag, value: partial.values[unitIndex]}
 			}
 			selected.values = append(selected.values, values)
 		}
@@ -322,7 +369,7 @@ func (session *typedStagedSelectionSession[V, S, Tag]) acceptRouteMode(mode stag
 // Unit order. This is the exact guarded cross-product required for
 // correlation; it intentionally performs no quotient because canonical route
 // tags and their order are semantic observations of a Selection.
-func (runtime *stagedReadRuntime[V, S, Tag]) refineStagedSource(session *productSession, within support.Mask, units []carrier.Unit, selected *typedStagedSelectionSession[V, S, Tag]) ([]stagedPartial[S], bool) {
+func (runtime *stagedReadRuntime[V, S, Tag]) refineStagedSource(session *productSession, within support.Mask, units []carrier.Unit, selected *typedStagedSelectionSession[V, S, Tag], policy readCellPolicy[V]) ([]stagedPartial[S], bool) {
 	if runtime == nil || session == nil || session.work == nil || runtime.target == nil || runtime.normalize == nil || selected == nil || !within.Valid() || support.Empty(within) || len(units) == 0 {
 		return nil, false
 	}
@@ -351,8 +398,7 @@ func (runtime *stagedReadRuntime[V, S, Tag]) refineStagedSource(session *product
 					if !ok {
 						return false
 					}
-					value, present := entry.Read()
-					cells[cellIndex] = summaryCell[V]{value: value, present: present}
+					cells[cellIndex] = policy.cell(entry.Read())
 				}
 				record := newOrderedCellsRecord(cells)
 				values, branched := branch.values(runtime.normalize(OrderedCells[V]{record: record}))
@@ -451,6 +497,45 @@ func (session *typedStagedSelectionSession[V, S, Tag]) indexRoutes(routes []stag
 	return routes, session.routeUnits, session.routeIndices, len(session.routeUnits) != 0
 }
 
+// orderMembers returns the presentation order of one row's canonical routes as
+// route indexes. It is the whole of the ReadOrder clause: the order contract is
+// one declaration the engine materializes here, never N positional comparisons
+// spread through a Fold. Canonical order is the identity permutation over the
+// already sorted (Unit, tag) routes; ByTag ranks the same routes by tag alone
+// and refuses a duplicate tag, which admits no member order at all.
+func (session *typedStagedSelectionSession[V, S, Tag]) orderMembers(routes []stagedRoute[Tag], order ReadOrder) ([]int, bool) {
+	if session == nil || len(routes) == 0 || !order.valid() {
+		return nil, false
+	}
+	if cap(session.memberOrder) < len(routes) {
+		session.memberOrder = make([]int, len(routes))
+	}
+	members := session.memberOrder[:len(routes)]
+	for index := range members {
+		members[index] = index
+	}
+	session.memberOrder = members
+	if order == ReadOrderCanonical {
+		return members, true
+	}
+	slices.SortStableFunc(members, func(left, right int) int {
+		switch {
+		case routes[left].tag < routes[right].tag:
+			return -1
+		case routes[left].tag > routes[right].tag:
+			return 1
+		default:
+			return 0
+		}
+	})
+	for position := 1; position < len(members); position++ {
+		if routes[members[position-1]].tag >= routes[members[position]].tag {
+			return nil, false
+		}
+	}
+	return members, true
+}
+
 func (session *typedStagedSelectionSession[V, S, Tag]) addDynamic(input int, unit carrier.Unit) {
 	if session == nil || input < 0 || unit == (carrier.Unit{}) {
 		return
@@ -498,6 +583,7 @@ func (session *typedStagedSelectionSession[V, S, Tag]) close() {
 	session.routeScratch = nil
 	session.routeUnits = nil
 	session.routeIndices = nil
+	session.memberOrder = nil
 	session.routeMode = 0
 	session.frame.routes = nil
 }
@@ -519,7 +605,7 @@ func (runtime *typedReadRuntime[K, V, S]) summaryAddress() (schemaFactorBinding,
 }
 
 func (runtime *typedReadRuntime[K, V, S]) refine(session *productSession, index int) bool {
-	return runtime != nil && runtime.equal != nil && runtime.fingerprint != nil && materializeTypedRead(session, index, runtime.input, runtime.unit, runtime.binding.ResolveObservation, runtime.normalize, runtime.equal, runtime.fingerprint)
+	return runtime != nil && runtime.equal != nil && runtime.fingerprint != nil && materializeTypedRead(session, index, runtime.input, runtime.unit, runtime.binding.ResolveObservation, runtime.normalize, runtime.equal, runtime.fingerprint, runtime.policy)
 }
 
 func (runtime *typedReadRuntime[K, V, S]) observations() []demand.Observation {
@@ -531,7 +617,7 @@ func (runtime *typedReadRuntime[K, V, S]) observations() []demand.Observation {
 
 func (*typedReadRuntime[K, V, S]) dynamicReads() []demand.DynamicRead { return nil }
 
-func materializeTypedRead[V, S any](session *productSession, index, input int, unit carrier.Unit, resolve func(carrier.SlotWork, carrier.ObservationRow) (factbinding.Observation[V], bool), normalize func(OrderedCells[V]) S, equal func(S, S) bool, fingerprint func(S) uint64) bool {
+func materializeTypedRead[V, S any](session *productSession, index, input int, unit carrier.Unit, resolve func(carrier.SlotWork, carrier.ObservationRow) (factbinding.Observation[V], bool), normalize func(OrderedCells[V]) S, equal func(S, S) bool, fingerprint func(S) uint64, policy readCellPolicy[V]) bool {
 	if session == nil || session.work == nil || index < 0 || index >= len(session.reads) || input < 0 || input >= len(session.inputs) || unit == (carrier.Unit{}) || resolve == nil || normalize == nil || equal == nil || fingerprint == nil || session.rows.Count() != len(session.values) {
 		return false
 	}
@@ -576,8 +662,7 @@ func materializeTypedRead[V, S any](session *productSession, index, input int, u
 				if !ok {
 					return false
 				}
-				value, present := entry.Read()
-				cells[cellIndex] = summaryCell[V]{value: value, present: present}
+				cells[cellIndex] = policy.cell(entry.Read())
 			}
 			record := newOrderedCellsRecord(cells)
 			values.records = append(values.records, record)
@@ -767,5 +852,50 @@ func resolveTypedSelection[V, S any, Tag selectionTag](session *productSession, 
 			ref := values.values[selectionID][ordinal].ref
 			return ref, ref != nil
 		},
+		byTag: func(row int, tag Tag) (S, bool) {
+			var zero S
+			if row < 0 || row >= len(session.values) {
+				return zero, false
+			}
+			return values.memberByTag(selectionID, tag)
+		},
 	}, true
+}
+
+// memberByTag resolves one member of a materialized selection by its own tag.
+// A ReadOrderByTag selection is already ranked by tag and its tags are proven
+// distinct, so the lookup is a binary search; a canonical selection is scanned
+// and an ambiguous repeated tag names no single member.
+func (session *typedStagedSelectionSession[V, S, Tag]) memberByTag(selectionID int, tag Tag) (S, bool) {
+	var zero S
+	if session == nil || selectionID < 0 || selectionID >= len(session.values) {
+		return zero, false
+	}
+	members := session.values[selectionID]
+	if session.tagOrdered {
+		low, high := 0, len(members)
+		for low < high {
+			middle := int(uint(low+high) >> 1)
+			switch {
+			case members[middle].tag < tag:
+				low = middle + 1
+			case members[middle].tag > tag:
+				high = middle
+			default:
+				return members[middle].value, true
+			}
+		}
+		return zero, false
+	}
+	found, value := false, zero
+	for _, member := range members {
+		if member.tag != tag {
+			continue
+		}
+		if found {
+			return zero, false
+		}
+		found, value = true, member.value
+	}
+	return value, found
 }

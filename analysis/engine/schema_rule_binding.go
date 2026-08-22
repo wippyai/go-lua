@@ -345,12 +345,12 @@ func directRuleReadCell[K ~uint32 | ~uint64, V, O, RV any](state *schemaBindingS
 	}
 	factorOrdinal, factorOK := factorRefOrdinal(factor, state.schema)
 	if !factorOK || factorOrdinal >= uint64(len(state.factors)) || state.schema.factorSemanticAt(factorOrdinal) == (composition.Key{}) {
-		state.poisonLocked()
+		state.poisonNamed(readForeignOwnerRefusal)
 		return nil, 0, nil, false
 	}
 	factorCell := state.factors[factorOrdinal]
 	if factorCell == nil {
-		state.poisonLocked()
+		state.poisonNamed(readForeignOwnerRefusal)
 		return nil, 0, nil, false
 	}
 	return cell, readOrdinal, factorCell, true
@@ -360,7 +360,22 @@ func directRuleReadCell[K ~uint32 | ~uint64, V, O, RV any](state *schemaBindingS
 // already-installed direct Rule cell at the read slot's packed cold ordinal.
 // The slot ordinal, not call order, chooses the immutable read position.
 func BindSelectedRuleDirectExactRead[K ~uint32 | ~uint64, V, O, RV any](binding *SchemaBinding, rule *RuleSlot[V, O], slot SchemaReadSlot[RV], factor FactorRef[RV], project func(O) (uint64, bool)) (Read[OrderedCells[RV]], bool) {
+	return BindSelectedRuleDirectExactReadUnderContract[K, V, O, RV](binding, rule, slot, factor, project, ReadContract{})
+}
+
+// BindSelectedRuleDirectExactReadUnderContract is BindSelectedRuleDirectExactRead
+// under an explicit read-boundary contract. An exact read has one coordinate
+// and no alternative set, so only the sparse clause is admitted here.
+func BindSelectedRuleDirectExactReadUnderContract[K ~uint32 | ~uint64, V, O, RV any](binding *SchemaBinding, rule *RuleSlot[V, O], slot SchemaReadSlot[RV], factor FactorRef[RV], project func(O) (uint64, bool), contract ReadContract) (Read[OrderedCells[RV]], bool) {
 	state := bindingState(binding)
+	if !contract.exactValid() {
+		if state != nil {
+			state.mu.Lock()
+			state.poisonNamed(readContractRefusal)
+			state.mu.Unlock()
+		}
+		return Read[OrderedCells[RV]]{}, false
+	}
 	if state == nil {
 		return Read[OrderedCells[RV]]{}, false
 	}
@@ -373,18 +388,18 @@ func BindSelectedRuleDirectExactRead[K ~uint32 | ~uint64, V, O, RV any](binding 
 	shape, shapeOK := state.schema.ruleReadShapeAt(cell.ordinal, readOrdinal)
 	factorOrdinal, factorOK := factorRefOrdinal(factor, state.schema)
 	if !shapeOK || shape.Kind != composition.ReadExact || shape.DependencyCount != 0 || !factorOK || state.schema.factorSemanticAt(factorOrdinal) != shape.Factor {
-		state.poisonLocked()
+		state.poisonNamed(readForeignOwnerRefusal)
 		return Read[OrderedCells[RV]]{}, false
 	}
 	row, rowOK := compileSchemaRuleReadRow(state, cell, cell.ordinal, readOrdinal, nil, 0)
 	if !rowOK || row.factorOrdinal != factorOrdinal || !factorCell.schemaFactorReadComplete(state, row) {
-		state.poisonLocked()
+		state.poisonNamed(readForeignOwnerRefusal)
 		return Read[OrderedCells[RV]]{}, false
 	}
 	read := Read[OrderedCells[RV]]{row: row, index: int(readOrdinal), resolve: resolveTypedRead[RV, OrderedCells[RV]]}
 	cell.impl.reads[int(readOrdinal)] = &schemaOpaqueExactRuleReadBinding[RV]{
 		row: row, factor: factorCell, read: read,
-		projector: projectExactLocal(project),
+		projector: projectExactLocal(project), contract: contract,
 	}
 	return read, true
 }
@@ -393,7 +408,21 @@ func BindSelectedRuleDirectExactRead[K ~uint32 | ~uint64, V, O, RV any](binding 
 // the direct Rule cell at its packed cold ordinal. Its dependency vector and
 // selected Factor geometry are revalidated from the sealed Schema.
 func BindSelectedRuleDirectSelectedRead[K ~uint32 | ~uint64, V, O, RV any, Tag selectionTag](binding *SchemaBinding, rule *RuleSlot[V, O], slot SchemaReadSlot[RV], factor FactorRef[RV], locate func(SelectorContext) bool) (Read[Selection[Tag, OrderedCells[RV]]], bool) {
+	return BindSelectedRuleDirectSelectedReadUnderContract[K, V, O, RV, Tag](binding, rule, slot, factor, locate, ReadContract{})
+}
+
+// BindSelectedRuleDirectSelectedReadUnderContract is
+// BindSelectedRuleDirectSelectedRead under an explicit read-boundary contract.
+func BindSelectedRuleDirectSelectedReadUnderContract[K ~uint32 | ~uint64, V, O, RV any, Tag selectionTag](binding *SchemaBinding, rule *RuleSlot[V, O], slot SchemaReadSlot[RV], factor FactorRef[RV], locate func(SelectorContext) bool, contract ReadContract) (Read[Selection[Tag, OrderedCells[RV]]], bool) {
 	state := bindingState(binding)
+	if !contract.valid() {
+		if state != nil {
+			state.mu.Lock()
+			state.poisonNamed(readContractRefusal)
+			state.mu.Unlock()
+		}
+		return Read[Selection[Tag, OrderedCells[RV]]]{}, false
+	}
 	if state == nil {
 		return Read[Selection[Tag, OrderedCells[RV]]]{}, false
 	}
@@ -410,16 +439,16 @@ func BindSelectedRuleDirectSelectedRead[K ~uint32 | ~uint64, V, O, RV any, Tag s
 	shape, shapeOK := state.schema.ruleReadShapeAt(cell.ordinal, readOrdinal)
 	factorOrdinal, factorOK := factorRefOrdinal(factor, state.schema)
 	if !shapeOK || shape.Kind != composition.ReadSelect || shape.DependencyCount == 0 || !validReadDependencies(state.schema, cell.ordinal, readOrdinal, shape.DependencyCount) || !factorOK || state.schema.factorSemanticAt(factorOrdinal) != shape.Factor {
-		state.poisonLocked()
+		state.poisonNamed(readForeignOwnerRefusal)
 		return Read[Selection[Tag, OrderedCells[RV]]]{}, false
 	}
 	row, rowOK := compileSchemaRuleReadRow(state, cell, cell.ordinal, readOrdinal, nil, 0)
 	if !rowOK || row.factorOrdinal != factorOrdinal || !factorCell.schemaFactorReadComplete(state, row) {
-		state.poisonLocked()
+		state.poisonNamed(readForeignOwnerRefusal)
 		return Read[Selection[Tag, OrderedCells[RV]]]{}, false
 	}
 	read := Read[Selection[Tag, OrderedCells[RV]]]{row: row, index: int(readOrdinal), resolve: resolveTypedSelection[RV, OrderedCells[RV], Tag]}
-	cell.impl.reads[int(readOrdinal)] = &schemaOpaqueSelectedRuleReadBinding[RV, Tag]{row: row, factor: factorCell, read: read, locate: locate}
+	cell.impl.reads[int(readOrdinal)] = &schemaOpaqueSelectedRuleReadBinding[RV, Tag]{row: row, factor: factorCell, read: read, locate: locate, contract: contract}
 	return read, true
 }
 
@@ -427,7 +456,24 @@ func BindSelectedRuleDirectSelectedRead[K ~uint32 | ~uint64, V, O, RV any, Tag s
 // Read into the direct Rule cell at its packed cold ordinal. The operand is
 // resolved only later by the canonical bound Rule during graph attachment.
 func BindSelectedRuleDirectOperandRead[K ~uint32 | ~uint64, V, O, RV any, Tag selectionTag](binding *SchemaBinding, rule *RuleSlot[V, O], slot SchemaReadSlot[RV], factor FactorRef[RV], locate func(SelectorContext, O) bool) (Read[Selection[Tag, OrderedCells[RV]]], bool) {
+	return BindSelectedRuleDirectOperandReadUnderContract[K, V, O, RV, Tag](binding, rule, slot, factor, locate, ReadContract{})
+}
+
+// BindSelectedRuleDirectOperandReadUnderContract is
+// BindSelectedRuleDirectOperandRead under an explicit read-boundary contract.
+// It is the declaration a rule makes once so its locator and its Fold both
+// receive the members in the declared order, with the Factor's default at every
+// unwritten coordinate and the declared disposition of an opaque alternative.
+func BindSelectedRuleDirectOperandReadUnderContract[K ~uint32 | ~uint64, V, O, RV any, Tag selectionTag](binding *SchemaBinding, rule *RuleSlot[V, O], slot SchemaReadSlot[RV], factor FactorRef[RV], locate func(SelectorContext, O) bool, contract ReadContract) (Read[Selection[Tag, OrderedCells[RV]]], bool) {
 	state := bindingState(binding)
+	if !contract.valid() {
+		if state != nil {
+			state.mu.Lock()
+			state.poisonNamed(readContractRefusal)
+			state.mu.Unlock()
+		}
+		return Read[Selection[Tag, OrderedCells[RV]]]{}, false
+	}
 	if state == nil {
 		return Read[Selection[Tag, OrderedCells[RV]]]{}, false
 	}
@@ -444,16 +490,16 @@ func BindSelectedRuleDirectOperandRead[K ~uint32 | ~uint64, V, O, RV any, Tag se
 	shape, shapeOK := state.schema.ruleReadShapeAt(cell.ordinal, readOrdinal)
 	factorOrdinal, factorOK := factorRefOrdinal(factor, state.schema)
 	if !shapeOK || shape.Kind != composition.ReadSelect || shape.DependencyCount == 0 || !validReadDependencies(state.schema, cell.ordinal, readOrdinal, shape.DependencyCount) || !factorOK || state.schema.factorSemanticAt(factorOrdinal) != shape.Factor {
-		state.poisonLocked()
+		state.poisonNamed(readForeignOwnerRefusal)
 		return Read[Selection[Tag, OrderedCells[RV]]]{}, false
 	}
 	row, rowOK := compileSchemaRuleReadRow(state, cell, cell.ordinal, readOrdinal, nil, 0)
 	if !rowOK || row.factorOrdinal != factorOrdinal || !factorCell.schemaFactorReadComplete(state, row) {
-		state.poisonLocked()
+		state.poisonNamed(readForeignOwnerRefusal)
 		return Read[Selection[Tag, OrderedCells[RV]]]{}, false
 	}
 	read := Read[Selection[Tag, OrderedCells[RV]]]{row: row, index: int(readOrdinal), resolve: resolveTypedSelection[RV, OrderedCells[RV], Tag]}
-	cell.impl.reads[int(readOrdinal)] = &schemaOpaqueOperandSelectedRuleReadBinding[RV, O, Tag]{row: row, factor: factorCell, read: read, locateOperand: locate}
+	cell.impl.reads[int(readOrdinal)] = &schemaOpaqueOperandSelectedRuleReadBinding[RV, O, Tag]{row: row, factor: factorCell, read: read, locateOperand: locate, contract: contract}
 	return read, true
 }
 

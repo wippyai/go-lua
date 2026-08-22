@@ -125,7 +125,7 @@ type schemaFactorBinding interface {
 	schemaFactorComplete() bool
 	schemaFactorRuntimeBinding(*runtimeBinding) (runtimeFactor, bool)
 	schemaFactorReadComplete(*schemaBindingState, *schemaRuleReadRow) bool
-	schemaFactorBindExactRead(readBinding, equation.RuleMember, map[composition.Key]runtimeFactor, *schemaRuleReadRow) bool
+	schemaFactorBindExactRead(readBinding, equation.RuleMember, map[composition.Key]runtimeFactor, *schemaRuleReadRow, ReadContract) bool
 	schemaFactorFormAt(uint64) schemaFactorFormBinding
 	schemaFactorExactRead(*schemaBindingState, *schemaBindingAuthority, uint64) (RuleReadSurface, bool)
 	schemaFactorExactWrite(*schemaBindingState, *schemaBindingAuthority, uint64) (ruleWriteSurface, bool)
@@ -264,7 +264,7 @@ func (cell *schemaFactorBindingCell[K, V]) schemaFactorFormAt(index uint64) sche
 	return cell.forms[index]
 }
 
-func (cell *schemaFactorBindingCell[K, V]) schemaFactorBindExactRead(bound readBinding, member equation.RuleMember, factors map[composition.Key]runtimeFactor, row *schemaRuleReadRow) bool {
+func (cell *schemaFactorBindingCell[K, V]) schemaFactorBindExactRead(bound readBinding, member equation.RuleMember, factors map[composition.Key]runtimeFactor, row *schemaRuleReadRow, contract ReadContract) bool {
 	if cell == nil || bound == nil || row == nil || member.ReadCount() <= int(row.readOrdinal) || !cell.schemaFactorReadComplete(row.ownerState(), row) || factors == nil {
 		return false
 	}
@@ -293,7 +293,11 @@ func (cell *schemaFactorBindingCell[K, V]) schemaFactorBindExactRead(bound readB
 	fingerprint := func(value OrderedCells[V]) uint64 {
 		return fingerprintOrderedCellRecord(value.record, cell.impl.algebra.Fingerprint)
 	}
-	return bound.appendReadRuntime(&typedReadRuntime[K, V, OrderedCells[V]]{input: int(row.input), binding: factor.binding, unit: unit, exactFactor: factor.implementation.row, exactRaw: readLocal, exact: true, normalize: normalize, equal: equal, fingerprint: fingerprint})
+	policy, admitted := exactReadPolicy(cell.impl.algebra.Default, contract)
+	if !admitted {
+		return false
+	}
+	return bound.appendReadRuntime(&typedReadRuntime[K, V, OrderedCells[V]]{input: int(row.input), binding: factor.binding, unit: unit, exactFactor: factor.implementation.row, exactRaw: readLocal, exact: true, normalize: normalize, equal: equal, fingerprint: fingerprint, policy: policy})
 }
 
 func (cell *schemaFactorBindingCell[K, V]) sealedImplementation(state *schemaBindingState, authority *schemaBindingAuthority) (*FactorImplementation[K, V], bool) {

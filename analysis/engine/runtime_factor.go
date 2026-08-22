@@ -250,6 +250,34 @@ func (bound *boundFactor[K, V]) carryRouteScopeFor(member equation.RuleMember) b
 	return bound != nil && member.Key().Available() && bound.carryRouteScope != nil && bound.carryRouteScope[member.Key()]
 }
 
+// stagedRow, stagedDefault and stagedTop expose the read boundary's three
+// authentication and substitution endpoints for this Factor: the sealed row a
+// read is bound against, the declared default of an unwritten coordinate, and
+// the greatest element a widened opaque read delivers. None of them reaches a
+// domain Fold; the engine consumes them while materializing the read.
+func (bound *boundFactor[K, V]) stagedRow() schemaFactorBinding {
+	if bound == nil || bound.implementation == nil {
+		return nil
+	}
+	return bound.implementation.row
+}
+
+func (bound *boundFactor[K, V]) stagedDefault() (V, bool) {
+	var zero V
+	if bound == nil || bound.implementation == nil || bound.implementation.algebra == nil {
+		return zero, false
+	}
+	return bound.implementation.algebra.Default()
+}
+
+func (bound *boundFactor[K, V]) stagedTop() (V, bool) {
+	var zero V
+	if bound == nil || bound.implementation == nil || bound.implementation.algebra == nil {
+		return zero, false
+	}
+	return bound.implementation.algebra.Top()
+}
+
 func (bound *boundFactor[K, V]) stagedSlot() (shape.Slot, bool) {
 	return bound.runtimeSlot()
 }

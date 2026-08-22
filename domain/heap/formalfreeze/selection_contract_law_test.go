@@ -2,32 +2,28 @@ package formalfreeze
 
 import "testing"
 
-func TestFormalFreezeSelectionTagsRecoverLogicalActualOrdinal(t *testing.T) {
-	for _, item := range []struct {
-		tag   actualTag
-		count int
-		want  int
-	}{
-		{tag: 3, count: 3, want: 2},
-		{tag: 1, count: 3, want: 0},
-		{tag: 2, count: 3, want: 1},
-	} {
-		if got, ok := actualOrdinal(item.tag, item.count); !ok || got != item.want {
-			t.Fatalf("tag %d/count %d = %d/%t, want %d/true", item.tag, item.count, got, ok, item.want)
+// TestFormalFreezeActualTagsRankInAuthoredOrder is what remains of this rule's
+// side of the selection contract once the engine owns member order. The rule
+// mints one dense tag per authored actual; because those tags strictly increase
+// with the authored ordinal, the engine's declared ReadOrderByTag ranking is the
+// authored order, and the rule needs no decode of its own.
+func TestFormalFreezeActualTagsRankInAuthoredOrder(t *testing.T) {
+	const count = 8
+	previous, seen := actualTag(0), make(map[actualTag]int, count)
+	for ordinal := 0; ordinal < count; ordinal++ {
+		tag, tagOK := canonicalActualTag(ordinal)
+		if !tagOK || tag == 0 {
+			t.Fatalf("authored ordinal %d minted tag %d/%t", ordinal, tag, tagOK)
 		}
+		if ordinal > 0 && tag <= previous {
+			t.Fatalf("authored ordinal %d minted tag %d after %d", ordinal, tag, previous)
+		}
+		if earlier, repeated := seen[tag]; repeated {
+			t.Fatalf("tag %d names both authored ordinal %d and %d", tag, earlier, ordinal)
+		}
+		seen[tag], previous = ordinal, tag
 	}
-	for _, item := range []struct {
-		tag   actualTag
-		count int
-	}{
-		{tag: 0, count: 3},
-		{tag: 4, count: 3},
-		{tag: ^actualTag(0), count: 3},
-		{tag: 1, count: 0},
-		{tag: 1, count: -1},
-	} {
-		if _, ok := actualOrdinal(item.tag, item.count); ok {
-			t.Fatalf("malformed actual tag %d/count %d was admitted", item.tag, item.count)
-		}
+	if _, ok := canonicalActualTag(-1); ok {
+		t.Fatal("a negative authored ordinal minted a tag")
 	}
 }

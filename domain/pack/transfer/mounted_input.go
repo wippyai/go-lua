@@ -207,6 +207,50 @@ func (input MountedInput) Source() (vocabulary.InputSource, bool) {
 	return input.source, input.valid()
 }
 
+// MountedShape is the total reading of one mounted input projection. The four
+// members are exhaustive over a valid row, so a consumer switches on this
+// instead of re-deriving the same trichotomy from MemberCount, IsOpen and
+// IsProvenNil and getting one combination wrong.
+type MountedShape uint8
+
+const (
+	// MountedShapeInvalid is the reading of a row that was never issued by
+	// NewMountedInput or whose seal is broken.
+	MountedShapeInvalid MountedShape = iota
+	// MountedShapeProvenNil is the Lua under-application shape: a ValueFormal
+	// position with no fixed actual and no tail that could reach it. The formal
+	// holds nil; this is a positive fact, never a missing join.
+	MountedShapeProvenNil
+	// MountedShapeEmpty is a closed projection selecting no member: the empty
+	// value list. It is a complete observation, not an absent one.
+	MountedShapeEmpty
+	// MountedShapeOpen is a projection with no fixed member whose actual tail
+	// is open, so its value list is statically unknown.
+	MountedShapeOpen
+	// MountedShapeMembers is a projection with at least one fixed member.
+	// IsOpen still reports whether an actual tail extends it.
+	MountedShapeMembers
+)
+
+// Shape reports this projection's reading. It is total over valid rows: an
+// invalid row is the only case that yields MountedShapeInvalid, and the
+// remaining four partition every valid row exactly once.
+func (input MountedInput) Shape() MountedShape {
+	if !input.valid() {
+		return MountedShapeInvalid
+	}
+	if len(input.members) != 0 {
+		return MountedShapeMembers
+	}
+	if input.open {
+		return MountedShapeOpen
+	}
+	if input.source.Kind == vocabulary.InputSourceValueFormal {
+		return MountedShapeProvenNil
+	}
+	return MountedShapeEmpty
+}
+
 func (input MountedInput) IsOpen() bool {
 	return input.valid() && input.open
 }

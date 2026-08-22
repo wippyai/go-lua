@@ -7,6 +7,51 @@ import (
 	"github.com/wippyai/go-lua/analysis/engine/internal/equation"
 )
 
+// stagedReadPolicy derives one selected read's materialization policy from its
+// declared contract and the sealed algebra endpoints of the Factor it is bound
+// against. It is also where the read boundary authenticates operand ownership:
+// a runtime Factor that is not the one this read's sealed row owns refuses
+// here, named readForeignOwnerRefusal, exactly once and for every later Fold.
+func stagedReadPolicy[V any](target stagedFactor[V], row schemaFactorBinding, contract ReadContract) (readCellPolicy[V], bool) {
+	var policy readCellPolicy[V]
+	if target == nil || row == nil || !contract.valid() || target.stagedRow() != row {
+		return policy, false
+	}
+	if contract.Sparse == ReadSparseFactorDefault {
+		fallback, ok := target.stagedDefault()
+		if !ok {
+			return policy, false
+		}
+		policy.defaulted, policy.fallback = true, fallback
+	}
+	if contract.OnOpaque == ReadOpaqueWiden {
+		top, ok := target.stagedTop()
+		if !ok {
+			return policy, false
+		}
+		policy.top = top
+	}
+	return policy, true
+}
+
+// exactReadPolicy is the same derivation for a read with no locator. An exact
+// read observes one declared coordinate and has no alternative set, so only the
+// sparse clause can substitute anything.
+func exactReadPolicy[V any](algebraDefault func() (V, bool), contract ReadContract) (readCellPolicy[V], bool) {
+	var policy readCellPolicy[V]
+	if algebraDefault == nil || !contract.exactValid() {
+		return policy, false
+	}
+	if contract.Sparse == ReadSparseFactorDefault {
+		fallback, ok := algebraDefault()
+		if !ok {
+			return policy, false
+		}
+		policy.defaulted, policy.fallback = true, fallback
+	}
+	return policy, true
+}
+
 // readRowReady checks the owner fence shared by a Read and its binding. The
 // row is compiled once at issuance; all later checks consume its copied
 // geometry instead of reopening the Schema.
@@ -19,6 +64,7 @@ type schemaExactRuleReadBinding[K ~uint32 | ~uint64, V any] struct {
 	factor    *schemaFactorBindingCell[K, V]
 	read      Read[OrderedCells[V]]
 	projector func(any) (uint64, bool)
+	contract  ReadContract
 }
 
 func (binding *schemaExactRuleReadBinding[K, V]) readRow() *schemaRuleReadRow {
@@ -35,6 +81,7 @@ type schemaOpaqueExactRuleReadBinding[V any] struct {
 	factor    schemaFactorBinding
 	read      Read[OrderedCells[V]]
 	projector func(any) (uint64, bool)
+	contract  ReadContract
 }
 
 func (binding *schemaOpaqueExactRuleReadBinding[V]) readRow() *schemaRuleReadRow {
@@ -45,10 +92,11 @@ func (binding *schemaOpaqueExactRuleReadBinding[V]) readRow() *schemaRuleReadRow
 }
 
 type schemaOpaqueSelectedRuleReadBinding[V any, Tag selectionTag] struct {
-	row    *schemaRuleReadRow
-	factor schemaFactorBinding
-	read   Read[Selection[Tag, OrderedCells[V]]]
-	locate func(SelectorContext) bool
+	row      *schemaRuleReadRow
+	factor   schemaFactorBinding
+	read     Read[Selection[Tag, OrderedCells[V]]]
+	locate   func(SelectorContext) bool
+	contract ReadContract
 }
 
 func (binding *schemaOpaqueSelectedRuleReadBinding[V, Tag]) readRow() *schemaRuleReadRow {
@@ -76,6 +124,7 @@ type schemaOpaqueOperandSelectedRuleReadBinding[RV, O any, Tag selectionTag] str
 	factor        schemaFactorBinding
 	read          Read[Selection[Tag, OrderedCells[RV]]]
 	locateOperand func(SelectorContext, O) bool
+	contract      ReadContract
 }
 
 func (binding *schemaOpaqueOperandSelectedRuleReadBinding[RV, O, Tag]) readRow() *schemaRuleReadRow {
@@ -109,7 +158,7 @@ func (binding *schemaOpaqueExactRuleReadBinding[V]) bind(bound readBinding, memb
 	if binding == nil || binding.row == nil || bound == nil || factors == nil {
 		return false
 	}
-	return binding.factor.schemaFactorBindExactRead(bound, member, factors, binding.row)
+	return binding.factor.schemaFactorBindExactRead(bound, member, factors, binding.row, binding.contract)
 }
 
 func (binding *schemaOpaqueExactRuleReadBinding[V]) projectLocal(operand any) (uint64, bool) {
@@ -171,7 +220,12 @@ func (binding *schemaOpaqueSelectedRuleReadBinding[V, Tag]) bind(bound readBindi
 		surface.Normalizer.Available() || surface.Mode != equation.TargetModeNone || !surface.LocalAvailable() {
 		return false
 	}
-	return bound.appendReadRuntime(&stagedReadRuntime[V, OrderedCells[V], Tag]{input: int(binding.row.input), selector: binding.row, target: targetProvider.stagedFactorTarget(), locate: binding.locate, normalize: func(value OrderedCells[V]) OrderedCells[V] { return value }})
+	target := targetProvider.stagedFactorTarget()
+	policy, admitted := stagedReadPolicy(target, binding.factor, binding.contract)
+	if !admitted {
+		return false
+	}
+	return bound.appendReadRuntime(&stagedReadRuntime[V, OrderedCells[V], Tag]{input: int(binding.row.input), selector: binding.row, target: target, locate: binding.locate, normalize: func(value OrderedCells[V]) OrderedCells[V] { return value }, contract: binding.contract, policy: policy})
 }
 
 func (binding *schemaOpaqueSelectedRuleReadBinding[V, Tag]) projectLocal(operand any) (uint64, bool) {
@@ -212,9 +266,14 @@ func (binding *schemaOpaqueOperandSelectedRuleReadBinding[RV, O, Tag]) bind(boun
 		surface.Normalizer.Available() || surface.Mode != equation.TargetModeNone || !surface.LocalAvailable() {
 		return false
 	}
+	target := targetProvider.stagedFactorTarget()
+	policy, admitted := stagedReadPolicy(target, binding.factor, binding.contract)
+	if !admitted {
+		return false
+	}
 	operand := operandOwner.ruleOperand()
 	locate := func(context SelectorContext) bool { return binding.locateOperand(context, operand) }
-	return bound.appendReadRuntime(&stagedReadRuntime[RV, OrderedCells[RV], Tag]{input: int(binding.row.input), selector: binding.row, target: targetProvider.stagedFactorTarget(), locate: locate, normalize: func(value OrderedCells[RV]) OrderedCells[RV] { return value }})
+	return bound.appendReadRuntime(&stagedReadRuntime[RV, OrderedCells[RV], Tag]{input: int(binding.row.input), selector: binding.row, target: target, locate: locate, normalize: func(value OrderedCells[RV]) OrderedCells[RV] { return value }, contract: binding.contract, policy: policy})
 }
 
 func (binding *schemaOpaqueOperandSelectedRuleReadBinding[RV, O, Tag]) projectLocal(operand any) (uint64, bool) {
@@ -264,7 +323,11 @@ func (binding *schemaExactRuleReadBinding[K, V]) bind(bound readBinding, member 
 	fingerprint := func(value OrderedCells[V]) uint64 {
 		return fingerprintOrderedCellRecord(value.record, binding.factor.impl.algebra.Fingerprint)
 	}
-	return bound.appendReadRuntime(&typedReadRuntime[K, V, OrderedCells[V]]{input: int(binding.row.input), binding: factor.binding, unit: unit, exactFactor: factor.implementation.row, exactRaw: readLocal, exact: true, normalize: normalize, equal: equal, fingerprint: fingerprint})
+	policy, admitted := exactReadPolicy(factor.implementation.algebra.Default, binding.contract)
+	if !admitted {
+		return false
+	}
+	return bound.appendReadRuntime(&typedReadRuntime[K, V, OrderedCells[V]]{input: int(binding.row.input), binding: factor.binding, unit: unit, exactFactor: factor.implementation.row, exactRaw: readLocal, exact: true, normalize: normalize, equal: equal, fingerprint: fingerprint, policy: policy})
 }
 
 func (binding *schemaExactRuleReadBinding[K, V]) exactAdmitFactor() schemaFactorBinding {

@@ -44,6 +44,9 @@ type schemaBindingState struct {
 	queries        []schemaBindingCell
 	activation     []schemaBindingCell
 	roleSlots      map[RuleSlotCapability]composition.Key
+	// refusal names the first declaration site that poisoned this binding. It
+	// survives poisoning so a caller can tell which boundary refused.
+	refusal string
 	// linkBootstrapTransports is the sole ordered transport authorization for
 	// the Link-global bootstrap seam. The engine retains opaque capabilities,
 	// never domain role names; the program owner registers the exact pair once
@@ -144,6 +147,32 @@ func (binding *SchemaBinding) Poisoned() bool {
 	state.mu.Lock()
 	defer state.mu.Unlock()
 	return state.phase == schemaBindingPoisoned
+}
+
+// Refusal names the declaration boundary that poisoned this binding. A read
+// refused by the read-boundary contract reports its own site here rather than
+// vanishing into an unnamed poison.
+func (binding *SchemaBinding) Refusal() (string, bool) {
+	state := bindingState(binding)
+	if state == nil {
+		return "", false
+	}
+	state.mu.Lock()
+	defer state.mu.Unlock()
+	return state.refusal, state.refusal != ""
+}
+
+// poisonNamed records the refusal site before poisoning. The name is the only
+// thing a poisoned binding still reports, so a read-boundary refusal is
+// distinguishable from an unrelated declaration fault.
+func (state *schemaBindingState) poisonNamed(site string) {
+	if state == nil || state.phase == schemaBindingSealed {
+		return
+	}
+	if state.refusal == "" {
+		state.refusal = site
+	}
+	state.poisonLocked()
 }
 
 func (state *schemaBindingState) poisonLocked() {

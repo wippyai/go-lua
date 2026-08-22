@@ -14,7 +14,12 @@ type routeSetLawRef uint64
 func (ref routeSetLawRef) factorRow() schemaFactorBinding { return nil }
 func (ref routeSetLawRef) rawAddress() uint64             { return uint64(ref) }
 
-type routeSetLawFactor struct{ unit carrier.Unit }
+type routeSetLawFactor struct {
+	unit carrier.Unit
+	row  schemaFactorBinding
+	zero uint64
+	top  uint64
+}
 
 func (factor routeSetLawFactor) stagedUnit(ref exactRef) (carrier.Unit, bool) {
 	return factor.unit, ref != nil && ref.rawAddress() == 1
@@ -25,6 +30,12 @@ func (routeSetLawFactor) stagedObserve(*carrier.Work, carrier.State, carrier.Uni
 }
 
 func (routeSetLawFactor) stagedSlot() (shape.Slot, bool) { return 0, false }
+
+func (factor routeSetLawFactor) stagedRow() schemaFactorBinding { return factor.row }
+
+func (factor routeSetLawFactor) stagedDefault() (uint64, bool) { return factor.zero, true }
+
+func (factor routeSetLawFactor) stagedTop() (uint64, bool) { return factor.top, true }
 
 func routeSetLawUnit(t testing.TB) carrier.Unit {
 	t.Helper()

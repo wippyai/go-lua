@@ -49,6 +49,7 @@ type Algebra[K scalar.Key, V any] struct {
 	seal        *algebraSeal
 	keyEnd      uint64
 	default_    V
+	top_        V
 	admitAt     func(K, V) bool
 	equal       func(V, V) bool
 	same        func(V, V) bool
@@ -84,7 +85,7 @@ func Admit[K scalar.Key, V any](keyEnd uint64, default_ V, values lattice.Lattic
 			return nil, false
 		}
 	}
-	algebra = &Algebra[K, V]{seal: new(algebraSeal), keyEnd: keyEnd, default_: default_, admitAt: admitAt, equal: values.Equal, same: values.Same, fingerprint: fingerprint, join: values.Join, widen: values.Widen, narrow: values.Narrow, lessOrEq: values.LessOrEq, widenRank: widenRank, narrowRank: narrowRank}
+	algebra = &Algebra[K, V]{seal: new(algebraSeal), keyEnd: keyEnd, default_: default_, top_: values.Top(), admitAt: admitAt, equal: values.Equal, same: values.Same, fingerprint: fingerprint, join: values.Join, widen: values.Widen, narrow: values.Narrow, lessOrEq: values.LessOrEq, widenRank: widenRank, narrowRank: narrowRank}
 	joined, widened := algebra.join(default_, default_), algebra.widen(default_, default_)
 	if !algebra.sameValue(joined, default_) || !algebra.sameValue(widened, default_) || !algebra.lessOrEq(default_, joined) || !algebra.lessOrEq(joined, default_) || !algebra.lessOrEq(default_, widened) || !algebra.lessOrEq(widened, default_) || algebra.sameContradictsEqual(joined, default_) || algebra.sameContradictsEqual(widened, default_) {
 		return nil, false
@@ -119,6 +120,17 @@ func (algebra *Algebra[K, V]) Default() (V, bool) {
 		return zero, false
 	}
 	return algebra.default_, true
+}
+
+// Top returns the sealed greatest element of the typed Factor. It is the
+// sound over-approximation the read boundary substitutes for a read whose
+// dispatch alternative set is opaque and which declared widening.
+func (algebra *Algebra[K, V]) Top() (V, bool) {
+	var zero V
+	if algebra == nil || algebra.seal == nil {
+		return zero, false
+	}
+	return algebra.top_, true
 }
 
 // Equal is the admitted value equality used by typed query projection. It

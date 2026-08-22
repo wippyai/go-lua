@@ -26,21 +26,6 @@ func canonicalActualTag(index int) (actualTag, bool) {
 	return actualTag(tag), true
 }
 
-// actualOrdinal recovers the authored actual position from a selected route
-// tag. Engine Selection rows are ordered by resolved Unit, so physical
-// SelectionAt ordinals are not actual ordinals. Every actual tag must name one
-// and only one position in the mounted projection.
-func actualOrdinal(tag actualTag, count int) (int, bool) {
-	if tag == 0 || count < 0 {
-		return 0, false
-	}
-	index := uint64(tag - 1)
-	if index >= uint64(count) || index > uint64(int(^uint(0)>>1)) {
-		return 0, false
-	}
-	return int(index), true
-}
-
 // HotRule is the receipt-native Target FormalEffectFreeze consumer. It
 // retains only owner-fenced schemas, Call's mounted invocation receipts,
 // Pack's direct mounted-actual projection authority, and the already-sealed
@@ -102,11 +87,19 @@ func BindHot(
 		return nil, false
 	}
 	rule.callRead = callRead
-	actualRead, actualOK := heapowner.AddSelectedRouteRuleDirectOperandRead[operand, valuedomain.Value, actualTag](implementation, fragment.actualRead, values.FactorRef(), rule.locateActual)
+	// The mounted actual selection is declared once here: ranked by its own
+	// authored tag, with Value's declared default at every unwritten
+	// coordinate. Both the locator and the fold then consume members by the
+	// tag they name, and neither restates the engine's order or sparsity.
+	actualRead, actualOK := heapowner.AddSelectedRouteRuleDirectOperandReadUnderContract[operand, valuedomain.Value, actualTag](implementation, fragment.actualRead, values.FactorRef(), rule.locateActual, engine.ReadContract{Order: engine.ReadOrderByTag, Sparse: engine.ReadSparseFactorDefault})
 	if !actualOK {
 		return nil, false
 	}
 	rule.actualRead = actualRead
+	// The routed Heap selection keeps the explicit sparsity it genuinely reads:
+	// a route with no predecessor fact has no Normal branch, which is a
+	// different judgment from a route whose predecessor is Bottom. Its members
+	// are paired with their route tag by Routed, so it declares no member order.
 	heapRead, heapOK := heapowner.AddSelectedRouteRuleDirectOperandRead[operand, heapdomain.Value, heapdomain.RawRouteTag](implementation, fragment.heapRead, owner.FactorRef(), rule.locateHeap)
 	if !heapOK {
 		return nil, false
@@ -187,7 +180,9 @@ func (rule *HotRule) locateHeap(context engine.SelectorContext, candidate operan
 	}
 	var inline [formalFreezeInlineWidth]actualObservation
 	observations, observationsOK := formalFreezeObservationBuffer(actual.ActualCount(), inline[:])
-	if !observationsOK || !rule.selectorObservations(context, actual, actualSelection, observations) {
+	if !observationsOK || !rule.observeActuals(actual, observations, func(tag actualTag) (engine.OrderedCells[valuedomain.Value], bool) {
+		return engine.SelectorSelectionByTag(context, actualSelection, tag)
+	}) {
 		return false
 	}
 	plan, planOK := planFor(rule.packs, rule.calls.Algebra(), rule.owner.Schema(), rule.values.Schema(), rule.contract, candidate.mounted, callFact, observations)
@@ -213,31 +208,31 @@ func formalFreezeObservationBuffer(count int, inline []actualObservation) ([]act
 	return make([]actualObservation, count), true
 }
 
-func (rule *HotRule) selectorObservations(context engine.SelectorContext, actual packdomain.MountedActualProjection, selection engine.Selection[actualTag, engine.OrderedCells[valuedomain.Value]], observations []actualObservation) bool {
-	if rule == nil || rule.values == nil || rule.values.Schema() == nil {
+// observeActuals reads one mounted actual per authored ordinal. The read is
+// declared ByTag with Value's default at an unwritten coordinate, so this names
+// the member it means, receives a value at every coordinate, and receives it
+// from the Factor the read was bound against. Order recovery, absence handling
+// and value ownership are all the engine's, which is why the locator and the
+// fold share this one reader instead of a copy each.
+func (rule *HotRule) observeActuals(actual packdomain.MountedActualProjection, observations []actualObservation, member func(actualTag) (engine.OrderedCells[valuedomain.Value], bool)) bool {
+	if rule == nil || rule.values == nil || rule.values.Schema() == nil || member == nil || len(observations) != actual.ActualCount() {
 		return false
 	}
-	count, countOK := engine.SelectorSelectionCount(context, selection)
-	if !countOK || count != actual.ActualCount() || len(observations) != count {
-		return false
-	}
-	for physical := 0; physical < count; physical++ {
-		tag, cells, selected := engine.SelectorSelectionAt(context, selection, physical)
-		ordinal, ordinalOK := actualOrdinal(tag, count)
-		if !ordinalOK || observations[ordinal].valid || !selected || cells.Count() != 1 {
+	for ordinal := range observations {
+		tag, tagOK := canonicalActualTag(ordinal)
+		if !tagOK {
 			return false
 		}
-		fact, present, available := cells.At(0)
+		cells, selected := member(tag)
 		coordinate, coordinateOK := rule.coordinateForActual(actual, ordinal)
-		if !available || !rule.values.Schema().Equal(fact, fact) || !present && !rule.values.Schema().Equal(fact, rule.values.Schema().Bottom()) || !coordinateOK || present && !rule.values.Schema().AdmitsCoordinate(coordinate, fact) {
+		if !selected || cells.Count() != 1 || !coordinateOK {
 			return false
 		}
-		observations[ordinal] = actualObservation{fact: fact, present: present, valid: true}
-	}
-	for _, observation := range observations {
-		if !observation.valid {
+		fact, available := cells.Value(0)
+		if !available || !rule.values.Schema().AdmitsCoordinate(coordinate, fact) {
 			return false
 		}
+		observations[ordinal] = actualObservation{fact: fact, valid: true}
 	}
 	return true
 }
@@ -273,7 +268,9 @@ func (rule *HotRule) fold(frame engine.Frame[heapdomain.Value, operand]) engine.
 	}
 	var inline [formalFreezeInlineWidth]actualObservation
 	observations, observationsOK := formalFreezeObservationBuffer(actual.ActualCount(), inline[:])
-	if !observationsOK || !rule.accessObservations(frame, actual, actualSelection, observations) {
+	if !observationsOK || !rule.observeActuals(actual, observations, func(tag actualTag) (engine.OrderedCells[valuedomain.Value], bool) {
+		return engine.SelectionByTag(frame, actualSelection, tag)
+	}) {
 		return engine.RuleResult[heapdomain.Value]{}
 	}
 	plan, planOK := planFor(rule.packs, rule.calls.Algebra(), rule.owner.Schema(), rule.values.Schema(), rule.contract, candidate.mounted, callFact, observations)
@@ -313,33 +310,4 @@ func (rule *HotRule) fold(frame engine.Frame[heapdomain.Value, operand]) engine.
 		}
 		return next, true
 	})
-}
-
-func (rule *HotRule) accessObservations(frame engine.Frame[heapdomain.Value, operand], actual packdomain.MountedActualProjection, selection engine.Selection[actualTag, engine.OrderedCells[valuedomain.Value]], observations []actualObservation) bool {
-	if rule == nil || rule.values == nil || rule.values.Schema() == nil {
-		return false
-	}
-	count, countOK := engine.SelectionCount(frame, selection)
-	if !countOK || count != actual.ActualCount() || len(observations) != count {
-		return false
-	}
-	for physical := 0; physical < count; physical++ {
-		tag, cells, selected := engine.SelectionAt(frame, selection, physical)
-		ordinal, ordinalOK := actualOrdinal(tag, count)
-		if !ordinalOK || observations[ordinal].valid || !selected || cells.Count() != 1 {
-			return false
-		}
-		fact, present, available := cells.At(0)
-		coordinate, coordinateOK := rule.coordinateForActual(actual, ordinal)
-		if !available || !rule.values.Schema().Equal(fact, fact) || !present && !rule.values.Schema().Equal(fact, rule.values.Schema().Bottom()) || !coordinateOK || present && !rule.values.Schema().AdmitsCoordinate(coordinate, fact) {
-			return false
-		}
-		observations[ordinal] = actualObservation{fact: fact, present: present, valid: true}
-	}
-	for _, observation := range observations {
-		if !observation.valid {
-			return false
-		}
-	}
-	return true
 }

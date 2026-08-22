@@ -128,6 +128,17 @@ func (cells OrderedCells[V]) At(index int) (V, bool, bool) {
 	return cells.view.At(index)
 }
 
+// Value returns one exact typed observation without its presence bit. It is
+// the accessor a read declaring ReadSparseFactorDefault is delivered through:
+// the engine has already substituted the Factor's declared default at every
+// unwritten coordinate, so there is no absent case left for a Fold to branch
+// on. A read that must tell a written Bottom from an unwritten coordinate
+// declares ReadSparseExplicit and reads At instead.
+func (cells OrderedCells[V]) Value(index int) (V, bool) {
+	value, present, available := cells.At(index)
+	return value, available && present
+}
+
 // summaryCell is private runtime observation storage. Its fields stay hidden
 // from domain declarations; an OrderedCells value is valid only while its
 // synchronous Product or Query frame remains active.

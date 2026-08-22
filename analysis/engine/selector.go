@@ -152,6 +152,13 @@ type emittedRoute[Tag selectionTag] struct {
 
 func (emittedRoute[Tag]) selectorEmission() {}
 
+// emittedOpaque is the untyped opacity emission. It names no route because an
+// opaque alternative has none; the read's declared ReadOpaque decides whether
+// the engine widens the read to the Factor's Top or refuses it.
+type emittedOpaque struct{}
+
+func (emittedOpaque) selectorEmission() {}
+
 // SelectRoute emits one owner-issued exact target Ref and typed opaque tag for
 // the current staged read row. Duplicate resolved (Unit,Tag) routes fail
 // closed; the same Unit with distinct tags is retained as distinct evidence.
@@ -186,6 +193,24 @@ func SelectRouteSet[K ~uint32 | ~uint64, Tag selectionTag](context SelectorConte
 	return true
 }
 
+// SelectOpaque reports that one alternative of this staged read's dispatch set
+// cannot be addressed. It is evidence, not a disposition: the read's declared
+// ReadOpaque decides whether the engine substitutes the Factor's Top for every
+// member or refuses the read. A locator therefore never widens by hand and
+// never mistakes an opaque alternative for malformed evidence.
+func SelectOpaque(context SelectorContext) bool {
+	frame := context.frame
+	if !context.valid() || !frame.rowLive() || frame.read == nil || frame.routes == nil {
+		frame.poison()
+		return false
+	}
+	if !frame.routes.accept(emittedOpaque{}) {
+		frame.poison()
+		return false
+	}
+	return true
+}
+
 // Selection is the typed, row-local multi-route result of a staged read. The
 // tag and value are retrieved atomically by SelectionAt, so distinct routes
 // cannot be accidentally paired across ordinals.
@@ -200,6 +225,11 @@ type Selection[Tag selectionTag, S any] struct {
 	// this ordinal. StageSelection can consume it atomically but ordinary Rule
 	// code can never recover a Ref from a Selection.
 	route func(int, int) (exactRef, bool)
+
+	// byTag resolves one member by its own tag. It is the accessor a read
+	// declaring ReadOrderByTag is consumed through, so a Fold holds no
+	// positional assumption about where the engine put a member.
+	byTag func(int, Tag) (S, bool)
 
 	// selectorScope is installed only by SelectorRead.  It is not a second
 	// authority: it is a short-lived capability fence for a predecessor
@@ -290,6 +320,41 @@ func validSelectorSelection[Tag selectionTag, S any](context SelectorContext, se
 	}
 	actual, ok := frame.product.readID(frame.row, selection.read)
 	return ok && actual == selection.selectionID
+}
+
+// SelectionByTag returns the one member of a Selection carrying this tag. It
+// is the tag-ordinal lookup half of the ReadOrder clause: a rule names the
+// member it means instead of assuming an ordinal, and a tag naming no member,
+// or more than one under a canonical order, refuses.
+func SelectionByTag[V, O any, Tag selectionTag, S any](frame Frame[V, O], selection Selection[Tag, S], tag Tag) (S, bool) {
+	var zero S
+	if !validSelection(frame, selection) || selection.byTag == nil {
+		poisonFrame(frame)
+		return zero, false
+	}
+	value, ok := selection.byTag(frame.row, tag)
+	if !ok {
+		return zero, false
+	}
+	return value, true
+}
+
+// SelectorSelectionByTag is the locator-scoped SelectionByTag. It answers under
+// the same predecessor fence as SelectorSelectionAt.
+func SelectorSelectionByTag[Tag selectionTag, S any](context SelectorContext, selection Selection[Tag, S], tag Tag) (S, bool) {
+	var zero S
+	frame := context.frame
+	if !validSelectorSelection(context, selection) || selection.byTag == nil {
+		if frame != nil {
+			frame.poison()
+		}
+		return zero, false
+	}
+	value, ok := selection.byTag(frame.row, tag)
+	if !ok {
+		return zero, false
+	}
+	return value, true
 }
 
 func SelectionCount[V, O any, Tag selectionTag, S any](frame Frame[V, O], selection Selection[Tag, S]) (int, bool) {

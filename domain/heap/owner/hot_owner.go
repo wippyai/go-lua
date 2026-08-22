@@ -90,6 +90,19 @@ func AddSelectedRouteRuleDirectOperandRead[O any, RV any, Tag interface {
 	return engine.BindSelectedRuleDirectOperandRead[coordinate, heap.Value, O, RV, Tag](issuer.owner.binding, issuer.slot, slot, factor, locate)
 }
 
+// AddSelectedRouteRuleDirectOperandReadUnderContract installs the same
+// operand-dependent selector under an explicit engine read-boundary contract.
+// The contract is the rule's one declaration of member order, sparse default
+// and opaque disposition; the engine, not the rule, then delivers them.
+func AddSelectedRouteRuleDirectOperandReadUnderContract[O any, RV any, Tag interface {
+	~uint8 | ~uint16 | ~uint32 | ~uint64
+}](issuer *RuleImplementation[O], slot engine.SchemaReadSlot[RV], factor engine.FactorRef[RV], locate func(engine.SelectorContext, O) bool, contract engine.ReadContract) (engine.Read[engine.Selection[Tag, engine.OrderedCells[RV]]], bool) {
+	if issuer == nil || issuer.owner == nil || issuer.slot == nil {
+		return engine.Read[engine.Selection[Tag, engine.OrderedCells[RV]]]{}, false
+	}
+	return engine.BindSelectedRuleDirectOperandReadUnderContract[coordinate, heap.Value, O, RV, Tag](issuer.owner.binding, issuer.slot, slot, factor, locate, contract)
+}
+
 // BindHot attaches Heap's already-sealed algebra to its one exact cold Factor
 // fragment. It neither re-declares the Factor shape nor creates a legacy
 // Composition owner.
