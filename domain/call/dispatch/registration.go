@@ -12,6 +12,10 @@ import (
 	valueowner "github.com/wippyai/go-lua/domain/value/owner"
 )
 
+// RuleKey is Call dispatch's one declaration identity. Composition consumes
+// this owner-issued key when selecting the sealed rule cell and placements.
+const RuleKey schema.Key = "call-dispatch"
+
 // rulePrincipals is this package's own statement of the cold owners its rule
 // declares against. It names only peer types this package already speaks, so
 // the composition that supplies the principal record satisfies it structurally
@@ -35,7 +39,7 @@ type ruleAuthorities interface {
 // interfaces above.
 func RuleEntry[P rulePrincipals, A ruleAuthorities]() rule.Spec {
 	return rule.Spec{
-		Key:    "call-dispatch",
+		Key:    RuleKey,
 		Writes: "call",
 		Owner:  "call",
 		Issues: []rule.Issuance{

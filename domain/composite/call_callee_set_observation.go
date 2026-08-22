@@ -12,8 +12,6 @@ import (
 	callquery "github.com/wippyai/go-lua/domain/call/query"
 )
 
-const callDispatchRuleKey schema.Key = "call-dispatch"
-
 // CallCalleeSetObservations enumerates Call's producer-only exact observation
 // population over the canonical mounted dispatch placements.  Query
 // registration owns the family and its typed fold; this seam only recovers
@@ -43,7 +41,7 @@ func (bound *ProgramBinding) CallCalleeSetObservations(
 		return nil, false
 	}
 
-	ruleCell, ruleCellOK := bound.rules.cellByKey(callDispatchRuleKey)
+	ruleCell, ruleCellOK := bound.rules.cellByKey(calldispatch.RuleKey)
 	dispatch, dispatchOK := rule.Payload[*calldispatch.HotRule](ruleCell)
 	if !ruleCellOK || !dispatchOK || dispatch == nil {
 		return nil, false
@@ -52,7 +50,7 @@ func (bound *ProgramBinding) CallCalleeSetObservations(
 	observations := make([]engine.ProgramObservationAdmission, 0)
 	seen := make(map[identity.ContentID]struct{})
 	_, walked := WalkSealedPlacements(mounts, func(ruleKey schema.Key, mount, _, occurrence identity.ContentID) bool {
-		if ruleKey != callDispatchRuleKey {
+		if ruleKey != calldispatch.RuleKey {
 			return true
 		}
 		mountedContexts, contextsOK := contexts.ContextsForModule(mount)
