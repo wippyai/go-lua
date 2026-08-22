@@ -7,6 +7,8 @@ import (
 
 	"github.com/wippyai/go-lua/analysis/identity"
 	"github.com/wippyai/go-lua/analysis/schema"
+	programcatalog "github.com/wippyai/go-lua/analysis/schema/program/catalog"
+	programconstruction "github.com/wippyai/go-lua/analysis/schema/program/construction"
 )
 
 func testID(value byte) identity.ContentID {
@@ -19,23 +21,25 @@ func TestAppendCanonicalizesWriteIdentity(t *testing.T) {
 	from, to := testID(1), testID(2)
 	left := New(17)
 	right := New(17)
-	if !left.Append("transfer", from, to, false, "value-source", "pack-source", "heap-ingress", "call-dispatch") ||
-		!right.Append("transfer", from, to, false, "call-dispatch", "heap-ingress", "pack-source", "value-source") {
+	if left.Append("transfer", from, to, false, "value-source", "pack-source", "heap-ingress", "call-dispatch").Available() ||
+		right.Append("transfer", from, to, false, "call-dispatch", "heap-ingress", "pack-source", "value-source").Available() {
 		t.Fatal("valid factor transport was rejected")
 	}
-	if left.Append("transfer", from, to, false, "value-source", "value-source") {
+	if fault := left.Append("transfer", from, to, false, "value-source", "value-source"); !fault.Available() || fault.Family() != programcatalog.LocalTransfer() || fault.Issue() != programconstruction.IssueLocalTransferUnavailable {
 		t.Fatal("duplicate write key was accepted")
+	} else if row, ok := fault.Row(); !ok || row != 1 {
+		t.Fatalf("duplicate write refusal row=%d/%t, want 1/true", row, ok)
 	}
-	if fault := left.Seal(); fault.Failed() {
+	if fault := left.Seal(); fault.Available() {
 		t.Fatalf("left seal fault=%#v", fault)
 	}
-	if fault := right.Seal(); fault.Failed() {
+	if fault := right.Seal(); fault.Available() {
 		t.Fatalf("right seal fault=%#v", fault)
 	}
-	leftRows, leftWrites, leftOK := left.TakeCanonicalPlanes()
-	rightRows, rightWrites, rightOK := right.TakeCanonicalPlanes()
-	if !leftOK || !rightOK || len(leftRows) != 1 || len(rightRows) != 1 {
-		t.Fatalf("canonical planes=%d/%d/%t/%t", len(leftRows), len(rightRows), leftOK, rightOK)
+	leftRows, leftWrites, leftFault := left.TakeCanonicalPlanes()
+	rightRows, rightWrites, rightFault := right.TakeCanonicalPlanes()
+	if leftFault.Available() || rightFault.Available() || len(leftRows) != 1 || len(rightRows) != 1 {
+		t.Fatalf("canonical planes=%d/%d/%+v/%+v", len(leftRows), len(rightRows), leftFault, rightFault)
 	}
 	if leftRows[0].ID() != rightRows[0].ID() || !slices.Equal(leftWrites, rightWrites) {
 		t.Fatal("set-identical writes changed canonical identity or plane")
@@ -65,16 +69,16 @@ func TestSealSortsFromToIDAndRejectsDuplicate(t *testing.T) {
 		{from: 1, to: 9, domain: "first"},
 		{from: 1, to: 9, domain: "second"},
 	} {
-		if !owner.Append(row.domain, testID(row.from), testID(row.to), true) {
+		if fault := owner.Append(row.domain, testID(row.from), testID(row.to), true); fault.Available() {
 			t.Fatalf("append[%d] rejected", index)
 		}
 	}
-	if fault := owner.Seal(); fault.Failed() {
+	if fault := owner.Seal(); fault.Available() {
 		t.Fatalf("seal fault=%#v", fault)
 	}
-	rows, _, ok := owner.TakeCanonicalPlanes()
-	if !ok || len(rows) != 3 {
-		t.Fatalf("canonical rows=%d/%t", len(rows), ok)
+	rows, _, transferFault := owner.TakeCanonicalPlanes()
+	if transferFault.Available() || len(rows) != 3 {
+		t.Fatalf("canonical rows=%d/%+v", len(rows), transferFault)
 	}
 	for index := 1; index < len(rows); index++ {
 		prior, current := rows[index-1], rows[index]
@@ -89,31 +93,40 @@ func TestSealSortsFromToIDAndRejectsDuplicate(t *testing.T) {
 	}
 
 	duplicate := New(23)
-	if !duplicate.Append("same", testID(1), testID(2), true) || !duplicate.Append("same", testID(1), testID(2), true) {
+	if fault := duplicate.Append("same", testID(1), testID(2), true); fault.Available() {
+		t.Fatal("first duplicate fixture append failed")
+	}
+	if fault := duplicate.Append("same", testID(1), testID(2), true); fault.Available() {
 		t.Fatal("duplicate fixture append failed")
 	}
 	fault := duplicate.Seal()
-	if !fault.Failed() || fault.Index() != 1 {
+	if !fault.Available() || fault.Family() != programcatalog.LocalTransfer() || fault.Issue() != programconstruction.IssueLocalTransferDuplicate {
 		t.Fatalf("duplicate fault=%#v, want failed index 1", fault)
 	}
-	if _, _, ok := duplicate.TakeCanonicalPlanes(); ok {
+	if row, ok := fault.Row(); !ok || row != 1 {
+		t.Fatalf("duplicate fault row=%d/%t, want 1/true", row, ok)
+	}
+	if _, _, fault := duplicate.TakeCanonicalPlanes(); !fault.Available() || fault.Family() != programcatalog.LocalTransfer() || fault.Issue() != programconstruction.IssueLocalTransferUnavailable {
 		t.Fatal("duplicate owner transferred canonical planes")
 	}
 }
 
 func TestTakeCanonicalPlanesTransfersExactlyOnce(t *testing.T) {
 	owner := New(29)
-	if !owner.Append("full", testID(1), testID(2), true) || !owner.Append("factor", testID(2), testID(3), false, "pack-source") {
+	if fault := owner.Append("full", testID(1), testID(2), true); fault.Available() {
+		t.Fatal("full transport fixture append failed")
+	}
+	if fault := owner.Append("factor", testID(2), testID(3), false, "pack-source"); fault.Available() {
 		t.Fatal("valid transport fixture append failed")
 	}
-	if fault := owner.Seal(); fault.Failed() {
+	if fault := owner.Seal(); fault.Available() {
 		t.Fatalf("seal fault=%#v", fault)
 	}
-	transfers, writes, ok := owner.TakeCanonicalPlanes()
-	if !ok || len(transfers) != 2 || len(writes) != 1 {
-		t.Fatalf("transferred planes=%d/%d/%t", len(transfers), len(writes), ok)
+	transfers, writes, fault := owner.TakeCanonicalPlanes()
+	if fault.Available() || len(transfers) != 2 || len(writes) != 1 {
+		t.Fatalf("transferred planes=%d/%d/%+v", len(transfers), len(writes), fault)
 	}
-	if _, _, ok := owner.TakeCanonicalPlanes(); ok {
+	if _, _, fault := owner.TakeCanonicalPlanes(); !fault.Available() || fault.Family() != programcatalog.LocalTransfer() || fault.Issue() != programconstruction.IssueLocalTransferUnavailable {
 		t.Fatal("canonical planes transferred twice")
 	}
 	for _, transfer := range transfers {

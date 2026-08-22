@@ -265,12 +265,12 @@ func TestProgramArtifactCallStagesUseFinishAndExactDispatchTransport(t *testing.
 	if failure := transaction.installLocalStagesFailure(); failure.Available() {
 		t.Fatalf("install call stages: %+v", failure)
 	}
-	if fault := transaction.localTransfer.Seal(); fault.Failed() {
+	if fault := transaction.localTransfer.Seal(); fault.Available() {
 		t.Fatalf("seal local transfers: %#v", fault)
 	}
-	transfers, transferWrites, transfersOK := transaction.localTransfer.TakeCanonicalPlanes()
-	if !transfersOK {
-		t.Fatal("take local transfer planes")
+	transfers, transferWrites, transferFault := transaction.localTransfer.TakeCanonicalPlanes()
+	if transferFault.Available() {
+		t.Fatalf("take local transfer planes: %#v", transferFault)
 	}
 	wantDispatchWrites := []schema.Key{"effect-body", "heap-ingress", "pack-source", "value-source"}
 	found := false

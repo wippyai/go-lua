@@ -144,16 +144,18 @@ func (compiler *compiler) installLocalStagesFailure() CompileFailure {
 				return compileFailure(CompileStageOccurrences, CompileRowOccurrence, index, -1, CompileReasonOccurrenceUnavailable)
 			}
 			sequence = append(sequence, stage)
-			if len(transport) != 0 && !compiler.localTransfer.Append("analysis/program-artifact/local-predecessor-transfer", base, stage, false, transport...) {
-				return compileFailure(CompileStageOccurrences, CompileRowEnvironment, index, -1, CompileReasonEnvironmentUnavailable)
+			if len(transport) != 0 {
+				if fault := compiler.localTransfer.Append("analysis/program-artifact/local-predecessor-transfer", base, stage, false, transport...); fault.Available() {
+					return CompileFailure{construction: fault}
+				}
 			}
 			predecessor = stage
 		}
 		if local, staged := placement.Local(); staged {
 			localStageFor[base] = local
 			sequence = append(sequence, local)
-			if !compiler.localTransfer.Append("analysis/program-artifact/local-transfer", predecessor, local, true) {
-				return compileFailure(CompileStageOccurrences, CompileRowEnvironment, index, -1, CompileReasonEnvironmentUnavailable)
+			if fault := compiler.localTransfer.Append("analysis/program-artifact/local-transfer", predecessor, local, true); fault.Available() {
+				return CompileFailure{construction: fault}
 			}
 			if predecessor != base {
 				localPredecessorInput[local] = predecessor
@@ -165,8 +167,8 @@ func (compiler *compiler) installLocalStagesFailure() CompileFailure {
 				return compileFailure(CompileStageOccurrences, CompileRowOccurrence, index, -1, CompileReasonOccurrenceUnavailable)
 			}
 			sequence = append(sequence, successor)
-			if !compiler.localTransfer.Append("analysis/program-artifact/local-successor-transfer", predecessor, successor, true) {
-				return compileFailure(CompileStageOccurrences, CompileRowEnvironment, index, -1, CompileReasonEnvironmentUnavailable)
+			if fault := compiler.localTransfer.Append("analysis/program-artifact/local-successor-transfer", predecessor, successor, true); fault.Available() {
+				return CompileFailure{construction: fault}
 			}
 			stagedInput[successor] = predecessor
 			predecessor = successor
@@ -178,8 +180,8 @@ func (compiler *compiler) installLocalStagesFailure() CompileFailure {
 				return compileFailure(CompileStageOccurrences, CompileRowOccurrence, index, computationIndex, CompileReasonOccurrenceUnavailable)
 			}
 			sequence = append(sequence, point)
-			if !compiler.localTransfer.Append("analysis/program-artifact/local-computation-transfer", predecessor, point, true) {
-				return compileFailure(CompileStageOccurrences, CompileRowEnvironment, index, -1, CompileReasonEnvironmentUnavailable)
+			if fault := compiler.localTransfer.Append("analysis/program-artifact/local-computation-transfer", predecessor, point, true); fault.Available() {
+				return CompileFailure{construction: fault}
 			}
 			stagedInput[point] = predecessor
 			predecessor = point
@@ -188,13 +190,23 @@ func (compiler *compiler) installLocalStagesFailure() CompileFailure {
 		if calls, staged := placement.Call(); staged {
 			dispatch, summary, effect := calls.Dispatch(), calls.Summary(), calls.Effect()
 			sequence = append(sequence, dispatch, summary, effect)
-			if !compiler.localTransfer.Append("analysis/program-artifact/call-base-dispatch-transfer", callBase, dispatch, false, dispatchEntry...) ||
-				!compiler.localTransfer.Append("analysis/program-artifact/call-base-summary-transfer", callBase, summary, false, effectBypass...) ||
-				!compiler.localTransfer.Append("analysis/program-artifact/call-dispatch-summary-transfer", dispatch, summary, false, dispatchForward...) ||
-				!compiler.localTransfer.Append("analysis/program-artifact/call-base-effect-transfer", callBase, effect, false, effectEntry...) ||
-				!compiler.localTransfer.Append("analysis/program-artifact/call-dispatch-effect-transfer", dispatch, effect, false, dispatchForward...) ||
-				!compiler.localTransfer.Append("analysis/program-artifact/call-summary-effect-transfer", summary, effect, false, summaryForward...) {
-				return compileFailure(CompileStageOccurrences, CompileRowEnvironment, index, -1, CompileReasonEnvironmentUnavailable)
+			if fault := compiler.localTransfer.Append("analysis/program-artifact/call-base-dispatch-transfer", callBase, dispatch, false, dispatchEntry...); fault.Available() {
+				return CompileFailure{construction: fault}
+			}
+			if fault := compiler.localTransfer.Append("analysis/program-artifact/call-base-summary-transfer", callBase, summary, false, effectBypass...); fault.Available() {
+				return CompileFailure{construction: fault}
+			}
+			if fault := compiler.localTransfer.Append("analysis/program-artifact/call-dispatch-summary-transfer", dispatch, summary, false, dispatchForward...); fault.Available() {
+				return CompileFailure{construction: fault}
+			}
+			if fault := compiler.localTransfer.Append("analysis/program-artifact/call-base-effect-transfer", callBase, effect, false, effectEntry...); fault.Available() {
+				return CompileFailure{construction: fault}
+			}
+			if fault := compiler.localTransfer.Append("analysis/program-artifact/call-dispatch-effect-transfer", dispatch, effect, false, dispatchForward...); fault.Available() {
+				return CompileFailure{construction: fault}
+			}
+			if fault := compiler.localTransfer.Append("analysis/program-artifact/call-summary-effect-transfer", summary, effect, false, summaryForward...); fault.Available() {
+				return CompileFailure{construction: fault}
 			}
 			callInput[dispatch] = callBase
 		}

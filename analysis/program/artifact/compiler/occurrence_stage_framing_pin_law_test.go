@@ -130,12 +130,12 @@ func TestInstalledCallStageIdentitiesArePinnedOverAFixture(t *testing.T) {
 		{dispatch, effect}:  pinnedCallDispatchEffectTransferFrame,
 		{summary, effect}:   pinnedCallSummaryEffectTransferFrame,
 	}
-	if fault := transaction.localTransfer.Seal(); fault.Failed() {
+	if fault := transaction.localTransfer.Seal(); fault.Available() {
 		t.Fatalf("seal local transfers: %#v", fault)
 	}
-	transfers, transferWrites, transfersOK := transaction.localTransfer.TakeCanonicalPlanes()
-	if !transfersOK || len(transfers) != len(framings) {
-		t.Fatalf("the call splice installed %d transports, want %d", len(transfers), len(framings))
+	transfers, transferWrites, transferFault := transaction.localTransfer.TakeCanonicalPlanes()
+	if transferFault.Available() || len(transfers) != len(framings) {
+		t.Fatalf("the call splice installed %d transports, want %d (fault=%+v)", len(transfers), len(framings), transferFault)
 	}
 	for _, edge := range transfers {
 		from, to, id := edge.From(), edge.To(), edge.ID()

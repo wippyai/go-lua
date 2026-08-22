@@ -11,18 +11,9 @@ import (
 	"github.com/wippyai/go-lua/analysis/program/artifact/issuance"
 	"github.com/wippyai/go-lua/analysis/schema"
 	programschema "github.com/wippyai/go-lua/analysis/schema/program"
+	programcatalog "github.com/wippyai/go-lua/analysis/schema/program/catalog"
+	programconstruction "github.com/wippyai/go-lua/analysis/schema/program/construction"
 )
-
-// Fault identifies a transport row that prevented canonical closure. Index is
-// the row's position after the canonical sort, matching the compiler's old
-// duplicate-row failure coordinate.
-type Fault struct {
-	index  int
-	failed bool
-}
-
-func (fault Fault) Failed() bool { return fault.failed }
-func (fault Fault) Index() int   { return fault.index }
 
 type draft struct {
 	id     identity.ContentID
@@ -57,15 +48,16 @@ type Builder struct {
 func New(format uint64) *Builder { return &Builder{format: format} }
 
 // Append admits one transport, canonicalizing its write set before deriving
-// the content identity. A false result preserves the parent compiler's
-// occurrence-stage environment-unavailable failure mapping.
-func (builder *Builder) Append(domain string, from, to identity.ContentID, full bool, writes ...schema.Key) bool {
+// the content identity. Refusals are issued against the exact row that was
+// being admitted; the parent carries the schema fault without translation.
+func (builder *Builder) Append(domain string, from, to identity.ContentID, full bool, writes ...schema.Key) programconstruction.Fault {
 	if builder == nil || builder.sealed || builder.transferred {
-		return false
+		return programconstruction.New(programcatalog.LocalTransfer(), programconstruction.IssueLocalTransferUnavailable, -1, -1)
 	}
+	rowIndex := len(builder.rows)
 	ordered, orderedOK := issuance.OrderedKeys(writes)
 	if !orderedOK {
-		return false
+		return programconstruction.New(programcatalog.LocalTransfer(), programconstruction.IssueLocalTransferUnavailable, rowIndex, -1)
 	}
 	fields := []artifactdigest.Field{
 		artifactdigest.ContentID(from), artifactdigest.ContentID(to),
@@ -82,18 +74,18 @@ func (builder *Builder) Append(domain string, from, to identity.ContentID, full 
 		writes: ordered,
 	}
 	if !row.available() {
-		return false
+		return programconstruction.New(programcatalog.LocalTransfer(), programconstruction.IssueLocalTransferUnavailable, rowIndex, -1)
 	}
 	builder.rows = append(builder.rows, row)
-	return true
+	return programconstruction.Fault{}
 }
 
 // Seal canonically orders the drafts and rejects duplicate transport IDs. The
 // least-significant key is applied first so the final order is (From, To, ID),
 // exactly matching the former compiler finalizer.
-func (builder *Builder) Seal() Fault {
+func (builder *Builder) Seal() programconstruction.Fault {
 	if builder == nil || builder.sealed || builder.transferred {
-		return Fault{index: -1, failed: true}
+		return programconstruction.New(programcatalog.LocalTransfer(), programconstruction.IssueLocalTransferUnavailable, -1, -1)
 	}
 	identity.SortByContentID(builder.rows, func(row draft) identity.ContentID { return row.id })
 	identity.SortByContentID(builder.rows, func(row draft) identity.ContentID { return row.to })
@@ -102,42 +94,45 @@ func (builder *Builder) Seal() Fault {
 		if builder.rows[index-1].id == builder.rows[index].id {
 			builder.sealed = true
 			builder.faulted = true
-			return Fault{index: index, failed: true}
+			return programconstruction.New(programcatalog.LocalTransfer(), programconstruction.IssueLocalTransferDuplicate, index, -1)
 		}
 	}
 	builder.sealed = true
-	return Fault{}
+	return programconstruction.Fault{}
 }
 
 // TakeCanonicalPlanes validates and transfers the one canonical transport and
 // write plane. It succeeds only after Seal and only once.
-func (builder *Builder) TakeCanonicalPlanes() ([]programschema.LocalTransfer, []programschema.LocalTransferWrite, bool) {
+func (builder *Builder) TakeCanonicalPlanes() ([]programschema.LocalTransfer, []programschema.LocalTransferWrite, programconstruction.Fault) {
 	if builder == nil || !builder.sealed || builder.faulted || builder.transferred {
-		return nil, nil, false
+		return nil, nil, programconstruction.New(programcatalog.LocalTransfer(), programconstruction.IssueLocalTransferUnavailable, -1, -1)
 	}
 	transfers := make([]programschema.LocalTransfer, 0, len(builder.rows))
 	writes := make([]programschema.LocalTransferWrite, 0)
-	for _, row := range builder.rows {
-		if !row.available() || !fitsUint32(len(writes)) || !fitsUint32(len(row.writes)) {
-			return nil, nil, false
+	for rowIndex, row := range builder.rows {
+		if !row.available() {
+			return nil, nil, programconstruction.New(programcatalog.LocalTransfer(), programconstruction.IssueLocalTransferUnavailable, rowIndex, -1)
+		}
+		if !fitsUint32(len(writes)) || !fitsUint32(len(row.writes)) {
+			return nil, nil, programconstruction.New(programcatalog.LocalTransferWrite(), programconstruction.IssueLocalTransferWriteUnavailable, len(writes), -1)
 		}
 		offset := uint32(len(writes))
 		for _, key := range row.writes {
 			write, ok := programschema.NewLocalTransferWrite(key)
 			if !ok {
-				return nil, nil, false
+				return nil, nil, programconstruction.New(programcatalog.LocalTransferWrite(), programconstruction.IssueLocalTransferWriteUnavailable, len(writes), -1)
 			}
 			writes = append(writes, write)
 		}
 		converted, ok := programschema.NewLocalTransfer(row.id, row.from, row.to, row.full, offset, uint32(len(row.writes)))
 		if !ok {
-			return nil, nil, false
+			return nil, nil, programconstruction.New(programcatalog.LocalTransfer(), programconstruction.IssueLocalTransferUnavailable, rowIndex, -1)
 		}
 		transfers = append(transfers, converted)
 	}
 	builder.rows = nil
 	builder.transferred = true
-	return transfers, writes, true
+	return transfers, writes, programconstruction.Fault{}
 }
 
 func fitsUint32(value int) bool { return value >= 0 && uint64(value) <= uint64(^uint32(0)) }

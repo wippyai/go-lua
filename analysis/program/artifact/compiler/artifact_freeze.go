@@ -20,8 +20,8 @@ func (compiler *compiler) finalizeFailure() CompileFailure {
 	if compiler.localTransfer == nil {
 		compiler.localTransfer = localtransfer.New(artifactFormat())
 	}
-	if fault := compiler.localTransfer.Seal(); fault.Failed() {
-		return compileFailure(CompileStageCanonicalize, CompileRowEnvironment, fault.Index(), -1, CompileReasonEnvironmentDuplicate)
+	if fault := compiler.localTransfer.Seal(); fault.Available() {
+		return CompileFailure{construction: fault}
 	}
 	return CompileFailure{}
 }
@@ -47,9 +47,12 @@ func (compiler *compiler) sealArtifact() (*programartifact.Artifact, CompileFail
 	allocations, allocationFields, allocationsOK := compiler.allocations.TakeCanonicalPlanes()
 	pointRows, pointDecisions, pointsOK := coldPointPlanes(points)
 	edges, resets, edgesOK := coldEnvironmentPlanes(compiler.environment)
-	transfers, transferWrites, transfersOK := compiler.localTransfer.TakeCanonicalPlanes()
+	transfers, transferWrites, transferFault := compiler.localTransfer.TakeCanonicalPlanes()
+	if transferFault.Available() {
+		return nil, CompileFailure{construction: transferFault}
+	}
 	regions, regionMembers, events, regionsOK := coldRegionPlanes(compiler.regions, compiler.events)
-	if !allocationsOK || !pointsOK || !edgesOK || !transfersOK || !regionsOK {
+	if !allocationsOK || !pointsOK || !edgesOK || !regionsOK {
 		return nil, compileFailure(CompileStageSeal, CompileRowBody, -1, -1, CompileReasonBodyUnavailable)
 	}
 	for index, row := range compiler.publication.Occurrences {
