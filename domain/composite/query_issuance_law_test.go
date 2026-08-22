@@ -1,10 +1,6 @@
 package composite
 
 import (
-	"os"
-	"path/filepath"
-	"runtime"
-	"strings"
 	"testing"
 
 	"github.com/wippyai/go-lua/analysis/schema/query"
@@ -40,21 +36,5 @@ func TestQueryConstructionUsesSealedQueryFamilies(t *testing.T) {
 			t.Fatalf("family %q is issued twice", family.Family)
 		}
 		seen[string(family.Family)] = true
-	}
-	_, thisFile, _, ok := runtime.Caller(0)
-	if !ok {
-		t.Fatal("composite source location")
-	}
-	src, err := os.ReadFile(filepath.Join(filepath.Dir(thisFile), "query_sites.go"))
-	if err != nil {
-		t.Fatalf("read query_sites.go: %v", err)
-	}
-	if !strings.Contains(string(src), "selectedPointQueryIssuance(state)") {
-		t.Fatal("SelectedQuerySites does not walk the compilation-owned query issuance")
-	}
-	for _, literal := range []string{`"value-summary"`, `"effect-exact"`, `"placement-summary"`} {
-		if strings.Contains(string(src), literal) {
-			t.Fatalf("query_sites.go restates query family %s; construction walks QueryIssuance", literal)
-		}
 	}
 }

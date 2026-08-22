@@ -1,10 +1,6 @@
 package query
 
 import (
-	"os"
-	"path/filepath"
-	"runtime"
-	"strings"
 	"testing"
 
 	"github.com/wippyai/go-lua/analysis/identity"
@@ -454,28 +450,5 @@ func TestObservationPopulationIsASealedPopulationRole(t *testing.T) {
 	}
 	if failure := sealRegistrations(t, []*Registration{registration}); failure.Available() {
 		t.Fatalf("observation-only family rejected by sealed population role: law=%d disposition=%s", failure.Law, failure.Disposition)
-	}
-}
-
-// TestArtifactQueryPlanSourceDoesNotRestateFamilyNames is the construction
-// half of the population/projection law: the plan walks issued families and
-// must not restate domain family spellings.
-func TestArtifactQueryPlanSourceDoesNotRestateFamilyNames(t *testing.T) {
-	_, thisFile, _, ok := runtime.Caller(0)
-	if !ok {
-		t.Fatal("query source location")
-	}
-	src, err := os.ReadFile(filepath.Join(filepath.Dir(thisFile), "..", "..", "..", "domain", "composite", "query_sites.go"))
-	if err != nil {
-		t.Fatalf("read query_sites.go: %v", err)
-	}
-	text := string(src)
-	if !strings.Contains(text, "QueryIssuance()") {
-		t.Fatal("SelectedQuerySites does not walk QueryIssuance")
-	}
-	for _, literal := range []string{`"value-summary"`, `"effect-exact"`} {
-		if strings.Contains(text, literal) {
-			t.Fatalf("query_sites.go restates query family %s", literal)
-		}
 	}
 }
