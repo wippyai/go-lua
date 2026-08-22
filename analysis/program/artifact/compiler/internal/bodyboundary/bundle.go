@@ -10,49 +10,6 @@ import (
 	programschema "github.com/wippyai/go-lua/analysis/schema/program"
 )
 
-// Reason is the compact fault vocabulary returned by Build. The parent maps
-// it once into its CompileFailure vocabulary.
-type Reason uint8
-
-const (
-	ReasonUnavailable Reason = iota + 1
-	ReasonForeign
-	ReasonIdentity
-	ReasonDuplicate
-	ReasonRange
-	ReasonOutcomeUnavailable
-	ReasonOutcomeAttachment
-	ReasonOutcomeShape
-	ReasonOutcomeForeign
-	ReasonOutcomeIdentity
-	ReasonOutcomeDuplicate
-	ReasonOutcomeKind
-	ReasonOutcomeTarget
-	ReasonOutcomePropagation
-	ReasonOutcomeReference
-	ReasonOutcomeRange
-	ReasonOutcomeReturn
-	ReasonReturnValueUnavailable
-	ReasonReturnValueReference
-)
-
-// Fault identifies the source row and optional child row that failed.
-type Fault struct {
-	reason Reason
-	row    int
-	subrow int
-	failed bool
-}
-
-func (fault Fault) Failed() bool   { return fault.failed }
-func (fault Fault) Reason() Reason { return fault.reason }
-func (fault Fault) Row() int       { return fault.row }
-func (fault Fault) Subrow() int    { return fault.subrow }
-
-func failure(reason Reason, row, subrow int) Fault {
-	return Fault{reason: reason, row: row, subrow: subrow, failed: true}
-}
-
 // Input is the exact canonical boundary for body publication. Values and the
 // site-to-point relation are already issued by the parent; no callback or
 // compiler authority crosses this package boundary.
