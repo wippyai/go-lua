@@ -15,7 +15,7 @@ import (
 // Its source axis is StateOrdinal and its producer axis is the compact
 // admitted stateGroupIndex row, so a mounted runtime never allocates a dense
 // StateCount×GroupCount operand product.
-func buildStateOperandPlane(runtime *solverRuntime, _ factorSourceColumn, regions []runtimeRegion) (*operandPlane, bool) {
+func buildStateOperandPlane(runtime *solverRuntime, factors stateFactorSourceColumn, regions []runtimeRegion) (*operandPlane, bool) {
 	if runtime == nil || !runtime.artifactBacked || runtime.graph == nil || !runtime.producerRows.valid() {
 		return nil, false
 	}
@@ -129,11 +129,8 @@ func buildStateOperandPlane(runtime *solverRuntime, _ factorSourceColumn, region
 			}{{region.factorExternal, operandExternalFactor}, {region.factorBack, operandBackFactor}}
 			for _, inputRow := range factorRows {
 				for position, factorRow := range inputRow.edges {
-					if factorRow < 0 || factorRow >= len(runtime.stateFactorRows) {
-						return false
-					}
-					source := runtime.stateFactorRows[factorRow].source
-					if source < 0 || source >= points || !record(source, false, uint32(plane.windows[window+int32(inputRow.kind)])+uint32(position), window+int32(inputRow.kind)) {
+					source, sourceOK := factors.source(factorRow)
+					if !sourceOK || source < 0 || source >= points || !record(source, false, uint32(plane.windows[window+int32(inputRow.kind)])+uint32(position), window+int32(inputRow.kind)) {
 						return false
 					}
 				}
@@ -272,6 +269,26 @@ type factorSourceColumn struct {
 	installed    []runtimeFactorEdge
 	additions    []preparedFactorAddition
 	replacements []preparedFactorReplacement
+}
+
+// stateFactorSourceColumn is the state-plane counterpart of
+// factorSourceColumn: the source StateOrdinal of one state factor row. The
+// contextual regions index these rows, so an overlay serves the rows of the
+// frontier it will publish and the plane is derived before they are assigned
+// to the runtime.
+type stateFactorSourceColumn struct {
+	rows []runtimeStateFactorRow
+}
+
+func stateFactorSources(rows []runtimeStateFactorRow) stateFactorSourceColumn {
+	return stateFactorSourceColumn{rows: rows}
+}
+
+func (column stateFactorSourceColumn) source(index int) (int, bool) {
+	if index < 0 || index >= len(column.rows) {
+		return 0, false
+	}
+	return column.rows[index].source, true
 }
 
 func installedFactorSources(edges []runtimeFactorEdge) factorSourceColumn {

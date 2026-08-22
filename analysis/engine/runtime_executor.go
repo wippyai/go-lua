@@ -468,10 +468,19 @@ func (solver *Solver) solve(ctx context.Context, report *SolveReport, diagnostic
 				}
 			}
 			// Direct transport must pass the overlay's exact structural fences. A
-			// false result fails closed below; there is no second compiler authority.
+			// false result fails closed below; there is no second compiler
+			// authority. The refusing fence names itself in overlayBoundary, so an
+			// incomplete solve reports the exact overlay step it stopped at.
+			overlayBoundary := boundaryNone
 			if publishedOK {
-				overlay, preparedOverlay := runtime.prepareSelectedFactorOverlay(delta, published)
-				installedOverlay := preparedOverlay && overlay != nil && epoch.installSelectedFactorOverlay(overlay)
+				overlay, preparedOverlay, prepareBoundary := runtime.prepareSelectedFactorOverlay(delta, published)
+				overlayBoundary = prepareBoundary
+				installedOverlay := false
+				if preparedOverlay && overlay != nil {
+					var installBoundary solveBoundary
+					installedOverlay, installBoundary = epoch.installSelectedFactorOverlay(overlay)
+					overlayBoundary = installBoundary
+				}
 				if installedOverlay {
 					solver.relation = published
 					epoch.diagnosticRevision = published.Generation()
@@ -506,7 +515,7 @@ func (solver *Solver) solve(ctx context.Context, report *SolveReport, diagnostic
 			// revision must be representable as a prepared structural overlay; an
 			// unsupported shape fails closed at this exact boundary.
 			if report != nil {
-				report.record(SolveFailureReasonActivationCompile, boundaryNone, identity.SemanticKey{}, identity.SemanticKey{}, identity.SemanticKey{}, identity.SemanticKey{})
+				report.record(SolveFailureReasonActivationCompile, overlayBoundary, identity.SemanticKey{}, identity.SemanticKey{}, identity.SemanticKey{}, identity.SemanticKey{})
 			}
 			return nil, SolveIncomplete
 		}

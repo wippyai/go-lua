@@ -211,90 +211,8 @@ func buildArtifactStateDemand(graph *equation.Graph, program *runtimeProgram, pl
 	if len(roots) == 0 {
 		return nil, nil, nil, false
 	}
-	reverse := make([][]int, stateCount)
-	for _, edge := range plan.Edges() {
-		from, to := int(edge.From), int(edge.To)
-		if from < 0 || from >= stateCount || to < 0 || to >= stateCount {
-			return nil, nil, nil, false
-		}
-		reverse[to] = append(reverse[to], from)
-	}
-	for index := range reverse {
-		sort.Ints(reverse[index])
-	}
-	// Add a state and its contextual predecessors. The returned bool makes
-	// malformed plan rows fail at assembly rather than becoming an empty solve.
-	closePredecessors := func() bool {
-		stack := append([]int(nil), roots...)
-		for len(stack) != 0 {
-			last := len(stack) - 1
-			state := stack[last]
-			stack = stack[:last]
-			for _, predecessor := range reverse[state] {
-				if !active[predecessor] {
-					active[predecessor] = true
-					stack = append(stack, predecessor)
-				}
-			}
-		}
-		return true
-	}
-	// A reached contextual WTO region owns its complete state interval. Any
-	// newly admitted interval may expose further predecessors, so iterate until
-	// both the region expansion and reverse closure reach a fixed point.
-	for {
-		before := 0
-		for _, admitted := range active {
-			if admitted {
-				before++
-			}
-		}
-		for regionIndex := 0; regionIndex < execution.RegionCount(); regionIndex++ {
-			region, ok := execution.RegionAt(regionIndex)
-			if !ok || region.Enter < 0 || region.Exit < region.Enter || region.Exit >= execution.EventCount() {
-				return nil, nil, nil, false
-			}
-			reached := false
-			for eventIndex := region.Enter; eventIndex <= region.Exit; eventIndex++ {
-				event, eventOK := execution.EventAt(eventIndex)
-				if !eventOK {
-					return nil, nil, nil, false
-				}
-				if event.Kind == schedule.EventNode && int(event.Node) >= 0 && int(event.Node) < stateCount && active[event.Node] {
-					reached = true
-				}
-			}
-			if !reached {
-				continue
-			}
-			for eventIndex := region.Enter; eventIndex <= region.Exit; eventIndex++ {
-				event, eventOK := execution.EventAt(eventIndex)
-				if !eventOK {
-					return nil, nil, nil, false
-				}
-				if event.Kind == schedule.EventNode && int(event.Node) >= 0 && int(event.Node) < stateCount {
-					active[event.Node] = true
-				}
-			}
-		}
-		roots = roots[:0]
-		for state, admitted := range active {
-			if admitted {
-				roots = append(roots, state)
-			}
-		}
-		if !closePredecessors() {
-			return nil, nil, nil, false
-		}
-		after := 0
-		for _, admitted := range active {
-			if admitted {
-				after++
-			}
-		}
-		if after == before {
-			break
-		}
+	if !closeStateDemand(execution, plan.Edges(), active) {
+		return nil, nil, nil, false
 	}
 	selected := make([]int, 0)
 	activePoints := make([]bool, len(graphActive))
@@ -314,6 +232,96 @@ func buildArtifactStateDemand(graph *equation.Graph, program *runtimeProgram, pl
 		return nil, nil, nil, false
 	}
 	return active, activePoints, selected, true
+}
+
+// closeStateDemand grows one state demand set to its fixed point over an
+// execution schedule and its edge relation: a reached contextual WTO region
+// owns its complete state interval, and every contextual predecessor of a
+// demanded state is demanded. Both frontiers close through this one
+// authority - the assembled plan and the widened selected overlay - so a
+// state the overlay admits is admitted by the same rule that admitted the
+// assembled frontier. A malformed schedule or edge row fails here rather than
+// becoming an empty solve.
+func closeStateDemand(execution *schedule.Schedule, edges []schedule.Edge, active []bool) bool {
+	if execution == nil || len(active) == 0 || execution.NodeCount() != len(active) || execution.EventCount() == 0 {
+		return false
+	}
+	stateCount := len(active)
+	reverse := make([][]int, stateCount)
+	for _, edge := range edges {
+		from, to := int(edge.From), int(edge.To)
+		if from < 0 || from >= stateCount || to < 0 || to >= stateCount {
+			return false
+		}
+		reverse[to] = append(reverse[to], from)
+	}
+	for index := range reverse {
+		sort.Ints(reverse[index])
+	}
+	stack := make([]int, 0, stateCount)
+	for {
+		before := 0
+		for _, admitted := range active {
+			if admitted {
+				before++
+			}
+		}
+		for regionIndex := 0; regionIndex < execution.RegionCount(); regionIndex++ {
+			region, ok := execution.RegionAt(regionIndex)
+			if !ok || region.Enter < 0 || region.Exit < region.Enter || region.Exit >= execution.EventCount() {
+				return false
+			}
+			reached := false
+			for eventIndex := region.Enter; eventIndex <= region.Exit; eventIndex++ {
+				event, eventOK := execution.EventAt(eventIndex)
+				if !eventOK {
+					return false
+				}
+				if event.Kind == schedule.EventNode && int(event.Node) >= 0 && int(event.Node) < stateCount && active[event.Node] {
+					reached = true
+				}
+			}
+			if !reached {
+				continue
+			}
+			for eventIndex := region.Enter; eventIndex <= region.Exit; eventIndex++ {
+				event, eventOK := execution.EventAt(eventIndex)
+				if !eventOK {
+					return false
+				}
+				if event.Kind == schedule.EventNode && int(event.Node) >= 0 && int(event.Node) < stateCount {
+					active[event.Node] = true
+				}
+			}
+		}
+		stack = stack[:0]
+		for state, admitted := range active {
+			if admitted {
+				stack = append(stack, state)
+			}
+		}
+		for len(stack) != 0 {
+			last := len(stack) - 1
+			state := stack[last]
+			stack = stack[:last]
+			for _, predecessor := range reverse[state] {
+				if !active[predecessor] {
+					active[predecessor] = true
+					stack = append(stack, predecessor)
+				}
+			}
+		}
+		after := 0
+		for _, admitted := range active {
+			if admitted {
+				after++
+			}
+		}
+		if after == before {
+			break
+		}
+	}
+	return true
 }
 
 // buildStateFactorIndex lifts singular graph factor rows onto the exact

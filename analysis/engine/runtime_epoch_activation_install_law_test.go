@@ -43,7 +43,7 @@ func newSelectedOverlayInstallFixture(t *testing.T) selectedOverlayInstallFixtur
 	if !publishedOK {
 		t.Fatal("selected-overlay install fixture relation did not publish")
 	}
-	overlay, prepared := runtime.prepareSelectedFactorOverlay(delta, published)
+	overlay, prepared, _ := runtime.prepareSelectedFactorOverlay(delta, published)
 	if !prepared || overlay == nil || len(overlay.additions) == 0 || len(overlay.targets) == 0 {
 		t.Fatalf("selected-overlay install fixture overlay prepared=%t additions=%d", prepared, len(overlay.additions))
 	}
@@ -87,8 +87,14 @@ func TestSelectedFactorOverlayRefusalLeavesTheRunningEpochUntouched(t *testing.T
 	points, execution, executionDemand := runtime.points, runtime.execution, runtime.executionDemand
 	regions, activeRegions := len(runtime.regions), len(runtime.activeRegions)
 
-	if epoch.installSelectedFactorOverlay(overlay) {
+	installed, boundary := epoch.installSelectedFactorOverlay(overlay)
+	if installed {
 		t.Fatal("an overlay whose region rows have no operand plane installed")
+	}
+	// A refused install is a sited refusal: an incomplete solve that stops
+	// here reports which install boundary rejected the frontier.
+	if failure := boundary.failure(); !failure.Available() || !failure.Site.Available() || failure.Family != SolveFailureFamilyCompile {
+		t.Fatalf("refused selected-overlay install did not name its site available=%t site=%t family=%v", failure.Available(), failure.Site.Available(), failure.Family)
 	}
 
 	if len(runtime.factorEdges) != len(edges) {
@@ -145,8 +151,8 @@ func TestSelectedFactorOverlayInstallPublishesOneFrontier(t *testing.T) {
 	plane := runtime.operands
 	generation := runtime.overlay.generation
 
-	if !epoch.installSelectedFactorOverlay(overlay) {
-		t.Fatal("a prepared selected overlay did not install")
+	if installed, boundary := epoch.installSelectedFactorOverlay(overlay); !installed {
+		t.Fatalf("a prepared selected overlay did not install boundary=%v", boundary.failure())
 	}
 
 	if len(runtime.factorEdges) != previousEdges+len(additions) {
@@ -198,8 +204,8 @@ func TestSelectedFactorOverlayInstallNestedMatchesIndependentDerivation(t *testi
 	fixture := newSelectedOverlayInstallFixture(t)
 	epoch, overlay := fixture.epoch, fixture.overlay
 
-	if !epoch.installSelectedFactorOverlay(overlay) {
-		t.Fatal("a prepared selected overlay did not install")
+	if installed, boundary := epoch.installSelectedFactorOverlay(overlay); !installed {
+		t.Fatalf("a prepared selected overlay did not install boundary=%v", boundary.failure())
 	}
 	wakePoints := append([]int(nil), epoch.postfixPending...)
 	if len(wakePoints) == 0 {

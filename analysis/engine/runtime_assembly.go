@@ -599,7 +599,7 @@ func assembleRuntimeOwned(graph *equation.Graph, runtime *carrier.Composition, p
 	var operands *operandPlane
 	var planed bool
 	if artifactBacked {
-		operands, planed = buildStateOperandPlane(assembled, installedFactorSources(factorEdges), operandRegions)
+		operands, planed = buildStateOperandPlane(assembled, stateFactorSources(stateFactorRows), operandRegions)
 	} else {
 		operands, planed = buildOperandPlane(graph, producers, environments, installedFactorSources(factorEdges), operandRegions)
 	}

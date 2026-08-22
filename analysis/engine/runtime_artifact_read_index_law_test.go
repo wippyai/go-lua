@@ -181,7 +181,7 @@ func newArtifactReadIndexLawFixture(t testing.TB) artifactReadIndexLawFixture {
 	}
 	expanded.regions = nil
 	expanded.activeRegions = nil
-	operands, operandsOK := buildStateOperandPlane(&expanded, installedFactorSources(expanded.factorEdges), nil)
+	operands, operandsOK := buildStateOperandPlane(&expanded, stateFactorSources(expanded.stateFactorRows), nil)
 	if !operandsOK || operands == nil {
 		t.Fatal("artifact-read-index operand plane")
 	}

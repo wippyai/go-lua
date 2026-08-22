@@ -54,7 +54,11 @@ type preparedSelectedFactorOverlay struct {
 	// directCatalog is the complete installed selected-direct descriptor set
 	// after this frontier (indexed by runtime factor edge). It is retained only
 	// until the prepared overlay is committed, then published in overlay.directAt.
-	directCatalog  map[int]equation.SelectedStructuralFactorEdge
+	directCatalog map[int]equation.SelectedStructuralFactorEdge
+	// step is the first inner refusal boundary this preparation recorded. It
+	// travels to the caller as the site of an incomplete solve, so a refused
+	// overlay never reports an unsited compile failure.
+	step           solveBoundary
 	directEdges    []equation.SelectedStructuralFactorEdge
 	regions        []runtimeRegion
 	regionChildren [][]int
@@ -109,20 +113,20 @@ type boundSelectedFactorEdge struct {
 // acyclic. A selected origin may widen its precondition in place exactly when
 // old.pre entails new.pre; that replaces, rather than duplicates, the bound
 // transport and forces an exact target fold.
-func (runtime *solverRuntime) prepareSelectedFactorOverlay(delta []equation.AcceptedMember, published equation.Relation) (*preparedSelectedFactorOverlay, bool) {
+func (runtime *solverRuntime) prepareSelectedFactorOverlay(delta []equation.AcceptedMember, published equation.Relation) (*preparedSelectedFactorOverlay, bool, solveBoundary) {
 	if !runtimeSelectedOverlayEligible(runtime) {
-		return nil, false
+		return nil, false, selectedOverlayRefused("eligibility")
 	}
 	if len(delta) == 0 || !canonicalAcceptedActivations(delta) || !validAcceptedActivations(runtime.topology, delta) || !published.OwnedBy(runtime.topology) {
-		return nil, false
+		return nil, false, selectedOverlayRefused("delta")
 	}
 	selected, materialized := runtime.topology.SelectedStructuralFactorEdges(runtime.graph, delta)
 	if !materialized || len(selected) == 0 {
-		return nil, false
+		return nil, false, selectedOverlayRefused("materialize")
 	}
 	descriptors, dependencyEdges, dependencyAt, dependencyChanged, execution, valid := runtime.prevalidateSelectedFactorEdges(selected)
 	if !valid {
-		return nil, false
+		return nil, false, selectedOverlayRefused("prevalidate")
 	}
 
 	prepared := &preparedSelectedFactorOverlay{
@@ -140,30 +144,30 @@ func (runtime *solverRuntime) prepareSelectedFactorOverlay(delta []equation.Acce
 	for _, descriptor := range descriptors {
 		bound, valid := runtime.bindSelectedFactorEdge(descriptor, prepared.latePlans)
 		if !valid {
-			return nil, false
+			return nil, false, selectedOverlayRefused("bind")
 		}
 		if installed, present := runtime.overlay.originAt[bound.origin]; present {
 			if !runtime.validSelectedOrigin(installed, bound.origin) {
-				return nil, false
+				return nil, false, selectedOverlayRefused("origin")
 			}
 			previous := runtime.factorEdges[installed]
 			if !previous.input.pre.Entails(bound.edge.input.pre) {
-				return nil, false
+				return nil, false, selectedOverlayRefused("precondition")
 			}
 			if previous.input.pre.Equal(bound.edge.input.pre) {
 				continue
 			}
 			if !appendPreparedReplacement(prepared, installed, bound.edge) {
-				return nil, false
+				return nil, false, selectedOverlayRefused("replacement")
 			}
 			prepared.directCatalog[installed] = descriptor.edge
 			continue
 		}
 		if _, static := runtime.overlay.staticOrigins[bound.origin]; static {
-			return nil, false
+			return nil, false, selectedOverlayRefused("static-origin")
 		}
 		if _, duplicate := prepared.newOrigins[bound.origin]; duplicate {
-			return nil, false
+			return nil, false, selectedOverlayRefused("duplicate-origin")
 		}
 		bound.edge.index = prepared.previousEdgeCount + len(prepared.additions)
 		prepared.newOrigins[bound.origin] = bound.edge.index
@@ -171,16 +175,43 @@ func (runtime *solverRuntime) prepareSelectedFactorOverlay(delta []equation.Acce
 		prepared.directCatalog[bound.edge.index] = descriptor.edge
 	}
 	if len(prepared.additions) == 0 && len(prepared.replacements) == 0 {
-		return nil, false
+		return nil, false, selectedOverlayRefused("empty-delta")
 	}
 	if !prepared.finalize(runtime) {
-		return nil, false
+		return nil, false, prepared.refusal(selectedOverlayRefused("finalize"))
 	}
 	prepared.directEdges = directCatalogEdges(prepared.directCatalog)
 	if !prepared.bindFeedbackRuntime(runtime) {
-		return nil, false
+		return nil, false, prepared.refusal(selectedOverlayRefused("feedback"))
 	}
-	return prepared, true
+	return prepared, true, boundaryNone
+}
+
+// selectedOverlayRefused names one refusal step of the selected-edge overlay:
+// the pipeline that compiles an accepted activation revision into a prepared
+// structural delta. The step name enters the site digest, so an incomplete
+// solve that stopped here reports which overlay boundary refused instead of an
+// unsited compile failure.
+func selectedOverlayRefused(step string) solveBoundary {
+	return refused(SolveFailureFamilyCompile, "selected-overlay/"+step)
+}
+
+// refusal returns the deepest step this preparation recorded, falling back to
+// the caller's own step when no inner boundary named itself.
+func (prepared *preparedSelectedFactorOverlay) refusal(outer solveBoundary) solveBoundary {
+	if prepared == nil || !prepared.step.available() {
+		return outer
+	}
+	return prepared.step
+}
+
+// refuse records the first inner refusal step of one preparation and reports
+// the false its caller returns.
+func (prepared *preparedSelectedFactorOverlay) refuse(step string) bool {
+	if prepared != nil && !prepared.step.available() {
+		prepared.step = selectedOverlayRefused(step)
+	}
+	return false
 }
 
 func cloneDirectCatalog(source map[int]equation.SelectedStructuralFactorEdge) map[int]equation.SelectedStructuralFactorEdge {
@@ -442,17 +473,17 @@ func (runtime *solverRuntime) bindSelectedFactorEdge(descriptor selectedFactorDe
 
 func (prepared *preparedSelectedFactorOverlay) finalize(runtime *solverRuntime) bool {
 	if prepared == nil || runtime == nil || prepared.runtime != runtime || prepared.previousEdgeCount != len(runtime.factorEdges) {
-		return false
+		return prepared.refuse("finalize-instance")
 	}
 	for index := range prepared.replacements {
 		replacement := &prepared.replacements[index]
 		if replacement.index < 0 || replacement.index >= prepared.previousEdgeCount {
-			return false
+			return prepared.refuse("finalize-replacement-index")
 		}
 		replacement.edge.index = replacement.index
 	}
 	if !prepared.prepareEdgeBacking(runtime) || !prepared.prepareTouchedCSR(runtime) || !prepared.collectTargets(runtime.activePoints) {
-		return false
+		return prepared.refuse("finalize-backing")
 	}
 	return true
 }
@@ -463,23 +494,23 @@ func (prepared *preparedSelectedFactorOverlay) finalize(runtime *solverRuntime) 
 // reconstructed or used as a fake oracle.
 func (prepared *preparedSelectedFactorOverlay) bindFeedbackRuntime(runtime *solverRuntime) bool {
 	if prepared == nil || runtime == nil || runtime.graph == nil || runtime.carrier == nil || prepared.runtime != runtime || prepared.execution == nil || len(prepared.directEdges) != len(prepared.directCatalog) {
-		return false
+		return prepared.refuse("feedback-instance")
 	}
 	oracle, ok := runtime.graph.ActivationGraphOverlay(prepared.execution, prepared.directEdges)
 	if !ok || oracle == nil || oracle.Schedule() == nil || oracle.PointCount() != runtime.graph.PointCount() || oracle.GroupCount() != runtime.graph.GroupCount() || oracle.EnvironmentEdgeTotal() != runtime.graph.EnvironmentEdgeTotal() || oracle.FactorEdgeTotal() != runtime.graph.FactorEdgeTotal()+len(prepared.directEdges) {
-		return false
+		return prepared.refuse("feedback-oracle")
 	}
 	for index := 0; index < oracle.PointCount(); index++ {
 		oldPoint, oldOK := runtime.graph.PointAt(schedule.Node(index))
 		newPoint, newOK := oracle.PointAt(schedule.Node(index))
 		if !oldOK || !newOK || oldPoint.Key() != newPoint.Key() {
-			return false
+			return prepared.refuse("feedback-point-identity")
 		}
 	}
 	for index := 0; index < oracle.GroupCount(); index++ {
 		group, groupOK := oracle.HyperedgeAt(index)
 		if !groupOK || index >= len(runtime.producers) || runtime.producers[index].group.Key() != group.Key() {
-			return false
+			return prepared.refuse("feedback-group-identity")
 		}
 	}
 	// Keep all currently live points as exact roots and add every selected
@@ -494,26 +525,26 @@ func (prepared *preparedSelectedFactorOverlay) bindFeedbackRuntime(runtime *solv
 		}
 		point, pointOK := oracle.PointAt(schedule.Node(index))
 		if !pointOK {
-			return false
+			return prepared.refuse("feedback-root-point")
 		}
 		roots = append(roots, point)
 	}
 	for _, selected := range prepared.directEdges {
 		if !selected.Available() || !oracle.OwnsPoint(selected.Target()) {
-			return false
+			return prepared.refuse("feedback-selected-target")
 		}
 		roots = append(roots, selected.Target())
 	}
 	demanded, demandedOK := oracle.DemandWithPoints(roots)
 	activePoints, active, activeOK := runtimeDemandMembership(oracle, demanded)
 	if !demandedOK || demanded == nil || !activeOK || len(activePoints) != len(runtime.activePoints) || len(active) != oracle.RegionCount() {
-		return false
+		return prepared.refuse("feedback-demand")
 	}
 	for index, live := range activePoints {
 		// Accepted revisions are demand-widening. Existing points can never be
 		// dropped; newly live rows receive prepared epoch state below.
 		if runtime.activePoints[index] && !live {
-			return false
+			return prepared.refuse("feedback-demand-narrows")
 		}
 	}
 	selectedPoints := make([]int, 0, demanded.PointCount())
@@ -521,7 +552,7 @@ func (prepared *preparedSelectedFactorOverlay) bindFeedbackRuntime(runtime *solv
 		point, pointOK := demanded.PointAt(index)
 		pointIndex, indexed := oracle.PointIndex(point)
 		if !pointOK || !indexed {
-			return false
+			return prepared.refuse("feedback-demand-point")
 		}
 		selectedPoints = append(selectedPoints, pointIndex)
 	}
@@ -531,14 +562,14 @@ func (prepared *preparedSelectedFactorOverlay) bindFeedbackRuntime(runtime *solv
 	}
 	for _, replacement := range prepared.replacements {
 		if replacement.index < 0 || replacement.index >= prepared.previousEdgeCount {
-			return false
+			return prepared.refuse("feedback-replacement-index")
 		}
 		factorAt[replacement.edge.key] = replacement.index
 	}
 	for offset, addition := range prepared.additions {
 		index := prepared.previousEdgeCount + offset
 		if _, duplicate := factorAt[addition.edge.key]; duplicate {
-			return false
+			return prepared.refuse("feedback-duplicate-key")
 		}
 		factorAt[addition.edge.key] = index
 	}
@@ -555,14 +586,14 @@ func (prepared *preparedSelectedFactorOverlay) bindFeedbackRuntime(runtime *solv
 		},
 	})
 	if !bound {
-		return false
+		return prepared.refuse("feedback-regions")
 	}
 	pointRegion := make([]int, oracle.PointCount())
 	for index := range pointRegion {
 		point, pointOK := oracle.PointAt(schedule.Node(index))
 		region, regionOK := oracle.PointRegion(point)
 		if !pointOK || !regionOK || region < schedule.NoRegion || region >= len(regions) {
-			return false
+			return prepared.refuse("feedback-point-region")
 		}
 		pointRegion[index] = region
 	}
@@ -576,7 +607,7 @@ func (prepared *preparedSelectedFactorOverlay) bindFeedbackRuntime(runtime *solv
 	prepared.activeRegions = active
 	if runtime.artifactBacked {
 		if !prepared.bindArtifactStateOverlay(runtime) {
-			return false
+			return prepared.refuse("feedback-state-overlay")
 		}
 	}
 	return true
@@ -588,15 +619,15 @@ func (prepared *preparedSelectedFactorOverlay) bindFeedbackRuntime(runtime *solv
 // target used by a mounted epoch is produced here in StateOrdinal space.
 func (prepared *preparedSelectedFactorOverlay) bindArtifactStateOverlay(runtime *solverRuntime) bool {
 	if prepared == nil || runtime == nil || !runtime.artifactBacked || runtime.executionPlan == nil || !runtime.executionPlan.Available() {
-		return false
+		return prepared.refuse("state-instance")
 	}
 	stateCount := runtime.stateCount()
 	if stateCount <= 0 || len(runtime.statePointRows) != runtime.graph.PointCount() {
-		return false
+		return prepared.refuse("state-shape")
 	}
 	active := append([]bool(nil), runtime.activeStates...)
 	if len(active) != stateCount {
-		return false
+		return prepared.refuse("state-active-width")
 	}
 	targetStates := make(map[int]struct{}, len(prepared.additions)+len(prepared.replacements))
 	// Every selected edge carries its complete transition tuple. Resolve its
@@ -605,26 +636,24 @@ func (prepared *preparedSelectedFactorOverlay) bindArtifactStateOverlay(runtime 
 	for _, edge := range selectedOverlayEdges(prepared) {
 		context := edge.context
 		if !context.Available() {
-			return false
+			return prepared.refuse("state-edge-context")
 		}
 		from, fromOK := runtime.contextIndex.ContextOrdinal(context.FromContextID)
 		to, toOK := runtime.contextIndex.ContextOrdinal(context.ToContextID)
 		if !fromOK || !toOK {
-			return false
+			return prepared.refuse("state-context-ordinal")
 		}
 		sourceState, sourceOK := runtime.executionPlan.Lookup(from, contextfiber.PointOrdinal(edge.source))
 		targetState, targetOK := runtime.executionPlan.Lookup(to, contextfiber.PointOrdinal(edge.target))
-		if !sourceOK || !targetOK || int(sourceState) >= stateCount || int(targetState) >= stateCount || !active[int(sourceState)] {
-			return false
+		if !sourceOK || !targetOK || int(sourceState) >= stateCount || int(targetState) >= stateCount {
+			return prepared.refuse("state-edge-lookup")
 		}
+		// The graph overlay roots this edge's target and reaches its source
+		// through the edge itself. The lifted state rows carry that same
+		// relation, so the target enters the demand set here and the closure
+		// below admits the producer behind it.
 		active[int(targetState)] = true
 		targetStates[int(targetState)] = struct{}{}
-	}
-	selected := make([]int, 0, stateCount)
-	for stateIndex, admitted := range active {
-		if admitted {
-			selected = append(selected, stateIndex)
-		}
 	}
 
 	// Build the compact factor transpose over the complete next edge backing.
@@ -635,13 +664,13 @@ func (prepared *preparedSelectedFactorOverlay) bindArtifactStateOverlay(runtime 
 	}
 	for _, replacement := range prepared.replacements {
 		if replacement.index < 0 || replacement.index >= len(nextFactors) {
-			return false
+			return prepared.refuse("state-replacement-index")
 		}
 		nextFactors[replacement.index] = replacement.edge
 	}
 	incoming, outgoing, factorRows, _, factorOK := buildStateFactorIndex(runtime.graph, runtime.executionPlan, nextFactors, true)
 	if !factorOK {
-		return false
+		return prepared.refuse("state-factor-index")
 	}
 
 	// The immutable base plan supplies all static contextual edges. Selected
@@ -655,7 +684,7 @@ func (prepared *preparedSelectedFactorOverlay) bindArtifactStateOverlay(runtime 
 	for _, addition := range prepared.additions {
 		pairs, pairsOK := runtime.liftGraphPairStates(addition.edge.source, addition.edge.target, addition.edge.context)
 		if !pairsOK {
-			return false
+			return prepared.refuse("state-addition-lift")
 		}
 		for _, pair := range pairs {
 			key := [2]int{int(pair.From), int(pair.To)}
@@ -669,7 +698,7 @@ func (prepared *preparedSelectedFactorOverlay) bindArtifactStateOverlay(runtime 
 	for _, replacement := range prepared.replacements {
 		pairs, pairsOK := runtime.liftGraphPairStates(replacement.edge.source, replacement.edge.target, replacement.edge.context)
 		if !pairsOK {
-			return false
+			return prepared.refuse("state-replacement-lift")
 		}
 		for _, pair := range pairs {
 			key := [2]int{int(pair.From), int(pair.To)}
@@ -688,23 +717,36 @@ func (prepared *preparedSelectedFactorOverlay) bindArtifactStateOverlay(runtime 
 	})
 	execution, err := schedule.Prepare(stateCount, edges)
 	if err != nil || execution == nil {
-		return false
+		return prepared.refuse("state-schedule")
+	}
+	// One demand authority closes both planes: the assembled frontier and this
+	// widened overlay reach their fixed point over the same region-interval and
+	// contextual-predecessor relation, here over the edge set the selected rows
+	// just extended.
+	if !closeStateDemand(execution, edges, active) {
+		return prepared.refuse("state-demand-closure")
+	}
+	selected := make([]int, 0, stateCount)
+	for stateIndex, admitted := range active {
+		if admitted {
+			selected = append(selected, stateIndex)
+		}
 	}
 	targets := make([]int, 0, len(targetStates))
 	for target := range targetStates {
 		if target < 0 || target >= stateCount || !active[target] {
-			return false
+			return prepared.refuse("state-target")
 		}
 		targets = append(targets, target)
 	}
 	sort.Ints(targets)
 	targets = uniqueInts(targets)
 	if len(targets) == 0 {
-		return false
+		return prepared.refuse("state-target-empty")
 	}
 	stateRegions, stateChildren, pointRegion, activeRegions, stateEvents, lifted := liftStateRegions(runtime.graph, execution, active, runtime, factorRows, true)
 	if !lifted {
-		return false
+		return prepared.refuse("state-regions")
 	}
 	prepared.stateExecution = execution
 	prepared.stateExecutionEvents = stateEvents

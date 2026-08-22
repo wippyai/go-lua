@@ -197,20 +197,20 @@ func (overlay *preparedSelectedFactorOverlay) nextFactorSources(runtime *solverR
 // on prepared values before the first mutation; the commit below then has no
 // fallible semantic operation, only assignments, map publication, and
 // touched-bit updates.
-func (epoch *executorEpoch) installSelectedFactorOverlay(overlay *preparedSelectedFactorOverlay) bool {
+func (epoch *executorEpoch) installSelectedFactorOverlay(overlay *preparedSelectedFactorOverlay) (bool, solveBoundary) {
 	if !epochSelectedOverlayInstallEligible(epoch, overlay) {
-		return false
+		return false, selectedOverlayRefused("install-eligibility")
 	}
 	if epoch.runtime.artifactBacked {
 		return epoch.installSelectedFactorOverlayArtifact(overlay)
 	}
 	prepared, ok := epoch.prepareSelectedFactorEpoch(overlay)
 	if !ok {
-		return false
+		return false, selectedOverlayRefused("install-epoch")
 	}
 	runtime := epoch.runtime
 	if overlay.execution == nil || overlay.executionDemand == nil || overlay.demandEpoch == nil || len(overlay.activePoints) != len(runtime.activePoints) {
-		return false
+		return false, selectedOverlayRefused("install-frontier")
 	}
 	// Region ordinals are per-frontier and private, so the operand transpose
 	// over them is too. It is derived from the edge and region rows this
@@ -220,10 +220,10 @@ func (epoch *executorEpoch) installSelectedFactorOverlay(overlay *preparedSelect
 	// reach a row of one frontier through a transpose of another.
 	operands, planed := buildOperandPlane(runtime.graph, runtime.producers, runtime.environments, overlay.nextFactorSources(runtime), overlay.regions)
 	if !planed {
-		return false
+		return false, selectedOverlayRefused("install-operand-plane")
 	}
 	if !epoch.operands.openable(operands) {
-		return false
+		return false, selectedOverlayRefused("install-operand-epoch")
 	}
 	// The frontier's per-region change-fact is derived here, against the rows
 	// the runtime still holds, because it is the only place both frontiers are
@@ -235,20 +235,20 @@ func (epoch *executorEpoch) installSelectedFactorOverlay(overlay *preparedSelect
 	}
 	previousOf, carry, classified := regionFrontierCarry(runtime.regions, overlay.regions, runtime.activeRegions, overlay.activeRegions, repointed)
 	if !classified {
-		return false
+		return false, selectedOverlayRefused("install-carry")
 	}
 	if len(prepared.regions) != len(overlay.regions) || len(overlay.regionChildren) != len(overlay.regions) || len(carry) != len(overlay.regions) {
-		return false
+		return false, selectedOverlayRefused("install-region-width")
 	}
 	// An in-place frontier appends into reserved capacity. prepareEdgeBacking
 	// grows the store whenever that capacity is short, so the reslice below is
 	// admitted here rather than assumed across the two calls.
 	if overlay.grownFactorEdges == nil && cap(runtime.factorEdges) < overlay.previousEdgeCount+len(overlay.additions) {
-		return false
+		return false, selectedOverlayRefused("install-edge-capacity")
 	}
 	for _, activation := range prepared.pointActivations {
 		if !epoch.installablePoint(activation.index) {
-			return false
+			return false, selectedOverlayRefused("install-point")
 		}
 	}
 	directAt := cloneDirectCatalog(overlay.directCatalog)
@@ -293,11 +293,11 @@ func (epoch *executorEpoch) installSelectedFactorOverlay(overlay *preparedSelect
 	// half-installed frontier to the caller.
 	regions, carried := epoch.carryRegionEpisodes(prepared.regions, previousOf, carry)
 	if !carried {
-		return epoch.fail()
+		return epoch.fail(), selectedOverlayRefused("install-region-episode")
 	}
 	epoch.regions = regions
 	if !epoch.markCarriedRegionOperands(epoch.operands.openAdmitted(operands, previousOf, carry), carry) {
-		return epoch.fail()
+		return epoch.fail(), selectedOverlayRefused("install-carried-operand")
 	}
 	for _, activation := range prepared.pointActivations {
 		// An activation installs a point without publishing a
@@ -335,24 +335,24 @@ func (epoch *executorEpoch) installSelectedFactorOverlay(overlay *preparedSelect
 	epoch.queue.count = len(prepared.wakePoints)
 	// matches proved the next stamp is representable before installation began.
 	runtime.overlay.generation = runtime.overlay.generation.Next()
-	return true
+	return true, boundaryNone
 }
 
 // installSelectedFactorOverlayArtifact commits a prepared contextual
 // frontier. Graph-shaped fields are retained only as detached mirrors for
 // existing non-artifact inspection; all mounted epoch state, wake rows,
 // factor occurrences and schedule events are StateOrdinal-indexed.
-func (epoch *executorEpoch) installSelectedFactorOverlayArtifact(overlay *preparedSelectedFactorOverlay) bool {
+func (epoch *executorEpoch) installSelectedFactorOverlayArtifact(overlay *preparedSelectedFactorOverlay) (bool, solveBoundary) {
 	if epoch == nil || overlay == nil || epoch.runtime == nil || !epoch.runtime.artifactBacked || overlay.stateExecution == nil || len(overlay.stateActive) != len(epoch.points) || len(overlay.stateTargets) == 0 || len(overlay.stateSelected) == 0 {
-		return false
+		return false, selectedOverlayRefused("artifact-instance")
 	}
 	prepared, ok := epoch.prepareSelectedFactorEpochArtifact(overlay)
 	if !ok || overlay.demandEpoch == nil || !overlay.demandEpoch.Live() {
-		return false
+		return false, selectedOverlayRefused("artifact-epoch")
 	}
 	runtime := epoch.runtime
 	if overlay.execution == nil || overlay.executionDemand == nil || len(overlay.activePoints) != len(runtime.activePoints) || len(overlay.stateFactorIncoming) != len(epoch.points) || len(overlay.stateFactorOutgoing) != len(epoch.points) || len(overlay.statePointRegion) != len(epoch.points) || len(overlay.stateRegions) != len(overlay.stateActiveRegions) {
-		return false
+		return false, selectedOverlayRefused("artifact-frontier")
 	}
 	// The graph view remains a cold consistency witness for an overlay built
 	// from the same frontier. Mounted execution below uses only state rows, but
@@ -360,31 +360,31 @@ func (epoch *executorEpoch) installSelectedFactorOverlayArtifact(overlay *prepar
 	// and still claim this is that prepared frontier.
 	nextEdgeCount := overlay.previousEdgeCount + len(overlay.additions)
 	if overlay.execution.RegionCount() != len(overlay.regions) || nextEdgeCount < overlay.previousEdgeCount {
-		return false
+		return false, selectedOverlayRefused("artifact-region-width")
 	}
 	for _, region := range overlay.regions {
 		for _, edge := range append(append([]int(nil), region.factorExternal...), region.factorBack...) {
 			if edge < 0 || edge >= nextEdgeCount {
-				return false
+				return false, selectedOverlayRefused("artifact-region-edge")
 			}
 		}
 	}
-	operands, planed := buildStateOperandPlane(runtime, overlay.nextFactorSources(runtime), overlay.stateRegions)
+	operands, planed := buildStateOperandPlane(runtime, stateFactorSources(overlay.stateFactorRows), overlay.stateRegions)
 	if !planed || !epoch.operands.openable(operands) {
-		return false
+		return false, selectedOverlayRefused("artifact-operand-plane")
 	}
 	for _, activation := range prepared.pointActivations {
 		if !epoch.installablePoint(activation.index) {
-			return false
+			return false, selectedOverlayRefused("artifact-point")
 		}
 	}
 	for _, activation := range prepared.producerActivations {
 		if activation.index < 0 || activation.index >= len(epoch.producers) || activation.stateIndex < 0 || activation.stateIndex >= len(epoch.points) || activation.group < 0 || activation.group >= len(runtime.producers) {
-			return false
+			return false, selectedOverlayRefused("artifact-producer")
 		}
 	}
 	if overlay.grownFactorEdges == nil && cap(runtime.factorEdges) < overlay.previousEdgeCount+len(overlay.additions) {
-		return false
+		return false, selectedOverlayRefused("artifact-edge-capacity")
 	}
 
 	// All fallible derivation is complete. The following assignments publish
@@ -459,7 +459,7 @@ func (epoch *executorEpoch) installSelectedFactorOverlayArtifact(overlay *prepar
 	}
 	for _, point := range prepared.wakePoints {
 		if point < 0 || point >= len(epoch.points) {
-			return false
+			return false, selectedOverlayRefused("artifact-wake-point")
 		}
 		epoch.postfixDirty[point] = true
 		epoch.queue.ready[point] = true
@@ -468,7 +468,7 @@ func (epoch *executorEpoch) installSelectedFactorOverlayArtifact(overlay *prepar
 	epoch.postfixHead = 0
 	epoch.queue.count = len(prepared.wakePoints)
 	runtime.overlay.generation = runtime.overlay.generation.Next()
-	return true
+	return true, boundaryNone
 }
 
 func epochSelectedOverlayInstallEligible(epoch *executorEpoch, overlay *preparedSelectedFactorOverlay) bool {
