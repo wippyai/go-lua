@@ -8,11 +8,13 @@ package manifest
 
 import (
 	"fmt"
+	"slices"
 	"sort"
 	"strings"
 
 	"github.com/wippyai/go-lua/domain/type/typ"
 	"github.com/wippyai/go-lua/domain/type/unwrap"
+	"github.com/wippyai/go-lua/domain/typestate"
 	moduleio "github.com/wippyai/go-lua/manifest/wire"
 	"github.com/wippyai/go-lua/types/signature"
 )
@@ -43,6 +45,12 @@ type Catalogue struct {
 	functions      []Function
 	byFunctionPath map[string]int
 	initialGlobals []string
+	// typestateProtocols is the catalogue-wide state-machine namespace. A
+	// protocol name is shared vocabulary rather than provider-local, so two
+	// providers may restate the identical machine and may never disagree
+	// about it.
+	typestateProtocols map[typestate.Protocol]typestate.Definition
+	protocolOwners     map[typestate.Protocol]string
 }
 
 // Function is one provider-owned callable with its Lua-visible bindings kept
@@ -165,9 +173,11 @@ func (e InitialEnvironment) CanonicalFunctionPath(local string) string {
 // only for deterministic enumeration, never for override semantics.
 func Seal(input ...Provider) (*Catalogue, error) {
 	catalogue := &Catalogue{
-		providers:      make([]provider, 0, len(input)),
-		byPath:         make(map[string]int, len(input)),
-		byFunctionPath: make(map[string]int),
+		providers:          make([]provider, 0, len(input)),
+		byPath:             make(map[string]int, len(input)),
+		byFunctionPath:     make(map[string]int),
+		typestateProtocols: make(map[typestate.Protocol]typestate.Definition),
+		protocolOwners:     make(map[typestate.Protocol]string),
 	}
 	identities := make(map[string]struct{}, len(input))
 	globals := make(map[string]struct{})
@@ -218,6 +228,20 @@ func Seal(input ...Provider) (*Catalogue, error) {
 			immutable: item.Immutable,
 			manifest:  owned,
 		})
+		for protocol, definition := range owned.TypestateProtocols {
+			normalized := definition.Normalized()
+			existing, declared := catalogue.typestateProtocols[protocol]
+			if declared && !typestateDefinitionEqual(existing, normalized) {
+				return nil, fmt.Errorf(
+					"manifest: provider %q redeclares typestate protocol %q differently from provider %q",
+					item.Identity, protocol, catalogue.protocolOwners[protocol],
+				)
+			}
+			catalogue.typestateProtocols[protocol] = normalized
+			if !declared {
+				catalogue.protocolOwners[protocol] = item.Identity
+			}
+		}
 		for local := range owned.FunctionOperations {
 			_, direct := owned.FunctionSignatures[local]
 			_, detached := owned.DetachedFunctions[local]
@@ -389,6 +413,30 @@ func (c *Catalogue) InitialGlobals() []string {
 		return nil
 	}
 	return append([]string(nil), c.initialGlobals...)
+}
+
+// TypestateProtocols returns every declared state machine in the catalogue,
+// keyed by protocol, in ownership-isolated normalized form. Seal has already
+// refused a disagreeing redeclaration, so the answer is one machine per name.
+func (c *Catalogue) TypestateProtocols() map[typestate.Protocol]typestate.Definition {
+	if c == nil || len(c.typestateProtocols) == 0 {
+		return nil
+	}
+	out := make(map[typestate.Protocol]typestate.Definition, len(c.typestateProtocols))
+	for protocol, definition := range c.typestateProtocols {
+		out[protocol] = definition.Clone()
+	}
+	return out
+}
+
+// typestateDefinitionEqual compares two normalized machines by value. Both
+// sides come from Definition.Normalized, so equal declarations have identical
+// element order.
+func typestateDefinitionEqual(left, right typestate.Definition) bool {
+	return left.Protocol == right.Protocol &&
+		slices.Equal(left.States, right.States) &&
+		slices.Equal(left.FinalStates, right.FinalStates) &&
+		slices.Equal(left.Transitions, right.Transitions)
 }
 
 // Function returns an ownership-isolated declaration by canonical diagnostic

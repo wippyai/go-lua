@@ -45,9 +45,14 @@ func compileCatalogue(declarations *manifest.Catalogue) (declaration.Spec, error
 	if err != nil {
 		return declaration.Spec{}, err
 	}
+	protocolSpecs, err := protocols(&catalogue, declarations)
+	if err != nil {
+		return declaration.Spec{}, err
+	}
 	return declaration.Spec{
 		Semantics:         domaincontract.NewSemantics(),
 		Operations:        catalogue.operations,
+		Protocols:         protocolSpecs,
 		InitialRoots:      boot.roots,
 		InitialEntries:    boot.entries,
 		InitialBindings:   boot.bindings,
@@ -63,15 +68,27 @@ type operationRef uint32
 type authoredCatalogue struct {
 	operations []vocabulary.OperationSpec
 	names      map[string]operationRef
+	// lifecycles holds the protocol relations read out of each declaration's
+	// signature effect row, keyed by the same canonical path as names. The
+	// protocol pass is their only consumer: it owns the state machines they
+	// name and the operation geometry they resolve against.
+	lifecycles map[string][]lifecycleDeclaration
 }
 
-func (catalogue *authoredCatalogue) add(name string, operation vocabulary.OperationSpec) {
+func (catalogue *authoredCatalogue) add(name string, operation vocabulary.OperationSpec, lifecycles []lifecycleDeclaration) {
 	if catalogue.names == nil {
 		catalogue.names = make(map[string]operationRef)
 	}
 	ref := operationRef(len(catalogue.operations) + 1)
 	catalogue.names[name] = ref
 	catalogue.operations = append(catalogue.operations, operation)
+	if len(lifecycles) == 0 {
+		return
+	}
+	if catalogue.lifecycles == nil {
+		catalogue.lifecycles = make(map[string][]lifecycleDeclaration)
+	}
+	catalogue.lifecycles[name] = lifecycles
 }
 
 func (catalogue *authoredCatalogue) lookup(name string) (operationRef, bool) {

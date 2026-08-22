@@ -105,6 +105,36 @@ func validateManifestTypestateUsage(m *Manifest) error {
 			return fmt.Errorf("manifest: function signature %q effect: %w", name, err)
 		}
 	}
+	for name, operation := range m.FunctionOperations {
+		if err := validateOperationTypestateUsage(defs, operation); err != nil {
+			return fmt.Errorf("manifest: function operation %q: %w", name, err)
+		}
+	}
+	return nil
+}
+
+// validateOperationTypestateUsage checks the acquisition rows of one operation
+// law against the declared state machines. The FSM is the sole authority on
+// which state an acquisition may create; the row itself only has to name a
+// declared protocol and a concrete state.
+func validateOperationTypestateUsage(defs map[typestate.Protocol]typestate.Definition, operation Operation) error {
+	for index, acquisition := range operation.Acquisitions {
+		protocol, ok := typestate.ProtocolFromString(acquisition.Protocol)
+		if !ok {
+			return fmt.Errorf("acquisition %d has no protocol", index)
+		}
+		def, err := declaredTypestateProtocol(defs, protocol)
+		if err != nil {
+			return fmt.Errorf("acquisition %d: %w", index, err)
+		}
+		state, ok := typestate.StateFromString(acquisition.State)
+		if !ok {
+			return fmt.Errorf("acquisition %d has no state", index)
+		}
+		if err := def.AdmitsAcquire(state, typestate.Obligation{}); err != nil {
+			return fmt.Errorf("acquisition %d: %w", index, err)
+		}
+	}
 	return nil
 }
 

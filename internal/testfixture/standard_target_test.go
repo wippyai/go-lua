@@ -5,6 +5,8 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/wippyai/go-lua/analysis/program/target/contract"
+	protocolvalue "github.com/wippyai/go-lua/analysis/program/target/protocol"
 	"github.com/wippyai/go-lua/analysis/program/target/vocabulary"
 	"github.com/wippyai/go-lua/domain/effect"
 	"github.com/wippyai/go-lua/domain/effect/lifecycle"
@@ -14,6 +16,7 @@ import (
 	"github.com/wippyai/go-lua/domain/type/typecall"
 	"github.com/wippyai/go-lua/domain/typestate"
 	"github.com/wippyai/go-lua/manifest"
+	manifestwire "github.com/wippyai/go-lua/manifest/wire"
 )
 
 func TestStandardLibraryTargetBindsChannelSelect(t *testing.T) {
@@ -136,11 +139,10 @@ func TestAssert2HostManifestAnswersItsRefutedSubject(t *testing.T) {
 	}
 }
 
-// The resource module states both lifecycles as finite state machines, and the
-// members that move a resource carry the transition they perform. Acquisition
-// stays unstated because the manifest names a lifecycle subject with a
-// parameter reference and both acquiring members produce their resource as a
-// result; that gap belongs to the vocabulary, not to this declaration.
+// The resource module states both lifecycles as finite state machines, the
+// members that create a resource declare the result slot they acquire it in,
+// and the members that move one carry the transition they perform. Every one
+// of those declarations answers the sealed target's protocol query surface.
 func TestResourceHostManifestDeclaresBothLifecycles(t *testing.T) {
 	declaration := resourceHostManifest()
 	for _, want := range []typestate.Definition{{
@@ -180,4 +182,116 @@ func TestResourceHostManifestDeclaresBothLifecycles(t *testing.T) {
 			t.Fatalf("resource.%s carries no %s", member, want)
 		}
 	}
+	for member, want := range map[string]manifestwire.Acquisition{
+		"connect": {Protocol: "connection", State: "open"},
+		"begin":   {Protocol: "transaction", State: "active"},
+	} {
+		law, ok := declaration.FunctionOperations[member]
+		if !ok {
+			t.Fatalf("the resource manifest declares no operation law for %s", member)
+		}
+		if len(law.Acquisitions) != 1 || law.Acquisitions[0] != want {
+			t.Fatalf("resource.%s acquisitions = %+v, want exactly %+v", member, law.Acquisitions, want)
+		}
+	}
+	assertSealedResourceLifecycles(t)
+}
+
+// assertSealedResourceLifecycles reads both declared machines back out of the
+// sealed target. The sealed protocol carries no nominal protocol name - its
+// identity is the set of result coordinates that create it - so each machine is
+// found by the member that acquires it.
+func assertSealedResourceLifecycles(t *testing.T) {
+	t.Helper()
+	sealed, err := StandardLibraryTarget()
+	if err != nil {
+		t.Fatal(err)
+	}
+	table := sealed.Protocols()
+	for _, want := range []struct {
+		acquire    string
+		move       string
+		from, to   string
+		stateNames map[string]bool
+	}{
+		{acquire: "connect", move: "close", from: "open", to: "closed", stateNames: map[string]bool{"open": false, "closed": true}},
+		{acquire: "begin", move: "commit", from: "active", to: "committed", stateNames: map[string]bool{"active": false, "committed": true}},
+	} {
+		acquirer := resourceOperation(t, sealed, want.acquire)
+		mover := resourceOperation(t, sealed, want.move)
+		protocol, state, found := protocolAcquiredBy(&table, acquirer)
+		if !found {
+			t.Fatalf("no sealed protocol is acquired by resource.%s", want.acquire)
+		}
+		if name, ok := table.StateName(protocol, state); !ok || name != want.from {
+			t.Fatalf("resource.%s acquires state %q/%v, want %q", want.acquire, name, ok, want.from)
+		}
+		if got := sealedStateNames(&table, protocol); !reflect.DeepEqual(got, want.stateNames) {
+			t.Fatalf("protocol acquired by resource.%s has states %v, want %v", want.acquire, got, want.stateNames)
+		}
+		if table.TransitionCount(protocol) != 1 {
+			t.Fatalf("protocol acquired by resource.%s has %d transitions, want 1", want.acquire, table.TransitionCount(protocol))
+		}
+		operation, kind, ordinal, from, ok := table.TransitionAt(protocol, 0)
+		if !ok || operation != mover || kind != vocabulary.InputSourceValueFormal || ordinal != 0 {
+			t.Fatalf("transition subject = op %d %d/%d/%v, want resource.%s parameter 0", operation, kind, ordinal, ok, want.move)
+		}
+		if name, nameOK := table.StateName(protocol, from); !nameOK || name != want.from {
+			t.Fatalf("transition source = %q/%v, want %q", name, nameOK, want.from)
+		}
+		if table.TransitionOutcomeCount(protocol, 0) != 1 {
+			t.Fatalf("transition of resource.%s has %d outcome arms, want the normal arm alone", want.move, table.TransitionOutcomeCount(protocol, 0))
+		}
+		outcome, to, outcomeOK := table.TransitionOutcomeAt(protocol, 0, 0)
+		if !outcomeOK || outcome != 0 {
+			t.Fatalf("transition outcome = %d/%v, want the normal arm", outcome, outcomeOK)
+		}
+		if name, nameOK := table.StateName(protocol, to); !nameOK || name != want.to {
+			t.Fatalf("transition target = %q/%v, want %q", name, nameOK, want.to)
+		}
+	}
+}
+
+func resourceOperation(t *testing.T, sealed *contract.Contract, member string) vocabulary.Operation {
+	t.Helper()
+	operation, ok := sealed.Operations.Lookup(vocabulary.BindingSpec{
+		Namespace: vocabulary.BindingModule, Owner: []string{"resource"}, Member: []string{member},
+	})
+	if !ok {
+		t.Fatalf("resource.%s is not a sealed operation", member)
+	}
+	return operation
+}
+
+func protocolAcquiredBy(table *protocolvalue.Table, operation vocabulary.Operation) (vocabulary.Protocol, vocabulary.State, bool) {
+	for index := 0; index < table.ProtocolCount(); index++ {
+		protocol, ok := table.ProtocolAt(index)
+		if !ok {
+			continue
+		}
+		for acquisition := 0; acquisition < table.ProtocolAcquisitionCount(protocol); acquisition++ {
+			owner, _, _, state, found := table.ProtocolAcquisitionAt(protocol, acquisition)
+			if found && owner == operation {
+				return protocol, state, true
+			}
+		}
+	}
+	return 0, 0, false
+}
+
+func sealedStateNames(table *protocolvalue.Table, protocol vocabulary.Protocol) map[string]bool {
+	out := make(map[string]bool, table.StateCount(protocol))
+	for index := 0; index < table.StateCount(protocol); index++ {
+		state, ok := table.StateAt(protocol, index)
+		if !ok {
+			continue
+		}
+		name, nameOK := table.StateName(protocol, state)
+		final, finalOK := table.StateFinal(protocol, state)
+		if !nameOK || !finalOK {
+			continue
+		}
+		out[name] = final
+	}
+	return out
 }

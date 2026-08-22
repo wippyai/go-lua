@@ -63,6 +63,11 @@ func (value *Values) UnmarshalJSON(data []byte) error {
 // Revision 2 changes publication Subject from an implicit ValueFormal to an
 // explicit InputSource kind/ordinal pair. All operation effect occurrences
 // use this revision so an older reader cannot silently reinterpret a row.
+//
+// The revision guards reinterpretation of an existing field, which no decoder
+// can detect on its own. A field that is only added carries no revision: the
+// operation decoder rejects unknown keys, so an older reader fails closed on
+// the new declaration rather than reading it as an absent one.
 const operationWireRevisionPublicationEffects uint8 = 2
 
 type outcomeTailTypeJSON struct {

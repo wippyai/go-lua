@@ -483,14 +483,11 @@ func assert2HostManifest() *manifestwire.Manifest {
 // this is a preview surface whose whole purpose is to state a lifecycle
 // contract, so it declares exactly the five members that fixture calls.
 //
-// The two state machines are stated in full. What the manifest vocabulary
-// cannot yet state is the other half of the contract: lifecycle.Acquire names
-// its subject with an effect.ParamRef, so neither connect's returned connection
-// nor begin's returned transaction can be named as the acquired resource, and
-// there is no requirement label for a member that reads a resource without
-// moving it, so query's demand for an open connection stays unstated. Both are
-// expressible one layer down, where vocabulary.AcquisitionSpec names an outcome
-// result slot; the manifest boundary is what is missing them.
+// The two state machines are stated in full, each with the member that creates
+// its resource and the member that moves it to its final state. What the
+// manifest vocabulary still cannot state is a requirement: there is no label
+// for a member that reads a resource without moving it, so query's demand for
+// an open connection stays unstated.
 func resourceHostManifest() *manifestwire.Manifest {
 	declaration := manifestwire.New("resource")
 	connectionType := typ.NewInterface("resource.Connection", nil)
@@ -521,6 +518,9 @@ func resourceHostManifest() *manifestwire.Manifest {
 	commitType := typ.Func().Param("transaction", transactionType).Build()
 
 	declaration.DefineFunctionSignature("connect", signature.Function{Type: connectType})
+	declaration.DefineFunctionOperation("connect", manifestwire.Operation{
+		Acquisitions: []manifestwire.Acquisition{{Protocol: "connection", State: "open"}},
+	})
 	declaration.DefineFunctionSignature("close", signature.Function{
 		Type: closeType,
 		Effect: effect.Empty.With(lifecycle.Transition{
@@ -529,6 +529,9 @@ func resourceHostManifest() *manifestwire.Manifest {
 	})
 	declaration.DefineFunctionSignature("query", signature.Function{Type: queryType})
 	declaration.DefineFunctionSignature("begin", signature.Function{Type: beginType})
+	declaration.DefineFunctionOperation("begin", manifestwire.Operation{
+		Acquisitions: []manifestwire.Acquisition{{Protocol: "transaction", State: "active"}},
+	})
 	declaration.DefineFunctionSignature("commit", signature.Function{
 		Type: commitType,
 		Effect: effect.Empty.With(lifecycle.Transition{

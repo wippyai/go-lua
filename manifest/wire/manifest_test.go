@@ -19,6 +19,15 @@ import (
 	"github.com/wippyai/go-lua/types/signature"
 )
 
+func manifestObligation(t *testing.T, states ...typestate.State) typestate.Obligation {
+	t.Helper()
+	obligation, ok := typestate.NewObligation(states...)
+	if !ok {
+		t.Fatal("NewObligation rejected valid states")
+	}
+	return obligation
+}
+
 func TestEncodeCompactMatchesCanonicalManifestContent(t *testing.T) {
 	m := New("example/module")
 	m.DefineType("User", typetable.NewRecord().Field("id", typ.Integer).Build())
@@ -315,12 +324,10 @@ func TestManifestRejectsLifecycleEffectsWithoutDeclaredFSM(t *testing.T) {
 	m.DefineFunctionSignature("begin", signature.Function{
 		Type: fn,
 		Effect: effect.Empty.With(lifecycle.Acquire{
-			Target:   effect.ParamRef{Index: 0},
-			Protocol: "transaction",
-			State:    "active",
-			Obligation: typestate.Obligation{
-				Final: "finished",
-			},
+			Target:     effect.ParamRef{Index: 0},
+			Protocol:   "transaction",
+			State:      "active",
+			Obligation: manifestObligation(t, "finished"),
 		}),
 	})
 
@@ -344,7 +351,7 @@ func TestManifestRoundTripsLifecycleAcquireFinalStateSet(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("DefineTypestateProtocol: %v", err)
 	}
-	obligation := typestate.Obligation{Finals: typestate.NewFinalStates("rolled_back", "committed")}
+	obligation := manifestObligation(t, "rolled_back", "committed")
 	m.DefineFunctionSignature("begin", signature.Function{
 		Type: fn,
 		Effect: effect.Empty.With(lifecycle.Acquire{
@@ -378,7 +385,7 @@ func TestManifestRoundTripsLifecycleAcquireFinalStateSet(t *testing.T) {
 		State:      "active",
 		Obligation: obligation,
 	}) {
-		t.Fatalf("decoded effect = %v, want lifecycle acquire with finals set %q", sig.Effect, obligation.Finals)
+		t.Fatalf("decoded effect = %v, want lifecycle acquire with final states %v", sig.Effect, obligation.FinalStateList())
 	}
 }
 

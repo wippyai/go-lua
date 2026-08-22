@@ -37,12 +37,33 @@ type Operation struct {
 	OutcomeTailTypes  []OutcomeTailType
 	OutcomeAmendments []OutcomeAmendment
 	Transfers         []TransferSpec
+	// Acquisitions declare the typestate resources this callable creates. A
+	// lifecycle effect label names its subject with a parameter reference, so
+	// the acquiring member of a resource protocol - one that produces the
+	// resource it creates - cannot state its subject there. Acquisition is
+	// therefore an operation law, addressed the same way every other
+	// result-slot declaration on this boundary is.
+	Acquisitions []Acquisition
 	// Behavior carries provider-owned result and predicate correspondences.
 	// The relation is deliberately a plain wire key: this package is a
 	// portable module boundary and must not import the analyzer's schema
 	// identity package. The Lua-domain target adapter resolves the key against
 	// its structural vocabulary when it projects the operation.
 	Behavior *OperationBehavior `json:"Behavior,omitempty"`
+}
+
+// Acquisition declares that one fixed result slot of one authored outcome
+// creates a resource governed by a declared typestate protocol, in the named
+// initial state. Outcome is the zero-based authored outcome ordinal and Result
+// the fixed result ordinal within it, exactly as OperationResult addresses a
+// result slot. Protocol must name a manifest-declared typestate FSM and State
+// one of its declared states; the FSM alone decides which state may be
+// acquired.
+type Acquisition struct {
+	Outcome  uint32
+	Result   uint32
+	Protocol string
+	State    string
 }
 
 // OperationBehavior is the generic, provider-owned behavior descriptor of an
@@ -621,6 +642,10 @@ func CloneOperation(in Operation) Operation {
 	for index := range out.Transfers {
 		out.Transfers[index].Outcomes = append([]TransferOutcomeSpec(nil), in.Transfers[index].Outcomes...)
 	}
+	out.Acquisitions = append([]Acquisition(nil), in.Acquisitions...)
+	sort.SliceStable(out.Acquisitions, func(left, right int) bool {
+		return compareAcquisition(out.Acquisitions[left], out.Acquisitions[right]) < 0
+	})
 	if in.Behavior != nil {
 		behavior := &OperationBehavior{
 			Results:    append([]OperationResult(nil), in.Behavior.Results...),
@@ -700,6 +725,34 @@ func cloneRow(in RowSpec) RowSpec {
 		}
 	}
 	return out
+}
+
+func compareAcquisition(left, right Acquisition) int {
+	if left.Outcome != right.Outcome {
+		if left.Outcome < right.Outcome {
+			return -1
+		}
+		return 1
+	}
+	if left.Result != right.Result {
+		if left.Result < right.Result {
+			return -1
+		}
+		return 1
+	}
+	if left.Protocol != right.Protocol {
+		if left.Protocol < right.Protocol {
+			return -1
+		}
+		return 1
+	}
+	if left.State != right.State {
+		if left.State < right.State {
+			return -1
+		}
+		return 1
+	}
+	return 0
 }
 
 func compareOperationResult(left, right OperationResult) int {

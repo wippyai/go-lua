@@ -10,7 +10,7 @@ import (
 )
 
 func TestFormalEffectsProjectionCoversEveryOwnershipKind(t *testing.T) {
-	row, err := formalEffects(effect.Row{Labels: []effect.Label{
+	row, _, err := formalEffects(effect.Row{Labels: []effect.Label{
 		ownership.Freeze{Param: effect.ParamRef{Index: -1}},
 		ownership.Opaque{Param: effect.ParamRef{Index: 7}},
 		ownership.Export{Param: effect.ParamRef{Index: 6}},
@@ -50,7 +50,7 @@ func TestFormalEffectsProjectionCoversEveryOwnershipKind(t *testing.T) {
 		t.Fatal("negative Store Into was marked present")
 	}
 
-	open, err := formalEffects(effect.Row{Tail: &effect.Var{Name: "known"}})
+	open, _, err := formalEffects(effect.Row{Tail: &effect.Var{Name: "known"}})
 	if err != nil {
 		t.Fatalf("project open ownership row: %v", err)
 	}
@@ -60,14 +60,14 @@ func TestFormalEffectsProjectionCoversEveryOwnershipKind(t *testing.T) {
 }
 
 func TestFormalEffectsProjectionIgnoresKnownNonOwnershipLabels(t *testing.T) {
-	row, err := formalEffects(effect.Empty.With(ownership.Borrow{Param: effect.ParamRef{Index: 0}}))
+	row, _, err := formalEffects(effect.Empty.With(ownership.Borrow{Param: effect.ParamRef{Index: 0}}))
 	if err != nil {
 		t.Fatalf("project ownership row: %v", err)
 	}
 	if len(row.Occurrences) != 1 || row.Occurrences[0].Kind != vocabulary.FormalEffectBorrow {
 		t.Fatalf("ownership projection = %#v, want one Borrow row", row.Occurrences)
 	}
-	row, err = formalEffects(effect.Empty.With(testFormalNonOwnershipLabel{}))
+	row, _, err = formalEffects(effect.Empty.With(testFormalNonOwnershipLabel{}))
 	if err != nil {
 		t.Fatalf("project non-ownership row: %v", err)
 	}
@@ -82,12 +82,12 @@ func TestFormalEffectsRejectsSignedCoordinateOverflow(t *testing.T) {
 	}
 	values := []int{int(^uint32(0)>>1) + 1, -int(^uint32(0)>>1) - 2}
 	for _, value := range values {
-		if _, err := formalEffects(effect.Empty.With(ownership.Borrow{Param: effect.ParamRef{Index: value}})); err == nil {
+		if _, _, err := formalEffects(effect.Empty.With(ownership.Borrow{Param: effect.ParamRef{Index: value}})); err == nil {
 			t.Fatalf("formal parameter %d crossed the int32 boundary", value)
 		}
 	}
 	for _, value := range values {
-		if _, err := formalEffects(effect.Empty.With(ownership.Send{FromParam: value})); err == nil {
+		if _, _, err := formalEffects(effect.Empty.With(ownership.Send{FromParam: value})); err == nil {
 			t.Fatalf("formal ordinal %d crossed the int32 boundary", value)
 		}
 	}
@@ -133,7 +133,7 @@ func TestFormalEffectsRejectsOverflowForEverySignedCoordinate(t *testing.T) {
 	}
 	for _, test := range cases {
 		for _, value := range values {
-			if _, err := formalEffects(effect.Empty.With(test.label(value))); err == nil {
+			if _, _, err := formalEffects(effect.Empty.With(test.label(value))); err == nil {
 				t.Errorf("%s %d crossed the int32 boundary", test.name, value)
 			}
 		}
@@ -141,7 +141,7 @@ func TestFormalEffectsRejectsOverflowForEverySignedCoordinate(t *testing.T) {
 }
 
 func TestFormalEffectsRetainsSignedInt32Boundary(t *testing.T) {
-	row, err := formalEffects(effect.Row{Labels: []effect.Label{
+	row, _, err := formalEffects(effect.Row{Labels: []effect.Label{
 		ownership.Borrow{Param: effect.ParamRef{Index: -1}},
 		ownership.Send{FromParam: int(^uint32(0) >> 1)},
 	}})

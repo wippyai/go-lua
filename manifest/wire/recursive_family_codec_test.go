@@ -2,11 +2,13 @@ package wire
 
 import (
 	"bytes"
+	"encoding/json"
 	"testing"
 
 	typetable "github.com/wippyai/go-lua/domain/type/table"
 	"github.com/wippyai/go-lua/domain/type/typ"
 	"github.com/wippyai/go-lua/domain/type/typeexpr"
+	typewire "github.com/wippyai/go-lua/types/signature/wire"
 )
 
 func TestManifestRoundTripRecursiveExport(t *testing.T) {
@@ -81,13 +83,33 @@ func TestRecursiveManifestBytesAreDeterministic(t *testing.T) {
 	}
 }
 
-func TestDecodeLegacyManifestWithoutRecursiveWire(t *testing.T) {
-	legacy := []byte(`{"path":"legacy","export":{"kind":"array","element":{"kind":"string"}}}`)
-	decoded, err := Decode(legacy)
+// TestDecodeManifestWithoutRecursiveWire states that a manifest carrying no
+// recursive member is a complete manifest and not a truncated one. The
+// recursive binder wire is a legitimate absence: a document whose types form no
+// cycle never emits one, and the reader answers from what the document states
+// instead of demanding a member it was right not to write.
+//
+// The document is written by hand so the absence is the document's own, while
+// the type payload inside it is written by the encoder: a type payload carries
+// its own integrity witness and there is no hand-writing that.
+func TestDecodeManifestWithoutRecursiveWire(t *testing.T) {
+	export, err := typewire.EncodeType(typ.NewArray(typ.String))
 	if err != nil {
-		t.Fatalf("Decode legacy manifest: %v", err)
+		t.Fatalf("EncodeType: %v", err)
+	}
+	encodedExport, err := json.Marshal(export)
+	if err != nil {
+		t.Fatalf("marshal export: %v", err)
+	}
+	document := []byte(`{"path":"legacy","export":` + string(encodedExport) + `}`)
+	if bytes.Contains(document, []byte(`"binder"`)) || bytes.Contains(document, []byte(`"recursive"`)) {
+		t.Fatalf("the document under test carries recursive wire: %s", document)
+	}
+	decoded, err := Decode(document)
+	if err != nil {
+		t.Fatalf("Decode manifest without recursive wire: %v", err)
 	}
 	if !typ.TypeEquals(decoded.Export, typ.NewArray(typ.String)) {
-		t.Fatalf("decoded legacy export = %v, want string[]", decoded.Export)
+		t.Fatalf("decoded export = %v, want string[]", decoded.Export)
 	}
 }
