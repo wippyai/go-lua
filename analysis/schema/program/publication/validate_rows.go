@@ -328,54 +328,7 @@ func (validator *validator) validateSealRows(state *validationState) bool {
 			return false
 		}
 	}
-	state.occurrenceRows = make(map[programschema.OccurrenceKind]map[identity.ContentID]struct{})
 	program := validator.program
-	occurrenceCount, occurrencesPublished := program.OccurrenceCount()
-	if !occurrencesPublished {
-		return false
-	}
-	for index := 0; index < occurrenceCount; index++ {
-		row, rowOK := program.OccurrenceAt(index)
-		if !rowOK || !row.Available() {
-			return false
-		}
-		body, hasBody := row.BodyID()
-		if hasBody {
-			if _, exists := state.bodyRows[body]; !exists {
-				return false
-			}
-		}
-		pointOffset, pointCount, pointSpanOK := row.PointSpan()
-		inputOffset, inputCount, inputSpanOK := row.InputSpan()
-		if !pointSpanOK || !inputSpanOK {
-			return false
-		}
-		for pointIndex := uint32(0); pointIndex < pointCount; pointIndex++ {
-			point, pointOK := program.OccurrencePointAt(int(pointOffset + pointIndex))
-			if !pointOK || !point.Available() {
-				return false
-			}
-			if _, exists := state.pointRows[point.PointID()]; !exists {
-				return false
-			}
-		}
-		for inputIndex := uint32(0); inputIndex < inputCount; inputIndex++ {
-			input, inputOK := program.OccurrenceInputAt(int(inputOffset + inputIndex))
-			if !inputOK || !input.Available() {
-				return false
-			}
-		}
-		kind := row.Kind()
-		rows := state.occurrenceRows[kind]
-		if rows == nil {
-			rows = make(map[identity.ContentID]struct{})
-			state.occurrenceRows[kind] = rows
-		}
-		if _, duplicate := rows[row.ID()]; duplicate {
-			return false
-		}
-		rows[row.ID()] = struct{}{}
-	}
 	exactCount, exactPublished := programschema.ExactScalarSummaryFamily().Count(&validator.frozen, validator.catalog)
 	if !exactPublished {
 		return false
@@ -387,24 +340,13 @@ func (validator *validator) validateSealRows(state *validationState) bool {
 			return false
 		}
 		priorExact = row.ID()
-		_, exists := state.occurrenceRows[programschema.OccurrenceBinaryArithmetic][row.OccurrenceID()]
-		if !exists {
-			return false
-		}
-		binary, found := program.OccurrenceForID(programschema.OccurrenceBinaryArithmetic, row.OccurrenceID())
+		entry, found := state.occurrence(programschema.OccurrenceBinaryArithmetic, row.OccurrenceID())
 		if !found {
 			return false
 		}
-		binaryIndex := -1
-		for candidate := 0; candidate < occurrenceCount; candidate++ {
-			candidateRow, candidateOK := program.OccurrenceAt(candidate)
-			if candidateOK && candidateRow.ID() == binary.ID() && candidateRow.Kind() == programschema.OccurrenceBinaryArithmetic {
-				binaryIndex = candidate
-				break
-			}
-		}
-		leftRow, leftOK := program.OccurrenceInputFor(binaryIndex, 0)
-		rightRow, rightOK := program.OccurrenceInputFor(binaryIndex, 1)
+		binary := entry.row
+		leftRow, leftOK := program.OccurrenceInputFor(entry.ordinal, 0)
+		rightRow, rightOK := program.OccurrenceInputFor(entry.ordinal, 1)
 		left, right, endpointsOK := leftRow.InputID(), rightRow.InputID(), leftOK && rightOK
 		body, bodyOK := binary.BodyID()
 		endpointsOK = endpointsOK && bodyOK && body == row.BodyPathID()
@@ -433,10 +375,11 @@ func (validator *validator) validateSealRows(state *validationState) bool {
 			return false
 		}
 		priorArithmetic = row.ID()
-		binary, found := program.OccurrenceForID(programschema.OccurrenceBinaryArithmetic, row.OccurrenceID())
+		entry, found := state.occurrence(programschema.OccurrenceBinaryArithmetic, row.OccurrenceID())
 		if !found {
 			return false
 		}
+		binary := entry.row
 		body, bodyOK := binary.BodyID()
 		if !bodyOK || body != row.BodyPathID() || flowkind.BinaryOp(binary.Code()) != flowkind.BinaryOp(row.Operator()) {
 			return false
@@ -453,10 +396,11 @@ func (validator *validator) validateSealRows(state *validationState) bool {
 			return false
 		}
 		priorUnary = row.ID()
-		unary, found := program.OccurrenceForID(programschema.OccurrenceUnary, row.OccurrenceID())
+		entry, found := state.occurrence(programschema.OccurrenceUnary, row.OccurrenceID())
 		if !found {
 			return false
 		}
+		unary := entry.row
 		body, bodyOK := unary.BodyID()
 		if !bodyOK || body != row.BodyPathID() {
 			return false

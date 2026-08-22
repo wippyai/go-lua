@@ -288,6 +288,20 @@ type Program []Instruction
 
 func cloneProgram(program Program) Program { return append(Program(nil), program...) }
 
+// registerWidth is the sealed height of one program's register file. The
+// machine numbers registers densely from one and register zero is its "no
+// operand" spelling, so the file a program needs is exactly its highest
+// output ordinal plus that reserved slot.
+func registerWidth(program Program) int {
+	width := 1
+	for _, instruction := range program {
+		if int(instruction.Out)+1 > width {
+			width = int(instruction.Out) + 1
+		}
+	}
+	return width
+}
+
 // OutputBinding authenticates a requirement selection against a separately
 // declared output ABI. Proof must be the requirement admission register.
 type OutputBinding struct {
@@ -379,6 +393,7 @@ type Entry struct {
 	native        bool
 	consumesInput bool
 	empty         EmptyPolicy
+	registerWidth int
 }
 
 func New(spec Spec) (*Entry, bool) {
@@ -397,6 +412,7 @@ func New(spec Spec) (*Entry, bool) {
 		dependencies: append([]uint16(nil), spec.Dependencies...),
 		predecessors: append([]schema.Key(nil), spec.Predecessors...), edges: cloneEdges(spec.Edges),
 		framing: spec.Framing, native: spec.Native, consumesInput: spec.ConsumesInput, empty: spec.Empty,
+		registerWidth: registerWidth(spec.Program),
 	}
 	return entry, entry.EntryAvailable() && entry.declarationComplete()
 }
@@ -419,7 +435,8 @@ func (entry *Entry) Native() bool                   { return entry.native }
 func (entry *Entry) ConsumesInput() bool            { return entry.consumesInput }
 func (entry *Entry) EmptyPolicy() EmptyPolicy       { return entry.empty }
 func (entry *Entry) Joins() []JoinField             { return append([]JoinField(nil), entry.joins...) }
-func (entry *Entry) Program() Program               { return cloneProgram(entry.program) }
+func (entry *Entry) ProgramLen() int                { return len(entry.program) }
+func (entry *Entry) RegisterWidth() int             { return entry.registerWidth }
 func (entry *Entry) Outputs() []OutputBinding       { return append([]OutputBinding(nil), entry.outputs...) }
 func (entry *Entry) Requires() []schema.Key         { return append([]schema.Key(nil), entry.requires...) }
 func (entry *Entry) Subject() schema.Key            { return entry.subject }
@@ -428,6 +445,18 @@ func (entry *Entry) Parameters() []DataType         { return append([]DataType(n
 func (entry *Entry) BaseParameter() uint16          { return entry.base }
 func (entry *Entry) IdentityParameters() []uint16 {
 	return append([]uint16(nil), entry.identity...)
+}
+
+// InstructionAt reads one sealed instruction in place. An Instruction is an
+// immutable value, so the sealed sequence is read by ordinal rather than
+// handed out as a slice: an interpreter walks the program once per row it
+// evaluates, and copying the whole program at each of those walks is the one
+// cost this accessor exists to remove.
+func (entry *Entry) InstructionAt(index int) (Instruction, bool) {
+	if entry == nil || index < 0 || index >= len(entry.program) {
+		return Instruction{}, false
+	}
+	return entry.program[index], true
 }
 func (entry *Entry) Constructor() StageConstructor {
 	return entry.constructor

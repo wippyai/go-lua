@@ -58,11 +58,17 @@ func (row Program) ColdState() (programstate.State, bool) {
 // catalog is the identity this program's compiled publication is addressed under.
 // It is derived rather than carried, so a row cannot be assembled with a
 // catalog that disagrees with the declaration catalog it names.
+//
+// Every cold row accessor resolves its address through here, so the
+// derivation must run once per access rather than twice: Available has
+// already proved that the sealed publication's carried schema is the catalog
+// of the declaration schema this row names, and the carried value is that
+// same identity.
 func (row Program) catalog() (identity.ContentID, bool) {
 	if !row.Available() {
 		return identity.ContentID{}, false
 	}
-	return programcatalog.CatalogID(row.SchemaID)
+	return row.Frozen.Schema(), true
 }
 
 // CallCount is the sealed width of the authored-call family.

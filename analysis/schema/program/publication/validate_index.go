@@ -45,7 +45,7 @@ func (validator *validator) validateSealIndexes(state *validationState) bool {
 		if _, valuesOK := state.valueRows[row.ValuesRootID()]; !valuesOK {
 			return false
 		}
-		if _, occurrenceOK := program.OccurrenceForID(programschema.OccurrenceCall, row.ID()); !occurrenceOK {
+		if _, occurrenceOK := state.occurrence(programschema.OccurrenceCall, row.ID()); !occurrenceOK {
 			return false
 		}
 		for childIndex := uint32(0); childIndex < operandWidth; childIndex++ {
@@ -285,7 +285,7 @@ func (validator *validator) validateSealIndexes(state *validationState) bool {
 			if !parentOK || !valueOK || !cellOK || !parentRow.Available() || !valueRow.Available() || !cellRow.Available() {
 				return false
 			}
-			if _, bindOK := program.OccurrenceForID(programschema.OccurrenceStorageBind, parentRow.InputID()); !bindOK {
+			if _, bindOK := state.occurrence(programschema.OccurrenceStorageBind, parentRow.InputID()); !bindOK {
 				return false
 			}
 		}

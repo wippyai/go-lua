@@ -60,7 +60,7 @@ type validationState struct {
 	outcomeRows    map[identity.ContentID]int
 	outcomeCursor  uint32
 	callableBodies int
-	occurrenceRows map[programschema.OccurrenceKind]map[identity.ContentID]struct{}
+	occurrenceRows map[programschema.OccurrenceKind]map[identity.ContentID]occurrenceRow
 	valuesRows     map[identity.ContentID]struct{}
 }
 
@@ -70,6 +70,9 @@ func (validator *validator) validate() bool {
 	}
 	state := validationState{}
 	if !validator.validateSealFoundation(&state) {
+		return false
+	}
+	if !validator.validateSealOccurrences(&state) {
 		return false
 	}
 	if !validator.validateSealIndexes(&state) {
