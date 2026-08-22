@@ -7,11 +7,14 @@ import (
 	"github.com/wippyai/go-lua/analysis/identity"
 	"github.com/wippyai/go-lua/analysis/schema"
 	"github.com/wippyai/go-lua/analysis/schema/executioncontext"
+	"github.com/wippyai/go-lua/analysis/schema/plane"
 	"github.com/wippyai/go-lua/analysis/schema/query"
 	"github.com/wippyai/go-lua/analysis/schema/structure"
 	"github.com/wippyai/go-lua/analysis/schema/vocabulary"
+	"github.com/wippyai/go-lua/domain/effect/factor"
 	effectowner "github.com/wippyai/go-lua/domain/effect/owner"
 	placementquery "github.com/wippyai/go-lua/domain/placement/query"
+	"github.com/wippyai/go-lua/domain/value"
 	valueowner "github.com/wippyai/go-lua/domain/value/owner"
 )
 
@@ -256,19 +259,21 @@ func TestWithdrawingAContributorRefusesTheFamily(t *testing.T) {
 	if !rolesOK {
 		t.Fatal("declared query identities did not resolve")
 	}
-	if _, _, admitted := wireQuery(valueowner.QuerySpec(), roles, valueowner.DeclareQuery, nil, valueowner.RecoverQuery, engine.NewSummaryQueryAdmission, valueowner.EncodeQueryAnswer); admitted {
+	if _, _, admitted := wireQuery(valueowner.QuerySpec(), roles, valueowner.DeclareQuery, nil, valueowner.RecoverQuery, engine.NewSummaryQueryAdmission, valueowner.EncodeQueryAnswer, value.SummaryResultStates, value.SummaryResultColumns()); admitted {
 		t.Fatal("value-summary was admitted without the contributor that folds it")
 	}
-	if _, _, admitted := wireQuery(effectowner.QuerySpec(), roles, nil, effectowner.BindQuery, effectowner.RecoverQuery, engine.NewExactQueryAdmission, effectowner.EncodeQueryAnswer); admitted {
+	if _, _, admitted := wireQuery(effectowner.QuerySpec(), roles, nil, effectowner.BindQuery, effectowner.RecoverQuery, engine.NewExactQueryAdmission, effectowner.EncodeQueryAnswer, factor.ExactResultStates, factor.ExactResultColumns()); admitted {
 		t.Fatal("effect-exact was admitted without the contributor that declares its slot")
 	}
-	if _, _, admitted := wireQuery(placementquery.QuerySpec(), roles, placementquery.DeclareQuery, nil, placementquery.RecoverQuery, engine.NewHeterogeneousQueryAdmission, placementquery.EncodeQueryAnswer); admitted {
+	if _, _, admitted := wireQuery(placementquery.QuerySpec(), roles, placementquery.DeclareQuery, nil, placementquery.RecoverQuery, engine.NewHeterogeneousQueryAdmission, func(_ *plane.Sealed, answer engine.Answer) (bool, uint64, []byte, bool) {
+		return placementquery.EncodeQueryAnswer(answer)
+	}, structure.CategoryInvalid, nil); admitted {
 		t.Fatal("placement-summary was admitted without the contributor that binds it")
 	}
-	if _, _, admitted := wireQuery(valueowner.QuerySpec(), roles, valueowner.DeclareQuery, valueowner.BindQuery, valueowner.RecoverQuery, nil, valueowner.EncodeQueryAnswer); admitted {
+	if _, _, admitted := wireQuery(valueowner.QuerySpec(), roles, valueowner.DeclareQuery, valueowner.BindQuery, valueowner.RecoverQuery, nil, valueowner.EncodeQueryAnswer, value.SummaryResultStates, value.SummaryResultColumns()); admitted {
 		t.Fatal("value-summary was admitted without its owner admission callback")
 	}
-	if _, _, admitted := wireQuery(valueowner.QuerySpec(), roles, valueowner.DeclareQuery, valueowner.BindQuery, valueowner.RecoverQuery, engine.NewSummaryQueryAdmission, nil); admitted {
+	if _, _, admitted := wireQuery(valueowner.QuerySpec(), roles, valueowner.DeclareQuery, valueowner.BindQuery, valueowner.RecoverQuery, engine.NewSummaryQueryAdmission, nil, value.SummaryResultStates, value.SummaryResultColumns()); admitted {
 		t.Fatal("value-summary was admitted without its owner result encoder")
 	}
 }
@@ -283,7 +288,7 @@ func TestObservationProducerDoesNotNeedResultPublication(t *testing.T) {
 	spec := valueowner.QuerySpec()
 	spec.Family = "value-summary-observation-producer-law"
 	spec.Population = query.PopulationObservation
-	registration, contributor, admitted := wireQuery(spec, roles, valueowner.DeclareQuery, valueowner.BindQuery, valueowner.RecoverQuery, nil, nil)
+	registration, contributor, admitted := wireQuery(spec, roles, valueowner.DeclareQuery, valueowner.BindQuery, valueowner.RecoverQuery, nil, nil, structure.CategoryInvalid, nil)
 	if !admitted || registration == nil {
 		t.Fatal("observation producer was rejected without Result callbacks")
 	}
@@ -308,7 +313,7 @@ func TestSelectedPointProducerRequiresCompleteResultPublication(t *testing.T) {
 	roles := queryCapabilityLawRoles(t)
 	spec := valueowner.QuerySpec()
 	spec.Family = "value-summary-selected-result-law"
-	registration, contributor, admitted := wireQuery(spec, roles, valueowner.DeclareQuery, valueowner.BindQuery, valueowner.RecoverQuery, nil, nil)
+	registration, contributor, admitted := wireQuery(spec, roles, valueowner.DeclareQuery, valueowner.BindQuery, valueowner.RecoverQuery, nil, nil, structure.CategoryInvalid, nil)
 	if admitted {
 		t.Fatal("selected-point producer without Result capability was admitted")
 	}
@@ -327,7 +332,7 @@ func TestSelectedPointProducerWithResultPublicationRemainsAdmitted(t *testing.T)
 	roles := queryCapabilityLawRoles(t)
 	spec := valueowner.QuerySpec()
 	spec.Family = "value-summary-selected-complete-law"
-	registration, contributor, admitted := wireQuery(spec, roles, valueowner.DeclareQuery, valueowner.BindQuery, valueowner.RecoverQuery, engine.NewSummaryQueryAdmission, valueowner.EncodeQueryAnswer)
+	registration, contributor, admitted := wireQuery(spec, roles, valueowner.DeclareQuery, valueowner.BindQuery, valueowner.RecoverQuery, engine.NewSummaryQueryAdmission, valueowner.EncodeQueryAnswer, value.SummaryResultStates, value.SummaryResultColumns())
 	if !admitted || registration == nil || !contributor.producerComplete() || !contributor.resultComplete() || !contributor.complete() {
 		t.Fatal("complete selected-point producer did not retain Result publication capability")
 	}
@@ -345,7 +350,7 @@ func TestObservationPartialResultCapabilityDoesNotSilentlyPass(t *testing.T) {
 	spec := valueowner.QuerySpec()
 	spec.Family = "value-summary-observation-partial-result-law"
 	spec.Population = query.PopulationObservation
-	if _, _, admitted := wireQuery(spec, roles, valueowner.DeclareQuery, valueowner.BindQuery, valueowner.RecoverQuery, nil, valueowner.EncodeQueryAnswer); admitted {
+	if _, _, admitted := wireQuery(spec, roles, valueowner.DeclareQuery, valueowner.BindQuery, valueowner.RecoverQuery, nil, valueowner.EncodeQueryAnswer, value.SummaryResultStates, value.SummaryResultColumns()); admitted {
 		t.Fatal("observation accepted a partial Result capability")
 	}
 }
@@ -355,7 +360,7 @@ func TestUnknownQueryPopulationDoesNotAcquireProducerOnlyAdmission(t *testing.T)
 	spec := valueowner.QuerySpec()
 	spec.Family = "value-summary-unknown-population-law"
 	spec.Population = "semantic/query/population/unknown-law"
-	if _, _, admitted := wireQuery(spec, roles, valueowner.DeclareQuery, valueowner.BindQuery, valueowner.RecoverQuery, nil, nil); admitted {
+	if _, _, admitted := wireQuery(spec, roles, valueowner.DeclareQuery, valueowner.BindQuery, valueowner.RecoverQuery, nil, nil, structure.CategoryInvalid, nil); admitted {
 		t.Fatal("unknown query population acquired observation-producer admission")
 	}
 }

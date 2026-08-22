@@ -98,12 +98,12 @@ func RecoverQuery(binding *engine.SchemaBinding, context query.Sealed[*ExactQuer
 
 // EncodeQueryAnswer is the effect-exact family's one-way public result
 // boundary. The private joined algebra value is discarded by the domain codec.
-func EncodeQueryAnswer(answer engine.Answer) (present bool, rows uint64, payload []byte, ok bool) {
+func EncodeQueryAnswer(layout *plane.Sealed, answer engine.Answer) (present bool, rows uint64, payload []byte, ok bool) {
 	observation, readable := engine.AnswerValue[factor.EffectObservation](answer)
 	if !readable {
 		return false, 0, nil, false
 	}
-	return factor.EncodeResult(observation)
+	return factor.EncodeResult(layout, observation)
 }
 
 // exactQuerySpec is the family's hot half against one Link's sealed effect
@@ -135,8 +135,3 @@ func exactQuerySpec(algebra *factor.Algebra, freezer identity.SemanticKey) engin
 		},
 	}
 }
-
-// ExactResultLayout is the sealed publication layout the answers of this family
-// are detached under. It is exposed beside the query declaration so the family
-// key and the layout that carries it are read from one place.
-func ExactResultLayout() *plane.Sealed { return factor.ExactResultLayout }

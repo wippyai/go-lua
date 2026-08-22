@@ -164,6 +164,7 @@ func canonicalContributions() [][]Spec {
 		authored(CategorySemanticRole, semanticRoles),
 		authored(CategoryConformanceVerdict, verdicts),
 		NativePublicationSpecs(),
+		PublicationPlaneSpecs(),
 	}
 }
 

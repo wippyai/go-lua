@@ -8,6 +8,7 @@ import (
 	linkproject "github.com/wippyai/go-lua/analysis/program/link/project"
 	"github.com/wippyai/go-lua/analysis/result"
 	"github.com/wippyai/go-lua/analysis/schema/plane"
+	"github.com/wippyai/go-lua/domain/composite"
 	"github.com/wippyai/go-lua/domain/value"
 )
 
@@ -21,7 +22,8 @@ func TestCompiledPlanMultiValueCallPublishesTypedSummary(t *testing.T) {
 		"return first\n"
 
 	linked := planLawMountedLink(t, []linkproject.Module{{Name: "main", Program: planLawProgram(t, source)}})
-	analysisResult, status := Analyze(context.Background(), linked)
+	workspace := NewWorkspace()
+	analysisResult, status := workspace.Analyze(context.Background(), linked)
 	if status != AnalyzeComplete || analysisResult == nil {
 		t.Fatalf("multi-value call solve = %v/%v", status, analysisResult)
 	}
@@ -50,7 +52,7 @@ func TestCompiledPlanMultiValueCallPublishesTypedSummary(t *testing.T) {
 			continue
 		}
 		cell, cellOK := query.Cell()
-		view, refusal := plane.Admit(value.SummaryResultLayout, cell.Present(), cell.RowCount(), cell.Payload())
+		view, refusal := plane.Admit(summaryLayout(t, workspace), cell.Present(), cell.RowCount(), cell.Payload())
 		if !cellOK || refusal.Available() {
 			t.Fatalf("value query %d hit has no typed summary: %s", queryIndex, refusal)
 		}
@@ -76,4 +78,16 @@ func TestCompiledPlanMultiValueCallPublishesTypedSummary(t *testing.T) {
 			t.Fatalf("canonical ingress Value %s is absent from the typed Result summary", id)
 		}
 	}
+}
+
+// summaryLayout is the sealed layout this workspace published its value
+// summaries under. A law opens a published cell against the compilation's own
+// declaration rather than a copy of it kept beside the reader.
+func summaryLayout(t testing.TB, workspace *Workspace) *plane.Sealed {
+	t.Helper()
+	layout, layoutOK := composite.QueryResultLayout(workspace.Compilation(), value.SummaryResultFamily)
+	if !layoutOK || !layout.Available() {
+		t.Fatal("the compilation sealed no value-summary layout")
+	}
+	return layout
 }

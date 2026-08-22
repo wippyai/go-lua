@@ -184,7 +184,7 @@ func (view View) admitPlanes() Refusal {
 	}
 	tailLength := len(view.body) - view.tailAt
 	if layout.variable >= 0 {
-		element := layout.columns[layout.variable].Carrier.element()
+		element := layout.columns[layout.variable].carrier.element()
 		if tailLength%element != 0 {
 			return RefusalTail
 		}
@@ -205,7 +205,7 @@ func (view View) admitPlanes() Refusal {
 		// A portable identity is available or it is not an identity. The
 		// vector carries no presence byte of its own, so the zero image is
 		// refused here rather than read back as a row that names nothing.
-		if layout.columns[layout.variable].Carrier == CarrierAtoms {
+		if layout.columns[layout.variable].carrier == CarrierAtoms {
 			for at := view.tailAt; at < len(view.body); at += identityWidth {
 				if !identityAvailable(view.body, at) {
 					return RefusalColumn
@@ -240,13 +240,13 @@ func (view View) admitRow(index int) Refusal {
 		return RefusalNone
 	}
 	for column, declared := range layout.columns {
-		if declared.Carrier.Variable() {
+		if declared.carrier.Variable() {
 			continue
 		}
 		at := recordAt + layout.offsets[column]
-		switch declared.Carrier {
+		switch declared.carrier {
 		case CarrierMember:
-			if int(view.body[at]) > len(declared.Members) {
+			if int(view.body[at]) > len(declared.members) {
 				return RefusalColumn
 			}
 		case CarrierEvidence:
@@ -405,7 +405,7 @@ func (row Row) Member(column int) (schema.Key, bool) {
 	if !ok || row.body[at] == 0 {
 		return "", false
 	}
-	return row.layout.columns[column].Members[row.body[at]-1], true
+	return row.layout.columns[column].members[row.body[at]-1], true
 }
 
 // MemberIs reports whether one declared member column names the given member.
@@ -454,7 +454,7 @@ func (row Row) Count() int {
 	if !row.ok || row.layout.variable < 0 {
 		return 0
 	}
-	return (row.tailTo - row.tailFrom) / row.layout.columns[row.layout.variable].Carrier.element()
+	return (row.tailTo - row.tailFrom) / row.layout.columns[row.layout.variable].carrier.element()
 }
 
 // WordAt reads one 64-bit word of this row's variable column.
@@ -477,7 +477,7 @@ func (row Row) AtomAt(index int) (identity.ContentID, bool) {
 }
 
 func (row Row) variableIs(carrier Carrier) bool {
-	return row.ok && row.layout.variable >= 0 && row.layout.columns[row.layout.variable].Carrier == carrier
+	return row.ok && row.layout.variable >= 0 && row.layout.columns[row.layout.variable].carrier == carrier
 }
 
 // fixed resolves one declared fixed column's byte offset inside this row. The
@@ -487,7 +487,7 @@ func (row Row) fixed(column int, carrier Carrier) (int, bool) {
 	if !row.ok || column < 0 || column >= len(row.layout.columns) {
 		return 0, false
 	}
-	if row.layout.columns[column].Carrier != carrier || row.body[row.recordAt] == 0 {
+	if row.layout.columns[column].carrier != carrier || row.body[row.recordAt] == 0 {
 		return 0, false
 	}
 	return row.recordAt + row.layout.offsets[column], true

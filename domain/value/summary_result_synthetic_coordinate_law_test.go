@@ -44,7 +44,8 @@ func TestSummaryResultEncodesSyntheticTailCoordinates(t *testing.T) {
 		t.Fatal("fold over the sealed coordinate space did not produce an owned summary answer")
 	}
 
-	present, rows, payload, encoded := valuedomain.EncodeSummaryResult(observation)
+	layout := syntheticSummaryLayout(t)
+	present, rows, payload, encoded := valuedomain.EncodeSummaryResult(layout, observation)
 	if !encoded {
 		t.Fatal("value-summary codec refused an owned answer over the schema's own coordinate space")
 	}
@@ -52,7 +53,7 @@ func TestSummaryResultEncodesSyntheticTailCoordinates(t *testing.T) {
 		t.Fatalf("encoded summary present=%t rows=%d, want a single present row", present, rows)
 	}
 
-	view, refusal := plane.Admit(valuedomain.SummaryResultLayout, present, rows, string(payload))
+	view, refusal := plane.Admit(layout, present, rows, string(payload))
 	if refusal.Available() {
 		t.Fatalf("encoded summary is not decodable: %s", refusal)
 	}
@@ -94,11 +95,12 @@ func TestSyntheticTailCoordinateResolvesByPortableIdentity(t *testing.T) {
 	if !folded {
 		t.Fatal("empty fold over the sealed coordinate space refused")
 	}
-	present, rows, payload, encoded := valuedomain.EncodeSummaryResult(observation)
+	layout := syntheticSummaryLayout(t)
+	present, rows, payload, encoded := valuedomain.EncodeSummaryResult(layout, observation)
 	if !encoded || present || rows != 0 {
 		t.Fatalf("all-absent encode = present:%t rows:%d ok:%t", present, rows, encoded)
 	}
-	view, refusal := plane.Admit(valuedomain.SummaryResultLayout, present, rows, string(payload))
+	view, refusal := plane.Admit(layout, present, rows, string(payload))
 	if refusal.Available() {
 		t.Fatalf("all-absent summary is not decodable: %s", refusal)
 	}
@@ -112,6 +114,23 @@ func TestSyntheticTailCoordinateResolvesByPortableIdentity(t *testing.T) {
 			t.Fatalf("coordinate %d identity does not resolve back to a sealed coordinate", index)
 		}
 	}
+}
+
+// syntheticSummaryLayout is the sealed layout the analyzer publishes this
+// family's answers under. It is read from the compilation rather than kept
+// beside the codec, so a law here opens a payload under the same declaration
+// the composition wrote it under.
+func syntheticSummaryLayout(t *testing.T) *plane.Sealed {
+	t.Helper()
+	compilation, compilationOK := composite.Build()
+	if !compilationOK {
+		t.Fatal("program schema")
+	}
+	layout, layoutOK := composite.QueryResultLayout(compilation, valuedomain.SummaryResultFamily)
+	if !layoutOK {
+		t.Fatal("the compilation sealed no value-summary layout")
+	}
+	return layout
 }
 
 func sealSyntheticTailValueSchema(t *testing.T, name, source string) (*valuedomain.Schema, int) {

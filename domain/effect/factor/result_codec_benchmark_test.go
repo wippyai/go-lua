@@ -26,7 +26,7 @@ func BenchmarkEncodeResult(b *testing.B) {
 			b.ReportAllocs()
 			b.ResetTimer()
 			for iteration := 0; iteration < b.N; iteration++ {
-				_, _, payload, ok := EncodeResult(observation)
+				_, _, payload, ok := EncodeResult(exactResultTestLayout, observation)
 				if !ok {
 					b.Fatal("effect result codec refused benchmark observation")
 				}
@@ -45,7 +45,7 @@ func BenchmarkAdmitResult(b *testing.B) {
 		atoms := atoms
 		b.Run("atoms="+strconv.Itoa(atoms), func(b *testing.B) {
 			observation := resultCodecBenchmarkObservation(atoms)
-			present, rows, payload, ok := EncodeResult(observation)
+			present, rows, payload, ok := EncodeResult(exactResultTestLayout, observation)
 			if !ok {
 				b.Fatal("effect result codec refused decode benchmark observation")
 			}
@@ -53,7 +53,7 @@ func BenchmarkAdmitResult(b *testing.B) {
 			b.ReportAllocs()
 			b.ResetTimer()
 			for iteration := 0; iteration < b.N; iteration++ {
-				view, refusal := plane.Admit(ExactResultLayout, present, rows, encoded)
+				view, refusal := plane.Admit(exactResultTestLayout, present, rows, encoded)
 				row, rowOK := view.At(0)
 				effectResultCodecDecodeSink = view
 				effectResultCodecDecodeOKSink = !refusal.Available() && rowOK &&
@@ -76,7 +76,7 @@ func BenchmarkAdmitResult(b *testing.B) {
 func TestEncodeResultAllocatesOnePayload(t *testing.T) {
 	observation := resultCodecBenchmarkObservation(16)
 	allocations := testing.AllocsPerRun(100, func() {
-		_, _, payload, ok := EncodeResult(observation)
+		_, _, payload, ok := EncodeResult(exactResultTestLayout, observation)
 		if !ok {
 			t.Fatal("effect result codec refused allocation-law observation")
 		}

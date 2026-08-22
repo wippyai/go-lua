@@ -29,6 +29,8 @@ import (
 
 	"github.com/wippyai/go-lua/analysis/identity"
 	"github.com/wippyai/go-lua/analysis/schema"
+	"github.com/wippyai/go-lua/analysis/schema/query"
+	"github.com/wippyai/go-lua/analysis/schema/structure"
 )
 
 // Format is the wire revision of this codec. It is the analyzer's one
@@ -142,7 +144,8 @@ func (state Evidence) Decided() bool {
 }
 
 // Column is one declared column of a published answer: the name a consumer
-// reads it under and the carrier its bytes are admitted over.
+// reads it under, the carrier its bytes are admitted over, and, for a member
+// column, the declared vocabulary its byte ranks.
 type Column struct {
 	// Key names this column inside its layout. It is content: two layouts that
 	// differ in a column name reach different layout digests, so a consumer
@@ -150,24 +153,35 @@ type Column struct {
 	// silently reinterpreted.
 	Key     schema.Key
 	Carrier Carrier
-	// Members is a CarrierMember column's declared vocabulary, in the order the
-	// seal ranks it. It is the column's meaning, not its width: a producer
-	// states a member by naming it and a consumer reads back that name, so
-	// neither side ever holds an ordinal the declaration did not issue. The
-	// identities are folded into the layout digest, so adding, renaming, or
-	// reordering a member is a different declaration and refuses the bytes of
-	// the one it replaced instead of silently re-ranking them.
-	Members []schema.Key
+	// Members names a CarrierMember column's declared vocabulary. It is a
+	// category of the structural vocabulary surface and not a list written
+	// here: the members, their order, and their identities are that category's
+	// declaration, and the seal reads them from it. The resolved identities are
+	// folded into the layout digest, so adding, renaming, or reordering a
+	// member of the category is a different declaration and refuses the bytes
+	// of the one it replaced instead of silently re-ranking them.
+	Members structure.Category
 }
 
-func (column Column) available() bool {
-	if !column.Key.Available() || !column.Carrier.Available() {
+// sealedColumn is one admitted column: the authored declaration together with
+// the member identities the seal resolved its category to. A producer states a
+// member by naming it and a consumer reads back that name, so neither side
+// ever holds an ordinal the declaration did not issue.
+type sealedColumn struct {
+	key      schema.Key
+	carrier  Carrier
+	category structure.Category
+	members  []schema.Key
+}
+
+func (column sealedColumn) available() bool {
+	if !column.key.Available() || !column.carrier.Available() {
 		return false
 	}
-	if column.Carrier != CarrierMember {
-		return len(column.Members) == 0
+	if column.carrier != CarrierMember {
+		return column.category == structure.CategoryInvalid && len(column.members) == 0
 	}
-	return declaredMembers(column.Members)
+	return column.category.Available() && declaredMembers(column.members)
 }
 
 // declaredMembers admits one member vocabulary: nonempty, uniquely named, and
@@ -201,43 +215,17 @@ func rank(members []schema.Key, member schema.Key) (byte, bool) {
 	return 0, false
 }
 
-// Layout is the authored declaration of one family's published answer.
-type Layout struct {
-	// Family is the query family this layout publishes. It is folded into the
-	// layout digest, so two families never share a payload interpretation.
-	Family schema.Key
-	// Keyed declares that every row carries the portable identity of the
-	// coordinate it holds. A family answering one point declares no key: the
-	// row's identity is the query site's own and restating it on the wire
-	// would publish a second authority for it.
-	//
-	// Whether the payload also carries the identity of the space those
-	// coordinates were issued by is not a second declaration: a keyed answer
-	// whose space is unnamed is a set of rows a consumer could read against a
-	// foreign coordinate space, and an unkeyed answer has no space to name. The
-	// seal derives the owner from the key rather than admitting the two apart.
-	Keyed bool
-	// States is the row state's declared vocabulary: the classes a written row
-	// may be published at, in the order the seal ranks them. A family whose
-	// rows carry presence alone declares the one class its written rows are at.
-	// Like a member column, the state byte is the seal's rank of a named class
-	// and the identities are folded into the layout digest.
-	States []schema.Key
-	// Columns are the published columns in declaration order. The order is the
-	// order the encoder walks and the order the decoder indexes, so no
-	// consumer and no producer spells a byte offset.
-	Columns []Column
-}
-
-// Sealed is one admitted layout: the declaration, the byte geometry derived
-// from it, and the digest the wire carries. It is immutable and safe for
-// concurrent readers.
+// Sealed is one admitted layout: the family and keying its query registration
+// publishes it under, the row state and column declarations resolved against
+// the sealed structural vocabulary, the byte geometry derived from all of it,
+// and the digest the wire carries. It is immutable and safe for concurrent
+// readers.
 type Sealed struct {
 	family   schema.Key
 	keyed    bool
 	owner    bool
 	states   []schema.Key
-	columns  []Column
+	columns  []sealedColumn
 	offsets  []int
 	rowWidth int
 	variable int
@@ -245,32 +233,55 @@ type Sealed struct {
 	digest   identity.ContentID
 }
 
-// Seal admits one authored layout. A rejected layout returns false rather than
-// a partially usable descriptor.
-func Seal(layout Layout) (*Sealed, bool) {
-	if !layout.Family.Available() || !declaredMembers(layout.States) || len(layout.Columns) == 0 {
+// Seal admits one family's published answer declaration.
+//
+// Nothing about the layout is authored twice. The family the payload is
+// interpreted under and whether its rows carry the coordinates they hold are
+// the query registration's shape; the classes a written row may be published
+// at and the vocabulary of every member column are categories of the sealed
+// structural vocabulary, read from it here rather than restated as lists
+// beside the codec. What a family states is only the columns it publishes and
+// the carrier each is admitted over.
+//
+// A rejected declaration returns false rather than a partially usable
+// descriptor.
+func Seal(shape query.Shape, vocabulary structure.Table, states structure.Category, columns []Column) (*Sealed, bool) {
+	if !shape.Available() || len(columns) == 0 {
+		return nil, false
+	}
+	declaredStates, statesOK := vocabulary.Vocabulary(states)
+	if !statesOK || !declaredMembers(declaredStates) {
 		return nil, false
 	}
 	sealed := &Sealed{
-		family:   layout.Family,
-		keyed:    layout.Keyed,
-		owner:    layout.Keyed,
-		states:   append([]schema.Key(nil), layout.States...),
-		columns:  append([]Column(nil), layout.Columns...),
-		offsets:  make([]int, len(layout.Columns)),
+		family:   shape.Family(),
+		keyed:    shape.Keyed(),
+		owner:    shape.Keyed(),
+		states:   declaredStates,
+		columns:  make([]sealedColumn, len(columns)),
+		offsets:  make([]int, len(columns)),
 		variable: -1,
 	}
-	names := make(map[schema.Key]struct{}, len(layout.Columns))
+	names := make(map[schema.Key]struct{}, len(columns))
 	cursor := stateWidth
-	for index, column := range sealed.columns {
+	for index, authored := range columns {
+		column := sealedColumn{key: authored.Key, carrier: authored.Carrier, category: authored.Members}
+		if authored.Carrier == CarrierMember {
+			members, membersOK := vocabulary.Vocabulary(authored.Members)
+			if !membersOK {
+				return nil, false
+			}
+			column.members = members
+		}
 		if !column.available() {
 			return nil, false
 		}
-		if _, duplicate := names[column.Key]; duplicate {
+		if _, duplicate := names[column.key]; duplicate {
 			return nil, false
 		}
-		names[column.Key] = struct{}{}
-		if column.Carrier.Variable() {
+		names[column.key] = struct{}{}
+		sealed.columns[index] = column
+		if column.carrier.Variable() {
 			// One variable column keeps every fixed column at a computed
 			// offset and the row record at a computed width, so a random row
 			// lookup never walks a prefix of the payload. A layout needing two
@@ -284,7 +295,7 @@ func Seal(layout Layout) (*Sealed, bool) {
 			continue
 		}
 		sealed.offsets[index] = cursor
-		cursor += column.Carrier.Width()
+		cursor += column.carrier.Width()
 	}
 	sealed.rowWidth = cursor
 	sealed.header = scalarWidth + identityWidth + scalarWidth
@@ -310,8 +321,8 @@ func sealLayoutDigest(sealed *Sealed) (identity.ContentID, bool) {
 	binary.BigEndian.PutUint64(shape[:], uint64(len(sealed.columns)))
 	parts = append(parts, append([]byte(nil), shape[:]...))
 	for _, column := range sealed.columns {
-		parts = append(parts, []byte(column.Key), []byte{byte(column.Carrier)})
-		parts = appendMemberIdentities(parts, column.Members)
+		parts = append(parts, []byte(column.key), []byte{byte(column.carrier)})
+		parts = appendMemberIdentities(parts, column.members)
 	}
 	return identity.DeriveContentID(layoutDigestDomain, parts...)
 }
@@ -362,7 +373,8 @@ func (sealed *Sealed) ColumnAt(index int) (Column, bool) {
 	if sealed == nil || index < 0 || index >= len(sealed.columns) {
 		return Column{}, false
 	}
-	return sealed.columns[index], true
+	column := sealed.columns[index]
+	return Column{Key: column.key, Carrier: column.carrier, Members: column.category}, true
 }
 
 // RowWidth is the byte width of one fixed row record, the row state included.
@@ -397,7 +409,7 @@ func (sealed *Sealed) Size(rows, elements int) (int, bool) {
 	}
 	size += rows * rowBytes
 	if sealed.variable >= 0 {
-		element := sealed.columns[sealed.variable].Carrier.element()
+		element := sealed.columns[sealed.variable].carrier.element()
 		if rows+1 > (maxInt-size)/scalarWidth {
 			return 0, false
 		}

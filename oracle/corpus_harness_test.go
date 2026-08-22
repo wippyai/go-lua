@@ -566,7 +566,7 @@ func corpusHarnessExecuteLink(t testing.TB, run *corpusHarnessRun, mode corpusHa
 			return run, class, err
 		}
 	}
-	if err := corpusHarnessResultDefect(run.result, linked.ContentID()); err != nil {
+	if err := corpusHarnessResultDefect(run.compilation, run.result, linked.ContentID()); err != nil {
 		return run, "detached-result", err
 	}
 	if mode.judge != nil {
@@ -607,7 +607,12 @@ func corpusHarnessSolve(run *corpusHarnessRun, mode corpusHarnessMode) (string, 
 // applies. A Result that cannot name its own source, bodies, roots, or typed
 // query publications is not a clean analysis regardless of the mode's own
 // verdict.
-func corpusHarnessResultDefect(analysisResult *result.Result, sourceID identity.ContentID) error {
+func corpusHarnessResultDefect(compilation composite.Compilation, analysisResult *result.Result, sourceID identity.ContentID) error {
+	summaryLayout, summaryLayoutOK := composite.QueryResultLayout(compilation, value.SummaryResultFamily)
+	exactLayout, exactLayoutOK := composite.QueryResultLayout(compilation, factor.ExactResultFamily)
+	if !summaryLayoutOK || !exactLayoutOK {
+		return fmt.Errorf("the compilation sealed no publication layout")
+	}
 	if analysisResult == nil {
 		return fmt.Errorf("nil result")
 	}
@@ -681,7 +686,7 @@ func corpusHarnessResultDefect(analysisResult *result.Result, sourceID identity.
 			// remains valid without asking the domain facade to decode a cell.
 		case result.QueryHit:
 			cell, cellOK := query.Cell()
-			view, refusal := plane.Admit(value.SummaryResultLayout, cell.Present(), cell.RowCount(), cell.Payload())
+			view, refusal := plane.Admit(summaryLayout, cell.Present(), cell.RowCount(), cell.Payload())
 			if !cellOK || refusal.Available() {
 				return fmt.Errorf("value query %d summary payload is unreadable: %s", queryIndex, refusal)
 			}
@@ -722,7 +727,7 @@ func corpusHarnessResultDefect(analysisResult *result.Result, sourceID identity.
 			// value family.
 		case result.QueryHit:
 			cell, cellOK := query.Cell()
-			view, refusal := plane.Admit(factor.ExactResultLayout, cell.Present(), cell.RowCount(), cell.Payload())
+			view, refusal := plane.Admit(exactLayout, cell.Present(), cell.RowCount(), cell.Payload())
 			row, rowOK := view.At(0)
 			if !cellOK || refusal.Available() || !rowOK {
 				return fmt.Errorf("effect query %d effect payload is unreadable: %s", queryIndex, refusal)

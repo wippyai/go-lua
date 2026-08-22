@@ -245,6 +245,7 @@ func structureContributions() [][]structure.Spec {
 		constraint.StructureSpecs(),
 		diagnosticVocabulary(),
 		structure.NativePublicationSpecs(),
+		structure.PublicationPlaneSpecs(),
 		semanticRoleVocabulary(),
 		observationRoleVocabulary(),
 		queryRoleVocabulary(),

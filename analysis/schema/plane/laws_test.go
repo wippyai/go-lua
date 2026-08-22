@@ -6,7 +6,52 @@ import (
 	"github.com/wippyai/go-lua/analysis/identity"
 	"github.com/wippyai/go-lua/analysis/schema"
 	"github.com/wippyai/go-lua/analysis/schema/plane"
+	"github.com/wippyai/go-lua/analysis/schema/query"
+	"github.com/wippyai/go-lua/analysis/schema/structure"
+	"github.com/wippyai/go-lua/analysis/schema/structure/structuretest"
 )
+
+// The two categories these laws seal their layouts against. The laws are about
+// the mechanism and not about either vocabulary: the seal ranks whatever the
+// category it is named holds, so what matters here is that the members come
+// from a sealed declaration rather than from a list beside the codec.
+const (
+	classes = structure.CategoryPublicationRowClass
+	kinds   = structure.CategoryOccurrenceKind
+)
+
+// vocabulary seals one structural table declaring the given members of the two
+// categories above, in the order given.
+func vocabulary(t *testing.T, rowClasses, memberKinds []schema.Key) structure.Table {
+	t.Helper()
+	var specs []structure.Spec
+	declare := func(category structure.Category, members []schema.Key) {
+		for index, member := range members {
+			specs = append(specs, structure.Spec{
+				Key: member, Category: category, Ordinal: uint16(index + 1),
+				Spelling: string(member), Accepted: true,
+			})
+		}
+	}
+	declare(classes, rowClasses)
+	declare(kinds, memberKinds)
+	table, ok := structuretest.Table(specs)
+	if !ok {
+		t.Fatal("the law vocabulary must seal")
+	}
+	return table
+}
+
+// shape derives the published shape of a family answered under one fold. It is
+// the registration's own derivation: nothing here decides keying.
+func shape(t *testing.T, family schema.Key, fold query.Fold) query.Shape {
+	t.Helper()
+	published, ok := query.NewShape(family, fold)
+	if !ok {
+		t.Fatalf("the shape of %q must derive", family)
+	}
+	return published
+}
 
 func id(seed byte) identity.ContentID {
 	var value identity.ContentID
@@ -19,18 +64,16 @@ func id(seed byte) identity.ContentID {
 // keyedLayout exercises every fixed carrier plus a variable word column.
 func keyedLayout(t *testing.T) *plane.Sealed {
 	t.Helper()
-	sealed, ok := plane.Seal(plane.Layout{
-		Family: schema.Key("law-keyed"),
-		Keyed:  true,
-		States: []schema.Key{"stack", "owned", "shared", "unknown"},
-		Columns: []plane.Column{
-			{Key: "kind", Carrier: plane.CarrierMember, Members: []schema.Key{"table", "closure", "manifest"}},
-			{Key: "root", Carrier: plane.CarrierIdentity},
-			{Key: "depth", Carrier: plane.CarrierOrdinal},
-			{Key: "frozen", Carrier: plane.CarrierEvidence},
-			{Key: "top", Carrier: plane.CarrierFlag},
-			{Key: "image", Carrier: plane.CarrierWords},
-		},
+	table := vocabulary(t,
+		[]schema.Key{"stack", "owned", "shared", "unknown"},
+		[]schema.Key{"table", "closure", "manifest"})
+	sealed, ok := plane.Seal(shape(t, "law-keyed", query.FoldDistributive), table, classes, []plane.Column{
+		{Key: "kind", Carrier: plane.CarrierMember, Members: kinds},
+		{Key: "root", Carrier: plane.CarrierIdentity},
+		{Key: "depth", Carrier: plane.CarrierOrdinal},
+		{Key: "frozen", Carrier: plane.CarrierEvidence},
+		{Key: "top", Carrier: plane.CarrierFlag},
+		{Key: "image", Carrier: plane.CarrierWords},
 	})
 	if !ok {
 		t.Fatal("the exercised layout must seal")
@@ -59,70 +102,127 @@ func TestLayoutIsTheOnlyColumnOrder(t *testing.T) {
 // TestLayoutDigestSeparatesDeclarations states that the declaration is the
 // payload's identity: two layouts that differ in anything a consumer reads
 // reach different digests, and a payload of one refuses to open as the other.
+// The vocabularies are declarations of the structural surface, so renaming or
+// reordering a member of the category a layout names is one of those
+// differences and the bytes written under the layout it replaced are refused.
 func TestLayoutDigestSeparatesDeclarations(t *testing.T) {
-	base := plane.Layout{
-		Family: "law-digest", Keyed: true, States: []schema.Key{"written"},
-		Columns: []plane.Column{{Key: "top", Carrier: plane.CarrierFlag}},
-	}
-	sealed, ok := plane.Seal(base)
+	baseClasses := []schema.Key{"written"}
+	baseKinds := []schema.Key{"a", "b"}
+	baseColumns := []plane.Column{{Key: "top", Carrier: plane.CarrierFlag}}
+	memberColumns := []plane.Column{{Key: "top", Carrier: plane.CarrierMember, Members: kinds}}
+	sealed, ok := plane.Seal(shape(t, "law-digest", query.FoldDistributive),
+		vocabulary(t, baseClasses, baseKinds), classes, baseColumns)
 	if !ok {
 		t.Fatal("base layout must seal")
 	}
 	drifted := []struct {
-		name   string
-		mutate func(*plane.Layout)
+		name    string
+		family  schema.Key
+		fold    query.Fold
+		classes []schema.Key
+		kinds   []schema.Key
+		columns []plane.Column
 	}{
-		{"family", func(layout *plane.Layout) { layout.Family = "other" }},
-		{"keyed", func(layout *plane.Layout) { layout.Keyed = false }},
-		{"state-vocabulary", func(layout *plane.Layout) {
-			layout.States = []schema.Key{"written", "second"}
-		}},
-		{"state-name", func(layout *plane.Layout) { layout.States = []schema.Key{"renamed"} }},
-		{"column-name", func(layout *plane.Layout) { layout.Columns[0].Key = "renamed" }},
-		{"carrier", func(layout *plane.Layout) { layout.Columns[0].Carrier = plane.CarrierEvidence }},
-		{"member-vocabulary", func(layout *plane.Layout) {
-			layout.Columns = []plane.Column{{Key: "top", Carrier: plane.CarrierMember, Members: []schema.Key{"a", "b"}}}
-		}},
-		{"member-arity", func(layout *plane.Layout) {
-			layout.Columns = []plane.Column{{Key: "top", Carrier: plane.CarrierMember, Members: []schema.Key{"a"}}}
-		}},
-		{"member-name", func(layout *plane.Layout) {
-			layout.Columns = []plane.Column{{Key: "top", Carrier: plane.CarrierMember, Members: []schema.Key{"a", "c"}}}
-		}},
-		{"member-order", func(layout *plane.Layout) {
-			layout.Columns = []plane.Column{{Key: "top", Carrier: plane.CarrierMember, Members: []schema.Key{"c", "a"}}}
-		}},
-		{"arity", func(layout *plane.Layout) {
-			layout.Columns = append(layout.Columns, plane.Column{Key: "extra", Carrier: plane.CarrierFlag})
-		}},
+		{name: "family", family: "other"},
+		{name: "keyed", fold: query.FoldGeneral},
+		{name: "state-vocabulary", classes: []schema.Key{"written", "second"}},
+		{name: "state-name", classes: []schema.Key{"renamed"}},
+		{name: "column-name", columns: []plane.Column{{Key: "renamed", Carrier: plane.CarrierFlag}}},
+		{name: "carrier", columns: []plane.Column{{Key: "top", Carrier: plane.CarrierEvidence}}},
+		{name: "member-vocabulary", columns: memberColumns},
+		{name: "member-arity", kinds: []schema.Key{"a"}, columns: memberColumns},
+		{name: "member-name", kinds: []schema.Key{"a", "c"}, columns: memberColumns},
+		{name: "member-order", kinds: []schema.Key{"b", "a"}, columns: memberColumns},
+		{name: "arity", columns: append(append([]plane.Column(nil), baseColumns...),
+			plane.Column{Key: "extra", Carrier: plane.CarrierFlag})},
 	}
+	digests := map[identity.ContentID]string{sealed.Digest(): "base"}
 	for _, drift := range drifted {
 		t.Run(drift.name, func(t *testing.T) {
-			mutated := base
-			mutated.Columns = append([]plane.Column(nil), base.Columns...)
-			drift.mutate(&mutated)
-			other, otherOK := plane.Seal(mutated)
+			family, fold := drift.family, drift.fold
+			if !family.Available() {
+				family = "law-digest"
+			}
+			if !fold.Available() {
+				fold = query.FoldDistributive
+			}
+			rowClasses, memberKinds, columns := drift.classes, drift.kinds, drift.columns
+			if rowClasses == nil {
+				rowClasses = baseClasses
+			}
+			if memberKinds == nil {
+				memberKinds = baseKinds
+			}
+			if columns == nil {
+				columns = baseColumns
+			}
+			other, otherOK := plane.Seal(shape(t, family, fold),
+				vocabulary(t, rowClasses, memberKinds), classes, columns)
 			if !otherOK {
 				t.Fatal("drifted layout must still seal")
 			}
-			if other.Digest() == sealed.Digest() {
-				t.Fatal("a drifted declaration reached the same layout digest")
+			if prior, taken := digests[other.Digest()]; taken {
+				t.Fatalf("a drifted declaration reached the layout digest of %s", prior)
 			}
+			digests[other.Digest()] = drift.name
 		})
+	}
+}
+
+// TestMemberDriftRefusesPriorBytes states the consequence of the law above at
+// the wire: a payload written while the category ranked one vocabulary is
+// refused once the category declares another.
+func TestMemberDriftRefusesPriorBytes(t *testing.T) {
+	published := shape(t, "law-drift", query.FoldGeneral)
+	columns := []plane.Column{{Key: "kind", Carrier: plane.CarrierMember, Members: kinds}}
+	before, beforeOK := plane.Seal(published, vocabulary(t, []schema.Key{"written"}, []schema.Key{"a", "b"}), classes, columns)
+	after, afterOK := plane.Seal(published, vocabulary(t, []schema.Key{"written"}, []schema.Key{"b", "a"}), classes, columns)
+	if !beforeOK || !afterOK {
+		t.Fatal("both declarations must seal")
+	}
+	writer, begun := plane.Begin(before, identity.ContentID{}, 1, 0)
+	if !begun || !writer.Row(identity.ContentID{}, "written") || !writer.Member(true, "a") || !writer.EndRow() {
+		t.Fatal("write")
+	}
+	_, _, payload, encoded := writer.Finish(1)
+	if !encoded {
+		t.Fatal("encode")
+	}
+	if _, refusal := plane.Open(after, string(payload)); refusal != plane.RefusalLayout {
+		t.Fatalf("refusal = %v (%s), want the foreign-layout refusal", refusal, refusal)
+	}
+}
+
+// TestKeyingFollowsTheFold states that no layout decides its own keying. A
+// family answered over a coordinate space carries the coordinates it holds;
+// a family answered whole at one point carries none, and neither can be
+// sealed the other way because neither states it.
+func TestKeyingFollowsTheFold(t *testing.T) {
+	table := vocabulary(t, []schema.Key{"written"}, []schema.Key{"a"})
+	columns := []plane.Column{{Key: "top", Carrier: plane.CarrierFlag}}
+	summary, summaryOK := plane.Seal(shape(t, "law-summary", query.FoldDistributive), table, classes, columns)
+	exact, exactOK := plane.Seal(shape(t, "law-exact-fold", query.FoldGeneral), table, classes, columns)
+	if !summaryOK || !exactOK {
+		t.Fatal("both folds must seal")
+	}
+	if _, ok := plane.Begin(summary, identity.ContentID{}, 1, 0); ok {
+		t.Fatal("a distributive family sealed an answer with no coordinate space")
+	}
+	if _, ok := plane.Begin(exact, id(1), 1, 0); ok {
+		t.Fatal("a general fold sealed an answer that names a coordinate space")
+	}
+	if _, ok := exact.Size(2, 0); ok {
+		t.Fatal("a general fold sized an answer of more than one row")
 	}
 }
 
 // TestForeignBytesRefuseByName states that a payload written under another
 // declaration is refused, and refused by a name its caller can render.
 func TestForeignBytesRefuseByName(t *testing.T) {
-	mine, _ := plane.Seal(plane.Layout{
-		Family: "law-mine", Keyed: false, States: []schema.Key{"written"},
-		Columns: []plane.Column{{Key: "top", Carrier: plane.CarrierFlag}},
-	})
-	theirs, _ := plane.Seal(plane.Layout{
-		Family: "law-theirs", Keyed: false, States: []schema.Key{"written"},
-		Columns: []plane.Column{{Key: "top", Carrier: plane.CarrierFlag}},
-	})
+	table := vocabulary(t, []schema.Key{"written"}, []schema.Key{"a"})
+	columns := []plane.Column{{Key: "top", Carrier: plane.CarrierFlag}}
+	mine, _ := plane.Seal(shape(t, "law-mine", query.FoldGeneral), table, classes, columns)
+	theirs, _ := plane.Seal(shape(t, "law-theirs", query.FoldGeneral), table, classes, columns)
 	writer, ok := plane.Begin(theirs, identity.ContentID{}, 1, 0)
 	if !ok {
 		t.Fatal("begin")
@@ -234,10 +334,9 @@ func TestAbsentRowCarriesNothing(t *testing.T) {
 // TestEvidenceFourStateRoundTrip states that every one of the four proof
 // states survives the wire distinctly, absence included.
 func TestEvidenceFourStateRoundTrip(t *testing.T) {
-	sealed, ok := plane.Seal(plane.Layout{
-		Family: "law-evidence", Keyed: true, States: []schema.Key{"written"},
-		Columns: []plane.Column{{Key: "proof", Carrier: plane.CarrierEvidence}},
-	})
+	sealed, ok := plane.Seal(shape(t, "law-evidence", query.FoldDistributive),
+		vocabulary(t, []schema.Key{"written"}, []schema.Key{"a"}), classes,
+		[]plane.Column{{Key: "proof", Carrier: plane.CarrierEvidence}})
 	if !ok {
 		t.Fatal("seal")
 	}
@@ -327,13 +426,12 @@ func TestRoundTripCarriesEveryColumn(t *testing.T) {
 // point publishes no coordinate identity: restating the query site's own
 // identity on the wire would publish a second authority for it.
 func TestUnkeyedAnswerCarriesNoCoordinatePlane(t *testing.T) {
-	sealed, ok := plane.Seal(plane.Layout{
-		Family: "law-exact", Keyed: false, States: []schema.Key{"written"},
-		Columns: []plane.Column{
+	sealed, ok := plane.Seal(shape(t, "law-exact", query.FoldGeneral),
+		vocabulary(t, []schema.Key{"written"}, []schema.Key{"a"}), classes,
+		[]plane.Column{
 			{Key: "top", Carrier: plane.CarrierFlag},
 			{Key: "atoms", Carrier: plane.CarrierAtoms},
-		},
-	})
+		})
 	if !ok {
 		t.Fatal("seal")
 	}
@@ -461,34 +559,36 @@ func TestWalkRefusesAnUndeclaredOrder(t *testing.T) {
 }
 
 // TestSealRefusesAnInadmissibleDeclaration states the layout laws themselves.
+// What a member vocabulary must be is no longer among them: uniqueness,
+// density, and naming are the structural surface's own laws over the category,
+// and a seal that restated them would be a second declaration of the catalog.
 func TestSealRefusesAnInadmissibleDeclaration(t *testing.T) {
-	written := []schema.Key{"written"}
-	cases := map[string]plane.Layout{
-		"no-family": {Keyed: true, States: written, Columns: []plane.Column{{Key: "a", Carrier: plane.CarrierFlag}}},
-		"no-state":  {Family: "f", Keyed: true, Columns: []plane.Column{{Key: "a", Carrier: plane.CarrierFlag}}},
-		"unnamed-state": {Family: "f", Keyed: true, States: []schema.Key{""},
-			Columns: []plane.Column{{Key: "a", Carrier: plane.CarrierFlag}}},
-		"duplicate-state": {Family: "f", Keyed: true, States: []schema.Key{"a", "a"},
-			Columns: []plane.Column{{Key: "a", Carrier: plane.CarrierFlag}}},
-		"no-column": {Family: "f", Keyed: true, States: written},
-		"unnamed-column": {Family: "f", Keyed: true, States: written,
-			Columns: []plane.Column{{Carrier: plane.CarrierFlag}}},
-		"duplicate-column": {Family: "f", Keyed: true, States: written,
-			Columns: []plane.Column{{Key: "a", Carrier: plane.CarrierFlag}, {Key: "a", Carrier: plane.CarrierFlag}}},
-		"member-without-a-vocabulary": {Family: "f", Keyed: true, States: written,
-			Columns: []plane.Column{{Key: "a", Carrier: plane.CarrierMember}}},
-		"unnamed-member": {Family: "f", Keyed: true, States: written,
-			Columns: []plane.Column{{Key: "a", Carrier: plane.CarrierMember, Members: []schema.Key{""}}}},
-		"duplicate-member": {Family: "f", Keyed: true, States: written,
-			Columns: []plane.Column{{Key: "a", Carrier: plane.CarrierMember, Members: []schema.Key{"m", "m"}}}},
-		"vocabulary-on-a-non-member": {Family: "f", Keyed: true, States: written,
-			Columns: []plane.Column{{Key: "a", Carrier: plane.CarrierFlag, Members: []schema.Key{"m"}}}},
-		"two-variable-columns": {Family: "f", Keyed: true, States: written,
-			Columns: []plane.Column{{Key: "a", Carrier: plane.CarrierWords}, {Key: "b", Carrier: plane.CarrierAtoms}}},
+	table := vocabulary(t, []schema.Key{"written"}, []schema.Key{"m"})
+	published := shape(t, "f", query.FoldDistributive)
+	cases := map[string]struct {
+		shape   query.Shape
+		states  structure.Category
+		columns []plane.Column
+	}{
+		"no-shape": {states: classes,
+			columns: []plane.Column{{Key: "a", Carrier: plane.CarrierFlag}}},
+		"undeclared-state-category": {shape: published,
+			columns: []plane.Column{{Key: "a", Carrier: plane.CarrierFlag}}},
+		"no-column": {shape: published, states: classes},
+		"unnamed-column": {shape: published, states: classes,
+			columns: []plane.Column{{Carrier: plane.CarrierFlag}}},
+		"duplicate-column": {shape: published, states: classes,
+			columns: []plane.Column{{Key: "a", Carrier: plane.CarrierFlag}, {Key: "a", Carrier: plane.CarrierFlag}}},
+		"member-without-a-vocabulary": {shape: published, states: classes,
+			columns: []plane.Column{{Key: "a", Carrier: plane.CarrierMember}}},
+		"vocabulary-on-a-non-member": {shape: published, states: classes,
+			columns: []plane.Column{{Key: "a", Carrier: plane.CarrierFlag, Members: kinds}}},
+		"two-variable-columns": {shape: published, states: classes,
+			columns: []plane.Column{{Key: "a", Carrier: plane.CarrierWords}, {Key: "b", Carrier: plane.CarrierAtoms}}},
 	}
-	for name, layout := range cases {
+	for name, one := range cases {
 		t.Run(name, func(t *testing.T) {
-			if _, ok := plane.Seal(layout); ok {
+			if _, ok := plane.Seal(one.shape, table, one.states, one.columns); ok {
 				t.Fatal("an inadmissible declaration sealed")
 			}
 		})

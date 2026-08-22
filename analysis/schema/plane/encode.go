@@ -137,7 +137,7 @@ func (writer *Writer) Member(present bool, member schema.Key) bool {
 		}
 		return true
 	}
-	state, declared := rank(column.Members, member)
+	state, declared := rank(column.members, member)
 	if !declared {
 		return writer.fail()
 	}
@@ -272,21 +272,21 @@ func (writer *Writer) Finish(cardinality uint64) (present bool, rows uint64, pay
 
 // next admits the caller's setter against the next declared column and
 // returns its byte offset inside the open row's record.
-func (writer *Writer) next(carrier Carrier) (Column, int, bool) {
+func (writer *Writer) next(carrier Carrier) (sealedColumn, int, bool) {
 	if writer.failed || !writer.open || writer.column >= len(writer.layout.columns) {
 		writer.fail()
-		return Column{}, 0, false
+		return sealedColumn{}, 0, false
 	}
 	// A row no producer wrote carries no column content, so a setter aimed at
 	// one is refused before it can put a decided byte into an absent record.
 	if writer.out[writer.rowAt+writer.row*writer.layout.rowWidth] == 0 {
 		writer.fail()
-		return Column{}, 0, false
+		return sealedColumn{}, 0, false
 	}
 	column := writer.layout.columns[writer.column]
-	if column.Carrier != carrier {
+	if column.carrier != carrier {
 		writer.fail()
-		return Column{}, 0, false
+		return sealedColumn{}, 0, false
 	}
 	at := writer.rowAt + writer.row*writer.layout.rowWidth + writer.layout.offsets[writer.column]
 	writer.column++
@@ -302,7 +302,7 @@ func (writer *Writer) appendTail(carrier Carrier) (int, bool) {
 		writer.fail()
 		return 0, false
 	}
-	if writer.layout.columns[writer.column].Carrier != carrier {
+	if writer.layout.columns[writer.column].carrier != carrier {
 		writer.fail()
 		return 0, false
 	}

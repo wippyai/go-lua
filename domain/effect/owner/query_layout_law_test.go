@@ -3,22 +3,36 @@ package owner_test
 import (
 	"testing"
 
+	"github.com/wippyai/go-lua/analysis/schema/query"
 	"github.com/wippyai/go-lua/domain/effect/factor"
 	"github.com/wippyai/go-lua/domain/effect/owner"
 )
 
-// TestExactLayoutNamesTheFamilyItPublishes states that the family a result
-// layout carries is the family that layout is registered under. The two are one
-// authored key today; this law is what keeps them from drifting into two.
-func TestExactLayoutNamesTheFamilyItPublishes(t *testing.T) {
-	layout := owner.ExactResultLayout()
-	if !layout.Available() {
-		t.Fatal("the effect-exact layout did not seal")
+// TestExactShapeFollowsTheRegistration states that the wire shape this family
+// publishes is its registration's and nothing else's. The family a layout
+// carries is the family the registration is declared under - one authored key
+// today, and this is what keeps it from drifting into two - and the keying is
+// the fold, not a second declaration beside the codec.
+func TestExactShapeFollowsTheRegistration(t *testing.T) {
+	spec := owner.QuerySpec()
+	if spec.Family != factor.ExactResultFamily {
+		t.Fatalf("registered family = %q, want the domain's one family key", spec.Family)
 	}
-	if layout.Family() != owner.QuerySpec().Family {
-		t.Fatalf("layout family = %q, registered family = %q", layout.Family(), owner.QuerySpec().Family)
+	shape, shapeOK := query.NewShape(spec.Family, spec.Fold)
+	if !shapeOK || shape.Family() != factor.ExactResultFamily {
+		t.Fatalf("shape family = %q/%v", shape.Family(), shapeOK)
 	}
-	if layout.Family() != factor.ExactResultFamily {
-		t.Fatalf("layout family = %q, want the domain's one family key", layout.Family())
+	// An exact family answers its subject whole at one point, so its row carries
+	// no coordinate: restating the query site's identity on the wire would
+	// publish a second authority for it.
+	if shape.Keyed() {
+		t.Fatalf("a %v family derived a keyed answer", spec.Fold)
+	}
+	columns := factor.ExactResultColumns()
+	if len(columns) != 2 || columns[factor.ExactColumnAtoms].Carrier.Width() != 0 {
+		t.Fatal("the effect-exact family declares no atom vector column")
+	}
+	if !factor.ExactResultStates.Available() {
+		t.Fatal("the effect-exact family names no declared row state vocabulary")
 	}
 }

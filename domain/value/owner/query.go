@@ -101,12 +101,12 @@ func RecoverQuery(binding *engine.SchemaBinding, context query.Sealed[*SummaryQu
 // EncodeQueryAnswer is the value-summary family's one-way public result
 // boundary. Typed engine state is validated and converted to Value's canonical
 // compact payload before Result can retain it.
-func EncodeQueryAnswer(answer engine.Answer) (present bool, rows uint64, payload []byte, ok bool) {
+func EncodeQueryAnswer(layout *plane.Sealed, answer engine.Answer) (present bool, rows uint64, payload []byte, ok bool) {
 	observation, readable := engine.AnswerValue[value.ValueSummaryObservation](answer)
 	if !readable {
 		return false, 0, nil, false
 	}
-	return value.EncodeSummaryResult(observation)
+	return value.EncodeSummaryResult(layout, observation)
 }
 
 // summaryQuerySpec is the family's hot half against one Link's sealed value
@@ -139,8 +139,3 @@ func summaryQuerySpec(schema *value.Schema, freezer identity.SemanticKey) engine
 		},
 	}
 }
-
-// SummaryResultLayout is the sealed publication layout the answers of this
-// family are detached under. It is exposed beside the query declaration so the
-// family key and the layout that carries it are read from one place.
-func SummaryResultLayout() *plane.Sealed { return value.SummaryResultLayout }

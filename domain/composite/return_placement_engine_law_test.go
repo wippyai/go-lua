@@ -55,6 +55,10 @@ func TestReturnPlacementPublishesOwnedHeapThroughTheCompositeEngine(t *testing.T
 			if !ok {
 				t.Fatal("query plan")
 			}
+			summaryLayout, summaryLayoutOK := queryResultLayout(bound.catalog, valuedomain.SummaryResultFamily)
+			if !summaryLayoutOK {
+				t.Fatal("the compilation sealed no value-summary layout")
+			}
 			publications, ok := bound.QueryPublications(committed, table)
 			if !ok {
 				t.Fatal("query publications")
@@ -119,7 +123,7 @@ func TestReturnPlacementPublishesOwnedHeapThroughTheCompositeEngine(t *testing.T
 				}
 				got := rows[returnedID]
 				if got != placementdomain.OwnedHeap {
-					valueState := returnBoundaryValueStateForLaw(t, &view, plan, valueByPoint[target.point], record.ValueSchema, target.coordinate)
+					valueState := returnBoundaryValueStateForLaw(t, summaryLayout, &view, plan, valueByPoint[target.point], record.ValueSchema, target.coordinate)
 					t.Fatalf("return escape point %s allocation %s=%s, want exact OwnedHeap demand (boundary value %s)", target.point, returnedID, got, valueState)
 				}
 				if !placementdomain.LessOrEq(joined, got) {
@@ -225,7 +229,7 @@ func placementRowsForReturnLaw(t testing.TB, result placementdomain.SummaryResul
 	return rows
 }
 
-func returnBoundaryValueStateForLaw(t testing.TB, view *snapshot.Snapshot, plan snapshot.QueryPlan[identity.ContentID, engine.Answer], publication QueryPublication, schema *valuedomain.Schema, coordinate valuedomain.Coordinate) string {
+func returnBoundaryValueStateForLaw(t testing.TB, layout *plane.Sealed, view *snapshot.Snapshot, plan snapshot.QueryPlan[identity.ContentID, engine.Answer], publication QueryPublication, schema *valuedomain.Schema, coordinate valuedomain.Coordinate) string {
 	t.Helper()
 	index, indexOK := schema.CoordinateIndex(coordinate)
 	if !indexOK || !publication.Key.Available() {
@@ -239,7 +243,7 @@ func returnBoundaryValueStateForLaw(t testing.TB, view *snapshot.Snapshot, plan 
 	if !cellOK {
 		return "cell-invalid"
 	}
-	summaryView, refusal := plane.Admit(valuedomain.SummaryResultLayout, cell.Present(), cell.RowCount(), cell.Payload())
+	summaryView, refusal := plane.Admit(layout, cell.Present(), cell.RowCount(), cell.Payload())
 	if refusal.Available() {
 		return "decode-invalid"
 	}

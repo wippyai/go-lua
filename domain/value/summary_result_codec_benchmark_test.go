@@ -27,7 +27,7 @@ func BenchmarkEncodeSummaryResult(b *testing.B) {
 			b.ReportAllocs()
 			b.ResetTimer()
 			for iteration := 0; iteration < b.N; iteration++ {
-				_, _, payload, ok := EncodeSummaryResult(observation)
+				_, _, payload, ok := EncodeSummaryResult(summaryResultTestLayout, observation)
 				if !ok {
 					b.Fatal("summary result codec refused benchmark observation")
 				}
@@ -46,7 +46,7 @@ func BenchmarkAdmitSummaryResult(b *testing.B) {
 		coordinates := coordinates
 		b.Run("coordinates="+strconv.Itoa(coordinates), func(b *testing.B) {
 			observation := summaryResultCodecBenchmarkObservation(coordinates)
-			present, rows, payload, ok := EncodeSummaryResult(observation)
+			present, rows, payload, ok := EncodeSummaryResult(summaryResultTestLayout, observation)
 			if !ok {
 				b.Fatal("summary result codec refused decode benchmark observation")
 			}
@@ -54,7 +54,7 @@ func BenchmarkAdmitSummaryResult(b *testing.B) {
 			b.ReportAllocs()
 			b.ResetTimer()
 			for iteration := 0; iteration < b.N; iteration++ {
-				view, refusal := plane.Admit(SummaryResultLayout, present, rows, encoded)
+				view, refusal := plane.Admit(summaryResultTestLayout, present, rows, encoded)
 				summaryResultCodecDecodeSink = view
 				summaryResultCodecDecodeOKSink = !refusal.Available() &&
 					view.RowCount() == coordinates
@@ -94,7 +94,7 @@ func BenchmarkAdmitSummaryResult(b *testing.B) {
 func TestEncodeSummaryResultAllocatesOnePayload(t *testing.T) {
 	observation := summaryResultCodecBenchmarkObservation(16)
 	allocations := testing.AllocsPerRun(100, func() {
-		_, _, payload, ok := EncodeSummaryResult(observation)
+		_, _, payload, ok := EncodeSummaryResult(summaryResultTestLayout, observation)
 		if !ok {
 			t.Fatal("summary result codec refused allocation-law observation")
 		}

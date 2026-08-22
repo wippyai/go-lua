@@ -3,31 +3,37 @@ package owner_test
 import (
 	"testing"
 
-	"github.com/wippyai/go-lua/analysis/schema/plane"
+	"github.com/wippyai/go-lua/analysis/schema/query"
 	"github.com/wippyai/go-lua/domain/value"
 	"github.com/wippyai/go-lua/domain/value/owner"
 )
 
-// TestSummaryLayoutNamesTheFamilyItPublishes states that the family a result
-// layout carries is the family that layout is registered under. The two are one
-// authored key today; this law is what keeps them from drifting into two.
-func TestSummaryLayoutNamesTheFamilyItPublishes(t *testing.T) {
-	layout := owner.SummaryResultLayout()
-	if !layout.Available() {
-		t.Fatal("the value-summary layout did not seal")
+// TestSummaryShapeFollowsTheRegistration states that the wire shape this
+// family publishes is its registration's and nothing else's. The family a
+// layout carries is the family the registration is declared under - one
+// authored key today, and this is what keeps it from drifting into two - and
+// the keying is the fold, not a second declaration beside the codec.
+func TestSummaryShapeFollowsTheRegistration(t *testing.T) {
+	spec := owner.QuerySpec()
+	if spec.Family != value.SummaryResultFamily {
+		t.Fatalf("registered family = %q, want the domain's one family key", spec.Family)
 	}
-	if layout.Family() != owner.QuerySpec().Family {
-		t.Fatalf("layout family = %q, registered family = %q", layout.Family(), owner.QuerySpec().Family)
-	}
-	if layout.Family() != value.SummaryResultFamily {
-		t.Fatalf("layout family = %q, want the domain's one family key", layout.Family())
+	shape, shapeOK := query.NewShape(spec.Family, spec.Fold)
+	if !shapeOK || shape.Family() != value.SummaryResultFamily {
+		t.Fatalf("shape family = %q/%v", shape.Family(), shapeOK)
 	}
 	// A summary family folds over a coordinate space, so its rows are keyed and
 	// fenced by the identity of the space that issued them.
-	if _, declared := layout.Variable(); !declared {
-		t.Fatal("the value-summary layout declares no compact image column")
+	if !shape.Keyed() {
+		t.Fatalf("a %v family derived an unkeyed answer", spec.Fold)
 	}
-	if plane.Format == 0 {
-		t.Fatal("the plane revision is unset")
+	// The columns the family publishes are its own statement; the row state
+	// vocabulary it ranks against is the sealed surface's.
+	columns := value.SummaryResultColumns()
+	if len(columns) != 2 || columns[value.SummaryColumnImage].Carrier.Width() != 0 {
+		t.Fatal("the value-summary family declares no compact image column")
+	}
+	if !value.SummaryResultStates.Available() {
+		t.Fatal("the value-summary family names no declared row state vocabulary")
 	}
 }

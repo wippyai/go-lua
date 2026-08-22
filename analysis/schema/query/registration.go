@@ -126,6 +126,48 @@ const (
 
 func (fold Fold) Available() bool { return fold == FoldDistributive || fold == FoldGeneral }
 
+// Shape is the wire shape one sealed family publishes: the family a payload is
+// interpreted under, and whether every row of that payload names the
+// coordinate it holds. Neither is authored beside a codec. The family is the
+// registration's own key, and keying follows from the fold the registration
+// already declares: a distributive family is answered over a coordinate space
+// and may be joined from disjoint fragments of it, so each of its rows carries
+// the coordinate it holds, while a general fold answers its subject whole at
+// one point whose identity is the query site's own and restating it on the
+// wire would publish a second authority for it.
+type Shape struct {
+	family schema.Key
+	keyed  bool
+}
+
+// NewShape derives one family's published shape from the two things that
+// determine it. It is the single derivation: a caller states the family and
+// the fold it is answered under and is handed the shape, so no consumer
+// decides on its own whether a family's rows are keyed.
+func NewShape(family schema.Key, fold Fold) (Shape, bool) {
+	if !family.Available() || !fold.Available() {
+		return Shape{}, false
+	}
+	return Shape{family: family, keyed: fold == FoldDistributive}, true
+}
+
+// Shape is this registration's published wire shape.
+func (registration *Registration) Shape() (Shape, bool) {
+	if registration == nil || !registration.EntryAvailable() {
+		return Shape{}, false
+	}
+	return NewShape(registration.family, registration.fold)
+}
+
+func (shape Shape) Available() bool { return shape.family.Available() }
+
+// Family is the query family a payload of this shape is interpreted under.
+func (shape Shape) Family() schema.Key { return shape.family }
+
+// Keyed reports whether every row of a payload of this shape names the
+// coordinate it holds.
+func (shape Shape) Keyed() bool { return shape.keyed }
+
 // Subjects is one pass's view of the axis payloads a family reads: the cold
 // fragment or the bound axis each of its subject spaces produced, keyed by the
 // axis's authored key. The composition holds the axis pass and opens the view;

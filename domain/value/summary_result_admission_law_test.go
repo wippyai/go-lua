@@ -21,11 +21,11 @@ func TestAdmitSummaryResultRoundTripAndWalk(t *testing.T) {
 		Values:  []Value{{schema: schema, image: []uint64{2, 5}}, {}, {schema: schema, top: true}},
 		Present: []bool{true, false, true}, Rows: 1, Valid: true, owner: schema,
 	}
-	present, rows, payload, ok := EncodeSummaryResult(observation)
+	present, rows, payload, ok := EncodeSummaryResult(summaryResultTestLayout, observation)
 	if !ok {
 		t.Fatal("EncodeSummaryResult rejected decode fixture")
 	}
-	view, refusal := plane.Admit(SummaryResultLayout, present, rows, string(payload))
+	view, refusal := plane.Admit(summaryResultTestLayout, present, rows, string(payload))
 	if refusal.Available() || !view.Owner().Available() || view.RowCount() != 3 {
 		t.Fatalf("admitted summary = refusal:%s owner:%v count:%d", refusal, view.Owner().Available(), view.RowCount())
 	}
@@ -79,11 +79,11 @@ func TestAdmitSummaryResultRoundTripsRowZero(t *testing.T) {
 	observation := ValueSummaryObservation{
 		Values: make([]Value, 3), Present: []bool{false, false, false}, Valid: true, owner: schema,
 	}
-	present, rows, payload, ok := EncodeSummaryResult(observation)
+	present, rows, payload, ok := EncodeSummaryResult(summaryResultTestLayout, observation)
 	if !ok || present || rows != 0 {
 		t.Fatal("EncodeSummaryResult rejected row-zero decode fixture")
 	}
-	view, refusal := plane.Admit(SummaryResultLayout, present, rows, string(payload))
+	view, refusal := plane.Admit(summaryResultTestLayout, present, rows, string(payload))
 	if refusal.Available() || view.Owner() != schema.LinkID() || view.RowCount() != 3 {
 		t.Fatalf("row-zero summary did not admit: %s", refusal)
 	}
@@ -104,7 +104,7 @@ func TestAdmitSummaryResultRejectsMalformedPayloads(t *testing.T) {
 		Values:  []Value{{schema: schema, image: []uint64{3, 8}}, {schema: schema, top: true}},
 		Present: []bool{true, true}, Rows: 1, Valid: true, owner: schema,
 	}
-	present, rows, payload, ok := EncodeSummaryResult(observation)
+	present, rows, payload, ok := EncodeSummaryResult(summaryResultTestLayout, observation)
 	if !ok {
 		t.Fatal("EncodeSummaryResult rejected malformed-payload fixture")
 	}
@@ -116,7 +116,7 @@ func TestAdmitSummaryResultRejectsMalformedPayloads(t *testing.T) {
 	}
 	reject := func(name string, metadataPresent bool, metadataRows uint64, encoded string) {
 		t.Run(name, func(t *testing.T) {
-			view, refusal := plane.Admit(SummaryResultLayout, metadataPresent, metadataRows, encoded)
+			view, refusal := plane.Admit(summaryResultTestLayout, metadataPresent, metadataRows, encoded)
 			if !refusal.Available() || view.Available() {
 				t.Fatal("plane.Admit accepted a malformed value-summary payload")
 			}
@@ -160,7 +160,7 @@ func TestAdmitSummaryResultRejectsMalformedPayloads(t *testing.T) {
 	rowZeroObservation := ValueSummaryObservation{
 		Values: make([]Value, 2), Present: []bool{false, false}, Valid: true, owner: schema,
 	}
-	_, _, rowZero, rowZeroOK := EncodeSummaryResult(rowZeroObservation)
+	_, _, rowZero, rowZeroOK := EncodeSummaryResult(summaryResultTestLayout, rowZeroObservation)
 	if !rowZeroOK {
 		t.Fatal("EncodeSummaryResult rejected the row-zero fixture")
 	}
@@ -186,13 +186,13 @@ func TestAdmitSummaryResultAllocatesZero(t *testing.T) {
 		Values:  []Value{{schema: schema, image: []uint64{4, 9}}, {schema: schema, image: []uint64{7, 11}}},
 		Present: []bool{true, true}, Rows: 1, Valid: true, owner: schema,
 	}
-	present, rows, payload, ok := EncodeSummaryResult(observation)
+	present, rows, payload, ok := EncodeSummaryResult(summaryResultTestLayout, observation)
 	if !ok {
 		t.Fatal("EncodeSummaryResult rejected allocation-law fixture")
 	}
 	payloadString := string(payload)
 	allocations := testing.AllocsPerRun(100, func() {
-		view, refusal := plane.Admit(SummaryResultLayout, present, rows, payloadString)
+		view, refusal := plane.Admit(summaryResultTestLayout, present, rows, payloadString)
 		for index := 0; index < view.RowCount(); index++ {
 			row, found := view.At(index)
 			if !found {

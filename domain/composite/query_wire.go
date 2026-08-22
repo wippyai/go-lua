@@ -4,7 +4,9 @@ import (
 	"github.com/wippyai/go-lua/analysis/engine"
 	"github.com/wippyai/go-lua/analysis/identity"
 	"github.com/wippyai/go-lua/analysis/schema/executioncontext"
+	"github.com/wippyai/go-lua/analysis/schema/plane"
 	"github.com/wippyai/go-lua/analysis/schema/query"
+	"github.com/wippyai/go-lua/analysis/schema/structure"
 	"github.com/wippyai/go-lua/analysis/schema/vocabulary"
 )
 
@@ -24,17 +26,37 @@ func (producer queryProducer) complete() bool {
 }
 
 // queryResultPublication is the selected-point Result capability for one
-// sealed family. The admission callback, encoder, and canonical contract are
-// one unit: admitting a query without all three would create a mounted row
+// sealed family. The admission callback, detachment, and canonical contract
+// are one unit: admitting a query without all three would create a mounted row
 // that has no sound Result publication boundary.
+//
+// The layout a family's answers are detached under is not one of the family's
+// own declarations. What the family states is the row state vocabulary and the
+// columns it publishes; the family the payload is interpreted under and
+// whether its rows are keyed come from the registration's shape, and the
+// vocabularies come from the sealed structural table. sealPublicationLayout
+// seals those together once the declaration table has sealed and closes the
+// detachment over the result, so the encoder the Result boundary calls writes
+// under the one layout the seal issued.
 type queryResultPublication struct {
 	admit    func(*engine.SchemaBinding, query.Cell, identity.ContentID, identity.ContentID, identity.ContentID, executioncontext.Context) (engine.ProgramQueryAdmission, bool)
+	detach   func(*plane.Sealed, engine.Answer) (bool, uint64, []byte, bool)
+	states   structure.Category
+	columns  []plane.Column
+	layout   *plane.Sealed
 	encode   func(engine.Answer) (bool, uint64, []byte, bool)
 	contract engine.CanonicalResultContract
 }
 
 func (publication queryResultPublication) complete() bool {
-	return publication.admit != nil && publication.encode != nil && publication.contract.Available()
+	return publication.admit != nil && publication.detach != nil && publication.contract.Available()
+}
+
+// planed reports whether this family publishes on the schema plane. A family
+// that declares no columns detaches its answers with a codec of its own and is
+// handed no sealed layout.
+func (publication queryResultPublication) planed() bool {
+	return publication.states.Available() && len(publication.columns) > 0
 }
 
 // queryContributor is the composition-owned wiring for one sealed family.
@@ -94,7 +116,9 @@ func wireQuery[F, R any](
 	bind func(*engine.SchemaBinding, query.Binding[F]) bool,
 	recover func(*engine.SchemaBinding, query.Sealed[F]) (R, bool),
 	admit func(R, identity.ContentID, identity.ContentID, identity.ContentID, executioncontext.Context) (engine.ProgramQueryAdmission, bool),
-	encode func(engine.Answer) (bool, uint64, []byte, bool),
+	detach func(*plane.Sealed, engine.Answer) (bool, uint64, []byte, bool),
+	states structure.Category,
+	columns []plane.Column,
 ) (*query.Registration, queryContributor, bool) {
 	if declare == nil || bind == nil || recover == nil {
 		return nil, queryContributor{}, false
@@ -143,8 +167,8 @@ func wireQuery[F, R any](
 	// Result callbacks are optional for an observation producer, but they are
 	// all-or-nothing whenever supplied. In particular, an observation family
 	// never gets a fabricated encoder or admission just to satisfy the table.
-	if admit != nil || encode != nil {
-		if admit == nil || encode == nil {
+	if admit != nil || detach != nil {
+		if admit == nil || detach == nil {
 			return nil, queryContributor{}, false
 		}
 		contract, contractOK := engine.NewCanonicalResultContract(identity.ContentID(registration.EntryID()), registration.Freezer())
@@ -152,6 +176,8 @@ func wireQuery[F, R any](
 			return nil, queryContributor{}, false
 		}
 		contributor.queryResultPublication = queryResultPublication{
+			states:  states,
+			columns: append([]plane.Column(nil), columns...),
 			admit: func(binding *engine.SchemaBinding, holder query.Cell, id, mount, point identity.ContentID, context executioncontext.Context) (engine.ProgramQueryAdmission, bool) {
 				fragment, ok := query.Payload[F](holder)
 				if !ok {
@@ -163,7 +189,7 @@ func wireQuery[F, R any](
 				}
 				return admit(implementation, id, mount, point, context)
 			},
-			encode:   encode,
+			detach:   detach,
 			contract: contract,
 		}
 	}
@@ -171,4 +197,49 @@ func wireQuery[F, R any](
 		return nil, queryContributor{}, false
 	}
 	return registration, contributor, true
+}
+
+// sealPublicationLayout seals every publishing family's answer layout against
+// the vocabulary the declaration table sealed, and closes each family's
+// detachment over the layout it published under.
+//
+// This is where the layout is held. A family authors the columns it publishes
+// and names the row state vocabulary; the family key and the keying come from
+// the registration's shape, which derives them from the fold the registration
+// already declares. Nothing below this function re-derives any of it, and no
+// domain seals a layout of its own.
+func sealPublicationLayout(registrations []*query.Registration, contributors []queryContributor, vocabulary structure.Table) bool {
+	if len(registrations) != len(contributors) {
+		return false
+	}
+	for index := range contributors {
+		publication := &contributors[index].queryResultPublication
+		if publication.detach == nil {
+			continue
+		}
+		detach := publication.detach
+		if !publication.planed() {
+			// A family still detaching its answers with a codec of its own
+			// publishes no plane layout, so it is handed none rather than a
+			// fabricated one.
+			publication.encode = func(answer engine.Answer) (bool, uint64, []byte, bool) {
+				return detach(nil, answer)
+			}
+			continue
+		}
+		registration := registrations[index]
+		shape, shapeOK := registration.Shape()
+		if !shapeOK {
+			return false
+		}
+		layout, sealed := plane.Seal(shape, vocabulary, publication.states, publication.columns)
+		if !sealed || !layout.Available() {
+			return false
+		}
+		publication.layout = layout
+		publication.encode = func(answer engine.Answer) (bool, uint64, []byte, bool) {
+			return detach(layout, answer)
+		}
+	}
+	return true
 }

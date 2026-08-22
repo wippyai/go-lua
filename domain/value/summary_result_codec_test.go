@@ -19,26 +19,11 @@ const (
 )
 
 func valueSummaryRowAt(coordinates, index int) int {
-	return valueSummaryHeaderSize + coordinates*valueSummaryCoordinateIDSize + index*SummaryResultLayout.RowWidth()
+	return valueSummaryHeaderSize + coordinates*valueSummaryCoordinateIDSize + index*summaryResultTestLayout.RowWidth()
 }
 
 func valueSummaryOffsetsAt(coordinates int) int {
 	return valueSummaryRowAt(coordinates, coordinates)
-}
-
-// TestSummaryResultLayoutSeals states that the family's declaration is
-// admissible: an unsealed layout would refuse every answer at publication.
-func TestSummaryResultLayoutSeals(t *testing.T) {
-	if !SummaryResultLayout.Available() || SummaryResultLayout.Family() != SummaryResultFamily {
-		t.Fatal("the value-summary layout did not seal")
-	}
-	if SummaryResultLayout.RowWidth() != 2 {
-		t.Fatalf("row width = %d, want the state byte plus the top flag", SummaryResultLayout.RowWidth())
-	}
-	variable, declared := SummaryResultLayout.Variable()
-	if !declared || variable != SummaryColumnImage {
-		t.Fatalf("variable column = %d/%v, want the declared compact image", variable, declared)
-	}
 }
 
 func summaryCodecID(seed byte) identity.ContentID {
@@ -60,7 +45,7 @@ func TestEncodeSummaryResultOwnsCompactCorrelatedImage(t *testing.T) {
 		},
 		Present: []bool{true, true}, Rows: 1, Valid: true, owner: schema,
 	}
-	present, rows, payload, ok := EncodeSummaryResult(observation)
+	present, rows, payload, ok := EncodeSummaryResult(summaryResultTestLayout, observation)
 	if !ok || !present || rows != 1 || binary.BigEndian.Uint64(payload[:8]) != plane.Format {
 		t.Fatal("value summary codec refused canonical observation")
 	}
@@ -99,8 +84,8 @@ func TestEncodeSummaryResultCoordinateIDsIgnoreMapOrder(t *testing.T) {
 		Values:  []Value{{schema: right, image: []uint64{1, 0}}, {schema: right, image: []uint64{1, 0}}},
 		Present: []bool{true, true}, Rows: 1, Valid: true, owner: right,
 	}
-	_, _, leftPayload, leftOK := EncodeSummaryResult(leftObservation)
-	_, _, rightPayload, rightOK := EncodeSummaryResult(rightObservation)
+	_, _, leftPayload, leftOK := EncodeSummaryResult(summaryResultTestLayout, leftObservation)
+	_, _, rightPayload, rightOK := EncodeSummaryResult(summaryResultTestLayout, rightObservation)
 	if !leftOK || !rightOK || string(leftPayload) != string(rightPayload) {
 		t.Fatal("coordinate IDs made the summary payload depend on map iteration order")
 	}
@@ -116,7 +101,7 @@ func TestEncodeSummaryResultRowZeroRetainsOwnerAndCoordinateSlots(t *testing.T) 
 		Valid:   true,
 		owner:   schema,
 	}
-	present, rows, payload, ok := EncodeSummaryResult(observation)
+	present, rows, payload, ok := EncodeSummaryResult(summaryResultTestLayout, observation)
 	if !ok || present || rows != 0 || identity.ContentID(payload[valueSummaryOwnerAt:valueSummaryOwnerAt+32]) != schema.LinkID() {
 		t.Fatal("row-zero summary observation was rejected")
 	}
@@ -140,13 +125,13 @@ func TestEncodeSummaryResultRejectsMixedOwnersAndRowMismatch(t *testing.T) {
 		Values:  []Value{{schema: left, top: true}, {schema: right, top: true}},
 		Present: []bool{true, true}, Rows: 1, Valid: true, owner: left,
 	}
-	if _, _, _, ok := EncodeSummaryResult(mixed); ok {
+	if _, _, _, ok := EncodeSummaryResult(summaryResultTestLayout, mixed); ok {
 		t.Fatal("mixed Value owners encoded")
 	}
 	mixed.Values = []Value{{}, {}}
 	mixed.Present = []bool{false, false}
 	mixed.Rows = 1
-	if _, _, _, ok := EncodeSummaryResult(mixed); ok {
+	if _, _, _, ok := EncodeSummaryResult(summaryResultTestLayout, mixed); ok {
 		t.Fatal("row cardinality disagreed with Value presence")
 	}
 }

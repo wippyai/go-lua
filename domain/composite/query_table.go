@@ -3,6 +3,7 @@ package composite
 import (
 	"github.com/wippyai/go-lua/analysis/engine"
 	"github.com/wippyai/go-lua/analysis/schema"
+	"github.com/wippyai/go-lua/analysis/schema/plane"
 	"github.com/wippyai/go-lua/analysis/schema/query"
 	"github.com/wippyai/go-lua/analysis/schema/structure"
 	"github.com/wippyai/go-lua/analysis/schema/vocabulary"
@@ -52,10 +53,19 @@ func queryRegistrations(roles vocabulary.Roles) ([]*query.Registration, []queryC
 		contributors = append(contributors, contributor)
 	}
 
-	add(wireQuery(valueowner.QuerySpec(), roles, valueowner.DeclareQuery, valueowner.BindQuery, valueowner.RecoverQuery, engine.NewSummaryQueryAdmission, valueowner.EncodeQueryAnswer))
-	add(wireQuery(effectowner.QuerySpec(), roles, effectowner.DeclareQuery, effectowner.BindQuery, effectowner.RecoverQuery, engine.NewExactQueryAdmission, effectowner.EncodeQueryAnswer))
-	add(wireQuery(placementquery.QuerySpec(), roles, placementquery.DeclareQuery, placementquery.BindQuery, placementquery.RecoverQuery, engine.NewHeterogeneousQueryAdmission, placementquery.EncodeQueryAnswer))
-	add(wireQuery(callquery.QuerySpec(), roles, callquery.DeclareQuery, callquery.BindQuery, callquery.RecoverQuery, nil, nil))
+	add(wireQuery(valueowner.QuerySpec(), roles, valueowner.DeclareQuery, valueowner.BindQuery, valueowner.RecoverQuery,
+		engine.NewSummaryQueryAdmission, valueowner.EncodeQueryAnswer, value.SummaryResultStates, value.SummaryResultColumns()))
+	add(wireQuery(effectowner.QuerySpec(), roles, effectowner.DeclareQuery, effectowner.BindQuery, effectowner.RecoverQuery,
+		engine.NewExactQueryAdmission, effectowner.EncodeQueryAnswer, factor.ExactResultStates, factor.ExactResultColumns()))
+	// Placement still detaches its answers with a codec of its own, so it
+	// declares no publication plane and the composition seals it no layout.
+	// CX-10 cuts that codec onto the plane and this closure goes with it.
+	add(wireQuery(placementquery.QuerySpec(), roles, placementquery.DeclareQuery, placementquery.BindQuery, placementquery.RecoverQuery,
+		engine.NewHeterogeneousQueryAdmission,
+		func(_ *plane.Sealed, answer engine.Answer) (bool, uint64, []byte, bool) {
+			return placementquery.EncodeQueryAnswer(answer)
+		}, structure.CategoryInvalid, nil))
+	add(wireQuery(callquery.QuerySpec(), roles, callquery.DeclareQuery, callquery.BindQuery, callquery.RecoverQuery, nil, nil, structure.CategoryInvalid, nil))
 
 	if rejected {
 		return nil, nil, false
@@ -133,4 +143,24 @@ func queryIssuance(state *catalog) []IssuedQuery {
 		})
 	}
 	return issued
+}
+
+// QueryResultLayout is the sealed layout one family's answers are detached
+// under in this compilation. It is the one place a reader opens a published
+// payload from: the layout is the seal's, so a consumer never holds a
+// declaration of the wire beside the one that wrote it.
+func QueryResultLayout(compilation Compilation, family schema.Key) (*plane.Sealed, bool) {
+	return queryResultLayout(compilation.catalog, family)
+}
+
+func queryResultLayout(state *catalog, family schema.Key) (*plane.Sealed, bool) {
+	if state == nil || !family.Available() {
+		return nil, false
+	}
+	position, positioned := queryPositionForFamily(state, family)
+	if !positioned || position < 0 || position >= len(state.queryContributors) {
+		return nil, false
+	}
+	layout := state.queryContributors[position].queryResultPublication.layout
+	return layout, layout.Available()
 }

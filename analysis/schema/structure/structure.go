@@ -172,6 +172,14 @@ const (
 	// per answer, so one published code renders the finding the verdict names
 	// rather than one message for every answer at once.
 	CategoryConformanceVerdict
+	// CategoryPublicationRowClass is the vocabulary of classes a written row of
+	// a detached query answer is published at. It is the row-state vocabulary
+	// every published plane layout ranks its state byte against, and it is one
+	// catalog rather than one per family: a family that publishes rows carrying
+	// presence alone names the single class its written rows are at, and two
+	// such families name the same class rather than each declaring a private
+	// spelling of it.
+	CategoryPublicationRowClass
 	categoryLimit
 )
 
@@ -453,6 +461,30 @@ func (table Table) Spelling(category Category, spelling string) (uint16, bool) {
 	}
 	ordinal, ok := table.spellings[category][spelling]
 	return ordinal, ok
+}
+
+// Vocabulary is one sealed category's member identities in declared rank
+// order. It is the projection a closed catalog is consumed as when the
+// consumer needs the whole vocabulary rather than one member: a wire layout
+// ranks its bytes against it, so the ranks a payload carries are the sealed
+// declaration's own positions and no consumer restates the catalog to obtain
+// them.
+func (table Table) Vocabulary(category Category) ([]schema.Key, bool) {
+	if !category.Available() {
+		return nil, false
+	}
+	members := table.members[category]
+	if len(members) == 0 {
+		return nil, false
+	}
+	keys := make([]schema.Key, len(members))
+	for index, entry := range members {
+		if entry == nil || !entry.key.Available() {
+			return nil, false
+		}
+		keys[index] = entry.key
+	}
+	return keys, true
 }
 
 // surface is the structural vocabulary contribution to the declaration root.

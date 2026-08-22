@@ -32,10 +32,10 @@ func TestEmptyReceiptSelfCreatePublishesReadableValueFamilyThroughMountedSolver(
 	if !bodyOK {
 		t.Fatal("empty self-create selected body unavailable")
 	}
-	assertEmptyValuePublicationReadable(t, result, body)
+	assertEmptyValuePublicationReadable(t, summaryLayout(t, plan), result, body)
 }
 
-func assertEmptyValuePublicationReadable(t testing.TB, input *analysisresult.Result, selected analysisresult.Body) {
+func assertEmptyValuePublicationReadable(t testing.TB, layout *plane.Sealed, input *analysisresult.Result, selected analysisresult.Body) {
 	t.Helper()
 	bodyID, bodyIDOK := selected.ID()
 	if !bodyIDOK {
@@ -79,7 +79,7 @@ func assertEmptyValuePublicationReadable(t testing.TB, input *analysisresult.Res
 			continue
 		}
 		cell, cellOK := query.Cell()
-		view, refusal := plane.Admit(value.SummaryResultLayout, cell.Present(), cell.RowCount(), cell.Payload())
+		view, refusal := plane.Admit(layout, cell.Present(), cell.RowCount(), cell.Payload())
 		if !cellOK || refusal.Available() || !view.Owner().Available() || view.RowCount() == 0 {
 			t.Fatalf("empty self-create value query[%d] summary unavailable or incomplete: %s", queryIndex, refusal)
 		}
@@ -115,4 +115,16 @@ func emptySuccessorLink(t testing.TB, text string) *link.Link {
 		t.Fatal(err)
 	}
 	return linked
+}
+
+// summaryLayout is the sealed layout the plan published its value summaries
+// under. A law opens a published cell against the compilation's own
+// declaration rather than a copy of it kept beside the reader.
+func summaryLayout(t testing.TB, plan *analysis.Plan) *plane.Sealed {
+	t.Helper()
+	layout, layoutOK := plan.QueryResultLayout(value.SummaryResultFamily)
+	if !layoutOK || !layout.Available() {
+		t.Fatal("the plan sealed no value-summary layout")
+	}
+	return layout
 }

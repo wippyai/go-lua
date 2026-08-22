@@ -18,11 +18,11 @@ func TestAdmitResultRoundTrip(t *testing.T) {
 	observation := EffectObservation{
 		Atoms: atoms, Rows: 1, Present: true, Valid: true, seal: sealAtoms(atoms),
 	}
-	present, rows, payload, ok := EncodeResult(observation)
+	present, rows, payload, ok := EncodeResult(exactResultTestLayout, observation)
 	if !ok {
 		t.Fatal("EncodeResult rejected round-trip observation")
 	}
-	view, refusal := plane.Admit(ExactResultLayout, present, rows, string(payload))
+	view, refusal := plane.Admit(exactResultTestLayout, present, rows, string(payload))
 	row, rowOK := view.At(0)
 	if refusal.Available() || !rowOK || !row.Written() || row.Flag(ExactColumnTop) || row.Count() != len(atoms) {
 		t.Fatalf("admitted result = refusal:%s written:%v top:%v atoms:%d", refusal, row.Written(), row.Flag(ExactColumnTop), row.Count())
@@ -56,11 +56,11 @@ func TestAdmitResultRoundTripsTopAndAbsent(t *testing.T) {
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
 			observation := EffectObservation{Rows: test.rows, Present: test.present, Top: test.top, Valid: true, seal: test.seal}
-			present, rows, payload, ok := EncodeResult(observation)
+			present, rows, payload, ok := EncodeResult(exactResultTestLayout, observation)
 			if !ok {
 				t.Fatal("EncodeResult rejected round-trip observation")
 			}
-			view, refusal := plane.Admit(ExactResultLayout, present, rows, string(payload))
+			view, refusal := plane.Admit(exactResultTestLayout, present, rows, string(payload))
 			row, rowOK := view.At(0)
 			if refusal.Available() || !rowOK || row.Written() != test.present || row.Flag(ExactColumnTop) != test.top || row.Count() != 0 {
 				t.Fatalf("admitted result = refusal:%s written:%v top:%v atoms:%d", refusal, row.Written(), row.Flag(ExactColumnTop), row.Count())
@@ -83,7 +83,7 @@ func TestEncodeResultRefusesAnIncoherentObservation(t *testing.T) {
 	}
 	for name, observation := range cases {
 		t.Run(name, func(t *testing.T) {
-			if _, _, _, ok := EncodeResult(observation); ok {
+			if _, _, _, ok := EncodeResult(exactResultTestLayout, observation); ok {
 				t.Fatal("an incoherent Effect observation reached the wire")
 			}
 		})
@@ -95,7 +95,7 @@ func TestAdmitResultRejectsMalformedPayloads(t *testing.T) {
 	observation := EffectObservation{
 		Atoms: atoms, Rows: 1, Present: true, Valid: true, seal: sealAtoms(atoms),
 	}
-	present, rows, payload, ok := EncodeResult(observation)
+	present, rows, payload, ok := EncodeResult(exactResultTestLayout, observation)
 	if !ok {
 		t.Fatal("EncodeResult rejected malformed-payload fixture")
 	}
@@ -106,7 +106,7 @@ func TestAdmitResultRejectsMalformedPayloads(t *testing.T) {
 	}
 	reject := func(name string, metadataPresent bool, metadataRows uint64, encoded string, want plane.Refusal) {
 		t.Run(name, func(t *testing.T) {
-			view, refusal := plane.Admit(ExactResultLayout, metadataPresent, metadataRows, encoded)
+			view, refusal := plane.Admit(exactResultTestLayout, metadataPresent, metadataRows, encoded)
 			if refusal != want || view.Available() {
 				t.Fatalf("refusal = %v (%s), want %v (%s)", refusal, refusal, want, want)
 			}
@@ -149,13 +149,13 @@ func TestAdmitResultAllocatesZero(t *testing.T) {
 	observation := EffectObservation{
 		Atoms: atoms, Rows: 1, Present: true, Valid: true, seal: sealAtoms(atoms),
 	}
-	present, rows, payload, ok := EncodeResult(observation)
+	present, rows, payload, ok := EncodeResult(exactResultTestLayout, observation)
 	if !ok {
 		t.Fatal("EncodeResult rejected allocation-law fixture")
 	}
 	payloadString := string(payload)
 	allocations := testing.AllocsPerRun(100, func() {
-		view, refusal := plane.Admit(ExactResultLayout, present, rows, payloadString)
+		view, refusal := plane.Admit(exactResultTestLayout, present, rows, payloadString)
 		row, rowOK := view.At(0)
 		atom, atomOK := row.AtomAt(0)
 		admitResultViewSink = view

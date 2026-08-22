@@ -138,6 +138,14 @@ func newCatalog() (*catalog, schema.SealFailure) {
 	state.diagnostics = diagnosticTable
 	state.structure = structureTable
 	state.structureOK = true
+	// The layout a family's answers are detached under is held by this seal.
+	// It is sealed here, against the vocabulary the declaration table just
+	// sealed and the shape the family's own registration derives, and never
+	// beside the domain codec that writes it.
+	if !sealPublicationLayout(queries, contributors, structureTable) {
+		state.failure = schema.SealFailure{Contributor: schema.SurfaceKindQuery, Law: query.LawCodecDeclared, Disposition: schema.DispositionIncomplete}
+		return state, state.failure
+	}
 	observationView, observationViewOK := sealed.Surface(schema.SurfaceKindObservation)
 	observationTable, observationTableOK := observation.NewTable(observationView)
 	if !observationViewOK || !observationTableOK {

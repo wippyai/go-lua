@@ -179,7 +179,8 @@ func TestCompiledPlanZeroRowOutcomeDoesNotMaskLiteralReturn(t *testing.T) {
 	if !shardOK || !programOK || availableExits < 2 {
 		t.Fatalf("literal body exits = %d, want multiple available exits", availableExits)
 	}
-	analysisResult, status := Analyze(context.Background(), linked)
+	workspace := NewWorkspace()
+	analysisResult, status := workspace.Analyze(context.Background(), linked)
 	if status != AnalyzeComplete || analysisResult == nil {
 		t.Fatalf("literal zero-row outcome solve = %v/%v", status, analysisResult)
 	}
@@ -222,7 +223,7 @@ func TestCompiledPlanZeroRowOutcomeDoesNotMaskLiteralReturn(t *testing.T) {
 			continue
 		}
 		cell, cellOK := query.Cell()
-		view, refusal := plane.Admit(value.SummaryResultLayout, cell.Present(), cell.RowCount(), cell.Payload())
+		view, refusal := plane.Admit(summaryLayout(t, workspace), cell.Present(), cell.RowCount(), cell.Payload())
 		if !cellOK || refusal.Available() {
 			t.Fatalf("literal return hit has no typed value summary: %s", refusal)
 		}
