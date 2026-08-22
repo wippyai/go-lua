@@ -60,8 +60,13 @@ const (
 // restating family names.
 const (
 	PopulationSelectedPoint schema.Key = "semantic/query/population/selected-point"
-	ProjectionSummary       schema.Key = "semantic/query/projection/summary"
-	ProjectionExact         schema.Key = "semantic/query/projection/exact"
+	// PopulationObservation declares a query family that is only attached as
+	// an explicit observation. It is a sealed producer population, not a
+	// request for one result row at every selected Program point; construction
+	// must therefore keep it out of SelectedQuerySites.
+	PopulationObservation schema.Key = "semantic/query/population/observation"
+	ProjectionSummary     schema.Key = "semantic/query/projection/summary"
+	ProjectionExact       schema.Key = "semantic/query/projection/exact"
 )
 
 // Fold is the closed catalog of ways a family's partial results compose.

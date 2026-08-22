@@ -225,6 +225,16 @@ func (owner *HotOwner) ExactWrite() engine.SchemaWriteForm[call.Value] {
 	return owner.fragment.exactWrite
 }
 
+// BindExactQuery attaches a Call-owned exact query to this exact Factor
+// owner. The query vertical supplies only its sealed output and fold; the
+// private Call Factor slot remains behind this owner boundary.
+func BindExactQuery[R any](owner *HotOwner, query *engine.QuerySlot[R], spec engine.HotExactQuerySpec[call.Value, R]) bool {
+	if owner == nil || owner.binding == nil || owner.fragment == nil || query == nil {
+		return false
+	}
+	return engine.BindExactQuery(owner.binding, query, owner.fragment.slot, spec)
+}
+
 // BindExactActivationRule attaches one Call-read activation callback to an
 // exact cold activation Rule.  Child packages supply only their own cold
 // rule/read proofs and callback; Call keeps the binding and private Factor

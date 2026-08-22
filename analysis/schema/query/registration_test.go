@@ -57,7 +57,9 @@ func scratchRoles(t *testing.T) vocabulary.Roles {
 	entries, entriesOK := structure.Collect(vocabulary.RoleSpecs(
 		"query/value-summary", "query-result/value-summary", "fold-contract/value-summary",
 		"query/effect-exact", "query-result/effect-exact", "fold-contract/effect-exact",
+		"query/call-callee-set", "query-result/call-callee-set", "fold-contract/call-callee-set",
 		"query/population/selected-point",
+		"query/population/observation",
 		"query/projection/summary",
 		"query/projection/exact",
 	))
@@ -100,10 +102,10 @@ func sealSurface(t *testing.T, contribution schema.Surface) (*schema.Schema, sch
 		case schema.SurfaceKindQuery:
 			builder.Register(contribution)
 		case schema.SurfaceKindAxis:
-			builder.Register(scratchSurface{kind: kind, keys: []schema.Key{"value", "effect"}})
+			builder.Register(scratchSurface{kind: kind, keys: []schema.Key{"value", "effect", "call"}})
 		case schema.SurfaceKindStructure:
 			builder.Register(scratchSurface{kind: kind, keys: []schema.Key{
-				PopulationSelectedPoint, ProjectionSummary, ProjectionExact,
+				PopulationSelectedPoint, PopulationObservation, ProjectionSummary, ProjectionExact,
 			}})
 		default:
 			builder.Register(scratchSurface{kind: kind})
@@ -432,6 +434,26 @@ func TestQueryPopulationAndProjectionAreDeclaredAndResolve(t *testing.T) {
 	if failure = sealRegistrations(t, []*Registration{mismatched}); failure.Law != LawProjectionFold ||
 		failure.Disposition != schema.DispositionMalformed {
 		t.Fatalf("fold/projection mismatch sealed: law=%d disposition=%s", failure.Law, failure.Disposition)
+	}
+}
+
+// TestObservationPopulationIsASealedPopulationRole states that an
+// observation-only family is a normal sealed query declaration with a
+// distinct population identity. Selection code can therefore exclude it by
+// the population value rather than by restating a family name.
+func TestObservationPopulationIsASealedPopulationRole(t *testing.T) {
+	spec := exactSpec("call-callee-set")
+	spec.Semantic = "semantic/query/call-callee-set"
+	spec.Codec = "semantic/query-result/call-callee-set"
+	spec.Contract = "semantic/fold-contract/call-callee-set"
+	spec.Subjects = []schema.Key{"call"}
+	spec.Population = PopulationObservation
+	registration := mustRegistration(t, spec)
+	if registration.Population() != PopulationObservation {
+		t.Fatalf("observation family population = %q, want %q", registration.Population(), PopulationObservation)
+	}
+	if failure := sealRegistrations(t, []*Registration{registration}); failure.Available() {
+		t.Fatalf("observation-only family rejected by sealed population role: law=%d disposition=%s", failure.Law, failure.Disposition)
 	}
 }
 
