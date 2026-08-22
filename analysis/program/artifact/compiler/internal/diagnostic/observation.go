@@ -345,12 +345,15 @@ func (compiler *compiler) copyTypeConformanceObservationsFailure() programconstr
 		if boundaries == nil {
 			return programconstruction.New(programcatalog.DiagnosticObservation(), programconstruction.IssueDiagnosticCall, index, -1)
 		}
-		bodyBoundary, bodyBoundaryOK := boundaries.ResolveBodyContextID(targetBody)
-		if !bodyBoundaryOK {
+		callTerm, callTermOK := compiler.input.Program.Flow().Authored().Calls().At(index)
+		functionTerm, functionTermOK := compiler.input.Program.Flow().DirectFunctions().Call(callTerm)
+		targetBoundary, targetBoundaryOK := boundaries.For(functionTerm)
+		if !callTermOK || !functionTermOK || !targetBoundaryOK || !targetBoundary.Available() {
 			return programconstruction.New(programcatalog.DiagnosticObservation(), programconstruction.IssueDiagnosticCall, index, -1)
 		}
-		bodyTerm, bodyTermOK := bodyBoundary.Body()
-		if !bodyTermOK {
+		bodyTerm, bodyTermOK := targetBoundary.Body()
+		bodyPath, bodyPathOK := compiler.input.Program.Flow().BodyPath(bodyTerm)
+		if !bodyTermOK || !bodyPathOK || bodyPath != targetBody {
 			return programconstruction.New(programcatalog.DiagnosticObservation(), programconstruction.IssueDiagnosticCall, index, -1)
 		}
 		functionBoundary, functionBoundaryOK := boundaries.ForFunctionBody(bodyTerm)
