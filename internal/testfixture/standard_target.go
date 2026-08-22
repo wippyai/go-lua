@@ -62,6 +62,10 @@ func sealStandardLibraryTarget() (*contract.Contract, error) {
 		Mount:       manifest.MountModule,
 		Declaration: uuidHostManifest,
 	}, manifest.Provider{
+		Identity:    "testfixture.wippy.stream",
+		Mount:       manifest.MountModule,
+		Declaration: streamHostManifest,
+	}, manifest.Provider{
 		Identity:    "testfixture.wippy.time",
 		Mount:       manifest.MountModule,
 		Declaration: timeHostManifest,
@@ -121,6 +125,29 @@ func uuidHostManifest() *manifestwire.Manifest {
 	declaration.SetExport(typetable.NewRecord().
 		Field("v7", v7Type).
 		Build())
+	return declaration
+}
+
+// streamHostManifest declares the historical host-style stream package. The
+// package installs a stream global while exposing stream.Stream for qualified
+// annotations; open is also registered as a callable declaration so the
+// manifesttarget compiler can publish its normal operation and result type.
+func streamHostManifest() *manifestwire.Manifest {
+	streamType := typetable.NewRecord().
+		Field("id", typ.String).
+		Build()
+	openType := typ.Func().
+		Param("name", typ.String).
+		Returns(streamType).
+		Build()
+	moduleType := typetable.NewRecord().
+		Field("open", openType).
+		Build()
+
+	declaration := manifestwire.New("stream")
+	declaration.DefineType("Stream", streamType)
+	declaration.DefineFunctionSignature("open", signature.Function{Type: openType})
+	declaration.SetExport(moduleType)
 	return declaration
 }
 

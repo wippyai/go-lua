@@ -1,6 +1,7 @@
 package testfixture
 
 import (
+	"context"
 	"reflect"
 	"strings"
 	"testing"
@@ -11,9 +12,11 @@ import (
 	"github.com/wippyai/go-lua/domain/effect"
 	"github.com/wippyai/go-lua/domain/effect/lifecycle"
 	"github.com/wippyai/go-lua/domain/effect/postcondition"
+	"github.com/wippyai/go-lua/domain/type/access"
 	"github.com/wippyai/go-lua/domain/type/channelselect"
 	"github.com/wippyai/go-lua/domain/type/typ"
 	"github.com/wippyai/go-lua/domain/type/typecall"
+	domaincontract "github.com/wippyai/go-lua/domain/type/typecontract"
 	"github.com/wippyai/go-lua/domain/typestate"
 	"github.com/wippyai/go-lua/manifest"
 	manifestwire "github.com/wippyai/go-lua/manifest/wire"
@@ -54,6 +57,83 @@ func TestStandardLibraryTargetBindsChannelSelect(t *testing.T) {
 	fn, ok := catalogue.Function("channel.select")
 	if !ok || !channelselect.IsSelectFunction(fn.Signature().Type) {
 		t.Fatalf("catalogue channel.select = %v/%v, want SelectFunction", fn.Signature().Type, ok)
+	}
+}
+
+// stream is a host-style package: its module path is require-able, the same
+// module table is present as the ambient stream binding, and only open is a
+// callable member of that table.
+func TestStandardLibraryTargetStreamHostSurface(t *testing.T) {
+	target, err := StandardLibraryTarget()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := target.InitialRootByModulePath("stream"); !ok {
+		t.Fatal("stream is not a require-able initial module root")
+	}
+	if _, _, _, _, ok := target.InitialBinding("stream"); !ok {
+		t.Fatal("stream is not an initial global binding")
+	}
+	open, ok := target.Operations.Lookup(vocabulary.BindingSpec{
+		Namespace: vocabulary.BindingModule,
+		Owner:     []string{"stream"},
+		Member:    []string{"open"},
+	})
+	if !ok {
+		t.Fatal("stream.open is not a target operation")
+	}
+	_, values, ok := target.Operations.OutcomeAt(open, 0)
+	if !ok {
+		t.Fatal("stream.open normal outcome is unavailable")
+	}
+	result, ok := target.Operations.ValuesAt(values, 0)
+	if !ok {
+		t.Fatal("stream.open result is unavailable")
+	}
+	declaration, ok := target.Operations.TypeDeclaration(result)
+	if !ok {
+		t.Fatal("stream.open result has no type declaration")
+	}
+	resultType, err := domaincontract.Decode(context.Background(), declaration, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	id, ok := access.Field(resultType, "id")
+	if !ok || !typ.TypeEquals(id, typ.String) {
+		t.Fatalf("stream.open result id = %v/%v, want string", id, ok)
+	}
+	if _, ok := target.Operations.Lookup(vocabulary.BindingSpec{
+		Namespace: vocabulary.BindingModule,
+		Owner:     []string{"stream"},
+		Member:    []string{"read"},
+	}); ok {
+		t.Fatal("stream.read is an undeclared nearest-neighbor operation")
+	}
+}
+
+func TestStreamHostManifestDeclaresNamedExportAndOpenSignature(t *testing.T) {
+	declaration := streamHostManifest()
+	streamType, ok := declaration.Types["Stream"]
+	if !ok || streamType == nil {
+		t.Fatal("stream manifest does not declare Stream")
+	}
+	open, ok := declaration.FunctionSignatures["open"]
+	if !ok || open.Type == nil || len(open.Type.Params) != 1 || len(open.Type.Returns) != 1 {
+		t.Fatalf("stream.open signature = %v, want one string parameter and one result", open.Type)
+	}
+	if !typ.TypeEquals(open.Type.Params[0].Type, typ.String) || !typ.TypeEquals(open.Type.Returns[0], streamType) {
+		t.Fatalf("stream.open signature = %v, want (string) -> Stream", open.Type)
+	}
+	export, ok := declaration.Export.(*typ.Record)
+	if !ok {
+		t.Fatalf("stream export = %T, want record", declaration.Export)
+	}
+	field := export.GetField("open")
+	if field == nil || !typ.TypeEquals(field.Type, open.Type) {
+		t.Fatalf("stream export open = %v, want %v", field, open.Type)
+	}
+	if export.GetField("read") != nil {
+		t.Fatal("stream export declares nearest-negative member read")
 	}
 }
 
