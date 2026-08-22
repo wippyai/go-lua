@@ -62,32 +62,32 @@ func TestSealRejectsSameDenominatorForeignOwners(t *testing.T) {
 	staticID := left.staticView.ContentID()
 	moduleID := left.flow.ModuleID()
 
-	if _, err := Seal(left.source, right.flow, left.bodies, left.bindings, left.forest, left.control, left.executable, staticID, moduleID); err == nil {
+	if _, err := Seal(left.source, right.flow, left.bodies, left.bindings, left.forest, left.control, left.executable, left.bodyPaths, staticID, moduleID); err == nil {
 		t.Fatal("foreign Flow with equal denominators was accepted")
 	}
-	if _, err := Seal(left.source, left.flow, left.bodies, left.bindings, left.forest, left.control, right.executable, staticID, moduleID); err == nil {
+	if _, err := Seal(left.source, left.flow, left.bodies, left.bindings, left.forest, left.control, right.executable, left.bodyPaths, staticID, moduleID); err == nil {
 		t.Fatal("foreign executable proof with equal denominators was accepted")
 	}
-	if _, err := Seal(left.source, left.flow, left.bodies, left.bindings, right.forest, left.control, left.executable, staticID, moduleID); err == nil {
+	if _, err := Seal(left.source, left.flow, left.bodies, left.bindings, right.forest, left.control, left.executable, left.bodyPaths, staticID, moduleID); err == nil {
 		t.Fatal("foreign containment proof with equal denominators was accepted")
 	}
-	if _, err := Seal(left.source, left.flow, left.bodies, left.bindings, left.forest, right.control, left.executable, staticID, moduleID); err == nil {
+	if _, err := Seal(left.source, left.flow, left.bodies, left.bindings, left.forest, right.control, left.executable, left.bodyPaths, staticID, moduleID); err == nil {
 		t.Fatal("foreign source-control proof with equal denominators was accepted")
 	}
-	if _, err := Seal(left.source, left.flow, right.bodies, left.bindings, left.forest, left.control, left.executable, staticID, moduleID); err == nil {
+	if _, err := Seal(left.source, left.flow, right.bodies, left.bindings, left.forest, left.control, left.executable, left.bodyPaths, staticID, moduleID); err == nil {
 		t.Fatal("foreign Body proof with equal denominators was accepted")
 	}
-	if _, err := Seal(left.source, left.flow, left.bodies, right.bindings, left.forest, left.control, left.executable, staticID, moduleID); err == nil {
+	if _, err := Seal(left.source, left.flow, left.bodies, right.bindings, left.forest, left.control, left.executable, left.bodyPaths, staticID, moduleID); err == nil {
 		t.Fatal("foreign Binding proof with equal denominators was accepted")
 	}
 	foreignStaticID := staticID
 	foreignStaticID[0] ^= 1
-	if _, err := Seal(left.source, left.flow, left.bodies, left.bindings, left.forest, left.control, left.executable, foreignStaticID, moduleID); err == nil {
+	if _, err := Seal(left.source, left.flow, left.bodies, left.bindings, left.forest, left.control, left.executable, left.bodyPaths, foreignStaticID, moduleID); err == nil {
 		t.Fatal("foreign Static identity with equal denominators was accepted")
 	}
 	foreignModuleID := moduleID
 	foreignModuleID[0] ^= 1
-	if _, err := Seal(left.source, left.flow, left.bodies, left.bindings, left.forest, left.control, left.executable, staticID, foreignModuleID); err == nil {
+	if _, err := Seal(left.source, left.flow, left.bodies, left.bindings, left.forest, left.control, left.executable, left.bodyPaths, staticID, foreignModuleID); err == nil {
 		t.Fatal("foreign Module identity with equal denominators was accepted")
 	}
 }

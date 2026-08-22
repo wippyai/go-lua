@@ -11,6 +11,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/program/flow/executable"
 	"github.com/wippyai/go-lua/analysis/program/flow/kind"
 	flowrole "github.com/wippyai/go-lua/analysis/program/flow/role"
+	"github.com/wippyai/go-lua/analysis/program/flow/semanticpath"
 	"github.com/wippyai/go-lua/analysis/program/flow/sourcecontrol"
 	"github.com/wippyai/go-lua/analysis/program/keyspace"
 	"github.com/wippyai/go-lua/analysis/program/source"
@@ -26,6 +27,7 @@ func validateOwners(
 	forest *containment.Result,
 	control *sourcecontrol.Result,
 	executableResult *executable.Result,
+	bodyPaths *semanticpath.VertexCatalogPaths,
 ) ([keyspace.FamilyCount]uint32, error) {
 	var counts [keyspace.FamilyCount]uint32
 	identity := sourceView.Identity()
@@ -39,7 +41,8 @@ func validateOwners(
 		!binding.Matches(&bindings, sourceID, flowID) ||
 		!executable.Matches(executableResult, sourceID, flowID, staticID, moduleID) ||
 		!containment.Matches(forest, sourceID, flowID, staticID, moduleID) ||
-		!sourcecontrol.Matches(control, sourceID, flowID, staticID, moduleID) {
+		!sourcecontrol.Matches(control, sourceID, flowID, staticID, moduleID) ||
+		bodyPaths == nil || !bodyPaths.Matches(sourceID, flowID, staticID, moduleID) || bodyPaths.BodyCount() != bodies.BodyCount() {
 		return counts, errors.New("program/flow/directfunction: owner provenance disagrees with Source, Flow, Static, or Module")
 	}
 	var total uint64

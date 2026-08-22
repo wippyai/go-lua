@@ -1,6 +1,8 @@
 package directfunction
 
 import (
+	"sort"
+
 	"github.com/wippyai/go-lua/analysis/identity"
 	"github.com/wippyai/go-lua/analysis/program/keyspace"
 )
@@ -23,6 +25,12 @@ type Result struct {
 	callFunctions []keyspace.Term
 	loopFunctions []keyspace.Term
 	functionCount uint32
+
+	// selectedBodyPaths is the sealed transitive direct-call closure used by
+	// consumers that need to distinguish selected bodies from merely authored
+	// callable bodies. It is sorted by the already-issued BodyPath identity so
+	// lookup never rebuilds the closure or retains a second body authority.
+	selectedBodyPaths []identity.ContentID
 }
 
 // Matches reports whether r was sealed for the exact Source, authored Flow,
@@ -70,6 +78,31 @@ func (r *Result) Call(call keyspace.Term) (keyspace.Term, bool) {
 // Loop.  Non-generic loops have no retained slot and fail closed.
 func (r *Result) GenericLoop(loop keyspace.Term) (keyspace.Term, bool) {
 	return r.plane(r.loopFunctions, loop, keyspace.FamilyLoop)
+}
+
+// SelectedBodyPath reports whether path belongs to the sealed body closure
+// rooted at non-callable bodies and expanded through direct calls. The second
+// result is false when the owner is unavailable or the query identity is
+// unavailable; callers must fail closed instead of treating an unavailable
+// owner as an empty closure.
+func (r *Result) SelectedBodyPath(path identity.ContentID) (bool, bool) {
+	if !r.available() || !path.Available() || len(r.selectedBodyPaths) == 0 {
+		return false, false
+	}
+	index := sort.Search(len(r.selectedBodyPaths), func(index int) bool {
+		return !contentIDLess(r.selectedBodyPaths[index], path)
+	})
+	return index < len(r.selectedBodyPaths) && r.selectedBodyPaths[index] == path, true
+}
+
+func contentIDLess(left, right identity.ContentID) bool {
+	for index := range left {
+		if left[index] == right[index] {
+			continue
+		}
+		return left[index] < right[index]
+	}
+	return false
 }
 
 func (r *Result) plane(plane []keyspace.Term, term keyspace.Term, family keyspace.Family) (keyspace.Term, bool) {

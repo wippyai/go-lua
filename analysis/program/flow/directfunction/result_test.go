@@ -14,14 +14,15 @@ func TestResultQueriesRetainOnlyExactDensePlanes(t *testing.T) {
 	call := keyspace.MakeTerm(keyspace.FamilyCall, 1)
 	loop := keyspace.MakeTerm(keyspace.FamilyLoop, 1)
 	result := &Result{
-		sourceID:      flowtest.ContentIDAt(1),
-		flowID:        flowtest.ContentIDAt(2),
-		staticID:      flowtest.ContentIDAt(3),
-		moduleID:      flowtest.ContentIDAt(4),
-		readFunctions: []keyspace.Term{0, function},
-		callFunctions: []keyspace.Term{0, function},
-		loopFunctions: []keyspace.Term{0, function},
-		functionCount: 1,
+		sourceID:          flowtest.ContentIDAt(1),
+		flowID:            flowtest.ContentIDAt(2),
+		staticID:          flowtest.ContentIDAt(3),
+		moduleID:          flowtest.ContentIDAt(4),
+		readFunctions:     []keyspace.Term{0, function},
+		callFunctions:     []keyspace.Term{0, function},
+		loopFunctions:     []keyspace.Term{0, function},
+		functionCount:     1,
+		selectedBodyPaths: []identity.ContentID{flowtest.ContentIDAt(5)},
 	}
 	if got, ok := result.For(function); !ok || got != function {
 		t.Fatalf("dead Function DirectFunction = %v/%v, want %v/true", got, ok, function)
@@ -37,6 +38,12 @@ func TestResultQueriesRetainOnlyExactDensePlanes(t *testing.T) {
 	}
 	if got, ok := result.GenericLoop(loop); !ok || got != function {
 		t.Fatalf("GenericLoopFunction = %v/%v, want %v/true", got, ok, function)
+	}
+	if selected, ok := result.SelectedBodyPath(flowtest.ContentIDAt(5)); !ok || !selected {
+		t.Fatalf("SelectedBodyPath = %v/%v, want true/true", selected, ok)
+	}
+	if selected, ok := result.SelectedBodyPath(flowtest.ContentIDAt(6)); !ok || selected {
+		t.Fatalf("unselected BodyPath = %v/%v, want false/true", selected, ok)
 	}
 	for _, term := range []keyspace.Term{
 		0,
@@ -62,20 +69,22 @@ func TestResultQueriesAllocateNothing(t *testing.T) {
 	call := keyspace.MakeTerm(keyspace.FamilyCall, 1)
 	loop := keyspace.MakeTerm(keyspace.FamilyLoop, 1)
 	result := &Result{
-		sourceID:      flowtest.ContentIDAt(1),
-		flowID:        flowtest.ContentIDAt(2),
-		staticID:      flowtest.ContentIDAt(3),
-		moduleID:      flowtest.ContentIDAt(4),
-		readFunctions: []keyspace.Term{0, function},
-		callFunctions: []keyspace.Term{0, function},
-		loopFunctions: []keyspace.Term{0, function},
-		functionCount: 1,
+		sourceID:          flowtest.ContentIDAt(1),
+		flowID:            flowtest.ContentIDAt(2),
+		staticID:          flowtest.ContentIDAt(3),
+		moduleID:          flowtest.ContentIDAt(4),
+		readFunctions:     []keyspace.Term{0, function},
+		callFunctions:     []keyspace.Term{0, function},
+		loopFunctions:     []keyspace.Term{0, function},
+		functionCount:     1,
+		selectedBodyPaths: []identity.ContentID{flowtest.ContentIDAt(5)},
 	}
 	allocations := testing.AllocsPerRun(1000, func() {
 		_, _ = result.For(function)
 		_, _ = result.Read(read)
 		_, _ = result.Call(call)
 		_, _ = result.GenericLoop(loop)
+		_, _ = result.SelectedBodyPath(flowtest.ContentIDAt(5))
 	})
 	if allocations != 0 {
 		t.Fatalf("Result queries allocated %.2f objects per run", allocations)

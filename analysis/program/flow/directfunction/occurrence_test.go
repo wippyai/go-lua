@@ -531,6 +531,7 @@ type directFixture struct {
 	forest     *containment.Result
 	control    *sourcecontrol.Result
 	executable *executable.Result
+	bodyPaths  *semanticpath.VertexCatalogPaths
 	result     *Result
 
 	staticView   staticquery.View
@@ -659,8 +660,14 @@ func openDirectFixture(t *testing.T, spec directSpec) *directFixture {
 		flowtest.CloseFinalizers(source.Finalizer{}, flowFinalize)
 		t.Fatalf("executable.Seal: %v", err)
 	}
+	bodyPaths, bodyPathsOK := paths.VertexCatalog(sourceView.Identity().ContentID(), flowView.ContentID(), staticView.ContentID(), moduleID)
+	if !bodyPathsOK {
+		flowtest.CloseFinalizers(source.Finalizer{}, flowFinalize)
+		t.Fatalf("semanticpath.VertexCatalog: unavailable")
+	}
 	result, err := Seal(
 		sourceView, flowView, bodies, bindingResult, forest, controlResult, executableResult,
+		bodyPaths,
 		staticView.ContentID(), moduleID,
 	)
 	if err != nil {
@@ -671,7 +678,8 @@ func openDirectFixture(t *testing.T, spec directSpec) *directFixture {
 	fixture := &directFixture{
 		source: sourceView, flow: flowView, bodies: bodies, bindings: bindingResult,
 		forest: forest, control: controlResult, executable: executableResult,
-		result: result, staticView: staticView, flowFinalize: flowFinalize,
+		bodyPaths: bodyPaths,
+		result:    result, staticView: staticView, flowFinalize: flowFinalize,
 	}
 	t.Cleanup(func() {
 		flowtest.CloseFinalizers(source.Finalizer{}, fixture.flowFinalize)

@@ -7,6 +7,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/program/flow/body"
 	"github.com/wippyai/go-lua/analysis/program/flow/containment"
 	"github.com/wippyai/go-lua/analysis/program/flow/executable"
+	"github.com/wippyai/go-lua/analysis/program/flow/semanticpath"
 	"github.com/wippyai/go-lua/analysis/program/flow/sourcecontrol"
 	"github.com/wippyai/go-lua/analysis/program/keyspace"
 	"github.com/wippyai/go-lua/analysis/program/source"
@@ -26,10 +27,11 @@ func Seal(
 	forest *containment.Result,
 	control *sourcecontrol.Result,
 	executableResult *executable.Result,
+	bodyPaths *semanticpath.VertexCatalogPaths,
 	staticID identity.ContentID,
 	moduleID identity.ContentID,
 ) (*Result, error) {
-	counts, err := validateOwners(sourceView, flow, staticID, moduleID, bodies, bindings, forest, control, executableResult)
+	counts, err := validateOwners(sourceView, flow, staticID, moduleID, bodies, bindings, forest, control, executableResult, bodyPaths)
 	if err != nil {
 		return nil, err
 	}
@@ -83,6 +85,9 @@ func Seal(
 		functionCount: counts[keyspace.FamilyFunction],
 	}
 	if err := proof.populate(result); err != nil {
+		return nil, err
+	}
+	if err := populateSelectedBodyPaths(result, flow, bodies, bodyPaths, counts); err != nil {
 		return nil, err
 	}
 	return result, nil

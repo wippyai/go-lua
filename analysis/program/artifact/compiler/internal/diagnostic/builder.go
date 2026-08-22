@@ -56,10 +56,7 @@ type compiler struct {
 	branchScopeRewriteWellFormed bool
 	branchScopeRewriteOwners     map[keyspace.Term]struct{}
 
-	selectedDirectCalleeBodiesComputed bool
-	selectedDirectCalleeBodiesOK       bool
-	selectedDirectCalleeBodiesValue    map[identity.ContentID]struct{}
-	callArgumentSources                map[identity.ContentID]callArgumentSource
+	callArgumentSources map[identity.ContentID]callArgumentSource
 }
 
 // pointPaths copies one owner-issued Causal span into reusable construction

@@ -192,8 +192,8 @@ func (p *OutcomePhasePaths) At(term keyspace.Term) (identity.ContentID, bool) {
 	return id, id.Available()
 }
 
-// VertexCatalogPaths is a read-only, owner-qualified projection.  It exposes
-// only the three coordinates SourceControl needs to derive phase paths.
+// VertexCatalogPaths is a read-only, owner-qualified projection of the
+// parent-issued paths needed by Flow's sealing consumers.
 type VertexCatalogPaths struct{ certificate *certificateState }
 
 // Matches is the exact owner fence for a SourceControl vertex view.

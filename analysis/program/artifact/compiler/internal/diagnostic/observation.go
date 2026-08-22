@@ -315,10 +315,7 @@ func (compiler *compiler) copyTypeConformanceObservationsFailure() programconstr
 	if compiler == nil || !compiler.input.Available() {
 		return programconstruction.New(programcatalog.DiagnosticObservation(), programconstruction.IssueDiagnosticCall, -1, -1)
 	}
-	selected, selectedOK := compiler.selectedDirectCalleeBodies()
-	if !selectedOK {
-		return programconstruction.New(programcatalog.DiagnosticObservation(), programconstruction.IssueDiagnosticCall, -1, -1)
-	}
+	directFunctions := compiler.input.Program.Flow().DirectFunctions()
 	for index, call := range compiler.calls {
 		if !call.Available() {
 			return programconstruction.New(programcatalog.DiagnosticObservation(), programconstruction.IssueDiagnosticCall, index, -1)
@@ -327,7 +324,11 @@ func (compiler *compiler) copyTypeConformanceObservationsFailure() programconstr
 		if !targetOK {
 			continue
 		}
-		if _, ownerSelected := selected[call.BodyID()]; !ownerSelected {
+		ownerSelected, selectedOK := directFunctions.SelectedBodyPath(call.BodyID())
+		if !selectedOK {
+			return programconstruction.New(programcatalog.DiagnosticObservation(), programconstruction.IssueDiagnosticCall, index, -1)
+		}
+		if !ownerSelected {
 			continue
 		}
 		if _, hasTail := call.TailID(); call.Form() != programschema.CallFormPlain || hasTail || call.TypeArgumentCount() != 0 {
@@ -403,61 +404,6 @@ func (compiler *compiler) copyTypeConformanceObservationsFailure() programconstr
 		}
 	}
 	return programconstruction.Fault{}
-}
-
-// selectedDirectCalleeBodies computes the sealed DirectFunctions closure once
-// per compile and memoizes it: the three conformance walks that read it all
-// run against the same compiler state, so the closure cannot change between
-// calls.
-func (compiler *compiler) selectedDirectCalleeBodies() (map[identity.ContentID]struct{}, bool) {
-	if compiler == nil {
-		return nil, false
-	}
-	if compiler.selectedDirectCalleeBodiesComputed {
-		return compiler.selectedDirectCalleeBodiesValue, compiler.selectedDirectCalleeBodiesOK
-	}
-	compiler.selectedDirectCalleeBodiesValue, compiler.selectedDirectCalleeBodiesOK = compiler.computeSelectedDirectCalleeBodies()
-	compiler.selectedDirectCalleeBodiesComputed = true
-	return compiler.selectedDirectCalleeBodiesValue, compiler.selectedDirectCalleeBodiesOK
-}
-
-func (compiler *compiler) computeSelectedDirectCalleeBodies() (map[identity.ContentID]struct{}, bool) {
-	selected := make(map[identity.ContentID]struct{})
-	callable := make(map[identity.ContentID]struct{})
-	for _, body := range compiler.bodyBoundary.Bodies() {
-		if !body.Available() {
-			return nil, false
-		}
-		if body.Callable() {
-			callable[body.ID()] = struct{}{}
-			continue
-		}
-		selected[body.ID()] = struct{}{}
-	}
-	if len(selected) == 0 {
-		return nil, false
-	}
-	for changed := true; changed; {
-		changed = false
-		for _, call := range compiler.calls {
-			target, targetOK := call.DirectTargetBody()
-			if !targetOK {
-				continue
-			}
-			if _, ownerSelected := selected[call.BodyID()]; !ownerSelected {
-				continue
-			}
-			if _, already := selected[target]; already {
-				continue
-			}
-			if _, isCallable := callable[target]; !isCallable {
-				return nil, false
-			}
-			selected[target] = struct{}{}
-			changed = true
-		}
-	}
-	return selected, true
 }
 
 // diagnosticEvidenceLinearScanLimit is the width below which a direct
@@ -605,10 +551,7 @@ func (compiler *compiler) copyWriteConformanceObservationsFailure() programconst
 	if compiler == nil || !compiler.input.Available() {
 		return programconstruction.New(programcatalog.DiagnosticObservation(), programconstruction.IssueDiagnosticUnavailable, -1, -1)
 	}
-	selected, selectedOK := compiler.selectedDirectCalleeBodies()
-	if !selectedOK {
-		return programconstruction.New(programcatalog.DiagnosticObservation(), programconstruction.IssueDiagnosticUnavailable, -1, -1)
-	}
+	directFunctions := compiler.input.Program.Flow().DirectFunctions()
 	view := compiler.input.Program.Flow()
 	assigns := view.Authored().Storage().Assigns()
 	writes := view.Authored().Storage().Writes()
@@ -627,7 +570,11 @@ func (compiler *compiler) copyWriteConformanceObservationsFailure() programconst
 		if !bodyOK || !bodyPath.Available() {
 			return programconstruction.New(programcatalog.DiagnosticObservation(), programconstruction.IssueDiagnosticUnavailable, index, -1)
 		}
-		if _, ownerSelected := selected[bodyPath]; !ownerSelected {
+		ownerSelected, selectedOK := directFunctions.SelectedBodyPath(bodyPath)
+		if !selectedOK {
+			return programconstruction.New(programcatalog.DiagnosticObservation(), programconstruction.IssueDiagnosticUnavailable, index, -1)
+		}
+		if !ownerSelected {
 			continue
 		}
 		assignmentID, assignmentIDOK := view.StorageAssignmentID(term)
@@ -699,10 +646,7 @@ func (compiler *compiler) copyAssignmentConformanceObservationsFailure() program
 	if compiler == nil || !compiler.input.Available() {
 		return programconstruction.New(programcatalog.DiagnosticObservation(), programconstruction.IssueDiagnosticUnavailable, -1, -1)
 	}
-	selected, selectedOK := compiler.selectedDirectCalleeBodies()
-	if !selectedOK {
-		return programconstruction.New(programcatalog.DiagnosticObservation(), programconstruction.IssueDiagnosticUnavailable, -1, -1)
-	}
+	directFunctions := compiler.input.Program.Flow().DirectFunctions()
 	view := compiler.input.Program.Flow()
 	binds := view.Authored().Storage().Binds()
 	authoredValues := view.Authored().Values()
@@ -720,7 +664,11 @@ func (compiler *compiler) copyAssignmentConformanceObservationsFailure() program
 		if !bodyOK || !bodyPath.Available() {
 			return programconstruction.New(programcatalog.DiagnosticObservation(), programconstruction.IssueDiagnosticUnavailable, index, -1)
 		}
-		if _, ownerSelected := selected[bodyPath]; !ownerSelected {
+		ownerSelected, selectedOK := directFunctions.SelectedBodyPath(bodyPath)
+		if !selectedOK {
+			return programconstruction.New(programcatalog.DiagnosticObservation(), programconstruction.IssueDiagnosticUnavailable, index, -1)
+		}
+		if !ownerSelected {
 			continue
 		}
 		bindID, bindIDOK := rowidentity.StorageBindID(compiler.input.Program, compiler.input.Program.ContentID(), index)

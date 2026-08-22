@@ -182,7 +182,7 @@ func Assemble(
 	if err != nil {
 		return fail("Causal recurrence", err)
 	}
-	directFunctionResult, err := directfunction.Seal(sourceView, authoredLive, bodies, bindings, forest, controlGraph, executableResult, staticID, moduleID)
+	directFunctionResult, err := directfunction.Seal(sourceView, authoredLive, bodies, bindings, forest, controlGraph, executableResult, vertexPaths, staticID, moduleID)
 	if err != nil {
 		return fail("DirectFunction", err)
 	}
