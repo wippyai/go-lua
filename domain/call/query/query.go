@@ -8,9 +8,6 @@
 package query
 
 import (
-	"crypto/sha256"
-	"encoding/binary"
-
 	"github.com/wippyai/go-lua/analysis/engine"
 	"github.com/wippyai/go-lua/analysis/identity"
 	"github.com/wippyai/go-lua/analysis/schema"
@@ -168,13 +165,6 @@ func fingerprintCalleeSet(value calldispatch.CalleeSet) uint64 {
 	if !value.Available() {
 		return 0
 	}
-	cardinality, finite := value.Cardinality()
-	var image [16]byte
-	image[0] = byte(value.Completeness())
-	if finite {
-		image[1] = 1
-	}
-	binary.BigEndian.PutUint32(image[4:8], cardinality)
-	digest := sha256.Sum256(image[:])
-	return binary.BigEndian.Uint64(digest[:8])
+	cardinality, _ := value.Cardinality()
+	return uint64(value.Completeness())<<32 | uint64(cardinality)
 }
