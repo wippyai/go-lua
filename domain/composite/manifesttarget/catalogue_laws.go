@@ -86,8 +86,14 @@ func compileCatalogue(declarations *manifest.Catalogue, amendments ...PreviewAme
 	if err != nil {
 		return declaration.Spec{}, err
 	}
+	if err := callbackConformance(functions); err != nil {
+		return declaration.Spec{}, err
+	}
 	catalogue, err := operations(functions)
 	if err != nil {
+		return declaration.Spec{}, err
+	}
+	if err := outcomeSuffixCarriage(&catalogue); err != nil {
 		return declaration.Spec{}, err
 	}
 	if err := catalogue.selfEffects(declarations); err != nil {

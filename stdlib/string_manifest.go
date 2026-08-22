@@ -16,7 +16,10 @@ var stringCapture = typeexpr.Union(typ.String, typ.Number)
 var stringReplacement = typeexpr.Union(
 	typ.String,
 	typetable.NewMap(typ.Any, typ.Any),
-	typ.Func().Param("capture", stringCapture).
+	// gsub applies the replacement function to the captures of each match, or
+	// to the whole match when the pattern declares none, so the arm always
+	// receives one capture and may receive more.
+	typ.Func().Param("capture", stringCapture).Variadic(stringCapture).
 		Returns(typeexpr.Union(typ.String, typ.Number, typ.LiteralBool(false), typ.Nil)).Build(),
 )
 
@@ -67,9 +70,14 @@ func stringDeclaration() declaration {
 		"sub": authored(typ.Func().
 			Param("s", typ.String).Param("i", typ.Integer).OptParam("j", typ.Integer).
 			Returns(typ.String).Build(), ownership.BorrowAll{}),
-		"unpack": withResults(authored(typ.Func().
+		// unpack answers the values the format describes followed by the index
+		// of the first unread byte. That trailing integer is end-anchored
+		// behind an open tail, and the sealed result vocabulary addresses a
+		// result by its fixed ordinal only, so the declaration states the tail
+		// it can carry; the seal refuses a suffix in this position by name.
+		"unpack": withResultTail(authored(typ.Func().
 			Param("fmt", typ.String).Param("s", typ.String).OptParam("pos", typ.Integer).
-			Build(), ownership.BorrowAll{}), typ.Any, typ.Integer),
+			Build(), ownership.BorrowAll{}), typ.Any),
 		"upper": authored(typ.Func().Param("s", typ.String).Returns(typ.String).Build(),
 			ownership.BorrowAll{}),
 	}, values: map[string]typ.Type{

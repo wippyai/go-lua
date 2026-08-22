@@ -27,6 +27,14 @@ func closed(fixed ...typ.Type) Values {
 	return values(fixed, false, 0)
 }
 
+// openTyped states a Values relation whose open tail carries a declared
+// element type. The neutral constructor above types every open tail as any,
+// which is the right answer only where the relation makes no claim about what
+// it carries.
+func openTyped(variable ValuesVar, element typ.Type, fixed ...typ.Type) Values {
+	return Values{Fixed: append([]typ.Type(nil), fixed...), Tail: ValuesVariable, Var: variable, TailType: element}
+}
+
 func anyValue() Values { return closed(typ.Any) }
 
 func emptyValues() Values { return closed() }
@@ -480,9 +488,13 @@ func callbackGsubProfile() Operation {
 	op := module("string", "gsub")
 	op.ValuesVars = 4
 	op.Input = values([]typ.Type{typ.String, typ.String, typ.Any}, true, 0)
-	op.Callbacks = []Callback{{Function: InputSource{Kind: InputSourceValue, Ordinal: 2}, Admission: CallableAdmissionDirectFunction, Arguments: nativeCallbackTail(1), Outcomes: terminals(nativeCallbackTail(2), nativeCallbackTail(2), anyValue(), anyValue(), nativeCallbackTail(3)), Lifecycle: CallbackSyncOptionalMany, Effects: RowSpec{Tail: RowClosed}}}
+	// The replacement function receives the captures of the match, and the
+	// whole match when the pattern declares none, so one capture is always
+	// applied and the rest are the open tail.
+	captures := openTyped(1, stringCapture, stringCapture)
+	op.Callbacks = []Callback{{Function: InputSource{Kind: InputSourceValue, Ordinal: 2}, Admission: CallableAdmissionDirectFunction, Arguments: captures, Outcomes: terminals(nativeCallbackTail(2), nativeCallbackTail(2), anyValue(), anyValue(), nativeCallbackTail(3)), Lifecycle: CallbackSyncOptionalMany, Effects: RowSpec{Tail: RowClosed}}}
 	op.Outcomes = []Outcome{{Kind: OutcomeNormal, Values: closed(typ.String, typ.Integer)}, {Kind: OutcomeThrow, Values: anyValue()}, {Kind: OutcomeCancel, Values: nativeCallbackTail(3)}}
-	function := Subedge{Role: 1, Family: SubedgeFamilyCall, Callee: SubedgeCallee{Kind: SubedgeCalleeCallback, Callback: 1}, ArgumentOrigins: ruleTailOrigin(), AdmissionFailure: admissionToOutcome(anyValue(), AdjustmentPreserve, PlacementFixed, 1), Routes: []SubedgeRoute{
+	function := Subedge{Role: 1, Family: SubedgeFamilyCall, Callee: SubedgeCallee{Kind: SubedgeCalleeCallback, Callback: 1}, ArgumentOrigins: append(ruleOrigins(1), ruleTailOrigin()...), AdmissionFailure: admissionToOutcome(anyValue(), AdjustmentPreserve, PlacementFixed, 1), Routes: []SubedgeRoute{
 		continueRoute(OutcomeNormal, anyValue(), AdjustmentExact), continueRoute(OutcomeReturn, anyValue(), AdjustmentExact), outcomeRoute(OutcomeThrow, anyValue(), AdjustmentPreserve, PlacementFixed, 1), rejectRoute(1), outcomeRoute(OutcomeCancel, nativeCallbackTail(3), AdjustmentPreserve, PlacementTail, 2),
 	}}
 	table := ruleFamilyEdge(2, SubedgeFamilyIndexGet, closed(typ.Any, typ.Any), 1, 2, nativeCallbackTail(3))

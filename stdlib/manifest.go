@@ -207,9 +207,3 @@ func withResultTail(function declaredFunction, tail typ.Type) declaredFunction {
 	function.ResultTail = tail
 	return function
 }
-
-func withResults(function declaredFunction, tail typ.Type, suffix ...typ.Type) declaredFunction {
-	function.ResultTail = tail
-	function.ResultSuffix = append([]typ.Type(nil), suffix...)
-	return function
-}
