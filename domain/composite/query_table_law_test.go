@@ -331,7 +331,7 @@ func TestSelectedPointProducerWithResultPublicationRemainsAdmitted(t *testing.T)
 	if !admitted || registration == nil || !contributor.producerComplete() || !contributor.resultComplete() || !contributor.complete() {
 		t.Fatal("complete selected-point producer did not retain Result publication capability")
 	}
-	if contributor.queryResultPublication.contract.FamilyID() != identity.ContentID(registration.ID()) || contributor.queryResultPublication.contract.Codec() != registration.Freezer() {
+	if contributor.queryResultPublication.contract.FamilyID() != identity.ContentID(registration.EntryID()) || contributor.queryResultPublication.contract.Codec() != registration.Freezer() {
 		t.Fatal("selected-point Result contract drifted from registration identity")
 	}
 }

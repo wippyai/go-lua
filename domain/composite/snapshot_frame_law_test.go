@@ -7,6 +7,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/identity"
 	"github.com/wippyai/go-lua/analysis/schema"
 	"github.com/wippyai/go-lua/analysis/schema/axis"
+	"github.com/wippyai/go-lua/analysis/schema/query"
 	"github.com/wippyai/go-lua/analysis/snapshot"
 )
 
@@ -140,20 +141,21 @@ func TestEveryMountedAuthorityPublishesAColumn(t *testing.T) {
 	}
 }
 
-// TestEverySealedQueryFamilyRequestsAResultColumn is the query half of the
-// issuance set. A family the table seals is a family the analyzer answers, so
-// the projection requests one result column for each of them, addressed by the
+// TestEverySelectedQueryFamilyRequestsAResultColumn is the query half of the
+// issuance set. A selected-point family is answered through Result, so the
+// projection requests one result column for each of them, addressed by the
 // same schema and the same dense slot discipline the axis columns are addressed
 // by, and identified by the identity the table sealed the family under rather
-// than by one a publisher minted.
-func TestEverySealedQueryFamilyRequestsAResultColumn(t *testing.T) {
+// than by one a publisher minted. Observation-only families publish through
+// their observation producer and never acquire a Result column.
+func TestEverySelectedQueryFamilyRequestsAResultColumn(t *testing.T) {
 	compilation, publication := publicationForTest(t)
 	requests, ok := publication.QueryRequests()
 	if !ok {
 		t.Fatal("the sealed table requests no query result columns")
 	}
-	if len(requests) != sealedQueryFamilies(t, compilation) {
-		t.Fatalf("%d result columns requested for %d sealed query families", len(requests), sealedQueryFamilies(t, compilation))
+	if len(requests) != selectedQueryFamilies(t, compilation) {
+		t.Fatalf("%d result columns requested for %d selected query families", len(requests), selectedQueryFamilies(t, compilation))
 	}
 	schemaID, _ := publication.SchemaID()
 	columns, columnsOK := publication.WriteRequests()
@@ -162,6 +164,9 @@ func TestEverySealedQueryFamilyRequestsAResultColumn(t *testing.T) {
 	}
 	families := make(map[identity.ContentID]schema.Key, len(requests))
 	for index, request := range requests {
+		if request.Family == QueryFamilyCallCalleeSet {
+			t.Fatal("observation-only Call family acquired a Result column")
+		}
 		if request.Schema != schemaID {
 			t.Fatalf("the request for family %q names a schema other than the sealed table", request.Family)
 		}
@@ -186,14 +191,17 @@ func TestEverySealedQueryFamilyRequestsAResultColumn(t *testing.T) {
 			t.Fatalf("family %q answers at slot %d, not at slot %d where the axis columns leave off", request.Family, request.Slot, expected)
 		}
 	}
+	if _, projects := publication.ProjectQuery(QueryFamilyCallCalleeSet); projects {
+		t.Fatal("observation-only Call family projects a Result identity")
+	}
 	if _, projects := publication.ProjectQuery("no-such-family"); projects {
 		t.Fatal("a family the table never sealed projects an identity")
 	}
 }
 
-// TestSealedQueryFamiliesAreAnswerableOnAPublishedSnapshot is the stitch on the
-// query side: a snapshot materialized from the sealed catalog fills every
-// declared column and answers every sealed family at the slot the projection
+// TestSelectedQueryFamiliesAreAnswerableOnAPublishedSnapshot is the stitch on
+// the query side: a snapshot materialized from the sealed catalog fills every
+// declared column and answers every selected family at the slot the projection
 // requested, and each family then opens on that snapshot and answers the same
 // four outcomes a column read reports. A materialized absence stays
 // distinguishable from ignorance on the way out of the analyzer as well as
@@ -202,7 +210,7 @@ func TestEverySealedQueryFamilyRequestsAResultColumn(t *testing.T) {
 // The publication is the real driver's over a real mounted Link. Every column
 // it fills is filled by the domain that owns the facts in it, so what this law
 // reads is the composition a consumer receives rather than a stand-in for one.
-func TestSealedQueryFamiliesAreAnswerableOnAPublishedSnapshot(t *testing.T) {
+func TestSelectedQueryFamiliesAreAnswerableOnAPublishedSnapshot(t *testing.T) {
 	_, publication := publicationForTest(t)
 	queries, queriesOK := publication.QueryRequests()
 	if !queriesOK || len(queries) == 0 {
@@ -230,10 +238,11 @@ func columnDenominator(slot uint32) identity.ContentID {
 	return identity.ContentID{0x40, byte(slot)}
 }
 
-// sealedQueryFamilies is the number of families the declaration table sealed.
-// Reading it from the table rather than through the projection is what makes
-// the request set a claim this law can check.
-func sealedQueryFamilies(t *testing.T, compilation Compilation) int {
+// selectedQueryFamilies is the number of sealed families whose declared
+// population is Result-facing. Reading the population from the schema table,
+// not the publication projection, makes the request set a claim this law can
+// check independently.
+func selectedQueryFamilies(t *testing.T, compilation Compilation) int {
 	t.Helper()
 	sealed, failure := Table(compilation)
 	if failure.Available() || sealed == nil {
@@ -243,7 +252,18 @@ func sealedQueryFamilies(t *testing.T, compilation Compilation) int {
 	if !viewOK {
 		t.Fatal("the sealed table registers no query surface")
 	}
-	return view.Count()
+	selected := 0
+	for position := 0; position < view.Count(); position++ {
+		entry, entryOK := view.At(position)
+		registration, registrationOK := entry.(*query.Registration)
+		if !entryOK || !registrationOK || !registration.EntryAvailable() {
+			t.Fatalf("query registration %d is unavailable", position)
+		}
+		if registration.PopulationKind() == query.PopulationKindSelectedPoint {
+			selected++
+		}
+	}
+	return selected
 }
 
 // TestEveryPublishedColumnRequestsOneWriter states the issuance half. The

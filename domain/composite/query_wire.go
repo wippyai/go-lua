@@ -147,7 +147,7 @@ func wireQuery[F, R any](
 		if admit == nil || encode == nil {
 			return nil, queryContributor{}, false
 		}
-		contract, contractOK := engine.NewCanonicalResultContract(identity.ContentID(registration.ID()), registration.Freezer())
+		contract, contractOK := engine.NewCanonicalResultContract(identity.ContentID(registration.EntryID()), registration.Freezer())
 		if !contractOK {
 			return nil, queryContributor{}, false
 		}

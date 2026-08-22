@@ -525,7 +525,7 @@ func (bound *ProgramBinding) QueryPublications(committed *engine.CommittedProgra
 			registration.EntryID() != site.RegistrationID || registration.Population() != query.PopulationSelectedPoint || registration.Projection() != site.Projection {
 			return nil, false
 		}
-		if !contributor.queryResultPublication.contract.Available() || contributor.queryResultPublication.contract.FamilyID() != identity.ContentID(registration.ID()) || contributor.queryResultPublication.contract.Codec() != registration.Freezer() {
+		if !contributor.queryResultPublication.contract.Available() || contributor.queryResultPublication.contract.FamilyID() != identity.ContentID(registration.EntryID()) || contributor.queryResultPublication.contract.Codec() != registration.Freezer() {
 			return nil, false
 		}
 		query, resolved := committed.Query(site.ID)

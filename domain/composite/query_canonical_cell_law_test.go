@@ -189,7 +189,7 @@ func TestQueryPublicationsSealFamilyCodecAndCanonicalizeBorrowedAnswers(t *testi
 			t.Fatalf("publication %d names no sealed query registration", index)
 		}
 		registration := catalogState.queries[position]
-		if contract.FamilyID() != identity.ContentID(registration.ID()) || contract.Codec() != registration.Freezer() {
+		if contract.FamilyID() != identity.ContentID(registration.EntryID()) || contract.Codec() != registration.Freezer() {
 			t.Fatalf("publication %d does not carry its registration family and codec identity", index)
 		}
 		if publication.Site.Authority != publication.Site.Family || publication.Site.Family == "" {

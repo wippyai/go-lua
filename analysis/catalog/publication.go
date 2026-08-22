@@ -113,11 +113,14 @@ func CompilePublication(sealed *schema.Schema) (Publication, bool) {
 		if !entryOK || !registrationOK || !registration.EntryAvailable() {
 			return Publication{}, false
 		}
+		if registration.PopulationKind() != query.PopulationKindSelectedPoint {
+			continue
+		}
 		family := registration.Key()
 		if _, duplicate := families[family]; duplicate {
 			return Publication{}, false
 		}
-		id := identity.ContentID(registration.ID())
+		id := identity.ContentID(registration.EntryID())
 		if !id.Available() {
 			return Publication{}, false
 		}
