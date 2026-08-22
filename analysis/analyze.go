@@ -66,7 +66,7 @@ type compiledState struct {
 	geometry          result.Geometry
 	binding           *composite.ProgramBinding
 	committed         *engine.CommittedProgram
-	querySites        []composite.QuerySite
+	querySites        composite.SelectedQueryTable
 	queryPublications []composite.QueryPublication
 	sourceID          identity.ContentID
 	composition       snapshot.Snapshot
@@ -310,7 +310,7 @@ func (plan *Plan) solveWithPolicy(ctx context.Context, options engine.SolveDiagn
 		diagnostics.FailCurrentPhase()
 		return nil, nil, AnalyzeIncomplete, diagnostics
 	}
-	if state.committed == nil || len(state.querySites) == 0 {
+	if state.committed == nil || state.querySites.Count() == 0 {
 		diagnostics.AssembleStage = anadiag.AnalyzeDiagnosticAssembleStageRuntime
 		diagnostics.Enter(anadiag.AnalyzeDiagnosticPhaseSolve)
 		diagnostics.Fail(anadiag.AnalyzeDiagnosticReasonEngineIncomplete)
@@ -367,7 +367,7 @@ func (plan *Plan) solveWithPolicy(ctx context.Context, options engine.SolveDiagn
 	}
 	diagnostics.Enter(anadiag.AnalyzeDiagnosticPhaseObservation)
 	diagnostics.Enter(anadiag.AnalyzeDiagnosticPhaseDetach)
-	queriesPublished := len(queryPublications) == len(state.querySites) && len(queryPublications) > 0
+	queriesPublished := len(queryPublications) == state.querySites.Count() && len(queryPublications) > 0
 	sealed, snapshotPublished := solver.PublishedSnapshot(stateResult)
 	published := sealed.Snapshot()
 	queryRead, queryOpened := snapshot.OpenQuery[identity.ContentID, engine.Answer](&published, sealed.QueryFamily())
@@ -412,7 +412,7 @@ func (state *compiledState) ordinaryRuntimeSolver() (*engine.Solver, bool) {
 		var publications []composite.QueryPublication
 		var failure engine.SolveFailure
 		state.ordinary, publications, failure, state.ordinaryOK = state.buildRuntimeSolver(nil)
-		state.ordinaryOK = state.ordinaryOK && len(publications) == len(state.querySites) && !failure.Available()
+		state.ordinaryOK = state.ordinaryOK && len(publications) == state.querySites.Count() && !failure.Available()
 		if state.ordinaryOK {
 			state.queryPublications = publications
 		}
@@ -437,7 +437,7 @@ const runtimeSealPhasePublications uint64 = 2
 // declared, so the only inventory this pass states is the observation set the
 // policy selected; the seal binds the whole runtime from both.
 func (state *compiledState) buildRuntimeSolver(policy *anadiag.DiagnosticPolicy) (*engine.Solver, []composite.QueryPublication, engine.SolveFailure, bool) {
-	if state == nil || state.binding == nil || state.binding.SchemaBinding() == nil || state.committed == nil || len(state.querySites) == 0 || state.artifacts == nil {
+	if state == nil || state.binding == nil || state.binding.SchemaBinding() == nil || state.committed == nil || state.querySites.Count() == 0 || state.artifacts == nil {
 		return nil, nil, engine.SolveFailure{}, false
 	}
 	geometry := state.geometry
@@ -446,7 +446,7 @@ func (state *compiledState) buildRuntimeSolver(policy *anadiag.DiagnosticPolicy)
 	}
 	binding := state.binding
 	publications, published := binding.QueryPublications(state.committed, state.querySites)
-	if !published || len(publications) != len(state.querySites) {
+	if !published || len(publications) != state.querySites.Count() {
 		return nil, nil, engine.ProgramSealFailure(runtimeSealPhasePublications), false
 	}
 	observations, observationFailure, observed := anadiag.ValueObservations(state.committed, binding, state.contextDirectory, geometry.BranchObservations, geometry.ConformanceObservations)
@@ -559,7 +559,7 @@ func (state *compiledState) release() {
 		state.artifacts = nil
 		state.compilation = composite.Compilation{}
 		state.committed = nil
-		state.querySites = nil
+		state.querySites = composite.SelectedQueryTable{}
 		state.queryPublications = nil
 		state.ordinary = nil
 		state.ordinaryOK = false
@@ -626,21 +626,21 @@ func (workspace *Workspace) analyze(ctx context.Context, source *link.Link) (*re
 	}
 }
 
-func (state *compiledState) assembleCommittedProgram() (*engine.CommittedProgram, []composite.QuerySite, anadiag.AnalyzeDiagnosticAssembleStage, composite.AdmissionFailure, engine.ProgramAssembleRefusal, bool) {
+func (state *compiledState) assembleCommittedProgram() (*engine.CommittedProgram, composite.SelectedQueryTable, anadiag.AnalyzeDiagnosticAssembleStage, composite.AdmissionFailure, engine.ProgramAssembleRefusal, bool) {
 	if state == nil || state.artifacts == nil || state.binding == nil || state.binding.SchemaBinding() == nil || !state.binding.SchemaBinding().Sealed() {
-		return nil, nil, anadiag.AnalyzeDiagnosticAssembleStageNone, composite.AdmissionFailure{}, engine.ProgramAssembleRefusal{}, false
+		return nil, composite.SelectedQueryTable{}, anadiag.AnalyzeDiagnosticAssembleStageNone, composite.AdmissionFailure{}, engine.ProgramAssembleRefusal{}, false
 	}
 	binding := state.binding
 	witness, witnessOK := linkBootstrapWitness(state, binding)
 	if !witnessOK {
-		return nil, nil, anadiag.AnalyzeDiagnosticAssembleStageBinding, composite.AdmissionFailure{}, engine.ProgramAssembleRefusal{}, false
+		return nil, composite.SelectedQueryTable{}, anadiag.AnalyzeDiagnosticAssembleStageBinding, composite.AdmissionFailure{}, engine.ProgramAssembleRefusal{}, false
 	}
 	inputs := make([]engine.MountedProgramArtifact, 0, len(state.artifacts.mounts))
 	rolesByArtifact := make(map[identity.ContentID][]engine.MountedProgramRole, len(state.artifacts.mounts))
 	factorsByArtifact := make(map[identity.ContentID][]engine.MountedProgramFactor, len(state.artifacts.mounts))
 	for _, mount := range state.artifacts.mounts {
 		if !mount.Available() {
-			return nil, nil, anadiag.AnalyzeDiagnosticAssembleStageMount, composite.AdmissionFailure{}, engine.ProgramAssembleRefusal{}, false
+			return nil, composite.SelectedQueryTable{}, anadiag.AnalyzeDiagnosticAssembleStageMount, composite.AdmissionFailure{}, engine.ProgramAssembleRefusal{}, false
 		}
 		artifactID := mount.Snapshot.ArtifactID()
 		roles, have := rolesByArtifact[artifactID]
@@ -648,11 +648,11 @@ func (state *compiledState) assembleCommittedProgram() (*engine.CommittedProgram
 		if !have {
 			product, productOK := state.artifacts.products[mount.ProgramID]
 			if !productOK {
-				return nil, nil, anadiag.AnalyzeDiagnosticAssembleStageMount, composite.AdmissionFailure{}, engine.ProgramAssembleRefusal{}, false
+				return nil, composite.SelectedQueryTable{}, anadiag.AnalyzeDiagnosticAssembleStageMount, composite.AdmissionFailure{}, engine.ProgramAssembleRefusal{}, false
 			}
 			boundRoles, boundFactors, boundOK := mountedProgramBindings(product.Bindings, binding)
 			if !boundOK {
-				return nil, nil, anadiag.AnalyzeDiagnosticAssembleStageMount, composite.AdmissionFailure{}, engine.ProgramAssembleRefusal{}, false
+				return nil, composite.SelectedQueryTable{}, anadiag.AnalyzeDiagnosticAssembleStageMount, composite.AdmissionFailure{}, engine.ProgramAssembleRefusal{}, false
 			}
 			roles, factors = boundRoles, boundFactors
 			rolesByArtifact[artifactID] = roles
@@ -660,7 +660,7 @@ func (state *compiledState) assembleCommittedProgram() (*engine.CommittedProgram
 		}
 		product, productOK := state.artifacts.products[mount.ProgramID]
 		if !productOK || product.Template == nil || !product.Template.Available() {
-			return nil, nil, anadiag.AnalyzeDiagnosticAssembleStageMount, composite.AdmissionFailure{}, engine.ProgramAssembleRefusal{}, false
+			return nil, composite.SelectedQueryTable{}, anadiag.AnalyzeDiagnosticAssembleStageMount, composite.AdmissionFailure{}, engine.ProgramAssembleRefusal{}, false
 		}
 		inputs = append(inputs, engine.MountedProgramArtifact{Template: product.Template, Roles: roles, Factors: factors, Module: mount.ModuleKey})
 	}
@@ -668,31 +668,31 @@ func (state *compiledState) assembleCommittedProgram() (*engine.CommittedProgram
 	sealedOK := len(sealed) != 0
 	rules := binding.Rules()
 	if !sealedOK || rules == nil {
-		return nil, nil, anadiag.AnalyzeDiagnosticAssembleStageBinding, composite.AdmissionFailure{}, engine.ProgramAssembleRefusal{}, false
+		return nil, composite.SelectedQueryTable{}, anadiag.AnalyzeDiagnosticAssembleStageBinding, composite.AdmissionFailure{}, engine.ProgramAssembleRefusal{}, false
 	}
 	sites, queryOK := composite.SelectedQuerySites(state.compilation, sealed, state.contextDirectory)
 	if !queryOK {
-		return nil, nil, anadiag.AnalyzeDiagnosticAssembleStageQueryPlan, composite.AdmissionFailure{}, engine.ProgramAssembleRefusal{}, false
+		return nil, composite.SelectedQueryTable{}, anadiag.AnalyzeDiagnosticAssembleStageQueryPlan, composite.AdmissionFailure{}, engine.ProgramAssembleRefusal{}, false
 	}
 	linkAdmissions, linkOK := rules.LinkAdmissions()
 	if !linkOK {
-		return nil, nil, anadiag.AnalyzeDiagnosticAssembleStageBootstrapRules, composite.AdmissionFailure{}, engine.ProgramAssembleRefusal{}, false
+		return nil, composite.SelectedQueryTable{}, anadiag.AnalyzeDiagnosticAssembleStageBootstrapRules, composite.AdmissionFailure{}, engine.ProgramAssembleRefusal{}, false
 	}
 	mountedPoint, mountedPointOK := rules.MountedPointAdmissions()
 	if !mountedPointOK {
-		return nil, nil, anadiag.AnalyzeDiagnosticAssembleStageArtifactRules, composite.AdmissionFailure{}, engine.ProgramAssembleRefusal{}, false
+		return nil, composite.SelectedQueryTable{}, anadiag.AnalyzeDiagnosticAssembleStageArtifactRules, composite.AdmissionFailure{}, engine.ProgramAssembleRefusal{}, false
 	}
 	mounted, activations, admissionFailure := rules.MountedAdmissions(sealed, state.contextDirectory)
 	if admissionFailure.Available() {
-		return nil, nil, anadiag.AnalyzeDiagnosticAssembleStageArtifactRules, admissionFailure, engine.ProgramAssembleRefusal{}, false
+		return nil, composite.SelectedQueryTable{}, anadiag.AnalyzeDiagnosticAssembleStageArtifactRules, admissionFailure, engine.ProgramAssembleRefusal{}, false
 	}
 	queries, queriesOK := binding.QueryAdmissions(sites)
 	if !queriesOK {
-		return nil, nil, anadiag.AnalyzeDiagnosticAssembleStageQueryRows, composite.AdmissionFailure{}, engine.ProgramAssembleRefusal{}, false
+		return nil, composite.SelectedQueryTable{}, anadiag.AnalyzeDiagnosticAssembleStageQueryRows, composite.AdmissionFailure{}, engine.ProgramAssembleRefusal{}, false
 	}
 	pointTransitions, pointTransitionsOK := state.pointTransitionAdmissions()
 	if !pointTransitionsOK {
-		return nil, nil, anadiag.AnalyzeDiagnosticAssembleStageCommit, composite.AdmissionFailure{}, engine.ProgramAssembleRefusal{}, false
+		return nil, composite.SelectedQueryTable{}, anadiag.AnalyzeDiagnosticAssembleStageCommit, composite.AdmissionFailure{}, engine.ProgramAssembleRefusal{}, false
 	}
 	admission := engine.MountedProgramAdmission{
 		Link:         linkAdmissions,
@@ -711,7 +711,7 @@ func (state *compiledState) assembleCommittedProgram() (*engine.CommittedProgram
 	})
 	if !committed {
 		if refusal.Lowered() {
-			return nil, nil, anadiag.AnalyzeDiagnosticAssembleStageLowering, composite.AdmissionFailure{}, refusal, false
+			return nil, composite.SelectedQueryTable{}, anadiag.AnalyzeDiagnosticAssembleStageLowering, composite.AdmissionFailure{}, refusal, false
 		}
 		switch refusal.Stage() {
 		case engine.ProgramAdmissionLink:
@@ -719,15 +719,15 @@ func (state *compiledState) assembleCommittedProgram() (*engine.CommittedProgram
 			if role, roleOK := refusal.LinkRole(); roleOK {
 				linkRule = diagnosticRuleForLinkRole(binding, role)
 			}
-			return nil, nil, anadiag.AnalyzeDiagnosticAssembleStageBootstrapRules, composite.RefusedAdmissionRule(composite.AdmissionStageConstruction, linkRule), refusal, false
+			return nil, composite.SelectedQueryTable{}, anadiag.AnalyzeDiagnosticAssembleStageBootstrapRules, composite.RefusedAdmissionRule(composite.AdmissionStageConstruction, linkRule), refusal, false
 		case engine.ProgramAdmissionMounted:
 			mountedRule := anadiag.AnalyzeDiagnosticRuleUnknown
 			if role, roleOK := refusal.MountedRole(); roleOK {
 				mountedRule = diagnosticRuleForMountedRole(binding, role)
 			}
-			return nil, nil, anadiag.AnalyzeDiagnosticAssembleStageArtifactRules, composite.RefusedAdmissionRule(composite.AdmissionStageConstruction, mountedRule), refusal, false
+			return nil, composite.SelectedQueryTable{}, anadiag.AnalyzeDiagnosticAssembleStageArtifactRules, composite.RefusedAdmissionRule(composite.AdmissionStageConstruction, mountedRule), refusal, false
 		case engine.ProgramAdmissionQuery:
-			return nil, nil, anadiag.AnalyzeDiagnosticAssembleStageQueryRows, composite.AdmissionFailure{}, refusal, false
+			return nil, composite.SelectedQueryTable{}, anadiag.AnalyzeDiagnosticAssembleStageQueryRows, composite.AdmissionFailure{}, refusal, false
 		case engine.ProgramAdmissionSeal:
 			failedRule := anadiag.AnalyzeDiagnosticRuleUnknown
 			failedStage := anadiag.AnalyzeDiagnosticAssembleStageSourceSeal
@@ -738,9 +738,9 @@ func (state *compiledState) assembleCommittedProgram() (*engine.CommittedProgram
 			} else if role, roleOK := refusal.LinkRole(); roleOK {
 				failedRule = diagnosticRuleForLinkRole(binding, role)
 			}
-			return nil, nil, failedStage, composite.RefusedAdmissionRule(composite.AdmissionStageConstruction, failedRule), refusal, false
+			return nil, composite.SelectedQueryTable{}, failedStage, composite.RefusedAdmissionRule(composite.AdmissionStageConstruction, failedRule), refusal, false
 		}
-		return nil, nil, anadiag.AnalyzeDiagnosticAssembleStageCommit, composite.AdmissionFailure{}, refusal, false
+		return nil, composite.SelectedQueryTable{}, anadiag.AnalyzeDiagnosticAssembleStageCommit, composite.AdmissionFailure{}, refusal, false
 	}
 	return program, sites, anadiag.AnalyzeDiagnosticAssembleStageCommit, composite.AdmissionFailure{}, engine.ProgramAssembleRefusal{}, true
 }
