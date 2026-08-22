@@ -14,11 +14,12 @@ import (
 func TestClosedEvaluatorReceiptSourceOrderNilDeletionAndCarry(t *testing.T) {
 	heap, values, operand := closedSemanticFixture(t, `local child = {}; return { item = child, item = nil }`)
 	child, childOK := firstTableAtom(t, heap, values)
-	nilAtom, nilOK := values.OpaqueKind(runtimekind.Nil)
 	childValue, childValueOK := values.Singleton(child)
-	nilValue, nilValueOK := values.Singleton(nilAtom)
+	// atomNil is Value's sole nil alternative, so the nil operand is the
+	// sealed runtime-kind projection rather than an opaque-kind atom.
+	nilValue, nilValueOK := values.ForRuntimeKinds(runtimekind.Bit(runtimekind.Nil))
 	predecessor, predecessorOK := heap.EmptyObject(operand.Key())
-	if !childOK || !nilOK || !childValueOK || !nilValueOK || !predecessorOK {
+	if !childOK || !childValueOK || !nilValueOK || !predecessorOK {
 		t.Fatal("closed evaluator source-order fixture")
 	}
 	inputs := []valuedomain.Value{values.Top(), values.Top()}
@@ -253,10 +254,9 @@ func closedWidenLeaves(leaves []heapdomain.Value) (heapdomain.Value, bool) {
 
 func TestClosedEvaluatorReceiptInvalidAndOpaqueKeys(t *testing.T) {
 	heap, values, invalid := closedSemanticFixture(t, `local x = nil; return { [x] = x }`)
-	nilAtom, nilOK := values.OpaqueKind(runtimekind.Nil)
-	nilValue, nilValueOK := values.Singleton(nilAtom)
+	nilValue, nilValueOK := values.ForRuntimeKinds(runtimekind.Bit(runtimekind.Nil))
 	predecessor, predecessorOK := heap.EmptyObject(invalid.Key())
-	if !nilOK || !nilValueOK || !predecessorOK {
+	if !nilValueOK || !predecessorOK {
 		t.Fatal("invalid-key evaluator fixture")
 	}
 	if _, normal, resultOK := closed.EvaluateClosedForTest(heap, values, invalid, predecessor, []valuedomain.Value{nilValue}); !resultOK || normal {
@@ -288,9 +288,8 @@ func TestClosedEvaluatorReceiptInvalidAndOpaqueKeys(t *testing.T) {
 	}
 	foreignHeap, foreignValues, foreignOperand := closedSemanticFixture(t, `local x = nil; return { [x] = x }`)
 	foreignPredecessor, foreignPredecessorOK := foreignHeap.EmptyObject(foreignOperand.Key())
-	foreignNil, foreignNilOK := foreignValues.OpaqueKind(runtimekind.Nil)
-	foreignNilValue, foreignNilValueOK := foreignValues.Singleton(foreignNil)
-	if !foreignPredecessorOK || !foreignNilOK || !foreignNilValueOK {
+	foreignNilValue, foreignNilValueOK := foreignValues.ForRuntimeKinds(runtimekind.Bit(runtimekind.Nil))
+	if !foreignPredecessorOK || !foreignNilValueOK {
 		t.Fatal("foreign closed evaluator fixture")
 	}
 	if _, _, accepted := closed.EvaluateClosedForTest(heap, values, foreignOperand, foreignPredecessor, []valuedomain.Value{foreignNilValue}); accepted {

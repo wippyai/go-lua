@@ -96,6 +96,12 @@ func TestLocalEqualityAndForeignContextRowsRefuse(t *testing.T) {
 	if _, ok := fixture.schema.Local(key, foreignContext, materialization.Recent); ok {
 		t.Fatal("Local accepted a context outside the sealed Directory")
 	}
+	// Heap remains the sole authority over which materialization role a key
+	// carries: an allocation root has Recent and Summary alternatives, and the
+	// contextual issuer never mints an Exact row the Heap refuses.
+	if _, ok := fixture.schema.Local(key, fixture.left, materialization.Exact); ok {
+		t.Fatal("Local minted a role the Heap does not admit at an allocation key")
+	}
 }
 
 func TestShareMovePreserveAllocationOriginAndReferenceHistoryIsIrrelevant(t *testing.T) {

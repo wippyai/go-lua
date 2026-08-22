@@ -204,10 +204,12 @@ func (closed Closed) CoordinateAt(index int) (valuedomain.Coordinate, bool) {
 // SummaryKeyCount and SummaryKeyAt expose the canonical dense Value-factor
 // coordinates as an immutable scalar range. Closed remains the sole owner of
 // the key vector; rule issuance can validate and hash it without allocating a
-// copied slice for every mounted constructor occurrence.
+// copied slice for every mounted constructor occurrence. An unauthenticated
+// operand owns no vector at all, and the seam spells that absence as a
+// negative count: zero is the length of an authenticated empty range.
 func (closed Closed) SummaryKeyCount() int {
 	if !closed.valid() {
-		return 0
+		return -1
 	}
 	return len(closed.keys)
 }

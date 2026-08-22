@@ -343,6 +343,40 @@ return direct, independent, lens
 // allocationKeys is the test-side admission boundary for Program allocations.
 // It deliberately enumerates Heap's issued coordinates rather than rebuilding
 // Link's retired allocation relation.
+// TestClosedSummaryVectorSpellsAbsenceAsANegativeCount states the summary-key
+// seam Closed shares with the engine: a count is the length of an
+// authenticated key vector, and the absence of any vector is a negative
+// count. Zero is a length, so an operand that never passed its constructor
+// fence must not report one; an authenticated closed operand always carries
+// one key per dense coordinate.
+func TestClosedSummaryVectorSpellsAbsenceAsANegativeCount(t *testing.T) {
+	var unauthenticated source.Closed
+	if count := unauthenticated.SummaryKeyCount(); count >= 0 {
+		t.Fatalf("unauthenticated closed operand reported a %d-key vector, want a negative absence", count)
+	}
+	if _, ok := unauthenticated.SummaryKeyAt(0); ok {
+		t.Fatal("unauthenticated closed operand served a summary key")
+	}
+	heap, values, _ := sourceFixture(t, `return { answer = 42, other = 7 }`)
+	seen := 0
+	for _, allocation := range allocationKeys(heap) {
+		closed, closedOK := source.NewClosed(heap, values, allocation)
+		if !closedOK {
+			continue
+		}
+		seen++
+		if closed.SummaryKeyCount() != closed.CoordinateCount() || closed.SummaryKeyCount() < 1 {
+			t.Fatalf("authenticated closed operand reported %d keys for %d coordinates", closed.SummaryKeyCount(), closed.CoordinateCount())
+		}
+		if _, ok := closed.SummaryKeyAt(closed.SummaryKeyCount()); ok {
+			t.Fatal("closed operand served a key past its vector")
+		}
+	}
+	if seen == 0 {
+		t.Fatal("closed summary-vector fixture")
+	}
+}
+
 func allocationKeys(schema heapdomain.Schema) []heapdomain.Key {
 	keys := make([]heapdomain.Key, 0, schema.KeyCount())
 	for index := 0; index < schema.KeyCount(); index++ {

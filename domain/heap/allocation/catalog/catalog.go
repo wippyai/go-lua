@@ -162,7 +162,7 @@ func BeginWithFailure(heap heapdomain.Schema, values *valuedomain.Schema, mounts
 			if !closedOK || !closed.FencedTo(result.heap, result.values) {
 				return nil, SealFailureClosed
 			}
-			if closed.SummaryKeyCount() == 0 {
+			if closed.SummaryKeyCount() <= 0 {
 				return nil, SealFailureCoordinate
 			}
 			rows.closed[index] = closed

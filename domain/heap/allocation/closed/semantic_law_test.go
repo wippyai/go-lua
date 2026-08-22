@@ -81,11 +81,10 @@ func TestClosedSemanticSourceOrderNilDeletionAndCreateRecurrence(t *testing.T) {
 		t.Fatalf("source-order fields=%d coordinates=%d, want 2/2", operand.Count(), operand.CoordinateCount())
 	}
 	child, childOK := firstTableAtom(t, heap, values)
-	nilAtom, nilOK := values.OpaqueKind(runtimekind.Nil)
 	childValue, childValueOK := values.Singleton(child)
-	nilValue, nilValueOK := values.Singleton(nilAtom)
+	nilValue, nilValueOK := values.ForRuntimeKinds(runtimekind.Bit(runtimekind.Nil))
 	predecessor, predecessorOK := heap.EmptyObject(operand.Key())
-	if !childOK || !nilOK || !childValueOK || !nilValueOK || !predecessorOK {
+	if !childOK || !childValueOK || !nilValueOK || !predecessorOK {
 		t.Fatal("source-order fixture atoms")
 	}
 	inputs := []valuedomain.Value{values.Top(), values.Top()}
@@ -121,10 +120,9 @@ func TestClosedSemanticSourceOrderNilDeletionAndCreateRecurrence(t *testing.T) {
 
 func TestClosedSemanticInvalidDynamicKeyHasNoNormalSuccessor(t *testing.T) {
 	heap, values, operand := closedSemanticFixture(t, `local x = {}; return { [x] = x }`)
-	nilAtom, nilOK := values.OpaqueKind(runtimekind.Nil)
-	_, valueOK := values.Singleton(nilAtom)
+	_, valueOK := values.ForRuntimeKinds(runtimekind.Bit(runtimekind.Nil))
 	_, predecessorOK := heap.EmptyObject(operand.Key())
-	if !nilOK || !valueOK || !predecessorOK || operand.CoordinateCount() == 0 {
+	if !valueOK || !predecessorOK || operand.CoordinateCount() == 0 {
 		t.Fatal("invalid dynamic key was not represented by a source coordinate")
 	}
 }

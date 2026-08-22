@@ -56,7 +56,7 @@ func TestContextValueKeepsExactReferenceRowsAndTheAllocationKey(t *testing.T) {
 func TestContextValueLatticeIsMonotoneAndOwnerFenced(t *testing.T) {
 	fixture := contextFixture(t)
 	key, keyOK := fixture.heap.AllocationKeyAt(0)
-	local, localOK := fixture.schema.Local(key, fixture.left, materialization.Exact)
+	local, localOK := fixture.schema.Local(key, fixture.left, materialization.Recent)
 	if !keyOK || !localOK {
 		t.Fatal("context reference fixture")
 	}
@@ -96,8 +96,8 @@ func TestContextValueRejectsDifferentAllocationRowsBeforeJoin(t *testing.T) {
 	fixture := contextFixture(t)
 	firstKey, firstKeyOK := fixture.heap.AllocationKeyAt(0)
 	secondKey, secondKeyOK := fixture.schema.FreshAt(0)
-	first, firstOK := fixture.schema.Local(firstKey, fixture.left, materialization.Exact)
-	second, secondOK := fixture.schema.Local(secondKey, fixture.left, materialization.Exact)
+	first, firstOK := fixture.schema.Local(firstKey, fixture.left, materialization.Recent)
+	second, secondOK := fixture.schema.Local(secondKey, fixture.left, materialization.Recent)
 	left, leftOK := fixture.schema.Exact(first.Result())
 	right, rightOK := fixture.schema.Exact(second.Result())
 	if !firstKeyOK || !secondKeyOK || !firstOK || !secondOK || !leftOK || !rightOK {
@@ -111,7 +111,7 @@ func TestContextValueRejectsDifferentAllocationRowsBeforeJoin(t *testing.T) {
 func TestContextValueDomainExposesFiniteWideningWitness(t *testing.T) {
 	fixture := contextFixture(t)
 	key, keyOK := fixture.heap.AllocationKeyAt(0)
-	local, localOK := fixture.schema.Local(key, fixture.left, materialization.Exact)
+	local, localOK := fixture.schema.Local(key, fixture.left, materialization.Recent)
 	value, valueOK := fixture.schema.Exact(local.Result())
 	if !keyOK || !localOK || !valueOK {
 		t.Fatal("widening fixture")
