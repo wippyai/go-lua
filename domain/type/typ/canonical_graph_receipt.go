@@ -19,13 +19,18 @@ import (
 //
 // The receipt is immutable at its persistent public boundary. Node and Nodes
 // return ownership-isolated edge slices. The mutable construction graph is a
-// separate linear capability transferred exactly once by TakeSourcePlane.
+// separate linear capability transferred exactly once by TakeSourcePlane,
+// unless the receipt has been sealed: a sealed receipt holds a shared
+// read-only plane that every consumer may read.
 type CanonicalGraphReceipt struct {
 	owner  *canonicalGraphReceiptOwner
 	root   uint32
 	digest CanonicalDigest
 	nodes  []canonicalGraphNode
 	source *canonicalGraphSourcePlane
+	// shared is the read-only construction plane of a sealed receipt. It is
+	// set exactly when the linear capability has been retired by Seal.
+	shared []Type
 }
 
 // canonicalGraphSourcePlane is a linear construction capability. Receipt
@@ -227,6 +232,43 @@ func (receipt CanonicalGraphReceipt) TakeSourcePlane() ([]Type, bool) {
 	nodes := receipt.source.nodes
 	receipt.source.nodes = nil
 	return nodes, true
+}
+
+// Seal retires this receipt's linear source capability in favour of a shared
+// read-only construction plane. The linear rule exists so two consumers cannot
+// each detach and then own one mutable graph; a sealed receipt is never
+// detached and never mutated, so it may seed any number of consumers at once.
+// This is the same sharing the fixed primitive seed graphs already rely on.
+func (receipt CanonicalGraphReceipt) Seal() (CanonicalGraphReceipt, bool) {
+	if !receipt.Valid() {
+		return CanonicalGraphReceipt{}, false
+	}
+	if receipt.Sealed() {
+		return receipt, true
+	}
+	plane, taken := receipt.TakeSourcePlane()
+	if !taken {
+		return CanonicalGraphReceipt{}, false
+	}
+	receipt.source = nil
+	receipt.shared = plane
+	return receipt, true
+}
+
+// Sealed reports whether this receipt carries a shared read-only plane.
+func (receipt CanonicalGraphReceipt) Sealed() bool {
+	return receipt.Valid() && len(receipt.shared) == len(receipt.nodes)
+}
+
+// SourcePlane yields the construction graph for one consumer. A linear
+// receipt transfers ownership exactly once; a sealed receipt lends its shared
+// plane to every consumer and retains it. The returned nodes are read-only in
+// both cases for a sealed receipt: its owner published them as immutable.
+func (receipt CanonicalGraphReceipt) SourcePlane() ([]Type, bool) {
+	if receipt.Sealed() {
+		return receipt.shared, true
+	}
+	return receipt.TakeSourcePlane()
 }
 
 func (e *canonicalEncoder) issueCanonicalGraph(rootIndex int) (CanonicalGraphReceipt, error) {

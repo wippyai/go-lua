@@ -8,6 +8,9 @@ import (
 	"github.com/wippyai/go-lua/internal/framing"
 )
 
+// Version 28 carries the sealed semantic column: the identity of the one
+// column an owner above this package sealed with the contract. A contract
+// that carries a different column is a different contract.
 // Version 27 carries the protocol requirement relation: a read-only state
 // constraint on one operation input, framed per protocol between the
 // transition and escape relations.
@@ -28,7 +31,7 @@ import (
 // Version 18 adds retained callback-holder protocol rows and the mandatory
 // zero-holder branch of a callback release. A target identity from any
 // preceding layout must never be reused as this schema.
-const contentIDCodecVersion = 27
+const contentIDCodecVersion = 28
 
 // ContentID is the SHA-256 identity of the complete observable sealed
 // contract. It encodes no authoring references, Go object identities, lookup
@@ -107,6 +110,7 @@ const (
 	recordInitialMetatableAttachment
 	recordOperationSubedgeRelation
 	recordProtocolRequirement
+	recordSealedColumn
 )
 
 func encodeCoordinate(w *framing.Writer, kind, ordinal uint64) error {
@@ -155,6 +159,21 @@ func encodeContract(w *framing.Writer, c *Contract) error {
 	}
 	if err := c.Table.Encode(w, c.exactKeys); err != nil {
 		return err
+	}
+	// The sealed semantic column is part of the published read surface, so its
+	// identity is part of the contract identity. An absent column frames its
+	// absence rather than nothing, so adding one is never invisible.
+	if err := w.Record(recordSealedColumn); err != nil {
+		return err
+	}
+	if err := w.Bool(c.column.Available()); err != nil {
+		return err
+	}
+	if c.column.Available() {
+		id := c.column.ID
+		if err := w.Bytes(id[:]); err != nil {
+			return err
+		}
 	}
 	return nil
 }

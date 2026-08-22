@@ -326,7 +326,9 @@ func (b *runtimeBuilder) ingest(inputs []runtimeCanonicalInput) ([]RuntimeInner,
 		if len(nodes) == 0 {
 			return nil, errors.New("typeauthority: Runtime receipt source empty")
 		}
-		plane, planeOK := input.input.graph.TakeSourcePlane()
+		// A sealed family receipt lends its shared read-only plane to every
+		// Runtime seal; an ordinary receipt transfers its linear plane once.
+		plane, planeOK := input.input.graph.SourcePlane()
 		if !planeOK || len(plane) != len(nodes) {
 			return nil, errors.New("typeauthority: Runtime receipt source unavailable")
 		}

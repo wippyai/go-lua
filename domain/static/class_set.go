@@ -1,7 +1,6 @@
 package static
 
 import (
-	"context"
 	"crypto/sha256"
 	"encoding/binary"
 	"errors"
@@ -10,12 +9,10 @@ import (
 	"github.com/wippyai/go-lua/analysis/program/target/vocabulary"
 
 	"github.com/wippyai/go-lua/analysis/identity"
-	flowkind "github.com/wippyai/go-lua/analysis/program/flow/kind"
 	"github.com/wippyai/go-lua/analysis/program/target/contract"
 	"github.com/wippyai/go-lua/domain/runtimekind"
 	typeauthority "github.com/wippyai/go-lua/domain/type/authority"
 	"github.com/wippyai/go-lua/domain/type/typ"
-	domaincontract "github.com/wippyai/go-lua/domain/type/typecontract"
 )
 
 type ClassKind uint8
@@ -113,23 +110,12 @@ func sealClassSet(authority *Authority) (*ClassSet, *typeauthority.Runtime, erro
 			set.byStatic[uint32(index)] = class
 		}
 	}
-	contract := authority.target
-	if contract == nil || !contract.ContentID().Available() {
+	target := authority.target
+	if target == nil || !target.ContentID().Available() {
 		return nil, nil, errors.New("static: Link target unavailable")
 	}
-	seenOperations := make(map[vocabulary.Operation]struct{}, contract.Operations.OperationCount())
-	for index := 0; index < contract.Operations.OperationCount(); index++ {
-		operation, valid := contract.Operations.OperationAt(index)
-		if !valid {
-			return nil, nil, errors.New("static: malformed operation family")
-		}
-		// Target owns the complete declaration denominator.  Static classifies
-		// every callable endpoint directly; Link application selection is a
-		// later Rule concern and is deliberately absent here.
-		seenOperations[operation] = struct{}{}
-		if err := set.addOperation(contract, operation); err != nil {
-			return nil, nil, err
-		}
+	if err := set.admitTargetFamily(target); err != nil {
+		return nil, nil, err
 	}
 	runtime, err := set.sealRuntime()
 	if err != nil {
@@ -146,7 +132,7 @@ func sealClassSet(authority *Authority) (*ClassSet, *typeauthority.Runtime, erro
 	if !authority.id.Available() {
 		return nil, nil, errors.New("static: unavailable content identity")
 	}
-	set.id = set.contentID(runtime, seenOperations)
+	set.id = set.contentID(runtime, target)
 	if !set.id.Available() {
 		return nil, nil, errors.New("static: unavailable ClassSet identity")
 	}
@@ -411,164 +397,7 @@ func (s *ClassSet) addConcreteCanonical(canonicalID identity.ContentID, input ty
 	return class, nil
 }
 
-func (s *ClassSet) addTarget(contract *contract.Contract, value vocabulary.Type) error {
-	if _, exists := s.byTarget[value]; exists {
-		return nil
-	}
-	declaration, ok := contract.Operations.TypeDeclaration(value)
-	if !ok {
-		return errors.New("static: Target type declaration unavailable")
-	}
-	decoded, err := domaincontract.Decode(context.Background(), declaration, nil)
-	if err == nil && decoded != nil {
-		class, addErr := s.addConcrete(decoded)
-		if addErr != nil {
-			return addErr
-		}
-		s.byTarget[value] = class
-		return nil
-	}
-	// A scoped endpoint with operation formals is still a finite opaque class.
-	// Static does not manufacture a parallel Target-formal authority to decode it.
-	contractID := contract.ContentID()
-	digest := declaration.Digest()
-	identity := make([]byte, 0, len(contractID)+8+len(digest))
-	identity = append(identity, contractID[:]...)
-	var ordinal [8]byte
-	binary.BigEndian.PutUint64(ordinal[:], uint64(value))
-	identity = append(identity, ordinal[:]...)
-	identity = append(identity, digest[:]...)
-	index, ordinalErr := denseOrdinal(len(s.rows))
-	if ordinalErr != nil {
-		return fmt.Errorf("static: Target class handle: %w", ordinalErr)
-	}
-	class := Class{owner: s, index: index}
-	s.rows = append(s.rows, classRow{kind: ClassOpaque, opaqueID: identity})
-	s.byTarget[value] = class
-	return nil
-}
-
-func (s *ClassSet) addValues(contract *contract.Contract, values vocabulary.Values) error {
-	for index := 0; index < contract.Operations.ValuesCount(values); index++ {
-		value, ok := contract.Operations.ValuesAt(values, index)
-		if !ok {
-			return errors.New("static: malformed Target Values")
-		}
-		if err := s.addTarget(contract, value); err != nil {
-			return err
-		}
-	}
-	for index := 0; index < contract.Operations.ValuesSuffixCount(values); index++ {
-		value, ok := contract.Operations.ValuesSuffixAt(values, index)
-		if !ok {
-			return errors.New("static: malformed Target Values suffix")
-		}
-		if err := s.addTarget(contract, value); err != nil {
-			return err
-		}
-	}
-	if value, ok := contract.Operations.ValuesTailType(values); ok {
-		return s.addTarget(contract, value)
-	}
-	return nil
-}
-
-func (s *ClassSet) addOperation(contract *contract.Contract, operation vocabulary.Operation) error {
-	input, ok := contract.Operations.Input(operation)
-	if !ok {
-		return errors.New("static: operation input unavailable")
-	}
-	if err := s.addValues(contract, input); err != nil {
-		return err
-	}
-	for index := 0; index < contract.Operations.TypeFormalCount(operation); index++ {
-		if value, ok := contract.Operations.TypeFormalConstraint(operation, vocabulary.TypeFormal(index)); ok {
-			if err := s.addTarget(contract, value); err != nil {
-				return err
-			}
-		}
-	}
-	for index := 0; index < contract.Operations.ValuesVarCount(operation); index++ {
-		value, ok := contract.Operations.ValuesVarType(operation, vocabulary.ValuesVar(index))
-		if !ok {
-			return errors.New("static: ValuesVar type unavailable")
-		}
-		if err := s.addTarget(contract, value); err != nil {
-			return err
-		}
-	}
-	for index := 0; index < contract.Operations.OutcomeCount(operation); index++ {
-		_, values, ok := contract.Operations.OutcomeAt(operation, index)
-		if !ok {
-			return errors.New("static: malformed outcome")
-		}
-		if err := s.addValues(contract, values); err != nil {
-			return err
-		}
-	}
-	kinds := [...]flowkind.OutcomeKind{flowkind.OutcomeNormal, flowkind.OutcomeReturn, flowkind.OutcomeThrow, flowkind.OutcomeYield, flowkind.OutcomeCancel}
-	for index := 0; index < contract.Operations.CallbackCount(operation); index++ {
-		callback, ok := contract.Operations.CallbackAt(operation, index)
-		if !ok {
-			return errors.New("static: malformed callback")
-		}
-		values, ok := contract.Operations.CallbackArguments(callback)
-		if !ok {
-			return errors.New("static: callback arguments unavailable")
-		}
-		if err := s.addValues(contract, values); err != nil {
-			return err
-		}
-		for _, kind := range kinds {
-			if values, found := contract.Operations.CallbackOutcome(callback, kind); found {
-				if err := s.addValues(contract, values); err != nil {
-					return err
-				}
-			}
-		}
-	}
-	for index := 0; index < contract.Operations.SubedgeCount(operation); index++ {
-		edge, ok := contract.Operations.SubedgeAt(operation, index)
-		if !ok {
-			return errors.New("static: malformed subedge")
-		}
-		values, ok := contract.Operations.SubedgeArguments(edge)
-		if !ok {
-			return errors.New("static: subedge arguments unavailable")
-		}
-		if err := s.addValues(contract, values); err != nil {
-			return err
-		}
-		for _, kind := range kinds {
-			if values, found := contract.Operations.SubedgeTerminal(edge, kind); found {
-				if err := s.addValues(contract, values); err != nil {
-					return err
-				}
-			}
-		}
-		if values, found := contract.Operations.SubedgeAdmissionFailure(edge); found {
-			if err := s.addValues(contract, values); err != nil {
-				return err
-			}
-		}
-	}
-	for index := 0; index < contract.Operations.ResumeCount(operation); index++ {
-		resume, ok := contract.Operations.ResumeIDAt(operation, index)
-		if !ok {
-			return errors.New("static: malformed resume")
-		}
-		_, _, _, values, ok := contract.Operations.Resume(resume)
-		if !ok {
-			return errors.New("static: resume arguments unavailable")
-		}
-		if err := s.addValues(contract, values); err != nil {
-			return err
-		}
-	}
-	return nil
-}
-
-func (s *ClassSet) contentID(runtime *typeauthority.Runtime, operations map[vocabulary.Operation]struct{}) (id identity.ContentID) {
+func (s *ClassSet) contentID(runtime *typeauthority.Runtime, target *contract.Contract) (id identity.ContentID) {
 	if runtime == nil || !runtime.ContentID().Available() {
 		return identity.ContentID{}
 	}
@@ -596,22 +425,23 @@ func (s *ClassSet) contentID(runtime *typeauthority.Runtime, operations map[voca
 		h.Write(word[:])
 		h.Write(row.opaqueID)
 	}
-	contract := s.target
-	if contract == nil {
+	if target == nil || target != s.target {
 		return identity.ContentID{}
 	}
-	targetID := contract.ContentID()
+	targetID := target.ContentID()
 	h.Write(targetID[:])
-	// Target handle order, not map iteration, fixes selected-operation identity.
-	for index := 0; index < contract.Operations.OperationCount(); index++ {
-		operation, _ := contract.Operations.OperationAt(index)
-		if _, ok := operations[operation]; ok {
-			operationID, valid := contract.OperationContentID(operation)
-			if !valid {
-				return identity.ContentID{}
-			}
-			h.Write(operationID[:])
+	// The sealed class family classifies the complete declaration denominator,
+	// so every operation of the target is framed, in Target handle order.
+	for index := 0; index < target.Operations.OperationCount(); index++ {
+		operation, valid := target.Operations.OperationAt(index)
+		if !valid {
+			return identity.ContentID{}
 		}
+		operationID, available := target.OperationContentID(operation)
+		if !available {
+			return identity.ContentID{}
+		}
+		h.Write(operationID[:])
 	}
 	// The universe receipt commits the exact ordered atom vocabulary once.
 	h.Write(s.universeID[:])

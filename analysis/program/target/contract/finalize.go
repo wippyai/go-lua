@@ -17,6 +17,10 @@ type Input struct {
 	Operations operationvalue.Core
 	Protocols  protocolvalue.Table
 	ExactKeys  exactkeyvalue.Table
+	// Column is the sealed semantic column this Contract carries. It is
+	// derived by its owner over the same finished operation core Contract
+	// publishes, and its identity is framed into the contract identity.
+	Column SealedColumn
 }
 
 // New atomically finalizes one contract from already sealed subordinate
@@ -30,6 +34,7 @@ func New(input Input) (*Contract, error) {
 	contract := &Contract{
 		Table: input.Table, Operations: input.Operations,
 		protocols: input.Protocols, exactKeys: input.ExactKeys,
+		column: input.Column,
 	}
 	if err := contract.sealSemanticIdentities(); err != nil {
 		return nil, err

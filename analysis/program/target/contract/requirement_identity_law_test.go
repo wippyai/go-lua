@@ -10,7 +10,7 @@ import (
 // framed under. Raising contentIDCodecVersion invalidates every persisted
 // target ContentID, so the constant moves only together with this fence and
 // the version note that says what changed.
-const contentIDCodecFence = 27
+const contentIDCodecFence = 28
 
 func TestContentIDCodecVersionIsFenced(t *testing.T) {
 	if contentIDCodecVersion != contentIDCodecFence {
@@ -39,7 +39,12 @@ func TestRequirementRecordBelongsToTheContractRecordSpace(t *testing.T) {
 		recordInitialBinding: "initial binding", recordInitialValue: "initial value",
 		recordFreshResult: "fresh result", recordInitialMetatableAttachment: "initial metatable attachment",
 		recordOperationSubedgeRelation: "operation subedge relation",
+		recordProtocolRequirement:      "protocol requirement",
 	}
+	if prior, taken := tags[recordSealedColumn]; taken {
+		t.Fatalf("the sealed column record tag %d is already the %s tag", recordSealedColumn, prior)
+	}
+	delete(tags, recordProtocolRequirement)
 	if prior, taken := tags[recordProtocolRequirement]; taken {
 		t.Fatalf("the protocol requirement record tag %d is already the %s tag", recordProtocolRequirement, prior)
 	}

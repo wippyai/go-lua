@@ -22,6 +22,9 @@ type Contract struct {
 	protocols  protocolvalue.Table
 	exactKeys  exactkey.Table
 	counts     denominator.CountRows
+	// column is the one sealed semantic column produced by the owner that
+	// constructed this Contract. Contract carries it and frames its identity.
+	column SealedColumn
 	// identityColumns carries the identity plane's own columns. The layout is
 	// declared with the rest of the model; the values are written and read only
 	// by the identity altitude.

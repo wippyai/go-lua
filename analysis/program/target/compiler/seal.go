@@ -143,8 +143,16 @@ func Seal(spec *declarationvalue.Spec) (*contractvalue.Contract, error) {
 	if err != nil {
 		return nil, err
 	}
+	// The semantic column is derived here, over the finished operation core
+	// and before the Contract pointer exists, so the contract identity frames
+	// a column that was sealed exactly once from exactly this read surface.
+	column, err := contractvalue.SealColumn(input.Semantics, queryCore)
+	if err != nil {
+		return nil, err
+	}
 	return contractvalue.New(contractvalue.Input{
 		Table: bootTable, Operations: queryCore, Protocols: protocols, ExactKeys: exactKeys,
+		Column: column,
 	})
 }
 
