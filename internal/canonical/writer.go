@@ -84,7 +84,7 @@ type writerState struct {
 	events   uint64
 	header   [1 + binary.MaxVarintLen64]byte
 	scalar   [binary.MaxVarintLen64]byte
-	strings  []byte
+	scratch  [64]byte
 }
 
 // Reset starts a new stream on dst and writes its framed domain and version.
@@ -367,9 +367,12 @@ func (s *writerState) startEvent(tag byte, payloadLength uint64) error {
 			return err
 		}
 	}
-	headerLength := binary.PutUvarint(s.header[1:], payloadLength)
-	s.header[0] = tag
-	return s.writeAll(s.header[:headerLength+1])
+	return s.writeAll(s.header[:frameEvent(s.header[:], tag, payloadLength)])
+}
+
+func frameEvent(header []byte, tag byte, payloadLength uint64) int {
+	header[0] = tag
+	return 1 + binary.PutUvarint(header[1:], payloadLength)
 }
 
 func (s *writerState) checkContext() error {
@@ -426,13 +429,14 @@ func (s *writerState) writeStringAll(value string) error {
 		}
 		return nil
 	}
-	if cap(s.strings) < len(value) {
-		s.strings = make([]byte, len(value))
-	} else {
-		s.strings = s.strings[:len(value)]
+	for len(value) > 0 {
+		n := copy(s.scratch[:], value)
+		if err := s.writeAll(s.scratch[:n]); err != nil {
+			return err
+		}
+		value = value[n:]
 	}
-	copy(s.strings, value)
-	return s.writeAll(s.strings)
+	return nil
 }
 
 func (s *writerState) fail(err error) error {

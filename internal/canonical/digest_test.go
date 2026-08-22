@@ -87,3 +87,27 @@ func TestCanonicalWriterAndProgramFramingDoNotShareUintTag(t *testing.T) {
 		t.Fatal("canonical and program framing Uint streams collided; identity schemas stay apart until a re-pin")
 	}
 }
+
+func TestDigestWriterSmallPreimageAllocatesAtMostTwo(t *testing.T) {
+	domain := "analysis/engine/equation/allocation"
+	id := [sha256.Size]byte{1}
+	payload := []byte("small")
+	allocs := testing.AllocsPerRun(1000, func() {
+		var writer DigestWriter
+		if writer.Reset(domain, 18) != nil ||
+			writer.Bytes(id[:]) != nil ||
+			writer.Uint(18) != nil ||
+			writer.Bytes(payload) != nil ||
+			writer.Count(3) != nil ||
+			writer.Uint(11) != nil ||
+			writer.Finish() != nil {
+			t.Fatal("digest writer")
+		}
+		if writer.Sum() == ([sha256.Size]byte{}) {
+			t.Fatal("empty digest")
+		}
+	})
+	if allocs > 2 {
+		t.Fatalf("small DigestWriter preimage allocates too much: %.2f allocs/op", allocs)
+	}
+}
