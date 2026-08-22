@@ -19,6 +19,14 @@ import (
 // of compiler.Seal, avoiding a compiler -> contract test cycle.
 func encodingContract(t *testing.T) *Contract {
 	t.Helper()
+	return encodingContractWithEffectTail(t, vocabulary.RowUnknownOpen)
+}
+
+// encodingContractWithEffectTail builds that same graph over one chosen
+// operation effect tail, so a law can state what two contracts that differ in
+// observable declared content owe each other.
+func encodingContractWithEffectTail(t *testing.T, tail vocabulary.RowTail) *Contract {
+	t.Helper()
 	keys, err := exactkey.Compile(nil)
 	if err != nil {
 		t.Fatal(err)
@@ -77,7 +85,7 @@ func encodingContract(t *testing.T) *Contract {
 				vocabulary.TransferMayDeliver | vocabulary.TransferMayReject,
 			},
 		}},
-		EffectTail: vocabulary.RowUnknownOpen,
+		EffectTail: tail,
 	}); err != nil {
 		t.Fatal(err)
 	}

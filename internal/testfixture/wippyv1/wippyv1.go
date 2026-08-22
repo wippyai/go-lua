@@ -22,6 +22,8 @@ package wippyv1
 //go:generate go run ./cmd/gendata
 
 import (
+	"sync"
+
 	"github.com/wippyai/go-lua/analysis/program/target/contract"
 	"github.com/wippyai/go-lua/domain/composite/manifesttarget"
 	"github.com/wippyai/go-lua/domain/type/typ"
@@ -85,7 +87,16 @@ func Providers() []manifest.Provider {
 // Target seals the Lua standard library together with the transcribed Wippy v1
 // host surface into one canonical Target contract. It is the fixture entry
 // point for asking what the checker makes of the real production boundary.
+// The seal is one value per process. Its whole input is the compiled-in
+// provider set, so every caller asks the same question of the same content,
+// and a sealed Contract is immutable.
 func Target() (*contract.Contract, error) {
+	return target()
+}
+
+var target = sync.OnceValues(sealTarget)
+
+func sealTarget() (*contract.Contract, error) {
 	catalogue, err := manifest.Seal(append(stdlib.Providers(), Providers()...)...)
 	if err != nil {
 		return nil, err
