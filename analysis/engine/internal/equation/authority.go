@@ -12,10 +12,6 @@ import (
 // ordinary graph and the immutable trigger/locator activation rows.
 type Topology struct {
 	source *composition.Composition
-	// deferredQueries is issued only by the binding-only observation seal. It
-	// records that every declared Query family was intentionally deferred to
-	// solve-local owned observation roots rather than silently omitted.
-	deferredQueries bool
 	// initial is the one compiled immutable structural graph. Activation
 	// revisions are tiny identity views over this payload; the builder spec
 	// and assembly are deliberately not retained after sealing.
@@ -61,37 +57,26 @@ func SealTopology(source *composition.Composition, spec TopologySpec) (*Topology
 // SealTopology. It exposes only the first closed phase, never caller rows,
 // coordinates, or mutable compiler state.
 func SealTopologyWithFailure(source *composition.Composition, spec TopologySpec) (*Topology, SealFailure, bool) {
-	return sealTopologyWithFailure(source, spec, false)
+	return sealTopologyWithFailure(source, spec)
 }
 
-// SealObservationTopologyWithFailure is the narrow binding-only topology
-// seal for a schema whose Query families are all deferred to solve-local
-// observation roots. It admits exactly zero ordinary Query rows; partial and
-// ordinary-query topologies remain the responsibility of SealTopology.
-func SealObservationTopologyWithFailure(source *composition.Composition, spec TopologySpec) (*Topology, SealFailure, bool) {
-	return sealTopologyWithFailure(source, spec, true)
-}
-
-func sealTopologyWithFailure(source *composition.Composition, spec TopologySpec, deferredQueries bool) (*Topology, SealFailure, bool) {
+func sealTopologyWithFailure(source *composition.Composition, spec TopologySpec) (*Topology, SealFailure, bool) {
 	if source == nil || !validTopologyBatch(spec.Batch, spec) {
 		return nil, sealRefused(SealFailureFamilyTopology, "input"), false
-	}
-	if deferredQueries && len(source.Queries()) == 0 {
-		return nil, sealRefused(SealFailureFamilyTopology, "deferred-queries"), false
 	}
 	// A nil slice is normalized to an empty disposable row plane.  The
 	// topology always seals through the one activation-row directory.
 	if spec.ActivationRows == nil {
 		spec.ActivationRows = []ActivationRowSpec{}
 	}
-	return sealTopologyWithActivationDirectory(source, spec, deferredQueries)
+	return sealTopologyWithActivationDirectory(source, spec)
 }
 
 // sealTopologyWithActivationDirectory is the seq4161 path.  All formal
 // target lowering, direct transport rows, trigger tuple validation, and
 // target-Batch reindexing finish before the ordinary graph compiler runs.
 // Topology retains only the one activationRowDirectory.
-func sealTopologyWithActivationDirectory(source *composition.Composition, spec TopologySpec, deferredQueries bool) (*Topology, SealFailure, bool) {
+func sealTopologyWithActivationDirectory(source *composition.Composition, spec TopologySpec) (*Topology, SealFailure, bool) {
 	directory, directoryOK := sealActivationRowDirectory(source, spec.Batch, spec.ActivationRows)
 	if !directoryOK || directory == nil || !directory.available() {
 		return nil, sealRefused(SealFailureFamilyTopology, "activation-directory"), false
@@ -103,9 +88,6 @@ func sealTopologyWithActivationDirectory(source *composition.Composition, spec T
 	}
 	if !appendAssemblyTargets(&sealed, directory.targetSpecs()) {
 		return nil, sealRefused(SealFailureFamilyTopology, "targets"), false
-	}
-	if deferredQueries && len(sealed.Queries) != 0 {
-		return nil, sealRefused(SealFailureFamilyTopology, "deferred-queries"), false
 	}
 	_, _, _, baseOK := buildPoints(sealed.Points)
 	if !baseOK {
@@ -120,7 +102,7 @@ func sealTopologyWithActivationDirectory(source *composition.Composition, spec T
 		return nil, sealRefused(SealFailureFamilyTopology, "instances"), false
 	}
 	topology := &Topology{
-		source: source, deferredQueries: deferredQueries,
+		source:     source,
 		activation: directory,
 		triggers:   make(map[composition.Key]activationTriggerBinding),
 	}
@@ -133,7 +115,7 @@ func sealTopologyWithActivationDirectory(source *composition.Composition, spec T
 	if !sealed.Batch.closesOperandRealms(sealed.Rules) {
 		return nil, sealRefused(SealFailureFamilyTopology, "operand-realms"), false
 	}
-	graph, rows, compileFailure, compiled := compileTopologyWithFailure(source, sealed, nil, deferredQueries)
+	graph, rows, compileFailure, compiled := compileTopologyWithFailure(source, sealed, nil)
 	if !compiled || graph == nil {
 		return nil, compileFailure, false
 	}
@@ -490,7 +472,7 @@ func (topology *Topology) deriveKey(base composition.Key) (composition.Key, bool
 		return composition.Key{}, false
 	}
 	return identityKey("analysis/engine/equation/topology", func(writer *canonical.DigestWriter) bool {
-		if !writeKey(writer, base) || writer.Uint(boolUint(topology.deferredQueries)) != nil {
+		if !writeKey(writer, base) {
 			return false
 		}
 		if topology.activation != nil {
