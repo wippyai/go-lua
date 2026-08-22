@@ -180,7 +180,7 @@ type derivedActivationReverse struct {
 	trigger composition.Key
 }
 
-func compileTopologyWithFailure(source *composition.Composition, topology TopologySpec, activationReverses []derivedActivationReverse, deferredQueries bool) (*Graph, compiledRowDirectory, SealFailure, bool) {
+func compileTopologyWithFailure(source *composition.Composition, topology TopologySpec, activationReverses []derivedActivationReverse) (*Graph, compiledRowDirectory, SealFailure, bool) {
 	if source == nil || !validTopologyBatch(topology.Batch, topology) || len(topology.Points) == 0 {
 		return nil, compiledRowDirectory{}, sealRefused(SealFailureFamilyCompile, "input"), false
 	}
@@ -211,7 +211,7 @@ func compileTopologyWithFailure(source *composition.Composition, topology Topolo
 	if !ok {
 		return nil, compiledRowDirectory{}, sealRefused(SealFailureFamilyCompile, "factor-edges"), false
 	}
-	queries, ok := buildQueries(source, declared, topology.Queries, catalog, deferredQueries)
+	queries, ok := buildQueries(source, declared, topology.Queries, catalog)
 	if !ok {
 		return nil, compiledRowDirectory{}, sealRefused(SealFailureFamilyCompile, "queries"), false
 	}
@@ -652,11 +652,8 @@ func resolveInputs(rows []Input, sites map[composition.Key]Point, target Point) 
 	return result, true
 }
 
-func buildQueries(source *composition.Composition, declared map[PointRef]Point, rows []QueryInstance, catalog topologyCatalog, deferredQueries bool) ([]Query, bool) {
+func buildQueries(source *composition.Composition, declared map[PointRef]Point, rows []QueryInstance, catalog topologyCatalog) ([]Query, bool) {
 	families := source.Queries()
-	if deferredQueries && len(rows) == 0 {
-		return nil, true
-	}
 	// A callback-free Factor/Rule schema may legitimately have no Query
 	// families while its graph is being compiled into a reusable transformer.
 	// Preserve exact inventory coverage: the empty cold denominator accepts
