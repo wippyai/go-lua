@@ -77,7 +77,14 @@ func (contributor queryContributor) registrable(registration *query.Registration
 	if registration == nil || !contributor.producerComplete() {
 		return false
 	}
-	return registration.Population() != query.PopulationSelectedPoint || contributor.resultComplete()
+	switch registration.Population() {
+	case query.PopulationSelectedPoint:
+		return contributor.resultComplete()
+	case query.PopulationObservation:
+		return true
+	default:
+		return false
+	}
 }
 
 func wireQuery[F, R any](

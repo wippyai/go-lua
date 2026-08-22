@@ -299,10 +299,20 @@ func TestObservationPartialResultCapabilityDoesNotSilentlyPass(t *testing.T) {
 	}
 }
 
+func TestUnknownQueryPopulationDoesNotAcquireProducerOnlyAdmission(t *testing.T) {
+	roles := queryCapabilityLawRoles(t)
+	spec := valueowner.QuerySpec()
+	spec.Family = "value-summary-unknown-population-law"
+	spec.Population = "semantic/query/population/unknown-law"
+	if _, _, admitted := wireQuery(spec, roles, valueowner.DeclareQuery, valueowner.BindQuery, valueowner.RecoverQuery, nil, nil); admitted {
+		t.Fatal("unknown query population acquired observation-producer admission")
+	}
+}
+
 func queryCapabilityLawRoles(t *testing.T) vocabulary.Roles {
 	t.Helper()
 	specs := queryRoleVocabulary()
-	specs = append(specs, vocabulary.RoleSpecs("query/population/observation")...)
+	specs = append(specs, vocabulary.RoleSpecs("query/population/observation", "query/population/unknown-law")...)
 	specs = append(specs, vocabulary.RoleSpecs("query/value-summary", "query-result/value-summary", "factor/value/summary-coordinatewise")...)
 	entries, collected := structure.Collect(specs)
 	if !collected {
