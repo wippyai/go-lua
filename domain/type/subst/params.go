@@ -91,7 +91,11 @@ func shadowsSubstitution(binder *typ.TypeParam, sub paramSubstitution) bool {
 	if binder == nil || sub.param == nil {
 		return false
 	}
-	return binder == sub.param || binder.Name == sub.param.Name || binder.Equals(sub.param)
+	// An anonymous formal has no lexical name, so name shadowing does not
+	// apply to it; it shadows only itself or a formal it is equal to.
+	return binder == sub.param ||
+		(binder.Name != "" && binder.Name == sub.param.Name) ||
+		binder.Equals(sub.param)
 }
 
 func lookupParamSubstitution(tp *typ.TypeParam, subs []paramSubstitution) (typ.Type, bool) {

@@ -760,6 +760,15 @@ func widenEither(narrow, wide typ.Type) proofExpr {
 }
 
 func (c *checker) widenRule(narrow, wide typ.Type) proofExpr {
+	// Two applications of one declaration relate through the declaration's own
+	// variance, never through its expansion. Expanding them would answer with
+	// whatever the body happens to mention, and a body that never mentions its
+	// parameter would answer with nothing at all.
+	narrowInst, narrowIsInst := narrow.(*typ.Instantiated)
+	wideInst, wideIsInst := wide.(*typ.Instantiated)
+	if narrowIsInst && wideIsInst && narrowInst.Generic != nil && wideInst.Generic != nil && typ.TypeEquals(narrowInst.Generic, wideInst.Generic) {
+		return c.instantiatedRule(narrowInst, wideInst, proofWiden)
+	}
 	if inst, ok := narrow.(*typ.Instantiated); ok {
 		expanded := subst.ExpandInstantiated(inst)
 		if expanded != nil && expanded != narrow {

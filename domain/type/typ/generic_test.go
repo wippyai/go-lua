@@ -137,7 +137,8 @@ func TestEqualityHashSelfInstantiatingGenericTerminates(t *testing.T) {
 	inst := Instantiate(g, String)
 
 	first, second := EqualityHash(inst), EqualityHash(inst)
-	const wantHash uint64 = 18179416691384307677
+	// The layout omits a formal's spelling: identity is (binder, ordinal).
+	const wantHash uint64 = 13011053935153812398
 	if first != wantHash || second != wantHash {
 		t.Fatalf("self-instantiating generic equality hash calls = %d, %d; want %d", first, second, wantHash)
 	}

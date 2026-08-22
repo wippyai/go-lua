@@ -393,7 +393,9 @@ func hashNodeOperations(t Type) (uint64, []hashOp) {
 		if value.Constraint != nil {
 			ops = append(ops, child(value.Constraint))
 		}
-		return hash.MixHash(uint64(kind.TypeParam), hash.FnvString(value.Name)), ops
+		// A formal's spelling is presentation: identity is (binder, ordinal),
+		// so the name is absent here exactly as it is absent from equality.
+		return uint64(kind.TypeParam), ops
 	case *Interface:
 		ops := make([]hashOp, 0, len(value.Methods)*2)
 		for _, method := range value.Methods {

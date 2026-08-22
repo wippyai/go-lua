@@ -12,6 +12,15 @@ import (
 // instantiate this parameter (nil means any type is allowed).
 //
 // Example: In Array<T>, T is a TypeParam with Name="T" and Constraint=nil.
+//
+// Identity:
+//
+// A formal is identified by its position in the binder that introduces it, the
+// pair (binder, ordinal) the canonical encoder writes. Name is the spelling a
+// declaration chose and is presentation only, so it is part of neither the
+// structural hash nor structural equality. An occurrence that no binder in the
+// comparison introduces is free; a free occurrence keeps its lexical name as
+// its identity, and an anonymous free occurrence is only ever itself.
 type TypeParam struct {
 	Name       string
 	Constraint Type // Upper bound (nil means any type)
@@ -21,7 +30,7 @@ type TypeParam struct {
 
 // NewTypeParam creates a type parameter.
 func NewTypeParam(name string, constraint Type) *TypeParam {
-	h := hash.MixHash(uint64(kind.TypeParam), hash.FnvString(name))
+	h := uint64(kind.TypeParam)
 	if constraint != nil {
 		h = hash.MixHash(h, constraint.Hash())
 	}

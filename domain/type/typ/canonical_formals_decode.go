@@ -336,7 +336,7 @@ func materializeCanonicalFormalsGraph(ctx context.Context, admission *canonicalF
 			if !available {
 				return nil, invalidCanonicalFormals("dependency order")
 			}
-			value, err := materializeCanonicalFormalNode(ctx, admission, nodes[index].scalar, shapes[index], children, &steps, index)
+			value, err := materializeCanonicalFormalNode(ctx, admission, nodes[index].scalar, shapes[index], children, &steps)
 			if err != nil {
 				return nil, err
 			}
@@ -513,7 +513,7 @@ func canonicalFormalDependencies(index int, nodes []canonicalTypeNode, shapes []
 	}
 }
 
-func materializeCanonicalFormalNode(ctx context.Context, admission *canonicalFormalsAdmission, scalar []byte, shape canonicalFormalNodeShape, children []Type, steps *uint64, index int) (Type, error) {
+func materializeCanonicalFormalNode(ctx context.Context, admission *canonicalFormalsAdmission, scalar []byte, shape canonicalFormalNodeShape, children []Type, steps *uint64) (Type, error) {
 	if shape.tag == canonicalTypeParam {
 		if shape.formalMode != canonicalScopedLocalFormal {
 			return nil, invalidCanonicalFormals("formal mode")
@@ -524,7 +524,12 @@ func materializeCanonicalFormalNode(ctx context.Context, admission *canonicalFor
 		} else if len(children) != 0 {
 			return nil, invalidCanonicalFormals("local formal child count")
 		}
-		return NewTypeParam(canonicalDecodedLocalFormalName(index), constraint), nil
+		// The wire carries no spelling for a local formal because it carries
+		// the binding instead: this node is the owner binder's ordinal-th
+		// parameter. The reconstructed formal is anonymous and takes its
+		// identity from that position, so nothing about the decode graph's
+		// layout can reach it.
+		return NewTypeParam("", constraint), nil
 	}
 	if shape.tag == canonicalOptional {
 		if len(children) != 1 || len(scalar) != 1 {
@@ -605,12 +610,6 @@ func canonicalScopedRecursiveHeader(scalar []byte) (bool, error) {
 		return false, invalidCanonicalFormals("recursive shape")
 	}
 	return hasBody, nil
-}
-
-func canonicalDecodedLocalFormalName(index int) string {
-	// This is intentionally a private construction label: scoped bytes replace
-	// it with lexical (owner, ordinal) identity before any graph refinement.
-	return fmt.Sprintf("\x00scoped-local-%d", index)
 }
 
 func boolChildCount(value bool) int {

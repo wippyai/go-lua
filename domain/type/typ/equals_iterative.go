@@ -10,6 +10,57 @@ type typeEqualsWorkStack struct {
 	inlineN  uint8
 	overflow []typeEqualsWork
 	result   bool
+	binders  binderCorrespondence
+}
+
+// binderCorrespondence carries the formal-to-formal correspondence every
+// binder frame entered by one equality query establishes. A formal is bound by
+// position: the canonical encoder writes it as (owner, ordinal) and this
+// comparator reads it the same way, so two declarations that spell one formal
+// differently are one type and two declarations that bind their formals in
+// opposite positions are two types.
+type binderCorrespondence struct {
+	forward map[*TypeParam]*TypeParam
+	reverse map[*TypeParam]*TypeParam
+}
+
+// bind records that left occupies the same binder position as right. The first
+// frame to introduce a formal owns it: a graph that shares one formal node
+// across two frames still has a single binding site, and rebinding it to a
+// second counterpart would relate occurrences their binders keep apart.
+func (c *binderCorrespondence) bind(left, right *TypeParam) {
+	if left == nil || right == nil || left == right {
+		return
+	}
+	if c.forward == nil {
+		c.forward = make(map[*TypeParam]*TypeParam, 4)
+		c.reverse = make(map[*TypeParam]*TypeParam, 4)
+	}
+	if _, bound := c.forward[left]; !bound {
+		c.forward[left] = right
+	}
+	if _, bound := c.reverse[right]; !bound {
+		c.reverse[right] = left
+	}
+}
+
+// agree reports whether two formal occurrences denote one binding. A formal a
+// frame introduced matches only its positional counterpart, and never a formal
+// no frame introduced. A pair both frames left free carries no positional
+// identity, so it falls back to the lexical name; an anonymous formal has no
+// name to be identified by and is therefore only ever itself, which the
+// identity fast path upstream has already decided.
+func (c *binderCorrespondence) agree(left, right *TypeParam) bool {
+	if bound, ok := c.forward[left]; ok {
+		return bound == right
+	}
+	if _, ok := c.reverse[right]; ok {
+		return false
+	}
+	if left.Name == "" || right.Name == "" {
+		return false
+	}
+	return left.Name == right.Name
 }
 
 type typeEqualsWork struct {
@@ -202,6 +253,9 @@ func typeEqualsStep(a, b Type, seen *typePairSet, work *typeEqualsWorkStack) boo
 		if !ok || len(va.TypeParams) != len(vb.TypeParams) || len(va.Params) != len(vb.Params) || len(va.Returns) != len(vb.Returns) || (va.Variadic == nil) != (vb.Variadic == nil) {
 			return false
 		}
+		for i := range va.TypeParams {
+			work.binders.bind(va.TypeParams[i], vb.TypeParams[i])
+		}
 		for i := len(va.Returns) - 1; i >= 0; i-- {
 			work.push(va.Returns[i], vb.Returns[i])
 		}
@@ -223,6 +277,9 @@ func typeEqualsStep(a, b Type, seen *typePairSet, work *typeEqualsWorkStack) boo
 		if !ok || va.Name != vb.Name || len(va.TypeParams) != len(vb.TypeParams) || (va.Body == nil) != (vb.Body == nil) {
 			return false
 		}
+		for i := range va.TypeParams {
+			work.binders.bind(va.TypeParams[i], vb.TypeParams[i])
+		}
 		if va.Body != nil {
 			work.push(va.Body, vb.Body)
 		}
@@ -240,7 +297,7 @@ func typeEqualsStep(a, b Type, seen *typePairSet, work *typeEqualsWorkStack) boo
 		work.push(va.Generic, vb.Generic)
 	case *TypeParam:
 		vb, ok := b.(*TypeParam)
-		if !ok || va.Name != vb.Name || (va.Constraint == nil) != (vb.Constraint == nil) {
+		if !ok || !work.binders.agree(va, vb) || (va.Constraint == nil) != (vb.Constraint == nil) {
 			return false
 		}
 		if va.Constraint != nil {
