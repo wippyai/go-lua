@@ -81,7 +81,6 @@ func CompileDetailed(input *program.Program, executionSchema programartifact.Exe
 	}
 	diagnosticPublication, diagnosticFault := diagnostic.Compile(diagnostic.Input{
 		Program:        transaction.input,
-		ProgramID:      transaction.key.ProgramID(),
 		Values:         transaction.publication.Values,
 		ValuesMembers:  transaction.publication.ValuesMembers,
 		Calls:          transaction.publication.Calls,

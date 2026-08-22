@@ -8,11 +8,8 @@ import (
 	"github.com/wippyai/go-lua/analysis/program"
 	"github.com/wippyai/go-lua/analysis/program/artifact/compiler/internal/allocation"
 	"github.com/wippyai/go-lua/analysis/program/artifact/compiler/internal/bodyboundary"
-	"github.com/wippyai/go-lua/analysis/program/flow"
 	"github.com/wippyai/go-lua/analysis/program/flow/causal"
 	"github.com/wippyai/go-lua/analysis/program/keyspace"
-	"github.com/wippyai/go-lua/analysis/program/source"
-	staticquery "github.com/wippyai/go-lua/analysis/program/static/query"
 	programschema "github.com/wippyai/go-lua/analysis/schema/program"
 	programcatalog "github.com/wippyai/go-lua/analysis/schema/program/catalog"
 	programconstruction "github.com/wippyai/go-lua/analysis/schema/program/construction"
@@ -25,7 +22,6 @@ import (
 // or resolver callback crosses this boundary.
 type Input struct {
 	Program        *program.Program
-	ProgramID      identity.ContentID
 	Values         []programschema.Values
 	ValuesMembers  []programschema.ValuesMember
 	Calls          []programschema.Call
@@ -36,45 +32,7 @@ type Input struct {
 }
 
 func (input Input) Available() bool {
-	return input.Program != nil && input.Program.Available() && input.ProgramID.Available()
-}
-
-func (input Input) ContentID() identity.ContentID { return input.ProgramID }
-
-func (input Input) Flow() flow.View {
-	if input.Program == nil {
-		return flow.View{}
-	}
-	return input.Program.Flow()
-}
-
-func (input Input) Static() staticquery.View {
-	if input.Program == nil {
-		return staticquery.View{}
-	}
-	return input.Program.Static()
-}
-
-func (input Input) Source() source.View {
-	if input.Program == nil {
-		return source.View{}
-	}
-	return input.Program.Source()
-}
-
-func (input Input) Span(term keyspace.Term) (program.Span, bool) {
-	if input.Program == nil {
-		return program.Span{}, false
-	}
-	return input.Program.Span(term)
-}
-
-func (input Input) OwnsSpan(span program.Span) bool {
-	return input.Program != nil && input.Program.OwnsSpan(span)
-}
-
-func (input Input) OwnsSite(site causal.Site) bool {
-	return input.Program != nil && input.Program.OwnsSite(site)
+	return input.Program != nil && input.Program.Available()
 }
 
 type callArgumentSource struct {
@@ -109,7 +67,7 @@ type compiler struct {
 // publication. The returned publication owns the only slices retained by the
 // parent; all indexes and scratch state die with this child transaction.
 func Compile(input Input) (programdiagnostic.Publication, programconstruction.Fault) {
-	if input.Program == nil || !input.Program.Available() || !input.ProgramID.Available() ||
+	if input.Program == nil || !input.Program.Available() ||
 		input.BodyBoundary == nil || input.Allocations == nil || input.PointIDsBySite == nil {
 		return programdiagnostic.Publication{}, programconstruction.New(programcatalog.DiagnosticObservation(), programconstruction.IssueDiagnosticInvalidInput, -1, -1)
 	}

@@ -30,7 +30,7 @@ func (compiler *compiler) copyDiagnosticObservationsFailure() programconstructio
 	} else {
 		clear(compiler.diagnosticObservationByID)
 	}
-	routes := compiler.input.Flow().Causal().Successors()
+	routes := compiler.input.Program.Flow().Causal().Successors()
 	for index := 0; index < routes.TotalCount(); index++ {
 		route, routeOK := routes.FinalAt(index)
 		if !routeOK {
@@ -85,17 +85,17 @@ func (compiler *compiler) admitDiagnosticBranchFailure(route causal.FinalRoute, 
 		return programconstruction.Fault{}
 	}
 	// Branches.Get returns (owner, condition, true arm, false arm, ok).
-	owner, branchCondition, branchTrue, branchFalse, branchRelationOK := compiler.input.Flow().Authored().Control().Branches().Get(decisionTerm)
+	owner, branchCondition, branchTrue, branchFalse, branchRelationOK := compiler.input.Program.Flow().Authored().Control().Branches().Get(decisionTerm)
 	_ = owner
 	if !branchRelationOK || !compiler.diagnosticBranchScopeRewriteSafe(branchTrue, branchFalse) {
 		return programconstruction.Fault{}
 	}
-	span, spanOK := compiler.input.Span(branchCondition)
-	location, locationOK := compiler.input.Source().Identity().Span(branchCondition)
+	span, spanOK := compiler.input.Program.Span(branchCondition)
+	location, locationOK := compiler.input.Program.Source().Identity().Span(branchCondition)
 	finish, finishOK := span.Finish()
 	decisionPath, pathOK := guard.DecisionPathID()
-	if !spanOK || !compiler.input.OwnsSpan(span) || !locationOK || !programdiagnostic.ValidSpan(location) ||
-		!finishOK || !compiler.input.OwnsSite(finish) || len(compiler.pointIDs(finish)) == 0 ||
+	if !spanOK || !compiler.input.Program.OwnsSpan(span) || !locationOK || !programdiagnostic.ValidSpan(location) ||
+		!finishOK || !compiler.input.Program.OwnsSite(finish) || len(compiler.pointIDs(finish)) == 0 ||
 		!pathOK || !decisionPath.Available() {
 		return programconstruction.New(programcatalog.DiagnosticObservation(), programconstruction.IssueDiagnosticRouteGuard, rowIndex, -1)
 	}
@@ -113,7 +113,7 @@ func (compiler *compiler) admitDiagnosticBranchFailure(route causal.FinalRoute, 
 		seen[points[index]] = struct{}{}
 	}
 	row, rowOK := programdiagnostic.NewDiagnosticObservationBranchCondition(
-		programdiagnostic.BranchConditionIdentity(compiler.input.ContentID(), location, decisionPath, span.ContextID(), points),
+		programdiagnostic.BranchConditionIdentity(compiler.input.Program.ContentID(), location, decisionPath, span.ContextID(), points),
 		location, uint32(len(compiler.diagnosticEvidence)), uint32(len(points)), decisionPath, span.ContextID(),
 	)
 	if !rowOK || !compiler.admitDiagnosticObservation(row, points, nil) {
@@ -166,7 +166,7 @@ func (compiler *compiler) computeBranchScopeRewriteGlobal() bool {
 	}
 	owners := make(map[keyspace.Term]struct{})
 	compiler.branchScopeRewriteOwners = owners
-	authoredView := input.Flow().Authored()
+	authoredView := input.Program.Flow().Authored()
 	cells := authoredView.Storage().Cells()
 	for index := 0; index < cells.Count(); index++ {
 		term, termOK := cells.At(index)
@@ -197,7 +197,7 @@ func (compiler *compiler) computeBranchScopeRewriteGlobal() bool {
 		}
 		owners[owner] = struct{}{}
 	}
-	static := input.Static().Declarations()
+	static := input.Program.Static().Declarations()
 	aliases := static.Aliases()
 	for index := 0; index < aliases.Count(); index++ {
 		term, termOK := aliases.At(index)
@@ -220,7 +220,7 @@ func (compiler *compiler) computeBranchScopeRewriteGlobal() bool {
 }
 
 func (compiler *compiler) copyUnresolvedTypeObservationsFailure() programconstruction.Fault {
-	view := compiler.input.Static()
+	view := compiler.input.Program.Static()
 	types := view.StaticTypes()
 	references := view.References()
 	for index := 0; index < types.Count(); index++ {
@@ -233,7 +233,7 @@ func (compiler *compiler) copyUnresolvedTypeObservationsFailure() programconstru
 		if !relationOK || resolution != staticrefs.Unresolved || target != 0 {
 			continue
 		}
-		location, locationOK := compiler.input.Source().Identity().Span(term)
+		location, locationOK := compiler.input.Program.Source().Identity().Span(term)
 		count, countOK := references.SourceCount(term)
 		if !locationOK || !programdiagnostic.ValidSpan(location) || !countOK || count == 0 {
 			return programconstruction.New(programcatalog.DiagnosticObservation(), programconstruction.IssueDiagnosticUnavailable, index, -1)
@@ -241,7 +241,7 @@ func (compiler *compiler) copyUnresolvedTypeObservationsFailure() programconstru
 		path := make([]string, count)
 		for pathIndex := range path {
 			key, keyOK := references.SourceAt(term, pathIndex)
-			componentLiteral, componentOK := compiler.input.Source().Keys().Exact(key)
+			componentLiteral, componentOK := compiler.input.Program.Source().Keys().Exact(key)
 			componentOK = componentOK && componentLiteral.Kind == keyspace.LiteralString
 			component := componentLiteral.String
 			if !keyOK || !componentOK || component == "" {
@@ -259,17 +259,17 @@ func (compiler *compiler) copyUnresolvedTypeObservationsFailure() programconstru
 				return programconstruction.New(programcatalog.DiagnosticObservation(), programconstruction.IssueDiagnosticUnavailable, index, -1)
 			}
 			var rootOK bool
-			root, rootOK = staticquery.ScopeID(compiler.input.ContentID(), rootTerm)
+			root, rootOK = staticquery.ScopeID(compiler.input.Program.ContentID(), rootTerm)
 			if !rootOK {
 				return programconstruction.New(programcatalog.DiagnosticObservation(), programconstruction.IssueDiagnosticUnavailable, index, -1)
 			}
 		}
-		reference, referenceOK := staticquery.TypeReferenceID(compiler.input.ContentID(), ref)
+		reference, referenceOK := staticquery.TypeReferenceID(compiler.input.Program.ContentID(), ref)
 		if !referenceOK {
 			return programconstruction.New(programcatalog.DiagnosticObservation(), programconstruction.IssueDiagnosticUnavailable, index, -1)
 		}
 		row, rowOK := programdiagnostic.NewDiagnosticObservationTypeReferenceUnresolved(
-			programdiagnostic.TypeReferenceUnresolvedIdentity(compiler.input.ContentID(), location, reference, root, path),
+			programdiagnostic.TypeReferenceUnresolvedIdentity(compiler.input.Program.ContentID(), location, reference, root, path),
 			location, uint32(len(compiler.diagnosticPaths)), uint32(len(path)), reference, root,
 		)
 		if !rowOK || !compiler.admitDiagnosticObservation(row, nil, path) {
@@ -283,16 +283,16 @@ func (compiler *compiler) copyUnresolvedTypeObservationsFailure() programconstru
 // implicit-read denominator. It never scans names or infers binder absence
 // from the ordinary Read catalog.
 func (compiler *compiler) copyUnresolvedValueObservationsFailure() programconstruction.Fault {
-	reads := compiler.input.Flow().Authored().Storage().Reads()
+	reads := compiler.input.Program.Flow().Authored().Storage().Reads()
 	for index := 0; index < reads.ImplicitCount(); index++ {
 		term, termOK := reads.ImplicitAt(index)
 		owner, sourceTerm, implicit, relationOK := reads.Get(term)
 		ordinal := keyspace.TermOrdinal(term)
 		readID, issuedTerm, readOK := programstorage.ReadIdentityAt(compiler.input.Program, int(ordinal-1))
-		cellID, cellOK := rowidentity.StorageCellID(compiler.input.ProgramID, compiler.input.Flow(), sourceTerm)
-		kind, body, key, cellRelationOK := compiler.input.Flow().Authored().Storage().Cells().Get(sourceTerm)
-		literal, literalOK := compiler.input.Source().Keys().Exact(key)
-		location, locationOK := compiler.input.Source().Identity().Span(term)
+		cellID, cellOK := rowidentity.StorageCellID(compiler.input.Program.ContentID(), compiler.input.Program.Flow(), sourceTerm)
+		kind, body, key, cellRelationOK := compiler.input.Program.Flow().Authored().Storage().Cells().Get(sourceTerm)
+		literal, literalOK := compiler.input.Program.Source().Keys().Exact(key)
+		location, locationOK := compiler.input.Program.Source().Identity().Span(term)
 		if !termOK || !relationOK || !implicit || owner == 0 || ordinal == 0 || !readOK ||
 			issuedTerm != term || !readID.Available() || !cellOK || !cellID.Available() ||
 			!cellRelationOK || kind != authored.CellGlobal || body != 0 || key == 0 ||
@@ -301,7 +301,7 @@ func (compiler *compiler) copyUnresolvedValueObservationsFailure() programconstr
 			return programconstruction.New(programcatalog.DiagnosticObservation(), programconstruction.IssueDiagnosticStorageRead, index, -1)
 		}
 		row, rowOK := programdiagnostic.NewDiagnosticObservationValueReferenceUnresolved(
-			programdiagnostic.ValueReferenceUnresolvedIdentity(compiler.input.ContentID(), location, readID, cellID, literal.String),
+			programdiagnostic.ValueReferenceUnresolvedIdentity(compiler.input.Program.ContentID(), location, readID, cellID, literal.String),
 			location, readID, cellID, literal.String,
 		)
 		if !rowOK || !compiler.admitDiagnosticObservation(row, nil, nil) {
@@ -363,13 +363,13 @@ func (compiler *compiler) copyTypeConformanceObservationsFailure() programconstr
 				continue
 			}
 			memberTerm, sourceIndex, memberOK := compiler.callArgumentSource(argument.ID())
-			location, locationOK := compiler.input.Source().Identity().Span(memberTerm)
+			location, locationOK := compiler.input.Program.Source().Identity().Span(memberTerm)
 			if !memberOK || !locationOK || !programdiagnostic.ValidSpan(location) || !argument.SpanID().Available() {
 				return programconstruction.New(programcatalog.DiagnosticObservation(), programconstruction.IssueDiagnosticCall, sourceIndex, argumentIndex)
 			}
-			memberSpan, memberSpanOK := compiler.input.Span(memberTerm)
+			memberSpan, memberSpanOK := compiler.input.Program.Span(memberTerm)
 			memberFinish, memberFinishOK := memberSpan.Finish()
-			if !memberSpanOK || !compiler.input.OwnsSpan(memberSpan) || !memberFinishOK || !compiler.input.OwnsSite(memberFinish) {
+			if !memberSpanOK || !compiler.input.Program.OwnsSpan(memberSpan) || !memberFinishOK || !compiler.input.Program.OwnsSite(memberFinish) {
 				return programconstruction.New(programcatalog.DiagnosticObservation(), programconstruction.IssueDiagnosticCall, sourceIndex, argumentIndex)
 			}
 			points := compiler.pointIDs(memberFinish)
@@ -378,7 +378,7 @@ func (compiler *compiler) copyTypeConformanceObservationsFailure() programconstr
 			}
 			site := programdiagnostic.DiagnosticObservationSiteCallArgument
 			row, rowOK := programdiagnostic.NewDiagnosticObservationTypeConformance(
-				programdiagnostic.TypeConformanceIdentity(compiler.input.ContentID(), location, site, call.ID(), argument.MemberID(), declared, argument.SpanID(), uint32(argumentIndex), points),
+				programdiagnostic.TypeConformanceIdentity(compiler.input.Program.ContentID(), location, site, call.ID(), argument.MemberID(), declared, argument.SpanID(), uint32(argumentIndex), points),
 				location, uint32(len(compiler.diagnosticEvidence)), uint32(len(points)),
 				site, call.ID(), argument.MemberID(), declared, argument.SpanID(), uint32(argumentIndex),
 			)
@@ -597,7 +597,7 @@ func (compiler *compiler) copyWriteConformanceObservationsFailure() programconst
 	if !selectedOK {
 		return programconstruction.New(programcatalog.DiagnosticObservation(), programconstruction.IssueDiagnosticUnavailable, -1, -1)
 	}
-	view := compiler.input.Flow()
+	view := compiler.input.Program.Flow()
 	assigns := view.Authored().Storage().Assigns()
 	writes := view.Authored().Storage().Writes()
 	authoredValues := view.Authored().Values()
@@ -629,7 +629,7 @@ func (compiler *compiler) copyWriteConformanceObservationsFailure() programconst
 			if !writeOK || !writeRelationOK || writeAssign != term {
 				return programconstruction.New(programcatalog.DiagnosticObservation(), programconstruction.IssueDiagnosticUnavailable, index, position)
 			}
-			declared, declaredOK := rowidentity.DeclaredStaticTypeID(compiler.input.ProgramID, compiler.input.Static(), target)
+			declared, declaredOK := rowidentity.DeclaredStaticTypeID(compiler.input.Program.ContentID(), compiler.input.Program.Static(), target)
 			memberTerm, memberOK := authoredValues.Member(valuesTerm, position)
 			member, memberRowOK := compiler.valueMemberAt(valueRow, position)
 			if !declaredOK || !memberOK || !memberRowOK || !member.Available() {
@@ -650,11 +650,11 @@ func (compiler *compiler) copyWriteConformanceObservationsFailure() programconst
 // coordinates every site shares: the owning statement, the measured value, the
 // declaration, and the measured value's own evaluation span.
 func (compiler *compiler) admitConformanceObservation(site programdiagnostic.DiagnosticObservationSite, owner, value, declared identity.ContentID, measured keyspace.Term, position uint32) bool {
-	location, locationOK := compiler.input.Source().Identity().Span(measured)
-	span, spanOK := compiler.input.Span(measured)
+	location, locationOK := compiler.input.Program.Source().Identity().Span(measured)
+	span, spanOK := compiler.input.Program.Span(measured)
 	finish, finishOK := span.Finish()
-	if !locationOK || !programdiagnostic.ValidSpan(location) || !spanOK || !compiler.input.OwnsSpan(span) ||
-		!finishOK || !compiler.input.OwnsSite(finish) {
+	if !locationOK || !programdiagnostic.ValidSpan(location) || !spanOK || !compiler.input.Program.OwnsSpan(span) ||
+		!finishOK || !compiler.input.Program.OwnsSite(finish) {
 		return false
 	}
 	points := compiler.pointIDs(finish)
@@ -662,7 +662,7 @@ func (compiler *compiler) admitConformanceObservation(site programdiagnostic.Dia
 		return false
 	}
 	row, rowOK := programdiagnostic.NewDiagnosticObservationTypeConformance(
-		programdiagnostic.TypeConformanceIdentity(compiler.input.ContentID(), location, site, owner, value, declared, span.ContextID(), position, points),
+		programdiagnostic.TypeConformanceIdentity(compiler.input.Program.ContentID(), location, site, owner, value, declared, span.ContextID(), position, points),
 		location, uint32(len(compiler.diagnosticEvidence)), uint32(len(points)),
 		site, owner, value, declared, span.ContextID(), position,
 	)
@@ -687,13 +687,13 @@ func (compiler *compiler) copyAssignmentConformanceObservationsFailure() program
 	if !selectedOK {
 		return programconstruction.New(programcatalog.DiagnosticObservation(), programconstruction.IssueDiagnosticUnavailable, -1, -1)
 	}
-	view := compiler.input.Flow()
+	view := compiler.input.Program.Flow()
 	binds := view.Authored().Storage().Binds()
 	authoredValues := view.Authored().Values()
 	for index := 0; index < binds.Count(); index++ {
 		term, termOK := binds.At(index)
 		owner, valuesTerm, relationOK := binds.Get(term)
-		width, widthOK := compiler.input.Source().Binds().Len(term)
+		width, widthOK := compiler.input.Program.Source().Binds().Len(term)
 		if !termOK || !relationOK || !widthOK {
 			return programconstruction.New(programcatalog.DiagnosticObservation(), programconstruction.IssueDiagnosticUnavailable, index, -1)
 		}
@@ -707,7 +707,7 @@ func (compiler *compiler) copyAssignmentConformanceObservationsFailure() program
 		if _, ownerSelected := selected[bodyPath]; !ownerSelected {
 			continue
 		}
-		bindID, bindIDOK := rowidentity.StorageBindID(compiler.input.Program, compiler.input.ProgramID, index)
+		bindID, bindIDOK := rowidentity.StorageBindID(compiler.input.Program, compiler.input.Program.ContentID(), index)
 		if !bindIDOK || !bindID.Available() {
 			return programconstruction.New(programcatalog.DiagnosticObservation(), programconstruction.IssueDiagnosticUnavailable, index, -1)
 		}
@@ -716,11 +716,11 @@ func (compiler *compiler) copyAssignmentConformanceObservationsFailure() program
 			continue
 		}
 		for position := 0; position < width; position++ {
-			cellTerm, cellOK := compiler.input.Source().Binds().At(term, position)
+			cellTerm, cellOK := compiler.input.Program.Source().Binds().At(term, position)
 			if !cellOK {
 				return programconstruction.New(programcatalog.DiagnosticObservation(), programconstruction.IssueDiagnosticUnavailable, index, position)
 			}
-			declared, declaredOK := rowidentity.DeclaredStaticTypeID(compiler.input.ProgramID, compiler.input.Static(), cellTerm)
+			declared, declaredOK := rowidentity.DeclaredStaticTypeID(compiler.input.Program.ContentID(), compiler.input.Program.Static(), cellTerm)
 			memberTerm, memberOK := authoredValues.Member(valuesTerm, position)
 			member, memberRowOK := compiler.valueMemberAt(valueRow, position)
 			if !declaredOK || !memberOK || !memberRowOK || !member.Available() {

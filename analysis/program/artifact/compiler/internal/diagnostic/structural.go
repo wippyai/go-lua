@@ -139,7 +139,7 @@ func (compiler *compiler) admitAbsentMemberObservations(
 	declared keyspace.Term,
 	established map[keyspace.Key]struct{},
 ) bool {
-	view := compiler.input.Static()
+	view := compiler.input.Program.Static()
 	records := view.Types().Records()
 	fields := view.Types().Fields()
 	_, declaredFieldCount, isRecord := records.Get(declared)
@@ -177,7 +177,7 @@ func (compiler *compiler) declaredStructuralMember(
 	normalized keyspace.Key,
 	normalizedOK bool,
 ) (keyspace.Term, bool) {
-	view := compiler.input.Static()
+	view := compiler.input.Program.Static()
 	if element, _, isArray := view.Types().Arrays().Get(declared); isArray {
 		if kind != flowkind.FieldList {
 			return 0, false
@@ -218,7 +218,7 @@ func (compiler *compiler) declaredTypeAdmitsNil(term keyspace.Term) bool {
 }
 
 func (compiler *compiler) declaredTermAdmitsNil(term keyspace.Term, visited map[keyspace.Term]struct{}) bool {
-	view := compiler.input.Static()
+	view := compiler.input.Program.Static()
 	for term != 0 {
 		if _, seen := visited[term]; seen {
 			return false
@@ -258,7 +258,7 @@ func (compiler *compiler) declaredTermAdmitsNil(term keyspace.Term, visited map[
 // nil, so an optional declaration measures its members against the inner type.
 // The visited set bounds a declaration graph that reaches itself.
 func (compiler *compiler) declaredStructuralTarget(term keyspace.Term) (keyspace.Term, bool) {
-	view := compiler.input.Static()
+	view := compiler.input.Program.Static()
 	visited := make(map[keyspace.Term]struct{}, 4)
 	for term != 0 {
 		if _, seen := visited[term]; seen {
@@ -289,11 +289,11 @@ func (compiler *compiler) staticTypeNodeIDForTerm(term keyspace.Term) (identity.
 	if compiler == nil || term == 0 {
 		return identity.ContentID{}, false
 	}
-	ref, refOK := compiler.input.Static().StaticTypes().Ref(term)
+	ref, refOK := compiler.input.Program.Static().StaticTypes().Ref(term)
 	if !refOK {
 		return identity.ContentID{}, false
 	}
-	id, idOK := staticquery.TypeReferenceID(compiler.input.ProgramID, ref)
+	id, idOK := staticquery.TypeReferenceID(compiler.input.Program.ContentID(), ref)
 	return id, idOK && id.Available()
 }
 
@@ -305,14 +305,14 @@ func (compiler *compiler) staticTypeTermForID(id identity.ContentID) (keyspace.T
 		return 0, false
 	}
 	if compiler.staticTypeTermsByID == nil {
-		types := compiler.input.Static().StaticTypes()
+		types := compiler.input.Program.Static().StaticTypes()
 		index := make(map[identity.ContentID]keyspace.Term, types.Count())
 		for position := 0; position < types.Count(); position++ {
 			ref, refOK := types.At(position)
 			if !refOK {
 				continue
 			}
-			nodeID, nodeOK := staticquery.TypeReferenceID(compiler.input.ProgramID, ref)
+			nodeID, nodeOK := staticquery.TypeReferenceID(compiler.input.Program.ContentID(), ref)
 			if !nodeOK || !nodeID.Available() {
 				continue
 			}
@@ -332,9 +332,9 @@ func (compiler *compiler) conformanceObservationAddressable(measured keyspace.Te
 	if compiler == nil || measured == 0 {
 		return false
 	}
-	location, locationOK := compiler.input.Source().Identity().Span(measured)
-	span, spanOK := compiler.input.Span(measured)
+	location, locationOK := compiler.input.Program.Source().Identity().Span(measured)
+	span, spanOK := compiler.input.Program.Span(measured)
 	finish, finishOK := span.Finish()
-	return locationOK && programdiagnostic.ValidSpan(location) && spanOK && compiler.input.OwnsSpan(span) &&
-		finishOK && compiler.input.OwnsSite(finish) && len(compiler.pointIDs(finish)) != 0
+	return locationOK && programdiagnostic.ValidSpan(location) && spanOK && compiler.input.Program.OwnsSpan(span) &&
+		finishOK && compiler.input.Program.OwnsSite(finish) && len(compiler.pointIDs(finish)) != 0
 }
