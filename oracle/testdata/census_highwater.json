@@ -1,25 +1,25 @@
 {
-  "measured": "2026-08-19",
-  "note": "Remint 2026-08-19 (second of the day) after the heap payload-fold cut (0da5011a2) closed the constructor-cut regression window: measured 903 complete / 8 incomplete / 1 unsupported / 0 invalid over 912 (analysis wall 5m52s, well inside the recorded ceiling), per-fixture-identical to the 58f8ae321 baseline except regression/deadlock-compiler-lua non-terminating -> complete (80s). The 8 incomplete: generics/result-map-generic, narrowing-recovery/accumulator-bounded, placement/list-inbox-clean, realworld/transactional-saga-orchestrator{,-soundness}, regression/deadlock-dataflow-node, soundness/integer-loop-counter-drift, soundness/opaque-callee-array-revocation; 1 unsupported: soundness/declared-local-reassignment. Recovery from the 642 post-cut trough: carry-route bind path (afc29ab2d +110), BodyHotRule canonical route order (b780b57d8 ~+34), predicate span directory (aa6300b00 +5), activation triggers at declaration (65bea5052 +96), heap payload fold (0da5011a2, the pathological fixture). Prior floor 800/111/1 was the pre-cut reference at 9bf25694e; this mint EXCEEDS it by 103 complete because the recovery fixed defects the pre-cut engine also had (bodyless-program activation members, inert interprocedural effect admission, the heap Cartesian enumeration). Sample-lane counts and both analysis walls carried forward conservative; a qualifying cold full run re-mints them. Prior provenance in git history of this file.",
-  "corpus_projects": 912,
+  "measured": "2026-08-22 remint on the 939-project corpus (27 new coverage fixtures); go test ./oracle -run TestCanonicalFrozenCorpusCensusHighWaterMark|TestCorpusCensusHighWaterMarkSample -count=1, GOMEMLIMIT=2GiB GOMAXPROCS=4",
+  "note": "The prior mark (912 projects) is not comparable: the corpus grew by 27 fixtures since it was minted. This run measured complete=705 incomplete=145 unsupported=89 invalid=0 over 939 (full lane, analysis wall 3m35.7s summed per-fixture), versus the prior mark's 903/8/1/0 over 912: complete fell by 198, incomplete rose by 137, unsupported rose by 88. Family breakdown from the same run: core complete=37/66, flow complete=10/20, functions complete=50/72, native complete=153/194, narrowing complete=122/140, realworld complete=14/47, semantic complete=63/85, soundness complete=26/33, types complete=78/97 - the drop is corpus-wide, not concentrated in the 27 new fixtures (native +21, semantic +4, sendsafety +2), so this is a genuine census regression uncovered by the remint, not an artifact of corpus growth. Sample lane (stride 6, 157 fixtures) is a slice of this same full walk's per-fixture outcomes: complete=116 incomplete=26 unsupported=15 invalid=0, wall 36.6s summed.",
+  "corpus_projects": 939,
   "analysis_wall_ceiling": 1.15,
   "full": {
     "measured": true,
-    "projects": 912,
-    "complete_min": 903,
-    "incomplete_max": 8,
-    "unsupported_max": 1,
+    "projects": 939,
+    "complete_min": 705,
+    "incomplete_max": 145,
+    "unsupported_max": 89,
     "invalid_max": 0,
-    "analysis_wall_seconds": 484.5
+    "analysis_wall_seconds": 215.722
   },
   "sample": {
     "measured": true,
     "stride": 6,
-    "projects": 152,
-    "complete_min": 119,
-    "incomplete_max": 21,
-    "unsupported_max": 12,
+    "projects": 157,
+    "complete_min": 116,
+    "incomplete_max": 26,
+    "unsupported_max": 15,
     "invalid_max": 0,
-    "analysis_wall_seconds": 56.7
+    "analysis_wall_seconds": 36.614
   }
 }

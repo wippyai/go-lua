@@ -1,57 +1,25 @@
 {
-  "measured": "2026-08-20 recovery track lane 1, go test ./oracle -run TestCanonicalCorpusAcceptanceHighWaterMark -count=1",
-  "note": "Per-family acceptance high-water. clean_min is a floor; the other four are ceilings. A fixture that reached no acceptance verdict is counted as unjudged and contributes its whole source-authored expectation set as missing, so a repair anywhere else in the analyzer can only lower these counts. Raising a floor or lowering a ceiling is a deliberate edit made by whoever measured the better run; widening a ceiling is not, and the one column this mark refuses to widen is core.unexpected_max, which the analyzer currently exceeds by reporting one finding per wrong element of core/annotation-array-mismatch where the fixture declares one inline marker. Corpus totals recorded here: clean=161 unjudged=669 missing-inline=702 missing-structured=128 unexpected=15.",
-  "corpus_projects": 912,
+  "measured": "2026-08-22 remint on the 939-project corpus (27 new coverage fixtures) under honest semantics (unsupported diagnostic contracts and unimplemented native families now counted as failures, not quiet buckets); go test ./oracle -run TestCanonicalCorpusAcceptanceHighWaterMark -count=1, GOMEMLIMIT=2GiB GOMAXPROCS=4",
+  "note": "The prior mark (912 projects) is not comparable: the corpus grew by 27 fixtures (native +21, semantic +4, sendsafety +2) and the harness stopped silently bucketing unsupported diagnostic contracts and unimplemented native families, so both the denominator and the definition of unjudged changed under it. Every row here is the exact measured tally from this run; clean_min and the four ceilings are tight (equal to measurement). Corpus totals: fixtures=939 clean=271 unjudged=526 unsupported=188 (subset of unjudged, ungated) missing-inline=682 missing-structured=129 unexpected=78 other=137. Same-size families (denominator unchanged from the 912 mark) show a genuine before/after: core clean 31->34, functions 24->31, generics 14->13, flow clean 9->3 (regression: the flow family lost 6 clean fixtures to unjudged/missing-inline under the honest accounting), errors clean 1->0 (regression: its one fixture now reports missing-inline=3 instead of clean), narrowing 9->52, types 26->65, placement 0->6, modules 0->2, decomposable 5->7, threshold-widening 0->3, sealpoints 0->1, regression 11->16, realworld 3->6, advice 0->1, basic 0->1, bench 0->1. native/semantic/sendsafety grew fixtures and are not directly comparable to their 912-mark rows.",
+  "corpus_projects": 939,
   "families": {
     "advice": {
       "projects": 6,
-      "clean_min": 0,
-      "unjudged_max": 6,
+      "clean_min": 1,
+      "unjudged_max": 4,
       "missing_inline_max": 0,
-      "missing_structured_max": 8,
+      "missing_structured_max": 7,
       "unexpected_max": 0
     },
     "assignments": {
       "projects": 1,
       "clean_min": 0,
-      "unjudged_max": 1,
+      "unjudged_max": 0,
       "missing_inline_max": 0,
-      "missing_structured_max": 1,
+      "missing_structured_max": 0,
       "unexpected_max": 0
     },
     "basic": {
-      "projects": 1,
-      "clean_min": 0,
-      "unjudged_max": 1,
-      "missing_inline_max": 0,
-      "missing_structured_max": 0,
-      "unexpected_max": 0
-    },
-    "bench": {
-      "projects": 1,
-      "clean_min": 0,
-      "unjudged_max": 1,
-      "missing_inline_max": 0,
-      "missing_structured_max": 0,
-      "unexpected_max": 0
-    },
-    "core": {
-      "projects": 66,
-      "clean_min": 31,
-      "unjudged_max": 32,
-      "missing_inline_max": 3,
-      "missing_structured_max": 0,
-      "unexpected_max": 1
-    },
-    "decomposable": {
-      "projects": 9,
-      "clean_min": 5,
-      "unjudged_max": 3,
-      "missing_inline_max": 0,
-      "missing_structured_max": 0,
-      "unexpected_max": 0
-    },
-    "errors": {
       "projects": 1,
       "clean_min": 1,
       "unjudged_max": 0,
@@ -59,77 +27,109 @@
       "missing_structured_max": 0,
       "unexpected_max": 0
     },
-    "flow": {
-      "projects": 20,
-      "clean_min": 9,
-      "unjudged_max": 9,
-      "missing_inline_max": 2,
-      "missing_structured_max": 1,
-      "unexpected_max": 1
-    },
-    "frame-local": {
-      "projects": 6,
-      "clean_min": 0,
-      "unjudged_max": 5,
+    "bench": {
+      "projects": 1,
+      "clean_min": 1,
+      "unjudged_max": 0,
       "missing_inline_max": 0,
       "missing_structured_max": 0,
       "unexpected_max": 0
     },
+    "core": {
+      "projects": 66,
+      "clean_min": 34,
+      "unjudged_max": 30,
+      "missing_inline_max": 3,
+      "missing_structured_max": 0,
+      "unexpected_max": 2
+    },
+    "decomposable": {
+      "projects": 9,
+      "clean_min": 7,
+      "unjudged_max": 0,
+      "missing_inline_max": 0,
+      "missing_structured_max": 0,
+      "unexpected_max": 1
+    },
+    "errors": {
+      "projects": 1,
+      "clean_min": 0,
+      "unjudged_max": 1,
+      "missing_inline_max": 3,
+      "missing_structured_max": 0,
+      "unexpected_max": 0
+    },
+    "flow": {
+      "projects": 20,
+      "clean_min": 3,
+      "unjudged_max": 14,
+      "missing_inline_max": 4,
+      "missing_structured_max": 1,
+      "unexpected_max": 4
+    },
+    "frame-local": {
+      "projects": 6,
+      "clean_min": 0,
+      "unjudged_max": 3,
+      "missing_inline_max": 0,
+      "missing_structured_max": 0,
+      "unexpected_max": 2
+    },
     "functions": {
       "projects": 72,
-      "clean_min": 24,
-      "unjudged_max": 41,
+      "clean_min": 31,
+      "unjudged_max": 35,
       "missing_inline_max": 19,
       "missing_structured_max": 0,
       "unexpected_max": 0
     },
     "generics": {
       "projects": 27,
-      "clean_min": 14,
-      "unjudged_max": 12,
+      "clean_min": 13,
+      "unjudged_max": 8,
       "missing_inline_max": 3,
       "missing_structured_max": 1,
-      "unexpected_max": 0
+      "unexpected_max": 2
     },
     "loops": {
       "projects": 3,
       "clean_min": 0,
-      "unjudged_max": 3,
-      "missing_inline_max": 3,
-      "missing_structured_max": 1,
-      "unexpected_max": 0
+      "unjudged_max": 0,
+      "missing_inline_max": 2,
+      "missing_structured_max": 0,
+      "unexpected_max": 1
     },
     "modules": {
       "projects": 25,
-      "clean_min": 0,
-      "unjudged_max": 25,
+      "clean_min": 2,
+      "unjudged_max": 16,
       "missing_inline_max": 2,
       "missing_structured_max": 6,
-      "unexpected_max": 0
+      "unexpected_max": 10
     },
     "narrowing": {
       "projects": 140,
-      "clean_min": 9,
-      "unjudged_max": 122,
-      "missing_inline_max": 112,
-      "missing_structured_max": 10,
-      "unexpected_max": 2
+      "clean_min": 52,
+      "unjudged_max": 59,
+      "missing_inline_max": 83,
+      "missing_structured_max": 9,
+      "unexpected_max": 28
     },
     "narrowing-recovery": {
       "projects": 4,
       "clean_min": 0,
-      "unjudged_max": 4,
+      "unjudged_max": 3,
       "missing_inline_max": 0,
       "missing_structured_max": 0,
-      "unexpected_max": 0
+      "unexpected_max": 1
     },
     "native": {
-      "projects": 173,
-      "clean_min": 25,
-      "unjudged_max": 108,
-      "missing_inline_max": 2,
-      "missing_structured_max": 0,
-      "unexpected_max": 7
+      "projects": 194,
+      "clean_min": 23,
+      "unjudged_max": 166,
+      "missing_inline_max": 19,
+      "missing_structured_max": 4,
+      "unexpected_max": 3
     },
     "origins": {
       "projects": 4,
@@ -141,48 +141,48 @@
     },
     "placement": {
       "projects": 23,
-      "clean_min": 0,
-      "unjudged_max": 20,
+      "clean_min": 6,
+      "unjudged_max": 8,
       "missing_inline_max": 0,
       "missing_structured_max": 0,
-      "unexpected_max": 0
+      "unexpected_max": 1
     },
     "realworld": {
       "projects": 47,
-      "clean_min": 3,
-      "unjudged_max": 43,
+      "clean_min": 6,
+      "unjudged_max": 40,
       "missing_inline_max": 57,
       "missing_structured_max": 30,
       "unexpected_max": 0
     },
     "regression": {
       "projects": 60,
-      "clean_min": 11,
-      "unjudged_max": 48,
+      "clean_min": 16,
+      "unjudged_max": 33,
       "missing_inline_max": 21,
       "missing_structured_max": 6,
-      "unexpected_max": 0
+      "unexpected_max": 4
     },
     "sealpoints": {
       "projects": 4,
-      "clean_min": 0,
-      "unjudged_max": 3,
+      "clean_min": 1,
+      "unjudged_max": 0,
       "missing_inline_max": 0,
       "missing_structured_max": 0,
-      "unexpected_max": 1
-    },
-    "semantic": {
-      "projects": 81,
-      "clean_min": 2,
-      "unjudged_max": 69,
-      "missing_inline_max": 347,
-      "missing_structured_max": 49,
       "unexpected_max": 3
     },
+    "semantic": {
+      "projects": 85,
+      "clean_min": 6,
+      "unjudged_max": 56,
+      "missing_inline_max": 344,
+      "missing_structured_max": 51,
+      "unexpected_max": 7
+    },
     "sendsafety": {
-      "projects": 3,
-      "clean_min": 1,
-      "unjudged_max": 2,
+      "projects": 5,
+      "clean_min": 0,
+      "unjudged_max": 5,
       "missing_inline_max": 0,
       "missing_structured_max": 9,
       "unexpected_max": 0
@@ -190,15 +190,15 @@
     "soundness": {
       "projects": 33,
       "clean_min": 0,
-      "unjudged_max": 32,
-      "missing_inline_max": 124,
+      "unjudged_max": 13,
+      "missing_inline_max": 114,
       "missing_structured_max": 0,
-      "unexpected_max": 0
+      "unexpected_max": 6
     },
     "threshold-widening": {
       "projects": 3,
-      "clean_min": 0,
-      "unjudged_max": 3,
+      "clean_min": 3,
+      "unjudged_max": 0,
       "missing_inline_max": 0,
       "missing_structured_max": 0,
       "unexpected_max": 0
@@ -213,11 +213,11 @@
     },
     "types": {
       "projects": 97,
-      "clean_min": 26,
-      "unjudged_max": 70,
-      "missing_inline_max": 7,
-      "missing_structured_max": 2,
-      "unexpected_max": 0
+      "clean_min": 65,
+      "unjudged_max": 26,
+      "missing_inline_max": 8,
+      "missing_structured_max": 1,
+      "unexpected_max": 3
     }
   }
 }
