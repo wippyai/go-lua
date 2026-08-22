@@ -36,7 +36,14 @@ type publicationRow struct {
 	// reach it.  A nil subject reaches no allocation root, so the row routes
 	// nothing.  It is mutually exclusive with subjectOpen.
 	subjectNil bool
-	operation  vocabulary.Operation
+	// subjectEmpty records Pack's empty-value-list subject: a ValuesVar or
+	// AllInputs projection that selects no member on a closed mounted call.
+	// The parent publishes this as a resolved fact about the call, distinct
+	// from the proven-nil ValueFormal and from a tail-fed unknown, so the row
+	// carries no allocation root and routes nothing. It is mutually exclusive
+	// with subjectOpen and subjectNil.
+	subjectEmpty bool
+	operation    vocabulary.Operation
 }
 
 type preparedBatch struct {
@@ -664,6 +671,9 @@ func (rule *HotRule) prepareBatch(batch effectfactor.MountedPublicationBatch) (*
 		if subject.IsProvenNil() {
 			row.subjectNil = true
 		}
+		if !subject.IsOpen() && !subject.IsProvenNil() && subject.MemberCount() == 0 {
+			row.subjectEmpty = true
+		}
 		for member := 0; member < subject.MemberCount(); member++ {
 			coordinate, coordinateOK := packtransfer.CoordinateForInputMember(rule.values.Schema(), subject, member)
 			tag, tagOK := sourceTagForMember(rowID, member)
@@ -874,9 +884,10 @@ func validPreparedRoutes(prepared *preparedBatch, values *valuedomain.Schema) bo
 		if !row.id.Available() || row.operation == 0 || !validRequirement(row.requirement) {
 			return false
 		}
-		// A subject is either statically absent and proven nil or reachable by
-		// an actual tail and unknown. Both bits together describe no call.
-		if row.subjectNil && row.subjectOpen {
+		// A subject is statically absent and proven nil, an empty selected
+		// value list, or reachable by an actual tail and unknown. The three
+		// readings are exclusive; any two together describe no call.
+		if row.subjectNil && row.subjectOpen || row.subjectEmpty && (row.subjectNil || row.subjectOpen) {
 			return false
 		}
 		for priorIndex := 0; priorIndex < rowIndex; priorIndex++ {
@@ -899,9 +910,9 @@ func validPreparedRoutes(prepared *preparedBatch, values *valuedomain.Schema) bo
 		if !rowOK || row.operation != source.operation {
 			return false
 		}
-		// A proven-nil subject selects no mounted semantic source, so a source
-		// claiming that row contradicts the row itself.
-		if row.subjectNil {
+		// A proven-nil or empty-list subject selects no mounted semantic
+		// source, so a source claiming that row contradicts the row itself.
+		if row.subjectNil || row.subjectEmpty {
 			return false
 		}
 	}
@@ -967,6 +978,18 @@ func (rule *HotRule) routeSet(schema placementdomain.Schema, prepared *preparedB
 			}
 			// Lua under-application proves the subject nil. A nil value holds no
 			// allocation root, so this publication escapes nothing.
+			continue
+		}
+		if row.subjectEmpty {
+			if !prepared.prepared {
+				// The empty-list bit is Pack's resolved projection shape, so it
+				// is admissible only when it came from the authenticated
+				// MountedInput retained by prepareBatch.
+				return routeBuffer{}, false
+			}
+			// A closed ValuesVar/AllInputs projection that selects no member is
+			// an empty value list. It holds no allocation root, so this
+			// publication escapes nothing.
 			continue
 		}
 		if row.subjectOpen {

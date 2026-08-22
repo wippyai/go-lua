@@ -103,3 +103,53 @@ func TestValidPreparedRoutesRefusesProvenNilRowWithSource(t *testing.T) {
 		t.Fatal("proven-nil row with a Value source passed the route integrity fence")
 	}
 }
+
+// TestRouteSetEmptyValueListSubjectRoutesNothing pins the third zero-member
+// reading Pack publishes. A ValuesVar/AllInputs projection with no member is
+// an empty value list: a positive fact about the mounted call, distinct from
+// the proven-nil formal and from a tail-fed unknown. An empty value list holds
+// no allocation root, so the row plans no route; refusing it would report an
+// incomplete join for evidence the parent has already resolved.
+func TestRouteSetEmptyValueListSubjectRoutesNothing(t *testing.T) {
+	fixture := newPublicationEscapeFixture(t)
+	prepared := &preparedBatch{
+		rows:     []publicationRow{{id: contentID(55), requirement: placementdomain.SharedHeap, operation: 1, subjectEmpty: true}},
+		byTag:    map[sourceTag]sourceSpec{},
+		prepared: true,
+	}
+	routes, ok := fixture.rule().routeSet(fixture.placement, prepared, operationGateForTest(1), factBuffer{})
+	if !ok {
+		t.Fatal("empty value list subject refused the route set")
+	}
+	if routes.len() != 0 {
+		t.Fatalf("empty value list subject planned %d routes, want none", routes.len())
+	}
+}
+
+// TestValidPreparedRoutesRefusesEmptySubjectContradictions keeps the three
+// zero-member readings disjoint and keeps the empty row's source plane empty.
+func TestValidPreparedRoutesRefusesEmptySubjectContradictions(t *testing.T) {
+	fixture := newPublicationEscapeFixture(t)
+	for name, row := range map[string]publicationRow{
+		"empty-and-nil":  {id: contentID(56), requirement: placementdomain.SharedHeap, operation: 1, subjectEmpty: true, subjectNil: true},
+		"empty-and-open": {id: contentID(57), requirement: placementdomain.SharedHeap, operation: 1, subjectEmpty: true, subjectOpen: true},
+	} {
+		prepared := &preparedBatch{rows: []publicationRow{row}, byTag: map[sourceTag]sourceSpec{}, prepared: true}
+		if validPreparedRoutes(prepared, fixture.values) {
+			t.Fatalf("%s subject shape passed the route integrity fence", name)
+		}
+	}
+
+	coordinate, coordinateOK := fixture.values.CoordinateAt(0)
+	if !coordinateOK {
+		t.Fatal("Value coordinate")
+	}
+	rowID := contentID(58)
+	prepared := &preparedBatch{
+		rows:    []publicationRow{{id: rowID, requirement: placementdomain.SharedHeap, operation: 1, subjectEmpty: true}},
+		sources: []sourceSpec{{tag: sourceTag(1), rowID: rowID, operation: 1, coordinate: coordinate}},
+	}
+	if validPreparedRoutes(prepared, fixture.values) {
+		t.Fatal("empty value list row with a Value source passed the route integrity fence")
+	}
+}
