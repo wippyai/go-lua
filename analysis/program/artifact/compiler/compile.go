@@ -140,19 +140,16 @@ func CompileDetailed(input *program.Program, executionSchema programartifact.Exe
 // remain in the compiler shell.
 func (compiler *compiler) copyCallTargetsFailure() CompileFailure {
 	if compiler == nil {
-		return compileFailure(CompileStageBodyOutcomes, CompileRowBody, -1, -1, CompileReasonBodyUnavailable)
+		_, fault := calltargetcompile.Build(calltargetcompile.Input{})
+		return CompileFailure{construction: fault}
 	}
 	rows, fault := calltargetcompile.Build(calltargetcompile.Input{
 		Program:     compiler.input,
 		Allocations: compiler.allocations,
 		Bodies:      compiler.bodyBoundary,
 	})
-	if fault.Failed() {
-		reason := CompileReasonBodyUnavailable
-		if fault.Reason() == calltargetcompile.ReasonDuplicate {
-			reason = CompileReasonBodyDuplicate
-		}
-		return compileFailure(CompileStageBodyOutcomes, CompileRowBody, fault.Row(), fault.Subrow(), reason)
+	if fault.Available() {
+		return CompileFailure{construction: fault}
 	}
 	compiler.publication.CallTargets = rows
 	return CompileFailure{}

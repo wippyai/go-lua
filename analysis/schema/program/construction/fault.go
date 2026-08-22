@@ -81,4 +81,6 @@ const (
 	IssueOutcomeReturn                schema.Key = "program.outcome.return"
 	IssueReturnValueUnavailable       schema.Key = "program.return-value.unavailable"
 	IssueReturnValueReference         schema.Key = "program.return-value.reference"
+	IssueCallTargetUnavailable        schema.Key = "program.call-target.unavailable"
+	IssueCallTargetDuplicate          schema.Key = "program.call-target.duplicate"
 )
