@@ -231,8 +231,12 @@ func contextFixture(t testing.TB) contextLawFixture {
 		t.Fatalf("heap seal shard=%t module=%t program=%t mount=%t failure=%v fresh=%d", shardOK, moduleOK, programIDOK, mountOK, heapFailure, heapSchema.FreshCount())
 	}
 	linkID := linked.ContentID()
-	left, leftOK := executioncontext.NewContext(linkID, module, lawID("left-actor"), lawID("left-representative"))
-	right, rightOK := executioncontext.NewContext(linkID, module, lawID("right-actor"), lawID("right-representative"))
+	// The two contexts are sibling cache instances of one module inside one
+	// actor. A module cache is actor-local, so a transition between two
+	// actors is not an edge any Directory carries.
+	actor := lawID("actor")
+	left, leftOK := executioncontext.NewContext(linkID, module, actor, lawID("left-representative"))
+	right, rightOK := executioncontext.NewContext(linkID, module, actor, lawID("right-representative"))
 	leftRoot := mustRoot(t, left, "left-root")
 	rightRoot := mustRoot(t, right, "right-root")
 	leftRight, leftRightOK := executioncontext.NewTransition(linkID, left.ID(), right.ID())
