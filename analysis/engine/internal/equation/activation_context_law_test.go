@@ -64,6 +64,32 @@ func TestContextQualifiedActivationRowsDoNotCollapse(t *testing.T) {
 	}
 }
 
+func TestActivationSelectionUsesTheUniqueOwnerIssuedContextForSource(t *testing.T) {
+	fixture := newTriggerBindingFixture(t)
+	application, target, endpoint := fixture.application, triggerBindingKey(51), triggerBindingKey(52)
+	from := boundaryContext(53)
+	context := ActivationContext{TransitionID: boundaryContext(54), FromContextID: from, ToContextID: boundaryContext(55)}
+	row := fixture.row(application, target, endpoint)
+	row.Context = context
+	topology, sealed := fixture.sealWithRows(
+		[]ActivationTriggerBinding{{TriggerOrdinal: 0, Family: fixture.family, Application: application}},
+		[]ActivationRowSpec{row},
+	)
+	if !sealed || topology == nil {
+		t.Fatal("unique context-qualified activation row refused to seal")
+	}
+	trigger := topology.rows.members[0]
+	member, selected := topology.SelectActivationMemberForContext(trigger, PairLocator{
+		Application: application,
+		Target:      target,
+		Endpoint:    endpoint,
+	}, from)
+	locator, locatorOK := member.Locator()
+	if !selected || !locatorOK || !locator.Context.Same(context) {
+		t.Fatal("unique owner-issued context was not retained by source-qualified selection")
+	}
+}
+
 func TestActivationRowRejectsPartialContextIdentity(t *testing.T) {
 	fixture := newTriggerBindingFixture(t)
 	row := fixture.row(fixture.application, triggerBindingKey(11), triggerBindingKey(12))

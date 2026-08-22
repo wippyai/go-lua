@@ -332,16 +332,19 @@ func (compiled *compiledActivationRule) settleActivationResult(execution *activa
 			return nil, false
 		}
 		context := locator.contextual()
-		if execution.fromContextID.Available() && (!context.Available() || context.FromContextID != execution.fromContextID) {
-			return nil, false
-		}
 		pair := equation.PairLocator{
 			Application: compositionKeyOf(locator.application),
 			Target:      compositionKeyOf(locator.target),
 			Endpoint:    compositionKeyOf(locator.endpoint),
 			Context:     context,
 		}
-		member, selected := compiled.topology.SelectActivationMember(compiled.trigger, pair)
+		var member equation.Member
+		var selected bool
+		if execution.fromContextID.Available() {
+			member, selected = compiled.topology.SelectActivationMemberForContext(compiled.trigger, pair, execution.fromContextID)
+		} else {
+			member, selected = compiled.topology.SelectActivationMember(compiled.trigger, pair)
+		}
 		if !selected || !member.Available() {
 			return nil, false
 		}
