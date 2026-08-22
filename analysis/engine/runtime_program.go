@@ -16,6 +16,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/engine/internal/equation"
 	"github.com/wippyai/go-lua/analysis/identity"
 	"github.com/wippyai/go-lua/analysis/schema/executioncontext"
+	queryschema "github.com/wippyai/go-lua/analysis/schema/query"
 )
 
 // memberRow retains exactly one canonical runtime member. Scheduling metadata,
@@ -114,7 +115,7 @@ type observationRow struct {
 	// exact (ContextID, member-output Point) pair. It is resolved while the
 	// committed directory/index/layout are attached and is retained as the
 	// only context coordinate needed by the later materialization seam.
-	state         contextfiber.StateOrdinal
+	state contextfiber.StateOrdinal
 	// contextID is the admission context that authenticated the observation.
 	// StateOrdinal alone is insufficient at Seal: a same-point row from another
 	// mounted context must not be interchangeable with this row. Link-global
@@ -252,7 +253,7 @@ func sealRuntimeProgram(schema *Schema, graph *equation.Graph, runtime *carrier.
 			return nil, false
 		}
 		shape, shapeOK := schema.queryShapeAt(row.queryOrdinal)
-		if !shapeOK {
+		if !shapeOK || shape.Population != queryschema.PopulationKindSelectedPoint {
 			return nil, false
 		}
 		if row.heterogeneous != nil {
