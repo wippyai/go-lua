@@ -28,11 +28,28 @@ type contributionPlan struct {
 	inputs      int
 	writes      []shape.Slot
 	carries     []ContributionSource
+	// carryExclusions is the sealed, exact strong-write mask for each carried
+	// source.  It is deliberately a private companion to ContributionSource:
+	// the source remains a small comparable (Slot, Input) identity while the
+	// target rows are retained only by the immutable plan that consumes them.
+	carryExclusions []carryExclusion
+	// carryExclusionsSealed distinguishes an intentionally empty exclusion
+	// declaration from a plan that has not received its one seal yet. This is
+	// what prevents a later caller from overwriting the first sealed relation.
+	carryExclusionsSealed bool
 	// carrySlots is the seal-time issuance of the slots carries name. Finish
 	// asks membership of it instead of rescanning the carry vector once per
 	// physical slot.
 	carrySlots  change.Slots
 	environment bool
+}
+
+// carryExclusion is one seal-time pair between an issued carry source and an
+// issued strong Target in that source slot.  Target remains the only identity
+// of a write; this companion carries no typed key or domain payload.
+type carryExclusion struct {
+	source ContributionSource
+	target Target
 }
 
 // ContributionBase is a single-use, unpublishable write predecessor. Its
@@ -117,6 +134,63 @@ func (composition *Composition) SealContribution(inputCount int, writes []shape.
 		plan.carrySlots.Set(int(carry.Slot))
 	}
 	return ContributionPlan{value: plan}, true
+}
+
+// SealCarryExclusions attaches the exact strong-write target mask to an
+// already-sealed contribution plan.  The input is a transient seal-time map;
+// the plan retains only a sorted private comparable companion.  This keeps
+// ContributionSource comparable and prevents a second source/target identity
+// vocabulary from crossing the carrier boundary.
+//
+// Every source must be one of the plan's declared carries. Every target must
+// be issued by the same composition, belong to that source slot, and be a
+// StrongTarget. Duplicate pairs are rejected rather than silently coalesced.
+func (plan ContributionPlan) SealCarryExclusions(exclusions map[ContributionSource][]Target) (ContributionPlan, bool) {
+	if plan.value == nil || plan.value.composition == nil {
+		return ContributionPlan{}, false
+	}
+	composition := plan.value.composition
+	declared := make(map[ContributionSource]struct{}, len(plan.value.carries))
+	for _, source := range plan.value.carries {
+		declared[source] = struct{}{}
+	}
+	rows := make([]carryExclusion, 0)
+	for source, targets := range exclusions {
+		if _, present := declared[source]; !present || len(targets) == 0 {
+			return ContributionPlan{}, false
+		}
+		for _, target := range targets {
+			if target.Mode() != StrongTarget || !composition.OwnsTarget(source.Slot, target) {
+				return ContributionPlan{}, false
+			}
+			rows = append(rows, carryExclusion{source: source, target: target})
+		}
+	}
+	sort.Slice(rows, func(left, right int) bool {
+		if rows[left].source.Slot != rows[right].source.Slot {
+			return rows[left].source.Slot < rows[right].source.Slot
+		}
+		if rows[left].source.Input != rows[right].source.Input {
+			return rows[left].source.Input < rows[right].source.Input
+		}
+		return rows[left].target.Less(rows[right].target)
+	})
+	for index := 1; index < len(rows); index++ {
+		if rows[index-1].source == rows[index].source && rows[index-1].target.Same(rows[index].target) {
+			return ContributionPlan{}, false
+		}
+	}
+	composition.scopeMu.Lock()
+	defer composition.scopeMu.Unlock()
+	if composition.workOpened || plan.value.carryExclusionsSealed {
+		return ContributionPlan{}, false
+	}
+	// Seal the shared plan identity, rather than returning a cloned plan. A
+	// caller may retain any copied ContributionPlan value; every such alias
+	// must observe the same one-shot declaration and be unable to bypass it.
+	plan.value.carryExclusions = rows
+	plan.value.carryExclusionsSealed = true
+	return plan, true
 }
 
 // BeginContribution is the compatibility entry for an already closed
@@ -348,6 +422,40 @@ func (work *Work) OwnsRuleContributionBase(base RuleContributionBase, inputs []P
 		}
 	}
 	return true
+}
+
+// RuleContributionCarrySlotCoverage returns the exact retained authored
+// coverage for one sealed carry source. The source is authenticated against
+// the live base and the plan's declared (Input, Slot) pair; no root or typed
+// plane lookup is involved. The returned SlotCoverage is the carrier-owned
+// immutable row projection retained by that base's input.
+func (work *Work) RuleContributionCarrySlotCoverage(base RuleContributionBase, source ContributionSource) (SlotCoverage, bool) {
+	owner := base.value
+	if !work.ownsContributionBase(owner) || owner.plan == nil || source.Input < 0 || source.Input >= len(owner.inputs) {
+		return SlotCoverage{}, false
+	}
+	declared := false
+	for _, carry := range owner.plan.carries {
+		if carry == source {
+			declared = true
+			break
+		}
+	}
+	if !declared {
+		return SlotCoverage{}, false
+	}
+	coverage := owner.inputs[source.Input].coverage
+	if len(coverage.slots) == 0 {
+		return SlotCoverage{}, true
+	}
+	if int(source.Slot) < 0 || int(source.Slot) >= len(coverage.slots) {
+		return SlotCoverage{}, false
+	}
+	rows := coverage.slots[int(source.Slot)]
+	if !work.validSlotCoverage(rows) {
+		return SlotCoverage{}, false
+	}
+	return SlotCoverage{value: &coverage.slots[int(source.Slot)]}, true
 }
 
 // OwnsRuleContributionStates validates the semantic input vector passed to Rule
@@ -648,7 +756,7 @@ func (work *Work) assembleAuthoredRows(owner *contributionBase, patches []Patch,
 		if carry.Slot != slot {
 			continue
 		}
-		if rows := owner.inputs[carry.Input].coverage.slot(slot).targets; len(rows) != 0 {
+		if rows := owner.plan.carryRows(carry, owner.inputs[carry.Input].coverage.slot(slot).targets); len(rows) != 0 {
 			sole, sources, total = rows, sources+1, total+len(rows)
 		}
 	}
@@ -666,7 +774,7 @@ func (work *Work) assembleAuthoredRows(owner *contributionBase, patches []Patch,
 	}
 	for _, carry := range owner.plan.carries {
 		if carry.Slot == slot {
-			rows = append(rows, owner.inputs[carry.Input].coverage.slot(slot).targets...)
+			rows = append(rows, owner.plan.carryRows(carry, owner.inputs[carry.Input].coverage.slot(slot).targets)...)
 		}
 	}
 	for _, patch := range patches {
@@ -675,6 +783,46 @@ func (work *Work) assembleAuthoredRows(owner *contributionBase, patches []Patch,
 		}
 	}
 	return rows
+}
+
+// carryRows removes only the exact strong targets issued by this carried
+// source.  An untouched source row remains borrowed; once a declared target
+// is excluded, the returned slice is the physical coverage presented to the
+// canonicalizer, so Finish cannot retain a stale fiber for that target.
+func (plan *contributionPlan) carryRows(source ContributionSource, rows []TargetRegion) []TargetRegion {
+	if plan == nil || len(rows) == 0 || len(plan.carryExclusions) == 0 {
+		return rows
+	}
+	first := -1
+	for index, row := range rows {
+		if plan.excludes(source, row.target) {
+			first = index
+			break
+		}
+	}
+	if first < 0 {
+		return rows
+	}
+	filtered := make([]TargetRegion, 0, len(rows)-1)
+	filtered = append(filtered, rows[:first]...)
+	for _, row := range rows[first+1:] {
+		if !plan.excludes(source, row.target) {
+			filtered = append(filtered, row)
+		}
+	}
+	return filtered
+}
+
+func (plan *contributionPlan) excludes(source ContributionSource, target Target) bool {
+	if plan == nil {
+		return false
+	}
+	for _, exclusion := range plan.carryExclusions {
+		if exclusion.source == source && exclusion.target.Same(target) {
+			return true
+		}
+	}
+	return false
 }
 
 func (work *Work) canBorrowClosedContributionSlot(owner *contributionBase, slot shape.Slot, retained support.Mask, final slotCoverage) bool {

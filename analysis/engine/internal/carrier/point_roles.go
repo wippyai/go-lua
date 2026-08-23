@@ -19,6 +19,16 @@ type RuleContribution struct {
 	roleSeal *contributionSeal
 }
 
+// pointLineage is an immutable carrier-issued generation marker. The owner is
+// deliberately a private Work pointer: a typed caller can copy an
+// authenticated token, but cannot manufacture one for a different Work.
+// sequence gives rows a deterministic metadata order when duplicate Targets
+// are canonicalized.
+type pointLineage struct {
+	owner    *Work
+	sequence uint64
+}
+
 func (rule RuleContribution) State() State          { return rule.value.State() }
 func (rule RuleContribution) Support() support.Mask { return rule.value.Support() }
 func (rule RuleContribution) Scope() Scope          { return rule.value.Scope() }
@@ -40,6 +50,7 @@ func (rule RuleContribution) Valid() bool { return rule.roleSeal != nil && rule.
 type PointState struct {
 	state     State
 	coverage  contributionCoverage
+	lineage   LineageToken
 	roleSeal  *contributionSeal
 	authority *stateAuthority
 	// closed is a carrier-proven fast path, not an alternate semantic plane.
@@ -54,8 +65,9 @@ func (point PointState) Scope() Scope          { return point.state.Scope() }
 func (point PointState) HandleAt(slot shape.Slot) (RootHandle, bool) {
 	return point.state.HandleAt(slot)
 }
+func (point PointState) Lineage() LineageToken { return point.lineage }
 func (point PointState) Valid() bool {
-	return point.roleSeal != nil && point.authority != nil && point.state.authority == point.authority && point.state.live() && point.coverage.validFor(point.state)
+	return point.roleSeal != nil && point.authority != nil && point.lineage.Valid() && point.state.authority == point.authority && point.state.live() && point.coverage.validFor(point.state)
 }
 
 // PointRHS is one semantic point-fold accumulator.  Its base is a PointState,
@@ -102,7 +114,7 @@ func (work *Work) admittedRuleContribution(rule RuleContribution) bool {
 }
 
 func (work *Work) admittedPointState(point PointState) bool {
-	if work == nil || !work.live() || point.roleSeal != work.contributionSeal || point.authority == nil || point.state.authority != point.authority || !work.OwnsState(point.state) || point.coverage.composition != work.composition {
+	if work == nil || !work.live() || point.roleSeal != work.contributionSeal || point.authority == nil || !work.ownsLineage(point.lineage) || point.state.authority != point.authority || !work.OwnsState(point.state) || point.coverage.composition != work.composition || !work.validContributionCoverage(point.state, point.coverage) {
 		return false
 	}
 	return len(point.coverage.slots) == 0 || len(point.coverage.slots) == work.composition.Count()
@@ -218,7 +230,7 @@ func (work *Work) rawCoverageAdditive(old, next contributionCoverage) bool {
 		if position >= work.composition.Count() {
 			return false
 		}
-		if !work.slotCoverageContains(next.slot(shape.Slot(position)), old.slot(shape.Slot(position))) {
+		if !work.slotCoverageContainsProvenance(next.slot(shape.Slot(position)), old.slot(shape.Slot(position))) {
 			return false
 		}
 	}
@@ -260,6 +272,46 @@ func (work *Work) AsRuleContribution(value Contribution) (RuleContribution, bool
 	return rule, work.admittedRuleContribution(rule)
 }
 
+// publishPointState is the sole minting cut for a new semantic point
+// generation. Its rows become the new point's baseline surface; any
+// predecessor/effect provenance is consumed by that publication and cannot
+// leak into the next sibling fold.
+func (work *Work) publishPointState(state State, coverage contributionCoverage, closed bool) (PointState, bool) {
+	if work == nil || !work.live() || !work.OwnsState(state) || coverage.composition != work.composition || !work.validContributionCoverage(state, coverage) {
+		return PointState{}, false
+	}
+	work.nextLineage++
+	if work.nextLineage == 0 {
+		return PointState{}, false
+	}
+	token := LineageToken{value: &pointLineage{owner: work, sequence: work.nextLineage}}
+	normalized := contributionCoverage{composition: work.composition}
+	if !coverage.occupied.Empty() {
+		normalized.slots = make([]slotCoverage, work.composition.Count())
+		for position, more := coverage.occupied.Next(0); more; position, more = coverage.occupied.Next(position + 1) {
+			if position < 0 || position >= work.composition.Count() {
+				return PointState{}, false
+			}
+			rows := coverage.slots[position].targets
+			if len(rows) == 0 {
+				return PointState{}, false
+			}
+			normalizedRows := make([]TargetRegion, len(rows))
+			for index, row := range rows {
+				normalizedRows[index] = row.WithLineage(token, CoverageBaseline)
+			}
+			canonical, ok := work.canonicalCoverage(normalizedRows, state.support)
+			if !ok || len(canonical.targets) == 0 {
+				return PointState{}, false
+			}
+			normalized.slots[position] = canonical
+			normalized.occupied.Set(position)
+		}
+	}
+	point := PointState{state: state, coverage: normalized, lineage: token, roleSeal: work.contributionSeal, authority: state.authority, closed: closed}
+	return point, work.admittedPointState(point)
+}
+
 // EmptyPointState is the nominal point-base route.  It deliberately reuses
 // EmptyContribution's composition-initial proof, so arbitrary raw State can
 // never be relabelled as a Point base or an empty authored RHS.
@@ -283,8 +335,7 @@ func (work *Work) PointStateFromRuleContribution(rule RuleContribution) (PointSt
 	if !work.admittedRuleContribution(rule) {
 		return PointState{}, false
 	}
-	point := PointState{state: rule.value.state, coverage: rule.value.coverage, roleSeal: work.contributionSeal, authority: rule.value.authority, closed: true}
-	return point, work.admittedPointState(point)
+	return work.publishPointState(rule.value.state, rule.value.coverage, true)
 }
 
 // PointRHSFromRuleContribution starts a semantic RHS from one closed rule.
@@ -332,7 +383,11 @@ func (work *Work) TransportPointRHS(rhs PointRHS, pre support.Mask, omega Reinde
 // composition-initial root vector plus the closed bit proves there is no such
 // latent payload.
 func (work *Work) closedInitialPoint(point PointState) bool {
-	return work.admittedPointState(point) && point.closed && len(point.coverage.slots) == 0 && sameRootVector(point.state.roots, work.composition.initial)
+	return work.admittedPointState(point) && work.closedInitialSurface(point.state, point.coverage, point.closed)
+}
+
+func (work *Work) closedInitialSurface(state State, coverage contributionCoverage, closed bool) bool {
+	return work.validContributionSurface(state, coverage) && closed && len(coverage.slots) == 0 && sameRootVector(state.roots, work.composition.initial)
 }
 
 // AddRuleContribution is the sole PointRHS rule-fold operation.  It chooses
@@ -380,14 +435,7 @@ func (work *Work) ProjectPointState(point PointState, selected shape.Slot) (Poin
 	}
 	state := point.state
 	state.roots = roots
-	projected := PointState{
-		state:     state,
-		coverage:  coverage,
-		roleSeal:  work.contributionSeal,
-		authority: state.authority,
-		closed:    point.closed,
-	}
-	return projected, work.admittedPointState(projected)
+	return work.publishPointState(state, coverage, point.closed)
 }
 
 // OverlayRuleContribution applies a sparse closed RuleContribution to one
@@ -475,8 +523,8 @@ func (work *Work) overlayPointSurface(rhs PointRHS, rightState State, rightCover
 	// A C-empty right side produces no typed change and preserves a preexisting
 	// closure proof. Any authored overlay may retain left physical branches
 	// outside support, so it deliberately clears the fast-path bit.
-	point := PointState{state: next, coverage: nextCoverage, roleSeal: work.contributionSeal, authority: next.authority, closed: rhs.point.closed && len(rightCoverage.slots) == 0}
-	if !work.admittedPointState(point) {
+	point, pointOK := work.publishPointState(next, nextCoverage, rhs.point.closed && len(rightCoverage.slots) == 0)
+	if !pointOK {
 		return PointRHS{}, ChangeSet{}, false
 	}
 	result := PointRHS{point: point, roleSeal: work.contributionSeal}
@@ -544,8 +592,8 @@ func (work *Work) ReplacePointWithRHS(current PointState, rhs PointRHS) (PointSt
 	if !ok {
 		return PointState{}, ChangeSet{}, false
 	}
-	point := PointState{state: next, coverage: rhs.point.coverage, roleSeal: work.contributionSeal, authority: next.authority, closed: rhs.point.closed}
-	return point, changes, work.admittedPointState(point)
+	point, pointOK := work.publishPointState(next, rhs.point.coverage, rhs.point.closed)
+	return point, changes, pointOK
 }
 
 // MergeSelectedPointState is the sole recurrence publication boundary. It
@@ -562,14 +610,8 @@ func (work *Work) MergeSelectedPointState(kind MergeKind, current PointState, se
 	if !ok {
 		return PointState{}, ChangeSet{}, false
 	}
-	point := PointState{
-		state:     state,
-		coverage:  exactRight.point.coverage,
-		roleSeal:  work.contributionSeal,
-		authority: state.authority,
-		closed:    true,
-	}
-	if !work.admittedPointState(point) {
+	point, pointOK := work.publishPointState(state, exactRight.point.coverage, true)
+	if !pointOK {
 		return PointState{}, ChangeSet{}, false
 	}
 	return point, changes, true
@@ -648,8 +690,8 @@ func (work *Work) TransportPointStateWithBoundary(input PointState, pre support.
 		}
 		state := input.state
 		state.scope, state.support = omega.target(), target
-		point := PointState{state: state, coverage: coverage, roleSeal: work.contributionSeal, authority: state.authority}
-		return point, PointTransportBoundaryCoordinateAdmission, work.admittedPointState(point)
+		point, pointOK := work.publishPointState(state, coverage, false)
+		return point, PointTransportBoundaryCoordinateAdmission, pointOK
 	}
 	state, ok := work.filter(input.state, pre)
 	if !ok {
@@ -675,8 +717,8 @@ func (work *Work) TransportPointStateWithBoundary(input PointState, pre support.
 	if !ok {
 		return PointState{}, PointTransportBoundaryGeneralCoverage, false
 	}
-	point := PointState{state: state, coverage: coverage, roleSeal: work.contributionSeal, authority: state.authority}
-	return point, PointTransportBoundaryGeneralAdmission, work.admittedPointState(point)
+	point, pointOK := work.publishPointState(state, coverage, false)
+	return point, PointTransportBoundaryGeneralAdmission, pointOK
 }
 
 // LiftRuleContribution is the only PointState -> RuleContribution boundary.

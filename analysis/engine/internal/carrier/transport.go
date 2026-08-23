@@ -183,7 +183,7 @@ func (work *Work) transportContributionCoverage(input contributionCoverage, pre 
 			if empty {
 				continue
 			}
-			rows = append(rows, TargetRegion{target: row.target, region: region})
+			rows = append(rows, row.WithRegion(region))
 		}
 		// Each retained row is constructed by exact And operations from an
 		// admitted source row and the target boundary. The algebra therefore
@@ -219,10 +219,10 @@ func (work *Work) validTransportSourceCoverage(input contributionCoverage) bool 
 		rows := input.slot(shape.Slot(position)).targets
 		for index, row := range rows {
 			slot, ok := row.target.Slot()
-			if !ok || int(slot) != position || !work.composition.OwnsTarget(slot, row.target) || !row.region.Valid() || row.region.Manager() != work.composition.guards || support.Empty(row.region) {
+			if !ok || int(slot) != position || !work.composition.OwnsTarget(slot, row.target) || !row.region.Valid() || row.region.Manager() != work.composition.guards || support.Empty(row.region) || !work.validCoverageRow(row) {
 				return false
 			}
-			if index != 0 && !rows[index-1].target.Less(row.target) {
+			if index != 0 && compareCoverageRows(row, rows[index-1]) < 0 {
 				return false
 			}
 		}
@@ -251,7 +251,7 @@ func validTransportCoverageShape(coverage contributionCoverage, composition *Com
 		}
 		rows := coverage.slots[position].targets
 		for index, row := range rows {
-			if !row.region.Valid() || row.region.Manager() != composition.guards || support.Empty(row.region) || index != 0 && !rows[index-1].target.Less(row.target) {
+			if !row.region.Valid() || row.region.Manager() != composition.guards || support.Empty(row.region) || index != 0 && compareCoverageRows(row, rows[index-1]) < 0 {
 				return false
 			}
 		}

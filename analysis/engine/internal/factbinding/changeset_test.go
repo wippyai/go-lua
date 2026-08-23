@@ -228,9 +228,22 @@ func TestWeakTargetChangeSetIncludesAllReverseSummaryClosure(t *testing.T) {
 // and publishes only the net exact/summarized ChangeSet.  No State scan or
 // second carry representation participates.
 func TestTransformClosurePublishesOnlyItsExactReverseDependencies(t *testing.T) {
-	binding, state, slot, composition, all, _, _, declared := changeFixture(t)
+	binding, _, slot, composition, all, _, _, declared := changeFixture(t)
+	seedPlan, ok := composition.SealContribution(0, []shape.Slot{slot}, nil)
+	if !ok {
+		t.Fatal("transform seed plan")
+	}
+	source := carrier.ContributionSource{Slot: slot, Input: 0}
+	carryPlan, ok := composition.SealContribution(1, []shape.Slot{slot}, []carrier.ContributionSource{source})
+	if !ok {
+		t.Fatal("transform carry plan")
+	}
 	work := newWork(t, composition)
-	seed := binding.Begin(work, state)
+	seedBase, ok := work.BeginContribution(seedPlan, composition.Scope(), nil, all)
+	if !ok {
+		t.Fatal("transform seed base")
+	}
+	seed := binding.Begin(work, seedBase.State())
 	if seed == nil || !seed.Write(declared.strong[0], all, 1) || !seed.Write(declared.strong[1], all, 1) {
 		t.Fatal("transform seed")
 	}
@@ -238,10 +251,12 @@ func TestTransformClosurePublishesOnlyItsExactReverseDependencies(t *testing.T) 
 	if !accepted {
 		t.Fatal("transform seed accept")
 	}
-	seeded, _, committed := work.Commit(state, []carrier.Patch{seedPatch})
-	if !committed {
-		t.Fatal("transform seed commit")
+	seedContribution, finished := work.FinishContribution(seedBase, []carrier.Patch{seedPatch})
+	if !finished {
+		t.Fatal("transform seed finish")
 	}
+	seeded := seedContribution.State()
+	seedPoint := closedPointOf(t, work, seedContribution)
 	closure, closed := binding.TransformClosure([]carrier.Target{declared.strong[0], declared.strong[1]})
 	reversed, reverseClosed := binding.TransformClosure([]carrier.Target{declared.strong[1], declared.strong[0]})
 	if !closed || !reverseClosed || len(closure.keys) != len(reversed.keys) {
@@ -252,9 +267,10 @@ func TestTransformClosurePublishesOnlyItsExactReverseDependencies(t *testing.T) 
 			t.Fatal("transform closure depends on target declaration order")
 		}
 	}
+	transformBase, sourceCoverage := carryCoverageFor(t, work, carryPlan, source, seedPoint, all)
 	patch := binding.Begin(work, seeded)
 	transformCalls := 0
-	if patch == nil || !patch.Transform(closure, all, func(value uint64) (uint64, bool) {
+	if patch == nil || !patch.Transform(closure, sourceCoverage, all, func(value uint64) (uint64, bool) {
 		transformCalls++
 		if value == 0 {
 			return 0, true
@@ -276,6 +292,9 @@ func TestTransformClosurePublishesOnlyItsExactReverseDependencies(t *testing.T) 
 		t.Fatal("transform accept")
 	}
 	next, changes, committed := work.Commit(seeded, []carrier.Patch{publication})
+	if !work.AbortRuleContribution(transformBase, nil) {
+		t.Fatal("transform source cleanup")
+	}
 	if !committed || changes.Count() != 3 || changes.FactorCount() != 1 {
 		t.Fatalf("transform changes = commit:%t rows:%d factors:%d", committed, changes.Count(), changes.FactorCount())
 	}
@@ -302,8 +321,9 @@ func TestTransformClosurePublishesOnlyItsExactReverseDependencies(t *testing.T) 
 	// Reapplying the idempotent map is the local recurrence law: it reaches
 	// the same post-fixpoint with no Fact or reader invalidation, rather than
 	// relying on an iteration budget to stop repeated carry transport.
+	stableBase, stableCoverage := carryCoverageFor(t, work, carryPlan, source, seedPoint, all)
 	stable := binding.Begin(work, next)
-	if stable == nil || !stable.Transform(closure, all, func(value uint64) (uint64, bool) {
+	if stable == nil || !stable.Transform(closure, stableCoverage, all, func(value uint64) (uint64, bool) {
 		if value == 0 {
 			return 0, true
 		}
@@ -319,6 +339,9 @@ func TestTransformClosurePublishesOnlyItsExactReverseDependencies(t *testing.T) 
 		t.Fatal("stable transform accept")
 	}
 	stabilized, stableChanges, stableCommitted := work.Commit(next, []carrier.Patch{stablePatch})
+	if !work.AbortRuleContribution(stableBase, nil) {
+		t.Fatal("stable source cleanup")
+	}
 	if !stableCommitted || !stableChanges.Empty() {
 		t.Fatalf("stable transform emitted change: commit:%t changes:%d", stableCommitted, stableChanges.Count())
 	}
@@ -331,8 +354,9 @@ func TestTransformClosurePublishesOnlyItsExactReverseDependencies(t *testing.T) 
 	// Transfers need not be extensive. A descending but monotone owner map is
 	// publishable; allocation recency has exactly this shape because Recent and
 	// Summary are distinct atoms rather than an ascending approximation step.
+	descendingBase, descendingCoverage := carryCoverageFor(t, work, carryPlan, source, seedPoint, all)
 	descending := binding.Begin(work, seeded)
-	if descending == nil || !descending.Transform(closure, all, func(value uint64) (uint64, bool) {
+	if descending == nil || !descending.Transform(closure, descendingCoverage, all, func(value uint64) (uint64, bool) {
 		if value == 0 {
 			return 0, true
 		}
@@ -345,6 +369,9 @@ func TestTransformClosurePublishesOnlyItsExactReverseDependencies(t *testing.T) 
 		t.Fatal("non-extensive transform was not publishable")
 	}
 	descended, descendedChanges, committed := work.Commit(seeded, []carrier.Patch{descendingPatch})
+	if !work.AbortRuleContribution(descendingBase, nil) {
+		t.Fatal("descending source cleanup")
+	}
 	if !committed || descendedChanges.Count() != 3 || descendedChanges.FactorCount() != 1 {
 		t.Fatalf("non-extensive transform changes = commit:%t units:%d factors:%d", committed, descendedChanges.Count(), descendedChanges.FactorCount())
 	}
@@ -361,9 +388,22 @@ func TestTransformClosurePublishesOnlyItsExactReverseDependencies(t *testing.T) 
 }
 
 func TestTransformClosureStaysSparseAtLargeKeyUniverse(t *testing.T) {
-	binding, state, slot, composition, all, unit, target := sparseCatalogFixture(t, 4_096)
+	binding, _, slot, composition, all, unit, target := sparseCatalogFixture(t, 4_096)
+	seedPlan, ok := composition.SealContribution(0, []shape.Slot{slot}, nil)
+	if !ok {
+		t.Fatal("sparse transform seed plan")
+	}
+	source := carrier.ContributionSource{Slot: slot, Input: 0}
+	carryPlan, ok := composition.SealContribution(1, []shape.Slot{slot}, []carrier.ContributionSource{source})
+	if !ok {
+		t.Fatal("sparse transform carry plan")
+	}
 	work := newWork(t, composition)
-	seed := binding.Begin(work, state)
+	seedBase, ok := work.BeginContribution(seedPlan, composition.Scope(), nil, all)
+	if !ok {
+		t.Fatal("sparse transform seed base")
+	}
+	seed := binding.Begin(work, seedBase.State())
 	if seed == nil || !seed.Write(target, all, 1) {
 		t.Fatal("sparse transform seed")
 	}
@@ -371,16 +411,19 @@ func TestTransformClosureStaysSparseAtLargeKeyUniverse(t *testing.T) {
 	if !accepted {
 		t.Fatal("sparse transform seed accept")
 	}
-	seeded, _, committed := work.Commit(state, []carrier.Patch{seedPatch})
-	if !committed {
-		t.Fatal("sparse transform seed commit")
+	seedContribution, finished := work.FinishContribution(seedBase, []carrier.Patch{seedPatch})
+	if !finished {
+		t.Fatal("sparse transform seed finish")
 	}
+	seeded := seedContribution.State()
+	seedPoint := closedPointOf(t, work, seedContribution)
 	closure, closed := binding.TransformClosure([]carrier.Target{target})
 	if !closed || len(closure.keys) != 1 {
 		t.Fatalf("sparse transform closure keys = %d, want 1", len(closure.keys))
 	}
+	transformBase, sourceCoverage := carryCoverageFor(t, work, carryPlan, source, seedPoint, all)
 	patch := binding.Begin(work, seeded)
-	if patch == nil || !patch.Transform(closure, all, func(value uint64) (uint64, bool) {
+	if patch == nil || !patch.Transform(closure, sourceCoverage, all, func(value uint64) (uint64, bool) {
 		if value == 0 {
 			return 0, true
 		}
@@ -393,6 +436,9 @@ func TestTransformClosureStaysSparseAtLargeKeyUniverse(t *testing.T) {
 		t.Fatal("sparse transform accept")
 	}
 	next, changes, committed := work.Commit(seeded, []carrier.Patch{publication})
+	if !work.AbortRuleContribution(transformBase, nil) {
+		t.Fatal("sparse transform source cleanup")
+	}
 	if !committed || changes.Count() != 1 || changes.FactorCount() != 1 {
 		t.Fatalf("sparse transform changes = commit:%t units:%d factors:%d", committed, changes.Count(), changes.FactorCount())
 	}
@@ -576,4 +622,17 @@ func TestCompositionInputOrderDeterminesSlotsAndInitialRoots(t *testing.T) {
 			t.Fatalf("canonical batch row %d", index)
 		}
 	}
+}
+
+func carryCoverageFor(t testing.TB, work *carrier.Work, plan carrier.ContributionPlan, source carrier.ContributionSource, input carrier.PointState, premise support.Mask) (carrier.RuleContributionBase, carrier.SlotCoverage) {
+	t.Helper()
+	base, ok := work.BeginRuleContribution(plan, input.Scope(), []carrier.PointState{input}, premise)
+	if !ok {
+		t.Fatal("carry coverage base")
+	}
+	coverage, ok := work.RuleContributionCarrySlotCoverage(base, source)
+	if !ok {
+		t.Fatal("carry coverage source")
+	}
+	return base, coverage
 }

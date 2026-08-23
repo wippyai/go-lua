@@ -15,14 +15,13 @@ import (
 // only region in which this patch can write.  A staged root consequently
 // cannot be reattached to a wider, different, or later predecessor.
 type Patch[K scalar.Key, V any] struct {
-	binding *Binding[K, V]
-	state   carrier.State
-	slot    shape.Slot
-	support support.Mask
-	base    carrier.RootHandle
-	patch   *stage.Patch[planeFactor, K, V]
-	targets []carrier.Target
-	regions []support.Mask
+	binding  *Binding[K, V]
+	state    carrier.State
+	slot     shape.Slot
+	support  support.Mask
+	base     carrier.RootHandle
+	patch    *stage.Patch[planeFactor, K, V]
+	authored []carrier.TargetRegion
 }
 
 // TransformClosure is one Binding-owned immutable typed key vector compiled
@@ -149,8 +148,7 @@ func (patch *Patch[K, V]) Write(target carrier.Target, when support.Mask, value 
 	} else {
 		return false
 	}
-	patch.targets = append(patch.targets, target)
-	patch.regions = append(patch.regions, when)
+	patch.authored = append(patch.authored, carrier.NewTargetRegion(target, when))
 	return true
 }
 
@@ -159,18 +157,14 @@ func (patch *Patch[K, V]) Write(target carrier.Target, when support.Mask, value 
 // and Join-stability for each reachable terminal. It runs
 // before ordinary row writes, against the same immutable predecessor and the
 // same guard, so Accept exposes one atomic net ChangeSet.
-func (patch *Patch[K, V]) Transform(closure TransformClosure[K, V], when support.Mask, apply func(V) (V, bool)) bool {
+func (patch *Patch[K, V]) Transform(closure TransformClosure[K, V], source carrier.SlotCoverage, when support.Mask, apply func(V) (V, bool)) bool {
 	if patch == nil || patch.binding == nil || patch.patch == nil || closure.binding != patch.binding || !when.Valid() || support.Empty(when) || !when.Entails(patch.support) || apply == nil {
 		return false
 	}
-	if !patch.patch.Transform(closure.keys, when, apply) {
+	if !patch.validateTransformSource(closure, TransformClosure[K, V]{}, source, when) || !patch.patch.Transform(closure.keys, when, apply) {
 		return false
 	}
-	for _, target := range closure.targets {
-		patch.targets = append(patch.targets, target)
-		patch.regions = append(patch.regions, when)
-	}
-	return true
+	return patch.appendTransformSource(closure, TransformClosure[K, V]{}, source, when)
 }
 
 // TransformClosures applies one owner map over one authored closure plus one
@@ -180,7 +174,7 @@ func (patch *Patch[K, V]) Transform(closure TransformClosure[K, V], when support
 // closure itself remains Binding-owned and can therefore be shared by every
 // Rule member. This private engine cut deliberately accepts at most two
 // closures: authored static carry plus the one Factor route closure.
-func (patch *Patch[K, V]) TransformClosures(closures []TransformClosure[K, V], when support.Mask, apply func(V) (V, bool)) bool {
+func (patch *Patch[K, V]) TransformClosures(closures []TransformClosure[K, V], source carrier.SlotCoverage, when support.Mask, apply func(V) (V, bool)) bool {
 	if patch == nil || patch.binding == nil || patch.patch == nil || !when.Valid() || support.Empty(when) || !when.Entails(patch.support) || apply == nil || len(closures) == 0 {
 		return false
 	}
@@ -197,31 +191,77 @@ func (patch *Patch[K, V]) TransformClosures(closures []TransformClosure[K, V], w
 	if len(closures) == 2 {
 		right = closures[1]
 	}
-	if !patch.patch.TransformSortedUnion(left.keys, right.keys, when, apply) {
+	if !patch.validateTransformSource(left, right, source, when) || !patch.patch.TransformSortedUnion(left.keys, right.keys, when, apply) {
 		return false
 	}
-	leftIndex, rightIndex := 0, 0
-	var prior carrier.Target
-	havePrior := false
-	for leftIndex < len(left.targets) || rightIndex < len(right.targets) {
-		var target carrier.Target
-		if rightIndex >= len(right.targets) || leftIndex < len(left.targets) && left.targets[leftIndex].Less(right.targets[rightIndex]) {
-			target, leftIndex = left.targets[leftIndex], leftIndex+1
-		} else if leftIndex >= len(left.targets) || right.targets[rightIndex].Less(left.targets[leftIndex]) {
-			target, rightIndex = right.targets[rightIndex], rightIndex+1
-		} else {
-			target = left.targets[leftIndex]
-			leftIndex++
-			rightIndex++
+	return patch.appendTransformSource(left, right, source, when)
+}
+
+// validateTransformSource authenticates every canonical source row and region
+// against the Patch's guard manager. It performs no allocation. A source row
+// may legitimately belong to another member's closure; appendTransformSource
+// projects such a row out after stage while retaining this full validation.
+func (patch *Patch[K, V]) validateTransformSource(left, right TransformClosure[K, V], source carrier.SlotCoverage, when support.Mask) bool {
+	if patch == nil || patch.binding == nil || !when.Valid() || support.Empty(when) || left.binding != patch.binding {
+		return false
+	}
+	if right.binding != nil && right.binding != patch.binding {
+		return false
+	}
+	for index := 0; index < source.Count(); index++ {
+		row, ok := source.At(index)
+		if !ok {
+			return false
 		}
-		if havePrior && prior.Same(target) {
-			continue
+		if !row.Region().Valid() || row.Region().Manager() != when.Manager() {
+			return false
 		}
-		prior, havePrior = target, true
-		patch.targets = append(patch.targets, target)
-		patch.regions = append(patch.regions, when)
 	}
 	return true
+}
+
+// appendTransformSource copies only source-present coverage after stage has
+// transformed the semantic root. Regions are clipped to when and empty clips
+// are omitted, so Absent remains no authored row while explicit Default keeps
+// its sparse authored row.
+func (patch *Patch[K, V]) appendTransformSource(left, right TransformClosure[K, V], source carrier.SlotCoverage, when support.Mask) bool {
+	for index := 0; index < source.Count(); index++ {
+		row, ok := source.At(index)
+		if !ok {
+			return false
+		}
+		if !containsTransformTarget(left, right, row.Target()) {
+			continue
+		}
+		region, ok := support.Intersect(row.Region(), when)
+		if !ok {
+			return false
+		}
+		if support.Empty(region) {
+			continue
+		}
+		patch.authored = append(patch.authored, row.WithRegion(region).WithLineage(row.Lineage(), carrier.CoverageEffect))
+	}
+	return true
+}
+
+func containsTransformTarget[K scalar.Key, V any](left, right TransformClosure[K, V], target carrier.Target) bool {
+	index := sort.Search(len(left.targets), func(index int) bool {
+		return !left.targets[index].Less(target)
+	})
+	if index < len(left.targets) && left.targets[index].Same(target) {
+		return true
+	}
+	if right.binding == nil {
+		return false
+	}
+	index = sort.Search(len(right.targets), func(index int) bool {
+		return !right.targets[index].Less(target)
+	})
+	if index < len(right.targets) && right.targets[index].Same(target) {
+		return true
+	}
+	return false
 }
 
 // WriteJoined performs one strong exact write after reducing every value for
@@ -244,8 +284,7 @@ func (patch *Patch[K, V]) WriteJoined(target carrier.Target, when support.Mask, 
 	if !patch.patch.Set(descriptor.keys[0], when, joined) {
 		return false
 	}
-	patch.targets = append(patch.targets, target)
-	patch.regions = append(patch.regions, when)
+	patch.authored = append(patch.authored, carrier.NewTargetRegion(target, when))
 	return true
 }
 
@@ -274,8 +313,7 @@ func (patch *Patch[K, V]) Accept(work *carrier.Work) (result carrier.Patch, acce
 		return carrier.Patch{}, false
 	}
 	binding, state, base := patch.binding, patch.state, patch.base
-	targets := append([]carrier.Target(nil), patch.targets...)
-	authoredRegions := append([]support.Mask(nil), patch.regions...)
+	authored := append([]carrier.TargetRegion(nil), patch.authored...)
 	slotWork, slotOK := work.SlotWork(patch.slot)
 	currentWork, currentOK := slotWork.(*bindingWork[K, V])
 	if !slotOK || !currentOK || !currentWork.live() || !work.OwnsState(state) {
@@ -309,10 +347,10 @@ func (patch *Patch[K, V]) Accept(work *carrier.Work) (result carrier.Patch, acce
 	if !okay {
 		return carrier.Patch{}, false
 	}
-	if len(targets) == 0 {
+	if len(authored) == 0 {
 		result, accepted = work.Accept(state, change)
 	} else {
-		result, accepted = work.AcceptAuthored(state, change, targets, authoredRegions)
+		result, accepted = work.AcceptAuthoredRows(state, change, authored)
 	}
 	if !accepted {
 		_ = work.DiscardChange(change)
@@ -482,8 +520,6 @@ func (patch *Patch[K, V]) clear() {
 	patch.slot = 0
 	patch.support = support.Mask{}
 	patch.base = carrier.RootHandle{}
-	clear(patch.targets)
-	patch.targets = nil
-	clear(patch.regions)
-	patch.regions = nil
+	clear(patch.authored)
+	patch.authored = nil
 }

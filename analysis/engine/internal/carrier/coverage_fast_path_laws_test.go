@@ -99,7 +99,7 @@ func TestPointFoldCoverageUnionReusesDominantHeaderAndKeepsPresentDefault(t *tes
 	narrowRows := []TargetRegion{{target: operation.target, region: narrow}}
 	base := newContributionCoverage(composition, []slotCoverage{{targets: baseRows}})
 	term := PointState{coverage: newContributionCoverage(composition, []slotCoverage{{targets: narrowRows}})}
-	result, ok := work.foldCoverageUnion(&pointFoldTransaction{}, base, []PointState{term})
+	result, ok := work.foldCoverageUnion(&pointFoldTransaction{}, base, []pointFoldOperand{{coverage: term.coverage}})
 	if !ok {
 		t.Fatal("coverage union")
 	}
@@ -149,7 +149,7 @@ func TestPointFoldCoverageUnionFindsLaterDominatingOperand(t *testing.T) {
 	base := rows(first)
 	middle := PointState{coverage: rows(second)}
 	dominant := PointState{coverage: rows(whole)}
-	result, ok := work.foldCoverageUnion(&pointFoldTransaction{}, base, []PointState{middle, dominant})
+	result, ok := work.foldCoverageUnion(&pointFoldTransaction{}, base, []pointFoldOperand{{coverage: middle.coverage}, {coverage: dominant.coverage}})
 	if !ok {
 		t.Fatal("coverage union")
 	}

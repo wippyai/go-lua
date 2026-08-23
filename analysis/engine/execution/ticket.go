@@ -1,0 +1,384 @@
+package execution
+
+import (
+	"github.com/wippyai/go-lua/analysis/engine/internal/carrier"
+	"github.com/wippyai/go-lua/analysis/engine/internal/executioncatalog"
+	"github.com/wippyai/go-lua/analysis/engine/internal/facts/support"
+)
+
+// Run owns one sealed invocation context and the reusable Ticket issuer for
+// that context. inputCapacity is supplied by the sealed execution plan, not
+// invented by this package; the state vector is allocated once at setup and
+// copied in place on each Issue.
+type Run struct {
+	identity         uint64
+	next             uint64
+	open             uint64
+	submitted        uint64
+	submittedOutcome Outcome
+	epoch            uint64
+	relationRevision uint64
+	generation       uint64
+
+	work    *carrier.Work
+	base    carrier.State
+	within  support.Mask
+	inputs  []carrier.State
+	outputs []carrier.Patch
+	drain   []carrier.Patch
+	used    []bool
+
+	// The issued Catalog row belongs to the same invocation authority as the
+	// transaction. It is copied from sealed Program data by Issue; no worker
+	// resolves a member or rule through an owner at run time.
+	familyOrdinal    uint32
+	localOrdinal     uint32
+	inputHandles     []uint32
+	outputHandles    []uint32
+	outputCount      int
+	ruleOrdinal      uint32
+	memberOrdinal    uint32
+	candidateOrdinal uint32
+}
+
+// NewRun creates one reusable family worker.  Invocation geometry is supplied
+// by the immutable Catalog row at Issue, never captured by this worker.
+func NewRun(inputCapacity, outputCapacity int) *Run {
+	if inputCapacity < 0 || outputCapacity < 0 {
+		return nil
+	}
+	return &Run{
+		identity:    1,
+		inputs:      make([]carrier.State, inputCapacity),
+		outputs:     make([]carrier.Patch, outputCapacity),
+		drain:       make([]carrier.Patch, outputCapacity),
+		used:        make([]bool, outputCapacity),
+		outputCount: outputCapacity,
+	}
+}
+
+// Ticket is an opaque, one-shot value handle. It contains only the issuer,
+// serial, and execution fences. Base/input States and the candidate region
+// remain in Run; an Axis names an input port or the base write context when
+// resolving them.
+type Ticket struct {
+	issuer           *Run
+	serial           uint64
+	epoch            uint64
+	relationRevision uint64
+	generation       uint64
+}
+
+// Submit is the opaque invocation's only completion operation. Run remains
+// the authority; this method lets generated composition submit without
+// receiving the carrier transaction or a second lifecycle wrapper.
+func (ticket *Ticket) Submit(outcome Outcome) bool {
+	if ticket == nil || ticket.issuer == nil {
+		return false
+	}
+	return ticket.issuer.Submit(ticket, outcome)
+}
+
+// Issue installs one sealed catalog row and current solver states into a
+// reusable family worker. The row slices are immutable catalog-owned data, so
+// this copies only their small addresses, never reconstructs topology.
+func (run *Run) Issue(catalog *executioncatalog.Catalog, row executioncatalog.Row, work *carrier.Work, base carrier.State, within support.Mask, inputs []carrier.State, epoch, relationRevision, generation uint64) (Ticket, bool) {
+	inputHandles, inputsOK := catalog.Inputs(row)
+	outputHandles, outputsOK := catalog.Outputs(row)
+	if run == nil || !inputsOK || !outputsOK || run.identity == 0 || run.open != 0 || run.submitted != 0 || run.next == ^uint64(0) || work == nil || !work.OwnsState(base) || !within.Valid() || within.Manager() != base.Support().Manager() || !within.Entails(base.Support()) || len(inputs) != len(inputHandles) || len(inputs) > len(run.inputs) || len(outputHandles) > len(run.outputs) || epoch == 0 || relationRevision == 0 || generation == 0 {
+		return Ticket{}, false
+	}
+	for _, state := range inputs {
+		if !work.OwnsState(state) || !state.Valid() || state.Support().Manager() != base.Support().Manager() {
+			return Ticket{}, false
+		}
+	}
+	run.work = work
+	run.base = base
+	run.within = within
+	run.epoch = epoch
+	run.relationRevision = relationRevision
+	run.generation = generation
+	copy(run.inputs, inputs)
+	run.familyOrdinal, run.localOrdinal = row.FamilyOrdinal(), row.LocalOrdinal()
+	run.inputHandles = inputHandles
+	run.outputHandles = outputHandles
+	run.outputCount = len(outputHandles)
+	run.ruleOrdinal, run.memberOrdinal, run.candidateOrdinal = row.RuleOrdinal(), row.MemberOrdinal(), row.CandidateOrdinal()
+	for index := range run.outputs {
+		run.outputs[index] = carrier.Patch{}
+		run.used[index] = false
+	}
+	run.next++
+	run.open = run.next
+	return Ticket{issuer: run, serial: run.next, epoch: epoch, relationRevision: relationRevision, generation: generation}, true
+}
+
+func (run *Run) clearInvocation() {
+	if run == nil {
+		return
+	}
+	run.work = nil
+	run.base = carrier.State{}
+	run.within = support.Mask{}
+	for index := range run.inputs {
+		run.inputs[index] = carrier.State{}
+	}
+	run.epoch, run.relationRevision, run.generation = 0, 0, 0
+	run.familyOrdinal, run.localOrdinal = 0, 0
+	run.inputHandles, run.outputHandles = nil, nil
+	run.outputCount = len(run.outputs)
+}
+
+// Open reports whether Run has one live opaque invocation.  It is an engine
+// continuation fence, not a second scheduler state.
+func (run *Run) Open() bool { return run != nil && run.open != 0 }
+
+// Pending reports whether Submit has completed an invocation and its patches
+// and outcome still await the engine continuation's Drain.
+func (run *Run) Pending() bool { return run != nil && run.submitted != 0 }
+
+// Abort revokes the current invocation or drops a submitted result.  It is
+// the one fail-closed cancellation edge used by the engine continuation.
+func (run *Run) Abort() bool {
+	if run == nil || run.identity == 0 || run.open == 0 && run.submitted == 0 {
+		return false
+	}
+	run.discardOutputs()
+	run.open = 0
+	run.submitted = 0
+	run.submittedOutcome = Refuse
+	run.clearInvocation()
+	return true
+}
+
+// Valid reports whether a Ticket still names its live issuer serial and
+// complete invocation fences. It is safe on a zero Ticket.
+func (ticket Ticket) Valid() bool {
+	return ticket.issuer != nil && ticket.issuer.identity != 0 && ticket.serial != 0 && ticket.issuer.open == ticket.serial && ticket.epoch != 0 && ticket.relationRevision != 0 && ticket.generation != 0 && ticket.epoch == ticket.issuer.epoch && ticket.relationRevision == ticket.issuer.relationRevision && ticket.generation == ticket.issuer.generation && ticket.issuer.contextValid()
+}
+
+// RuleOrdinal, MemberOrdinal, and CandidateOrdinal expose only the sealed
+// row coordinates while the ticket is live.  Once Submit/Close/Abort revokes
+// the ticket, every coordinate read refuses with no stale metadata leak.
+func (ticket Ticket) RuleOrdinal() (uint32, bool) {
+	if !ticket.Valid() {
+		return 0, false
+	}
+	return ticket.issuer.ruleOrdinal, true
+}
+
+func (ticket Ticket) MemberOrdinal() (uint32, bool) {
+	if !ticket.Valid() {
+		return 0, false
+	}
+	return ticket.issuer.memberOrdinal, true
+}
+
+func (ticket Ticket) CandidateOrdinal() (uint32, bool) {
+	if !ticket.Valid() {
+		return 0, false
+	}
+	return ticket.issuer.candidateOrdinal, true
+}
+
+func (ticket Ticket) familyLocal() (uint32, uint32, bool) {
+	if !ticket.Valid() {
+		return 0, 0, false
+	}
+	return ticket.issuer.familyOrdinal, ticket.issuer.localOrdinal, true
+}
+
+func (ticket Ticket) InputCount() int {
+	if !ticket.Valid() {
+		return 0
+	}
+	return len(ticket.issuer.inputHandles)
+}
+
+func (ticket Ticket) OutputCount() int {
+	if !ticket.Valid() {
+		return 0
+	}
+	return len(ticket.issuer.outputHandles)
+}
+
+func (ticket Ticket) InputHandleAt(index int) (uint32, bool) {
+	if !ticket.Valid() || index < 0 || index >= len(ticket.issuer.inputHandles) {
+		return 0, false
+	}
+	return ticket.issuer.inputHandles[index], true
+}
+
+func (run *Run) hasInputHandle(port uint16) bool {
+	return run != nil && int(port) < len(run.inputs)
+}
+
+func (run *Run) inputCapacity() int {
+	if run == nil {
+		return -1
+	}
+	return len(run.inputs)
+}
+
+func (ticket Ticket) OutputHandleAt(index int) (uint32, bool) {
+	if !ticket.Valid() || index < 0 || index >= len(ticket.issuer.outputHandles) {
+		return 0, false
+	}
+	return ticket.issuer.outputHandles[index], true
+}
+
+func (run *Run) hasOutputHandle(output uint16) bool {
+	return run != nil && int(output) < len(run.outputs)
+}
+
+// Close consumes a Ticket exactly once. A copied handle observes the same
+// issuer open serial and is revoked with the original.
+func (ticket *Ticket) Close() bool {
+	if ticket == nil || !ticket.Valid() || ticket.issuer.hasOutput() {
+		return false
+	}
+	ticket.issuer.open = 0
+	return true
+}
+
+func (run *Run) contextValid() bool {
+	if run == nil || run.identity == 0 || run.work == nil || !run.work.OwnsState(run.base) || !run.within.Valid() || run.within.Manager() != run.base.Support().Manager() || !run.within.Entails(run.base.Support()) {
+		return false
+	}
+	for _, state := range run.inputs {
+		if !run.work.OwnsState(state) || !state.Valid() || state.Support().Manager() != run.base.Support().Manager() {
+			return false
+		}
+	}
+	return true
+}
+
+func (ticket Ticket) input(port uint16) (*carrier.Work, carrier.State, support.Mask, bool) {
+	if !ticket.Valid() || int(port) >= len(ticket.issuer.inputs) {
+		return nil, carrier.State{}, support.Mask{}, false
+	}
+	return ticket.issuer.work, ticket.issuer.inputs[port], ticket.issuer.within, true
+}
+
+func (ticket Ticket) base() (*carrier.Work, carrier.State, support.Mask, bool) {
+	if !ticket.Valid() {
+		return nil, carrier.State{}, support.Mask{}, false
+	}
+	return ticket.issuer.work, ticket.issuer.base, ticket.issuer.within, true
+}
+
+func (ticket Ticket) sameLease(other Ticket) bool {
+	return ticket.issuer != nil && ticket.issuer == other.issuer && ticket.serial == other.serial && ticket.Valid() && other.Valid()
+}
+
+func (run *Run) hasOutput() bool {
+	for _, used := range run.used[:run.outputCount] {
+		if used {
+			return true
+		}
+	}
+	return false
+}
+
+// Submit is the one final reducer boundary. It owns the fixed Outcome and
+// atomically transitions the live Ticket into Run's submitted state after all
+// independent output slots have been sealed. Patches stay private until
+// Drain copies them into an engine-owned destination. Outcome policy is not
+// interpreted here; even AuthenticatedOpaque is transported unchanged for the
+// sealed compiled plan to decide.
+func (run *Run) Submit(ticket *Ticket, outcome Outcome) bool {
+	if run == nil || ticket == nil || ticket.issuer != run || !ticket.Valid() {
+		return false
+	}
+	if !outcome.Valid() {
+		_ = run.Abort()
+		return false
+	}
+	if outcome != Concrete {
+		run.discardOutputs()
+		return run.submitTicket(ticket, outcome)
+	}
+	if outcome == Concrete {
+		for _, used := range run.used[:run.outputCount] {
+			if !used {
+				run.discardOutputs()
+				run.submitTicket(ticket, Refuse)
+				return false
+			}
+		}
+		run.submitTicket(ticket, outcome)
+		return true
+	}
+	run.discardOutputs()
+	run.submitTicket(ticket, outcome)
+	return true
+}
+
+func (run *Run) submitTicket(ticket *Ticket, outcome Outcome) bool {
+	if run == nil || ticket == nil || ticket.issuer != run || !ticket.Valid() {
+		return false
+	}
+	run.open = 0
+	run.submitted = ticket.serial
+	run.submittedOutcome = outcome
+	return true
+}
+
+// Drain copies submitted carrier patches and the exact submitted Outcome into
+// caller-owned engine storage, then returns Run to idle. It refuses a second
+// drain, a short destination, or an Issue attempted before this copy. A
+// disposition with no surviving patches accepts a nil destination and returns
+// count zero.
+func (run *Run) Drain(destination []carrier.Patch) (Outcome, int, bool) {
+	if run == nil || run.submitted == 0 {
+		return Refuse, 0, false
+	}
+	count := 0
+	if run.hasOutput() {
+		if len(destination) < run.outputCount {
+			return Refuse, 0, false
+		}
+		copy(destination, run.outputs[:run.outputCount])
+		count = run.outputCount
+	}
+	outcome := run.submittedOutcome
+	for index := range run.outputs {
+		run.outputs[index] = carrier.Patch{}
+		run.used[index] = false
+	}
+	run.submitted = 0
+	run.submittedOutcome = Refuse
+	run.clearInvocation()
+	return outcome, count, true
+}
+
+// Consume is Drain against Run's sealed drain buffer. The returned patch
+// slice aliases that buffer until the next Issue and allocates nothing on
+// the hot path.
+func (run *Run) Consume() (Outcome, []carrier.Patch, bool) {
+	if run == nil {
+		return Refuse, nil, false
+	}
+	outcome, count, ok := run.Drain(run.drain)
+	if !ok {
+		return outcome, nil, false
+	}
+	if count == 0 {
+		return outcome, nil, true
+	}
+	return outcome, run.drain[:count], true
+}
+
+func (run *Run) discardOutputs() {
+	if run == nil || run.work == nil {
+		return
+	}
+	for index, used := range run.used[:run.outputCount] {
+		if used {
+			_ = run.work.Discard(run.outputs[index])
+			run.outputs[index] = carrier.Patch{}
+			run.used[index] = false
+		}
+	}
+}

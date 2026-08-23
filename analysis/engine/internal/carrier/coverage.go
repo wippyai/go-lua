@@ -46,6 +46,30 @@ type contributionCoverage struct {
 	occupied change.Slots
 }
 
+// CoverageRole distinguishes a carried predecessor surface from a sibling
+// authored effect.  Effect is deliberately the zero value so existing raw
+// TargetRegion literals remain ordinary authored rows.
+type CoverageRole uint8
+
+const (
+	CoverageEffect CoverageRole = iota
+	CoverageBaseline
+)
+
+// LineageToken is an opaque identity for one published PointState generation.
+// It carries no roots or coverage and is comparable, so typed fold code can
+// group rows without receiving a second state representation. The private
+// owner/sequence fields are authenticated by Work before a row crosses any
+// carrier boundary.
+type LineageToken struct{ value *pointLineage }
+
+// Valid reports whether the token has the shape of a carrier-issued lineage.
+// Work ownership is checked separately at admission because a token copied
+// from a sibling Work is structurally valid but not valid for this Work.
+func (token LineageToken) Valid() bool {
+	return token.value != nil && token.value.owner != nil && token.value.sequence != 0
+}
+
 type slotCoverage struct {
 	targets []TargetRegion
 }
@@ -54,12 +78,85 @@ type slotCoverage struct {
 // concrete key set beside its typed Binding; carrier owns only its exact
 // nonempty Guard region.
 type TargetRegion struct {
-	target Target
-	region support.Mask
+	target  Target
+	region  support.Mask
+	lineage LineageToken
+	role    CoverageRole
 }
 
-func (row TargetRegion) Target() Target       { return row.target }
-func (row TargetRegion) Region() support.Mask { return row.region }
+func (row TargetRegion) Target() Target        { return row.target }
+func (row TargetRegion) Region() support.Mask  { return row.region }
+func (row TargetRegion) Lineage() LineageToken { return row.lineage }
+func (row TargetRegion) Role() CoverageRole    { return row.role }
+
+// NewTargetRegion creates an ordinary authored effect row. Carried and
+// transformed rows use WithLineage/WithRole below so their provenance remains
+// attached to the canonical coverage row.
+func NewTargetRegion(target Target, region support.Mask) TargetRegion {
+	return TargetRegion{target: target, region: region, role: CoverageEffect}
+}
+
+func (row TargetRegion) WithLineage(lineage LineageToken, role CoverageRole) TargetRegion {
+	row.lineage = lineage
+	row.role = role
+	return row
+}
+
+func (row TargetRegion) WithRegion(region support.Mask) TargetRegion {
+	row.region = region
+	return row
+}
+
+func sameCoverageMetadata(left, right TargetRegion) bool {
+	return left.lineage == right.lineage && left.role == right.role
+}
+
+// compareCoverageRows is the one canonical order for authored rows. Target
+// remains the primary key; duplicate Targets are ordered by role first and
+// then by carrier-issued lineage sequence. This makes baseline/effect order
+// independent of operand/input order while retaining different metadata rows.
+func compareCoverageRows(left, right TargetRegion) int {
+	if left.target.Less(right.target) {
+		return -1
+	}
+	if right.target.Less(left.target) {
+		return 1
+	}
+	if left.role != right.role {
+		if left.role == CoverageBaseline {
+			return -1
+		}
+		if right.role == CoverageBaseline {
+			return 1
+		}
+		if left.role < right.role {
+			return -1
+		}
+		return 1
+	}
+	leftValid, rightValid := left.lineage.Valid(), right.lineage.Valid()
+	if leftValid != rightValid {
+		if !leftValid {
+			return -1
+		}
+		return 1
+	}
+	if leftValid && left.lineage.value.sequence != right.lineage.value.sequence {
+		if left.lineage.value.sequence < right.lineage.value.sequence {
+			return -1
+		}
+		return 1
+	}
+	return 0
+}
+
+func sameCoverageRow(left, right TargetRegion) bool {
+	return left.target.Same(right.target) && sameCoverageMetadata(left, right) && (left.region.SameHandle(right.region) || left.region.Equal(right.region))
+}
+
+func sameCoverageSurfaceRow(left, right TargetRegion) bool {
+	return left.target.Same(right.target) && (left.region.SameHandle(right.region) || left.region.Equal(right.region))
+}
 
 // SlotCoverage is the read-only slot-local projection supplied to SlotWork.
 // Its backing rows remain carrier-owned and contain no typed key vocabulary.
@@ -109,7 +206,7 @@ func (work *Work) admittedContribution(contribution Contribution) bool {
 		return false
 	}
 	coverage := contribution.coverage
-	return coverage.composition == work.composition && (len(coverage.slots) == 0 || len(coverage.slots) == work.composition.Count())
+	return work.validContributionCoverage(state, coverage)
 }
 
 // admitContribution attaches the Work-local seal only after the existing
@@ -250,12 +347,63 @@ func (coverage contributionCoverage) validFor(state State) bool {
 		}
 		for index, row := range coverage.slots[position].targets {
 			slot, ok := row.target.Slot()
-			if !ok || int(slot) != position || !coverage.composition.OwnsTarget(slot, row.target) || !row.region.Valid() || row.region.Manager() != coverage.composition.guards || support.Empty(row.region) || index > 0 && !coverage.slots[position].targets[index-1].target.Less(row.target) {
+			if !ok || int(slot) != position || !coverage.composition.OwnsTarget(slot, row.target) || !row.region.Valid() || row.region.Manager() != coverage.composition.guards || support.Empty(row.region) || row.role != CoverageEffect && row.role != CoverageBaseline || row.role == CoverageBaseline && !row.lineage.Valid() || row.lineage.value != nil && !row.lineage.Valid() || index > 0 && compareCoverageRows(row, coverage.slots[position].targets[index-1]) < 0 {
 				return false
 			}
 		}
 	}
 	return len(coverage.slots) != 0 || coverage.occupied.Empty()
+}
+
+// ownsLineage authenticates a copied token against the Work that issued it.
+// A token from another live Work over the same Composition is intentionally
+// rejected: lineage is evaluator-local provenance, not Composition identity.
+func (work *Work) ownsLineage(token LineageToken) bool {
+	return work != nil && work.live() && token.Valid() && token.value.owner == work
+}
+
+func (work *Work) validCoverageRow(row TargetRegion) bool {
+	if work == nil || row.role != CoverageEffect && row.role != CoverageBaseline {
+		return false
+	}
+	if row.role == CoverageBaseline && !row.lineage.Valid() {
+		return false
+	}
+	return row.lineage.value == nil || work.ownsLineage(row.lineage)
+}
+
+// validContributionCoverage is the Work-specific half of coverage validity.
+// The structural validator can prove row shape, but only the issuing Work can
+// prove that every nonzero lineage belongs to this evaluator epoch.
+func (work *Work) validContributionCoverage(state State, coverage contributionCoverage) bool {
+	if work == nil || !coverage.validFor(state) || coverage.composition != work.composition {
+		return false
+	}
+	for position, more := coverage.occupied.Next(0); more; position, more = coverage.occupied.Next(position + 1) {
+		if position < 0 || position >= len(coverage.slots) {
+			return false
+		}
+		rows := coverage.slots[position].targets
+		for _, row := range rows {
+			if !work.validCoverageRow(row) {
+				return false
+			}
+		}
+	}
+	return true
+}
+
+func (work *Work) validSlotCoverage(rows slotCoverage) bool {
+	if work == nil || !work.live() {
+		return false
+	}
+	for index, row := range rows.targets {
+		slot, ok := row.target.Slot()
+		if !ok || !work.composition.OwnsTarget(slot, row.target) || !row.region.Valid() || row.region.Manager() != work.composition.guards || support.Empty(row.region) || !work.validCoverageRow(row) || index > 0 && compareCoverageRows(row, rows.targets[index-1]) < 0 {
+			return false
+		}
+	}
+	return true
 }
 
 // newContributionCoverage assembles one coverage header and issues its
@@ -297,7 +445,22 @@ func sameSlotCoverage(left, right slotCoverage) bool {
 		return true
 	}
 	for index := range left.targets {
-		if !left.targets[index].target.Same(right.targets[index].target) || !left.targets[index].region.SameHandle(right.targets[index].region) && !left.targets[index].region.Equal(right.targets[index].region) {
+		if !sameCoverageSurfaceRow(left.targets[index], right.targets[index]) {
+			return false
+		}
+	}
+	return true
+}
+
+func sameSlotCoverageProvenance(left, right slotCoverage) bool {
+	if len(left.targets) != len(right.targets) {
+		return false
+	}
+	if len(left.targets) != 0 && &left.targets[0] == &right.targets[0] {
+		return true
+	}
+	for index := range left.targets {
+		if !sameCoverageRow(left.targets[index], right.targets[index]) {
 			return false
 		}
 	}
@@ -370,32 +533,46 @@ func (work *Work) unionCoverage(left, right contributionCoverage) (contributionC
 }
 
 func (work *Work) unionSlotCoverage(left, right slotCoverage) (slotCoverage, bool) {
+	if !work.validSlotCoverage(left) || !work.validSlotCoverage(right) {
+		return slotCoverage{}, false
+	}
 	switch {
 	case len(left.targets) == 0:
 		return right, true
 	case len(right.targets) == 0:
 		return left, true
-	case sameSlotCoverage(left, right) || work.slotCoverageContains(left, right):
+	case sameSlotCoverageProvenance(left, right) || work.slotCoverageContainsProvenance(left, right):
 		return left, true
-	case work.slotCoverageContains(right, left):
+	case work.slotCoverageContainsProvenance(right, left):
 		return right, true
 	}
 	rows := make([]TargetRegion, 0, len(left.targets)+len(right.targets))
 	leftIndex, rightIndex := 0, 0
 	for leftIndex < len(left.targets) || rightIndex < len(right.targets) {
-		switch {
-		case rightIndex == len(right.targets) || leftIndex < len(left.targets) && left.targets[leftIndex].target.Less(right.targets[rightIndex].target):
+		if rightIndex == len(right.targets) {
 			rows = append(rows, left.targets[leftIndex])
 			leftIndex++
-		case leftIndex == len(left.targets) || right.targets[rightIndex].target.Less(left.targets[leftIndex].target):
+			continue
+		}
+		if leftIndex == len(left.targets) {
 			rows = append(rows, right.targets[rightIndex])
 			rightIndex++
+			continue
+		}
+		leftRow, rightRow := left.targets[leftIndex], right.targets[rightIndex]
+		switch compareCoverageRows(leftRow, rightRow) {
+		case -1:
+			rows = append(rows, leftRow)
+			leftIndex++
+		case 1:
+			rows = append(rows, rightRow)
+			rightIndex++
 		default:
-			region, ok := work.unionSupport(left.targets[leftIndex].region, right.targets[rightIndex].region)
+			region, ok := work.unionSupport(leftRow.region, rightRow.region)
 			if !ok {
 				return slotCoverage{}, false
 			}
-			rows = append(rows, TargetRegion{target: left.targets[leftIndex].target, region: region})
+			rows = append(rows, leftRow.WithRegion(region))
 			leftIndex++
 			rightIndex++
 		}
@@ -410,38 +587,45 @@ func (work *Work) canonicalCoverage(rows []TargetRegion, within support.Mask) (s
 	if len(rows) == 0 || support.Empty(within) {
 		return slotCoverage{}, true
 	}
-	// Most producer rows are already sorted, unique, and clipped by the
-	// preceding exact carrier boundary.  Validate that shape before copying;
-	// rows are immutable after this function returns and every caller either
-	// supplies an immutable admitted slice or a fresh finish-local slice.  The
-	// fallback below remains the sole canonicalizer for arbitrary row order,
-	// duplicate targets, or rows that cross the retained support boundary.
+	// Most producer rows are already sorted and clipped. Equal Targets are
+	// intentionally retained when their lineage/role differs: a carried
+	// baseline and a transformed effect may overlap the same Target.
 	orderedRows := true
 	for index, row := range rows {
 		slot, ok := row.target.Slot()
 		if !ok || !work.composition.OwnsTarget(slot, row.target) || !row.region.Valid() || row.region.Manager() != work.composition.guards || support.Empty(row.region) {
 			return slotCoverage{}, false
 		}
-		if index != 0 && !rows[index-1].target.Less(row.target) {
+		if !work.validCoverageRow(row) {
+			return slotCoverage{}, false
+		}
+		if index != 0 && compareCoverageRows(row, rows[index-1]) < 0 {
 			orderedRows = false
 		}
 		if !work.entailsSupport(row.region, within) {
 			orderedRows = false
 		}
 	}
-	if orderedRows {
+	ordered := rows
+	if !orderedRows {
+		ordered = append([]TargetRegion(nil), rows...)
+		sort.SliceStable(ordered, func(left, right int) bool { return compareCoverageRows(ordered[left], ordered[right]) < 0 })
+	}
+	canonicalRows := true
+	for index := 1; index < len(ordered); index++ {
+		if ordered[index-1].target.Same(ordered[index].target) && sameCoverageMetadata(ordered[index-1], ordered[index]) {
+			canonicalRows = false
+			break
+		}
+	}
+	if orderedRows && canonicalRows {
 		return slotCoverage{targets: rows}, true
 	}
-	ordered := append([]TargetRegion(nil), rows...)
-	sort.Slice(ordered, func(left, right int) bool { return ordered[left].target.Less(ordered[right].target) })
 	result := make([]TargetRegion, 0, len(ordered))
 	for _, row := range ordered {
-		slot, ok := row.target.Slot()
-		if !ok || !work.composition.OwnsTarget(slot, row.target) || !row.region.Valid() || row.region.Manager() != work.composition.guards || support.Empty(row.region) {
-			return slotCoverage{}, false
-		}
 		region := row.region
 		if !work.entailsSupport(region, within) {
+			var ok bool
 			region, ok = work.intersectSupport(region, within)
 			if !ok {
 				return slotCoverage{}, false
@@ -450,15 +634,16 @@ func (work *Work) canonicalCoverage(rows []TargetRegion, within support.Mask) (s
 		if support.Empty(region) {
 			continue
 		}
-		if len(result) != 0 && result[len(result)-1].target.Same(row.target) {
-			region, ok = work.unionSupport(result[len(result)-1].region, region)
+		row = row.WithRegion(region)
+		if len(result) != 0 && result[len(result)-1].target.Same(row.target) && sameCoverageMetadata(result[len(result)-1], row) {
+			var ok bool
+			result[len(result)-1].region, ok = work.unionSupport(result[len(result)-1].region, row.region)
 			if !ok {
 				return slotCoverage{}, false
 			}
-			result[len(result)-1].region = region
 			continue
 		}
-		result = append(result, TargetRegion{target: row.target, region: region})
+		result = append(result, row)
 	}
 	return slotCoverage{targets: result}, true
 }
@@ -477,7 +662,7 @@ func (work *Work) restrictSlotCoverage(input slotCoverage, within support.Mask) 
 	var result []TargetRegion
 	for index, row := range input.targets {
 		slot, ok := row.target.Slot()
-		if !ok || !work.composition.OwnsTarget(slot, row.target) || !row.region.Valid() || row.region.Manager() != work.composition.guards || support.Empty(row.region) || index > 0 && !input.targets[index-1].target.Less(row.target) {
+		if !ok || !work.composition.OwnsTarget(slot, row.target) || !row.region.Valid() || row.region.Manager() != work.composition.guards || support.Empty(row.region) || !work.validCoverageRow(row) || index > 0 && compareCoverageRows(row, input.targets[index-1]) < 0 {
 			return slotCoverage{}, false
 		}
 		region := row.region
@@ -495,7 +680,7 @@ func (work *Work) restrictSlotCoverage(input slotCoverage, within support.Mask) 
 			result = append(result, input.targets[:index]...)
 		}
 		if !support.Empty(region) {
-			result = append(result, TargetRegion{target: row.target, region: region})
+			result = append(result, row.WithRegion(region))
 		}
 	}
 	if result == nil {
@@ -530,37 +715,48 @@ func (work *Work) mergeSlotCoverage(left, right slotCoverage, within support.Mas
 	// allocating the merged row vector; this is exact authored coverage
 	// inclusion, not a semantic-root shortcut, so coverage-only wake/version
 	// evidence remains unchanged by the caller's outer publication.
-	if sameSlotCoverage(left, right) || work.slotCoverageContains(left, right) {
+	if sameSlotCoverageProvenance(left, right) || work.slotCoverageContainsProvenance(left, right) {
 		return left, true
 	}
-	if work.slotCoverageContains(right, left) {
+	if work.slotCoverageContainsProvenance(right, left) {
 		return right, true
 	}
 	rows := make([]TargetRegion, 0, len(left.targets)+len(right.targets))
 	leftIndex, rightIndex := 0, 0
 	for leftIndex < len(left.targets) || rightIndex < len(right.targets) {
-		switch {
-		case rightIndex == len(right.targets) || leftIndex < len(left.targets) && left.targets[leftIndex].target.Less(right.targets[rightIndex].target):
+		if rightIndex == len(right.targets) {
 			rows = append(rows, left.targets[leftIndex])
 			leftIndex++
-		case leftIndex == len(left.targets) || right.targets[rightIndex].target.Less(left.targets[leftIndex].target):
+			continue
+		}
+		if leftIndex == len(left.targets) {
 			rows = append(rows, right.targets[rightIndex])
 			rightIndex++
+			continue
+		}
+		leftRow, rightRow := left.targets[leftIndex], right.targets[rightIndex]
+		switch compareCoverageRows(leftRow, rightRow) {
+		case -1:
+			rows = append(rows, leftRow)
+			leftIndex++
+		case 1:
+			rows = append(rows, rightRow)
+			rightIndex++
 		default:
-			region, valid := work.unionSupport(left.targets[leftIndex].region, right.targets[rightIndex].region)
+			region, valid := work.unionSupport(leftRow.region, rightRow.region)
 			if !valid {
 				return slotCoverage{}, false
 			}
-			rows = append(rows, TargetRegion{target: left.targets[leftIndex].target, region: region})
+			rows = append(rows, leftRow.WithRegion(region))
 			leftIndex++
 			rightIndex++
 		}
 	}
 	result := slotCoverage{targets: rows}
-	if sameSlotCoverage(result, left) {
+	if sameSlotCoverageProvenance(result, left) {
 		return left, true
 	}
-	if sameSlotCoverage(result, right) {
+	if sameSlotCoverageProvenance(result, right) {
 		return right, true
 	}
 	return result, true
@@ -597,12 +793,46 @@ func (work *Work) slotCoverageContains(super, sub slotCoverage) bool {
 	return subIndex == len(sub.targets)
 }
 
+// slotCoverageContainsProvenance is the representation-level inclusion used
+// while joining authored rows.  A baseline and an effect may have the same
+// Target and region but are intentionally distinct rows, so the generic
+// semantic inclusion above must not discard either one during that join.
+func (work *Work) slotCoverageContainsProvenance(super, sub slotCoverage) bool {
+	if !work.validSlotCoverage(super) || !work.validSlotCoverage(sub) {
+		return false
+	}
+	if len(sub.targets) == 0 {
+		return true
+	}
+	if len(super.targets) < len(sub.targets) {
+		return false
+	}
+	superIndex, subIndex := 0, 0
+	for superIndex < len(super.targets) && subIndex < len(sub.targets) {
+		superRow, subRow := super.targets[superIndex], sub.targets[subIndex]
+		switch compareCoverageRows(superRow, subRow) {
+		case -1:
+			superIndex++
+		case 1:
+			return false
+		default:
+			if subRow.region.SameHandle(superRow.region) || work.entailsSupport(subRow.region, superRow.region) {
+				superIndex++
+				subIndex++
+				continue
+			}
+			return false
+		}
+	}
+	return subIndex == len(sub.targets)
+}
+
 // validContributionSurface is the common private role fence for all lifted
 // comparisons.  A PointState and PointRHS use the same State+C storage as a
 // RuleContribution, but they may retain physical root fibers outside their
 // support.  Those fibers are intentionally not part of this surface.
 func (work *Work) validContributionSurface(state State, coverage contributionCoverage) bool {
-	return work != nil && work.live() && work.OwnsState(state) && !state.previewMarked() && !state.contributionMarked() && coverage.composition == work.composition && (len(coverage.slots) == 0 || len(coverage.slots) == work.composition.Count())
+	return work != nil && work.live() && work.OwnsState(state) && !state.previewMarked() && !state.contributionMarked() && work.validContributionCoverage(state, coverage)
 }
 
 // lessOrEqContributionSurface proves the lifted partial order over one

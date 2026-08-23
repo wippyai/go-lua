@@ -11,11 +11,21 @@ type pointFoldCoverageCursor struct {
 	index int
 }
 
+// pointFoldOperand is the one borrowed State+C header used by both published
+// environments and closed RuleContributions. It carries no alternate roots
+// or delta plane; direct rule admission simply avoids publishing a temporary
+// PointState before its provenance reaches the fold.
+type pointFoldOperand struct {
+	state    State
+	coverage contributionCoverage
+	closed   bool
+}
+
 type pointFoldTransaction struct {
 	active       bool
 	reference    PointState
 	base         PointRHS
-	terms        []PointState
+	terms        []pointFoldOperand
 	slotTerms    []PointFoldTerm
 	patches      []Patch
 	cursors      []pointFoldCoverageCursor
@@ -50,23 +60,25 @@ func (work *Work) BeginPointRHSFold(reference PointState, base PointRHS) bool {
 }
 
 func (work *Work) AddPointFoldEnvironment(point PointState) bool {
-	return work.appendPointFoldState(point)
+	if !work.admittedPointState(point) {
+		return false
+	}
+	return work.appendPointFoldOperand(point.state, point.coverage, point.closed)
 }
 
 func (work *Work) AddPointFoldRule(rule RuleContribution) bool {
 	if !work.admittedRuleContribution(rule) {
 		return false
 	}
-	point, ok := work.PointStateFromRuleContribution(rule)
-	return ok && work.appendPointFoldState(point)
+	return work.appendPointFoldOperand(rule.value.state, rule.value.coverage, true)
 }
 
-func (work *Work) appendPointFoldState(point PointState) bool {
+func (work *Work) appendPointFoldOperand(state State, coverage contributionCoverage, closed bool) bool {
 	transaction := work.activePointFold()
-	if transaction == nil || !work.admittedPointState(point) || !point.Scope().Same(transaction.base.Scope()) {
+	if transaction == nil || !work.validContributionSurface(state, coverage) || !state.Scope().Same(transaction.base.Scope()) {
 		return false
 	}
-	transaction.terms = append(transaction.terms, point)
+	transaction.terms = append(transaction.terms, pointFoldOperand{state: state, coverage: coverage, closed: closed})
 	return true
 }
 
@@ -115,28 +127,28 @@ func (work *Work) FinishPointRHSFold() (PointRHS, ChangeSet, bool) {
 	start := 0
 	currentSupport := physical.state.support
 	pristine := work.closedInitialPoint(physical)
-	for index, point := range transaction.terms {
-		if !work.admittedPointState(point) || !point.Scope().Same(transaction.base.Scope()) {
+	for index, term := range transaction.terms {
+		if !work.validContributionSurface(term.state, term.coverage) || !term.state.Scope().Same(transaction.base.Scope()) {
 			return PointRHS{}, ChangeSet{}, false
 		}
 		// This is the exact old zero-copy adoption law. Any earlier term while
 		// pristine was a contained C-empty identity, so changing the physical
 		// base discards no semantic operand.
-		if pristine && work.entailsSupport(currentSupport, point.state.support) {
-			physical = point
+		if pristine && work.entailsSupport(currentSupport, term.state.support) {
+			physical = PointState{state: term.state, coverage: term.coverage, roleSeal: work.contributionSeal, authority: term.state.authority, lineage: transaction.base.point.lineage, closed: term.closed}
 			start = index + 1
-			currentSupport = point.state.support
-			pristine = work.closedInitialPoint(point)
+			currentSupport = term.state.support
+			pristine = work.closedInitialSurface(term.state, term.coverage, term.closed)
 			continue
 		}
-		if !work.entailsSupport(point.state.support, currentSupport) {
+		if !work.entailsSupport(term.state.support, currentSupport) {
 			var ok bool
-			currentSupport, ok = work.unionSupport(currentSupport, point.state.support)
+			currentSupport, ok = work.unionSupport(currentSupport, term.state.support)
 			if !ok {
 				return PointRHS{}, ChangeSet{}, false
 			}
 		}
-		if !emptyContributionCoverage(point.coverage) {
+		if !emptyContributionCoverage(term.coverage) {
 			pristine = false
 		}
 	}
@@ -202,14 +214,8 @@ func (work *Work) FinishPointRHSFold() (PointRHS, ChangeSet, bool) {
 	if !ok {
 		return PointRHS{}, ChangeSet{}, false
 	}
-	point := PointState{
-		state:     next,
-		coverage:  nextCoverage,
-		roleSeal:  work.contributionSeal,
-		authority: next.authority,
-		closed:    !carryBaseOutside || physical.closed,
-	}
-	if !work.admittedPointState(point) {
+	point, pointOK := work.publishPointState(next, nextCoverage, !carryBaseOutside || physical.closed)
+	if !pointOK {
 		return PointRHS{}, ChangeSet{}, false
 	}
 	result := PointRHS{point: point, roleSeal: work.contributionSeal}
@@ -246,7 +252,7 @@ func (transaction *pointFoldTransaction) clear() {
 	transaction.slotSources = transaction.slotSources[:0]
 }
 
-func (work *Work) foldCoverageUnion(transaction *pointFoldTransaction, base contributionCoverage, terms []PointState) (contributionCoverage, bool) {
+func (work *Work) foldCoverageUnion(transaction *pointFoldTransaction, base contributionCoverage, terms []pointFoldOperand) (contributionCoverage, bool) {
 	if work == nil || transaction == nil || base.composition != work.composition {
 		return contributionCoverage{}, false
 	}
@@ -296,10 +302,10 @@ func (work *Work) foldCoverageUnion(transaction *pointFoldTransaction, base cont
 				dominant = coverage
 				return
 			}
-			if work.slotCoverageContains(dominant, coverage) {
+			if work.slotCoverageContainsProvenance(dominant, coverage) {
 				return
 			}
-			if work.slotCoverageContains(coverage, dominant) {
+			if work.slotCoverageContainsProvenance(coverage, dominant) {
 				dominantSource = source
 				dominant = coverage
 				return
@@ -335,7 +341,7 @@ func (work *Work) foldCoverageUnion(transaction *pointFoldTransaction, base cont
 			// candidate against every source before sharing its header.
 			candidateValid := true
 			for _, source := range transaction.slotSources {
-				if !work.slotCoverageContains(dominant, pointFoldSlotCoverageAt(base, terms, slot, source)) {
+				if !work.slotCoverageContainsProvenance(dominant, pointFoldSlotCoverageAt(base, terms, slot, source)) {
 					candidateValid = false
 					break
 				}
@@ -375,7 +381,7 @@ func (work *Work) foldCoverageUnion(transaction *pointFoldTransaction, base cont
 				cursorIndex = transaction.heap[0]
 				cursor := &transaction.cursors[cursorIndex]
 				candidate := cursor.rows[cursor.index]
-				if !candidate.target.Same(target) {
+				if !candidate.target.Same(target) || !sameCoverageMetadata(candidate, row) {
 					break
 				}
 				_, _ = transaction.coverageHeapPop()
@@ -391,7 +397,7 @@ func (work *Work) foldCoverageUnion(transaction *pointFoldTransaction, base cont
 					transaction.coverageHeapPush(cursorIndex)
 				}
 			}
-			transaction.coverageRows = append(transaction.coverageRows, TargetRegion{target: target, region: region})
+			transaction.coverageRows = append(transaction.coverageRows, row.WithRegion(region))
 		}
 		rows := append([]TargetRegion(nil), transaction.coverageRows...)
 		transaction.resultSlots[position] = slotCoverage{targets: rows}
@@ -408,7 +414,7 @@ func (work *Work) foldCoverageUnion(transaction *pointFoldTransaction, base cont
 	return result, true
 }
 
-func pointFoldSlotCoverageAt(base contributionCoverage, terms []PointState, slot shape.Slot, source int) slotCoverage {
+func pointFoldSlotCoverageAt(base contributionCoverage, terms []pointFoldOperand, slot shape.Slot, source int) slotCoverage {
 	if source == 0 {
 		return base.slot(slot)
 	}
@@ -418,7 +424,7 @@ func pointFoldSlotCoverageAt(base contributionCoverage, terms []PointState, slot
 	return slotCoverage{}
 }
 
-func contributionCoverageAt(base contributionCoverage, terms []PointState, source int) contributionCoverage {
+func contributionCoverageAt(base contributionCoverage, terms []pointFoldOperand, source int) contributionCoverage {
 	if source == 0 {
 		return base
 	}
@@ -431,9 +437,7 @@ func contributionCoverageAt(base contributionCoverage, terms []PointState, sourc
 func (transaction *pointFoldTransaction) coverageHeapLess(left, right int) bool {
 	leftCursor := transaction.cursors[transaction.heap[left]]
 	rightCursor := transaction.cursors[transaction.heap[right]]
-	leftTarget := leftCursor.rows[leftCursor.index].target
-	rightTarget := rightCursor.rows[rightCursor.index].target
-	return leftTarget.Less(rightTarget)
+	return compareCoverageRows(leftCursor.rows[leftCursor.index], rightCursor.rows[rightCursor.index]) < 0
 }
 
 func (transaction *pointFoldTransaction) coverageHeapPush(cursor int) {

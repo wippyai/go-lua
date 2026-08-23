@@ -286,6 +286,9 @@ type Work struct {
 	supportWork *support.Work
 	epoch       *RootEpoch
 	authority   *stateAuthority
+	// nextLineage is the Work-local issuance ordinal used both for ownership
+	// authentication and deterministic duplicate-Target metadata order.
+	nextLineage uint64
 	// checkpointProbe is the one Work-owned liveness callback shared by all
 	// support transactions.  It is installed once when Work is opened; hot
 	// support operations only select it or nil and never manufacture a
@@ -615,6 +618,7 @@ func (work *Work) Close() bool {
 	work.contributionSeal = nil
 	work.neutralSeal = nil
 	work.authority = nil
+	work.nextLineage = 0
 	work.checkpointProbe = nil
 	work.checkpoint = nil
 	work.epoch = nil
@@ -1534,21 +1538,35 @@ func (work *Work) AcceptAuthored(state State, change ChangeHandle, targets []Tar
 	if len(targets) == 0 || len(targets) != len(regions) {
 		return Patch{}, false
 	}
+	rows := make([]TargetRegion, len(targets))
+	for index, target := range targets {
+		rows[index] = NewTargetRegion(target, regions[index])
+	}
+	return work.AcceptAuthoredRows(state, change, rows)
+}
+
+// AcceptAuthoredRows is the provenance-preserving contribution admission.
+// Ordinary callers use AcceptAuthored and receive effect rows; transformed
+// carry callers provide the same canonical rows with their source lineage.
+func (work *Work) AcceptAuthoredRows(state State, change ChangeHandle, rows []TargetRegion) (Patch, bool) {
+	if len(rows) == 0 {
+		return Patch{}, false
+	}
 	patch, ok := work.Accept(state, change)
 	if !ok {
 		return Patch{}, false
 	}
-	rows := make([]TargetRegion, len(targets))
-	for index, target := range targets {
+	canonicalRows := make([]TargetRegion, len(rows))
+	for index, row := range rows {
+		target, region := row.target, row.region
 		slot, slotOK := target.Slot()
-		region := regions[index]
-		if !slotOK || slot != patch.slot || !work.composition.OwnsTarget(slot, target) || !region.Valid() || region.Manager() != work.composition.guards || support.Empty(region) || !work.entailsSupport(region, state.support) {
+		if !slotOK || slot != patch.slot || !work.composition.OwnsTarget(slot, target) || !region.Valid() || region.Manager() != work.composition.guards || support.Empty(region) || !work.entailsSupport(region, state.support) || !work.validCoverageRow(row) {
 			work.Discard(patch)
 			return Patch{}, false
 		}
-		rows[index] = TargetRegion{target: target, region: region}
+		canonicalRows[index] = row
 	}
-	patch.authored = rows
+	patch.authored = canonicalRows
 	return patch, true
 }
 

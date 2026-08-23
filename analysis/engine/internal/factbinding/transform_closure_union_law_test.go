@@ -4,6 +4,7 @@ import (
 	"testing"
 
 	"github.com/wippyai/go-lua/analysis/engine/internal/carrier"
+	"github.com/wippyai/go-lua/analysis/engine/internal/carrier/shape"
 	"github.com/wippyai/go-lua/analysis/engine/internal/facts/support"
 	"github.com/wippyai/go-lua/analysis/engine/internal/guard"
 )
@@ -69,9 +70,22 @@ func measureTransformClosureAllocs(t testing.TB, width int) (float64, float64) {
 			return true
 		},
 	}
-	binding, state, _, composition, _ := bindingState(t, manager, config, whole)
+	binding, _, slot, composition, _ := bindingState(t, manager, config, whole)
+	seedPlan, ok := composition.SealContribution(0, []shape.Slot{slot}, nil)
+	if !ok {
+		t.Fatal("seed contribution plan")
+	}
+	source := carrier.ContributionSource{Slot: slot, Input: 0}
+	carryPlan, ok := composition.SealContribution(1, []shape.Slot{slot}, []carrier.ContributionSource{source})
+	if !ok {
+		t.Fatal("carry contribution plan")
+	}
 	work := newWork(t, composition)
-	seed := binding.Begin(work, state)
+	seedBase, ok := work.BeginContribution(seedPlan, composition.Scope(), nil, whole)
+	if !ok {
+		t.Fatal("seed contribution base")
+	}
+	seed := binding.Begin(work, seedBase.State())
 	if seed == nil {
 		t.Fatal("seed patch")
 	}
@@ -84,7 +98,12 @@ func measureTransformClosureAllocs(t testing.TB, width int) (float64, float64) {
 	if !accepted {
 		t.Fatal("seed accept")
 	}
-	seeded := commit(t, work, state, seedPatch)
+	seedContribution, ok := work.FinishContribution(seedBase, []carrier.Patch{seedPatch})
+	if !ok {
+		t.Fatal("seed contribution finish")
+	}
+	seeded := seedContribution.State()
+	seedPoint := closedPointOf(t, work, seedContribution)
 	static, staticOK := binding.TransformClosure([]carrier.Target{targets[0]})
 	route, routeOK := binding.TransformClosure(targets)
 	if !staticOK || !routeOK {
@@ -95,8 +114,9 @@ func measureTransformClosureAllocs(t testing.TB, width int) (float64, float64) {
 	withStatic := []TransformClosure[uint64, uint64]{static, route}
 	measure := func(closures []TransformClosure[uint64, uint64]) float64 {
 		return testing.AllocsPerRun(20, func() {
+			base, sourceCoverage := carryCoverageFor(t, work, carryPlan, source, seedPoint, whole)
 			patch := binding.Begin(work, seeded)
-			if patch == nil || !patch.TransformClosures(closures, whole, identity) || !patch.Discard() {
+			if patch == nil || !patch.TransformClosures(closures, sourceCoverage, whole, identity) || !patch.Discard() || !work.AbortRuleContribution(base, nil) {
 				panic("transform closure allocation fixture")
 			}
 		})

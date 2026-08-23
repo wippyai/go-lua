@@ -354,6 +354,14 @@ type bindingWork[K scalar.Key, V any] struct {
 	nextPartials []observationGroup
 	spine        []observationCell[V]
 	buckets      map[uint64]int
+	// Exact observation traversal is a Work-local state machine.  Both the
+	// callback adapter and DirectObservation advance this same state; neither
+	// path owns a second partition or emission implementation.
+	observationCursorMode   directObservationMode
+	observationCursorIndex  int
+	observationCursorRoot   carrier.RootHandle
+	observationCursorUnit   carrier.Unit
+	observationCursorFailed bool
 	// scratch and changes belong to the enclosing evaluator's merge/compare
 	// lifecycle, not to one observation generation. Every sole operation
 	// begins with SoleScratch.prepare (which Clear's it); Merge3Under clears
@@ -364,22 +372,27 @@ type bindingWork[K scalar.Key, V any] struct {
 	// Coverage maps are evaluator scratch only. They resolve opaque authored
 	// Targets beside this typed Binding for one fold and are cleared before
 	// the fold returns; no coverage or fact authority is retained here.
-	coverageLeft    map[K]support.Mask
-	coverageRight   map[K]support.Mask
-	coverageOutput  map[K]support.Mask
-	changed         map[K]support.Mask
-	changeRows      []semantic.ContributionChange[K]
-	pointFoldPlanes []semantic.Plane[planeFactor, K, V]
-	pointFoldRows   []pointFoldCoverageRegion
-	pointFoldRuns   []pointFoldRun
-	pointFoldMerge  []pointFoldCoverageRegion
-	pointFoldHeap   []int32
+	coverageLeft              map[K]support.Mask
+	coverageRight             map[K]support.Mask
+	coverageOutput            map[K]support.Mask
+	changed                   map[K]support.Mask
+	changeRows                []semantic.ContributionChange[K]
+	pointFoldPlanes           []semantic.Plane[planeFactor, K, V]
+	pointFoldRows             []pointFoldCoverageRegion
+	pointFoldRuns             []pointFoldRun
+	pointFoldMerge            []pointFoldCoverageRegion
+	pointFoldHeap             []int32
+	pointFoldEffects          map[carrier.LineageToken]support.Mask
+	pointFoldBaselines        map[carrier.LineageToken]support.Mask
+	pointFoldBaselineOperands map[carrier.LineageToken]int
 }
 
 type pointFoldCoverageRegion struct {
 	position int
 	operand  int
 	region   support.Mask
+	lineage  carrier.LineageToken
+	role     carrier.CoverageRole
 }
 
 // pointFoldRun is one operand's coverage rows inside pointFoldRows. Every run
@@ -493,6 +506,12 @@ func (work *bindingWork[K, V]) CloseRootEpoch() {
 	work.pointFoldMerge = nil
 	work.pointFoldRuns = nil
 	work.pointFoldHeap = nil
+	clear(work.pointFoldEffects)
+	work.pointFoldEffects = nil
+	clear(work.pointFoldBaselines)
+	work.pointFoldBaselines = nil
+	clear(work.pointFoldBaselineOperands)
+	work.pointFoldBaselineOperands = nil
 	clear(work.coverageLeft)
 	work.coverageLeft = nil
 	clear(work.coverageRight)
@@ -654,17 +673,26 @@ func (work *bindingWork[K, V]) FoldPointRHSUnder(before, base carrier.RootHandle
 	clear(work.pointFoldRows)
 	work.pointFoldRows = work.pointFoldRows[:0]
 	work.pointFoldRuns = work.pointFoldRuns[:0]
+	if work.pointFoldEffects == nil {
+		work.pointFoldEffects = make(map[carrier.LineageToken]support.Mask)
+	}
+	if work.pointFoldBaselines == nil {
+		work.pointFoldBaselines = make(map[carrier.LineageToken]support.Mask)
+	}
+	if work.pointFoldBaselineOperands == nil {
+		work.pointFoldBaselineOperands = make(map[carrier.LineageToken]int)
+	}
 	appendCoverage := func(operand int, coverage carrier.SlotCoverage, within support.Mask) bool {
 		start := len(work.pointFoldRows)
 		prior := -1
 		for rowIndex := 0; rowIndex < coverage.Count(); rowIndex++ {
 			row, present := coverage.At(rowIndex)
 			descriptor, declared := work.binding.targets[row.Target()]
-			if !present || !declared || descriptor.position <= prior || !row.Region().Valid() || row.Region().Manager() != baseSupport.Manager() || !work.entailsSupport(row.Region(), within) {
+			if !present || !declared || descriptor.position < prior || !row.Region().Valid() || row.Region().Manager() != baseSupport.Manager() || !work.entailsSupport(row.Region(), within) {
 				return false
 			}
 			prior = descriptor.position
-			work.pointFoldRows = append(work.pointFoldRows, pointFoldCoverageRegion{position: descriptor.position, operand: operand, region: row.Region()})
+			work.pointFoldRows = append(work.pointFoldRows, pointFoldCoverageRegion{position: descriptor.position, operand: operand, region: row.Region(), lineage: row.Lineage(), role: row.Role()})
 		}
 		work.pointFoldRuns = append(work.pointFoldRuns, pointFoldRun{next: start, end: len(work.pointFoldRows)})
 		return true
@@ -700,6 +728,9 @@ func (work *bindingWork[K, V]) FoldPointRHSUnder(before, base carrier.RootHandle
 		if len(output) != len(work.pointFoldPlanes) {
 			return false
 		}
+		clear(work.pointFoldEffects)
+		clear(work.pointFoldBaselines)
+		clear(work.pointFoldBaselineOperands)
 		for operand := range output {
 			output[operand] = falseRegion
 		}
@@ -707,15 +738,67 @@ func (work *bindingWork[K, V]) FoldPointRHSUnder(before, base carrier.RootHandle
 			output[0] = baseOutside
 		}
 		for _, position := range work.binding.targetReverse[key] {
+			clear(work.pointFoldEffects)
+			clear(work.pointFoldBaselines)
+			clear(work.pointFoldBaselineOperands)
 			rowIndex := sort.Search(len(work.pointFoldRows), func(index int) bool { return work.pointFoldRows[index].position >= position })
-			for rowIndex < len(work.pointFoldRows) && work.pointFoldRows[rowIndex].position == position {
-				row := work.pointFoldRows[rowIndex]
+			end := rowIndex
+			for end < len(work.pointFoldRows) && work.pointFoldRows[end].position == position {
+				row := work.pointFoldRows[end]
+				if row.lineage.Valid() {
+					var target map[carrier.LineageToken]support.Mask
+					if row.role == carrier.CoverageBaseline {
+						target = work.pointFoldBaselines
+						if _, present := work.pointFoldBaselineOperands[row.lineage]; !present {
+							work.pointFoldBaselineOperands[row.lineage] = row.operand
+						}
+					} else {
+						target = work.pointFoldEffects
+					}
+					priorRegion, present := target[row.lineage]
+					if !present {
+						target[row.lineage] = row.region
+					} else {
+						region, valid := delta.Or(priorRegion, row.region)
+						if !valid {
+							return false
+						}
+						target[row.lineage] = region
+					}
+				}
+				end++
+			}
+			for lineage, region := range work.pointFoldBaselines {
+				operand := work.pointFoldBaselineOperands[lineage]
+				if effect, present := work.pointFoldEffects[lineage]; present {
+					complement, valid := delta.Not(effect)
+					if !valid {
+						return false
+					}
+					region, valid = delta.And(region, complement)
+					if !valid {
+						return false
+					}
+				}
+				if support.Empty(region) {
+					continue
+				}
+				merged, valid := delta.Or(output[operand], region)
+				if !valid {
+					return false
+				}
+				output[operand] = merged
+			}
+			for index := rowIndex; index < end; index++ {
+				row := work.pointFoldRows[index]
+				if row.role == carrier.CoverageBaseline && row.lineage.Valid() {
+					continue
+				}
 				region, valid := delta.Or(output[row.operand], row.region)
 				if !valid {
 					return false
 				}
 				output[row.operand] = region
-				rowIndex++
 			}
 		}
 		return true
@@ -1160,13 +1243,15 @@ func (work *bindingWork[K, V]) contributionCoverage(coverage carrier.SlotCoverag
 }
 
 // CloseContributionUnder is the typed half of every RuleContribution
-// issuance. It proves that the candidate already agrees with its closed
-// surface under split.Right(), then physically drops every root fiber outside
-// that surface before preparing the one final root publication. ReplaceUnder
-// consumes the same carrier-owned split, so typed delta rows are confined to
-// its overlap and support-only growth remains carrier Added evidence. A
-// preview candidate is intentionally never reused: its publisher owns the
-// temporary root and the closed plane receives a fresh normal pending
+// issuance. It physically drops every root fiber outside the canonical closed
+// surface under split.Right() before preparing the one final root publication.
+// A candidate may still carry a stale cell for a target excluded from that
+// surface; CloseContribution is the typed operation that removes such latent
+// payload, so its moved region is not itself a rejection condition.
+// ReplaceUnder consumes the same carrier-owned split, so typed delta rows are
+// confined to its overlap and support-only growth remains carrier Added
+// evidence. A preview candidate is intentionally never reused: its publisher
+// owns the temporary root and the closed plane receives a fresh normal pending
 // publisher.
 func (work *bindingWork[K, V]) CloseContributionUnder(before, input carrier.RootHandle, split support.Split, coverage carrier.SlotCoverage, delta *support.Work) (carrier.ChangeHandle, bool) {
 	if !work.live() || work.binding == nil || work.binding.plane == nil || delta == nil || !delta.Open() || !split.Valid(work.binding.plane.domain.Guards()) {
@@ -1182,25 +1267,26 @@ func (work *bindingWork[K, V]) CloseContributionUnder(before, input carrier.Root
 		return carrier.ChangeHandle{}, false
 	}
 	coverageValid := true
-	closed, moved, ok := work.binding.plane.domain.CloseContribution(candidate, within, func(key K) (support.Mask, bool) {
+	closed, _, ok := work.binding.plane.domain.CloseContribution(candidate, within, func(key K) (support.Mask, bool) {
 		region, present, valid := work.contributionRegionAt(coverage, within, key)
 		coverageValid = coverageValid && valid
 		return region, present && valid
 	}, &work.scratch, delta)
-	// The close reports the exact region it moved inside within. An empty
-	// region is the agreement proof this issuance requires, derived by the one
-	// traversal that performed the close rather than by a second comparison of
-	// its input against its output.
-	if !ok || !coverageValid || !delta.Empty(moved) {
+	// The close's moved region is intentionally not required to be empty: a
+	// carried predecessor may contain latent payload for a target omitted by
+	// canonical coverage, while a typed Patch authors the replacement surface.
+	// The close itself is the one traversal that removes that payload.
+	if !ok || !coverageValid {
 		return carrier.ChangeHandle{}, false
 	}
 	// When the predecessor and candidate name the same immutable root, the
 	// equality proof above also proves that every cell in the replacement
 	// overlap is unchanged.  ReplaceUnder would only rediscover that empty
 	// typed delta while traversing the old and closed FDDs.  Keep the physical
-	// close (it may still erase latent payload outside within), but publish no
-	// Factor/unit evidence.  A preview candidate must still become a normal
-	// pending root, even when the close is semantically whole-plane equal.
+	// close (it may still erase latent payload outside the canonical surface),
+	// but publish no Factor/unit evidence.  A preview candidate must still
+	// become a normal pending root, even when the close is semantically
+	// whole-plane equal.
 	if before == input {
 		_, preview := work.epoch.ResolvePreviewRoot(work.binding.issuer, input)
 		if !preview && work.binding.plane.domain.Same(candidate, closed) {
@@ -1208,10 +1294,11 @@ func (work *bindingWork[K, V]) CloseContributionUnder(before, input carrier.Root
 		}
 		return work.prepareChange(before, carrier.RootHandle{}, closed, true, support.Mask{}, nil, nil, delta)
 	}
-	// The close is allowed to erase only out-of-support payload (or a sparse
-	// Default encoding).  Its published delta is nevertheless derived from the
-	// actual predecessor to the closed final root, rather than inherited from a
-	// staged patch whose publisher named the unclosed preview candidate.
+	// The close may erase stale payload outside the canonical authored surface,
+	// including a carried target omitted by a target-scoped exclusion. Its
+	// published delta is nevertheless derived from the actual predecessor to
+	// the closed final root, rather than inherited from a staged patch whose
+	// publisher named the unclosed preview candidate.
 	work.changes.reset()
 	defer work.changes.reset()
 	report := func(key K, region support.Mask) bool {
@@ -1719,40 +1806,18 @@ func (work *bindingWork[K, V]) clearObservationScratch() {
 	clear(work.spine)
 	work.spine = work.spine[:0]
 	clear(work.buckets)
+	work.observationCursorMode = directObservationDone
+	work.observationCursorIndex = 0
+	work.observationCursorRoot = carrier.RootHandle{}
+	work.observationCursorUnit = carrier.Unit{}
+	work.observationCursorFailed = false
 }
 
 func (work *bindingWork[K, V]) observeExact(input semantic.Plane[planeFactor, K, V], root carrier.RootHandle, unit carrier.Unit, key K, within support.Mask, visit func(carrier.ObservationRow) bool) bool {
-	if !work.partitionKey(input, key, within) {
+	if !work.beginExactObservation(input, root, unit, key, within) {
 		return false
 	}
-	if len(work.pieces) == 0 {
-		return false
-	}
-	// A sole terminal cell already is the complete exact cover. It has no
-	// equal sibling to coalesce, so avoid opening a disposable guard candidate
-	// transaction or building summary buckets on this hot one-key path.
-	if len(work.pieces) == 1 {
-		return work.emitExactPiece(root, unit, work.pieces[0], visit)
-	}
-	// Distinct exact entries require no union construction: the FDD partition
-	// already supplied their disjoint sealed cells in canonical low/high order.
-	// Retain the coalescing path only when equal entries really need a union.
-	if work.exactPiecesDistinct() {
-		for _, piece := range work.pieces {
-			if !work.emitExactPiece(root, unit, piece, visit) {
-				return false
-			}
-		}
-		return true
-	}
-	unions := work.newSupportWork()
-	if unions == nil || !work.seedGroups(unions) || !unions.Seal() {
-		if unions != nil {
-			unions.Discard()
-		}
-		return false
-	}
-	return work.emitGroups(root, unit, visit)
+	return work.emitDirectObservations(visit)
 }
 
 func (work *bindingWork[K, V]) exactPiecesDistinct() bool {
@@ -1772,79 +1837,17 @@ func (work *bindingWork[K, V]) exactPiecesDistinct() bool {
 // declared fold makes the joint partition unobservable, so the whole of
 // within is one region.
 func (work *bindingWork[K, V]) observeDistributiveSummary(input semantic.Plane[planeFactor, K, V], root carrier.RootHandle, unit carrier.Unit, keys []K, within support.Mask, visit func(carrier.ObservationRow) bool) bool {
-	work.resetSpine()
-	cell, count := -1, 0
-	for _, key := range keys {
-		if !work.live() {
-			return false
-		}
-		value, present, valid := work.binding.plane.domain.JoinUnderKey(input, key, within, &work.scratch)
-		if !valid {
-			return false
-		}
-		cell, count = work.appendCell(cell, ObservationEntry[V]{value: value, present: present}), count+1
+	if !work.beginSummaryObservation(input, root, unit, keys, true, within) {
+		return false
 	}
-	clear(work.partials)
-	work.partials = work.partials[:0]
-	work.partials = append(work.partials, observationGroup{cell: cell, count: count, region: within, previous: -1})
-	return work.emitGroups(root, unit, visit)
+	return work.emitDirectObservations(visit)
 }
 
 func (work *bindingWork[K, V]) observeSummary(input semantic.Plane[planeFactor, K, V], root carrier.RootHandle, unit carrier.Unit, keys []K, within support.Mask, visit func(carrier.ObservationRow) bool) bool {
-	// A declared summary of constant (including absent) keys has exactly one
-	// raw ordered sequence for all of within. The sealed empty projection is
-	// the degenerate member of that class: it declares no key, so its single
-	// sequence is empty. Neither needs pairwise intersections or a candidate
-	// support transaction; retain that work for the first genuinely branched
-	// declared key.
-	work.resetSpine()
-	constant := true
-	cell, count := -1, 0
-	for _, key := range keys {
-		if !work.live() {
-			return false
-		}
-		if !work.partitionKey(input, key, within) {
-			return false
-		}
-		if len(work.pieces) != 1 {
-			constant = false
-			break
-		}
-		cell, count = work.appendCell(cell, work.pieces[0].entry), count+1
-	}
-	if constant {
-		clear(work.partials)
-		work.partials = work.partials[:0]
-		work.partials = append(work.partials, observationGroup{cell: cell, count: count, region: within, previous: -1})
-		return work.emitGroups(root, unit, visit)
-	}
-	// The preliminary constant probe intentionally avoids a second semantic
-	// authority. On a branched summary, restart the existing exact grouping
-	// algorithm from its first declared key rather than combining a partial
-	// prefix with a different traversal state.
-	unions := work.newSupportWork()
-	if unions == nil || !work.partitionKey(input, keys[0], within) || !work.seedGroups(unions) {
-		if unions != nil {
-			unions.Discard()
-		}
+	if !work.beginSummaryObservation(input, root, unit, keys, false, within) {
 		return false
 	}
-	for _, key := range keys[1:] {
-		if !work.live() {
-			unions.Discard()
-			return false
-		}
-		if !work.partitionKey(input, key, within) || !work.extendGroups(unions) {
-			unions.Discard()
-			return false
-		}
-	}
-	if !unions.Seal() {
-		unions.Discard()
-		return false
-	}
-	return work.emitGroups(root, unit, visit)
+	return work.emitDirectObservations(visit)
 }
 
 // partitionKey is the only read of a declared typed key. semantic.PartitionKey
@@ -2023,32 +2026,40 @@ func (work *bindingWork[K, V]) emitGroups(root carrier.RootHandle, unit carrier.
 		return false
 	}
 	for _, group := range work.partials {
-		if !work.live() {
-			return false
-		}
-		if work.nextObservation == ^uint64(0) || !group.region.Valid() {
-			return false
-		}
-		first := len(work.entries)
-		if !work.appendSequence(group.cell, group.count) {
-			return false
-		}
-		work.nextObservation++
-		id := work.nextObservation
-		handle, ok := work.binding.issuer.IssueObservation(work.observations, work.generation, id)
+		row, ok := work.emitGroup(root, unit, group)
 		if !ok {
 			return false
 		}
-		row, ok := work.observations.Row(handle, group.region)
-		if !ok {
-			return false
-		}
-		work.records = append(work.records, observationRecord{root: root, unit: unit, region: group.region, first: first, count: group.count})
 		if !visit(row) {
 			return false
 		}
 	}
 	return true
+}
+
+// emitGroup is the callback-free emission authority for one grouped
+// observation.  ObserveUnder's summary adapter and the exact cursor both use
+// this constructor; only the former invokes the caller visitor.
+func (work *bindingWork[K, V]) emitGroup(root carrier.RootHandle, unit carrier.Unit, group observationGroup) (carrier.ObservationRow, bool) {
+	if !work.observationLive || !work.live() || work.nextObservation == ^uint64(0) || !group.region.Valid() {
+		return carrier.ObservationRow{}, false
+	}
+	first := len(work.entries)
+	if !work.appendSequence(group.cell, group.count) {
+		return carrier.ObservationRow{}, false
+	}
+	work.nextObservation++
+	id := work.nextObservation
+	handle, ok := work.binding.issuer.IssueObservation(work.observations, work.generation, id)
+	if !ok {
+		return carrier.ObservationRow{}, false
+	}
+	row, ok := work.observations.Row(handle, group.region)
+	if !ok {
+		return carrier.ObservationRow{}, false
+	}
+	work.records = append(work.records, observationRecord{root: root, unit: unit, region: group.region, first: first, count: group.count})
+	return row, true
 }
 
 // appendSequence materializes one group's declared-order sequence into the
@@ -2077,9 +2088,9 @@ func (work *bindingWork[K, V]) appendSequence(cell, count int) bool {
 	return true
 }
 
-func (work *bindingWork[K, V]) emitExactPiece(root carrier.RootHandle, unit carrier.Unit, piece observationPiece[V], visit func(carrier.ObservationRow) bool) bool {
-	if !work.observationLive || work.nextObservation == ^uint64(0) || !piece.region.Valid() {
-		return false
+func (work *bindingWork[K, V]) emitExactPiece(root carrier.RootHandle, unit carrier.Unit, piece observationPiece[V]) (carrier.ObservationRow, bool) {
+	if !work.observationLive || !work.live() || work.nextObservation == ^uint64(0) || !piece.region.Valid() {
+		return carrier.ObservationRow{}, false
 	}
 	first := len(work.entries)
 	work.entries = append(work.entries, piece.entry)
@@ -2087,14 +2098,14 @@ func (work *bindingWork[K, V]) emitExactPiece(root carrier.RootHandle, unit carr
 	id := work.nextObservation
 	handle, ok := work.binding.issuer.IssueObservation(work.observations, work.generation, id)
 	if !ok {
-		return false
+		return carrier.ObservationRow{}, false
 	}
 	row, ok := work.observations.Row(handle, piece.region)
 	if !ok {
-		return false
+		return carrier.ObservationRow{}, false
 	}
 	work.records = append(work.records, observationRecord{root: root, unit: unit, region: piece.region, first: first, count: 1})
-	return visit(row)
+	return row, true
 }
 
 // ResolveObservation returns the generation-bound typed entry sequence for
