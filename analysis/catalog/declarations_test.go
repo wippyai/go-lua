@@ -5,6 +5,7 @@ import (
 
 	"github.com/wippyai/go-lua/analysis/schema"
 	"github.com/wippyai/go-lua/analysis/schema/axis"
+	"github.com/wippyai/go-lua/analysis/schema/seal"
 	"github.com/wippyai/go-lua/internal/framing"
 )
 
@@ -40,7 +41,7 @@ func (surface declarationLawSurface) Kind() schema.SurfaceKind { return surface.
 
 func (surface declarationLawSurface) Entries() []schema.Entry { return surface.entries }
 
-func (surface declarationLawSurface) Seal(schema.View, schema.Sealed) schema.SealFailure {
+func (surface declarationLawSurface) Seal(seal.View, seal.Sealed) schema.SealFailure {
 	return schema.SealFailure{}
 }
 
