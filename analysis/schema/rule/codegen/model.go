@@ -481,3 +481,68 @@ func cloneRelationDerivation(derivation RelationDerivation) RelationDerivation {
 	derivation.staticAxes = append([]Axis(nil), derivation.staticAxes...)
 	return derivation
 }
+
+// ReducerArgumentRole names what one position of a reducer's direct call
+// carries. The three roles are the whole vocabulary: there is deliberately no
+// role for an owner schema, a route plan, a projection, or any other sealed
+// per-rule datum.
+type ReducerArgumentRole uint8
+
+const (
+	// ReducerArgumentCandidate is the optional owner-issued candidate carrier,
+	// which always precedes the inputs when present.
+	ReducerArgumentCandidate ReducerArgumentRole = iota + 1
+	// ReducerArgumentTag is the tag carrier of a tagged input. It is how the
+	// fold learns which member of a selection it was handed - the route member's
+	// own carrier value - without the engine passing a projection or an ordinal.
+	ReducerArgumentTag
+	// ReducerArgumentFact is one declared input's fact carrier, delivered under
+	// that input's sealed read contract.
+	ReducerArgumentFact
+)
+
+// ReducerArgument is one position of a reducer's derived direct-call signature.
+type ReducerArgument struct {
+	Role  ReducerArgumentRole
+	Type  memberdefinition.GoType
+	Input int
+}
+
+// Arguments derives the complete parameter vector of this reducer's direct
+// call. It is the one statement of the call shape: the emitter emits this
+// vector, and the laws that fence the shape read this vector, so an emitter
+// cannot drift from the contract by construction.
+//
+// The vector is carrier values only - the optional candidate carrier, then for
+// each declared input its tag carrier when the input is tagged followed by its
+// fact carrier. Nothing else is ever a parameter. In particular the owner
+// schema, the derived route plan, and the projections a fold consults are NOT
+// passed: they are the sealed state of the installed Family that calls this
+// reducer, bound once when the owner installs it and immutable thereafter.
+// That is what keeps this signature from growing plumbing - a fold that needs
+// more owner knowledge takes it from its Family, and the call shape is a
+// function of the declaration alone.
+func (call ReducerCall) Arguments() []ReducerArgument {
+	arguments := make([]ReducerArgument, 0, len(call.Inputs)*2+1)
+	if call.CandidatePresent {
+		arguments = append(arguments, ReducerArgument{Role: ReducerArgumentCandidate, Type: call.Candidate, Input: -1})
+	}
+	for index, input := range call.Inputs {
+		if input.Tagged {
+			arguments = append(arguments, ReducerArgument{Role: ReducerArgumentTag, Type: input.Tag, Input: index})
+		}
+		arguments = append(arguments, ReducerArgument{Role: ReducerArgumentFact, Type: input.Type, Input: index})
+	}
+	return arguments
+}
+
+// Results derives the complete result vector: the declared output carriers in
+// slot order, followed by the sealed disposition. A reducer concludes exactly
+// one disposition and it is always the last result.
+func (call ReducerCall) Results() []memberdefinition.GoType {
+	results := make([]memberdefinition.GoType, 0, len(call.Outputs)+1)
+	for _, output := range call.Outputs {
+		results = append(results, output.ValueType())
+	}
+	return append(results, call.Outcome)
+}
