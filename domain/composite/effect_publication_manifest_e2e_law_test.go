@@ -137,7 +137,7 @@ func assertManifestPublicationPayloadShared(t testing.TB, record LinkInputs, bou
 			t.Fatal("decode publication Placement result")
 		}
 		rows := decodeFormalPlacementRows(t, result)
-		if got := rows[payloadID]; got != placementdomain.SharedHeap {
+		if got := rows[payloadID]; got.Class != placementdomain.SharedHeap {
 			t.Fatalf("published payload placement = %s, want SharedHeap", got)
 		}
 		return

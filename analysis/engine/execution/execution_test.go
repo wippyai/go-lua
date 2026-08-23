@@ -1,6 +1,7 @@
 package execution
 
 import (
+	"github.com/wippyai/go-lua/analysis/schema/structure"
 	"sync"
 	"testing"
 
@@ -166,7 +167,7 @@ func TestExecutionReadStatusAndIndependentWriteTransaction(t *testing.T) {
 	if !write.Close(ticket, &scratch) {
 		t.Fatal("write close")
 	}
-	if !run.Submit(&ticket, Concrete) {
+	if !run.Submit(&ticket, structure.Concrete) {
 		t.Fatal("submit")
 	}
 	if _, issued := issueExecutionRow(run, fixture.work, fixture.state, fixture.whole, []carrier.State{fixture.state}, 1, 1, 17, 3); issued {
@@ -174,7 +175,7 @@ func TestExecutionReadStatusAndIndependentWriteTransaction(t *testing.T) {
 	}
 	patches := make([]carrier.Patch, 1)
 	disposition, count, ok := run.Drain(patches)
-	if !ok || disposition != Concrete || count != 1 {
+	if !ok || disposition != structure.Concrete || count != 1 {
 		t.Fatal("drain")
 	}
 	if _, _, drained := run.Drain(patches); drained {
@@ -226,10 +227,10 @@ func TestExecutionRejectsForeignRunAndAllowsZeroInputSource(t *testing.T) {
 	if !write.Close(ticket, &scratch) {
 		t.Fatal("source close")
 	}
-	if !run.Submit(&ticket, Concrete) {
+	if !run.Submit(&ticket, structure.Concrete) {
 		t.Fatal("source submit")
 	}
-	if disposition, count, ok := run.Drain(make([]carrier.Patch, 1)); !ok || disposition != Concrete || count != 1 {
+	if disposition, count, ok := run.Drain(make([]carrier.Patch, 1)); !ok || disposition != structure.Concrete || count != 1 {
 		t.Fatal("source drain")
 	}
 
@@ -256,7 +257,7 @@ func TestExecutionSubmitRefuseAndOpaqueFailClosed(t *testing.T) {
 	if !ok {
 		t.Fatal("write axis")
 	}
-	for _, outcome := range []Outcome{Refuse, AuthenticatedOpaque} {
+	for _, outcome := range []structure.ReductionOutcome{structure.Refuse, structure.AuthenticatedOpaque} {
 		ticket, issued := issueExecutionRow(run, fixture.work, fixture.state, fixture.whole, nil, 1, 1, 31, 1)
 		if !issued {
 			t.Fatal("issue")
@@ -323,11 +324,11 @@ func TestExecutionMultiInputAndHeterogeneousOutputSlots(t *testing.T) {
 		t.Fatal("port read lifecycle")
 	}
 	var writeScratch Scratch[uint64, uint64]
-	if !write.Stage(ticket, &writeScratch, whole, 19) || !write.Close(ticket, &writeScratch) || !run.Submit(&ticket, Concrete) {
+	if !write.Stage(ticket, &writeScratch, whole, 19) || !write.Close(ticket, &writeScratch) || !run.Submit(&ticket, structure.Concrete) {
 		t.Fatal("heterogeneous output lifecycle")
 	}
 	patches := make([]carrier.Patch, 1)
-	if disposition, count, drained := run.Drain(patches); !drained || disposition != Concrete || count != 1 {
+	if disposition, count, drained := run.Drain(patches); !drained || disposition != structure.Concrete || count != 1 {
 		t.Fatal("pair drain")
 	}
 	if !work.Discard(patches[0]) {
@@ -354,13 +355,13 @@ func TestExecutionOutputSlotsAreAtomic(t *testing.T) {
 	if !first.Stage(ticket, &one, fixture.whole, 2) || !first.Close(ticket, &one) {
 		t.Fatal("first output")
 	}
-	if run.Submit(&ticket, Concrete) {
+	if run.Submit(&ticket, structure.Concrete) {
 		t.Fatal("partial output accepted")
 	}
 	if ticket.Valid() {
 		t.Fatal("partial output ticket remained live")
 	}
-	if disposition, count, drained := run.Drain(nil); !drained || disposition != Refuse || count != 0 {
+	if disposition, count, drained := run.Drain(nil); !drained || disposition != structure.Refuse || count != 0 {
 		t.Fatal("partial output drain")
 	}
 
@@ -369,11 +370,11 @@ func TestExecutionOutputSlotsAreAtomic(t *testing.T) {
 		t.Fatal("second issue")
 	}
 	var left, right Scratch[uint64, uint64]
-	if !first.Stage(ticket, &left, fixture.whole, 3) || !first.Close(ticket, &left) || !second.Stage(ticket, &right, fixture.whole, 4) || !second.Close(ticket, &right) || !run.Submit(&ticket, Concrete) {
+	if !first.Stage(ticket, &left, fixture.whole, 3) || !first.Close(ticket, &left) || !second.Stage(ticket, &right, fixture.whole, 4) || !second.Close(ticket, &right) || !run.Submit(&ticket, structure.Concrete) {
 		t.Fatal("two output submit")
 	}
 	patches := make([]carrier.Patch, 2)
-	if disposition, count, drained := run.Drain(patches); !drained || disposition != Concrete || count != 2 {
+	if disposition, count, drained := run.Drain(patches); !drained || disposition != structure.Concrete || count != 2 {
 		t.Fatal("two output drain")
 	}
 	for _, patch := range patches {
@@ -386,7 +387,7 @@ func TestExecutionOutputSlotsAreAtomic(t *testing.T) {
 func TestExecutionPreservesEveryOutcomeAcrossSubmitDrain(t *testing.T) {
 	fixture := newExecutionFixture(t)
 	run := NewRun(0, 0)
-	for _, want := range []Outcome{Refuse, NoSelection, NoCandidate, AuthenticatedOpaque} {
+	for _, want := range []structure.ReductionOutcome{structure.Refuse, structure.NoSelection, structure.NoCandidate, structure.AuthenticatedOpaque} {
 		ticket, ok := issueExecutionRow(run, fixture.work, fixture.state, fixture.whole, nil, 0, 5, 61, uint64(want)+1)
 		if !ok || !run.Submit(&ticket, want) {
 			t.Fatalf("submit outcome %d", want)
@@ -407,12 +408,12 @@ func TestExecutionPreservesEveryOutcomeAcrossSubmitDrain(t *testing.T) {
 		t.Fatal("concrete issue")
 	}
 	var scratch Scratch[uint64, uint64]
-	if !write.Stage(ticket, &scratch, fixture.whole, 22) || !write.Close(ticket, &scratch) || !run.Submit(&ticket, Concrete) {
+	if !write.Stage(ticket, &scratch, fixture.whole, 22) || !write.Close(ticket, &scratch) || !run.Submit(&ticket, structure.Concrete) {
 		t.Fatal("concrete submit")
 	}
 	destination := make([]carrier.Patch, 1)
 	got, count, drained := run.Drain(destination)
-	if !drained || got != Concrete || count != 1 {
+	if !drained || got != structure.Concrete || count != 1 {
 		t.Fatal("concrete drain")
 	}
 	if !fixture.work.Discard(destination[0]) {
@@ -482,7 +483,7 @@ func TestExecutionRejectsGuardRegionOutsideInvocationSupport(t *testing.T) {
 	if write.Stage(ticket, &scratch, off, 2) {
 		t.Fatal("outside guard region accepted")
 	}
-	if !write.Stage(ticket, &scratch, on, 2) || !write.Close(ticket, &scratch) || !run.Submit(&ticket, Concrete) {
+	if !write.Stage(ticket, &scratch, on, 2) || !write.Close(ticket, &scratch) || !run.Submit(&ticket, structure.Concrete) {
 		t.Fatal("in-support stage")
 	}
 	destination := make([]carrier.Patch, 1)
@@ -537,7 +538,7 @@ func TestExecutionExecutorUsesOpaqueFrameAndRunDrain(t *testing.T) {
 		t.Fatal("opaque frame")
 	}
 	result, executed := executor.Execute(frame, ticket)
-	if !executed || !result.Valid() || result.Outcome() != NoCandidate || result.Count() != 0 {
+	if !executed || !result.Valid() || result.Outcome() != structure.NoCandidate || result.Count() != 0 {
 		t.Fatalf("opaque execution result = %+v/%t", result, executed)
 	}
 	if _, _, drained := run.Consume(); !drained {

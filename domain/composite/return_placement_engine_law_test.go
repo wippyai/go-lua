@@ -91,7 +91,7 @@ func TestReturnPlacementPublishesOwnedHeapThroughTheCompositeEngine(t *testing.T
 					valueByPoint[publication.Site.Point] = publication
 				}
 			}
-			joined := placementdomain.Bottom
+			joined := placementdomain.BottomFact()
 			for _, target := range returnTargets {
 				publication, publicationOK := byPoint[target.point]
 				if !publicationOK {
@@ -112,7 +112,7 @@ func TestReturnPlacementPublishesOwnedHeapThroughTheCompositeEngine(t *testing.T
 				if result.AllocationCount() != len(allocationIDs) {
 					t.Fatalf("return escape point %s allocation denominator=%d, want Heap denominator=%d", target.point, result.AllocationCount(), len(allocationIDs))
 				}
-				rows := placementRowsForReturnLaw(t, result)
+				rows := placementFactsForReturnLaw(t, result)
 				if len(rows) != len(allocationIDs) {
 					t.Fatalf("return escape point %s decoded rows=%d, want Heap denominator=%d", target.point, len(rows), len(allocationIDs))
 				}
@@ -122,17 +122,19 @@ func TestReturnPlacementPublishesOwnedHeapThroughTheCompositeEngine(t *testing.T
 					}
 				}
 				got := rows[returnedID]
-				if got != placementdomain.OwnedHeap {
+				want := placementdomain.Fact{Class: placementdomain.OwnedHeap, RetainEscape: placementdomain.EvidenceProven}
+				if got != want {
 					valueState := returnBoundaryValueStateForLaw(t, summaryLayout, &view, plan, valueByPoint[target.point], record.ValueSchema, target.coordinate)
-					t.Fatalf("return escape point %s allocation %s=%s, want exact OwnedHeap demand (boundary value %s)", target.point, returnedID, got, valueState)
+					t.Fatalf("return escape point %s allocation %s=%s, want exact %s demand (boundary value %s)", target.point, returnedID, got, want, valueState)
 				}
-				if !placementdomain.LessOrEq(joined, got) {
+				if !placementdomain.LessOrEqFact(joined, got) {
 					t.Fatalf("alternate return join descended from %s to %s at point %s", joined, got, target.point)
 				}
-				joined = placementdomain.Join(joined, got)
+				joined = placementdomain.JoinFact(joined, got)
 			}
-			if joined != placementdomain.OwnedHeap {
-				t.Fatalf("joined return demand=%s, want OwnedHeap", joined)
+			want := placementdomain.Fact{Class: placementdomain.OwnedHeap, RetainEscape: placementdomain.EvidenceProven}
+			if joined != want {
+				t.Fatalf("joined return demand=%s, want %s", joined, want)
 			}
 		})
 	}
@@ -200,9 +202,9 @@ func heapAllocationIDsForReturnLaw(t testing.TB, record LinkInputs) map[identity
 	return ids
 }
 
-func placementRowsForReturnLaw(t testing.TB, result placementdomain.SummaryResult) map[identity.ContentID]placementdomain.Placement {
+func placementFactsForReturnLaw(t testing.TB, result placementdomain.SummaryResult) map[identity.ContentID]placementdomain.Fact {
 	t.Helper()
-	rows := make(map[identity.ContentID]placementdomain.Placement, result.AllocationCount())
+	rows := make(map[identity.ContentID]placementdomain.Fact, result.AllocationCount())
 	iterator := result.Allocations()
 	for {
 		allocation, next := iterator.Next()
@@ -216,15 +218,15 @@ func placementRowsForReturnLaw(t testing.TB, result placementdomain.SummaryResul
 		if !presentOK || !present {
 			t.Fatal("typed Placement allocation row has no published class")
 		}
-		class, decodedOK := allocation.Placement()
+		fact, decodedOK := allocation.Fact()
 		if !decodedOK {
-			t.Fatal("typed Placement allocation row has no class")
+			t.Fatal("typed Placement allocation row has no canonical fact")
 		}
 		id := allocation.AllocationID()
 		if _, duplicate := rows[id]; duplicate {
 			t.Fatalf("typed Placement allocation row %s is duplicated", id)
 		}
-		rows[id] = class
+		rows[id] = fact
 	}
 	return rows
 }

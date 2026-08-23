@@ -10,6 +10,8 @@ import (
 	"github.com/wippyai/go-lua/analysis/schema/observation"
 	"github.com/wippyai/go-lua/analysis/schema/query"
 	"github.com/wippyai/go-lua/analysis/schema/rule"
+	ruleplan "github.com/wippyai/go-lua/analysis/schema/rule/plan"
+	"github.com/wippyai/go-lua/analysis/schema/seal"
 	"github.com/wippyai/go-lua/analysis/schema/structure"
 	"github.com/wippyai/go-lua/analysis/schema/vocabulary"
 )
@@ -18,7 +20,7 @@ type catalog struct {
 	// The fields above and below are one immutable declaration state. The
 	// Compilation handle below points directly at this object; no nested state
 	// mirror or second declaration projection is retained.
-	sealed            *schema.Schema
+	sealed            *seal.Schema
 	failure           schema.SealFailure
 	templates         []*rule.Template
 	ruleContributors  []RuleContributor[principals, authorities]
@@ -147,6 +149,16 @@ func (compilation Compilation) Publication() (analysiscatalog.Publication, bool)
 	return compilation.catalog.declarations.Publication()
 }
 
+// RulePlans returns the single post-seal Rule projection retained by this
+// compilation. Runtime construction consumes these dense rows directly; it
+// does not reopen the declaration schema or reconstruct rule geometry.
+func (compilation Compilation) RulePlans() (ruleplan.Catalog, bool) {
+	if !compilation.Available() || compilation.catalog == nil {
+		return ruleplan.Catalog{}, false
+	}
+	return compilation.catalog.declarations.RulePlans()
+}
+
 // Build seals one independent concrete analyzer compilation. The caller owns
 // its lifetime; this package retains no compilation cache.
 func Build() (Compilation, bool) {
@@ -199,7 +211,7 @@ func Build() (Compilation, bool) {
 	if !state.diagnostics.Available() {
 		return Compilation{}, false
 	}
-	collections, collectionsOK := diagnosticCollectionDirectory(state.diagnostics, observationIssuance(state), queryIssuance(state))
+	collections, collectionsOK := diagnosticCollectionDirectory(state.diagnostics, observationIssuance(state), queryIssuance(state), state)
 	if !collectionsOK {
 		return Compilation{}, false
 	}

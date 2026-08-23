@@ -5,6 +5,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/program/target/contract"
 	"github.com/wippyai/go-lua/analysis/schema"
 	"github.com/wippyai/go-lua/analysis/schema/executioncontext"
+	"github.com/wippyai/go-lua/analysis/schema/modulecomposition"
 	"github.com/wippyai/go-lua/analysis/schema/programmount"
 	"github.com/wippyai/go-lua/analysis/schema/structure"
 	calldomain "github.com/wippyai/go-lua/domain/call"
@@ -23,6 +24,7 @@ import (
 	placementowner "github.com/wippyai/go-lua/domain/placement/owner"
 	placementsuspension "github.com/wippyai/go-lua/domain/placement/suspension"
 	staticdomain "github.com/wippyai/go-lua/domain/static"
+	staticowner "github.com/wippyai/go-lua/domain/static/owner"
 	valuedomain "github.com/wippyai/go-lua/domain/value"
 	valueowner "github.com/wippyai/go-lua/domain/value/owner"
 )
@@ -31,18 +33,19 @@ import (
 // declaration surface's P parameter, so a rule's Declare hook receives its
 // owners already typed and never asserts.
 type principals struct {
-	value     *valueowner.SchemaFragment
-	call      *callowner.SchemaFragment
-	heap      *heapowner.SchemaFragment
-	placement *placementowner.SchemaFragment
-	context   *contextowner.SchemaFragment
-	evidence  *placementsuspension.EvidenceFactorFragment
-	pack      *packowner.SchemaFragment
-	effect    *effectowner.SchemaFragment
+	value      *valueowner.SchemaFragment
+	staticType *staticowner.SchemaFragment
+	call       *callowner.SchemaFragment
+	heap       *heapowner.SchemaFragment
+	placement  *placementowner.SchemaFragment
+	context    *contextowner.SchemaFragment
+	evidence   *placementsuspension.EvidenceFactorFragment
+	pack       *packowner.SchemaFragment
+	effect     *effectowner.SchemaFragment
 }
 
 func (set principals) available() bool {
-	return set.value != nil && set.call != nil && set.heap != nil && set.placement != nil && set.context != nil && set.evidence != nil && set.pack != nil && set.effect != nil
+	return set.value != nil && set.staticType != nil && set.call != nil && set.heap != nil && set.placement != nil && set.context != nil && set.evidence != nil && set.pack != nil && set.effect != nil
 }
 
 // The principal getters are the record's read surface. An owning domain names
@@ -50,6 +53,8 @@ func (set principals) available() bool {
 // a rule reaches its cold owners without this record's shape reaching the
 // domain.
 func (set principals) ValuePrincipal() *valueowner.SchemaFragment { return set.value }
+
+func (set principals) StaticTypePrincipal() *staticowner.SchemaFragment { return set.staticType }
 
 func (set principals) CallPrincipal() *callowner.SchemaFragment { return set.call }
 
@@ -74,6 +79,8 @@ func (set principals) writes(key schema.Key) bool {
 	switch key {
 	case axisKeyValue:
 		return set.value != nil
+	case axisKeyStaticType:
+		return set.staticType != nil
 	case axisKeyCall:
 		return set.call != nil
 	case axisKeyHeap:
@@ -97,14 +104,15 @@ func (set principals) writes(key schema.Key) bool {
 // A parameter and carries every already-sealed authority a hot rule binds
 // against; no runtime policy or live capability enters through it.
 type authorities struct {
-	value     *valueowner.HotOwner
-	call      *callowner.HotOwner
-	heap      *heapowner.HotOwner
-	placement *placementowner.HotOwner
-	context   *contextowner.HotOwner
-	evidence  *placementsuspension.EvidenceOwner
-	pack      *packowner.HotOwner
-	effect    *effectowner.HotOwner
+	value      *valueowner.HotOwner
+	staticType *staticowner.HotOwner
+	call       *callowner.HotOwner
+	heap       *heapowner.HotOwner
+	placement  *placementowner.HotOwner
+	context    *contextowner.HotOwner
+	evidence   *placementsuspension.EvidenceOwner
+	pack       *packowner.HotOwner
+	effect     *effectowner.HotOwner
 
 	valueSchema     *valuedomain.Schema
 	heapSchema      heapdomain.Schema
@@ -114,6 +122,7 @@ type authorities struct {
 	// derived by the mount phase from the exact Link directory and mounted Heap;
 	// callers never supply a contextual directory or schema alongside inputs.
 	contextSchema contextdomain.Schema
+	composition   modulecomposition.Composition
 	topology      *heapindex.Topology
 	allocations   *allocationcatalog.Catalog
 	// targetContract is the exact immutable Target authority retained by the
@@ -123,9 +132,9 @@ type authorities struct {
 }
 
 func (set authorities) available() bool {
-	return set.value != nil && set.call != nil && set.heap != nil && set.placement != nil && set.context != nil && set.evidence != nil && set.pack != nil && set.effect != nil &&
+	return set.value != nil && set.staticType != nil && set.call != nil && set.heap != nil && set.placement != nil && set.context != nil && set.evidence != nil && set.pack != nil && set.effect != nil &&
 		set.valueSchema != nil && set.heapSchema.Valid() && set.placementSchema.Valid() && set.packSchema != nil &&
-		set.contextSchema.Valid() && set.contextSchema.Heap() == set.heapSchema &&
+		set.contextSchema.Valid() && set.contextSchema.Heap() == set.heapSchema && set.composition.Available() && set.composition.LinkID() == set.contextSchema.Directory().LinkID() &&
 		set.topology != nil && set.allocations != nil && set.targetContract != nil
 }
 
@@ -135,6 +144,8 @@ func (set authorities) writes(key schema.Key) bool {
 	switch key {
 	case axisKeyValue:
 		return set.value != nil
+	case axisKeyStaticType:
+		return set.staticType != nil
 	case axisKeyCall:
 		return set.call != nil
 	case axisKeyHeap:
@@ -159,6 +170,8 @@ func (set authorities) writes(key schema.Key) bool {
 // interface, so a rule reaches its sealed authorities without this record's
 // shape reaching the domain.
 func (set authorities) ValueAuthority() *valueowner.HotOwner { return set.value }
+
+func (set authorities) StaticTypeAuthority() *staticowner.HotOwner { return set.staticType }
 
 func (set authorities) CallAuthority() *callowner.HotOwner { return set.call }
 
@@ -191,6 +204,13 @@ func (set authorities) ContextSchema() contextdomain.Schema {
 	return set.contextSchema
 }
 
+func (set authorities) ModuleComposition() modulecomposition.Composition {
+	if !set.composition.Available() {
+		return modulecomposition.Composition{}
+	}
+	return set.composition
+}
+
 func (set authorities) Topology() *heapindex.Topology { return set.topology }
 
 func (set authorities) Allocations() *allocationcatalog.Catalog { return set.allocations }
@@ -219,7 +239,6 @@ type LinkInputs struct {
 	// mounted authority, and a mounting axis that seals over it names it in its
 	// own need interface.
 	StaticAuthority *staticdomain.Authority
-
 	ValueSchema     *valuedomain.Schema
 	CallAlgebra     *calldomain.Algebra
 	HeapSchema      heapdomain.Schema
@@ -240,6 +259,10 @@ type LinkInputs struct {
 	// never a caller input: derive seals it from Source.ContextDirectory and
 	// the mounted Heap schema after all factor axes have sealed.
 	contextSchema contextdomain.Schema
+	// composition is derived once after all mounted authorities seal. Domain
+	// rules consume it during binding and publication later uses this exact
+	// immutable owner; callers cannot inject or rebuild it.
+	composition modulecomposition.Composition
 	// These are mount-phase derivations. They remain private to the neutral
 	// LinkInputs record and are projected into typed authorities only after all
 	// factor axes have sealed.
@@ -273,7 +296,7 @@ func (inputs LinkInputs) available() bool {
 	return inputs.mountable() && inputs.ValueSchema != nil && inputs.CallAlgebra != nil && inputs.CallAlgebra.Valid() &&
 		inputs.HeapSchema.Valid() && inputs.PlacementSchema.Valid() && inputs.PackSchema != nil &&
 		inputs.EffectAlgebra != nil && inputs.EffectAlgebra.Valid() && inputs.topology != nil &&
-		inputs.contextAuthorityAvailable() &&
+		inputs.contextAuthorityAvailable() && inputs.composition.Available() && inputs.composition.LinkID() == inputs.Source.ContentID() &&
 		inputs.targetContract != nil && mountedActualsComplete(inputs.CallAlgebra, inputs.PackSchema)
 }
 

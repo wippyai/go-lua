@@ -245,7 +245,7 @@ type formalAllocationRoot struct {
 // intentional: the first three-actual call is formal.owned and the second is
 // formal.shared. Call support is checked separately above as a may-envelope;
 // these expectations are read only from the selected solve points.
-func formalPlacementExpectations(t testing.TB, record LinkInputs, invocations []calldomain.MountedCall) map[identity.ContentID]map[identity.ContentID]placementdomain.Placement {
+func formalPlacementExpectations(t testing.TB, record LinkInputs, invocations []calldomain.MountedCall) map[identity.ContentID]map[identity.ContentID]placementdomain.Fact {
 	t.Helper()
 	if len(invocations) != 2 {
 		t.Fatalf("formal placement expectation invocations = %d, want two authored calls", len(invocations))
@@ -297,7 +297,7 @@ func formalPlacementExpectations(t testing.TB, record LinkInputs, invocations []
 		}
 	}
 
-	result := make(map[identity.ContentID]map[identity.ContentID]placementdomain.Placement, len(invocations))
+	result := make(map[identity.ContentID]map[identity.ContentID]placementdomain.Fact, len(invocations))
 	for invocationIndex, invocation := range invocations {
 		point := formalCallEffectPoint(t, record, invocation)
 		if _, duplicate := result[point]; duplicate {
@@ -305,29 +305,35 @@ func formalPlacementExpectations(t testing.TB, record LinkInputs, invocations []
 		}
 		// All six argument roots are already allocated before either call. The
 		// first call selects owned's retain/store row; the second selects
-		// shared's send/export/opaque row. An untouched actual must retain the
-		// allocation seed's Stack placement at both cuts.
-		classes := []placementdomain.Placement{
-			placementdomain.OwnedHeap, placementdomain.OwnedHeap, placementdomain.Stack,
+		// shared's send/export/opaque row. An untouched actual preserves the
+		// allocation seed's Stack/Refuted fact at both cuts.
+		facts := []placementdomain.Fact{
+			{Class: placementdomain.OwnedHeap, RetainEscape: placementdomain.EvidenceProven},
+			{Class: placementdomain.OwnedHeap, RetainEscape: placementdomain.EvidenceProven},
+			{Class: placementdomain.Stack, RetainEscape: placementdomain.EvidenceRefuted},
 		}
 		if invocationIndex == 1 {
-			classes = []placementdomain.Placement{
-				placementdomain.SharedHeap, placementdomain.SharedHeap, placementdomain.SharedHeap,
+			facts = []placementdomain.Fact{
+				{Class: placementdomain.SharedHeap, RetainEscape: placementdomain.EvidenceProven},
+				{Class: placementdomain.SharedHeap, RetainEscape: placementdomain.EvidenceProven},
+				{Class: placementdomain.SharedHeap, RetainEscape: placementdomain.EvidenceProven},
 			}
 		}
-		expected := make(map[identity.ContentID]placementdomain.Placement, len(byFormalRoot))
+		expected := make(map[identity.ContentID]placementdomain.Fact, len(byFormalRoot))
 		for rootID := range byFormalRoot {
-			expected[rootID] = placementdomain.Stack
+			expected[rootID] = placementdomain.Fact{Class: placementdomain.Stack, RetainEscape: placementdomain.EvidenceRefuted}
 		}
 		for prior := 0; prior <= invocationIndex; prior++ {
-			priorClasses := classes
+			priorFacts := facts
 			if prior == 0 {
-				priorClasses = []placementdomain.Placement{
-					placementdomain.OwnedHeap, placementdomain.OwnedHeap, placementdomain.Stack,
+				priorFacts = []placementdomain.Fact{
+					{Class: placementdomain.OwnedHeap, RetainEscape: placementdomain.EvidenceProven},
+					{Class: placementdomain.OwnedHeap, RetainEscape: placementdomain.EvidenceProven},
+					{Class: placementdomain.Stack, RetainEscape: placementdomain.EvidenceRefuted},
 				}
 			}
 			for actualIndex, rootID := range invocationRoots[prior] {
-				expected[rootID] = priorClasses[actualIndex]
+				expected[rootID] = priorFacts[actualIndex]
 			}
 		}
 		result[point] = expected
@@ -515,9 +521,9 @@ func formalCallEffectPoint(t testing.TB, record LinkInputs, mounted calldomain.M
 	return identity.ContentID{}
 }
 
-func decodeFormalPlacementRows(t testing.TB, result placementdomain.SummaryResult) map[identity.ContentID]placementdomain.Placement {
+func decodeFormalPlacementRows(t testing.TB, result placementdomain.SummaryResult) map[identity.ContentID]placementdomain.Fact {
 	t.Helper()
-	rows := make(map[identity.ContentID]placementdomain.Placement, result.AllocationCount())
+	rows := make(map[identity.ContentID]placementdomain.Fact, result.AllocationCount())
 	allocations := result.Allocations()
 	for index := 0; ; index++ {
 		allocation, allocationOK := allocations.Next()
@@ -534,20 +540,16 @@ func decodeFormalPlacementRows(t testing.TB, result placementdomain.SummaryResul
 		if _, duplicate := rows[id]; duplicate {
 			t.Fatalf("typed Placement allocation row %s is duplicated", id)
 		}
-		present, presentOK := allocation.Present()
-		if !presentOK || !present {
-			t.Fatalf("typed Placement allocation row %d has no published class", index)
+		fact, factOK := allocation.Fact()
+		if !factOK {
+			t.Fatalf("typed Placement allocation row %d has no complete fact", index)
 		}
-		class, classOK := allocation.Placement()
-		if !classOK {
-			t.Fatalf("typed Placement allocation row %d is present without a class", index)
-		}
-		rows[id] = class
+		rows[id] = fact
 	}
 	return rows
 }
 
-func assertFormalPlacementRows(t testing.TB, point identity.ContentID, rows map[identity.ContentID]placementdomain.Placement, expected map[identity.ContentID]placementdomain.Placement, allocationRootIDs map[identity.ContentID]struct{}) {
+func assertFormalPlacementRows(t testing.TB, point identity.ContentID, rows map[identity.ContentID]placementdomain.Fact, expected map[identity.ContentID]placementdomain.Fact, allocationRootIDs map[identity.ContentID]struct{}) {
 	t.Helper()
 	if len(rows) != len(allocationRootIDs) {
 		t.Fatalf("formal Placement point %s returned %d allocation identities, want exact Heap denominator %d", point, len(rows), len(allocationRootIDs))
@@ -557,12 +559,12 @@ func assertFormalPlacementRows(t testing.TB, point identity.ContentID, rows map[
 			t.Fatalf("formal Placement point %s omitted Heap allocation root %s", point, id)
 		}
 	}
-	for id, class := range rows {
+	for id, fact := range rows {
 		if _, formalRoot := expected[id]; formalRoot {
 			continue
 		}
-		if class == placementdomain.OwnedHeap || class == placementdomain.SharedHeap {
-			t.Fatalf("formal Placement point %s assigned unexpected %s class %s", point, class, id)
+		if fact.Class == placementdomain.OwnedHeap || fact.Class == placementdomain.SharedHeap {
+			t.Fatalf("formal Placement point %s assigned unexpected %s fact %s", point, fact, id)
 		}
 	}
 	for id, want := range expected {

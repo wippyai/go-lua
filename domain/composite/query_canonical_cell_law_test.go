@@ -119,10 +119,12 @@ func queryCanonicalProgram(t testing.TB, record LinkInputs, bound *ProgramBindin
 	if !queriesOK {
 		t.Fatal("query admissions")
 	}
-	// Reuse Module's sealed composition rows, then perform the same
-	// GenerationID join as production pointTransitionAdmissions. The mirror
-	// must not mint a second transition or context authority.
-	_, _, transitions, generations, _, _, _, compositionOK := record.Source.Module().BuildCompositionRows(sourceID, record.Artifacts, contexts)
+	// Reuse the exact pre-bind composition owner retained by ProgramBinding,
+	// then perform the same GenerationID join as production
+	// pointTransitionAdmissions. The mirror must not rebuild composition or
+	// mint a second transition/context authority.
+	composition, compositionOK := bound.ModuleComposition()
+	transitions, generations := composition.Transitions(), composition.Generations()
 	if !compositionOK || len(transitions) != len(generations) {
 		t.Fatal("query canonical composition admissions")
 	}
@@ -161,7 +163,8 @@ func queryCanonicalProgram(t testing.TB, record LinkInputs, bound *ProgramBindin
 		PointTransitions: pointTransitions,
 	})
 	if !committed || program == nil {
-		t.Fatalf("construct committed query program: stage=%v lowered=%t lowering=%v seal=%v construction=%v", refusal.Stage(), refusal.Lowered(), refusal.LoweringFailure(), refusal.Seal(), refusal.Commit())
+		row, rowOK := refusal.ConstructionRow()
+		t.Fatalf("construct committed query program: stage=%v lowered=%t lowering=%v seal=%v construction=%v row=%d/%t schedule=%d", refusal.Stage(), refusal.Lowered(), refusal.LoweringFailure(), refusal.Seal(), refusal.Commit(), row, rowOK, refusal.ScheduleRow())
 	}
 	return program, table
 }

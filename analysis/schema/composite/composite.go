@@ -45,6 +45,7 @@ package composite
 import (
 	"github.com/wippyai/go-lua/analysis/identity"
 	"github.com/wippyai/go-lua/analysis/schema"
+	seal "github.com/wippyai/go-lua/analysis/schema/seal"
 	"github.com/wippyai/go-lua/internal/framing"
 )
 
@@ -61,7 +62,7 @@ const (
 // Surface law ordinals. They are numeric identities; rendering a verdict is
 // the caller's job, from the identity.
 const (
-	LawEntryShape schema.LawID = schema.SurfaceLawFloor + iota
+	LawEntryShape schema.LawID = seal.SurfaceLawFloor + iota
 	LawCompositeIdentity
 	LawAxisPhase
 	LawMembershipDeclared
@@ -651,7 +652,7 @@ func (entry *Entry) disciplineComplete() bool {
 type surface struct{ entries []*Entry }
 
 // NewSurface hands one ordered set of composite declarations to the table.
-func NewSurface(entries []*Entry) schema.Surface { return surface{entries: entries} }
+func NewSurface(entries []*Entry) seal.Surface { return surface{entries: entries} }
 
 func (contribution surface) Kind() schema.SurfaceKind { return schema.SurfaceKindComposite }
 
@@ -667,7 +668,7 @@ func (contribution surface) Entries() []schema.Entry {
 // axis a composite names is resolved against the already-sealed axis surface,
 // so a relation over a coordinate space that does not exist is rejected here
 // rather than discovered at bind.
-func (contribution surface) Seal(view schema.View, sealed schema.Sealed) schema.SealFailure {
+func (contribution surface) Seal(view seal.View, sealed seal.Sealed) schema.SealFailure {
 	// A composite resolves its membership against the axis inventory, so the
 	// axis surface must be sealed below it. The catalog order is the bind phase
 	// order, and asking the sealed projection for the axis surface is what
@@ -727,7 +728,7 @@ func (contribution surface) Seal(view schema.View, sealed schema.Sealed) schema.
 	return schema.SealFailure{}
 }
 
-func (entry *Entry) sealMembership(axes schema.View) schema.SealFailure {
+func (entry *Entry) sealMembership(axes seal.View) schema.SealFailure {
 	if len(entry.roles) == 0 {
 		return failure(entry.id, LawMembershipDeclared, schema.DispositionIncomplete)
 	}
@@ -768,7 +769,7 @@ func (entry *Entry) sealMembership(axes schema.View) schema.SealFailure {
 	return schema.SealFailure{}
 }
 
-func (entry *Entry) sealOutput(axes schema.View) schema.SealFailure {
+func (entry *Entry) sealOutput(axes seal.View) schema.SealFailure {
 	if !entry.output.Kind.Available() {
 		return failure(entry.id, LawOutputDiscipline, schema.DispositionIncomplete)
 	}
@@ -818,7 +819,7 @@ func (entry *Entry) sealOutput(axes schema.View) schema.SealFailure {
 // declared. An intermediate that repeats a role axis or the output axis is not
 // an intermediate; it is that axis under a second name, and naming it twice
 // hides which declaration governs it.
-func (entry *Entry) sealIntermediates(axes schema.View) schema.SealFailure {
+func (entry *Entry) sealIntermediates(axes seal.View) schema.SealFailure {
 	for _, intermediate := range entry.intermediates {
 		if !intermediate.Available() {
 			return failure(entry.id, LawNoHiddenState, schema.DispositionIncomplete)
@@ -842,7 +843,7 @@ func (entry *Entry) sealIntermediates(axes schema.View) schema.SealFailure {
 // The composite surface never sees an axis's own record: it derives the axis
 // surface's identity for the key it was handed and asks the sealed view, so a
 // reference is resolved against the same table it is being sealed into.
-func axisDeclared(axes schema.View, key schema.Key) bool {
+func axisDeclared(axes seal.View, key schema.Key) bool {
 	if !key.Available() {
 		return false
 	}
@@ -855,5 +856,5 @@ func axisDeclared(axes schema.View, key schema.Key) bool {
 }
 
 func failure(entry schema.EntryID, law schema.LawID, disposition schema.Disposition) schema.SealFailure {
-	return schema.SurfaceLawFailure(schema.SurfaceKindComposite, entry, law, disposition)
+	return seal.SurfaceLawFailure(schema.SurfaceKindComposite, entry, law, disposition)
 }

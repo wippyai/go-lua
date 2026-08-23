@@ -173,11 +173,14 @@ func (compiler *compiler) recordOccurrencePredecessorPaths(kind programschema.Oc
 	return finishOK && compiler.recordOccurrencePredecessor(kind, id, route, finishPoints)
 }
 
-func (compiler *compiler) appendRuleOccurrence(key, writes schema.Key, occurrence uint32, point, input identity.ContentID, stage, inputSpec schema.Key, route identity.ContentID, native bool) bool {
+// appendRuleOccurrenceVector publishes the ordered input-point roles selected
+// by the sealed issuance schedule. The compiler copies the vector into the
+// immutable Program row; no later phase may infer or replace one of its roles.
+func (compiler *compiler) appendRuleOccurrenceVector(key, writes schema.Key, occurrence uint32, point identity.ContentID, inputs []identity.ContentID, stage, inputSpec schema.Key, route identity.ContentID, native bool) bool {
 	if compiler == nil || !fitsUint32(len(compiler.publication.RuleOccurrences)) {
 		return false
 	}
-	row, rowOK := programschema.NewRuleOccurrence(key, writes, occurrence, point, input, stage, inputSpec, route, native)
+	row, rowOK := programschema.NewRuleOccurrenceWithInputs(key, writes, occurrence, point, inputs, stage, inputSpec, route, native)
 	if !rowOK {
 		return false
 	}

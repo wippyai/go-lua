@@ -14,6 +14,8 @@ package structuretest
 import (
 	"strconv"
 
+	seal "github.com/wippyai/go-lua/analysis/schema/seal"
+
 	"github.com/wippyai/go-lua/analysis/schema"
 	"github.com/wippyai/go-lua/analysis/schema/structure"
 )
@@ -43,7 +45,7 @@ func Table(contributions ...[]structure.Spec) (structure.Table, bool) {
 	if !collected {
 		return structure.Table{}, false
 	}
-	builder := schema.NewBuilder()
+	builder := seal.NewBuilder()
 	if !builder.Register(structure.NewSurface(entries)) {
 		return structure.Table{}, false
 	}
@@ -68,6 +70,6 @@ type emptySurface struct{ kind schema.SurfaceKind }
 
 func (surface emptySurface) Kind() schema.SurfaceKind { return surface.kind }
 func (surface emptySurface) Entries() []schema.Entry  { return nil }
-func (surface emptySurface) Seal(schema.View, schema.Sealed) schema.SealFailure {
+func (surface emptySurface) Seal(seal.View, seal.Sealed) schema.SealFailure {
 	return schema.SealFailure{}
 }

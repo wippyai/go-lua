@@ -7,6 +7,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/schema/axis"
 	"github.com/wippyai/go-lua/analysis/schema/executioncontext"
 	"github.com/wippyai/go-lua/analysis/schema/rule"
+	ruleplan "github.com/wippyai/go-lua/analysis/schema/rule/plan"
 	"github.com/wippyai/go-lua/analysis/schema/vocabulary"
 )
 
@@ -24,6 +25,10 @@ type ActivationRule interface {
 // catalog retains only rule.Template values; these hooks live in the schema
 // composition root and are never carried by a catalog declaration.
 type RuleContributor[P, A any] struct {
+	// generated marks the compact schema-program arm. It intentionally has no
+	// domain callback or typed hot payload: the composition derives and binds
+	// the engine's GeneratedRuleSlot directly from the sealed plan catalog.
+	generated         bool
 	declare           func(*engine.SchemaBuilder, vocabulary.Roles, P) (rule.Cell, bool)
 	register          func(*engine.SchemaBinding, rule.Cell) (engine.RuleSlotCapability, bool)
 	pair              func(*engine.SchemaBinding, rule.Cell, func(schema.Key) (engine.RuleSlotCapability, bool)) bool
@@ -33,13 +38,38 @@ type RuleContributor[P, A any] struct {
 }
 
 func (contributor RuleContributor[P, A]) Declare(builder *engine.SchemaBuilder, roles vocabulary.Roles, principals P) (rule.Cell, bool) {
+	if contributor.generated {
+		return rule.Cell{}, false
+	}
 	if contributor.declare == nil {
 		return rule.Cell{}, false
 	}
 	return contributor.declare(builder, roles, principals)
 }
 
+// DeclareGenerated derives one generated Rule slot from the one sealed plan
+// catalog owned by the composition declaration transaction. The caller passes
+// the canonical sealed Rule ordinal; no domain package supplies geometry,
+// semantic identities, or an alternate plan catalog.
+func (contributor RuleContributor[P, A]) DeclareGenerated(builder *engine.SchemaBuilder, plans ruleplan.Catalog, ordinal uint32) (rule.Cell, bool) {
+	if !contributor.generated {
+		return rule.Cell{}, false
+	}
+	slot, ok := engine.DeclareGeneratedRuleSlot(builder, plans, ordinal)
+	if !ok || slot == nil || !slot.Available() {
+		return rule.Cell{}, false
+	}
+	return rule.NewCell(slot), true
+}
+
 func (contributor RuleContributor[P, A]) Register(binding *engine.SchemaBinding, holder rule.Cell) (engine.RuleSlotCapability, bool) {
+	if contributor.generated {
+		slot, ok := rule.Payload[*engine.GeneratedRuleSlot](holder)
+		if !ok || slot == nil {
+			return engine.RuleSlotCapability{}, false
+		}
+		return engine.RegisterMountedGeneratedSlot(binding, slot)
+	}
 	if contributor.register == nil {
 		return engine.RuleSlotCapability{}, false
 	}
@@ -51,6 +81,15 @@ func (contributor RuleContributor[P, A]) Pair(binding *engine.SchemaBinding, hol
 }
 
 func (contributor RuleContributor[P, A]) Bind(binding *engine.SchemaBinding, authorities A, holder rule.Cell) (rule.Cell, ActivationRule, bool) {
+	if contributor.generated {
+		slot, ok := rule.Payload[*engine.GeneratedRuleSlot](holder)
+		if !ok || slot == nil || !engine.BindGeneratedRule(binding, slot) {
+			return rule.Cell{}, nil, false
+		}
+		// The generated slot is the complete hot identity. Keeping this same
+		// opaque slot cell lets the table retain no HotRule/HotOwner payload.
+		return holder, nil, true
+	}
 	if contributor.bind == nil {
 		return rule.Cell{}, nil, false
 	}
@@ -69,6 +108,9 @@ func (contributor RuleContributor[P, A]) OccurrenceCatalog(holder rule.Cell) (ru
 }
 
 func (contributor RuleContributor[P, A]) complete(template *rule.Template) bool {
+	if contributor.generated {
+		return template != nil && template.Lane() == rule.LaneMounted && template.Program().Available()
+	}
 	if contributor.declare == nil || contributor.register == nil || contributor.bind == nil {
 		return false
 	}
@@ -79,6 +121,18 @@ func (contributor RuleContributor[P, A]) complete(template *rule.Template) bool 
 		return contributor.occurrenceCatalog != nil
 	}
 	return contributor.occurrenceCatalog == nil
+}
+
+// WireGeneratedRule admits a callback-free Rule program into the generic
+// composition path. Its contributor carries only the generated marker; the
+// composition owns all engine slot declaration, binding, and capability
+// issuance, so the owning domain retains no engine fragment or hot callback.
+func WireGeneratedRule[P, A any](spec rule.Spec) (*rule.Template, RuleContributor[P, A], bool) {
+	template, ok := rule.New(spec)
+	if !ok || template == nil || !template.Program().Available() || template.Lane() != rule.LaneMounted {
+		return nil, RuleContributor[P, A]{}, false
+	}
+	return template, RuleContributor[P, A]{generated: true}, true
 }
 
 // WireRule binds a domain's typed declaration, owner registration, and hot

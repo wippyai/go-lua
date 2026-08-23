@@ -6,13 +6,14 @@ import (
 	"github.com/wippyai/go-lua/analysis/schema"
 	schemaissuance "github.com/wippyai/go-lua/analysis/schema/issuance"
 	programissuance "github.com/wippyai/go-lua/analysis/schema/program/issuance"
+	"github.com/wippyai/go-lua/analysis/schema/seal"
 )
 
 type emptySchemaSurface struct{ kind schema.SurfaceKind }
 
 func (surface emptySchemaSurface) Kind() schema.SurfaceKind { return surface.kind }
 func (emptySchemaSurface) Entries() []schema.Entry          { return nil }
-func (emptySchemaSurface) Seal(schema.View, schema.Sealed) schema.SealFailure {
+func (emptySchemaSurface) Seal(seal.View, seal.Sealed) schema.SealFailure {
 	return schema.SealFailure{}
 }
 
@@ -25,7 +26,7 @@ func EmptyProgramIssuancePlan(t testing.TB) schemaissuance.Plan {
 	if !ok {
 		t.Fatal("Program issuance declarations unavailable")
 	}
-	builder := schema.NewBuilder()
+	builder := seal.NewBuilder()
 	builder.Register(emptySchemaSurface{schema.SurfaceKindStructure})
 	builder.Register(emptySchemaSurface{schema.SurfaceKindAxis})
 	builder.Register(schemaissuance.NewSurface(entries))

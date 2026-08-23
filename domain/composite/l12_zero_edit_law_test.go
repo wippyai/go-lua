@@ -14,6 +14,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/schema/programmount"
 	"github.com/wippyai/go-lua/analysis/schema/query"
 	"github.com/wippyai/go-lua/analysis/schema/rule"
+	"github.com/wippyai/go-lua/analysis/schema/seal"
 	"github.com/wippyai/go-lua/analysis/schema/structure"
 	"github.com/wippyai/go-lua/analysis/schema/vocabulary"
 	"github.com/wippyai/go-lua/domain/probe"
@@ -81,7 +82,7 @@ type walkInventory struct {
 // Nothing here edits an analyzer table: every contribution is the production
 // function that composes the analyzer's own rows, and the probe's rows are
 // appended to the aggregation the surfaces already number.
-func composeWalk(t *testing.T, spec diagnostic.Spec) (*schema.Schema, schema.SealFailure, walkInventory) {
+func composeWalk(t *testing.T, spec diagnostic.Spec) (*seal.Schema, schema.SealFailure, walkInventory) {
 	t.Helper()
 	structures, structuresOK := structure.Collect(append(structureContributions(), probe.StructureSpecs())...)
 	if !structuresOK {
@@ -132,7 +133,7 @@ func composeWalk(t *testing.T, spec diagnostic.Spec) (*schema.Schema, schema.Sea
 		t.Fatal("a derived analyzer inventory rejected the extended axis and role sets")
 	}
 
-	builder := schema.NewBuilder()
+	builder := seal.NewBuilder()
 	builder.Register(structure.NewSurface(structures))
 	builder.Register(axis.NewSurface(axes))
 	builder.Register(rule.NewSurface(rules))
@@ -148,7 +149,7 @@ func composeWalk(t *testing.T, spec diagnostic.Spec) (*schema.Schema, schema.Sea
 // walkStructureMember resolves one declared vocabulary member out of the sealed
 // table by the key it was declared under, and states the category the resolution
 // expects.
-func walkStructureMember(t *testing.T, sealed *schema.Schema, key schema.Key, category structure.Category) *structure.Entry {
+func walkStructureMember(t *testing.T, sealed *seal.Schema, key schema.Key, category structure.Category) *structure.Entry {
 	t.Helper()
 	view, viewOK := sealed.Surface(schema.SurfaceKindStructure)
 	if !viewOK {

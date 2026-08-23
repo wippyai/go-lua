@@ -4,6 +4,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/schema"
 	"github.com/wippyai/go-lua/analysis/schema/diagnostic"
 	"github.com/wippyai/go-lua/analysis/schema/structure"
+	"github.com/wippyai/go-lua/domain/sendsafety"
 	typedomain "github.com/wippyai/go-lua/domain/type"
 )
 
@@ -18,6 +19,7 @@ const (
 	diagnosticFamilyValue   = schema.Key("family/value")
 	diagnosticFamilyLint    = schema.Key("family/lint")
 	diagnosticFamilyChannel = schema.Key("family/channel")
+	diagnosticFamilySend    = schema.Key("family/send")
 )
 
 // diagnosticVocabulary is the diagnostic surface's contribution to the
@@ -39,6 +41,7 @@ func diagnosticVocabulary() []structure.Spec {
 		structure.Spec{Key: diagnosticFamilyValue, Category: structure.CategoryDiagnosticFamily, Spelling: "value", Accepted: true},
 		structure.Spec{Key: diagnosticFamilyLint, Category: structure.CategoryDiagnosticFamily, Spelling: "lint", Accepted: true},
 		structure.Spec{Key: diagnosticFamilyChannel, Category: structure.CategoryDiagnosticFamily, Spelling: "channel", Accepted: true},
+		structure.Spec{Key: diagnosticFamilySend, Category: structure.CategoryDiagnosticFamily, Spelling: "send", Accepted: true},
 
 		structure.Spec{Key: "severity/error", Category: structure.CategoryDiagnosticSeverity, Ordinal: diagnostic.SeverityError.Ordinal(), Spelling: "error", Accepted: true},
 		structure.Spec{Key: "severity/warning", Category: structure.CategoryDiagnosticSeverity, Ordinal: diagnostic.SeverityWarning.Ordinal(), Spelling: "warning", Accepted: true},
@@ -63,6 +66,7 @@ const (
 	DiagnosticCodeUnresolvedTypeReference  diagnostic.Code = "type.reference.unresolved"
 	DiagnosticCodeUnresolvedValueReference diagnostic.Code = "value.reference.unresolved"
 	DiagnosticCodeUnusedLocal              diagnostic.Code = "lint.unused.local"
+	DiagnosticCodeSendIsolation            diagnostic.Code = "send.isolation"
 )
 
 // valueAxis is the coordinate space the solver-observed diagnostics are
@@ -214,6 +218,36 @@ func analyzerDiagnosticSpecs() []diagnostic.Spec {
 			Labels:          []diagnostic.Label{{Anchor: diagnostic.AnchorPrimary, Text: "unused local"}},
 			Render:          diagnosticRender,
 		},
+		{
+			Code: DiagnosticCodeSendIsolation, Family: declaredMember(diagnosticFamilySend),
+			DefaultSeverity: diagnostic.SeverityHint,
+			Lane:            diagnostic.LaneResult,
+			VerdictCategory: structure.CategoryNativeSendSafety,
+			Variants: []diagnostic.Variant{
+				{
+					Verdict:  sendsafety.VerdictImmutable.Ordinal(),
+					Message:  "send payload is proven immutable for direct sharing",
+					Help:     "The runtime may share this exact identity without copying it.",
+					Evidence: []diagnostic.Evidence{{Anchor: diagnostic.AnchorPrimary, Kind: "abstract fact", Trust: "proven", Reason: "deep freeze", Detail: "the complete sent allocation graph is deeply frozen"}},
+					Labels:   []diagnostic.Label{{Anchor: diagnostic.AnchorPrimary, Text: "immutable send payload"}},
+				},
+				{
+					Verdict:  sendsafety.VerdictIsolated.Ordinal(),
+					Message:  "send payload is proven isolated for direct transfer",
+					Help:     "The runtime may transfer this exact identity without copying it.",
+					Evidence: []diagnostic.Evidence{{Anchor: diagnostic.AnchorPrimary, Kind: "abstract fact", Trust: "proven", Reason: "unique ownership", Detail: "the sent allocation has no retaining alias before this send"}},
+					Labels:   []diagnostic.Label{{Anchor: diagnostic.AnchorPrimary, Text: "isolated send payload"}},
+				},
+				{
+					Verdict:  sendsafety.VerdictCopyRequired.Ordinal(),
+					Message:  "send payload has a proven retaining alias; copy-on-write is required",
+					Help:     "Remove the retaining alias or freeze the complete payload graph before sending it.",
+					Evidence: []diagnostic.Evidence{{Anchor: diagnostic.AnchorPrimary, Kind: "abstract fact", Trust: "proven", Reason: "retaining escape", Detail: "a retaining boundary precedes this send"}},
+					Labels:   []diagnostic.Label{{Anchor: diagnostic.AnchorPrimary, Text: "retained send payload"}},
+				},
+			},
+			Render: diagnosticRender,
+		},
 	}
 }
 
@@ -297,8 +331,8 @@ func entrySites(entry *diagnostic.Entry) []diagnostic.Site {
 // diagnosticCollectionDirectory joins every sealed LaneBranch row to the
 // issued query or observation inventory it named as Collection. Construction
 // calls it once and retains the result in Compilation.
-func diagnosticCollectionDirectory(table diagnostic.Table, issuedObservations []IssuedObservation, issuedQueries []IssuedQuery) (DiagnosticCollections, bool) {
-	if !table.Available() {
+func diagnosticCollectionDirectory(table diagnostic.Table, issuedObservations []IssuedObservation, issuedQueries []IssuedQuery, state *catalog) (DiagnosticCollections, bool) {
+	if !table.Available() || state == nil {
 		return DiagnosticCollections{}, false
 	}
 	observations := make(map[schema.Key]IssuedObservation)
@@ -325,7 +359,11 @@ func diagnosticCollectionDirectory(table diagnostic.Table, issuedObservations []
 		switch collection.Surface {
 		case schema.SurfaceKindObservation:
 			issued, found := observations[collection.Key]
-			if !found || !issued.Producer.Available() || !issued.Codec.Available() {
+			if !found || !issued.Producer.Available() || !issued.Codec.Available() ||
+				!issued.Geometry.Available() || !issued.Anchor.Available() {
+				return DiagnosticCollections{}, false
+			}
+			if _, _, producerOK := observationProducerRegistration(state, issued); !producerOK {
 				return DiagnosticCollections{}, false
 			}
 			row.Producer = issued.Producer

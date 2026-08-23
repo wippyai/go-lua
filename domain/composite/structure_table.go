@@ -37,9 +37,12 @@ import (
 	placementsuspension "github.com/wippyai/go-lua/domain/placement/suspension"
 	placementtransfer "github.com/wippyai/go-lua/domain/placement/transfer"
 	"github.com/wippyai/go-lua/domain/runtimekind"
+	staticowner "github.com/wippyai/go-lua/domain/static/owner"
+	statictransfer "github.com/wippyai/go-lua/domain/static/transfer"
 	typedomain "github.com/wippyai/go-lua/domain/type"
 	valueallocation "github.com/wippyai/go-lua/domain/value/allocation"
 	valuearithmetic "github.com/wippyai/go-lua/domain/value/arithmetic"
+	valuebodyresult "github.com/wippyai/go-lua/domain/value/bodyresult"
 	valuebootstrap "github.com/wippyai/go-lua/domain/value/bootstrap"
 	valueequality "github.com/wippyai/go-lua/domain/value/equality"
 	valuefreshresult "github.com/wippyai/go-lua/domain/value/freshresult"
@@ -176,6 +179,7 @@ func semanticRoleVocabulary() []structure.Spec {
 	contributions := [][]structure.Spec{
 		runtimekind.BehaviorStructureSpecs(),
 		valueowner.StructureSpecs(),
+		staticowner.StructureSpecs(),
 		packowner.StructureSpecs(),
 		heapowner.StructureSpecs(),
 		contextowner.StructureSpecs(),
@@ -221,6 +225,8 @@ func semanticRoleVocabulary() []structure.Spec {
 		placementtransfer.StructureSpecs(),
 		valueresultalias.StructureSpecs(),
 		valuefreshresult.StructureSpecs(),
+		valuebodyresult.StructureSpecs(),
+		statictransfer.StructureSpecs(),
 	}
 	var specs []structure.Spec
 	for _, contribution := range contributions {
@@ -246,6 +252,7 @@ func structureContributions() [][]structure.Spec {
 		diagnosticVocabulary(),
 		structure.NativePublicationSpecs(),
 		structure.PublicationPlaneSpecs(),
+		structure.ReductionOutcomeSpecs(),
 		semanticRoleVocabulary(),
 		observationRoleVocabulary(),
 		queryRoleVocabulary(),

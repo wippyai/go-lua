@@ -305,11 +305,22 @@ func Lower(snapshot *ingress.Snapshot, vocabulary structure.Table, machine schem
 			return nil, nil, false
 		}
 		role, roleOK := directory.Role(row.Key())
-		input, hasInput := row.InputPoint()
 		route, hasRoute := row.PredecessorRouteID()
 		native, nativeOK := row.Native()
-		if !roleOK || !row.Available() || !nativeOK || hasInput != input.Available() || hasRoute != route.Available() ||
-			!spec.AddRule(rows.ArtifactScalarRule{Role: role, Stage: row.Stage(), Point: row.PointID(), Input: input, ID: occurrenceID(program, row), Route: route, Native: native}) {
+		inputCount := row.InputPointCount()
+		if inputCount < 0 || inputCount > 6 {
+			return nil, nil, false
+		}
+		var inputs [6]identity.ContentID
+		for inputIndex := 0; inputIndex < inputCount; inputIndex++ {
+			input, inputOK := row.InputPointAt(inputIndex)
+			if !inputOK {
+				return nil, nil, false
+			}
+			inputs[inputIndex] = input
+		}
+		if !roleOK || !row.Available() || !nativeOK || hasRoute != route.Available() ||
+			!spec.AddRule(rows.ArtifactScalarRule{Role: role, Stage: row.Stage(), Point: row.PointID(), Inputs: inputs, InputCount: uint8(inputCount), ID: occurrenceID(program, row), Route: route, Native: native}) {
 			return nil, nil, false
 		}
 	}

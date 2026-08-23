@@ -8,8 +8,8 @@ import (
 )
 
 // ReadStatus is the cursor-level result of one direct read step. It is kept
-// separate from Outcome: sparse absence is still an available row, while
-// NoCandidate is a rule-level reducer decision made by generated code.
+// separate from the fold outcome: sparse absence is still an available row,
+// while NoCandidate is a rule-level reducer decision made by generated code.
 type ReadStatus uint8
 
 const (
@@ -324,7 +324,7 @@ func (axis ExactWrite[K, V]) Stage(ticket Ticket, scratch *Scratch[K, V], when s
 }
 
 // Close seals this independent output into the Run-owned output slot. It does
-// not consume Ticket; Run.Submit performs the one final Outcome decision and
+// not consume Ticket; Run.Submit performs the one final outcome decision and
 // atomically closes the invocation after every output is sealed.
 func (axis ExactWrite[K, V]) Close(ticket Ticket, scratch *Scratch[K, V]) bool {
 	if !axis.Valid() || scratch == nil {

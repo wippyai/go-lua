@@ -17,6 +17,7 @@ import (
 	programissuance "github.com/wippyai/go-lua/analysis/schema/program/issuance"
 	"github.com/wippyai/go-lua/analysis/schema/query"
 	"github.com/wippyai/go-lua/analysis/schema/rule"
+	"github.com/wippyai/go-lua/analysis/schema/seal"
 	"github.com/wippyai/go-lua/analysis/schema/structure"
 	"github.com/wippyai/go-lua/analysis/schema/vocabulary"
 	heapdomain "github.com/wippyai/go-lua/domain/heap"
@@ -37,7 +38,7 @@ func newCatalog() (*catalog, schema.SealFailure) {
 	// semantic roles are resolved once for every inventory below.
 	structures, structuresOK := structureEntries()
 	if !structuresOK {
-		state.failure = schema.SealFailure{Contributor: schema.SurfaceKindStructure, Law: schema.LawEntryAdmissible, Disposition: schema.DispositionMalformed}
+		state.failure = schema.SealFailure{Contributor: schema.SurfaceKindStructure, Law: seal.LawEntryAdmissible, Disposition: schema.DispositionMalformed}
 		return state, state.failure
 	}
 	roles, rolesOK := vocabulary.NewRoles(structures)
@@ -45,12 +46,12 @@ func newCatalog() (*catalog, schema.SealFailure) {
 		// A declared role whose spelling derives no identity leaves every
 		// surface that names it unresolvable, so the catalog cannot be composed
 		// at all rather than composed short one identity.
-		state.failure = schema.SealFailure{Contributor: schema.SurfaceKindStructure, Law: schema.LawSurfaceCatalog, Disposition: schema.DispositionMalformed}
+		state.failure = schema.SealFailure{Contributor: schema.SurfaceKindStructure, Law: seal.LawSurfaceCatalog, Disposition: schema.DispositionMalformed}
 		return state, state.failure
 	}
 	axes, axisContributors, axesOK := axisTemplates()
 	if !axesOK {
-		state.failure = schema.SealFailure{Contributor: schema.SurfaceKindAxis, Law: schema.LawEntryAdmissible, Disposition: schema.DispositionMalformed}
+		state.failure = schema.SealFailure{Contributor: schema.SurfaceKindAxis, Law: seal.LawEntryAdmissible, Disposition: schema.DispositionMalformed}
 		return state, state.failure
 	}
 	issuanceEntries, issuanceOK := programissuance.Entries(
@@ -58,37 +59,37 @@ func newCatalog() (*catalog, schema.SealFailure) {
 		programissuance.CodeFamily{Key: "occurrence/allocation-closed", Kind: programschema.OccurrenceAllocation, Code: uint64(heapdomain.AllocationFormClosed)},
 	)
 	if !issuanceOK {
-		state.failure = schema.SealFailure{Contributor: schema.SurfaceKindIssuance, Law: schema.LawEntryAdmissible, Disposition: schema.DispositionMalformed}
+		state.failure = schema.SealFailure{Contributor: schema.SurfaceKindIssuance, Law: seal.LawEntryAdmissible, Disposition: schema.DispositionMalformed}
 		return state, state.failure
 	}
 	templates, ruleContributors, ok := RuleTemplates[principals, authorities]()
 	if !ok {
-		state.failure = schema.SealFailure{Contributor: schema.SurfaceKindRule, Law: schema.LawEntryAdmissible, Disposition: schema.DispositionMalformed}
+		state.failure = schema.SealFailure{Contributor: schema.SurfaceKindRule, Law: seal.LawEntryAdmissible, Disposition: schema.DispositionMalformed}
 		return state, state.failure
 	}
 	diagnostics, diagnosticsOK := diagnosticEntries()
 	if !diagnosticsOK {
-		state.failure = schema.SealFailure{Contributor: schema.SurfaceKindDiagnostic, Law: schema.LawEntryAdmissible, Disposition: schema.DispositionMalformed}
+		state.failure = schema.SealFailure{Contributor: schema.SurfaceKindDiagnostic, Law: seal.LawEntryAdmissible, Disposition: schema.DispositionMalformed}
 		return state, state.failure
 	}
 	composites, compositesOK := compositeEntries()
 	if !compositesOK {
-		state.failure = schema.SealFailure{Contributor: schema.SurfaceKindComposite, Law: schema.LawEntryAdmissible, Disposition: schema.DispositionMalformed}
+		state.failure = schema.SealFailure{Contributor: schema.SurfaceKindComposite, Law: seal.LawEntryAdmissible, Disposition: schema.DispositionMalformed}
 		return state, state.failure
 	}
 	denominators, denominatorsOK := denominatorEntries(axes, roles)
 	if !denominatorsOK {
-		state.failure = schema.SealFailure{Contributor: schema.SurfaceKindDenominator, Law: schema.LawEntryAdmissible, Disposition: schema.DispositionMalformed}
+		state.failure = schema.SealFailure{Contributor: schema.SurfaceKindDenominator, Law: seal.LawEntryAdmissible, Disposition: schema.DispositionMalformed}
 		return state, state.failure
 	}
 	queries, contributors, queriesOK := queryRegistrations(roles)
 	if !queriesOK {
-		state.failure = schema.SealFailure{Contributor: schema.SurfaceKindQuery, Law: schema.LawEntryAdmissible, Disposition: schema.DispositionMalformed}
+		state.failure = schema.SealFailure{Contributor: schema.SurfaceKindQuery, Law: seal.LawEntryAdmissible, Disposition: schema.DispositionMalformed}
 		return state, state.failure
 	}
 	observations, observationsOK := observationEntries(queries)
 	if !observationsOK {
-		state.failure = schema.SealFailure{Contributor: schema.SurfaceKindObservation, Law: schema.LawEntryAdmissible, Disposition: schema.DispositionMalformed}
+		state.failure = schema.SealFailure{Contributor: schema.SurfaceKindObservation, Law: seal.LawEntryAdmissible, Disposition: schema.DispositionMalformed}
 		return state, state.failure
 	}
 	// The registration order is the catalog order, which is the bind phase
@@ -115,7 +116,7 @@ func newCatalog() (*catalog, schema.SealFailure) {
 	if failure.Available() || !compiledDeclarations.Available() {
 		state.failure = failure
 		if !state.failure.Available() {
-			state.failure = schema.SealFailure{Contributor: schema.SurfaceKindStructure, Law: schema.LawSurfaceCatalog, Disposition: schema.DispositionMalformed}
+			state.failure = schema.SealFailure{Contributor: schema.SurfaceKindStructure, Law: seal.LawSurfaceCatalog, Disposition: schema.DispositionMalformed}
 		}
 		return state, state.failure
 	}
@@ -123,7 +124,7 @@ func newCatalog() (*catalog, schema.SealFailure) {
 	structureView, structureViewOK := sealed.Surface(schema.SurfaceKindStructure)
 	structureTable, structureTableOK := structure.NewTable(structureView)
 	if !structureViewOK || !structureTableOK {
-		state.failure = schema.SealFailure{Contributor: schema.SurfaceKindStructure, Law: schema.LawSurfaceCatalog, Disposition: schema.DispositionMalformed}
+		state.failure = schema.SealFailure{Contributor: schema.SurfaceKindStructure, Law: seal.LawSurfaceCatalog, Disposition: schema.DispositionMalformed}
 		return state, state.failure
 	}
 	// The diagnostic surface states its own population law, so a sealed table
@@ -132,7 +133,7 @@ func newCatalog() (*catalog, schema.SealFailure) {
 	diagnosticView, diagnosticViewOK := sealed.Surface(schema.SurfaceKindDiagnostic)
 	diagnosticTable, diagnosticTableOK := diagnostic.NewTable(diagnosticView)
 	if !diagnosticViewOK || !diagnosticTableOK {
-		state.failure = schema.SealFailure{Contributor: schema.SurfaceKindDiagnostic, Law: schema.LawSurfaceCatalog, Disposition: schema.DispositionMalformed}
+		state.failure = schema.SealFailure{Contributor: schema.SurfaceKindDiagnostic, Law: seal.LawSurfaceCatalog, Disposition: schema.DispositionMalformed}
 		return state, state.failure
 	}
 	state.diagnostics = diagnosticTable
@@ -149,7 +150,7 @@ func newCatalog() (*catalog, schema.SealFailure) {
 	observationView, observationViewOK := sealed.Surface(schema.SurfaceKindObservation)
 	observationTable, observationTableOK := observation.NewTable(observationView)
 	if !observationViewOK || !observationTableOK {
-		state.failure = schema.SealFailure{Contributor: schema.SurfaceKindObservation, Law: schema.LawSurfaceCatalog, Disposition: schema.DispositionMalformed}
+		state.failure = schema.SealFailure{Contributor: schema.SurfaceKindObservation, Law: seal.LawSurfaceCatalog, Disposition: schema.DispositionMalformed}
 		return state, state.failure
 	}
 	state.observations = observationTable
@@ -168,7 +169,7 @@ func newCatalog() (*catalog, schema.SealFailure) {
 		}
 		family := registration.Key()
 		if _, duplicate := positions[family]; duplicate {
-			state.failure = schema.SealFailure{Contributor: schema.SurfaceKindQuery, Entry: registration.ID(), Law: schema.LawEntryUnique, Disposition: schema.DispositionDuplicate}
+			state.failure = schema.SealFailure{Contributor: schema.SurfaceKindQuery, Entry: registration.ID(), Law: seal.LawEntryUnique, Disposition: schema.DispositionDuplicate}
 			return state, state.failure
 		}
 		entryID := registration.EntryID()
@@ -200,11 +201,11 @@ func newCatalog() (*catalog, schema.SealFailure) {
 	slots := make(map[schema.Key]int, len(templates))
 	for position, entry := range templates {
 		if entry == nil || !entry.Key().Available() {
-			state.failure = schema.SealFailure{Contributor: schema.SurfaceKindRule, Law: schema.LawEntryAdmissible, Disposition: schema.DispositionMalformed}
+			state.failure = schema.SealFailure{Contributor: schema.SurfaceKindRule, Law: seal.LawEntryAdmissible, Disposition: schema.DispositionMalformed}
 			return state, state.failure
 		}
 		if _, duplicate := slots[entry.Key()]; duplicate {
-			state.failure = schema.SealFailure{Contributor: schema.SurfaceKindRule, Law: schema.LawEntryAdmissible, Disposition: schema.DispositionMalformed}
+			state.failure = schema.SealFailure{Contributor: schema.SurfaceKindRule, Law: seal.LawEntryAdmissible, Disposition: schema.DispositionMalformed}
 			return state, state.failure
 		}
 		slots[entry.Key()] = position + 1
@@ -221,10 +222,10 @@ func newCatalog() (*catalog, schema.SealFailure) {
 // this exact compilation. The structure, axis, rule, diagnostic, composite,
 // denominator, query, and observation surfaces are its members, sealed in
 // catalog order.
-func Table(compilation Compilation) (*schema.Schema, schema.SealFailure) {
+func Table(compilation Compilation) (*seal.Schema, schema.SealFailure) {
 	state := compilation.catalog
 	if state == nil {
-		return nil, schema.SealFailure{Law: schema.LawSurfaceCatalog, Disposition: schema.DispositionIncomplete}
+		return nil, schema.SealFailure{Law: seal.LawSurfaceCatalog, Disposition: schema.DispositionIncomplete}
 	}
 	return state.sealed, state.failure
 }
@@ -443,12 +444,31 @@ func declareRules(state *catalog, builder *engine.SchemaBuilder, roles vocabular
 	if len(state.ruleContributors) != len(state.templates) {
 		return fragments, DiagnosticRuleUnknown, false
 	}
+	plans, plansOK := state.declarations.RulePlans()
+	if !plansOK {
+		return fragments, DiagnosticRuleUnknown, false
+	}
+	ruleView, ruleViewOK := state.sealed.Surface(schema.SurfaceKindRule)
+	if !ruleViewOK {
+		return fragments, DiagnosticRuleUnknown, false
+	}
 	for position, entry := range state.templates {
 		slot := position + 1
 		if !owners.writes(entry.Writes()) || !owners.writes(entry.Owner()) {
 			return fragments, DiagnosticRule(slot), false
 		}
-		fragment, ok := state.ruleContributors[position].Declare(builder, roles, owners)
+		contributor := state.ruleContributors[position]
+		canonicalOrdinal, ordinalOK := ruleView.Ordinal(entry.ID())
+		if !ordinalOK {
+			return fragments, DiagnosticRule(slot), false
+		}
+		var fragment rule.Cell
+		var ok bool
+		if entry.Program().Available() {
+			fragment, ok = contributor.DeclareGenerated(builder, plans, canonicalOrdinal)
+		} else {
+			fragment, ok = contributor.Declare(builder, roles, owners)
+		}
 		if !ok {
 			return fragments, DiagnosticRule(slot), false
 		}

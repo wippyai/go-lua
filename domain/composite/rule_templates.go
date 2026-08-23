@@ -32,9 +32,12 @@ import (
 	placementstore "github.com/wippyai/go-lua/domain/placement/store"
 	placementsuspension "github.com/wippyai/go-lua/domain/placement/suspension"
 	placementtransfer "github.com/wippyai/go-lua/domain/placement/transfer"
+	staticowner "github.com/wippyai/go-lua/domain/static/owner"
+	statictransfer "github.com/wippyai/go-lua/domain/static/transfer"
 	valuedomain "github.com/wippyai/go-lua/domain/value"
 	valueallocation "github.com/wippyai/go-lua/domain/value/allocation"
 	valuearithmetic "github.com/wippyai/go-lua/domain/value/arithmetic"
+	valuebodyresult "github.com/wippyai/go-lua/domain/value/bodyresult"
 	valuebootstrap "github.com/wippyai/go-lua/domain/value/bootstrap"
 	valueequality "github.com/wippyai/go-lua/domain/value/equality"
 	valuefreshresult "github.com/wippyai/go-lua/domain/value/freshresult"
@@ -50,6 +53,7 @@ import (
 
 type Principals interface {
 	ValuePrincipal() *valueowner.SchemaFragment
+	StaticTypePrincipal() *staticowner.SchemaFragment
 	CallPrincipal() *callowner.SchemaFragment
 	HeapPrincipal() *heapowner.SchemaFragment
 	ContextPrincipal() *contextowner.SchemaFragment
@@ -61,6 +65,7 @@ type Principals interface {
 
 type Authorities interface {
 	ValueAuthority() *valueowner.HotOwner
+	StaticTypeAuthority() *staticowner.HotOwner
 	CallAuthority() *callowner.HotOwner
 	HeapAuthority() *heapowner.HotOwner
 	ContextAuthority() *contextowner.HotOwner
@@ -95,9 +100,9 @@ func RuleTemplates[P Principals, A Authorities]() ([]*rule.Template, []RuleContr
 		contributors = append(contributors, contributor)
 	}
 
-	add(WireRule(valuesource.RuleEntry[P, A](), valuesource.DeclareRule[P], valuesource.RegisterRule, nil, valuesource.BindRule[A], nil, nil, nil))
-	add(WireRule(packsource.RuleEntry[P, A](), packsource.DeclareRule[P], packsource.RegisterRule, nil, packsource.BindRule[A], nil, nil, nil))
-	add(WireRule(heapingress.RuleEntry[P, A](), heapingress.DeclareRule[P], heapingress.RegisterRule, nil, heapingress.BindRule[A], heapingress.FinalizeRule[A], nil, nil))
+	add(WireGeneratedRule[P, A](valuesource.RuleEntry()))
+	add(WireGeneratedRule[P, A](packsource.RuleEntry()))
+	add(WireGeneratedRule[P, A](heapingress.RuleEntry()))
 	add(WireRule(valueallocation.RuleEntry[P, A](), valueallocation.DeclareRule[P], valueallocation.RegisterRule, nil, valueallocation.BindRule[A], nil, nil, nil))
 	add(WireRule(heapempty.RuleEntry[P, A](), heapempty.DeclareRule[P], heapempty.RegisterRule, nil, heapempty.BindRule[A], nil, nil, nil))
 	add(WireRule(heapclosed.RuleEntry[P, A](), heapclosed.DeclareRule[P], heapclosed.RegisterRule, nil, heapclosed.BindRule[A], nil, nil, nil))
@@ -111,7 +116,7 @@ func RuleTemplates[P Principals, A Authorities]() ([]*rule.Template, []RuleContr
 	add(WireRule(valueruntimekind.RuleEntry[P, A](), valueruntimekind.DeclareRule[P], valueruntimekind.RegisterRule, nil, valueruntimekind.BindRule[A], nil, nil, nil))
 	add(WireRule(valuebootstrap.RuleEntry[P, A](), valuebootstrap.DeclareRule[P], valuebootstrap.RegisterRule, nil, valuebootstrap.BindRule[A], valuebootstrap.FinalizeRule[A], valuebootstrap.OccurrenceCatalog, nil))
 	add(WireRule(heapbootstrap.RuleEntry[P, A](), heapbootstrap.DeclareRule[P], heapbootstrap.RegisterRule, heapbootstrap.PairRule, heapbootstrap.BindRule[A], heapbootstrap.FinalizeRule[A], heapbootstrap.OccurrenceCatalog, nil))
-	add(WireRule(valuetransfer.RuleEntry[P, A](), valuetransfer.DeclareRule[P], valuetransfer.RegisterRule, nil, valuetransfer.BindRule[A], nil, nil, nil))
+	add(WireGeneratedRule[P, A](valuetransfer.RuleEntry()))
 	add(WireRule(valuearithmetic.RuleEntry[P, A](), valuearithmetic.DeclareRule[P], valuearithmetic.RegisterRule, nil, valuearithmetic.BindRule[A], nil, nil, nil))
 	add(WireRule(valueequality.RuleEntry[P, A](), valueequality.DeclareRule[P], valueequality.RegisterRule, nil, valueequality.BindRule[A], nil, nil, nil))
 	add(WireRule(valueorder.RuleEntry[P, A](), valueorder.DeclareRule[P], valueorder.RegisterRule, nil, valueorder.BindRule[A], nil, nil, nil))
@@ -154,6 +159,16 @@ func RuleTemplates[P Principals, A Authorities]() ([]*rule.Template, []RuleContr
 	// enumerated from Value's own admitted fresh-result directory.
 	add(WireRule(valueresultalias.RuleEntry[P, A](), valueresultalias.DeclareRule[P], valueresultalias.RegisterRule, nil, valueresultalias.BindRule[A], valueresultalias.FinalizeRule[A], nil, nil))
 	add(WireRule(valuefreshresult.RuleEntry[P, A](), valuefreshresult.DeclareRule[P], valuefreshresult.RegisterRule, nil, valuefreshresult.BindRule[A], valuefreshresult.FinalizeRule[A], valuefreshresult.OccurrenceCatalog, nil))
+	// Body-result is the Value-owned executable-body counterpart to the two
+	// Target result consumers above. It consumes selected Call body targets and
+	// Value's sealed ReturnBoundary relation; no caller reconstructs Program
+	// return geometry.
+	add(WireRule(valuebodyresult.RuleEntry[P, A](), valuebodyresult.DeclareRule[P], valuebodyresult.RegisterRule, nil, valuebodyresult.BindRule[A], valuebodyresult.FinalizeRule[A], nil, nil))
+	// Static typed-fact transfer is the identity copy of TypeFact along
+	// Value's sealed StorageTransfer. It is appended so established rule
+	// ordinals stay fixed. The composition derives its generated slot from
+	// the one declaration-owned plan catalog.
+	add(WireGeneratedRule[P, A](statictransfer.RuleEntry()))
 
 	return admitted, contributors, !rejected && len(admitted) > 0
 }

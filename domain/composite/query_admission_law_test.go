@@ -11,19 +11,6 @@ import (
 	"github.com/wippyai/go-lua/analysis/schema/programmount"
 )
 
-func selectedQueryRows(t testing.TB, table SelectedQueryTable) []QuerySite {
-	t.Helper()
-	rows := make([]QuerySite, table.Count())
-	for index := range rows {
-		row, ok := table.At(index)
-		if !ok {
-			t.Fatalf("selected query table row %d/%d is unavailable", index, table.Count())
-		}
-		rows[index] = row
-	}
-	return rows
-}
-
 func TestQueryAdmissionDispatchesBySealedFamily(t *testing.T) {
 	record := mountedRecord(t, "query-admission", "local function identity(value) return value end; return identity(1)")
 	bound := materializerBinding(t, record)
@@ -86,9 +73,13 @@ return 42`)
 	if !compilationOK {
 		t.Fatal("compilation unavailable")
 	}
-	sites, ok := SelectedQuerySites(compilation, record.Artifacts, record.Source.ContextDirectory())
-	if !ok || sites.Count() == 0 {
+	table, ok := SelectedQuerySites(compilation, record.Artifacts, record.Source.ContextDirectory())
+	if !ok || table.Count() == 0 {
 		t.Fatal("selected query sites")
+	}
+	selectedFamilies, selectedFamiliesOK := selectedPointQueryIssuance(compilation.catalog)
+	if !selectedFamiliesOK {
+		t.Fatal("selected-point query issuance")
 	}
 	callable := make(map[identity.ContentID]struct{})
 	roots := make(map[identity.ContentID]struct{})
@@ -142,18 +133,28 @@ return 42`)
 		t.Fatal("fixture issued no callable/root occurrence points")
 	}
 	perPoint := make(map[identity.ContentID]int)
-	for _, site := range selectedQueryRows(t, sites) {
+	for index := 0; index < table.Count(); index++ {
+		site, siteOK := table.At(index)
+		if !siteOK {
+			t.Fatalf("selected query site %d is unavailable", index)
+		}
 		if _, forbidden := callablePoints[site.Point]; forbidden {
 			t.Fatal("uncalled callable interior became a query site")
 		}
-		if _, root := rootPoints[site.Point]; !root {
-			t.Fatal("query site escaped the non-callable root")
-		}
 		perPoint[site.Point]++
 	}
+	// Occurrence spans own authored points. The selected table also closes
+	// those points over their canonical WTO regions so declaration-framed
+	// stage cuts are queryable; those synthetic points are not an escape into
+	// the dormant callable. Every authored root point must still be present.
+	for point := range rootPoints {
+		if count := perPoint[point]; count != len(selectedFamilies) {
+			t.Fatalf("authored root point %v query lanes = %d, want %d", point, count, len(selectedFamilies))
+		}
+	}
 	for point, count := range perPoint {
-		if count != len(QueryIssuance(compilation)) {
-			t.Fatalf("root point %v query lanes = %d", point, count)
+		if count != len(selectedFamilies) {
+			t.Fatalf("selected root-region point %v query lanes = %d, want %d", point, count, len(selectedFamilies))
 		}
 	}
 }
@@ -175,9 +176,13 @@ return use(1)`)
 	if !compilationOK {
 		t.Fatal("compilation unavailable")
 	}
-	sites, ok := SelectedQuerySites(compilation, record.Artifacts, record.Source.ContextDirectory())
-	if !ok || sites.Count() == 0 {
+	table, ok := SelectedQuerySites(compilation, record.Artifacts, record.Source.ContextDirectory())
+	if !ok || table.Count() == 0 {
 		t.Fatal("selected query sites")
+	}
+	selectedFamilies, selectedFamiliesOK := selectedPointQueryIssuance(compilation.catalog)
+	if !selectedFamiliesOK {
+		t.Fatal("selected-point query issuance")
 	}
 	points := selectedCallableOccurrencePoints(t, record.Artifacts[0].Program)
 	callee, sibling := selectedDirectCalleeAndSibling(t, record.Artifacts[0].Program)
@@ -188,7 +193,11 @@ return use(1)`)
 		t.Fatal("callable bodies published no occurrence points")
 	}
 	selected := make(map[identity.ContentID]int)
-	for _, site := range selectedQueryRows(t, sites) {
+	for index := 0; index < table.Count(); index++ {
+		site, siteOK := table.At(index)
+		if !siteOK {
+			t.Fatalf("selected query site %d is unavailable", index)
+		}
 		if _, forbidden := points[sibling][site.Point]; forbidden {
 			t.Fatal("uncalled sibling became a query site")
 		}
@@ -200,8 +209,8 @@ return use(1)`)
 		t.Fatal("direct callee interior is not a query subject")
 	}
 	for point, count := range selected {
-		if count != len(QueryIssuance(compilation)) {
-			t.Fatalf("selected callee point %v query lanes = %d", point, count)
+		if count != len(selectedFamilies) {
+			t.Fatalf("selected callee point %v query lanes = %d, want %d", point, count, len(selectedFamilies))
 		}
 	}
 }
@@ -223,9 +232,9 @@ func TestSelectedQuerySitesAdmitControlFaultRoots(t *testing.T) {
 			if !compilationOK {
 				t.Fatal("compilation unavailable")
 			}
-			sites, ok := SelectedQuerySites(compilation, record.Artifacts, record.Source.ContextDirectory())
-			if !ok || sites.Count() == 0 {
-				t.Fatalf("control-fault root has no selected query sites: ok=%t rows=%d", ok, sites.Count())
+			table, ok := SelectedQuerySites(compilation, record.Artifacts, record.Source.ContextDirectory())
+			if !ok || table.Count() == 0 {
+				t.Fatalf("control-fault root has no selected query sites: ok=%t rows=%d", ok, table.Count())
 			}
 		})
 	}
@@ -237,15 +246,19 @@ func TestSelectedQuerySitesUseTheirOwnerAddressFormula(t *testing.T) {
 	if !compilationOK {
 		t.Fatal("compilation unavailable")
 	}
-	sites, ok := SelectedQuerySites(compilation, record.Artifacts, record.Source.ContextDirectory())
-	if !ok || sites.Count() == 0 {
+	table, ok := SelectedQuerySites(compilation, record.Artifacts, record.Source.ContextDirectory())
+	if !ok || table.Count() == 0 {
 		t.Fatal("selected query sites")
 	}
 	issued := make(map[schema.Key]struct{})
 	for _, family := range QueryIssuance(compilation) {
 		issued[family.Family] = struct{}{}
 	}
-	for index, site := range selectedQueryRows(t, sites) {
+	for index := 0; index < table.Count(); index++ {
+		site, siteOK := table.At(index)
+		if !siteOK {
+			t.Fatalf("selected query site %d is unavailable", index)
+		}
 		if _, known := issued[site.Family]; !known {
 			t.Fatalf("site %d carries unissued family %q", index, site.Family)
 		}

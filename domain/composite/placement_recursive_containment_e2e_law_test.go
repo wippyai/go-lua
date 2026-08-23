@@ -108,6 +108,8 @@ func assertPlacementContainmentGraph(t testing.TB, name, source string, wantAllo
 	}
 
 	bestDepths, bestOwned, bestMutable := [3]int{}, 0, 0
+	bestExact := 0
+	wantFact := placementdomain.Fact{Class: placementdomain.OwnedHeap, RetainEscape: placementdomain.EvidenceProven}
 	for _, publication := range publications {
 		if publication.Site.Family != QueryFamilyPlacementSummary {
 			continue
@@ -122,6 +124,7 @@ func assertPlacementContainmentGraph(t testing.TB, name, source string, wantAllo
 			continue
 		}
 		depths, owned, mutable := [3]int{}, 0, 0
+		exact := 0
 		rowsOK := true
 		iterator := result.Allocations()
 		for {
@@ -129,9 +132,9 @@ func assertPlacementContainmentGraph(t testing.TB, name, source string, wantAllo
 			if !available {
 				break
 			}
-			class, classOK := allocation.Placement()
+			fact, factOK := allocation.Fact()
 			frozen, frozenOK := allocation.DeepFrozen()
-			if !classOK || !frozenOK {
+			if !factOK || !frozenOK {
 				rowsOK = false
 				break
 			}
@@ -143,18 +146,21 @@ func assertPlacementContainmentGraph(t testing.TB, name, source string, wantAllo
 				}
 				depths[depth]++
 			}
-			if class == placementdomain.OwnedHeap {
+			if fact.Class == placementdomain.OwnedHeap {
 				owned++
+			}
+			if fact == wantFact {
+				exact++
 			}
 			if frozen == placementdomain.EvidenceRefuted {
 				mutable++
 			}
 		}
-		bestDepths, bestOwned, bestMutable = depths, owned, mutable
+		bestDepths, bestOwned, bestMutable, bestExact = depths, owned, mutable, exact
 		depthsOK := wantDepths == nil || depths == *wantDepths
-		if rowsOK && depthsOK && owned == wantAllocations && mutable == wantAllocations {
+		if rowsOK && depthsOK && owned == wantAllocations && exact == wantAllocations && mutable == wantAllocations {
 			return
 		}
 	}
-	t.Fatalf("no typed Placement point retained the graph: depths=%v owned=%d mutable=%d want-depths=%v want-allocations=%d", bestDepths, bestOwned, bestMutable, wantDepths, wantAllocations)
+	t.Fatalf("no typed Placement point retained the graph: depths=%v owned=%d exact=%d mutable=%d want-depths=%v want-fact=%s want-allocations=%d", bestDepths, bestOwned, bestExact, bestMutable, wantDepths, wantFact, wantAllocations)
 }

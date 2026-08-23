@@ -51,7 +51,7 @@ func TestMountedEffectContextsExpandsEveryExactSameModuleContext(t *testing.T) {
 		t.Fatal("construct context-law rows")
 	}
 	directory := effectPublicationContextDirectory(t, link, first, second, other)
-	got, ok := mountedEffectContexts(directory, mount)
+	got, ok := directory.ContextsForModule(mount)
 	if !ok || len(got) != 2 {
 		t.Fatalf("mounted effect contexts = %d/%t, want two exact rows", len(got), ok)
 	}
@@ -67,7 +67,7 @@ func TestMountedEffectContextsExpandsEveryExactSameModuleContext(t *testing.T) {
 		}
 	}
 	reversed := effectPublicationContextDirectory(t, link, other, second, first)
-	gotReversed, reversedOK := mountedEffectContexts(reversed, mount)
+	gotReversed, reversedOK := reversed.ContextsForModule(mount)
 	if !reversedOK || len(gotReversed) != len(got) {
 		t.Fatal("permuted context directory changed expansion cardinality")
 	}
@@ -87,17 +87,17 @@ func TestMountedEffectContextsPreservesOneContextAndRefusesMissingContext(t *tes
 		t.Fatal("construct one-context rows")
 	}
 	directory := effectPublicationContextDirectory(t, link, context, foreign)
-	got, ok := mountedEffectContexts(directory, mount)
+	got, ok := directory.ContextsForModule(mount)
 	if !ok || len(got) != 1 || got[0] != context {
 		t.Fatalf("one-context expansion = %d/%t, want the exact context", len(got), ok)
 	}
-	if _, ok := mountedEffectContexts(directory, effectPublicationContextID(t, "absent-module")); ok {
+	if _, ok := directory.ContextsForModule(effectPublicationContextID(t, "absent-module")); ok {
 		t.Fatal("mismatched module acquired an effect context")
 	}
-	if _, ok := mountedEffectContexts(executioncontext.Directory{}, mount); ok {
+	if _, ok := (executioncontext.Directory{}).ContextsForModule(mount); ok {
 		t.Fatal("zero context directory acquired an effect context")
 	}
-	if _, ok := mountedEffectContexts(directory, identity.ContentID{}); ok {
+	if _, ok := directory.ContextsForModule(identity.ContentID{}); ok {
 		t.Fatal("zero mount acquired an effect context")
 	}
 }

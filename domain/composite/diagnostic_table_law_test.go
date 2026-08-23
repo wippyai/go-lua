@@ -26,6 +26,7 @@ func publishedCodes() []diagnostic.Code {
 		DiagnosticCodeUnresolvedTypeReference,
 		DiagnosticCodeUnresolvedValueReference,
 		DiagnosticCodeUnusedLocal,
+		DiagnosticCodeSendIsolation,
 		typedomain.Code,
 		typedomain.CallArgumentCode,
 		typedomain.ChannelSelectExhaustivenessCode,

@@ -4,6 +4,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/engine"
 	allocationcatalog "github.com/wippyai/go-lua/domain/heap/allocation/catalog"
 	contextowner "github.com/wippyai/go-lua/domain/heap/context/owner"
+	staticowner "github.com/wippyai/go-lua/domain/static/owner"
 	valueowner "github.com/wippyai/go-lua/domain/value/owner"
 )
 
@@ -93,13 +94,14 @@ type catalogBinding struct {
 	rules       *RuleBinding
 	allocations *allocationcatalog.Catalog
 	value       *valueowner.HotOwner
+	staticType  *staticowner.HotOwner
 	context     *contextowner.HotOwner
 	queries     queryCells
 }
 
 func (bound catalogBinding) available() bool {
 	return bound.binding != nil && bound.binding.Sealed() && bound.rules != nil && bound.allocations != nil &&
-		bound.value != nil && bound.context != nil && bound.catalog != nil && bound.queries.available(bound.catalog.queries)
+		bound.value != nil && bound.staticType != nil && bound.context != nil && bound.catalog != nil && bound.queries.available(bound.catalog.queries)
 }
 
 // bind is the one hot binding transaction for one compilation-owned catalog. It
@@ -133,7 +135,8 @@ func bind(compilation Compilation, inputs LinkInputs) (catalogBinding, BindFailu
 		return catalogBinding{}, BindFailure{Stage: BindStagePrincipal, Axis: failedAxis}
 	}
 	value, valueOK := axisPayloadForKey[*valueowner.HotOwner](state, axes, axisKeyValue)
-	if !valueOK {
+	staticType, staticTypeOK := axisPayloadForKey[*staticowner.HotOwner](state, axes, axisKeyStaticType)
+	if !valueOK || !staticTypeOK {
 		return catalogBinding{}, BindFailure{Stage: BindStagePrincipal}
 	}
 	// The mount set the allocation catalog joins is the heap schema's own: it
@@ -193,7 +196,7 @@ func bind(compilation Compilation, inputs LinkInputs) (catalogBinding, BindFailu
 	if context == nil {
 		contextOK = false
 	}
-	bound := catalogBinding{catalog: state, binding: binding, rules: rules, allocations: allocations, value: value, context: context, queries: fragments}
+	bound := catalogBinding{catalog: state, binding: binding, rules: rules, allocations: allocations, value: value, staticType: staticType, context: context, queries: fragments}
 	if !contextOK || !bound.available() {
 		return catalogBinding{}, BindFailure{Stage: BindStageSeal}
 	}

@@ -9,6 +9,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/schema"
 	"github.com/wippyai/go-lua/analysis/schema/axis"
 	"github.com/wippyai/go-lua/analysis/schema/query"
+	"github.com/wippyai/go-lua/analysis/schema/seal"
 	"github.com/wippyai/go-lua/analysis/snapshot"
 )
 
@@ -42,7 +43,7 @@ type publishedQuery struct {
 // deliberately explicit and allocation-local: separate checker and LSP
 // environments can compile different catalogs without sharing a process
 // singleton or a stale plan.
-func CompilePublication(sealed *schema.Schema) (Publication, bool) {
+func CompilePublication(sealed *seal.Schema) (Publication, bool) {
 	if !sealed.Available() {
 		return Publication{}, false
 	}

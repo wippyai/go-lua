@@ -4,6 +4,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/engine/internal/carrier"
 	"github.com/wippyai/go-lua/analysis/engine/internal/executioncatalog"
 	"github.com/wippyai/go-lua/analysis/engine/internal/facts/support"
+	"github.com/wippyai/go-lua/analysis/schema/structure"
 )
 
 // Run owns one sealed invocation context and the reusable Ticket issuer for
@@ -15,7 +16,7 @@ type Run struct {
 	next             uint64
 	open             uint64
 	submitted        uint64
-	submittedOutcome Outcome
+	submittedOutcome structure.ReductionOutcome
 	epoch            uint64
 	relationRevision uint64
 	generation       uint64
@@ -72,7 +73,7 @@ type Ticket struct {
 // Submit is the opaque invocation's only completion operation. Run remains
 // the authority; this method lets generated composition submit without
 // receiving the carrier transaction or a second lifecycle wrapper.
-func (ticket *Ticket) Submit(outcome Outcome) bool {
+func (ticket *Ticket) Submit(outcome structure.ReductionOutcome) bool {
 	if ticket == nil || ticket.issuer == nil {
 		return false
 	}
@@ -147,7 +148,7 @@ func (run *Run) Abort() bool {
 	run.discardOutputs()
 	run.open = 0
 	run.submitted = 0
-	run.submittedOutcome = Refuse
+	run.submittedOutcome = structure.Refuse
 	run.clearInvocation()
 	return true
 }
@@ -281,29 +282,29 @@ func (run *Run) hasOutput() bool {
 	return false
 }
 
-// Submit is the one final reducer boundary. It owns the fixed Outcome and
+// Submit is the one final reducer boundary. It owns the fixed outcome and
 // atomically transitions the live Ticket into Run's submitted state after all
 // independent output slots have been sealed. Patches stay private until
 // Drain copies them into an engine-owned destination. Outcome policy is not
 // interpreted here; even AuthenticatedOpaque is transported unchanged for the
 // sealed compiled plan to decide.
-func (run *Run) Submit(ticket *Ticket, outcome Outcome) bool {
+func (run *Run) Submit(ticket *Ticket, outcome structure.ReductionOutcome) bool {
 	if run == nil || ticket == nil || ticket.issuer != run || !ticket.Valid() {
 		return false
 	}
-	if !outcome.Valid() {
+	if !outcome.Available() {
 		_ = run.Abort()
 		return false
 	}
-	if outcome != Concrete {
+	if outcome != structure.Concrete {
 		run.discardOutputs()
 		return run.submitTicket(ticket, outcome)
 	}
-	if outcome == Concrete {
+	if outcome == structure.Concrete {
 		for _, used := range run.used[:run.outputCount] {
 			if !used {
 				run.discardOutputs()
-				run.submitTicket(ticket, Refuse)
+				run.submitTicket(ticket, structure.Refuse)
 				return false
 			}
 		}
@@ -315,7 +316,7 @@ func (run *Run) Submit(ticket *Ticket, outcome Outcome) bool {
 	return true
 }
 
-func (run *Run) submitTicket(ticket *Ticket, outcome Outcome) bool {
+func (run *Run) submitTicket(ticket *Ticket, outcome structure.ReductionOutcome) bool {
 	if run == nil || ticket == nil || ticket.issuer != run || !ticket.Valid() {
 		return false
 	}
@@ -325,19 +326,19 @@ func (run *Run) submitTicket(ticket *Ticket, outcome Outcome) bool {
 	return true
 }
 
-// Drain copies submitted carrier patches and the exact submitted Outcome into
+// Drain copies submitted carrier patches and the exact submitted outcome into
 // caller-owned engine storage, then returns Run to idle. It refuses a second
 // drain, a short destination, or an Issue attempted before this copy. A
 // disposition with no surviving patches accepts a nil destination and returns
 // count zero.
-func (run *Run) Drain(destination []carrier.Patch) (Outcome, int, bool) {
+func (run *Run) Drain(destination []carrier.Patch) (structure.ReductionOutcome, int, bool) {
 	if run == nil || run.submitted == 0 {
-		return Refuse, 0, false
+		return structure.Refuse, 0, false
 	}
 	count := 0
 	if run.hasOutput() {
 		if len(destination) < run.outputCount {
-			return Refuse, 0, false
+			return structure.Refuse, 0, false
 		}
 		copy(destination, run.outputs[:run.outputCount])
 		count = run.outputCount
@@ -348,7 +349,7 @@ func (run *Run) Drain(destination []carrier.Patch) (Outcome, int, bool) {
 		run.used[index] = false
 	}
 	run.submitted = 0
-	run.submittedOutcome = Refuse
+	run.submittedOutcome = structure.Refuse
 	run.clearInvocation()
 	return outcome, count, true
 }
@@ -356,9 +357,9 @@ func (run *Run) Drain(destination []carrier.Patch) (Outcome, int, bool) {
 // Consume is Drain against Run's sealed drain buffer. The returned patch
 // slice aliases that buffer until the next Issue and allocates nothing on
 // the hot path.
-func (run *Run) Consume() (Outcome, []carrier.Patch, bool) {
+func (run *Run) Consume() (structure.ReductionOutcome, []carrier.Patch, bool) {
 	if run == nil {
-		return Refuse, nil, false
+		return structure.Refuse, nil, false
 	}
 	outcome, count, ok := run.Drain(run.drain)
 	if !ok {

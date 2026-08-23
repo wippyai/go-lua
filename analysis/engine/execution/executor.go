@@ -5,6 +5,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/engine/internal/factbinding"
 	"github.com/wippyai/go-lua/analysis/engine/internal/facts/scalar"
 	memberrelation "github.com/wippyai/go-lua/analysis/schema/axis/member/relation"
+	"github.com/wippyai/go-lua/analysis/schema/structure"
 )
 
 // Executor is the one dynamic dispatch seam. Implementations are sealed typed
@@ -42,21 +43,21 @@ func (frame Frame) Valid(ticket Ticket) bool {
 // Result is completion metadata only. Patches remain owned by Run and reach
 // the solver only through Consume.
 type Result struct {
-	outcome Outcome
+	outcome structure.ReductionOutcome
 	count   uint16
 }
 
-func NewResult(outcome Outcome, count int) (Result, bool) {
-	if !outcome.Valid() || count < 0 || count > int(^uint16(0)) || outcome != Concrete && count != 0 {
+func NewResult(outcome structure.ReductionOutcome, count int) (Result, bool) {
+	if !outcome.Available() || count < 0 || count > int(^uint16(0)) || outcome != structure.Concrete && count != 0 {
 		return Result{}, false
 	}
 	return Result{outcome: outcome, count: uint16(count)}, true
 }
 func (result Result) Valid() bool {
-	return result.outcome.Valid() && (result.outcome == Concrete || result.count == 0)
+	return result.outcome.Available() && (result.outcome == structure.Concrete || result.count == 0)
 }
-func (result Result) Outcome() Outcome { return result.outcome }
-func (result Result) Count() int       { return int(result.count) }
+func (result Result) Outcome() structure.ReductionOutcome { return result.outcome }
+func (result Result) Count() int                          { return int(result.count) }
 
 // ExactRow is static typed row data for the E form. It contains only sealed
 // binding/unit/target/port descriptors and no live Run or callback.
@@ -118,7 +119,7 @@ func (worker *exactWorker[K, V]) Execute(frame Frame, ticket Ticket) (Result, bo
 		return Result{}, false
 	}
 	count := 0
-	if outcome == Concrete {
+	if outcome == structure.Concrete {
 		count = 1
 	}
 	return NewResult(outcome, count)
@@ -187,8 +188,8 @@ func (worker *sourceWorker[K, V]) Execute(frame Frame, ticket Ticket) (Result, b
 		return Result{}, false
 	}
 	_, _, within, contextOK := row.write.context(ticket)
-	if !contextOK || !row.write.Stage(ticket, &worker.scratch, within, value) || !row.write.Close(ticket, &worker.scratch) || !ticket.Submit(Concrete) {
+	if !contextOK || !row.write.Stage(ticket, &worker.scratch, within, value) || !row.write.Close(ticket, &worker.scratch) || !ticket.Submit(structure.Concrete) {
 		return Result{}, false
 	}
-	return NewResult(Concrete, 1)
+	return NewResult(structure.Concrete, 1)
 }

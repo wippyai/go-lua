@@ -198,6 +198,7 @@ var grammarRoleKeys = [...]struct {
 	{roleEffectBody, "effect-body"},
 	{roleCallActivation, "call-activation"},
 	{roleStorageTransfer, "value-transfer"},
+	{roleStorageTransfer, "static-transfer"},
 	{roleArithmetic, "value-binary-arithmetic"},
 	{roleEquality, "value-binary-equality"},
 	{roleOrder, "value-binary-order"},

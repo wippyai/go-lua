@@ -19,6 +19,7 @@ import (
 	packowner "github.com/wippyai/go-lua/domain/pack/owner"
 	placementowner "github.com/wippyai/go-lua/domain/placement/owner"
 	placementsuspension "github.com/wippyai/go-lua/domain/placement/suspension"
+	staticowner "github.com/wippyai/go-lua/domain/static/owner"
 	valueowner "github.com/wippyai/go-lua/domain/value/owner"
 )
 
@@ -37,6 +38,7 @@ const (
 	axisKeyContext               schema.Key = "context"
 	axisKeyCall                  schema.Key = "call"
 	axisKeyEffect                schema.Key = "effect"
+	axisKeyStaticType            schema.Key = staticowner.AxisKey
 	axisKeyExecutionReachability schema.Key = "execution-reachability"
 	axisKeyChannelSelectCase     schema.Key = "channel-select-case"
 )
@@ -130,6 +132,7 @@ func axisTemplates() ([]*axisTemplate, []axisContributor, bool) {
 	addBound(wireAxis(placementowner.AxisEntry[LinkInputs](), placementowner.DeclareAxis, placementowner.BindAxis[LinkInputs], placementowner.AlgebraAxis))
 	addBound(wireAxis(placementsuspension.AxisEntry[LinkInputs](), placementsuspension.DeclareAxis, placementsuspension.BindAxis[LinkInputs], placementsuspension.AlgebraAxis))
 	addBound(wireAxis(contextowner.AxisEntry[LinkInputs](), contextowner.DeclareAxis, contextowner.BindAxis[LinkInputs], contextowner.AlgebraAxis))
+	addBound(wireAxis(staticowner.AxisEntry[LinkInputs](), staticowner.DeclareAxis, staticowner.BindAxis[LinkInputs], staticowner.AlgebraAxis))
 	// Engine-published axes are declared after the factor axes so artifact
 	// lane ordinals keep the prefix they address. Snapshot slots are assigned
 	// separately: engine-published outputs lead that range, and the first
@@ -142,8 +145,10 @@ func axisTemplates() ([]*axisTemplate, []axisContributor, bool) {
 	addPublishedSpec(modulecomposition.ModuleCallTransitionAxisEntry[LinkInputs]())
 	addPublishedSpec(modulecomposition.GenerationAxisEntry[LinkInputs]())
 	addPublishedSpec(modulecomposition.OutcomeAxisEntry[LinkInputs]())
+	addPublishedSpec(modulecomposition.ModuleReturnStateEdgeAxisEntry[LinkInputs]())
 	addPublishedSpec(modulecomposition.TerminalAxisEntry[LinkInputs]())
 	addPublishedSpec(modulecomposition.ModuleExportCallableOriginAxisEntry[LinkInputs]())
+	addPublishedSpec(modulecomposition.ModuleExportCallableIngressAxisEntry[LinkInputs]())
 	addPublishedSpec(executionowner.AxisEntry[LinkInputs]())
 	addPublishedSpec(denominatorpublication.AxisEntry[LinkInputs]())
 
@@ -412,6 +417,7 @@ func bindAxisInventory(state *catalog, entries []*axisTemplate, binding *engine.
 // principal record.
 func (cells axisCells) coldPrincipals(state *catalog) (principals, bool) {
 	value, valueOK := axisPayloadForKey[*valueowner.SchemaFragment](state, cells, axisKeyValue)
+	staticType, staticTypeOK := axisPayloadForKey[*staticowner.SchemaFragment](state, cells, axisKeyStaticType)
 	call, callOK := axisPayloadForKey[*callowner.SchemaFragment](state, cells, axisKeyCall)
 	heap, heapOK := axisPayloadForKey[*heapowner.SchemaFragment](state, cells, axisKeyHeap)
 	placement, placementOK := axisPayloadForKey[*placementowner.SchemaFragment](state, cells, axisKeyPlacement)
@@ -419,10 +425,10 @@ func (cells axisCells) coldPrincipals(state *catalog) (principals, bool) {
 	evidence, evidenceOK := axisPayloadForKey[*placementsuspension.EvidenceFactorFragment](state, cells, axisKeyPlacementEvidence)
 	pack, packOK := axisPayloadForKey[*packowner.SchemaFragment](state, cells, axisKeyPack)
 	effect, effectOK := axisPayloadForKey[*effectowner.SchemaFragment](state, cells, axisKeyEffect)
-	if !valueOK || !callOK || !heapOK || !placementOK || !contextOK || !evidenceOK || !packOK || !effectOK {
+	if !valueOK || !staticTypeOK || !callOK || !heapOK || !placementOK || !contextOK || !evidenceOK || !packOK || !effectOK {
 		return principals{}, false
 	}
-	set := principals{value: value, call: call, heap: heap, placement: placement, context: context, evidence: evidence, pack: pack, effect: effect}
+	set := principals{value: value, staticType: staticType, call: call, heap: heap, placement: placement, context: context, evidence: evidence, pack: pack, effect: effect}
 	return set, set.available()
 }
 
@@ -431,6 +437,7 @@ func (cells axisCells) coldPrincipals(state *catalog) (principals, bool) {
 // factor authorities are the table's.
 func (cells axisCells) hotPrincipals(state *catalog, inputs LinkInputs, allocations *allocationcatalog.Catalog) (authorities, bool) {
 	value, valueOK := axisPayloadForKey[*valueowner.HotOwner](state, cells, axisKeyValue)
+	staticType, staticTypeOK := axisPayloadForKey[*staticowner.HotOwner](state, cells, axisKeyStaticType)
 	call, callOK := axisPayloadForKey[*callowner.HotOwner](state, cells, axisKeyCall)
 	heap, heapOK := axisPayloadForKey[*heapowner.HotOwner](state, cells, axisKeyHeap)
 	placement, placementOK := axisPayloadForKey[*placementowner.HotOwner](state, cells, axisKeyPlacement)
@@ -438,13 +445,13 @@ func (cells axisCells) hotPrincipals(state *catalog, inputs LinkInputs, allocati
 	evidence, evidenceOK := axisPayloadForKey[*placementsuspension.EvidenceOwner](state, cells, axisKeyPlacementEvidence)
 	pack, packOK := axisPayloadForKey[*packowner.HotOwner](state, cells, axisKeyPack)
 	effect, effectOK := axisPayloadForKey[*effectowner.HotOwner](state, cells, axisKeyEffect)
-	if !valueOK || !callOK || !heapOK || !placementOK || !contextOK || !evidenceOK || !packOK || !effectOK {
+	if !valueOK || !staticTypeOK || !callOK || !heapOK || !placementOK || !contextOK || !evidenceOK || !packOK || !effectOK {
 		return authorities{}, false
 	}
 	set := authorities{
-		value: value, call: call, heap: heap, placement: placement, context: context, evidence: evidence, pack: pack, effect: effect,
+		value: value, staticType: staticType, call: call, heap: heap, placement: placement, context: context, evidence: evidence, pack: pack, effect: effect,
 		valueSchema: inputs.ValueSchema, heapSchema: inputs.HeapSchema, placementSchema: inputs.PlacementSchema, packSchema: inputs.PackSchema,
-		contextSchema: inputs.contextSchema, topology: inputs.topology, allocations: allocations,
+		contextSchema: inputs.contextSchema, composition: inputs.composition, topology: inputs.topology, allocations: allocations,
 		targetContract: inputs.targetContract,
 	}
 	return set, set.available() && mountedActualsComplete(inputs.CallAlgebra, inputs.PackSchema)

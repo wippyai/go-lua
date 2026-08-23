@@ -13,6 +13,7 @@ package observation
 import (
 	"github.com/wippyai/go-lua/analysis/schema"
 	"github.com/wippyai/go-lua/analysis/schema/query"
+	seal "github.com/wippyai/go-lua/analysis/schema/seal"
 	"github.com/wippyai/go-lua/analysis/schema/structure"
 	"github.com/wippyai/go-lua/analysis/schema/vocabulary"
 	"github.com/wippyai/go-lua/internal/framing"
@@ -21,7 +22,7 @@ import (
 // Surface law ordinals. They are numeric identities; rendering a verdict is
 // the caller's job, from the identity.
 const (
-	LawEntryShape schema.LawID = schema.SurfaceLawFloor + iota
+	LawEntryShape schema.LawID = seal.SurfaceLawFloor + iota
 	LawObservationIdentity
 	LawProducerDeclared
 	LawProducerPhase
@@ -203,7 +204,7 @@ func (entry *Entry) declarationComplete() bool {
 type surface struct{ entries []*Entry }
 
 // NewSurface hands one ordered set of observation declarations to the table.
-func NewSurface(entries []*Entry) schema.Surface { return surface{entries: entries} }
+func NewSurface(entries []*Entry) seal.Surface { return surface{entries: entries} }
 
 func (contribution surface) Kind() schema.SurfaceKind { return schema.SurfaceKindObservation }
 
@@ -218,7 +219,7 @@ func (contribution surface) Entries() []schema.Entry {
 // Seal states the observation surface's own laws over the indexed view. Every
 // reference is resolved against a lower sealed surface, and a wrong category
 // is malformed rather than silently treated as an absent declaration.
-func (contribution surface) Seal(view schema.View, sealed schema.Sealed) schema.SealFailure {
+func (contribution surface) Seal(view seal.View, sealed seal.Sealed) schema.SealFailure {
 	for position := 0; position < view.Count(); position++ {
 		row, rowOK := view.At(position)
 		entry, entryOK := row.(*Entry)
@@ -301,7 +302,7 @@ func (contribution surface) Seal(view schema.View, sealed schema.Sealed) schema.
 }
 
 func failure(entry schema.EntryID, law schema.LawID, disposition schema.Disposition) schema.SealFailure {
-	return schema.SurfaceLawFailure(schema.SurfaceKindObservation, entry, law, disposition)
+	return seal.SurfaceLawFailure(schema.SurfaceKindObservation, entry, law, disposition)
 }
 
 // Table is the immutable projection a consumer reads the sealed observation
@@ -313,7 +314,7 @@ type Table struct {
 }
 
 // NewTable projects one sealed observation view.
-func NewTable(view schema.View) (Table, bool) {
+func NewTable(view seal.View) (Table, bool) {
 	if view.Kind() != schema.SurfaceKindObservation || !view.Available() {
 		return Table{}, false
 	}

@@ -43,6 +43,8 @@ package diagnostic
 import (
 	"strings"
 
+	seal "github.com/wippyai/go-lua/analysis/schema/seal"
+
 	"github.com/wippyai/go-lua/analysis/schema"
 	"github.com/wippyai/go-lua/analysis/schema/structure"
 	"github.com/wippyai/go-lua/internal/framing"
@@ -60,7 +62,7 @@ const (
 // Surface law ordinals. They are numeric identities; rendering a verdict is
 // the caller's job, from the identity.
 const (
-	LawEntryShape schema.LawID = schema.SurfaceLawFloor + iota
+	LawEntryShape schema.LawID = seal.SurfaceLawFloor + iota
 	LawCodeIdentity
 	LawFamilyDeclared
 	LawTierValid
@@ -1251,7 +1253,7 @@ func (entry *Entry) reads() Requirement {
 type surface struct{ entries []*Entry }
 
 // NewSurface hands one ordered set of diagnostic declarations to the table.
-func NewSurface(entries []*Entry) schema.Surface { return surface{entries: entries} }
+func NewSurface(entries []*Entry) seal.Surface { return surface{entries: entries} }
 
 func (contribution surface) Kind() schema.SurfaceKind { return schema.SurfaceKindDiagnostic }
 
@@ -1265,13 +1267,13 @@ func (contribution surface) Entries() []schema.Entry {
 
 // Seal states the diagnostic surface's own laws over the indexed view and the
 // surfaces sealed below it.
-func (contribution surface) Seal(view schema.View, sealed schema.Sealed) schema.SealFailure {
+func (contribution surface) Seal(view seal.View, sealed seal.Sealed) schema.SealFailure {
 	// How many rows a surface holds is that surface's own law. This one is the
 	// analyzer's whole published vocabulary and every reader of a verdict
 	// resolves its row here, so an inventory of none is an unusable table rather
 	// than a surface with nothing in it yet.
 	if view.Count() == 0 {
-		return schema.SurfaceLawFailure(schema.SurfaceKindDiagnostic, schema.EntryID{}, LawSurfacePopulated, schema.DispositionIncomplete)
+		return seal.SurfaceLawFailure(schema.SurfaceKindDiagnostic, schema.EntryID{}, LawSurfacePopulated, schema.DispositionIncomplete)
 	}
 	observations := make(map[schema.Key]schema.EntryID, view.Count())
 	branchSited := make(map[schema.Key]map[Site]schema.EntryID, view.Count())
@@ -1280,20 +1282,20 @@ func (contribution surface) Seal(view schema.View, sealed schema.Sealed) schema.
 		row, rowOK := view.At(position)
 		entry, entryOK := row.(*Entry)
 		if !rowOK || !entryOK || entry == nil {
-			return schema.SurfaceLawFailure(schema.SurfaceKindDiagnostic, schema.EntryID{}, LawEntryShape, schema.DispositionMalformed)
+			return seal.SurfaceLawFailure(schema.SurfaceKindDiagnostic, schema.EntryID{}, LawEntryShape, schema.DispositionMalformed)
 		}
 		// Entry uniqueness is the root's law. What the surface states here is
 		// that the identity a verdict carries is this surface's own derivation
 		// of the published code, so a row cannot travel under another surface's
 		// identity and a code cannot drift from the entry it names.
 		if !entry.code.Available() || entry.id != schema.NewEntryID(schema.SurfaceKindDiagnostic, schema.Key(entry.code)) {
-			return schema.SurfaceLawFailure(schema.SurfaceKindDiagnostic, entry.id, LawCodeIdentity, schema.DispositionMalformed)
+			return seal.SurfaceLawFailure(schema.SurfaceKindDiagnostic, entry.id, LawCodeIdentity, schema.DispositionMalformed)
 		}
 		if failure := sealFamily(entry, sealed); failure.Available() {
 			return failure
 		}
 		if !entry.defaultSeverity.Available() || entry.Tier() == TierInvalid {
-			return schema.SurfaceLawFailure(schema.SurfaceKindDiagnostic, entry.id, LawTierValid, schema.DispositionIncomplete)
+			return seal.SurfaceLawFailure(schema.SurfaceKindDiagnostic, entry.id, LawTierValid, schema.DispositionIncomplete)
 		}
 		// The payload a producer must supply is exactly the payload the row's
 		// own presentation reads. A field nothing reads is dead weight on every
@@ -1302,10 +1304,10 @@ func (contribution surface) Seal(view schema.View, sealed schema.Sealed) schema.
 		if entry.VariantCount() == 0 {
 			reads := entry.reads()
 			if !entry.requirements.has(reads) {
-				return schema.SurfaceLawFailure(schema.SurfaceKindDiagnostic, entry.id, LawRequirementCovered, schema.DispositionIncomplete)
+				return seal.SurfaceLawFailure(schema.SurfaceKindDiagnostic, entry.id, LawRequirementCovered, schema.DispositionIncomplete)
 			}
 			if !reads.has(entry.requirements) {
-				return schema.SurfaceLawFailure(schema.SurfaceKindDiagnostic, entry.id, LawRequirementCovered, schema.DispositionMalformed)
+				return seal.SurfaceLawFailure(schema.SurfaceKindDiagnostic, entry.id, LawRequirementCovered, schema.DispositionMalformed)
 			}
 		}
 		if failure := sealVariants(entry, sealed); failure.Available() {
@@ -1322,7 +1324,7 @@ func (contribution surface) Seal(view schema.View, sealed schema.Sealed) schema.
 		}
 		if entry.lane == LaneStatic {
 			if prior, duplicate := observations[entry.observation.Key]; duplicate {
-				return schema.SurfaceLawFailure(schema.SurfaceKindDiagnostic, prior, LawObservationUnique, schema.DispositionDuplicate)
+				return seal.SurfaceLawFailure(schema.SurfaceKindDiagnostic, prior, LawObservationUnique, schema.DispositionDuplicate)
 			}
 			observations[entry.observation.Key] = entry.id
 		}
@@ -1334,13 +1336,13 @@ func (contribution surface) Seal(view schema.View, sealed schema.Sealed) schema.
 		// is the row's content for the answer it names, so it is held to the
 		// same render plan.
 		if entry.declaresEvidence() && !entry.Renders(SectionEvidence) {
-			return schema.SurfaceLawFailure(schema.SurfaceKindDiagnostic, entry.id, LawRenderComplete, schema.DispositionIncomplete)
+			return seal.SurfaceLawFailure(schema.SurfaceKindDiagnostic, entry.id, LawRenderComplete, schema.DispositionIncomplete)
 		}
 		if entry.declaresHelp() && !entry.Renders(SectionHelp) {
-			return schema.SurfaceLawFailure(schema.SurfaceKindDiagnostic, entry.id, LawRenderComplete, schema.DispositionIncomplete)
+			return seal.SurfaceLawFailure(schema.SurfaceKindDiagnostic, entry.id, LawRenderComplete, schema.DispositionIncomplete)
 		}
 		if !entry.Renders(SectionSummary) {
-			return schema.SurfaceLawFailure(schema.SurfaceKindDiagnostic, entry.id, LawRenderComplete, schema.DispositionIncomplete)
+			return seal.SurfaceLawFailure(schema.SurfaceKindDiagnostic, entry.id, LawRenderComplete, schema.DispositionIncomplete)
 		}
 	}
 	return schema.SealFailure{}
@@ -1376,10 +1378,10 @@ func (entry *Entry) declaresHelp() bool {
 // sealed verdict vocabulary. The vocabulary's ordinals are owned by the
 // judgment that produces them, so a row keyed by an ordinal the vocabulary
 // does not declare is a presentation no collector can ever select.
-func sealVariants(entry *Entry, sealed schema.Sealed) schema.SealFailure {
+func sealVariants(entry *Entry, sealed seal.Sealed) schema.SealFailure {
 	for _, variant := range entry.variants {
 		if _, disposition := structure.Member(sealed, entry.verdictCategory, variant.verdict); disposition != schema.DispositionAccepted {
-			return schema.SurfaceLawFailure(schema.SurfaceKindDiagnostic, entry.id, LawVariantDeclared, disposition)
+			return seal.SurfaceLawFailure(schema.SurfaceKindDiagnostic, entry.id, LawVariantDeclared, disposition)
 		}
 	}
 	return schema.SealFailure{}
@@ -1392,17 +1394,17 @@ func sealVariants(entry *Entry, sealed schema.Sealed) schema.SealFailure {
 // on the declared family therefore reach the same decision, and a family the
 // analyzer has never published before is a row on the structural surface rather
 // than a member of an enum here.
-func sealFamily(entry *Entry, sealed schema.Sealed) schema.SealFailure {
+func sealFamily(entry *Entry, sealed seal.Sealed) schema.SealFailure {
 	if entry.family.Surface != schema.SurfaceKindStructure {
-		return schema.SurfaceLawFailure(schema.SurfaceKindDiagnostic, entry.id, LawFamilyDeclared, schema.DispositionMalformed)
+		return seal.SurfaceLawFailure(schema.SurfaceKindDiagnostic, entry.id, LawFamilyDeclared, schema.DispositionMalformed)
 	}
 	member, disposition := structure.Resolve(sealed, entry.family.Key, structure.CategoryDiagnosticFamily)
 	if disposition != schema.DispositionAccepted {
-		return schema.SurfaceLawFailure(schema.SurfaceKindDiagnostic, entry.id, LawFamilyDeclared, disposition)
+		return seal.SurfaceLawFailure(schema.SurfaceKindDiagnostic, entry.id, LawFamilyDeclared, disposition)
 	}
 	family, familyOK := entry.code.Family()
 	if !familyOK || family != member.Spelling() {
-		return schema.SurfaceLawFailure(schema.SurfaceKindDiagnostic, entry.id, LawFamilyDeclared, schema.DispositionMalformed)
+		return seal.SurfaceLawFailure(schema.SurfaceKindDiagnostic, entry.id, LawFamilyDeclared, schema.DispositionMalformed)
 	}
 	return schema.SealFailure{}
 }
@@ -1411,15 +1413,15 @@ func sealFamily(entry *Entry, sealed schema.Sealed) schema.SealFailure {
 // row is measured over is declared once, on the structural surface, so this is
 // the only bound on it: a producing row names a member of that vocabulary, and
 // a row with no producer names none.
-func sealObservation(entry *Entry, sealed schema.Sealed) schema.SealFailure {
+func sealObservation(entry *Entry, sealed seal.Sealed) schema.SealFailure {
 	if !entry.observation.Declared() {
 		return schema.SealFailure{}
 	}
 	if entry.observation.Surface != schema.SurfaceKindStructure {
-		return schema.SurfaceLawFailure(schema.SurfaceKindDiagnostic, entry.id, LawObservationDeclared, schema.DispositionMalformed)
+		return seal.SurfaceLawFailure(schema.SurfaceKindDiagnostic, entry.id, LawObservationDeclared, schema.DispositionMalformed)
 	}
 	if _, disposition := structure.Resolve(sealed, entry.observation.Key, structure.CategoryDiagnosticObservation); disposition != schema.DispositionAccepted {
-		return schema.SurfaceLawFailure(schema.SurfaceKindDiagnostic, entry.id, LawObservationDeclared, disposition)
+		return seal.SurfaceLawFailure(schema.SurfaceKindDiagnostic, entry.id, LawObservationDeclared, disposition)
 	}
 	return schema.SealFailure{}
 }
@@ -1453,14 +1455,14 @@ func sitesAdmissible(sites []Site, lane Lane) bool {
 func sealBranchSite(entry *Entry, sited map[schema.Key]map[Site]schema.EntryID, unsited map[schema.Key]schema.EntryID) schema.SealFailure {
 	if entry.lane != LaneBranch || !entry.observation.Declared() {
 		if len(entry.sites) != 0 {
-			return schema.SurfaceLawFailure(schema.SurfaceKindDiagnostic, entry.id, LawSiteUnique, schema.DispositionMalformed)
+			return seal.SurfaceLawFailure(schema.SurfaceKindDiagnostic, entry.id, LawSiteUnique, schema.DispositionMalformed)
 		}
 		return schema.SealFailure{}
 	}
 	population := entry.observation.Key
 	if len(entry.sites) != 0 {
 		if prior, shared := unsited[population]; shared {
-			return schema.SurfaceLawFailure(schema.SurfaceKindDiagnostic, prior, LawSiteUnique, schema.DispositionMalformed)
+			return seal.SurfaceLawFailure(schema.SurfaceKindDiagnostic, prior, LawSiteUnique, schema.DispositionMalformed)
 		}
 		bySite := sited[population]
 		if bySite == nil {
@@ -1469,14 +1471,14 @@ func sealBranchSite(entry *Entry, sited map[schema.Key]map[Site]schema.EntryID, 
 		}
 		for _, site := range entry.sites {
 			if prior, duplicate := bySite[site]; duplicate {
-				return schema.SurfaceLawFailure(schema.SurfaceKindDiagnostic, prior, LawSiteUnique, schema.DispositionDuplicate)
+				return seal.SurfaceLawFailure(schema.SurfaceKindDiagnostic, prior, LawSiteUnique, schema.DispositionDuplicate)
 			}
 			bySite[site] = entry.id
 		}
 		return schema.SealFailure{}
 	}
 	if _, shared := sited[population]; shared {
-		return schema.SurfaceLawFailure(schema.SurfaceKindDiagnostic, entry.id, LawSiteUnique, schema.DispositionMalformed)
+		return seal.SurfaceLawFailure(schema.SurfaceKindDiagnostic, entry.id, LawSiteUnique, schema.DispositionMalformed)
 	}
 	if _, seen := unsited[population]; !seen {
 		unsited[population] = entry.id
@@ -1490,14 +1492,14 @@ func sealBranchSite(entry *Entry, sited map[schema.Key]map[Site]schema.EntryID, 
 // post-seal directory rather than a downward Resolve.
 func sealCollection(entry *Entry) schema.SealFailure {
 	if (entry.lane == LaneBranch) != entry.collection.Declared() {
-		return schema.SurfaceLawFailure(schema.SurfaceKindDiagnostic, entry.id, LawCollectionDeclared, schema.DispositionIncomplete)
+		return seal.SurfaceLawFailure(schema.SurfaceKindDiagnostic, entry.id, LawCollectionDeclared, schema.DispositionIncomplete)
 	}
 	if !entry.collection.Declared() {
 		return schema.SealFailure{}
 	}
 	if !entry.collection.Available() ||
 		(entry.collection.Surface != schema.SurfaceKindQuery && entry.collection.Surface != schema.SurfaceKindObservation) {
-		return schema.SurfaceLawFailure(schema.SurfaceKindDiagnostic, entry.id, LawCollectionDeclared, schema.DispositionMalformed)
+		return seal.SurfaceLawFailure(schema.SurfaceKindDiagnostic, entry.id, LawCollectionDeclared, schema.DispositionMalformed)
 	}
 	return schema.SealFailure{}
 }
@@ -1506,12 +1508,12 @@ func sealCollection(entry *Entry) schema.SealFailure {
 // into. A reference to a surface below this one must name an entry that is
 // actually there; a reference upward names a table that is not sealed yet, and
 // the catalog order says that is malformed rather than merely unresolved.
-func sealFact(entry *Entry, sealed schema.Sealed) schema.SealFailure {
+func sealFact(entry *Entry, sealed seal.Sealed) schema.SealFailure {
 	if !entry.fact.Declared() {
 		return schema.SealFailure{}
 	}
 	if _, disposition := sealed.Resolve(entry.fact.Surface, entry.fact.Key); disposition != schema.DispositionAccepted {
-		return schema.SurfaceLawFailure(schema.SurfaceKindDiagnostic, entry.id, LawFactResolves, disposition)
+		return seal.SurfaceLawFailure(schema.SurfaceKindDiagnostic, entry.id, LawFactResolves, disposition)
 	}
 	return schema.SealFailure{}
 }
@@ -1533,7 +1535,7 @@ type Table struct {
 
 // NewTable projects one sealed diagnostic view. It is the only construction of
 // a diagnostic lookup in the analyzer.
-func NewTable(view schema.View) (Table, bool) {
+func NewTable(view seal.View) (Table, bool) {
 	if view.Kind() != schema.SurfaceKindDiagnostic || !view.Available() {
 		return Table{}, false
 	}

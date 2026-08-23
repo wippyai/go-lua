@@ -28,6 +28,7 @@ const (
 	// so no axis is named beside it.
 	MountStageTopology
 	MountStageFormal
+	MountStageComposition
 )
 
 func (stage MountStage) String() string {
@@ -44,6 +45,8 @@ func (stage MountStage) String() string {
 		return "topology"
 	case MountStageFormal:
 		return "formal"
+	case MountStageComposition:
+		return "composition"
 	default:
 		return "none"
 	}
@@ -146,6 +149,10 @@ func (inputs LinkInputs) derive() (LinkInputs, MountFailure) {
 		// this foundation does not invent a transfer/result ABI or new verdict.
 		return LinkInputs{}, MountFailure{Stage: MountStageFormal}
 	}
+	composition, compositionOK := inputs.Source.Module().BuildComposition(inputs.Source.ContentID(), inputs.Artifacts, inputs.Source.ContextDirectory())
+	if !compositionOK {
+		return LinkInputs{}, MountFailure{Stage: MountStageComposition}
+	}
 	// Target is read exactly once from Link's finalized Boundary. Mounted actual
 	// completeness is checked directly from Call's sealed MountedCall rows and
 	// Pack's detached projections; no cross-domain catalogue is retained.
@@ -159,6 +166,7 @@ func (inputs LinkInputs) derive() (LinkInputs, MountFailure) {
 	}
 	inputs.topology = topology
 	inputs.contextSchema = contextSchema
+	inputs.composition = composition
 	inputs.targetContract = target
 	return inputs, MountFailure{}
 }

@@ -6,6 +6,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/identity"
 	"github.com/wippyai/go-lua/analysis/schema"
 	"github.com/wippyai/go-lua/analysis/schema/executioncontext"
+	"github.com/wippyai/go-lua/analysis/schema/modulecomposition"
 	"github.com/wippyai/go-lua/analysis/schema/programmount"
 	"github.com/wippyai/go-lua/analysis/schema/query"
 	"github.com/wippyai/go-lua/analysis/schema/rule"
@@ -16,6 +17,8 @@ import (
 	contextowner "github.com/wippyai/go-lua/domain/heap/context/owner"
 	placementdomain "github.com/wippyai/go-lua/domain/placement"
 	placementquery "github.com/wippyai/go-lua/domain/placement/query"
+	"github.com/wippyai/go-lua/domain/sendsafety"
+	staticowner "github.com/wippyai/go-lua/domain/static/owner"
 	valuedomain "github.com/wippyai/go-lua/domain/value"
 	valueowner "github.com/wippyai/go-lua/domain/value/owner"
 )
@@ -43,9 +46,11 @@ type ProgramBinding struct {
 	allocations   *allocationcatalog.Catalog
 	placement     placementdomain.Schema
 	contextSchema contextdomain.Schema
+	composition   modulecomposition.Composition
 
-	value   *valueowner.HotOwner
-	context *contextowner.HotOwner
+	value      *valueowner.HotOwner
+	staticType *staticowner.HotOwner
+	context    *contextowner.HotOwner
 
 	// queries holds every declared query family's sealed implementation at its
 	// slot, opaque here and recovered at its type by the accessor the family's
@@ -57,7 +62,8 @@ type ProgramBinding struct {
 func (bound *ProgramBinding) Available() bool {
 	return bound != nil && bound.binding != nil && bound.binding.Sealed() &&
 		bound.compilation.Available() && bound.catalog != nil && bound.rules != nil && bound.factors != nil && bound.allocations != nil &&
-		bound.placement.Valid() && bound.context != nil && bound.contextSchema.Valid() && bound.contextSchema.Heap() == bound.placement.Heap()
+		bound.placement.Valid() && bound.context != nil && bound.contextSchema.Valid() && bound.contextSchema.Heap() == bound.placement.Heap() &&
+		bound.composition.Available() && bound.composition.LinkID() == bound.contextSchema.Directory().LinkID()
 }
 
 // SchemaBinding is the one sealed engine binding this transaction produced.
@@ -116,6 +122,16 @@ func (bound *ProgramBinding) ValueSchema() *valuedomain.Schema {
 	return bound.value.Schema()
 }
 
+// StaticTypeAuthority returns the one Static-owned typed factor bound over the
+// same Value coordinate denominator. Consumers use it to issue typed reads;
+// they do not reconstruct Runtime rows from Program or diagnostic metadata.
+func (bound *ProgramBinding) StaticTypeAuthority() *staticowner.HotOwner {
+	if bound == nil {
+		return nil
+	}
+	return bound.staticType
+}
+
 // PlacementSchema returns the exact Link-bound Placement authority used by
 // this program's rules and query encoder. Detached result consumers must carry
 // this authority explicitly; a payload schema ID alone cannot authorize a
@@ -145,6 +161,15 @@ func (bound *ProgramBinding) ContextAuthority() *contextowner.HotOwner {
 		return nil
 	}
 	return bound.context
+}
+
+// ModuleComposition returns the one immutable catalog derived before this
+// binding sealed. Publication and domain consumers share this exact owner.
+func (bound *ProgramBinding) ModuleComposition() (modulecomposition.Composition, bool) {
+	if bound == nil || !bound.Available() || !bound.composition.Available() {
+		return modulecomposition.Composition{}, false
+	}
+	return bound.composition, true
 }
 
 // Query recovers the sealed implementation cell of one issued family. The
@@ -265,6 +290,75 @@ func (bound *ProgramBinding) EffectPublicationObservations(committed *engine.Com
 	return observations, true
 }
 
+// SendSafetyObservations admits the Value and Placement summaries needed to
+// decide typed send publications. Both rows read the authenticated input of
+// the Call-effect stage, so the current send's own escape transition cannot
+// alter the decision about that send.
+func (bound *ProgramBinding) SendSafetyObservations(committed *engine.CommittedProgram, mounts []programmount.MountedArtifact, contexts executioncontext.Directory) ([]SendSafetyObservation, bool) {
+	if bound == nil || !bound.Available() || committed == nil || len(mounts) == 0 || !contexts.Available() {
+		return nil, false
+	}
+	boundContexts := bound.contextSchema.Directory()
+	placementQuery := bound.PlacementQuery()
+	valueQuery := bound.ValueQuery()
+	cell, cellOK := bound.rules.cellByKey("effect-selected")
+	selected, selectedOK := rule.Payload[*callsite.HotRule](cell)
+	if !boundContexts.Available() || contexts.LinkID() != boundContexts.LinkID() || placementQuery == nil || valueQuery == nil || !cellOK || !selectedOK || selected == nil {
+		return nil, false
+	}
+	observations := make([]SendSafetyObservation, 0)
+	seen := make(map[identity.ContentID]struct{})
+	_, walked := WalkSealedPlacements(mounts, func(ruleKey schema.Key, mount, _, occurrence identity.ContentID) bool {
+		if ruleKey != "effect-selected" {
+			return true
+		}
+		mountedContexts, contextsOK := contexts.ContextsForModule(mount)
+		if !contextsOK {
+			return false
+		}
+		stage, publications, publicationsOK := selected.MountedPublicationBatchStage(committed, mount, occurrence)
+		if !publicationsOK || !stage.Available() || !stage.InputPointID().Available() {
+			return false
+		}
+		for _, context := range mountedContexts {
+			if !bound.contextSchema.OwnsContext(context) {
+				return false
+			}
+			placementID, present, placementIDOK := sendsafety.PlacementObservationID(publications, context)
+			valueID, valuePresent, valueIDOK := sendsafety.ValueObservationID(publications, context)
+			if !placementIDOK || !valueIDOK || present != valuePresent {
+				return false
+			}
+			if !present {
+				continue
+			}
+			placementAdmission, placementAdmitted := engine.NewHeterogeneousCallInputObservationAdmission(placementQuery, placementID, stage, context)
+			valueAdmission, valueAdmitted := engine.NewSummaryCallInputObservationAdmission(valueQuery, valueID, stage, context)
+			if !placementAdmitted || !valueAdmitted || !placementAdmission.Available() || !valueAdmission.Available() {
+				return false
+			}
+			if _, duplicate := seen[placementID]; duplicate {
+				return false
+			}
+			if _, duplicate := seen[valueID]; duplicate {
+				return false
+			}
+			seen[placementID] = struct{}{}
+			seen[valueID] = struct{}{}
+			observation := SendSafetyObservation{batch: publications, context: context, point: stage.InputPointID(), placement: placementAdmission, value: valueAdmission}
+			if !observation.Available() {
+				return false
+			}
+			observations = append(observations, observation)
+		}
+		return true
+	})
+	if !walked {
+		return nil, false
+	}
+	return observations, true
+}
+
 // PlacementQuery is the sealed implementation of the placement-summary
 // family.
 func (bound *ProgramBinding) PlacementQuery() *engine.HeterogeneousQueryImplementation[placementdomain.PlacementSummaryObservation] {
@@ -339,7 +433,9 @@ func BindProgram(compilation Compilation, inputs LinkInputs) (*ProgramBinding, B
 		allocations:   bound.allocations,
 		placement:     inputs.PlacementSchema,
 		contextSchema: inputs.contextSchema,
+		composition:   inputs.composition,
 		value:         bound.value,
+		staticType:    bound.staticType,
 		context:       bound.context,
 		queries:       bound.queries,
 	}, BindFailure{}

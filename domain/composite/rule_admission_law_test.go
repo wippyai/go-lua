@@ -312,12 +312,16 @@ func TestBodylessPlacementQueryRetainsAnAbsentSummary(t *testing.T) {
 	if bound.PlacementQuery() == nil {
 		t.Fatal("bodyless Placement query implementation is unavailable")
 	}
-	sites, sitesOK := SelectedQuerySites(bound.Compilation(), record.Artifacts, record.Source.ContextDirectory())
-	if !sitesOK || sites.Count() == 0 {
+	table, tableOK := SelectedQuerySites(bound.Compilation(), record.Artifacts, record.Source.ContextDirectory())
+	if !tableOK || table.Count() == 0 {
 		t.Fatal("bodyless fixture issued no selected query sites")
 	}
 	placementSites := 0
-	for _, site := range selectedQueryRows(t, sites) {
+	for index := 0; index < table.Count(); index++ {
+		site, siteOK := table.At(index)
+		if !siteOK {
+			t.Fatalf("selected query site %d is unavailable", index)
+		}
 		if site.Family == QueryFamilyPlacementSummary {
 			placementSites++
 		}
@@ -325,7 +329,7 @@ func TestBodylessPlacementQueryRetainsAnAbsentSummary(t *testing.T) {
 	if placementSites == 0 {
 		t.Fatal("bodyless fixture issued no Placement query site")
 	}
-	if queries, queriesOK := bound.QueryAdmissions(sites); !queriesOK || len(queries) != sites.Count() {
-		t.Fatalf("bodyless query admissions = %d/%v, sites = %d", len(queries), queriesOK, sites.Count())
+	if queries, queriesOK := bound.QueryAdmissions(table); !queriesOK || len(queries) != table.Count() {
+		t.Fatalf("bodyless query admissions = %d/%v, sites = %d", len(queries), queriesOK, table.Count())
 	}
 }

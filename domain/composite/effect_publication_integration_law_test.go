@@ -31,4 +31,8 @@ return identity(root)
 	if _, observationsOK := bound.EffectPublicationObservations(committed, nil, record.Source.ContextDirectory()); observationsOK {
 		t.Fatal("publication observation enumeration accepted a missing mounted denominator")
 	}
+	sendObservations, sendObservationsOK := bound.SendSafetyObservations(committed, record.Artifacts, record.Source.ContextDirectory())
+	if !sendObservationsOK || len(sendObservations) != 0 {
+		t.Fatalf("missing authored send descriptor inferred Placement observations: %d/%t", len(sendObservations), sendObservationsOK)
+	}
 }
