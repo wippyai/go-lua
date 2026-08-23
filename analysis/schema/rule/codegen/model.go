@@ -482,31 +482,21 @@ func cloneRelationDerivation(derivation RelationDerivation) RelationDerivation {
 	return derivation
 }
 
-// ReducerArgumentRole names what one position of a reducer's direct call
-// carries. The three roles are the whole vocabulary: there is deliberately no
-// role for an owner schema, a route plan, a projection, or any other sealed
-// per-rule datum.
-type ReducerArgumentRole uint8
-
-const (
-	// ReducerArgumentCandidate is the optional owner-issued candidate carrier,
-	// which always precedes the inputs when present.
-	ReducerArgumentCandidate ReducerArgumentRole = iota + 1
-	// ReducerArgumentTag is the tag carrier of a tagged input. It is how the
-	// fold learns which member of a selection it was handed - the route member's
-	// own carrier value - without the engine passing a projection or an ordinal.
-	ReducerArgumentTag
-	// ReducerArgumentFact is one declared input's fact carrier, delivered under
-	// that input's sealed read contract.
-	ReducerArgumentFact
+// The reducer call-shape vocabulary is the member definition layer's, not this
+// package's. It is aliased here so an emitter reads one name set, and so the
+// ordering rule has exactly one statement below the two derivations that need
+// it: this one, which resolves carriers through dense plan addresses, and
+// Definition.ReducerSignature, which resolves them by declared name.
+type (
+	ReducerArgumentRole = memberdefinition.ArgumentRole
+	ReducerArgument     = memberdefinition.Argument
 )
 
-// ReducerArgument is one position of a reducer's derived direct-call signature.
-type ReducerArgument struct {
-	Role  ReducerArgumentRole
-	Type  memberdefinition.GoType
-	Input int
-}
+const (
+	ReducerArgumentCandidate = memberdefinition.ArgumentCandidate
+	ReducerArgumentTag       = memberdefinition.ArgumentTag
+	ReducerArgumentFact      = memberdefinition.ArgumentFact
+)
 
 // Arguments derives the complete parameter vector of this reducer's direct
 // call. It is the one statement of the call shape: the emitter emits this
@@ -523,17 +513,11 @@ type ReducerArgument struct {
 // more owner knowledge takes it from its Family, and the call shape is a
 // function of the declaration alone.
 func (call ReducerCall) Arguments() []ReducerArgument {
-	arguments := make([]ReducerArgument, 0, len(call.Inputs)*2+1)
-	if call.CandidatePresent {
-		arguments = append(arguments, ReducerArgument{Role: ReducerArgumentCandidate, Type: call.Candidate, Input: -1})
-	}
+	inputs := make([]memberdefinition.ArgumentInput, len(call.Inputs))
 	for index, input := range call.Inputs {
-		if input.Tagged {
-			arguments = append(arguments, ReducerArgument{Role: ReducerArgumentTag, Type: input.Tag, Input: index})
-		}
-		arguments = append(arguments, ReducerArgument{Role: ReducerArgumentFact, Type: input.Type, Input: index})
+		inputs[index] = memberdefinition.ArgumentInput{Tag: input.Tag, Tagged: input.Tagged, Fact: input.Type}
 	}
-	return arguments
+	return memberdefinition.ComposeArguments(call.Candidate, call.CandidatePresent, inputs)
 }
 
 // Results derives the complete result vector: the declared output carriers in

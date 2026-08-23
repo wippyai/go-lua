@@ -663,3 +663,112 @@ func (definition Definition) Clone() Definition {
 	}
 	return clone
 }
+
+// ArgumentRole names what one position of a reducer's direct call carries.
+// The three roles are the whole vocabulary: there is deliberately no role for
+// an owner schema, a derived route plan, a projection, or an ordinal.
+type ArgumentRole uint8
+
+const (
+	// ArgumentCandidate is the optional owner-issued candidate carrier, which
+	// always precedes the inputs when present.
+	ArgumentCandidate ArgumentRole = iota + 1
+	// ArgumentTag is the tag carrier of a tagged input. It is how a fold learns
+	// which member of a selection it was handed - the route member's own
+	// carrier value - rather than an engine-supplied projection or index.
+	ArgumentTag
+	// ArgumentFact is one declared input's fact carrier, delivered under that
+	// input's sealed read contract.
+	ArgumentFact
+)
+
+// Argument is one position of a reducer's derived direct-call signature.
+type Argument struct {
+	Role  ArgumentRole
+	Type  GoType
+	Input int
+}
+
+// ArgumentInput is one declared input reduced to the carrier types its
+// positions carry. It exists so the ordering rule below has exactly one
+// statement, shared by the name-resolving derivation here and by the
+// address-resolving one in the rule codegen model.
+type ArgumentInput struct {
+	Tag    GoType
+	Tagged bool
+	Fact   GoType
+}
+
+// ComposeArguments is the one statement of a reducer's parameter order: the
+// optional candidate carrier first, then for each input its tag carrier when
+// tagged followed by its fact carrier. A tag precedes the fact it names because
+// it is what says which member of a selection the invocation is folding.
+func ComposeArguments(candidate GoType, candidatePresent bool, inputs []ArgumentInput) []Argument {
+	arguments := make([]Argument, 0, len(inputs)*2+1)
+	if candidatePresent {
+		arguments = append(arguments, Argument{Role: ArgumentCandidate, Type: candidate, Input: -1})
+	}
+	for index, input := range inputs {
+		if input.Tagged {
+			arguments = append(arguments, Argument{Role: ArgumentTag, Type: input.Tag, Input: index})
+		}
+		arguments = append(arguments, Argument{Role: ArgumentFact, Type: input.Fact, Input: index})
+	}
+	return arguments
+}
+
+// ReducerSignature derives the complete direct-call signature one declared
+// reducer must have: its parameter vector and its result vector. It is the one
+// statement of the call shape, so the emitter, the generator and the laws that
+// fence a fold all read the same derivation.
+//
+// The parameters are carrier values only - the optional candidate carrier, then
+// for each declared input its tag carrier when tagged followed by its fact
+// carrier. Nothing else is ever a parameter. The owner schema, the derived
+// route plan and the projections a fold consults are the sealed state of the
+// installed Family that calls the reducer, bound once when the owner installs
+// it. That is what keeps a signature from growing plumbing: its width is a
+// function of the declared rows alone.
+//
+// The results are the declared output carriers in row order followed by the one
+// sealed disposition, which a caller supplies as outcome so this package states
+// the shape without naming the vocabulary's package.
+func (definition Definition) ReducerSignature(reducer Reducer, outcome GoType) ([]Argument, []GoType, bool) {
+	carriers, _, carriersOK := definition.carrierIndex()
+	if !carriersOK {
+		return nil, nil, false
+	}
+	var candidate Carrier
+	if reducer.Candidate != "" {
+		var candidateOK bool
+		candidate, candidateOK = carriers[reducer.Candidate]
+		if !candidateOK {
+			return nil, nil, false
+		}
+	}
+	inputs := make([]ArgumentInput, len(reducer.Inputs))
+	for index, input := range reducer.Inputs {
+		fact, factOK := carriers[input.Carrier]
+		if !factOK {
+			return nil, nil, false
+		}
+		inputs[index] = ArgumentInput{Fact: fact.Type}
+		if input.Tag != "" {
+			tag, tagOK := carriers[input.Tag]
+			if !tagOK {
+				return nil, nil, false
+			}
+			inputs[index].Tag, inputs[index].Tagged = tag.Type, true
+		}
+	}
+	arguments := ComposeArguments(candidate.Type, reducer.Candidate != "", inputs)
+	results := make([]GoType, 0, len(reducer.Outputs)+1)
+	for _, output := range reducer.Outputs {
+		carrier, carrierOK := carriers[output.Carrier]
+		if !carrierOK {
+			return nil, nil, false
+		}
+		results = append(results, carrier.Type)
+	}
+	return arguments, append(results, outcome), true
+}
