@@ -326,6 +326,21 @@ func (plane FormPlane[K, V]) CarryWrite(target carrier.Target, output uint16, ca
 	return NewCarryWrite(plane.binding, target, output, carried, carry)
 }
 
+// RowCarry seals one plan row's transformed-carry write. The carried closure
+// is the row's own target, not a set the installer chooses: which coordinates
+// a row carries is the Plan's statement and the solver schedules the row
+// against exactly it. The map is the caller's, because a candidate-indexed
+// transition is a different map at every row and only the rule knows it.
+//
+// It exists so a rule package outside the engine can seal its carry without
+// naming a carrier coordinate type it has no business holding.
+func (plane FormPlane[K, V]) RowCarry(row FormRow, carry func(V) (V, bool)) (CarryWrite[K, V], bool) {
+	if !plane.Valid() {
+		return CarryWrite[K, V]{}, false
+	}
+	return NewCarryWrite(plane.binding, row.Target, 0, []carrier.Target{row.Target}, carry)
+}
+
 // SourceColumn returns one present materialized source column of this Factor
 // by the relation member ordinal a plan row carries.
 func (plane FormPlane[K, V]) SourceColumn(relation uint32) (memberrelation.SourceColumn[V], bool) {

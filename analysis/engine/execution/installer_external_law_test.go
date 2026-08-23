@@ -93,7 +93,7 @@ func (installer externalInstaller) InstallRuleFamily(plane execution.FormPlane[e
 		// against the candidate that row carries. It still has to fix the
 		// Factor default, which the plane checks where the write is sealed.
 		candidate := row.Candidate
-		write, writeOK := plane.CarryWrite(row.Target, 0, []carrier.Target{row.Target}, func(prior uint64) (uint64, bool) {
+		write, writeOK := plane.RowCarry(row, func(prior uint64) (uint64, bool) {
 			if prior == 0 {
 				return 0, true
 			}

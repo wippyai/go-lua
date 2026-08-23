@@ -154,7 +154,10 @@ func BindRelationOwner[V any](binding *SchemaBinding, slot *FactorSlot[V], owner
 // and a Program-declared one differ in how their geometry was authored, not in
 // what a family claim is, so RuleFamilyTarget is the only thing this entry
 // knows about the claimant.
-func BindRuleFamily[K ~uint32 | ~uint64, V any](binding *SchemaBinding, slot RuleFamilyTarget, output *FactorSlot[V], installer execution.RuleFamilyInstaller[K, V]) bool {
+// The output Factor is named by reference, not by its owner slot. An axis
+// owner hands its rules a FactorRef precisely so they cannot declare against
+// its Factor, and a family claim needs no more than the reference names.
+func BindRuleFamily[K ~uint32 | ~uint64, V any](binding *SchemaBinding, slot RuleFamilyTarget, output FactorRef[V], installer execution.RuleFamilyInstaller[K, V]) bool {
 	state := bindingState(binding)
 	if state == nil {
 		return false
@@ -163,14 +166,14 @@ func BindRuleFamily[K ~uint32 | ~uint64, V any](binding *SchemaBinding, slot Rul
 	defer state.mu.Unlock()
 	ruleCell := ruleFamilyTargetCell(slot)
 	if state.phase != schemaBindingOpen || state.schema == nil || ruleCell == nil ||
-		ruleCell.schema != state.schema || output == nil || output.cell == nil || output.cell.schema != state.schema || installer == nil {
+		ruleCell.schema != state.schema || output.cell == nil || output.cell.schema != state.schema || installer == nil {
 		if state.phase == schemaBindingOpen {
 			state.poisonLocked()
 		}
 		return false
 	}
 	ruleOrdinal, ruleOK := slot.Ordinal()
-	factorOrdinal, factorOK := output.Ordinal()
+	factorOrdinal, factorOK := output.ordinal()
 	if !ruleOK || !factorOK || ruleOrdinal >= uint64(len(state.rules)) || factorOrdinal >= uint64(len(state.factors)) || state.factors[factorOrdinal] == nil {
 		state.poisonLocked()
 		return false

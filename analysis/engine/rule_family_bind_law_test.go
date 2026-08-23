@@ -46,7 +46,7 @@ func ruleFamilyFixture(t *testing.T, key uint64) (*SchemaBinding, *RuleSlot[uint
 // schemas it has no business holding just to pass them along.
 func TestARuleInstallsTheFamilyOfItsOwnOrdinal(t *testing.T) {
 	binding, rule, factor := ruleFamilyFixture(t, 947_100)
-	if !BindRuleFamily[uint64](binding, rule, factor, lawRuleFamilyInstaller{}) {
+	if !BindRuleFamily[uint64](binding, rule, factor.Ref(), lawRuleFamilyInstaller{}) {
 		t.Fatal("a rule could not install the family of its own ordinal")
 	}
 	if binding.Poisoned() {
@@ -60,19 +60,19 @@ func TestARuleInstallsTheFamilyOfItsOwnOrdinal(t *testing.T) {
 func TestARuleFamilyClaimIsOneShotAndFenced(t *testing.T) {
 	t.Run("duplicate", func(t *testing.T) {
 		binding, rule, factor := ruleFamilyFixture(t, 947_200)
-		if !BindRuleFamily[uint64](binding, rule, factor, lawRuleFamilyInstaller{}) {
+		if !BindRuleFamily[uint64](binding, rule, factor.Ref(), lawRuleFamilyInstaller{}) {
 			t.Fatal("first family claim")
 		}
 		// Two installers for one rule is two authorities over one rule's
 		// execution, which no order between them resolves.
-		if BindRuleFamily[uint64](binding, rule, factor, lawRuleFamilyInstaller{}) || !binding.Poisoned() {
+		if BindRuleFamily[uint64](binding, rule, factor.Ref(), lawRuleFamilyInstaller{}) || !binding.Poisoned() {
 			t.Fatal("a second claim on one rule ordinal crossed the one-shot fence")
 		}
 	})
 
 	t.Run("nil-installer", func(t *testing.T) {
 		binding, rule, factor := ruleFamilyFixture(t, 947_300)
-		if BindRuleFamily[uint64](binding, rule, factor, nil) || !binding.Poisoned() {
+		if BindRuleFamily[uint64](binding, rule, factor.Ref(), nil) || !binding.Poisoned() {
 			t.Fatal("a nil installer was admitted")
 		}
 	})
@@ -80,14 +80,14 @@ func TestARuleFamilyClaimIsOneShotAndFenced(t *testing.T) {
 	t.Run("foreign-slot", func(t *testing.T) {
 		binding, rule, _ := ruleFamilyFixture(t, 947_400)
 		_, _, foreignFactor := ruleFamilyFixture(t, 947_500)
-		if BindRuleFamily[uint64](binding, rule, foreignFactor, lawRuleFamilyInstaller{}) || !binding.Poisoned() {
+		if BindRuleFamily[uint64](binding, rule, foreignFactor.Ref(), lawRuleFamilyInstaller{}) || !binding.Poisoned() {
 			t.Fatal("a Factor slot from another binding crossed the family fence")
 		}
 	})
 
 	t.Run("nil-claimant", func(t *testing.T) {
 		binding, _, factor := ruleFamilyFixture(t, 947_600)
-		if BindRuleFamily[uint64](binding, nil, factor, lawRuleFamilyInstaller{}) || !binding.Poisoned() {
+		if BindRuleFamily[uint64](binding, nil, factor.Ref(), lawRuleFamilyInstaller{}) || !binding.Poisoned() {
 			t.Fatal("an absent claimant was admitted")
 		}
 	})
@@ -100,13 +100,13 @@ func TestARuleFamilyClaimIsOneShotAndFenced(t *testing.T) {
 // lifecycle for the same claim, resolved in an order nothing states.
 func TestAProgramDeclaredRuleInstallsThroughTheSameSeam(t *testing.T) {
 	fixture := openGeneratedBindingLaw(t, newGeneratedRuleLawFixture(t, generatedRuleLawExact, generatedRuleLawRuleRole))
-	if !BindRuleFamily[uint64](fixture.binding, fixture.slot, fixture.factors[0], lawRuleFamilyInstaller{}) {
+	if !BindRuleFamily[uint64](fixture.binding, fixture.slot, fixture.factors[0].Ref(), lawRuleFamilyInstaller{}) {
 		t.Fatal("a Program-declared rule could not install the family of its own ordinal")
 	}
 	if fixture.binding.Poisoned() {
 		t.Fatal("an admitted generated family claim poisoned the binding")
 	}
-	if BindRuleFamily[uint64](fixture.binding, fixture.slot, fixture.factors[0], lawRuleFamilyInstaller{}) || !fixture.binding.Poisoned() {
+	if BindRuleFamily[uint64](fixture.binding, fixture.slot, fixture.factors[0].Ref(), lawRuleFamilyInstaller{}) || !fixture.binding.Poisoned() {
 		t.Fatal("a second claim on one generated rule ordinal crossed the one-shot fence")
 	}
 }
@@ -125,7 +125,7 @@ func TestAFamilyClaimNamesTheFactorItsRuleWritesTo(t *testing.T) {
 	if !writtenOK || !otherOK || written == other {
 		t.Fatal("multi-axis fixture Factor ordinals")
 	}
-	if BindRuleFamily[uint64](fixture.binding, fixture.slot, fixture.factors[1], lawRuleFamilyInstaller{}) || !fixture.binding.Poisoned() {
+	if BindRuleFamily[uint64](fixture.binding, fixture.slot, fixture.factors[1].Ref(), lawRuleFamilyInstaller{}) || !fixture.binding.Poisoned() {
 		t.Fatal("a family claim against a Factor the rule does not write to was admitted")
 	}
 }
