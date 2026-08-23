@@ -66,6 +66,7 @@ func mountHeapSchema[A axisInputs](inputs A) (heap.Schema, heap.SealFailure, boo
 // AxisEntry is this package's heap axis declaration. A is the composition's
 // own Link input record, admitted by the need interface above.
 func AxisEntry[A axisInputs]() axis.Spec[A] {
+	members := heap.AxisMemberCatalog()
 	return axis.Spec[A]{
 		Key:         "heap",
 		Storage:     axis.StorageFactor,
@@ -76,9 +77,11 @@ func AxisEntry[A axisInputs]() axis.Spec[A] {
 		// The heap factor's facts are published as one column, written by this
 		// axis's own principal: the lane whose rules write the factor is the lane
 		// the engine admits to fill the column a consumer reads it out of.
-		Frame:    axis.Frame{Outputs: []axis.Output{{Key: "heap/facts", Writer: "heap"}}},
-		Semantic: "semantic/factor/heap",
-		Roles:    []schema.Key{"semantic/factor/heap/summary-complete"},
+		Frame:     axis.Frame{Outputs: []axis.Output{{Key: "heap/facts", Writer: "heap"}}},
+		Catalog:   members,
+		Signature: axis.Signature{Key: heap.HeapKeyCarrier, Fact: heap.HeapFactCarrier},
+		Semantic:  "semantic/factor/heap",
+		Roles:     []schema.Key{"semantic/factor/heap/summary-complete"},
 		Mount: axis.NewMount(func(context axis.Mounting[A]) (heap.Schema, heap.SealFailure, bool) {
 			return mountHeapSchema[A](context.Inputs)
 		}),
@@ -95,7 +98,14 @@ func DeclareAxis(builder *engine.SchemaBuilder, context axis.Declaration) (*Sche
 }
 
 func BindAxis[A axisInputs](binding *engine.SchemaBinding, context axis.Binding[A, *SchemaFragment]) (*HotOwner, bool) {
-	return BindHot(binding, context.Fragment, context.Inputs.HeapInput())
+	owner, ownerOK := BindHot(binding, context.Fragment, context.Inputs.HeapInput())
+	if !ownerOK || owner == nil || context.Fragment == nil {
+		return nil, false
+	}
+	if !engine.BindRelationOwner(binding, context.Fragment.slot, heap.NewRelationOwner(context.Inputs.HeapInput())) {
+		return nil, false
+	}
+	return owner, true
 }
 
 func AlgebraAxis(owner *HotOwner) (axis.Algebra[heap.Value], bool) {

@@ -65,6 +65,7 @@ func mountValueSchema[A axisInputs](inputs A) (*value.Schema, value.SealFailure,
 // AxisEntry is this package's value axis declaration. A is the composition's
 // own Link input record, admitted by the need interface above.
 func AxisEntry[A axisInputs]() axis.Spec[A] {
+	members := value.AxisMemberCatalog()
 	return axis.Spec[A]{
 		Key:         "value",
 		Storage:     axis.StorageFactor,
@@ -79,9 +80,11 @@ func AxisEntry[A axisInputs]() axis.Spec[A] {
 		// The value factor's facts are published as one column, written by this
 		// axis's own principal: the lane whose rules write the factor is the
 		// lane the engine admits to fill the column a consumer reads it out of.
-		Frame:    axis.Frame{Outputs: []axis.Output{{Key: "value/facts", Writer: "value"}}},
-		Semantic: "semantic/factor/value",
-		Roles:    []schema.Key{"semantic/factor/value/summary-identity", "semantic/factor/value/summary-coordinatewise"},
+		Frame:     axis.Frame{Outputs: []axis.Output{{Key: "value/facts", Writer: "value"}}},
+		Catalog:   members,
+		Signature: axis.Signature{Key: value.ValueCoordinateCarrier, Fact: value.ValueFactCarrier},
+		Semantic:  "semantic/factor/value",
+		Roles:     []schema.Key{"semantic/factor/value/summary-identity", "semantic/factor/value/summary-coordinatewise"},
 		Mount: axis.NewMount(func(context axis.Mounting[A]) (*value.Schema, value.SealFailure, bool) {
 			return mountValueSchema[A](context.Inputs)
 		}),
@@ -101,7 +104,18 @@ func DeclareAxis(builder *engine.SchemaBuilder, context axis.Declaration) (*Sche
 
 // BindAxis instantiates the value factor binding.
 func BindAxis[A axisInputs](binding *engine.SchemaBinding, context axis.Binding[A, *SchemaFragment]) (*HotOwner, bool) {
-	return BindHot(binding, context.Fragment, context.Inputs.ValueInput())
+	owner, ownerOK := BindHot(binding, context.Fragment, context.Inputs.ValueInput())
+	if !ownerOK || owner == nil || context.Fragment == nil {
+		return nil, false
+	}
+	// Generated Rules resolve Value's member relations through the one axis
+	// owner. Install it exactly once on the Value Factor; no Rule receives a
+	// per-rule relation provider.
+	relationOwner := value.NewRelationOwner(context.Inputs.ValueInput())
+	if !engine.BindRelationOwner(binding, context.Fragment.slot, relationOwner) {
+		return nil, false
+	}
+	return owner, true
 }
 
 // AlgebraAxis publishes the value factor algebra on the axis ordinal key space.

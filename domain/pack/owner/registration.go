@@ -99,8 +99,10 @@ func AxisEntry[A axisInputs]() axis.Spec[A] {
 		// The pack factor's facts are published as one column, written by this
 		// axis's own principal: the lane whose rules write the factor is the lane
 		// the engine admits to fill the column a consumer reads it out of.
-		Frame:    axis.Frame{Outputs: []axis.Output{{Key: "pack/facts", Writer: "pack"}}},
-		Semantic: "semantic/factor/pack",
+		Frame:     axis.Frame{Outputs: []axis.Output{{Key: "pack/facts", Writer: "pack"}}},
+		Catalog:   pack.AxisMemberCatalog(),
+		Signature: axis.Signature{Key: pack.RootCarrier, Fact: pack.FactCarrier},
+		Semantic:  "semantic/factor/pack",
 		Mount: axis.NewMount(func(context axis.Mounting[A]) (*pack.Schema, MountRejection, bool) {
 			return mountPackSchema[A](context.Inputs)
 		}),
@@ -116,7 +118,15 @@ func DeclareAxis(builder *engine.SchemaBuilder, context axis.Declaration) (*Sche
 }
 
 func BindAxis[A axisInputs](binding *engine.SchemaBinding, context axis.Binding[A, *SchemaFragment]) (*HotOwner, bool) {
-	return BindHot(binding, context.Fragment, context.Inputs.PackInput())
+	owner, ownerOK := BindHot(binding, context.Fragment, context.Inputs.PackInput())
+	if !ownerOK || owner == nil || context.Fragment == nil {
+		return nil, false
+	}
+	relationOwner := pack.NewRelationOwner(context.Inputs.PackInput())
+	if !engine.BindRelationOwner(binding, context.Fragment.slot, relationOwner) {
+		return nil, false
+	}
+	return owner, true
 }
 
 func AlgebraAxis(owner *HotOwner) (axis.Algebra[pack.Value], bool) {
