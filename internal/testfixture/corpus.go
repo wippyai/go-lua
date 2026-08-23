@@ -20,14 +20,14 @@ import (
 // FrozenLuaFileCount is the exact checked-in Lua fixture denominator. Corpus
 // changes require an explicit test-contract update rather than silently
 // changing the analysis denominator.
-const FrozenLuaFileCount = 1206
+const FrozenLuaFileCount = 1211
 
 // FrozenCorpusProjectCount is the exact checked-in fixture-project
 // denominator: the number of distinct project directories LoadCorpus groups
 // the frozen Lua files into. Every consumer that pins the fixture-project
 // count derives it from this one constant rather than hand-copying the
 // number, so the fixture census and its dependent counts change together.
-const FrozenCorpusProjectCount = 939
+const FrozenCorpusProjectCount = 944
 
 type corpusManifest struct {
 	Files []string `json:"files"`

@@ -316,13 +316,13 @@ func TestFrozenCorpusDiagnosticExpectationInventory(t *testing.T) {
 	}
 	inventory := catalog.inventory
 
-	if inventory.projects != 939 || inventory.luaFiles != testfixture.FrozenLuaFileCount || inventory.manifests != 558 || inventory.annotatedFiles != 188 {
+	if inventory.projects != 944 || inventory.luaFiles != testfixture.FrozenLuaFileCount || inventory.manifests != 563 || inventory.annotatedFiles != 188 {
 		t.Fatalf("fixture denominator changed: projects=%d lua=%d manifests=%d annotated=%d", inventory.projects, inventory.luaFiles, inventory.manifests, inventory.annotatedFiles)
 	}
 	if inventory.inlineErrors != 727 || inventory.inlineWarnings != 4 {
 		t.Fatalf("inline diagnostic denominator changed: errors=%d warnings=%d", inventory.inlineErrors, inventory.inlineWarnings)
 	}
-	if inventory.structuredManifests != 73 || inventory.structuredFindings != 140 || inventory.structuredErrors != 96 || inventory.structuredWarnings != 18 || inventory.structuredHints != 26 {
+	if inventory.structuredManifests != 75 || inventory.structuredFindings != 142 || inventory.structuredErrors != 98 || inventory.structuredWarnings != 18 || inventory.structuredHints != 26 {
 		t.Fatalf("structured diagnostic denominator changed: manifests=%d findings=%d errors=%d warnings=%d hints=%d", inventory.structuredManifests, inventory.structuredFindings, inventory.structuredErrors, inventory.structuredWarnings, inventory.structuredHints)
 	}
 	if inventory.errorCountManifests != 252 || !reflect.DeepEqual(inventory.errorCounts, map[int]int{0: 240, 1: 7, 2: 3, 3: 1, 4: 1}) {
@@ -352,7 +352,7 @@ func TestFrozenCorpusDiagnosticExpectationInventory(t *testing.T) {
 		"send.isolation":                     9,
 		"type.assignment":                    47,
 		"type.assignment.optional_target":    1,
-		"type.call.direct.argument_type":     17,
+		"type.call.direct.argument_type":     19,
 		"type.call.direct.not_callable":      4,
 		"type.call.direct.result_assignment": 1,
 		"type.call.direct.too_few_args":      1,
@@ -410,7 +410,7 @@ func TestFrozenCorpusDiagnosticExpectationInventory(t *testing.T) {
 			t.Fatalf("structured diagnostic anchor is ambiguous: project=%q code=%q file=%q line=%d severity=%q rows=%d", key.project, key.code, key.file, key.line, key.severity, len(refs))
 		}
 	}
-	if len(catalog.projects) != 939 || indexedInline != 731 || len(catalog.structuredByCode) != 34 || indexedStructured != 140 || len(catalog.structuredByLocation) != 140 || indexedStructuredLocations != 140 {
+	if len(catalog.projects) != 944 || indexedInline != 731 || len(catalog.structuredByCode) != 34 || indexedStructured != 142 || len(catalog.structuredByLocation) != 142 || indexedStructuredLocations != 142 {
 		t.Fatalf("scalable diagnostic indexes changed: projects=%d inline=%d codes=%d structured=%d structured-anchors=%d/%d", len(catalog.projects), indexedInline, len(catalog.structuredByCode), indexedStructured, len(catalog.structuredByLocation), indexedStructuredLocations)
 	}
 }
@@ -449,7 +449,7 @@ func TestFrozenCorpusFullManifestContractInventory(t *testing.T) {
 		stdlibManifests, renderOptionManifests            int
 		nativeManifests, nativeFacts, nativeInvalidations int
 		placementManifests                                int
-	}{359, 625, 123, 141, 1, 8, 177, 764, 30, 51}
+	}{364, 630, 123, 141, 1, 8, 177, 764, 30, 51}
 	if got.declaredFileManifests != want.declaredFileManifests || got.declaredFiles != want.declaredFiles ||
 		got.packageManifests != want.packageManifests || got.packageDeclarations != want.packageDeclarations ||
 		got.stdlibManifests != want.stdlibManifests || got.renderOptionManifests != want.renderOptionManifests ||

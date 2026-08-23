@@ -1,0 +1,39 @@
+{
+  "description": "A function-typed argument is measured against the parameter's declared signature under the function rule: parameters contravariant, returns covariant. A (number) -> number is not a (string) -> string, and the runtime family both values share is not a proof that it is.",
+  "files": [
+    "main.lua"
+  ],
+  "check": {
+    "diagnostics": [
+      {
+        "file": "main.lua",
+        "line": 9,
+        "column": 15,
+        "severity": "error",
+        "code": "type.call.direct.argument_type",
+        "message_contains": [
+          "argument 1 (bad)"
+        ],
+        "evidence_contains": [
+          "accept parameter 1 expects",
+          "no proof on this path shows bad satisfies the parameter type"
+        ],
+        "min_evidence": 3,
+        "render_contains": [
+          "error[type.call.direct.argument_type]",
+          "return accept(bad)",
+          "because:"
+        ],
+        "help_contains": [
+          "Pass `bad` as a value compatible with the parameter type"
+        ],
+        "label_contains": [
+          "argument value"
+        ]
+      }
+    ]
+  },
+  "run": {
+    "skip": "diagnostic-only"
+  }
+}

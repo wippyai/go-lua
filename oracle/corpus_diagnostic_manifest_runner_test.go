@@ -193,7 +193,7 @@ type corpusDiagnosticRegistrationCounts struct {
 // counts. It is not a passing-evidence mark.
 var corpusDiagnosticFrozenRegistrationCensus = corpusDiagnosticRegistrationCounts{
 	registeredCases: 5, registeredFindings: 5,
-	whollyPendingCodes: 30, pendingFindings: 135, inlinePending: 731,
+	whollyPendingCodes: 30, pendingFindings: 137, inlinePending: 731,
 }
 
 func (counts corpusDiagnosticRegistrationCounts) matches(want corpusDiagnosticRegistrationCounts) bool {

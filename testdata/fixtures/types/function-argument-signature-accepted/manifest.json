@@ -1,0 +1,9 @@
+{
+  "description": "The conforming half of the function-argument judgment: a callable whose signature satisfies the declared parameter type is accepted, so the signature judgment refuses a mismatch without refusing a match.",
+  "files": [
+    "main.lua"
+  ],
+  "run": {
+    "skip": "diagnostic-only"
+  }
+}

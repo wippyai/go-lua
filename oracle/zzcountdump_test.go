@@ -41,11 +41,11 @@ func TestZZCountDump(t *testing.T) {
 		len(catalog.projects), indexedInline, len(catalog.structuredByCode), indexedStructured, len(catalog.structuredByLocation), indexedLocations)
 	t.Logf("structuredCodes:\n%s", dumpZZCounts(inv.structuredCodes))
 	t.Logf("ruleCodes:\n%s", dumpZZCounts(inv.ruleCodes))
-	counts, err := corpusDiagnosticSupportCensus(catalog)
+	counts, err := corpusDiagnosticRegistrationCensus(catalog)
 	if err != nil {
-		t.Logf("supportCensus error: %v", err)
+		t.Logf("registrationCensus error: %v", err)
 	} else {
-		t.Logf("supportCensus=%+v", counts)
+		t.Logf("registrationCensus=%+v", counts)
 	}
 }
 

@@ -1,0 +1,9 @@
+{
+  "description": "Record subtyping in this analyzer is width subtyping: the record rule measures only the fields the declared type states, so a value carrying additional fields still satisfies it. This fixture pins that declared law at a call argument rather than restating it as a policy of the argument gate.",
+  "files": [
+    "main.lua"
+  ],
+  "run": {
+    "skip": "diagnostic-only"
+  }
+}

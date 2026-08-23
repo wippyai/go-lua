@@ -1,0 +1,9 @@
+{
+  "description": "The conforming half of the record-argument judgment: a value that establishes every required field of the declared record type is accepted, so the shape judgment refuses a mismatch without refusing a match.",
+  "files": [
+    "main.lua"
+  ],
+  "run": {
+    "skip": "diagnostic-only"
+  }
+}

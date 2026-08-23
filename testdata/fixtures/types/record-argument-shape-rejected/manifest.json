@@ -1,0 +1,40 @@
+{
+  "description": "A record-shaped argument is measured against the parameter's declared record type. The value reaches the call through a binding rather than as a literal at the call site, so the judgment is the assignability of the argument's own type and not the shape the call-site expression happens to spell: {other = 1} establishes no id, so it is not a Job.",
+  "files": [
+    "main.lua"
+  ],
+  "check": {
+    "diagnostics": [
+      {
+        "file": "main.lua",
+        "line": 8,
+        "column": 15,
+        "severity": "error",
+        "code": "type.call.direct.argument_type",
+        "message_contains": [
+          "argument 1 (bad)",
+          "not Job"
+        ],
+        "evidence_contains": [
+          "accept parameter 1 expects Job",
+          "no proof on this path shows bad satisfies the parameter type"
+        ],
+        "min_evidence": 3,
+        "render_contains": [
+          "error[type.call.direct.argument_type]",
+          "return accept(bad)",
+          "because:"
+        ],
+        "help_contains": [
+          "Pass `bad` as a value compatible with the parameter type"
+        ],
+        "label_contains": [
+          "argument value"
+        ]
+      }
+    ]
+  },
+  "run": {
+    "skip": "diagnostic-only"
+  }
+}
