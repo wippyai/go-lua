@@ -13,7 +13,19 @@
         "message_contains": [
           "Event",
           "Timer"
-        ]
+        ],
+        "render_contains": [
+          "error[type.call.direct.argument_type]",
+          "return sink(inbox)",
+          "because:"
+        ],
+        "help_contains": [
+          "Pass `inbox` as a value compatible with the parameter type, or change the callee signature if that argument is valid."
+        ],
+        "label_contains": [
+          "argument value"
+        ],
+        "allow_empty_evidence": true
       }
     ]
   },
