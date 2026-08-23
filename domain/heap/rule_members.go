@@ -62,8 +62,8 @@ func AxisMemberCatalog() member.Catalog {
 			}},
 		},
 		[]member.CarryTransform{
-			{Key: EmptyAllocationCarryTransform, Candidate: EmptyAllocationCarrier, Input: HeapFactCarrier, Output: HeapFactCarrier},
-			{Key: ClosedAllocationCarryTransform, Candidate: ClosedAllocationCarrier, Input: HeapFactCarrier, Output: HeapFactCarrier},
+			{Key: EmptyAllocationCarryTransform, Candidate: HeapKeyCarrier, Input: HeapFactCarrier, Output: HeapFactCarrier},
+			{Key: ClosedAllocationCarryTransform, Candidate: HeapKeyCarrier, Input: HeapFactCarrier, Output: HeapFactCarrier},
 		},
 	)
 	if !ok {

@@ -35,15 +35,6 @@ func heapMethod(name, receiver string, receiverPointer bool, resultIndex int8) d
 	}
 }
 
-func sourceMethod(name, receiver string, resultIndex int8) definition.GoSymbol {
-	return definition.GoSymbol{
-		PackagePath: sourcePackagePath,
-		Name:        name,
-		Receiver:    definition.GoType{PackagePath: sourcePackagePath, Name: receiver},
-		ResultIndex: resultIndex,
-	}
-}
-
 func axisReference(key string) schema.EntryReference {
 	return schema.EntryReference{Surface: schema.SurfaceKindAxis, Key: schema.Key(key)}
 }
@@ -162,21 +153,27 @@ func AllocationCarry() definition.Definition {
 			},
 		},
 		CarryTransforms: []definition.CarryTransform{
+			// Both forms carry with the same owner-issued transition, applied
+			// to the allocation coordinate rather than to a constructor
+			// descriptor: the candidate a rule carries is the subject of the
+			// relation it draws candidates from, and a descriptor that lives
+			// beside the fold is no relation's subject. The two keys remain
+			// separate semantic identities for the empty and closed rules.
 			{
 				Name:           "EmptyAllocationCarryTransform",
 				Key:            "transform/heap/allocation-empty",
-				Candidate:      "EmptyAllocationCarrier",
+				Candidate:      "HeapKeyCarrier",
 				Input:          "HeapFactCarrier",
 				Output:         "HeapFactCarrier",
-				Implementation: sourceMethod("Age", "Root", 0),
+				Implementation: heapMethod("Age", "Key", false, 0),
 			},
 			{
 				Name:           "ClosedAllocationCarryTransform",
 				Key:            "transform/heap/allocation-closed",
-				Candidate:      "ClosedAllocationCarrier",
+				Candidate:      "HeapKeyCarrier",
 				Input:          "HeapFactCarrier",
 				Output:         "HeapFactCarrier",
-				Implementation: sourceMethod("Age", "Closed", 0),
+				Implementation: heapMethod("Age", "Key", false, 0),
 			},
 		},
 	}

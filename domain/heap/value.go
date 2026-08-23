@@ -713,6 +713,18 @@ func (schema Schema) Age(value Value, allocationKey Key) (Value, bool) {
 	return schema.age(value, allocationKey.slot)
 }
 
+// Age is the allocation carry transition published on the coordinate that
+// carries its own owner. It is the transform every allocation-form rule
+// carries with, stated once here rather than once per constructor
+// descriptor: a Key already fences its schema, so the transition needs no
+// source-side descriptor and no allocation topology query.
+func (key Key) Age(prior Value) (Value, bool) {
+	if !key.valid() {
+		return Value{}, false
+	}
+	return Schema{owner: key.owner}.Age(prior, key)
+}
+
 func (schema Schema) age(value Value, selected uint32) (Value, bool) {
 	root, rootOK := schema.owner.rootAt(selected)
 	if !schema.owns(value) || !rootOK || root.kind != RootAllocation {
