@@ -70,14 +70,10 @@ func RegisterRule(binding *engine.SchemaBinding, context rule.Registration[*Sche
 }
 
 func BindRule[A ruleAuthorities](_ *engine.SchemaBinding, context rule.Binding[A, *SchemaFragment]) (*HotRule, bool) {
-	hot, ok := BindHot(context.Fragment, context.Authorities.CallAuthority())
-	if !ok {
-		return nil, false
-	}
-	if !BindMountedTransport(hot, context.Authorities.ValueAuthority().FactorRef(), context.Authorities.CallAuthority().FactorRef(), context.Authorities.HeapAuthority().FactorRef(), context.Authorities.PackAuthority().FactorRef(), context.Authorities.EffectAuthority().FactorRef(), context.Authorities.PlacementAuthority().FactorRef()) {
-		return nil, false
-	}
-	return hot, true
+	return BindHot(context.Fragment, context.Authorities.CallAuthority(),
+		context.Authorities.ValueAuthority().FactorRef(), context.Authorities.CallAuthority().FactorRef(),
+		context.Authorities.HeapAuthority().FactorRef(), context.Authorities.PackAuthority().FactorRef(),
+		context.Authorities.EffectAuthority().FactorRef(), context.Authorities.PlacementAuthority().FactorRef())
 }
 
 // StructureSpecs is this package's contribution to the analyzer's semantic

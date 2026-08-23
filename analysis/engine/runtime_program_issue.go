@@ -135,12 +135,9 @@ func declareMountedProgram(rowsWorkspace *programRows, mounts []sealedProgramMou
 		}
 	}
 	for ordinal, row := range admission.Activation {
-		issuance, admitted, ok := admitActivationRuleIssuance(rowsWorkspace, rows, state, row)
+		issuance, ok := admitActivationRuleIssuance(rowsWorkspace, rows, state, row)
 		if !ok || !claimAnchoredSurfaces(anchored, issuance.surfaces) {
 			return topologyDeclaration{}, programSealFailure{phase: programSealFailureActivationIssuance, ordinal: uint32(ordinal), mounted: row.Capability}, ProgramAdmissionMounted, false
-		}
-		if !admitted {
-			continue
 		}
 		pending = append(pending, issuance)
 	}
@@ -401,26 +398,30 @@ func admitRuleSurfaceAnchor(rowsWorkspace *programRows, site equation.Site, enti
 	return ruleSurfaceAnchor{occurrence: occurrence, operand: operand}, true
 }
 
-// admitActivationRuleIssuance mints one mounted activation issuance. An
-// occurrence whose owner bound no transport vector declares no trigger row,
-// which is the lawful no-op for an activation with nothing to instantiate.
-func admitActivationRuleIssuance(rowsWorkspace *programRows, rows *mountedArtifactRows, state *schemaBindingState, admit MountedActivationAdmit) (pendingRuleIssuance, bool, bool) {
+// admitActivationRuleIssuance mints one mounted activation issuance. The
+// transport vector is what a candidate body route instantiates, so an
+// admission that declares none is malformed rather than empty: the issuer
+// refuses an empty vector at bind, and the equation sealer cannot represent a
+// direct-transport row without one. An activation that instantiates nothing is
+// the one that declares its vector and admits no candidate row, which stays
+// admitted and addressable on its own trigger declaration.
+func admitActivationRuleIssuance(rowsWorkspace *programRows, rows *mountedArtifactRows, state *schemaBindingState, admit MountedActivationAdmit) (pendingRuleIssuance, bool) {
 	if !admit.Capability.mounted() || !admit.Capability.activation ||
 		!admit.Mount.Available() || !admit.Point.Available() || !admit.Occurrence.Available() {
-		return pendingRuleIssuance{}, false, false
+		return pendingRuleIssuance{}, false
 	}
 	binder, binderOK := resolveActivationRuleCell(admit.Capability)
 	if !binderOK {
-		return pendingRuleIssuance{}, false, false
+		return pendingRuleIssuance{}, false
 	}
 	if admit.Transport == nil {
-		return pendingRuleIssuance{}, false, len(admit.Candidates) == 0
+		return pendingRuleIssuance{}, false
 	}
 	if !admit.Application.Available() {
-		return pendingRuleIssuance{}, false, false
+		return pendingRuleIssuance{}, false
 	}
 	if !rows.mountedRule(admit.Capability, admit.Mount, admit.Point, admit.Occurrence) {
-		return pendingRuleIssuance{}, false, false
+		return pendingRuleIssuance{}, false
 	}
 	site, sited := rows.mountedSite(admit.Mount, admit.Point)
 	entity, entityOK := mountedRuleOccurrenceKey(admit.Capability, admit.Occurrence)
@@ -430,11 +431,11 @@ func admitActivationRuleIssuance(rowsWorkspace *programRows, rows *mountedArtifa
 	if !sited || !entityOK || !member.Available() || !activation.Available() || !semanticOK ||
 		!declaredRoleOwnsRuleSchema(state, admit.Capability, semantic) ||
 		!declaredActivationTransport(state, admit.Transport, admit.Capability, semantic) {
-		return pendingRuleIssuance{}, false, false
+		return pendingRuleIssuance{}, false
 	}
 	anchor, anchorOK := admitRuleSurfaceAnchor(rowsWorkspace, site, entity, [32]byte(admit.Occurrence))
 	if !anchorOK {
-		return pendingRuleIssuance{}, false, false
+		return pendingRuleIssuance{}, false
 	}
 	return pendingRuleIssuance{
 		plane: declaredMemberMount, role: admit.Capability,
@@ -446,7 +447,7 @@ func admitActivationRuleIssuance(rowsWorkspace *programRows, rows *mountedArtifa
 		candidates:  admit.Candidates,
 		application: admit.Application,
 		issuer:      admit.Transport,
-	}, true, true
+	}, true
 }
 
 // declaredActivationSurfaces states the read plane of one activation trigger.

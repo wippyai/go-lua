@@ -28,8 +28,6 @@ const (
 	RefusalRoutes
 	// RefusalCapability is an absent mounted rule-slot capability.
 	RefusalCapability
-	// RefusalTransport is an unbound mounted candidate issuer.
-	RefusalTransport
 	// RefusalRead is an occurrence whose owner reference resolves no exact
 	// read surface.
 	RefusalRead
@@ -58,8 +56,6 @@ func (reason RefusalReason) String() string {
 		return "routes"
 	case RefusalCapability:
 		return "capability"
-	case RefusalTransport:
-		return "transport"
 	case RefusalRead:
 		return "read"
 	case RefusalBodyRow:

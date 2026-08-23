@@ -180,3 +180,34 @@ func TestMountedActivationTransportVectorRefusesAnExportItsImportsDoNotDeclare(t
 		t.Fatal("binding seal after the symmetry law refused declarations")
 	}
 }
+
+// TestMountedActivationAdmissionRequiresADeclaredTransportVector proves the
+// transport vector is not optional at admission.
+//
+// The engine already refuses an empty vector when the issuer is bound, and the
+// equation sealer cannot represent a direct-transport row without one, so an
+// admission that names no vector at all is a malformed declaration rather than
+// a trigger that carries nothing. The trigger that carries nothing is the one
+// that declares its vector and admits no candidate row; that case is separate,
+// lawful, and addressable on its own declaration.
+func TestMountedActivationAdmissionRequiresADeclaredTransportVector(t *testing.T) {
+	owner := newActivationTransportLawOwner(t, 2, 948_500)
+	binding := openActivationTransportLawBinding(t, owner)
+	capability, capabilityOK := IssueActivationRuleCapability(binding, owner.rule)
+	if !capabilityOK || !RegisterActivationRuleSlot(binding, owner.rule, capability) || !binding.Seal() {
+		t.Fatal("activation rule capability")
+	}
+	// Every coordinate this admission is inspected for before the transport
+	// gate is present, so the refusal is attributable to the absent vector
+	// alone.
+	admit := MountedActivationAdmit{
+		Capability:  capability,
+		Mount:       selectedOverlayLawID(948_501),
+		Point:       selectedOverlayLawID(948_502),
+		Occurrence:  selectedOverlayLawID(948_503),
+		Application: coldKey(948_504),
+	}
+	if _, ok := admitActivationRuleIssuance(nil, nil, bindingState(binding), admit); ok {
+		t.Fatal("an activation admission that declares no transport vector was admitted")
+	}
+}

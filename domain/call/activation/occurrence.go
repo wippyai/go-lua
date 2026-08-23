@@ -49,9 +49,6 @@ func (rule *HotRule) mountedAdmit(mountID, reusablePointID, occurrenceID identit
 	if !capabilityOK {
 		return engine.MountedActivationAdmit{}, Refusal{Reason: RefusalCapability, Trigger: mountID}
 	}
-	if rule.transport == nil {
-		return engine.MountedActivationAdmit{}, Refusal{Reason: RefusalTransport, Trigger: mountID}
-	}
 	ref, refOK := rule.owner.Ref(key)
 	read, readOK := engine.ExactReadSurface(ref)
 	if !refOK || !readOK {
