@@ -16,6 +16,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/schema/ingress"
 	programschema "github.com/wippyai/go-lua/analysis/schema/program"
 	"github.com/wippyai/go-lua/analysis/schema/programmount"
+	"github.com/wippyai/go-lua/analysis/schema/seal"
 	"github.com/wippyai/go-lua/analysis/schema/structure"
 	"github.com/wippyai/go-lua/domain/heap"
 	"github.com/wippyai/go-lua/domain/materialization"
@@ -360,7 +361,7 @@ func syntheticStructuralVocabulary(t testing.TB) structure.Table {
 	if !entriesOK {
 		t.Fatal("synthetic structural declarations")
 	}
-	builder := schema.NewBuilder()
+	builder := seal.NewBuilder()
 	if !builder.Register(structure.NewSurface(entries)) {
 		t.Fatal("synthetic structure surface")
 	}
@@ -388,7 +389,7 @@ type emptySurface struct{ kind schema.SurfaceKind }
 
 func (surface emptySurface) Kind() schema.SurfaceKind { return surface.kind }
 func (surface emptySurface) Entries() []schema.Entry  { return nil }
-func (surface emptySurface) Seal(schema.View, schema.Sealed) schema.SealFailure {
+func (surface emptySurface) Seal(seal.View, seal.Sealed) schema.SealFailure {
 	return schema.SealFailure{}
 }
 

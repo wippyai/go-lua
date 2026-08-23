@@ -17,6 +17,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/schema"
 	"github.com/wippyai/go-lua/analysis/schema/ingress"
 	"github.com/wippyai/go-lua/analysis/schema/programmount"
+	"github.com/wippyai/go-lua/analysis/schema/seal"
 	"github.com/wippyai/go-lua/analysis/schema/structure"
 	schemavocabulary "github.com/wippyai/go-lua/analysis/schema/vocabulary"
 	heapdomain "github.com/wippyai/go-lua/domain/heap"
@@ -493,7 +494,7 @@ func publicationEscapeStructuralVocabulary(t testing.TB) structure.Table {
 	if !collectedOK {
 		t.Fatal("publication escape structural entries")
 	}
-	builder := schema.NewBuilder()
+	builder := seal.NewBuilder()
 	if !builder.Register(structure.NewSurface(collected)) {
 		t.Fatal("publication escape structural surface")
 	}
@@ -521,6 +522,6 @@ type publicationEscapeEmptySurface struct{ kind schema.SurfaceKind }
 
 func (surface publicationEscapeEmptySurface) Kind() schema.SurfaceKind { return surface.kind }
 func (surface publicationEscapeEmptySurface) Entries() []schema.Entry  { return nil }
-func (surface publicationEscapeEmptySurface) Seal(schema.View, schema.Sealed) schema.SealFailure {
+func (surface publicationEscapeEmptySurface) Seal(seal.View, seal.Sealed) schema.SealFailure {
 	return schema.SealFailure{}
 }

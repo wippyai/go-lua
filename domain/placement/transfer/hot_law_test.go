@@ -20,6 +20,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/schema/ingress"
 	programschema "github.com/wippyai/go-lua/analysis/schema/program"
 	programmount "github.com/wippyai/go-lua/analysis/schema/programmount"
+	"github.com/wippyai/go-lua/analysis/schema/seal"
 	"github.com/wippyai/go-lua/analysis/schema/structure"
 	schematype "github.com/wippyai/go-lua/analysis/schema/typecontract"
 	calldomain "github.com/wippyai/go-lua/domain/call"
@@ -592,7 +593,7 @@ func transferStructuralVocabulary(t testing.TB) structure.Table {
 	if !entriesOK {
 		t.Fatal("transfer structural declarations")
 	}
-	builder := schema.NewBuilder()
+	builder := seal.NewBuilder()
 	if !builder.Register(structure.NewSurface(entries)) {
 		t.Fatal("transfer structural surface")
 	}
@@ -620,6 +621,6 @@ type transferEmptySurface struct{ kind schema.SurfaceKind }
 
 func (surface transferEmptySurface) Kind() schema.SurfaceKind { return surface.kind }
 func (surface transferEmptySurface) Entries() []schema.Entry  { return nil }
-func (surface transferEmptySurface) Seal(schema.View, schema.Sealed) schema.SealFailure {
+func (surface transferEmptySurface) Seal(seal.View, seal.Sealed) schema.SealFailure {
 	return schema.SealFailure{}
 }

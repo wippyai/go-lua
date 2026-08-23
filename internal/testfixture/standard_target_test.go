@@ -310,17 +310,24 @@ func assertSealedConnectionRequirements(t *testing.T) {
 	}
 	for _, member := range []string{"query", "begin"} {
 		operation := resourceOperation(t, sealed, member)
-		rows := table.RequirementsOf(operation)
-		if len(rows) != 1 {
-			t.Fatalf("resource.%s requirements = %+v, want the single connection row", member, rows)
+		var input vocabulary.InputSource
+		var state vocabulary.State
+		matches := 0
+		for index := 0; index < table.ProtocolRequirementCount(connection); index++ {
+			declaredOperation, declaredInput, declaredState, ok := table.ProtocolRequirementAt(connection, index)
+			if !ok || declaredOperation != operation {
+				continue
+			}
+			input, state = declaredInput, declaredState
+			matches++
 		}
-		if rows[0].Protocol != connection {
-			t.Fatalf("resource.%s constrains protocol %d, want the connection machine %d", member, rows[0].Protocol, connection)
+		if matches != 1 {
+			t.Fatalf("resource.%s requirement count = %d, want the single connection row", member, matches)
 		}
-		if rows[0].Input.Kind != vocabulary.InputSourceValueFormal || rows[0].Input.Ordinal != 0 {
-			t.Fatalf("resource.%s constrains %+v, want parameter 0", member, rows[0].Input)
+		if input.Kind != vocabulary.InputSourceValueFormal || input.Ordinal != 0 {
+			t.Fatalf("resource.%s constrains %+v, want parameter 0", member, input)
 		}
-		if name, ok := table.StateName(connection, rows[0].State); !ok || name != "open" {
+		if name, ok := table.StateName(connection, state); !ok || name != "open" {
 			t.Fatalf("resource.%s requires state %q/%v, want open", member, name, ok)
 		}
 		for index := 0; index < table.TransitionCount(connection); index++ {

@@ -17,6 +17,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/schema"
 	"github.com/wippyai/go-lua/analysis/schema/ingress"
 	"github.com/wippyai/go-lua/analysis/schema/programmount"
+	"github.com/wippyai/go-lua/analysis/schema/seal"
 	"github.com/wippyai/go-lua/analysis/schema/structure"
 	"github.com/wippyai/go-lua/domain/heap"
 	"github.com/wippyai/go-lua/domain/materialization"
@@ -201,7 +202,7 @@ func formalSoundnessStructuralVocabulary(t testing.TB) structure.Table {
 	if !entriesOK {
 		t.Fatal("formal soundness structural declarations")
 	}
-	builder := schema.NewBuilder()
+	builder := seal.NewBuilder()
 	if !builder.Register(structure.NewSurface(entries)) {
 		t.Fatal("formal soundness structural surface")
 	}
@@ -229,6 +230,6 @@ type formalSoundnessEmptySurface struct{ kind schema.SurfaceKind }
 
 func (surface formalSoundnessEmptySurface) Kind() schema.SurfaceKind { return surface.kind }
 func (surface formalSoundnessEmptySurface) Entries() []schema.Entry  { return nil }
-func (surface formalSoundnessEmptySurface) Seal(schema.View, schema.Sealed) schema.SealFailure {
+func (surface formalSoundnessEmptySurface) Seal(seal.View, seal.Sealed) schema.SealFailure {
 	return schema.SealFailure{}
 }
