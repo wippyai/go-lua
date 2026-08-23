@@ -70,7 +70,7 @@ func DeclareQuery(builder *engine.SchemaBuilder, context queryschema.Declaration
 	if placementRead.Schema() != nil || heapRead.Schema() != nil || evidenceRead.Schema() != nil {
 		return nil, false
 	}
-	slot, slotOK := engine.NewQuerySlot[placementdomain.PlacementSummaryObservation](builder, engine.SchemaQuerySpec{Semantic: context.Semantic, Freezer: context.Freezer})
+	slot, slotOK := engine.NewQuerySlot[placementdomain.PlacementSummaryObservation](builder, engine.SchemaQuerySpec{Semantic: context.Semantic, Freezer: context.Freezer, Population: context.Population})
 	if !slotOK || !engine.SchemaQueryRead(slot, placementRead) || !engine.SchemaQueryRead(slot, heapRead) || !engine.SchemaQueryRead(slot, evidenceRead) {
 		return nil, false
 	}
