@@ -93,7 +93,7 @@ func bindFactorFromGraph[K ~uint32 | ~uint64, V any](implementation *FactorImple
 		// A Factor that authors the family of one of its own rules installs it
 		// here, at seal, beside its materialized columns. The runtime keeps the
 		// sealed executor, never the owner capability that built it.
-		if families, familiesOK := owner.(execution.RuleFamilyProvider); familiesOK {
+		if families, familiesOK := owner.(execution.RuleFamilyProvider[K, V]); familiesOK {
 			bound.families = families
 		}
 		if columns, columnsOK := owner.(memberrelation.SourceColumns[V]); columnsOK {

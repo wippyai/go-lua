@@ -58,7 +58,7 @@ type boundFactor[K ~uint32 | ~uint64, V any] struct {
 	// family for one of its own rule ordinals. It is sealed data in the same
 	// sense the source columns are: the runtime asks it once, at Program seal,
 	// and never during a solve.
-	families execution.RuleFamilyProvider
+	families execution.RuleFamilyProvider[K, V]
 }
 
 type runtimeFactor interface {

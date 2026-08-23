@@ -15,6 +15,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/engine/internal/factbinding"
 	"github.com/wippyai/go-lua/analysis/engine/internal/facts/scalar"
 	memberrelation "github.com/wippyai/go-lua/analysis/schema/axis/member/relation"
+	ruleplan "github.com/wippyai/go-lua/analysis/schema/rule/plan"
 )
 
 // Form is the sealed execution form ordinal one plan row carries. The table is
@@ -100,13 +101,16 @@ type FormAddress struct {
 // AuthorsRule partitions before anything is built, so a refusal from
 // InstallRuleFamily is a real refusal rather than a silent fall back to a
 // generic form builder.
-type RuleFamilyProvider interface {
+type RuleFamilyProvider[K scalar.Key, V any] interface {
 	// AuthorsRule reports whether this owner installs the family of one sealed
 	// rule ordinal.
 	AuthorsRule(rule uint32) bool
 	// InstallRuleFamily seals one family covering every plan row of that rule,
 	// in the order given, and answers the local ordinal each row was sealed at.
-	InstallRuleFamily(rule uint32, rows []FormRow) (Family, []FormAddress, bool)
+	// Every primitive it needs is sealed through the plane, so an owner outside
+	// this package builds a family without naming - or reaching - one carrier,
+	// binding, or guard type.
+	InstallRuleFamily(plane FormPlane[K, V], rule uint32, rows []FormRow) (Family, []FormAddress, bool)
 }
 
 // FormPlane is the sealed typed plane a form builder may read: the Factor's
@@ -117,12 +121,12 @@ type FormPlane[K scalar.Key, V any] struct {
 	binding  *factbinding.Binding[K, V]
 	columns  []memberrelation.SourceColumn[V]
 	present  []bool
-	families RuleFamilyProvider
+	families RuleFamilyProvider[K, V]
 }
 
 // NewFormPlane seals one bound Factor's typed plane for the form table. A
 // Factor that installs no family of its own passes a nil provider.
-func NewFormPlane[K scalar.Key, V any](binding *factbinding.Binding[K, V], columns []memberrelation.SourceColumn[V], present []bool, families RuleFamilyProvider) (FormPlane[K, V], bool) {
+func NewFormPlane[K scalar.Key, V any](binding *factbinding.Binding[K, V], columns []memberrelation.SourceColumn[V], present []bool, families RuleFamilyProvider[K, V]) (FormPlane[K, V], bool) {
 	if binding == nil {
 		return FormPlane[K, V]{}, false
 	}
@@ -131,6 +135,55 @@ func NewFormPlane[K scalar.Key, V any](binding *factbinding.Binding[K, V], colum
 
 // Valid reports whether the plane still names a live typed binding.
 func (plane FormPlane[K, V]) Valid() bool { return plane.binding != nil }
+
+// ExactRow seals one exact read and exact write of this plane. It is the
+// primitive an installed family is built from: an owner hands back the
+// coordinates its plan row carries and never holds a binding of its own.
+func (plane FormPlane[K, V]) ExactRow(unit carrier.Unit, input uint16, target carrier.Target, output uint16) (ExactRow[K, V], bool) {
+	if !plane.Valid() {
+		return ExactRow[K, V]{}, false
+	}
+	return NewExactRow(plane.binding, unit, input, target, output)
+}
+
+// ExactWrite seals one exact write of this plane.
+func (plane FormPlane[K, V]) ExactWrite(target carrier.Target, output uint16) (ExactWrite[K, V], bool) {
+	if !plane.Valid() {
+		return ExactWrite[K, V]{}, false
+	}
+	return NewExactWrite(plane.binding, target, output)
+}
+
+// ExactRead seals one exact read of this plane.
+func (plane FormPlane[K, V]) ExactRead(unit carrier.Unit, input uint16) (ExactRead[K, V], bool) {
+	if !plane.Valid() {
+		return ExactRead[K, V]{}, false
+	}
+	return NewExactRead(plane.binding, unit, input)
+}
+
+// SelectedRead seals one selected read of this plane under the contract its
+// plan row declared and the materialization the read boundary derived.
+func (plane FormPlane[K, V]) SelectedRead(input uint16, contract ruleplan.ReadContract, policy ReadCellPolicy[V]) (SelectedRead[K, V], bool) {
+	if !plane.Valid() {
+		return SelectedRead[K, V]{}, false
+	}
+	return NewSelectedRead(plane.binding, input, contract, policy)
+}
+
+// RouteWrite seals one bounded routed write of this plane.
+func (plane FormPlane[K, V]) RouteWrite(output uint16) (RouteWrite[K, V], bool) {
+	if !plane.Valid() {
+		return RouteWrite[K, V]{}, false
+	}
+	return NewRouteWrite(plane.binding, output)
+}
+
+// SourceColumn returns one present materialized source column of this Factor
+// by the relation member ordinal a plan row carries.
+func (plane FormPlane[K, V]) SourceColumn(relation uint32) (memberrelation.SourceColumn[V], bool) {
+	return plane.column(relation)
+}
 
 // column returns one present materialized source column of this Factor.
 func (plane FormPlane[K, V]) column(relation uint32) (memberrelation.SourceColumn[V], bool) {
@@ -270,7 +323,7 @@ func buildForms[K scalar.Key, V any](plane FormPlane[K, V], rows []FormRow, buil
 		sort.Slice(ordinals, func(left, right int) bool { return ordinals[left] < ordinals[right] })
 		for _, ordinal := range ordinals {
 			ruleRows := installed[ordinal]
-			family, ruleAddresses, built := plane.families.InstallRuleFamily(ordinal, ruleRows)
+			family, ruleAddresses, built := plane.families.InstallRuleFamily(plane, ordinal, ruleRows)
 			if !built || !appendFamily(family, ruleAddresses, len(ruleRows)) {
 				return nil, nil, form, false
 			}

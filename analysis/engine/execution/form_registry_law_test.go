@@ -206,7 +206,10 @@ func (provider *installedFamilyProvider) AuthorsRule(rule uint32) bool {
 	return provider != nil && rule == provider.rule
 }
 
-func (provider *installedFamilyProvider) InstallRuleFamily(rule uint32, rows []FormRow) (Family, []FormAddress, bool) {
+func (provider *installedFamilyProvider) InstallRuleFamily(plane FormPlane[uint64, uint64], rule uint32, rows []FormRow) (Family, []FormAddress, bool) {
+	if !plane.Valid() {
+		return nil, nil, false
+	}
 	if provider == nil || rule != provider.rule {
 		return nil, nil, false
 	}
