@@ -104,6 +104,12 @@ type Relation struct {
 	Key     schema.Key
 	Subject string
 	Inputs  []string
+	// Axis is the axis whose rows these are. A relation over call coordinates
+	// is call-axis data whichever rule declares it, so a contribution states
+	// the axis per row rather than per contribution and the roster folds the
+	// row into that axis's source. Left empty it is the contribution's own
+	// axis, which is what a rule declaring rows of the axis it writes means.
+	Axis schema.Key
 	// CandidateProvider explicitly names the owner-qualified dense directory
 	// used by this relation. It is required even when the provider is a
 	// same-axis relation; no carrier-type inference is permitted.
@@ -181,6 +187,10 @@ type Projection struct {
 	Result            string
 	Accessor          GoSymbol
 	CandidateProvider member.RelationRef
+	// Axis is the axis whose rows this projection reads, declared under the
+	// same law as a relation's. A projection names a relation, so it folds into
+	// the source its relation does.
+	Axis schema.Key
 }
 
 // ReducerInput is one named reducer input. Carrier, Tag and Route refer to
@@ -457,6 +467,13 @@ func (definition Definition) Complete() bool {
 	relationsByKey := make(map[schema.Key]Relation, len(definition.Relations))
 	owner := definition.Binding.Key.Normalizer.Receiver
 	for _, relation := range definition.Relations {
+		// A row states the axis whose rows it is. A definition holds exactly
+		// the rows of its own axis, so a row that names another one has been
+		// folded into the wrong source and is refused where the vocabulary
+		// seals rather than discovered when a plan cannot resolve it.
+		if relation.Axis.Available() && relation.Axis != definition.Axis {
+			return false
+		}
 		if !relation.CandidateProvider.Available() {
 			return false
 		}
@@ -604,6 +621,9 @@ func (definition Definition) Complete() bool {
 	projectionNames := make(map[string]struct{}, len(definition.Projections))
 	projectionKeys := make(map[schema.Key]struct{}, len(definition.Projections))
 	for _, projection := range definition.Projections {
+		if projection.Axis.Available() && projection.Axis != definition.Axis {
+			return false
+		}
 		if !projection.CandidateProvider.Available() {
 			return false
 		}

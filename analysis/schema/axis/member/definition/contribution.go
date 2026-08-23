@@ -53,7 +53,7 @@ type Contribution struct {
 // the same relation. Relation carries slices, so identity is stated here
 // rather than left to comparison.
 func relationsAgree(left, right Relation) bool {
-	if left.Name != right.Name || left.Key != right.Key || left.Subject != right.Subject ||
+	if left.Name != right.Name || left.Key != right.Key || left.Subject != right.Subject || left.Axis != right.Axis ||
 		left.CandidateProvider != right.CandidateProvider || left.CandidateResolver != right.CandidateResolver ||
 		left.CandidateOrdinal != right.CandidateOrdinal || left.CandidateAt != right.CandidateAt ||
 		left.CandidateCount != right.CandidateCount || left.Materialize != right.Materialize ||
@@ -91,8 +91,21 @@ func derivationsAgree(left, right RelationDerivation) bool {
 // Available reports whether this contribution identifies one rule of one axis
 // and declares at least one reducer. A contribution that declares none is not
 // an empty contribution: it is a rule claiming a fold it did not state.
+//
+// The reducer clause is the AUTHORED law and the roster states it over what a
+// package wrote. It is deliberately not Compose's gate: the roster folds a
+// contribution's rows into the source of the axis each row names, so a rule
+// that declares rows of a foreign axis reaches that axis's composition
+// carrying rows and no fold, which is the correct shape rather than an empty
+// claim.
 func (contribution Contribution) Available() bool {
-	if !contribution.Axis.Available() || !contribution.Rule.Available() || len(contribution.Reducers) == 0 {
+	return len(contribution.Reducers) != 0 && contribution.rowsAvailable()
+}
+
+// rowsAvailable reports whether every row this contribution declares is a
+// complete declaration of one rule of one axis.
+func (contribution Contribution) rowsAvailable() bool {
+	if !contribution.Axis.Available() || !contribution.Rule.Available() {
 		return false
 	}
 	for _, carrier := range contribution.Carriers {
@@ -183,7 +196,7 @@ func (source Source) Compose() (Definition, bool) {
 	reducerKeys := make(map[schema.Key]struct{}, len(source.Contributions))
 	composed := make([]Reducer, 0, len(source.Contributions))
 	for _, contribution := range source.Contributions {
-		if !contribution.Available() || contribution.Axis != base.Axis {
+		if !contribution.rowsAvailable() || contribution.Axis != base.Axis {
 			return Definition{}, false
 		}
 		if _, duplicate := rules[contribution.Rule]; duplicate {
@@ -260,11 +273,23 @@ type Roster struct {
 	sources []Source
 }
 
-// NewRoster admits an ordered set of axis sources. Two sources naming one axis
-// or one generator name are two owners of one vocabulary and are refused.
+// NewRoster admits an ordered set of axis sources and folds every declared row
+// into the source of the axis that row names. Two sources naming one axis or
+// one generator name are two owners of one vocabulary and are refused.
+//
+// A relation over call coordinates is call-axis data whichever rule declares
+// it, so the axis is a property of the row and not of the contribution that
+// authored it. A rule that reads a foreign axis states its join rows on that
+// axis - where the key projection's accessor is a method the owner actually
+// has - and the roster places them there. The alternative was for the reading
+// domain's candidate to carry the foreign coordinate, which is a schema-level
+// dependency between two domains that have none.
+//
+// The fold happens once, here, so composition stays a per-source operation and
+// there is exactly one statement of where a row lives.
 func NewRoster(sources ...Source) (Roster, bool) {
 	names := make(map[string]struct{}, len(sources))
-	axes := make(map[schema.Key]struct{}, len(sources))
+	axes := make(map[schema.Key]int, len(sources))
 	admitted := make([]Source, 0, len(sources))
 	for _, source := range sources {
 		if source.Name == "" || source.Package == "" || !packagePathAvailable(source.Package) || !source.Base.Axis.Available() {
@@ -276,11 +301,135 @@ func NewRoster(sources ...Source) (Roster, bool) {
 		if _, duplicate := axes[source.Base.Axis]; duplicate {
 			return Roster{}, false
 		}
+		for _, contribution := range source.Contributions {
+			if !contribution.Available() || contribution.Axis != source.Base.Axis {
+				return Roster{}, false
+			}
+		}
 		names[source.Name] = struct{}{}
-		axes[source.Base.Axis] = struct{}{}
+		axes[source.Base.Axis] = len(admitted)
 		admitted = append(admitted, source)
 	}
-	return Roster{sources: admitted}, len(admitted) > 0
+	if len(admitted) == 0 {
+		return Roster{}, false
+	}
+	folded, foldOK := foldForeignRows(admitted, axes)
+	if !foldOK {
+		return Roster{}, false
+	}
+	return Roster{sources: folded}, true
+}
+
+// foldForeignRows moves every relation and projection to the source of the
+// axis it names, carrying the carrier rows it is typed in. A row naming an axis
+// no source registers has no home and refuses the roster where it is written
+// rather than where a plan later fails to resolve it.
+func foldForeignRows(sources []Source, axes map[schema.Key]int) ([]Source, bool) {
+	retained := make([][]Contribution, len(sources))
+	received := make([][]Contribution, len(sources))
+	for index, source := range sources {
+		retained[index] = make([]Contribution, 0, len(source.Contributions))
+		for _, contribution := range source.Contributions {
+			home := contribution
+			home.Relations = nil
+			home.Projections = nil
+			foreign := make(map[schema.Key]Contribution, 1)
+			order := make([]schema.Key, 0, 1)
+			for _, relation := range contribution.Relations {
+				axis := relation.Axis
+				if !axis.Available() {
+					axis = contribution.Axis
+				}
+				if axis == contribution.Axis {
+					home.Relations = append(home.Relations, relation)
+					continue
+				}
+				target, targetOK := axes[axis]
+				if !targetOK || target == index {
+					return nil, false
+				}
+				row, seen := foreign[axis]
+				if !seen {
+					row = Contribution{Axis: axis, Rule: contribution.Rule}
+					order = append(order, axis)
+				}
+				row.Relations = append(row.Relations, relation)
+				names := append(append([]string(nil), relation.Subject), relation.Inputs...)
+				carriers, carriersOK := namedCarriers(contribution.Carriers, row.Carriers, names)
+				if !carriersOK {
+					return nil, false
+				}
+				row.Carriers = carriers
+				foreign[axis] = row
+			}
+			for _, projection := range contribution.Projections {
+				axis := projection.Axis
+				if !axis.Available() {
+					axis = contribution.Axis
+				}
+				if axis == contribution.Axis {
+					home.Projections = append(home.Projections, projection)
+					continue
+				}
+				target, targetOK := axes[axis]
+				if !targetOK || target == index {
+					return nil, false
+				}
+				row, seen := foreign[axis]
+				if !seen {
+					row = Contribution{Axis: axis, Rule: contribution.Rule}
+					order = append(order, axis)
+				}
+				row.Projections = append(row.Projections, projection)
+				carriers, carriersOK := namedCarriers(contribution.Carriers, row.Carriers, []string{projection.Result})
+				if !carriersOK {
+					return nil, false
+				}
+				row.Carriers = carriers
+				foreign[axis] = row
+			}
+			retained[index] = append(retained[index], home)
+			for _, axis := range order {
+				target := axes[axis]
+				received[target] = append(received[target], foreign[axis])
+			}
+		}
+	}
+	folded := make([]Source, len(sources))
+	for index, source := range sources {
+		folded[index] = source
+		folded[index].Contributions = append(retained[index], received[index]...)
+	}
+	return folded, true
+}
+
+// namedCarriers appends the declared carriers a routed row is typed in, taking
+// them from the contribution that authored the row. A name the authoring
+// contribution does not declare is the receiving axis's own, and composition
+// refuses it there if it is neither.
+func namedCarriers(declared, carried []Carrier, names []string) ([]Carrier, bool) {
+	for _, name := range names {
+		if !identifierAvailable(name) {
+			return nil, false
+		}
+		held := false
+		for _, carrier := range carried {
+			if carrier.Name == name {
+				held = true
+				break
+			}
+		}
+		if held {
+			continue
+		}
+		for _, carrier := range declared {
+			if carrier.Name == name {
+				carried = append(carried, carrier)
+				break
+			}
+		}
+	}
+	return carried, true
 }
 
 // Count is the number of registered axis sources.

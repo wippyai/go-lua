@@ -164,9 +164,6 @@ func TestComposeRefusesContradictoryContributions(t *testing.T) {
 			specimenContribution("specimen-first", "First", "specimen/reducer/first"),
 			specimenContribution("specimen-first", "Second", "specimen/reducer/second"),
 		},
-		"no-reducer": {
-			{Axis: "specimen", Rule: "specimen-empty"},
-		},
 		"unnamed-rule": {
 			specimenContribution("", "First", "specimen/reducer/first"),
 		},
@@ -182,6 +179,21 @@ func TestComposeRefusesContradictoryContributions(t *testing.T) {
 	foreign.Axis = "other"
 	if _, ok := specimenSource(foreign).Compose(); ok {
 		t.Fatal("a contribution placed a reducer in a foreign axis")
+	}
+}
+
+// TestAnAuthoredContributionStatesTheFoldItClaims keeps the law that a
+// contribution declaring no reducer is a rule claiming a fold it did not state.
+// It is the roster's law rather than composition's: composition receives rows
+// the roster folded in from another axis's rule, which carry no fold there and
+// are not empty claims, so the law belongs where a package's own declaration
+// is registered.
+func TestAnAuthoredContributionStatesTheFoldItClaims(t *testing.T) {
+	if _, ok := NewRoster(specimenSource(Contribution{Axis: "specimen", Rule: "specimen-empty"})); ok {
+		t.Fatal("a contribution claiming a fold it did not state was registered")
+	}
+	if _, ok := NewRoster(specimenSource(specimenContribution("specimen-first", "First", "specimen/reducer/first"))); !ok {
+		t.Fatal("a contribution stating its fold was refused")
 	}
 }
 
@@ -481,4 +493,154 @@ func TestAGlobalDirectoryOwesACensusWithoutOwingAMaterializer(t *testing.T) {
 			t.Fatal("a census authored outside the axis owner was admitted")
 		}
 	})
+}
+
+// foreignAxisBase is a second registered axis whose rows a specimen rule wants
+// to join on: its key projection's accessor is a method the FOREIGN owner has,
+// which is exactly why the row cannot live on the reading rule's axis.
+func foreignAxisBase() Definition {
+	provider := member.RelationRef{Axis: schema.EntryReference{Surface: schema.SurfaceKindAxis, Key: "foreign"}, Member: "foreign/candidates"}
+	return Definition{
+		Name: "Foreign",
+		Axis: "foreign",
+		Binding: Binding{Key: KeyNormalization{
+			Carrier:    "ForeignKeyCarrier",
+			Dense:      GoType{Name: "uint32"},
+			Normalizer: specimenMethod("ForeignKeyIndex", "ForeignSchema"),
+		}},
+		Signature: Signature{Key: "ForeignKeyCarrier", Fact: "ForeignFactCarrier"},
+		Carriers: []Carrier{
+			{Name: "ForeignKeyCarrier", Key: "carrier/foreign/key", Type: specimenType("ForeignKey")},
+			{Name: "ForeignFactCarrier", Key: "carrier/foreign/fact", Type: specimenType("ForeignFact")},
+			{Name: "ForeignSeedCarrier", Key: "carrier/foreign/seed", Type: specimenType("ForeignSeed")},
+		},
+		Relations: []Relation{{
+			Name:              "ForeignCandidates",
+			Key:               "foreign/candidates",
+			Subject:           "ForeignSeedCarrier",
+			CandidateProvider: provider,
+			CandidateResolver: specimenMethod("ForeignSeedForOccurrence", "ForeignSchema"),
+			CandidateOrdinal:  specimenMethod("ForeignSeedOrdinal", "ForeignSchema"),
+			CandidateAt:       specimenMethod("ForeignSeedAt", "ForeignSchema"),
+		}},
+	}
+}
+
+func foreignSource() Source {
+	return Source{Package: "foreign", Name: "foreign", Base: foreignAxisBase()}
+}
+
+// foreignJoinContribution is a specimen rule that folds on its own axis but
+// reads a foreign one: the rows it joins over are the foreign axis's rows, so
+// it declares them naming that axis.
+func foreignJoinContribution() Contribution {
+	contribution := specimenContribution("specimen-foreign", "Foreign", "specimen/reducer/foreign")
+	provider := member.RelationRef{Axis: schema.EntryReference{Surface: schema.SurfaceKindAxis, Key: "foreign"}, Member: "foreign/specimen-joins"}
+	contribution.Carriers = []Carrier{
+		{Name: "JoinCarrier", Key: "carrier/foreign/join", Type: specimenType("ForeignJoin")},
+	}
+	contribution.Relations = []Relation{{
+		Name:              "ForeignJoins",
+		Key:               "foreign/specimen-joins",
+		Axis:              "foreign",
+		Subject:           "JoinCarrier",
+		CandidateProvider: provider,
+		CandidateResolver: specimenMethod("JoinForOccurrence", "ForeignSchema"),
+		CandidateOrdinal:  specimenMethod("JoinOrdinal", "ForeignSchema"),
+		CandidateAt:       specimenMethod("JoinAt", "ForeignSchema"),
+	}}
+	contribution.Projections = []Projection{{
+		Name:              "ForeignJoinKey",
+		Key:               "foreign/specimen-joins/key",
+		Axis:              "foreign",
+		Relation:          "ForeignJoins",
+		CandidateProvider: provider,
+		Role:              member.Key,
+		Result:            "ForeignKeyCarrier",
+		Accessor:          specimenMethod("JoinKey", "ForeignJoin"),
+	}}
+	return contribution
+}
+
+// TestARowIsFoldedIntoTheSourceOfTheAxisItNames is ruling (a): a relation over
+// a foreign axis's coordinates is that axis's data whichever rule declares it.
+//
+// The reading rule keeps its fold on the axis it writes, and the rows it joins
+// over land in the source that owns them - where the key projection's accessor
+// is a method the owner actually has. The alternative was for the reading
+// domain's candidate to carry the foreign coordinate, which is a schema-level
+// dependency between two domains that have none.
+func TestARowIsFoldedIntoTheSourceOfTheAxisItNames(t *testing.T) {
+	roster, rosterOK := NewRoster(specimenSource(foreignJoinContribution()), foreignSource())
+	if !rosterOK {
+		t.Fatal("a rule declaring rows of the axis it reads was refused")
+	}
+	_, specimen, specimenOK := roster.Definition("specimen")
+	if !specimenOK {
+		t.Fatal("the reading axis does not compose")
+	}
+	if _, present := findRelation(specimen, "ForeignJoins"); present {
+		t.Fatal("a foreign axis's rows stayed in the reading rule's own axis")
+	}
+	if len(specimen.Reducers) != 1 || specimen.Reducers[0].Rule != "specimen-foreign" {
+		t.Fatalf("the reading rule's fold did not stay on the axis it writes: %+v", specimen.Reducers)
+	}
+	_, foreign, foreignOK := roster.Definition("foreign")
+	if !foreignOK {
+		t.Fatal("the read axis does not compose with the folded rows")
+	}
+	relation, relationFound := findRelation(foreign, "ForeignJoins")
+	if !relationFound || relation.Axis != "foreign" || relation.Subject != "JoinCarrier" {
+		t.Fatalf("folded relation = %+v found=%t", relation, relationFound)
+	}
+	projection, projectionFound := findProjection(foreign, "ForeignJoinKey")
+	if !projectionFound || projection.Axis != "foreign" {
+		t.Fatalf("folded projection = %+v found=%t", projection, projectionFound)
+	}
+	if len(foreign.Reducers) != 0 {
+		t.Fatalf("the reading rule's fold followed its rows into the read axis: %+v", foreign.Reducers)
+	}
+	carried := false
+	for _, carrier := range foreign.Carriers {
+		if carrier.Name == "JoinCarrier" {
+			carried = true
+		}
+	}
+	if !carried {
+		t.Fatal("a folded row's subject carrier did not travel with it")
+	}
+}
+
+// TestARowNamingAnUnregisteredAxisHasNoHome refuses the roster where the row is
+// written. A row whose axis no source owns cannot be placed, and discovering
+// that when a plan fails to resolve the relation names the wrong defect.
+func TestARowNamingAnUnregisteredAxisHasNoHome(t *testing.T) {
+	contribution := foreignJoinContribution()
+	contribution.Relations[0].Axis = "unregistered"
+	contribution.Projections[0].Axis = "unregistered"
+	if _, ok := NewRoster(specimenSource(contribution), foreignSource()); ok {
+		t.Fatal("a row naming an axis no source owns was registered")
+	}
+}
+
+// TestADefinitionHoldsOnlyTheRowsOfItsOwnAxis is the seal-side half: whatever
+// placed a row, a definition that ends up holding one belonging to another axis
+// is refused where the vocabulary seals.
+func TestADefinitionHoldsOnlyTheRowsOfItsOwnAxis(t *testing.T) {
+	misplaced := specimenBase()
+	misplaced.Relations[0].Axis = "foreign"
+	if misplaced.Complete() {
+		t.Fatal("a definition holding another axis's relation sealed")
+	}
+	misplaced = specimenBase()
+	misplaced.Projections[0].Axis = "foreign"
+	if misplaced.Complete() {
+		t.Fatal("a definition holding another axis's projection sealed")
+	}
+	home := specimenBase()
+	home.Relations[0].Axis = "specimen"
+	home.Projections[0].Axis = "specimen"
+	if !home.Complete() {
+		t.Fatal("a definition holding rows that name its own axis was refused")
+	}
 }
