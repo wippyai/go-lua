@@ -5,7 +5,6 @@ import (
 	"github.com/wippyai/go-lua/analysis/identity"
 	"github.com/wippyai/go-lua/analysis/schema"
 	"github.com/wippyai/go-lua/analysis/schema/axis"
-	"github.com/wippyai/go-lua/analysis/schema/plane"
 	"github.com/wippyai/go-lua/analysis/schema/query"
 	"github.com/wippyai/go-lua/domain/effect/factor"
 )
@@ -70,7 +69,7 @@ func DeclareQuery(builder *engine.SchemaBuilder, context query.Declaration) (*Ex
 	if read.Schema() != nil {
 		return nil, false
 	}
-	slot, slotOK := engine.NewQuerySlot[factor.EffectObservation](builder, engine.SchemaQuerySpec{Semantic: context.Semantic, Freezer: context.Freezer})
+	slot, slotOK := engine.NewQuerySlot[factor.EffectObservation](builder, engine.SchemaQuerySpec{Semantic: context.Semantic, Freezer: context.Freezer, Population: context.Population})
 	if !slotOK || !engine.SchemaQueryRead(slot, read) {
 		return nil, false
 	}
@@ -94,16 +93,6 @@ func RecoverQuery(binding *engine.SchemaBinding, context query.Sealed[*ExactQuer
 		return nil, false
 	}
 	return engine.ExactQueryImplementationAt[factor.Value, factor.EffectObservation](binding, context.Fragment.slot)
-}
-
-// EncodeQueryAnswer is the effect-exact family's one-way public result
-// boundary. The private joined algebra value is discarded by the domain codec.
-func EncodeQueryAnswer(layout *plane.Sealed, answer engine.Answer) (present bool, rows uint64, payload []byte, ok bool) {
-	observation, readable := engine.AnswerValue[factor.EffectObservation](answer)
-	if !readable {
-		return false, 0, nil, false
-	}
-	return factor.EncodeResult(layout, observation)
 }
 
 // exactQuerySpec is the family's hot half against one Link's sealed effect

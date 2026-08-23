@@ -19,8 +19,8 @@ const summaryResultPin = "58ee06e07da27d3cb74d5e15cff584861e77628bcd21c65d34e81e
 
 // summaryResultTestLayout seals this family's publication layout the way the
 // composition seals it: the shape derived from the fold the family's query
-// registration declares, the row state vocabulary read from a sealed
-// structural table, and the columns this package publishes.
+// registration declares, the sealed structural table the row state vocabulary
+// is read from, and this package's one publication declaration.
 var summaryResultTestLayout = sealSummaryResultTestLayout()
 
 func sealSummaryResultTestLayout() *plane.Sealed {
@@ -32,7 +32,7 @@ func sealSummaryResultTestLayout() *plane.Sealed {
 	if !shapeOK {
 		return nil
 	}
-	sealed, _ := plane.Seal(shape, table, SummaryResultStates, SummaryResultColumns())
+	sealed, _ := plane.SealPublication(shape, table, SummaryPublication())
 	return sealed
 }
 

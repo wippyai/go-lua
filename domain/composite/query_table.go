@@ -54,18 +54,17 @@ func queryRegistrations(roles vocabulary.Roles) ([]*query.Registration, []queryC
 	}
 
 	add(wireQuery(valueowner.QuerySpec(), roles, valueowner.DeclareQuery, valueowner.BindQuery, valueowner.RecoverQuery,
-		engine.NewSummaryQueryAdmission, valueowner.EncodeQueryAnswer, value.SummaryResultStates, value.SummaryResultColumns()))
+		engine.NewSummaryQueryAdmission, value.SummaryPublication()))
 	add(wireQuery(effectowner.QuerySpec(), roles, effectowner.DeclareQuery, effectowner.BindQuery, effectowner.RecoverQuery,
-		engine.NewExactQueryAdmission, effectowner.EncodeQueryAnswer, factor.ExactResultStates, factor.ExactResultColumns()))
+		engine.NewExactQueryAdmission, factor.ExactPublication()))
 	// Placement still detaches its answers with a codec of its own, so it
-	// declares no publication plane and the composition seals it no layout.
-	// CX-10 cuts that codec onto the plane and this closure goes with it.
-	add(wireQuery(placementquery.QuerySpec(), roles, placementquery.DeclareQuery, placementquery.BindQuery, placementquery.RecoverQuery,
-		engine.NewHeterogeneousQueryAdmission,
-		func(_ *plane.Sealed, answer engine.Answer) (bool, uint64, []byte, bool) {
-			return placementquery.EncodeQueryAnswer(answer)
-		}, structure.CategoryInvalid, nil))
-	add(wireQuery(callquery.QuerySpec(), roles, callquery.DeclareQuery, callquery.BindQuery, callquery.RecoverQuery, nil, nil, structure.CategoryInvalid, nil))
+	// declares no publication and the composition seals it no layout. CX-10
+	// cuts that codec onto the plane and this arm goes with it.
+	add(wireUnplanedQuery(placementquery.QuerySpec(), roles, placementquery.DeclareQuery, placementquery.BindQuery, placementquery.RecoverQuery,
+		engine.NewHeterogeneousQueryAdmission, placementquery.EncodeQueryAnswer))
+	// Call's callee set is an observation population. It carries its typed
+	// producer alone: no selected-point admission and no published answer.
+	add(wireObservation(callquery.QuerySpec(), roles, callquery.DeclareQuery, callquery.BindQuery, callquery.RecoverQuery))
 
 	if rejected {
 		return nil, nil, false

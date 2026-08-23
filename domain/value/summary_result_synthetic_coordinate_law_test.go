@@ -45,7 +45,7 @@ func TestSummaryResultEncodesSyntheticTailCoordinates(t *testing.T) {
 	}
 
 	layout := syntheticSummaryLayout(t)
-	present, rows, payload, encoded := valuedomain.EncodeSummaryResult(layout, observation)
+	present, rows, payload, encoded := plane.Publish(layout, valuedomain.SummaryPublication().Projection, observation)
 	if !encoded {
 		t.Fatal("value-summary codec refused an owned answer over the schema's own coordinate space")
 	}
@@ -96,7 +96,7 @@ func TestSyntheticTailCoordinateResolvesByPortableIdentity(t *testing.T) {
 		t.Fatal("empty fold over the sealed coordinate space refused")
 	}
 	layout := syntheticSummaryLayout(t)
-	present, rows, payload, encoded := valuedomain.EncodeSummaryResult(layout, observation)
+	present, rows, payload, encoded := plane.Publish(layout, valuedomain.SummaryPublication().Projection, observation)
 	if !encoded || present || rows != 0 {
 		t.Fatalf("all-absent encode = present:%t rows:%d ok:%t", present, rows, encoded)
 	}

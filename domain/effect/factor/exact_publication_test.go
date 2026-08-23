@@ -30,7 +30,7 @@ func effectCodecID(seed byte) identity.ContentID {
 func TestEncodeEffectResultDropsPrivateAlgebraAccumulator(t *testing.T) {
 	atoms := []identity.ContentID{effectCodecID(1), effectCodecID(67)}
 	observation := EffectObservation{Atoms: atoms, Rows: 1, Present: true, Valid: true, seal: sealAtoms(atoms), joined: Value{}}
-	present, rows, payload, ok := EncodeResult(exactResultTestLayout, observation)
+	present, rows, payload, ok := plane.Publish(exactResultTestLayout, exactPublicationProjection, observation)
 	if !ok || !present || rows != 1 || binary.BigEndian.Uint64(payload[:8]) != plane.Format ||
 		binary.BigEndian.Uint64(payload[effectOffsetsAt+8:effectOffsetsAt+16]) != 2*32 {
 		t.Fatal("effect result codec refused canonical observation")
@@ -44,7 +44,7 @@ func TestEncodeEffectResultDropsPrivateAlgebraAccumulator(t *testing.T) {
 
 func TestEncodeEffectResultRejectsUnauthenticatedProjection(t *testing.T) {
 	observation := EffectObservation{Atoms: []identity.ContentID{effectCodecID(1)}, Rows: 1, Present: true, Valid: true}
-	if _, _, _, ok := EncodeResult(exactResultTestLayout, observation); ok {
+	if _, _, _, ok := plane.Publish(exactResultTestLayout, exactPublicationProjection, observation); ok {
 		t.Fatal("unauthenticated Effect atom projection encoded")
 	}
 }
@@ -59,13 +59,13 @@ func TestEncodeEffectResultAcceptsAbsentWithoutSeal(t *testing.T) {
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			observation := EffectObservation{Rows: test.rows, Valid: true}
-			present, rows, payload, ok := EncodeResult(exactResultTestLayout, observation)
+			present, rows, payload, ok := plane.Publish(exactResultTestLayout, exactPublicationProjection, observation)
 			if !ok || present || rows != uint64(test.rows) || len(payload) != effectTailAt {
-				t.Fatalf("EncodeResult absent observation = present:%v rows:%d payload:%d ok:%v", present, rows, len(payload), ok)
+				t.Fatalf("the effect-exact declaration absent observation = present:%v rows:%d payload:%d ok:%v", present, rows, len(payload), ok)
 			}
 			if binary.BigEndian.Uint64(payload[:8]) != plane.Format || payload[effectStateAt] != 0 || payload[effectTopAt] != 0 ||
 				binary.BigEndian.Uint64(payload[effectOffsetsAt+8:effectOffsetsAt+16]) != 0 {
-				t.Fatal("EncodeResult produced invalid absent result payload")
+				t.Fatal("the effect-exact declaration produced an invalid absent result payload")
 			}
 		})
 	}

@@ -19,9 +19,14 @@ const exactResultPin = "5dfd6657e139f6ce6e55a18677ec2c7cfcb9d1fc315bbef05b7218f5
 
 // exactResultTestLayout seals this family's publication layout the way the
 // composition seals it: the shape derived from the fold the family's query
-// registration declares, the row state vocabulary read from a sealed
-// structural table, and the columns this package publishes.
+// registration declares, the sealed structural table the row state vocabulary
+// is read from, and this package's one publication declaration.
+//
+// exactPublicationProjection is that same declaration's projection, so the
+// laws publish through the one the analyzer publishes through.
 var exactResultTestLayout = sealExactResultTestLayout()
+
+var exactPublicationProjection = ExactPublication().Projection
 
 func sealExactResultTestLayout() *plane.Sealed {
 	table, tableOK := structuretest.Table(structure.PublicationPlaneSpecs())
@@ -32,7 +37,7 @@ func sealExactResultTestLayout() *plane.Sealed {
 	if !shapeOK {
 		return nil
 	}
-	sealed, _ := plane.Seal(shape, table, ExactResultStates, ExactResultColumns())
+	sealed, _ := plane.SealPublication(shape, table, ExactPublication())
 	return sealed
 }
 

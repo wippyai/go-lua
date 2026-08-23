@@ -109,16 +109,16 @@ func (contributor queryContributor) registrable(registration *query.Registration
 	}
 }
 
-func wireQuery[F, R any](
+// wireProducer wires the capability every sealed family carries: the typed
+// producer that declares, binds, and recovers the family's query state. It is
+// the whole capability an observation population needs, and it is the half a
+// publishing family is built on top of.
+func wireProducer[F, R any](
 	spec query.Spec,
 	roles vocabulary.Roles,
 	declare func(*engine.SchemaBuilder, query.Declaration) (F, bool),
 	bind func(*engine.SchemaBinding, query.Binding[F]) bool,
 	recover func(*engine.SchemaBinding, query.Sealed[F]) (R, bool),
-	admit func(R, identity.ContentID, identity.ContentID, identity.ContentID, executioncontext.Context) (engine.ProgramQueryAdmission, bool),
-	detach func(*plane.Sealed, engine.Answer) (bool, uint64, []byte, bool),
-	states structure.Category,
-	columns []plane.Column,
 ) (*query.Registration, queryContributor, bool) {
 	if declare == nil || bind == nil || recover == nil {
 		return nil, queryContributor{}, false
@@ -164,34 +164,125 @@ func wireQuery[F, R any](
 			},
 		},
 	}
-	// Result callbacks are optional for an observation producer, but they are
-	// all-or-nothing whenever supplied. In particular, an observation family
-	// never gets a fabricated encoder or admission just to satisfy the table.
-	if admit != nil || detach != nil {
-		if admit == nil || detach == nil {
-			return nil, queryContributor{}, false
+	return registration, contributor, true
+}
+
+// wireObservation wires one observation-population family. The typed producer
+// is the whole capability such a family needs, and the population law is
+// stated over the finished row here exactly as it is for a publishing family:
+// a selected-point row reaching this arm is refused rather than registered
+// without a Result publication lane.
+func wireObservation[F, R any](
+	spec query.Spec,
+	roles vocabulary.Roles,
+	declare func(*engine.SchemaBuilder, query.Declaration) (F, bool),
+	bind func(*engine.SchemaBinding, query.Binding[F]) bool,
+	recover func(*engine.SchemaBinding, query.Sealed[F]) (R, bool),
+) (*query.Registration, queryContributor, bool) {
+	registration, contributor, ok := wireProducer(spec, roles, declare, bind, recover)
+	if !ok || !contributor.registrable(registration) {
+		return nil, queryContributor{}, false
+	}
+	return registration, contributor, true
+}
+
+// resultAdmission closes one family's selected-point admission over its typed
+// sealed implementation. It is the Result gate half of a publishing family and
+// carries no knowledge of the wire.
+func resultAdmission[F, R any](
+	recover func(*engine.SchemaBinding, query.Sealed[F]) (R, bool),
+	admit func(R, identity.ContentID, identity.ContentID, identity.ContentID, executioncontext.Context) (engine.ProgramQueryAdmission, bool),
+) func(*engine.SchemaBinding, query.Cell, identity.ContentID, identity.ContentID, identity.ContentID, executioncontext.Context) (engine.ProgramQueryAdmission, bool) {
+	return func(binding *engine.SchemaBinding, holder query.Cell, id, mount, point identity.ContentID, context executioncontext.Context) (engine.ProgramQueryAdmission, bool) {
+		fragment, ok := query.Payload[F](holder)
+		if !ok {
+			return engine.ProgramQueryAdmission{}, false
 		}
-		contract, contractOK := engine.NewCanonicalResultContract(identity.ContentID(registration.EntryID()), registration.Freezer())
-		if !contractOK {
-			return nil, queryContributor{}, false
+		implementation, ok := recover(binding, query.Sealed[F]{Fragment: fragment})
+		if !ok {
+			return engine.ProgramQueryAdmission{}, false
 		}
-		contributor.queryResultPublication = queryResultPublication{
-			states:  states,
-			columns: append([]plane.Column(nil), columns...),
-			admit: func(binding *engine.SchemaBinding, holder query.Cell, id, mount, point identity.ContentID, context executioncontext.Context) (engine.ProgramQueryAdmission, bool) {
-				fragment, ok := query.Payload[F](holder)
-				if !ok {
-					return engine.ProgramQueryAdmission{}, false
-				}
-				implementation, ok := recover(binding, query.Sealed[F]{Fragment: fragment})
-				if !ok {
-					return engine.ProgramQueryAdmission{}, false
-				}
-				return admit(implementation, id, mount, point, context)
-			},
-			detach:   detach,
-			contract: contract,
+		return admit(implementation, id, mount, point, context)
+	}
+}
+
+// wireQuery wires one selected-point family that publishes its answers on the
+// schema plane.
+//
+// The publication is the family's one declaration about publishing: the row
+// state vocabulary, the columns, and the projection those columns are read out
+// of. The composition seals the layout from it and closes the detachment over
+// that layout here, so the encoder a family publishes through is generated
+// from its declaration and no domain authors a codec, a layout, or a walk.
+func wireQuery[F, R, A any](
+	spec query.Spec,
+	roles vocabulary.Roles,
+	declare func(*engine.SchemaBuilder, query.Declaration) (F, bool),
+	bind func(*engine.SchemaBinding, query.Binding[F]) bool,
+	recover func(*engine.SchemaBinding, query.Sealed[F]) (R, bool),
+	admit func(R, identity.ContentID, identity.ContentID, identity.ContentID, executioncontext.Context) (engine.ProgramQueryAdmission, bool),
+	publication plane.Publication[A],
+) (*query.Registration, queryContributor, bool) {
+	registration, contributor, ok := wireProducer(spec, roles, declare, bind, recover)
+	if !ok || admit == nil || !publication.Available() {
+		return nil, queryContributor{}, false
+	}
+	projection := publication.Projection
+	detach := func(layout *plane.Sealed, answer engine.Answer) (bool, uint64, []byte, bool) {
+		value, readable := engine.AnswerValue[A](answer)
+		if !readable {
+			return false, 0, nil, false
 		}
+		return plane.Publish(layout, projection, value)
+	}
+	return finishResultPublication(registration, contributor, resultAdmission(recover, admit), detach,
+		publication.States, publication.Columns)
+}
+
+// wireUnplanedQuery wires one selected-point family whose answers are still
+// detached by a codec of its own. It declares no columns, so the composition
+// seals it no layout and hands it none: what it publishes is that family's own
+// bytes, and the family is on record here as not yet publishing on the plane.
+func wireUnplanedQuery[F, R any](
+	spec query.Spec,
+	roles vocabulary.Roles,
+	declare func(*engine.SchemaBuilder, query.Declaration) (F, bool),
+	bind func(*engine.SchemaBinding, query.Binding[F]) bool,
+	recover func(*engine.SchemaBinding, query.Sealed[F]) (R, bool),
+	admit func(R, identity.ContentID, identity.ContentID, identity.ContentID, executioncontext.Context) (engine.ProgramQueryAdmission, bool),
+	codec func(engine.Answer) (bool, uint64, []byte, bool),
+) (*query.Registration, queryContributor, bool) {
+	registration, contributor, ok := wireProducer(spec, roles, declare, bind, recover)
+	if !ok || admit == nil || codec == nil {
+		return nil, queryContributor{}, false
+	}
+	detach := func(_ *plane.Sealed, answer engine.Answer) (bool, uint64, []byte, bool) {
+		return codec(answer)
+	}
+	return finishResultPublication(registration, contributor, resultAdmission(recover, admit), detach,
+		structure.CategoryInvalid, nil)
+}
+
+// finishResultPublication installs the Result capability on a wired producer
+// and states the population-sensitive admission law over the whole row.
+func finishResultPublication(
+	registration *query.Registration,
+	contributor queryContributor,
+	admit func(*engine.SchemaBinding, query.Cell, identity.ContentID, identity.ContentID, identity.ContentID, executioncontext.Context) (engine.ProgramQueryAdmission, bool),
+	detach func(*plane.Sealed, engine.Answer) (bool, uint64, []byte, bool),
+	states structure.Category,
+	columns []plane.Column,
+) (*query.Registration, queryContributor, bool) {
+	contract, contractOK := engine.NewCanonicalResultContract(identity.ContentID(registration.EntryID()), registration.Freezer())
+	if !contractOK {
+		return nil, queryContributor{}, false
+	}
+	contributor.queryResultPublication = queryResultPublication{
+		states:   states,
+		columns:  append([]plane.Column(nil), columns...),
+		admit:    admit,
+		detach:   detach,
+		contract: contract,
 	}
 	if !contributor.registrable(registration) {
 		return nil, queryContributor{}, false

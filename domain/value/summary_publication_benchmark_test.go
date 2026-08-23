@@ -16,10 +16,11 @@ var (
 	summaryResultCodecWordSink       uint64
 )
 
-// BenchmarkEncodeSummaryResult measures the detached wire image at the small,
+// BenchmarkPublishSummaryResult measures the detached wire image at the small,
 // ordinary, and wide coordinate widths used by summary queries.  Fixtures are
-// built before timing so the benchmark covers EncodeSummaryResult itself.
-func BenchmarkEncodeSummaryResult(b *testing.B) {
+// built before timing so the benchmark covers the declared publication walk
+// itself.
+func BenchmarkPublishSummaryResult(b *testing.B) {
 	for _, coordinates := range []int{1, 16, 128} {
 		coordinates := coordinates
 		b.Run("coordinates="+strconv.Itoa(coordinates), func(b *testing.B) {
@@ -27,9 +28,9 @@ func BenchmarkEncodeSummaryResult(b *testing.B) {
 			b.ReportAllocs()
 			b.ResetTimer()
 			for iteration := 0; iteration < b.N; iteration++ {
-				_, _, payload, ok := EncodeSummaryResult(summaryResultTestLayout, observation)
+				_, _, payload, ok := plane.Publish(summaryResultTestLayout, summaryPublicationProjection, observation)
 				if !ok {
-					b.Fatal("summary result codec refused benchmark observation")
+					b.Fatal("the value summary declaration refused a benchmark observation")
 				}
 				summaryResultCodecPayloadSink = payload
 			}
@@ -37,8 +38,8 @@ func BenchmarkEncodeSummaryResult(b *testing.B) {
 	}
 }
 
-// BenchmarkDecodeSummaryResult measures opening and walking the detached wire
-// image at the same coordinate widths as BenchmarkEncodeSummaryResult.  The
+// BenchmarkAdmitSummaryResult measures opening and walking the detached wire
+// image at the same coordinate widths as BenchmarkPublishSummaryResult.  The
 // payload is encoded before timing so the benchmark covers admission and the
 // complete coordinate/word iteration only.
 func BenchmarkAdmitSummaryResult(b *testing.B) {
@@ -46,9 +47,9 @@ func BenchmarkAdmitSummaryResult(b *testing.B) {
 		coordinates := coordinates
 		b.Run("coordinates="+strconv.Itoa(coordinates), func(b *testing.B) {
 			observation := summaryResultCodecBenchmarkObservation(coordinates)
-			present, rows, payload, ok := EncodeSummaryResult(summaryResultTestLayout, observation)
+			present, rows, payload, ok := plane.Publish(summaryResultTestLayout, summaryPublicationProjection, observation)
 			if !ok {
-				b.Fatal("summary result codec refused decode benchmark observation")
+				b.Fatal("the value summary declaration refused a decode benchmark observation")
 			}
 			encoded := string(payload)
 			b.ReportAllocs()
@@ -91,17 +92,17 @@ func BenchmarkAdmitSummaryResult(b *testing.B) {
 	}
 }
 
-func TestEncodeSummaryResultAllocatesOnePayload(t *testing.T) {
+func TestPublishSummaryResultAllocatesOnePayload(t *testing.T) {
 	observation := summaryResultCodecBenchmarkObservation(16)
 	allocations := testing.AllocsPerRun(100, func() {
-		_, _, payload, ok := EncodeSummaryResult(summaryResultTestLayout, observation)
+		_, _, payload, ok := plane.Publish(summaryResultTestLayout, summaryPublicationProjection, observation)
 		if !ok {
-			t.Fatal("summary result codec refused allocation-law observation")
+			t.Fatal("the value summary declaration refused an allocation-law observation")
 		}
 		summaryResultCodecPayloadSink = payload
 	})
 	if allocations != 1 {
-		t.Fatalf("EncodeSummaryResult allocations = %v, want one payload allocation", allocations)
+		t.Fatalf("publishing a value summary allocates = %v, want one payload allocation", allocations)
 	}
 }
 

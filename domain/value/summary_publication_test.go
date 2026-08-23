@@ -8,6 +8,10 @@ import (
 	"github.com/wippyai/go-lua/analysis/schema/plane"
 )
 
+// summaryPublicationProjection is the declared projection these laws publish
+// through. It is the one this domain authors; nothing here restates it.
+var summaryPublicationProjection = SummaryPublication().Projection
+
 // The wire offsets this family's payload is read at are derived from its
 // sealed layout, never spelled: format, layout digest, owner identity, row
 // count, then the coordinate plane, the row records, the tail extents and the
@@ -34,7 +38,7 @@ func summaryCodecID(seed byte) identity.ContentID {
 	return id
 }
 
-func TestEncodeSummaryResultOwnsCompactCorrelatedImage(t *testing.T) {
+func TestSummaryPublicationOwnsCompactCorrelatedImage(t *testing.T) {
 	firstID := summaryCodecID(33)
 	secondID := summaryCodecID(67)
 	schema := summaryCodecSchema(firstID, secondID)
@@ -45,12 +49,12 @@ func TestEncodeSummaryResultOwnsCompactCorrelatedImage(t *testing.T) {
 		},
 		Present: []bool{true, true}, Rows: 1, Valid: true, owner: schema,
 	}
-	present, rows, payload, ok := EncodeSummaryResult(summaryResultTestLayout, observation)
+	present, rows, payload, ok := plane.Publish(summaryResultTestLayout, summaryPublicationProjection, observation)
 	if !ok || !present || rows != 1 || binary.BigEndian.Uint64(payload[:8]) != plane.Format {
-		t.Fatal("value summary codec refused canonical observation")
+		t.Fatal("the value summary declaration refused a canonical observation")
 	}
 	if got := identity.ContentID(payload[valueSummaryOwnerAt : valueSummaryOwnerAt+32]); got != schema.LinkID() {
-		t.Fatal("value summary codec lost Link owner identity")
+		t.Fatal("the published value summary lost its Link owner identity")
 	}
 	for index, want := range []identity.ContentID{firstID, secondID} {
 		start := valueSummaryHeaderSize + index*valueSummaryCoordinateIDSize
@@ -65,7 +69,7 @@ func TestEncodeSummaryResultOwnsCompactCorrelatedImage(t *testing.T) {
 	}
 }
 
-func TestEncodeSummaryResultCoordinateIDsIgnoreMapOrder(t *testing.T) {
+func TestSummaryPublicationCoordinateIDsIgnoreMapOrder(t *testing.T) {
 	firstID := summaryCodecID(101)
 	secondID := summaryCodecID(135)
 	left := summaryCodecSchemaWithOrdinals(map[identity.ContentID]uint32{
@@ -84,14 +88,14 @@ func TestEncodeSummaryResultCoordinateIDsIgnoreMapOrder(t *testing.T) {
 		Values:  []Value{{schema: right, image: []uint64{1, 0}}, {schema: right, image: []uint64{1, 0}}},
 		Present: []bool{true, true}, Rows: 1, Valid: true, owner: right,
 	}
-	_, _, leftPayload, leftOK := EncodeSummaryResult(summaryResultTestLayout, leftObservation)
-	_, _, rightPayload, rightOK := EncodeSummaryResult(summaryResultTestLayout, rightObservation)
+	_, _, leftPayload, leftOK := plane.Publish(summaryResultTestLayout, summaryPublicationProjection, leftObservation)
+	_, _, rightPayload, rightOK := plane.Publish(summaryResultTestLayout, summaryPublicationProjection, rightObservation)
 	if !leftOK || !rightOK || string(leftPayload) != string(rightPayload) {
 		t.Fatal("coordinate IDs made the summary payload depend on map iteration order")
 	}
 }
 
-func TestEncodeSummaryResultRowZeroRetainsOwnerAndCoordinateSlots(t *testing.T) {
+func TestSummaryPublicationRowZeroRetainsOwnerAndCoordinateSlots(t *testing.T) {
 	firstID := summaryCodecID(11)
 	secondID := summaryCodecID(45)
 	schema := summaryCodecSchema(firstID, secondID)
@@ -101,7 +105,7 @@ func TestEncodeSummaryResultRowZeroRetainsOwnerAndCoordinateSlots(t *testing.T) 
 		Valid:   true,
 		owner:   schema,
 	}
-	present, rows, payload, ok := EncodeSummaryResult(summaryResultTestLayout, observation)
+	present, rows, payload, ok := plane.Publish(summaryResultTestLayout, summaryPublicationProjection, observation)
 	if !ok || present || rows != 0 || identity.ContentID(payload[valueSummaryOwnerAt:valueSummaryOwnerAt+32]) != schema.LinkID() {
 		t.Fatal("row-zero summary observation was rejected")
 	}
@@ -118,20 +122,20 @@ func TestEncodeSummaryResultRowZeroRetainsOwnerAndCoordinateSlots(t *testing.T) 
 	}
 }
 
-func TestEncodeSummaryResultRejectsMixedOwnersAndRowMismatch(t *testing.T) {
+func TestSummaryPublicationRejectsMixedOwnersAndRowMismatch(t *testing.T) {
 	left := &Schema{linkID: summaryCodecID(1), potential: 1}
 	right := &Schema{linkID: summaryCodecID(2), potential: 1}
 	mixed := ValueSummaryObservation{
 		Values:  []Value{{schema: left, top: true}, {schema: right, top: true}},
 		Present: []bool{true, true}, Rows: 1, Valid: true, owner: left,
 	}
-	if _, _, _, ok := EncodeSummaryResult(summaryResultTestLayout, mixed); ok {
+	if _, _, _, ok := plane.Publish(summaryResultTestLayout, summaryPublicationProjection, mixed); ok {
 		t.Fatal("mixed Value owners encoded")
 	}
 	mixed.Values = []Value{{}, {}}
 	mixed.Present = []bool{false, false}
 	mixed.Rows = 1
-	if _, _, _, ok := EncodeSummaryResult(summaryResultTestLayout, mixed); ok {
+	if _, _, _, ok := plane.Publish(summaryResultTestLayout, summaryPublicationProjection, mixed); ok {
 		t.Fatal("row cardinality disagreed with Value presence")
 	}
 }

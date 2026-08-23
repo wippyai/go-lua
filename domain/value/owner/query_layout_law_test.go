@@ -27,13 +27,17 @@ func TestSummaryShapeFollowsTheRegistration(t *testing.T) {
 	if !shape.Keyed() {
 		t.Fatalf("a %v family derived an unkeyed answer", spec.Fold)
 	}
-	// The columns the family publishes are its own statement; the row state
-	// vocabulary it ranks against is the sealed surface's.
-	columns := value.SummaryResultColumns()
-	if len(columns) != 2 || columns[value.SummaryColumnImage].Carrier.Width() != 0 {
+	// The columns the family publishes, the row state vocabulary it ranks
+	// against, and the projection those columns are read out of are one
+	// declaration, so a consumer cannot pair the wrong two.
+	publication := value.SummaryPublication()
+	if !publication.Available() {
+		t.Fatal("the value-summary family states no complete publication declaration")
+	}
+	if len(publication.Columns) != 2 || publication.Columns[value.SummaryColumnImage].Carrier.Width() != 0 {
 		t.Fatal("the value-summary family declares no compact image column")
 	}
-	if !value.SummaryResultStates.Available() {
+	if !publication.States.Available() {
 		t.Fatal("the value-summary family names no declared row state vocabulary")
 	}
 }

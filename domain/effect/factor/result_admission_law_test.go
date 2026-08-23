@@ -18,9 +18,9 @@ func TestAdmitResultRoundTrip(t *testing.T) {
 	observation := EffectObservation{
 		Atoms: atoms, Rows: 1, Present: true, Valid: true, seal: sealAtoms(atoms),
 	}
-	present, rows, payload, ok := EncodeResult(exactResultTestLayout, observation)
+	present, rows, payload, ok := plane.Publish(exactResultTestLayout, exactPublicationProjection, observation)
 	if !ok {
-		t.Fatal("EncodeResult rejected round-trip observation")
+		t.Fatal("the effect-exact declaration rejected round-trip observation")
 	}
 	view, refusal := plane.Admit(exactResultTestLayout, present, rows, string(payload))
 	row, rowOK := view.At(0)
@@ -56,9 +56,9 @@ func TestAdmitResultRoundTripsTopAndAbsent(t *testing.T) {
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
 			observation := EffectObservation{Rows: test.rows, Present: test.present, Top: test.top, Valid: true, seal: test.seal}
-			present, rows, payload, ok := EncodeResult(exactResultTestLayout, observation)
+			present, rows, payload, ok := plane.Publish(exactResultTestLayout, exactPublicationProjection, observation)
 			if !ok {
-				t.Fatal("EncodeResult rejected round-trip observation")
+				t.Fatal("the effect-exact declaration rejected round-trip observation")
 			}
 			view, refusal := plane.Admit(exactResultTestLayout, present, rows, string(payload))
 			row, rowOK := view.At(0)
@@ -69,12 +69,12 @@ func TestAdmitResultRoundTripsTopAndAbsent(t *testing.T) {
 	}
 }
 
-// TestEncodeResultRefusesAnIncoherentObservation states Effect's own two
+// TestExactPublicationRefusesAnIncoherentObservation states Effect's own two
 // cross-column laws over the layout: an answer no producer wrote decides
 // nothing, and the algebra's top value subsumes every atom rather than listing
 // them. Neither is a shape the sealed layout can express, so both belong to the
 // one writer of that layout rather than being restated by every reader.
-func TestEncodeResultRefusesAnIncoherentObservation(t *testing.T) {
+func TestExactPublicationRefusesAnIncoherentObservation(t *testing.T) {
 	atoms := []identity.ContentID{decodeResultTestID(5)}
 	cases := map[string]EffectObservation{
 		"absent carrying top":   {Rows: 1, Top: true, Valid: true},
@@ -83,7 +83,7 @@ func TestEncodeResultRefusesAnIncoherentObservation(t *testing.T) {
 	}
 	for name, observation := range cases {
 		t.Run(name, func(t *testing.T) {
-			if _, _, _, ok := EncodeResult(exactResultTestLayout, observation); ok {
+			if _, _, _, ok := plane.Publish(exactResultTestLayout, exactPublicationProjection, observation); ok {
 				t.Fatal("an incoherent Effect observation reached the wire")
 			}
 		})
@@ -95,9 +95,9 @@ func TestAdmitResultRejectsMalformedPayloads(t *testing.T) {
 	observation := EffectObservation{
 		Atoms: atoms, Rows: 1, Present: true, Valid: true, seal: sealAtoms(atoms),
 	}
-	present, rows, payload, ok := EncodeResult(exactResultTestLayout, observation)
+	present, rows, payload, ok := plane.Publish(exactResultTestLayout, exactPublicationProjection, observation)
 	if !ok {
-		t.Fatal("EncodeResult rejected malformed-payload fixture")
+		t.Fatal("the effect-exact declaration rejected malformed-payload fixture")
 	}
 	mutate := func(change func([]byte)) string {
 		copyPayload := append([]byte(nil), payload...)
@@ -149,9 +149,9 @@ func TestAdmitResultAllocatesZero(t *testing.T) {
 	observation := EffectObservation{
 		Atoms: atoms, Rows: 1, Present: true, Valid: true, seal: sealAtoms(atoms),
 	}
-	present, rows, payload, ok := EncodeResult(exactResultTestLayout, observation)
+	present, rows, payload, ok := plane.Publish(exactResultTestLayout, exactPublicationProjection, observation)
 	if !ok {
-		t.Fatal("EncodeResult rejected allocation-law fixture")
+		t.Fatal("the effect-exact declaration rejected allocation-law fixture")
 	}
 	payloadString := string(payload)
 	allocations := testing.AllocsPerRun(100, func() {

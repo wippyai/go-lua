@@ -15,10 +15,10 @@ var (
 	effectResultCodecAtomSink     identity.ContentID
 )
 
-// BenchmarkEncodeResult measures the detached wire image at the small,
+// BenchmarkPublishExactResult measures the detached wire image at the small,
 // ordinary, and wide atom widths used by Effect observations.  Fixtures are
-// built before timing so the benchmark covers EncodeResult itself.
-func BenchmarkEncodeResult(b *testing.B) {
+// built before timing so the benchmark covers the declared publication walk itself.
+func BenchmarkPublishExactResult(b *testing.B) {
 	for _, atoms := range []int{1, 16, 128} {
 		atoms := atoms
 		b.Run("atoms="+strconv.Itoa(atoms), func(b *testing.B) {
@@ -26,7 +26,7 @@ func BenchmarkEncodeResult(b *testing.B) {
 			b.ReportAllocs()
 			b.ResetTimer()
 			for iteration := 0; iteration < b.N; iteration++ {
-				_, _, payload, ok := EncodeResult(exactResultTestLayout, observation)
+				_, _, payload, ok := plane.Publish(exactResultTestLayout, exactPublicationProjection, observation)
 				if !ok {
 					b.Fatal("effect result codec refused benchmark observation")
 				}
@@ -37,7 +37,7 @@ func BenchmarkEncodeResult(b *testing.B) {
 }
 
 // BenchmarkAdmitResult measures opening and walking the detached wire image at
-// the same atom widths as BenchmarkEncodeResult.  The payload is encoded before
+// the same atom widths as BenchmarkPublishExactResult.  The payload is encoded before
 // timing so the benchmark covers admission and the complete atom iteration
 // only.
 func BenchmarkAdmitResult(b *testing.B) {
@@ -45,7 +45,7 @@ func BenchmarkAdmitResult(b *testing.B) {
 		atoms := atoms
 		b.Run("atoms="+strconv.Itoa(atoms), func(b *testing.B) {
 			observation := resultCodecBenchmarkObservation(atoms)
-			present, rows, payload, ok := EncodeResult(exactResultTestLayout, observation)
+			present, rows, payload, ok := plane.Publish(exactResultTestLayout, exactPublicationProjection, observation)
 			if !ok {
 				b.Fatal("effect result codec refused decode benchmark observation")
 			}
@@ -73,17 +73,17 @@ func BenchmarkAdmitResult(b *testing.B) {
 	}
 }
 
-func TestEncodeResultAllocatesOnePayload(t *testing.T) {
+func TestPublishExactResultAllocatesOnePayload(t *testing.T) {
 	observation := resultCodecBenchmarkObservation(16)
 	allocations := testing.AllocsPerRun(100, func() {
-		_, _, payload, ok := EncodeResult(exactResultTestLayout, observation)
+		_, _, payload, ok := plane.Publish(exactResultTestLayout, exactPublicationProjection, observation)
 		if !ok {
 			t.Fatal("effect result codec refused allocation-law observation")
 		}
 		effectResultCodecPayloadSink = payload
 	})
 	if allocations != 1 {
-		t.Fatalf("EncodeResult allocations = %v, want one payload allocation", allocations)
+		t.Fatalf("publishing an effect answer allocates = %v, want one payload allocation", allocations)
 	}
 }
 

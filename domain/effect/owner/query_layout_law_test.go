@@ -28,11 +28,12 @@ func TestExactShapeFollowsTheRegistration(t *testing.T) {
 	if shape.Keyed() {
 		t.Fatalf("a %v family derived a keyed answer", spec.Fold)
 	}
-	columns := factor.ExactResultColumns()
+	publication := factor.ExactPublication()
+	columns := publication.Columns
 	if len(columns) != 2 || columns[factor.ExactColumnAtoms].Carrier.Width() != 0 {
 		t.Fatal("the effect-exact family declares no atom vector column")
 	}
-	if !factor.ExactResultStates.Available() {
+	if !publication.Available() || !publication.States.Available() {
 		t.Fatal("the effect-exact family names no declared row state vocabulary")
 	}
 }
