@@ -7,10 +7,13 @@ import (
 )
 
 // Result is the immutable dense Cell definition projection. Index zero in
-// roles, hosts, and functionCells is reserved for the invalid zero Term;
-// published state is limited to those arrays and the optional derived chunk
-// Cell. functionCells is the one-way Function-ordinal -> Cell projection used
-// by the recursive self-capture proof.
+// roles, hosts, slots, and functionCells is reserved for the invalid zero
+// Term; published state is limited to those arrays and the optional derived
+// chunk Cell. slots carry each Cell's position inside the ordered group its
+// definition host introduces, so a consumer that needs the position never
+// re-walks the authored Bind, formal, capture, or Loop order. functionCells
+// is the one-way Function-ordinal -> Cell projection used by the recursive
+// self-capture proof.
 type Result struct {
 	// Provenance is the narrow owner fence for this projection. Binding does
 	// not retain Source, Flow, or Body owners; the scalar identities are copied
@@ -19,6 +22,7 @@ type Result struct {
 	flowID        identity.ContentID
 	roles         []kind.CellRole
 	hosts         []keyspace.Term
+	slots         []uint32
 	chunk         keyspace.Term
 	functionCells []keyspace.Term
 }

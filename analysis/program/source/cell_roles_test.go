@@ -56,7 +56,7 @@ func TestSourceCellRolesUseStableExactAtomSemantics(t *testing.T) {
 	}
 }
 
-func TestSourceCellRolesFenceDenominatorAndOrderedRoles(t *testing.T) {
+func TestSourceCellRolesFenceDenominator(t *testing.T) {
 	input, index := sourceFixture(1)
 	draft, err := Build(input)
 	if err != nil {
@@ -75,13 +75,8 @@ func TestSourceCellRolesFenceDenominatorAndOrderedRoles(t *testing.T) {
 	if !roles.Matches(view) || roles.CellCount() != int(view.Identity().FamilyCount(keyspace.FamilyCell)) {
 		t.Fatal("Cell denominator disagreed with Source identity")
 	}
-	bindCell := keyspace.MakeTerm(keyspace.FamilyCell, 1)
-	formalCell := keyspace.MakeTerm(keyspace.FamilyCell, 2)
-	bind, bindOK := roles.BindRoleForCell(keyspace.MakeTerm(keyspace.FamilyBind, 1), bindCell)
-	formal, formalOK := roles.FormalRoleForCell(keyspace.MakeTerm(keyspace.FamilyFunction, 1), formalCell)
-	if !bindOK || !formalOK || !roles.Owns(bind) || !roles.Owns(formal) || bind.Kind() != CellRoleBind || formal.Kind() != CellRoleFormal ||
-		!bind.MatchesCell(bindCell) || !formal.MatchesCell(formalCell) {
-		t.Fatal("ordered Bind/Formal Cell roles were not exact")
+	if (CellRoles{}).CellCount() != 0 {
+		t.Fatal("an uncommitted Cell role column reported a denominator")
 	}
 }
 

@@ -13,7 +13,7 @@ import (
 
 // CellCount reports the exact sealed Cell cardinality.
 func (r Result) CellCount() int {
-	if !r.available() || len(r.roles) < 2 || len(r.hosts) != len(r.roles) {
+	if !r.available() || len(r.roles) < 2 || len(r.hosts) != len(r.roles) || len(r.slots) != len(r.roles) {
 		return 0
 	}
 	return len(r.roles) - 1
@@ -49,6 +49,20 @@ func (r Result) Host(cell keyspace.Term) (keyspace.Term, bool) {
 		return 0, false
 	}
 	return r.hosts[ordinal], true
+}
+
+// Slot returns one sealed Cell's position inside the ordered group its
+// definition host introduces, counted from one. A Cell its host introduces
+// outright has slot zero: a Function or chunk Vararg, and a global Cell.
+func (r Result) Slot(cell keyspace.Term) (uint32, bool) {
+	if !r.available() || len(r.slots) != len(r.roles) {
+		return 0, false
+	}
+	ordinal, ok := r.cellOrdinal(cell)
+	if !ok || !validRole(r.roles[ordinal]) {
+		return 0, false
+	}
+	return r.slots[ordinal], true
 }
 
 // ChunkVararg returns the optional Cell derived from chunk-scope Vararg rows.

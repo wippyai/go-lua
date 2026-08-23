@@ -56,11 +56,10 @@ func Seal(preimage source.Preimage, view authored.View, bodies *body.Result, ent
 		return Result{}, err
 	}
 	cellCount := cells.Count()
-	roles := make([]kind.CellRole, cellCount+1)
-	hosts := make([]keyspace.Term, cellCount+1)
+	plane := newRolePlane(cellCount)
 
 	keys := preimage.Keys()
-	if err := validateCells(cells, keys, roles, hosts, bodyCount); err != nil {
+	if err := validateCells(cells, keys, plane, bodyCount); err != nil {
 		return Result{}, err
 	}
 
@@ -69,42 +68,43 @@ func Seal(preimage source.Preimage, view authored.View, bodies *body.Result, ent
 		return Result{}, err
 	}
 	if chunk != 0 {
-		if err := assignRole(cells, roles, hosts, chunk, kind.CellChunkVararg, entry, entry, bodyCount); err != nil {
+		if err := plane.assignRole(cells, chunk, kind.CellChunkVararg, entry, entry, 0, bodyCount); err != nil {
 			return Result{}, err
 		}
 	}
 
-	if err := sealBinds(preimage, binds, cells, roles, hosts, bodyCount); err != nil {
+	if err := sealBinds(preimage, binds, cells, plane, bodyCount); err != nil {
 		return Result{}, err
 	}
-	if err := sealLoops(loops, cells, bodies, roles, hosts, bodyCount); err != nil {
+	if err := sealLoops(loops, cells, bodies, plane, bodyCount); err != nil {
 		return Result{}, err
 	}
-	if err := sealFunctions(preimage, functions, cells, bodies, roles, hosts, bodyCount); err != nil {
+	if err := sealFunctions(preimage, functions, cells, bodies, plane, bodyCount); err != nil {
 		return Result{}, err
 	}
-	functionCells, err := sealFunctionCells(preimage, view, binds, functions, cells, roles, hosts, bodyCount)
+	functionCells, err := sealFunctionCells(preimage, view, binds, functions, cells, plane, bodyCount)
 	if err != nil {
 		return Result{}, err
 	}
 
 	for ordinal := 1; ordinal <= cellCount; ordinal++ {
-		if !validRole(roles[ordinal]) {
+		if !validRole(plane.roles[ordinal]) {
 			return Result{}, errors.New("program/flow/binding: unclassified Cell")
 		}
-		if roles[ordinal] == kind.CellGlobal {
-			if hosts[ordinal] != 0 {
+		if plane.roles[ordinal] == kind.CellGlobal {
+			if plane.hosts[ordinal] != 0 {
 				return Result{}, errors.New("program/flow/binding: global Cell has a host")
 			}
-		} else if hosts[ordinal] == 0 {
+		} else if plane.hosts[ordinal] == 0 {
 			return Result{}, errors.New("program/flow/binding: lexical Cell has no host")
 		}
 	}
 	return Result{
 		sourceID:      sourceID,
 		flowID:        flowID,
-		roles:         roles,
-		hosts:         hosts,
+		roles:         plane.roles,
+		hosts:         plane.hosts,
+		slots:         plane.slots,
 		chunk:         chunk,
 		functionCells: functionCells,
 	}, nil
@@ -141,8 +141,8 @@ func validateEntry(result *body.Result, entry keyspace.Term, bodyCount int) erro
 	return nil
 }
 
-func validateCells(cells authored.Cells, keys source.Keys, roles []kind.CellRole, hosts []keyspace.Term, bodyCount int) error {
-	cellCount := len(roles) - 1
+func validateCells(cells authored.Cells, keys source.Keys, plane rolePlane, bodyCount int) error {
+	cellCount := len(plane.roles) - 1
 	// Exact atoms can be much larger than the Cell family. Allocate duplicate
 	// scratch only when a global Cell actually claims an atom; local-only and
 	// zero-Cell programs must not scale validation memory with ExactCount.
@@ -172,7 +172,7 @@ func validateCells(cells authored.Cells, keys source.Keys, roles []kind.CellRole
 				return errors.New("program/flow/binding: invalid or duplicate global key")
 			}
 			seenKeys[key] = struct{}{}
-			if err := assignRole(cells, roles, hosts, cell, kind.CellGlobal, 0, 0, bodyCount); err != nil {
+			if err := plane.assignRole(cells, cell, kind.CellGlobal, 0, 0, 0, bodyCount); err != nil {
 				return err
 			}
 		case authored.CellLocal:
@@ -248,7 +248,7 @@ func validateVarargs(varargs authored.Varargs, functions authored.Functions, cel
 	return chunk, nil
 }
 
-func sealBinds(preimage source.Preimage, binds authored.Binds, cells authored.Cells, roles []kind.CellRole, hosts []keyspace.Term, bodyCount int) error {
+func sealBinds(preimage source.Preimage, binds authored.Binds, cells authored.Cells, plane rolePlane, bodyCount int) error {
 	order := preimage.Binds()
 	for index := 0; index < binds.Count(); index++ {
 		bind, ok := binds.At(index)
@@ -268,7 +268,7 @@ func sealBinds(preimage source.Preimage, binds authored.Binds, cells authored.Ce
 			if !ok {
 				return errors.New("program/flow/binding: Bind order is not live")
 			}
-			if err := assignRole(cells, roles, hosts, cell, kind.CellLocal, owner, bind, bodyCount); err != nil {
+			if err := plane.assignRole(cells, cell, kind.CellLocal, owner, bind, uint32(at+1), bodyCount); err != nil {
 				return err
 			}
 		}
@@ -276,7 +276,7 @@ func sealBinds(preimage source.Preimage, binds authored.Binds, cells authored.Ce
 	return nil
 }
 
-func sealLoops(loops authored.Loops, cells authored.Cells, bodies *body.Result, roles []kind.CellRole, hosts []keyspace.Term, bodyCount int) error {
+func sealLoops(loops authored.Loops, cells authored.Cells, bodies *body.Result, plane rolePlane, bodyCount int) error {
 	for index := 0; index < loops.Count(); index++ {
 		loop, ok := loops.At(index)
 		if !ok {
@@ -300,7 +300,7 @@ func sealLoops(loops authored.Loops, cells authored.Cells, bodies *body.Result, 
 			if !ok {
 				return errors.New("program/flow/binding: Loop Cell order is not live")
 			}
-			if err := assignRole(cells, roles, hosts, cell, kind.CellLoop, loopBody, loop, bodyCount); err != nil {
+			if err := plane.assignRole(cells, cell, kind.CellLoop, loopBody, loop, uint32(at+1), bodyCount); err != nil {
 				return err
 			}
 		}
@@ -308,7 +308,7 @@ func sealLoops(loops authored.Loops, cells authored.Cells, bodies *body.Result, 
 	return nil
 }
 
-func sealFunctions(preimage source.Preimage, functions authored.Functions, cells authored.Cells, bodies *body.Result, roles []kind.CellRole, hosts []keyspace.Term, bodyCount int) error {
+func sealFunctions(preimage source.Preimage, functions authored.Functions, cells authored.Cells, bodies *body.Result, plane rolePlane, bodyCount int) error {
 	formalOrder := preimage.Formals()
 	seenOuter := make([]uint32, cells.Count()+1)
 	for index := 0; index < functions.Count(); index++ {
@@ -329,12 +329,12 @@ func sealFunctions(preimage source.Preimage, functions authored.Functions, cells
 			if !ok {
 				return errors.New("program/flow/binding: Function formal order is not live")
 			}
-			if err := assignRole(cells, roles, hosts, cell, kind.CellFormal, functionBody, function, bodyCount); err != nil {
+			if err := plane.assignRole(cells, cell, kind.CellFormal, functionBody, function, uint32(at+1), bodyCount); err != nil {
 				return err
 			}
 		}
 		if functionVararg != 0 {
-			if err := assignRole(cells, roles, hosts, functionVararg, kind.CellFunctionVararg, functionBody, function, bodyCount); err != nil {
+			if err := plane.assignRole(cells, functionVararg, kind.CellFunctionVararg, functionBody, function, 0, bodyCount); err != nil {
 				return err
 			}
 		}
@@ -369,7 +369,7 @@ func sealFunctions(preimage source.Preimage, functions authored.Functions, cells
 				return errors.New("program/flow/binding: duplicate Capture Outer")
 			}
 			seenOuter[outerOrdinal] = marker
-			if err := assignRole(cells, roles, hosts, inner, kind.CellCapture, functionBody, function, bodyCount); err != nil {
+			if err := plane.assignRole(cells, inner, kind.CellCapture, functionBody, function, uint32(at+1), bodyCount); err != nil {
 				return err
 			}
 		}
@@ -390,8 +390,7 @@ func sealFunctionCells(
 	binds authored.Binds,
 	functions authored.Functions,
 	cells authored.Cells,
-	roles []kind.CellRole,
-	hosts []keyspace.Term,
+	plane rolePlane,
 	bodyCount int,
 ) ([]keyspace.Term, error) {
 	functionCells := make([]keyspace.Term, functions.Count()+1)
@@ -454,8 +453,8 @@ func sealFunctionCells(
 			if functionCells[functionOrdinal] != 0 || claimedCells[cellOrdinal] {
 				return nil, errors.New("program/flow/binding: ambiguous Function Cell binding")
 			}
-			if cellOrdinal == 0 || int(cellOrdinal) >= len(roles) || len(hosts) != len(roles) ||
-				roles[cellOrdinal] != kind.CellLocal || hosts[cellOrdinal] != bind {
+			if cellOrdinal == 0 || int(cellOrdinal) >= len(plane.roles) || len(plane.hosts) != len(plane.roles) ||
+				plane.roles[cellOrdinal] != kind.CellLocal || plane.hosts[cellOrdinal] != bind {
 				// Binding roles already reject nonlocal/global Cells in Source
 				// Bind order. Keep this projection fail-closed if a foreign or
 				// malformed Result is ever assembled internally.
@@ -468,12 +467,33 @@ func sealFunctionCells(
 	return functionCells, nil
 }
 
-func assignRole(cells authored.Cells, roles []kind.CellRole, hosts []keyspace.Term, cell keyspace.Term, role kind.CellRole, body, host keyspace.Term, bodyCount int) error {
-	if !validCell(cell, len(roles)-1) || !validRole(role) {
+// rolePlane is the dense definition column under construction: the role, the
+// definition host, and the host-order slot of every Cell ordinal. Index zero
+// is the reserved invalid Term.
+type rolePlane struct {
+	roles []kind.CellRole
+	hosts []keyspace.Term
+	slots []uint32
+}
+
+func newRolePlane(cellCount int) rolePlane {
+	return rolePlane{
+		roles: make([]kind.CellRole, cellCount+1),
+		hosts: make([]keyspace.Term, cellCount+1),
+		slots: make([]uint32, cellCount+1),
+	}
+}
+
+// assignRole claims one Cell for exactly one definition role. slot is the
+// Cell's one-based position in the ordered group its host introduces, and is
+// zero when the host introduces the Cell outright: a Function or chunk
+// Vararg, and a global Cell's Program scope.
+func (plane rolePlane) assignRole(cells authored.Cells, cell keyspace.Term, role kind.CellRole, body, host keyspace.Term, slot uint32, bodyCount int) error {
+	if !validCell(cell, len(plane.roles)-1) || !validRole(role) {
 		return errors.New("program/flow/binding: invalid Cell role input")
 	}
 	ordinal := keyspace.TermOrdinal(cell)
-	if roles[ordinal] != 0 {
+	if plane.roles[ordinal] != 0 {
 		return errors.New("program/flow/binding: Cell has multiple definition roles")
 	}
 	cellKind, cellBody, key, ok := cells.Get(cell)
@@ -481,14 +501,15 @@ func assignRole(cells authored.Cells, roles []kind.CellRole, hosts []keyspace.Te
 		return errors.New("program/flow/binding: Cell view is not live")
 	}
 	if role == kind.CellGlobal {
-		if cellKind != authored.CellGlobal || cellBody != 0 || key == 0 || body != 0 || host != 0 {
+		if cellKind != authored.CellGlobal || cellBody != 0 || key == 0 || body != 0 || host != 0 || slot != 0 {
 			return errors.New("program/flow/binding: invalid Global role")
 		}
 	} else if cellKind != authored.CellLocal || key != 0 || !validBody(body, bodyCount) || cellBody != body || host == 0 {
 		return errors.New("program/flow/binding: invalid lexical role")
 	}
-	roles[ordinal] = role
-	hosts[ordinal] = host
+	plane.roles[ordinal] = role
+	plane.hosts[ordinal] = host
+	plane.slots[ordinal] = slot
 	return nil
 }
 
