@@ -239,9 +239,6 @@ func (d *operationDraft) freezeType(value schematype.Type) (string, error) {
 	if !value.Available() {
 		return "", errors.New("unavailable type declaration")
 	}
-	if err := d.semantics.Validate(value, d.formalConstraints); err != nil {
-		return "", fmt.Errorf("type declaration rejected: %w", err)
-	}
 	encoded := value.Bytes()
 	if _, err := vocabulary.CheckedStoredLength("type bytes", len(encoded)); err != nil {
 		return "", err
@@ -254,13 +251,22 @@ func (d *operationDraft) freezeType(value schematype.Type) (string, error) {
 		digest := value.Digest()
 		key = string(digest[:])
 	}
-	if existing, exists := d.declarations[key]; exists && !existing.Equal(value) {
-		return "", errors.New("distinct neutral type declarations share a storage key")
+	if existing, exists := d.declarations[key]; exists {
+		if !existing.Equal(value) {
+			return "", errors.New("distinct neutral type declarations share a storage key")
+		}
+		return key, nil
 	}
-	if _, exists := d.types[key]; !exists {
-		d.types[key] = append([]byte(nil), encoded...)
-		d.declarations[key] = value
+	// Admission is a property of the declaration under this operation's formal
+	// scope, and that scope is complete before the first declaration is
+	// frozen. The draft's declaration table is therefore the admission
+	// denominator: each distinct declaration is admitted once, however many
+	// operation positions mention it.
+	if err := d.semantics.Validate(value, d.formalConstraints); err != nil {
+		return "", fmt.Errorf("type declaration rejected: %w", err)
 	}
+	d.types[key] = append([]byte(nil), encoded...)
+	d.declarations[key] = value
 	return key, nil
 }
 
