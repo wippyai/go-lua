@@ -3,6 +3,7 @@ package closed_test
 import (
 	"testing"
 
+	"github.com/wippyai/go-lua/analysis/schema/structure"
 	heapdomain "github.com/wippyai/go-lua/domain/heap"
 	closed "github.com/wippyai/go-lua/domain/heap/allocation/closed"
 	"github.com/wippyai/go-lua/domain/heap/allocation/internal/source"
@@ -34,9 +35,9 @@ func TestClosedEvaluatorReceiptSourceOrderNilDeletionAndCarry(t *testing.T) {
 			inputs[field.ValueOrdinal()] = nilValue
 		}
 	}
-	first, normal, resultOK := closed.EvaluateClosedForTest(heap, values, operand, predecessor, inputs)
-	if !resultOK || !normal {
-		t.Fatalf("closed source-order result=%t/%t", resultOK, normal)
+	first, outcome := closed.EvaluateClosedForTest(heap, values, operand, predecessor, inputs)
+	if outcome != structure.Concrete {
+		t.Fatalf("closed source-order outcome=%v, want concrete", outcome)
 	}
 	assertClosedWorldKind(t, first, heapdomain.WorldOne)
 	field, fieldOK := operand.At(1)
@@ -52,9 +53,9 @@ func TestClosedEvaluatorReceiptSourceOrderNilDeletionAndCarry(t *testing.T) {
 	}) || !seenAbsent {
 		t.Fatal("closed source-order nil did not delete the exact field")
 	}
-	second, secondNormal, secondOK := closed.EvaluateClosedForTest(heap, values, operand, first, inputs)
-	if !secondOK || !secondNormal {
-		t.Fatalf("closed carry result=%t/%t", secondOK, secondNormal)
+	second, secondOutcome := closed.EvaluateClosedForTest(heap, values, operand, first, inputs)
+	if secondOutcome != structure.Concrete {
+		t.Fatalf("closed carry outcome=%v, want concrete", secondOutcome)
 	}
 	assertClosedWorldKind(t, second, heapdomain.WorldMany)
 }
@@ -83,9 +84,9 @@ func TestClosedEvaluatorReceiptDiagonalAndIndependentProducts(t *testing.T) {
 		if !alternativesOK || !predecessorOK {
 			t.Fatal("diagonal product fixture")
 		}
-		result, normal, resultOK := closed.EvaluateClosedForTest(heap, values, operand, predecessor, []valuedomain.Value{alternatives})
-		if !resultOK || !normal {
-			t.Fatalf("diagonal result=%t/%t", resultOK, normal)
+		result, outcome := closed.EvaluateClosedForTest(heap, values, operand, predecessor, []valuedomain.Value{alternatives})
+		if outcome != structure.Concrete {
+			t.Fatalf("diagonal outcome=%v, want concrete", outcome)
 		}
 		if result.WorldCount() != 2 {
 			t.Fatalf("diagonal worlds=%d, want 2", result.WorldCount())
@@ -120,9 +121,9 @@ func TestClosedEvaluatorReceiptDiagonalAndIndependentProducts(t *testing.T) {
 		if !alternativesOK || !predecessorOK {
 			t.Fatal("payload product fixture")
 		}
-		result, normal, resultOK := closed.EvaluateClosedForTest(heap, values, operand, predecessor, []valuedomain.Value{alternatives})
-		if !resultOK || !normal {
-			t.Fatalf("payload result=%t/%t", resultOK, normal)
+		result, outcome := closed.EvaluateClosedForTest(heap, values, operand, predecessor, []valuedomain.Value{alternatives})
+		if outcome != structure.Concrete {
+			t.Fatalf("payload outcome=%v, want concrete", outcome)
 		}
 
 		// L2: the folded coordinate is exactly the pointwise merge of its
@@ -158,9 +159,9 @@ func TestClosedEvaluatorReceiptDiagonalAndIndependentProducts(t *testing.T) {
 		for index := range inputs {
 			inputs[index] = alternatives
 		}
-		result, normal, resultOK := closed.EvaluateClosedForTest(heap, values, operand, predecessor, inputs)
-		if !resultOK || !normal {
-			t.Fatalf("keyed-payload result=%t/%t", resultOK, normal)
+		result, outcome := closed.EvaluateClosedForTest(heap, values, operand, predecessor, inputs)
+		if outcome != structure.Concrete {
+			t.Fatalf("keyed-payload outcome=%v, want concrete", outcome)
 		}
 
 		// The key coordinate still enumerates one world per alternative while
@@ -180,9 +181,9 @@ func TestClosedEvaluatorReceiptDiagonalAndIndependentProducts(t *testing.T) {
 			branchInputs := make([]valuedomain.Value, len(inputs))
 			copy(branchInputs, inputs)
 			branchInputs[keyOrdinal] = singleton
-			branch, branchNormal, branchOK := closed.EvaluateClosedForTest(heap, values, operand, predecessor, branchInputs)
-			if !branchOK || !branchNormal {
-				t.Fatalf("keyed-payload branch=%t/%t", branchOK, branchNormal)
+			branch, branchOutcome := closed.EvaluateClosedForTest(heap, values, operand, predecessor, branchInputs)
+			if branchOutcome != structure.Concrete {
+				t.Fatalf("keyed-payload branch outcome=%v, want concrete", branchOutcome)
 			}
 			if !have {
 				expected, have = branch, true
@@ -213,9 +214,9 @@ func closedSingletonLeaves(t testing.TB, heap heapdomain.Schema, values *valuedo
 			}
 			inputs[index] = singleton
 		}
-		leaf, leafNormal, leafOK := closed.EvaluateClosedForTest(heap, values, operand, predecessor, inputs)
-		if !leafOK || !leafNormal {
-			t.Fatalf("ordinary leaf=%t/%t", leafOK, leafNormal)
+		leaf, leafOutcome := closed.EvaluateClosedForTest(heap, values, operand, predecessor, inputs)
+		if leafOutcome != structure.Concrete {
+			t.Fatalf("ordinary leaf outcome=%v, want concrete", leafOutcome)
 		}
 		leaves = append(leaves, leaf)
 	}
@@ -259,8 +260,8 @@ func TestClosedEvaluatorReceiptInvalidAndOpaqueKeys(t *testing.T) {
 	if !nilValueOK || !predecessorOK {
 		t.Fatal("invalid-key evaluator fixture")
 	}
-	if _, normal, resultOK := closed.EvaluateClosedForTest(heap, values, invalid, predecessor, []valuedomain.Value{nilValue}); !resultOK || normal {
-		t.Fatalf("invalid key result=%t normal=%t, want valid no-candidate", resultOK, normal)
+	if _, outcome := closed.EvaluateClosedForTest(heap, values, invalid, predecessor, []valuedomain.Value{nilValue}); outcome != structure.NoCandidate {
+		t.Fatalf("invalid key outcome=%v, want no-candidate", outcome)
 	}
 
 	heap, values, opaqueOperand := closedSemanticFixture(t, `local key = {}; return { [key] = key }`)
@@ -270,9 +271,9 @@ func TestClosedEvaluatorReceiptInvalidAndOpaqueKeys(t *testing.T) {
 	if !opaqueOK || !opaqueValueOK || !predecessorOK {
 		t.Fatal("opaque-key evaluator fixture")
 	}
-	result, normal, resultOK := closed.EvaluateClosedForTest(heap, values, opaqueOperand, predecessor, []valuedomain.Value{opaqueValue})
-	if !resultOK || !normal {
-		t.Fatalf("opaque key result=%t/%t", resultOK, normal)
+	result, opaqueOutcome := closed.EvaluateClosedForTest(heap, values, opaqueOperand, predecessor, []valuedomain.Value{opaqueValue})
+	if opaqueOutcome != structure.Concrete {
+		t.Fatalf("opaque key outcome=%v, want concrete", opaqueOutcome)
 	}
 	selector, selectorOK := heap.KindSelector()
 	seenPresent := false
@@ -292,8 +293,8 @@ func TestClosedEvaluatorReceiptInvalidAndOpaqueKeys(t *testing.T) {
 	if !foreignPredecessorOK || !foreignNilValueOK {
 		t.Fatal("foreign closed evaluator fixture")
 	}
-	if _, _, accepted := closed.EvaluateClosedForTest(heap, values, foreignOperand, foreignPredecessor, []valuedomain.Value{foreignNilValue}); accepted {
-		t.Fatal("closed evaluator accepted a foreign operand/schema pair")
+	if _, foreignOutcome := closed.EvaluateClosedForTest(heap, values, foreignOperand, foreignPredecessor, []valuedomain.Value{foreignNilValue}); foreignOutcome != structure.Refuse {
+		t.Fatalf("closed evaluator outcome=%v on a foreign operand/schema pair, want refuse", foreignOutcome)
 	}
 }
 

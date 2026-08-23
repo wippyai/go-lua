@@ -20,12 +20,15 @@ const (
 	EmptyAllocationCoordinate      schemaapi.Key  = "heap/empty-allocation/coordinate"
 	IngressReducer                 schemaapi.Key  = "heap/reducer/ingress"
 	BootReducer                    schemaapi.Key  = "heap/reducer/boot"
+	ClosedAllocationReducer        schemaapi.Key  = "heap/reducer/closed"
 	EmptyAllocationCarryTransform  schemaapi.Key  = "transform/heap/allocation-empty"
 	ClosedAllocationCarryTransform schemaapi.Key  = "transform/heap/allocation-closed"
 	HeapKeyCarrier                 member.Carrier = "carrier/heap/key"
 	HeapFactCarrier                member.Carrier = "carrier/heap/fact"
 	EmptyAllocationCarrier         member.Carrier = "carrier/heap/allocation-empty"
 	ClosedAllocationCarrier        member.Carrier = "carrier/heap/allocation-closed"
+	ValueFactCarrier               member.Carrier = "carrier/value/fact"
+	ValueCoordinateCarrier         member.Carrier = "carrier/value/coordinate"
 )
 
 // AxisMemberCatalog is heap's declaration-only member vocabulary.
@@ -49,6 +52,12 @@ func AxisMemberCatalog() member.Catalog {
 				{Axis: valueAxis, Carrier: HeapFactCarrier},
 			}},
 			{Key: BootReducer, Inputs: []member.ReducerInput{}, Outputs: []member.ReducerOutput{
+				{Axis: valueAxis, Carrier: HeapFactCarrier},
+			}},
+			{Key: ClosedAllocationReducer, Inputs: []member.ReducerInput{
+				{Axis: valueAxis, Carrier: HeapFactCarrier, Form: member.ReadFormExact, Multiplicity: member.MultiplicityOne},
+				{Axis: schemaapi.EntryReference{Surface: schemaapi.SurfaceKindAxis, Key: "value"}, Carrier: ValueFactCarrier, Form: member.ReadFormSummary, Multiplicity: member.MultiplicityMany, Tag: ValueCoordinateCarrier},
+			}, Outputs: []member.ReducerOutput{
 				{Axis: valueAxis, Carrier: HeapFactCarrier},
 			}},
 		},

@@ -2,6 +2,7 @@ package closed
 
 import (
 	"github.com/wippyai/go-lua/analysis/engine"
+	"github.com/wippyai/go-lua/analysis/schema/structure"
 	heapdomain "github.com/wippyai/go-lua/domain/heap"
 	allocationcatalog "github.com/wippyai/go-lua/domain/heap/allocation/catalog"
 	"github.com/wippyai/go-lua/domain/heap/allocation/internal/source"
@@ -73,14 +74,15 @@ func BindHot(binding *engine.SchemaBinding, fragment *SchemaFragment, heapOwner 
 				if !present {
 					return engine.NoCandidate(frame)
 				}
-				next, normal, resultOK := resultClosed(heapSchema, values, projection, operand, predecessor, valueCells)
-				if !resultOK {
+				next, outcome := resultClosed(heapSchema, values, projection, operand, predecessor, valueCells)
+				switch outcome {
+				case structure.Concrete:
+					return engine.Staged(frame, next)
+				case structure.NoCandidate:
+					return engine.NoCandidate(frame)
+				default:
 					return engine.RuleResult[heapdomain.Value]{}
 				}
-				if !normal {
-					return engine.NoCandidate(frame)
-				}
-				return engine.Staged(frame, next)
 			},
 		}, engine.HotCarrySpec[heapdomain.Value, source.Closed]{
 			Apply: func(operand source.Closed, prior heapdomain.Value) (heapdomain.Value, bool) {

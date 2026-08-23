@@ -6,6 +6,7 @@ package closed
 
 import (
 	"github.com/wippyai/go-lua/analysis/engine"
+	"github.com/wippyai/go-lua/analysis/schema/structure"
 	heapdomain "github.com/wippyai/go-lua/domain/heap"
 	"github.com/wippyai/go-lua/domain/heap/allocation/internal/source"
 	"github.com/wippyai/go-lua/domain/heap/keymatch"
@@ -13,18 +14,23 @@ import (
 	valuedomain "github.com/wippyai/go-lua/domain/value"
 )
 
-func resultClosed(schema heapdomain.Schema, values *valuedomain.Schema, projection *keymatch.SelectorProjection, operand source.Closed, predecessor heapdomain.Value, cells engine.OrderedCells[valuedomain.Value]) (next heapdomain.Value, normal, ok bool) {
+// resultClosed is the heap/reducer/closed fold: it concludes the one Heap
+// world the sealed scalar constructor denotes, and nothing else. Its whole
+// answer is a lattice value paired with the sealed outcome that value is
+// delivered under - it schedules nothing, locates nothing, and publishes
+// nothing.
+func resultClosed(schema heapdomain.Schema, values *valuedomain.Schema, projection *keymatch.SelectorProjection, operand source.Closed, predecessor heapdomain.Value, cells engine.OrderedCells[valuedomain.Value]) (heapdomain.Value, structure.ReductionOutcome) {
 	if values == nil || !operand.FencedTo(schema, values) || cells.Count() != operand.CoordinateCount() {
-		return heapdomain.Value{}, false, false
+		return heapdomain.Value{}, structure.Refuse
 	}
 	inputs := make([]valuedomain.Value, cells.Count())
 	for index := range inputs {
 		value, present, available := cells.At(index)
 		if !available {
-			return heapdomain.Value{}, false, false
+			return heapdomain.Value{}, structure.Refuse
 		}
 		if !present {
-			return heapdomain.Value{}, false, true
+			return heapdomain.Value{}, structure.NoCandidate
 		}
 		inputs[index] = value
 	}
@@ -43,24 +49,24 @@ func resultClosed(schema heapdomain.Schema, values *valuedomain.Schema, projecti
 // Every coordinate that still enumerates is first quotiented by its
 // heap-observable class: alternatives that agree on that class produce
 // identical worlds, which the world accumulator was already discarding.
-func evaluateClosed(schema heapdomain.Schema, values *valuedomain.Schema, projection *keymatch.SelectorProjection, operand source.Closed, predecessor heapdomain.Value, inputs []valuedomain.Value) (next heapdomain.Value, normal, ok bool) {
+func evaluateClosed(schema heapdomain.Schema, values *valuedomain.Schema, projection *keymatch.SelectorProjection, operand source.Closed, predecessor heapdomain.Value, inputs []valuedomain.Value) (heapdomain.Value, structure.ReductionOutcome) {
 	if values == nil || projection == nil || len(inputs) != operand.CoordinateCount() || !schema.Admits(operand.Key(), predecessor) {
-		return heapdomain.Value{}, false, false
+		return heapdomain.Value{}, structure.Refuse
 	}
 	fields, fieldsOK := fieldsFor(operand)
 	if !fieldsOK {
-		return heapdomain.Value{}, false, false
+		return heapdomain.Value{}, structure.Refuse
 	}
 	folded, foldedOK := payloadOnlyCoordinates(fields, len(inputs))
 	if !foldedOK {
-		return heapdomain.Value{}, false, false
+		return heapdomain.Value{}, structure.Refuse
 	}
 	choices, payloads, choicesOK := coordinateChoices(projection, inputs, folded)
 	order, orderOK := coordinateOrder(fields, len(inputs), folded)
 	none, noneOK := schema.ContainmentNone()
 	base, baseOK := schema.BeginObject(heapdomain.ShapeEligible, heapdomain.FrozenMutable, none)
 	if !choicesOK || !orderOK || !noneOK || !baseOK {
-		return heapdomain.Value{}, false, false
+		return heapdomain.Value{}, structure.Refuse
 	}
 
 	state := &application{
@@ -87,13 +93,13 @@ func evaluateClosed(schema heapdomain.Schema, values *valuedomain.Schema, projec
 		child := base
 		nextField, branchNormal, applied := state.applyReady(0, &child)
 		if !applied {
-			return heapdomain.Value{}, false, false
+			return heapdomain.Value{}, structure.Refuse
 		}
 		if !branchNormal {
 			return finishWorlds(worlds, occupied)
 		}
 		if nextField != len(fields) || !complete(child) {
-			return heapdomain.Value{}, false, false
+			return heapdomain.Value{}, structure.Refuse
 		}
 		return finishWorlds(worlds, occupied)
 	}
@@ -122,7 +128,7 @@ func evaluateClosed(schema heapdomain.Schema, values *valuedomain.Schema, projec
 	for len(stack) != 0 {
 		current := &stack[len(stack)-1]
 		if current.depth < 0 || current.depth >= len(order) {
-			return heapdomain.Value{}, false, false
+			return heapdomain.Value{}, structure.Refuse
 		}
 		coordinate := order[current.depth]
 		if coordinate < 0 || coordinate >= len(choices) || current.next >= len(choices[coordinate]) {
@@ -132,14 +138,14 @@ func evaluateClosed(schema heapdomain.Schema, values *valuedomain.Schema, projec
 		atom := choices[coordinate][current.next]
 		current.next++
 		if state.bound[coordinate] {
-			return heapdomain.Value{}, false, false
+			return heapdomain.Value{}, structure.Refuse
 		}
 		state.bindings[coordinate], state.bound[coordinate] = atom, true
 		child := current.init
 		nextField, branchNormal, applied := state.applyReady(current.field, &child)
 		if !applied {
 			state.bound[coordinate], state.bindings[coordinate] = false, valuedomain.Atom{}
-			return heapdomain.Value{}, false, false
+			return heapdomain.Value{}, structure.Refuse
 		}
 		if !branchNormal {
 			state.bound[coordinate], state.bindings[coordinate] = false, valuedomain.Atom{}
@@ -152,7 +158,7 @@ func evaluateClosed(schema heapdomain.Schema, values *valuedomain.Schema, projec
 		completed := nextField == len(fields) && complete(child)
 		state.bound[coordinate], state.bindings[coordinate] = false, valuedomain.Atom{}
 		if !completed {
-			return heapdomain.Value{}, false, false
+			return heapdomain.Value{}, structure.Refuse
 		}
 	}
 	return finishWorlds(worlds, occupied)
@@ -185,9 +191,9 @@ func accumulateWorld(slots *[]heapdomain.Value, occupied *[]bool, leaf heapdomai
 	}
 }
 
-func finishWorlds(slots []heapdomain.Value, occupied []bool) (heapdomain.Value, bool, bool) {
+func finishWorlds(slots []heapdomain.Value, occupied []bool) (heapdomain.Value, structure.ReductionOutcome) {
 	if len(slots) != len(occupied) {
-		return heapdomain.Value{}, false, false
+		return heapdomain.Value{}, structure.Refuse
 	}
 	var result heapdomain.Value
 	have := false
@@ -201,14 +207,14 @@ func finishWorlds(slots []heapdomain.Value, occupied []bool) (heapdomain.Value, 
 		}
 		joined, joinedOK := heapdomain.Join(result, slots[level])
 		if !joinedOK {
-			return heapdomain.Value{}, false, false
+			return heapdomain.Value{}, structure.Refuse
 		}
 		result = joined
 	}
 	if !have {
-		return heapdomain.Value{}, false, true
+		return heapdomain.Value{}, structure.NoCandidate
 	}
-	return result, true, true
+	return result, structure.Concrete
 }
 
 func fieldsFor(operand source.Closed) ([]source.Field, bool) {
