@@ -96,11 +96,12 @@ func BindHot(
 		return nil, false
 	}
 	rule.actualRead = actualRead
-	// The routed Heap selection keeps the explicit sparsity it genuinely reads:
-	// a route with no predecessor fact has no Normal branch, which is a
-	// different judgment from a route whose predecessor is Bottom. Its members
-	// are paired with their route tag by Routed, so it declares no member order.
-	heapRead, heapOK := heapowner.AddSelectedRouteRuleDirectOperandRead[operand, heapdomain.Value, heapdomain.RawRouteTag](implementation, fragment.heapRead, owner.FactorRef(), rule.locateHeap)
+	// The routed Heap selection declares the Factor's default at an unwritten
+	// route: Heap's default is Bottom, and the freeze judgment publishes the
+	// same empty normal image for a Bottom predecessor as for an absent one, so
+	// there is no provenance here for a fold to read. Its members are paired
+	// with their route tag by Routed, so it declares no member order.
+	heapRead, heapOK := heapowner.AddSelectedRouteRuleDirectOperandReadUnderContract[operand, heapdomain.Value, heapdomain.RawRouteTag](implementation, fragment.heapRead, owner.FactorRef(), rule.locateHeap, engine.ReadContract{Order: engine.ReadOrderCanonical, Sparse: engine.ReadSparseFactorDefault})
 	if !heapOK {
 		return nil, false
 	}
@@ -262,7 +263,7 @@ func (rule *HotRule) fold(frame engine.Frame[heapdomain.Value, operand]) engine.
 	}
 	if !callPresent {
 		if count == 0 {
-			return freezeEmptySelection(frame, rule.owner.Schema(), routePlan{}, heapSelection)
+			return freezeEmptySelection(frame, rule.owner.Schema(), heapSelection)
 		}
 		return engine.RuleResult[heapdomain.Value]{}
 	}
@@ -278,22 +279,23 @@ func (rule *HotRule) fold(frame engine.Frame[heapdomain.Value, operand]) engine.
 		return engine.RuleResult[heapdomain.Value]{}
 	}
 	if count == 0 {
-		return freezeEmptySelection(frame, rule.owner.Schema(), plan, heapSelection)
+		return freezeEmptySelection(frame, rule.owner.Schema(), heapSelection)
 	}
-	schema := rule.owner.Schema()
-	// The judgment itself is FreezeFold's. This callback carries one selected
-	// route across the engine boundary and nothing else, so the freeze
-	// semantics have one owner-issued statement rather than one here and one in
-	// the declaration that replaces this rule.
+	// The judgment itself is Heap's. This callback resolves which route the
+	// engine handed it - the plan is this rule's authority until the route
+	// relation that replaces it is declared - and carries that one route's
+	// coordinate across the boundary, so the freeze semantics have one
+	// owner-issued statement rather than one here and one in the declaration.
 	return engine.Routed(frame, heapSelection, func(tag heapdomain.RawRouteTag, cells engine.OrderedCells[heapdomain.Value]) (heapdomain.Value, bool) {
-		if cells.Count() != 1 {
+		route, routeOK := routeForTag(plan, tag)
+		if !routeOK || cells.Count() != 1 {
 			return heapdomain.Value{}, false
 		}
-		predecessor, present, available := cells.At(0)
+		predecessor, available := cells.Value(0)
 		if !available {
 			return heapdomain.Value{}, false
 		}
-		fact, outcome := FreezeFold(schema, plan, tag, predecessor, present)
+		fact, outcome := heapdomain.FormalFreezeFact(route.Key, predecessor)
 		if outcome != structure.Concrete {
 			return heapdomain.Value{}, false
 		}
@@ -301,16 +303,16 @@ func (rule *HotRule) fold(frame engine.Frame[heapdomain.Value, operand]) engine.
 	})
 }
 
-// freezeEmptySelection settles a row whose plan selected no route. The
-// disposition is read from the one declared fold rather than concluded here, so
-// the empty selection has the same author as every other freeze answer.
+// freezeEmptySelection settles a row whose plan selected no route. It makes the
+// one invocation a route form makes over an empty route set - the zero
+// coordinate with the Factor's default input - so the empty selection is
+// concluded by the same declared fold as every other freeze answer.
 func freezeEmptySelection(
 	frame engine.Frame[heapdomain.Value, operand],
 	schema heapdomain.Schema,
-	plan routePlan,
 	selection engine.Selection[heapdomain.RawRouteTag, engine.OrderedCells[heapdomain.Value]],
 ) engine.RuleResult[heapdomain.Value] {
-	if _, outcome := FreezeFold(schema, plan, 0, heapdomain.Value{}, false); outcome != structure.NoSelection {
+	if _, outcome := heapdomain.FormalFreezeFact(heapdomain.Key{}, schema.Default()); outcome != structure.NoSelection {
 		return engine.RuleResult[heapdomain.Value]{}
 	}
 	return engine.NoSelection(frame, selection)
