@@ -1,8 +1,12 @@
-// read_contract.go owns the read-boundary contract: the one declaration a
-// Rule makes about how the engine must deliver a read, so a Fold never sees an
-// unordered, absent, or foreign operand and never restates engine policy.
+// read_contract.go owns the declaration half of the read-boundary contract: the
+// one declaration a Rule makes about how the engine must deliver a read, so a
+// Fold never sees an unordered, absent, or foreign operand and never restates
+// engine policy. The materialization half is execution.ReadCellPolicy, which
+// sits below every consumer of a delivered cell.
 
 package engine
+
+import "github.com/wippyai/go-lua/analysis/engine/execution"
 
 // ReadOrder declares the member order a selected read's Selection is
 // materialized in. It is one declaration per read; a Fold holds no positional
@@ -82,37 +86,6 @@ func (contract ReadContract) exactValid() bool {
 	return contract.valid() && contract.Order == ReadOrderCanonical && contract.OnOpaque == ReadOpaqueRefuse
 }
 
-// readCellPolicy is the materialization half of the contract. It is the one
-// place an observed Factor cell becomes a delivered cell, so no rule restates
-// the sparse-default or widening substitution.
-type readCellPolicy[V any] struct {
-	defaulted bool
-	fallback  V
-	widened   bool
-	top       V
-}
-
-// cell delivers one observed coordinate under the declared contract. Widening
-// dominates: a read whose alternative set is opaque delivers the Factor's Top
-// at every coordinate, which is the sound over-approximation of any value the
-// unobserved alternative could have written.
-func (policy readCellPolicy[V]) cell(value V, present bool) summaryCell[V] {
-	switch {
-	case policy.widened:
-		return summaryCell[V]{value: policy.top, present: true}
-	case policy.defaulted && !present:
-		return summaryCell[V]{value: policy.fallback, present: true}
-	}
-	return summaryCell[V]{value: value, present: present}
-}
-
-// widen returns the policy this read uses for a source row whose locator
-// reported an opaque alternative.
-func (policy readCellPolicy[V]) widen() readCellPolicy[V] {
-	policy.widened = true
-	return policy
-}
-
 // readForeignOwnerRefusal names the engine refusal a read takes when the
 // Factor presented at binding is not the Factor its sealed row owns. The
 // authentication happens once, here, so a Fold never re-proves value ownership
@@ -122,3 +95,10 @@ const readForeignOwnerRefusal = "read/foreign-owner"
 // readContractRefusal names the engine refusal a read takes when the contract
 // it declares is not one this read kind can carry.
 const readContractRefusal = "read/contract"
+
+// summaryCellFrom delivers one observed coordinate through the shared
+// execution-owned materialization and wraps it in the engine's ordered cell.
+func summaryCellFrom[V any](policy execution.ReadCellPolicy[V], value V, present bool) summaryCell[V] {
+	delivered, deliveredPresent := policy.Cell(value, present)
+	return summaryCell[V]{value: delivered, present: deliveredPresent}
+}

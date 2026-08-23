@@ -11,11 +11,16 @@ import (
 	"github.com/wippyai/go-lua/analysis/schema/structure"
 )
 
-// classifyExactForm claims a descriptor with exactly one sealed join and an
-// exact output: the read port is the form's only coordinate.
+// classifyExactForm claims a descriptor with exactly one sealed exact join and
+// an exact output: the read port is the form's only coordinate. A single join
+// declaring any other read form belongs to the form that executes that read,
+// so the read form is part of the claim and not an assumption.
 func classifyExactForm(rule generated.CompiledRule) (FormRow, bool) {
 	mode, modeOK := rule.OutputMode()
 	if !modeOK || mode != ruleprogram.ModeExact || rule.ReadCount() != 1 {
+		return FormRow{}, false
+	}
+	if form, ok := rule.ReadFormAt(0); !ok || form != ruleprogram.Exact {
 		return FormRow{}, false
 	}
 	input := rule.ReadInput()

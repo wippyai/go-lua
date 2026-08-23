@@ -25,15 +25,15 @@ func TestFactorDefaultReadDeliversTheDefaultAndNeverAnAbsentCell(t *testing.T) {
 		t.Fatal("read policy admitted a Factor its sealed row does not own")
 	}
 	defaulted, admitted := stagedReadPolicy[uint64](target, target.row, ReadContract{Sparse: ReadSparseFactorDefault})
-	if !admitted || !defaulted.defaulted || defaulted.fallback != declaredDefault {
+	if !admitted {
 		t.Fatalf("factor-default policy = %+v admitted=%t", defaulted, admitted)
 	}
 
-	written := defaulted.cell(4, true)
+	written := summaryCellFrom(defaulted, 4, true)
 	if written.value != 4 || !written.present {
 		t.Fatalf("a written coordinate was rewritten: %+v", written)
 	}
-	unwritten := defaulted.cell(0, false)
+	unwritten := summaryCellFrom(defaulted, 0, false)
 	if !unwritten.present {
 		t.Fatal("a FactorDefault read delivered an absent cell to its fold")
 	}
@@ -48,10 +48,10 @@ func TestFactorDefaultReadDeliversTheDefaultAndNeverAnAbsentCell(t *testing.T) {
 	}
 
 	explicit, explicitOK := stagedReadPolicy[uint64](target, target.row, ReadContract{})
-	if !explicitOK || explicit.defaulted {
-		t.Fatalf("explicit policy substituted a default: %+v", explicit)
+	if !explicitOK {
+		t.Fatalf("explicit policy was refused: %+v", explicit)
 	}
-	if cell := explicit.cell(0, false); cell.present {
+	if cell := summaryCellFrom(explicit, 0, false); cell.present {
 		t.Fatal("explicit sparsity lost the unwritten distinction")
 	}
 }
@@ -65,11 +65,14 @@ func TestOpaqueAlternativeWidensToFactorTopOrRefusesByDeclaration(t *testing.T) 
 	target := routeSetLawFactor{unit: routeSetLawUnit(t), row: &schemaFactorBindingCell[uint64, uint64]{}, zero: 9, top: declaredTop}
 
 	widening, admitted := stagedReadPolicy[uint64](target, target.row, ReadContract{OnOpaque: ReadOpaqueWiden})
-	if !admitted || widening.top != declaredTop || widening.widened {
+	if !admitted {
 		t.Fatalf("widening policy = %+v admitted=%t", widening, admitted)
 	}
-	opaque := widening.widen()
-	for _, sample := range []summaryCell[uint64]{opaque.cell(3, true), opaque.cell(0, false)} {
+	if unopaque := summaryCellFrom(widening, 3, true); unopaque.value != 3 || !unopaque.present {
+		t.Fatalf("a widening declaration substituted Top before an opaque alternative was reported: %+v", unopaque)
+	}
+	opaque := widening.Widen()
+	for _, sample := range []summaryCell[uint64]{summaryCellFrom(opaque, 3, true), summaryCellFrom(opaque, 0, false)} {
 		if !sample.present || sample.value != declaredTop {
 			t.Fatalf("widened read delivered %+v, want the Factor Top present", sample)
 		}

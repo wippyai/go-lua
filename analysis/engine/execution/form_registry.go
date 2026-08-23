@@ -49,10 +49,13 @@ func (form Form) Name() string {
 	return formNames[form]
 }
 
-// FormRow is one plan row's execution coordinates. Form, Input, and Relation
-// are classified from the sealed descriptor; Member, Unit, and Target are the
-// occurrence coordinates the bound Factor minted for that row. A row carries no
-// owner capability and no domain value.
+// FormRow is one plan row handed to its form. Form, Input, and Relation are
+// classified from the sealed descriptor; Member, Unit, and Target are the
+// occurrence coordinates the bound Factor minted for that row; Rule is the
+// descriptor the row was classified from, so a form whose geometry is wider
+// than one read and one write mints its own coordinates from the plan it was
+// already classified against instead of classifying a second time. A row
+// carries no owner capability and no domain value.
 type FormRow struct {
 	Member   int
 	Form     Form
@@ -60,6 +63,7 @@ type FormRow struct {
 	Relation uint32
 	Unit     carrier.Unit
 	Target   carrier.Target
+	Rule     generated.CompiledRule
 }
 
 // FormAddress is where one plan row's invocation landed: the family offset
@@ -153,6 +157,7 @@ func classifyForm(rule generated.CompiledRule, classifiers [formCount]formClassi
 		if found || row.Form != form {
 			return FormRow{}, false
 		}
+		row.Rule = rule
 		claimed, found = row, true
 	}
 	if !found {

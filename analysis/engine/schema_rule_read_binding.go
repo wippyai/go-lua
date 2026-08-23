@@ -3,6 +3,7 @@
 package engine
 
 import (
+	"github.com/wippyai/go-lua/analysis/engine/execution"
 	"github.com/wippyai/go-lua/analysis/engine/internal/composition"
 	"github.com/wippyai/go-lua/analysis/engine/internal/equation"
 )
@@ -12,44 +13,48 @@ import (
 // against. It is also where the read boundary authenticates operand ownership:
 // a runtime Factor that is not the one this read's sealed row owns refuses
 // here, named readForeignOwnerRefusal, exactly once and for every later Fold.
-func stagedReadPolicy[V any](target stagedFactor[V], row schemaFactorBinding, contract ReadContract) (readCellPolicy[V], bool) {
-	var policy readCellPolicy[V]
+func stagedReadPolicy[V any](target stagedFactor[V], row schemaFactorBinding, contract ReadContract) (execution.ReadCellPolicy[V], bool) {
+	var none execution.ReadCellPolicy[V]
 	if target == nil || row == nil || !contract.valid() || target.stagedRow() != row {
-		return policy, false
+		return none, false
 	}
+	var defaulted bool
+	var fallback, top V
 	if contract.Sparse == ReadSparseFactorDefault {
-		fallback, ok := target.stagedDefault()
+		value, ok := target.stagedDefault()
 		if !ok {
-			return policy, false
+			return none, false
 		}
-		policy.defaulted, policy.fallback = true, fallback
+		defaulted, fallback = true, value
 	}
 	if contract.OnOpaque == ReadOpaqueWiden {
-		top, ok := target.stagedTop()
+		value, ok := target.stagedTop()
 		if !ok {
-			return policy, false
+			return none, false
 		}
-		policy.top = top
+		top = value
 	}
-	return policy, true
+	return execution.NewReadCellPolicy(defaulted, fallback, top), true
 }
 
 // exactReadPolicy is the same derivation for a read with no locator. An exact
 // read observes one declared coordinate and has no alternative set, so only the
 // sparse clause can substitute anything.
-func exactReadPolicy[V any](algebraDefault func() (V, bool), contract ReadContract) (readCellPolicy[V], bool) {
-	var policy readCellPolicy[V]
+func exactReadPolicy[V any](algebraDefault func() (V, bool), contract ReadContract) (execution.ReadCellPolicy[V], bool) {
+	var none execution.ReadCellPolicy[V]
 	if algebraDefault == nil || !contract.exactValid() {
-		return policy, false
+		return none, false
 	}
+	var defaulted bool
+	var fallback, top V
 	if contract.Sparse == ReadSparseFactorDefault {
-		fallback, ok := algebraDefault()
+		value, ok := algebraDefault()
 		if !ok {
-			return policy, false
+			return none, false
 		}
-		policy.defaulted, policy.fallback = true, fallback
+		defaulted, fallback = true, value
 	}
-	return policy, true
+	return execution.NewReadCellPolicy(defaulted, fallback, top), true
 }
 
 // readRowReady checks the owner fence shared by a Read and its binding. The

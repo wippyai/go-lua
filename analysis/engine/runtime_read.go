@@ -6,6 +6,7 @@ import (
 	"slices"
 	"sort"
 
+	"github.com/wippyai/go-lua/analysis/engine/execution"
 	"github.com/wippyai/go-lua/analysis/engine/internal/carrier"
 	"github.com/wippyai/go-lua/analysis/engine/internal/carrier/shape"
 	"github.com/wippyai/go-lua/analysis/engine/internal/demand"
@@ -28,7 +29,7 @@ type typedReadRuntime[K ~uint32 | ~uint64, V, S any] struct {
 	normalize     func(OrderedCells[V]) S
 	equal         func(S, S) bool
 	fingerprint   func(S) uint64
-	policy        readCellPolicy[V]
+	policy        execution.ReadCellPolicy[V]
 }
 
 type typedReadSession[V, S any] struct {
@@ -75,7 +76,7 @@ type stagedReadRuntime[V, S any, Tag selectionTag] struct {
 	locate    func(SelectorContext) bool
 	normalize func(OrderedCells[V]) S
 	contract  ReadContract
-	policy    readCellPolicy[V]
+	policy    execution.ReadCellPolicy[V]
 }
 
 type stagedRoute[Tag selectionTag] struct {
@@ -274,7 +275,7 @@ func (runtime *stagedReadRuntime[V, S, Tag]) refine(session *productSession, ind
 				selected.close()
 				return false
 			}
-			policy = policy.widen()
+			policy = policy.Widen()
 		}
 		if len(sink.routes) == 0 {
 			if !refinement.Add(source, within) {
@@ -369,7 +370,7 @@ func (session *typedStagedSelectionSession[V, S, Tag]) acceptRouteMode(mode stag
 // Unit order. This is the exact guarded cross-product required for
 // correlation; it intentionally performs no quotient because canonical route
 // tags and their order are semantic observations of a Selection.
-func (runtime *stagedReadRuntime[V, S, Tag]) refineStagedSource(session *productSession, within support.Mask, units []carrier.Unit, selected *typedStagedSelectionSession[V, S, Tag], policy readCellPolicy[V]) ([]stagedPartial[S], bool) {
+func (runtime *stagedReadRuntime[V, S, Tag]) refineStagedSource(session *productSession, within support.Mask, units []carrier.Unit, selected *typedStagedSelectionSession[V, S, Tag], policy execution.ReadCellPolicy[V]) ([]stagedPartial[S], bool) {
 	if runtime == nil || session == nil || session.work == nil || runtime.target == nil || runtime.normalize == nil || selected == nil || !within.Valid() || support.Empty(within) || len(units) == 0 {
 		return nil, false
 	}
@@ -398,7 +399,8 @@ func (runtime *stagedReadRuntime[V, S, Tag]) refineStagedSource(session *product
 					if !ok {
 						return false
 					}
-					cells[cellIndex] = policy.cell(entry.Read())
+					observed, observedPresent := entry.Read()
+					cells[cellIndex] = summaryCellFrom(policy, observed, observedPresent)
 				}
 				record := newOrderedCellsRecord(cells)
 				values, branched := branch.values(runtime.normalize(OrderedCells[V]{record: record}))
@@ -617,7 +619,7 @@ func (runtime *typedReadRuntime[K, V, S]) observations() []demand.Observation {
 
 func (*typedReadRuntime[K, V, S]) dynamicReads() []demand.DynamicRead { return nil }
 
-func materializeTypedRead[V, S any](session *productSession, index, input int, unit carrier.Unit, resolve func(carrier.SlotWork, carrier.ObservationRow) (factbinding.Observation[V], bool), normalize func(OrderedCells[V]) S, equal func(S, S) bool, fingerprint func(S) uint64, policy readCellPolicy[V]) bool {
+func materializeTypedRead[V, S any](session *productSession, index, input int, unit carrier.Unit, resolve func(carrier.SlotWork, carrier.ObservationRow) (factbinding.Observation[V], bool), normalize func(OrderedCells[V]) S, equal func(S, S) bool, fingerprint func(S) uint64, policy execution.ReadCellPolicy[V]) bool {
 	if session == nil || session.work == nil || index < 0 || index >= len(session.reads) || input < 0 || input >= len(session.inputs) || unit == (carrier.Unit{}) || resolve == nil || normalize == nil || equal == nil || fingerprint == nil || session.rows.Count() != len(session.values) {
 		return false
 	}
@@ -662,7 +664,8 @@ func materializeTypedRead[V, S any](session *productSession, index, input int, u
 				if !ok {
 					return false
 				}
-				cells[cellIndex] = policy.cell(entry.Read())
+				observed, observedPresent := entry.Read()
+				cells[cellIndex] = summaryCellFrom(policy, observed, observedPresent)
 			}
 			record := newOrderedCellsRecord(cells)
 			values.records = append(values.records, record)
