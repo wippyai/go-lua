@@ -61,7 +61,6 @@ func (a *canonicalFormalsAdmission) reserve(count, elementBytes int) error {
 	return nil
 }
 
-
 func canonicalFormalsAllocationBytes(count, elementBytes int) (int, bool) {
 	if count < 0 || elementBytes < 0 || count == 0 || elementBytes == 0 {
 		return 0, count >= 0 && elementBytes >= 0
