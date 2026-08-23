@@ -47,7 +47,8 @@ func AccumulatePlacementSummarySuspensionRows(schema placementdomain.Schema, obs
 			return placementdomain.PlacementSummaryObservation{}, false
 		}
 		state, present, available := at(index)
-		if !available || !state.Valid() {
+		state, stateOK := authenticateEvidenceCell(state, present, available)
+		if !stateOK {
 			return placementdomain.PlacementSummaryObservation{}, false
 		}
 		if !present {
@@ -55,13 +56,7 @@ func AccumulatePlacementSummarySuspensionRows(schema placementdomain.Schema, obs
 			// EvidenceMissing is this factor's exact Bottom and therefore an
 			// authenticated absence of a suspension verdict, not permission to
 			// publish Unknown or a proof. Any other sparse payload is malformed.
-			if state != EvidenceMissing {
-				return placementdomain.PlacementSummaryObservation{}, false
-			}
 			continue
-		}
-		if state == EvidenceMissing {
-			return placementdomain.PlacementSummaryObservation{}, false
 		}
 		// Every authenticated route verdict is published, including Unknown.
 		// Skipping Unknown would leave the column at its absence default and

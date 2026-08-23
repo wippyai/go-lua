@@ -239,10 +239,8 @@ func (rule *EvidenceHotRule) fold(frame engine.Frame[Evidence, operand]) engine.
 			return EvidenceMissing, false
 		}
 		current, present, available := prior.At(0)
-		if !available || !present || !current.Valid() || current == EvidenceMissing {
-			// Missing evidence is not an identity supplied by the runtime.
-			// The selected predecessor must be present and explicit before
-			// this rule can refine it with the authenticated liveness fact.
+		current, currentOK := authenticateEvidenceCell(current, present, available)
+		if !currentOK {
 			return EvidenceMissing, false
 		}
 		want, wantOK := suspensionEvidenceForState(canonical.state)

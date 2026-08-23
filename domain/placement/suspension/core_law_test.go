@@ -14,7 +14,7 @@ func TestPlacementForStateIsClosedAndConservative(t *testing.T) {
 	}{
 		{lifecycle.SubjectLivenessDiesBefore, placement.Stack},
 		{lifecycle.SubjectLivenessLive, placement.OwnedHeap},
-		{lifecycle.SubjectLivenessUnknown, placement.Unknown},
+		{lifecycle.SubjectLivenessUnknown, placement.OwnedHeap},
 	}
 	for _, item := range cases {
 		got, ok := PlacementForState(item.state)
@@ -34,11 +34,11 @@ func TestPlacementForStateIsClosedAndConservative(t *testing.T) {
 }
 
 func TestPlacementForStatePreservesTheLivenessOrder(t *testing.T) {
-	// DiesBefore is the least demand, Live requires a surviving owned root,
-	// and Unknown is the conservative top. The consumer must not reverse this
-	// ordering while projecting the neutral answer.
-	if !placement.LessOrEq(placement.Stack, placement.OwnedHeap) || !placement.LessOrEq(placement.OwnedHeap, placement.Unknown) {
-		t.Fatal("placement order no longer has Stack <= OwnedHeap <= Unknown")
+	// DiesBefore is the least demand. Live and Unknown both require a surviving
+	// owned root: liveness uncertainty carries no sharing evidence and therefore
+	// cannot select Placement Top.
+	if !placement.LessOrEq(placement.Stack, placement.OwnedHeap) {
+		t.Fatal("placement order no longer has Stack <= OwnedHeap")
 	}
 	for _, state := range []lifecycle.SubjectLivenessState{
 		lifecycle.SubjectLivenessDiesBefore,
@@ -49,5 +49,13 @@ func TestPlacementForStatePreservesTheLivenessOrder(t *testing.T) {
 		if !ok || !placement.LessOrEq(placement.Stack, got) {
 			t.Fatalf("state %v projected below the seeded Stack placement: %v/%t", state, got, ok)
 		}
+	}
+}
+
+func TestUnknownSuspensionCannotPoisonAuthenticatedSharing(t *testing.T) {
+	suspension, suspensionOK := PlacementForState(lifecycle.SubjectLivenessUnknown)
+	joined, joinedOK := placement.JoinChecked(suspension, placement.SharedHeap)
+	if !suspensionOK || !joinedOK || joined != placement.SharedHeap {
+		t.Fatalf("unknown suspension joined with authenticated sharing = %v/%t, want SharedHeap", joined, joinedOK)
 	}
 }

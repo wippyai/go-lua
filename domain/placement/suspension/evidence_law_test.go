@@ -67,3 +67,27 @@ func TestEvidencePublicProjectionSeparatesMissingFromUnknown(t *testing.T) {
 		t.Fatalf("Public(invalid) = %v, want an inadmissible public state", got)
 	}
 }
+
+func TestEvidenceCellAuthenticationOwnsSparseBottom(t *testing.T) {
+	tests := []struct {
+		name      string
+		state     Evidence
+		present   bool
+		available bool
+		want      bool
+	}{
+		{name: "sparse bottom", state: EvidenceMissing, available: true, want: true},
+		{name: "present verdict", state: EvidenceProven, present: true, available: true, want: true},
+		{name: "present bottom", state: EvidenceMissing, present: true, available: true},
+		{name: "sparse verdict", state: EvidenceRefuted, available: true},
+		{name: "unavailable", state: EvidenceMissing},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			got, ok := authenticateEvidenceCell(test.state, test.present, test.available)
+			if ok != test.want || ok && got != test.state {
+				t.Fatalf("authenticate %v/%t/%t = %v/%t, want %t", test.state, test.present, test.available, got, ok, test.want)
+			}
+		})
+	}
+}

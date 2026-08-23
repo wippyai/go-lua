@@ -22,7 +22,12 @@ import (
 // needs no escape beyond its Stack baseline. A subject used after a
 // suspension must survive the current activation, but no sharing/export proof
 // is present, so OwnedHeap is the greatest precise demand available here.
-// Unknown is the lattice top and is never treated as frame-local.
+// Unknown liveness still requires survival, but suspension alone can never
+// imply sharing or export. Its concrete alternatives are DiesBefore (Stack)
+// and Live (OwnedHeap), whose least Placement demand is OwnedHeap. The
+// independent suspension-evidence factor retains the unknown proof polarity;
+// writing Placement Top here would cross axes and poison a later authenticated
+// SharedHeap publication.
 func PlacementForState(state lifecycle.SubjectLivenessState) (placementdomain.Placement, bool) {
 	switch state {
 	case lifecycle.SubjectLivenessDiesBefore:
@@ -30,7 +35,7 @@ func PlacementForState(state lifecycle.SubjectLivenessState) (placementdomain.Pl
 	case lifecycle.SubjectLivenessLive:
 		return placementdomain.OwnedHeap, true
 	case lifecycle.SubjectLivenessUnknown:
-		return placementdomain.Unknown, true
+		return placementdomain.OwnedHeap, true
 	default:
 		// An invalid lifecycle ordinal is not an authenticated Unknown fact.
 		// Refuse it at the catalog/rule boundary instead of manufacturing the

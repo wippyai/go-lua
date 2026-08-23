@@ -33,6 +33,18 @@ func (state Evidence) Known() bool {
 	return state == EvidenceRefuted || state == EvidenceProven
 }
 
+// authenticateEvidenceCell validates the Evidence owner's sparse transport.
+// Missing is the factor's canonical Bottom and is lawful only when the cell is
+// sparse. A present row must carry an explicit verdict; an unavailable row is
+// never evidence. Keeping this at the factor owner gives runtime production
+// and summary publication one authentication authority.
+func authenticateEvidenceCell(state Evidence, present, available bool) (Evidence, bool) {
+	if !available || !state.Valid() || !present && state != EvidenceMissing || present && state == EvidenceMissing {
+		return invalidEvidence, false
+	}
+	return state, true
+}
+
 // Public projects this producer's private state into the public Placement
 // proof vocabulary. The projection is distinction-preserving: Missing is the
 // sparse Factor default and publishes as absence, while Unknown is the
