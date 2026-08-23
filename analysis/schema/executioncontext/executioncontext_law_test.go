@@ -345,3 +345,148 @@ func TestDirectoryRejectsAuthoredCrossActorTransition(t *testing.T) {
 		t.Fatal("directory accepted a transition between two actors")
 	}
 }
+
+// activationRelationLink seals one Link whose modules and actors exercise
+// every shape of the activation relation: a module with one Context, a module
+// with two Contexts in one actor and a third in another, and a module that no
+// Context of the first actor shares.
+type activationRelationLink struct {
+	directory executioncontext.Directory
+	modules   map[string]identity.ContentID
+	contexts  map[string]executioncontext.Context
+}
+
+func sealActivationRelationLink(t *testing.T) activationRelationLink {
+	t.Helper()
+	linkID := lawID(t, "activation-relation/link")
+	modules := map[string]identity.ContentID{
+		"main":   lawID(t, "activation-relation/module/main"),
+		"lib":    lawID(t, "activation-relation/module/lib"),
+		"worker": lawID(t, "activation-relation/module/worker"),
+	}
+	actors := map[string]identity.ContentID{
+		"host":   lawID(t, "activation-relation/actor/host"),
+		"worker": lawID(t, "activation-relation/actor/worker"),
+	}
+	rows := []struct{ name, module, actor string }{
+		{"main", "main", "host"},
+		{"lib-a", "lib", "host"},
+		{"lib-b", "lib", "host"},
+		{"lib-worker", "lib", "worker"},
+		{"worker", "worker", "worker"},
+	}
+	contexts := make(map[string]executioncontext.Context, len(rows))
+	sealed := make([]executioncontext.Context, 0, len(rows))
+	roots := make([]executioncontext.RootContext, 0, len(rows))
+	for _, row := range rows {
+		context, contextOK := executioncontext.NewContext(linkID, modules[row.module], actors[row.actor], lawID(t, "activation-relation/instance/"+row.name))
+		root, rootOK := executioncontext.NewRootContext(linkID, lawID(t, "activation-relation/root/"+row.name), context.ID())
+		if !contextOK || !rootOK {
+			t.Fatalf("construct context %s", row.name)
+		}
+		contexts[row.name] = context
+		sealed = append(sealed, context)
+		roots = append(roots, root)
+	}
+	directory, directoryOK := executioncontext.Seal(linkID, sealed, roots, nil)
+	if !directoryOK {
+		t.Fatal("seal the activation relation link")
+	}
+	return activationRelationLink{directory: directory, modules: modules, contexts: contexts}
+}
+
+// TestActivationRoutesAreExactlyTheCoResidentPairsOfTheModulePair is the
+// declaration-totality law of the sealed activation relation. The directory
+// owns the relation, so the routes it publishes for an ordered module pair are
+// exactly the Context pairs one actor holds both ends of: one row per pair, no
+// pair missing, no row an ActivationEdge does not authenticate, and no
+// duplicate. A consumer therefore never pairs sibling Contexts itself.
+func TestActivationRoutesAreExactlyTheCoResidentPairsOfTheModulePair(t *testing.T) {
+	link := sealActivationRelationLink(t)
+	cases := []struct {
+		name          string
+		trigger, body string
+		pairs         [][2]string
+	}{
+		{"a body in a module the trigger's actor also holds", "main", "lib", [][2]string{{"main", "lib-a"}, {"main", "lib-b"}}},
+		{"a callback body back in the trigger's module", "lib", "main", [][2]string{{"lib-a", "main"}, {"lib-b", "main"}}},
+		{"every co-resident pair of one module with itself", "lib", "lib", [][2]string{
+			{"lib-a", "lib-a"}, {"lib-a", "lib-b"}, {"lib-b", "lib-a"}, {"lib-b", "lib-b"}, {"lib-worker", "lib-worker"},
+		}},
+		{"a body only another actor holds", "main", "worker", nil},
+	}
+	for _, testCase := range cases {
+		t.Run(testCase.name, func(t *testing.T) {
+			routes, triggerResident, bodyResident := link.directory.ActivationRoutes(link.modules[testCase.trigger], link.modules[testCase.body])
+			if !triggerResident || !bodyResident {
+				t.Fatal("a module the directory holds was reported as not resident")
+			}
+			if len(routes) != len(testCase.pairs) {
+				t.Fatalf("the relation published %d routes, want %d", len(routes), len(testCase.pairs))
+			}
+			seen := make(map[identity.ContentID]struct{}, len(routes))
+			expected := make(map[[2]identity.ContentID]struct{}, len(testCase.pairs))
+			for _, pair := range testCase.pairs {
+				expected[[2]identity.ContentID{link.contexts[pair[0]].ID(), link.contexts[pair[1]].ID()}] = struct{}{}
+			}
+			for _, route := range routes {
+				edge, edgeOK := link.directory.ActivationEdge(route.FromContextID(), route.ToContextID())
+				if !route.Available() || !edgeOK || edge.ID() != route.ID() {
+					t.Fatal("a published route is not the edge the directory authenticates for its endpoints")
+				}
+				if _, duplicate := seen[route.ID()]; duplicate {
+					t.Fatal("the relation published one route twice")
+				}
+				seen[route.ID()] = struct{}{}
+				endpoints := [2]identity.ContentID{route.FromContextID(), route.ToContextID()}
+				if _, wanted := expected[endpoints]; !wanted {
+					t.Fatal("the relation published a route between Contexts no single actor holds")
+				}
+				delete(expected, endpoints)
+			}
+			if len(expected) != 0 {
+				t.Fatalf("the relation omitted %d co-resident pairs", len(expected))
+			}
+		})
+	}
+}
+
+// TestActivationRoutesSeparateResidenceFromReachability proves the two
+// verdicts the relation answers with are distinct. A module the directory
+// holds no Context for is a mount the Link never made and is reported not
+// resident; a resident module the trigger's actor never reaches produces no
+// route and refuses nothing.
+func TestActivationRoutesSeparateResidenceFromReachability(t *testing.T) {
+	link := sealActivationRelationLink(t)
+	unmounted := lawID(t, "activation-relation/module/unmounted")
+	routes, triggerResident, bodyResident := link.directory.ActivationRoutes(link.modules["main"], unmounted)
+	if len(routes) != 0 || !triggerResident || bodyResident {
+		t.Fatal("an unmounted body module was not reported as the absent residence")
+	}
+	routes, triggerResident, bodyResident = link.directory.ActivationRoutes(unmounted, link.modules["main"])
+	if len(routes) != 0 || triggerResident || !bodyResident {
+		t.Fatal("an unmounted trigger module was not reported as the absent residence")
+	}
+	routes, triggerResident, bodyResident = link.directory.ActivationRoutes(link.modules["main"], link.modules["worker"])
+	if len(routes) != 0 || !triggerResident || !bodyResident {
+		t.Fatal("two resident modules that share no actor were not both resident and unreached")
+	}
+}
+
+// TestActivationRoutesAreSealOrderDeterministic proves the published relation
+// is a property of the sealed directory rather than of the order its rows were
+// authored in.
+func TestActivationRoutesAreSealOrderDeterministic(t *testing.T) {
+	first := sealActivationRelationLink(t)
+	second := sealActivationRelationLink(t)
+	left, _, _ := first.directory.ActivationRoutes(first.modules["lib"], first.modules["lib"])
+	right, _, _ := second.directory.ActivationRoutes(second.modules["lib"], second.modules["lib"])
+	if len(left) == 0 || len(left) != len(right) {
+		t.Fatalf("two seals of one Link published %d and %d routes", len(left), len(right))
+	}
+	for index := range left {
+		if left[index].ID() != right[index].ID() {
+			t.Fatalf("route %d differs between two seals of one Link", index)
+		}
+	}
+}

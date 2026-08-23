@@ -217,12 +217,20 @@ func (row Transition) ToContextID() identity.ContentID {
 // Directory is a frozen scalar Context, root-ingress, and transition
 // directory.  Seal copies and canonicalizes all rows; the returned value has
 // no owner pointer and exposes no mutator.
+//
+// contextAt and moduleContexts are the sealed indexes of the same rows, built
+// once by Seal and never written again.  They carry no row a consumer cannot
+// reach through contexts; they exist so the directory answers by identity and
+// by module without rescanning, which is what lets it own the activation
+// relation instead of publishing its rows for a consumer to pair up.
 type Directory struct {
-	link        identity.ContentID
-	contexts    []Context
-	roots       []RootContext
-	transitions []Transition
-	sealed      bool
+	link           identity.ContentID
+	contexts       []Context
+	roots          []RootContext
+	transitions    []Transition
+	contextAt      map[identity.ContentID]Context
+	moduleContexts map[identity.ContentID][]Context
+	sealed         bool
 }
 
 // Seal validates and freezes a complete Link directory.  It refuses malformed
@@ -339,7 +347,18 @@ func Seal(linkID identity.ContentID, contexts []Context, roots []RootContext, tr
 	}
 	sort.Slice(transitionRows, func(i, j int) bool { return lessID(transitionRows[i].ID(), transitionRows[j].ID()) })
 
-	return Directory{link: linkID, contexts: contextRows, roots: rootRows, transitions: transitionRows, sealed: true}, true
+	// Index the sealed rows once.  contextRows is already in canonical order,
+	// so every per-module slice inherits that order and the relations derived
+	// from these indexes are permutation-independent for free.
+	moduleContexts := make(map[identity.ContentID][]Context, len(contextRows))
+	for _, row := range contextRows {
+		moduleContexts[row.ModuleKey()] = append(moduleContexts[row.ModuleKey()], row)
+	}
+
+	return Directory{
+		link: linkID, contexts: contextRows, roots: rootRows, transitions: transitionRows,
+		contextAt: contextAt, moduleContexts: moduleContexts, sealed: true,
+	}, true
 }
 
 func lessID(left, right identity.ContentID) bool {
@@ -381,12 +400,8 @@ func (directory Directory) Context(id identity.ContentID) (Context, bool) {
 	if !directory.Available() || !id.Available() {
 		return Context{}, false
 	}
-	for _, row := range directory.contexts {
-		if row.ID() == id {
-			return row, true
-		}
-	}
-	return Context{}, false
+	row, held := directory.contextAt[id]
+	return row, held
 }
 
 func (directory Directory) RootCount() int {
@@ -492,15 +507,58 @@ func (directory Directory) ActivationEdge(fromID, toID identity.ContentID) (Tran
 // error to recover from: the boolean states that the directory has nothing to
 // say about it.
 func (directory Directory) ContextsForModule(moduleKey identity.ContentID) ([]Context, bool) {
-	if !directory.Available() || !moduleKey.Available() {
+	held := directory.moduleContextRows(moduleKey)
+	if len(held) == 0 {
 		return nil, false
 	}
-	rows := make([]Context, 0, len(directory.contexts))
-	for _, row := range directory.contexts {
-		if row.ModuleKey() != moduleKey {
-			continue
-		}
-		rows = append(rows, row)
+	return append([]Context(nil), held...), true
+}
+
+// moduleContextRows resolves the sealed per-module row slice.  It is private
+// because the slice is the directory's own storage: a public caller receives a
+// copy, while the relations below only read it.
+func (directory Directory) moduleContextRows(moduleKey identity.ContentID) []Context {
+	if !directory.Available() || !moduleKey.Available() {
+		return nil
 	}
-	return rows, len(rows) != 0
+	return directory.moduleContexts[moduleKey]
+}
+
+// ActivationRoutes publishes the sealed activation relation restricted to one
+// ordered module pair: every Context transition an application performed in a
+// Context of the trigger module takes into a body resident in a Context of the
+// body module.
+//
+// The relation is the directory's own.  Two Contexts are activation-connected
+// exactly when one actor holds both, so this answer carries one route for
+// every co-resident pair of the two modules and none for any other pair.  A
+// consumer therefore never enumerates sibling Contexts or pairs them up: it
+// names the two modules a candidate body route runs between and receives the
+// complete relation the Link declares for them.  Routes follow the sealed
+// Context order, so the published relation is permutation-independent.
+//
+// Residence and reachability are separate verdicts and only the first is a
+// refusal.  A module the directory holds no Context for is a mount the Link
+// never made, and its boolean states that the directory has nothing to say
+// about it.  Two resident modules that share no actor - the two copies of one
+// shared library in a same-Link deployment - are both resident and produce no
+// route, because a value applied in one actor is never the value another actor
+// holds.
+func (directory Directory) ActivationRoutes(triggerModuleKey, bodyModuleKey identity.ContentID) ([]Transition, bool, bool) {
+	from := directory.moduleContextRows(triggerModuleKey)
+	to := directory.moduleContextRows(bodyModuleKey)
+	if len(from) == 0 || len(to) == 0 {
+		return nil, len(from) != 0, len(to) != 0
+	}
+	routes := make([]Transition, 0, len(from))
+	for _, source := range from {
+		for _, target := range to {
+			route, ok := directory.ActivationEdge(source.ID(), target.ID())
+			if !ok || !route.Available() {
+				continue
+			}
+			routes = append(routes, route)
+		}
+	}
+	return routes, true, true
 }

@@ -73,7 +73,7 @@ func (rule *HotRule) mountedAdmit(mountID, reusablePointID, occurrenceID identit
 		// declares unreachable - another actor's copy of a shared library -
 		// and contributes no candidate while the occurrence keeps the routes
 		// that remain.
-		edges, residence := activationRouteEdges(contexts, mountID, moduleKey)
+		edges, residence := activationRoutes(contexts, mountID, moduleKey)
 		if residence.Available() {
 			return engine.MountedActivationAdmit{}, residence
 		}
@@ -96,11 +96,14 @@ func (rule *HotRule) mountedAdmit(mountID, reusablePointID, occurrenceID identit
 	}, Refusal{}
 }
 
-// activationRouteEdges resolves the execution-context edges one candidate body
-// route may run on: from a Context of the trigger's module to a Context of the
-// body's module. A module can hold several Contexts, so the route is admitted
-// once per activation edge the directory derives, and the directory - not the
-// producer - decides which pairs are connected.
+// activationRoutes resolves the candidate body routes one occurrence carries
+// from its trigger module into one body module, and spells this package's
+// refusal for a module the Link never mounted.
+//
+// The routes themselves are the sealed directory's: the Link owns the
+// activation relation, so the rule names the two modules and receives the
+// complete set of Context transitions the relation holds for them. It never
+// enumerates sibling Contexts or pairs them itself.
 //
 // The route table this walks is Call's global body table: a call value may
 // name any admitted body, so a trigger in one module carries a route to a body
@@ -112,26 +115,15 @@ func (rule *HotRule) mountedAdmit(mountID, reusablePointID, occurrenceID identit
 // The refusal reports residence, not reachability, and names which of the two
 // modules is not resident: that is a mount the Link never made. Two resident
 // modules that share no actor - the two copies of one shared library in a
-// same-Link deployment - are resident and produce no edge and no refusal,
+// same-Link deployment - are resident and produce no route and no refusal,
 // because a value applied in one actor is never the value another actor holds.
-func activationRouteEdges(contexts executioncontext.Directory, triggerModuleID, bodyModuleID identity.ContentID) ([]executioncontext.Transition, Refusal) {
-	from, fromOK := contexts.ContextsForModule(triggerModuleID)
-	if !fromOK {
+func activationRoutes(contexts executioncontext.Directory, triggerModuleID, bodyModuleID identity.ContentID) ([]executioncontext.Transition, Refusal) {
+	routes, triggerResident, bodyResident := contexts.ActivationRoutes(triggerModuleID, bodyModuleID)
+	if !triggerResident {
 		return nil, Refusal{Reason: RefusalTriggerNotResident, Trigger: triggerModuleID, Body: bodyModuleID}
 	}
-	to, toOK := contexts.ContextsForModule(bodyModuleID)
-	if !toOK {
+	if !bodyResident {
 		return nil, Refusal{Reason: RefusalBodyNotResident, Trigger: triggerModuleID, Body: bodyModuleID}
 	}
-	edges := make([]executioncontext.Transition, 0, len(from))
-	for _, source := range from {
-		for _, target := range to {
-			edge, ok := contexts.ActivationEdge(source.ID(), target.ID())
-			if !ok || !edge.Available() {
-				continue
-			}
-			edges = append(edges, edge)
-		}
-	}
-	return edges, Refusal{}
+	return routes, Refusal{}
 }

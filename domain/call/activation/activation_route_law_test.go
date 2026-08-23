@@ -68,7 +68,7 @@ func routeLawLink(t *testing.T) routeLawDirectory {
 // module that imported the trigger's own, and a body in the trigger's module.
 // A body another actor holds is resident and reached by no edge: the two
 // actors never hold one value.
-func TestActivationRouteEdgesAdmitEveryBodyOfOneActor(t *testing.T) {
+func TestActivationRoutesAdmitEveryBodyOfOneActor(t *testing.T) {
 	link := routeLawLink(t)
 	cases := []struct {
 		name          string
@@ -82,7 +82,7 @@ func TestActivationRouteEdgesAdmitEveryBodyOfOneActor(t *testing.T) {
 	}
 	for _, testCase := range cases {
 		t.Run(testCase.name, func(t *testing.T) {
-			edges, refusal := activationRouteEdges(link.directory, link.modules[testCase.trigger], link.modules[testCase.body])
+			edges, refusal := activationRoutes(link.directory, link.modules[testCase.trigger], link.modules[testCase.body])
 			if refusal.Available() {
 				t.Fatalf("a module the directory holds was refused as %s", refusal)
 			}
@@ -105,7 +105,7 @@ func TestActivationRouteEdgesAdmitEveryBodyOfOneActor(t *testing.T) {
 // may be invented for it. Nothing is silent: the refusal names which of the
 // two modules is not resident and carries both module identities, so the
 // envelope reports the operands rather than only the rule.
-func TestActivationRouteEdgesNameTheModuleOutsideTheDirectory(t *testing.T) {
+func TestActivationRoutesNameTheModuleOutsideTheDirectory(t *testing.T) {
 	link := routeLawLink(t)
 	unmounted := routeLawID(t, "module/unmounted")
 	cases := []struct {
@@ -118,7 +118,7 @@ func TestActivationRouteEdgesNameTheModuleOutsideTheDirectory(t *testing.T) {
 	}
 	for _, testCase := range cases {
 		t.Run(testCase.name, func(t *testing.T) {
-			edges, refusal := activationRouteEdges(link.directory, testCase.trigger, testCase.body)
+			edges, refusal := activationRoutes(link.directory, testCase.trigger, testCase.body)
 			if len(edges) != 0 {
 				t.Fatalf("a refused route produced %d edges", len(edges))
 			}
@@ -135,9 +135,9 @@ func TestActivationRouteEdgesNameTheModuleOutsideTheDirectory(t *testing.T) {
 // A body another actor holds is resident, reached by no activation edge, and
 // refuses nothing: the occurrence keeps the routes that remain. Residence and
 // reachability are separate verdicts and only the first refuses.
-func TestActivationRouteEdgesLeaveAnotherActorsBodySilentlyUnreached(t *testing.T) {
+func TestActivationRoutesLeaveAnotherActorsBodySilentlyUnreached(t *testing.T) {
 	link := routeLawLink(t)
-	edges, refusal := activationRouteEdges(link.directory, link.modules["main"], link.modules["worker"])
+	edges, refusal := activationRoutes(link.directory, link.modules["main"], link.modules["worker"])
 	if refusal.Available() {
 		t.Fatalf("a resident body in another actor was refused as %s", refusal)
 	}
