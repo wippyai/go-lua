@@ -433,13 +433,18 @@ func buildRule(byAxis map[uint32]membergenerator.Metadata, catalog ruleplan.Cata
 	if !joinOK {
 		return Rule{}, joinKind, false
 	}
-	inputs, inputKind, inputOK := verifyReducerInputs(byAxis, catalog, compiled, reducer, joins)
-	if !inputOK {
-		return Rule{}, inputKind, false
-	}
-	outputs, outputKind, outputOK := verifyOutputs(byAxis, catalog, compiled, reducer)
+	// Outputs are verified before inputs because the route correspondence is
+	// theirs: a join is a route join because an output writes through it. The
+	// destination coordinate a routed fold receives is resolved once there and
+	// handed to the input verification, so the two never disagree about which
+	// joins are routed.
+	outputs, routes, outputKind, outputOK := verifyOutputs(byAxis, catalog, compiled, reducer)
 	if !outputOK {
 		return Rule{}, outputKind, false
+	}
+	inputs, inputKind, inputOK := verifyReducerInputs(byAxis, catalog, compiled, reducer, joins, routes)
+	if !inputOK {
+		return Rule{}, inputKind, false
 	}
 	carry, carryKind, carryOK := verifyCarry(byAxis, catalog, compiled, candidateRelation, outputs)
 	if !carryOK {
@@ -614,7 +619,13 @@ func verifyJoins(byAxis map[uint32]membergenerator.Metadata, catalog ruleplan.Ca
 	return joins, ProblemNone, true
 }
 
-func verifyReducerInputs(byAxis map[uint32]membergenerator.Metadata, catalog ruleplan.Catalog, compiled ruleplan.Plan, reducer membergenerator.ReducerBinding, joins []Join) ([]ReducerInput, ProblemKind, bool) {
+// verifyReducerInputs holds each declared input to the join it reads. Two of
+// its three carriers are conditional and neither condition is the input row's
+// to state: a tag is required exactly when the join declares a Predicate, and a
+// route coordinate exactly when an output routes through that join. Both
+// conditions are the rule's plan, which is why the declaration leaves them
+// optional and this is where they are settled.
+func verifyReducerInputs(byAxis map[uint32]membergenerator.Metadata, catalog ruleplan.Catalog, compiled ruleplan.Plan, reducer membergenerator.ReducerBinding, joins []Join, routes map[uint32]memberdefinition.GoType) ([]ReducerInput, ProblemKind, bool) {
 	if compiled.FoldInputCount() != len(reducer.Inputs) {
 		return nil, ProblemReducer, false
 	}
@@ -642,60 +653,79 @@ func verifyReducerInputs(byAxis map[uint32]membergenerator.Metadata, catalog rul
 		} else if tagged {
 			return nil, ProblemForm, false
 		}
-		inputs[index] = ReducerInput{Join: joinOrdinal, Type: binding.Type, Form: binding.Form, Multiplicity: binding.Multiplicity, Tag: tag, Tagged: tagged}
+		// A route coordinate is available on every join an output routes
+		// through, so taking it is the declaration's choice, exactly as the
+		// candidate carrier is: a fold whose answer does not depend on which
+		// coordinate it publishes at does not grow a parameter for one.
+		// Declaring it where no output routes through the join is refused -
+		// there is no coordinate to deliver.
+		route := binding.Route
+		routed := route.Available()
+		if routed {
+			destination, routeJoin := routes[joinOrdinal]
+			if !routeJoin || route != destination {
+				return nil, ProblemForm, false
+			}
+		}
+		inputs[index] = ReducerInput{Join: joinOrdinal, Type: binding.Type, Form: binding.Form, Multiplicity: binding.Multiplicity, Tag: tag, Tagged: tagged, Route: route, Routed: routed}
 	}
 	return inputs, ProblemNone, true
 }
 
-func verifyOutputs(byAxis map[uint32]membergenerator.Metadata, catalog ruleplan.Catalog, compiled ruleplan.Plan, reducer membergenerator.ReducerBinding) ([]Output, ProblemKind, bool) {
+// verifyOutputs resolves every published column and, for a routed one, the
+// destination coordinate its route join delivers to the fold. That second
+// result is the route correspondence stated once: the input verification reads
+// it rather than rediscovering which joins a plan routes through.
+func verifyOutputs(byAxis map[uint32]membergenerator.Metadata, catalog ruleplan.Catalog, compiled ruleplan.Plan, reducer membergenerator.ReducerBinding) ([]Output, map[uint32]memberdefinition.GoType, ProblemKind, bool) {
 	if compiled.OutputCount() != len(reducer.Outputs) {
-		return nil, ProblemOutputType, false
+		return nil, nil, ProblemOutputType, false
 	}
 	outputs := make([]Output, compiled.OutputCount())
+	routes := make(map[uint32]memberdefinition.GoType, compiled.OutputCount())
 	seenSlots := make(map[uint32]struct{}, len(outputs))
 	seenRouteDestinations := make(map[ruleplan.ProjectionAddr]struct{}, len(outputs))
 	candidateAddress := compiled.Candidate()
 	candidateMetadata, _, candidateMetadataOK := ownerMetadata(byAxis, catalog, candidateAddress.Axis)
 	if !candidateMetadataOK || uint64(candidateAddress.Member) >= uint64(len(candidateMetadata.Relations)) {
-		return nil, ProblemCandidate, false
+		return nil, nil, ProblemCandidate, false
 	}
 	candidateRelation := candidateMetadata.Relations[candidateAddress.Member]
 	if !candidateRelation.Key.Available() {
-		return nil, ProblemCandidate, false
+		return nil, nil, ProblemCandidate, false
 	}
 	for index := 0; index < compiled.OutputCount(); index++ {
 		compiledOutput, outputOK := compiled.OutputAt(index)
 		if !outputOK || uint64(compiledOutput.Slot) >= uint64(len(reducer.Outputs)) {
-			return nil, ProblemOutputType, false
+			return nil, nil, ProblemOutputType, false
 		}
 		if _, duplicate := seenSlots[compiledOutput.Slot]; duplicate {
-			return nil, ProblemOutputType, false
+			return nil, nil, ProblemOutputType, false
 		}
 		seenSlots[compiledOutput.Slot] = struct{}{}
 		outputMetadata, outputAxis, outputMetadataOK := ownerMetadata(byAxis, catalog, compiledOutput.Address.Axis)
 		destinationMetadata, destinationAxis, destinationMetadataOK := ownerMetadata(byAxis, catalog, compiledOutput.Destination.Axis)
 		if !outputMetadataOK || !destinationMetadataOK || uint64(compiledOutput.Destination.Member) >= uint64(len(destinationMetadata.Projections)) || uint64(compiledOutput.Slot) >= uint64(len(reducer.Outputs)) {
-			return nil, ProblemMember, false
+			return nil, nil, ProblemMember, false
 		}
 		binding := reducer.Outputs[compiledOutput.Slot]
 		axisKey, axisKeyOK := axisKeyAt(catalog, compiledOutput.Address.Axis)
 		if !axisKeyOK || binding.Axis.Surface != schema.SurfaceKindAxis || binding.Axis.Key != axisKey || binding.Type != outputMetadata.FactType || !compiledOutput.Mode.Available() {
-			return nil, ProblemOutputType, false
+			return nil, nil, ProblemOutputType, false
 		}
 		if compiledOutput.Mode != program.ModeRoute && compiledOutput.RouteJoinPresent {
-			return nil, ProblemOutputType, false
+			return nil, nil, ProblemOutputType, false
 		}
 		if compiledOutput.Mode == program.ModeRoute {
 			if !compiledOutput.RouteJoinPresent || uint64(compiledOutput.RouteJoin) >= uint64(compiled.JoinCount()) {
-				return nil, ProblemOutputType, false
+				return nil, nil, ProblemOutputType, false
 			}
 			if _, duplicate := seenRouteDestinations[compiledOutput.Destination]; duplicate {
-				return nil, ProblemMember, false
+				return nil, nil, ProblemMember, false
 			}
 			seenRouteDestinations[compiledOutput.Destination] = struct{}{}
 			routeJoin, routeJoinOK := compiled.JoinAt(int(compiledOutput.RouteJoin))
 			if !routeJoinOK || routeJoin.ReadForm != member.Selected || !routeJoin.Cardinality.Available() || routeJoin.ReadContract.Multiplicity == member.MultiplicityMany || routeJoin.Cardinality == member.MultiplicityMany || !routeJoin.Denominator.Present {
-				return nil, ProblemForm, false
+				return nil, nil, ProblemForm, false
 			}
 			foldInput := false
 			for inputIndex := 0; inputIndex < compiled.FoldInputCount(); inputIndex++ {
@@ -706,34 +736,40 @@ func verifyOutputs(byAxis map[uint32]membergenerator.Metadata, catalog ruleplan.
 				}
 			}
 			if !foldInput {
-				return nil, ProblemReducer, false
+				return nil, nil, ProblemReducer, false
 			}
 		}
 		destination := destinationMetadata.Projections[compiledOutput.Destination.Member]
 		if destination.Role != member.Destination || !destination.Result.Available() || destination.Result != outputMetadata.Key.Input {
-			return nil, ProblemMember, false
+			return nil, nil, ProblemMember, false
 		}
 		if compiledOutput.Mode == program.ModeRoute {
 			routeJoin, routeJoinOK := compiled.JoinAt(int(compiledOutput.RouteJoin))
 			if !routeJoinOK {
-				return nil, ProblemMember, false
+				return nil, nil, ProblemMember, false
 			}
 			routeRelationMetadata, _, routeRelationOK := ownerMetadata(byAxis, catalog, routeJoin.Relation.Axis)
 			if !routeRelationOK || uint64(routeJoin.Relation.Member) >= uint64(len(routeRelationMetadata.Relations)) || destination.CandidateProvider != routeRelationMetadata.Relations[routeJoin.Relation.Member].CandidateProvider {
-				return nil, ProblemMember, false
+				return nil, nil, ProblemMember, false
 			}
 			routeRelation := routeRelationMetadata.Relations[routeJoin.Relation.Member]
 			routeAxisKey, routeAxisOK := axisKeyAt(catalog, routeJoin.Relation.Axis)
 			if !routeAxisOK || destinationAxis != routeAxisKey || destination.Relation != routeRelation.Key {
-				return nil, ProblemMember, false
+				return nil, nil, ProblemMember, false
 			}
 		} else {
 			candidateAxisKey, candidateAxisOK := axisKeyAt(catalog, candidateAddress.Axis)
 			if !candidateAxisOK || destinationAxis != candidateAxisKey || destination.Relation != candidateRelation.Key || destination.CandidateProvider != candidateRelation.CandidateProvider {
-				return nil, ProblemMember, false
+				return nil, nil, ProblemMember, false
 			}
+		}
+		if compiledOutput.Mode == program.ModeRoute {
+			if existing, duplicate := routes[compiledOutput.RouteJoin]; duplicate && existing != destination.Result {
+				return nil, nil, ProblemMember, false
+			}
+			routes[compiledOutput.RouteJoin] = destination.Result
 		}
 		outputs[index] = newOutput(compiledOutput, outputAxis, destinationAxis, binding.Type, destination.Accessor)
 	}
-	return outputs, ProblemNone, true
+	return outputs, routes, ProblemNone, true
 }

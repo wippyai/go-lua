@@ -117,29 +117,48 @@ func TestNewCatalogRejectsMalformedReducer(t *testing.T) {
 	}
 }
 
-func TestReducerInputTagExistsOnlyForTaggedReadForms(t *testing.T) {
+// TestReducerInputConditionalCarriersFollowTheirReadForm states which of an
+// input's two conditional carriers its read form can have at all.
+//
+// A Summary's tag IS its selection projection, so a Summary read always carries
+// one. An Exact or Complete read selects nothing and routes nowhere, so it
+// carries neither. A Selected read is the one form whose conditions this row
+// cannot answer: its tag is required exactly when the join it reads declares a
+// Predicate, and its route coordinate exactly when an output writes through
+// that join - both statements of the reading rule's plan, not of this
+// declaration. So this law leaves both open on Selected, and the rule model is
+// where they are settled against the plan that makes them true.
+func TestReducerInputConditionalCarriersFollowTheirReadForm(t *testing.T) {
 	axis := axisRef("axis/source")
 	for name, input := range map[string]ReducerInput{
 		"exact with tag": {
 			Axis: axis, Carrier: "carrier", Form: ReadFormExact,
 			Multiplicity: MultiplicityOne, Tag: "tag",
 		},
-		"selected without tag": {
-			Axis: axis, Carrier: "carrier", Form: ReadFormSelected,
-			Multiplicity: MultiplicityMany,
+		"exact with route": {
+			Axis: axis, Carrier: "carrier", Form: ReadFormExact,
+			Multiplicity: MultiplicityOne, Route: "route",
 		},
 		"summary without tag": {
 			Axis: axis, Carrier: "carrier", Form: ReadFormSummary,
 			Multiplicity: MultiplicityOne,
 		},
+		"summary with route": {
+			Axis: axis, Carrier: "carrier", Form: ReadFormSummary,
+			Multiplicity: MultiplicityOne, Tag: "tag", Route: "route",
+		},
 		"complete with tag": {
 			Axis: axis, Carrier: "carrier", Form: ReadFormComplete,
 			Multiplicity: MultiplicityMany, Tag: "tag",
 		},
+		"complete with route": {
+			Axis: axis, Carrier: "carrier", Form: ReadFormComplete,
+			Multiplicity: MultiplicityMany, Route: "route",
+		},
 	} {
 		t.Run(name, func(t *testing.T) {
 			if input.Available() {
-				t.Fatal("reducer input admitted a tag/read-form mismatch")
+				t.Fatal("reducer input admitted a carrier its read form cannot have")
 			}
 		})
 	}
@@ -148,9 +167,21 @@ func TestReducerInputTagExistsOnlyForTaggedReadForms(t *testing.T) {
 			Axis: axis, Carrier: "carrier", Form: ReadFormExact,
 			Multiplicity: MultiplicityOne,
 		},
-		"selected": {
+		"selected tagged": {
 			Axis: axis, Carrier: "carrier", Form: ReadFormSelected,
 			Multiplicity: MultiplicityMany, Tag: "tag",
+		},
+		"selected untagged": {
+			Axis: axis, Carrier: "carrier", Form: ReadFormSelected,
+			Multiplicity: MultiplicityMany,
+		},
+		"selected routed": {
+			Axis: axis, Carrier: "carrier", Form: ReadFormSelected,
+			Multiplicity: MultiplicityOne, Route: "route",
+		},
+		"selected routed and tagged": {
+			Axis: axis, Carrier: "carrier", Form: ReadFormSelected,
+			Multiplicity: MultiplicityMany, Tag: "tag", Route: "route",
 		},
 		"summary": {
 			Axis: axis, Carrier: "carrier", Form: ReadFormSummary,
@@ -163,7 +194,7 @@ func TestReducerInputTagExistsOnlyForTaggedReadForms(t *testing.T) {
 	} {
 		t.Run(name, func(t *testing.T) {
 			if !input.Available() {
-				t.Fatal("reducer input rejected its canonical tag/read-form shape")
+				t.Fatal("reducer input rejected a shape its read form admits")
 			}
 		})
 	}

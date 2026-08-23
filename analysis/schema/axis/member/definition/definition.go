@@ -183,14 +183,17 @@ type Projection struct {
 	CandidateProvider member.RelationRef
 }
 
-// ReducerInput is one named reducer input. Carrier and Tag refer to carrier
-// names; an empty Tag is the untagged spelling for Exact and Complete reads.
+// ReducerInput is one named reducer input. Carrier, Tag and Route refer to
+// carrier names; an empty Tag is the untagged spelling, and an empty Route is
+// the unrouted one. Whether a Selected read is tagged or routed is stated by
+// the Program that reads it, so both are optional here.
 type ReducerInput struct {
 	Axis         schema.EntryReference
 	Carrier      string
 	Form         member.ReadForm
 	Multiplicity member.Multiplicity
 	Tag          string
+	Route        string
 }
 
 // ReducerOutput is one named reducer output. Carrier refers to a carrier name.
@@ -391,7 +394,15 @@ func (definition Definition) Catalog() (member.Catalog, bool) {
 				}
 				tag = tagged.Key
 			}
-			inputs[inputIndex] = member.ReducerInput{Axis: input.Axis, Carrier: carrier.Key, Form: input.Form, Multiplicity: input.Multiplicity, Tag: tag}
+			var routed member.Carrier
+			if input.Route != "" {
+				route, routeOK := carriers[input.Route]
+				if !routeOK {
+					return member.Catalog{}, false
+				}
+				routed = route.Key
+			}
+			inputs[inputIndex] = member.ReducerInput{Axis: input.Axis, Carrier: carrier.Key, Form: input.Form, Multiplicity: input.Multiplicity, Tag: tag, Route: routed}
 		}
 		outputs := make([]member.ReducerOutput, len(reducer.Outputs))
 		for outputIndex, output := range reducer.Outputs {
@@ -700,6 +711,11 @@ const (
 	// ArgumentCandidate is the optional owner-issued candidate carrier, which
 	// always precedes the inputs when present.
 	ArgumentCandidate ArgumentRole = iota + 1
+	// ArgumentRoute is the destination coordinate of a routed input: the route
+	// join's Destination projection result. It is how a routed fold learns
+	// which coordinate it is publishing at, rather than resolving a plan of its
+	// own. It precedes that input's tag.
+	ArgumentRoute
 	// ArgumentTag is the tag carrier of a tagged input. It is how a fold learns
 	// which member of a selection it was handed - the route member's own
 	// carrier value - rather than an engine-supplied projection or index.
@@ -721,21 +737,28 @@ type Argument struct {
 // statement, shared by the name-resolving derivation here and by the
 // address-resolving one in the rule codegen model.
 type ArgumentInput struct {
+	Route  GoType
+	Routed bool
 	Tag    GoType
 	Tagged bool
 	Fact   GoType
 }
 
 // ComposeArguments is the one statement of a reducer's parameter order: the
-// optional candidate carrier first, then for each input its tag carrier when
-// tagged followed by its fact carrier. A tag precedes the fact it names because
-// it is what says which member of a selection the invocation is folding.
+// optional candidate carrier first, then for each input its route coordinate
+// when routed, its tag carrier when tagged, and its fact carrier. A route
+// precedes the tag and the tag precedes the fact, outermost address first: the
+// route says where the invocation publishes, the tag says which member of the
+// selection it folds, and the fact is that member.
 func ComposeArguments(candidate GoType, candidatePresent bool, inputs []ArgumentInput) []Argument {
-	arguments := make([]Argument, 0, len(inputs)*2+1)
+	arguments := make([]Argument, 0, len(inputs)*3+1)
 	if candidatePresent {
 		arguments = append(arguments, Argument{Role: ArgumentCandidate, Type: candidate, Input: -1})
 	}
 	for index, input := range inputs {
+		if input.Routed {
+			arguments = append(arguments, Argument{Role: ArgumentRoute, Type: input.Route, Input: index})
+		}
 		if input.Tagged {
 			arguments = append(arguments, Argument{Role: ArgumentTag, Type: input.Tag, Input: index})
 		}
@@ -750,8 +773,8 @@ func ComposeArguments(candidate GoType, candidatePresent bool, inputs []Argument
 // fence a fold all read the same derivation.
 //
 // The parameters are carrier values only - the optional candidate carrier, then
-// for each declared input its tag carrier when tagged followed by its fact
-// carrier. Nothing else is ever a parameter. The owner schema, the derived
+// for each declared input its route coordinate when routed, its tag carrier
+// when tagged, and its fact carrier. Nothing else is ever a parameter. The owner schema, the derived
 // route plan and the projections a fold consults are the sealed state of the
 // installed Family that calls the reducer, bound once when the owner installs
 // it. That is what keeps a signature from growing plumbing: its width is a
@@ -780,6 +803,13 @@ func (definition Definition) ReducerSignature(reducer Reducer, outcome GoType) (
 			return nil, nil, false
 		}
 		inputs[index] = ArgumentInput{Fact: fact.Type}
+		if input.Route != "" {
+			route, routeOK := carriers[input.Route]
+			if !routeOK {
+				return nil, nil, false
+			}
+			inputs[index].Route, inputs[index].Routed = route.Type, true
+		}
 		if input.Tag != "" {
 			tag, tagOK := carriers[input.Tag]
 			if !tagOK {

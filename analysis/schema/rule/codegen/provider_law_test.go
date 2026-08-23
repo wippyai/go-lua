@@ -141,6 +141,11 @@ func providerConsumerMetadata() membergenerator.Metadata {
 
 func providerCatalogs(t *testing.T) (member.Catalog, member.Catalog) {
 	t.Helper()
+	return providerCatalogsFor(t, false)
+}
+
+func providerCatalogsFor(t *testing.T, spareJoin bool) (member.Catalog, member.Catalog) {
+	t.Helper()
 	valueProvider := member.RelationRef{Axis: providerAxisRef(providerValueAxis), Member: providerCandidates}
 	valueCatalog, valueOK := member.NewCatalog(
 		[]member.Relation{{Key: providerCandidates, Subject: "carrier/value/storage-transfer", CandidateProvider: valueProvider}},
@@ -157,7 +162,7 @@ func providerCatalogs(t *testing.T) (member.Catalog, member.Catalog) {
 			{Key: providerPredicate, Relation: providerRoutes, Role: member.Predicate, Result: "carrier/placement/tag", CandidateProvider: placementProvider},
 			{Key: providerDestination, Relation: providerRoutes, Role: member.Destination, Result: "carrier/placement/key", CandidateProvider: placementProvider},
 		},
-		[]member.Reducer{{Key: providerReducer, Inputs: []member.ReducerInput{{Axis: providerAxisRef(providerPlacementAxis), Carrier: "carrier/placement/fact", Form: member.Selected, Multiplicity: member.MultiplicityOne, Tag: "carrier/placement/tag"}}, Outputs: []member.ReducerOutput{{Axis: providerAxisRef(providerPlacementAxis), Carrier: "carrier/placement/fact"}}}},
+		[]member.Reducer{{Key: providerReducer, Inputs: providerReducerInputs(spareJoin), Outputs: []member.ReducerOutput{{Axis: providerAxisRef(providerPlacementAxis), Carrier: "carrier/placement/fact"}}}},
 		nil,
 	)
 	if !placementOK {
@@ -166,29 +171,64 @@ func providerCatalogs(t *testing.T) (member.Catalog, member.Catalog) {
 	return valueCatalog, placementCatalog
 }
 
-func providerPlanCatalog(t *testing.T) ruleplan.Catalog {
-	t.Helper()
-	valueCatalog, placementCatalog := providerCatalogs(t)
+// providerJoin is the fixture's one selected join over the route relation. The
+// spare-join variant reads it twice so a fold has an input no output routes
+// through, which is the only shape that can state what a route carrier on an
+// unrouted input does.
+func providerJoin() program.JoinDecl {
+	placementAxis := providerAxisRef(providerPlacementAxis)
+	return program.JoinDecl{
+		Sources:   []program.SourceRef{program.CandidateSource()},
+		Relation:  member.RelationRef{Axis: placementAxis, Member: providerRoutes},
+		Key:       member.ProjectionRef{Axis: placementAxis, Member: providerRouteKey},
+		Predicate: member.ProjectionRef{Axis: placementAxis, Member: providerPredicate},
+		Read: program.ReadDecl{
+			Input: 0, Axis: program.AxisRef(placementAxis), Form: program.Selected,
+			Contract: program.ReadContract{Order: program.OrderCanonical, Sparse: program.SparseExplicit, OnOpaque: program.OnOpaqueRefuse, Multiplicity: program.MultiplicityOne, DenominatorRef: program.DenominatorRef{Surface: schema.SurfaceKindDenominator, Key: providerDenominator}},
+		},
+	}
+}
+
+func providerDeclaration(spareJoin bool) program.Program {
 	valueAxis := providerAxisRef(providerValueAxis)
 	placementAxis := providerAxisRef(providerPlacementAxis)
-	declaration := program.Program{
+	joins := []program.JoinDecl{providerJoin()}
+	inputs := []program.JoinRef{0}
+	if spareJoin {
+		spare := providerJoin()
+		spare.Predicate = member.ProjectionRef{}
+		spare.Read.Form = program.Exact
+		spare.Read.Contract.Multiplicity = program.MultiplicityOne
+		joins = append(joins, spare)
+		inputs = append(inputs, 1)
+	}
+	return program.Program{
 		OperandRole: vocabulary.RoleKey("provider/operand"),
 		Candidate:   member.RelationRef{Axis: valueAxis, Member: providerCandidates},
-		Joins: []program.JoinDecl{{
-			Sources:   []program.SourceRef{program.CandidateSource()},
-			Relation:  member.RelationRef{Axis: placementAxis, Member: providerRoutes},
-			Key:       member.ProjectionRef{Axis: placementAxis, Member: providerRouteKey},
-			Predicate: member.ProjectionRef{Axis: placementAxis, Member: providerPredicate},
-			Read: program.ReadDecl{
-				Input: 0, Axis: program.AxisRef(placementAxis), Form: program.Selected,
-				Contract: program.ReadContract{Order: program.OrderCanonical, Sparse: program.SparseExplicit, OnOpaque: program.OnOpaqueRefuse, Multiplicity: program.MultiplicityOne, DenominatorRef: program.DenominatorRef{Surface: schema.SurfaceKindDenominator, Key: providerDenominator}},
-			},
-		}},
+		Joins:       joins,
 		Fold: program.FoldDecl{
-			Reducer: member.ReducerRef{Axis: placementAxis, Member: providerReducer}, Inputs: []program.JoinRef{0},
+			Reducer: member.ReducerRef{Axis: placementAxis, Member: providerReducer}, Inputs: inputs,
 			Outputs: []program.OutputDecl{{Column: axis.OutputRef{Axis: placementAxis, Key: providerOutput}, Destination: member.ProjectionRef{Axis: placementAxis, Member: providerDestination}, Mode: program.ModeRoute, ValueSlot: 0, RouteJoin: 0, RouteJoinPresent: true}},
 		},
 	}
+}
+
+func providerPlanCatalog(t *testing.T) ruleplan.Catalog {
+	t.Helper()
+	return providerPlanCatalogFor(t, providerDeclaration(false))
+}
+
+func providerReducerInputs(spareJoin bool) []member.ReducerInput {
+	inputs := []member.ReducerInput{{Axis: providerAxisRef(providerPlacementAxis), Carrier: "carrier/placement/fact", Form: member.Selected, Multiplicity: member.MultiplicityOne, Tag: "carrier/placement/tag"}}
+	if spareJoin {
+		inputs = append(inputs, member.ReducerInput{Axis: providerAxisRef(providerPlacementAxis), Carrier: "carrier/placement/fact", Form: member.Exact, Multiplicity: member.MultiplicityOne})
+	}
+	return inputs
+}
+
+func providerPlanCatalogFor(t *testing.T, declaration program.Program) ruleplan.Catalog {
+	t.Helper()
+	valueCatalog, placementCatalog := providerCatalogsFor(t, declaration.JoinCount() > 1)
 	if problem, valid := declaration.Check(); !valid {
 		t.Fatalf("provider declaration rejected: %+v", problem)
 	}

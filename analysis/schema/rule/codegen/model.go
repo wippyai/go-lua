@@ -181,6 +181,11 @@ type ReducerInput struct {
 	Multiplicity member.Multiplicity
 	Tag          memberdefinition.GoType
 	Tagged       bool
+	// Route is the destination coordinate of an input whose join a routed
+	// output writes through, resolved from that output's Destination
+	// projection. Routed says the plan named this join as a route join.
+	Route  memberdefinition.GoType
+	Routed bool
 }
 
 // Output is one reducer output mapped to a sealed frame column. Type is the
@@ -494,6 +499,7 @@ type (
 
 const (
 	ReducerArgumentCandidate = memberdefinition.ArgumentCandidate
+	ReducerArgumentRoute     = memberdefinition.ArgumentRoute
 	ReducerArgumentTag       = memberdefinition.ArgumentTag
 	ReducerArgumentFact      = memberdefinition.ArgumentFact
 )
@@ -504,8 +510,9 @@ const (
 // cannot drift from the contract by construction.
 //
 // The vector is carrier values only - the optional candidate carrier, then for
-// each declared input its tag carrier when the input is tagged followed by its
-// fact carrier. Nothing else is ever a parameter. In particular the owner
+// each declared input its route coordinate when the input is routed, its tag
+// carrier when the input is tagged, and its fact carrier. Nothing else is ever
+// a parameter. In particular the owner
 // schema, the derived route plan, and the projections a fold consults are NOT
 // passed: they are the sealed state of the installed Family that calls this
 // reducer, bound once when the owner installs it and immutable thereafter.
@@ -515,7 +522,7 @@ const (
 func (call ReducerCall) Arguments() []ReducerArgument {
 	inputs := make([]memberdefinition.ArgumentInput, len(call.Inputs))
 	for index, input := range call.Inputs {
-		inputs[index] = memberdefinition.ArgumentInput{Tag: input.Tag, Tagged: input.Tagged, Fact: input.Type}
+		inputs[index] = memberdefinition.ArgumentInput{Route: input.Route, Routed: input.Routed, Tag: input.Tag, Tagged: input.Tagged, Fact: input.Type}
 	}
 	return memberdefinition.ComposeArguments(call.Candidate, call.CandidatePresent, inputs)
 }

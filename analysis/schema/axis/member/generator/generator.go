@@ -101,13 +101,18 @@ type ProjectionBinding struct {
 	CandidateProviderLocal bool
 }
 
-// ReducerInputBinding is typed metadata for one reducer input row.
+// ReducerInputBinding is typed metadata for one reducer input row. Tag and
+// Route are the conditional carriers: a tag names which member of a selection
+// the invocation folds, a route names the coordinate it publishes at. Whether
+// either is present is the reading rule's plan, so both are optional here and
+// the rule model settles them against that plan.
 type ReducerInputBinding struct {
 	Axis         schema.EntryReference
 	Type         definition.GoType
 	Form         member.ReadForm
 	Multiplicity member.Multiplicity
 	Tag          definition.GoType
+	Route        definition.GoType
 }
 
 // ReducerOutputBinding is typed metadata for one reducer output row.
@@ -283,6 +288,9 @@ func Resolve(source definition.Definition) (Metadata, error) {
 			row := ReducerInputBinding{Axis: input.Axis, Type: carriers[input.Carrier].Type, Form: input.Form, Multiplicity: input.Multiplicity}
 			if input.Tag != "" {
 				row.Tag = carriers[input.Tag].Type
+			}
+			if input.Route != "" {
+				row.Route = carriers[input.Route].Type
 			}
 			inputs[inputIndex] = row
 		}
@@ -490,6 +498,9 @@ func renderCold(packageName string, source definition.Definition) ([]byte, error
 			fmt.Fprintf(&out, "\t\t\t\t{Axis: %s, Carrier: %s, Form: %s, Multiplicity: %s", coldEntryReferenceExpression(input.Axis, source.Axis), carriers[input.Carrier], form, multiplicity)
 			if input.Tag != "" {
 				fmt.Fprintf(&out, ", Tag: %s", carriers[input.Tag])
+			}
+			if input.Route != "" {
+				fmt.Fprintf(&out, ", Route: %s", carriers[input.Route])
 			}
 			out.WriteString("},\n")
 		}

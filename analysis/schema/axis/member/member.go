@@ -141,7 +141,19 @@ type ReducerInput struct {
 	Carrier      Carrier
 	Form         ReadForm
 	Multiplicity Multiplicity
-	Tag          Carrier
+	// Tag is the carrier naming which member of a selection the invocation
+	// folds. A Summary's tag IS its selection projection, so a Summary read
+	// always carries one. A Selected read carries one exactly when the join it
+	// reads declares a Predicate, which only the reading Program states, so
+	// this declaration leaves it optional and the rule's plan settles it.
+	Tag Carrier
+	// Route is the carrier of the route join's Destination projection: the
+	// coordinate this invocation writes to. A routed fold is indexed by that
+	// coordinate, so it receives it as a value rather than resolving it from a
+	// plan of its own. Whether an input is routed is the reading Program's
+	// statement - a route join is named by an output, not by this row - so this
+	// declaration leaves it optional and the rule's plan settles it.
+	Route Carrier
 }
 
 func (input ReducerInput) Available() bool {
@@ -149,8 +161,14 @@ func (input ReducerInput) Available() bool {
 		!input.Form.Available() || !input.Multiplicity.Available() {
 		return false
 	}
-	tagged := input.Form == ReadFormSelected || input.Form == ReadFormSummary
-	return tagged == input.Tag.Available()
+	switch input.Form {
+	case ReadFormSelected:
+		return true
+	case ReadFormSummary:
+		return input.Tag.Available() && !input.Route.Available()
+	default:
+		return !input.Tag.Available() && !input.Route.Available()
+	}
 }
 
 // ReducerOutput is one ordered axis publication in a reducer's cold
