@@ -64,7 +64,7 @@ type declaredActivationCandidate struct {
 	Body        identity.ContentID
 	Trigger     artifactMountedPoint
 	Imports     []composition.Key
-	Export      composition.Key
+	Exports     []composition.Key
 }
 
 // declaredRoleOwnsRuleSchema is the sealed role fence one issuance is admitted
@@ -463,11 +463,16 @@ func declaredActivationSurfaces(read RuleReadSurface) declaredRuleSurfaces {
 // must belong to this Binding and to the exact activation rule the role owns.
 func declaredActivationTransport(state *schemaBindingState, issuer *MountedActivationCandidateIssuer, role RuleSlotCapability, semantic composition.Key) bool {
 	if issuer == nil || issuer.state != state || state == nil || state.authority == nil ||
-		issuer.rule != semantic || !issuer.family.Available() || len(issuer.imports) == 0 || !issuer.export.Available() ||
+		issuer.rule != semantic || !issuer.family.Available() || len(issuer.imports) == 0 || len(issuer.exports) == 0 ||
 		!role.activation {
 		return false
 	}
 	for _, factor := range issuer.imports {
+		if !factor.Available() {
+			return false
+		}
+	}
+	for _, factor := range issuer.exports {
 		if !factor.Available() {
 			return false
 		}
@@ -537,7 +542,7 @@ func declareActivationCandidates(schema *Schema, issuance pendingRuleIssuance) (
 			Context: context,
 			Mount:   candidate.Mount, Body: candidate.Body,
 			Trigger: artifactMountedPoint{mount: issuance.mount, reusable: issuance.point},
-			Imports: issuance.issuer.imports, Export: issuance.issuer.export,
+			Imports: issuance.issuer.imports, Exports: issuance.issuer.exports,
 		})
 	}
 	return declared, true

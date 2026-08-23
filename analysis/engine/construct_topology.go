@@ -1258,6 +1258,7 @@ func constructActivationPlane(declaration topologyDeclaration, source constructe
 		}
 		tupleAt[tuple] = struct{}{}
 		row.Imports = append([]composition.Key(nil), row.Imports...)
+		row.Exports = append([]composition.Key(nil), row.Exports...)
 		row.Entries = append([]equation.PointRef(nil), row.Entries...)
 		row.Exits = append([]equation.PointRef(nil), row.Exits...)
 		plane.rows = append(plane.rows, row)
@@ -1310,7 +1311,7 @@ func constructDeclaredCandidates(declaration topologyDeclaration, mounts constru
 				Entries:        append([]equation.PointRef(nil), transport.entries...),
 				Exits:          append([]equation.PointRef(nil), transport.exits...),
 				Imports:        append([]composition.Key(nil), candidate.Imports...),
-				Export:         candidate.Export,
+				Exports:        append([]composition.Key(nil), candidate.Exports...),
 			})
 		}
 	}
