@@ -13,8 +13,8 @@ import (
 	"github.com/wippyai/go-lua/domain/composite"
 	staticdomain "github.com/wippyai/go-lua/domain/static"
 	"github.com/wippyai/go-lua/domain/type/authority"
-	domaintypecontract "github.com/wippyai/go-lua/domain/type/typecontract"
 	"github.com/wippyai/go-lua/domain/type/channelselect"
+	domaintypecontract "github.com/wippyai/go-lua/domain/type/typecontract"
 
 	"github.com/wippyai/go-lua/analysis/identity"
 	analysisworkspace "github.com/wippyai/go-lua/analysis/internal/workspace"
@@ -196,10 +196,17 @@ func (state *compiledState) publishComposition(module *linkmodule.Component, con
 	if !directoryOK {
 		return anadiag.AnalyzeDiagnosticCompositionFailureContent, programmount.AxisKey
 	}
-	imports, caches, transitions, generations, outcomes, terminals, origins, compositionOK := module.BuildCompositionRows(state.sourceID, state.artifacts.mounts, contextDirectory)
-	if !compositionOK {
+	composition, compositionOK := state.binding.ModuleComposition()
+	if !compositionOK || !composition.Available() || composition.LinkID() != state.sourceID {
 		return anadiag.AnalyzeDiagnosticCompositionFailureRows, ""
 	}
+	imports := composition.Imports()
+	caches := composition.Caches()
+	transitions := composition.Transitions()
+	generations := composition.Generations()
+	outcomes := composition.Outcomes()
+	terminals := composition.Terminals()
+	origins := composition.CallableOrigins()
 	importDenominator, importDenominatorOK := modulecomposition.ImportDenominatorID(state.sourceID)
 	cacheDenominator, cacheDenominatorOK := modulecomposition.CacheDenominatorID(state.sourceID)
 	transitionDenominator, transitionDenominatorOK := modulecomposition.ModuleCallTransitionDenominatorID(state.sourceID)
