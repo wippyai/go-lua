@@ -83,6 +83,11 @@ type CompiledRule struct {
 	reads      []ReadPlan
 	outputs    []OutputPlan
 	carry      *CarryPlan
+	// transports is the sealed activation transport vector. It is the content
+	// of a structural publication: the axes one candidate route instantiates
+	// across its transition, each row carrying whether the mounted body carries
+	// that axis back out. A rule that publishes a fact declares none.
+	transports []ruleplan.Transport
 
 	// planGeometry is set only by the schema-owned constructor below. A generic
 	// invocation descriptor can omit Plan/member authority, but such a value
@@ -110,6 +115,7 @@ type CompiledRuleSpec struct {
 	Reads      []ReadPlan
 	Outputs    []OutputPlan
 	Carry      *CarryPlan
+	Transports []ruleplan.Transport
 }
 
 // NewPlanCompiledRule seals a generated descriptor from one already compiled
@@ -150,12 +156,16 @@ func NewPlanCompiledRule(spec CompiledRuleSpec) (CompiledRule, bool) {
 	}
 	rule := CompiledRule{
 		ordinal: spec.Ordinal, inputCount: uint16(spec.InputCount), reads: readCopy, outputs: outputCopy, carry: carry,
+		transports:   append([]ruleplan.Transport(nil), spec.Transports...),
 		planGeometry: true, axisCount: uint32(spec.AxisCount), candidateRelation: spec.Candidate, reducer: spec.Reducer,
 	}
 	if carry != nil && !normalizeCarryPlan(carry, spec.InputCount, spec.AxisCount, outputCopy[0].Factor) {
 		return CompiledRule{}, false
 	}
 	if !validRelationAddr(spec.Candidate) || !validReducerAddr(spec.Reducer) || !addressAxesInRange(spec.AxisCount, spec.Candidate, spec.Reducer, outputCopy[0].Address, outputCopy[0].Destination) {
+		return CompiledRule{}, false
+	}
+	if !validTransportVector(rule.transports, outputCopy[0].Mode, spec.AxisCount) {
 		return CompiledRule{}, false
 	}
 	for _, read := range readCopy {
@@ -170,7 +180,7 @@ func NewPlanCompiledRule(spec CompiledRuleSpec) (CompiledRule, bool) {
 	if output.Mode == ruleprogram.ModeRoute && selectedReadCount(readCopy) != 1 {
 		return CompiledRule{}, false
 	}
-	if output.Mode == ruleprogram.ModeExact && output.Destination.Axis != spec.Candidate.Axis {
+	if output.Mode != ruleprogram.ModeRoute && output.Destination.Axis != spec.Candidate.Axis {
 		return CompiledRule{}, false
 	}
 	if output.Mode == ruleprogram.ModeRoute && output.Destination.Axis != readCopy[output.RouteJoin].Relation.Axis {
@@ -294,16 +304,42 @@ func normalizeOutputPlan(output *OutputPlan, reads []ReadPlan) bool {
 	if output == nil {
 		return false
 	}
-	if output.Mode != ruleprogram.ModeExact && output.Mode != ruleprogram.ModeRoute {
+	switch output.Mode {
+	case ruleprogram.ModeExact:
+		// Exact and Strong are the exact writer's capability evidence.
+		return output.Exact && output.Strong && !output.RouteJoinPresent && output.RouteJoin == 0
+	case ruleprogram.ModeStructural:
+		// A structural publication stages no fact, so it carries neither the
+		// exact writer's evidence nor a route.
+		return !output.Exact && !output.Strong && !output.RouteJoinPresent && output.RouteJoin == 0
+	case ruleprogram.ModeRoute:
+		return output.RouteJoinPresent && uint64(output.RouteJoin) < uint64(len(reads)) && reads[output.RouteJoin].Form == ruleprogram.Selected && selectedReadCount(reads) == 1
+	default:
 		return false
 	}
-	if output.Mode == ruleprogram.ModeExact && (!output.Exact || !output.Strong) {
+}
+
+// validTransportVector states the biconditional between a structural
+// publication and an activation transport vector. A structural publication
+// with no vector instantiates nothing; a vector on a fact-writing rule is a
+// transport no candidate route crosses. Neither is silently converted into the
+// other, and every transported axis is fenced by the same sealed directory as
+// the descriptor's other addresses.
+func validTransportVector(transports []ruleplan.Transport, mode ruleprogram.OutputMode, axisCount int) bool {
+	if (mode == ruleprogram.ModeStructural) != (len(transports) != 0) {
 		return false
 	}
-	if output.Mode == ruleprogram.ModeExact {
-		return !output.RouteJoinPresent && output.RouteJoin == 0
+	seen := make(map[uint32]struct{}, len(transports))
+	for _, transport := range transports {
+		if uint64(transport.Axis) >= uint64(axisCount) {
+			return false
+		}
+		if _, duplicate := seen[transport.Axis]; duplicate {
+			return false
+		}
+		seen[transport.Axis] = struct{}{}
 	}
-	return output.RouteJoinPresent && uint64(output.RouteJoin) < uint64(len(reads)) && reads[output.RouteJoin].Form == ruleprogram.Selected && selectedReadCount(reads) == 1
+	return true
 }
 
 func normalizeCarryPlan(carry *CarryPlan, inputCount, axisCount int, outputFactor uint32) bool {
@@ -368,9 +404,11 @@ func validOutputPlan(output OutputPlan, _ int, axisCount int, candidate ruleplan
 		validOutputAddr(output.Address) && validProjectionAddr(output.Destination) &&
 		output.Address.Axis == output.Axis &&
 		reducer.Axis == output.Axis && output.Slot == 0 &&
-		(output.Mode == ruleprogram.ModeExact || output.Mode == ruleprogram.ModeRoute) &&
+		output.Mode.Available() &&
 		(output.Mode != ruleprogram.ModeExact || output.Exact && output.Strong) &&
-		(output.Mode == ruleprogram.ModeExact && !output.RouteJoinPresent && output.RouteJoin == 0 || output.Mode == ruleprogram.ModeRoute && output.RouteJoinPresent) &&
+		(output.Mode != ruleprogram.ModeStructural || !output.Exact && !output.Strong) &&
+		(output.Mode == ruleprogram.ModeRoute) == output.RouteJoinPresent &&
+		(output.RouteJoinPresent || output.RouteJoin == 0) &&
 		addressAxesInRange(axisCount, output.Address, output.Destination)
 }
 
@@ -455,10 +493,13 @@ func (rule CompiledRule) Available() bool {
 			return false
 		}
 	}
-	if output.Mode == ruleprogram.ModeExact && output.Destination.Axis != rule.candidateRelation.Axis {
+	if output.Mode != ruleprogram.ModeRoute && output.Destination.Axis != rule.candidateRelation.Axis {
 		return false
 	}
 	if output.Mode == ruleprogram.ModeRoute && output.Destination.Axis != rule.reads[output.RouteJoin].Relation.Axis {
+		return false
+	}
+	if !validTransportVector(rule.transports, output.Mode, int(rule.axisCount)) {
 		return false
 	}
 	if rule.carry != nil {
@@ -512,6 +553,23 @@ func (rule CompiledRule) OutputAt(index int) (OutputPlan, bool) {
 		return OutputPlan{}, false
 	}
 	return rule.outputs[index], true
+}
+
+// TransportCount is the width of this descriptor's activation transport
+// vector. It is zero for a rule that publishes a fact.
+func (rule CompiledRule) TransportCount() int {
+	if !rule.Available() {
+		return 0
+	}
+	return len(rule.transports)
+}
+
+// TransportAt returns one sealed transport row by its declaration ordinal.
+func (rule CompiledRule) TransportAt(index int) (ruleplan.Transport, bool) {
+	if !rule.Available() || index < 0 || index >= len(rule.transports) {
+		return ruleplan.Transport{}, false
+	}
+	return rule.transports[index], true
 }
 
 func (rule CompiledRule) ReadInput() int {
