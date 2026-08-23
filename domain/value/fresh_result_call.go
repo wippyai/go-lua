@@ -58,6 +58,43 @@ func (schema *Schema) FreshResultCallAt(index int) (FreshResultCall, bool) {
 	return schema.FreshResultCallFor(schema.freshResultCallKeys[index])
 }
 
+// FreshResultCallForID resolves an admitted fixed fresh-result row by the Heap
+// key content identity it is addressed by across the Link. It redeems the
+// occurrence through Heap's own key directory rather than keeping a second
+// identity index of its own.
+func (schema *Schema) FreshResultCallForID(id identity.ContentID) (FreshResultCall, bool) {
+	if schema == nil || !schema.Valid() || !id.Available() {
+		return FreshResultCall{}, false
+	}
+	key, keyOK := schema.heap.KeyForID(id)
+	if !keyOK || key.Kind() != heap.RootAllocation {
+		return FreshResultCall{}, false
+	}
+	return schema.FreshResultCallFor(key)
+}
+
+// FreshResultCallIDAt is the occurrence identity of one admitted fixed result
+// in the same canonical order FreshResultCallAt enumerates. It mints no second
+// identity: the row is addressed by the Heap key content identity it already
+// carries.
+func (schema *Schema) FreshResultCallIDAt(index int) (identity.ContentID, bool) {
+	row, rowOK := schema.FreshResultCallAt(index)
+	if !rowOK {
+		return identity.ContentID{}, false
+	}
+	return row.KeyID()
+}
+
+// FreshResultCallOrdinal is the dense position of one admitted row in the
+// canonical order. It is the exact inverse of FreshResultCallAt.
+func (schema *Schema) FreshResultCallOrdinal(row FreshResultCall) (uint32, bool) {
+	if schema == nil || !schema.OwnsFreshResultCall(row) || schema.freshResultCallOrdinals == nil {
+		return 0, false
+	}
+	ordinal, ok := schema.freshResultCallOrdinals[row.key]
+	return ordinal, ok
+}
+
 // OwnsFreshResultCall is the exact Schema owner fence for a detached
 // fresh-result operand. Equal-content Value schemas cannot exchange rows.
 func (schema *Schema) OwnsFreshResultCall(row FreshResultCall) bool {
@@ -139,7 +176,7 @@ type freshResultCallOrigin struct {
 // coordinate, so no second Link-level result-coordinate row is read.
 // Open or structural slots have no admitted Value coordinate and are omitted.
 func (schema *valueBuilder) sealFreshResultCalls() bool {
-	if schema == nil || schema.Schema == nil || schema.sealProject() == nil || schema.sealBoundary() == nil || schema.Schema.mountedCallResultSlots == nil || schema.freshResultCalls == nil || len(schema.freshResultCalls) != 0 || len(schema.freshResultCallKeys) != 0 || !schema.heap.Valid() {
+	if schema == nil || schema.Schema == nil || schema.sealProject() == nil || schema.sealBoundary() == nil || schema.Schema.mountedCallResultSlots == nil || schema.freshResultCalls == nil || schema.freshResultCallOrdinals == nil || len(schema.freshResultCalls) != 0 || len(schema.freshResultCallKeys) != 0 || len(schema.freshResultCallOrdinals) != 0 || !schema.heap.Valid() {
 		return false
 	}
 
@@ -198,7 +235,9 @@ func (schema *valueBuilder) sealFreshResultCalls() bool {
 			return false
 		}
 		schema.freshResultCalls[key] = row
+		schema.freshResultCallOrdinals[key] = uint32(len(schema.freshResultCallKeys))
 		schema.freshResultCallKeys = append(schema.freshResultCallKeys, key)
 	}
-	return len(schema.freshResultCalls) == len(schema.freshResultCallKeys)
+	return len(schema.freshResultCalls) == len(schema.freshResultCallKeys) &&
+		len(schema.freshResultCallOrdinals) == len(schema.freshResultCallKeys)
 }

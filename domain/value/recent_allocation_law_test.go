@@ -196,6 +196,14 @@ func mustAtom(t testing.TB, schema *valuedomain.Schema, fact valuedomain.Value) 
 }
 
 func recentAllocationFixture(t testing.TB) (heapdomain.Schema, *valuedomain.Schema) {
+	return sealValueSource(t, "exact_recent_allocation.lua", "return {}\n")
+}
+
+// sealValueSource seals one source to the altitude Value's directories are
+// published at. It is the same construction recentAllocationFixture always
+// did, with the source named by the caller so a law can ask for a program that
+// actually seals the rows it is about.
+func sealValueSource(t testing.TB, name, source string) (heapdomain.Schema, *valuedomain.Schema) {
 	t.Helper()
 	compilation, compilationOK := composite.Build()
 	grammar := compilation.ExecutionSchemaID()
@@ -205,7 +213,7 @@ func recentAllocationFixture(t testing.TB) (heapdomain.Schema, *valuedomain.Sche
 	if contractErr != nil {
 		t.Fatal(contractErr)
 	}
-	linked, linkErr := testfixture.SealSource(contract, "exact_recent_allocation.lua", []byte("return {}\n"))
+	linked, linkErr := testfixture.SealSource(contract, name, []byte(source))
 	if linkErr != nil {
 		t.Fatal(linkErr)
 	}

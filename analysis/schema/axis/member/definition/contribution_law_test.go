@@ -435,3 +435,50 @@ func TestCompleteRefusesTwoProjectionsClaimingOneIdentity(t *testing.T) {
 		})
 	}
 }
+
+// TestAGlobalDirectoryOwesACensusWithoutOwingAMaterializer separates the two
+// obligations a candidate census answers to. A source relation's count is the
+// exact width of the dense column its materializer fills, so a count with no
+// materializer there is a width nothing writes. A global directory's count is
+// the bound on the occurrence inventory a Link rule enumerates from it, which
+// it owes whether or not any fact is materialized from its rows. Requiring a
+// materializer for the second reading would force every Link candidate
+// directory to invent a zero-input fact it does not have.
+func TestAGlobalDirectoryOwesACensusWithoutOwingAMaterializer(t *testing.T) {
+	global := func() Definition {
+		base := specimenBase()
+		base.Relations[0].CandidateCount = specimenMethod("SeedCount", "Schema")
+		base.Relations[0].CandidateIdentityAt = specimenMethod("SeedIDAt", "Schema")
+		return base
+	}
+
+	t.Run("admitted", func(t *testing.T) {
+		if !global().Complete() {
+			t.Fatal("a global directory with a census and no materializer was refused")
+		}
+	})
+
+	t.Run("census-without-a-reading", func(t *testing.T) {
+		base := specimenBase()
+		base.Relations[0].CandidateCount = specimenMethod("SeedCount", "Schema")
+		if base.Complete() {
+			t.Fatal("a census with neither a materializer nor an occurrence directory was admitted")
+		}
+	})
+
+	t.Run("directory-without-a-census", func(t *testing.T) {
+		base := global()
+		base.Relations[0].CandidateCount = GoSymbol{}
+		if base.Complete() {
+			t.Fatal("a global directory bounded by no census was admitted")
+		}
+	})
+
+	t.Run("foreign-census", func(t *testing.T) {
+		base := global()
+		base.Relations[0].CandidateCount = specimenMethod("SeedCount", "Elsewhere")
+		if base.Complete() {
+			t.Fatal("a census authored outside the axis owner was admitted")
+		}
+	})
+}

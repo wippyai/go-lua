@@ -480,7 +480,12 @@ func (definition Definition) Complete() bool {
 			}
 		}
 		if materializeOptional {
-			if !countOptional {
+			// Two independent obligations need a census, and only one of them
+			// is materialization. A global directory owes the count that bounds
+			// the occurrence inventory a Link rule enumerates from it, whether
+			// or not any fact is materialized from its rows; every other
+			// relation with no materializer owes no width at all.
+			if !countOptional && (symbolOptional(relation.CandidateIdentityAt) || !sameOwnerSymbol(relation.CandidateCount, owner)) {
 				return false
 			}
 		} else if !relation.CandidateCount.Available() || !sameOwnerSymbol(relation.CandidateCount, owner) {

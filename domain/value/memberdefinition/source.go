@@ -66,8 +66,9 @@ func StorageTransfer() definition.Definition {
 			{Name: "SourceSeedCarrier", Key: "carrier/value/source-seed", Type: valueGoType("SourceSeed")},
 			{Name: "GlobalBootstrapResultCarrier", Key: "carrier/value/global-bootstrap-result", Type: valueGoType("GlobalBootstrapResult")},
 			// These are the two owner-issued candidate relationships whose
-			// transformed carries write the Value factor. They remain nominal
-			// carriers in the cold catalog; no receipt or callback is retained.
+			// transformed carries write the Value factor. Each is the subject of
+			// its own published directory below; no receipt or callback is
+			// retained in the cold catalog.
 			{Name: "AllocationResultCarrier", Key: "carrier/value/allocation-result", Type: allocationResult},
 			{Name: "FreshResultCallCarrier", Key: "carrier/value/fresh-result-call", Type: freshResultCall},
 			{Name: "MountedCallArgumentCarrier", Key: "carrier/value/mounted-call-argument", Type: mountedCallArgument},
@@ -132,6 +133,32 @@ func StorageTransfer() definition.Definition {
 				Inputs:            []string{"MountedCallArgumentCarrier"},
 				CandidateProvider: member.RelationRef{Axis: axisReference("value"), Member: "value/mounted-call/argument-candidates"},
 			},
+			{
+				// The two allocation-form candidate directories. Value publishes
+				// rows of its own constructor receipts because it declares them:
+				// the receipt type lives in the value package, so the relation
+				// whose subject it is can exist. A carry transform may only name
+				// a candidate some relation of its axis subjects, and these are
+				// the relations that subject the two the transforms below name.
+				Name:              "AllocationResults",
+				Key:               "value/allocation/candidates",
+				Subject:           "AllocationResultCarrier",
+				CandidateProvider: member.RelationRef{Axis: axisReference("value"), Member: "value/allocation/candidates"},
+				CandidateResolver: valueMethod("AllocationResultForMountedOccurrence", "Schema", true, 0),
+				CandidateOrdinal:  valueMethod("AllocationResultOrdinal", "Schema", true, 0),
+				CandidateAt:       valueMethod("AllocationResultAt", "Schema", true, 0),
+			},
+			{
+				Name:                "FreshResultCalls",
+				Key:                 "value/fresh-result/candidates",
+				Subject:             "FreshResultCallCarrier",
+				CandidateProvider:   member.RelationRef{Axis: axisReference("value"), Member: "value/fresh-result/candidates"},
+				CandidateResolver:   valueMethod("FreshResultCallForID", "Schema", true, 0),
+				CandidateOrdinal:    valueMethod("FreshResultCallOrdinal", "Schema", true, 0),
+				CandidateAt:         valueMethod("FreshResultCallAt", "Schema", true, 0),
+				CandidateCount:      valueMethod("FreshResultCallCount", "Schema", true, 0),
+				CandidateIdentityAt: valueMethod("FreshResultCallIDAt", "Schema", true, 0),
+			},
 		},
 		Projections: []definition.Projection{
 			{
@@ -178,6 +205,24 @@ func StorageTransfer() definition.Definition {
 				Role:              member.Key,
 				Result:            "ValueCoordinateCarrier",
 				Accessor:          valueMethod("Coordinate", "MountedCallArgument", false, -1),
+			},
+			{
+				Name:              "AllocationResultCoordinate",
+				Key:               "value/allocation/coordinate",
+				Relation:          "AllocationResults",
+				CandidateProvider: member.RelationRef{Axis: axisReference("value"), Member: "value/allocation/candidates"},
+				Role:              member.Destination,
+				Result:            "ValueCoordinateCarrier",
+				Accessor:          valueMethod("Coordinate", "AllocationResult", true, -1),
+			},
+			{
+				Name:              "FreshResultCoordinate",
+				Key:               "value/fresh-result/coordinate",
+				Relation:          "FreshResultCalls",
+				CandidateProvider: member.RelationRef{Axis: axisReference("value"), Member: "value/fresh-result/candidates"},
+				Role:              member.Destination,
+				Result:            "ValueCoordinateCarrier",
+				Accessor:          valueMethod("Coordinate", "FreshResultCall", false, -1),
 			},
 		},
 		CarryTransforms: []definition.CarryTransform{

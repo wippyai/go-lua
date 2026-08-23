@@ -205,6 +205,11 @@ func TestResolveKeepsTypedRowsAlignedWithColdKinds(t *testing.T) {
 		"value/global-bootstrap/candidates",
 		"value/mounted-call/argument-candidates",
 		"value/mounted-call/arguments",
+		// The two allocation-form candidate directories. They are appended, not
+		// interleaved, because a relation that moves is a different ordinal in
+		// every generated ladder.
+		"value/allocation/candidates",
+		"value/fresh-result/candidates",
 	}
 	if len(metadata.Relations) != len(wantRelations) {
 		t.Fatalf("relation inventory = %d, want %d", len(metadata.Relations), len(wantRelations))
@@ -223,6 +228,8 @@ func TestResolveKeepsTypedRowsAlignedWithColdKinds(t *testing.T) {
 		"value/source/coordinate",
 		"value/global-bootstrap/coordinate",
 		"value/mounted-call/argument-key",
+		"value/allocation/coordinate",
+		"value/fresh-result/coordinate",
 	}
 	if len(metadata.Projections) != len(wantProjections) {
 		t.Fatalf("projection inventory = %d, want %d", len(metadata.Projections), len(wantProjections))
@@ -323,9 +330,17 @@ func TestResolveKeepsCandidateIndexedCarryTransformTyped(t *testing.T) {
 // TestResolveRetainsExactlyTheFourInventoriedOwnerCarryMembers pins the whole
 // owner carry inventory: four members, each carrying one fact type through one
 // owner-issued transition named on the candidate the rule draws from its
-// relation. Heap's two carry on the allocation coordinate rather than on a
-// constructor descriptor, because a descriptor that lives beside the fold is
-// no relation's subject and no plan can bind a transform to it.
+// relation.
+//
+// The two axes satisfy that one law differently, and the difference is which
+// package declares the descriptor. Heap's constructor descriptors live beside
+// the fold in a package the heap axis cannot import, so no heap relation could
+// ever publish rows of them; heap therefore carries on the allocation
+// coordinate, which its candidate directories already subject. Value declares
+// AllocationResult and FreshResultCall itself, so it publishes those two
+// directories and carries on the receipts directly. Either way the candidate
+// is the subject of a relation of its own axis, which is what the plan's carry
+// admission binds against.
 func TestResolveRetainsExactlyTheFourInventoriedOwnerCarryMembers(t *testing.T) {
 	valueMetadata, err := Resolve(composedSource(t, "value"))
 	if err != nil {

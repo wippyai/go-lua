@@ -104,6 +104,64 @@ func (schema *Schema) AllocationResultFor(key heap.Key) (*AllocationResult, bool
 	return result, result.validFor(schema)
 }
 
+// AllocationResultCount is the width of Value's issued allocation-receipt
+// directory. The order is the reference order the receipts were sealed in,
+// which is Value's own dense allocation order; nothing derives a second one.
+func (schema *Schema) AllocationResultCount() int {
+	if schema == nil || !schema.Valid() {
+		return 0
+	}
+	return len(schema.allocationResultKeys)
+}
+
+// AllocationResultAt returns one issued receipt in that canonical order.
+func (schema *Schema) AllocationResultAt(index int) (*AllocationResult, bool) {
+	if schema == nil || index < 0 || index >= schema.AllocationResultCount() {
+		return nil, false
+	}
+	return schema.AllocationResultFor(schema.allocationResultKeys[index])
+}
+
+// AllocationResultOrdinal is the dense position of one issued receipt. It is
+// the exact inverse of AllocationResultAt.
+func (schema *Schema) AllocationResultOrdinal(result *AllocationResult) (uint32, bool) {
+	if schema == nil || !result.validFor(schema) || schema.allocationResultOrdinals == nil {
+		return 0, false
+	}
+	key, keyOK := result.Key()
+	if !keyOK {
+		return 0, false
+	}
+	ordinal, ok := schema.allocationResultOrdinals[key]
+	return ordinal, ok
+}
+
+// AllocationResultIDAt is the occurrence identity of one issued receipt in the
+// same order. The receipt is addressed by the Heap key content identity it
+// already carries; no second identity is minted.
+func (schema *Schema) AllocationResultIDAt(index int) (identity.ContentID, bool) {
+	result, resultOK := schema.AllocationResultAt(index)
+	if !resultOK {
+		return identity.ContentID{}, false
+	}
+	return result.KeyID()
+}
+
+// AllocationResultForMountedOccurrence resolves one issued receipt from the
+// mounted allocation occurrence it belongs to. The mount-to-root join is
+// Heap's, read once here rather than restated: Value adds only its own
+// receipt lookup on the key Heap answers with.
+func (schema *Schema) AllocationResultForMountedOccurrence(module, occurrence identity.ContentID) (*AllocationResult, bool) {
+	if schema == nil || !schema.Valid() {
+		return nil, false
+	}
+	key, keyOK := schema.heap.AllocationRootForMountedOccurrence(module, occurrence)
+	if !keyOK {
+		return nil, false
+	}
+	return schema.AllocationResultFor(key)
+}
+
 // AgeWithAllocation applies the presealed Recent-to-Summary transition using
 // only the exact allocation receipt. The ordinary Age API remains available
 // for cold callers and resolves its receipt once before entering this path.

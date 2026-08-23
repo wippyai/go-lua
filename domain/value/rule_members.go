@@ -16,11 +16,15 @@ const (
 	GlobalBootstrapResults        schemaapi.Key  = "value/global-bootstrap/candidates"
 	MountedCallArgumentCandidates schemaapi.Key  = "value/mounted-call/argument-candidates"
 	MountedCallArguments          schemaapi.Key  = "value/mounted-call/arguments"
+	AllocationResults             schemaapi.Key  = "value/allocation/candidates"
+	FreshResultCalls              schemaapi.Key  = "value/fresh-result/candidates"
 	StorageTransferSourceKey      schemaapi.Key  = "value/storage-transfer/source-key"
 	StorageTransferTarget         schemaapi.Key  = "value/storage-transfer/target"
 	SourceCoordinate              schemaapi.Key  = "value/source/coordinate"
 	GlobalBootstrapCoordinate     schemaapi.Key  = "value/global-bootstrap/coordinate"
 	MountedCallArgumentKey        schemaapi.Key  = "value/mounted-call/argument-key"
+	AllocationResultCoordinate    schemaapi.Key  = "value/allocation/coordinate"
+	FreshResultCoordinate         schemaapi.Key  = "value/fresh-result/coordinate"
 	IdentityReducer               schemaapi.Key  = "value/reducer/identity"
 	SourceReducer                 schemaapi.Key  = "value/reducer/source"
 	GlobalBootstrapReducer        schemaapi.Key  = "value/reducer/global-bootstrap"
@@ -47,6 +51,8 @@ func AxisMemberCatalog() member.Catalog {
 			{Key: GlobalBootstrapResults, Subject: GlobalBootstrapResultCarrier, CandidateProvider: member.RelationRef{Axis: schemaapi.EntryReference{Surface: schemaapi.SurfaceKind(2), Key: "value"}, Member: "value/global-bootstrap/candidates"}},
 			{Key: MountedCallArgumentCandidates, Subject: MountedCallArgumentCarrier, CandidateProvider: member.RelationRef{Axis: schemaapi.EntryReference{Surface: schemaapi.SurfaceKind(2), Key: "value"}, Member: "value/mounted-call/argument-candidates"}},
 			{Key: MountedCallArguments, Subject: ValueFactCarrier, CandidateProvider: member.RelationRef{Axis: schemaapi.EntryReference{Surface: schemaapi.SurfaceKind(2), Key: "value"}, Member: "value/mounted-call/argument-candidates"}, Inputs: []member.Carrier{MountedCallArgumentCarrier}},
+			{Key: AllocationResults, Subject: AllocationResultCarrier, CandidateProvider: member.RelationRef{Axis: schemaapi.EntryReference{Surface: schemaapi.SurfaceKind(2), Key: "value"}, Member: "value/allocation/candidates"}},
+			{Key: FreshResultCalls, Subject: FreshResultCallCarrier, CandidateProvider: member.RelationRef{Axis: schemaapi.EntryReference{Surface: schemaapi.SurfaceKind(2), Key: "value"}, Member: "value/fresh-result/candidates"}},
 		},
 		[]member.Projection{
 			{Key: StorageTransferSourceKey, Relation: StorageTransferSources, Role: member.Key, Result: ValueCoordinateCarrier, CandidateProvider: member.RelationRef{Axis: schemaapi.EntryReference{Surface: schemaapi.SurfaceKind(2), Key: "value"}, Member: "value/storage-transfer/candidates"}},
@@ -54,6 +60,8 @@ func AxisMemberCatalog() member.Catalog {
 			{Key: SourceCoordinate, Relation: SourceSeeds, Role: member.Destination, Result: ValueCoordinateCarrier, CandidateProvider: member.RelationRef{Axis: schemaapi.EntryReference{Surface: schemaapi.SurfaceKind(2), Key: "value"}, Member: "value/source/candidates"}},
 			{Key: GlobalBootstrapCoordinate, Relation: GlobalBootstrapResults, Role: member.Destination, Result: ValueCoordinateCarrier, CandidateProvider: member.RelationRef{Axis: schemaapi.EntryReference{Surface: schemaapi.SurfaceKind(2), Key: "value"}, Member: "value/global-bootstrap/candidates"}},
 			{Key: MountedCallArgumentKey, Relation: MountedCallArguments, Role: member.Key, Result: ValueCoordinateCarrier, CandidateProvider: member.RelationRef{Axis: schemaapi.EntryReference{Surface: schemaapi.SurfaceKind(2), Key: "value"}, Member: "value/mounted-call/argument-candidates"}},
+			{Key: AllocationResultCoordinate, Relation: AllocationResults, Role: member.Destination, Result: ValueCoordinateCarrier, CandidateProvider: member.RelationRef{Axis: schemaapi.EntryReference{Surface: schemaapi.SurfaceKind(2), Key: "value"}, Member: "value/allocation/candidates"}},
+			{Key: FreshResultCoordinate, Relation: FreshResultCalls, Role: member.Destination, Result: ValueCoordinateCarrier, CandidateProvider: member.RelationRef{Axis: schemaapi.EntryReference{Surface: schemaapi.SurfaceKind(2), Key: "value"}, Member: "value/fresh-result/candidates"}},
 		},
 		[]member.Reducer{
 			{Key: IdentityReducer, Inputs: []member.ReducerInput{

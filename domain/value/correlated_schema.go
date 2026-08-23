@@ -446,8 +446,16 @@ type Schema struct {
 	// Target fresh results that have an existing fixed CallResultValue
 	// coordinate. Heap remains the sole issuer of the key; this map only joins
 	// that key to Call's operation and the existing Boundary Value coordinate.
-	freshResultCalls    map[heap.Key]FreshResultCall
-	freshResultCallKeys []heap.Key
+	// allocationResultKeys is the dense order of Value's issued allocation
+	// receipts, and allocationResultOrdinals its exact inverse. Both are the
+	// reference order sealAllocationResults issued them in: the directory is a
+	// projection of that one order, never a second one.
+	allocationResultKeys     []heap.Key
+	allocationResultOrdinals map[heap.Key]uint32
+
+	freshResultCalls        map[heap.Key]FreshResultCall
+	freshResultCallKeys     []heap.Key
+	freshResultCallOrdinals map[heap.Key]uint32
 	// moduleExportFresh is the narrow composition proof for a fresh require
 	// result. Its roots are existing Heap allocation keys recovered from an
 	// authored Module Import's exported root fact; it is not an operation×root
@@ -851,7 +859,9 @@ func SealWithFailure(source *link.Link, heaps heap.Schema, mounts []programmount
 		valueClaims:                    make(map[computationKey]ValueClaim),
 		returnBoundaries:               make(map[computationKey]ReturnBoundary),
 		returnBoundariesByBody:         make(map[computationKey][]computationKey),
+		allocationResultOrdinals:       make(map[heap.Key]uint32),
 		freshResultCalls:               make(map[heap.Key]FreshResultCall),
+		freshResultCallOrdinals:        make(map[heap.Key]uint32),
 		moduleExportFresh:              make(map[heap.Key]moduleExportFreshRow),
 		mountedCallResultSlots:         make(map[mountedCallResultSlotKey]MountedCallResultSlot),
 		mountedCallArguments:           make(map[mountedCallArgumentKey]MountedCallArgument),
@@ -1093,8 +1103,13 @@ func (schema *valueBuilder) sealAllocationResults() bool {
 			coordinate: Coordinate{schema: schema.Schema, index: coordinateRow.coordinate}, routes: routes, fresh: fresh,
 			recent: recent, summary: summary,
 		}
+		if _, duplicate := schema.allocationResultOrdinals[row.allocation]; duplicate {
+			return false
+		}
+		schema.allocationResultOrdinals[row.allocation] = uint32(len(schema.allocationResultKeys))
+		schema.allocationResultKeys = append(schema.allocationResultKeys, row.allocation)
 	}
-	return true
+	return len(schema.allocationResultKeys) == len(schema.allocationResultOrdinals)
 }
 
 // sealExactKeys imports Link's already-normalized key universe once during
