@@ -1,6 +1,8 @@
 // Package freshresult declares Value's Target fresh-result Call transfer.
-// The package is intentionally isolated from the composite roster while the
-// environment wiring for this Link-lane rule is completed.
+//
+// The rule is Link-lane: its occurrences are Heap's fresh roots rather than
+// authored Program rows, so the composite roster reaches them through this
+// package's occurrence catalog and never through an issuance subscription.
 package freshresult
 
 import (
@@ -71,8 +73,8 @@ func OccurrenceCatalog(hot *HotRule) (rule.OccurrenceCatalog, bool) {
 	return hot, hot != nil
 }
 
-// StructureSpecs contributes the isolated rule's semantic roles. Composite
-// roster/environment wiring intentionally remains outside this package.
+// StructureSpecs contributes this rule's semantic roles. The roster that
+// composes them stays outside this package.
 func StructureSpecs() []structure.Spec {
 	return vocabulary.RoleSpecs(
 		"rule/value/callresult-freshresult",

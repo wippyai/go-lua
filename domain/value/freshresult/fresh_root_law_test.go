@@ -224,6 +224,57 @@ func TestFreshResultValueIsTheHeapAllocationRootValue(t *testing.T) {
 	}
 }
 
+// TestFreshResultCarryAgeUsesTheIssuedCandidateSemantics exercises the direct
+// Value-owned transform. A valid candidate must move its exact Recent root to
+// Summary; stale and cross-schema candidates/prior facts are refused by the
+// candidate's owner fence.
+func TestFreshResultCarryAgeUsesTheIssuedCandidateSemantics(t *testing.T) {
+	fixture := sealFixture(t, "fresh_result_age", freshSubject)
+	row, rowOK := fixture.values.FreshResultCallAt(0)
+	if !rowOK {
+		t.Fatal("fresh-result candidate")
+	}
+	key, keyOK := row.Key()
+	prior, priorOK := fixture.values.FreshResultFact(key, materialization.Recent)
+	if !keyOK || !priorOK {
+		t.Fatal("fresh-result Recent prior")
+	}
+	aged, agedOK := row.Age(prior)
+	if !agedOK || !hasFreshRole(fixture.values, aged, key, materialization.Summary) || hasFreshRole(fixture.values, aged, key, materialization.Recent) {
+		t.Fatal("fresh-result carry did not replace the selected Recent reference with Summary")
+	}
+	var stale valuedomain.FreshResultCall
+	if _, staleOK := stale.Age(prior); staleOK {
+		t.Fatal("stale fresh-result candidate crossed the owner fence")
+	}
+	foreign := sealFixture(t, "foreign_fresh_result_age", freshSubject)
+	foreignRow, foreignRowOK := foreign.values.FreshResultCallAt(0)
+	if !foreignRowOK {
+		t.Fatal("foreign fresh-result candidate")
+	}
+	if _, foreignPriorOK := row.Age(foreign.values.Top()); foreignPriorOK {
+		t.Fatal("fresh-result candidate accepted a foreign prior fact")
+	}
+	if _, foreignCandidateOK := foreignRow.Age(prior); foreignCandidateOK {
+		t.Fatal("foreign fresh-result candidate accepted a local prior fact")
+	}
+}
+
+func hasFreshRole(schema *valuedomain.Schema, fact valuedomain.Value, want heapdomain.Key, role materialization.Role) bool {
+	atoms, ok := schema.Atoms(fact)
+	if !ok {
+		return false
+	}
+	for _, atom := range atoms {
+		reference, gotRole, referenceOK := atom.Reference()
+		key, keyOK := reference.AllocationKey()
+		if referenceOK && keyOK && key == want && gotRole == role {
+			return true
+		}
+	}
+	return false
+}
+
 // TestFreshResultAdmitsOnlyTargetDeclaredFreshOperations is the widening half.
 // Heap allocates one fresh root per mounted call and declared fresh operation,
 // because the call's selected operation is decided by the Call fact and not by
