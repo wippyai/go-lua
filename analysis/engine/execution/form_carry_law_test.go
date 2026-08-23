@@ -1,0 +1,68 @@
+package execution
+
+import (
+	"testing"
+
+	"github.com/wippyai/go-lua/analysis/engine/generated"
+	ruleplan "github.com/wippyai/go-lua/analysis/schema/rule/plan"
+	ruleprogram "github.com/wippyai/go-lua/analysis/schema/rule/program"
+)
+
+// TestTransformedCarryIsItsOwnForm states that a sealed transformed carry is a
+// form of its own. An identity carry hands the prior output fact on unchanged,
+// which the exact fold can do with no domain call at all; a transformed carry
+// applies one owner-issued candidate-indexed transition to it, which the exact
+// fold cannot do and must never be given to silently. The two descriptors
+// differ only in their carry, so the form table must separate them there.
+func TestTransformedCarryIsItsOwnForm(t *testing.T) {
+	identity := planCompiledExactRule(t)
+	transformed := planCompiledTransformedCarryRule(t)
+
+	if row, ok := classifyExactForm(transformed); ok {
+		t.Fatalf("the exact form claimed a transformed carry as %q", row.Form.Name())
+	}
+	if row, ok := classifyExactForm(identity); !ok || row.Form != FormExact {
+		t.Fatalf("the exact form stopped claiming an identity carry: %q/%t", row.Form.Name(), ok)
+	}
+
+	carried, ok := ClassifyForm(transformed)
+	if !ok || carried.Form != FormCarry {
+		t.Fatalf("transformed carry classified as %q/%t, want carry", carried.Form.Name(), ok)
+	}
+	if carried.Input != 0 {
+		t.Fatalf("transformed carry read port = %d, want 0", carried.Input)
+	}
+	if _, present := carried.Rule.CarryTransform(); !present {
+		t.Fatal("the classified row lost the transform address it was classified from")
+	}
+}
+
+// planCompiledTransformedCarryRule seals the one-join exact-output descriptor
+// whose carry names an owner-issued transform member.
+func planCompiledTransformedCarryRule(t *testing.T) generated.CompiledRule {
+	t.Helper()
+	rule, ok := generated.NewPlanCompiledRule(generated.CompiledRuleSpec{
+		Ordinal: 9, AxisCount: 3, InputCount: 1,
+		Candidate: ruleplan.RelationAddr{Axis: 0, Member: 0},
+		Reducer:   ruleplan.ReducerAddr{Axis: 2, Member: 1},
+		Reads: []generated.ReadPlan{{
+			Input: 0, Factor: 2, Axis: 0,
+			Relation: ruleplan.RelationAddr{Axis: 0, Member: 0}, Key: ruleplan.ProjectionAddr{Axis: 0, Member: 0},
+			Form:        ruleprogram.Exact,
+			Contract:    ruleplan.ReadContract{Order: ruleprogram.OrderCanonical, Sparse: ruleprogram.SparseExplicit, OnOpaque: ruleprogram.OnOpaqueRefuse, Multiplicity: ruleprogram.MultiplicityOne},
+			RowCapacity: 1, CellCapacity: 1,
+		}},
+		Outputs: []generated.OutputPlan{{
+			Factor: 2, Axis: 2, Address: ruleplan.OutputAddr{Axis: 2, Frame: 0},
+			Destination: ruleplan.ProjectionAddr{Axis: 0, Member: 0}, Mode: ruleprogram.ModeExact, Exact: true, Strong: true,
+		}},
+		Carry: &generated.CarryPlan{
+			Input: 0, Factor: 2, Mode: ruleprogram.CarryTransform,
+			Transform: ruleplan.CarryTransformAddr{Axis: 2, Member: 1}, TransformPresent: true,
+		},
+	})
+	if !ok {
+		t.Fatal("sealed transformed carry plan")
+	}
+	return rule
+}

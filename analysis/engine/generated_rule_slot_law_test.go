@@ -588,7 +588,6 @@ func TestGeneratedRuleSlotRejectsUnsupportedPlanShapes(t *testing.T) {
 		{name: "summary-read", variant: generatedRuleLawSummary},
 		{name: "complete-read", variant: generatedRuleLawComplete},
 		{name: "structural-output", variant: generatedRuleLawStructural},
-		{name: "transformed-carry", variant: generatedRuleLawTransformedCarry},
 	}
 	for _, test := range variants {
 		t.Run(test.name, func(t *testing.T) {
@@ -598,6 +597,50 @@ func TestGeneratedRuleSlotRejectsUnsupportedPlanShapes(t *testing.T) {
 				t.Fatalf("unsupported Plan shape was admitted: slot=%v ok=%t phase=%d", slot, slotOK, builder.phase)
 			}
 		})
+	}
+}
+
+// TestGeneratedRuleSlotSealsTheDeclaredCarryDisposition states that the slot
+// seals the carry the Plan compiled, not a disposition of its own. A
+// transformed carry reaches the descriptor as a transform with the owner-issued
+// member address the Plan resolved, normalized into the runtime Factor
+// directory like every other address; sealing it as an identity carry would
+// silently hand a rule with a domain transition to the identity fold.
+func TestGeneratedRuleSlotSealsTheDeclaredCarryDisposition(t *testing.T) {
+	fixture := newGeneratedRuleLawFixture(t, generatedRuleLawTransformedCarry, generatedRuleLawRuleRole)
+	compiled, compiledOK := fixture.catalog.At(0)
+	if !compiledOK || !compiled.Present() {
+		t.Fatalf("transformed-carry Plan = %+v/%t", compiled, compiledOK)
+	}
+	planCarry, planCarryOK := compiled.Carry()
+	if !planCarryOK || planCarry.Mode != program.CarryTransform || !planCarry.TransformPresent {
+		t.Fatalf("compiled Plan carry = %+v/%t", planCarry, planCarryOK)
+	}
+	builder := generatedRuleLawBuilder(t, fixture.catalog, false)
+	slot, slotOK := DeclareGeneratedRuleSlot(builder, fixture.catalog, 0)
+	if !slotOK || slot == nil || builder.phase == schemaBuilderPoisoned {
+		t.Fatalf("transformed carry refused: slot=%v ok=%t phase=%d", slot, slotOK, builder.phase)
+	}
+	sealed, sealedOK := builder.Seal()
+	if !sealedOK {
+		t.Fatal("seal transformed-carry schema")
+	}
+	descriptor, descriptorOK := sealed.generatedProgramAt(0)
+	if !descriptorOK || !descriptor.Available() {
+		t.Fatalf("sealed descriptor = %+v/%t", descriptor, descriptorOK)
+	}
+	if descriptor.CarryIdentity() {
+		t.Fatal("the slot sealed a transformed carry as an identity carry")
+	}
+	if mode, modeOK := descriptor.CarryMode(); !modeOK || mode != program.CarryTransform {
+		t.Fatalf("sealed carry mode = %v/%t", mode, modeOK)
+	}
+	address, present := descriptor.CarryTransform()
+	if !present || address.Member != planCarry.Transform.Member {
+		t.Fatalf("sealed transform address = %+v/%t, want member %d", address, present, planCarry.Transform.Member)
+	}
+	if descriptor.CarryInput() != int(planCarry.Input) {
+		t.Fatalf("sealed carry input = %d, want %d", descriptor.CarryInput(), planCarry.Input)
 	}
 }
 

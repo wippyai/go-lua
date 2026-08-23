@@ -23,6 +23,12 @@ func classifyExactForm(rule generated.CompiledRule) (FormRow, bool) {
 	if form, ok := rule.ReadFormAt(0); !ok || form != ruleprogram.Exact {
 		return FormRow{}, false
 	}
+	// A carry is part of the claim: identity hands the prior output fact on
+	// unchanged, which this fold does by writing nothing else, while a
+	// transformed carry owes a domain call this form cannot make.
+	if carry, present := rule.CarryMode(); present && carry != ruleprogram.CarryIdentity {
+		return FormRow{}, false
+	}
 	input := rule.ReadInput()
 	if input < 0 || input >= rule.InputCount() || input > int(^uint16(0)) || rule.InputCount() <= 0 {
 		return FormRow{}, false

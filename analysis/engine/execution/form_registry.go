@@ -28,6 +28,9 @@ const (
 	// FormSummary is the Summary and Complete read axis: one partition row's
 	// whole declared cell vector, delivered under a mandatory read contract.
 	FormSummary
+	// FormCarry is the exact read and write whose carried prior fact passes
+	// through an owner-issued transform.
+	FormCarry
 	// formCount is the exclusive upper bound of the declared ordinals. It is
 	// the last constant in the block; a new form is appended above it.
 	formCount
@@ -40,6 +43,7 @@ var formNames = [formCount]string{
 	FormExact:   "exact",
 	FormSource:  "source",
 	FormSummary: "summary",
+	FormCarry:   "carry",
 }
 
 // Declared reports whether form names a sealed ordinal of the table.
@@ -123,6 +127,7 @@ var formClassifiers = [formCount]formClassifier{
 	FormExact:   classifyExactForm,
 	FormSource:  classifySourceForm,
 	FormSummary: classifySummaryForm,
+	FormCarry:   classifyCarryForm,
 }
 
 // formBuilders is the implementation column of the form table. It is built per

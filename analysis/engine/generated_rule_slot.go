@@ -215,12 +215,25 @@ func DeclareGeneratedRuleSlot(
 		}
 	}
 
-	// Identity carry is the only carry disposition representable without a
-	// transform identity. A transform address is deliberately not converted
-	// from ordinals into a fabricated semantic key. It is refused explicitly.
+	// A carry is sealed in the disposition the Plan compiled: identity carries
+	// the prior output fact unchanged, and a transform names one owner-issued
+	// transform member the Plan already resolved against the writing axis. The
+	// address is normalized into the runtime Factor directory like every other
+	// address in the descriptor; no semantic key is fabricated from an ordinal.
 	carry, carryOK := compiled.Carry()
-	if carryOK && (carry.Mode != ruleprogram.CarryIdentity || carry.TransformPresent || uint64(carry.Input) >= uint64(compiled.InputCount())) {
-		return refuse()
+	var normalizedCarryTransform ruleplan.CarryTransformAddr
+	if carryOK {
+		if !carry.Mode.Available() || uint64(carry.Input) >= uint64(compiled.InputCount()) ||
+			carry.TransformPresent != (carry.Mode == ruleprogram.CarryTransform) {
+			return refuse()
+		}
+		if carry.TransformPresent {
+			transformAxis, transformAxisOK := generatedRuntimeAxis(factorDirectory, catalog, carry.Transform.Axis)
+			if !transformAxisOK || !carry.TransformAxis.Available() || !carry.TransformKey.Available() {
+				return refuse()
+			}
+			normalizedCarryTransform = ruleplan.CarryTransformAddr{Axis: transformAxis, Member: carry.Transform.Member}
+		}
 	}
 	if !builder.claim(semantic) {
 		return nil, false
@@ -287,7 +300,11 @@ func DeclareGeneratedRuleSlot(
 			if !carryOK {
 				return nil
 			}
-			return &generated.CarryPlan{Input: carry.Input, Factor: outputFactor.ordinal, Mode: ruleprogram.CarryIdentity, Identity: true}
+			return &generated.CarryPlan{
+				Input: carry.Input, Factor: outputFactor.ordinal, Mode: carry.Mode,
+				Transform: normalizedCarryTransform, TransformPresent: carry.TransformPresent,
+				Identity: carry.Mode == ruleprogram.CarryIdentity,
+			}
 		}(),
 	})
 	if !descriptorOK {

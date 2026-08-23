@@ -105,13 +105,43 @@ func TestCompiledRuleRejectsUnsupportedFormsAndCarryWithoutDroppingThem(t *testi
 		})
 	}
 	{
+		// A transformed carry is sealed with its transform, never as an
+		// identity carry and never with the address dropped: the transform is
+		// the whole difference between the two dispositions.
 		spec := heterogeneousPlanLawSpec()
 		spec.Carry.Mode = ruleprogram.CarryTransform
 		spec.Carry.Identity = false
 		spec.Carry.TransformPresent = true
 		spec.Carry.Transform = ruleplan.CarryTransformAddr{Axis: 2, Member: 1}
+		descriptor, ok := NewPlanCompiledRule(spec)
+		if !ok || !descriptor.Available() {
+			t.Fatalf("transformed carry refused: %+v/%t", descriptor, ok)
+		}
+		if descriptor.CarryIdentity() {
+			t.Fatal("a transformed carry was sealed as an identity carry")
+		}
+		if mode, modeOK := descriptor.CarryMode(); !modeOK || mode != ruleprogram.CarryTransform {
+			t.Fatalf("sealed carry mode = %v/%t", mode, modeOK)
+		}
+		if address, present := descriptor.CarryTransform(); !present || address != (ruleplan.CarryTransformAddr{Axis: 2, Member: 1}) {
+			t.Fatalf("sealed transform address = %+v/%t", address, present)
+		}
+	}
+	{
+		// The two halves of the disposition cannot disagree. A mode without an
+		// address, and an address without the mode, are both incomplete rows
+		// rather than a carry the runtime may guess at.
+		spec := heterogeneousPlanLawSpec()
+		spec.Carry.Mode = ruleprogram.CarryTransform
+		spec.Carry.Identity = false
 		if descriptor, ok := NewPlanCompiledRule(spec); ok || descriptor.Available() {
-			t.Fatalf("transformed carry admitted: %+v/%t", descriptor, ok)
+			t.Fatalf("transformed carry without its address admitted: %+v/%t", descriptor, ok)
+		}
+		spec = heterogeneousPlanLawSpec()
+		spec.Carry.TransformPresent = true
+		spec.Carry.Transform = ruleplan.CarryTransformAddr{Axis: 2, Member: 1}
+		if descriptor, ok := NewPlanCompiledRule(spec); ok || descriptor.Available() {
+			t.Fatalf("identity carry carrying a transform address admitted: %+v/%t", descriptor, ok)
 		}
 	}
 	{

@@ -152,7 +152,7 @@ func NewPlanCompiledRule(spec CompiledRuleSpec) (CompiledRule, bool) {
 		ordinal: spec.Ordinal, inputCount: uint16(spec.InputCount), reads: readCopy, outputs: outputCopy, carry: carry,
 		planGeometry: true, axisCount: uint32(spec.AxisCount), candidateRelation: spec.Candidate, reducer: spec.Reducer,
 	}
-	if carry != nil && !normalizeCarryPlan(carry, spec.InputCount, outputCopy[0].Factor) {
+	if carry != nil && !normalizeCarryPlan(carry, spec.InputCount, spec.AxisCount, outputCopy[0].Factor) {
 		return CompiledRule{}, false
 	}
 	if !validRelationAddr(spec.Candidate) || !validReducerAddr(spec.Reducer) || !addressAxesInRange(spec.AxisCount, spec.Candidate, spec.Reducer, outputCopy[0].Address, outputCopy[0].Destination) {
@@ -303,24 +303,32 @@ func normalizeOutputPlan(output *OutputPlan, reads []ReadPlan) bool {
 	return output.RouteJoinPresent && uint64(output.RouteJoin) < uint64(len(reads)) && reads[output.RouteJoin].Form == ruleprogram.Selected && selectedReadCount(reads) == 1
 }
 
-func normalizeCarryPlan(carry *CarryPlan, inputCount int, outputFactor uint32) bool {
-	if carry == nil || inputCount < 0 || carry.Input >= uint32(inputCount) || carry.Factor == ^uint32(0) || carry.Factor != outputFactor {
+func normalizeCarryPlan(carry *CarryPlan, inputCount, axisCount int, outputFactor uint32) bool {
+	if carry == nil {
 		return false
 	}
-	if carry.Mode != ruleprogram.CarryIdentity || !carry.Identity || carry.TransformPresent {
-		return false
-	}
-	if carry.Transform != (ruleplan.CarryTransformAddr{}) {
-		return false
-	}
-	return true
+	return validCarryPlan(*carry, inputCount, axisCount, outputFactor)
 }
 
-func validCarryPlan(carry CarryPlan, inputCount int, outputFactor uint32) bool {
-	if inputCount < 0 || carry.Input >= uint32(inputCount) || carry.Factor == ^uint32(0) || carry.Factor != outputFactor {
+// validCarryPlan states the two sealed carry dispositions. Identity carries the
+// prior output fact unchanged and names no transform. Transform names exactly
+// one owner-issued transform member, addressed in the same axis directory as
+// the rest of the descriptor; the transform is what makes the carry a form of
+// its own, so a transformed carry that lost its address is not a carry at all.
+func validCarryPlan(carry CarryPlan, inputCount, axisCount int, outputFactor uint32) bool {
+	if inputCount < 0 || axisCount <= 0 || carry.Input >= uint32(inputCount) || carry.Factor == ^uint32(0) || carry.Factor != outputFactor {
 		return false
 	}
-	return carry.Mode == ruleprogram.CarryIdentity && carry.Identity && !carry.TransformPresent && carry.Transform == (ruleplan.CarryTransformAddr{})
+	switch carry.Mode {
+	case ruleprogram.CarryIdentity:
+		return carry.Identity && !carry.TransformPresent && carry.Transform == (ruleplan.CarryTransformAddr{})
+	case ruleprogram.CarryTransform:
+		return !carry.Identity && carry.TransformPresent &&
+			carry.Transform.Axis != ^uint32(0) && carry.Transform.Member != ^uint32(0) &&
+			uint64(carry.Transform.Axis) < uint64(axisCount)
+	default:
+		return false
+	}
 }
 
 func validReadPlan(read ReadPlan, inputCount, axisCount int) bool {
@@ -454,7 +462,7 @@ func (rule CompiledRule) Available() bool {
 		return false
 	}
 	if rule.carry != nil {
-		if !validCarryPlan(*rule.carry, int(rule.inputCount), output.Factor) {
+		if !validCarryPlan(*rule.carry, int(rule.inputCount), int(rule.axisCount), output.Factor) {
 			return false
 		}
 	}
@@ -684,9 +692,9 @@ func (rule CompiledRule) OutputAxis() uint32 {
 	return rule.outputs[0].Axis
 }
 
-// CarryIdentity reports the sealed carry disposition.  The first generated
-// vertical admits identity carry only; transformed carries are refused at
-// SchemaBuilder declaration.
+// CarryIdentity reports whether the sealed carry hands the prior output fact
+// on unchanged. A transformed carry answers false and names its transform
+// through CarryTransform.
 func (rule CompiledRule) CarryIdentity() bool {
 	return rule.Available() && rule.carry != nil && rule.carry.Identity && rule.planGeometry
 }
@@ -709,8 +717,8 @@ func (rule CompiledRule) CarryMode() (ruleprogram.CarryMode, bool) {
 }
 
 // CarryTransform returns the owner-qualified transform address when present.
-// The current constructor refuses transformed carries, so a present result is
-// reserved for the later transform table without inventing a fallback.
+// It is the one authority for which transform a carried fact passes through;
+// no consumer may derive a member from the carry input or the output factor.
 func (rule CompiledRule) CarryTransform() (ruleplan.CarryTransformAddr, bool) {
 	if !rule.Available() || rule.carry == nil || !rule.carry.TransformPresent {
 		return ruleplan.CarryTransformAddr{}, false
