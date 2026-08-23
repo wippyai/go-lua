@@ -12,8 +12,12 @@ import (
 const (
 	IngressSeeds                   schemaapi.Key  = "heap/ingress/candidates"
 	BootRoots                      schemaapi.Key  = "heap/boot/candidates"
+	ClosedAllocations              schemaapi.Key  = "heap/closed-allocation/candidates"
+	EmptyAllocations               schemaapi.Key  = "heap/empty-allocation/candidates"
 	IngressCoordinate              schemaapi.Key  = "heap/ingress/coordinate"
 	BootCoordinate                 schemaapi.Key  = "heap/boot/coordinate"
+	ClosedAllocationCoordinate     schemaapi.Key  = "heap/closed-allocation/coordinate"
+	EmptyAllocationCoordinate      schemaapi.Key  = "heap/empty-allocation/coordinate"
 	IngressReducer                 schemaapi.Key  = "heap/reducer/ingress"
 	BootReducer                    schemaapi.Key  = "heap/reducer/boot"
 	EmptyAllocationCarryTransform  schemaapi.Key  = "transform/heap/allocation-empty"
@@ -31,10 +35,14 @@ func AxisMemberCatalog() member.Catalog {
 		[]member.Relation{
 			{Key: IngressSeeds, Subject: HeapKeyCarrier, CandidateProvider: member.RelationRef{Axis: schemaapi.EntryReference{Surface: schemaapi.SurfaceKind(2), Key: "heap"}, Member: "heap/ingress/candidates"}},
 			{Key: BootRoots, Subject: HeapKeyCarrier, CandidateProvider: member.RelationRef{Axis: schemaapi.EntryReference{Surface: schemaapi.SurfaceKind(2), Key: "heap"}, Member: "heap/boot/candidates"}},
+			{Key: ClosedAllocations, Subject: HeapKeyCarrier, CandidateProvider: member.RelationRef{Axis: schemaapi.EntryReference{Surface: schemaapi.SurfaceKind(2), Key: "heap"}, Member: "heap/closed-allocation/candidates"}},
+			{Key: EmptyAllocations, Subject: HeapKeyCarrier, CandidateProvider: member.RelationRef{Axis: schemaapi.EntryReference{Surface: schemaapi.SurfaceKind(2), Key: "heap"}, Member: "heap/empty-allocation/candidates"}},
 		},
 		[]member.Projection{
 			{Key: IngressCoordinate, Relation: IngressSeeds, Role: member.Destination, Result: HeapKeyCarrier, CandidateProvider: member.RelationRef{Axis: schemaapi.EntryReference{Surface: schemaapi.SurfaceKind(2), Key: "heap"}, Member: "heap/ingress/candidates"}},
 			{Key: BootCoordinate, Relation: BootRoots, Role: member.Destination, Result: HeapKeyCarrier, CandidateProvider: member.RelationRef{Axis: schemaapi.EntryReference{Surface: schemaapi.SurfaceKind(2), Key: "heap"}, Member: "heap/boot/candidates"}},
+			{Key: ClosedAllocationCoordinate, Relation: ClosedAllocations, Role: member.Destination, Result: HeapKeyCarrier, CandidateProvider: member.RelationRef{Axis: schemaapi.EntryReference{Surface: schemaapi.SurfaceKind(2), Key: "heap"}, Member: "heap/closed-allocation/candidates"}},
+			{Key: EmptyAllocationCoordinate, Relation: EmptyAllocations, Role: member.Destination, Result: HeapKeyCarrier, CandidateProvider: member.RelationRef{Axis: schemaapi.EntryReference{Surface: schemaapi.SurfaceKind(2), Key: "heap"}, Member: "heap/empty-allocation/candidates"}},
 		},
 		[]member.Reducer{
 			{Key: IngressReducer, Inputs: []member.ReducerInput{}, Outputs: []member.ReducerOutput{

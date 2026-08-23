@@ -95,6 +95,30 @@ func AllocationCarry() definition.Definition {
 				CandidateIdentityAt: heapMethod("BootIDAt", "Schema", false, 0),
 				Materialize:         definition.GoSymbol{PackagePath: heapPackagePath, Name: "BootFact", ResultIndex: 0},
 			},
+			{
+				// The two constructor-form directories are the heap axis's own
+				// dense global candidate sets. A form directory is published
+				// here, beside the roots it partitions, because an allocation
+				// occurrence resolves to one Link-wide ordinal that every
+				// reader shares; a per-mount substitution map has no row for
+				// the mount it is not and cannot state that ordinal.
+				Name:              "ClosedAllocations",
+				Key:               "heap/closed-allocation/candidates",
+				Subject:           "HeapKeyCarrier",
+				CandidateProvider: member.RelationRef{Axis: axisReference("heap"), Member: "heap/closed-allocation/candidates"},
+				CandidateResolver: heapMethod("ClosedAllocationForMountedOccurrence", "Schema", false, 0),
+				CandidateOrdinal:  heapMethod("ClosedAllocationOrdinal", "Schema", false, 0),
+				CandidateAt:       heapMethod("ClosedAllocationAt", "Schema", false, 0),
+			},
+			{
+				Name:              "EmptyAllocations",
+				Key:               "heap/empty-allocation/candidates",
+				Subject:           "HeapKeyCarrier",
+				CandidateProvider: member.RelationRef{Axis: axisReference("heap"), Member: "heap/empty-allocation/candidates"},
+				CandidateResolver: heapMethod("EmptyAllocationForMountedOccurrence", "Schema", false, 0),
+				CandidateOrdinal:  heapMethod("EmptyAllocationOrdinal", "Schema", false, 0),
+				CandidateAt:       heapMethod("EmptyAllocationAt", "Schema", false, 0),
+			},
 		},
 		Projections: []definition.Projection{
 			{
@@ -114,6 +138,27 @@ func AllocationCarry() definition.Definition {
 				Role:              member.Destination,
 				Result:            "HeapKeyCarrier",
 				Accessor:          heapMethod("Boot", "Key", false, 0),
+			},
+			{
+				// A constructor writes the very root it is a candidate of, so
+				// the destination projection is the candidate itself, refused
+				// on any key the relation does not contain.
+				Name:              "ClosedAllocationCoordinate",
+				Key:               "heap/closed-allocation/coordinate",
+				Relation:          "ClosedAllocations",
+				CandidateProvider: member.RelationRef{Axis: axisReference("heap"), Member: "heap/closed-allocation/candidates"},
+				Role:              member.Destination,
+				Result:            "HeapKeyCarrier",
+				Accessor:          heapMethod("ClosedAllocation", "Key", false, -1),
+			},
+			{
+				Name:              "EmptyAllocationCoordinate",
+				Key:               "heap/empty-allocation/coordinate",
+				Relation:          "EmptyAllocations",
+				CandidateProvider: member.RelationRef{Axis: axisReference("heap"), Member: "heap/empty-allocation/candidates"},
+				Role:              member.Destination,
+				Result:            "HeapKeyCarrier",
+				Accessor:          heapMethod("EmptyAllocation", "Key", false, -1),
 			},
 		},
 		CarryTransforms: []definition.CarryTransform{

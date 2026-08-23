@@ -251,6 +251,7 @@ const (
 	SealFailureFinishWidenRanks
 	SealFailureFinishContentID
 	SealFailureFinishKeyInverse
+	SealFailureFinishAllocationForms
 )
 
 func (failure SealFailure) String() string {
@@ -295,6 +296,8 @@ func (failure SealFailure) String() string {
 		return "finish-content-id"
 	case SealFailureFinishKeyInverse:
 		return "finish-key-inverse"
+	case SealFailureFinishAllocationForms:
+		return "finish-allocation-forms"
 	default:
 		return "unknown"
 	}
@@ -307,7 +310,13 @@ type schema struct {
 	roots            []rootRow // physical Program roots followed by Boot roots
 	programRootCount uint32
 	bootIndex        map[identity.ContentID]uint32
-	fresh            *fresh.Catalog
+	// allocationFormRoots and allocationFormOrdinal are the sealed dense
+	// global directory of Program allocation roots grouped by constructor
+	// form, and its exact inverse indexed by root slot. They are published as
+	// the heap axis's per-form candidate relations.
+	allocationFormRoots   [allocationFormDirectoryCount][]uint32
+	allocationFormOrdinal []uint32
+	fresh                 *fresh.Catalog
 	// atomicKeys is the exact finite universe of selectors that may become
 	// Partition exceptions. atomMaskCounts compresses that universe by its
 	// owner-derived possible-kind mask for the fixed-coordinate rank law.
@@ -1429,6 +1438,9 @@ func (owner *heapBuilder) finishWithFailure() SealFailure {
 	}
 	if !owner.sealKeyIDInverse() {
 		return SealFailureFinishKeyInverse
+	}
+	if !owner.sealAllocationFormDirectory() {
+		return SealFailureFinishAllocationForms
 	}
 	return SealFailureNone
 }
