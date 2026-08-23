@@ -14,6 +14,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/schema"
 	"github.com/wippyai/go-lua/analysis/schema/ingress"
 	"github.com/wippyai/go-lua/analysis/schema/programmount"
+	"github.com/wippyai/go-lua/analysis/schema/seal"
 	"github.com/wippyai/go-lua/analysis/schema/structure"
 	"github.com/wippyai/go-lua/domain/heap"
 	"github.com/wippyai/go-lua/domain/materialization"
@@ -128,7 +129,7 @@ func suspensionRoutePlanStructural(t testing.TB) structure.Table {
 	if !entriesOK {
 		t.Fatal("suspension route structure entries")
 	}
-	builder := schema.NewBuilder()
+	builder := seal.NewBuilder()
 	if !builder.Register(structure.NewSurface(entries)) {
 		t.Fatal("suspension route structure surface")
 	}
@@ -156,7 +157,7 @@ type suspensionRoutePlanEmptySurface struct{ kind schema.SurfaceKind }
 
 func (surface suspensionRoutePlanEmptySurface) Kind() schema.SurfaceKind { return surface.kind }
 func (surface suspensionRoutePlanEmptySurface) Entries() []schema.Entry  { return nil }
-func (surface suspensionRoutePlanEmptySurface) Seal(schema.View, schema.Sealed) schema.SealFailure {
+func (surface suspensionRoutePlanEmptySurface) Seal(seal.View, seal.Sealed) schema.SealFailure {
 	return schema.SealFailure{}
 }
 
