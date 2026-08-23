@@ -26,6 +26,7 @@ import (
 type Family struct {
 	id      identity.ContentID
 	members []familyMember
+	prefix  *familyPrefix
 }
 
 type familyMember struct {
@@ -77,6 +78,11 @@ func SealFamily(domain string, values []typ.Type) (*Family, error) {
 	if !family.id.Available() {
 		return nil, errors.New("typeauthority: unavailable Runtime family identity")
 	}
+	prefix, err := newFamilyPrefix(family.members)
+	if err != nil {
+		return nil, err
+	}
+	family.prefix = prefix
 	return family, nil
 }
 
@@ -114,8 +120,8 @@ func (f *Family) Input(index int, types *Authority) (RuntimeInput, bool) {
 		return RuntimeInput{}, false
 	}
 	member := f.members[index]
-	if !member.graph.Sealed() {
+	if !member.graph.Sealed() || f.prefix == nil {
 		return RuntimeInput{}, false
 	}
-	return RuntimeInput{authority: types, graph: member.graph}, true
+	return RuntimeInput{authority: types, graph: member.graph, prefix: f.prefix, prefixMember: index}, true
 }

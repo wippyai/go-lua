@@ -29,8 +29,10 @@ type RuntimeInner struct {
 // against. The receipt's source plane is consumed during sealing; Runtime
 // retains no typ graph or receipt after publication.
 type RuntimeInput struct {
-	authority *Authority
-	graph     typ.CanonicalGraphReceipt
+	authority    *Authority
+	graph        typ.CanonicalGraphReceipt
+	prefix       *familyPrefix
+	prefixMember int
 }
 
 type runtimeChild struct {
@@ -299,9 +301,18 @@ type runtimeBuilder struct {
 	runtime      *Runtime
 	construction []typ.Type
 	sourceMaps   [][]uint32
+	keys         []runtimeSourceKey
 }
 
 func (b *runtimeBuilder) ingest(inputs []runtimeCanonicalInput) ([]RuntimeInner, error) {
+	prefix, members := sharedFamilyPrefix(inputs)
+	if prefix != nil && !familyPrefixHasLocal(members) {
+		return b.installFamilyPrefix(prefix, inputs, members)
+	}
+	return b.ingestFresh(inputs)
+}
+
+func (b *runtimeBuilder) ingestFresh(inputs []runtimeCanonicalInput) ([]RuntimeInner, error) {
 	if b == nil || b.runtime == nil || len(b.runtime.rows) != 0 || len(b.construction) != 0 {
 		return nil, errors.New("typeauthority: invalid Runtime receipt builder")
 	}
@@ -416,6 +427,10 @@ func (b *runtimeBuilder) ingest(inputs []runtimeCanonicalInput) ([]RuntimeInner,
 			return nil, errors.New("typeauthority: Runtime receipt root unmapped")
 		}
 		canonicalInners[inputIndex] = RuntimeInner{owner: b.runtime, index: row}
+	}
+	b.keys = make([]runtimeSourceKey, len(representatives))
+	for index, representative := range representatives {
+		b.keys[index] = representative.key
 	}
 	return canonicalInners, nil
 }
@@ -595,7 +610,10 @@ func runtimeDenseOrdinal(length int) (uint32, error) {
 // sealRuntimeKinds publishes the owner-issued runtime-vocabulary column while
 // the receipt construction sources are still live.
 func (b *runtimeBuilder) sealRuntimeKinds() error {
-	if b == nil || b.runtime == nil || len(b.runtime.rows) != len(b.construction) || b.runtime.runtimeKindsPublished {
+	if b != nil && b.runtime != nil && b.runtime.runtimeKindsPublished {
+		return nil
+	}
+	if b == nil || b.runtime == nil || len(b.runtime.rows) != len(b.construction) {
 		return errors.New("typeauthority: malformed Runtime kind source")
 	}
 	for index, value := range b.construction {

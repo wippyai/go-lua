@@ -16,6 +16,9 @@ import (
 // The relation belongs to this Runtime owner and dies with it. No process-wide
 // cache retains quadratic matrices after their owning analysis is released.
 func (b *runtimeBuilder) sealSubtypeRelation() error {
+	if b.subtypeRelationInstalled() {
+		return nil
+	}
 	if b == nil || b.runtime == nil || len(b.runtime.rows) != len(b.construction) {
 		return errors.New("typeauthority: malformed Runtime relation source")
 	}
