@@ -119,7 +119,20 @@ func (rules *RuleBinding) MountedAdmissions(mounts []programmount.MountedArtifac
 	activations := make([]engine.MountedActivationAdmit, 0)
 	refusal := AdmissionFailure{}
 	key, ok := WalkSealedPlacements(mounts, func(key schema.Key, mount, point, occurrence identity.ContentID) bool {
-		if key == "call-activation" && rules.activation != nil {
+		// The lane the rule declared decides the inventory. A rule key spelled
+		// here would be one rule's name deciding a lane for every composition:
+		// renaming that rule, or declaring a second activation, would silently
+		// reroute a placement.
+		capability, capabilityOK := rules.CapabilityByKey(key)
+		if !capabilityOK || !capability.Mounted() {
+			refusal = RefusedAdmission(AdmissionStageCapability, diagnosticRuleForKey(rules.catalog, key), axis.Cell{})
+			return false
+		}
+		if capability.Activation() {
+			if rules.activation == nil {
+				refusal = RefusedAdmission(AdmissionStageCapability, diagnosticRuleForKey(rules.catalog, key), axis.Cell{})
+				return false
+			}
 			admit, reason, admitOK := rules.activation.MountedAdmit(mount, point, occurrence, contexts)
 			if !admitOK {
 				refusal = RefusedAdmission(AdmissionStageActivation, diagnosticRuleForKey(rules.catalog, key), reason)
@@ -127,11 +140,6 @@ func (rules *RuleBinding) MountedAdmissions(mounts []programmount.MountedArtifac
 			}
 			activations = append(activations, admit)
 			return true
-		}
-		capability, capabilityOK := rules.CapabilityByKey(key)
-		if !capabilityOK || !capability.Mounted() || capability.Activation() {
-			refusal = RefusedAdmission(AdmissionStageCapability, diagnosticRuleForKey(rules.catalog, key), axis.Cell{})
-			return false
 		}
 		mounted = append(mounted, engine.MountedRuleAdmission{Capability: capability, Mount: mount, Point: point, Occurrence: occurrence})
 		return true
