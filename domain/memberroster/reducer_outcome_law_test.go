@@ -103,6 +103,13 @@ func checkFoldSignature(t *testing.T, root string, symbol memberdefinition.GoSym
 func resolvedType(file *ast.File, declaring string, expr ast.Expr) (string, string) {
 	switch typed := expr.(type) {
 	case *ast.Ident:
+		// GoType is the declaration authority for the closed built-in spelling
+		// set.  An unqualified builtin belongs to no declaring package; treating
+		// it as a package-local identifier would make `uint64` resolve as
+		// `store.uint64` and reject the exact carrier the declaration derives.
+		if (memberdefinition.GoType{Name: typed.Name}).Available() {
+			return "", typed.Name
+		}
 		return declaring, typed.Name
 	case *ast.StarExpr:
 		path, name := resolvedType(file, declaring, typed.X)
