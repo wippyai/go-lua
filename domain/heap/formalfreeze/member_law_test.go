@@ -211,3 +211,32 @@ func TestFreezeFoldRefusesAnUnsealedSchema(t *testing.T) {
 		t.Fatalf("unsealed schema outcome = %d, want Refuse", outcome)
 	}
 }
+
+// TestFreezeFoldAgreesOnAnAbsentAndABottomPredecessor states that this fold
+// draws no distinction between a route whose coordinate holds no predecessor
+// fact and one whose predecessor is Bottom. Both are the empty normal image:
+// freezing Bottom is admitted by the owner but issues no normal branch, which
+// lands on the same answer the absent case takes directly.
+//
+// The distinction is therefore not observable in what this axis publishes, and
+// that is what makes the route read's sparse clause a free choice - explicit
+// provenance or the Factor's default both deliver a sound answer here. A change
+// that makes these two disagree is a change to the freeze judgment and has to
+// be argued as one, not slipped in through a read contract.
+func TestFreezeFoldAgreesOnAnAbsentAndABottomPredecessor(t *testing.T) {
+	schema := freezeSchema(t)
+	key := freezeAllocationRoot(t, schema)
+	plan, tag := freezeRoutePlan(t, schema, key)
+
+	absent, absentOutcome := formalfreeze.FreezeFold(schema, plan, tag, heapdomain.Value{}, false)
+	bottom, bottomOutcome := formalfreeze.FreezeFold(schema, plan, tag, schema.Bottom(), true)
+	if absentOutcome != bottomOutcome {
+		t.Fatalf("outcomes disagree: absent=%d bottom=%d", absentOutcome, bottomOutcome)
+	}
+	if !heapdomain.Equal(absent, bottom) {
+		t.Fatal("an absent predecessor and a Bottom predecessor published different facts")
+	}
+	if !heapdomain.Equal(absent, schema.Bottom()) {
+		t.Fatal("the agreed fact is not the empty normal image")
+	}
+}
