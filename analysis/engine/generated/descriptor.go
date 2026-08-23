@@ -218,16 +218,19 @@ func zeroDenominator(address ruleplan.DenominatorAddr) bool {
 	return !address.Present && address.Ordinal == 0
 }
 
-// readFormPredicateShape is the descriptor's statement of which sealed read
-// forms carry a selection predicate. It is the same normal form the cold
-// declaration seals: an exact lookup and a closed complete vector select
-// nothing, a summary vector is selected by one owner-issued predicate, and a
+// ReadFormPredicateShape is the one statement of which sealed read forms carry
+// a selection predicate. It is the normal form the cold declaration already
+// seals: an exact lookup and a closed complete vector select nothing, a
+// summary vector is selected by exactly one owner-issued predicate, and a
 // selected read may omit it only because a routed row's tag is optional data.
-func readFormPredicateShape(form ruleprogram.ReadForm, predicate ruleplan.ProjectionAddr, present bool) bool {
-	if present && !validProjectionAddr(predicate) {
-		return false
-	}
-	if !present && predicate != (ruleplan.ProjectionAddr{}) {
+// The zero address is the absent encoding, so a present predicate must name a
+// member and an absent one must be zero.
+//
+// It is exported because the plan-shape fence in the schema engine reads the
+// same law; a second spelling of it there is a second authority over which
+// declarations exist.
+func ReadFormPredicateShape(form ruleprogram.ReadForm, predicate ruleplan.ProjectionAddr, present bool) bool {
+	if present != (predicate != ruleplan.ProjectionAddr{}) || present && !validProjectionAddr(predicate) {
 		return false
 	}
 	switch form {
@@ -242,11 +245,11 @@ func readFormPredicateShape(form ruleprogram.ReadForm, predicate ruleplan.Projec
 	}
 }
 
-// readFormRequiresDenominator names the reads whose empty state is a closed
+// ReadFormRequiresDenominator names the reads whose empty state is a closed
 // fact rather than a plain absence: a selected route, a summary or complete
 // vector, and any read materialized through a declared default or dense
 // denominator. Those reads are unsealed without one.
-func readFormRequiresDenominator(form ruleprogram.ReadForm, sparse ruleprogram.Sparse) bool {
+func ReadFormRequiresDenominator(form ruleprogram.ReadForm, sparse ruleprogram.Sparse) bool {
 	return form == ruleprogram.Selected || form == ruleprogram.Summary || form == ruleprogram.Complete ||
 		sparse == ruleprogram.SparseDefault || sparse == ruleprogram.SparseDense
 }
@@ -262,7 +265,7 @@ func normalizeReadPlan(read *ReadPlan) bool {
 	if !contract.Order.Available() || !contract.Sparse.Available() || !contract.OnOpaque.Available() || !contract.Multiplicity.Available() {
 		return false
 	}
-	if !readFormPredicateShape(read.Form, read.Predicate, read.PredicatePresent) {
+	if !ReadFormPredicateShape(read.Form, read.Predicate, read.PredicatePresent) {
 		return false
 	}
 	if !zeroDenominator(read.Denominator) && !read.Denominator.Present {
@@ -271,7 +274,7 @@ func normalizeReadPlan(read *ReadPlan) bool {
 	if read.Denominator.Present && read.Denominator.Ordinal == ^uint32(0) {
 		return false
 	}
-	if readFormRequiresDenominator(read.Form, contract.Sparse) && !read.Denominator.Present {
+	if ReadFormRequiresDenominator(read.Form, contract.Sparse) && !read.Denominator.Present {
 		return false
 	}
 	if read.Sources.Count == 0 {
@@ -341,16 +344,13 @@ func validReadPlan(read ReadPlan, inputCount, axisCount int) bool {
 		!addressAxesInRange(axisCount, read.Relation, read.Key, read.Predicate) {
 		return false
 	}
-	if read.PredicatePresent && !validProjectionAddr(read.Predicate) {
-		return false
-	}
 	if !read.Contract.Order.Available() || !read.Contract.Sparse.Available() || !read.Contract.OnOpaque.Available() || !read.Contract.Multiplicity.Available() {
 		return false
 	}
-	if !readFormPredicateShape(read.Form, read.Predicate, read.PredicatePresent) {
+	if !ReadFormPredicateShape(read.Form, read.Predicate, read.PredicatePresent) {
 		return false
 	}
-	if readFormRequiresDenominator(read.Form, read.Contract.Sparse) && !read.Denominator.Present {
+	if ReadFormRequiresDenominator(read.Form, read.Contract.Sparse) && !read.Denominator.Present {
 		return false
 	}
 	if !zeroDenominator(read.Denominator) && !read.Denominator.Present || read.Denominator.Present && read.Denominator.Ordinal == ^uint32(0) {

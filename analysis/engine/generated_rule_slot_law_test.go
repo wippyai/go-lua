@@ -585,8 +585,6 @@ func TestGeneratedRuleSlotRejectsUnsupportedPlanShapes(t *testing.T) {
 		name    string
 		variant generatedRuleLawVariant
 	}{
-		{name: "summary-read", variant: generatedRuleLawSummary},
-		{name: "complete-read", variant: generatedRuleLawComplete},
 		{name: "structural-output", variant: generatedRuleLawStructural},
 	}
 	for _, test := range variants {
@@ -595,6 +593,51 @@ func TestGeneratedRuleSlotRejectsUnsupportedPlanShapes(t *testing.T) {
 			builder := generatedRuleLawBuilder(t, fixture.catalog, false)
 			if slot, slotOK := DeclareGeneratedRuleSlot(builder, fixture.catalog, 0); slotOK || slot != nil || builder.phase != schemaBuilderPoisoned {
 				t.Fatalf("unsupported Plan shape was admitted: slot=%v ok=%t phase=%d", slot, slotOK, builder.phase)
+			}
+		})
+	}
+}
+
+// TestGeneratedRuleSlotAdmitsTheSealedVectorReads states that the two vector
+// reads are declarations the slot seals, not shapes it refuses. A summary
+// vector selected by its owner-issued predicate and a closed complete vector
+// each reach the descriptor whole; the predicate is what separates them, so
+// neither is admitted under the other's normal form.
+func TestGeneratedRuleSlotAdmitsTheSealedVectorReads(t *testing.T) {
+	for _, test := range []struct {
+		name    string
+		variant generatedRuleLawVariant
+		form    program.ReadForm
+	}{
+		{name: "summary", variant: generatedRuleLawSummary, form: program.Summary},
+		{name: "complete", variant: generatedRuleLawComplete, form: program.Complete},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			fixture := newGeneratedRuleLawFixture(t, test.variant, generatedRuleLawRuleRole)
+			builder := generatedRuleLawBuilder(t, fixture.catalog, false)
+			slot, slotOK := DeclareGeneratedRuleSlot(builder, fixture.catalog, 0)
+			if !slotOK || slot == nil || builder.phase == schemaBuilderPoisoned {
+				t.Fatalf("sealed %s read refused: slot=%v ok=%t phase=%d", test.name, slot, slotOK, builder.phase)
+			}
+			sealed, sealedOK := builder.Seal()
+			if !sealedOK {
+				t.Fatalf("seal %s schema", test.name)
+			}
+			descriptor, descriptorOK := sealed.generatedProgramAt(0)
+			if !descriptorOK || !descriptor.Available() {
+				t.Fatalf("sealed descriptor = %+v/%t", descriptor, descriptorOK)
+			}
+			form, formOK := descriptor.ReadFormAt(0)
+			if !formOK || form != test.form {
+				t.Fatalf("descriptor read form = %d/%t, want %d", form, formOK, test.form)
+			}
+			denominator, denominatorOK := descriptor.ReadDenominatorAt(0)
+			if !denominatorOK || !denominator.Present {
+				t.Fatalf("vector read reached the descriptor without its closed denominator: %+v/%t", denominator, denominatorOK)
+			}
+			_, predicatePresent, predicateOK := descriptor.ReadPredicateAt(0)
+			if !predicateOK || predicatePresent != (test.form == program.Summary) {
+				t.Fatalf("%s read predicate present = %t/%t", test.name, predicatePresent, predicateOK)
 			}
 		})
 	}
