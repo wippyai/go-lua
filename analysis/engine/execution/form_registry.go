@@ -90,27 +90,71 @@ type FormAddress struct {
 	Local        uint32
 }
 
-// RuleFamilyProvider is implemented by a bound owner that authors the execution
-// family of one of its own sealed rule ordinals with concrete types. It is the
-// handoff a materialized source column already uses, handing over an executor
-// instead of a column, and it is how a rule the engine cannot type reaches
+// RuleFamilyInstaller authors the execution family of ONE sealed rule ordinal
+// with concrete types. It is how a rule the engine cannot type reaches
 // execution: a rule whose joins or whose reducer are typed in more than one
 // Factor has no generic builder, because the engine may not name those types
-// and the owner may not see the solve loop.
+// and the rule may not see the solve loop.
 //
-// AuthorsRule partitions before anything is built, so a refusal from
-// InstallRuleFamily is a real refusal rather than a silent fall back to a
-// generic form builder.
-type RuleFamilyProvider[K scalar.Key, V any] interface {
-	// AuthorsRule reports whether this owner installs the family of one sealed
-	// rule ordinal.
-	AuthorsRule(rule uint32) bool
+// The implementor is the rule's own package. A rule's family is the rule's
+// knowledge - the schemas, contracts and derived plans its fold needs are
+// sealed into it at the rule's own bind, where they are all in scope - and not
+// the knowledge of the axis it happens to write to. An axis owner constructed
+// from its own schema alone could not supply them, and must not acquire
+// foreign schemas in order to.
+type RuleFamilyInstaller[K scalar.Key, V any] interface {
 	// InstallRuleFamily seals one family covering every plan row of that rule,
 	// in the order given, and answers the local ordinal each row was sealed at.
-	// Every primitive it needs is sealed through the plane, so an owner outside
-	// this package builds a family without naming - or reaching - one carrier,
-	// binding, or guard type.
+	// Every primitive it needs is sealed through the plane, so an installer
+	// outside this package builds a family without naming - or reaching - one
+	// carrier, binding, or guard type.
 	InstallRuleFamily(plane FormPlane[K, V], rule uint32, rows []FormRow) (Family, []FormAddress, bool)
+}
+
+// RuleFamilies is the sealed table of which installer authors which sealed
+// rule ordinal. Membership in the table IS authorship: there is no separate
+// predicate an installer could answer inconsistently with the table, and no
+// order in which two claimants are resolved, because a second claim on one
+// ordinal is refused when it is made.
+//
+// The table partitions before anything is built, so a refusal from an
+// installer is a real refusal rather than a silent fall back to a generic form
+// builder.
+type RuleFamilies[K scalar.Key, V any] struct {
+	installers map[uint32]RuleFamilyInstaller[K, V]
+}
+
+// Install claims one sealed rule ordinal for one installer. A second claim on
+// one ordinal is two authorities for one family and is refused.
+func (families *RuleFamilies[K, V]) Install(rule uint32, installer RuleFamilyInstaller[K, V]) bool {
+	if families == nil || installer == nil {
+		return false
+	}
+	if _, claimed := families.installers[rule]; claimed {
+		return false
+	}
+	if families.installers == nil {
+		families.installers = map[uint32]RuleFamilyInstaller[K, V]{}
+	}
+	families.installers[rule] = installer
+	return true
+}
+
+// Installer resolves the installer authoring one sealed rule ordinal.
+func (families *RuleFamilies[K, V]) Installer(rule uint32) (RuleFamilyInstaller[K, V], bool) {
+	if families == nil {
+		return nil, false
+	}
+	installer, claimed := families.installers[rule]
+	return installer, claimed
+}
+
+// Count is the number of sealed rule ordinals this table authors.
+func (families *RuleFamilies[K, V]) Count() int {
+	if families == nil {
+		return 0
+	}
+	return len(families.installers)
 }
 
 // FormPlane is the sealed typed plane a form builder may read: the Factor's
@@ -121,12 +165,12 @@ type FormPlane[K scalar.Key, V any] struct {
 	binding  *factbinding.Binding[K, V]
 	columns  []memberrelation.SourceColumn[V]
 	present  []bool
-	families RuleFamilyProvider[K, V]
+	families *RuleFamilies[K, V]
 }
 
 // NewFormPlane seals one bound Factor's typed plane for the form table. A
 // Factor that installs no family of its own passes a nil provider.
-func NewFormPlane[K scalar.Key, V any](binding *factbinding.Binding[K, V], columns []memberrelation.SourceColumn[V], present []bool, families RuleFamilyProvider[K, V]) (FormPlane[K, V], bool) {
+func NewFormPlane[K scalar.Key, V any](binding *factbinding.Binding[K, V], columns []memberrelation.SourceColumn[V], present []bool, families *RuleFamilies[K, V]) (FormPlane[K, V], bool) {
 	if binding == nil {
 		return FormPlane[K, V]{}, false
 	}
@@ -275,6 +319,19 @@ func BuildForms[K scalar.Key, V any](plane FormPlane[K, V], rows []FormRow) ([]F
 	return buildForms(plane, rows, formBuilders[K, V]())
 }
 
+// authoredRuleOrdinal answers the sealed rule ordinal one plan row belongs to
+// when an installer authors that rule's family. A row whose rule has no sealed
+// ordinal is never authored: authorship is claimed against the ordinal, so an
+// unresolved one cannot match a claim.
+func authoredRuleOrdinal[K scalar.Key, V any](plane FormPlane[K, V], row FormRow) (uint32, bool) {
+	ordinal, ordinalOK := row.Rule.Ordinal()
+	if !ordinalOK {
+		return 0, false
+	}
+	_, authored := plane.families.Installer(ordinal)
+	return ordinal, authored
+}
+
 // buildForms is BuildForms over an explicit implementation column, so the
 // totality law can state what a declared form without an implementation does.
 func buildForms[K scalar.Key, V any](plane FormPlane[K, V], rows []FormRow, builders [formCount]formBuilder[K, V]) ([]Family, []FormAddress, Form, bool) {
@@ -288,8 +345,8 @@ func buildForms[K scalar.Key, V any](plane FormPlane[K, V], rows []FormRow, buil
 		if row.Member < 0 || !row.Form.Declared() {
 			return nil, nil, row.Form, false
 		}
-		ordinal, ordinalOK := row.Rule.Ordinal()
-		if plane.families != nil && ordinalOK && plane.families.AuthorsRule(ordinal) {
+		ordinal, authored := authoredRuleOrdinal(plane, row)
+		if authored {
 			if existing, present := installed[ordinal]; present {
 				if existing[0].Form != row.Form {
 					return nil, nil, row.Form, false
@@ -333,7 +390,11 @@ func buildForms[K scalar.Key, V any](plane FormPlane[K, V], rows []FormRow, buil
 		sort.Slice(ordinals, func(left, right int) bool { return ordinals[left] < ordinals[right] })
 		for _, ordinal := range ordinals {
 			ruleRows := installed[ordinal]
-			family, ruleAddresses, built := plane.families.InstallRuleFamily(plane, ordinal, ruleRows)
+			installer, authored := plane.families.Installer(ordinal)
+			if !authored {
+				return nil, nil, form, false
+			}
+			family, ruleAddresses, built := installer.InstallRuleFamily(plane, ordinal, ruleRows)
 			if !built || !appendFamily(family, ruleAddresses, len(ruleRows)) {
 				return nil, nil, form, false
 			}

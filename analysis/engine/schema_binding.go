@@ -29,6 +29,16 @@ type schemaBindingAuthority struct{ marker byte }
 // complete and fenced to this exact Schema.
 type SchemaBinding struct{ state *schemaBindingState }
 
+// ruleFamilyClaim is one rule's claim on the execution family of its own
+// sealed ordinal. The installer is held opaquely because it is typed in the
+// key and fact types of the Factor the rule writes to, which this state may
+// not name; factor is that Factor's sealed ordinal, so the claim is resolved
+// by exactly the Factor it was made for.
+type ruleFamilyClaim struct {
+	factor    uint64
+	installer any
+}
+
 type schemaBindingState struct {
 	mu     sync.Mutex
 	schema *Schema
@@ -47,6 +57,11 @@ type schemaBindingState struct {
 	// refusal names the first declaration site that poisoned this binding. It
 	// survives poisoning so a caller can tell which boundary refused.
 	refusal string
+	// ruleFamilies are the execution families rules install for their own
+	// sealed ordinals, held opaquely because each is typed in its own Factor's
+	// key and fact types, which this state may not name. A Factor claims the
+	// ones typed for it while it binds.
+	ruleFamilies map[uint64]ruleFamilyClaim
 	// linkBootstrapTransports is the sole ordered transport authorization for
 	// the Link-global bootstrap seam. The engine retains opaque capabilities,
 	// never domain role names; the program owner registers the complete set

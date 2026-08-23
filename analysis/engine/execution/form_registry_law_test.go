@@ -192,8 +192,8 @@ func planCompiledSourceRule(t *testing.T) generated.CompiledRule {
 	return rule
 }
 
-// installedFamilyProvider is a test owner that installs the family of exactly
-// one sealed rule ordinal, the way a domain arm authored with concrete types
+// installedFamilyProvider is a test rule package that installs the family of
+// its own sealed rule ordinal, the way a rule authored with concrete types
 // does.
 type installedFamilyProvider struct {
 	rule    uint32
@@ -202,8 +202,12 @@ type installedFamilyProvider struct {
 	install Family
 }
 
-func (provider *installedFamilyProvider) AuthorsRule(rule uint32) bool {
-	return provider != nil && rule == provider.rule
+// ruleFamilyTable is the sealed authorship table one provider claims its own
+// ordinal in, which is what a Factor hands the plane at bind.
+func ruleFamilyTable(provider *installedFamilyProvider) *RuleFamilies[uint64, uint64] {
+	families := &RuleFamilies[uint64, uint64]{}
+	families.Install(provider.rule, provider)
+	return families
 }
 
 func (provider *installedFamilyProvider) InstallRuleFamily(plane FormPlane[uint64, uint64], rule uint32, rows []FormRow) (Family, []FormAddress, bool) {
@@ -251,7 +255,7 @@ func TestAnOwnerInstallsTheFamilyOfItsOwnRule(t *testing.T) {
 
 	t.Run("installed", func(t *testing.T) {
 		provider := &installedFamilyProvider{rule: ordinal, install: installedFamily{}}
-		plane, planeOK := NewFormPlane(fixture.binding, nil, nil, provider)
+		plane, planeOK := NewFormPlane(fixture.binding, nil, nil, ruleFamilyTable(provider))
 		if !planeOK {
 			t.Fatal("form plane")
 		}
@@ -269,7 +273,7 @@ func TestAnOwnerInstallsTheFamilyOfItsOwnRule(t *testing.T) {
 
 	t.Run("not-authored", func(t *testing.T) {
 		provider := &installedFamilyProvider{rule: ordinal + 1, install: installedFamily{}}
-		plane, planeOK := NewFormPlane(fixture.binding, nil, nil, provider)
+		plane, planeOK := NewFormPlane(fixture.binding, nil, nil, ruleFamilyTable(provider))
 		if !planeOK {
 			t.Fatal("form plane")
 		}
@@ -284,7 +288,7 @@ func TestAnOwnerInstallsTheFamilyOfItsOwnRule(t *testing.T) {
 
 	t.Run("refused-install-is-a-refusal", func(t *testing.T) {
 		provider := &installedFamilyProvider{rule: ordinal, refuse: true, install: installedFamily{}}
-		plane, planeOK := NewFormPlane(fixture.binding, nil, nil, provider)
+		plane, planeOK := NewFormPlane(fixture.binding, nil, nil, ruleFamilyTable(provider))
 		if !planeOK {
 			t.Fatal("form plane")
 		}
@@ -323,5 +327,52 @@ func TestAFormRefusesACoordinateOfAnotherFactor(t *testing.T) {
 				t.Fatalf("a foreign coordinate sealed %d families / %d addresses", len(families), len(addresses))
 			}
 		})
+	}
+}
+
+// TestOneRuleOrdinalHasOneFamilyAuthority is why authorship is a table rather
+// than a predicate each installer answers for itself. Two installers claiming
+// one ordinal is two authorities over one rule's execution, and no order
+// between them resolves it - so the second claim is refused where it is made,
+// before anything is built and while the claimant can still be named.
+func TestOneRuleOrdinalHasOneFamilyAuthority(t *testing.T) {
+	first := &installedFamilyProvider{rule: 7, install: installedFamily{}}
+	second := &installedFamilyProvider{rule: 7, install: installedFamily{}}
+	families := &RuleFamilies[uint64, uint64]{}
+	if !families.Install(first.rule, first) {
+		t.Fatal("the first claim on an unclaimed ordinal is refused")
+	}
+	if families.Install(second.rule, second) {
+		t.Fatal("a second installer claimed an ordinal that already has one")
+	}
+	installer, authored := families.Installer(7)
+	if !authored || installer != RuleFamilyInstaller[uint64, uint64](first) {
+		t.Fatal("the refused second claim displaced the first")
+	}
+	if _, authored := families.Installer(8); authored {
+		t.Fatal("an unclaimed ordinal reports an authority")
+	}
+	if families.Count() != 1 {
+		t.Fatalf("table holds %d claims after one admitted and one refused", families.Count())
+	}
+}
+
+// TestAnEmptyFamilyTableAuthorsNothing keeps the common case - a Factor no rule
+// installs a family for - reading through the generic form builders rather
+// than refusing.
+func TestAnEmptyFamilyTableAuthorsNothing(t *testing.T) {
+	var absent *RuleFamilies[uint64, uint64]
+	if _, authored := absent.Installer(0); authored {
+		t.Fatal("a Factor with no installed families authors one")
+	}
+	if absent.Count() != 0 {
+		t.Fatal("an absent table holds claims")
+	}
+	empty := &RuleFamilies[uint64, uint64]{}
+	if _, authored := empty.Installer(0); authored {
+		t.Fatal("an empty table authors an ordinal")
+	}
+	if empty.Install(0, nil) {
+		t.Fatal("a nil installer claimed an ordinal")
 	}
 }

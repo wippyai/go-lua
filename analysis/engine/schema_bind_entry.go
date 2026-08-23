@@ -3,6 +3,7 @@
 package engine
 
 import (
+	"github.com/wippyai/go-lua/analysis/engine/execution"
 	"github.com/wippyai/go-lua/analysis/engine/internal/composition"
 	"github.com/wippyai/go-lua/analysis/engine/internal/factbinding"
 	memberrelation "github.com/wippyai/go-lua/analysis/schema/axis/member/relation"
@@ -134,6 +135,52 @@ func BindRelationOwner[V any](binding *SchemaBinding, slot *FactorSlot[V], owner
 	}
 	factor := state.factors[ordinal]
 	return factor.setSchemaFactorRelationOwner(owner)
+}
+
+// BindRuleFamily installs the execution family one rule authors for its own
+// sealed ordinal, while the SchemaBinding is open.
+//
+// A rule's family is the rule's knowledge. The schemas, contracts and derived
+// plans its fold needs are in scope exactly here, at the rule's own bind, and
+// nowhere else: the axis owner the rule writes to is constructed from that
+// axis's schema alone and could not supply them without acquiring foreign
+// schemas it has no business holding. So the rule installs its own family, and
+// the claim is fenced by the sealed rule ordinal it is made against.
+//
+// The installer is retained as sealed data, exactly as a relation owner's
+// source columns are. It is asked once, when the Factor it belongs to builds
+// its form table, and never during a solve.
+func BindRuleFamily[K ~uint32 | ~uint64, V, O any](binding *SchemaBinding, slot *RuleSlot[V, O], output *FactorSlot[V], installer execution.RuleFamilyInstaller[K, V]) bool {
+	state := bindingState(binding)
+	if state == nil {
+		return false
+	}
+	state.mu.Lock()
+	defer state.mu.Unlock()
+	if state.phase != schemaBindingOpen || state.schema == nil || slot == nil || slot.cell == nil ||
+		slot.cell.schema != state.schema || output == nil || output.cell == nil || output.cell.schema != state.schema || installer == nil {
+		if state.phase == schemaBindingOpen {
+			state.poisonLocked()
+		}
+		return false
+	}
+	ruleOrdinal, ruleOK := slot.Ordinal()
+	factorOrdinal, factorOK := output.Ordinal()
+	if !ruleOK || !factorOK || ruleOrdinal >= uint64(len(state.rules)) || factorOrdinal >= uint64(len(state.factors)) {
+		state.poisonLocked()
+		return false
+	}
+	// One rule ordinal has one family. A second claim is two authorities for
+	// one rule's execution, which no order between them could resolve.
+	if _, claimed := state.ruleFamilies[ruleOrdinal]; claimed {
+		state.poisonLocked()
+		return false
+	}
+	if state.ruleFamilies == nil {
+		state.ruleFamilies = map[uint64]ruleFamilyClaim{}
+	}
+	state.ruleFamilies[ruleOrdinal] = ruleFamilyClaim{factor: factorOrdinal, installer: installer}
+	return true
 }
 
 // BindRule binds the sole direct Rule lane currently implemented.

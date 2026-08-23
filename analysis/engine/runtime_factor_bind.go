@@ -90,12 +90,6 @@ func bindFactorFromGraph[K ~uint32 | ~uint64, V any](implementation *FactorImple
 	// this Program-bound factor.  The solve runtime keeps only immutable values
 	// and cannot retain, reopen, or invoke the owner capability.
 	if owner := row.schemaFactorRelationOwner(); owner != nil {
-		// A Factor that authors the family of one of its own rules installs it
-		// here, at seal, beside its materialized columns. The runtime keeps the
-		// sealed executor, never the owner capability that built it.
-		if families, familiesOK := owner.(execution.RuleFamilyProvider[K, V]); familiesOK {
-			bound.families = families
-		}
 		if columns, columnsOK := owner.(memberrelation.SourceColumns[V]); columnsOK {
 			count := columns.RelationCount()
 			if count < 0 {
@@ -114,6 +108,29 @@ func bindFactorFromGraph[K ~uint32 | ~uint64, V any](implementation *FactorImple
 				bound.sourceColumns[index] = column.Clone()
 				bound.sourcePresent[index] = true
 			}
+		}
+	}
+	// The families rules installed for their own sealed ordinals are claimed
+	// here, at seal, beside the materialized columns. A claim is resolved by
+	// exactly the Factor it names, and it must be typed in that Factor's key
+	// and fact types: a claim that is not is a rule installing a family for a
+	// Factor it does not write to.
+	for ruleOrdinal, claim := range runtime.state.ruleFamilies {
+		if claim.factor != implementation.ordinal {
+			continue
+		}
+		if ruleOrdinal > uint64(^uint32(0)) {
+			return nil, false
+		}
+		installer, typed := claim.installer.(execution.RuleFamilyInstaller[K, V])
+		if !typed {
+			return nil, false
+		}
+		if bound.families == nil {
+			bound.families = &execution.RuleFamilies[K, V]{}
+		}
+		if !bound.families.Install(uint32(ruleOrdinal), installer) {
+			return nil, false
 		}
 	}
 	binding, ok := factbinding.Bind(implementation.algebra, runtime.guards, func(binding *factbinding.Binding[K, V]) bool {
