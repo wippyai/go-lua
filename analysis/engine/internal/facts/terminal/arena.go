@@ -129,6 +129,24 @@ func (arena *Arena[V]) Begin() *Work[V] {
 	return &Work[V]{base: arena, page: newPage(arena.owner), open: true}
 }
 
+// BeginInto opens the same candidate page over caller-owned Work storage. A
+// candidate page that published nothing is not part of any sealed identity, so
+// the next candidate reuses it and a warm write transaction admits terminals
+// without allocating a page at all. A page the owner has published is
+// immutable and is never reused.
+func (arena *Arena[V]) BeginInto(work *Work[V]) bool {
+	if arena == nil || work == nil || work.open || !arena.sealed || arena.owner == nil || arena.page == nil {
+		return false
+	}
+	if work.page == nil || work.page.owner != arena.owner || work.page.published {
+		work.page = newPage(arena.owner)
+	} else {
+		work.page.reuse()
+	}
+	work.base, work.open = arena, true
+	return true
+}
+
 // Valid reports whether id names a published page from this Arena's one
 // immutable semantic owner.  It intentionally accepts independently sealed
 // sibling generations, but never a still-open Work page.
@@ -282,7 +300,9 @@ func (work *Work[V]) Discard() {
 		return
 	}
 	work.open = false
-	work.page = nil
+	if work.page != nil && work.page.published {
+		work.page = nil
+	}
 }
 
 // promote publishes target into the owner's one sealed intern generation.
@@ -346,6 +366,20 @@ func lookupBucket[V any](bucket []ID[V], equal func(V, V) bool, value V) (ID[V],
 
 func newPage[V any](identity *owner[V]) *page[V] {
 	return &page[V]{owner: identity}
+}
+
+// reuse returns an unpublished candidate page to its empty state while keeping
+// the storage it has already grown. A published page is immutable and refuses.
+func (target *page[V]) reuse() {
+	if target == nil || target.published {
+		return
+	}
+	clear(target.values)
+	clear(target.forward)
+	target.values = target.values[:0]
+	target.hashes = target.hashes[:0]
+	target.forward = target.forward[:0]
+	clear(target.buckets)
 }
 
 // local resolves a repeat within this still-open candidate page.  Every entry

@@ -210,7 +210,7 @@ func (builder *Builder[F, K, V]) MergeSoleFactorChanges(left, right Root[F, K, V
 		}
 	}
 	if len(scratch.patches) == 0 {
-		return Root[F, K, V]{diagram: builder.diagram, root: left.root, count: left.count, lease: builder.lease}, true
+		return Root[F, K, V]{diagram: builder.diagram, root: left.root, count: left.count, lease: builder.token}, true
 	}
 	keys, ok := applySolePatches(leftKeys, scratch.patches, scratch.live)
 	if !ok || !scratch.live() {
@@ -224,7 +224,7 @@ func (builder *Builder[F, K, V]) MergeSoleFactorChanges(left, right Root[F, K, V
 	if keys != nil {
 		root = makeFactor(factor, rank, keys, nil, nil)
 	}
-	return Root[F, K, V]{diagram: builder.diagram, root: root, count: finalCount, lease: builder.lease}, true
+	return Root[F, K, V]{diagram: builder.diagram, root: root, count: finalCount, lease: builder.token}, true
 }
 
 // applySolePatches updates one immutable AVL from a sorted, unique mutation
@@ -382,13 +382,13 @@ func (builder *Builder[F, K, V]) mergeSoleFactorRegions(left, right Root[F, K, V
 		}
 	}
 	if sameLeft {
-		return Root[F, K, V]{diagram: builder.diagram, root: left.root, count: left.count, lease: builder.lease}, true
+		return Root[F, K, V]{diagram: builder.diagram, root: left.root, count: left.count, lease: builder.token}, true
 	}
 	if sameRight {
-		return Root[F, K, V]{diagram: builder.diagram, root: right.root, count: right.count, lease: builder.lease}, true
+		return Root[F, K, V]{diagram: builder.diagram, root: right.root, count: right.count, lease: builder.token}, true
 	}
 	if len(scratch.output) == 0 {
-		return Root[F, K, V]{diagram: builder.diagram, lease: builder.lease}, true
+		return Root[F, K, V]{diagram: builder.diagram, lease: builder.token}, true
 	}
 	// A changed sparse point normally touches only a few persistent columns.
 	// Preserve the immutable AVL subtrees of the left predecessor in that case
@@ -412,7 +412,7 @@ func (builder *Builder[F, K, V]) mergeSoleFactorRegions(left, right Root[F, K, V
 			diagram: builder.diagram,
 			root:    makeFactor(factor, rank, keys, nil, nil),
 			count:   len(scratch.output),
-			lease:   builder.lease,
+			lease:   builder.token,
 		}, true
 	}
 	keys := buildSoleKeys(scratch)
@@ -420,7 +420,7 @@ func (builder *Builder[F, K, V]) mergeSoleFactorRegions(left, right Root[F, K, V
 		diagram: builder.diagram,
 		root:    makeFactor(factor, rank, keys, nil, nil),
 		count:   len(scratch.output),
-		lease:   builder.lease,
+		lease:   builder.token,
 	}, true
 }
 

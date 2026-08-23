@@ -75,7 +75,7 @@ func newDisjointFoldFixture(t *testing.T, width int) *disjointFoldFixture {
 			diagram: facts,
 			root:    makeFactor(uint64(1), 0, keys, nil, nil),
 			count:   1,
-			lease:   builder.lease,
+			lease:   builder.token,
 		})
 		if !valid {
 			t.Fatal("column seal")

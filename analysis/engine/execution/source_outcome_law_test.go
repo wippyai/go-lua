@@ -94,14 +94,23 @@ func TestSourceColumnIsOneRowTable(t *testing.T) {
 // executes: the zero-read source row and the one exact read that carries its
 // own identity forward.
 //
-// This law is RED, and the cost is not in the dispatch. Issue, frame and drain
-// are already free; every allocation comes from the staged write, where
-// factbinding.Binding.Begin opens a fresh diagram builder and terminal arena
-// for each staging transaction (27 objects / ~7KB per staged write, profiled
-// through facts/stage.Begin -> facts/diagram.begin -> facts/terminal.Arena).
-// That path is shared with every hand-wired rule, so the defect is the fact
-// plane's staging transaction rather than the generated arm; it is stated here
-// because this is where the generated arm pays it.
+// This law is RED, and what is left of the cost is the accepted result rather
+// than the transaction. Issue, frame and drain are free, and the staging
+// transaction is now reusable storage owned by the invocation lane: the
+// candidate terminal page, the candidate FDD, the Boolean shell and both patch
+// wrappers are grown once per worker and reset per write, so opening a staged
+// write allocates nothing (23 -> 2 on exact, 33 -> 13 on source, profiled
+// through factbinding.Binding.BeginInto -> facts/stage.BeginInto ->
+// facts/diagram.BeginWithTerminalsInto -> facts/terminal.Arena.BeginInto).
+//
+// The remainder is data the invocation produces and hands to the solver: the
+// carrier change identity and the authored rows the carrier canonicalizes and
+// keeps, and - for a write that genuinely introduces a fact, which is what the
+// source row does on every iteration here - the FDD nodes and the expanded
+// unit/region vectors of that change. This law goes green when the accepted
+// change set is drawn from Run-owned storage as well, which is a carrier
+// lifetime question: the solver retains the patch beyond the invocation, so it
+// cannot simply be reused the way the transaction is.
 func TestExecutionWarmInvocationAllocatesNothing(t *testing.T) {
 	t.Run("source", func(t *testing.T) {
 		fixture := newExecutionFixture(t)

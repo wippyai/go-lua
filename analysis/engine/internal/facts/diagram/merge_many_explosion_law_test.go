@@ -74,7 +74,7 @@ func TestMergeSoleManyPreviousComplexityIsIndependentOfPreviousLane(t *testing.T
 			diagram: facts,
 			root:    makeFactor(uint64(1), 0, keys, nil, nil),
 			count:   1,
-			lease:   builder.lease,
+			lease:   builder.token,
 		}
 		sealed, valid := builder.Seal(candidate)
 		if !valid {
@@ -215,7 +215,7 @@ func TestSeedSoleManyPredecessorReusesSharedCrossEdgeLaw(t *testing.T) {
 	// right child is also reached from the left subtree. A parallel child push
 	// would encounter it gray and falsely report a cycle.
 	keys := makeKey(uint64(7), root, nil, nil)
-	sealed, sealedOK := prior.Seal(Root[uint64, uint64, uint8]{diagram: facts, root: makeFactor(uint64(1), 0, keys, nil, nil), count: 1, lease: prior.lease})
+	sealed, sealedOK := prior.Seal(Root[uint64, uint64, uint8]{diagram: facts, root: makeFactor(uint64(1), 0, keys, nil, nil), count: 1, lease: prior.token})
 	if !sealedOK || sealed.root == nil {
 		t.Fatal("prior seal")
 	}

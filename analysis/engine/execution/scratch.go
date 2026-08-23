@@ -33,6 +33,11 @@ type Scratch[K scalar.Key, V any] struct {
 	writeBinding *factbinding.Binding[K, V]
 	writeTarget  carrier.Target
 	patch        *factbinding.Patch[K, V]
+	// patchScratch is this lane's own write-transaction storage. A worker
+	// stages at most once per invocation and reuses it for its whole lifetime,
+	// so a warm invocation opens its write without allocating a candidate page,
+	// a candidate FDD, or a wrapper.
+	patchScratch factbinding.PatchScratch[K, V]
 }
 
 func (scratch *Scratch[K, V]) reset(ticket Ticket) bool {

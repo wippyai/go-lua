@@ -57,7 +57,7 @@ type Root[F ~uint64, K scalar.Key, V any] struct {
 	root    *factorNode[F, K, V]
 	count   int
 	sealed  bool
-	lease   *lease
+	lease   leaseRef
 }
 
 // Builder is a single-writer construction scope.  It structurally shares
@@ -68,6 +68,7 @@ type Builder[F ~uint64, K scalar.Key, V any] struct {
 	terminalAuthority interface{ Valid(terminal.ID[V]) bool }
 	terminalWork      *terminal.Work[V]
 	lease             *lease
+	token             leaseRef
 	open              bool
 	terminals         map[terminal.ID[V]]*node[V]
 	decisions         map[decisionKey[V]]*node[V]
@@ -106,7 +107,18 @@ func reuseMemo[T comparable, R any](storage map[T]R) map[T]R {
 	return storage
 }
 
-type lease struct{ marker byte }
+// lease is the identity of one Builder's candidate scope. A Builder is
+// reusable storage, so the identity is a pointer plus the generation it is
+// currently issuing: a root from an earlier transaction of the same Builder
+// carries an earlier generation and is refused rather than silently accepted.
+type lease struct{ generation uint64 }
+
+// leaseRef is the candidate-scope stamp a root carries. Its zero value names a
+// sealed root, which belongs to the Diagram rather than to any transaction.
+type leaseRef struct {
+	owner      *lease
+	generation uint64
+}
 
 type factorNode[F ~uint64, K scalar.Key, V any] struct {
 	factor F
@@ -254,18 +266,54 @@ func (diagram *Diagram[F, K, V]) BeginWithTerminals(values *terminal.Work[V]) *B
 }
 
 func (diagram *Diagram[F, K, V]) begin(values interface{ Valid(terminal.ID[V]) bool }) *Builder[F, K, V] {
-	return &Builder[F, K, V]{
-		diagram: diagram, terminalAuthority: values, lease: &lease{}, open: true,
-		terminals: make(map[terminal.ID[V]]*node[V]),
-		decisions: make(map[decisionKey[V]]*node[V]),
-		updates:   make(map[updateKey[V]]*node[V]),
-		imports:   make(map[*node[V]]*node[V]),
+	builder := &Builder[F, K, V]{}
+	builder.reopen(diagram, values)
+	return builder
+}
+
+// BeginWithTerminalsInto opens the same candidate scope over caller-owned
+// Builder storage. The unique tables and the transaction memos are reset, not
+// reallocated, so a warm write transaction opens without allocating: a Builder
+// is the reusable scratch of one write, never a value that outlives it.
+func (diagram *Diagram[F, K, V]) BeginWithTerminalsInto(builder *Builder[F, K, V], values *terminal.Work[V]) bool {
+	if diagram == nil || builder == nil || builder.open || values == nil || values.Base() != diagram.terminals {
+		return false
 	}
+	builder.reopen(diagram, values)
+	builder.terminalWork = values
+	return true
+}
+
+// reopen installs one candidate scope over this Builder's storage. Every map
+// is cleared rather than dropped, and the scope's generation advances so a root
+// stamped by an earlier transaction is no longer this Builder's.
+func (builder *Builder[F, K, V]) reopen(diagram *Diagram[F, K, V], values interface{ Valid(terminal.ID[V]) bool }) {
+	if builder.lease == nil {
+		builder.lease = &lease{}
+	}
+	builder.lease.generation++
+	builder.token = leaseRef{owner: builder.lease, generation: builder.lease.generation}
+	builder.diagram = diagram
+	builder.terminalAuthority = values
+	builder.terminalWork = nil
+	builder.open = true
+	if builder.terminals == nil {
+		builder.terminals = make(map[terminal.ID[V]]*node[V])
+		builder.decisions = make(map[decisionKey[V]]*node[V])
+		builder.updates = make(map[updateKey[V]]*node[V])
+		builder.imports = make(map[*node[V]]*node[V])
+		return
+	}
+	clear(builder.terminals)
+	clear(builder.decisions)
+	clear(builder.updates)
+	clear(builder.imports)
+	builder.releaseMemos()
 }
 
 // Valid reports whether root is a sealed root from this exact Diagram.
 func (diagram *Diagram[F, K, V]) Valid(root Root[F, K, V]) bool {
-	return diagram != nil && root.diagram == diagram && root.sealed && root.lease == nil
+	return diagram != nil && root.diagram == diagram && root.sealed && root.lease == leaseRef{}
 }
 
 // Count returns the number of populated sparse columns, not the number of
@@ -352,7 +400,7 @@ func (diagram *Diagram[F, K, V]) Equal(left, right Root[F, K, V]) bool {
 
 // Valid accepts sealed predecessors and roots private to this Builder.
 func (builder *Builder[F, K, V]) Valid(root Root[F, K, V]) bool {
-	return builder != nil && builder.open && root.diagram == builder.diagram && (builder.diagram.Valid(root) || !root.sealed && root.lease == builder.lease)
+	return builder != nil && builder.open && root.diagram == builder.diagram && (builder.diagram.Valid(root) || !root.sealed && root.lease == builder.token)
 }
 
 // Set strongly overwrites the exact support region for one fact column:
@@ -380,14 +428,14 @@ func (builder *Builder[F, K, V]) Set(root Root[F, K, V], factor F, key K, when s
 	}
 	next := builder.update(prior, when, value)
 	if next == prior {
-		return Root[F, K, V]{diagram: builder.diagram, root: root.root, count: root.count, lease: builder.lease}, true
+		return Root[F, K, V]{diagram: builder.diagram, root: root.root, count: root.count, lease: builder.token}, true
 	}
 	columns, added := setFactor(root.root, rank, factor, key, next)
 	count := root.count
 	if added {
 		count++
 	}
-	return Root[F, K, V]{diagram: builder.diagram, root: columns, count: count, lease: builder.lease}, true
+	return Root[F, K, V]{diagram: builder.diagram, root: columns, count: count, lease: builder.token}, true
 }
 
 // Delete strongly writes undefined under when.  The sparse column itself is
@@ -402,16 +450,16 @@ func (builder *Builder[F, K, V]) Delete(root Root[F, K, V], factor F, key K, whe
 	}
 	column := findFactor(root.root, rank)
 	if column == nil {
-		return Root[F, K, V]{diagram: builder.diagram, root: root.root, count: root.count, lease: builder.lease}, true
+		return Root[F, K, V]{diagram: builder.diagram, root: root.root, count: root.count, lease: builder.token}, true
 	}
 	prior := columnValue(column.keys, key)
 	if prior == nil {
-		return Root[F, K, V]{diagram: builder.diagram, root: root.root, count: root.count, lease: builder.lease}, true
+		return Root[F, K, V]{diagram: builder.diagram, root: root.root, count: root.count, lease: builder.token}, true
 	}
 	prior = builder.importNode(prior)
 	next := builder.update(prior, when, terminal.ID[V]{})
 	if next == prior {
-		return Root[F, K, V]{diagram: builder.diagram, root: root.root, count: root.count, lease: builder.lease}, true
+		return Root[F, K, V]{diagram: builder.diagram, root: root.root, count: root.count, lease: builder.token}, true
 	}
 	if next.terminal && next.value == (terminal.ID[V]{}) {
 		columns, removed := deleteFactor(root.root, rank, key)
@@ -419,10 +467,10 @@ func (builder *Builder[F, K, V]) Delete(root Root[F, K, V], factor F, key K, whe
 		if removed {
 			count--
 		}
-		return Root[F, K, V]{diagram: builder.diagram, root: columns, count: count, lease: builder.lease}, true
+		return Root[F, K, V]{diagram: builder.diagram, root: columns, count: count, lease: builder.token}, true
 	}
 	columns, _ := setFactor(root.root, rank, factor, key, next)
-	return Root[F, K, V]{diagram: builder.diagram, root: columns, count: root.count, lease: builder.lease}, true
+	return Root[F, K, V]{diagram: builder.diagram, root: columns, count: root.count, lease: builder.token}, true
 }
 
 // Seal publishes root and drops every builder-local FDD cache.  Sealed roots
@@ -440,14 +488,7 @@ func (builder *Builder[F, K, V]) Seal(root Root[F, K, V]) (Root[F, K, V], bool) 
 			return Root[F, K, V]{}, false
 		}
 	}
-	builder.open = false
-	builder.lease = nil
-	builder.terminals = nil
-	builder.decisions = nil
-	builder.updates = nil
-	builder.imports = nil
-	builder.releaseMemos()
-	builder.terminalAuthority = nil
+	builder.close()
 	builder.terminalWork = nil
 	return Root[F, K, V]{diagram: builder.diagram, root: root.root, count: root.count, sealed: true}, true
 }
@@ -460,14 +501,7 @@ func (builder *Builder[F, K, V]) Discard() {
 		return
 	}
 	builder.terminalWork.Discard()
-	builder.open = false
-	builder.lease = nil
-	builder.terminals = nil
-	builder.decisions = nil
-	builder.updates = nil
-	builder.imports = nil
-	builder.releaseMemos()
-	builder.terminalAuthority = nil
+	builder.close()
 	builder.terminalWork = nil
 }
 
@@ -514,7 +548,7 @@ func (builder *Builder[F, K, V]) Put(root Root[F, K, V], factor F, key K, value 
 		stored = columnValue(column.keys, key)
 	}
 	if stored == value.node {
-		return Root[F, K, V]{diagram: builder.diagram, root: root.root, count: root.count, lease: builder.lease}, true
+		return Root[F, K, V]{diagram: builder.diagram, root: root.root, count: root.count, lease: builder.token}, true
 	}
 	if value.node.terminal && value.node.value == (terminal.ID[V]{}) {
 		columns, removed := deleteFactor(root.root, rank, key)
@@ -522,14 +556,14 @@ func (builder *Builder[F, K, V]) Put(root Root[F, K, V], factor F, key K, value 
 		if removed {
 			count--
 		}
-		return Root[F, K, V]{diagram: builder.diagram, root: columns, count: count, lease: builder.lease}, true
+		return Root[F, K, V]{diagram: builder.diagram, root: columns, count: count, lease: builder.token}, true
 	}
 	columns, added := setFactor(root.root, rank, factor, key, value.node)
 	count := root.count
 	if added {
 		count++
 	}
-	return Root[F, K, V]{diagram: builder.diagram, root: columns, count: count, lease: builder.lease}, true
+	return Root[F, K, V]{diagram: builder.diagram, root: columns, count: count, lease: builder.token}, true
 }
 
 // Zip applies operation pointwise to two FDDs over their common guard order.
@@ -1438,6 +1472,20 @@ func (diagram *Diagram[F, K, V]) ForEach(root Root[F, K, V], visit func(Fact[F, 
 
 // releaseMemos drops the transaction's pointwise operation storage. A sealed
 // or discarded Builder must not keep candidate nodes reachable through a memo.
+// close ends the candidate scope. The unique tables and memos are cleared so
+// no node of a finished transaction stays reachable, while their storage stays
+// available to the next transaction this Builder opens.
+func (builder *Builder[F, K, V]) close() {
+	builder.open = false
+	builder.token = leaseRef{}
+	builder.terminalAuthority = nil
+	clear(builder.terminals)
+	clear(builder.decisions)
+	clear(builder.updates)
+	clear(builder.imports)
+	builder.releaseMemos()
+}
+
 func (builder *Builder[F, K, V]) releaseMemos() {
 	builder.zipWork = nil
 	builder.transformWork = nil

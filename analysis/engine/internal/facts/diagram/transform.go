@@ -30,13 +30,13 @@ func (builder *Builder[F, K, V]) TransformSoleFactor(input Root[F, K, V], transf
 		return Root[F, K, V]{}, false
 	}
 	if keys == factorKeys(column) {
-		return Root[F, K, V]{diagram: builder.diagram, root: input.root, count: input.count, lease: builder.lease}, true
+		return Root[F, K, V]{diagram: builder.diagram, root: input.root, count: input.count, lease: builder.token}, true
 	}
 	var root *factorNode[F, K, V]
 	if keys != nil {
 		root = makeFactor(factor, rank, keys, nil, nil)
 	}
-	return Root[F, K, V]{diagram: builder.diagram, root: root, count: count, lease: builder.lease}, true
+	return Root[F, K, V]{diagram: builder.diagram, root: root, count: count, lease: builder.token}, true
 }
 
 // transformSoleKeys visits in ascending key order. Recursion consumes only

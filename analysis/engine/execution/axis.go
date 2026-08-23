@@ -315,7 +315,7 @@ func (axis ExactWrite[K, V]) Stage(ticket Ticket, scratch *Scratch[K, V], when s
 		return false
 	}
 	if scratch.patch == nil {
-		scratch.patch = axis.binding.Begin(work, state)
+		scratch.patch = axis.binding.BeginInto(&scratch.patchScratch, work, state)
 		if scratch.patch == nil {
 			return false
 		}

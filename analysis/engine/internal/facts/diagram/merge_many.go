@@ -119,7 +119,7 @@ func (builder *Builder[F, K, V]) MergeSoleFactorMany(previous Root[F, K, V], inp
 		return Root[F, K, V]{}, false
 	}
 	if len(scratch.patches) == 0 {
-		return Root[F, K, V]{diagram: builder.diagram, root: previous.root, count: previous.count, lease: builder.lease}, true
+		return Root[F, K, V]{diagram: builder.diagram, root: previous.root, count: previous.count, lease: builder.token}, true
 	}
 	keys, ok := applySolePatches(baseKeys, scratch.patches, scratch.live)
 	if !ok || !scratch.live() {
@@ -136,7 +136,7 @@ func (builder *Builder[F, K, V]) MergeSoleFactorMany(previous Root[F, K, V], inp
 	if !scratch.live() {
 		return Root[F, K, V]{}, false
 	}
-	return Root[F, K, V]{diagram: builder.diagram, root: root, count: count, lease: builder.lease}, true
+	return Root[F, K, V]{diagram: builder.diagram, root: root, count: count, lease: builder.token}, true
 }
 
 // seedSoleManyPredecessor imports one immutable predecessor column into the

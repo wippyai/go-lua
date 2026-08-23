@@ -121,8 +121,8 @@ func TestMergeSoleFactorChangesMaintainsAVLAfterDeletingCompleteHalf(t *testing.
 		}, func(index int) (testKey, support.Mask, support.Mask, support.Mask, bool) {
 			return rows[index].key, all, all, all, true
 		})
-	if !ok || result.count != 8 || result.lease != builder.lease {
-		t.Fatalf("batch result = ok:%t count:%d leased:%t", ok, result.count, result.lease == builder.lease)
+	if !ok || result.count != 8 || result.lease != builder.token {
+		t.Fatalf("batch result = ok:%t count:%d leased:%t", ok, result.count, result.lease == builder.token)
 	}
 	factor := findFactor(result.root, fixture.diagram.ranks[factorFirst])
 	if factor == nil {
@@ -214,7 +214,7 @@ func TestMergeSoleFactorChangesMatchesScalarMixedPatchesAndCanonicalEmpty(t *tes
 	noop, ok := noopBuilder.MergeSoleFactorChanges(left, right, 1, NewSoleScratch[testKey, uint8](), support.New(fixture.manager), combine, equal,
 		func(testKey, support.Mask) bool { return false },
 		func(int) (testKey, support.Mask, support.Mask, support.Mask, bool) { return 4, all, all, all, true })
-	if !ok || noop.root != left.root || noop.count != left.count || noop.lease != noopBuilder.lease {
+	if !ok || noop.root != left.root || noop.count != left.count || noop.lease != noopBuilder.token {
 		t.Fatal("no-op batch did not retain exact lhs root with candidate lease")
 	}
 	if _, ok = noopBuilder.Seal(noop); !ok {
@@ -280,7 +280,7 @@ func TestTransformSoleFactorSharesShapeAndMatchesCanonicalDeletion(t *testing.T)
 	noop, ok := noopBuilder.TransformSoleFactor(input, func(_ testKey, value Value[uint8]) (Value[uint8], bool) {
 		return value, true
 	})
-	if !ok || noop.root != input.root || noop.count != input.count || noop.lease != noopBuilder.lease {
+	if !ok || noop.root != input.root || noop.count != input.count || noop.lease != noopBuilder.token {
 		t.Fatal("identity transform did not retain the exact immutable root")
 	}
 	if _, ok = noopBuilder.Seal(noop); !ok {

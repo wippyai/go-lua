@@ -22,6 +22,9 @@ type Patch[K scalar.Key, V any] struct {
 	base     carrier.RootHandle
 	patch    *stage.Patch[planeFactor, K, V]
 	authored []carrier.TargetRegion
+	// owned marks a Patch that lives in caller-owned scratch. Closing one keeps
+	// its authored storage for the next transaction instead of dropping it.
+	owned bool
 }
 
 // TransformClosure is one Binding-owned immutable typed key vector compiled
@@ -109,21 +112,59 @@ func (binding *Binding[K, V]) Begin(work *carrier.Work, state carrier.State) *Pa
 	if !within.Valid() || within.Manager() != binding.plane.domain.Guards() {
 		return nil
 	}
-	patch := stage.Begin(binding.plane.diagram, typedPlane.Root(), within, stage.Config[K, V]{
-		KeyEnd:     binding.algebra.keyEnd,
-		Default:    binding.algebra.default_,
-		AdmitAt:    binding.algebra.admitAt,
-		Equal:      binding.algebra.equal,
-		LessOrEq:   binding.algebra.lessOrEq,
-		JoinStable: binding.algebra.joinStable,
-		Join: func(left, right V) (V, bool) {
-			return binding.algebra.join(left, right), true
-		},
-	})
+	patch := stage.Begin(binding.plane.diagram, typedPlane.Root(), within, binding.stageConfig)
 	if patch == nil {
 		return nil
 	}
 	return &Patch[K, V]{binding: binding, state: state, slot: slot, support: within, base: base, patch: patch}
+}
+
+// PatchScratch is caller-owned storage for one write transaction. A worker that
+// stages once per invocation keeps one of these for its whole lifetime, so the
+// candidate page, the candidate FDD and this wrapper are grown once instead of
+// per write. It carries no authority of its own: every admission Begin makes is
+// made here too, and the returned Patch is closed by Accept or Discard exactly
+// as an allocated one is.
+type PatchScratch[K scalar.Key, V any] struct {
+	patch Patch[K, V]
+	stage stage.Patch[planeFactor, K, V]
+}
+
+// BeginInto opens the same write scope over caller-owned scratch.
+func (binding *Binding[K, V]) BeginInto(scratch *PatchScratch[K, V], work *carrier.Work, state carrier.State) *Patch[K, V] {
+	if binding == nil || scratch == nil || scratch.patch.patch != nil || work == nil || !work.OwnsState(state) {
+		return nil
+	}
+	slot, ok := binding.issuer.Slot()
+	if !ok {
+		return nil
+	}
+	slotWork, ok := work.SlotWork(slot)
+	typedWork, typed := slotWork.(*bindingWork[K, V])
+	if !ok || !typed || typedWork.binding != binding || !typedWork.live() {
+		return nil
+	}
+	base, ok := state.HandleAt(slot)
+	if !ok {
+		return nil
+	}
+	typedPlane, ok := typedWork.resolve(base)
+	if !ok {
+		return nil
+	}
+	within := state.Support()
+	if !within.Valid() || within.Manager() != binding.plane.domain.Guards() {
+		return nil
+	}
+	if !stage.BeginInto(&scratch.stage, binding.plane.diagram, typedPlane.Root(), within, binding.stageConfig) {
+		return nil
+	}
+	scratch.patch.binding, scratch.patch.state = binding, state
+	scratch.patch.slot, scratch.patch.support, scratch.patch.base = slot, within, base
+	scratch.patch.patch = &scratch.stage
+	scratch.patch.owned = true
+	scratch.patch.authored = scratch.patch.authored[:0]
+	return &scratch.patch
 }
 
 // Write is the only factbinding mutation entry.  Target is a presealed
@@ -313,7 +354,10 @@ func (patch *Patch[K, V]) Accept(work *carrier.Work) (result carrier.Patch, acce
 		return carrier.Patch{}, false
 	}
 	binding, state, base := patch.binding, patch.state, patch.base
-	authored := append([]carrier.TargetRegion(nil), patch.authored...)
+	// The carrier canonicalizes and keeps its own copy of the authored rows, so
+	// this boundary hands over the staged rows directly. They are still owned
+	// here until Accept returns, and clear() runs after it.
+	authored := patch.authored
 	slotWork, slotOK := work.SlotWork(patch.slot)
 	currentWork, currentOK := slotWork.(*bindingWork[K, V])
 	if !slotOK || !currentOK || !currentWork.live() || !work.OwnsState(state) {
@@ -521,5 +565,9 @@ func (patch *Patch[K, V]) clear() {
 	patch.support = support.Mask{}
 	patch.base = carrier.RootHandle{}
 	clear(patch.authored)
+	if patch.owned {
+		patch.authored = patch.authored[:0]
+		return
+	}
 	patch.authored = nil
 }

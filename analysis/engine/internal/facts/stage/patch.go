@@ -40,13 +40,26 @@ type Patch[F ~uint64, K scalar.Key, V any] struct {
 	terminals *terminal.Work[V]
 	builder   *diagram.Builder[F, K, V]
 	regions   *support.Work
-	scratch   diagram.SoleScratch[K, V]
-	config    Config[K, V]
-	factor    F
-	within    support.Mask
-	base      diagram.Root[F, K, V]
-	root      diagram.Root[F, K, V]
-	changes   []keyChange[K, V]
+	// builderStorage and terminalStorage are this Patch's own candidate scope
+	// when it was opened over caller-owned storage. They are the reason a warm
+	// write transaction opens without allocating: the pointers above address
+	// them, and closing a candidate clears them instead of dropping them.
+	builderStorage  diagram.Builder[F, K, V]
+	terminalStorage terminal.Work[V]
+	owned           bool
+	rows            []KeyChange[K]
+	// regionStorage is the long-lived Boolean shell of a Patch opened over
+	// caller-owned storage. support.Work is reopened between terminal
+	// transactions by design, so a warm write reuses one shell instead of
+	// creating a guard Work per accepted patch.
+	regionStorage *support.Work
+	scratch       diagram.SoleScratch[K, V]
+	config        Config[K, V]
+	factor        F
+	within        support.Mask
+	base          diagram.Root[F, K, V]
+	root          diagram.Root[F, K, V]
+	changes       []keyChange[K, V]
 	// transformMemo belongs to this one candidate Patch.  It prevents one
 	// carried terminal shared by many keys or Product rows from being mapped
 	// repeatedly, and is discarded with the candidate before publication.
@@ -110,6 +123,38 @@ func Begin[F ~uint64, K scalar.Key, V any](facts *diagram.Diagram[F, K, V], base
 		diagram: facts, values: values, terminals: terminals, builder: builder,
 		config: config, factor: factor, within: within, base: base, root: base,
 	}
+}
+
+// BeginInto opens the same candidate over caller-owned Patch storage. The
+// candidate page and the candidate FDD are this Patch's own fields, so a warm
+// transaction reuses the storage its predecessor grew and allocates nothing to
+// open. The candidate is no less private for being reused: BeginInto refuses a
+// Patch that is still open, and closing one clears every candidate field.
+func BeginInto[F ~uint64, K scalar.Key, V any](patch *Patch[F, K, V], facts *diagram.Diagram[F, K, V], base diagram.Root[F, K, V], within support.Mask, config Config[K, V]) bool {
+	if patch == nil || patch.builder != nil || patch.terminals != nil {
+		return false
+	}
+	if facts == nil || !facts.Valid(base) || !within.Valid() || within.Manager() != facts.Guards() || config.AdmitAt == nil || config.Equal == nil || config.Join == nil || config.LessOrEq == nil {
+		return false
+	}
+	values := facts.Terminals()
+	factor, sole := facts.SoleFactor()
+	if !sole || !values.BeginInto(&patch.terminalStorage) {
+		return false
+	}
+	if !facts.BeginWithTerminalsInto(&patch.builderStorage, &patch.terminalStorage) {
+		patch.terminalStorage.Discard()
+		return false
+	}
+	patch.diagram, patch.values = facts, values
+	patch.terminals, patch.builder = &patch.terminalStorage, &patch.builderStorage
+	patch.config, patch.factor, patch.within = config, factor, within
+	patch.base, patch.root = base, base
+	patch.changes = patch.changes[:0]
+	patch.rows = patch.rows[:0]
+	patch.owned, patch.closed = true, false
+	clear(patch.transformMemo)
+	return true
 }
 
 // Set strongly overwrites key precisely where when holds.  A Default result
@@ -372,7 +417,10 @@ func (patch *Patch[F, K, V]) Accept(consume func(KeyChanges[K], *support.Work) b
 		patch.closeDiscarded()
 		return diagram.Root[F, K, V]{}, false
 	}
-	rows := make([]KeyChange[K], 0, len(patch.changes))
+	// rows is transaction-scoped: consume reads it synchronously and the
+	// carrier keeps its own copy of anything it retains, so a reused Patch
+	// hands out its own buffer rather than a fresh slice per accepted write.
+	rows := patch.rows[:0]
 	for _, change := range patch.changes {
 		view, valid := patch.regions.Decompose(change.region)
 		if !valid {
@@ -383,6 +431,7 @@ func (patch *Patch[F, K, V]) Accept(consume func(KeyChanges[K], *support.Work) b
 			rows = append(rows, KeyChange[K]{key: change.key, region: change.region})
 		}
 	}
+	patch.rows = rows
 	changes := KeyChanges[K]{rows: rows}
 	if !consume(changes, patch.regions) {
 		patch.closeDiscarded()
@@ -393,16 +442,7 @@ func (patch *Patch[F, K, V]) Accept(consume func(KeyChanges[K], *support.Work) b
 		patch.closeDiscarded()
 		return diagram.Root[F, K, V]{}, false
 	}
-	patch.closed = true
-	patch.builder = nil
-	patch.terminals = nil
-	patch.regions = nil
-	patch.scratch.Clear()
-	patch.within = support.Mask{}
-	patch.base = diagram.Root[F, K, V]{}
-	patch.root = diagram.Root[F, K, V]{}
-	patch.changes = nil
-	patch.transformMemo = nil
+	patch.closeCandidate()
 	return root, true
 }
 
@@ -423,7 +463,17 @@ func (patch *Patch[F, K, V]) ensureRegions() bool {
 	if patch.regions != nil {
 		return patch.regions.Open()
 	}
-	patch.regions = support.New(patch.diagram.Guards())
+	if !patch.owned {
+		patch.regions = support.New(patch.diagram.Guards())
+		return patch.regions != nil
+	}
+	guards := patch.diagram.Guards()
+	if patch.regionStorage == nil || !patch.regionStorage.OwnsManager(guards) {
+		patch.regionStorage = support.New(guards)
+	} else if !patch.regionStorage.Open() && !patch.regionStorage.Begin() {
+		return false
+	}
+	patch.regions = patch.regionStorage
 	return patch.regions != nil
 }
 
@@ -474,6 +524,13 @@ func (patch *Patch[F, K, V]) closeDiscarded() {
 	if patch.regions != nil {
 		patch.regions.Discard()
 	}
+	patch.closeCandidate()
+}
+
+// closeCandidate ends the candidate scope. Storage this Patch owns is cleared
+// rather than dropped, so the next transaction opened over it starts empty
+// without reallocating; storage it borrowed is released.
+func (patch *Patch[F, K, V]) closeCandidate() {
 	patch.closed = true
 	patch.builder = nil
 	patch.terminals = nil
@@ -482,7 +539,14 @@ func (patch *Patch[F, K, V]) closeDiscarded() {
 	patch.within = support.Mask{}
 	patch.base = diagram.Root[F, K, V]{}
 	patch.root = diagram.Root[F, K, V]{}
+	if patch.owned {
+		patch.changes = patch.changes[:0]
+		patch.rows = patch.rows[:0]
+		clear(patch.transformMemo)
+		return
+	}
 	patch.changes = nil
+	patch.rows = nil
 	patch.transformMemo = nil
 }
 

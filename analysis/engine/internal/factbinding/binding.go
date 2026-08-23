@@ -11,6 +11,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/engine/internal/facts/diagram"
 	"github.com/wippyai/go-lua/analysis/engine/internal/facts/scalar"
 	"github.com/wippyai/go-lua/analysis/engine/internal/facts/semantic"
+	"github.com/wippyai/go-lua/analysis/engine/internal/facts/stage"
 	"github.com/wippyai/go-lua/analysis/engine/internal/facts/terminal"
 	"github.com/wippyai/go-lua/analysis/engine/internal/guard"
 	"github.com/wippyai/go-lua/analysis/lattice"
@@ -202,7 +203,10 @@ type Binding[K scalar.Key, V any] struct {
 	lifecycle sync.Mutex
 	algebra   *Algebra[K, V]
 	plane     *plane[K, V]
-	issuer    carrier.Issuer
+	// stageConfig is the sealed staged law surface handed to every write
+	// transaction. It is built once from the algebra at Bind.
+	stageConfig stage.Config[K, V]
+	issuer      carrier.Issuer
 	// roots owns only the immutable composition-attached initial root.  Every
 	// dynamic candidate/published root belongs instead to one bindingWork's
 	// epoch-local store and is revoked with that Work.
@@ -315,6 +319,20 @@ func Bind[K scalar.Key, V any](algebra *Algebra[K, V], guards *guard.Manager, de
 		units:     make(map[carrier.Unit]declaredUnit[K]),
 		targets:   make(map[carrier.Target]declaredTarget[K]),
 		declaring: true,
+	}
+	// The staged law surface is a property of the sealed algebra, not of one
+	// write. It is compiled once here so opening a write transaction does not
+	// build a closure over this Binding on every invocation.
+	binding.stageConfig = stage.Config[K, V]{
+		KeyEnd:     algebra.keyEnd,
+		Default:    algebra.default_,
+		AdmitAt:    algebra.admitAt,
+		Equal:      algebra.equal,
+		LessOrEq:   algebra.lessOrEq,
+		JoinStable: algebra.joinStable,
+		Join: func(left, right V) (V, bool) {
+			return algebra.join(left, right), true
+		},
 	}
 	if declare != nil && !declare(binding) {
 		return nil, false
