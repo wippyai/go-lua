@@ -11,11 +11,11 @@ import (
 	"github.com/wippyai/go-lua/domain/type/typeexpr"
 )
 
-// TestRuntimeSealedRelationMaterializesCanonicalJudgment is the seal-time
-// construction law. Runtime owns no structural proof of its own: the sealed
-// bitset must reproduce the canonical checker's answer for every ordered pair
-// of the sealed closed universe, including the structural children the
-// descriptor algebra observes but no caller named directly.
+// TestRuntimeSealedRelationMaterializesCanonicalJudgment is the sealed
+// judgment law. Runtime owns no structural proof of its own: it must
+// reproduce the canonical checker's answer for every ordered pair of the
+// sealed closed universe, including the structural children the descriptor
+// algebra observes but no caller named directly.
 func TestRuntimeSealedRelationMaterializesCanonicalJudgment(t *testing.T) {
 	runtime, _, sources := runtimeRelationFixture(runtimeRelationCorpus())
 	if len(runtime.closedRows) == 0 {
@@ -37,6 +37,65 @@ func TestRuntimeSealedRelationMaterializesCanonicalJudgment(t *testing.T) {
 				t.Fatalf("sealed relation row %d <: row %d = %v/%v, canonical %v", leftRow, rightRow, answer, decided, expected)
 			}
 		}
+	}
+}
+
+// TestSealAdmittingOneDeclarationDecidesNoPair is the bounded-admission law.
+// Admitting a declaration is linear in its node count: the seal publishes the
+// closed universe and decides nothing. A seal that materializes the ordered
+// pair relation instead pays the square of that node count, each pair proved
+// over the full depth of the declaration, so one deeply nested authored type
+// never finishes admitting.
+//
+// The relation then charges exactly one judgment per ordered pair a consumer
+// actually asks about, and none for a pair it asks about twice.
+func TestSealAdmittingOneDeclarationDecidesNoPair(t *testing.T) {
+	const depth = 4096
+	deep := typ.Type(typ.String)
+	for level := 0; level < depth; level++ {
+		deep = typ.NewArray(deep)
+	}
+	family, err := SealFamily("test/deep-admission", []typ.Type{deep})
+	if err != nil {
+		t.Fatal(err)
+	}
+	runtime, inners, _ := sealFamilyRuntime(t, family, nil)
+	if len(runtime.closedRows) <= depth {
+		t.Fatalf("closed universe = %d rows, the declaration alone has %d nodes", len(runtime.closedRows), depth+1)
+	}
+	if decided := runtime.relation.judgmentCount(); decided != 0 {
+		t.Fatalf("admitting one declaration decided %d ordered pairs, the seal states no judgment", decided)
+	}
+	deepInner := inners[0]
+	unknown, unknownOK := runtime.InnerAtIndex(runtime.unknownRow)
+	never, neverOK := runtime.InnerAtIndex(runtime.neverRow)
+	if !unknownOK || !neverOK {
+		t.Fatal("seed rows")
+	}
+	asked := []struct {
+		left, right RuntimeInner
+		want        bool
+	}{
+		{left: deepInner, right: unknown, want: true},
+		{left: never, right: deepInner, want: true},
+		{left: unknown, right: deepInner, want: false},
+	}
+	for index, pair := range asked {
+		answer, decided := runtime.Subtype(pair.left, pair.right)
+		if !decided || answer != pair.want {
+			t.Fatalf("asked pair %d = %t/%t, want %t", index, answer, decided, pair.want)
+		}
+		if count := runtime.relation.judgmentCount(); count != index+1 {
+			t.Fatalf("after %d asked pairs the relation decided %d", index+1, count)
+		}
+	}
+	for _, pair := range asked {
+		if _, decided := runtime.Subtype(pair.left, pair.right); !decided {
+			t.Fatal("repeated pair undecided")
+		}
+	}
+	if count := runtime.relation.judgmentCount(); count != len(asked) {
+		t.Fatalf("repeating every asked pair decided %d judgments, the relation holds %d", count, len(asked))
 	}
 }
 
@@ -402,8 +461,8 @@ type runtimeRelationFixtureType struct {
 }
 
 // runtimeRelationCorpus is the structural vocabulary the sealed relation must
-// materialize. It deliberately spans every supported outer form so an
-// indexing defect in the packed bitset cannot hide behind a narrow fixture.
+// decide. It deliberately spans every supported outer form so a row-addressing
+// defect cannot hide behind a narrow fixture.
 func runtimeRelationCorpus() []runtimeRelationFixtureType {
 	method := typ.Func().Returns(typ.String).Build()
 	recursiveNode := typ.NewRecursive("Node", func(self typ.Type) typ.Type {
@@ -462,9 +521,9 @@ func runtimeRelationCorpus() []runtimeRelationFixtureType {
 }
 
 // runtimeRelationFixture runs the production seal pipeline over a raw type
-// vocabulary. It stops where SealRuntime stops for the relation: the sealed
-// bitset is built from the construction graphs and then those graphs are the
-// only thing the test keeps, as the canonical oracle input.
+// vocabulary. It stops where SealRuntime stops for the relation: the closed
+// universe is published over the construction graphs, and the test keeps those
+// graphs as the canonical oracle input.
 func runtimeRelationFixture(values []runtimeRelationFixtureType) (*Runtime, []RuntimeInner, []typ.Type) {
 	authority := &Authority{linkID: identity.ContentID{3}, artifact: &artifactAuthority{}}
 	inputs := make([]RuntimeInput, len(values))
@@ -491,7 +550,7 @@ func runtimeRelationFixture(values []runtimeRelationFixtureType) (*Runtime, []Ru
 			inners[position] = canonicalInners[canonicalIndex]
 		}
 	}
-	for _, step := range []func() error{builder.sealRuntimeKinds, builder.sealCanonical, builder.sealDescriptors, runtime.sealRanks, builder.sealSubtypeRelation} {
+	for _, step := range []func() error{builder.sealRuntimeKinds, builder.sealCanonical, builder.sealDescriptors, runtime.sealRanks, builder.sealClosedUniverse} {
 		if err := step(); err != nil {
 			panic(err)
 		}

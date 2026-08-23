@@ -5,32 +5,26 @@ import (
 	"sort"
 
 	"github.com/wippyai/go-lua/analysis/identity"
-	"github.com/wippyai/go-lua/domain/type/subtype"
 	"github.com/wippyai/go-lua/domain/type/typ"
 )
 
 // familyPrefix is the Family-owned Runtime universe of the eight primitive
 // seeds coalesced with every admitted member plane. SealFamily pays this once.
-// A family-only SealRuntime copies it. Mixed local inputs merge in key order
-// and extend the prefix subtype matrix for pairs that touch a new closed row.
+// A family-only SealRuntime copies it. Mixed local inputs merge in key order.
 type familyPrefix struct {
-	rows            []runtimeRow
-	variants        []runtimeChild
-	construction    []typ.Type
-	keys            []runtimeSourceKey
-	memberMaps      [][]uint32
-	nilRow          uint32
-	booleanRow      uint32
-	numberRow       uint32
-	integerRow      uint32
-	stringRow       uint32
-	anyRow          uint32
-	unknownRow      uint32
-	neverRow        uint32
-	closedPositions []int32
-	closedRows      []uint32
-	subtypeStride   int
-	subtypeBits     []uint64
+	rows         []runtimeRow
+	variants     []runtimeChild
+	construction []typ.Type
+	keys         []runtimeSourceKey
+	memberMaps   [][]uint32
+	nilRow       uint32
+	booleanRow   uint32
+	numberRow    uint32
+	integerRow   uint32
+	stringRow    uint32
+	anyRow       uint32
+	unknownRow   uint32
+	neverRow     uint32
 }
 
 func newFamilyPrefix(members []familyMember) (*familyPrefix, error) {
@@ -56,27 +50,20 @@ func newFamilyPrefix(members []familyMember) (*familyPrefix, error) {
 	if err := builder.sealRuntimeKinds(); err != nil {
 		return nil, err
 	}
-	if err := builder.sealSubtypeRelation(); err != nil {
-		return nil, err
-	}
 	return &familyPrefix{
-		rows:            runtime.rows,
-		variants:        runtime.variants,
-		construction:    builder.construction,
-		keys:            builder.keys,
-		memberMaps:      builder.sourceMaps,
-		nilRow:          runtime.nilRow,
-		booleanRow:      runtime.booleanRow,
-		numberRow:       runtime.numberRow,
-		integerRow:      runtime.integerRow,
-		stringRow:       runtime.stringRow,
-		anyRow:          runtime.anyRow,
-		unknownRow:      runtime.unknownRow,
-		neverRow:        runtime.neverRow,
-		closedPositions: runtime.closedPositions,
-		closedRows:      runtime.closedRows,
-		subtypeStride:   runtime.subtypeStride,
-		subtypeBits:     runtime.subtypeBits,
+		rows:         runtime.rows,
+		variants:     runtime.variants,
+		construction: builder.construction,
+		keys:         builder.keys,
+		memberMaps:   builder.sourceMaps,
+		nilRow:       runtime.nilRow,
+		booleanRow:   runtime.booleanRow,
+		numberRow:    runtime.numberRow,
+		integerRow:   runtime.integerRow,
+		stringRow:    runtime.stringRow,
+		anyRow:       runtime.anyRow,
+		unknownRow:   runtime.unknownRow,
+		neverRow:     runtime.neverRow,
 	}, nil
 }
 
@@ -122,10 +109,6 @@ func (b *runtimeBuilder) installFamilyPrefix(prefix *familyPrefix, inputs []runt
 	b.runtime.numberRow, b.runtime.integerRow = prefix.numberRow, prefix.integerRow
 	b.runtime.stringRow, b.runtime.anyRow = prefix.stringRow, prefix.anyRow
 	b.runtime.unknownRow, b.runtime.neverRow = prefix.unknownRow, prefix.neverRow
-	b.runtime.closedPositions = append([]int32(nil), prefix.closedPositions...)
-	b.runtime.closedRows = append([]uint32(nil), prefix.closedRows...)
-	b.runtime.subtypeStride = prefix.subtypeStride
-	b.runtime.subtypeBits = append([]uint64(nil), prefix.subtypeBits...)
 	b.runtime.runtimeKindsPublished = true
 	b.sourceMaps = make([][]uint32, len(inputs))
 	for index, member := range members {
@@ -262,8 +245,6 @@ func (b *runtimeBuilder) mergeFamilyPrefix(prefix *familyPrefix, inputs []runtim
 		}
 		canonicalInners[inputIndex] = RuntimeInner{owner: b.runtime, index: row}
 	}
-	b.prefix = prefix
-	b.oldOfNew = oldOfNew
 	return canonicalInners, nil
 }
 
@@ -378,60 +359,6 @@ func collectRuntimeInputSources(inputIndex int, input RuntimeInput) ([]runtimeSo
 	return sources, nil
 }
 
-func (b *runtimeBuilder) extendPrefixSubtypeRelation() error {
-	if b == nil || b.runtime == nil || b.prefix == nil || len(b.oldOfNew) != len(b.runtime.rows) {
-		return errors.New("typeauthority: malformed Runtime prefix relation extend")
-	}
-	if len(b.runtime.rows) != len(b.construction) {
-		return errors.New("typeauthority: malformed Runtime relation source")
-	}
-	runtime := b.runtime
-	runtime.closedPositions = make([]int32, len(runtime.rows))
-	runtime.closedRows = make([]uint32, 0, len(runtime.rows))
-	for index := range runtime.rows {
-		runtime.closedPositions[index] = -1
-		if runtime.rows[index].scopedID.Available() {
-			continue
-		}
-		if b.construction[index] == nil {
-			return errors.New("typeauthority: closed Runtime row lacks a relation source graph")
-		}
-		runtime.closedPositions[index] = int32(len(runtime.closedRows))
-		runtime.closedRows = append(runtime.closedRows, uint32(index+1))
-	}
-	count := len(runtime.closedRows)
-	if count == 0 {
-		return errors.New("typeauthority: empty Runtime relation universe")
-	}
-	runtime.subtypeStride = (count + 63) / 64
-	bits := make([]uint64, count*runtime.subtypeStride)
-	var prover subtype.Batch
-	for leftPosition, leftRow := range runtime.closedRows {
-		left := b.construction[leftRow-1]
-		base := leftPosition * runtime.subtypeStride
-		oldLeft := b.oldOfNew[leftRow-1]
-		for rightPosition, rightRow := range runtime.closedRows {
-			oldRight := b.oldOfNew[rightRow-1]
-			if oldLeft != 0 && oldRight != 0 {
-				leftClosed := b.prefix.closedPositions[oldLeft-1]
-				rightClosed := b.prefix.closedPositions[oldRight-1]
-				if leftClosed >= 0 && rightClosed >= 0 {
-					word := b.prefix.subtypeBits[int(leftClosed)*b.prefix.subtypeStride+int(rightClosed)>>6]
-					if word&(1<<(uint(rightClosed)&63)) != 0 {
-						bits[base+rightPosition>>6] |= 1 << (uint(rightPosition) & 63)
-					}
-					continue
-				}
-			}
-			if prover.IsSubtype(left, b.construction[rightRow-1]) {
-				bits[base+rightPosition>>6] |= 1 << (uint(rightPosition) & 63)
-			}
-		}
-	}
-	runtime.subtypeBits = bits
-	return nil
-}
-
 func copyRuntimeRows(rows []runtimeRow, owner *Runtime) []runtimeRow {
 	copied := append([]runtimeRow(nil), rows...)
 	for index := range copied {
@@ -483,8 +410,4 @@ func remapRuntimeFields(fields map[string]RuntimeField, owner *Runtime, remap []
 		copied[key] = field
 	}
 	return copied, nil
-}
-
-func (b *runtimeBuilder) subtypeRelationInstalled() bool {
-	return b != nil && b.runtime != nil && len(b.runtime.subtypeBits) != 0 && len(b.runtime.closedRows) != 0
 }

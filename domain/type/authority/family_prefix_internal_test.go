@@ -8,6 +8,10 @@ import (
 	"github.com/wippyai/go-lua/domain/type/typ"
 )
 
+// TestFamilyPrefixSubtypeBitsMatchFreshProver is the CX-19 prefix judgment
+// law: a Runtime seeded by the sealed Family prefix answers every ordered
+// pair of its closed universe exactly as the canonical prover answers it on
+// the construction values behind those rows.
 func TestFamilyPrefixSubtypeBitsMatchFreshProver(t *testing.T) {
 	family, err := SealFamily("test/family-prefix", []typ.Type{
 		typ.String,
@@ -18,21 +22,28 @@ func TestFamilyPrefixSubtypeBitsMatchFreshProver(t *testing.T) {
 		t.Fatal(err)
 	}
 	prefix := family.prefix
-	if prefix == nil || len(prefix.rows) == 0 || len(prefix.closedRows) == 0 {
+	if prefix == nil || len(prefix.rows) == 0 || len(prefix.construction) != len(prefix.rows) {
 		t.Fatal("family prefix universe")
 	}
-	if len(prefix.construction) != len(prefix.rows) || len(prefix.subtypeBits) == 0 {
+	runtime, _, _ := sealFamilyRuntime(t, family, nil)
+	if len(runtime.closedRows) == 0 || len(runtime.sources) != len(runtime.rows) {
 		t.Fatal("family prefix relation")
 	}
 	var prover subtype.Batch
-	for leftPosition, leftRow := range prefix.closedRows {
-		left := prefix.construction[leftRow-1]
-		for rightPosition, rightRow := range prefix.closedRows {
-			want := prover.IsSubtype(left, prefix.construction[rightRow-1])
-			word := prefix.subtypeBits[leftPosition*prefix.subtypeStride+int(rightPosition)>>6]
-			got := word&(1<<(uint(rightPosition)&63)) != 0
-			if got != want {
-				t.Fatalf("prefix subtype %d <: %d = %t, prover = %t", leftRow, rightRow, got, want)
+	for _, leftRow := range runtime.closedRows {
+		left, leftOK := runtime.InnerAtIndex(leftRow)
+		if !leftOK {
+			t.Fatalf("prefix row %d is not an owned row", leftRow)
+		}
+		for _, rightRow := range runtime.closedRows {
+			right, rightOK := runtime.InnerAtIndex(rightRow)
+			if !rightOK {
+				t.Fatalf("prefix row %d is not an owned row", rightRow)
+			}
+			want := prover.IsSubtype(runtime.sources[leftRow-1], runtime.sources[rightRow-1])
+			got, decided := runtime.Subtype(left, right)
+			if !decided || got != want {
+				t.Fatalf("prefix subtype %d <: %d = %t/%t, prover = %t", leftRow, rightRow, got, decided, want)
 			}
 		}
 	}

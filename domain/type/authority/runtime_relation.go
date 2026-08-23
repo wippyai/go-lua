@@ -3,25 +3,17 @@ package typeauthority
 import (
 	"errors"
 	"math"
+	"sync"
 
 	"github.com/wippyai/go-lua/domain/type/subtype"
+	"github.com/wippyai/go-lua/domain/type/typ"
 )
 
-// sealSubtypeRelation materializes the finite subtype relation of the sealed
-// closed universe once, from the canonical checker, while the construction
-// graphs are still owned by the builder. Runtime therefore holds no second
-// structural proof engine: after this pass every judgment is one bit read out
-// of a packed row.
-//
-// The relation belongs to this Runtime owner and dies with it. No process-wide
-// cache retains quadratic matrices after their owning analysis is released.
-func (b *runtimeBuilder) sealSubtypeRelation() error {
-	if b.subtypeRelationInstalled() {
-		return nil
-	}
-	if b != nil && b.prefix != nil && len(b.oldOfNew) == len(b.runtime.rows) {
-		return b.extendPrefixSubtypeRelation()
-	}
+// sealClosedUniverse publishes the finite closed universe of the sealed rows:
+// the dense positions a structural judgment may name. It is one linear pass
+// over the rows, so admitting a declaration costs work proportional to its
+// node count and never to the number of ordered pairs those nodes form.
+func (b *runtimeBuilder) sealClosedUniverse() error {
 	if b == nil || b.runtime == nil || len(b.runtime.rows) != len(b.construction) {
 		return errors.New("typeauthority: malformed Runtime relation source")
 	}
@@ -42,28 +34,56 @@ func (b *runtimeBuilder) sealSubtypeRelation() error {
 		runtime.closedPositions[index] = int32(len(runtime.closedRows))
 		runtime.closedRows = append(runtime.closedRows, uint32(index+1))
 	}
-	count := len(runtime.closedRows)
-	if count == 0 {
+	if len(runtime.closedRows) == 0 {
 		return errors.New("typeauthority: empty Runtime relation universe")
 	}
-	runtime.subtypeStride = (count + 63) / 64
-	bits := make([]uint64, count*runtime.subtypeStride)
-	// One prover serves the whole matrix: each ordered pair still starts from
-	// an empty memo, so no coinductive assumption crosses a judgment.
-	var prover subtype.Batch
-	for leftPosition, leftRow := range runtime.closedRows {
-		left := b.construction[leftRow-1]
-		base := leftPosition * runtime.subtypeStride
-		for rightPosition, rightRow := range runtime.closedRows {
-			// The canonical prover memoizes under active coinductive
-			// assumptions, so its table belongs to exactly one top-level
-			// judgment and is cleared between pairs.
-			if !prover.IsSubtype(left, b.construction[rightRow-1]) {
-				continue
-			}
-			bits[base+rightPosition>>6] |= 1 << (uint(rightPosition) & 63)
-		}
-	}
-	runtime.subtypeBits = bits
+	runtime.sources = b.construction
 	return nil
+}
+
+// runtimeRelation is the sealed subtype judgment of the closed universe.
+// Runtime states no rule of its own: it asks the canonical checker about the
+// retained construction values and remembers the answer for the ordered pair
+// it was asked about.
+//
+// The relation is therefore paid per asked pair rather than per possible
+// pair. Sealing a declaration decides nothing, so one deep declaration costs
+// its node count and not the square of it, and no owner ever holds a
+// quadratic matrix of judgments no consumer demanded.
+type runtimeRelation struct {
+	mutex     sync.Mutex
+	prover    subtype.Batch
+	memo      map[uint64]bool
+	judgments int
+}
+
+func relationPair(left, right uint32) uint64 {
+	return uint64(left)<<32 | uint64(right)
+}
+
+func (relation *runtimeRelation) decide(left, right uint32, leftValue, rightValue typ.Type) (bool, bool) {
+	if leftValue == nil || rightValue == nil {
+		return false, false
+	}
+	pair := relationPair(left, right)
+	relation.mutex.Lock()
+	defer relation.mutex.Unlock()
+	if answer, known := relation.memo[pair]; known {
+		return answer, true
+	}
+	// Every judgment starts from the prover's empty memo, so no coinductive
+	// assumption of one pair is ever observed by another.
+	answer := relation.prover.IsSubtype(leftValue, rightValue)
+	if relation.memo == nil {
+		relation.memo = make(map[uint64]bool)
+	}
+	relation.memo[pair] = answer
+	relation.judgments++
+	return answer, true
+}
+
+func (relation *runtimeRelation) judgmentCount() int {
+	relation.mutex.Lock()
+	defer relation.mutex.Unlock()
+	return relation.judgments
 }

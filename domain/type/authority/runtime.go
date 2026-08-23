@@ -81,10 +81,10 @@ type runtimeRow struct {
 }
 
 // Runtime is the immutable finite structural authority consumed by Runtime
-// reflection. Its only retained structural feed is the direct Union variant
-// plane and the direct Optional inner edge used by descriptor formation.
-// Every other authored child is retained only by the temporary construction
-// graph used to seal the subtype relation.
+// reflection. Its only retained dense structural feed is the direct Union
+// variant plane and the direct Optional inner edge used by descriptor
+// formation; every other authored child is named by the canonical
+// construction value the closed universe keeps as its relation source.
 type Runtime struct {
 	sourceID              identity.ContentID
 	id                    identity.ContentID
@@ -96,14 +96,15 @@ type Runtime struct {
 	identities []identity.ContentID
 	canonical  []uint32
 
-	// The sealed subtype relation of the closed universe. closedPositions maps
-	// a one-based dense row onto its universe position (-1 for an open row),
-	// closedRows is the inverse, and subtypeBits packs one bitset row per
-	// universe position.
+	// The closed universe of the sealed rows. closedPositions maps a one-based
+	// dense row onto its universe position (-1 for an open row) and closedRows
+	// is the inverse. sources holds the canonical construction value of every
+	// row: it is the relation's only proof source, and it is linear in the
+	// admitted node count. relation answers one ordered pair at a time.
 	closedPositions []int32
 	closedRows      []uint32
-	subtypeStride   int
-	subtypeBits     []uint64
+	sources         []typ.Type
+	relation        runtimeRelation
 
 	// Primitive rows are part of the same dense Runtime universe. Their
 	// handles are discovered from the same graph receipt source plane as every
@@ -248,9 +249,9 @@ func SealRuntime(types *Authority, inputs []RuntimeInput) (*Runtime, []RuntimeIn
 	if err := runtime.sealRanks(); err != nil {
 		return nil, nil, err
 	}
-	// The relation is materialized while the construction graphs are alive and
-	// is the last consumer of them.
-	if err := builder.sealSubtypeRelation(); err != nil {
+	// The closed universe is published last: it is the relation's index over
+	// the construction values the seal keeps as its proof source.
+	if err := builder.sealClosedUniverse(); err != nil {
 		return nil, nil, err
 	}
 	if err := runtime.sealIdentity(); err != nil {
@@ -260,8 +261,9 @@ func SealRuntime(types *Authority, inputs []RuntimeInput) (*Runtime, []RuntimeIn
 	// receipts are a one-shot construction handoff and die once this Runtime
 	// has installed the complete input denominator.
 	types.releaseRuntimeInputs()
-	// No receipt, source ordinal map, or construction graph crosses the seal.
-	builder.construction = nil
+	// No receipt and no source ordinal map crosses the seal. The canonical
+	// construction values do: one value per row is the sealed relation's proof
+	// source, and it is the whole cost the seal pays for the judgment.
 	builder.sourceMaps = nil
 	return runtime, inners, nil
 }
@@ -331,8 +333,6 @@ type runtimeBuilder struct {
 	construction []typ.Type
 	sourceMaps   [][]uint32
 	keys         []runtimeSourceKey
-	prefix       *familyPrefix
-	oldOfNew     []uint32
 }
 
 func (b *runtimeBuilder) ingest(inputs []runtimeCanonicalInput) ([]RuntimeInner, error) {
@@ -1054,7 +1054,9 @@ func (r *Runtime) StructuralEqual(left, right RuntimeInner) (answer, decided boo
 	return false, !r.rows[left.index-1].scopedID.Available() && !r.rows[right.index-1].scopedID.Available()
 }
 
-// Subtype is the sealed allocation-free owner-local subtype judgment.
+// Subtype is the sealed owner-local subtype judgment. The answer for one
+// ordered pair is decided by the canonical checker the first time it is asked
+// for and read from the relation's memory afterwards.
 func (r *Runtime) Subtype(left, right RuntimeInner) (answer, decided bool) {
 	if !r.owns(left) || !r.owns(right) {
 		return false, false
@@ -1062,15 +1064,13 @@ func (r *Runtime) Subtype(left, right RuntimeInner) (answer, decided bool) {
 	if left.index == right.index {
 		return true, true
 	}
-	if len(r.closedPositions) != len(r.rows) {
+	if len(r.closedPositions) != len(r.rows) || len(r.sources) != len(r.rows) {
 		return false, false
 	}
-	leftPosition, rightPosition := r.closedPositions[left.index-1], r.closedPositions[right.index-1]
-	if leftPosition < 0 || rightPosition < 0 {
+	if r.closedPositions[left.index-1] < 0 || r.closedPositions[right.index-1] < 0 {
 		return false, false
 	}
-	word := r.subtypeBits[int(leftPosition)*r.subtypeStride+int(rightPosition)>>6]
-	return word&(1<<(uint(rightPosition)&63)) != 0, true
+	return r.relation.decide(left.index, right.index, r.sources[left.index-1], r.sources[right.index-1])
 }
 
 // Canonical returns the semantic-equivalence representative used by Runtime
