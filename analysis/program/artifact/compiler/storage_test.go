@@ -78,13 +78,16 @@ return move
 			}
 			placements++
 			point := rule.PointID()
-			input, inputOK := rule.InputPoint()
+			input, inputOK := rule.InputPointAt(0)
 			expectedStage := programissuance.StageLocal
+			if kind == programschema.OccurrenceStorageBindTransfer {
+				expectedStage = programissuance.StageSuccessor
+			}
 			if kind == programschema.OccurrenceStorageWrite {
 				expectedStage = programissuance.StagePredecessor
 			}
 			if !point.Available() || !inputOK || point == input || rule.Stage() != expectedStage {
-				t.Fatalf("kind=%d rule=%d is not a distinct Local placement", kind, ruleIndex)
+				t.Fatalf("kind=%d rule=%d is not a distinct local placement: point=%s input0=%s/%v count=%d spec=%s stage=%s want=%s", kind, ruleIndex, point, input, inputOK, rule.InputPointCount(), rule.InputSpec(), rule.Stage(), expectedStage)
 			}
 			switch kind {
 			case programschema.OccurrenceStorageRead:
@@ -92,7 +95,7 @@ return move
 					t.Fatalf("kind=%d rule=%d did not retain Program Entry", kind, ruleIndex)
 				}
 			case programschema.OccurrenceStorageBindTransfer:
-				if rule.InputSpec() != programissuance.InputPreviousStage {
+				if rule.InputSpec() != programissuance.InputLocalStage {
 					t.Fatalf("bind rule=%d did not retain the ordinary Local cut as its Finish input", ruleIndex)
 				}
 			case programschema.OccurrenceStorageWrite:
@@ -101,8 +104,12 @@ return move
 					t.Fatalf("write rule=%d did not retain exact predecessor route", ruleIndex)
 				}
 			}
-			localParent := false
-			for edgeIndex := 0; edgeIndex < transferCount; edgeIndex++ {
+			// A predecessor write deliberately has no local transport edge:
+			// StagePredecessor's declared TransportAllExceptTargetWrites
+			// excludes the target axis, while Carry.Input=0 preserves the
+			// exact predecessor role. Its route witness is checked above.
+			localParent := kind == programschema.OccurrenceStorageWrite
+			for edgeIndex := 0; edgeIndex < transferCount && !localParent; edgeIndex++ {
 				edge, edgeOK := program.LocalTransferAt(edgeIndex)
 				if !edgeOK || edge.To() != point {
 					continue

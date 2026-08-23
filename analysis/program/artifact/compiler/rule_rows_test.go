@@ -283,7 +283,7 @@ return run
 					continue
 				}
 				point := rule.PointID()
-				input, inputOK := rule.InputPoint()
+				input, inputOK := rule.InputPointAt(0)
 				if !point.Available() || !inputOK {
 					t.Fatalf("placement %d staged placement has no point pair", ruleIndex)
 				}

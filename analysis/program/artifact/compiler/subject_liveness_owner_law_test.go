@@ -175,6 +175,35 @@ return result
 	}
 }
 
+func TestSubjectLivenessAllocationUsesCanonicalArtifactTemplate(t *testing.T) {
+	input := subjectLivenessOwnerLawProgram(t, `
+local function run()
+    local captured = { value = 1 }
+    coroutine.yield()
+    return captured.value
+end
+return run
+`)
+	state := &compiler{input: input, key: testCompileKey(t, input)}
+	if failure := state.copyValuesFailure(); failure.Available() {
+		t.Fatalf("copy values: %s", failure.Error())
+	}
+	if failure := state.copyAllocationRowsFailure(); failure.Available() {
+		t.Fatalf("copy allocations: %s", failure.Error())
+	}
+	table, tableOK := input.Flow().Authored().Tables().At(0)
+	row, rowOK := state.allocations.ForTerm(table)
+	want, templateOK := row.Template()
+	source, sourceOK := input.Flow().AllocationID(table)
+	got, gotOK := state.valueLivenessID(input.ContentID(), table)
+	if !tableOK || !rowOK || !templateOK || !sourceOK || !gotOK || got != want {
+		t.Fatalf("table liveness identity = %v/%v, want canonical artifact template %v/true", got, gotOK, want)
+	}
+	if source == want {
+		t.Fatal("fixture did not distinguish Flow allocation occurrence from artifact allocation template")
+	}
+}
+
 func TestSubjectLivenessCallUsesCanonicalResultSlotOwner(t *testing.T) {
 	input := subjectLivenessOwnerLawProgram(t, `
 local function identity(value)

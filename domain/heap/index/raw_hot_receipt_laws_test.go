@@ -40,6 +40,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/schema/executioncontext"
 	programschema "github.com/wippyai/go-lua/analysis/schema/program"
 	"github.com/wippyai/go-lua/analysis/schema/programmount"
+	queryschema "github.com/wippyai/go-lua/analysis/schema/query"
 )
 
 type rawHotQueryObservation struct {
@@ -736,9 +737,9 @@ return b.source`)})
 		seedWrite, seedWriteOK := engine.SchemaWrite(seedRule, heapFragment.ExactWrite())
 		heapSeedRules[index], heapSeedWrites[index], heapSeedOK = seedRule, seedWrite, heapSeedOK && seedRuleOK && seedWriteOK
 	}
-	valueQuery, valueQueryOK := engine.DeclareQuerySlot[rawHotQueryObservation](builder, engine.SchemaQuerySpec{Semantic: rawHotKey(12), Freezer: rawHotKey(13)})
+	valueQuery, valueQueryOK := engine.DeclareQuerySlot[rawHotQueryObservation](builder, engine.SchemaQuerySpec{Semantic: rawHotKey(12), Freezer: rawHotKey(13), Population: queryschema.PopulationKindSelectedPoint})
 	valueQueryReadOK := valueQuery != nil && engine.SchemaQueryRead(valueQuery, valueFragment.ExactRead())
-	heapQueryA, heapQueryAOK := engine.DeclareQuerySlot[rawHotHeapObservation](builder, engine.SchemaQuerySpec{Semantic: rawHotKey(14), Freezer: rawHotKey(15)})
+	heapQueryA, heapQueryAOK := engine.DeclareQuerySlot[rawHotHeapObservation](builder, engine.SchemaQuerySpec{Semantic: rawHotKey(14), Freezer: rawHotKey(15), Population: queryschema.PopulationKindSelectedPoint})
 	heapQueryAReadOK := heapQueryA != nil && engine.SchemaQueryRead(heapQueryA, heapFragment.ExactRead())
 	if !valueFragmentOK || !callFragmentOK || !heapFragmentOK || !packFragmentOK || !getFragmentOK || !setFragmentOK || !valueSeedOK || !heapSeedOK || !valueQueryOK || !valueQueryReadOK || !heapQueryAOK || !heapQueryAReadOK {
 		t.Fatal("raw hot schema declarations")
@@ -876,8 +877,8 @@ func rawHotScalarMount(artifact *programartifact.Artifact, module identity.Conte
 		rules = append(rules, scalarRuleBinding{capability: seed.Capability, rule: rows.ArtifactScalarRule{Stage: programissuance.StageBase, Point: seed.Point, ID: seed.Occurrence}})
 	}
 	rules = append(rules,
-		scalarRuleBinding{capability: getCapability, rule: rows.ArtifactScalarRule{Stage: programissuance.StageLocal, Point: getPoint, Input: setPoint, ID: getID}},
-		scalarRuleBinding{capability: setCapability, rule: rows.ArtifactScalarRule{Stage: programissuance.StageLocal, Point: setPoint, Input: seedPoint, ID: setID}},
+		scalarRuleBinding{capability: getCapability, rule: rows.ArtifactScalarRule{Stage: programissuance.StageLocal, Point: getPoint, Inputs: [6]identity.ContentID{setPoint}, InputCount: 1, ID: getID}},
+		scalarRuleBinding{capability: setCapability, rule: rows.ArtifactScalarRule{Stage: programissuance.StageLocal, Point: setPoint, Inputs: [6]identity.ContentID{seedPoint}, InputCount: 1, ID: setID}},
 	)
 	spec, specOK := rows.NewArtifactScalarSpec(artifact.ID(), artifact.CompileKey().ProgramID(), identity.ContentID(schemaID), rows.ArtifactScalarCapacity{Roles: len(rules), Points: len(points), Transfers: 2, Regions: 1, Events: 5, Rules: len(rules), Bodies: 1})
 	if !specOK {

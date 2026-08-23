@@ -12,6 +12,18 @@ import (
 	valueowner "github.com/wippyai/go-lua/domain/value/owner"
 )
 
+// IndexReadIssuance is the canonical mounted occurrence consumed by rules
+// whose operand is Heap/index's sealed read candidate. Keeping this declaration
+// here prevents consumers from authoring a second, subtly divergent inventory
+// of the index-read geometry.
+func IndexReadIssuance() rule.Issuance {
+	return rule.Issuance{
+		Occurrence:  "occurrence/index-read",
+		Requirement: "program-requirement/unrestricted",
+		Form:        "program-form/computation",
+	}
+}
+
 // rawGetPrincipals is this package's own statement of the cold owners the
 // raw-get rule declares against. It names only peer types this package already
 // speaks, so the composition that supplies the principal record satisfies it
@@ -48,7 +60,7 @@ func RawGetEntry[P rawGetPrincipals, A rawGetAuthorities]() rule.Spec {
 			// computation successor and read the predecessor finish; this gives
 			// the receiver a complete local Value before raw-get writes the
 			// indexed result that Call dispatch consumes.
-			{Occurrence: "occurrence/index-read", Requirement: "program-requirement/unrestricted", Form: "program-form/computation"},
+			IndexReadIssuance(),
 		},
 		Lane:     rule.LaneMounted,
 		Semantic: "semantic/rule/heap/index-get-raw",

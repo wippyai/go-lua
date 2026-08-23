@@ -24,21 +24,30 @@ func (node Node) Stage() *schemaissuance.Entry { return node.stage }
 func (node Node) Base() identity.ContentID     { return node.base }
 func (node Node) Point() identity.ContentID    { return node.point }
 
-// Emission is the atomic final result of one emitted request. Input is selected
-// from the sealed input policy before the compiler can publish a rule row, so
-// no downstream input rewrite exists.
+// Emission is the atomic final result of one emitted request. Inputs are
+// selected from the sealed input policies before the compiler can publish a
+// rule row, so no downstream input rewrite exists.
 type Emission struct {
-	request  Request
-	point    identity.ContentID
-	input    identity.ContentID
-	hasInput bool
-	native   bool
+	request    Request
+	point      identity.ContentID
+	inputs     [6]identity.ContentID
+	inputCount uint8
+	native     bool
 }
 
 func (emission Emission) Request() Request          { return emission.request }
 func (emission Emission) Point() identity.ContentID { return emission.point }
-func (emission Emission) InputPoint() (identity.ContentID, bool) {
-	return emission.input, emission.hasInput
+func (emission Emission) InputPointCount() int {
+	if emission.request.stage == nil || emission.inputCount > uint8(len(emission.inputs)) {
+		return 0
+	}
+	return int(emission.inputCount)
+}
+func (emission Emission) InputPointAt(index int) (identity.ContentID, bool) {
+	if index < 0 || index >= emission.InputPointCount() {
+		return identity.ContentID{}, false
+	}
+	return emission.inputs[index], true
 }
 func (emission Emission) Native() (bool, bool) {
 	return emission.native, emission.request.stage != nil && emission.request.stage.Kind() == schemaissuance.KindStage
@@ -152,15 +161,29 @@ func BuildSchedule(format uint64, plan schemaissuance.Plan, requests []Request) 
 	}
 	for index, request := range requests {
 		node := requestNodes[index]
-		input, hasInput, ok := resolveInput(request, node, orderedByBase[request.base])
 		subscription := request.Subscription()
 		stage := request.Stage()
-		if !ok || node == nil || !node.point.Available() || !request.base.Available() ||
+		inputCount := request.InputCount()
+		if stage != nil && inputCount != int(stage.InputCount()) {
+			return Schedule{}, false
+		}
+		if inputCount > len(Emission{}.inputs) {
+			return Schedule{}, false
+		}
+		var inputs [6]identity.ContentID
+		for inputIndex := 0; inputIndex < inputCount; inputIndex++ {
+			input, hasInput, inputOK := resolveInput(request, requestInput(request, inputIndex), node, orderedByBase[request.base])
+			if !inputOK || !hasInput || !input.Available() {
+				return Schedule{}, false
+			}
+			inputs[inputIndex] = input
+		}
+		if node == nil || !node.point.Available() || !request.base.Available() ||
 			stage == nil || stage.Kind() != schemaissuance.KindStage || !stage.Key().Available() ||
 			!subscription.Available() || !subscription.Writes().Available() {
 			return Schedule{}, false
 		}
-		schedule.emissions = append(schedule.emissions, Emission{request: request, point: node.point, input: input, hasInput: hasInput, native: stage.Native()})
+		schedule.emissions = append(schedule.emissions, Emission{request: request, point: node.point, inputs: inputs, inputCount: uint8(inputCount), native: stage.Native()})
 		pointSet := pointSets[node.point]
 		if pointSet == nil {
 			pointSet = make(map[schema.Key]struct{})
@@ -375,24 +398,29 @@ func orderStage(nodes []*Node) ([]*Node, bool) {
 	return ordered, len(ordered) == len(nodes)
 }
 
-func resolveInput(request Request, node *Node, ordered []*Node) (identity.ContentID, bool, bool) {
-	declaration := request.input.declaration
+func requestInput(request Request, index int) Input {
+	input, _ := request.InputAt(index)
+	return input
+}
+
+func resolveInput(request Request, input Input, node *Node, ordered []*Node) (identity.ContentID, bool, bool) {
+	declaration := input.declaration
 	if declaration == nil || node == nil {
 		return identity.ContentID{}, false, false
 	}
 	switch declaration.InputSelection() {
 	case schemaissuance.InputSelectionNone:
-		return identity.ContentID{}, false, len(request.input.points) == 0
+		return identity.ContentID{}, false, len(input.points) == 0
 	case schemaissuance.InputSelectionDriver:
-		if request.driverIndex < 0 || request.driverIndex >= len(request.input.points) {
+		if request.driverIndex < 0 || request.driverIndex >= len(input.points) {
 			return identity.ContentID{}, false, false
 		}
-		return request.input.points[request.driverIndex], true, request.input.points[request.driverIndex].Available()
+		return input.points[request.driverIndex], true, input.points[request.driverIndex].Available()
 	case schemaissuance.InputSelectionOnly:
-		if len(request.input.points) != 1 {
+		if len(input.points) != 1 {
 			return identity.ContentID{}, false, false
 		}
-		return request.input.points[0], true, request.input.points[0].Available()
+		return input.points[0], true, input.points[0].Available()
 	case schemaissuance.InputSelectionStage:
 		var selected identity.ContentID
 		for _, candidate := range ordered {
@@ -446,6 +474,14 @@ func cloneValues(values []value) []value {
 		cloned[index].rows = append([]programissuance.Row(nil), cloned[index].rows...)
 		cloned[index].points = append([]identity.ContentID(nil), cloned[index].points...)
 		cloned[index].requests = append([]Request(nil), cloned[index].requests...)
+	}
+	return cloned
+}
+
+func cloneInputs(inputs []Input) []Input {
+	cloned := make([]Input, len(inputs))
+	for index, input := range inputs {
+		cloned[index] = Input{declaration: input.declaration, points: append([]identity.ContentID(nil), input.points...)}
 	}
 	return cloned
 }

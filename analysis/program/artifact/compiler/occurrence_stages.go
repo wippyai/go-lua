@@ -56,7 +56,6 @@ func (compiler *compiler) installLocalStagesFailure() CompileFailure {
 			delete(stageFor, base)
 		}
 	}
-
 	for index := range compiler.environment {
 		edge := &compiler.environment[index]
 		if edge.from == edge.to && !edge.hasMu && !edge.hasReset {
@@ -173,6 +172,27 @@ func (compiler *compiler) scheduleTransport(
 		excludedSet := make(map[schema.Key]struct{}, len(excluded))
 		for _, axis := range excluded {
 			excludedSet[axis] = struct{}{}
+		}
+		var writes []schema.Key
+		for _, axis := range compiler.issuance.Axes() {
+			if _, skip := excludedSet[axis]; !skip {
+				writes = append(writes, axis)
+			}
+		}
+		return false, writes, true
+	case schemaissuance.StageTransportAllExceptWritesOfStages:
+		if !targetBase.Available() {
+			return false, nil, false
+		}
+		excludedSet := make(map[schema.Key]struct{})
+		for _, stage := range edge.WriterStages {
+			writers, ok := schedule.StageWriters(targetBase, stage)
+			if !ok {
+				return false, nil, false
+			}
+			for _, axis := range writers {
+				excludedSet[axis] = struct{}{}
+			}
 		}
 		var writes []schema.Key
 		for _, axis := range compiler.issuance.Axes() {

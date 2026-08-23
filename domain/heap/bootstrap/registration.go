@@ -56,7 +56,10 @@ func RegisterRule(binding *engine.SchemaBinding, context rule.Registration[*Sche
 func PairRule(binding *engine.SchemaBinding, _ rule.Pairing[*SchemaFragment], resolve func(schema.Key) (engine.RuleSlotCapability, bool)) bool {
 	value, valueOK := resolve("value-bootstrap")
 	heap, heapOK := resolve("heap-bootstrap")
-	return valueOK && heapOK && engine.RegisterLinkBootstrapTransportPair(binding, value, heap)
+	suspension, suspensionOK := resolve("placement-suspension")
+	suspensionEvidence, suspensionEvidenceOK := resolve("placement-suspension-evidence")
+	return valueOK && heapOK && suspensionOK && suspensionEvidenceOK &&
+		engine.RegisterLinkBootstrapTransports(binding, value, heap, suspension, suspensionEvidence)
 }
 
 func BindRule[A ruleAuthorities](_ *engine.SchemaBinding, context rule.Binding[A, *SchemaFragment]) (*HotRule, bool) {

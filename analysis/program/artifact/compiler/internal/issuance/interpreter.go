@@ -31,9 +31,13 @@ type Request struct {
 	stage        *schemaissuance.Entry
 	base         identity.ContentID
 	parameters   []value
-	input        Input
-	route        identity.ContentID
-	driverIndex  int
+	inputs       []Input
+	// input is kept only as an authored-request compatibility field while
+	// callers migrate to inputs. Scheduler normalization always treats inputs
+	// as the canonical ordered vector.
+	input       Input
+	route       identity.ContentID
+	driverIndex int
 }
 
 func (request Request) Subscription() schemaissuance.Subscription { return request.subscription }
@@ -41,7 +45,34 @@ func (request Request) Occurrence() uint32                        { return reque
 func (request Request) Stage() *schemaissuance.Entry              { return request.stage }
 func (request Request) Base() identity.ContentID                  { return request.base }
 func (request Request) Input() Input {
+	if len(request.inputs) != 0 {
+		return Input{declaration: request.inputs[0].declaration, points: request.inputs[0].Points()}
+	}
 	return Input{declaration: request.input.declaration, points: request.input.Points()}
+}
+func (request Request) InputCount() int {
+	if len(request.inputs) != 0 {
+		return len(request.inputs)
+	}
+	if request.input.declaration != nil {
+		return 1
+	}
+	return 0
+}
+func (request Request) InputAt(index int) (Input, bool) {
+	if index < 0 {
+		return Input{}, false
+	}
+	if len(request.inputs) != 0 {
+		if index >= len(request.inputs) {
+			return Input{}, false
+		}
+		return Input{declaration: request.inputs[index].declaration, points: request.inputs[index].Points()}, true
+	}
+	if index == 0 && request.input.declaration != nil {
+		return Input{declaration: request.input.declaration, points: request.input.Points()}, true
+	}
+	return Input{}, false
 }
 func (request Request) Route() (identity.ContentID, bool) {
 	return request.route, request.route.Available()
@@ -264,7 +295,6 @@ func executeRegisters(entry *schemaissuance.Entry, ctx context) (registerFrame, 
 // so that a refusal anywhere in the opcode switch releases the frame through
 // one path instead of one per opcode.
 func runProgram(entry *schemaissuance.Entry, ctx context, registers registerFrame) bool {
-	read := registers.read
 	for programIndex := 0; programIndex < entry.ProgramLen(); programIndex++ {
 		instruction, instructionOK := entry.InstructionAt(programIndex)
 		if !instructionOK {
@@ -288,7 +318,7 @@ func runProgram(entry *schemaissuance.Entry, ctx context, registers registerFram
 				return false
 			}
 		case schemaissuance.OpRead:
-			row, rowOK := read(instruction.Args[0])
+			row, rowOK := registers.read(instruction.Args[0])
 			field, fieldOK := ctx.table.Entry(instruction.Ref, schemaissuance.KindField)
 			if !rowOK || !fieldOK {
 				return false
@@ -314,7 +344,7 @@ func runProgram(entry *schemaissuance.Entry, ctx context, registers registerFram
 			}
 			output = converted
 		case schemaissuance.OpFollow:
-			source, sourceOK := read(instruction.Args[0])
+			source, sourceOK := registers.read(instruction.Args[0])
 			relation, relationOK := ctx.table.Entry(instruction.Ref, schemaissuance.KindRelation)
 			if !sourceOK || !source.present || !relationOK {
 				return false
@@ -340,8 +370,8 @@ func runProgram(entry *schemaissuance.Entry, ctx context, registers registerFram
 			}
 			output = value{typ: schemaissuance.DataType{Value: schemaissuance.ValueRange, Space: relation.Target(), Relation: relation.Key(), Cardinality: relation.Cardinality()}, present: true, rows: selected}
 		case schemaissuance.OpAt:
-			rangeValue, rangeOK := read(instruction.Args[0])
-			indexValue, indexOK := read(instruction.Args[1])
+			rangeValue, rangeOK := registers.read(instruction.Args[0])
+			indexValue, indexOK := registers.read(instruction.Args[1])
 			output.typ = schemaissuance.DataType{Value: schemaissuance.ValueRow, Space: rangeValue.typ.Space, Cardinality: schemaissuance.CardinalityOptional}
 			if !rangeOK || !indexOK || !rangeValue.present || !indexValue.present || indexValue.unsigned >= uint64(len(rangeValue.rows)) {
 				if rangeOK && indexOK && rangeValue.present && indexValue.present {
@@ -351,14 +381,14 @@ func runProgram(entry *schemaissuance.Entry, ctx context, registers registerFram
 			}
 			output.present, output.row = true, rangeValue.rows[indexValue.unsigned]
 		case schemaissuance.OpCount:
-			rangeValue, ok := read(instruction.Args[0])
+			rangeValue, ok := registers.read(instruction.Args[0])
 			if !ok || !rangeValue.present {
 				return false
 			}
 			output = value{typ: schemaissuance.UintType(schemaissuance.TypeRelationCount), present: true, unsigned: uint64(len(rangeValue.rows))}
 		case schemaissuance.OpEqual, schemaissuance.OpEqualIfPresent, schemaissuance.OpGreater, schemaissuance.OpLess, schemaissuance.OpAnd, schemaissuance.OpOr:
-			left, leftOK := read(instruction.Args[0])
-			right, rightOK := read(instruction.Args[1])
+			left, leftOK := registers.read(instruction.Args[0])
+			right, rightOK := registers.read(instruction.Args[1])
 			if !leftOK || !rightOK {
 				return false
 			}
@@ -378,7 +408,7 @@ func runProgram(entry *schemaissuance.Entry, ctx context, registers registerFram
 				output.boolean = left.present && right.present && (left.boolean || right.boolean)
 			}
 		case schemaissuance.OpNot, schemaissuance.OpPresent, schemaissuance.OpExactlyOne:
-			left, ok := read(instruction.Args[0])
+			left, ok := registers.read(instruction.Args[0])
 			if !ok {
 				return false
 			}
@@ -392,8 +422,8 @@ func runProgram(entry *schemaissuance.Entry, ctx context, registers registerFram
 				output.boolean = left.present && len(left.rows) == 1
 			}
 		case schemaissuance.OpOnly:
-			rangeValue, rangeOK := read(instruction.Args[0])
-			proof, proofOK := read(instruction.Args[1])
+			rangeValue, rangeOK := registers.read(instruction.Args[0])
+			proof, proofOK := registers.read(instruction.Args[1])
 			if !rangeOK || !proofOK || !rangeValue.present || proof.typ != schemaissuance.BoolType() {
 				return false
 			}
@@ -409,8 +439,8 @@ func runProgram(entry *schemaissuance.Entry, ctx context, registers registerFram
 			output.typ.Cardinality = schemaissuance.CardinalityOne
 			output.present, output.row = true, rangeValue.rows[0]
 		case schemaissuance.OpRequirePresent:
-			candidate, candidateOK := read(instruction.Args[0])
-			proof, proofOK := read(instruction.Args[1])
+			candidate, candidateOK := registers.read(instruction.Args[0])
+			proof, proofOK := registers.read(instruction.Args[1])
 			if !candidateOK || !proofOK || proof.typ != schemaissuance.BoolType() || !proof.present {
 				return false
 			}
@@ -435,7 +465,7 @@ func runProgram(entry *schemaissuance.Entry, ctx context, registers registerFram
 		case schemaissuance.OpWritesKey:
 			output = value{typ: schemaissuance.IdentityType(schemaissuance.TypeAxisKey), present: true, key: ctx.subscription.Writes()}
 		case schemaissuance.OpProjectPoints:
-			rangeValue, ok := read(instruction.Args[0])
+			rangeValue, ok := registers.read(instruction.Args[0])
 			if !ok || !rangeValue.present {
 				return false
 			}
@@ -445,13 +475,13 @@ func runProgram(entry *schemaissuance.Entry, ctx context, registers registerFram
 			}
 			output = value{typ: schemaissuance.DataType{Value: schemaissuance.ValuePointRange, Name: schemaissuance.TypePoint, Cardinality: schemaissuance.CardinalityMany}, present: true, points: points}
 		case schemaissuance.OpPoint:
-			point, ok := read(instruction.Args[0])
+			point, ok := registers.read(instruction.Args[0])
 			if !ok || !point.present || !point.identity.Available() {
 				return false
 			}
 			output = value{typ: schemaissuance.DataType{Value: schemaissuance.ValuePointRange, Name: schemaissuance.TypePoint, Cardinality: schemaissuance.CardinalityOne}, present: true, points: []identity.ContentID{point.identity}}
 		case schemaissuance.OpRoute:
-			route, ok := read(instruction.Args[0])
+			route, ok := registers.read(instruction.Args[0])
 			if !ok || !route.present || !route.identity.Available() {
 				return false
 			}
@@ -463,7 +493,7 @@ func runProgram(entry *schemaissuance.Entry, ctx context, registers registerFram
 			}
 			output = value{typ: schemaissuance.DataType{Value: schemaissuance.ValueInputRange, Name: declaration.Key(), Cardinality: schemaissuance.CardinalityMany}, present: true, input: Input{declaration: declaration}}
 			if instruction.Args[0] != 0 {
-				points, pointsOK := read(instruction.Args[0])
+				points, pointsOK := registers.read(instruction.Args[0])
 				if !pointsOK || !points.present {
 					return false
 				}
@@ -477,16 +507,26 @@ func runProgram(entry *schemaissuance.Entry, ctx context, registers registerFram
 			parameters := stage.Parameters()
 			arguments := make([]value, len(parameters))
 			for index := range parameters {
-				argument, argumentOK := read(instruction.Args[index])
+				argument, argumentOK := registers.read(instruction.Args[index])
 				if !argumentOK || !argument.present {
 					return false
 				}
 				arguments[index] = argument
 			}
-			inputValue, inputOK := read(instruction.Args[len(parameters)])
+			inputCount := int(stage.InputCount())
+			if len(parameters)+inputCount > len(instruction.Args) {
+				return false
+			}
+			inputs := make([]Input, inputCount)
+			for inputIndex := 0; inputIndex < inputCount; inputIndex++ {
+				inputValue, inputOK := registers.read(instruction.Args[len(parameters)+inputIndex])
+				if !inputOK || !inputValue.present || inputValue.input.declaration == nil {
+					return false
+				}
+				inputs[inputIndex] = inputValue.input
+			}
 			baseIndex := int(stage.BaseParameter()) - 1
-			if !inputOK || !inputValue.present || inputValue.input.declaration == nil ||
-				baseIndex < 0 || baseIndex >= len(arguments) {
+			if baseIndex < 0 || baseIndex >= len(arguments) {
 				return false
 			}
 			output = value{typ: schemaissuance.DataType{Value: schemaissuance.ValueStageRequestRange, Name: stage.Key(), Cardinality: schemaissuance.CardinalityMany}, present: true}
@@ -495,17 +535,17 @@ func runProgram(entry *schemaissuance.Entry, ctx context, registers registerFram
 				requestArguments[baseIndex].points = []identity.ContentID{point}
 				output.requests = append(output.requests, Request{
 					subscription: ctx.subscription, occurrence: ctx.occurrence, stage: stage, base: point,
-					parameters: requestArguments, input: inputValue.input, driverIndex: pointIndex,
+					parameters: requestArguments, inputs: cloneInputs(inputs), driverIndex: pointIndex,
 				})
 			}
 		case schemaissuance.OpEmit:
-			requests, ok := read(instruction.Args[0])
+			requests, ok := registers.read(instruction.Args[0])
 			if !ok || !requests.present {
 				return false
 			}
 			output = value{typ: schemaissuance.DataType{Value: schemaissuance.ValueEmissionRange, Name: schemaissuance.TypeEmission, Cardinality: schemaissuance.CardinalityMany}, present: true, requests: append([]Request(nil), requests.requests...)}
 			if instruction.Args[1] != 0 {
-				route, routeOK := read(instruction.Args[1])
+				route, routeOK := registers.read(instruction.Args[1])
 				if !routeOK || !route.present || !route.route.Available() {
 					return false
 				}

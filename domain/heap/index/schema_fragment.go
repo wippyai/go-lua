@@ -17,7 +17,6 @@ import (
 // callbacks and payload/topology catalogs remain Binding-owned.
 type RawGetSchemaFragment struct {
 	slot       *engine.RuleSlot[valuedomain.Value, Index]
-	inputs     [4]engine.SchemaInput
 	receiver   engine.SchemaReadSlot[valuedomain.Value]
 	key        engine.SchemaReadSlot[valuedomain.Value]
 	call       engine.SchemaReadSlot[calldomain.Value]
@@ -28,31 +27,19 @@ type RawGetSchemaFragment struct {
 	write      engine.SchemaWriteSlot[valuedomain.Value]
 }
 
-// DeclareRawGetSchema records RawGet's exact four-input selector DAG.
+// DeclareRawGetSchema records RawGet's exact single-input selector DAG.
 func DeclareRawGetSchema(builder *engine.SchemaBuilder, semantic, operandFamily identity.SemanticKey, values *valueowner.SchemaFragment, calls *callowner.SchemaFragment, heap *heapowner.SchemaFragment, packs *packowner.SchemaFragment) (*RawGetSchemaFragment, bool) {
 	if builder == nil || values == nil || calls == nil || heap == nil || packs == nil || !identity.DistinctKeys(semantic, operandFamily) {
 		return nil, false
 	}
 	slot, ok := engine.NewRuleSlot[valuedomain.Value, Index](builder, engine.SchemaRuleSpec[valuedomain.Value]{
-		Semantic: semantic, OperandFamily: operandFamily, Inputs: 4,
+		Semantic: semantic, OperandFamily: operandFamily, Inputs: 1,
 		Output: values.Ref(),
 	})
 	if !ok {
 		return nil, false
 	}
 	in0, ok := slot.Input(0)
-	if !ok {
-		return nil, false
-	}
-	in1, ok := slot.Input(1)
-	if !ok {
-		return nil, false
-	}
-	in2, ok := slot.Input(2)
-	if !ok {
-		return nil, false
-	}
-	in3, ok := slot.Input(3)
 	if !ok {
 		return nil, false
 	}
@@ -64,15 +51,15 @@ func DeclareRawGetSchema(builder *engine.SchemaBuilder, semantic, operandFamily 
 	if !ok {
 		return nil, false
 	}
-	call, ok := engine.SchemaSelectedRead[calldomain.Value](slot, calls.ExactRead(), in1, receiver.Ref(), key.Ref())
+	call, ok := engine.SchemaSelectedRead[calldomain.Value](slot, calls.ExactRead(), in0, receiver.Ref(), key.Ref())
 	if !ok {
 		return nil, false
 	}
-	heapRead, ok := engine.SchemaSelectedRead[heapdomain.Value](slot, heap.ExactRead(), in2, receiver.Ref(), key.Ref(), call.Ref())
+	heapRead, ok := engine.SchemaSelectedRead[heapdomain.Value](slot, heap.ExactRead(), in0, receiver.Ref(), key.Ref(), call.Ref())
 	if !ok {
 		return nil, false
 	}
-	packRead, ok := engine.SchemaSelectedRead[packdomain.Value](slot, packs.ExactRead(), in3, key.Ref(), heapRead.Ref())
+	packRead, ok := engine.SchemaSelectedRead[packdomain.Value](slot, packs.ExactRead(), in0, key.Ref(), heapRead.Ref())
 	if !ok {
 		return nil, false
 	}
@@ -88,7 +75,7 @@ func DeclareRawGetSchema(builder *engine.SchemaBuilder, semantic, operandFamily 
 	if !ok {
 		return nil, false
 	}
-	return &RawGetSchemaFragment{slot: slot, inputs: [4]engine.SchemaInput{in0, in1, in2, in3}, receiver: receiver, key: key, call: call, heapRead: heapRead, packRead: packRead, sourceRead: sourceRead, carry: carry, write: write}, true
+	return &RawGetSchemaFragment{slot: slot, receiver: receiver, key: key, call: call, heapRead: heapRead, packRead: packRead, sourceRead: sourceRead, carry: carry, write: write}, true
 }
 
 // RawSetSchemaFragment is the callback-free RawSet Rule shape. The routed
@@ -99,7 +86,6 @@ type RawSetSchemaFragment struct {
 	valueRef   engine.FactorRef[valuedomain.Value]
 	heapRef    engine.FactorRef[heapdomain.Value]
 	packRef    engine.FactorRef[packdomain.Value]
-	inputs     [3]engine.SchemaInput
 	receiver   engine.SchemaReadSlot[valuedomain.Value]
 	key        engine.SchemaReadSlot[valuedomain.Value]
 	heapRead   engine.SchemaReadSlot[heapdomain.Value]
@@ -116,28 +102,20 @@ func (fragment *RawSetSchemaFragment) RuleSlot() *engine.RuleSlot[heapdomain.Val
 	return fragment.slot
 }
 
-// DeclareRawSetSchema records RawSet's exact three-input selector DAG and
+// DeclareRawSetSchema records RawSet's exact single-input selector DAG and
 // routed Heap write.
 func DeclareRawSetSchema(builder *engine.SchemaBuilder, semantic, operandFamily identity.SemanticKey, values *valueowner.SchemaFragment, heap *heapowner.SchemaFragment, packs *packowner.SchemaFragment) (*RawSetSchemaFragment, bool) {
 	if builder == nil || values == nil || heap == nil || packs == nil || !identity.DistinctKeys(semantic, operandFamily) {
 		return nil, false
 	}
 	slot, ok := engine.NewRuleSlot[heapdomain.Value, Index](builder, engine.SchemaRuleSpec[heapdomain.Value]{
-		Semantic: semantic, OperandFamily: operandFamily, Inputs: 3,
+		Semantic: semantic, OperandFamily: operandFamily, Inputs: 1,
 		Output: heap.Ref(),
 	})
 	if !ok {
 		return nil, false
 	}
 	in0, ok := slot.Input(0)
-	if !ok {
-		return nil, false
-	}
-	in1, ok := slot.Input(1)
-	if !ok {
-		return nil, false
-	}
-	in2, ok := slot.Input(2)
 	if !ok {
 		return nil, false
 	}
@@ -149,11 +127,11 @@ func DeclareRawSetSchema(builder *engine.SchemaBuilder, semantic, operandFamily 
 	if !ok {
 		return nil, false
 	}
-	heapRead, ok := engine.SchemaSelectedRead[heapdomain.Value](slot, heap.ExactRead(), in1, receiver.Ref(), key.Ref())
+	heapRead, ok := engine.SchemaSelectedRead[heapdomain.Value](slot, heap.ExactRead(), in0, receiver.Ref(), key.Ref())
 	if !ok {
 		return nil, false
 	}
-	packRead, ok := engine.SchemaSelectedRead[packdomain.Value](slot, packs.ExactRead(), in2, receiver.Ref(), key.Ref(), heapRead.Ref())
+	packRead, ok := engine.SchemaSelectedRead[packdomain.Value](slot, packs.ExactRead(), in0, receiver.Ref(), key.Ref(), heapRead.Ref())
 	if !ok {
 		return nil, false
 	}
@@ -161,7 +139,7 @@ func DeclareRawSetSchema(builder *engine.SchemaBuilder, semantic, operandFamily 
 	if !ok {
 		return nil, false
 	}
-	carry, ok := engine.SchemaCarryFrom(slot, in1, heap.Ref())
+	carry, ok := engine.SchemaCarryFrom(slot, in0, heap.Ref())
 	if !ok {
 		return nil, false
 	}
@@ -169,5 +147,5 @@ func DeclareRawSetSchema(builder *engine.SchemaBuilder, semantic, operandFamily 
 	if !ok {
 		return nil, false
 	}
-	return &RawSetSchemaFragment{slot: slot, valueRef: values.Ref(), heapRef: heap.Ref(), packRef: packs.Ref(), inputs: [3]engine.SchemaInput{in0, in1, in2}, receiver: receiver, key: key, heapRead: heapRead, packRead: packRead, sourceRead: sourceRead, carry: carry, write: write}, true
+	return &RawSetSchemaFragment{slot: slot, valueRef: values.Ref(), heapRef: heap.Ref(), packRef: packs.Ref(), receiver: receiver, key: key, heapRead: heapRead, packRead: packRead, sourceRead: sourceRead, carry: carry, write: write}, true
 }

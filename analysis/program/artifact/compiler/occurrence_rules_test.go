@@ -48,7 +48,7 @@ return redundant
 		route, routeInputOK := program.OccurrenceInputID(int(ordinal), 3)
 		predecessor, predecessorOK := rule.PredecessorRouteID()
 		point := rule.PointID()
-		input, inputOK := rule.InputPoint()
+		input, inputOK := rule.InputPointAt(0)
 		if !ruleOK || !ordinalOK || !occurrenceOK || !bodyOK || occurrence.Kind() != programschema.OccurrenceBinaryPresenceRefinement || !routeInputOK || !predecessorOK || !point.Available() || !inputOK || predecessor != route ||
 			rule.InputSpec() != programissuance.InputPredecessorGeometry || rule.Stage() != programissuance.StagePredecessor || point == input {
 			t.Fatalf("refinement[%d] lost exact guarded predecessor/local placement", index)

@@ -79,7 +79,7 @@ return total
 	endpointsOK := arithmeticOrdinalOK && leftOK && rightOK
 	rule, ruleOK := ruleForOccurrence(artifact, "value-binary-arithmetic", occurrenceID)
 	point := rule.PointID()
-	input, inputOK := rule.InputPoint()
+	input, inputOK := rule.InputPointAt(0)
 	if !arithmeticOK || !bodyOK || !endpointsOK || !left.Available() || !right.Available() || op != flowkind.BinaryAdd ||
 		!ruleOK || !point.Available() || !inputOK || point == input || rule.Stage() != programissuance.StageComputation {
 		t.Fatalf("scalar arithmetic=%+v/%v rule=%+v/%v", arithmetic, arithmeticOK, rule, ruleOK)
@@ -356,9 +356,9 @@ return guard
 	storageRule, storageOK := ruleForOccurrence(artifact, "value-transfer", storage.ID())
 	orderRule, orderRuleOK := ruleForOccurrence(artifact, "value-binary-order", order.ID())
 	storagePoint := storageRule.PointID()
-	storageInput, storageInputOK := storageRule.InputPoint()
+	storageInput, storageInputOK := storageRule.InputPointAt(0)
 	orderPoint := orderRule.PointID()
-	orderInput, orderInputOK := orderRule.InputPoint()
+	orderInput, orderInputOK := orderRule.InputPointAt(0)
 	if !storageOK || !orderRuleOK || !storagePoint.Available() || !storageInputOK || !orderPoint.Available() || !orderInputOK ||
 		storagePoint == storageInput || orderPoint == storagePoint || orderInput != storagePoint ||
 		orderRule.Stage() != programissuance.StageComputation || orderRule.InputSpec() != programissuance.InputPreviousStage {
@@ -459,7 +459,7 @@ return guard
 	equalityRule, equalityOK := ruleForOccurrence(artifact, "value-binary-equality", equality.ID())
 	orderPoint := orderRule.PointID()
 	equalityPoint := equalityRule.PointID()
-	equalityInput, equalityInputOK := equalityRule.InputPoint()
+	equalityInput, equalityInputOK := equalityRule.InputPointAt(0)
 	if !order.Available() || !equality.Available() || !orderOK || !equalityOK || !orderPoint.Available() || !equalityPoint.Available() || !equalityInputOK ||
 		equalityInput != orderPoint || equalityPoint == orderPoint || equalityRule.InputSpec() != programissuance.InputPreviousStage {
 		t.Fatalf("nested computation dependency order=%+v/%t equality=%+v/%t", orderRule, orderOK, equalityRule, equalityOK)

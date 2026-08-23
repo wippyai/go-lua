@@ -325,12 +325,21 @@ func (compiler *compiler) valueLivenessID(programID identity.ContentID, term key
 		compiler.key.ProgramID() != programID || compiler.input.ContentID() != programID || term == 0 {
 		return identity.ContentID{}, false
 	}
-	input, flowView := compiler.input, compiler.input.Flow()
+	input := compiler.input
 	family, ordinal := keyspace.TermFamily(term), keyspace.TermOrdinal(term)
 	switch family {
 	case keyspace.FamilyFunction, keyspace.FamilyTable:
-		if id, ok := flowView.AllocationID(term); ok {
-			return id, true
+		// Flow's AllocationID is the source occurrence preimage. Mounted Heap
+		// and every allocation-aligned factor are keyed by the canonical
+		// artifact allocation template already issued by the allocation bundle.
+		// Publish that owner identity here so downstream consumers never need an
+		// occurrence-to-template mirror or a reconstruction join.
+		if compiler.allocations != nil {
+			if row, rowOK := compiler.allocations.ForTerm(term); rowOK {
+				if id, idOK := row.Template(); idOK {
+					return id, true
+				}
+			}
 		}
 	case keyspace.FamilyNil, keyspace.FamilyBool, keyspace.FamilyInteger,
 		keyspace.FamilyFloat, keyspace.FamilyString:

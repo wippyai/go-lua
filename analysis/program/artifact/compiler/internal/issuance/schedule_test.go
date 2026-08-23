@@ -7,13 +7,14 @@ import (
 	"github.com/wippyai/go-lua/analysis/schema"
 	schemaissuance "github.com/wippyai/go-lua/analysis/schema/issuance"
 	programissuance "github.com/wippyai/go-lua/analysis/schema/program/issuance"
+	"github.com/wippyai/go-lua/analysis/schema/seal"
 )
 
 type emptySurface struct{ kind schema.SurfaceKind }
 
 func (surface emptySurface) Kind() schema.SurfaceKind { return surface.kind }
 func (emptySurface) Entries() []schema.Entry          { return nil }
-func (emptySurface) Seal(schema.View, schema.Sealed) schema.SealFailure {
+func (emptySurface) Seal(seal.View, seal.Sealed) schema.SealFailure {
 	return schema.SealFailure{}
 }
 
@@ -42,11 +43,11 @@ func TestScheduleResolvesPreviousFromDeclaredStageOrder(t *testing.T) {
 	pointMany := pointOne
 	pointMany.Cardinality = schemaissuance.CardinalityMany
 	requests := []Request{
-		{subscription: subscription, stage: localStage, base: base, parameters: []value{{typ: pointMany, present: true, points: []identity.ContentID{base}}}, input: Input{declaration: previousInput}},
+		{subscription: subscription, stage: localStage, base: base, parameters: []value{{typ: pointMany, present: true, points: []identity.ContentID{base}}}, inputs: []Input{{declaration: previousInput}}},
 		{subscription: subscription, stage: predecessorStage, base: base, parameters: []value{
 			{typ: pointOne, present: true, points: []identity.ContentID{base}},
 			{typ: schemaissuance.IdentityType(schemaissuance.TypeAxisKey), present: true, key: "axis/write"},
-		}, input: Input{declaration: predecessorInput, points: []identity.ContentID{base}}},
+		}, inputs: []Input{{declaration: predecessorInput, points: []identity.ContentID{base}}}},
 	}
 	schedule, scheduled := BuildSchedule(41, plan, requests)
 	if !scheduled || schedule.NodeCount() != 3 || schedule.EmissionCount() != 2 {
@@ -54,7 +55,7 @@ func TestScheduleResolvesPreviousFromDeclaredStageOrder(t *testing.T) {
 	}
 	predecessor, _ := schedule.EmissionAt(1)
 	local, _ := schedule.EmissionAt(0)
-	input, inputOK := local.InputPoint()
+	input, inputOK := local.InputPointAt(0)
 	if !inputOK || input != predecessor.Point() {
 		t.Fatal("previous-stage input was not selected from sealed stage order")
 	}
@@ -161,7 +162,7 @@ func TestScheduleEmissionCarriesSealedStageNativeBit(t *testing.T) {
 	schedule, scheduled := BuildSchedule(41, plan, []Request{request})
 	emission, emissionOK := schedule.EmissionAt(0)
 	native, nativeOK := emission.Native()
-	inputPoint, inputOK := emission.InputPoint()
+	inputPoint, inputOK := emission.InputPointAt(0)
 	if !subscriptionOK || !scheduled || schedule.NodeCount() != 2 || schedule.EmissionCount() != 1 ||
 		!emissionOK || !nativeOK || native != stage.Native() || !native || !inputOK || inputPoint != base {
 		t.Fatalf("native emission = (subscription=%v scheduled=%v nodes=%d emissions=%d row=%v native=%v/%v input=%x/%v), want sealed native stage over base",
@@ -206,7 +207,7 @@ func scheduleTable(t *testing.T) schemaissuance.Table {
 	if !ok {
 		t.Fatal("Program issuance declarations refused")
 	}
-	builder := schema.NewBuilder()
+	builder := seal.NewBuilder()
 	builder.Register(emptySurface{schema.SurfaceKindStructure})
 	builder.Register(emptySurface{schema.SurfaceKindAxis})
 	builder.Register(schemaissuance.NewSurface(entries))

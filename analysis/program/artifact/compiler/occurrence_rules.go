@@ -1,8 +1,10 @@
 package compiler
 
 import (
+	"github.com/wippyai/go-lua/analysis/identity"
 	issuanceexecutor "github.com/wippyai/go-lua/analysis/program/artifact/compiler/internal/issuance"
 	programschema "github.com/wippyai/go-lua/analysis/schema/program"
+	programissuance "github.com/wippyai/go-lua/analysis/schema/program/issuance"
 )
 
 // deriveRuleOccurrencesFailure executes the sealed generic issuance machine
@@ -37,12 +39,30 @@ func (compiler *compiler) deriveRuleOccurrencesFailure() CompileFailure {
 		}
 		request := emission.Request()
 		subscription := request.Subscription()
-		input, _ := emission.InputPoint()
+		inputs := make([]identity.ContentID, emission.InputPointCount())
+		for inputIndex := range inputs {
+			input, inputOK := emission.InputPointAt(inputIndex)
+			if !inputOK {
+				compiler.publication.RuleOccurrences = nil
+				return compileFailure(CompileStageOccurrences, CompileRowOccurrence, index, inputIndex, CompileReasonOccurrenceUnavailable)
+			}
+			inputs[inputIndex] = input
+		}
 		native, nativeOK := emission.Native()
 		route, _ := request.Route()
-		if !nativeOK || !compiler.appendRuleOccurrence(
+		inputSpec := programissuance.InputNone
+		if request.InputCount() != 0 {
+			input, inputOK := request.InputAt(0)
+			inputDeclaration := input.Declaration()
+			if !inputOK || inputDeclaration == nil {
+				compiler.publication.RuleOccurrences = nil
+				return compileFailure(CompileStageOccurrences, CompileRowOccurrence, index, -1, CompileReasonOccurrenceUnavailable)
+			}
+			inputSpec = inputDeclaration.Key()
+		}
+		if !nativeOK || !compiler.appendRuleOccurrenceVector(
 			subscription.Rule(), subscription.Writes(), request.Occurrence(),
-			emission.Point(), input, request.Stage().Key(), request.Input().Declaration().Key(), route, native,
+			emission.Point(), inputs, request.Stage().Key(), inputSpec, route, native,
 		) {
 			compiler.publication.RuleOccurrences = nil
 			return compileFailure(CompileStageOccurrences, CompileRowOccurrence, index, -1, CompileReasonOccurrenceUnavailable)
