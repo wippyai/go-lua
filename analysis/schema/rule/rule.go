@@ -17,9 +17,13 @@
 package rule
 
 import (
+	"crypto/sha256"
+
 	"github.com/wippyai/go-lua/analysis/identity"
 	"github.com/wippyai/go-lua/analysis/schema"
 	issuanceschema "github.com/wippyai/go-lua/analysis/schema/issuance"
+	ruleprogram "github.com/wippyai/go-lua/analysis/schema/rule/program"
+	seal "github.com/wippyai/go-lua/analysis/schema/seal"
 	"github.com/wippyai/go-lua/analysis/schema/structure"
 	"github.com/wippyai/go-lua/analysis/schema/vocabulary"
 	"github.com/wippyai/go-lua/internal/framing"
@@ -31,7 +35,7 @@ const (
 	// The ordinal here is retired. A rule's role is its declaration position,
 	// so the position is a construction rather than a property a row could
 	// state differently from where it sits.
-	_ schema.LawID = schema.SurfaceLawFloor + iota
+	_ schema.LawID = seal.SurfaceLawFloor + iota
 	// The ordinal here is retired. Role uniqueness is the root's own law: one
 	// role is one row, and two rows carrying one identity is stated over the
 	// entry identity this surface derives.
@@ -76,6 +80,11 @@ const (
 	// LawIssuanceRequirementResolves states that the named operand shape is a
 	// declared member of the requirement vocabulary.
 	LawIssuanceRequirementResolves
+	// LawProgramShape states that a Rule-owned execution program is a valid
+	// callback-free ordered typed-join/fold declaration.
+	LawProgramShape
+	// LawProgramOutput states that writes map only to declared output columns.
+	LawProgramOutput
 )
 
 // Lane is the closed admission lane of one rule. Mounted rules enter through a
@@ -207,6 +216,9 @@ type Spec struct {
 	// so the identity set a rule is declared against is part of the table
 	// digest, and the hook reaches no identity this list omits.
 	Roles []schema.Key
+	// Program is the immutable, domain-neutral execution declaration. It
+	// contains no callback, domain value, or runtime handle.
+	Program ruleprogram.Program
 }
 
 // Cell is the opaque per-rule payload the table carries between passes. It is
@@ -229,17 +241,21 @@ func NewCell(value any) Cell {
 type Template struct {
 	key      schema.Key
 	id       schema.EntryID
+	digest   identity.ContentID
 	lane     Lane
 	writes   schema.Key
 	owner    schema.Key
 	issues   []Issuance
 	semantic schema.Key
 	roles    []schema.Key
+	program  ruleprogram.Program
 }
 
 // New admits one authored declaration. A rejected spec returns false rather
 // than a partially usable template.
 func New(spec Spec) (*Template, bool) {
+	program := spec.Program.Clone()
+	spec.Program = program
 	if !specAdmissible(spec) {
 		return nil, false
 	}
@@ -252,8 +268,10 @@ func New(spec Spec) (*Template, bool) {
 		issues:   append([]Issuance(nil), spec.Issues...),
 		semantic: spec.Semantic,
 		roles:    append([]schema.Key(nil), spec.Roles...),
+		program:  program.Clone(),
 	}
-	return template, template.EntryAvailable()
+	template.digest = template.contentDigest()
+	return template, template.EntryAvailable() && template.digest.Available()
 }
 
 func specAdmissible(spec Spec) bool {
@@ -276,7 +294,25 @@ func specAdmissible(spec Spec) bool {
 			return false
 		}
 	}
+	if !spec.Program.Valid() {
+		return false
+	}
+	if spec.Program.Available() && !containsRole(spec.Roles, spec.Program.OperandRole) {
+		return false
+	}
 	return true
+}
+
+func containsRole(roles []schema.Key, key schema.Key) bool {
+	if !key.Available() {
+		return false
+	}
+	for _, role := range roles {
+		if role == key {
+			return true
+		}
+	}
+	return false
 }
 
 func (template *Template) Key() schema.Key { return template.key }
@@ -291,6 +327,23 @@ func (template *Template) Writes() schema.Key { return template.writes }
 
 // Owner is the axis that must supply this rule's operand resolver.
 func (template *Template) Owner() schema.Key { return template.owner }
+
+// Digest is the Rule declaration digest, including its canonical cold
+// Program/issuance bytes. It is distinct from the root table digest but
+// is derived from the same EntryContent stream.
+func (template *Template) Digest() identity.ContentID {
+	if template == nil {
+		return identity.ContentID{}
+	}
+	return template.digest
+}
+
+func (template *Template) Program() ruleprogram.Program {
+	if template == nil {
+		return ruleprogram.Program{}
+	}
+	return template.program.Clone()
+}
 
 // IssuanceCount is the number of occurrence subscriptions this rule declares.
 func (template *Template) IssuanceCount() int {
@@ -355,7 +408,7 @@ func (template *Template) EntryAvailable() bool {
 	if !template.writes.Available() || !template.owner.Available() {
 		return false
 	}
-	return true
+	return template.digest.Available()
 }
 
 // DeclaredRoles is the whole role set this rule is declared against.
@@ -393,6 +446,15 @@ func (template *Template) DeclaredRoles() []schema.Key {
 // space they write, and the surface's own admission laws bind the hook set to
 // the lane.
 func (template *Template) EntryContent(content *framing.Writer) error {
+	return template.writeContent(content)
+}
+
+const (
+	ruleContentDomain  = "wippy.analysis/schema/rule/template"
+	ruleContentVersion = 1
+)
+
+func (template *Template) writeContent(content *framing.Writer) error {
 	if err := content.String(string(template.semantic)); err != nil {
 		return err
 	}
@@ -427,14 +489,49 @@ func (template *Template) EntryContent(content *framing.Writer) error {
 			return err
 		}
 	}
-	return nil
+	return template.program.WriteContent(content)
+}
+
+// References exposes the complete common reference stream to schema/seal.
+// The seal snapshots it before running this surface and validates it against
+// the completed catalog, so upward Program references are checked at the root
+// rather than by a local table or callback.
+func (template *Template) References() schema.EntryReferences {
+	if template == nil {
+		return nil
+	}
+	refs := schema.EntryReferences{
+		{Surface: schema.SurfaceKindAxis, Key: template.writes},
+		{Surface: schema.SurfaceKindAxis, Key: template.owner},
+	}
+	for _, issuance := range template.issues {
+		refs = append(refs,
+			schema.EntryReference{Surface: schema.SurfaceKindIssuance, Key: issuance.Occurrence},
+			schema.EntryReference{Surface: schema.SurfaceKindIssuance, Key: issuance.Form},
+			schema.EntryReference{Surface: schema.SurfaceKindIssuance, Key: issuance.Requirement})
+	}
+	return append(refs, template.program.References()...)
+}
+
+func (template *Template) contentDigest() identity.ContentID {
+	if template == nil {
+		return identity.ContentID{}
+	}
+	hash := sha256.New()
+	var content framing.Writer
+	if content.Reset(hash, ruleContentDomain, ruleContentVersion) != nil || template.writeContent(&content) != nil || content.Finish() != nil {
+		return identity.ContentID{}
+	}
+	var digest identity.ContentID
+	copy(digest[:], hash.Sum(nil))
+	return digest
 }
 
 // surface is the rule contribution to the analyzer declaration root.
 type surface struct{ templates []*Template }
 
 // NewSurface hands one ordered set of rule declarations to the table.
-func NewSurface(templates []*Template) schema.Surface {
+func NewSurface(templates []*Template) seal.Surface {
 	return surface{templates: templates}
 }
 
@@ -456,13 +553,13 @@ func (contribution surface) Entries() []schema.Entry {
 // The axis surface and the structural vocabulary seal below this one, so both
 // references resolve downward against the table this surface is being sealed
 // into rather than against a catalog restated here.
-func (contribution surface) Seal(view schema.View, sealed schema.Sealed) schema.SealFailure {
+func (contribution surface) Seal(view seal.View, sealed seal.Sealed) schema.SealFailure {
 	semantics := make(map[schema.Key]schema.EntryID, view.Count())
 	for position := 0; position < view.Count(); position++ {
 		entry, entryOK := view.At(position)
 		template, templateOK := entry.(*Template)
 		if !entryOK || !templateOK {
-			return schema.SurfaceLawFailure(schema.SurfaceKindRule, schema.EntryID{}, LawEntryShape, schema.DispositionMalformed)
+			return seal.SurfaceLawFailure(schema.SurfaceKindRule, schema.EntryID{}, LawEntryShape, schema.DispositionMalformed)
 		}
 		// Every role a rule names is a declared member of the semantic role
 		// vocabulary. The vocabulary raises the two ways the name fails - one it
@@ -471,27 +568,27 @@ func (contribution surface) Seal(view schema.View, sealed schema.Sealed) schema.
 		// here is this declaration.
 		for _, role := range template.declaredRoles() {
 			if _, disposition := structure.Resolve(sealed, role, structure.CategorySemanticRole); disposition != schema.DispositionAccepted {
-				return schema.SurfaceLawFailure(schema.SurfaceKindRule, template.id, LawSemanticIdentity, disposition)
+				return seal.SurfaceLawFailure(schema.SurfaceKindRule, template.id, LawSemanticIdentity, disposition)
 			}
 		}
 		// One role is one rule. Two rules declared under one role would be one
 		// engine slot two declarations bind, so the repeat is a verdict here
 		// rather than a slot whichever rule reaches it first wins.
 		if prior, duplicate := semantics[template.semantic]; duplicate {
-			return schema.SurfaceLawFailure(schema.SurfaceKindRule, prior, LawSemanticUnique, schema.DispositionDuplicate)
+			return seal.SurfaceLawFailure(schema.SurfaceKindRule, prior, LawSemanticUnique, schema.DispositionDuplicate)
 		}
 		semantics[template.semantic] = template.id
 		// An axis is a writer principal, so the lane a rule writes is a declared
 		// axis and nothing else names it.
 		if _, disposition := sealed.Resolve(schema.SurfaceKindAxis, template.writes); disposition != schema.DispositionAccepted {
-			return schema.SurfaceLawFailure(schema.SurfaceKindRule, template.id, LawWritesResolves, disposition)
+			return seal.SurfaceLawFailure(schema.SurfaceKindRule, template.id, LawWritesResolves, disposition)
 		}
 		// The owner is the writer principal that must install this rule's
 		// operand resolver. It is resolved against the same axis surface as
 		// Writes, so a rule cannot name an owner that is not a declared
 		// principal.
 		if _, disposition := sealed.Resolve(schema.SurfaceKindAxis, template.owner); disposition != schema.DispositionAccepted {
-			return schema.SurfaceLawFailure(schema.SurfaceKindRule, template.id, LawOwnerResolves, disposition)
+			return seal.SurfaceLawFailure(schema.SurfaceKindRule, template.id, LawOwnerResolves, disposition)
 		}
 		// A rule admitted from a compiled artifact is reached by the rows it
 		// subscribes to. One that subscribes to nothing would sit on that lane
@@ -502,40 +599,60 @@ func (contribution surface) Seal(view schema.View, sealed schema.Sealed) schema.
 			if !template.lane.Mounted() {
 				law = LawIssuanceLane
 			}
-			return schema.SurfaceLawFailure(schema.SurfaceKindRule, template.id, law, schema.DispositionIncomplete)
+			return seal.SurfaceLawFailure(schema.SurfaceKindRule, template.id, law, schema.DispositionIncomplete)
 		}
 		for _, issuance := range template.issues {
 			if failure := sealIssuance(template.id, issuance, sealed); failure.Available() {
 				return failure
 			}
 		}
+		if template.contentDigest() != template.digest {
+			return seal.SurfaceLawFailure(schema.SurfaceKindRule, template.id, LawProgramShape, schema.DispositionMalformed)
+		}
+		if problem, valid := template.program.Check(); !valid {
+			law := LawProgramShape
+			if problem.Kind == ruleprogram.ProblemOutput {
+				law = LawProgramOutput
+			}
+			return seal.SurfaceLawFailure(schema.SurfaceKindRule, template.id, law, schema.DispositionMalformed)
+		}
+		if template.program.Available() && !template.declaresRole(template.program.OperandRole) {
+			// The execution program consumes this semantic identity. It must be
+			// one of the rule's authored roles, never an unrecorded name threaded
+			// into runtime construction.
+			return seal.SurfaceLawFailure(schema.SurfaceKindRule, template.id, LawProgramShape, schema.DispositionIncomplete)
+		}
 	}
 	return schema.SealFailure{}
+}
+
+func (template *Template) declaresRole(key schema.Key) bool {
+	return template != nil && containsRole(template.roles, key)
 }
 
 // sealIssuance resolves the complete subscription against the issuance
 // machine. It also proves that the chosen requirement publishes every output
 // the chosen form reads, preventing a downstream form from reconstructing a
 // selection the admission program did not issue.
-func sealIssuance(entry schema.EntryID, issuance Issuance, sealed schema.Sealed) schema.SealFailure {
+func sealIssuance(entry schema.EntryID, issuance Issuance, sealed seal.Sealed) schema.SealFailure {
 	view, viewOK := sealed.Surface(schema.SurfaceKindIssuance)
 	table, tableOK := issuanceschema.NewTable(view)
 	if !viewOK || !tableOK {
-		return schema.SurfaceLawFailure(schema.SurfaceKindRule, entry, LawIssuanceResolves, schema.DispositionIncomplete)
+		return seal.SurfaceLawFailure(schema.SurfaceKindRule, entry, LawIssuanceResolves, schema.DispositionIncomplete)
 	}
 	if !issuance.Available() {
-		return schema.SurfaceLawFailure(schema.SurfaceKindRule, entry, LawIssuanceRequirementDeclared, schema.DispositionIncomplete)
+		return seal.SurfaceLawFailure(schema.SurfaceKindRule, entry, LawIssuanceRequirementDeclared, schema.DispositionIncomplete)
 	}
 	if _, ok := table.Entry(issuance.Occurrence, issuanceschema.KindFamily); !ok {
-		return schema.SurfaceLawFailure(schema.SurfaceKindRule, entry, LawIssuanceResolves, schema.DispositionMalformed)
+		return seal.SurfaceLawFailure(schema.SurfaceKindRule, entry, LawIssuanceResolves, schema.DispositionMalformed)
 	}
 	form, formOK := table.Entry(issuance.Form, issuanceschema.KindForm)
 	requirement, requirementOK := table.Entry(issuance.Requirement, issuanceschema.KindRequirement)
 	if !formOK {
-		return schema.SurfaceLawFailure(schema.SurfaceKindRule, entry, LawIssuanceResolves, schema.DispositionMalformed)
+		return seal.SurfaceLawFailure(schema.SurfaceKindRule, entry, LawIssuanceResolves, schema.DispositionMalformed)
 	}
 	if !requirementOK {
-		return schema.SurfaceLawFailure(schema.SurfaceKindRule, entry, LawIssuanceRequirementResolves, schema.DispositionMalformed)
+		return seal.SurfaceLawFailure(schema.SurfaceKindRule, entry, LawIssuanceRequirementResolves, schema.DispositionMalformed)
 	}
 	published := make(map[schema.Key]struct{}, len(requirement.Outputs()))
 	for _, output := range requirement.Outputs() {
@@ -543,7 +660,7 @@ func sealIssuance(entry schema.EntryID, issuance Issuance, sealed schema.Sealed)
 	}
 	for _, required := range form.Requires() {
 		if _, ok := published[required]; !ok {
-			return schema.SurfaceLawFailure(schema.SurfaceKindRule, entry, LawIssuanceRequirementResolves, schema.DispositionIncomplete)
+			return seal.SurfaceLawFailure(schema.SurfaceKindRule, entry, LawIssuanceRequirementResolves, schema.DispositionIncomplete)
 		}
 	}
 	return schema.SealFailure{}

@@ -3,7 +3,7 @@ package issuance
 import "testing"
 
 func TestPlanRetainsSealedDeclarationsWithoutOrdinalProjection(t *testing.T) {
-	sealed, failure := seal(t, canonicalEntries(t)...)
+	sealed, failure := sealTable(t, canonicalEntries(t)...)
 	if failure.Available() {
 		t.Fatalf("canonical surface refused: %+v", failure)
 	}
@@ -25,7 +25,7 @@ func TestPlanRetainsSealedDeclarationsWithoutOrdinalProjection(t *testing.T) {
 }
 
 func TestPlanRefusesDuplicateSubscriptionAuthority(t *testing.T) {
-	sealed, failure := seal(t, canonicalEntries(t)...)
+	sealed, failure := sealTable(t, canonicalEntries(t)...)
 	if failure.Available() {
 		t.Fatalf("canonical surface refused: %+v", failure)
 	}

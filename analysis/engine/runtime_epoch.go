@@ -6,16 +6,19 @@ import (
 	"context"
 	"sync/atomic"
 
+	"github.com/wippyai/go-lua/analysis/engine/execution"
 	"github.com/wippyai/go-lua/analysis/engine/internal/carrier"
 	"github.com/wippyai/go-lua/analysis/engine/internal/carrier/shape"
 	"github.com/wippyai/go-lua/analysis/engine/internal/composition"
 	"github.com/wippyai/go-lua/analysis/engine/internal/contextfiber"
 	"github.com/wippyai/go-lua/analysis/engine/internal/demand"
 	"github.com/wippyai/go-lua/analysis/engine/internal/equation"
+	"github.com/wippyai/go-lua/analysis/engine/internal/executioncatalog"
 	"github.com/wippyai/go-lua/analysis/engine/internal/facts/change"
 	"github.com/wippyai/go-lua/analysis/engine/internal/facts/support"
 	"github.com/wippyai/go-lua/analysis/engine/internal/schedule"
 	"github.com/wippyai/go-lua/analysis/identity"
+	ruleprogram "github.com/wippyai/go-lua/analysis/schema/rule/program"
 )
 
 // producerEpoch is an epoch-local candidate cache in graph Group order. A
@@ -167,6 +170,10 @@ type executorEpoch struct {
 	diagnostics        *solveDiagnosticState
 	diagnosticRevision identity.Generation
 	work               *carrier.Work
+	generatedCatalog   *executioncatalog.Catalog
+	generatedWorkers   []generatedExecutionWorker
+	relationRevision   uint64
+	generation         uint64
 	demand             *demand.Epoch
 	points             []carrier.PointState
 	producers          []producerEpoch
@@ -205,6 +212,124 @@ type executorEpoch struct {
 	// exact reads. It is intentionally absent from the sealed runtime: exact
 	// Units discovered by a Product belong to this solve generation only.
 	artifactProducerReads artifactProducerReadIndex
+}
+
+type generatedExecutionWorker struct {
+	run      *execution.Run
+	executor execution.Executor
+}
+
+// generatedExecutionProgram is immutable Program-owned execution data. Its
+// catalog and typed family descriptors are built once at Program seal; epochs
+// allocate only bounded workers with fresh Run/scratch state.
+type generatedExecutionProgram struct {
+	catalog  *executioncatalog.Catalog
+	families []execution.Family
+}
+
+type generatedFamilyAssignment struct {
+	family uint32
+	local  uint32
+	form   generatedFamilyForm
+}
+
+// buildGeneratedExecutionProgram performs the one cold grouping step from
+// sealed member rows to typed E/Z families. The solve loop later performs two
+// dense indexes (ref -> row, family -> worker) and nothing else.
+func buildGeneratedExecutionProgram(program *runtimeProgram) (*generatedExecutionProgram, bool) {
+	if program == nil || !program.valid() {
+		return nil, false
+	}
+	memberCount := program.memberCount()
+	entriesByOwner := make([][]generatedFamilyEntry, len(program.factorOwners))
+	assignments := make([]generatedFamilyAssignment, memberCount)
+	supported := make([]bool, memberCount)
+	assigned := make([]bool, memberCount)
+	for memberIndex := 0; memberIndex < memberCount; memberIndex++ {
+		row, rowOK := program.memberRowAt(memberIndex)
+		if !rowOK || row.generated == nil {
+			continue
+		}
+		descriptor, descriptorOK := program.generatedProgramAt(row.generated.rule)
+		if !descriptorOK {
+			return nil, false
+		}
+		mode, modeOK := descriptor.OutputMode()
+		if !modeOK || descriptor.OutputCount() != 1 || mode != ruleprogram.ModeExact || int(descriptor.OutputFactor()) >= len(entriesByOwner) {
+			return nil, false
+		}
+		entry := generatedFamilyEntry{memberIndex: memberIndex, member: row.generated}
+		switch descriptor.ReadCount() {
+		case 1:
+			if descriptor.ReadInput() < 0 || descriptor.ReadInput() >= descriptor.InputCount() || descriptor.ReadInput() > int(^uint16(0)) || descriptor.InputCount() <= 0 {
+				return nil, false
+			}
+			entry.form, entry.input = generatedFamilyExact, uint16(descriptor.ReadInput())
+		case 0:
+			candidate := descriptor.CandidateRelation()
+			if descriptor.InputCount() != 0 || candidate.Axis != descriptor.OutputFactor() {
+				return nil, false
+			}
+			entry.form, entry.relation = generatedFamilySource, candidate.Member
+		default:
+			return nil, false
+		}
+		entriesByOwner[descriptor.OutputFactor()] = append(entriesByOwner[descriptor.OutputFactor()], entry)
+		supported[memberIndex] = true
+	}
+	families := make([]execution.Family, 0, len(entriesByOwner)*2)
+	for ownerIndex, entries := range entriesByOwner {
+		if len(entries) == 0 {
+			continue
+		}
+		owner, ownerOK := program.factorOwnerAt(int32(ownerIndex))
+		if !ownerOK || owner == nil {
+			return nil, false
+		}
+		executors, addresses, built := owner.buildGeneratedFamilies(entries)
+		if !built || len(addresses) != len(entries) || len(executors) == 0 {
+			return nil, false
+		}
+		familyBase := uint32(len(families))
+		for _, executor := range executors {
+			if executor == nil || executor.InputCapacity() < 0 || executor.OutputCapacity() <= 0 {
+				return nil, false
+			}
+			families = append(families, executor)
+		}
+		for _, address := range addresses {
+			if address.memberIndex < 0 || address.memberIndex >= memberCount || !supported[address.memberIndex] || assigned[address.memberIndex] || uint64(address.familyOffset) >= uint64(len(executors)) {
+				return nil, false
+			}
+			assignments[address.memberIndex] = generatedFamilyAssignment{family: familyBase + address.familyOffset, local: address.local}
+			assigned[address.memberIndex] = true
+		}
+	}
+	drafts := make([]executioncatalog.Draft, 0, memberCount)
+	for memberIndex := 0; memberIndex < memberCount; memberIndex++ {
+		if !supported[memberIndex] {
+			continue
+		}
+		if !assigned[memberIndex] {
+			return nil, false
+		}
+		row, rowOK := program.memberRowAt(memberIndex)
+		if !rowOK || row.generated == nil {
+			return nil, false
+		}
+		descriptor, descriptorOK := program.generatedProgramAt(row.generated.rule)
+		if !descriptorOK || descriptor.InputCount() < 0 || descriptor.InputCount() > int(^uint16(0)) || descriptor.OutputCount() != 1 {
+			return nil, false
+		}
+		assignment := assignments[memberIndex]
+		drafts = append(drafts, executioncatalog.Draft{Family: assignment.family, Local: assignment.local, Rule: row.generated.rule, Member: uint32(memberIndex), Candidate: row.generated.candidate, InputCount: uint16(descriptor.InputCount()), OutputCount: 1})
+		row.generated.invocationRef = executioncatalog.Ref(len(drafts) - 1)
+	}
+	catalog, sealed := executioncatalog.Seal(drafts)
+	if !sealed {
+		return nil, false
+	}
+	return &generatedExecutionProgram{catalog: catalog, families: families}, true
 }
 
 func (epoch *executorEpoch) recordFailure(reason SolveFailureReason, boundary solveBoundary, point, group, member, rule composition.Key) {
@@ -247,10 +372,18 @@ func (epoch *executorEpoch) recordRunFailure(boundary solveBoundary) {
 }
 
 func (epoch *executorEpoch) recordGroupFailure(reason SolveFailureReason, point equation.Point, group equation.GroupNode) {
+	epoch.recordGroupBoundaryFailure(reason, boundaryNone, point, group)
+}
+
+// recordGroupBoundaryFailure preserves the exact engine boundary for failures
+// that occur after a sealed Group has been selected but outside an individual
+// member. The caller must not invent a member identity for group-wide
+// transport, contribution, or publication failures.
+func (epoch *executorEpoch) recordGroupBoundaryFailure(reason SolveFailureReason, boundary solveBoundary, point equation.Point, group equation.GroupNode) {
 	if epoch == nil {
 		return
 	}
-	epoch.recordFailure(reason, boundaryNone, func() composition.Key {
+	epoch.recordFailure(reason, boundary, func() composition.Key {
 		if point.Available() {
 			return point.Key()
 		}
@@ -384,10 +517,36 @@ func newRuntimeEpoch(runtime *solverRuntime, relation equation.Relation, ctx con
 	if !ok {
 		return nil, false
 	}
+	relationRevision := uint64(relation.Generation())
+	generatedCatalog := (*executioncatalog.Catalog)(nil)
+	var generatedWorkers []generatedExecutionWorker
+	if runtime.program.generatedPresent {
+		executionProgram := runtime.program.generatedExecution
+		if executionProgram == nil || executionProgram.catalog == nil || len(executionProgram.families) == 0 {
+			return nil, false
+		}
+		generatedCatalog = executionProgram.catalog
+		generatedWorkers = make([]generatedExecutionWorker, len(executionProgram.families))
+		for index, family := range executionProgram.families {
+			if family == nil || family.InputCapacity() < 0 || family.OutputCapacity() <= 0 {
+				return nil, false
+			}
+			run := execution.NewRun(family.InputCapacity(), family.OutputCapacity())
+			executor := family.NewExecutor(run)
+			if run == nil || executor == nil {
+				return nil, false
+			}
+			generatedWorkers[index] = generatedExecutionWorker{run: run, executor: executor}
+		}
+	}
 	epoch := &executorEpoch{
 		runtime:           runtime,
 		ctx:               ctx,
 		work:              work,
+		generatedCatalog:  generatedCatalog,
+		generatedWorkers:  generatedWorkers,
+		relationRevision:  relationRevision,
+		generation:        relationRevision,
 		demand:            demandEpoch,
 		points:            make([]carrier.PointState, stateCount),
 		producers:         make([]producerEpoch, len(runtime.producerRows.rows)),

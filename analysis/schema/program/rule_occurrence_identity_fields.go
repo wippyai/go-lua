@@ -16,16 +16,34 @@ func (row Program) WriteRuleOccurrenceIdentityFields(writer identity.StringIdent
 	for index := 0; index < count; index++ {
 		rule, held := RuleOccurrenceFamily().At(&row.Frozen, catalog, index)
 		occurrence, occurrenceOK := rule.Occurrence()
-		input, inputOK := rule.InputPoint()
 		route, routeOK := rule.PredecessorRouteID()
 		native, nativeOK := rule.Native()
 		key, writes := rule.Key(), rule.Writes()
+		inputCount := rule.InputPointCount()
 		if !held || !rule.Available() || !occurrenceOK || !nativeOK ||
-			(inputOK != input.Available()) || (routeOK != route.Available()) ||
+			inputCount < 0 || (routeOK != route.Available()) ||
 			!key.Available() || !writes.Available() ||
 			!writer.WriteString(string(key)) || !writer.WriteString(string(writes)) ||
-			!writer.WriteUint(uint64(occurrence)) || !writer.WriteContentID(rule.PointID()) ||
-			!writer.WriteContentID(input) || !writer.WriteString(string(rule.Stage())) ||
+			!writer.WriteUint(uint64(occurrence)) || !writer.WriteContentID(rule.PointID()) {
+			return false
+		}
+		if inputCount <= 1 {
+			input, inputOK := rule.InputPointAt(0)
+			if inputOK != input.Available() || !writer.WriteContentID(input) {
+				return false
+			}
+		} else {
+			if !writer.WriteUint(uint64(inputCount)) {
+				return false
+			}
+			for inputIndex := 0; inputIndex < inputCount; inputIndex++ {
+				input, inputOK := rule.InputPointAt(inputIndex)
+				if !inputOK || !writer.WriteContentID(input) {
+					return false
+				}
+			}
+		}
+		if !writer.WriteString(string(rule.Stage())) ||
 			!writer.WriteString(string(rule.InputSpec())) || !writer.WriteContentID(route) || !writer.WriteBool(native) {
 			return false
 		}

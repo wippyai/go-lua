@@ -23,28 +23,33 @@ import (
 // contribution writes/carries, the demand family's read sets, and the
 // occurrence recurrence footprint.
 type memberFold struct {
-	writes       []shape.Slot
-	sources      []carrier.ContributionSource
-	initialReads []demand.Observation
-	dynamicReads []demand.DynamicRead
-	carries      []demand.Carry
-	footprint    []recurrenceFootprint
+	writes  []shape.Slot
+	sources []carrier.ContributionSource
+	// carryExclusions is transient seal input. Each member pairs its own carry
+	// source with only its direct StrongTarget output rows; recurrence footprint
+	// is deliberately unrelated and is never reused for this mask.
+	carryExclusions map[carrier.ContributionSource][]carrier.Target
+	initialReads    []demand.Observation
+	dynamicReads    []demand.DynamicRead
+	carries         []demand.Carry
+	footprint       []recurrenceFootprint
 }
 
 // foldMemberDrafts aggregates one Group's attached drafts. Targets are
 // deduplicated per Factor, and a route write contributes only the Factor owner
 // identity, so the footprint never grows as Group x route universe.
-func foldMemberDrafts(inputCount int, drafts []runtimeMember) (memberFold, bool) {
+func foldMemberDrafts(inputCount int, drafts []memberRow) (memberFold, bool) {
 	if inputCount < 0 {
 		return memberFold{}, false
 	}
 	fold := memberFold{
-		writes:       make([]shape.Slot, 0, len(drafts)),
-		sources:      make([]carrier.ContributionSource, 0),
-		initialReads: make([]demand.Observation, 0),
-		dynamicReads: make([]demand.DynamicRead, 0),
-		carries:      make([]demand.Carry, 0),
-		footprint:    make([]recurrenceFootprint, 0, len(drafts)),
+		writes:          make([]shape.Slot, 0, len(drafts)),
+		sources:         make([]carrier.ContributionSource, 0),
+		carryExclusions: make(map[carrier.ContributionSource][]carrier.Target),
+		initialReads:    make([]demand.Observation, 0),
+		dynamicReads:    make([]demand.DynamicRead, 0),
+		carries:         make([]demand.Carry, 0),
+		footprint:       make([]recurrenceFootprint, 0, len(drafts)),
 	}
 	// These sets are fold-local deduplication scratch. The published
 	// recurrenceFootprint retains authored occurrence targets only; the
@@ -79,29 +84,30 @@ func foldMemberDrafts(inputCount int, drafts []runtimeMember) (memberFold, bool)
 		return true
 	}
 	for _, draft := range drafts {
-		if draft == nil {
+		geometry, geometryOK := draft.geometry()
+		if !geometryOK || geometry == nil || !draft.valid() {
 			return memberFold{}, false
 		}
-		slot, hasSlot := draft.outputSlot()
-		fold.initialReads = append(fold.initialReads, draft.initialReads()...)
-		fold.dynamicReads = append(fold.dynamicReads, draft.dynamicReads()...)
+		slot, hasSlot := geometry.outputSlot()
+		fold.initialReads = append(fold.initialReads, geometry.initialReads()...)
+		fold.dynamicReads = append(fold.dynamicReads, geometry.dynamicReads()...)
 		if !hasSlot {
 			continue
 		}
-		factor, factorOK := draft.factorKey()
+		factor, factorOK := geometry.factorKey()
 		if !factorOK {
 			return memberFold{}, false
 		}
-		memberCarries := draft.carries()
+		memberCarries := geometry.carries()
 		// A carrying member publishes both surfaces: its own exact write target
 		// and every target its carry closure reaches. The occurrence footprint is
 		// their union, so the recurrence scope the active Region seals from it
 		// always contains the member's own writes.
-		occurrenceTargets := draft.targets()
+		occurrenceTargets := geometry.targets()
 		if len(memberCarries) != 0 {
-			occurrenceTargets = unionRuntimeTargets(occurrenceTargets, draft.carryTargets())
+			occurrenceTargets = unionRuntimeTargets(occurrenceTargets, geometry.carryTargets())
 		}
-		narrowTargets := draft.narrowTargets()
+		narrowTargets := geometry.narrowTargets()
 		for _, target := range narrowTargets {
 			if !runtimeContainsTarget(occurrenceTargets, target) {
 				return memberFold{}, false
@@ -113,7 +119,7 @@ func foldMemberDrafts(inputCount int, drafts []runtimeMember) (memberFold, bool)
 			footprintIndex = len(fold.footprint) - 1
 			footprintIndexByFactor[factor] = footprintIndex
 		}
-		if routeFactor := draft.routeScope(); routeFactor != nil {
+		if routeFactor := geometry.routeScope(); routeFactor != nil {
 			if compositionKeyOf(routeFactor.semantic()) != factor {
 				return memberFold{}, false
 			}
@@ -122,7 +128,7 @@ func foldMemberDrafts(inputCount int, drafts []runtimeMember) (memberFold, bool)
 			}
 			fold.footprint[footprintIndex].routeFactor = routeFactor
 			fold.footprint[footprintIndex].route = true
-			fold.footprint[footprintIndex].narrowRoute = fold.footprint[footprintIndex].narrowRoute || draft.routeNarrow()
+			fold.footprint[footprintIndex].narrowRoute = fold.footprint[footprintIndex].narrowRoute || geometry.routeNarrow()
 		}
 		for _, target := range occurrenceTargets {
 			if !appendFootprintTarget(footprintIndex, target, false) {
@@ -134,14 +140,33 @@ func foldMemberDrafts(inputCount int, drafts []runtimeMember) (memberFold, bool)
 				return memberFold{}, false
 			}
 		}
-		if draft.writesOutput() {
+		if geometry.writesOutput() {
 			fold.writes = append(fold.writes, slot)
 		}
 		for _, input := range memberCarries {
 			if input < 0 || input >= inputCount {
 				return memberFold{}, false
 			}
-			fold.sources = append(fold.sources, carrier.ContributionSource{Slot: slot, Input: input})
+			source := carrier.ContributionSource{Slot: slot, Input: input}
+			fold.sources = append(fold.sources, source)
+			// A member's direct output targets are the only targets its carry
+			// may mask. Route/carry closure targets are not strong direct
+			// writes and therefore never enter this exclusion relation.
+			for _, target := range geometry.targets() {
+				if target.Mode() != carrier.StrongTarget {
+					continue
+				}
+				seen := false
+				for _, existing := range fold.carryExclusions[source] {
+					if existing.Same(target) {
+						seen = true
+						break
+					}
+				}
+				if !seen {
+					fold.carryExclusions[source] = append(fold.carryExclusions[source], target)
+				}
+			}
 			fold.carries = append(fold.carries, demand.Carry{Input: uint64(input), Slot: slot})
 		}
 	}
@@ -155,7 +180,7 @@ func foldMemberDrafts(inputCount int, drafts []runtimeMember) (memberFold, bool)
 // program. It is total over the graph: every Group's members become rows, so
 // the sealed program describes the whole compiled program and a later demand
 // revision selects from it rather than rebuilding it.
-func bindRuntimeProgram(schema *Schema, graph *equation.Graph, runtime *carrier.Composition, factors map[composition.Key]runtimeFactor, drafts []runtimeMember, queries []queryRow, observations []observationRow, contexts executioncontext.Directory, contextIndex contextfiber.Index, contextLayout contextfiber.Layout, pointOwners []contextfiber.PointOwner, artifactBacked bool) (*runtimeProgram, []memberFold, bool) {
+func bindRuntimeProgram(schema *Schema, graph *equation.Graph, runtime *carrier.Composition, factors map[composition.Key]runtimeFactor, drafts []memberRow, queries []queryRow, observations []observationRow, contexts executioncontext.Directory, contextIndex contextfiber.Index, contextLayout contextfiber.Layout, pointOwners []contextfiber.PointOwner, artifactBacked bool) (*runtimeProgram, []memberFold, bool) {
 	if schema == nil || !schema.Available() || graph == nil || runtime == nil || runtime.Guards() == nil || factors == nil {
 		return nil, nil, false
 	}
@@ -166,13 +191,17 @@ func bindRuntimeProgram(schema *Schema, graph *equation.Graph, runtime *carrier.
 	if !factorsOK {
 		return nil, nil, false
 	}
-	byMember := make(map[composition.Key]runtimeMember, len(drafts))
+	byMember := make(map[composition.Key]memberRow, len(drafts))
 	for _, draft := range drafts {
-		if draft == nil {
+		geometry, geometryOK := draft.geometry()
+		if !geometryOK || geometry == nil {
 			return nil, nil, false
 		}
-		key := draft.member().Key()
-		if !key.Available() || byMember[key] != nil {
+		key := geometry.member().Key()
+		if !key.Available() {
+			return nil, nil, false
+		}
+		if _, duplicate := byMember[key]; duplicate {
 			return nil, nil, false
 		}
 		byMember[key] = draft
@@ -180,7 +209,7 @@ func bindRuntimeProgram(schema *Schema, graph *equation.Graph, runtime *carrier.
 	rows := make([]memberRow, 0, len(drafts))
 	spans := make([]memberSpan, graph.GroupCount())
 	folds := make([]memberFold, graph.GroupCount())
-	attached := make([]runtimeMember, 0, len(drafts))
+	attached := make([]memberRow, 0, len(drafts))
 	positions := make([]int, 0, len(drafts))
 	for index := 0; index < graph.GroupCount(); index++ {
 		group, groupOK := graph.HyperedgeAt(index)
@@ -194,8 +223,9 @@ func bindRuntimeProgram(schema *Schema, graph *equation.Graph, runtime *carrier.
 			if !memberOK || !member.Key().Available() {
 				return nil, nil, false
 			}
-			draft := byMember[member.Key()]
-			if draft == nil || draft.member().Key() != member.Key() || !draft.member().Rule().Available() {
+			draft, draftPresent := byMember[member.Key()]
+			geometry, geometryOK := draft.geometry()
+			if !draftPresent || !geometryOK || geometry == nil || geometry.member().Key() != member.Key() || !geometry.member().Rule().Available() {
 				return nil, nil, false
 			}
 			// A Rule instance belongs to exactly one compiled Group. Consuming the
@@ -214,12 +244,13 @@ func bindRuntimeProgram(schema *Schema, graph *equation.Graph, runtime *carrier.
 		// producer orders its members, while each row keeps the graph position it
 		// came from so its identity stays recoverable from the Group.
 		sort.Slice(positions, func(left, right int) bool {
-			return lessRuntimeKey(attached[positions[left]].member().Key(), attached[positions[right]].member().Key())
+			leftGeometry, _ := attached[positions[left]].geometry()
+			rightGeometry, _ := attached[positions[right]].geometry()
+			return lessRuntimeKey(leftGeometry.member().Key(), rightGeometry.member().Key())
 		})
 		start := int32(len(rows))
 		for _, position := range positions {
-			draft := attached[position]
-			rows = append(rows, memberRow{member: draft})
+			rows = append(rows, attached[position])
 		}
 		spans[index] = memberSpan{start: start, end: int32(len(rows))}
 	}
@@ -236,7 +267,7 @@ func bindRuntimeProgram(schema *Schema, graph *equation.Graph, runtime *carrier.
 // assembleProgramRuntime is the one entry from attached drafts to an
 // executable runtime. It seals the program first and retains each canonical
 // runtime member only through the row's direct execute method value.
-func assembleProgramRuntime(schema *Schema, graph *equation.Graph, runtime *carrier.Composition, factors map[composition.Key]runtimeFactor, drafts []runtimeMember, queries []queryRow, observations []observationRow, contexts executioncontext.Directory, contextIndex contextfiber.Index, contextLayout contextfiber.Layout, pointOwners []contextfiber.PointOwner, pointTransitions []ProgramPointTransition, artifactBacked bool) (*solverRuntime, bool) {
+func assembleProgramRuntime(schema *Schema, graph *equation.Graph, runtime *carrier.Composition, factors map[composition.Key]runtimeFactor, drafts []memberRow, queries []queryRow, observations []observationRow, contexts executioncontext.Directory, contextIndex contextfiber.Index, contextLayout contextfiber.Layout, pointOwners []contextfiber.PointOwner, pointTransitions []ProgramPointTransition, artifactBacked bool) (*solverRuntime, bool) {
 	program, folds, bound := bindRuntimeProgram(schema, graph, runtime, factors, drafts, queries, observations, contexts, contextIndex, contextLayout, pointOwners, artifactBacked)
 	if !bound {
 		return nil, false

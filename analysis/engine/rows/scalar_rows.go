@@ -99,11 +99,38 @@ type ArtifactScalarEvent struct {
 }
 
 type ArtifactScalarRule struct {
-	Role             ArtifactScalarRole
-	Stage            schema.Key
-	Point, Input, ID identity.ContentID
-	Route            identity.ContentID
-	Native           bool
+	Role      ArtifactScalarRole
+	Stage     schema.Key
+	Point, ID identity.ContentID
+	// Inputs is the ordered point-role vector issued by the Program artifact.
+	// The fixed width mirrors the issuance instruction's six operand cells;
+	// InputCount is the only authority for which prefix is present.
+	Inputs     [6]identity.ContentID
+	InputCount uint8
+	Route      identity.ContentID
+	Native     bool
+}
+
+// InputPointCount returns the dense number of point roles. A negative result
+// denotes a malformed vector width; callers must reject it rather than scan
+// for an available point.
+func (rule ArtifactScalarRule) InputPointCount() int {
+	if rule.InputCount > uint8(len(rule.Inputs)) {
+		return -1
+	}
+	return int(rule.InputCount)
+}
+
+// InputPointAt resolves exactly one ordinal in the dense vector. It never
+// substitutes another available point for a missing role.
+func (rule ArtifactScalarRule) InputPointAt(index int) (identity.ContentID, bool) {
+	if index < 0 {
+		return identity.ContentID{}, false
+	}
+	if rule.InputCount > uint8(len(rule.Inputs)) || index >= int(rule.InputCount) {
+		return identity.ContentID{}, false
+	}
+	return rule.Inputs[index], rule.Inputs[index].Available()
 }
 
 // ArtifactScalarBody is the engine-neutral body transport. It carries only the

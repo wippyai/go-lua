@@ -16,6 +16,7 @@ type moduleCallTransitionFixture struct {
 	cache      modulecomposition.CacheIngress
 	generation modulecomposition.InitGeneration
 	transition executioncontext.Transition
+	from, to   executioncontext.Context
 	row        modulecomposition.ModuleCallTransition
 }
 
@@ -58,7 +59,7 @@ func makeModuleCallTransitionFixture(t *testing.T, rootSuffix string) moduleCall
 	if !rowOK {
 		t.Fatal("module-call transition")
 	}
-	return moduleCallTransitionFixture{program: program, link: linkID, importRow: importRow, cache: cache, generation: generation, transition: transition, row: row}
+	return moduleCallTransitionFixture{program: program, link: linkID, importRow: importRow, cache: cache, generation: generation, transition: transition, from: fromContext, to: toContext, row: row}
 }
 
 func TestModuleCallTransitionRetainsCanonicalJoin(t *testing.T) {
@@ -71,6 +72,7 @@ func TestModuleCallTransitionRetainsCanonicalJoin(t *testing.T) {
 		row.GenerationID() != fixture.generation.ID() ||
 		row.SourceModuleKey() != fixture.program.mount.ModuleKey ||
 		row.SourcePointID() != lawID(t, "call-dispatch-point") ||
+		row.ReturnPointID() != lawID(t, "call-effect-point") ||
 		row.ArtifactID() != fixture.program.mount.ArtifactID || row.ProgramID() != fixture.program.mount.ProgramID ||
 		row.ImportID() != fixture.importRow.ID() || row.CallID() != fixture.importRow.CallID() ||
 		row.TransitionID() != fixture.transition.ID() || row.FromContextID() != fixture.transition.FromContextID() ||

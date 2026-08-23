@@ -4,6 +4,8 @@ import (
 	"bytes"
 	"testing"
 
+	seal "github.com/wippyai/go-lua/analysis/schema/seal"
+
 	"github.com/wippyai/go-lua/analysis/identity"
 	"github.com/wippyai/go-lua/analysis/schema"
 	issuanceschema "github.com/wippyai/go-lua/analysis/schema/issuance"
@@ -185,14 +187,14 @@ func (lawStructureSurface) Entries() []schema.Entry {
 // The stand-in states no law of its own: what this file is stating laws about
 // is the rule surface, and the structural surface's own totality is that
 // package's law.
-func (lawStructureSurface) Seal(schema.View, schema.Sealed) schema.SealFailure {
+func (lawStructureSurface) Seal(seal.View, seal.Sealed) schema.SealFailure {
 	return schema.SealFailure{}
 }
 
 // lawSurfaceFor stands one sibling surface in. The axis surface carries the one
 // axis the law table's rules write, and the structural surface carries the
 // vocabulary their subscriptions name.
-func lawSurfaceFor(kind schema.SurfaceKind) schema.Surface {
+func lawSurfaceFor(kind schema.SurfaceKind) seal.Surface {
 	switch kind {
 	case schema.SurfaceKindStructure:
 		return lawStructureSurface{}
@@ -272,7 +274,7 @@ func (surface lawSiblingSurface) Entries() []schema.Entry {
 	return entries
 }
 
-func (lawSiblingSurface) Seal(schema.View, schema.Sealed) schema.SealFailure {
+func (lawSiblingSurface) Seal(seal.View, seal.Sealed) schema.SealFailure {
 	return schema.SealFailure{}
 }
 
@@ -286,8 +288,8 @@ func sealLawTable(templates []*Template) schema.SealFailure {
 
 // sealLawTableFor is the same seal, read for the table it produces rather than
 // for the verdict alone.
-func sealLawTableFor(templates []*Template) (*schema.Schema, schema.SealFailure) {
-	builder := schema.NewBuilder()
+func sealLawTableFor(templates []*Template) (*seal.Schema, schema.SealFailure) {
+	builder := seal.NewBuilder()
 	for kind := schema.SurfaceKind(1); kind.Available(); kind++ {
 		if kind == schema.SurfaceKindRule {
 			builder.Register(NewSurface(templates))
@@ -461,7 +463,7 @@ func (lawForeignSurface) Entries() []schema.Entry {
 	return []schema.Entry{lawSiblingEntry{key: "law-foreign"}}
 }
 
-func (lawForeignSurface) Seal(view schema.View, sealed schema.Sealed) schema.SealFailure {
+func (lawForeignSurface) Seal(view seal.View, sealed seal.Sealed) schema.SealFailure {
 	return surface{}.Seal(view, sealed)
 }
 
@@ -470,7 +472,7 @@ func (lawForeignSurface) Seal(view schema.View, sealed schema.Sealed) schema.Sea
 // the declared data every rule law is stated over, so it is rejected as the
 // wrong shape rather than read as a partially declared rule.
 func TestRuleSurfaceRejectsAForeignRow(t *testing.T) {
-	builder := schema.NewBuilder()
+	builder := seal.NewBuilder()
 	for kind := schema.SurfaceKind(1); kind.Available(); kind++ {
 		if kind == schema.SurfaceKindRule {
 			builder.Register(lawForeignSurface{})

@@ -3,6 +3,7 @@ package engine
 import (
 	"sync"
 
+	"github.com/wippyai/go-lua/analysis/engine/generated"
 	"github.com/wippyai/go-lua/analysis/engine/internal/composition"
 	coldcomposition "github.com/wippyai/go-lua/analysis/engine/internal/composition"
 	"github.com/wippyai/go-lua/analysis/engine/internal/equation"
@@ -22,6 +23,11 @@ type Schema struct {
 	cold      *coldcomposition.Composition
 	id        CompositionID
 	available bool
+	// generatedPrograms is the canonical Rule-ordinal descriptor table. It is
+	// populated once by SchemaBuilder.bindSealed from generatedRuleCell's
+	// already Plan-derived descriptors and is never reconstructed from rows.
+	generatedPrograms []generated.CompiledRule
+	generatedPresent  bool
 }
 
 // Available reports whether this Schema is a sealed cold grammar. SchemaBuilder
@@ -37,6 +43,16 @@ func (schema *Schema) ID() CompositionID {
 		return CompositionID{}
 	}
 	return schema.id
+}
+
+// generatedProgramTable returns the immutable descriptor table sealed with
+// this Schema. The hot runtime borrows this table; it does not make a second
+// per-Link copy of rule descriptors.
+func (schema *Schema) generatedProgramTable() ([]generated.CompiledRule, bool) {
+	if !schema.Available() {
+		return nil, false
+	}
+	return schema.generatedPrograms, schema.generatedPresent
 }
 func (schema *Schema) coldID() composition.ID {
 	if !schema.Available() {
@@ -166,6 +182,14 @@ func (schema *Schema) ruleWriteShapeAt(rule, write uint64) (coldcomposition.Rule
 		return coldcomposition.RuleWriteShape{}, false
 	}
 	return schema.cold.RuleWriteShapeAt(rule, write)
+}
+
+func (schema *Schema) generatedProgramAt(rule uint64) (generated.CompiledRule, bool) {
+	if !schema.Available() || !schema.generatedPresent || rule >= uint64(len(schema.generatedPrograms)) {
+		return generated.CompiledRule{}, false
+	}
+	descriptor := schema.generatedPrograms[rule]
+	return descriptor, descriptor.Available()
 }
 
 // Solver is the runtime owner of one sealed program. Activation revisions

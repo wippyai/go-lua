@@ -5,6 +5,7 @@ package engine
 import (
 	"github.com/wippyai/go-lua/analysis/engine/internal/composition"
 	"github.com/wippyai/go-lua/analysis/engine/internal/factbinding"
+	memberrelation "github.com/wippyai/go-lua/analysis/schema/axis/member/relation"
 )
 
 func BindSummaryReadForFactor[K ~uint32 | ~uint64, V, S any](binding *SchemaBinding, factorSlot *FactorSlot[V], form SchemaReadForm[V], normalize func(OrderedCells[V]) S, equal func(S, S) bool, fingerprint func(S) uint64) bool {
@@ -107,6 +108,32 @@ func BindFactor[K ~uint32 | ~uint64, V any](binding *SchemaBinding, slot *Factor
 	cell.exactWrite = &schemaFactorFormCell[K, V]{schema: state.schema, ordinal: ordinal, kind: SchemaFormWriteExact, factor: cell, algebra: algebra}
 	state.factors[ordinal] = cell
 	return true
+}
+
+// BindRelationOwner installs the one generated member-relation owner for a
+// bound Factor/axis while the SchemaBinding is open. The owner is deliberately
+// neutral: it can only resolve the Plan's relation/projection ordinals and
+// never receives a Rule callback, operand value, or runtime handle.
+func BindRelationOwner[V any](binding *SchemaBinding, slot *FactorSlot[V], owner memberrelation.Owner) bool {
+	state := bindingState(binding)
+	if state == nil {
+		return false
+	}
+	state.mu.Lock()
+	defer state.mu.Unlock()
+	if state.phase != schemaBindingOpen || state.schema == nil || slot == nil || slot.cell == nil || slot.cell.schema != state.schema || owner == nil {
+		if state.phase == schemaBindingOpen {
+			state.poisonLocked()
+		}
+		return false
+	}
+	ordinal, ok := slot.Ordinal()
+	if !ok || ordinal >= uint64(len(state.factors)) || state.factors[ordinal] == nil || state.factors[ordinal].schemaFactorRelationOwner() != nil {
+		state.poisonLocked()
+		return false
+	}
+	factor := state.factors[ordinal]
+	return factor.setSchemaFactorRelationOwner(owner)
 }
 
 // BindRule binds the sole direct Rule lane currently implemented.

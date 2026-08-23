@@ -3,6 +3,8 @@ package axis
 import (
 	"testing"
 
+	seal "github.com/wippyai/go-lua/analysis/schema/seal"
+
 	"github.com/wippyai/go-lua/analysis/identity"
 	"github.com/wippyai/go-lua/analysis/lattice"
 	"github.com/wippyai/go-lua/analysis/schema"
@@ -50,7 +52,7 @@ func (surface scratchRuleSurface) Entries() []schema.Entry {
 	return []schema.Entry{scratchRuleEntry{key: "scratch-rule"}}
 }
 
-func (surface scratchRuleSurface) Seal(schema.View, schema.Sealed) schema.SealFailure {
+func (surface scratchRuleSurface) Seal(seal.View, seal.Sealed) schema.SealFailure {
 	return schema.SealFailure{}
 }
 
@@ -76,7 +78,7 @@ func (surface scratchStructureSurface) Entries() []schema.Entry {
 	return entries
 }
 
-func (surface scratchStructureSurface) Seal(schema.View, schema.Sealed) schema.SealFailure {
+func (surface scratchStructureSurface) Seal(seal.View, seal.Sealed) schema.SealFailure {
 	return schema.SealFailure{}
 }
 
@@ -137,9 +139,9 @@ func sealTemplates(t *testing.T, templates []*Template[scratchInputs]) schema.Se
 
 // sealTable is the same seal, read for the table it produces rather than for
 // the verdict alone.
-func sealTable(t *testing.T, templates []*Template[scratchInputs]) (*schema.Schema, schema.SealFailure) {
+func sealTable(t *testing.T, templates []*Template[scratchInputs]) (*seal.Schema, schema.SealFailure) {
 	t.Helper()
-	builder := schema.NewBuilder()
+	builder := seal.NewBuilder()
 	for kind := schema.SurfaceKind(1); kind.Available(); kind++ {
 		switch kind {
 		case schema.SurfaceKindAxis:

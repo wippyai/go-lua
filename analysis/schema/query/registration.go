@@ -30,6 +30,8 @@ package query
 import (
 	"encoding/binary"
 
+	seal "github.com/wippyai/go-lua/analysis/schema/seal"
+
 	"github.com/wippyai/go-lua/analysis/identity"
 	"github.com/wippyai/go-lua/analysis/schema"
 	"github.com/wippyai/go-lua/analysis/schema/axis"
@@ -41,7 +43,7 @@ import (
 // Surface law ordinals. They are numeric identities; rendering a verdict is
 // the caller's job, from the identity.
 const (
-	LawEntryShape schema.LawID = schema.SurfaceLawFloor + iota
+	LawEntryShape schema.LawID = seal.SurfaceLawFloor + iota
 	LawRegistrationIdentity
 	LawAxisPhase
 	LawCodecDeclared
@@ -593,7 +595,7 @@ func projectionAgrees(fold Fold, projection schema.Key) bool {
 type surface struct{ registrations []*Registration }
 
 // NewSurface hands one ordered set of query family declarations to the table.
-func NewSurface(registrations []*Registration) schema.Surface {
+func NewSurface(registrations []*Registration) seal.Surface {
 	return surface{registrations: registrations}
 }
 
@@ -611,7 +613,7 @@ func (contribution surface) Entries() []schema.Entry {
 // are resolved against the already-sealed axis surface, so a family that reads
 // a coordinate space which does not exist is rejected here rather than
 // discovered at answer time.
-func (contribution surface) Seal(view schema.View, sealed schema.Sealed) schema.SealFailure {
+func (contribution surface) Seal(view seal.View, sealed seal.Sealed) schema.SealFailure {
 	// A family resolves its subjects against the axis inventory, so the axis
 	// surface must be sealed below it. The catalog order is the bind phase
 	// order, and asking the sealed projection for the axis surface is what
@@ -697,7 +699,7 @@ func (contribution surface) Seal(view schema.View, sealed schema.Sealed) schema.
 // The query surface never sees an axis's own record: it derives the axis
 // surface's identity for the key it was handed and asks the sealed view, so a
 // reference is resolved against the same table it is being sealed into.
-func axisDeclared(axes schema.View, key schema.Key) bool {
+func axisDeclared(axes seal.View, key schema.Key) bool {
 	if !key.Available() {
 		return false
 	}
@@ -710,5 +712,5 @@ func axisDeclared(axes schema.View, key schema.Key) bool {
 }
 
 func failure(entry schema.EntryID, law schema.LawID, disposition schema.Disposition) schema.SealFailure {
-	return schema.SurfaceLawFailure(schema.SurfaceKindQuery, entry, law, disposition)
+	return seal.SurfaceLawFailure(schema.SurfaceKindQuery, entry, law, disposition)
 }

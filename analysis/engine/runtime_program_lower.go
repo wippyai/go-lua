@@ -534,7 +534,7 @@ func buildMountedArtifactRows(mounts []sealedProgramMount, schemaID identity.Con
 		}
 		roles[id] = capability
 	}
-	authorizedTransports, transportsAuthorized := sealedLinkBootstrapTransportPair(bindingState)
+	authorizedTransports, transportsAuthorized := sealedLinkBootstrapTransports(bindingState)
 	seenTransportCapabilities := make(map[RuleSlotCapability]struct{}, len(authorizedTransports))
 	seenTransportFactors := make(map[composition.Key]struct{}, len(authorizedTransports))
 	if transportsAuthorized {
@@ -718,8 +718,16 @@ func appendMountedProgramMount(rows *mountedArtifactRows, mount identity.Content
 		if !capabilityOK || !rule.Stage.Available() || !pointOK {
 			return false
 		}
-		if rule.Input.Available() {
-			if _, inputOK := points[rule.Input]; !inputOK {
+		inputCount := rule.InputPointCount()
+		if inputCount < 0 || inputCount > len(rule.Inputs) {
+			return false
+		}
+		for inputIndex := 0; inputIndex < inputCount; inputIndex++ {
+			input, inputOK := rule.InputPointAt(inputIndex)
+			if !inputOK || !input.Available() {
+				return false
+			}
+			if _, pointOK := points[input]; !pointOK {
 				return false
 			}
 		}

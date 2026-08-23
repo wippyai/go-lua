@@ -109,6 +109,83 @@ func TestExactRecentAllocationAcceptsOnlyOneOwnedRecentAllocation(t *testing.T) 
 	}
 }
 
+// TestAllocationCarryAgeUsesTheIssuedCandidateSemantics exercises the direct
+// candidate transform itself. The assertion names the absolute owner result
+// (the selected Recent reference becomes Summary); it does not compare two
+// independently implemented Age authorities.
+func TestAllocationCarryAgeUsesTheIssuedCandidateSemantics(t *testing.T) {
+	heaps, values := recentAllocationFixture(t)
+	var key heapdomain.Key
+	var result *valuedomain.AllocationResult
+	for index := 0; index < heaps.KeyCount(); index++ {
+		candidate, candidateOK := heaps.KeyAt(index)
+		if !candidateOK || candidate.Kind() != heapdomain.RootAllocation {
+			continue
+		}
+		row, rowOK := values.AllocationResultFor(candidate)
+		if rowOK {
+			key, result = candidate, row
+			break
+		}
+	}
+	if !key.Valid() || result == nil {
+		t.Fatal("fixture has no issued allocation candidate")
+	}
+	recentAtom, recentOK := values.Allocation(key, materialization.Recent)
+	prior, priorOK := values.Singleton(recentAtom)
+	if !recentOK || !priorOK {
+		t.Fatal("allocation Recent prior")
+	}
+	aged, agedOK := result.Age(prior)
+	if !agedOK {
+		t.Fatal("issued allocation candidate did not age its prior")
+	}
+	if !hasAllocationRole(values, aged, key, materialization.Summary) || hasAllocationRole(values, aged, key, materialization.Recent) {
+		t.Fatal("allocation carry did not replace the selected Recent reference with Summary")
+	}
+	var stale valuedomain.AllocationResult
+	if _, staleOK := stale.Age(prior); staleOK {
+		t.Fatal("stale allocation candidate crossed the owner fence")
+	}
+	foreignHeaps, foreignValues := recentAllocationFixture(t)
+	var foreign *valuedomain.AllocationResult
+	for index := 0; index < foreignHeaps.KeyCount(); index++ {
+		candidate, candidateOK := foreignHeaps.KeyAt(index)
+		if !candidateOK || candidate.Kind() != heapdomain.RootAllocation {
+			continue
+		}
+		row, rowOK := foreignValues.AllocationResultFor(candidate)
+		if rowOK {
+			foreign = row
+			break
+		}
+	}
+	if foreign == nil {
+		t.Fatal("foreign allocation candidate")
+	}
+	if _, foreignPriorOK := result.Age(foreignValues.Top()); foreignPriorOK {
+		t.Fatal("allocation candidate accepted a foreign prior fact")
+	}
+	if _, foreignCandidateOK := foreign.Age(prior); foreignCandidateOK {
+		t.Fatal("foreign allocation candidate accepted a local prior fact")
+	}
+}
+
+func hasAllocationRole(schema *valuedomain.Schema, fact valuedomain.Value, want heapdomain.Key, role materialization.Role) bool {
+	atoms, ok := schema.Atoms(fact)
+	if !ok {
+		return false
+	}
+	for _, atom := range atoms {
+		reference, gotRole, referenceOK := atom.Reference()
+		key, keyOK := reference.AllocationKey()
+		if referenceOK && keyOK && key == want && gotRole == role {
+			return true
+		}
+	}
+	return false
+}
+
 func mustAtom(t testing.TB, schema *valuedomain.Schema, fact valuedomain.Value) valuedomain.Atom {
 	t.Helper()
 	atoms, ok := schema.Atoms(fact)

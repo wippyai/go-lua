@@ -8,6 +8,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/engine/internal/equation"
 	"github.com/wippyai/go-lua/analysis/engine/internal/factbinding"
 	"github.com/wippyai/go-lua/analysis/lattice"
+	memberrelation "github.com/wippyai/go-lua/analysis/schema/axis/member/relation"
 )
 
 // HotFactorSpec is the Link-local portion of FactorSpec. Semantic is absent:
@@ -88,11 +89,12 @@ type schemaRuleBindingCell interface {
 	schemaRuleComplete() bool
 }
 
-// sealedOrdinaryRuleGeometry is the direct, post-Seal geometry owned by an
-// ordinary Rule cell. Activation cells deliberately do not implement this
-// interface: their structural relation remains authenticated by equation's
-// ActivationMember witness and their existing sealed read rows.
-type sealedOrdinaryRuleGeometry interface {
+// sealedRuleGeometry is the direct, post-Seal geometry shared by ordinary and
+// generated Rule cells. It is the graph compiler's structural input; runtime
+// binders and domain callbacks are intentionally absent. Activation cells do
+// not implement it because their relation is authenticated by equation's
+// ActivationMember witness.
+type sealedRuleGeometry interface {
 	schemaRuleBindingCell
 	sealedRuleComplete() bool
 	directRuleSemantic() composition.Key
@@ -129,6 +131,8 @@ type schemaFactorBinding interface {
 	schemaFactorFormAt(uint64) schemaFactorFormBinding
 	schemaFactorExactRead(*schemaBindingState, *schemaBindingAuthority, uint64) (RuleReadSurface, bool)
 	schemaFactorExactWrite(*schemaBindingState, *schemaBindingAuthority, uint64) (ruleWriteSurface, bool)
+	schemaFactorRelationOwner() memberrelation.Owner
+	setSchemaFactorRelationOwner(memberrelation.Owner) bool
 }
 
 func factorRowAvailable(row schemaFactorBinding) bool {
@@ -175,6 +179,11 @@ type schemaFactorBindingCell[K ~uint32 | ~uint64, V any] struct {
 	exactWrite  schemaFactorFormBinding
 	forms       []schemaFactorFormBinding
 	summaryKeys []uint64
+	// relationOwner is immutable construction-only generated relation authority.
+	// It remains on the sealed Factor cell so the same sealed composition can
+	// construct more than one Program, but is never copied into runtime Factor
+	// bindings or generated member rows.
+	relationOwner memberrelation.Owner
 }
 
 func (cell *schemaFactorBindingCell[K, V]) schemaFactorOrdinal() uint64 {
@@ -237,6 +246,21 @@ func (cell *schemaFactorBindingCell[K, V]) schemaFactorBindingState() *schemaBin
 		return nil
 	}
 	return cell.state
+}
+
+func (cell *schemaFactorBindingCell[K, V]) schemaFactorRelationOwner() memberrelation.Owner {
+	if cell == nil {
+		return nil
+	}
+	return cell.relationOwner
+}
+
+func (cell *schemaFactorBindingCell[K, V]) setSchemaFactorRelationOwner(owner memberrelation.Owner) bool {
+	if cell == nil || owner == nil || cell.relationOwner != nil {
+		return false
+	}
+	cell.relationOwner = owner
+	return true
 }
 
 func (cell *schemaFactorBindingCell[K, V]) schemaFactorRuntimeBinding(runtime *runtimeBinding) (runtimeFactor, bool) {

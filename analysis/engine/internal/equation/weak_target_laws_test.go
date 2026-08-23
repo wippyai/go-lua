@@ -4,6 +4,7 @@ import (
 	"testing"
 
 	"github.com/wippyai/go-lua/analysis/engine/internal/composition"
+	queryschema "github.com/wippyai/go-lua/analysis/schema/query"
 )
 
 func weakTargetKey(value byte) composition.Key {
@@ -29,7 +30,7 @@ func TestEquationRejectsStrongSurfaceAsWeakTarget(t *testing.T) {
 			Writes:        []composition.Write{{Kind: composition.WriteExact, Factor: factor}},
 		}},
 		Queries: []composition.QueryFamily{{
-			Key: query, Freezer: weakTargetKey(6),
+			Key: query, Freezer: weakTargetKey(6), Population: queryschema.PopulationKindSelectedPoint,
 			Projections: []composition.QueryProjection{{Kind: composition.QueryFactorExact, Factor: factor}},
 		}},
 	})

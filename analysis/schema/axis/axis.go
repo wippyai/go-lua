@@ -36,6 +36,8 @@ package axis
 import (
 	"github.com/wippyai/go-lua/analysis/lattice"
 	"github.com/wippyai/go-lua/analysis/schema"
+	"github.com/wippyai/go-lua/analysis/schema/axis/member"
+	seal "github.com/wippyai/go-lua/analysis/schema/seal"
 	"github.com/wippyai/go-lua/analysis/schema/structure"
 	"github.com/wippyai/go-lua/analysis/schema/vocabulary"
 	"github.com/wippyai/go-lua/internal/framing"
@@ -44,7 +46,7 @@ import (
 // Surface law ordinals. They are numeric identities; rendering a verdict is
 // the caller's job, from the identity.
 const (
-	LawEntryShape schema.LawID = schema.SurfaceLawFloor + iota
+	LawEntryShape schema.LawID = seal.SurfaceLawFloor + iota
 	LawAxisIdentity
 	// The ordinal here is retired. An axis is a writer principal, so the
 	// principal is declared by declaring the axis and there is no second field
@@ -52,7 +54,7 @@ const (
 	_
 	// The ordinal here is retired. One axis is one principal by construction,
 	// and two rows carrying one identity is the root's own law, stated by
-	// schema.LawEntryUnique over the entry identity this surface derives.
+	// seal.LawEntryUnique over the entry identity this surface derives.
 	_
 	LawFieldComplete
 	LawMetadataComplete
@@ -61,7 +63,7 @@ const (
 	LawSemanticUnique
 	// The ordinal here is retired. The bind phase is the root's law: the
 	// declaration catalog order is the bind phase order, and the root rejects
-	// out-of-order registration under schema.LawSurfacePhase.
+	// out-of-order registration under seal.LawSurfacePhase.
 	_
 	// The ordinal here is retired. Whether the semantic role vocabulary is
 	// itself complete is the structural surface's own law, stated over the
@@ -84,6 +86,30 @@ const (
 	// axis, so a column cannot be admitted for a principal this table does not
 	// know.
 	LawOutputWriterResolves
+	// LawMemberShape states that every nested member is an admitted member
+	// declaration. Members are nested under their owning axis rather than
+	// registered as a second SurfaceKindAxis contribution, so this surface is
+	// the sole place that owns their shape.
+	LawMemberShape
+	// LawMemberIdentity states that a member's stable identity is issued by its
+	// owner axis and cannot be laundered from a different owner or key.
+	LawMemberIdentity
+	// LawMemberKind states that a member names one of the finite relation,
+	// projection, or reducer vocabularies.
+	LawMemberKind
+	// LawMemberOwner states that a nested member belongs to the axis row that
+	// publishes it.
+	LawMemberOwner
+	// LawMemberUnique states that an owner cannot publish one member identity
+	// twice, even when the declarations arrive through separate contributors.
+	LawMemberUnique
+	// LawMemberSignature states that a member's declared signature is complete;
+	// executable functions and runtime handles are deliberately outside this
+	// package.
+	LawMemberSignature
+	// LawMemberCatalog states the migration ratchet: a nonempty supplied catalog
+	// must be complete. The zero catalog remains the staged legacy absence.
+	LawMemberCatalog
 )
 
 // Storage is the closed catalog of places an axis's facts live. It is the
@@ -350,6 +376,18 @@ type Binding[A, F any] struct {
 	Inputs   A
 }
 
+// Signature is the bounded cold carrier signature of an axis. Key and Fact
+// are nominal member carriers, so executable or domain-owned handles cannot
+// enter the declaration stream by structural coincidence.
+type Signature struct {
+	Key  member.Carrier
+	Fact member.Carrier
+}
+
+func (signature Signature) Available() bool {
+	return signature.Key.Available() && signature.Fact.Available()
+}
+
 // Spec is the authored declaration of one axis. A is the composition's Link
 // input record. The owning domain keeps its algebra, owner, and contributor;
 // what it hands over here is the sealed declaration.
@@ -373,6 +411,13 @@ type Spec[A any] struct {
 	// Frame is this axis's published half: the columns its facts are read out
 	// of and the principal admitted to write each of them.
 	Frame Frame
+	// Catalog is the owner-issued declaration catalog for this axis. Its zero
+	// value is the staged-migration absence used by legacy callers; once members
+	// are supplied, the catalog must be complete.
+	Catalog member.Catalog
+	// Signature is the bounded cold carrier signature shared by this axis's
+	// members. A legacy zero signature is admitted only while Catalog is empty.
+	Signature Signature
 	// Semantic is this axis's canonical identity: the semantic role row it is
 	// declared under. The row's declared spelling derives the identity the
 	// engine binds this axis's factor with, so the coordinate space and the
@@ -419,6 +464,8 @@ type Template[A any] struct {
 	concurrency  Concurrency
 	dependencies []schema.Key
 	outputs      []Output
+	catalog      member.Catalog
+	signature    Signature
 
 	semantic schema.Key
 	roles    []schema.Key
@@ -441,6 +488,8 @@ func New[A any](spec Spec[A]) (*Template[A], bool) {
 		concurrency:  spec.Concurrency,
 		dependencies: append([]schema.Key(nil), spec.Dependencies...),
 		outputs:      append([]Output(nil), spec.Frame.Outputs...),
+		catalog:      spec.Catalog.Clone(),
+		signature:    spec.Signature,
 		semantic:     spec.Semantic,
 		roles:        append([]schema.Key(nil), spec.Roles...),
 		mount:        spec.Mount,
@@ -474,6 +523,12 @@ func specAdmissible[A any](spec Spec[A]) bool {
 			return false
 		}
 	}
+	if spec.Signature != (Signature{}) && !spec.Signature.Available() {
+		return false
+	}
+	if spec.Catalog.HasMembers() && (!spec.Catalog.Complete() || !spec.Signature.Available()) {
+		return false
+	}
 	return true
 }
 
@@ -490,6 +545,14 @@ func (template *Template[A]) Lifetime() Lifetime { return template.lifetime }
 func (template *Template[A]) Mutability() Mutability { return template.mutability }
 
 func (template *Template[A]) Concurrency() Concurrency { return template.concurrency }
+
+// Signature returns this axis's bounded cold carrier signature.
+func (template *Template[A]) Signature() Signature {
+	if template == nil {
+		return Signature{}
+	}
+	return template.signature
+}
 
 func (template *Template[A]) DependencyCount() int { return len(template.dependencies) }
 
@@ -508,6 +571,53 @@ func (template *Template[A]) OutputAt(index int) (Output, bool) {
 		return Output{}, false
 	}
 	return template.outputs[index], true
+}
+
+// HasMembers reports whether this axis has entered the migrated member-catalog
+// state. A zero catalog is the explicit legacy-absence state.
+func (template *Template[A]) HasMembers() bool {
+	return template != nil && template.catalog.HasMembers()
+}
+
+// MemberCount is the number of nested declarations in catalog order: all
+// relations, followed by projections, followed by reducers.
+func (template *Template[A]) MemberCount() int {
+	if template == nil {
+		return 0
+	}
+	return template.catalog.MemberCount()
+}
+
+// Catalog returns an independent copy of the owner-issued declaration catalog.
+func (template *Template[A]) Catalog() member.Catalog {
+	if template == nil {
+		return member.Catalog{}
+	}
+	return template.catalog.Clone()
+}
+
+// RelationOrdinal resolves a relation's dense catalog ordinal.
+func (template *Template[A]) RelationOrdinal(key schema.Key) (uint32, bool) {
+	if template == nil {
+		return 0, false
+	}
+	return template.catalog.RelationOrdinal(key)
+}
+
+// ProjectionOrdinal resolves a projection's dense catalog ordinal.
+func (template *Template[A]) ProjectionOrdinal(key schema.Key) (uint32, bool) {
+	if template == nil {
+		return 0, false
+	}
+	return template.catalog.ProjectionOrdinal(key)
+}
+
+// ReducerOrdinal resolves a reducer's dense catalog ordinal.
+func (template *Template[A]) ReducerOrdinal(key schema.Key) (uint32, bool) {
+	if template == nil {
+		return 0, false
+	}
+	return template.catalog.ReducerOrdinal(key)
 }
 
 // Coverage is what a published column of this axis concludes about a key it
@@ -651,7 +761,31 @@ func (template *Template[A]) EntryContent(content *framing.Writer) error {
 			return err
 		}
 	}
-	return nil
+	if !template.catalog.HasMembers() {
+		return nil
+	}
+	// The member signature is a migration suffix. Keeping it behind the
+	// catalog-presence ratchet preserves the exact canonical byte stream of
+	// every unmigrated axis; only an axis that actually declares members moves
+	// to the extended identity.
+	if err := content.String(string(template.signature.Key)); err != nil {
+		return err
+	}
+	if err := content.String(string(template.signature.Fact)); err != nil {
+		return err
+	}
+	return template.catalog.WriteContent(content)
+}
+
+// References exposes the ordered cross-surface declarations carried by
+// reducer inputs. The member key is local to its owner and is not converted
+// into a second root EntryReference; the containing axis is the root entry
+// that owns this snapshot.
+func (template *Template[A]) References() schema.EntryReferences {
+	if template == nil {
+		return nil
+	}
+	return template.catalog.References()
 }
 
 func (template *Template[A]) metadataComplete() bool {
@@ -716,7 +850,7 @@ func (template *Template[A]) Mount(inputs A) (Cell, Cell, bool) {
 type surface[A any] struct{ templates []*Template[A] }
 
 // NewSurface hands one ordered set of axis declarations to the table.
-func NewSurface[A any](templates []*Template[A]) schema.Surface {
+func NewSurface[A any](templates []*Template[A]) seal.Surface {
 	return surface[A]{templates: templates}
 }
 
@@ -733,7 +867,7 @@ func (contribution surface[A]) Entries() []schema.Entry {
 // Seal states the axis surface's own laws over the indexed view. The
 // structural vocabulary is sealed below this surface, so the semantic roles an
 // axis names are resolved against it here.
-func (contribution surface[A]) Seal(view schema.View, sealed schema.Sealed) schema.SealFailure {
+func (contribution surface[A]) Seal(view seal.View, sealed seal.Sealed) schema.SealFailure {
 	keys := make(map[schema.Key]schema.EntryID, view.Count())
 	semantics := make(map[schema.Key]schema.EntryID, view.Count())
 	templates := make([]*Template[A], 0, view.Count())
@@ -741,7 +875,7 @@ func (contribution surface[A]) Seal(view schema.View, sealed schema.Sealed) sche
 		entry, entryOK := view.At(position)
 		template, templateOK := entry.(*Template[A])
 		if !entryOK || !templateOK || template == nil {
-			return schema.SurfaceLawFailure(schema.SurfaceKindAxis, schema.EntryID{}, LawEntryShape, schema.DispositionMalformed)
+			return seal.SurfaceLawFailure(schema.SurfaceKindAxis, schema.EntryID{}, LawEntryShape, schema.DispositionMalformed)
 		}
 		templates = append(templates, template)
 		// Entry uniqueness is the root's law. What the surface states here is
@@ -749,15 +883,26 @@ func (contribution surface[A]) Seal(view schema.View, sealed schema.Sealed) sche
 		// of this entry's key, so an entry cannot travel under another
 		// surface's identity.
 		if !template.key.Available() || template.id != schema.NewEntryID(schema.SurfaceKindAxis, template.key) {
-			return schema.SurfaceLawFailure(schema.SurfaceKindAxis, template.id, LawAxisIdentity, schema.DispositionMalformed)
+			return seal.SurfaceLawFailure(schema.SurfaceKindAxis, template.id, LawAxisIdentity, schema.DispositionMalformed)
 		}
 		id := template.id
 		keys[template.key] = id
 		if !template.metadataComplete() {
-			return schema.SurfaceLawFailure(schema.SurfaceKindAxis, id, LawMetadataComplete, schema.DispositionIncomplete)
+			return seal.SurfaceLawFailure(schema.SurfaceKindAxis, id, LawMetadataComplete, schema.DispositionIncomplete)
 		}
 		if !template.fieldsComplete() {
-			return schema.SurfaceLawFailure(schema.SurfaceKindAxis, id, LawFieldComplete, schema.DispositionIncomplete)
+			return seal.SurfaceLawFailure(schema.SurfaceKindAxis, id, LawFieldComplete, schema.DispositionIncomplete)
+		}
+		// A zero catalog is the staged legacy-migration state. Once an axis
+		// publishes members, the bounded catalog must be complete and closed.
+		if template.signature != (Signature{}) && !template.signature.Available() {
+			return seal.SurfaceLawFailure(schema.SurfaceKindAxis, id, LawMemberSignature, schema.DispositionIncomplete)
+		}
+		if template.catalog.HasMembers() && !template.signature.Available() {
+			return seal.SurfaceLawFailure(schema.SurfaceKindAxis, id, LawMemberSignature, schema.DispositionIncomplete)
+		}
+		if template.catalog.HasMembers() && !template.catalog.Complete() {
+			return seal.SurfaceLawFailure(schema.SurfaceKindAxis, id, LawMemberCatalog, schema.DispositionMalformed)
 		}
 		// Every role an axis names is a declared member of the semantic role
 		// vocabulary. The vocabulary raises the two ways the name fails - one it
@@ -766,14 +911,14 @@ func (contribution surface[A]) Seal(view schema.View, sealed schema.Sealed) sche
 		// here is this declaration.
 		for _, role := range template.declaredRoles() {
 			if _, disposition := structure.Resolve(sealed, role, structure.CategorySemanticRole); disposition != schema.DispositionAccepted {
-				return schema.SurfaceLawFailure(schema.SurfaceKindAxis, id, LawSemanticIdentity, disposition)
+				return seal.SurfaceLawFailure(schema.SurfaceKindAxis, id, LawSemanticIdentity, disposition)
 			}
 		}
 		// One role is one axis. Two axes declared under one role would be one
 		// coordinate space the engine binds twice, so the repeat is a verdict
 		// here rather than a binding whichever axis reaches it first wins.
 		if prior, duplicate := semantics[template.semantic]; duplicate {
-			return schema.SurfaceLawFailure(schema.SurfaceKindAxis, prior, LawSemanticUnique, schema.DispositionDuplicate)
+			return seal.SurfaceLawFailure(schema.SurfaceKindAxis, prior, LawSemanticUnique, schema.DispositionDuplicate)
 		}
 		semantics[template.semantic] = id
 	}
@@ -785,10 +930,10 @@ func (contribution surface[A]) Seal(view schema.View, sealed schema.Sealed) sche
 	for _, template := range templates {
 		for _, output := range template.outputs {
 			if !output.Available() {
-				return schema.SurfaceLawFailure(schema.SurfaceKindAxis, template.id, LawOutputDeclared, schema.DispositionIncomplete)
+				return seal.SurfaceLawFailure(schema.SurfaceKindAxis, template.id, LawOutputDeclared, schema.DispositionIncomplete)
 			}
 			if prior, duplicate := outputs[output.Key]; duplicate {
-				return schema.SurfaceLawFailure(schema.SurfaceKindAxis, prior, LawOutputUnique, schema.DispositionDuplicate)
+				return seal.SurfaceLawFailure(schema.SurfaceKindAxis, prior, LawOutputUnique, schema.DispositionDuplicate)
 			}
 			outputs[output.Key] = template.id
 		}
@@ -799,7 +944,7 @@ func (contribution surface[A]) Seal(view schema.View, sealed schema.Sealed) sche
 	for _, template := range templates {
 		for _, output := range template.outputs {
 			if _, declared := keys[output.Writer]; !declared {
-				return schema.SurfaceLawFailure(schema.SurfaceKindAxis, template.id, LawOutputWriterResolves, schema.DispositionIncomplete)
+				return seal.SurfaceLawFailure(schema.SurfaceKindAxis, template.id, LawOutputWriterResolves, schema.DispositionIncomplete)
 			}
 		}
 	}
@@ -808,10 +953,10 @@ func (contribution surface[A]) Seal(view schema.View, sealed schema.Sealed) sche
 	for _, template := range templates {
 		for _, dependency := range template.dependencies {
 			if dependency == template.key {
-				return schema.SurfaceLawFailure(schema.SurfaceKindAxis, template.id, LawDependencyResolves, schema.DispositionMalformed)
+				return seal.SurfaceLawFailure(schema.SurfaceKindAxis, template.id, LawDependencyResolves, schema.DispositionMalformed)
 			}
 			if _, declared := keys[dependency]; !declared {
-				return schema.SurfaceLawFailure(schema.SurfaceKindAxis, template.id, LawDependencyResolves, schema.DispositionIncomplete)
+				return seal.SurfaceLawFailure(schema.SurfaceKindAxis, template.id, LawDependencyResolves, schema.DispositionIncomplete)
 			}
 		}
 	}
@@ -819,7 +964,7 @@ func (contribution surface[A]) Seal(view schema.View, sealed schema.Sealed) sche
 	// another's authority walks them. The first axis on an unresolvable cycle
 	// carries the verdict.
 	if blamed, cyclic := firstCyclicEntry(templates); cyclic {
-		return schema.SurfaceLawFailure(schema.SurfaceKindAxis, blamed, LawDependencyAcyclic, schema.DispositionMalformed)
+		return seal.SurfaceLawFailure(schema.SurfaceKindAxis, blamed, LawDependencyAcyclic, schema.DispositionMalformed)
 	}
 	return schema.SealFailure{}
 }

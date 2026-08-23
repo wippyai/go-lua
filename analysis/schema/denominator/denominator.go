@@ -24,15 +24,17 @@ import (
 	"bytes"
 	"sort"
 
+	seal "github.com/wippyai/go-lua/analysis/schema/seal"
+
 	"github.com/wippyai/go-lua/analysis/identity"
-	"github.com/wippyai/go-lua/internal/framing"
 	"github.com/wippyai/go-lua/analysis/schema"
+	"github.com/wippyai/go-lua/internal/framing"
 )
 
 // Surface law ordinals. They are numeric identities; rendering a verdict is
 // the caller's job, from the identity.
 const (
-	LawEntryShape schema.LawID = schema.SurfaceLawFloor + iota
+	LawEntryShape schema.LawID = seal.SurfaceLawFloor + iota
 	LawDenominatorIdentity
 	LawOwnerDeclared
 	LawOwnerPhase
@@ -290,7 +292,7 @@ type surface struct {
 // The variadic relation argument preserves the existing one-argument caller
 // while making both declaration kinds one SurfaceKindDenominator
 // contribution.
-func NewSurface(entries []*Entry, relationSets ...[]*RelationEntry) schema.Surface {
+func NewSurface(entries []*Entry, relationSets ...[]*RelationEntry) seal.Surface {
 	var relations []*RelationEntry
 	for _, relationSet := range relationSets {
 		relations = append(relations, relationSet...)
@@ -314,7 +316,7 @@ func (contribution surface) Entries() []schema.Entry {
 // Seal states the denominator surface's own laws over the indexed view. Every
 // owner is resolved against the surface it names, in the same table this
 // surface is being sealed into.
-func (contribution surface) Seal(view schema.View, sealed schema.Sealed) schema.SealFailure {
+func (contribution surface) Seal(view seal.View, sealed seal.Sealed) schema.SealFailure {
 	universes := make(map[identity.ContentID]schema.EntryID, view.Count())
 	relations := make(map[schema.EntryID]*RelationEntry, view.Count())
 	for position := 0; position < view.Count(); position++ {
@@ -336,7 +338,7 @@ func (contribution surface) Seal(view schema.View, sealed schema.Sealed) schema.
 				return failure(relation.id, LawRelationFormDeclared, schema.DispositionIncomplete)
 			}
 			if _, duplicate := relations[relation.id]; duplicate {
-				return failure(relation.id, schema.LawEntryUnique, schema.DispositionDuplicate)
+				return failure(relation.id, seal.LawEntryUnique, schema.DispositionDuplicate)
 			}
 			relations[relation.id] = relation
 			continue
@@ -389,7 +391,7 @@ func (contribution surface) Seal(view schema.View, sealed schema.Sealed) schema.
 }
 
 func failure(entry schema.EntryID, law schema.LawID, disposition schema.Disposition) schema.SealFailure {
-	return schema.SurfaceLawFailure(schema.SurfaceKindDenominator, entry, law, disposition)
+	return seal.SurfaceLawFailure(schema.SurfaceKindDenominator, entry, law, disposition)
 }
 
 func validateRelations(relations map[schema.EntryID]*RelationEntry) (schema.SealFailure, bool) {

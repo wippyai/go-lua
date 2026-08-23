@@ -166,6 +166,15 @@ func (schema *Schema) RootOrder(root Root) (int, bool) {
 	return int(root.index), true
 }
 
+// RootIndex is the dense Factor-local form of RootOrder.
+func (schema *Schema) RootIndex(root Root) (uint32, bool) {
+	order, ok := schema.RootOrder(root)
+	if !ok || order < 0 || uint64(order) > uint64(^uint32(0)) {
+		return 0, false
+	}
+	return uint32(order), true
+}
+
 // RootID is the canonical cold identity for a Pack source/root descriptor.
 func (schema *Schema) RootID(root Root) (identity.ContentID, bool) {
 	if schema == nil || schema.state == nil || !root.valid() || root.schema != schema.state {
@@ -304,6 +313,15 @@ func (source Source) valid() bool {
 	return source.schema != nil && source.root.valid() && source.root.schema == source.schema && (source.schema.roots[source.root.index].kind == rootValues || source.schema.roots[source.root.index].kind == rootCall)
 }
 func (source Source) Root() (Root, bool) { return source.root, source.valid() }
+
+// Occurrence returns the mount-qualified Program row that issued this source.
+func (source Source) Occurrence() (identity.ContentID, identity.ContentID, bool) {
+	if !source.valid() {
+		return identity.ContentID{}, identity.ContentID{}, false
+	}
+	return source.schema.mountedSourceIdentity(source.root.index)
+}
+
 func (source Source) ContentID() (identity.ContentID, bool) {
 	if !source.valid() {
 		return identity.ContentID{}, false

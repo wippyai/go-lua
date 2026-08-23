@@ -24,6 +24,7 @@ type programMemberBinding struct {
 	activation identity.ContentID
 	operand    declaredRuleOperand
 	binder     sealedRuleCell
+	generated  *generatedMemberDeclaration
 	activated  bool
 }
 
@@ -100,13 +101,10 @@ func (committed *CommittedProgram) seal(observations []ProgramObservationAdmissi
 // bindMemberRows mints one runtime member per declared member row. Each row is
 // resolved against the published directory, so a bind addresses exactly the
 // member the geometry published it under.
-func (committed *CommittedProgram) bindMemberRows(plane *programPlane) ([]runtimeMember, bool) {
-	drafts := make([]runtimeMember, 0, len(committed.members))
+func (committed *CommittedProgram) bindMemberRows(plane *programPlane) ([]memberRow, bool) {
+	drafts := make([]memberRow, 0, len(committed.members))
 	bound := make(map[composition.Key]struct{}, len(committed.members))
 	for _, declared := range committed.members {
-		if declared.binder == nil || !declared.binder.schemaRuleComplete() {
-			return nil, false
-		}
 		member, resolved := committed.declaredMember(declared)
 		if !resolved || !member.Key().Available() {
 			return nil, false
@@ -114,12 +112,24 @@ func (committed *CommittedProgram) bindMemberRows(plane *programPlane) ([]runtim
 		if _, duplicate := bound[member.Key()]; duplicate {
 			return nil, false
 		}
-		row, ok := declared.binder.bindMember(plane, committed.topology, member, declared.operand)
-		if !ok || row == nil || row.member().Key() != member.Key() {
+		if declared.generated != nil {
+			generatedRow, generatedOK := bindGeneratedMember(plane, committed.topology, member, declared.generated)
+			if !generatedOK || generatedRow == nil || generatedRow.member().Key() != member.Key() {
+				return nil, false
+			}
+			bound[member.Key()] = struct{}{}
+			drafts = append(drafts, memberRow{generated: generatedRow})
+			continue
+		}
+		if declared.binder == nil || !declared.binder.schemaRuleComplete() {
+			return nil, false
+		}
+		legacyRow, legacyOK := declared.binder.bindMember(plane, committed.topology, member, declared.operand)
+		if !legacyOK || legacyRow == nil || legacyRow.member().Key() != member.Key() {
 			return nil, false
 		}
 		bound[member.Key()] = struct{}{}
-		drafts = append(drafts, row)
+		drafts = append(drafts, memberRow{legacy: legacyRow})
 	}
 	return drafts, true
 }
@@ -181,12 +191,20 @@ func (committed *CommittedProgram) bindObservationRows(plane *programPlane, obse
 		if !committed.ownsObservationContext(declared.Context, declared.Mount) {
 			return nil, observationSealFailureArguments
 		}
-		member, resolved := committed.MountedRuleMember(declared.Role, declared.Mount, declared.Point, declared.Occurrence)
+		member, resolved := committed.MountedRuleMember(declared.Role, declared.Mount, declared.memberPoint, declared.Occurrence)
 		if !resolved {
 			return nil, observationSealFailurePoint
 		}
-		point, located := points[member.member.Key()]
-		if !located || !committed.graph.OwnsPoint(point) {
+		memberPoint, located := points[member.member.Key()]
+		point := memberPoint
+		pointOK := located && declared.Point == declared.memberPoint
+		if declared.readPoint.Available() {
+			if declared.Point != declared.readPoint {
+				return nil, observationSealFailurePoint
+			}
+			point, pointOK = committed.lookupPoint(declared.Point)
+		}
+		if !located || !committed.graph.OwnsPoint(memberPoint) || !pointOK || !committed.graph.OwnsPoint(point) {
 			return nil, observationSealFailurePoint
 		}
 		if _, duplicate := admitted[declared.ID]; duplicate {

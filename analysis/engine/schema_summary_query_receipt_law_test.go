@@ -4,6 +4,7 @@ import (
 	"testing"
 
 	"github.com/wippyai/go-lua/analysis/engine/internal/equation"
+	queryschema "github.com/wippyai/go-lua/analysis/schema/query"
 )
 
 func summaryQueryLawSchema(t testing.TB) (*Schema, *FactorSlot[uint64], SchemaReadForm[uint64], *QuerySlot[uint64]) {
@@ -11,7 +12,7 @@ func summaryQueryLawSchema(t testing.TB) (*Schema, *FactorSlot[uint64], SchemaRe
 	builder := NewSchema()
 	factor, factorOK := DeclareFactorSlot[uint64](builder, coldKey(954_001))
 	form, formOK := factor.SummaryRead(coldKey(954_002))
-	query, queryOK := DeclareQuerySlot[uint64](builder, SchemaQuerySpec{Semantic: coldKey(954_003), Freezer: coldKey(953_100)})
+	query, queryOK := DeclareQuerySlot[uint64](builder, SchemaQuerySpec{Semantic: coldKey(954_003), Freezer: coldKey(953_100), Population: queryschema.PopulationKindSelectedPoint})
 	readOK := SchemaQueryRead(query, form)
 	schema, schemaOK := builder.Seal()
 	if !factorOK || !formOK || !queryOK || !readOK || !schemaOK || schema == nil {

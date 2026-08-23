@@ -3,6 +3,8 @@ package issuance
 import (
 	"testing"
 
+	seal "github.com/wippyai/go-lua/analysis/schema/seal"
+
 	"github.com/wippyai/go-lua/analysis/schema"
 )
 
@@ -10,7 +12,7 @@ type scratchSurface struct{ kind schema.SurfaceKind }
 
 func (surface scratchSurface) Kind() schema.SurfaceKind { return surface.kind }
 func (scratchSurface) Entries() []schema.Entry          { return nil }
-func (scratchSurface) Seal(schema.View, schema.Sealed) schema.SealFailure {
+func (scratchSurface) Seal(seal.View, seal.Sealed) schema.SealFailure {
 	return schema.SealFailure{}
 }
 
@@ -23,9 +25,9 @@ func mustEntry(t *testing.T, spec Spec) *Entry {
 	return entry
 }
 
-func seal(t *testing.T, entries ...*Entry) (*schema.Schema, schema.SealFailure) {
+func sealTable(t *testing.T, entries ...*Entry) (*seal.Schema, schema.SealFailure) {
 	t.Helper()
-	builder := schema.NewBuilder()
+	builder := seal.NewBuilder()
 	builder.Register(scratchSurface{schema.SurfaceKindStructure})
 	builder.Register(scratchSurface{schema.SurfaceKindAxis})
 	builder.Register(NewSurface(entries))
@@ -76,7 +78,7 @@ func canonicalEntries(t *testing.T) []*Entry {
 		}, Result: 2, Outputs: []OutputBinding{{Output: "output/occurrence", Register: 1, Proof: 2}}}),
 		mustEntry(t, Spec{Key: "input/finish", Kind: KindInput, Ordinal: 1, Input: InputFinish, InputSource: InputSourceRelation, Selection: InputSelectionDriver, Source: "relation/occurrence-geometry"}),
 		mustEntry(t, Spec{Key: "stage/base", Kind: KindStage, Ordinal: 1, Constructor: StageConstructorPassthrough, Parameters: []DataType{{Value: ValuePointRange, Name: TypePoint, Cardinality: CardinalityMany}}, Base: 1, Identity: []uint16{1}, Order: 1}),
-		mustEntry(t, Spec{Key: "stage/local", Kind: KindStage, Ordinal: 2, Constructor: StageConstructorFramed, Parameters: []DataType{{Value: ValuePointRange, Name: TypePoint, Cardinality: CardinalityMany}}, Base: 1, Identity: []uint16{1}, Order: 2, Predecessors: []schema.Key{"stage/base"}, Edges: []StageEdge{{Source: StageEdgeSourcePrevious, Transport: StageTransportAll, Framing: "issuance/local-transfer/v1"}}, Framing: "issuance/local/v1", ConsumesInput: true}),
+		mustEntry(t, Spec{Key: "stage/local", Kind: KindStage, Ordinal: 2, Constructor: StageConstructorFramed, Parameters: []DataType{{Value: ValuePointRange, Name: TypePoint, Cardinality: CardinalityMany}}, Base: 1, Identity: []uint16{1}, Order: 2, Predecessors: []schema.Key{"stage/base"}, Edges: []StageEdge{{Source: StageEdgeSourcePrevious, Transport: StageTransportAll, Framing: "issuance/local-transfer/v1"}}, Framing: "issuance/local/v1", InputCount: 1}),
 		mustEntry(t, Spec{Key: "form/local", Kind: KindForm, Ordinal: 1, Empty: EmptyRefuse, Subject: "output/occurrence", Requires: []schema.Key{"output/occurrence"}, Program: Program{
 			{Op: OpSelection, Out: 1, Ref: "output/occurrence"},
 			{Op: OpFollow, Out: 2, Args: [6]uint16{1}, Ref: "relation/occurrence-geometry"},
@@ -90,7 +92,7 @@ func canonicalEntries(t *testing.T) []*Entry {
 }
 
 func TestSurfaceSealsNominalMachine(t *testing.T) {
-	sealed, failure := seal(t, canonicalEntries(t)...)
+	sealed, failure := sealTable(t, canonicalEntries(t)...)
 	if failure.Available() || sealed == nil || !sealed.Available() {
 		t.Fatalf("canonical issuance schema refused: %+v", failure)
 	}
@@ -109,7 +111,7 @@ func TestSurfaceRefusesCrossNominalComparison(t *testing.T) {
 		{Op: OpLiteral, Out: 2, Type: UintType(TypeRelationIndex)},
 		{Op: OpEqual, Out: 3, Args: [6]uint16{1, 2}},
 	}, Result: 3}))
-	if _, failure := seal(t, entries...); !failure.Available() || failure.Law != LawProgramShape {
+	if _, failure := sealTable(t, entries...); !failure.Available() || failure.Law != LawProgramShape {
 		t.Fatalf("cross-nominal comparison produced %+v", failure)
 	}
 }
@@ -122,7 +124,7 @@ func TestSurfaceRefusesUnauthenticatedOutputAndWrongPhase(t *testing.T) {
 		"projection in requirement": mustEntry(t, Spec{Key: "requirement/geometry", Kind: KindRequirement, Ordinal: 2, Space: "row/occurrence", Program: Program{{Op: OpProjectPoints, Out: 1}}, Result: 1}),
 	} {
 		t.Run(name, func(t *testing.T) {
-			if _, failure := seal(t, append(canonicalEntries(t), bad)...); !failure.Available() || failure.Law != LawProgramShape {
+			if _, failure := sealTable(t, append(canonicalEntries(t), bad)...); !failure.Available() || failure.Law != LawProgramShape {
 				t.Fatalf("defect produced %+v", failure)
 			}
 		})
@@ -136,7 +138,7 @@ func TestSurfaceRefusesRelationAndStageCycles(t *testing.T) {
 			Joins:   []JoinField{{Source: "field/call-id", Target: "field/call-id", Missing: JoinMissingNoEdge}},
 			Program: Program{{Op: OpCurrent, Out: 1}, {Op: OpFollow, Out: 2, Args: [6]uint16{1}, Ref: "relation/call-self"}, {Op: OpExactlyOne, Out: 3, Args: [6]uint16{2}}}, Result: 3}),
 	)
-	if _, failure := seal(t, relationCycle...); !failure.Available() || failure.Law != LawRelationAcyclic {
+	if _, failure := sealTable(t, relationCycle...); !failure.Available() || failure.Law != LawRelationAcyclic {
 		t.Fatalf("relation cycle produced %+v", failure)
 	}
 
@@ -146,7 +148,7 @@ func TestSurfaceRefusesRelationAndStageCycles(t *testing.T) {
 			entry.edges = []StageEdge{{Source: StageEdgeSourceStage, Stage: "stage/local", Transport: StageTransportAll, Framing: "issuance/cycle/v1"}}
 		}
 	}
-	if _, failure := seal(t, entries...); !failure.Available() || failure.Law != LawStageAcyclic {
+	if _, failure := sealTable(t, entries...); !failure.Available() || failure.Law != LawStageAcyclic {
 		t.Fatalf("stage cycle produced %+v", failure)
 	}
 }
@@ -158,7 +160,7 @@ func TestSurfaceRefusesSparseOrdinals(t *testing.T) {
 			entry.ordinal = 4
 		}
 	}
-	if _, failure := seal(t, entries...); !failure.Available() || failure.Law != LawOrdinalDense {
+	if _, failure := sealTable(t, entries...); !failure.Available() || failure.Law != LawOrdinalDense {
 		t.Fatalf("sparse ordinal produced %+v", failure)
 	}
 }
@@ -170,8 +172,34 @@ func TestSurfaceRefusesDuplicateStageAndTransportFraming(t *testing.T) {
 			entry.edges[0].Framing = entry.framing
 		}
 	}
-	if _, failure := seal(t, entries...); !failure.Available() || failure.Law != LawFramingUnique || failure.Disposition != schema.DispositionDuplicate {
+	if _, failure := sealTable(t, entries...); !failure.Available() || failure.Law != LawFramingUnique || failure.Disposition != schema.DispositionDuplicate {
 		t.Fatalf("duplicate stage/transport framing produced %+v", failure)
+	}
+}
+
+func TestAllExceptStageWritersRequiresAndCarriesWriterStages(t *testing.T) {
+	entries := canonicalEntries(t)
+	for _, entry := range entries {
+		if entry.key != "stage/local" {
+			continue
+		}
+		entry.edges[0].Transport = StageTransportAllExceptWritesOfStages
+		entry.edges[0].WriterStages = []schema.Key{"stage/base"}
+	}
+	if _, failure := sealTable(t, entries...); failure.Available() {
+		t.Fatalf("all-except stage-writers declaration refused: %+v", failure)
+	}
+
+	entries = canonicalEntries(t)
+	for _, entry := range entries {
+		if entry.key != "stage/local" {
+			continue
+		}
+		entry.edges[0].Transport = StageTransportAllExceptWritesOfStages
+		entry.edges[0].WriterStages = nil
+	}
+	if _, failure := sealTable(t, entries...); !failure.Available() {
+		t.Fatal("all-except stage-writers edge without exclusions was admitted")
 	}
 }
 
@@ -214,11 +242,11 @@ func TestStageDeclarationOwnsBaseAndInputContract(t *testing.T) {
 	entries := canonicalEntries(t)
 	for _, entry := range entries {
 		if entry.key == "stage/local" {
-			entry.consumesInput = false
+			entry.inputCount = 7
 		}
 	}
-	if _, failure := seal(t, entries...); !failure.Available() || failure.Law != LawProgramShape {
-		t.Fatalf("stage/input consumption mismatch produced %+v", failure)
+	if _, failure := sealTable(t, entries...); !failure.Available() {
+		t.Fatalf("stage input width mismatch produced %+v", failure)
 	}
 }
 
@@ -230,11 +258,11 @@ func TestProgramBytesChangeSchemaDigest(t *testing.T) {
 			entry.program[1].Literal = 0
 		}
 	}
-	leftSchema, leftFailure := seal(t, left...)
-	rightSchema, rightFailure := seal(t, right...)
+	leftSchema, leftFailure := sealTable(t, left...)
+	rightSchema, rightFailure := sealTable(t, right...)
 	if leftFailure.Available() || rightFailure.Available() || leftSchema.Digest() == rightSchema.Digest() {
 		t.Fatal("changing a machine instruction did not change the sealed schema digest")
 	}
 }
 
-var _ schema.Surface = scratchSurface{}
+var _ seal.Surface = scratchSurface{}

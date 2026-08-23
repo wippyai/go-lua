@@ -9,6 +9,7 @@ import (
 	coldcomposition "github.com/wippyai/go-lua/analysis/engine/internal/composition"
 	"github.com/wippyai/go-lua/analysis/identity"
 	programartifact "github.com/wippyai/go-lua/analysis/program/artifact"
+	queryschema "github.com/wippyai/go-lua/analysis/schema/query"
 )
 
 func TestSchemaBindingRetainsExplicitExecutionSchemaIdentity(t *testing.T) {
@@ -76,7 +77,7 @@ func schemaSlotFixture(t testing.TB, routed bool, reverse bool) (*SchemaBuilder,
 	if _, ok = SchemaWrite[uint64](rule, outputWrite); !ok {
 		t.Fatal("write")
 	}
-	query, ok := DeclareQuerySlot[uint64](builder, SchemaQuerySpec{Semantic: coldKey(940_006), Freezer: coldKey(940_007)})
+	query, ok := DeclareQuerySlot[uint64](builder, SchemaQuerySpec{Semantic: coldKey(940_006), Freezer: coldKey(940_007), Population: queryschema.PopulationKindSelectedPoint})
 	if !ok || !SchemaQueryRead[uint64](query, inputRead) {
 		t.Fatal("query")
 	}
@@ -179,7 +180,7 @@ func TestSchemaSlotsExtensionPresenceAcceptsCanonicalOrdinalZero(t *testing.T) {
 	if _, ok := SchemaWrite(rule, write); !ok {
 		t.Fatal("write")
 	}
-	query, ok := DeclareQuerySlot[uint64](builder, SchemaQuerySpec{Semantic: coldKey(942_305), Freezer: coldKey(942_306)})
+	query, ok := DeclareQuerySlot[uint64](builder, SchemaQuerySpec{Semantic: coldKey(942_305), Freezer: coldKey(942_306), Population: queryschema.PopulationKindSelectedPoint})
 	if !ok || !SchemaQueryRead(query, extension) {
 		t.Fatal("query")
 	}
@@ -277,7 +278,7 @@ func TestSchemaSlotsRouteAndSelectorPredecessorsAreExactAndCanonical(t *testing.
 		t.Fatal("non-selected route accepted")
 	}
 
-	support, ok := DeclareSchemaSupportQuery[bool](builder, SchemaQuerySpec{Semantic: coldKey(944_104), Freezer: coldKey(944_105)})
+	support, ok := DeclareSchemaSupportQuery[bool](builder, SchemaQuerySpec{Semantic: coldKey(944_104), Freezer: coldKey(944_105), Population: queryschema.PopulationKindSelectedPoint})
 	if !ok || SchemaQueryRead(support, read) {
 		t.Fatal("support query accepted factor read")
 	}
@@ -355,7 +356,7 @@ func TestSchemaSlotsStructuralCapabilitiesBind(t *testing.T) {
 	if !ok || rule == nil {
 		t.Fatal("support rule")
 	}
-	query, ok := DeclareSchemaSupportQuery[bool](builder, SchemaQuerySpec{Semantic: coldKey(945_005), Freezer: coldKey(945_006)})
+	query, ok := DeclareSchemaSupportQuery[bool](builder, SchemaQuerySpec{Semantic: coldKey(945_005), Freezer: coldKey(945_006), Population: queryschema.PopulationKindSelectedPoint})
 	if !ok || query == nil {
 		t.Fatal("support query")
 	}
@@ -378,7 +379,7 @@ func TestSchemaSlotsStructuralCapabilitiesBind(t *testing.T) {
 	if rows := familyBuilder.candidate.Rules; len(rows) != 1 || rows[0].OperandFamily != compositionKeyOf(unitOperandFamily) {
 		t.Fatal("activation rule did not retain the engine unit operand family")
 	}
-	activationQuery, ok := DeclareQuerySlot[bool](familyBuilder, SchemaQuerySpec{Semantic: coldKey(945_010), Freezer: coldKey(945_011)})
+	activationQuery, ok := DeclareQuerySlot[bool](familyBuilder, SchemaQuerySpec{Semantic: coldKey(945_010), Freezer: coldKey(945_011), Population: queryschema.PopulationKindSelectedPoint})
 	if !ok || !SchemaQueryRead(activationQuery, activationRead) {
 		t.Fatal("activation query")
 	}

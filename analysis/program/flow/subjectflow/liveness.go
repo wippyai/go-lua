@@ -287,6 +287,7 @@ type livenessIndex struct {
 	events          []eventAttachment
 	eventsByOwner   map[keyspace.Term]map[subjectKey][]int
 	subjectsByOwner map[keyspace.Term]map[subjectKey]Subject
+	aliasesByOwner  map[keyspace.Term]map[subjectKey][]subjectKey
 	forwardCache    map[int][]bool
 	reverseCache    map[int][]bool
 }
@@ -301,6 +302,7 @@ func (builder *sealBuilder) buildLivenessIndex() (*livenessIndex, error) {
 		events:          make([]eventAttachment, len(builder.events)),
 		eventsByOwner:   make(map[keyspace.Term]map[subjectKey][]int),
 		subjectsByOwner: make(map[keyspace.Term]map[subjectKey]Subject),
+		aliasesByOwner:  make(map[keyspace.Term]map[subjectKey][]subjectKey),
 		forwardCache:    make(map[int][]bool),
 		reverseCache:    make(map[int][]bool),
 	}
@@ -312,6 +314,7 @@ func (builder *sealBuilder) buildLivenessIndex() (*livenessIndex, error) {
 				bySubject = make(map[subjectKey][]int)
 				index.eventsByOwner[owner] = bySubject
 				index.subjectsByOwner[owner] = make(map[subjectKey]Subject)
+				index.aliasesByOwner[owner] = make(map[subjectKey][]subjectKey)
 			}
 			addEventSubject := func(subject Subject) {
 				if !subject.Kind.valid() || !subject.ID.Available() {
@@ -325,6 +328,11 @@ func (builder *sealBuilder) buildLivenessIndex() (*livenessIndex, error) {
 			if !sameSubjectKey(event.Subject, event.Related) {
 				addEventSubject(event.Related)
 			}
+			if event.Kind == EventAlias && event.Subject.Kind.valid() && event.Subject.ID.Available() && event.Related.Kind.valid() && event.Related.ID.Available() {
+				left, right := makeSubjectKey(event.Subject), makeSubjectKey(event.Related)
+				index.aliasesByOwner[owner][left] = append(index.aliasesByOwner[owner][left], right)
+				index.aliasesByOwner[owner][right] = append(index.aliasesByOwner[owner][right], left)
+			}
 		}
 
 		// Event.Term is an existing authored coordinate.  Causal's Site path
@@ -336,6 +344,43 @@ func (builder *sealBuilder) buildLivenessIndex() (*livenessIndex, error) {
 		index.events[eventIndex] = eventAttachment{node: node, attached: pathOK && nodeOK && path == event.Path}
 	}
 	return index, nil
+}
+
+// componentEvents returns every event attached to one exact-alias component.
+// Alias is an equality proof, so a use of either endpoint is a use of the
+// represented subject. The closure is seal-local and publishes no second
+// alias representation; liveness rows retain the original owner subjects.
+func (index *livenessIndex) componentEvents(owner keyspace.Term, subject subjectKey) []int {
+	if index == nil {
+		return nil
+	}
+	bySubject := index.eventsByOwner[owner]
+	if len(bySubject) == 0 {
+		return nil
+	}
+	aliases := index.aliasesByOwner[owner]
+	queue := []subjectKey{subject}
+	seenSubjects := make(map[subjectKey]struct{})
+	seenEvents := make(map[int]struct{})
+	result := make([]int, 0)
+	for len(queue) != 0 {
+		current := queue[0]
+		queue = queue[1:]
+		if _, seen := seenSubjects[current]; seen {
+			continue
+		}
+		seenSubjects[current] = struct{}{}
+		for _, event := range bySubject[current] {
+			if _, seen := seenEvents[event]; seen {
+				continue
+			}
+			seenEvents[event] = struct{}{}
+			result = append(result, event)
+		}
+		queue = append(queue, aliases[current]...)
+	}
+	sort.Ints(result)
+	return result
 }
 
 func sameSubjectKey(left, right Subject) bool {
@@ -413,7 +458,7 @@ func (builder *sealBuilder) classifyLiveness(boundary Boundary, subject Subject,
 	}
 	priorReach := index.reach(yieldFromNode, true)
 	postReach := index.reach(reentryToNode, false)
-	events := index.eventsByOwner[owner][makeSubjectKey(subject)]
+	events := index.componentEvents(owner, makeSubjectKey(subject))
 	if len(events) == 0 {
 		return LivenessUnknown
 	}
@@ -448,11 +493,19 @@ func (builder *sealBuilder) classifyLiveness(boundary Boundary, subject Subject,
 			post = true
 		}
 	}
-	if unknown || !prior {
+	if !prior {
 		return LivenessUnknown
 	}
+	// An exact post-reentry use or alias is sufficient positive evidence that
+	// this subject is live on this arm. An opaque event on the same reachable
+	// slice may hide additional uses, but it cannot invalidate the witnessed
+	// use. Unknown remains absorbing only for the negative DiesBefore proof,
+	// where every relevant event must be accounted for.
 	if post {
 		return LivenessLive
+	}
+	if unknown {
+		return LivenessUnknown
 	}
 	return LivenessDiesBefore
 }

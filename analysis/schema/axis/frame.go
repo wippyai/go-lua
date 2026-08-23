@@ -2,6 +2,24 @@ package axis
 
 import "github.com/wippyai/go-lua/analysis/schema"
 
+// OutputRef is the owner-qualified reference to one nested output column of an
+// axis. Axis is the root declaration resolved by schema/seal; Key remains a
+// local frame name and is never flattened into a second schema entry.
+type OutputRef struct {
+	Axis schema.EntryReference
+	Key  schema.Key
+}
+
+func (reference OutputRef) Available() bool {
+	return reference.Axis.Surface == schema.SurfaceKindAxis && reference.Axis.Key.Available() && reference.Key.Available()
+}
+
+func (reference OutputRef) Declared() bool {
+	return reference.Axis.Declared() || reference.Key.Available()
+}
+
+func (reference OutputRef) AxisReference() schema.EntryReference { return reference.Axis }
+
 // Frame is one axis's published half: the columns this axis's facts are read
 // out of once the engine publishes them, and the principal admitted to write
 // each of them. Declaring a coordinate space and publishing it are two acts. A

@@ -48,6 +48,12 @@ func TestCandidateFreeActivationTriggerOwnsItsNativeStage(t *testing.T) {
 		if !ok || !stage.Available() {
 			t.Fatalf("%s: native call stage of the trigger is not addressable", name)
 		}
+		if !stage.InputPointID().Available() {
+			t.Fatalf("%s: native call stage does not expose its authenticated input point", name)
+		}
+		if stage.InputPointID() == stage.PointID() {
+			t.Fatalf("%s: native call stage collapsed its input and output points", name)
+		}
 	}
 }
 

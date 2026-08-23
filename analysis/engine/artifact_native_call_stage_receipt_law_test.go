@@ -6,6 +6,7 @@ import (
 
 	"github.com/wippyai/go-lua/analysis/identity"
 	programissuance "github.com/wippyai/go-lua/analysis/schema/program/issuance"
+	queryschema "github.com/wippyai/go-lua/analysis/schema/query"
 )
 
 type nativeCallStageLawFixture struct {
@@ -58,7 +59,7 @@ func buildNativeCallStageLawOwner(t testing.TB, queried bool) nativeCallStageLaw
 	var query *QuerySlot[uint64]
 	queryOK := true
 	if queried {
-		query, queryOK = DeclareQuerySlot[uint64](builder, SchemaQuerySpec{Semantic: coldKey(947_108), Freezer: coldKey(947_109)})
+		query, queryOK = DeclareQuerySlot[uint64](builder, SchemaQuerySpec{Semantic: coldKey(947_108), Freezer: coldKey(947_109), Population: queryschema.PopulationKindSelectedPoint})
 		queryOK = queryOK && SchemaQueryRead(query, read)
 	}
 	schema, schemaOK := builder.Seal()
@@ -162,9 +163,9 @@ func (fixture nativeCallStageLawFixture) rules() []rows.ArtifactScalarRule {
 	// Deliberately not stage order: admission must follow committed stage
 	// geometry, never input slice order.
 	return []rows.ArtifactScalarRule{
-		{Stage: programissuance.StageCallEffect, Point: fixture.effect, Input: fixture.summary, ID: fixture.effectID, Native: true},
-		{Stage: programissuance.StageCallDispatch, Point: fixture.dispatch, Input: fixture.base, ID: fixture.dispatchID, Native: true},
-		{Stage: programissuance.StageCallSummary, Point: fixture.summary, Input: fixture.dispatch, ID: fixture.summaryID, Native: true},
+		{Stage: programissuance.StageCallEffect, Point: fixture.effect, Inputs: [6]identity.ContentID{fixture.summary}, InputCount: 1, ID: fixture.effectID, Native: true},
+		{Stage: programissuance.StageCallDispatch, Point: fixture.dispatch, Inputs: [6]identity.ContentID{fixture.base}, InputCount: 1, ID: fixture.dispatchID, Native: true},
+		{Stage: programissuance.StageCallSummary, Point: fixture.summary, Inputs: [6]identity.ContentID{fixture.dispatch}, InputCount: 1, ID: fixture.summaryID, Native: true},
 	}
 }
 
@@ -228,13 +229,13 @@ func TestArtifactNativeCallStageRejectsTamperAliasAndOrder(t *testing.T) {
 	// from a Point the parent WTO order puts after it - is refused here and can
 	// never reach a declaration.
 	coincident := fixture.rules()
-	coincident[1].Input = coincident[1].Point
+	coincident[1].Inputs[0] = coincident[1].Point
 	if mount, ok := fixture.scalarMount(t, coincident, fixture.order()); ok || mount.Template != nil {
 		t.Fatal("native Call stage staged from its own Point admitted")
 	}
 
 	inverted := fixture.rules()
-	inverted[1].Input = fixture.effect
+	inverted[1].Inputs[0] = fixture.effect
 	if mount, ok := fixture.scalarMount(t, inverted, fixture.order()); ok || mount.Template != nil {
 		t.Fatal("native Call stage staged from a later Point admitted")
 	}

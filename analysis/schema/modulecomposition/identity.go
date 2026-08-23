@@ -36,16 +36,16 @@ func cacheIngressID(row CacheIngress) identity.ContentID {
 }
 
 func moduleCallTransitionID(row ModuleCallTransition) identity.ContentID {
-	if !row.link.Available() || !row.cacheIngressID.Available() || !row.sourceModuleKey.Available() || !row.sourcePointID.Available() ||
+	if !row.link.Available() || !row.cacheIngressID.Available() || !row.sourceModuleKey.Available() || !row.sourcePointID.Available() || !row.returnPointID.Available() ||
 		!row.artifactID.Available() || !row.programID.Available() || !row.importID.Available() ||
 		!row.callID.Available() || !row.generationID.Available() || !row.transitionID.Available() || !row.fromContextID.Available() ||
 		!row.toContextID.Available() {
 		return identity.ContentID{}
 	}
 	id, _ := identity.DeriveContentID(
-		"analysis/schema/module-composition/module-call-transition/v2",
+		"analysis/schema/module-composition/module-call-transition/v3",
 		idPart(row.link), idPart(row.cacheIngressID), idPart(row.sourceModuleKey),
-		idPart(row.sourcePointID), idPart(row.artifactID), idPart(row.programID), idPart(row.importID), idPart(row.callID),
+		idPart(row.sourcePointID), idPart(row.returnPointID), idPart(row.artifactID), idPart(row.programID), idPart(row.importID), idPart(row.callID),
 		idPart(row.generationID), idPart(row.transitionID), idPart(row.fromContextID), idPart(row.toContextID),
 	)
 	return id
@@ -100,6 +100,36 @@ func moduleExportCallableOriginID(row ModuleExportCallableOrigin) identity.Conte
 		idPart(row.functionID), idPart(row.allocationID), idPart(row.bodyID), idPart(row.bodyContextID),
 		idPart(row.formalID), idPart(row.moduleKey), idPart(row.artifactID), idPart(row.programID),
 		kindPartModuleExportCallableOrigin(row.kind),
+	)
+	return id
+}
+
+func moduleExportCallableIngressID(row ModuleExportCallableIngress) identity.ContentID {
+	if !row.link.Available() || !row.originID.Available() || !row.callTransitionID.Available() ||
+		!row.returnTransitionID.Available() || !row.originContextID.Available() || !row.holderContextID.Available() ||
+		!row.sourceModuleKey.Available() || !row.targetModuleKey.Available() || !row.allocationID.Available() {
+		return identity.ContentID{}
+	}
+	id, _ := identity.DeriveContentID(
+		"analysis/schema/module-composition/module-export-callable-ingress/v1",
+		idPart(row.link), idPart(row.originID), idPart(row.callTransitionID), idPart(row.returnTransitionID),
+		idPart(row.originContextID), idPart(row.holderContextID), idPart(row.sourceModuleKey),
+		idPart(row.targetModuleKey), idPart(row.allocationID),
+	)
+	return id
+}
+
+func moduleReturnStateEdgeID(row ModuleReturnStateEdge) identity.ContentID {
+	if !row.link.Available() || !row.callTransitionID.Available() || !row.generationID.Available() || !row.outcomeID.Available() ||
+		!row.outcomePointID.Available() || !row.callerReturnPointID.Available() || !row.returnTransitionID.Available() ||
+		!row.fromContextID.Available() || !row.toContextID.Available() || !row.returnModuleKey.Available() || !row.callerModuleKey.Available() {
+		return identity.ContentID{}
+	}
+	id, _ := identity.DeriveContentID(
+		"analysis/schema/module-composition/module-return-state-edge/v1",
+		idPart(row.link), idPart(row.callTransitionID), idPart(row.generationID), idPart(row.outcomeID),
+		idPart(row.outcomePointID), idPart(row.callerReturnPointID), idPart(row.returnTransitionID),
+		idPart(row.fromContextID), idPart(row.toContextID), idPart(row.returnModuleKey), idPart(row.callerModuleKey),
 	)
 	return id
 }

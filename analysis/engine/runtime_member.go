@@ -13,9 +13,11 @@ import (
 	"github.com/wippyai/go-lua/analysis/identity"
 )
 
-// runtimeMember is one typed attachment for a graph-owned RuleMember. It has
-// no independent schedule, candidate, or publication path.
-type runtimeMember interface {
+// runtimeMemberGeometry is the shared sealed metadata of one graph-owned
+// member row. It deliberately contains no execution method: a later
+// engine-owned generated row can retain plan-derived geometry here while the
+// composition supplies only one invocation-level executable program.
+type runtimeMemberGeometry interface {
 	member() equation.RuleMember
 	outputSlot() (shape.Slot, bool)
 	factorKey() (composition.Key, bool)
@@ -34,6 +36,12 @@ type runtimeMember interface {
 	routeScope() runtimeFactor
 	routeNarrow() bool
 	writesOutput() bool
+}
+
+// runtimeMember is one legacy typed attachment for a graph-owned RuleMember.
+// It has no independent schedule, candidate, or publication path.
+type runtimeMember interface {
+	runtimeMemberGeometry
 	execute(*carrier.Work, carrier.RuleContributionBase, []carrier.State, support.Mask) memberResult
 }
 
@@ -68,6 +76,7 @@ type boundRuleMember[V, O any] struct {
 	output             outputAccess[V]
 	routeTransform     bool
 	carrySemantic      identity.SemanticKey
+	carrySource        carrier.ContributionSource
 	transformedTargets []carrier.Target
 	carryApply         func(V) (V, bool)
 	nextEpoch          lifetime.GenerationSequence
@@ -308,6 +317,10 @@ func bindSchemaRuleCellMember[K ~uint32 | ~uint64, V, O any](cell *schemaRuleBin
 	}
 	carryIndexes := []int(nil)
 	allTargets := []carrier.Target(nil)
+	slot, slotOK := output.runtimeSlot()
+	if !slotOK {
+		return nil, false
+	}
 	if memberOK {
 		allTargets = append(allTargets, target)
 	}
@@ -339,6 +352,7 @@ func bindSchemaRuleCellMember[K ~uint32 | ~uint64, V, O any](cell *schemaRuleBin
 				return nil, false
 			}
 			bound.carrySemantic = carrySemantic
+			bound.carrySource = carrier.ContributionSource{Slot: slot, Input: int(hot.carryInput)}
 			bound.transformedTargets = carryTargets
 			// The transformed carry maps the route universe through the same
 			// terminal as its exact closure, so the Factor-owned route
@@ -361,10 +375,6 @@ func bindSchemaRuleCellMember[K ~uint32 | ~uint64, V, O any](cell *schemaRuleBin
 	}
 	if routeOK || carryRouteScope {
 		bound.routeOwner = output
-	}
-	slot, slotOK := output.runtimeSlot()
-	if !slotOK {
-		return nil, false
 	}
 	outputTargets := []carrier.Target(nil)
 	if memberOK {

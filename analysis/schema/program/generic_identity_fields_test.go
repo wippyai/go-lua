@@ -163,7 +163,7 @@ func TestEnvironmentAndLocalTransferIdentityFieldsPreserveWitnessAndKeyOrder(t *
 
 func TestRuleOccurrenceIdentityFieldsPreserveKeyAndOptionalPayloadOrder(t *testing.T) {
 	pointID := genericIdentityID(31)
-	rule, ruleOK := programschema.NewRuleOccurrence(schema.Key("rule-key"), schema.Key("writes-key"), 0, pointID, identity.ContentID{}, programissuance.StageBase, programissuance.InputNone, identity.ContentID{}, false)
+	rule, ruleOK := programschema.NewRuleOccurrenceWithInputs(schema.Key("rule-key"), schema.Key("writes-key"), 0, pointID, nil, programissuance.StageBase, programissuance.InputNone, identity.ContentID{}, false)
 	if !ruleOK {
 		t.Fatal("rule occurrence")
 	}
@@ -191,8 +191,8 @@ func TestRuleOccurrenceIdentityFieldsPreserveKeyAndOptionalPayloadOrder(t *testi
 
 func TestRuleOccurrenceNativeBitParticipatesInIdentity(t *testing.T) {
 	pointID, inputID := genericIdentityID(32), genericIdentityID(33)
-	ordinary, ordinaryOK := programschema.NewRuleOccurrence(schema.Key("rule-key"), schema.Key("writes-key"), 0, pointID, inputID, programissuance.StageCallDispatch, programissuance.InputPreviousStage, identity.ContentID{}, false)
-	native, nativeOK := programschema.NewRuleOccurrence(schema.Key("rule-key"), schema.Key("writes-key"), 0, pointID, inputID, programissuance.StageCallDispatch, programissuance.InputPreviousStage, identity.ContentID{}, true)
+	ordinary, ordinaryOK := programschema.NewRuleOccurrenceWithInputs(schema.Key("rule-key"), schema.Key("writes-key"), 0, pointID, []identity.ContentID{inputID}, programissuance.StageCallDispatch, programissuance.InputPreviousStage, identity.ContentID{}, false)
+	native, nativeOK := programschema.NewRuleOccurrenceWithInputs(schema.Key("rule-key"), schema.Key("writes-key"), 0, pointID, []identity.ContentID{inputID}, programissuance.StageCallDispatch, programissuance.InputPreviousStage, identity.ContentID{}, true)
 	if !ordinaryOK || !nativeOK {
 		t.Fatal("rule occurrence variants")
 	}
@@ -205,6 +205,24 @@ func TestRuleOccurrenceNativeBitParticipatesInIdentity(t *testing.T) {
 		ordinaryFields[len(ordinaryFields)-1] != (genericIdentityOperation{kind: 'b'}) ||
 		nativeFields[len(nativeFields)-1] != (genericIdentityOperation{kind: 'b', value: 1}) {
 		t.Fatalf("native bit did not exclusively change the canonical rule identity: ordinary=%#v native=%#v", ordinaryFields, nativeFields)
+	}
+}
+
+func TestRuleOccurrenceInputRolesPreserveOrdinalAliasing(t *testing.T) {
+	pointID, inputID := genericIdentityID(34), genericIdentityID(35)
+	rule, ruleOK := programschema.NewRuleOccurrenceWithInputs(
+		schema.Key("aliased-input-rule"), schema.Key("aliased-input-axis"), 0,
+		pointID, []identity.ContentID{inputID, inputID},
+		programissuance.StageComputation, programissuance.InputPreviousStage,
+		identity.ContentID{}, false,
+	)
+	if !ruleOK || rule.InputPointCount() != 2 {
+		t.Fatalf("aliased ordinal inputs were not sealed: rule=%+v", rule)
+	}
+	first, firstOK := rule.InputPointAt(0)
+	second, secondOK := rule.InputPointAt(1)
+	if !firstOK || !secondOK || first != inputID || second != inputID {
+		t.Fatalf("ordinal input roles lost their alias: first=%v/%t second=%v/%t", first, firstOK, second, secondOK)
 	}
 }
 

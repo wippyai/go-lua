@@ -13,6 +13,7 @@ package engine
 import (
 	"sort"
 
+	"github.com/wippyai/go-lua/analysis/engine/generated"
 	coldcomposition "github.com/wippyai/go-lua/analysis/engine/internal/composition"
 	"github.com/wippyai/go-lua/analysis/identity"
 	queryschema "github.com/wippyai/go-lua/analysis/schema/query"
@@ -105,13 +106,19 @@ func (builder *SchemaBuilder) claim(keys ...identity.SemanticKey) bool {
 
 // schemaTokenCell is the shared mutable identity cell behind every issued
 // value token. Copies of a token therefore observe the same post-Seal owner
-// and ordinal. Once bound, all declaration storage is dropped from the cell.
+// and ordinal. Once bound, ordinary declaration storage is dropped from the
+// cell; a generated Rule additionally retains its immutable engine projection.
 type schemaTokenCell struct {
 	builder *SchemaBuilder
 	schema  *Schema
 	ordinal uint64
 	draft   any
 	kind    SchemaFormKind
+	// generated retains the engine-only generated Rule projection after Seal.
+	// It is deliberately not part of any public token surface: a
+	// GeneratedRuleSlot is an opaque identity, while the later generated
+	// binding pass may recover this sealed projection from engine code.
+	generated *generatedRuleCell
 }
 
 func (cell *schemaTokenCell) bind(schema *Schema, ordinal uint64) {
@@ -481,6 +488,29 @@ type SchemaRuleSpec[V any] struct {
 
 type RuleSlot[V, O any] struct{ slotHandle[schemaRuleDraft] }
 
+// GeneratedRuleSlot is the domain-free identity of a generated Rule row.
+// Unlike RuleSlot it carries no caller-selected V/O marker types and exposes
+// no old read/write/carry declaration methods. Its only public authority is
+// the sealed Schema and dense Rule ordinal, which are sufficient for the
+// later engine capability handoff.
+type GeneratedRuleSlot struct{ slotHandle[schemaRuleDraft] }
+
+func (slot *GeneratedRuleSlot) Available() bool { return slot != nil && slot.available() }
+
+func (slot *GeneratedRuleSlot) Ordinal() (uint64, bool) {
+	if slot == nil {
+		return 0, false
+	}
+	return slot.ordinal()
+}
+
+func (slot *GeneratedRuleSlot) Schema() *Schema {
+	if slot == nil {
+		return nil
+	}
+	return slot.schema()
+}
+
 func (slot *RuleSlot[V, O]) Available() bool { return slot != nil && slot.available() }
 
 func (slot *RuleSlot[V, O]) Ordinal() (uint64, bool) {
@@ -498,12 +528,13 @@ func (slot *RuleSlot[V, O]) ruleDraft() (*schemaRuleDraft, bool) {
 }
 
 type schemaRuleDraft struct {
-	builder *SchemaBuilder
-	index   int
-	inputs  []*rowDraft[inputRole]
-	output  *keyDraft[factorRole]
-	route   bool
-	token   *schemaTokenCell
+	builder   *SchemaBuilder
+	index     int
+	inputs    []*rowDraft[inputRole]
+	output    *keyDraft[factorRole]
+	route     bool
+	generated *generatedRuleCell
+	token     *schemaTokenCell
 }
 
 func (draft *schemaRuleDraft) setToken(cell *schemaTokenCell) { draft.token = cell }
@@ -1203,6 +1234,38 @@ func (builder *SchemaBuilder) bindSealed(schema *Schema, sealed *coldcomposition
 			return false
 		}
 	}
+	// Generated descriptors are copied from the Rule cells' sealed Plan
+	// projection into one canonical ordinal table. No later member bind may
+	// derive a descriptor from occurrence geometry.
+	_, generatedRuleCount, _, _, generatedShapeOK := sealed.ShapeCount()
+	if !generatedShapeOK {
+		return false
+	}
+	generatedPrograms := make([]generated.CompiledRule, generatedRuleCount)
+	generatedPresent := false
+	for rule, ordinal := range ruleOrdinals {
+		if rule == nil || rule.generated == nil {
+			continue
+		}
+		descriptor := rule.generated.program
+		descriptorOrdinal, ordinalOK := descriptor.Ordinal()
+		planOrdinal := rule.generated.rule
+		if !ordinalOK || descriptorOrdinal != planOrdinal || ordinal > uint64(^uint32(0)) {
+			return false
+		}
+		rebased, rebasedOK := descriptor.RebaseOrdinal(uint32(ordinal))
+		if !rebasedOK {
+			return false
+		}
+		// The Rule cell is the construction seam consumed by generated member
+		// binding. Rebase that immutable-after-seal cell together with the
+		// canonical ordinal table so no later runtime path translates a Plan
+		// Rule ordinal.
+		rule.generated.program = rebased
+		rule.generated.rule = uint32(ordinal)
+		generatedPrograms[ordinal] = rebased
+		generatedPresent = true
+	}
 	// The completion row is the schema's single structural capability: it has
 	// no canonical vector of its own, so its token binds at ordinal zero.
 	if builder.candidate.Completion.Semantic.Available() {
@@ -1213,6 +1276,8 @@ func (builder *SchemaBuilder) bindSealed(schema *Schema, sealed *coldcomposition
 	for _, item := range plan {
 		item.cell.bind(schema, item.ordinal)
 	}
+	schema.generatedPrograms = generatedPrograms
+	schema.generatedPresent = generatedPresent
 	return true
 }
 

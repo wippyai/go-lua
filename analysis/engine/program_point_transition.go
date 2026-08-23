@@ -17,10 +17,13 @@ import (
 type ProgramPointTransitionAdmission struct {
 	Transition modulecomposition.ModuleCallTransition
 	Generation modulecomposition.InitGeneration
+	ReturnEdge modulecomposition.ModuleReturnStateEdge
 }
 
 func (admission ProgramPointTransitionAdmission) available() bool {
-	return admission.Transition.Available() && admission.Generation.Available()
+	forward := admission.Transition.Available() && !admission.ReturnEdge.Available()
+	reverse := admission.ReturnEdge.Available() && !admission.Transition.Available()
+	return admission.Generation.Available() && (forward != reverse)
 }
 
 // ProgramPointTransition is one immutable graph-owned point pair derived from
@@ -32,6 +35,7 @@ func (admission ProgramPointTransitionAdmission) available() bool {
 type ProgramPointTransition struct {
 	program                      *CommittedProgram
 	transition                   modulecomposition.ModuleCallTransition
+	returnEdge                   modulecomposition.ModuleReturnStateEdge
 	generation                   modulecomposition.InitGeneration
 	transitionID, generationID   identity.ContentID
 	fromContextID, toContextID   identity.ContentID
@@ -45,6 +49,9 @@ type ProgramPointTransition struct {
 // latter checks the retained rows in turn, so using it here would recurse.  It
 // runs once, in constructProgramPointTransitions, which is the sole issuer.
 func (row ProgramPointTransition) completeGeometry() bool {
+	if row.returnEdge.Available() {
+		return row.completeReturnGeometry()
+	}
 	program := row.program
 	if program == nil || program.self != program || program.graph == nil || len(program.pointOwners) != program.graph.PointCount() || !program.contexts.Available() ||
 		!row.transition.Available() || !row.generation.Available() || row.transition.ID() != row.transitionID || row.generation.ID() != row.generationID ||
@@ -83,6 +90,35 @@ func (row ProgramPointTransition) completeGeometry() bool {
 		sourceOwner.ModuleKey() == row.transition.SourceModuleKey() && targetOwner.ModuleKey() == row.generation.ModuleKey()
 }
 
+func (row ProgramPointTransition) completeReturnGeometry() bool {
+	program := row.program
+	edge := row.returnEdge
+	if program == nil || program.self != program || program.graph == nil || len(program.pointOwners) != program.graph.PointCount() || !program.contexts.Available() ||
+		!edge.Available() || !row.generation.Available() || edge.ID() != row.transitionID || row.generation.ID() != row.generationID ||
+		edge.GenerationID() != row.generationID || edge.LinkID() != program.contexts.LinkID() || row.generation.LinkID() != program.contexts.LinkID() ||
+		edge.FromContextID() != row.fromContextID || edge.ToContextID() != row.toContextID ||
+		!program.graph.OwnsPoint(row.source) || !program.graph.OwnsPoint(row.target) {
+		return false
+	}
+	sourceOrdinal, sourceOK := program.graph.PointIndex(row.source)
+	targetOrdinal, targetOK := program.graph.PointIndex(row.target)
+	if !sourceOK || !targetOK || sourceOrdinal < 0 || targetOrdinal < 0 ||
+		row.sourceOrdinal != contextfiber.PointOrdinal(sourceOrdinal) || row.targetOrdinal != contextfiber.PointOrdinal(targetOrdinal) {
+		return false
+	}
+	from, fromOK := program.contexts.Context(row.fromContextID)
+	to, toOK := program.contexts.Context(row.toContextID)
+	activation, activationOK := program.contexts.ActivationEdge(row.fromContextID, row.toContextID)
+	if !fromOK || !toOK || !activationOK || activation.ID() != edge.ReturnTransitionID() ||
+		from.ModuleKey() != edge.ReturnModuleKey() || to.ModuleKey() != edge.CallerModuleKey() {
+		return false
+	}
+	sourceOwner := program.pointOwners[sourceOrdinal]
+	targetOwner := program.pointOwners[targetOrdinal]
+	return sourceOwner.Mounted() && targetOwner.Mounted() &&
+		sourceOwner.ModuleKey() == edge.ReturnModuleKey() && targetOwner.ModuleKey() == edge.CallerModuleKey()
+}
+
 // Available reports whether this row names the exact graph and context
 // directory that issued it.  The verdict is sealed by the constructor; a
 // committed program never exchanges the graph or the directory it committed.
@@ -118,6 +154,15 @@ func (row ProgramPointTransition) Generation() modulecomposition.InitGeneration 
 		return modulecomposition.InitGeneration{}
 	}
 	return row.generation
+}
+
+// ReturnEdge returns the exact schema row for a reverse module-result
+// transport. Forward call transitions return the unavailable zero row.
+func (row ProgramPointTransition) ReturnEdge() modulecomposition.ModuleReturnStateEdge {
+	if !row.available || !row.returnEdge.Available() {
+		return modulecomposition.ModuleReturnStateEdge{}
+	}
+	return row.returnEdge
 }
 
 // FromContextID returns the exact source execution-context identity.
@@ -238,6 +283,58 @@ func constructProgramPointTransitions(committed *CommittedProgram, declaration t
 	seenGeometry := make(map[pointTransitionGeometryKey]struct{})
 	result := make([]ProgramPointTransition, 0, len(declaration.pointTransitions))
 	for _, admission := range declaration.pointTransitions {
+		if admission.ReturnEdge.Available() {
+			edge, generation := admission.ReturnEdge, admission.Generation
+			if !admission.available() || edge.GenerationID() != generation.ID() ||
+				edge.LinkID() != committed.contexts.LinkID() || generation.LinkID() != committed.contexts.LinkID() ||
+				edge.ReturnModuleKey() != generation.ModuleKey() {
+				return nil, false
+			}
+			if _, duplicate := seenTransitions[edge.ID()]; duplicate {
+				return nil, false
+			}
+			seenTransitions[edge.ID()] = struct{}{}
+
+			sourceMount, sourceOK := mountByModule[edge.ReturnModuleKey()]
+			targetMount, targetOK := mountByModule[edge.CallerModuleKey()]
+			if !sourceOK || !targetOK || sourceMount.template == nil || targetMount.template == nil ||
+				sourceMount.template.ArtifactID() != generation.ArtifactID() || sourceMount.template.ProgramID() != generation.ProgramID() {
+				return nil, false
+			}
+			from, fromOK := committed.contexts.Context(edge.FromContextID())
+			to, toOK := committed.contexts.Context(edge.ToContextID())
+			activation, activationOK := committed.contexts.ActivationEdge(edge.FromContextID(), edge.ToContextID())
+			if !fromOK || !toOK || !activationOK || activation.ID() != edge.ReturnTransitionID() ||
+				from.ModuleKey() != edge.ReturnModuleKey() || to.ModuleKey() != edge.CallerModuleKey() {
+				return nil, false
+			}
+			sourcePoint, sourceOrdinal, sourcePointOK := resolveProgramMountedPoint(committed, sourceMount.module, sourceMount.template.ArtifactID(), edge.OutcomePointID())
+			targetPoint, targetOrdinal, targetPointOK := resolveProgramMountedPoint(committed, targetMount.module, targetMount.template.ArtifactID(), edge.CallerReturnPointID())
+			if !sourcePointOK || !targetPointOK {
+				return nil, false
+			}
+			geometry := pointTransitionGeometryKey{
+				fromContextID: edge.FromContextID(), toContextID: edge.ToContextID(),
+				source: sourcePoint.Key(), target: targetPoint.Key(),
+			}
+			if _, duplicate := seenGeometry[geometry]; duplicate {
+				return nil, false
+			}
+			seenGeometry[geometry] = struct{}{}
+			result = append(result, ProgramPointTransition{
+				program: committed, returnEdge: edge, generation: generation,
+				transitionID: edge.ID(), generationID: generation.ID(),
+				fromContextID: edge.FromContextID(), toContextID: edge.ToContextID(),
+				source: sourcePoint, target: targetPoint,
+				sourceOrdinal: sourceOrdinal, targetOrdinal: targetOrdinal,
+			})
+			issued := &result[len(result)-1]
+			issued.available = issued.completeGeometry()
+			if !issued.available {
+				return nil, false
+			}
+			continue
+		}
 		transition, generation := admission.Transition, admission.Generation
 		if !admission.available() || transition.GenerationID() != generation.ID() || transition.CacheIngressID() != generation.CacheIngressID() ||
 			transition.LinkID() != committed.contexts.LinkID() || generation.LinkID() != committed.contexts.LinkID() {

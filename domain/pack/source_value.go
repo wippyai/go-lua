@@ -1,6 +1,33 @@
 package pack
 
-import "github.com/wippyai/go-lua/analysis/identity"
+import (
+	"github.com/wippyai/go-lua/analysis/identity"
+	"github.com/wippyai/go-lua/analysis/schema/structure"
+)
+
+// SourceFact is Pack's zero-input source reducer. It rederives the immutable
+// source fact from one owner-issued Source.
+func SourceFact(source Source) (Value, structure.ReductionOutcome) {
+	_, fact, ok := source.Result()
+	if !ok {
+		return Value{}, structure.Refuse
+	}
+	return fact, structure.Concrete
+}
+
+// Result rederives the source Root coordinate and its sealed fact.
+func (source Source) Result() (Root, Value, bool) {
+	if !source.valid() {
+		return Root{}, Value{}, false
+	}
+	schema := Schema{state: source.schema}
+	root, rootOK := source.Root()
+	fact, valueOK := schema.SourceValue(source)
+	if !rootOK || !valueOK {
+		return Root{}, Value{}, false
+	}
+	return root, fact, true
+}
 
 // SourceValue returns the sealed value for an exact Pack Source row.
 // It returns the existing Value directly; no owner wrapper is created for the
@@ -63,6 +90,71 @@ func (schema *Schema) SourceForMountedOccurrence(module, occurrence identity.Con
 	}
 	_, valueOK := schema.SourceValue(source)
 	return source, valueOK
+}
+
+// SourceCount is the dense census of owner-issued source-producing roots.
+func (schema *Schema) SourceCount() int {
+	if schema == nil || schema.state == nil {
+		return 0
+	}
+	count := 0
+	for index := range schema.state.roots {
+		root := Root{schema: schema.state, index: uint32(index)}
+		source, sourceOK := schema.Source(root)
+		if !sourceOK {
+			continue
+		}
+		if _, valueOK := schema.SourceValue(source); valueOK {
+			count++
+		}
+	}
+	return count
+}
+
+// SourceAt returns one dense source in sealed root order.
+func (schema *Schema) SourceAt(index int) (Source, bool) {
+	if schema == nil || schema.state == nil || index < 0 {
+		return Source{}, false
+	}
+	remaining := index
+	for rootIndex := range schema.state.roots {
+		root := Root{schema: schema.state, index: uint32(rootIndex)}
+		source, sourceOK := schema.Source(root)
+		if !sourceOK {
+			continue
+		}
+		if _, valueOK := schema.SourceValue(source); !valueOK {
+			continue
+		}
+		if remaining == 0 {
+			return source, true
+		}
+		remaining--
+	}
+	return Source{}, false
+}
+
+// SourceOrdinal is the exact inverse of SourceAt over this Schema.
+func (schema *Schema) SourceOrdinal(source Source) (uint32, bool) {
+	if schema == nil || schema.state == nil || !source.valid() || source.schema != schema.state {
+		return 0, false
+	}
+	ordinal := uint32(0)
+	for rootIndex := range schema.state.roots {
+		root := Root{schema: schema.state, index: uint32(rootIndex)}
+		candidate, sourceOK := schema.Source(root)
+		if !sourceOK {
+			continue
+		}
+		if _, valueOK := schema.SourceValue(candidate); !valueOK {
+			continue
+		}
+		if candidate.root.index == source.root.index {
+			return ordinal, true
+		}
+		ordinal++
+	}
+	return 0, false
 }
 
 func (schema *Schema) sealSourceValues() bool {

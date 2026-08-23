@@ -69,7 +69,14 @@ func makeLawProgram(t *testing.T) lawProgram {
 		return outcome
 	}
 	normal := newOutcome("normal-outcome", programschema.OutcomeNormal)
-	returned := newOutcome("return-outcome", programschema.OutcomeReturn)
+	returned, returnedOK := programschema.NewOutcome(lawID(t, "return-outcome"), bodyID, identity.ContentID{}, identity.ContentID{}, programschema.OutcomeReturn, 0, 0, 0, 1, false, false)
+	if !returnedOK {
+		t.Fatal("return outcome")
+	}
+	returnPoint, returnPointOK := programschema.NewOutcomePoint(returned.ID(), lawID(t, "return-outcome-point"))
+	if !returnPointOK {
+		t.Fatal("return outcome point")
+	}
 	thrown := newOutcome("throw-outcome", programschema.OutcomeThrow)
 	yielded := newOutcome("yield-outcome", programschema.OutcomeYield)
 	canceled := newOutcome("cancel-outcome", programschema.OutcomeCancel)
@@ -78,6 +85,8 @@ func makeLawProgram(t *testing.T) lawProgram {
 		t.Fatal("return entry")
 	}
 	dispatchPointID := lawID(t, "call-dispatch-point")
+	summaryPointID := lawID(t, "call-summary-point")
+	returnPointID := lawID(t, "call-effect-point")
 	basePointID := lawID(t, "call-base-point")
 	callOccurrence, ok := programschema.NewOccurrence(programschema.OccurrenceCall, callID, bodyID, 0, 0, 1, 0, 0, keyspace.FamilyInvalid, keyspace.LiteralValue{}, false)
 	if !ok {
@@ -88,18 +97,23 @@ func makeLawProgram(t *testing.T) lawProgram {
 		t.Fatal("call dispatch occurrence point")
 	}
 	basePoint, basePointOK := programschema.NewOccurrencePoint(basePointID)
-	dispatchRule, ok := programschema.NewRuleOccurrence(schema.Key("module-call-transition-law"), schema.Key("module-call-transition-law-axis"), 0, dispatchPointID, basePointID, programissuance.StageCallDispatch, programissuance.InputPreviousStage, identity.ContentID{}, true)
-	if !ok || !basePointOK {
+	summaryPoint, summaryPointOK := programschema.NewOccurrencePoint(summaryPointID)
+	effectPoint, effectPointOK := programschema.NewOccurrencePoint(returnPointID)
+	dispatchRule, ok := programschema.NewRuleOccurrenceWithInputs(schema.Key("module-call-transition-law"), schema.Key("module-call-transition-law-axis"), 0, dispatchPointID, []identity.ContentID{basePointID}, programissuance.StageCallDispatch, programissuance.InputPreviousStage, identity.ContentID{}, true)
+	summaryRule, summaryRuleOK := programschema.NewRuleOccurrenceWithInputs(schema.Key("module-call-transition-summary-law"), schema.Key("module-call-transition-law-axis"), 0, summaryPointID, []identity.ContentID{dispatchPointID}, programissuance.StageCallSummary, programissuance.InputCallDispatchStage, identity.ContentID{}, true)
+	returnRule, returnRuleOK := programschema.NewRuleOccurrenceWithInputs(schema.Key("module-call-transition-effect-law"), schema.Key("module-call-transition-law-axis"), 0, returnPointID, []identity.ContentID{summaryPointID}, programissuance.StageCallEffect, programissuance.InputCallSummaryStage, identity.ContentID{}, true)
+	if !ok || !basePointOK || !summaryPointOK || !effectPointOK || !summaryRuleOK || !returnRuleOK {
 		t.Fatal("call dispatch rule occurrence")
 	}
 	frozen, ok := (programpublication.Publication{
 		ModuleImports:    []programschema.ModuleImport{importRow},
 		ModuleRequests:   []programschema.ModuleRequest{request},
 		Occurrences:      []programschema.Occurrence{callOccurrence},
-		OccurrencePoints: []programschema.OccurrencePoint{basePoint, dispatchPoint},
-		RuleOccurrences:  []programschema.RuleOccurrence{dispatchRule},
+		OccurrencePoints: []programschema.OccurrencePoint{basePoint, dispatchPoint, summaryPoint, effectPoint},
+		RuleOccurrences:  []programschema.RuleOccurrence{dispatchRule, summaryRule, returnRule},
 		Bodies:           []programschema.Body{body},
 		Outcomes:         []programschema.Outcome{normal, returned, thrown, yielded, canceled},
+		OutcomePoints:    []programschema.OutcomePoint{returnPoint},
 		ModuleEntries:    []programschema.ModuleEntry{entry},
 	}).Seal(catalogID, store)
 	if !ok {

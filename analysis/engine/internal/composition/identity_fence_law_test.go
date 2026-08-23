@@ -3,6 +3,8 @@ package composition
 import (
 	"encoding/hex"
 	"testing"
+
+	queryschema "github.com/wippyai/go-lua/analysis/schema/query"
 )
 
 // The cold codec version and the digest it frames are the identity fence of the
@@ -15,13 +17,13 @@ import (
 // codecVersionFence is the version compositionID frames its preimage under.
 // Raising it is a deliberate declaration that every persisted CompositionID is
 // now unreadable, so it may only change together with coldCompositionFenceHex.
-const codecVersionFence = 17
+const codecVersionFence = 18
 
 // coldCompositionFenceHex is the sealed CompositionID of fenceCandidate. It is
 // stable by design: the preimage is the sorted declaration set, the codec
 // version, and the domain tag, none of which a construction-path edit is
 // allowed to reach.
-const coldCompositionFenceHex = "3e6b0eb2fdaeb9d1509ae5eac9ed64e5af0cb14f89ad23f05d9840d68f84bf98"
+const coldCompositionFenceHex = "5a2b7940f7002ed6206f96009ff2a227e1e9fa46b028e318ea9587a02cbac112"
 
 func TestColdCodecVersionIsFenced(t *testing.T) {
 	if codecVersion != codecVersionFence {
@@ -69,7 +71,7 @@ func fenceCandidate() Candidate {
 			},
 		},
 		Queries: []QueryFamily{{
-			Key: fenceKey(61), Freezer: fenceKey(62),
+			Key: fenceKey(61), Freezer: fenceKey(62), Population: queryschema.PopulationKindSelectedPoint,
 			Projections: []QueryProjection{
 				{Kind: QueryFactorExact, Factor: factor},
 				{Kind: QueryFactorSummary, Factor: summary, Normalizer: fenceKey(21)},

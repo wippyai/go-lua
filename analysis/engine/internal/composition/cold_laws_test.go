@@ -1,6 +1,10 @@
 package composition
 
-import "testing"
+import (
+	"testing"
+
+	queryschema "github.com/wippyai/go-lua/analysis/schema/query"
+)
 
 func coldKey(value byte) Key {
 	var id ID
@@ -47,7 +51,7 @@ func TestColdCompositionIDIgnoresEquationTopology(t *testing.T) {
 	first, ok := Seal(Candidate{
 		Factors: []Factor{{Key: factor}, {Key: read}},
 		Rules:   []Rule{{Key: rule, OperandFamily: coldKey(249), OutputKind: FactorOutput, Output: factor, Inputs: 1, Reads: []Read{{Kind: ReadExact, Input: 0, Factor: read}}, Writes: []Write{{Kind: WriteExact, Factor: factor}}}},
-		Queries: []QueryFamily{{Key: query, Freezer: freezer, Projections: []QueryProjection{{Kind: QueryFactorExact, Factor: factor}}}},
+		Queries: []QueryFamily{{Key: query, Freezer: freezer, Population: queryschema.PopulationKindSelectedPoint, Projections: []QueryProjection{{Kind: QueryFactorExact, Factor: factor}}}},
 	})
 	if !ok || first == nil || !first.ID().Available() {
 		t.Fatal("cold seal")
@@ -55,7 +59,7 @@ func TestColdCompositionIDIgnoresEquationTopology(t *testing.T) {
 	second, ok := Seal(Candidate{
 		Factors: []Factor{{Key: read}, {Key: factor}},
 		Rules:   []Rule{{Key: rule, OperandFamily: coldKey(249), OutputKind: FactorOutput, Output: factor, Inputs: 1, Reads: []Read{{Kind: ReadExact, Input: 0, Factor: read}}, Writes: []Write{{Kind: WriteExact, Factor: factor}}}},
-		Queries: []QueryFamily{{Key: query, Freezer: freezer, Projections: []QueryProjection{{Kind: QueryFactorExact, Factor: factor}}}},
+		Queries: []QueryFamily{{Key: query, Freezer: freezer, Population: queryschema.PopulationKindSelectedPoint, Projections: []QueryProjection{{Kind: QueryFactorExact, Factor: factor}}}},
 	})
 	if !ok || first.ID() != second.ID() {
 		t.Fatal("cold identity depends on declaration order")
@@ -79,7 +83,7 @@ func TestRoutedWriteReadCoordinateEntersCompositionIdentity(t *testing.T) {
 				},
 				Writes: []Write{{Kind: WriteRoute, Factor: factor, Route: route}},
 			}},
-			Queries: []QueryFamily{{Key: coldKey(9), Freezer: coldKey(10), Projections: []QueryProjection{{Kind: QueryFactorExact, Factor: other}}}},
+			Queries: []QueryFamily{{Key: coldKey(9), Freezer: coldKey(10), Population: queryschema.PopulationKindSelectedPoint, Projections: []QueryProjection{{Kind: QueryFactorExact, Factor: other}}}},
 		}
 	}
 	first, firstOK := Seal(base(2))
@@ -98,7 +102,7 @@ func TestRuleOperandFamilyIsMandatoryAndCanonical(t *testing.T) {
 				Key: rule, OperandFamily: coldKey(249), OutputKind: FactorOutput, Output: factor,
 				Writes: []Write{{Kind: WriteExact, Factor: factor}},
 			}},
-			Queries: []QueryFamily{{Key: query, Freezer: freezer, Projections: []QueryProjection{{Kind: QueryFactorExact, Factor: factor}}}},
+			Queries: []QueryFamily{{Key: query, Freezer: freezer, Population: queryschema.PopulationKindSelectedPoint, Projections: []QueryProjection{{Kind: QueryFactorExact, Factor: factor}}}},
 		}
 	}
 	first, firstOK := Seal(base())
@@ -127,7 +131,7 @@ func TestTransformedCarryFormIsValidatedAndChangesColdIdentity(t *testing.T) {
 				Key: rule, OperandFamily: coldKey(249), OutputKind: FactorOutput, Output: factor, Inputs: 1,
 				Carries: []Carry{{Input: 0, Factor: factor}},
 			}},
-			Queries: []QueryFamily{{Key: query, Freezer: freezer, Projections: []QueryProjection{{Kind: QueryFactorExact, Factor: factor}}}},
+			Queries: []QueryFamily{{Key: query, Freezer: freezer, Population: queryschema.PopulationKindSelectedPoint, Projections: []QueryProjection{{Kind: QueryFactorExact, Factor: factor}}}},
 		}
 	}
 	ordinary, ordinaryOK := Seal(base())
@@ -150,7 +154,7 @@ func TestTransformedCarryFormIsValidatedAndChangesColdIdentity(t *testing.T) {
 func TestColdQueryFamilyRetainsFreezerButRejectsTopology(t *testing.T) {
 	factor, completion, prune := coldKey(11), coldKey(12), coldKey(13)
 	family, freezer := coldKey(14), coldKey(15)
-	sealed, ok := Seal(Candidate{Factors: []Factor{{Key: factor}}, Completion: Completion{Semantic: completion, Prune: prune}, Queries: []QueryFamily{{Key: family, Freezer: freezer, Projections: []QueryProjection{{Kind: QuerySupport}}}}})
+	sealed, ok := Seal(Candidate{Factors: []Factor{{Key: factor}}, Completion: Completion{Semantic: completion, Prune: prune}, Queries: []QueryFamily{{Key: family, Freezer: freezer, Population: queryschema.PopulationKindSelectedPoint, Projections: []QueryProjection{{Kind: QuerySupport}}}}})
 	if !ok || sealed == nil {
 		t.Fatal("support family")
 	}
@@ -170,12 +174,12 @@ func TestColdQueryReadOrderChangesIdentityButNotFactorGraph(t *testing.T) {
 	first, firstOK := Seal(Candidate{
 		Factors: []Factor{{Key: left}, {Key: right}},
 		Rules:   []Rule{{Key: rule, OperandFamily: coldKey(249), OutputKind: FactorOutput, Output: left, Inputs: 1, Reads: []Read{{Kind: ReadExact, Input: 0, Factor: right}}, Writes: []Write{{Kind: WriteExact, Factor: left}}}},
-		Queries: []QueryFamily{{Key: family, Freezer: freezer, Projections: []QueryProjection{{Kind: QueryFactorExact, Factor: left}, {Kind: QueryFactorExact, Factor: right}}}},
+		Queries: []QueryFamily{{Key: family, Freezer: freezer, Population: queryschema.PopulationKindSelectedPoint, Projections: []QueryProjection{{Kind: QueryFactorExact, Factor: left}, {Kind: QueryFactorExact, Factor: right}}}},
 	})
 	second, secondOK := Seal(Candidate{
 		Factors: []Factor{{Key: right}, {Key: left}},
 		Rules:   []Rule{{Key: rule, OperandFamily: coldKey(249), OutputKind: FactorOutput, Output: left, Inputs: 1, Reads: []Read{{Kind: ReadExact, Input: 0, Factor: right}}, Writes: []Write{{Kind: WriteExact, Factor: left}}}},
-		Queries: []QueryFamily{{Key: family, Freezer: freezer, Projections: []QueryProjection{{Kind: QueryFactorExact, Factor: right}, {Kind: QueryFactorExact, Factor: left}}}},
+		Queries: []QueryFamily{{Key: family, Freezer: freezer, Population: queryschema.PopulationKindSelectedPoint, Projections: []QueryProjection{{Kind: QueryFactorExact, Factor: right}, {Kind: QueryFactorExact, Factor: left}}}},
 	})
 	if !firstOK || !secondOK || first == nil || second == nil || first.ID() == second.ID() {
 		t.Fatal("ordered query projections were not part of cold identity")
@@ -190,7 +194,7 @@ func TestColdQueryScalarShapesPreserveOrderedProjectionProof(t *testing.T) {
 	family, freezer, normalizer := coldKey(43), coldKey(44), coldKey(45)
 	sealed, ok := Seal(Candidate{
 		Factors: []Factor{{Key: left}, {Key: right, Forms: []FactorForm{{Kind: FactorSummaryRead, Semantic: normalizer}}}},
-		Queries: []QueryFamily{{Key: family, Freezer: freezer, Projections: []QueryProjection{
+		Queries: []QueryFamily{{Key: family, Freezer: freezer, Population: queryschema.PopulationKindSelectedPoint, Projections: []QueryProjection{
 			{Kind: QueryFactorExact, Factor: left},
 			{Kind: QueryFactorSummary, Factor: right, Normalizer: normalizer},
 		}}},
@@ -202,7 +206,7 @@ func TestColdQueryScalarShapesPreserveOrderedProjectionProof(t *testing.T) {
 	shape, shaped := sealed.QueryShapeAt(index)
 	first, firstOK := sealed.QueryProjectionShapeAt(index, 0)
 	second, secondOK := sealed.QueryProjectionShapeAt(index, 1)
-	if !found || !shaped || shape != (QueryShape{Freezer: freezer, ProjectionCount: 2}) ||
+	if !found || !shaped || shape != (QueryShape{Freezer: freezer, Population: queryschema.PopulationKindSelectedPoint, ProjectionCount: 2}) ||
 		!firstOK || first != (QueryProjectionShape{Kind: QueryFactorExact, Factor: left}) ||
 		!secondOK || second != (QueryProjectionShape{Kind: QueryFactorSummary, Factor: right, Normalizer: normalizer}) {
 		t.Fatal("scalar query shape projection disagrees with sealed order")
@@ -262,7 +266,7 @@ func TestDeclaredFactorFormsAreFrozenHashedAndRequiredBySummaryReads(t *testing.
 		t.Fatal("unknown Factor form kind was admitted")
 	}
 
-	query := QueryFamily{Key: coldKey(34), Freezer: coldKey(35), Projections: []QueryProjection{{Kind: QueryFactorSummary, Factor: factor, Normalizer: secondForm}}}
+	query := QueryFamily{Key: coldKey(34), Freezer: coldKey(35), Population: queryschema.PopulationKindSelectedPoint, Projections: []QueryProjection{{Kind: QueryFactorSummary, Factor: factor, Normalizer: secondForm}}}
 	if sealed, ok := Seal(Candidate{Factors: []Factor{{Key: factor, Forms: []FactorForm{{Kind: FactorSummaryRead, Semantic: firstForm}}}}, Queries: []QueryFamily{query}}); ok || sealed != nil {
 		t.Fatal("summary query accepted a normalizer not declared by its Factor")
 	}
@@ -304,7 +308,7 @@ func TestColdDeclaredFormsObeyPublicGlobalClaimLaw(t *testing.T) {
 			name: "query-key",
 			candidate: func() Candidate {
 				candidate := base(coldKey(41))
-				candidate.Queries = []QueryFamily{{Key: coldKey(41), Freezer: coldKey(42), Projections: []QueryProjection{{Kind: QueryFactorExact, Factor: factor}}}}
+				candidate.Queries = []QueryFamily{{Key: coldKey(41), Freezer: coldKey(42), Population: queryschema.PopulationKindSelectedPoint, Projections: []QueryProjection{{Kind: QueryFactorExact, Factor: factor}}}}
 				return candidate
 			}(),
 		},
@@ -312,7 +316,7 @@ func TestColdDeclaredFormsObeyPublicGlobalClaimLaw(t *testing.T) {
 			name: "query-freezer",
 			candidate: func() Candidate {
 				candidate := base(coldKey(43))
-				candidate.Queries = []QueryFamily{{Key: coldKey(44), Freezer: coldKey(43), Projections: []QueryProjection{{Kind: QueryFactorExact, Factor: factor}}}}
+				candidate.Queries = []QueryFamily{{Key: coldKey(44), Freezer: coldKey(43), Population: queryschema.PopulationKindSelectedPoint, Projections: []QueryProjection{{Kind: QueryFactorExact, Factor: factor}}}}
 				return candidate
 			}(),
 		},
@@ -346,7 +350,7 @@ func TestRuleOutputDispositionIsCanonicalAndExclusive(t *testing.T) {
 	rule, query, freezer := coldKey(43), coldKey(44), coldKey(45)
 	base := Candidate{
 		Factors: []Factor{{Key: factor}, {Key: input}},
-		Queries: []QueryFamily{{Key: query, Freezer: freezer, Projections: []QueryProjection{{Kind: QueryFactorExact, Factor: factor}}}},
+		Queries: []QueryFamily{{Key: query, Freezer: freezer, Population: queryschema.PopulationKindSelectedPoint, Projections: []QueryProjection{{Kind: QueryFactorExact, Factor: factor}}}},
 	}
 	factorRule := Rule{
 		Key: rule, OperandFamily: coldKey(249), OutputKind: FactorOutput, Output: factor, Inputs: 1,
@@ -379,7 +383,7 @@ func TestRuleOutputDispositionIsCanonicalAndExclusive(t *testing.T) {
 			Key: rule, OperandFamily: coldKey(249), OutputKind: StructuralOutput, Inputs: 1,
 			Supports: []Support{{Semantic: completion}}, Prunes: []Prune{{Semantic: prune}},
 		}},
-		Queries: []QueryFamily{{Key: query, Freezer: freezer, Projections: []QueryProjection{{Kind: QuerySupport}}}},
+		Queries: []QueryFamily{{Key: query, Freezer: freezer, Population: queryschema.PopulationKindSelectedPoint, Projections: []QueryProjection{{Kind: QuerySupport}}}},
 	}
 	sealed, ok = Seal(structural)
 	if !ok || sealed == nil || len(sealed.Incidence()) != 0 {
@@ -403,7 +407,7 @@ func TestStructuralOutputRuleEntersCompositionIdentity(t *testing.T) {
 		Factors:    []Factor{{Key: factor}},
 		Completion: Completion{Semantic: completion, Prune: prune},
 		Rules:      []Rule{{Key: coldKey(56), OperandFamily: coldKey(249), OutputKind: StructuralOutput, Inputs: 1, Supports: []Support{{Semantic: completion}}, Prunes: []Prune{{Semantic: prune}}}},
-		Queries:    []QueryFamily{{Key: query, Freezer: freezer, Projections: []QueryProjection{{Kind: QuerySupport}}}},
+		Queries:    []QueryFamily{{Key: query, Freezer: freezer, Population: queryschema.PopulationKindSelectedPoint, Projections: []QueryProjection{{Kind: QuerySupport}}}},
 	}
 	first, firstOK := Seal(structural)
 	if !firstOK || first == nil {
@@ -427,7 +431,7 @@ func TestFactorRuleRetainsArbitraryOrderedInputArity(t *testing.T) {
 			Carries: []Carry{{Input: 1, Factor: factor}},
 			Writes:  []Write{{Kind: WriteExact, Factor: factor}},
 		}},
-		Queries: []QueryFamily{{Key: query, Freezer: freezer, Projections: []QueryProjection{{Kind: QueryFactorExact, Factor: factor}}}},
+		Queries: []QueryFamily{{Key: query, Freezer: freezer, Population: queryschema.PopulationKindSelectedPoint, Projections: []QueryProjection{{Kind: QueryFactorExact, Factor: factor}}}},
 	}
 	sealed, ok := Seal(candidate)
 	if !ok || sealed == nil || sealed.Rules()[0].Inputs != 3 {
@@ -448,7 +452,7 @@ func TestFactorRuleAdmitsZeroInputIngress(t *testing.T) {
 			Key: rule, OperandFamily: coldKey(249), OutputKind: FactorOutput, Output: factor, Inputs: 0,
 			Writes: []Write{{Kind: WriteExact, Factor: factor}},
 		}},
-		Queries: []QueryFamily{{Key: query, Freezer: freezer, Projections: []QueryProjection{{Kind: QueryFactorExact, Factor: factor}}}},
+		Queries: []QueryFamily{{Key: query, Freezer: freezer, Population: queryschema.PopulationKindSelectedPoint, Projections: []QueryProjection{{Kind: QueryFactorExact, Factor: factor}}}},
 	})
 	if !ok || sealed == nil || len(sealed.Rules()) != 1 || sealed.Rules()[0].Inputs != 0 {
 		t.Fatal("zero-input Factor ingress Rule was rejected")

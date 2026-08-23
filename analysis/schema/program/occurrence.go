@@ -214,22 +214,49 @@ type RuleOccurrence struct {
 	writes     schema.Key
 	occurrence uint32
 	point      identity.ContentID
-	input      identity.ContentID
+	// inputs is the ordered point-role vector issued by the sealed Program
+	// form. It is fixed-width rather than a retained slice so the parent row
+	// remains an immutable value; issuance instructions have the same six
+	// operand bound. inputCount distinguishes an empty vector from an
+	// unavailable slot.
+	inputs     [6]identity.ContentID
+	inputCount uint8
 	stage      schema.Key
 	inputSpec  schema.Key
 	route      identity.ContentID
 	native     bool
 }
 
-func NewRuleOccurrence(key, writes schema.Key, occurrence uint32, point, input identity.ContentID, stage, inputSpec schema.Key, route identity.ContentID, native bool) (RuleOccurrence, bool) {
-	row := RuleOccurrence{key: key, writes: writes, occurrence: occurrence, point: point, input: input, stage: stage, inputSpec: inputSpec, route: route, native: native}
+// NewRuleOccurrenceWithInputs seals one ordered point-role vector. The vector
+// is copied into the row's fixed dense storage; callers cannot mutate the
+// published placement after construction.
+func NewRuleOccurrenceWithInputs(key, writes schema.Key, occurrence uint32, point identity.ContentID, inputs []identity.ContentID, stage, inputSpec schema.Key, route identity.ContentID, native bool) (RuleOccurrence, bool) {
+	row := RuleOccurrence{key: key, writes: writes, occurrence: occurrence, point: point, stage: stage, inputSpec: inputSpec, route: route, native: native}
+	if len(inputs) > len(row.inputs) {
+		return RuleOccurrence{}, false
+	}
+	row.inputCount = uint8(len(inputs))
+	for index, input := range inputs {
+		if !input.Available() {
+			return RuleOccurrence{}, false
+		}
+		row.inputs[index] = input
+	}
 	return row, row.Available()
 }
 func (row RuleOccurrence) Available() bool {
 	if !row.key.Available() || !row.writes.Available() || !row.point.Available() || !row.stage.Available() || !row.inputSpec.Available() || row.occurrence == ^uint32(0) {
 		return false
 	}
-	if !row.input.Available() {
+	if row.inputCount > uint8(len(row.inputs)) {
+		return false
+	}
+	for index := uint8(0); index < row.inputCount; index++ {
+		if !row.inputs[index].Available() {
+			return false
+		}
+	}
+	if row.inputCount == 0 {
 		return !row.route.Available() && !row.native
 	}
 	return true
@@ -259,9 +286,25 @@ func (row RuleOccurrence) PointID() identity.ContentID {
 	}
 	return row.point
 }
-func (row RuleOccurrence) InputPoint() (identity.ContentID, bool) {
-	return row.input, row.Available() && row.input.Available()
+
+// InputPointCount is the sealed width of this placement's ordered point-role
+// vector. It returns zero for an unavailable row.
+func (row RuleOccurrence) InputPointCount() int {
+	if !row.Available() {
+		return 0
+	}
+	return int(row.inputCount)
 }
+
+// InputPointAt resolves one exact point role by ordinal. No scan or fallback
+// is permitted: an out-of-range ordinal is unavailable.
+func (row RuleOccurrence) InputPointAt(index int) (identity.ContentID, bool) {
+	if index < 0 || !row.Available() || index >= int(row.inputCount) {
+		return identity.ContentID{}, false
+	}
+	return row.inputs[index], true
+}
+
 func (row RuleOccurrence) InputSpec() schema.Key {
 	if !row.Available() {
 		return ""

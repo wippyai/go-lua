@@ -3,6 +3,8 @@ package engine
 import (
 	"encoding/hex"
 	"testing"
+
+	queryschema "github.com/wippyai/go-lua/analysis/schema/query"
 )
 
 // This file is the engine-side identity fence of the construction cut. The cut
@@ -30,7 +32,7 @@ import (
 // builder.candidate declaration set in schema_slots.go is its sole preimage, so
 // this literal fences every candidate declaration the builder emits: a changed
 // field, a dropped part, or a reordered ordered sub-slice moves it.
-const schemaDeclarationFenceHex = "66c85c2756b200e3cc923b5b8646ff55543f9b1a0fd9038a5415f99c2d15a3fb"
+const schemaDeclarationFenceHex = "3c23fb3c8e76062a442249386ea2c65861eeefef208629888bdfdf19ab7a5b89"
 
 // fenceSchema declares a fixed schema through the public SchemaBuilder surface:
 // a Factor with both intrinsic forms, a Factor-output Rule with an exact
@@ -48,7 +50,7 @@ func fenceSchema(t testing.TB) *Schema {
 		Output: factor.Ref(),
 	})
 	_, writeOK := SchemaWrite(rule, writeForm)
-	query, queryOK := DeclareQuerySlot[uint64](builder, SchemaQuerySpec{Semantic: coldKey(970_021), Freezer: coldKey(970_022)})
+	query, queryOK := DeclareQuerySlot[uint64](builder, SchemaQuerySpec{Semantic: coldKey(970_021), Freezer: coldKey(970_022), Population: queryschema.PopulationKindSelectedPoint})
 	queryReadOK := SchemaQueryRead(query, readForm)
 	schema, schemaOK := builder.Seal()
 	if !factorOK || !writeFormOK || !readFormOK || !ruleOK || !writeOK || !queryOK || !queryReadOK || !schemaOK || schema == nil {

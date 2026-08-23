@@ -4,6 +4,7 @@ import (
 	"sort"
 
 	"github.com/wippyai/go-lua/analysis/program/keyspace"
+	"github.com/wippyai/go-lua/analysis/schema/structure"
 	"github.com/wippyai/go-lua/domain/materialization"
 	"github.com/wippyai/go-lua/domain/runtimekind"
 )
@@ -672,6 +673,28 @@ func (schema Schema) EmptyObject(key Key) (Value, bool) {
 		return Value{}, false
 	}
 	return schema.Relation(key, world)
+}
+
+// IngressFact is Heap's zero-input allocation-ingress reducer. It rederives
+// the WorldZero image sealed for one owner-issued allocation Key.
+func IngressFact(key Key) (Value, structure.ReductionOutcome) {
+	if !key.valid() {
+		return Value{}, structure.Refuse
+	}
+	fact, ok := Schema{owner: key.owner}.EmptyObject(key)
+	if !ok {
+		return Value{}, structure.Refuse
+	}
+	return fact, structure.Concrete
+}
+
+// Ingress rederives the allocation Key coordinate and its WorldZero fact.
+func (key Key) Ingress() (Key, Value, bool) {
+	fact, outcome := IngressFact(key)
+	if outcome != structure.Concrete {
+		return Key{}, Value{}, false
+	}
+	return key, fact, true
 }
 
 // Age maps all nested Recent references to allocationKey into Summary.  It

@@ -22,7 +22,7 @@ import (
 // certify as unmoved, and every entry of a cache that has installed no
 // candidate, is transported again.
 func (epoch *executorEpoch) inputs(producer *runtimeProducer, cache *producerEpoch) ([]carrier.PointState, bool) {
-	if epoch == nil || epoch.work == nil || producer == nil || cache == nil || len(producer.inputs) != producer.group.InputCount() || len(cache.inputs) != producer.group.InputCount() {
+	if epoch == nil || epoch.work == nil || producer == nil || cache == nil || len(producer.inputProjection) != producer.group.InputCount() || len(cache.inputs) != producer.group.InputCount() {
 		return nil, false
 	}
 	values := cache.inputs
@@ -46,7 +46,7 @@ func (epoch *executorEpoch) inputs(producer *runtimeProducer, cache *producerEpo
 // prevents registration from validating a graph-point approximation of the
 // value the Rule actually consumed.
 func (epoch *executorEpoch) transportProducerInput(producer *runtimeProducer, cache *producerEpoch, index int) (carrier.PointState, bool) {
-	if epoch == nil || epoch.runtime == nil || epoch.runtime.graph == nil || epoch.work == nil || producer == nil || cache == nil || producer.group.InputCount() < 0 || index < 0 || index >= producer.group.InputCount() || len(producer.inputs) != producer.group.InputCount() {
+	if epoch == nil || epoch.runtime == nil || epoch.runtime.graph == nil || epoch.work == nil || producer == nil || cache == nil || producer.group.InputCount() < 0 || index < 0 || index >= producer.group.InputCount() || len(producer.inputProjection) != producer.group.InputCount() {
 		return carrier.PointState{}, false
 	}
 	stateIndex, sourceOK := epoch.producerInputSourceState(producer, cache, index)
@@ -57,9 +57,13 @@ func (epoch *executorEpoch) transportProducerInput(producer *runtimeProducer, ca
 	if !epoch.work.OwnsPointState(current) || !current.Valid() {
 		return carrier.PointState{}, false
 	}
-	transport := producer.inputs[index]
+	projection, projectionOK := producer.inputProjectionAt(index)
+	if !projectionOK || !projection.factorOwnedBy(epoch.runtime.program) || !projection.factorRootPresent(current) {
+		return carrier.PointState{}, false
+	}
+	transport := projection.transport
 	point, ok := epoch.work.TransportPointState(current, transport.pre, transport.plan, transport.post)
-	if !transport.valid() || !ok || !point.Valid() || !point.Scope().Same(producer.outputScope) {
+	if !transport.valid() || !ok || !point.Valid() || !point.Scope().Same(producer.outputScope) || !projection.factorRootPresent(point) {
 		return carrier.PointState{}, false
 	}
 	return point, true
@@ -70,15 +74,14 @@ func (epoch *executorEpoch) transportProducerInput(producer *runtimeProducer, ca
 // registration uses this address both before and after transporting the value,
 // while transportProducerInput adds the carrier-owned value checks.
 func (epoch *executorEpoch) producerInputSourceState(producer *runtimeProducer, cache *producerEpoch, index int) (int, bool) {
-	if epoch == nil || epoch.runtime == nil || epoch.runtime.graph == nil || producer == nil || cache == nil || producer.group.InputCount() < 0 || index < 0 || index >= producer.group.InputCount() {
+	if epoch == nil || epoch.runtime == nil || epoch.runtime.graph == nil || producer == nil || cache == nil || producer.group.InputCount() < 0 || index < 0 || index >= producer.group.InputCount() || len(producer.inputProjection) != producer.group.InputCount() {
 		return 0, false
 	}
-	input, inputOK := producer.group.InputAt(index)
-	pointIndex, indexed := epoch.runtime.graph.PointIndex(input.Point())
-	if !inputOK || !indexed || pointIndex < 0 || pointIndex >= epoch.runtime.graph.PointCount() {
+	projection, projectionOK := producer.inputProjectionAt(index)
+	if !projectionOK || !projection.factorOwnedBy(epoch.runtime.program) {
 		return 0, false
 	}
-	stateIndex, stateOK := epoch.runtime.stateForGraphPoint(int(cache.state), pointIndex)
+	stateIndex, stateOK := epoch.runtime.stateForGraphPoint(int(cache.state), projection.sourcePoint)
 	return stateIndex, stateOK
 }
 
@@ -116,6 +119,29 @@ func (epoch *executorEpoch) environment(producer *runtimeProducer) (carrier.Poin
 	return transported, true
 }
 
+func (epoch *executorEpoch) executeMemberRow(row memberRow, base carrier.RuleContributionBase, inputs []carrier.State, within support.Mask) memberResult {
+	if epoch == nil || !within.Valid() || !row.valid() {
+		return memberResult{boundary: refused(SolveFailureFamilyExecution, "member-row")}
+	}
+	if row.generated != nil {
+		return row.generated.executeGeneratedAt(epoch, base, inputs, within)
+	}
+	if epoch.work == nil || row.legacy == nil {
+		return memberResult{boundary: refused(SolveFailureFamilyExecution, "member-row")}
+	}
+	if epoch.runtime != nil && epoch.runtime.artifactBacked {
+		if contextual, contextualMember := row.legacy.(contextualRuntimeMember); contextualMember {
+			_, _, contextOrdinal, contextOK := epoch.graphPoint(epoch.currentState)
+			contextID, contextIDOK := epoch.runtime.contextIndex.ContextID(contextOrdinal)
+			if !contextOK || !contextIDOK {
+				return memberResult{boundary: refused(SolveFailureFamilyExecution, "member-context")}
+			}
+			return contextual.executeAt(epoch.work, base, inputs, within, contextID)
+		}
+	}
+	return row.legacy.execute(epoch.work, base, inputs, within)
+}
+
 func (epoch *executorEpoch) evaluate(producer *runtimeProducer, cache *producerEpoch) (result carrier.RuleContribution, reads []demand.Observation, ok bool) {
 	if epoch != nil && epoch.diagnostics != nil && epoch.diagnostics.scheduleEnabled() {
 		defer func() { epoch.diagnostics.recordEvaluate(&ok) }()
@@ -125,20 +151,24 @@ func (epoch *executorEpoch) evaluate(producer *runtimeProducer, cache *producerE
 	}
 	rows := epoch.runtime.program.memberRows(producer.span)
 	if len(rows) != producer.span.count() {
+		epoch.recordGroupBoundaryFailure(SolveFailureReasonExecution, refused(SolveFailureFamilyExecution, "group-rows"), producer.group.Output(), producer.group)
 		return carrier.RuleContribution{}, nil, false
 	}
 	inputs, ok := epoch.inputs(producer, cache)
 	if !ok {
+		epoch.recordGroupBoundaryFailure(SolveFailureReasonExecution, refused(SolveFailureFamilyExecution, "group-inputs"), producer.group.Output(), producer.group)
 		return carrier.RuleContribution{}, nil, false
 	}
 	var environment carrier.PointState
 	if producer.environment != nil {
 		environment, ok = epoch.environment(producer)
 		if !ok {
+			epoch.recordGroupBoundaryFailure(SolveFailureReasonExecution, refused(SolveFailureFamilyExecution, "group-environment"), producer.group.Output(), producer.group)
 			return carrier.RuleContribution{}, nil, false
 		}
 	}
 	if len(cache.inputStates) != len(inputs) {
+		epoch.recordGroupBoundaryFailure(SolveFailureReasonExecution, refused(SolveFailureFamilyExecution, "group-input-state-width"), producer.group.Output(), producer.group)
 		return carrier.RuleContribution{}, nil, false
 	}
 	for index := range inputs {
@@ -154,10 +184,12 @@ func (epoch *executorEpoch) evaluate(producer *runtimeProducer, cache *producerE
 		base, ok = epoch.work.BeginRuleContribution(producer.plan, producer.outputScope, inputs, producer.premise)
 	}
 	if !ok {
+		epoch.recordGroupBoundaryFailure(SolveFailureReasonExecution, refused(SolveFailureFamilyExecution, "contribution-begin"), producer.group.Output(), producer.group)
 		return carrier.RuleContribution{}, nil, false
 	}
 	within := base.State().Support()
 	if !within.Valid() {
+		epoch.recordGroupBoundaryFailure(SolveFailureReasonExecution, refused(SolveFailureFamilyExecution, "contribution-support"), producer.group.Output(), producer.group)
 		return carrier.RuleContribution{}, nil, false
 	}
 	patches := cache.patches[:0]
@@ -174,17 +206,7 @@ func (epoch *executorEpoch) evaluate(producer *runtimeProducer, cache *producerE
 		if epoch.canceled() {
 			return carrier.RuleContribution{}, nil, false
 		}
-		var result memberResult
-		if contextual, contextualMember := row.member.(contextualRuntimeMember); contextualMember && epoch.runtime.artifactBacked {
-			_, _, contextOrdinal, contextOK := epoch.graphPoint(epoch.currentState)
-			contextID, contextIDOK := epoch.runtime.contextIndex.ContextID(contextOrdinal)
-			if !contextOK || !contextIDOK {
-				return carrier.RuleContribution{}, nil, false
-			}
-			result = contextual.executeAt(epoch.work, base, cache.inputStates, within, contextID)
-		} else {
-			result = row.member.execute(epoch.work, base, cache.inputStates, within)
-		}
+		result := epoch.executeMemberRow(row, base, cache.inputStates, within)
 		if !result.valid {
 			// The failing member's identity is recovered from the Group the
 			// producer already holds; the hot row carries only its position.
@@ -204,8 +226,14 @@ func (epoch *executorEpoch) evaluate(producer *runtimeProducer, cache *producerE
 			activations = append(activations, result.activations...)
 		}
 		if result.wrote {
-			slot, hasSlot := row.member.outputSlot()
+			geometry, geometryOK := row.geometry()
+			if !geometryOK {
+				epoch.recordGroupBoundaryFailure(SolveFailureReasonExecution, refused(SolveFailureFamilyExecution, "member-geometry"), producer.group.Output(), producer.group)
+				return carrier.RuleContribution{}, nil, false
+			}
+			slot, hasSlot := geometry.outputSlot()
 			if !hasSlot {
+				epoch.recordGroupBoundaryFailure(SolveFailureReasonExecution, refused(SolveFailureFamilyExecution, "member-output-slot"), producer.group.Output(), producer.group)
 				return carrier.RuleContribution{}, nil, false
 			}
 			patches = append(patches, result.patch)
@@ -221,6 +249,7 @@ func (epoch *executorEpoch) evaluate(producer *runtimeProducer, cache *producerE
 	sort.Slice(patchRows, func(left, right int) bool { return patchRows[left].slot < patchRows[right].slot })
 	for index, row := range patchRows {
 		if row.slot < 0 || index > 0 && patchRows[index-1].slot >= row.slot {
+			epoch.recordGroupBoundaryFailure(SolveFailureReasonExecution, refused(SolveFailureFamilyExecution, "contribution-patch-order"), producer.group.Output(), producer.group)
 			return carrier.RuleContribution{}, nil, false
 		}
 	}
@@ -230,6 +259,7 @@ func (epoch *executorEpoch) evaluate(producer *runtimeProducer, cache *producerE
 	}
 	next, ok := epoch.work.FinishRuleContribution(base, patches)
 	if !ok {
+		epoch.recordGroupBoundaryFailure(SolveFailureReasonExecution, refused(SolveFailureFamilyExecution, "contribution-finish"), producer.group.Output(), producer.group)
 		return carrier.RuleContribution{}, nil, false
 	}
 	// Finish consumed the one-shot base and every owned Patch atomically. Only
@@ -423,21 +453,33 @@ func (epoch *executorEpoch) addPointFoldFactorEdgeWithBoundary(edgeIndex int) (s
 // and buildStateOperandPlane transposes the same axis. Resolving the ordinal a
 // second time as a graph Group would read a different plane.
 func (epoch *executorEpoch) pointFoldGroupState(row int) (carrier.PointState, bool) {
+	rule, ok := epoch.pointFoldGroupRule(row)
+	if !ok {
+		return carrier.PointState{}, false
+	}
+	return epoch.work.PointStateFromRuleContribution(rule)
+}
+
+// pointFoldGroupRule keeps a producer's RuleContribution provenance intact
+// until PointFold admits it.  Publishing a temporary PointState here would
+// mint a fresh baseline lineage and make a transformed sibling indistinguish-
+// able from an independent predecessor during the fold.
+func (epoch *executorEpoch) pointFoldGroupRule(row int) (carrier.RuleContribution, bool) {
 	if epoch == nil || epoch.work == nil || epoch.runtime == nil || !epoch.runtime.producerRows.valid() ||
 		row < 0 || row >= len(epoch.producers) || row >= len(epoch.runtime.producerRows.rows) {
-		return carrier.PointState{}, false
+		return carrier.RuleContribution{}, false
 	}
 	// A Region folds only its own head, so every producer operand row it
 	// publishes is owned by the head's state. A row minted for another state is
 	// a sibling context's contribution and is refused.
 	if epoch.currentState < 0 || epoch.runtime.producerRows.rows[row].state != contextfiber.StateOrdinal(epoch.currentState) {
-		return carrier.PointState{}, false
+		return carrier.RuleContribution{}, false
 	}
 	state := &epoch.producers[row]
 	if !state.hasValue {
-		return carrier.PointState{}, false
+		return carrier.RuleContribution{}, false
 	}
-	return epoch.work.PointStateFromRuleContribution(state.candidate)
+	return state.candidate, true
 }
 
 func (epoch *executorEpoch) addPointFoldGroup(group int) bool {
@@ -628,11 +670,11 @@ func (epoch *executorEpoch) foldPointTermSetsWithBoundary(reference carrier.Poin
 		}
 		boundary = refused(SolveFailureFamilyRefresh, "acyclic-fold-producer")
 		for _, group := range set.groups {
-			term, termOK := epoch.pointFoldGroupState(group)
+			rule, termOK := epoch.pointFoldGroupRule(group)
 			if !termOK {
 				return carrier.PointRHS{}, carrier.ChangeSet{}, boundary, false
 			}
-			if !epoch.work.AddPointFoldEnvironment(term) || epoch.canceled() {
+			if !epoch.work.AddPointFoldRule(rule) || epoch.canceled() {
 				return carrier.PointRHS{}, carrier.ChangeSet{}, boundary, false
 			}
 		}

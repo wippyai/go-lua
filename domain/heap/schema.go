@@ -2086,6 +2086,78 @@ func (schema Schema) KeyIndex(key Key) (int, bool) {
 	return int(key.slot - 1), true
 }
 
+// DenseKeyIndex is the Factor-local form of KeyIndex.
+func (schema Schema) DenseKeyIndex(key Key) (uint32, bool) {
+	index, ok := schema.KeyIndex(key)
+	if !ok || index < 0 || uint64(index) > uint64(^uint32(0)) {
+		return 0, false
+	}
+	return uint32(index), true
+}
+
+// AllocationRootForMountedOccurrence resolves one mounted Program allocation
+// occurrence to its Heap allocation Key.
+func (schema Schema) AllocationRootForMountedOccurrence(module, occurrence identity.ContentID) (Key, bool) {
+	mount, mountOK := schema.OccurrenceMountForModule(module)
+	if !mountOK {
+		return Key{}, false
+	}
+	return mount.AllocationRootForOccurrence(occurrence)
+}
+
+// AllocationRootCount is the dense census of allocation Keys.
+func (schema Schema) AllocationRootCount() int {
+	if !schema.valid() {
+		return 0
+	}
+	count := 0
+	for index := 0; index < schema.KeyCount(); index++ {
+		key, keyOK := schema.KeyAt(index)
+		if keyOK && key.Kind() == RootAllocation {
+			count++
+		}
+	}
+	return count
+}
+
+// AllocationRootAt returns one dense allocation Key in sealed Key order.
+func (schema Schema) AllocationRootAt(index int) (Key, bool) {
+	if !schema.valid() || index < 0 {
+		return Key{}, false
+	}
+	remaining := index
+	for keyIndex := 0; keyIndex < schema.KeyCount(); keyIndex++ {
+		key, keyOK := schema.KeyAt(keyIndex)
+		if !keyOK || key.Kind() != RootAllocation {
+			continue
+		}
+		if remaining == 0 {
+			return key, true
+		}
+		remaining--
+	}
+	return Key{}, false
+}
+
+// AllocationRootOrdinal is the exact inverse of AllocationRootAt.
+func (schema Schema) AllocationRootOrdinal(key Key) (uint32, bool) {
+	if !schema.OwnsKey(key) || key.Kind() != RootAllocation {
+		return 0, false
+	}
+	ordinal := uint32(0)
+	for keyIndex := 0; keyIndex < schema.KeyCount(); keyIndex++ {
+		candidate, keyOK := schema.KeyAt(keyIndex)
+		if !keyOK || candidate.Kind() != RootAllocation {
+			continue
+		}
+		if candidate.slot == key.slot {
+			return ordinal, true
+		}
+		ordinal++
+	}
+	return 0, false
+}
+
 // KeyID is Heap's stable identity for an already owner-issued coordinate.
 // It is not a second root representation and it never serializes a Link
 // allocation handle.

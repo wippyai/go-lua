@@ -11,7 +11,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/schema/programmount"
 )
 
-// BuildCompositionRows constructs the Link-lifetime module composition from
+// BuildComposition constructs the Link-lifetime module composition from
 // the sealed parent relation and the already-published mount directory. The
 // result is construction-time data only: callers publish the returned rows
 // into one Snapshot and retain no module builder, cache, or Program pointer.
@@ -21,36 +21,20 @@ import (
 // Program's exact ModuleRequest and to the target root's ModuleKey. The
 // caller supplies Module's already-sealed scalar context directory; no root,
 // source key/literal catalog, or authored-name target index is reopened here.
-func (c *Component) BuildCompositionRows(linkID identity.ContentID, mounts []programmount.MountedArtifact, contextDirectory executioncontext.Directory) (
-	[]modulecomposition.ResolvedImport,
-	[]modulecomposition.CacheIngress,
-	[]modulecomposition.ModuleCallTransition,
-	[]modulecomposition.InitGeneration,
-	[]modulecomposition.InitOutcome,
-	[]modulecomposition.InitTerminal,
-	[]modulecomposition.ModuleExportCallableOrigin,
-	bool,
-) {
-	var emptyImports []modulecomposition.ResolvedImport
-	var emptyCache []modulecomposition.CacheIngress
-	var emptyTransitions []modulecomposition.ModuleCallTransition
-	var emptyGenerations []modulecomposition.InitGeneration
-	var emptyOutcomes []modulecomposition.InitOutcome
-	var emptyTerminals []modulecomposition.InitTerminal
-	var emptyOrigins []modulecomposition.ModuleExportCallableOrigin
+func (c *Component) BuildComposition(linkID identity.ContentID, mounts []programmount.MountedArtifact, contextDirectory executioncontext.Directory) (modulecomposition.Composition, bool) {
 	if c == nil || c.authority == nil || c.authority.project == nil || !linkID.Available() || len(mounts) == 0 {
-		return emptyImports, emptyCache, emptyTransitions, emptyGenerations, emptyOutcomes, emptyTerminals, emptyOrigins, false
+		return modulecomposition.Composition{}, false
 	}
 	entries, entriesOK := c.compositionEntries()
 	if !entriesOK {
-		return emptyImports, emptyCache, emptyTransitions, emptyGenerations, emptyOutcomes, emptyTerminals, emptyOrigins, false
+		return modulecomposition.Composition{}, false
 	}
 	if !contextDirectory.Available() || contextDirectory.LinkID() != linkID {
-		return emptyImports, emptyCache, emptyTransitions, emptyGenerations, emptyOutcomes, emptyTerminals, emptyOrigins, false
+		return modulecomposition.Composition{}, false
 	}
 	for _, mount := range mounts {
 		if !mount.Available() {
-			return emptyImports, emptyCache, emptyTransitions, emptyGenerations, emptyOutcomes, emptyTerminals, emptyOrigins, false
+			return modulecomposition.Composition{}, false
 		}
 	}
 
@@ -59,72 +43,138 @@ func (c *Component) BuildCompositionRows(linkID identity.ContentID, mounts []pro
 	transitions := make([]modulecomposition.ModuleCallTransition, 0, len(entries))
 	generations := make([]modulecomposition.InitGeneration, 0, len(entries))
 	outcomes := make([]modulecomposition.InitOutcome, 0)
+	stateEdges := make([]modulecomposition.ModuleReturnStateEdge, 0)
 	terminals := make([]modulecomposition.InitTerminal, 0)
 	origins := make([]modulecomposition.ModuleExportCallableOrigin, 0)
+	ingresses := make([]modulecomposition.ModuleExportCallableIngress, 0)
 	for _, entry := range entries {
 		sourceModuleKey, sourceKeyOK := c.authority.project.ModuleKey(entry.sourceShard)
 		targetRoot, targetRootOK := c.root(entry.toRootOrdinal)
 		if !sourceKeyOK || !targetRootOK {
-			return emptyImports, emptyCache, emptyTransitions, emptyGenerations, emptyOutcomes, emptyTerminals, emptyOrigins, false
+			return modulecomposition.Composition{}, false
 		}
 		targetModuleKey, targetKeyOK := c.authority.project.ModuleKey(targetRoot.shard)
 		sourceMount, sourceMountOK := mountedProgram(mounts, sourceModuleKey)
 		targetMount, targetMountOK := mountedProgram(mounts, targetModuleKey)
 		if !targetKeyOK || !sourceMountOK || !targetMountOK {
-			return emptyImports, emptyCache, emptyTransitions, emptyGenerations, emptyOutcomes, emptyTerminals, emptyOrigins, false
+			return modulecomposition.Composition{}, false
 		}
 		ordinal := keyspace.TermOrdinal(entry.importTerm)
 		if ordinal == 0 {
-			return emptyImports, emptyCache, emptyTransitions, emptyGenerations, emptyOutcomes, emptyTerminals, emptyOrigins, false
+			return modulecomposition.Composition{}, false
 		}
 		importIndex := int(ordinal - 1)
 		programImport, importOK := sourceMount.Program.ModuleImportAt(importIndex)
 		request, requestOK := sourceMount.Program.ModuleRequestFor(importIndex)
 		if !importOK || !requestOK || !programImport.ID().Available() || request.ImportID() != programImport.ID() {
-			return emptyImports, emptyCache, emptyTransitions, emptyGenerations, emptyOutcomes, emptyTerminals, emptyOrigins, false
+			return modulecomposition.Composition{}, false
 		}
 		resolved, resolvedOK := modulecomposition.NewResolvedImport(linkID, sourceMount.Program, request, targetModuleKey)
 		if !resolvedOK {
-			return emptyImports, emptyCache, emptyTransitions, emptyGenerations, emptyOutcomes, emptyTerminals, emptyOrigins, false
+			return modulecomposition.Composition{}, false
 		}
 		fromContext, fromContextOK := contextDirectory.ContextForRoot(entry.fromRootID)
 		toContext, toContextOK := contextDirectory.ContextForRoot(entry.toRootID)
 		if !fromContextOK || !toContextOK || fromContext.LinkID() != linkID || toContext.LinkID() != linkID ||
 			fromContext.ActorID() != entry.actorID || fromContext.RepresentativeCacheInstanceID() != entry.representativeID {
-			return emptyImports, emptyCache, emptyTransitions, emptyGenerations, emptyOutcomes, emptyTerminals, emptyOrigins, false
+			return modulecomposition.Composition{}, false
 		}
 		cacheRow, cacheOK := modulecomposition.NewCacheIngress(resolved, entry.fromRootID, entry.toRootID, fromContext, toContext)
 		if !cacheOK {
-			return emptyImports, emptyCache, emptyTransitions, emptyGenerations, emptyOutcomes, emptyTerminals, emptyOrigins, false
+			return modulecomposition.Composition{}, false
 		}
 		body, bodyOK := targetMount.Program.EntryBody()
 		if !bodyOK {
-			return emptyImports, emptyCache, emptyTransitions, emptyGenerations, emptyOutcomes, emptyTerminals, emptyOrigins, false
+			return modulecomposition.Composition{}, false
 		}
 		generation, generationOK := modulecomposition.NewInitGeneration(cacheRow, targetMount.Program, body)
 		if !generationOK {
-			return emptyImports, emptyCache, emptyTransitions, emptyGenerations, emptyOutcomes, emptyTerminals, emptyOrigins, false
+			return modulecomposition.Composition{}, false
 		}
 		transition, transitionOK := contextDirectory.Transition(fromContext.ID(), toContext.ID())
 		if !transitionOK {
-			return emptyImports, emptyCache, emptyTransitions, emptyGenerations, emptyOutcomes, emptyTerminals, emptyOrigins, false
+			return modulecomposition.Composition{}, false
 		}
 		callTransition, callTransitionOK := modulecomposition.NewModuleCallTransition(cacheRow, generation, sourceMount.Program, programImport, transition)
 		if !callTransitionOK {
-			return emptyImports, emptyCache, emptyTransitions, emptyGenerations, emptyOutcomes, emptyTerminals, emptyOrigins, false
+			return modulecomposition.Composition{}, false
 		}
 		imports = append(imports, resolved)
 		caches = append(caches, cacheRow)
 		transitions = append(transitions, callTransition)
 		generations = append(generations, generation)
+		outcomeStart := len(outcomes)
 		if !appendInitOutcomes(targetMount.Program, body, generation, &outcomes, &terminals) {
-			return emptyImports, emptyCache, emptyTransitions, emptyGenerations, emptyOutcomes, emptyTerminals, emptyOrigins, false
+			return modulecomposition.Composition{}, false
 		}
+		if !appendReturnStateEdges(targetMount.Program, callTransition, generation, outcomes[outcomeStart:], contextDirectory, &stateEdges) {
+			return modulecomposition.Composition{}, false
+		}
+		originStart := len(origins)
 		if !appendCallableOrigins(targetMount.Program.Program, generation, callTransition, &origins) {
-			return emptyImports, emptyCache, emptyTransitions, emptyGenerations, emptyOutcomes, emptyTerminals, emptyOrigins, false
+			return modulecomposition.Composition{}, false
+		}
+		for _, origin := range origins[originStart:] {
+			ingress, ingressOK := modulecomposition.NewModuleExportCallableIngress(origin, callTransition, contextDirectory)
+			if !ingressOK {
+				return modulecomposition.Composition{}, false
+			}
+			ingresses = append(ingresses, ingress)
 		}
 	}
-	return imports, caches, transitions, generations, outcomes, terminals, origins, true
+	return modulecomposition.SealComposition(linkID, imports, caches, transitions, generations, outcomes, stateEdges, terminals, origins, ingresses)
+}
+
+func appendReturnStateEdges(
+	mount programmount.Program,
+	call modulecomposition.ModuleCallTransition,
+	generation modulecomposition.InitGeneration,
+	outcomes []modulecomposition.InitOutcome,
+	directory executioncontext.Directory,
+	edges *[]modulecomposition.ModuleReturnStateEdge,
+) bool {
+	if !mount.Available() || !call.Available() || !generation.Available() || !directory.Available() || edges == nil {
+		return false
+	}
+	count, published := mount.Program.OutcomeCount()
+	if !published {
+		return false
+	}
+	for _, outcome := range outcomes {
+		if !outcome.Available() || outcome.GenerationID() != generation.ID() || outcome.Kind() != programschema.OutcomeReturn {
+			continue
+		}
+		outcomeIndex := -1
+		var canonical programschema.Outcome
+		for index := 0; index < count; index++ {
+			candidate, held := mount.Program.OutcomeAt(index)
+			if !held {
+				return false
+			}
+			if candidate.ID() != outcome.OutcomeID() {
+				continue
+			}
+			if outcomeIndex >= 0 {
+				return false
+			}
+			outcomeIndex, canonical = index, candidate
+		}
+		if outcomeIndex < 0 || canonical.Kind() != programschema.OutcomeReturn || canonical.PointCount() == 0 {
+			return false
+		}
+		for pointIndex := 0; pointIndex < canonical.PointCount(); pointIndex++ {
+			point, held := mount.Program.OutcomePointFor(outcomeIndex, pointIndex)
+			if !held {
+				return false
+			}
+			edge, edgeOK := modulecomposition.NewModuleReturnStateEdge(call, generation, outcome, mount, point, directory)
+			if !edgeOK {
+				return false
+			}
+			*edges = append(*edges, edge)
+		}
+	}
+	return true
 }
 
 func (c *Component) root(ordinal uint32) (rootRow, bool) {

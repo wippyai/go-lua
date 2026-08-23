@@ -39,8 +39,8 @@ func TestGraphCatalogActivationReadRetainsSealedRowOutsideOrdinaryGeometry(t *te
 	if cell == nil || !activationGraphCellReady(binding.state, cell) {
 		t.Fatal("activation cell not ready")
 	}
-	if _, ordinary := any(cell).(sealedOrdinaryRuleGeometry); ordinary {
-		t.Fatal("activation cell implements ordinary geometry")
+	if _, structural := any(cell).(sealedRuleGeometry); structural {
+		t.Fatal("activation cell implements sealed rule geometry")
 	}
 	row := cell.schemaRuleReadAt(0)
 	if row == nil || row.kind != composition.ReadExact || row.factor != schema.factorSemanticAt(0) || !row.sealed() {

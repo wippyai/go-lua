@@ -342,9 +342,12 @@ func artifactReadIndexLawChange(t testing.TB, fixture artifactReadIndexLawFixtur
 	if producer.span.start < 0 || producer.span.end <= producer.span.start || int(producer.span.end) > len(fixture.source.runtime.program.memberTable) {
 		t.Fatal("artifact-read-index source publication member span")
 	}
-	member := fixture.source.runtime.program.memberTable[producer.span.start].member
-	targets := member.targets()
-	outputSlot, outputSlotOK := member.outputSlot()
+	geometry, geometryOK := fixture.source.runtime.program.memberTable[producer.span.start].geometry()
+	if !geometryOK {
+		t.Fatal("artifact-read-index source publication member geometry")
+	}
+	targets := geometry.targets()
+	outputSlot, outputSlotOK := geometry.outputSlot()
 	if len(targets) != 1 || !outputSlotOK || int(outputSlot) < 0 || int(outputSlot) >= len(fixture.source.runtime.program.factorOwners) {
 		t.Fatal("artifact-read-index source publication target")
 	}

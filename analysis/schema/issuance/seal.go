@@ -1,6 +1,9 @@
 package issuance
 
-import "github.com/wippyai/go-lua/analysis/schema"
+import (
+	"github.com/wippyai/go-lua/analysis/schema"
+	seal "github.com/wippyai/go-lua/analysis/schema/seal"
+)
 
 const (
 	TypeRelationIndex schema.Key = "machine-type/relation-index"
@@ -14,9 +17,9 @@ const (
 	TypeAxisKey       schema.Key = "machine-type/axis-key"
 )
 
-func (surface *Surface) Seal(view schema.View, _ schema.Sealed) schema.SealFailure {
+func (surface *Surface) Seal(view seal.View, _ seal.Sealed) schema.SealFailure {
 	if surface == nil || view.Kind() != schema.SurfaceKindIssuance {
-		return schema.SurfaceLawFailure(schema.SurfaceKindIssuance, schema.EntryID{}, LawEntryShape, schema.DispositionMalformed)
+		return seal.SurfaceLawFailure(schema.SurfaceKindIssuance, schema.EntryID{}, LawEntryShape, schema.DispositionMalformed)
 	}
 	entries := make(map[schema.Key]*Entry, view.Count())
 	ordinals := make(map[Kind]map[uint16]schema.EntryID)
@@ -102,7 +105,7 @@ func failure(entry *Entry, law schema.LawID, disposition schema.Disposition) sch
 	if entry != nil {
 		id = entry.id
 	}
-	return schema.SurfaceLawFailure(schema.SurfaceKindIssuance, id, law, disposition)
+	return seal.SurfaceLawFailure(schema.SurfaceKindIssuance, id, law, disposition)
 }
 
 func firstOfKind(entries map[schema.Key]*Entry, kind Kind) *Entry {
@@ -580,28 +583,39 @@ func containsKey(keys []schema.Key, sought schema.Key) bool {
 }
 
 func stageArgumentsMatch(arguments [6]uint16, stage *Entry, registers map[uint16]DataType, entries map[schema.Key]*Entry) bool {
-	if stage == nil || len(stage.parameters)+1 > len(arguments) {
+	if stage == nil || len(stage.parameters)+int(stage.inputCount) > len(arguments) {
 		return false
 	}
-	for index := range arguments {
-		if index == len(stage.parameters) {
-			typ, ok := registers[arguments[index]]
-			input := entries[typ.Name]
-			if !ok || typ.Value != ValueInputRange || typ.Cardinality != CardinalityMany ||
-				input == nil || input.kind != KindInput ||
-				stage.consumesInput != (input.input != InputNone) {
-				return false
-			}
-			continue
-		}
-		if index > len(stage.parameters) {
-			if arguments[index] != 0 {
-				return false
-			}
-			continue
-		}
+	for index := 0; index < len(stage.parameters); index++ {
 		typ, ok := registers[arguments[index]]
 		if !ok || typ != stage.parameters[index] {
+			return false
+		}
+	}
+	for index := len(stage.parameters); index < len(stage.parameters)+int(stage.inputCount); index++ {
+		typ, ok := registers[arguments[index]]
+		input := entries[typ.Name]
+		if !ok || typ.Value != ValueInputRange || typ.Cardinality != CardinalityMany ||
+			input == nil || input.kind != KindInput || input.input == InputNone {
+			return false
+		}
+	}
+	end := len(stage.parameters) + int(stage.inputCount)
+	// Existing zero-input forms encode an InputNone range in one trailing
+	// register. It carries no role and is ignored by the interpreter; accepting
+	// it here keeps the ABI dense for authored forms while positive-width stages
+	// still require exactly their declared N operands.
+	if stage.inputCount == 0 && end < len(arguments) && arguments[end] != 0 {
+		typ, ok := registers[arguments[end]]
+		input := entries[typ.Name]
+		if !ok || typ.Value != ValueInputRange || typ.Cardinality != CardinalityMany ||
+			input == nil || input.kind != KindInput || input.input != InputNone {
+			return false
+		}
+		end++
+	}
+	for index := end; index < len(arguments); index++ {
+		if arguments[index] != 0 {
 			return false
 		}
 	}

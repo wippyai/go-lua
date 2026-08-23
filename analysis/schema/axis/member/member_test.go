@@ -1,0 +1,248 @@
+package member
+
+import (
+	"testing"
+
+	"github.com/wippyai/go-lua/analysis/schema"
+)
+
+func axisRef(key schema.Key) schema.EntryReference {
+	return schema.EntryReference{Surface: schema.SurfaceKindAxis, Key: key}
+}
+
+func reducerInput(axis schema.EntryReference, carrier, tag Carrier) ReducerInput {
+	return ReducerInput{
+		Axis:         axis,
+		Carrier:      carrier,
+		Form:         Exact,
+		Multiplicity: MultiplicityOne,
+		Tag:          tag,
+	}
+}
+
+func reducerOutput(axis schema.EntryReference, carrier Carrier) ReducerOutput {
+	return ReducerOutput{Axis: axis, Carrier: carrier}
+}
+
+func relationProvider(axis schema.EntryReference, member schema.Key) RelationRef {
+	return RelationRef{Axis: axis, Member: member}
+}
+
+func completeCatalog() Catalog {
+	catalog, ok := NewCatalog(
+		[]Relation{{
+			Key: "relation/input", Subject: "subject", Inputs: []Carrier{"input/key", "input/value"},
+			CandidateProvider: relationProvider(axisRef("axis/source"), "relation/input"),
+		}},
+		[]Projection{
+			{Key: "projection/key", Relation: "relation/input", Role: Key, Result: "projection/key/result", CandidateProvider: relationProvider(axisRef("axis/source"), "relation/input")},
+			{Key: "projection/predicate", Relation: "relation/input", Role: Predicate, Result: "projection/predicate/result", CandidateProvider: relationProvider(axisRef("axis/source"), "relation/input")},
+		},
+		[]Reducer{{
+			Key:     "reducer/output",
+			Inputs:  []ReducerInput{reducerInput(axisRef("axis/source"), "input/carrier", "")},
+			Outputs: []ReducerOutput{reducerOutput(axisRef("axis/result"), "output/carrier")},
+		}},
+		nil,
+	)
+	if !ok {
+		panic("complete member catalog rejected")
+	}
+	return catalog
+}
+
+func TestNewCatalogAdmitsCompleteDeclaration(t *testing.T) {
+	catalog := completeCatalog()
+	if !catalog.Available() || catalog.MemberCount() != 4 {
+		t.Fatalf("catalog = %#v, available=%t count=%d", catalog, catalog.Available(), catalog.MemberCount())
+	}
+	if relation, ok := catalog.Relation("relation/input"); !ok || relation.Subject != "subject" || len(relation.Inputs) != 2 {
+		t.Fatalf("relation resolution = %#v/%t", relation, ok)
+	}
+	if ordinal, ok := catalog.ProjectionOrdinal("projection/predicate"); !ok || ordinal != 1 {
+		t.Fatalf("projection ordinal = %d/%t", ordinal, ok)
+	}
+	if ordinal, ok := catalog.ReducerOrdinal("reducer/output"); !ok || ordinal != 0 {
+		t.Fatalf("reducer ordinal = %d/%t", ordinal, ok)
+	}
+	if references := catalog.References(); len(references) != 5 ||
+		references[0] != axisRef("axis/source") || references[1] != axisRef("axis/source") ||
+		references[2] != axisRef("axis/source") || references[3] != axisRef("axis/source") ||
+		references[4] != axisRef("axis/result") {
+		t.Fatalf("catalog references = %#v", references)
+	}
+}
+
+func TestNewCatalogRejectsDuplicateKeysAcrossKinds(t *testing.T) {
+	if _, ok := NewCatalog(
+		[]Relation{{Key: "same"}},
+		[]Projection{{Key: "same", Relation: "same", Role: Key}},
+		nil,
+		nil,
+	); ok {
+		t.Fatal("catalog admitted a relation/projection duplicate key")
+	}
+}
+
+func TestNewCatalogRejectsProjectionWithMissingRelation(t *testing.T) {
+	if _, ok := NewCatalog(nil, []Projection{{Key: "projection", Relation: "missing", Role: Key, Result: "result"}}, nil, nil); ok {
+		t.Fatal("catalog admitted a projection with a missing relation")
+	}
+}
+
+func TestNewCatalogRejectsMalformedReducer(t *testing.T) {
+	for name, reducer := range map[string]Reducer{
+		"zero outputs": {Key: "reducer"},
+		"foreign input": {Key: "reducer", Inputs: []ReducerInput{reducerInput(
+			schema.EntryReference{Surface: schema.SurfaceKindRule, Key: "rule"}, "carrier", "tag",
+		)}, Outputs: []ReducerOutput{reducerOutput(axisRef("axis/result"), "output")}},
+		"empty input": {Key: "reducer", Inputs: []ReducerInput{reducerInput(
+			schema.EntryReference{Surface: schema.SurfaceKindAxis}, "carrier", "tag",
+		)}, Outputs: []ReducerOutput{reducerOutput(axisRef("axis/result"), "output")}},
+		"missing input carrier": {Key: "reducer", Inputs: []ReducerInput{reducerInput(
+			axisRef("axis/source"), "", "",
+		)}, Outputs: []ReducerOutput{reducerOutput(axisRef("axis/result"), "output")}},
+		"invalid input form": {Key: "reducer", Inputs: []ReducerInput{{
+			Axis: axisRef("axis/source"), Carrier: "carrier", Multiplicity: MultiplicityOne, Tag: "tag",
+		}}, Outputs: []ReducerOutput{reducerOutput(axisRef("axis/result"), "output")}},
+		"missing output carrier": {Key: "reducer", Inputs: []ReducerInput{reducerInput(
+			axisRef("axis/source"), "carrier", "",
+		)}, Outputs: []ReducerOutput{reducerOutput(axisRef("axis/result"), "")}},
+	} {
+		t.Run(name, func(t *testing.T) {
+			if _, ok := NewCatalog(nil, nil, []Reducer{reducer}, nil); ok {
+				t.Fatal("catalog admitted malformed reducer")
+			}
+		})
+	}
+}
+
+func TestReducerInputTagExistsOnlyForTaggedReadForms(t *testing.T) {
+	axis := axisRef("axis/source")
+	for name, input := range map[string]ReducerInput{
+		"exact with tag": {
+			Axis: axis, Carrier: "carrier", Form: ReadFormExact,
+			Multiplicity: MultiplicityOne, Tag: "tag",
+		},
+		"selected without tag": {
+			Axis: axis, Carrier: "carrier", Form: ReadFormSelected,
+			Multiplicity: MultiplicityMany,
+		},
+		"summary without tag": {
+			Axis: axis, Carrier: "carrier", Form: ReadFormSummary,
+			Multiplicity: MultiplicityOne,
+		},
+		"complete with tag": {
+			Axis: axis, Carrier: "carrier", Form: ReadFormComplete,
+			Multiplicity: MultiplicityMany, Tag: "tag",
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			if input.Available() {
+				t.Fatal("reducer input admitted a tag/read-form mismatch")
+			}
+		})
+	}
+	for name, input := range map[string]ReducerInput{
+		"exact": {
+			Axis: axis, Carrier: "carrier", Form: ReadFormExact,
+			Multiplicity: MultiplicityOne,
+		},
+		"selected": {
+			Axis: axis, Carrier: "carrier", Form: ReadFormSelected,
+			Multiplicity: MultiplicityMany, Tag: "tag",
+		},
+		"summary": {
+			Axis: axis, Carrier: "carrier", Form: ReadFormSummary,
+			Multiplicity: MultiplicityOne, Tag: "tag",
+		},
+		"complete": {
+			Axis: axis, Carrier: "carrier", Form: ReadFormComplete,
+			Multiplicity: MultiplicityMany,
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			if !input.Available() {
+				t.Fatal("reducer input rejected its canonical tag/read-form shape")
+			}
+		})
+	}
+}
+
+func TestCatalogCopiesSlicesAndReducerInputs(t *testing.T) {
+	inputs := []Carrier{"input/one", "input/two"}
+	relations := []Relation{{Key: "relation", Subject: "subject", Inputs: inputs, CandidateProvider: relationProvider(axisRef("axis/source"), "relation")}}
+	reducerInputs := []ReducerInput{reducerInput(axisRef("axis/source"), "carrier", "")}
+	reducerOutputs := []ReducerOutput{reducerOutput(axisRef("axis/result"), "output")}
+	reducers := []Reducer{{Key: "reducer", Inputs: reducerInputs, Outputs: reducerOutputs}}
+	catalog, ok := NewCatalog(relations, nil, reducers, nil)
+	if !ok {
+		t.Fatal("complete catalog rejected")
+	}
+	relations[0].Key = "changed"
+	inputs[0] = "changed"
+	reducerInputs[0].Carrier = "changed"
+	reducerOutputs[0].Carrier = "changed"
+	if _, ok := catalog.Relation("relation"); !ok {
+		t.Fatal("catalog retained an aliased relation slice")
+	}
+	relation, ok := catalog.Relation("relation")
+	if !ok || len(relation.Inputs) != 2 || relation.Inputs[0] != "input/one" {
+		t.Fatalf("catalog retained aliased relation inputs: %#v/%t", relation, ok)
+	}
+	reducer, ok := catalog.Reducer("reducer")
+	if !ok || len(reducer.Inputs) != 1 || reducer.Inputs[0].Carrier != "carrier" || len(reducer.Outputs) != 1 || reducer.Outputs[0].Carrier != "output" {
+		t.Fatalf("catalog retained aliased reducer signature: %#v/%t", reducer, ok)
+	}
+	copy := catalog.Clone()
+	copy.Relations[0].Inputs[0] = "copy-mutated"
+	copy.Reducers[0].Inputs[0].Carrier = "copy-mutated"
+	copy.Reducers[0].Outputs[0].Carrier = "copy-mutated"
+	if catalog.Relations[0].Inputs[0] != "input/one" || catalog.Reducers[0].Inputs[0].Carrier != "carrier" || catalog.Reducers[0].Outputs[0].Carrier != "output" {
+		t.Fatal("catalog clone shares member signature storage")
+	}
+}
+
+func TestMemberRefsRequireAxisOwnerAndMember(t *testing.T) {
+	valid := RelationRef{Axis: axisRef("axis/source"), Member: "relation/input"}
+	if !valid.Available() || !(ProjectionRef{Axis: valid.Axis, Member: valid.Member}).Available() ||
+		!(ReducerRef{Axis: valid.Axis, Member: valid.Member}).Available() {
+		t.Fatal("complete member references rejected")
+	}
+	for _, available := range []bool{
+		(RelationRef{Axis: schema.EntryReference{Surface: schema.SurfaceKindRule, Key: "rule"}, Member: "member"}).Available(),
+		(RelationRef{Axis: axisRef("axis/source"), Member: ""}).Available(),
+	} {
+		if available {
+			t.Fatal("malformed member reference admitted")
+		}
+	}
+}
+
+func TestCatalogAdmitsCandidateIndexedFactEndomorphism(t *testing.T) {
+	transform := CarryTransform{Key: "transform/value", Candidate: "candidate", Input: "fact", Output: "fact"}
+	catalog, ok := NewCatalog(
+		[]Relation{{Key: "relation", Subject: "candidate", CandidateProvider: relationProvider(axisRef("axis/source"), "relation")}},
+		nil,
+		nil,
+		[]CarryTransform{transform},
+	)
+	if !ok || !catalog.Available() || catalog.CarryTransformCount() != 1 {
+		t.Fatalf("carry transform catalog unavailable: %#v/%t", catalog, ok)
+	}
+	got, gotOK := catalog.CarryTransform("transform/value")
+	if !gotOK || got != transform {
+		t.Fatalf("carry transform lookup=%#v/%t, want %#v/true", got, gotOK, transform)
+	}
+	if ordinal, ordinalOK := catalog.CarryTransformOrdinal("transform/value"); !ordinalOK || ordinal != 0 {
+		t.Fatalf("carry transform ordinal=%d/%t", ordinal, ordinalOK)
+	}
+	for _, malformed := range []CarryTransform{
+		{Key: "transform/value", Candidate: "candidate", Input: "fact", Output: "other-fact"},
+		{Key: "transform/value", Candidate: "candidate", Input: "fact", Output: ""},
+	} {
+		if _, malformedOK := NewCatalog(nil, nil, nil, []CarryTransform{malformed}); malformedOK {
+			t.Fatalf("malformed carry transform admitted: %#v", malformed)
+		}
+	}
+}

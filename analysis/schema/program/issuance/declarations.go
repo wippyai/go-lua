@@ -441,6 +441,7 @@ func stageDeclarations() []schemaissuance.Spec {
 	content := schemaissuance.IdentityType(TypeContentID)
 	all := schemaissuance.StageTransportAll
 	writes := schemaissuance.StageTransportWritesOfStages
+	exceptWrites := schemaissuance.StageTransportAllExceptWritesOfStages
 	exceptTarget := schemaissuance.StageTransportAllExceptTargetWrites
 	return []schemaissuance.Spec{
 		{Key: StageBase, Kind: schemaissuance.KindStage, Ordinal: 1,
@@ -448,45 +449,43 @@ func stageDeclarations() []schemaissuance.Spec {
 		{Key: StageLocal, Kind: schemaissuance.KindStage, Ordinal: 2,
 			Constructor: schemaissuance.StageConstructorFramed, Parameters: []schemaissuance.DataType{pointMany}, Base: 1, Identity: []uint16{1},
 			Order: 3, Predecessors: []schema.Key{StageBase}, Edges: []schemaissuance.StageEdge{{Source: schemaissuance.StageEdgeSourcePrevious, Transport: all, Framing: "analysis/program-artifact/local-transfer"}},
-			Framing: "analysis/program-artifact/local-stage", ConsumesInput: true},
+			Framing: "analysis/program-artifact/local-stage", InputCount: 1},
 		{Key: StageSuccessor, Kind: schemaissuance.KindStage, Ordinal: 3,
 			Constructor: schemaissuance.StageConstructorFramed, Parameters: []schemaissuance.DataType{pointMany}, Base: 1, Identity: []uint16{1},
 			Order: 4, Predecessors: []schema.Key{StageLocal}, Edges: []schemaissuance.StageEdge{{Source: schemaissuance.StageEdgeSourceStage, Stage: StageLocal, Transport: all, Framing: "analysis/program-artifact/local-successor-transfer"}},
-			Framing: "analysis/program-artifact/local-successor-stage", ConsumesInput: true},
+			Framing: "analysis/program-artifact/local-successor-stage", InputCount: 1},
 		{Key: StageComputation, Kind: schemaissuance.KindStage, Ordinal: 4,
 			Constructor: schemaissuance.StageConstructorFramed,
 			Parameters:  []schemaissuance.DataType{pointMany, schemaissuance.IdentityType(schemaissuance.TypeRuleKey), content, content, content}, Base: 1,
 			Identity: []uint16{1, 2, 3},
 			Order:    5, Node: 3, Dependencies: []uint16{4, 5}, Predecessors: []schema.Key{StageBase},
 			Edges:   []schemaissuance.StageEdge{{Source: schemaissuance.StageEdgeSourcePrevious, Transport: all, Framing: "analysis/program-artifact/local-computation-transfer"}},
-			Framing: "analysis/program-artifact/local-computation-stage", ConsumesInput: true},
+			Framing: "analysis/program-artifact/local-computation-stage", InputCount: 1},
 		{Key: StagePredecessor, Kind: schemaissuance.KindStage, Ordinal: 5,
 			Constructor: schemaissuance.StageConstructorFramed,
 			Parameters:  []schemaissuance.DataType{pointOne, schemaissuance.IdentityType(schemaissuance.TypeAxisKey)}, Base: 1,
 			Identity: []uint16{1, 2},
 			Order:    2, Predecessors: []schema.Key{StageBase}, Edges: []schemaissuance.StageEdge{{Source: schemaissuance.StageEdgeSourcePrevious, Transport: exceptTarget, Framing: "analysis/program-artifact/local-predecessor-transfer"}},
-			Framing: "analysis/program-artifact/local-predecessor-stage", ConsumesInput: true},
+			Framing: "analysis/program-artifact/local-predecessor-stage", InputCount: 1},
 		{Key: StageCallDispatch, Kind: schemaissuance.KindStage, Ordinal: 6,
 			Constructor: schemaissuance.StageConstructorFramed, Parameters: []schemaissuance.DataType{pointMany}, Base: 1, Identity: []uint16{1},
 			Order: 6, Predecessors: []schema.Key{StageBase}, Edges: []schemaissuance.StageEdge{{Source: schemaissuance.StageEdgeSourcePrevious, Transport: exceptTarget, Framing: "analysis/program-artifact/call-base-dispatch-transfer"}},
-			Framing: "analysis/program-artifact/call-dispatch-stage", Native: true, ConsumesInput: true},
+			Framing: "analysis/program-artifact/call-dispatch-stage", Native: true, InputCount: 1},
 		{Key: StageCallSummary, Kind: schemaissuance.KindStage, Ordinal: 7,
 			Constructor: schemaissuance.StageConstructorFramed, Parameters: []schemaissuance.DataType{pointMany}, Base: 1, Identity: []uint16{1},
 			Order: 7, Predecessors: []schema.Key{StageCallDispatch},
 			Edges: []schemaissuance.StageEdge{
-				{Source: schemaissuance.StageEdgeSourceBeforeStage, Stage: StageCallDispatch, Transport: writes, WriterStages: []schema.Key{StageCallEffect}, Framing: "analysis/program-artifact/call-base-summary-transfer"},
+				{Source: schemaissuance.StageEdgeSourceBeforeStage, Stage: StageCallDispatch, Transport: exceptWrites, WriterStages: []schema.Key{StageCallDispatch}, Framing: "analysis/program-artifact/call-base-summary-transfer"},
 				{Source: schemaissuance.StageEdgeSourceStage, Stage: StageCallDispatch, Transport: writes, WriterStages: []schema.Key{StageCallDispatch}, Framing: "analysis/program-artifact/call-dispatch-summary-transfer"},
 			},
-			Framing: "analysis/program-artifact/call-summary-stage", Native: true, ConsumesInput: true},
+			Framing: "analysis/program-artifact/call-summary-stage", Native: true, InputCount: 1},
 		{Key: StageCallEffect, Kind: schemaissuance.KindStage, Ordinal: 8,
 			Constructor: schemaissuance.StageConstructorFramed, Parameters: []schemaissuance.DataType{pointMany}, Base: 1, Identity: []uint16{1},
 			Order: 8, Predecessors: []schema.Key{StageCallSummary},
 			Edges: []schemaissuance.StageEdge{
-				{Source: schemaissuance.StageEdgeSourceBeforeStage, Stage: StageCallDispatch, Transport: exceptTarget, Framing: "analysis/program-artifact/call-base-effect-transfer"},
-				{Source: schemaissuance.StageEdgeSourceStage, Stage: StageCallDispatch, Transport: writes, WriterStages: []schema.Key{StageCallDispatch}, Framing: "analysis/program-artifact/call-dispatch-effect-transfer"},
-				{Source: schemaissuance.StageEdgeSourceStage, Stage: StageCallSummary, Transport: writes, WriterStages: []schema.Key{StageCallSummary, StageCallEffect}, Framing: "analysis/program-artifact/call-summary-effect-transfer"},
+				{Source: schemaissuance.StageEdgeSourceStage, Stage: StageCallSummary, Transport: exceptTarget, Framing: "analysis/program-artifact/call-summary-effect-transfer"},
 			},
-			Framing: "analysis/program-artifact/call-effect-stage", Native: true, ConsumesInput: true},
+			Framing: "analysis/program-artifact/call-effect-stage", Native: true, InputCount: 1},
 	}
 }
 

@@ -66,7 +66,8 @@ func TestSolvedRuntimeProgramCoversEveryGraphMember(t *testing.T) {
 		groupKeys := make(map[composition.Key]struct{}, group.MemberCount())
 		for _, row := range program.memberRows(span) {
 			member, memberOK := memberRowIdentity(group, row)
-			if !row.valid() || !memberOK || !graph.OwnsMember(member) || row.member.member().Key() != member.Key() {
+			geometry, geometryOK := row.geometry()
+			if !row.valid() || !geometryOK || !memberOK || !graph.OwnsMember(member) || geometry.member().Key() != member.Key() {
 				t.Fatalf("group %d row lost its canonical graph member", groupIndex)
 			}
 			groupKeys[member.Key()] = struct{}{}
@@ -107,7 +108,7 @@ func TestSealRuntimeProgramTakesOneValidityDecision(t *testing.T) {
 		t.Fatal("invalid runtime row published a program")
 	}
 	var nilRule *boundRuleMember[uint64, struct{}]
-	if (memberRow{member: nilRule}).valid() {
+	if (memberRow{legacy: nilRule}).valid() {
 		t.Fatal("typed-nil runtime member became valid")
 	}
 	fixture := newReceiptQueryMatrixFixture(t, 2, nil, nil)
@@ -129,7 +130,8 @@ func TestProgramRowsCarryOneCanonicalMember(t *testing.T) {
 		}
 		for _, row := range program.memberRows(span) {
 			member, ok := memberRowIdentity(group, row)
-			if !ok || !row.valid() || row.member.member().Key() != member.Key() {
+			geometry, geometryOK := row.geometry()
+			if !ok || !row.valid() || !geometryOK || geometry.member().Key() != member.Key() {
 				t.Fatal("runtime member row did not retain one canonical member")
 			}
 		}

@@ -565,6 +565,18 @@ func NewHeterogeneousObservationAdmission[R any](implementation *HeterogeneousQu
 	if implementation == nil {
 		return ProgramObservationAdmission{}, false
 	}
-	admission := ProgramObservationAdmission{admit: implementation, ID: id, Role: role, Mount: mount, Point: point, Occurrence: occurrence, Context: context}
+	admission := ProgramObservationAdmission{admit: implementation, memberPoint: point, ID: id, Role: role, Mount: mount, Point: point, Occurrence: occurrence, Context: context}
 	return admission, admission.Available()
+}
+
+// NewHeterogeneousCallInputObservationAdmission admits a heterogeneous query
+// over the authenticated input state of one committed Call stage. The stage's
+// output point authenticates its attached rule member; its input point selects
+// the state read by the query. Keeping those coordinates distinct prevents a
+// pre-effect consumer from fabricating a member at the predecessor point.
+func NewHeterogeneousCallInputObservationAdmission[R any](implementation *HeterogeneousQueryImplementation[R], id identity.ContentID, stage ProgramCallStage, context executioncontext.Context) (ProgramObservationAdmission, bool) {
+	if implementation == nil || !stage.Available() {
+		return ProgramObservationAdmission{}, false
+	}
+	return newCallInputObservationAdmission(implementation, id, stage, context)
 }

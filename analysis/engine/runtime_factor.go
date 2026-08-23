@@ -3,6 +3,7 @@
 package engine
 
 import (
+	"github.com/wippyai/go-lua/analysis/engine/execution"
 	"github.com/wippyai/go-lua/analysis/engine/internal/carrier"
 	"github.com/wippyai/go-lua/analysis/engine/internal/carrier/shape"
 	"github.com/wippyai/go-lua/analysis/engine/internal/composition"
@@ -10,6 +11,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/engine/internal/factbinding"
 	"github.com/wippyai/go-lua/analysis/engine/internal/facts/support"
 	"github.com/wippyai/go-lua/analysis/identity"
+	memberrelation "github.com/wippyai/go-lua/analysis/schema/axis/member/relation"
 )
 
 type boundUnit struct {
@@ -47,6 +49,11 @@ type boundFactor[K ~uint32 | ~uint64, V any] struct {
 	routeTransformOK bool
 	carryTargets     map[composition.Key][]carrier.Target
 	carryRouteScope  map[composition.Key]bool
+	// sourceColumns are copied from the generated relation owner while this
+	// Factor is bound to a Program.  They are sealed data, not an owner
+	// capability: no runtime row can reopen a domain schema or call an owner.
+	sourceColumns []memberrelation.SourceColumn[V]
+	sourcePresent []bool
 }
 
 type runtimeFactor interface {
@@ -61,6 +68,31 @@ type runtimeFactor interface {
 	routeUniverse() []carrier.Target
 	carryRouteScopeFor(equation.RuleMember) bool
 	releaseColdBindings()
+	// buildGeneratedFamilies compiles all generated rows owned by this typed
+	// factor into at most one E and one Z executor family. It is an epoch setup
+	// operation; execution reaches only the dense catalog address it returns.
+	buildGeneratedFamilies([]generatedFamilyEntry) ([]execution.Family, []generatedFamilyAddress, bool)
+}
+
+type generatedFamilyForm uint8
+
+const (
+	generatedFamilyExact generatedFamilyForm = iota + 1
+	generatedFamilySource
+)
+
+type generatedFamilyEntry struct {
+	memberIndex int
+	member      *generatedMember
+	form        generatedFamilyForm
+	input       uint16
+	relation    uint32
+}
+
+type generatedFamilyAddress struct {
+	memberIndex  int
+	familyOffset uint32
+	local        uint32
 }
 
 func (bound *boundFactor[K, V]) semantic() identity.SemanticKey {

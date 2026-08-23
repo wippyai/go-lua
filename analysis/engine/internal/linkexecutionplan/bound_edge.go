@@ -5,8 +5,20 @@ import (
 	"github.com/wippyai/go-lua/analysis/engine/internal/equation"
 	"github.com/wippyai/go-lua/analysis/identity"
 	"github.com/wippyai/go-lua/analysis/schema/executioncontext"
-	"github.com/wippyai/go-lua/analysis/schema/modulecomposition"
 )
+
+// BoundEdgeSpec is the complete scalar proof imported from an upstream
+// Program point-transition issuer.  The execution plan does not retain or
+// interpret module-composition rows.
+type BoundEdgeSpec struct {
+	TransitionID, GenerationID identity.ContentID
+	FromContextID, ToContextID identity.ContentID
+}
+
+func (spec BoundEdgeSpec) available() bool {
+	return spec.TransitionID.Available() && spec.GenerationID.Available() &&
+		spec.FromContextID.Available() && spec.ToContextID.Available()
+}
 
 // BoundEdge is the authenticated state projection of one module-call edge.
 //
@@ -24,8 +36,8 @@ type BoundEdge struct {
 	sourceContext, targetContext contextfiber.ContextOrdinal
 	from, to                     contextfiber.StateOrdinal
 
-	transition modulecomposition.ModuleCallTransition
-	generation modulecomposition.InitGeneration
+	transitionID, generationID identity.ContentID
+	fromContextID, toContextID identity.ContentID
 
 	available bool
 }
@@ -41,21 +53,16 @@ func NewBoundEdge(
 	layout contextfiber.Layout,
 	directory executioncontext.Directory,
 	source, target equation.Point,
-	transition modulecomposition.ModuleCallTransition,
-	generation modulecomposition.InitGeneration,
+	spec BoundEdgeSpec,
 ) (BoundEdge, bool) {
 	if graph == nil || !graph.OwnsPoint(source) || !graph.OwnsPoint(target) ||
 		!layout.Available() || !directory.Available() ||
 		layout.Graph() != graph ||
 		layout.PointCount() != graph.PointCount() ||
-		!transition.Available() || !generation.Available() {
+		!spec.available() {
 		return BoundEdge{}, false
 	}
-	if !contextLayoutDirectoryMatch(layout, directory) ||
-		transition.LinkID() != directory.LinkID() ||
-		generation.LinkID() != directory.LinkID() ||
-		transition.CacheIngressID() != generation.CacheIngressID() ||
-		transition.GenerationID() != generation.ID() {
+	if !contextLayoutDirectoryMatch(layout, directory) {
 		return BoundEdge{}, false
 	}
 
@@ -69,28 +76,24 @@ func NewBoundEdge(
 	sourceOwner, sourceOwnerOK := layout.PointOwnerAt(sourceOrdinal)
 	targetOwner, targetOwnerOK := layout.PointOwnerAt(targetOrdinal)
 	if !sourceOwnerOK || !targetOwnerOK || !sourceOwner.Mounted() || !targetOwner.Mounted() ||
-		sourceOwner.ModuleKey() != transition.SourceModuleKey() ||
-		targetOwner.ModuleKey() != generation.ModuleKey() {
+		!sourceOwner.ModuleKey().Available() || !targetOwner.ModuleKey().Available() {
 		return BoundEdge{}, false
 	}
 
-	canonicalTransition, transitionOK := directory.Transition(transition.FromContextID(), transition.ToContextID())
-	if !transitionOK || canonicalTransition.ID() != transition.TransitionID() ||
-		canonicalTransition.LinkID() != transition.LinkID() ||
-		canonicalTransition.FromContextID() != transition.FromContextID() ||
-		canonicalTransition.ToContextID() != transition.ToContextID() {
+	canonicalTransition, transitionOK := directory.ActivationEdge(spec.FromContextID, spec.ToContextID)
+	if !transitionOK || canonicalTransition.ID() != spec.TransitionID ||
+		canonicalTransition.FromContextID() != spec.FromContextID || canonicalTransition.ToContextID() != spec.ToContextID {
 		return BoundEdge{}, false
 	}
-	sourceContext, sourceContextOK := contextOrdinal(layout, transition.FromContextID())
-	targetContext, targetContextOK := contextOrdinal(layout, transition.ToContextID())
+	sourceContext, sourceContextOK := contextOrdinal(layout, spec.FromContextID)
+	targetContext, targetContextOK := contextOrdinal(layout, spec.ToContextID)
 	if !sourceContextOK || !targetContextOK {
 		return BoundEdge{}, false
 	}
 	sourceContextModule, sourceContextModuleOK := layout.ContextModuleKey(sourceContext)
 	targetContextModule, targetContextModuleOK := layout.ContextModuleKey(targetContext)
 	if !sourceContextModuleOK || !targetContextModuleOK ||
-		sourceContextModule != sourceOwner.ModuleKey() ||
-		targetContextModule != targetOwner.ModuleKey() {
+		sourceContextModule != sourceOwner.ModuleKey() || targetContextModule != targetOwner.ModuleKey() {
 		return BoundEdge{}, false
 	}
 
@@ -105,8 +108,9 @@ func NewBoundEdge(
 		sourceOrdinal: sourceOrdinal, targetOrdinal: targetOrdinal,
 		sourceContext: sourceContext, targetContext: targetContext,
 		from: from, to: to,
-		transition: transition, generation: generation,
-		available:  true,
+		transitionID: spec.TransitionID, generationID: spec.GenerationID,
+		fromContextID: spec.FromContextID, toContextID: spec.ToContextID,
+		available: true,
 	}
 	return edge, true
 }
@@ -166,20 +170,18 @@ func (edge BoundEdge) TargetContext() (contextfiber.ContextOrdinal, bool) {
 	return edge.targetContext, true
 }
 
-// Transition returns the canonical module-call transition witness.
-func (edge BoundEdge) Transition() modulecomposition.ModuleCallTransition {
+func (edge BoundEdge) TransitionID() identity.ContentID {
 	if !edge.Available() {
-		return modulecomposition.ModuleCallTransition{}
+		return identity.ContentID{}
 	}
-	return edge.transition
+	return edge.transitionID
 }
 
-// Generation returns the matching target initialization-generation witness.
-func (edge BoundEdge) Generation() modulecomposition.InitGeneration {
+func (edge BoundEdge) GenerationID() identity.ContentID {
 	if !edge.Available() {
-		return modulecomposition.InitGeneration{}
+		return identity.ContentID{}
 	}
-	return edge.generation
+	return edge.generationID
 }
 
 func (edge BoundEdge) pointPair() pointPair {
@@ -192,7 +194,7 @@ func (edge BoundEdge) stateEdge() StateEdge {
 		sourcePoint: edge.sourceOrdinal, targetPoint: edge.targetOrdinal,
 		sourceContext: edge.sourceContext, targetContext: edge.targetContext,
 		sourceContextOK: true, targetContextOK: true,
-		transitionID: edge.transition.ID(), generationID: edge.generation.ID(),
+		transitionID: edge.transitionID, generationID: edge.generationID,
 	}
 }
 
@@ -204,11 +206,8 @@ func (edge BoundEdge) boundEdgeBelongsTo(graph *equation.Graph, layout contextfi
 		edge.layout.PointCount() != layout.PointCount() || edge.layout.StateCount() != layout.StateCount() {
 		return false
 	}
-	canonical, ok := directory.Transition(edge.transition.FromContextID(), edge.transition.ToContextID())
-	return ok && canonical.ID() == edge.transition.TransitionID() &&
-		canonical.LinkID() == edge.transition.LinkID() &&
-		canonical.FromContextID() == edge.transition.FromContextID() &&
-		canonical.ToContextID() == edge.transition.ToContextID()
+	canonical, ok := directory.ActivationEdge(edge.fromContextID, edge.toContextID)
+	return ok && canonical.ID() == edge.transitionID && canonical.FromContextID() == edge.fromContextID && canonical.ToContextID() == edge.toContextID
 }
 
 func contextOrdinal(layout contextfiber.Layout, id identity.ContentID) (contextfiber.ContextOrdinal, bool) {

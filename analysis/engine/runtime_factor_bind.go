@@ -10,6 +10,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/engine/internal/composition"
 	"github.com/wippyai/go-lua/analysis/engine/internal/equation"
 	"github.com/wippyai/go-lua/analysis/engine/internal/factbinding"
+	memberrelation "github.com/wippyai/go-lua/analysis/schema/axis/member/relation"
 )
 
 // summaryUnitKey is the carrier Unit identity of one declared summary read.
@@ -83,6 +84,30 @@ func bindFactorFromGraph[K ~uint32 | ~uint64, V any](implementation *FactorImple
 		writes:          make(map[equation.Surface]boundTarget, len(catalog.strongWrites)+len(catalog.weakWrites)),
 		carryTargets:    make(map[composition.Key][]carrier.Target, len(catalog.carryTargets)),
 		carryRouteScope: make(map[composition.Key]bool, len(catalog.carryTargets)),
+	}
+	// Source columns are copied exactly once from the cold relation owner into
+	// this Program-bound factor.  The solve runtime keeps only immutable values
+	// and cannot retain, reopen, or invoke the owner capability.
+	if owner := row.schemaFactorRelationOwner(); owner != nil {
+		if columns, columnsOK := owner.(memberrelation.SourceColumns[V]); columnsOK {
+			count := columns.RelationCount()
+			if count < 0 {
+				return nil, false
+			}
+			bound.sourceColumns = make([]memberrelation.SourceColumn[V], count)
+			bound.sourcePresent = make([]bool, count)
+			for index := 0; index < count; index++ {
+				column, present := columns.SourceFactColumn(uint32(index))
+				if !present {
+					continue
+				}
+				if !column.Valid() {
+					return nil, false
+				}
+				bound.sourceColumns[index] = column.Clone()
+				bound.sourcePresent[index] = true
+			}
+		}
 	}
 	binding, ok := factbinding.Bind(implementation.algebra, runtime.guards, func(binding *factbinding.Binding[K, V]) bool {
 		if catalog.dynamicRead {
@@ -401,7 +426,18 @@ func collectFactorGraphCatalog[K ~uint32 | ~uint64, V any](implementation *Facto
 	}
 	for _, use := range uses.reads {
 		row := use.row
-		if use.index < 0 || row == nil || state == nil || !row.sealed() || row.ownerState() != state || row.ownerOrdinal >= uint64(len(state.rules)) || row.readOrdinal != uint64(use.index) || row.factor != key {
+		if use.index < 0 || state == nil {
+			return factorGraphCatalog[K]{}, false
+		}
+		if use.sealedExact {
+			// Exact surface geometry was sealed against this graph before the
+			// catalog walk; no legacy per-read cell may be present or synthesized.
+			if row != nil || use.surface.Form != equation.SurfaceReadExact || !collectRead(use.surface) {
+				return factorGraphCatalog[K]{}, false
+			}
+			continue
+		}
+		if row == nil || !row.sealed() || row.ownerState() != state || row.ownerOrdinal >= uint64(len(state.rules)) || row.readOrdinal != uint64(use.index) || row.factor != key {
 			return factorGraphCatalog[K]{}, false
 		}
 		if use.surface.Form == equation.SurfaceReadSelect {

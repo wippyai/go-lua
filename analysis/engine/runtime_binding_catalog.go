@@ -25,6 +25,10 @@ type graphReadUse struct {
 	row     *schemaRuleReadRow
 	index   int
 	surface equation.Surface
+	// sealedExact marks a structurally sealed exact read. Its complete contract
+	// is the graph surface itself, so no legacy schemaRuleReadRow exists or is
+	// synthesized. The graph compiler depends on read shape, not Rule lineage.
+	sealedExact bool
 }
 
 type graphWriteUse struct {
@@ -150,11 +154,11 @@ func activationGraphCellReady(state *schemaBindingState, cell *schemaActivationR
 	return true
 }
 
-func buildSealedGraphRuleMaps(state *schemaBindingState) (map[composition.Key]sealedOrdinaryRuleGeometry, map[composition.Key]*schemaActivationRuleBindingCell, bool) {
+func buildSealedGraphRuleMaps(state *schemaBindingState) (map[composition.Key]sealedRuleGeometry, map[composition.Key]*schemaActivationRuleBindingCell, bool) {
 	if state == nil || state.schema == nil || !state.schema.Available() || state.phase != schemaBindingSealed || state.authority == nil {
 		return nil, nil, false
 	}
-	ordinary := make(map[composition.Key]sealedOrdinaryRuleGeometry)
+	ordinary := make(map[composition.Key]sealedRuleGeometry)
 	activations := make(map[composition.Key]*schemaActivationRuleBindingCell)
 	for ordinal, raw := range state.rules {
 		cell, cellOK := raw.(schemaRuleBindingCell)
@@ -165,7 +169,7 @@ func buildSealedGraphRuleMaps(state *schemaBindingState) (map[composition.Key]se
 		if !key.Available() {
 			return nil, nil, false
 		}
-		if direct, directOK := raw.(sealedOrdinaryRuleGeometry); directOK {
+		if direct, directOK := raw.(sealedRuleGeometry); directOK {
 			if !direct.sealedRuleComplete() || direct.directRuleSemantic() != key || !direct.directRuleOperandFamily().Available() || !direct.directRuleOutputFactor().Available() {
 				return nil, nil, false
 			}
@@ -187,7 +191,7 @@ func buildSealedGraphRuleMaps(state *schemaBindingState) (map[composition.Key]se
 	return ordinary, activations, true
 }
 
-func validOrdinaryGraphMember(rule sealedOrdinaryRuleGeometry, member equation.RuleMember) bool {
+func validOrdinaryGraphMember(rule sealedRuleGeometry, member equation.RuleMember) bool {
 	if rule == nil || !member.Rule().Available() {
 		return false
 	}
@@ -219,7 +223,7 @@ func validOrdinaryGraphMember(rule sealedOrdinaryRuleGeometry, member equation.R
 // DAG is evaluated from predecessor-free components. This is the exact least
 // closure of declared direct writes and Carry predecessors: no depth limit,
 // cardinality cap, or runtime topology traversal is involved.
-func buildGraphCarryClosures(state *schemaBindingState, graph *equation.Graph, rules map[composition.Key]sealedOrdinaryRuleGeometry, activations map[composition.Key]*schemaActivationRuleBindingCell) (map[graphCarryClosureKey]graphCarryClosure, bool) {
+func buildGraphCarryClosures(state *schemaBindingState, graph *equation.Graph, rules map[composition.Key]sealedRuleGeometry, activations map[composition.Key]*schemaActivationRuleBindingCell) (map[graphCarryClosureKey]graphCarryClosure, bool) {
 	if state == nil || state.schema == nil || !state.schema.Available() || graph == nil || len(rules)+len(activations) == 0 {
 		return nil, false
 	}
@@ -619,10 +623,15 @@ func buildGraphBindingCatalog(state *schemaBindingState, graph *equation.Graph) 
 					return nil, false
 				}
 				row := owner.schemaRuleReadAt(uint64(readIndex))
-				if row == nil || !row.sealed() || row.owner != owner || row.ownerOrdinal != owner.schemaRuleOrdinal() || row.readOrdinal != uint64(readIndex) || !row.factor.Available() || row.factor != surface.Factor {
+				sealedExact := row == nil
+				if sealedExact {
+					if surface.Form != equation.SurfaceReadExact || surface.Mode != equation.TargetModeNone || surface.Semantic.Available() || surface.Normalizer.Available() || surface.Local == 0 {
+						return nil, false
+					}
+				} else if row == nil || !row.sealed() || row.owner != owner || row.ownerOrdinal != owner.schemaRuleOrdinal() || row.readOrdinal != uint64(readIndex) || !row.factor.Available() || row.factor != surface.Factor {
 					return nil, false
 				}
-				use := graphReadUse{row: row, index: readIndex, surface: surface}
+				use := graphReadUse{row: row, index: readIndex, surface: surface, sealedExact: sealedExact}
 				if !appendGraphRead(catalog, surface, use) {
 					return nil, false
 				}

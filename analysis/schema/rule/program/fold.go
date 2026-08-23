@@ -1,0 +1,164 @@
+package program
+
+import (
+	"github.com/wippyai/go-lua/analysis/schema"
+	"github.com/wippyai/go-lua/analysis/schema/axis"
+	"github.com/wippyai/go-lua/analysis/schema/axis/member"
+)
+
+// OutputMode is the closed publication mode vocabulary. The destination is
+// always an owner-issued projection, including exact writes.
+type OutputMode uint8
+
+const (
+	ModeInvalid OutputMode = iota
+	ModeExact
+	ModeRoute
+	ModeStructural
+)
+
+func (mode OutputMode) Available() bool { return mode >= ModeExact && mode <= ModeStructural }
+
+// OutputDecl maps one reducer slot to a declared output column and destination
+// projection. A routed output must name the JoinDecl that produces its route;
+// the zero JoinRef is valid, so RouteJoinPresent is explicit. ValueSlot is
+// bounded by the exact output arity (len(Outputs)) during sealing.
+type OutputDecl struct {
+	Column           axis.OutputRef
+	Destination      member.ProjectionRef
+	Mode             OutputMode
+	ValueSlot        uint16
+	RouteJoin        JoinRef
+	RouteJoinPresent bool
+}
+
+func (output OutputDecl) Available() bool {
+	return output.Column.Available() && output.Destination.Available() && output.Mode.Available()
+}
+
+// CarryMode is the closed disposition of an optional whole-output carry.
+// Identity carries the output fact as-is; Transform applies one owner-issued
+// candidate-indexed transform. The transform reference is meaningful only in
+// the latter mode.
+type CarryMode uint8
+
+const (
+	CarryModeInvalid CarryMode = iota
+	CarryIdentity
+	CarryTransform
+)
+
+func (mode CarryMode) Available() bool {
+	return mode == CarryIdentity || mode == CarryTransform
+}
+
+// CarryDecl is the optional rule-level carry declaration. Its input port is
+// part of the same contiguous input prefix as ReadDecl.Input values.
+type CarryDecl struct {
+	Input     InputRef
+	Mode      CarryMode
+	Transform member.CarryTransformRef
+}
+
+func (carry CarryDecl) Available() bool {
+	if !carry.Mode.Available() {
+		return false
+	}
+	switch carry.Mode {
+	case CarryIdentity:
+		return !carry.Transform.Declared()
+	case CarryTransform:
+		return carry.Transform.Available()
+	default:
+		return false
+	}
+}
+
+func (carry CarryDecl) References() schema.EntryReferences {
+	if carry.Transform.Declared() {
+		return schema.EntryReferences{carry.Transform.EntryReference()}
+	}
+	return nil
+}
+
+// FoldDecl is the sole family semantic declaration. Reducer is data naming an
+// owner-issued reducer; execution functions and AxisRuntime bindings do not
+// cross this package boundary.
+type FoldDecl struct {
+	Reducer member.ReducerRef
+	Inputs  []JoinRef
+	Outputs []OutputDecl
+}
+
+type foldProblem uint8
+
+const (
+	foldProblemNone foldProblem = iota
+	foldProblemReducer
+	foldProblemInputs
+	foldProblemOutputs
+)
+
+func (fold FoldDecl) check(joinCount int) foldProblem {
+	if !fold.Reducer.Available() {
+		return foldProblemReducer
+	}
+	if joinCount == 0 {
+		if len(fold.Inputs) != 0 {
+			return foldProblemInputs
+		}
+	} else if len(fold.Inputs) == 0 {
+		return foldProblemInputs
+	}
+	seenInputs := make(map[JoinRef]struct{}, len(fold.Inputs))
+	for _, input := range fold.Inputs {
+		if uint64(input) >= uint64(joinCount) {
+			return foldProblemInputs
+		}
+		if _, duplicate := seenInputs[input]; duplicate {
+			return foldProblemInputs
+		}
+		seenInputs[input] = struct{}{}
+	}
+	if len(fold.Outputs) == 0 {
+		return foldProblemOutputs
+	}
+	seenColumns := make(map[axis.OutputRef]struct{}, len(fold.Outputs))
+	seenSlots := make(map[uint16]struct{}, len(fold.Outputs))
+	for _, output := range fold.Outputs {
+		if !output.Available() || int(output.ValueSlot) >= len(fold.Outputs) {
+			return foldProblemOutputs
+		}
+		if _, duplicate := seenColumns[output.Column]; duplicate {
+			return foldProblemOutputs
+		}
+		seenColumns[output.Column] = struct{}{}
+		if _, duplicate := seenSlots[output.ValueSlot]; duplicate {
+			return foldProblemOutputs
+		}
+		seenSlots[output.ValueSlot] = struct{}{}
+	}
+	return foldProblemNone
+}
+
+func (fold FoldDecl) References() schema.EntryReferences {
+	var references schema.EntryReferences
+	if fold.Reducer.Declared() {
+		references = append(references, fold.Reducer.EntryReference())
+	}
+	for _, output := range fold.Outputs {
+		if output.Column.Declared() {
+			references = append(references, output.Column.AxisReference())
+		}
+		if output.Destination.Declared() {
+			references = append(references, output.Destination.EntryReference())
+		}
+	}
+	return references
+}
+
+func cloneFold(fold FoldDecl) FoldDecl {
+	fold.Inputs = append([]JoinRef(nil), fold.Inputs...)
+	fold.Outputs = append([]OutputDecl(nil), fold.Outputs...)
+	return fold
+}

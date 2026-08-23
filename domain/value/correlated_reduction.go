@@ -1,6 +1,29 @@
 package value
 
-import "github.com/wippyai/go-lua/domain/runtimekind"
+import (
+	"github.com/wippyai/go-lua/analysis/schema/structure"
+	"github.com/wippyai/go-lua/domain/runtimekind"
+)
+
+// IdentityValue is Value's direct identity reducer. Value is already an
+// immutable, owner-issued lattice fact, so the reducer carries the exact
+// input without allocating, widening, or introducing a second ownership
+// boundary. The owner fence (when needed) remains the Value/Schema algebra's
+// responsibility rather than a reducer callback, so carrying an authenticated
+// fact through is always a concrete conclusion.
+func IdentityValue(input Value) (Value, structure.ReductionOutcome) {
+	return input, structure.Concrete
+}
+
+// SourceFact is Value's zero-input source reducer. It rederives the immutable
+// source fact from one owner-issued SourceSeed.
+func SourceFact(seed SourceSeed) (Value, structure.ReductionOutcome) {
+	coordinate, fact, ok := seed.Result()
+	if !ok || seed.schema == nil || !seed.schema.AdmitsCoordinate(coordinate, fact) || seed.schema.Equal(fact, seed.schema.Default()) {
+		return Value{}, structure.Refuse
+	}
+	return fact, structure.Concrete
+}
 
 // ForRuntimeKinds returns the sealed over-approximation of every Value atom
 // that may have one of kinds. It is a precomputed immutable relation with all

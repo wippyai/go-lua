@@ -148,6 +148,54 @@ func (schema *Schema) SourceSeedForMountedOccurrence(module, occurrence identity
 	return seed, mountOK && rowOK && seedOK
 }
 
+// SourceSeedCount is the dense, mount-major census of owner-issued source seeds.
+func (schema *Schema) SourceSeedCount() int {
+	if schema == nil {
+		return 0
+	}
+	count := 0
+	for index := range schema.sourceSeedMounts {
+		count += len(schema.sourceSeedMounts[index].occurrences)
+	}
+	return count
+}
+
+// SourceSeedAt returns one dense source seed. Order is sealed mount order,
+// then occurrence order inside each mount.
+func (schema *Schema) SourceSeedAt(index int) (SourceSeed, bool) {
+	if schema == nil || index < 0 {
+		return SourceSeed{}, false
+	}
+	remaining := index
+	for mountIndex := range schema.sourceSeedMounts {
+		rows := schema.sourceSeedMounts[mountIndex].occurrences
+		if remaining < len(rows) {
+			seed := rows[remaining].seed
+			return seed, seed.valid()
+		}
+		remaining -= len(rows)
+	}
+	return SourceSeed{}, false
+}
+
+// SourceSeedOrdinal is the exact inverse of SourceSeedAt over this Schema.
+func (schema *Schema) SourceSeedOrdinal(seed SourceSeed) (uint32, bool) {
+	if schema == nil || !seed.valid() || seed.schema != schema {
+		return 0, false
+	}
+	ordinal := 0
+	for mountIndex := range schema.sourceSeedMounts {
+		rows := schema.sourceSeedMounts[mountIndex].occurrences
+		for index, row := range rows {
+			if row.seed.valueID == seed.valueID && row.occurrence == seed.occurrence && row.seed.module == seed.module {
+				return uint32(ordinal + index), true
+			}
+		}
+		ordinal += len(rows)
+	}
+	return 0, false
+}
+
 // sealSourceSeedOccurrences resolves Program-owned ValueSource occurrence
 // identities exactly once while Value seals its source census. The retained
 // directory deliberately contains neither Program/Flow handles nor raw Terms.

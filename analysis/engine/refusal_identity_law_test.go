@@ -11,6 +11,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/identity"
 	"github.com/wippyai/go-lua/analysis/schema/executioncontext"
 	programissuance "github.com/wippyai/go-lua/analysis/schema/program/issuance"
+	queryschema "github.com/wippyai/go-lua/analysis/schema/query"
 )
 
 func issuanceRefusalID(value int) identity.ContentID {
@@ -57,7 +58,7 @@ func newIssuanceRefusalFixture(t testing.TB) issuanceRefusalFixture {
 		Semantic: coldKey(982_000), OperandFamily: unitOperandFamily, Inputs: 0, Output: factor.Ref(),
 	})
 	writeSlot, writeSlotOK := SchemaWrite(rule, writeForm)
-	query, queryOK := DeclareQuerySlot[uint64](builder, SchemaQuerySpec{Semantic: coldKey(983_000), Freezer: coldKey(953_100)})
+	query, queryOK := DeclareQuerySlot[uint64](builder, SchemaQuerySpec{Semantic: coldKey(983_000), Freezer: coldKey(953_100), Population: queryschema.PopulationKindSelectedPoint})
 	if queryOK {
 		queryOK = SchemaQueryRead(query, readForm)
 	}
@@ -102,7 +103,7 @@ func newIssuanceRefusalFixture(t testing.TB) issuanceRefusalFixture {
 	body, bodyOK := spec.AddBody(rows.ArtifactScalarBody{ID: issuanceRefusalID(8)})
 	bodyOK = bodyOK && spec.AddBodyEntry(body, initial) && spec.AddBodyExit(body, output)
 	occurrence := issuanceRefusalID(9)
-	ruleRowOK := spec.AddRule(rows.ArtifactScalarRule{Role: role, Stage: programissuance.StageCallDispatch, Point: output, Input: initial, ID: occurrence, Native: true})
+	ruleRowOK := spec.AddRule(rows.ArtifactScalarRule{Role: role, Stage: programissuance.StageCallDispatch, Point: output, Inputs: [6]identity.ContentID{initial}, InputCount: 1, ID: occurrence, Native: true})
 	installArtifactStageTable(t, spec)
 	template, templateOK := rows.NewArtifactScalarTemplate(spec)
 	bootstrap, bootstrapOK := NewProgramBootstrap(issuanceRefusalID(10), issuanceRefusalID(11))

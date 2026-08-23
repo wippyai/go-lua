@@ -114,6 +114,12 @@ var nativeNumericOverflows = [...]nativePublicationMember{
 	{"native/overflow/ieee754", "ieee754"},
 }
 
+var nativeSendSafetyVerdicts = [...]nativePublicationMember{
+	{"native/send-safety/immutable", "immutable"},
+	{"native/send-safety/isolated", "isolated"},
+	{"native/send-safety/copy-required", "copy_required"},
+}
+
 // NativePublicationSpecs returns the canonical structural declarations of the
 // native publication vocabularies. The returned slice is detached so callers
 // cannot mutate the inventory owned by this package.
@@ -131,6 +137,7 @@ func NativePublicationSpecs() []Spec {
 		{CategoryNativeBranchPartition, nativeBranchPartitions[:]},
 		{CategoryNativeBranchArm, nativeBranchArms[:]},
 		{CategoryNativeNumericOverflow, nativeNumericOverflows[:]},
+		{CategoryNativeSendSafety, nativeSendSafetyVerdicts[:]},
 	}
 	specs := make([]Spec, 0, 32)
 	for _, declaration := range declarations {

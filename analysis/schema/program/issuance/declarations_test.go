@@ -4,6 +4,8 @@ import (
 	"reflect"
 	"testing"
 
+	seal "github.com/wippyai/go-lua/analysis/schema/seal"
+
 	"github.com/wippyai/go-lua/analysis/schema"
 	schemaissuance "github.com/wippyai/go-lua/analysis/schema/issuance"
 )
@@ -12,7 +14,7 @@ type emptySurface struct{ kind schema.SurfaceKind }
 
 func (surface emptySurface) Kind() schema.SurfaceKind { return surface.kind }
 func (emptySurface) Entries() []schema.Entry          { return nil }
-func (emptySurface) Seal(schema.View, schema.Sealed) schema.SealFailure {
+func (emptySurface) Seal(seal.View, seal.Sealed) schema.SealFailure {
 	return schema.SealFailure{}
 }
 
@@ -27,23 +29,21 @@ func TestProgramCallStagesOwnTheirExactPredecessorAndTransportGraph(t *testing.T
 		return entry
 	}
 	dispatch, summary, effect := stage(StageCallDispatch), stage(StageCallSummary), stage(StageCallEffect)
-	if dispatch.BaseParameter() != 1 || !dispatch.Native() || !dispatch.ConsumesInput() || !reflect.DeepEqual(dispatch.Predecessors(), []schema.Key{StageBase}) {
+	if dispatch.BaseParameter() != 1 || !dispatch.Native() || dispatch.InputCount() != 1 || !reflect.DeepEqual(dispatch.Predecessors(), []schema.Key{StageBase}) {
 		t.Fatal("call dispatch lost its explicit Base predecessor")
 	}
-	if summary.BaseParameter() != 1 || !summary.Native() || !summary.ConsumesInput() || !reflect.DeepEqual(summary.Predecessors(), []schema.Key{StageCallDispatch}) {
+	if summary.BaseParameter() != 1 || !summary.Native() || summary.InputCount() != 1 || !reflect.DeepEqual(summary.Predecessors(), []schema.Key{StageCallDispatch}) {
 		t.Fatal("call summary lost its explicit Dispatch predecessor")
 	}
-	if effect.BaseParameter() != 1 || !effect.Native() || !effect.ConsumesInput() || !reflect.DeepEqual(effect.Predecessors(), []schema.Key{StageCallSummary}) {
+	if effect.BaseParameter() != 1 || !effect.Native() || effect.InputCount() != 1 || !reflect.DeepEqual(effect.Predecessors(), []schema.Key{StageCallSummary}) {
 		t.Fatal("call effect lost its explicit Summary predecessor")
 	}
 	wantSummary := []schemaissuance.StageEdge{
-		{Source: schemaissuance.StageEdgeSourceBeforeStage, Stage: StageCallDispatch, Transport: schemaissuance.StageTransportWritesOfStages, WriterStages: []schema.Key{StageCallEffect}, Framing: "analysis/program-artifact/call-base-summary-transfer"},
+		{Source: schemaissuance.StageEdgeSourceBeforeStage, Stage: StageCallDispatch, Transport: schemaissuance.StageTransportAllExceptWritesOfStages, WriterStages: []schema.Key{StageCallDispatch}, Framing: "analysis/program-artifact/call-base-summary-transfer"},
 		{Source: schemaissuance.StageEdgeSourceStage, Stage: StageCallDispatch, Transport: schemaissuance.StageTransportWritesOfStages, WriterStages: []schema.Key{StageCallDispatch}, Framing: "analysis/program-artifact/call-dispatch-summary-transfer"},
 	}
 	wantEffect := []schemaissuance.StageEdge{
-		{Source: schemaissuance.StageEdgeSourceBeforeStage, Stage: StageCallDispatch, Transport: schemaissuance.StageTransportAllExceptTargetWrites, Framing: "analysis/program-artifact/call-base-effect-transfer"},
-		{Source: schemaissuance.StageEdgeSourceStage, Stage: StageCallDispatch, Transport: schemaissuance.StageTransportWritesOfStages, WriterStages: []schema.Key{StageCallDispatch}, Framing: "analysis/program-artifact/call-dispatch-effect-transfer"},
-		{Source: schemaissuance.StageEdgeSourceStage, Stage: StageCallSummary, Transport: schemaissuance.StageTransportWritesOfStages, WriterStages: []schema.Key{StageCallSummary, StageCallEffect}, Framing: "analysis/program-artifact/call-summary-effect-transfer"},
+		{Source: schemaissuance.StageEdgeSourceStage, Stage: StageCallSummary, Transport: schemaissuance.StageTransportAllExceptTargetWrites, Framing: "analysis/program-artifact/call-summary-effect-transfer"},
 	}
 	if !reflect.DeepEqual(summary.Edges(), wantSummary) || !reflect.DeepEqual(effect.Edges(), wantEffect) {
 		t.Fatal("call stage transport graph drifted from its sealed declaration")
@@ -66,7 +66,7 @@ func programIssuanceTable(t testing.TB) schemaissuance.Table {
 	if !entriesOK {
 		t.Fatal("Program issuance vocabulary refused construction")
 	}
-	builder := schema.NewBuilder()
+	builder := seal.NewBuilder()
 	builder.Register(emptySurface{schema.SurfaceKindStructure})
 	builder.Register(emptySurface{schema.SurfaceKindAxis})
 	builder.Register(schemaissuance.NewSurface(entries))

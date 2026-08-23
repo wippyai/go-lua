@@ -156,6 +156,18 @@ func (schema *Schema) StorageTransferAt(index int) (StorageTransfer, bool) {
 	return transfer, transfer.valid()
 }
 
+// StorageTransferOrdinal returns the exact zero-based dense ordinal issued by
+// this Schema for one StorageTransfer. The Schema pointer is part of the
+// owner-directory fence: an equal-content transfer from another Link is never
+// normalized into this directory. StorageTransferAt is its total inverse over
+// the published transfer rows.
+func (schema *Schema) StorageTransferOrdinal(transfer StorageTransfer) (uint32, bool) {
+	if schema == nil || transfer.schema != schema || !transfer.valid() {
+		return 0, false
+	}
+	return transfer.index, true
+}
+
 // StorageTransferForArtifactOccurrence resolves the exact Link-owned
 // transfer operand for one mounted reusable Program occurrence. The mapping
 // is sealed with the Value schema; hot callers never reopen Program or Link

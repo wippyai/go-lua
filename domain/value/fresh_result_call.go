@@ -112,6 +112,17 @@ func (row FreshResultCall) Coordinate() (Coordinate, bool) {
 	return row.coordinate, true
 }
 
+// Age applies the Value-owned carry transition for this exact fresh-result
+// candidate.  The candidate already carries Heap's issued key, so the
+// transform is a direct owner method: callers provide the candidate and the
+// prior Value fact, and no callback or key reconstruction is needed.
+func (row FreshResultCall) Age(prior Value) (Value, bool) {
+	if !row.valid() {
+		return Value{}, false
+	}
+	return row.schema.Age(prior, row.key)
+}
+
 type freshResultCallOrigin struct {
 	application linkproject.Application
 	module      identity.ContentID

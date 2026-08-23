@@ -17,11 +17,17 @@ func ModuleCallTransitionDenominatorID(linkID identity.ContentID) (identity.Cont
 func ModuleExportCallableOriginDenominatorID(linkID identity.ContentID) (identity.ContentID, bool) {
 	return denominatorID("module-export-callable-origins", linkID)
 }
+func ModuleExportCallableIngressDenominatorID(linkID identity.ContentID) (identity.ContentID, bool) {
+	return denominatorID("module-export-callable-ingresses", linkID)
+}
 func GenerationDenominatorID(linkID identity.ContentID) (identity.ContentID, bool) {
 	return denominatorID("init-generations", linkID)
 }
 func OutcomeDenominatorID(linkID identity.ContentID) (identity.ContentID, bool) {
 	return denominatorID("init-outcomes", linkID)
+}
+func ModuleReturnStateEdgeDenominatorID(linkID identity.ContentID) (identity.ContentID, bool) {
+	return denominatorID("module-return-state-edges", linkID)
 }
 func TerminalDenominatorID(linkID identity.ContentID) (identity.ContentID, bool) {
 	return denominatorID("init-terminals", linkID)
@@ -48,6 +54,9 @@ func GenerationContent(rows []InitGeneration, denominator identity.ContentID) (s
 }
 func OutcomeContent(rows []InitOutcome, denominator identity.ContentID) (snapshot.Content[identity.ContentID, InitOutcome], bool) {
 	return content(rows, denominator, func(row InitOutcome) identity.ContentID { return row.ID() }, func(row InitOutcome) bool { return row.Available() })
+}
+func ModuleReturnStateEdgeContent(rows []ModuleReturnStateEdge, denominator identity.ContentID) (snapshot.Content[identity.ContentID, ModuleReturnStateEdge], bool) {
+	return content(rows, denominator, func(row ModuleReturnStateEdge) identity.ContentID { return row.ID() }, func(row ModuleReturnStateEdge) bool { return row.Available() })
 }
 func TerminalContent(rows []InitTerminal, denominator identity.ContentID) (snapshot.Content[identity.ContentID, InitTerminal], bool) {
 	return content(rows, denominator, func(row InitTerminal) identity.ContentID { return row.ID() }, func(row InitTerminal) bool { return row.Available() })
@@ -79,6 +88,9 @@ func ModuleExportCallableOriginContent(rows []ModuleExportCallableOrigin, denomi
 	}
 	identity.SortContentIDs(members)
 	return snapshot.Content[identity.ContentID, ModuleExportCallableOrigin]{Rows: byID, Denominator: denominator, Members: members}, true
+}
+func ModuleExportCallableIngressContent(rows []ModuleExportCallableIngress, denominator identity.ContentID) (snapshot.Content[identity.ContentID, ModuleExportCallableIngress], bool) {
+	return content(rows, denominator, func(row ModuleExportCallableIngress) identity.ContentID { return row.ID() }, func(row ModuleExportCallableIngress) bool { return row.Available() })
 }
 
 func content[V any](rows []V, denominator identity.ContentID, key func(V) identity.ContentID, available func(V) bool) (snapshot.Content[identity.ContentID, V], bool) {
@@ -117,11 +129,17 @@ func GenerationAxis(runtimeSchema identity.ContentID, slot uint32) snapshot.Axis
 func OutcomeAxis(runtimeSchema identity.ContentID, slot uint32) snapshot.Axis[identity.ContentID, InitOutcome] {
 	return snapshot.Axis[identity.ContentID, InitOutcome]{SchemaID: runtimeSchema, Slot: slot}
 }
+func ModuleReturnStateEdgeAxis(runtimeSchema identity.ContentID, slot uint32) snapshot.Axis[identity.ContentID, ModuleReturnStateEdge] {
+	return snapshot.Axis[identity.ContentID, ModuleReturnStateEdge]{SchemaID: runtimeSchema, Slot: slot}
+}
 func TerminalAxis(runtimeSchema identity.ContentID, slot uint32) snapshot.Axis[identity.ContentID, InitTerminal] {
 	return snapshot.Axis[identity.ContentID, InitTerminal]{SchemaID: runtimeSchema, Slot: slot}
 }
 func ModuleExportCallableOriginAxis(runtimeSchema identity.ContentID, slot uint32) snapshot.Axis[identity.ContentID, ModuleExportCallableOrigin] {
 	return snapshot.Axis[identity.ContentID, ModuleExportCallableOrigin]{SchemaID: runtimeSchema, Slot: slot}
+}
+func ModuleExportCallableIngressAxis(runtimeSchema identity.ContentID, slot uint32) snapshot.Axis[identity.ContentID, ModuleExportCallableIngress] {
+	return snapshot.Axis[identity.ContentID, ModuleExportCallableIngress]{SchemaID: runtimeSchema, Slot: slot}
 }
 
 func ImportAt(published *snapshot.Snapshot, address snapshot.Axis[identity.ContentID, ResolvedImport], key identity.ContentID) (ResolvedImport, bool) {
@@ -144,11 +162,19 @@ func OutcomeAt(published *snapshot.Snapshot, address snapshot.Axis[identity.Cont
 	row, status := snapshot.Read(published, address, key)
 	return row, status == snapshot.ReadHit && row.Available()
 }
+func ModuleReturnStateEdgeAt(published *snapshot.Snapshot, address snapshot.Axis[identity.ContentID, ModuleReturnStateEdge], key identity.ContentID) (ModuleReturnStateEdge, bool) {
+	row, status := snapshot.Read(published, address, key)
+	return row, status == snapshot.ReadHit && row.Available()
+}
 func TerminalAt(published *snapshot.Snapshot, address snapshot.Axis[identity.ContentID, InitTerminal], key identity.ContentID) (InitTerminal, bool) {
 	row, status := snapshot.Read(published, address, key)
 	return row, status == snapshot.ReadHit && row.Available()
 }
 func ModuleExportCallableOriginAt(published *snapshot.Snapshot, address snapshot.Axis[identity.ContentID, ModuleExportCallableOrigin], key identity.ContentID) (ModuleExportCallableOrigin, bool) {
+	row, status := snapshot.Read(published, address, key)
+	return row, status == snapshot.ReadHit && row.Available()
+}
+func ModuleExportCallableIngressAt(published *snapshot.Snapshot, address snapshot.Axis[identity.ContentID, ModuleExportCallableIngress], key identity.ContentID) (ModuleExportCallableIngress, bool) {
 	row, status := snapshot.Read(published, address, key)
 	return row, status == snapshot.ReadHit && row.Available()
 }

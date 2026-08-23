@@ -6,12 +6,14 @@ package issuance
 import (
 	"sort"
 
+	seal "github.com/wippyai/go-lua/analysis/schema/seal"
+
 	"github.com/wippyai/go-lua/analysis/schema"
 	"github.com/wippyai/go-lua/internal/framing"
 )
 
 const (
-	LawEntryShape schema.LawID = schema.SurfaceLawFloor + iota
+	LawEntryShape schema.LawID = seal.SurfaceLawFloor + iota
 	LawEntryIdentity
 	LawOrdinalUnique
 	LawOrdinalDense
@@ -181,10 +183,11 @@ const (
 	StageTransportAll
 	StageTransportAllExceptTargetWrites
 	StageTransportWritesOfStages
+	StageTransportAllExceptWritesOfStages
 )
 
 func (transport StageTransport) valid() bool {
-	return transport > StageTransportInvalid && transport <= StageTransportWritesOfStages
+	return transport > StageTransportInvalid && transport <= StageTransportAllExceptWritesOfStages
 }
 
 type StageConstructor uint8
@@ -327,37 +330,40 @@ const (
 )
 
 type Spec struct {
-	Key           schema.Key
-	Kind          Kind
-	Ordinal       uint16
-	Space         schema.Key
-	Target        schema.Key
-	Type          DataType
-	Cardinality   Cardinality
-	Joins         []JoinField
-	Program       Program
-	Result        uint16
-	Outputs       []OutputBinding
-	Requires      []schema.Key
-	Subject       schema.Key
-	Emissions     []uint16
-	Input         InputKind
-	InputSource   InputSource
-	Selection     InputSelection
-	Source        schema.Key
-	Parameters    []DataType
-	Base          uint16
-	Identity      []uint16
-	Constructor   StageConstructor
-	Order         uint16
-	Node          uint16
-	Dependencies  []uint16
-	Predecessors  []schema.Key
-	Edges         []StageEdge
-	Framing       string
-	Native        bool
-	ConsumesInput bool
-	Empty         EmptyPolicy
+	Key          schema.Key
+	Kind         Kind
+	Ordinal      uint16
+	Space        schema.Key
+	Target       schema.Key
+	Type         DataType
+	Cardinality  Cardinality
+	Joins        []JoinField
+	Program      Program
+	Result       uint16
+	Outputs      []OutputBinding
+	Requires     []schema.Key
+	Subject      schema.Key
+	Emissions    []uint16
+	Input        InputKind
+	InputSource  InputSource
+	Selection    InputSelection
+	Source       schema.Key
+	Parameters   []DataType
+	Base         uint16
+	Identity     []uint16
+	Constructor  StageConstructor
+	Order        uint16
+	Node         uint16
+	Dependencies []uint16
+	Predecessors []schema.Key
+	Edges        []StageEdge
+	Framing      string
+	Native       bool
+	// InputCount is the ordered number of input-range operands trailing a
+	// stage request's structural parameters. The request instruction has six
+	// argument cells, so the width is sealed rather than inferred at runtime.
+	InputCount uint8
+	Empty      EmptyPolicy
 }
 
 type Entry struct {
@@ -391,12 +397,13 @@ type Entry struct {
 	edges         []StageEdge
 	framing       string
 	native        bool
-	consumesInput bool
+	inputCount    uint8
 	empty         EmptyPolicy
 	registerWidth int
 }
 
 func New(spec Spec) (*Entry, bool) {
+	inputCount := spec.InputCount
 	entry := &Entry{
 		key: spec.Key, id: schema.NewEntryID(schema.SurfaceKindIssuance, spec.Key),
 		kind: spec.Kind, ordinal: spec.Ordinal, space: spec.Space, target: spec.Target,
@@ -411,7 +418,7 @@ func New(spec Spec) (*Entry, bool) {
 		constructor: spec.Constructor, order: spec.Order, node: spec.Node,
 		dependencies: append([]uint16(nil), spec.Dependencies...),
 		predecessors: append([]schema.Key(nil), spec.Predecessors...), edges: cloneEdges(spec.Edges),
-		framing: spec.Framing, native: spec.Native, consumesInput: spec.ConsumesInput, empty: spec.Empty,
+		framing: spec.Framing, native: spec.Native, inputCount: inputCount, empty: spec.Empty,
 		registerWidth: registerWidth(spec.Program),
 	}
 	return entry, entry.EntryAvailable() && entry.declarationComplete()
@@ -432,7 +439,7 @@ func (entry *Entry) InputSelection() InputSelection { return entry.selection }
 func (entry *Entry) Source() schema.Key             { return entry.source }
 func (entry *Entry) Framing() string                { return entry.framing }
 func (entry *Entry) Native() bool                   { return entry.native }
-func (entry *Entry) ConsumesInput() bool            { return entry.consumesInput }
+func (entry *Entry) InputCount() uint8              { return entry.inputCount }
 func (entry *Entry) EmptyPolicy() EmptyPolicy       { return entry.empty }
 func (entry *Entry) Joins() []JoinField             { return append([]JoinField(nil), entry.joins...) }
 func (entry *Entry) ProgramLen() int                { return len(entry.program) }
@@ -512,7 +519,7 @@ func (entry *Entry) declarationComplete() bool {
 		return entry.constructor.valid() && validStageFraming(entry.constructor, entry.framing) &&
 			validTypes(entry.parameters) && entry.order != 0 &&
 			validStageSchedule(entry.parameters, entry.base, entry.identity, entry.node, entry.dependencies, entry.predecessors) &&
-			validEdges(entry.edges) && (!entry.native || entry.consumesInput) && !program && entry.stageStateEmpty()
+			entry.inputCount <= uint8(len(Instruction{}.Args)) && validEdges(entry.edges) && (!entry.native || entry.inputCount != 0) && !program && entry.stageStateEmpty()
 	default:
 		return false
 	}
@@ -524,7 +531,7 @@ func (entry *Entry) emptyState() bool {
 		len(entry.program) == 0 && entry.result == 0 && len(entry.outputs) == 0 && len(entry.requires) == 0 &&
 		len(entry.emissions) == 0 && entry.input == InputInvalid &&
 		len(entry.parameters) == 0 && entry.base == 0 && len(entry.identity) == 0 && len(entry.edges) == 0 &&
-		entry.constructor == StageConstructorInvalid && entry.framing == "" && !entry.native && !entry.consumesInput && entry.empty == EmptyInvalid &&
+		entry.constructor == StageConstructorInvalid && entry.framing == "" && !entry.native && entry.inputCount == 0 && entry.empty == EmptyInvalid &&
 		entry.nonFormInputStageStateEmpty()
 }
 
@@ -533,14 +540,14 @@ func (entry *Entry) fieldStateEmpty() bool {
 		len(entry.outputs) == 0 && len(entry.requires) == 0 && len(entry.emissions) == 0 &&
 		entry.input == InputInvalid && len(entry.parameters) == 0 && entry.base == 0 && len(entry.identity) == 0 &&
 		len(entry.edges) == 0 && entry.constructor == StageConstructorInvalid &&
-		entry.framing == "" && !entry.native && !entry.consumesInput && entry.empty == EmptyInvalid && entry.nonFormInputStageStateEmpty()
+		entry.framing == "" && !entry.native && entry.inputCount == 0 && entry.empty == EmptyInvalid && entry.nonFormInputStageStateEmpty()
 }
 
 func (entry *Entry) relationStateEmpty() bool {
 	return entry.typ == (DataType{}) && len(entry.outputs) == 0 && len(entry.requires) == 0 &&
 		len(entry.emissions) == 0 && entry.input == InputInvalid &&
 		len(entry.parameters) == 0 && entry.base == 0 && len(entry.identity) == 0 && len(entry.edges) == 0 &&
-		entry.constructor == StageConstructorInvalid && entry.framing == "" && !entry.native && !entry.consumesInput && entry.empty == EmptyInvalid &&
+		entry.constructor == StageConstructorInvalid && entry.framing == "" && !entry.native && entry.inputCount == 0 && entry.empty == EmptyInvalid &&
 		entry.nonFormInputStageStateEmpty()
 }
 
@@ -550,7 +557,7 @@ func (entry *Entry) outputStateEmpty() bool {
 		entry.result == 0 && len(entry.outputs) == 0 && len(entry.requires) == 0 && len(entry.emissions) == 0 &&
 		entry.input == InputInvalid && len(entry.parameters) == 0 && entry.base == 0 && len(entry.identity) == 0 &&
 		len(entry.edges) == 0 && entry.constructor == StageConstructorInvalid &&
-		entry.framing == "" && !entry.native && !entry.consumesInput && entry.empty == EmptyInvalid && entry.nonFormInputStageStateEmpty()
+		entry.framing == "" && !entry.native && entry.inputCount == 0 && entry.empty == EmptyInvalid && entry.nonFormInputStageStateEmpty()
 }
 
 func (entry *Entry) requirementStateEmpty() bool {
@@ -558,7 +565,7 @@ func (entry *Entry) requirementStateEmpty() bool {
 		entry.cardinality == CardinalityInvalid && len(entry.joins) == 0 &&
 		len(entry.requires) == 0 && len(entry.emissions) == 0 && entry.input == InputInvalid &&
 		len(entry.parameters) == 0 && entry.base == 0 && len(entry.identity) == 0 && len(entry.edges) == 0 &&
-		entry.constructor == StageConstructorInvalid && entry.framing == "" && !entry.native && !entry.consumesInput && entry.empty == EmptyInvalid &&
+		entry.constructor == StageConstructorInvalid && entry.framing == "" && !entry.native && entry.inputCount == 0 && entry.empty == EmptyInvalid &&
 		entry.nonFormInputStageStateEmpty()
 }
 
@@ -568,7 +575,7 @@ func (entry *Entry) formStateEmpty() bool {
 		len(entry.joins) == 0 && entry.result == 0 && len(entry.outputs) == 0 &&
 		entry.input == InputInvalid && entry.inputSource == InputSourceInvalid && entry.selection == InputSelectionInvalid && !entry.source.Available() &&
 		len(entry.parameters) == 0 && entry.base == 0 && len(entry.identity) == 0 && len(entry.edges) == 0 &&
-		entry.constructor == StageConstructorInvalid && entry.order == 0 && entry.node == 0 && !entry.native && !entry.consumesInput &&
+		entry.constructor == StageConstructorInvalid && entry.order == 0 && entry.node == 0 && !entry.native && entry.inputCount == 0 &&
 		len(entry.dependencies) == 0 && len(entry.predecessors) == 0 && entry.framing == ""
 }
 
@@ -579,7 +586,7 @@ func (entry *Entry) inputStateEmpty() bool {
 		len(entry.emissions) == 0 && !entry.subject.Available() && len(entry.parameters) == 0 && entry.base == 0 && len(entry.identity) == 0 &&
 		len(entry.edges) == 0 && entry.constructor == StageConstructorInvalid &&
 		entry.order == 0 && entry.node == 0 && len(entry.dependencies) == 0 && len(entry.predecessors) == 0 &&
-		entry.framing == "" && !entry.native && !entry.consumesInput && entry.empty == EmptyInvalid
+		entry.framing == "" && !entry.native && entry.inputCount == 0 && entry.empty == EmptyInvalid
 }
 
 func (entry *Entry) stageStateEmpty() bool {
@@ -734,7 +741,8 @@ func validEdges(edges []StageEdge) bool {
 		if !edge.Source.valid() || edge.Stage.Available() != stageRequired || !edge.Transport.valid() || edge.Framing == "" {
 			return false
 		}
-		if edge.Transport == StageTransportWritesOfStages != (len(edge.WriterStages) != 0) ||
+		stageDependent := edge.Transport == StageTransportWritesOfStages || edge.Transport == StageTransportAllExceptWritesOfStages
+		if stageDependent != (len(edge.WriterStages) != 0) ||
 			!validKeys(edge.WriterStages) {
 			return false
 		}
@@ -947,7 +955,7 @@ func (entry *Entry) EntryContent(content *framing.Writer) error {
 	if err := content.Bool(entry.native); err != nil {
 		return err
 	}
-	if err := content.Bool(entry.consumesInput); err != nil {
+	if err := content.Uint(uint64(entry.inputCount)); err != nil {
 		return err
 	}
 	return content.Uint(uint64(entry.empty))
@@ -974,7 +982,7 @@ func (surface *Surface) Entries() []schema.Entry {
 
 type Table struct{ entries map[schema.Key]*Entry }
 
-func NewTable(view schema.View) (Table, bool) {
+func NewTable(view seal.View) (Table, bool) {
 	if view.Kind() != schema.SurfaceKindIssuance {
 		return Table{}, false
 	}
@@ -1013,4 +1021,4 @@ func (table Table) Entries(kind Kind) []*Entry {
 }
 
 var _ schema.Entry = (*Entry)(nil)
-var _ schema.Surface = (*Surface)(nil)
+var _ seal.Surface = (*Surface)(nil)

@@ -49,10 +49,10 @@ type schemaBindingState struct {
 	refusal string
 	// linkBootstrapTransports is the sole ordered transport authorization for
 	// the Link-global bootstrap seam. The engine retains opaque capabilities,
-	// never domain role names; the program owner registers the exact pair once
-	// before this Binding seals.
-	linkBootstrapTransports    [2]RuleSlotCapability
-	linkBootstrapTransportPair bool
+	// never domain role names; the program owner registers the complete set
+	// once before this Binding seals.
+	linkBootstrapTransports   []RuleSlotCapability
+	linkBootstrapTransportSet bool
 	// columns is the published columns this binding's publication is admitted
 	// to write, by the column's authored key, and columnSlots is the same set
 	// by the dense slot each occupies. Both are stated once, while the binding
@@ -235,6 +235,10 @@ func (binding *SchemaBinding) Seal() bool {
 			return false
 		}
 	}
+	if !completeGeneratedRelationOwnersLocked(state) {
+		state.poisonLocked()
+		return false
+	}
 	for ordinal, cell := range state.queries {
 		query, ok := cell.(schemaQueryBindingCell)
 		if !ok || query == nil || cell.schemaBindingSchema() != state.schema || query.schemaQueryState() != state || query.schemaQueryOrdinal() != uint64(ordinal) || !query.complete() {
@@ -248,7 +252,7 @@ func (binding *SchemaBinding) Seal() bool {
 			return false
 		}
 	}
-	if state.linkBootstrapTransportPair && !completeLinkBootstrapTransportPairLocked(state) {
+	if state.linkBootstrapTransportSet && !completeLinkBootstrapTransportsLocked(state) {
 		state.poisonLocked()
 		return false
 	}
@@ -266,6 +270,9 @@ func (binding *SchemaBinding) Seal() bool {
 	// deliberately retains its draft Rule/read state.
 	for _, cell := range state.rules {
 		if _, ordinary := cell.(interface{ finalizeOrdinaryRuleCell() }); ordinary {
+			continue
+		}
+		if _, generated := cell.(*generatedRuleBindingCell); generated {
 			continue
 		}
 		if _, activation := cell.(*schemaActivationRuleBindingCell); activation {
@@ -287,10 +294,11 @@ func (binding *SchemaBinding) Seal() bool {
 	return true
 }
 
-func completeLinkBootstrapTransportPairLocked(state *schemaBindingState) bool {
-	if state == nil || state.schema == nil || state.authority == nil || !state.linkBootstrapTransportPair {
+func completeLinkBootstrapTransportsLocked(state *schemaBindingState) bool {
+	if state == nil || state.schema == nil || state.authority == nil || !state.linkBootstrapTransportSet || len(state.linkBootstrapTransports) == 0 {
 		return false
 	}
+	seenCapabilities := make(map[RuleSlotCapability]struct{}, len(state.linkBootstrapTransports))
 	seenOutputs := make(map[composition.Key]struct{}, len(state.linkBootstrapTransports))
 	for _, capability := range state.linkBootstrapTransports {
 		semantic, registered := state.roleSlots[capability]
@@ -298,9 +306,13 @@ func completeLinkBootstrapTransportPairLocked(state *schemaBindingState) bool {
 		if !registered || !capability.link() || capability.state != state || capability.authority != state.authority || semantic != state.schema.ruleSemanticAt(capability.ordinal) || !shapeOK || shape.OutputKind != composition.FactorOutput || !shape.Output.Available() {
 			return false
 		}
+		if _, duplicate := seenCapabilities[capability]; duplicate {
+			return false
+		}
 		if _, duplicate := seenOutputs[shape.Output]; duplicate {
 			return false
 		}
+		seenCapabilities[capability] = struct{}{}
 		seenOutputs[shape.Output] = struct{}{}
 	}
 	return true

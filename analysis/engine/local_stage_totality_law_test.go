@@ -10,6 +10,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/engine/rows"
 	"github.com/wippyai/go-lua/analysis/identity"
 	programissuance "github.com/wippyai/go-lua/analysis/schema/program/issuance"
+	queryschema "github.com/wippyai/go-lua/analysis/schema/query"
 )
 
 func stageTotalityID(value int) identity.ContentID {
@@ -56,7 +57,7 @@ func stageTotalityConstruct(t testing.TB, carryMounted bool) (*CommittedProgram,
 	carriedSlot, carriedSlotOK := SchemaWrite(carriedRule, carriedWrite)
 	furtherSlot, furtherSlotOK := SchemaWrite(furtherRule, furtherWrite)
 	linkSlot, linkSlotOK := SchemaWrite(linkRule, linkedWrite)
-	query, queryOK := DeclareQuerySlot[uint64](builder, SchemaQuerySpec{Semantic: coldKey(993_000), Freezer: coldKey(953_100)})
+	query, queryOK := DeclareQuerySlot[uint64](builder, SchemaQuerySpec{Semantic: coldKey(993_000), Freezer: coldKey(953_100), Population: queryschema.PopulationKindSelectedPoint})
 	if queryOK {
 		queryOK = SchemaQueryRead(query, stagedRead)
 	}
@@ -128,7 +129,7 @@ func stageTotalityConstruct(t testing.TB, carryMounted bool) (*CommittedProgram,
 	body, bodyOK := artifact.AddBody(rows.ArtifactScalarBody{ID: stageTotalityID(11)})
 	bodyOK = bodyOK && artifact.AddBodyEntry(body, base) && artifact.AddBodyExit(body, stage)
 	occurrence := stageTotalityID(12)
-	ruleRowOK := artifact.AddRule(rows.ArtifactScalarRule{Role: stagedRole, Stage: programissuance.StageLocal, Point: stage, Input: base, ID: occurrence})
+	ruleRowOK := artifact.AddRule(rows.ArtifactScalarRule{Role: stagedRole, Stage: programissuance.StageLocal, Point: stage, Inputs: [6]identity.ContentID{base}, InputCount: 1, ID: occurrence})
 	template, templateOK := rows.NewArtifactScalarTemplate(artifact)
 	bootstrapOccurrence := stageTotalityID(13)
 	bootstrap, bootstrapOK := NewProgramBootstrap(stageTotalityID(14), stageTotalityID(15), ProgramBootstrapCatalog{

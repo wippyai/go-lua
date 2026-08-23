@@ -644,13 +644,12 @@ func liftContextTransports(graph *equation.Graph, layout contextfiber.Layout, di
 		if !sourceContextOK || !targetContextOK {
 			return nil, false
 		}
-		transition, generation := bound.Transition(), bound.Generation()
 		transports = append(transports, ContextTransport{
 			from: bound.From(), to: bound.To(),
 			sourcePoint:   contextfiber.PointOrdinal(mustGraphPointIndex(graph, source)),
 			targetPoint:   contextfiber.PointOrdinal(mustGraphPointIndex(graph, target)),
 			sourceContext: sourceContext, targetContext: targetContext,
-			transitionID: transition.ID(), generationID: generation.ID(),
+			transitionID: bound.TransitionID(), generationID: bound.GenerationID(),
 			reindex: reindex,
 		})
 	}

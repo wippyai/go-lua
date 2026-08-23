@@ -10,6 +10,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/schema"
 	schemaissuance "github.com/wippyai/go-lua/analysis/schema/issuance"
 	programissuance "github.com/wippyai/go-lua/analysis/schema/program/issuance"
+	"github.com/wippyai/go-lua/analysis/schema/seal"
 )
 
 // TestArtifactScalarTemplateConsumesPrivateBuilderStorageExactlyOnce pins the
@@ -64,10 +65,10 @@ func TestArtifactScalarTemplateAdmitsRoutedNonNativeRule(t *testing.T) {
 	}
 	role, roleOK := spec.DeclareRole(artifactScalarLawID(20))
 	if !roleOK || !spec.AddRule(ArtifactScalarRule{
-		Role:  role,
-		Stage: schema.Key("test-stage/non-native"),
-		Point: stage,
-		Input: base,
+		Role:   role,
+		Stage:  schema.Key("test-stage/non-native"),
+		Point:  stage,
+		Inputs: [6]identity.ContentID{base}, InputCount: 1,
 		ID:    artifactScalarLawID(21),
 		Route: artifactScalarLawID(22),
 	}) {
@@ -98,7 +99,7 @@ func TestArtifactScalarTemplateSealsIssuedNativeReceipt(t *testing.T) {
 		Role:   role,
 		Stage:  programissuance.StageCallDispatch,
 		Point:  artifactScalarLawID(7),
-		Input:  artifactScalarLawID(4),
+		Inputs: [6]identity.ContentID{artifactScalarLawID(4)}, InputCount: 1,
 		ID:     artifactScalarLawID(21),
 		Native: true,
 	}) {
@@ -122,7 +123,7 @@ func TestArtifactScalarTemplateRefusesNativeRowWithoutStageTable(t *testing.T) {
 	role, roleOK := spec.DeclareRole(artifactScalarLawID(20))
 	if !roleOK || !spec.AddRule(ArtifactScalarRule{
 		Role: role, Stage: programissuance.StageCallDispatch,
-		Point: artifactScalarLawID(7), Input: artifactScalarLawID(4),
+		Point: artifactScalarLawID(7), Inputs: [6]identity.ContentID{artifactScalarLawID(4)}, InputCount: 1,
 		ID: artifactScalarLawID(21), Native: true,
 	}) {
 		t.Fatal("native rule fixture")
@@ -139,7 +140,7 @@ func TestArtifactScalarTemplateRejectsNativeBackEdge(t *testing.T) {
 		Role:   role,
 		Stage:  programissuance.StageCallDispatch,
 		Point:  artifactScalarLawID(4),
-		Input:  artifactScalarLawID(7),
+		Inputs: [6]identity.ContentID{artifactScalarLawID(7)}, InputCount: 1,
 		ID:     artifactScalarLawID(21),
 		Native: true,
 	}) {
@@ -155,7 +156,7 @@ type scalarLawEmptySurface struct{ kind schema.SurfaceKind }
 
 func (surface scalarLawEmptySurface) Kind() schema.SurfaceKind { return surface.kind }
 func (scalarLawEmptySurface) Entries() []schema.Entry          { return nil }
-func (scalarLawEmptySurface) Seal(schema.View, schema.Sealed) schema.SealFailure {
+func (scalarLawEmptySurface) Seal(seal.View, seal.Sealed) schema.SealFailure {
 	return schema.SealFailure{}
 }
 
@@ -165,7 +166,7 @@ func installScalarLawStageTable(t testing.TB, spec *ArtifactScalarSpec) {
 	if !entriesOK {
 		t.Fatal("Program issuance entries")
 	}
-	builder := schema.NewBuilder()
+	builder := seal.NewBuilder()
 	builder.Register(scalarLawEmptySurface{schema.SurfaceKindStructure})
 	builder.Register(scalarLawEmptySurface{schema.SurfaceKindAxis})
 	builder.Register(schemaissuance.NewSurface(entries))

@@ -7,13 +7,14 @@ import (
 	analysisschema "github.com/wippyai/go-lua/analysis/schema"
 	schemaissuance "github.com/wippyai/go-lua/analysis/schema/issuance"
 	programissuance "github.com/wippyai/go-lua/analysis/schema/program/issuance"
+	"github.com/wippyai/go-lua/analysis/schema/seal"
 )
 
 type artifactStageEmptySurface struct{ kind analysisschema.SurfaceKind }
 
 func (surface artifactStageEmptySurface) Kind() analysisschema.SurfaceKind { return surface.kind }
 func (artifactStageEmptySurface) Entries() []analysisschema.Entry          { return nil }
-func (artifactStageEmptySurface) Seal(analysisschema.View, analysisschema.Sealed) analysisschema.SealFailure {
+func (artifactStageEmptySurface) Seal(seal.View, seal.Sealed) analysisschema.SealFailure {
 	return analysisschema.SealFailure{}
 }
 
@@ -27,7 +28,7 @@ func installArtifactStageTable(t testing.TB, spec *rows.ArtifactScalarSpec) {
 	if !entriesOK {
 		t.Fatal("Program issuance entries")
 	}
-	builder := analysisschema.NewBuilder()
+	builder := seal.NewBuilder()
 	builder.Register(artifactStageEmptySurface{analysisschema.SurfaceKindStructure})
 	builder.Register(artifactStageEmptySurface{analysisschema.SurfaceKindAxis})
 	builder.Register(schemaissuance.NewSurface(entries))

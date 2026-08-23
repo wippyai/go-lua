@@ -2,6 +2,7 @@ package modulecomposition
 
 import (
 	"github.com/wippyai/go-lua/analysis/identity"
+	"github.com/wippyai/go-lua/analysis/schema"
 	"github.com/wippyai/go-lua/analysis/schema/executioncontext"
 	programschema "github.com/wippyai/go-lua/analysis/schema/program"
 	programissuance "github.com/wippyai/go-lua/analysis/schema/program/issuance"
@@ -18,7 +19,7 @@ import (
 // retained as mutable or reusable state.
 type ModuleCallTransition struct {
 	id, link, cacheIngressID, sourceModuleKey identity.ContentID
-	sourcePointID                             identity.ContentID
+	sourcePointID, returnPointID              identity.ContentID
 	artifactID, programID, importID, callID   identity.ContentID
 	generationID, transitionID                identity.ContentID
 	fromContextID, toContextID                identity.ContentID
@@ -47,7 +48,8 @@ func NewModuleCallTransition(cache CacheIngress, generation InitGeneration, moun
 		return ModuleCallTransition{}, false
 	}
 	sourcePointID, sourcePointOK := moduleCallDispatchPoint(mount.Program, importRow.CallID())
-	if !sourcePointOK {
+	returnPointID, returnPointOK := moduleCallReturnPoint(mount.Program, importRow.CallID())
+	if !sourcePointOK || !returnPointOK {
 		return ModuleCallTransition{}, false
 	}
 	request, requestOK := moduleRequestForImport(mount.Program, importRow, cache.RequestID())
@@ -70,6 +72,7 @@ func NewModuleCallTransition(cache CacheIngress, generation InitGeneration, moun
 		cacheIngressID:  cache.ID(),
 		sourceModuleKey: mount.ModuleKey,
 		sourcePointID:   sourcePointID,
+		returnPointID:   returnPointID,
 		artifactID:      mount.ArtifactID,
 		programID:       mount.ProgramID,
 		importID:        importRow.ID(),
@@ -114,7 +117,7 @@ func moduleRequestForImport(program programschema.Program, importRow programsche
 // discarded; the identity equation protects the sealed scalar row thereafter.
 func (row ModuleCallTransition) Available() bool {
 	return row.id.Available() && row.link.Available() && row.cacheIngressID.Available() &&
-		row.sourceModuleKey.Available() && row.sourcePointID.Available() && row.artifactID.Available() && row.programID.Available() &&
+		row.sourceModuleKey.Available() && row.sourcePointID.Available() && row.returnPointID.Available() && row.artifactID.Available() && row.programID.Available() &&
 		row.importID.Available() && row.callID.Available() && row.generationID.Available() && row.transitionID.Available() &&
 		row.fromContextID.Available() && row.toContextID.Available() &&
 		row.id == moduleCallTransitionID(row)
@@ -155,6 +158,17 @@ func (row ModuleCallTransition) SourceModuleKey() identity.ContentID {
 func (row ModuleCallTransition) SourcePointID() identity.ContentID {
 	if row.Available() {
 		return row.sourcePointID
+	}
+	return identity.ContentID{}
+}
+
+// ReturnPointID is the reusable Program point issued by the canonical
+// StageCallEffect placement. Return-state transports terminate at the
+// post-call continuation so callee Heap, Placement, and Effect state enters
+// the caller's ordinary successor flow.
+func (row ModuleCallTransition) ReturnPointID() identity.ContentID {
+	if row.Available() {
+		return row.returnPointID
 	}
 	return identity.ContentID{}
 }
@@ -249,6 +263,14 @@ func moduleImportInProgram(program programschema.Program, wanted programschema.M
 // roles may publish that stage, but they must all agree on the exact point;
 // distinct dispatch points are an ambiguity and refuse the join.
 func moduleCallDispatchPoint(program programschema.Program, callID identity.ContentID) (identity.ContentID, bool) {
+	return moduleCallStagePoint(program, callID, programissuance.StageCallDispatch)
+}
+
+func moduleCallReturnPoint(program programschema.Program, callID identity.ContentID) (identity.ContentID, bool) {
+	return moduleCallStagePoint(program, callID, programissuance.StageCallEffect)
+}
+
+func moduleCallStagePoint(program programschema.Program, callID identity.ContentID, stage schema.Key) (identity.ContentID, bool) {
 	if !program.Available() || !callID.Available() {
 		return identity.ContentID{}, false
 	}
@@ -265,7 +287,7 @@ func moduleCallDispatchPoint(program programschema.Program, callID identity.Cont
 		if !held || !placement.Available() || !occurrenceOK {
 			return identity.ContentID{}, false
 		}
-		if int(occurrence) != ordinal || placement.Stage() != programissuance.StageCallDispatch {
+		if int(occurrence) != ordinal || placement.Stage() != stage {
 			continue
 		}
 		candidate := placement.PointID()

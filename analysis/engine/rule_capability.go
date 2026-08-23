@@ -75,6 +75,16 @@ func IssueMountedRuleCapability[V, O any](binding *SchemaBinding, slot *RuleSlot
 	return issueRuleSlotCapability(binding, slot.cell.schema, slot.cell.ordinal, ruleCapabilityMounted, false)
 }
 
+// IssueMountedGeneratedRuleCapability issues the mounted lane capability for
+// a Plan-generated Rule. Generated slots have a separate public type so they
+// cannot be laundered into the legacy typed Rule binders.
+func IssueMountedGeneratedRuleCapability(binding *SchemaBinding, slot *GeneratedRuleSlot) (RuleSlotCapability, bool) {
+	if slot == nil || slot.cell == nil || slot.cell.generated == nil {
+		return RuleSlotCapability{}, false
+	}
+	return issueRuleSlotCapability(binding, slot.cell.schema, slot.cell.ordinal, ruleCapabilityMounted, false)
+}
+
 // IssueActivationRuleCapability issues the structural mounted capability for
 // an activation slot.  Activation is slot geometry, not an engine role.
 func IssueActivationRuleCapability(binding *SchemaBinding, slot *SchemaActivationRuleSlot) (RuleSlotCapability, bool) {
@@ -123,6 +133,26 @@ func RegisterRuleSlot[V, O any](binding *SchemaBinding, slot *RuleSlot[V, O], ca
 	return registerRuleSlot(binding, slot.cell.schema, slot.cell.ordinal, capability)
 }
 
+// RegisterGeneratedRuleSlot is the pre-seal handoff for a generated slot. It
+// shares the opaque capability directory with legacy lanes but never accepts
+// a typed RuleSlot or a RuleImplementation.
+func RegisterGeneratedRuleSlot(binding *SchemaBinding, slot *GeneratedRuleSlot, capability RuleSlotCapability) bool {
+	if slot == nil || slot.cell == nil || slot.cell.generated == nil {
+		return false
+	}
+	return registerRuleSlot(binding, slot.cell.schema, slot.cell.ordinal, capability)
+}
+
+// RegisterMountedGeneratedSlot issues and registers one generated mounted
+// lane in a single open-binding handoff.
+func RegisterMountedGeneratedSlot(binding *SchemaBinding, slot *GeneratedRuleSlot) (RuleSlotCapability, bool) {
+	capability, ok := IssueMountedGeneratedRuleCapability(binding, slot)
+	if !ok || !RegisterGeneratedRuleSlot(binding, slot, capability) {
+		return RuleSlotCapability{}, false
+	}
+	return capability, true
+}
+
 // RegisterMountedSlot issues the mounted capability and registers the slot
 // against it in one pre-seal handoff.
 func RegisterMountedSlot[V, O any](binding *SchemaBinding, slot *RuleSlot[V, O]) (RuleSlotCapability, bool) {
@@ -158,40 +188,45 @@ func RegisterActivationRuleSlot(binding *SchemaBinding, slot *SchemaActivationRu
 	return registerRuleSlot(binding, slot.cell.schema, slot.cell.ordinal, capability)
 }
 
-// RegisterLinkBootstrapTransportPair is the one pre-seal authorization for
-// the two factors allowed to leave the Link-global bootstrap point. Ordering
-// is owner-significant and retained exactly; a same-Binding Link capability
-// is not sufficient unless it occupies its registered position in this pair.
-func RegisterLinkBootstrapTransportPair(binding *SchemaBinding, first, second RuleSlotCapability) bool {
+// RegisterLinkBootstrapTransports is the one pre-seal authorization for the
+// complete factor set allowed to leave the Link-global bootstrap point.
+// Ordering is owner-significant and retained exactly; a same-Binding Link
+// capability is not sufficient unless it occupies its registered position.
+func RegisterLinkBootstrapTransports(binding *SchemaBinding, capabilities ...RuleSlotCapability) bool {
 	state := bindingState(binding)
-	if state == nil || !first.link() || !second.link() || first == second || first.state != state || second.state != state || first.authority != state.authority || second.authority != state.authority {
+	if state == nil || len(capabilities) == 0 {
 		return false
+	}
+	for _, capability := range capabilities {
+		if !capability.link() || capability.state != state || capability.authority != state.authority {
+			return false
+		}
 	}
 	state.mu.Lock()
 	defer state.mu.Unlock()
-	if state.phase != schemaBindingOpen || state.linkBootstrapTransportPair {
+	if state.phase != schemaBindingOpen || state.linkBootstrapTransportSet {
 		return false
 	}
-	state.linkBootstrapTransports = [2]RuleSlotCapability{first, second}
-	state.linkBootstrapTransportPair = true
-	if !completeLinkBootstrapTransportPairLocked(state) {
-		state.linkBootstrapTransports = [2]RuleSlotCapability{}
-		state.linkBootstrapTransportPair = false
+	state.linkBootstrapTransports = append([]RuleSlotCapability(nil), capabilities...)
+	state.linkBootstrapTransportSet = true
+	if !completeLinkBootstrapTransportsLocked(state) {
+		state.linkBootstrapTransports = nil
+		state.linkBootstrapTransportSet = false
 		return false
 	}
 	return true
 }
 
-func sealedLinkBootstrapTransportPair(state *schemaBindingState) ([2]RuleSlotCapability, bool) {
+func sealedLinkBootstrapTransports(state *schemaBindingState) ([]RuleSlotCapability, bool) {
 	if state == nil {
-		return [2]RuleSlotCapability{}, false
+		return nil, false
 	}
 	state.mu.Lock()
 	defer state.mu.Unlock()
-	if state.phase != schemaBindingSealed || !completeLinkBootstrapTransportPairLocked(state) {
-		return [2]RuleSlotCapability{}, false
+	if state.phase != schemaBindingSealed || !completeLinkBootstrapTransportsLocked(state) {
+		return nil, false
 	}
-	return state.linkBootstrapTransports, true
+	return append([]RuleSlotCapability(nil), state.linkBootstrapTransports...), true
 }
 
 // BindingRuleSlot resolves one runtime Rule semantic through the exact sealed
@@ -232,6 +267,15 @@ func BindingRuleSlot(binding *SchemaBinding, semantic identity.SemanticKey) (Rul
 // domain adapters; no semantic role name crosses this boundary.
 func MountedCapabilityForSlot[V, O any](binding *SchemaBinding, slot *RuleSlot[V, O]) (RuleSlotCapability, bool) {
 	if slot == nil || slot.cell == nil {
+		return RuleSlotCapability{}, false
+	}
+	return capabilityForSlot(binding, slot.cell.schema, slot.cell.ordinal, ruleCapabilityMounted, false)
+}
+
+// MountedGeneratedCapabilityForSlot recovers the registered generated
+// mounted capability after the Binding seals.
+func MountedGeneratedCapabilityForSlot(binding *SchemaBinding, slot *GeneratedRuleSlot) (RuleSlotCapability, bool) {
+	if slot == nil || slot.cell == nil || slot.cell.generated == nil {
 		return RuleSlotCapability{}, false
 	}
 	return capabilityForSlot(binding, slot.cell.schema, slot.cell.ordinal, ruleCapabilityMounted, false)
@@ -344,6 +388,29 @@ func resolveSealedRuleCell(capability RuleSlotCapability) (sealedRuleCell, bool)
 		return nil, false
 	}
 	cell, ok := raw.(sealedRuleCell)
+	if !ok || cell == nil || !cell.schemaRuleComplete() {
+		return nil, false
+	}
+	return cell, true
+}
+
+// resolveGeneratedRuleCell authenticates the distinct generated sealed arm.
+// It deliberately does not widen resolveSealedRuleCell: generated rows must
+// never enter the legacy operand/provider binding path.
+func resolveGeneratedRuleCell(capability RuleSlotCapability) (*generatedRuleBindingCell, bool) {
+	state := capability.state
+	if state == nil || capability.authority == nil || !capability.available() {
+		return nil, false
+	}
+	state.mu.Lock()
+	defer state.mu.Unlock()
+	if state.phase != schemaBindingSealed || state.authority != capability.authority || state.roleSlots == nil || state.rules == nil || capability.activation {
+		return nil, false
+	}
+	if _, registered := state.roleSlots[capability]; !registered || capability.ordinal >= uint64(len(state.rules)) {
+		return nil, false
+	}
+	cell, ok := state.rules[capability.ordinal].(*generatedRuleBindingCell)
 	if !ok || cell == nil || !cell.schemaRuleComplete() {
 		return nil, false
 	}

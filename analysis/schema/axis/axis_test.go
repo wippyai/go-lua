@@ -4,6 +4,8 @@ import (
 	"bytes"
 	"testing"
 
+	seal "github.com/wippyai/go-lua/analysis/schema/seal"
+
 	"github.com/wippyai/go-lua/analysis/schema"
 	"github.com/wippyai/go-lua/internal/framing"
 )
@@ -32,7 +34,7 @@ func (scratchForeignSurface) Entries() []schema.Entry {
 	return []schema.Entry{scratchRuleEntry{key: "scratch-foreign"}}
 }
 
-func (scratchForeignSurface) Seal(view schema.View, sealed schema.Sealed) schema.SealFailure {
+func (scratchForeignSurface) Seal(view seal.View, sealed seal.Sealed) schema.SealFailure {
 	return surface[scratchInputs]{}.Seal(view, sealed)
 }
 
@@ -41,7 +43,7 @@ func (scratchForeignSurface) Seal(view schema.View, sealed schema.Sealed) schema
 // the declared data every axis law is stated over, so it is rejected as the
 // wrong shape rather than read as a partially declared axis.
 func TestAxisSurfaceRejectsAForeignRow(t *testing.T) {
-	builder := schema.NewBuilder()
+	builder := seal.NewBuilder()
 	for kind := schema.SurfaceKind(1); kind.Available(); kind++ {
 		if kind == schema.SurfaceKindAxis {
 			builder.Register(scratchForeignSurface{})
@@ -80,7 +82,7 @@ func TestAxisKeyIsUnique(t *testing.T) {
 	first := mustTemplate(t, scratchSpec("value", valueRole))
 	second := mustTemplate(t, scratchSpec("value", heapRole))
 	failure := sealTemplates(t, []*Template[scratchInputs]{first, second})
-	if failure.Law != schema.LawEntryUnique || failure.Disposition != schema.DispositionDuplicate {
+	if failure.Law != seal.LawEntryUnique || failure.Disposition != schema.DispositionDuplicate {
 		t.Fatalf("duplicate axis key sealed: law=%d disposition=%s", failure.Law, failure.Disposition)
 	}
 }
@@ -172,13 +174,13 @@ func TestAxisSemanticIsUnique(t *testing.T) {
 // The declaration catalog order is the bind phase order, so a table that
 // registers the rule surface before the axis surface is rejected by the root.
 func TestAxesBindBeforeRules(t *testing.T) {
-	builder := schema.NewBuilder()
+	builder := seal.NewBuilder()
 	builder.Register(scratchRuleSurface{kind: schema.SurfaceKindRule})
 	builder.Register(NewSurface([]*Template[scratchInputs]{
 		mustTemplate(t, scratchSpec("value", valueRole)),
 	}))
 	_, failure := builder.Seal()
-	if failure.Law != schema.LawSurfacePhase || failure.Disposition != schema.DispositionMalformed {
+	if failure.Law != seal.LawSurfacePhase || failure.Disposition != schema.DispositionMalformed {
 		t.Fatalf("rule surface registered before the axis surface sealed: law=%d disposition=%s", failure.Law, failure.Disposition)
 	}
 }

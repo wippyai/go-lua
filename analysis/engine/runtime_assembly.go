@@ -26,15 +26,15 @@ type runtimeProducer struct {
 	// span addresses this Group's rows in the sealed program's member table. A
 	// producer holds no member of its own; the span is retained even when its
 	// output is outside the initial active mask.
-	span         memberSpan
-	inputs       []runtimeInput
-	environment  *runtimeInput
-	outputScope  carrier.Scope
-	premise      support.Mask
-	reads        []demand.Observation
-	dynamicReads []demand.DynamicRead
-	carries      []demand.Carry
-	footprint    []recurrenceFootprint
+	span            memberSpan
+	inputProjection []runtimeInputProjection
+	environment     *runtimeInput
+	outputScope     carrier.Scope
+	premise         support.Mask
+	reads           []demand.Observation
+	dynamicReads    []demand.DynamicRead
+	carries         []demand.Carry
+	footprint       []recurrenceFootprint
 }
 
 // runtimeInput is the one fully bound carrier transport for one immutable
@@ -304,7 +304,14 @@ func assembleRuntimeOwned(graph *equation.Graph, runtime *carrier.Composition, p
 			if !transition.available {
 				return nil, false
 			}
-			edge, bound := linkexecutionplan.NewBoundEdge(graph, contextLayout, contexts, transition.SourcePoint(), transition.TargetPoint(), transition.Transition(), transition.Generation())
+			activation, activationOK := contexts.ActivationEdge(transition.FromContextID(), transition.ToContextID())
+			if !activationOK {
+				return nil, false
+			}
+			edge, bound := linkexecutionplan.NewBoundEdge(graph, contextLayout, contexts, transition.SourcePoint(), transition.TargetPoint(), linkexecutionplan.BoundEdgeSpec{
+				TransitionID: activation.ID(), GenerationID: transition.GenerationID(),
+				FromContextID: transition.FromContextID(), ToContextID: transition.ToContextID(),
+			})
 			if !bound {
 				return nil, false
 			}
@@ -470,6 +477,10 @@ func assembleRuntimeOwned(graph *equation.Graph, runtime *carrier.Composition, p
 				return nil, false
 			}
 		}
+		inputProjection, projectionOK := sealRuntimeInputProjection(graph, program, executionPlan, span, group, inputTransports)
+		if !projectionOK {
+			return nil, false
+		}
 		var environment *runtimeInput
 		if environmentInput, environmentOK := group.EnvironmentInput(); environmentOK {
 			plan, planOK := plans.plan(environmentInput.Reindex())
@@ -487,10 +498,13 @@ func assembleRuntimeOwned(graph *equation.Graph, runtime *carrier.Composition, p
 		}
 		fold := folds[index]
 		plan, planOK := runtime.SealContribution(group.InputCount(), fold.writes, fold.sources, environment != nil)
+		if planOK {
+			plan, planOK = plan.SealCarryExclusions(fold.carryExclusions)
+		}
 		if !planOK {
 			return nil, false
 		}
-		producers[index] = runtimeProducer{index: index, group: group, plan: plan, span: span, inputs: inputTransports, environment: environment, outputScope: outputScope, premise: premise, reads: fold.initialReads, dynamicReads: fold.dynamicReads, carries: fold.carries, footprint: fold.footprint}
+		producers[index] = runtimeProducer{index: index, group: group, plan: plan, span: span, inputProjection: inputProjection, environment: environment, outputScope: outputScope, premise: premise, reads: fold.initialReads, dynamicReads: fold.dynamicReads, carries: fold.carries, footprint: fold.footprint}
 	}
 	stateFactorIncoming, stateFactorOutgoing, stateFactorRows, statePointRows, stateFactorOK := buildStateFactorIndex(graph, executionPlan, factorEdges, artifactBacked)
 	if !stateFactorOK {

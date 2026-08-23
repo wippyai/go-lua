@@ -9,6 +9,7 @@ package engine
 import (
 	"sort"
 
+	"github.com/wippyai/go-lua/analysis/engine/generated"
 	"github.com/wippyai/go-lua/analysis/engine/internal/carrier"
 	"github.com/wippyai/go-lua/analysis/engine/internal/carrier/shape"
 	"github.com/wippyai/go-lua/analysis/engine/internal/composition"
@@ -19,17 +20,33 @@ import (
 	"github.com/wippyai/go-lua/analysis/schema/population"
 )
 
-// memberRow retains exactly one canonical runtime member. Scheduling metadata,
-// execution, output ownership, reads, carries, routes, and failure identity are
-// all projected from that same immutable object rather than copied into a
-// parallel row representation.
-type memberRow struct{ member runtimeMember }
+// memberRow is the sealed execution union. Exactly one arm is present: the
+// established legacy typed member or the engine-private generated member.
+// Geometry is projected through one shared accessor so fold/seal consumers do
+// not duplicate metadata handling for either execution representation.
+type memberRow struct {
+	legacy    runtimeMember
+	generated *generatedMember
+}
+
+func (row memberRow) geometry() (runtimeMemberGeometry, bool) {
+	legacyPresent := row.legacy != nil
+	generatedPresent := row.generated != nil
+	if legacyPresent == generatedPresent {
+		return nil, false
+	}
+	if legacyPresent {
+		return row.legacy, true
+	}
+	return row.generated, true
+}
 
 func (row memberRow) valid() bool {
-	if row.member == nil || !row.member.member().Key().Available() {
+	geometry, ok := row.geometry()
+	if !ok || geometry == nil || !geometry.member().Key().Available() {
 		return false
 	}
-	slot, hasSlot := row.member.outputSlot()
+	slot, hasSlot := geometry.outputSlot()
 	return !hasSlot || slot >= 0
 }
 
@@ -164,13 +181,19 @@ func (span memberSpan) count() int { return int(span.end - span.start) }
 // constructor, is never written after that constructor returns, and exposes its
 // tables only through copying accessors.
 type runtimeProgram struct {
-	memberTable      []memberRow
-	groupSpans       []memberSpan
-	factorTable      []factorRecord
-	factorOwners     []runtimeFactor
-	queryTable       []queryRow
-	observationTable []observationRow
-	programSealed    bool
+	memberTable []memberRow
+	groupSpans  []memberSpan
+	// generatedPrograms borrows Schema's immutable Rule-ordinal descriptor
+	// table. Every generated occurrence row refers to one descriptor here; no
+	// occurrence owns an executable object or invocation storage.
+	generatedPrograms  []generated.CompiledRule
+	generatedPresent   bool
+	generatedExecution *generatedExecutionProgram
+	factorTable        []factorRecord
+	factorOwners       []runtimeFactor
+	queryTable         []queryRow
+	observationTable   []observationRow
+	programSealed      bool
 }
 
 // sealRuntimeProgram is the sole Seal and the sole writer of a runtimeProgram.
@@ -218,7 +241,11 @@ func sealRuntimeProgram(schema *Schema, graph *equation.Graph, runtime *carrier.
 			if !row.valid() {
 				return nil, false
 			}
-			key := row.member.member().Key()
+			geometry, geometryOK := row.geometry()
+			if !geometryOK {
+				return nil, false
+			}
+			key := geometry.member().Key()
 			if _, present := expected[key]; !present {
 				return nil, false
 			}
@@ -312,16 +339,58 @@ func sealRuntimeProgram(schema *Schema, graph *equation.Graph, runtime *carrier.
 			return nil, false
 		}
 	}
+	generatedPrograms, generatedPresent, generatedOK := sealedGeneratedPrograms(schema)
+	if !generatedOK {
+		return nil, false
+	}
+	if generatedPresent {
+		for _, row := range rows {
+			if row.generated == nil {
+				continue
+			}
+			if _, descriptorOK := generatedDescriptorAt(generatedPrograms, row.generated.rule); !descriptorOK {
+				return nil, false
+			}
+		}
+	}
 	program := &runtimeProgram{
-		memberTable:      rows,
-		groupSpans:       spans,
-		factorTable:      factors,
-		factorOwners:     owners,
-		queryTable:       queries,
-		observationTable: observations,
-		programSealed:    true,
+		memberTable:       rows,
+		groupSpans:        spans,
+		generatedPrograms: generatedPrograms,
+		generatedPresent:  generatedPresent,
+		factorTable:       factors,
+		factorOwners:      owners,
+		queryTable:        queries,
+		observationTable:  observations,
+		programSealed:     true,
+	}
+	if generatedPresent {
+		executionProgram, executionOK := buildGeneratedExecutionProgram(program)
+		if !executionOK {
+			return nil, false
+		}
+		program.generatedExecution = executionProgram
 	}
 	return program, true
+}
+
+// sealedGeneratedPrograms borrows the descriptor table validated during
+// SchemaBuilder.Seal. Runtime links share that immutable owner; no occurrence
+// row or runtime seal re-compiles or copies a descriptor.
+func sealedGeneratedPrograms(schema *Schema) ([]generated.CompiledRule, bool, bool) {
+	programs, present := schema.generatedProgramTable()
+	if programs == nil && present {
+		return nil, false, false
+	}
+	return programs, present, true
+}
+
+func generatedDescriptorAt(programs []generated.CompiledRule, ordinal uint32) (generated.CompiledRule, bool) {
+	if ordinal >= uint32(len(programs)) {
+		return generated.CompiledRule{}, false
+	}
+	descriptor := programs[ordinal]
+	return descriptor, descriptor.Available()
 }
 
 func validRuntimeQueryProjection(schema *Schema, factors []factorRecord, runtime *carrier.Composition, queryOrdinal, projectionOrdinal uint64, pair queryProjectionRow) bool {
@@ -409,13 +478,24 @@ func (program *runtimeProgram) memberRows(span memberSpan) []memberRow {
 	return program.memberTable[span.start:span.end]
 }
 
+func (program *runtimeProgram) generatedProgramAt(ordinal uint32) (generated.CompiledRule, bool) {
+	if !program.valid() || !program.generatedPresent {
+		return generated.CompiledRule{}, false
+	}
+	return generatedDescriptorAt(program.generatedPrograms, ordinal)
+}
+
 // memberRowIdentity returns the same canonical member used for execution after
 // re-proving that the reporting Group contains it.
 func memberRowIdentity(group equation.GroupNode, row memberRow) (equation.RuleMember, bool) {
 	if !row.valid() {
 		return equation.RuleMember{}, false
 	}
-	member := row.member.member()
+	geometry, geometryOK := row.geometry()
+	if !geometryOK {
+		return equation.RuleMember{}, false
+	}
+	member := geometry.member()
 	for index := 0; index < group.MemberCount(); index++ {
 		candidate, ok := group.MemberAt(index)
 		if ok && candidate.Key() == member.Key() {

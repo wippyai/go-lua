@@ -4,6 +4,7 @@ import (
 	"testing"
 
 	"github.com/wippyai/go-lua/analysis/engine/internal/composition"
+	queryschema "github.com/wippyai/go-lua/analysis/schema/query"
 )
 
 // activationRowFixture supplies a formal binding and an ordinary base Batch
@@ -37,7 +38,7 @@ func newActivationRowFixtureWithOptions(t testing.TB, withMetadata, withGrammar 
 	candidate := composition.Candidate{Factors: []composition.Factor{{Key: factor}}}
 	if withMetadata {
 		candidate.Factors[0].Forms = []composition.FactorForm{{Kind: composition.FactorSummaryRead, Semantic: boundaryKey(218)}}
-		candidate.Queries = []composition.QueryFamily{{Key: query, Freezer: boundaryKey(220), Projections: []composition.QueryProjection{{Kind: composition.QueryFactorSummary, Factor: factor, Normalizer: boundaryKey(218)}}}}
+		candidate.Queries = []composition.QueryFamily{{Key: query, Freezer: boundaryKey(220), Population: queryschema.PopulationKindSelectedPoint, Projections: []composition.QueryProjection{{Kind: composition.QueryFactorSummary, Factor: factor, Normalizer: boundaryKey(218)}}}}
 	}
 	if withGrammar {
 		candidate.Completion = composition.Completion{Semantic: boundaryKey(229), Prune: boundaryKey(230)}

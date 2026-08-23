@@ -9,6 +9,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/identity"
 	"github.com/wippyai/go-lua/analysis/lattice"
 	programissuance "github.com/wippyai/go-lua/analysis/schema/program/issuance"
+	queryschema "github.com/wippyai/go-lua/analysis/schema/query"
 )
 
 type heterogeneousQueryLawResult struct {
@@ -114,7 +115,7 @@ func newHeterogeneousQueryLawFixture(t testing.TB) heterogeneousQueryLawFixture 
 	})
 	writeSlotA, writeSlotAOK := SchemaWrite(ruleA, writeA)
 	writeSlotB, writeSlotBOK := SchemaWrite(ruleB, writeB)
-	query, queryOK := DeclareQuerySlot[heterogeneousQueryLawResult](builder, SchemaQuerySpec{Semantic: querySemantic, Freezer: freezer})
+	query, queryOK := DeclareQuerySlot[heterogeneousQueryLawResult](builder, SchemaQuerySpec{Semantic: querySemantic, Freezer: freezer, Population: queryschema.PopulationKindSelectedPoint})
 	if queryOK {
 		queryOK = SchemaQueryRead(query, exactA) && SchemaQueryRead(query, summaryB) && SchemaQueryRead(query, summaryB)
 	}
@@ -249,8 +250,8 @@ func newHeterogeneousQueryLawFixture(t testing.TB) heterogeneousQueryLawFixture 
 	eventsOK = eventsOK && spec.AddEvent(rows.ArtifactScalarEvent{Kind: rows.ArtifactEventExit, Region: heterogeneousQueryLawID(8)})
 	body, bodyOK := spec.AddBody(rows.ArtifactScalarBody{ID: heterogeneousQueryLawID(9)})
 	bodyOK = bodyOK && spec.AddBodyEntry(body, pointInitial) && spec.AddBodyExit(body, pointOutput)
-	ruleRowsOK := spec.AddRule(rows.ArtifactScalarRule{Role: roleA, Stage: programissuance.StageCallDispatch, Point: pointOutput, Input: pointInitial, ID: heterogeneousQueryLawID(10), Native: true})
-	ruleRowsOK = ruleRowsOK && spec.AddRule(rows.ArtifactScalarRule{Role: roleB, Stage: programissuance.StageCallDispatch, Point: pointOutput, Input: pointInitial, ID: heterogeneousQueryLawID(11), Native: true})
+	ruleRowsOK := spec.AddRule(rows.ArtifactScalarRule{Role: roleA, Stage: programissuance.StageCallDispatch, Point: pointOutput, Inputs: [6]identity.ContentID{pointInitial}, InputCount: 1, ID: heterogeneousQueryLawID(10), Native: true})
+	ruleRowsOK = ruleRowsOK && spec.AddRule(rows.ArtifactScalarRule{Role: roleB, Stage: programissuance.StageCallDispatch, Point: pointOutput, Inputs: [6]identity.ContentID{pointInitial}, InputCount: 1, ID: heterogeneousQueryLawID(11), Native: true})
 	installArtifactStageTable(t, spec)
 	template, templateOK := rows.NewArtifactScalarTemplate(spec)
 	bootstrap, bootstrapOK := NewProgramBootstrap(heterogeneousQueryLawID(12), heterogeneousQueryLawID(13))
@@ -331,7 +332,7 @@ func TestHeterogeneousQueryRejectsForeignAndReorderedProjectionAuthority(t *test
 		leftRead, leftReadOK := left.ExactRead()
 		rightRead, rightReadOK := right.ExactRead()
 		freezer := coldKey(987_004)
-		query, queryOK := DeclareQuerySlot[heterogeneousQueryLawResult](builder, SchemaQuerySpec{Semantic: coldKey(987_003), Freezer: freezer})
+		query, queryOK := DeclareQuerySlot[heterogeneousQueryLawResult](builder, SchemaQuerySpec{Semantic: coldKey(987_003), Freezer: freezer, Population: queryschema.PopulationKindSelectedPoint})
 		if queryOK {
 			queryOK = SchemaQueryRead(query, leftRead) && SchemaQueryRead(query, rightRead)
 		}

@@ -79,19 +79,19 @@ func TestBoundEdgeAvailabilityIsSealedAtConstruction(t *testing.T) {
 // row are all refused by NewBoundEdge, which never issues an unavailable edge.
 func TestBoundEdgeRefusesMalformedConstruction(t *testing.T) {
 	fixture := newBoundEdgeSCCFixture(t)
-	if edge, ok := NewBoundEdge(nil, fixture.layout, fixture.directory, fixture.points[0], fixture.points[1], fixture.forwardRow, fixture.forwardGen); ok || edge.Available() {
+	if edge, ok := NewBoundEdge(nil, fixture.layout, fixture.directory, fixture.points[0], fixture.points[1], boundEdgeSpec(t, fixture.directory, fixture.forwardRow, fixture.forwardGen)); ok || edge.Available() {
 		t.Fatal("graphless edge issued")
 	}
-	if edge, ok := NewBoundEdge(fixture.graph, contextfiber.Layout{}, fixture.directory, fixture.points[0], fixture.points[1], fixture.forwardRow, fixture.forwardGen); ok || edge.Available() {
+	if edge, ok := NewBoundEdge(fixture.graph, contextfiber.Layout{}, fixture.directory, fixture.points[0], fixture.points[1], boundEdgeSpec(t, fixture.directory, fixture.forwardRow, fixture.forwardGen)); ok || edge.Available() {
 		t.Fatal("layoutless edge issued")
 	}
-	if edge, ok := NewBoundEdge(fixture.graph, fixture.layout, executioncontext.Directory{}, fixture.points[0], fixture.points[1], fixture.forwardRow, fixture.forwardGen); ok || edge.Available() {
+	if edge, ok := NewBoundEdge(fixture.graph, fixture.layout, executioncontext.Directory{}, fixture.points[0], fixture.points[1], boundEdgeSpec(t, fixture.directory, fixture.forwardRow, fixture.forwardGen)); ok || edge.Available() {
 		t.Fatal("directoryless edge issued")
 	}
-	if edge, ok := NewBoundEdge(fixture.graph, fixture.layout, fixture.directory, fixture.points[0], fixture.points[1], fixture.reverseRow, fixture.forwardGen); ok || edge.Available() {
+	if edge, ok := NewBoundEdge(fixture.graph, fixture.layout, fixture.directory, fixture.points[0], fixture.points[1], boundEdgeSpec(t, fixture.directory, fixture.reverseRow, fixture.forwardGen)); ok || edge.Available() {
 		t.Fatal("edge issued for a transition that does not join its generation")
 	}
-	if edge, ok := NewBoundEdge(fixture.graph, fixture.layout, fixture.directory, fixture.points[1], fixture.points[0], fixture.forwardRow, fixture.forwardGen); ok || edge.Available() {
+	if edge, ok := NewBoundEdge(fixture.graph, fixture.layout, fixture.directory, fixture.points[1], fixture.points[0], boundEdgeSpec(t, fixture.directory, fixture.forwardRow, fixture.forwardGen)); ok || edge.Available() {
 		t.Fatal("edge issued for endpoints that contradict the transition owners")
 	}
 }

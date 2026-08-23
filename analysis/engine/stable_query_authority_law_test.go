@@ -8,6 +8,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/engine/rows"
 	"github.com/wippyai/go-lua/analysis/identity"
 	programissuance "github.com/wippyai/go-lua/analysis/schema/program/issuance"
+	queryschema "github.com/wippyai/go-lua/analysis/schema/query"
 )
 
 // programQueryMatrixFixture is a sealed-row fixture. Every member, query and
@@ -59,7 +60,7 @@ func exactQuerySchemaFixture(t testing.TB) (*Schema, *FactorSlot[uint64], *Query
 	builder := NewSchema()
 	factor, factorOK := DeclareFactorSlot[uint64](builder, coldKey(948_001))
 	read, readOK := factor.ExactRead()
-	query, queryOK := DeclareQuerySlot[uint64](builder, SchemaQuerySpec{Semantic: coldKey(948_002), Freezer: coldKey(953_100)})
+	query, queryOK := DeclareQuerySlot[uint64](builder, SchemaQuerySpec{Semantic: coldKey(948_002), Freezer: coldKey(953_100), Population: queryschema.PopulationKindSelectedPoint})
 	if !factorOK || !readOK || !queryOK || !SchemaQueryRead(query, read) {
 		t.Fatal("exact query schema")
 	}
@@ -152,7 +153,7 @@ func buildReceiptQueryMatrixFixtureWithOptions(t testing.TB, count int, observed
 		Output: factor.Ref(),
 	})
 	writeSlot, writeSlotOK := SchemaWrite(rule, writeForm)
-	query, queryOK := DeclareQuerySlot[uint64](builder, SchemaQuerySpec{Semantic: coldKey(953_000), Freezer: coldKey(953_100)})
+	query, queryOK := DeclareQuerySlot[uint64](builder, SchemaQuerySpec{Semantic: coldKey(953_000), Freezer: coldKey(953_100), Population: queryschema.PopulationKindSelectedPoint})
 	if queryOK {
 		queryOK = SchemaQueryRead(query, readForm)
 	}
@@ -253,7 +254,7 @@ func buildReceiptQueryMatrixFixtureWithOptions(t testing.TB, count int, observed
 		t.Fatal("sealed matrix body")
 	}
 	for index := 0; index < count; index++ {
-		if !spec.AddRule(rows.ArtifactScalarRule{Role: role, Stage: programissuance.StageCallDispatch, Point: pointIDs[index+1], Input: pointIDs[0], ID: programMatrixID(60 + index), Native: true}) {
+		if !spec.AddRule(rows.ArtifactScalarRule{Role: role, Stage: programissuance.StageCallDispatch, Point: pointIDs[index+1], Inputs: [6]identity.ContentID{pointIDs[0]}, InputCount: 1, ID: programMatrixID(60 + index), Native: true}) {
 			t.Fatal("sealed matrix artifact rule")
 		}
 	}

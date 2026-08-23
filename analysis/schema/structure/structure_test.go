@@ -3,6 +3,8 @@ package structure
 import (
 	"testing"
 
+	seal "github.com/wippyai/go-lua/analysis/schema/seal"
+
 	"github.com/wippyai/go-lua/analysis/schema"
 	"github.com/wippyai/go-lua/internal/framing"
 )
@@ -26,14 +28,14 @@ func (contribution scratchSurface) Entries() []schema.Entry {
 	return []schema.Entry{scratchEntry{key: "scratch"}}
 }
 
-func (contribution scratchSurface) Seal(schema.View, schema.Sealed) schema.SealFailure {
+func (contribution scratchSurface) Seal(seal.View, seal.Sealed) schema.SealFailure {
 	return schema.SealFailure{}
 }
 
 // sealEntries seals one structural inventory into a complete declaration table.
 // The catalog is walked rather than listed, so the surfaces the declaration
 // root settles on do not change what these laws assert.
-func sealEntries(t *testing.T, entries []*Entry) (*schema.Schema, schema.SealFailure) {
+func sealEntries(t *testing.T, entries []*Entry) (*seal.Schema, schema.SealFailure) {
 	t.Helper()
 	return sealContribution(t, NewSurface(entries))
 }
@@ -41,9 +43,9 @@ func sealEntries(t *testing.T, entries []*Entry) (*schema.Schema, schema.SealFai
 // sealContribution seals one arbitrary contribution under this surface's kind,
 // so a law about what this surface accepts as a row is stated against the
 // public seal path rather than against the unexported entry type alone.
-func sealContribution(t *testing.T, contribution schema.Surface) (*schema.Schema, schema.SealFailure) {
+func sealContribution(t *testing.T, contribution seal.Surface) (*seal.Schema, schema.SealFailure) {
 	t.Helper()
-	builder := schema.NewBuilder()
+	builder := seal.NewBuilder()
 	for kind := schema.SurfaceKind(1); kind.Available(); kind++ {
 		if kind == schema.SurfaceKindStructure {
 			builder.Register(contribution)
@@ -165,6 +167,7 @@ func canonicalContributions() [][]Spec {
 		authored(CategoryConformanceVerdict, verdicts),
 		NativePublicationSpecs(),
 		PublicationPlaneSpecs(),
+		ReductionOutcomeSpecs(),
 	}
 }
 
@@ -239,7 +242,7 @@ func (foreignSurface) Entries() []schema.Entry {
 	return []schema.Entry{scratchEntry{key: "foreign"}}
 }
 
-func (contribution foreignSurface) Seal(view schema.View, sealed schema.Sealed) schema.SealFailure {
+func (contribution foreignSurface) Seal(view seal.View, sealed seal.Sealed) schema.SealFailure {
 	return surface{}.Seal(view, sealed)
 }
 
@@ -278,7 +281,7 @@ func TestStructureMemberKeyIsUnique(t *testing.T) {
 	entries[len(entries)-1].key = entries[0].key
 	entries[len(entries)-1].id = schema.NewEntryID(schema.SurfaceKindStructure, entries[0].key)
 	_, failure := sealEntries(t, entries)
-	if failure.Law != schema.LawEntryUnique || failure.Disposition != schema.DispositionDuplicate {
+	if failure.Law != seal.LawEntryUnique || failure.Disposition != schema.DispositionDuplicate {
 		t.Fatalf("duplicate member key sealed: law=%d disposition=%s", failure.Law, failure.Disposition)
 	}
 }
@@ -647,7 +650,7 @@ func TestTableRejectsAForeignView(t *testing.T) {
 	if _, projected := NewTable(foreign); projected {
 		t.Fatal("a foreign surface view projected as the structural vocabulary")
 	}
-	if _, projected := NewTable(schema.View{}); projected {
+	if _, projected := NewTable(seal.View{}); projected {
 		t.Fatal("an unavailable view projected as the structural vocabulary")
 	}
 }

@@ -3,6 +3,8 @@ package query
 import (
 	"testing"
 
+	seal "github.com/wippyai/go-lua/analysis/schema/seal"
+
 	"github.com/wippyai/go-lua/analysis/identity"
 	"github.com/wippyai/go-lua/analysis/schema"
 	"github.com/wippyai/go-lua/analysis/schema/structure"
@@ -41,7 +43,7 @@ func (contribution scratchSurface) Entries() []schema.Entry {
 	return entries
 }
 
-func (contribution scratchSurface) Seal(schema.View, schema.Sealed) schema.SealFailure {
+func (contribution scratchSurface) Seal(seal.View, seal.Sealed) schema.SealFailure {
 	return schema.SealFailure{}
 }
 
@@ -81,7 +83,7 @@ func sealRegistrations(t *testing.T, registrations []*Registration) schema.SealF
 
 // sealTable is the same seal, read for the table it produces rather than for
 // the verdict alone.
-func sealTable(t *testing.T, registrations []*Registration) (*schema.Schema, schema.SealFailure) {
+func sealTable(t *testing.T, registrations []*Registration) (*seal.Schema, schema.SealFailure) {
 	t.Helper()
 	return sealSurface(t, NewSurface(registrations))
 }
@@ -90,9 +92,9 @@ func sealTable(t *testing.T, registrations []*Registration) (*schema.Schema, sch
 // It is the same table sealTable builds, stated over the contribution rather
 // than over the inventory, so a contribution that is not this package's own
 // surface is sealed under exactly the laws above.
-func sealSurface(t *testing.T, contribution schema.Surface) (*schema.Schema, schema.SealFailure) {
+func sealSurface(t *testing.T, contribution seal.Surface) (*seal.Schema, schema.SealFailure) {
 	t.Helper()
-	builder := schema.NewBuilder()
+	builder := seal.NewBuilder()
 	for kind := schema.SurfaceKind(1); kind.Available(); kind++ {
 		switch kind {
 		case schema.SurfaceKindQuery:
@@ -120,7 +122,7 @@ func (foreignSurface) Entries() []schema.Entry {
 	return []schema.Entry{scratchEntry{key: "foreign"}}
 }
 
-func (foreignSurface) Seal(view schema.View, sealed schema.Sealed) schema.SealFailure {
+func (foreignSurface) Seal(view seal.View, sealed seal.Sealed) schema.SealFailure {
 	return surface{}.Seal(view, sealed)
 }
 
@@ -207,7 +209,7 @@ func TestQueryFamilyIsUnique(t *testing.T) {
 	first := mustRegistration(t, summarySpec("value-summary"))
 	second := mustRegistration(t, exactSpec("value-summary"))
 	failure := sealRegistrations(t, []*Registration{first, second})
-	if failure.Law != schema.LawEntryUnique || failure.Disposition != schema.DispositionDuplicate {
+	if failure.Law != seal.LawEntryUnique || failure.Disposition != schema.DispositionDuplicate {
 		t.Fatalf("duplicate query family sealed: law=%d disposition=%s", failure.Law, failure.Disposition)
 	}
 }
@@ -284,11 +286,11 @@ func TestQuerySubjectsAreDeclaredAndResolve(t *testing.T) {
 // against the axis inventory, so the axis surface is sealed below it and a
 // table registered the other way round is rejected by the root.
 func TestQueriesSealAfterAxes(t *testing.T) {
-	builder := schema.NewBuilder()
+	builder := seal.NewBuilder()
 	builder.Register(NewSurface([]*Registration{mustRegistration(t, summarySpec("value-summary"))}))
 	builder.Register(scratchSurface{kind: schema.SurfaceKindAxis, keys: []schema.Key{"value"}})
 	_, failure := builder.Seal()
-	if failure.Law != schema.LawSurfacePhase || failure.Disposition != schema.DispositionMalformed {
+	if failure.Law != seal.LawSurfacePhase || failure.Disposition != schema.DispositionMalformed {
 		t.Fatalf("axis surface registered after the query surface sealed: law=%d disposition=%s", failure.Law, failure.Disposition)
 	}
 }
@@ -299,7 +301,7 @@ func TestQueriesSealAfterAxes(t *testing.T) {
 // that cannot reach the axis inventory cannot resolve one subject, and says so
 // instead of sealing a read over nothing.
 func TestQueriesRequireASealedAxisSurface(t *testing.T) {
-	builder := schema.NewBuilder()
+	builder := seal.NewBuilder()
 	for kind := schema.SurfaceKind(1); kind.Available(); kind++ {
 		switch kind {
 		case schema.SurfaceKindAxis:

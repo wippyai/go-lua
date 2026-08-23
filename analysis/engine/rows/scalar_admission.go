@@ -159,9 +159,13 @@ func validArtifactScalarSpec(spec *ArtifactScalarSpec) bool {
 		if !scalarSpecOwnsRole(state, rule.Role) || !rule.Stage.Available() || !rule.Point.Available() || !rule.ID.Available() {
 			return false
 		}
+		inputCount := rule.InputPointCount()
+		if inputCount < 0 {
+			return false
+		}
 		stage, stageOK := state.stages.Entry(rule.Stage, schemaissuance.KindStage)
 		if state.stagesSet {
-			if !stageOK || stage.Native() != rule.Native || stage.ConsumesInput() != rule.Input.Available() {
+			if !stageOK || stage.Native() != rule.Native || int(stage.InputCount()) != inputCount {
 				return false
 			}
 		} else if rule.Native {
@@ -173,27 +177,29 @@ func validArtifactScalarSpec(spec *ArtifactScalarSpec) bool {
 		if _, pointOK := points[rule.Point]; !pointOK {
 			return false
 		}
-		if rule.Input.Available() {
-			if _, inputOK := points[rule.Input]; !inputOK {
+		var firstInput identity.ContentID
+		for inputIndex := 0; inputIndex < inputCount; inputIndex++ {
+			input, inputOK := rule.InputPointAt(inputIndex)
+			if !inputOK || !input.Available() {
 				return false
+			}
+			if _, pointOK := points[input]; !pointOK || input == rule.Point {
+				return false
+			}
+			if inputIndex == 0 {
+				firstInput = input
 			}
 		}
-		if !rule.Input.Available() {
-			if rule.Native || rule.Route.Available() {
-				return false
-			}
-		} else {
-			if rule.Input == rule.Point {
-				return false
-			}
+		if inputCount == 0 && (rule.Native || rule.Route.Available()) {
+			return false
 		}
 		if rule.Native {
-			inputRank, inputOK := pointRank[rule.Input]
+			inputRank, inputOK := pointRank[firstInput]
 			outputRank, pointOK := pointRank[rule.Point]
-			if !rule.Input.Available() || rule.Input == rule.Point || !inputOK || !pointOK || inputRank >= outputRank {
+			if !firstInput.Available() || !inputOK || !pointOK || inputRank >= outputRank {
 				return false
 			}
-			geometry := artifactStageGeometry{stage: rule.Stage, input: rule.Input}
+			geometry := artifactStageGeometry{stage: rule.Stage, input: firstInput}
 			if prior, duplicate := stageGeometry[rule.Point]; duplicate && prior != geometry {
 				return false
 			}
@@ -211,7 +217,7 @@ func validArtifactScalarSpec(spec *ArtifactScalarSpec) bool {
 				return false
 			}
 			predecessor, predecessorOK := routes[rule.Route]
-			if !predecessorOK || predecessor.To != rule.Input {
+			if !predecessorOK || inputCount == 0 || predecessor.To != firstInput {
 				return false
 			}
 		}

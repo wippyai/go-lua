@@ -13,6 +13,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/engine/rows"
 	"github.com/wippyai/go-lua/analysis/identity"
 	programissuance "github.com/wippyai/go-lua/analysis/schema/program/issuance"
+	queryschema "github.com/wippyai/go-lua/analysis/schema/query"
 )
 
 func readLaneID(value int) identity.ContentID {
@@ -66,7 +67,7 @@ func newReadLaneFixture(t testing.TB) readLaneFixture {
 	input, inputOK := rule.Input(0)
 	readSlot, readSlotOK := SchemaRead(rule, readForm, input)
 	writeSlot, writeSlotOK := SchemaWrite(rule, writeForm)
-	query, queryOK := DeclareQuerySlot[uint64](builder, SchemaQuerySpec{Semantic: coldKey(961_003), Freezer: coldKey(961_004)})
+	query, queryOK := DeclareQuerySlot[uint64](builder, SchemaQuerySpec{Semantic: coldKey(961_003), Freezer: coldKey(961_004), Population: queryschema.PopulationKindSelectedPoint})
 	if queryOK {
 		queryOK = SchemaQueryRead(query, outputReadForm)
 	}
@@ -175,7 +176,7 @@ func constructReadLaneProgram(t testing.TB, binding *SchemaBinding, schema *Sche
 	if !events || !bodyOK || !spec.AddBodyEntry(body, entry) || !spec.AddBodyExit(body, member) {
 		t.Fatal("read lane artifact body")
 	}
-	if !spec.AddRule(rows.ArtifactScalarRule{Role: role, Stage: programissuance.StageCallDispatch, Point: member, Input: entry, ID: readLaneID(60), Native: true}) {
+	if !spec.AddRule(rows.ArtifactScalarRule{Role: role, Stage: programissuance.StageCallDispatch, Point: member, Inputs: [6]identity.ContentID{entry}, InputCount: 1, ID: readLaneID(60), Native: true}) {
 		t.Fatal("read lane artifact rule")
 	}
 	installArtifactStageTable(t, spec)

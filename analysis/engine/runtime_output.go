@@ -146,6 +146,7 @@ type typedOutput[K ~uint32 | ~uint64, V any] struct {
 // only the owner-specific V callback is retained here.
 type typedCarryTransform[K ~uint32 | ~uint64, V any] struct {
 	semantic identity.SemanticKey
+	source   carrier.ContributionSource
 	closures []factbinding.TransformClosure[K, V]
 	apply    func(V) (V, bool)
 }
@@ -155,7 +156,7 @@ func (transform typedCarryTransform[K, V]) active() bool {
 }
 
 type transformedCarryOwner[V any] interface {
-	transformedCarry() (identity.SemanticKey, []carrier.Target, func(V) (V, bool), bool)
+	transformedCarry() (identity.SemanticKey, carrier.ContributionSource, []carrier.Target, func(V) (V, bool), bool)
 }
 
 type transformedCarryRouteOwner interface {
@@ -184,7 +185,7 @@ func newTypedOutputAccess[K ~uint32 | ~uint64, V any](output *boundFactor[K, V],
 	}
 	var transform typedCarryTransform[K, V]
 	if transformed, present := owner.(transformedCarryOwner[V]); present {
-		semantic, targets, apply, active := transformed.transformedCarry()
+		semantic, source, targets, apply, active := transformed.transformedCarry()
 		if active {
 			defaultValue, defaultOK := output.implementation.algebra.Default()
 			mappedDefault, mappedOK := apply(defaultValue)
@@ -206,7 +207,7 @@ func newTypedOutputAccess[K ~uint32 | ~uint64, V any](output *boundFactor[K, V],
 				}
 				closures = append(closures, routeClosure)
 			}
-			transform = typedCarryTransform[K, V]{semantic: semantic, closures: closures, apply: apply}
+			transform = typedCarryTransform[K, V]{semantic: semantic, source: source, closures: closures, apply: apply}
 		}
 	}
 	return outputAccess[V]{
@@ -297,7 +298,11 @@ func (output *typedOutput[K, V]) applyCarryTransform(execution *ruleExecution, w
 	if output == nil || !output.transform.active() {
 		return true
 	}
-	return output.beginPatch(execution) && output.patch.TransformClosures(output.transform.closures, when, output.transform.apply)
+	if execution == nil || execution.work == nil {
+		return false
+	}
+	source, ok := execution.work.RuleContributionCarrySlotCoverage(execution.base, output.transform.source)
+	return ok && output.beginPatch(execution) && output.patch.TransformClosures(output.transform.closures, source, when, output.transform.apply)
 }
 
 func (output *typedOutput[K, V]) stage(execution *ruleExecution, epoch identity.Generation, row int, value V) bool {

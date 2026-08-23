@@ -24,11 +24,11 @@ func (bound *boundRuleMember[V, O]) ruleOperand() O {
 	return bound.operand
 }
 
-func (bound *boundRuleMember[V, O]) transformedCarry() (identity.SemanticKey, []carrier.Target, func(V) (V, bool), bool) {
+func (bound *boundRuleMember[V, O]) transformedCarry() (identity.SemanticKey, carrier.ContributionSource, []carrier.Target, func(V) (V, bool), bool) {
 	if bound == nil || !bound.carrySemantic.Available() || bound.carryApply == nil {
-		return identity.SemanticKey{}, nil, nil, false
+		return identity.SemanticKey{}, carrier.ContributionSource{}, nil, nil, false
 	}
-	return bound.carrySemantic, bound.transformedTargets, bound.carryApply, true
+	return bound.carrySemantic, bound.carrySource, bound.transformedTargets, bound.carryApply, true
 }
 
 func (bound *boundRuleMember[V, O]) transformedCarryRoute() bool {

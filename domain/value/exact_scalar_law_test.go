@@ -43,6 +43,11 @@ func TestExactScalarRequiresOneOwnedExactAlternativeLaw(t *testing.T) {
 			t.Fatalf("ExactScalar(%v) = kind:%d literal:%+v/%v, want %d %+v/%v", want.row.kind, scalar.Kind(), literal, literalOK, want.kind, want.literal, want.litOK)
 		}
 	}
+	nilValue, nilOK := schema.Nil()
+	nilScalar, nilScalarOK := schema.ExactScalar(nilValue)
+	if !nilOK || !nilScalarOK || nilScalar.Kind() != ExactScalarNil {
+		t.Fatal("Nil did not issue the sole exact nil atom")
+	}
 	opaque, _ := schema.Singleton(Atom{schema: schema, id: schema.atomByRow[rows[4]]})
 	mixed, _ := schema.Alternatives(Atom{schema: schema, id: schema.atomByRow[rows[1]]}, Atom{schema: schema, id: schema.atomByRow[rows[2]]})
 	foreign := *schema

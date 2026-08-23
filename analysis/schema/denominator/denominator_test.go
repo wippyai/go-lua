@@ -4,9 +4,11 @@ import (
 	"crypto/sha256"
 	"testing"
 
+	seal "github.com/wippyai/go-lua/analysis/schema/seal"
+
 	"github.com/wippyai/go-lua/analysis/identity"
-	"github.com/wippyai/go-lua/internal/framing"
 	"github.com/wippyai/go-lua/analysis/schema"
+	"github.com/wippyai/go-lua/internal/framing"
 )
 
 // scratchEntry is a stand-in row for a sibling surface. A denominator resolves
@@ -40,7 +42,7 @@ func (contribution scratchSurface) Entries() []schema.Entry {
 	return entries
 }
 
-func (contribution scratchSurface) Seal(schema.View, schema.Sealed) schema.SealFailure {
+func (contribution scratchSurface) Seal(seal.View, seal.Sealed) schema.SealFailure {
 	return schema.SealFailure{}
 }
 
@@ -60,7 +62,7 @@ func sealEntries(t *testing.T, entries []*Entry) schema.SealFailure {
 
 // sealTable is the same seal, read for the table it produces rather than for
 // the verdict alone.
-func sealTable(t *testing.T, entries []*Entry) (*schema.Schema, schema.SealFailure) {
+func sealTable(t *testing.T, entries []*Entry) (*seal.Schema, schema.SealFailure) {
 	t.Helper()
 	return sealContribution(t, NewSurface(entries))
 }
@@ -68,9 +70,9 @@ func sealTable(t *testing.T, entries []*Entry) (*schema.Schema, schema.SealFailu
 // sealContribution seals one arbitrary contribution under this surface's kind,
 // so a law about what this surface accepts as a row is stated against the
 // public seal path rather than against the unexported entry type alone.
-func sealContribution(t *testing.T, contribution schema.Surface) (*schema.Schema, schema.SealFailure) {
+func sealContribution(t *testing.T, contribution seal.Surface) (*seal.Schema, schema.SealFailure) {
 	t.Helper()
-	builder := schema.NewBuilder()
+	builder := seal.NewBuilder()
 	for kind := schema.SurfaceKind(1); kind.Available(); kind++ {
 		switch kind {
 		case schema.SurfaceKindDenominator:
@@ -159,7 +161,7 @@ func (foreignSurface) Entries() []schema.Entry {
 	return []schema.Entry{scratchEntry{key: "foreign"}}
 }
 
-func (contribution foreignSurface) Seal(view schema.View, sealed schema.Sealed) schema.SealFailure {
+func (contribution foreignSurface) Seal(view seal.View, sealed seal.Sealed) schema.SealFailure {
 	return surface{}.Seal(view, sealed)
 }
 
@@ -197,7 +199,7 @@ func TestDenominatorKeyIsUnique(t *testing.T) {
 	second := compositeEntry(t, "container")
 	second.universe = universeID("universe/second-container")
 	failure := sealEntries(t, []*Entry{first, second})
-	if failure.Law != schema.LawEntryUnique || failure.Disposition != schema.DispositionDuplicate {
+	if failure.Law != seal.LawEntryUnique || failure.Disposition != schema.DispositionDuplicate {
 		t.Fatalf("duplicate denominator key sealed: law=%d disposition=%s", failure.Law, failure.Disposition)
 	}
 }

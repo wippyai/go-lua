@@ -7,6 +7,21 @@ import (
 	"github.com/wippyai/go-lua/analysis/schema"
 )
 
+func TestOutputRefRequiresAxisOwnerAndColumnKey(t *testing.T) {
+	valid := OutputRef{Axis: schema.EntryReference{Surface: schema.SurfaceKindAxis, Key: "value"}, Key: "facts"}
+	if !valid.Available() || valid.AxisReference() != valid.Axis {
+		t.Fatalf("complete output reference rejected: %#v", valid)
+	}
+	for _, reference := range []OutputRef{
+		{Axis: schema.EntryReference{Surface: schema.SurfaceKindRule, Key: "rule"}, Key: "facts"},
+		{Axis: schema.EntryReference{Surface: schema.SurfaceKindAxis, Key: "value"}},
+	} {
+		if reference.Available() {
+			t.Fatalf("malformed output reference admitted: %#v", reference)
+		}
+	}
+}
+
 // TestOutputDeclaresBothHalves states that a column and its writer are declared
 // together. A column with no writer is one nothing may fill, and a writer over
 // no column is a capability over nothing.

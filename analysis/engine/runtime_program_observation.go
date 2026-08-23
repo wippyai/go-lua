@@ -18,19 +18,23 @@ type programObservationAdmit interface {
 // snapshot identity it answers under and the mounted member coordinates it
 // reads. The typed query implementation stays sealed inside the row.
 type ProgramObservationAdmission struct {
-	admit      programObservationAdmit
-	ID         identity.ContentID
-	Role       RuleSlotCapability
-	Mount      identity.ContentID
-	Point      identity.ContentID
-	Occurrence identity.ContentID
-	Context    executioncontext.Context
+	admit       programObservationAdmit
+	memberPoint identity.ContentID
+	readPoint   identity.ContentID
+	ID          identity.ContentID
+	Role        RuleSlotCapability
+	Mount       identity.ContentID
+	Point       identity.ContentID
+	Occurrence  identity.ContentID
+	Context     executioncontext.Context
 }
 
 // Available reports whether this row states a complete observation.
 func (admission ProgramObservationAdmission) Available() bool {
 	return admission.admit != nil && admission.ID.Available() && admission.Role.mounted() &&
-		admission.Mount.Available() && admission.Point.Available() && admission.Occurrence.Available() && admission.Context.Available()
+		admission.Mount.Available() && admission.memberPoint.Available() && admission.Point.Available() &&
+		(!admission.readPoint.Available() || admission.Point == admission.readPoint) &&
+		admission.Occurrence.Available() && admission.Context.Available()
 }
 
 // NewSummaryObservationAdmission seals one summary observation row against the
@@ -39,7 +43,7 @@ func NewSummaryObservationAdmission[V, R any](implementation *SummaryQueryImplem
 	if implementation == nil {
 		return ProgramObservationAdmission{}, false
 	}
-	admission := ProgramObservationAdmission{admit: implementation, ID: id, Role: role, Mount: mount, Point: point, Occurrence: occurrence, Context: context}
+	admission := ProgramObservationAdmission{admit: implementation, memberPoint: point, ID: id, Role: role, Mount: mount, Point: point, Occurrence: occurrence, Context: context}
 	return admission, admission.Available()
 }
 
@@ -49,7 +53,47 @@ func NewExactObservationAdmission[V, R any](implementation *ExactQueryImplementa
 	if implementation == nil {
 		return ProgramObservationAdmission{}, false
 	}
-	admission := ProgramObservationAdmission{admit: implementation, ID: id, Role: role, Mount: mount, Point: point, Occurrence: occurrence, Context: context}
+	admission := ProgramObservationAdmission{admit: implementation, memberPoint: point, ID: id, Role: role, Mount: mount, Point: point, Occurrence: occurrence, Context: context}
+	return admission, admission.Available()
+}
+
+// NewSummaryCallInputObservationAdmission admits a summary query over the
+// authenticated input state of one committed Call stage.
+func NewSummaryCallInputObservationAdmission[V, R any](implementation *SummaryQueryImplementation[V, R], id identity.ContentID, stage ProgramCallStage, context executioncontext.Context) (ProgramObservationAdmission, bool) {
+	if implementation == nil {
+		return ProgramObservationAdmission{}, false
+	}
+	return newCallInputObservationAdmission(implementation, id, stage, context)
+}
+
+// NewExactCallInputObservationAdmission admits an exact query over the
+// authenticated input state of one committed Call stage.
+func NewExactCallInputObservationAdmission[V, R any](implementation *ExactQueryImplementation[V, R], id identity.ContentID, stage ProgramCallStage, context executioncontext.Context) (ProgramObservationAdmission, bool) {
+	if implementation == nil {
+		return ProgramObservationAdmission{}, false
+	}
+	return newCallInputObservationAdmission(implementation, id, stage, context)
+}
+
+func newCallInputObservationAdmission(admit programObservationAdmit, id identity.ContentID, stage ProgramCallStage, context executioncontext.Context) (ProgramObservationAdmission, bool) {
+	if admit == nil || !stage.Available() {
+		return ProgramObservationAdmission{}, false
+	}
+	admission := ProgramObservationAdmission{
+		admit:       admit,
+		memberPoint: stage.PointID(),
+		readPoint:   stage.handle.stage.mountedInput,
+		ID:          id,
+		Role:        stage.handle.key.role,
+		Mount:       stage.MountID(),
+		// Point is the canonical read coordinate for this observation. The
+		// reusable predecessor remains available through ProgramCallStage, but
+		// the sealed observation row must carry the exact mounted identity that
+		// lookupPoint authenticates.
+		Point:      stage.handle.stage.mountedInput,
+		Occurrence: stage.OccurrenceID(),
+		Context:    context,
+	}
 	return admission, admission.Available()
 }
 
@@ -104,6 +148,14 @@ func (stage ProgramCallStage) OccurrenceID() identity.ContentID {
 
 func (stage ProgramCallStage) PointID() identity.ContentID {
 	return stage.handle.ReusablePointID()
+}
+
+// InputPointID returns the authenticated predecessor point of this native
+// Call stage. It is the point the stage declaration reads; consumers that
+// decide an effect from pre-effect evidence must observe this coordinate
+// rather than reconstructing a predecessor from stage order.
+func (stage ProgramCallStage) InputPointID() identity.ContentID {
+	return stage.handle.ReusableInputPointID()
 }
 
 func (stage ProgramCallStage) HasMember() bool {

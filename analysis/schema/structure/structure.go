@@ -61,13 +61,14 @@ package structure
 
 import (
 	"github.com/wippyai/go-lua/analysis/schema"
+	seal "github.com/wippyai/go-lua/analysis/schema/seal"
 	"github.com/wippyai/go-lua/internal/framing"
 )
 
 // Surface law ordinals. They are numeric identities; rendering a verdict is
 // the caller's job, from the identity.
 const (
-	LawEntryShape schema.LawID = schema.SurfaceLawFloor + iota
+	LawEntryShape schema.LawID = seal.SurfaceLawFloor + iota
 	LawStructureIdentity
 	LawCategoryDeclared
 	LawOrdinalDeclared
@@ -180,6 +181,18 @@ const (
 	// such families name the same class rather than each declaring a private
 	// spelling of it.
 	CategoryPublicationRowClass
+	// CategoryNativeSendSafety is the vocabulary of proved allocation-level
+	// send strategies. Its ordinals are domain/sendsafety.Verdict's numbering.
+	CategoryNativeSendSafety
+	// CategoryReductionOutcome is the vocabulary of fold dispositions: what one
+	// reduction concluded, as opposed to the fact it computed. Its ordinals are
+	// ReductionOutcome's own numbering, offset by one so the enum's zero value
+	// is a declared member rather than an absent row. It is one catalog rather
+	// than one per execution plane: the engine's execution substrate, the
+	// activation relation, and the Delta path name the same five members, and a
+	// fold that spelled a sixth would be encoding a disposition its consumers
+	// cannot read.
+	CategoryReductionOutcome
 	categoryLimit
 )
 
@@ -294,7 +307,7 @@ func Collect(contributions ...[]Spec) ([]*Entry, bool) {
 // category is a member of the wrong vocabulary and so malformed. The referring
 // surface raises the verdict under its own law, because what the member means
 // is that surface's declaration.
-func Resolve(sealed schema.Sealed, key schema.Key, category Category) (*Entry, schema.Disposition) {
+func Resolve(sealed seal.Sealed, key schema.Key, category Category) (*Entry, schema.Disposition) {
 	if !category.Available() {
 		return nil, schema.DispositionMalformed
 	}
@@ -320,7 +333,7 @@ func (entry *Entry) Category() Category { return entry.category }
 // Resolve: a surface above this one that names a member by the ordinal its
 // owner assigned reaches the declaration through this rather than projecting a
 // whole table of its own, which a surface sealing mid-catalog cannot do.
-func Member(sealed schema.Sealed, category Category, ordinal uint16) (*Entry, schema.Disposition) {
+func Member(sealed seal.Sealed, category Category, ordinal uint16) (*Entry, schema.Disposition) {
 	if !category.Available() || ordinal == 0 {
 		return nil, schema.DispositionMalformed
 	}
@@ -397,7 +410,7 @@ type Table struct {
 
 // NewTable projects one sealed structure view. The density law has already run
 // at seal, so the projection is total by construction rather than by check.
-func NewTable(view schema.View) (Table, bool) {
+func NewTable(view seal.View) (Table, bool) {
 	if view.Kind() != schema.SurfaceKindStructure || !view.Available() {
 		return Table{}, false
 	}
@@ -492,7 +505,7 @@ type surface struct{ entries []*Entry }
 
 // NewSurface hands one ordered set of structural vocabulary declarations to
 // the table.
-func NewSurface(entries []*Entry) schema.Surface { return surface{entries: entries} }
+func NewSurface(entries []*Entry) seal.Surface { return surface{entries: entries} }
 
 func (contribution surface) Kind() schema.SurfaceKind { return schema.SurfaceKindStructure }
 
@@ -508,7 +521,7 @@ func (contribution surface) Entries() []schema.Entry {
 // view. A consumer projection switches on the declared ordinals, so the laws
 // that make such a switch exhaustive are stated here once rather than assumed
 // at every consumer.
-func (contribution surface) Seal(view schema.View, _ schema.Sealed) schema.SealFailure {
+func (contribution surface) Seal(view seal.View, _ seal.Sealed) schema.SealFailure {
 	var counts [categoryLimit]int
 	var accepted [categoryLimit]int
 	var claimed [categoryLimit]map[uint16]schema.EntryID
@@ -592,5 +605,5 @@ func (contribution surface) Seal(view schema.View, _ schema.Sealed) schema.SealF
 }
 
 func failure(entry schema.EntryID, law schema.LawID, disposition schema.Disposition) schema.SealFailure {
-	return schema.SurfaceLawFailure(schema.SurfaceKindStructure, entry, law, disposition)
+	return seal.SurfaceLawFailure(schema.SurfaceKindStructure, entry, law, disposition)
 }

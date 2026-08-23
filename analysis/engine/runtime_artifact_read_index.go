@@ -1,6 +1,6 @@
 package engine
 
-// runtime_artifact_read_index.go owns the contextual inverse for exact Units
+// runtime_artifact_read_index.go owns the contextual inverse for declared Units
 // discovered by completed artifact producer Products.  The ordinary demand
 // plan is graph-point keyed and therefore cannot be reused by a mounted epoch:
 // one graph Point may have several executable StateOrdinal rows.  This inverse
@@ -27,7 +27,7 @@ type artifactProducerReadKey struct {
 }
 
 // artifactProducerReadFactorKey is the sparse factor-publication address for
-// exact reads owned by one factor slot in one source StateOrdinal. A carrier
+// declared reads owned by one factor slot in one source StateOrdinal. A carrier
 // FactorRegion may intentionally omit UnitRegion rows when the whole factor
 // root moves; retaining this slot-level inverse preserves that publication's
 // exact contextual consumer set without expanding points or closure rows.
@@ -115,12 +115,6 @@ func (epoch *executorEpoch) artifactProducerReadKeys(stateIndex, group int, read
 		_, inputOK := producer.group.InputAt(int(read.Input))
 		if !inputOK {
 			return nil, false
-		}
-		// Summary reads are already represented by their sealed structural
-		// input/factor surfaces. This inverse is deliberately exact-Unit only;
-		// retaining a summary here would broaden a later factor publication.
-		if read.Unit.Kind() != carrier.ExactUnit {
-			continue
 		}
 		sourceState, sourceOK := epoch.producerInputSourceState(producer, cache, int(read.Input))
 		if !sourceOK || sourceState < 0 || !epoch.activeState(sourceState) {
@@ -394,7 +388,7 @@ func (epoch *executorEpoch) clearArtifactProducerReads(stateIndex, group int) bo
 }
 
 // markArtifactProducerReadConsumers is the contextual publication wake. It
-// considers only exact Units carried by this factor publication and only
+// considers every declared Unit carried by this factor publication and only
 // producer rows already present in the completed-read inverse; no graph-point
 // or closure-wide expansion is permitted.
 func (epoch *executorEpoch) markArtifactProducerReadConsumers(sourceState int, changes carrier.ChangeSet) bool {
@@ -438,9 +432,6 @@ func (epoch *executorEpoch) markArtifactProducerReadConsumers(sourceState int, c
 		slot, slotOK := unit.Slot()
 		if !slotOK || !epoch.runtime.carrier.OwnsUnit(slot, unit) {
 			return false
-		}
-		if unit.Kind() != carrier.ExactUnit {
-			continue
 		}
 		consumers, present := epoch.artifactProducerReads.byKey[artifactProducerReadKey{state: contextfiber.StateOrdinal(sourceState), unit: unit}]
 		if present && len(consumers) == 0 {

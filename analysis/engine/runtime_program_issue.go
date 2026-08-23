@@ -43,6 +43,10 @@ type pendingRuleIssuance struct {
 	// never by this pass.
 	binder sealedRuleCell
 	coords OperandCoords
+	// generated is the separate Plan-generated construction arm. It is never
+	// passed through binder.bindMember and retains only compact candidate and
+	// Factor-issued surfaces.
+	generated *generatedMemberDeclaration
 	// operand is the single canonical owner-issued value for this issuance.
 	// The binder receives it directly and never resolves or canonicalizes it
 	// again.
@@ -204,6 +208,32 @@ func admitMountedPointRuleIssuances(rowsWorkspace *programRows, rows *mountedArt
 	if !row.Capability.mountedPoint() || !row.Occurrence.Available() {
 		return nil, false
 	}
+	generated, generatedOK := resolveGeneratedRuleCell(row.Capability)
+	if generatedOK {
+		var result []pendingRuleIssuance
+		for _, mount := range mounts {
+			if mount.template == nil || !mount.module.Available() {
+				return nil, false
+			}
+			for pointIndex := 0; pointIndex < mount.template.PointCount(); pointIndex++ {
+				point, pointOK := mount.template.PointAt(pointIndex)
+				site, siteOK := rows.mountedSite(mount.module, point.ID)
+				entity, entityOK := mountedPointRuleOccurrenceKey(row.Capability, mount.module, point.ID, row.Occurrence)
+				member := mountedPointRuleMemberID(row.Capability, mount.module, point.ID, row.Occurrence)
+				if !pointOK || !siteOK || !entityOK || !member.Available() {
+					return nil, false
+				}
+				coords := OperandCoords{Mount: mount.module, Point: point.ID, Occurrence: row.Occurrence}
+				issuance := pendingRuleIssuance{plane: declaredMemberMountedPoint, role: row.Capability, mount: mount.module, point: point.ID, occurrence: row.Occurrence, member: member, coords: coords}
+				declared, ok := declareGeneratedIssuanceSurfaces(rowsWorkspace, state, generated, coords, site, entity, issuance)
+				if !ok {
+					return nil, false
+				}
+				result = append(result, declared)
+			}
+		}
+		return result, len(result) != 0
+	}
 	binder, binderOK := resolveOrdinaryRuleCell(row.Capability)
 	if !binderOK {
 		return nil, false
@@ -290,6 +320,22 @@ func admitMountedRuleIssuance(rowsWorkspace *programRows, rows *mountedArtifactR
 	if !row.Capability.mounted() || row.Capability.activation || !row.Mount.Available() || !row.Point.Available() || !row.Occurrence.Available() {
 		return pendingRuleIssuance{}, false
 	}
+	generated, generatedOK := resolveGeneratedRuleCell(row.Capability)
+	if generatedOK {
+		if !rows.mountedRule(row.Capability, row.Mount, row.Point, row.Occurrence) {
+			return pendingRuleIssuance{}, false
+		}
+		site, siteOK := rows.mountedSite(row.Mount, row.Point)
+		entity, entityOK := mountedRuleOccurrenceKey(row.Capability, row.Occurrence)
+		member := mountedRuleMemberID(row.Capability, row.Mount, row.Point, row.Occurrence)
+		activation := mountedRuleActivationID(row.Capability, row.Mount, row.Point, row.Occurrence)
+		if !siteOK || !entityOK || !member.Available() || !activation.Available() {
+			return pendingRuleIssuance{}, false
+		}
+		coords := OperandCoords{Mount: row.Mount, Point: row.Point, Occurrence: row.Occurrence}
+		issuance := pendingRuleIssuance{plane: declaredMemberMount, role: row.Capability, mount: row.Mount, point: row.Point, occurrence: row.Occurrence, member: member, activationID: activation, coords: coords}
+		return declareGeneratedIssuanceSurfaces(rowsWorkspace, state, generated, coords, site, entity, issuance)
+	}
 	binder, binderOK := resolveOrdinaryRuleCell(row.Capability)
 	if !binderOK {
 		return pendingRuleIssuance{}, false
@@ -325,6 +371,11 @@ func admitMountedRuleIssuance(rowsWorkspace *programRows, rows *mountedArtifactR
 // once.
 func admitLinkRuleIssuance(rowsWorkspace *programRows, rows *mountedArtifactRows, state *schemaBindingState, row LinkRuleAdmission, claimed map[identity.ContentID]RuleSlotCapability) (pendingRuleIssuance, bool) {
 	if !row.Capability.link() || !row.Occurrence.Available() {
+		return pendingRuleIssuance{}, false
+	}
+	if _, generated := resolveGeneratedRuleCell(row.Capability); generated {
+		// Generated relation owners resolve mount-qualified candidates. A Link
+		// occurrence has no mount and therefore has no generated issuance lane.
 		return pendingRuleIssuance{}, false
 	}
 	binder, binderOK := resolveOrdinaryRuleCell(row.Capability)
@@ -377,6 +428,101 @@ func declareIssuanceSurfaces(rowsWorkspace *programRows, state *schemaBindingSta
 		return pendingRuleIssuance{}, false
 	}
 	issuance.semantic, issuance.family, issuance.anchor, issuance.surfaces, issuance.operand = semantic, family, anchor, surfaces, operand
+	return issuance, true
+}
+
+// declareGeneratedIssuanceSurfaces is the generated construction arm. It
+// resolves candidate/source/destination dense locals through the axis owners,
+// then mints exact Factor surfaces from those locals. No operand provider,
+// callback, type-erased value, or legacy binder participates.
+func declareGeneratedIssuanceSurfaces(rowsWorkspace *programRows, state *schemaBindingState, declaration *generatedRuleBindingCell, coords OperandCoords, site equation.Site, entity composition.Key, issuance pendingRuleIssuance) (pendingRuleIssuance, bool) {
+	// Site is intentionally still open here: admitRuleSurfaceAnchor owns the
+	// Batch admission and authenticates the opaque Site against that exact open
+	// Batch. Site.Available is a post-seal predicate, so requiring it here would
+	// make the production construction phase impossible while admitting the
+	// same capability through the ordinary arm.
+	if rowsWorkspace == nil || state == nil || declaration == nil || !coords.Mount.Available() || !coords.Occurrence.Available() || !entity.Available() {
+		return pendingRuleIssuance{}, false
+	}
+	semantic, family, schemaOK := generatedRuleSchema(declaration)
+	if !schemaOK || !declaredRoleOwnsRuleSchema(state, issuance.role, semantic) {
+		return pendingRuleIssuance{}, false
+	}
+	cell := declaration.generatedCell()
+	if cell == nil || !cell.available() {
+		return pendingRuleIssuance{}, false
+	}
+	descriptor := cell.program
+	candidate := descriptor.CandidateRelation()
+	destination := descriptor.DestinationProjection()
+	candidateOwner, candidateOwnerOK := relationOwnerForGeneratedAxis(state, candidate.Axis)
+	if !candidateOwnerOK {
+		return pendingRuleIssuance{}, false
+	}
+	denseCandidate, candidateOK := candidateOwner.Candidate(candidate.Member, coords.Mount, coords.Occurrence)
+	if !candidateOK {
+		return pendingRuleIssuance{}, false
+	}
+	destinationLocal, destinationOK := candidateOwner.Project(candidate.Member, destination.Member, denseCandidate)
+	if !destinationOK {
+		return pendingRuleIssuance{}, false
+	}
+	outputFactorOrdinal := uint64(descriptor.OutputFactor())
+	if outputFactorOrdinal >= uint64(len(state.factors)) {
+		return pendingRuleIssuance{}, false
+	}
+	outputFactor := state.factors[outputFactorOrdinal]
+	if outputFactor == nil {
+		return pendingRuleIssuance{}, false
+	}
+	writeSurface, writeSurfaceOK := outputFactor.schemaFactorExactWrite(state, state.authority, uint64(destinationLocal))
+	if !writeSurfaceOK || !writeSurface.value.Available() || writeSurface.value.Factor != outputFactor.schemaFactorSemanticKey() {
+		return pendingRuleIssuance{}, false
+	}
+	var readSurface RuleReadSurface
+	var carries uint64
+	if descriptor.ReadCount() != 0 {
+		join := descriptor.JoinRelation()
+		key := descriptor.KeyProjection()
+		joinOwner, joinOwnerOK := relationOwnerForGeneratedAxis(state, join.Axis)
+		if !joinOwnerOK {
+			return pendingRuleIssuance{}, false
+		}
+		sourceLocal, sourceOK := joinOwner.Project(join.Member, key.Member, denseCandidate)
+		readFactorOrdinal := uint64(descriptor.ReadFactor())
+		if !sourceOK || readFactorOrdinal >= uint64(len(state.factors)) || readFactorOrdinal != outputFactorOrdinal {
+			return pendingRuleIssuance{}, false
+		}
+		readFactor := state.factors[readFactorOrdinal]
+		if readFactor == nil || readFactor != outputFactor {
+			return pendingRuleIssuance{}, false
+		}
+		var readOK bool
+		readSurface, readOK = readFactor.schemaFactorExactRead(state, state.authority, uint64(sourceLocal))
+		if !readOK || !readSurface.value.Available() || readSurface.value.Factor != readFactor.schemaFactorSemanticKey() {
+			return pendingRuleIssuance{}, false
+		}
+		carries = 1
+	}
+	if !cell.planDigest.Available() {
+		return pendingRuleIssuance{}, false
+	}
+	anchor, anchorOK := admitRuleSurfaceAnchor(rowsWorkspace, site, entity, [32]byte(cell.planDigest))
+	if !anchorOK {
+		return pendingRuleIssuance{}, false
+	}
+	surfaces := declaredRuleSurfaces{
+		writes:  []ruleWriteSurface{writeSurface},
+		carries: carries,
+	}
+	if descriptor.ReadCount() != 0 {
+		surfaces.reads = []RuleReadSurface{readSurface}
+	}
+	issuance.semantic, issuance.family, issuance.anchor, issuance.surfaces = semantic, family, anchor, surfaces
+	issuance.generated = &generatedMemberDeclaration{
+		cell: cell, operand: anchor.operand, candidate: denseCandidate,
+		readSurface: readSurface, writeSurface: writeSurface,
+	}
 	return issuance, true
 }
 
@@ -499,6 +645,10 @@ func resolveDeclaredMemberRow(state *schemaBindingState, authority *schemaBindin
 		Plane: issuance.plane, ID: issuance.member, Role: issuance.role,
 		Mount: issuance.mount, Point: issuance.point, Occurrence: issuance.occurrence,
 		Row: row, Bind: issuance.binder, Coords: issuance.coords, Operand: issuance.operand,
+		Generated: issuance.generated,
+	}
+	if issuance.generated != nil {
+		member.GeneratedOperand = issuance.generated.operand
 	}
 	if issuance.activation {
 		application := compositionKeyOf(issuance.application)
