@@ -1,63 +1,59 @@
 package transfer
 
 import (
-	"github.com/wippyai/go-lua/analysis/engine"
 	"github.com/wippyai/go-lua/analysis/schema"
+	"github.com/wippyai/go-lua/analysis/schema/axis"
+	"github.com/wippyai/go-lua/analysis/schema/axis/member"
 	"github.com/wippyai/go-lua/analysis/schema/rule"
+	"github.com/wippyai/go-lua/analysis/schema/rule/program"
 	"github.com/wippyai/go-lua/analysis/schema/structure"
 	"github.com/wippyai/go-lua/analysis/schema/vocabulary"
-	valueowner "github.com/wippyai/go-lua/domain/value/owner"
+	valuedomain "github.com/wippyai/go-lua/domain/value"
 )
 
-// rulePrincipals is this package's own statement of the cold owners its rule
-// declares against. It names only peer types this package already speaks, so
-// the composition that supplies the principal record satisfies it structurally
-// and neither side learns the other's shape.
-type rulePrincipals interface {
-	ValuePrincipal() *valueowner.SchemaFragment
-}
-
-// ruleAuthorities is the sealed authority set this rule binds against, stated
-// the same way.
-type ruleAuthorities interface {
-	ValueAuthority() *valueowner.HotOwner
-}
-
-// RuleEntry is this package's value-transfer rule declaration. P and A are the
-// composition's own principal and authority records, admitted by the need
-// interfaces above.
-func RuleEntry[P rulePrincipals, A ruleAuthorities]() rule.Spec {
+// RuleEntry is Value transfer's semantic callback-free Rule declaration. The
+// generic composition derives and binds its generated engine slot from this
+// Program; this package owns no engine fragment, registration, or hot rule.
+func RuleEntry() rule.Spec {
+	valueAxis := schema.EntryReference{Surface: schema.SurfaceKindAxis, Key: "value"}
 	return rule.Spec{
-		Key:    "value-transfer",
-		Writes: "value",
-		Owner:  "value",
-		Issues: []rule.Issuance{
-			{Occurrence: "occurrence/storage-read", Requirement: "program-requirement/unrestricted", Form: "program-form/local-entry"},
-			{Occurrence: "occurrence/storage-bind-transfer", Requirement: "program-requirement/unrestricted", Form: "program-form/local-successor"},
-			{Occurrence: "occurrence/storage-bind-transfer", Requirement: "program-requirement/tail-transfer-result", Form: "program-form/call-effect"},
-			{Occurrence: "occurrence/storage-write", Requirement: "program-requirement/unrestricted", Form: "program-form/local-predecessor"},
-		},
+		Key:      "value-transfer",
+		Writes:   "value",
+		Owner:    "value",
+		Issues:   valuedomain.StorageTransferRuleIssues(),
 		Lane:     rule.LaneMounted,
 		Semantic: "semantic/rule/value/storage-transfer",
 		Roles:    []schema.Key{"semantic/operand/value/storage-transfer"},
+		Program: program.Program{
+			OperandRole: "semantic/operand/value/storage-transfer",
+			Candidate:   member.RelationRef{Axis: valueAxis, Member: valuedomain.StorageTransferCandidates},
+			Joins: []program.JoinDecl{{
+				Sources:  []program.SourceRef{program.CandidateSource()},
+				Relation: member.RelationRef{Axis: valueAxis, Member: valuedomain.StorageTransferSources},
+				Key:      member.ProjectionRef{Axis: valueAxis, Member: valuedomain.StorageTransferSourceKey},
+				Read: program.ReadDecl{
+					Input: 0,
+					Axis:  program.AxisRef(valueAxis),
+					Form:  program.Exact,
+					Contract: program.ReadContract{
+						Order: program.OrderCanonical, Sparse: program.SparseExplicit,
+						OnOpaque: program.OnOpaqueRefuse, Multiplicity: program.MultiplicityOne,
+					},
+				},
+			}},
+			Fold: program.FoldDecl{
+				Reducer: member.ReducerRef{Axis: valueAxis, Member: valuedomain.IdentityReducer},
+				Inputs:  []program.JoinRef{0},
+				Outputs: []program.OutputDecl{{
+					Column:      axis.OutputRef{Axis: valueAxis, Key: "value/facts"},
+					Destination: member.ProjectionRef{Axis: valueAxis, Member: valuedomain.StorageTransferTarget},
+					Mode:        program.ModeExact,
+					ValueSlot:   0,
+				}},
+			},
+			Carry: &program.CarryDecl{Input: 0, Mode: program.CarryIdentity},
+		},
 	}
-}
-
-func DeclareRule[P rulePrincipals](builder *engine.SchemaBuilder, context rule.Declaration[P]) (*SchemaFragment, bool) {
-	ruleSemantic, ruleOK := context.Roles.Key(vocabulary.RoleKey("rule/value/storage-transfer"))
-	operandFamily, operandOK := context.Roles.Key(vocabulary.RoleKey("operand/value/storage-transfer"))
-	if !ruleOK || !operandOK {
-		return nil, false
-	}
-	return DeclareSchema(builder, ruleSemantic, operandFamily, context.Principals.ValuePrincipal())
-}
-
-func RegisterRule(binding *engine.SchemaBinding, context rule.Registration[*SchemaFragment]) (engine.RuleSlotCapability, bool) {
-	return engine.RegisterMountedSlot(binding, context.Fragment.RuleSlot())
-}
-
-func BindRule[A ruleAuthorities](_ *engine.SchemaBinding, context rule.Binding[A, *SchemaFragment]) (*HotRule, bool) {
-	return BindHot(context.Fragment, context.Authorities.ValueAuthority())
 }
 
 // StructureSpecs is this package's contribution to the analyzer's semantic
