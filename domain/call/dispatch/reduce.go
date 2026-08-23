@@ -60,9 +60,10 @@ func dispatchAtom(rule *HotRule, mounted calldomain.MountedCall, bound dispatchR
 		if !hasRequire || boundaryRequire != require || !bound.key.IsApplication() {
 			return calldomain.Target{}, false, true
 		}
-		_, _, _, _, seedID, identityOK := algebra.MountedCallIdentity(mounted)
+		projected, projectedOK := algebra.CallCoordinateForMountedCall(mounted)
+		seedID, seedOK := projected.LoaderSeedID()
 		capability, admitted := algebra.TargetForSeedID(seedID)
-		admitted = admitted && identityOK && seedID.Available()
+		admitted = admitted && projectedOK && seedOK
 		if !admitted {
 			return calldomain.Target{}, false, true
 		}

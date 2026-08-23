@@ -70,9 +70,9 @@ func BindHot(fragment *SchemaFragment, values *valueowner.HotOwner, calls *callo
 		if !applicationOK {
 			return 0, false
 		}
-		key, keyOK := calls.Algebra().KeyForApplicationID(application)
-		index, indexOK := calls.Algebra().KeyIndex(key)
-		return uint64(index), keyOK && indexOK && key.IsApplication()
+		coordinate, coordinateOK := calls.Algebra().CallCoordinateForApplication(application)
+		index, indexOK := coordinate.CoordinateIndex()
+		return index, coordinateOK && indexOK
 	})
 	if !callOK {
 		return nil, false

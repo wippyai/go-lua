@@ -20,9 +20,14 @@ type mountedCallResultSlotKey struct {
 // coordinates. A finite tail consumed by a Cell receives a distinct logical
 // coordinate here; the Cell remains a separate storage endpoint.
 type MountedCallResultSlot struct {
-	schema     *Schema
-	key        mountedCallResultSlotKey
-	slotID     identity.ContentID
+	schema *Schema
+	key    mountedCallResultSlotKey
+	slotID identity.ContentID
+	// content is the owner-issued identity of this mounted row. A Program
+	// CallResultSlot identity is reusable across mounts of one program, so
+	// the mount qualifies it here once instead of every consuming rule
+	// re-qualifying it with a hash of its own.
+	content    identity.ContentID
 	sourceKind programschema.CallResultSlotSourceKind
 	value      identity.ContentID
 	coordinate Coordinate
@@ -30,7 +35,7 @@ type MountedCallResultSlot struct {
 
 func (row MountedCallResultSlot) valid() bool {
 	return row.schema != nil && row.schema.Valid() && row.key.module.Available() &&
-		row.key.call.Available() && row.slotID.Available() && row.sourceKind.Valid() && row.value.Available() &&
+		row.key.call.Available() && row.slotID.Available() && row.content.Available() && row.sourceKind.Valid() && row.value.Available() &&
 		row.coordinate.schema == row.schema && row.coordinate.Valid()
 }
 
@@ -62,6 +67,15 @@ func (row MountedCallResultSlot) Module() (identity.ContentID, bool) {
 		return identity.ContentID{}, false
 	}
 	return row.key.module, true
+}
+
+// ID returns the owner-issued identity of this mounted result slot. It is
+// the operand identity a consuming rule declares; a rule does not derive one.
+func (row MountedCallResultSlot) ID() (identity.ContentID, bool) {
+	if !row.valid() {
+		return identity.ContentID{}, false
+	}
+	return row.content, true
 }
 
 // SlotID returns the existing Program CallResultSlot identity.
@@ -173,6 +187,7 @@ func (builder *valueBuilder) sealMountedCallResultSlots() bool {
 			schema:     builder.Schema,
 			key:        key,
 			slotID:     slot.ID(),
+			content:    computationContent(builder.linkID, "val-callresultslot!", key.module, key.call, uint64(key.ordinal)),
 			sourceKind: slot.SourceKind(),
 			value:      valueID,
 			coordinate: coordinate,

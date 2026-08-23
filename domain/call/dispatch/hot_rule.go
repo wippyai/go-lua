@@ -74,9 +74,9 @@ func BindHot(binding *engine.SchemaBinding, fragment *SchemaFragment, values *va
 		index, indexOK := values.Schema().CoordinateIndex(row.coordinate)
 		return uint64(index), rowOK && indexOK
 	}, func(mounted calldomain.MountedCall) (uint64, bool) {
-		row, rowOK := hot.rowForMounted(mounted)
-		index, indexOK := calls.Algebra().KeyIndex(row.key)
-		return uint64(index), rowOK && indexOK && index >= 0
+		projected, projectedOK := calls.Algebra().CallCoordinateForMountedCall(mounted)
+		index, indexOK := projected.CoordinateIndex()
+		return index, projectedOK && indexOK
 	})
 	if !ok {
 		return nil, false
@@ -92,8 +92,9 @@ func (rule *HotRule) resolveOperand(coords engine.OperandCoords) (calldomain.Mou
 	if !rule.valid() {
 		return calldomain.MountedCall{}, false
 	}
-	mounted, ok := rule.calls.Algebra().MountedCallForOccurrence(coords.Mount, coords.Occurrence)
-	if !ok {
+	projected, projectedOK := rule.calls.Algebra().CallCoordinateForOccurrence(coords.Mount, coords.Occurrence)
+	mounted, ok := projected.MountedCall()
+	if !projectedOK || !ok {
 		return calldomain.MountedCall{}, false
 	}
 	_, rowOK := rule.rowForMounted(mounted)

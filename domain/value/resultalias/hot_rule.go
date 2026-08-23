@@ -1,7 +1,6 @@
 package resultalias
 
 import (
-	"crypto/sha256"
 	"sort"
 
 	"github.com/wippyai/go-lua/analysis/engine"
@@ -81,6 +80,7 @@ type HotRule struct {
 	contract       *contract.Contract
 	pack           *packdomain.Schema
 	plan           targetAliasPlan
+	semantic       identity.SemanticKey
 	callRead       engine.Read[engine.OrderedCells[calldomain.Value]]
 	actualRead     engine.Read[engine.Selection[uint64, engine.OrderedCells[valuedomain.Value]]]
 }
@@ -108,11 +108,9 @@ func BindHot(
 	if !planOK {
 		return nil, false
 	}
-	rule := &HotRule{values: values, calls: calls, contract: targetContract, pack: packSchema, plan: plan}
+	rule := &HotRule{values: values, calls: calls, contract: targetContract, pack: packSchema, plan: plan, semantic: fragment.semantic}
 	implementation, bound := valueowner.BindSelectedRuleDirect(values, fragment.slot, fragment.carry, fragment.write, values.FactorRef(), engine.HotRuleSpec[valuedomain.Value, valuedomain.MountedCallResultSlot]{
-		OperandContent: func(row valuedomain.MountedCallResultSlot) (valuedomain.MountedCallResultSlot, [32]byte, bool) {
-			return resultAliasContent(values.Schema(), row)
-		},
+		OperandContent:  rule.operandContent,
 		OperandResolver: rule.resolveOperand,
 		Fold:            rule.fold,
 	}, engine.HotCarrySpec[valuedomain.Value, valuedomain.MountedCallResultSlot]{}, func(row valuedomain.MountedCallResultSlot) (uint64, bool) {
@@ -125,9 +123,9 @@ func BindHot(
 	}
 	callRead, callOK := valueowner.AddSelectedRuleDirectExactRead(implementation, fragment.callRead, calls.FactorRef(), func(row valuedomain.MountedCallResultSlot) (uint64, bool) {
 		module, occurrence, occurrenceOK := mountedOccurrence(row)
-		key, keyOK := projectCallKey(calls.Algebra(), module, occurrence, occurrenceOK)
-		index, indexOK := calls.Algebra().KeyIndex(key)
-		return uint64(index), keyOK && indexOK && key.IsApplication()
+		coordinate, coordinateOK := projectCallCoordinate(calls.Algebra(), module, occurrence, occurrenceOK)
+		index, indexOK := coordinate.CoordinateIndex()
+		return index, coordinateOK && indexOK
 	})
 	if !callOK {
 		return nil, false
@@ -140,34 +138,32 @@ func BindHot(
 	return rule, true
 }
 
-func resultAliasContent(schema *valuedomain.Schema, row valuedomain.MountedCallResultSlot) (valuedomain.MountedCallResultSlot, [32]byte, bool) {
-	if schema == nil || !schema.OwnsMountedCallResultSlot(row) {
+// operandContent declares the operand under Value's owner-issued row identity
+// framed by this rule's semantic key. Body-result binds over the same slot
+// row, so the framing is what keeps the two operand entities apart.
+func (rule *HotRule) operandContent(row valuedomain.MountedCallResultSlot) (valuedomain.MountedCallResultSlot, [32]byte, bool) {
+	if rule == nil || rule.values == nil || rule.values.Schema() == nil || !rule.values.Schema().OwnsMountedCallResultSlot(row) {
 		return valuedomain.MountedCallResultSlot{}, [32]byte{}, false
 	}
-	module, moduleOK := row.Module()
-	call, callOK := row.CallID()
-	linkID := schema.LinkID()
-	if !moduleOK || !callOK || !module.Available() || !call.Available() || !linkID.Available() {
+	id, idOK := row.ID()
+	if !idOK {
 		return valuedomain.MountedCallResultSlot{}, [32]byte{}, false
 	}
-	hash := sha256.New()
-	_, _ = hash.Write([]byte("wippy.analysis.value.resultalias.v1\x00"))
-	_, _ = hash.Write(linkID[:])
-	_, _ = hash.Write(module[:])
-	_, _ = hash.Write(call[:])
-	var digest [32]byte
-	copy(digest[:], hash.Sum(nil))
-	return row, digest, digest != ([32]byte{})
+	framed, framedOK := rule.values.Schema().FrameOperandIdentity(rule.semantic, id)
+	if !framedOK {
+		return valuedomain.MountedCallResultSlot{}, [32]byte{}, false
+	}
+	return row, [32]byte(framed), true
 }
 
-func projectCallKey(algebra *calldomain.Algebra, module, occurrence identity.ContentID, ok bool) (calldomain.Key, bool) {
-	if algebra == nil || !algebra.Valid() || !ok || !module.Available() || !occurrence.Available() {
-		return calldomain.Key{}, false
+// projectCallCoordinate reads Call's sealed occurrence projection. The mounted
+// inverse, the detached identity and the application key are one owner-issued
+// row there.
+func projectCallCoordinate(algebra *calldomain.Algebra, module, occurrence identity.ContentID, ok bool) (calldomain.CallCoordinate, bool) {
+	if algebra == nil || !ok {
+		return calldomain.CallCoordinate{}, false
 	}
-	mounted, mountedOK := algebra.MountedCallForOccurrence(module, occurrence)
-	_, callID, mountedModule, _, _, identityOK := algebra.MountedCallIdentity(mounted)
-	key, keyOK := algebra.KeyForMountedCall(mounted)
-	return key, mountedOK && identityOK && keyOK && key.IsApplication() && key.Valid() && callID == occurrence && mountedModule == module
+	return algebra.CallCoordinateForOccurrence(module, occurrence)
 }
 
 func (rule *HotRule) resolveOperand(coords engine.OperandCoords) (valuedomain.MountedCallResultSlot, bool) {
@@ -193,12 +189,9 @@ func (rule *HotRule) mountedActual(row valuedomain.MountedCallResultSlot) (packd
 	if !occurrenceOK {
 		return packdomain.MountedActualProjection{}, false
 	}
-	mounted, mountedOK := rule.calls.Algebra().MountedCallForOccurrence(module, occurrence)
-	key, keyOK := rule.calls.Algebra().KeyForMountedCall(mounted)
-	_, callID, mountedModule, _, _, identityOK := rule.calls.Algebra().MountedCallIdentity(mounted)
+	_, coordinateOK := rule.calls.Algebra().CallCoordinateForOccurrence(module, occurrence)
 	actual, actualOK := rule.pack.MountedActualProjection(module, occurrence)
-	return actual, mountedOK && keyOK && key.Valid() && key.IsApplication() && identityOK && callID == occurrence && mountedModule == module &&
-		actualOK && actual.Valid() && actual.OwnedBy(rule.pack)
+	return actual, coordinateOK && actualOK && actual.Valid() && actual.OwnedBy(rule.pack)
 }
 
 type aliasSelection struct {

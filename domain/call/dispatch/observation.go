@@ -41,17 +41,15 @@ func (rule *HotRule) MountedCalleeSetObservation(
 		return engine.ProgramObservationAdmission{}, false
 	}
 
-	// Resolve the occurrence through Call's exact owner.  The application key
-	// check is intentional: callback and resume arms have ContentIDs too, but
-	// neither is an ordinary mounted call application.
-	mounted, mountedOK := algebra.MountedCallForOccurrence(mount, occurrence)
-	applicationID, callID, moduleID, _, _, identityOK := algebra.MountedCallIdentity(mounted)
-	key, keyOK := algebra.KeyForMountedCall(mounted)
-	keyApplicationID, keyApplicationOK := key.ApplicationID()
+	// Resolve the occurrence through Call's sealed occurrence projection. Only
+	// an ordinary mounted call application has a row there, so callback and
+	// resume arms - which have ContentIDs of their own - cannot enter here.
+	projected, projectedOK := algebra.CallCoordinateForOccurrence(mount, occurrence)
+	applicationID, callID, moduleID, _, _, identityOK := projected.Identity()
+	mounted, mountedOK := projected.MountedCall()
 	row, rowOK := rule.rowForMounted(mounted)
-	if !mountedOK || !identityOK || !keyOK || !key.IsApplication() || !keyApplicationOK ||
-		!applicationID.Available() || !callID.Available() || !moduleID.Available() || !rowOK ||
-		callID != occurrence || moduleID != mount || keyApplicationID != applicationID || !row.contentID.Available() {
+	if !projectedOK || !identityOK || !mountedOK || !rowOK ||
+		callID != occurrence || moduleID != mount || !row.contentID.Available() {
 		return engine.ProgramObservationAdmission{}, false
 	}
 

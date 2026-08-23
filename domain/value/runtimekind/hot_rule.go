@@ -196,22 +196,16 @@ func callOccurrence(schema *valuedomain.Schema, row valuedomain.RuntimeKindCall)
 	return module, occurrence, ok && module.Available() && occurrence.Available()
 }
 
+// projectCall reads Call's sealed occurrence projection. The mounted inverse,
+// the detached identity, the application key and its dense slot are one
+// owner-issued row there.
 func projectCall(algebra *call.Algebra, module, occurrence identity.ContentID, ok bool) (uint64, bool) {
-	key, keyOK := projectCallKey(algebra, module, occurrence, ok)
-	index, indexOK := algebra.KeyIndex(key)
-	return uint64(index), keyOK && indexOK
-}
-
-func projectCallKey(algebra *call.Algebra, module, occurrence identity.ContentID, ok bool) (call.Key, bool) {
-	if !ok || algebra == nil || !module.Available() || !occurrence.Available() {
-		return call.Key{}, false
+	if !ok || algebra == nil {
+		return 0, false
 	}
-	mounted, mountedOK := algebra.MountedCallForOccurrence(module, occurrence)
-	applicationID, _, mountedModule, _, _, identityOK := algebra.MountedCallIdentity(mounted)
-	if !mountedOK || !identityOK || mountedModule != module || !applicationID.Available() {
-		return call.Key{}, false
-	}
-	return algebra.KeyForApplicationID(applicationID)
+	coordinate, coordinateOK := algebra.CallCoordinateForOccurrence(module, occurrence)
+	index, indexOK := coordinate.CoordinateIndex()
+	return index, coordinateOK && indexOK
 }
 
 type decision uint8

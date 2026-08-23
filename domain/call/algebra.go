@@ -41,18 +41,22 @@ type Algebra struct {
 	mountedCalls               []mountedCallRow
 	mountedCallIndex           map[identity.ContentID]uint32
 	mountedCallOccurrenceIndex map[mountedCallOccurrenceRef]uint32
-	requireOperation           vocabulary.Operation
-	linkOwner                  link.OwnerCapability
-	content                    identity.ContentID
-	keys                       []keyRow
-	keyIndex                   map[identity.ContentID]uint32
-	targets                    []targetRow
-	seedIndex                  map[identity.ContentID]selector
-	roleIndex                  map[TargetRoleID]selector
-	allocationIndex            map[allocationTargetKey]selector
-	bodyTargetCount            int
-	bottom                     Value
-	top                        Value
+	// callCoordinates is the sealed Call-occurrence -> Call-coordinate
+	// projection issued once the mounted-call directory is complete.
+	callCoordinates     []callCoordinateRow
+	callCoordinateTable identity.ContentID
+	requireOperation    vocabulary.Operation
+	linkOwner           link.OwnerCapability
+	content             identity.ContentID
+	keys                []keyRow
+	keyIndex            map[identity.ContentID]uint32
+	targets             []targetRow
+	seedIndex           map[identity.ContentID]selector
+	roleIndex           map[TargetRoleID]selector
+	allocationIndex     map[allocationTargetKey]selector
+	bodyTargetCount     int
+	bottom              Value
+	top                 Value
 }
 
 // mountedCallRow is the seal-time projection of Project's ordinary-call
@@ -196,6 +200,9 @@ func NewWithMountedArtifacts(source *link.Link, mounts []MountedArtifact) (*Alge
 		slot := uint32(len(algebra.mountedCalls))
 		algebra.mountedCallIndex[applicationID] = slot
 		algebra.mountedCallOccurrenceIndex[mountedCallOccurrenceRef{moduleID: moduleID, callID: callID}] = slot
+	}
+	if !algebra.sealCallCoordinates() {
+		return nil, false
 	}
 	algebra.bottom = Value{owner: algebra, known: true}
 	algebra.top = Value{owner: algebra, top: true}
