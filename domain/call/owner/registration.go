@@ -91,8 +91,10 @@ func AxisEntry[A axisInputs]() axis.Spec[A] {
 		// The call factor's facts are published as one column, written by this
 		// axis's own principal: the lane whose rules write the factor is the lane
 		// the engine admits to fill the column a consumer reads it out of.
-		Frame:    axis.Frame{Outputs: []axis.Output{{Key: "call/facts", Writer: "call"}}},
-		Semantic: "semantic/factor/call",
+		Frame:     axis.Frame{Outputs: []axis.Output{{Key: "call/facts", Writer: "call"}}},
+		Catalog:   call.AxisMemberCatalog(),
+		Signature: axis.Signature{Key: call.CallKeyCarrier, Fact: call.CallFactCarrier},
+		Semantic:  "semantic/factor/call",
 		Mount: axis.NewMount(func(context axis.Mounting[A]) (*call.Algebra, MountRejection, bool) {
 			return mountCallAlgebra[A](context.Inputs)
 		}),

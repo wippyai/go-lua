@@ -15,6 +15,7 @@ package memberroster
 
 import (
 	"github.com/wippyai/go-lua/analysis/schema/axis/member/definition"
+	callbase "github.com/wippyai/go-lua/domain/call/memberdefinition"
 	heapbase "github.com/wippyai/go-lua/domain/heap/memberdefinition"
 
 	heapingress "github.com/wippyai/go-lua/domain/heap/allocation/ingress/memberdefinition"
@@ -77,6 +78,11 @@ func Composition() (definition.Roster, bool) {
 				heapingress.Contribution(),
 				heapbootstrap.Contribution(),
 			},
+		},
+		definition.Source{
+			Package: "call",
+			Name:    "call",
+			Base:    callbase.MountedCall(),
 		},
 	)
 }

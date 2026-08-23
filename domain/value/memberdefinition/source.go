@@ -44,6 +44,7 @@ func StorageTransfer() definition.Definition {
 	value := valueGoType("Value")
 	allocationResult := valueGoType("AllocationResult")
 	freshResultCall := valueGoType("FreshResultCall")
+	mountedCallArgument := valueGoType("MountedCallArgument")
 	return definition.Definition{
 		Name: "ValueStorageTransfer",
 		Axis: "value",
@@ -69,6 +70,7 @@ func StorageTransfer() definition.Definition {
 			// carriers in the cold catalog; no receipt or callback is retained.
 			{Name: "AllocationResultCarrier", Key: "carrier/value/allocation-result", Type: allocationResult},
 			{Name: "FreshResultCallCarrier", Key: "carrier/value/fresh-result-call", Type: freshResultCall},
+			{Name: "MountedCallArgumentCarrier", Key: "carrier/value/mounted-call-argument", Type: mountedCallArgument},
 		},
 		Relations: []definition.Relation{
 			{
@@ -114,6 +116,22 @@ func StorageTransfer() definition.Definition {
 				CandidateIdentityAt: valueMethod("GlobalBootstrapResultIDAt", "Schema", true, 0),
 				Materialize:         definition.GoSymbol{PackagePath: valuePackagePath, Name: "GlobalBootstrapFact", ResultIndex: 0},
 			},
+			{
+				Name:              "MountedCallArgumentCandidates",
+				Key:               "value/mounted-call/argument-candidates",
+				Subject:           "MountedCallArgumentCarrier",
+				CandidateProvider: member.RelationRef{Axis: axisReference("value"), Member: "value/mounted-call/argument-candidates"},
+				CandidateResolver: valueMethod("MountedCallArgumentForMountedOccurrence", "Schema", true, 0),
+				CandidateOrdinal:  valueMethod("MountedCallArgumentOrdinal", "Schema", true, 0),
+				CandidateAt:       valueMethod("MountedCallArgumentAt", "Schema", true, 0),
+			},
+			{
+				Name:              "MountedCallArguments",
+				Key:               "value/mounted-call/arguments",
+				Subject:           "ValueFactCarrier",
+				Inputs:            []string{"MountedCallArgumentCarrier"},
+				CandidateProvider: member.RelationRef{Axis: axisReference("value"), Member: "value/mounted-call/argument-candidates"},
+			},
 		},
 		Projections: []definition.Projection{
 			{
@@ -151,6 +169,15 @@ func StorageTransfer() definition.Definition {
 				Role:              member.Destination,
 				Result:            "ValueCoordinateCarrier",
 				Accessor:          valueMethod("Result", "GlobalBootstrapResult", true, 0),
+			},
+			{
+				Name:              "MountedCallArgumentKey",
+				Key:               "value/mounted-call/argument-key",
+				Relation:          "MountedCallArguments",
+				CandidateProvider: member.RelationRef{Axis: axisReference("value"), Member: "value/mounted-call/argument-candidates"},
+				Role:              member.Key,
+				Result:            "ValueCoordinateCarrier",
+				Accessor:          valueMethod("Coordinate", "MountedCallArgument", false, -1),
 			},
 		},
 		CarryTransforms: []definition.CarryTransform{

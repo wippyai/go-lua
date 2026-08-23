@@ -307,3 +307,28 @@ func (row CallCoordinate) MountedCall() (MountedCall, bool) {
 	}
 	return row.owner.MountedCallAtHandle(int(row.slot) - 1)
 }
+
+// CallCoordinateOrdinal is the dense ordinal of a row this exact Algebra
+// issued. CallCoordinate.Ordinal is a row method; this is the owner-receiver
+// form the axis member candidate directory addresses.
+func (algebra *Algebra) CallCoordinateOrdinal(row CallCoordinate) (uint32, bool) {
+	if !algebra.OwnsCallCoordinate(row) {
+		return 0, false
+	}
+	ordinal, ok := row.Ordinal()
+	if !ok || ordinal < 0 {
+		return 0, false
+	}
+	return uint32(ordinal), true
+}
+
+// DenseKeyIndex is the axis member key-binding form of KeyIndex: the same
+// dense coordinate, narrowed to the uint32 the generated relation owner
+// normalizes against.
+func (algebra *Algebra) DenseKeyIndex(key Key) (uint32, bool) {
+	index, ok := algebra.KeyIndex(key)
+	if !ok || index < 0 {
+		return 0, false
+	}
+	return uint32(index), true
+}

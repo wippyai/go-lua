@@ -195,20 +195,105 @@ func TestResolveKeepsTypedRowsAlignedWithColdKinds(t *testing.T) {
 	if metadata.Key.Carrier != "carrier/value/coordinate" || metadata.Key.Input.Name != "Coordinate" || metadata.Key.Dense.Name != "uint32" || metadata.Key.Normalizer.Name != "CoordinateIndex" {
 		t.Fatalf("key metadata = %#v", metadata.Key)
 	}
-	if len(metadata.Relations) != 3 || metadata.Relations[0].Key != "value/storage-transfer/candidates" || metadata.Relations[0].Subject.Name != "StorageTransfer" || metadata.Relations[0].CandidateResolver.Name != "StorageTransferForArtifactOccurrence" || metadata.Relations[0].CandidateOrdinal.Name != "StorageTransferOrdinal" || metadata.Relations[0].CandidateAt.Name != "StorageTransferAt" {
-		t.Fatalf("relation metadata = %#v", metadata.Relations)
+	// The inventory is pinned by ordered key, not by a bare count: a row added
+	// to the value axis has to name itself here, and a row that moves is a
+	// different ordinal in every generated ladder.
+	wantRelations := []schema.Key{
+		"value/storage-transfer/candidates",
+		"value/storage-transfer/sources",
+		"value/source/candidates",
+		"value/global-bootstrap/candidates",
+		"value/mounted-call/argument-candidates",
+		"value/mounted-call/arguments",
 	}
-	if len(metadata.Projections) != 3 || metadata.Projections[0].Accessor.ResultIndex != 0 || metadata.Projections[1].Accessor.ResultIndex != 1 || metadata.Projections[0].Result.Name != "Coordinate" {
+	if len(metadata.Relations) != len(wantRelations) {
+		t.Fatalf("relation inventory = %d, want %d", len(metadata.Relations), len(wantRelations))
+	}
+	for index, key := range wantRelations {
+		if metadata.Relations[index].Key != key {
+			t.Fatalf("relation %d = %q, want %q", index, metadata.Relations[index].Key, key)
+		}
+	}
+	if metadata.Relations[0].Subject.Name != "StorageTransfer" || metadata.Relations[0].CandidateResolver.Name != "StorageTransferForArtifactOccurrence" || metadata.Relations[0].CandidateOrdinal.Name != "StorageTransferOrdinal" || metadata.Relations[0].CandidateAt.Name != "StorageTransferAt" {
+		t.Fatalf("relation metadata = %#v", metadata.Relations[0])
+	}
+	wantProjections := []schema.Key{
+		"value/storage-transfer/source-key",
+		"value/storage-transfer/target",
+		"value/source/coordinate",
+		"value/global-bootstrap/coordinate",
+		"value/mounted-call/argument-key",
+	}
+	if len(metadata.Projections) != len(wantProjections) {
+		t.Fatalf("projection inventory = %d, want %d", len(metadata.Projections), len(wantProjections))
+	}
+	for index, key := range wantProjections {
+		if metadata.Projections[index].Key != key {
+			t.Fatalf("projection %d = %q, want %q", index, metadata.Projections[index].Key, key)
+		}
+	}
+	// The three accessor arities the emitter binds: result 0 of a pair, result
+	// 1 of a pair, and the sole result of an unpaired accessor.
+	if metadata.Projections[0].Accessor.ResultIndex != 0 || metadata.Projections[1].Accessor.ResultIndex != 1 || metadata.Projections[4].Accessor.ResultIndex != -1 || metadata.Projections[0].Result.Name != "Coordinate" {
 		t.Fatalf("projection metadata = %#v", metadata.Projections)
 	}
-	if len(metadata.Reducers) != 2 || len(metadata.Reducers[0].Inputs) != 1 || metadata.Reducers[0].Inputs[0].Type.Name != "Value" || metadata.Reducers[0].Implementation.Name != "IdentityValue" {
-		t.Fatalf("reducer metadata = %#v", metadata.Reducers)
+	wantReducers := []schema.Key{"value/reducer/identity", "value/reducer/source", "value/reducer/global-bootstrap"}
+	if len(metadata.Reducers) != len(wantReducers) {
+		t.Fatalf("reducer inventory = %d, want %d", len(metadata.Reducers), len(wantReducers))
+	}
+	for index, key := range wantReducers {
+		if metadata.Reducers[index].Key != key {
+			t.Fatalf("reducer %d = %q, want %q", index, metadata.Reducers[index].Key, key)
+		}
+	}
+	if len(metadata.Reducers[0].Inputs) != 1 || metadata.Reducers[0].Inputs[0].Type.Name != "Value" || metadata.Reducers[0].Implementation.Name != "IdentityValue" {
+		t.Fatalf("reducer metadata = %#v", metadata.Reducers[0])
 	}
 	if metadata.Reducers[0].CandidatePresent || metadata.Reducers[0].Candidate.Available() || !metadata.Reducers[0].CandidateConstant {
 		t.Fatalf("joined reducer unexpectedly declares a candidate: %#v", metadata.Reducers[0])
 	}
 	if !metadata.Reducers[1].CandidatePresent || metadata.Reducers[1].CandidateConstant || metadata.Reducers[1].Candidate.Name != "SourceSeed" {
 		t.Fatalf("source reducer candidate metadata = %#v", metadata.Reducers[1])
+	}
+}
+
+// TestSoleResultProjectionAccessorEmitsOneBoundName states the accessor-arity
+// law: an owner that publishes exactly one projection and no fact beside it
+// declares result -1, and the emitted direct call binds one name plus its
+// validity. Without it every such owner has to add a paired accessor that
+// returns a second value it does not have, which is a wrapper written around
+// the generator rather than a member declaration.
+func TestSoleResultProjectionAccessorEmitsOneBoundName(t *testing.T) {
+	artifact, err := Render("call", composedSource(t, "call"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	relations := string(artifact.Relations)
+	if !strings.Contains(relations, "first, projectionOK := candidate.Key()") {
+		t.Fatalf("sole-result accessor was not emitted as one bound name:\n%s", relations)
+	}
+	if strings.Contains(relations, "first, second, projectionOK := candidate.Key()") || strings.Contains(relations, "_ = second") {
+		t.Fatalf("sole-result accessor still binds a discarded second result:\n%s", relations)
+	}
+	paired, err := Render("heap", composedSource(t, "heap"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(paired.Relations), "_ = second") {
+		t.Fatalf("a paired accessor stopped discarding its unused result:\n%s", string(paired.Relations))
+	}
+}
+
+// TestResolveRefusesAProjectionResultTheCallCannotBind states the other half:
+// -1, 0 and 1 are the whole accessor-arity vocabulary, and any other index
+// names a result the emitted call has no name for.
+func TestResolveRefusesAProjectionResultTheCallCannotBind(t *testing.T) {
+	for _, index := range []int8{2, 3, 127} {
+		source := composedSource(t, "value").Clone()
+		source.Projections[0].Accessor.ResultIndex = index
+		if _, err := Resolve(source); err == nil {
+			t.Fatalf("projection accessor result %d admitted", index)
+		}
 	}
 }
 

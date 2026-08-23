@@ -259,8 +259,12 @@ func Resolve(source definition.Definition) (Metadata, error) {
 		if !projection.CandidateProvider.Available() || projection.CandidateProvider != relation.CandidateProvider {
 			return Metadata{}, fmt.Errorf("member generator: projection %s candidate provider mismatches relation", projection.Name)
 		}
-		if projection.Accessor.ResultIndex != 0 && projection.Accessor.ResultIndex != 1 {
-			return Metadata{}, fmt.Errorf("member generator: projection %s must select accessor result 0 or 1", projection.Name)
+		// -1 is the sole-result accessor: the owner publishes exactly this
+		// projection and no fact beside it. 0 and 1 select one result of a
+		// pair. Any other index names a result the emitted direct call has no
+		// binding for.
+		if projection.Accessor.ResultIndex < -1 || projection.Accessor.ResultIndex > 1 {
+			return Metadata{}, fmt.Errorf("member generator: projection %s must select accessor result -1, 0 or 1", projection.Name)
 		}
 	}
 	reducers := make([]ReducerBinding, len(source.Reducers))
@@ -692,19 +696,26 @@ func renderRelations(packageName string, source definition.Definition) ([]byte, 
 			fmt.Fprintf(&out, "\t\t\tcandidate, candidateOK := %s\n", candidateAt)
 			out.WriteString("\t\t\tif !candidateOK {\n\t\t\t\treturn 0, false\n\t\t\t}\n")
 			accessor := directCall(projection.Accessor, owner, "owner.schema", "candidate", nil, packageName, aliases)
-			out.WriteString("\t\t\tfirst, second, projectionOK := ")
-			out.WriteString(accessor)
-			out.WriteString("\n\t\t\tif !projectionOK {\n\t\t\t\treturn 0, false\n\t\t\t}\n")
-			projected := "first"
-			if projection.Accessor.ResultIndex == 1 {
-				out.WriteString("\t\t\t_ = first\n")
-				projected = "second"
-			} else {
-				out.WriteString("\t\t\t_ = second\n")
+			// A sole-result accessor publishes exactly this projection and no
+			// value beside it, so the call binds one name. Binding a second
+			// would force every owner to publish a fact it may not have, which
+			// is how a paired accessor gets written around an unpaired one.
+			projected, discarded := "first", ""
+			results := "first, second, projectionOK := "
+			switch projection.Accessor.ResultIndex {
+			case -1:
+				results = "first, projectionOK := "
+			case 1:
+				projected, discarded = "second", "first"
+			default:
+				discarded = "second"
 			}
-			out.WriteString("\t\t\tprojected := ")
-			out.WriteString(projected)
-			out.WriteString("\n")
+			fmt.Fprintf(&out, "\t\t\t%s%s\n", results, accessor)
+			out.WriteString("\t\t\tif !projectionOK {\n\t\t\t\treturn 0, false\n\t\t\t}\n")
+			if discarded != "" {
+				fmt.Fprintf(&out, "\t\t\t_ = %s\n", discarded)
+			}
+			fmt.Fprintf(&out, "\t\t\tprojected := %s\n", projected)
 			normalizer := directCall(source.Binding.Key.Normalizer, owner, "owner.schema", "projected", []string{"projected"}, packageName, aliases)
 			fmt.Fprintf(&out, "\t\t\treturn %s\n", normalizer)
 		}

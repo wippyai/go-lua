@@ -459,6 +459,15 @@ type Schema struct {
 	// Program CallResult/CallResultSlot rows remain in the cold builder
 	// directory.
 	mountedCallResultSlots map[mountedCallResultSlotKey]MountedCallResultSlot
+	// mountedCallArguments is the immutable, Value-owned projection of every
+	// admitted Program Call actual: the receiver first for a method-form call,
+	// then each declared argument in order, matching Pack's fixed endpoint
+	// list. mountedCallArgumentOrder is the dense candidate-directory order;
+	// mountedCallArgumentOccurrences is the mount-qualified inverse from a
+	// row's own owner-issued content identity to its dense ordinal.
+	mountedCallArguments           map[mountedCallArgumentKey]MountedCallArgument
+	mountedCallArgumentOrder       []mountedCallArgumentKey
+	mountedCallArgumentOccurrences map[mountedCallArgumentOccurrenceKey]uint32
 
 	references     []referenceRow
 	allocRefs      map[heap.Key]uint32
@@ -771,6 +780,10 @@ const (
 	// stable while the Target fresh-result CallResult join gets its own closed
 	// construction boundary.
 	SealFailureFreshResultCalls
+	// SealFailureMountedCallArguments is appended so existing failure ordinals
+	// stay stable while the mounted Call actual projection gets its own closed
+	// construction boundary.
+	SealFailureMountedCallArguments
 )
 
 func (failure SealFailure) String() string {
@@ -780,7 +793,7 @@ func (failure SealFailure) String() string {
 		"storage-transfer-bind", "storage-transfer-write", "exact-keys", "capabilities", "sources", "bootstrap-callables",
 		"opaque-alternatives", "literal-source-atoms", "target-literal-atoms", "stored-unknown-atoms", "stored-exact-atoms",
 		"reference-source-atoms", "finish", "allocation-results", "source-values", "source-occurrences", "global-bootstrap-results", "runtime-kind-atoms",
-		"fresh-result-calls",
+		"fresh-result-calls", "mounted-call-arguments",
 	}
 	if int(failure) < 0 || int(failure) >= len(names) {
 		return "invalid"
@@ -815,41 +828,43 @@ func SealWithFailure(source *link.Link, heaps heap.Schema, mounts []programmount
 		}
 	}
 	schema := &Schema{
-		owner:                      source.OwnerCapability(),
-		linkID:                     source.ContentID(),
-		heap:                       heaps,
-		atomByRow:                  make(map[atomRow]uint32),
-		coordinateCount:            uint32(source.Boundary().Values().Count()),
-		mountCount:                 uint32(source.Project().Mounts().Count()),
-		coordinates:                make(map[identity.ContentID]coordinateRow, source.Boundary().Values().Count()),
-		mountedCoordinates:         make(map[mountedCoordinateKey]uint32),
-		exactKeys:                  make(map[keyspace.LiteralValue]keyspace.LiteralValue, source.Project().Keys().Count()),
-		literalSources:             make(map[identity.ContentID]literalSourceRow),
-		storageTransferOrdinals:    make(map[StorageTransferRef]uint32),
-		storageTransferOccurrences: make(map[storageTransferOccurrenceKey]uint32),
-		binaryEqualities:           make(map[computationKey]BinaryEquality),
-		binaryArithmetics:          make(map[computationKey]BinaryArithmetic),
-		binaryOrders:               make(map[computationKey]BinaryOrder),
-		runtimeKindCalls:           make(map[computationKey]RuntimeKindCall),
-		moduleLoadCalls:            make(map[computationKey]ModuleLoadCall),
-		presenceRefinements:        make(map[computationKey]PresenceRefinement),
-		unaryNots:                  make(map[computationKey]UnaryNot),
-		selectBranches:             make(map[selectBranchKey]SelectBranch),
-		valueClaims:                make(map[computationKey]ValueClaim),
-		returnBoundaries:           make(map[computationKey]ReturnBoundary),
-		returnBoundariesByBody:     make(map[computationKey][]computationKey),
-		freshResultCalls:           make(map[heap.Key]FreshResultCall),
-		moduleExportFresh:          make(map[heap.Key]moduleExportFreshRow),
-		mountedCallResultSlots:     make(map[mountedCallResultSlotKey]MountedCallResultSlot),
-		allocRefs:                  make(map[heap.Key]uint32),
-		globalResults:              make(map[identity.ContentID]*GlobalBootstrapResult),
-		globalOrdinals:             make(map[identity.ContentID]uint32),
-		targetInitials:             make(map[targetInitialKey]Value),
-		bootRefs:                   make(map[identity.ContentID]uint32),
-		endpointRefs:               make(map[identity.ContentID]uint32),
-		callableRefs:               make(map[identity.ContentID]uint32),
-		typeRefs:                   make(map[identity.ContentID]uint32),
-		capabilityID:               make(map[identity.ContentID]uint32),
+		owner:                          source.OwnerCapability(),
+		linkID:                         source.ContentID(),
+		heap:                           heaps,
+		atomByRow:                      make(map[atomRow]uint32),
+		coordinateCount:                uint32(source.Boundary().Values().Count()),
+		mountCount:                     uint32(source.Project().Mounts().Count()),
+		coordinates:                    make(map[identity.ContentID]coordinateRow, source.Boundary().Values().Count()),
+		mountedCoordinates:             make(map[mountedCoordinateKey]uint32),
+		exactKeys:                      make(map[keyspace.LiteralValue]keyspace.LiteralValue, source.Project().Keys().Count()),
+		literalSources:                 make(map[identity.ContentID]literalSourceRow),
+		storageTransferOrdinals:        make(map[StorageTransferRef]uint32),
+		storageTransferOccurrences:     make(map[storageTransferOccurrenceKey]uint32),
+		binaryEqualities:               make(map[computationKey]BinaryEquality),
+		binaryArithmetics:              make(map[computationKey]BinaryArithmetic),
+		binaryOrders:                   make(map[computationKey]BinaryOrder),
+		runtimeKindCalls:               make(map[computationKey]RuntimeKindCall),
+		moduleLoadCalls:                make(map[computationKey]ModuleLoadCall),
+		presenceRefinements:            make(map[computationKey]PresenceRefinement),
+		unaryNots:                      make(map[computationKey]UnaryNot),
+		selectBranches:                 make(map[selectBranchKey]SelectBranch),
+		valueClaims:                    make(map[computationKey]ValueClaim),
+		returnBoundaries:               make(map[computationKey]ReturnBoundary),
+		returnBoundariesByBody:         make(map[computationKey][]computationKey),
+		freshResultCalls:               make(map[heap.Key]FreshResultCall),
+		moduleExportFresh:              make(map[heap.Key]moduleExportFreshRow),
+		mountedCallResultSlots:         make(map[mountedCallResultSlotKey]MountedCallResultSlot),
+		mountedCallArguments:           make(map[mountedCallArgumentKey]MountedCallArgument),
+		mountedCallArgumentOccurrences: make(map[mountedCallArgumentOccurrenceKey]uint32),
+		allocRefs:                      make(map[heap.Key]uint32),
+		globalResults:                  make(map[identity.ContentID]*GlobalBootstrapResult),
+		globalOrdinals:                 make(map[identity.ContentID]uint32),
+		targetInitials:                 make(map[targetInitialKey]Value),
+		bootRefs:                       make(map[identity.ContentID]uint32),
+		endpointRefs:                   make(map[identity.ContentID]uint32),
+		callableRefs:                   make(map[identity.ContentID]uint32),
+		typeRefs:                       make(map[identity.ContentID]uint32),
+		capabilityID:                   make(map[identity.ContentID]uint32),
 	}
 	builder := &valueBuilder{Schema: schema, project: source.Project(), boundary: source.Boundary(), host: source.Host(), module: source.Module(), moduleFacts: make(map[moduleLoadFactKey]Value), artifacts: artifacts, structural: structural}
 	if !builder.sealMountedCallResultGeometry() {
@@ -863,6 +878,9 @@ func SealWithFailure(source *link.Link, heaps heap.Schema, mounts []programmount
 	}
 	if !builder.sealMountedCallResultSlots() {
 		return nil, SealFailureCoordinates
+	}
+	if !builder.sealMountedCallArguments() {
+		return nil, SealFailureMountedCallArguments
 	}
 	// The mounted finite tail slots reserve the last coordinates of the range,
 	// so the canonical publication order is derived once the range is complete
