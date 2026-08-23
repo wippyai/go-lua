@@ -19,7 +19,7 @@ type generatedLinkLawDirectory struct {
 var _ memberrelation.Owner = (*generatedLinkLawDirectory)(nil)
 var _ memberrelation.OccurrenceDirectory = (*generatedLinkLawDirectory)(nil)
 
-func (owner *generatedLinkLawDirectory) Candidate(relationOrdinal uint32, mount, occurrence identity.ContentID) (uint32, bool) {
+func (owner *generatedLinkLawDirectory) candidateFor(relationOrdinal uint32, mount, occurrence identity.ContentID) (uint32, bool) {
 	if owner == nil || !owner.acceptCandidate || relationOrdinal != owner.relation || mount.Available() || !occurrence.Available() {
 		return 0, false
 	}
@@ -29,6 +29,20 @@ func (owner *generatedLinkLawDirectory) Candidate(relationOrdinal uint32, mount,
 		}
 	}
 	return 0, false
+}
+
+func (owner *generatedLinkLawDirectory) CandidateCount(relationOrdinal uint32, mount, occurrence identity.ContentID) (int, bool) {
+	if _, ok := owner.candidateFor(relationOrdinal, mount, occurrence); !ok {
+		return 0, false
+	}
+	return 1, true
+}
+
+func (owner *generatedLinkLawDirectory) CandidateAt(relationOrdinal uint32, mount, occurrence identity.ContentID, index int) (uint32, bool) {
+	if index != 0 {
+		return 0, false
+	}
+	return owner.candidateFor(relationOrdinal, mount, occurrence)
 }
 
 func (owner *generatedLinkLawDirectory) OccurrenceCount(relationOrdinal uint32) (int, bool) {

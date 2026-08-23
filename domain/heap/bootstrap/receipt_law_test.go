@@ -93,11 +93,11 @@ func TestSealedRootReceiptDirectoryIsTheOccurrenceInventory(t *testing.T) {
 		}
 		// The candidate is addressed by the occurrence alone: this relation is
 		// Link-global, so a mount is refused rather than ignored.
-		candidate, candidateOK := owner.Candidate(relation, identity.ContentID{}, id)
+		candidate, candidateOK := owner.CandidateAt(relation, identity.ContentID{}, id, 0)
 		if !candidateOK || candidate != uint32(index) {
 			t.Fatalf("occurrence row %d candidate = %d/%t", index, candidate, candidateOK)
 		}
-		if _, mounted := owner.Candidate(relation, id, id); mounted {
+		if _, mounted := owner.CandidateAt(relation, id, id, 0); mounted {
 			t.Fatalf("occurrence row %d admitted a mount", index)
 		}
 		if ordinal, ordinalOK := schema.BootRootOrdinal(key); !ordinalOK || ordinal != uint32(index) {
@@ -114,7 +114,7 @@ func TestSealedRootReceiptDirectoryIsTheOccurrenceInventory(t *testing.T) {
 	if _, issued := schema.BootRootID(zero); issued {
 		t.Fatal("zero bootstrap key acquired a row")
 	}
-	if _, admitted := owner.Candidate(relation, identity.ContentID{}, identity.ContentID{}); admitted {
+	if _, admitted := owner.CandidateAt(relation, identity.ContentID{}, identity.ContentID{}, 0); admitted {
 		t.Fatal("an unavailable occurrence resolved a bootstrap candidate")
 	}
 	ingress, ingressOK := heapdomain.AxisMemberCatalog().RelationOrdinal(heapdomain.IngressSeeds)

@@ -113,11 +113,11 @@ func TestCanonicalGlobalDirectoryIsTheOccurrenceInventory(t *testing.T) {
 		}
 		// The candidate is addressed by the occurrence alone: this relation is
 		// Link-global, so a mount is refused rather than ignored.
-		candidate, candidateOK := owner.Candidate(relation, identity.ContentID{}, id)
+		candidate, candidateOK := owner.CandidateAt(relation, identity.ContentID{}, id, 0)
 		if !candidateOK || candidate != uint32(index) {
 			t.Fatalf("occurrence row %d candidate = %d/%t", index, candidate, candidateOK)
 		}
-		if _, mounted := owner.Candidate(relation, want, id); mounted {
+		if _, mounted := owner.CandidateAt(relation, want, id, 0); mounted {
 			t.Fatalf("occurrence row %d admitted a mount", index)
 		}
 		receipt, receiptOK := local.schema.GlobalBootstrapResultAt(index)

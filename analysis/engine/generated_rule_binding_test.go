@@ -63,11 +63,31 @@ type generatedBindingLawOwner struct {
 
 var _ memberrelation.Owner = (*generatedBindingLawOwner)(nil)
 
-func (owner *generatedBindingLawOwner) Candidate(relationOrdinal uint32, mount, occurrence identity.ContentID) (uint32, bool) {
+func (owner *generatedBindingLawOwner) candidateFor(relationOrdinal uint32, mount, occurrence identity.ContentID) (uint32, bool) {
 	if owner == nil || !owner.acceptCandidate || relationOrdinal != owner.relation || !mount.Available() || !occurrence.Available() {
 		return 0, false
 	}
 	return owner.candidate, true
+}
+
+func (owner *generatedBindingLawOwner) CandidateCount(relationOrdinal uint32, mount, occurrence identity.ContentID) (int, bool) {
+	if _, ok := owner.candidateFor(relationOrdinal, mount, occurrence); !ok {
+		return 0, false
+	}
+	return 1, true
+}
+
+func (owner *generatedBindingLawOwner) CandidateAt(relationOrdinal uint32, mount, occurrence identity.ContentID, index int) (uint32, bool) {
+	if index != 0 {
+		return 0, false
+	}
+	return owner.candidateFor(relationOrdinal, mount, occurrence)
+}
+
+func (owner *generatedBindingLawOwner) MemberCount(uint32, uint32) (int, bool) { return 0, false }
+
+func (owner *generatedBindingLawOwner) MemberAt(uint32, uint32, int) (uint32, bool) {
+	return 0, false
 }
 
 func (owner *generatedBindingLawOwner) Project(relationOrdinal, projectionOrdinal, candidateOrdinal uint32) (uint32, bool) {
@@ -443,7 +463,7 @@ func TestGeneratedIssuanceOwnerProjectionAndFactorSurfaces(t *testing.T) {
 	if !candidateOK || !joinOK || candidateOwner == nil || joinOwner == nil {
 		t.Fatal("generated issuance relation owners")
 	}
-	candidate, candidateOK := candidateOwner.Candidate(descriptor.CandidateRelation().Member, fixture.mount, fixture.occurrence)
+	candidate, candidateOK := candidateOwner.CandidateAt(descriptor.CandidateRelation().Member, fixture.mount, fixture.occurrence, 0)
 	sourceLocal, sourceOK := joinOwner.Project(descriptor.JoinRelation().Member, descriptor.KeyProjection().Member, candidate)
 	destinationLocal, destinationOK := candidateOwner.Project(descriptor.CandidateRelation().Member, descriptor.DestinationProjection().Member, candidate)
 	if !candidateOK || !sourceOK || !destinationOK || candidate != 1 || sourceLocal != 0 || destinationLocal != 1 {
@@ -470,13 +490,13 @@ func TestGeneratedIssuanceNearestNegatives(t *testing.T) {
 	cell := generatedLawCell(t, fixture)
 	descriptor := cell.generated.program
 	owner := fixture.owner
-	if _, ok := owner.Candidate(descriptor.CandidateRelation().Member, identity.ContentID{}, fixture.occurrence); ok {
+	if _, ok := owner.CandidateAt(descriptor.CandidateRelation().Member, identity.ContentID{}, fixture.occurrence, 0); ok {
 		t.Fatal("absent mount admitted a generated candidate")
 	}
-	if _, ok := owner.Candidate(descriptor.CandidateRelation().Member, fixture.mount, identity.ContentID{}); ok {
+	if _, ok := owner.CandidateAt(descriptor.CandidateRelation().Member, fixture.mount, identity.ContentID{}, 0); ok {
 		t.Fatal("absent occurrence admitted a generated candidate")
 	}
-	if _, ok := owner.Candidate(descriptor.CandidateRelation().Member+1, fixture.mount, fixture.occurrence); ok {
+	if _, ok := owner.CandidateAt(descriptor.CandidateRelation().Member+1, fixture.mount, fixture.occurrence, 0); ok {
 		t.Fatal("wrong relation member admitted a generated candidate")
 	}
 	if _, ok := owner.Project(descriptor.JoinRelation().Member, descriptor.KeyProjection().Member+1, 1); ok {
@@ -486,7 +506,7 @@ func TestGeneratedIssuanceNearestNegatives(t *testing.T) {
 		t.Fatal("wrong candidate ordinal admitted a generated local")
 	}
 	owner.acceptCandidate = false
-	if _, ok := owner.Candidate(descriptor.CandidateRelation().Member, fixture.mount, fixture.occurrence); ok {
+	if _, ok := owner.CandidateAt(descriptor.CandidateRelation().Member, fixture.mount, fixture.occurrence, 0); ok {
 		t.Fatal("absent candidate admitted a generated issuance")
 	}
 	owner.acceptCandidate = true
