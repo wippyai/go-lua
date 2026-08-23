@@ -18,9 +18,11 @@ import (
 	programschema "github.com/wippyai/go-lua/analysis/schema/program"
 	programcatalog "github.com/wippyai/go-lua/analysis/schema/program/catalog"
 	"github.com/wippyai/go-lua/analysis/schema/programmount"
+	schematype "github.com/wippyai/go-lua/analysis/schema/typecontract"
 	staticdomain "github.com/wippyai/go-lua/domain/static"
 	typeauthority "github.com/wippyai/go-lua/domain/type/authority"
 	domaincontract "github.com/wippyai/go-lua/domain/type/typecontract"
+	valuedomain "github.com/wippyai/go-lua/domain/value"
 )
 
 // Catalog-admission laws: a real Link mounted through the phase every axis
@@ -47,10 +49,19 @@ func mountedRecord(t testing.TB, name, source string) LinkInputs {
 	if err != nil {
 		t.Fatal(err)
 	}
+	pathType, pathOK := schematype.NewPrimitive(schematype.PrimitiveString)
+	rootType, rootOK := schematype.NewPrimitive(schematype.PrimitiveAny)
+	if !pathOK || !rootOK {
+		t.Fatal("the require operand and result declarations")
+	}
+	// The scoped loader states the bounded result a require call produces.
+	// Value's module-load vertical reads that result to bind a call to a
+	// module root, so an operation bound to the builtin require name that
+	// names no normal result is a Target this Link cannot be sealed against.
 	contract, err := compiler.Seal(&declaration.Spec{Semantics: domaincontract.NewSemantics(), Operations: []vocabulary.OperationSpec{{
 		Bindings: []vocabulary.BindingSpec{{Namespace: vocabulary.BindingBuiltin, Member: []string{"require"}}},
-		Input:    vocabulary.ValuesSpec{Tail: vocabulary.ValuesClosed},
-		Outcomes: []vocabulary.OutcomeSpec{{Kind: flowkind.OutcomeNormal, Values: vocabulary.ValuesSpec{Tail: vocabulary.ValuesClosed}}},
+		Input:    vocabulary.ValuesSpec{Fixed: []schematype.Type{pathType}, Tail: vocabulary.ValuesClosed},
+		Outcomes: []vocabulary.OutcomeSpec{{Kind: flowkind.OutcomeNormal, Values: vocabulary.ValuesSpec{Fixed: []schematype.Type{rootType}, Tail: vocabulary.ValuesClosed}}},
 		Effects:  vocabulary.RowSpec{Tail: vocabulary.RowClosed},
 	}}})
 	if err != nil {
@@ -114,9 +125,24 @@ func mountedRecord(t testing.TB, name, source string) LinkInputs {
 	}
 	record, failure := MountLink(receipt, LinkInputs{Source: linked, Artifacts: rows, StaticAuthority: inventory})
 	if failure.Available() {
+		if reason, ok := MountRejection[valuedomain.SealFailure](failure); ok {
+			t.Fatalf("mount the Link: %v (%s)", failure, reason)
+		}
 		t.Fatalf("mount the Link: %v", failure)
 	}
 	return record
+}
+
+// TestMountLinkAdmitsTheSmallestValueLink is the mount floor. One module, one
+// local, one return: the smallest program that still owns a Value coordinate.
+// Every law below stands on a mounted record, so a refusal here is a refusal
+// of the whole mount phase rather than of the program under it, and the axis
+// that refused must be named by the failure it returns.
+func TestMountLinkAdmitsTheSmallestValueLink(t *testing.T) {
+	record := mountedRecord(t, "mount-floor", "local root = 1\nreturn root\n")
+	if record.Source == nil || len(record.Artifacts) != 1 || record.StaticAuthority == nil {
+		t.Fatalf("the mounted record carries %d artifacts", len(record.Artifacts))
+	}
 }
 
 // materializerBinding is one publication's write authority: the sealed hot
