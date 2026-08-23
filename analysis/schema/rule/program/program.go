@@ -35,7 +35,28 @@ const (
 	contentRecordReference uint64 = 9
 	contentRecordCarry     uint64 = 10
 	contentRecordOperand   uint64 = 11
+	// contentRecordTransport is written only by a Program that declares an
+	// activation transport vector. A rule that carries none emits the exact
+	// stream it emitted before the vector existed, so adding it remints no
+	// program that does not use it.
+	contentRecordTransport uint64 = 12
 )
+
+// TransportDecl is one axis carried across an activation edge. The row's
+// existence is the import direction - the trigger seeds the mounted body's
+// entry Points on this axis - and Exported is the return direction, the body's
+// exit Points carried back to that same trigger.
+//
+// One row is one axis, so a Factor named on both sides is one bidirectional
+// transport rather than two authorities, and an export whose axis has no
+// import cannot be written down: the symmetry the issuer used to seal over two
+// lists is a property of this shape.
+type TransportDecl struct {
+	Axis     AxisRef
+	Exported bool
+}
+
+func (transport TransportDecl) Available() bool { return transport.Axis.Available() }
 
 // Program is the complete Rule-owned cold declaration. The zero value is the
 // explicit migration ratchet for families that have not yet crossed from the
@@ -46,12 +67,28 @@ type Program struct {
 	Joins       []JoinDecl
 	Fold        FoldDecl
 	Carry       *CarryDecl
+	// Transport is the ordered vector of axes one activation candidate route
+	// instantiates when it crosses its transition. A rule that publishes no
+	// activation declares none.
+	Transport []TransportDecl
+}
+
+// TransportCount is the declared width of this rule's activation transport
+// vector.
+func (program Program) TransportCount() int { return len(program.Transport) }
+
+// TransportAt returns one declared transport row by its ordinal.
+func (program Program) TransportAt(index int) (TransportDecl, bool) {
+	if index < 0 || index >= len(program.Transport) {
+		return TransportDecl{}, false
+	}
+	return program.Transport[index], true
 }
 
 func (program Program) Available() bool {
 	return program.OperandRole.Available() || program.Candidate.Declared() || len(program.Joins) != 0 ||
 		program.Fold.Reducer.Declared() || len(program.Fold.Inputs) != 0 ||
-		len(program.Fold.Outputs) != 0 || program.Carry != nil
+		len(program.Fold.Outputs) != 0 || program.Carry != nil || len(program.Transport) != 0
 }
 
 func (program Program) JoinCount() int { return len(program.Joins) }
@@ -71,6 +108,7 @@ func (program Program) Clone() Program {
 		program.Joins[index] = cloneJoin(join)
 	}
 	program.Fold = cloneFold(program.Fold)
+	program.Transport = append([]TransportDecl(nil), program.Transport...)
 	if program.Carry != nil {
 		carry := *program.Carry
 		program.Carry = &carry
@@ -98,6 +136,7 @@ const (
 	ProblemOutput
 	ProblemFold
 	ProblemCarry
+	ProblemTransport
 )
 
 func (problem Problem) Available() bool { return problem.Kind != ProblemNone }
@@ -121,6 +160,9 @@ func (program Program) Check() (Problem, bool) {
 	}
 	if program.Carry != nil && !program.Carry.Available() {
 		return Problem{Kind: ProblemCarry}, false
+	}
+	if !program.checkTransport() {
+		return Problem{Kind: ProblemTransport}, false
 	}
 	if _, contiguous := program.inputCount(); !contiguous {
 		return Problem{Kind: ProblemInput}, false
@@ -165,6 +207,28 @@ func (program Program) Check() (Problem, bool) {
 		}
 	}
 	return Problem{}, true
+}
+
+// checkTransport seals the activation transport vector: every row names a
+// declared axis, and one axis crosses the edge exactly once. Two rows for one
+// axis would be two authorities for one crossing, which is the defect the
+// single-list shape exists to make unwritable.
+func (program Program) checkTransport() bool {
+	if len(program.Transport) == 0 {
+		return true
+	}
+	seen := make(map[schema.EntryReference]struct{}, len(program.Transport))
+	for _, transport := range program.Transport {
+		if !transport.Available() {
+			return false
+		}
+		reference := transport.Axis.EntryReference()
+		if _, duplicate := seen[reference]; duplicate {
+			return false
+		}
+		seen[reference] = struct{}{}
+	}
+	return true
 }
 
 // routeAllowsOptionalPredicate reports whether this join is explicitly named
@@ -239,6 +303,11 @@ func (program Program) References() schema.EntryReferences {
 	}
 	if program.Carry != nil {
 		references = append(references, program.Carry.References()...)
+	}
+	for _, transport := range program.Transport {
+		if transport.Axis.Declared() {
+			references = append(references, transport.Axis.EntryReference())
+		}
 	}
 	return append(references, program.Fold.References()...)
 }
@@ -349,6 +418,22 @@ func (program Program) WriteContent(content *framing.Writer) error {
 		}
 		if err := writeMemberReference(content, program.Carry.Transform.Axis, program.Carry.Transform.Member); err != nil {
 			return err
+		}
+	}
+	if len(program.Transport) != 0 {
+		if err := content.Record(contentRecordTransport); err != nil {
+			return err
+		}
+		if err := content.Count(uint64(len(program.Transport))); err != nil {
+			return err
+		}
+		for _, transport := range program.Transport {
+			if err := writeReference(content, transport.Axis.EntryReference()); err != nil {
+				return err
+			}
+			if err := content.Bool(transport.Exported); err != nil {
+				return err
+			}
 		}
 	}
 	if err := content.Record(contentRecordFold); err != nil {

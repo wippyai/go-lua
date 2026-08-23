@@ -120,6 +120,16 @@ type Carry struct {
 	TransformKey  schema.Key
 }
 
+// Transport is one compiled activation transport row: the dense ordinal of the
+// axis carried across the candidate's transition, and whether the mounted body
+// carries that axis back out to its trigger. One row is one axis, so the
+// import/export symmetry is the shape rather than a checked relation between
+// two lists.
+type Transport struct {
+	Axis     uint32
+	Exported bool
+}
+
 // Output is one reducer publication declaration after all owner-issued
 // members have been projected to dense addresses.
 type Output struct {
@@ -179,6 +189,19 @@ type Plan struct {
 	outputs      []Output
 	carry        Carry
 	carryPresent bool
+	transports   []Transport
+}
+
+// TransportCount is the declared width of this plan's activation transport
+// vector. It is zero for a rule that publishes no activation.
+func (compiled Plan) TransportCount() int { return len(compiled.transports) }
+
+// TransportAt returns one compiled transport row by its declaration ordinal.
+func (compiled Plan) TransportAt(index int) (Transport, bool) {
+	if index < 0 || index >= len(compiled.transports) {
+		return Transport{}, false
+	}
+	return compiled.transports[index], true
 }
 
 // Present reports whether this rule ordinal carried an authored Program.
@@ -772,7 +795,20 @@ func compileProgram(ruleOrdinal uint32, template *rule.Template, declaration pro
 		}
 	}
 
-	if !fitsUint32(len(compiled.sources)) || !fitsUint32(len(compiled.joins)) || !fitsUint32(len(compiled.foldInputs)) || !fitsUint32(len(compiled.outputs)) {
+	for transportIndex := 0; transportIndex < declaration.TransportCount(); transportIndex++ {
+		transport, transportOK := declaration.TransportAt(transportIndex)
+		if !transportOK {
+			return Plan{}, compileFailure(template.ID(), rule.LawProgramShape, schema.DispositionMalformed)
+		}
+		_, transportAxisOrdinal, transportFailure := resolveAxis(axisView, transport.Axis.EntryReference())
+		if transportFailure.Available() {
+			transportFailure.Entry = template.ID()
+			return Plan{}, transportFailure
+		}
+		compiled.transports = append(compiled.transports, Transport{Axis: transportAxisOrdinal, Exported: transport.Exported})
+	}
+
+	if !fitsUint32(len(compiled.sources)) || !fitsUint32(len(compiled.joins)) || !fitsUint32(len(compiled.foldInputs)) || !fitsUint32(len(compiled.outputs)) || !fitsUint32(len(compiled.transports)) {
 		return Plan{}, compileFailure(template.ID(), rule.LawProgramShape, schema.DispositionMalformed)
 	}
 	if !planAxesInRange(compiled, len(axisDirectory)) {
@@ -809,6 +845,11 @@ func planAxesInRange(compiled Plan, axisCount int) bool {
 	}
 	if compiled.carryPresent && compiled.carry.TransformPresent && !inRange(compiled.carry.Transform.Axis) {
 		return false
+	}
+	for _, transport := range compiled.transports {
+		if !inRange(transport.Axis) {
+			return false
+		}
 	}
 	return true
 }
