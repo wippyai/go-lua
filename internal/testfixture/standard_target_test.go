@@ -313,10 +313,20 @@ func assertSealedConnectionRequirements(t *testing.T) {
 		var input vocabulary.InputSource
 		var state vocabulary.State
 		matches := 0
-		for index := 0; index < table.ProtocolRequirementCount(connection); index++ {
-			declaredOperation, declaredInput, declaredState, ok := table.ProtocolRequirementAt(connection, index)
-			if !ok || declaredOperation != operation {
+		for index := 0; index < table.DemandCount(operation); index++ {
+			demand, ok := table.DemandAt(operation, index)
+			if !ok {
+				t.Fatalf("resource.%s demand %d is unavailable", member, index)
+			}
+			if demand.Kind != protocolvalue.DemandRequirement {
 				continue
+			}
+			if demand.Protocol != connection {
+				t.Fatalf("resource.%s constrains protocol %d, want the connection machine %d", member, demand.Protocol, connection)
+			}
+			_, declaredInput, declaredState, ok := table.ProtocolRequirementAt(demand.Protocol, demand.Row)
+			if !ok {
+				t.Fatalf("resource.%s requirement row %d is unavailable", member, demand.Row)
 			}
 			input, state = declaredInput, declaredState
 			matches++
