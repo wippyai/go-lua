@@ -10,6 +10,7 @@ import (
 	effectowner "github.com/wippyai/go-lua/domain/effect/owner"
 	heapowner "github.com/wippyai/go-lua/domain/heap/owner"
 	packowner "github.com/wippyai/go-lua/domain/pack/owner"
+	placementowner "github.com/wippyai/go-lua/domain/placement/owner"
 	valueowner "github.com/wippyai/go-lua/domain/value/owner"
 )
 
@@ -21,8 +22,8 @@ type rulePrincipals interface {
 }
 
 // ruleAuthorities is the sealed authority set this rule binds against. The
-// activation plane transports every factor lane across a call boundary, so it
-// names the five factor authorities. Its route keys are private bind-time
+// activation plane transports the exact factor lanes required across a call
+// boundary. Its route keys are private bind-time
 // output derived from Call itself.
 type ruleAuthorities interface {
 	ValueAuthority() *valueowner.HotOwner
@@ -30,6 +31,7 @@ type ruleAuthorities interface {
 	HeapAuthority() *heapowner.HotOwner
 	PackAuthority() *packowner.HotOwner
 	EffectAuthority() *effectowner.HotOwner
+	PlacementAuthority() *placementowner.HotOwner
 }
 
 // RuleEntry is this package's call-activation rule declaration. P and A are
@@ -72,7 +74,7 @@ func BindRule[A ruleAuthorities](_ *engine.SchemaBinding, context rule.Binding[A
 	if !ok {
 		return nil, false
 	}
-	if !BindMountedTransport(hot, context.Authorities.ValueAuthority().FactorRef(), context.Authorities.CallAuthority().FactorRef(), context.Authorities.HeapAuthority().FactorRef(), context.Authorities.PackAuthority().FactorRef(), context.Authorities.EffectAuthority().FactorRef()) {
+	if !BindMountedTransport(hot, context.Authorities.ValueAuthority().FactorRef(), context.Authorities.CallAuthority().FactorRef(), context.Authorities.HeapAuthority().FactorRef(), context.Authorities.PackAuthority().FactorRef(), context.Authorities.EffectAuthority().FactorRef(), context.Authorities.PlacementAuthority().FactorRef()) {
 		return nil, false
 	}
 	return hot, true

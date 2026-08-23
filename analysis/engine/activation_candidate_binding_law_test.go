@@ -80,23 +80,24 @@ func openActivationTransportLawBinding(t testing.TB, owner activationTransportLa
 // TestMountedActivationTransportVectorArityIsDeclared proves the engine holds no
 // transport arity of its own: a vector of any arity the Schema's declared
 // Factors cover binds, and the issuer retains exactly the Factor semantics the
-// caller ordered.
+// caller ordered. The export side names an axis every arity imports, so the
+// arity under test is the only thing varying.
 func TestMountedActivationTransportVectorArityIsDeclared(t *testing.T) {
 	owner := newActivationTransportLawOwner(t, 4, 948_100)
 	semantics := activationTransportLawSemantics(t, owner)
-	export := owner.factors[len(owner.factors)-1]
+	export := owner.factors[0]
 	for arity := 1; arity < len(owner.factors); arity++ {
 		binding := openActivationTransportLawBinding(t, owner)
 		imports := make([]AnyFactorRef, arity)
 		for index := range imports {
 			imports[index] = owner.factors[index].Ref().Any()
 		}
-		issuer, ok := BindMountedActivationCandidateIssuer(binding, owner.rule, imports, export.Ref().Any())
+		issuer, ok := BindMountedActivationCandidateIssuer(binding, owner.rule, imports, []AnyFactorRef{export.Ref().Any()})
 		if !ok || issuer == nil {
 			t.Fatalf("arity %d transport vector refused", arity)
 		}
-		if len(issuer.imports) != arity || issuer.export != semantics[len(owner.factors)-1] {
-			t.Fatalf("arity %d issuer kept %d imports and export %v", arity, len(issuer.imports), issuer.export)
+		if len(issuer.imports) != arity || len(issuer.exports) != 1 || issuer.exports[0] != semantics[0] {
+			t.Fatalf("arity %d issuer kept %d imports and exports %v", arity, len(issuer.imports), issuer.exports)
 		}
 		for index, key := range issuer.imports {
 			if key != semantics[index] {
@@ -110,34 +111,72 @@ func TestMountedActivationTransportVectorArityIsDeclared(t *testing.T) {
 }
 
 // TestMountedActivationTransportVectorRefusesUnusableDeclarations proves every
-// vector defect fails closed at bind: an empty import vector, a Factor named
-// twice, an export repeating an import, a Factor of another Schema, and an
-// unavailable reference all leave the Binding without an issuer.
+// vector defect fails closed at bind: an empty direction, a Factor named twice
+// within one direction, a Factor of another Schema, and an unavailable
+// reference all leave the Binding without an issuer. Naming one Factor once in
+// each direction is the canonical bidirectional declaration.
 func TestMountedActivationTransportVectorRefusesUnusableDeclarations(t *testing.T) {
 	owner := newActivationTransportLawOwner(t, 3, 948_200)
 	foreign := newActivationTransportLawOwner(t, 3, 948_300)
 	binding := openActivationTransportLawBinding(t, owner)
 	first, second, third := owner.factors[0].Ref().Any(), owner.factors[1].Ref().Any(), owner.factors[2].Ref().Any()
-	if _, ok := BindMountedActivationCandidateIssuer(binding, owner.rule, nil, third); ok {
+	if _, ok := BindMountedActivationCandidateIssuer(binding, owner.rule, nil, []AnyFactorRef{first}); ok {
 		t.Fatal("an empty import vector was admitted")
 	}
-	if _, ok := BindMountedActivationCandidateIssuer(binding, owner.rule, []AnyFactorRef{first, first}, third); ok {
+	if _, ok := BindMountedActivationCandidateIssuer(binding, owner.rule, []AnyFactorRef{first, first}, []AnyFactorRef{first}); ok {
 		t.Fatal("one Factor was admitted twice in an import vector")
 	}
-	if _, ok := BindMountedActivationCandidateIssuer(binding, owner.rule, []AnyFactorRef{first, second}, first); ok {
-		t.Fatal("an export repeating an import was admitted")
+	if _, ok := BindMountedActivationCandidateIssuer(binding, owner.rule, []AnyFactorRef{first, second}, []AnyFactorRef{first, first}); ok {
+		t.Fatal("one Factor was admitted twice in an export vector")
 	}
-	if _, ok := BindMountedActivationCandidateIssuer(binding, owner.rule, []AnyFactorRef{first, foreign.factors[1].Ref().Any()}, third); ok {
+	if _, ok := BindMountedActivationCandidateIssuer(binding, owner.rule, []AnyFactorRef{first, foreign.factors[1].Ref().Any()}, []AnyFactorRef{first}); ok {
 		t.Fatal("a Factor of another Schema was admitted")
 	}
-	if _, ok := BindMountedActivationCandidateIssuer(binding, owner.rule, []AnyFactorRef{first, second}, AnyFactorRef{}); ok {
+	if _, ok := BindMountedActivationCandidateIssuer(binding, owner.rule, []AnyFactorRef{first, second}, []AnyFactorRef{{}}); ok {
 		t.Fatal("an unavailable export was admitted")
 	}
-	issuer, ok := BindMountedActivationCandidateIssuer(binding, owner.rule, []AnyFactorRef{first, second}, third)
+	issuer, ok := BindMountedActivationCandidateIssuer(binding, owner.rule, []AnyFactorRef{first, second, third}, []AnyFactorRef{first, third})
 	if !ok || issuer == nil {
-		t.Fatal("declared transport vector refused after refused declarations")
+		t.Fatal("declared bidirectional transport vector refused after refused declarations")
+	}
+	if len(issuer.exports) != 2 || issuer.exports[0] != activationTransportLawSemantics(t, owner)[0] {
+		t.Fatal("bidirectional Factor did not retain its single import and export declarations")
 	}
 	if !binding.Seal() {
 		t.Fatal("binding seal after refused declarations")
+	}
+}
+
+// TestMountedActivationTransportVectorRefusesAnExportItsImportsDoNotDeclare is
+// the transport-vector symmetry law. One vector crosses one transition in both
+// directions: the import side seeds a mounted body's entry from its trigger and
+// the export side carries the body's exit back. An axis the export side names
+// is therefore an axis whose exported value is a function of an in-state the
+// import side must have declared. A vector that exports an axis its imports
+// never name publishes a lane the body's entry never received, so the seal
+// refuses it and no candidate row can carry the asymmetric vector.
+func TestMountedActivationTransportVectorRefusesAnExportItsImportsDoNotDeclare(t *testing.T) {
+	owner := newActivationTransportLawOwner(t, 3, 948_400)
+	binding := openActivationTransportLawBinding(t, owner)
+	first, second, third := owner.factors[0].Ref().Any(), owner.factors[1].Ref().Any(), owner.factors[2].Ref().Any()
+	if _, ok := BindMountedActivationCandidateIssuer(binding, owner.rule, []AnyFactorRef{first, second}, []AnyFactorRef{third}); ok {
+		t.Fatal("an export naming an axis no import declares was admitted")
+	}
+	if _, ok := BindMountedActivationCandidateIssuer(binding, owner.rule, []AnyFactorRef{first, second}, []AnyFactorRef{first, third}); ok {
+		t.Fatal("an export vector was admitted while one of its axes had no import")
+	}
+	// An axis carried into a body without being carried back out is the other
+	// direction of the same law and stays admissible: a lane a body only reads
+	// publishes nothing back to its trigger.
+	issuer, ok := BindMountedActivationCandidateIssuer(binding, owner.rule, []AnyFactorRef{first, second, third}, []AnyFactorRef{first, third})
+	if !ok || issuer == nil {
+		t.Fatal("a vector whose exports are covered by its imports was refused")
+	}
+	semantics := activationTransportLawSemantics(t, owner)
+	if len(issuer.imports) != 3 || len(issuer.exports) != 2 || issuer.exports[0] != semantics[0] || issuer.exports[1] != semantics[2] {
+		t.Fatal("the admitted vector did not retain its declared import and export order")
+	}
+	if !binding.Seal() {
+		t.Fatal("binding seal after the symmetry law refused declarations")
 	}
 }

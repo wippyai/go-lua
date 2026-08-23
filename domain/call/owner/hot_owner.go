@@ -252,14 +252,14 @@ func BindExactActivationRule(owner *HotOwner, slot *engine.SchemaActivationRuleS
 
 // BindMountedActivationCandidateIssuer binds the exact CallActivation slot to
 // the factor transport vector its mounted body transport declares: the
-// lanes imported into a mounted body and the one lane exported back out. The
+// lanes imported into a mounted body and the lanes exported back out. The
 // engine keeps the resulting issuer opaque; child packages cannot submit
 // point/factor edge rows themselves.
-func BindMountedActivationCandidateIssuer(issuer *ActivationRuleImplementation, imports []engine.AnyFactorRef, export engine.AnyFactorRef) (*engine.MountedActivationCandidateIssuer, bool) {
+func BindMountedActivationCandidateIssuer(issuer *ActivationRuleImplementation, imports, exports []engine.AnyFactorRef) (*engine.MountedActivationCandidateIssuer, bool) {
 	if issuer == nil || issuer.owner == nil || issuer.owner.binding == nil || issuer.slot == nil {
 		return nil, false
 	}
-	return engine.BindMountedActivationCandidateIssuer(issuer.owner.binding, issuer.slot, imports, export)
+	return engine.BindMountedActivationCandidateIssuer(issuer.owner.binding, issuer.slot, imports, exports)
 }
 
 // ResolveActivationRuleImplementation resolves the engine implementation only after

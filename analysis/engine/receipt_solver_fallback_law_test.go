@@ -9,6 +9,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/identity"
 	"github.com/wippyai/go-lua/analysis/schema/executioncontext"
 	programissuance "github.com/wippyai/go-lua/analysis/schema/program/issuance"
+	queryschema "github.com/wippyai/go-lua/analysis/schema/query"
 )
 
 type selectedOverlayLawFixture struct {
@@ -132,7 +133,7 @@ func newSelectedOverlayLawFixtureWithOptions(t testing.TB, options selectedOverl
 	transport, transportOK := DeclareFactorSlot[uint64](builder, coldKey(transportSemantic))
 	writeForm, writeOK := factor.ExactWrite()
 	readForm, readOK := factor.ExactRead()
-	query, queryOK := DeclareQuerySlot[uint64](builder, SchemaQuerySpec{Semantic: coldKey(querySemantic), Freezer: coldKey(queryResultSemantic)})
+	query, queryOK := DeclareQuerySlot[uint64](builder, SchemaQuerySpec{Semantic: coldKey(querySemantic), Freezer: coldKey(queryResultSemantic), Population: queryschema.PopulationKindSelectedPoint})
 	ordinary, ordinaryOK := DeclareRuleSlot[uint64, ruleUnit](builder, SchemaRuleSpec[uint64]{
 		Semantic: coldKey(ordinaryRule), OperandFamily: unitOperandFamily, Inputs: 0,
 		Output: factor.Ref(),
@@ -188,7 +189,9 @@ func newSelectedOverlayLawFixtureWithOptions(t testing.TB, options selectedOverl
 	}
 	ordinaryCapability, ordinaryCapabilityOK := IssueMountedRuleCapability(binding, ordinary)
 	activationCapability, activationCapabilityOK := IssueActivationRuleCapability(binding, activation)
-	issuer, issuerOK := BindMountedActivationCandidateIssuer(binding, activation, []AnyFactorRef{transport.Ref().Any()}, factor.Ref().Any())
+	// The exported lane is one of the imported lanes: a mounted body cannot
+	// publish a Factor back to its trigger that its entry never received.
+	issuer, issuerOK := BindMountedActivationCandidateIssuer(binding, activation, []AnyFactorRef{transport.Ref().Any(), factor.Ref().Any()}, []AnyFactorRef{factor.Ref().Any()})
 	if !ordinaryCapabilityOK || !activationCapabilityOK || !issuerOK || issuer == nil || !RegisterRuleSlot(binding, ordinary, ordinaryCapability) || !RegisterActivationRuleSlot(binding, activation, activationCapability) || !binding.Seal() {
 		t.Fatal("selected overlay capabilities")
 	}
@@ -232,9 +235,9 @@ func newSelectedOverlayLawFixtureWithOptions(t testing.TB, options selectedOverl
 	}
 	triggerRule := rows.ArtifactScalarRule{Role: activationRole, Stage: programissuance.StageBase, Point: points[0], ID: selectedOverlayLawID(triggerOccurrence)}
 	if options.nativeStage {
-		triggerRule = rows.ArtifactScalarRule{Role: activationRole, Stage: programissuance.StageCallDispatch, Point: points[2], Input: points[0], ID: selectedOverlayLawID(triggerOccurrence), Native: true}
+		triggerRule = rows.ArtifactScalarRule{Role: activationRole, Stage: programissuance.StageCallDispatch, Point: points[2], Inputs: [6]identity.ContentID{points[0]}, InputCount: 1, ID: selectedOverlayLawID(triggerOccurrence), Native: true}
 	}
-	if !ordinaryRoleOK || !activationRoleOK || !artifact.AddRule(triggerRule) || !artifact.AddRule(rows.ArtifactScalarRule{Role: ordinaryRole, Stage: programissuance.StageLocal, Point: points[1], Input: points[0], ID: selectedOverlayLawID(targetOccurrence)}) || !artifact.AddRule(rows.ArtifactScalarRule{Role: ordinaryRole, Stage: programissuance.StageBase, Point: points[2], ID: selectedOverlayLawID(bodyOccurrence)}) {
+	if !ordinaryRoleOK || !activationRoleOK || !artifact.AddRule(triggerRule) || !artifact.AddRule(rows.ArtifactScalarRule{Role: ordinaryRole, Stage: programissuance.StageLocal, Point: points[1], Inputs: [6]identity.ContentID{points[0]}, InputCount: 1, ID: selectedOverlayLawID(targetOccurrence)}) || !artifact.AddRule(rows.ArtifactScalarRule{Role: ordinaryRole, Stage: programissuance.StageBase, Point: points[2], ID: selectedOverlayLawID(bodyOccurrence)}) {
 		t.Fatal("selected overlay artifact rules")
 	}
 	if options.nativeStage {

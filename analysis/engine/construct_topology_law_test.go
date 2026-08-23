@@ -184,8 +184,8 @@ func TestConstructedOwnerDeclaredRefusesPointCollision(t *testing.T) {
 func TestConstructedActivationPlaneIsTotalOverRegisteredTriggers(t *testing.T) {
 	owner := newActivationTransportLawOwner(t, 3, 971_100)
 	binding := openActivationTransportLawBinding(t, owner)
-	issuer, ok := BindMountedActivationCandidateIssuer(binding, owner.rule, []AnyFactorRef{owner.factors[0].Ref().Any()}, owner.factors[1].Ref().Any())
-	if !ok || issuer == nil || !binding.Seal() || len(issuer.imports) != 1 || !issuer.export.Available() {
+	issuer, ok := BindMountedActivationCandidateIssuer(binding, owner.rule, []AnyFactorRef{owner.factors[0].Ref().Any(), owner.factors[1].Ref().Any()}, []AnyFactorRef{owner.factors[1].Ref().Any()})
+	if !ok || issuer == nil || !binding.Seal() || len(issuer.imports) != 2 || len(issuer.exports) != 1 || !issuer.exports[0].Available() {
 		t.Fatal("activation plane did not publish one registered trigger transport")
 	}
 }
@@ -195,7 +195,7 @@ func TestConstructedActivationPlaneIsTotalOverRegisteredTriggers(t *testing.T) {
 func TestConstructedActivationPlaneRefusesIncompleteCandidateSets(t *testing.T) {
 	owner := newActivationTransportLawOwner(t, 2, 971_200)
 	binding := openActivationTransportLawBinding(t, owner)
-	if issuer, ok := BindMountedActivationCandidateIssuer(binding, owner.rule, nil, owner.factors[1].Ref().Any()); ok || issuer != nil {
+	if issuer, ok := BindMountedActivationCandidateIssuer(binding, owner.rule, nil, []AnyFactorRef{owner.factors[1].Ref().Any()}); ok || issuer != nil {
 		t.Fatal("empty activation transport vector admitted")
 	}
 	if binding.Poisoned() {
@@ -208,7 +208,7 @@ func TestConstructedActivationPlaneRefusesIncompleteCandidateSets(t *testing.T) 
 func TestConstructedActivationPlaneRefusesUnshapedTrigger(t *testing.T) {
 	owner := newActivationTransportLawOwner(t, 2, 971_300)
 	binding := openActivationTransportLawBinding(t, owner)
-	if _, ok := BindMountedActivationCandidateIssuer(binding, owner.rule, []AnyFactorRef{AnyFactorRef{}}, owner.factors[1].Ref().Any()); ok {
+	if _, ok := BindMountedActivationCandidateIssuer(binding, owner.rule, []AnyFactorRef{{}}, []AnyFactorRef{owner.factors[1].Ref().Any()}); ok {
 		t.Fatal("unavailable trigger transport admitted")
 	}
 }
