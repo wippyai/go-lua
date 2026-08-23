@@ -72,13 +72,19 @@ func (form Form) Name() string {
 // already classified against instead of classifying a second time. A row
 // carries no owner capability and no domain value.
 type FormRow struct {
-	Member   int
-	Form     Form
-	Input    uint16
-	Relation uint32
-	Unit     carrier.Unit
-	Target   carrier.Target
-	Rule     generated.CompiledRule
+	Member int
+	Form   Form
+	Input  uint16
+	// Candidate is the row's dense position in the candidate relation its rule
+	// draws from. A candidate-indexed transform - the transition a transformed
+	// carry applies - is a different map at every row, so the row that carries
+	// it has to say which candidate it is. It is the same coordinate the
+	// invocation is later authenticated against.
+	Candidate uint32
+	Relation  uint32
+	Unit      carrier.Unit
+	Target    carrier.Target
+	Rule      generated.CompiledRule
 }
 
 // FormAddress is where one plan row's invocation landed: the family offset

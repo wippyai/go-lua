@@ -198,6 +198,25 @@ func (ticket Ticket) CandidateOrdinal() (uint32, bool) {
 	return ticket.issuer.candidateOrdinal, true
 }
 
+// LocalOrdinal is this invocation's position inside the family that runs it.
+// It is the one address a family needs to select the sealed row it executes,
+// and it is what makes an installed family implementable outside this package:
+// an installer seals its rows in the order it was handed them and answers the
+// local ordinal of each, so the address it reads back is the one it minted.
+func (ticket Ticket) LocalOrdinal() (uint32, bool) {
+	if !ticket.Valid() {
+		return 0, false
+	}
+	return ticket.issuer.localOrdinal, true
+}
+
+// Owns reports whether this Run issued the ticket. A worker holds the Run its
+// family was built for, so this is how an installed family outside this
+// package refuses a ticket from another lane rather than executing it.
+func (run *Run) Owns(ticket Ticket) bool {
+	return run != nil && ticket.Valid() && ticket.issuer == run
+}
+
 func (ticket Ticket) familyLocal() (uint32, uint32, bool) {
 	if !ticket.Valid() {
 		return 0, 0, false

@@ -266,6 +266,7 @@ func buildGeneratedExecutionProgram(program *runtimeProgram) (*generatedExecutio
 			return nil, false
 		}
 		formRow.Member, formRow.Unit, formRow.Target = memberIndex, row.generated.unit, row.generated.target
+		formRow.Candidate = row.generated.candidate
 		rowsByOwner[descriptor.OutputFactor()] = append(rowsByOwner[descriptor.OutputFactor()], formRow)
 		installed[memberIndex] = formRow
 	}
