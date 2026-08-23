@@ -25,10 +25,12 @@ type ActivationRule interface {
 // catalog retains only rule.Template values; these hooks live in the schema
 // composition root and are never carried by a catalog declaration.
 type RuleContributor[P, A any] struct {
-	// generated marks the compact schema-program arm. It intentionally has no
+	// generated names the lane of the compact schema-program arm, and
+	// rule.LaneInvalid names a hand-wired row. It intentionally carries no
 	// domain callback or typed hot payload: the composition derives and binds
-	// the engine's GeneratedRuleSlot directly from the sealed plan catalog.
-	generated         bool
+	// the engine's GeneratedRuleSlot directly from the sealed plan catalog, and
+	// the lane is the only thing that arm still has to be told.
+	generated         rule.Lane
 	declare           func(*engine.SchemaBuilder, vocabulary.Roles, P) (rule.Cell, bool)
 	register          func(*engine.SchemaBinding, rule.Cell) (engine.RuleSlotCapability, bool)
 	pair              func(*engine.SchemaBinding, rule.Cell, func(schema.Key) (engine.RuleSlotCapability, bool)) bool
@@ -37,8 +39,22 @@ type RuleContributor[P, A any] struct {
 	occurrenceCatalog func(rule.Cell) (rule.OccurrenceCatalog, bool)
 }
 
+// generatedLaneHandoff is the one table naming which lanes have a generated
+// registration. Both the wiring check and the registration pass read it, so a
+// lane cannot be admitted by one and refused by the other.
+func generatedLaneHandoff(lane rule.Lane) (func(*engine.SchemaBinding, *engine.GeneratedRuleSlot) (engine.RuleSlotCapability, bool), bool) {
+	switch lane {
+	case rule.LaneMounted:
+		return engine.RegisterMountedGeneratedSlot, true
+	case rule.LaneLink:
+		return engine.RegisterLinkGeneratedSlot, true
+	default:
+		return nil, false
+	}
+}
+
 func (contributor RuleContributor[P, A]) Declare(builder *engine.SchemaBuilder, roles vocabulary.Roles, principals P) (rule.Cell, bool) {
-	if contributor.generated {
+	if contributor.generated.Available() {
 		return rule.Cell{}, false
 	}
 	if contributor.declare == nil {
@@ -52,7 +68,7 @@ func (contributor RuleContributor[P, A]) Declare(builder *engine.SchemaBuilder, 
 // the canonical sealed Rule ordinal; no domain package supplies geometry,
 // semantic identities, or an alternate plan catalog.
 func (contributor RuleContributor[P, A]) DeclareGenerated(builder *engine.SchemaBuilder, plans ruleplan.Catalog, ordinal uint32) (rule.Cell, bool) {
-	if !contributor.generated {
+	if !contributor.generated.Available() {
 		return rule.Cell{}, false
 	}
 	slot, ok := engine.DeclareGeneratedRuleSlot(builder, plans, ordinal)
@@ -63,12 +79,13 @@ func (contributor RuleContributor[P, A]) DeclareGenerated(builder *engine.Schema
 }
 
 func (contributor RuleContributor[P, A]) Register(binding *engine.SchemaBinding, holder rule.Cell) (engine.RuleSlotCapability, bool) {
-	if contributor.generated {
+	if contributor.generated.Available() {
+		register, laneOK := generatedLaneHandoff(contributor.generated)
 		slot, ok := rule.Payload[*engine.GeneratedRuleSlot](holder)
-		if !ok || slot == nil {
+		if !laneOK || !ok || slot == nil {
 			return engine.RuleSlotCapability{}, false
 		}
-		return engine.RegisterMountedGeneratedSlot(binding, slot)
+		return register(binding, slot)
 	}
 	if contributor.register == nil {
 		return engine.RuleSlotCapability{}, false
@@ -81,7 +98,7 @@ func (contributor RuleContributor[P, A]) Pair(binding *engine.SchemaBinding, hol
 }
 
 func (contributor RuleContributor[P, A]) Bind(binding *engine.SchemaBinding, authorities A, holder rule.Cell) (rule.Cell, ActivationRule, bool) {
-	if contributor.generated {
+	if contributor.generated.Available() {
 		slot, ok := rule.Payload[*engine.GeneratedRuleSlot](holder)
 		if !ok || slot == nil || !engine.BindGeneratedRule(binding, slot) {
 			return rule.Cell{}, nil, false
@@ -100,7 +117,19 @@ func (contributor RuleContributor[P, A]) Finalize(authorities A, holder rule.Cel
 	return contributor.finalize == nil || contributor.finalize(authorities, holder)
 }
 
-func (contributor RuleContributor[P, A]) OccurrenceCatalog(holder rule.Cell) (rule.OccurrenceCatalog, bool) {
+// OccurrenceCatalog is the inventory of occurrences one rule's lane admits.
+// A hand-wired rule states it through the owner callback its wiring supplied;
+// a generated rule has no callback and needs none - the engine derives the
+// inventory from the candidate relation its sealed plan already names.
+func (contributor RuleContributor[P, A]) OccurrenceCatalog(binding *engine.SchemaBinding, holder rule.Cell) (rule.OccurrenceCatalog, bool) {
+	if contributor.generated.Available() {
+		slot, ok := rule.Payload[*engine.GeneratedRuleSlot](holder)
+		if !ok || slot == nil {
+			return nil, false
+		}
+		inventory, inventoryOK := engine.GeneratedOccurrenceCatalog(binding, slot)
+		return inventory, inventoryOK
+	}
 	if contributor.occurrenceCatalog == nil {
 		return nil, false
 	}
@@ -129,9 +158,9 @@ const (
 	// WiringGeneratedWithoutProgram is the converse: a row wired generated whose
 	// template declares no Program, so the composition has nothing to lower.
 	WiringGeneratedWithoutProgram
-	// WiringGeneratedOffMountedLane is a generated row on a lane the generated
-	// path does not materialize occurrences for.
-	WiringGeneratedOffMountedLane
+	// WiringGeneratedLaneUnsupported is a generated row on a lane that has no
+	// generated registration handoff.
+	WiringGeneratedLaneUnsupported
 	// WiringHooksMissing is a hand-wired row lacking one of the three passes
 	// every hand-wired rule must supply.
 	WiringHooksMissing
@@ -151,8 +180,8 @@ func (refusal WiringRefusal) String() string {
 		return "program-wired-by-hand"
 	case WiringGeneratedWithoutProgram:
 		return "generated-without-program"
-	case WiringGeneratedOffMountedLane:
-		return "generated-off-mounted-lane"
+	case WiringGeneratedLaneUnsupported:
+		return "generated-lane-unsupported"
 	case WiringHooksMissing:
 		return "hooks-missing"
 	case WiringOccurrenceCatalogMissing:
@@ -183,12 +212,12 @@ func (contributor RuleContributor[P, A]) complete(template *rule.Template) Wirin
 	if template == nil {
 		return WiringTemplateAbsent
 	}
-	if contributor.generated {
+	if contributor.generated.Available() {
 		if !template.Program().Available() {
 			return WiringGeneratedWithoutProgram
 		}
-		if template.Lane() != rule.LaneMounted {
-			return WiringGeneratedOffMountedLane
+		if _, laneOK := generatedLaneHandoff(template.Lane()); !laneOK || template.Lane() != contributor.generated {
+			return WiringGeneratedLaneUnsupported
 		}
 		return WiringAdmitted
 	}
@@ -216,10 +245,13 @@ func (contributor RuleContributor[P, A]) complete(template *rule.Template) Wirin
 // issuance, so the owning domain retains no engine fragment or hot callback.
 func WireGeneratedRule[P, A any](spec rule.Spec) (*rule.Template, RuleContributor[P, A], bool) {
 	template, ok := rule.New(spec)
-	if !ok || template == nil || !template.Program().Available() || template.Lane() != rule.LaneMounted {
+	if !ok || template == nil || !template.Program().Available() {
 		return nil, RuleContributor[P, A]{}, false
 	}
-	return template, RuleContributor[P, A]{generated: true}, true
+	if _, laneOK := generatedLaneHandoff(template.Lane()); !laneOK {
+		return nil, RuleContributor[P, A]{}, false
+	}
+	return template, RuleContributor[P, A]{generated: template.Lane()}, true
 }
 
 // WireRule binds a domain's typed declaration, owner registration, and hot

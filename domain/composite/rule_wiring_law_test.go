@@ -85,7 +85,7 @@ func TestGeneratedWiringIsRefusedByNameWithoutAProgram(t *testing.T) {
 	if !ok {
 		t.Fatal("Program-less specimen declaration rejected")
 	}
-	contributor := RuleContributor[principals, authorities]{generated: true}
+	contributor := RuleContributor[principals, authorities]{generated: rule.LaneMounted}
 	if refusal := contributor.complete(template); refusal != WiringGeneratedWithoutProgram {
 		t.Fatalf("refusal = %s, want %s", refusal, WiringGeneratedWithoutProgram)
 	}
@@ -110,6 +110,46 @@ func TestMatchedWiringIsAdmitted(t *testing.T) {
 	}
 	if refusal := handContributor.complete(handTemplate); refusal != WiringAdmitted {
 		t.Fatalf("hand-wired refusal = %s", refusal)
+	}
+}
+
+// TestGeneratedWiringAdmitsEveryLaneWithAGeneratedHandoff states the lane half
+// of the wiring law. The generated arm is not a mounted-lane privilege: any
+// lane the composition has a generated registration for takes the same sealed
+// plan through the same Executor. A lane with no such handoff is refused by
+// name, and the wiring check and the registration pass read the same table, so
+// one cannot admit what the other would fail on.
+func TestGeneratedWiringAdmitsEveryLaneWithAGeneratedHandoff(t *testing.T) {
+	for _, lane := range []rule.Lane{rule.LaneMounted, rule.LaneLink} {
+		spec := wiringSpec(true)
+		spec.Lane = lane
+		if lane == rule.LaneLink {
+			spec.Issues = nil
+		}
+		template, contributor, ok := WireGeneratedRule[principals, authorities](spec)
+		if !ok {
+			t.Fatalf("generated lane %d refused", lane)
+		}
+		if refusal := contributor.complete(template); refusal != WiringAdmitted {
+			t.Fatalf("generated lane %d refusal = %s", lane, refusal)
+		}
+		if _, laneOK := generatedLaneHandoff(contributor.generated); !laneOK {
+			t.Fatalf("generated lane %d has no registration handoff", lane)
+		}
+	}
+	closure := wiringSpec(true)
+	closure.Lane = rule.LaneMountedPoint
+	closure.Issues = nil
+	if _, _, admitted := WireGeneratedRule[principals, authorities](closure); admitted {
+		t.Fatal("a lane with no generated handoff was admitted through the generated path")
+	}
+	template, templateOK := rule.New(closure)
+	if !templateOK {
+		t.Fatal("mounted-point specimen declaration rejected")
+	}
+	contributor := RuleContributor[principals, authorities]{generated: rule.LaneMountedPoint}
+	if refusal := contributor.complete(template); refusal != WiringGeneratedLaneUnsupported {
+		t.Fatalf("refusal = %s, want %s", refusal, WiringGeneratedLaneUnsupported)
 	}
 }
 

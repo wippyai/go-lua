@@ -613,7 +613,7 @@ func (rules *RuleBinding) OccurrenceCatalogByKey(key schema.Key) (rule.Occurrenc
 	if !hotOK || !contributorOK {
 		return nil, false
 	}
-	return contributor.OccurrenceCatalog(hot)
+	return contributor.OccurrenceCatalog(rules.binding, hot)
 }
 
 func ruleContributorFor(state *catalog, key schema.Key) (RuleContributor[principals, authorities], bool) {
