@@ -16,7 +16,7 @@ import (
 
 // ActivationRowSpec is a disposable input to Topology sealing.  A row may
 // carry a formal target lowering (Binding/Sites/Inputs) and/or direct factor
-// transport (Trigger/Entries/Exits/Imports/Export).  The two forms share one
+// transport (Trigger/Entries/Exits/Imports/Exports).  The two forms share one
 // trigger and locator tuple and are fused into the same sealed directory.
 //
 // Binding remains the formal-port authority.  Its rows are consumed exactly
@@ -42,7 +42,7 @@ type ActivationRowSpec struct {
 	Entries []PointRef
 	Exits   []PointRef
 	Imports []composition.Key
-	Export  composition.Key
+	Exports []composition.Key
 }
 
 type activationRowLocator struct {
@@ -183,7 +183,7 @@ func activationRowSpecShape(spec ActivationRowSpec) bool {
 	if spec.TriggerOrdinal < 0 || !spec.Family.Available() || !spec.Application.Available() || !spec.Target.Available() || !spec.Endpoint.Available() || spec.Target == spec.Endpoint || !spec.Context.WellFormed() {
 		return false
 	}
-	if !spec.Binding.Available() && (spec.Trigger == 0 || len(spec.Entries) == 0 || len(spec.Exits) == 0 || len(spec.Imports) == 0 || !spec.Export.Available()) {
+	if !spec.Binding.Available() && (spec.Trigger == 0 || len(spec.Entries) == 0 || len(spec.Exits) == 0 || len(spec.Imports) == 0 || len(spec.Exports) == 0) {
 		return false
 	}
 	if !spec.Binding.Available() && (len(spec.Sites) != 0 || len(spec.Inputs) != 0) {
@@ -200,7 +200,7 @@ func activationTransportRows(source *composition.Composition, spec ActivationRow
 		return nil, false
 	}
 	if spec.Trigger == 0 {
-		if len(spec.Entries) != 0 || len(spec.Exits) != 0 || len(spec.Imports) != 0 || spec.Export.Available() {
+		if len(spec.Entries) != 0 || len(spec.Exits) != 0 || len(spec.Imports) != 0 || len(spec.Exports) != 0 {
 			return nil, false
 		}
 		return nil, true
@@ -208,18 +208,11 @@ func activationTransportRows(source *composition.Composition, spec ActivationRow
 	entries, entriesOK := canonicalDirectActivationRefs(spec.Entries)
 	exits, exitsOK := canonicalDirectActivationRefs(spec.Exits)
 	imports, importsOK := canonicalDirectActivationFactors(source, spec.Imports)
-	if !entriesOK || !exitsOK || !importsOK || !spec.Export.Available() {
+	exports, exportsOK := canonicalDirectActivationFactors(source, spec.Exports)
+	if !entriesOK || !exitsOK || !importsOK || !exportsOK {
 		return nil, false
 	}
-	if _, known := source.FactorIndex(spec.Export); !known {
-		return nil, false
-	}
-	for _, factor := range imports {
-		if factor == spec.Export {
-			return nil, false
-		}
-	}
-	rows := make([]activationTransportRow, 0, len(entries)*len(imports)+len(exits))
+	rows := make([]activationTransportRow, 0, len(entries)*len(imports)+len(exits)*len(exports))
 	for _, entry := range entries {
 		for _, factor := range imports {
 			id, ok := activationTransportRowKey(spec.Trigger, entry, factor)
@@ -230,11 +223,13 @@ func activationTransportRows(source *composition.Composition, spec ActivationRow
 		}
 	}
 	for _, exit := range exits {
-		id, ok := activationTransportRowKey(exit, spec.Trigger, spec.Export)
-		if !ok {
-			return nil, false
+		for _, factor := range exports {
+			id, ok := activationTransportRowKey(exit, spec.Trigger, factor)
+			if !ok {
+				return nil, false
+			}
+			rows = append(rows, activationTransportRow{id: id, source: exit, target: spec.Trigger, factor: factor})
 		}
-		rows = append(rows, activationTransportRow{id: id, source: exit, target: spec.Trigger, factor: spec.Export})
 	}
 	return rows, true
 }
@@ -390,7 +385,7 @@ func cloneActivationRowSpecs(values []ActivationRowSpec) []ActivationRowSpec {
 			Entries:        append([]PointRef(nil), value.Entries...),
 			Exits:          append([]PointRef(nil), value.Exits...),
 			Imports:        append([]composition.Key(nil), value.Imports...),
-			Export:         value.Export,
+			Exports:        append([]composition.Key(nil), value.Exports...),
 		}
 	}
 	return result

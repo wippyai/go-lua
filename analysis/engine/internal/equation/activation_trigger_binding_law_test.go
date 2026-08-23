@@ -90,7 +90,42 @@ func (fixture triggerBindingFixture) row(application, target, endpoint compositi
 		Entries:        []PointRef{PointAt(0)},
 		Exits:          []PointRef{PointAt(0)},
 		Imports:        []composition.Key{fixture.factor},
-		Export:         fixture.export,
+		Exports:        []composition.Key{fixture.export},
+	}
+}
+
+// TestDirectActivationTransportCarriesEachDeclaredDirection proves the sealed
+// transport ABI is a direction declaration, not a one-export special case. A
+// factor present in both sets produces one ingress and one egress edge, while
+// an export-only factor produces only egress.
+func TestDirectActivationTransportCarriesEachDeclaredDirection(t *testing.T) {
+	fixture := newTriggerBindingFixture(t)
+	rows, ok := activationTransportRows(fixture.cold, ActivationRowSpec{
+		Trigger: PointAt(1), Entries: []PointRef{PointAt(2)}, Exits: []PointRef{PointAt(3)},
+		Imports: []composition.Key{fixture.factor}, Exports: []composition.Key{fixture.factor, fixture.export},
+	})
+	if !ok || len(rows) != 3 {
+		t.Fatalf("direct activation transport rows=%d ok=%t, want three declared directional edges", len(rows), ok)
+	}
+	want := []struct {
+		source, target PointRef
+		factor         composition.Key
+	}{
+		{PointAt(1), PointAt(2), fixture.factor},
+		{PointAt(3), PointAt(1), fixture.factor},
+		{PointAt(3), PointAt(1), fixture.export},
+	}
+	for _, expected := range want {
+		found := false
+		for _, row := range rows {
+			if row.source == expected.source && row.target == expected.target && row.factor == expected.factor {
+				found = true
+				break
+			}
+		}
+		if !found {
+			t.Fatalf("missing transport %v -> %v for %v", expected.source, expected.target, expected.factor)
+		}
 	}
 }
 
