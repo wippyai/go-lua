@@ -185,8 +185,8 @@ func TestATransformedCarryPublishesTheRowAndAgesTheCarriedFacts(t *testing.T) {
 	if !issued {
 		t.Fatal("issue carry invocation")
 	}
-	var scratch Scratch[uint64, uint64]
-	outcome := FoldCarry(ticket, carryLawReducer{outcome: structure.Concrete}, read, write, &scratch)
+	var reads, writes Scratch[uint64, uint64]
+	outcome := FoldCarry(ticket, carryLawReducer{outcome: structure.Concrete}, read, &reads, write, &writes)
 	if outcome != structure.Concrete {
 		t.Fatalf("carry fold = %v, want Concrete", outcome)
 	}
@@ -239,8 +239,8 @@ func TestATransformedCarryThatPublishesNothingCarriesNothing(t *testing.T) {
 			if !issued {
 				t.Fatal("issue carry invocation")
 			}
-			var scratch Scratch[uint64, uint64]
-			if folded := FoldCarry(ticket, carryLawReducer{outcome: outcome}, read, write, &scratch); folded != outcome {
+			var reads, writes Scratch[uint64, uint64]
+			if folded := FoldCarry(ticket, carryLawReducer{outcome: outcome}, read, &reads, write, &writes); folded != outcome {
 				t.Fatalf("carry fold = %v, want %v", folded, outcome)
 			}
 			if !run.Submit(&ticket, outcome) {
@@ -297,14 +297,14 @@ func TestAWarmTransformedCarryAllocatesNothingBeyondItsPublication(t *testing.T)
 		t.Fatal("sealed carry row")
 	}
 	run := NewRun(1, 1)
-	var scratch Scratch[uint64, uint64]
+	var reads, writes Scratch[uint64, uint64]
 	inputs := []carrier.State{fixture.state}
 	invoke := func() bool {
 		ticket, issued := issueExecutionRow(run, fixture.work, fixture.state, fixture.whole, inputs, 1, 4, 9, 2)
 		if !issued {
 			return false
 		}
-		outcome := FoldCarry(ticket, carryLawReducer{outcome: structure.NoSelection}, read, write, &scratch)
+		outcome := FoldCarry(ticket, carryLawReducer{outcome: structure.NoSelection}, read, &reads, write, &writes)
 		if !run.Submit(&ticket, outcome) {
 			return false
 		}

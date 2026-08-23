@@ -76,8 +76,14 @@ type runtimeFactor interface {
 	// buildGeneratedFamilies compiles all generated rows owned by this typed
 	// factor into one executor family per present execution form. It is an epoch
 	// setup operation; execution reaches only the dense catalog address it
-	// returns.
-	buildGeneratedFamilies([]execution.FormRow) ([]execution.Family, []execution.FormAddress, bool)
+	// returns. foreign is the Program's Factor read table, indexed by sealed
+	// Factor ordinal, so a rule that joins an axis it does not write to can
+	// seal that read at the read fact's own types.
+	buildGeneratedFamilies([]execution.FormRow, []execution.ForeignFactor) ([]execution.Family, []execution.FormAddress, bool)
+	// foreignRead is this Factor's own read side with its types erased. It is
+	// what the table above is built from, and it is the only thing one Factor
+	// hands another.
+	foreignRead() (execution.ForeignFactor, bool)
 }
 
 func (bound *boundFactor[K, V]) semantic() identity.SemanticKey {

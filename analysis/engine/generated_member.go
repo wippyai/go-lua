@@ -325,11 +325,11 @@ func (member *generatedMember) authenticateInvocationRow(catalog *executioncatal
 // execution form table. It contributes the Factor's sealed typed plane and
 // nothing else: which forms exist, how a plan row is classified into one, and
 // how each form seals its family are owned by analysis/engine/execution.
-func (factor *boundFactor[K, V]) buildGeneratedFamilies(rows []execution.FormRow) ([]execution.Family, []execution.FormAddress, bool) {
+func (factor *boundFactor[K, V]) buildGeneratedFamilies(rows []execution.FormRow, foreign []execution.ForeignFactor) ([]execution.Family, []execution.FormAddress, bool) {
 	if factor == nil {
 		return nil, nil, false
 	}
-	plane, planeOK := execution.NewFormPlane(factor.binding, factor.sourceColumns, factor.sourcePresent, factor.families)
+	plane, planeOK := execution.NewFormPlane(factor.binding, factor.sourceColumns, factor.sourcePresent, foreign, factor.families)
 	if !planeOK {
 		return nil, nil, false
 	}
@@ -338,6 +338,15 @@ func (factor *boundFactor[K, V]) buildGeneratedFamilies(rows []execution.FormRow
 		return nil, nil, false
 	}
 	return families, addresses, true
+}
+
+// foreignRead erases this Factor's key and fact types so a rule that joins it
+// from another Factor's plane can recover the typed read it declared.
+func (factor *boundFactor[K, V]) foreignRead() (execution.ForeignFactor, bool) {
+	if factor == nil {
+		return nil, false
+	}
+	return execution.NewForeignFactor(factor.binding)
 }
 
 func (member *generatedMember) executeGeneratedAt(epoch *executorEpoch, base carrier.RuleContributionBase, inputs []carrier.State, within support.Mask) memberResult {

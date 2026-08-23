@@ -269,6 +269,22 @@ func buildGeneratedExecutionProgram(program *runtimeProgram) (*generatedExecutio
 		rowsByOwner[descriptor.OutputFactor()] = append(rowsByOwner[descriptor.OutputFactor()], formRow)
 		installed[memberIndex] = formRow
 	}
+	// The read table is the whole Program's Factor read sides, indexed by
+	// sealed Factor ordinal. It is built once here, before any family is
+	// sealed, because a rule's own joins decide which entries its installer
+	// sees and no Factor may choose that for another.
+	foreign := make([]execution.ForeignFactor, len(program.factorOwners))
+	for ownerIndex := range program.factorOwners {
+		owner, ownerOK := program.factorOwnerAt(int32(ownerIndex))
+		if !ownerOK || owner == nil {
+			return nil, false
+		}
+		read, readOK := owner.foreignRead()
+		if !readOK {
+			return nil, false
+		}
+		foreign[ownerIndex] = read
+	}
 	families := make([]execution.Family, 0, len(rowsByOwner)*2)
 	for ownerIndex, formRows := range rowsByOwner {
 		if len(formRows) == 0 {
@@ -278,7 +294,7 @@ func buildGeneratedExecutionProgram(program *runtimeProgram) (*generatedExecutio
 		if !ownerOK || owner == nil {
 			return nil, false
 		}
-		executors, addresses, built := owner.buildGeneratedFamilies(formRows)
+		executors, addresses, built := owner.buildGeneratedFamilies(formRows, foreign)
 		if !built || len(addresses) != len(formRows) || len(executors) == 0 {
 			return nil, false
 		}

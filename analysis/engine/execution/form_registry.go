@@ -157,24 +157,111 @@ func (families *RuleFamilies[K, V]) Count() int {
 	return len(families.installers)
 }
 
+// ForeignFactor is one input axis's read side, delivered to a rule's installer
+// with its key and fact types erased. A rule that reads a Factor it does not
+// write to is exactly the rule the engine cannot type generically: the read
+// fact is not the written fact, so the plane cannot seal that read against its
+// own binding. The rule's own package knows both types and recovers the typed
+// read through ForeignExactRead.
+//
+// The handle is a value, not a capability: it carries a bound Factor's fact
+// binding and nothing that could reopen a schema, an owner, or a solve.
+type ForeignFactor interface{ sealedForeignFactor() }
+
+type foreignFactor[K scalar.Key, V any] struct {
+	binding *factbinding.Binding[K, V]
+}
+
+func (foreignFactor[K, V]) sealedForeignFactor() {}
+
+// NewForeignFactor seals one bound Factor's read side for delivery to the
+// installers of rules that declared it as an input axis.
+func NewForeignFactor[K scalar.Key, V any](binding *factbinding.Binding[K, V]) (ForeignFactor, bool) {
+	if binding == nil {
+		return nil, false
+	}
+	return foreignFactor[K, V]{binding: binding}, true
+}
+
+// ForeignExactRead seals one exact read of a foreign input axis at the read
+// fact's own types. It is the read half of the heterogeneous fold: the write
+// side stays sealed against the writing Factor's plane, and the two halves
+// never have to agree on a type.
+//
+// The caller states the read types because it is the only party that knows
+// them. A handle typed otherwise is refused rather than reinterpreted.
+func ForeignExactRead[K scalar.Key, V any](foreign ForeignFactor, unit carrier.Unit, input uint16) (ExactRead[K, V], bool) {
+	typed, ok := foreign.(foreignFactor[K, V])
+	if !ok {
+		return ExactRead[K, V]{}, false
+	}
+	return NewExactRead(typed.binding, unit, input)
+}
+
 // FormPlane is the sealed typed plane a form builder may read: the Factor's
-// fact binding, its materialized source columns, and the owner that installs
-// families for its own rules. It is a value handoff, not an owner capability -
-// a builder can seal descriptors from it and nothing else.
+// fact binding, its materialized source columns, the input axes its rows
+// declared reads against, and the owner that installs families for its own
+// rules. It is a value handoff, not an owner capability - a builder can seal
+// descriptors from it and nothing else.
 type FormPlane[K scalar.Key, V any] struct {
 	binding  *factbinding.Binding[K, V]
 	columns  []memberrelation.SourceColumn[V]
 	present  []bool
+	foreign  []ForeignFactor
 	families *RuleFamilies[K, V]
 }
 
 // NewFormPlane seals one bound Factor's typed plane for the form table. A
-// Factor that installs no family of its own passes a nil provider.
-func NewFormPlane[K scalar.Key, V any](binding *factbinding.Binding[K, V], columns []memberrelation.SourceColumn[V], present []bool, families *RuleFamilies[K, V]) (FormPlane[K, V], bool) {
+// Factor that installs no family of its own passes a nil provider. foreign is
+// the whole Program's Factor read table, indexed by sealed Factor ordinal; a
+// rule's installer sees only the entries that rule's own joins declared.
+func NewFormPlane[K scalar.Key, V any](binding *factbinding.Binding[K, V], columns []memberrelation.SourceColumn[V], present []bool, foreign []ForeignFactor, families *RuleFamilies[K, V]) (FormPlane[K, V], bool) {
 	if binding == nil {
 		return FormPlane[K, V]{}, false
 	}
-	return FormPlane[K, V]{binding: binding, columns: columns, present: present, families: families}, true
+	return FormPlane[K, V]{binding: binding, columns: columns, present: present, foreign: foreign, families: families}, true
+}
+
+// Foreign resolves the read side of one input axis this plane's rule declared
+// a join against. A Factor no join of this rule named has no entry: a fold may
+// read exactly the axes its own sealed plan depends on, so a read the plan
+// does not account for cannot be sealed at all.
+func (plane FormPlane[K, V]) Foreign(factor uint32) (ForeignFactor, bool) {
+	if !plane.Valid() || uint64(factor) >= uint64(len(plane.foreign)) || plane.foreign[factor] == nil {
+		return nil, false
+	}
+	return plane.foreign[factor], true
+}
+
+// forRule narrows this plane's foreign table to the input axes one rule's own
+// rows declared joins against. It is the foreign fence, stated once: every
+// installer receives a plane that can seal a read against the Factors its plan
+// depends on and against no other.
+func (plane FormPlane[K, V]) forRule(rows []FormRow) (FormPlane[K, V], bool) {
+	if !plane.Valid() || len(rows) == 0 {
+		return FormPlane[K, V]{}, false
+	}
+	var declared []ForeignFactor
+	for _, row := range rows {
+		for index := 0; index < row.Rule.ReadCount(); index++ {
+			read, readOK := row.Rule.ReadAt(index)
+			if !readOK {
+				return FormPlane[K, V]{}, false
+			}
+			if uint64(read.Factor) >= uint64(len(plane.foreign)) {
+				return FormPlane[K, V]{}, false
+			}
+			if uint64(read.Factor) >= uint64(len(declared)) {
+				grown := make([]ForeignFactor, read.Factor+1)
+				copy(grown, declared)
+				declared = grown
+			}
+			declared[read.Factor] = plane.foreign[read.Factor]
+		}
+	}
+	narrowed := plane
+	narrowed.foreign = declared
+	return narrowed, true
 }
 
 // Valid reports whether the plane still names a live typed binding.
@@ -394,7 +481,11 @@ func buildForms[K scalar.Key, V any](plane FormPlane[K, V], rows []FormRow, buil
 			if !authored {
 				return nil, nil, form, false
 			}
-			family, ruleAddresses, built := installer.InstallRuleFamily(plane, ordinal, ruleRows)
+			rulePlane, fenced := plane.forRule(ruleRows)
+			if !fenced {
+				return nil, nil, form, false
+			}
+			family, ruleAddresses, built := installer.InstallRuleFamily(rulePlane, ordinal, ruleRows)
 			if !built || !appendFamily(family, ruleAddresses, len(ruleRows)) {
 				return nil, nil, form, false
 			}

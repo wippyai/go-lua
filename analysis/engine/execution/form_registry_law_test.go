@@ -39,7 +39,7 @@ func TestExecutionFormTableIsTotal(t *testing.T) {
 // never silently dropped from the ladder or folded into a neighbouring form.
 func TestExecutionFormWithoutImplementationRefusesByName(t *testing.T) {
 	fixture := newExecutionFixture(t)
-	plane, planeOK := NewFormPlane(fixture.binding, nil, nil, nil)
+	plane, planeOK := NewFormPlane(fixture.binding, nil, nil, nil, nil)
 	if !planeOK {
 		t.Fatal("form plane")
 	}
@@ -65,7 +65,7 @@ func TestExecutionFormsBuildInSealedOrdinalOrder(t *testing.T) {
 	if !columnOK {
 		t.Fatal("sealed source column")
 	}
-	plane, planeOK := NewFormPlane(fixture.binding, []memberrelation.SourceColumn[uint64]{column}, []bool{true}, nil)
+	plane, planeOK := NewFormPlane(fixture.binding, []memberrelation.SourceColumn[uint64]{column}, []bool{true}, nil, nil)
 	if !planeOK {
 		t.Fatal("form plane")
 	}
@@ -202,6 +202,23 @@ type installedFamilyProvider struct {
 	install Family
 }
 
+// fixtureForeignTable is the Program-wide Factor read table: one entry per
+// sealed Factor ordinal, all typed in this fixture's one algebra. A real
+// Program's entries differ per Factor; the fence a plane applies to them does
+// not.
+func fixtureForeignTable(t testing.TB, fixture executionFixture, width int) []ForeignFactor {
+	t.Helper()
+	read, readOK := NewForeignFactor(fixture.binding)
+	if !readOK {
+		t.Fatal("foreign read side")
+	}
+	table := make([]ForeignFactor, width)
+	for index := range table {
+		table[index] = read
+	}
+	return table
+}
+
 // ruleFamilyTable is the sealed authorship table one provider claims its own
 // ordinal in, which is what a Factor hands the plane at bind.
 func ruleFamilyTable(provider *installedFamilyProvider) *RuleFamilies[uint64, uint64] {
@@ -255,7 +272,7 @@ func TestAnOwnerInstallsTheFamilyOfItsOwnRule(t *testing.T) {
 
 	t.Run("installed", func(t *testing.T) {
 		provider := &installedFamilyProvider{rule: ordinal, install: installedFamily{}}
-		plane, planeOK := NewFormPlane(fixture.binding, nil, nil, ruleFamilyTable(provider))
+		plane, planeOK := NewFormPlane(fixture.binding, nil, nil, fixtureForeignTable(t, fixture, 3), ruleFamilyTable(provider))
 		if !planeOK {
 			t.Fatal("form plane")
 		}
@@ -273,7 +290,7 @@ func TestAnOwnerInstallsTheFamilyOfItsOwnRule(t *testing.T) {
 
 	t.Run("not-authored", func(t *testing.T) {
 		provider := &installedFamilyProvider{rule: ordinal + 1, install: installedFamily{}}
-		plane, planeOK := NewFormPlane(fixture.binding, nil, nil, ruleFamilyTable(provider))
+		plane, planeOK := NewFormPlane(fixture.binding, nil, nil, fixtureForeignTable(t, fixture, 3), ruleFamilyTable(provider))
 		if !planeOK {
 			t.Fatal("form plane")
 		}
@@ -288,7 +305,7 @@ func TestAnOwnerInstallsTheFamilyOfItsOwnRule(t *testing.T) {
 
 	t.Run("refused-install-is-a-refusal", func(t *testing.T) {
 		provider := &installedFamilyProvider{rule: ordinal, refuse: true, install: installedFamily{}}
-		plane, planeOK := NewFormPlane(fixture.binding, nil, nil, ruleFamilyTable(provider))
+		plane, planeOK := NewFormPlane(fixture.binding, nil, nil, fixtureForeignTable(t, fixture, 3), ruleFamilyTable(provider))
 		if !planeOK {
 			t.Fatal("form plane")
 		}
@@ -311,7 +328,7 @@ func TestAnOwnerInstallsTheFamilyOfItsOwnRule(t *testing.T) {
 func TestAFormRefusesACoordinateOfAnotherFactor(t *testing.T) {
 	fixture := newExecutionFixture(t)
 	foreign := newExecutionFixture(t)
-	plane, planeOK := NewFormPlane(fixture.binding, nil, nil, nil)
+	plane, planeOK := NewFormPlane(fixture.binding, nil, nil, nil, nil)
 	if !planeOK {
 		t.Fatal("form plane")
 	}
@@ -374,5 +391,103 @@ func TestAnEmptyFamilyTableAuthorsNothing(t *testing.T) {
 	}
 	if empty.Install(0, nil) {
 		t.Fatal("a nil installer claimed an ordinal")
+	}
+}
+
+// foreignFenceProvider records which input axes the plane handed it. It is the
+// installer half of the foreign fence: what a rule can seal a read against is
+// decided by the plane it is given, not by anything the installer asks for.
+type foreignFenceProvider struct {
+	rule     uint32
+	resolved map[uint32]bool
+	width    int
+}
+
+func (provider *foreignFenceProvider) InstallRuleFamily(plane FormPlane[uint64, uint64], rule uint32, rows []FormRow) (Family, []FormAddress, bool) {
+	if provider == nil || rule != provider.rule || !plane.Valid() {
+		return nil, nil, false
+	}
+	provider.resolved = make(map[uint32]bool, provider.width)
+	for factor := 0; factor < provider.width; factor++ {
+		_, ok := plane.Foreign(uint32(factor))
+		provider.resolved[uint32(factor)] = ok
+	}
+	addresses := make([]FormAddress, 0, len(rows))
+	for index, row := range rows {
+		addresses = append(addresses, FormAddress{Member: row.Member, Local: uint32(index)})
+	}
+	return installedFamily{}, addresses, true
+}
+
+// TestAnInstallerReadsOnlyTheInputAxesItsPlanDeclared is the foreign fence.
+// A fold's dependencies are the joins its sealed plan states, and the solver
+// schedules the rule against exactly those: a read of any other Factor would
+// observe a fact nothing waited for, at whatever value that Factor happened to
+// hold. The plane an installer receives therefore resolves the input axes its
+// own rule declared and refuses every other Factor by name, so the mistake is
+// unrepresentable rather than merely unlikely.
+func TestAnInstallerReadsOnlyTheInputAxesItsPlanDeclared(t *testing.T) {
+	fixture := newExecutionFixture(t)
+	exactRule := planCompiledExactRule(t)
+	ordinal, ordinalOK := exactRule.Ordinal()
+	if !ordinalOK {
+		t.Fatal("sealed rule ordinal")
+	}
+	declared, declaredOK := exactRule.ReadAt(0)
+	if !declaredOK {
+		t.Fatal("sealed rule read")
+	}
+	provider := &foreignFenceProvider{rule: ordinal, width: 3}
+	families := &RuleFamilies[uint64, uint64]{}
+	if !families.Install(ordinal, provider) {
+		t.Fatal("family claim")
+	}
+	plane, planeOK := NewFormPlane(fixture.binding, nil, nil, fixtureForeignTable(t, fixture, 3), families)
+	if !planeOK {
+		t.Fatal("form plane")
+	}
+	row := FormRow{Member: 0, Form: FormExact, Input: 0, Unit: fixture.unit, Target: fixture.target, Rule: exactRule}
+	if _, _, _, built := BuildForms(plane, []FormRow{row}); !built {
+		t.Fatal("installed rule did not build")
+	}
+	if len(provider.resolved) != 3 {
+		t.Fatalf("installer probed %d factors, want 3", len(provider.resolved))
+	}
+	for factor, resolved := range provider.resolved {
+		want := factor == declared.Factor
+		if resolved != want {
+			t.Fatalf("factor %d resolved=%t, want %t (the plan declares a join on %d only)", factor, resolved, want, declared.Factor)
+		}
+	}
+}
+
+// TestAPlaneRefusesAnInputAxisTheProgramDoesNotHave states the outer bound of
+// the same fence. A rule whose plan names a read Factor the Program's read
+// table has no entry for is a plan and a Program that disagree about how many
+// Factors exist; nothing downstream can repair that, so the family refuses
+// where it would be sealed.
+func TestAPlaneRefusesAnInputAxisTheProgramDoesNotHave(t *testing.T) {
+	fixture := newExecutionFixture(t)
+	exactRule := planCompiledExactRule(t)
+	ordinal, ordinalOK := exactRule.Ordinal()
+	if !ordinalOK {
+		t.Fatal("sealed rule ordinal")
+	}
+	provider := &foreignFenceProvider{rule: ordinal, width: 1}
+	families := &RuleFamilies[uint64, uint64]{}
+	if !families.Install(ordinal, provider) {
+		t.Fatal("family claim")
+	}
+	// The plan reads Factor 1; the Program's table names one Factor.
+	plane, planeOK := NewFormPlane(fixture.binding, nil, nil, fixtureForeignTable(t, fixture, 1), families)
+	if !planeOK {
+		t.Fatal("form plane")
+	}
+	row := FormRow{Member: 0, Form: FormExact, Input: 0, Unit: fixture.unit, Target: fixture.target, Rule: exactRule}
+	if _, _, _, built := BuildForms(plane, []FormRow{row}); built {
+		t.Fatal("a rule reading a Factor the Program does not have was sealed")
+	}
+	if provider.resolved != nil {
+		t.Fatal("the installer was reached with an unresolvable read table")
 	}
 }

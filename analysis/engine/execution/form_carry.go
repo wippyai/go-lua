@@ -104,16 +104,21 @@ func (write CarryWrite[K, V]) Close(ticket Ticket, scratch *Scratch[K, V]) bool 
 }
 
 // CarryReducer is the domain judgment of one transformed-carry row. It is a
-// type parameter instantiated with the family's own concrete type, so the call
-// below is a static direct call: no interface value, no closure and no
+// type parameter instantiated with the family's own concrete types, so the
+// call below is a static direct call: no interface value, no closure and no
 // function field per row.
+//
+// The read fact and the published fact are separate type parameters. A rule
+// that folds a foreign axis onto its own reads one domain's value and writes
+// another's, and there is no sense in which those are one type; a rule that
+// reads the Factor it writes instantiates both with the same one.
 //
 // Reduce answers the fact this row publishes at its own coordinate from the
 // one cell it read. Sparse absence is handed over rather than hidden, because
 // whether an unwritten predecessor is a candidate at all is the domain's
 // judgment and not the fold's.
-type CarryReducer[V any] interface {
-	Reduce(read V, present bool) (V, structure.ReductionOutcome)
+type CarryReducer[R, V any] interface {
+	Reduce(read R, present bool) (V, structure.ReductionOutcome)
 }
 
 // FoldCarry is the WT fold: one exact cell is reduced to the fact the row
@@ -121,31 +126,41 @@ type CarryReducer[V any] interface {
 // land in one patch so the row publishes atomically. An empty cursor is
 // NoCandidate, as it is for the identity fold; any other cursor failure is
 // Refuse. Ticket remains open for Submit.
-func FoldCarry[K scalar.Key, V any, R CarryReducer[V]](ticket Ticket, reducer R, read ExactRead[K, V], write CarryWrite[K, V], scratch *Scratch[K, V]) structure.ReductionOutcome {
-	if scratch == nil || !read.Valid() || !write.Valid() {
+//
+// The read and the write are sealed against their own Factors and carry their
+// own lanes. The read lane belongs to the Factor being read - foreign or the
+// writing one - because a cursor is typed by the binding it steps through;
+// the write lane holds the one patch both the row and the carry land in. The
+// support region the write publishes under is the region the read reported,
+// so a foreign read does not widen what the row claims.
+func FoldCarry[RK scalar.Key, RV any, K scalar.Key, V any, R CarryReducer[RV, V]](
+	ticket Ticket, reducer R,
+	read ExactRead[RK, RV], reads *Scratch[RK, RV],
+	write CarryWrite[K, V], writes *Scratch[K, V],
+) structure.ReductionOutcome {
+	if reads == nil || writes == nil || !read.Valid() || !write.Valid() {
 		return structure.Refuse
 	}
-	switch read.Read(ticket, scratch) {
+	switch read.Read(ticket, reads) {
 	case ReadAvailable:
 	case ReadExhausted:
-		if read.Close(ticket, scratch) {
+		if read.Close(ticket, reads) {
 			return structure.NoCandidate
 		}
 		return structure.Refuse
 	default:
-		_ = scratch.Discard(ticket)
+		_ = reads.Discard(ticket)
 		return structure.Refuse
 	}
-	region, regionOK := scratch.Region()
-	value, valueOK := scratch.Value()
-	present := scratch.Present()
-	if !read.Close(ticket, scratch) || !regionOK || !valueOK {
-		_ = scratch.Discard(ticket)
+	region, regionOK := reads.Region()
+	value, valueOK := reads.Value()
+	present := reads.Present()
+	if !read.Close(ticket, reads) || !regionOK || !valueOK {
+		_ = reads.Discard(ticket)
 		return structure.Refuse
 	}
 	next, outcome := reducer.Reduce(value, present)
 	if !outcome.Available() {
-		_ = scratch.Discard(ticket)
 		return structure.Refuse
 	}
 	if outcome != structure.Concrete {
@@ -153,8 +168,8 @@ func FoldCarry[K scalar.Key, V any, R CarryReducer[V]](ticket Ticket, reducer R,
 		// of this Factor stay exactly as the predecessor left them.
 		return outcome
 	}
-	if !write.Carry(ticket, scratch, region) || !write.Stage(ticket, scratch, region, next) || !write.Close(ticket, scratch) {
-		_ = scratch.Discard(ticket)
+	if !write.Carry(ticket, writes, region) || !write.Stage(ticket, writes, region, next) || !write.Close(ticket, writes) {
+		_ = writes.Discard(ticket)
 		return structure.Refuse
 	}
 	return structure.Concrete
