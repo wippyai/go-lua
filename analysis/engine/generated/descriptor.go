@@ -177,9 +177,6 @@ func NewPlanCompiledRule(spec CompiledRuleSpec) (CompiledRule, bool) {
 	if !validOutputPlan(output, spec.InputCount, spec.AxisCount, spec.Candidate, spec.Reducer) {
 		return CompiledRule{}, false
 	}
-	if output.Mode == ruleprogram.ModeRoute && selectedReadCount(readCopy) != 1 {
-		return CompiledRule{}, false
-	}
 	if output.Mode != ruleprogram.ModeRoute && output.Destination.Axis != spec.Candidate.Axis {
 		return CompiledRule{}, false
 	}
@@ -313,7 +310,12 @@ func normalizeOutputPlan(output *OutputPlan, reads []ReadPlan) bool {
 		// exact writer's evidence nor a route.
 		return !output.Exact && !output.Strong && !output.RouteJoinPresent && output.RouteJoin == 0
 	case ruleprogram.ModeRoute:
-		return output.RouteJoinPresent && uint64(output.RouteJoin) < uint64(len(reads)) && reads[output.RouteJoin].Form == ruleprogram.Selected && selectedReadCount(reads) == 1
+		// The route join must be the selected read the output publishes over.
+		// How many OTHER selected reads the rule declares is not this law's
+		// business: a route set computed from an earlier selection is the
+		// ordinary dependent join, and counting selections instead of naming
+		// the route one refuses it.
+		return output.RouteJoinPresent && uint64(output.RouteJoin) < uint64(len(reads)) && reads[output.RouteJoin].Form == ruleprogram.Selected
 	default:
 		return false
 	}
@@ -412,16 +414,6 @@ func validOutputPlan(output OutputPlan, _ int, axisCount int, candidate ruleplan
 		addressAxesInRange(axisCount, output.Address, output.Destination)
 }
 
-func selectedReadCount(reads []ReadPlan) int {
-	count := 0
-	for _, read := range reads {
-		if read.Form == ruleprogram.Selected {
-			count++
-		}
-	}
-	return count
-}
-
 // RebaseOrdinal copies a sealed descriptor with the canonical engine Rule
 // ordinal assigned by SchemaBuilder.Seal. Plan Rule ordinals and the cold
 // composition's canonical Rule order are distinct directories; rebasing is
@@ -485,7 +477,7 @@ func (rule CompiledRule) Available() bool {
 	if !validOutputPlan(output, int(rule.inputCount), int(rule.axisCount), rule.candidateRelation, rule.reducer) {
 		return false
 	}
-	if output.Mode == ruleprogram.ModeRoute && (uint64(output.RouteJoin) >= uint64(len(rule.reads)) || rule.reads[output.RouteJoin].Form != ruleprogram.Selected || selectedReadCount(rule.reads) != 1) {
+	if output.Mode == ruleprogram.ModeRoute && (uint64(output.RouteJoin) >= uint64(len(rule.reads)) || rule.reads[output.RouteJoin].Form != ruleprogram.Selected) {
 		return false
 	}
 	for _, read := range rule.reads {

@@ -3,8 +3,11 @@ package execution
 import (
 	"testing"
 
+	"github.com/wippyai/go-lua/analysis/engine/generated"
 	"github.com/wippyai/go-lua/analysis/engine/internal/carrier"
 	"github.com/wippyai/go-lua/analysis/engine/internal/facts/support"
+	ruleplan "github.com/wippyai/go-lua/analysis/schema/rule/plan"
+	ruleprogram "github.com/wippyai/go-lua/analysis/schema/rule/program"
 	"github.com/wippyai/go-lua/analysis/schema/structure"
 )
 
@@ -193,5 +196,82 @@ func TestRoutedWriteRefusesASupportRowItDidNotObserve(t *testing.T) {
 	var scratch RouteScratch[uint64, uint64]
 	if write.Stage(ticket, &scratch, fixture.targets[0], support.Mask{}, 5) {
 		t.Fatal("a route staged under an unauthenticated support row")
+	}
+}
+
+// routedDescriptor builds one routed rule whose route selection is fed by
+// earlier joins. selectedFeeds is how many selected reads precede the route
+// join, which is the ordinary dependent shape: a route set computed from an
+// earlier selection rather than from the candidate alone.
+func routedDescriptor(t testing.TB, selectedFeeds int) generated.CompiledRule {
+	t.Helper()
+	reads := make([]generated.ReadPlan, 0, selectedFeeds+2)
+	reads = append(reads, generated.ReadPlan{
+		Input: 0, Factor: 1, Axis: 0,
+		Relation:    ruleplan.RelationAddr{Axis: 0, Member: 0},
+		Key:         ruleplan.ProjectionAddr{Axis: 0, Member: 0},
+		Form:        ruleprogram.Exact,
+		Contract:    ruleplan.ReadContract{Order: ruleprogram.OrderCanonical, Sparse: ruleprogram.SparseExplicit, OnOpaque: ruleprogram.OnOpaqueRefuse, Multiplicity: ruleprogram.MultiplicityOne},
+		RowCapacity: 4, CellCapacity: 4,
+	})
+	for feed := 0; feed < selectedFeeds; feed++ {
+		reads = append(reads, generated.ReadPlan{
+			Input: uint32(len(reads)), Factor: 1, Axis: 0,
+			Relation:         ruleplan.RelationAddr{Axis: 0, Member: 0},
+			Key:              ruleplan.ProjectionAddr{Axis: 0, Member: 0},
+			Predicate:        ruleplan.ProjectionAddr{Axis: 0, Member: 1},
+			PredicatePresent: true,
+			Form:             ruleprogram.Selected,
+			Contract:         ruleplan.ReadContract{Order: ruleprogram.OrderByTag, Sparse: ruleprogram.SparseDefault, OnOpaque: ruleprogram.OnOpaqueRefuse, Multiplicity: ruleprogram.MultiplicityOne},
+			Denominator:      ruleplan.DenominatorAddr{Ordinal: 0, Present: true},
+			RowCapacity:      4, CellCapacity: 4,
+		})
+	}
+	routeJoin := uint32(len(reads))
+	reads = append(reads, generated.ReadPlan{
+		Input: routeJoin, Factor: 2, Axis: 2,
+		Relation:         ruleplan.RelationAddr{Axis: 2, Member: 0},
+		Key:              ruleplan.ProjectionAddr{Axis: 2, Member: 0},
+		Predicate:        ruleplan.ProjectionAddr{Axis: 2, Member: 1},
+		PredicatePresent: true,
+		Form:             ruleprogram.Selected,
+		Contract:         ruleplan.ReadContract{Order: ruleprogram.OrderCanonical, Sparse: ruleprogram.SparseExplicit, OnOpaque: ruleprogram.OnOpaqueRefuse, Multiplicity: ruleprogram.MultiplicityOne},
+		Denominator:      ruleplan.DenominatorAddr{Ordinal: 1, Present: true},
+		RowCapacity:      4, CellCapacity: 4,
+	})
+	rule, ok := generated.NewPlanCompiledRule(generated.CompiledRuleSpec{
+		Ordinal: 7, AxisCount: 3, InputCount: len(reads),
+		Candidate: ruleplan.RelationAddr{Axis: 0, Member: 0},
+		Reducer:   ruleplan.ReducerAddr{Axis: 2, Member: 0},
+		Reads:     reads,
+		Outputs: []generated.OutputPlan{{
+			Factor: 2, Axis: 2, Address: ruleplan.OutputAddr{Axis: 2, Frame: 0},
+			Destination: ruleplan.ProjectionAddr{Axis: 2, Member: 2}, Mode: ruleprogram.ModeRoute,
+			RouteJoin: routeJoin, RouteJoinPresent: true,
+		}},
+	})
+	if !ok {
+		t.Fatal("routed descriptor")
+	}
+	return rule
+}
+
+// TestSelectedRouteClaimsARouteSelectionFedByAnEarlierSelection states the J
+// shape the form exists for. A route set computed from an earlier read's result
+// is the whole point of the dependent join, and that earlier read is itself
+// often a selection - heap/formalfreeze selects the call's mounted actuals and
+// then selects the heap routes those actuals justify. Only the join the output
+// publishes over has to be the route; the joins that feed it are ordinary
+// reads, and counting selections instead of naming the route one refuses the
+// specimen this form was built for.
+func TestSelectedRouteClaimsARouteSelectionFedByAnEarlierSelection(t *testing.T) {
+	for _, feeds := range []int{0, 1, 2} {
+		row, claimed := ClassifyForm(routedDescriptor(t, feeds))
+		if !claimed {
+			t.Fatalf("a routed rule with %d selected feeds was claimed by no form", feeds)
+		}
+		if row.Form != FormSelectedRoute {
+			t.Fatalf("routed rule with %d selected feeds classified as %q", feeds, row.Form.Name())
+		}
 	}
 }

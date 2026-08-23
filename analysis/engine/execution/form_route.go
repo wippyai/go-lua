@@ -209,11 +209,13 @@ func FoldSelectedRoute[K scalar.Key, V any, R RouteReducer[V]](
 	return structure.Concrete
 }
 
-// classifySelectedRouteForm claims the ordered join whose one selected read is
-// the route the output publishes over. Every other join is exact, the route
-// join is the selected one, and the pair of a bounded multiplicity and a
-// present denominator is the declared bound on how many routes one row may
-// publish.
+// classifySelectedRouteForm claims the ordered join whose selected read is the
+// route the output publishes over. The route join is named by the output, not
+// found by counting selections: a route set computed from an earlier selection
+// is the ordinary dependent join this form exists for, and heap/formalfreeze
+// selects the call's mounted actuals before selecting the heap routes those
+// actuals justify. The pair of a bounded multiplicity and a present denominator
+// on the route join is the declared bound on how many routes one row publishes.
 func classifySelectedRouteForm(rule generated.CompiledRule) (FormRow, bool) {
 	mode, modeOK := rule.OutputMode()
 	if !modeOK || mode != ruleprogram.ModeRoute || rule.ReadCount() == 0 {
@@ -223,22 +225,14 @@ func classifySelectedRouteForm(rule generated.CompiledRule) (FormRow, bool) {
 	if !outputOK || !output.RouteJoinPresent || uint64(output.RouteJoin) >= uint64(rule.ReadCount()) {
 		return FormRow{}, false
 	}
-	selected := 0
 	for index := 0; index < rule.ReadCount(); index++ {
 		form, formOK := rule.ReadFormAt(index)
-		if !formOK {
-			return FormRow{}, false
-		}
-		switch form {
-		case ruleprogram.Exact:
-		case ruleprogram.Selected:
-			selected++
-		default:
+		if !formOK || form != ruleprogram.Exact && form != ruleprogram.Selected {
 			return FormRow{}, false
 		}
 	}
 	route, routeOK := rule.ReadAt(int(output.RouteJoin))
-	if !routeOK || selected != 1 || route.Form != ruleprogram.Selected {
+	if !routeOK || route.Form != ruleprogram.Selected {
 		return FormRow{}, false
 	}
 	if route.Contract.Multiplicity == ruleprogram.MultiplicityMany || !route.Denominator.Present {

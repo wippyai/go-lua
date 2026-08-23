@@ -149,11 +149,7 @@ func DeclareGeneratedRuleSlot(
 		compiled.Reducer().Axis != output.Address.Axis {
 		return refuse()
 	}
-	selectedCount := 0
 	for joinIndex, join := range joins {
-		if join.ReadForm == ruleprogram.Selected {
-			selectedCount++
-		}
 		if output.Mode == ruleprogram.ModeRoute && output.RouteJoinPresent && output.RouteJoin == uint32(joinIndex) && join.ReadForm != ruleprogram.Selected {
 			return refuse()
 		}
@@ -162,7 +158,7 @@ func DeclareGeneratedRuleSlot(
 		if output.RouteJoinPresent || output.RouteJoin != 0 || output.Destination.Axis != compiled.Candidate().Axis {
 			return refuse()
 		}
-	} else if !output.RouteJoinPresent || uint64(output.RouteJoin) >= uint64(len(joins)) || selectedCount != 1 || joins[output.RouteJoin].ReadForm != ruleprogram.Selected || output.Destination.Axis != joins[output.RouteJoin].Relation.Axis {
+	} else if !output.RouteJoinPresent || uint64(output.RouteJoin) >= uint64(len(joins)) || joins[output.RouteJoin].ReadForm != ruleprogram.Selected || output.Destination.Axis != joins[output.RouteJoin].Relation.Axis {
 		return refuse()
 	}
 	// Validate all addresses while they still use the Plan's own axis
