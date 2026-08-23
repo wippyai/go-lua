@@ -1,13 +1,8 @@
 package empty_test
 
 import (
-	"crypto/sha256"
 	"testing"
 
-	"github.com/wippyai/go-lua/domain/composite/snapshottest"
-
-	"github.com/wippyai/go-lua/analysis/engine"
-	"github.com/wippyai/go-lua/analysis/identity"
 	"github.com/wippyai/go-lua/analysis/lua/lower"
 	artifactcompiler "github.com/wippyai/go-lua/analysis/program/artifact/compiler"
 	"github.com/wippyai/go-lua/analysis/program/link"
@@ -15,121 +10,74 @@ import (
 	"github.com/wippyai/go-lua/analysis/program/target/compiler"
 	"github.com/wippyai/go-lua/analysis/program/target/declaration"
 	"github.com/wippyai/go-lua/analysis/schema/programmount"
+	"github.com/wippyai/go-lua/analysis/schema/structure"
 	"github.com/wippyai/go-lua/domain/composite"
+	"github.com/wippyai/go-lua/domain/composite/snapshottest"
 	heapdomain "github.com/wippyai/go-lua/domain/heap"
-	allocationcatalog "github.com/wippyai/go-lua/domain/heap/allocation/catalog"
-	empty "github.com/wippyai/go-lua/domain/heap/allocation/empty"
-	"github.com/wippyai/go-lua/domain/heap/allocation/internal/source"
-	heapowner "github.com/wippyai/go-lua/domain/heap/owner"
 	domaincontract "github.com/wippyai/go-lua/domain/type/typecontract"
-	valuedomain "github.com/wippyai/go-lua/domain/value"
-	valueowner "github.com/wippyai/go-lua/domain/value/owner"
 )
 
-func TestHotEmptyBindingIssuesOnlyItsExactMountedReceipt(t *testing.T) {
-	heapSchema, valueSchema, mounts := emptyFixture(t)
-	root := emptyRoot(t, heapSchema)
-	operand, operandOK := source.New(heapSchema, root)
-	if !operandOK || operand.Form() != source.FormEmpty || !operand.FencedTo(heapSchema) {
-		t.Fatal("empty source receipt")
+// TestEmptySelfCreateProducesCanonicalHeaderAtEveryConstructorForm states the
+// fold this rule declares, over the directory it draws candidates from: every
+// sealed empty constructor - table and closure alike - concludes the world its
+// predecessor held with one fresh mutable object at its own coordinate,
+// eligible exactly when the allocation is a table. Applying the constructor to
+// a world that already holds an object at that coordinate widens it to Many,
+// which is the distinction a single application cannot show.
+func TestEmptySelfCreateProducesCanonicalHeaderAtEveryConstructorForm(t *testing.T) {
+	schema := emptyFixture(t)
+	candidates := schema.EmptyAllocationCount()
+	if candidates == 0 {
+		t.Fatal("fixture sealed no empty allocation candidate")
 	}
-
-	// Empty's hot vertical consumes only Heap; its allocation catalog still
-	// requires the exact Value summary owner for mounted occurrence receipts.
-	// Build a complete binding with both declarations for the authoritative bind.
-	// The actual Empty fragment and owner must share one SchemaBinding. Build a
-	// complete binding with both declarations for the authoritative bind.
-	builder := engine.NewSchema()
-	heapFragment, heapFragmentOK := heapowner.DeclareSchema(builder, emptyKey(51), emptyKey(201))
-	valueFragment2, valueFragmentOK := valueowner.DeclareSchema(builder, emptyKey(52), emptyKey(53), emptyKey(151))
-	fragment, fragmentOK := empty.DeclareSchema(builder, emptyKey(54), emptyKey(55), emptyKey(56), heapFragment)
-	if !heapFragmentOK || !valueFragmentOK || !fragmentOK {
-		t.Fatal("empty receipt fragments")
-	}
-	cold, coldOK := builder.Seal()
-	if !coldOK || cold == nil {
-		t.Fatal("empty receipt cold seal")
-	}
-	binding := engine.NewSchemaBinding(cold)
-	heapHot, heapHotOK := heapowner.BindHot(binding, heapFragment, heapSchema)
-	_, valueHotOK := valueowner.BindHot(binding, valueFragment2, valueSchema)
-	catalog2, catalog2OK := allocationcatalog.Seal(heapSchema, valueSchema, mounts.heap)
-	rule, ruleOK := empty.BindHot(fragment, heapHot, catalog2)
-	if !heapHotOK || !valueHotOK || !catalog2OK || !ruleOK || rule == nil || !binding.Seal() {
-		t.Fatal("exact Empty mounted bind")
-	}
-	if implementation, issued := rule.Implementation(); !issued || implementation == nil {
-		t.Fatal("sealed Empty binding did not issue receipt")
-	}
-	secondSchema, secondOwnerFragment, _ := emptyHotSchema(t)
-	secondBinding := engine.NewSchemaBinding(secondSchema)
-	secondOwner, secondOwnerOK := heapowner.BindHot(secondBinding, secondOwnerFragment, heapSchema)
-	if !secondOwnerOK || secondOwner == nil {
-		t.Fatal("independent equal Empty Heap owner")
-	}
-	if foreign, accepted := empty.BindHot(fragment, secondOwner, catalog2); accepted || foreign != nil {
-		t.Fatal("foreign equal SchemaBinding accepted Empty fragment")
-	}
-}
-
-func TestEmptyReceiptNativeSelfCreateProducesCanonicalHeader(t *testing.T) {
-	schema, _, _ := emptyFixture(t)
 	seenTable, seenClosure := false, false
-	for index := 0; index < schema.KeyCount(); index++ {
-		root, rootOK := schema.KeyAt(index)
-		operand, operandOK := source.New(schema, root)
-		if !rootOK || !operandOK || operand.Form() != source.FormEmpty {
-			continue
+	for index := 0; index < candidates; index++ {
+		key, keyOK := schema.EmptyAllocationAt(index)
+		if !keyOK {
+			t.Fatalf("EmptyAllocationAt(%d)", index)
 		}
-		zero, zeroOK := schema.EmptyObject(root)
+		_, _, _, kind, _, originOK := schema.AllocationOriginForKey(key)
+		if !originOK {
+			t.Fatalf("sealed allocation origin at ordinal %d", index)
+		}
 		shape := heapdomain.ShapeIneligible
-		if operand.Kind() == heapdomain.AllocationTable {
-			shape = heapdomain.ShapeEligible
-			seenTable = true
-		} else if operand.Kind() == heapdomain.AllocationClosure {
+		switch kind {
+		case heapdomain.AllocationTable:
+			shape, seenTable = heapdomain.ShapeEligible, true
+		case heapdomain.AllocationClosure:
 			seenClosure = true
-		} else {
+		default:
 			continue
 		}
-		key, one, oneOK := empty.EmptyResultForTest(schema, operand, zero)
+		predecessor, predecessorOK := schema.EmptyObject(key)
+		if !predecessorOK {
+			t.Fatalf("predecessor world at ordinal %d", index)
+		}
+		one, outcome := heapdomain.EmptyAllocationFact(key, predecessor)
+		if outcome != structure.Concrete {
+			t.Fatalf("ordinal %d concluded %v", index, outcome)
+		}
 		world, worldOK := one.WorldAt(0)
 		object, objectOK := world.Recent()
 		gotShape, gotFrozen, headerOK := object.Header()
-		_, many, manyOK := empty.EmptyResultForTest(schema, operand, one)
+		if !worldOK || !objectOK || !headerOK || world.Kind() != heapdomain.WorldOne {
+			t.Fatalf("ordinal %d world=%v object=%t header=%t", index, world.Kind(), objectOK, headerOK)
+		}
+		if gotShape != shape || gotFrozen != heapdomain.FrozenMutable {
+			t.Fatalf("ordinal %d header shape=%v frozen=%v", index, gotShape, gotFrozen)
+		}
+		many, manyOutcome := heapdomain.EmptyAllocationFact(key, one)
 		manyWorld, manyWorldOK := many.WorldAt(0)
-		_, _, bottomOK := empty.EmptyResultForTest(schema, operand, schema.Bottom())
-		if !zeroOK || !oneOK || key != root || !worldOK || !objectOK || !headerOK || world.Kind() != heapdomain.WorldOne || gotShape != shape || gotFrozen != heapdomain.FrozenMutable || !manyOK || !manyWorldOK || manyWorld.Kind() != heapdomain.WorldMany || bottomOK {
-			t.Fatalf("empty self-create root=%v zero=%t create=%t world=%v header=%t", root, zeroOK, oneOK, world.Kind(), headerOK)
+		if manyOutcome != structure.Concrete || !manyWorldOK || manyWorld.Kind() != heapdomain.WorldMany {
+			t.Fatalf("ordinal %d re-application concluded %v world=%v", index, manyOutcome, manyWorld.Kind())
 		}
 	}
 	if !seenTable || !seenClosure {
-		t.Fatalf("empty receipt fixture roots table=%t closure=%t", seenTable, seenClosure)
-	}
-	foreignSchema, _, _ := emptyFixture(t)
-	foreignRoot := emptyRoot(t, foreignSchema)
-	foreignOperand, foreignOperandOK := source.New(foreignSchema, foreignRoot)
-	foreignZero, foreignZeroOK := foreignSchema.EmptyObject(foreignRoot)
-	if !foreignOperandOK || !foreignZeroOK {
-		t.Fatal("foreign empty evaluator fixture")
-	}
-	if _, _, foreignAccepted := empty.EmptyResultForTest(schema, foreignOperand, foreignZero); foreignAccepted {
-		t.Fatal("empty evaluator accepted a foreign operand/schema pair")
+		t.Fatalf("fixture constructor forms table=%t closure=%t", seenTable, seenClosure)
 	}
 }
 
-func emptyHotSchema(t testing.TB) (*engine.Schema, *heapowner.SchemaFragment, *empty.SchemaFragment) {
-	t.Helper()
-	builder := engine.NewSchema()
-	owner, ownerOK := heapowner.DeclareSchema(builder, emptyKey(31), emptyKey(131))
-	fragment, fragmentOK := empty.DeclareSchema(builder, emptyKey(32), emptyKey(33), emptyKey(34), owner)
-	schema, sealOK := builder.Seal()
-	if !ownerOK || !fragmentOK || !sealOK || schema == nil {
-		t.Fatal("declare Empty cold schema")
-	}
-	return schema, owner, fragment
-}
-
-func emptyFixture(t testing.TB) (heapdomain.Schema, *valuedomain.Schema, emptyFixtureMounts) {
+func emptyFixture(t testing.TB) heapdomain.Schema {
 	t.Helper()
 	program, err := lower.Lower(lower.Source{Name: "empty_receipt.lua", Text: []byte(`local table = {}; local closure = function() end; return table, closure`)})
 	if err != nil {
@@ -143,73 +91,34 @@ func emptyFixture(t testing.TB) (heapdomain.Schema, *valuedomain.Schema, emptyFi
 	if err != nil {
 		t.Fatal(err)
 	}
-	mounts := emptyMountedArtifacts(t, linked)
-	heapSchema, heapFailure := heapdomain.SealWithArtifacts(linked, mounts.heap)
-	structural, structuralOK := composite.StructureVocabulary(mounts.compilation)
-	if !structuralOK {
-		t.Fatal("structure vocabulary")
-	}
-	valueSchema, valueFailure := valuedomain.SealWithFailure(linked, heapSchema, mounts.value, structural)
-	if heapFailure != heapdomain.SealFailureNone || valueFailure != valuedomain.SealFailureNone {
-		t.Fatalf("empty schemas heap=%v value=%v", heapFailure, valueFailure)
-	}
-	return heapSchema, valueSchema, mounts
-}
-
-type emptyFixtureMounts struct {
-	linked      *link.Link
-	compilation composite.Compilation
-	heap        []programmount.MountedArtifact
-	value       []programmount.MountedArtifact
-}
-
-func emptyMountedArtifacts(t testing.TB, linked *link.Link) emptyFixtureMounts {
-	t.Helper()
 	compilation, compilationOK := composite.Build()
 	executionSchemaID := compilation.ExecutionSchemaID()
 	issuance, issuanceOK := composite.ArtifactIssuanceDirectory(compilation)
-	if !compilationOK || !executionSchemaID.Available() || !issuanceOK || linked == nil || linked.Project() == nil {
+	if !compilationOK || !executionSchemaID.Available() || !issuanceOK || linked.Project() == nil {
 		t.Fatal("empty artifact receipt")
 	}
 	projectMounts := linked.Project().Mounts()
-	mounts := emptyFixtureMounts{linked: linked, compilation: compilation, heap: make([]programmount.MountedArtifact, projectMounts.Count()), value: make([]programmount.MountedArtifact, projectMounts.Count())}
+	mounts := make([]programmount.MountedArtifact, projectMounts.Count())
 	for index := 0; index < projectMounts.Count(); index++ {
 		shard, shardOK := projectMounts.At(index)
-		program, programOK := projectMounts.Program(shard)
+		mountedProgram, programOK := projectMounts.Program(shard)
 		module, moduleOK := linked.Project().ModuleKey(shard)
-		_, programIDOK := projectMounts.ProgramID(shard)
-		if !shardOK || !programOK || program == nil || !moduleOK || !programIDOK {
+		if !shardOK || !programOK || mountedProgram == nil || !moduleOK {
 			t.Fatal("empty artifact mount")
 		}
-		artifact, failure := artifactcompiler.CompileDetailed(program, executionSchemaID, issuance)
+		artifact, failure := artifactcompiler.CompileDetailed(mountedProgram, executionSchemaID, issuance)
 		if failure.Available() || artifact == nil {
 			t.Fatalf("empty artifact compile: %v", failure)
 		}
-		var heapOK, valueOK bool
-		mounts.heap[index], heapOK = programmount.MountedArtifactFromSnapshot(snapshottest.MustLower(t, artifact), module)
-		mounts.value[index], valueOK = programmount.MountedArtifactFromSnapshot(snapshottest.MustLower(t, artifact), module)
-		if !heapOK || !valueOK {
+		mount, mountOK := programmount.MountedArtifactFromSnapshot(snapshottest.MustLower(t, artifact), module)
+		if !mountOK {
 			t.Fatal("empty artifact mount receipt")
 		}
+		mounts[index] = mount
 	}
-	return mounts
-}
-
-func emptyRoot(t testing.TB, schema heapdomain.Schema) heapdomain.Key {
-	t.Helper()
-	for index := 0; index < schema.KeyCount(); index++ {
-		root, rootOK := schema.KeyAt(index)
-		_, _, _, kind, _, originOK := schema.AllocationOriginForKey(root)
-		if rootOK && originOK && kind == heapdomain.AllocationClosure {
-			return root
-		}
+	schema, failure := heapdomain.SealWithArtifacts(linked, mounts)
+	if failure != heapdomain.SealFailureNone {
+		t.Fatalf("empty heap seal: %v", failure)
 	}
-	t.Fatal("empty allocation root")
-	return heapdomain.Key{}
-}
-
-func emptyKey(value byte) identity.SemanticKey {
-	digest := sha256.Sum256([]byte{0xE1, value})
-	key, _ := identity.NewSemanticKey(digest, 1)
-	return key
+	return schema
 }

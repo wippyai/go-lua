@@ -7,8 +7,8 @@ import (
 )
 
 // TestHeapAxisPublishesItsFacts states the publication half of this axis's
-// declaration. The heap factor holds one fact per coordinate -- the world
-// disjunction that coordinate is proven to inhabit -- and that population is
+// declaration. The heap factor holds one fact per Coordinate -- the world
+// disjunction that Coordinate is proven to inhabit -- and that population is
 // what a consumer of the analyzer reads, so the axis declares one column for it
 // and names itself as the principal admitted to write it: the lane whose rules
 // write the factor is the lane the engine admits to fill the column.
@@ -33,7 +33,7 @@ func TestHeapAxisPublishesItsFacts(t *testing.T) {
 }
 
 // TestHeapPublishedColumnProvesAbsence states what a reader concludes from a
-// coordinate the published column holds no row for. The heap key space is
+// Coordinate the published column holds no row for. The heap key space is
 // dense, so the column is published with the key universe it is total over and
 // an in-universe miss is a fact rather than ignorance.
 func TestHeapPublishedColumnProvesAbsence(t *testing.T) {

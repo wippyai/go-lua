@@ -116,15 +116,15 @@ func AlgebraAxis(owner *HotOwner) (axis.Algebra[heap.Value], bool) {
 	return adoptFactor(spec)
 }
 
-func adoptFactor(spec engine.HotFactorSpec[coordinate, heap.Value]) (axis.Algebra[heap.Value], bool) {
-	return axis.Adopt(axis.CarrierAlgebra[coordinate, heap.Value]{
+func adoptFactor(spec engine.HotFactorSpec[Coordinate, heap.Value]) (axis.Algebra[heap.Value], bool) {
+	return axis.Adopt(axis.CarrierAlgebra[Coordinate, heap.Value]{
 		KeyEnd:      spec.KeyEnd,
 		Lattice:     spec.Lattice,
 		Default:     spec.Default,
 		AdmitAt:     spec.AdmitAt,
 		Fingerprint: spec.Fingerprint,
-		Widen:       axis.CarrierRank[coordinate, heap.Value]{Width: spec.WidenRank.Width, At: spec.WidenRank.At},
-		Narrow:      axis.CarrierRank[coordinate, heap.Value]{Width: spec.NarrowRank.Width, At: spec.NarrowRank.At},
+		Widen:       axis.CarrierRank[Coordinate, heap.Value]{Width: spec.WidenRank.Width, At: spec.WidenRank.At},
+		Narrow:      axis.CarrierRank[Coordinate, heap.Value]{Width: spec.NarrowRank.Width, At: spec.NarrowRank.At},
 	})
 }
 
