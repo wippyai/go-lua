@@ -4,6 +4,7 @@ import (
 	"strings"
 	"testing"
 
+	targetprotocol "github.com/wippyai/go-lua/analysis/program/target/protocol"
 	"github.com/wippyai/go-lua/analysis/program/target/vocabulary"
 	"github.com/wippyai/go-lua/domain/composite/manifesttarget"
 	"github.com/wippyai/go-lua/domain/type/typ"
@@ -67,9 +68,26 @@ func TestDeclaredRequirementSealsIntoTheProtocolTable(t *testing.T) {
 	if name, nameOK := table.StateName(protocol, state); !nameOK || name != "open" {
 		t.Fatalf("required state = %q/%v, want open", name, nameOK)
 	}
-	rows := table.RequirementsOf(operation)
-	if len(rows) != 1 || rows[0].Protocol != protocol || rows[0].State != state {
-		t.Fatalf("RequirementsOf(session.query) = %+v, want the single sealed row", rows)
+	demands := 0
+	for index := 0; index < table.DemandCount(operation); index++ {
+		demand, demandOK := table.DemandAt(operation, index)
+		if !demandOK {
+			t.Fatalf("obligation %d of session.query is unavailable", index)
+		}
+		if demand.Kind != targetprotocol.DemandRequirement {
+			continue
+		}
+		demands++
+		if demand.Protocol != protocol {
+			t.Fatalf("requirement protocol = %d, want %d", demand.Protocol, protocol)
+		}
+		_, _, demandState, rowOK := table.ProtocolRequirementAt(demand.Protocol, demand.Row)
+		if !rowOK || demandState != state {
+			t.Fatalf("requirement row state = %d/%v, want %d", demandState, rowOK, state)
+		}
+	}
+	if demands != 1 {
+		t.Fatalf("session.query carries %d requirement obligations, want the single sealed row", demands)
 	}
 }
 

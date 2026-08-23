@@ -448,10 +448,10 @@ func buildRule(byAxis map[uint32]membergenerator.Metadata, catalog ruleplan.Cata
 	_, carryPresent := compiled.Carry()
 
 	call := ReducerCall{
-		Address: reducerAddress, Axis: reducerAxis, Key: reducer.Key,
+		Address: reducerAddress, Axis: reducerAxis, Key: reducer.Key, Rule: reducer.Rule,
 		Implementation: reducer.Implementation, Candidate: reducer.Candidate,
 		CandidatePresent: reducer.CandidatePresent, CandidateConstant: reducer.CandidateConstant,
-		Inputs: inputs, Outputs: outputs,
+		Inputs: inputs, Outputs: outputs, Outcome: ReducerOutcomeType,
 	}
 	return Rule{
 		ordinal: ordinal,

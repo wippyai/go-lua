@@ -727,7 +727,11 @@ func compileProgram(ruleOrdinal uint32, template *rule.Template, declaration pro
 			destinationOwnerOrdinal = routeRelationAxisOrdinal
 			destinationOwnerKey = routeRelationAxis.Key()
 		}
-		if destination.Role != member.Destination || destination.Relation != destinationRelation || destinationAxisOrdinal != destinationOwnerOrdinal || destinationAxis.Key() != destinationOwnerKey || destination.Result != outputSignature.Key {
+		if destination.Role != member.Destination || destination.Result != outputSignature.Key {
+			return Plan{}, compileFailure(template.ID(), rule.LawProgramOutput, schema.DispositionMalformed)
+		}
+		sameOwner := destination.Relation == destinationRelation && destinationAxisOrdinal == destinationOwnerOrdinal && destinationAxis.Key() == destinationOwnerKey
+		if !sameOwner && !consumerProjectionOfCandidate(template, declaration, destinationAxis, destinationCatalog, destination, output.Mode) {
 			return Plan{}, compileFailure(template.ID(), rule.LawProgramOutput, schema.DispositionMalformed)
 		}
 		compiled.outputs = append(compiled.outputs, Output{
@@ -807,6 +811,40 @@ func planAxesInRange(compiled Plan, axisCount int) bool {
 		return false
 	}
 	return true
+}
+
+// consumerProjectionOfCandidate admits the second exact-write normal form: a
+// rule whose candidate is a foreign axis's sealed occurrence relation writing
+// its OWN sealed projection of that same candidate.
+//
+// The first normal form - destination projection on the candidate relation
+// itself - only covers a rule that writes the axis its candidate belongs to. A
+// consumer keyed on another axis's occurrences has a coordinate space of its
+// own, and the cell it writes is a projection its own owner declared for that
+// candidate. That write is still exactly one cell per candidate row, which is
+// what ModeExact means, so it needs neither a selected join nor a denominator:
+// the candidate directory is the denominator.
+//
+// The fence is that the projection is the consumer's own and is declared for
+// this exact candidate. A projection of some other relation, or one owned by a
+// third axis, is refused as before.
+func consumerProjectionOfCandidate(template *rule.Template, declaration program.Program, destinationAxis axisEntry, destinationCatalog member.Catalog, destination member.Projection, mode program.OutputMode) bool {
+	if mode != program.ModeExact || destinationAxis == nil {
+		return false
+	}
+	if destinationAxis.Key() != template.Writes() {
+		return false
+	}
+	if declaration.Candidate.Axis.Key == destinationAxis.Key() {
+		// A same-axis candidate is already the first normal form; reaching here
+		// means the projection is declared for some other relation of this axis.
+		return false
+	}
+	relation, relationOK := destinationCatalog.Relation(destination.Relation)
+	if !relationOK {
+		return false
+	}
+	return relation.CandidateProvider == declaration.Candidate && destination.CandidateProvider == declaration.Candidate
 }
 
 // routeJoinForOutput validates the explicit route-producing JoinRef. It never

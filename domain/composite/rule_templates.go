@@ -88,12 +88,34 @@ func activationRule(hot *callactivation.HotRule) ActivationRule { return hot }
 // rules. It returns data-only catalog entries and the typed compose passes that
 // bind each entry exactly once to its domain implementation.
 func RuleTemplates[P Principals, A Authorities]() ([]*rule.Template, []RuleContributor[P, A], bool) {
+	admitted, contributors, _, ok := ruleTemplateWiring[P, A]()
+	return admitted, contributors, ok
+}
+
+// RuleTemplateRefusal is the named first refusal of the rule catalog wiring.
+// It is what a reader needs when the catalog does not admit: which rule, and
+// which half of the row disagreed with the other.
+func RuleTemplateRefusal[P Principals, A Authorities]() RuleWiringFailure {
+	_, _, failure, _ := ruleTemplateWiring[P, A]()
+	return failure
+}
+
+func ruleTemplateWiring[P Principals, A Authorities]() ([]*rule.Template, []RuleContributor[P, A], RuleWiringFailure, bool) {
 	var admitted []*rule.Template
 	var contributors []RuleContributor[P, A]
-	rejected := false
+	failure := RuleWiringFailure{}
 	add := func(entry *rule.Template, contributor RuleContributor[P, A], ok bool) {
-		if !ok || !contributor.complete(entry) {
-			rejected = true
+		refusal := contributor.complete(entry)
+		if !ok && refusal == WiringAdmitted {
+			refusal = WiringTemplateAbsent
+		}
+		if refusal != WiringAdmitted {
+			if !failure.Available() {
+				failure = RuleWiringFailure{Refusal: refusal}
+				if entry != nil {
+					failure.Rule = entry.Key()
+				}
+			}
 			return
 		}
 		admitted = append(admitted, entry)
@@ -170,5 +192,5 @@ func RuleTemplates[P Principals, A Authorities]() ([]*rule.Template, []RuleContr
 	// the one declaration-owned plan catalog.
 	add(WireGeneratedRule[P, A](statictransfer.RuleEntry()))
 
-	return admitted, contributors, !rejected && len(admitted) > 0
+	return admitted, contributors, failure, !failure.Available() && len(admitted) > 0
 }

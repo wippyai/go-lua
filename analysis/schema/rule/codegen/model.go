@@ -230,21 +230,42 @@ func (output Output) DestinationAccessor() memberdefinition.GoSymbol {
 	return output.destinationAccessor
 }
 
+// ReducerOutcomeType is the one disposition every reducer concludes with. It
+// is a constant of this package rather than a row an owner authors: a reducer
+// that returned a boolean, or an enum of its own, would be stating a
+// disposition its consumers - the fold executor, the activation relation, and
+// the Delta path - have no member for. An emitter binds the second result of
+// every direct reducer call to this type.
+var ReducerOutcomeType = memberdefinition.GoType{
+	PackagePath: "github.com/wippyai/go-lua/analysis/schema/structure",
+	Name:        "ReductionOutcome",
+}
+
 // ReducerCall is the direct-call signature of one owner reducer. Candidate is
 // optional and precedes Inputs when present. When CandidatePresent is false,
 // CandidateConstant is true: the call has no candidate carrier and its
 // candidate guard is the literal true rather than an inferred relation value.
+//
+// The call returns the declared output carriers followed by Outcome. Outcome
+// is filled from ReducerOutcomeType by Build, so no owner declaration can
+// substitute a second disposition vocabulary for it.
 type ReducerCall struct {
 	Address           ruleplan.ReducerAddr
 	Axis              schema.Key
 	Key               schema.Key
+	Rule              schema.Key
 	Implementation    memberdefinition.GoSymbol
 	Candidate         memberdefinition.GoType
 	CandidatePresent  bool
 	CandidateConstant bool
 	Inputs            []ReducerInput
 	Outputs           []Output
+	Outcome           memberdefinition.GoType
 }
+
+// OutcomeType returns the sealed disposition type this call's last result is
+// bound to.
+func (call ReducerCall) OutcomeType() memberdefinition.GoType { return call.Outcome }
 
 // Carry is the direct-call descriptor for one optional whole-output carry.
 // The transform address and owner key are retained together: the address is

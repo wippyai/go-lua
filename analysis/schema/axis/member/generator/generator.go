@@ -113,6 +113,9 @@ type ReducerOutputBinding struct {
 // ReducerBinding is typed metadata for exactly one reducer declaration.
 type ReducerBinding struct {
 	Key schema.Key
+	// Rule is the rule whose contribution declared this reducer. It is the
+	// provenance a generated dispatch row is attributable by.
+	Rule schema.Key
 	// Candidate is the optional owner-issued candidate/subject carrier. When
 	// CandidatePresent is false the reducer signature starts with its joined
 	// inputs; generated call sites use a true constant for the absent
@@ -277,7 +280,7 @@ func Resolve(source definition.Definition) (Metadata, error) {
 			outputs[outputIndex] = ReducerOutputBinding{Axis: output.Axis, Type: carriers[output.Carrier].Type}
 		}
 		reducers[index] = ReducerBinding{
-			Key: reducer.Key, Candidate: candidateType, CandidatePresent: candidatePresent, CandidateConstant: !candidatePresent,
+			Key: reducer.Key, Rule: reducer.Rule, Candidate: candidateType, CandidatePresent: candidatePresent, CandidateConstant: !candidatePresent,
 			Inputs: inputs, Outputs: outputs, Implementation: reducer.Implementation,
 		}
 	}

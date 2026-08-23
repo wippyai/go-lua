@@ -1,13 +1,11 @@
 package ingress_test
 
 import (
-	"crypto/sha256"
+	"github.com/wippyai/go-lua/analysis/schema/structure"
 	"testing"
 
 	"github.com/wippyai/go-lua/domain/composite/snapshottest"
 
-	"github.com/wippyai/go-lua/analysis/engine"
-	"github.com/wippyai/go-lua/analysis/identity"
 	"github.com/wippyai/go-lua/analysis/lua/lower"
 	artifactcompiler "github.com/wippyai/go-lua/analysis/program/artifact/compiler"
 	"github.com/wippyai/go-lua/analysis/program/link"
@@ -17,50 +15,40 @@ import (
 	"github.com/wippyai/go-lua/analysis/schema/programmount"
 	"github.com/wippyai/go-lua/domain/composite"
 	heapdomain "github.com/wippyai/go-lua/domain/heap"
-	allocationcatalog "github.com/wippyai/go-lua/domain/heap/allocation/catalog"
 	"github.com/wippyai/go-lua/domain/heap/allocation/ingress"
 	"github.com/wippyai/go-lua/domain/heap/allocation/internal/source"
-	heapowner "github.com/wippyai/go-lua/domain/heap/owner"
 	domaincontract "github.com/wippyai/go-lua/domain/type/typecontract"
 	valuedomain "github.com/wippyai/go-lua/domain/value"
-	valueowner "github.com/wippyai/go-lua/domain/value/owner"
 )
 
-func TestHotIngressBindingIssuesOnlyItsExactMountedReceipt(t *testing.T) {
-	heapSchema, valueSchema, mounts := ingressFixture(t)
-	root := tableRoot(t, heapSchema)
-	operand, operandOK := source.New(heapSchema, root)
-	if !operandOK || !operand.FencedTo(heapSchema) {
-		t.Fatal("ingress source receipt")
+func TestIngressRelationOwnerIsSchemaLocal(t *testing.T) {
+	heapSchema, _, _ := ingressFixture(t)
+	if heapSchema.AllocationRootCount() == 0 {
+		t.Fatal("allocation directory is empty")
 	}
-
-	builder := engine.NewSchema()
-	heapFragment, heapOK := heapowner.DeclareSchema(builder, ingressKey(1), ingressKey(201))
-	valueFragment, valueOK := valueowner.DeclareSchema(builder, ingressKey(2), ingressKey(3), ingressKey(101))
-	fragment, fragmentOK := ingress.DeclareSchema(builder, ingressKey(4), ingressKey(5), heapFragment)
-	cold, coldOK := builder.Seal()
-	if !heapOK || !valueOK || !fragmentOK || !coldOK || cold == nil {
-		t.Fatal("ingress receipt schema")
+	key, keyOK := heapSchema.AllocationRootAt(0)
+	module, _, allocation, _, _, originOK := heapSchema.AllocationOriginForKey(key)
+	if !keyOK || !originOK {
+		t.Fatal("allocation origin")
 	}
-	binding := engine.NewSchemaBinding(cold)
-	heapHot, heapHotOK := heapowner.BindHot(binding, heapFragment, heapSchema)
-	_, valueHotOK := valueowner.BindHot(binding, valueFragment, valueSchema)
-	catalog, catalogOK := allocationcatalog.Seal(heapSchema, valueSchema, mounts.heap)
-	rule, ruleOK := ingress.BindHot(fragment, heapHot)
-	if !heapHotOK || !valueHotOK || !catalogOK || !ruleOK || rule == nil || !rule.AttachCatalog(catalog) || !binding.Seal() {
-		t.Fatal("exact ingress mounted bind")
+	owner := heapdomain.NewRelationOwner(heapSchema)
+	candidate, candidateOK := owner.Candidate(0, module, allocation)
+	want, wantOK := heapSchema.AllocationRootOrdinal(key)
+	if !candidateOK || !wantOK || candidate != want {
+		t.Fatalf("candidate ordinal=%d/%t want=%d/%t", candidate, candidateOK, want, wantOK)
 	}
-	if implementation, issued := rule.Implementation(); !issued || implementation == nil {
-		t.Fatal("sealed ingress binding did not issue receipt")
+	local, localOK := owner.Project(0, 0, candidate)
+	dense, denseOK := heapSchema.DenseKeyIndex(key)
+	if !localOK || !denseOK || local != dense {
+		t.Fatalf("projected key=%d/%t want=%d/%t", local, localOK, dense, denseOK)
 	}
-	secondSchema, secondOwnerFragment, _ := ingressHotSchema(t)
-	secondBinding := engine.NewSchemaBinding(secondSchema)
-	secondOwner, secondOwnerOK := heapowner.BindHot(secondBinding, secondOwnerFragment, heapSchema)
-	if !secondOwnerOK || secondOwner == nil {
-		t.Fatal("independent equal ingress Heap owner")
+	foreignSchema, _, _ := ingressFixture(t)
+	foreignKey := tableRoot(t, foreignSchema)
+	if _, outcome := heapdomain.IngressFact(foreignKey); outcome == structure.Concrete && foreignSchema.OwnsKey(foreignKey) && heapSchema.OwnsKey(foreignKey) {
+		t.Fatal("local schema owns a foreign allocation key")
 	}
-	if foreign, accepted := ingress.BindHot(fragment, secondOwner); accepted || foreign != nil {
-		t.Fatal("foreign equal SchemaBinding accepted ingress fragment")
+	if _, ok := heapSchema.EmptyObject(foreignKey); ok {
+		t.Fatal("local EmptyObject admitted a foreign allocation key")
 	}
 }
 
@@ -99,18 +87,6 @@ func TestIngressReceiptNativeSeedIsExactlyWorldZero(t *testing.T) {
 	if _, _, foreignAccepted := ingress.IngressResultForTest(schema, foreignOperand); foreignAccepted {
 		t.Fatal("ingress evaluator accepted a foreign operand/schema pair")
 	}
-}
-
-func ingressHotSchema(t testing.TB) (*engine.Schema, *heapowner.SchemaFragment, *ingress.SchemaFragment) {
-	t.Helper()
-	builder := engine.NewSchema()
-	owner, ownerOK := heapowner.DeclareSchema(builder, ingressKey(31), ingressKey(131))
-	fragment, fragmentOK := ingress.DeclareSchema(builder, ingressKey(32), ingressKey(33), owner)
-	schema, sealOK := builder.Seal()
-	if !ownerOK || !fragmentOK || !sealOK || schema == nil {
-		t.Fatal("declare ingress cold schema")
-	}
-	return schema, owner, fragment
 }
 
 type ingressFixtureMounts struct {
@@ -184,10 +160,4 @@ func tableRoot(t testing.TB, schema heapdomain.Schema) heapdomain.Key {
 	}
 	t.Fatal("ingress table root")
 	return heapdomain.Key{}
-}
-
-func ingressKey(value byte) identity.SemanticKey {
-	digest := sha256.Sum256([]byte{0xD1, value})
-	key, _ := identity.NewSemanticKey(digest, 1)
-	return key
 }

@@ -107,20 +107,107 @@ func (contributor RuleContributor[P, A]) OccurrenceCatalog(holder rule.Cell) (ru
 	return contributor.occurrenceCatalog(holder)
 }
 
-func (contributor RuleContributor[P, A]) complete(template *rule.Template) bool {
+// WiringRefusal names why one catalog row's contributor and its template do
+// not describe the same rule. It is a closed vocabulary rather than a bare
+// false, because the two halves of a row are authored in different packages:
+// a mismatch that surfaces as an anonymous failure at a slot ordinal costs the
+// reader the whole walk to find which rule and which half.
+//
+// The zero value is the admitted verdict.
+type WiringRefusal uint8
+
+const (
+	WiringAdmitted WiringRefusal = iota
+	// WiringTemplateAbsent is a row whose declaration itself was rejected.
+	WiringTemplateAbsent
+	// WiringProgramWiredByHand is a template that carries a callback-free
+	// Program wired through WireRule. The composition owns slot declaration and
+	// binding for a Program, so a hand-wired hook set would declare the slot a
+	// second time; the declaration says generated and the wiring says hand, and
+	// only one of them can be executed.
+	WiringProgramWiredByHand
+	// WiringGeneratedWithoutProgram is the converse: a row wired generated whose
+	// template declares no Program, so the composition has nothing to lower.
+	WiringGeneratedWithoutProgram
+	// WiringGeneratedOffMountedLane is a generated row on a lane the generated
+	// path does not materialize occurrences for.
+	WiringGeneratedOffMountedLane
+	// WiringHooksMissing is a hand-wired row lacking one of the three passes
+	// every hand-wired rule must supply.
+	WiringHooksMissing
+	// WiringOccurrenceCatalogMissing is a Link or mounted-point row that
+	// supplies no owner-issued occurrence inventory.
+	WiringOccurrenceCatalogMissing
+	// WiringOccurrenceCatalogUnexpected is an artifact-materialized row that
+	// supplies one anyway.
+	WiringOccurrenceCatalogUnexpected
+)
+
+func (refusal WiringRefusal) String() string {
+	switch refusal {
+	case WiringTemplateAbsent:
+		return "template-absent"
+	case WiringProgramWiredByHand:
+		return "program-wired-by-hand"
+	case WiringGeneratedWithoutProgram:
+		return "generated-without-program"
+	case WiringGeneratedOffMountedLane:
+		return "generated-off-mounted-lane"
+	case WiringHooksMissing:
+		return "hooks-missing"
+	case WiringOccurrenceCatalogMissing:
+		return "occurrence-catalog-missing"
+	case WiringOccurrenceCatalogUnexpected:
+		return "occurrence-catalog-unexpected"
+	default:
+		return "admitted"
+	}
+}
+
+// RuleWiringFailure is the named verdict of one refused catalog row.
+type RuleWiringFailure struct {
+	Rule    schema.Key
+	Refusal WiringRefusal
+}
+
+func (failure RuleWiringFailure) Available() bool { return failure.Refusal != WiringAdmitted }
+
+func (failure RuleWiringFailure) String() string {
+	if !failure.Available() {
+		return "admitted"
+	}
+	return string(failure.Rule) + "/" + failure.Refusal.String()
+}
+
+func (contributor RuleContributor[P, A]) complete(template *rule.Template) WiringRefusal {
+	if template == nil {
+		return WiringTemplateAbsent
+	}
 	if contributor.generated {
-		return template != nil && template.Lane() == rule.LaneMounted && template.Program().Available()
+		if !template.Program().Available() {
+			return WiringGeneratedWithoutProgram
+		}
+		if template.Lane() != rule.LaneMounted {
+			return WiringGeneratedOffMountedLane
+		}
+		return WiringAdmitted
+	}
+	if template.Program().Available() {
+		return WiringProgramWiredByHand
 	}
 	if contributor.declare == nil || contributor.register == nil || contributor.bind == nil {
-		return false
-	}
-	if template == nil {
-		return false
+		return WiringHooksMissing
 	}
 	if template.Lane() == rule.LaneLink || template.Lane() == rule.LaneMountedPoint {
-		return contributor.occurrenceCatalog != nil
+		if contributor.occurrenceCatalog == nil {
+			return WiringOccurrenceCatalogMissing
+		}
+		return WiringAdmitted
 	}
-	return contributor.occurrenceCatalog == nil
+	if contributor.occurrenceCatalog != nil {
+		return WiringOccurrenceCatalogUnexpected
+	}
+	return WiringAdmitted
 }
 
 // WireGeneratedRule admits a callback-free Rule program into the generic
@@ -220,5 +307,5 @@ func WireRule[P, A, F, H any](
 			return inventory, ok && inventory != nil
 		}
 	}
-	return template, contributor, contributor.complete(template)
+	return template, contributor, contributor.complete(template) == WiringAdmitted
 }
