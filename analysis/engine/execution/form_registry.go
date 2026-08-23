@@ -179,6 +179,16 @@ func (plane FormPlane[K, V]) RouteWrite(output uint16) (RouteWrite[K, V], bool) 
 	return NewRouteWrite(plane.binding, output)
 }
 
+// CarryWrite seals one transformed-carry write of this plane: the row target,
+// the carried target closure, and the owner-issued map their prior facts pass
+// through.
+func (plane FormPlane[K, V]) CarryWrite(target carrier.Target, output uint16, carried []carrier.Target, carry func(V) (V, bool)) (CarryWrite[K, V], bool) {
+	if !plane.Valid() {
+		return CarryWrite[K, V]{}, false
+	}
+	return NewCarryWrite(plane.binding, target, output, carried, carry)
+}
+
 // SourceColumn returns one present materialized source column of this Factor
 // by the relation member ordinal a plan row carries.
 func (plane FormPlane[K, V]) SourceColumn(relation uint32) (memberrelation.SourceColumn[V], bool) {

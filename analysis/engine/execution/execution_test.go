@@ -129,7 +129,7 @@ func issueExecutionRow(run *Run, work *carrier.Work, state carrier.State, within
 	if entry.catalog == nil {
 		return Ticket{}, false
 	}
-	return run.Issue(entry.catalog, entry.row, work, state, within, inputs, epoch, revision, generation)
+	return run.Issue(entry.catalog, entry.row, work, state, within, inputs, carrier.SlotCoverage{}, epoch, revision, generation)
 }
 
 func TestExecutionReadStatusAndIndependentWriteTransaction(t *testing.T) {

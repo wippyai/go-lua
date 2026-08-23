@@ -3,11 +3,11 @@ package formalfreeze
 import (
 	"github.com/wippyai/go-lua/analysis/engine"
 	"github.com/wippyai/go-lua/analysis/program/target/contract"
+	"github.com/wippyai/go-lua/analysis/schema/structure"
 	calldomain "github.com/wippyai/go-lua/domain/call"
 	callowner "github.com/wippyai/go-lua/domain/call/owner"
 	heapdomain "github.com/wippyai/go-lua/domain/heap"
 	heapowner "github.com/wippyai/go-lua/domain/heap/owner"
-	"github.com/wippyai/go-lua/domain/materialization"
 	packdomain "github.com/wippyai/go-lua/domain/pack"
 	valuedomain "github.com/wippyai/go-lua/domain/value"
 	valueowner "github.com/wippyai/go-lua/domain/value/owner"
@@ -262,7 +262,7 @@ func (rule *HotRule) fold(frame engine.Frame[heapdomain.Value, operand]) engine.
 	}
 	if !callPresent {
 		if count == 0 {
-			return engine.NoSelection(frame, heapSelection)
+			return freezeEmptySelection(frame, rule.owner.Schema(), routePlan{}, heapSelection)
 		}
 		return engine.RuleResult[heapdomain.Value]{}
 	}
@@ -278,36 +278,40 @@ func (rule *HotRule) fold(frame engine.Frame[heapdomain.Value, operand]) engine.
 		return engine.RuleResult[heapdomain.Value]{}
 	}
 	if count == 0 {
-		return engine.NoSelection(frame, heapSelection)
+		return freezeEmptySelection(frame, rule.owner.Schema(), plan, heapSelection)
 	}
 	schema := rule.owner.Schema()
+	// The judgment itself is FreezeFold's. This callback carries one selected
+	// route across the engine boundary and nothing else, so the freeze
+	// semantics have one owner-issued statement rather than one here and one in
+	// the declaration that replaces this rule.
 	return engine.Routed(frame, heapSelection, func(tag heapdomain.RawRouteTag, cells engine.OrderedCells[heapdomain.Value]) (heapdomain.Value, bool) {
-		route, routeOK := routeForTag(plan, tag)
-		if !routeOK || cells.Count() != 1 {
+		if cells.Count() != 1 {
 			return heapdomain.Value{}, false
 		}
 		predecessor, present, available := cells.At(0)
 		if !available {
 			return heapdomain.Value{}, false
 		}
-		if !present {
-			// A selected route with no predecessor has no Normal branch. The
-			// routed output must still settle one exact Heap target, so Bottom is
-			// the empty normal image rather than a fabricated frozen object.
-			return schema.Bottom(), true
-		}
-		reference, referenceOK := schema.Reference(route.Key, materialization.Recent)
-		if !referenceOK {
+		fact, outcome := FreezeFold(schema, plan, tag, predecessor, present)
+		if outcome != structure.Concrete {
 			return heapdomain.Value{}, false
 		}
-		branches, freezeOK := schema.ShallowFreeze(predecessor, reference)
-		if !freezeOK {
-			return heapdomain.Value{}, false
-		}
-		next, normalOK := branches.Normal(route.Key)
-		if !normalOK {
-			return schema.Bottom(), true
-		}
-		return next, true
+		return fact, true
 	})
+}
+
+// freezeEmptySelection settles a row whose plan selected no route. The
+// disposition is read from the one declared fold rather than concluded here, so
+// the empty selection has the same author as every other freeze answer.
+func freezeEmptySelection(
+	frame engine.Frame[heapdomain.Value, operand],
+	schema heapdomain.Schema,
+	plan routePlan,
+	selection engine.Selection[heapdomain.RawRouteTag, engine.OrderedCells[heapdomain.Value]],
+) engine.RuleResult[heapdomain.Value] {
+	if _, outcome := FreezeFold(schema, plan, 0, heapdomain.Value{}, false); outcome != structure.NoSelection {
+		return engine.RuleResult[heapdomain.Value]{}
+	}
+	return engine.NoSelection(frame, selection)
 }

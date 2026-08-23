@@ -306,21 +306,34 @@ func (axis ExactWrite[K, V]) scratch(ticket Ticket, scratch *Scratch[K, V]) bool
 	return true
 }
 
+// begin opens this invocation's one write transaction over the lane's own
+// reusable storage, or returns the one already open. Every write of one
+// invocation - the row and any transformed carry - shares it, so the row
+// publishes atomically.
+func (axis ExactWrite[K, V]) begin(ticket Ticket, scratch *Scratch[K, V]) (*factbinding.Patch[K, V], bool) {
+	work, state, _, ok := axis.context(ticket)
+	if !ok || int(axis.output) >= ticket.OutputCount() || !axis.scratch(ticket, scratch) {
+		return nil, false
+	}
+	if scratch.patch == nil {
+		scratch.patch = axis.binding.BeginInto(&scratch.patchScratch, work, state)
+	}
+	return scratch.patch, scratch.patch != nil
+}
+
 // Stage writes one typed value at an explicitly authenticated support region.
 // It does not require a prior ExactRead step. The region must be admitted by
 // both the base predecessor and this invocation's within region.
 func (axis ExactWrite[K, V]) Stage(ticket Ticket, scratch *Scratch[K, V], when support.Mask, value V) bool {
-	work, state, within, ok := axis.context(ticket)
-	if !ok || int(axis.output) >= ticket.OutputCount() || !when.Valid() || support.Empty(when) || when.Manager() != state.Support().Manager() || !when.Entails(state.Support()) || !when.Entails(within) || !axis.scratch(ticket, scratch) {
+	_, state, within, ok := axis.context(ticket)
+	if !ok || !when.Valid() || support.Empty(when) || when.Manager() != state.Support().Manager() || !when.Entails(state.Support()) || !when.Entails(within) {
 		return false
 	}
-	if scratch.patch == nil {
-		scratch.patch = axis.binding.BeginInto(&scratch.patchScratch, work, state)
-		if scratch.patch == nil {
-			return false
-		}
+	patch, patchOK := axis.begin(ticket, scratch)
+	if !patchOK {
+		return false
 	}
-	return scratch.patch.Write(axis.target, when, value)
+	return patch.Write(axis.target, when, value)
 }
 
 // Close seals this independent output into the Run-owned output slot. It does

@@ -105,6 +105,22 @@ func (binding *Binding[K, V]) live() bool {
 // Capability declarations are intentionally not inferred from K.  Full
 // opaque capability identity is the map key; matching issuer/slot/kind alone
 // is insufficient because it could otherwise admit an undeclared surface.
+// Default is the Factor's declared absent-key value. It is the law a carry
+// transform is held to: a map that moves the default invents a fact at every
+// coordinate the Factor never wrote.
+func (binding *Binding[K, V]) Default() (V, bool) {
+	if binding == nil || binding.algebra == nil {
+		var zero V
+		return zero, false
+	}
+	return binding.algebra.Default()
+}
+
+// Equal is the Factor's declared value equality.
+func (binding *Binding[K, V]) Equal(left, right V) bool {
+	return binding != nil && binding.algebra != nil && binding.algebra.Equal(left, right)
+}
+
 func (binding *Binding[K, V]) ValidUnit(unit carrier.Unit) bool {
 	if !binding.live() {
 		return false

@@ -9,6 +9,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/engine/internal/equation"
 	"github.com/wippyai/go-lua/analysis/engine/internal/executioncatalog"
 	"github.com/wippyai/go-lua/analysis/engine/internal/facts/support"
+	ruleprogram "github.com/wippyai/go-lua/analysis/schema/rule/program"
 	"github.com/wippyai/go-lua/analysis/schema/structure"
 )
 
@@ -294,7 +295,18 @@ func (member *generatedMember) executeGeneratedAt(epoch *executorEpoch, base car
 	if worker.run == nil || worker.executor == nil {
 		return generatedMemberRefusal(member, "executor")
 	}
-	ticket, issued := worker.run.Issue(epoch.generatedCatalog, row, epoch.work, base.State(), within, inputs, epoch.generation, epoch.relationRevision, epoch.generation)
+	// A transformed carry is authenticated against the coverage of the input it
+	// carries. The solver resolves that coverage from its own contribution here,
+	// once, so execution never reaches back into the contribution plane.
+	var carried carrier.SlotCoverage
+	if mode, present := descriptor.CarryMode(); present && mode == ruleprogram.CarryTransform && len(member.carryInputs) != 0 && member.hasSlot {
+		coverage, coverageOK := epoch.work.RuleContributionCarrySlotCoverage(base, carrier.ContributionSource{Slot: member.slot, Input: member.carryInputs[0]})
+		if !coverageOK {
+			return generatedMemberRefusal(member, "carry-coverage")
+		}
+		carried = coverage
+	}
+	ticket, issued := worker.run.Issue(epoch.generatedCatalog, row, epoch.work, base.State(), within, inputs, carried, epoch.generation, epoch.relationRevision, epoch.generation)
 	if !issued {
 		return generatedMemberRefusal(member, "issue")
 	}

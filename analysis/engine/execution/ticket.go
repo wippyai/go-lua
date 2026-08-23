@@ -21,10 +21,15 @@ type Run struct {
 	relationRevision uint64
 	generation       uint64
 
-	work    *carrier.Work
-	base    carrier.State
-	within  support.Mask
-	inputs  []carrier.State
+	work   *carrier.Work
+	base   carrier.State
+	within support.Mask
+	inputs []carrier.State
+	// carried is the coverage of the input this rule carries, resolved by the
+	// solver from its own contribution before the invocation opens. Execution
+	// authenticates a transformed carry against it and never reaches back into
+	// the contribution to derive one.
+	carried carrier.SlotCoverage
 	outputs []carrier.Patch
 	drain   []carrier.Patch
 	used    []bool
@@ -83,7 +88,7 @@ func (ticket *Ticket) Submit(outcome structure.ReductionOutcome) bool {
 // Issue installs one sealed catalog row and current solver states into a
 // reusable family worker. The row slices are immutable catalog-owned data, so
 // this copies only their small addresses, never reconstructs topology.
-func (run *Run) Issue(catalog *executioncatalog.Catalog, row executioncatalog.Row, work *carrier.Work, base carrier.State, within support.Mask, inputs []carrier.State, epoch, relationRevision, generation uint64) (Ticket, bool) {
+func (run *Run) Issue(catalog *executioncatalog.Catalog, row executioncatalog.Row, work *carrier.Work, base carrier.State, within support.Mask, inputs []carrier.State, carried carrier.SlotCoverage, epoch, relationRevision, generation uint64) (Ticket, bool) {
 	inputHandles, inputsOK := catalog.Inputs(row)
 	outputHandles, outputsOK := catalog.Outputs(row)
 	if run == nil || !inputsOK || !outputsOK || run.identity == 0 || run.open != 0 || run.submitted != 0 || run.next == ^uint64(0) || work == nil || !work.OwnsState(base) || !within.Valid() || within.Manager() != base.Support().Manager() || !within.Entails(base.Support()) || len(inputs) != len(inputHandles) || len(inputs) > len(run.inputs) || len(outputHandles) > len(run.outputs) || epoch == 0 || relationRevision == 0 || generation == 0 {
@@ -97,6 +102,7 @@ func (run *Run) Issue(catalog *executioncatalog.Catalog, row executioncatalog.Ro
 	run.work = work
 	run.base = base
 	run.within = within
+	run.carried = carried
 	run.epoch = epoch
 	run.relationRevision = relationRevision
 	run.generation = generation
@@ -122,6 +128,7 @@ func (run *Run) clearInvocation() {
 	run.work = nil
 	run.base = carrier.State{}
 	run.within = support.Mask{}
+	run.carried = carrier.SlotCoverage{}
 	for index := range run.inputs {
 		run.inputs[index] = carrier.State{}
 	}
@@ -129,6 +136,14 @@ func (run *Run) clearInvocation() {
 	run.familyOrdinal, run.localOrdinal = 0, 0
 	run.inputHandles, run.outputHandles = nil, nil
 	run.outputCount = len(run.outputs)
+}
+
+// carriedCoverage is the coverage of this invocation's carried input.
+func (ticket Ticket) carriedCoverage() (carrier.SlotCoverage, bool) {
+	if !ticket.Valid() {
+		return carrier.SlotCoverage{}, false
+	}
+	return ticket.issuer.carried, true
 }
 
 // Open reports whether Run has one live opaque invocation.  It is an engine
