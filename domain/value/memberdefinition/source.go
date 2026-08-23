@@ -63,6 +63,7 @@ func StorageTransfer() definition.Definition {
 			{Name: "ValueFactCarrier", Key: "carrier/value/fact", Type: value},
 			{Name: "StorageTransferCarrier", Key: "carrier/value/storage-transfer", Type: storageTransfer},
 			{Name: "SourceSeedCarrier", Key: "carrier/value/source-seed", Type: valueGoType("SourceSeed")},
+			{Name: "GlobalBootstrapResultCarrier", Key: "carrier/value/global-bootstrap-result", Type: valueGoType("GlobalBootstrapResult")},
 			// These are the two owner-issued candidate relationships whose
 			// transformed carries write the Value factor. They remain nominal
 			// carriers in the cold catalog; no receipt or callback is retained.
@@ -97,6 +98,22 @@ func StorageTransfer() definition.Definition {
 				CandidateCount:    valueMethod("SourceSeedCount", "Schema", true, 0),
 				Materialize:       definition.GoSymbol{PackagePath: valuePackagePath, Name: "SourceFact", ResultIndex: 0},
 			},
+			{
+				// The Host global bindings are a Link-global directory: they are
+				// addressed by the binding identity alone, and the axis publishes
+				// that directory itself rather than an artifact declaring rows for
+				// it.
+				Name:                "GlobalBootstrapResults",
+				Key:                 "value/global-bootstrap/candidates",
+				Subject:             "GlobalBootstrapResultCarrier",
+				CandidateProvider:   member.RelationRef{Axis: axisReference("value"), Member: "value/global-bootstrap/candidates"},
+				CandidateResolver:   valueMethod("GlobalBootstrapResultForID", "Schema", true, 0),
+				CandidateOrdinal:    valueMethod("GlobalBootstrapResultOrdinal", "Schema", true, 0),
+				CandidateAt:         valueMethod("GlobalBootstrapResultAt", "Schema", true, 0),
+				CandidateCount:      valueMethod("GlobalBootstrapResultCount", "Schema", true, 0),
+				CandidateIdentityAt: valueMethod("GlobalBootstrapResultIDAt", "Schema", true, 0),
+				Materialize:         definition.GoSymbol{PackagePath: valuePackagePath, Name: "GlobalBootstrapFact", ResultIndex: 0},
+			},
 		},
 		Projections: []definition.Projection{
 			{
@@ -125,6 +142,15 @@ func StorageTransfer() definition.Definition {
 				Role:              member.Destination,
 				Result:            "ValueCoordinateCarrier",
 				Accessor:          valueMethod("Result", "SourceSeed", false, 0),
+			},
+			{
+				Name:              "GlobalBootstrapCoordinate",
+				Key:               "value/global-bootstrap/coordinate",
+				Relation:          "GlobalBootstrapResults",
+				CandidateProvider: member.RelationRef{Axis: axisReference("value"), Member: "value/global-bootstrap/candidates"},
+				Role:              member.Destination,
+				Result:            "ValueCoordinateCarrier",
+				Accessor:          valueMethod("Result", "GlobalBootstrapResult", true, 0),
 			},
 		},
 		CarryTransforms: []definition.CarryTransform{

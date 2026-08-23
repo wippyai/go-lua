@@ -5,6 +5,7 @@ import (
 	"encoding/binary"
 
 	"github.com/wippyai/go-lua/analysis/identity"
+	"github.com/wippyai/go-lua/analysis/schema/structure"
 )
 
 // BootRootID returns the stable identity of the sealed bootstrap image owned
@@ -33,6 +34,57 @@ func (schema Schema) BootValue(key Key) (Value, bool) {
 		return Value{}, false
 	}
 	return row.bootValue, true
+}
+
+// BootRootAt and BootRootOrdinal are the boot-root directory addressed by
+// dense candidate position. They share the order BootIDAt publishes, so a
+// candidate ordinal and a bootstrap occurrence identity name the same root.
+func (schema Schema) BootRootAt(index int) (Key, bool) {
+	id, ok := schema.BootIDAt(index)
+	if !ok {
+		return Key{}, false
+	}
+	return schema.KeyForBootID(id)
+}
+
+func (schema Schema) BootRootOrdinal(key Key) (uint32, bool) {
+	if !schema.valid() || !schema.OwnsKey(key) || key.Kind() != RootBoot {
+		return 0, false
+	}
+	ordinal := uint32(0)
+	for _, row := range schema.owner.roots {
+		if row.kind != RootBoot || !row.bootID.Available() {
+			continue
+		}
+		if schema.owner.bootIndex[row.bootID] == key.slot {
+			return ordinal, true
+		}
+		ordinal++
+	}
+	return 0, false
+}
+
+// BootFact is the zero-input fold of one bootstrap root: the complete
+// immutable image Heap sealed for it.
+func BootFact(key Key) (Value, structure.ReductionOutcome) {
+	if !key.valid() {
+		return Value{}, structure.Refuse
+	}
+	value, ok := Schema{owner: key.owner}.BootValue(key)
+	if !ok {
+		return Value{}, structure.Refuse
+	}
+	return value, structure.Concrete
+}
+
+// Boot is the destination projection of a bootstrap root: the root writes its
+// own coordinate.
+func (key Key) Boot() (Key, Value, bool) {
+	value, outcome := BootFact(key)
+	if outcome != structure.Concrete {
+		return Key{}, Value{}, false
+	}
+	return key, value, true
 }
 
 // sealBootRows publishes each bootstrap image once, after all Heap source

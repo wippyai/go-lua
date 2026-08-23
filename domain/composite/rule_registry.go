@@ -700,6 +700,9 @@ func bindRules(state *catalog, binding *engine.SchemaBinding, fragments ruleCell
 			return nil, DiagnosticRule(slot), RuleBindStagePair
 		}
 	}
+	if !registerLinkBootstrapTransports(state, issued, binding) {
+		return nil, DiagnosticRuleUnknown, RuleBindStagePair
+	}
 	if !seal() {
 		return nil, DiagnosticRuleUnknown, RuleBindStageSeal
 	}
@@ -722,6 +725,32 @@ func bindRules(state *catalog, binding *engine.SchemaBinding, fragments ruleCell
 		}
 	}
 	return rules, DiagnosticRuleUnknown, RuleBindStageNone
+}
+
+// registerLinkBootstrapTransports authorizes the factor set allowed to leave
+// the Link-global bootstrap point. A factor computed at that point must be able
+// to leave it, and it leaves once, so the authorization is keyed by the axis a
+// Link rule writes rather than by the rule: two Link rules writing one axis
+// name one transport, and the catalog's own order fixes which capability
+// stands for it. Nothing here is authored per rule - a hand-kept list would be
+// a second statement of the Link lane that could disagree with it.
+func registerLinkBootstrapTransports(state *catalog, issued []engine.RuleSlotCapability, binding *engine.SchemaBinding) bool {
+	transports := make([]engine.RuleSlotCapability, 0, len(state.templates))
+	written := make(map[schema.Key]struct{}, len(state.templates))
+	for position, entry := range state.templates {
+		if entry == nil || entry.Lane() != rule.LaneLink {
+			continue
+		}
+		if _, duplicate := written[entry.Writes()]; duplicate {
+			continue
+		}
+		written[entry.Writes()] = struct{}{}
+		transports = append(transports, issued[position+1])
+	}
+	if len(transports) == 0 {
+		return true
+	}
+	return engine.RegisterLinkBootstrapTransports(binding, transports...)
 }
 
 // SemanticRoles is the resolved semantic role vocabulary the sealed table was

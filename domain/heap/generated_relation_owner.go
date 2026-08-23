@@ -13,11 +13,14 @@ import (
 type RelationOwner struct {
 	schema        Schema
 	sourceColumn0 memberrelation.SourceColumn[Value]
+	sourceColumn1 memberrelation.SourceColumn[Value]
 }
 
 var _ memberrelation.Owner = (*RelationOwner)(nil)
 
 var _ memberrelation.SourceColumns[Value] = (*RelationOwner)(nil)
+
+var _ memberrelation.OccurrenceDirectory = (*RelationOwner)(nil)
 
 // NewRelationOwner binds the generated relation owner to one immutable axis schema.
 func NewRelationOwner(schema Schema) *RelationOwner {
@@ -45,8 +48,49 @@ func (owner *RelationOwner) Candidate(relationOrdinal uint32, mount, occurrence 
 			return 0, false
 		}
 		return owner.schema.AllocationRootOrdinal(candidate)
+	case 1:
+		if mount.Available() {
+			return 0, false
+		}
+		candidate, candidateOK := owner.schema.KeyForBootID(occurrence)
+		if !candidateOK {
+			return 0, false
+		}
+		return owner.schema.BootRootOrdinal(candidate)
 	default:
 		return 0, false
+	}
+}
+
+// OccurrenceCount is the sealed census of one global relation's occurrence
+// directory. A mounted relation has no directory of its own and is refused.
+func (owner *RelationOwner) OccurrenceCount(relationOrdinal uint32) (int, bool) {
+	if owner == nil {
+		return 0, false
+	}
+	switch relationOrdinal {
+	case 1:
+		count := owner.schema.BootCount()
+		if count < 0 {
+			return 0, false
+		}
+		return count, true
+	default:
+		return 0, false
+	}
+}
+
+// OccurrenceIDAt is the occurrence identity of one dense candidate of a
+// global relation, in the owner's canonical directory order.
+func (owner *RelationOwner) OccurrenceIDAt(relationOrdinal uint32, index int) (identity.ContentID, bool) {
+	if owner == nil || index < 0 {
+		return identity.ContentID{}, false
+	}
+	switch relationOrdinal {
+	case 1:
+		return owner.schema.BootIDAt(index)
+	default:
+		return identity.ContentID{}, false
 	}
 }
 
@@ -64,6 +108,23 @@ func (owner *RelationOwner) Project(relationOrdinal, projectionOrdinal, candidat
 				return 0, false
 			}
 			first, second, projectionOK := candidate.Ingress()
+			if !projectionOK {
+				return 0, false
+			}
+			_ = second
+			projected := first
+			return owner.schema.DenseKeyIndex(projected)
+		default:
+			return 0, false
+		}
+	case 1:
+		switch projectionOrdinal {
+		case 1:
+			candidate, candidateOK := owner.schema.BootRootAt(int(candidateOrdinal))
+			if !candidateOK {
+				return 0, false
+			}
+			first, second, projectionOK := candidate.Boot()
 			if !projectionOK {
 				return 0, false
 			}
@@ -106,13 +167,36 @@ func (owner *RelationOwner) materializeSourceColumns() bool {
 		return false
 	}
 	owner.sourceColumn0 = column0
+	count1 := owner.schema.BootCount()
+	if count1 < 0 {
+		return false
+	}
+	facts1 := make([]Value, count1)
+	outcomes1 := make([]structure.ReductionOutcome, count1)
+	for index := 0; index < count1; index++ {
+		candidate, candidateOK := owner.schema.BootRootAt(index)
+		if !candidateOK {
+			return false
+		}
+		fact, outcome := BootFact(candidate)
+		if outcome == structure.Refuse {
+			return false
+		}
+		facts1[index] = fact
+		outcomes1[index] = outcome
+	}
+	column1, column1OK := memberrelation.NewSourceColumn(facts1, outcomes1)
+	if !column1OK {
+		return false
+	}
+	owner.sourceColumn1 = column1
 	return true
 }
 
 // SourceFactColumn returns the immutable typed source fact column for one relation.
 // RelationCount is the sealed relation-ordinal extent. It preserves absent
 // materializations separately from a valid empty source column.
-func (*RelationOwner) RelationCount() int { return 1 }
+func (*RelationOwner) RelationCount() int { return 2 }
 
 func (owner *RelationOwner) SourceFactColumn(relationOrdinal uint32) (memberrelation.SourceColumn[Value], bool) {
 	if owner == nil {
@@ -121,6 +205,8 @@ func (owner *RelationOwner) SourceFactColumn(relationOrdinal uint32) (memberrela
 	switch relationOrdinal {
 	case 0:
 		return owner.sourceColumn0, true
+	case 1:
+		return owner.sourceColumn1, true
 	default:
 		return memberrelation.SourceColumn[Value]{}, false
 	}

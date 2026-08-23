@@ -11,8 +11,11 @@ import (
 
 const (
 	IngressSeeds                   schemaapi.Key  = "heap/ingress/candidates"
+	BootRoots                      schemaapi.Key  = "heap/boot/candidates"
 	IngressCoordinate              schemaapi.Key  = "heap/ingress/coordinate"
+	BootCoordinate                 schemaapi.Key  = "heap/boot/coordinate"
 	IngressReducer                 schemaapi.Key  = "heap/reducer/ingress"
+	BootReducer                    schemaapi.Key  = "heap/reducer/boot"
 	EmptyAllocationCarryTransform  schemaapi.Key  = "transform/heap/allocation-empty"
 	ClosedAllocationCarryTransform schemaapi.Key  = "transform/heap/allocation-closed"
 	HeapKeyCarrier                 member.Carrier = "carrier/heap/key"
@@ -27,12 +30,17 @@ func AxisMemberCatalog() member.Catalog {
 	catalog, ok := member.NewCatalog(
 		[]member.Relation{
 			{Key: IngressSeeds, Subject: HeapKeyCarrier, CandidateProvider: member.RelationRef{Axis: schemaapi.EntryReference{Surface: schemaapi.SurfaceKind(2), Key: "heap"}, Member: "heap/ingress/candidates"}},
+			{Key: BootRoots, Subject: HeapKeyCarrier, CandidateProvider: member.RelationRef{Axis: schemaapi.EntryReference{Surface: schemaapi.SurfaceKind(2), Key: "heap"}, Member: "heap/boot/candidates"}},
 		},
 		[]member.Projection{
 			{Key: IngressCoordinate, Relation: IngressSeeds, Role: member.Destination, Result: HeapKeyCarrier, CandidateProvider: member.RelationRef{Axis: schemaapi.EntryReference{Surface: schemaapi.SurfaceKind(2), Key: "heap"}, Member: "heap/ingress/candidates"}},
+			{Key: BootCoordinate, Relation: BootRoots, Role: member.Destination, Result: HeapKeyCarrier, CandidateProvider: member.RelationRef{Axis: schemaapi.EntryReference{Surface: schemaapi.SurfaceKind(2), Key: "heap"}, Member: "heap/boot/candidates"}},
 		},
 		[]member.Reducer{
 			{Key: IngressReducer, Inputs: []member.ReducerInput{}, Outputs: []member.ReducerOutput{
+				{Axis: valueAxis, Carrier: HeapFactCarrier},
+			}},
+			{Key: BootReducer, Inputs: []member.ReducerInput{}, Outputs: []member.ReducerOutput{
 				{Axis: valueAxis, Carrier: HeapFactCarrier},
 			}},
 		},

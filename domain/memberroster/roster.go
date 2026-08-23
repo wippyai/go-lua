@@ -18,12 +18,14 @@ import (
 	heapbase "github.com/wippyai/go-lua/domain/heap/memberdefinition"
 
 	heapingress "github.com/wippyai/go-lua/domain/heap/allocation/ingress/memberdefinition"
+	heapbootstrap "github.com/wippyai/go-lua/domain/heap/bootstrap/memberdefinition"
 	packbase "github.com/wippyai/go-lua/domain/pack/memberdefinition"
 	packsource "github.com/wippyai/go-lua/domain/pack/source/memberdefinition"
 	placementbase "github.com/wippyai/go-lua/domain/placement/memberdefinition"
 	placementstore "github.com/wippyai/go-lua/domain/placement/store/memberdefinition"
 	staticbase "github.com/wippyai/go-lua/domain/static/memberdefinition"
 	statictransfer "github.com/wippyai/go-lua/domain/static/transfer/memberdefinition"
+	valuebootstrap "github.com/wippyai/go-lua/domain/value/bootstrap/memberdefinition"
 	valuebase "github.com/wippyai/go-lua/domain/value/memberdefinition"
 	valuesource "github.com/wippyai/go-lua/domain/value/source/memberdefinition"
 	valuetransfer "github.com/wippyai/go-lua/domain/value/transfer/memberdefinition"
@@ -40,6 +42,7 @@ func Composition() (definition.Roster, bool) {
 			Contributions: []definition.Contribution{
 				valuetransfer.Contribution(),
 				valuesource.Contribution(),
+				valuebootstrap.Contribution(),
 			},
 		},
 		definition.Source{
@@ -72,6 +75,7 @@ func Composition() (definition.Roster, bool) {
 			Base:    heapbase.AllocationCarry(),
 			Contributions: []definition.Contribution{
 				heapingress.Contribution(),
+				heapbootstrap.Contribution(),
 			},
 		},
 	)

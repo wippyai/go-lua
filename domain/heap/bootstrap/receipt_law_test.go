@@ -7,7 +7,6 @@ import (
 	"github.com/wippyai/go-lua/analysis/program/target/vocabulary"
 	"github.com/wippyai/go-lua/domain/composite/snapshottest"
 
-	"github.com/wippyai/go-lua/analysis/engine"
 	"github.com/wippyai/go-lua/analysis/identity"
 	"github.com/wippyai/go-lua/analysis/lua/lower"
 	artifactcompiler "github.com/wippyai/go-lua/analysis/program/artifact/compiler"
@@ -16,75 +15,114 @@ import (
 	linkproject "github.com/wippyai/go-lua/analysis/program/link/project"
 	"github.com/wippyai/go-lua/analysis/program/target/compiler"
 	"github.com/wippyai/go-lua/analysis/program/target/declaration"
+	memberrelation "github.com/wippyai/go-lua/analysis/schema/axis/member/relation"
 	"github.com/wippyai/go-lua/analysis/schema/programmount"
+	"github.com/wippyai/go-lua/analysis/schema/rule"
+	"github.com/wippyai/go-lua/analysis/schema/rule/program"
+	"github.com/wippyai/go-lua/analysis/schema/structure"
 	"github.com/wippyai/go-lua/domain/composite"
 	heapdomain "github.com/wippyai/go-lua/domain/heap"
 	bootstrap "github.com/wippyai/go-lua/domain/heap/bootstrap"
-	heapowner "github.com/wippyai/go-lua/domain/heap/owner"
 	"github.com/wippyai/go-lua/domain/materialization"
 	domaincontract "github.com/wippyai/go-lua/domain/type/typecontract"
 )
 
-func TestHotBootstrapUsesSealedRootReceiptAndRejectsForeignBinding(t *testing.T) {
+// TestRuleEntryDeclaresCanonicalBootProgram states the shape of the
+// declaration this package now is: a zero-join exact write whose candidate is
+// the Link-global directory of sealed bootstrap roots.
+func TestRuleEntryDeclaresCanonicalBootProgram(t *testing.T) {
+	spec := bootstrap.RuleEntry()
+	problem, ok := spec.Program.Check()
+	if !ok {
+		t.Fatalf("heap-bootstrap Program rejected: %+v", problem)
+	}
+	if spec.Lane != rule.LaneLink || len(spec.Issues) != 0 {
+		t.Fatalf("heap-bootstrap lane = %v with %d issuances", spec.Lane, len(spec.Issues))
+	}
+	if spec.Program.JoinCount() != 0 || len(spec.Program.Fold.Inputs) != 0 || len(spec.Program.Fold.Outputs) != 1 {
+		t.Fatalf("heap-bootstrap Program shape = joins:%d inputs:%d outputs:%d", spec.Program.JoinCount(), len(spec.Program.Fold.Inputs), len(spec.Program.Fold.Outputs))
+	}
+	if spec.Program.Carry != nil {
+		t.Fatalf("heap-bootstrap carry = %#v", spec.Program.Carry)
+	}
+	if spec.Program.Candidate.Member != heapdomain.BootRoots {
+		t.Fatalf("heap-bootstrap candidate = %s", spec.Program.Candidate.Member)
+	}
+	if spec.Program.Fold.Outputs[0].Mode != program.ModeExact {
+		t.Fatalf("heap-bootstrap output mode = %v", spec.Program.Fold.Outputs[0].Mode)
+	}
+}
+
+// TestRoutedBootOutputIsRefused is the nearest negative: a zero-read Link rule
+// derives no relation to route a write through.
+func TestRoutedBootOutputIsRefused(t *testing.T) {
+	declaration := bootstrap.RuleEntry().Program
+	declaration.Fold.Outputs[0].Mode = program.ModeRoute
+	problem, ok := declaration.Check()
+	if ok || problem.Kind != program.ProblemOutput {
+		t.Fatalf("routed heap-bootstrap output admitted: problem=%+v ok=%t", problem, ok)
+	}
+}
+
+// TestSealedRootReceiptDirectoryIsTheOccurrenceInventory is the sealed-receipt
+// law, stated where the occurrences now come from. Every bootstrap root Heap
+// sealed carries its image and its identity, that directory is fenced to the
+// schema that issued it, and it is exactly the occurrence directory the axis
+// publishes for this rule's candidate relation - so the inventory a Link rule
+// admits is derived from the declaration rather than issued by a callback.
+func TestSealedRootReceiptDirectoryIsTheOccurrenceInventory(t *testing.T) {
 	schema, _ := bootstrapFixture(t)
-	bootID, bootIDOK := schema.BootIDAt(0)
-	key, keyOK := schema.KeyForBootID(bootID)
-	rootID, rootIDOK := schema.BootRootID(key)
-	rootValue, rootValueOK := schema.BootValue(key)
-	if !bootIDOK || !keyOK || !rootIDOK || !rootValueOK || !rootValue.Valid() {
-		t.Fatal("bootstrap root row")
+	owner := heapdomain.NewRelationOwner(schema)
+	directory, directoryOK := any(owner).(memberrelation.OccurrenceDirectory)
+	relation, relationOK := heapdomain.AxisMemberCatalog().RelationOrdinal(heapdomain.BootRoots)
+	if owner == nil || !directoryOK || !relationOK {
+		t.Fatal("heap boot occurrence directory")
 	}
-	if !rootID.Available() {
-		t.Fatal("bootstrap root row ID")
+	count, countOK := directory.OccurrenceCount(relation)
+	if !countOK || count != schema.BootCount() || count == 0 {
+		t.Fatalf("occurrence census = %d/%t, want %d", count, countOK, schema.BootCount())
 	}
-
-	builder := engine.NewSchema()
-	ownerFragment, ownerOK := heapowner.DeclareSchema(builder, bootstrapKey(1), bootstrapKey(101))
-	fragment, fragmentOK := bootstrap.DeclareSchema(builder, bootstrapKey(2), bootstrapKey(3), ownerFragment)
-	cold, coldOK := builder.Seal()
-	if !ownerOK || !fragmentOK || !coldOK || cold == nil {
-		t.Fatal("bootstrap receipt cold schema")
-	}
-	bind := func(domain heapdomain.Schema) (*heapowner.HotOwner, *bootstrap.HotRule, *heapowner.RuleImplementation[heapdomain.Key], *engine.SchemaBinding) {
-		binding := engine.NewSchemaBinding(cold)
-		owner, ownerHotOK := heapowner.BindHot(binding, ownerFragment, domain)
-		rule, ruleOK := bootstrap.BindHot(fragment, owner)
-		if !ownerHotOK || !ruleOK || rule == nil || !binding.Seal() {
-			return nil, nil, nil, binding
+	for index := 0; index < count; index++ {
+		id, idOK := directory.OccurrenceIDAt(relation, index)
+		want, wantOK := schema.BootIDAt(index)
+		key, keyOK := schema.KeyForBootID(id)
+		rootID, rootIDOK := schema.BootRootID(key)
+		value, valueOK := schema.BootValue(key)
+		if !idOK || !wantOK || id != want || !keyOK || !rootIDOK || !rootID.Available() || !valueOK || !value.Valid() {
+			t.Fatalf("occurrence row %d = %v/%t", index, id, idOK)
 		}
-		issuer, issued := rule.Implementation()
-		if !issued {
-			return owner, rule, nil, binding
+		// The candidate is addressed by the occurrence alone: this relation is
+		// Link-global, so a mount is refused rather than ignored.
+		candidate, candidateOK := owner.Candidate(relation, identity.ContentID{}, id)
+		if !candidateOK || candidate != uint32(index) {
+			t.Fatalf("occurrence row %d candidate = %d/%t", index, candidate, candidateOK)
 		}
-		return owner, rule, issuer, binding
+		if _, mounted := owner.Candidate(relation, id, id); mounted {
+			t.Fatalf("occurrence row %d admitted a mount", index)
+		}
+		if ordinal, ordinalOK := schema.BootRootOrdinal(key); !ordinalOK || ordinal != uint32(index) {
+			t.Fatalf("occurrence row %d ordinal = %d/%t", index, ordinal, ordinalOK)
+		}
+		if fact, outcome := heapdomain.BootFact(key); outcome != structure.Concrete || !fact.Valid() {
+			t.Fatalf("occurrence row %d folded to %v", index, outcome)
+		}
 	}
-	owner, rule, issuer, binding := bind(schema)
-	if owner == nil || rule == nil || issuer == nil || binding == nil {
-		t.Fatal("bootstrap hot receipt bind")
-	}
-	if implementation, issued := heapowner.ResolveRuleImplementationFor(owner, issuer); !issued || implementation == nil {
-		t.Fatal("bootstrap hot receipt issue")
-	}
-	localKey, localOK := schema.KeyForBootID(bootID)
-	localID, localIssued := schema.BootRootID(localKey)
-	if !localOK || !localIssued || !localID.Available() || localKey != key || rule.Count() != schema.BootCount() {
-		t.Fatal("local bootstrap occurrence row")
-	}
-
-	foreignSchema, _ := bootstrapFixture(t)
-	foreignOwner, _, foreignIssuer, foreignBinding := bind(foreignSchema)
-	if foreignOwner == nil || foreignIssuer == nil || foreignBinding == nil {
-		t.Fatal("foreign bootstrap hot receipt bind")
-	}
-	if implementation, accepted := heapowner.ResolveRuleImplementationFor(foreignOwner, issuer); accepted || implementation != nil {
-		t.Fatal("foreign equal binding accepted local bootstrap receipt")
-	}
-	if implementation, accepted := heapowner.ResolveRuleImplementationFor(foreignOwner, foreignIssuer); !accepted || implementation == nil {
-		t.Fatal("foreign equal binding rejected own bootstrap receipt")
+	if _, ok := directory.OccurrenceIDAt(relation, count); ok {
+		t.Fatal("the directory admitted a row past its census")
 	}
 	var zero heapdomain.Key
 	if _, issued := schema.BootRootID(zero); issued {
 		t.Fatal("zero bootstrap key acquired a row")
+	}
+	if _, admitted := owner.Candidate(relation, identity.ContentID{}, identity.ContentID{}); admitted {
+		t.Fatal("an unavailable occurrence resolved a bootstrap candidate")
+	}
+	ingress, ingressOK := heapdomain.AxisMemberCatalog().RelationOrdinal(heapdomain.IngressSeeds)
+	if !ingressOK {
+		t.Fatal("heap ingress relation ordinal")
+	}
+	if _, published := directory.OccurrenceCount(ingress); published {
+		t.Fatal("a mounted relation published an occurrence directory")
 	}
 }
 

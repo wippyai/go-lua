@@ -1,6 +1,9 @@
 package value
 
-import "github.com/wippyai/go-lua/analysis/identity"
+import (
+	"github.com/wippyai/go-lua/analysis/identity"
+	"github.com/wippyai/go-lua/analysis/schema/structure"
+)
 
 // GlobalBootstrapResult is the sealed Value-owned result of one Host global
 // binding. Bootstrap issues it only after validating Host, Module, Boundary,
@@ -24,9 +27,34 @@ func NewGlobalBootstrapResult(schema *Schema, id identity.ContentID, coordinate 
 	return &GlobalBootstrapResult{schema: schema, bindingID: id, id: id, coordinate: coordinate, fact: fact, absent: absent}, true
 }
 
+// sealed is the receipt's own well-formedness: one available binding identity
+// standing for itself, and a coordinate owned by the schema that issued it.
+func (result *GlobalBootstrapResult) sealed() bool {
+	return result != nil && result.schema != nil && result.bindingID == result.id &&
+		result.id.Available() && result.coordinate.Valid() && result.coordinate.schema == result.schema
+}
+
 // Owns reports exact receipt ownership without reopening Host or Boundary.
 func (result *GlobalBootstrapResult) Owns(schema *Schema) bool {
-	return result != nil && schema != nil && result.schema == schema && result.bindingID == result.id && result.id.Available() && result.coordinate.schema == schema && result.coordinate.Valid()
+	return result.sealed() && schema != nil && result.schema == schema
+}
+
+// Result pairs the sealed target coordinate with the bootstrap fact, in the
+// shape a destination projection reads. An absent binding is a real row with a
+// real coordinate and no fact: GlobalBootstrapFact is the authority on which of
+// the two a row is, so the fact is the zero Value here rather than a refusal
+// that would drop the occurrence.
+func (result *GlobalBootstrapResult) Result() (Coordinate, Value, bool) {
+	if !result.sealed() {
+		return Coordinate{}, Value{}, false
+	}
+	if result.absent {
+		return result.coordinate, Value{}, true
+	}
+	if !result.fact.valid() || result.fact.schema != result.schema {
+		return Coordinate{}, Value{}, false
+	}
+	return result.coordinate, result.fact, true
 }
 
 // ID returns the already-issued Host binding identity.
@@ -83,4 +111,41 @@ func (schema *Schema) GlobalBootstrapResultIDAt(index int) (identity.ContentID, 
 	id := schema.globalIDs[index]
 	_, ok := schema.GlobalBootstrapResultForID(id)
 	return id, ok
+}
+
+// GlobalBootstrapResultAt and GlobalBootstrapResultOrdinal are the same sealed
+// directory addressed by dense candidate position. They are the inverse of each
+// other and share the order GlobalBootstrapResultIDAt publishes, so a candidate
+// ordinal and an occurrence identity name the same row.
+func (schema *Schema) GlobalBootstrapResultAt(index int) (*GlobalBootstrapResult, bool) {
+	id, ok := schema.GlobalBootstrapResultIDAt(index)
+	if !ok {
+		return nil, false
+	}
+	return schema.GlobalBootstrapResultForID(id)
+}
+
+func (schema *Schema) GlobalBootstrapResultOrdinal(result *GlobalBootstrapResult) (uint32, bool) {
+	if schema == nil || !result.Owns(schema) || schema.globalOrdinals == nil {
+		return 0, false
+	}
+	ordinal, ok := schema.globalOrdinals[result.id]
+	return ordinal, ok
+}
+
+// GlobalBootstrapFact is the zero-input fold of one Host global binding: the
+// Value the binding was sealed with, or the sealed absence of an initial value.
+// The absence is a disposition of the fold, not a missing row.
+func GlobalBootstrapFact(result *GlobalBootstrapResult) (Value, structure.ReductionOutcome) {
+	if !result.sealed() {
+		return Value{}, structure.Refuse
+	}
+	if result.absent {
+		return Value{}, structure.NoCandidate
+	}
+	fact, ok := result.Fact()
+	if !ok {
+		return Value{}, structure.Refuse
+	}
+	return fact, structure.Concrete
 }

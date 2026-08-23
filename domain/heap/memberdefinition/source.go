@@ -80,6 +80,21 @@ func AllocationCarry() definition.Definition {
 				CandidateCount:    heapMethod("AllocationRootCount", "Schema", false, 0),
 				Materialize:       definition.GoSymbol{PackagePath: heapPackagePath, Name: "IngressFact", ResultIndex: 0},
 			},
+			{
+				// Bootstrap roots are a Link-global directory: the Host binding
+				// identity addresses one root on its own, and Heap publishes that
+				// directory rather than an artifact declaring rows for it.
+				Name:                "BootRoots",
+				Key:                 "heap/boot/candidates",
+				Subject:             "HeapKeyCarrier",
+				CandidateProvider:   member.RelationRef{Axis: axisReference("heap"), Member: "heap/boot/candidates"},
+				CandidateResolver:   heapMethod("KeyForBootID", "Schema", false, 0),
+				CandidateOrdinal:    heapMethod("BootRootOrdinal", "Schema", false, 0),
+				CandidateAt:         heapMethod("BootRootAt", "Schema", false, 0),
+				CandidateCount:      heapMethod("BootCount", "Schema", false, 0),
+				CandidateIdentityAt: heapMethod("BootIDAt", "Schema", false, 0),
+				Materialize:         definition.GoSymbol{PackagePath: heapPackagePath, Name: "BootFact", ResultIndex: 0},
+			},
 		},
 		Projections: []definition.Projection{
 			{
@@ -90,6 +105,15 @@ func AllocationCarry() definition.Definition {
 				Role:              member.Destination,
 				Result:            "HeapKeyCarrier",
 				Accessor:          heapMethod("Ingress", "Key", false, 0),
+			},
+			{
+				Name:              "BootCoordinate",
+				Key:               "heap/boot/coordinate",
+				Relation:          "BootRoots",
+				CandidateProvider: member.RelationRef{Axis: axisReference("heap"), Member: "heap/boot/candidates"},
+				Role:              member.Destination,
+				Result:            "HeapKeyCarrier",
+				Accessor:          heapMethod("Boot", "Key", false, 0),
 			},
 		},
 		CarryTransforms: []definition.CarryTransform{

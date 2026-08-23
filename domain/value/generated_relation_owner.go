@@ -13,11 +13,14 @@ import (
 type RelationOwner struct {
 	schema        *Schema
 	sourceColumn2 memberrelation.SourceColumn[Value]
+	sourceColumn3 memberrelation.SourceColumn[Value]
 }
 
 var _ memberrelation.Owner = (*RelationOwner)(nil)
 
 var _ memberrelation.SourceColumns[Value] = (*RelationOwner)(nil)
+
+var _ memberrelation.OccurrenceDirectory = (*RelationOwner)(nil)
 
 // NewRelationOwner binds the generated relation owner to one immutable axis schema.
 func NewRelationOwner(schema *Schema) *RelationOwner {
@@ -57,8 +60,49 @@ func (owner *RelationOwner) Candidate(relationOrdinal uint32, mount, occurrence 
 			return 0, false
 		}
 		return owner.schema.SourceSeedOrdinal(candidate)
+	case 3:
+		if mount.Available() {
+			return 0, false
+		}
+		candidate, candidateOK := owner.schema.GlobalBootstrapResultForID(occurrence)
+		if !candidateOK {
+			return 0, false
+		}
+		return owner.schema.GlobalBootstrapResultOrdinal(candidate)
 	default:
 		return 0, false
+	}
+}
+
+// OccurrenceCount is the sealed census of one global relation's occurrence
+// directory. A mounted relation has no directory of its own and is refused.
+func (owner *RelationOwner) OccurrenceCount(relationOrdinal uint32) (int, bool) {
+	if owner == nil || owner.schema == nil {
+		return 0, false
+	}
+	switch relationOrdinal {
+	case 3:
+		count := owner.schema.GlobalBootstrapResultCount()
+		if count < 0 {
+			return 0, false
+		}
+		return count, true
+	default:
+		return 0, false
+	}
+}
+
+// OccurrenceIDAt is the occurrence identity of one dense candidate of a
+// global relation, in the owner's canonical directory order.
+func (owner *RelationOwner) OccurrenceIDAt(relationOrdinal uint32, index int) (identity.ContentID, bool) {
+	if owner == nil || owner.schema == nil || index < 0 {
+		return identity.ContentID{}, false
+	}
+	switch relationOrdinal {
+	case 3:
+		return owner.schema.GlobalBootstrapResultIDAt(index)
+	default:
+		return identity.ContentID{}, false
 	}
 }
 
@@ -119,6 +163,23 @@ func (owner *RelationOwner) Project(relationOrdinal, projectionOrdinal, candidat
 		default:
 			return 0, false
 		}
+	case 3:
+		switch projectionOrdinal {
+		case 3:
+			candidate, candidateOK := owner.schema.GlobalBootstrapResultAt(int(candidateOrdinal))
+			if !candidateOK {
+				return 0, false
+			}
+			first, second, projectionOK := candidate.Result()
+			if !projectionOK {
+				return 0, false
+			}
+			_ = second
+			projected := first
+			return owner.schema.CoordinateIndex(projected)
+		default:
+			return 0, false
+		}
 	default:
 		return 0, false
 	}
@@ -152,13 +213,36 @@ func (owner *RelationOwner) materializeSourceColumns() bool {
 		return false
 	}
 	owner.sourceColumn2 = column2
+	count3 := owner.schema.GlobalBootstrapResultCount()
+	if count3 < 0 {
+		return false
+	}
+	facts3 := make([]Value, count3)
+	outcomes3 := make([]structure.ReductionOutcome, count3)
+	for index := 0; index < count3; index++ {
+		candidate, candidateOK := owner.schema.GlobalBootstrapResultAt(index)
+		if !candidateOK {
+			return false
+		}
+		fact, outcome := GlobalBootstrapFact(candidate)
+		if outcome == structure.Refuse {
+			return false
+		}
+		facts3[index] = fact
+		outcomes3[index] = outcome
+	}
+	column3, column3OK := memberrelation.NewSourceColumn(facts3, outcomes3)
+	if !column3OK {
+		return false
+	}
+	owner.sourceColumn3 = column3
 	return true
 }
 
 // SourceFactColumn returns the immutable typed source fact column for one relation.
 // RelationCount is the sealed relation-ordinal extent. It preserves absent
 // materializations separately from a valid empty source column.
-func (*RelationOwner) RelationCount() int { return 3 }
+func (*RelationOwner) RelationCount() int { return 4 }
 
 func (owner *RelationOwner) SourceFactColumn(relationOrdinal uint32) (memberrelation.SourceColumn[Value], bool) {
 	if owner == nil || owner.schema == nil {
@@ -167,6 +251,8 @@ func (owner *RelationOwner) SourceFactColumn(relationOrdinal uint32) (memberrela
 	switch relationOrdinal {
 	case 2:
 		return owner.sourceColumn2, true
+	case 3:
+		return owner.sourceColumn3, true
 	default:
 		return memberrelation.SourceColumn[Value]{}, false
 	}

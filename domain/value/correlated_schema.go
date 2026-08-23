@@ -464,6 +464,7 @@ type Schema struct {
 	allocRefs      map[heap.Key]uint32
 	globalResults  map[identity.ContentID]*GlobalBootstrapResult
 	globalIDs      []identity.ContentID
+	globalOrdinals map[identity.ContentID]uint32
 	targetInitials map[targetInitialKey]Value
 	bootRefs       map[identity.ContentID]uint32
 	endpointRefs   map[identity.ContentID]uint32
@@ -842,6 +843,7 @@ func SealWithFailure(source *link.Link, heaps heap.Schema, mounts []programmount
 		mountedCallResultSlots:     make(map[mountedCallResultSlotKey]MountedCallResultSlot),
 		allocRefs:                  make(map[heap.Key]uint32),
 		globalResults:              make(map[identity.ContentID]*GlobalBootstrapResult),
+		globalOrdinals:             make(map[identity.ContentID]uint32),
 		targetInitials:             make(map[targetInitialKey]Value),
 		bootRefs:                   make(map[identity.ContentID]uint32),
 		endpointRefs:               make(map[identity.ContentID]uint32),
@@ -1943,6 +1945,7 @@ func (schema *valueBuilder) sealGlobalBootstrapResults(module *linkmodule.Compon
 			return false
 		}
 		schema.globalResults[bindingID] = result
+		schema.globalOrdinals[bindingID] = uint32(len(schema.globalIDs))
 		schema.globalIDs = append(schema.globalIDs, bindingID)
 	}
 	return true
