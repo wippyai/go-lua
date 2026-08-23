@@ -24,6 +24,7 @@ const (
 	BootReducer                    schemaapi.Key  = "heap/reducer/boot"
 	ClosedAllocationReducer        schemaapi.Key  = "heap/reducer/closed"
 	EmptyAllocationReducer         schemaapi.Key  = "heap/reducer/empty"
+	FormalFreezeReducer            schemaapi.Key  = "heap/reducer/formal-freeze"
 	EmptyAllocationCarryTransform  schemaapi.Key  = "transform/heap/allocation-empty"
 	ClosedAllocationCarryTransform schemaapi.Key  = "transform/heap/allocation-closed"
 	HeapKeyCarrier                 member.Carrier = "carrier/heap/key"
@@ -67,6 +68,11 @@ func AxisMemberCatalog() member.Catalog {
 			}},
 			{Key: EmptyAllocationReducer, Inputs: []member.ReducerInput{
 				{Axis: valueAxis, Carrier: HeapFactCarrier, Form: member.ReadFormExact, Multiplicity: member.MultiplicityOne},
+			}, Outputs: []member.ReducerOutput{
+				{Axis: valueAxis, Carrier: HeapFactCarrier},
+			}},
+			{Key: FormalFreezeReducer, Inputs: []member.ReducerInput{
+				{Axis: valueAxis, Carrier: HeapFactCarrier, Form: member.ReadFormSelected, Multiplicity: member.MultiplicityOne, Route: HeapKeyCarrier},
 			}, Outputs: []member.ReducerOutput{
 				{Axis: valueAxis, Carrier: HeapFactCarrier},
 			}},
