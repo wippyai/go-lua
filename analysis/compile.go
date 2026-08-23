@@ -19,6 +19,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/identity"
 	analysisworkspace "github.com/wippyai/go-lua/analysis/internal/workspace"
 	"github.com/wippyai/go-lua/analysis/lua/selectapply"
+	artifactcompiler "github.com/wippyai/go-lua/analysis/program/artifact/compiler"
 	"github.com/wippyai/go-lua/analysis/program/link"
 	linkmodule "github.com/wippyai/go-lua/analysis/program/link/module"
 	"github.com/wippyai/go-lua/analysis/program/link/mounted"
@@ -27,7 +28,6 @@ import (
 	"github.com/wippyai/go-lua/analysis/schema/ingress"
 	"github.com/wippyai/go-lua/analysis/schema/modulecomposition"
 	programschema "github.com/wippyai/go-lua/analysis/schema/program"
-	artifactcompiler "github.com/wippyai/go-lua/analysis/program/artifact/compiler"
 	programcatalog "github.com/wippyai/go-lua/analysis/schema/program/catalog"
 	"github.com/wippyai/go-lua/analysis/schema/program/programdiagnostic"
 	"github.com/wippyai/go-lua/analysis/schema/programmount"
@@ -205,30 +205,38 @@ func (state *compiledState) publishComposition(module *linkmodule.Component, con
 	transitions := composition.Transitions()
 	generations := composition.Generations()
 	outcomes := composition.Outcomes()
+	stateEdges := composition.StateEdges()
 	terminals := composition.Terminals()
 	origins := composition.CallableOrigins()
+	ingresses := composition.CallableIngresses()
 	importDenominator, importDenominatorOK := modulecomposition.ImportDenominatorID(state.sourceID)
 	cacheDenominator, cacheDenominatorOK := modulecomposition.CacheDenominatorID(state.sourceID)
 	transitionDenominator, transitionDenominatorOK := modulecomposition.ModuleCallTransitionDenominatorID(state.sourceID)
 	generationDenominator, generationDenominatorOK := modulecomposition.GenerationDenominatorID(state.sourceID)
 	outcomeDenominator, outcomeDenominatorOK := modulecomposition.OutcomeDenominatorID(state.sourceID)
+	stateEdgeDenominator, stateEdgeDenominatorOK := modulecomposition.ModuleReturnStateEdgeDenominatorID(state.sourceID)
 	terminalDenominator, terminalDenominatorOK := modulecomposition.TerminalDenominatorID(state.sourceID)
 	originDenominator, originDenominatorOK := modulecomposition.ModuleExportCallableOriginDenominatorID(state.sourceID)
+	ingressDenominator, ingressDenominatorOK := modulecomposition.ModuleExportCallableIngressDenominatorID(state.sourceID)
 	importContent, importContentOK := modulecomposition.ImportContent(imports, importDenominator)
 	cacheContent, cacheContentOK := modulecomposition.CacheContent(caches, cacheDenominator)
 	transitionContent, transitionContentOK := modulecomposition.ModuleCallTransitionContent(transitions, transitionDenominator)
 	generationContent, generationContentOK := modulecomposition.GenerationContent(generations, generationDenominator)
 	outcomeContent, outcomeContentOK := modulecomposition.OutcomeContent(outcomes, outcomeDenominator)
+	stateEdgeContent, stateEdgeContentOK := modulecomposition.ModuleReturnStateEdgeContent(stateEdges, stateEdgeDenominator)
 	terminalContent, terminalContentOK := modulecomposition.TerminalContent(terminals, terminalDenominator)
 	originContent, originContentOK := modulecomposition.ModuleExportCallableOriginContent(origins, originDenominator)
+	ingressContent, ingressContentOK := modulecomposition.ModuleExportCallableIngressContent(ingresses, ingressDenominator)
 	for _, minted := range []compositionRowStep{
 		{importDenominatorOK, importContentOK, modulecomposition.ImportAxisKey},
 		{cacheDenominatorOK, cacheContentOK, modulecomposition.CacheAxisKey},
 		{transitionDenominatorOK, transitionContentOK, modulecomposition.ModuleCallTransitionAxisKey},
 		{generationDenominatorOK, generationContentOK, modulecomposition.GenerationAxisKey},
 		{outcomeDenominatorOK, outcomeContentOK, modulecomposition.OutcomeAxisKey},
+		{stateEdgeDenominatorOK, stateEdgeContentOK, modulecomposition.ModuleReturnStateEdgeAxisKey},
 		{terminalDenominatorOK, terminalContentOK, modulecomposition.TerminalAxisKey},
 		{originDenominatorOK, originContentOK, modulecomposition.ModuleExportCallableOriginAxisKey},
+		{ingressDenominatorOK, ingressContentOK, modulecomposition.ModuleExportCallableIngressAxisKey},
 	} {
 		if !minted.denominator {
 			return anadiag.AnalyzeDiagnosticCompositionFailureDenominator, minted.axis
@@ -242,16 +250,20 @@ func (state *compiledState) publishComposition(module *linkmodule.Component, con
 	transitionWrite, transitionMinted := engine.MintColumnWrite[identity.ContentID, modulecomposition.ModuleCallTransition](state.binding.SchemaBinding(), modulecomposition.ModuleCallTransitionOutputKey, modulecomposition.ModuleCallTransitionAxisKey)
 	generationWrite, generationMinted := engine.MintColumnWrite[identity.ContentID, modulecomposition.InitGeneration](state.binding.SchemaBinding(), modulecomposition.GenerationOutputKey, modulecomposition.GenerationAxisKey)
 	outcomeWrite, outcomeMinted := engine.MintColumnWrite[identity.ContentID, modulecomposition.InitOutcome](state.binding.SchemaBinding(), modulecomposition.OutcomeOutputKey, modulecomposition.OutcomeAxisKey)
+	stateEdgeWrite, stateEdgeMinted := engine.MintColumnWrite[identity.ContentID, modulecomposition.ModuleReturnStateEdge](state.binding.SchemaBinding(), modulecomposition.ModuleReturnStateEdgeOutputKey, modulecomposition.ModuleReturnStateEdgeAxisKey)
 	terminalWrite, terminalMinted := engine.MintColumnWrite[identity.ContentID, modulecomposition.InitTerminal](state.binding.SchemaBinding(), modulecomposition.TerminalOutputKey, modulecomposition.TerminalAxisKey)
 	originWrite, originMinted := engine.MintColumnWrite[identity.ContentID, modulecomposition.ModuleExportCallableOrigin](state.binding.SchemaBinding(), modulecomposition.ModuleExportCallableOriginOutputKey, modulecomposition.ModuleExportCallableOriginAxisKey)
+	ingressWrite, ingressMinted := engine.MintColumnWrite[identity.ContentID, modulecomposition.ModuleExportCallableIngress](state.binding.SchemaBinding(), modulecomposition.ModuleExportCallableIngressOutputKey, modulecomposition.ModuleExportCallableIngressAxisKey)
 	for _, grant := range []compositionGrantStep{
 		{importMinted && importWrite.Available(), modulecomposition.ImportAxisKey},
 		{cacheMinted && cacheWrite.Available(), modulecomposition.CacheAxisKey},
 		{transitionMinted && transitionWrite.Available(), modulecomposition.ModuleCallTransitionAxisKey},
 		{generationMinted && generationWrite.Available(), modulecomposition.GenerationAxisKey},
 		{outcomeMinted && outcomeWrite.Available(), modulecomposition.OutcomeAxisKey},
+		{stateEdgeMinted && stateEdgeWrite.Available(), modulecomposition.ModuleReturnStateEdgeAxisKey},
 		{terminalMinted && terminalWrite.Available(), modulecomposition.TerminalAxisKey},
 		{originMinted && originWrite.Available(), modulecomposition.ModuleExportCallableOriginAxisKey},
+		{ingressMinted && ingressWrite.Available(), modulecomposition.ModuleExportCallableIngressAxisKey},
 	} {
 		if !grant.granted {
 			return anadiag.AnalyzeDiagnosticCompositionFailureColumnGrant, grant.axis
@@ -279,11 +291,17 @@ func (state *compiledState) publishComposition(module *linkmodule.Component, con
 	if err := engine.PublishColumn(outcomeWrite, &builder, outcomeContent); err != nil {
 		return anadiag.AnalyzeDiagnosticCompositionFailureWrite, modulecomposition.OutcomeAxisKey
 	}
+	if err := engine.PublishColumn(stateEdgeWrite, &builder, stateEdgeContent); err != nil {
+		return anadiag.AnalyzeDiagnosticCompositionFailureWrite, modulecomposition.ModuleReturnStateEdgeAxisKey
+	}
 	if err := engine.PublishColumn(terminalWrite, &builder, terminalContent); err != nil {
 		return anadiag.AnalyzeDiagnosticCompositionFailureWrite, modulecomposition.TerminalAxisKey
 	}
 	if err := engine.PublishColumn(originWrite, &builder, originContent); err != nil {
 		return anadiag.AnalyzeDiagnosticCompositionFailureWrite, modulecomposition.ModuleExportCallableOriginAxisKey
+	}
+	if err := engine.PublishColumn(ingressWrite, &builder, ingressContent); err != nil {
+		return anadiag.AnalyzeDiagnosticCompositionFailureWrite, modulecomposition.ModuleExportCallableIngressAxisKey
 	}
 	sealed, err := builder.Seal()
 	if err != nil || !sealed.Published() {
