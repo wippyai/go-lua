@@ -168,9 +168,11 @@ func TestPartitionValueTerminalsTraversesDeepPublicDecisionChainIteratively(t *t
 		t.Fatal("deep value unavailable")
 	}
 	storedLeaves, absentLeaves := 0, 0
-	completed, valid := diagram.PartitionValueTerminals(value, whole, nil, func(id terminal.ID[uint8], _ support.Mask) bool {
+	var storedRegion support.Mask
+	completed, valid := diagram.PartitionValueTerminals(value, whole, nil, func(id terminal.ID[uint8], region support.Mask) bool {
 		if id == stored {
 			storedLeaves++
+			storedRegion = region
 		} else if id == (terminal.ID[uint8]{}) {
 			absentLeaves++
 		} else {
@@ -178,8 +180,17 @@ func TestPartitionValueTerminalsTraversesDeepPublicDecisionChainIteratively(t *t
 		}
 		return true
 	})
-	if !completed || !valid || storedLeaves != depth || absentLeaves != 1 {
+	// The depth literals all carry the one stored terminal, so the partition
+	// publishes their union as one piece and sparse absence as the other.
+	if !completed || !valid || storedLeaves != 1 || absentLeaves != 1 {
 		t.Fatalf("deep partition = completed:%t valid:%t stored:%d absent:%d", completed, valid, storedLeaves, absentLeaves)
+	}
+	// Coalescing keeps every cell the chain wrote: each literal still selects
+	// the stored piece.
+	for index, literal := range literals {
+		if !literal.Entails(storedRegion) {
+			t.Fatalf("literal %d escaped the stored piece", index)
+		}
 	}
 	if _, present, valid := diagram.At(root, factorFirst, 1, func(guard.Atom) bool { return false }); !valid || present {
 		t.Fatal("all-false valuation must select sparse absence")

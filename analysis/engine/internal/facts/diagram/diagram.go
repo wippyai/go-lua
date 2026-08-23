@@ -5,6 +5,8 @@
 package diagram
 
 import (
+	"sync"
+
 	"github.com/wippyai/go-lua/analysis/engine/internal/facts/scalar"
 	"github.com/wippyai/go-lua/analysis/engine/internal/facts/support"
 	"github.com/wippyai/go-lua/analysis/engine/internal/facts/terminal"
@@ -43,6 +45,11 @@ type Diagram[F ~uint64, K scalar.Key, V any] struct {
 	factors   []F
 	terminals *terminal.Arena[V]
 	guards    *guard.Manager
+
+	// partitions lends the value partition its node tables. It is reuse
+	// storage for one read, never a candidate cache: nothing a read puts back
+	// survives the Seal that published its cells.
+	partitions sync.Pool
 }
 
 // diagramOwner is a non-generic opaque generation token retained by Values.
@@ -1294,99 +1301,293 @@ func (diagram *Diagram[F, K, V]) PartitionValueTerminals(value Value[V], region 
 	if value.node.terminal {
 		return visit(value.node.value, region), true
 	}
-	var frameInline [8]valuePartitionFrame[V]
-	frames := frameInline[:0]
-	frames = append(frames, valuePartitionFrame[V]{value: value.node, region: region})
-	var cellInline [8]terminalCell[V]
-	cells := cellInline[:0]
-	var work *support.Work
-	for len(frames) != 0 {
-		last := len(frames) - 1
-		frame := frames[last]
-		frames[last] = valuePartitionFrame[V]{}
-		frames = frames[:last]
-		if frame.value == nil {
-			if work != nil {
-				work.Discard()
-			}
-			return false, false
-		}
-		if frame.value.terminal {
-			cells = append(cells, terminalCell[V]{terminal: frame.value.value, region: frame.region})
-			continue
-		}
-		// Decompose exposes BDD cofactors, not subset masks: Low/High omit the
-		// tested literal and therefore cannot themselves be emitted as FDD
-		// pieces. The only allocation-free aligned case is when one cofactor is
-		// empty, proving that all of frame.region already selects the other FDD
-		// branch. Keep the original region in that case; otherwise construct the
-		// two real intersections below.
-		var view support.Decomposition
-		var decomposed bool
-		if work != nil && work.Valid(frame.region) {
-			view, decomposed = work.Decompose(frame.region)
-		} else {
-			view, decomposed = frame.region.Decompose()
-		}
+	// Decompose exposes BDD cofactors, not subset masks: Low/High omit the
+	// tested literal and therefore cannot themselves be emitted as FDD pieces.
+	// The one allocation-free aligned case is an empty cofactor, which proves
+	// all of region already selects the other FDD branch and keeps the region
+	// unchanged. Descending that case here keeps a constant-on-region value off
+	// the transactional path entirely.
+	current := value.node
+	for !current.terminal {
+		view, decomposed := region.Decompose()
 		if !decomposed {
-			if work != nil {
-				work.Discard()
-			}
 			return false, false
 		}
-		if !view.Terminal && view.Atom == frame.value.atom {
-			if support.Empty(view.Low) {
-				frames = append(frames, valuePartitionFrame[V]{value: frame.value.high, region: frame.region})
-				continue
-			}
-			if support.Empty(view.High) {
-				frames = append(frames, valuePartitionFrame[V]{value: frame.value.low, region: frame.region})
-				continue
-			}
+		if view.Terminal || view.Atom != current.atom {
+			break
 		}
-		if work == nil {
-			work = diagram.beginRefinement(scratch)
-			if work == nil {
-				return false, false
-			}
-			if !work.Valid(frame.region) {
-				work.Discard()
-				return false, false
-			}
-		}
-		low, lowOK := work.Conjoin(frame.region, frame.value.atom, false)
-		high, highOK := work.Conjoin(frame.region, frame.value.atom, true)
-		if !lowOK || !highOK {
-			work.Discard()
-			return false, false
-		}
-		// LIFO scheduling keeps canonical low/high discovery while every
-		// descent remains in operation-owned heap storage rather than Go's
-		// call stack.
-		frames = append(frames,
-			valuePartitionFrame[V]{value: frame.value.high, region: high},
-			valuePartitionFrame[V]{value: frame.value.low, region: low},
-		)
-	}
-	if work != nil {
-		if !work.Seal() {
-			work.Discard()
-			return false, false
-		}
-	}
-	for _, cell := range cells {
-		view, okay := cell.region.Decompose()
-		if !okay {
-			return false, false
-		}
-		if view.Terminal && !view.Value {
+		if support.Empty(view.Low) {
+			current = current.high
 			continue
 		}
+		if support.Empty(view.High) {
+			current = current.low
+			continue
+		}
+		break
+	}
+	if current.terminal {
+		return visit(current.value, region), true
+	}
+	work := diagram.beginRefinement(scratch)
+	if work == nil {
+		return false, false
+	}
+	if !work.Valid(region) {
+		work.Discard()
+		return false, false
+	}
+	walk := diagram.takeValuePartition()
+	defer diagram.putValuePartition(walk)
+	if !walk.discover(current) || !walk.accumulate(work, region) || !walk.collect(work) {
+		work.Discard()
+		return false, false
+	}
+	if !work.Seal() {
+		work.Discard()
+		return false, false
+	}
+	for _, cell := range walk.cells {
 		if !visit(cell.terminal, cell.region) {
 			return false, true
 		}
 	}
 	return true, true
+}
+
+// valuePartitionScratch is short-lived implementation storage for one value
+// partition. It holds no fact, identity, or candidate and never survives the
+// read that borrowed it; the Diagram pools it so the one-key read the engine
+// runs millions of times reuses its tables instead of minting them per call.
+type valuePartitionScratch[V any] struct {
+	index   map[*node[V]]int32
+	order   []*node[V]
+	edges   [][2]int32
+	pending []int32
+	regions []support.Mask
+	stack   []*node[V]
+	queue   []int32
+	cells   []terminalCell[V]
+}
+
+// valuePartitionInline is the node count below which the walk finds a node by
+// scanning its own discovery order. Almost every read partitions a handful of
+// nodes, where a linear scan of pointers costs less than hashing them; the
+// index map is built only once a graph is large enough to need it.
+const valuePartitionInline = 16
+
+func (diagram *Diagram[F, K, V]) takeValuePartition() *valuePartitionScratch[V] {
+	held, ok := diagram.partitions.Get().(*valuePartitionScratch[V])
+	if !ok || held == nil {
+		return &valuePartitionScratch[V]{}
+	}
+	held.reset()
+	return held
+}
+
+func (diagram *Diagram[F, K, V]) putValuePartition(walk *valuePartitionScratch[V]) {
+	if walk == nil {
+		return
+	}
+	walk.reset()
+	diagram.partitions.Put(walk)
+}
+
+func (walk *valuePartitionScratch[V]) reset() {
+	clear(walk.index)
+	clear(walk.order)
+	clear(walk.stack)
+	clear(walk.cells)
+	clear(walk.pending)
+	walk.order = walk.order[:0]
+	walk.edges = walk.edges[:0]
+	walk.pending = walk.pending[:0]
+	walk.regions = walk.regions[:0]
+	walk.stack = walk.stack[:0]
+	walk.queue = walk.queue[:0]
+	walk.cells = walk.cells[:0]
+}
+
+// discover records every node reachable from root exactly once, in the
+// low-first depth-first order the partition emits in, and counts the incoming
+// edges of each one. The FDD is a hash-consed DAG: a shared subgraph is one
+// node with several parents, so enumerating root-to-leaf paths would revisit
+// it once per path and is exponential in the node count. One entry per node is
+// the structural quantity this read is allowed to cost.
+func (walk *valuePartitionScratch[V]) discover(root *node[V]) bool {
+	walk.stack = append(walk.stack, root)
+	for len(walk.stack) != 0 {
+		last := len(walk.stack) - 1
+		current := walk.stack[last]
+		walk.stack[last] = nil
+		walk.stack = walk.stack[:last]
+		if current == nil {
+			return false
+		}
+		if _, discovered := walk.lookup(current); discovered {
+			continue
+		}
+		walk.install(current)
+		if current.terminal {
+			continue
+		}
+		if current.low == nil || current.high == nil {
+			return false
+		}
+		walk.stack = append(walk.stack, current.high, current.low)
+	}
+	for len(walk.pending) < len(walk.order) {
+		walk.pending = append(walk.pending, 0)
+	}
+	walk.pending = walk.pending[:len(walk.order)]
+	for _, current := range walk.order {
+		if current.terminal {
+			walk.edges = append(walk.edges, [2]int32{-1, -1})
+			continue
+		}
+		low, lowKnown := walk.lookup(current.low)
+		high, highKnown := walk.lookup(current.high)
+		if !lowKnown || !highKnown {
+			return false
+		}
+		walk.edges = append(walk.edges, [2]int32{low, high})
+		walk.pending[low]++
+		walk.pending[high]++
+	}
+	return walk.pending[0] == 0
+}
+
+// lookup and install are the walk's own node directory. Discovery order is
+// the row order, so a row number addresses every parallel table at once.
+func (walk *valuePartitionScratch[V]) lookup(current *node[V]) (int32, bool) {
+	if len(walk.order) > valuePartitionInline {
+		row, known := walk.index[current]
+		return row, known
+	}
+	for row, held := range walk.order {
+		if held == current {
+			return int32(row), true
+		}
+	}
+	return 0, false
+}
+
+func (walk *valuePartitionScratch[V]) install(current *node[V]) {
+	row := int32(len(walk.order))
+	walk.order = append(walk.order, current)
+	if len(walk.order) <= valuePartitionInline {
+		return
+	}
+	if walk.index == nil {
+		walk.index = make(map[*node[V]]int32, 2*valuePartitionInline)
+	}
+	if len(walk.index) != len(walk.order)-1 {
+		clear(walk.index)
+		for held := range walk.order {
+			walk.index[walk.order[held]] = int32(held)
+		}
+		return
+	}
+	walk.index[current] = row
+}
+
+// accumulate carries region down the DAG, joining at every node the regions
+// its parents deliver. A node is processed only once all of its incoming edges
+// have arrived, so each decision costs one pair of conjunctions no matter how
+// many paths reach it, and every terminal ends holding the exact union of the
+// cells that select it.
+func (walk *valuePartitionScratch[V]) accumulate(work *support.Work, region support.Mask) bool {
+	empty := work.False()
+	for range walk.order {
+		walk.regions = append(walk.regions, empty)
+	}
+	walk.regions[0] = region
+	walk.queue = append(walk.queue, 0)
+	for cursor := 0; cursor < len(walk.queue); cursor++ {
+		index := walk.queue[cursor]
+		current := walk.order[index]
+		if current.terminal {
+			continue
+		}
+		low, high := empty, empty
+		if arrived := walk.regions[index]; !support.Empty(arrived) {
+			view, decomposed := work.Decompose(arrived)
+			if !decomposed {
+				return false
+			}
+			switch {
+			case !view.Terminal && view.Atom == current.atom && support.Empty(view.Low):
+				high = arrived
+			case !view.Terminal && view.Atom == current.atom && support.Empty(view.High):
+				low = arrived
+			default:
+				lowPart, lowOK := work.Conjoin(arrived, current.atom, false)
+				highPart, highOK := work.Conjoin(arrived, current.atom, true)
+				if !lowOK || !highOK {
+					return false
+				}
+				low, high = lowPart, highPart
+			}
+		}
+		if !walk.deliver(work, walk.edges[index][0], low) || !walk.deliver(work, walk.edges[index][1], high) {
+			return false
+		}
+	}
+	return true
+}
+
+func (walk *valuePartitionScratch[V]) deliver(work *support.Work, index int32, part support.Mask) bool {
+	if index < 0 || int(index) >= len(walk.pending) || walk.pending[index] == 0 {
+		return false
+	}
+	// An empty arrival adds nothing, and the first non-empty arrival is
+	// already the join with the empty accumulator. Neither needs Boolean work.
+	switch {
+	case support.Empty(part):
+	case support.Empty(walk.regions[index]):
+		walk.regions[index] = part
+	default:
+		joined, ok := work.Or(walk.regions[index], part)
+		if !ok {
+			return false
+		}
+		walk.regions[index] = joined
+	}
+	walk.pending[index]--
+	if walk.pending[index] == 0 {
+		walk.queue = append(walk.queue, index)
+	}
+	return true
+}
+
+// collect reduces the settled terminals to one cell per distinct terminal, in
+// the order the partition first reached them. Two terminal nodes carrying the
+// same value denote one FDD piece, and a terminal no cell selects is not a
+// piece at all.
+func (walk *valuePartitionScratch[V]) collect(work *support.Work) bool {
+	for index, current := range walk.order {
+		if !current.terminal || support.Empty(walk.regions[index]) {
+			continue
+		}
+		merged := false
+		for slot := range walk.cells {
+			if walk.cells[slot].terminal != current.value {
+				continue
+			}
+			joined, ok := work.Or(walk.cells[slot].region, walk.regions[index])
+			if !ok {
+				return false
+			}
+			walk.cells[slot].region = joined
+			merged = true
+			break
+		}
+		if merged {
+			continue
+		}
+		walk.cells = append(walk.cells, terminalCell[V]{terminal: current.value, region: walk.regions[index]})
+	}
+	return true
 }
 
 // beginRefinement opens the one support transaction a branched partition
