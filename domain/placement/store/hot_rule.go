@@ -112,7 +112,7 @@ func (rule *HotRule) locate(context engine.SelectorContext, transfer valuedomain
 	if !factOK {
 		return false
 	}
-	plan, planOK := Plan(rule.owner.Schema(), rule.values.Schema(), fact)
+	plan, planOK := planRoutes(rule.owner.Schema(), rule.values.Schema(), fact)
 	if !planOK {
 		return false
 	}
@@ -161,7 +161,7 @@ func (rule *HotRule) fold(frame engine.Frame[placement.Fact, valuedomain.Storage
 		// at settlement even though both reads completed successfully.
 		return engine.NoSelection(frame, selection)
 	}
-	plan, planOK := Plan(rule.owner.Schema(), rule.values.Schema(), fact)
+	plan, planOK := planRoutes(rule.owner.Schema(), rule.values.Schema(), fact)
 	if !planOK || count != plan.RouteCount() {
 		return engine.RuleResult[placement.Fact]{}
 	}

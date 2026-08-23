@@ -78,11 +78,25 @@ func (plan RoutePlan) RouteAt(index int) (Route, bool) {
 	return plan.spill[spill], true
 }
 
-// Plan derives exact or conservative routes from the existing Value fact.
-// Exact allocation references select their own Heap roots. Top and opaque
-// alternatives widen to every Placement allocation root. Exact non-allocation
-// roots (including Boot handles) and scalars produce no local route.
-func Plan(schema placement.Schema, values *valuedomain.Schema, fact valuedomain.Value) (RoutePlan, bool) {
+// DeriveRoutes is the sole Store relation derivation. It authenticates the
+// two static schema authorities and the Value-owned StorageTransfer candidate
+// before looking at the supplied Value fact. Frame-local transfers are a
+// valid empty route relation; they do not enter Placement's selected-read
+// denominator. Persistent transfers delegate exactly once to planRoutes.
+func DeriveRoutes(schema placement.Schema, values *valuedomain.Schema, transfer valuedomain.StorageTransfer, fact valuedomain.Value) (RoutePlan, bool) {
+	if !schema.Valid() || values == nil || !values.Valid() || !values.OwnsHeapSchema(schema.Heap()) || !values.OwnsStorageTransfer(transfer) {
+		return RoutePlan{}, false
+	}
+	if !transfer.Persistent() {
+		return RoutePlan{class: routeScalar}, true
+	}
+	return planRoutes(schema, values, fact)
+}
+
+// planRoutes is the private route-set algebra after DeriveRoutes has fenced
+// the relation candidate. It has no public authority and cannot admit a
+// StorageTransfer on its own.
+func planRoutes(schema placement.Schema, values *valuedomain.Schema, fact valuedomain.Value) (RoutePlan, bool) {
 	projection, projectionOK := placement.ProjectValueAllocations(schema, values, fact)
 	if !projectionOK {
 		return RoutePlan{}, false
@@ -127,6 +141,12 @@ func Plan(schema placement.Schema, values *valuedomain.Schema, fact valuedomain.
 	plan.class = routeExact
 	return plan, true
 }
+
+// RouteCount is the direct composition accessor for a sealed RoutePlan.
+func RouteCount(plan RoutePlan) int { return plan.RouteCount() }
+
+// RouteAt is the direct composition accessor for one RoutePlan row.
+func RouteAt(plan RoutePlan, index int) (Route, bool) { return plan.RouteAt(index) }
 
 // allAllocationPlan keeps widening lazy. It counts and authenticates the
 // owner's allocation coordinates once, then RouteAt/routeAtTag derive each

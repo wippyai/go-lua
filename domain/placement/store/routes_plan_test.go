@@ -11,17 +11,15 @@ import (
 	artifactcompiler "github.com/wippyai/go-lua/analysis/program/artifact/compiler"
 	"github.com/wippyai/go-lua/analysis/program/link"
 	linkproject "github.com/wippyai/go-lua/analysis/program/link/project"
-	"github.com/wippyai/go-lua/analysis/program/target/compiler"
-	"github.com/wippyai/go-lua/analysis/program/target/declaration"
 	"github.com/wippyai/go-lua/analysis/schema"
 	"github.com/wippyai/go-lua/analysis/schema/ingress"
 	"github.com/wippyai/go-lua/analysis/schema/programmount"
+	"github.com/wippyai/go-lua/analysis/schema/seal"
 	"github.com/wippyai/go-lua/analysis/schema/structure"
 	"github.com/wippyai/go-lua/domain/heap"
 	"github.com/wippyai/go-lua/domain/materialization"
 	"github.com/wippyai/go-lua/domain/placement"
 	"github.com/wippyai/go-lua/domain/runtimekind"
-	domaincontract "github.com/wippyai/go-lua/domain/type/typecontract"
 	valuedomain "github.com/wippyai/go-lua/domain/value"
 	"github.com/wippyai/go-lua/internal/testfixture"
 )
@@ -32,21 +30,37 @@ type routePlanFixture struct {
 	keys      []heap.Key
 }
 
+func routePlanTransfer(t testing.TB, values *valuedomain.Schema, persistent bool) valuedomain.StorageTransfer {
+	t.Helper()
+	for index := 0; index < values.StorageTransferCount(); index++ {
+		transfer, ok := values.StorageTransferAt(index)
+		if ok && transfer.Persistent() == persistent {
+			return transfer
+		}
+	}
+	t.Fatalf("Value fixture has no persistent=%t StorageTransfer", persistent)
+	return valuedomain.StorageTransfer{}
+}
+
 func routePlanFixtureForStore(t testing.TB, width int) routePlanFixture {
 	t.Helper()
-	source := "return {"
+	// A global store gives this fixture one persistent transfer; returning it
+	// also preserves a frame-local read transfer. Both are needed to exercise
+	// the public relation derivation boundary rather than only its private
+	// route-set algebra.
+	source := "stored = {"
 	for index := 0; index < width; index++ {
 		if index != 0 {
 			source += ","
 		}
 		source += fmt.Sprintf("[%d] = {}", index+1)
 	}
-	source += "}"
+	source += "}; return stored"
 	program, err := lower.Lower(lower.Source{Name: fmt.Sprintf("store-route-%d.lua", width), Text: []byte(source)})
 	if err != nil {
 		t.Fatal(err)
 	}
-	contract, err := compiler.Seal(&declaration.Spec{Semantics: domaincontract.NewSemantics()})
+	contract, err := testfixture.StandardLibraryTarget()
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -91,6 +105,24 @@ func routePlanFixtureForStore(t testing.TB, width int) routePlanFixture {
 	return routePlanFixture{placement: projected, values: values, keys: keys}
 }
 
+func TestDeriveRoutesAuthenticatesCandidateAndKeepsFrameTransfersEmpty(t *testing.T) {
+	fixture := routePlanFixtureForStore(t, 2)
+	persistent := routePlanTransfer(t, fixture.values, true)
+	bottom, bottomOK := DeriveRoutes(fixture.placement, fixture.values, persistent, fixture.values.Bottom())
+	if !bottomOK || !bottom.Valid() || !bottom.Bottom() || RouteCount(bottom) != 0 {
+		t.Fatalf("persistent Bottom derivation=%#v/%t", bottom, bottomOK)
+	}
+	if _, ok := DeriveRoutes(fixture.placement, fixture.values, valuedomain.StorageTransfer{}, fixture.values.Bottom()); ok {
+		t.Fatal("forged StorageTransfer candidate admitted")
+	}
+
+	frame := routePlanTransfer(t, fixture.values, false)
+	empty, emptyOK := DeriveRoutes(fixture.placement, fixture.values, frame, valuedomain.Value{})
+	if !emptyOK || !empty.Valid() || empty.Bottom() || empty.Widened() || RouteCount(empty) != 0 {
+		t.Fatalf("frame-local transfer must derive a valid empty route set: %#v/%t", empty, emptyOK)
+	}
+}
+
 func routePlanStructural(t testing.TB) structure.Table {
 	t.Helper()
 	counts := func(category structure.Category) int {
@@ -120,7 +152,7 @@ func routePlanStructural(t testing.TB) structure.Table {
 	if !entriesOK {
 		t.Fatal("structure entries")
 	}
-	builder := schema.NewBuilder()
+	builder := seal.NewBuilder()
 	if !builder.Register(structure.NewSurface(entries)) {
 		t.Fatal("structure surface")
 	}
@@ -148,14 +180,14 @@ type routePlanEmptySurface struct{ kind schema.SurfaceKind }
 
 func (surface routePlanEmptySurface) Kind() schema.SurfaceKind { return surface.kind }
 func (surface routePlanEmptySurface) Entries() []schema.Entry  { return nil }
-func (surface routePlanEmptySurface) Seal(schema.View, schema.Sealed) schema.SealFailure {
+func (surface routePlanEmptySurface) Seal(seal.View, seal.Sealed) schema.SealFailure {
 	return schema.SealFailure{}
 }
 
 func TestPlanClassesAndCanonicalTags(t *testing.T) {
 	fixture := routePlanFixtureForStore(t, 8)
 
-	bottom, bottomOK := Plan(fixture.placement, fixture.values, fixture.values.Bottom())
+	bottom, bottomOK := planRoutes(fixture.placement, fixture.values, fixture.values.Bottom())
 	if !bottomOK || !bottom.Valid() || !bottom.Bottom() || bottom.Widened() || bottom.RouteCount() != 0 {
 		t.Fatalf("Bottom plan = %#v/%t, want valid Bottom with no routes", bottom, bottomOK)
 	}
@@ -178,7 +210,7 @@ func TestPlanClassesAndCanonicalTags(t *testing.T) {
 	if !scalarOK {
 		t.Fatal("scalar fact")
 	}
-	scalarPlan, scalarPlanOK := Plan(fixture.placement, fixture.values, scalar)
+	scalarPlan, scalarPlanOK := planRoutes(fixture.placement, fixture.values, scalar)
 	if !scalarPlanOK || !scalarPlan.Valid() || scalarPlan.Bottom() || scalarPlan.Widened() || scalarPlan.RouteCount() != 0 {
 		t.Fatalf("scalar plan = %#v/%t, want valid scalar with no routes", scalarPlan, scalarPlanOK)
 	}
@@ -191,7 +223,7 @@ func TestPlanClassesAndCanonicalTags(t *testing.T) {
 	if !factOK {
 		t.Fatal("allocation fact")
 	}
-	exact, exactOK := Plan(fixture.placement, fixture.values, fact)
+	exact, exactOK := planRoutes(fixture.placement, fixture.values, fact)
 	if !exactOK || !exact.Valid() || exact.Bottom() || exact.Widened() || exact.RouteCount() != 1 {
 		t.Fatalf("exact plan = %#v/%t, want one exact route", exact, exactOK)
 	}
@@ -214,7 +246,7 @@ func TestPlanClassesAndCanonicalTags(t *testing.T) {
 	if !joinedOK {
 		t.Fatal("joined fact")
 	}
-	joinedPlan, joinedPlanOK := Plan(fixture.placement, fixture.values, joined)
+	joinedPlan, joinedPlanOK := planRoutes(fixture.placement, fixture.values, joined)
 	if !joinedPlanOK || !joinedPlan.Valid() || joinedPlan.Widened() || joinedPlan.RouteCount() != 3 {
 		t.Fatalf("joined plan = %#v/%t, want three exact routes", joinedPlan, joinedPlanOK)
 	}
@@ -230,7 +262,7 @@ func TestPlanClassesAndCanonicalTags(t *testing.T) {
 		}
 	}
 
-	top, topOK := Plan(fixture.placement, fixture.values, fixture.values.Top())
+	top, topOK := planRoutes(fixture.placement, fixture.values, fixture.values.Top())
 	if !topOK || !top.Valid() || !top.Widened() || top.Bottom() || top.RouteCount() != len(fixture.keys) {
 		t.Fatalf("Top plan = %#v/%t, want widened allocation routes", top, topOK)
 	}
@@ -252,7 +284,7 @@ func TestPlanClassesAndCanonicalTags(t *testing.T) {
 	if !opaqueFactOK {
 		t.Fatal("opaque fact")
 	}
-	opaquePlan, opaquePlanOK := Plan(fixture.placement, fixture.values, opaqueFact)
+	opaquePlan, opaquePlanOK := planRoutes(fixture.placement, fixture.values, opaqueFact)
 	if !opaquePlanOK || !opaquePlan.Widened() || opaquePlan.RouteCount() != top.RouteCount() {
 		t.Fatalf("opaque plan = %#v/%t, want widened allocation routes", opaquePlan, opaquePlanOK)
 	}
@@ -269,7 +301,7 @@ func TestPlanRejectsForeignFactsAndIsConcurrent(t *testing.T) {
 	if !foreignFactOK {
 		t.Fatal("foreign fact")
 	}
-	if _, ok := Plan(fixture.placement, foreign.values, foreignFact); ok {
+	if _, ok := planRoutes(fixture.placement, foreign.values, foreignFact); ok {
 		t.Fatal("foreign Value schema crossed placement owner fence")
 	}
 	localAtom, localAtomOK := fixture.values.Allocation(fixture.keys[0], materialization.Recent)
@@ -280,11 +312,11 @@ func TestPlanRejectsForeignFactsAndIsConcurrent(t *testing.T) {
 	if !localFactOK {
 		t.Fatal("local fact")
 	}
-	if _, ok := Plan(fixture.placement, fixture.values, foreignFact); ok {
+	if _, ok := planRoutes(fixture.placement, fixture.values, foreignFact); ok {
 		t.Fatal("foreign Value fact crossed value owner fence")
 	}
-	exactPlan, exactPlanOK := Plan(fixture.placement, fixture.values, localFact)
-	widePlan, widePlanOK := Plan(fixture.placement, fixture.values, fixture.values.Top())
+	exactPlan, exactPlanOK := planRoutes(fixture.placement, fixture.values, localFact)
+	widePlan, widePlanOK := planRoutes(fixture.placement, fixture.values, fixture.values.Top())
 	if !exactPlanOK || exactPlan.RouteCount() != 1 || !widePlanOK || !widePlan.Widened() || widePlan.RouteCount() != len(fixture.keys) {
 		t.Fatal("plans for concurrency")
 	}
@@ -330,7 +362,7 @@ func TestPlanInlineOverflowRemainsCanonical(t *testing.T) {
 	if !factOK {
 		t.Fatal("overflow fact")
 	}
-	plan, planOK := Plan(fixture.placement, fixture.values, fact)
+	plan, planOK := planRoutes(fixture.placement, fixture.values, fact)
 	if !planOK || !plan.Valid() || plan.Widened() || plan.RouteCount() != len(atoms) {
 		t.Fatalf("overflow plan = %#v/%t", plan, planOK)
 	}
@@ -359,7 +391,7 @@ func TestPlanAllocations(t *testing.T) {
 		t.Fatal("allocation fact")
 	}
 	if got := testing.AllocsPerRun(100, func() {
-		plan, ok := Plan(fixture.placement, fixture.values, fact)
+		plan, ok := planRoutes(fixture.placement, fixture.values, fact)
 		if !ok || !plan.Valid() || plan.RouteCount() != 1 {
 			t.Fatal("exact plan")
 		}
@@ -367,7 +399,7 @@ func TestPlanAllocations(t *testing.T) {
 		t.Fatalf("exact Plan allocations=%v", got)
 	}
 	if got := testing.AllocsPerRun(100, func() {
-		plan, ok := Plan(fixture.placement, fixture.values, fixture.values.Top())
+		plan, ok := planRoutes(fixture.placement, fixture.values, fixture.values.Top())
 		if !ok || !plan.Widened() || plan.RouteCount() != len(fixture.keys) {
 			t.Fatal("wide plan")
 		}
@@ -394,7 +426,7 @@ func BenchmarkPlanExact(b *testing.B) {
 	b.ReportAllocs()
 	b.ResetTimer()
 	for index := 0; index < b.N; index++ {
-		storePlanBenchmarkPlan, storePlanBenchmarkOK = Plan(fixture.placement, fixture.values, fact)
+		storePlanBenchmarkPlan, storePlanBenchmarkOK = planRoutes(fixture.placement, fixture.values, fact)
 		if !storePlanBenchmarkOK || storePlanBenchmarkPlan.RouteCount() != 1 {
 			b.Fatal("exact Plan")
 		}
@@ -409,7 +441,7 @@ func BenchmarkPlanTopScaling(b *testing.B) {
 			b.ReportAllocs()
 			b.ResetTimer()
 			for index := 0; index < b.N; index++ {
-				storePlanBenchmarkPlan, storePlanBenchmarkOK = Plan(fixture.placement, fixture.values, fact)
+				storePlanBenchmarkPlan, storePlanBenchmarkOK = planRoutes(fixture.placement, fixture.values, fact)
 				if !storePlanBenchmarkOK || !storePlanBenchmarkPlan.Widened() || storePlanBenchmarkPlan.RouteCount() != len(fixture.keys) {
 					b.Fatal("wide Plan")
 				}
