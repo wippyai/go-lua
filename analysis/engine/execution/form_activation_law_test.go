@@ -145,6 +145,7 @@ func TestATriggerSettlesTheDispositionItsBranchesJustify(t *testing.T) {
 		{"one transport is concrete", []ActivationRow{branch(structure.NoCandidate), branch(structure.Concrete)}, structure.Concrete},
 		{"unknowing survives", []ActivationRow{branch(structure.NoCandidate), branch(structure.AuthenticatedOpaque)}, structure.AuthenticatedOpaque},
 		{"all declined", []ActivationRow{branch(structure.NoCandidate), branch(structure.NoCandidate)}, structure.NoCandidate},
+		{"an existing population outranks an absent subject", []ActivationRow{branch(structure.NoCandidate), branch(structure.NoSelection)}, structure.NoSelection},
 		{"declined selection", []ActivationRow{branch(structure.NoSelection)}, structure.NoSelection},
 	}
 	for _, testCase := range cases {
@@ -157,6 +158,35 @@ func TestATriggerSettlesTheDispositionItsBranchesJustify(t *testing.T) {
 				t.Fatalf("trigger settled %d, want %d", got, testCase.settled)
 			}
 		})
+	}
+}
+
+// TestATriggerSettlesTheSameDispositionUnderAnyBranchOrder states that the
+// trigger fold is a property of the branch set and not of the order the
+// branches were discovered in. A set is unordered evidence; a disposition that
+// moved with the discovery order would make the trigger's answer depend on the
+// solver's traversal.
+func TestATriggerSettlesTheSameDispositionUnderAnyBranchOrder(t *testing.T) {
+	branch := func(outcome structure.ReductionOutcome) ActivationRow {
+		row, _ := NewActivationRow(activationLawSpec(t, outcome))
+		return row
+	}
+	pairs := [][2]structure.ReductionOutcome{
+		{structure.NoCandidate, structure.NoSelection},
+		{structure.NoCandidate, structure.AuthenticatedOpaque},
+		{structure.NoSelection, structure.Concrete},
+		{structure.AuthenticatedOpaque, structure.Concrete},
+		{structure.Concrete, structure.Refuse},
+	}
+	for _, pair := range pairs {
+		forward, forwardOK := NewActivationBranches([]ActivationRow{branch(pair[0]), branch(pair[1])})
+		reverse, reverseOK := NewActivationBranches([]ActivationRow{branch(pair[1]), branch(pair[0])})
+		if !forwardOK || !reverseOK {
+			t.Fatal("a branch set of sealed rows seals in either order")
+		}
+		if forward.Outcome() != reverse.Outcome() {
+			t.Fatalf("branches %d/%d settled %d forward and %d reversed", pair[0], pair[1], forward.Outcome(), reverse.Outcome())
+		}
 	}
 }
 

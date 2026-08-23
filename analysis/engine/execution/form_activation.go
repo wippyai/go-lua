@@ -170,24 +170,27 @@ func (branches ActivationBranches) Outcome() structure.ReductionOutcome {
 	if !branches.sealed || len(branches.rows) == 0 {
 		return structure.NoSelection
 	}
-	settled := structure.NoSelection
+	var concrete, opaque, emptySelection bool
 	for _, row := range branches.rows {
 		switch row.Outcome() {
 		case structure.Refuse:
 			return structure.Refuse
 		case structure.Concrete:
-			if settled != structure.Concrete {
-				settled = structure.Concrete
-			}
+			concrete = true
 		case structure.AuthenticatedOpaque:
-			if settled != structure.Concrete {
-				settled = structure.AuthenticatedOpaque
-			}
-		case structure.NoCandidate:
-			if settled == structure.NoSelection {
-				settled = structure.NoCandidate
-			}
+			opaque = true
+		case structure.NoSelection:
+			emptySelection = true
 		}
 	}
-	return settled
+	switch {
+	case concrete:
+		return structure.Concrete
+	case opaque:
+		return structure.AuthenticatedOpaque
+	case emptySelection:
+		return structure.NoSelection
+	default:
+		return structure.NoCandidate
+	}
 }
