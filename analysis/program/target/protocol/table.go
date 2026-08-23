@@ -20,7 +20,12 @@ type Table struct {
 	requirements       sealedrows.Pool[requirementRow]
 	escapes            sealedrows.Pool[escapeRow]
 	callbackHolders    sealedrows.Pool[protocolCallbackHolderRow]
-	opaque             vocabulary.Operation
+	// operationDemands is the callable-requirement authority: one dense span
+	// per sealed operation into the projected obligation rows below. It is the
+	// protocol relations read by operation instead of by protocol.
+	operationDemands sealedrows.Rows[sealedrows.Span]
+	demands          sealedrows.Pool[demandRow]
+	opaque           vocabulary.Operation
 }
 
 type protocolRow struct {

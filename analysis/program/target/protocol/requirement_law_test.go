@@ -54,9 +54,12 @@ func TestDeclaredRequirementSealsAndQueriesBack(t *testing.T) {
 	}
 }
 
-// RequirementsOf answers every protocol that constrains one operation, so a
-// consumer holding an operation handle needs no protocol scan of its own.
-func TestRequirementsOfAnswersTheOperationsWholeConstraint(t *testing.T) {
+// The callable-requirement authority answers every protocol that constrains
+// one operation, so a consumer holding an operation handle needs no protocol
+// scan of its own. The requirement relation is one kind of that authority's
+// closed obligation vocabulary, addressed by the protocol-local row that
+// states it.
+func TestRequirementIsReachableFromTheCallableAuthority(t *testing.T) {
 	table, err := Compile(requirementInput())
 	if err != nil {
 		t.Fatal(err)
@@ -65,21 +68,32 @@ func TestRequirementsOfAnswersTheOperationsWholeConstraint(t *testing.T) {
 	if !ok {
 		t.Fatal("sealed table has no protocol handle")
 	}
-	rows := table.RequirementsOf(1)
-	if len(rows) != 1 {
-		t.Fatalf("RequirementsOf = %+v, want the single declared row", rows)
+	var found int
+	for index := 0; index < table.DemandCount(1); index++ {
+		demand, demandOK := table.DemandAt(1, index)
+		if !demandOK {
+			t.Fatalf("demand %d is unavailable", index)
+		}
+		if demand.Kind != DemandRequirement {
+			continue
+		}
+		found++
+		if demand.Protocol != protocol {
+			t.Fatalf("requirement protocol = %d, want %d", demand.Protocol, protocol)
+		}
+		_, input, state, rowOK := table.ProtocolRequirementAt(demand.Protocol, demand.Row)
+		if !rowOK || input.Kind != vocabulary.InputSourceValueFormal || input.Ordinal != 0 {
+			t.Fatalf("requirement input = %+v/%v, want value formal 0", input, rowOK)
+		}
+		if name, nameOK := table.StateName(demand.Protocol, state); !nameOK || name != "open" {
+			t.Fatalf("required state = %q/%v, want open", name, nameOK)
+		}
 	}
-	if rows[0].Protocol != protocol {
-		t.Fatalf("requirement protocol = %d, want %d", rows[0].Protocol, protocol)
+	if found != 1 {
+		t.Fatalf("the authority carries %d requirement obligations, want the single declared row", found)
 	}
-	if rows[0].Input.Kind != vocabulary.InputSourceValueFormal || rows[0].Input.Ordinal != 0 {
-		t.Fatalf("requirement input = %+v, want value formal 0", rows[0].Input)
-	}
-	if name, nameOK := table.StateName(protocol, rows[0].State); !nameOK || name != "open" {
-		t.Fatalf("required state = %q/%v, want open", name, nameOK)
-	}
-	if other := table.RequirementsOf(0); len(other) != 0 {
-		t.Fatalf("RequirementsOf(invalid operation) = %+v, want nothing", other)
+	if count := table.DemandCount(0); count != 0 {
+		t.Fatalf("DemandCount(invalid operation) = %d, want nothing", count)
 	}
 }
 

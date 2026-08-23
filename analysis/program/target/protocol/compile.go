@@ -27,5 +27,8 @@ func Compile(input Input) (Table, error) {
 	if err := table.appendProtocols(protocols); err != nil {
 		return Table{}, err
 	}
+	if err := table.sealDemands(input.Operations); err != nil {
+		return Table{}, err
+	}
 	return table, nil
 }
