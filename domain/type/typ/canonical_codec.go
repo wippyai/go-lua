@@ -39,28 +39,10 @@ var canonicalEncoderPool = sync.Pool{
 // receipt consumers must not pass a source graph back through a receipt to
 // bypass its own graph admission.
 func EncodeCanonicalFormals(ctx context.Context, t Type, formals []*TypeParam) (CanonicalFormalsReceipt, error) {
-	admission, err := newCanonicalFormalsAdmission(ctx, 0)
-	if err != nil {
-		return CanonicalFormalsReceipt{}, err
-	}
-	if uint64(len(formals)) > uint64(^uint32(0)) {
-		return CanonicalFormalsReceipt{}, invalidCanonicalFormals("external formal count")
-	}
-	encoded, err := encodeCanonicalFormalsAdmission(ctx, t, formals, admission)
-	if err != nil {
-		return CanonicalFormalsReceipt{}, err
-	}
-	if err := admission.checkpoint(); err != nil {
-		return CanonicalFormalsReceipt{}, err
-	}
-	return newCanonicalFormalsReceipt(encoded, uint32(len(formals))), nil
-}
-
-func encodeCanonicalFormalsAdmission(ctx context.Context, t Type, formals []*TypeParam, admission *canonicalFormalsAdmission) ([]byte, error) {
 	encoder := canonicalEncoderPool.Get().(*canonicalEncoder)
-	out, err := encoder.encodeFormalsAdmission(ctx, t, formals, admission)
+	receipt, err := encoder.encodeFormals(ctx, t, formals)
 	canonicalEncoderPool.Put(encoder)
-	return out, err
+	return receipt, err
 }
 
 // canonicalEncoder retains traversal scratch across calls. It is not safe for
@@ -94,8 +76,10 @@ type canonicalEncoder struct {
 	binders         map[*TypeParam]canonicalFormalBinder
 }
 
-// EncodeFormals is the reusable form of EncodeCanonicalFormals. Like Encode,
-// it retains only scratch and is not safe for concurrent use.
+// encodeFormals is the whole scoped encode over one caller-owned encoder. It
+// is the single implementation: EncodeCanonicalFormals supplies a pooled
+// encoder to it. Like the pooled entry point it retains only scratch and is
+// not safe for concurrent use.
 func (e *canonicalEncoder) encodeFormals(ctx context.Context, t Type, formals []*TypeParam) (CanonicalFormalsReceipt, error) {
 	admission, err := newCanonicalFormalsAdmission(ctx, 0)
 	if err != nil {

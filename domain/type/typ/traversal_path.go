@@ -31,23 +31,3 @@ func (p *typePath) enter(t Type) bool {
 	p.overflow[t] = struct{}{}
 	return true
 }
-
-func (p *typePath) leave(t Type) {
-	if t == nil {
-		return
-	}
-	if _, ok := p.overflow[t]; ok {
-		delete(p.overflow, t)
-		return
-	}
-	for i := int(p.inlineN) - 1; i >= 0; i-- {
-		if p.inline[i] != t {
-			continue
-		}
-		last := int(p.inlineN) - 1
-		p.inline[i] = p.inline[last]
-		p.inline[last] = nil
-		p.inlineN--
-		return
-	}
-}

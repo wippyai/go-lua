@@ -61,13 +61,6 @@ func (a *canonicalFormalsAdmission) reserve(count, elementBytes int) error {
 	return nil
 }
 
-func (a *canonicalFormalsAdmission) reserveMap(entries int) error {
-	return a.reserve(entries, canonicalFormalsMapEntryBytes)
-}
-
-func (a *canonicalFormalsAdmission) reserveObject(bytes int) error {
-	return a.reserve(1, bytes)
-}
 
 func canonicalFormalsAllocationBytes(count, elementBytes int) (int, bool) {
 	if count < 0 || elementBytes < 0 || count == 0 || elementBytes == 0 {
