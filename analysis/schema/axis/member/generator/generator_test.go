@@ -320,6 +320,12 @@ func TestResolveKeepsCandidateIndexedCarryTransformTyped(t *testing.T) {
 	}
 }
 
+// TestResolveRetainsExactlyTheFourInventoriedOwnerCarryMembers pins the whole
+// owner carry inventory: four members, each carrying one fact type through one
+// owner-issued transition named on the candidate the rule draws from its
+// relation. Heap's two carry on the allocation coordinate rather than on a
+// constructor descriptor, because a descriptor that lives beside the fold is
+// no relation's subject and no plan can bind a transform to it.
 func TestResolveRetainsExactlyTheFourInventoriedOwnerCarryMembers(t *testing.T) {
 	valueMetadata, err := Resolve(composedSource(t, "value"))
 	if err != nil {
@@ -338,8 +344,8 @@ func TestResolveRetainsExactlyTheFourInventoriedOwnerCarryMembers(t *testing.T) 
 	}{
 		{"transform/value/allocation", "AllocationResult", "Age"},
 		{"transform/value/callresult-freshresult", "FreshResultCall", "Age"},
-		{"transform/heap/allocation-empty", "Root", "Age"},
-		{"transform/heap/allocation-closed", "Closed", "Age"},
+		{"transform/heap/allocation-empty", "Key", "Age"},
+		{"transform/heap/allocation-closed", "Key", "Age"},
 	}
 	seen := make(map[string]struct{}, len(rows))
 	for index, row := range rows {
