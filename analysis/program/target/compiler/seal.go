@@ -9,6 +9,7 @@ import (
 	declarationvalue "github.com/wippyai/go-lua/analysis/program/target/declaration"
 	operationvalue "github.com/wippyai/go-lua/analysis/program/target/operation"
 	protocolvalue "github.com/wippyai/go-lua/analysis/program/target/protocol"
+	typeindexvalue "github.com/wippyai/go-lua/analysis/program/target/typeindex"
 	"github.com/wippyai/go-lua/analysis/program/target/vocabulary"
 	schematype "github.com/wippyai/go-lua/analysis/schema/typecontract"
 )
@@ -24,6 +25,18 @@ func Seal(spec *declarationvalue.Spec) (*contractvalue.Contract, error) {
 	}
 	if err := schematype.ValidateSemantics(input.Semantics); err != nil {
 		return nil, fmt.Errorf("target: %w", err)
+	}
+	for index, declaration := range input.Types {
+		if !declaration.Declaration.Available() {
+			return nil, fmt.Errorf("target: qualified type %d (%q) has no declaration", index, declaration.Name)
+		}
+		if err := input.Semantics.Validate(declaration.Declaration, nil); err != nil {
+			return nil, fmt.Errorf("target: qualified type %d (%q): %w", index, declaration.Name, err)
+		}
+	}
+	types, err := typeindexvalue.Compile(input.Types)
+	if err != nil {
+		return nil, err
 	}
 
 	_, err = vocabulary.CheckedStoredTotal("operation table", len(input.Operations), 1)
@@ -152,6 +165,7 @@ func Seal(spec *declarationvalue.Spec) (*contractvalue.Contract, error) {
 	}
 	return contractvalue.New(contractvalue.Input{
 		Table: bootTable, Operations: queryCore, Protocols: protocols, ExactKeys: exactKeys,
+		Types:  types,
 		Column: column,
 	})
 }

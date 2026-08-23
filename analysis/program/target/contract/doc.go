@@ -23,14 +23,16 @@
 //	target/protocol    protocol freeze/validation, private rows, queries,
 //	                   canonical identity encoding, and protocol counts
 //	target/exactkey    contract-wide canonical literal directory and handles
+//	target/typeindex   contract-wide exact qualified type names, owner-issued
+//	                   Type handles, declarations, and canonical enumeration
 //	target/boot       boot roots/shapes/values/entries/bindings/metatables,
 //	                   private rows, queries, identity encoding and counts
 //	target/operation operation geometry plus the immutable operation query plane
 //	                   (Values, outcomes, behavior, transfers, effects, and
 //	                   declarations); composes no Target Contract or callback
 //	target             remaining verticals; composes operation.Core,
-//	                   protocol.Table, exactkey.Table, boot.Table, identity and
-//	                   complete Target ID
+//	                   protocol.Table, exactkey.Table, typeindex.Table,
+//	                   boot.Table, identity and complete Target ID
 //
 // `protocol.Compile` consumes sealed operation geometry and owner-issued
 // callback coordinates. It accepts no Contract, operation draft, mutable

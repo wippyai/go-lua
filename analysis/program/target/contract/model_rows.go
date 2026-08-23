@@ -6,6 +6,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/program/target/exactkey"
 	operationvalue "github.com/wippyai/go-lua/analysis/program/target/operation"
 	protocolvalue "github.com/wippyai/go-lua/analysis/program/target/protocol"
+	typeindexvalue "github.com/wippyai/go-lua/analysis/program/target/typeindex"
 	"github.com/wippyai/go-lua/analysis/program/target/vocabulary"
 	"github.com/wippyai/go-lua/analysis/schema/denominator"
 )
@@ -21,6 +22,7 @@ type Contract struct {
 	Operations operationvalue.Core
 	protocols  protocolvalue.Table
 	exactKeys  exactkey.Table
+	types      typeindexvalue.Table
 	counts     denominator.CountRows
 	// column is the one sealed semantic column produced by the owner that
 	// constructed this Contract. Contract carries it and frames its identity.

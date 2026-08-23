@@ -6,6 +6,15 @@ import (
 	schematype "github.com/wippyai/go-lua/analysis/schema/typecontract"
 )
 
+// QualifiedTypeSpec is one exact name-to-declaration entry in the Target
+// type vocabulary. Name is already fully qualified by the manifest owner;
+// Target never rebuilds it from provider or module fields. The declaration
+// remains the neutral type-contract value until the owner seals its index.
+type QualifiedTypeSpec struct {
+	Name        string
+	Declaration schematype.Type
+}
+
 type ResumeID uint32
 
 // ReentrySource identifies the closed authority that can restore a suspended

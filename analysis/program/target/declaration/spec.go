@@ -13,7 +13,11 @@ type Spec struct {
 	// Semantics is the explicit domain implementation of the schema type
 	// contract. Target never supplies a default: every sealed target must name
 	// the type authority that validates declarations and proves relations.
-	Semantics         schematype.Semantics
+	Semantics schematype.Semantics
+	// Types is the complete authored name-to-type vocabulary for the
+	// target. Names are already canonical and qualified at this boundary; the
+	// compiler seals them into owner-issued Type handles.
+	Types             []vocabulary.QualifiedTypeSpec
 	Operations        []vocabulary.OperationSpec
 	Protocols         []vocabulary.ProtocolSpec
 	InitialRoots      []vocabulary.InitialRootSpec
@@ -29,6 +33,7 @@ type Spec struct {
 // into its canonical immutable representation before publishing a Contract.
 type Input struct {
 	Semantics         schematype.Semantics
+	Types             []vocabulary.QualifiedTypeSpec
 	Operations        []vocabulary.OperationSpec
 	Protocols         []vocabulary.ProtocolSpec
 	InitialRoots      []vocabulary.InitialRootSpec
@@ -53,6 +58,7 @@ func (spec *Spec) Consume() (Input, error) {
 	defer func() { *spec = Spec{consumed: true} }()
 	return Input{
 		Semantics:         spec.Semantics,
+		Types:             spec.Types,
 		Operations:        spec.Operations,
 		Protocols:         spec.Protocols,
 		InitialRoots:      spec.InitialRoots,

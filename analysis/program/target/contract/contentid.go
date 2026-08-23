@@ -5,9 +5,13 @@ import (
 	"errors"
 
 	"github.com/wippyai/go-lua/analysis/identity"
+	typeindex "github.com/wippyai/go-lua/analysis/program/target/typeindex"
 	"github.com/wippyai/go-lua/internal/framing"
 )
 
+// Version 29 carries the sealed Target-owned qualified type directory. A
+// qualified type name is observable target vocabulary, so changing its
+// spelling, declaration, or owner-issued mapping changes the contract.
 // Version 28 carries the sealed semantic column: the identity of the one
 // column an owner above this package sealed with the contract. A contract
 // that carries a different column is a different contract.
@@ -31,7 +35,7 @@ import (
 // Version 18 adds retained callback-holder protocol rows and the mandatory
 // zero-holder branch of a callback release. A target identity from any
 // preceding layout must never be reused as this schema.
-const contentIDCodecVersion = 28
+const contentIDCodecVersion = 29
 
 // ContentID is the SHA-256 identity of the complete observable sealed
 // contract. It encodes no authoring references, Go object identities, lookup
@@ -111,6 +115,7 @@ const (
 	recordOperationSubedgeRelation
 	recordProtocolRequirement
 	recordSealedColumn
+	recordQualifiedType
 )
 
 func encodeCoordinate(w *framing.Writer, kind, ordinal uint64) error {
@@ -159,6 +164,21 @@ func encodeContract(w *framing.Writer, c *Contract) error {
 	}
 	if err := c.Table.Encode(w, c.exactKeys); err != nil {
 		return err
+	}
+	if err := w.Count(uint64(c.types.Count())); err != nil {
+		return err
+	}
+	for index := 0; index < c.types.Count(); index++ {
+		_, typ, ok := c.types.At(index)
+		if !ok {
+			return errors.New("target: malformed qualified type table")
+		}
+		if err := w.Record(recordQualifiedType); err != nil {
+			return err
+		}
+		if err := typeindex.Encode(w, &c.types, typ); err != nil {
+			return err
+		}
 	}
 	// The sealed semantic column is part of the published read surface, so its
 	// identity is part of the contract identity. An absent column frames its

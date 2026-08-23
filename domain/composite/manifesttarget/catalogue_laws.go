@@ -107,8 +107,13 @@ func compileCatalogue(declarations *manifest.Catalogue, amendments ...PreviewAme
 	if err != nil {
 		return declaration.Spec{}, err
 	}
+	namedTypes, err := qualifiedTypes(declarations)
+	if err != nil {
+		return declaration.Spec{}, err
+	}
 	return declaration.Spec{
 		Semantics:         domaincontract.NewSemantics(),
+		Types:             namedTypes,
 		Operations:        catalogue.operations,
 		Protocols:         protocolSpecs,
 		InitialRoots:      boot.roots,
