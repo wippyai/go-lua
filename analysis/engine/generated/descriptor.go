@@ -218,6 +218,39 @@ func zeroDenominator(address ruleplan.DenominatorAddr) bool {
 	return !address.Present && address.Ordinal == 0
 }
 
+// readFormPredicateShape is the descriptor's statement of which sealed read
+// forms carry a selection predicate. It is the same normal form the cold
+// declaration seals: an exact lookup and a closed complete vector select
+// nothing, a summary vector is selected by one owner-issued predicate, and a
+// selected read may omit it only because a routed row's tag is optional data.
+func readFormPredicateShape(form ruleprogram.ReadForm, predicate ruleplan.ProjectionAddr, present bool) bool {
+	if present && !validProjectionAddr(predicate) {
+		return false
+	}
+	if !present && predicate != (ruleplan.ProjectionAddr{}) {
+		return false
+	}
+	switch form {
+	case ruleprogram.Exact, ruleprogram.Complete:
+		return !present
+	case ruleprogram.Summary:
+		return present
+	case ruleprogram.Selected:
+		return true
+	default:
+		return false
+	}
+}
+
+// readFormRequiresDenominator names the reads whose empty state is a closed
+// fact rather than a plain absence: a selected route, a summary or complete
+// vector, and any read materialized through a declared default or dense
+// denominator. Those reads are unsealed without one.
+func readFormRequiresDenominator(form ruleprogram.ReadForm, sparse ruleprogram.Sparse) bool {
+	return form == ruleprogram.Selected || form == ruleprogram.Summary || form == ruleprogram.Complete ||
+		sparse == ruleprogram.SparseDefault || sparse == ruleprogram.SparseDense
+}
+
 // normalizeReadPlan validates the complete sealed read metadata. There is no
 // legacy exact default here: a descriptor without its form or contract is
 // incomplete and is refused at the seal boundary.
@@ -225,29 +258,20 @@ func normalizeReadPlan(read *ReadPlan) bool {
 	if read == nil {
 		return false
 	}
-	if read.Form != ruleprogram.Exact && read.Form != ruleprogram.Selected {
-		return false
-	}
 	contract := read.Contract
 	if !contract.Order.Available() || !contract.Sparse.Available() || !contract.OnOpaque.Available() || !contract.Multiplicity.Available() {
 		return false
 	}
-	if read.Form == ruleprogram.Exact {
-		if read.PredicatePresent || read.Predicate != (ruleplan.ProjectionAddr{}) {
-			return false
-		} else {
-			if read.PredicatePresent && !validProjectionAddr(read.Predicate) {
-				return false
-			}
-			if !read.PredicatePresent && read.Predicate != (ruleplan.ProjectionAddr{}) {
-				return false
-			}
-		}
+	if !readFormPredicateShape(read.Form, read.Predicate, read.PredicatePresent) {
+		return false
 	}
 	if !zeroDenominator(read.Denominator) && !read.Denominator.Present {
 		return false
 	}
 	if read.Denominator.Present && read.Denominator.Ordinal == ^uint32(0) {
+		return false
+	}
+	if readFormRequiresDenominator(read.Form, contract.Sparse) && !read.Denominator.Present {
 		return false
 	}
 	if read.Sources.Count == 0 {
@@ -312,16 +336,13 @@ func validReadPlan(read ReadPlan, inputCount, axisCount int) bool {
 	if read.PredicatePresent && !validProjectionAddr(read.Predicate) {
 		return false
 	}
-	if read.Form != ruleprogram.Exact && read.Form != ruleprogram.Selected {
-		return false
-	}
 	if !read.Contract.Order.Available() || !read.Contract.Sparse.Available() || !read.Contract.OnOpaque.Available() || !read.Contract.Multiplicity.Available() {
 		return false
 	}
-	if read.Form == ruleprogram.Exact && read.PredicatePresent {
+	if !readFormPredicateShape(read.Form, read.Predicate, read.PredicatePresent) {
 		return false
 	}
-	if (read.Form == ruleprogram.Selected || read.Contract.Sparse == ruleprogram.SparseDefault || read.Contract.Sparse == ruleprogram.SparseDense) && !read.Denominator.Present {
+	if readFormRequiresDenominator(read.Form, read.Contract.Sparse) && !read.Denominator.Present {
 		return false
 	}
 	if !zeroDenominator(read.Denominator) && !read.Denominator.Present || read.Denominator.Present && read.Denominator.Ordinal == ^uint32(0) {

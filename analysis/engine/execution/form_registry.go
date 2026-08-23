@@ -25,6 +25,9 @@ const (
 	FormExact Form = iota + 1
 	// FormSource is the read-free materialized source column write.
 	FormSource
+	// FormSummary is the Summary and Complete read axis: one partition row's
+	// whole declared cell vector, delivered under a mandatory read contract.
+	FormSummary
 	// formCount is the exclusive upper bound of the declared ordinals. It is
 	// the last constant in the block; a new form is appended above it.
 	formCount
@@ -34,8 +37,9 @@ const (
 // name, whether or not it has an implementation, so a plan whose form is not
 // executable refuses by that name instead of by a bare ordinal.
 var formNames = [formCount]string{
-	FormExact:  "exact",
-	FormSource: "source",
+	FormExact:   "exact",
+	FormSource:  "source",
+	FormSummary: "summary",
 }
 
 // Declared reports whether form names a sealed ordinal of the table.
@@ -116,8 +120,9 @@ type formBuilder[K scalar.Key, V any] func(FormPlane[K, V], []FormRow) (Family, 
 // formClassifiers is the classifier column of the form table, indexed by
 // ordinal. A form lane appends its own entry here and owns its child file.
 var formClassifiers = [formCount]formClassifier{
-	FormExact:  classifyExactForm,
-	FormSource: classifySourceForm,
+	FormExact:   classifyExactForm,
+	FormSource:  classifySourceForm,
+	FormSummary: classifySummaryForm,
 }
 
 // formBuilders is the implementation column of the form table. It is built per

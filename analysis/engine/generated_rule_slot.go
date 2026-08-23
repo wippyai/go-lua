@@ -405,8 +405,17 @@ func generatedPlanJoinShape(compiled ruleplan.Plan, joinIndex int, join ruleplan
 		if join.PredicatePresent && join.Predicate == (ruleplan.ProjectionAddr{}) {
 			return false
 		}
-	case ruleprogram.Summary, ruleprogram.Complete:
-		return false
+	case ruleprogram.Summary:
+		// A summary vector is selected by one owner-issued predicate. Without
+		// it the join declares no selection and is a complete vector under a
+		// summary spelling.
+		if !join.PredicatePresent || join.Predicate == (ruleplan.ProjectionAddr{}) {
+			return false
+		}
+	case ruleprogram.Complete:
+		if join.PredicatePresent || join.Predicate != (ruleplan.ProjectionAddr{}) {
+			return false
+		}
 	default:
 		return false
 	}
@@ -414,7 +423,8 @@ func generatedPlanJoinShape(compiled ruleplan.Plan, joinIndex int, join ruleplan
 		join.Denominator.Present && join.Denominator.Ordinal == ^uint32(0) {
 		return false
 	}
-	if (join.ReadForm == ruleprogram.Selected || join.ReadContract.Sparse == ruleprogram.SparseDefault || join.ReadContract.Sparse == ruleprogram.SparseDense) && !join.Denominator.Present {
+	if (join.ReadForm == ruleprogram.Selected || join.ReadForm == ruleprogram.Summary || join.ReadForm == ruleprogram.Complete ||
+		join.ReadContract.Sparse == ruleprogram.SparseDefault || join.ReadContract.Sparse == ruleprogram.SparseDense) && !join.Denominator.Present {
 		return false
 	}
 	for offset := uint32(0); offset < join.Sources.Count; offset++ {
