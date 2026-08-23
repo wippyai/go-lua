@@ -14,13 +14,16 @@ const (
 	BootRoots                      schemaapi.Key  = "heap/boot/candidates"
 	ClosedAllocations              schemaapi.Key  = "heap/closed-allocation/candidates"
 	EmptyAllocations               schemaapi.Key  = "heap/empty-allocation/candidates"
+	EmptyAllocationPredecessors    schemaapi.Key  = "heap/empty-allocation/predecessors"
 	IngressCoordinate              schemaapi.Key  = "heap/ingress/coordinate"
 	BootCoordinate                 schemaapi.Key  = "heap/boot/coordinate"
 	ClosedAllocationCoordinate     schemaapi.Key  = "heap/closed-allocation/coordinate"
 	EmptyAllocationCoordinate      schemaapi.Key  = "heap/empty-allocation/coordinate"
+	EmptyAllocationPredecessorKey  schemaapi.Key  = "heap/empty-allocation/predecessor-key"
 	IngressReducer                 schemaapi.Key  = "heap/reducer/ingress"
 	BootReducer                    schemaapi.Key  = "heap/reducer/boot"
 	ClosedAllocationReducer        schemaapi.Key  = "heap/reducer/closed"
+	EmptyAllocationReducer         schemaapi.Key  = "heap/reducer/empty"
 	EmptyAllocationCarryTransform  schemaapi.Key  = "transform/heap/allocation-empty"
 	ClosedAllocationCarryTransform schemaapi.Key  = "transform/heap/allocation-closed"
 	HeapKeyCarrier                 member.Carrier = "carrier/heap/key"
@@ -40,12 +43,14 @@ func AxisMemberCatalog() member.Catalog {
 			{Key: BootRoots, Subject: HeapKeyCarrier, CandidateProvider: member.RelationRef{Axis: schemaapi.EntryReference{Surface: schemaapi.SurfaceKind(2), Key: "heap"}, Member: "heap/boot/candidates"}},
 			{Key: ClosedAllocations, Subject: HeapKeyCarrier, CandidateProvider: member.RelationRef{Axis: schemaapi.EntryReference{Surface: schemaapi.SurfaceKind(2), Key: "heap"}, Member: "heap/closed-allocation/candidates"}},
 			{Key: EmptyAllocations, Subject: HeapKeyCarrier, CandidateProvider: member.RelationRef{Axis: schemaapi.EntryReference{Surface: schemaapi.SurfaceKind(2), Key: "heap"}, Member: "heap/empty-allocation/candidates"}},
+			{Key: EmptyAllocationPredecessors, Subject: HeapFactCarrier, CandidateProvider: member.RelationRef{Axis: schemaapi.EntryReference{Surface: schemaapi.SurfaceKind(2), Key: "heap"}, Member: "heap/empty-allocation/candidates"}, Inputs: []member.Carrier{HeapKeyCarrier}},
 		},
 		[]member.Projection{
 			{Key: IngressCoordinate, Relation: IngressSeeds, Role: member.Destination, Result: HeapKeyCarrier, CandidateProvider: member.RelationRef{Axis: schemaapi.EntryReference{Surface: schemaapi.SurfaceKind(2), Key: "heap"}, Member: "heap/ingress/candidates"}},
 			{Key: BootCoordinate, Relation: BootRoots, Role: member.Destination, Result: HeapKeyCarrier, CandidateProvider: member.RelationRef{Axis: schemaapi.EntryReference{Surface: schemaapi.SurfaceKind(2), Key: "heap"}, Member: "heap/boot/candidates"}},
 			{Key: ClosedAllocationCoordinate, Relation: ClosedAllocations, Role: member.Destination, Result: HeapKeyCarrier, CandidateProvider: member.RelationRef{Axis: schemaapi.EntryReference{Surface: schemaapi.SurfaceKind(2), Key: "heap"}, Member: "heap/closed-allocation/candidates"}},
 			{Key: EmptyAllocationCoordinate, Relation: EmptyAllocations, Role: member.Destination, Result: HeapKeyCarrier, CandidateProvider: member.RelationRef{Axis: schemaapi.EntryReference{Surface: schemaapi.SurfaceKind(2), Key: "heap"}, Member: "heap/empty-allocation/candidates"}},
+			{Key: EmptyAllocationPredecessorKey, Relation: EmptyAllocationPredecessors, Role: member.Key, Result: HeapKeyCarrier, CandidateProvider: member.RelationRef{Axis: schemaapi.EntryReference{Surface: schemaapi.SurfaceKind(2), Key: "heap"}, Member: "heap/empty-allocation/candidates"}},
 		},
 		[]member.Reducer{
 			{Key: IngressReducer, Inputs: []member.ReducerInput{}, Outputs: []member.ReducerOutput{
@@ -57,6 +62,11 @@ func AxisMemberCatalog() member.Catalog {
 			{Key: ClosedAllocationReducer, Inputs: []member.ReducerInput{
 				{Axis: valueAxis, Carrier: HeapFactCarrier, Form: member.ReadFormExact, Multiplicity: member.MultiplicityOne},
 				{Axis: schemaapi.EntryReference{Surface: schemaapi.SurfaceKindAxis, Key: "value"}, Carrier: ValueFactCarrier, Form: member.ReadFormSummary, Multiplicity: member.MultiplicityMany, Tag: ValueCoordinateCarrier},
+			}, Outputs: []member.ReducerOutput{
+				{Axis: valueAxis, Carrier: HeapFactCarrier},
+			}},
+			{Key: EmptyAllocationReducer, Inputs: []member.ReducerInput{
+				{Axis: valueAxis, Carrier: HeapFactCarrier, Form: member.ReadFormExact, Multiplicity: member.MultiplicityOne},
 			}, Outputs: []member.ReducerOutput{
 				{Axis: valueAxis, Carrier: HeapFactCarrier},
 			}},

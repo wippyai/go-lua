@@ -214,6 +214,22 @@ func (owner *RelationOwner) Project(relationOrdinal, projectionOrdinal, candidat
 		default:
 			return 0, false
 		}
+	case 4:
+		switch projectionOrdinal {
+		case 4:
+			candidate, candidateOK := owner.schema.EmptyAllocationAt(int(candidateOrdinal))
+			if !candidateOK {
+				return 0, false
+			}
+			first, projectionOK := candidate.EmptyAllocation()
+			if !projectionOK {
+				return 0, false
+			}
+			projected := first
+			return owner.schema.DenseKeyIndex(projected)
+		default:
+			return 0, false
+		}
 	default:
 		return 0, false
 	}
@@ -276,7 +292,7 @@ func (owner *RelationOwner) materializeSourceColumns() bool {
 // SourceFactColumn returns the immutable typed source fact column for one relation.
 // RelationCount is the sealed relation-ordinal extent. It preserves absent
 // materializations separately from a valid empty source column.
-func (*RelationOwner) RelationCount() int { return 4 }
+func (*RelationOwner) RelationCount() int { return 5 }
 
 func (owner *RelationOwner) SourceFactColumn(relationOrdinal uint32) (memberrelation.SourceColumn[Value], bool) {
 	if owner == nil {

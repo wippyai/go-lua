@@ -19,6 +19,7 @@ import (
 	heapbase "github.com/wippyai/go-lua/domain/heap/memberdefinition"
 
 	heapclosed "github.com/wippyai/go-lua/domain/heap/allocation/closed/memberdefinition"
+	heapempty "github.com/wippyai/go-lua/domain/heap/allocation/empty/memberdefinition"
 	heapingress "github.com/wippyai/go-lua/domain/heap/allocation/ingress/memberdefinition"
 	heapbootstrap "github.com/wippyai/go-lua/domain/heap/bootstrap/memberdefinition"
 	packbase "github.com/wippyai/go-lua/domain/pack/memberdefinition"
@@ -79,6 +80,7 @@ func Composition() (definition.Roster, bool) {
 				heapingress.Contribution(),
 				heapbootstrap.Contribution(),
 				heapclosed.Contribution(),
+				heapempty.Contribution(),
 			},
 		},
 		definition.Source{
