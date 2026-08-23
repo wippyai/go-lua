@@ -70,7 +70,9 @@ func generatedMemberRuntime(t *testing.T, fixture generatedFactorAdapterFixture,
 	if !rowOK || !familyOK || !catalogOK {
 		t.Fatal("seal generated exact family")
 	}
-	member.invocationRef = 0
+	if !member.sealInvocationRow(catalog, 0, 0, fixture.unit, fixture.target) {
+		t.Fatal("seal generated invocation row")
+	}
 	run := execution.NewRun(1, 1)
 	executor := family.NewExecutor(run)
 	if run == nil || executor == nil {
@@ -153,6 +155,119 @@ func TestGeneratedMemberRowDispatchRefusesForeignOrStaleHandles(t *testing.T) {
 		t.Fatal("foreign Target was accepted")
 	}
 	_ = fixture.work.AbortRuleContribution(base, nil)
+}
+
+// generatedMemberDispatchRefusal runs one dispatch that must not authenticate
+// and answers the boundary that refused it by name.
+func generatedMemberDispatchRefusal(t *testing.T, fixture generatedFactorAdapterFixture, epoch *executorEpoch, member *generatedMember) string {
+	t.Helper()
+	base := beginGeneratedMemberBase(t, fixture)
+	result := epoch.executeMemberRow(memberRow{generated: member}, base, []carrier.State{fixture.source.State()}, fixture.whole)
+	_ = fixture.work.AbortRuleContribution(base, nil)
+	if result.valid || result.wrote || !result.boundary.available() {
+		t.Fatal("dispatch admitted an unauthenticated row")
+	}
+	return result.boundary.site
+}
+
+// TestGeneratedMemberRowDispatchRefusesAnUnsealedAddress states that a member
+// row reaches execution only through the seal the execution program installed.
+// A row that was never given an address has none to borrow from the epoch.
+func TestGeneratedMemberRowDispatchRefusesAnUnsealedAddress(t *testing.T) {
+	fixture := newGeneratedFactorAdapterFixture(t)
+	_, epoch := generatedMemberRuntime(t, fixture, 17, 23)
+	unsealed, ok := newGeneratedMember(generatedMemberTestSpec(t, fixture, 17, 23))
+	if !ok {
+		t.Fatal("seal generated member")
+	}
+	if site := generatedMemberDispatchRefusal(t, fixture, epoch, unsealed); site != "unsealed-row" {
+		t.Fatalf("unsealed row refused at %q", site)
+	}
+}
+
+// TestGeneratedMemberRowDispatchRefusesAForeignCatalog states the owner fence
+// on the address itself. A Ref is meaningful only against the catalog that
+// minted it, so an epoch carrying any other catalog - a superseded execution
+// program, or another Program's - refuses before it indexes a row.
+func TestGeneratedMemberRowDispatchRefusesAForeignCatalog(t *testing.T) {
+	fixture := newGeneratedFactorAdapterFixture(t)
+	member, epoch := generatedMemberRuntime(t, fixture, 17, 23)
+	foreign, ok := executioncatalog.Seal([]executioncatalog.Draft{{Family: 0, Local: 0, Rule: 17, Member: 0, Candidate: 23, InputCount: 1, OutputCount: 1}})
+	if !ok || foreign == epoch.generatedCatalog {
+		t.Fatal("seal foreign catalog")
+	}
+	epoch.generatedCatalog = foreign
+	if site := generatedMemberDispatchRefusal(t, fixture, epoch, member); site != "row-owner" {
+		t.Fatalf("foreign catalog refused at %q", site)
+	}
+}
+
+// TestGeneratedMemberRowDispatchRefusesAWrongRowOrdinal states that the sealed
+// address must still name this row's own occurrence. The catalog row carries
+// the member, rule and candidate ordinals it was drafted under; a row whose
+// live occurrence has moved off them is dispatching against another row.
+func TestGeneratedMemberRowDispatchRefusesAWrongRowOrdinal(t *testing.T) {
+	fixture := newGeneratedFactorAdapterFixture(t)
+	member, epoch := generatedMemberRuntime(t, fixture, 17, 23)
+	member.candidate = 24
+	if site := generatedMemberDispatchRefusal(t, fixture, epoch, member); site != "row-ordinal" {
+		t.Fatalf("wrong candidate ordinal refused at %q", site)
+	}
+
+	member, epoch = generatedMemberRuntime(t, fixture, 17, 23)
+	member.rule = 18
+	if site := generatedMemberDispatchRefusal(t, fixture, epoch, member); site != "row-ordinal" {
+		t.Fatalf("wrong rule ordinal refused at %q", site)
+	}
+}
+
+// TestGeneratedMemberRowDispatchRefusesAStaleGeneration states the one fence
+// that cannot be sealed with the address: the invocation fences name this
+// solve generation, so an epoch that no longer carries a live relation
+// revision and generation refuses before a Ticket is issued against them.
+func TestGeneratedMemberRowDispatchRefusesAStaleGeneration(t *testing.T) {
+	fixture := newGeneratedFactorAdapterFixture(t)
+	member, epoch := generatedMemberRuntime(t, fixture, 17, 23)
+	epoch.generation = 0
+	if site := generatedMemberDispatchRefusal(t, fixture, epoch, member); site != "generation" {
+		t.Fatalf("stale generation refused at %q", site)
+	}
+
+	member, epoch = generatedMemberRuntime(t, fixture, 17, 23)
+	epoch.relationRevision = 0
+	if site := generatedMemberDispatchRefusal(t, fixture, epoch, member); site != "generation" {
+		t.Fatalf("stale relation revision refused at %q", site)
+	}
+}
+
+// TestGeneratedMemberRowSealsOneAddressOnce states that the install-time proof
+// is established exactly once and only against a catalog row that already
+// names this member. A second address, a row that names another occurrence,
+// and handles other than the ones the typed family row was built from are all
+// refused at install rather than at dispatch.
+func TestGeneratedMemberRowSealsOneAddressOnce(t *testing.T) {
+	fixture := newGeneratedFactorAdapterFixture(t)
+	member, epoch := generatedMemberRuntime(t, fixture, 17, 23)
+	if member.sealInvocationRow(epoch.generatedCatalog, 0, 0, fixture.unit, fixture.target) {
+		t.Fatal("a sealed row took a second address")
+	}
+	foreign := newGeneratedFactorAdapterFixture(t)
+	fresh, ok := newGeneratedMember(generatedMemberTestSpec(t, fixture, 17, 23))
+	if !ok {
+		t.Fatal("seal generated member")
+	}
+	if fresh.sealInvocationRow(epoch.generatedCatalog, 0, 0, foreign.unit, fixture.target) {
+		t.Fatal("a row was sealed to a foreign Unit")
+	}
+	if fresh.sealInvocationRow(epoch.generatedCatalog, 0, 1, fixture.unit, fixture.target) {
+		t.Fatal("a row was sealed to another member ordinal")
+	}
+	if fresh.invocation.installed() {
+		t.Fatal("a refused seal installed an address")
+	}
+	if !fresh.sealInvocationRow(epoch.generatedCatalog, 0, 0, fixture.unit, fixture.target) {
+		t.Fatal("seal generated invocation row")
+	}
 }
 
 func TestGeneratedMemberRowIsExclusive(t *testing.T) {

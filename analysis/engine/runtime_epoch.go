@@ -243,7 +243,11 @@ func buildGeneratedExecutionProgram(program *runtimeProgram) (*generatedExecutio
 	memberCount := program.memberCount()
 	rowsByOwner := make([][]execution.FormRow, len(program.factorOwners))
 	assignments := make([]generatedFamilyAssignment, memberCount)
-	supported := make([]bool, memberCount)
+	// installed is the row each member was classified into and handed over as.
+	// A declared Form is the presence proof, and the row carries the exact
+	// Unit/Target the owner's family was built from, which is what the member's
+	// invocation seal is authenticated against below.
+	installed := make([]execution.FormRow, memberCount)
 	assigned := make([]bool, memberCount)
 	for memberIndex := 0; memberIndex < memberCount; memberIndex++ {
 		row, rowOK := program.memberRowAt(memberIndex)
@@ -263,7 +267,7 @@ func buildGeneratedExecutionProgram(program *runtimeProgram) (*generatedExecutio
 		}
 		formRow.Member, formRow.Unit, formRow.Target = memberIndex, row.generated.unit, row.generated.target
 		rowsByOwner[descriptor.OutputFactor()] = append(rowsByOwner[descriptor.OutputFactor()], formRow)
-		supported[memberIndex] = true
+		installed[memberIndex] = formRow
 	}
 	families := make([]execution.Family, 0, len(rowsByOwner)*2)
 	for ownerIndex, formRows := range rowsByOwner {
@@ -286,7 +290,7 @@ func buildGeneratedExecutionProgram(program *runtimeProgram) (*generatedExecutio
 			families = append(families, executor)
 		}
 		for _, address := range addresses {
-			if address.Member < 0 || address.Member >= memberCount || !supported[address.Member] || assigned[address.Member] || uint64(address.FamilyOffset) >= uint64(len(executors)) {
+			if address.Member < 0 || address.Member >= memberCount || !installed[address.Member].Form.Declared() || assigned[address.Member] || uint64(address.FamilyOffset) >= uint64(len(executors)) {
 				return nil, false
 			}
 			assignments[address.Member] = generatedFamilyAssignment{family: familyBase + address.FamilyOffset, local: address.Local}
@@ -294,8 +298,9 @@ func buildGeneratedExecutionProgram(program *runtimeProgram) (*generatedExecutio
 		}
 	}
 	drafts := make([]executioncatalog.Draft, 0, memberCount)
+	draftMembers := make([]int, 0, memberCount)
 	for memberIndex := 0; memberIndex < memberCount; memberIndex++ {
-		if !supported[memberIndex] {
+		if !installed[memberIndex].Form.Declared() {
 			continue
 		}
 		if !assigned[memberIndex] {
@@ -311,11 +316,23 @@ func buildGeneratedExecutionProgram(program *runtimeProgram) (*generatedExecutio
 		}
 		assignment := assignments[memberIndex]
 		drafts = append(drafts, executioncatalog.Draft{Family: assignment.family, Local: assignment.local, Rule: row.generated.rule, Member: uint32(memberIndex), Candidate: row.generated.candidate, InputCount: uint16(descriptor.InputCount()), OutputCount: 1})
-		row.generated.invocationRef = executioncatalog.Ref(len(drafts) - 1)
+		draftMembers = append(draftMembers, memberIndex)
 	}
 	catalog, sealed := executioncatalog.Seal(drafts)
 	if !sealed {
 		return nil, false
+	}
+	// The catalog is the authority an address is minted against, so a member
+	// row is sealed to its invocation only once that authority exists. This is
+	// the one place the proof is established: dispatch reads the seal.
+	for ref, memberIndex := range draftMembers {
+		row, rowOK := program.memberRowAt(memberIndex)
+		if !rowOK || row.generated == nil {
+			return nil, false
+		}
+		if !row.generated.sealInvocationRow(catalog, executioncatalog.Ref(ref), uint32(memberIndex), installed[memberIndex].Unit, installed[memberIndex].Target) {
+			return nil, false
+		}
 	}
 	return &generatedExecutionProgram{catalog: catalog, families: families}, true
 }

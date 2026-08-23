@@ -75,12 +75,28 @@ type generatedMember struct {
 	routeNarrowEligible bool
 	writes              bool
 
-	unit          carrier.Unit
-	target        carrier.Target
-	rule          uint32
-	candidate     uint32
-	invocationRef executioncatalog.Ref
+	unit       carrier.Unit
+	target     carrier.Target
+	rule       uint32
+	candidate  uint32
+	invocation generatedRowSeal
 }
+
+// generatedRowSeal binds one member row to the one execution row it dispatches
+// to. The catalog Ref is not a free field: it exists only inside a seal, beside
+// the catalog that minted it, the member ordinal the row was drafted under, and
+// the exact Unit/Target the typed family row was built from. The whole proof is
+// established once, when the execution program installs the address; dispatch
+// reads it and never re-derives an address of its own.
+type generatedRowSeal struct {
+	catalog *executioncatalog.Catalog
+	unit    carrier.Unit
+	target  carrier.Target
+	ref     executioncatalog.Ref
+	ordinal uint32
+}
+
+func (seal generatedRowSeal) installed() bool { return seal.catalog != nil }
 
 var _ runtimeMemberGeometry = (*generatedMember)(nil)
 
@@ -153,7 +169,6 @@ func newGeneratedMember(spec generatedMemberSpec) (*generatedMember, bool) {
 		target:              spec.target,
 		rule:                spec.rule,
 		candidate:           spec.candidate,
-		invocationRef:       executioncatalog.Ref(^uint32(0)),
 	}, true
 }
 
@@ -256,6 +271,56 @@ func generatedMemberRefusal(member *generatedMember, site string) memberResult {
 	return memberResult{boundary: refused(SolveFailureFamilyExecution, site), valid: false}
 }
 
+// sealInvocationRow installs this row's one authenticated execution address.
+// It runs once, cold, where the execution program mints the address: the
+// catalog row must already name this member's ordinal, rule and candidate
+// occurrence, and the handles the typed family row was built from must be the
+// handles this row's contribution plane presents. A row that is already sealed
+// refuses a second address.
+func (member *generatedMember) sealInvocationRow(catalog *executioncatalog.Catalog, ref executioncatalog.Ref, ordinal uint32, unit carrier.Unit, target carrier.Target) bool {
+	if member == nil || catalog == nil || member.invocation.installed() || !member.validRuntimeMember() {
+		return false
+	}
+	row, rowOK := catalog.At(ref)
+	if !rowOK || row.MemberOrdinal() != ordinal || row.RuleOrdinal() != member.rule || row.CandidateOrdinal() != member.candidate {
+		return false
+	}
+	if member.unit != unit || member.target != target {
+		return false
+	}
+	member.invocation = generatedRowSeal{catalog: catalog, unit: unit, target: target, ref: ref, ordinal: ordinal}
+	return true
+}
+
+// authenticateInvocationRow reads the seal against the live epoch and answers
+// the sealed row or the boundary that refused it. Nothing here re-proves an
+// invariant: the catalog must be the authority the address was minted against,
+// the row must still name this member's occurrence, and the live Unit/Target
+// must still be the pair the typed row executes. Each fence names its own
+// refusal, so a foreign handle and a stale address are never one verdict.
+func (member *generatedMember) authenticateInvocationRow(catalog *executioncatalog.Catalog) (executioncatalog.Row, solveBoundary) {
+	if !member.invocation.installed() {
+		return executioncatalog.Row{}, refused(SolveFailureFamilyExecution, "unsealed-row")
+	}
+	if catalog != member.invocation.catalog {
+		return executioncatalog.Row{}, refused(SolveFailureFamilyExecution, "row-owner")
+	}
+	row, rowOK := catalog.At(member.invocation.ref)
+	if !rowOK {
+		return executioncatalog.Row{}, refused(SolveFailureFamilyExecution, "catalog")
+	}
+	if row.MemberOrdinal() != member.invocation.ordinal || row.RuleOrdinal() != member.rule || row.CandidateOrdinal() != member.candidate {
+		return executioncatalog.Row{}, refused(SolveFailureFamilyExecution, "row-ordinal")
+	}
+	if member.unit != member.invocation.unit {
+		return executioncatalog.Row{}, refused(SolveFailureFamilyExecution, "foreign-unit")
+	}
+	if member.target != member.invocation.target {
+		return executioncatalog.Row{}, refused(SolveFailureFamilyExecution, "foreign-target")
+	}
+	return row, boundaryNone
+}
+
 // buildGeneratedFamilies is the typed trampoline from one bound Factor to the
 // execution form table. It contributes the Factor's sealed typed plane and
 // nothing else: which forms exist, how a plan row is classified into one, and
@@ -276,12 +341,17 @@ func (factor *boundFactor[K, V]) buildGeneratedFamilies(rows []execution.FormRow
 }
 
 func (member *generatedMember) executeGeneratedAt(epoch *executorEpoch, base carrier.RuleContributionBase, inputs []carrier.State, within support.Mask) memberResult {
-	if member == nil || epoch == nil || epoch.runtime == nil || epoch.runtime.program == nil || !member.validRuntimeMember() || !within.Valid() || epoch.work == nil || !epoch.work.OwnsRuleContributionStates(base, inputs) || epoch.relationRevision == 0 || epoch.generation == 0 || epoch.generatedCatalog == nil {
+	if member == nil || epoch == nil || epoch.runtime == nil || epoch.runtime.program == nil || !member.validRuntimeMember() || !within.Valid() || epoch.work == nil || !epoch.work.OwnsRuleContributionStates(base, inputs) {
 		return generatedMemberRefusal(member, "preflight")
 	}
-	row, rowOK := epoch.generatedCatalog.At(member.invocationRef)
-	if !rowOK {
-		return generatedMemberRefusal(member, "catalog")
+	// The invocation fences are the one authentication that cannot be sealed:
+	// they name this solve generation, not this row's address.
+	if epoch.relationRevision == 0 || epoch.generation == 0 {
+		return generatedMemberRefusal(member, "generation")
+	}
+	row, boundary := member.authenticateInvocationRow(epoch.generatedCatalog)
+	if boundary.available() {
+		return memberResult{boundary: boundary, valid: false}
 	}
 	descriptor, descriptorOK := epoch.runtime.program.generatedProgramAt(member.rule)
 	if !descriptorOK || descriptor.InputCount() != len(inputs) || descriptor.OutputCount() != 1 {
