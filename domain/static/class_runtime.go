@@ -44,5 +44,18 @@ func (s *ClassSet) sealRuntime() (*typeauthority.Runtime, error) {
 		}
 		seenInner[inner] = struct{}{}
 	}
+	for value, class := range s.byTarget {
+		if class.owner != s || class.index == 0 || uint64(class.index) >= uint64(len(s.rows)) {
+			return nil, errors.New("static: malformed Target Runtime class projection")
+		}
+		row := s.rows[class.index]
+		if row.kind != ClassConcrete {
+			continue
+		}
+		if _, owned := runtime.Index(row.inner); !owned {
+			return nil, errors.New("static: Target Runtime projection unavailable")
+		}
+		s.targetRuntime[value] = row.inner
+	}
 	return runtime, nil
 }

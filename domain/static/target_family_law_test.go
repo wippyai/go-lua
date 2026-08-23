@@ -71,7 +71,7 @@ func TestOneSealedTargetFamilySeedsEveryLink(t *testing.T) {
 		}
 		observed := make([]identity.ContentID, 0, family.Count())
 		for index := 0; index < family.Count(); index++ {
-			value, _, rowOK := family.At(index)
+			value, member, rowOK := family.At(index)
 			if !rowOK {
 				t.Fatalf("link %d: malformed sealed class family row %d", link, index)
 			}
@@ -84,6 +84,17 @@ func TestOneSealedTargetFamilySeedsEveryLink(t *testing.T) {
 				t.Fatalf("link %d: class for Target type %d has no identity", link, index)
 			}
 			observed = append(observed, classID)
+			inner, innerOK := classes.RuntimeForTarget(target, value)
+			if member >= 0 {
+				if !innerOK {
+					t.Fatalf("link %d: concrete Target type %d has no Runtime row", link, index)
+				}
+				if _, owned := classes.runtime.Index(inner); !owned {
+					t.Fatalf("link %d: concrete Target type %d escaped Runtime ownership", link, index)
+				}
+			} else if innerOK {
+				t.Fatalf("link %d: opaque Target type %d acquired a concrete Runtime row", link, index)
+			}
 		}
 		if link == 1 {
 			first = observed

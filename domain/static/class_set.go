@@ -57,16 +57,20 @@ type descriptorConstruction struct {
 // relational judgment is recomputed by a finite scan. It owns no Pack
 // values and derives declaration classes directly from Target.
 type ClassSet struct {
-	linkID       identity.ContentID
-	target       *contract.Contract
-	types        *typeauthority.Authority // construction-only; released after Runtime seal.
-	id           identity.ContentID
-	rows         []classRow // zero is AnyValue
-	byCanonical  map[identity.ContentID]Class
-	byStatic     map[uint32]Class
-	byTarget     map[vocabulary.Type]Class
-	universeID   identity.ContentID // identity of the ordered universe as a whole.
-	universeSize int
+	linkID      identity.ContentID
+	target      *contract.Contract
+	types       *typeauthority.Authority // construction-only; released after Runtime seal.
+	id          identity.ContentID
+	rows        []classRow // zero is AnyValue
+	byCanonical map[identity.ContentID]Class
+	byStatic    map[uint32]Class
+	byTarget    map[vocabulary.Type]Class
+	// targetRuntime is the seal-time projection from Target's portable type
+	// handles to the exact Runtime rows installed for their concrete shapes.
+	// Scoped residuals intentionally have no entry.
+	targetRuntime map[vocabulary.Type]typeauthority.RuntimeInner
+	universeID    identity.ContentID // identity of the ordered universe as a whole.
+	universeSize  int
 	// Hot descriptor geometry retained after the construction plane is released.
 	coverageStride int
 	opaqueMask     []uint64
@@ -83,7 +87,7 @@ type ClassSet struct {
 func sealClassSet(authority *Authority) (*ClassSet, *typeauthority.Runtime, error) {
 	set := &ClassSet{linkID: authority.linkID, target: authority.target, types: authority.types, rows: []classRow{{kind: ClassAnyValue}},
 		byCanonical: make(map[identity.ContentID]Class), byStatic: make(map[uint32]Class),
-		byTarget: make(map[vocabulary.Type]Class)}
+		byTarget: make(map[vocabulary.Type]Class), targetRuntime: make(map[vocabulary.Type]typeauthority.RuntimeInner)}
 	nilClass, err := set.addConcrete(typ.Nil)
 	if err != nil {
 		return nil, nil, err
@@ -204,6 +208,23 @@ func (s *ClassSet) ClassForTarget(contract *contract.Contract, value vocabulary.
 	}
 	class, ok := s.byTarget[value]
 	return class, ok
+}
+
+// RuntimeForTarget returns the concrete Runtime row sealed for one Target
+// declaration. The Contract pointer is part of the capability: an ordinal
+// from another Target cannot address this Link's type universe. Opaque
+// declarations retaining operation formals have no concrete Runtime row and
+// fail closed.
+func (s *ClassSet) RuntimeForTarget(contract *contract.Contract, value vocabulary.Type) (typeauthority.RuntimeInner, bool) {
+	if s == nil || contract == nil || contract != s.target || s.runtime == nil {
+		return typeauthority.RuntimeInner{}, false
+	}
+	inner, ok := s.targetRuntime[value]
+	if !ok {
+		return typeauthority.RuntimeInner{}, false
+	}
+	_, owned := s.runtime.Index(inner)
+	return inner, owned
 }
 
 func (s *ClassSet) Equal(left, right Class) bool {
