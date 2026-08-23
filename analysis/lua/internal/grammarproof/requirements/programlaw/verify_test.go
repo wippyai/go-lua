@@ -7,6 +7,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/lua/bind"
 	lualower "github.com/wippyai/go-lua/analysis/lua/lower"
 	flowkind "github.com/wippyai/go-lua/analysis/program/flow/kind"
+	"github.com/wippyai/go-lua/analysis/program/target/typeindex"
 	"github.com/wippyai/go-lua/compiler/parse"
 )
 
@@ -31,7 +32,7 @@ func TestExactProgramSourceLaws(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			if binding := bind.BindChunk(statements); binding == nil {
+			if binding := bind.BindChunk(statements, typeindex.Table{}); binding == nil {
 				t.Fatal("public binder returned nil result")
 			}
 			p, err := lualower.Lower(lualower.Source{Name: lawFile, Text: []byte(sourceCase.source)})

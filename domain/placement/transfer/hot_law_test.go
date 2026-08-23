@@ -456,7 +456,7 @@ return payload`)})
 	if !heapMountOK || !valueMountOK || !packMountOK || heapFailure != heapdomain.SealFailureNone || !placementOK || valueFailure != valuedomain.SealFailureNone || values == nil {
 		t.Fatalf("transfer fixture Heap/Value schemas heapMount=%t valueMount=%t packMount=%t heap=%v placement=%t value=%v", heapMountOK, valueMountOK, packMountOK, heapFailure, placementOK, valueFailure)
 	}
-	types, typesErr := typeauthority.SealProgramRows(linked.ContentID(), []programschema.Program{artifact.Program()})
+	types, typesErr := typeauthority.SealProgramRows(linked.ContentID(), []programschema.Program{artifact.Program()}, nil)
 	if typesErr != nil || types == nil {
 		t.Fatalf("transfer fixture Type authority: %v", typesErr)
 	}

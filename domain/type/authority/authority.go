@@ -48,11 +48,16 @@ type Authority struct {
 // SealProgramRows constructs the selector directory directly from canonical
 // Program rows. Rows are sorted by owner and row identity so the
 // selector assignment is deterministic and independent of mount order.
-func SealProgramRows(linkID identity.ContentID, programs []programschema.Program) (*Authority, error) {
+//
+// qualified is the Link target's published type vocabulary, already read into
+// this domain's types. A Program reference that names a qualified type by
+// canonical path is resolved through it; a Link whose target publishes none
+// carries an empty vocabulary and refuses every such reference by name.
+func SealProgramRows(linkID identity.ContentID, programs []programschema.Program, qualified []QualifiedType) (*Authority, error) {
 	if !linkID.Available() {
 		return nil, errors.New("typeauthority: unavailable program link identity")
 	}
-	artifact, err := sealPrograms(programs, true)
+	artifact, err := sealPrograms(programs, true, qualified)
 	if err != nil {
 		return nil, err
 	}

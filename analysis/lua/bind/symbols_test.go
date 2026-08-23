@@ -5,6 +5,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/wippyai/go-lua/analysis/program/target/typeindex"
 	"github.com/wippyai/go-lua/compiler/ast"
 	"github.com/wippyai/go-lua/compiler/parse"
 )
@@ -21,7 +22,7 @@ func parsedWideSymbolAnnotations(tb testing.TB, width int) (*Result, []Symbol, [
 	if err != nil {
 		tb.Fatal(err)
 	}
-	result := BindChunk(stmts)
+	result := BindChunk(stmts, typeindex.Table{})
 	ids := make([]Symbol, 0, width+2)
 	types := make([]ast.TypeExpr, 0, width+2)
 	for i := 0; i < width; i++ {

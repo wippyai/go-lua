@@ -8,6 +8,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/program"
 	flowkind "github.com/wippyai/go-lua/analysis/program/flow/kind"
 	"github.com/wippyai/go-lua/analysis/program/keyspace"
+	"github.com/wippyai/go-lua/analysis/program/target/typeindex"
 	"github.com/wippyai/go-lua/compiler/ast"
 	"github.com/wippyai/go-lua/compiler/parse"
 	"github.com/wippyai/go-lua/compiler/parse/numparse"
@@ -52,7 +53,7 @@ func TestValuesSourceCasesHaveExactProgramWitnesses(t *testing.T) {
 				t.Fatalf("parse %s: %v", sourceCase.ID, err)
 			}
 			target := valuesASTTarget(t, statements, sourceCase.Form, sourceCase.Line)
-			binding := bind.BindChunk(statements)
+			binding := bind.BindChunk(statements, typeindex.Table{})
 			if binding == nil {
 				t.Fatal("binder returned nil result")
 			}

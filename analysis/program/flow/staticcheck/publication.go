@@ -49,7 +49,12 @@ func validatePublications(
 		if !targetOK {
 			return errors.New("program/flow/staticcheck: Publication target is unavailable")
 		}
-		canonicalTarget := false
+		// The published name and the published type are two different paths.
+		// The published name is the exact write path this Assign pair targets
+		// and is validated below from the access column. The published type is
+		// the authored right-hand spelling the TypeRef retains, and its binder
+		// disposition - a declaration target or a canonical path - resolves
+		// that spelling, never the name it is being published under.
 		switch resolution {
 		case staticrefs.Declaration:
 			if keyspace.TermOrdinal(targetDeclaration) == 0 ||
@@ -57,7 +62,10 @@ func validatePublications(
 				return errors.New("program/flow/staticcheck: Publication target is unavailable")
 			}
 		case staticrefs.CanonicalPath:
-			canonicalTarget = true
+			canonicalCount, canonicalOK := references.CanonicalCount(target)
+			if !canonicalOK || canonicalCount == 0 {
+				return errors.New("program/flow/staticcheck: Publication canonical target names no path")
+			}
 		default:
 			return errors.New("program/flow/staticcheck: Publication target is unavailable")
 		}
@@ -65,31 +73,16 @@ func validatePublications(
 		if !pathOK || depth <= 0 || keyspace.TermFamily(root) != keyspace.FamilyCell || keyspace.TermOrdinal(root) == 0 {
 			return errors.New("program/flow/staticcheck: Publication path is unavailable")
 		}
-		if canonicalTarget {
-			if targetRoot != root {
-				return errors.New("program/flow/staticcheck: Publication target root disagrees")
-			}
-			canonicalCount, canonicalOK := references.CanonicalCount(target)
-			if !canonicalOK || canonicalCount != depth {
-				return errors.New("program/flow/staticcheck: Publication target path depth disagrees")
-			}
-		}
 		pathCursor, cursorOK := paths.PathCursor(publication)
 		if !cursorOK {
 			return errors.New("program/flow/staticcheck: Publication path cursor is unavailable")
 		}
 		for index := 0; index < depth; index++ {
-			key, nextCursor, keyOK := pathCursor.Segment()
+			key, next, keyOK := pathCursor.Segment()
 			if !keyOK || key == 0 {
 				return errors.New("program/flow/staticcheck: Publication path segment is unavailable")
 			}
-			if canonicalTarget {
-				canonical, canonicalOK := references.CanonicalAt(target, depth-1-index)
-				if !canonicalOK || key != canonical {
-					return errors.New("program/flow/staticcheck: Publication path key disagrees")
-				}
-			}
-			pathCursor = nextCursor
+			pathCursor = next
 		}
 		if _, _, extra := pathCursor.Segment(); extra {
 			return errors.New("program/flow/staticcheck: Publication path depth is noncanonical")
@@ -126,6 +119,16 @@ func validatePublications(
 		role, roleOK := bindings.Role(root)
 		if !roleOK || !validPublicationRoot(cells, bindings, tree, root, role, point) {
 			return errors.New("program/flow/staticcheck: Publication root is not visible")
+		}
+		// A qualified right-hand spelling names its own value root, and that
+		// root must be visible where the publication is authored. Stating it
+		// here keeps the source spelling honest for both dispositions instead
+		// of only for the one that carries a declaration target.
+		if targetRoot != 0 {
+			targetRole, targetRoleOK := bindings.Role(targetRoot)
+			if !targetRoleOK || !validPublicationRoot(cells, bindings, tree, targetRoot, targetRole, point) {
+				return errors.New("program/flow/staticcheck: Publication target root is not visible")
+			}
 		}
 	}
 	return nil

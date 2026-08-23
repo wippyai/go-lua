@@ -69,7 +69,7 @@ func newEffectMembershipFixture(t testing.TB) effectMembershipFixture {
 	if failure.Available() || artifact == nil || !artifact.Available() {
 		t.Fatalf("compile artifact: %s", failure.Error())
 	}
-	types, err := typeauthority.SealProgramRows(linked.ContentID(), []programschema.Program{artifact.Program()})
+	types, err := typeauthority.SealProgramRows(linked.ContentID(), []programschema.Program{artifact.Program()}, nil)
 	if err != nil || types == nil {
 		t.Fatalf("seal types: %v", err)
 	}

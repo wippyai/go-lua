@@ -4,6 +4,7 @@ import (
 	"testing"
 
 	"github.com/wippyai/go-lua/analysis/lua/bind"
+	"github.com/wippyai/go-lua/analysis/program/target/typeindex"
 	"github.com/wippyai/go-lua/compiler/parse"
 )
 
@@ -40,7 +41,7 @@ func TestBuildCensusStaticImportShapeLaw(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			binding := bind.BindChunk(statements)
+			binding := bind.BindChunk(statements, typeindex.Table{})
 			evidence := requireEvidence(binding)
 			if got := len(evidence); got != test.direct {
 				t.Fatalf("DirectGlobalCalls(require) = %d, want %d", got, test.direct)
@@ -82,7 +83,7 @@ end
 	if err != nil {
 		t.Fatal(err)
 	}
-	binding := bind.BindChunk(statements)
+	binding := bind.BindChunk(statements, typeindex.Table{})
 	census, err := BuildCensus(binding)
 	if err != nil {
 		t.Fatal(err)

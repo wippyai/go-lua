@@ -34,9 +34,14 @@ type StaticTypeNodeReferenceSourceKey struct {
 	key      keyspace.Key
 	position uint32
 }
+// StaticTypeNodeReferenceCanonicalKey is one segment of a reference's
+// canonical path. It carries the segment's exact spelling as well as its key:
+// the canonical path names a declaration outside this Program, so a consumer
+// that has only the Program's rows must be able to read it by name.
 type StaticTypeNodeReferenceCanonicalKey struct {
 	parent   identity.ContentID
 	key      keyspace.Key
+	text     string
 	position uint32
 }
 
@@ -72,9 +77,9 @@ func NewStaticTypeNodeReferenceSourceKey(parent identity.ContentID, key keyspace
 	row := StaticTypeNodeReferenceSourceKey{parent: parent, key: key, position: position}
 	return row, parent.Available() && key != 0
 }
-func NewStaticTypeNodeReferenceCanonicalKey(parent identity.ContentID, key keyspace.Key, position uint32) (StaticTypeNodeReferenceCanonicalKey, bool) {
-	row := StaticTypeNodeReferenceCanonicalKey{parent: parent, key: key, position: position}
-	return row, parent.Available() && key != 0
+func NewStaticTypeNodeReferenceCanonicalKey(parent identity.ContentID, key keyspace.Key, text string, position uint32) (StaticTypeNodeReferenceCanonicalKey, bool) {
+	row := StaticTypeNodeReferenceCanonicalKey{parent: parent, key: key, text: text, position: position}
+	return row, parent.Available() && key != 0 && text != ""
 }
 
 func (row StaticTypeNodeInterfaceMember) Available() bool {
@@ -90,5 +95,5 @@ func (row StaticTypeNodeReferenceSourceKey) Available() bool {
 	return row.parent.Available() && row.key != 0
 }
 func (row StaticTypeNodeReferenceCanonicalKey) Available() bool {
-	return row.parent.Available() && row.key != 0
+	return row.parent.Available() && row.key != 0 && row.text != ""
 }

@@ -20,14 +20,17 @@ import (
 // FrozenLuaFileCount is the exact checked-in Lua fixture denominator. Corpus
 // changes require an explicit test-contract update rather than silently
 // changing the analysis denominator.
-const FrozenLuaFileCount = 1213
+// The two qualified-host-type fixtures state CX-36 end to end: a name the
+// target's sealed qualified type index publishes resolves through it, and a
+// name it does not publish refuses under its exact authored spelling.
+const FrozenLuaFileCount = 1215
 
 // FrozenCorpusProjectCount is the exact checked-in fixture-project
 // denominator: the number of distinct project directories LoadCorpus groups
 // the frozen Lua files into. Every consumer that pins the fixture-project
 // count derives it from this one constant rather than hand-copying the
 // number, so the fixture census and its dependent counts change together.
-const FrozenCorpusProjectCount = 946
+const FrozenCorpusProjectCount = 948
 
 type corpusManifest struct {
 	Files []string `json:"files"`
@@ -199,7 +202,7 @@ func SealSource(contract *contract.Contract, name string, text []byte) (*link.Li
 	if contract == nil || !contract.ContentID().Available() || name == "" {
 		return nil, fmt.Errorf("testfixture: unavailable source name or canonical target profile")
 	}
-	sealed, err := lower.Lower(lower.Source{Name: name, Text: text})
+	sealed, err := lower.Lower(lower.Source{Name: name, Text: text, Types: contract.Types()})
 	if err != nil {
 		return nil, fmt.Errorf("testfixture: lower %s: %w", name, err)
 	}
@@ -231,7 +234,7 @@ func SealCorpusProject(contract *contract.Contract, project CorpusProject) (*lin
 		// The fixture project is the source-root boundary. Diagnostics and
 		// manifests use project-relative file names; the corpus storage path is
 		// test infrastructure and must not enter Program identity or findings.
-		sealed, err := lower.Lower(lower.Source{Name: filepath.ToSlash(file), Text: source})
+		sealed, err := lower.Lower(lower.Source{Name: filepath.ToSlash(file), Text: source, Types: contract.Types()})
 		if err != nil {
 			return nil, fmt.Errorf("testfixture: lower %s: %w", path, err)
 		}

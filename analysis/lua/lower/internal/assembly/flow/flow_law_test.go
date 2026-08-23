@@ -11,6 +11,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/program/flow/kind"
 	"github.com/wippyai/go-lua/analysis/program/keyspace"
 	programsource "github.com/wippyai/go-lua/analysis/program/source"
+	"github.com/wippyai/go-lua/analysis/program/target/typeindex"
 	"github.com/wippyai/go-lua/compiler/ast"
 	"github.com/wippyai/go-lua/compiler/parse"
 )
@@ -45,7 +46,7 @@ func TestFlowRowsFreezeUsesSourceGlobalKey(t *testing.T) {
 	if err != nil {
 		t.Fatalf("parse: %v", err)
 	}
-	binding := bind.BindChunk(stmts)
+	binding := bind.BindChunk(stmts, typeindex.Table{})
 	ident := stmts[0].(*ast.LocalAssignStmt).Exprs[0].(*ast.IdentExpr)
 	globalIdentity, ok := binding.GlobalIdentity(ident)
 	if !ok {
@@ -75,7 +76,7 @@ func TestFlowModuleRequestFollowsCallValuesToSourceString(t *testing.T) {
 	if err != nil {
 		t.Fatalf("parse: %v", err)
 	}
-	binding := bind.BindChunk(statements)
+	binding := bind.BindChunk(statements, typeindex.Table{})
 	callSyntax, ok := statements[0].(*ast.LocalAssignStmt).Exprs[0].(*ast.FuncCallExpr)
 	if !ok {
 		t.Fatal("module fixture lost direct require call")
@@ -160,7 +161,7 @@ func TestFlowGlobalRejectsForeignIdentityAndKeepsReservedTerm(t *testing.T) {
 	if err != nil {
 		t.Fatalf("parse first: %v", err)
 	}
-	firstBinding := bind.BindChunk(firstStmts)
+	firstBinding := bind.BindChunk(firstStmts, typeindex.Table{})
 	firstIdent := firstStmts[0].(*ast.LocalAssignStmt).Exprs[0].(*ast.IdentExpr)
 	firstIdentity, ok := firstBinding.GlobalIdentity(firstIdent)
 	if !ok {
@@ -175,7 +176,7 @@ func TestFlowGlobalRejectsForeignIdentityAndKeepsReservedTerm(t *testing.T) {
 	if err != nil {
 		t.Fatalf("parse foreign: %v", err)
 	}
-	foreignBinding := bind.BindChunk(foreignStmts)
+	foreignBinding := bind.BindChunk(foreignStmts, typeindex.Table{})
 	foreignIdent := foreignStmts[0].(*ast.LocalAssignStmt).Exprs[0].(*ast.IdentExpr)
 	foreignIdentity, ok := foreignBinding.GlobalIdentity(foreignIdent)
 	if !ok {

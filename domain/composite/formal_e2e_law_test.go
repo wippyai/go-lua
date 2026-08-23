@@ -705,7 +705,7 @@ func mountFormalTargetRecord(t testing.TB, target *contract.Contract, name, sour
 		rows[index] = programmount.MountedArtifact{Program: mountedProgram, Snapshot: snapshotValue}
 		statics[index] = staticdomain.MountedProgram{Program: mountedProgram.Program, ModuleID: module, NamespaceID: module}
 	}
-	types, err := typeauthority.SealProgramRows(linked.ContentID(), artifacts)
+	types, err := typeauthority.SealProgramRows(linked.ContentID(), artifacts, nil)
 	if err != nil || types == nil {
 		t.Fatalf("seal type authority: %v", err)
 	}

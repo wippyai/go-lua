@@ -13,6 +13,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/program/source"
 	staticdecl "github.com/wippyai/go-lua/analysis/program/static/declarations"
 	statictypes "github.com/wippyai/go-lua/analysis/program/static/types"
+	"github.com/wippyai/go-lua/analysis/program/target/typeindex"
 	"github.com/wippyai/go-lua/compiler/ast"
 	"github.com/wippyai/go-lua/compiler/parse"
 )
@@ -260,7 +261,7 @@ func TestGlobalCensusExcludesRuntimeTypeOnlyIdentity(t *testing.T) {
 	if err != nil {
 		t.Fatalf("parse: %v", err)
 	}
-	binding := bind.BindChunk(stmts)
+	binding := bind.BindChunk(stmts, typeindex.Table{})
 	assign := stmts[1].(*ast.LocalAssignStmt)
 	base := assign.Exprs[0].(*ast.FuncCallExpr).Func.(*ast.IdentExpr)
 	identity, ok := binding.GlobalIdentity(base)
@@ -348,7 +349,7 @@ func TestGlobalCensusSelectionAcrossLargeReservedSet(t *testing.T) {
 	if err != nil {
 		t.Fatalf("parse large census: %v", err)
 	}
-	binding := bind.BindChunk(stmts)
+	binding := bind.BindChunk(stmts, typeindex.Table{})
 	if got := binding.GlobalCensus().Len(); got != count {
 		t.Fatalf("large census length = %d, want %d", got, count)
 	}
@@ -395,7 +396,7 @@ func bindFixture(t testing.TB, name, text string) *bind.Result {
 	if err != nil {
 		t.Fatalf("parse %s: %v", name, err)
 	}
-	return bind.BindChunk(stmts)
+	return bind.BindChunk(stmts, typeindex.Table{})
 }
 
 // Source suite restored from terminal_rejection_law_test.go.

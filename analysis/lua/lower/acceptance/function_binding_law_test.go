@@ -7,6 +7,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/program"
 	"github.com/wippyai/go-lua/analysis/program/flow/authored"
 	"github.com/wippyai/go-lua/analysis/program/keyspace"
+	"github.com/wippyai/go-lua/analysis/program/target/typeindex"
 	"github.com/wippyai/go-lua/compiler/ast"
 	"github.com/wippyai/go-lua/compiler/parse"
 )
@@ -19,7 +20,7 @@ func TestSourceBindingCasesRetainExactLexicalMeaning(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			result := bind.BindChunk(stmts)
+			result := bind.BindChunk(stmts, typeindex.Table{})
 			p := parseBindLower(t, claim.Source)
 			bindingUniqueFormLine(t, stmts, claim.Form, claim.Line)
 

@@ -3,6 +3,7 @@ package bind
 import (
 	"testing"
 
+	"github.com/wippyai/go-lua/analysis/program/target/typeindex"
 	"github.com/wippyai/go-lua/compiler/ast"
 	"github.com/wippyai/go-lua/compiler/parse"
 )
@@ -79,7 +80,7 @@ type Remote = stream.Stream
 	if err != nil {
 		t.Fatal(err)
 	}
-	result := BindChunk(stmts)
+	result := BindChunk(stmts, typeindex.Table{})
 	census := result.GlobalCensus()
 	if census.Len() != 3 {
 		t.Fatalf("GlobalCensus length = %d, want 3", census.Len())
@@ -93,7 +94,7 @@ type Remote = stream.Stream
 type Shape = number
 local value = Shape(1)
 `, "runtime_type_only_census.lua")
-	typeOnlyResult := BindChunk(typeOnly)
+	typeOnlyResult := BindChunk(typeOnly, typeindex.Table{})
 	identity, ok := typeOnlyResult.GlobalIdentity(onlyOK)
 	if !ok || identity.Name() != "Shape" {
 		t.Fatalf("runtime type identity = %#v/%v, want Shape", identity, ok)
@@ -112,7 +113,7 @@ type Shape = number
 local value = Shape(1)
 local later = Shape
 `, "runtime_type_upgrade_census.lua")
-	result := BindChunk(stmts)
+	result := BindChunk(stmts, typeindex.Table{})
 	later := stmts[2].(*ast.LocalAssignStmt).Exprs[0].(*ast.IdentExpr)
 	baseIdentity, baseOK := result.GlobalIdentity(base)
 	laterIdentity, laterOK := result.GlobalIdentity(later)
@@ -136,7 +137,7 @@ M.User = User
 	if err != nil {
 		t.Fatal(err)
 	}
-	result := BindChunk(stmts)
+	result := BindChunk(stmts, typeindex.Table{})
 	if !censusHasName(result.GlobalCensus(), "M") {
 		t.Fatal("static publication root M was omitted from GlobalCensus")
 	}
@@ -155,7 +156,7 @@ func TestGlobalCensusAssignsAuthoredSlotsToWriteAndReadIdentities(t *testing.T) 
 	if err != nil {
 		t.Fatal(err)
 	}
-	result := BindChunk(stmts)
+	result := BindChunk(stmts, typeindex.Table{})
 	lhs := stmts[0].(*ast.AssignStmt).Lhs[0].(*ast.IdentExpr)
 	rhs := stmts[0].(*ast.AssignStmt).Rhs[0].(*ast.IdentExpr)
 	lhsIdentity, lhsOK := result.GlobalIdentity(lhs)
@@ -178,7 +179,7 @@ func TestGlobalCensusAEqualsBCallUsesAuthoredTargetOrder(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	result := BindChunk(stmts)
+	result := BindChunk(stmts, typeindex.Table{})
 	for index, want := range []string{"A", "B"} {
 		cell, ok := result.GlobalCensus().At(index)
 		if !ok || cell.Name() != want || cell.Slot() != uint32(index) {
@@ -205,7 +206,7 @@ end
 	if err != nil {
 		t.Fatal(err)
 	}
-	result := BindChunk(stmts)
+	result := BindChunk(stmts, typeindex.Table{})
 	want := []string{"first", "second", "third", "fourth", "fifth", "sixth"}
 	if got := result.GlobalCensus().Len(); got != len(want) {
 		t.Fatalf("nested GlobalCensus length = %d, want %d", got, len(want))
@@ -231,7 +232,7 @@ end
 	if err != nil {
 		t.Fatal(err)
 	}
-	result := BindChunk(stmts)
+	result := BindChunk(stmts, typeindex.Table{})
 	want := []string{"A", "B", "C", "D", "E"}
 	census := result.GlobalCensus()
 	if got := census.Len(); got != len(want) {
@@ -253,7 +254,7 @@ M.User = Remote
 	if err != nil {
 		t.Fatal(err)
 	}
-	result := BindChunk(stmts)
+	result := BindChunk(stmts, typeindex.Table{})
 	ref := stmts[0].(*ast.TypeDefStmt).Type.(*ast.TypeRefExpr)
 	rootID, ok := result.QualifiedTypeRootSymbol(ref)
 	if !ok {
@@ -282,7 +283,7 @@ type ImportType = typeof(require("module"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	result := BindChunk(stmts)
+	result := BindChunk(stmts, typeindex.Table{})
 	if calls := result.DirectGlobalCalls(); len(calls) != 1 || !calls[0].Global.Matches("require") {
 		t.Fatalf("static typeof(require(...)) DirectGlobalCalls = %#v, want one require", calls)
 	}
@@ -301,7 +302,7 @@ local later = A
 	if err != nil {
 		t.Fatal(err)
 	}
-	result := BindChunk(stmts)
+	result := BindChunk(stmts, typeindex.Table{})
 	census := result.GlobalCensus()
 	if census.Len() != 2 {
 		t.Fatalf("GlobalCensus length = %d, want 2", census.Len())
@@ -323,7 +324,7 @@ local again = alpha
 	if err != nil {
 		t.Fatal(err)
 	}
-	result := BindChunk(stmts)
+	result := BindChunk(stmts, typeindex.Table{})
 	census := result.GlobalCensus()
 	if census.Len() != 2 {
 		t.Fatalf("GlobalCensus length = %d, want 2", census.Len())
@@ -342,7 +343,7 @@ local again = alpha
 	if err != nil {
 		t.Fatal(err)
 	}
-	other := BindChunk(otherStmts)
+	other := BindChunk(otherStmts, typeindex.Table{})
 	foreign, ok := other.GlobalIdentity(otherStmts[0].(*ast.LocalAssignStmt).Exprs[0].(*ast.IdentExpr))
 	if !ok {
 		t.Fatal("foreign identity was not bound")

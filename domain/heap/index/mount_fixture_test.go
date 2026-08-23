@@ -101,7 +101,7 @@ func indexSchemas(t testing.TB, linked *link.Link) (heapdomain.Schema, *valuedom
 	for index, artifact := range artifacts {
 		programs[index] = artifact.Program()
 	}
-	types, typeErr := typeauthority.SealProgramRows(linked.ContentID(), programs)
+	types, typeErr := typeauthority.SealProgramRows(linked.ContentID(), programs, nil)
 	staticMounts := make([]staticdomain.MountedProgram, 0, len(artifacts))
 	for index, artifact := range artifacts {
 		shard, shardOK := linked.Project().Mounts().At(index)

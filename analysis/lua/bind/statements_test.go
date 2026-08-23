@@ -3,6 +3,7 @@ package bind
 import (
 	"testing"
 
+	"github.com/wippyai/go-lua/analysis/program/target/typeindex"
 	"github.com/wippyai/go-lua/compiler/ast"
 	"github.com/wippyai/go-lua/compiler/parse"
 )
@@ -18,7 +19,7 @@ end
 	if err != nil {
 		t.Fatal(err)
 	}
-	result := BindChunk(statements)
+	result := BindChunk(statements, typeindex.Table{})
 	loop := statements[1].(*ast.NumberForStmt)
 	loopID, ok := result.NumForSymbol(loop)
 	if !ok || loopID == 0 {

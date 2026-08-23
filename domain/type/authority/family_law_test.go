@@ -15,7 +15,7 @@ import (
 func familyLawAuthority(t *testing.T) *typeauthority.Authority {
 	t.Helper()
 	artifact := compileArtifactForAuthorityTest(t, "local value = 1\nreturn value\n")
-	authority, err := typeauthority.SealProgramRows(artifact.CompileKey().ProgramID(), []programschema.Program{authorityProgram(artifact)})
+	authority, err := typeauthority.SealProgramRows(artifact.CompileKey().ProgramID(), []programschema.Program{authorityProgram(artifact)}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}

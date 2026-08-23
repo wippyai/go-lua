@@ -200,7 +200,7 @@ func (view View) WriteArtifactIdentityFields(writer identity.StringIdentityWrite
 		}
 		for keyIndex := uint32(0); keyIndex < canonicalCount; keyIndex++ {
 			key, keyOK := staticTypeNodeFamilyAt(view, StaticTypeNodeReferenceCanonicalKeyFamily(), int(canonicalOffset+keyIndex))
-			if !keyOK || key.ParentID() != row.ID() || !writer.WriteUint(uint64(key.Key())) {
+			if !keyOK || key.ParentID() != row.ID() || !writer.WriteUint(uint64(key.Key())) || !writer.WriteString(key.Text()) {
 				return false
 			}
 		}

@@ -45,7 +45,7 @@ func sealedPackSchema(t testing.TB, name, source string) *packdomain.Schema {
 	if failure.Available() || artifact == nil || !artifact.Available() {
 		t.Fatalf("compile pack source artifact: %s", failure.Error())
 	}
-	types, err := typeauthority.SealProgramRows(linked.ContentID(), []programschema.Program{artifact.Program()})
+	types, err := typeauthority.SealProgramRows(linked.ContentID(), []programschema.Program{artifact.Program()}, nil)
 	if err != nil || types == nil {
 		t.Fatalf("seal pack source types: %v", err)
 	}

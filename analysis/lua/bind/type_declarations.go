@@ -318,6 +318,10 @@ func (b *binder) bindTypeRef(ref *ast.TypeRefExpr) {
 		key := qualifiedTypeAliasKey{root: id, suffix: strings.Join(ref.Path[1:], ".")}
 		if alias := b.qualifiedTypeAliases[key]; alias.valid() {
 			b.result.qualifiedTypeRefs[ref] = alias.copy()
+			return
+		}
+		if alias, published := b.qualifiedTypeIndexAlias(ref.Path); published {
+			b.result.qualifiedTypeRefs[ref] = alias
 		}
 		return
 	}
@@ -342,6 +346,22 @@ func (b *binder) bindPrimitiveTypeRef(expr *ast.PrimitiveTypeExpr) {
 	}
 	b.observeAmbientType(decl)
 	b.result.primitiveTypeRefs[expr] = decl
+}
+
+// qualifiedTypeIndexAlias resolves one authored qualified spelling against the
+// sealed qualified type index of the target. The index is the authority for
+// which owner-qualified names exist, and it is read by exact spelling: a name
+// it does not publish is not a type here, and the reference stays unresolved
+// so the refusal can name it. A chunk that names nothing the index publishes
+// takes nothing from it.
+func (b *binder) qualifiedTypeIndexAlias(path []string) (QualifiedTypeAlias, bool) {
+	if len(path) < 2 {
+		return QualifiedTypeAlias{}, false
+	}
+	if _, published := b.qualifiedTypes.Lookup(strings.Join(path, ".")); !published {
+		return QualifiedTypeAlias{}, false
+	}
+	return QualifiedTypeAlias{Path: append([]string(nil), path...)}, true
 }
 
 // observeAmbientType records that this chunk names one ambient declaration.

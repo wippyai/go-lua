@@ -3,6 +3,7 @@ package bind
 import (
 	"testing"
 
+	"github.com/wippyai/go-lua/analysis/program/target/typeindex"
 	"github.com/wippyai/go-lua/compiler/ast"
 	"github.com/wippyai/go-lua/compiler/parse"
 )
@@ -26,7 +27,7 @@ end
 	if !ok {
 		t.Fatalf("interface member = %#v, want function signature", stmts[2].(*ast.InterfaceDefStmt).Members[0])
 	}
-	result := BindChunk(stmts)
+	result := BindChunk(stmts, typeindex.Table{})
 
 	tests := []struct {
 		name       string
@@ -74,7 +75,7 @@ local afterStatic: T
 	if !ok {
 		t.Fatalf("interface member = %#v, want function signature", stmts[5].(*ast.InterfaceDefStmt).Members[0])
 	}
-	result := BindChunk(stmts)
+	result := BindChunk(stmts, typeindex.Table{})
 	outerDecl, _ := result.TypeDef(outer)
 
 	groups := []struct {

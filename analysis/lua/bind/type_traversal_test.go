@@ -3,6 +3,7 @@ package bind
 import (
 	"testing"
 
+	"github.com/wippyai/go-lua/analysis/program/target/typeindex"
 	"github.com/wippyai/go-lua/compiler/ast"
 	"github.com/wippyai/go-lua/compiler/parse"
 )
@@ -17,7 +18,7 @@ local fn: (Numeric, string) -> Flag
 	if err != nil {
 		t.Fatal(err)
 	}
-	result := BindChunk(statements)
+	result := BindChunk(statements, typeindex.Table{})
 	record := statements[2].(*ast.LocalAssignStmt).Types[0].(*ast.RecordTypeExpr)
 	item, ok := result.PrimitiveTypeRef(record.Fields[0].Type.(*ast.PrimitiveTypeExpr))
 	if !ok || item.Name != "Numeric" {

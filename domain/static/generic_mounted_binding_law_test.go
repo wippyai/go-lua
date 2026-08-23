@@ -41,7 +41,7 @@ return map(r, function(x: number): number return x * 2 end)
 	}
 	program := artifact.Program()
 	linkID := identity.ContentID{3}
-	types, err := typeauthority.SealProgramRows(linkID, []programschema.Program{program})
+	types, err := typeauthority.SealProgramRows(linkID, []programschema.Program{program}, nil)
 	if err != nil || types == nil {
 		t.Fatalf("seal generic Link type authority: %v", err)
 	}

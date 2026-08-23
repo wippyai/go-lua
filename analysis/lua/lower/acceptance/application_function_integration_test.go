@@ -6,6 +6,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/lua/bind"
 	"github.com/wippyai/go-lua/analysis/program"
 	"github.com/wippyai/go-lua/analysis/program/keyspace"
+	"github.com/wippyai/go-lua/analysis/program/target/typeindex"
 	"github.com/wippyai/go-lua/compiler/ast"
 	"github.com/wippyai/go-lua/compiler/parse"
 )
@@ -30,7 +31,7 @@ func TestApplicationFunctionSourceCasesHaveExactProgramWitnesses(t *testing.T) {
 			if anchor.Form != sourceCase.Form || anchor.Line != sourceCase.Line || anchor.Span.StartLine == 0 || anchor.Span.File != "fixture.lua" {
 				t.Fatalf("parsed application anchor = %#v for %s/%d", anchor, sourceCase.Form, sourceCase.Line)
 			}
-			binding := bind.BindChunk(stmts)
+			binding := bind.BindChunk(stmts, typeindex.Table{})
 			p := parseBindLower(t, sourceCase.Source)
 			switch node := anchor.Node.(type) {
 			case *ast.FunctionExpr:

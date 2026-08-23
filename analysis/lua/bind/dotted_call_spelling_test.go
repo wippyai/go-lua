@@ -4,6 +4,7 @@ import (
 	"testing"
 
 	"github.com/wippyai/go-lua/analysis/lua/bind"
+	"github.com/wippyai/go-lua/analysis/program/target/typeindex"
 	"github.com/wippyai/go-lua/compiler/ast"
 	"github.com/wippyai/go-lua/compiler/parse"
 )
@@ -15,7 +16,7 @@ func TestDottedCallSpellingRecordsTheFullChain(t *testing.T) {
 		t.Fatal(err)
 	}
 	want := []string{"a.b.c", "a.b.c.d", "m", "f", "", "", ""}
-	binding := bind.BindChunk(statements)
+	binding := bind.BindChunk(statements, typeindex.Table{})
 	for index, statement := range statements {
 		callStmt, ok := statement.(*ast.FuncCallStmt)
 		if !ok || callStmt.Expr == nil {

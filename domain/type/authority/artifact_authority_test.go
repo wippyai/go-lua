@@ -67,7 +67,7 @@ type DeclaredPoint = {x: number}
 local p: DeclaredPoint = {x = 1}
 return p
 `)
-	authority, err := typeauthority.SealProgramRows(artifact.CompileKey().ProgramID(), []programschema.Program{authorityProgram(artifact)})
+	authority, err := typeauthority.SealProgramRows(artifact.CompileKey().ProgramID(), []programschema.Program{authorityProgram(artifact)}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -355,7 +355,7 @@ local function identity<T>(x: T): T
 end
 return identity
 `)
-	authority, err := typeauthority.SealProgramRows(artifact.CompileKey().ProgramID(), []programschema.Program{authorityProgram(artifact)})
+	authority, err := typeauthority.SealProgramRows(artifact.CompileKey().ProgramID(), []programschema.Program{authorityProgram(artifact)}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}

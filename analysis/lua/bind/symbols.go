@@ -1,6 +1,7 @@
 package bind
 
 import (
+	"github.com/wippyai/go-lua/analysis/program/target/typeindex"
 	"github.com/wippyai/go-lua/compiler/ast"
 )
 
@@ -283,6 +284,10 @@ type binder struct {
 	globals               map[string]Symbol
 	runtimeChunkTypes     map[string]TypeDecl
 	qualifiedTypeAliases  map[qualifiedTypeAliasKey]QualifiedTypeAlias
+	// qualifiedTypes is the sealed qualified type directory of the target this
+	// chunk is compiled against. It is read by exact authored spelling and is
+	// never rebuilt, folded, or extended by the binder.
+	qualifiedTypes typeindex.Table
 
 	valueHeads map[string]valueHead
 	valueUndo  []valueUndo

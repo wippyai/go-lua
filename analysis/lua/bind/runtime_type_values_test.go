@@ -3,6 +3,7 @@ package bind
 import (
 	"testing"
 
+	"github.com/wippyai/go-lua/analysis/program/target/typeindex"
 	"github.com/wippyai/go-lua/compiler/ast"
 	"github.com/wippyai/go-lua/compiler/parse"
 )
@@ -18,7 +19,7 @@ return number(value), Shape(value), Contract(value), External(value),
 	if err != nil {
 		t.Fatal(err)
 	}
-	result := BindChunk(stmts)
+	result := BindChunk(stmts, typeindex.Table{})
 	shape, _ := result.TypeDef(stmts[0].(*ast.TypeDefStmt))
 	contract, _ := result.InterfaceDef(stmts[1].(*ast.InterfaceDefStmt))
 	calls := stmts[3].(*ast.ReturnStmt).Exprs
@@ -75,7 +76,7 @@ end
 	if err != nil {
 		t.Fatal(err)
 	}
-	result := BindChunk(stmts)
+	result := BindChunk(stmts, typeindex.Table{})
 	ordinary := stmts[2].(*ast.LocalAssignStmt).Exprs[0].(*ast.IdentExpr)
 	if value, ok := result.RuntimeTypeValue(ordinary); ok || value.Kind != 0 {
 		t.Fatalf("ordinary value = %#v/%v, want absent", value, ok)
@@ -112,7 +113,7 @@ M.Bad = Builder.new
 	if err != nil {
 		t.Fatal(err)
 	}
-	result := BindChunk(stmts)
+	result := BindChunk(stmts, typeindex.Table{})
 	mixed := stmts[3].(*ast.AssignStmt)
 	entries := result.StaticTypePublications(mixed)
 	if len(entries) != 1 || entries[0].Index != 0 || len(entries[0].Source) != 1 || entries[0].Source[0] != "User" {
@@ -151,7 +152,7 @@ local annotated: number @proof(
 	for _, argument := range annotation.Args {
 		calls = append(calls, argument.(*ast.FuncCallExpr))
 	}
-	result := BindChunk(stmts)
+	result := BindChunk(stmts, typeindex.Table{})
 	for i, call := range calls {
 		base := parsedRuntimeTypeBase(t, call)
 		value, ok := result.RuntimeTypeValue(base)

@@ -287,7 +287,7 @@ func (compiler *compiler) copyStaticGraphFailure() CompileFailure {
 						ok = false
 						break
 					}
-					member, memberOK := staticnode.NewStaticTypeNodeReferenceCanonicalKey(id, key, uint32(n))
+					member, memberOK := staticnode.NewStaticTypeNodeReferenceCanonicalKey(id, key, textForKey(key), uint32(n))
 					ok = memberOK
 					if ok {
 						compiler.publication.Static.StaticTypeNodeReferenceCanonicalKeys = append(compiler.publication.Static.StaticTypeNodeReferenceCanonicalKeys, member)

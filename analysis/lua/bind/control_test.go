@@ -3,6 +3,7 @@ package bind
 import (
 	"testing"
 
+	"github.com/wippyai/go-lua/analysis/program/target/typeindex"
 	"github.com/wippyai/go-lua/compiler/ast"
 	"github.com/wippyai/go-lua/compiler/parse"
 )
@@ -13,7 +14,7 @@ func bindControlSource(t *testing.T, source string) ([]ast.Stmt, *Result) {
 	if err != nil {
 		t.Fatalf("parse: %v", err)
 	}
-	return stmts, BindChunk(stmts)
+	return stmts, BindChunk(stmts, typeindex.Table{})
 }
 
 func requireGotoTarget(

@@ -13,6 +13,7 @@ import (
 	"github.com/wippyai/go-lua/domain/composite"
 	staticdomain "github.com/wippyai/go-lua/domain/static"
 	"github.com/wippyai/go-lua/domain/type/authority"
+	domaintypecontract "github.com/wippyai/go-lua/domain/type/typecontract"
 	"github.com/wippyai/go-lua/domain/type/channelselect"
 
 	"github.com/wippyai/go-lua/analysis/identity"
@@ -504,7 +505,11 @@ func compileProgramArtifacts(products *analysisworkspace.Artifacts, source *link
 		}
 		programs = append(programs, compiled)
 	}
-	types, typesErr := typeauthority.SealProgramRows(source.ContentID(), programs)
+	qualified, qualifiedOK := linkQualifiedTypes(source)
+	if !qualifiedOK {
+		return nil, artifactcompiler.CompileFailure{}, false
+	}
+	types, typesErr := typeauthority.SealProgramRows(source.ContentID(), programs, qualified)
 	if typesErr != nil || types == nil {
 		return nil, artifactcompiler.CompileFailure{}, false
 	}
@@ -513,4 +518,44 @@ func compileProgramArtifacts(products *analysisworkspace.Artifacts, source *link
 		return nil, artifactcompiler.CompileFailure{}, false
 	}
 	return result, artifactcompiler.CompileFailure{}, true
+}
+
+// linkQualifiedTypes reads the target's sealed qualified type index into the
+// type domain. The target owns the names and their denominator and the type
+// domain owns what a declaration means, so the index crosses into the type
+// authority as finished types under their exact published names. A Link whose
+// target publishes no qualified type yields none.
+func linkQualifiedTypes(source *link.Link) ([]typeauthority.QualifiedType, bool) {
+	if source == nil {
+		return nil, false
+	}
+	target, targetOK := source.Boundary().Target()
+	if !targetOK || target == nil {
+		return nil, false
+	}
+	index := target.Types()
+	if index.Count() == 0 {
+		return nil, true
+	}
+	qualified := make([]typeauthority.QualifiedType, 0, index.Count())
+	for position := 0; position < index.Count(); position++ {
+		name, handle, rowOK := index.At(position)
+		if !rowOK {
+			return nil, false
+		}
+		declaration, declarationOK := index.Declaration(handle)
+		if !declarationOK {
+			return nil, false
+		}
+		value, valueOK := domaintypecontract.Reading()(declaration)
+		if !valueOK {
+			// A declaration the type domain cannot read is not a type this
+			// Link can name. It is left out under its own name rather than
+			// admitted as an unreadable row, so a reference to it refuses by
+			// name at the authority.
+			continue
+		}
+		qualified = append(qualified, typeauthority.QualifiedType{Name: name, Value: value})
+	}
+	return qualified, true
 }

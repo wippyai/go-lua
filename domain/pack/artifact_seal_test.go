@@ -54,7 +54,7 @@ func TestBranchOnlyArtifactSealsEmptyPackSchema(t *testing.T) {
 	if !catalogOK || !valuesOK || !callsOK || valueCount != 0 || callCount != 0 {
 		t.Fatalf("branch-only Pack denominator: values=%d/%t calls=%d/%t catalog=%t", valueCount, valuesOK, callCount, callsOK, catalogOK)
 	}
-	types, err := typeauthority.SealProgramRows(linked.ContentID(), []programschema.Program{cold})
+	types, err := typeauthority.SealProgramRows(linked.ContentID(), []programschema.Program{cold}, nil)
 	if err != nil || types == nil {
 		t.Fatalf("seal branch-only types: %v", err)
 	}

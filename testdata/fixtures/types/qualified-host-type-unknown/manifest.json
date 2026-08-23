@@ -1,0 +1,36 @@
+{
+  "description": "A qualified name the sealed qualified type index does not publish is not a type. The reference stays unresolved and the refusal names the exact authored spelling instead of reporting an anonymous failure.",
+  "packages": [
+    "stream"
+  ],
+  "check": {
+    "diagnostics": [
+      {
+        "file": "main.lua",
+        "line": 3,
+        "severity": "error",
+        "code": "type.reference.unresolved",
+        "message_contains": [
+          "unknown type",
+          "stream.Missing"
+        ],
+        "min_evidence": 1,
+        "evidence_contains": [
+          "no type named stream.Missing is declared"
+        ],
+        "render_contains": [
+          "error[type.reference.unresolved]: unknown type stream.Missing"
+        ],
+        "help_contains": [
+          "Declare the type in scope"
+        ],
+        "label_contains": [
+          "unknown type"
+        ]
+      }
+    ]
+  },
+  "run": {
+    "skip": "diagnostic-only fixture"
+  }
+}

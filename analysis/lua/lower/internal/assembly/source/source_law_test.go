@@ -9,6 +9,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/program/flow/kind"
 	"github.com/wippyai/go-lua/analysis/program/keyspace"
 	programsource "github.com/wippyai/go-lua/analysis/program/source"
+	"github.com/wippyai/go-lua/analysis/program/target/typeindex"
 	"github.com/wippyai/go-lua/compiler/ast"
 	"github.com/wippyai/go-lua/compiler/parse"
 )
@@ -215,7 +216,7 @@ func TestModuleRequestExactAddsOnlyRawLiteralBeforeSourceFreeze(t *testing.T) {
 	if err != nil {
 		t.Fatalf("parse: %v", err)
 	}
-	binding := bind.BindChunk(statements)
+	binding := bind.BindChunk(statements, typeindex.Table{})
 	callSyntax, ok := statements[0].(*ast.LocalAssignStmt).Exprs[0].(*ast.FuncCallExpr)
 	if !ok {
 		t.Fatal("module fixture lost direct require call")

@@ -6,6 +6,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/lua/bind"
 	lualower "github.com/wippyai/go-lua/analysis/lua/lower"
 	flowkind "github.com/wippyai/go-lua/analysis/program/flow/kind"
+	"github.com/wippyai/go-lua/analysis/program/target/typeindex"
 	"github.com/wippyai/go-lua/compiler/ast"
 	"github.com/wippyai/go-lua/compiler/parse"
 )
@@ -21,7 +22,7 @@ func TestExactSourceCoordinateLaw(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if bound := bind.BindChunk(statements); bound == nil {
+	if bound := bind.BindChunk(statements, typeindex.Table{}); bound == nil {
 		t.Fatal("public binder returned nil result")
 	}
 	p, err := lualower.Lower(lualower.Source{Name: file, Text: []byte(source)})

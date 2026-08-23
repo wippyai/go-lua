@@ -19,15 +19,20 @@ import (
 	staticlower "github.com/wippyai/go-lua/analysis/lua/lower/internal/static"
 	storagelower "github.com/wippyai/go-lua/analysis/lua/lower/internal/storage"
 	"github.com/wippyai/go-lua/analysis/program"
+	"github.com/wippyai/go-lua/analysis/program/target/typeindex"
 	"github.com/wippyai/go-lua/compiler/ast"
 	"github.com/wippyai/go-lua/compiler/parse"
 )
 
 // Source is one logical source input to canonical Program construction. Name
-// is the caller-supplied logical reflection name.
+// is the caller-supplied logical reflection name. Types is the sealed
+// qualified type directory of the target this source is compiled against: the
+// namespace its annotations may name owner-qualified types from. Its zero
+// value is a target that publishes no qualified type.
 type Source struct {
-	Name string
-	Text []byte
+	Name  string
+	Text  []byte
+	Types typeindex.Table
 }
 
 // Lower parses, binds, lowers, and publishes exactly one logical source. Syntax
@@ -47,7 +52,7 @@ func Lower(source Source) (*program.Program, error) {
 		}
 		return nil, fmt.Errorf("lualower: parse: %w", err)
 	}
-	binding := bind.BindChunk(statements)
+	binding := bind.BindChunk(statements, source.Types)
 	if binding == nil {
 		return nil, fmt.Errorf("lualower: bind: no binding result")
 	}

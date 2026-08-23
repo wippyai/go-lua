@@ -4,6 +4,7 @@ import (
 	"testing"
 
 	"github.com/wippyai/go-lua/analysis/lua/bind"
+	"github.com/wippyai/go-lua/analysis/program/target/typeindex"
 	"github.com/wippyai/go-lua/compiler/ast"
 	"github.com/wippyai/go-lua/compiler/parse"
 )
@@ -23,7 +24,7 @@ func TestLocalFunctionDeclarationIsTheOnlyRecursiveInitializer(t *testing.T) {
 		local := stmts[0].(*ast.LocalAssignStmt)
 		fn := local.Exprs[0].(*ast.FunctionExpr)
 		recur := fn.Stmts[1].(*ast.ReturnStmt).Exprs[0].(*ast.FuncCallExpr).Func.(*ast.IdentExpr)
-		bindings := bind.BindChunk(stmts)
+		bindings := bind.BindChunk(stmts, typeindex.Table{})
 		target, ok := bindings.LocalSymbolAt(local, 0)
 		if !ok {
 			t.Fatal("singleton local target missing")
@@ -69,7 +70,7 @@ end
 	recursive := recursiveBlock.Stmts[0].(*ast.LocalAssignStmt)
 	recursiveFn := recursive.Exprs[0].(*ast.FunctionExpr)
 	recursiveRead := recursiveFn.Stmts[0].(*ast.ReturnStmt).Exprs[0].(*ast.FuncCallExpr).Func.(*ast.IdentExpr)
-	bindings := bind.BindChunk(stmts)
+	bindings := bind.BindChunk(stmts, typeindex.Table{})
 
 	outerID, _ := bindings.LocalSymbolAt(outer, 0)
 	ordinaryID, _ := bindings.LocalSymbolAt(ordinary, 0)

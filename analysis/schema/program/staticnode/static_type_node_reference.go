@@ -29,6 +29,11 @@ func (row StaticTypeNodeReferenceCanonicalKey) ParentID() identity.ContentID {
 	}
 	return row.parent
 }
+// Text is the exact spelling of this canonical path segment.
+func (row StaticTypeNodeReferenceCanonicalKey) Text() string {
+	return row.text
+}
+
 func (row StaticTypeNodeReferenceCanonicalKey) Key() keyspace.Key {
 	if !row.Available() {
 		return 0

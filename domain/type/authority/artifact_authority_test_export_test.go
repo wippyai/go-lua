@@ -43,5 +43,5 @@ func ResolveForTest(owner any, coordinate any) (typ.Type, bool) {
 // SealProgramsForTest exposes the detached construction boundary only to its
 // black-box laws. Production constructs it solely through SealProgramRows.
 func SealProgramsForTest(programs []programschema.Program) (*artifactAuthority, error) {
-	return sealPrograms(programs, false)
+	return sealPrograms(programs, false, nil)
 }

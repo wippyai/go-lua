@@ -4,6 +4,7 @@ import (
 	"testing"
 
 	"github.com/wippyai/go-lua/analysis/lua/bind"
+	"github.com/wippyai/go-lua/analysis/program/target/typeindex"
 	"github.com/wippyai/go-lua/compiler/ast"
 	"github.com/wippyai/go-lua/compiler/parse"
 )
@@ -13,7 +14,7 @@ func TestCallSpellingIsBoundAtTheCallOccurrence(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	binding := bind.BindChunk(statements)
+	binding := bind.BindChunk(statements, typeindex.Table{})
 	want := []string{"direct", "object.field", "", "method"}
 	for index, statement := range statements {
 		callStmt, ok := statement.(*ast.FuncCallStmt)
@@ -46,7 +47,7 @@ func TestMethodParamSlotOwnsImplicitSelfSelectorPosition(t *testing.T) {
 	if !ok || statement.Name == nil || statement.Func == nil {
 		t.Fatal("method declaration was not parsed")
 	}
-	binding := bind.BindChunk(statements)
+	binding := bind.BindChunk(statements, typeindex.Table{})
 	slots := binding.ParamSlots(statement.Func)
 	if len(slots) != 2 || !slots[0].ImplicitSelf || slots[0].Name != "self" {
 		t.Fatalf("method ParamSlots = %#v, want implicit self followed by value", slots)

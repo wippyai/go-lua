@@ -160,7 +160,7 @@ func TestATargetWithoutItsClassVocabularyCannotMount(t *testing.T) {
 	}
 	program := artifact.Program()
 	linkID := identity.ContentID{5}
-	types, typesErr := typeauthority.SealProgramRows(linkID, []programschema.Program{program})
+	types, typesErr := typeauthority.SealProgramRows(linkID, []programschema.Program{program}, nil)
 	if typesErr != nil || types == nil {
 		t.Fatalf("columnless link type authority: %v", typesErr)
 	}

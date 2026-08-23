@@ -3,6 +3,7 @@ package bind
 import (
 	"testing"
 
+	"github.com/wippyai/go-lua/analysis/program/target/typeindex"
 	"github.com/wippyai/go-lua/compiler/ast"
 	"github.com/wippyai/go-lua/compiler/parse"
 )
@@ -20,7 +21,7 @@ end
 	outerDecl := statements[0].(*ast.LocalAssignStmt)
 	outer := outerDecl.Exprs[0].(*ast.FunctionExpr)
 	innerDecl := outer.Stmts[1].(*ast.ReturnStmt).Exprs[0].(*ast.FunctionExpr)
-	result := BindChunk(statements)
+	result := BindChunk(statements, typeindex.Table{})
 	params := result.ParamSlots(outer)
 	if len(params) != 2 || params[0].Name != "first" || !params[1].Vararg {
 		t.Fatalf("ParamSlots = %#v, want fixed and vararg parameters", params)

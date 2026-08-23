@@ -14,6 +14,7 @@ import (
 	staticquery "github.com/wippyai/go-lua/analysis/program/static/query"
 	staticrefs "github.com/wippyai/go-lua/analysis/program/static/references"
 	statictypes "github.com/wippyai/go-lua/analysis/program/static/types"
+	"github.com/wippyai/go-lua/analysis/program/target/typeindex"
 	"github.com/wippyai/go-lua/compiler/ast"
 	"github.com/wippyai/go-lua/compiler/parse"
 )
@@ -37,7 +38,7 @@ func TestExactStaticSourceLaws(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			if bound := bind.BindChunk(statements); bound == nil {
+			if bound := bind.BindChunk(statements, typeindex.Table{}); bound == nil {
 				t.Fatal("public binder returned nil result")
 			}
 			p, err := lualower.Lower(lualower.Source{Name: staticLawFile, Text: []byte(source)})
@@ -64,7 +65,7 @@ func TestExactInterfaceSourceLaw(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if bound := bind.BindChunk(statements); bound == nil {
+	if bound := bind.BindChunk(statements, typeindex.Table{}); bound == nil {
 		t.Fatal("public binder returned nil result")
 	}
 	p, err := lualower.Lower(lualower.Source{Name: staticLawFile, Text: []byte(source)})

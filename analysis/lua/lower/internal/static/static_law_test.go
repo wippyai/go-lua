@@ -7,6 +7,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/lua/lower/internal/assembly"
 	"github.com/wippyai/go-lua/analysis/lua/lower/internal/coord"
 	"github.com/wippyai/go-lua/analysis/program/source"
+	"github.com/wippyai/go-lua/analysis/program/target/typeindex"
 	"github.com/wippyai/go-lua/compiler/ast"
 	"github.com/wippyai/go-lua/compiler/parse"
 )
@@ -105,7 +106,7 @@ func TestBeginAliasRequiresExactBinderTypeParameterCount(t *testing.T) {
 				t.Fatalf("parse: %v", err)
 			}
 			def := stmts[0].(*ast.TypeDefStmt)
-			binding := bind.BindChunk(stmts)
+			binding := bind.BindChunk(stmts, typeindex.Table{})
 			c := assembly.New(sourceName, 0, binding.GlobalCensus())
 			body := c.Body(source.Span{File: sourceName})
 			writer := New(nil, c, c, binding, nil, nil, nil, sourceName)

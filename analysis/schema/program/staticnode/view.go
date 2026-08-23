@@ -277,12 +277,17 @@ func (program View) StaticTypeNodeChildren(index int, row StaticTypeNode, strict
 	case StaticNodeReference:
 		id, ok := row.ReferenceTarget()
 		if strict {
+			// A reference carries a target edge only when its binder resolved
+			// it to a declaration of this Program. An unresolved reference has
+			// nothing to point at, and a canonical reference names a
+			// declaration outside this Program by path: both are complete
+			// leaves of the local graph and neither owns a child.
 			switch staticrefs.Resolution(row.Resolution()) {
-			case staticrefs.Unresolved:
+			case staticrefs.Unresolved, staticrefs.CanonicalPath:
 				if id.Available() {
 					return nil, false
 				}
-			case staticrefs.Declaration, staticrefs.CanonicalPath:
+			case staticrefs.Declaration:
 				if !add(id, ok) {
 					return nil, false
 				}

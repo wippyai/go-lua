@@ -124,7 +124,7 @@ func rawSemanticSourceFrontierFixture(t testing.TB, count int) rawSemanticSource
 		t.Fatal("structure vocabulary")
 	}
 	valueSchema, valueFailure := valuedomain.SealWithFailure(linked, heapSchema, []programmount.MountedArtifact{valueMount}, structural)
-	types, typeErr := typeauthority.SealProgramRows(linked.ContentID(), []programschema.Program{artifact.Program()})
+	types, typeErr := typeauthority.SealProgramRows(linked.ContentID(), []programschema.Program{artifact.Program()}, nil)
 	statics, _, staticErr := staticdomain.SealMountedPrograms(staticdomain.MountContext{LinkID: linked.ContentID(), Target: contract}, types, []staticdomain.MountedProgram{{Program: snapshottest.MustMount(t, artifact, module).Program, ModuleID: module, NamespaceID: module}})
 	packs, packsOK := packdomain.SealMountedArtifacts(linked, statics, []programmount.MountedArtifact{packMount})
 	if heapFailure != heapdomain.SealFailureNone || valueFailure != valuedomain.SealFailureNone || typeErr != nil || staticErr != nil || statics == nil || !packsOK || packs == nil {

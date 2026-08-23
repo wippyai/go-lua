@@ -24,7 +24,7 @@ func newTypeFactFixture(t *testing.T, linkByte byte) typeFactFixture {
 
 	program := targetFamilyLawProgram(t)
 	linkID := identity.ContentID{linkByte}
-	types, err := typeauthority.SealProgramRows(linkID, []programschema.Program{program})
+	types, err := typeauthority.SealProgramRows(linkID, []programschema.Program{program}, nil)
 	if err != nil || types == nil {
 		t.Fatalf("seal type authority: %v", err)
 	}

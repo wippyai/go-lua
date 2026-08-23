@@ -245,10 +245,11 @@ func (b *binder) qualifiedTypeAliasSource(expr ast.Expr) (QualifiedTypeAlias, bo
 			return alias.copy(), true
 		}
 	}
-	// A dotted value expression is not type evidence. Imported/module paths
-	// become canonical only after an authoritative resolver or an earlier
-	// proven publication has established this exact symbol/path pair.
-	return QualifiedTypeAlias{}, false
+	// A dotted value expression is not type evidence on its own. It becomes
+	// canonical through the sealed qualified type index of the target, which is
+	// the authority for owner-qualified names, or through an earlier proven
+	// publication that established this exact symbol/path pair.
+	return b.qualifiedTypeIndexAlias(append([]string{root.Value}, suffix...))
 }
 
 func dottedTypeValuePath(expr ast.Expr) (*ast.IdentExpr, []string, bool) {

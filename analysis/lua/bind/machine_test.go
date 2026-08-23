@@ -5,6 +5,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/wippyai/go-lua/analysis/program/target/typeindex"
 	"github.com/wippyai/go-lua/compiler/ast"
 	"github.com/wippyai/go-lua/compiler/parse"
 )
@@ -54,7 +55,7 @@ func parsedDeepLookup(tb testing.TB, depth int) ([]ast.Stmt, *ast.LocalAssignStm
 
 func TestGeneratedSourceScaleRetainsLexicalAndTypeAuthority(t *testing.T) {
 	stmts, root, deepest := parsedDeepLookup(t, 256)
-	result := BindChunk(stmts)
+	result := BindChunk(stmts, typeindex.Table{})
 	rootID := mustLocalAt(t, result, root, 0)
 	use := deepest.Exprs[0].(*ast.IdentExpr)
 	if got := mustSymbol(t, result, use); got != rootID {
@@ -70,7 +71,7 @@ func BenchmarkBindWideFunctionsSource(b *testing.B) {
 	for _, width := range []int{512, 1024} {
 		b.Run(strconv.Itoa(width), func(b *testing.B) {
 			stmts := parsedWideFunctions(b, width)
-			result := BindChunk(stmts)
+			result := BindChunk(stmts, typeindex.Table{})
 			for i, stmt := range stmts {
 				fn := stmt.(*ast.LocalAssignStmt).Exprs[0].(*ast.FunctionExpr)
 				if _, ok := result.FunctionOrigin(fn); !ok {
@@ -80,7 +81,7 @@ func BenchmarkBindWideFunctionsSource(b *testing.B) {
 			b.ReportAllocs()
 			b.ResetTimer()
 			for range b.N {
-				BindChunk(stmts)
+				BindChunk(stmts, typeindex.Table{})
 			}
 		})
 	}
@@ -90,7 +91,7 @@ func BenchmarkBindDeepLookupSource(b *testing.B) {
 	for _, depth := range []int{512, 1024} {
 		b.Run(strconv.Itoa(depth), func(b *testing.B) {
 			stmts, root, deepest := parsedDeepLookup(b, depth)
-			result := BindChunk(stmts)
+			result := BindChunk(stmts, typeindex.Table{})
 			rootID, rootOK := result.LocalSymbolAt(root, 0)
 			got, gotOK := result.SymbolOf(deepest.Exprs[0].(*ast.IdentExpr))
 			if !rootOK || !gotOK || got != rootID {
@@ -99,7 +100,7 @@ func BenchmarkBindDeepLookupSource(b *testing.B) {
 			b.ReportAllocs()
 			b.ResetTimer()
 			for range b.N {
-				BindChunk(stmts)
+				BindChunk(stmts, typeindex.Table{})
 			}
 		})
 	}
@@ -120,13 +121,13 @@ func BenchmarkBindControlWidthSource(b *testing.B) {
 			if err != nil {
 				b.Fatal(err)
 			}
-			if issues := BindChunk(stmts).ControlIssues(); len(issues) != 0 {
+			if issues := BindChunk(stmts, typeindex.Table{}).ControlIssues(); len(issues) != 0 {
 				b.Fatalf("control issues = %#v", issues)
 			}
 			b.ReportAllocs()
 			b.ResetTimer()
 			for range b.N {
-				BindChunk(stmts)
+				BindChunk(stmts, typeindex.Table{})
 			}
 		})
 	}

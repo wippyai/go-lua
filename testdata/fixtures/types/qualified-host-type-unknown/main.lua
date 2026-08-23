@@ -1,0 +1,7 @@
+local stream = require("stream")
+
+local function identifier(handle: stream.Missing): string
+    return handle.id
+end
+
+return identifier

@@ -5,6 +5,7 @@ import (
 
 	bind "github.com/wippyai/go-lua/analysis/lua/bind"
 	lualower "github.com/wippyai/go-lua/analysis/lua/lower"
+	"github.com/wippyai/go-lua/analysis/program/target/typeindex"
 	"github.com/wippyai/go-lua/compiler/ast"
 	"github.com/wippyai/go-lua/compiler/parse"
 )
@@ -25,7 +26,7 @@ return number(value), Shape(value)
 	if err != nil {
 		t.Fatal(err)
 	}
-	result := bind.BindChunk(statements)
+	result := bind.BindChunk(statements, typeindex.Table{})
 
 	shape := statements[0].(*ast.TypeDefStmt)
 	box := statements[1].(*ast.TypeDefStmt)
@@ -87,7 +88,7 @@ func TestDirectRequirePreservesOneGlobalIdentityIntoProgram(t *testing.T) {
 	}
 	call := statements[0].(*ast.LocalAssignStmt).Exprs[0].(*ast.FuncCallExpr)
 	ident := call.Func.(*ast.IdentExpr)
-	binding := bind.BindChunk(statements)
+	binding := bind.BindChunk(statements, typeindex.Table{})
 	if !binding.IsImplicitGlobalUse(ident) {
 		t.Fatal("direct require has no binder implicit-global evidence")
 	}
@@ -119,7 +120,7 @@ func TestDirectRequirePreservesOneGlobalIdentityIntoProgram(t *testing.T) {
 	}
 	shadowCall := shadowStatements[1].(*ast.LocalAssignStmt).Exprs[0].(*ast.FuncCallExpr)
 	shadowIdent := shadowCall.Func.(*ast.IdentExpr)
-	shadowBinding := bind.BindChunk(shadowStatements)
+	shadowBinding := bind.BindChunk(shadowStatements, typeindex.Table{})
 	if shadowBinding.IsImplicitGlobalUse(shadowIdent) {
 		t.Fatal("shadowed require fabricated implicit-global evidence")
 	}

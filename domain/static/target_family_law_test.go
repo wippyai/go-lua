@@ -55,7 +55,7 @@ func TestOneSealedTargetFamilySeedsEveryLink(t *testing.T) {
 	var first []identity.ContentID
 	for link := 1; link <= 3; link++ {
 		linkID := identity.ContentID{byte(link)}
-		types, typesErr := typeauthority.SealProgramRows(linkID, []programschema.Program{program})
+		types, typesErr := typeauthority.SealProgramRows(linkID, []programschema.Program{program}, nil)
 		if typesErr != nil || types == nil {
 			t.Fatalf("link %d type authority: %v", link, typesErr)
 		}

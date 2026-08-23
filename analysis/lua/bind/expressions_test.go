@@ -3,6 +3,7 @@ package bind
 import (
 	"testing"
 
+	"github.com/wippyai/go-lua/analysis/program/target/typeindex"
 	"github.com/wippyai/go-lua/compiler/ast"
 	"github.com/wippyai/go-lua/compiler/parse"
 )
@@ -15,7 +16,7 @@ local table = {value = value, [key] = lookup()}
 	if err != nil {
 		t.Fatal(err)
 	}
-	result := BindChunk(statements)
+	result := BindChunk(statements, typeindex.Table{})
 	calls := result.DirectGlobalCalls()
 	if len(calls) != 2 {
 		t.Fatalf("DirectGlobalCalls length = %d, want 2", len(calls))

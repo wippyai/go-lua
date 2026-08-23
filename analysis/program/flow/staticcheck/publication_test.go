@@ -198,7 +198,12 @@ func TestStaticCheckPublicationAcceptsQualifiedDeclarationTarget(t *testing.T) {
 	}
 }
 
-func TestStaticCheckPublicationRejectsMismatchedCanonicalPathIdentity(t *testing.T) {
+// TestStaticCheckPublicationCanonicalPathResolvesTheSourceSpelling states
+// which of a publication's two paths the canonical path is. The published name
+// is the write path this Assign pair targets; the canonical path resolves the
+// authored right-hand spelling the TypeRef retains. They are different paths
+// and a canonical key that is not a write-path key is therefore ordinary.
+func TestStaticCheckPublicationCanonicalPathResolvesTheSourceSpelling(t *testing.T) {
 	body := keyspace.MakeTerm(keyspace.FamilyBody, 1)
 	nilValue := keyspace.MakeTerm(keyspace.FamilyNil, 1)
 	nilValue2 := keyspace.MakeTerm(keyspace.FamilyNil, 2)
@@ -243,51 +248,55 @@ func TestStaticCheckPublicationRejectsMismatchedCanonicalPathIdentity(t *testing
 		fixture.bindings, fixture.forest, fixture.proof, fixture.access,
 		fixture.flowView.ModuleID(), fixture.entry,
 	)
-	if err == nil {
-		t.Fatal("Validate accepted a publication with a foreign canonical path key")
+	if err != nil {
+		t.Fatalf("Validate: %v", err)
 	}
 }
 
-func TestStaticCheckPublicationRejectsMismatchedCanonicalPathRoot(t *testing.T) {
+// TestStaticCheckPublicationRejectsInvisibleCanonicalTargetRoot states the
+// law that replaces the write-path comparison: a qualified source spelling
+// names its own value root, and that root must be a value visible where the
+// publication is authored. An unbound local cell is not.
+func TestStaticCheckPublicationRejectsInvisibleCanonicalTargetRoot(t *testing.T) {
 	body := keyspace.MakeTerm(keyspace.FamilyBody, 1)
-	nilValue := keyspace.MakeTerm(keyspace.FamilyNil, 1)
-	nilValue2 := keyspace.MakeTerm(keyspace.FamilyNil, 2)
-	cell := keyspace.MakeTerm(keyspace.FamilyCell, 1)
-	foreignRoot := keyspace.MakeTerm(keyspace.FamilyCell, 2)
+	nil1 := keyspace.MakeTerm(keyspace.FamilyNil, 1)
+	nil2 := keyspace.MakeTerm(keyspace.FamilyNil, 2)
+	global := keyspace.MakeTerm(keyspace.FamilyCell, 1)
+	local := keyspace.MakeTerm(keyspace.FamilyCell, 2)
 	key := keyspace.MakeTerm(keyspace.FamilyKey, 1)
-	key2 := keyspace.MakeTerm(keyspace.FamilyKey, 2)
 	lens := keyspace.MakeTerm(keyspace.FamilyLensExact, 1)
-	lens2 := keyspace.MakeTerm(keyspace.FamilyLensExact, 2)
 	read := keyspace.MakeTerm(keyspace.FamilyRead, 1)
-	read2 := keyspace.MakeTerm(keyspace.FamilyRead, 2)
-	values := keyspace.MakeTerm(keyspace.FamilyValues, 1)
+	values1 := keyspace.MakeTerm(keyspace.FamilyValues, 1)
 	values2 := keyspace.MakeTerm(keyspace.FamilyValues, 2)
+	bind := keyspace.MakeTerm(keyspace.FamilyBind, 1)
 	assign := keyspace.MakeTerm(keyspace.FamilyAssign, 1)
-	assign2 := keyspace.MakeTerm(keyspace.FamilyAssign, 2)
 	typeRef := keyspace.MakeTerm(keyspace.FamilyTypeRef, 1)
 	counts := checkCounts(
 		checkCount(keyspace.FamilyBody, 1), checkCount(keyspace.FamilyNil, 2), checkCount(keyspace.FamilyCell, 2),
-		checkCount(keyspace.FamilyKey, 2), checkCount(keyspace.FamilyLensExact, 2), checkCount(keyspace.FamilyRead, 2),
-		checkCount(keyspace.FamilyValues, 2), checkCount(keyspace.FamilyAssign, 2), checkCount(keyspace.FamilyWrite, 2),
-		checkCount(keyspace.FamilyTypeRef, 1), checkCount(keyspace.FamilyTypePublication, 1),
+		checkCount(keyspace.FamilyKey, 1), checkCount(keyspace.FamilyLensExact, 1), checkCount(keyspace.FamilyRead, 1),
+		checkCount(keyspace.FamilyValues, 2), checkCount(keyspace.FamilyBind, 1), checkCount(keyspace.FamilyAssign, 1),
+		checkCount(keyspace.FamilyWrite, 1), checkCount(keyspace.FamilyTypeRef, 1), checkCount(keyspace.FamilyTypePublication, 1),
 	)
+	// The Assign is authored before the Bind, so the local cell the TypeRef
+	// names as its source root is not yet a visible value at the publication.
 	fixture := newCheckFixture(t, checkSpec{
-		name: "staticcheck-publication-foreign-root.lua", counts: counts,
-		rows:   [][]keyspace.Term{{assign, assign2}},
-		exacts: []keyspace.LiteralValue{{Kind: keyspace.LiteralString, String: "field"}, {Kind: keyspace.LiteralString, String: "other"}},
-		keys:   []source.KeyInput{source.NameKey(body, "field"), source.NameKey(body, "other")},
+		name: "staticcheck-publication-invisible-root.lua", counts: counts,
+		rows: [][]keyspace.Term{{assign, bind}}, binds: []source.BindCells{{Bind: bind, Cells: []keyspace.Term{local}}},
+		exacts: []keyspace.LiteralValue{{Kind: keyspace.LiteralString, String: "field"}},
+		keys:   []source.KeyInput{source.NameKey(body, "field")},
 		flow: authored.Input{
-			Values: authored.ValuesInput{Rows: []authored.Value{{Owner: body, Fixed: authored.Range{End: 1}}, {Owner: body, Fixed: authored.Range{Start: 1, End: 2}}}, Terms: []keyspace.Term{nilValue, nilValue2}},
-			Access: authored.AccessInput{Exact: []authored.ExactLens{{Owner: body, Base: read, Source: key, Kind: kind.FieldName}, {Owner: body, Base: read2, Source: key2, Kind: kind.FieldName}}},
+			Values: authored.ValuesInput{Rows: []authored.Value{{Owner: body, Fixed: authored.Range{End: 1}}, {Owner: body, Fixed: authored.Range{Start: 1, End: 2}}}, Terms: []keyspace.Term{nil1, nil2}},
+			Access: authored.AccessInput{Exact: []authored.ExactLens{{Owner: body, Base: read, Source: key, Kind: kind.FieldName}}},
 			Storage: authored.StorageInput{
-				Cells:   []authored.Cell{{Kind: authored.CellGlobal, Key: 1}, {Kind: authored.CellGlobal, Key: 2}},
-				Reads:   []authored.Read{{Owner: body, Source: cell}, {Owner: body, Source: foreignRoot}},
-				Assigns: []authored.Assign{{Owner: body, Values: values}, {Owner: body, Values: values2}},
-				Writes:  []authored.Write{{Assign: assign, Target: lens}, {Assign: assign2, Target: lens2}},
+				Cells:   []authored.Cell{{Kind: authored.CellGlobal, Key: 1}, {Kind: authored.CellLocal, Body: body}},
+				Reads:   []authored.Read{{Owner: body, Source: global}},
+				Binds:   []authored.Bind{{Owner: body, Values: values2}},
+				Assigns: []authored.Assign{{Owner: body, Values: values1}},
+				Writes:  []authored.Write{{Assign: assign, Target: lens}},
 			},
 		},
 		static: static.Input{
-			References:   staticrefs.Input{TypeRef: []staticrefs.TypeRef{{Resolution: staticrefs.CanonicalPath, Root: foreignRoot, Source: []keyspace.Key{1, 2}, Canonical: []keyspace.Key{1}}}},
+			References:   staticrefs.Input{TypeRef: []staticrefs.TypeRef{{Resolution: staticrefs.CanonicalPath, Root: local, Source: []keyspace.Key{1, 2}, Canonical: []keyspace.Key{1}}}},
 			Publications: staticpubs.Input{Type: []staticpubs.Publication{{Assign: assign, Pair: 0, Target: typeRef}}},
 		},
 	})
@@ -296,7 +305,7 @@ func TestStaticCheckPublicationRejectsMismatchedCanonicalPathRoot(t *testing.T) 
 		fixture.bindings, fixture.forest, fixture.proof, fixture.access,
 		fixture.flowView.ModuleID(), fixture.entry,
 	); err == nil {
-		t.Fatal("Validate accepted a publication with a foreign canonical path root")
+		t.Fatal("Validate accepted a publication whose source root is not visible")
 	}
 }
 

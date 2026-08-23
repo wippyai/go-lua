@@ -10,6 +10,7 @@ import (
 	programlower "github.com/wippyai/go-lua/analysis/lua/lower"
 	"github.com/wippyai/go-lua/analysis/program"
 	"github.com/wippyai/go-lua/analysis/program/keyspace"
+	"github.com/wippyai/go-lua/analysis/program/target/typeindex"
 	"github.com/wippyai/go-lua/compiler/ast"
 	"github.com/wippyai/go-lua/compiler/parse"
 )
@@ -281,7 +282,7 @@ func boundaryRequireAnchorAt(t *testing.T, source string, line int) (*ast.FuncCa
 	if _, ok := anchor.Func.(*ast.IdentExpr); !ok || len(anchor.Args) != 1 || anchor.Receiver != nil || anchor.Method != "" {
 		t.Fatalf("anchor at line %d is not the direct one-argument require form", line)
 	}
-	return anchor, bind.BindChunk(statements)
+	return anchor, bind.BindChunk(statements, typeindex.Table{})
 }
 
 func assertDirectGlobalRequire(t *testing.T, binding *bind.Result, call *ast.FuncCallExpr) {

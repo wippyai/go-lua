@@ -108,7 +108,7 @@ func selectorLawSchemaSource(t testing.TB, contract *contract.Contract, label, s
 	if failure.Available() || artifact == nil || !artifact.Available() {
 		t.Fatalf("compile selector artifact: %s", failure.Error())
 	}
-	types, err := typeauthority.SealProgramRows(linked.ContentID(), []programschema.Program{artifact.Program()})
+	types, err := typeauthority.SealProgramRows(linked.ContentID(), []programschema.Program{artifact.Program()}, nil)
 	if err != nil || types == nil {
 		t.Fatalf("seal selector types: %v", err)
 	}

@@ -57,16 +57,19 @@ func TestStaticReferenceResolutionShapeLaw(t *testing.T) {
 		name       string
 		resolution staticrefs.Resolution
 		children   int
-		unresolved bool
-		ok         bool
+		edge staticReferenceEdge
 	}{
-		{name: "unresolved leaf", resolution: staticrefs.Unresolved, children: 0, unresolved: true, ok: true},
+		{name: "unresolved leaf", resolution: staticrefs.Unresolved, children: 0, edge: staticReferenceUnresolved},
 		{name: "unresolved target", resolution: staticrefs.Unresolved, children: 1},
-		{name: "declaration target", resolution: staticrefs.Declaration, children: 1, ok: true},
+		{name: "declaration target", resolution: staticrefs.Declaration, children: 1, edge: staticReferenceDeclaration},
 		{name: "declaration missing", resolution: staticrefs.Declaration, children: 0},
 		{name: "declaration extra", resolution: staticrefs.Declaration, children: 2},
-		{name: "canonical target", resolution: staticrefs.CanonicalPath, children: 1, ok: true},
-		{name: "canonical missing", resolution: staticrefs.CanonicalPath, children: 0},
+		// A canonical reference names a declaration outside this Program by
+		// path. The Program seal gives it no target and the artifact
+		// publication gives it no child, so one child is a malformed row and
+		// none is the declared shape.
+		{name: "canonical leaf", resolution: staticrefs.CanonicalPath, children: 0, edge: staticReferenceCanonical},
+		{name: "canonical target", resolution: staticrefs.CanonicalPath, children: 1},
 		{name: "canonical extra", resolution: staticrefs.CanonicalPath, children: 2},
 		{name: "unknown resolution", resolution: staticrefs.Resolution(0), children: 1},
 		{name: "future resolution", resolution: staticrefs.Resolution(255), children: 1},
@@ -74,9 +77,9 @@ func TestStaticReferenceResolutionShapeLaw(t *testing.T) {
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
-			unresolved, ok := staticReferenceResolutionShape(test.resolution, test.children)
-			if unresolved != test.unresolved || ok != test.ok {
-				t.Fatalf("staticReferenceResolutionShape(%d, %d) = (%v, %v), want (%v, %v)", test.resolution, test.children, unresolved, ok, test.unresolved, test.ok)
+			edge := staticReferenceResolutionShape(test.resolution, test.children)
+			if edge != test.edge {
+				t.Fatalf("staticReferenceResolutionShape(%d, %d) = %v, want %v", test.resolution, test.children, edge, test.edge)
 			}
 		})
 	}

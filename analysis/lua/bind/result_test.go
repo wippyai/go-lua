@@ -3,6 +3,7 @@ package bind
 import (
 	"testing"
 
+	"github.com/wippyai/go-lua/analysis/program/target/typeindex"
 	"github.com/wippyai/go-lua/compiler/ast"
 	"github.com/wippyai/go-lua/compiler/parse"
 )
@@ -40,7 +41,7 @@ func parseBindSource(t *testing.T, source string) ([]ast.Stmt, *Result) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	return stmts, BindChunk(stmts)
+	return stmts, BindChunk(stmts, typeindex.Table{})
 }
 
 func TestParsedTypedOrdinaryFunctionInitializerIsNotRecursive(t *testing.T) {
@@ -57,7 +58,7 @@ end
 	call := fn.Stmts[0].(*ast.ReturnStmt).Exprs[0].(*ast.FuncCallExpr)
 	self := call.Func.(*ast.IdentExpr)
 
-	result := BindChunk(stmts)
+	result := BindChunk(stmts, typeindex.Table{})
 	target := mustLocalAt(t, result, definition, 0)
 	got := mustSymbol(t, result, self)
 	if got == target {

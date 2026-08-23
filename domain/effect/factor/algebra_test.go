@@ -99,7 +99,7 @@ func newEffectFactorFixture(t testing.TB, spec declaration.Spec, source string) 
 	for index, artifact := range artifacts {
 		programs[index] = artifact.Program()
 	}
-	types, err := typeauthority.SealProgramRows(linked.ContentID(), programs)
+	types, err := typeauthority.SealProgramRows(linked.ContentID(), programs, nil)
 	if err != nil || types == nil {
 		t.Fatalf("seal type authority: %v", err)
 	}

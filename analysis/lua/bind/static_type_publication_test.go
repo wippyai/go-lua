@@ -3,6 +3,7 @@ package bind
 import (
 	"testing"
 
+	"github.com/wippyai/go-lua/analysis/program/target/typeindex"
 	"github.com/wippyai/go-lua/compiler/ast"
 	"github.com/wippyai/go-lua/compiler/parse"
 )
@@ -27,7 +28,7 @@ type Bare = Outer
 	innerRef := block.Stmts[1].(*ast.TypeDefStmt).Type.(*ast.TypeRefExpr)
 	bare := stmts[3].(*ast.TypeDefStmt).Type
 
-	result := BindChunk(stmts)
+	result := BindChunk(stmts, typeindex.Table{})
 	outer := mustLocalAt(t, result, outerLocal, 0)
 	inner := mustLocalAt(t, result, innerLocal, 0)
 	if got, ok := result.QualifiedTypeRootSymbol(outerRef); !ok || got != outer {
@@ -51,7 +52,7 @@ type Remote = stream.Stream
 		t.Fatal(err)
 	}
 	ref := stmts[0].(*ast.TypeDefStmt).Type.(*ast.TypeRefExpr)
-	result := BindChunk(stmts)
+	result := BindChunk(stmts, typeindex.Table{})
 
 	root, ok := result.QualifiedTypeRootSymbol(ref)
 	if !ok || root == 0 {
@@ -75,7 +76,7 @@ local runtime = stream
 	}
 	ref := stmts[0].(*ast.TypeDefStmt).Type.(*ast.TypeRefExpr)
 	runtime := stmts[1].(*ast.LocalAssignStmt).Exprs[0].(*ast.IdentExpr)
-	result := BindChunk(stmts)
+	result := BindChunk(stmts, typeindex.Table{})
 
 	root, rootOK := result.QualifiedTypeRootSymbol(ref)
 	use, useOK := result.SymbolOf(runtime)
@@ -99,7 +100,7 @@ local runtime = stream
 	ref := stmts[0].(*ast.TypeDefStmt).Type.(*ast.TypeRefExpr)
 	write := stmts[1].(*ast.AssignStmt).Lhs[0].(*ast.IdentExpr)
 	read := stmts[2].(*ast.LocalAssignStmt).Exprs[0].(*ast.IdentExpr)
-	result := BindChunk(stmts)
+	result := BindChunk(stmts, typeindex.Table{})
 
 	root, rootOK := result.QualifiedTypeRootSymbol(ref)
 	writeID, writeOK := result.SymbolOf(write)
@@ -128,7 +129,7 @@ end
 	block := stmts[1].(*ast.DoBlockStmt)
 	local := block.Stmts[0].(*ast.LocalAssignStmt)
 	innerRef := block.Stmts[1].(*ast.TypeDefStmt).Type.(*ast.TypeRefExpr)
-	result := BindChunk(stmts)
+	result := BindChunk(stmts, typeindex.Table{})
 
 	outer, outerOK := result.QualifiedTypeRootSymbol(outerRef)
 	inner, innerOK := result.QualifiedTypeRootSymbol(innerRef)
@@ -152,7 +153,7 @@ Target.User = Source.User
 	if err != nil {
 		t.Fatal(err)
 	}
-	result := BindChunk(stmts)
+	result := BindChunk(stmts, typeindex.Table{})
 	bare := stmts[3].(*ast.AssignStmt)
 	qualified := stmts[4].(*ast.AssignStmt)
 	bareEntries := result.StaticTypePublications(bare)

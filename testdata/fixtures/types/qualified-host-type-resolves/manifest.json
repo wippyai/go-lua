@@ -1,0 +1,12 @@
+{
+  "description": "A qualified type name the target publishes in its sealed qualified type index resolves to that index row, so an annotation naming stream.Stream reaches the declared record and reading its id field is clean.",
+  "packages": [
+    "stream"
+  ],
+  "check": {
+    "diagnostics": []
+  },
+  "run": {
+    "skip": "diagnostic-only fixture"
+  }
+}

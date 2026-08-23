@@ -115,7 +115,7 @@ func mountedRecord(t testing.TB, name, source string) LinkInputs {
 		rows[index] = programmount.MountedArtifact{Program: program, Snapshot: snapshot}
 		statics[index] = staticdomain.MountedProgram{Program: program.Program, ModuleID: module, NamespaceID: module}
 	}
-	types, err := typeauthority.SealProgramRows(linked.ContentID(), artifacts)
+	types, err := typeauthority.SealProgramRows(linked.ContentID(), artifacts, nil)
 	if err != nil || types == nil {
 		t.Fatalf("seal the type authority: %v", err)
 	}

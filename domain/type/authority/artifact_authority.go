@@ -30,6 +30,22 @@ type artifactAuthority struct {
 	location   map[identity.ContentID]canonicalRowLocation
 	component  map[identity.ContentID]rowComponent
 	projection map[identity.ContentID]artifactReferenceProjection
+	// qualified is the name-to-type directory a canonical reference resolves
+	// through. It is the Link's target vocabulary, handed in already read.
+	qualified qualifiedDirectory
+	// refusal is the first reason a reference named something the authority
+	// could not reach. A skipped projection is how an open or unresolved row
+	// leaves the directory, so a reference that names a missing declaration
+	// must state its reason here instead of disappearing into that same path.
+	refusal string
+}
+
+// refuse records the first refusal reason. Later reasons are consequences of
+// the first, so the seal reports the one that started it.
+func (a *artifactAuthority) refuse(reason string) {
+	if a != nil && a.refusal == "" {
+		a.refusal = reason
+	}
 }
 
 // artifactReferenceProjection is the seal-local image from which the Link
@@ -90,9 +106,13 @@ type componentScope struct {
 	outer     *componentScope
 }
 
-func sealPrograms(programs []programschema.Program, retainValues bool) (*artifactAuthority, error) {
+func sealPrograms(programs []programschema.Program, retainValues bool, qualified []QualifiedType) (*artifactAuthority, error) {
 	if len(programs) == 0 {
 		return nil, errors.New("typeauthority: no programs")
+	}
+	directory, directoryErr := newQualifiedDirectory(qualified)
+	if directoryErr != nil {
+		return nil, directoryErr
 	}
 	locations := make(map[identity.ContentID]canonicalRowLocation)
 	views := make([]programstaticnode.View, 0, len(programs))
@@ -134,6 +154,7 @@ func sealPrograms(programs []programschema.Program, retainValues bool) (*artifac
 		location:   locations,
 		component:  components,
 		projection: make(map[identity.ContentID]artifactReferenceProjection, len(locations)),
+		qualified:  directory,
 	}
 	resolver := &artifactResolver{authority: a, built: make(map[identity.ContentID]typ.Type)}
 	for _, view := range views {
@@ -174,6 +195,9 @@ func sealPrograms(programs []programschema.Program, retainValues bool) (*artifac
 			}
 			a.projection[row.ID()] = projection
 		}
+	}
+	if a.refusal != "" {
+		return nil, errors.New(a.refusal)
 	}
 	return a, nil
 }
@@ -276,13 +300,16 @@ func (a *artifactResolver) resolve(id identity.ContentID) (typ.Type, bool) {
 	return value, true
 }
 
-// resolveReference materializes a TypeRef edge. A resolved reference is a
+// resolveReference materializes a TypeRef edge. A declaration reference is a
 // transparent edge of the type graph: it owns no value of its own and never
 // carries a binder, so resolution entered at a reference and resolution
 // entered at the declaration it names are one type. An unresolved reference is
 // a complete, targetless leaf: Unknown is the Static carrier for missing
-// information and stays distinct from Any. A reference chain that closes on
-// itself names no declaration and issues no value.
+// information and stays distinct from Any. A canonical reference is resolved
+// too, but the declaration it names is outside this Program, so it is read by
+// path from the qualified type directory the authority was sealed with. A
+// reference chain that closes on itself names no declaration and issues no
+// value.
 func (a *artifactResolver) resolveReference(row programstaticnode.StaticTypeNode) (typ.Type, bool) {
 	var seen map[identity.ContentID]bool
 	for {
@@ -290,12 +317,14 @@ func (a *artifactResolver) resolveReference(row programstaticnode.StaticTypeNode
 		if !childrenOK {
 			return nil, false
 		}
-		unresolved, shapeOK := staticReferenceResolutionShape(staticrefs.Resolution(row.Resolution()), len(children))
-		if !shapeOK {
-			return nil, false
-		}
-		if unresolved {
+		switch staticReferenceResolutionShape(staticrefs.Resolution(row.Resolution()), len(children)) {
+		case staticReferenceUnresolved:
 			return typ.Unknown, true
+		case staticReferenceCanonical:
+			return a.resolveCanonical(row)
+		case staticReferenceDeclaration:
+		default:
+			return nil, false
 		}
 		target := children[0]
 		targetOK := target.Available()
@@ -698,21 +727,42 @@ func (a *artifactResolver) construct(id identity.ContentID, row programstaticnod
 	return value, true
 }
 
+// staticReferenceEdge is the edge one TypeRef row resolves through. Exactly
+// one target edge belongs to a declaration reference: an unresolved reference
+// has nothing to name, and a canonical reference names a declaration outside
+// this Program by path, which is a name rather than an edge.
+type staticReferenceEdge uint8
+
+const (
+	staticReferenceInvalid staticReferenceEdge = iota
+	staticReferenceUnresolved
+	staticReferenceDeclaration
+	staticReferenceCanonical
+)
+
 // staticReferenceResolutionShape is the sole TypeRef edge-cardinality gate
 // used by artifactAuthority. Keeping resolution and arity in one predicate
 // prevents an unknown enum or an extra target edge from being accepted merely
 // because ChildAt(0) happens to resolve.
-func staticReferenceResolutionShape(resolution staticrefs.Resolution, childCount int) (unresolved bool, ok bool) {
+func staticReferenceResolutionShape(resolution staticrefs.Resolution, childCount int) staticReferenceEdge {
 	switch resolution {
 	case staticrefs.Unresolved:
 		if childCount != 0 {
-			return false, false
+			return staticReferenceInvalid
 		}
-		return true, true
-	case staticrefs.Declaration, staticrefs.CanonicalPath:
-		return false, childCount == 1
+		return staticReferenceUnresolved
+	case staticrefs.Declaration:
+		if childCount != 1 {
+			return staticReferenceInvalid
+		}
+		return staticReferenceDeclaration
+	case staticrefs.CanonicalPath:
+		if childCount != 0 {
+			return staticReferenceInvalid
+		}
+		return staticReferenceCanonical
 	default:
-		return false, false
+		return staticReferenceInvalid
 	}
 }
 

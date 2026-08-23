@@ -247,7 +247,7 @@ func newOpaqueDispatchLawFixture(t testing.TB, name string) opaqueDispatchLawFix
 	if !programRowsOK || programRows == 0 {
 		t.Fatal("opaque dispatch artifact has no Call rows")
 	}
-	types, typesErr := typeauthority.SealProgramRows(linked.ContentID(), []programschema.Program{artifact.Program()})
+	types, typesErr := typeauthority.SealProgramRows(linked.ContentID(), []programschema.Program{artifact.Program()}, nil)
 	if typesErr != nil || types == nil {
 		t.Fatalf("opaque dispatch Type authority: %v", typesErr)
 	}
