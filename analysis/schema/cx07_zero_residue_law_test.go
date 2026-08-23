@@ -110,14 +110,18 @@ func cx07DomainResidues(t *testing.T) []cx07Residue {
 
 func cx07DeclaredResidues(pkg *packages.Package) []cx07Residue {
 	var residues []cx07Residue
-	// Scope lookup is a typed declaration check. PkgName objects are imports,
-	// not declarations made by the package, and are therefore excluded.
-	for _, name := range []string{"HotRule", "HotOwner", "BindHot"} {
+	// Scope lookup is a typed declaration check. Match the dying vocabulary
+	// by shape, not by one historical spelling: several families already call
+	// the same protocol EvidenceHotRule, RawGetHotRule, or BindSelectedHot.
+	// PkgName objects are imports, not declarations made by the package, and
+	// are therefore excluded.
+	for _, name := range pkg.Types.Scope().Names() {
 		object := pkg.Types.Scope().Lookup(name)
-		if object == nil {
+		if _, imported := object.(*types.PkgName); imported {
 			continue
 		}
-		if _, imported := object.(*types.PkgName); imported {
+		forbidden := strings.HasSuffix(name, "HotRule") || strings.HasSuffix(name, "HotOwner") || strings.HasPrefix(name, "Bind") && strings.HasSuffix(name, "Hot")
+		if !forbidden {
 			continue
 		}
 		position := pkg.Fset.PositionFor(object.Pos(), false)
@@ -126,7 +130,7 @@ func cx07DeclaredResidues(pkg *packages.Package) []cx07Residue {
 			file:        position.Filename,
 			line:        position.Line,
 			column:      position.Column,
-			detail:      "forbidden production declaration " + name,
+			detail:      "forbidden production hot-protocol declaration " + name,
 		})
 	}
 
