@@ -24,6 +24,28 @@ type RuntimeInner struct {
 	index uint32 // one-based into Runtime.rows
 }
 
+// RuntimeField is the sealed scalar projection of one direct record field.
+// The child is an owner-fenced Runtime row; optionality and readonly are the
+// only authored metadata retained beside it. The source typ.Type is consumed
+// during sealing and is never reachable through this value.
+//
+// Inner is intentionally exported as a value rather than exposing the dense
+// row index. Runtime methods still authenticate it against their owner before
+// using it as a handle.
+type RuntimeField struct {
+	Inner    RuntimeInner
+	Optional bool
+	Readonly bool
+}
+
+// Child returns the projected field child. It is an alias for Inner for
+// consumers that describe a field projection in terms of its child row.
+func (field RuntimeField) Child() RuntimeInner { return field.Inner }
+
+// Type returns the projected field child. Runtime rows are the sealed type
+// representation, so no typ.Type is materialized by this accessor.
+func (field RuntimeField) Type() RuntimeInner { return field.Inner }
+
 // RuntimeInput is a cold, ownership-isolated canonical graph receipt. It can
 // only be minted by the Authority which owns the Link it will be sealed
 // against. The receipt's source plane is consumed during sealing; Runtime
@@ -53,6 +75,7 @@ type runtimeRow struct {
 
 	inner    runtimeChild
 	variants runtimeRange
+	fields   map[string]RuntimeField
 	atoms    []uint32
 	rank     uint32
 }
@@ -214,6 +237,12 @@ func SealRuntime(types *Authority, inputs []RuntimeInput) (*Runtime, []RuntimeIn
 		return nil, nil, err
 	}
 	if err := builder.sealDescriptors(); err != nil {
+		return nil, nil, err
+	}
+	// Direct field projections are derived from the live construction graph
+	// before the relation source is released. Runtime retains only dense child
+	// handles and scalar metadata.
+	if err := builder.sealFields(); err != nil {
 		return nil, nil, err
 	}
 	if err := runtime.sealRanks(); err != nil {
@@ -582,6 +611,31 @@ func (b *runtimeBuilder) installReceiptEdges(index int, source runtimeSource) er
 		return runtimeChild{inner: RuntimeInner{owner: b.runtime, index: index}, present: true}, nil
 	}
 	switch row.form {
+	case kind.Record:
+		// Canonical record children begin with the direct named fields. Static
+		// members, map components, and metatables follow that authored prefix
+		// and intentionally do not enter this direct-field plane.
+		record, recordOK := runtimeSourceValue(source.value).(*typ.Record)
+		if !recordOK || record == nil {
+			return errors.New("typeauthority: Runtime record source unavailable")
+		}
+		if uint64(len(record.Fields)) > uint64(len(source.node.Children)) {
+			return errors.New("typeauthority: Runtime record field source arity")
+		}
+		if len(record.Fields) == 0 {
+			return nil
+		}
+		fields := make(map[string]RuntimeField, len(record.Fields))
+		for fieldIndex, field := range record.Fields {
+			entry, err := child(source.node.Children[fieldIndex])
+			if err != nil {
+				return err
+			}
+			fields[field.Name] = RuntimeField{
+				Inner: entry.inner, Optional: field.Optional, Readonly: field.Readonly,
+			}
+		}
+		row.fields = fields
 	case kind.Union:
 		row.variants.start = uint32(len(b.runtime.variants))
 		for _, ordinal := range source.node.Children {
@@ -736,6 +790,34 @@ func (b *runtimeBuilder) sealDescriptors() error {
 	return nil
 }
 
+// sealFields validates the already-installed scalar direct-field plane while
+// the builder still owns the construction graphs. Fresh and local rows have
+// their fields installed by installReceiptEdges; rows copied from a Family
+// prefix carry the immutable scalar plane forward and only need owner-fence
+// validation here. This pass deliberately does not inspect or retain a typ
+// graph in Runtime.
+func (b *runtimeBuilder) sealFields() error {
+	if b == nil || b.runtime == nil || len(b.runtime.rows) != len(b.construction) {
+		return errors.New("typeauthority: malformed Runtime field source")
+	}
+	for index, row := range b.runtime.rows {
+		for _, field := range row.fields {
+			if !b.runtime.owns(field.Inner) {
+				return errors.New("typeauthority: malformed Runtime field projection")
+			}
+		}
+		if row.form == kind.Record && row.fields == nil {
+			// A record with no named fields has no map to retain. A non-empty
+			// record must have been installed from its source plane above.
+			value := runtimeSourceValue(b.construction[index])
+			if record, ok := value.(*typ.Record); ok && record != nil && len(record.Fields) != 0 {
+				return errors.New("typeauthority: missing Runtime record field projection")
+			}
+		}
+	}
+	return nil
+}
+
 // sealRanks assigns the exact-singleton finite-set measure. Every closed row
 // is one distinct atom, so each singleton has rank |P|.
 func (r *Runtime) sealRanks() error {
@@ -764,9 +846,10 @@ func (r *Runtime) sealIdentity() error {
 		return errors.New("typeauthority: unavailable Runtime identity source")
 	}
 	hash := sha256.New()
-	// v6 is the explicit flash-cut identity domain: structural planes other
-	// than Union variants and Optional inner no longer contribute to Runtime.
-	_, _ = hash.Write([]byte("wippy.analysis.typeauthority.runtime\x00\x06"))
+	// v7 adds the sealed direct-field projection plane. Structural source
+	// graphs remain construction-only; only sorted field keys, dense child
+	// handles, and optional/readonly bits enter Runtime identity.
+	_, _ = hash.Write([]byte("wippy.analysis.typeauthority.runtime\x00\x07"))
 	_, _ = hash.Write(r.sourceID[:])
 	writeRuntimeWord(hash, uint64(len(r.rows)))
 	for _, row := range r.rows {
@@ -790,6 +873,9 @@ func (r *Runtime) sealIdentity() error {
 		writeRuntimeChild(hash, row.inner)
 		writeRuntimeWord(hash, uint64(row.variants.start))
 		writeRuntimeWord(hash, uint64(row.variants.end))
+		if err := writeRuntimeFields(hash, row.fields); err != nil {
+			return err
+		}
 	}
 	writeRuntimeWord(hash, uint64(len(r.variants)))
 	for _, child := range r.variants {
@@ -837,6 +923,35 @@ func writeRuntimeChild(hash interface{ Write([]byte) (int, error) }, child runti
 	} else {
 		_, _ = hash.Write([]byte{0})
 	}
+}
+
+func writeRuntimeFields(hash interface{ Write([]byte) (int, error) }, fields map[string]RuntimeField) error {
+	keys := make([]string, 0, len(fields))
+	for key := range fields {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	writeRuntimeWord(hash, uint64(len(keys)))
+	for _, key := range keys {
+		field := fields[key]
+		if field.Inner.index == 0 {
+			return errors.New("typeauthority: unavailable Runtime field identity")
+		}
+		writeRuntimeWord(hash, uint64(len(key)))
+		_, _ = hash.Write([]byte(key))
+		writeRuntimeWord(hash, uint64(field.Inner.index))
+		if field.Optional {
+			_, _ = hash.Write([]byte{1})
+		} else {
+			_, _ = hash.Write([]byte{0})
+		}
+		if field.Readonly {
+			_, _ = hash.Write([]byte{1})
+		} else {
+			_, _ = hash.Write([]byte{0})
+		}
+	}
+	return nil
 }
 
 // LinkID identifies the exact sealed Link Runtime is fenced to.
@@ -978,4 +1093,19 @@ func (r *Runtime) DescriptorAt(inner RuntimeInner, index int) (RuntimeInner, boo
 		return RuntimeInner{}, false
 	}
 	return RuntimeInner{owner: r, index: atom}, true
+}
+
+// Field returns one exact direct record field in constant time. The lookup is
+// owner-fenced on both the receiver and the projected child; foreign or zero
+// inners are absent. A sealed map read returns the scalar projection without
+// allocation and without consulting any construction graph.
+func (r *Runtime) Field(inner RuntimeInner, key string) (RuntimeField, bool) {
+	if !r.owns(inner) {
+		return RuntimeField{}, false
+	}
+	field, ok := r.rows[inner.index-1].fields[key]
+	if !ok || !r.owns(field.Inner) {
+		return RuntimeField{}, false
+	}
+	return field, true
 }

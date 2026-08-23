@@ -327,6 +327,11 @@ func (b *runtimeBuilder) rewriteMergedPrefixEdges(prefix *familyPrefix, remap []
 			return err
 		}
 		b.runtime.rows[index].inner = rewritten
+		fields, err := remapRuntimeFields(prefix.rows[old-1].fields, b.runtime, remap)
+		if err != nil {
+			return err
+		}
+		b.runtime.rows[index].fields = fields
 	}
 	return nil
 }
@@ -431,6 +436,7 @@ func copyRuntimeRows(rows []runtimeRow, owner *Runtime) []runtimeRow {
 	copied := append([]runtimeRow(nil), rows...)
 	for index := range copied {
 		copied[index].inner = rewriteRuntimeChild(copied[index].inner, owner)
+		copied[index].fields = rewriteRuntimeFields(copied[index].fields, owner)
 	}
 	return copied
 }
@@ -449,6 +455,34 @@ func rewriteRuntimeChild(child runtimeChild, owner *Runtime) runtimeChild {
 	}
 	child.inner.owner = owner
 	return child
+}
+
+func rewriteRuntimeFields(fields map[string]RuntimeField, owner *Runtime) map[string]RuntimeField {
+	if len(fields) == 0 {
+		return nil
+	}
+	copied := make(map[string]RuntimeField, len(fields))
+	for key, field := range fields {
+		field.Inner.owner = owner
+		copied[key] = field
+	}
+	return copied
+}
+
+func remapRuntimeFields(fields map[string]RuntimeField, owner *Runtime, remap []uint32) (map[string]RuntimeField, error) {
+	if len(fields) == 0 {
+		return nil, nil
+	}
+	copied := make(map[string]RuntimeField, len(fields))
+	for key, field := range fields {
+		if field.Inner.index == 0 || int(field.Inner.index) >= len(remap) || remap[field.Inner.index] == 0 {
+			return nil, errors.New("typeauthority: Runtime prefix field remap")
+		}
+		field.Inner.owner = owner
+		field.Inner.index = remap[field.Inner.index]
+		copied[key] = field
+	}
+	return copied, nil
 }
 
 func (b *runtimeBuilder) subtypeRelationInstalled() bool {
