@@ -57,5 +57,9 @@ func (artifact *Artifact) Program() programschema.Program {
 	if artifact == nil || !artifact.frozen.Published() || !artifact.id.Available() || !artifact.key.ExecutionSchemaID().Available() || !artifact.entryBodyID.Available() {
 		return programschema.Program{}
 	}
-	return programschema.Program{Frozen: artifact.frozen, ArtifactID: artifact.id, ProgramID: artifact.key.ProgramID(), SchemaID: artifact.key.ExecutionSchemaID().ContentID(), EntryBodyID: artifact.entryBodyID}
+	row, ok := programschema.New(artifact.frozen, artifact.id, artifact.key.ProgramID(), artifact.key.ExecutionSchemaID().ContentID(), artifact.entryBodyID)
+	if !ok {
+		return programschema.Program{}
+	}
+	return row
 }

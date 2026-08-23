@@ -309,3 +309,59 @@ func TestProgramFamilyAccessorsBindCatalogDefinitions(t *testing.T) {
 		}
 	}
 }
+
+func catalogLawProgram(t *testing.T) Program {
+	t.Helper()
+	frozen, catalog := sealCatalogLaw(t, catalogLawFamily())
+	schema := catalogLawSchema(t)
+	artifact, artifactOK := identity.DeriveContentID("cold-law/artifact", nil)
+	programID, programOK := identity.DeriveContentID("cold-law/program", nil)
+	entry, entryOK := identity.DeriveContentID("cold-law/entry", nil)
+	if !artifactOK || !programOK || !entryOK {
+		t.Fatal("program identities")
+	}
+	row, ok := New(frozen, artifact, programID, schema, entry)
+	if !ok {
+		t.Fatal("New")
+	}
+	if row.catalogID != catalog {
+		t.Fatal("New carried a catalog other than CatalogID(SchemaID)")
+	}
+	return row
+}
+
+func TestNewProgramCarriesCatalogWithoutRehash(t *testing.T) {
+	row := catalogLawProgram(t)
+	if !row.Available() {
+		t.Fatal("New program is unavailable")
+	}
+	got, ok := row.catalog()
+	if !ok || got != row.catalogID {
+		t.Fatal("catalog()")
+	}
+	allocs := testing.AllocsPerRun(1000, func() {
+		if !row.Available() {
+			t.Fatal("available")
+		}
+		if _, held := row.catalog(); !held {
+			t.Fatal("catalog")
+		}
+	})
+	if allocs != 0 {
+		t.Fatalf("carried catalog allocated %.2f", allocs)
+	}
+}
+
+func TestNewProgramRefusesMismatchedFrozenSchema(t *testing.T) {
+	frozen, _ := sealCatalogLaw(t, catalogLawFamily())
+	other, ok := identity.DeriveContentID("cold-law/other-runtime-schema", nil)
+	artifact, artifactOK := identity.DeriveContentID("cold-law/artifact", nil)
+	programID, programOK := identity.DeriveContentID("cold-law/program", nil)
+	entry, entryOK := identity.DeriveContentID("cold-law/entry", nil)
+	if !ok || !artifactOK || !programOK || !entryOK {
+		t.Fatal("identities")
+	}
+	if _, sealed := New(frozen, artifact, programID, other, entry); sealed {
+		t.Fatal("New accepted a Frozen whose schema is not CatalogID(SchemaID)")
+	}
+}

@@ -28,14 +28,33 @@ type Program struct {
 	// the Flow Body authority owns the root relation; consumers must not infer
 	// it from Body order or from the count of non-callable bodies.
 	EntryBodyID identity.ContentID
+	catalogID   identity.ContentID
+}
+
+// New authenticates one compiled Program and carries the catalog identity
+// CatalogID(SchemaID). Cold row accessors then read that field instead of
+// re-deriving it.
+func New(frozen snapshot.Frozen, artifactID, programID, schemaID, entryBodyID identity.ContentID) (Program, bool) {
+	catalogID, derived := programcatalog.CatalogID(schemaID)
+	if !frozen.Published() || !artifactID.Available() || !programID.Available() || !schemaID.Available() || !derived || frozen.Schema() != catalogID {
+		return Program{}, false
+	}
+	return Program{
+		Frozen: frozen, ArtifactID: artifactID, ProgramID: programID,
+		SchemaID: schemaID, EntryBodyID: entryBodyID, catalogID: catalogID,
+	}, true
 }
 
 // Available reports whether row names compiled program content. A row is
 // available only when the frozen publication is sealed and every identity
-// that authenticates it is present.
+// that authenticates it is present. A New row compares the carried catalog;
+// a composite literal still derives CatalogID.
 func (row Program) Available() bool {
 	if !row.Frozen.Published() || !row.ArtifactID.Available() || !row.ProgramID.Available() || !row.SchemaID.Available() {
 		return false
+	}
+	if row.catalogID.Available() {
+		return row.Frozen.Schema() == row.catalogID
 	}
 	catalogID, derived := programcatalog.CatalogID(row.SchemaID)
 	return derived && row.Frozen.Schema() == catalogID
@@ -45,26 +64,22 @@ func (row Program) Available() bool {
 // child readers. The returned capability shares Frozen's immutable storage;
 // it carries no Program metadata, copied rows, or secondary indexes.
 func (row Program) ColdState() (programstate.State, bool) {
-	if !row.Available() {
-		return programstate.State{}, false
-	}
-	catalogID, derived := programcatalog.CatalogID(row.SchemaID)
-	if !derived {
+	catalogID, ok := row.catalog()
+	if !ok {
 		return programstate.State{}, false
 	}
 	return programstate.New(row.Frozen, catalogID)
 }
 
 // catalog is the identity this program's compiled publication is addressed under.
-// It is derived rather than carried, so a row cannot be assembled with a
-// catalog that disagrees with the declaration catalog it names.
-//
-// Every cold row accessor resolves its address through here, so the
-// derivation must run once per access rather than twice: Available has
-// already proved that the sealed publication's carried schema is the catalog
-// of the declaration schema this row names, and the carried value is that
-// same identity.
+// New carries it; a literal row still derives it through Available.
 func (row Program) catalog() (identity.ContentID, bool) {
+	if row.catalogID.Available() {
+		if !row.Frozen.Published() || !row.ArtifactID.Available() || !row.ProgramID.Available() || !row.SchemaID.Available() || row.Frozen.Schema() != row.catalogID {
+			return identity.ContentID{}, false
+		}
+		return row.catalogID, true
+	}
 	if !row.Available() {
 		return identity.ContentID{}, false
 	}

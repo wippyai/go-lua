@@ -115,10 +115,11 @@ func (snapshot *Snapshot) Program() programschema.Program {
 	if !snapshot.Available() {
 		return programschema.Program{}
 	}
-	return programschema.Program{
-		Frozen: snapshot.frozen, ArtifactID: snapshot.artifactID,
-		ProgramID: snapshot.programID, SchemaID: snapshot.schemaID, EntryBodyID: snapshot.entryBodyID,
+	row, ok := programschema.New(snapshot.frozen, snapshot.artifactID, snapshot.programID, snapshot.schemaID, snapshot.entryBodyID)
+	if !ok {
+		return programschema.Program{}
 	}
+	return row
 }
 
 // Lower projects one sealed artifact through the sealed structural vocabulary
