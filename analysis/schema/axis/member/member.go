@@ -64,9 +64,15 @@ const (
 	Key
 	Predicate
 	Destination
+	// Attribute is a candidate-row column that is neither the join key, the
+	// selection predicate, nor the write destination: a trigger context, a
+	// body context, a transition, a settled outcome. Its projected local is a
+	// declared vocabulary ordinal rather than a factor surface index, so a
+	// Program can read a row it joins on without a fourth addressing mode.
+	Attribute
 )
 
-func (role Role) Available() bool { return role >= Key && role <= Destination }
+func (role Role) Available() bool { return role >= Key && role <= Attribute }
 
 // Relation is one owner-issued relation declaration. Inputs retain authored
 // carrier order; an empty input list is valid for a zero-input relation.
@@ -78,10 +84,25 @@ type Relation struct {
 	Subject           Carrier
 	Inputs            []Carrier
 	CandidateProvider RelationRef
+	// Parent names the relation whose candidate row each of this relation's
+	// rows hangs off. A relation that declares one is a nested ordered member
+	// set - a bounded port list - addressed by (parent candidate, ordinal)
+	// rather than by an occurrence.
+	Parent RelationRef
+	// Ordinal is the carrier that keys the nested member set. It is declared
+	// exactly when Parent is: a parent with no ordinal carrier gives its
+	// members no address, and an ordinal carrier with no parent keys nothing.
+	Ordinal Carrier
 }
 
 func (relation Relation) Available() bool {
 	if !relation.Key.Available() || !relation.Subject.Available() || !relation.CandidateProvider.Available() {
+		return false
+	}
+	if relation.Parent.Declared() != relation.Ordinal.Available() {
+		return false
+	}
+	if relation.Parent.Declared() && !relation.Parent.Available() {
 		return false
 	}
 	for _, input := range relation.Inputs {
@@ -90,6 +111,12 @@ func (relation Relation) Available() bool {
 		}
 	}
 	return true
+}
+
+// Nested reports whether this relation is an ordinal-addressed member set of
+// another relation's candidate rows.
+func (relation Relation) Nested() bool {
+	return relation.Parent.Available() && relation.Ordinal.Available()
 }
 
 // Projection is one owner-issued projection declaration. Relation names a
@@ -300,6 +327,8 @@ func cloneRelations(relations []Relation) []Relation {
 			Subject:           relation.Subject,
 			Inputs:            cloneCarriers(relation.Inputs),
 			CandidateProvider: relation.CandidateProvider,
+			Parent:            relation.Parent,
+			Ordinal:           relation.Ordinal,
 		}
 	}
 	return clone
@@ -367,6 +396,20 @@ func (catalog Catalog) Complete() bool {
 		}
 		keys[relation.Key] = struct{}{}
 		relations[relation.Key] = struct{}{}
+	}
+	for _, relation := range catalog.Relations {
+		if !relation.Nested() {
+			continue
+		}
+		// A nested member set is addressed from a base row, so its parent must
+		// be a relation this same catalog declares and cannot be the set
+		// itself: a relation addressed by its own rows has no base row.
+		if relation.Parent.Member == relation.Key {
+			return false
+		}
+		if _, held := relations[relation.Parent.Member]; !held {
+			return false
+		}
 	}
 	for _, projection := range catalog.Projections {
 		if !projection.Available() {
@@ -563,6 +606,11 @@ const (
 	contentRecordOutput         uint64 = 7
 	contentRecordCarryTransform uint64 = 8
 	contentRecordProvider       uint64 = 9
+	// contentRecordNestedSet is written only by a relation that declares a
+	// nested ordered member set. An ordinary relation emits the exact stream
+	// it emitted before the nested form existed, so adding the form remints
+	// no declaration that does not use it.
+	contentRecordNestedSet uint64 = 10
 )
 
 // WriteContent writes the catalog's canonical declaration stream. Collection
@@ -597,6 +645,18 @@ func (catalog Catalog) WriteContent(content *framing.Writer) error {
 			if err := content.String(string(input)); err != nil {
 				return err
 			}
+		}
+		if !relation.Nested() {
+			continue
+		}
+		if err := content.Record(contentRecordNestedSet); err != nil {
+			return err
+		}
+		if err := writeRelationReference(content, relation.Parent); err != nil {
+			return err
+		}
+		if err := content.String(string(relation.Ordinal)); err != nil {
+			return err
 		}
 	}
 	if err := content.Count(uint64(len(catalog.Projections))); err != nil {

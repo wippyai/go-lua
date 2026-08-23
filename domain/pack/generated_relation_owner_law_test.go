@@ -28,7 +28,7 @@ func TestGeneratedRelationOwnerProjectsSource(t *testing.T) {
 
 	owner := packdomain.NewRelationOwner(local)
 	var relations memberrelation.Owner = owner
-	candidate, candidateOK := relations.Candidate(0, mount, occurrence)
+	candidate, candidateOK := relations.CandidateAt(0, mount, occurrence, 0)
 	wantCandidate, wantCandidateOK := local.SourceOrdinal(source)
 	if !candidateOK || !wantCandidateOK || candidate != wantCandidate {
 		t.Fatalf("candidate ordinal=%d/%t, want=%d/%t", candidate, candidateOK, wantCandidate, wantCandidateOK)
@@ -54,16 +54,16 @@ func TestGeneratedRelationOwnerProjectsSource(t *testing.T) {
 		t.Fatal("out-of-range source candidate indexed a column")
 	}
 
-	if _, ok := relations.Candidate(0, identity.ContentID{}, occurrence); ok {
+	if _, ok := relations.CandidateAt(0, identity.ContentID{}, occurrence, 0); ok {
 		t.Fatal("unavailable mount admitted")
 	}
-	if _, ok := relations.Candidate(0, mount, identity.ContentID{}); ok {
+	if _, ok := relations.CandidateAt(0, mount, identity.ContentID{}, 0); ok {
 		t.Fatal("unavailable occurrence admitted")
 	}
-	if _, ok := relations.Candidate(99, mount, occurrence); ok {
+	if _, ok := relations.CandidateAt(99, mount, occurrence, 0); ok {
 		t.Fatal("out-of-range relation admitted")
 	}
-	if _, ok := relations.Candidate(0, foreignMount, foreignOccurrence); ok {
+	if _, ok := relations.CandidateAt(0, foreignMount, foreignOccurrence, 0); ok {
 		t.Fatal("foreign occurrence crossed the local relation owner")
 	}
 	if _, ok := relations.Project(0, 99, candidate); ok {

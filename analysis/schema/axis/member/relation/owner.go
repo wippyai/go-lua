@@ -105,8 +105,41 @@ type SourceColumns[V any] interface {
 // resolves an occurrence alone and refuses a mount. Each relation arm decides
 // which of the two it is.
 type Owner interface {
-	Candidate(relationOrdinal uint32, mount, occurrence identity.ContentID) (uint32, bool)
+	// CandidateCount and CandidateAt publish the candidate SET one occurrence
+	// carries. Cardinality is a property of the relation: an ordinary keyed
+	// relation answers one, while an activation occurrence answers one row per
+	// admitted body route. A surface that could only name "the candidate" made
+	// the wide answer inexpressible, so there is no scalar spelling beside
+	// this pair.
+	CandidateCount(relationOrdinal uint32, mount, occurrence identity.ContentID) (int, bool)
+	CandidateAt(relationOrdinal uint32, mount, occurrence identity.ContentID, index int) (uint32, bool)
+	// MemberCount and MemberAt address one nested ordered member set - a
+	// bounded port list - under one row of its parent relation. The ordinal is
+	// the port's address, so "export port k" is a row rather than a
+	// variable-length projection result.
+	MemberCount(relationOrdinal, parentCandidateOrdinal uint32) (int, bool)
+	MemberAt(relationOrdinal, parentCandidateOrdinal uint32, ordinal int) (uint32, bool)
 	Project(relationOrdinal, projectionOrdinal, candidateOrdinal uint32) (uint32, bool)
+}
+
+// Outcome reads one candidate row's settled disposition from the local an
+// attribute projection issued. The five-valued vocabulary is ordinal-addressed
+// by structure, so the column needs no typed storage of its own: the attribute
+// role is what says the local is a vocabulary ordinal rather than a factor
+// surface index.
+//
+// Zero is the absent local and settles nothing. A branch that settles no
+// declared member is a branch whose disposition the relation never published,
+// which is a refusal to read rather than a default.
+func Outcome(local uint32) (structure.ReductionOutcome, bool) {
+	if local == 0 || local > uint32(^uint16(0)) {
+		return structure.ReductionOutcome(0), false
+	}
+	outcome := structure.ReductionOutcome(local - 1)
+	if !outcome.Available() || uint32(outcome.Ordinal()) != local {
+		return structure.ReductionOutcome(0), false
+	}
+	return outcome, true
 }
 
 // OccurrenceDirectory is the sealed occurrence inventory of a global relation:

@@ -32,7 +32,7 @@ func TestGeneratedRelationOwnerProjectsTypeFactSource(t *testing.T) {
 	}
 
 	owner := staticdomain.NewRelationOwner(local)
-	candidate, candidateOK := owner.Candidate(0, mount, occurrence)
+	candidate, candidateOK := owner.CandidateAt(0, mount, occurrence, 0)
 	wantCandidate, wantCandidateOK := local.StorageTransferOrdinal(transfer)
 	if !candidateOK || !wantCandidateOK || candidate != wantCandidate {
 		t.Fatalf("candidate ordinal=%d/%t, want=%d/%t", candidate, candidateOK, wantCandidate, wantCandidateOK)
@@ -45,7 +45,7 @@ func TestGeneratedRelationOwnerProjectsTypeFactSource(t *testing.T) {
 		t.Fatalf("projected source=%d/%t want=%d", gotFrom, gotFromOK, wantFrom)
 	}
 
-	if _, ok := owner.Candidate(1, mount, occurrence); ok {
+	if _, ok := owner.CandidateAt(1, mount, occurrence, 0); ok {
 		t.Fatal("derived relation exposed a candidate directory")
 	}
 	foreignTransfer, foreignOK := foreign.StorageTransferAt(0)
@@ -56,7 +56,7 @@ func TestGeneratedRelationOwnerProjectsTypeFactSource(t *testing.T) {
 	if !foreignOccurrenceOK {
 		t.Fatal("foreign storage transfer occurrence")
 	}
-	if _, ok := owner.Candidate(0, foreignMount, foreignOccurrence); ok {
+	if _, ok := owner.CandidateAt(0, foreignMount, foreignOccurrence, 0); ok {
 		t.Fatal("foreign occurrence crossed the local relation owner")
 	}
 	if _, ok := owner.Project(1, 0, uint32(local.StorageTransferCount())); ok {

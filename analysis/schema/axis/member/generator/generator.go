@@ -584,10 +584,10 @@ func renderRelations(packageName string, source definition.Definition) ([]byte, 
 	}
 	out.WriteString("\treturn owner\n")
 	out.WriteString("}\n\n")
-	out.WriteString("// Candidate resolves one occurrence to the owner-issued dense candidate ordinal.\n")
+	out.WriteString("// candidate resolves one occurrence to the owner-issued dense candidate ordinal.\n")
 	out.WriteString("// A mounted relation requires the mount that qualifies the occurrence; a global\n")
 	out.WriteString("// relation owns the occurrence directory itself and refuses one.\n")
-	out.WriteString("func (owner *RelationOwner) Candidate(relationOrdinal uint32, mount, occurrence identity.ContentID) (uint32, bool) {\n")
+	out.WriteString("func (owner *RelationOwner) candidate(relationOrdinal uint32, mount, occurrence identity.ContentID) (uint32, bool) {\n")
 	fmt.Fprintf(&out, "\tif %s || !occurrence.Available() {\n\t\treturn 0, false\n\t}\n", ownerSchemaMissing(source.Binding.Key.Normalizer.ReceiverPointer))
 	out.WriteString("\tswitch relationOrdinal {\n")
 	for index, relation := range source.Relations {
@@ -610,6 +610,28 @@ func renderRelations(packageName string, source definition.Definition) ([]byte, 
 	}
 	out.WriteString("\tdefault:\n\t\treturn 0, false\n\t}\n")
 	out.WriteString("}\n\n")
+
+	out.WriteString("// CandidateCount is the census of the candidate set one occurrence carries.\n")
+	out.WriteString("// Every relation this axis declares is keyed: one occurrence names one row, so\n")
+	out.WriteString("// the census is one wherever the keyed resolution succeeds and no row at all\n")
+	out.WriteString("// where it does not.\n")
+	out.WriteString("func (owner *RelationOwner) CandidateCount(relationOrdinal uint32, mount, occurrence identity.ContentID) (int, bool) {\n")
+	out.WriteString("\tif _, ok := owner.candidate(relationOrdinal, mount, occurrence); !ok {\n\t\treturn 0, false\n\t}\n")
+	out.WriteString("\treturn 1, true\n}\n\n")
+
+	out.WriteString("// CandidateAt indexes that set. A keyed relation admits index zero only.\n")
+	out.WriteString("func (owner *RelationOwner) CandidateAt(relationOrdinal uint32, mount, occurrence identity.ContentID, index int) (uint32, bool) {\n")
+	out.WriteString("\tif index != 0 {\n\t\treturn 0, false\n\t}\n")
+	out.WriteString("\treturn owner.candidate(relationOrdinal, mount, occurrence)\n}\n\n")
+
+	out.WriteString("// MemberCount is the census of one nested ordered member set under one parent\n")
+	out.WriteString("// candidate. This axis declares no nested set, so it holds no members.\n")
+	out.WriteString("func (owner *RelationOwner) MemberCount(relationOrdinal, parentCandidateOrdinal uint32) (int, bool) {\n")
+	out.WriteString("\treturn 0, false\n}\n\n")
+
+	out.WriteString("// MemberAt addresses one row of a nested ordered member set by its ordinal.\n")
+	out.WriteString("func (owner *RelationOwner) MemberAt(relationOrdinal, parentCandidateOrdinal uint32, ordinal int) (uint32, bool) {\n")
+	out.WriteString("\treturn 0, false\n}\n\n")
 
 	if len(global) != 0 {
 		out.WriteString("// OccurrenceCount is the sealed census of one global relation's occurrence\n")

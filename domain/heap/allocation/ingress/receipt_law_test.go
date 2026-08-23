@@ -32,7 +32,7 @@ func TestIngressRelationOwnerIsSchemaLocal(t *testing.T) {
 		t.Fatal("allocation origin")
 	}
 	owner := heapdomain.NewRelationOwner(heapSchema)
-	candidate, candidateOK := owner.Candidate(0, module, allocation)
+	candidate, candidateOK := owner.CandidateAt(0, module, allocation, 0)
 	want, wantOK := heapSchema.AllocationRootOrdinal(key)
 	if !candidateOK || !wantOK || candidate != want {
 		t.Fatalf("candidate ordinal=%d/%t want=%d/%t", candidate, candidateOK, want, wantOK)

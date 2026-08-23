@@ -31,10 +31,10 @@ func NewRelationOwner(schema *Schema) *RelationOwner {
 	return owner
 }
 
-// Candidate resolves one occurrence to the owner-issued dense candidate ordinal.
+// candidate resolves one occurrence to the owner-issued dense candidate ordinal.
 // A mounted relation requires the mount that qualifies the occurrence; a global
 // relation owns the occurrence directory itself and refuses one.
-func (owner *RelationOwner) Candidate(relationOrdinal uint32, mount, occurrence identity.ContentID) (uint32, bool) {
+func (owner *RelationOwner) candidate(relationOrdinal uint32, mount, occurrence identity.ContentID) (uint32, bool) {
 	if owner == nil || owner.schema == nil || !occurrence.Available() {
 		return 0, false
 	}
@@ -51,6 +51,36 @@ func (owner *RelationOwner) Candidate(relationOrdinal uint32, mount, occurrence 
 	default:
 		return 0, false
 	}
+}
+
+// CandidateCount is the census of the candidate set one occurrence carries.
+// Every relation this axis declares is keyed: one occurrence names one row, so
+// the census is one wherever the keyed resolution succeeds and no row at all
+// where it does not.
+func (owner *RelationOwner) CandidateCount(relationOrdinal uint32, mount, occurrence identity.ContentID) (int, bool) {
+	if _, ok := owner.candidate(relationOrdinal, mount, occurrence); !ok {
+		return 0, false
+	}
+	return 1, true
+}
+
+// CandidateAt indexes that set. A keyed relation admits index zero only.
+func (owner *RelationOwner) CandidateAt(relationOrdinal uint32, mount, occurrence identity.ContentID, index int) (uint32, bool) {
+	if index != 0 {
+		return 0, false
+	}
+	return owner.candidate(relationOrdinal, mount, occurrence)
+}
+
+// MemberCount is the census of one nested ordered member set under one parent
+// candidate. This axis declares no nested set, so it holds no members.
+func (owner *RelationOwner) MemberCount(relationOrdinal, parentCandidateOrdinal uint32) (int, bool) {
+	return 0, false
+}
+
+// MemberAt addresses one row of a nested ordered member set by its ordinal.
+func (owner *RelationOwner) MemberAt(relationOrdinal, parentCandidateOrdinal uint32, ordinal int) (uint32, bool) {
+	return 0, false
 }
 
 // Project projects one dense candidate through one relation/projection pair to a local coordinate ordinal.

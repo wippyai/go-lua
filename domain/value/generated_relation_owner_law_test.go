@@ -24,7 +24,7 @@ func TestGeneratedRelationOwnerProjectsStorageTransfer(t *testing.T) {
 
 	owner := valuedomain.NewRelationOwner(local)
 	var relations memberrelation.Owner = owner
-	candidate, candidateOK := relations.Candidate(0, mount, occurrence)
+	candidate, candidateOK := relations.CandidateAt(0, mount, occurrence, 0)
 	wantCandidate, wantCandidateOK := local.StorageTransferOrdinal(transfer)
 	if !candidateOK || !wantCandidateOK || candidate != wantCandidate {
 		t.Fatalf("candidate ordinal=%d/%t, want=%d/%t", candidate, candidateOK, wantCandidate, wantCandidateOK)
@@ -42,19 +42,19 @@ func TestGeneratedRelationOwnerProjectsStorageTransfer(t *testing.T) {
 		t.Fatalf("projected endpoints from=%d/%t want=%d; to=%d/%t want=%d", gotFrom, gotFromOK, wantFrom, gotTo, gotToOK, wantTo)
 	}
 
-	if _, ok := relations.Candidate(0, identity.ContentID{}, occurrence); ok {
+	if _, ok := relations.CandidateAt(0, identity.ContentID{}, occurrence, 0); ok {
 		t.Fatal("unavailable mount admitted")
 	}
-	if _, ok := relations.Candidate(0, mount, identity.ContentID{}); ok {
+	if _, ok := relations.CandidateAt(0, mount, identity.ContentID{}, 0); ok {
 		t.Fatal("unavailable occurrence admitted")
 	}
-	if _, ok := relations.Candidate(1, mount, occurrence); ok {
+	if _, ok := relations.CandidateAt(1, mount, occurrence, 0); ok {
 		t.Fatal("derived relation exposed a candidate directory")
 	}
-	if _, ok := relations.Candidate(99, mount, occurrence); ok {
+	if _, ok := relations.CandidateAt(99, mount, occurrence, 0); ok {
 		t.Fatal("out-of-range relation admitted")
 	}
-	if _, ok := relations.Candidate(0, foreignMount, foreignOccurrence); ok {
+	if _, ok := relations.CandidateAt(0, foreignMount, foreignOccurrence, 0); ok {
 		t.Fatal("foreign occurrence crossed the local relation owner")
 	}
 	if _, ok := relations.Project(99, 1, candidate); ok {

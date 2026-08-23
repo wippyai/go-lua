@@ -465,7 +465,15 @@ func declareGeneratedIssuanceSurfaces(rowsWorkspace *programRows, state *schemaB
 	if !candidateOwnerOK {
 		return pendingRuleIssuance{}, false
 	}
-	denseCandidate, candidateOK := candidateOwner.Candidate(candidate.Member, coords.Mount, coords.Occurrence)
+	// The census is read before the row: a keyed generated rule instantiates
+	// one member per occurrence, so an occurrence whose relation publishes a
+	// candidate set is not this arm's row and refuses here rather than
+	// silently taking a first candidate.
+	candidateCount, candidateCountOK := candidateOwner.CandidateCount(candidate.Member, coords.Mount, coords.Occurrence)
+	if !candidateCountOK || candidateCount != 1 {
+		return pendingRuleIssuance{}, false
+	}
+	denseCandidate, candidateOK := candidateOwner.CandidateAt(candidate.Member, coords.Mount, coords.Occurrence, 0)
 	if !candidateOK {
 		return pendingRuleIssuance{}, false
 	}
