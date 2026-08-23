@@ -69,8 +69,13 @@ type ClassSet struct {
 	// handles to the exact Runtime rows installed for their concrete shapes.
 	// Scoped residuals intentionally have no entry.
 	targetRuntime map[vocabulary.Type]typeauthority.RuntimeInner
-	universeID    identity.ContentID // identity of the ordered universe as a whole.
-	universeSize  int
+	// Exact Runtime/Class projections are the scalar bridge between Static's
+	// canonical union lattice and Type Authority's structural field rows. They
+	// are sealed once; no type graph or second subtype relation is retained.
+	runtimeByClass []typeauthority.RuntimeInner
+	classByRuntime map[typeauthority.RuntimeInner]Class
+	universeID     identity.ContentID // identity of the ordered universe as a whole.
+	universeSize   int
 	// Hot descriptor geometry retained after the construction plane is released.
 	coverageStride int
 	opaqueMask     []uint64
@@ -130,6 +135,9 @@ func sealClassSet(authority *Authority) (*ClassSet, *typeauthority.Runtime, erro
 		return nil, nil, err
 	}
 	if err := set.sealDescriptors(runtime); err != nil {
+		return nil, nil, err
+	}
+	if err := set.sealRuntimeClassProjection(); err != nil {
 		return nil, nil, err
 	}
 	authority.id = authority.contentID()
@@ -344,7 +352,11 @@ func (s *ClassSet) MayRuntimeKinds(class Class) (runtimekind.Set, bool) {
 	case ClassAnyValue, ClassOpaque:
 		return runtimekind.All, true
 	case ClassConcrete:
-		return s.runtime.RuntimeKinds(row.inner)
+		inner, ok := s.RuntimeForClass(class)
+		if !ok {
+			return 0, false
+		}
+		return s.runtime.RuntimeKinds(inner)
 	default:
 		return 0, false
 	}

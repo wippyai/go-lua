@@ -991,6 +991,13 @@ func (r *Runtime) Index(inner RuntimeInner) (uint32, bool) {
 	return inner.index, true
 }
 
+// Closed reports whether inner belongs to Runtime's complete structural
+// universe. Scoped/formal rows remain addressable for their own owners but are
+// not admissible as facts in a total hot lattice.
+func (r *Runtime) Closed(inner RuntimeInner) bool {
+	return r.owns(inner) && len(r.closedPositions) == len(r.rows) && r.closedPositions[inner.index-1] >= 0
+}
+
 func (r *Runtime) owns(inner RuntimeInner) bool {
 	return r != nil && inner.owner == r && inner.index != 0 && uint64(inner.index) <= uint64(len(r.rows))
 }

@@ -59,3 +59,47 @@ func (s *ClassSet) sealRuntime() (*typeauthority.Runtime, error) {
 	}
 	return runtime, nil
 }
+
+func (s *ClassSet) sealRuntimeClassProjection() error {
+	if s == nil || s.runtime == nil || len(s.rows) == 0 || s.classByRuntime != nil || s.runtimeByClass != nil {
+		return errors.New("static: Runtime/Class projection source unavailable")
+	}
+	s.runtimeByClass = make([]typeauthority.RuntimeInner, len(s.rows))
+	s.classByRuntime = make(map[typeauthority.RuntimeInner]Class, len(s.rows))
+	for index, row := range s.rows {
+		if row.kind != ClassConcrete {
+			continue
+		}
+		if !s.runtime.Closed(row.inner) {
+			return errors.New("static: concrete Class lacks closed Runtime row")
+		}
+		class := Class{owner: s, index: uint32(index)}
+		if _, duplicate := s.classByRuntime[row.inner]; duplicate {
+			return errors.New("static: duplicate Runtime/Class projection")
+		}
+		s.runtimeByClass[index] = row.inner
+		s.classByRuntime[row.inner] = class
+	}
+	return nil
+}
+
+// ClassForRuntime returns the exact sealed Static class for one closed Runtime
+// row. Derived union descriptors have no Runtime row and cannot enter here.
+func (s *ClassSet) ClassForRuntime(inner typeauthority.RuntimeInner) (Class, bool) {
+	if s == nil || s.runtime == nil || !s.runtime.Closed(inner) {
+		return Class{}, false
+	}
+	class, ok := s.classByRuntime[inner]
+	return class, ok && s.owns(class)
+}
+
+// RuntimeForClass returns the exact structural row for one sealed concrete
+// class. AnyValue, opaque, and derived union classes intentionally have no
+// single structural row.
+func (s *ClassSet) RuntimeForClass(class Class) (typeauthority.RuntimeInner, bool) {
+	if !s.owns(class) || class.descriptor != nil || class.index == 0 || uint64(class.index) >= uint64(len(s.runtimeByClass)) {
+		return typeauthority.RuntimeInner{}, false
+	}
+	inner := s.runtimeByClass[class.index]
+	return inner, s.runtime != nil && s.runtime.Closed(inner)
+}
