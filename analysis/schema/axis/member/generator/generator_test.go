@@ -1,6 +1,7 @@
 package generator
 
 import (
+	"github.com/wippyai/go-lua/domain/memberroster"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -10,11 +11,24 @@ import (
 	"github.com/wippyai/go-lua/analysis/schema"
 	"github.com/wippyai/go-lua/analysis/schema/axis/member"
 	"github.com/wippyai/go-lua/analysis/schema/axis/member/definition"
-	heapmemberdefinition "github.com/wippyai/go-lua/domain/heap/memberdefinition"
-	packmemberdefinition "github.com/wippyai/go-lua/domain/pack/memberdefinition"
-	staticmemberdefinition "github.com/wippyai/go-lua/domain/static/memberdefinition"
-	"github.com/wippyai/go-lua/domain/value/memberdefinition"
 )
+
+// composedSource resolves one axis's member definition the way the generator
+// command does: from the composition roster, as the sealed fold of the axis
+// base and the reducer contributions its rules declare. A law that reached for
+// a base directly would be testing half a definition.
+func composedSource(t *testing.T, name string) definition.Definition {
+	t.Helper()
+	roster, rosterOK := memberroster.Composition()
+	if !rosterOK {
+		t.Fatal("member definition roster is not admissible")
+	}
+	_, composed, composedOK := roster.Definition(name)
+	if !composedOK {
+		t.Fatalf("member definition source %q does not compose", name)
+	}
+	return composed
+}
 
 func externalProviderDefinition() definition.Definition {
 	owner := definition.GoType{PackagePath: "example/placement", Name: "Schema"}
@@ -163,7 +177,7 @@ func TestResolveRejectsProviderDriftAndAbsence(t *testing.T) {
 }
 
 func TestColdRendererUsesStableSchemaAPIAlias(t *testing.T) {
-	artifact, err := Render("pack", packmemberdefinition.Source())
+	artifact, err := Render("pack", composedSource(t, "pack"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -174,7 +188,7 @@ func TestColdRendererUsesStableSchemaAPIAlias(t *testing.T) {
 }
 
 func TestResolveKeepsTypedRowsAlignedWithColdKinds(t *testing.T) {
-	metadata, err := Resolve(memberdefinition.StorageTransfer())
+	metadata, err := Resolve(composedSource(t, "value"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -199,7 +213,7 @@ func TestResolveKeepsTypedRowsAlignedWithColdKinds(t *testing.T) {
 }
 
 func TestResolveKeepsCandidateIndexedCarryTransformTyped(t *testing.T) {
-	source := memberdefinition.StorageTransfer().Clone()
+	source := composedSource(t, "value").Clone()
 	source.CarryTransforms = []definition.CarryTransform{{
 		Name:           "StorageTransferTransform",
 		Key:            "value/storage-transfer/transform",
@@ -222,11 +236,11 @@ func TestResolveKeepsCandidateIndexedCarryTransformTyped(t *testing.T) {
 }
 
 func TestResolveRetainsExactlyTheFourInventoriedOwnerCarryMembers(t *testing.T) {
-	valueMetadata, err := Resolve(memberdefinition.StorageTransfer())
+	valueMetadata, err := Resolve(composedSource(t, "value"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	heapMetadata, err := Resolve(heapmemberdefinition.AllocationCarry())
+	heapMetadata, err := Resolve(composedSource(t, "heap"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -255,7 +269,7 @@ func TestResolveRetainsExactlyTheFourInventoriedOwnerCarryMembers(t *testing.T) 
 }
 
 func TestResolveRejectsCarryTransformCarrierOrImplementationDrift(t *testing.T) {
-	source := memberdefinition.StorageTransfer().Clone()
+	source := composedSource(t, "value").Clone()
 	source.CarryTransforms = []definition.CarryTransform{{
 		Name:           "StorageTransferTransform",
 		Key:            "value/storage-transfer/transform",
@@ -267,7 +281,7 @@ func TestResolveRejectsCarryTransformCarrierOrImplementationDrift(t *testing.T) 
 	if _, err := Resolve(source); err == nil {
 		t.Fatal("fact carrier mismatch admitted")
 	}
-	source = memberdefinition.StorageTransfer().Clone()
+	source = composedSource(t, "value").Clone()
 	source.CarryTransforms = []definition.CarryTransform{{
 		Name:      "StorageTransferTransform",
 		Key:       "value/storage-transfer/transform",
@@ -281,19 +295,19 @@ func TestResolveRejectsCarryTransformCarrierOrImplementationDrift(t *testing.T) 
 }
 
 func TestResolveRejectsMissingMemberImplementation(t *testing.T) {
-	source := memberdefinition.StorageTransfer().Clone()
+	source := composedSource(t, "value").Clone()
 	source.Projections[0].Accessor = definition.GoSymbol{}
 	if _, err := Resolve(source); err == nil {
 		t.Fatal("missing projection accessor admitted")
 	}
 
-	source = memberdefinition.StorageTransfer().Clone()
+	source = composedSource(t, "value").Clone()
 	source.Binding.Key.Normalizer = definition.GoSymbol{}
 	if _, err := Resolve(source); err == nil {
 		t.Fatal("missing key normalizer admitted")
 	}
 
-	source = memberdefinition.StorageTransfer().Clone()
+	source = composedSource(t, "value").Clone()
 	source.Binding.Key.Carrier = "StorageTransferCarrier"
 	if _, err := Resolve(source); err == nil {
 		t.Fatal("key normalization detached from axis signature admitted")
@@ -301,7 +315,7 @@ func TestResolveRejectsMissingMemberImplementation(t *testing.T) {
 }
 
 func TestResolveRejectsUnknownReducerCandidateCarrier(t *testing.T) {
-	source := memberdefinition.StorageTransfer().Clone()
+	source := composedSource(t, "value").Clone()
 	source.Reducers[0].Candidate = "MissingCandidateCarrier"
 	if _, err := Resolve(source); err == nil {
 		t.Fatal("reducer candidate carrier was inferred or admitted")
@@ -312,7 +326,7 @@ func TestCheckedInGeneratedOutputIsFreshAndCompiles(t *testing.T) {
 	root := repositoryRoot(t)
 	coldPath := filepath.Join(root, "domain", "value", "rule_members.go")
 	relationPath := filepath.Join(root, "domain", "value", "generated_relation_owner.go")
-	if err := GenerateAll("value", memberdefinition.StorageTransfer(), coldPath, relationPath, true); err != nil {
+	if err := GenerateAll("value", composedSource(t, "value"), coldPath, relationPath, true); err != nil {
 		t.Fatal(err)
 	}
 	command := exec.Command("go", "test", "./domain/value", "-run", "^TestAxisMemberCatalogOwnsStorageTransferGeometry$", "-count=1")
@@ -324,25 +338,25 @@ func TestCheckedInGeneratedOutputIsFreshAndCompiles(t *testing.T) {
 
 	staticCold := filepath.Join(root, "domain", "static", "rule_members.go")
 	staticRelations := filepath.Join(root, "domain", "static", "generated_relation_owner.go")
-	if err := GenerateAll("static", staticmemberdefinition.TypeFactTransfer(), staticCold, staticRelations, true); err != nil {
+	if err := GenerateAll("static", composedSource(t, "static-type"), staticCold, staticRelations, true); err != nil {
 		t.Fatal(err)
 	}
 
 	packCold := filepath.Join(root, "domain", "pack", "rule_members.go")
 	packRelations := filepath.Join(root, "domain", "pack", "generated_relation_owner.go")
-	if err := GenerateAll("pack", packmemberdefinition.Source(), packCold, packRelations, true); err != nil {
+	if err := GenerateAll("pack", composedSource(t, "pack"), packCold, packRelations, true); err != nil {
 		t.Fatal(err)
 	}
 
 	heapCold := filepath.Join(root, "domain", "heap", "rule_members.go")
 	heapRelations := filepath.Join(root, "domain", "heap", "generated_relation_owner.go")
-	if err := GenerateAll("heap", heapmemberdefinition.AllocationCarry(), heapCold, heapRelations, true); err != nil {
+	if err := GenerateAll("heap", composedSource(t, "heap"), heapCold, heapRelations, true); err != nil {
 		t.Fatal(err)
 	}
 }
 
 func TestResolveRejectsPartialCandidateDirectory(t *testing.T) {
-	source := memberdefinition.StorageTransfer().Clone()
+	source := composedSource(t, "value").Clone()
 	source.Relations[0].CandidateAt = definition.GoSymbol{}
 	if _, err := Resolve(source); err == nil {
 		t.Fatal("partial candidate directory admitted")

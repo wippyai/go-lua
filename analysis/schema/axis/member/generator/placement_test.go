@@ -5,11 +5,10 @@ import (
 	"testing"
 
 	"github.com/wippyai/go-lua/analysis/schema/axis/member"
-	placementmemberdefinition "github.com/wippyai/go-lua/domain/placement/memberdefinition"
 )
 
 func TestResolvePlacementStorageKeepsForeignCandidateOwner(t *testing.T) {
-	metadata, err := Resolve(placementmemberdefinition.Storage())
+	metadata, err := Resolve(composedSource(t, "placement"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -43,7 +42,7 @@ func TestResolvePlacementStorageKeepsForeignCandidateOwner(t *testing.T) {
 }
 
 func TestRenderPlacementStorageDoesNotEmitForeignDirectory(t *testing.T) {
-	artifact, err := Render("placement", placementmemberdefinition.Storage())
+	artifact, err := Render("placement", composedSource(t, "placement"))
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -1,14 +1,33 @@
-package memberdefinition
+package memberdefinition_test
 
 import (
 	"testing"
 
 	"github.com/wippyai/go-lua/analysis/schema"
 	"github.com/wippyai/go-lua/analysis/schema/axis/member"
+	definition "github.com/wippyai/go-lua/analysis/schema/axis/member/definition"
+	"github.com/wippyai/go-lua/domain/memberroster"
 )
 
+// composedStorage is Placement's whole member definition: the Store base this
+// package declares folded with the Store rule's own reducer contribution. The
+// law is stated over the composition rather than over the base, because the
+// base deliberately declares no reducer of its own.
+func composedStorage(t *testing.T) definition.Definition {
+	t.Helper()
+	roster, rosterOK := memberroster.Composition()
+	if !rosterOK {
+		t.Fatal("member definition roster is not admissible")
+	}
+	_, composed, composedOK := roster.Definition("placement")
+	if !composedOK {
+		t.Fatal("Placement member definition does not compose")
+	}
+	return composed
+}
+
 func TestStorageDefinitionIsCompleteAndForeignProviderOwned(t *testing.T) {
-	source := Storage()
+	source := composedStorage(t)
 	if !source.Complete() {
 		t.Fatal("Placement Store definition is incomplete")
 	}
