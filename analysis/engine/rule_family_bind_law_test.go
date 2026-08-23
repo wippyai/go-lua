@@ -84,4 +84,48 @@ func TestARuleFamilyClaimIsOneShotAndFenced(t *testing.T) {
 			t.Fatal("a Factor slot from another binding crossed the family fence")
 		}
 	})
+
+	t.Run("nil-claimant", func(t *testing.T) {
+		binding, _, factor := ruleFamilyFixture(t, 947_600)
+		if BindRuleFamily[uint64](binding, nil, factor, lawRuleFamilyInstaller{}) || !binding.Poisoned() {
+			t.Fatal("an absent claimant was admitted")
+		}
+	})
+}
+
+// TestAProgramDeclaredRuleInstallsThroughTheSameSeam is the whole of gap one:
+// a rule whose geometry a Program authored is still one sealed rule ordinal
+// writing to one Factor, so it claims its family exactly where a hand-declared
+// rule does. A second install entry for the generated lane would be a second
+// lifecycle for the same claim, resolved in an order nothing states.
+func TestAProgramDeclaredRuleInstallsThroughTheSameSeam(t *testing.T) {
+	fixture := openGeneratedBindingLaw(t, newGeneratedRuleLawFixture(t, generatedRuleLawExact, generatedRuleLawRuleRole))
+	if !BindRuleFamily[uint64](fixture.binding, fixture.slot, fixture.factors[0], lawRuleFamilyInstaller{}) {
+		t.Fatal("a Program-declared rule could not install the family of its own ordinal")
+	}
+	if fixture.binding.Poisoned() {
+		t.Fatal("an admitted generated family claim poisoned the binding")
+	}
+	if BindRuleFamily[uint64](fixture.binding, fixture.slot, fixture.factors[0], lawRuleFamilyInstaller{}) || !fixture.binding.Poisoned() {
+		t.Fatal("a second claim on one generated rule ordinal crossed the one-shot fence")
+	}
+}
+
+// TestAFamilyClaimNamesTheFactorItsRuleWritesTo holds the claim to the output
+// the rule actually publishes on. A family installed against another Factor is
+// typed in a key and fact the rule never writes, and the Factor it names does
+// not own the rule's rows, so the claim could only ever go unresolved.
+func TestAFamilyClaimNamesTheFactorItsRuleWritesTo(t *testing.T) {
+	fixture := openGeneratedBindingLaw(t, newGeneratedRuleLawMultiAxisFixture(t))
+	if len(fixture.factors) < 2 {
+		t.Fatal("multi-axis fixture declares one Factor")
+	}
+	written, writtenOK := fixture.factors[0].Ordinal()
+	other, otherOK := fixture.factors[1].Ordinal()
+	if !writtenOK || !otherOK || written == other {
+		t.Fatal("multi-axis fixture Factor ordinals")
+	}
+	if BindRuleFamily[uint64](fixture.binding, fixture.slot, fixture.factors[1], lawRuleFamilyInstaller{}) || !fixture.binding.Poisoned() {
+		t.Fatal("a family claim against a Factor the rule does not write to was admitted")
+	}
 }

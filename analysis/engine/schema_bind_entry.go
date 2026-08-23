@@ -150,15 +150,20 @@ func BindRelationOwner[V any](binding *SchemaBinding, slot *FactorSlot[V], owner
 // The installer is retained as sealed data, exactly as a relation owner's
 // source columns are. It is asked once, when the Factor it belongs to builds
 // its form table, and never during a solve.
-func BindRuleFamily[K ~uint32 | ~uint64, V, O any](binding *SchemaBinding, slot *RuleSlot[V, O], output *FactorSlot[V], installer execution.RuleFamilyInstaller[K, V]) bool {
+// The seam is one function for both declaration lanes. A hand-declared rule
+// and a Program-declared one differ in how their geometry was authored, not in
+// what a family claim is, so RuleFamilyTarget is the only thing this entry
+// knows about the claimant.
+func BindRuleFamily[K ~uint32 | ~uint64, V any](binding *SchemaBinding, slot RuleFamilyTarget, output *FactorSlot[V], installer execution.RuleFamilyInstaller[K, V]) bool {
 	state := bindingState(binding)
 	if state == nil {
 		return false
 	}
 	state.mu.Lock()
 	defer state.mu.Unlock()
-	if state.phase != schemaBindingOpen || state.schema == nil || slot == nil || slot.cell == nil ||
-		slot.cell.schema != state.schema || output == nil || output.cell == nil || output.cell.schema != state.schema || installer == nil {
+	ruleCell := ruleFamilyTargetCell(slot)
+	if state.phase != schemaBindingOpen || state.schema == nil || ruleCell == nil ||
+		ruleCell.schema != state.schema || output == nil || output.cell == nil || output.cell.schema != state.schema || installer == nil {
 		if state.phase == schemaBindingOpen {
 			state.poisonLocked()
 		}
@@ -166,7 +171,17 @@ func BindRuleFamily[K ~uint32 | ~uint64, V, O any](binding *SchemaBinding, slot 
 	}
 	ruleOrdinal, ruleOK := slot.Ordinal()
 	factorOrdinal, factorOK := output.Ordinal()
-	if !ruleOK || !factorOK || ruleOrdinal >= uint64(len(state.rules)) || factorOrdinal >= uint64(len(state.factors)) {
+	if !ruleOK || !factorOK || ruleOrdinal >= uint64(len(state.rules)) || factorOrdinal >= uint64(len(state.factors)) || state.factors[factorOrdinal] == nil {
+		state.poisonLocked()
+		return false
+	}
+	// The claim is fenced by the Factor the rule writes to. A family installed
+	// against any other Factor is typed in a key and fact the rule never
+	// publishes, and the claim would simply never be resolved: the Factor it
+	// names does not own the rule's rows. Refusing it here names the mistake
+	// where it is made.
+	shape, shapeOK := state.schema.ruleShapeAt(ruleOrdinal)
+	if !shapeOK || shape.OutputKind != composition.FactorOutput || shape.Output != state.factors[factorOrdinal].schemaFactorSemanticKey() {
 		state.poisonLocked()
 		return false
 	}
@@ -406,4 +421,14 @@ func FactorImplementationAt[K ~uint32 | ~uint64, V any](binding *SchemaBinding, 
 	// never mutated after Seal, so concurrent callers cannot observe a
 	// descriptor being rewritten underneath a live runtime binder.
 	return cell.sealedImplementation(state, state.authority)
+}
+
+// ruleFamilyTargetCell resolves the declaration cell of a family claim target.
+// A nil interface and a typed nil pointer are the same absent claimant here,
+// so the entry above states one refusal rather than two.
+func ruleFamilyTargetCell(slot RuleFamilyTarget) *schemaTokenCell {
+	if slot == nil {
+		return nil
+	}
+	return slot.ruleFamilyCell()
 }

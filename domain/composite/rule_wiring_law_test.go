@@ -166,3 +166,33 @@ func TestRuleCatalogNamesItsFirstWiringRefusal(t *testing.T) {
 		t.Fatalf("wiring failure %s names no rule", failure)
 	}
 }
+
+// TestAGeneratedRuleCarriesItsFamilyInstallOnItsOwnRow states the generated
+// lane's install arm as a wiring property. A Program whose execution form has
+// no generic builder - a transformed carry, a selected route - owes a domain
+// fold the engine may not name, and the only place that fold's schemas are in
+// scope is the rule's own bind. The arm therefore belongs to the row, is
+// required when the row is wired to have one, and is absent on a row wired
+// without: there is no second table a family could be registered in.
+func TestAGeneratedRuleCarriesItsFamilyInstallOnItsOwnRow(t *testing.T) {
+	if _, _, admitted := WireGeneratedRuleWithFamily[principals, authorities](wiringSpec(true), nil); admitted {
+		t.Fatal("a family-installing generated row with no install was admitted")
+	}
+	_, plain, plainOK := WireGeneratedRule[principals, authorities](wiringSpec(true))
+	if !plainOK || plain.installFamily != nil {
+		t.Fatal("a plain generated row acquired a family install")
+	}
+	template, installing, installingOK := WireGeneratedRuleWithFamily[principals, authorities](wiringSpec(true),
+		func(*engine.SchemaBinding, *engine.GeneratedRuleSlot, authorities) bool { return true })
+	if !installingOK || installing.installFamily == nil {
+		t.Fatal("a family-installing generated row was refused")
+	}
+	// The arm changes nothing about which declarations the row admits: it is an
+	// arm of the generated lane, not a lane of its own.
+	if refusal := installing.complete(template); refusal != WiringAdmitted {
+		t.Fatalf("family-installing refusal = %s", refusal)
+	}
+	if _, _, bound := installing.Bind(nil, authorities{}, rule.Cell{}); bound {
+		t.Fatal("a generated row bound a cell holding no slot")
+	}
+}

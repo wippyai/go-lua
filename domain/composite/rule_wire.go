@@ -30,7 +30,13 @@ type RuleContributor[P, A any] struct {
 	// domain callback or typed hot payload: the composition derives and binds
 	// the engine's GeneratedRuleSlot directly from the sealed plan catalog, and
 	// the lane is the only thing that arm still has to be told.
-	generated         rule.Lane
+	generated rule.Lane
+	// installFamily is the generated lane's bind arm. A rule whose fold the
+	// engine cannot type installs its own execution family at its own bind,
+	// where its schemas, contracts and derived plans are in scope; the
+	// composition supplies the sealed rule slot and the authority set and
+	// learns nothing about the family itself.
+	installFamily     func(*engine.SchemaBinding, *engine.GeneratedRuleSlot, A) bool
 	declare           func(*engine.SchemaBuilder, vocabulary.Roles, P) (rule.Cell, bool)
 	register          func(*engine.SchemaBinding, rule.Cell) (engine.RuleSlotCapability, bool)
 	pair              func(*engine.SchemaBinding, rule.Cell, func(schema.Key) (engine.RuleSlotCapability, bool)) bool
@@ -101,6 +107,12 @@ func (contributor RuleContributor[P, A]) Bind(binding *engine.SchemaBinding, aut
 	if contributor.generated.Available() {
 		slot, ok := rule.Payload[*engine.GeneratedRuleSlot](holder)
 		if !ok || slot == nil || !engine.BindGeneratedRule(binding, slot) {
+			return rule.Cell{}, nil, false
+		}
+		// A generated rule whose form the engine has no generic builder for
+		// reaches execution through the family it installs here, against the
+		// same sealed ordinal the row above just bound.
+		if contributor.installFamily != nil && !contributor.installFamily(binding, slot, authorities) {
 			return rule.Cell{}, nil, false
 		}
 		// The generated slot is the complete hot identity. Keeping this same
@@ -244,6 +256,23 @@ func (contributor RuleContributor[P, A]) complete(template *rule.Template) Wirin
 // composition owns all engine slot declaration, binding, and capability
 // issuance, so the owning domain retains no engine fragment or hot callback.
 func WireGeneratedRule[P, A any](spec rule.Spec) (*rule.Template, RuleContributor[P, A], bool) {
+	return wireGenerated[P, A](spec, nil)
+}
+
+// WireGeneratedRuleWithFamily is WireGeneratedRule for a Program whose
+// execution form has no generic builder: exact and source rows the engine can
+// type need nothing beyond the plan, while a transformed carry or a selected
+// route owes a domain fold and a foreign read that only the rule's own package
+// can name. The install runs at the rule's bind, on the same sealed ordinal,
+// so the generated lane gains an arm rather than a second lifecycle.
+func WireGeneratedRuleWithFamily[P, A any](spec rule.Spec, install func(*engine.SchemaBinding, *engine.GeneratedRuleSlot, A) bool) (*rule.Template, RuleContributor[P, A], bool) {
+	if install == nil {
+		return nil, RuleContributor[P, A]{}, false
+	}
+	return wireGenerated[P, A](spec, install)
+}
+
+func wireGenerated[P, A any](spec rule.Spec, install func(*engine.SchemaBinding, *engine.GeneratedRuleSlot, A) bool) (*rule.Template, RuleContributor[P, A], bool) {
 	template, ok := rule.New(spec)
 	if !ok || template == nil || !template.Program().Available() {
 		return nil, RuleContributor[P, A]{}, false
@@ -251,7 +280,7 @@ func WireGeneratedRule[P, A any](spec rule.Spec) (*rule.Template, RuleContributo
 	if _, laneOK := generatedLaneHandoff(template.Lane()); !laneOK {
 		return nil, RuleContributor[P, A]{}, false
 	}
-	return template, RuleContributor[P, A]{generated: template.Lane()}, true
+	return template, RuleContributor[P, A]{generated: template.Lane(), installFamily: install}, true
 }
 
 // WireRule binds a domain's typed declaration, owner registration, and hot

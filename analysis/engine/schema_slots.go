@@ -495,7 +495,29 @@ type RuleSlot[V, O any] struct{ slotHandle[schemaRuleDraft] }
 // later engine capability handoff.
 type GeneratedRuleSlot struct{ slotHandle[schemaRuleDraft] }
 
+// RuleFamilyTarget is the sealed rule identity a family is claimed against.
+// A hand-declared RuleSlot and a Program-declared GeneratedRuleSlot are the
+// same thing to an install: one sealed rule ordinal in one schema. They claim
+// through this one seam, so a Program-declared rule acquires no second family
+// lifecycle of its own.
+type RuleFamilyTarget interface {
+	// Ordinal is the sealed rule ordinal the claim is made against.
+	Ordinal() (uint64, bool)
+	// ruleFamilyCell is the issuing declaration cell. It is unexported so only
+	// a rule slot this package minted can be a claim target.
+	ruleFamilyCell() *schemaTokenCell
+}
+
 func (slot *GeneratedRuleSlot) Available() bool { return slot != nil && slot.available() }
+
+// ruleFamilyCell exposes the generated rule row's issuing cell to the family
+// install seam.
+func (slot *GeneratedRuleSlot) ruleFamilyCell() *schemaTokenCell {
+	if slot == nil {
+		return nil
+	}
+	return slot.cell
+}
 
 func (slot *GeneratedRuleSlot) Ordinal() (uint64, bool) {
 	if slot == nil {
@@ -518,6 +540,15 @@ func (slot *RuleSlot[V, O]) Ordinal() (uint64, bool) {
 		return 0, false
 	}
 	return slot.ordinal()
+}
+
+// ruleFamilyCell exposes the hand-declared rule row's issuing cell to the
+// family install seam.
+func (slot *RuleSlot[V, O]) ruleFamilyCell() *schemaTokenCell {
+	if slot == nil {
+		return nil
+	}
+	return slot.cell
 }
 
 func (slot *RuleSlot[V, O]) ruleDraft() (*schemaRuleDraft, bool) {
