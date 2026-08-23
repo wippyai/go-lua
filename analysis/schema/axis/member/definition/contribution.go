@@ -32,8 +32,60 @@ type Contribution struct {
 	// repeated verbatim; a repeat that disagrees is two declarations of one
 	// name and is refused.
 	Carriers []Carrier
+	// Relations are the owner-issued relations this rule's fold reads and the
+	// base does not declare. A rule's relations are that rule's declaration for
+	// the same reason its reducer is: the rows it folds over are part of how it
+	// decides. Pushing them into the axis base would make the base the file
+	// every new rule has to edit, which is the choke point contributions exist
+	// to remove. A relation the base already declares may be repeated verbatim;
+	// a repeat that disagrees is two declarations of one name and is refused.
+	Relations []Relation
+	// Projections are the projections over those relations, declared with them
+	// under the same law. A projection names a relation, so declaring the two
+	// apart would let a rule contribute a projection over rows it never
+	// declared.
+	Projections []Projection
 	// Reducers are this rule's reducer definitions, in declaration order.
 	Reducers []Reducer
+}
+
+// relationsAgree reports whether two declarations of one relation name state
+// the same relation. Relation carries slices, so identity is stated here
+// rather than left to comparison.
+func relationsAgree(left, right Relation) bool {
+	if left.Name != right.Name || left.Key != right.Key || left.Subject != right.Subject ||
+		left.CandidateProvider != right.CandidateProvider || left.CandidateResolver != right.CandidateResolver ||
+		left.CandidateOrdinal != right.CandidateOrdinal || left.CandidateAt != right.CandidateAt ||
+		left.CandidateCount != right.CandidateCount || left.Materialize != right.Materialize ||
+		left.CandidateIdentityAt != right.CandidateIdentityAt {
+		return false
+	}
+	if len(left.Inputs) != len(right.Inputs) {
+		return false
+	}
+	for index, input := range left.Inputs {
+		if input != right.Inputs[index] {
+			return false
+		}
+	}
+	return derivationsAgree(left.Derivation, right.Derivation)
+}
+
+// derivationsAgree reports whether two relation derivations are the same
+// construction, static axis order included.
+func derivationsAgree(left, right RelationDerivation) bool {
+	if left.State != right.State || left.Build != right.Build || left.Count != right.Count || left.At != right.At {
+		return false
+	}
+	if len(left.StaticAxes) != len(right.StaticAxes) {
+		return false
+	}
+	for index, axis := range left.StaticAxes {
+		if axis != right.StaticAxes[index] {
+			return false
+		}
+	}
+	return true
 }
 
 // Available reports whether this contribution identifies one rule of one axis
@@ -45,6 +97,16 @@ func (contribution Contribution) Available() bool {
 	}
 	for _, carrier := range contribution.Carriers {
 		if !identifierAvailable(carrier.Name) || !carrier.Key.Available() || !carrier.Type.Available() {
+			return false
+		}
+	}
+	for _, relation := range contribution.Relations {
+		if !identifierAvailable(relation.Name) || !relation.Key.Available() || !identifierAvailable(relation.Subject) {
+			return false
+		}
+	}
+	for _, projection := range contribution.Projections {
+		if !identifierAvailable(projection.Name) || !projection.Key.Available() || !identifierAvailable(projection.Relation) || !identifierAvailable(projection.Result) {
 			return false
 		}
 	}
@@ -60,6 +122,13 @@ func (contribution Contribution) Available() bool {
 func (contribution Contribution) Clone() Contribution {
 	clone := contribution
 	clone.Carriers = append([]Carrier(nil), contribution.Carriers...)
+	clone.Projections = append([]Projection(nil), contribution.Projections...)
+	clone.Relations = make([]Relation, len(contribution.Relations))
+	for index, relation := range contribution.Relations {
+		clone.Relations[index] = relation
+		clone.Relations[index].Inputs = append([]string(nil), relation.Inputs...)
+		clone.Relations[index].Derivation.StaticAxes = append([]schema.EntryReference(nil), relation.Derivation.StaticAxes...)
+	}
 	clone.Reducers = make([]Reducer, len(contribution.Reducers))
 	for index, reducer := range contribution.Reducers {
 		clone.Reducers[index] = reducer
@@ -101,6 +170,14 @@ func (source Source) Compose() (Definition, bool) {
 		carriers[carrier.Name] = carrier
 		keys[carrier] = struct{}{}
 	}
+	relations := make(map[string]Relation, len(base.Relations))
+	for _, relation := range base.Relations {
+		relations[relation.Name] = relation
+	}
+	projections := make(map[string]Projection, len(base.Projections))
+	for _, projection := range base.Projections {
+		projections[projection.Name] = projection
+	}
 	rules := make(map[schema.Key]struct{}, len(source.Contributions))
 	reducerNames := make(map[string]struct{}, len(source.Contributions))
 	reducerKeys := make(map[schema.Key]struct{}, len(source.Contributions))
@@ -127,6 +204,31 @@ func (source Source) Compose() (Definition, bool) {
 			carriers[carrier.Name] = carrier
 			keys[carrier] = struct{}{}
 			base.Carriers = append(base.Carriers, carrier)
+		}
+		for _, relation := range contribution.Relations {
+			existing, declared := relations[relation.Name]
+			if declared {
+				if !relationsAgree(existing, relation) {
+					return Definition{}, false
+				}
+				continue
+			}
+			row := relation
+			row.Inputs = append([]string(nil), relation.Inputs...)
+			row.Derivation.StaticAxes = append([]schema.EntryReference(nil), relation.Derivation.StaticAxes...)
+			relations[relation.Name] = row
+			base.Relations = append(base.Relations, row)
+		}
+		for _, projection := range contribution.Projections {
+			existing, declared := projections[projection.Name]
+			if declared {
+				if existing != projection {
+					return Definition{}, false
+				}
+				continue
+			}
+			projections[projection.Name] = projection
+			base.Projections = append(base.Projections, projection)
 		}
 		for _, reducer := range contribution.Reducers {
 			if _, duplicate := reducerNames[reducer.Name]; duplicate {

@@ -218,3 +218,220 @@ func TestRosterRefusesTwoOwnersOfOneVocabulary(t *testing.T) {
 		t.Fatal("an unregistered source resolved")
 	}
 }
+
+// routedContribution is one rule declaring the whole shape it folds over: the
+// carrier its rows are typed in, the relation those rows come from, and the
+// projection that addresses them. It is the shape a routed rule needs and the
+// axis base has no reason to know about.
+func routedContribution(rule schema.Key, relation string, key schema.Key) Contribution {
+	provider := member.RelationRef{Axis: specimenAxis(), Member: key}
+	return Contribution{
+		Axis: "specimen",
+		Rule: rule,
+		Carriers: []Carrier{
+			{Name: "RouteCarrier", Key: "carrier/specimen/route", Type: specimenType("Route")},
+		},
+		Relations: []Relation{{
+			Name:              relation,
+			Key:               key,
+			Subject:           "RouteCarrier",
+			CandidateProvider: provider,
+			CandidateResolver: specimenMethod("RouteForOccurrence", "Schema"),
+			CandidateOrdinal:  specimenMethod("RouteOrdinal", "Schema"),
+			CandidateAt:       specimenMethod("RouteAt", "Schema"),
+		}},
+		Projections: []Projection{{
+			Name:              relation + "Coordinate",
+			Key:               key + "/coordinate",
+			Relation:          relation,
+			CandidateProvider: provider,
+			Role:              member.Destination,
+			Result:            "KeyCarrier",
+			Accessor:          specimenMethod("Result", "Route"),
+		}},
+		Reducers: []Reducer{{
+			Name:           "Routed",
+			Key:            "specimen/reducer/routed",
+			Candidate:      "RouteCarrier",
+			Outputs:        []ReducerOutput{{Axis: specimenAxis(), Carrier: "FactCarrier"}},
+			Implementation: GoSymbol{PackagePath: specimenPackage, Name: "RoutedFold"},
+		}},
+	}
+}
+
+// TestAContributionDeclaresItsOwnRelationsAndProjections is the property the
+// shape exists for: a rule that folds over rows the axis base never declared
+// brings those rows with it. Adding such a rule edits that rule's package and
+// the roster, and nothing in the axis owner's base.
+func TestAContributionDeclaresItsOwnRelationsAndProjections(t *testing.T) {
+	composed, ok := specimenSource(routedContribution("specimen-routed", "Routes", "specimen/routes")).Compose()
+	if !ok {
+		t.Fatal("a contribution carrying its own relation and projection does not compose")
+	}
+	relation, relationFound := findRelation(composed, "Routes")
+	if !relationFound {
+		t.Fatal("the contributed relation is absent from the composed definition")
+	}
+	if relation.Subject != "RouteCarrier" || relation.Key != "specimen/routes" {
+		t.Fatalf("contributed relation composed as %+v", relation)
+	}
+	if _, found := findProjection(composed, "RoutesCoordinate"); !found {
+		t.Fatal("the contributed projection is absent from the composed definition")
+	}
+	// The base's own rows are still there and still first: a contribution
+	// extends the vocabulary, it does not replace it.
+	if _, found := findRelation(composed, "Candidates"); !found {
+		t.Fatal("composing a contribution dropped the base's own relation")
+	}
+	if composed.Relations[0].Name != "Candidates" {
+		t.Fatalf("base relation is not first: %s", composed.Relations[0].Name)
+	}
+}
+
+// TestComposeRefusesAContributionRelationThatContradictsTheBase holds the
+// contributed rows to the same law carriers are held to. One name is one
+// declaration, whoever wrote it.
+func TestComposeRefusesAContributionRelationThatContradictsTheBase(t *testing.T) {
+	contribution := routedContribution("specimen-routed", "Candidates", "specimen/other")
+	if _, ok := specimenSource(contribution).Compose(); ok {
+		t.Fatal("a contribution redeclaring the base's relation with different content composes")
+	}
+}
+
+// TestComposeRefusesTwoContributionsContradictingOneRelation is the same law
+// between two rules, where neither is the base and neither is privileged.
+func TestComposeRefusesTwoContributionsContradictingOneRelation(t *testing.T) {
+	first := routedContribution("specimen-first", "Routes", "specimen/routes")
+	second := routedContribution("specimen-second", "Routes", "specimen/routes")
+	second.Relations[0].Subject = "SeedCarrier"
+	second.Reducers[0].Name = "SecondRouted"
+	second.Reducers[0].Key = "specimen/reducer/second-routed"
+	second.Projections[0].Name = "SecondCoordinate"
+	second.Projections[0].Key = "specimen/routes/second"
+	if _, ok := specimenSource(first, second).Compose(); ok {
+		t.Fatal("two contributions declaring one relation name differently compose")
+	}
+}
+
+// TestARepeatedRelationDeclarationIsAdmittedVerbatim is the other half: two
+// rules folding over the same rows must each be able to say so, or the second
+// rule is forced to depend on the first having been registered.
+func TestARepeatedRelationDeclarationIsAdmittedVerbatim(t *testing.T) {
+	first := routedContribution("specimen-first", "Routes", "specimen/routes")
+	second := routedContribution("specimen-second", "Routes", "specimen/routes")
+	second.Reducers[0].Name = "SecondRouted"
+	second.Reducers[0].Key = "specimen/reducer/second-routed"
+	composed, ok := specimenSource(first, second).Compose()
+	if !ok {
+		t.Fatal("two rules folding over one declared relation do not compose")
+	}
+	count := 0
+	for _, relation := range composed.Relations {
+		if relation.Name == "Routes" {
+			count++
+		}
+	}
+	if count != 1 {
+		t.Fatalf("one relation declared twice composed to %d rows", count)
+	}
+}
+
+// TestComposeRefusesTwoRelationNamesClaimingOneKey keeps the cold key space one
+// to one with the declarations, so a generated relation ordinal names exactly
+// one authored row.
+func TestComposeRefusesTwoRelationNamesClaimingOneKey(t *testing.T) {
+	contribution := routedContribution("specimen-routed", "Routes", "specimen/candidates")
+	if _, ok := specimenSource(contribution).Compose(); ok {
+		t.Fatal("a contributed relation taking the base relation's key composes")
+	}
+}
+
+func findRelation(definition Definition, name string) (Relation, bool) {
+	for _, relation := range definition.Relations {
+		if relation.Name == name {
+			return relation, true
+		}
+	}
+	return Relation{}, false
+}
+
+func findProjection(definition Definition, name string) (Projection, bool) {
+	for _, projection := range definition.Projections {
+		if projection.Name == name {
+			return projection, true
+		}
+	}
+	return Projection{}, false
+}
+
+// twinRelation is a second self-providing candidate directory: its own key, its
+// own provider reference, and the same directory symbols the base relation
+// carries. Everything Complete inspects besides the identity under test is
+// satisfied, so a refusal is attributable to that identity alone.
+func twinRelation(name string, key schema.Key) Relation {
+	twin := specimenBase().Relations[0]
+	twin.Name = name
+	twin.Key = key
+	twin.CandidateProvider = member.RelationRef{Axis: specimenAxis(), Member: key}
+	return twin
+}
+
+// TestCompleteRefusesTwoRelationsClaimingOneKey states who owns the sealed
+// relation key space. Two rows under one key do not merge and do not race:
+// every provider that names that key resolves to whichever row was composed
+// last, silently, and the generated ordinal then names a declaration nobody
+// wrote.
+func TestCompleteRefusesTwoRelationsClaimingOneKey(t *testing.T) {
+	definition := specimenBase()
+	definition.Relations = append(definition.Relations, twinRelation("Twin", definition.Relations[0].Key))
+	if definition.Complete() {
+		t.Fatal("a definition with two relations under one key is complete")
+	}
+	// The same definition with the twin's identity made distinct is complete,
+	// which is what makes the refusal above attributable to the shared key.
+	definition.Relations[1] = twinRelation("Twin", "specimen/twin")
+	if !definition.Complete() {
+		t.Fatal("the same definition with distinct relation keys is not complete")
+	}
+}
+
+// TestCompleteRefusesTwoRelationsClaimingOneName is the same law over the name
+// space projections and reducer inputs address relations by. The base's
+// projection is left out so that the name collision is the only thing wrong
+// with the definition under test.
+func TestCompleteRefusesTwoRelationsClaimingOneName(t *testing.T) {
+	definition := specimenBase()
+	definition.Projections = nil
+	definition.Relations = append(definition.Relations, twinRelation(definition.Relations[0].Name, "specimen/twin"))
+	if definition.Complete() {
+		t.Fatal("a definition with two relations under one name is complete")
+	}
+	definition.Relations[1] = twinRelation("Twin", "specimen/twin")
+	if !definition.Complete() {
+		t.Fatal("the same definition with distinct relation names is not complete")
+	}
+}
+
+// TestCompleteRefusesTwoProjectionsClaimingOneIdentity holds projections to the
+// relation law, over both the name they are addressed by and the key they seal.
+func TestCompleteRefusesTwoProjectionsClaimingOneIdentity(t *testing.T) {
+	for _, probe := range []struct {
+		name    string
+		collide func(*Projection, Projection)
+	}{
+		{name: "key", collide: func(twin *Projection, first Projection) { twin.Key = first.Key }},
+		{name: "name", collide: func(twin *Projection, first Projection) { twin.Name = first.Name }},
+	} {
+		t.Run(probe.name, func(t *testing.T) {
+			definition := specimenBase()
+			twin := definition.Projections[0]
+			twin.Name = "Twin"
+			twin.Key = "specimen/twin"
+			probe.collide(&twin, definition.Projections[0])
+			definition.Projections = append(definition.Projections, twin)
+			if definition.Complete() {
+				t.Fatalf("a definition with two projections sharing one %s is complete", probe.name)
+			}
+		})
+	}
+}

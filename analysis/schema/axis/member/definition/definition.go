@@ -513,6 +513,16 @@ func (definition Definition) Complete() bool {
 				return false
 			}
 		}
+		// One name is one relation and one key is one relation. Without this
+		// the later row silently wins both lookups, and every provider that
+		// names the shared key resolves to whichever declaration happened to be
+		// composed last.
+		if _, duplicate := relations[relation.Name]; duplicate {
+			return false
+		}
+		if _, duplicate := relationsByKey[relation.Key]; duplicate {
+			return false
+		}
 		relations[relation.Name] = relation
 		relationsByKey[relation.Key] = relation
 	}
@@ -575,6 +585,8 @@ func (definition Definition) Complete() bool {
 			return false
 		}
 	}
+	projectionNames := make(map[string]struct{}, len(definition.Projections))
+	projectionKeys := make(map[schema.Key]struct{}, len(definition.Projections))
 	for _, projection := range definition.Projections {
 		if !projection.CandidateProvider.Available() {
 			return false
@@ -582,6 +594,16 @@ func (definition Definition) Complete() bool {
 		if !projection.Accessor.Available() {
 			return false
 		}
+		// A projection is addressed by name and sealed by key on the same terms
+		// a relation is.
+		if _, duplicate := projectionNames[projection.Name]; duplicate {
+			return false
+		}
+		if _, duplicate := projectionKeys[projection.Key]; duplicate {
+			return false
+		}
+		projectionNames[projection.Name] = struct{}{}
+		projectionKeys[projection.Key] = struct{}{}
 		relation, relationOK := relations[projection.Relation]
 		if !relationOK || relation.CandidateProvider != projection.CandidateProvider || !projectionReceiverMatches(projection.Accessor, relation, carriers) {
 			return false
