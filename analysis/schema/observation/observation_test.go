@@ -4,6 +4,8 @@ import (
 	"fmt"
 	"testing"
 
+	seal "github.com/wippyai/go-lua/analysis/schema/seal"
+
 	"github.com/wippyai/go-lua/analysis/schema"
 	"github.com/wippyai/go-lua/analysis/schema/query"
 	"github.com/wippyai/go-lua/analysis/schema/structure"
@@ -53,7 +55,7 @@ func (surface producerSurface) Entries() []schema.Entry {
 	}}
 }
 
-func (producerSurface) Seal(schema.View, schema.Sealed) schema.SealFailure {
+func (producerSurface) Seal(seal.View, seal.Sealed) schema.SealFailure {
 	return schema.SealFailure{}
 }
 
@@ -72,7 +74,7 @@ func (contribution scratchSurface) Entries() []schema.Entry {
 	return entries
 }
 
-func (scratchSurface) Seal(schema.View, schema.Sealed) schema.SealFailure {
+func (scratchSurface) Seal(seal.View, seal.Sealed) schema.SealFailure {
 	return schema.SealFailure{}
 }
 
@@ -86,7 +88,7 @@ const (
 	testAnchor                 = "semantic/observation/anchor/test"
 )
 
-func testStructure(t *testing.T) schema.Surface {
+func testStructure(t *testing.T) seal.Surface {
 	t.Helper()
 	specs := make([]structure.Spec, 0, int(structure.CategoryNativeSendSafety))
 	for category := structure.CategoryArm; category <= structure.CategoryNativeSendSafety; category++ {
@@ -110,14 +112,14 @@ func testStructure(t *testing.T) schema.Surface {
 	return structure.NewSurface(entries)
 }
 
-func sealObservation(t *testing.T, contribution schema.Surface) (*schema.Schema, schema.SealFailure) {
+func sealObservation(t *testing.T, contribution seal.Surface) (*seal.Schema, schema.SealFailure) {
 	t.Helper()
 	return sealObservationWithProducer(t, contribution, scratchSurface{kind: schema.SurfaceKindQuery, keys: []schema.Key{testProducer}})
 }
 
-func sealObservationWithProducer(t *testing.T, contribution schema.Surface, producer schema.Surface) (*schema.Schema, schema.SealFailure) {
+func sealObservationWithProducer(t *testing.T, contribution seal.Surface, producer seal.Surface) (*seal.Schema, schema.SealFailure) {
 	t.Helper()
-	builder := schema.NewBuilder()
+	builder := seal.NewBuilder()
 	for kind := schema.SurfaceKindInvalid + 1; kind.Available(); kind++ {
 		switch kind {
 		case schema.SurfaceKindStructure:
@@ -247,7 +249,7 @@ func TestObservationReportsUnresolvedGeometryRole(t *testing.T) {
 func TestObservationReportsDuplicateRowsAtRoot(t *testing.T) {
 	entry := mustEntry(t, testSpec())
 	sealed, failure := sealObservation(t, NewSurface([]*Entry{entry, entry}))
-	if sealed != nil || failure.Law != schema.LawEntryUnique || failure.Disposition != schema.DispositionDuplicate {
+	if sealed != nil || failure.Law != seal.LawEntryUnique || failure.Disposition != schema.DispositionDuplicate {
 		t.Fatalf("duplicate observation verdict = table=%v law=%d disposition=%s", sealed != nil, failure.Law, failure.Disposition)
 	}
 }

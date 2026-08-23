@@ -62,12 +62,12 @@ func nativeOccurrenceScaleProgram(t *testing.T, width int) programschema.Program
 			inputs = append(inputs, input)
 		}
 		point := nativeOccurrenceScaleID(t, "point", ordinal)
-		rule, ruleOK := programschema.NewRuleOccurrence(
+		rule, ruleOK := programschema.NewRuleOccurrenceWithInputs(
 			schema.Key("native-artifact-scale"),
 			schema.Key("native-artifact-scale-axis"),
 			uint32(ordinal),
 			point,
-			nativeOccurrenceScaleID(t, "rule-input", ordinal),
+			[]identity.ContentID{nativeOccurrenceScaleID(t, "rule-input", ordinal)},
 			programissuance.StageComputation,
 			programissuance.InputPreviousStage,
 			identity.ContentID{},

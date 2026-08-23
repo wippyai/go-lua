@@ -4,6 +4,8 @@ import (
 	"bytes"
 	"testing"
 
+	seal "github.com/wippyai/go-lua/analysis/schema/seal"
+
 	"github.com/wippyai/go-lua/analysis/schema"
 	"github.com/wippyai/go-lua/analysis/schema/structure"
 	"github.com/wippyai/go-lua/internal/framing"
@@ -45,11 +47,11 @@ func (contribution scratchVocabularySurface) Entries() []schema.Entry {
 	return entries
 }
 
-func (contribution scratchVocabularySurface) Seal(schema.View, schema.Sealed) schema.SealFailure {
+func (contribution scratchVocabularySurface) Seal(seal.View, seal.Sealed) schema.SealFailure {
 	return schema.SealFailure{}
 }
 
-func scratchVocabulary(t *testing.T) schema.Surface {
+func scratchVocabulary(t *testing.T) seal.Surface {
 	t.Helper()
 	specs := []structure.Spec{
 		{Key: scratchObservationBranch, Category: structure.CategoryDiagnosticObservation, Ordinal: 1, Spelling: "branch-condition", Accepted: true},
@@ -106,7 +108,7 @@ func (surface scratchSiblingSurface) Entries() []schema.Entry {
 	return entries
 }
 
-func (surface scratchSiblingSurface) Seal(schema.View, schema.Sealed) schema.SealFailure {
+func (surface scratchSiblingSurface) Seal(seal.View, seal.Sealed) schema.SealFailure {
 	return schema.SealFailure{}
 }
 
@@ -145,7 +147,7 @@ func mustEntry(t *testing.T, spec Spec) *Entry {
 // table. The catalog is walked rather than listed, so the surfaces the
 // declaration root settles on do not change what these laws assert, and the
 // two surfaces a diagnostic reference resolves against carry real inventories.
-func sealSurfaces(t *testing.T, entries []*Entry, axes []schema.Key) (*schema.Schema, schema.SealFailure) {
+func sealSurfaces(t *testing.T, entries []*Entry, axes []schema.Key) (*seal.Schema, schema.SealFailure) {
 	t.Helper()
 	return sealContribution(t, NewSurface(entries), axes)
 }
@@ -153,9 +155,9 @@ func sealSurfaces(t *testing.T, entries []*Entry, axes []schema.Key) (*schema.Sc
 // sealContribution seals one arbitrary contribution under this surface's kind,
 // so a law about what this surface accepts as a row is stated against the
 // public seal path rather than against the unexported entry type alone.
-func sealContribution(t *testing.T, contribution schema.Surface, axes []schema.Key) (*schema.Schema, schema.SealFailure) {
+func sealContribution(t *testing.T, contribution seal.Surface, axes []schema.Key) (*seal.Schema, schema.SealFailure) {
 	t.Helper()
-	builder := schema.NewBuilder()
+	builder := seal.NewBuilder()
 	for kind := schema.SurfaceKind(1); kind.Available(); kind++ {
 		switch kind {
 		case schema.SurfaceKindDiagnostic:
@@ -182,9 +184,9 @@ func sealEntries(t *testing.T, entries []*Entry) schema.SealFailure {
 // sealEntriesWith seals one inventory against a chosen structural vocabulary,
 // so a law about a row keyed by a vocabulary member is stated against a table
 // that declares it.
-func sealEntriesWith(t *testing.T, entries []*Entry, vocabulary schema.Surface) schema.SealFailure {
+func sealEntriesWith(t *testing.T, entries []*Entry, vocabulary seal.Surface) schema.SealFailure {
 	t.Helper()
-	builder := schema.NewBuilder()
+	builder := seal.NewBuilder()
 	for kind := schema.SurfaceKind(1); kind.Available(); kind++ {
 		switch kind {
 		case schema.SurfaceKindDiagnostic:
@@ -243,7 +245,7 @@ func (foreignSurface) Entries() []schema.Entry {
 	return []schema.Entry{scratchSiblingEntry{key: "advice.foreign"}}
 }
 
-func (contribution foreignSurface) Seal(view schema.View, sealed schema.Sealed) schema.SealFailure {
+func (contribution foreignSurface) Seal(view seal.View, sealed seal.Sealed) schema.SealFailure {
 	return surface{}.Seal(view, sealed)
 }
 
@@ -282,7 +284,7 @@ func TestDiagnosticCodeIsUnique(t *testing.T) {
 	first := mustEntry(t, scratchSpec("advice.always_true_guard", scratchFamilyAdvice))
 	second := mustEntry(t, scratchSpec("advice.always_true_guard", scratchFamilyAdvice))
 	failure := sealEntries(t, []*Entry{first, second})
-	if failure.Law != schema.LawEntryUnique || failure.Disposition != schema.DispositionDuplicate {
+	if failure.Law != seal.LawEntryUnique || failure.Disposition != schema.DispositionDuplicate {
 		t.Fatalf("duplicate diagnostic code sealed: law=%d disposition=%s", failure.Law, failure.Disposition)
 	}
 }
@@ -928,7 +930,7 @@ func TestDiagnosticTableProjectsEverySealedRow(t *testing.T) {
 // is keyed by. It is the shape of the vocabulary a judgment contributes, not
 // that judgment's own catalog: what these laws are about is what the
 // diagnostic surface does with a member of it.
-func scratchVerdictVocabulary(t *testing.T) schema.Surface {
+func scratchVerdictVocabulary(t *testing.T) seal.Surface {
 	t.Helper()
 	base, baseOK := scratchVocabulary(t).(scratchVocabularySurface)
 	if !baseOK {

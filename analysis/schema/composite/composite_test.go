@@ -4,6 +4,8 @@ import (
 	"crypto/sha256"
 	"testing"
 
+	seal "github.com/wippyai/go-lua/analysis/schema/seal"
+
 	"github.com/wippyai/go-lua/analysis/identity"
 	"github.com/wippyai/go-lua/analysis/schema"
 	"github.com/wippyai/go-lua/internal/framing"
@@ -44,7 +46,7 @@ func (contribution scratchSurface) Entries() []schema.Entry {
 	return entries
 }
 
-func (contribution scratchSurface) Seal(schema.View, schema.Sealed) schema.SealFailure {
+func (contribution scratchSurface) Seal(seal.View, seal.Sealed) schema.SealFailure {
 	return schema.SealFailure{}
 }
 
@@ -70,7 +72,7 @@ func sealEntries(t *testing.T, entries []*Entry) schema.SealFailure {
 
 // sealTable is the same seal, read for the table it produces rather than for
 // the verdict alone.
-func sealTable(t *testing.T, entries []*Entry) (*schema.Schema, schema.SealFailure) {
+func sealTable(t *testing.T, entries []*Entry) (*seal.Schema, schema.SealFailure) {
 	t.Helper()
 	return sealSurface(t, NewSurface(entries))
 }
@@ -79,9 +81,9 @@ func sealTable(t *testing.T, entries []*Entry) (*schema.Schema, schema.SealFailu
 // table. It is the same table sealTable builds, stated over the contribution
 // rather than over the inventory, so a contribution that is not this package's
 // own surface is sealed under exactly the laws above.
-func sealSurface(t *testing.T, contribution schema.Surface) (*schema.Schema, schema.SealFailure) {
+func sealSurface(t *testing.T, contribution seal.Surface) (*seal.Schema, schema.SealFailure) {
 	t.Helper()
-	builder := schema.NewBuilder()
+	builder := seal.NewBuilder()
 	for kind := schema.SurfaceKind(1); kind.Available(); kind++ {
 		switch kind {
 		case schema.SurfaceKindComposite:
@@ -105,7 +107,7 @@ func (foreignSurface) Entries() []schema.Entry {
 	return []schema.Entry{scratchEntry{key: "foreign"}}
 }
 
-func (foreignSurface) Seal(view schema.View, sealed schema.Sealed) schema.SealFailure {
+func (foreignSurface) Seal(view seal.View, sealed seal.Sealed) schema.SealFailure {
 	return surface{}.Seal(view, sealed)
 }
 
@@ -281,7 +283,7 @@ func TestCompositeKeyIsUnique(t *testing.T) {
 	first := mustEntry(t, containmentSpec("containment"))
 	second := mustEntry(t, overlapSpec("containment"))
 	failure := sealEntries(t, []*Entry{first, second})
-	if failure.Law != schema.LawEntryUnique || failure.Disposition != schema.DispositionDuplicate {
+	if failure.Law != seal.LawEntryUnique || failure.Disposition != schema.DispositionDuplicate {
 		t.Fatalf("duplicate composite key sealed: law=%d disposition=%s", failure.Law, failure.Disposition)
 	}
 }
@@ -570,11 +572,11 @@ func TestCompositeDependencyEdgesResolve(t *testing.T) {
 // membership against the axis inventory, so the axis surface is sealed below
 // it and a table registered the other way round is rejected by the root.
 func TestCompositesSealAfterAxes(t *testing.T) {
-	builder := schema.NewBuilder()
+	builder := seal.NewBuilder()
 	builder.Register(NewSurface([]*Entry{mustEntry(t, containmentSpec("containment"))}))
 	builder.Register(scratchSurface{kind: schema.SurfaceKindAxis, keys: scratchAxes()})
 	_, failure := builder.Seal()
-	if failure.Law != schema.LawSurfacePhase || failure.Disposition != schema.DispositionMalformed {
+	if failure.Law != seal.LawSurfacePhase || failure.Disposition != schema.DispositionMalformed {
 		t.Fatalf("axis surface registered after the composite surface sealed: law=%d disposition=%s", failure.Law, failure.Disposition)
 	}
 }
@@ -585,7 +587,7 @@ func TestCompositesSealAfterAxes(t *testing.T) {
 // composite that cannot reach the axis inventory cannot resolve one role, and
 // says so instead of sealing a membership over nothing.
 func TestCompositesRequireASealedAxisSurface(t *testing.T) {
-	builder := schema.NewBuilder()
+	builder := seal.NewBuilder()
 	for kind := schema.SurfaceKind(1); kind.Available(); kind++ {
 		switch kind {
 		case schema.SurfaceKindAxis:
