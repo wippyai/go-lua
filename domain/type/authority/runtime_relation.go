@@ -19,6 +19,9 @@ func (b *runtimeBuilder) sealSubtypeRelation() error {
 	if b.subtypeRelationInstalled() {
 		return nil
 	}
+	if b != nil && b.prefix != nil && len(b.oldOfNew) == len(b.runtime.rows) {
+		return b.extendPrefixSubtypeRelation()
+	}
 	if b == nil || b.runtime == nil || len(b.runtime.rows) != len(b.construction) {
 		return errors.New("typeauthority: malformed Runtime relation source")
 	}

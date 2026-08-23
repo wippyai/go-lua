@@ -302,14 +302,19 @@ type runtimeBuilder struct {
 	construction []typ.Type
 	sourceMaps   [][]uint32
 	keys         []runtimeSourceKey
+	prefix       *familyPrefix
+	oldOfNew     []uint32
 }
 
 func (b *runtimeBuilder) ingest(inputs []runtimeCanonicalInput) ([]RuntimeInner, error) {
 	prefix, members := sharedFamilyPrefix(inputs)
-	if prefix != nil && !familyPrefixHasLocal(members) {
-		return b.installFamilyPrefix(prefix, inputs, members)
+	if prefix == nil {
+		return b.ingestFresh(inputs)
 	}
-	return b.ingestFresh(inputs)
+	if familyPrefixHasLocal(members) {
+		return b.mergeFamilyPrefix(prefix, inputs, members)
+	}
+	return b.installFamilyPrefix(prefix, inputs, members)
 }
 
 func (b *runtimeBuilder) ingestFresh(inputs []runtimeCanonicalInput) ([]RuntimeInner, error) {
