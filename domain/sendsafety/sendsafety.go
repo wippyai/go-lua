@@ -10,8 +10,7 @@
 //
 // # The arms
 //
-// A send is answered on exactly one of four arms, three of which this package
-// decides:
+// A send is answered on exactly one of three arms:
 //
 //   - Immutable. The payload graph is deeply frozen, so no observer can tell a
 //     shared reference from a copy. Aliasing is irrelevant to this arm, which
@@ -20,38 +19,26 @@
 //     contains no second identity, and placement proves it never left the
 //     sending frame. The reference handed to the send is then the only one
 //     that exists.
-//   - CopyFallback. Placement answered, and its answer proves neither of the
-//     above. The runtime copies; the judgment says so rather than staying
-//     silent, because "answered, not provable" is a different fact from "not
-//     answered".
-//
-// The fourth arm - a payload with a proven escaping alias, which must refuse
-// the zero-copy transfer outright rather than fall back to a copy - is
-// deliberately absent. It is registered as declared-not-composed against
-// domain/effect/ownership. The placement summary publishes only the joined
-// placement class, and Store-then-Send joins to exactly the SharedHeap that
-// Send alone produces, so Class == SharedHeap separates nothing: reading it as
-// an escape proof would refute correct sends, and reading its absence as an
-// isolation proof would admit escaped ones. Both directions are unsound, so
-// the arm waits for placement to publish the escape provenance column rather
-// than being guessed from what is published today.
+//   - CopyRequired. Placement proves that a retaining boundary precedes this
+//     send, so a mutable payload cannot be transferred in place. This is a
+//     positive provenance judgment.
 //
 // # Abstention
 //
 // An unanswered placement is not an arm. When the summary carries no row for
-// the payload, or carries one whose class is Unknown, this package answers
-// nothing at all: unknown is never laundered into a proof, and a runtime that
-// already copies by default needs no diagnostic to do so.
+// the payload, or carries an Unknown class, this package answers nothing at
+// all. Unknown retain provenance never becomes a mutable-copy decision; an
+// independent deep-freeze proof may still establish Immutable.
 package sendsafety
 
 import (
 	"github.com/wippyai/go-lua/analysis/identity"
+	heapdomain "github.com/wippyai/go-lua/domain/heap"
 	"github.com/wippyai/go-lua/domain/placement"
 )
 
-// Verdict is the closed set of answers this judgment publishes. The escaping
-// arm is not a member: a verdict this package cannot decide is not spelled
-// here, so no consumer can switch on it and no default arm can invent it.
+// Verdict is the closed set of answers this judgment publishes. A verdict this
+// package cannot prove is not spelled here, so no default arm can invent it.
 type Verdict uint8
 
 const (
@@ -64,14 +51,14 @@ const (
 	// VerdictIsolated is a solely owned payload: zero-copy transfer is
 	// admissible because the sent reference is the only one that exists.
 	VerdictIsolated
-	// VerdictCopyFallback is an answered placement that proves neither arm.
-	// The runtime copies.
-	VerdictCopyFallback
+	// VerdictCopyRequired is a mutable payload with a proven prior retaining
+	// escape. The runtime must copy before sealing/publication.
+	VerdictCopyRequired
 )
 
 // Available reports whether the verdict is one this judgment decided.
 func (verdict Verdict) Available() bool {
-	return verdict >= VerdictImmutable && verdict <= VerdictCopyFallback
+	return verdict >= VerdictImmutable && verdict <= VerdictCopyRequired
 }
 
 // Ordinal is the verdict's position in the declared vocabulary. It is the
@@ -79,23 +66,9 @@ func (verdict Verdict) Available() bool {
 // rather than a spelling a table restates.
 func (verdict Verdict) Ordinal() uint16 { return uint16(verdict) }
 
-// Spelling is the verdict's authored name.
-func (verdict Verdict) Spelling() string {
-	switch verdict {
-	case VerdictImmutable:
-		return "immutable"
-	case VerdictIsolated:
-		return "isolated"
-	case VerdictCopyFallback:
-		return "unproven_copy"
-	default:
-		return ""
-	}
-}
-
 // Catalog is the declared verdict vocabulary in ordinal order.
 func Catalog() []Verdict {
-	return []Verdict{VerdictImmutable, VerdictIsolated, VerdictCopyFallback}
+	return []Verdict{VerdictImmutable, VerdictIsolated, VerdictCopyRequired}
 }
 
 // PayloadShape is what the Program knows about the expression in the payload
@@ -125,19 +98,19 @@ const (
 // payload names, the placement row published for that allocation, and the
 // shape of the payload expression.
 //
-// Every placement column here is copied from placement.SummaryResultAllocation
-// by NewSubject. A caller never fills these by hand from a second reading of
-// the summary.
+// The complete placement Fact is copied from
+// placement.SummaryResultAllocation by NewSubject. A caller never rebuilds it
+// from detached columns.
 type Subject struct {
 	// Allocation is the identity of the payload's allocation root.
 	Allocation identity.ContentID
 	// Answered reports that the summary published a row for Allocation. A
 	// query miss leaves it false, which is abstention rather than a verdict.
 	Answered bool
-	// Present reports that the published row carries a placement class.
-	Present bool
-	// Class is the joined placement of the allocation.
-	Class placement.Placement
+	// Fact is the complete canonical Placement value at the pre-effect point.
+	// Class and retain provenance remain inseparable so this judgment cannot
+	// observe a combination the Placement owner never wrote.
+	Fact placement.Fact
 	// Owner is the owner identity the placement row carries. A row whose owner
 	// is not its own allocation is malformed, not an isolation proof.
 	Owner identity.ContentID
@@ -168,13 +141,11 @@ func NewSubject(row placement.SummaryResultAllocation, shape PayloadShape) (Subj
 	if !allocation.Available() {
 		return Subject{}, false
 	}
-	subject := Subject{Allocation: allocation, Answered: true, Shape: shape}
-	if present, ok := row.Present(); ok {
-		subject.Present = present
+	fact, factOK := row.Fact()
+	if !factOK {
+		return Subject{}, false
 	}
-	if class, ok := row.Placement(); ok {
-		subject.Class = class
-	}
+	subject := Subject{Allocation: allocation, Answered: true, Fact: fact, Shape: shape}
 	if owner, ok := row.OwnerIdentity(); ok {
 		subject.Owner = owner
 	}
@@ -190,13 +161,38 @@ func NewSubject(row placement.SummaryResultAllocation, shape PayloadShape) (Subj
 	return subject, true
 }
 
+// NewObservedSubject projects one allocation directly from the transient
+// Placement observation produced at a send's pre-effect point. Placement owns
+// the complete row composition; send-safety only copies that authenticated
+// result into its judgment input.
+func NewObservedSubject(schema placement.Schema, observation placement.PlacementSummaryObservation, key heapdomain.Key, shape PayloadShape) (Subject, bool) {
+	fact, evidence, rowOK := placement.PlacementSummaryAllocation(schema, observation, key)
+	allocation, allocationOK := key.ContentID()
+	if !rowOK || !allocationOK || !allocation.Available() || !evidence.Valid() || !evidence.HasOwnerIdentity || evidence.OwnerIdentity != allocation {
+		return Subject{}, false
+	}
+	subject := Subject{
+		Allocation: allocation,
+		Answered:   true,
+		Fact:       fact,
+		Owner:      evidence.OwnerIdentity,
+		Shape:      shape,
+		FrameLocal: evidence.FrameLocal,
+		DeepFrozen: evidence.DeepFrozen,
+	}
+	if evidence.HasDepth {
+		subject.Depth, subject.DepthKnown = evidence.Depth, true
+	}
+	return subject, true
+}
+
 // answered reports that placement gave a usable answer for this allocation.
 // An unpublished row, an absent class, and a class of Unknown are all the
 // absence of an answer: Unknown is placement's semantic top, so it states that
 // every placement remains possible, which proves nothing about a transfer.
 func (subject Subject) answered() bool {
-	return subject.Answered && subject.Present && subject.Allocation.Available() &&
-		analysisPlacement(subject.Class)
+	return subject.Answered && subject.Allocation.Available() && subject.Fact.Valid() &&
+		subject.Fact.RetainEscape != placement.EvidenceAbsent && analysisPlacement(subject.Fact.Class)
 }
 
 // analysisPlacement is the analysis half of the placement vocabulary: the
@@ -234,21 +230,26 @@ func (subject Subject) immutable() bool {
 // A missing depth is not a depth of zero and an unclassified payload shape is
 // not a literal birth, so either one leaves this arm undecided.
 func (subject Subject) isolated() bool {
-	return subject.FrameLocal.Proven() &&
+	return subject.Fact.RetainEscape.Refuted() &&
+		subject.FrameLocal.Proven() &&
 		subject.DepthKnown && subject.Depth == 0 &&
-		subject.Shape == PayloadShapeLiteralBirth &&
-		subject.wellFormed()
+		subject.Shape == PayloadShapeLiteralBirth
+}
+
+// copyRequired is the retaining-escape arm. It is published only when the
+// graph is proven mutable and Placement proves a prior retaining boundary.
+func (subject Subject) copyRequired() bool {
+	return subject.DeepFrozen.Refuted() && subject.Fact.RetainEscape.Proven()
 }
 
 // Derive answers one send site.
 //
 // The order is the soundness order. Immutability is checked first because it
 // is independent of aliasing; isolation second because it is the stronger
-// claim about ownership; the copy fallback last because it is what an answered
-// placement means when neither proof stands. An unanswered placement returns
-// VerdictNone, and VerdictNone is never a row.
+// claim about ownership; CopyRequired follows only from proven prior-retain
+// provenance. Missing or ambiguous proof returns VerdictNone.
 func Derive(subject Subject) Verdict {
-	if !subject.answered() {
+	if !subject.answered() || !subject.wellFormed() {
 		return VerdictNone
 	}
 	if subject.immutable() {
@@ -257,5 +258,8 @@ func Derive(subject Subject) Verdict {
 	if subject.isolated() {
 		return VerdictIsolated
 	}
-	return VerdictCopyFallback
+	if subject.copyRequired() {
+		return VerdictCopyRequired
+	}
+	return VerdictNone
 }

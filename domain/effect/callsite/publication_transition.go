@@ -7,7 +7,6 @@ import (
 	"github.com/wippyai/go-lua/analysis/identity"
 	"github.com/wippyai/go-lua/analysis/schema/executioncontext"
 	programissuance "github.com/wippyai/go-lua/analysis/schema/program/issuance"
-	calldomain "github.com/wippyai/go-lua/domain/call"
 	effectfactor "github.com/wippyai/go-lua/domain/effect/factor"
 )
 
@@ -27,16 +26,12 @@ func (rule *HotRule) MountedPublicationObservation(committed *engine.CommittedPr
 	if rule == nil || rule.opaque || committed == nil || effectQuery == nil || !mount.Available() || !occurrence.Available() || !context.Available() || context.ModuleKey() != mount {
 		return engine.ProgramObservationAdmission{}, false, false
 	}
-	mounted, mountedOK := rule.mountedForOccurrence(mount, occurrence)
-	stage, stageOK := rule.MountedSelectedCallEffectStage(committed, mount, occurrence)
+	stage, publications, publicationsOK := rule.MountedPublicationBatchStage(committed, mount, occurrence)
 	capability, capabilityOK := rule.implementation.MountedCapability()
-	if !mountedOK || !stageOK || !stage.Available() || stage.Kind() != programissuance.StageCallEffect || stage.MountID() != mount || stage.OccurrenceID() != occurrence || !capabilityOK || !stage.HasMember() {
+	if !publicationsOK || !stage.Available() || stage.Kind() != programissuance.StageCallEffect || stage.MountID() != mount || stage.OccurrenceID() != occurrence || !capabilityOK || !stage.HasMember() {
 		return engine.ProgramObservationAdmission{}, false, false
 	}
-	present, publicationsOK := rule.mountedCallHasPublication(mounted, mount, occurrence)
-	if !publicationsOK {
-		return engine.ProgramObservationAdmission{}, false, false
-	}
+	present = publications.RowCount() != 0
 	if !present {
 		return engine.ProgramObservationAdmission{}, false, true
 	}
@@ -46,45 +41,6 @@ func (rule *HotRule) MountedPublicationObservation(committed *engine.CommittedPr
 		return engine.ProgramObservationAdmission{}, false, false
 	}
 	return observation, true, true
-}
-
-// mountedCallHasPublication validates every selected typed publication route
-// for this call. Factor retains the complete descriptor, occurrence,
-// provenance, selector, and uniqueness validation; Callsite receives only
-// the boolean fact that an exact observation is needed.
-func (rule *HotRule) mountedCallHasPublication(mounted effectfactor.MountedCall, mount, occurrence identity.ContentID) (bool, bool) {
-	if rule == nil || rule.opaque || !rule.valid() {
-		return false, false
-	}
-	effects := rule.effects.Algebra()
-	calls := rule.calls.Algebra()
-	_, _, root, siteOK := mountedCallRows(rule.binding, rule.calls, rule.effects, mounted)
-	_, mountedMount, mountedOccurrence, identityOK := effects.MountedCallIdentity(mounted)
-	if !siteOK || !identityOK || mountedMount != mount || mountedOccurrence != occurrence {
-		return false, false
-	}
-	seeds := calls.Seeds()
-	any := false
-	for index := 0; index < seeds.Count(); index++ {
-		target, targetOK := seeds.At(index)
-		role, roleOK := target.RoleID()
-		canonicalTarget, canonicalTargetOK := calls.TargetForRole(role)
-		if !targetOK || !roleOK || role.Kind() != calldomain.TargetRoleSeed || !canonicalTargetOK || !canonicalTarget.Same(target) {
-			return false, false
-		}
-		operation, applicable := canonicalTarget.Operation()
-		if !applicable {
-			continue
-		}
-		selected, selectedOK := effects.SelectedCallPublication(root, mounted, operation)
-		if !selectedOK {
-			// Generic and unsupported routes remain ordinary Target
-			// alternatives. They cannot infer a publication observation.
-			continue
-		}
-		any = any || selected
-	}
-	return any, true
 }
 
 func publicationObservationID(mount, occurrence, contextID identity.ContentID) (identity.ContentID, bool) {

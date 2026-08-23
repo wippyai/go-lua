@@ -23,8 +23,9 @@ func ownedSubject(t *testing.T) Subject {
 	t.Helper()
 	id := allocationID(t, "owned")
 	return Subject{
-		Allocation: id, Answered: true, Present: true,
-		Class: placement.Stack, Owner: id,
+		Allocation: id, Answered: true,
+		Fact:  placement.DefaultFact(),
+		Owner: id,
 		Depth: 0, DepthKnown: true,
 		FrameLocal: placement.EvidenceProven,
 		DeepFrozen: placement.EvidenceUnknown,
@@ -37,29 +38,28 @@ func ownedSubject(t *testing.T) Subject {
 // transfer.
 func TestOwnedAdmissiblePayloadIsIsolated(t *testing.T) {
 	if verdict := Derive(ownedSubject(t)); verdict != VerdictIsolated {
-		t.Fatalf("fully owned frame-local literal birth = %v, want isolated", verdict.Spelling())
+		t.Fatalf("fully owned frame-local literal birth = %d, want isolated", verdict)
 	}
 }
 
 // TestUnknownPlacementNeverYieldsSendSafe is the central soundness law:
 // unknown is never laundered into a proof. Every way placement can fail to
-// answer must produce no verdict at all, not a copy fallback and never an
-// admission.
+// answer must produce no verdict at all and never an admission.
 func TestUnknownPlacementNeverYieldsSendSafe(t *testing.T) {
 	for _, testcase := range []struct {
 		name   string
 		mutate func(Subject) Subject
 	}{
-		{"class unknown is the lattice top", func(s Subject) Subject { s.Class = placement.Unknown; return s }},
-		{"class bottom is unreachable", func(s Subject) Subject { s.Class = placement.Bottom; return s }},
+		{"class unknown is the lattice top", func(s Subject) Subject { s.Fact = placement.UnknownFact(); return s }},
+		{"class bottom is unreachable", func(s Subject) Subject { s.Fact = placement.BottomFact(); return s }},
 		{"no row published for the allocation", func(s Subject) Subject { s.Answered = false; return s }},
-		{"row carries no placement class", func(s Subject) Subject { s.Present = false; return s }},
+		{"row carries no placement fact", func(s Subject) Subject { s.Fact = placement.Fact{}; return s }},
 		{"allocation identity unavailable", func(s Subject) Subject { s.Allocation = identity.ContentID{}; return s }},
 	} {
 		t.Run(testcase.name, func(t *testing.T) {
 			subject := testcase.mutate(ownedSubject(t))
 			if verdict := Derive(subject); verdict != VerdictNone {
-				t.Fatalf("unanswered placement = %v, want no verdict", verdict.Spelling())
+				t.Fatalf("unanswered placement = %d, want no verdict", verdict)
 			}
 		})
 	}
@@ -70,17 +70,16 @@ func TestUnknownPlacementNeverYieldsSendSafe(t *testing.T) {
 // answered for is evidence about nothing.
 func TestUnknownPlacementAbstainsEvenWhenFrozen(t *testing.T) {
 	subject := ownedSubject(t)
-	subject.Class = placement.Unknown
+	subject.Fact = placement.UnknownFact()
 	subject.DeepFrozen = placement.EvidenceProven
 	if verdict := Derive(subject); verdict != VerdictNone {
-		t.Fatalf("frozen payload with unknown placement = %v, want no verdict", verdict.Spelling())
+		t.Fatalf("frozen payload with unknown placement = %d, want no verdict", verdict)
 	}
 }
 
-// TestAliasedOrEscapingSubgraphRefusesIsolation is the refusal law. Each case
-// removes exactly one clause of the isolation proof, and each must fall back
-// to the copy verdict rather than admitting the transfer.
-func TestAliasedOrEscapingSubgraphRefusesIsolation(t *testing.T) {
+// TestUnprovenIsolationAbstains is the refusal law. Each case removes exactly
+// one clause of the isolation proof, and none may invent a copy decision.
+func TestUnprovenIsolationAbstains(t *testing.T) {
 	for _, testcase := range []struct {
 		name   string
 		mutate func(Subject) Subject
@@ -90,7 +89,7 @@ func TestAliasedOrEscapingSubgraphRefusesIsolation(t *testing.T) {
 		{"graph reaches a second identity", func(s Subject) Subject { s.Depth = 1; return s }},
 		{"containment depth unpublished", func(s Subject) Subject { s.DepthKnown = false; return s }},
 		{"frame locality refuted", func(s Subject) Subject {
-			s.FrameLocal, s.Class = placement.EvidenceRefuted, placement.OwnedHeap
+			s.FrameLocal, s.Fact.Class = placement.EvidenceRefuted, placement.OwnedHeap
 			return s
 		}},
 		{"frame locality unknown", func(s Subject) Subject { s.FrameLocal = placement.EvidenceUnknown; return s }},
@@ -106,28 +105,36 @@ func TestAliasedOrEscapingSubgraphRefusesIsolation(t *testing.T) {
 			if verdict == VerdictIsolated {
 				t.Fatalf("%s still admitted a zero-copy transfer", testcase.name)
 			}
-			if verdict != VerdictCopyFallback {
-				t.Fatalf("%s = %v, want the copy fallback", testcase.name, verdict.Spelling())
+			if verdict != VerdictNone {
+				t.Fatalf("%s = %d, want no verdict", testcase.name, verdict)
 			}
 		})
 	}
 }
 
-// TestSharedPlacementIsNeverReadAsAnEscapeProof pins the arm this package
-// deliberately does not decide. A SharedHeap class is what an ordinary send
-// produces, so it must not refuse the transfer and must not be mistaken for a
-// proven escaping alias; the answered-but-unproven arm is the only honest one.
-func TestSharedPlacementIsNeverReadAsAnEscapeProof(t *testing.T) {
+// TestSharedPlacementIsNeverReadAsRetainProvenance pins the canonical split:
+// the class alone decides nothing, while the Fact's retain component can
+// positively require a copy.
+func TestSharedPlacementIsNeverReadAsRetainProvenance(t *testing.T) {
 	subject := ownedSubject(t)
-	subject.Class = placement.SharedHeap
+	subject.Fact.Class = placement.SharedHeap
 	subject.FrameLocal = placement.EvidenceRefuted
-	if verdict := Derive(subject); verdict != VerdictCopyFallback {
-		t.Fatalf("shared placement = %v, want the copy fallback", verdict.Spelling())
+	if verdict := Derive(subject); verdict != VerdictNone {
+		t.Fatalf("shared class without retain proof = %d, want no verdict", verdict)
 	}
-	for _, verdict := range Catalog() {
-		if verdict.Spelling() == "escaped_refuted" {
-			t.Fatal("the escaping arm is declared-not-composed and must not be in the catalog")
-		}
+	subject.Fact.RetainEscape = placement.EvidenceProven
+	subject.DeepFrozen = placement.EvidenceRefuted
+	if verdict := Derive(subject); verdict != VerdictCopyRequired {
+		t.Fatalf("shared class with prior retain = %d, want copy_required", verdict)
+	}
+}
+
+func TestUnknownMutabilityDoesNotInventCopyRequired(t *testing.T) {
+	subject := ownedSubject(t)
+	subject.Fact = placement.Fact{Class: placement.SharedHeap, RetainEscape: placement.EvidenceProven}
+	subject.Shape = PayloadShapeReference
+	if verdict := Derive(subject); verdict != VerdictNone {
+		t.Fatalf("unknown mutability with prior retain = %d, want no verdict", verdict)
 	}
 }
 
@@ -140,9 +147,10 @@ func TestFrozenPayloadIsImmutableRegardlessOfAliasing(t *testing.T) {
 	subject.DeepFrozen = placement.EvidenceProven
 	subject.Shape = PayloadShapeReference
 	subject.Depth, subject.DepthKnown = 3, true
-	subject.Class, subject.FrameLocal = placement.SharedHeap, placement.EvidenceRefuted
+	subject.Fact = placement.Fact{Class: placement.SharedHeap, RetainEscape: placement.EvidenceProven}
+	subject.FrameLocal = placement.EvidenceRefuted
 	if verdict := Derive(subject); verdict != VerdictImmutable {
-		t.Fatalf("deeply frozen aliased payload = %v, want immutable", verdict.Spelling())
+		t.Fatalf("deeply frozen aliased payload = %d, want immutable", verdict)
 	}
 }
 
@@ -152,17 +160,12 @@ func TestVerdictVocabularyIsClosed(t *testing.T) {
 	if len(catalog) != 3 {
 		t.Fatalf("catalog holds %d arms, want the three decidable ones", len(catalog))
 	}
-	seen := make(map[string]struct{}, len(catalog))
-	for _, verdict := range catalog {
-		if !verdict.Available() || verdict.Spelling() == "" {
-			t.Fatalf("catalog member %d is not a decided arm", verdict.Ordinal())
+	for index, verdict := range catalog {
+		if !verdict.Available() || verdict.Ordinal() != uint16(index+1) {
+			t.Fatalf("catalog[%d] = %d/%d", index, verdict, verdict.Ordinal())
 		}
-		if _, duplicate := seen[verdict.Spelling()]; duplicate {
-			t.Fatalf("catalog spells %q twice", verdict.Spelling())
-		}
-		seen[verdict.Spelling()] = struct{}{}
 	}
-	if VerdictNone.Available() || VerdictNone.Spelling() != "" {
+	if VerdictNone.Available() || VerdictNone.Ordinal() != 0 {
 		t.Fatal("the absence of an answer must not be a decided arm")
 	}
 }
