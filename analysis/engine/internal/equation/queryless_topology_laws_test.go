@@ -4,6 +4,7 @@ import (
 	"testing"
 
 	"github.com/wippyai/go-lua/analysis/engine/internal/composition"
+	queryschema "github.com/wippyai/go-lua/analysis/schema/query"
 )
 
 // TestQuerylessTopologyCoverageAndEmptyDemandLaw pins the transformer-local
@@ -17,11 +18,11 @@ func TestQuerylessTopologyCoverageAndEmptyDemandLaw(t *testing.T) {
 	if !zeroOK || zeroSource == nil {
 		t.Fatal("queryless source")
 	}
-	zeroQueries, accepted := buildQueries(zeroSource, nil, nil, topologyCatalog{}, false)
+	zeroQueries, _, accepted := buildQueries(zeroSource, nil, nil, topologyCatalog{})
 	if !accepted || len(zeroQueries) != 0 {
 		t.Fatal("0 families / 0 instances was rejected")
 	}
-	if _, accepted = buildQueries(zeroSource, nil, []QueryInstance{{}}, topologyCatalog{}, false); accepted {
+	if _, _, accepted = buildQueries(zeroSource, nil, []QueryInstance{{}}, topologyCatalog{}); accepted {
 		t.Fatal("0 families / 1 instance was accepted")
 	}
 
@@ -31,27 +32,28 @@ func TestQuerylessTopologyCoverageAndEmptyDemandLaw(t *testing.T) {
 		Factors: []composition.Factor{{Key: factor}},
 		Queries: []composition.QueryFamily{{
 			Key: familyA, Freezer: boundaryKey(205),
+			Population:  queryschema.PopulationKindSelectedPoint,
 			Projections: []composition.QueryProjection{{Kind: composition.QueryFactorExact, Factor: factor}},
 		}},
 	})
 	if !oneFamilyOK || withOneFamily == nil {
 		t.Fatal("one-family source")
 	}
-	if _, accepted = buildQueries(withOneFamily, nil, nil, topologyCatalog{}, false); accepted {
+	if _, _, accepted = buildQueries(withOneFamily, nil, nil, topologyCatalog{}); accepted {
 		t.Fatal("1 family / 0 instances was accepted")
 	}
 
 	withTwoFamilies, twoFamiliesOK := composition.Seal(composition.Candidate{
 		Factors: []composition.Factor{{Key: factor}},
 		Queries: []composition.QueryFamily{
-			{Key: familyA, Freezer: boundaryKey(206), Projections: []composition.QueryProjection{{Kind: composition.QueryFactorExact, Factor: factor}}},
-			{Key: familyB, Freezer: boundaryKey(207), Projections: []composition.QueryProjection{{Kind: composition.QueryFactorExact, Factor: factor}}},
+			{Key: familyA, Freezer: boundaryKey(206), Population: queryschema.PopulationKindSelectedPoint, Projections: []composition.QueryProjection{{Kind: composition.QueryFactorExact, Factor: factor}}},
+			{Key: familyB, Freezer: boundaryKey(207), Population: queryschema.PopulationKindSelectedPoint, Projections: []composition.QueryProjection{{Kind: composition.QueryFactorExact, Factor: factor}}},
 		},
 	})
 	if !twoFamiliesOK || withTwoFamilies == nil {
 		t.Fatal("two-family source")
 	}
-	if _, accepted = buildQueries(withTwoFamilies, nil, []QueryInstance{{}}, topologyCatalog{}, false); accepted {
+	if _, _, accepted = buildQueries(withTwoFamilies, nil, []QueryInstance{{}}, topologyCatalog{}); accepted {
 		t.Fatal("nonempty family inventory with missing coverage was accepted")
 	}
 
@@ -64,70 +66,60 @@ func TestQuerylessTopologyCoverageAndEmptyDemandLaw(t *testing.T) {
 	}
 }
 
-func TestObservationTopologyDefersOnlyAllQueryFamilies(t *testing.T) {
-	factor := boundaryKey(241)
-	first, second := boundaryKey(242), boundaryKey(243)
+func TestMixedQueryPopulationUsesOnlySelectedPointRows(t *testing.T) {
+	factor := boundaryKey(161)
+	selectedFamily, observationFamily := boundaryKey(162), boundaryKey(163)
 	source, sourceOK := composition.Seal(composition.Candidate{
 		Factors: []composition.Factor{{Key: factor}},
 		Queries: []composition.QueryFamily{
-			{Key: first, Freezer: boundaryKey(244), Projections: []composition.QueryProjection{{Kind: composition.QueryFactorExact, Factor: factor}}},
-			{Key: second, Freezer: boundaryKey(245), Projections: []composition.QueryProjection{{Kind: composition.QueryFactorExact, Factor: factor}}},
+			{Key: selectedFamily, Freezer: boundaryKey(164), Population: queryschema.PopulationKindSelectedPoint, Projections: []composition.QueryProjection{{Kind: composition.QueryFactorExact, Factor: factor}}},
+			{Key: observationFamily, Freezer: boundaryKey(165), Population: queryschema.PopulationKindObservation, Projections: []composition.QueryProjection{{Kind: composition.QueryFactorExact, Factor: factor}}},
 		},
 	})
 	if !sourceOK || source == nil {
-		t.Fatal("deferred-query source")
+		t.Fatal("mixed query population source")
 	}
 	batch := NewBatch()
-	site, siteOK := batch.AdmitSite(boundaryKey(246), EmptyScope(), TrueExpr(), InitPresent)
+	site, siteOK := batch.AdmitSite(boundaryKey(166), EmptyScope(), TrueExpr(), InitPresent)
 	if !siteOK || !batch.Seal() {
-		t.Fatal("deferred-query batch")
+		t.Fatal("mixed query population batch")
 	}
-	zero := TopologySpec{Batch: batch, Points: []PointSpec{{Site: site}}}
-	noFamilySource, noFamilyOK := composition.Seal(composition.Candidate{Factors: []composition.Factor{{Key: factor}}})
-	if !noFamilyOK || noFamilySource == nil {
-		t.Fatal("no-family source")
+	declared, _, points, pointsOK := buildPoints([]PointSpec{{Site: site}})
+	if !pointsOK || len(points) != 1 {
+		t.Fatal("mixed query population point")
 	}
-	if topology, _, deferred := SealObservationTopologyWithFailure(noFamilySource, zero); deferred || topology != nil {
-		t.Fatal("observation topology accepted a source without query families")
+	row := QueryInstance{
+		Context: boundaryContext(167), Family: selectedFamily, Point: PointAt(0),
+		Surfaces: []Surface{{Factor: factor, Form: SurfaceReadExact, Local: 1}},
 	}
-	if topology, strict := SealTopology(source, zero); strict || topology != nil {
-		t.Fatal("ordinary topology accepted missing declared query families")
+	queries, _, accepted := buildQueries(source, declared, []QueryInstance{row}, topologyCatalog{})
+	if !accepted || len(queries) != 1 {
+		t.Fatal("selected-point row did not cover mixed query families")
 	}
-	partial := zero
-	partial.Queries = []QueryInstance{{Context: boundaryContext(11), Family: first, Point: PointAt(0), Surfaces: []Surface{{Factor: factor, Form: SurfaceReadExact, Local: 1}}}}
-	if topology, _, deferred := SealObservationTopologyWithFailure(source, partial); deferred || topology != nil {
-		t.Fatal("observation topology accepted a partial ordinary query inventory")
+	observationRow := row
+	observationRow.Family = observationFamily
+	if queries, _, accepted = buildQueries(source, declared, []QueryInstance{observationRow}, topologyCatalog{}); accepted || queries != nil {
+		t.Fatal("observation family was smuggled into graph query rows")
 	}
-	full := zero
-	full.Queries = []QueryInstance{
-		{Context: boundaryContext(11), Family: first, Point: PointAt(0), Surfaces: []Surface{{Factor: factor, Form: SurfaceReadExact, Local: 1}}},
-		{Context: boundaryContext(11), Family: second, Point: PointAt(0), Surfaces: []Surface{{Factor: factor, Form: SurfaceReadExact, Local: 1}}},
+	if queries, _, accepted = buildQueries(source, declared, nil, topologyCatalog{}); accepted || queries != nil {
+		t.Fatal("missing selected-point family was accepted")
 	}
-	strict, strictOK := SealTopology(source, full)
-	if !strictOK || strict == nil {
-		t.Fatal("ordinary topology rejected complete query inventory")
+}
+
+func TestObservationOnlyQueryPopulationAllowsEmptyGraphQueryPlane(t *testing.T) {
+	factor, family := boundaryKey(171), boundaryKey(172)
+	source, sourceOK := composition.Seal(composition.Candidate{
+		Factors: []composition.Factor{{Key: factor}},
+		Queries: []composition.QueryFamily{{
+			Key: family, Freezer: boundaryKey(173), Population: queryschema.PopulationKindObservation,
+			Projections: []composition.QueryProjection{{Kind: composition.QueryFactorExact, Factor: factor}},
+		}},
+	})
+	if !sourceOK || source == nil {
+		t.Fatal("observation-only query population source")
 	}
-	if topology, _, deferred := SealObservationTopologyWithFailure(source, full); deferred || topology != nil {
-		t.Fatal("observation topology accepted a complete ordinary query inventory")
-	}
-	topology, _, deferred := SealObservationTopologyWithFailure(source, zero)
-	if !deferred || topology == nil {
-		t.Fatal("observation topology rejected complete query deferral")
-	}
-	graph, graphOK := initialGraph(topology)
-	if !graphOK || graph == nil || graph.QueryCount() != 0 {
-		t.Fatal("deferred topology exposed ordinary query rows")
-	}
-	if _, demanded := graph.Demand(); demanded {
-		t.Fatal("deferred topology acquired unowned demand")
-	}
-	strictGraph, strictGraphOK := initialGraph(strict)
-	strictRelation, strictRelationOK := strict.InitialRelation()
-	deferredRelation, deferredRelationOK := topology.InitialRelation()
-	if !strictGraphOK || strictGraph == nil || !strictRelationOK || !deferredRelationOK || strict.Key() == topology.Key() || strictRelation.Digest() == deferredRelation.Digest() {
-		t.Fatal("strict and deferred topologies shared an identity")
-	}
-	if strict.OwnsGraph(graph) || topology.OwnsGraph(strictGraph) {
-		t.Fatal("strict and deferred topology owners exchanged graphs")
+	queries, _, accepted := buildQueries(source, nil, nil, topologyCatalog{})
+	if !accepted || len(queries) != 0 {
+		t.Fatal("observation-only source did not retain an empty graph query plane")
 	}
 }

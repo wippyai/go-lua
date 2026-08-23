@@ -212,9 +212,9 @@ func compileTopologyWithFailure(source *composition.Composition, topology Topolo
 	if !ok {
 		return nil, compiledRowDirectory{}, sealRefused(SealFailureFamilyCompile, "factor-edges"), false
 	}
-	queries, ok := buildQueries(source, declared, topology.Queries, catalog)
+	queries, queryFailure, ok := buildQueries(source, declared, topology.Queries, catalog)
 	if !ok {
-		return nil, compiledRowDirectory{}, sealRefused(SealFailureFamilyCompile, "queries"), false
+		return nil, compiledRowDirectory{}, queryFailure, false
 	}
 	reverses, ok := buildActivationReverseIndex(activationReverses, instances, declared, groups)
 	if !ok {
@@ -653,7 +653,11 @@ func resolveInputs(rows []Input, sites map[composition.Key]Point, target Point) 
 	return result, true
 }
 
-func buildQueries(source *composition.Composition, declared map[PointRef]Point, rows []QueryInstance, catalog topologyCatalog) ([]Query, bool) {
+// buildQueries compiles the graph query plane. Each fence names the boundary
+// it refuses at, so a caller that receives a refusal learns which of the query
+// inventory, the row's family, its point, its surfaces, its identity, or the
+// selected-point coverage rejected the plane.
+func buildQueries(source *composition.Composition, declared map[PointRef]Point, rows []QueryInstance, catalog topologyCatalog) ([]Query, SealFailure, bool) {
 	families := source.Queries()
 	// A callback-free Factor/Rule schema may legitimately have no Query
 	// families while its graph is being compiled into a reusable transformer.
@@ -661,7 +665,10 @@ func buildQueries(source *composition.Composition, declared map[PointRef]Point, 
 	// only an empty instance set; any nonempty denominator still requires every
 	// family and at least one concrete observation.
 	if len(families) == 0 {
-		return nil, len(rows) == 0
+		if len(rows) != 0 {
+			return nil, sealRefused(SealFailureFamilyCompile, "query-inventory-unowned"), false
+		}
+		return nil, SealFailure{}, true
 	}
 	// Observation-populated families are sealed producers, not graph query
 	// roots. Their rows are attached later through the solve-local observation
@@ -674,7 +681,7 @@ func buildQueries(source *composition.Composition, declared map[PointRef]Point, 
 			required++
 		case population.Observation:
 		default:
-			return nil, false
+			return nil, sealRefused(SealFailureFamilyCompile, "query-population"), false
 		}
 	}
 	if required == 0 {
@@ -682,34 +689,41 @@ func buildQueries(source *composition.Composition, declared map[PointRef]Point, 
 		// roots by design. Solve-local observation roots may still request the
 		// already-declared Points later; accepting an empty graph-query plane
 		// here keeps that population distinct from a deferred-all-family mode.
-		return nil, len(rows) == 0
+		if len(rows) != 0 {
+			return nil, sealRefused(SealFailureFamilyCompile, "query-inventory-unowned"), false
+		}
+		return nil, SealFailure{}, true
 	}
 	if len(rows) < required || len(rows) == 0 {
-		return nil, false
+		return nil, sealRefused(SealFailureFamilyCompile, "query-inventory-short"), false
 	}
 	queries := make([]Query, len(rows))
 	seen := make([]bool, len(families))
 	seenKeys := make(map[composition.Key]struct{}, len(rows))
 	for index, row := range rows {
 		point, ok := declared[row.Point]
-		if !ok || !validQueryInstance(source, row) {
-			return nil, false
+		if !ok {
+			return nil, sealRefused(SealFailureFamilyCompile, "query-point"), false
 		}
+		if !validQueryInstance(source, row) {
+			return nil, sealRefused(SealFailureFamilyCompile, "query-instance"), false
+		}
+		// validQueryInstance already authenticated the row against its family.
+		// This fence recovers the family ordinal the coverage denominator is
+		// counted on, and refuses an index that does not name the row's own
+		// selected-point family: an observation family reaching the graph as a
+		// synthetic point row would be a second attachment authority.
 		familyIndex, indexed := source.QueryIndex(row.Family)
-		if !indexed || familyIndex >= uint64(len(families)) || families[familyIndex].Key != row.Family {
-			return nil, false
-		}
-		if families[familyIndex].Population != population.SelectedPoint {
-			// An observation family must never be smuggled into the graph as a
-			// synthetic point row. It is attached by its owner-issued admission.
-			return nil, false
+		if !indexed || familyIndex >= uint64(len(families)) || families[familyIndex].Key != row.Family ||
+			families[familyIndex].Population != population.SelectedPoint {
+			return nil, sealRefused(SealFailureFamilyCompile, "query-family"), false
 		}
 		key, ok := deriveQueryKey(row, point, catalog)
 		if !ok {
-			return nil, false
+			return nil, sealRefused(SealFailureFamilyCompile, "query-identity"), false
 		}
 		if _, duplicate := seenKeys[key]; duplicate {
-			return nil, false
+			return nil, sealRefused(SealFailureFamilyCompile, "query-duplicate"), false
 		}
 		seenKeys[key] = struct{}{}
 		seen[familyIndex] = true
@@ -717,11 +731,11 @@ func buildQueries(source *composition.Composition, declared map[PointRef]Point, 
 	}
 	for index, present := range seen {
 		if families[index].Population == population.SelectedPoint && !present {
-			return nil, false
+			return nil, sealRefused(SealFailureFamilyCompile, "query-coverage"), false
 		}
 	}
 	sort.Slice(queries, func(i, j int) bool { return lessKey(queries[i].key, queries[j].key) })
-	return queries, true
+	return queries, SealFailure{}, true
 }
 
 func assembleGraph(source *composition.Composition, points []Point, built []builtGroup, environments []builtEnvironmentEdge, factorEdges []builtFactorEdge, queries []Query, reverses []builtActivationReverse, decisions []Decision, catalog topologyCatalog, semanticRanks ...[]int) (*Graph, bool) {

@@ -5,6 +5,7 @@ import (
 
 	"github.com/wippyai/go-lua/analysis/engine/internal/composition"
 	"github.com/wippyai/go-lua/analysis/identity"
+	queryschema "github.com/wippyai/go-lua/analysis/schema/query"
 )
 
 type queryContextFixture struct {
@@ -20,7 +21,7 @@ func newQueryContextFixture(t testing.TB) queryContextFixture {
 	source, sourceOK := composition.Seal(composition.Candidate{
 		Factors: []composition.Factor{{Key: factor}},
 		Queries: []composition.QueryFamily{{
-			Key: family, Freezer: boundaryKey(232),
+			Key: family, Freezer: boundaryKey(232), Population: queryschema.PopulationKindSelectedPoint,
 			Projections: []composition.QueryProjection{{Kind: composition.QueryFactorExact, Factor: factor}},
 		}},
 	})
@@ -49,7 +50,7 @@ func TestQueryCoordinatesInDistinctContextsCoexist(t *testing.T) {
 	fixture := newQueryContextFixture(t)
 	other := fixture.row
 	other.Context = boundaryContext(235)
-	queries, accepted := buildQueries(fixture.source, fixture.declared, []QueryInstance{fixture.row, other}, topologyCatalog{}, false)
+	queries, _, accepted := buildQueries(fixture.source, fixture.declared, []QueryInstance{fixture.row, other}, topologyCatalog{})
 	if !accepted || len(queries) != 2 {
 		t.Fatal("equal query coordinates in distinct contexts did not coexist")
 	}
@@ -75,7 +76,7 @@ func TestQueryCoordinatesInDistinctContextsCoexist(t *testing.T) {
 
 func TestQueryDuplicateSameContextRefuses(t *testing.T) {
 	fixture := newQueryContextFixture(t)
-	if queries, accepted := buildQueries(fixture.source, fixture.declared, []QueryInstance{fixture.row, fixture.row}, topologyCatalog{}, false); accepted || queries != nil {
+	if queries, _, accepted := buildQueries(fixture.source, fixture.declared, []QueryInstance{fixture.row, fixture.row}, topologyCatalog{}); accepted || queries != nil {
 		t.Fatal("duplicate query in one context was accepted")
 	}
 }
@@ -84,7 +85,7 @@ func TestQueryZeroContextRefuses(t *testing.T) {
 	fixture := newQueryContextFixture(t)
 	zero := fixture.row
 	zero.Context = identity.ContentID{}
-	if queries, accepted := buildQueries(fixture.source, fixture.declared, []QueryInstance{zero}, topologyCatalog{}, false); accepted || queries != nil {
+	if queries, _, accepted := buildQueries(fixture.source, fixture.declared, []QueryInstance{zero}, topologyCatalog{}); accepted || queries != nil {
 		t.Fatal("query with zero context was accepted")
 	}
 }
