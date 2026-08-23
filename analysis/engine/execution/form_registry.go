@@ -8,6 +8,8 @@
 package execution
 
 import (
+	"sort"
+
 	"github.com/wippyai/go-lua/analysis/engine/generated"
 	"github.com/wippyai/go-lua/analysis/engine/internal/carrier"
 	"github.com/wippyai/go-lua/analysis/engine/internal/factbinding"
@@ -31,6 +33,9 @@ const (
 	// FormCarry is the exact read and write whose carried prior fact passes
 	// through an owner-issued transform.
 	FormCarry
+	// FormSelectedRoute is the ordered join with exactly one selected read and
+	// the bounded routed write that publishes over it.
+	FormSelectedRoute
 	// formCount is the exclusive upper bound of the declared ordinals. It is
 	// the last constant in the block; a new form is appended above it.
 	formCount
@@ -40,10 +45,11 @@ const (
 // name, whether or not it has an implementation, so a plan whose form is not
 // executable refuses by that name instead of by a bare ordinal.
 var formNames = [formCount]string{
-	FormExact:   "exact",
-	FormSource:  "source",
-	FormSummary: "summary",
-	FormCarry:   "carry",
+	FormExact:         "exact",
+	FormSource:        "source",
+	FormSummary:       "summary",
+	FormCarry:         "carry",
+	FormSelectedRoute: "selected-route",
 }
 
 // Declared reports whether form names a sealed ordinal of the table.
@@ -83,22 +89,44 @@ type FormAddress struct {
 	Local        uint32
 }
 
-// FormPlane is the sealed typed plane a form builder may read: the Factor's
-// fact binding and its materialized source columns. It is a value handoff, not
-// an owner capability - a builder can seal descriptors from it and nothing
-// else.
-type FormPlane[K scalar.Key, V any] struct {
-	binding *factbinding.Binding[K, V]
-	columns []memberrelation.SourceColumn[V]
-	present []bool
+// RuleFamilyProvider is implemented by a bound owner that authors the execution
+// family of one of its own sealed rule ordinals with concrete types. It is the
+// handoff a materialized source column already uses, handing over an executor
+// instead of a column, and it is how a rule the engine cannot type reaches
+// execution: a rule whose joins or whose reducer are typed in more than one
+// Factor has no generic builder, because the engine may not name those types
+// and the owner may not see the solve loop.
+//
+// AuthorsRule partitions before anything is built, so a refusal from
+// InstallRuleFamily is a real refusal rather than a silent fall back to a
+// generic form builder.
+type RuleFamilyProvider interface {
+	// AuthorsRule reports whether this owner installs the family of one sealed
+	// rule ordinal.
+	AuthorsRule(rule uint32) bool
+	// InstallRuleFamily seals one family covering every plan row of that rule,
+	// in the order given, and answers the local ordinal each row was sealed at.
+	InstallRuleFamily(rule uint32, rows []FormRow) (Family, []FormAddress, bool)
 }
 
-// NewFormPlane seals one bound Factor's typed plane for the form table.
-func NewFormPlane[K scalar.Key, V any](binding *factbinding.Binding[K, V], columns []memberrelation.SourceColumn[V], present []bool) (FormPlane[K, V], bool) {
+// FormPlane is the sealed typed plane a form builder may read: the Factor's
+// fact binding, its materialized source columns, and the owner that installs
+// families for its own rules. It is a value handoff, not an owner capability -
+// a builder can seal descriptors from it and nothing else.
+type FormPlane[K scalar.Key, V any] struct {
+	binding  *factbinding.Binding[K, V]
+	columns  []memberrelation.SourceColumn[V]
+	present  []bool
+	families RuleFamilyProvider
+}
+
+// NewFormPlane seals one bound Factor's typed plane for the form table. A
+// Factor that installs no family of its own passes a nil provider.
+func NewFormPlane[K scalar.Key, V any](binding *factbinding.Binding[K, V], columns []memberrelation.SourceColumn[V], present []bool, families RuleFamilyProvider) (FormPlane[K, V], bool) {
 	if binding == nil {
 		return FormPlane[K, V]{}, false
 	}
-	return FormPlane[K, V]{binding: binding, columns: columns, present: present}, true
+	return FormPlane[K, V]{binding: binding, columns: columns, present: present, families: families}, true
 }
 
 // Valid reports whether the plane still names a live typed binding.
@@ -124,10 +152,11 @@ type formBuilder[K scalar.Key, V any] func(FormPlane[K, V], []FormRow) (Family, 
 // formClassifiers is the classifier column of the form table, indexed by
 // ordinal. A form lane appends its own entry here and owns its child file.
 var formClassifiers = [formCount]formClassifier{
-	FormExact:   classifyExactForm,
-	FormSource:  classifySourceForm,
-	FormSummary: classifySummaryForm,
-	FormCarry:   classifyCarryForm,
+	FormExact:         classifyExactForm,
+	FormSource:        classifySourceForm,
+	FormSummary:       classifySummaryForm,
+	FormCarry:         classifyCarryForm,
+	FormSelectedRoute: classifySelectedRouteForm,
 }
 
 // formBuilders is the implementation column of the form table. It is built per
@@ -190,28 +219,61 @@ func buildForms[K scalar.Key, V any](plane FormPlane[K, V], rows []FormRow, buil
 		return nil, nil, 0, false
 	}
 	var grouped [formCount][]FormRow
+	var installedForms [formCount][]uint32
+	installed := map[uint32][]FormRow{}
 	for _, row := range rows {
-		if row.Member < 0 || !row.Form.Declared() || builders[row.Form] == nil {
+		if row.Member < 0 || !row.Form.Declared() {
+			return nil, nil, row.Form, false
+		}
+		ordinal, ordinalOK := row.Rule.Ordinal()
+		if plane.families != nil && ordinalOK && plane.families.AuthorsRule(ordinal) {
+			if existing, present := installed[ordinal]; present {
+				if existing[0].Form != row.Form {
+					return nil, nil, row.Form, false
+				}
+			} else {
+				installedForms[row.Form] = append(installedForms[row.Form], ordinal)
+			}
+			installed[ordinal] = append(installed[ordinal], row)
+			continue
+		}
+		if builders[row.Form] == nil {
 			return nil, nil, row.Form, false
 		}
 		grouped[row.Form] = append(grouped[row.Form], row)
 	}
 	families := make([]Family, 0, formCount-1)
 	addresses := make([]FormAddress, 0, len(rows))
-	for form := Form(1); form < formCount; form++ {
-		formRows := grouped[form]
-		if len(formRows) == 0 {
-			continue
-		}
-		family, formAddresses, built := builders[form](plane, formRows)
-		if !built || family == nil || len(formAddresses) != len(formRows) {
-			return nil, nil, form, false
+	appendFamily := func(family Family, formAddresses []FormAddress, expected int) bool {
+		if family == nil || len(formAddresses) != expected {
+			return false
 		}
 		offset := uint32(len(families))
 		families = append(families, family)
 		for _, address := range formAddresses {
 			address.FamilyOffset = offset
 			addresses = append(addresses, address)
+		}
+		return true
+	}
+	for form := Form(1); form < formCount; form++ {
+		if formRows := grouped[form]; len(formRows) != 0 {
+			family, formAddresses, built := builders[form](plane, formRows)
+			if !built || !appendFamily(family, formAddresses, len(formRows)) {
+				return nil, nil, form, false
+			}
+		}
+		// An installed rule follows its own form's family, in ascending rule
+		// order, so the ladder a Program produces stays a function of the sealed
+		// ordinals rather than of the order rows were discovered.
+		ordinals := installedForms[form]
+		sort.Slice(ordinals, func(left, right int) bool { return ordinals[left] < ordinals[right] })
+		for _, ordinal := range ordinals {
+			ruleRows := installed[ordinal]
+			family, ruleAddresses, built := plane.families.InstallRuleFamily(ordinal, ruleRows)
+			if !built || !appendFamily(family, ruleAddresses, len(ruleRows)) {
+				return nil, nil, form, false
+			}
 		}
 	}
 	if len(families) == 0 {

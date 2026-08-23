@@ -263,7 +263,7 @@ func (factor *boundFactor[K, V]) buildGeneratedFamilies(rows []execution.FormRow
 	if factor == nil {
 		return nil, nil, false
 	}
-	plane, planeOK := execution.NewFormPlane(factor.binding, factor.sourceColumns, factor.sourcePresent)
+	plane, planeOK := execution.NewFormPlane(factor.binding, factor.sourceColumns, factor.sourcePresent, factor.families)
 	if !planeOK {
 		return nil, nil, false
 	}
@@ -380,8 +380,12 @@ func bindGeneratedMember(plane *programPlane, topology *equation.Topology, membe
 			readSurface.Form != equation.SurfaceReadExact || readSurface.Mode != equation.TargetModeNone || readSurface.Local == 0 {
 			return nil, false
 		}
+		// A read may name a Factor other than the written one. A rule whose
+		// join is foreign is exactly the rule the engine cannot type generically,
+		// and it reaches execution through the family its owner installs; the
+		// form builders refuse a cross-Factor Unit on their own.
 		readFactor, readFactorOK := plane.byKey[readSurface.Factor]
-		if !readFactorOK || readFactor == nil || readFactor != writeFactor {
+		if !readFactorOK || readFactor == nil {
 			return nil, false
 		}
 		var unitOK bool

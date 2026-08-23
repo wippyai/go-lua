@@ -39,7 +39,7 @@ func TestExecutionFormTableIsTotal(t *testing.T) {
 // never silently dropped from the ladder or folded into a neighbouring form.
 func TestExecutionFormWithoutImplementationRefusesByName(t *testing.T) {
 	fixture := newExecutionFixture(t)
-	plane, planeOK := NewFormPlane(fixture.binding, nil, nil)
+	plane, planeOK := NewFormPlane(fixture.binding, nil, nil, nil)
 	if !planeOK {
 		t.Fatal("form plane")
 	}
@@ -65,7 +65,7 @@ func TestExecutionFormsBuildInSealedOrdinalOrder(t *testing.T) {
 	if !columnOK {
 		t.Fatal("sealed source column")
 	}
-	plane, planeOK := NewFormPlane(fixture.binding, []memberrelation.SourceColumn[uint64]{column}, []bool{true})
+	plane, planeOK := NewFormPlane(fixture.binding, []memberrelation.SourceColumn[uint64]{column}, []bool{true}, nil)
 	if !planeOK {
 		t.Fatal("form plane")
 	}
@@ -190,4 +190,135 @@ func planCompiledSourceRule(t *testing.T) generated.CompiledRule {
 		t.Fatal("sealed source plan")
 	}
 	return rule
+}
+
+// installedFamilyProvider is a test owner that installs the family of exactly
+// one sealed rule ordinal, the way a domain arm authored with concrete types
+// does.
+type installedFamilyProvider struct {
+	rule    uint32
+	refuse  bool
+	calls   int
+	install Family
+}
+
+func (provider *installedFamilyProvider) AuthorsRule(rule uint32) bool {
+	return provider != nil && rule == provider.rule
+}
+
+func (provider *installedFamilyProvider) InstallRuleFamily(rule uint32, rows []FormRow) (Family, []FormAddress, bool) {
+	if provider == nil || rule != provider.rule {
+		return nil, nil, false
+	}
+	provider.calls++
+	if provider.refuse {
+		return nil, nil, false
+	}
+	addresses := make([]FormAddress, 0, len(rows))
+	for index, row := range rows {
+		addresses = append(addresses, FormAddress{Member: row.Member, Local: uint32(index)})
+	}
+	return provider.install, addresses, true
+}
+
+type installedFamily struct{}
+
+func (installedFamily) NewExecutor(*Run) Executor { return nil }
+func (installedFamily) InputCapacity() int        { return 1 }
+func (installedFamily) OutputCapacity() int       { return 1 }
+
+// TestAnOwnerInstallsTheFamilyOfItsOwnRule states the rule-level handoff: a
+// Factor that authors an execution family for one of its sealed rules with
+// concrete types has that family installed for every plan row of that rule,
+// while every other row still builds through its form. This is the only way a
+// rule whose joins or reducer are typed outside the written Factor reaches
+// execution - the engine cannot name those types - and it is the same handoff
+// shape a materialized source column already uses.
+func TestAnOwnerInstallsTheFamilyOfItsOwnRule(t *testing.T) {
+	fixture := newExecutionFixture(t)
+	exactRule := planCompiledExactRule(t)
+	ordinal, ordinalOK := exactRule.Ordinal()
+	if !ordinalOK {
+		t.Fatal("sealed rule ordinal")
+	}
+	generic := FormRow{Member: 0, Form: FormExact, Input: 0, Unit: fixture.unit, Target: fixture.target, Rule: exactRule}
+	owned := func(member int) FormRow {
+		return FormRow{Member: member, Form: FormExact, Input: 0, Unit: fixture.unit, Target: fixture.target, Rule: exactRule}
+	}
+
+	t.Run("installed", func(t *testing.T) {
+		provider := &installedFamilyProvider{rule: ordinal, install: installedFamily{}}
+		plane, planeOK := NewFormPlane(fixture.binding, nil, nil, provider)
+		if !planeOK {
+			t.Fatal("form plane")
+		}
+		families, addresses, refused, built := BuildForms(plane, []FormRow{owned(3), owned(4)})
+		if !built || refused != 0 || provider.calls != 1 {
+			t.Fatalf("install = %t refused %q calls %d", built, refused.Name(), provider.calls)
+		}
+		if len(families) != 1 || families[0] != provider.install {
+			t.Fatalf("ladder = %d families, want the installed one", len(families))
+		}
+		if len(addresses) != 2 || addresses[0] != (FormAddress{Member: 3, Local: 0}) || addresses[1] != (FormAddress{Member: 4, Local: 1}) {
+			t.Fatalf("installed addresses = %+v", addresses)
+		}
+	})
+
+	t.Run("not-authored", func(t *testing.T) {
+		provider := &installedFamilyProvider{rule: ordinal + 1, install: installedFamily{}}
+		plane, planeOK := NewFormPlane(fixture.binding, nil, nil, provider)
+		if !planeOK {
+			t.Fatal("form plane")
+		}
+		families, addresses, refused, built := BuildForms(plane, []FormRow{generic})
+		if !built || refused != 0 || provider.calls != 0 {
+			t.Fatalf("unauthored rule = %t refused %q calls %d", built, refused.Name(), provider.calls)
+		}
+		if len(families) != 1 || families[0] == provider.install || len(addresses) != 1 {
+			t.Fatalf("unauthored rule did not build through its form: %d families", len(families))
+		}
+	})
+
+	t.Run("refused-install-is-a-refusal", func(t *testing.T) {
+		provider := &installedFamilyProvider{rule: ordinal, refuse: true, install: installedFamily{}}
+		plane, planeOK := NewFormPlane(fixture.binding, nil, nil, provider)
+		if !planeOK {
+			t.Fatal("form plane")
+		}
+		families, addresses, refused, built := BuildForms(plane, []FormRow{owned(0)})
+		if built || families != nil || addresses != nil {
+			t.Fatalf("a refused install still produced %d families", len(families))
+		}
+		if refused != FormExact {
+			t.Fatalf("refusal names %q, want the row's form", refused.Name())
+		}
+	})
+}
+
+// TestAFormRefusesACoordinateOfAnotherFactor states the guarantee that lets a
+// generated member bind a read on a Factor other than the one it writes: the
+// binding decides. A row whose Unit or Target was minted by another Factor's
+// binding is refused where the family is sealed, so a foreign join reaches
+// execution only through the family its owner installs and never by being
+// silently sealed onto the writing Factor's plane.
+func TestAFormRefusesACoordinateOfAnotherFactor(t *testing.T) {
+	fixture := newExecutionFixture(t)
+	foreign := newExecutionFixture(t)
+	plane, planeOK := NewFormPlane(fixture.binding, nil, nil, nil)
+	if !planeOK {
+		t.Fatal("form plane")
+	}
+	for _, testCase := range []struct {
+		name string
+		row  FormRow
+	}{
+		{name: "foreign-unit", row: FormRow{Member: 0, Form: FormExact, Unit: foreign.unit, Target: fixture.target}},
+		{name: "foreign-target", row: FormRow{Member: 0, Form: FormExact, Unit: fixture.unit, Target: foreign.target}},
+	} {
+		t.Run(testCase.name, func(t *testing.T) {
+			if families, addresses, _, built := BuildForms(plane, []FormRow{testCase.row}); built {
+				t.Fatalf("a foreign coordinate sealed %d families / %d addresses", len(families), len(addresses))
+			}
+		})
+	}
 }

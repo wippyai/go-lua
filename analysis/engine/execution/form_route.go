@@ -10,10 +10,12 @@
 package execution
 
 import (
+	"github.com/wippyai/go-lua/analysis/engine/generated"
 	"github.com/wippyai/go-lua/analysis/engine/internal/carrier"
 	"github.com/wippyai/go-lua/analysis/engine/internal/factbinding"
 	"github.com/wippyai/go-lua/analysis/engine/internal/facts/scalar"
 	"github.com/wippyai/go-lua/analysis/engine/internal/facts/support"
+	ruleprogram "github.com/wippyai/go-lua/analysis/schema/rule/program"
 	"github.com/wippyai/go-lua/analysis/schema/structure"
 )
 
@@ -205,4 +207,45 @@ func FoldSelectedRoute[K scalar.Key, V any, R RouteReducer[V]](
 		return structure.Refuse
 	}
 	return structure.Concrete
+}
+
+// classifySelectedRouteForm claims the ordered join whose one selected read is
+// the route the output publishes over. Every other join is exact, the route
+// join is the selected one, and the pair of a bounded multiplicity and a
+// present denominator is the declared bound on how many routes one row may
+// publish.
+func classifySelectedRouteForm(rule generated.CompiledRule) (FormRow, bool) {
+	mode, modeOK := rule.OutputMode()
+	if !modeOK || mode != ruleprogram.ModeRoute || rule.ReadCount() == 0 {
+		return FormRow{}, false
+	}
+	output, outputOK := rule.OutputAt(0)
+	if !outputOK || !output.RouteJoinPresent || uint64(output.RouteJoin) >= uint64(rule.ReadCount()) {
+		return FormRow{}, false
+	}
+	selected := 0
+	for index := 0; index < rule.ReadCount(); index++ {
+		form, formOK := rule.ReadFormAt(index)
+		if !formOK {
+			return FormRow{}, false
+		}
+		switch form {
+		case ruleprogram.Exact:
+		case ruleprogram.Selected:
+			selected++
+		default:
+			return FormRow{}, false
+		}
+	}
+	route, routeOK := rule.ReadAt(int(output.RouteJoin))
+	if !routeOK || selected != 1 || route.Form != ruleprogram.Selected {
+		return FormRow{}, false
+	}
+	if route.Contract.Multiplicity == ruleprogram.MultiplicityMany || !route.Denominator.Present {
+		return FormRow{}, false
+	}
+	if uint64(route.Input) >= uint64(rule.InputCount()) || route.Input > uint32(^uint16(0)) {
+		return FormRow{}, false
+	}
+	return FormRow{Form: FormSelectedRoute, Input: uint16(route.Input), Relation: route.Relation.Member}, true
 }

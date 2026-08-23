@@ -54,6 +54,11 @@ type boundFactor[K ~uint32 | ~uint64, V any] struct {
 	// capability: no runtime row can reopen a domain schema or call an owner.
 	sourceColumns []memberrelation.SourceColumn[V]
 	sourcePresent []bool
+	// families is the owner arm that installs a concretely-typed execution
+	// family for one of its own rule ordinals. It is sealed data in the same
+	// sense the source columns are: the runtime asks it once, at Program seal,
+	// and never during a solve.
+	families execution.RuleFamilyProvider
 }
 
 type runtimeFactor interface {

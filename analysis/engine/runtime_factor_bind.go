@@ -6,6 +6,7 @@ import (
 	"bytes"
 	"sort"
 
+	"github.com/wippyai/go-lua/analysis/engine/execution"
 	"github.com/wippyai/go-lua/analysis/engine/internal/carrier"
 	"github.com/wippyai/go-lua/analysis/engine/internal/composition"
 	"github.com/wippyai/go-lua/analysis/engine/internal/equation"
@@ -89,6 +90,12 @@ func bindFactorFromGraph[K ~uint32 | ~uint64, V any](implementation *FactorImple
 	// this Program-bound factor.  The solve runtime keeps only immutable values
 	// and cannot retain, reopen, or invoke the owner capability.
 	if owner := row.schemaFactorRelationOwner(); owner != nil {
+		// A Factor that authors the family of one of its own rules installs it
+		// here, at seal, beside its materialized columns. The runtime keeps the
+		// sealed executor, never the owner capability that built it.
+		if families, familiesOK := owner.(execution.RuleFamilyProvider); familiesOK {
+			bound.families = families
+		}
 		if columns, columnsOK := owner.(memberrelation.SourceColumns[V]); columnsOK {
 			count := columns.RelationCount()
 			if count < 0 {
