@@ -69,30 +69,10 @@ type runtimeFactor interface {
 	carryRouteScopeFor(equation.RuleMember) bool
 	releaseColdBindings()
 	// buildGeneratedFamilies compiles all generated rows owned by this typed
-	// factor into at most one E and one Z executor family. It is an epoch setup
-	// operation; execution reaches only the dense catalog address it returns.
-	buildGeneratedFamilies([]generatedFamilyEntry) ([]execution.Family, []generatedFamilyAddress, bool)
-}
-
-type generatedFamilyForm uint8
-
-const (
-	generatedFamilyExact generatedFamilyForm = iota + 1
-	generatedFamilySource
-)
-
-type generatedFamilyEntry struct {
-	memberIndex int
-	member      *generatedMember
-	form        generatedFamilyForm
-	input       uint16
-	relation    uint32
-}
-
-type generatedFamilyAddress struct {
-	memberIndex  int
-	familyOffset uint32
-	local        uint32
+	// factor into one executor family per present execution form. It is an epoch
+	// setup operation; execution reaches only the dense catalog address it
+	// returns.
+	buildGeneratedFamilies([]execution.FormRow) ([]execution.Family, []execution.FormAddress, bool)
 }
 
 func (bound *boundFactor[K, V]) semantic() identity.SemanticKey {

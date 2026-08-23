@@ -18,7 +18,6 @@ import (
 	"github.com/wippyai/go-lua/analysis/engine/internal/facts/support"
 	"github.com/wippyai/go-lua/analysis/engine/internal/schedule"
 	"github.com/wippyai/go-lua/analysis/identity"
-	ruleprogram "github.com/wippyai/go-lua/analysis/schema/rule/program"
 )
 
 // producerEpoch is an epoch-local candidate cache in graph Group order. A
@@ -230,18 +229,19 @@ type generatedExecutionProgram struct {
 type generatedFamilyAssignment struct {
 	family uint32
 	local  uint32
-	form   generatedFamilyForm
 }
 
 // buildGeneratedExecutionProgram performs the one cold grouping step from
-// sealed member rows to typed E/Z families. The solve loop later performs two
-// dense indexes (ref -> row, family -> worker) and nothing else.
+// sealed member rows to typed families. Each row is classified into its sealed
+// execution form by the form table; this pass only routes the classified row to
+// its owning Factor. The solve loop later performs two dense indexes (ref ->
+// row, family -> worker) and nothing else.
 func buildGeneratedExecutionProgram(program *runtimeProgram) (*generatedExecutionProgram, bool) {
 	if program == nil || !program.valid() {
 		return nil, false
 	}
 	memberCount := program.memberCount()
-	entriesByOwner := make([][]generatedFamilyEntry, len(program.factorOwners))
+	rowsByOwner := make([][]execution.FormRow, len(program.factorOwners))
 	assignments := make([]generatedFamilyAssignment, memberCount)
 	supported := make([]bool, memberCount)
 	assigned := make([]bool, memberCount)
@@ -254,40 +254,28 @@ func buildGeneratedExecutionProgram(program *runtimeProgram) (*generatedExecutio
 		if !descriptorOK {
 			return nil, false
 		}
-		mode, modeOK := descriptor.OutputMode()
-		if !modeOK || descriptor.OutputCount() != 1 || mode != ruleprogram.ModeExact || int(descriptor.OutputFactor()) >= len(entriesByOwner) {
+		if descriptor.OutputCount() != 1 || int(descriptor.OutputFactor()) >= len(rowsByOwner) || row.generated.target.Mode() != carrier.StrongTarget {
 			return nil, false
 		}
-		entry := generatedFamilyEntry{memberIndex: memberIndex, member: row.generated}
-		switch descriptor.ReadCount() {
-		case 1:
-			if descriptor.ReadInput() < 0 || descriptor.ReadInput() >= descriptor.InputCount() || descriptor.ReadInput() > int(^uint16(0)) || descriptor.InputCount() <= 0 {
-				return nil, false
-			}
-			entry.form, entry.input = generatedFamilyExact, uint16(descriptor.ReadInput())
-		case 0:
-			candidate := descriptor.CandidateRelation()
-			if descriptor.InputCount() != 0 || candidate.Axis != descriptor.OutputFactor() {
-				return nil, false
-			}
-			entry.form, entry.relation = generatedFamilySource, candidate.Member
-		default:
+		formRow, classified := execution.ClassifyForm(descriptor)
+		if !classified {
 			return nil, false
 		}
-		entriesByOwner[descriptor.OutputFactor()] = append(entriesByOwner[descriptor.OutputFactor()], entry)
+		formRow.Member, formRow.Unit, formRow.Target = memberIndex, row.generated.unit, row.generated.target
+		rowsByOwner[descriptor.OutputFactor()] = append(rowsByOwner[descriptor.OutputFactor()], formRow)
 		supported[memberIndex] = true
 	}
-	families := make([]execution.Family, 0, len(entriesByOwner)*2)
-	for ownerIndex, entries := range entriesByOwner {
-		if len(entries) == 0 {
+	families := make([]execution.Family, 0, len(rowsByOwner)*2)
+	for ownerIndex, formRows := range rowsByOwner {
+		if len(formRows) == 0 {
 			continue
 		}
 		owner, ownerOK := program.factorOwnerAt(int32(ownerIndex))
 		if !ownerOK || owner == nil {
 			return nil, false
 		}
-		executors, addresses, built := owner.buildGeneratedFamilies(entries)
-		if !built || len(addresses) != len(entries) || len(executors) == 0 {
+		executors, addresses, built := owner.buildGeneratedFamilies(formRows)
+		if !built || len(addresses) != len(formRows) || len(executors) == 0 {
 			return nil, false
 		}
 		familyBase := uint32(len(families))
@@ -298,11 +286,11 @@ func buildGeneratedExecutionProgram(program *runtimeProgram) (*generatedExecutio
 			families = append(families, executor)
 		}
 		for _, address := range addresses {
-			if address.memberIndex < 0 || address.memberIndex >= memberCount || !supported[address.memberIndex] || assigned[address.memberIndex] || uint64(address.familyOffset) >= uint64(len(executors)) {
+			if address.Member < 0 || address.Member >= memberCount || !supported[address.Member] || assigned[address.Member] || uint64(address.FamilyOffset) >= uint64(len(executors)) {
 				return nil, false
 			}
-			assignments[address.memberIndex] = generatedFamilyAssignment{family: familyBase + address.familyOffset, local: address.local}
-			assigned[address.memberIndex] = true
+			assignments[address.Member] = generatedFamilyAssignment{family: familyBase + address.FamilyOffset, local: address.Local}
+			assigned[address.Member] = true
 		}
 	}
 	drafts := make([]executioncatalog.Draft, 0, memberCount)

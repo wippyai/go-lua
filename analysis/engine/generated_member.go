@@ -255,78 +255,23 @@ func generatedMemberRefusal(member *generatedMember, site string) memberResult {
 	return memberResult{boundary: refused(SolveFailureFamilyExecution, site), valid: false}
 }
 
-// buildGeneratedFamilies is the only typed family compiler for generated
-// members. It groups every E and Z row of this Factor once, so the epoch owns
-// workers by typed family rather than by occurrence/member.
-func (factor *boundFactor[K, V]) buildGeneratedFamilies(entries []generatedFamilyEntry) ([]execution.Family, []generatedFamilyAddress, bool) {
-	if factor == nil || factor.binding == nil || len(entries) == 0 {
+// buildGeneratedFamilies is the typed trampoline from one bound Factor to the
+// execution form table. It contributes the Factor's sealed typed plane and
+// nothing else: which forms exist, how a plan row is classified into one, and
+// how each form seals its family are owned by analysis/engine/execution.
+func (factor *boundFactor[K, V]) buildGeneratedFamilies(rows []execution.FormRow) ([]execution.Family, []execution.FormAddress, bool) {
+	if factor == nil {
 		return nil, nil, false
 	}
-	exactRows := make([]execution.ExactRow[K, V], 0, len(entries))
-	exactAddresses := make([]generatedFamilyAddress, 0, len(entries))
-	sourceRows := make([]execution.SourceRow[K, V], 0, len(entries))
-	sourceAddresses := make([]generatedFamilyAddress, 0, len(entries))
-	type sourceDescriptorKey struct {
-		relation uint32
-		target   carrier.Target
+	plane, planeOK := execution.NewFormPlane(factor.binding, factor.sourceColumns, factor.sourcePresent)
+	if !planeOK {
+		return nil, nil, false
 	}
-	sourceLocals := make(map[sourceDescriptorKey]uint32, len(entries))
-	for _, entry := range entries {
-		if entry.member == nil || entry.memberIndex < 0 || entry.member.target.Mode() != carrier.StrongTarget {
-			return nil, nil, false
-		}
-		switch entry.form {
-		case generatedFamilyExact:
-			row, ok := execution.NewExactRow(factor.binding, entry.member.unit, entry.input, entry.member.target, 0)
-			if !ok {
-				return nil, nil, false
-			}
-			exactAddresses = append(exactAddresses, generatedFamilyAddress{memberIndex: entry.memberIndex, local: uint32(len(exactRows))})
-			exactRows = append(exactRows, row)
-		case generatedFamilySource:
-			if uint64(entry.relation) >= uint64(len(factor.sourceColumns)) || uint64(entry.relation) >= uint64(len(factor.sourcePresent)) || !factor.sourcePresent[entry.relation] {
-				return nil, nil, false
-			}
-			key := sourceDescriptorKey{relation: entry.relation, target: entry.member.target}
-			local, present := sourceLocals[key]
-			if !present {
-				row, ok := execution.NewSourceRow(factor.binding, entry.member.target, 0, factor.sourceColumns[entry.relation])
-				if !ok {
-					return nil, nil, false
-				}
-				local = uint32(len(sourceRows))
-				sourceLocals[key] = local
-				sourceRows = append(sourceRows, row)
-			}
-			sourceAddresses = append(sourceAddresses, generatedFamilyAddress{memberIndex: entry.memberIndex, local: local})
-		default:
-			return nil, nil, false
-		}
+	families, addresses, _, built := execution.BuildForms(plane, rows)
+	if !built {
+		return nil, nil, false
 	}
-	executors := make([]execution.Family, 0, 2)
-	addresses := make([]generatedFamilyAddress, 0, len(entries))
-	if len(exactRows) != 0 {
-		family, ok := execution.NewExactFamily(exactRows)
-		if !ok {
-			return nil, nil, false
-		}
-		executors = append(executors, family)
-		addresses = append(addresses, exactAddresses...)
-	}
-	if len(sourceRows) != 0 {
-		family, ok := execution.NewSourceFamily(sourceRows)
-		if !ok {
-			return nil, nil, false
-		}
-		executors = append(executors, family)
-		for _, address := range sourceAddresses {
-			// A source address is locally numbered in its source family. The
-			// epoch adds the factor's family base; local remains untouched.
-			address.familyOffset = uint32(len(executors) - 1)
-			addresses = append(addresses, address)
-		}
-	}
-	return executors, addresses, true
+	return families, addresses, true
 }
 
 func (member *generatedMember) executeGeneratedAt(epoch *executorEpoch, base carrier.RuleContributionBase, inputs []carrier.State, within support.Mask) memberResult {
