@@ -14,6 +14,8 @@ import (
 const SummaryResultFamily schema.Key = "placement-summary"
 
 // placementSummaryResultFormat is the current allocation-factor wire revision.
+// Revision 10 serializes the canonical Placement Fact's retain-escape
+// component beside the class, so detaching a result cannot erase provenance.
 // Revision 9 removes Bottom from public allocation rows: Stack is the factor's
 // owner-issued default and every encoded allocation is present at Stack or a
 // monotone displacement above it.
@@ -30,7 +32,7 @@ const SummaryResultFamily schema.Key = "placement-summary"
 // made the public allocation denominator canonical: complete allocation rows
 // are ordered by their owner-issued ContentID. Draft class-only images and
 // revision-3 declaration-order images are not part of this contract.
-const SummaryResultFormat uint64 = 9
+const SummaryResultFormat uint64 = 10
 
 const placementSummaryResultFormat uint64 = SummaryResultFormat
 
@@ -38,9 +40,12 @@ const (
 	placementSummaryResultHeaderSize = 8 + 32 + 8
 	placementSummaryAllocationIDSize = 32
 	// One fixed record per allocation keeps evidence lookups allocation-free:
-	// kind, owner presence+ID, depth presence+value, and the three Placement
-	// proof states.
-	placementSummaryEvidenceRecordSize = 1 + 1 + 32 + 1 + 4 + 1 + 1 + 1
+	// kind, owner presence+ID, depth presence+value, retain-escape, and the
+	// three additional Placement proof states.
+	placementSummaryEvidenceRecordSize = 1 + 1 + 32 + 1 + 4 + 1 + 1 + 1 + 1
+	placementSummaryRetainEscapeOffset = 39
+	placementSummaryFrameLocalOffset   = 40
+	placementSummaryDiesBeforeOffset   = 41
 	placementSummaryDeepFrozenOffset   = placementSummaryEvidenceRecordSize - 1
 )
 
@@ -90,7 +95,7 @@ func EncodeSummaryResult(observation PlacementSummaryObservation) (present bool,
 		cursor += placementSummaryAllocationIDSize
 	}
 	for _, coordinate := range coordinates {
-		state, stateOK := placementWireState(observation.Values[coordinate.denseIndex], observation.Present[coordinate.denseIndex])
+		state, stateOK := placementWireState(observation.Values[coordinate.denseIndex].Class, observation.Present[coordinate.denseIndex])
 		if !stateOK {
 			return false, 0, nil, false
 		}
@@ -211,7 +216,7 @@ func placementSummaryCoordinates(schemaOwner Schema, observation PlacementSummar
 			return nil, false, false
 		}
 		present := observation.Present[index]
-		if present && (!validAnalysisPlacement(observation.Values[index]) || observation.Values[index] == Bottom) {
+		if present && (!observation.Values[index].Valid() || observation.Values[index].Class == Bottom || observation.Values[index].RetainEscape == EvidenceAbsent) {
 			return nil, false, false
 		}
 		if key.Kind() != heapdomain.RootAllocation {
@@ -248,8 +253,9 @@ func encodeAllocationEvidence(payload []byte, evidence AllocationEvidence) bool 
 		payload[34] = 1
 		binary.BigEndian.PutUint32(payload[35:39], evidence.Depth)
 	}
-	payload[39] = byte(evidence.FrameLocal)
-	payload[40] = byte(evidence.DiesBeforeSuspension)
+	payload[placementSummaryRetainEscapeOffset] = byte(evidence.RetainEscape)
+	payload[placementSummaryFrameLocalOffset] = byte(evidence.FrameLocal)
+	payload[placementSummaryDiesBeforeOffset] = byte(evidence.DiesBeforeSuspension)
 	payload[placementSummaryDeepFrozenOffset] = byte(evidence.DeepFrozen)
 	return true
 }

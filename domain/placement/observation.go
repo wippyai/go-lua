@@ -13,7 +13,7 @@ import (
 // opened the fold. It is a transient authority and never crosses the result
 // codec boundary.
 type PlacementSummaryObservation struct {
-	Values  []Placement
+	Values  []Fact
 	Present []bool
 	Rows    uint32
 	Valid   bool
@@ -38,7 +38,7 @@ func BeginPlacementSummary(schema Schema) PlacementSummaryObservation {
 	}
 	count := schema.DenseKeyCount()
 	return PlacementSummaryObservation{
-		Values:            make([]Placement, count),
+		Values:            make([]Fact, count),
 		Present:           make([]bool, count),
 		evidence:          make([]AllocationEvidence, count),
 		evidencePublished: make([]bool, count),
@@ -52,14 +52,14 @@ func BeginPlacementSummary(schema Schema) PlacementSummaryObservation {
 // Stack default. The default is projected as a present Stack row because every
 // coordinate already denotes an allocation site; displacement rules only move
 // it upward. Present cells are joined coordinatewise in the Placement lattice.
-func AccumulatePlacementSummary(schema Schema, result PlacementSummaryObservation, cells engine.OrderedCells[Placement]) (PlacementSummaryObservation, bool) {
+func AccumulatePlacementSummary(schema Schema, result PlacementSummaryObservation, cells engine.OrderedCells[Fact]) (PlacementSummaryObservation, bool) {
 	return AccumulatePlacementSummaryRows(schema, result, cells.Count(), cells.At)
 }
 
 // AccumulatePlacementSummaryRows states the same fold over an explicit dense
 // vector. Keeping this form beside the OrderedCells form makes package laws and
 // sealed readers exercise the exact fold the engine invokes.
-func AccumulatePlacementSummaryRows(schema Schema, result PlacementSummaryObservation, count int, at func(index int) (Placement, bool, bool)) (PlacementSummaryObservation, bool) {
+func AccumulatePlacementSummaryRows(schema Schema, result PlacementSummaryObservation, count int, at func(index int) (Fact, bool, bool)) (PlacementSummaryObservation, bool) {
 	if !summaryObservationShape(schema, result) || at == nil {
 		return PlacementSummaryObservation{}, false
 	}
@@ -84,14 +84,14 @@ func AccumulatePlacementSummaryRows(schema Schema, result PlacementSummaryObserv
 		if key.Kind() != heapdomain.RootAllocation {
 			return PlacementSummaryObservation{}, false
 		}
-		value, valueOK := AuthenticateFactorCell(value, present, available)
+		value, valueOK := AuthenticateFactCell(value, present, available)
 		if !valueOK {
 			return PlacementSummaryObservation{}, false
 		}
 		if !result.Present[index] {
 			result.Values[index], result.Present[index] = value, true
 		} else {
-			joined, joinedOK := JoinChecked(result.Values[index], value)
+			joined, joinedOK := JoinFactChecked(result.Values[index], value)
 			if !joinedOK {
 				return PlacementSummaryObservation{}, false
 			}
@@ -107,7 +107,7 @@ func AccumulatePlacementSummaryRows(schema Schema, result PlacementSummaryObserv
 // ClonePlacementSummary detaches the mutable fold planes while retaining the
 // exact Heap owner fence used by the running query.
 func ClonePlacementSummary(input PlacementSummaryObservation) PlacementSummaryObservation {
-	input.Values = append([]Placement(nil), input.Values...)
+	input.Values = append([]Fact(nil), input.Values...)
 	input.Present = append([]bool(nil), input.Present...)
 	input.evidence = append([]AllocationEvidence(nil), input.evidence...)
 	input.evidencePublished = append([]bool(nil), input.evidencePublished...)
@@ -127,6 +127,33 @@ func PlacementSummaryEvidence(schema Schema, observation PlacementSummaryObserva
 		return invalidAllocationEvidence(), false
 	}
 	return observation.evidence[index], true
+}
+
+// PlacementSummaryAllocation returns the complete owner-authenticated row for
+// one allocation directly from an in-memory summary answer. It is the same
+// composition EncodeSummaryResult writes: the Placement factor supplies class
+// and retain provenance, Heap supplies identity/kind/frame locality, and the
+// private producer plane supplies refinements such as depth and deep freeze.
+// Consumers therefore do not encode and decode a summary merely to read it.
+func PlacementSummaryAllocation(schema Schema, observation PlacementSummaryObservation, key heapdomain.Key) (Fact, AllocationEvidence, bool) {
+	if !summaryObservationBase(schema, observation) || key.Kind() != heapdomain.RootAllocation || !schema.Heap().OwnsKey(key) {
+		return Fact{}, invalidAllocationEvidence(), false
+	}
+	index, indexOK := schema.Heap().AllocationKeyIndex(key)
+	if !indexOK || index < 0 || index >= len(observation.Values) || !observation.Present[index] || !observation.evidencePublished[index] {
+		return Fact{}, invalidAllocationEvidence(), false
+	}
+	fact := observation.Values[index]
+	evidence, evidenceOK := allocationEvidenceForKey(schema, key, fact, true)
+	if !evidenceOK {
+		return Fact{}, invalidAllocationEvidence(), false
+	}
+	producer := observation.evidence[index]
+	composed, composedOK := ComposeAllocationEvidence(evidence, producer)
+	if !composedOK {
+		return Fact{}, invalidAllocationEvidence(), false
+	}
+	return fact, composed, true
 }
 
 // WithPlacementSummaryEvidence joins one producer-owned proof row into a
@@ -177,13 +204,13 @@ func setPlacementSummaryEvidenceInPlace(schema Schema, observation *PlacementSum
 	if !canonicalOK {
 		return false
 	}
-	if evidence.HasClass && (!observation.Present[index] || evidence.Class != observation.Values[index]) {
+	if evidence.HasClass && (!observation.Present[index] || evidence.Class != observation.Values[index].Class) {
 		return false
 	}
-	if evidence.FrameLocal == EvidenceProven && observation.Present[index] && observation.Values[index] != Stack {
+	if evidence.FrameLocal == EvidenceProven && observation.Present[index] && observation.Values[index].Class != Stack {
 		return false
 	}
-	if evidence.FrameLocal == EvidenceRefuted && observation.Present[index] && observation.Values[index] == Stack {
+	if evidence.FrameLocal == EvidenceRefuted && observation.Present[index] && observation.Values[index].Class == Stack {
 		return false
 	}
 	if evidence.HasOwnerIdentity && (!canonical.HasOwnerIdentity || evidence.OwnerIdentity != canonical.OwnerIdentity) {
@@ -239,7 +266,7 @@ func FingerprintPlacementSummary(schema Schema, value PlacementSummaryObservatio
 	for index := range value.Values {
 		result ^= uint64(index+1) * 0x9e3779b97f4a7c15
 		if value.Present[index] {
-			result ^= (uint64(value.Values[index]) + 1) * 0xc2b2ae3d27d4eb4f
+			result ^= value.Values[index].Hash() * 0xc2b2ae3d27d4eb4f
 		}
 		evidence := value.evidence[index]
 		if value.evidencePublished[index] {
@@ -281,7 +308,7 @@ func summaryObservationShape(schema Schema, observation PlacementSummaryObservat
 				return false
 			}
 		}
-		if present && (!validAnalysisPlacement(observation.Values[index]) || observation.Values[index] == Bottom) {
+		if present && (!observation.Values[index].Valid() || observation.Values[index].Class == Bottom || observation.Values[index].RetainEscape == EvidenceAbsent) {
 			return false
 		}
 		if !present {

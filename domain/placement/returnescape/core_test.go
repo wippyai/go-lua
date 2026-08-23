@@ -193,35 +193,35 @@ func TestReturnPlacementDemandPreservesMonotoneDisplacement(t *testing.T) {
 		t.Fatal("exact return plan")
 	}
 	for _, item := range []struct {
-		current placement.Placement
-		want    placement.Placement
+		current placement.Fact
+		want    placement.Fact
 	}{
-		{placement.Stack, placement.OwnedHeap},
-		{placement.OwnedHeap, placement.OwnedHeap},
-		{placement.SharedHeap, placement.SharedHeap},
-		{placement.Unknown, placement.Unknown},
+		{placement.DefaultFact(), placement.Fact{Class: placement.OwnedHeap, RetainEscape: placement.EvidenceProven}},
+		{placement.Fact{Class: placement.OwnedHeap, RetainEscape: placement.EvidenceRefuted}, placement.Fact{Class: placement.OwnedHeap, RetainEscape: placement.EvidenceProven}},
+		{placement.Fact{Class: placement.SharedHeap, RetainEscape: placement.EvidenceRefuted}, placement.Fact{Class: placement.SharedHeap, RetainEscape: placement.EvidenceProven}},
+		{placement.UnknownFact(), placement.Fact{Class: placement.Unknown, RetainEscape: placement.EvidenceProven}},
 	} {
 		got, ok := returnValue(item.current, true, plan)
 		if !ok || got != item.want {
-			t.Fatalf("return demand(%s) = %s/%t, want %s", item.current, got, ok, item.want)
+			t.Fatalf("return demand(%v) = %v/%t, want %v", item.current, got, ok, item.want)
 		}
 	}
-	if got, ok := returnValue(placement.Bottom, true, plan); ok || got != placement.Bottom {
-		t.Fatalf("missing Bottom placement seed = %s/%t, want bottom/false", got, ok)
+	if got, ok := returnValue(placement.BottomFact(), true, plan); ok || got == placement.UnknownFact() {
+		t.Fatalf("missing Bottom placement seed = %v/%t, must refuse without Unknown", got, ok)
 	}
-	if got, ok := returnValue(placement.Stack, false, plan); !ok || got != placement.OwnedHeap {
-		t.Fatalf("sparse Placement default = %s/%t, want owned-heap/true", got, ok)
+	if got, ok := returnValue(placement.DefaultFact(), false, plan); !ok || got != (placement.Fact{Class: placement.OwnedHeap, RetainEscape: placement.EvidenceProven}) {
+		t.Fatalf("sparse Placement default = %v/%t, want owned-heap/proven/true", got, ok)
 	}
 	topPlan, topOK := routePlanFor(fixture.placement, fixture.values, fixture.values.Top())
 	if !topOK || topPlan.class != routeWidened {
 		t.Fatal("top return plan")
 	}
-	got, ok := returnValue(placement.Stack, true, topPlan)
-	if !ok || got != placement.OwnedHeap {
-		t.Fatalf("widened return demand = %s/%t, want OwnedHeap", got, ok)
+	got, ok := returnValue(placement.DefaultFact(), true, topPlan)
+	if !ok || got != (placement.Fact{Class: placement.OwnedHeap, RetainEscape: placement.EvidenceProven}) {
+		t.Fatalf("widened return demand = %v/%t, want OwnedHeap/Proven", got, ok)
 	}
-	if got, ok := returnValue(placement.Bottom, true, topPlan); ok || got != placement.Bottom {
-		t.Fatalf("missing Bottom seed on widened return = %s/%t, want bottom/false", got, ok)
+	if got, ok := returnValue(placement.BottomFact(), true, topPlan); ok || got == placement.UnknownFact() {
+		t.Fatalf("missing Bottom seed on widened return = %v/%t, must refuse without Unknown", got, ok)
 	}
 }
 

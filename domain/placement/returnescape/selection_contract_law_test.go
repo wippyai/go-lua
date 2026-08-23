@@ -40,14 +40,16 @@ func TestReturnSelectionTagsRecoverLogicalBoundaryOrdinal(t *testing.T) {
 }
 
 func TestReturnSparseStackPlacementIsDisplaced(t *testing.T) {
-	got, ok := returnValue(placement.Stack, false, routePlan{class: routeExact})
-	if !ok || got != placement.OwnedHeap {
+	got, ok := returnValue(placement.DefaultFact(), false, routePlan{class: routeExact})
+	want := placement.Fact{Class: placement.OwnedHeap, RetainEscape: placement.EvidenceProven}
+	if !ok || got != want {
 		t.Fatalf("sparse Stack predecessor = %s/%t, want OwnedHeap/true", got, ok)
 	}
-	if got, ok := returnValue(placement.Bottom, false, routePlan{class: routeExact}); ok || got != placement.Bottom {
+	if got, ok := returnValue(placement.BottomFact(), false, routePlan{class: routeExact}); ok || got != placement.BottomFact() {
 		t.Fatalf("sparse non-default predecessor = %s/%t, want Bottom/false", got, ok)
 	}
-	if got, ok := returnValue(placement.SharedHeap, true, routePlan{class: routeWidened}); !ok || got != placement.SharedHeap {
+	shared := placement.Fact{Class: placement.SharedHeap, RetainEscape: placement.EvidenceRefuted}
+	if got, ok := returnValue(shared, true, routePlan{class: routeWidened}); !ok || got != (placement.Fact{Class: placement.SharedHeap, RetainEscape: placement.EvidenceProven}) {
 		t.Fatalf("widened identity changed known Return policy = %s/%t, want SharedHeap/true", got, ok)
 	}
 }

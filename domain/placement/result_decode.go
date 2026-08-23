@@ -383,6 +383,25 @@ func (allocation SummaryResultAllocation) DeepFrozen() (EvidenceState, bool) {
 	return proofColumn(evidence.DeepFrozen, ok)
 }
 
+// RetainEscape returns the path-sensitive retain provenance serialized from
+// the same canonical Placement factor as this row's class.
+func (allocation SummaryResultAllocation) RetainEscape() (EvidenceState, bool) {
+	evidence, ok := allocation.Evidence()
+	return proofColumn(evidence.RetainEscape, ok)
+}
+
+// Fact reconstructs the one canonical Placement factor value carried by this
+// row. It never infers retain provenance from the placement class.
+func (allocation SummaryResultAllocation) Fact() (Fact, bool) {
+	class, classOK := allocation.Placement()
+	retained, retainedOK := allocation.RetainEscape()
+	fact := Fact{Class: class, RetainEscape: retained}
+	if !classOK || !retainedOK || !fact.Valid() || class == Bottom || retained == EvidenceAbsent {
+		return invalidFact(), false
+	}
+	return fact, true
+}
+
 // proofColumn is the one projection every row-scoped proof accessor shares. It
 // keeps unavailability and absence apart in both results, so a caller that
 // drops the boolean still reads an inadmissible state instead of a column the
@@ -440,7 +459,9 @@ func validateAllocationEvidencePlane(payload string, offset, idOffset, count int
 }
 
 func validAllocationEvidenceBytes(payload string) bool {
-	if len(payload) != placementSummaryEvidenceRecordSize || payload[0] > byte(AllocationKindManifest) || payload[1] > 1 || payload[34] > 1 || payload[39] > byte(EvidenceProven) || payload[40] > byte(EvidenceProven) || payload[41] > byte(EvidenceProven) {
+	if len(payload) != placementSummaryEvidenceRecordSize || payload[0] > byte(AllocationKindManifest) || payload[1] > 1 || payload[34] > 1 ||
+		payload[placementSummaryRetainEscapeOffset] > byte(EvidenceProven) || payload[placementSummaryFrameLocalOffset] > byte(EvidenceProven) ||
+		payload[placementSummaryDiesBeforeOffset] > byte(EvidenceProven) || payload[placementSummaryDeepFrozenOffset] > byte(EvidenceProven) {
 		return false
 	}
 	if payload[1] == 1 && !placementSummaryIDAvailable(payload, 2) {
@@ -475,8 +496,9 @@ func decodeAllocationEvidence(payload string, evidence AllocationEvidence) (Allo
 		evidence.HasDepth = true
 		evidence.Depth = uint32(payload[35])<<24 | uint32(payload[36])<<16 | uint32(payload[37])<<8 | uint32(payload[38])
 	}
-	evidence.FrameLocal = EvidenceState(payload[39])
-	evidence.DiesBeforeSuspension = EvidenceState(payload[40])
+	evidence.RetainEscape = EvidenceState(payload[placementSummaryRetainEscapeOffset])
+	evidence.FrameLocal = EvidenceState(payload[placementSummaryFrameLocalOffset])
+	evidence.DiesBeforeSuspension = EvidenceState(payload[placementSummaryDiesBeforeOffset])
 	evidence.DeepFrozen = EvidenceState(payload[placementSummaryDeepFrozenOffset])
 	return evidence, evidence.Valid()
 }

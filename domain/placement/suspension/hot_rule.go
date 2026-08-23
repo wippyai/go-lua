@@ -19,7 +19,7 @@ type HotRule struct {
 	catalog        *Catalog
 	valueAnchor    engine.Read[engine.OrderedCells[valuedomain.Value]]
 	valueRead      engine.Read[engine.Selection[routeTag, engine.OrderedCells[valuedomain.Value]]]
-	placementRead  engine.Read[engine.Selection[routeTag, engine.OrderedCells[placementdomain.Placement]]]
+	placementRead  engine.Read[engine.Selection[routeTag, engine.OrderedCells[placementdomain.Fact]]]
 }
 
 // BindHot binds the Value-aware suspension bridge to one shared hot
@@ -40,13 +40,13 @@ func BindHot(binding *engine.SchemaBinding, fragment *SchemaFragment, owner *pla
 		return nil, false
 	}
 	rule := &HotRule{owner: owner, values: values, catalog: catalog}
-	implementation, implementationOK := placementowner.BindSelectedRouteRuleDirect(owner, fragment.slot, fragment.carry, fragment.write, owner.FactorRef(), engine.HotRuleSpec[placementdomain.Placement, operand]{
+	implementation, implementationOK := placementowner.BindSelectedRouteRuleDirect(owner, fragment.slot, fragment.carry, fragment.write, owner.FactorRef(), engine.HotRuleSpec[placementdomain.Fact, operand]{
 		OperandContent: func(candidate operand) (operand, [32]byte, bool) {
 			return rule.operandContent(candidate)
 		},
 		OperandResolver: rule.resolveOperand,
 		Fold:            rule.fold,
-	}, engine.HotCarrySpec[placementdomain.Placement, operand]{}, nil)
+	}, engine.HotCarrySpec[placementdomain.Fact, operand]{}, nil)
 	if !implementationOK || implementation == nil {
 		return nil, false
 	}
@@ -61,7 +61,7 @@ func BindHot(binding *engine.SchemaBinding, fragment *SchemaFragment, owner *pla
 		return nil, false
 	}
 	rule.valueRead = valueRead
-	placementRead, placementOK := placementowner.AddSelectedRuleDirectOperandRead[operand, placementdomain.Placement, routeTag](implementation, fragment.placementRead, owner.FactorRef(), rule.locateRoutes)
+	placementRead, placementOK := placementowner.AddSelectedRuleDirectOperandRead[operand, placementdomain.Fact, routeTag](implementation, fragment.placementRead, owner.FactorRef(), rule.locateRoutes)
 	if !placementOK {
 		return nil, false
 	}
@@ -199,23 +199,23 @@ func (rule *HotRule) locateRoutes(context engine.SelectorContext, candidate oper
 	return true
 }
 
-func (rule *HotRule) fold(frame engine.Frame[placementdomain.Placement, operand]) engine.RuleResult[placementdomain.Placement] {
+func (rule *HotRule) fold(frame engine.Frame[placementdomain.Fact, operand]) engine.RuleResult[placementdomain.Fact] {
 	candidate, operandOK := engine.Operand(frame)
 	if !operandOK || rule == nil || rule.owner == nil || rule.values == nil || rule.catalog == nil || rule.catalog.values == nil {
-		return engine.RuleResult[placementdomain.Placement]{}
+		return engine.RuleResult[placementdomain.Fact]{}
 	}
 	canonical, _, contentOK := rule.operandContent(candidate)
 	if !contentOK {
-		return engine.RuleResult[placementdomain.Placement]{}
+		return engine.RuleResult[placementdomain.Fact]{}
 	}
 	valueSelection, valuesOK := engine.ReadValue(frame, rule.valueRead)
 	placementSelection, placementOK := engine.ReadValue(frame, rule.placementRead)
 	if !valuesOK || !placementOK {
-		return engine.RuleResult[placementdomain.Placement]{}
+		return engine.RuleResult[placementdomain.Fact]{}
 	}
 	count, countOK := engine.SelectionCount(frame, placementSelection)
 	if !countOK {
-		return engine.RuleResult[placementdomain.Placement]{}
+		return engine.RuleResult[placementdomain.Fact]{}
 	}
 
 	var plan routePlan
@@ -223,28 +223,28 @@ func (rule *HotRule) fold(frame engine.Frame[placementdomain.Placement, operand]
 	if canonical.key.Kind() == heapdomain.RootAllocation {
 		selectedCount, selectedOK := engine.SelectionCount(frame, valueSelection)
 		if !selectedOK || selectedCount != 0 {
-			return engine.RuleResult[placementdomain.Placement]{}
+			return engine.RuleResult[placementdomain.Fact]{}
 		}
 		index, indexOK := rule.owner.Schema().Heap().AllocationKeyIndex(canonical.key)
 		if !indexOK || index < 0 {
-			return engine.RuleResult[placementdomain.Placement]{}
+			return engine.RuleResult[placementdomain.Fact]{}
 		}
 		planOK = plan.add(route{key: canonical.key, tag: routeTag(uint64(index) + 1)})
 		plan.class = routeExact
 	} else {
 		selectedCount, selectedOK := engine.SelectionCount(frame, valueSelection)
 		if !selectedOK || selectedCount != len(canonical.sources) {
-			return engine.RuleResult[placementdomain.Placement]{}
+			return engine.RuleResult[placementdomain.Fact]{}
 		}
 		var factsInline [sourceFactInlineWidth]sourceFact
 		facts, factsOK := sourceFactBuffer(selectedCount, factsInline[:])
 		if !factsOK {
-			return engine.RuleResult[placementdomain.Placement]{}
+			return engine.RuleResult[placementdomain.Fact]{}
 		}
 		for index := 0; index < selectedCount; index++ {
 			tag, cells, selectedOK := engine.SelectionAt(frame, valueSelection, index)
 			if !selectedOK || index >= len(canonical.sources) || tag != canonical.sources[index].tag || cells.Count() != 1 {
-				return engine.RuleResult[placementdomain.Placement]{}
+				return engine.RuleResult[placementdomain.Fact]{}
 			}
 			fact, present, available := cells.At(0)
 			facts[index] = sourceFact{fact: fact, present: present, available: available}
@@ -252,31 +252,28 @@ func (rule *HotRule) fold(frame engine.Frame[placementdomain.Placement, operand]
 		plan, planOK = routePlanForFacts(rule.owner.Schema(), rule.values.Schema(), facts)
 	}
 	if !planOK || count != plan.count() {
-		return engine.RuleResult[placementdomain.Placement]{}
+		return engine.RuleResult[placementdomain.Fact]{}
 	}
 	if count == 0 {
 		return engine.NoSelection(frame, placementSelection)
 	}
-	return engine.Routed(frame, placementSelection, func(tag routeTag, prior engine.OrderedCells[placementdomain.Placement]) (placementdomain.Placement, bool) {
+	return engine.Routed(frame, placementSelection, func(tag routeTag, prior engine.OrderedCells[placementdomain.Fact]) (placementdomain.Fact, bool) {
 		_, routeOK := routeAtTag(plan, tag)
 		if !routeOK || prior.Count() != 1 {
-			return placementdomain.Placement(0), false
+			return placementdomain.BottomFact(), false
 		}
 		current, currentPresent, currentAvailable := prior.At(0)
-		current, currentOK := placementdomain.AuthenticateFactorCell(current, currentPresent, currentAvailable)
+		current, currentOK := placementdomain.AuthenticateFactCell(current, currentPresent, currentAvailable)
 		if !currentOK {
-			return placementdomain.Placement(0), false
+			return placementdomain.BottomFact(), false
 		}
 		want, wantOK := PlacementForState(canonical.state)
 		if !wantOK {
-			return placementdomain.Placement(0), false
+			return placementdomain.BottomFact(), false
 		}
 		if plan.widened() {
-			return placementdomain.Unknown, true
+			return placementdomain.UnknownFact(), true
 		}
-		if placementdomain.LessOrEq(current, want) {
-			return want, true
-		}
-		return current, true
+		return placementdomain.RaiseClassChecked(current, want)
 	})
 }

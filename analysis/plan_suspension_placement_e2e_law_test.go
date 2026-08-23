@@ -75,15 +75,13 @@ return wrapped
 		if !allocationOK || !allocation.Available() || allocation.AllocationID() != tableID {
 			t.Fatalf("coroutine-yield capture query %d omitted exact table allocation %s", queryIndex, tableID)
 		}
-		class, classOK := allocation.Placement()
-		if !classOK {
-			t.Fatalf("coroutine-yield capture query %d has no Placement class for exact table allocation %s", queryIndex, tableID)
-		}
-		if class == placementdomain.Unknown {
-			t.Fatalf("coroutine-yield capture query %d widened exact table allocation %s to Unknown", queryIndex, tableID)
+		fact, factOK := allocation.Fact()
+		wantFact := placementdomain.Fact{Class: placementdomain.OwnedHeap, RetainEscape: placementdomain.EvidenceRefuted}
+		if !factOK || fact != wantFact {
+			t.Fatalf("coroutine-yield capture query %d exact table allocation %s fact = %v/%t, want %v", queryIndex, tableID, fact, factOK, wantFact)
 		}
 		hits++
-		if class == placementdomain.OwnedHeap {
+		if fact.Class == placementdomain.OwnedHeap {
 			displaced = true
 		}
 	}
@@ -156,12 +154,10 @@ return wrapped
 		if !allocationOK || !allocation.Available() || allocation.AllocationID() != tableID {
 			t.Fatalf("coroutine no-suspension query %d omitted exact table allocation %s", queryIndex, tableID)
 		}
-		class, classOK := allocation.Placement()
-		if !classOK {
-			t.Fatalf("coroutine no-suspension query %d has no Placement class for exact table allocation %s", queryIndex, tableID)
-		}
-		if class != placementdomain.Stack {
-			t.Fatalf("coroutine no-suspension query %d exact table allocation %s = %v, want Stack", queryIndex, tableID, class)
+		fact, factOK := allocation.Fact()
+		wantFact := placementdomain.Fact{Class: placementdomain.Stack, RetainEscape: placementdomain.EvidenceRefuted}
+		if !factOK || fact != wantFact {
+			t.Fatalf("coroutine no-suspension query %d exact table allocation %s fact = %v/%t, want %v", queryIndex, tableID, fact, factOK, wantFact)
 		}
 		hits++
 	}

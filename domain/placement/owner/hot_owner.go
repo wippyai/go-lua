@@ -29,32 +29,32 @@ func BindHot(binding *engine.SchemaBinding, fragment *SchemaFragment, schema pla
 	if !ok || !engine.BindFactor[coordinate](binding, fragment.slot, spec) {
 		return nil, false
 	}
-	if !engine.BindIdentitySummaryReadForFactor[coordinate, placement.Placement](binding, fragment.slot, fragment.foldRead) {
+	if !engine.BindIdentitySummaryReadForFactor[coordinate, placement.Fact](binding, fragment.slot, fragment.foldRead) {
 		return nil, false
 	}
 	return owner, true
 }
 
 // FactorSpec is Placement's exact Link-local factor algebra.
-func (owner *HotOwner) FactorSpec() (engine.HotFactorSpec[coordinate, placement.Placement], bool) {
+func (owner *HotOwner) FactorSpec() (engine.HotFactorSpec[coordinate, placement.Fact], bool) {
 	if owner == nil || !owner.schema.Valid() {
-		return engine.HotFactorSpec[coordinate, placement.Placement]{}, false
+		return engine.HotFactorSpec[coordinate, placement.Fact]{}, false
 	}
 	keyEnd := owner.schema.KeyCount()
 	if keyEnd < 0 || uint64(keyEnd) > uint64(^uint32(0)) {
-		return engine.HotFactorSpec[coordinate, placement.Placement]{}, false
+		return engine.HotFactorSpec[coordinate, placement.Fact]{}, false
 	}
-	return engine.HotFactorSpec[coordinate, placement.Placement]{
+	return engine.HotFactorSpec[coordinate, placement.Fact]{
 		KeyEnd:  uint64(keyEnd),
-		Lattice: placement.Lattice(),
+		Lattice: placement.FactLattice(),
 		// Every admitted coordinate is an allocation root, whose least escaped
 		// placement is Stack. Displacement rules only move this value upward;
 		// procedural allocation/fresh seed rules would be duplicate authority.
-		Default:     placement.Stack,
+		Default:     placement.DefaultFact(),
 		AdmitAt:     owner.admits,
-		Fingerprint: func(value placement.Placement) uint64 { return value.Hash() },
-		WidenRank: engine.Measure[coordinate, placement.Placement]{
-			Width: 1,
+		Fingerprint: func(value placement.Fact) uint64 { return value.Hash() },
+		WidenRank: engine.Measure[coordinate, placement.Fact]{
+			Width: 2,
 			At:    owner.widenRank,
 		},
 	}, true
@@ -86,17 +86,17 @@ func (owner *HotOwner) MatchesBinding(binding *engine.SchemaBinding) bool {
 
 // FactorRef returns Placement's sealed Factor surface without exposing its
 // private carrier coordinate or FactorSlot.
-func (owner *HotOwner) FactorRef() engine.FactorRef[placement.Placement] {
+func (owner *HotOwner) FactorRef() engine.FactorRef[placement.Fact] {
 	if owner == nil || owner.fragment == nil {
-		return engine.FactorRef[placement.Placement]{}
+		return engine.FactorRef[placement.Fact]{}
 	}
 	return owner.fragment.Ref()
 }
 
 // ExactRead returns Placement's exact factor read form.
-func (owner *HotOwner) ExactRead() engine.SchemaReadForm[placement.Placement] {
+func (owner *HotOwner) ExactRead() engine.SchemaReadForm[placement.Fact] {
 	if owner == nil || owner.fragment == nil {
-		return engine.SchemaReadForm[placement.Placement]{}
+		return engine.SchemaReadForm[placement.Fact]{}
 	}
 	return owner.fragment.ExactRead()
 }
@@ -104,23 +104,23 @@ func (owner *HotOwner) ExactRead() engine.SchemaReadForm[placement.Placement] {
 // FoldSummaryRead returns Placement's coordinatewise summary read form. The
 // query vertical consumes this public owner surface; the base owner does not
 // carry any producer-owned evidence or query state.
-func (owner *HotOwner) FoldSummaryRead() engine.SchemaReadForm[placement.Placement] {
+func (owner *HotOwner) FoldSummaryRead() engine.SchemaReadForm[placement.Fact] {
 	if owner == nil || owner.fragment == nil {
-		return engine.SchemaReadForm[placement.Placement]{}
+		return engine.SchemaReadForm[placement.Fact]{}
 	}
 	return owner.fragment.FoldSummaryRead()
 }
 
 // ExactWrite returns Placement's exact factor write form.
-func (owner *HotOwner) ExactWrite() engine.SchemaWriteForm[placement.Placement] {
+func (owner *HotOwner) ExactWrite() engine.SchemaWriteForm[placement.Fact] {
 	if owner == nil || owner.fragment == nil {
-		return engine.SchemaWriteForm[placement.Placement]{}
+		return engine.SchemaWriteForm[placement.Fact]{}
 	}
 	return owner.fragment.ExactWrite()
 }
 
 // BindSelectedRuleDirect installs a selected direct-write Placement rule.
-func BindSelectedRuleDirect[O any](owner *HotOwner, slot *engine.RuleSlot[placement.Placement, O], write engine.SchemaWriteSlot[placement.Placement], spec engine.HotRuleSpec[placement.Placement, O], projectWrite func(O) (uint64, bool)) (*RuleImplementation[O], bool) {
+func BindSelectedRuleDirect[O any](owner *HotOwner, slot *engine.RuleSlot[placement.Fact, O], write engine.SchemaWriteSlot[placement.Fact], spec engine.HotRuleSpec[placement.Fact, O], projectWrite func(O) (uint64, bool)) (*RuleImplementation[O], bool) {
 	if owner == nil || owner.binding == nil || owner.fragment == nil || slot == nil {
 		return nil, false
 	}
@@ -133,7 +133,7 @@ func BindSelectedRuleDirect[O any](owner *HotOwner, slot *engine.RuleSlot[placem
 // BindSelectedRouteRuleDirect installs a selected-read/routed-write
 // Placement Rule. The route read and write geometry remain in the cold
 // fragment; this wrapper only admits the exact owner-fenced hot cell.
-func BindSelectedRouteRuleDirect[O any](owner *HotOwner, slot *engine.RuleSlot[placement.Placement, O], carry engine.SchemaCarrySlot[placement.Placement], write engine.SchemaWriteSlot[placement.Placement], output engine.FactorRef[placement.Placement], spec engine.HotRuleSpec[placement.Placement, O], carrySpec engine.HotCarrySpec[placement.Placement, O], projectWrite func(O) (uint64, bool)) (*RuleImplementation[O], bool) {
+func BindSelectedRouteRuleDirect[O any](owner *HotOwner, slot *engine.RuleSlot[placement.Fact, O], carry engine.SchemaCarrySlot[placement.Fact], write engine.SchemaWriteSlot[placement.Fact], output engine.FactorRef[placement.Fact], spec engine.HotRuleSpec[placement.Fact, O], carrySpec engine.HotCarrySpec[placement.Fact, O], projectWrite func(O) (uint64, bool)) (*RuleImplementation[O], bool) {
 	if owner == nil || owner.binding == nil || owner.fragment == nil || slot == nil || output != owner.fragment.Ref() {
 		return nil, false
 	}
@@ -162,13 +162,13 @@ func AddSelectedRuleDirectOperandRead[O any, RV any, Tag interface {
 	if issuer == nil || issuer.owner == nil || issuer.slot == nil {
 		return engine.Read[engine.Selection[Tag, engine.OrderedCells[RV]]]{}, false
 	}
-	return engine.BindSelectedRuleDirectOperandRead[coordinate, placement.Placement, O, RV, Tag](issuer.owner.binding, issuer.slot, slot, factor, locate)
+	return engine.BindSelectedRuleDirectOperandRead[coordinate, placement.Fact, O, RV, Tag](issuer.owner.binding, issuer.slot, slot, factor, locate)
 }
 
 // RuleImplementation is Placement's opaque pending rule receipt.
 type RuleImplementation[O any] struct {
 	owner *HotOwner
-	slot  *engine.RuleSlot[placement.Placement, O]
+	slot  *engine.RuleSlot[placement.Fact, O]
 }
 
 func (issuer *RuleImplementation[O]) MountedCapability() (engine.RuleSlotCapability, bool) {
@@ -198,15 +198,15 @@ func AddSelectedRuleDirectSummaryRead[O, RV, S any](issuer *RuleImplementation[O
 	if issuer == nil || issuer.owner == nil || issuer.slot == nil {
 		return engine.Read[S]{}, false
 	}
-	return engine.BindSelectedRuleDirectSummaryRead[coordinate, placement.Placement, O, RV, S](issuer.owner.binding, issuer.slot, slot, factor, form)
+	return engine.BindSelectedRuleDirectSummaryRead[coordinate, placement.Fact, O, RV, S](issuer.owner.binding, issuer.slot, slot, factor, form)
 }
 
 // ResolveRuleImplementation issues the engine rule receipt after sealing.
-func ResolveRuleImplementation[O any](issuer *RuleImplementation[O]) (*engine.RuleImplementation[coordinate, placement.Placement, O], bool) {
+func ResolveRuleImplementation[O any](issuer *RuleImplementation[O]) (*engine.RuleImplementation[coordinate, placement.Fact, O], bool) {
 	if issuer == nil || issuer.owner == nil || issuer.slot == nil {
 		return nil, false
 	}
-	implementation, ok := engine.RuleImplementationAt[coordinate, placement.Placement, O](issuer.owner.binding, issuer.slot)
+	implementation, ok := engine.RuleImplementationAt[coordinate, placement.Fact, O](issuer.owner.binding, issuer.slot)
 	if !ok {
 		return nil, false
 	}
@@ -215,7 +215,7 @@ func ResolveRuleImplementation[O any](issuer *RuleImplementation[O]) (*engine.Ru
 
 // ResolveRuleImplementationFor rejects a receipt issued by another equal
 // Placement binding before resolving the private engine implementation.
-func ResolveRuleImplementationFor[O any](owner *HotOwner, issuer *RuleImplementation[O]) (*engine.RuleImplementation[coordinate, placement.Placement, O], bool) {
+func ResolveRuleImplementationFor[O any](owner *HotOwner, issuer *RuleImplementation[O]) (*engine.RuleImplementation[coordinate, placement.Fact, O], bool) {
 	if owner == nil || issuer == nil || issuer.owner != owner {
 		return nil, false
 	}
@@ -233,7 +233,7 @@ func (owner *HotOwner) Ref(key heap.Key) (engine.Ref[coordinate], bool) {
 	if !ok || index < 0 || uint64(index) > uint64(^uint32(0)) || index >= owner.schema.KeyCount() {
 		return engine.Ref[coordinate]{}, false
 	}
-	implementation, ok := engine.FactorImplementationAt[coordinate, placement.Placement](owner.binding, owner.fragment.slot)
+	implementation, ok := engine.FactorImplementationAt[coordinate, placement.Fact](owner.binding, owner.fragment.slot)
 	if !ok {
 		return engine.Ref[coordinate]{}, false
 	}
@@ -265,24 +265,37 @@ func SelectRouteTyped[Tag interface {
 	return ok && engine.SelectRoute(context, ref, tag)
 }
 
-func (owner *HotOwner) admits(index coordinate, fact placement.Placement) bool {
+func (owner *HotOwner) admits(index coordinate, fact placement.Fact) bool {
 	key, ok := owner.keyAt(index)
 	if !ok {
 		return false
 	}
-	_, valid := placementRank(fact)
-	return key.Kind() == heap.RootAllocation && fact != placement.Bottom && valid
+	return key.Kind() == heap.RootAllocation && fact.Valid() && fact.Class != placement.Bottom && fact.RetainEscape != placement.EvidenceAbsent
 }
 
-func (owner *HotOwner) widenRank(index coordinate, fact placement.Placement, component int) uint64 {
-	if owner == nil || component != 0 || !owner.admits(index, fact) {
+func (owner *HotOwner) widenRank(index coordinate, fact placement.Fact, component int) uint64 {
+	if owner == nil || !owner.admits(index, fact) {
 		return 0
 	}
-	rank, ok := placementRank(fact)
-	if !ok {
+	switch component {
+	case 0:
+		rank, ok := placementRank(fact.Class)
+		if !ok {
+			return 0
+		}
+		return uint64(rank)
+	case 1:
+		switch fact.RetainEscape {
+		case placement.EvidenceRefuted, placement.EvidenceProven:
+			return 1
+		case placement.EvidenceUnknown:
+			return 0
+		default:
+			return 0
+		}
+	default:
 		return 0
 	}
-	return uint64(rank)
 }
 
 func placementRank(fact placement.Placement) (int, bool) {

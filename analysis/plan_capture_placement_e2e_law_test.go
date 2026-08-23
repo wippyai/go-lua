@@ -71,6 +71,7 @@ return make()
 	if !publicationOK || publication.QueryCount() == 0 {
 		t.Fatal("closure-capture typed Placement publication unavailable")
 	}
+	wantFact := placementdomain.Fact{Class: placementdomain.OwnedHeap, RetainEscape: placementdomain.EvidenceProven}
 	found := map[string]bool{}
 	closureOwned, tableOwned := false, false
 	for queryIndex := 0; queryIndex < publication.QueryCount(); queryIndex++ {
@@ -89,8 +90,8 @@ return make()
 				break
 			}
 			kind, kindOK := row.Kind()
-			class, classOK := row.Placement()
-			if !kindOK || !classOK {
+			fact, factOK := row.Fact()
+			if !kindOK || !factOK {
 				t.Fatalf("closure-capture query %d has incomplete row %s", queryIndex, row.AllocationID())
 			}
 			_, relevant := map[string]bool{"lua.table": true, "lua.closure": true}[kind.String()]
@@ -98,13 +99,10 @@ return make()
 				continue
 			}
 			found[kind.String()] = true
-			if class == placementdomain.Unknown {
-				t.Fatalf("closure-capture %s root widened to Unknown", kind)
-			}
-			if kind.String() == "lua.closure" && class == placementdomain.OwnedHeap {
+			if kind.String() == "lua.closure" && fact == wantFact {
 				closureOwned = true
 			}
-			if kind.String() == "lua.table" && class == placementdomain.OwnedHeap {
+			if kind.String() == "lua.table" && fact == wantFact {
 				tableOwned = true
 			}
 		}

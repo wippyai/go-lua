@@ -143,8 +143,8 @@ func TestPublicationEscapeTopValueBroadcastsKnownRequirement(t *testing.T) {
 		if !routeOK || route.unknown || route.required != placementdomain.SharedHeap {
 			t.Fatalf("Value Top route=%#v, want SharedHeap identity broadcast", route)
 		}
-		placement, applyOK := applyRoute(route, placementdomain.Stack)
-		if !applyOK || placement != placementdomain.SharedHeap {
+		placement, applyOK := applyRoute(route, placementdomain.DefaultFact())
+		if !applyOK || placement != (placementdomain.Fact{Class: placementdomain.SharedHeap, RetainEscape: placementdomain.EvidenceProven}) {
 			t.Fatalf("Value Top applied placement=%v/%t, want SharedHeap", placement, applyOK)
 		}
 	}

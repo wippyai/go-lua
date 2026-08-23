@@ -29,9 +29,14 @@ func TestFromProgramUsesAnExplicitConservativeMapping(t *testing.T) {
 }
 
 func TestFrameStorageDoesNotPromoteEveryRHS(t *testing.T) {
-	for _, current := range []placement.Placement{placement.Bottom, placement.Stack, placement.OwnedHeap, placement.SharedHeap, placement.Unknown} {
+	for _, current := range []placement.Fact{
+		placement.DefaultFact(),
+		{Class: placement.OwnedHeap, RetainEscape: placement.EvidenceRefuted},
+		{Class: placement.SharedHeap, RetainEscape: placement.EvidenceRefuted},
+		placement.UnknownFact(),
+	} {
 		if got, ok := Apply(current, LifetimeFrame); !ok || got != current {
-			t.Fatalf("frame store changed %s to %s (ok=%t)", current, got, ok)
+			t.Fatalf("frame store changed %v to %v (ok=%t)", current, got, ok)
 		}
 	}
 }
@@ -48,18 +53,33 @@ func TestStorageLifetimeDemandIsOrdered(t *testing.T) {
 		{LifetimeUnknown, placement.Unknown},
 	}
 	for _, test := range cases {
-		if got, ok := Apply(placement.Stack, test.lifetime); !ok || got != test.want {
-			t.Errorf("Apply(stack,%s) = %s (ok=%t), want %s", test.lifetime, got, ok, test.want)
+		want := placement.Fact{Class: test.want, RetainEscape: placement.EvidenceProven}
+		if test.want == placement.Unknown {
+			want = placement.UnknownFact()
+		}
+		if got, ok := Apply(placement.DefaultFact(), test.lifetime); !ok || got != want {
+			t.Errorf("Apply(stack/refuted,%s) = %v (ok=%t), want %v", test.lifetime, got, ok, want)
 		}
 	}
 }
 
 func TestStorageLifetimeNeverDowngradesAnotherEscape(t *testing.T) {
 	for _, lifetime := range []Lifetime{LifetimeModule, LifetimeClosure, LifetimeGlobal, LifetimeExternal, LifetimeUnknown} {
-		for _, current := range []placement.Placement{placement.OwnedHeap, placement.SharedHeap, placement.Unknown} {
+		for _, current := range []placement.Fact{
+			{Class: placement.OwnedHeap, RetainEscape: placement.EvidenceRefuted},
+			{Class: placement.SharedHeap, RetainEscape: placement.EvidenceRefuted},
+			placement.UnknownFact(),
+		} {
 			got, ok := Apply(current, lifetime)
-			if !ok || !placement.LessOrEq(current, got) {
-				t.Errorf("Apply(%s,%s) = %s (ok=%t), downgraded current placement", current, lifetime, got, ok)
+			if !ok || !placement.LessOrEq(current.Class, got.Class) {
+				t.Errorf("Apply(%v,%s) = %v (ok=%t), downgraded current placement", current, lifetime, got, ok)
+			}
+			if lifetime == LifetimeExternal || lifetime == LifetimeUnknown {
+				if got != placement.UnknownFact() {
+					t.Errorf("Apply(%v,%s) = %v, want authenticated UnknownFact", current, lifetime, got)
+				}
+			} else if got.RetainEscape != placement.EvidenceProven {
+				t.Errorf("Apply(%v,%s) = %v, want retain provenance", current, lifetime, got)
 			}
 		}
 	}
@@ -67,38 +87,43 @@ func TestStorageLifetimeNeverDowngradesAnotherEscape(t *testing.T) {
 
 func TestOrdinaryObjectStoreUsesContainmentNotLifetimePromotion(t *testing.T) {
 	cases := []struct {
-		destination placement.Placement
-		source      placement.Placement
-		want        placement.Placement
+		destination placement.Fact
+		source      placement.Fact
+		want        placement.Fact
 	}{
-		{placement.Stack, placement.Stack, placement.Stack},
-		{placement.OwnedHeap, placement.Stack, placement.OwnedHeap},
-		{placement.Stack, placement.OwnedHeap, placement.OwnedHeap},
-		{placement.SharedHeap, placement.Stack, placement.SharedHeap},
-		{placement.Stack, placement.SharedHeap, placement.SharedHeap},
+		{placement.DefaultFact(), placement.DefaultFact(), placement.DefaultFact()},
+		{placement.Fact{Class: placement.OwnedHeap, RetainEscape: placement.EvidenceRefuted}, placement.DefaultFact(), placement.Fact{Class: placement.OwnedHeap, RetainEscape: placement.EvidenceRefuted}},
+		{placement.DefaultFact(), placement.Fact{Class: placement.OwnedHeap, RetainEscape: placement.EvidenceRefuted}, placement.Fact{Class: placement.OwnedHeap, RetainEscape: placement.EvidenceRefuted}},
+		{placement.Fact{Class: placement.SharedHeap, RetainEscape: placement.EvidenceRefuted}, placement.DefaultFact(), placement.Fact{Class: placement.SharedHeap, RetainEscape: placement.EvidenceRefuted}},
+		{placement.DefaultFact(), placement.Fact{Class: placement.SharedHeap, RetainEscape: placement.EvidenceRefuted}, placement.Fact{Class: placement.SharedHeap, RetainEscape: placement.EvidenceRefuted}},
+		// A retained container carries its prior-retain proof to a contained
+		// child even though ObjectStore itself is not a new lifetime demand.
+		{placement.Fact{Class: placement.OwnedHeap, RetainEscape: placement.EvidenceProven}, placement.DefaultFact(), placement.Fact{Class: placement.OwnedHeap, RetainEscape: placement.EvidenceProven}},
 	}
 	for _, test := range cases {
 		if got, ok := ObjectStore(test.destination, test.source); !ok || got != test.want {
-			t.Errorf("ObjectStore(%s,%s) = %s (ok=%t), want %s", test.destination, test.source, got, ok, test.want)
+			t.Errorf("ObjectStore(%v,%v) = %v (ok=%t), want %v", test.destination, test.source, got, ok, test.want)
 		}
 	}
-	if got, ok := ObjectStore(placement.Stack, placement.Stack); !ok || got == placement.OwnedHeap || got == placement.SharedHeap {
-		t.Fatalf("ordinary local object store was promoted to %s", got)
+	if got, ok := ObjectStore(placement.DefaultFact(), placement.DefaultFact()); !ok || got.Class == placement.OwnedHeap || got.Class == placement.SharedHeap || got.RetainEscape != placement.EvidenceRefuted {
+		t.Fatalf("ordinary local object store was promoted to %v", got)
 	}
 }
 
 func TestStorageRejectsUnclassifiedAndJITInputsWithoutFabricatingUnknown(t *testing.T) {
-	if got, ok := Apply(placement.Stack, LifetimeInvalid); ok || got == placement.Unknown {
-		t.Fatalf("invalid lifetime = %s (ok=%t), must refuse without Unknown", got, ok)
+	if got, ok := Apply(placement.DefaultFact(), LifetimeInvalid); ok || got.Class == placement.Unknown || got.RetainEscape == placement.EvidenceUnknown {
+		t.Fatalf("invalid lifetime = %v (ok=%t), must refuse without Unknown", got, ok)
 	}
-	if got, ok := Apply(placement.Interpreter, LifetimeFrame); ok || got == placement.Unknown {
-		t.Fatalf("interpreter placement = %s (ok=%t), must refuse without Unknown", got, ok)
+	badInterpreter := placement.Fact{Class: placement.Interpreter, RetainEscape: placement.EvidenceRefuted}
+	if got, ok := Apply(badInterpreter, LifetimeFrame); ok || got.Class == placement.Unknown || got.RetainEscape == placement.EvidenceUnknown {
+		t.Fatalf("interpreter placement = %v (ok=%t), must refuse without Unknown", got, ok)
 	}
-	if got, ok := ObjectStore(placement.Register, placement.Stack); ok || got == placement.Unknown {
-		t.Fatalf("register object store = %s (ok=%t), must refuse without Unknown", got, ok)
+	badRegister := placement.Fact{Class: placement.Register, RetainEscape: placement.EvidenceRefuted}
+	if got, ok := ObjectStore(badRegister, placement.DefaultFact()); ok || got.Class == placement.Unknown || got.RetainEscape == placement.EvidenceUnknown {
+		t.Fatalf("register object store = %v (ok=%t), must refuse without Unknown", got, ok)
 	}
-	if got, ok := ObjectStore(placement.Stack, placement.Interpreter); ok || got == placement.Unknown {
-		t.Fatalf("interpreter source store = %s (ok=%t), must refuse without Unknown", got, ok)
+	if got, ok := ObjectStore(placement.DefaultFact(), badInterpreter); ok || got.Class == placement.Unknown || got.RetainEscape == placement.EvidenceUnknown {
+		t.Fatalf("interpreter source store = %v (ok=%t), must refuse without Unknown", got, ok)
 	}
 }
 

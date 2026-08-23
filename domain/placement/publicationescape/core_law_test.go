@@ -107,13 +107,14 @@ func TestRequirementForEscapeIsNarrowAndConservative(t *testing.T) {
 }
 
 func TestApplyRouteUsesOnlyEscapeDisplacement(t *testing.T) {
-	if got, ok := applyRoute(plannedRoute{required: placement.OwnedHeap}, placement.Stack); !ok || got != placement.OwnedHeap {
+	if got, ok := applyRoute(plannedRoute{required: placement.OwnedHeap}, placement.DefaultFact()); !ok || got != (placement.Fact{Class: placement.OwnedHeap, RetainEscape: placement.EvidenceProven}) {
 		t.Fatalf("owned route from stack = %v, want owned heap", got)
 	}
-	if got, ok := applyRoute(plannedRoute{required: placement.SharedHeap}, placement.OwnedHeap); !ok || got != placement.SharedHeap {
+	owned := placement.Fact{Class: placement.OwnedHeap, RetainEscape: placement.EvidenceRefuted}
+	if got, ok := applyRoute(plannedRoute{required: placement.SharedHeap}, owned); !ok || got != (placement.Fact{Class: placement.SharedHeap, RetainEscape: placement.EvidenceProven}) {
 		t.Fatalf("send route from owned heap = %v, want shared heap", got)
 	}
-	if got, ok := applyRoute(plannedRoute{required: placement.Unknown, unknown: true}, placement.Stack); !ok || got != placement.Unknown {
+	if got, ok := applyRoute(plannedRoute{required: placement.Unknown, unknown: true}, placement.DefaultFact()); !ok || got != placement.UnknownFact() {
 		t.Fatalf("unknown route from stack = %v, want unknown", got)
 	}
 }

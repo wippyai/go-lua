@@ -51,7 +51,7 @@ type HotRule struct {
 	packs          *packdomain.Schema
 	callRead       engine.Read[engine.OrderedCells[calldomain.Value]]
 	actualRead     engine.Read[engine.Selection[actualTag, engine.OrderedCells[valuedomain.Value]]]
-	placementRead  engine.Read[engine.Selection[routeTag, engine.OrderedCells[placement.Placement]]]
+	placementRead  engine.Read[engine.Selection[routeTag, engine.OrderedCells[placement.Fact]]]
 }
 
 // BindHot binds one formal ownership Rule through the exact Placement owner.
@@ -79,13 +79,13 @@ func BindHot(
 		owner: owner, values: values, calls: calls, contract: targetContract,
 		packs: packSchema,
 	}
-	implementation, ok := placementowner.BindSelectedRouteRuleDirect(owner, fragment.slot, fragment.carry, fragment.write, owner.FactorRef(), engine.HotRuleSpec[placement.Placement, operand]{
+	implementation, ok := placementowner.BindSelectedRouteRuleDirect(owner, fragment.slot, fragment.carry, fragment.write, owner.FactorRef(), engine.HotRuleSpec[placement.Fact, operand]{
 		OperandContent: func(candidate operand) (operand, [32]byte, bool) {
 			return operandContent(rule.packs, calls.Algebra(), candidate)
 		},
 		OperandResolver: rule.resolveOperand,
 		Fold:            rule.fold,
-	}, engine.HotCarrySpec[placement.Placement, operand]{}, nil)
+	}, engine.HotCarrySpec[placement.Fact, operand]{}, nil)
 	if !ok || implementation == nil {
 		return nil, false
 	}
@@ -107,7 +107,7 @@ func BindHot(
 		return nil, false
 	}
 	rule.actualRead = actualRead
-	placementRead, placementOK := placementowner.AddSelectedRuleDirectOperandRead[operand, placement.Placement, routeTag](implementation, fragment.placementRead, owner.FactorRef(), rule.locatePlacement)
+	placementRead, placementOK := placementowner.AddSelectedRuleDirectOperandRead[operand, placement.Fact, routeTag](implementation, fragment.placementRead, owner.FactorRef(), rule.locatePlacement)
 	if !placementOK {
 		return nil, false
 	}
@@ -271,65 +271,65 @@ func (rule *HotRule) selectorObservations(context engine.SelectorContext, actual
 	return true
 }
 
-func (rule *HotRule) fold(frame engine.Frame[placement.Placement, operand]) engine.RuleResult[placement.Placement] {
+func (rule *HotRule) fold(frame engine.Frame[placement.Fact, operand]) engine.RuleResult[placement.Fact] {
 	candidate, candidateOK := engine.Operand(frame)
 	if !candidateOK || rule == nil || rule.owner == nil || rule.values == nil || rule.calls == nil {
-		return engine.RuleResult[placement.Placement]{}
+		return engine.RuleResult[placement.Fact]{}
 	}
 	actual, actualOK := rule.actual(candidate)
 	if !actualOK {
-		return engine.RuleResult[placement.Placement]{}
+		return engine.RuleResult[placement.Fact]{}
 	}
 	callCells, callOK := engine.ReadValue(frame, rule.callRead)
 	actualSelection, actualOK := engine.ReadValue(frame, rule.actualRead)
 	placementSelection, placementOK := engine.ReadValue(frame, rule.placementRead)
 	if !callOK || !actualOK || !placementOK || callCells.Count() != 1 {
-		return engine.RuleResult[placement.Placement]{}
+		return engine.RuleResult[placement.Fact]{}
 	}
 	callFact, callPresent, callAvailable := callCells.At(0)
 	if !callAvailable {
-		return engine.RuleResult[placement.Placement]{}
+		return engine.RuleResult[placement.Fact]{}
 	}
 	count, countOK := engine.SelectionCount(frame, placementSelection)
 	if !countOK {
-		return engine.RuleResult[placement.Placement]{}
+		return engine.RuleResult[placement.Fact]{}
 	}
 	if !callPresent {
 		if count == 0 {
 			return engine.NoSelection(frame, placementSelection)
 		}
-		return engine.RuleResult[placement.Placement]{}
+		return engine.RuleResult[placement.Fact]{}
 	}
 	var inline [formalObservationInlineWidth]actualObservation
 	observations, bufferOK := formalObservationBuffer(actual.ActualCount(), inline[:])
 	if !bufferOK || !rule.accessObservations(frame, actual, actualSelection, observations) {
-		return engine.RuleResult[placement.Placement]{}
+		return engine.RuleResult[placement.Fact]{}
 	}
 	plan, planOK := planFor(rule.packs, rule.calls.Algebra(), rule.owner.Schema(), rule.values.Schema(), rule.contract, candidate.mounted, callFact, observations)
 	if !planOK || count != plan.routeCount() {
-		return engine.RuleResult[placement.Placement]{}
+		return engine.RuleResult[placement.Fact]{}
 	}
 	if count == 0 {
 		return engine.NoSelection(frame, placementSelection)
 	}
-	return engine.Routed(frame, placementSelection, func(tag routeTag, cells engine.OrderedCells[placement.Placement]) (placement.Placement, bool) {
+	return engine.Routed(frame, placementSelection, func(tag routeTag, cells engine.OrderedCells[placement.Fact]) (placement.Fact, bool) {
 		route, routeOK := routeForTag(plan, tag)
 		if !routeOK || cells.Count() != 1 {
-			return placement.Bottom, false
+			return placement.BottomFact(), false
 		}
 		current, present, available := cells.At(0)
-		current, currentOK := placement.AuthenticateFactorCell(current, present, available)
+		current, currentOK := placement.AuthenticateFactCell(current, present, available)
 		if !currentOK {
-			return placement.Bottom, false
+			return placement.BottomFact(), false
 		}
 		if route.unknown {
-			return placement.Unknown, true
+			return placement.UnknownFact(), true
 		}
-		return placement.DisplaceChecked(current, route.escape)
+		return placement.DisplaceFactChecked(current, route.escape)
 	})
 }
 
-func (rule *HotRule) accessObservations(frame engine.Frame[placement.Placement, operand], actual packdomain.MountedActualProjection, selection engine.Selection[actualTag, engine.OrderedCells[valuedomain.Value]], observations []actualObservation) bool {
+func (rule *HotRule) accessObservations(frame engine.Frame[placement.Fact, operand], actual packdomain.MountedActualProjection, selection engine.Selection[actualTag, engine.OrderedCells[valuedomain.Value]], observations []actualObservation) bool {
 	if rule == nil || rule.values == nil {
 		return false
 	}

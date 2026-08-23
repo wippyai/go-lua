@@ -16,7 +16,7 @@ type HotRule struct {
 	values          *valueowner.HotOwner
 	valueAnchorRead engine.Read[engine.OrderedCells[valuedomain.Value]]
 	valueRead       engine.Read[engine.Selection[valueTag, engine.OrderedCells[valuedomain.Value]]]
-	placementRead   engine.Read[engine.Selection[routeTag, engine.OrderedCells[placementdomain.Placement]]]
+	placementRead   engine.Read[engine.Selection[routeTag, engine.OrderedCells[placementdomain.Fact]]]
 }
 
 // BindHot binds the exact return-boundary read and selected Placement route
@@ -28,13 +28,13 @@ func BindHot(binding *engine.SchemaBinding, fragment *SchemaFragment, owner *pla
 		return nil, false
 	}
 	rule := &HotRule{owner: owner, values: values}
-	implementation, ok := placementowner.BindSelectedRouteRuleDirect(owner, fragment.slot, fragment.carry, fragment.write, owner.FactorRef(), engine.HotRuleSpec[placementdomain.Placement, operand]{
+	implementation, ok := placementowner.BindSelectedRouteRuleDirect(owner, fragment.slot, fragment.carry, fragment.write, owner.FactorRef(), engine.HotRuleSpec[placementdomain.Fact, operand]{
 		OperandContent: func(candidate operand) (operand, [32]byte, bool) {
 			return returnOperandContentForSchema(values.Schema(), candidate)
 		},
 		OperandResolver: rule.resolveOperand,
 		Fold:            rule.fold,
-	}, engine.HotCarrySpec[placementdomain.Placement, operand]{}, nil)
+	}, engine.HotCarrySpec[placementdomain.Fact, operand]{}, nil)
 	if !ok || implementation == nil {
 		return nil, false
 	}
@@ -51,7 +51,7 @@ func BindHot(binding *engine.SchemaBinding, fragment *SchemaFragment, owner *pla
 		return nil, false
 	}
 	rule.valueRead = valueRead
-	placementRead, placementReadOK := placementowner.AddSelectedRuleDirectOperandRead[operand, placementdomain.Placement, routeTag](implementation, fragment.placementRead, owner.FactorRef(), rule.locate)
+	placementRead, placementReadOK := placementowner.AddSelectedRuleDirectOperandRead[operand, placementdomain.Fact, routeTag](implementation, fragment.placementRead, owner.FactorRef(), rule.locate)
 	if !placementReadOK {
 		return nil, false
 	}
@@ -170,7 +170,7 @@ func (rule *HotRule) collectFacts(context engine.SelectorContext, selection engi
 	return facts, true
 }
 
-func (rule *HotRule) collectFactsFrame(frame engine.Frame[placementdomain.Placement, operand], selection engine.Selection[valueTag, engine.OrderedCells[valuedomain.Value]], operand operand) (returnFacts, bool) {
+func (rule *HotRule) collectFactsFrame(frame engine.Frame[placementdomain.Fact, operand], selection engine.Selection[valueTag, engine.OrderedCells[valuedomain.Value]], operand operand) (returnFacts, bool) {
 	if rule == nil || rule.values == nil {
 		return returnFacts{}, false
 	}
@@ -211,46 +211,46 @@ func (rule *HotRule) collectFactsFrame(frame engine.Frame[placementdomain.Placem
 	return facts, true
 }
 
-func (rule *HotRule) fold(frame engine.Frame[placementdomain.Placement, operand]) engine.RuleResult[placementdomain.Placement] {
+func (rule *HotRule) fold(frame engine.Frame[placementdomain.Fact, operand]) engine.RuleResult[placementdomain.Fact] {
 	operand, operandOK := engine.Operand(frame)
 	if !operandOK || rule == nil || rule.values == nil || rule.owner == nil {
-		return engine.RuleResult[placementdomain.Placement]{}
+		return engine.RuleResult[placementdomain.Fact]{}
 	}
 	if _, _, contentOK := returnOperandContentForSchema(rule.values.Schema(), operand); !contentOK {
-		return engine.RuleResult[placementdomain.Placement]{}
+		return engine.RuleResult[placementdomain.Fact]{}
 	}
 	anchorCells, anchorReadOK := engine.ReadValue(frame, rule.valueAnchorRead)
 	selection, valueReadOK := engine.ReadValue(frame, rule.valueRead)
 	placementSelection, placementReadOK := engine.ReadValue(frame, rule.placementRead)
 	if !anchorReadOK || !valueReadOK || !placementReadOK {
-		return engine.RuleResult[placementdomain.Placement]{}
+		return engine.RuleResult[placementdomain.Fact]{}
 	}
 	facts, factsOK := rule.collectFactsFrame(frame, selection, operand)
 	if !factsOK || anchorCells.Count() != 1 {
-		return engine.RuleResult[placementdomain.Placement]{}
+		return engine.RuleResult[placementdomain.Fact]{}
 	}
 	anchor, anchorPresent, anchorAvailable := anchorCells.At(0)
 	if !authenticatedReturnFact(rule.values.Schema(), anchor, anchorPresent, anchorAvailable) || anchorPresent && !rule.values.Schema().AdmitsCoordinate(operand.root, anchor) {
-		return engine.RuleResult[placementdomain.Placement]{}
+		return engine.RuleResult[placementdomain.Fact]{}
 	}
 	count, countOK := engine.SelectionCount(frame, placementSelection)
 	if !countOK {
-		return engine.RuleResult[placementdomain.Placement]{}
+		return engine.RuleResult[placementdomain.Fact]{}
 	}
 	plan, planOK := routePlanForFacts(rule.owner.Schema(), rule.values.Schema(), facts, operand.boundary.HasTail())
 	if !planOK || count != plan.routeCount() {
-		return engine.RuleResult[placementdomain.Placement]{}
+		return engine.RuleResult[placementdomain.Fact]{}
 	}
 	if count == 0 {
 		return engine.NoSelection(frame, placementSelection)
 	}
-	return engine.Routed(frame, placementSelection, func(tag routeTag, prior engine.OrderedCells[placementdomain.Placement]) (placementdomain.Placement, bool) {
+	return engine.Routed(frame, placementSelection, func(tag routeTag, prior engine.OrderedCells[placementdomain.Fact]) (placementdomain.Fact, bool) {
 		if _, routeOK := routeAtTag(plan, tag); !routeOK || prior.Count() != 1 {
-			return placementdomain.Bottom, false
+			return placementdomain.BottomFact(), false
 		}
 		current, currentPresent, currentAvailable := prior.At(0)
 		if !currentAvailable {
-			return placementdomain.Bottom, false
+			return placementdomain.BottomFact(), false
 		}
 		return returnValue(current, currentPresent, plan)
 	})

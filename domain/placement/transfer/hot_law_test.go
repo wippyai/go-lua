@@ -83,8 +83,9 @@ func TestTransferMayDeliverDisplacesTheExactPayloadRootWithoutPublicationEffect(
 	if !routeOK || route.key != fixture.payloadRoot {
 		t.Fatalf("MayDeliver route = %#v/%t, want exact payload root %v", route, routeOK, fixture.payloadRoot)
 	}
-	if displaced, displacementOK := placementdomain.DisplaceChecked(placementdomain.OwnedHeap, placementdomain.Send); !displacementOK || displaced != placementdomain.SharedHeap {
-		t.Fatalf("Send displacement = %s/%t, want SharedHeap/true", displaced, displacementOK)
+	current := placementdomain.Fact{Class: placementdomain.OwnedHeap, RetainEscape: placementdomain.EvidenceRefuted}
+	if displaced, displacementOK := placementdomain.DisplaceFactChecked(current, placementdomain.Send); !displacementOK || displaced != (placementdomain.Fact{Class: placementdomain.SharedHeap, RetainEscape: placementdomain.EvidenceProven}) {
+		t.Fatalf("Send displacement = %v/%t, want SharedHeap/Proven/true", displaced, displacementOK)
 	}
 }
 

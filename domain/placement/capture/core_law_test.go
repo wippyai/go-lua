@@ -13,16 +13,16 @@ var (
 
 func TestCapturePlacementIsTheLeastUpperBoundOfClosureAndSource(t *testing.T) {
 	cases := []struct {
-		closure placement.Placement
-		source  placement.Placement
-		want    placement.Placement
+		closure placement.Fact
+		source  placement.Fact
+		want    placement.Fact
 	}{
-		{placement.Stack, placement.Stack, placement.Stack},
-		{placement.Stack, placement.OwnedHeap, placement.OwnedHeap},
-		{placement.OwnedHeap, placement.Stack, placement.OwnedHeap},
-		{placement.OwnedHeap, placement.SharedHeap, placement.SharedHeap},
-		{placement.SharedHeap, placement.OwnedHeap, placement.SharedHeap},
-		{placement.Unknown, placement.Stack, placement.Unknown},
+		{placement.DefaultFact(), placement.DefaultFact(), placement.DefaultFact()},
+		{placement.DefaultFact(), placement.Fact{Class: placement.OwnedHeap, RetainEscape: placement.EvidenceRefuted}, placement.Fact{Class: placement.OwnedHeap, RetainEscape: placement.EvidenceRefuted}},
+		{placement.Fact{Class: placement.OwnedHeap, RetainEscape: placement.EvidenceProven}, placement.DefaultFact(), placement.Fact{Class: placement.OwnedHeap, RetainEscape: placement.EvidenceProven}},
+		{placement.Fact{Class: placement.OwnedHeap, RetainEscape: placement.EvidenceProven}, placement.Fact{Class: placement.SharedHeap, RetainEscape: placement.EvidenceRefuted}, placement.Fact{Class: placement.SharedHeap, RetainEscape: placement.EvidenceProven}},
+		{placement.Fact{Class: placement.SharedHeap, RetainEscape: placement.EvidenceProven}, placement.Fact{Class: placement.OwnedHeap, RetainEscape: placement.EvidenceRefuted}, placement.Fact{Class: placement.SharedHeap, RetainEscape: placement.EvidenceProven}},
+		{placement.UnknownFact(), placement.DefaultFact(), placement.UnknownFact()},
 	}
 	for _, item := range cases {
 		if got, ok := captureValue(item.closure, item.source); !ok || got != item.want {
@@ -35,7 +35,10 @@ func TestCapturePlacementDoesNotSynthesizeAnAbsentSource(t *testing.T) {
 	// captureValue is only reached after the selected source cell has been
 	// authenticated. Its value-level contract therefore has no absent-source
 	// compensation branch; an absent cell is refused by route planning.
-	if got, ok := captureValue(placement.OwnedHeap, placement.SharedHeap); !ok || got != placement.SharedHeap {
+	closure := placement.Fact{Class: placement.OwnedHeap, RetainEscape: placement.EvidenceProven}
+	source := placement.Fact{Class: placement.SharedHeap, RetainEscape: placement.EvidenceRefuted}
+	want := placement.Fact{Class: placement.SharedHeap, RetainEscape: placement.EvidenceProven}
+	if got, ok := captureValue(closure, source); !ok || got != want {
 		t.Fatalf("authenticated source capture = %s/%t, want SharedHeap/true", got, ok)
 	}
 }

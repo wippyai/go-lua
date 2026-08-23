@@ -15,13 +15,13 @@ import (
 // the exact routed write surface, and no engine-level suspension policy is
 // encoded here.
 type SchemaFragment struct {
-	slot          *engine.RuleSlot[placementdomain.Placement, operand]
+	slot          *engine.RuleSlot[placementdomain.Fact, operand]
 	input         engine.SchemaInput
 	valueAnchor   engine.SchemaReadSlot[valuedomain.Value]
 	valueRead     engine.SchemaReadSlot[valuedomain.Value]
-	placementRead engine.SchemaReadSlot[placementdomain.Placement]
-	carry         engine.SchemaCarrySlot[placementdomain.Placement]
-	write         engine.SchemaWriteSlot[placementdomain.Placement]
+	placementRead engine.SchemaReadSlot[placementdomain.Fact]
+	carry         engine.SchemaCarrySlot[placementdomain.Fact]
+	write         engine.SchemaWriteSlot[placementdomain.Fact]
 	route         bool
 	semantic      identity.SemanticKey
 }
@@ -38,7 +38,7 @@ func DeclareSchema(builder *engine.SchemaBuilder, semantic, operandFamily identi
 	if builder == nil || values == nil || owner == nil || !identity.DistinctKeys(semantic, operandFamily) {
 		return nil, false
 	}
-	slot, ok := engine.NewRuleSlot[placementdomain.Placement, operand](builder, engine.SchemaRuleSpec[placementdomain.Placement]{
+	slot, ok := engine.NewRuleSlot[placementdomain.Fact, operand](builder, engine.SchemaRuleSpec[placementdomain.Fact]{
 		Semantic: semantic, OperandFamily: operandFamily, Inputs: 1,
 		Output: owner.Ref(),
 	})
@@ -57,7 +57,7 @@ func DeclareSchema(builder *engine.SchemaBuilder, semantic, operandFamily identi
 	if !ok {
 		return nil, false
 	}
-	placementRead, ok := engine.SchemaSelectedRead[placementdomain.Placement](slot, owner.ExactRead(), input, valueAnchor.Ref(), valueRead.Ref())
+	placementRead, ok := engine.SchemaSelectedRead[placementdomain.Fact](slot, owner.ExactRead(), input, valueAnchor.Ref(), valueRead.Ref())
 	if !ok {
 		return nil, false
 	}
@@ -72,7 +72,7 @@ func DeclareSchema(builder *engine.SchemaBuilder, semantic, operandFamily identi
 	return &SchemaFragment{slot: slot, input: input, valueAnchor: valueAnchor, valueRead: valueRead, placementRead: placementRead, carry: carry, write: write, route: true, semantic: semantic}, true
 }
 
-func (fragment *SchemaFragment) RuleSlot() *engine.RuleSlot[placementdomain.Placement, operand] {
+func (fragment *SchemaFragment) RuleSlot() *engine.RuleSlot[placementdomain.Fact, operand] {
 	if fragment == nil {
 		return nil
 	}

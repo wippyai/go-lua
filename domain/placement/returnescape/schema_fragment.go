@@ -14,17 +14,17 @@ import (
 // Value read carries the heterogeneous root/member rows, while Placement's
 // selected read supplies the route-write predecessor geometry.
 type SchemaFragment struct {
-	slot          *engine.RuleSlot[placement.Placement, operand]
+	slot          *engine.RuleSlot[placement.Fact, operand]
 	input         engine.SchemaInput
 	valueAnchor   engine.SchemaReadSlot[valuedomain.Value]
 	valueRead     engine.SchemaReadSlot[valuedomain.Value]
-	placementRead engine.SchemaReadSlot[placement.Placement]
-	carry         engine.SchemaCarrySlot[placement.Placement]
-	write         engine.SchemaWriteSlot[placement.Placement]
+	placementRead engine.SchemaReadSlot[placement.Fact]
+	carry         engine.SchemaCarrySlot[placement.Fact]
+	write         engine.SchemaWriteSlot[placement.Fact]
 	semantic      identity.SemanticKey
 }
 
-func (fragment *SchemaFragment) RuleSlot() *engine.RuleSlot[placement.Placement, operand] {
+func (fragment *SchemaFragment) RuleSlot() *engine.RuleSlot[placement.Fact, operand] {
 	if fragment == nil {
 		return nil
 	}
@@ -38,7 +38,7 @@ func DeclareSchema(builder *engine.SchemaBuilder, semantic, operandFamily identi
 	if builder == nil || values == nil || owner == nil || !identity.DistinctKeys(semantic, operandFamily) {
 		return nil, false
 	}
-	slot, ok := engine.NewRuleSlot[placement.Placement, operand](builder, engine.SchemaRuleSpec[placement.Placement]{
+	slot, ok := engine.NewRuleSlot[placement.Fact, operand](builder, engine.SchemaRuleSpec[placement.Fact]{
 		Semantic: semantic, OperandFamily: operandFamily, Inputs: 1,
 		Output: owner.Ref(),
 	})
@@ -57,7 +57,7 @@ func DeclareSchema(builder *engine.SchemaBuilder, semantic, operandFamily identi
 	if !ok {
 		return nil, false
 	}
-	placementRead, ok := engine.SchemaSelectedRead[placement.Placement](slot, owner.ExactRead(), input, valueAnchor.Ref(), valueRead.Ref())
+	placementRead, ok := engine.SchemaSelectedRead[placement.Fact](slot, owner.ExactRead(), input, valueAnchor.Ref(), valueRead.Ref())
 	if !ok {
 		return nil, false
 	}

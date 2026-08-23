@@ -15,7 +15,7 @@ func TestCompiledPlanStorageEscapePublishesOwnedHeapAndFrameControl(t *testing.T
 	cases := []struct {
 		name   string
 		source string
-		want   placementdomain.Placement
+		want   placementdomain.Fact
 	}{
 		{
 			name: "module-cell",
@@ -23,7 +23,7 @@ func TestCompiledPlanStorageEscapePublishesOwnedHeapAndFrameControl(t *testing.T
 local retained = { value = 1 }
 return true
 `,
-			want: placementdomain.OwnedHeap,
+			want: placementdomain.Fact{Class: placementdomain.OwnedHeap, RetainEscape: placementdomain.EvidenceProven},
 		},
 		{
 			name: "frame-cell",
@@ -35,7 +35,7 @@ end
 localOnly()
 return true
 `,
-			want: placementdomain.Stack,
+			want: placementdomain.Fact{Class: placementdomain.Stack, RetainEscape: placementdomain.EvidenceRefuted},
 		},
 	}
 	for _, test := range cases {
@@ -86,8 +86,8 @@ return true
 						break
 					}
 					kind, kindOK := row.Kind()
-					class, classOK := row.Placement()
-					if kindOK && classOK && kind == placementdomain.AllocationKindTable && row.AllocationID() == tableID && class == test.want {
+					fact, factOK := row.Fact()
+					if kindOK && factOK && kind == placementdomain.AllocationKindTable && row.AllocationID() == tableID && fact == test.want {
 						found = true
 					}
 				}

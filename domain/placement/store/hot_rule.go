@@ -16,7 +16,7 @@ type HotRule struct {
 	owner          *placementowner.HotOwner
 	values         *valueowner.HotOwner
 	valueRead      engine.Read[engine.OrderedCells[valuedomain.Value]]
-	placementRead  engine.Read[engine.Selection[uint64, engine.OrderedCells[placement.Placement]]]
+	placementRead  engine.Read[engine.Selection[uint64, engine.OrderedCells[placement.Fact]]]
 }
 
 // BindHot binds the exact Value source read and selected Placement route lane.
@@ -26,13 +26,13 @@ func BindHot(binding *engine.SchemaBinding, fragment *SchemaFragment, owner *pla
 		return nil, false
 	}
 	rule := &HotRule{owner: owner, values: values}
-	implementation, ok := placementowner.BindSelectedRouteRuleDirect(owner, fragment.slot, fragment.carry, fragment.write, owner.FactorRef(), engine.HotRuleSpec[placement.Placement, valuedomain.StorageTransfer]{
+	implementation, ok := placementowner.BindSelectedRouteRuleDirect(owner, fragment.slot, fragment.carry, fragment.write, owner.FactorRef(), engine.HotRuleSpec[placement.Fact, valuedomain.StorageTransfer]{
 		OperandContent: func(candidate valuedomain.StorageTransfer) (valuedomain.StorageTransfer, [32]byte, bool) {
 			return hotStorageTransferContent(values.Schema(), candidate)
 		},
 		OperandResolver: rule.resolveOperand,
 		Fold:            rule.fold,
-	}, engine.HotCarrySpec[placement.Placement, valuedomain.StorageTransfer]{}, nil)
+	}, engine.HotCarrySpec[placement.Fact, valuedomain.StorageTransfer]{}, nil)
 	if !ok || implementation == nil {
 		return nil, false
 	}
@@ -44,7 +44,7 @@ func BindHot(binding *engine.SchemaBinding, fragment *SchemaFragment, owner *pla
 		return nil, false
 	}
 	rule.valueRead = valueRead
-	placementRead, placementReadOK := placementowner.AddSelectedRuleDirectOperandRead[valuedomain.StorageTransfer, placement.Placement, uint64](implementation, fragment.placementRead, owner.FactorRef(), rule.locate)
+	placementRead, placementReadOK := placementowner.AddSelectedRuleDirectOperandRead[valuedomain.StorageTransfer, placement.Fact, uint64](implementation, fragment.placementRead, owner.FactorRef(), rule.locate)
 	if !placementReadOK {
 		return nil, false
 	}
@@ -128,32 +128,32 @@ func (rule *HotRule) locate(context engine.SelectorContext, transfer valuedomain
 	return true
 }
 
-func (rule *HotRule) fold(frame engine.Frame[placement.Placement, valuedomain.StorageTransfer]) engine.RuleResult[placement.Placement] {
+func (rule *HotRule) fold(frame engine.Frame[placement.Fact, valuedomain.StorageTransfer]) engine.RuleResult[placement.Fact] {
 	transfer, operandOK := engine.Operand(frame)
 	if !operandOK || rule == nil || rule.owner == nil || rule.values == nil {
-		return engine.RuleResult[placement.Placement]{}
+		return engine.RuleResult[placement.Fact]{}
 	}
 	canonical, _, contentOK := hotStorageTransferContent(rule.values.Schema(), transfer)
 	if !contentOK {
-		return engine.RuleResult[placement.Placement]{}
+		return engine.RuleResult[placement.Fact]{}
 	}
 	cells, valueReadOK := engine.ReadValue(frame, rule.valueRead)
 	selection, selectionOK := engine.ReadValue(frame, rule.placementRead)
 	if !valueReadOK || !selectionOK || cells.Count() != 1 {
-		return engine.RuleResult[placement.Placement]{}
+		return engine.RuleResult[placement.Fact]{}
 	}
 	fact, present, available := cells.At(0)
 	fact, factOK := authenticatedSource(rule.values.Schema(), fact, present, available)
 	if !factOK {
-		return engine.RuleResult[placement.Placement]{}
+		return engine.RuleResult[placement.Fact]{}
 	}
 	count, countOK := engine.SelectionCount(frame, selection)
 	if !countOK {
-		return engine.RuleResult[placement.Placement]{}
+		return engine.RuleResult[placement.Fact]{}
 	}
 	if fact.IsBottom() {
 		if count != 0 {
-			return engine.RuleResult[placement.Placement]{}
+			return engine.RuleResult[placement.Fact]{}
 		}
 		// This Rule writes through a selected route. An absent source therefore
 		// has an authenticated empty route set, not an unrouted candidate
@@ -163,27 +163,27 @@ func (rule *HotRule) fold(frame engine.Frame[placement.Placement, valuedomain.St
 	}
 	plan, planOK := Plan(rule.owner.Schema(), rule.values.Schema(), fact)
 	if !planOK || count != plan.RouteCount() {
-		return engine.RuleResult[placement.Placement]{}
+		return engine.RuleResult[placement.Fact]{}
 	}
 	if count == 0 {
 		return engine.NoSelection(frame, selection)
 	}
 	lifetime, lifetimeOK := canonical.Lifetime()
 	if !lifetimeOK {
-		return engine.RuleResult[placement.Placement]{}
+		return engine.RuleResult[placement.Fact]{}
 	}
 	storageLifetime := FromProgram(lifetime)
 	if !storageLifetime.Valid() {
-		return engine.RuleResult[placement.Placement]{}
+		return engine.RuleResult[placement.Fact]{}
 	}
-	return engine.Routed(frame, selection, func(tag uint64, prior engine.OrderedCells[placement.Placement]) (placement.Placement, bool) {
+	return engine.Routed(frame, selection, func(tag uint64, prior engine.OrderedCells[placement.Fact]) (placement.Fact, bool) {
 		if _, routeOK := plan.routeAtTag(tag); !routeOK || prior.Count() != 1 {
-			return placement.Bottom, false
+			return placement.BottomFact(), false
 		}
 		current, present, currentAvailable := prior.At(0)
-		current, currentOK := placement.AuthenticateFactorCell(current, present, currentAvailable)
+		current, currentOK := placement.AuthenticateFactCell(current, present, currentAvailable)
 		if !currentOK {
-			return placement.Bottom, false
+			return placement.BottomFact(), false
 		}
 		return Apply(current, storageLifetime)
 	})

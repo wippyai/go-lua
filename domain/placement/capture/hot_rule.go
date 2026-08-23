@@ -17,9 +17,9 @@ type HotRule struct {
 	values         *valueowner.HotOwner
 	schema         placementdomain.Schema
 	valueSchema    *valuedomain.Schema
-	parentRead     engine.Read[engine.OrderedCells[placementdomain.Placement]]
+	parentRead     engine.Read[engine.OrderedCells[placementdomain.Fact]]
 	valueRead      engine.Read[engine.Selection[routeTag, engine.OrderedCells[valuedomain.Value]]]
-	placementRead  engine.Read[engine.Selection[routeTag, engine.OrderedCells[placementdomain.Placement]]]
+	placementRead  engine.Read[engine.Selection[routeTag, engine.OrderedCells[placementdomain.Fact]]]
 }
 
 // Capture source rows are normally short. Keep the authored-order fact plane
@@ -37,15 +37,15 @@ func BindHot(binding *engine.SchemaBinding, fragment *SchemaFragment, owner *pla
 		return nil, false
 	}
 	rule := &HotRule{owner: owner, values: values, schema: schema, valueSchema: valueSchema}
-	implementation, implementationOK := placementowner.BindSelectedRouteRuleDirect(owner, fragment.slot, fragment.carry, fragment.write, owner.FactorRef(), engine.HotRuleSpec[placementdomain.Placement, operand]{
+	implementation, implementationOK := placementowner.BindSelectedRouteRuleDirect(owner, fragment.slot, fragment.carry, fragment.write, owner.FactorRef(), engine.HotRuleSpec[placementdomain.Fact, operand]{
 		OperandContent: func(candidate operand) (operand, [32]byte, bool) {
 			return operandContentForSchema(schema, valueSchema, candidate)
 		},
 		OperandResolver: rule.resolveOperand,
-		Fold: func(frame engine.Frame[placementdomain.Placement, operand]) engine.RuleResult[placementdomain.Placement] {
+		Fold: func(frame engine.Frame[placementdomain.Fact, operand]) engine.RuleResult[placementdomain.Fact] {
 			return rule.fold(frame)
 		},
-	}, engine.HotCarrySpec[placementdomain.Placement, operand]{}, nil)
+	}, engine.HotCarrySpec[placementdomain.Fact, operand]{}, nil)
 	if !implementationOK || implementation == nil {
 		return nil, false
 	}
@@ -62,7 +62,7 @@ func BindHot(binding *engine.SchemaBinding, fragment *SchemaFragment, owner *pla
 		return nil, false
 	}
 	rule.valueRead = valueRead
-	placementRead, placementOK := placementowner.AddSelectedRuleDirectOperandRead[operand, placementdomain.Placement, routeTag](implementation, fragment.placements, owner.FactorRef(), rule.locateRoutes)
+	placementRead, placementOK := placementowner.AddSelectedRuleDirectOperandRead[operand, placementdomain.Fact, routeTag](implementation, fragment.placements, owner.FactorRef(), rule.locateRoutes)
 	if !placementOK {
 		return nil, false
 	}
@@ -174,54 +174,54 @@ func (rule *HotRule) locateRoutes(context engine.SelectorContext, candidate oper
 	return true
 }
 
-func (rule *HotRule) fold(frame engine.Frame[placementdomain.Placement, operand]) engine.RuleResult[placementdomain.Placement] {
+func (rule *HotRule) fold(frame engine.Frame[placementdomain.Fact, operand]) engine.RuleResult[placementdomain.Fact] {
 	candidate, operandOK := engine.Operand(frame)
 	if !operandOK || rule == nil || rule.owner == nil || rule.values == nil || !rule.schema.Valid() || rule.valueSchema == nil {
-		return engine.RuleResult[placementdomain.Placement]{}
+		return engine.RuleResult[placementdomain.Fact]{}
 	}
 	parentCells, parentOK := engine.ReadValue(frame, rule.parentRead)
 	valueSelection, valuesOK := engine.ReadValue(frame, rule.valueRead)
 	placementSelection, placementOK := engine.ReadValue(frame, rule.placementRead)
 	if !parentOK || !valuesOK || !placementOK {
-		return engine.RuleResult[placementdomain.Placement]{}
+		return engine.RuleResult[placementdomain.Fact]{}
 	}
 	parent, parentPresent, parentAvailable := oneOrderedCell(parentCells)
 	if !parentAvailable || !parentPresent {
 		return engine.NoCandidate(frame)
 	}
-	if !validPlacement(parent) {
-		return engine.RuleResult[placementdomain.Placement]{}
+	parent, parentFactOK := placementdomain.AuthenticateFactCell(parent, parentPresent, parentAvailable)
+	if !parentFactOK {
+		return engine.RuleResult[placementdomain.Fact]{}
 	}
-	parentPlacement := parent
 	plan, factsOK := rule.transferFacts(frame, valueSelection, candidate)
 	if !factsOK {
-		return engine.RuleResult[placementdomain.Placement]{}
+		return engine.RuleResult[placementdomain.Fact]{}
 	}
 	count, countOK := engine.SelectionCount(frame, placementSelection)
 	if !countOK || count != plan.routeCount() {
-		return engine.RuleResult[placementdomain.Placement]{}
+		return engine.RuleResult[placementdomain.Fact]{}
 	}
 	if count == 0 {
 		return engine.NoSelection(frame, placementSelection)
 	}
-	return engine.Routed(frame, placementSelection, func(tag routeTag, prior engine.OrderedCells[placementdomain.Placement]) (placementdomain.Placement, bool) {
+	return engine.Routed(frame, placementSelection, func(tag routeTag, prior engine.OrderedCells[placementdomain.Fact]) (placementdomain.Fact, bool) {
 		expected, routeOK := routeAtTag(plan, tag)
 		if !routeOK || prior.Count() != 1 {
-			return placementdomain.Bottom, false
+			return placementdomain.BottomFact(), false
 		}
 		if expected.key.Kind() != heapdomain.RootAllocation {
-			return placementdomain.Bottom, false
+			return placementdomain.BottomFact(), false
 		}
 		current, currentPresent, currentAvailable := prior.At(0)
-		current, currentOK := placementdomain.AuthenticateFactorCell(current, currentPresent, currentAvailable)
+		current, currentOK := placementdomain.AuthenticateFactCell(current, currentPresent, currentAvailable)
 		if !currentOK {
-			return placementdomain.Bottom, false
+			return placementdomain.BottomFact(), false
 		}
-		return captureValue(parentPlacement, current)
+		return captureValue(parent, current)
 	})
 }
 
-func (rule *HotRule) transferFacts(frame engine.Frame[placementdomain.Placement, operand], selection engine.Selection[routeTag, engine.OrderedCells[valuedomain.Value]], candidate operand) (routePlan, bool) {
+func (rule *HotRule) transferFacts(frame engine.Frame[placementdomain.Fact, operand], selection engine.Selection[routeTag, engine.OrderedCells[valuedomain.Value]], candidate operand) (routePlan, bool) {
 	count, countOK := engine.SelectionCount(frame, selection)
 	if !countOK || count != len(candidate.sources) || count == 0 {
 		return routePlan{}, false

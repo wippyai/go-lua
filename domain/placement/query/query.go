@@ -28,7 +28,7 @@ func StructureSpecs() []structure.Spec {
 // Placement factor owner.
 type SummaryQueryFragment struct {
 	slot          *engine.QuerySlot[placementdomain.PlacementSummaryObservation]
-	placementRead engine.SchemaReadForm[placementdomain.Placement]
+	placementRead engine.SchemaReadForm[placementdomain.Fact]
 	heapRead      engine.SchemaReadForm[heapdomain.Value]
 	evidenceRead  engine.SchemaReadForm[placementsuspension.Evidence]
 	freezer       identity.SemanticKey
@@ -118,9 +118,9 @@ func summaryQuerySpec(placementOwner *placementowner.HotOwner, heapOwner *heapow
 	schema := placementOwner.Schema()
 	containmentCache := placementOwner.StaticContainmentCache()
 	projections := []engine.QueryProjectionSpec[placementdomain.PlacementSummaryObservation]{
-		engine.NewSummaryQueryProjection(placementOwner.FoldSummaryRead(), engine.QueryProjectionFold[placementdomain.Placement, placementdomain.PlacementSummaryObservation]{
+		engine.NewSummaryQueryProjection(placementOwner.FoldSummaryRead(), engine.QueryProjectionFold[placementdomain.Fact, placementdomain.PlacementSummaryObservation]{
 			BorrowIssued: true,
-			Accumulate: func(result placementdomain.PlacementSummaryObservation, cells engine.OrderedCells[placementdomain.Placement]) (placementdomain.PlacementSummaryObservation, bool) {
+			Accumulate: func(result placementdomain.PlacementSummaryObservation, cells engine.OrderedCells[placementdomain.Fact]) (placementdomain.PlacementSummaryObservation, bool) {
 				return placementdomain.AccumulatePlacementSummary(schema, result, cells)
 			},
 		}),

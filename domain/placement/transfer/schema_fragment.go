@@ -17,17 +17,17 @@ import (
 // authority are Link inputs to the hot binder; neither is a second Factor
 // principal in this cold geometry.
 type SchemaFragment struct {
-	slot          *engine.RuleSlot[placement.Placement, operand]
+	slot          *engine.RuleSlot[placement.Fact, operand]
 	callRead      engine.SchemaReadSlot[calldomain.Value]
 	actualRead    engine.SchemaReadSlot[valuedomain.Value]
-	placementRead engine.SchemaReadSlot[placement.Placement]
-	carry         engine.SchemaCarrySlot[placement.Placement]
-	write         engine.SchemaWriteSlot[placement.Placement]
+	placementRead engine.SchemaReadSlot[placement.Fact]
+	carry         engine.SchemaCarrySlot[placement.Fact]
+	write         engine.SchemaWriteSlot[placement.Fact]
 	semantic      identity.SemanticKey
 }
 
 // RuleSlot returns the exact cold Rule declaration for composition.
-func (fragment *SchemaFragment) RuleSlot() *engine.RuleSlot[placement.Placement, operand] {
+func (fragment *SchemaFragment) RuleSlot() *engine.RuleSlot[placement.Fact, operand] {
 	if fragment == nil {
 		return nil
 	}
@@ -48,7 +48,7 @@ func DeclareSchema(
 		!identity.DistinctKeys(semantic, operandFamily) {
 		return nil, false
 	}
-	slot, ok := engine.NewRuleSlot[placement.Placement, operand](builder, engine.SchemaRuleSpec[placement.Placement]{
+	slot, ok := engine.NewRuleSlot[placement.Fact, operand](builder, engine.SchemaRuleSpec[placement.Fact]{
 		Semantic: semantic, OperandFamily: operandFamily, Inputs: 1,
 		Output: owner.Ref(),
 	})
@@ -67,7 +67,7 @@ func DeclareSchema(
 	if !ok {
 		return nil, false
 	}
-	placementRead, ok := engine.SchemaSelectedRead[placement.Placement](slot, owner.ExactRead(), input, callRead.Ref(), actualRead.Ref())
+	placementRead, ok := engine.SchemaSelectedRead[placement.Fact](slot, owner.ExactRead(), input, callRead.Ref(), actualRead.Ref())
 	if !ok {
 		return nil, false
 	}

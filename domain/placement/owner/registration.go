@@ -73,23 +73,23 @@ func BindAxis[A axisInputs](binding *engine.SchemaBinding, context axis.Binding[
 
 // AlgebraAxis publishes Placement's owner-typed factor algebra through the
 // axis declaration surface.
-func AlgebraAxis(owner *HotOwner) (axis.Algebra[placement.Placement], bool) {
+func AlgebraAxis(owner *HotOwner) (axis.Algebra[placement.Fact], bool) {
 	spec, ok := owner.FactorSpec()
 	if !ok {
-		return axis.Algebra[placement.Placement]{}, false
+		return axis.Algebra[placement.Fact]{}, false
 	}
 	return adoptFactor(spec)
 }
 
-func adoptFactor(spec engine.HotFactorSpec[coordinate, placement.Placement]) (axis.Algebra[placement.Placement], bool) {
-	return axis.Adopt(axis.CarrierAlgebra[coordinate, placement.Placement]{
+func adoptFactor(spec engine.HotFactorSpec[coordinate, placement.Fact]) (axis.Algebra[placement.Fact], bool) {
+	return axis.Adopt(axis.CarrierAlgebra[coordinate, placement.Fact]{
 		KeyEnd:      spec.KeyEnd,
 		Lattice:     spec.Lattice,
 		Default:     spec.Default,
 		AdmitAt:     spec.AdmitAt,
 		Fingerprint: spec.Fingerprint,
-		Widen:       axis.CarrierRank[coordinate, placement.Placement]{Width: spec.WidenRank.Width, At: spec.WidenRank.At},
-		Narrow:      axis.CarrierRank[coordinate, placement.Placement]{Width: spec.NarrowRank.Width, At: spec.NarrowRank.At},
+		Widen:       axis.CarrierRank[coordinate, placement.Fact]{Width: spec.WidenRank.Width, At: spec.WidenRank.At},
+		Narrow:      axis.CarrierRank[coordinate, placement.Fact]{Width: spec.NarrowRank.Width, At: spec.NarrowRank.At},
 	})
 }
 

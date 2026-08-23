@@ -7,7 +7,7 @@ import (
 	"github.com/wippyai/go-lua/domain/placement"
 )
 
-var storeBenchmarkPlacement placement.Placement
+var storeBenchmarkPlacement placement.Fact
 
 var (
 	storeRouteBenchmarkResult Route
@@ -39,12 +39,12 @@ func BenchmarkStorageApply(b *testing.B) {
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		var ok bool
-		storeBenchmarkPlacement, ok = Apply(placement.Stack, lifetime)
+		storeBenchmarkPlacement, ok = Apply(placement.DefaultFact(), lifetime)
 		if !ok {
 			b.Fatal("storage placement input")
 		}
 	}
-	if storeBenchmarkPlacement != placement.SharedHeap {
+	if storeBenchmarkPlacement != (placement.Fact{Class: placement.SharedHeap, RetainEscape: placement.EvidenceProven}) {
 		b.Fatal("storage placement")
 	}
 }

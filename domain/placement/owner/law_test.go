@@ -76,7 +76,7 @@ func placementHeapFixture(t testing.TB) heap.Schema {
 	return schema
 }
 
-func placementOwnerFixture(t testing.TB) (placement.Schema, axis.Algebra[placement.Placement]) {
+func placementOwnerFixture(t testing.TB) (placement.Schema, axis.Algebra[placement.Fact]) {
 	t.Helper()
 	heaps := placementHeapFixture(t)
 	projected, ok := placement.NewSchema(heaps)
@@ -190,14 +190,14 @@ func TestPlacementEmptyHeapKeepsZeroWidthFactorAndSummary(t *testing.T) {
 	if !specOK || spec.KeyEnd != 0 || !algebraOK || algebra.KeyEnd != 0 {
 		t.Fatalf("empty Placement width spec=%d/%t algebra=%d/%t", spec.KeyEnd, specOK, algebra.KeyEnd, algebraOK)
 	}
-	if spec.AdmitAt(0, placement.Bottom) || algebra.AdmitAt(0, placement.Bottom) {
+	if spec.AdmitAt(0, placement.BottomFact()) || algebra.AdmitAt(0, placement.BottomFact()) {
 		t.Fatal("empty Placement factor admitted a phantom coordinate")
 	}
 
 	observation := placement.BeginPlacementSummary(projected)
-	observation, observed := placement.AccumulatePlacementSummaryRows(projected, observation, 0, func(int) (placement.Placement, bool, bool) {
+	observation, observed := placement.AccumulatePlacementSummaryRows(projected, observation, 0, func(int) (placement.Fact, bool, bool) {
 		t.Fatal("empty Placement summary addressed a coordinate")
-		return placement.Bottom, false, false
+		return placement.BottomFact(), false, false
 	})
 	if !observed || !observation.Valid || len(observation.Values) != 0 || len(observation.Present) != 0 || observation.Rows != 0 {
 		t.Fatalf("empty Placement summary = %#v/%t", observation, observed)
@@ -213,14 +213,16 @@ func TestPlacementFactorContainsOnlyAllocationsWithStackDefault(t *testing.T) {
 			t.Fatalf("placement ordinal %d is not an allocation root", index)
 		}
 		foundAllocation = true
-		if algebra.AdmitAt(uint64(index), placement.Bottom) || algebra.AdmitAt(uint64(index), placement.Interpreter) || algebra.AdmitAt(uint64(index), placement.Register) {
+		if algebra.AdmitAt(uint64(index), placement.BottomFact()) ||
+			algebra.AdmitAt(uint64(index), placement.Fact{Class: placement.Interpreter, RetainEscape: placement.EvidenceRefuted}) ||
+			algebra.AdmitAt(uint64(index), placement.Fact{Class: placement.Register, RetainEscape: placement.EvidenceRefuted}) {
 			t.Fatalf("allocation ordinal %d admitted a non-placement value", index)
 		}
 	}
 	if !foundAllocation {
 		t.Fatal("fixture has no allocation root")
 	}
-	if algebra.Default != placement.Stack {
+	if algebra.Default != placement.DefaultFact() {
 		t.Fatalf("Placement default = %v, want Stack", algebra.Default)
 	}
 }
@@ -241,7 +243,12 @@ func TestPlacementLatticeAndOneComponentRank(t *testing.T) {
 	if allocationIndex < 0 {
 		t.Fatal("placement fixture has no allocation coordinate")
 	}
-	values := []placement.Placement{placement.Stack, placement.OwnedHeap, placement.SharedHeap, placement.Unknown}
+	values := []placement.Fact{
+		placement.DefaultFact(),
+		{Class: placement.OwnedHeap, RetainEscape: placement.EvidenceRefuted},
+		{Class: placement.SharedHeap, RetainEscape: placement.EvidenceRefuted},
+		placement.UnknownFact(),
+	}
 	wantRanks := []uint64{3, 2, 1, 0}
 	for index, value := range values {
 		if !algebra.AdmitAt(uint64(allocationIndex), value) {
@@ -251,8 +258,8 @@ func TestPlacementLatticeAndOneComponentRank(t *testing.T) {
 			t.Fatalf("rank(%v) = %d, want %d", value, rank, wantRanks[index])
 		}
 	}
-	lattice := placement.Lattice()
-	if lattice.Bottom() != placement.Bottom || lattice.Top() != placement.Unknown {
+	lattice := placement.FactLattice()
+	if lattice.Bottom() != placement.BottomFact() || lattice.Top() != placement.UnknownFact() {
 		t.Fatal("placement lattice endpoints")
 	}
 	for beforeIndex, before := range values {
@@ -272,5 +279,14 @@ func TestPlacementLatticeAndOneComponentRank(t *testing.T) {
 				t.Fatalf("placement Widen(%v, %v) = %v, want %v", before, after, widened, after)
 			}
 		}
+	}
+	for _, polarity := range []placement.EvidenceState{placement.EvidenceRefuted, placement.EvidenceProven} {
+		fact := placement.Fact{Class: placement.Stack, RetainEscape: polarity}
+		if rank := algebra.Widen.At(uint64(allocationIndex), fact, 1); rank != 1 {
+			t.Fatalf("retain rank(%v) = %d, want 1", polarity, rank)
+		}
+	}
+	if rank := algebra.Widen.At(uint64(allocationIndex), placement.UnknownFact(), 1); rank != 0 {
+		t.Fatalf("retain rank(unknown) = %d, want 0", rank)
 	}
 }

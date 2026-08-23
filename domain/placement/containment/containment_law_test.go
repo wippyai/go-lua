@@ -217,23 +217,24 @@ func TestContainmentRuleRoutePlanExactAndUnknownIdentityBroadcast(t *testing.T) 
 func TestContainmentUnknownChildIdentityRetainsKnownParentPlacement(t *testing.T) {
 	fixture := newContainmentFixture(t)
 	unknown := mustUnknown(t, fixture.heap)
-	for _, parent := range []placementdomain.Placement{
-		placementdomain.Stack,
-		placementdomain.OwnedHeap,
-		placementdomain.SharedHeap,
-		placementdomain.Unknown,
+	for _, parent := range []placementdomain.Fact{
+		placementdomain.DefaultFact(),
+		{Class: placementdomain.OwnedHeap, RetainEscape: placementdomain.EvidenceProven},
+		{Class: placementdomain.SharedHeap, RetainEscape: placementdomain.EvidenceProven},
+		placementdomain.UnknownFact(),
 	} {
 		for name, child := range map[string]heapdomain.Value{
 			"opaque-edge": mustValue(t, fixture, fixture.roots[0], mustNone(t, fixture.heap), unknown, mustNone(t, fixture.heap)),
 			"top":         fixture.heap.Top(),
 		} {
-			got, ok := routePlacement(parent, child, fixture.heap)
+			got, ok := routePlacement(placementdomain.DefaultFact(), parent, child, fixture.heap)
 			if !ok || got != parent {
 				t.Fatalf("%s child identity parent=%v route=%v/%t, want parent placement", name, parent, got, ok)
 			}
 		}
 	}
-	if got, ok := routePlacement(placementdomain.SharedHeap, fixture.heap.Bottom(), fixture.heap); ok || got != placementdomain.Bottom {
+	shared := placementdomain.Fact{Class: placementdomain.SharedHeap, RetainEscape: placementdomain.EvidenceProven}
+	if got, ok := routePlacement(placementdomain.DefaultFact(), shared, fixture.heap.Bottom(), fixture.heap); ok || got != placementdomain.BottomFact() {
 		t.Fatalf("Bottom child evidence route=%v/%t, want refusal", got, ok)
 	}
 }

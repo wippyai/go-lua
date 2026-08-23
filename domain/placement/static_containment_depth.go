@@ -120,7 +120,7 @@ func buildStaticHeapGraphRows(schema Schema, cellCount int, at func(int) (heapdo
 		if key.Kind() == heapdomain.RootAllocation {
 			graph.allocationOrdinal[dense] = len(graph.allocationDense)
 			graph.allocationDense = append(graph.allocationDense, dense)
-			canonical, canonicalOK := allocationEvidenceForKey(schema, key, Bottom, false)
+			canonical, canonicalOK := allocationEvidenceForKey(schema, key, BottomFact(), false)
 			if !canonicalOK {
 				return staticHeapGraph{}, false
 			}

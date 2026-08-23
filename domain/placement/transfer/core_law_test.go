@@ -212,16 +212,20 @@ func TestTransferSendDisplacementIsMonotoneAndNeverDemotes(t *testing.T) {
 		placementdomain.SharedHeap,
 		placementdomain.Unknown,
 	} {
-		got, ok := placementdomain.DisplaceChecked(current, placementdomain.Send)
+		input := placementdomain.Fact{Class: current, RetainEscape: placementdomain.EvidenceRefuted}
+		got, ok := placementdomain.DisplaceFactChecked(input, placementdomain.Send)
+		if !ok || got.RetainEscape != placementdomain.EvidenceProven {
+			t.Fatalf("Send displacement from %s lost retain provenance: %v/%t", current, got, ok)
+		}
 		want := placementdomain.SharedHeap
 		if current == placementdomain.SharedHeap || current == placementdomain.Unknown {
 			want = current
 		}
-		if !ok || got != want || !got.Covers(current) {
+		if !ok || got.Class != want || !got.Class.Covers(current) {
 			t.Fatalf("Send displacement from %s = %s/%t, want %s and monotone", current, got, ok, want)
 		}
 	}
-	if _, ok := placementdomain.DisplaceChecked(placementdomain.Bottom, placementdomain.Send); ok {
+	if _, ok := placementdomain.DisplaceFactChecked(placementdomain.BottomFact(), placementdomain.Send); ok {
 		t.Fatal("Bottom was converted into a placement instead of refusing")
 	}
 }

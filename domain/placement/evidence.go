@@ -130,8 +130,11 @@ type AllocationEvidence struct {
 	// Class is copied from the Placement factor when a row is present. It is
 	// kept here so a consumer can inspect one complete evidence row without
 	// separately retaining the iterator's class accessor.
-	Class                Placement
-	HasClass             bool
+	Class    Placement
+	HasClass bool
+	// RetainEscape is the path-sensitive provenance carried by the canonical
+	// Placement factor at the sampled point. It is not inferred from Class.
+	RetainEscape         EvidenceState
 	Kind                 AllocationKind
 	HasKind              bool
 	OwnerIdentity        identity.ContentID
@@ -157,6 +160,11 @@ func (e AllocationEvidence) Valid() bool {
 	if !e.HasClass && e.Class != Bottom {
 		return false
 	}
+	if e.HasClass == e.RetainEscape.Absent() {
+		// Class and retain provenance are the two components of one canonical
+		// factor fact; neither may be published without the other.
+		return false
+	}
 	if !e.Kind.Valid() {
 		return false
 	}
@@ -180,7 +188,7 @@ func (e AllocationEvidence) Valid() bool {
 		// presence bit is a detached identity that no consumer may trust.
 		return false
 	}
-	if !e.FrameLocal.Valid() || !e.DiesBeforeSuspension.Valid() || !e.DeepFrozen.Valid() {
+	if !e.RetainEscape.Valid() || !e.FrameLocal.Valid() || !e.DiesBeforeSuspension.Valid() || !e.DeepFrozen.Valid() {
 		return false
 	}
 	if !e.HasDepth && e.Depth != 0 {
@@ -219,6 +227,10 @@ func ComposeAllocationEvidence(base, producer AllocationEvidence) (AllocationEvi
 		result.HasClass = true
 		result.Class = producer.Class
 	}
+	var ok bool
+	if result.RetainEscape, ok = result.RetainEscape.JoinChecked(producer.RetainEscape); !ok {
+		return invalidAllocationEvidence(), false
+	}
 	if producer.HasOwnerIdentity {
 		if result.HasOwnerIdentity && result.OwnerIdentity != producer.OwnerIdentity {
 			return invalidAllocationEvidence(), false
@@ -233,7 +245,6 @@ func ComposeAllocationEvidence(base, producer AllocationEvidence) (AllocationEvi
 		result.HasDepth = true
 		result.Depth = producer.Depth
 	}
-	var ok bool
 	if result.FrameLocal, ok = result.FrameLocal.JoinChecked(producer.FrameLocal); !ok {
 		return invalidAllocationEvidence(), false
 	}
@@ -260,11 +271,11 @@ func invalidAllocationEvidence() AllocationEvidence {
 // allocationEvidenceForKey derives the complete evidence currently justified
 // by Placement's own factor and Heap coordinate. It intentionally leaves all
 // columns without an authenticated producer absent.
-func allocationEvidenceForKey(schema Schema, key heapdomain.Key, class Placement, present bool) (AllocationEvidence, bool) {
+func allocationEvidenceForKey(schema Schema, key heapdomain.Key, fact Fact, present bool) (AllocationEvidence, bool) {
 	if !schema.Valid() || !schema.Heap().OwnsKey(key) || key.Kind() != heapdomain.RootAllocation {
 		return invalidAllocationEvidence(), false
 	}
-	if !validAnalysisPlacement(class) {
+	if !fact.Valid() || present && (fact.Class == Bottom || fact.RetainEscape == EvidenceAbsent) {
 		return invalidAllocationEvidence(), false
 	}
 	id, idOK := key.ContentID()
@@ -273,7 +284,8 @@ func allocationEvidenceForKey(schema Schema, key heapdomain.Key, class Placement
 	}
 	evidence := AllocationEvidence{OwnerIdentity: id, HasOwnerIdentity: true}
 	if present {
-		evidence.Class, evidence.HasClass = class, true
+		evidence.Class, evidence.HasClass = fact.Class, true
+		evidence.RetainEscape = fact.RetainEscape
 	}
 	if _, _, _, kind, _, originOK := schema.Heap().AllocationOriginForKey(key); originOK {
 		switch kind {
@@ -286,7 +298,7 @@ func allocationEvidenceForKey(schema Schema, key heapdomain.Key, class Placement
 		evidence.Kind, evidence.HasKind = AllocationKindManifest, true
 	}
 	if present {
-		switch class {
+		switch fact.Class {
 		case Stack:
 			evidence.FrameLocal = EvidenceProven
 		case OwnedHeap, SharedHeap, Unknown:

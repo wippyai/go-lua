@@ -124,26 +124,26 @@ func Demand(lifetime Lifetime) (placement.Placement, bool, bool) {
 // converted to Frame or Stack.  The boolean reports whether both inputs were
 // valid and the transition was produced.  On failure the Placement result is
 // only a Bottom sentinel and must be ignored.
-func Apply(current placement.Placement, lifetime Lifetime) (placement.Placement, bool) {
-	if !validPlacement(current) || !lifetime.Valid() {
-		return placement.Bottom, false
+func Apply(current placement.Fact, lifetime Lifetime) (placement.Fact, bool) {
+	if !validFact(current) || !lifetime.Valid() {
+		return placement.BottomFact(), false
 	}
 	demand, forced, demandOK := Demand(lifetime)
 	if !demandOK {
-		return placement.Bottom, false
+		return placement.BottomFact(), false
 	}
 	if !forced {
 		return current, true
 	}
 	switch demand {
 	case placement.OwnedHeap:
-		return placement.DisplaceChecked(current, placement.Retain)
+		return placement.RetainAtClassChecked(current, placement.OwnedHeap)
 	case placement.SharedHeap:
-		return placement.DisplaceChecked(current, placement.Send)
+		return placement.RetainAtClassChecked(current, placement.SharedHeap)
 	case placement.Unknown:
-		return placement.Unknown, true
+		return placement.UnknownFact(), true
 	default:
-		return placement.Bottom, false
+		return placement.BottomFact(), false
 	}
 }
 
@@ -154,11 +154,15 @@ func Apply(current placement.Placement, lifetime Lifetime) (placement.Placement,
 // Apply: ordinary object writes do not imply a Program-cell lifetime escape.
 // The boolean reports whether both Placement inputs were valid.  Invalid
 // inputs are refused rather than widened to Unknown.
-func ObjectStore(destination, source placement.Placement) (placement.Placement, bool) {
-	if !validPlacement(destination) || !validPlacement(source) {
-		return placement.Bottom, false
+func ObjectStore(destination, source placement.Fact) (placement.Fact, bool) {
+	if !validFact(destination) || !validFact(source) {
+		return placement.BottomFact(), false
 	}
-	return placement.JoinChecked(destination, source)
+	return placement.ThroughContainerChecked(source, destination)
+}
+
+func validFact(value placement.Fact) bool {
+	return value.Valid() && value.Class != placement.Bottom && value.RetainEscape != placement.EvidenceAbsent
 }
 
 func validPlacement(value placement.Placement) bool {

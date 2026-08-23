@@ -24,7 +24,7 @@ var (
 func BenchmarkPlacementSummaryFold(b *testing.B) {
 	schema, values, present := placementSummaryBenchmarkInputs(b)
 	observation := placementdomain.BeginPlacementSummary(schema)
-	at := func(index int) (placementdomain.Placement, bool, bool) {
+	at := func(index int) (placementdomain.Fact, bool, bool) {
 		return values[index], present[index], true
 	}
 
@@ -47,7 +47,7 @@ func BenchmarkPlacementSummaryEncoding(b *testing.B) {
 	schema, values, present := placementSummaryBenchmarkInputs(b)
 	observation := placementdomain.BeginPlacementSummary(schema)
 	var foldOK bool
-	observation, foldOK = placementdomain.AccumulatePlacementSummaryRows(schema, observation, len(values), func(index int) (placementdomain.Placement, bool, bool) {
+	observation, foldOK = placementdomain.AccumulatePlacementSummaryRows(schema, observation, len(values), func(index int) (placementdomain.Fact, bool, bool) {
 		return values[index], present[index], true
 	})
 	if !foldOK || observation.Rows == 0 {
@@ -83,11 +83,11 @@ func BenchmarkPlacementSummaryEncoding(b *testing.B) {
 	}
 }
 
-func placementSummaryBenchmarkInputs(b testing.TB) (placementdomain.Schema, []placementdomain.Placement, []bool) {
+func placementSummaryBenchmarkInputs(b testing.TB) (placementdomain.Schema, []placementdomain.Fact, []bool) {
 	b.Helper()
 	schema, _ := placementOwnerFixture(b)
 	count := schema.DenseKeyCount()
-	values := make([]placementdomain.Placement, count)
+	values := make([]placementdomain.Fact, count)
 	present := make([]bool, count)
 	allocations := 0
 	for index := 0; index < count; index++ {
@@ -98,7 +98,7 @@ func placementSummaryBenchmarkInputs(b testing.TB) (placementdomain.Schema, []pl
 		if key.Kind() != heapdomain.RootAllocation {
 			b.Fatalf("Placement summary key %d has unsupported kind %v", index, key.Kind())
 		}
-		values[index], present[index] = placementdomain.OwnedHeap, true
+		values[index], present[index] = placementdomain.Fact{Class: placementdomain.OwnedHeap, RetainEscape: placementdomain.EvidenceRefuted}, true
 		allocations++
 	}
 	if allocations == 0 {

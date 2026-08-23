@@ -16,18 +16,18 @@ import (
 // Effect-owned batch is the operand; Call gates the mounted call, Value
 // supplies the receipt subjects/contexts, and Placement owns the routed write.
 type SchemaFragment struct {
-	slot          *engine.RuleSlot[placementdomain.Placement, effectfactor.MountedPublicationBatch]
+	slot          *engine.RuleSlot[placementdomain.Fact, effectfactor.MountedPublicationBatch]
 	input         engine.SchemaInput
 	callRead      engine.SchemaReadSlot[calldomain.Value]
 	valueRead     engine.SchemaReadSlot[valuedomain.Value]
-	placementRead engine.SchemaReadSlot[placementdomain.Placement]
-	carry         engine.SchemaCarrySlot[placementdomain.Placement]
-	write         engine.SchemaWriteSlot[placementdomain.Placement]
+	placementRead engine.SchemaReadSlot[placementdomain.Fact]
+	carry         engine.SchemaCarrySlot[placementdomain.Fact]
+	write         engine.SchemaWriteSlot[placementdomain.Fact]
 	semantic      identity.SemanticKey
 }
 
 // RuleSlot returns the exact cold Rule declaration.
-func (fragment *SchemaFragment) RuleSlot() *engine.RuleSlot[placementdomain.Placement, effectfactor.MountedPublicationBatch] {
+func (fragment *SchemaFragment) RuleSlot() *engine.RuleSlot[placementdomain.Fact, effectfactor.MountedPublicationBatch] {
 	if fragment == nil {
 		return nil
 	}
@@ -48,7 +48,7 @@ func DeclareSchema(
 	if builder == nil || values == nil || calls == nil || owner == nil || !identity.DistinctKeys(semantic, operandFamily) {
 		return nil, false
 	}
-	slot, ok := engine.NewRuleSlot[placementdomain.Placement, effectfactor.MountedPublicationBatch](builder, engine.SchemaRuleSpec[placementdomain.Placement]{
+	slot, ok := engine.NewRuleSlot[placementdomain.Fact, effectfactor.MountedPublicationBatch](builder, engine.SchemaRuleSpec[placementdomain.Fact]{
 		Semantic: semantic, OperandFamily: operandFamily, Inputs: 1,
 		Output: owner.Ref(),
 	})
@@ -67,7 +67,7 @@ func DeclareSchema(
 	if !ok {
 		return nil, false
 	}
-	placementRead, ok := engine.SchemaSelectedRead[placementdomain.Placement](slot, owner.ExactRead(), input, callRead.Ref(), valueRead.Ref())
+	placementRead, ok := engine.SchemaSelectedRead[placementdomain.Fact](slot, owner.ExactRead(), input, callRead.Ref(), valueRead.Ref())
 	if !ok {
 		return nil, false
 	}

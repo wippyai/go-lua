@@ -174,14 +174,14 @@ func TestManifestFormalEffectDisplacementContract(t *testing.T) {
 		t.Fatal("sealed manifest formal operation is unavailable")
 	}
 	want := []struct {
-		row       vocabulary.FormalEffectSpec
-		placement placement.Placement
+		row  vocabulary.FormalEffectSpec
+		fact placement.Fact
 	}{
-		{row: vocabulary.FormalEffectSpec{Kind: vocabulary.FormalEffectRetain, Param: 0}, placement: placement.OwnedHeap},
-		{row: vocabulary.FormalEffectSpec{Kind: vocabulary.FormalEffectStore, Param: 1, Into: 2, HasInto: true}, placement: placement.OwnedHeap},
-		{row: vocabulary.FormalEffectSpec{Kind: vocabulary.FormalEffectSendParam, Param: 0}, placement: placement.SharedHeap},
-		{row: vocabulary.FormalEffectSpec{Kind: vocabulary.FormalEffectExport, Param: 1}, placement: placement.SharedHeap},
-		{row: vocabulary.FormalEffectSpec{Kind: vocabulary.FormalEffectOpaque, Param: 2}, placement: placement.SharedHeap},
+		{row: vocabulary.FormalEffectSpec{Kind: vocabulary.FormalEffectRetain, Param: 0}, fact: placement.Fact{Class: placement.OwnedHeap, RetainEscape: placement.EvidenceProven}},
+		{row: vocabulary.FormalEffectSpec{Kind: vocabulary.FormalEffectStore, Param: 1, Into: 2, HasInto: true}, fact: placement.Fact{Class: placement.OwnedHeap, RetainEscape: placement.EvidenceProven}},
+		{row: vocabulary.FormalEffectSpec{Kind: vocabulary.FormalEffectSendParam, Param: 0}, fact: placement.Fact{Class: placement.SharedHeap, RetainEscape: placement.EvidenceProven}},
+		{row: vocabulary.FormalEffectSpec{Kind: vocabulary.FormalEffectExport, Param: 1}, fact: placement.Fact{Class: placement.SharedHeap, RetainEscape: placement.EvidenceProven}},
+		{row: vocabulary.FormalEffectSpec{Kind: vocabulary.FormalEffectOpaque, Param: 2}, fact: placement.Fact{Class: placement.SharedHeap, RetainEscape: placement.EvidenceProven}},
 	}
 	if got := contract.Operations.FormalEffectCount(op); got != len(want) {
 		t.Fatalf("sealed manifest formal row count = %d, want %d", got, len(want))
@@ -199,12 +199,15 @@ func TestManifestFormalEffectDisplacementContract(t *testing.T) {
 		if !owns || !escape.ValidManifest() {
 			t.Fatalf("formal row %d escaped as %v/%v, want a manifest escape", index, escape, owns)
 		}
-		if gotPlacement, displacementOK := placement.DisplaceChecked(placement.OwnedHeap, escape); !displacementOK || gotPlacement != expected.placement {
-			t.Fatalf("formal row %d displacement = %v/%t, want %v/true", index, gotPlacement, displacementOK, expected.placement)
+		current := placement.Fact{Class: placement.OwnedHeap, RetainEscape: placement.EvidenceRefuted}
+		gotFact, displacementOK := placement.DisplaceFactChecked(current, escape)
+		if !displacementOK || gotFact != expected.fact {
+			t.Fatalf("formal row %d displacement = %v/%t, want %v/true", index, gotFact, displacementOK, expected.fact)
 		}
 	}
-	if got, ok := placement.DisplaceChecked(placement.OwnedHeap, placement.Return); !ok || got != placement.OwnedHeap {
-		t.Fatalf("independent return displacement = %v/%t, want owned-heap/true", got, ok)
+	current := placement.Fact{Class: placement.OwnedHeap, RetainEscape: placement.EvidenceRefuted}
+	if got, ok := placement.DisplaceFactChecked(current, placement.Return); !ok || got != (placement.Fact{Class: placement.OwnedHeap, RetainEscape: placement.EvidenceProven}) {
+		t.Fatalf("independent return displacement = %v/%t, want owned-heap/proven/true", got, ok)
 	}
 
 	// An authored coordinate this call site does not supply is bound to nil by

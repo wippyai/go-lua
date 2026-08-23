@@ -14,16 +14,16 @@ import (
 // together with the route write, so the engine owns their dependency and
 // target correspondence.
 type SchemaFragment struct {
-	slot          *engine.RuleSlot[placementdomain.Placement, valuedomain.StorageTransfer]
+	slot          *engine.RuleSlot[placementdomain.Fact, valuedomain.StorageTransfer]
 	input         engine.SchemaInput
 	valueRead     engine.SchemaReadSlot[valuedomain.Value]
-	placementRead engine.SchemaReadSlot[placementdomain.Placement]
-	carry         engine.SchemaCarrySlot[placementdomain.Placement]
-	write         engine.SchemaWriteSlot[placementdomain.Placement]
+	placementRead engine.SchemaReadSlot[placementdomain.Fact]
+	carry         engine.SchemaCarrySlot[placementdomain.Fact]
+	write         engine.SchemaWriteSlot[placementdomain.Fact]
 	semantic      identity.SemanticKey
 }
 
-func (fragment *SchemaFragment) RuleSlot() *engine.RuleSlot[placementdomain.Placement, valuedomain.StorageTransfer] {
+func (fragment *SchemaFragment) RuleSlot() *engine.RuleSlot[placementdomain.Fact, valuedomain.StorageTransfer] {
 	if fragment == nil {
 		return nil
 	}
@@ -36,7 +36,7 @@ func DeclareSchema(builder *engine.SchemaBuilder, semantic, operandFamily identi
 	if builder == nil || values == nil || owner == nil || !identity.DistinctKeys(semantic, operandFamily) {
 		return nil, false
 	}
-	slot, ok := engine.NewRuleSlot[placementdomain.Placement, valuedomain.StorageTransfer](builder, engine.SchemaRuleSpec[placementdomain.Placement]{
+	slot, ok := engine.NewRuleSlot[placementdomain.Fact, valuedomain.StorageTransfer](builder, engine.SchemaRuleSpec[placementdomain.Fact]{
 		Semantic: semantic, OperandFamily: operandFamily, Inputs: 1,
 		Output: owner.Ref(),
 	})
@@ -51,7 +51,7 @@ func DeclareSchema(builder *engine.SchemaBuilder, semantic, operandFamily identi
 	if !ok {
 		return nil, false
 	}
-	placementRead, ok := engine.SchemaSelectedRead[placementdomain.Placement](slot, owner.ExactRead(), input, valueRead.Ref())
+	placementRead, ok := engine.SchemaSelectedRead[placementdomain.Fact](slot, owner.ExactRead(), input, valueRead.Ref())
 	if !ok {
 		return nil, false
 	}

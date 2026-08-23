@@ -127,7 +127,7 @@ func TestSuspensionSummaryPreservesSparseEvidenceOwnerBottom(t *testing.T) {
 	observation := placementdomain.BeginPlacementSummary(placementSchema)
 	var placementOK bool
 	observation, placementOK = placementdomain.AccumulatePlacementSummaryRows(placementSchema, observation, denseCount,
-		func(int) (placementdomain.Placement, bool, bool) { return placementdomain.Stack, false, true })
+		func(int) (placementdomain.Fact, bool, bool) { return placementdomain.DefaultFact(), false, true })
 	if !placementOK {
 		t.Fatal("Placement owner sparse Stack baseline was not authenticated")
 	}
@@ -165,7 +165,7 @@ func TestSuspensionSummaryPublishesAuthenticatedUnknown(t *testing.T) {
 		if key.Kind() != heap.RootAllocation {
 			continue
 		}
-		observation.Values[index] = placementdomain.OwnedHeap
+		observation.Values[index] = placementdomain.Fact{Class: placementdomain.OwnedHeap, RetainEscape: placementdomain.EvidenceRefuted}
 		observation.Present[index] = true
 		observation.Rows = 1
 		allocations = append(allocations, key)

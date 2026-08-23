@@ -59,8 +59,8 @@ func TestRouteSetOpenSubjectBroadcastsKnownRequirement(t *testing.T) {
 		if !routeOK || route.unknown || route.required != placementdomain.SharedHeap {
 			t.Fatalf("open subject route=%#v, want SharedHeap identity broadcast", route)
 		}
-		placement, applyOK := applyRoute(route, placementdomain.Stack)
-		if !applyOK || placement != placementdomain.SharedHeap {
+		placement, applyOK := applyRoute(route, placementdomain.DefaultFact())
+		if !applyOK || placement != (placementdomain.Fact{Class: placementdomain.SharedHeap, RetainEscape: placementdomain.EvidenceProven}) {
 			t.Fatalf("open subject applied placement=%v/%t, want SharedHeap", placement, applyOK)
 		}
 	}

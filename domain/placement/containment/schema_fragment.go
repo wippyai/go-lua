@@ -14,19 +14,19 @@ import (
 // Placement read is the sole routed-write address source; its dependencies
 // keep the two summary planes together in the cold schema.
 type SchemaFragment struct {
-	slot             *engine.RuleSlot[placement.Placement, operand]
+	slot             *engine.RuleSlot[placement.Fact, operand]
 	input            engine.SchemaInput
-	placementSummary engine.SchemaReadSlot[placement.Placement]
+	placementSummary engine.SchemaReadSlot[placement.Fact]
 	heapSummary      engine.SchemaReadSlot[heapdomain.Value]
-	routes           engine.SchemaReadSlot[placement.Placement]
-	carry            engine.SchemaCarrySlot[placement.Placement]
-	write            engine.SchemaWriteSlot[placement.Placement]
-	placementRef     engine.FactorRef[placement.Placement]
+	routes           engine.SchemaReadSlot[placement.Fact]
+	carry            engine.SchemaCarrySlot[placement.Fact]
+	write            engine.SchemaWriteSlot[placement.Fact]
+	placementRef     engine.FactorRef[placement.Fact]
 	heapRef          engine.FactorRef[heapdomain.Value]
 	semantic         identity.SemanticKey
 }
 
-func (fragment *SchemaFragment) RuleSlot() *engine.RuleSlot[placement.Placement, operand] {
+func (fragment *SchemaFragment) RuleSlot() *engine.RuleSlot[placement.Fact, operand] {
 	if fragment == nil {
 		return nil
 	}
@@ -40,7 +40,7 @@ func DeclareSchema(builder *engine.SchemaBuilder, semantic, operandFamily identi
 	if builder == nil || placementPrincipal == nil || heapPrincipal == nil || !identity.DistinctKeys(semantic, operandFamily) {
 		return nil, false
 	}
-	slot, ok := engine.NewRuleSlot[placement.Placement, operand](builder, engine.SchemaRuleSpec[placement.Placement]{
+	slot, ok := engine.NewRuleSlot[placement.Fact, operand](builder, engine.SchemaRuleSpec[placement.Fact]{
 		Semantic: semantic, OperandFamily: operandFamily, Inputs: 1,
 		Output: placementPrincipal.Ref(),
 	})
@@ -51,7 +51,7 @@ func DeclareSchema(builder *engine.SchemaBuilder, semantic, operandFamily identi
 	if !ok {
 		return nil, false
 	}
-	placementSummary, ok := engine.SchemaRead[placement.Placement](slot, placementPrincipal.FoldSummaryRead(), input)
+	placementSummary, ok := engine.SchemaRead[placement.Fact](slot, placementPrincipal.FoldSummaryRead(), input)
 	if !ok {
 		return nil, false
 	}
@@ -59,7 +59,7 @@ func DeclareSchema(builder *engine.SchemaBuilder, semantic, operandFamily identi
 	if !ok {
 		return nil, false
 	}
-	routes, ok := engine.SchemaSelectedRead[placement.Placement](slot, placementPrincipal.ExactRead(), input, placementSummary.Ref(), heapSummary.Ref())
+	routes, ok := engine.SchemaSelectedRead[placement.Fact](slot, placementPrincipal.ExactRead(), input, placementSummary.Ref(), heapSummary.Ref())
 	if !ok {
 		return nil, false
 	}

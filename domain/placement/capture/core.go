@@ -460,15 +460,6 @@ func routeAtTag(plan routePlan, tag routeTag) (route, bool) {
 	return route{}, false
 }
 
-func validPlacement(fact placementdomain.Placement) bool {
-	switch fact {
-	case placementdomain.Bottom, placementdomain.Stack, placementdomain.OwnedHeap, placementdomain.SharedHeap, placementdomain.Unknown:
-		return true
-	default:
-		return false
-	}
-}
-
 func oneOrderedCell[T any](cells engine.OrderedCells[T]) (value T, present, available bool) {
 	if cells.Count() != 1 {
 		return value, false, false
@@ -476,6 +467,6 @@ func oneOrderedCell[T any](cells engine.OrderedCells[T]) (value T, present, avai
 	return cells.At(0)
 }
 
-func captureValue(parent, current placementdomain.Placement) (placementdomain.Placement, bool) {
-	return placementdomain.JoinChecked(parent, current)
+func captureValue(parent, current placementdomain.Fact) (placementdomain.Fact, bool) {
+	return placementdomain.ThroughContainerChecked(current, parent)
 }

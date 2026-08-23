@@ -146,12 +146,10 @@ return true
 		if gotID := allocation.AllocationID(); gotID != rootID || !gotID.Available() {
 			t.Fatalf("process.send Placement query %d allocation identity = %s, want %s", queryIndex, gotID, rootID)
 		}
-		class, classOK := allocation.Placement()
-		if !classOK {
-			t.Fatal("process.send Placement send point payload class unavailable")
-		}
-		if class != placementdomain.SharedHeap {
-			t.Fatalf("process.send Placement send point payload class = %v, want SharedHeap", class)
+		fact, factOK := allocation.Fact()
+		wantFact := placementdomain.Fact{Class: placementdomain.SharedHeap, RetainEscape: placementdomain.EvidenceProven}
+		if !factOK || fact != wantFact {
+			t.Fatalf("process.send Placement send point payload fact = %v/%t, want %v", fact, factOK, wantFact)
 		}
 	}
 	if sendHits != 1 {

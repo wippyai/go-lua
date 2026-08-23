@@ -545,13 +545,13 @@ func routeAtTag(plan routePlan, tag routeTag) (route, bool) {
 	return route{}, false
 }
 
-func returnValue(current placementdomain.Placement, present bool, plan routePlan) (placementdomain.Placement, bool) {
-	current, currentOK := placementdomain.AuthenticateFactorCell(current, present, true)
+func returnValue(current placementdomain.Fact, present bool, plan routePlan) (placementdomain.Fact, bool) {
+	current, currentOK := placementdomain.AuthenticateFactCell(current, present, true)
 	if !currentOK {
-		return placementdomain.Bottom, false
+		return placementdomain.BottomFact(), false
 	}
 	// Widening means that the Value identity names every possible allocation
 	// root; it does not widen the known Return escape policy. Apply that policy
 	// to each predecessor independently.
-	return placementdomain.DisplaceChecked(current, placementdomain.Return)
+	return placementdomain.DisplaceFactChecked(current, placementdomain.Return)
 }

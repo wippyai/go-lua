@@ -907,7 +907,7 @@ func (rule *HotRule) callValueSelector(context engine.SelectorContext, batch eff
 	return admitCallCell(rule.calls.Algebra(), key, value, present)
 }
 
-func (rule *HotRule) callValueFrame(frame engine.Frame[placementdomain.Placement, effectfactor.MountedPublicationBatch], batch effectfactor.MountedPublicationBatch) (calldomain.Value, bool, bool) {
+func (rule *HotRule) callValueFrame(frame engine.Frame[placementdomain.Fact, effectfactor.MountedPublicationBatch], batch effectfactor.MountedPublicationBatch) (calldomain.Value, bool, bool) {
 	if rule == nil || rule.calls == nil || rule.calls.Algebra() == nil {
 		return calldomain.Value{}, false, false
 	}
@@ -997,7 +997,7 @@ func (rule *HotRule) collectFacts(context engine.SelectorContext, sources source
 	return facts, true
 }
 
-func (rule *HotRule) collectFrameFacts(frame engine.Frame[placementdomain.Placement, effectfactor.MountedPublicationBatch], sources sourceView, selection engine.Selection[sourceTag, engine.OrderedCells[valuedomain.Value]]) (factBuffer, bool) {
+func (rule *HotRule) collectFrameFacts(frame engine.Frame[placementdomain.Fact, effectfactor.MountedPublicationBatch], sources sourceView, selection engine.Selection[sourceTag, engine.OrderedCells[valuedomain.Value]]) (factBuffer, bool) {
 	if rule == nil || rule.values == nil || rule.values.Schema() == nil {
 		return factBuffer{}, false
 	}
@@ -1205,16 +1205,16 @@ func (rule *HotRule) routeSet(schema placementdomain.Schema, prepared *preparedB
 	return routes, true
 }
 
-func applyRoute(route plannedRoute, current placementdomain.Placement) (placementdomain.Placement, bool) {
+func applyRoute(route plannedRoute, current placementdomain.Fact) (placementdomain.Fact, bool) {
 	if route.unknown || route.required == placementdomain.Unknown {
-		return placementdomain.Unknown, true
+		return placementdomain.UnknownFact(), true
 	}
 	switch route.required {
 	case placementdomain.OwnedHeap:
-		return placementdomain.DisplaceChecked(current, placementdomain.Retain)
+		return placementdomain.DisplaceFactChecked(current, placementdomain.Retain)
 	case placementdomain.SharedHeap:
-		return placementdomain.DisplaceChecked(current, placementdomain.Send)
+		return placementdomain.DisplaceFactChecked(current, placementdomain.Send)
 	default:
-		return placementdomain.Bottom, false
+		return placementdomain.BottomFact(), false
 	}
 }

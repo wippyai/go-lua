@@ -14,17 +14,17 @@ import (
 // the selected Value read resolves every captured outer storage cell; the
 // selected Placement read supplies the routed write predecessors.
 type SchemaFragment struct {
-	slot       *engine.RuleSlot[placementdomain.Placement, operand]
+	slot       *engine.RuleSlot[placementdomain.Fact, operand]
 	input      engine.SchemaInput
-	parent     engine.SchemaReadSlot[placementdomain.Placement]
+	parent     engine.SchemaReadSlot[placementdomain.Fact]
 	values     engine.SchemaReadSlot[valuedomain.Value]
-	placements engine.SchemaReadSlot[placementdomain.Placement]
-	carry      engine.SchemaCarrySlot[placementdomain.Placement]
-	write      engine.SchemaWriteSlot[placementdomain.Placement]
+	placements engine.SchemaReadSlot[placementdomain.Fact]
+	carry      engine.SchemaCarrySlot[placementdomain.Fact]
+	write      engine.SchemaWriteSlot[placementdomain.Fact]
 	semantic   identity.SemanticKey
 }
 
-func (fragment *SchemaFragment) RuleSlot() *engine.RuleSlot[placementdomain.Placement, operand] {
+func (fragment *SchemaFragment) RuleSlot() *engine.RuleSlot[placementdomain.Fact, operand] {
 	if fragment == nil {
 		return nil
 	}
@@ -39,7 +39,7 @@ func DeclareSchema(builder *engine.SchemaBuilder, semantic, operandFamily identi
 	if builder == nil || values == nil || owner == nil || !identity.DistinctKeys(semantic, operandFamily) {
 		return nil, false
 	}
-	slot, ok := engine.NewRuleSlot[placementdomain.Placement, operand](builder, engine.SchemaRuleSpec[placementdomain.Placement]{
+	slot, ok := engine.NewRuleSlot[placementdomain.Fact, operand](builder, engine.SchemaRuleSpec[placementdomain.Fact]{
 		Semantic: semantic, OperandFamily: operandFamily, Inputs: 1,
 		Output: owner.Ref(),
 	})
@@ -50,7 +50,7 @@ func DeclareSchema(builder *engine.SchemaBuilder, semantic, operandFamily identi
 	if !ok {
 		return nil, false
 	}
-	parent, ok := engine.SchemaRead[placementdomain.Placement](slot, owner.ExactRead(), input)
+	parent, ok := engine.SchemaRead[placementdomain.Fact](slot, owner.ExactRead(), input)
 	if !ok {
 		return nil, false
 	}
@@ -58,7 +58,7 @@ func DeclareSchema(builder *engine.SchemaBuilder, semantic, operandFamily identi
 	if !ok {
 		return nil, false
 	}
-	placements, ok := engine.SchemaSelectedRead[placementdomain.Placement](slot, owner.ExactRead(), input, parent.Ref(), valueRead.Ref())
+	placements, ok := engine.SchemaSelectedRead[placementdomain.Fact](slot, owner.ExactRead(), input, parent.Ref(), valueRead.Ref())
 	if !ok {
 		return nil, false
 	}
