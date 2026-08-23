@@ -47,7 +47,7 @@ return make()
 			if !rowOK || row.Key() != "placement-closure-capture" {
 				continue
 			}
-			input, inputOK := row.InputPoint()
+			input, inputOK := row.InputPointAt(0)
 			native, nativeOK := row.Native()
 			if row.Stage() != programissuance.StageSuccessor || row.InputSpec() != programissuance.InputLocalStage ||
 				!inputOK || !input.Available() || !nativeOK || native {

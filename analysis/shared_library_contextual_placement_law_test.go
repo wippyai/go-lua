@@ -103,7 +103,11 @@ func TestSharedMountedArtifactAcrossActorContextsKeepsContextualPlacement(t *tes
 	firstLibrarySiteIDs := make(map[identity.ContentID]struct{})
 	firstLibraryPublicationKeys := make(map[identity.ContentID]struct{})
 	firstLibrarySites := 0
-	for _, site := range first.state.querySites {
+	for index := 0; index < first.state.querySites.Count(); index++ {
+		site, siteOK := first.state.querySites.At(index)
+		if !siteOK {
+			t.Fatalf("first Link query site %d is unavailable", index)
+		}
 		if site.Context.ModuleKey() == firstLibraryKey && site.Context.ID() != firstContext.ID() {
 			t.Fatal("first Link query site lost its exact library context")
 		}
@@ -121,7 +125,11 @@ func TestSharedMountedArtifactAcrossActorContextsKeepsContextualPlacement(t *tes
 	secondLibrarySiteIDs := make(map[identity.ContentID]struct{})
 	secondLibraryPublicationKeys := make(map[identity.ContentID]struct{})
 	secondLibrarySites := 0
-	for _, site := range second.state.querySites {
+	for index := 0; index < second.state.querySites.Count(); index++ {
+		site, siteOK := second.state.querySites.At(index)
+		if !siteOK {
+			t.Fatalf("second Link query site %d is unavailable", index)
+		}
 		if site.Context.ModuleKey() == secondLibraryKey && site.Context.ID() != secondContext.ID() {
 			t.Fatal("second Link query site lost its exact library context")
 		}

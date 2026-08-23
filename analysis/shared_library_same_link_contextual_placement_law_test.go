@@ -269,7 +269,11 @@ func sameLinkLibrarySites(t testing.TB, plan *Plan, module identity.ContentID) [
 		t.Fatal("same-Link Plan unavailable")
 	}
 	sites := make([]composite.QuerySite, 0)
-	for _, site := range plan.state.querySites {
+	for index := 0; index < plan.state.querySites.Count(); index++ {
+		site, siteOK := plan.state.querySites.At(index)
+		if !siteOK {
+			t.Fatalf("same-Link query site %d is unavailable", index)
+		}
 		if site.Context.ModuleKey() == module {
 			sites = append(sites, site)
 		}

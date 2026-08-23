@@ -338,7 +338,7 @@ return shared_template_probe(43)`
 	if !leftBoundariesPublished || leftBoundaryCount == 0 {
 		t.Fatalf("shared Program function interfaces = %d/%v", leftBoundaryCount, leftBoundariesPublished)
 	}
-	if left.state.committed != nil || right.state.committed != nil || len(left.state.querySites) != 0 || len(right.state.querySites) != 0 {
+	if left.state.committed != nil || right.state.committed != nil || left.state.querySites.Count() != 0 || right.state.querySites.Count() != 0 {
 		t.Fatal("Compile instantiated runtime topology before Solve ownership")
 	}
 	leftDiagnostic, leftStage, leftRule, leftInstantiated := left.state.instantiateRuntimeTopology()
