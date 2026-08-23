@@ -19,14 +19,15 @@ import (
 // module-path relation and Host's actor-local boot mapping are resolved while
 // sealing, so no hot rule derives a root from a string or a name convention.
 type ModuleLoadCall struct {
-	schema   *Schema
-	key      computationKey
-	content  identity.ContentID
-	result   Coordinate
-	argument Coordinate
-	expected Value
-	fact     Value
-	require  vocabulary.Operation
+	schema    *Schema
+	key       computationKey
+	content   identity.ContentID
+	result    Coordinate
+	argument  Coordinate
+	expected  Value
+	fact      Value
+	endpoints uint32
+	require   vocabulary.Operation
 	// composed is true only when Program's authored Import term was resolved
 	// through Module composition. Path/boot projection is deliberately not an
 	// export proof for dynamic fresh-result routing.
@@ -124,17 +125,8 @@ func (schema *valueBuilder) sealModuleLoadRows() bool {
 	if !contractOK || contract == nil {
 		return false
 	}
-	outcomeResult, outcomeResultOK := normalResultID(contract, require)
-	if !outcomeResultOK || !outcomeResult.Available() {
-		// A malformed/empty require outcome cannot produce a bounded result
-		// coordinate. Leave the vertical absent rather than fabricating one.
-		return true
-	}
-	operation, outcome, resultIndex, resultIdentityOK := contract.FindOutcomeResultID(outcomeResult)
-	kind, values, outcomeOK := contract.Operations.OutcomeAt(require, outcome)
-	slots, slotsOK := contract.Operations.OutcomeValueSlots(require, outcome)
-	if !resultIdentityOK || operation != require || resultIndex != 0 || !outcomeOK || kind != flowkind.OutcomeNormal || values == 0 || !slotsOK || slots == 0 {
-		return true
+	if !requireOutcomeResultAvailable(contract, require) {
+		return false
 	}
 	applications := schema.sealProject().Applications().Calls()
 	applicationByCall := make(map[computationKey]linkproject.Application, applications.Count())
@@ -323,6 +315,32 @@ func moduleImportTermForCall(program programschema.Program, callID identity.Cont
 		term = candidate
 	}
 	return term, term != 0, true
+}
+
+// requireOutcomeResultAvailable reports whether the declared required
+// operation actually names a bounded normal result at ordinal zero.
+//
+// A Link that declares no scoped loader has no module-load vertical at all,
+// and sealing simply produces no rows. A Link that DOES declare one but whose
+// contract cannot produce its result is a different thing: leaving the
+// vertical absent there does not leave the program unanalysed, it hands every
+// require call to the generic call-result path, which has no module evidence
+// and widens to Top. Refusing the seal by name keeps that fabricated Top out
+// of the lattice; the malformed contract is reported as a Value seal failure
+// instead of being silently absorbed.
+func requireOutcomeResultAvailable(target *contract.Contract, require vocabulary.Operation) bool {
+	if target == nil || require == 0 {
+		return false
+	}
+	outcomeResult, outcomeResultOK := normalResultID(target, require)
+	if !outcomeResultOK || !outcomeResult.Available() {
+		return false
+	}
+	operation, outcome, resultIndex, resultIdentityOK := target.FindOutcomeResultID(outcomeResult)
+	kind, values, outcomeOK := target.Operations.OutcomeAt(require, outcome)
+	slots, slotsOK := target.Operations.OutcomeValueSlots(require, outcome)
+	return resultIdentityOK && operation == require && resultIndex == 0 &&
+		outcomeOK && kind == flowkind.OutcomeNormal && values != 0 && slotsOK && slots != 0
 }
 
 func normalResultID(target *contract.Contract, require vocabulary.Operation) (identity.ContentID, bool) {

@@ -29,8 +29,8 @@ func BindHot(fragment *SchemaFragment, owner *valueowner.HotOwner) (*HotRule, bo
 		OperandResolver: rule.resolveOperand,
 		Fold: func(frame engine.Frame[value.Value, value.PresenceRefinement]) engine.RuleResult[value.Value] {
 			refinement, operandOK := engine.Operand(frame)
-			_, present, targetOK := hotTarget(owner.Schema(), refinement)
-			if !operandOK || !targetOK {
+			present, presentOK := refinement.Present()
+			if !operandOK || !presentOK {
 				return engine.RuleResult[value.Value]{}
 			}
 			cells, readOK := engine.ReadValue(frame, runtimeRead)
@@ -51,13 +51,9 @@ func BindHot(fragment *SchemaFragment, owner *valueowner.HotOwner) (*HotRule, bo
 			return engine.Staged(frame, result)
 		},
 	}, engine.HotCarrySpec[value.Value, value.PresenceRefinement]{}, func(refinement value.PresenceRefinement) (uint64, bool) {
-		target, _, ok := hotTarget(owner.Schema(), refinement)
-		index, indexOK := owner.Schema().CoordinateIndex(target)
-		return uint64(index), ok && indexOK
+		return refinement.Endpoint(value.EndpointWrite)
 	}, func(refinement value.PresenceRefinement) (uint64, bool) {
-		target, _, ok := hotTarget(owner.Schema(), refinement)
-		index, indexOK := owner.Schema().CoordinateIndex(target)
-		return uint64(index), ok && indexOK
+		return refinement.Endpoint(value.EndpointLeft)
 	})
 	if !ok || implementation == nil {
 		return nil, false
@@ -89,18 +85,4 @@ func hotContent(schema *value.Schema, row value.PresenceRefinement) (value.Prese
 		return value.PresenceRefinement{}, [32]byte{}, false
 	}
 	return row, [32]byte(id), true
-}
-
-func hotTarget(schema *value.Schema, row value.PresenceRefinement) (value.Coordinate, bool, bool) {
-	if schema == nil || !schema.OwnsPresenceRefinement(row) {
-		return value.Coordinate{}, false, false
-	}
-	target, present, ok := row.Target()
-	if !ok {
-		return value.Coordinate{}, false, false
-	}
-	if _, coordinateOK := schema.CoordinateIndex(target); !coordinateOK {
-		return value.Coordinate{}, false, false
-	}
-	return target, present, true
 }

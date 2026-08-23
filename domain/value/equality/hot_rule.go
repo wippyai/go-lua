@@ -31,8 +31,8 @@ func BindHot(fragment *SchemaFragment, owner *valueowner.HotOwner) (*HotRule, bo
 		OperandResolver: rule.resolveOperand,
 		Fold: func(frame engine.Frame[value.Value, value.BinaryEquality]) engine.RuleResult[value.Value] {
 			operand, operandOK := engine.Operand(frame)
-			_, _, _, notEqual, endpointsOK := hotEndpoints(owner.Schema(), operand)
-			if !operandOK || !endpointsOK {
+			notEqual, notEqualOK := operand.NotEqual()
+			if !operandOK || !notEqualOK {
 				return engine.RuleResult[value.Value]{}
 			}
 			leftCells, leftOK := engine.ReadValue(frame, leftRead)
@@ -55,23 +55,17 @@ func BindHot(fragment *SchemaFragment, owner *valueowner.HotOwner) (*HotRule, bo
 			return engine.Staged(frame, result)
 		},
 	}, engine.HotCarrySpec[value.Value, value.BinaryEquality]{}, func(row value.BinaryEquality) (uint64, bool) {
-		result, _, _, _, ok := hotEndpoints(owner.Schema(), row)
-		index, indexOK := owner.Schema().CoordinateIndex(result)
-		return uint64(index), ok && indexOK
+		return row.Endpoint(value.EndpointWrite)
 	})
 	if !bound {
 		return nil, false
 	}
 	var leftOK, rightOK bool
 	left, leftOK = valueowner.AddSelectedRuleDirectExactRead(implementation, fragment.left, owner.FactorRef(), func(row value.BinaryEquality) (uint64, bool) {
-		_, leftCoord, _, _, ok := hotEndpoints(owner.Schema(), row)
-		index, indexOK := owner.Schema().CoordinateIndex(leftCoord)
-		return uint64(index), ok && indexOK
+		return row.Endpoint(value.EndpointLeft)
 	})
 	right, rightOK = valueowner.AddSelectedRuleDirectExactRead(implementation, fragment.right, owner.FactorRef(), func(row value.BinaryEquality) (uint64, bool) {
-		_, _, rightCoord, _, ok := hotEndpoints(owner.Schema(), row)
-		index, indexOK := owner.Schema().CoordinateIndex(rightCoord)
-		return uint64(index), ok && indexOK
+		return row.Endpoint(value.EndpointRight)
 	})
 	if !leftOK || !rightOK {
 		return nil, false
@@ -103,24 +97,4 @@ func hotContent(schema *value.Schema, row value.BinaryEquality) (value.BinaryEqu
 		return value.BinaryEquality{}, [32]byte{}, false
 	}
 	return row, [32]byte(id), true
-}
-
-func hotEndpoints(schema *value.Schema, row value.BinaryEquality) (result, left, right value.Coordinate, notEqual bool, ok bool) {
-	if schema == nil || !schema.OwnsBinaryEquality(row) {
-		return value.Coordinate{}, value.Coordinate{}, value.Coordinate{}, false, false
-	}
-	result, left, right, notEqual, ok = row.Endpoints()
-	if !ok {
-		return value.Coordinate{}, value.Coordinate{}, value.Coordinate{}, false, false
-	}
-	if _, resultOK := schema.CoordinateIndex(result); !resultOK {
-		return value.Coordinate{}, value.Coordinate{}, value.Coordinate{}, false, false
-	}
-	if _, leftOK := schema.CoordinateIndex(left); !leftOK {
-		return value.Coordinate{}, value.Coordinate{}, value.Coordinate{}, false, false
-	}
-	if _, rightOK := schema.CoordinateIndex(right); !rightOK {
-		return value.Coordinate{}, value.Coordinate{}, value.Coordinate{}, false, false
-	}
-	return result, left, right, notEqual, true
 }

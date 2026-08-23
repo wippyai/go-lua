@@ -28,6 +28,7 @@ type BinaryEquality struct {
 	key                 computationKey
 	content             identity.ContentID
 	result, left, right Coordinate
+	endpoints           uint32
 	notEqual            bool
 }
 
@@ -40,6 +41,7 @@ type BinaryArithmetic struct {
 	key                 computationKey
 	content             identity.ContentID
 	result, left, right Coordinate
+	endpoints           uint32
 	op                  flowkind.BinaryOp
 }
 
@@ -67,6 +69,15 @@ func (row BinaryArithmetic) ID() (identity.ContentID, bool) {
 	return row.content, true
 }
 
+// Op is the closed Lua operator this transfer applies. The coordinates it
+// used to be returned beside are read from the sealed endpoint projection.
+func (row BinaryArithmetic) Op() (flowkind.BinaryOp, bool) {
+	if !row.valid() {
+		return 0, false
+	}
+	return row.op, true
+}
+
 func (row BinaryArithmetic) Endpoints() (result, left, right Coordinate, op flowkind.BinaryOp, ok bool) {
 	if !row.valid() {
 		return Coordinate{}, Coordinate{}, Coordinate{}, 0, false
@@ -83,6 +94,7 @@ type BinaryOrder struct {
 	key                 computationKey
 	content             identity.ContentID
 	result, left, right Coordinate
+	endpoints           uint32
 	op                  flowkind.BinaryOp
 }
 
@@ -110,6 +122,14 @@ func (row BinaryOrder) ID() (identity.ContentID, bool) {
 	return row.content, true
 }
 
+// Op is the closed Lua relational operator this comparison applies.
+func (row BinaryOrder) Op() (flowkind.BinaryOp, bool) {
+	if !row.valid() {
+		return 0, false
+	}
+	return row.op, true
+}
+
 func (row BinaryOrder) Endpoints() (result, left, right Coordinate, op flowkind.BinaryOp, ok bool) {
 	if !row.valid() {
 		return Coordinate{}, Coordinate{}, Coordinate{}, 0, false
@@ -122,11 +142,12 @@ func (row BinaryOrder) Endpoints() (result, left, right Coordinate, op flowkind.
 // and the closed presence conclusion; Program branch/route geometry remains
 // behind the artifact receipt that issued this operand.
 type PresenceRefinement struct {
-	schema  *Schema
-	key     computationKey
-	content identity.ContentID
-	target  Coordinate
-	present bool
+	schema    *Schema
+	key       computationKey
+	content   identity.ContentID
+	target    Coordinate
+	endpoints uint32
+	present   bool
 }
 
 func (schema *Schema) PresenceRefinement(module, occurrence identity.ContentID) (PresenceRefinement, bool) {
@@ -150,6 +171,14 @@ func (row PresenceRefinement) ID() (identity.ContentID, bool) {
 		return identity.ContentID{}, false
 	}
 	return row.content, true
+}
+
+// Present is the closed presence conclusion this arm narrows to.
+func (row PresenceRefinement) Present() (bool, bool) {
+	if !row.valid() {
+		return false, false
+	}
+	return row.present, true
 }
 
 func (row PresenceRefinement) Target() (Coordinate, bool, bool) {
@@ -180,6 +209,14 @@ func (row BinaryEquality) ID() (identity.ContentID, bool) {
 		return identity.ContentID{}, false
 	}
 	return row.content, true
+}
+
+// NotEqual is the equality polarity this comparison publishes.
+func (row BinaryEquality) NotEqual() (bool, bool) {
+	if !row.valid() {
+		return false, false
+	}
+	return row.notEqual, true
 }
 
 func (row BinaryEquality) Endpoints() (result, left, right Coordinate, notEqual bool, ok bool) {
@@ -705,16 +742,23 @@ func (schema *valueBuilder) sealComputationRows() bool {
 					}
 					schema.returnBoundaryMembers = append(schema.returnBoundaryMembers, returnBoundaryMember{coordinate: memberCoordinate})
 				}
+				body, bodyOK := row.BodyID()
 				boundary := ReturnBoundary{
 					schema: schema.Schema, key: key,
+					body:    body,
 					content: computationContent(schema.linkID, "val-ret!", module, row.ID()),
 					root:    coordinate, memberOffset: memberOffset, memberCount: uint32(len(topology.members)),
 					hasTail: topology.hasTail, tailKind: topology.tailKind,
+				}
+				if !bodyOK || !body.Available() {
+					return false
 				}
 				if _, duplicate := schema.returnBoundaries[key]; duplicate {
 					return false
 				}
 				schema.returnBoundaries[key] = boundary
+				bodyKey := computationKey{module: module, occurrence: body}
+				schema.returnBoundariesByBody[bodyKey] = append(schema.returnBoundariesByBody[bodyKey], key)
 				if !boundary.valid() {
 					return false
 				}

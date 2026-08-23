@@ -17,6 +17,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/program/scalar"
 	"github.com/wippyai/go-lua/analysis/program/target/contract"
 	"github.com/wippyai/go-lua/analysis/program/target/vocabulary"
+	"github.com/wippyai/go-lua/analysis/schema/program/calltarget"
 	"github.com/wippyai/go-lua/analysis/schema/programmount"
 	"github.com/wippyai/go-lua/domain/materialization"
 	"github.com/wippyai/go-lua/domain/runtimekind"
@@ -425,17 +426,22 @@ type Schema struct {
 	// computation rows are Value-owned interpretations issued while the Link
 	// is still open during sealing.  Published operands resolve through these
 	// dense, owner-fenced maps; they never reopen a mounted Program.
-	binaryEqualities      map[computationKey]BinaryEquality
-	binaryArithmetics     map[computationKey]BinaryArithmetic
-	binaryOrders          map[computationKey]BinaryOrder
-	runtimeKindCalls      map[computationKey]RuntimeKindCall
-	moduleLoadCalls       map[computationKey]ModuleLoadCall
-	presenceRefinements   map[computationKey]PresenceRefinement
-	unaryNots             map[computationKey]UnaryNot
-	selectBranches        map[selectBranchKey]SelectBranch
-	valueClaims           map[computationKey]ValueClaim
-	returnBoundaries      map[computationKey]ReturnBoundary
-	returnBoundaryMembers []returnBoundaryMember
+	// endpoints is the sealed operand -> dense Value coordinate projection
+	// issued once every operand family is sealed.
+	endpoints              []endpointRow
+	endpointTable          identity.ContentID
+	binaryEqualities       map[computationKey]BinaryEquality
+	binaryArithmetics      map[computationKey]BinaryArithmetic
+	binaryOrders           map[computationKey]BinaryOrder
+	runtimeKindCalls       map[computationKey]RuntimeKindCall
+	moduleLoadCalls        map[computationKey]ModuleLoadCall
+	presenceRefinements    map[computationKey]PresenceRefinement
+	unaryNots              map[computationKey]UnaryNot
+	selectBranches         map[selectBranchKey]SelectBranch
+	valueClaims            map[computationKey]ValueClaim
+	returnBoundaries       map[computationKey]ReturnBoundary
+	returnBoundariesByBody map[computationKey][]computationKey
+	returnBoundaryMembers  []returnBoundaryMember
 	// freshResultCalls is the detached Value-owned admission directory for
 	// Target fresh results that have an existing fixed CallResultValue
 	// coordinate. Heap remains the sole issuer of the key; this map only joins
@@ -830,6 +836,7 @@ func SealWithFailure(source *link.Link, heaps heap.Schema, mounts []programmount
 		selectBranches:             make(map[selectBranchKey]SelectBranch),
 		valueClaims:                make(map[computationKey]ValueClaim),
 		returnBoundaries:           make(map[computationKey]ReturnBoundary),
+		returnBoundariesByBody:     make(map[computationKey][]computationKey),
 		freshResultCalls:           make(map[heap.Key]FreshResultCall),
 		moduleExportFresh:          make(map[heap.Key]moduleExportFreshRow),
 		mountedCallResultSlots:     make(map[mountedCallResultSlotKey]MountedCallResultSlot),
@@ -901,6 +908,9 @@ func SealWithFailure(source *link.Link, heaps heap.Schema, mounts []programmount
 		{SealFailureSourceValues, builder.sealSourceValues},
 		{SealFailureSourceOccurrences, builder.sealSourceSeedOccurrences},
 		{SealFailureGlobalBootstrapResults, func() bool { return builder.sealGlobalBootstrapResults(source.Module()) }},
+		// Every operand family is sealed by here, so the endpoint projection
+		// resolves each operand's coordinates once and for all.
+		{SealFailureComputation, builder.sealEndpointVectors},
 	}
 	for _, step := range steps {
 		if !step.seal() {
@@ -948,11 +958,26 @@ func (schema *valueBuilder) sealMountedCoordinateDirectory() bool {
 		return false
 	}
 	values := schema.sealBoundary().Values()
+	quotients := make(map[identity.ContentID]storageCaptureQuotient)
 	complete := true
 	return values.VisitMountedSemantics(func(module, id identity.ContentID, value linkboundary.Value) bool {
-		coordinate, coordinateOK := schema.coordinateForCold(value)
+		quotient, quotientOK := quotients[module]
+		if !quotientOK {
+			quotient, quotientOK = schema.storageCaptureQuotientForModule(module)
+			if !quotientOK {
+				complete = false
+				return false
+			}
+			quotients[module] = quotient
+		}
+		canonicalID, captured := quotient.canonical(id)
+		if !captured {
+			canonicalID = id
+		}
+		canonicalValue, canonicalValueOK := values.ForMountedSemantic(module, canonicalID)
+		coordinate, coordinateOK := schema.coordinateForCold(canonicalValue)
 		key := mountedCoordinateKey{module: module, value: id}
-		if !coordinateOK {
+		if !canonicalValueOK || !coordinateOK {
 			complete = false
 			return false
 		}
@@ -991,7 +1016,7 @@ func (schema *valueBuilder) sealAllocationResults() bool {
 		if row.allocationResult != nil {
 			return false
 		}
-		_, _, _, _, _, programRoot := schema.heap.AllocationOriginForKey(row.allocation)
+		module, _, allocationID, _, _, programRoot := schema.heap.AllocationOriginForKey(row.allocation)
 		subjectID, subjectOK := schema.heap.AllocationRootValueID(row.allocation)
 		if !programRoot || !subjectOK {
 			continue
@@ -1009,9 +1034,43 @@ func (schema *valueBuilder) sealAllocationResults() bool {
 			return false
 		}
 		summary, _ := schema.referenceAtom(uint32(index+1), materialization.Summary)
+		routes := []Coordinate{{schema: schema.Schema, index: coordinateRow.coordinate}}
+		mount, mounted := schema.artifacts[module]
+		if mounted {
+			state, stateOK := mount.Program.Program.ColdState()
+			targets, targetsOK := calltarget.NewView(state)
+			count, countOK := targets.Count()
+			if !stateOK || !targetsOK || !countOK {
+				return false
+			}
+			var function identity.ContentID
+			for targetIndex := 0; targetIndex < count; targetIndex++ {
+				target, targetOK := targets.At(targetIndex)
+				if !targetOK {
+					return false
+				}
+				if target.AllocationID() != allocationID {
+					continue
+				}
+				if function.Available() {
+					return false
+				}
+				function = target.FunctionID()
+			}
+			if function.Available() {
+				alias, aliasOK := schema.CoordinateForMountedSemantic(module, function)
+				// A Function row is code identity, not necessarily a Value
+				// coordinate (named declarations commonly have no expression
+				// result). Only an existing Value coordinate participates in the
+				// allocation's atomic result image.
+				if aliasOK && alias != routes[0] {
+					routes = append(routes, alias)
+				}
+			}
+		}
 		row.allocationResult = &AllocationResult{
 			schema: schema.Schema, key: row.allocation, keyID: keyID,
-			coordinate: Coordinate{schema: schema.Schema, index: coordinateRow.coordinate}, fresh: fresh,
+			coordinate: Coordinate{schema: schema.Schema, index: coordinateRow.coordinate}, routes: routes, fresh: fresh,
 			recent: recent, summary: summary,
 		}
 	}

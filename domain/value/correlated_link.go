@@ -91,6 +91,7 @@ func (seed SourceSeed) Result() (Coordinate, Value, bool) {
 type ReturnBoundary struct {
 	schema       *Schema
 	key          computationKey
+	body         identity.ContentID
 	content      identity.ContentID
 	root         Coordinate
 	memberOffset uint32
@@ -112,7 +113,7 @@ func (boundary ReturnBoundary) valid() bool {
 		return false
 	}
 	expected, ok := boundary.schema.returnBoundaries[boundary.key]
-	if !ok || expected != boundary || !boundary.root.Valid() {
+	if !ok || expected != boundary || !boundary.body.Available() || !boundary.root.Valid() {
 		return false
 	}
 	if uint64(boundary.memberOffset)+uint64(boundary.memberCount) > uint64(len(boundary.schema.returnBoundaryMembers)) {
@@ -125,6 +126,39 @@ func (boundary ReturnBoundary) valid() bool {
 		return false
 	}
 	return true
+}
+
+// BodyID returns the canonical Program body that owns this return. It is
+// retained while Value seals its computation rows, so body-result consumers
+// never recover ownership from occurrence geometry after the seal.
+func (boundary ReturnBoundary) BodyID() (identity.ContentID, bool) {
+	if !boundary.valid() {
+		return identity.ContentID{}, false
+	}
+	return boundary.body, true
+}
+
+// ReturnBoundariesForBody returns the canonical return rows of one mounted
+// body in authored Program occurrence order. The body index is issued during
+// Value sealing and points back to the sole ReturnBoundary map; it is not a
+// second boundary representation.
+func (schema *Schema) ReturnBoundariesForBody(module, body identity.ContentID) ([]ReturnBoundary, bool) {
+	if schema == nil || schema.returnBoundariesByBody == nil || !module.Available() || !body.Available() {
+		return nil, false
+	}
+	keys, ok := schema.returnBoundariesByBody[computationKey{module: module, occurrence: body}]
+	if !ok || len(keys) == 0 {
+		return nil, false
+	}
+	rows := make([]ReturnBoundary, len(keys))
+	for index, key := range keys {
+		row, held := schema.returnBoundaries[key]
+		if !held || !row.valid() || row.key != key || row.body != body {
+			return nil, false
+		}
+		rows[index] = row
+	}
+	return rows, true
 }
 
 func (schema *Schema) OwnsReturnBoundary(boundary ReturnBoundary) bool {

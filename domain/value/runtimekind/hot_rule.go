@@ -50,11 +50,8 @@ func BindHot(fragment *SchemaFragment, values *valueowner.HotOwner, calls *callo
 		OperandResolver: hot.resolveOperand,
 		Fold: func(frame engine.Frame[valuedomain.Value, valuedomain.RuntimeKindCall]) engine.RuleResult[valuedomain.Value] {
 			operand, operandOK := engine.Operand(frame)
-			_, _, endpointsOK := hotEndpoints(values.Schema(), operand)
-			if !operandOK || !endpointsOK {
-				return engine.RuleResult[valuedomain.Value]{}
-			}
-			if _, writeOK := hotWriteTarget(values.Schema(), operand); !writeOK {
+			_, writeOK := operand.Endpoint(valuedomain.EndpointWrite)
+			if !operandOK || !writeOK {
 				return engine.RuleResult[valuedomain.Value]{}
 			}
 			callCells, callOK := engine.ReadValue(frame, callRead)
@@ -90,9 +87,7 @@ func BindHot(fragment *SchemaFragment, values *valueowner.HotOwner, calls *callo
 		},
 	}
 	implementation, bound := valueowner.BindSelectedRuleDirect(values, fragment.slot, fragment.carry, fragment.write, values.FactorRef(), bindSpec, engine.HotCarrySpec[valuedomain.Value, valuedomain.RuntimeKindCall]{}, func(row valuedomain.RuntimeKindCall) (uint64, bool) {
-		target, ok := hotWriteTarget(values.Schema(), row)
-		index, indexOK := values.Schema().CoordinateIndex(target)
-		return uint64(index), ok && indexOK
+		return row.Endpoint(valuedomain.EndpointWrite)
 	})
 	if !bound {
 		return nil, false
@@ -103,19 +98,15 @@ func BindHot(fragment *SchemaFragment, values *valueowner.HotOwner, calls *callo
 		return projectCall(calls.Algebra(), module, occurrence, ok)
 	})
 	valueRead, valueOK = valueowner.AddSelectedRuleDirectExactRead(implementation, fragment.valueRead, values.FactorRef(), func(row valuedomain.RuntimeKindCall) (uint64, bool) {
-		_, input, ok := hotEndpoints(values.Schema(), row)
-		index, indexOK := values.Schema().CoordinateIndex(input)
-		return uint64(index), ok && indexOK
+		return row.Endpoint(valuedomain.EndpointLeft)
 	})
 	comparisonRead, comparisonOK = valueowner.AddSelectedRuleDirectExactRead(implementation, fragment.comparisonRead, values.FactorRef(), func(row valuedomain.RuntimeKindCall) (uint64, bool) {
-		comparison, _, _, refinement := row.Refinement()
-		if !refinement {
-			_, input, ok := hotEndpoints(values.Schema(), row)
-			index, indexOK := values.Schema().CoordinateIndex(input)
-			return uint64(index), ok && indexOK
+		// Only a guarded predicate declares a compared coordinate. A plain
+		// runtime-kind call compares against the value it already reads.
+		if index, compared := row.Endpoint(valuedomain.EndpointCompared); compared {
+			return index, true
 		}
-		index, indexOK := values.Schema().CoordinateIndex(comparison)
-		return uint64(index), indexOK
+		return row.Endpoint(valuedomain.EndpointLeft)
 	})
 	if !callOK || !valueOK || !comparisonOK {
 		return nil, false
@@ -154,38 +145,6 @@ func hotContent(schema *valuedomain.Schema, row valuedomain.RuntimeKindCall) (va
 		return valuedomain.RuntimeKindCall{}, [32]byte{}, false
 	}
 	return row, [32]byte(id), true
-}
-
-// hotEndpoints returns the two Value coordinates.  Mount and occurrence
-// identity remain a separate projection so semantic coordinates cannot be
-// mistaken for a Call key.
-func hotEndpoints(schema *valuedomain.Schema, row valuedomain.RuntimeKindCall) (result, input valuedomain.Coordinate, ok bool) {
-	if schema == nil || !schema.OwnsRuntimeKindCall(row) {
-		return valuedomain.Coordinate{}, valuedomain.Coordinate{}, false
-	}
-	result, input, ok = row.Endpoints()
-	if !ok {
-		return valuedomain.Coordinate{}, valuedomain.Coordinate{}, false
-	}
-	if _, resultOK := schema.CoordinateIndex(result); !resultOK {
-		return valuedomain.Coordinate{}, valuedomain.Coordinate{}, false
-	}
-	if _, inputOK := schema.CoordinateIndex(input); !inputOK {
-		return valuedomain.Coordinate{}, valuedomain.Coordinate{}, false
-	}
-	return result, input, true
-}
-
-func hotWriteTarget(schema *valuedomain.Schema, row valuedomain.RuntimeKindCall) (valuedomain.Coordinate, bool) {
-	if schema == nil || !schema.OwnsRuntimeKindCall(row) {
-		return valuedomain.Coordinate{}, false
-	}
-	target, ok := row.WriteTarget()
-	if !ok {
-		return valuedomain.Coordinate{}, false
-	}
-	_, indexOK := schema.CoordinateIndex(target)
-	return target, indexOK
 }
 
 func callOccurrence(schema *valuedomain.Schema, row valuedomain.RuntimeKindCall) (module, occurrence identity.ContentID, ok bool) {

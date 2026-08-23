@@ -57,3 +57,17 @@ func (schema *Schema) ExactScalar(value Value) (ExactScalar, bool) {
 		return ExactScalar{}, false
 	}
 }
+
+// Nil returns Lua's sole exact nil Value from this Schema. Missing result
+// positions use this owner-issued atom; callers never manufacture an Unknown
+// or infer the private atom ordinal.
+func (schema *Schema) Nil() (Value, bool) {
+	if schema == nil {
+		return Value{}, false
+	}
+	id := schema.atomByRow[atomRow{kind: atomNil}]
+	if id == 0 {
+		return Value{}, false
+	}
+	return schema.Singleton(Atom{schema: schema, id: id})
+}

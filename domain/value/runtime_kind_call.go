@@ -17,6 +17,7 @@ type RuntimeKindCall struct {
 	input      Coordinate
 	comparison Coordinate
 	write      Coordinate
+	endpoints  uint32
 	call       identity.ContentID
 	op         flowkind.BinaryOp
 	truth      bool

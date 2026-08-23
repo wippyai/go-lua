@@ -15,6 +15,7 @@ type AllocationResult struct {
 	key        heap.Key
 	keyID      identity.ContentID
 	coordinate Coordinate
+	routes     []Coordinate
 	fresh      Value
 	recent     uint32
 	summary    uint32
@@ -22,7 +23,7 @@ type AllocationResult struct {
 
 func (result *AllocationResult) validFor(schema *Schema) bool {
 	return result != nil && schema != nil && result.schema == schema &&
-		result.keyID.Available() && result.coordinate.schema == schema && result.coordinate.Valid() &&
+		result.keyID.Available() && result.coordinate.schema == schema && result.coordinate.Valid() && len(result.routes) != 0 && result.routes[0] == result.coordinate &&
 		result.fresh.schema == schema && result.fresh.valid() && result.recent != 0 && result.summary == result.recent+1
 }
 
@@ -51,6 +52,24 @@ func (result *AllocationResult) Coordinate() (Coordinate, bool) {
 		return Coordinate{}, false
 	}
 	return result.coordinate, true
+}
+
+// RouteCount reports the complete canonical Value-coordinate image written
+// atomically by this allocation. Route zero is always the allocation root;
+// callable allocations additionally carry their exact Function value.
+func (result *AllocationResult) RouteCount() int {
+	if result == nil || !result.validFor(result.schema) {
+		return 0
+	}
+	return len(result.routes)
+}
+
+// RouteAt returns one owner-issued allocation result route.
+func (result *AllocationResult) RouteAt(index int) (Coordinate, bool) {
+	if result == nil || !result.validFor(result.schema) || index < 0 || index >= len(result.routes) {
+		return Coordinate{}, false
+	}
+	return result.routes[index], true
 }
 
 // Fresh returns the canonical Recent fact issued for this allocation.

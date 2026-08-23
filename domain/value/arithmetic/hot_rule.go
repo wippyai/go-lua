@@ -2,7 +2,6 @@ package arithmetic
 
 import (
 	"github.com/wippyai/go-lua/analysis/engine"
-	flowkind "github.com/wippyai/go-lua/analysis/program/flow/kind"
 	"github.com/wippyai/go-lua/domain/value"
 	valueowner "github.com/wippyai/go-lua/domain/value/owner"
 )
@@ -31,8 +30,8 @@ func BindHot(fragment *SchemaFragment, owner *valueowner.HotOwner) (*HotRule, bo
 		OperandResolver: rule.resolveOperand,
 		Fold: func(frame engine.Frame[value.Value, value.BinaryArithmetic]) engine.RuleResult[value.Value] {
 			operand, operandOK := engine.Operand(frame)
-			_, _, _, op, endpointsOK := hotEndpoints(owner.Schema(), operand)
-			if !operandOK || !endpointsOK {
+			op, opOK := operand.Op()
+			if !operandOK || !opOK {
 				return engine.RuleResult[value.Value]{}
 			}
 			leftCells, leftOK := engine.ReadValue(frame, leftRead)
@@ -62,23 +61,17 @@ func BindHot(fragment *SchemaFragment, owner *valueowner.HotOwner) (*HotRule, bo
 			return engine.Staged(frame, result)
 		},
 	}, engine.HotCarrySpec[value.Value, value.BinaryArithmetic]{}, func(row value.BinaryArithmetic) (uint64, bool) {
-		result, _, _, _, ok := hotEndpoints(owner.Schema(), row)
-		index, indexOK := owner.Schema().CoordinateIndex(result)
-		return uint64(index), ok && indexOK
+		return row.Endpoint(value.EndpointWrite)
 	})
 	if !bound {
 		return nil, false
 	}
 	var leftOK, rightOK bool
 	left, leftOK = valueowner.AddSelectedRuleDirectExactRead(implementation, fragment.left, owner.FactorRef(), func(row value.BinaryArithmetic) (uint64, bool) {
-		_, leftCoord, _, _, ok := hotEndpoints(owner.Schema(), row)
-		index, indexOK := owner.Schema().CoordinateIndex(leftCoord)
-		return uint64(index), ok && indexOK
+		return row.Endpoint(value.EndpointLeft)
 	})
 	right, rightOK = valueowner.AddSelectedRuleDirectExactRead(implementation, fragment.right, owner.FactorRef(), func(row value.BinaryArithmetic) (uint64, bool) {
-		_, _, rightCoord, _, ok := hotEndpoints(owner.Schema(), row)
-		index, indexOK := owner.Schema().CoordinateIndex(rightCoord)
-		return uint64(index), ok && indexOK
+		return row.Endpoint(value.EndpointRight)
 	})
 	if !leftOK || !rightOK {
 		return nil, false
@@ -110,24 +103,4 @@ func hotContent(schema *value.Schema, row value.BinaryArithmetic) (value.BinaryA
 		return value.BinaryArithmetic{}, [32]byte{}, false
 	}
 	return row, [32]byte(id), true
-}
-
-func hotEndpoints(schema *value.Schema, row value.BinaryArithmetic) (result, left, right value.Coordinate, op flowkind.BinaryOp, ok bool) {
-	if schema == nil || !schema.OwnsBinaryArithmetic(row) {
-		return value.Coordinate{}, value.Coordinate{}, value.Coordinate{}, 0, false
-	}
-	result, left, right, op, ok = row.Endpoints()
-	if !ok || !flowkind.IsBinaryArithmetic(op) {
-		return value.Coordinate{}, value.Coordinate{}, value.Coordinate{}, 0, false
-	}
-	if _, resultOK := schema.CoordinateIndex(result); !resultOK {
-		return value.Coordinate{}, value.Coordinate{}, value.Coordinate{}, 0, false
-	}
-	if _, leftOK := schema.CoordinateIndex(left); !leftOK {
-		return value.Coordinate{}, value.Coordinate{}, value.Coordinate{}, 0, false
-	}
-	if _, rightOK := schema.CoordinateIndex(right); !rightOK {
-		return value.Coordinate{}, value.Coordinate{}, value.Coordinate{}, 0, false
-	}
-	return result, left, right, op, true
 }

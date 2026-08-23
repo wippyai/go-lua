@@ -36,12 +36,6 @@ func BindHot(fragment *SchemaFragment, values *valueowner.HotOwner, calls *callo
 			if !operandOK {
 				return engine.RuleResult[valuedomain.Value]{}
 			}
-			if _, _, endpointsOK := hotEndpoints(values.Schema(), operand); !endpointsOK {
-				return engine.RuleResult[valuedomain.Value]{}
-			}
-			if _, writeOK := hotWriteTarget(values.Schema(), operand); !writeOK {
-				return engine.RuleResult[valuedomain.Value]{}
-			}
 			callCells, callOK := engine.ReadValue(frame, callRead)
 			valueCells, valueOK := engine.ReadValue(frame, valueRead)
 			if !callOK || !valueOK || callCells.Count() != 1 || valueCells.Count() != 1 {
@@ -65,14 +59,14 @@ func BindHot(fragment *SchemaFragment, values *valueowner.HotOwner, calls *callo
 			case decisionStage:
 				return engine.Staged(frame, projected)
 			default:
+				// decisionInvalid and decisionRefused both leave the rule
+				// without a result to publish.
 				return engine.RuleResult[valuedomain.Value]{}
 			}
 		},
 	}
 	implementation, bound := valueowner.BindSelectedRuleDirect(values, fragment.slot, fragment.carry, fragment.write, values.FactorRef(), bindSpec, engine.HotCarrySpec[valuedomain.Value, valuedomain.ModuleLoadCall]{}, func(row valuedomain.ModuleLoadCall) (uint64, bool) {
-		target, ok := hotWriteTarget(values.Schema(), row)
-		index, indexOK := values.Schema().CoordinateIndex(target)
-		return uint64(index), ok && indexOK
+		return row.Endpoint(valuedomain.EndpointWrite)
 	})
 	if !bound {
 		return nil, false
@@ -82,9 +76,7 @@ func BindHot(fragment *SchemaFragment, values *valueowner.HotOwner, calls *callo
 		return projectCall(calls.Algebra(), module, occurrence, ok)
 	})
 	valueRead, valueOK := valueowner.AddSelectedRuleDirectExactRead(implementation, fragment.valueRead, values.FactorRef(), func(row valuedomain.ModuleLoadCall) (uint64, bool) {
-		_, argument, ok := hotEndpoints(values.Schema(), row)
-		index, indexOK := values.Schema().CoordinateIndex(argument)
-		return uint64(index), ok && indexOK
+		return row.Endpoint(valuedomain.EndpointLeft)
 	})
 	if !callOK || !valueOK {
 		return nil, false
@@ -125,28 +117,6 @@ func hotContent(schema *valuedomain.Schema, row valuedomain.ModuleLoadCall) (val
 	return row, [32]byte(id), true
 }
 
-func hotEndpoints(schema *valuedomain.Schema, row valuedomain.ModuleLoadCall) (result, argument valuedomain.Coordinate, ok bool) {
-	if schema == nil || !schema.OwnsModuleLoadCall(row) {
-		return valuedomain.Coordinate{}, valuedomain.Coordinate{}, false
-	}
-	result, argument, ok = row.Endpoints()
-	if !ok {
-		return valuedomain.Coordinate{}, valuedomain.Coordinate{}, false
-	}
-	if _, resultOK := schema.CoordinateIndex(result); !resultOK {
-		return valuedomain.Coordinate{}, valuedomain.Coordinate{}, false
-	}
-	if _, argumentOK := schema.CoordinateIndex(argument); !argumentOK {
-		return valuedomain.Coordinate{}, valuedomain.Coordinate{}, false
-	}
-	return result, argument, true
-}
-
-func hotWriteTarget(schema *valuedomain.Schema, row valuedomain.ModuleLoadCall) (valuedomain.Coordinate, bool) {
-	result, _, ok := hotEndpoints(schema, row)
-	return result, ok
-}
-
 // projectCall reads Call's sealed occurrence projection. The mounted inverse,
 // the detached identity, the application key and its dense slot are one
 // owner-issued row there.
@@ -163,6 +133,12 @@ type decision uint8
 
 const (
 	decisionInvalid decision = iota
+	// decisionRefused is the named refusal for an operand that does not carry
+	// the required operation this rule exists to interpret. A rule cannot
+	// widen its way out of a missing declaration: Top would assert that every
+	// value is a possible module root, which is a claim about the program
+	// rather than an admission that the operand is malformed.
+	decisionRefused
 	decisionNoCandidate
 	decisionStage
 )
@@ -182,7 +158,7 @@ func classify(schema *valuedomain.Schema, callFact call.Value, argument valuedom
 	}
 	require, requireOK := operand.RequireOperation()
 	if !requireOK {
-		return schema.Top(), decisionStage, true
+		return valuedomain.Value{}, decisionRefused, false
 	}
 	hasScopedLoader := false
 	for index := 0; index < callFact.KnownTargetCount(); index++ {
