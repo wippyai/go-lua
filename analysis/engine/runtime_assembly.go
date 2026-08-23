@@ -3,6 +3,7 @@
 package engine
 
 import (
+	"github.com/wippyai/go-lua/analysis/engine/execution"
 	"github.com/wippyai/go-lua/analysis/engine/internal/carrier"
 	"github.com/wippyai/go-lua/analysis/engine/internal/carrier/shape"
 	"github.com/wippyai/go-lua/analysis/engine/internal/composition"
@@ -198,15 +199,20 @@ type runtimeEnvironment struct {
 }
 
 type runtimeFactorEdge struct {
-	index                  int
-	key                    composition.Key
-	factor                 composition.Key
-	source                 int
-	target                 int
-	input                  runtimeInput
-	slot                   shape.Slot
-	context                equation.ActivationContext
-	fromContext, toContext contextfiber.ContextOrdinal
+	index  int
+	key    composition.Key
+	factor composition.Key
+	source int
+	target int
+	input  runtimeInput
+	slot   shape.Slot
+	// activation is the sealed candidate branch this edge instantiates. An
+	// edge that carries one was authenticated exactly once, against the Link
+	// directory, the point layout, and the execution plan together; every
+	// consumer below reads its endpoint Contexts and States off the row rather
+	// than deriving them again from the transition tuple. A static transport
+	// edge carries no branch, which is what says it is not an activation.
+	activation execution.ActivationRow
 }
 
 // runtimeStateFactorRow is one admitted contextual occurrence of a singular

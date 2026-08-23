@@ -3,6 +3,7 @@ package engine
 import (
 	"testing"
 
+	"github.com/wippyai/go-lua/analysis/engine/execution"
 	"github.com/wippyai/go-lua/analysis/engine/internal/composition"
 	"github.com/wippyai/go-lua/analysis/engine/internal/contextfiber"
 	"github.com/wippyai/go-lua/analysis/engine/internal/equation"
@@ -152,18 +153,22 @@ func (fixture contextQualifiedActivationLawFixture) completeContext() equation.A
 	}
 }
 
-func (fixture contextQualifiedActivationLawFixture) selectedEdge() runtimeFactorEdge {
-	fromOrdinal, _ := fixture.index.ContextOrdinal(fixture.from.ID())
-	toOrdinal, _ := fixture.index.ContextOrdinal(fixture.to.ID())
+// selectedEdge is one selected transport edge carrying the branch the runtime
+// authenticated for it. The edge is built from the sealed row rather than from
+// loose coordinates: an edge whose branch no authentication produced is exactly
+// what this law's negative half is about.
+func (fixture contextQualifiedActivationLawFixture) selectedEdge(t testing.TB, branch execution.ActivationRow) runtimeFactorEdge {
+	t.Helper()
+	if !branch.Available() {
+		t.Fatal("a selected transport edge carries an authenticated branch")
+	}
 	return runtimeFactorEdge{
-		index:       0,
-		key:         contextQualifiedActivationLawKey(0x34),
-		factor:      fixture.factor,
-		source:      0,
-		target:      1,
-		fromContext: fromOrdinal,
-		toContext:   toOrdinal,
-		context:     fixture.completeContext(),
+		index:      0,
+		key:        contextQualifiedActivationLawKey(0x34),
+		factor:     fixture.factor,
+		source:     0,
+		target:     1,
+		activation: branch,
 	}
 }
 
@@ -214,15 +219,17 @@ func TestContextQualifiedActivationLiftsExactlyOneStatePair(t *testing.T) {
 	if source == siblingSource || target == siblingTarget {
 		t.Fatal("sibling contexts collapsed onto selected StateOrdinals")
 	}
-	if !runtime.validSelectedActivationContext(context, 0, 1) {
+	branch, sealed := runtime.sealSelectedActivationBranch(context, fixture.factor, 0, 1)
+	if !sealed || !branch.Available() {
 		t.Fatal("complete activation tuple was not authenticated")
 	}
-	pairs, pairsOK := runtime.liftGraphPairStates(0, 1, context)
-	if !pairsOK || len(pairs) != 1 || pairs[0] != (schedule.Edge{From: schedule.Node(source), To: schedule.Node(target)}) {
-		t.Fatalf("selected activation lifted pairs=%v want one exact %d->%d", pairs, source, target)
+	sourceState, targetState := branch.States()
+	if int(sourceState) != source || int(targetState) != target {
+		t.Fatalf("sealed branch states=%d->%d want one exact %d->%d", sourceState, targetState, source, target)
 	}
+	pair := schedule.Edge{From: schedule.Node(source), To: schedule.Node(target)}
 
-	selected := fixture.selectedEdge()
+	selected := fixture.selectedEdge(t, branch)
 	prepared := &preparedSelectedFactorOverlay{
 		runtime:   runtime,
 		additions: []preparedFactorAddition{{edge: selected}},
@@ -254,8 +261,8 @@ func TestContextQualifiedActivationLiftsExactlyOneStatePair(t *testing.T) {
 			t.Fatalf("sibling StateOrdinal %d was scheduled by selected activation", sibling)
 		}
 	}
-	if len(prepared.stateExecution.Edges()) != 1 || prepared.stateExecution.Edges()[0] != pairs[0] {
-		t.Fatalf("state execution edges=%v want exact selected pair %v", prepared.stateExecution.Edges(), pairs[0])
+	if len(prepared.stateExecution.Edges()) != 1 || prepared.stateExecution.Edges()[0] != pair {
+		t.Fatalf("state execution edges=%v want exact selected pair %v", prepared.stateExecution.Edges(), pair)
 	}
 }
 
@@ -287,17 +294,23 @@ func TestContextQualifiedActivationRefusesIncompleteForeignAndAmbiguousTuples(t 
 	}
 	for name, candidate := range cases {
 		t.Run(name, func(t *testing.T) {
-			if runtime.validSelectedActivationContext(candidate, 0, 1) {
+			branch, sealed := runtime.sealSelectedActivationBranch(candidate, fixture.factor, 0, 1)
+			if sealed || branch.Available() {
 				t.Fatal("invalid activation tuple authenticated")
 			}
-			if pairs, paired := runtime.liftGraphPairStates(0, 1, candidate); paired || len(pairs) != 0 {
-				t.Fatalf("invalid activation tuple lifted pairs=%v paired=%t", pairs, paired)
+			// Authentication happens once, so the refusal is here and the
+			// overlay's own obligation is the narrower one below: an edge that
+			// carries no authenticated branch installs no state row.
+			unauthenticated := runtimeFactorEdge{
+				index:  0,
+				key:    contextQualifiedActivationLawKey(0x34),
+				factor: fixture.factor,
+				source: 0,
+				target: 1,
 			}
-			selected := fixture.selectedEdge()
-			selected.context = candidate
 			prepared := &preparedSelectedFactorOverlay{
 				runtime:   runtime,
-				additions: []preparedFactorAddition{{edge: selected}},
+				additions: []preparedFactorAddition{{edge: unauthenticated}},
 			}
 			if prepared.bindArtifactStateOverlay(runtime) {
 				t.Fatal("invalid activation tuple installed a state overlay")

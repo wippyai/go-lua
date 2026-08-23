@@ -365,16 +365,15 @@ func buildStateFactorIndex(graph *equation.Graph, plan interface {
 		if edge.source < 0 || edge.target < 0 || edge.source >= len(stateRows) || edge.target >= len(stateRows) || !edge.key.Available() {
 			return nil, nil, nil, nil, false
 		}
-		if edge.context.Available() {
-			sourceState, sourceStateOK := plan.Lookup(edge.fromContext, contextfiber.PointOrdinal(edge.source))
-			targetState, targetStateOK := plan.Lookup(edge.toContext, contextfiber.PointOrdinal(edge.target))
-			if !sourceStateOK || !targetStateOK || !add(edgeIndex, int(sourceState), int(targetState)) {
+		if edge.activation.Available() {
+			// The branch names the State pair its endpoints occupy. It was
+			// sealed by one authentication, so this pass installs the row it
+			// carries instead of resolving the pair a second time.
+			sourceState, targetState := edge.activation.States()
+			if !add(edgeIndex, int(sourceState), int(targetState)) {
 				return nil, nil, nil, nil, false
 			}
 			continue
-		}
-		if !edge.context.WellFormed() {
-			return nil, nil, nil, nil, false
 		}
 		fromOwner, fromOK := stateRowOwner(plan, stateRows[edge.source])
 		toOwner, toOK := stateRowOwner(plan, stateRows[edge.target])

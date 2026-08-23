@@ -3,6 +3,7 @@ package engine
 import (
 	"sort"
 
+	"github.com/wippyai/go-lua/analysis/engine/execution"
 	"github.com/wippyai/go-lua/analysis/engine/internal/carrier"
 	"github.com/wippyai/go-lua/analysis/engine/internal/composition"
 	"github.com/wippyai/go-lua/analysis/engine/internal/contextfiber"
@@ -11,6 +12,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/engine/internal/schedule"
 	"github.com/wippyai/go-lua/analysis/identity"
 	"github.com/wippyai/go-lua/analysis/schema/executioncontext"
+	"github.com/wippyai/go-lua/analysis/schema/structure"
 )
 
 // preparedSelectedFactorOverlay is a stale-fenced, uninstalled structural
@@ -270,34 +272,51 @@ type selectedFactorDescriptor struct {
 	edge   equation.SelectedStructuralFactorEdge
 	source int
 	target int
+	// activation is the branch this descriptor's edge instantiates, sealed by
+	// the one authentication below. A static transport descriptor carries an
+	// unsealed row, which is the statement that it names no activation.
+	activation execution.ActivationRow
 }
 
-// validSelectedActivationContext authenticates the complete transition tuple
-// against the sealed Link directory's activation relation and resolves exactly
-// one source/target StateOrdinal pair. It never searches same-module contexts
-// or fans out a graph-point edge.
-func (runtime *solverRuntime) validSelectedActivationContext(context equation.ActivationContext, source, target int) bool {
+// sealSelectedActivationBranch is the one authentication of one activation
+// candidate branch. It proves the complete transition tuple against the sealed
+// Link directory's activation relation, assigns the transition's two Contexts
+// to the edge's two endpoints, and resolves the exact source/target
+// StateOrdinal pair those endpoints occupy - all against one reading of the
+// directory and the plan. It never searches same-module contexts or fans out a
+// graph-point edge.
+//
+// The sealed row it returns is the only carrier of that answer. Every consumer
+// downstream reads the row, so the assignment is decided once instead of being
+// recomputed at each site from the same tuple with no one holding the several
+// derivations to agreeing.
+//
+// A runtime that is not artifact-backed has no state plane and therefore no
+// activation branch to seal; its transports carry an empty tuple, and a
+// non-empty one there is a claim the runtime cannot authenticate.
+func (runtime *solverRuntime) sealSelectedActivationBranch(context equation.ActivationContext, factor composition.Key, source, target int) (execution.ActivationRow, bool) {
 	if runtime == nil || !runtime.artifactBacked {
-		return context.Empty()
+		return execution.ActivationRow{}, context.Empty()
 	}
-	if runtime.graph == nil || runtime.executionPlan == nil || !runtime.executionPlan.Available() || !context.Available() || source < 0 || target < 0 || source >= runtime.graph.PointCount() || target >= runtime.graph.PointCount() {
-		return false
+	if runtime.graph == nil || runtime.executionPlan == nil || !runtime.executionPlan.Available() || !context.Available() || !factor.Available() ||
+		source < 0 || target < 0 || source >= runtime.graph.PointCount() || target >= runtime.graph.PointCount() {
+		return execution.ActivationRow{}, false
 	}
 	from, fromOK := runtime.contexts.Context(context.FromContextID)
 	to, toOK := runtime.contexts.Context(context.ToContextID)
 	transition, transitionOK := runtime.contexts.ActivationEdge(context.FromContextID, context.ToContextID)
 	if !fromOK || !toOK || !from.Available() || !to.Available() || !transitionOK || !transition.Available() ||
 		transition.ID() != context.TransitionID || transition.LinkID() != runtime.contexts.LinkID() {
-		return false
+		return execution.ActivationRow{}, false
 	}
 	sourceOrdinal, targetOrdinal, orientedOK := runtime.selectedActivationEndpointContexts(context, from, to, source, target)
 	if !orientedOK {
-		return false
+		return execution.ActivationRow{}, false
 	}
 	sourceState, sourceStateOK := runtime.executionPlan.Lookup(sourceOrdinal, contextfiber.PointOrdinal(source))
 	targetState, targetStateOK := runtime.executionPlan.Lookup(targetOrdinal, contextfiber.PointOrdinal(target))
 	if !sourceStateOK || !targetStateOK {
-		return false
+		return execution.ActivationRow{}, false
 	}
 	sourceCell, sourceCellOK := runtime.executionPlan.StateAt(sourceState)
 	targetCell, targetCellOK := runtime.executionPlan.StateAt(targetState)
@@ -305,8 +324,26 @@ func (runtime *solverRuntime) validSelectedActivationContext(context equation.Ac
 	targetContext, targetContextOK := targetCell.ContextOrdinal()
 	sourcePoint, sourcePointOK := sourceCell.PointOrdinal()
 	targetPoint, targetPointOK := targetCell.PointOrdinal()
-	return sourceCellOK && targetCellOK && sourceContextOK && targetContextOK && sourcePointOK && targetPointOK &&
-		sourceContext == sourceOrdinal && targetContext == targetOrdinal && sourcePoint == contextfiber.PointOrdinal(source) && targetPoint == contextfiber.PointOrdinal(target)
+	if !sourceCellOK || !targetCellOK || !sourceContextOK || !targetContextOK || !sourcePointOK || !targetPointOK ||
+		sourceContext != sourceOrdinal || targetContext != targetOrdinal ||
+		sourcePoint != contextfiber.PointOrdinal(source) || targetPoint != contextfiber.PointOrdinal(target) {
+		return execution.ActivationRow{}, false
+	}
+	// An authenticated branch whose transport this overlay installs is a
+	// proved transport: the disposition it settles is Concrete.
+	return execution.NewActivationRow(execution.ActivationSpec{
+		TransitionID:  context.TransitionID,
+		FromContextID: context.FromContextID,
+		ToContextID:   context.ToContextID,
+		FromContext:   sourceOrdinal,
+		ToContext:     targetOrdinal,
+		SourcePoint:   contextfiber.PointOrdinal(source),
+		TargetPoint:   contextfiber.PointOrdinal(target),
+		SourceState:   sourceState,
+		TargetState:   targetState,
+		Port:          factor,
+		Outcome:       structure.Concrete,
+	})
 }
 
 // selectedActivationEndpointContextIDs assigns the two Contexts of one
@@ -352,17 +389,6 @@ func (runtime *solverRuntime) selectedActivationEndpointContexts(context equatio
 	return sourceOrdinal, targetOrdinal, true
 }
 
-// selectedActivationEdgeContexts resolves one edge's endpoint Contexts after
-// reading the two directory rows its transition names.
-func (runtime *solverRuntime) selectedActivationEdgeContexts(context equation.ActivationContext, source, target int) (contextfiber.ContextOrdinal, contextfiber.ContextOrdinal, bool) {
-	from, fromOK := runtime.contexts.Context(context.FromContextID)
-	to, toOK := runtime.contexts.Context(context.ToContextID)
-	if !fromOK || !toOK || !from.Available() || !to.Available() {
-		return 0, 0, false
-	}
-	return runtime.selectedActivationEndpointContexts(context, from, to, source, target)
-}
-
 func (runtime *solverRuntime) prevalidateSelectedFactorEdges(selected []equation.SelectedStructuralFactorEdge) ([]selectedFactorDescriptor, []schedule.Edge, map[[2]int]struct{}, bool, *schedule.Schedule, bool) {
 	if runtime == nil || runtime.graph == nil || len(selected) == 0 {
 		return nil, nil, nil, false, nil, false
@@ -380,7 +406,8 @@ func (runtime *solverRuntime) prevalidateSelectedFactorEdges(selected []equation
 		if !sourceOK || !targetOK || !factorOK || slot < 0 || int(slot) >= runtime.carrier.Count() || source < 0 || target < 0 || source >= runtime.graph.PointCount() || target >= runtime.graph.PointCount() {
 			return nil, nil, nil, false, nil, false
 		}
-		if !runtime.validSelectedActivationContext(edge.Context(), source, target) {
+		activation, sealed := runtime.sealSelectedActivationBranch(edge.Context(), edge.Factor(), source, target)
+		if !sealed {
 			return nil, nil, nil, false, nil, false
 		}
 		// ContextTransport is the sole Link-owned authority for an exact
@@ -394,7 +421,7 @@ func (runtime *solverRuntime) prevalidateSelectedFactorEdges(selected []equation
 			return nil, nil, nil, false, nil, false
 		}
 		seen[edge.Key()] = struct{}{}
-		result = append(result, selectedFactorDescriptor{edge: edge, source: source, target: target})
+		result = append(result, selectedFactorDescriptor{edge: edge, source: source, target: target, activation: activation})
 	}
 	dependencies, dependencyAt, changed, execution, scheduled := runtime.combinedSelectedDependencyEdges(result)
 	if !scheduled {
@@ -487,13 +514,11 @@ func (runtime *solverRuntime) bindSelectedFactorEdge(descriptor selectedFactorDe
 	}
 	planKey := input.Reindex().Key()
 	context := edge.Context()
-	var fromContext, toContext contextfiber.ContextOrdinal
-	if context.Available() {
-		var orientedOK bool
-		fromContext, toContext, orientedOK = runtime.selectedActivationEdgeContexts(context, descriptor.source, descriptor.target)
-		if !orientedOK {
-			return boundSelectedFactorEdge{}, false
-		}
+	// The branch was authenticated by prevalidation and its endpoint Context
+	// assignment sealed there. A descriptor whose edge carries a transition
+	// tuple and no sealed branch never passed that authentication.
+	if context.Available() != descriptor.activation.Available() {
+		return boundSelectedFactorEdge{}, false
 	}
 	plan, planOK := runtime.overlay.reindexes.plan(input.Reindex())
 	if !planOK {
@@ -515,7 +540,7 @@ func (runtime *solverRuntime) bindSelectedFactorEdge(descriptor selectedFactorDe
 	if !planKey.Available() || !planOK || !preOK || !postOK || !bound.valid() || !originOK {
 		return boundSelectedFactorEdge{}, false
 	}
-	return boundSelectedFactorEdge{edge: runtimeFactorEdge{key: edge.Key(), factor: edge.Factor(), source: descriptor.source, target: descriptor.target, input: bound, slot: slot, context: context, fromContext: fromContext, toContext: toContext}, origin: origin}, true
+	return boundSelectedFactorEdge{edge: runtimeFactorEdge{key: edge.Key(), factor: edge.Factor(), source: descriptor.source, target: descriptor.target, input: bound, slot: slot, activation: descriptor.activation}, origin: origin}, true
 }
 
 func (prepared *preparedSelectedFactorOverlay) finalize(runtime *solverRuntime) bool {
@@ -677,21 +702,16 @@ func (prepared *preparedSelectedFactorOverlay) bindArtifactStateOverlay(runtime 
 		return prepared.refuse("state-active-width")
 	}
 	targetStates := make(map[int]struct{}, len(prepared.additions)+len(prepared.replacements))
-	// Every selected edge carries its complete transition tuple. Resolve its
-	// one source and one target StateOrdinal directly; no graph-point row scan
-	// or same-module context fan-out is legal in the artifact runtime.
+	// Every selected edge carries its sealed activation branch, and that branch
+	// already names the State pair its endpoints occupy. This pass reads the
+	// row; it does not re-resolve the assignment, scan graph-point rows, or fan
+	// out same-module contexts.
 	for _, edge := range selectedOverlayEdges(prepared) {
-		context := edge.context
-		if !context.Available() {
+		if !edge.activation.Available() {
 			return prepared.refuse("state-edge-context")
 		}
-		from, to, orientedOK := runtime.selectedActivationEdgeContexts(context, edge.source, edge.target)
-		if !orientedOK {
-			return prepared.refuse("state-context-ordinal")
-		}
-		sourceState, sourceOK := runtime.executionPlan.Lookup(from, contextfiber.PointOrdinal(edge.source))
-		targetState, targetOK := runtime.executionPlan.Lookup(to, contextfiber.PointOrdinal(edge.target))
-		if !sourceOK || !targetOK || int(sourceState) >= stateCount || int(targetState) >= stateCount {
+		sourceState, targetState := edge.activation.States()
+		if int(sourceState) >= stateCount || int(targetState) >= stateCount {
 			return prepared.refuse("state-edge-lookup")
 		}
 		// The graph overlay roots this edge's target and reaches its source
@@ -728,29 +748,23 @@ func (prepared *preparedSelectedFactorOverlay) bindArtifactStateOverlay(runtime 
 		seen[[2]int{int(edge.From), int(edge.To)}] = struct{}{}
 	}
 	for _, addition := range prepared.additions {
-		pairs, pairsOK := runtime.liftGraphPairStates(addition.edge.source, addition.edge.target, addition.edge.context)
-		if !pairsOK {
+		pair, pairOK := activationBranchScheduleEdge(addition.edge)
+		if !pairOK {
 			return prepared.refuse("state-addition-lift")
 		}
-		for _, pair := range pairs {
-			key := [2]int{int(pair.From), int(pair.To)}
-			if _, duplicate := seen[key]; duplicate {
-				continue
-			}
+		key := [2]int{int(pair.From), int(pair.To)}
+		if _, duplicate := seen[key]; !duplicate {
 			seen[key] = struct{}{}
 			edges = append(edges, pair)
 		}
 	}
 	for _, replacement := range prepared.replacements {
-		pairs, pairsOK := runtime.liftGraphPairStates(replacement.edge.source, replacement.edge.target, replacement.edge.context)
-		if !pairsOK {
+		pair, pairOK := activationBranchScheduleEdge(replacement.edge)
+		if !pairOK {
 			return prepared.refuse("state-replacement-lift")
 		}
-		for _, pair := range pairs {
-			key := [2]int{int(pair.From), int(pair.To)}
-			if _, duplicate := seen[key]; duplicate {
-				continue
-			}
+		key := [2]int{int(pair.From), int(pair.To)}
+		if _, duplicate := seen[key]; !duplicate {
 			seen[key] = struct{}{}
 			edges = append(edges, pair)
 		}
@@ -836,20 +850,16 @@ func uniqueInts(values []int) []int {
 	return result
 }
 
-func (runtime *solverRuntime) liftGraphPairStates(sourcePoint, targetPoint int, context equation.ActivationContext) ([]schedule.Edge, bool) {
-	if runtime == nil || !runtime.artifactBacked || runtime.executionPlan == nil || !context.Available() || !runtime.validSelectedActivationContext(context, sourcePoint, targetPoint) {
-		return nil, false
+// activationBranchScheduleEdge is one selected edge's contextual predecessor
+// pair, read off the branch the edge already carries. One authenticated branch
+// is one State pair, so there is no lift to perform and no second reading of
+// the directory or the plan to disagree with the first.
+func activationBranchScheduleEdge(edge runtimeFactorEdge) (schedule.Edge, bool) {
+	if !edge.activation.Available() {
+		return schedule.Edge{}, false
 	}
-	from, to, orientedOK := runtime.selectedActivationEdgeContexts(context, sourcePoint, targetPoint)
-	if !orientedOK {
-		return nil, false
-	}
-	sourceState, sourceOK := runtime.executionPlan.Lookup(from, contextfiber.PointOrdinal(sourcePoint))
-	targetState, targetOK := runtime.executionPlan.Lookup(to, contextfiber.PointOrdinal(targetPoint))
-	if !sourceOK || !targetOK {
-		return nil, false
-	}
-	return []schedule.Edge{{From: schedule.Node(sourceState), To: schedule.Node(targetState)}}, true
+	sourceState, targetState := edge.activation.States()
+	return schedule.Edge{From: schedule.Node(sourceState), To: schedule.Node(targetState)}, true
 }
 
 func (prepared *preparedSelectedFactorOverlay) prepareEdgeBacking(runtime *solverRuntime) bool {
