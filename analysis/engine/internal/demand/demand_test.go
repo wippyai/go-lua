@@ -13,7 +13,9 @@ import (
 	"github.com/wippyai/go-lua/analysis/engine/internal/facts/support"
 	"github.com/wippyai/go-lua/analysis/engine/internal/guard"
 	"github.com/wippyai/go-lua/analysis/engine/internal/schedule"
+	"github.com/wippyai/go-lua/analysis/identity"
 	"github.com/wippyai/go-lua/analysis/lattice"
+	queryschema "github.com/wippyai/go-lua/analysis/schema/query"
 )
 
 // demandPointOf puts one closed Contribution into the nominal point role that
@@ -43,6 +45,15 @@ func routingKey(kind byte, index int) composition.Key {
 	var id composition.ID
 	id[0], id[1], id[2] = kind, byte(index), byte(index>>8)
 	return composition.Key{ID: id, Version: 1}
+}
+
+// routingContext is the owning boundary a graph Query row is declared under.
+// A Query instance carries its context into the query identity, so a routing
+// fixture that omits it declares a query no owner issued.
+func routingContext(kind byte, index int) identity.ContentID {
+	var id identity.ContentID
+	id[0], id[1], id[2] = kind, byte(index), byte(index>>8)
+	return id
 }
 
 func routingOperandFamily(rule composition.Key) composition.Key {
@@ -106,11 +117,11 @@ func wideRoutingGraph(t testing.TB, width int) *equation.Graph {
 		groups[index] = equation.Group{Members: []equation.RuleRef{equation.RuleAt(index)}, Output: equation.PointAt(index + 1), Inputs: []equation.Input{input}}
 	}
 	queryFamily := routingKey(6, 0)
-	cold, ok := composition.Seal(composition.Candidate{Factors: factors, Rules: rules, Queries: []composition.QueryFamily{{Key: queryFamily, Freezer: routingKey(7, 0), Projections: []composition.QueryProjection{{Kind: composition.QueryFactorExact, Factor: factors[0].Key}}}}})
+	cold, ok := composition.Seal(composition.Candidate{Factors: factors, Rules: rules, Queries: []composition.QueryFamily{{Key: queryFamily, Freezer: routingKey(7, 0), Population: queryschema.PopulationKindSelectedPoint, Projections: []composition.QueryProjection{{Kind: composition.QueryFactorExact, Factor: factors[0].Key}}}}})
 	if !ok || cold == nil {
 		t.Fatal("routing composition")
 	}
-	topology, ok := equation.SealTopology(cold, equation.TopologySpec{Batch: batch, Rules: instances, Points: points, Groups: groups, Queries: []equation.QueryInstance{{Family: queryFamily, Point: equation.PointAt(0), Surfaces: []equation.Surface{{Factor: factors[0].Key, Form: equation.SurfaceReadExact, Local: 1}}}}})
+	topology, ok := equation.SealTopology(cold, equation.TopologySpec{Batch: batch, Rules: instances, Points: points, Groups: groups, Queries: []equation.QueryInstance{{Context: routingContext(9, 0), Family: queryFamily, Point: equation.PointAt(0), Surfaces: []equation.Surface{{Factor: factors[0].Key, Form: equation.SurfaceReadExact, Local: 1}}}}})
 	if !ok || topology == nil {
 		t.Fatal("routing topology")
 	}
