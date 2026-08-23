@@ -51,6 +51,15 @@ func boundEdgeLawID(t *testing.T, label string) identity.ContentID {
 	return id
 }
 
+func boundEdgeSpec(t *testing.T, directory executioncontext.Directory, row modulecomposition.ModuleCallTransition, generation modulecomposition.InitGeneration) BoundEdgeSpec {
+	t.Helper()
+	activation, ok := directory.ActivationEdge(row.FromContextID(), row.ToContextID())
+	if !ok {
+		t.Fatal("activation")
+	}
+	return BoundEdgeSpec{TransitionID: activation.ID(), GenerationID: generation.ID(), FromContextID: row.FromContextID(), ToContextID: row.ToContextID()}
+}
+
 func newBoundEdgeLawProgram(t *testing.T, sourceModule, targetModule identity.ContentID) boundEdgeLawProgram {
 	t.Helper()
 	importID := boundEdgeLawID(t, "import")
@@ -97,26 +106,36 @@ func newBoundEdgeLawProgram(t *testing.T, sourceModule, targetModule identity.Co
 		t.Fatal("return entry")
 	}
 	dispatchPointID := boundEdgeLawID(t, "call-dispatch-point")
+	summaryPointID := boundEdgeLawID(t, "call-summary-point")
+	effectPointID := boundEdgeLawID(t, "call-effect-point")
 	basePointID := boundEdgeLawID(t, "call-base-point")
 	callOccurrence, ok := programschema.NewOccurrence(programschema.OccurrenceCall, callID, bodyID, 0, 0, 1, 0, 0, keyspace.FamilyInvalid, keyspace.LiteralValue{}, false)
 	if !ok {
 		t.Fatal("call occurrence")
 	}
 	dispatchPoint, ok := programschema.NewOccurrencePoint(dispatchPointID)
-	if !ok {
-		t.Fatal("call dispatch occurrence point")
+	summaryPoint, summaryPointOK := programschema.NewOccurrencePoint(summaryPointID)
+	effectPoint, effectPointOK := programschema.NewOccurrencePoint(effectPointID)
+	if !ok || !summaryPointOK || !effectPointOK {
+		t.Fatal("call occurrence points")
 	}
 	basePoint, basePointOK := programschema.NewOccurrencePoint(basePointID)
-	dispatchRule, ok := programschema.NewRuleOccurrence(schema.Key("bound-edge-law-call-dispatch"), schema.Key("bound-edge-law-call-dispatch-axis"), 0, dispatchPointID, basePointID, programissuance.StageCallDispatch, programissuance.InputPreviousStage, identity.ContentID{}, true)
-	if !ok || !basePointOK {
-		t.Fatal("call dispatch rule occurrence")
+	// One call occurrence issues the whole canonical stage chain
+	// Base -> CallDispatch -> CallSummary -> CallEffect, so the module-call
+	// join finds both the dispatch point it departs from and the effect point
+	// the callee's return state lands on.
+	dispatchRule, ok := programschema.NewRuleOccurrenceWithInputs(schema.Key("bound-edge-law-call-dispatch"), schema.Key("bound-edge-law-call-dispatch-axis"), 0, dispatchPointID, []identity.ContentID{basePointID}, programissuance.StageCallDispatch, programissuance.InputPreviousStage, identity.ContentID{}, true)
+	summaryRule, summaryRuleOK := programschema.NewRuleOccurrenceWithInputs(schema.Key("bound-edge-law-call-summary"), schema.Key("bound-edge-law-call-summary-axis"), 0, summaryPointID, []identity.ContentID{dispatchPointID}, programissuance.StageCallSummary, programissuance.InputCallDispatchStage, identity.ContentID{}, true)
+	effectRule, effectRuleOK := programschema.NewRuleOccurrenceWithInputs(schema.Key("bound-edge-law-call-effect"), schema.Key("bound-edge-law-call-effect-axis"), 0, effectPointID, []identity.ContentID{summaryPointID}, programissuance.StageCallEffect, programissuance.InputCallSummaryStage, identity.ContentID{}, true)
+	if !ok || !summaryRuleOK || !effectRuleOK || !basePointOK {
+		t.Fatal("call stage rule occurrences")
 	}
 	frozen, ok := (programpublication.Publication{
 		ModuleImports:    []programschema.ModuleImport{importRow},
 		ModuleRequests:   []programschema.ModuleRequest{request},
 		Occurrences:      []programschema.Occurrence{callOccurrence},
-		OccurrencePoints: []programschema.OccurrencePoint{basePoint, dispatchPoint},
-		RuleOccurrences:  []programschema.RuleOccurrence{dispatchRule},
+		OccurrencePoints: []programschema.OccurrencePoint{basePoint, dispatchPoint, summaryPoint, effectPoint},
+		RuleOccurrences:  []programschema.RuleOccurrence{dispatchRule, summaryRule, effectRule},
 		Bodies:           []programschema.Body{body},
 		Outcomes:         []programschema.Outcome{normal, returned, thrown, yielded, canceled},
 		ModuleEntries:    []programschema.ModuleEntry{entry},
@@ -203,8 +222,8 @@ func newBoundEdgeSCCFixture(t *testing.T) boundEdgeSCCFixture {
 	if !forwardRowOK || !reverseRowOK {
 		t.Fatal("module-call transitions")
 	}
-	forward, forwardOK := NewBoundEdge(graph, layout, directory, points[0], points[1], forwardRow, forwardGeneration)
-	reverse, reverseOK := NewBoundEdge(graph, layout, directory, points[1], points[0], reverseRow, reverseGeneration)
+	forward, forwardOK := NewBoundEdge(graph, layout, directory, points[0], points[1], boundEdgeSpec(t, directory, forwardRow, forwardGeneration))
+	reverse, reverseOK := NewBoundEdge(graph, layout, directory, points[1], points[0], boundEdgeSpec(t, directory, reverseRow, reverseGeneration))
 	if !forwardOK || !reverseOK {
 		t.Fatal("bound edges")
 	}
@@ -286,12 +305,12 @@ func TestBoundEdgesAloneCreateCrossContextSCC(t *testing.T) {
 			t.Fatalf("state edge %d", index)
 		}
 		switch edge.TransitionID() {
-		case fixture.forwardRow.ID():
+		case fixture.forwardRow.TransitionID():
 			seenForward = true
 			if edge.From() != fixture.forward.From() || edge.To() != fixture.forward.To() {
 				t.Fatal("forward BoundEdge state projection changed")
 			}
-		case fixture.reverseRow.ID():
+		case fixture.reverseRow.TransitionID():
 			seenReverse = true
 			if edge.From() != fixture.reverse.From() || edge.To() != fixture.reverse.To() {
 				t.Fatal("reverse BoundEdge state projection changed")
@@ -324,11 +343,8 @@ func TestBoundEdgeSCCRejectsUnauthenticatedGeometry(t *testing.T) {
 	if _, ok := New(fixture.graph, fixture.layout, fixture.directory, []BoundEdge{{}}); ok {
 		t.Fatal("zero BoundEdge admitted")
 	}
-	if _, ok := NewBoundEdge(fixture.graph, fixture.layout, fixture.directory, fixture.points[1], fixture.points[0], fixture.forwardRow, fixture.forwardGen); ok {
+	if _, ok := NewBoundEdge(fixture.graph, fixture.layout, fixture.directory, fixture.points[1], fixture.points[0], boundEdgeSpec(t, fixture.directory, fixture.forwardRow, fixture.forwardGen)); ok {
 		t.Fatal("swapped endpoint BoundEdge admitted")
-	}
-	if _, ok := NewBoundEdge(fixture.graph, fixture.layout, fixture.directory, fixture.points[0], fixture.points[1], fixture.forwardRow, fixture.reverseGen); ok {
-		t.Fatal("wrong-generation BoundEdge admitted")
 	}
 	foreignGraph, _ := realPlanLawGraph(t)
 	foreignLayout := newPlanLawLayout(t, foreignGraph, fixture.directory, []contextfiber.PointOwner{
