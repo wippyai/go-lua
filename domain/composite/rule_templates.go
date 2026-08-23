@@ -17,6 +17,7 @@ import (
 	contextowner "github.com/wippyai/go-lua/domain/heap/context/owner"
 	heapformalfreeze "github.com/wippyai/go-lua/domain/heap/formalfreeze"
 	heapindex "github.com/wippyai/go-lua/domain/heap/index"
+	"github.com/wippyai/go-lua/domain/heap/keymatch"
 	heapowner "github.com/wippyai/go-lua/domain/heap/owner"
 	heappublicationfreeze "github.com/wippyai/go-lua/domain/heap/publicationfreeze"
 	packdomain "github.com/wippyai/go-lua/domain/pack"
@@ -78,6 +79,7 @@ type Authorities interface {
 	PlacementSchema() placementdomain.Schema
 	PackSchema() *packdomain.Schema
 	Topology() *heapindex.Topology
+	KeySelection() *keymatch.SelectorProjection
 	Allocations() *allocationcatalog.Catalog
 	TargetContract() *contract.Contract
 }

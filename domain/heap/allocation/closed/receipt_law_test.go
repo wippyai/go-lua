@@ -20,6 +20,7 @@ import (
 	allocationcatalog "github.com/wippyai/go-lua/domain/heap/allocation/catalog"
 	closed "github.com/wippyai/go-lua/domain/heap/allocation/closed"
 	"github.com/wippyai/go-lua/domain/heap/allocation/internal/source"
+	"github.com/wippyai/go-lua/domain/heap/keymatch"
 	heapowner "github.com/wippyai/go-lua/domain/heap/owner"
 	domaincontract "github.com/wippyai/go-lua/domain/type/typecontract"
 	valuedomain "github.com/wippyai/go-lua/domain/value"
@@ -50,8 +51,9 @@ func TestClosedMountedReceiptAdmission(t *testing.T) {
 	heapHot, heapHotOK := heapowner.BindHot(binding, heapFragment, heapSchema)
 	valueHot, valueHotOK := valueowner.BindHot(binding, valueFragment, valueSchema)
 	catalog, catalogOK := allocationcatalog.Seal(heapSchema, valueSchema, mounts.heap)
-	rule, ruleOK := closed.BindHot(binding, fragment, heapHot, valueHot, catalog)
-	if !heapHotOK || !valueHotOK || !catalogOK || !ruleOK || rule == nil || !binding.Seal() {
+	selectors, selectorsOK := keymatch.NewSelectorProjection(heapSchema, valueSchema)
+	rule, ruleOK := closed.BindHot(binding, fragment, heapHot, valueHot, catalog, selectors)
+	if !heapHotOK || !valueHotOK || !catalogOK || !selectorsOK || !ruleOK || rule == nil || !binding.Seal() {
 		t.Fatal("closed mounted receipt binding")
 	}
 	if implementation, implementationOK := rule.Implementation(); !implementationOK || implementation == nil {

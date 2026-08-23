@@ -214,6 +214,14 @@ func (projection *SelectorProjection) visitQuotient(value valuedomain.Value, pay
 	return valid
 }
 
+// FencedTo is the sealed projection's owner fence. A consumer that receives
+// this projection from the seal proves it belongs to the exact Heap and Value
+// authorities it is about to read, instead of building a second projection to
+// be sure.
+func (projection *SelectorProjection) FencedTo(heap heapdomain.Schema, values *valuedomain.Schema) bool {
+	return projection.usable() && projection.heap == heap && projection.values == values
+}
+
 func (projection *SelectorProjection) usable() bool {
 	return projection != nil && projection.values != nil && projection.values.OwnsHeapSchema(projection.heap) &&
 		projection.heap.LinkOwner().Matches(projection.values.LinkOwner()) && projection.values.LinkOwner().Available()

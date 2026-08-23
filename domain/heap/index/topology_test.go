@@ -35,7 +35,7 @@ func portableAnyTypes(count int) []schematype.Type {
 
 func TestTopologyStaticRoutesPreserveExactTopAndHeapExtremes(t *testing.T) {
 	heap, values, calls, _, rootKey, candidate, mounts := staticTopologyFixture(t)
-	topology, sealed := indexdomain.Seal(heap, values, calls, mounts.packs)
+	topology, sealed := indexdomain.Seal(heap, values, calls, mounts.packs, indexSelectors(t, heap, values))
 	access, accessed := topology.Access(candidate)
 	rooted := rootKey.Valid()
 	atom, atomOK := values.Allocation(rootKey, materialization.Recent)
@@ -116,10 +116,10 @@ func TestTopologyRejectsSameLinkResealedHeap(t *testing.T) {
 	if resealedFailure != heapdomain.SealFailureNone || values.OwnsHeapSchema(resealed) {
 		t.Fatal("independently resealed same-Link Heap was not distinguished")
 	}
-	if topology, ok := indexdomain.Seal(resealed, values, calls, mounts.packs); ok || topology != nil {
+	if topology, ok := indexdomain.Seal(resealed, values, calls, mounts.packs, indexSelectors(t, heap, values)); ok || topology != nil {
 		t.Fatal("Topology accepted independently resealed Heap")
 	}
-	if topology, ok := indexdomain.Seal(heap, values, calls, mounts.packs); !ok || topology == nil {
+	if topology, ok := indexdomain.Seal(heap, values, calls, mounts.packs, indexSelectors(t, heap, values)); !ok || topology == nil {
 		t.Fatal("Topology rejected exact Value/Heap schema pair")
 	}
 	foreignLink := sameContentLink(t, linked)
@@ -127,15 +127,15 @@ func TestTopologyRejectsSameLinkResealedHeap(t *testing.T) {
 	if !foreignCallsOK || foreignLink.ContentID() != linked.ContentID() || foreignLink == linked {
 		t.Fatal("same-content independent Call fixture")
 	}
-	if topology, ok := indexdomain.Seal(heap, values, foreignCalls, mounts.packs); ok || topology != nil {
+	if topology, ok := indexdomain.Seal(heap, values, foreignCalls, mounts.packs, indexSelectors(t, heap, values)); ok || topology != nil {
 		t.Fatal("Topology accepted same-content independent Call algebra")
 	}
 }
 
 func TestTopologyOwnsAccessRejectsDuplicateSameContentTopology(t *testing.T) {
 	heap, values, calls, _, _, candidate, mounts := staticTopologyFixture(t)
-	primary, primaryOK := indexdomain.Seal(heap, values, calls, mounts.packs)
-	duplicate, duplicateOK := indexdomain.Seal(heap, values, calls, mounts.packs)
+	primary, primaryOK := indexdomain.Seal(heap, values, calls, mounts.packs, indexSelectors(t, heap, values))
+	duplicate, duplicateOK := indexdomain.Seal(heap, values, calls, mounts.packs, indexSelectors(t, heap, values))
 	if !primaryOK || primary == nil || !duplicateOK || duplicate == nil || primary == duplicate {
 		t.Fatal("same-content topology fixtures did not seal independently")
 	}

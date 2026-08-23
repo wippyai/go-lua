@@ -13,6 +13,7 @@ import (
 	"github.com/wippyai/go-lua/domain/composite"
 	heapdomain "github.com/wippyai/go-lua/domain/heap"
 	indexdomain "github.com/wippyai/go-lua/domain/heap/index"
+	"github.com/wippyai/go-lua/domain/heap/keymatch"
 	packdomain "github.com/wippyai/go-lua/domain/pack"
 	staticdomain "github.com/wippyai/go-lua/domain/static"
 	"github.com/wippyai/go-lua/domain/type/authority"
@@ -122,9 +123,21 @@ func indexSchemas(t testing.TB, linked *link.Link) (heapdomain.Schema, *valuedom
 
 func indexTopology(t testing.TB, heap heapdomain.Schema, values *valuedomain.Schema, calls *calldomain.Algebra, mounts indexFixtureMounts) *indexdomain.Topology {
 	t.Helper()
-	topology, sealed := indexdomain.Seal(heap, values, calls, mounts.packs)
+	topology, sealed := indexdomain.Seal(heap, values, calls, mounts.packs, indexSelectors(t, heap, values))
 	if !sealed || topology == nil {
 		t.Fatal("index topology seal")
 	}
 	return topology
+}
+
+// indexSelectors is the one sealed Heap key/class projection a Topology reads.
+// The composition derives it once per Link; a law derives it the same way for
+// the exact schema pair under test.
+func indexSelectors(t testing.TB, heap heapdomain.Schema, values *valuedomain.Schema) *keymatch.SelectorProjection {
+	t.Helper()
+	selectors, ok := keymatch.NewSelectorProjection(heap, values)
+	if !ok {
+		t.Fatal("index fixture key selection")
+	}
+	return selectors
 }

@@ -451,7 +451,7 @@ func (cells axisCells) hotPrincipals(state *catalog, inputs LinkInputs, allocati
 	set := authorities{
 		value: value, staticType: staticType, call: call, heap: heap, placement: placement, context: context, evidence: evidence, pack: pack, effect: effect,
 		valueSchema: inputs.ValueSchema, heapSchema: inputs.HeapSchema, placementSchema: inputs.PlacementSchema, packSchema: inputs.PackSchema,
-		contextSchema: inputs.contextSchema, composition: inputs.composition, topology: inputs.topology, allocations: allocations,
+		contextSchema: inputs.contextSchema, composition: inputs.composition, topology: inputs.topology, keySelection: inputs.keySelection, allocations: allocations,
 		targetContract: inputs.targetContract,
 	}
 	return set, set.available() && mountedActualsComplete(inputs.CallAlgebra, inputs.PackSchema)

@@ -33,18 +33,17 @@ func (rule *HotRule) Implementation() (*heapowner.RuleImplementation[source.Clos
 
 // BindHot binds the exact heterogeneous Heap/Value read surface, ordinary
 // carry, and exact Heap write through the two owner-issued FactorRefs.
-func BindHot(binding *engine.SchemaBinding, fragment *SchemaFragment, heapOwner *heapowner.HotOwner, valueOwner *valueowner.HotOwner, catalog *allocationcatalog.Catalog) (*HotRule, bool) {
+func BindHot(binding *engine.SchemaBinding, fragment *SchemaFragment, heapOwner *heapowner.HotOwner, valueOwner *valueowner.HotOwner, catalog *allocationcatalog.Catalog, projection *keymatch.SelectorProjection) (*HotRule, bool) {
 	if binding == nil || fragment == nil || fragment.slot == nil || heapOwner == nil || !heapOwner.MatchesBinding(binding) || valueOwner == nil || !valueOwner.MatchesBinding(binding) || valueOwner.Schema() == nil || !heapOwner.Schema().Valid() ||
 		catalog == nil || !catalog.FencedTo(heapOwner.Schema(), valueOwner.Schema()) ||
 		fragment.valueSummary.Kind() != engine.SchemaFormReadSummary {
 		return nil, false
 	}
 	heapSchema, values := heapOwner.Schema(), valueOwner.Schema()
-	// The sealed key/class projection is this Rule's one atom quotient. It is
-	// built once per binding beside the schemas it is fenced to, never per
-	// transfer row.
-	projection, projectionOK := keymatch.NewSelectorProjection(heapSchema, values)
-	if !projectionOK {
+	// The key/class projection is this Rule's one atom quotient and a pure
+	// function of the two sealed schemas, so the composition seals it and this
+	// binding reads it. Binding proves the seal belongs to its exact pair.
+	if !projection.FencedTo(heapSchema, values) {
 		return nil, false
 	}
 	rule := &HotRule{catalog: catalog, heapOwner: heapOwner, heap: heapSchema, values: values}

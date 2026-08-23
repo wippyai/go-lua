@@ -231,14 +231,14 @@ func (topology *Topology) HeapState(key heapdomain.Key, value heapdomain.Value) 
 // schemas. It is deliberately a cold O(R) construction where R is the Heap
 // root support. Hot exact observation scans receiver atoms and selected fresh
 // rows only; it never scans every Heap root or materializes candidate×root.
-func Seal(heap heapdomain.Schema, values *valuedomain.Schema, calls *calldomain.Algebra, packs *pack.Schema) (*Topology, bool) {
-	topology, diagnostic := SealWithFailure(heap, values, calls, packs)
+func Seal(heap heapdomain.Schema, values *valuedomain.Schema, calls *calldomain.Algebra, packs *pack.Schema, selectors *keymatch.SelectorProjection) (*Topology, bool) {
+	topology, diagnostic := SealWithFailure(heap, values, calls, packs, selectors)
 	return topology, diagnostic.failure == SealFailureNone
 }
 
 // SealWithFailure is Seal with a permanent closed diagnostic. It never
 // returns a partially admitted Topology.
-func SealWithFailure(heap heapdomain.Schema, values *valuedomain.Schema, calls *calldomain.Algebra, packs *pack.Schema) (*Topology, SealDiagnostic) {
+func SealWithFailure(heap heapdomain.Schema, values *valuedomain.Schema, calls *calldomain.Algebra, packs *pack.Schema, selectors *keymatch.SelectorProjection) (*Topology, SealDiagnostic) {
 	if values == nil || calls == nil || packs == nil || !values.OwnsHeapSchema(heap) || !values.LinkOwner().Matches(calls.LinkOwner()) || !values.LinkOwner().Matches(heap.LinkOwner()) || !values.LinkOwner().Matches(packs.LinkOwner()) || !heap.ContentID().Available() {
 		return nil, sealDiagnostic(SealFailureInputs, -1, -1)
 	}
@@ -259,8 +259,10 @@ func SealWithFailure(heap heapdomain.Schema, values *valuedomain.Schema, calls *
 		}
 		seenModules[module] = struct{}{}
 	}
-	selectors, selectorsOK := keymatch.NewSelectorProjection(heap, values)
-	if !selectorsOK {
+	// The key/class projection is a pure function of the two sealed schemas,
+	// so the composition seals it once and hands it here. Topology proves it
+	// belongs to the exact pair it is about to read and never builds a second.
+	if !selectors.FencedTo(heap, values) {
 		return nil, sealDiagnostic(SealFailureValidity, -1, -1)
 	}
 	topology := &Topology{heap: heap, values: values, calls: calls, packs: packs, selectors: selectors, freshByRoot: make(map[heapdomain.Key]uint32), freshByApp: make(map[identity.ContentID]uint32), moduleExports: make(map[heapdomain.Key]moduleExportRoute)}

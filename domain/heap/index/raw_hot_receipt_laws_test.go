@@ -692,9 +692,9 @@ return b.source`)})
 	if !heapMountOK || !valueMountOK || !packMountOK || heapFailure != heapdomain.SealFailureNone || valueFailure != valuedomain.SealFailureNone || !callsOK || typeErr != nil || types == nil || staticErr != nil || statics == nil || !packsOK {
 		t.Fatalf("domain schemas heapMount=%t valueMount=%t packMount=%t heapFailure=%v valueFailure=%v calls=%t typeErr=%v types=%t staticErr=%v statics=%t packs=%t", heapMountOK, valueMountOK, packMountOK, heapFailure, valueFailure, callsOK, typeErr, types != nil, staticErr, statics != nil, packsOK)
 	}
-	topology, topologyOK := indexdomain.Seal(heapSchema, valueSchema, calls, packs)
+	topology, topologyOK := indexdomain.Seal(heapSchema, valueSchema, calls, packs, indexSelectors(t, heapSchema, valueSchema))
 	if !topologyOK || topology == nil {
-		_, diagnostic := indexdomain.SealWithFailure(heapSchema, valueSchema, calls, packs)
+		_, diagnostic := indexdomain.SealWithFailure(heapSchema, valueSchema, calls, packs, indexSelectors(t, heapSchema, valueSchema))
 		t.Fatalf("index topology: %s", diagnostic)
 	}
 	plan := buildRawHotMountedPlan(t, linked, module, artifact, heapMount, heapSchema, valueSchema, packs)

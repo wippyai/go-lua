@@ -8,6 +8,7 @@ import (
 	heapdomain "github.com/wippyai/go-lua/domain/heap"
 	contextdomain "github.com/wippyai/go-lua/domain/heap/context"
 	heapindex "github.com/wippyai/go-lua/domain/heap/index"
+	"github.com/wippyai/go-lua/domain/heap/keymatch"
 	packdomain "github.com/wippyai/go-lua/domain/pack"
 	placementdomain "github.com/wippyai/go-lua/domain/placement"
 	valuedomain "github.com/wippyai/go-lua/domain/value"
@@ -132,7 +133,15 @@ func MountLink(compilation Compilation, inputs LinkInputs) (LinkInputs, MountFai
 // authorities from axes that mount in different positions of the dependency
 // order, so it can only run once the whole order has run.
 func (inputs LinkInputs) derive() (LinkInputs, MountFailure) {
-	topology, topologyOK := heapindex.Seal(inputs.HeapSchema, inputs.ValueSchema, inputs.CallAlgebra, inputs.PackSchema)
+	// The Heap key/class projection is a pure function of the sealed Heap and
+	// Value schemas, so it is one of this phase's derivations rather than
+	// something each binding rebuilds for itself. Both readers - the index
+	// topology and the closed-allocation rule - receive this one seal.
+	keySelection, keySelectionOK := keymatch.NewSelectorProjection(inputs.HeapSchema, inputs.ValueSchema)
+	if !keySelectionOK {
+		return LinkInputs{}, MountFailure{Stage: MountStageTopology}
+	}
+	topology, topologyOK := heapindex.Seal(inputs.HeapSchema, inputs.ValueSchema, inputs.CallAlgebra, inputs.PackSchema, keySelection)
 	if !topologyOK {
 		return LinkInputs{}, MountFailure{Stage: MountStageTopology}
 	}
@@ -165,6 +174,7 @@ func (inputs LinkInputs) derive() (LinkInputs, MountFailure) {
 		return LinkInputs{}, MountFailure{Stage: MountStageFormal}
 	}
 	inputs.topology = topology
+	inputs.keySelection = keySelection
 	inputs.contextSchema = contextSchema
 	inputs.composition = composition
 	inputs.targetContract = target

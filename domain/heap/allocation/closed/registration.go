@@ -7,6 +7,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/schema/structure"
 	"github.com/wippyai/go-lua/analysis/schema/vocabulary"
 	allocationcatalog "github.com/wippyai/go-lua/domain/heap/allocation/catalog"
+	"github.com/wippyai/go-lua/domain/heap/keymatch"
 	heapowner "github.com/wippyai/go-lua/domain/heap/owner"
 	valueowner "github.com/wippyai/go-lua/domain/value/owner"
 )
@@ -26,6 +27,7 @@ type ruleAuthorities interface {
 	HeapAuthority() *heapowner.HotOwner
 	ValueAuthority() *valueowner.HotOwner
 	Allocations() *allocationcatalog.Catalog
+	KeySelection() *keymatch.SelectorProjection
 }
 
 // RuleEntry is this package's heap-closed rule declaration. P and A are the
@@ -60,7 +62,7 @@ func RegisterRule(binding *engine.SchemaBinding, context rule.Registration[*Sche
 }
 
 func BindRule[A ruleAuthorities](binding *engine.SchemaBinding, context rule.Binding[A, *SchemaFragment]) (*HotRule, bool) {
-	return BindHot(binding, context.Fragment, context.Authorities.HeapAuthority(), context.Authorities.ValueAuthority(), context.Authorities.Allocations())
+	return BindHot(binding, context.Fragment, context.Authorities.HeapAuthority(), context.Authorities.ValueAuthority(), context.Authorities.Allocations(), context.Authorities.KeySelection())
 }
 
 // StructureSpecs is this package's contribution to the analyzer's semantic

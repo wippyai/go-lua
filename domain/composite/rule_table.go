@@ -17,6 +17,7 @@ import (
 	contextdomain "github.com/wippyai/go-lua/domain/heap/context"
 	contextowner "github.com/wippyai/go-lua/domain/heap/context/owner"
 	heapindex "github.com/wippyai/go-lua/domain/heap/index"
+	"github.com/wippyai/go-lua/domain/heap/keymatch"
 	heapowner "github.com/wippyai/go-lua/domain/heap/owner"
 	packdomain "github.com/wippyai/go-lua/domain/pack"
 	packowner "github.com/wippyai/go-lua/domain/pack/owner"
@@ -124,7 +125,11 @@ type authorities struct {
 	contextSchema contextdomain.Schema
 	composition   modulecomposition.Composition
 	topology      *heapindex.Topology
-	allocations   *allocationcatalog.Catalog
+	// keySelection is the mount phase's sealed Heap key/class projection over
+	// the Heap and Value pair. It is derived once and read, never rebuilt per
+	// binding.
+	keySelection *keymatch.SelectorProjection
+	allocations  *allocationcatalog.Catalog
 	// targetContract is the exact immutable Target authority retained by the
 	// Link Boundary. Mounted actual geometry remains owned by Pack and is
 	// authenticated directly against the exact Call rows when consumed.
@@ -135,7 +140,8 @@ func (set authorities) available() bool {
 	return set.value != nil && set.staticType != nil && set.call != nil && set.heap != nil && set.placement != nil && set.context != nil && set.evidence != nil && set.pack != nil && set.effect != nil &&
 		set.valueSchema != nil && set.heapSchema.Valid() && set.placementSchema.Valid() && set.packSchema != nil &&
 		set.contextSchema.Valid() && set.contextSchema.Heap() == set.heapSchema && set.composition.Available() && set.composition.LinkID() == set.contextSchema.Directory().LinkID() &&
-		set.topology != nil && set.allocations != nil && set.targetContract != nil
+		set.topology != nil && set.allocations != nil && set.targetContract != nil &&
+		set.keySelection.FencedTo(set.heapSchema, set.valueSchema)
 }
 
 // writes is the sealed half of the same question: whether the axis a rule
@@ -215,6 +221,11 @@ func (set authorities) Topology() *heapindex.Topology { return set.topology }
 
 func (set authorities) Allocations() *allocationcatalog.Catalog { return set.allocations }
 
+// KeySelection returns the one sealed Heap key/class projection this Link
+// derived. A rule that quotients Value alternatives by what Heap observes
+// reads this projection; it does not seal a second one beside it.
+func (set authorities) KeySelection() *keymatch.SelectorProjection { return set.keySelection }
+
 // TargetContract returns the exact Target contract issued by the Link
 // Boundary. Consumers receive this sealed authority directly; they never
 // reopen Link or substitute an equivalent reseal.
@@ -255,6 +266,9 @@ type LinkInputs struct {
 	// factors. Activation owns and seals its own private Call projection during
 	// binding, so no activation state is retained in this root record.
 	topology *heapindex.Topology
+	// keySelection is the mount phase's sealed Heap key/class projection. Like
+	// topology it is derived, never a caller input.
+	keySelection *keymatch.SelectorProjection
 	// contextSchema is the mount phase's private contextual authority. It is
 	// never a caller input: derive seals it from Source.ContextDirectory and
 	// the mounted Heap schema after all factor axes have sealed.

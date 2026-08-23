@@ -25,7 +25,7 @@ import (
 
 func TestTopologyReceiverCallDemandFencesExactStaticBottomAndForeign(t *testing.T) {
 	heap, values, calls, _, fresh, mounts := freshTopologyFixture(t)
-	topology, sealed := indexdomain.Seal(heap, values, calls, mounts.packs)
+	topology, sealed := indexdomain.Seal(heap, values, calls, mounts.packs, indexSelectors(t, heap, values))
 	application, _, _, source := fresh.FreshResultID()
 	wantKey, keyed := calls.KeyForApplicationID(application)
 	atom, atomOK := values.Allocation(fresh, materialization.Recent)
@@ -66,7 +66,7 @@ func TestTopologyReceiverCallDemandFencesExactStaticBottomAndForeign(t *testing.
 	}
 
 	staticHeap, staticValues, staticCalls, _, staticRoot, _, staticMounts := staticTopologyFixture(t)
-	staticTopology, staticSealed := indexdomain.Seal(staticHeap, staticValues, staticCalls, staticMounts.packs)
+	staticTopology, staticSealed := indexdomain.Seal(staticHeap, staticValues, staticCalls, staticMounts.packs, indexSelectors(t, staticHeap, staticValues))
 	staticAtom, staticAtomOK := staticValues.Allocation(staticRoot, materialization.Recent)
 	staticReceiver, staticReceiverOK := staticValues.Singleton(staticAtom)
 	staticCallsObserved := 0
@@ -95,7 +95,7 @@ return first, second
 		{Result: 0, Kind: schematype.FreshClassTable},
 		{Result: 1, Kind: schematype.FreshClassTable},
 	})
-	topology, sealed := indexdomain.Seal(heap, values, calls, mounts.packs)
+	topology, sealed := indexdomain.Seal(heap, values, calls, mounts.packs, indexSelectors(t, heap, values))
 	if !sealed {
 		t.Fatal("two-result fresh topology did not seal")
 	}
@@ -158,7 +158,7 @@ local second = fresh()
 local ignored = localOnly()
 return first, second, ignored
 `, []vocabulary.FreshResultSpec{{Result: 0, Kind: schematype.FreshClassTable}})
-	topology, sealed := indexdomain.Seal(heap, values, calls, mounts.packs)
+	topology, sealed := indexdomain.Seal(heap, values, calls, mounts.packs, indexSelectors(t, heap, values))
 	if !sealed {
 		t.Fatal("fresh-group topology did not seal")
 	}
@@ -214,7 +214,7 @@ local second = fresh()
 local ignored = localOnly()
 return first, second, ignored
 `, []vocabulary.FreshResultSpec{{Result: 0, Kind: schematype.FreshClassTable}})
-	topology2, sealed2 := indexdomain.Seal(heap2, values2, calls2, mounts2.packs)
+	topology2, sealed2 := indexdomain.Seal(heap2, values2, calls2, mounts2.packs, indexSelectors(t, heap2, values2))
 	if !sealed2 {
 		t.Fatal("equivalent fresh-group topology did not seal")
 	}
@@ -228,7 +228,7 @@ return first, second, ignored
 
 func TestTopologyCallStateUsesDemandTagAndSeparatesBottomFromUnavailable(t *testing.T) {
 	heap, values, calls, _, fresh, mounts := freshTopologyFixture(t)
-	topology, sealed := indexdomain.Seal(heap, values, calls, mounts.packs)
+	topology, sealed := indexdomain.Seal(heap, values, calls, mounts.packs, indexSelectors(t, heap, values))
 	atom, atomOK := values.Allocation(fresh, materialization.Recent)
 	receiver, receiverOK := values.Singleton(atom)
 	if !sealed || !atomOK || !receiverOK {
