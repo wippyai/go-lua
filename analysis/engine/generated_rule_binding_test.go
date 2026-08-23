@@ -102,6 +102,14 @@ func generatedBindingLawIDs(t testing.TB) (identity.ContentID, identity.ContentI
 
 func openGeneratedBindingLaw(t testing.TB, fixture generatedRuleLawFixture) generatedBindingLawFixture {
 	t.Helper()
+	return openGeneratedBindingLaneLaw(t, fixture, false)
+}
+
+// openGeneratedBindingLaneLaw seals one generated Rule on the lane under test.
+// The two lanes differ only in which capability the composition issues, so the
+// fixture keeps one construction and names the lane.
+func openGeneratedBindingLaneLaw(t testing.TB, fixture generatedRuleLawFixture, link bool) generatedBindingLawFixture {
+	t.Helper()
 	builder := NewSchema()
 	factors := make([]*FactorSlot[uint64], fixture.catalog.AxisCount())
 	for index := range factors {
@@ -133,8 +141,11 @@ func openGeneratedBindingLaw(t testing.TB, fixture generatedRuleLawFixture) gene
 		t.Fatal("generated binding law bind Rule")
 	}
 	capability, capabilityOK := RegisterMountedGeneratedSlot(binding, slot)
-	if !capabilityOK || !capability.Mounted() {
-		t.Fatal("generated binding law mounted capability")
+	if link {
+		capability, capabilityOK = RegisterLinkGeneratedSlot(binding, slot)
+	}
+	if !capabilityOK || capability.Mounted() == link || capability.Link() != link {
+		t.Fatalf("generated binding law capability link=%t mounted=%t issued=%t", capability.Link(), capability.Mounted(), capabilityOK)
 	}
 	mount, occurrence := generatedBindingLawIDs(t)
 	return generatedBindingLawFixture{

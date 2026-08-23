@@ -183,9 +183,18 @@ func (worker *sourceWorker[K, V]) Execute(frame Frame, ticket Ticket) (Result, b
 		return Result{}, false
 	}
 	row := worker.family.rows[local]
-	value, valueOK := row.column.At(candidate)
-	if !valueOK {
+	value, outcome, valueOK := row.column.At(candidate)
+	if !valueOK || !outcome.Available() || outcome == structure.Refuse {
 		return Result{}, false
+	}
+	// A sealed non-Concrete row stages nothing. The candidate stays in the
+	// directory - it is a real occurrence - and the fold concludes the
+	// disposition its materializer sealed.
+	if outcome != structure.Concrete {
+		if !ticket.Submit(outcome) {
+			return Result{}, false
+		}
+		return NewResult(outcome, 0)
 	}
 	_, _, within, contextOK := row.write.context(ticket)
 	if !contextOK || !row.write.Stage(ticket, &worker.scratch, within, value) || !row.write.Close(ticket, &worker.scratch) || !ticket.Submit(structure.Concrete) {

@@ -43,14 +43,14 @@ func TestGeneratedRelationOwnerProjectsSource(t *testing.T) {
 
 	columnOwner, columnOK := owner.SourceFactColumn(0)
 	wantFact, wantOutcome := packdomain.SourceFact(source)
-	fact, factOK := columnOwner.At(candidate)
-	if !columnOK || columnOwner.Count() != local.SourceCount() || !factOK || wantOutcome != structure.Concrete || local.Fingerprint(fact) != local.Fingerprint(wantFact) {
+	fact, outcome, factOK := columnOwner.At(candidate)
+	if !columnOK || columnOwner.Count() != local.SourceCount() || !factOK || outcome != wantOutcome || wantOutcome != structure.Concrete || local.Fingerprint(fact) != local.Fingerprint(wantFact) {
 		t.Fatal("source fact")
 	}
 	if _, ok := owner.SourceFactColumn(99); ok {
 		t.Fatal("out-of-range source relation exposed a column")
 	}
-	if _, ok := columnOwner.At(uint32(columnOwner.Count())); ok {
+	if _, _, ok := columnOwner.At(uint32(columnOwner.Count())); ok {
 		t.Fatal("out-of-range source candidate indexed a column")
 	}
 

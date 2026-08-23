@@ -4,20 +4,45 @@
 // to dense coordinates.
 package relation
 
-import "github.com/wippyai/go-lua/analysis/identity"
+import (
+	"github.com/wippyai/go-lua/analysis/identity"
+	"github.com/wippyai/go-lua/analysis/schema/structure"
+)
 
 // SourceColumn is an immutable, typed dense column published by a generated
 // relation owner at schema materialization time. Its backing storage is
 // private; execution can only index an owner-issued ordinal through At.
+//
+// Every row carries the outcome its materializer concluded. A zero-input fold
+// is a total function over the candidate directory, but not every candidate
+// yields a fact: an owner-issued row may be a sealed absence. Storing the
+// outcome beside the value is what lets the Z form conclude that absence
+// without removing the candidate from the directory the occurrence inventory
+// is derived from.
 type SourceColumn[V any] struct {
-	values []V
-	sealed bool
+	values   []V
+	outcomes []structure.ReductionOutcome
+	sealed   bool
 }
 
 // NewSourceColumn seals one owner-materialized value slice by taking an
-// independent copy. The returned column has no mutation operation.
-func NewSourceColumn[V any](values []V) SourceColumn[V] {
-	return SourceColumn[V]{values: append([]V(nil), values...), sealed: true}
+// independent copy. The returned column has no mutation operation. Values and
+// outcomes are one row table: a length disagreement, an unavailable outcome,
+// or an outcome that carries a value it must not is refused.
+func NewSourceColumn[V any](values []V, outcomes []structure.ReductionOutcome) (SourceColumn[V], bool) {
+	if len(values) != len(outcomes) {
+		return SourceColumn[V]{}, false
+	}
+	for _, outcome := range outcomes {
+		if !outcome.Available() || outcome == structure.Refuse {
+			return SourceColumn[V]{}, false
+		}
+	}
+	return SourceColumn[V]{
+		values:   append([]V(nil), values...),
+		outcomes: append([]structure.ReductionOutcome(nil), outcomes...),
+		sealed:   true,
+	}, true
 }
 
 // Valid distinguishes a deliberately sealed empty column from a missing
@@ -35,12 +60,14 @@ func (column SourceColumn[V]) Count() int {
 }
 
 // At indexes the column directly by the owner-issued dense candidate ordinal.
-func (column SourceColumn[V]) At(index uint32) (V, bool) {
+// The outcome is the row's own disposition: a Concrete row stages its value,
+// and any other admitted outcome stages nothing.
+func (column SourceColumn[V]) At(index uint32) (V, structure.ReductionOutcome, bool) {
 	if !column.sealed || uint64(index) >= uint64(len(column.values)) {
 		var zero V
-		return zero, false
+		return zero, structure.ReductionOutcome(0), false
 	}
-	return column.values[index], true
+	return column.values[index], column.outcomes[index], true
 }
 
 // Clone returns an independent sealed column for a Program-bound runtime
@@ -51,7 +78,8 @@ func (column SourceColumn[V]) Clone() SourceColumn[V] {
 	if !column.sealed {
 		return SourceColumn[V]{}
 	}
-	return NewSourceColumn(column.values)
+	clone, _ := NewSourceColumn(column.values, column.outcomes)
+	return clone
 }
 
 // SourceColumns is a bind-only typed view implemented by generated relation
@@ -71,7 +99,21 @@ type SourceColumns[V any] interface {
 // projects that candidate into an axis-local coordinate. Domain values never
 // cross this boundary, and implementations are not retained after Program
 // construction.
+//
+// Addressing is a property of the relation, not of the owner: a mounted
+// relation resolves a mount-qualified occurrence, while a global relation
+// resolves an occurrence alone and refuses a mount. Each relation arm decides
+// which of the two it is.
 type Owner interface {
 	Candidate(relationOrdinal uint32, mount, occurrence identity.ContentID) (uint32, bool)
 	Project(relationOrdinal, projectionOrdinal, candidateOrdinal uint32) (uint32, bool)
+}
+
+// OccurrenceDirectory is the sealed occurrence inventory of a global relation:
+// the axis's own statement of which occurrences exist for it. A mounted
+// relation has no such directory - its occurrences are the artifact's rows -
+// so only owners that declare at least one global relation implement this.
+type OccurrenceDirectory interface {
+	OccurrenceCount(relationOrdinal uint32) (int, bool)
+	OccurrenceIDAt(relationOrdinal uint32, index int) (identity.ContentID, bool)
 }

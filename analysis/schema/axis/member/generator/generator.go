@@ -26,6 +26,7 @@ const (
 	OutcomePackagePath = "github.com/wippyai/go-lua/analysis/schema/structure"
 	OutcomeType        = "ReductionOutcome"
 	OutcomeConcrete    = "Concrete"
+	OutcomeRefuse      = "Refuse"
 )
 
 // Artifact is the pair of generated owner artifacts. Cold is the declaration
@@ -56,6 +57,11 @@ type RelationBinding struct {
 	CandidateOrdinal  definition.GoSymbol
 	CandidateAt       definition.GoSymbol
 	CandidateCount    definition.GoSymbol
+	// CandidateIdentityAt is present exactly on a globally addressed relation:
+	// the axis publishes the occurrence identity of every dense candidate, so
+	// the relation is resolved from an occurrence alone and carries its own
+	// occurrence inventory.
+	CandidateIdentityAt definition.GoSymbol
 	// CandidateRelation is the local relation ordinal for the explicitly named
 	// CandidateProvider. It is populated only when that provider belongs to
 	// this axis; foreign providers retain CandidateProvider for composition to
@@ -192,6 +198,7 @@ func Resolve(source definition.Definition) (Metadata, error) {
 			CandidateProvider: relation.CandidateProvider,
 			CandidateResolver: relation.CandidateResolver, CandidateOrdinal: relation.CandidateOrdinal,
 			CandidateAt: relation.CandidateAt, CandidateCount: relation.CandidateCount,
+			CandidateIdentityAt: relation.CandidateIdentityAt,
 			Derivation: RelationDerivationBinding{
 				State: relation.Derivation.State, Build: relation.Derivation.Build,
 				Count: relation.Derivation.Count, At: relation.Derivation.At,
@@ -529,9 +536,13 @@ func renderRelations(packageName string, source definition.Definition) ([]byte, 
 		return nil, errors.New("member generator: fact carrier is missing")
 	}
 	materializable := make([]int, 0, len(source.Relations))
+	global := make([]int, 0, len(source.Relations))
 	for index, relation := range source.Relations {
 		if !optionalSymbol(relation.Materialize) {
 			materializable = append(materializable, index)
+		}
+		if !optionalSymbol(relation.CandidateIdentityAt) {
+			global = append(global, index)
 		}
 	}
 
@@ -557,6 +568,9 @@ func renderRelations(packageName string, source definition.Definition) ([]byte, 
 	if len(materializable) != 0 {
 		fmt.Fprintf(&out, "var _ memberrelation.SourceColumns[%s] = (*RelationOwner)(nil)\n\n", qualifiedType(factType, packageName, aliases))
 	}
+	if len(global) != 0 {
+		out.WriteString("var _ memberrelation.OccurrenceDirectory = (*RelationOwner)(nil)\n\n")
+	}
 	out.WriteString("// NewRelationOwner binds the generated relation owner to one immutable axis schema.\n")
 	out.WriteString("func NewRelationOwner(schema ")
 	out.WriteString(ownerFieldType)
@@ -570,16 +584,25 @@ func renderRelations(packageName string, source definition.Definition) ([]byte, 
 	}
 	out.WriteString("\treturn owner\n")
 	out.WriteString("}\n\n")
-	out.WriteString("// Candidate resolves one mounted occurrence to the owner-issued dense candidate ordinal.\n")
+	out.WriteString("// Candidate resolves one occurrence to the owner-issued dense candidate ordinal.\n")
+	out.WriteString("// A mounted relation requires the mount that qualifies the occurrence; a global\n")
+	out.WriteString("// relation owns the occurrence directory itself and refuses one.\n")
 	out.WriteString("func (owner *RelationOwner) Candidate(relationOrdinal uint32, mount, occurrence identity.ContentID) (uint32, bool) {\n")
-	fmt.Fprintf(&out, "\tif %s || !mount.Available() || !occurrence.Available() {\n\t\treturn 0, false\n\t}\n", ownerSchemaMissing(source.Binding.Key.Normalizer.ReceiverPointer))
+	fmt.Fprintf(&out, "\tif %s || !occurrence.Available() {\n\t\treturn 0, false\n\t}\n", ownerSchemaMissing(source.Binding.Key.Normalizer.ReceiverPointer))
 	out.WriteString("\tswitch relationOrdinal {\n")
 	for index, relation := range source.Relations {
 		if optionalSymbol(relation.CandidateResolver) {
 			continue
 		}
 		fmt.Fprintf(&out, "\tcase %d:\n", index)
-		resolver := directCall(relation.CandidateResolver, owner, "owner.schema", "candidate", []string{"mount", "occurrence"}, packageName, aliases)
+		arguments := []string{"mount", "occurrence"}
+		if !optionalSymbol(relation.CandidateIdentityAt) {
+			out.WriteString("\t\tif mount.Available() {\n\t\t\treturn 0, false\n\t\t}\n")
+			arguments = []string{"occurrence"}
+		} else {
+			out.WriteString("\t\tif !mount.Available() {\n\t\t\treturn 0, false\n\t\t}\n")
+		}
+		resolver := directCall(relation.CandidateResolver, owner, "owner.schema", "candidate", arguments, packageName, aliases)
 		fmt.Fprintf(&out, "\t\tcandidate, candidateOK := %s\n", resolver)
 		out.WriteString("\t\tif !candidateOK {\n\t\t\treturn 0, false\n\t\t}\n")
 		ordinal := directCall(relation.CandidateOrdinal, owner, "owner.schema", "candidate", []string{"candidate"}, packageName, aliases)
@@ -587,6 +610,33 @@ func renderRelations(packageName string, source definition.Definition) ([]byte, 
 	}
 	out.WriteString("\tdefault:\n\t\treturn 0, false\n\t}\n")
 	out.WriteString("}\n\n")
+
+	if len(global) != 0 {
+		out.WriteString("// OccurrenceCount is the sealed census of one global relation's occurrence\n")
+		out.WriteString("// directory. A mounted relation has no directory of its own and is refused.\n")
+		out.WriteString("func (owner *RelationOwner) OccurrenceCount(relationOrdinal uint32) (int, bool) {\n")
+		fmt.Fprintf(&out, "\tif %s {\n\t\treturn 0, false\n\t}\n", ownerSchemaMissing(source.Binding.Key.Normalizer.ReceiverPointer))
+		out.WriteString("\tswitch relationOrdinal {\n")
+		for _, relationIndex := range global {
+			relation := source.Relations[relationIndex]
+			count := directCall(relation.CandidateCount, owner, "owner.schema", "candidate", nil, packageName, aliases)
+			fmt.Fprintf(&out, "\tcase %d:\n\t\tcount := %s\n", relationIndex, count)
+			out.WriteString("\t\tif count < 0 {\n\t\t\treturn 0, false\n\t\t}\n\t\treturn count, true\n")
+		}
+		out.WriteString("\tdefault:\n\t\treturn 0, false\n\t}\n}\n\n")
+
+		out.WriteString("// OccurrenceIDAt is the occurrence identity of one dense candidate of a\n")
+		out.WriteString("// global relation, in the owner's canonical directory order.\n")
+		out.WriteString("func (owner *RelationOwner) OccurrenceIDAt(relationOrdinal uint32, index int) (identity.ContentID, bool) {\n")
+		fmt.Fprintf(&out, "\tif %s || index < 0 {\n\t\treturn identity.ContentID{}, false\n\t}\n", ownerSchemaMissing(source.Binding.Key.Normalizer.ReceiverPointer))
+		out.WriteString("\tswitch relationOrdinal {\n")
+		for _, relationIndex := range global {
+			relation := source.Relations[relationIndex]
+			identityAt := directCall(relation.CandidateIdentityAt, owner, "owner.schema", "candidate", []string{"index"}, packageName, aliases)
+			fmt.Fprintf(&out, "\tcase %d:\n\t\treturn %s\n", relationIndex, identityAt)
+		}
+		out.WriteString("\tdefault:\n\t\treturn identity.ContentID{}, false\n\t}\n}\n\n")
+	}
 
 	out.WriteString("// Project projects one dense candidate through one relation/projection pair to a local coordinate ordinal.\n")
 	out.WriteString("func (owner *RelationOwner) Project(relationOrdinal, projectionOrdinal, candidateOrdinal uint32) (uint32, bool) {\n")
@@ -651,16 +701,20 @@ func renderRelations(packageName string, source definition.Definition) ([]byte, 
 			fmt.Fprintf(&out, "\tcount%d := %s\n", relationIndex, count)
 			fmt.Fprintf(&out, "\tif count%d < 0 {\n\t\treturn false\n\t}\n", relationIndex)
 			fmt.Fprintf(&out, "\tfacts%d := make([]%s, count%d)\n", relationIndex, qualifiedType(factType, packageName, aliases), relationIndex)
+			fmt.Fprintf(&out, "\toutcomes%d := make([]%s.%s, count%d)\n", relationIndex, aliases[OutcomePackagePath], OutcomeType, relationIndex)
 			fmt.Fprintf(&out, "\tfor index := 0; index < count%d; index++ {\n", relationIndex)
 			candidateAt := directCall(relation.CandidateAt, owner, "owner.schema", "candidate", []string{"index"}, packageName, aliases)
 			fmt.Fprintf(&out, "\t\tcandidate, candidateOK := %s\n", candidateAt)
 			out.WriteString("\t\tif !candidateOK {\n\t\t\treturn false\n\t\t}\n")
 			materialize := directCall(relation.Materialize, owner, "owner.schema", "candidate", []string{"candidate"}, packageName, aliases)
 			fmt.Fprintf(&out, "\t\tfact, outcome := %s\n", materialize)
-			fmt.Fprintf(&out, "\t\tif outcome != %s.%s {\n\t\t\treturn false\n\t\t}\n", aliases[OutcomePackagePath], OutcomeConcrete)
+			fmt.Fprintf(&out, "\t\tif outcome == %s.%s {\n\t\t\treturn false\n\t\t}\n", aliases[OutcomePackagePath], OutcomeRefuse)
 			fmt.Fprintf(&out, "\t\tfacts%d[index] = fact\n", relationIndex)
+			fmt.Fprintf(&out, "\t\toutcomes%d[index] = outcome\n", relationIndex)
 			out.WriteString("\t}\n")
-			fmt.Fprintf(&out, "\towner.sourceColumn%d = memberrelation.NewSourceColumn(facts%d)\n", relationIndex, relationIndex)
+			fmt.Fprintf(&out, "\tcolumn%d, column%dOK := memberrelation.NewSourceColumn(facts%d, outcomes%d)\n", relationIndex, relationIndex, relationIndex, relationIndex)
+			fmt.Fprintf(&out, "\tif !column%dOK {\n\t\treturn false\n\t}\n", relationIndex)
+			fmt.Fprintf(&out, "\towner.sourceColumn%d = column%d\n", relationIndex, relationIndex)
 		}
 		out.WriteString("\treturn true\n}\n\n")
 		out.WriteString("// SourceFactColumn returns the immutable typed source fact column for one relation.\n")
@@ -725,6 +779,7 @@ func relationImportAliases(packageName string, source definition.Definition, met
 		add(relation.CandidateAt.PackagePath)
 		add(relation.CandidateCount.PackagePath)
 		add(relation.Materialize.PackagePath)
+		add(relation.CandidateIdentityAt.PackagePath)
 		if !optionalSymbol(relation.Materialize) {
 			add(OutcomePackagePath)
 		}

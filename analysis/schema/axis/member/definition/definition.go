@@ -125,6 +125,14 @@ type Relation struct {
 	// Materialize is the optional zero-input reducer applied to one dense
 	// candidate. It is the source/ingress fact producer: (subject) (Fact, bool).
 	Materialize GoSymbol
+	// CandidateIdentityAt declares that this relation is addressed globally
+	// rather than by mount: it publishes the occurrence identity of each dense
+	// candidate, (index) (identity.ContentID, bool). Its presence is the whole
+	// statement - a relation that names its own occurrence directory resolves
+	// candidates from an occurrence alone, and a Link rule reading this
+	// relation derives its occurrence inventory from this directory instead of
+	// from an artifact's rows.
+	CandidateIdentityAt GoSymbol
 	// Derivation is the optional typed construction of a dependent relation
 	// row. It is invoked by generated composition code, never retained as a
 	// runtime callback or owner handle.
@@ -453,12 +461,23 @@ func (definition Definition) Complete() bool {
 			// neither replace a provider directory nor coexist with ingress
 			// materialization.
 			if !relation.Derivation.complete() || relation.CandidateProvider.Axis.Key == definition.Axis && relation.CandidateProvider.Member == relation.Key ||
-				len(relation.Inputs) == 0 || !resolverOptional || !ordinalOptional || !atOptional || !countOptional || !materializeOptional {
+				len(relation.Inputs) == 0 || !resolverOptional || !ordinalOptional || !atOptional || !countOptional || !materializeOptional ||
+				!symbolOptional(relation.CandidateIdentityAt) {
 				return false
 			}
 		}
 		if !materializeOptional && !relation.Materialize.Available() {
 			return false
+		}
+		if !symbolOptional(relation.CandidateIdentityAt) {
+			// A global relation is a closed owner directory of occurrences: it
+			// owns the resolver triple, the census its inventory is bounded by,
+			// and the identity of every dense row. None of the three can be
+			// supplied by composition or inferred from the others.
+			if !relation.CandidateIdentityAt.Available() || !sameOwnerSymbol(relation.CandidateIdentityAt, owner) ||
+				resolverOptional || countOptional {
+				return false
+			}
 		}
 		if materializeOptional {
 			if !countOptional {
@@ -501,7 +520,7 @@ func (definition Definition) Complete() bool {
 		if relation.CandidateProvider.Axis.Key != definition.Axis {
 			// Foreign ownership is resolved against the composition roster.
 			// The consumer definition must not retain a second owner directory.
-			if !symbolOptional(relation.CandidateResolver) || !symbolOptional(relation.CandidateOrdinal) || !symbolOptional(relation.CandidateAt) || !symbolOptional(relation.CandidateCount) || !symbolOptional(relation.Materialize) {
+			if !symbolOptional(relation.CandidateResolver) || !symbolOptional(relation.CandidateOrdinal) || !symbolOptional(relation.CandidateAt) || !symbolOptional(relation.CandidateCount) || !symbolOptional(relation.Materialize) || !symbolOptional(relation.CandidateIdentityAt) {
 				return false
 			}
 			continue
@@ -535,6 +554,9 @@ func (definition Definition) Complete() bool {
 			return false
 		}
 		if !symbolOptional(relation.Materialize) {
+			return false
+		}
+		if !symbolOptional(relation.CandidateIdentityAt) {
 			return false
 		}
 		providerCarrier, providerCarrierOK := carriers[provider.Subject]
@@ -614,6 +636,7 @@ func (definition Definition) Clone() Definition {
 		clone.Relations[index].CandidateAt = cloneSymbol(relation.CandidateAt)
 		clone.Relations[index].CandidateCount = cloneSymbol(relation.CandidateCount)
 		clone.Relations[index].Materialize = cloneSymbol(relation.Materialize)
+		clone.Relations[index].CandidateIdentityAt = cloneSymbol(relation.CandidateIdentityAt)
 		clone.Relations[index].Derivation = relation.Derivation
 		clone.Relations[index].Derivation.Build = cloneSymbol(relation.Derivation.Build)
 		clone.Relations[index].Derivation.Count = cloneSymbol(relation.Derivation.Count)

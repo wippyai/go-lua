@@ -85,6 +85,17 @@ func IssueMountedGeneratedRuleCapability(binding *SchemaBinding, slot *Generated
 	return issueRuleSlotCapability(binding, slot.cell.schema, slot.cell.ordinal, ruleCapabilityMounted, false)
 }
 
+// IssueLinkGeneratedRuleCapability issues the Link lane capability for a
+// Plan-generated Rule. It is the exact twin of the mounted issuer: the lane is
+// the only difference, and a generated slot still cannot be laundered into the
+// legacy typed Rule binders.
+func IssueLinkGeneratedRuleCapability(binding *SchemaBinding, slot *GeneratedRuleSlot) (RuleSlotCapability, bool) {
+	if slot == nil || slot.cell == nil || slot.cell.generated == nil {
+		return RuleSlotCapability{}, false
+	}
+	return issueRuleSlotCapability(binding, slot.cell.schema, slot.cell.ordinal, ruleCapabilityLink, false)
+}
+
 // IssueActivationRuleCapability issues the structural mounted capability for
 // an activation slot.  Activation is slot geometry, not an engine role.
 func IssueActivationRuleCapability(binding *SchemaBinding, slot *SchemaActivationRuleSlot) (RuleSlotCapability, bool) {
@@ -147,6 +158,17 @@ func RegisterGeneratedRuleSlot(binding *SchemaBinding, slot *GeneratedRuleSlot, 
 // lane in a single open-binding handoff.
 func RegisterMountedGeneratedSlot(binding *SchemaBinding, slot *GeneratedRuleSlot) (RuleSlotCapability, bool) {
 	capability, ok := IssueMountedGeneratedRuleCapability(binding, slot)
+	if !ok || !RegisterGeneratedRuleSlot(binding, slot, capability) {
+		return RuleSlotCapability{}, false
+	}
+	return capability, true
+}
+
+// RegisterLinkGeneratedSlot issues and registers one generated Link lane in a
+// single open-binding handoff. It stands to RegisterMountedGeneratedSlot
+// exactly as RegisterLinkSlot stands to RegisterMountedSlot.
+func RegisterLinkGeneratedSlot(binding *SchemaBinding, slot *GeneratedRuleSlot) (RuleSlotCapability, bool) {
+	capability, ok := IssueLinkGeneratedRuleCapability(binding, slot)
 	if !ok || !RegisterGeneratedRuleSlot(binding, slot, capability) {
 		return RuleSlotCapability{}, false
 	}

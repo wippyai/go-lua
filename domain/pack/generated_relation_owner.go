@@ -31,13 +31,18 @@ func NewRelationOwner(schema *Schema) *RelationOwner {
 	return owner
 }
 
-// Candidate resolves one mounted occurrence to the owner-issued dense candidate ordinal.
+// Candidate resolves one occurrence to the owner-issued dense candidate ordinal.
+// A mounted relation requires the mount that qualifies the occurrence; a global
+// relation owns the occurrence directory itself and refuses one.
 func (owner *RelationOwner) Candidate(relationOrdinal uint32, mount, occurrence identity.ContentID) (uint32, bool) {
-	if owner == nil || owner.schema == nil || !mount.Available() || !occurrence.Available() {
+	if owner == nil || owner.schema == nil || !occurrence.Available() {
 		return 0, false
 	}
 	switch relationOrdinal {
 	case 0:
+		if !mount.Available() {
+			return 0, false
+		}
 		candidate, candidateOK := owner.schema.SourceForMountedOccurrence(mount, occurrence)
 		if !candidateOK {
 			return 0, false
@@ -86,18 +91,24 @@ func (owner *RelationOwner) materializeSourceColumns() bool {
 		return false
 	}
 	facts0 := make([]Value, count0)
+	outcomes0 := make([]structure.ReductionOutcome, count0)
 	for index := 0; index < count0; index++ {
 		candidate, candidateOK := owner.schema.SourceAt(index)
 		if !candidateOK {
 			return false
 		}
 		fact, outcome := SourceFact(candidate)
-		if outcome != structure.Concrete {
+		if outcome == structure.Refuse {
 			return false
 		}
 		facts0[index] = fact
+		outcomes0[index] = outcome
 	}
-	owner.sourceColumn0 = memberrelation.NewSourceColumn(facts0)
+	column0, column0OK := memberrelation.NewSourceColumn(facts0, outcomes0)
+	if !column0OK {
+		return false
+	}
+	owner.sourceColumn0 = column0
 	return true
 }
 

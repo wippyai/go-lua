@@ -373,15 +373,6 @@ func admitLinkRuleIssuance(rowsWorkspace *programRows, rows *mountedArtifactRows
 	if !row.Capability.link() || !row.Occurrence.Available() {
 		return pendingRuleIssuance{}, false
 	}
-	if _, generated := resolveGeneratedRuleCell(row.Capability); generated {
-		// Generated relation owners resolve mount-qualified candidates. A Link
-		// occurrence has no mount and therefore has no generated issuance lane.
-		return pendingRuleIssuance{}, false
-	}
-	binder, binderOK := resolveOrdinaryRuleCell(row.Capability)
-	if !binderOK {
-		return pendingRuleIssuance{}, false
-	}
 	assigned, found := rows.bootstrap.roles[row.Occurrence]
 	if !found || assigned != row.Capability {
 		return pendingRuleIssuance{}, false
@@ -395,16 +386,24 @@ func admitLinkRuleIssuance(rowsWorkspace *programRows, rows *mountedArtifactRows
 	if !entityOK || !member.Available() {
 		return pendingRuleIssuance{}, false
 	}
+	coords := OperandCoords{Occurrence: row.Occurrence}
 	issuance := pendingRuleIssuance{
 		plane: declaredMemberLink, role: row.Capability,
-		occurrence: row.Occurrence, member: member,
-		binder: binder, coords: OperandCoords{Occurrence: row.Occurrence},
+		occurrence: row.Occurrence, member: member, coords: coords,
 	}
 	// The bootstrap Site is deliberately admitted into the still-open source
 	// Batch. Site.Available requires a sealed Batch and therefore cannot be
 	// used at this pre-seal boundary; admitFrom authenticates the open-batch
 	// capability and preserves the same fence as mounted rows.
-	return declareIssuanceSurfaces(rowsWorkspace, state, binder, OperandCoords{Occurrence: row.Occurrence}, rows.bootstrap.site, entity, issuance)
+	if generated, generatedOK := resolveGeneratedRuleCell(row.Capability); generatedOK {
+		return declareGeneratedIssuanceSurfaces(rowsWorkspace, state, generated, coords, rows.bootstrap.site, entity, issuance)
+	}
+	binder, binderOK := resolveOrdinaryRuleCell(row.Capability)
+	if !binderOK {
+		return pendingRuleIssuance{}, false
+	}
+	issuance.binder = binder
+	return declareIssuanceSurfaces(rowsWorkspace, state, binder, coords, rows.bootstrap.site, entity, issuance)
 }
 
 // declareIssuanceSurfaces is the shared half of every rule issuance: mint the
@@ -441,7 +440,14 @@ func declareGeneratedIssuanceSurfaces(rowsWorkspace *programRows, state *schemaB
 	// Batch. Site.Available is a post-seal predicate, so requiring it here would
 	// make the production construction phase impossible while admitting the
 	// same capability through the ordinary arm.
-	if rowsWorkspace == nil || state == nil || declaration == nil || !coords.Mount.Available() || !coords.Occurrence.Available() || !entity.Available() {
+	if rowsWorkspace == nil || state == nil || declaration == nil || !coords.Occurrence.Available() || !entity.Available() {
+		return pendingRuleIssuance{}, false
+	}
+	// The mount is the issuance plane's own statement, not a free coordinate:
+	// an artifact-addressed plane must carry one, and the Link plane is
+	// mount-neutral by construction. The candidate relation named by the plan
+	// decides whether it accepts that addressing.
+	if coords.Mount.Available() != (issuance.plane != declaredMemberLink) {
 		return pendingRuleIssuance{}, false
 	}
 	semantic, family, schemaOK := generatedRuleSchema(declaration)
