@@ -562,8 +562,12 @@ func (b *binder) bindWriteIdent(ident *ast.IdentExpr) {
 	b.recordDirectCapture(id)
 }
 
+// recordTypeValueRef marks a value-position occurrence of a type name. Only an
+// authored declaration can be read as a value: an ambient name declares an
+// annotation spelling and has no value identity, so a global of the same name
+// stays an ordinary value read.
 func (b *binder) recordTypeValueRef(ident *ast.IdentExpr, decl TypeDecl) {
-	if b == nil || b.result == nil || ident == nil || decl.ID == 0 {
+	if b == nil || b.result == nil || ident == nil || decl.ID == 0 || decl.Kind == TypeDeclAmbient {
 		return
 	}
 	if b.result.typeValueRefs == nil {

@@ -263,7 +263,10 @@ func (b *binder) enterFuncDef(stmt *ast.FuncDefStmt, mode exprBindMode) {
 		details.method = stmt.Name.Method
 		details.methodPosition = stmt.Name.MethodPosition
 		if name := receiverTypeName(stmt.Name.Receiver); name != "" {
-			if decl, ok := b.lookupType(name); ok {
+			// An implicit self receiver is typed by an authored sibling
+			// declaration. An ambient name declares no receiver: the value it
+			// shares a spelling with is an ordinary global.
+			if decl, ok := b.lookupType(name); ok && decl.Kind != TypeDeclAmbient {
 				details.receiverType = decl
 				details.hasReceiverType = true
 			}

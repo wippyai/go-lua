@@ -1,0 +1,23 @@
+{
+  "description": "Channel<T> is invariant in its payload: a Channel<Event> is refused where a Channel<Timer> is required, even though the declaration body never mentions T and both applications expand to the same nominal Channel.",
+  "packages": [
+    "channel"
+  ],
+  "check": {
+    "diagnostics": [
+      {
+        "file": "main.lua",
+        "line": 9,
+        "severity": "error",
+        "code": "type.call.direct.argument_type",
+        "message_contains": [
+          "Event",
+          "Timer"
+        ]
+      }
+    ]
+  },
+  "run": {
+    "skip": "diagnostic-only fixture"
+  }
+}

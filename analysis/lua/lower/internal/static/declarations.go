@@ -17,6 +17,12 @@ func (w *Writer) Predeclare(body keyspace.Term, stmts []ast.Stmt) error {
 	if w == nil || w.binding == nil {
 		return fmt.Errorf("lualower: static writer is not initialized")
 	}
+	if w.rootBody == 0 {
+		w.rootBody = body
+		if err := w.predeclareAmbient(body); err != nil {
+			return err
+		}
+	}
 	for _, stmt := range stmts {
 		switch def := stmt.(type) {
 		case *ast.TypeDefStmt:
@@ -145,8 +151,8 @@ func (w *Writer) declarationRef(span source.Span, source []string, decl bind.Typ
 
 func (w *Writer) declarationTarget(decl bind.TypeDecl) (keyspace.Term, error) {
 	target, ok := w.Host(decl)
-	if !ok || (decl.Kind != bind.TypeDeclAlias &&
-		decl.Kind != bind.TypeDeclInterface && decl.Kind != bind.TypeDeclParam) {
+	if !ok || (decl.Kind != bind.TypeDeclAlias && decl.Kind != bind.TypeDeclInterface &&
+		decl.Kind != bind.TypeDeclParam && decl.Kind != bind.TypeDeclAmbient) {
 		return 0, fmt.Errorf("lualower: unavailable type declaration %q", decl.Name)
 	}
 	return target, nil

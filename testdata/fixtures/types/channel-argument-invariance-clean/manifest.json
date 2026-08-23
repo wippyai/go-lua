@@ -1,0 +1,12 @@
+{
+  "description": "Channel<T> invariance admits the equal application: a Channel<Event> flows into a Channel<Event> parameter with no diagnostic.",
+  "packages": [
+    "channel"
+  ],
+  "check": {
+    "errors": 0
+  },
+  "run": {
+    "skip": "diagnostic-only fixture"
+  }
+}

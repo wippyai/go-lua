@@ -33,6 +33,9 @@ type Result struct {
 	controlIssues []ControlIssue
 
 	nextTypeDeclID TypeDeclID
+	// ambientTypes are the ambient declarations this chunk names, in catalogue
+	// order. Only a named entry is materialized by a lowering.
+	ambientTypes []TypeDecl
 	// typeValueRefs retains binder-owned value-position occurrences whose
 	// lexical spelling denotes a declared type. Lowering consults this only at
 	// a call-argument boundary; ordinary value positions remain reads.

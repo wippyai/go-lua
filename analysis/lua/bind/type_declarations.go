@@ -5,6 +5,7 @@ import (
 
 	statictypes "github.com/wippyai/go-lua/analysis/program/static/types"
 	"github.com/wippyai/go-lua/compiler/ast"
+	"github.com/wippyai/go-lua/domain/type/ambient"
 )
 
 // TypeDeclID identifies a lexical type declaration independently of value
@@ -18,6 +19,11 @@ const (
 	TypeDeclAlias TypeDeclKind = iota + 1
 	TypeDeclInterface
 	TypeDeclParam
+	// TypeDeclAmbient is a declaration of the ambient namespace: a name always
+	// available to annotations, declared by the ambient catalogue rather than
+	// by a statement of this chunk. Ambient names occupy the outermost type
+	// scope, so an authored declaration of the same name shadows one.
+	TypeDeclAmbient
 )
 
 // TypeDecl records one declaration in the lexical type namespace.
@@ -29,6 +35,10 @@ type TypeDecl struct {
 	Type         *ast.TypeDefStmt
 	Interface    *ast.InterfaceDefStmt
 	Constraint   ast.TypeExpr
+	// Ambient carries the catalogue row an ambient declaration was opened
+	// from. It is the whole declaration for that kind: the ambient namespace
+	// has no statement to point back at.
+	Ambient ambient.Declaration
 }
 
 // TypeValueRef returns the lexical declaration selected for a value-position
@@ -41,6 +51,15 @@ func (r *Result) TypeValueRef(ident *ast.IdentExpr) (TypeDecl, bool) {
 	}
 	decl, ok := r.typeValueRefs[ident]
 	return decl, ok && decl.ID != 0
+}
+
+// AmbientTypes returns the ambient declarations this chunk names, in the order
+// the catalogue declares them. A lowering materializes exactly these rows.
+func (r *Result) AmbientTypes() []TypeDecl {
+	if r == nil {
+		return nil
+	}
+	return cloneTypeDecls(r.ambientTypes)
 }
 
 // TypeRef returns the lexical type declaration bound to ref.
@@ -211,6 +230,22 @@ func (b *binder) lookupType(name string) (TypeDecl, bool) {
 	return decl, ok && decl.ID != 0
 }
 
+// declareAmbientTypes opens the outermost type scope with the ambient
+// namespace. Every ambient name is one ordinary entry of the lexical type
+// namespace, so an annotation resolves it exactly the way it resolves an
+// authored declaration, and an authored declaration of the same name shadows
+// it under the ordinary scope rule.
+func (b *binder) declareAmbientTypes() {
+	for _, declaration := range ambient.Declarations() {
+		decl := b.result.newTypeDecl(TypeDeclAmbient, declaration.Name, nil, nil, nil)
+		if decl.ID == 0 {
+			continue
+		}
+		decl.Ambient = declaration
+		b.defineType(declaration.Name, decl)
+	}
+}
+
 // declareTypeDef introduces the alias name into the current type scope. It is
 // idempotent per statement: hoisting may run before the in-order walk reaches
 // the statement, and bindTypeDef must not re-declare it.
@@ -290,6 +325,7 @@ func (b *binder) bindTypeRef(ref *ast.TypeRefExpr) {
 	if !ok {
 		return
 	}
+	b.observeAmbientType(decl)
 	b.result.typeRefs[ref] = decl
 }
 
@@ -304,5 +340,22 @@ func (b *binder) bindPrimitiveTypeRef(expr *ast.PrimitiveTypeExpr) {
 	if !ok {
 		return
 	}
+	b.observeAmbientType(decl)
 	b.result.primitiveTypeRefs[expr] = decl
+}
+
+// observeAmbientType records that this chunk names one ambient declaration.
+// The ambient namespace is always in scope, but only a named entry becomes a
+// declaration of the Program: a chunk that annotates nothing ambient carries
+// no ambient row.
+func (b *binder) observeAmbientType(decl TypeDecl) {
+	if decl.Kind != TypeDeclAmbient || decl.ID == 0 {
+		return
+	}
+	for _, seen := range b.result.ambientTypes {
+		if seen.ID == decl.ID {
+			return
+		}
+	}
+	b.result.ambientTypes = append(b.result.ambientTypes, decl)
 }
