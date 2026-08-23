@@ -167,14 +167,14 @@ func BindExactWriteRule[O any](owner *HotOwner, slot *engine.RuleSlot[value.Valu
 	return &RuleImplementation[O]{owner: owner, slot: slot}, true
 }
 
-// BindCarryRule binds one transformed-carry Rule through this owner's exact
-// Factor slot. The child supplies only its typed operand transform and
-// transfer; the SchemaCarrySlot remains the sole structural authority.
-func BindCarryRule[O any](owner *HotOwner, slot *engine.RuleSlot[value.Value, O], carry engine.SchemaCarrySlot[value.Value], write engine.SchemaWriteSlot[value.Value], spec engine.HotRuleSpec[value.Value, O], carrySpec engine.HotCarrySpec[value.Value, O], projectWrite func(O) (uint64, bool)) (*RuleImplementation[O], bool) {
+// BindSelectedRouteCarryRule binds Value's routed allocation issuance. The
+// child selects only owner-issued Value coordinates; one fresh fact is then
+// written atomically to the complete route image.
+func BindSelectedRouteCarryRule[O any](owner *HotOwner, slot *engine.RuleSlot[value.Value, O], carry engine.SchemaCarrySlot[value.Value], write engine.SchemaWriteSlot[value.Value], spec engine.HotRuleSpec[value.Value, O], carrySpec engine.HotCarrySpec[value.Value, O]) (*RuleImplementation[O], bool) {
 	if owner == nil || owner.binding == nil || owner.fragment == nil || slot == nil {
 		return nil, false
 	}
-	if !engine.BindRuleWithCarry[coordinate](owner.binding, slot, carry, write, owner.fragment.slot, spec, carrySpec, projectWrite) {
+	if !engine.BindSelectedRouteRuleDirect[coordinate](owner.binding, slot, carry, write, owner.fragment.Ref(), spec, carrySpec, nil) {
 		return nil, false
 	}
 	return &RuleImplementation[O]{owner: owner, slot: slot}, true

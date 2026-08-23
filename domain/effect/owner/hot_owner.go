@@ -113,19 +113,6 @@ func (owner *HotOwner) MatchesBinding(binding *engine.SchemaBinding) bool {
 	return owner != nil && owner.binding != nil && owner.binding == binding
 }
 
-// BindExactWriteRule binds one zero-input Effect source through the exact
-// owner Factor. It is intentionally disjoint from the selected-read
-// transaction used by BodyCall.
-func BindExactWriteRule[O any](owner *HotOwner, slot *engine.RuleSlot[factor.Value, O], write engine.SchemaWriteSlot[factor.Value], spec engine.HotRuleSpec[factor.Value, O], projectWrite func(O) (uint64, bool)) (*RuleImplementation[O], bool) {
-	if owner == nil || owner.binding == nil || owner.fragment == nil || slot == nil {
-		return nil, false
-	}
-	if !engine.BindRule[coordinate](owner.binding, slot, write, owner.fragment.slot, spec, projectWrite) {
-		return nil, false
-	}
-	return &RuleImplementation[O]{owner: owner, slot: slot}, true
-}
-
 // FactorRef returns the exact cold Effect Factor surface without exposing its
 // private dense coordinate or FactorSlot.
 func (owner *HotOwner) FactorRef() engine.FactorRef[factor.Value] {

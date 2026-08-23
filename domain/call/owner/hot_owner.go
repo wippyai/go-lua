@@ -148,19 +148,6 @@ func (owner *HotOwner) MatchesBinding(binding *engine.SchemaBinding) bool {
 	return owner != nil && owner.binding != nil && owner.binding == binding
 }
 
-// BindExactWriteRule binds one Call-output Rule through this owner's exact
-// write surface. Child packages cannot replace the output Factor or recover
-// Call's private coordinate type.
-func BindExactWriteRule[O any](owner *HotOwner, slot *engine.RuleSlot[call.Value, O], write engine.SchemaWriteSlot[call.Value], spec engine.HotRuleSpec[call.Value, O], projectWrite func(O) (uint64, bool)) (*RuleImplementation[O], bool) {
-	if owner == nil || owner.binding == nil || owner.fragment == nil || slot == nil {
-		return nil, false
-	}
-	if !engine.BindRule[coordinate](owner.binding, slot, write, owner.fragment.slot, spec, projectWrite) {
-		return nil, false
-	}
-	return &RuleImplementation[O]{owner: owner, slot: slot}, true
-}
-
 // BindExactReadRule binds a heterogeneous exact-read Rule while retaining
 // Call's pending typed implementation for mounted rule attachment.
 func BindExactReadRule[O any](owner *HotOwner, slot *engine.RuleSlot[call.Value, O], read engine.SchemaReadSlot[call.Value], readFactor engine.FactorRef[call.Value], write engine.SchemaWriteSlot[call.Value], writeFactor engine.FactorRef[call.Value], spec engine.HotRuleSpec[call.Value, O], projectRead func(O) (uint64, bool), projectWrite func(O) (uint64, bool)) (*RuleImplementation[O], engine.Read[engine.OrderedCells[call.Value]], bool) {
@@ -183,17 +170,6 @@ func BindHeterogeneousExactReadRule[RV, O any](owner *HotOwner, slot *engine.Rul
 		return nil, engine.Read[engine.OrderedCells[RV]]{}, false
 	}
 	return &HeterogeneousRuleImplementation[RV, O]{owner: owner, slot: slot}, runtimeRead, true
-}
-
-func ResolveHeterogeneousRuleImplementation[RV, O any](issuer *HeterogeneousRuleImplementation[RV, O]) (*engine.RuleImplementation[coordinate, call.Value, O], bool) {
-	if issuer == nil || issuer.owner == nil || issuer.slot == nil {
-		return nil, false
-	}
-	implementation, ok := engine.RuleImplementationAt[coordinate, call.Value, O](issuer.owner.binding, issuer.slot)
-	if !ok {
-		return nil, false
-	}
-	return implementation, true
 }
 
 // ResolveRuleImplementation resolves the exact implementation after the shared
