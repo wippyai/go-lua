@@ -165,53 +165,6 @@ func (owner *HotOwner) widenRank(index coordinate, value contextdomain.Value, co
 	return rank
 }
 
-// RuleImplementation is Context's opaque pending output-rule issuer.
-type RuleImplementation[O any] struct {
-	owner *HotOwner
-	slot  *engine.RuleSlot[contextdomain.Value, O]
-}
-
-func (issuer *RuleImplementation[O]) MountedCapability() (engine.RuleSlotCapability, bool) {
-	if issuer == nil || issuer.owner == nil || issuer.slot == nil {
-		return engine.RuleSlotCapability{}, false
-	}
-	return engine.MountedCapabilityForSlot(issuer.owner.binding, issuer.slot)
-}
-
-func (issuer *RuleImplementation[O]) LinkCapability() (engine.RuleSlotCapability, bool) {
-	if issuer == nil || issuer.owner == nil || issuer.slot == nil {
-		return engine.RuleSlotCapability{}, false
-	}
-	return engine.LinkCapabilityForSlot(issuer.owner.binding, issuer.slot)
-}
-
-// BindExactWriteRule keeps future Context producers on the owner-authenticated
-// output path without exposing the private carrier coordinate.
-func BindExactWriteRule[O any](owner *HotOwner, slot *engine.RuleSlot[contextdomain.Value, O], write engine.SchemaWriteSlot[contextdomain.Value], spec engine.HotRuleSpec[contextdomain.Value, O], projectWrite func(O) (uint64, bool)) (*RuleImplementation[O], bool) {
-	if owner == nil || owner.binding == nil || owner.fragment == nil || slot == nil {
-		return nil, false
-	}
-	if !engine.BindRule[coordinate](owner.binding, slot, write, owner.fragment.slot, spec, projectWrite) {
-		return nil, false
-	}
-	return &RuleImplementation[O]{owner: owner, slot: slot}, true
-}
-
-func ResolveRuleImplementation[O any](issuer *RuleImplementation[O]) (*engine.RuleImplementation[coordinate, contextdomain.Value, O], bool) {
-	if issuer == nil || issuer.owner == nil || issuer.slot == nil {
-		return nil, false
-	}
-	implementation, ok := engine.RuleImplementationAt[coordinate, contextdomain.Value, O](issuer.owner.binding, issuer.slot)
-	return implementation, ok
-}
-
-func ResolveRuleImplementationFor[O any](owner *HotOwner, issuer *RuleImplementation[O]) (*engine.RuleImplementation[coordinate, contextdomain.Value, O], bool) {
-	if owner == nil || issuer == nil || issuer.owner != owner {
-		return nil, false
-	}
-	return ResolveRuleImplementation(issuer)
-}
-
 func bindingOpen(binding *engine.SchemaBinding) bool {
 	return binding != nil && !binding.Sealed() && !binding.Poisoned() && binding.Schema() == nil
 }
