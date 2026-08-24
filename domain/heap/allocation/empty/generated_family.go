@@ -106,18 +106,21 @@ func (lane *familyWorker) Execute(frame execution.Frame, ticket execution.Ticket
 // holds are the ones the declaration names: the candidate directory it resolves
 // dense candidates through, and every static axis a declared relation derives
 // against. It reaches no owner callback and no runtime capability.
+//
+// It holds NO rule ordinal. Which rule an installer authors is the claim it
+// was installed under, and the family table resolves an installer only for
+// that claim; a copy kept here would be a second answer to a question the
+// table already answers, and one that goes stale on its own.
 type familyInstaller struct {
 	heapSchema heap.Schema
-	rule       uint32
 }
 
 // NewFamilyInstaller seals this rule's family installer against the axis schemas
-// its declaration names and the sealed ordinal it authors. The bind arm that
-// resolves those schemas from its composition's authorities is the owner's own,
-// because how an authority record is reached is that composition's knowledge
-// and not this rule's.
-func NewFamilyInstaller(heapSchema heap.Schema, rule uint32) (execution.RuleFamilyInstaller[heap.DenseCoordinate, heap.Value], bool) {
-	install := familyInstaller{heapSchema: heapSchema, rule: rule}
+// its declaration names. The bind arm that resolves those schemas from its
+// composition's authorities is the owner's own, because how an authority
+// record is reached is that composition's knowledge and not this rule's.
+func NewFamilyInstaller(heapSchema heap.Schema) (execution.RuleFamilyInstaller[heap.DenseCoordinate, heap.Value], bool) {
+	install := familyInstaller{heapSchema: heapSchema}
 	if !install.available() {
 		return nil, false
 	}
@@ -131,8 +134,8 @@ func (install familyInstaller) available() bool {
 	return true
 }
 
-func (install familyInstaller) InstallRuleFamily(plane execution.FormPlane[heap.DenseCoordinate, heap.Value], ruleOrdinal uint32, rows []execution.FormRow) (execution.Family, []execution.FormAddress, bool) {
-	if !install.available() || ruleOrdinal != install.rule || !plane.Valid() || len(rows) == 0 {
+func (install familyInstaller) InstallRuleFamily(plane execution.FormPlane[heap.DenseCoordinate, heap.Value], _ uint32, rows []execution.FormRow) (execution.Family, []execution.FormAddress, bool) {
+	if !install.available() || !plane.Valid() || len(rows) == 0 {
 		return nil, nil, false
 	}
 	sealed := &sealedFamily{rows: make([]familyRow, 0, len(rows))}

@@ -98,9 +98,15 @@ type CarryPlan struct {
 
 // CompiledRule is the immutable, table-backed, type-neutral description of a
 // generated Rule program. It is intentionally free of Read/Write
-// capabilities and scratch storage. A runtimeProgram owns one descriptor per
-// compiled Rule ordinal; member rows retain only that ordinal and their
-// occurrence-local coordinates.
+// capabilities and scratch storage.
+//
+// It does NOT carry its own Rule ordinal. A descriptor is a row of the sealed
+// rule table, and its coordinate is its POSITION in that table: the seal
+// assigns it once, the table answers it, and a copy stored in the row would be
+// a second place the same number lives and a second thing to keep in agreement.
+// A row of another table that has to name this one holds the ordinal as a
+// typed foreign key - the member row and the plan row an execution family is
+// handed both do - and nothing rebases or re-derives it.
 //
 // The admitted forms are structural, not a runtime enum: an ordered zero or
 // more join table, one exact/route output row, and an optional identity carry.
@@ -110,7 +116,6 @@ type CarryPlan struct {
 // All slices are seal-owned copies. No hot-path operation mutates or appends to
 // them.
 type CompiledRule struct {
-	ordinal    uint32
 	inputCount uint16
 	reads      []ReadPlan
 	outputs    []OutputPlan
@@ -140,7 +145,6 @@ type CompiledRule struct {
 // laundered as a projection or reducer ordinal by sharing a fused shape tag.
 // The schema engine is the only package that should issue this specification.
 type CompiledRuleSpec struct {
-	Ordinal    uint32
 	AxisCount  int
 	InputCount int
 	Candidate  ruleplan.RelationAddr
@@ -163,7 +167,7 @@ type CompiledRuleSpec struct {
 // available to the generic invocation owner. No domain value, callback, or
 // runtime schema lookup enters this constructor.
 func NewPlanCompiledRule(spec CompiledRuleSpec) (CompiledRule, bool) {
-	if spec.Ordinal == ^uint32(0) || spec.AxisCount <= 0 || uint64(spec.AxisCount) > uint64(^uint32(0)) || spec.InputCount < 0 || spec.InputCount > int(^uint16(0)) {
+	if spec.AxisCount <= 0 || uint64(spec.AxisCount) > uint64(^uint32(0)) || spec.InputCount < 0 || spec.InputCount > int(^uint16(0)) {
 		return CompiledRule{}, false
 	}
 	if spec.Reads == nil || spec.Outputs == nil {
@@ -193,7 +197,7 @@ func NewPlanCompiledRule(spec CompiledRuleSpec) (CompiledRule, bool) {
 		return CompiledRule{}, false
 	}
 	rule := CompiledRule{
-		ordinal: spec.Ordinal, inputCount: uint16(spec.InputCount), reads: readCopy, outputs: outputCopy, carry: carry,
+		inputCount: uint16(spec.InputCount), reads: readCopy, outputs: outputCopy, carry: carry,
 		transports:   append([]ruleplan.Transport(nil), spec.Transports...),
 		planGeometry: true, axisCount: uint32(spec.AxisCount), candidateRelation: spec.Candidate, issuedCandidate: spec.IssuedCandidate, reducer: spec.Reducer,
 	}
@@ -470,19 +474,6 @@ func validOutputPlan(output OutputPlan, _ int, axisCount int, candidate ruleplan
 		addressAxesInRange(axisCount, output.Address, output.Destination)
 }
 
-// RebaseOrdinal copies a sealed descriptor with the canonical engine Rule
-// ordinal assigned by SchemaBuilder.Seal. Plan Rule ordinals and the cold
-// composition's canonical Rule order are distinct directories; rebasing is
-// therefore a seal-time identity operation, not runtime translation. The
-// descriptor's normalized Factor axes and owner-local member/frame addresses
-// are preserved byte-for-byte.
-func (rule CompiledRule) RebaseOrdinal(ordinal uint32) (CompiledRule, bool) {
-	if !rule.Available() || ordinal == ^uint32(0) {
-		return CompiledRule{}, false
-	}
-	rule.ordinal = ordinal
-	return rule, true
-}
 
 func validRelationAddr(address ruleplan.RelationAddr) bool {
 	return address.Axis != ^uint32(0) && address.Member != ^uint32(0)
@@ -523,7 +514,7 @@ func addressAxesInRange(axisCount int, addresses ...interface{}) bool {
 }
 
 func (rule CompiledRule) Available() bool {
-	if rule.ordinal == ^uint32(0) || len(rule.outputs) != 1 || !rule.planGeometry {
+	if len(rule.outputs) != 1 || !rule.planGeometry {
 		return false
 	}
 	if rule.axisCount == 0 || !validRelationAddr(rule.candidateRelation) || !validReducerAddr(rule.reducer) || !addressAxesInRange(int(rule.axisCount), rule.candidateRelation, rule.reducer) || !validInputPrefix(int(rule.inputCount), rule.reads, rule.carry) {
@@ -558,12 +549,6 @@ func (rule CompiledRule) Available() bool {
 	return true
 }
 
-func (rule CompiledRule) Ordinal() (uint32, bool) {
-	if !rule.Available() {
-		return 0, false
-	}
-	return rule.ordinal, true
-}
 
 func (rule CompiledRule) InputCount() int {
 	if !rule.Available() {

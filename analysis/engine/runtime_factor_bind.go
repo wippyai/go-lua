@@ -115,6 +115,13 @@ func bindFactorFromGraph[K ~uint32 | ~uint64, V any](implementation *FactorImple
 	// exactly the Factor it names, and it must be typed in that Factor's key
 	// and fact types: a claim that is not is a rule installing a family for a
 	// Factor it does not write to.
+	//
+	// The claim table this reads is the transient composition one: opaque
+	// installers keyed by the ordinal they were claimed against. It is resolved
+	// exactly here, once, into a table typed in this Factor's own key and fact,
+	// and never consulted again - so it is never a second untyped authority
+	// over which family a rule has. The typed table is sized from the sealed
+	// rule table, because a claim is a position in that table.
 	for ruleOrdinal, claim := range runtime.state.ruleFamilies {
 		if claim.factor != implementation.ordinal {
 			continue
@@ -127,7 +134,11 @@ func bindFactorFromGraph[K ~uint32 | ~uint64, V any](implementation *FactorImple
 			return nil, false
 		}
 		if bound.families == nil {
-			bound.families = &execution.RuleFamilies[K, V]{}
+			families, opened := execution.NewRuleFamilies[K, V](int(schema.ruleCount()))
+			if !opened {
+				return nil, false
+			}
+			bound.families = families
 		}
 		if !bound.families.Install(uint32(ruleOrdinal), installer) {
 			return nil, false

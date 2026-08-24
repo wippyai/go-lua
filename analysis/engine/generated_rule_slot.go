@@ -390,7 +390,7 @@ func DeclareGeneratedRuleSlot(
 		draft.output = nil
 	}
 	descriptor, descriptorOK := generated.NewPlanCompiledRule(generated.CompiledRuleSpec{
-		Ordinal: compiled.Rule(), AxisCount: factorDirectory.count, InputCount: compiled.InputCount(),
+		AxisCount: factorDirectory.count, InputCount: compiled.InputCount(),
 		Candidate: normalizedCandidate, IssuedCandidate: issuedCandidate, Reducer: normalizedReducer,
 		Reads: readPlans,
 		Outputs: []generated.OutputPlan{{
@@ -417,7 +417,6 @@ func DeclareGeneratedRuleSlot(
 	cell := &generatedRuleCell{
 		planDigest: catalog.Digest(),
 		program:    descriptor,
-		rule:       compiled.Rule(),
 		inputs:     uint32(compiled.InputCount()),
 		candidate:  compiled.Candidate(),
 		join: func() ruleplan.RelationAddr {

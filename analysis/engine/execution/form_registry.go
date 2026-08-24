@@ -102,7 +102,13 @@ type FormRow struct {
 	Unit     carrier.Unit
 	Target   carrier.Target
 	Rule     generated.CompiledRule
-	exact    []carrier.Unit
+	// RuleOrdinal is this row's typed foreign key into the sealed rule table:
+	// which rule Rule is a descriptor of. It is set by the engine from the
+	// member row that produced this plan row, because the descriptor itself
+	// does not carry its own coordinate - a row's position in a table is the
+	// table's answer, not the row's.
+	RuleOrdinal uint32
+	exact       []carrier.Unit
 }
 
 // BindExact attaches the owner-issued Unit of one exact join to this sealed
@@ -193,21 +199,36 @@ type RuleFamilyInstaller[K scalar.Key, V any] interface {
 // The table partitions before anything is built, so a refusal from an
 // installer is a real refusal rather than a silent fall back to a generic form
 // builder.
+// It is a DENSE slice over the sealed rule table, not a map keyed by an
+// ordinal: the ordinal is a position in that table, so the table it indexes is
+// the same length as the one that assigned it, and an ordinal past the end is
+// not an unclaimed rule but a coordinate of no table at all. Absence stays
+// sparse - a nil entry is a rule with no installer, which takes the generic
+// builder for its form.
 type RuleFamilies[K scalar.Key, V any] struct {
-	installers map[uint32]RuleFamilyInstaller[K, V]
+	installers []RuleFamilyInstaller[K, V]
+}
+
+// NewRuleFamilies opens the claim table for one bound Factor over the sealed
+// rule table's own width. Every claim is made against a position of that
+// table, so the width is taken from it once here rather than grown by whoever
+// claims last.
+func NewRuleFamilies[K scalar.Key, V any](rules int) (*RuleFamilies[K, V], bool) {
+	if rules < 0 || uint64(rules) > uint64(^uint32(0)) {
+		return nil, false
+	}
+	return &RuleFamilies[K, V]{installers: make([]RuleFamilyInstaller[K, V], rules)}, true
 }
 
 // Install claims one sealed rule ordinal for one installer. A second claim on
-// one ordinal is two authorities for one family and is refused.
+// one ordinal is two authorities for one family and is refused, and so is a
+// claim against an ordinal the sealed rule table does not have.
 func (families *RuleFamilies[K, V]) Install(rule uint32, installer RuleFamilyInstaller[K, V]) bool {
-	if families == nil || installer == nil {
+	if families == nil || installer == nil || uint64(rule) >= uint64(len(families.installers)) {
 		return false
 	}
-	if _, claimed := families.installers[rule]; claimed {
+	if families.installers[rule] != nil {
 		return false
-	}
-	if families.installers == nil {
-		families.installers = map[uint32]RuleFamilyInstaller[K, V]{}
 	}
 	families.installers[rule] = installer
 	return true
@@ -215,19 +236,26 @@ func (families *RuleFamilies[K, V]) Install(rule uint32, installer RuleFamilyIns
 
 // Installer resolves the installer authoring one sealed rule ordinal.
 func (families *RuleFamilies[K, V]) Installer(rule uint32) (RuleFamilyInstaller[K, V], bool) {
-	if families == nil {
+	if families == nil || uint64(rule) >= uint64(len(families.installers)) {
 		return nil, false
 	}
-	installer, claimed := families.installers[rule]
-	return installer, claimed
+	installer := families.installers[rule]
+	return installer, installer != nil
 }
 
-// Count is the number of sealed rule ordinals this table authors.
+// Count is the number of sealed rule ordinals this table authors. It is the
+// number of CLAIMS, not the width of the rule table the claims index.
 func (families *RuleFamilies[K, V]) Count() int {
 	if families == nil {
 		return 0
 	}
-	return len(families.installers)
+	claimed := 0
+	for _, installer := range families.installers {
+		if installer != nil {
+			claimed++
+		}
+	}
+	return claimed
 }
 
 // ForeignFactor is one input axis's read side, delivered to a rule's installer
@@ -806,16 +834,12 @@ func BuildForms[K scalar.Key, V any](plane FormPlane[K, V], rows []FormRow) ([]F
 }
 
 // authoredRuleOrdinal answers the sealed rule ordinal one plan row belongs to
-// when an installer authors that rule's family. A row whose rule has no sealed
-// ordinal is never authored: authorship is claimed against the ordinal, so an
-// unresolved one cannot match a claim.
+// when an installer authors that rule's family. The ordinal is the row's own
+// foreign key; whether it is authored is the family table's answer, and a row
+// naming a rule no installer claimed takes the generic builder for its form.
 func authoredRuleOrdinal[K scalar.Key, V any](plane FormPlane[K, V], row FormRow) (uint32, bool) {
-	ordinal, ordinalOK := row.Rule.Ordinal()
-	if !ordinalOK {
-		return 0, false
-	}
-	_, authored := plane.families.Installer(ordinal)
-	return ordinal, authored
+	_, authored := plane.families.Installer(row.RuleOrdinal)
+	return row.RuleOrdinal, authored
 }
 
 // buildForms is BuildForms over an explicit implementation column, so the

@@ -278,6 +278,10 @@ func buildGeneratedExecutionProgram(program *runtimeProgram) (*generatedExecutio
 		formRow.Member, formRow.Unit, formRow.Target = memberIndex, row.generated.unit, row.generated.target
 		formRow.Candidate = row.generated.candidate
 		formRow.Source = row.generated.source
+		// The plan row names its rule by the member row's own sealed foreign
+		// key. The descriptor beside it is the row at that ordinal and holds no
+		// copy of it, so this is the only place the coordinate is carried.
+		formRow.RuleOrdinal = row.generated.rule
 		exact := 0
 		for join := 0; join < descriptor.ReadCount(); join++ {
 			plan, planOK := descriptor.ReadAt(join)

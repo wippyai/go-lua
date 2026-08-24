@@ -39,7 +39,7 @@ func TestTransformedCarryIsItsOwnForm(t *testing.T) {
 func planCompiledTransformedCarryRule(t *testing.T) generated.CompiledRule {
 	t.Helper()
 	rule, ok := generated.NewPlanCompiledRule(generated.CompiledRuleSpec{
-		Ordinal: 9, AxisCount: 3, InputCount: 1,
+		AxisCount: 3, InputCount: 1,
 		Candidate: ruleplan.RelationAddr{Axis: 0, Member: 0},
 		Reducer:   ruleplan.ReducerAddr{Axis: 2, Member: 1},
 		Reads: []generated.ReadPlan{{

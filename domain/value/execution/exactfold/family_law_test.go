@@ -230,7 +230,7 @@ func exactFoldLawSpec(arity int) generated.CompiledRuleSpec {
 	}
 	axis := uint32(2)
 	spec := generated.CompiledRuleSpec{
-		Ordinal: 11, AxisCount: 3, InputCount: 1,
+		AxisCount: 3, InputCount: 1,
 		Candidate: ruleplan.RelationAddr{Axis: axis, Member: 0},
 		Reducer:   ruleplan.ReducerAddr{Axis: axis, Member: 3},
 		Outputs: []generated.OutputPlan{{

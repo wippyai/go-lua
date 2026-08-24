@@ -1268,33 +1268,29 @@ func (builder *SchemaBuilder) bindSealed(schema *Schema, sealed *coldcomposition
 	// Generated descriptors are copied from the Rule cells' sealed Plan
 	// projection into one canonical ordinal table. No later member bind may
 	// derive a descriptor from occurrence geometry.
-	_, generatedRuleCount, _, _, generatedShapeOK := sealed.ShapeCount()
-	if !generatedShapeOK {
+	_, ruleCount, _, _, shapeCountOK := sealed.ShapeCount()
+	if !shapeCountOK {
 		return false
 	}
-	generatedPrograms := make([]generated.CompiledRule, generatedRuleCount)
+	// The descriptor table is the sealed RULE table, one entry per rule, and a
+	// hand-declared rule simply leaves its entry absent. It is not a directory
+	// of its own with its own numbering: a generated rule's coordinate is its
+	// position here, which is the position the composition already gave it.
+	generatedPrograms := make([]generated.CompiledRule, ruleCount)
 	generatedPresent := false
 	for rule, ordinal := range ruleOrdinals {
 		if rule == nil || rule.generated == nil {
 			continue
 		}
-		descriptor := rule.generated.program
-		descriptorOrdinal, ordinalOK := descriptor.Ordinal()
-		planOrdinal := rule.generated.rule
-		if !ordinalOK || descriptorOrdinal != planOrdinal || ordinal > uint64(^uint32(0)) {
+		if ordinal > uint64(^uint32(0)) {
 			return false
 		}
-		rebased, rebasedOK := descriptor.RebaseOrdinal(uint32(ordinal))
-		if !rebasedOK {
-			return false
-		}
-		// The Rule cell is the construction seam consumed by generated member
-		// binding. Rebase that immutable-after-seal cell together with the
-		// canonical ordinal table so no later runtime path translates a Plan
-		// Rule ordinal.
-		rule.generated.program = rebased
+		// This is the ONE assignment of a generated rule's coordinate. The
+		// descriptor carries none, so nothing is rebased; the Rule cell - the
+		// construction seam generated member binding consumes - is handed the
+		// same ordinal its descriptor is placed at, as a foreign key.
 		rule.generated.rule = uint32(ordinal)
-		generatedPrograms[ordinal] = rebased
+		generatedPrograms[ordinal] = rule.generated.program
 		generatedPresent = true
 	}
 	// The completion row is the schema's single structural capability: it has

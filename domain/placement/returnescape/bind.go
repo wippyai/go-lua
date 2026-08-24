@@ -38,11 +38,7 @@ func InstallFamily[A ruleAuthorities](binding *engine.SchemaBinding, slot *engin
 		placementSchema.ContentID() != placement.Schema().ContentID() || values.Schema() != valueSchema {
 		return false
 	}
-	ordinal, ordinalOK := slot.Ordinal()
-	if !ordinalOK || ordinal > uint64(^uint32(0)) {
-		return false
-	}
-	installer, installerOK := NewFamilyInstaller(placementSchema, valueSchema, uint32(ordinal))
+	installer, installerOK := NewFamilyInstaller(placementSchema, valueSchema)
 	if !installerOK {
 		return false
 	}

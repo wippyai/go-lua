@@ -492,8 +492,11 @@ func bindGeneratedMember(plane *programPlane, topology *equation.Topology, membe
 	if !descriptor.Available() {
 		return nil, false
 	}
-	ruleOrdinal, ruleOK := descriptor.Ordinal()
-	if !ruleOK || ruleOrdinal != declaration.cell.rule || uint64(ruleOrdinal) >= plane.runtime.schema.ruleCount() || member.Rule() != plane.runtime.schema.ruleSemanticAt(uint64(ruleOrdinal)) {
+	// The rule this member belongs to is the cell's own sealed foreign key.
+	// It is read, never re-derived from the descriptor: the descriptor is the
+	// row the seal placed at that ordinal and carries no copy of it.
+	ruleOrdinal := declaration.cell.rule
+	if uint64(ruleOrdinal) >= plane.runtime.schema.ruleCount() || member.Rule() != plane.runtime.schema.ruleSemanticAt(uint64(ruleOrdinal)) {
 		return nil, false
 	}
 	shape, shapeOK := plane.runtime.schema.ruleShapeAt(uint64(ruleOrdinal))

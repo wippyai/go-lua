@@ -88,11 +88,7 @@ func InstallFamily[A ruleAuthorities](binding *engine.SchemaBinding, slot *engin
 	if owner == nil || !owner.Schema().Valid() {
 		return false
 	}
-	ordinal, ordinalOK := slot.Ordinal()
-	if !ordinalOK || ordinal > uint64(^uint32(0)) {
-		return false
-	}
-	installer, installerOK := NewFamilyInstaller(owner.Schema(), uint32(ordinal))
+	installer, installerOK := NewFamilyInstaller(owner.Schema())
 	if !installerOK {
 		return false
 	}

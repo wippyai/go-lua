@@ -262,12 +262,11 @@ type installer struct {
 	values *valuedomain.Schema
 	calls  *calldomain.Algebra
 	packs  *packdomain.Schema
-	rule   uint32
 }
 
-func (install installer) InstallRuleFamily(plane execution.FormPlane[heapdomain.DenseCoordinate, heapdomain.Value], ruleOrdinal uint32, rows []execution.FormRow) (execution.Family, []execution.FormAddress, bool) {
+func (install installer) InstallRuleFamily(plane execution.FormPlane[heapdomain.DenseCoordinate, heapdomain.Value], _ uint32, rows []execution.FormRow) (execution.Family, []execution.FormAddress, bool) {
 	if !install.heap.Valid() || install.values == nil || !install.values.Valid() || install.calls == nil || !install.calls.Valid() ||
-		install.packs == nil || ruleOrdinal != install.rule || !plane.Valid() || len(rows) == 0 {
+		install.packs == nil || !plane.Valid() || len(rows) == 0 {
 		return nil, nil, false
 	}
 	routeWidth := plane.RouteWidth()
@@ -353,11 +352,7 @@ func InstallFamily[A ruleAuthorities](binding *engine.SchemaBinding, slot *engin
 		!packs.LinkOwner().Available() || !packs.LinkOwner().Matches(algebra.LinkOwner()) {
 		return false
 	}
-	ordinal, ordinalOK := slot.Ordinal()
-	if !ordinalOK || ordinal > uint64(^uint32(0)) {
-		return false
-	}
 	return engine.BindRuleFamily[heapdomain.DenseCoordinate](binding, slot,
 		heapAuthority.FactorRef(),
-		installer{heap: heapSchema, values: valueSchema, calls: algebra, packs: packs, rule: uint32(ordinal)})
+		installer{heap: heapSchema, values: valueSchema, calls: algebra, packs: packs})
 }

@@ -153,8 +153,7 @@ func (cell *generatedRuleBindingCell) schemaRuleComplete() bool {
 		!cell.generated.available() {
 		return false
 	}
-	ordinal, ordinalOK := cell.generated.program.Ordinal()
-	if !ordinalOK || ordinal != uint32(cell.ordinal) || cell.ordinal > uint64(^uint32(0)) {
+	if cell.ordinal > uint64(^uint32(0)) || cell.generated.rule != uint32(cell.ordinal) {
 		return false
 	}
 	factorCount := schemaFactorCount(cell.schema)

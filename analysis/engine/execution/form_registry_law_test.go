@@ -170,7 +170,7 @@ func planCompiledExactProductRule(t *testing.T) generated.CompiledRule {
 	t.Helper()
 	contract := ruleplan.ReadContract{Order: ruleprogram.OrderCanonical, Sparse: ruleprogram.SparseExplicit, OnOpaque: ruleprogram.OnOpaqueRefuse, Multiplicity: ruleprogram.MultiplicityOne}
 	rule, ok := generated.NewPlanCompiledRule(generated.CompiledRuleSpec{
-		Ordinal: 10, AxisCount: 3, InputCount: 1,
+		AxisCount: 3, InputCount: 1,
 		Candidate: ruleplan.RelationAddr{Axis: 0, Member: 0},
 		Reducer:   ruleplan.ReducerAddr{Axis: 2, Member: 0},
 		Reads: []generated.ReadPlan{
@@ -194,7 +194,7 @@ func planCompiledExactProductRule(t *testing.T) generated.CompiledRule {
 func planCompiledExactRule(t *testing.T) generated.CompiledRule {
 	t.Helper()
 	rule, ok := generated.NewPlanCompiledRule(generated.CompiledRuleSpec{
-		Ordinal: 7, AxisCount: 3, InputCount: 1,
+		AxisCount: 3, InputCount: 1,
 		Candidate: ruleplan.RelationAddr{Axis: 0, Member: 0},
 		Reducer:   ruleplan.ReducerAddr{Axis: 2, Member: 0},
 		Reads: []generated.ReadPlan{{
@@ -223,7 +223,7 @@ func planCompiledExactRule(t *testing.T) generated.CompiledRule {
 func planCompiledSourceRule(t *testing.T) generated.CompiledRule {
 	t.Helper()
 	rule, ok := generated.NewPlanCompiledRule(generated.CompiledRuleSpec{
-		Ordinal: 8, AxisCount: 3, InputCount: 0,
+		AxisCount: 3, InputCount: 0,
 		Candidate: ruleplan.RelationAddr{Axis: 0, Member: 4},
 		Reducer:   ruleplan.ReducerAddr{Axis: 0, Member: 0},
 		Reads:     []generated.ReadPlan{},
@@ -246,6 +246,9 @@ type installedFamilyProvider struct {
 	refuse  bool
 	calls   int
 	install Family
+	// rows are the plan rows the table actually handed this installer, which
+	// is what proves WHICH rows its claim covered.
+	rows []FormRow
 }
 
 // fixtureForeignTable is the Program-wide Factor read table: one entry per
@@ -265,10 +268,37 @@ func fixtureForeignTable(t testing.TB, fixture executionFixture, width int) []Fo
 	return table
 }
 
+// lawRuleTableWidth is the sealed rule table these laws claim positions in.
+const lawRuleTableWidth = 32
+
+// lawExactRuleOrdinal is the position planCompiledExactRule occupies in that
+// table. The descriptor carries no ordinal of its own, so a law that installs
+// a family for it names the position it was sealed at.
+const lawExactRuleOrdinal uint32 = 7
+
+// newLawFormPlane is the bound plane these laws build forms through: the
+// fixture's own typed binding, a Program-wide read table, and one claim table.
+func newLawFormPlane(t testing.TB, fixture executionFixture, families *RuleFamilies[uint64, uint64]) FormPlane[uint64, uint64] {
+	t.Helper()
+	plane, planeOK := NewFormPlane(fixture.binding, nil, nil, RouteTable{}, fixtureForeignTable(t, fixture, 3), families)
+	if !planeOK {
+		t.Fatal("law form plane")
+	}
+	return plane
+}
+
+func newLawRuleFamilies() *RuleFamilies[uint64, uint64] {
+	families, opened := NewRuleFamilies[uint64, uint64](lawRuleTableWidth)
+	if !opened {
+		panic("law rule family table")
+	}
+	return families
+}
+
 // ruleFamilyTable is the sealed authorship table one provider claims its own
 // ordinal in, which is what a Factor hands the plane at bind.
 func ruleFamilyTable(provider *installedFamilyProvider) *RuleFamilies[uint64, uint64] {
-	families := &RuleFamilies[uint64, uint64]{}
+	families := newLawRuleFamilies()
 	families.Install(provider.rule, provider)
 	return families
 }
@@ -281,6 +311,7 @@ func (provider *installedFamilyProvider) InstallRuleFamily(plane FormPlane[uint6
 		return nil, nil, false
 	}
 	provider.calls++
+	provider.rows = append(provider.rows, rows...)
 	if provider.refuse {
 		return nil, nil, false
 	}
@@ -307,13 +338,10 @@ func (installedFamily) OutputCapacity() int       { return 1 }
 func TestAnOwnerInstallsTheFamilyOfItsOwnRule(t *testing.T) {
 	fixture := newExecutionFixture(t)
 	exactRule := planCompiledExactRule(t)
-	ordinal, ordinalOK := exactRule.Ordinal()
-	if !ordinalOK {
-		t.Fatal("sealed rule ordinal")
-	}
-	generic := FormRow{Member: 0, Form: FormExact, Input: 0, Unit: fixture.unit, Target: fixture.target, Rule: exactRule}
+	ordinal := lawExactRuleOrdinal
+	generic := FormRow{Member: 0, Form: FormExact, Input: 0, Unit: fixture.unit, Target: fixture.target, Rule: exactRule, RuleOrdinal: lawExactRuleOrdinal}
 	owned := func(member int) FormRow {
-		return FormRow{Member: member, Form: FormExact, Input: 0, Unit: fixture.unit, Target: fixture.target, Rule: exactRule}
+		return FormRow{Member: member, Form: FormExact, Input: 0, Unit: fixture.unit, Target: fixture.target, Rule: exactRule, RuleOrdinal: lawExactRuleOrdinal}
 	}
 
 	t.Run("installed", func(t *testing.T) {
@@ -401,7 +429,7 @@ func TestAFormRefusesACoordinateOfAnotherFactor(t *testing.T) {
 func TestOneRuleOrdinalHasOneFamilyAuthority(t *testing.T) {
 	first := &installedFamilyProvider{rule: 7, install: installedFamily{}}
 	second := &installedFamilyProvider{rule: 7, install: installedFamily{}}
-	families := &RuleFamilies[uint64, uint64]{}
+	families := newLawRuleFamilies()
 	if !families.Install(first.rule, first) {
 		t.Fatal("the first claim on an unclaimed ordinal is refused")
 	}
@@ -431,7 +459,7 @@ func TestAnEmptyFamilyTableAuthorsNothing(t *testing.T) {
 	if absent.Count() != 0 {
 		t.Fatal("an absent table holds claims")
 	}
-	empty := &RuleFamilies[uint64, uint64]{}
+	empty := newLawRuleFamilies()
 	if _, authored := empty.Installer(0); authored {
 		t.Fatal("an empty table authors an ordinal")
 	}
@@ -475,16 +503,13 @@ func (provider *foreignFenceProvider) InstallRuleFamily(plane FormPlane[uint64, 
 func TestAnInstallerReadsOnlyTheInputAxesItsPlanDeclared(t *testing.T) {
 	fixture := newExecutionFixture(t)
 	exactRule := planCompiledExactRule(t)
-	ordinal, ordinalOK := exactRule.Ordinal()
-	if !ordinalOK {
-		t.Fatal("sealed rule ordinal")
-	}
+	ordinal := lawExactRuleOrdinal
 	declared, declaredOK := exactRule.ReadAt(0)
 	if !declaredOK {
 		t.Fatal("sealed rule read")
 	}
 	provider := &foreignFenceProvider{rule: ordinal, width: 3}
-	families := &RuleFamilies[uint64, uint64]{}
+	families := newLawRuleFamilies()
 	if !families.Install(ordinal, provider) {
 		t.Fatal("family claim")
 	}
@@ -492,7 +517,7 @@ func TestAnInstallerReadsOnlyTheInputAxesItsPlanDeclared(t *testing.T) {
 	if !planeOK {
 		t.Fatal("form plane")
 	}
-	row := FormRow{Member: 0, Form: FormExact, Input: 0, Unit: fixture.unit, Target: fixture.target, Rule: exactRule}
+	row := FormRow{Member: 0, Form: FormExact, Input: 0, Unit: fixture.unit, Target: fixture.target, Rule: exactRule, RuleOrdinal: lawExactRuleOrdinal}
 	if _, _, _, built := BuildForms(plane, []FormRow{row}); !built {
 		t.Fatal("installed rule did not build")
 	}
@@ -515,12 +540,9 @@ func TestAnInstallerReadsOnlyTheInputAxesItsPlanDeclared(t *testing.T) {
 func TestAPlaneRefusesAnInputAxisTheProgramDoesNotHave(t *testing.T) {
 	fixture := newExecutionFixture(t)
 	exactRule := planCompiledExactRule(t)
-	ordinal, ordinalOK := exactRule.Ordinal()
-	if !ordinalOK {
-		t.Fatal("sealed rule ordinal")
-	}
+	ordinal := lawExactRuleOrdinal
 	provider := &foreignFenceProvider{rule: ordinal, width: 1}
-	families := &RuleFamilies[uint64, uint64]{}
+	families := newLawRuleFamilies()
 	if !families.Install(ordinal, provider) {
 		t.Fatal("family claim")
 	}
@@ -529,7 +551,7 @@ func TestAPlaneRefusesAnInputAxisTheProgramDoesNotHave(t *testing.T) {
 	if !planeOK {
 		t.Fatal("form plane")
 	}
-	row := FormRow{Member: 0, Form: FormExact, Input: 0, Unit: fixture.unit, Target: fixture.target, Rule: exactRule}
+	row := FormRow{Member: 0, Form: FormExact, Input: 0, Unit: fixture.unit, Target: fixture.target, Rule: exactRule, RuleOrdinal: lawExactRuleOrdinal}
 	if _, _, _, built := BuildForms(plane, []FormRow{row}); built {
 		t.Fatal("a rule reading a Factor the Program does not have was sealed")
 	}

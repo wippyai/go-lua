@@ -825,7 +825,7 @@ func TestGeneratedRuleDescriptorRefusesForeignOrOutOfRangeMemberAddresses(t *tes
 	}
 	scratch := compiled.Scratch()
 	valid := generated.CompiledRuleSpec{
-		Ordinal: compiled.Rule(), AxisCount: fixture.catalog.AxisCount(), InputCount: compiled.InputCount(),
+		AxisCount: fixture.catalog.AxisCount(), InputCount: compiled.InputCount(),
 		Candidate: compiled.Candidate(), Reducer: compiled.Reducer(),
 		Reads: []generated.ReadPlan{{
 			Input: join.Input, Factor: join.ReadAxis, Axis: join.ReadAxis,

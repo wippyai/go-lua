@@ -11,7 +11,7 @@ import (
 func TestGeneratedRelationOwnerCompletenessWalksEveryRead(t *testing.T) {
 	contract := ruleplan.ReadContract{Order: ruleprogram.OrderCanonical, Sparse: ruleprogram.SparseExplicit, OnOpaque: ruleprogram.OnOpaqueRefuse, Multiplicity: ruleprogram.MultiplicityOne}
 	descriptor, ok := generated.NewPlanCompiledRule(generated.CompiledRuleSpec{
-		Ordinal: 1, AxisCount: 1, InputCount: 1,
+		AxisCount: 1, InputCount: 1,
 		Candidate: ruleplan.RelationAddr{Axis: 0, Member: 1},
 		Reducer:   ruleplan.ReducerAddr{Axis: 0, Member: 1},
 		Reads: []generated.ReadPlan{
@@ -40,7 +40,7 @@ func newExactIdentityDescriptor(rule uint32, inputCount, readInput int, readFact
 		return generated.CompiledRule{}, false
 	}
 	return generated.NewPlanCompiledRule(generated.CompiledRuleSpec{
-		Ordinal: rule, AxisCount: 1, InputCount: inputCount,
+		AxisCount: 1, InputCount: inputCount,
 		Candidate: ruleplan.RelationAddr{Axis: 0, Member: 0},
 		Reducer:   ruleplan.ReducerAddr{Axis: 0, Member: 0},
 		Reads: []generated.ReadPlan{{

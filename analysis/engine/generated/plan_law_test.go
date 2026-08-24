@@ -9,7 +9,6 @@ import (
 
 func planLawSpec(reads []ReadPlan, carry *CarryPlan, inputCount int) CompiledRuleSpec {
 	return CompiledRuleSpec{
-		Ordinal:    7,
 		AxisCount:  3,
 		InputCount: inputCount,
 		Candidate:  ruleplan.RelationAddr{Axis: 0, Member: 0},

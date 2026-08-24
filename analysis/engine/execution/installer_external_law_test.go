@@ -245,7 +245,13 @@ func TestARulePackageOutsideTheEngineAuthorsItsOwnFamily(t *testing.T) {
 	externalPublish(t, &fixture, fixture.targets[1], 5)
 
 	rule := uint32(5)
-	families := &execution.RuleFamilies[externalKey, uint64]{}
+	// The claim table is opened over the sealed rule table's own width: a
+	// claim is a position in that table, so an external package opens one the
+	// same way the engine does rather than growing a map as it claims.
+	families, opened := execution.NewRuleFamilies[externalKey, uint64](8)
+	if !opened {
+		t.Fatal("family table")
+	}
 	if !families.Install(rule, externalInstaller{rule: rule}) {
 		t.Fatal("family claim")
 	}

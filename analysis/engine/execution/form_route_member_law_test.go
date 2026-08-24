@@ -238,7 +238,7 @@ func TestARouteMemberRefusesAWeakOrUnobservableCoordinate(t *testing.T) {
 func selectedOnlyDescriptor(t testing.TB) generated.CompiledRule {
 	t.Helper()
 	rule, ok := generated.NewPlanCompiledRule(generated.CompiledRuleSpec{
-		Ordinal: 11, AxisCount: 3, InputCount: 2,
+		AxisCount: 3, InputCount: 2,
 		Candidate: ruleplan.RelationAddr{Axis: 0, Member: 0},
 		Reducer:   ruleplan.ReducerAddr{Axis: 2, Member: 0},
 		Reads: []generated.ReadPlan{

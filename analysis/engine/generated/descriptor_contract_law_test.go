@@ -9,7 +9,6 @@ import (
 
 func heterogeneousPlanLawSpec() CompiledRuleSpec {
 	return CompiledRuleSpec{
-		Ordinal:    19,
 		AxisCount:  3,
 		InputCount: 3,
 		Candidate:  ruleplan.RelationAddr{Axis: 0, Member: 0},

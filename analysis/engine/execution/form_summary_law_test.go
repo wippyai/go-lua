@@ -411,7 +411,7 @@ func summaryPlanSpec(form ruleprogram.ReadForm, predicate bool, denominator rule
 		selection = ruleplan.ProjectionAddr{Axis: 0, Member: 1}
 	}
 	return generated.NewPlanCompiledRule(generated.CompiledRuleSpec{
-		Ordinal: 11, AxisCount: 3, InputCount: 1,
+		AxisCount: 3, InputCount: 1,
 		Candidate: ruleplan.RelationAddr{Axis: 0, Member: 0},
 		Reducer:   ruleplan.ReducerAddr{Axis: 2, Member: 0},
 		Reads: []generated.ReadPlan{{

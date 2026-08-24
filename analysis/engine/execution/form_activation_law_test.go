@@ -208,7 +208,6 @@ func TestAnUnsealedBranchIsNotAdmittedToATriggersBranchSet(t *testing.T) {
 // transport vector.
 func activationFormLawSpec() generated.CompiledRuleSpec {
 	return generated.CompiledRuleSpec{
-		Ordinal:    19,
 		AxisCount:  3,
 		InputCount: 2,
 		Candidate:  ruleplan.RelationAddr{Axis: 0, Member: 0},

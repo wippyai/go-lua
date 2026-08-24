@@ -26,26 +26,28 @@ func renderInstaller(out *strings.Builder, built *plan) error {
 	out.WriteString("// holds are the ones the declaration names: the candidate directory it resolves\n")
 	out.WriteString("// dense candidates through, and every static axis a declared relation derives\n")
 	out.WriteString("// against. It reaches no owner callback and no runtime capability.\n")
+	out.WriteString("//\n")
+	out.WriteString("// It holds NO rule ordinal. Which rule an installer authors is the claim it\n")
+	out.WriteString("// was installed under, and the family table resolves an installer only for\n")
+	out.WriteString("// that claim; a copy kept here would be a second answer to a question the\n")
+	out.WriteString("// table already answers, and one that goes stale on its own.\n")
 	fmt.Fprintf(out, "type %s struct {\n", installerType)
 	for _, axis := range built.axes {
 		fmt.Fprintf(out, "\t%s %s\n", axis.param, imports.typeName(axis.schemaType))
 	}
-	out.WriteString("\trule uint32\n}\n\n")
+	out.WriteString("}\n\n")
 
-	parameters := make([]string, 0, len(built.axes)+1)
-	assignments := make([]string, 0, len(built.axes)+1)
+	parameters := make([]string, 0, len(built.axes))
+	assignments := make([]string, 0, len(built.axes))
 	for _, axis := range built.axes {
 		parameters = append(parameters, axis.param+" "+imports.typeName(axis.schemaType))
 		assignments = append(assignments, axis.param+": "+axis.param)
 	}
-	parameters = append(parameters, "rule uint32")
-	assignments = append(assignments, "rule: rule")
 
 	out.WriteString("// " + constructor + " seals this rule's family installer against the axis schemas\n")
-	out.WriteString("// its declaration names and the sealed ordinal it authors. The bind arm that\n")
-	out.WriteString("// resolves those schemas from its composition's authorities is the owner's own,\n")
-	out.WriteString("// because how an authority record is reached is that composition's knowledge\n")
-	out.WriteString("// and not this rule's.\n")
+	out.WriteString("// its declaration names. The bind arm that resolves those schemas from its\n")
+	out.WriteString("// composition's authorities is the owner's own, because how an authority\n")
+	out.WriteString("// record is reached is that composition's knowledge and not this rule's.\n")
 	fmt.Fprintf(out, "func %s(%s) (%s.RuleFamilyInstaller[%s, %s], bool) {\n",
 		constructor, strings.Join(parameters, ", "), execution, dense, fact)
 	fmt.Fprintf(out, "\tinstall := %s{%s}\n", installerType, strings.Join(assignments, ", "))
@@ -68,9 +70,9 @@ func renderInstaller(out *strings.Builder, built *plan) error {
 		fmt.Fprintf(out, "\treturn %s\n}\n\n", strings.Join(guards, " && "))
 	}
 
-	fmt.Fprintf(out, "func (install %s) InstallRuleFamily(plane %s.FormPlane[%s, %s], ruleOrdinal uint32, rows []%s.FormRow) (%s.Family, []%s.FormAddress, bool) {\n",
+	fmt.Fprintf(out, "func (install %s) InstallRuleFamily(plane %s.FormPlane[%s, %s], _ uint32, rows []%s.FormRow) (%s.Family, []%s.FormAddress, bool) {\n",
 		installerType, execution, dense, fact, execution, execution, execution)
-	out.WriteString("\tif !install.available() || ruleOrdinal != install.rule || !plane.Valid() || len(rows) == 0 {\n\t\treturn nil, nil, false\n\t}\n")
+	out.WriteString("\tif !install.available() || !plane.Valid() || len(rows) == 0 {\n\t\treturn nil, nil, false\n\t}\n")
 	fmt.Fprintf(out, "\tsealed := &%s{rows: make([]%s, 0, len(rows))", familyType, rowType)
 	for _, axis := range built.familyAxes {
 		fmt.Fprintf(out, ", %s: install.%s", axis.param, axis.param)

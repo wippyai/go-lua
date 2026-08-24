@@ -55,7 +55,6 @@ type exactFoldRow struct {
 type family struct {
 	rows   []exactFoldRow
 	values *valuedomain.Schema
-	rule   uint32
 }
 
 func (sealed *family) NewExecutor(run *engineexecution.Run) engineexecution.Executor {
@@ -98,10 +97,6 @@ func (lane *worker) Execute(frame engineexecution.Frame, ticket engineexecution.
 		return engineexecution.Result{}, false
 	}
 	row := lane.family.rows[local]
-	rule, ruleOK := ticket.RuleOrdinal()
-	if !ruleOK || rule != lane.family.rule {
-		return engineexecution.Result{}, false
-	}
 	payloadReducer, payloadReducerOK := row.payload.ReducerOrdinal()
 	payloadCandidate, payloadCandidateOK := row.payload.CandidateOrdinal()
 	payloadReads, payloadReadsOK := row.payload.ReadCount()
@@ -257,21 +252,22 @@ func (lane *worker) settle(ticket engineexecution.Ticket, outcome structure.Redu
 // installer owns the one generated Rule ordinal it claims. Value is the rule
 // authority here because the reducer's candidate directory and fold are both
 // Value-owned, while the output plane is supplied by the engine bind seam.
+// It holds no rule ordinal: which rule this installer authors is the claim it
+// was installed under, and the family table resolves it only for that claim.
 type installer struct {
 	values *valuedomain.Schema
-	rule   uint32
 }
 
 func (install installer) InstallRuleFamily(
 	plane engineexecution.FormPlane[valuedomain.DenseCoordinate, valuedomain.Value],
-	ruleOrdinal uint32,
+	_ uint32,
 	rows []engineexecution.FormRow,
 ) (engineexecution.Family, []engineexecution.FormAddress, bool) {
-	if install.values == nil || !install.values.Valid() || ruleOrdinal != install.rule || !plane.Valid() || len(rows) == 0 {
+	if install.values == nil || !install.values.Valid() || !plane.Valid() || len(rows) == 0 {
 		return nil, nil, false
 	}
 
-	sealed := &family{values: install.values, rule: ruleOrdinal, rows: make([]exactFoldRow, 0, len(rows))}
+	sealed := &family{values: install.values, rows: make([]exactFoldRow, 0, len(rows))}
 	addresses := make([]engineexecution.FormAddress, 0, len(rows))
 	for _, planRow := range rows {
 		count, shapeOK := exactFoldShape(planRow.Rule, planRow.Form)
@@ -409,9 +405,5 @@ func InstallFamily[A ruleAuthorities](binding *engine.SchemaBinding, slot *engin
 	if owner == nil || schema == nil || !schema.Valid() || owner.Schema() != schema {
 		return false
 	}
-	ordinal, ordinalOK := slot.Ordinal()
-	if !ordinalOK || ordinal > uint64(^uint32(0)) {
-		return false
-	}
-	return engine.BindRuleFamily[valuedomain.DenseCoordinate](binding, slot, owner.FactorRef(), installer{values: schema, rule: uint32(ordinal)})
+	return engine.BindRuleFamily[valuedomain.DenseCoordinate](binding, slot, owner.FactorRef(), installer{values: schema})
 }

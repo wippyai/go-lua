@@ -245,7 +245,7 @@ func routedDescriptor(t testing.TB, selectedFeeds int) generated.CompiledRule {
 		RowCapacity:      4, CellCapacity: 4,
 	})
 	rule, ok := generated.NewPlanCompiledRule(generated.CompiledRuleSpec{
-		Ordinal: 7, AxisCount: 3, InputCount: len(reads),
+		AxisCount: 3, InputCount: len(reads),
 		Candidate: ruleplan.RelationAddr{Axis: 0, Member: 0},
 		Reducer:   ruleplan.ReducerAddr{Axis: 2, Member: 0},
 		Reads:     reads,
