@@ -223,7 +223,11 @@ func (cell *generatedRuleBindingCell) schemaRuleComplete() bool {
 		if !carryOK || carry.Input != uint64(program.CarryInput()) || carry.Factor != outputFactor {
 			return false
 		}
-		if _, transformPresent := program.CarryTransform(); transformPresent != carry.Transform.Available() {
+		// The cold carry row of a generated rule names no transform: which
+		// transform a carried fact passes through is the descriptor's
+		// statement, resolved by the family that installs the fold, so a cold
+		// transform key here would be a second authority over it.
+		if carry.Transform.Available() {
 			return false
 		}
 	} else if program.CarryInput() >= 0 {

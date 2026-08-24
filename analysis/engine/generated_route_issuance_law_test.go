@@ -151,3 +151,25 @@ func TestAnExactIssuanceStillResolvesItsDestination(t *testing.T) {
 		t.Fatal("a resolved destination was anchored as though it were deferred")
 	}
 }
+
+// TestATransformedCarryGeneratedRuleStaysComplete fences the one fact the cold
+// carry row does NOT carry. Which transform a carried fact passes through is
+// the descriptor's statement, resolved by the family that installs the fold,
+// so the cold row names none even for a rule whose carry transforms. A
+// completeness check that expected the cold row to agree with the descriptor
+// about the transform would refuse every transformed carry - which is the
+// shape heap's empty constructor has.
+func TestATransformedCarryGeneratedRuleStaysComplete(t *testing.T) {
+	fixture := openGeneratedBindingLaw(t, newGeneratedRuleLawFixture(t, generatedRuleLawTransformedCarry, generatedRuleLawRuleRole))
+	cell := generatedLawCell(t, fixture)
+	if _, present := cell.generated.program.CarryTransform(); !present {
+		t.Fatal("the fixture rule declares no carry transform")
+	}
+	carry, carryOK := cell.schema.ruleCarryShapeAt(cell.ordinal, 0)
+	if !carryOK || carry.Transform.Available() {
+		t.Fatalf("the cold carry row names transform %+v, which is the descriptor's statement", carry.Transform)
+	}
+	if !cell.schemaRuleComplete() {
+		t.Fatal("a transformed-carry generated rule was not admitted as complete")
+	}
+}
