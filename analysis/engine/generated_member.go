@@ -329,7 +329,7 @@ func (factor *boundFactor[K, V]) buildGeneratedFamilies(rows []execution.FormRow
 	if factor == nil {
 		return nil, nil, false
 	}
-	plane, planeOK := execution.NewFormPlane(factor.binding, factor.sourceColumns, factor.sourcePresent, foreign, factor.families)
+	plane, planeOK := execution.NewFormPlane(factor.binding, factor.sourceColumns, factor.sourcePresent, factor.routeGeometry(), foreign, factor.families)
 	if !planeOK {
 		return nil, nil, false
 	}

@@ -226,6 +226,23 @@ func (bound *boundFactor[K, V]) stagedTarget(ref exactRef) (carrier.Target, sche
 	return target, bound.implementation.row, targetRaw, true
 }
 
+// routeGeometry is the Factor's paired dense route universe: the staged exact
+// Unit each coordinate is read at, beside the presealed strong Target it is
+// written to. A Factor owns one exactly when both universes exist and are the
+// same universe, which is the pairing stagedTarget follows. A Factor with only
+// one of the two owns no route at all - it is a Factor no routed rule writes
+// to - and answers the empty geometry rather than half of one.
+func (bound *boundFactor[K, V]) routeGeometry() execution.RouteTable {
+	if bound == nil || len(bound.routeTargets) == 0 || len(bound.routeTargets) != len(bound.dynamicUnits) {
+		return execution.RouteTable{}
+	}
+	table, ok := execution.NewRouteTable(bound.dynamicUnits, bound.routeTargets)
+	if !ok {
+		return execution.RouteTable{}
+	}
+	return table
+}
+
 func (bound *boundFactor[K, V]) routeUniverse() []carrier.Target {
 	if bound == nil || len(bound.routeTargets) == 0 {
 		return nil

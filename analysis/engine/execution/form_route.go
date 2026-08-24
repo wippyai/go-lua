@@ -162,7 +162,9 @@ type RouteReducer[V any] interface {
 
 // FoldSelectedRoute is the J/WR fold: every selected member is reduced and
 // staged at its own route destination, and the row settles one of the five
-// declared dispositions.
+// declared dispositions. The cells and the members are the two halves of one
+// materialized relation - the same member vector the selected read observed -
+// so a destination is never paired with a fact observed somewhere else.
 //
 // Concrete requires every route to be Concrete. A row cannot publish half a
 // strong write, so the first route that settles anything else settles the whole
@@ -174,10 +176,10 @@ func FoldSelectedRoute[K scalar.Key, V any, R RouteReducer[V]](
 	write RouteWrite[K, V],
 	scratch *RouteScratch[K, V],
 	cells []SelectedCell[V],
-	targets []carrier.Target,
+	members []RouteMember,
 	reducer R,
 ) structure.ReductionOutcome {
-	if scratch == nil || !write.Valid() || len(targets) < len(cells) {
+	if scratch == nil || !write.Valid() || len(members) != len(cells) {
 		return structure.Refuse
 	}
 	if len(cells) == 0 {
@@ -188,6 +190,15 @@ func FoldSelectedRoute[K scalar.Key, V any, R RouteReducer[V]](
 		return outcome
 	}
 	for index, cell := range cells {
+		member := members[index]
+		// The cell was observed at this member's own coordinate, so it carries
+		// this member's tag. A disagreement means the cells and the members are
+		// two materializations of the relation rather than one, which is the
+		// re-derivation this form exists to forbid.
+		if !member.Valid() || cell.Tag != member.Tag() {
+			_ = write.Discard(scratch)
+			return structure.Refuse
+		}
 		value, outcome := reducer.Reduce(cell)
 		if !outcome.Available() {
 			_ = write.Discard(scratch)
@@ -197,7 +208,7 @@ func FoldSelectedRoute[K scalar.Key, V any, R RouteReducer[V]](
 			_ = write.Discard(scratch)
 			return outcome
 		}
-		if !write.Stage(ticket, scratch, targets[index], cell.Region, value) {
+		if !write.Stage(ticket, scratch, member.target, cell.Region, value) {
 			_ = write.Discard(scratch)
 			return structure.Refuse
 		}

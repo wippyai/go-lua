@@ -35,9 +35,9 @@ func (reducer routeLawReducer) Reduce(cell SelectedCell[uint64]) (uint64, struct
 
 func (reducer routeLawReducer) Empty() structure.ReductionOutcome { return reducer.empty }
 
-func routeCells(fixture selectedFixture, width int) ([]SelectedCell[uint64], []carrier.Target) {
+func routeCells(fixture selectedFixture, width int) ([]SelectedCell[uint64], []RouteMember) {
 	cells := make([]SelectedCell[uint64], 0, width)
-	targets := make([]carrier.Target, 0, width)
+	members := make([]RouteMember, 0, width)
 	for index := 0; index < width; index++ {
 		cells = append(cells, SelectedCell[uint64]{
 			Value:   uint64(index),
@@ -45,9 +45,9 @@ func routeCells(fixture selectedFixture, width int) ([]SelectedCell[uint64], []c
 			Tag:     uint64(index) + 1,
 			Region:  fixture.whole,
 		})
-		targets = append(targets, fixture.targets[index])
+		members = append(members, fixture.member(index, uint64(index)+1))
 	}
-	return cells, targets
+	return cells, members
 }
 
 // TestRoutedPublicationIsOneOutputAcrossEveryRoute states the WR shape: a
@@ -63,10 +63,10 @@ func TestRoutedPublicationIsOneOutputAcrossEveryRoute(t *testing.T) {
 	}
 	run := NewRun(1, 1)
 	ticket := issueSelected(t, run, fixture, fixture.state)
-	cells, targets := routeCells(fixture, 3)
+	cells, members := routeCells(fixture, 3)
 	var scratch RouteScratch[uint64, uint64]
 	seen := 0
-	outcome := FoldSelectedRoute(ticket, write, &scratch, cells, targets, routeLawReducer{empty: structure.NoSelection, failAt: -1, seen: &seen})
+	outcome := FoldSelectedRoute(ticket, write, &scratch, cells, members, routeLawReducer{empty: structure.NoSelection, failAt: -1, seen: &seen})
 	if outcome != structure.Concrete {
 		t.Fatalf("routed outcome = %d, want Concrete", outcome)
 	}
@@ -146,10 +146,10 @@ func TestRoutedRowRefusesToPublishHalfAStrongWrite(t *testing.T) {
 		}
 		run := NewRun(1, 1)
 		ticket := issueSelected(t, run, fixture, fixture.state)
-		cells, targets := routeCells(fixture, 3)
+		cells, members := routeCells(fixture, 3)
 		var scratch RouteScratch[uint64, uint64]
 		seen := 0
-		outcome := FoldSelectedRoute(ticket, write, &scratch, cells, targets, routeLawReducer{outcome: settled, empty: structure.NoSelection, failAt: 2, seen: &seen})
+		outcome := FoldSelectedRoute(ticket, write, &scratch, cells, members, routeLawReducer{outcome: settled, empty: structure.NoSelection, failAt: 2, seen: &seen})
 		if outcome != settled {
 			t.Fatalf("routed outcome = %d, want the route's own %d", outcome, settled)
 		}

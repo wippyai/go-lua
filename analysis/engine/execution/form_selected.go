@@ -3,11 +3,10 @@
 // the mandatory read contract.
 //
 // The read is callback-free. A family hands this primitive the bounded ordered
-// coordinate set its sealed relation derived for one candidate row, and gets
-// back one cell per coordinate with the contract's substitutions already
-// applied. Member order, sparse absence and opaque widening are decided here,
-// once, so a Fold holds no positional assumption and has no absent branch to
-// get wrong.
+// member set its sealed relation derived for one candidate row, and gets back
+// one cell per member with the contract's substitutions already applied.
+// Member order, sparse absence and opaque widening are decided here, once, so
+// a Fold holds no positional assumption and has no absent branch to get wrong.
 
 package execution
 
@@ -96,12 +95,12 @@ func (read SelectedRead[K, V]) Order() ruleprogram.Order { return read.order }
 // repeated tag admits no member order at all and refuses the read. The derived
 // relation is an ordered member set, so this verifies the order it already
 // carries instead of sorting a copy of it.
-func (read SelectedRead[K, V]) Ordered(coordinates []SelectedCoordinate) bool {
+func (read SelectedRead[K, V]) Ordered(members []RouteMember) bool {
 	if !read.Valid() {
 		return false
 	}
-	for index := range coordinates {
-		coordinate := coordinates[index]
+	for index := range members {
+		coordinate := members[index].coordinate
 		if coordinate.Unit == (carrier.Unit{}) || !read.binding.ValidUnit(coordinate.Unit) ||
 			coordinate.Unit.Kind() != carrier.ExactUnit {
 			return false
@@ -109,7 +108,7 @@ func (read SelectedRead[K, V]) Ordered(coordinates []SelectedCoordinate) bool {
 		if index == 0 {
 			continue
 		}
-		previous := coordinates[index-1]
+		previous := members[index-1].coordinate
 		switch read.order {
 		case ruleprogram.OrderByTag:
 			if coordinate.Tag <= previous.Tag {
@@ -143,24 +142,25 @@ func (read SelectedRead[K, V]) Width(count, capacity int) bool {
 	return read.Valid() && count >= 0 && count <= capacity
 }
 
-// Observe materializes one row's Selection into cells. coordinates is the
-// bounded ordered member set the family's sealed relation derived for this
-// candidate; cells is caller-owned, seal-sized storage that must be at least as
-// wide. Nothing is allocated here: one cursor is opened and closed per member
-// against storage the worker already owns.
+// Observe materializes one row's Selection into cells. members is the bounded
+// ordered member set the family's sealed relation derived for this candidate,
+// each carrying the coordinate it is observed at beside the destination it
+// publishes to; cells is caller-owned, seal-sized storage that must be at
+// least as wide. Nothing is allocated here: one cursor is opened and closed
+// per member against storage the worker already owns.
 //
 // A member that reports no row, or more than the one entry an exact coordinate
 // has, refuses the whole read rather than delivering a short Selection.
 func (read SelectedRead[K, V]) Observe(
 	ticket Ticket,
 	scratch *SelectedScratch[K, V],
-	coordinates []SelectedCoordinate,
+	members []RouteMember,
 	cells []SelectedCell[V],
 ) ReadStatus {
 	if !read.Valid() || scratch == nil || !ticket.Valid() {
 		return ReadRefuse
 	}
-	if !read.Ordered(coordinates) || !read.Width(len(coordinates), len(cells)) {
+	if !read.Ordered(members) || !read.Width(len(members), len(cells)) {
 		return ReadRefuse
 	}
 	work, state, within, contextOK := ticket.input(read.port)
@@ -170,19 +170,19 @@ func (read SelectedRead[K, V]) Observe(
 	if !scratch.begin(ticket, read.binding) {
 		return ReadRefuse
 	}
-	for index, coordinate := range coordinates {
-		value, present, region, ok := scratch.observe(work, state, within, coordinate.Unit)
+	for index, member := range members {
+		value, present, region, ok := scratch.observe(work, state, within, member.coordinate.Unit)
 		if !ok {
 			scratch.finish()
 			return ReadRefuse
 		}
 		delivered, deliveredPresent := read.policy.Cell(value, present)
-		cells[index] = SelectedCell[V]{Value: delivered, Present: deliveredPresent, Tag: coordinate.Tag, Region: region}
+		cells[index] = SelectedCell[V]{Value: delivered, Present: deliveredPresent, Tag: member.coordinate.Tag, Region: region}
 	}
 	if !scratch.close() {
 		return ReadRefuse
 	}
-	if len(coordinates) == 0 {
+	if len(members) == 0 {
 		return ReadExhausted
 	}
 	return ReadAvailable

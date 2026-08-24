@@ -16,6 +16,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/engine/internal/facts/scalar"
 	memberrelation "github.com/wippyai/go-lua/analysis/schema/axis/member/relation"
 	ruleplan "github.com/wippyai/go-lua/analysis/schema/rule/plan"
+	ruleprogram "github.com/wippyai/go-lua/analysis/schema/rule/program"
 )
 
 // Form is the sealed execution form ordinal one plan row carries. The table is
@@ -213,6 +214,8 @@ type FormPlane[K scalar.Key, V any] struct {
 	binding  *factbinding.Binding[K, V]
 	columns  []memberrelation.SourceColumn[V]
 	present  []bool
+	routes   RouteTable
+	routed   bool
 	foreign  []ForeignFactor
 	families *RuleFamilies[K, V]
 }
@@ -220,12 +223,14 @@ type FormPlane[K scalar.Key, V any] struct {
 // NewFormPlane seals one bound Factor's typed plane for the form table. A
 // Factor that installs no family of its own passes a nil provider. foreign is
 // the whole Program's Factor read table, indexed by sealed Factor ordinal; a
-// rule's installer sees only the entries that rule's own joins declared.
-func NewFormPlane[K scalar.Key, V any](binding *factbinding.Binding[K, V], columns []memberrelation.SourceColumn[V], present []bool, foreign []ForeignFactor, families *RuleFamilies[K, V]) (FormPlane[K, V], bool) {
+// rule's installer sees only the entries that rule's own joins declared, and
+// routes is that Factor's own dense route geometry, which only a rule that
+// declared a routed publication may address.
+func NewFormPlane[K scalar.Key, V any](binding *factbinding.Binding[K, V], columns []memberrelation.SourceColumn[V], present []bool, routes RouteTable, foreign []ForeignFactor, families *RuleFamilies[K, V]) (FormPlane[K, V], bool) {
 	if binding == nil {
 		return FormPlane[K, V]{}, false
 	}
-	return FormPlane[K, V]{binding: binding, columns: columns, present: present, foreign: foreign, families: families}, true
+	return FormPlane[K, V]{binding: binding, columns: columns, present: present, routes: routes, foreign: foreign, families: families}, true
 }
 
 // Foreign resolves the read side of one input axis this plane's rule declared
@@ -267,7 +272,26 @@ func (plane FormPlane[K, V]) forRule(rows []FormRow) (FormPlane[K, V], bool) {
 	}
 	narrowed := plane
 	narrowed.foreign = declared
+	narrowed.routed = declaresRoute(rows)
 	return narrowed, true
+}
+
+// declaresRoute reports whether any of one rule's rows publishes through a
+// route. It is the route half of the same fence the foreign table is narrowed
+// under: geometry a plan does not depend on is geometry its installer cannot
+// reach, so a rule that states no route cannot resolve one.
+func declaresRoute(rows []FormRow) bool {
+	for _, row := range rows {
+		mode, modeOK := row.Rule.OutputMode()
+		if !modeOK || mode != ruleprogram.ModeRoute {
+			continue
+		}
+		output, outputOK := row.Rule.OutputAt(0)
+		if outputOK && output.RouteJoinPresent {
+			return true
+		}
+	}
+	return false
 }
 
 // Valid reports whether the plane still names a live typed binding.

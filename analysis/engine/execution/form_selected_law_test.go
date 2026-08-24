@@ -113,14 +113,23 @@ func selectedContract(order ruleprogram.Order, sparse ruleprogram.Sparse) rulepl
 	}
 }
 
-// canonicalCoordinates returns the fixture's first width coordinates in the
-// canonical order a derived member set publishes them in.
-func (fixture selectedFixture) canonicalCoordinates(width int) []SelectedCoordinate {
-	coordinates := make([]SelectedCoordinate, 0, width)
-	for index := 0; index < width; index++ {
-		coordinates = append(coordinates, SelectedCoordinate{Unit: fixture.units[index], Tag: uint64(index) + 1})
+// member pairs one of the fixture's dense positions with the tag a derived
+// relation issued for it, the way the Factor's own paired geometry does.
+func (fixture selectedFixture) member(index int, tag uint64) RouteMember {
+	return RouteMember{
+		coordinate: SelectedCoordinate{Unit: fixture.units[index], Tag: tag},
+		target:     fixture.targets[index],
 	}
-	return coordinates
+}
+
+// canonicalMembers returns the fixture's first width members in the canonical
+// order a derived member set publishes them in.
+func (fixture selectedFixture) canonicalMembers(width int) []RouteMember {
+	members := make([]RouteMember, 0, width)
+	for index := 0; index < width; index++ {
+		members = append(members, fixture.member(index, uint64(index)+1))
+	}
+	return members
 }
 
 // TestSelectedReadDeliversOneCellPerDerivedMemberInDeclaredOrder states the
@@ -135,15 +144,15 @@ func TestSelectedReadDeliversOneCellPerDerivedMemberInDeclaredOrder(t *testing.T
 	}
 	run := NewRun(1, 1)
 	ticket := issueSelected(t, run, fixture, fixture.state)
-	coordinates := fixture.canonicalCoordinates(3)
+	coordinates := fixture.canonicalMembers(3)
 	cells := make([]SelectedCell[uint64], selectedFixtureWidth)
 	var scratch SelectedScratch[uint64, uint64]
 	if status := read.Observe(ticket, &scratch, coordinates, cells); status != ReadAvailable {
 		t.Fatalf("observe status = %d", status)
 	}
-	for index, coordinate := range coordinates {
-		if cells[index].Tag != coordinate.Tag {
-			t.Fatalf("member %d tag = %d, want %d", index, cells[index].Tag, coordinate.Tag)
+	for index, member := range coordinates {
+		if cells[index].Tag != member.Tag() {
+			t.Fatalf("member %d tag = %d, want %d", index, cells[index].Tag, member.Tag())
 		}
 		if !cells[index].Region.Equal(fixture.whole) {
 			t.Fatalf("member %d region is not the observed support row", index)
@@ -163,10 +172,7 @@ func TestSelectedReadRefusesADuplicateTagUnderByTagOrder(t *testing.T) {
 	}
 	run := NewRun(1, 1)
 	ticket := issueSelected(t, run, fixture, fixture.state)
-	coordinates := []SelectedCoordinate{
-		{Unit: fixture.units[0], Tag: 7},
-		{Unit: fixture.units[1], Tag: 7},
-	}
+	coordinates := []RouteMember{fixture.member(0, 7), fixture.member(1, 7)}
 	cells := make([]SelectedCell[uint64], selectedFixtureWidth)
 	var scratch SelectedScratch[uint64, uint64]
 	if status := read.Observe(ticket, &scratch, coordinates, cells); status != ReadRefuse {
@@ -186,10 +192,7 @@ func TestSelectedReadRefusesMembersOutsideTheDeclaredOrder(t *testing.T) {
 	}
 	run := NewRun(1, 1)
 	ticket := issueSelected(t, run, fixture, fixture.state)
-	descending := []SelectedCoordinate{
-		{Unit: fixture.units[0], Tag: 9},
-		{Unit: fixture.units[1], Tag: 4},
-	}
+	descending := []RouteMember{fixture.member(0, 9), fixture.member(1, 4)}
 	cells := make([]SelectedCell[uint64], selectedFixtureWidth)
 	var scratch SelectedScratch[uint64, uint64]
 	if status := read.Observe(ticket, &scratch, descending, cells); status != ReadRefuse {
@@ -212,7 +215,7 @@ func TestSelectedReadDeliversTheFactorDefaultAtAnUnwrittenCoordinate(t *testing.
 	}
 	run := NewRun(1, 1)
 	ticket := issueSelected(t, run, fixture, fixture.state)
-	coordinates := fixture.canonicalCoordinates(2)
+	coordinates := fixture.canonicalMembers(2)
 	cells := make([]SelectedCell[uint64], selectedFixtureWidth)
 	var scratch SelectedScratch[uint64, uint64]
 	if status := read.Observe(ticket, &scratch, coordinates, cells); status != ReadAvailable {
@@ -240,7 +243,7 @@ func TestSelectedReadWidenedDeliversTopAtEveryMember(t *testing.T) {
 	}
 	run := NewRun(1, 1)
 	ticket := issueSelected(t, run, fixture, fixture.state)
-	coordinates := fixture.canonicalCoordinates(3)
+	coordinates := fixture.canonicalMembers(3)
 	cells := make([]SelectedCell[uint64], selectedFixtureWidth)
 	var scratch SelectedScratch[uint64, uint64]
 	if status := read.Observe(ticket, &scratch, coordinates, cells); status != ReadAvailable {
@@ -282,7 +285,7 @@ func TestSelectedReadRefusesAMemberSetWiderThanItsSealedStorage(t *testing.T) {
 	}
 	run := NewRun(1, 1)
 	ticket := issueSelected(t, run, fixture, fixture.state)
-	coordinates := fixture.canonicalCoordinates(3)
+	coordinates := fixture.canonicalMembers(3)
 	narrow := make([]SelectedCell[uint64], 2)
 	var scratch SelectedScratch[uint64, uint64]
 	if status := read.Observe(ticket, &scratch, coordinates, narrow); status != ReadRefuse {
