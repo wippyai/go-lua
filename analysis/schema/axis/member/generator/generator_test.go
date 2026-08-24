@@ -203,6 +203,7 @@ func TestResolveKeepsTypedRowsAlignedWithColdKinds(t *testing.T) {
 		"value/binary-arithmetic/candidates",
 		"value/binary-equality/candidates",
 		"value/binary-order/candidates",
+		"value/presence-refinement/candidates",
 		"value/storage-transfer/sources",
 		"value/source/candidates",
 		"value/global-bootstrap/candidates",
@@ -221,6 +222,7 @@ func TestResolveKeepsTypedRowsAlignedWithColdKinds(t *testing.T) {
 		"value/return-boundary/members",
 		"value/binary-arithmetic/sources",
 		"value/binary-equality/sources",
+		"value/presence-refinement/sources",
 		"value/binary-order/sources",
 		"value/formal-freeze/call-actuals",
 		"value/formal-freeze/actual-members",
@@ -252,6 +254,8 @@ func TestResolveKeepsTypedRowsAlignedWithColdKinds(t *testing.T) {
 		"value/binary-equality/left",
 		"value/binary-equality/right",
 		"value/binary-equality/write",
+		"value/presence-refinement/source-key",
+		"value/presence-refinement/write",
 		"value/binary-order/left",
 		"value/binary-order/right",
 		"value/binary-order/write",
@@ -277,6 +281,7 @@ func TestResolveKeepsTypedRowsAlignedWithColdKinds(t *testing.T) {
 		"value/reducer/global-bootstrap",
 		"value/binary-arithmetic/reducer",
 		"value/binary-equality/reducer",
+		"value/presence-refinement/reducer",
 		"value/binary-order/reducer",
 	}
 	if len(metadata.Reducers) != len(wantReducers) {
