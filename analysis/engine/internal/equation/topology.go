@@ -2,6 +2,7 @@ package equation
 
 import (
 	"sort"
+	"sync/atomic"
 
 	"github.com/wippyai/go-lua/analysis/engine/internal/composition"
 	"github.com/wippyai/go-lua/analysis/engine/internal/schedule"
@@ -181,24 +182,17 @@ type derivedActivationReverse struct {
 	trigger composition.Key
 }
 
-func compileTopologyWithFailure(source *composition.Composition, topology TopologySpec, activationReverses []derivedActivationReverse) (*Graph, compiledRowDirectory, SealFailure, bool) {
-	if source == nil || !validTopologyBatch(topology.Batch, topology) || len(topology.Points) == 0 {
+func compileTopologyWithFailure(source *composition.Composition, topology TopologySpec, derived sealedTopologyRows, activationReverses []derivedActivationReverse) (*Graph, compiledRowDirectory, SealFailure, bool) {
+	if source == nil || !validTopologyBatch(topology.Batch, topology) || len(topology.Points) == 0 || !derived.derivedFrom(topology) {
 		return nil, compiledRowDirectory{}, sealRefused(SealFailureFamilyCompile, "input"), false
 	}
-	catalog, ok := buildTopologyCatalog(topology)
-	if !ok {
-		return nil, compiledRowDirectory{}, sealRefused(SealFailureFamilyCompile, "catalog"), false
-	}
+	// The rows are the seal's one derivation of this spec. The compiler
+	// validates the catalog it is handed against the whole spec and never
+	// re-derives a population of its own.
+	catalog, instances := derived.catalog, derived.instances
+	declared, sites, points := derived.declared, derived.sites, derived.points
 	if !validateTopologyCatalogUsage(topology, catalog) {
 		return nil, compiledRowDirectory{}, sealRefused(SealFailureFamilyCompile, "catalog-usage"), false
-	}
-	instances, ok := buildInstances(source, topology.Batch, topology.Rules, catalog)
-	if !ok {
-		return nil, compiledRowDirectory{}, sealRefused(SealFailureFamilyCompile, "instances"), false
-	}
-	declared, sites, points, ok := buildPoints(topology.Points)
-	if !ok {
-		return nil, compiledRowDirectory{}, sealRefused(SealFailureFamilyCompile, "points"), false
 	}
 	groups, ok := buildGroups(source, instances, declared, sites, topology.Groups)
 	if !ok {
@@ -407,6 +401,55 @@ func buildActivationReverseIndex(rows []derivedActivationReverse, instances []ca
 		retained++
 	}
 	return result[:retained], true
+}
+
+// sealedTopologyRows is one sealed TopologySpec's derived row population:
+// the issued Points, the capability catalog, and the canonical rule
+// instances. A sealed spec owes exactly one derivation, and the same rows
+// reach activation construction and the graph compiler.
+type sealedTopologyRows struct {
+	catalog   topologyCatalog
+	instances []canonicalInstance
+	declared  map[PointRef]Point
+	sites     map[composition.Key]Point
+	points    []Point
+}
+
+// derivedFrom is the compiler's guard that the rows it was handed are this
+// spec's rows. A bundle reaches the compiler only from the seal that built it,
+// and every row plane it carries is one-to-one with the spec plane it came
+// from, so a shape that disagrees names a bundle from another spec.
+func (rows sealedTopologyRows) derivedFrom(spec TopologySpec) bool {
+	return rows.declared != nil && rows.sites != nil && rows.instances != nil &&
+		rows.catalog.summaryAt != nil && rows.catalog.weakAt != nil &&
+		len(rows.points) == len(spec.Points) && len(rows.declared) == len(spec.Points) &&
+		len(rows.instances) == len(spec.Rules) &&
+		len(rows.catalog.summaries) == len(spec.Summaries) && len(rows.catalog.weak) == len(spec.WeakTargets)
+}
+
+// topologyRowDerivations counts whole-spec row derivations. The seal is the
+// one caller, so the count a law reads over one seal states how many times
+// that seal derived its population.
+var topologyRowDerivations atomic.Uint64
+
+// buildSealedTopologyRows derives one sealed spec's population once. Its
+// refusal phases name the topology seal, which is the boundary that observes
+// them first.
+func buildSealedTopologyRows(source *composition.Composition, spec TopologySpec) (sealedTopologyRows, SealFailure, bool) {
+	topologyRowDerivations.Add(1)
+	declared, sites, points, pointsOK := buildPoints(spec.Points)
+	if !pointsOK {
+		return sealedTopologyRows{}, sealRefused(SealFailureFamilyTopology, "points"), false
+	}
+	catalog, catalogOK := buildTopologyCatalog(spec)
+	if !catalogOK {
+		return sealedTopologyRows{}, sealRefused(SealFailureFamilyTopology, "catalog"), false
+	}
+	instances, instancesOK := buildInstances(source, spec.Batch, spec.Rules, catalog)
+	if !instancesOK {
+		return sealedTopologyRows{}, sealRefused(SealFailureFamilyTopology, "instances"), false
+	}
+	return sealedTopologyRows{catalog: catalog, instances: instances, declared: declared, sites: sites, points: points}, SealFailure{}, true
 }
 
 // buildPoints gives every builder reference its issued Point and indexes the

@@ -89,33 +89,25 @@ func sealTopologyWithActivationDirectory(source *composition.Composition, spec T
 	if !appendAssemblyTargets(&sealed, directory.targetSpecs()) {
 		return nil, sealRefused(SealFailureFamilyTopology, "targets"), false
 	}
-	_, _, _, baseOK := buildPoints(sealed.Points)
-	if !baseOK {
-		return nil, sealRefused(SealFailureFamilyTopology, "points"), false
-	}
-	catalog, catalogOK := buildTopologyCatalog(TopologySpec{Rules: sealed.Rules, Summaries: sealed.Summaries, WeakTargets: sealed.WeakTargets})
-	if !catalogOK {
-		return nil, sealRefused(SealFailureFamilyTopology, "catalog"), false
-	}
-	instances, instancesOK := buildInstances(source, sealed.Batch, sealed.Rules, catalog)
-	if !instancesOK {
-		return nil, sealRefused(SealFailureFamilyTopology, "instances"), false
+	derived, derivedFailure, derivedOK := buildSealedTopologyRows(source, sealed)
+	if !derivedOK {
+		return nil, derivedFailure, false
 	}
 	topology := &Topology{
 		source:     source,
 		activation: directory,
 		triggers:   make(map[composition.Key]activationTriggerBinding),
 	}
-	if !topology.sealTriggers(sealed.ActivationTriggers, instances) {
+	if !topology.sealTriggers(sealed.ActivationTriggers, derived.instances) {
 		return nil, sealRefused(SealFailureFamilyTopology, "activation-triggers"), false
 	}
-	if !topology.sealActivationDirectory(directory, len(sealed.Points), instances) {
+	if !topology.sealActivationDirectory(directory, len(sealed.Points), derived.instances) {
 		return nil, sealRefused(SealFailureFamilyTopology, "activation-rows"), false
 	}
 	if !sealed.Batch.closesOperandRealms(sealed.Rules) {
 		return nil, sealRefused(SealFailureFamilyTopology, "operand-realms"), false
 	}
-	graph, rows, compileFailure, compiled := compileTopologyWithFailure(source, sealed, nil)
+	graph, rows, compileFailure, compiled := compileTopologyWithFailure(source, sealed, derived, nil)
 	if !compiled || graph == nil {
 		return nil, compileFailure, false
 	}
