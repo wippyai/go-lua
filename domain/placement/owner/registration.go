@@ -27,6 +27,7 @@ type axisInputs interface {
 
 // AxisEntry is Placement's factor-axis declaration.
 func AxisEntry[A axisInputs]() axis.Spec[A] {
+	members := placement.AxisMemberCatalog()
 	return axis.Spec[A]{
 		Key:          "placement",
 		Storage:      axis.StorageFactor,
@@ -36,6 +37,8 @@ func AxisEntry[A axisInputs]() axis.Spec[A] {
 		Concurrency:  axis.ConcurrencySingleWriter,
 		Dependencies: []schema.Key{"heap"},
 		Frame:        axis.Frame{Outputs: []axis.Output{{Key: "placement/facts", Writer: "placement"}}},
+		Catalog:      members,
+		Signature:    axis.Signature{Key: placement.PlacementKeyCarrier, Fact: placement.PlacementFactCarrier},
 		Semantic:     "semantic/factor/placement",
 		Roles:        []schema.Key{"semantic/factor/placement/summary-coordinatewise"},
 		Mount: axis.NewMount(func(context axis.Mounting[A]) (placement.Schema, MountRejection, bool) {
@@ -68,7 +71,17 @@ func BindAxis[A axisInputs](binding *engine.SchemaBinding, context axis.Binding[
 	if !schema.Valid() || schema.Heap().ContentID() != context.Inputs.HeapInput().ContentID() {
 		return nil, false
 	}
-	return BindHot(binding, context.Fragment, schema)
+	owner, ownerOK := BindHot(binding, context.Fragment, schema)
+	if !ownerOK || owner == nil || context.Fragment == nil {
+		return nil, false
+	}
+	// The generated Placement relation owner is installed once on the axis;
+	// Store's foreign Value provider is resolved by sealed composition, never
+	// copied into a per-rule helper.
+	if !engine.BindRelationOwner(binding, context.Fragment.slot, placement.NewRelationOwner(schema)) {
+		return nil, false
+	}
+	return owner, true
 }
 
 // AlgebraAxis publishes Placement's owner-typed factor algebra through the

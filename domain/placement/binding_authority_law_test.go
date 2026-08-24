@@ -24,7 +24,6 @@ import (
 	formal "github.com/wippyai/go-lua/domain/placement/formal"
 	placementowner "github.com/wippyai/go-lua/domain/placement/owner"
 	returnescape "github.com/wippyai/go-lua/domain/placement/returnescape"
-	store "github.com/wippyai/go-lua/domain/placement/store"
 	valuedomain "github.com/wippyai/go-lua/domain/value"
 	valueowner "github.com/wippyai/go-lua/domain/value/owner"
 	"github.com/wippyai/go-lua/internal/testfixture"
@@ -45,10 +44,9 @@ func TestPlacementRuleBindersRejectEqualSchemaForeignAuthorities(t *testing.T) {
 	containmentFragment, containmentOK := containment.DeclareSchema(builder, placementBindingLawSemantic(13), placementBindingLawSemantic(14), placementFragment, heapFragment)
 	formalFragment, formalOK := formal.DeclareSchema(builder, placementBindingLawSemantic(15), placementBindingLawSemantic(16), valueFragment, callFragment, placementFragment)
 	returnFragment, returnOK := returnescape.DeclareSchema(builder, placementBindingLawSemantic(19), placementBindingLawSemantic(20), valueFragment, placementFragment)
-	storeFragment, storeOK := store.DeclareSchema(builder, placementBindingLawSemantic(21), placementBindingLawSemantic(22), valueFragment, placementFragment)
 	cold, coldOK := builder.Seal()
-	if !placementOK || !valueOK || !heapOK || !callOK || !captureOK || !containmentOK || !formalOK || !returnOK || !storeOK || !coldOK || cold == nil {
-		t.Fatalf("Placement binding-law declaration placement=%t value=%t heap=%t call=%t capture=%t containment=%t formal=%t return=%t store=%t cold=%t", placementOK, valueOK, heapOK, callOK, captureOK, containmentOK, formalOK, returnOK, storeOK, coldOK)
+	if !placementOK || !valueOK || !heapOK || !callOK || !captureOK || !containmentOK || !formalOK || !returnOK || !coldOK || cold == nil {
+		t.Fatalf("Placement binding-law declaration placement=%t value=%t heap=%t call=%t capture=%t containment=%t formal=%t return=%t cold=%t", placementOK, valueOK, heapOK, callOK, captureOK, containmentOK, formalOK, returnOK, coldOK)
 	}
 	localBinding := engine.NewSchemaBinding(cold)
 	foreignBinding := engine.NewSchemaBinding(cold)
@@ -84,10 +82,6 @@ func TestPlacementRuleBindersRejectEqualSchemaForeignAuthorities(t *testing.T) {
 			_, ok := returnescape.BindHot(localBinding, returnFragment, foreignPlacement, localValues)
 			return ok
 		}},
-		{name: "store placement", bind: func() bool {
-			_, ok := store.BindHot(localBinding, storeFragment, foreignPlacement, localValues)
-			return ok
-		}},
 		{name: "capture value", bind: func() bool {
 			_, ok := capture.BindHot(localBinding, captureFragment, localPlacement, foreignValues, values, placementSchema)
 			return ok
@@ -106,10 +100,6 @@ func TestPlacementRuleBindersRejectEqualSchemaForeignAuthorities(t *testing.T) {
 		}},
 		{name: "return value", bind: func() bool {
 			_, ok := returnescape.BindHot(localBinding, returnFragment, localPlacement, foreignValues)
-			return ok
-		}},
-		{name: "store value", bind: func() bool {
-			_, ok := store.BindHot(localBinding, storeFragment, localPlacement, foreignValues)
 			return ok
 		}},
 	}

@@ -31,6 +31,7 @@ import (
 	placementpublicationescape "github.com/wippyai/go-lua/domain/placement/publicationescape"
 	placementreturnescape "github.com/wippyai/go-lua/domain/placement/returnescape"
 	placementstore "github.com/wippyai/go-lua/domain/placement/store"
+	placementstoreprogram "github.com/wippyai/go-lua/domain/placement/store/program"
 	placementsuspension "github.com/wippyai/go-lua/domain/placement/suspension"
 	placementtransfer "github.com/wippyai/go-lua/domain/placement/transfer"
 	staticowner "github.com/wippyai/go-lua/domain/static/owner"
@@ -154,8 +155,9 @@ func ruleTemplateWiring[P Principals, A Authorities]() ([]*rule.Template, []Rule
 	add(WireRule(placementformal.RuleEntry[P, A](), placementformal.DeclareRule[P], placementformal.RegisterRule, nil, placementformal.BindRule[A], placementformal.FinalizeRule[A], nil, nil))
 	// Containment is the singleton declarative rule expanded at every mounted point.
 	add(WireRule(placementcontainment.RuleEntry[P, A](), placementcontainment.DeclareRule[P], placementcontainment.RegisterRule, nil, placementcontainment.BindRule[A], placementcontainment.FinalizeRule[A], placementcontainment.OccurrenceCatalog, nil))
-	// Storage lifetime keeps its neutral Program/Value prerequisite explicit.
-	add(WireRule(placementstore.RuleEntry[P, A](), placementstore.DeclareRule[P], placementstore.RegisterRule, nil, placementstore.BindRule[A], nil, nil, nil))
+	// Storage lifetime is the generated dependent Store family. Its authored
+	// route relation is installed once through the rule's own family claimant.
+	add(WireGeneratedRuleWithFamily[P, A](placementstoreprogram.RuleEntry(), placementstore.InstallFamily[A]))
 	// Suspension consumes neutral Program liveness rows through the
 	// owner-fenced Value/Placement bridge.
 	add(WireRule(placementsuspension.RuleEntry[P, A](), placementsuspension.DeclareRule[P], placementsuspension.RegisterRule, nil, placementsuspension.BindRule[A], placementsuspension.FinalizeRule[A], placementsuspension.OccurrenceCatalog, nil))

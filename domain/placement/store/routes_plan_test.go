@@ -115,6 +115,23 @@ func TestDeriveRoutesAuthenticatesCandidateAndKeepsFrameTransfersEmpty(t *testin
 	if _, ok := DeriveRoutes(fixture.placement, fixture.values, valuedomain.StorageTransfer{}, fixture.values.Bottom()); ok {
 		t.Fatal("forged StorageTransfer candidate admitted")
 	}
+	atom, atomOK := fixture.values.Allocation(fixture.keys[0], materialization.Recent)
+	if !atomOK {
+		t.Fatal("allocation atom")
+	}
+	source, sourceOK := fixture.values.Singleton(atom)
+	if !sourceOK {
+		t.Fatal("allocation source fact")
+	}
+	plan, planOK := DeriveRoutes(fixture.placement, fixture.values, persistent, source)
+	route, routeOK := plan.RouteAt(0)
+	if !planOK || !routeOK || plan.RouteCount() != 1 {
+		t.Fatalf("authenticated route plan=%#v/%t route=%#v/%t", plan, planOK, route, routeOK)
+	}
+	got, outcome := StorageFold(persistent, source, route.Tag, placement.DefaultFact())
+	if outcome != structure.Concrete || got != (placement.Fact{Class: placement.SharedHeap, RetainEscape: placement.EvidenceProven}) {
+		t.Fatalf("StorageFold=%v/%v, want authenticated SharedHeap/Concrete", got, outcome)
+	}
 
 	frame := routePlanTransfer(t, fixture.values, false)
 	empty, emptyOK := DeriveRoutes(fixture.placement, fixture.values, frame, valuedomain.Value{})
