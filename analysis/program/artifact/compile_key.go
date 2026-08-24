@@ -16,18 +16,17 @@ const (
 	// every CompileKey, not an ambient package assumption.
 	GrammarABIVersion = uint64(6)
 
-	artifactFormat = uint64(34)
-	// Issuance is now one sealed schema-driven machine. Rule stages and inputs
-	// are exact schema keys, stage identity/transport is declaration data, and
-	// the compiler emits final emissions atomically from the generic schedule.
-	// Advance both laws so artifacts from the ordinal/mirror representation can
-	// never be admitted under the new geometry.
-	compilerLawVersion     = uint64(7)
+	artifactFormat = uint64(35)
+	// Routed predecessor placement now carries its route landing independently
+	// of the rule's data inputs, and the Local stage precedes the routed write
+	// that consumes its result. Advance the compiler and route laws together so
+	// an artifact from the conflated geometry cannot enter the new schedule.
+	compilerLawVersion     = uint64(8)
 	operatorLawVersion     = uint64(1)
 	substitutionLawVersion = uint64(1)
 	summaryLawVersion      = uint64(1)
 	wtoLawVersion          = uint64(1)
-	routeLawVersion        = uint64(3)
+	routeLawVersion        = uint64(4)
 	valuesLawVersion       = uint64(1)
 	bodyOutcomeLawVersion  = uint64(4)
 	// The occurrence vocabulary carries the structural BinaryConcat family, so

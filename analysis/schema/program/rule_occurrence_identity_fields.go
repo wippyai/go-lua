@@ -16,7 +16,7 @@ func (row Program) WriteRuleOccurrenceIdentityFields(writer identity.StringIdent
 	for index := 0; index < count; index++ {
 		rule, held := RuleOccurrenceFamily().At(&row.Frozen, catalog, index)
 		occurrence, occurrenceOK := rule.Occurrence()
-		route, routeOK := rule.PredecessorRouteID()
+		route, routeOK := rule.PredecessorRoute()
 		native, nativeOK := rule.Native()
 		key, writes := rule.Key(), rule.Writes()
 		inputCount := rule.InputPointCount()
@@ -44,7 +44,13 @@ func (row Program) WriteRuleOccurrenceIdentityFields(writer identity.StringIdent
 			}
 		}
 		if !writer.WriteString(string(rule.Stage())) ||
-			!writer.WriteString(string(rule.InputSpec())) || !writer.WriteContentID(route) || !writer.WriteBool(native) {
+			!writer.WriteString(string(rule.InputSpec())) || !writer.WriteContentID(route.ID) {
+			return false
+		}
+		if routeOK && !writer.WriteContentID(route.Point) {
+			return false
+		}
+		if !writer.WriteBool(native) {
 			return false
 		}
 		// The candidate row is replayed only by a rule that has one, so a rule

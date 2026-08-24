@@ -70,7 +70,7 @@ func nativeOccurrenceScaleProgram(t *testing.T, width int) programschema.Program
 			[]identity.ContentID{nativeOccurrenceScaleID(t, "rule-input", ordinal)},
 			programissuance.StageComputation,
 			programissuance.InputPreviousStage,
-			identity.ContentID{},
+			programschema.RuleOccurrenceRoute{},
 			true,
 			programschema.RuleOccurrenceSource{},
 		)

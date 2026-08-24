@@ -137,13 +137,12 @@ func (validator *validator) validateSealFreeze(state *validationState) bool {
 				return false
 			}
 		}
-		if route, routeOK := occurrence.PredecessorRouteID(); routeOK {
-			input, inputOK := occurrence.InputPointAt(0)
-			edge, found, duplicate := validator.environmentEdgeForRoute(route)
+		if route, routeOK := occurrence.PredecessorRoute(); routeOK {
+			edge, found, duplicate := validator.environmentEdgeForRoute(route.ID)
 			if duplicate {
 				return false
 			}
-			if !inputOK || !found || edge.To() != input {
+			if !found || edge.To() != route.Point {
 				return false
 			}
 		}

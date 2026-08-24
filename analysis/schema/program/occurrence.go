@@ -231,7 +231,7 @@ type RuleOccurrence struct {
 	inputCount uint8
 	stage      schema.Key
 	inputSpec  schema.Key
-	route      identity.ContentID
+	route      RuleOccurrenceRoute
 	native     bool
 	source     RuleOccurrenceSource
 }
@@ -249,10 +249,24 @@ type RuleOccurrenceSource struct {
 // Available reports whether a source was resolved.
 func (source RuleOccurrenceSource) Available() bool { return source.Space.Available() }
 
+// RuleOccurrenceRoute is the exact authored control-flow predecessor proof
+// for a routed rule placement. Point is the route landing; ID identifies the
+// sealed environment edge. It is distinct from the rule's data inputs.
+type RuleOccurrenceRoute struct {
+	Point identity.ContentID
+	ID    identity.ContentID
+}
+
+// Available reports whether both halves of the routed predecessor proof are
+// present. The zero value states that the placement is not route-bound.
+func (route RuleOccurrenceRoute) Available() bool {
+	return route.Point.Available() && route.ID.Available()
+}
+
 // NewRuleOccurrenceWithInputs seals one ordered point-role vector. The vector
 // is copied into the row's fixed dense storage; callers cannot mutate the
 // published placement after construction.
-func NewRuleOccurrenceWithInputs(key, writes schema.Key, occurrence uint32, point identity.ContentID, inputs []identity.ContentID, stage, inputSpec schema.Key, route identity.ContentID, native bool, source RuleOccurrenceSource) (RuleOccurrence, bool) {
+func NewRuleOccurrenceWithInputs(key, writes schema.Key, occurrence uint32, point identity.ContentID, inputs []identity.ContentID, stage, inputSpec schema.Key, route RuleOccurrenceRoute, native bool, source RuleOccurrenceSource) (RuleOccurrence, bool) {
 	row := RuleOccurrence{key: key, writes: writes, occurrence: occurrence, point: point, stage: stage, inputSpec: inputSpec, route: route, native: native, source: source}
 	if len(inputs) > len(row.inputs) {
 		return RuleOccurrence{}, false
@@ -279,7 +293,10 @@ func (row RuleOccurrence) Available() bool {
 		}
 	}
 	if row.inputCount == 0 {
-		return !row.route.Available() && !row.native
+		return !row.route.Point.Available() && !row.route.ID.Available() && !row.native
+	}
+	if row.route.Point.Available() != row.route.ID.Available() {
+		return false
 	}
 	return true
 }
@@ -347,6 +364,6 @@ func (row RuleOccurrence) Native() (bool, bool) { return row.native, row.Availab
 func (row RuleOccurrence) Source() (RuleOccurrenceSource, bool) {
 	return row.source, row.Available() && row.source.Available()
 }
-func (row RuleOccurrence) PredecessorRouteID() (identity.ContentID, bool) {
+func (row RuleOccurrence) PredecessorRoute() (RuleOccurrenceRoute, bool) {
 	return row.route, row.Available() && row.route.Available()
 }

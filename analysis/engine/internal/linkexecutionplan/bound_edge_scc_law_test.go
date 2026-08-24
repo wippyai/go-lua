@@ -124,9 +124,9 @@ func newBoundEdgeLawProgram(t *testing.T, sourceModule, targetModule identity.Co
 	// Base -> CallDispatch -> CallSummary -> CallEffect, so the module-call
 	// join finds both the dispatch point it departs from and the effect point
 	// the callee's return state lands on.
-	dispatchRule, ok := programschema.NewRuleOccurrenceWithInputs(schema.Key("bound-edge-law-call-dispatch"), schema.Key("bound-edge-law-call-dispatch-axis"), 0, dispatchPointID, []identity.ContentID{basePointID}, programissuance.StageCallDispatch, programissuance.InputPreviousStage, identity.ContentID{}, true, programschema.RuleOccurrenceSource{})
-	summaryRule, summaryRuleOK := programschema.NewRuleOccurrenceWithInputs(schema.Key("bound-edge-law-call-summary"), schema.Key("bound-edge-law-call-summary-axis"), 0, summaryPointID, []identity.ContentID{dispatchPointID}, programissuance.StageCallSummary, programissuance.InputCallDispatchStage, identity.ContentID{}, true, programschema.RuleOccurrenceSource{})
-	effectRule, effectRuleOK := programschema.NewRuleOccurrenceWithInputs(schema.Key("bound-edge-law-call-effect"), schema.Key("bound-edge-law-call-effect-axis"), 0, effectPointID, []identity.ContentID{summaryPointID}, programissuance.StageCallEffect, programissuance.InputCallSummaryStage, identity.ContentID{}, true, programschema.RuleOccurrenceSource{})
+	dispatchRule, ok := programschema.NewRuleOccurrenceWithInputs(schema.Key("bound-edge-law-call-dispatch"), schema.Key("bound-edge-law-call-dispatch-axis"), 0, dispatchPointID, []identity.ContentID{basePointID}, programissuance.StageCallDispatch, programissuance.InputPreviousStage, programschema.RuleOccurrenceRoute{}, true, programschema.RuleOccurrenceSource{})
+	summaryRule, summaryRuleOK := programschema.NewRuleOccurrenceWithInputs(schema.Key("bound-edge-law-call-summary"), schema.Key("bound-edge-law-call-summary-axis"), 0, summaryPointID, []identity.ContentID{dispatchPointID}, programissuance.StageCallSummary, programissuance.InputCallDispatchStage, programschema.RuleOccurrenceRoute{}, true, programschema.RuleOccurrenceSource{})
+	effectRule, effectRuleOK := programschema.NewRuleOccurrenceWithInputs(schema.Key("bound-edge-law-call-effect"), schema.Key("bound-edge-law-call-effect-axis"), 0, effectPointID, []identity.ContentID{summaryPointID}, programissuance.StageCallEffect, programissuance.InputCallSummaryStage, programschema.RuleOccurrenceRoute{}, true, programschema.RuleOccurrenceSource{})
 	if !ok || !summaryRuleOK || !effectRuleOK || !basePointOK {
 		t.Fatal("call stage rule occurrences")
 	}

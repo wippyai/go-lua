@@ -176,7 +176,7 @@ func (compiler *compiler) recordOccurrencePredecessorPaths(kind programschema.Oc
 // appendRuleOccurrenceVector publishes the ordered input-point roles selected
 // by the sealed issuance schedule. The compiler copies the vector into the
 // immutable Program row; no later phase may infer or replace one of its roles.
-func (compiler *compiler) appendRuleOccurrenceVector(key, writes schema.Key, occurrence uint32, point identity.ContentID, inputs []identity.ContentID, stage, inputSpec schema.Key, route identity.ContentID, native bool, source programschema.RuleOccurrenceSource) bool {
+func (compiler *compiler) appendRuleOccurrenceVector(key, writes schema.Key, occurrence uint32, point identity.ContentID, inputs []identity.ContentID, stage, inputSpec schema.Key, route programschema.RuleOccurrenceRoute, native bool, source programschema.RuleOccurrenceSource) bool {
 	if compiler == nil || !fitsUint32(len(compiler.publication.RuleOccurrences)) {
 		return false
 	}

@@ -305,7 +305,7 @@ func Lower(snapshot *ingress.Snapshot, vocabulary structure.Table, machine schem
 			return nil, nil, false
 		}
 		role, roleOK := directory.Role(row.Key())
-		route, hasRoute := row.PredecessorRouteID()
+		route, hasRoute := row.PredecessorRoute()
 		native, nativeOK := row.Native()
 		// The candidate row was resolved by issuance. Only its ordinal travels:
 		// the row space it indexes is sealed in the rule's compiled plan, so
@@ -324,7 +324,7 @@ func Lower(snapshot *ingress.Snapshot, vocabulary structure.Table, machine schem
 			inputs[inputIndex] = input
 		}
 		if !roleOK || !row.Available() || !nativeOK || hasRoute != route.Available() ||
-			!spec.AddRule(rows.ArtifactScalarRule{Role: role, Stage: row.Stage(), Point: row.PointID(), Inputs: inputs, InputCount: uint8(inputCount), ID: occurrenceID(program, row), Route: route, Native: native, Source: candidate.Ordinal, SourcePresent: sourcePresent}) {
+			!spec.AddRule(rows.ArtifactScalarRule{Role: role, Stage: row.Stage(), Point: row.PointID(), Inputs: inputs, InputCount: uint8(inputCount), ID: occurrenceID(program, row), Route: route.ID, RoutePoint: route.Point, Native: native, Source: candidate.Ordinal, SourcePresent: sourcePresent}) {
 			return nil, nil, false
 		}
 	}

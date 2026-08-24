@@ -1072,11 +1072,13 @@ func resolveMemberCoordinates(declaration topologyDeclaration, mounts constructe
 			coordinates.inputPoints[inputIndex] = inputPoint
 			coordinates.inputSites[inputIndex] = inputSite
 		}
+		if rule.Route.Available() != rule.RoutePoint.Available() {
+			return memberCoordinates{}, refuseAdmission(topologyConstructionStepMemberIssuance, ordinal)
+		}
 		if rule.Route.Available() {
 			edgeIndex, routed := mounts.routes[constructedRouteKey{mount: handle.mount, route: rule.Route}]
 			edge, edgeOK := mount.template.EdgeAt(edgeIndex)
-			firstInput, firstInputOK := rule.InputPointAt(0)
-			if inputCount == 0 || !firstInputOK || !routed || !edgeOK || edge.To != firstInput {
+			if inputCount == 0 || !routed || !edgeOK || edge.To != rule.RoutePoint {
 				return memberCoordinates{}, refuseAdmission(topologyConstructionStepMemberIssuance, ordinal)
 			}
 			coordinates.routed, coordinates.route = true, edge
@@ -1210,13 +1212,11 @@ func constructMemberGroup(declaration topologyDeclaration, source constructedSou
 			}
 		}
 		if member.Plane == declaredMemberMount && coordinates.routed {
-			// A routed member's predecessor proof is the parent's route row:
-			// the member's input must be the exact Point that route lands on,
-			// under a proof the artifact declaration already sealed.
-			landing, landed := points.idByMounted[artifactMountedPoint{mount: coordinates.mount, reusable: coordinates.route.To}]
-			firstInput, firstInputOK := inputPoints[0], len(inputPoints) != 0
-			input, inputLocated := points.idByMounted[artifactMountedPoint{mount: coordinates.mount, reusable: firstInput}]
-			if !landed || !firstInputOK || !inputLocated || landing != input || !rows.ValidArtifactScalarEdgeProof(coordinates.route) {
+			// A routed member's predecessor proof is the parent's route row.
+			// Its landing must exist in this mount and carry a valid edge proof;
+			// data inputs are an independent, already-admitted vector.
+			_, landed := points.idByMounted[artifactMountedPoint{mount: coordinates.mount, reusable: coordinates.route.To}]
+			if !landed || !rows.ValidArtifactScalarEdgeProof(coordinates.route) {
 				return equation.Group{}, refuseAdmission(topologyConstructionStepMemberGroup, ordinal)
 			}
 		}

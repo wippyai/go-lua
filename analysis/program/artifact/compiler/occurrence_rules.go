@@ -49,7 +49,10 @@ func (compiler *compiler) deriveRuleOccurrencesFailure() CompileFailure {
 			inputs[inputIndex] = input
 		}
 		native, nativeOK := emission.Native()
-		route, _ := request.Route()
+		var route programschema.RuleOccurrenceRoute
+		if routeID, routed := request.Route(); routed {
+			route = programschema.RuleOccurrenceRoute{Point: request.Base(), ID: routeID}
+		}
 		inputSpec := programissuance.InputNone
 		if request.InputCount() != 0 {
 			input, inputOK := request.InputAt(0)

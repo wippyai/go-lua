@@ -108,6 +108,7 @@ type ArtifactScalarRule struct {
 	Inputs     [6]identity.ContentID
 	InputCount uint8
 	Route      identity.ContentID
+	RoutePoint identity.ContentID
 	Native     bool
 	// Source is the dense ordinal of the candidate row issuance resolved for
 	// this placement, and SourcePresent states whether one exists. Ordinal

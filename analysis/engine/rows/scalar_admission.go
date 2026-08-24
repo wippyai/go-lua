@@ -190,7 +190,7 @@ func validArtifactScalarSpec(spec *ArtifactScalarSpec) bool {
 				firstInput = input
 			}
 		}
-		if inputCount == 0 && (rule.Native || rule.Route.Available()) {
+		if rule.Route.Available() != rule.RoutePoint.Available() || inputCount == 0 && (rule.Native || rule.Route.Available()) {
 			return false
 		}
 		if rule.Native {
@@ -217,7 +217,7 @@ func validArtifactScalarSpec(spec *ArtifactScalarSpec) bool {
 				return false
 			}
 			predecessor, predecessorOK := routes[rule.Route]
-			if !predecessorOK || inputCount == 0 || predecessor.To != firstInput {
+			if !predecessorOK || inputCount == 0 || predecessor.To != rule.RoutePoint {
 				return false
 			}
 		}

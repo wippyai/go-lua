@@ -40,6 +40,30 @@ func TestArtifactScalarTemplateConsumesPrivateBuilderStorageExactlyOnce(t *testi
 // artifactScalarLawSpec fills one admissible builder and returns it together
 // with a copied handle that shares the same private state.
 func TestArtifactScalarTemplateAdmitsRoutedNonNativeRule(t *testing.T) {
+	routeFrom, base := artifactScalarLawID(4), artifactScalarLawID(7)
+	spec := artifactScalarRoutedRuleSpec(t, routeFrom, base)
+	template, ok := NewArtifactScalarTemplate(spec)
+	if !ok || template == nil || !template.Available() {
+		t.Fatal("local predecessor stage must seal")
+	}
+	if rule, rowOK := template.RuleAt(0); !rowOK || rule.Native {
+		t.Fatalf("local rule receipt=(%+v,%v), want non-native", rule, rowOK)
+	}
+}
+
+// TestArtifactScalarTemplateRefusesRoutePointThatTheRouteDoesNotReach is the
+// nearest negative for the independent route proof. The data input remains a
+// valid point; only the claimed route landing is false.
+func TestArtifactScalarTemplateRefusesRoutePointThatTheRouteDoesNotReach(t *testing.T) {
+	routeFrom := artifactScalarLawID(4)
+	spec := artifactScalarRoutedRuleSpec(t, routeFrom, routeFrom)
+	if template, ok := NewArtifactScalarTemplate(spec); ok || template != nil {
+		t.Fatal("routed rule admitted a route point that its edge does not reach")
+	}
+}
+
+func artifactScalarRoutedRuleSpec(t testing.TB, input, routePoint identity.ContentID) *ArtifactScalarSpec {
+	t.Helper()
 	routeFrom, base, stage := artifactScalarLawID(4), artifactScalarLawID(7), artifactScalarLawID(8)
 	regionID, bodyID := artifactScalarLawID(5), artifactScalarLawID(6)
 	spec, specOK := NewArtifactScalarSpec(artifactScalarLawID(1), artifactScalarLawID(2), artifactScalarLawID(3), ArtifactScalarCapacity{
@@ -65,12 +89,14 @@ func TestArtifactScalarTemplateAdmitsRoutedNonNativeRule(t *testing.T) {
 	}
 	role, roleOK := spec.DeclareRole(artifactScalarLawID(20))
 	if !roleOK || !spec.AddRule(ArtifactScalarRule{
-		Role:   role,
-		Stage:  schema.Key("test-stage/non-native"),
-		Point:  stage,
-		Inputs: [6]identity.ContentID{base}, InputCount: 1,
-		ID:    artifactScalarLawID(21),
-		Route: artifactScalarLawID(22),
+		Role:       role,
+		Stage:      schema.Key("test-stage/non-native"),
+		Point:      stage,
+		Inputs:     [6]identity.ContentID{input},
+		InputCount: 1,
+		ID:         artifactScalarLawID(21),
+		Route:      artifactScalarLawID(22),
+		RoutePoint: routePoint,
 	}) {
 		t.Fatal("local predecessor rule")
 	}
@@ -83,13 +109,7 @@ func TestArtifactScalarTemplateAdmitsRoutedNonNativeRule(t *testing.T) {
 	}); !edgeOK {
 		t.Fatal("predecessor route")
 	}
-	template, ok := NewArtifactScalarTemplate(spec)
-	if !ok || template == nil || !template.Available() {
-		t.Fatal("local predecessor stage must seal")
-	}
-	if rule, rowOK := template.RuleAt(0); !rowOK || rule.Native {
-		t.Fatalf("local rule receipt=(%+v,%v), want non-native", rule, rowOK)
-	}
+	return spec
 }
 
 func TestArtifactScalarTemplateSealsIssuedNativeReceipt(t *testing.T) {

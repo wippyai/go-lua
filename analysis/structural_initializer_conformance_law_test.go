@@ -156,10 +156,10 @@ func TestEveryPublishedPlacementNamesTheAxisItWrites(t *testing.T) {
 	if !pointOK || !inputOK {
 		t.Fatal("derive placement coordinates")
 	}
-	if _, sealed := programschema.NewRuleOccurrenceWithInputs("value-source", "", 0, point, []identity.ContentID{input}, programissuance.StageLocal, programissuance.InputPreviousStage, identity.ContentID{}, false, programschema.RuleOccurrenceSource{}); sealed {
+	if _, sealed := programschema.NewRuleOccurrenceWithInputs("value-source", "", 0, point, []identity.ContentID{input}, programissuance.StageLocal, programissuance.InputPreviousStage, programschema.RuleOccurrenceRoute{}, false, programschema.RuleOccurrenceSource{}); sealed {
 		t.Fatal("a placement sealed without the axis it writes")
 	}
-	if _, sealed := programschema.NewRuleOccurrenceWithInputs("value-source", "value", 0, point, []identity.ContentID{input}, programissuance.StageLocal, programissuance.InputPreviousStage, identity.ContentID{}, false, programschema.RuleOccurrenceSource{}); !sealed {
+	if _, sealed := programschema.NewRuleOccurrenceWithInputs("value-source", "value", 0, point, []identity.ContentID{input}, programissuance.StageLocal, programissuance.InputPreviousStage, programschema.RuleOccurrenceRoute{}, false, programschema.RuleOccurrenceSource{}); !sealed {
 		t.Fatal("a placement naming the axis it writes is refused")
 	}
 }

@@ -99,15 +99,16 @@ return move
 					t.Fatalf("bind rule=%d did not retain the ordinary Local cut as its Finish input", ruleIndex)
 				}
 			case programschema.OccurrenceStorageWrite:
-				route, routeOK := rule.PredecessorRouteID()
-				if rule.InputSpec() != programissuance.InputPredecessorGeometry || !routeOK || !route.Available() {
+				route, routeOK := rule.PredecessorRoute()
+				if rule.InputSpec() != programissuance.InputPreviousStage || !routeOK || !route.Available() || route.Point == input {
 					t.Fatalf("write rule=%d did not retain exact predecessor route", ruleIndex)
 				}
 			}
 			// A predecessor write deliberately has no local transport edge:
 			// StagePredecessor's declared TransportAllExceptTargetWrites
 			// excludes the target axis, while Carry.Input=0 preserves the
-			// exact predecessor role. Its route witness is checked above.
+			// exact Value result from the preceding Local stage. Its independent
+			// route witness is checked above.
 			localParent := kind == programschema.OccurrenceStorageWrite
 			for edgeIndex := 0; edgeIndex < transferCount && !localParent; edgeIndex++ {
 				edge, edgeOK := program.LocalTransferAt(edgeIndex)

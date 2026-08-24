@@ -163,7 +163,7 @@ func TestEnvironmentAndLocalTransferIdentityFieldsPreserveWitnessAndKeyOrder(t *
 
 func TestRuleOccurrenceIdentityFieldsPreserveKeyAndOptionalPayloadOrder(t *testing.T) {
 	pointID := genericIdentityID(31)
-	rule, ruleOK := programschema.NewRuleOccurrenceWithInputs(schema.Key("rule-key"), schema.Key("writes-key"), 0, pointID, nil, programissuance.StageBase, programissuance.InputNone, identity.ContentID{}, false, programschema.RuleOccurrenceSource{})
+	rule, ruleOK := programschema.NewRuleOccurrenceWithInputs(schema.Key("rule-key"), schema.Key("writes-key"), 0, pointID, nil, programissuance.StageBase, programissuance.InputNone, programschema.RuleOccurrenceRoute{}, false, programschema.RuleOccurrenceSource{})
 	if !ruleOK {
 		t.Fatal("rule occurrence")
 	}
@@ -191,8 +191,8 @@ func TestRuleOccurrenceIdentityFieldsPreserveKeyAndOptionalPayloadOrder(t *testi
 
 func TestRuleOccurrenceNativeBitParticipatesInIdentity(t *testing.T) {
 	pointID, inputID := genericIdentityID(32), genericIdentityID(33)
-	ordinary, ordinaryOK := programschema.NewRuleOccurrenceWithInputs(schema.Key("rule-key"), schema.Key("writes-key"), 0, pointID, []identity.ContentID{inputID}, programissuance.StageCallDispatch, programissuance.InputPreviousStage, identity.ContentID{}, false, programschema.RuleOccurrenceSource{})
-	native, nativeOK := programschema.NewRuleOccurrenceWithInputs(schema.Key("rule-key"), schema.Key("writes-key"), 0, pointID, []identity.ContentID{inputID}, programissuance.StageCallDispatch, programissuance.InputPreviousStage, identity.ContentID{}, true, programschema.RuleOccurrenceSource{})
+	ordinary, ordinaryOK := programschema.NewRuleOccurrenceWithInputs(schema.Key("rule-key"), schema.Key("writes-key"), 0, pointID, []identity.ContentID{inputID}, programissuance.StageCallDispatch, programissuance.InputPreviousStage, programschema.RuleOccurrenceRoute{}, false, programschema.RuleOccurrenceSource{})
+	native, nativeOK := programschema.NewRuleOccurrenceWithInputs(schema.Key("rule-key"), schema.Key("writes-key"), 0, pointID, []identity.ContentID{inputID}, programissuance.StageCallDispatch, programissuance.InputPreviousStage, programschema.RuleOccurrenceRoute{}, true, programschema.RuleOccurrenceSource{})
 	if !ordinaryOK || !nativeOK {
 		t.Fatal("rule occurrence variants")
 	}
@@ -208,13 +208,50 @@ func TestRuleOccurrenceNativeBitParticipatesInIdentity(t *testing.T) {
 	}
 }
 
+func TestRuleOccurrenceRoutePointParticipatesInIdentityIndependently(t *testing.T) {
+	pointID, inputID := genericIdentityID(36), genericIdentityID(37)
+	routeID, firstLanding, secondLanding := genericIdentityID(38), genericIdentityID(39), genericIdentityID(40)
+	first, firstOK := programschema.NewRuleOccurrenceWithInputs(
+		schema.Key("rule-key"), schema.Key("writes-key"), 0, pointID,
+		[]identity.ContentID{inputID}, programissuance.StagePredecessor, programissuance.InputPreviousStage,
+		programschema.RuleOccurrenceRoute{Point: firstLanding, ID: routeID}, false, programschema.RuleOccurrenceSource{},
+	)
+	second, secondOK := programschema.NewRuleOccurrenceWithInputs(
+		schema.Key("rule-key"), schema.Key("writes-key"), 0, pointID,
+		[]identity.ContentID{inputID}, programissuance.StagePredecessor, programissuance.InputPreviousStage,
+		programschema.RuleOccurrenceRoute{Point: secondLanding, ID: routeID}, false, programschema.RuleOccurrenceSource{},
+	)
+	if !firstOK || !secondOK {
+		t.Fatal("routed rule occurrence variants")
+	}
+	var firstFields, secondFields genericIdentityOperations
+	if !genericIdentityProgram(t, programpublication.Publication{RuleOccurrences: []programschema.RuleOccurrence{first}}).WriteRuleOccurrenceIdentityFields(&firstFields) ||
+		!genericIdentityProgram(t, programpublication.Publication{RuleOccurrences: []programschema.RuleOccurrence{second}}).WriteRuleOccurrenceIdentityFields(&secondFields) {
+		t.Fatal("write routed rule identity variants")
+	}
+	if reflect.DeepEqual(firstFields, secondFields) || len(firstFields) != len(secondFields) || len(firstFields) < 2 {
+		t.Fatalf("route landing did not independently remint rule identity: first=%#v second=%#v", firstFields, secondFields)
+	}
+	for index := range firstFields {
+		if index == len(firstFields)-2 {
+			if firstFields[index] != (genericIdentityOperation{kind: 'i', id: firstLanding}) || secondFields[index] != (genericIdentityOperation{kind: 'i', id: secondLanding}) {
+				t.Fatalf("route landing identity slot was not canonical: first=%#v second=%#v", firstFields[index], secondFields[index])
+			}
+			continue
+		}
+		if firstFields[index] != secondFields[index] {
+			t.Fatalf("route landing changed unrelated identity slot %d: first=%#v second=%#v", index, firstFields[index], secondFields[index])
+		}
+	}
+}
+
 func TestRuleOccurrenceInputRolesPreserveOrdinalAliasing(t *testing.T) {
 	pointID, inputID := genericIdentityID(34), genericIdentityID(35)
 	rule, ruleOK := programschema.NewRuleOccurrenceWithInputs(
 		schema.Key("aliased-input-rule"), schema.Key("aliased-input-axis"), 0,
 		pointID, []identity.ContentID{inputID, inputID},
 		programissuance.StageComputation, programissuance.InputPreviousStage,
-		identity.ContentID{}, false, programschema.RuleOccurrenceSource{},
+		programschema.RuleOccurrenceRoute{}, false, programschema.RuleOccurrenceSource{},
 	)
 	if !ruleOK || rule.InputPointCount() != 2 {
 		t.Fatalf("aliased ordinal inputs were not sealed: rule=%+v", rule)

@@ -46,11 +46,11 @@ return redundant
 		occurrence, occurrenceOK := program.OccurrenceAt(int(ordinal))
 		_, bodyOK := occurrence.BodyID()
 		route, routeInputOK := program.OccurrenceInputID(int(ordinal), 3)
-		predecessor, predecessorOK := rule.PredecessorRouteID()
+		predecessor, predecessorOK := rule.PredecessorRoute()
 		point := rule.PointID()
 		input, inputOK := rule.InputPointAt(0)
-		if !ruleOK || !ordinalOK || !occurrenceOK || !bodyOK || occurrence.Kind() != programschema.OccurrenceBinaryPresenceRefinement || !routeInputOK || !predecessorOK || !point.Available() || !inputOK || predecessor != route ||
-			rule.InputSpec() != programissuance.InputPredecessorGeometry || rule.Stage() != programissuance.StagePredecessor || point == input {
+		if !ruleOK || !ordinalOK || !occurrenceOK || !bodyOK || occurrence.Kind() != programschema.OccurrenceBinaryPresenceRefinement || !routeInputOK || !predecessorOK || !point.Available() || !inputOK || predecessor.ID != route || !predecessor.Point.Available() ||
+			rule.InputSpec() != programissuance.InputPreviousStage || rule.Stage() != programissuance.StagePredecessor || point == input || predecessor.Point == input {
 			t.Fatalf("refinement[%d] lost exact guarded predecessor/local placement", index)
 		}
 		count++

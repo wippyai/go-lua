@@ -37,7 +37,6 @@ func TestScheduleResolvesPreviousFromDeclaredStageOrder(t *testing.T) {
 	base := testID(1)
 	predecessorStage := scheduleEntry(t, table, programissuance.StagePredecessor, schemaissuance.KindStage)
 	localStage := scheduleEntry(t, table, programissuance.StageLocal, schemaissuance.KindStage)
-	predecessorInput := scheduleEntry(t, table, programissuance.InputPredecessorGeometry, schemaissuance.KindInput)
 	previousInput := scheduleEntry(t, table, programissuance.InputPreviousStage, schemaissuance.KindInput)
 	pointOne := schemaissuance.DataType{Value: schemaissuance.ValuePointRange, Name: schemaissuance.TypePoint, Cardinality: schemaissuance.CardinalityOne}
 	pointMany := pointOne
@@ -47,7 +46,7 @@ func TestScheduleResolvesPreviousFromDeclaredStageOrder(t *testing.T) {
 		{subscription: subscription, stage: predecessorStage, base: base, parameters: []value{
 			{typ: pointOne, present: true, points: []identity.ContentID{base}},
 			{typ: schemaissuance.IdentityType(schemaissuance.TypeAxisKey), present: true, key: "axis/write"},
-		}, inputs: []Input{{declaration: predecessorInput, points: []identity.ContentID{base}}}},
+		}, inputs: []Input{{declaration: previousInput}}},
 	}
 	schedule, scheduled := BuildSchedule(41, plan, requests)
 	if !scheduled || schedule.NodeCount() != 3 || schedule.EmissionCount() != 2 {
@@ -55,9 +54,9 @@ func TestScheduleResolvesPreviousFromDeclaredStageOrder(t *testing.T) {
 	}
 	predecessor, _ := schedule.EmissionAt(1)
 	local, _ := schedule.EmissionAt(0)
-	input, inputOK := local.InputPointAt(0)
-	if !inputOK || input != predecessor.Point() {
-		t.Fatal("previous-stage input was not selected from sealed stage order")
+	input, inputOK := predecessor.InputPointAt(0)
+	if !inputOK || input != local.Point() {
+		t.Fatal("predecessor data input was not selected from the preceding Local stage")
 	}
 	for _, emission := range []Emission{local, predecessor} {
 		writers, found := schedule.PointWriters(emission.Point())
