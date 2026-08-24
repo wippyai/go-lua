@@ -625,13 +625,6 @@ func (work *bindingWork[K, V]) threeSupport(left, right support.Mask) (support.S
 	return support.ThreeWithWork(work.supportWork, work.poll, left, right)
 }
 
-func (work *bindingWork[K, V]) unionSupport(left, right support.Mask) (support.Mask, bool) {
-	if !work.live() || work.supportWork == nil {
-		return support.Mask{}, false
-	}
-	return support.UnionWithWork(work.supportWork, work.poll, left, right)
-}
-
 // entailsSupport is the hot Boolean inclusion boundary for one typed Work.
 // Its guard traversal uses the Work-owned read scratch rather than the
 // Manager observer, whose per-call stack/map would allocate on every
@@ -2195,22 +2188,6 @@ func (work *bindingWork[K, V]) clearBuckets() {
 		return
 	}
 	clear(work.buckets)
-}
-
-func (work *bindingWork[K, V]) emitGroups(root carrier.RootHandle, unit carrier.Unit, visit func(carrier.ObservationRow) bool) bool {
-	if !work.observationLive || len(work.partials) == 0 {
-		return false
-	}
-	for _, group := range work.partials {
-		row, ok := work.emitGroup(root, unit, group)
-		if !ok {
-			return false
-		}
-		if !visit(row) {
-			return false
-		}
-	}
-	return true
 }
 
 // emitGroup is the callback-free emission authority for one grouped

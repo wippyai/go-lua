@@ -266,26 +266,11 @@ func (ticket Ticket) InputHandleAt(index int) (uint32, bool) {
 	return ticket.issuer.inputHandles[index], true
 }
 
-func (run *Run) hasInputHandle(port uint16) bool {
-	return run != nil && int(port) < len(run.inputs)
-}
-
-func (run *Run) inputCapacity() int {
-	if run == nil {
-		return -1
-	}
-	return len(run.inputs)
-}
-
 func (ticket Ticket) OutputHandleAt(index int) (uint32, bool) {
 	if !ticket.Valid() || index < 0 || index >= len(ticket.issuer.outputHandles) {
 		return 0, false
 	}
 	return ticket.issuer.outputHandles[index], true
-}
-
-func (run *Run) hasOutputHandle(output uint16) bool {
-	return run != nil && int(output) < len(run.outputs)
 }
 
 // Close consumes a Ticket exactly once. A copied handle observes the same
@@ -322,10 +307,6 @@ func (ticket Ticket) base() (*carrier.Work, carrier.State, support.Mask, bool) {
 		return nil, carrier.State{}, support.Mask{}, false
 	}
 	return ticket.issuer.work, ticket.issuer.base, ticket.issuer.within, true
-}
-
-func (ticket Ticket) sameLease(other Ticket) bool {
-	return ticket.issuer != nil && ticket.issuer == other.issuer && ticket.serial == other.serial && ticket.Valid() && other.Valid()
 }
 
 func (run *Run) hasOutput() bool {

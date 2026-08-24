@@ -96,8 +96,11 @@ func Admit[K scalar.Key, V any](keyEnd uint64, default_ V, values lattice.Lattic
 		if !algebra.sameValue(narrowed, default_) || !algebra.lessOrEq(default_, narrowed) || !algebra.lessOrEq(narrowed, default_) || algebra.sameContradictsEqual(narrowed, default_) {
 			return nil, false
 		}
+		if fingerprint(narrowed) != fingerprint(default_) {
+			return nil, false
+		}
 	}
-	if fingerprint(default_) != fingerprint(default_) {
+	if fingerprint(joined) != fingerprint(default_) || fingerprint(widened) != fingerprint(default_) {
 		return nil, false
 	}
 	return algebra, true

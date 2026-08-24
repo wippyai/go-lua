@@ -109,6 +109,35 @@ func (fixture testFixture) unit(t testing.TB, key uint64) carrier.Unit {
 	return fixture.exact[key]
 }
 
+// admitPair is a value whose Equal treats field order as irrelevant while its
+// Fingerprint does not. Join swaps the fields, so the joined value is Equal
+// to its input under the algebra's own equality without being bit-identical
+// to it, exposing whether Admit actually verifies Fingerprint agrees with
+// Equal for the fixed points it establishes.
+type admitPair struct{ a, b int }
+
+func TestAdmitRejectsFingerprintDisagreeingWithJoinFixedPoint(t *testing.T) {
+	_, admitted := Admit(
+		1,
+		admitPair{a: 1, b: 2},
+		lattice.Lattice[admitPair]{
+			Bottom:   func() admitPair { return admitPair{a: 1, b: 2} },
+			Top:      func() admitPair { return admitPair{a: 1, b: 2} },
+			Equal:    func(left, right admitPair) bool { return left == right || (left.a == right.b && left.b == right.a) },
+			Join:     func(_, right admitPair) admitPair { return admitPair{a: right.b, b: right.a} },
+			Widen:    func(_, right admitPair) admitPair { return admitPair{a: right.b, b: right.a} },
+			LessOrEq: func(left, right admitPair) bool { return left == right || (left.a == right.b && left.b == right.a) },
+		},
+		func(_ uint64, _ admitPair) bool { return true },
+		func(value admitPair) uint64 { return uint64(value.a)*31 + uint64(value.b) },
+		Measure[uint64, admitPair]{},
+		Measure[uint64, admitPair]{},
+	)
+	if admitted {
+		t.Fatal("admitted a Fingerprint that disagrees with Equal on the algebra's own join fixed point")
+	}
+}
+
 func TestBindingStagesDefaultSparseFactThroughCarrier(t *testing.T) {
 	manager, err := guard.New(nil)
 	if err != nil {
