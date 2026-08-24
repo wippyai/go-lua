@@ -145,6 +145,47 @@ func TestOneRuleDeclaresOneEmittedLawSuite(t *testing.T) {
 	}
 }
 
+// TestARosteredDeclarationAuthorsNoSecondStructuralLaw is the law cutover's own
+// irreversibility, and the counterpart of TestARosteredPackageAuthorsNoSecondFamily.
+//
+// Once a declaration's structural laws are emitted, the package holds exactly
+// one statement of them. An authored geometry restatement beside the generated
+// one is a second authority over what the declaration is, and the two drift the
+// moment the declaration moves - the emitted half regenerates and the authored
+// half does not.
+//
+// The two spellings held here are the ones that are only ever the structural
+// suite's: the declared join count, and the reducer call-shape agreement. A
+// package may still call Check itself, because a law about what the upward seal
+// refuses has to establish that the declaration is data-local valid first.
+func TestARosteredDeclarationAuthorsNoSecondStructuralLaw(t *testing.T) {
+	root := moduleRoot(t)
+	restatements := []string{"JoinCount()", "CheckAgainst("}
+	for _, declaration := range familyroster.Declarations() {
+		directory := filepath.Join(root, declaration.Directory)
+		entries, err := os.ReadDir(directory)
+		if err != nil {
+			t.Fatalf("%s: %v", declaration.Directory, err)
+		}
+		for _, entry := range entries {
+			name := entry.Name()
+			if entry.IsDir() || !strings.HasSuffix(name, "_test.go") || name == familyroster.GeneratedLawFileName {
+				continue
+			}
+			source, readErr := os.ReadFile(filepath.Join(directory, name))
+			if readErr != nil {
+				t.Fatalf("%s/%s: %v", declaration.Directory, name, readErr)
+			}
+			for _, restatement := range restatements {
+				if strings.Contains(string(source), restatement) {
+					t.Errorf("%s/%s restates %s, which %s emits",
+						declaration.Directory, name, restatement, familyroster.GeneratedLawFileName)
+				}
+			}
+		}
+	}
+}
+
 func moduleRoot(t *testing.T) string {
 	t.Helper()
 	directory, err := os.Getwd()
