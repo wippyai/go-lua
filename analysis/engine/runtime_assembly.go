@@ -483,6 +483,9 @@ func assembleRuntimeOwned(graph *equation.Graph, runtime *carrier.Composition, p
 				return nil, false
 			}
 		}
+		if !validateRuntimeInputReads(program, span, group.InputCount()) {
+			return nil, false
+		}
 		inputProjection, projectionOK := sealRuntimeInputProjection(graph, executionPlan, group, inputTransports)
 		if !projectionOK {
 			return nil, false

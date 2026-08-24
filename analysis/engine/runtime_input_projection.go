@@ -31,6 +31,40 @@ type runtimeInputProjection struct {
 	transport         runtimeInput
 }
 
+// validateRuntimeInputReads is the cold structural fence between one Group
+// and its generated descriptors. It retains nothing: descriptor reads remain
+// the sole Factor authority, while this pass proves their input and Factor
+// ordinals belong to the sealed Group/program before runtime transport exists.
+func validateRuntimeInputReads(program *runtimeProgram, span memberSpan, inputCount int) bool {
+	if program == nil || !program.valid() || inputCount < 0 || span.count() < 0 {
+		return false
+	}
+	rows := program.memberRows(span)
+	if len(rows) != span.count() {
+		return false
+	}
+	for _, row := range rows {
+		if !row.valid() {
+			return false
+		}
+		if row.generated == nil {
+			continue
+		}
+		descriptor, ok := program.generatedProgramAt(row.generated.rule)
+		if !ok || descriptor.InputCount() != inputCount {
+			return false
+		}
+		for index := 0; index < descriptor.ReadCount(); index++ {
+			read, readOK := descriptor.ReadAt(index)
+			factor, factorOK := program.factorRecordAt(int(read.Factor))
+			if !readOK || int(read.Input) < 0 || int(read.Input) >= inputCount || !factorOK || !factor.valid() {
+				return false
+			}
+		}
+	}
+	return true
+}
+
 // sealRuntimeInputProjection converts the already constructed Group input
 // rows into dense graph-point ordinals. The Group row is the owner-issued
 // predecessor-State geometry; this function resolves its address exactly once

@@ -3,7 +3,46 @@ package engine
 import (
 	"context"
 	"testing"
+
+	"github.com/wippyai/go-lua/analysis/engine/generated"
 )
+
+// TestRuntimeInputReadValidationRetainsNoFactorMirror keeps malformed
+// descriptor geometry at Seal without putting Factor tuples on the input
+// projection. The descriptor and runtime Factor table remain the only two
+// authorities checked by this allocation-free pass.
+func TestRuntimeInputReadValidationRetainsNoFactorMirror(t *testing.T) {
+	fixture := newGeneratedFactorAdapterFixture(t)
+	member, memberOK := newGeneratedMember(generatedMemberTestSpec(t, fixture, 0, 0))
+	descriptor, descriptorOK := newExactIdentityDescriptor(0, 1, 0, 0, 0, 1, 1)
+	if !memberOK || !descriptorOK {
+		t.Fatal("generated input validation fixture")
+	}
+	program := &runtimeProgram{
+		memberTable:       []memberRow{{generated: member}},
+		generatedPrograms: []generated.CompiledRule{descriptor},
+		generatedPresent:  true,
+		factorTable: []factorRecord{{
+			key:   compositionKeyOf(coldKey(999_101)),
+			slot:  fixture.slot,
+			owner: 0,
+		}},
+		factorOwners:  []runtimeFactor{fixture.factor},
+		programSealed: true,
+	}
+	span := memberSpan{start: 0, end: 1}
+	if !validateRuntimeInputReads(program, span, 1) {
+		t.Fatal("canonical descriptor input was refused")
+	}
+
+	if validateRuntimeInputReads(program, span, 2) {
+		t.Fatal("descriptor with foreign Group input width was admitted")
+	}
+	program.factorTable = nil
+	if validateRuntimeInputReads(program, span, 1) {
+		t.Fatal("descriptor with an absent Factor row was admitted")
+	}
+}
 
 // TestRuntimeInputProjectionIsDenseAndGenerationFenced proves that every
 // Group port has exactly one sealed source address and that the address cannot
