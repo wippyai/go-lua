@@ -129,3 +129,52 @@ func TestAFamilyClaimNamesTheFactorItsRuleWritesTo(t *testing.T) {
 		t.Fatal("a family claim against a Factor the rule does not write to was admitted")
 	}
 }
+
+// lawForeignCoordinate is a second nominal coordinate over the same width - an
+// axis's private key type beside its published one, which is what an
+// unfinished coordinate migration leaves behind.
+type lawForeignCoordinate uint32
+
+// lawForeignKeyInstaller is a family typed at that other coordinate. Its fact
+// type is the Factor's, so only the key disagrees, which is exactly the shape
+// the defect takes: two names for one width.
+type lawForeignKeyInstaller struct{}
+
+func (lawForeignKeyInstaller) InstallRuleFamily(execution.FormPlane[lawForeignCoordinate, uint64], uint32, []execution.FormRow) (execution.Family, []execution.FormAddress, bool) {
+	return nil, nil, false
+}
+
+// TestAFamilyTypedAtAnotherCoordinateIsRefusedWhereItIsClaimed states where a
+// mistyped family has to be caught.
+//
+// The claim is resolved by a type assertion when the Factor binds its Program,
+// so a family typed at another coordinate does not fail loudly: the assertion
+// simply does not hold, the Factor refuses to bind, the plane refuses, and
+// every Program that touches that axis stops sealing with nothing naming why.
+// Two nominal coordinates over one width - an owner's private key beside the
+// axis's published one - produce exactly that, and no test of the rule's own
+// package sees it, because no package test binds a Program.
+//
+// So the claim is typed against the Factor it names, at the declaration that
+// makes it, and the refusal says what it was.
+func TestAFamilyTypedAtAnotherCoordinateIsRefusedWhereItIsClaimed(t *testing.T) {
+	binding, rule, factor := ruleFamilyFixture(t, 993_400)
+	if BindRuleFamily[lawForeignCoordinate](binding, rule, factor.Ref(), lawForeignKeyInstaller{}) {
+		t.Fatal("a family typed at another coordinate was claimed")
+	}
+	if !binding.Poisoned() {
+		t.Fatal("a mistyped claim left the binding open")
+	}
+	refusal, named := binding.Refusal()
+	if !named || refusal != "rule-family/foreign-coordinate" {
+		t.Fatalf("refusal = %q/%t, want the mistyped-claim site", refusal, named)
+	}
+
+	own, ownRule, ownFactor := ruleFamilyFixture(t, 993_410)
+	if !BindRuleFamily[uint64](own, ownRule, ownFactor.Ref(), lawRuleFamilyInstaller{}) {
+		t.Fatal("a family typed at its own Factor was refused")
+	}
+	if own.Poisoned() {
+		t.Fatal("a correctly typed claim poisoned the binding")
+	}
+}

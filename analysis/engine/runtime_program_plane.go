@@ -117,30 +117,34 @@ func (plane *programPlane) observationState(point equation.Point, context execut
 // binding's Factor cells by canonical ordinal, prepares the one carrier
 // composition for them, and releases the cold catalog before returning, so the
 // plane retains only concrete runtime handles.
-func bindProgramPlane(state *schemaBindingState, graph *equation.Graph) (*programPlane, bool) {
+func bindProgramPlane(state *schemaBindingState, graph *equation.Graph) (*programPlane, ProgramSealStage, bool) {
 	runtime, ok := newSealedRuntimeBinding(state, graph)
 	if !ok || runtime == nil {
-		return nil, false
+		return nil, ProgramSealStageAdmission, false
 	}
+	// Everything past the sealed binding is the bound Factor table, and it says
+	// so. A Factor that will not bind - because its algebra, its graph catalog,
+	// or the family typed against it does not resolve - is not an admission
+	// fault, and reporting one sends every reader to the program's inputs.
 	factors, byKey, ok := bindProgramPlaneFactors(state, runtime)
 	if !ok || !runtime.freezeCatalog() {
-		return nil, false
+		return nil, ProgramSealStageFactorBind, false
 	}
 	prepared, ordered, ok := prepareRuntimeComposition(factors, runtime.guards)
 	if !ok || prepared == nil {
-		return nil, false
+		return nil, ProgramSealStageFactorBind, false
 	}
 	attached, ok := prepared.Attach()
 	if !ok || attached == nil {
-		return nil, false
+		return nil, ProgramSealStageFactorBind, false
 	}
 	for _, factor := range ordered {
 		preparer, preparable := factor.(interface{ prepareRouteTransformClosure() bool })
 		if !preparable || !preparer.prepareRouteTransformClosure() {
-			return nil, false
+			return nil, ProgramSealStageFactorBind, false
 		}
 	}
-	return &programPlane{runtime: runtime, factors: factors, byKey: byKey, carrier: attached, ordered: ordered, frozen: true}, true
+	return &programPlane{runtime: runtime, factors: factors, byKey: byKey, carrier: attached, ordered: ordered, frozen: true}, ProgramSealStageNone, true
 }
 
 // releaseColdFactorBindings drops the cold declaration state every bound Factor

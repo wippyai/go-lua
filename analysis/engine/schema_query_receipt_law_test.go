@@ -96,7 +96,7 @@ func TestCommittedExactQueryPublishesOneEvidenceSurface(t *testing.T) {
 func TestProgramExactQueryEvidenceRejectsForeignBindingAndGraph(t *testing.T) {
 	fixture := newReceiptQueryMatrixFixture(t, 1, nil, nil)
 	query, queryOK := fixture.graph.Query(programMatrixID(110))
-	plane, planeOK := bindProgramPlane(fixture.graph.state, fixture.graph.graph)
+	plane, _, planeOK := bindProgramPlane(fixture.graph.state, fixture.graph.graph)
 	implementation := fixture.queryImplementations[0]
 	if !queryOK || !planeOK || plane == nil || implementation == nil || !plane.attachQueryContext(fixture.graph) {
 		t.Fatal("exact query evidence plane")

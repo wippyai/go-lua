@@ -104,7 +104,7 @@ func newReadLaneFixture(t testing.TB) readLaneFixture {
 		t.Fatal("read lane rule implementation")
 	}
 	program := constructReadLaneProgram(t, binding, schema, capability, implementation, queryImplementation)
-	plane, planeOK := bindProgramPlane(program.state, program.graph)
+	plane, _, planeOK := bindProgramPlane(program.state, program.graph)
 	if !planeOK || plane == nil {
 		t.Fatal("read lane factor plane")
 	}

@@ -60,9 +60,12 @@ func (committed *CommittedProgram) seal(observations []ProgramObservationAdmissi
 	if !committed.valid() {
 		return nil, ProgramStageFailure(ProgramSealStageAdmission), false
 	}
-	plane, planeOK := bindProgramPlane(committed.state, committed.graph)
+	plane, planeStage, planeOK := bindProgramPlane(committed.state, committed.graph)
 	if !planeOK || plane == nil || plane.carrier == nil || plane.byKey == nil {
-		return nil, ProgramStageFailure(ProgramSealStageAdmission), false
+		if planeStage == ProgramSealStageNone {
+			planeStage = ProgramSealStageFactorBind
+		}
+		return nil, ProgramStageFailure(planeStage), false
 	}
 	if !plane.attachQueryContext(committed) {
 		return nil, ProgramStageFailure(ProgramSealStageAdmission), false

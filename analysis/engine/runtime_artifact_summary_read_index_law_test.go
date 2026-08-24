@@ -75,7 +75,7 @@ func newArtifactSummaryReadLane(t testing.TB) readLaneFixture {
 		t.Fatal("artifact-summary-read-index implementation")
 	}
 	program := constructArtifactSummaryReadLaneProgram(t, binding, schema, capability, implementation, queryImplementation)
-	plane, planeOK := bindProgramPlane(program.state, program.graph)
+	plane, _, planeOK := bindProgramPlane(program.state, program.graph)
 	if !planeOK || plane == nil {
 		t.Fatal("artifact-summary-read-index plane")
 	}

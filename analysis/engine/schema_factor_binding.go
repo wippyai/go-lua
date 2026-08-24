@@ -3,6 +3,7 @@
 package engine
 
 import (
+	"github.com/wippyai/go-lua/analysis/engine/execution"
 	"github.com/wippyai/go-lua/analysis/engine/internal/carrier"
 	"github.com/wippyai/go-lua/analysis/engine/internal/composition"
 	"github.com/wippyai/go-lua/analysis/engine/internal/equation"
@@ -125,6 +126,13 @@ type schemaFactorBinding interface {
 	schemaFactorAlgebra() anyFactorAlgebra
 	schemaFactorSemanticKey() composition.Key
 	schemaFactorComplete() bool
+	// schemaFactorAdmitsRuleFamily reports whether one installer is typed in
+	// this Factor's own key and fact. A family belongs to the Factor its rule
+	// writes to, so an installer typed at any other pair is not this Factor's
+	// family at all - and because the claim is resolved by a type assertion at
+	// Program seal, an untyped one would otherwise surface as a Factor that
+	// silently refuses to bind, far from the declaration that made it.
+	schemaFactorAdmitsRuleFamily(installer any) bool
 	schemaFactorRuntimeBinding(*runtimeBinding) (runtimeFactor, bool)
 	schemaFactorReadComplete(*schemaBindingState, *schemaRuleReadRow) bool
 	schemaFactorBindExactRead(readBinding, equation.RuleMember, map[composition.Key]runtimeFactor, *schemaRuleReadRow, ReadContract) bool
@@ -332,6 +340,14 @@ func (cell *schemaFactorBindingCell[K, V]) sealedImplementation(state *schemaBin
 	result.row = cell
 	result.ordinal = cell.ordinal
 	return &result, true
+}
+
+func (cell *schemaFactorBindingCell[K, V]) schemaFactorAdmitsRuleFamily(installer any) bool {
+	if cell == nil || installer == nil {
+		return false
+	}
+	_, typed := installer.(execution.RuleFamilyInstaller[K, V])
+	return typed
 }
 
 func (cell *schemaFactorBindingCell[K, V]) schemaFactorComplete() bool {

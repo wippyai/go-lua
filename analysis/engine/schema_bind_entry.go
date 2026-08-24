@@ -188,6 +188,16 @@ func BindRuleFamily[K ~uint32 | ~uint64, V any](binding *SchemaBinding, slot Rul
 		state.poisonLocked()
 		return false
 	}
+	// The installer must be typed in that Factor's own key and fact. A family
+	// typed at another coordinate is one this Factor's binding could never
+	// resolve, and resolving it is a type assertion made at Program seal - so
+	// an unnamed refusal there reads as a Factor that will not bind rather than
+	// as the declaration that mistyped it. Two nominal coordinates over one
+	// width are the case this actually catches.
+	if !state.factors[factorOrdinal].schemaFactorAdmitsRuleFamily(installer) {
+		state.poisonNamed("rule-family/foreign-coordinate")
+		return false
+	}
 	// One rule ordinal has one family. A second claim is two authorities for
 	// one rule's execution, which no order between them could resolve.
 	if _, claimed := state.ruleFamilies[ruleOrdinal]; claimed {
