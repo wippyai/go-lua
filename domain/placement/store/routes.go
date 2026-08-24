@@ -54,15 +54,16 @@ const routeInlineWidth = 8
 func (plan RoutePlan) Valid() bool   { return plan.class != routeInvalid }
 func (plan RoutePlan) Bottom() bool  { return plan.class == routeBottom }
 func (plan RoutePlan) Widened() bool { return plan.class == routeWidened }
-func (plan RoutePlan) RouteCount() int {
+
+func (plan RoutePlan) routeCount() int {
 	if plan.count < 0 {
 		return 0
 	}
 	return plan.count
 }
 
-func (plan RoutePlan) RouteAt(index int) (Route, bool) {
-	if index < 0 || index >= plan.RouteCount() {
+func (plan RoutePlan) routeAt(index int) (Route, bool) {
+	if index < 0 || index >= plan.routeCount() {
 		return Route{}, false
 	}
 	if plan.allRoot {
@@ -142,11 +143,15 @@ func planRoutes(schema placement.Schema, values *valuedomain.Schema, fact valued
 	return plan, true
 }
 
-// RouteCount is the direct composition accessor for a sealed RoutePlan.
-func RouteCount(plan RoutePlan) int { return plan.RouteCount() }
+// RouteCount is the direct composition accessor for a sealed RoutePlan. It is
+// the derived Build's own Count companion, so it is a free function rather
+// than a method: a derivation call shape names the plan it counts, not a
+// receiver that hides it.
+func RouteCount(plan RoutePlan) int { return plan.routeCount() }
 
-// RouteAt is the direct composition accessor for one RoutePlan row.
-func RouteAt(plan RoutePlan, index int) (Route, bool) { return plan.RouteAt(index) }
+// RouteAt is the direct composition accessor for one RoutePlan row, the
+// derived Build's At companion for the same reason RouteCount is a function.
+func RouteAt(plan RoutePlan, index int) (Route, bool) { return plan.routeAt(index) }
 
 // allAllocationPlan keeps widening lazy. It counts and authenticates the
 // owner's allocation coordinates once, then RouteAt/routeAtTag derive each
@@ -186,11 +191,11 @@ func (plan RoutePlan) routeAtTag(tag uint64) (Route, bool) {
 	if plan.allRoot {
 		return plan.allRootAtTag(tag)
 	}
-	count := plan.RouteCount()
+	count := plan.routeCount()
 	low, high := 0, count
 	for low < high {
 		middle := low + (high-low)/2
-		candidate, candidateOK := plan.RouteAt(middle)
+		candidate, candidateOK := plan.routeAt(middle)
 		if !candidateOK {
 			return Route{}, false
 		}
@@ -202,7 +207,7 @@ func (plan RoutePlan) routeAtTag(tag uint64) (Route, bool) {
 	}
 	index := low
 	if index < count {
-		candidate, candidateOK := plan.RouteAt(index)
+		candidate, candidateOK := plan.routeAt(index)
 		if candidateOK && candidate.Tag == tag {
 			return candidate, true
 		}
@@ -259,7 +264,7 @@ func (plan *RoutePlan) addExact(candidate Route) bool {
 	}
 	position := 0
 	for position < plan.count {
-		current, currentOK := plan.RouteAt(position)
+		current, currentOK := plan.routeAt(position)
 		if !currentOK {
 			return false
 		}
