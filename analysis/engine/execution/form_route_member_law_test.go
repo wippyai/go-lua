@@ -366,3 +366,98 @@ func TestARoutedFoldRefusesAMemberItMayOnlyRead(t *testing.T) {
 		t.Fatalf("a fold published through a member it may only read, settling %v", outcome)
 	}
 }
+
+// TestAForeignSelectionResolvesMembersAtTheForeignAxisOwnTypes states how a
+// dependent join on an axis this rule does not write is observed.
+//
+// The members are coordinates of the FOREIGN Factor, so they cannot come from
+// this plane's own geometry - and the rule's family may not name that Factor's
+// key and fact types either. The handle carries the geometry beside the read
+// side it already carried, and the caller states the types for the same reason
+// ForeignExactRead makes it state them: a handle asked for another pair is
+// refused rather than reinterpreted.
+func TestAForeignSelectionResolvesMembersAtTheForeignAxisOwnTypes(t *testing.T) {
+	fixture := newSelectedFixture(t)
+	table, tableOK := NewRouteTable(fixture.units, nil)
+	if !tableOK {
+		t.Fatal("foreign selection geometry")
+	}
+	foreign, foreignOK := NewForeignFactor(fixture.binding, table)
+	if !foreignOK {
+		t.Fatal("foreign handle")
+	}
+	member, resolved := ForeignSelectedMember[uint64, uint64](foreign, 1, 4)
+	if !resolved || !member.Valid() {
+		t.Fatal("a foreign axis resolved no member of its own coordinate universe")
+	}
+	if !member.Coordinate().Unit.Same(fixture.units[1]) || member.Tag() != 4 {
+		t.Fatal("the foreign member does not name the coordinate its position holds")
+	}
+	if member.Routed() {
+		t.Fatal("a foreign member carries a destination; a rule publishes into the Factor it writes")
+	}
+	if _, resolved := ForeignSelectedMember[uint32, uint32](foreign, 1, 4); resolved {
+		t.Fatal("a foreign selection was resolved at another Factor's types")
+	}
+	if _, resolved := ForeignSelectedMember[uint64, uint64](foreign, selectedFixtureWidth, 4); resolved {
+		t.Fatal("a coordinate outside the foreign universe resolved a member")
+	}
+	if width := ForeignSelectionWidth[uint64, uint64](foreign); width != selectedFixtureWidth {
+		t.Fatalf("foreign selection width = %d, want %d", width, selectedFixtureWidth)
+	}
+
+	own := newSelectedFixture(t)
+	stranger, strangerOK := NewForeignFactor(own.binding, table)
+	if !strangerOK {
+		t.Fatal("stranger handle")
+	}
+	if _, resolved := ForeignSelectedMember[uint64, uint64](stranger, 1, 4); resolved {
+		t.Fatal("a coordinate another binding minted resolved against this one")
+	}
+}
+
+// TestForeignSelectionIsNarrowerThanTheForeignReadTable states the fence.
+// Enumerating the members of an axis is what a dependent join does; a rule
+// that reads one coordinate of an axis has no member set of it to walk, so the
+// selection handle is published for exactly the axes its plan selects and the
+// read handle stays published for every axis its plan joins.
+func TestForeignSelectionIsNarrowerThanTheForeignReadTable(t *testing.T) {
+	fixture := newSelectedFixture(t)
+	table, tableOK := NewRouteTable(fixture.units, fixture.targets)
+	if !tableOK {
+		t.Fatal("route geometry")
+	}
+	entries := make([]ForeignFactor, 3)
+	for index := range entries {
+		entry, entryOK := NewForeignFactor(fixture.binding, table)
+		if !entryOK {
+			t.Fatal("foreign entry")
+		}
+		entries[index] = entry
+	}
+	plane, planeOK := NewFormPlane(fixture.binding, nil, nil, table, entries, nil)
+	if !planeOK {
+		t.Fatal("form plane")
+	}
+	exact, exactOK := plane.forRule([]FormRow{{Member: 0, Form: FormExact, Rule: planCompiledExactRule(t)}})
+	if !exactOK {
+		t.Fatal("narrowed exact plane")
+	}
+	if _, published := exact.Foreign(1); !published {
+		t.Fatal("an axis this rule joins has no read handle")
+	}
+	if _, published := exact.ForeignSelection(1); published {
+		t.Fatal("an axis this rule only reads one coordinate of published a selection handle")
+	}
+
+	routed, routedOK := plane.forRule([]FormRow{{Member: 0, Form: FormSelectedRoute, Rule: routedDescriptor(t, 1)}})
+	if !routedOK {
+		t.Fatal("narrowed routed plane")
+	}
+	if _, published := routed.ForeignSelection(2); !published {
+		t.Fatal("the axis this rule selects published no selection handle")
+	}
+	if _, published := routed.ForeignSelection(0); published {
+		t.Fatal("an axis no join of this rule named published a selection handle")
+	}
+}

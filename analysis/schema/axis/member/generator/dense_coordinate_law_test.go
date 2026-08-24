@@ -52,8 +52,9 @@ func TestEveryAxisPublishesOneDenseCoordinateInItsOwnPackage(t *testing.T) {
 
 // TestTheGeneratedOwnerDeclaresTheCoordinateAndItsReadHandle states what the
 // rendered artifact owes a family of another axis: the coordinate type itself,
-// over the declared width, and one read handle already instantiated at this
-// axis's coordinate and fact.
+// over the declared width, and the two handles already instantiated at this
+// axis's coordinate and fact - one to read a coordinate, one to enumerate the
+// members of a dependent join.
 //
 // The handle is the whole reason the type is exported. A cross-axis fold reads
 // a Factor whose key and fact types it may not name; with the handle it names
@@ -91,6 +92,10 @@ func TestTheGeneratedOwnerDeclaresTheCoordinateAndItsReadHandle(t *testing.T) {
 			}
 			if !strings.Contains(rendered, "execution.ForeignExactRead"+pair) {
 				t.Fatalf("the read handle of %q is not sealed at the axis's own types", source.Name)
+			}
+			selection := "func ForeignSelectedMember(foreign execution.ForeignFactor, dense uint32, tag uint64) (execution.RouteMember, bool)"
+			if !strings.Contains(rendered, selection) || !strings.Contains(rendered, "execution.ForeignSelectedMember"+pair) {
+				t.Fatalf("generated owner publishes no selection handle at %s", pair)
 			}
 		})
 	}

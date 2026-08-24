@@ -28,6 +28,16 @@ func ForeignRead(foreign execution.ForeignFactor, coordinate execution.SelectedC
 	return execution.ForeignExactRead[DenseCoordinate, Value](foreign, coordinate.Unit, input)
 }
 
+// ForeignSelectedMember resolves one dense coordinate of a bound pack Factor
+// into one member of a dependent join, at this axis's own coordinate and fact
+// types. It is the selection sibling of the read handle: a family of another
+// axis enumerates the members it joins without naming this axis's pair, and
+// resolves no destination, because a rule publishes into the Factor it writes
+// and never into one it merely joins.
+func ForeignSelectedMember(foreign execution.ForeignFactor, dense uint32, tag uint64) (execution.RouteMember, bool) {
+	return execution.ForeignSelectedMember[DenseCoordinate, Value](foreign, dense, tag)
+}
+
 // RelationOwner is the generated bind-time owner for pack's member relations.
 type RelationOwner struct {
 	schema        *Schema

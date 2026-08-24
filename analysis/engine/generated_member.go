@@ -380,7 +380,7 @@ func (factor *boundFactor[K, V]) foreignRead() (execution.ForeignFactor, bool) {
 	if factor == nil {
 		return nil, false
 	}
-	return execution.NewForeignFactor(factor.binding)
+	return execution.NewForeignFactor(factor.binding, factor.routeGeometry())
 }
 
 func (member *generatedMember) executeGeneratedAt(epoch *executorEpoch, base carrier.RuleContributionBase, inputs []carrier.State, within support.Mask) memberResult {

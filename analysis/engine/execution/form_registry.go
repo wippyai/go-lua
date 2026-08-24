@@ -177,17 +177,51 @@ type ForeignFactor interface{ sealedForeignFactor() }
 
 type foreignFactor[K scalar.Key, V any] struct {
 	binding *factbinding.Binding[K, V]
+	routes  RouteTable
 }
 
 func (foreignFactor[K, V]) sealedForeignFactor() {}
 
 // NewForeignFactor seals one bound Factor's read side for delivery to the
-// installers of rules that declared it as an input axis.
-func NewForeignFactor[K scalar.Key, V any](binding *factbinding.Binding[K, V]) (ForeignFactor, bool) {
+// installers of rules that declared it as an input axis. The selection
+// geometry travels with it because a dependent join on a foreign axis observes
+// members of THAT axis: a rule that could not name the foreign coordinates
+// would have nothing to observe its own selection at.
+func NewForeignFactor[K scalar.Key, V any](binding *factbinding.Binding[K, V], routes RouteTable) (ForeignFactor, bool) {
 	if binding == nil {
 		return nil, false
 	}
-	return foreignFactor[K, V]{binding: binding}, true
+	return foreignFactor[K, V]{binding: binding, routes: routes}, true
+}
+
+// ForeignSelectedMember resolves one dense coordinate of a foreign input axis
+// into the observation half of a member, at that axis's own types.
+//
+// It is the selection sibling of ForeignExactRead and it carries the same
+// fence: the caller states the types because it is the only party that knows
+// them, and a handle typed otherwise is refused rather than reinterpreted. No
+// destination is ever resolved here - a rule publishes into the Factor it
+// writes, never into one it merely joins.
+func ForeignSelectedMember[K scalar.Key, V any](foreign ForeignFactor, dense uint32, tag uint64) (RouteMember, bool) {
+	typed, ok := foreign.(foreignFactor[K, V])
+	if !ok || typed.binding == nil {
+		return RouteMember{}, false
+	}
+	member, memberOK := typed.routes.selectedMember(dense, tag)
+	if !memberOK || !typed.binding.ValidUnit(member.coordinate.Unit) {
+		return RouteMember{}, false
+	}
+	return member, true
+}
+
+// ForeignSelectionWidth is the dense extent of a foreign axis's coordinate
+// universe, at that axis's own types.
+func ForeignSelectionWidth[K scalar.Key, V any](foreign ForeignFactor) int {
+	typed, ok := foreign.(foreignFactor[K, V])
+	if !ok {
+		return 0
+	}
+	return typed.routes.Width()
 }
 
 // ForeignExactRead seals one exact read of a foreign input axis at the read
@@ -218,6 +252,7 @@ type FormPlane[K scalar.Key, V any] struct {
 	routed   bool
 	selects  bool
 	foreign  []ForeignFactor
+	selected []ForeignFactor
 	families *RuleFamilies[K, V]
 }
 
@@ -245,6 +280,17 @@ func (plane FormPlane[K, V]) Foreign(factor uint32) (ForeignFactor, bool) {
 	return plane.foreign[factor], true
 }
 
+// ForeignSelection resolves the same handle for an axis this rule declared a
+// DEPENDENT join against. It is narrower than Foreign on purpose: resolving
+// members of an axis is what a selection does, and a rule that reads one
+// coordinate of an axis has no member set of it to enumerate.
+func (plane FormPlane[K, V]) ForeignSelection(factor uint32) (ForeignFactor, bool) {
+	if !plane.Valid() || uint64(factor) >= uint64(len(plane.selected)) || plane.selected[factor] == nil {
+		return nil, false
+	}
+	return plane.selected[factor], true
+}
+
 // forRule narrows this plane's foreign table to the input axes one rule's own
 // rows declared joins against. It is the foreign fence, stated once: every
 // installer receives a plane that can seal a read against the Factors its plan
@@ -253,7 +299,15 @@ func (plane FormPlane[K, V]) forRule(rows []FormRow) (FormPlane[K, V], bool) {
 	if !plane.Valid() || len(rows) == 0 {
 		return FormPlane[K, V]{}, false
 	}
-	var declared []ForeignFactor
+	var declared, selected []ForeignFactor
+	grow := func(table []ForeignFactor, factor uint32) []ForeignFactor {
+		if uint64(factor) < uint64(len(table)) {
+			return table
+		}
+		grown := make([]ForeignFactor, factor+1)
+		copy(grown, table)
+		return grown
+	}
 	for _, row := range rows {
 		for index := 0; index < row.Rule.ReadCount(); index++ {
 			read, readOK := row.Rule.ReadAt(index)
@@ -263,16 +317,18 @@ func (plane FormPlane[K, V]) forRule(rows []FormRow) (FormPlane[K, V], bool) {
 			if uint64(read.Factor) >= uint64(len(plane.foreign)) {
 				return FormPlane[K, V]{}, false
 			}
-			if uint64(read.Factor) >= uint64(len(declared)) {
-				grown := make([]ForeignFactor, read.Factor+1)
-				copy(grown, declared)
-				declared = grown
-			}
+			declared = grow(declared, read.Factor)
 			declared[read.Factor] = plane.foreign[read.Factor]
+			if read.Form != ruleprogram.Selected {
+				continue
+			}
+			selected = grow(selected, read.Factor)
+			selected[read.Factor] = plane.foreign[read.Factor]
 		}
 	}
 	narrowed := plane
 	narrowed.foreign = declared
+	narrowed.selected = selected
 	narrowed.routed = declaresRoute(rows)
 	narrowed.selects = declaresSelection(rows)
 	return narrowed, true

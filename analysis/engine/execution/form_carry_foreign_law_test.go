@@ -246,7 +246,7 @@ func TestAWTFoldReadsOneFactorAndWritesAnother(t *testing.T) {
 	fixture.publishWrite(t, fixture.writeTargets[0], 3)
 	fixture.publishWrite(t, fixture.writeTargets[1], 5)
 
-	foreign, foreignOK := NewForeignFactor(fixture.read)
+	foreign, foreignOK := NewForeignFactor(fixture.read, RouteTable{})
 	if !foreignOK {
 		t.Fatal("foreign read side")
 	}
@@ -294,7 +294,7 @@ func TestAWTFoldReadsOneFactorAndWritesAnother(t *testing.T) {
 // binding is not a byte range that two domains can both claim.
 func TestAForeignReadIsSealedAtItsOwnTypes(t *testing.T) {
 	fixture := newForeignCarryFixture(t)
-	foreign, foreignOK := NewForeignFactor(fixture.read)
+	foreign, foreignOK := NewForeignFactor(fixture.read, RouteTable{})
 	if !foreignOK {
 		t.Fatal("foreign read side")
 	}
@@ -307,7 +307,7 @@ func TestAForeignReadIsSealedAtItsOwnTypes(t *testing.T) {
 	if _, ok := ForeignExactRead[uint32, readFact](foreign, fixture.writeUnits[0], 0); ok {
 		t.Fatal("a Unit minted by another binding was sealed as a foreign read")
 	}
-	if _, ok := NewForeignFactor[uint32, readFact](nil); ok {
+	if _, ok := NewForeignFactor[uint32, readFact](nil, RouteTable{}); ok {
 		t.Fatal("an absent binding was sealed as a read side")
 	}
 }
@@ -322,7 +322,7 @@ func TestAWarmForeignCarryAllocatesNothing(t *testing.T) {
 	fixture.publishRead(t, fixture.readTargets[0], 7)
 	fixture.publishWrite(t, fixture.writeTargets[0], 3)
 	fixture.publishWrite(t, fixture.writeTargets[1], 5)
-	foreign, foreignOK := NewForeignFactor(fixture.read)
+	foreign, foreignOK := NewForeignFactor(fixture.read, RouteTable{})
 	if !foreignOK {
 		t.Fatal("foreign read side")
 	}

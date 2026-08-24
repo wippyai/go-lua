@@ -249,7 +249,7 @@ func TestARulePackageOutsideTheEngineAuthorsItsOwnFamily(t *testing.T) {
 	if !families.Install(rule, externalInstaller{rule: rule}) {
 		t.Fatal("family claim")
 	}
-	read, readOK := execution.NewForeignFactor(fixture.binding)
+	read, readOK := execution.NewForeignFactor(fixture.binding, execution.RouteTable{})
 	if !readOK {
 		t.Fatal("foreign read side")
 	}

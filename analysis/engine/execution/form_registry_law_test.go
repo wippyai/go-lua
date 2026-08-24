@@ -208,7 +208,7 @@ type installedFamilyProvider struct {
 // not.
 func fixtureForeignTable(t testing.TB, fixture executionFixture, width int) []ForeignFactor {
 	t.Helper()
-	read, readOK := NewForeignFactor(fixture.binding)
+	read, readOK := NewForeignFactor(fixture.binding, RouteTable{})
 	if !readOK {
 		t.Fatal("foreign read side")
 	}
