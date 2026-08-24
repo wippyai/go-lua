@@ -326,9 +326,19 @@ func (builder *sealBuilder) buildLivenessIndex() (*livenessIndex, error) {
 			index.subjectsByOwner[owner][key] = subject
 			bySubject[key] = append(bySubject[key], eventIndex)
 		}
-		addEventSubject(event.Subject)
-		if !sameSubjectKey(event.Subject, event.Related) {
-			addEventSubject(event.Related)
+		// roots() issues exactly one RoleRoot Define per body solely to
+		// publish that body's owner directory (see subjectsForOwner); the
+		// body's own root is not itself a tracked subject. Registering it
+		// here would surface a spurious self-liveness row at every boundary
+		// the body yields through, including bodies that are never captured
+		// or returned as a value. A genuine reference to a body's root
+		// (capture, alias, unknown pass-through) arrives through its own
+		// event with a different Role and is indexed normally below.
+		if event.Kind != EventDefine || event.Role != RoleRoot {
+			addEventSubject(event.Subject)
+			if !sameSubjectKey(event.Subject, event.Related) {
+				addEventSubject(event.Related)
+			}
 		}
 		if event.Kind == EventAlias && event.Subject.Kind.valid() && event.Subject.ID.Available() && event.Related.Kind.valid() && event.Related.ID.Available() {
 			left, right := makeSubjectKey(event.Subject), makeSubjectKey(event.Related)
@@ -410,10 +420,14 @@ func subjectsForOwner(index *livenessIndex, owner keyspace.Term) ([]Subject, boo
 		return nil, false
 	}
 	seen, published := index.subjectsByOwner[owner]
-	// roots() publishes one exact SubjectRoot event for every body before this
-	// index is built. An absent or empty owner entry therefore means the source
-	// directory is malformed; it is not evidence for an Unknown root.
-	if !published || len(seen) == 0 {
+	// roots() issues one event for every body before this index is built, so
+	// buildLivenessIndex always publishes an owner directory for a real body;
+	// an absent directory means the source never reached this owner and is
+	// malformed evidence, not proof of an empty subject set. A published but
+	// empty directory is the true, common case: this body tracks no local
+	// subject beyond its own root bookkeeping, and it must be admitted with
+	// zero members rather than refused as if it were missing.
+	if !published {
 		return nil, false
 	}
 	subjects := make([]Subject, 0, len(seen))
