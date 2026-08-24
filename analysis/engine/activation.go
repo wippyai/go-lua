@@ -32,17 +32,6 @@ func NewActivationLocator(application, target, endpoint identity.SemanticKey) (A
 	return ActivationLocator{application: application, target: target, endpoint: endpoint}, true
 }
 
-// NewContextualActivationLocator constructs the owner-qualified locator used
-// by mounted activation. The complete transition tuple is carried alongside
-// the semantic relation; selection refuses when any component is missing or
-// disagrees with the executing source context.
-func NewContextualActivationLocator(application, target, endpoint identity.SemanticKey, transitionID, fromContextID, toContextID identity.ContentID) (ActivationLocator, bool) {
-	if !application.Available() || !target.Available() || !endpoint.Available() || !transitionID.Available() || !fromContextID.Available() || !toContextID.Available() {
-		return ActivationLocator{}, false
-	}
-	return ActivationLocator{application: application, target: target, endpoint: endpoint, transitionID: transitionID, fromContextID: fromContextID, toContextID: toContextID}, true
-}
-
 func (locator ActivationLocator) contextual() equation.ActivationContext {
 	return equation.ActivationContext{TransitionID: locator.transitionID, FromContextID: locator.fromContextID, ToContextID: locator.toContextID}
 }
