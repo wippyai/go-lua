@@ -50,6 +50,25 @@ func TestEveryAxisPublishesOneDenseCoordinateInItsOwnPackage(t *testing.T) {
 	}
 }
 
+// renderedTypeArguments returns the instantiation that follows one prefix in
+// the rendered artifact, so a law can compare the pair two handles are sealed
+// at without restating how the generator spells a type.
+func renderedTypeArguments(rendered, prefix string) (string, bool) {
+	at := strings.Index(rendered, prefix)
+	if at < 0 {
+		return "", false
+	}
+	open := strings.Index(rendered[at:], "[")
+	if open < 0 {
+		return "", false
+	}
+	close := strings.Index(rendered[at+open:], "]")
+	if close < 0 {
+		return "", false
+	}
+	return rendered[at+open : at+open+close+1], true
+}
+
 // TestTheGeneratedOwnerDeclaresTheCoordinateAndItsReadHandle states what the
 // rendered artifact owes a family of another axis: the coordinate type itself,
 // over the declared width, and the two handles already instantiated at this
@@ -60,6 +79,12 @@ func TestEveryAxisPublishesOneDenseCoordinateInItsOwnPackage(t *testing.T) {
 // a Factor whose key and fact types it may not name; with the handle it names
 // neither and still gets a read sealed at exactly those types, instead of an
 // erased one it would have to reinterpret.
+//
+// The pair is read out of the artifact rather than spelled here. An axis whose
+// rendered owner sits in a package of its own qualifies its fact type, and how
+// that type is written is the generator's business; what this law owes is that
+// both handles are sealed at ONE pair, that the pair's coordinate is the type
+// this file publishes, and that the pair names this axis's fact.
 func TestTheGeneratedOwnerDeclaresTheCoordinateAndItsReadHandle(t *testing.T) {
 	roster, rosterOK := memberroster.Composition()
 	if !rosterOK {
@@ -85,10 +110,16 @@ func TestTheGeneratedOwnerDeclaresTheCoordinateAndItsReadHandle(t *testing.T) {
 			if !strings.Contains(rendered, declaration) {
 				t.Fatalf("generated owner does not declare %q", strings.TrimSuffix(declaration, "\n"))
 			}
-			pair := fmt.Sprintf("[%s, %s]", CoordinateType, metadata.FactType.Name)
-			handle := "func ForeignRead(foreign execution.ForeignFactor, coordinate execution.SelectedCoordinate, input uint16) (execution.ExactRead" + pair
-			if !strings.Contains(rendered, handle) {
-				t.Fatalf("generated owner publishes no read handle at %s", pair)
+			pair, pairOK := renderedTypeArguments(rendered, "func ForeignRead(foreign execution.ForeignFactor, coordinate execution.SelectedCoordinate, input uint16) (execution.ExactRead")
+			if !pairOK {
+				t.Fatal("generated owner publishes no read handle")
+			}
+			if !strings.HasPrefix(pair, "["+CoordinateType+", ") {
+				t.Fatalf("the read handle is sealed at %s, want this axis's own coordinate first", pair)
+			}
+			fact := strings.TrimSuffix(strings.TrimPrefix(pair, "["+CoordinateType+", "), "]")
+			if fact != metadata.FactType.Name && !strings.HasSuffix(fact, "."+metadata.FactType.Name) {
+				t.Fatalf("the read handle is sealed at fact %s, want this axis's own %s", fact, metadata.FactType.Name)
 			}
 			if !strings.Contains(rendered, "execution.ForeignExactRead"+pair) {
 				t.Fatalf("the read handle of %q is not sealed at the axis's own types", source.Name)
