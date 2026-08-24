@@ -18,6 +18,11 @@ import (
 type GoType struct {
 	PackagePath string
 	Name        string
+	// Pointer records that the reference is to the pointer form of the named
+	// type. An axis whose schema is passed by pointer is a different parameter
+	// from one passed by value, and a derived signature that could not tell
+	// them apart would admit a call the compiler refuses.
+	Pointer bool
 }
 
 func (typ GoType) Available() bool {

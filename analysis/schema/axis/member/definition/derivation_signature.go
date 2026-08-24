@@ -1,0 +1,105 @@
+package definition
+
+import "github.com/wippyai/go-lua/analysis/schema"
+
+// DerivationShape is the direct-call shape one authored relation derivation
+// must have. It is derived from the declaration and from nothing else, which
+// is fence one of the authored-Build ruling: a Build is admitted as domain
+// logic behind a SEALED contract, and a contract nobody derives is a contract.
+//
+// Build answers the derivation's State from the schemas of its ordered static
+// axes followed by the relation's declared inputs. Count and At consume that
+// State to expose the relation's Subject rows in canonical order. Nothing else
+// is a parameter: which candidate a row hangs off, which projection addresses
+// it, and which coordinates it resolves to are the sealed knowledge of the
+// family that calls this, exactly as they are for a reducer.
+type DerivationShape struct {
+	BuildParams  []GoType
+	BuildResults []GoType
+	CountParams  []GoType
+	CountResults []GoType
+	AtParams     []GoType
+	AtResults    []GoType
+}
+
+// axisSchemaType is the Go type one axis's own schema is spelled as: the
+// receiver its declared key normalizer is a method on. An axis states that
+// type once, where it says how a key becomes a dense coordinate, so a
+// derivation naming the axis names the same type its owner does.
+func axisSchemaType(source Definition) (GoType, bool) {
+	receiver := source.Binding.Key.Normalizer.Receiver
+	if !receiver.Available() {
+		return GoType{}, false
+	}
+	if source.Binding.Key.Normalizer.ReceiverPointer {
+		receiver.Pointer = true
+	}
+	return receiver, true
+}
+
+// DerivationSignature derives the call shape of one relation's authored Build,
+// Count and At. The relation is resolved in the axis it belongs to, and each
+// static axis is resolved through the roster, because a derivation reaching
+// another axis's schema is naming that axis's own published type rather than
+// one its consumer chose.
+func (roster Roster) DerivationSignature(axis schema.Key, relation Relation) (DerivationShape, bool) {
+	if !relation.Derivation.complete() {
+		return DerivationShape{}, false
+	}
+	owner, ownerOK := roster.definitionForAxis(axis)
+	if !ownerOK {
+		return DerivationShape{}, false
+	}
+	carriers, _, carriersOK := owner.carrierIndex()
+	if !carriersOK {
+		return DerivationShape{}, false
+	}
+	subject, subjectOK := carriers[relation.Subject]
+	if !subjectOK {
+		return DerivationShape{}, false
+	}
+	params := make([]GoType, 0, len(relation.Derivation.StaticAxes)+len(relation.Inputs))
+	for _, static := range relation.Derivation.StaticAxes {
+		staticSource, staticOK := roster.definitionForAxis(static.Key)
+		if !staticOK {
+			return DerivationShape{}, false
+		}
+		schemaType, schemaTypeOK := axisSchemaType(staticSource)
+		if !schemaTypeOK {
+			return DerivationShape{}, false
+		}
+		params = append(params, schemaType)
+	}
+	for _, input := range relation.Inputs {
+		carrier, carrierOK := carriers[input]
+		if !carrierOK {
+			return DerivationShape{}, false
+		}
+		params = append(params, carrier.Type)
+	}
+	state := relation.Derivation.State
+	return DerivationShape{
+		BuildParams:  params,
+		BuildResults: []GoType{state, {Name: "bool"}},
+		CountParams:  []GoType{state},
+		CountResults: []GoType{{Name: "int"}},
+		AtParams:     []GoType{state, {Name: "int"}},
+		AtResults:    []GoType{subject.Type, {Name: "bool"}},
+	}, true
+}
+
+// definitionForAxis composes the one source that owns an axis. Two sources
+// naming one axis are refused when the roster is admitted, so this resolves at
+// most one.
+func (roster Roster) definitionForAxis(axis schema.Key) (Definition, bool) {
+	for _, source := range roster.sources {
+		composed, composedOK := source.Compose()
+		if !composedOK {
+			return Definition{}, false
+		}
+		if composed.Axis == axis {
+			return composed, true
+		}
+	}
+	return Definition{}, false
+}
