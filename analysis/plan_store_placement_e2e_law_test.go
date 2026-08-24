@@ -18,10 +18,17 @@ func TestCompiledPlanStorageEscapePublishesOwnedHeapAndFrameControl(t *testing.T
 		want   placementdomain.Fact
 	}{
 		{
-			name: "module-cell",
+			// Retention must be proved by the storage owner. Merely belonging to
+			// the entry body does not make a local module-owned: an uncaptured
+			// chunk local dies with that activation. The closure relation is the
+			// canonical proof that this cell outlives its introducing frame.
+			name: "closure-cell",
 			source: `
 local retained = { value = 1 }
-return true
+local function retain()
+  return retained
+end
+return retain
 `,
 			want: placementdomain.Fact{Class: placementdomain.OwnedHeap, RetainEscape: placementdomain.EvidenceProven},
 		},
