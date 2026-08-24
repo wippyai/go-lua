@@ -160,5 +160,5 @@ func TestForeignMemberExactReadAllocatesNothing(t *testing.T) {
 		_, _, drained := run.Consume()
 		return drained
 	}
-	measureWarmInvocation(t, invoke)
+	measureWarmInvocation(t, invoke, 0)
 }

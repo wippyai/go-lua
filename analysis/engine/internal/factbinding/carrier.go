@@ -399,6 +399,10 @@ type bindingWork[K scalar.Key, V any] struct {
 	// and typed projection buffers, never an unrelated in-flight evaluator op.
 	scratch diagram.SoleScratch[K, V]
 	changes mergeChanges[K]
+	// expand is expandChanges' reusable heap/output-vector storage for this
+	// Work's own merges, kept separate from a Patch's copy since a nested
+	// evaluator operation and a staged write never share one epoch.
+	expand expandScratch[K]
 	// Coverage maps are evaluator scratch only. They resolve opaque authored
 	// Targets beside this typed Binding for one fold and are cleared before
 	// the fold returns; no coverage or fact authority is retained here.
@@ -1429,7 +1433,7 @@ func (work *bindingWork[K, V]) CloseContributionUnder(before, input carrier.Root
 	if !work.binding.plane.domain.ReplaceUnder(prior, closed, split, &work.scratch, delta, report) {
 		return carrier.ChangeHandle{}, false
 	}
-	factor, units, regions, ok := work.binding.expandChanges(&work.changes, delta)
+	factor, units, regions, ok := work.binding.expandChanges(&work.changes, delta, &work.expand)
 	if !ok {
 		return carrier.ChangeHandle{}, false
 	}
@@ -1582,7 +1586,7 @@ func (work *bindingWork[K, V]) MergeContributionUnder(left, right carrier.RootHa
 	if !ok {
 		return carrier.ChangeHandle{}, false
 	}
-	factor, units, regions, ok := work.binding.expandChanges(&work.changes, delta)
+	factor, units, regions, ok := work.binding.expandChanges(&work.changes, delta, &work.expand)
 	if !ok {
 		return carrier.ChangeHandle{}, false
 	}
@@ -1700,7 +1704,7 @@ func (work *bindingWork[K, V]) OverlayPointRHSUnder(left, right carrier.RootHand
 	if !ok {
 		return carrier.ChangeHandle{}, false
 	}
-	factor, units, regions, ok := work.binding.expandChanges(&work.changes, delta)
+	factor, units, regions, ok := work.binding.expandChanges(&work.changes, delta, &work.expand)
 	if !ok {
 		return carrier.ChangeHandle{}, false
 	}
@@ -1803,7 +1807,7 @@ func (work *bindingWork[K, V]) mergeContributionPlanes(leftHandle, rightHandle c
 		}
 		return work.prepareChange(leftHandle, leftHandle, next, false, support.Mask{}, nil, nil, delta)
 	}
-	factor, units, regions, ok := work.binding.expandChanges(&work.changes, delta)
+	factor, units, regions, ok := work.binding.expandChanges(&work.changes, delta, &work.expand)
 	if !ok {
 		return carrier.ChangeHandle{}, false
 	}
@@ -2417,7 +2421,7 @@ func (work *bindingWork[K, V]) Merge3Under(kind carrier.MergeKind, recurrence bo
 	var units []carrier.Unit
 	var regions []support.Mask
 	if recurrence || kind == carrier.Widen {
-		factor, units, regions, ok = binding.expandChanges(&work.changes, delta)
+		factor, units, regions, ok = binding.expandChanges(&work.changes, delta, &work.expand)
 		if !ok {
 			return carrier.ChangeHandle{}, false
 		}
@@ -2518,7 +2522,7 @@ func (work *bindingWork[K, V]) MergeSelectedContributionUnder(kind carrier.Merge
 	if !binding.plane.domain.ReplaceUnder(left, closed, exactSplit, &work.scratch, delta, report) {
 		return carrier.ChangeHandle{}, false
 	}
-	factor, units, regions, ok := binding.expandChanges(&work.changes, delta)
+	factor, units, regions, ok := binding.expandChanges(&work.changes, delta, &work.expand)
 	if !ok {
 		return carrier.ChangeHandle{}, false
 	}
@@ -2719,7 +2723,7 @@ func (work *bindingWork[K, V]) ReplaceUnder(left, right carrier.RootHandle, spli
 	if !binding.plane.domain.ReplaceUnder(first, second, split, &work.scratch, delta, report) {
 		return carrier.ChangeHandle{}, false
 	}
-	factor, units, regions, ok := binding.expandChanges(&work.changes, delta)
+	factor, units, regions, ok := binding.expandChanges(&work.changes, delta, &work.expand)
 	if !ok {
 		return carrier.ChangeHandle{}, false
 	}

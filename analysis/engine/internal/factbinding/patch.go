@@ -25,6 +25,12 @@ type Patch[K scalar.Key, V any] struct {
 	// owned marks a Patch that lives in caller-owned scratch. Closing one keeps
 	// its authored storage for the next transaction instead of dropping it.
 	owned bool
+	// changesScratch is Accept's reusable holder for the candidate KeyChanges
+	// it hands to expandChanges. Passing its address keeps the keyChanges
+	// interface value pointing at scratch already owned by this Patch instead
+	// of boxing a fresh copy of the value handed back by stage.Patch.Accept.
+	changesScratch stage.KeyChanges[K]
+	expandScratch  expandScratch[K]
 }
 
 // TransformClosure is one Binding-owned immutable typed key vector compiled
@@ -376,8 +382,9 @@ func (patch *Patch[K, V]) Accept(work *carrier.Work) (result carrier.Patch, acce
 	changeCount := 0
 	root, ok := staged.Accept(func(changes stage.KeyChanges[K], work *support.Work) bool {
 		changeCount = changes.Count()
+		patch.changesScratch = changes
 		var expanded bool
-		factor, units, regions, expanded = binding.expandChanges(changes, work)
+		factor, units, regions, expanded = binding.expandChanges(&patch.changesScratch, work, &patch.expandScratch)
 		return expanded
 	})
 	if !ok {
@@ -407,7 +414,18 @@ type keyChanges[K scalar.Key] interface {
 	At(int) (K, support.Mask, bool)
 }
 
-func (binding *Binding[K, V]) expandChanges(changes keyChanges[K], unions *support.Work) (support.Mask, []carrier.Unit, []support.Mask, bool) {
+// expandScratch is expandChanges' reusable working storage. Its owner is
+// whichever per-invocation object already reuses the paired keyChanges (a
+// Patch or a bindingWork), so a repeated write grows these buffers once and
+// resets them per call instead of allocating a fresh heap and output vectors
+// on every accepted change.
+type expandScratch[K scalar.Key] struct {
+	heap    []changeCursor
+	units   []carrier.Unit
+	regions []support.Mask
+}
+
+func (binding *Binding[K, V]) expandChanges(changes keyChanges[K], unions *support.Work, scratch *expandScratch[K]) (support.Mask, []carrier.Unit, []support.Mask, bool) {
 	if !binding.live() {
 		return support.Mask{}, nil, nil, false
 	}
@@ -439,7 +457,7 @@ func (binding *Binding[K, V]) expandChanges(changes keyChanges[K], unions *suppo
 		}
 	}
 
-	heap := make([]changeCursor, 0, changes.Count())
+	heap := scratch.heap[:0]
 	for index := 0; index < changes.Count(); index++ {
 		key, region, ok := changes.At(index)
 		closure := binding.reverse[key]
@@ -451,12 +469,13 @@ func (binding *Binding[K, V]) expandChanges(changes keyChanges[K], unions *suppo
 		}
 		heap = append(heap, changeCursor{units: closure, region: region})
 	}
+	scratch.heap = heap
 	if len(heap) == 0 {
 		return factor, nil, nil, true
 	}
 	changeHeapify(heap)
-	units := make([]carrier.Unit, 0, changes.Count())
-	regions := make([]support.Mask, 0, changes.Count())
+	units := scratch.units[:0]
+	regions := scratch.regions[:0]
 	for len(heap) != 0 {
 		cursor := changeHeapPop(&heap)
 		unit, region := cursor.units[cursor.index], cursor.region
@@ -468,6 +487,7 @@ func (binding *Binding[K, V]) expandChanges(changes keyChanges[K], unions *suppo
 			duplicate := changeHeapPop(&heap)
 			joined, valid := unions.Or(region, duplicate.region)
 			if !valid {
+				scratch.heap, scratch.units, scratch.regions = heap, units, regions
 				return support.Mask{}, nil, nil, false
 			}
 			region = joined
@@ -479,6 +499,7 @@ func (binding *Binding[K, V]) expandChanges(changes keyChanges[K], unions *suppo
 		units = append(units, unit)
 		regions = append(regions, region)
 	}
+	scratch.heap, scratch.units, scratch.regions = heap, units, regions
 	return factor, units, regions, true
 }
 

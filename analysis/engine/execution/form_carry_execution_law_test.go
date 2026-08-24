@@ -311,5 +311,5 @@ func TestAWarmTransformedCarryAllocatesNothingBeyondItsPublication(t *testing.T)
 		disposition, patches, drained := run.Consume()
 		return drained && disposition == structure.NoSelection && len(patches) == 0
 	}
-	measureWarmInvocation(t, invoke)
+	measureWarmInvocation(t, invoke, 0)
 }

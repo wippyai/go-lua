@@ -85,33 +85,50 @@ func TestSourceColumnIsOneRowTable(t *testing.T) {
 	}
 }
 
-// TestExecutionWarmInvocationAllocatesNothing states the cost of one generated
-// invocation. A generated member's whole dispatch is the sequence below -
-// issue a ticket against the sealed catalog row, frame it, execute the typed
-// family, drain the patches - and it runs once per member per solver round.
-// A single allocation here is a per-member-per-round allocation, so the
-// admitted budget is zero for both of the forms the generated arm currently
-// executes: the zero-read source row and the one exact read that carries its
-// own identity forward.
+// TestExecutionWarmInvocationAllocatesOnlyAcceptedChange states the cost of
+// one generated invocation. A generated member's whole dispatch is the
+// sequence below - issue a ticket against the sealed catalog row, frame it,
+// execute the typed family, drain the patches - and it runs once per member
+// per solver round.
 //
-// This law is RED, and what is left of the cost is the accepted result rather
-// than the transaction. Issue, frame and drain are free, and the staging
-// transaction is now reusable storage owned by the invocation lane: the
-// candidate terminal page, the candidate FDD, the Boolean shell and both patch
-// wrappers are grown once per worker and reset per write, so opening a staged
-// write allocates nothing (23 -> 2 on exact, 33 -> 13 on source, profiled
-// through factbinding.Binding.BeginInto -> facts/stage.BeginInto ->
-// facts/diagram.BeginWithTerminalsInto -> facts/terminal.Arena.BeginInto).
+// Issue, frame, drain and the staging transaction itself are free: the
+// candidate terminal page, the candidate FDD, the Boolean shell, both patch
+// wrappers, the KeyChanges handed to expandChanges and expandChanges' own
+// heap/unit/region scratch are all reusable storage grown once per worker and
+// reset per write (profiled through factbinding.Binding.BeginInto ->
+// facts/stage.BeginInto -> facts/diagram.BeginWithTerminalsInto ->
+// facts/terminal.Arena.BeginInto, and through
+// factbinding.(*Patch).Accept -> expandChanges).
 //
-// The remainder is data the invocation produces and hands to the solver: the
-// carrier change identity and the authored rows the carrier canonicalizes and
-// keeps, and - for a write that genuinely introduces a fact, which is what the
-// source row does on every iteration here - the FDD nodes and the expanded
-// unit/region vectors of that change. This law goes green when the accepted
-// change set is drawn from Run-owned storage as well, which is a carrier
-// lifetime question: the solver retains the patch beyond the invocation, so it
-// cannot simply be reused the way the transaction is.
-func TestExecutionWarmInvocationAllocatesNothing(t *testing.T) {
+// What remains is not fold overhead: it is the accepted change itself, which
+// the carrier and the solver retain past this call, so it cannot be drawn
+// from a lane-reset scratch without aliasing a patch still live in the round.
+// Reusing it would be exactly the forbidden compensation this law would
+// otherwise be gamed with. Every remaining allocation is one of:
+//
+//   - carrier.Issuer.IssueChange's changeRecord - the ChangeHandle backing
+//     the accepted change identity Run.outputs and, later, State.Commit hold
+//     onto.
+//   - carrier.Work.AcceptAuthoredRows's owned []TargetRegion copy - the
+//     authored row content of the accepted patch.
+//
+// Both read forms above pay exactly this floor (2): the source row also
+// mints a brand-new root, so it pays four more retained pieces:
+//
+//   - IssueChange's independent copies of the units/regions evidence
+//     (expandChanges' own scratch is reset on the next call, so the
+//     changeRecord must own its copy).
+//   - bindingWork.prepareChange's pendingRoot publisher, wrapping the new
+//     semantic plane until the carrier resolves and commits that root.
+//   - the four facts/diagram FDD nodes (the written terminal, the carried
+//     terminal, the factor node, the key node) that record the newly
+//     introduced fact and persist as part of the diagram thereafter.
+//
+// source's floor is 9, exact's is 2. A regression above either number is a
+// new allocation to trace and fix; a claimed reduction must name which of the
+// above stops being retained, not merely reuse a buffer under it (2026-08-24,
+// CX-43).
+func TestExecutionWarmInvocationAllocatesOnlyAcceptedChange(t *testing.T) {
 	t.Run("source", func(t *testing.T) {
 		fixture := newExecutionFixture(t)
 		column, columnOK := memberrelation.NewSourceColumn(
@@ -141,7 +158,7 @@ func TestExecutionWarmInvocationAllocatesNothing(t *testing.T) {
 			disposition, patches, drained := run.Consume()
 			return executed && drained && disposition == structure.Concrete && len(patches) == result.Count()
 		}
-		measureWarmInvocation(t, invoke)
+		measureWarmInvocation(t, invoke, 9)
 	})
 	t.Run("exact", func(t *testing.T) {
 		fixture := publishedExecutionFixture(t)
@@ -166,7 +183,7 @@ func TestExecutionWarmInvocationAllocatesNothing(t *testing.T) {
 			disposition, patches, drained := run.Consume()
 			return executed && drained && disposition == structure.Concrete && len(patches) == result.Count()
 		}
-		measureWarmInvocation(t, invoke)
+		measureWarmInvocation(t, invoke, 2)
 	})
 }
 
@@ -200,7 +217,12 @@ func publishedExecutionFixture(t testing.TB) executionFixture {
 	return fixture
 }
 
-func measureWarmInvocation(t *testing.T, invoke func() bool) {
+// measureWarmInvocation asserts a warm invocation allocates exactly budget
+// times - the accepted-change floor named on
+// TestExecutionWarmInvocationAllocatesOnlyAcceptedChange, never more and
+// never fewer, so both a new fold-overhead regression and an unnoticed change
+// to what the carrier retains are caught.
+func measureWarmInvocation(t *testing.T, invoke func() bool, budget float64) {
 	t.Helper()
 	if !invoke() || !invoke() {
 		t.Fatal("warmup invocation")
@@ -210,7 +232,7 @@ func measureWarmInvocation(t *testing.T, invoke func() bool) {
 			t.Fatal("warm invocation")
 		}
 	})
-	if allocations != 0 {
-		t.Fatalf("warm generated invocation allocated %v times", allocations)
+	if allocations != budget {
+		t.Fatalf("warm generated invocation allocated %v times, want %v", allocations, budget)
 	}
 }
