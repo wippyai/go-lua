@@ -350,6 +350,72 @@ func TestProductDistinguishesEmptySeedAndZeroRows(t *testing.T) {
 	}
 }
 
+func TestProductEmptyExtendAuthenticatesReadAndScratch(t *testing.T) {
+	fixture := newProductFixture(t)
+	falseWork := support.New(fixture.manager)
+	if falseWork == nil {
+		t.Fatal("empty support work")
+	}
+	empty := falseWork.False()
+	if !falseWork.Seal() {
+		t.Fatal("empty seal")
+	}
+	_, ticket := fixture.issue(t, empty)
+	seed, status, ok := NewSeed(ticket)
+	if !ok || status != RefineEmpty {
+		t.Fatal("empty seed")
+	}
+	read, readOK := engineexecution.NewExactRead(fixture.binding, fixture.units[0], 0)
+	if !readOK {
+		t.Fatal("empty read")
+	}
+	var extender Extender[uint64, uint64, struct{}]
+	var scratch engineexecution.Scratch[uint64, uint64]
+	if rows, status, ok := extender.Extend(ticket, seed.Rows(), read, &scratch); !ok || status != RefineEmpty || rows.Valid() {
+		t.Fatal("authenticated empty Extend did not return RefineEmpty")
+	}
+	if _, status, ok := extender.Extend(ticket, seed.Rows(), engineexecution.ExactRead[uint64, uint64]{}, &scratch); ok || status != RefineRefuse {
+		t.Fatal("foreign empty read bypassed authentication")
+	}
+	if !ticket.Close() {
+		t.Fatal("empty ticket close")
+	}
+}
+
+func TestProductExtendRecoversScratchAfterCloseCancellation(t *testing.T) {
+	fixture := newProductFixture(t)
+	_, ticket := fixture.issue(t, fixture.whole)
+	seed, status, ok := NewSeed(ticket)
+	if !ok || status != RefineAvailable {
+		t.Fatal("seed")
+	}
+	read, readOK := engineexecution.NewExactRead(fixture.binding, fixture.units[0], 0)
+	if !readOK {
+		t.Fatal("read")
+	}
+	var scratch engineexecution.Scratch[uint64, uint64]
+	if read.Read(ticket, &scratch) != engineexecution.ReadAvailable || !read.Close(ticket, &scratch) {
+		t.Fatal("close exact read")
+	}
+	if !fixture.work.SetCheckpoint(func() bool { return false }) {
+		t.Fatal("cancel checkpoint")
+	}
+	var extender Extender[uint64, uint64, struct{}]
+	if _, status, ok := extender.Extend(ticket, seed.Rows(), read, &scratch); ok || status != RefineRefuse {
+		t.Fatal("cancelled post-close read was accepted")
+	}
+	if !fixture.work.SetCheckpoint(nil) {
+		t.Fatal("restore checkpoint")
+	}
+	rows, status, ok := extender.Extend(ticket, seed.Rows(), read, &scratch)
+	if !ok || status != RefineAvailable || !rows.Valid() {
+		t.Fatal("scratch did not recover after post-close cancellation")
+	}
+	if !ticket.Close() {
+		t.Fatal("ticket close")
+	}
+}
+
 func TestProductRejectsZeroRowExactSource(t *testing.T) {
 	fixture := newProductFixture(t)
 	run, ticket := fixture.issue(t, fixture.whole)

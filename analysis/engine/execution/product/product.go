@@ -62,6 +62,10 @@ type Rows[T any] struct {
 	product carrierproduct.Rows
 	values  []T
 	sealed  bool
+	// empty is the constructor-issued empty-seed witness. A zero carrier Rows
+	// has no geometry seal, so empty support must carry an explicit product
+	// token rather than being inferred from Count()==0.
+	empty bool
 	// lease authenticates the Ticket that issued these rows.  Product rows are
 	// ephemeral execution views: a closed Ticket must revoke both the support
 	// cells and their typed tuples, even when the caller retained the value.
@@ -127,7 +131,13 @@ func (rows Rows[T]) At(index int) (support.Mask, T, bool) {
 // that its typed tuple count agrees with the canonical product. An
 // authenticated empty Rows is valid; the zero value remains unsealed.
 func (rows Rows[T]) Valid() bool {
-	return rows.live() && rows.product.Count() == len(rows.values)
+	if !rows.live() {
+		return false
+	}
+	if rows.empty {
+		return len(rows.values) == 0 && rows.product.Count() == 0
+	}
+	return rows.product.Valid() && rows.product.Count() == len(rows.values)
 }
 
 // Seed is the authenticated one-row empty tuple product. NewSeed obtains its
@@ -144,7 +154,7 @@ func NewSeed(ticket engineexecution.Ticket) (Seed, RefineStatus, bool) {
 	}
 	lease := rowsLease{frame: frame, ticket: ticket}
 	if support.Empty(within) {
-		return Seed{rows: Rows[struct{}]{sealed: true, lease: lease}}, RefineEmpty, true
+		return Seed{rows: Rows[struct{}]{sealed: true, empty: true, lease: lease}}, RefineEmpty, true
 	}
 	productRows, rowsOK := carrierproduct.NewRows(within)
 	if !rowsOK {
@@ -189,10 +199,31 @@ type Extender[K scalar.Key, V any, T any] struct {
 	// pair map from the carrier authority.
 	cross      carrierproduct.CrossWork
 	generation uint64
+	// exhausted is terminal once generation would wrap. A fresh Extender is
+	// required after that point; the overflow attempt still revokes prior rows.
+	exhausted bool
 }
 
 func (extender *Extender[K, V, T]) live() bool {
-	return extender != nil && extender.ticket.Checkpoint()
+	return extender != nil && !extender.exhausted && extender.ticket.Checkpoint()
+}
+
+// beginAttempt revokes the prior typed Rows generation before any input,
+// ticket, read, or scratch admission check. This keeps every failed Extend
+// from leaving a previously published view alive.
+func (extender *Extender[K, V, T]) beginAttempt() bool {
+	if extender == nil || extender.exhausted {
+		return false
+	}
+	if extender.generation == ^uint64(0) {
+		extender.generation = 0
+		extender.exhausted = true
+		extender.rows = extender.rows[:0]
+		return false
+	}
+	extender.generation++
+	extender.rows = extender.rows[:0]
+	return true
 }
 
 // Extend drains the ExactRead's ticket-wide rows once, seals those rows over
@@ -204,44 +235,76 @@ func (extender *Extender[K, V, T]) Extend(
 	input Rows[T],
 	read engineexecution.ExactRead[K, V],
 	scratch *engineexecution.Scratch[K, V],
-) (Rows[Cons[Cell[V], T]], RefineStatus, bool) {
-	if extender == nil || !ticket.Valid() || !input.liveFor(ticket) || !read.Valid() || scratch == nil || input.Count() == 0 {
-		if extender != nil && ticket.Valid() && input.liveFor(ticket) && read.Valid() && input.Count() == 0 && input.product.Count() == 0 {
-			return Rows[Cons[Cell[V], T]]{}, RefineEmpty, true
-		}
+) (output Rows[Cons[Cell[V], T]], status RefineStatus, ok bool) {
+	if !extender.beginAttempt() {
 		return Rows[Cons[Cell[V], T]]{}, RefineRefuse, false
 	}
-	if extender.generation == ^uint64(0) {
-		return Rows[Cons[Cell[V], T]]{}, RefineRefuse, false
+	accepted := false
+	var within support.Mask
+	var readRows, productRows carrierproduct.Rows
+	var pairs carrierproduct.CrossPairs
+	var crossed, withinOK, readOK, drained, emptyRead bool
+	if !ticket.Valid() || !ticket.Checkpoint() || !input.Valid() || !input.liveFor(ticket) || !read.Valid() || scratch == nil {
+		goto finish
 	}
+	// Recover a caller that closed an ExactRead before this attempt. A fresh
+	// zero scratch simply refuses Reuse and proceeds through Read's own reset.
+	_ = scratch.Reuse(ticket)
 	extender.ticket = ticket
 	if extender.checkpoint == nil {
 		extender.checkpoint = extender.live
 	}
-	extender.generation++
 	extender.rows = extender.rows[:0]
-	if !extender.drain(ticket, read, scratch) {
-		return Rows[Cons[Cell[V], T]]{}, RefineRefuse, false
+	drained, emptyRead = extender.drain(ticket, read, scratch)
+	if !drained {
+		goto finish
 	}
-	within, withinOK := ticket.Within()
+	if emptyRead {
+		// Empty is a valid authenticated result only for the authenticated
+		// empty seed. The read was still opened, exhausted, closed, and scratch
+		// reset above, so a foreign read/nil scratch cannot bypass admission.
+		if !input.empty || input.Count() != 0 || input.product.Count() != 0 {
+			goto finish
+		}
+		accepted = true
+		status = RefineEmpty
+		ok = true
+		goto finish
+	}
+	within, withinOK = ticket.Within()
 	if !withinOK {
-		return Rows[Cons[Cell[V], T]]{}, RefineRefuse, false
+		goto finish
 	}
-	readRows, readOK := extender.sealRead(ticket, within)
+	readRows, readOK = extender.sealRead(ticket, within)
 	if !readOK {
-		return Rows[Cons[Cell[V], T]]{}, RefineRefuse, false
+		goto finish
 	}
-	productRows, pairs, crossed := extender.cross.Cross(input.product, readRows, extender.checkpoint)
+	productRows, pairs, crossed = extender.cross.Cross(input.product, readRows, extender.checkpoint)
 	if !crossed || productRows.Count() != pairs.Count() {
-		return Rows[Cons[Cell[V], T]]{}, RefineRefuse, false
+		goto finish
 	}
-	if !extender.materializeRows(ticket, input, pairs) {
-		return Rows[Cons[Cell[V], T]]{}, RefineRefuse, false
+	if !extender.materializeRows(ticket, input, readRows, productRows, pairs) {
+		goto finish
 	}
 	if len(extender.rows) != pairs.Count() {
-		return Rows[Cons[Cell[V], T]]{}, RefineRefuse, false
+		goto finish
 	}
-	return Rows[Cons[Cell[V], T]]{product: productRows, values: extender.rows, sealed: true, lease: input.lease, owner: &extender.generation, generation: extender.generation}, RefineAvailable, true
+	accepted = true
+	output = Rows[Cons[Cell[V], T]]{product: productRows, values: extender.rows, sealed: true, lease: input.lease, owner: &extender.generation, generation: extender.generation}
+	status = RefineAvailable
+	ok = true
+
+finish:
+	if !accepted && ticket.Valid() && scratch != nil {
+		// ExactRead.Close leaves the lane reusable but not reset. Reuse is the
+		// deterministic recovery cut after cancellation; a foreign or active
+		// scratch refuses and therefore remains terminally rejected.
+		_ = scratch.Reuse(ticket)
+	}
+	if !ok {
+		status = RefineRefuse
+	}
+	return
 }
 
 // sealRead asks carrier/product to re-prove the complete read cover over W.
@@ -310,8 +373,11 @@ func (extender *Extender[K, V, T]) sealRead(ticket engineexecution.Ticket, decla
 	return rows, true
 }
 
-func (extender *Extender[K, V, T]) materializeRows(ticket engineexecution.Ticket, input Rows[T], pairs carrierproduct.CrossPairs) bool {
+func (extender *Extender[K, V, T]) materializeRows(ticket engineexecution.Ticket, input Rows[T], readRows, productRows carrierproduct.Rows, pairs carrierproduct.CrossPairs) bool {
 	if extender == nil || !ticket.Checkpoint() {
+		return false
+	}
+	if !pairs.ValidFor(input.product, readRows, productRows) {
 		return false
 	}
 	extender.rows = extender.rows[:0]
@@ -336,13 +402,13 @@ func (extender *Extender[K, V, T]) materializeRows(ticket engineexecution.Ticket
 // authenticated ticket support. The product then performs only support
 // intersections; it never asks the Factor to repartition the same key under
 // each product source row.
-func (extender *Extender[K, V, T]) drain(ticket engineexecution.Ticket, read engineexecution.ExactRead[K, V], scratch *engineexecution.Scratch[K, V]) bool {
+func (extender *Extender[K, V, T]) drain(ticket engineexecution.Ticket, read engineexecution.ExactRead[K, V], scratch *engineexecution.Scratch[K, V]) (bool, bool) {
 	if extender == nil || !ticket.Checkpoint() || !read.Valid() || scratch == nil {
-		return false
+		return false, false
 	}
 	ticketRegion, regionOK := ticket.Within()
 	if !regionOK || !ticketRegion.Valid() {
-		return false
+		return false, false
 	}
 	extender.readRegions = extender.readRegions[:0]
 	extender.readCells = extender.readCells[:0]
@@ -353,18 +419,20 @@ func (extender *Extender[K, V, T]) drain(ticket engineexecution.Ticket, read eng
 			region, regionOK := scratch.Region()
 			if !valueOK || !regionOK || !region.Valid() || !region.Entails(ticketRegion) {
 				_ = scratch.Discard(ticket)
-				return false
+				return false, false
 			}
 			extender.readRegions = append(extender.readRegions, region)
 			extender.readCells = append(extender.readCells, Cell[V]{value: value, present: scratch.Present()})
 		case engineexecution.ReadExhausted:
-			if !read.Close(ticket, scratch) || !scratch.Reuse(ticket) || len(extender.readRegions) != len(extender.readCells) {
-				return false
+			closed := read.Close(ticket, scratch)
+			reused := closed && scratch.Reuse(ticket)
+			if !closed || !reused || len(extender.readRegions) != len(extender.readCells) {
+				return false, false
 			}
-			return len(extender.readRegions) != 0
+			return true, len(extender.readRegions) == 0
 		default:
 			_ = scratch.Discard(ticket)
-			return false
+			return false, false
 		}
 	}
 }

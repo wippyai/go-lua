@@ -373,7 +373,7 @@ func TestPrefixQuotientRejectsIncompleteOrEmptySourceMappings(t *testing.T) {
 
 func TestPrefixQuotientSkipsEqualityAcrossDistinctFingerprintBuckets(t *testing.T) {
 	rows, _ := newExactRows(t, 4)
-	sources := SourceRows{offsets: []int{0, 4}}
+	sources := SourceRows{offsets: []int{0, 4}, sourceID: rows.identity, rowsID: rows.identity}
 	comparisons := 0
 	quotient, representatives, ok := rows.PrefixQuotientWithCheckpoint(sources, nil, func(index int) (uint64, bool) {
 		return uint64(index), true
@@ -526,6 +526,114 @@ func TestCrossWorkRejectsUnauthenticatedOrMismatchedCovers(t *testing.T) {
 	}
 	if _, _, ok := cross.Cross(left, other, nil); ok {
 		t.Fatal("mismatched declared support crossed")
+	}
+}
+
+func TestCrossWorkRevokesPriorViewsBeforeEveryFailure(t *testing.T) {
+	regions := newRegions(t)
+	seed, ok := NewRows(regions.all)
+	if !ok {
+		t.Fatal("seed")
+	}
+	left := splitOnA(t, seed, regions)
+	right := splitOnB(t, seed, regions)
+	other, ok := NewRows(regions.a)
+	if !ok {
+		t.Fatal("other seed")
+	}
+	var cross CrossWork
+
+	assertRevoked := func(name string, fail func()) {
+		t.Helper()
+		prior, pairs, crossed := cross.Cross(left, right, nil)
+		if !crossed {
+			t.Fatalf("%s setup cross", name)
+		}
+		fail()
+		if prior.Valid() || prior.Count() != 0 || pairs.Count() != 0 {
+			t.Fatalf("%s retained the prior carrier views", name)
+		}
+	}
+
+	assertRevoked("invalid", func() {
+		if _, _, crossed := cross.Cross(Rows{}, right, nil); crossed {
+			t.Fatal("invalid left crossed")
+		}
+	})
+	assertRevoked("mismatched", func() {
+		if _, _, crossed := cross.Cross(left, other, nil); crossed {
+			t.Fatal("mismatched support crossed")
+		}
+	})
+	assertRevoked("cancelled", func() {
+		if _, _, crossed := cross.Cross(left, right, func() bool { return false }); crossed {
+			t.Fatal("cancelled cross published")
+		}
+	})
+
+	prior, pairs, crossed := cross.Cross(left, right, nil)
+	if !crossed {
+		t.Fatal("generation exhaustion setup cross")
+	}
+	cross.generation = ^uint64(0)
+	if _, _, crossed = cross.Cross(left, right, nil); crossed {
+		t.Fatal("generation-exhausted cross published")
+	}
+	if prior.Valid() || prior.Count() != 0 || pairs.Count() != 0 {
+		t.Fatal("generation exhaustion retained the prior carrier views")
+	}
+}
+
+func TestCrossPairsAuthenticateExactOperandsAndResult(t *testing.T) {
+	regions := newRegions(t)
+	seed, ok := NewRows(regions.all)
+	if !ok {
+		t.Fatal("seed")
+	}
+	left := splitOnA(t, seed, regions)
+	right := splitOnB(t, seed, regions)
+	foreignLeft := splitOnA(t, seed, regions)
+	var cross CrossWork
+	result, pairs, ok := cross.Cross(left, right, nil)
+	if !ok || !pairs.ValidFor(left, right, result) {
+		t.Fatal("exact CrossPairs authentication")
+	}
+	if pairs.ValidFor(foreignLeft, right, result) {
+		t.Fatal("CrossPairs accepted a foreign same-shaped left Rows")
+	}
+	foreignResult, _, ok := cross.Cross(left, right, nil)
+	if !ok || pairs.ValidFor(left, right, foreignResult) {
+		t.Fatal("CrossPairs accepted a foreign result or stale generation")
+	}
+}
+
+func TestSourceRowsRejectForeignSameShapedProducer(t *testing.T) {
+	regions := newRegions(t)
+	seed, ok := NewRows(regions.all)
+	if !ok {
+		t.Fatal("seed")
+	}
+	refinement := seed.BeginRefine()
+	if refinement == nil || !refinement.Add(0, regions.a) || !refinement.Add(0, regions.notA) {
+		t.Fatal("source refinement")
+	}
+	rows, sources, ok := refinement.Seal()
+	if !ok {
+		t.Fatal("source seal")
+	}
+	foreignRefinement := seed.BeginRefine()
+	if foreignRefinement == nil || !foreignRefinement.Add(0, regions.a) || !foreignRefinement.Add(0, regions.notA) {
+		t.Fatal("foreign source refinement")
+	}
+	foreignRows, _, ok := foreignRefinement.Seal()
+	if !ok {
+		t.Fatal("foreign source seal")
+	}
+	if _, _, ok := foreignRows.PrefixQuotientWithCheckpoint(sources, nil, func(int) (uint64, bool) { return 0, true }, func(_, _ int) bool { return true }); ok {
+		t.Fatal("SourceRows accepted a foreign same-shaped producer")
+	}
+	if _, _, ok := rows.PrefixQuotientWithCheckpoint(sources, nil, func(int) (uint64, bool) { return 0, true }, func(_, _ int) bool { return true }); !ok {
+		t.Fatal("SourceRows rejected its exact producer")
 	}
 }
 
@@ -838,6 +946,10 @@ func newExactRows(tb testing.TB, count int) (Rows, []support.Mask) {
 	if work == nil {
 		tb.Fatal("support work creation failed")
 	}
+	declared := work.True()
+	if !declared.Valid() {
+		tb.Fatal("declared support")
+	}
 	pieces := make([]support.Mask, count)
 	for value := range pieces {
 		piece := work.True()
@@ -853,7 +965,7 @@ func newExactRows(tb testing.TB, count int) (Rows, []support.Mask) {
 	if !work.Seal() {
 		tb.Fatal("could not publish exact source regions")
 	}
-	return Rows{manager: manager, cells: pieces}, pieces
+	return sealedRows(manager, declared, pieces), pieces
 }
 
 // newPartitionRows gives each input source one independent split atom.  The
@@ -880,6 +992,10 @@ func newPartitionRows(tb testing.TB, count int) (Rows, [][]support.Mask) {
 	if work == nil {
 		tb.Fatal("support work creation failed")
 	}
+	declared := work.True()
+	if !declared.Valid() {
+		tb.Fatal("declared support")
+	}
 	rows := make([]support.Mask, count)
 	pieces := make([][]support.Mask, count)
 	for value := range rows {
@@ -905,7 +1021,7 @@ func newPartitionRows(tb testing.TB, count int) (Rows, [][]support.Mask) {
 	if !work.Seal() {
 		tb.Fatal("could not publish partition source regions")
 	}
-	return Rows{manager: manager, cells: rows}, pieces
+	return sealedRows(manager, declared, rows), pieces
 }
 
 // newAdversarialPrefixRows starts one true-support row over a fixed ordered
