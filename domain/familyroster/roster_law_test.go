@@ -8,6 +8,7 @@ import (
 
 	"github.com/wippyai/go-lua/analysis/schema"
 	"github.com/wippyai/go-lua/analysis/schema/rule/emit"
+	"github.com/wippyai/go-lua/analysis/schema/rule/emitlaw"
 	"github.com/wippyai/go-lua/domain/familyroster"
 	"github.com/wippyai/go-lua/domain/memberroster"
 )
@@ -91,6 +92,56 @@ func TestOneRuleDeclaresOneEmittedFamily(t *testing.T) {
 			t.Fatalf("two rostered families are generated into %s", family.Directory)
 		}
 		directories[family.Directory] = struct{}{}
+	}
+}
+
+// TestEveryEmittedLawSuiteIsTheOneItsDeclarationDerives is the freshness law of
+// the structural law suite, and carries the same weight for laws that
+// TestEveryEmittedFamilyIsTheOneItsDeclarationDerives carries for executors.
+//
+// A declaration's structural obligations are a function of the declaration. If
+// the checked-in suite could drift from the declaration it was emitted from,
+// its geometry law would be holding the declaration to a form nobody has
+// re-derived and its mutation table would be asserting verdicts against a
+// declaration that no longer has those terms. Re-deriving every rostered suite
+// and holding the checked-in file to it byte for byte is what makes the
+// emitted laws laws.
+func TestEveryEmittedLawSuiteIsTheOneItsDeclarationDerives(t *testing.T) {
+	root := moduleRoot(t)
+	roster, rosterOK := memberroster.Composition()
+	if !rosterOK {
+		t.Fatal("member definition roster is not admissible")
+	}
+	declarations := familyroster.Declarations()
+	if len(declarations) == 0 {
+		t.Fatal("the emitted law suite roster is empty")
+	}
+	for _, declaration := range declarations {
+		path := filepath.Join(root, declaration.Directory, familyroster.GeneratedLawFileName)
+		if err := emitlaw.Generate(declaration.Target, roster, path, true); err != nil {
+			t.Errorf("%s: %v", string(declaration.Key()), err)
+		}
+	}
+}
+
+// TestOneRuleDeclaresOneEmittedLawSuite keeps the law roster a registry for the
+// same reason the family roster is one: two rows over a rule or a directory
+// would put two generated suites in disagreement over one declaration.
+func TestOneRuleDeclaresOneEmittedLawSuite(t *testing.T) {
+	keys := map[schema.Key]struct{}{}
+	directories := map[string]struct{}{}
+	for _, declaration := range familyroster.Declarations() {
+		if !declaration.Key().Available() {
+			t.Fatalf("a rostered law suite declares no rule key: %s", declaration.Directory)
+		}
+		if _, duplicate := keys[declaration.Key()]; duplicate {
+			t.Fatalf("two rostered law suites claim rule %s", string(declaration.Key()))
+		}
+		keys[declaration.Key()] = struct{}{}
+		if _, duplicate := directories[declaration.Directory]; duplicate {
+			t.Fatalf("two rostered law suites are generated into %s", declaration.Directory)
+		}
+		directories[declaration.Directory] = struct{}{}
 	}
 }
 

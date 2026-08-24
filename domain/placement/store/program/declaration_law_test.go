@@ -20,117 +20,43 @@ import (
 	valuedomain "github.com/wippyai/go-lua/domain/value"
 )
 
-const (
-	testValueCandidates  = schema.Key("value/storage-transfer/candidates")
-	testValueSources     = schema.Key("value/storage-transfer/sources")
-	testValueSourceKey   = schema.Key("value/storage-transfer/source-key")
-	testRouteRelation    = schema.Key("placement/store/storage-routes")
-	testRouteKey         = schema.Key("placement/store/route-key")
-	testRouteTag         = schema.Key("placement/store/route-tag")
-	testRouteDestination = schema.Key("placement/store/route-destination")
-)
+const testRouteKey = schema.Key("placement/store/route-key")
 
-func TestStorageProgramSealsExactSelectedRouteWithoutCarry(t *testing.T) {
-	declaration := Storage()
-	if problem, valid := declaration.Check(); !valid {
-		t.Fatalf("storage declaration rejected: %+v", problem)
-	}
-	reducer, reducerOK := placementdomain.AxisMemberCatalog().Reducer(placementdomain.StorageReducer)
-	if !reducerOK {
-		t.Fatal("generated Placement Store reducer unavailable")
-	}
-	if problem, valid := declaration.CheckAgainst(reducer); !valid {
-		t.Fatalf("storage declaration does not agree with its generated reducer call shape: %+v", problem)
-	}
-	if compiled, failure := compileStorageProgram(t, declaration); failure.Available() || !compiled.Available() {
+// The structural half of this declaration's laws - its geometry, its identity,
+// its agreement with the reducer call shape, and the refusal of every
+// malformed edit of a term the cold ABI carries - is emitted from the
+// declaration into generated_law_test.go. What stays here is what a
+// declaration cannot decide alone: how the seal resolves it against a complete
+// catalog, and what the route relation's Build actually is.
+
+// TestStorageProgramSealsThroughACompleteCatalog is the seam Check cannot
+// reach. Check is data-local by design, so a candidate provider on the wrong
+// owner axis and a destination that names a key projection are both well
+// formed to it; only the upward seal, resolving every local key against the
+// complete catalog, can refuse them. That resolution is what this law states,
+// over the same focused composition the canonical declaration compiles
+// through.
+func TestStorageProgramSealsThroughACompleteCatalog(t *testing.T) {
+	if compiled, failure := compileStorageProgram(t, Storage()); failure.Available() || !compiled.Available() {
 		t.Fatalf("sealed storage plan unavailable: catalog=%+v failure=%+v", compiled, failure)
 	}
-	if declaration.Candidate.AxisRelation.Member != testValueCandidates || declaration.Candidate.AxisRelation.Axis.Key != "value" {
-		t.Fatalf("candidate provider=%+v, want Value storage-transfer candidates", declaration.Candidate)
+
+	wrongProvider := Storage()
+	wrongProvider.Candidate.AxisRelation.Axis = schema.EntryReference{Surface: schema.SurfaceKindAxis, Key: "placement"}
+	if problem, valid := wrongProvider.Check(); !valid {
+		t.Fatalf("the owner-qualified provider is a seal question, not a data-local one: %+v", problem)
 	}
-	if got, want := declaration.JoinCount(), 2; got != want {
-		t.Fatalf("join count=%d, want %d", got, want)
+	if _, failure := compileStorageProgram(t, wrongProvider); !failure.Available() {
+		t.Fatal("wrong owner-qualified candidate provider was admitted by the seal plan")
 	}
 
-	first, firstOK := declaration.JoinAt(0)
-	if !firstOK || first.Read.Form != ruleprogram.Exact || first.Read.Axis.EntryReference().Key != "value" ||
-		first.Relation.Member != testValueSources || first.Key.Member != testValueSourceKey ||
-		len(first.Sources) != 1 || !first.Sources[0].Candidate {
-		t.Fatalf("exact Value join=%+v, want candidate-only exact source read", first)
+	wrongDestination := Storage()
+	wrongDestination.Fold.Outputs[0].Destination.Member = testRouteKey
+	if problem, valid := wrongDestination.Check(); !valid {
+		t.Fatalf("the destination's projection kind is a seal question, not a data-local one: %+v", problem)
 	}
-	if first.Read.Contract.DenominatorRef.Declared() {
-		t.Fatal("exact sparse Value read acquired a fabricated denominator")
-	}
-
-	second, secondOK := declaration.JoinAt(1)
-	if !secondOK || second.Read.Form != ruleprogram.Selected || second.Read.Axis.EntryReference().Key != "placement" ||
-		second.Relation.Member != testRouteRelation || second.Key.Member != testRouteKey ||
-		second.Predicate.Member != testRouteTag || len(second.Sources) != 2 ||
-		!second.Sources[0].Candidate || second.Sources[1] != ruleprogram.PriorSource(0) {
-		t.Fatalf("selected Placement join=%+v, want candidate + prior exact source", second)
-	}
-	if second.Read.Contract.DenominatorRef.EntryReference().Key != schema.Key("coordinates/placement") {
-		t.Fatalf("selected route denominator=%+v, want coordinates/placement", second.Read.Contract.DenominatorRef)
-	}
-
-	if declaration.Carry != nil {
-		t.Fatalf("carry=%+v, want no carry on a routed Store rule", declaration.Carry)
-	}
-	if len(declaration.Fold.Inputs) != 2 || declaration.Fold.Inputs[0] != 0 || declaration.Fold.Inputs[1] != 1 {
-		t.Fatalf("fold inputs=%v, want [0 1]", declaration.Fold.Inputs)
-	}
-	output := declaration.Fold.Outputs[0]
-	if output.Mode != ruleprogram.ModeRoute || !output.RouteJoinPresent || output.RouteJoin != 1 ||
-		output.Destination.Member != testRouteDestination || output.Column.Key != OutputKey {
-		t.Fatalf("route output=%+v, want explicit selected-join route publication", output)
-	}
-}
-
-func TestStorageRuleEntryCarriesTheCanonicalProgramAndIssuance(t *testing.T) {
-	spec := RuleEntry()
-	if spec.Key != RuleKey || spec.Writes != AxisKey || spec.Owner != AxisKey || spec.Lane != rule.LaneMounted ||
-		spec.Semantic != vocabulary.RoleKey(RuleRole) || len(spec.Roles) != 1 || spec.Roles[0] != vocabulary.RoleKey(OperandRole) {
-		t.Fatalf("Store RuleEntry identity = %+v", spec)
-	}
-	if len(spec.Issues) != 3 {
-		t.Fatalf("Store issuance count = %d, want the three storage bind/write forms", len(spec.Issues))
-	}
-	for index, issue := range spec.Issues {
-		if !issue.Available() {
-			t.Fatalf("Store issuance[%d] unavailable: %+v", index, issue)
-		}
-	}
-	if problem, valid := spec.Program.Check(); !valid {
-		t.Fatalf("RuleEntry Program rejected: %+v", problem)
-	}
-	// RuleEntry receives a fresh issue slice. Mutating a caller-owned copy must
-	// not alter the next declaration value.
-	spec.Issues[0].Occurrence = "mutated"
-	if RuleEntry().Issues[0].Occurrence == "mutated" {
-		t.Fatal("Store issuance geometry is shared between declarations")
-	}
-}
-
-func TestStorageReadsUseOneStrictMaterializationContract(t *testing.T) {
-	declaration := Storage()
-	for index := 0; index < declaration.JoinCount(); index++ {
-		join, ok := declaration.JoinAt(index)
-		if !ok {
-			t.Fatalf("join %d unavailable", index)
-		}
-		contract := join.Read.Contract
-		if contract.Order != ruleprogram.OrderCanonical || contract.Sparse != ruleprogram.SparseExplicit ||
-			contract.OnOpaque != ruleprogram.OnOpaqueRefuse || contract.Multiplicity != ruleprogram.MultiplicityOne {
-			t.Fatalf("join %d contract = %+v, want strict canonical one-cell materialization", index, contract)
-		}
-	}
-	first, _ := declaration.JoinAt(0)
-	second, _ := declaration.JoinAt(1)
-	if first.Read.Contract.DenominatorRef.Declared() {
-		t.Fatal("foreign Value exact read acquired a fallback denominator")
-	}
-	if second.Read.Contract.DenominatorRef.EntryReference().Key != schema.Key("coordinates/placement") {
-		t.Fatalf("Placement selected read denominator = %+v", second.Read.Contract.DenominatorRef)
+	if _, failure := compileStorageProgram(t, wrongDestination); !failure.Available() {
+		t.Fatal("route output accepted a key projection as its destination")
 	}
 }
 
@@ -168,44 +94,6 @@ func TestStorageRelationAuthorsTheFourFenceDeriveRoutesBuild(t *testing.T) {
 		derivation.Build.PackagePath != "github.com/wippyai/go-lua/domain/placement/store" || len(derivation.StaticAxes) != 2 ||
 		derivation.StaticAxes[0].Key != AxisKey || derivation.StaticAxes[1].Key != valueAxisKey {
 		t.Fatalf("Store route derivation = %+v", derivation)
-	}
-}
-
-func TestStorageProgramRejectsMissingProviderAndRouteGeometry(t *testing.T) {
-	missingProvider := Storage()
-	missingProvider.Candidate = ruleprogram.Program{}.Candidate
-	if problem, valid := missingProvider.Check(); valid || problem.Kind != ruleprogram.ProblemCandidate {
-		t.Fatalf("missing candidate provider valid=%v problem=%+v", valid, problem)
-	}
-
-	wrongProvider := Storage()
-	wrongProvider.Candidate.AxisRelation.Axis = schema.EntryReference{Surface: schema.SurfaceKindAxis, Key: "placement"}
-	if _, failure := compileStorageProgram(t, wrongProvider); !failure.Available() {
-		t.Fatal("wrong owner-qualified candidate provider was admitted by the seal plan")
-	}
-
-	missingRouteJoin := Storage()
-	missingRouteJoin.Fold.Outputs[0].RouteJoinPresent = false
-	if problem, valid := missingRouteJoin.Check(); valid || problem.Kind != ruleprogram.ProblemOutput {
-		t.Fatalf("missing route join valid=%v problem=%+v", valid, problem)
-	}
-
-	wrongRouteJoin := Storage()
-	wrongRouteJoin.Fold.Outputs[0].RouteJoin = 0
-	if problem, valid := wrongRouteJoin.Check(); valid || problem.Kind != ruleprogram.ProblemJoin {
-		t.Fatalf("exact join used as route source valid=%v problem=%+v", valid, problem)
-	}
-
-	unboundedRoute := Storage()
-	unboundedRoute.Joins[1].Read.Contract.Multiplicity = ruleprogram.MultiplicityMany
-	if problem, valid := unboundedRoute.Check(); valid || problem.Kind != ruleprogram.ProblemJoin {
-		t.Fatalf("unbounded route valid=%v problem=%+v", valid, problem)
-	}
-
-	wrongDestination := Storage()
-	wrongDestination.Fold.Outputs[0].Destination.Member = testRouteKey
-	if _, failure := compileStorageProgram(t, wrongDestination); !failure.Available() {
-		t.Fatal("route output accepted a key projection as its destination")
 	}
 }
 

@@ -12,6 +12,7 @@ package familyroster
 import (
 	"github.com/wippyai/go-lua/analysis/schema"
 	"github.com/wippyai/go-lua/analysis/schema/rule/emit"
+	"github.com/wippyai/go-lua/analysis/schema/rule/emitlaw"
 	heapempty "github.com/wippyai/go-lua/domain/heap/allocation/empty"
 	storeprogram "github.com/wippyai/go-lua/domain/placement/store/program"
 )
@@ -50,6 +51,46 @@ func Families() []Family {
 				Spec:        storeprogram.RuleEntry(),
 			},
 			Directory: "domain/placement/store",
+		},
+	}
+}
+
+// GeneratedLawFileName is the one name an emitted structural law suite is
+// written under, for the same reason GeneratedFileName is fixed: a package's
+// generated laws are identifiable without consulting this roster.
+const GeneratedLawFileName = "generated_law_test.go"
+
+// Declaration is one rule whose structural law suite is emitted: the
+// declaration package it is emitted into, and the accessors that package
+// publishes.
+//
+// It is a separate roster row from Family because the two cutovers are
+// separate. A rule can have its execution family emitted while its structural
+// laws are still authored, and a rule whose family is authored can still owe
+// the same structural laws - what a declaration is obliged to prove about
+// itself does not depend on who wrote its executor.
+type Declaration struct {
+	Target    emitlaw.Target
+	Directory string
+}
+
+// Key is the rule key this law suite is emitted from.
+func (declaration Declaration) Key() schema.Key { return declaration.Target.Spec.Key }
+
+// Declarations returns the roster of rules whose structural law suite is
+// emitted. Returning a fresh slice keeps the registry independent of callers
+// that inspect or reorder it.
+func Declarations() []Declaration {
+	return []Declaration{
+		{
+			Target: emitlaw.Target{
+				PackagePath: "github.com/wippyai/go-lua/domain/placement/store/program",
+				PackageName: "program",
+				Declaration: "Storage",
+				Entry:       "RuleEntry",
+				Spec:        storeprogram.RuleEntry(),
+			},
+			Directory: "domain/placement/store/program",
 		},
 	}
 }
