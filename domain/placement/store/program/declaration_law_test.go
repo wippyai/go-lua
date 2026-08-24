@@ -156,7 +156,7 @@ func TestStorageRelationAuthorsTheFourFenceDeriveRoutesBuild(t *testing.T) {
 	}
 	relation := source.Relations[0]
 	if relation.CandidateProvider.Axis.Key != valueAxisKey || relation.CandidateProvider.Member != StorageTransferCandidates ||
-		len(relation.Inputs) != 2 || relation.Inputs[0] != "StorageTransferCarrier" || relation.Inputs[1] != "ValueFactCarrier" {
+		len(relation.Inputs) != 2 || relation.Inputs[0].Carrier != "StorageTransferCarrier" || relation.Inputs[1].Carrier != "ValueFactCarrier" {
 		t.Fatalf("Store route ownership/input shape = %+v", relation)
 	}
 	if relation.CandidateResolver.Available() || relation.CandidateOrdinal.Available() || relation.CandidateAt.Available() ||
