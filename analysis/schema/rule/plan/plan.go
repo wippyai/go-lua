@@ -214,6 +214,11 @@ type Plan struct {
 	carry              Carry
 	carryPresent       bool
 	transports         []Transport
+	// activation is the semantic identity of the activation family this plan's
+	// candidate branches are grouped under, resolved through the same sealed
+	// role vocabulary as semantic and operand. It is absent for a plan that
+	// declares no transport vector.
+	activation identity.SemanticKey
 }
 
 // TransportCount is the declared width of this plan's activation transport
@@ -227,6 +232,11 @@ func (compiled Plan) TransportAt(index int) (Transport, bool) {
 	}
 	return compiled.transports[index], true
 }
+
+// ActivationFamily is the activation family identity this plan's structural
+// publication is admitted under. It is available exactly when the plan carries
+// a transport vector, which is the biconditional the Program declares.
+func (compiled Plan) ActivationFamily() identity.SemanticKey { return compiled.activation }
 
 // Present reports whether this rule ordinal carried an authored Program.
 func (compiled Plan) Present() bool { return compiled.present }
@@ -912,6 +922,18 @@ func compileProgram(ruleOrdinal uint32, template *rule.Template, declaration pro
 			return Plan{}, transportFailure
 		}
 		compiled.transports = append(compiled.transports, Transport{Axis: transportAxisOrdinal, Exported: transport.Exported})
+	}
+	if len(compiled.transports) != 0 {
+		// The family is resolved through the same role vocabulary as the rule
+		// and operand identities above. Program.Check already holds the
+		// declaration to the biconditional between the vector and the role, so
+		// a vector that reaches here without a resolvable family is a role the
+		// composition did not publish.
+		activationSemantic, activationSemanticOK := roles.Key(declaration.ActivationRole)
+		if !activationSemanticOK || !activationSemantic.Available() {
+			return Plan{}, compileFailure(template.ID(), rule.LawProgramShape, schema.DispositionIncomplete)
+		}
+		compiled.activation = activationSemantic
 	}
 
 	if !fitsUint32(len(compiled.sources)) || !fitsUint32(len(compiled.joins)) || !fitsUint32(len(compiled.foldInputs)) || !fitsUint32(len(compiled.outputs)) || !fitsUint32(len(compiled.transports)) {

@@ -24,7 +24,40 @@ func transportProgram(rows []TransportDecl) Program {
 		[]OutputDecl{seq5742Output("call-activation/write", ModeStructural, 0)},
 	)
 	program.Transport = rows
+	if len(rows) != 0 {
+		program.ActivationRole = "semantic/activation-family/call-body"
+	}
 	return program
+}
+
+// TestAnActivationVectorAndItsFamilyAreOneDeclaration states the biconditional
+// the cold row depends on. A vector with no family names candidate branches
+// nothing groups, and a family with no vector groups branches that instantiate
+// nothing; neither half can be declared alone.
+func TestAnActivationVectorAndItsFamilyAreOneDeclaration(t *testing.T) {
+	vectorWithoutFamily := transportProgram([]TransportDecl{{Axis: transportAxis("value")}})
+	vectorWithoutFamily.ActivationRole = ""
+	if problem, valid := vectorWithoutFamily.Check(); valid || problem.Kind != ProblemTransport {
+		t.Fatalf("a transport vector with no activation family = %#v valid=%t", problem, valid)
+	}
+	familyWithoutVector := transportProgram(nil)
+	familyWithoutVector.ActivationRole = "semantic/activation-family/call-body"
+	if problem, valid := familyWithoutVector.Check(); valid || problem.Kind != ProblemTransport {
+		t.Fatalf("an activation family with no transport vector = %#v valid=%t", problem, valid)
+	}
+}
+
+// TestTheActivationFamilyIsPartOfTheProgramsSealedIdentity keeps the family off
+// the digest of a rule that declares no vector and on the digest of one that
+// does: two activation rules whose branches are grouped under different
+// families are two declarations.
+func TestTheActivationFamilyIsPartOfTheProgramsSealedIdentity(t *testing.T) {
+	first := transportProgram([]TransportDecl{{Axis: transportAxis("value")}})
+	second := transportProgram([]TransportDecl{{Axis: transportAxis("value")}})
+	second.ActivationRole = "semantic/activation-family/call-tail"
+	if first.Digest() == second.Digest() {
+		t.Fatal("the activation family is not part of the sealed identity")
+	}
 }
 
 // TestATransportVectorCannotExportAnAxisItDoesNotImport is the FG-6 symmetry

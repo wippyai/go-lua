@@ -83,6 +83,16 @@ type Program struct {
 	// instantiates when it crosses its transition. A rule that publishes no
 	// activation declares none.
 	Transport []TransportDecl
+	// ActivationRole is the semantic role of the activation family this rule's
+	// candidate branches are grouped under. It is the structural sibling of
+	// OperandRole: the declaration names a role, and the composition's role
+	// vocabulary resolves it to the one semantic identity the cold row claims.
+	//
+	// A rule that publishes a fact declares none, and a rule that transports a
+	// vector across an activation edge declares one. That biconditional is
+	// checked below, so a transport vector can never reach a cold row that has
+	// no family to be admitted under.
+	ActivationRole schema.Key
 }
 
 // TransportCount is the declared width of this rule's activation transport
@@ -100,7 +110,8 @@ func (program Program) TransportAt(index int) (TransportDecl, bool) {
 func (program Program) Available() bool {
 	return program.OperandRole.Available() || program.Candidate.Declared() || len(program.Joins) != 0 ||
 		program.Fold.Reducer.Declared() || len(program.Fold.Inputs) != 0 ||
-		len(program.Fold.Outputs) != 0 || program.Carry != nil || len(program.Transport) != 0
+		len(program.Fold.Outputs) != 0 || program.Carry != nil || len(program.Transport) != 0 ||
+		program.ActivationRole.Available()
 }
 
 func (program Program) JoinCount() int { return len(program.Joins) }
@@ -268,6 +279,12 @@ func (program Program) checkReachability() (Problem, bool) {
 // axis would be two authorities for one crossing, which is the defect the
 // single-list shape exists to make unwritable.
 func (program Program) checkTransport() bool {
+	// The family and the vector are one declaration. A vector with no family
+	// names candidate branches nothing groups; a family with no vector groups
+	// branches that instantiate nothing.
+	if (len(program.Transport) != 0) != program.ActivationRole.Available() {
+		return false
+	}
 	if len(program.Transport) == 0 {
 		return true
 	}
@@ -481,6 +498,9 @@ func (program Program) WriteContent(content *framing.Writer) error {
 			if err := content.Bool(transport.Exported); err != nil {
 				return err
 			}
+		}
+		if err := content.String(string(program.ActivationRole)); err != nil {
+			return err
 		}
 	}
 	if err := content.Record(contentRecordFold); err != nil {
