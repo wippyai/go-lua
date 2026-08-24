@@ -31,6 +31,7 @@ type Session struct {
 	solveDiag     anadiag.AnalyzeDiagnostics
 	compileStatus analysis.CompileStatus
 	solveStatus   analysis.AnalyzeStatus
+	declared      declaredProgram
 	records       []rowRecord
 	byID          map[identity.ContentID]int
 }
@@ -66,6 +67,7 @@ func Open(repository, fixture string) (*Session, error) {
 		compilation: workspace.Compilation(),
 		link:        linked,
 	}
+	session.declared = newDeclaredProgram(session.compilation)
 	if target, ok := linked.Boundary().Target(); ok {
 		session.contract = target
 	}
@@ -133,6 +135,7 @@ func (session *Session) Close() bool {
 	session.contract = nil
 	session.records = nil
 	session.byID = nil
+	session.declared = declaredProgram{}
 	return ok
 }
 

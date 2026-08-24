@@ -4,6 +4,7 @@ import (
 	"fmt"
 
 	"github.com/wippyai/go-lua/analysis/identity"
+	"github.com/wippyai/go-lua/analysis/schema"
 )
 
 // Command renders one inspector verb over this session. Printed facts name
@@ -34,14 +35,18 @@ func (session *Session) Command(name string, args ...string) (string, error) {
 		return formatRow(session, id), nil
 	case "why":
 		if len(args) > 1 {
-			return "", fmt.Errorf("inspect: why takes at most one identity")
+			return "", fmt.Errorf("inspect: why takes at most one row identity or factor key")
 		}
 		if len(args) == 0 {
 			return formatWhy(session, identity.ContentID{}, false), nil
 		}
+		// why names either a solved row by its identity or a factor by the
+		// axis key the schema declares it under. The two are distinguishable
+		// by shape: a row identity is a portable content identity, a factor is
+		// a declaration key.
 		id, ok := ParseContentID(args[0])
 		if !ok {
-			return "", fmt.Errorf("inspect: unavailable identity")
+			return formatWhyKey(session, schema.Key(args[0])), nil
 		}
 		return formatWhy(session, id, true), nil
 	case "publish":
