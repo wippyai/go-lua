@@ -77,6 +77,17 @@ func MountedCall() definition.Definition {
 				CandidateOrdinal:  callMethod("CallCoordinateOrdinal", "Algebra", true, 0),
 				CandidateAt:       callMethod("CallCoordinateAt", "Algebra", true, 0),
 			},
+			{
+				// The dispatch fact relation is indexed by the same mounted Call
+				// candidate that owns its exact destination key. It declares the
+				// foreign Call read a Rule Program consumes; it does not materialize
+				// or duplicate a runtime Call value.
+				Name:              "MountedCallFacts",
+				Key:               "call/mounted-call/facts",
+				Subject:           "CallFactCarrier",
+				Inputs:            []definition.RelationInput{{Carrier: "CallCoordinateCarrier"}},
+				CandidateProvider: member.RelationRef{Axis: axisReference("call"), Member: "call/mounted-call/candidates"},
+			},
 		},
 		Projections: []definition.Projection{
 			{
@@ -85,6 +96,15 @@ func MountedCall() definition.Definition {
 				Relation:          "MountedCallCandidates",
 				CandidateProvider: member.RelationRef{Axis: axisReference("call"), Member: "call/mounted-call/candidates"},
 				Role:              member.Destination,
+				Result:            "CallKeyCarrier",
+				Accessor:          callMethod("Key", "CallCoordinate", false, -1),
+			},
+			{
+				Name:              "MountedCallFactKey",
+				Key:               "call/mounted-call/fact-key",
+				Relation:          "MountedCallFacts",
+				CandidateProvider: member.RelationRef{Axis: axisReference("call"), Member: "call/mounted-call/candidates"},
+				Role:              member.Key,
 				Result:            "CallKeyCarrier",
 				Accessor:          callMethod("Key", "CallCoordinate", false, -1),
 			},

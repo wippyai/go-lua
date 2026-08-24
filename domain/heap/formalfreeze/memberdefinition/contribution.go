@@ -90,19 +90,6 @@ func Contribution() definition.Contribution {
 		},
 		Relations: []definition.Relation{
 			{
-				// The mounted call's own fact, read at the coordinate Call
-				// already projects for the candidate. It is a dependent relation
-				// over the candidate row rather than the directory itself: a
-				// join reads rows a relation derives FROM something, and what
-				// this derives from is the mounted call it is handed.
-				Axis:              "call",
-				Name:              "MountedCallFacts",
-				Key:               "call/mounted-call/facts",
-				Subject:           "CallFactCarrier",
-				Inputs:            []definition.RelationInput{{Carrier: "CallCoordinateCarrier"}},
-				CandidateProvider: mountedCallProvider(),
-			},
-			{
 				// The parent of the actual member set: one row per mounted call,
 				// resolved under the same occurrence the mounted call candidate
 				// is. It is Value grouping its own sealed actual rows by the
@@ -166,19 +153,6 @@ func Contribution() definition.Contribution {
 			},
 		},
 		Projections: []definition.Projection{
-			{
-				// The coordinate the call fact is read at. The accessor's
-				// receiver is the relation's input - the mounted call row - which
-				// is what a dependent relation keyed on its own candidate means.
-				Axis:              "call",
-				Name:              "MountedCallFactKey",
-				Key:               "call/mounted-call/fact-key",
-				Relation:          "MountedCallFacts",
-				CandidateProvider: mountedCallProvider(),
-				Role:              member.Key,
-				Result:            "CallKeyCarrier",
-				Accessor:          method(callPackagePath, "Key", callPackagePath, "CallCoordinate", false, -1),
-			},
 			{
 				Axis:              "value",
 				Name:              "FormalFreezeActualKey",
