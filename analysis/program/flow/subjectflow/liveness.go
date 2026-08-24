@@ -535,6 +535,7 @@ func (builder *sealBuilder) liveness() error {
 			entry := rows[key]
 			if entry == nil {
 				entry = &livenessAccumulator{row: Liveness{
+					Call:          boundary.Call,
 					YieldRoute:    boundary.YieldRoute,
 					YieldFromPath: boundary.YieldFromPath,
 					YieldToPath:   boundary.YieldToPath,

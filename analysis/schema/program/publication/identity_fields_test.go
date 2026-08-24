@@ -69,13 +69,13 @@ func TestArtifactIdentityManifestEmptyKAT(t *testing.T) {
 		// Point, Values.
 		u(2), u(2), u(0), u(0),
 		// Lifecycle.
-		u(1), u(0), u(1), u(0), u(1), u(0), u(1), u(0), u(0), u(1), u(0),
+		u(2), u(0), u(2), u(0), u(1), u(0), u(1), u(0), u(0), u(1), u(0),
 		// Call, CallResultSlot, Body, Module, Occurrence, Summary.
 		u(2), u(0), u(4), u(0), u(2), u(0), u(0), u(4), u(0), u(0), u(0), u(0),
 		u(1), u(0), u(0), u(0), u(0), u(0), u(0),
 		u(0), u(0), u(0), u(0),
 		// Heap allocation/index, diagnostic, static type value/node/expression/input.
-		u(0), u(0), u(5), u(0), u(0), u(0), u(0), u(0),
+		u(0), u(0), u(7), u(0), u(0), u(0), u(0), u(0),
 		// Environment/local transfer, rule occurrence, region/WTO.
 		u(0), u(0), u(0), u(0), u(0),
 	}

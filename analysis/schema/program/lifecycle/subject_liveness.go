@@ -40,12 +40,14 @@ func (state SubjectLivenessState) Valid() bool {
 	return state >= SubjectLivenessUnknown && state <= SubjectLivenessDiesBefore
 }
 
-// SubjectLiveness is one all-normal-arms result for one Yield route and one
-// subject. Yield endpoint paths are provenance coordinates copied from Flow's
+// SubjectLiveness is one all-normal-arms result for one Call/Yield route and
+// one subject. Call is the canonical artifact occurrence consumed by mounted
+// Call; Yield endpoint paths are provenance coordinates copied from Flow's
 // causal schedule; they may be unavailable for a terminal/unknown route, but
 // the route identity and subject identity are always required.
 type SubjectLiveness struct {
 	id            identity.ContentID
+	call          identity.ContentID
 	yieldRoute    identity.ContentID
 	yieldFromPath identity.ContentID
 	yieldToPath   identity.ContentID
@@ -54,14 +56,14 @@ type SubjectLiveness struct {
 	state         SubjectLivenessState
 }
 
-func SubjectLivenessIdentity(yieldRoute identity.ContentID, kind SubjectLivenessKind, subject identity.ContentID) (identity.ContentID, bool) {
-	if !yieldRoute.Available() || !kind.Valid() || !subject.Available() {
+func SubjectLivenessIdentity(call, yieldRoute identity.ContentID, kind SubjectLivenessKind, subject identity.ContentID) (identity.ContentID, bool) {
+	if !call.Available() || !yieldRoute.Available() || !kind.Valid() || !subject.Available() {
 		return identity.ContentID{}, false
 	}
 	hash := sha256.New()
 	var writer framing.Writer
-	if writer.Reset(hash, "program/subject-liveness-v1", 1) != nil || writer.Record(1) != nil ||
-		writer.Bytes(yieldRoute[:]) != nil || writer.Uint(uint64(kind)) != nil || writer.Bytes(subject[:]) != nil ||
+	if writer.Reset(hash, "program/subject-liveness-v2", 1) != nil || writer.Record(1) != nil ||
+		writer.Bytes(call[:]) != nil || writer.Bytes(yieldRoute[:]) != nil || writer.Uint(uint64(kind)) != nil || writer.Bytes(subject[:]) != nil ||
 		writer.Finish() != nil {
 		return identity.ContentID{}, false
 	}
@@ -70,16 +72,16 @@ func SubjectLivenessIdentity(yieldRoute identity.ContentID, kind SubjectLiveness
 	return id, id.Available()
 }
 
-func NewSubjectLiveness(id, yieldRoute, yieldFromPath, yieldToPath, subject identity.ContentID, kind SubjectLivenessKind, state SubjectLivenessState) (SubjectLiveness, bool) {
+func NewSubjectLiveness(id, call, yieldRoute, yieldFromPath, yieldToPath, subject identity.ContentID, kind SubjectLivenessKind, state SubjectLivenessState) (SubjectLiveness, bool) {
 	row := SubjectLiveness{
-		id: id, yieldRoute: yieldRoute, yieldFromPath: yieldFromPath, yieldToPath: yieldToPath,
+		id: id, call: call, yieldRoute: yieldRoute, yieldFromPath: yieldFromPath, yieldToPath: yieldToPath,
 		subjectKind: kind, subject: subject, state: state,
 	}
 	return row, row.Available()
 }
 
 func (row SubjectLiveness) Available() bool {
-	return row.id.Available() && row.yieldRoute.Available() && row.subject.Available() && row.subjectKind.Valid() && row.state.Valid() &&
+	return row.id.Available() && row.call.Available() && row.yieldRoute.Available() && row.subject.Available() && row.subjectKind.Valid() && row.state.Valid() &&
 		(row.yieldFromPath.Available() == row.yieldToPath.Available()) && row.identityValid()
 }
 
@@ -87,10 +89,10 @@ func (row SubjectLiveness) Available() bool {
 // neutral coordinates. State is deliberately excluded: changing a proven
 // answer must never silently mint a second subject coordinate.
 func (row SubjectLiveness) identityValid() bool {
-	if !row.id.Available() || !row.yieldRoute.Available() || !row.subject.Available() || !row.subjectKind.Valid() {
+	if !row.id.Available() || !row.call.Available() || !row.yieldRoute.Available() || !row.subject.Available() || !row.subjectKind.Valid() {
 		return false
 	}
-	id, ok := SubjectLivenessIdentity(row.yieldRoute, row.subjectKind, row.subject)
+	id, ok := SubjectLivenessIdentity(row.call, row.yieldRoute, row.subjectKind, row.subject)
 	return ok && id == row.id
 }
 
@@ -99,6 +101,13 @@ func (row SubjectLiveness) ID() identity.ContentID {
 		return identity.ContentID{}
 	}
 	return row.id
+}
+
+func (row SubjectLiveness) CallID() identity.ContentID {
+	if !row.Available() {
+		return identity.ContentID{}
+	}
+	return row.call
 }
 
 func (row SubjectLiveness) YieldRouteID() identity.ContentID {

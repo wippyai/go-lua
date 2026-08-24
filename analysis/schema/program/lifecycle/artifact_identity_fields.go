@@ -8,10 +8,12 @@ const (
 	// Version 2 adds the explicit closure-environment lifetime class while
 	// retaining the existing ordinals for all prior classes.
 	StorageCellLifetimeLawVersion uint64 = 2
-	SubjectLivenessLawVersion     uint64 = 1
-	SubjectEventLawVersion        uint64 = 1
-	AliasRouteScopeLawVersion     uint64 = 1
-	AliasCandidateLawVersion      uint64 = 1
+	// Version 2 adds the canonical artifact Call occurrence which authorizes
+	// mounted consumers to join liveness to the selected Call/Target fact.
+	SubjectLivenessLawVersion uint64 = 2
+	SubjectEventLawVersion    uint64 = 1
+	AliasRouteScopeLawVersion uint64 = 1
+	AliasCandidateLawVersion  uint64 = 1
 )
 
 // WriteArtifactIdentityFields replays the historical lifecycle portion of an
@@ -39,7 +41,7 @@ func (view View) WriteArtifactIdentityFields(writer identity.IdentityWriter) boo
 	for index := 0; index < livenessCount; index++ {
 		row, held := view.SubjectLivenessAt(index)
 		if !held || !row.Available() ||
-			!writer.WriteContentID(row.ID()) || !writer.WriteContentID(row.YieldRouteID()) ||
+			!writer.WriteContentID(row.ID()) || !writer.WriteContentID(row.CallID()) || !writer.WriteContentID(row.YieldRouteID()) ||
 			!writer.WriteContentID(row.YieldFromPathID()) || !writer.WriteContentID(row.YieldToPathID()) ||
 			!writer.WriteUint(uint64(row.SubjectKind())) || !writer.WriteContentID(row.SubjectID()) ||
 			!writer.WriteUint(uint64(row.State())) {

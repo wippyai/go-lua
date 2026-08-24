@@ -19,11 +19,12 @@ func subjectLivenessValidationID(seed byte) identity.ContentID {
 
 func subjectLivenessValidationRow(t *testing.T, route, from, to, subject identity.ContentID, kind lifecycle.SubjectLivenessKind, state lifecycle.SubjectLivenessState) lifecycle.SubjectLiveness {
 	t.Helper()
-	id, ok := lifecycle.SubjectLivenessIdentity(route, kind, subject)
+	call := subjectLivenessValidationID(137)
+	id, ok := lifecycle.SubjectLivenessIdentity(call, route, kind, subject)
 	if !ok {
 		t.Fatal("subject-liveness identity")
 	}
-	row, ok := lifecycle.NewSubjectLiveness(id, route, from, to, subject, kind, state)
+	row, ok := lifecycle.NewSubjectLiveness(id, call, route, from, to, subject, kind, state)
 	if !ok {
 		t.Fatal("subject-liveness row")
 	}

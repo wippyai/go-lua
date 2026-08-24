@@ -208,6 +208,7 @@ func AggregateLiveness(states []LivenessState) LivenessState {
 // key used by mounted consumers and by the all-path fold.
 type Liveness struct {
 	ID            identity.ContentID
+	Call          keyspace.Term
 	YieldRoute    identity.ContentID
 	YieldFromPath identity.ContentID
 	YieldToPath   identity.ContentID

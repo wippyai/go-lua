@@ -89,11 +89,12 @@ func suspensionCatalogLawView(t testing.TB, program programschema.Program) lifec
 
 func suspensionCatalogLawSubject(t testing.TB, route identity.ContentID, kind lifecycle.SubjectLivenessKind, subject identity.ContentID) lifecycle.SubjectLiveness {
 	t.Helper()
-	id, ok := lifecycle.SubjectLivenessIdentity(route, kind, subject)
+	call := suspensionCatalogLawID(t, "call")
+	id, ok := lifecycle.SubjectLivenessIdentity(call, route, kind, subject)
 	if !ok {
 		t.Fatal("subject liveness identity")
 	}
-	row, ok := lifecycle.NewSubjectLiveness(id, route, identity.ContentID{}, identity.ContentID{}, subject, kind, lifecycle.SubjectLivenessLive)
+	row, ok := lifecycle.NewSubjectLiveness(id, call, route, identity.ContentID{}, identity.ContentID{}, subject, kind, lifecycle.SubjectLivenessLive)
 	if !ok {
 		t.Fatal("subject liveness row")
 	}
