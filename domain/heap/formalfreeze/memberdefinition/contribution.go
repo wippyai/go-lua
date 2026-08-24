@@ -103,6 +103,13 @@ func Contribution() definition.Contribution {
 				CandidateResolver: method(valuePackagePath, "MountedCallActualsForMountedOccurrence", valuePackagePath, "Schema", true, 0),
 				CandidateOrdinal:  method(valuePackagePath, "MountedCallActualsOrdinal", valuePackagePath, "Schema", true, 0),
 				CandidateAt:       method(valuePackagePath, "MountedCallActualsAt", valuePackagePath, "Schema", true, 0),
+				// Value's parent order and Call's mounted-call order enumerate
+				// the same subjects: both are addressed by the mounted call's
+				// occurrence, and the coordinate Call published is copied into
+				// each parent row at seal. Stating the correspondence is what
+				// lets this rule - whose candidate is Call's - address these
+				// rows without the two directories being correlated by hand.
+				Correspondences: []member.RelationRef{mountedCallProvider()},
 			},
 			{
 				// The ordered actuals themselves, addressed by (call, ordinal).
