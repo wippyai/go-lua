@@ -237,9 +237,9 @@ type generatedFamilyAssignment struct {
 // own descriptor declares; this pass only routes that row to its owning
 // Factor. The solve loop later performs two dense indexes (ref ->
 // row, family -> worker) and nothing else.
-func buildGeneratedExecutionProgram(program *runtimeProgram) (*generatedExecutionProgram, bool) {
+func buildGeneratedExecutionProgram(program *runtimeProgram) (*generatedExecutionProgram, topologyConstructionRefusal, bool) {
 	if program == nil || !program.valid() {
-		return nil, false
+		return nil, refuseProgramSeal(topologyConstructionStepDeclarationShape), false
 	}
 	memberCount := program.memberCount()
 	rowsByOwner := make([][]execution.FormRow, len(program.factorOwners))
@@ -257,10 +257,10 @@ func buildGeneratedExecutionProgram(program *runtimeProgram) (*generatedExecutio
 		}
 		descriptor, descriptorOK := program.generatedProgramAt(row.generated.rule)
 		if !descriptorOK {
-			return nil, false
+			return nil, refuseProgramSeal(topologyConstructionStepMemberRow), false
 		}
 		if descriptor.OutputCount() != 1 || int(descriptor.OutputFactor()) >= len(rowsByOwner) {
-			return nil, false
+			return nil, refuseProgramSeal(topologyConstructionStepMemberRow), false
 		}
 		// A row's Target is its one static destination, and a routed row has
 		// none: it publishes at the members its own relation derives. The
@@ -269,11 +269,11 @@ func buildGeneratedExecutionProgram(program *runtimeProgram) (*generatedExecutio
 		// routed one.
 		mode, modeOK := descriptor.OutputMode()
 		if !modeOK || (row.generated.target.Mode() == carrier.StrongTarget) != (mode == ruleprogram.ModeExact) {
-			return nil, false
+			return nil, refuseProgramSeal(topologyConstructionStepMemberRow), false
 		}
 		formRow, declared := execution.DeclaredForm(descriptor)
 		if !declared {
-			return nil, false
+			return nil, refuseProgramSeal(topologyConstructionStepMemberRow), false
 		}
 		formRow.Member, formRow.Unit, formRow.Target = memberIndex, row.generated.unit, row.generated.target
 		formRow.Candidate = row.generated.candidate
@@ -282,23 +282,23 @@ func buildGeneratedExecutionProgram(program *runtimeProgram) (*generatedExecutio
 		for join := 0; join < descriptor.ReadCount(); join++ {
 			plan, planOK := descriptor.ReadAt(join)
 			if !planOK {
-				return nil, false
+				return nil, refuseProgramSeal(topologyConstructionStepMemberRow), false
 			}
 			if plan.Form != ruleprogram.Exact {
 				continue
 			}
 			if exact >= len(row.generated.initial) || row.generated.initial[exact].Input != uint64(plan.Input) {
-				return nil, false
+				return nil, refuseProgramSeal(topologyConstructionStepMemberRow), false
 			}
 			var bound bool
 			formRow, bound = formRow.BindExact(join, row.generated.initial[exact].Unit)
 			if !bound {
-				return nil, false
+				return nil, refuseProgramSeal(topologyConstructionStepMemberRow), false
 			}
 			exact++
 		}
 		if exact != len(row.generated.initial) {
-			return nil, false
+			return nil, refuseProgramSeal(topologyConstructionStepMemberRow), false
 		}
 		rowsByOwner[descriptor.OutputFactor()] = append(rowsByOwner[descriptor.OutputFactor()], formRow)
 		installed[memberIndex] = formRow
@@ -311,11 +311,11 @@ func buildGeneratedExecutionProgram(program *runtimeProgram) (*generatedExecutio
 	for ownerIndex := range program.factorOwners {
 		owner, ownerOK := program.factorOwnerAt(int32(ownerIndex))
 		if !ownerOK || owner == nil {
-			return nil, false
+			return nil, refuseProgramSeal(topologyConstructionStepBinding), false
 		}
 		read, readOK := owner.foreignRead()
 		if !readOK {
-			return nil, false
+			return nil, refuseProgramSeal(topologyConstructionStepBinding), false
 		}
 		foreign[ownerIndex] = read
 	}
@@ -326,22 +326,22 @@ func buildGeneratedExecutionProgram(program *runtimeProgram) (*generatedExecutio
 		}
 		owner, ownerOK := program.factorOwnerAt(int32(ownerIndex))
 		if !ownerOK || owner == nil {
-			return nil, false
+			return nil, refuseProgramSeal(topologyConstructionStepDirectory), false
 		}
 		executors, addresses, built := owner.buildGeneratedFamilies(formRows, foreign)
 		if !built || len(addresses) != len(formRows) || len(executors) == 0 {
-			return nil, false
+			return nil, refuseProgramSeal(topologyConstructionStepDirectory), false
 		}
 		familyBase := uint32(len(families))
 		for _, executor := range executors {
 			if executor == nil || executor.InputCapacity() < 0 || executor.OutputCapacity() <= 0 {
-				return nil, false
+				return nil, refuseProgramSeal(topologyConstructionStepDirectory), false
 			}
 			families = append(families, executor)
 		}
 		for _, address := range addresses {
 			if address.Member < 0 || address.Member >= memberCount || !installed[address.Member].Form.Declared() || assigned[address.Member] || uint64(address.FamilyOffset) >= uint64(len(executors)) {
-				return nil, false
+				return nil, refuseProgramSeal(topologyConstructionStepDirectory), false
 			}
 			assignments[address.Member] = generatedFamilyAssignment{family: familyBase + address.FamilyOffset, local: address.Local}
 			assigned[address.Member] = true
@@ -354,15 +354,15 @@ func buildGeneratedExecutionProgram(program *runtimeProgram) (*generatedExecutio
 			continue
 		}
 		if !assigned[memberIndex] {
-			return nil, false
+			return nil, refuseProgramSeal(topologyConstructionStepMemberRow), false
 		}
 		row, rowOK := program.memberRowAt(memberIndex)
 		if !rowOK || row.generated == nil {
-			return nil, false
+			return nil, refuseProgramSeal(topologyConstructionStepMemberRow), false
 		}
 		descriptor, descriptorOK := program.generatedProgramAt(row.generated.rule)
 		if !descriptorOK || descriptor.InputCount() < 0 || descriptor.InputCount() > int(^uint16(0)) || descriptor.OutputCount() != 1 {
-			return nil, false
+			return nil, refuseProgramSeal(topologyConstructionStepMemberRow), false
 		}
 		assignment := assignments[memberIndex]
 		drafts = append(drafts, executioncatalog.Draft{Family: assignment.family, Local: assignment.local, Rule: row.generated.rule, Member: uint32(memberIndex), Candidate: row.generated.candidate, InputCount: uint16(descriptor.InputCount()), OutputCount: 1})
@@ -370,7 +370,7 @@ func buildGeneratedExecutionProgram(program *runtimeProgram) (*generatedExecutio
 	}
 	catalog, sealed := executioncatalog.Seal(drafts)
 	if !sealed {
-		return nil, false
+		return nil, refuseProgramSeal(topologyConstructionStepMemberRow), false
 	}
 	// The catalog is the authority an address is minted against, so a member
 	// row is sealed to its invocation only once that authority exists. This is
@@ -378,13 +378,13 @@ func buildGeneratedExecutionProgram(program *runtimeProgram) (*generatedExecutio
 	for ref, memberIndex := range draftMembers {
 		row, rowOK := program.memberRowAt(memberIndex)
 		if !rowOK || row.generated == nil {
-			return nil, false
+			return nil, refuseProgramSeal(topologyConstructionStepMemberRow), false
 		}
 		if !row.generated.sealInvocationRow(catalog, executioncatalog.Ref(ref), uint32(memberIndex), installed[memberIndex].Unit, installed[memberIndex].Target) {
-			return nil, false
+			return nil, refuseProgramSeal(topologyConstructionStepMemberRow), false
 		}
 	}
-	return &generatedExecutionProgram{catalog: catalog, families: families}, true
+	return &generatedExecutionProgram{catalog: catalog, families: families}, topologyConstructionRefusal{}, true
 }
 
 func (epoch *executorEpoch) recordFailure(reason SolveFailureReason, boundary solveBoundary, point, group, member, rule composition.Key) {

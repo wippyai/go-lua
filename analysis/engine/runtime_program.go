@@ -202,26 +202,26 @@ type runtimeProgram struct {
 // artifact-backed row must carry the StateOrdinal resolved from its exact
 // context plane; the graph-point StateOrdinal rule is reserved for the
 // explicitly non-artifact construction.
-func sealRuntimeProgram(schema *Schema, graph *equation.Graph, runtime *carrier.Composition, rows []memberRow, spans []memberSpan, factors []factorRecord, owners []runtimeFactor, queries []queryRow, observations []observationRow, contexts executioncontext.Directory, contextIndex contextfiber.Index, contextLayout contextfiber.Layout, pointOwners []contextfiber.PointOwner, artifactBacked bool) (*runtimeProgram, bool) {
+func sealRuntimeProgram(schema *Schema, graph *equation.Graph, runtime *carrier.Composition, rows []memberRow, spans []memberSpan, factors []factorRecord, owners []runtimeFactor, queries []queryRow, observations []observationRow, contexts executioncontext.Directory, contextIndex contextfiber.Index, contextLayout contextfiber.Layout, pointOwners []contextfiber.PointOwner, artifactBacked bool) (*runtimeProgram, topologyConstructionRefusal, bool) {
 	if schema == nil || !schema.Available() || graph == nil || runtime == nil || graph.CompositionID() != schema.coldID() || len(factors) != len(owners) || len(factors) != schemaFactorCount(schema) || len(queries) != graph.QueryCount() {
-		return nil, false
+		return nil, refuseProgramSeal(topologyConstructionStepDeclarationShape), false
 	}
 	contextPlanePresent := contexts.Available() || contextIndex.Available() || contextLayout.Available() || len(pointOwners) != 0
 	if artifactBacked {
 		if !validQueryContextPlane(graph, contexts, contextIndex, contextLayout, pointOwners) {
-			return nil, false
+			return nil, refuseProgramSeal(topologyConstructionStepDeclarationShape), false
 		}
 	} else if contextPlanePresent {
-		return nil, false
+		return nil, refuseProgramSeal(topologyConstructionStepDeclarationShape), false
 	}
 	next := int32(0)
 	for groupIndex, span := range spans {
 		if span.start != next || span.end < span.start || int(span.end) > len(rows) {
-			return nil, false
+			return nil, refuseProgramSeal(topologyConstructionStepMemberGroup), false
 		}
 		group, groupOK := graph.HyperedgeAt(groupIndex)
 		if !groupOK || span.count() != group.MemberCount() {
-			return nil, false
+			return nil, refuseProgramSeal(topologyConstructionStepMemberGroup), false
 		}
 		// A Group's rows are exactly its graph members. The transient expected set
 		// proves that permutation once; no identity/index mirror survives Seal.
@@ -229,35 +229,35 @@ func sealRuntimeProgram(schema *Schema, graph *equation.Graph, runtime *carrier.
 		for memberIndex := 0; memberIndex < group.MemberCount(); memberIndex++ {
 			member, memberOK := group.MemberAt(memberIndex)
 			if !memberOK || !member.Key().Available() {
-				return nil, false
+				return nil, refuseProgramSeal(topologyConstructionStepMemberGroup), false
 			}
 			expected[member.Key()] = struct{}{}
 		}
 		if len(expected) != group.MemberCount() {
-			return nil, false
+			return nil, refuseProgramSeal(topologyConstructionStepMemberGroup), false
 		}
 		for position := span.start; position < span.end; position++ {
 			row := rows[position]
 			if !row.valid() {
-				return nil, false
+				return nil, refuseProgramSeal(topologyConstructionStepMemberRow), false
 			}
 			geometry, geometryOK := row.geometry()
 			if !geometryOK {
-				return nil, false
+				return nil, refuseProgramSeal(topologyConstructionStepMemberRow), false
 			}
 			key := geometry.member().Key()
 			if _, present := expected[key]; !present {
-				return nil, false
+				return nil, refuseProgramSeal(topologyConstructionStepMemberRow), false
 			}
 			delete(expected, key)
 		}
 		if len(expected) != 0 {
-			return nil, false
+			return nil, refuseProgramSeal(topologyConstructionStepMemberRow), false
 		}
 		next = span.end
 	}
 	if int(next) != len(rows) {
-		return nil, false
+		return nil, refuseProgramSeal(topologyConstructionStepMemberRow), false
 	}
 	for index, record := range factors {
 		owner := owners[index]
@@ -266,7 +266,7 @@ func sealRuntimeProgram(schema *Schema, graph *equation.Graph, runtime *carrier.
 			slot, slotOK = owner.runtimeSlot()
 		}
 		if !record.valid() || int(record.owner) != index || owner == nil || !slotOK || slot != record.slot || compositionKeyOf(owner.semantic()) != record.key || schema.factorSemanticAt(uint64(index)) != record.key || index > 0 && !lessRuntimeKey(factors[index-1].key, record.key) {
-			return nil, false
+			return nil, refuseProgramSeal(topologyConstructionStepBinding), false
 		}
 	}
 	for index, row := range queries {
@@ -277,21 +277,21 @@ func sealRuntimeProgram(schema *Schema, graph *equation.Graph, runtime *carrier.
 			state, stateOK = queryStateOrdinalOwned(graph, query, contextIndex, contextLayout)
 		}
 		if !queryOK || !row.valid() || !pointOK || int(row.point) != point || !stateOK || row.state != state || row.queryOrdinal >= schema.queryCount() || schema.querySemanticAt(row.queryOrdinal) != query.Family() {
-			return nil, false
+			return nil, refuseProgramSeal(topologyConstructionStepQueryRow), false
 		}
 		shape, shapeOK := schema.queryShapeAt(row.queryOrdinal)
 		if !shapeOK || shape.Population != population.SelectedPoint {
-			return nil, false
+			return nil, refuseProgramSeal(topologyConstructionStepQueryRow), false
 		}
 		if row.heterogeneous != nil {
 			if shape.ProjectionCount == 0 || shape.ProjectionCount != uint64(len(row.heterogeneous.projections)) || len(query.Surfaces()) != len(row.heterogeneous.projections) || row.heterogeneous.exec == nil {
-				return nil, false
+				return nil, refuseProgramSeal(topologyConstructionStepQueryRow), false
 			}
 			surfaces := query.Surfaces()
 			for projectionIndex, pair := range row.heterogeneous.projections {
 				projection, projectionOK := schema.queryProjectionShapeAt(row.queryOrdinal, uint64(projectionIndex))
 				if !projectionOK || !validRuntimeQueryProjection(schema, factors, runtime, row.queryOrdinal, uint64(projectionIndex), pair) || !validProgramQuerySurface(surfaces[projectionIndex], projection) {
-					return nil, false
+					return nil, refuseProgramSeal(topologyConstructionStepQueryRow), false
 				}
 			}
 			continue
@@ -299,12 +299,12 @@ func sealRuntimeProgram(schema *Schema, graph *equation.Graph, runtime *carrier.
 		projection, projectionOK := schema.queryProjectionShapeAt(row.queryOrdinal, 0)
 		unitSlot, unitOK := row.unit.Slot()
 		if !projectionOK || shape.ProjectionCount != 1 || row.factorOrdinal >= uint64(len(factors)) || projection.Factor != factors[row.factorOrdinal].key || !unitOK || unitSlot != factors[row.factorOrdinal].slot || !runtime.OwnsUnit(unitSlot, row.unit) || projection.Kind == composition.QueryFactorExact && row.unit.Kind() != carrier.ExactUnit || projection.Kind == composition.QueryFactorSummary && row.unit.Kind() != carrier.SummaryUnit {
-			return nil, false
+			return nil, refuseProgramSeal(topologyConstructionStepQueryRow), false
 		}
 	}
 	for _, row := range observations {
 		if !row.valid() || int(row.point) >= graph.PointCount() || row.queryOrdinal >= schema.queryCount() {
-			return nil, false
+			return nil, refuseProgramSeal(topologyConstructionStepQueryRow), false
 		}
 		stateOK := row.state == contextfiber.StateOrdinal(row.point)
 		if artifactBacked {
@@ -316,19 +316,19 @@ func sealRuntimeProgram(schema *Schema, graph *equation.Graph, runtime *carrier.
 			stateOK = row.contextID.Available() && contextOK && canonicalContextOK && canonicalContext == row.contextID && cellOK && pointStateOK && uint64(statePoint) == uint64(row.point) && stateContextOK && stateContext == contextOrdinal
 		}
 		if !stateOK {
-			return nil, false
+			return nil, refuseProgramSeal(topologyConstructionStepQueryRow), false
 		}
 		shape, shapeOK := schema.queryShapeAt(row.queryOrdinal)
 		if !shapeOK {
-			return nil, false
+			return nil, refuseProgramSeal(topologyConstructionStepQueryRow), false
 		}
 		if row.heterogeneous != nil {
 			if shape.ProjectionCount == 0 || shape.ProjectionCount != uint64(len(row.heterogeneous.projections)) || row.heterogeneous.exec == nil {
-				return nil, false
+				return nil, refuseProgramSeal(topologyConstructionStepQueryRow), false
 			}
 			for projectionIndex, pair := range row.heterogeneous.projections {
 				if !validRuntimeQueryProjection(schema, factors, runtime, row.queryOrdinal, uint64(projectionIndex), pair) {
-					return nil, false
+					return nil, refuseProgramSeal(topologyConstructionStepQueryRow), false
 				}
 			}
 			continue
@@ -336,12 +336,12 @@ func sealRuntimeProgram(schema *Schema, graph *equation.Graph, runtime *carrier.
 		projection, projectionOK := schema.queryProjectionShapeAt(row.queryOrdinal, 0)
 		unitSlot, unitOK := row.unit.Slot()
 		if !projectionOK || shape.ProjectionCount != 1 || row.factorOrdinal >= uint64(len(factors)) || projection.Factor != factors[row.factorOrdinal].key || !unitOK || unitSlot != factors[row.factorOrdinal].slot || !runtime.OwnsUnit(unitSlot, row.unit) || projection.Kind == composition.QueryFactorExact && row.unit.Kind() != carrier.ExactUnit || projection.Kind == composition.QueryFactorSummary && row.unit.Kind() != carrier.SummaryUnit {
-			return nil, false
+			return nil, refuseProgramSeal(topologyConstructionStepQueryRow), false
 		}
 	}
 	generatedPrograms, generatedPresent, generatedOK := sealedGeneratedPrograms(schema)
 	if !generatedOK {
-		return nil, false
+		return nil, refuseProgramSeal(topologyConstructionStepDeclarationShape), false
 	}
 	if generatedPresent {
 		for _, row := range rows {
@@ -349,7 +349,7 @@ func sealRuntimeProgram(schema *Schema, graph *equation.Graph, runtime *carrier.
 				continue
 			}
 			if _, descriptorOK := generatedDescriptorAt(generatedPrograms, row.generated.rule); !descriptorOK {
-				return nil, false
+				return nil, refuseProgramSeal(topologyConstructionStepMemberRow), false
 			}
 		}
 	}
@@ -365,13 +365,13 @@ func sealRuntimeProgram(schema *Schema, graph *equation.Graph, runtime *carrier.
 		programSealed:     true,
 	}
 	if generatedPresent {
-		executionProgram, executionOK := buildGeneratedExecutionProgram(program)
+		executionProgram, executionRefusal, executionOK := buildGeneratedExecutionProgram(program)
 		if !executionOK {
-			return nil, false
+			return nil, executionRefusal, false
 		}
 		program.generatedExecution = executionProgram
 	}
-	return program, true
+	return program, topologyConstructionRefusal{}, true
 }
 
 // sealedGeneratedPrograms borrows the descriptor table validated during

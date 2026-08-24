@@ -180,29 +180,29 @@ func foldMemberDrafts(inputCount int, drafts []memberRow) (memberFold, bool) {
 // program. It is total over the graph: every Group's members become rows, so
 // the sealed program describes the whole compiled program and a later demand
 // revision selects from it rather than rebuilding it.
-func bindRuntimeProgram(schema *Schema, graph *equation.Graph, runtime *carrier.Composition, factors map[composition.Key]runtimeFactor, drafts []memberRow, queries []queryRow, observations []observationRow, contexts executioncontext.Directory, contextIndex contextfiber.Index, contextLayout contextfiber.Layout, pointOwners []contextfiber.PointOwner, artifactBacked bool) (*runtimeProgram, []memberFold, bool) {
+func bindRuntimeProgram(schema *Schema, graph *equation.Graph, runtime *carrier.Composition, factors map[composition.Key]runtimeFactor, drafts []memberRow, queries []queryRow, observations []observationRow, contexts executioncontext.Directory, contextIndex contextfiber.Index, contextLayout contextfiber.Layout, pointOwners []contextfiber.PointOwner, artifactBacked bool) (*runtimeProgram, []memberFold, topologyConstructionRefusal, bool) {
 	if schema == nil || !schema.Available() || graph == nil || runtime == nil || runtime.Guards() == nil || factors == nil {
-		return nil, nil, false
+		return nil, nil, refuseProgramSeal(topologyConstructionStepDeclarationShape), false
 	}
 	if graph.CompositionID() != schema.coldID() {
-		return nil, nil, false
+		return nil, nil, refuseProgramSeal(topologyConstructionStepDeclarationShape), false
 	}
 	records, owners, factorsOK := bindProgramFactorTable(schema, runtime, factors)
 	if !factorsOK {
-		return nil, nil, false
+		return nil, nil, refuseProgramSeal(topologyConstructionStepBinding), false
 	}
 	byMember := make(map[composition.Key]memberRow, len(drafts))
 	for _, draft := range drafts {
 		geometry, geometryOK := draft.geometry()
 		if !geometryOK || geometry == nil {
-			return nil, nil, false
+			return nil, nil, refuseProgramSeal(topologyConstructionStepMemberRow), false
 		}
 		key := geometry.member().Key()
 		if !key.Available() {
-			return nil, nil, false
+			return nil, nil, refuseProgramSeal(topologyConstructionStepMemberRow), false
 		}
 		if _, duplicate := byMember[key]; duplicate {
-			return nil, nil, false
+			return nil, nil, refuseProgramSeal(topologyConstructionStepMemberRow), false
 		}
 		byMember[key] = draft
 	}
@@ -215,18 +215,18 @@ func bindRuntimeProgram(schema *Schema, graph *equation.Graph, runtime *carrier.
 		group, groupOK := graph.HyperedgeAt(index)
 		groupIndex, indexed := graph.GroupIndex(group)
 		if !groupOK || !indexed || groupIndex != index || !graph.OwnsGroup(group) || !group.Key().Available() {
-			return nil, nil, false
+			return nil, nil, refuseProgramSeal(topologyConstructionStepMemberRow), false
 		}
 		attached, positions = attached[:0], positions[:0]
 		for memberIndex := 0; memberIndex < group.MemberCount(); memberIndex++ {
 			member, memberOK := group.MemberAt(memberIndex)
 			if !memberOK || !member.Key().Available() {
-				return nil, nil, false
+				return nil, nil, refuseProgramSeal(topologyConstructionStepMemberRow), false
 			}
 			draft, draftPresent := byMember[member.Key()]
 			geometry, geometryOK := draft.geometry()
 			if !draftPresent || !geometryOK || geometry == nil || geometry.member().Key() != member.Key() || !geometry.member().Rule().Available() {
-				return nil, nil, false
+				return nil, nil, refuseProgramSeal(topologyConstructionStepMemberRow), false
 			}
 			// A Rule instance belongs to exactly one compiled Group. Consuming the
 			// lookup here proves every supplied draft was attached without a later
@@ -237,7 +237,7 @@ func bindRuntimeProgram(schema *Schema, graph *equation.Graph, runtime *carrier.
 		}
 		fold, foldOK := foldMemberDrafts(group.InputCount(), attached)
 		if !foldOK {
-			return nil, nil, false
+			return nil, nil, refuseProgramSeal(topologyConstructionStepMemberRow), false
 		}
 		folds[index] = fold
 		// Rows are ordered by canonical member key, exactly as the assembled
@@ -255,24 +255,31 @@ func bindRuntimeProgram(schema *Schema, graph *equation.Graph, runtime *carrier.
 		spans[index] = memberSpan{start: start, end: int32(len(rows))}
 	}
 	if len(byMember) != 0 {
-		return nil, nil, false
+		return nil, nil, refuseProgramSeal(topologyConstructionStepMemberRow), false
 	}
-	program, sealed := sealRuntimeProgram(schema, graph, runtime, rows, spans, records, owners, append([]queryRow(nil), queries...), append([]observationRow(nil), observations...), contexts, contextIndex, contextLayout, pointOwners, artifactBacked)
+	program, refusal, sealed := sealRuntimeProgram(schema, graph, runtime, rows, spans, records, owners, append([]queryRow(nil), queries...), append([]observationRow(nil), observations...), contexts, contextIndex, contextLayout, pointOwners, artifactBacked)
 	if !sealed {
-		return nil, nil, false
+		return nil, nil, refusal, false
 	}
-	return program, folds, true
+	return program, folds, topologyConstructionRefusal{}, true
 }
 
 // assembleProgramRuntime is the one entry from attached drafts to an
 // executable runtime. It seals the program first and retains each canonical
 // runtime member only through the row's direct execute method value.
-func assembleProgramRuntime(schema *Schema, graph *equation.Graph, runtime *carrier.Composition, factors map[composition.Key]runtimeFactor, drafts []memberRow, queries []queryRow, observations []observationRow, contexts executioncontext.Directory, contextIndex contextfiber.Index, contextLayout contextfiber.Layout, pointOwners []contextfiber.PointOwner, pointTransitions []ProgramPointTransition, artifactBacked bool) (*solverRuntime, bool) {
-	program, folds, bound := bindRuntimeProgram(schema, graph, runtime, factors, drafts, queries, observations, contexts, contextIndex, contextLayout, pointOwners, artifactBacked)
+func assembleProgramRuntime(schema *Schema, graph *equation.Graph, runtime *carrier.Composition, factors map[composition.Key]runtimeFactor, drafts []memberRow, queries []queryRow, observations []observationRow, contexts executioncontext.Directory, contextIndex contextfiber.Index, contextLayout contextfiber.Layout, pointOwners []contextfiber.PointOwner, pointTransitions []ProgramPointTransition, artifactBacked bool) (*solverRuntime, topologyConstructionRefusal, bool) {
+	program, folds, refusal, bound := bindRuntimeProgram(schema, graph, runtime, factors, drafts, queries, observations, contexts, contextIndex, contextLayout, pointOwners, artifactBacked)
 	if !bound {
-		return nil, false
+		return nil, refusal, false
 	}
-	return assembleRuntimeOwned(graph, runtime, program, folds, contexts, contextIndex, contextLayout, pointOwners, pointTransitions, artifactBacked)
+	// Owning the assembled runtime is the schedule half of the seal: the
+	// program's tables are already proved consistent, and what remains is the
+	// solver runtime built over them.
+	assembled, owned := assembleRuntimeOwned(graph, runtime, program, folds, contexts, contextIndex, contextLayout, pointOwners, pointTransitions, artifactBacked)
+	if !owned {
+		return nil, refuseProgramSeal(topologyConstructionStepSchedule), false
+	}
+	return assembled, topologyConstructionRefusal{}, true
 }
 
 // bindProgramFactorTable places every Factor at its Schema ordinal. This makes

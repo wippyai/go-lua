@@ -104,7 +104,7 @@ func TestProgramRowExecutionMatchesDraftExecution(t *testing.T) {
 // is all-or-nothing and a valid committed program exposes the resulting sealed
 // table without a recoverable draft phase.
 func TestSealRuntimeProgramTakesOneValidityDecision(t *testing.T) {
-	if program, ok := sealRuntimeProgram(nil, nil, nil, []memberRow{{}}, []memberSpan{{start: 0, end: 1}}, nil, nil, nil, nil, executioncontext.Directory{}, contextfiber.Index{}, contextfiber.Layout{}, nil, false); ok || program != nil {
+	if program, _, ok := sealRuntimeProgram(nil, nil, nil, []memberRow{{}}, []memberSpan{{start: 0, end: 1}}, nil, nil, nil, nil, executioncontext.Directory{}, contextfiber.Index{}, contextfiber.Layout{}, nil, false); ok || program != nil {
 		t.Fatal("invalid runtime row published a program")
 	}
 	var nilRule *boundRuleMember[uint64, struct{}]

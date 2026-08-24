@@ -83,8 +83,14 @@ func (committed *CommittedProgram) seal(observations []ProgramObservationAdmissi
 	if observationFailure != observationSealFailureNone {
 		return nil, observationFailure.Failure(), false
 	}
-	runtime, assembled := assembleProgramRuntime(committed.state.schema, committed.graph, plane.carrier, plane.byKey, drafts, queries, observed, committed.contexts, committed.contextIndex, committed.contextLayout, committed.pointOwners, committed.pointTransitions, committed.artifactBacked)
+	runtime, refusal, assembled := assembleProgramRuntime(committed.state.schema, committed.graph, plane.carrier, plane.byKey, drafts, queries, observed, committed.contexts, committed.contextIndex, committed.contextLayout, committed.pointOwners, committed.pointTransitions, committed.artifactBacked)
 	if !assembled || runtime == nil {
+		// The assembly's own step travels out. A caller that received the bare
+		// stage learned only that the program did not seal, which is the one
+		// thing it already knew.
+		if refusal.Available() {
+			return nil, refusal.Failure(), false
+		}
 		return nil, ProgramStageFailure(ProgramSealStageProgramSeal), false
 	}
 	runtime.topology = committed.topology

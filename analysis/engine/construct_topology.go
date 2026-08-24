@@ -204,6 +204,19 @@ func refuseAdmission(step topologyConstructionStep, ordinal int) topologyConstru
 	return topologyConstructionRefusal{stage: ProgramSealStageAdmission, step: step, ordinal: constructionOrdinal(ordinal)}
 }
 
+// refuseProgramSeal closes one runtime-assembly refusal. The program seal is
+// the last construction stage, and it was the one stage that published no step
+// at all: every table disagreement inside it - a member row, a query row, the
+// per-Factor execution family directory - collapsed onto the bare stage, so a
+// precise inner refusal reached a caller as "the program did not seal".
+//
+// It carries no row ordinal. The assembly walks several tables and the index
+// that failed means something different in each, so publishing one integer
+// beside the step would name a row of a table the step does not identify.
+func refuseProgramSeal(step topologyConstructionStep) topologyConstructionRefusal {
+	return topologyConstructionRefusal{stage: ProgramSealStageProgramSeal, step: step}
+}
+
 // refuseTopologySeal closes one geometry-commit refusal.
 func refuseTopologySeal(step topologyConstructionStep, ordinal int) topologyConstructionRefusal {
 	return topologyConstructionRefusal{stage: ProgramSealStageTopologySeal, step: step, ordinal: constructionOrdinal(ordinal)}
