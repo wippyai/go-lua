@@ -1,12 +1,16 @@
-package program
+package member
 
 import (
 	"github.com/wippyai/go-lua/analysis/schema"
-	"github.com/wippyai/go-lua/analysis/schema/axis/member"
 )
 
-// CandidateDecl is the closed tagged choice of a rule's candidate authority.
-// Exactly one arm is stated; zero and both refuse.
+// CandidateRef is the closed tagged choice of a candidate authority. Exactly
+// one arm is stated; zero and both refuse.
+//
+// One type answers two questions at two altitudes: which rows a rule runs
+// once per, and which directory a relation's rows are addressed through. They
+// are the same question about the same authority, so a relation whose rows are
+// keyed by an issued Program row states it the same way the rule does.
 //
 // AxisRelation is a domain-owned relation. The runtime resolves the dense
 // candidate through that axis owner, from the mount and occurrence the rule is
@@ -22,34 +26,34 @@ import (
 // The two arms are alternatives, not layers: a rule whose candidates are
 // Program rows has no Factor axis to resolve them through, and a rule whose
 // candidates are axis rows has no issuance relation to reach them by.
-type CandidateDecl struct {
-	AxisRelation member.RelationRef
+type CandidateRef struct {
+	AxisRelation RelationRef
 	IssuedRow    schema.Key
 }
 
 // AxisRelationCandidate states the domain-owned arm.
-func AxisRelationCandidate(relation member.RelationRef) CandidateDecl {
-	return CandidateDecl{AxisRelation: relation}
+func AxisRelationCandidate(relation RelationRef) CandidateRef {
+	return CandidateRef{AxisRelation: relation}
 }
 
 // IssuedRowCandidate states the Program-owned arm by the issuance relation
 // that reaches the candidate row from the issued occurrence.
-func IssuedRowCandidate(relation schema.Key) CandidateDecl {
-	return CandidateDecl{IssuedRow: relation}
+func IssuedRowCandidate(relation schema.Key) CandidateRef {
+	return CandidateRef{IssuedRow: relation}
 }
 
 // Issued reports which arm is stated. It is meaningful only on a declaration
 // that is Available; a malformed value answers by its issued arm alone.
-func (candidate CandidateDecl) Issued() bool { return candidate.IssuedRow.Available() }
+func (candidate CandidateRef) Issued() bool { return candidate.IssuedRow.Available() }
 
 // Declared reports whether either arm is stated. It is the migration ratchet
 // predicate: a Program with no candidate at all is the zero declaration.
-func (candidate CandidateDecl) Declared() bool {
+func (candidate CandidateRef) Declared() bool {
 	return candidate.AxisRelation.Declared() || candidate.IssuedRow.Available()
 }
 
 // Available reports whether exactly one arm is stated and complete.
-func (candidate CandidateDecl) Available() bool {
+func (candidate CandidateRef) Available() bool {
 	if candidate.IssuedRow.Available() {
 		return !candidate.AxisRelation.Declared()
 	}
@@ -60,7 +64,7 @@ func (candidate CandidateDecl) Available() bool {
 // axis arm points at its member relation; the issued arm points at its
 // issuance relation, so the same seal machinery that proves an axis relation
 // exists proves the issuance relation exists.
-func (candidate CandidateDecl) References() schema.EntryReferences {
+func (candidate CandidateRef) References() schema.EntryReferences {
 	if candidate.Issued() {
 		return schema.EntryReferences{{Surface: schema.SurfaceKindIssuance, Key: candidate.IssuedRow}}
 	}
