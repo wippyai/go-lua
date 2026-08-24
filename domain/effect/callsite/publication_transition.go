@@ -7,7 +7,9 @@ import (
 	"github.com/wippyai/go-lua/analysis/identity"
 	"github.com/wippyai/go-lua/analysis/schema/executioncontext"
 	programissuance "github.com/wippyai/go-lua/analysis/schema/program/issuance"
+	callowner "github.com/wippyai/go-lua/domain/call/owner"
 	effectfactor "github.com/wippyai/go-lua/domain/effect/factor"
+	effectowner "github.com/wippyai/go-lua/domain/effect/owner"
 )
 
 const publicationObservationDomain = "wippy.analysis.effect.publication-observation.v2\x00"
@@ -22,13 +24,12 @@ const publicationObservationDomain = "wippy.analysis.effect.publication-observat
 // observation admission. Every present result has exactly one admission per
 // mounted call occurrence and exact execution Context, regardless of how many
 // selected target routes carry publication descriptors.
-func (rule *HotRule) MountedPublicationObservation(committed *engine.CommittedProgram, effectQuery *engine.ExactQueryImplementation[effectfactor.Value, effectfactor.EffectObservation], mount, occurrence identity.ContentID, context executioncontext.Context) (admission engine.ProgramObservationAdmission, present bool, ok bool) {
-	if rule == nil || rule.opaque || committed == nil || effectQuery == nil || !mount.Available() || !occurrence.Available() || !context.Available() || context.ModuleKey() != mount {
+func MountedPublicationObservation(binding *engine.SchemaBinding, calls *callowner.HotOwner, effects *effectowner.HotOwner, capability engine.RuleSlotCapability, committed *engine.CommittedProgram, effectQuery *engine.ExactQueryImplementation[effectfactor.Value, effectfactor.EffectObservation], mount, occurrence identity.ContentID, context executioncontext.Context) (admission engine.ProgramObservationAdmission, present bool, ok bool) {
+	if committed == nil || effectQuery == nil || !capability.Available() || !mount.Available() || !occurrence.Available() || !context.Available() || context.ModuleKey() != mount {
 		return engine.ProgramObservationAdmission{}, false, false
 	}
-	stage, publications, publicationsOK := rule.MountedPublicationBatchStage(committed, mount, occurrence)
-	capability, capabilityOK := rule.implementation.MountedCapability()
-	if !publicationsOK || !stage.Available() || stage.Kind() != programissuance.StageCallEffect || stage.MountID() != mount || stage.OccurrenceID() != occurrence || !capabilityOK || !stage.HasMember() {
+	stage, publications, publicationsOK := MountedPublicationBatchStage(binding, calls, effects, capability, committed, mount, occurrence)
+	if !publicationsOK || !stage.Available() || stage.Kind() != programissuance.StageCallEffect || stage.MountID() != mount || stage.OccurrenceID() != occurrence || !stage.HasMember() {
 		return engine.ProgramObservationAdmission{}, false, false
 	}
 	present = publications.RowCount() != 0

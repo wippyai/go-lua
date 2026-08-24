@@ -2,6 +2,8 @@ package composite
 
 import (
 	"github.com/wippyai/go-lua/analysis/engine"
+	callowner "github.com/wippyai/go-lua/domain/call/owner"
+	effectowner "github.com/wippyai/go-lua/domain/effect/owner"
 	allocationcatalog "github.com/wippyai/go-lua/domain/heap/allocation/catalog"
 	contextowner "github.com/wippyai/go-lua/domain/heap/context/owner"
 	staticowner "github.com/wippyai/go-lua/domain/static/owner"
@@ -96,12 +98,15 @@ type catalogBinding struct {
 	value       *valueowner.HotOwner
 	staticType  *staticowner.HotOwner
 	context     *contextowner.HotOwner
+	call        *callowner.HotOwner
+	effect      *effectowner.HotOwner
 	queries     queryCells
 }
 
 func (bound catalogBinding) available() bool {
 	return bound.binding != nil && bound.binding.Sealed() && bound.rules != nil && bound.allocations != nil &&
-		bound.value != nil && bound.staticType != nil && bound.context != nil && bound.catalog != nil && bound.queries.available(bound.catalog.queries)
+		bound.value != nil && bound.staticType != nil && bound.context != nil && bound.call != nil && bound.effect != nil &&
+		bound.catalog != nil && bound.queries.available(bound.catalog.queries)
 }
 
 // bind is the one hot binding transaction for one compilation-owned catalog. It
@@ -196,7 +201,8 @@ func bind(compilation Compilation, inputs LinkInputs) (catalogBinding, BindFailu
 	if context == nil {
 		contextOK = false
 	}
-	bound := catalogBinding{catalog: state, binding: binding, rules: rules, allocations: allocations, value: value, staticType: staticType, context: context, queries: fragments}
+	call, effect := set.CallAuthority(), set.EffectAuthority()
+	bound := catalogBinding{catalog: state, binding: binding, rules: rules, allocations: allocations, value: value, staticType: staticType, context: context, call: call, effect: effect, queries: fragments}
 	if !contextOK || !bound.available() {
 		return catalogBinding{}, BindFailure{Stage: BindStageSeal}
 	}

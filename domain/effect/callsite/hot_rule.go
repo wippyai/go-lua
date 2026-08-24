@@ -150,13 +150,25 @@ func (rule *HotRule) valid() bool {
 }
 
 func (rule *HotRule) mountedForOccurrence(mount, occurrence identity.ContentID) (effectfactor.MountedCall, bool) {
-	if !rule.valid() || !mount.Available() || !occurrence.Available() {
+	if !rule.valid() {
 		return effectfactor.MountedCall{}, false
 	}
-	ordinal, ordinalOK := rule.effects.Algebra().MountedCallOrdinalForOccurrence(mount, occurrence)
-	mounted, mountedOK := rule.effects.Algebra().MountedCallAt(ordinal)
-	_, _, _, rowsOK := mountedCallRows(rule.binding, rule.calls, rule.effects, mounted)
-	application, module, callOccurrence, identityOK := rule.effects.Algebra().MountedCallIdentity(mounted)
+	return mountedForOccurrence(rule.binding, rule.calls, rule.effects, mount, occurrence)
+}
+
+// mountedForOccurrence is the owner-fenced lookup shared by the bind-time fold
+// and the free publication accessors below. It takes the two owners directly
+// rather than a *HotRule so a caller holding an authenticated capability and
+// the two sealed owners - not a private rule instance - can resolve the same
+// mounted row.
+func mountedForOccurrence(binding *engine.SchemaBinding, calls *callowner.HotOwner, effects *effectowner.HotOwner, mount, occurrence identity.ContentID) (effectfactor.MountedCall, bool) {
+	if !callsiteOwnersValid(binding, calls, effects) || !mount.Available() || !occurrence.Available() {
+		return effectfactor.MountedCall{}, false
+	}
+	ordinal, ordinalOK := effects.Algebra().MountedCallOrdinalForOccurrence(mount, occurrence)
+	mounted, mountedOK := effects.Algebra().MountedCallAt(ordinal)
+	_, _, _, rowsOK := mountedCallRows(binding, calls, effects, mounted)
+	application, module, callOccurrence, identityOK := effects.Algebra().MountedCallIdentity(mounted)
 	return mounted, ordinalOK && ordinal >= 0 && mountedOK && rowsOK && identityOK && application.Available() && module == mount && callOccurrence == occurrence
 }
 

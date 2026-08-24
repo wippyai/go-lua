@@ -9,7 +9,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/schema/modulecomposition"
 	"github.com/wippyai/go-lua/analysis/schema/programmount"
 	"github.com/wippyai/go-lua/analysis/schema/query"
-	"github.com/wippyai/go-lua/analysis/schema/rule"
+	callowner "github.com/wippyai/go-lua/domain/call/owner"
 	callsite "github.com/wippyai/go-lua/domain/effect/callsite"
 	effectowner "github.com/wippyai/go-lua/domain/effect/owner"
 	allocationcatalog "github.com/wippyai/go-lua/domain/heap/allocation/catalog"
@@ -51,6 +51,8 @@ type ProgramBinding struct {
 	value      *valueowner.HotOwner
 	staticType *staticowner.HotOwner
 	context    *contextowner.HotOwner
+	call       *callowner.HotOwner
+	effect     *effectowner.HotOwner
 
 	// queries holds every declared query family's sealed implementation at its
 	// slot, opaque here and recovered at its type by the accessor the family's
@@ -62,7 +64,7 @@ type ProgramBinding struct {
 func (bound *ProgramBinding) Available() bool {
 	return bound != nil && bound.binding != nil && bound.binding.Sealed() &&
 		bound.compilation.Available() && bound.catalog != nil && bound.rules != nil && bound.factors != nil && bound.allocations != nil &&
-		bound.placement.Valid() && bound.context != nil && bound.contextSchema.Valid() && bound.contextSchema.Heap() == bound.placement.Heap() &&
+		bound.placement.Valid() && bound.context != nil && bound.call != nil && bound.effect != nil && bound.contextSchema.Valid() && bound.contextSchema.Heap() == bound.placement.Heap() &&
 		bound.composition.Available() && bound.composition.LinkID() == bound.contextSchema.Directory().LinkID()
 }
 
@@ -163,6 +165,26 @@ func (bound *ProgramBinding) ContextAuthority() *contextowner.HotOwner {
 	return bound.context
 }
 
+// CallAuthority returns the exact owner-fenced Call Factor authority. It is
+// the channel a caller uses to reach a Call/Effect two-owner fold's free
+// accessors alongside a capability resolved through Rules().CapabilityByKey -
+// never through a cast to a retained hot rule payload.
+func (bound *ProgramBinding) CallAuthority() *callowner.HotOwner {
+	if bound == nil {
+		return nil
+	}
+	return bound.call
+}
+
+// EffectAuthority returns the exact owner-fenced Effect Factor authority. See
+// CallAuthority.
+func (bound *ProgramBinding) EffectAuthority() *effectowner.HotOwner {
+	if bound == nil {
+		return nil
+	}
+	return bound.effect
+}
+
 // ModuleComposition returns the one immutable catalog derived before this
 // binding sealed. Publication and domain consumers share this exact owner.
 func (bound *ProgramBinding) ModuleComposition() (modulecomposition.Composition, bool) {
@@ -247,9 +269,8 @@ func (bound *ProgramBinding) EffectPublicationObservations(committed *engine.Com
 	if query == nil {
 		return nil, false
 	}
-	cell, cellOK := bound.rules.cellByKey("effect-selected")
-	selected, selectedOK := rule.Payload[*callsite.HotRule](cell)
-	if !cellOK || !selectedOK || selected == nil {
+	capability, capabilityOK := bound.rules.CapabilityByKey("effect-selected")
+	if !capabilityOK {
 		return nil, false
 	}
 	observations := make([]engine.ProgramObservationAdmission, 0)
@@ -266,7 +287,7 @@ func (bound *ProgramBinding) EffectPublicationObservations(committed *engine.Com
 			if !bound.contextSchema.OwnsContext(context) {
 				return false
 			}
-			admission, present, observationOK := selected.MountedPublicationObservation(committed, query, mount, occurrence, context)
+			admission, present, observationOK := callsite.MountedPublicationObservation(bound.binding, bound.call, bound.effect, capability, committed, query, mount, occurrence, context)
 			if !observationOK {
 				return false
 			}
@@ -301,9 +322,8 @@ func (bound *ProgramBinding) SendSafetyObservations(committed *engine.CommittedP
 	boundContexts := bound.contextSchema.Directory()
 	placementQuery := bound.PlacementQuery()
 	valueQuery := bound.ValueQuery()
-	cell, cellOK := bound.rules.cellByKey("effect-selected")
-	selected, selectedOK := rule.Payload[*callsite.HotRule](cell)
-	if !boundContexts.Available() || contexts.LinkID() != boundContexts.LinkID() || placementQuery == nil || valueQuery == nil || !cellOK || !selectedOK || selected == nil {
+	capability, capabilityOK := bound.rules.CapabilityByKey("effect-selected")
+	if !boundContexts.Available() || contexts.LinkID() != boundContexts.LinkID() || placementQuery == nil || valueQuery == nil || !capabilityOK {
 		return nil, false
 	}
 	observations := make([]SendSafetyObservation, 0)
@@ -316,7 +336,7 @@ func (bound *ProgramBinding) SendSafetyObservations(committed *engine.CommittedP
 		if !contextsOK {
 			return false
 		}
-		stage, publications, publicationsOK := selected.MountedPublicationBatchStage(committed, mount, occurrence)
+		stage, publications, publicationsOK := callsite.MountedPublicationBatchStage(bound.binding, bound.call, bound.effect, capability, committed, mount, occurrence)
 		if !publicationsOK || !stage.Available() || !stage.InputPointID().Available() {
 			return false
 		}
@@ -437,6 +457,8 @@ func BindProgram(compilation Compilation, inputs LinkInputs) (*ProgramBinding, B
 		value:         bound.value,
 		staticType:    bound.staticType,
 		context:       bound.context,
+		call:          bound.call,
+		effect:        bound.effect,
 		queries:       bound.queries,
 	}, BindFailure{}
 }
