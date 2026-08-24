@@ -20,10 +20,16 @@ type routeReducer struct {
 }
 
 func (reducer routeReducer) Reduce(cell execution.SelectedCell[placementdomain.Fact]) (placementdomain.Fact, structure.ReductionOutcome) {
-	if !cell.Present {
+	// SelectedRead preserves sparse provenance.  An absent cell is still a
+	// delivered Placement Default under this read's explicit-sparsity contract;
+	// authenticate that owner-issued default before handing the value to the
+	// direct reducer.  Refusing every absent cell here would reject the normal
+	// first store into an unwritten allocation root.
+	selected, selectedOK := placementdomain.AuthenticateFactCell(cell.Value, cell.Present, true)
+	if !selectedOK {
 		return placementdomain.BottomFact(), structure.Refuse
 	}
-	return StorageFold(reducer.candidate, reducer.source, cell.Tag, cell.Value)
+	return StorageFold(reducer.candidate, reducer.source, cell.Tag, selected)
 }
 
 func (routeReducer) Empty() structure.ReductionOutcome { return structure.NoSelection }

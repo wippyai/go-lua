@@ -5,6 +5,7 @@ import (
 	"sync"
 	"testing"
 
+	"github.com/wippyai/go-lua/analysis/engine/execution"
 	"github.com/wippyai/go-lua/analysis/identity"
 	"github.com/wippyai/go-lua/analysis/lua/lower"
 	programartifact "github.com/wippyai/go-lua/analysis/program/artifact"
@@ -137,6 +138,34 @@ func TestDeriveRoutesAuthenticatesCandidateAndKeepsFrameTransfersEmpty(t *testin
 	empty, emptyOK := DeriveRoutes(fixture.placement, fixture.values, frame, valuedomain.Value{})
 	if !emptyOK || !empty.Valid() || empty.Bottom() || empty.Widened() || RouteCount(empty) != 0 {
 		t.Fatalf("frame-local transfer must derive a valid empty route set: %#v/%t", empty, emptyOK)
+	}
+}
+
+func TestRouteReducerAdmitsAuthenticatedSparsePlacementDefault(t *testing.T) {
+	fixture := routePlanFixtureForStore(t, 1)
+	candidate := routePlanTransfer(t, fixture.values, true)
+	atom, atomOK := fixture.values.Allocation(fixture.keys[0], materialization.Recent)
+	if !atomOK {
+		t.Fatal("allocation atom")
+	}
+	source, sourceOK := fixture.values.Singleton(atom)
+	if !sourceOK {
+		t.Fatal("allocation source fact")
+	}
+	plan, planOK := DeriveRoutes(fixture.placement, fixture.values, candidate, source)
+	route, routeOK := plan.RouteAt(0)
+	if !planOK || !routeOK || route.Tag == 0 {
+		t.Fatalf("authenticated route plan=%#v/%t route=%#v/%t", plan, planOK, route, routeOK)
+	}
+
+	got, outcome := (routeReducer{candidate: candidate, source: source}).Reduce(execution.SelectedCell[placement.Fact]{
+		Value:   placement.DefaultFact(),
+		Present: false,
+		Tag:     route.Tag,
+	})
+	want := placement.Fact{Class: placement.SharedHeap, RetainEscape: placement.EvidenceProven}
+	if outcome != structure.Concrete || got != want {
+		t.Fatalf("sparse Placement default reduction=%v/%v, want %v/Concrete", got, outcome, want)
 	}
 }
 
