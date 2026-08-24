@@ -513,16 +513,112 @@ func TestCheckedInGeneratedOutputIsFreshAndCompiles(t *testing.T) {
 		})
 	}
 
-	exactFoldPath := filepath.Join(root, "domain", "value", "generated_exact_fold.go")
-	if err := GenerateExactFold("value", composedSource(t, "value"), exactFoldPath, true); err != nil {
-		t.Fatal(err)
-	}
 	command := exec.Command("go", "test", "./domain/value", "-run", "^TestAxisMemberCatalogOwnsStorageTransferGeometry$", "-count=1")
 	command.Dir = root
 	output, err := command.CombinedOutput()
 	if err != nil {
 		t.Fatalf("generated cold package failed to compile: %v\n%s", err, output)
 	}
+}
+
+// TestCheckedInExactFoldTablesAreFresh holds every axis's exact-fold dispatch
+// to the catalog it is derived from, by walking the roster.
+//
+// An exact-fold table captures MEMBER ordinals - the read relations, read keys
+// and destination projections of each reducer it dispatches. Those are
+// positions in the axis's sealed catalog, so a catalog that gains a row
+// renumbers them and every captured ordinal in a table emitted before that
+// addresses a catalog which no longer exists. The installer that holds such a
+// table then refuses every rule it authors, and the refusal surfaces far from
+// the file that caused it.
+//
+// The check was previously written for one axis by name, so a second axis
+// declaring an exact fold - or a first one whose catalog moved - was not held
+// to anything. It is a property of every rostered source, and an axis that
+// declares no exact fold must emit no table rather than an empty one nothing
+// checks.
+func TestCheckedInExactFoldTablesAreFresh(t *testing.T) {
+	root := repositoryRoot(t)
+	roster, rosterOK := memberroster.Composition()
+	if !rosterOK {
+		t.Fatal("member definition roster is not admissible")
+	}
+	checked := 0
+	for index := 0; index < roster.Count(); index++ {
+		source, _ := roster.At(index)
+		t.Run(source.Name, func(t *testing.T) {
+			composed := composedSource(t, source.Name)
+			metadata, err := Resolve(composed)
+			if err != nil {
+				t.Fatal(err)
+			}
+			reducers, err := exactFoldReducers(composed, metadata)
+			if err != nil {
+				t.Fatal(err)
+			}
+			path := filepath.Join(root, "domain", source.Package, "generated_exact_fold.go")
+			if len(reducers) == 0 {
+				if _, err := os.Stat(path); err == nil {
+					t.Fatalf("%s declares no exact fold yet an emitted table is checked in at %s", source.Name, path)
+				}
+				return
+			}
+			checked++
+			if err := GenerateExactFold(source.Package, composed, path, true); err != nil {
+				t.Fatal(err)
+			}
+		})
+	}
+	if checked == 0 {
+		t.Fatal("no rostered axis declares an exact fold: this law proves nothing")
+	}
+}
+
+// TestAStaleExactFoldTableIsRefused proves the freshness check itself sees the
+// drift that actually shipped: one member ordinal moved, everything else
+// identical. A check that compared anything coarser than the emitted bytes
+// would pass a table whose every reducer row addresses the wrong rows.
+func TestAStaleExactFoldTableIsRefused(t *testing.T) {
+	composed := composedSource(t, "value")
+	artifact, err := Render("value", composed)
+	if err != nil {
+		t.Fatal(err)
+	}
+	fresh := string(artifact.ExactFold)
+	marker := "ReadRelationMember: [ExactFoldArity]uint32{"
+	position := strings.Index(fresh, marker)
+	if position < 0 {
+		t.Fatalf("the emitted table declares no read relation member: %q", firstLine(fresh))
+	}
+	digit := position + len(marker)
+	end := digit
+	for end < len(fresh) && fresh[end] >= '0' && fresh[end] <= '9' {
+		end++
+	}
+	if end == digit {
+		t.Fatal("the emitted table's first read relation member is not a number")
+	}
+	stale := fresh[:digit] + "999" + fresh[end:]
+	path := filepath.Join(t.TempDir(), "generated_exact_fold.go")
+	if err := os.WriteFile(path, []byte(stale), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := GenerateExactFold("value", composed, path, true); err == nil {
+		t.Fatal("a table naming a member ordinal the catalog does not have passed the freshness check")
+	}
+	if err := os.WriteFile(path, []byte(fresh), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := GenerateExactFold("value", composed, path, true); err != nil {
+		t.Fatalf("the freshly emitted table was refused: %v", err)
+	}
+}
+
+func firstLine(text string) string {
+	if index := strings.Index(text, "\n"); index >= 0 {
+		return text[:index]
+	}
+	return text
 }
 
 func TestGeneratorCommandWritesEveryRequestedOutput(t *testing.T) {
