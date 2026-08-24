@@ -30,10 +30,7 @@ func correspondingRelation() member.Relation {
 		Key:               "value/formal-freeze/call-actuals",
 		Subject:           "MountedCallActualsCarrier",
 		CandidateProvider: member.AxisRelationCandidate(correspondenceProvider()),
-		Correspondences: []member.Correspondence{{
-			Foreign:    correspondenceForeign(),
-			Coordinate: "value/formal-freeze/call-coordinate",
-		}},
+		Correspondences:   []member.RelationRef{correspondenceForeign()},
 	}
 }
 
@@ -52,42 +49,24 @@ func correspondenceCatalog(t *testing.T, relation member.Relation, projections [
 	return member.NewCatalog([]member.Relation{relation}, projections, nil, nil)
 }
 
-// TestACorrespondenceStatesBothTheForeignOrderAndTheKeyTheyAgreeOn is the
-// declaration law of the statement itself. A correspondence that names a
-// foreign order but no key claims two enumerations happen to line up, which
-// nothing can check; a key that names no order correlates with nothing.
-func TestACorrespondenceStatesBothTheForeignOrderAndTheKeyTheyAgreeOn(t *testing.T) {
-	stated := member.Correspondence{Foreign: correspondenceForeign(), Coordinate: "value/formal-freeze/call-coordinate"}
-	if !stated.Available() || !stated.Declared() {
-		t.Fatal("a correspondence naming a foreign order and the key they agree on is a declarable statement")
-	}
-	keyless := stated
-	keyless.Coordinate = ""
-	if keyless.Available() || !keyless.Declared() {
-		t.Fatal("a correspondence with no key is a half-written statement, not an omitted one")
-	}
-	orderless := stated
-	orderless.Foreign = member.RelationRef{}
-	if orderless.Available() || !orderless.Declared() {
-		t.Fatal("a key with no foreign order correlates with nothing")
-	}
-	if (member.Correspondence{}).Declared() {
-		t.Fatal("an omitted correspondence states nothing")
-	}
-}
-
 // TestACorrespondenceCarriesTheForeignAxisAsItsUpwardReference holds the
 // statement to the same seal machinery every other member reference answers
-// to: the axis whose order is named must be an axis the composition proves
-// exists, so the correspondence publishes it as a reference rather than
-// resolving it privately.
+// to: the axis whose order is named must be one the composition proves exists,
+// so the catalog publishes it as a reference rather than resolving it
+// privately.
 func TestACorrespondenceCarriesTheForeignAxisAsItsUpwardReference(t *testing.T) {
-	references := member.Correspondence{Foreign: correspondenceForeign(), Coordinate: "value/formal-freeze/call-coordinate"}.References()
-	if len(references) != 1 || references[0].Surface != schema.SurfaceKindAxis || references[0].Key != "call" {
-		t.Fatalf("a correspondence references the foreign axis exactly once, got %v", references)
+	catalog, ok := correspondenceCatalog(t, correspondingRelation(), []member.Projection{correspondenceKeyProjection()})
+	if !ok {
+		t.Fatal("a self-provided relation with one correspondence is a declarable catalog")
 	}
-	if (member.Correspondence{}).References() != nil {
-		t.Fatal("an omitted correspondence references nothing")
+	var named int
+	for _, reference := range catalog.References() {
+		if reference.Surface == schema.SurfaceKindAxis && reference.Key == "call" {
+			named++
+		}
+	}
+	if named != 1 {
+		t.Fatalf("the catalog references the corresponded axis exactly once, got %d", named)
 	}
 }
 
@@ -117,33 +96,9 @@ func TestOnlyARelationWithAnOrderOfItsOwnCorresponds(t *testing.T) {
 // not already say, and admitting it would give one order two authorities.
 func TestACorrespondenceNamesAForeignOrder(t *testing.T) {
 	local := correspondingRelation()
-	local.Correspondences = []member.Correspondence{{
-		Foreign:    member.RelationRef{Axis: correspondenceOwnAxis(), Member: "value/mounted-call/argument-candidates"},
-		Coordinate: "value/formal-freeze/call-coordinate",
-	}}
+	local.Correspondences = []member.RelationRef{{Axis: correspondenceOwnAxis(), Member: "value/mounted-call/argument-candidates"}}
 	if _, ok := correspondenceCatalog(t, local, []member.Projection{correspondenceKeyProjection()}); ok {
 		t.Fatal("a same-axis correspondence is the identity the candidate provider already spells")
-	}
-}
-
-// TestACorrespondenceIsKeyedByThisRelationsOwnKeyProjection closes the
-// statement inside its catalog. The key the two orders agree on is a Key
-// projection over the corresponding rows: a coordinate naming a projection the
-// catalog does not hold, one over a different relation, or one in another role
-// is a key nothing can resolve the correspondence through.
-func TestACorrespondenceIsKeyedByThisRelationsOwnKeyProjection(t *testing.T) {
-	if _, ok := correspondenceCatalog(t, correspondingRelation(), nil); ok {
-		t.Fatal("a correspondence keyed by a projection the catalog does not declare resolves through nothing")
-	}
-	predicate := correspondenceKeyProjection()
-	predicate.Role = member.Predicate
-	if _, ok := correspondenceCatalog(t, correspondingRelation(), []member.Projection{predicate}); ok {
-		t.Fatal("a selection predicate is not the key two orders agree on")
-	}
-	stray := correspondenceKeyProjection()
-	stray.Relation = "value/mounted-call/argument-candidates"
-	if _, ok := correspondenceCatalog(t, correspondingRelation(), []member.Projection{stray}); ok {
-		t.Fatal("a key over another relation's rows does not key this correspondence")
 	}
 }
 
@@ -152,10 +107,7 @@ func TestACorrespondenceIsKeyedByThisRelationsOwnKeyProjection(t *testing.T) {
 // answers to one question, and a reader would have no declared way to choose.
 func TestOneCorrespondencePerForeignAxis(t *testing.T) {
 	doubled := correspondingRelation()
-	doubled.Correspondences = append(doubled.Correspondences, member.Correspondence{
-		Foreign:    member.RelationRef{Axis: correspondenceForeignAxis(), Member: "call/mounted-call/facts"},
-		Coordinate: "value/formal-freeze/call-coordinate",
-	})
+	doubled.Correspondences = append(doubled.Correspondences, member.RelationRef{Axis: correspondenceForeignAxis(), Member: "call/mounted-call/facts"})
 	if _, ok := correspondenceCatalog(t, doubled, []member.Projection{correspondenceKeyProjection()}); ok {
 		t.Fatal("two correspondences to one foreign axis are two authorities over one correlation")
 	}

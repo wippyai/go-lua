@@ -96,11 +96,11 @@ type Relation struct {
 	// exactly when Parent is: a parent with no ordinal carrier gives its
 	// members no address, and an ordinal carrier with no parent keys nothing.
 	Ordinal Carrier
-	// Correspondences are this relation's statements that its own sealed
-	// candidate order enumerates the same subjects a foreign axis's order
-	// does. A relation declares one for each foreign order a rule addressing
-	// it must reach; a relation that correlates with nothing declares none.
-	Correspondences []Correspondence
+	// Correspondences name the foreign axis relations whose candidate orders
+	// enumerate the same subjects this relation's own order does. A relation
+	// declares one for each foreign order a rule addressing it must reach; a
+	// relation that correlates with nothing declares none.
+	Correspondences []RelationRef
 }
 
 func (relation Relation) Available() bool {
@@ -429,14 +429,8 @@ func (catalog Catalog) Complete() bool {
 		keys[relation.Key] = struct{}{}
 		relations[relation.Key] = struct{}{}
 	}
-	keyProjections := make(map[schema.Key]schema.Key, len(catalog.Projections))
-	for _, projection := range catalog.Projections {
-		if projection.Role == Key {
-			keyProjections[projection.Key] = projection.Relation
-		}
-	}
 	for _, relation := range catalog.Relations {
-		if !correspondencesComplete(relation, keyProjections) {
+		if !correspondencesComplete(relation) {
 			return false
 		}
 		if !relation.Nested() {
@@ -627,7 +621,7 @@ func (catalog Catalog) References() schema.EntryReferences {
 	for _, relation := range catalog.Relations {
 		references = append(references, relation.CandidateProvider.References()...)
 		for _, correspondence := range relation.Correspondences {
-			references = append(references, correspondence.References()...)
+			references = append(references, correspondence.EntryReference())
 		}
 	}
 	for _, projection := range catalog.Projections {
@@ -708,10 +702,7 @@ func (catalog Catalog) WriteContent(content *framing.Writer) error {
 			if err := content.Record(contentRecordCorrespondence); err != nil {
 				return err
 			}
-			if err := writeRelationReference(content, correspondence.Foreign); err != nil {
-				return err
-			}
-			if err := content.String(string(correspondence.Coordinate)); err != nil {
+			if err := writeRelationReference(content, correspondence); err != nil {
 				return err
 			}
 		}
