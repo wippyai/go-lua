@@ -136,6 +136,10 @@ func TestExecutionFormClassifiesTheSealedPlan(t *testing.T) {
 	if !ok || exact.Form != FormExact || exact.Input != 0 {
 		t.Fatalf("exact plan classified as %q input %d/%t", exact.Form.Name(), exact.Input, ok)
 	}
+	product, ok := ClassifyForm(planCompiledExactProductRule(t))
+	if !ok || product.Form != FormExact || product.Rule.ReadCount() != 2 {
+		t.Fatalf("exact product classified as %q reads %d/%t", product.Form.Name(), product.Rule.ReadCount(), ok)
+	}
 	source, ok := ClassifyForm(planCompiledSourceRule(t))
 	if !ok || source.Form != FormSource || source.Relation != 4 {
 		t.Fatalf("source plan classified as %q relation %d/%t", source.Form.Name(), source.Relation, ok)
@@ -143,6 +147,32 @@ func TestExecutionFormClassifiesTheSealedPlan(t *testing.T) {
 	if row, ok := ClassifyForm(generated.CompiledRule{}); ok {
 		t.Fatalf("unavailable descriptor classified as %q", row.Form.Name())
 	}
+}
+
+// planCompiledExactProductRule seals the common binary-domain shape: two
+// owner-issued exact joins on one predecessor port, one exact publication,
+// and identity carry of the written Factor.
+func planCompiledExactProductRule(t *testing.T) generated.CompiledRule {
+	t.Helper()
+	contract := ruleplan.ReadContract{Order: ruleprogram.OrderCanonical, Sparse: ruleprogram.SparseExplicit, OnOpaque: ruleprogram.OnOpaqueRefuse, Multiplicity: ruleprogram.MultiplicityOne}
+	rule, ok := generated.NewPlanCompiledRule(generated.CompiledRuleSpec{
+		Ordinal: 10, AxisCount: 3, InputCount: 1,
+		Candidate: ruleplan.RelationAddr{Axis: 0, Member: 0},
+		Reducer:   ruleplan.ReducerAddr{Axis: 2, Member: 0},
+		Reads: []generated.ReadPlan{
+			{Input: 0, Factor: 1, Axis: 0, Relation: ruleplan.RelationAddr{Axis: 0, Member: 0}, Key: ruleplan.ProjectionAddr{Axis: 0, Member: 0}, Form: ruleprogram.Exact, Contract: contract, RowCapacity: 2, CellCapacity: 1},
+			{Input: 0, Factor: 1, Axis: 0, Relation: ruleplan.RelationAddr{Axis: 0, Member: 1}, Key: ruleplan.ProjectionAddr{Axis: 0, Member: 1}, Form: ruleprogram.Exact, Contract: contract, RowCapacity: 2, CellCapacity: 1},
+		},
+		Outputs: []generated.OutputPlan{{
+			Factor: 2, Axis: 2, Address: ruleplan.OutputAddr{Axis: 2, Frame: 0},
+			Destination: ruleplan.ProjectionAddr{Axis: 0, Member: 2}, Mode: ruleprogram.ModeExact, Exact: true, Strong: true,
+		}},
+		Carry: &generated.CarryPlan{Input: 0, Factor: 2, Mode: ruleprogram.CarryIdentity, Identity: true},
+	})
+	if !ok {
+		t.Fatal("sealed exact-product plan")
+	}
+	return rule
 }
 
 // planCompiledExactRule seals the smallest one-join exact-output descriptor:

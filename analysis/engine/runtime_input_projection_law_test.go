@@ -3,9 +3,6 @@ package engine
 import (
 	"context"
 	"testing"
-
-	"github.com/wippyai/go-lua/analysis/engine/internal/carrier/shape"
-	"github.com/wippyai/go-lua/analysis/engine/internal/composition"
 )
 
 // TestRuntimeInputProjectionIsDenseAndGenerationFenced proves that every
@@ -53,44 +50,11 @@ func TestRuntimeInputProjectionIsDenseAndGenerationFenced(t *testing.T) {
 	}
 }
 
-// TestRuntimeInputProjectionRejectsForeignFactorMetadata proves that a
-// malformed or foreign CompiledRule factor cannot be represented as a valid
-// sealed port. This is the factor half of the same source-address fence; no
-// fallback factor is inferred from the output or carrier slot.
-func TestRuntimeInputProjectionRejectsForeignFactorMetadata(t *testing.T) {
-	lane := newReadLaneFixture(t)
-	solver, failure, sealed := lane.program.Seal(nil)
-	if !sealed || solver == nil {
-		t.Fatalf("seal read-lane solver failure=%v", failure)
-	}
-	runtime := solver.runtime
-	if runtime == nil || runtime.graph == nil || runtime.executionPlan == nil {
-		t.Fatal("sealed runtime factor plane")
-	}
-	for _, producer := range runtime.producers {
-		if len(producer.inputProjection) == 0 {
-			continue
-		}
-		projection := producer.inputProjection[0]
-		projection.readFactorPresent = true
-		projection.readFactor = ^uint32(0)
-		projection.readFactorKey = composition.Key{}
-		if projection.validFor(runtime.graph, runtime.executionPlan.Generation()) {
-			t.Fatal("foreign factor metadata accepted")
-		}
-		return
-	}
-	t.Fatal("read-lane fixture has no dense input projection")
-}
-
-// TestRuntimeInputProjectionTransportPreservesRequiredAndSiblingRoots proves
-// that the sealed factor is consumed at the one carrier transport boundary.
-// TransportPointState carries the complete opaque root vector; the required
-// root and an unrelated sibling therefore remain the same readable roots
-// after the source reindex. A foreign or missing factor tuple is refused
-// before transport. Exact authored-target removal is intentionally absent
-// here; that remains the ContributionPlan.SealCarryExclusions cut.
-func TestRuntimeInputProjectionTransportPreservesRequiredAndSiblingRoots(t *testing.T) {
+// TestRuntimeInputProjectionTransportPreservesTheCompleteFactorProduct proves
+// that one predecessor-State port transports its complete opaque root vector.
+// Factor identity is not copied into the projection: the CompiledRule reads
+// own those identities, while carrier owns preservation of every root.
+func TestRuntimeInputProjectionTransportPreservesTheCompleteFactorProduct(t *testing.T) {
 	lane := newReadLaneFixture(t)
 	solver, failure, sealed := lane.program.Seal(nil)
 	if !sealed || solver == nil {
@@ -116,15 +80,8 @@ func TestRuntimeInputProjectionTransportPreservesRequiredAndSiblingRoots(t *test
 		if len(producer.inputProjection) == 0 {
 			continue
 		}
-		projection := append([]runtimeInputProjection(nil), producer.inputProjection...)
-		projection[0].readFactorPresent = true
-		projection[0].readFactor = 0
-		projection[0].readFactorKey = required.key
-		projection[0].readFactorSlot = required.slot
-		bound := producer
-		bound.inputProjection = projection
 		cache := &epoch.producers[rowIndex]
-		stateIndex, sourceOK := epoch.producerInputSourceState(&bound, cache, 0)
+		stateIndex, sourceOK := epoch.producerInputSourceState(&producer, cache, 0)
 		if !sourceOK || stateIndex < 0 || stateIndex >= len(epoch.points) {
 			t.Fatalf("row %d source state", rowIndex)
 		}
@@ -134,7 +91,7 @@ func TestRuntimeInputProjectionTransportPreservesRequiredAndSiblingRoots(t *test
 		if !beforeRequiredOK || !beforeSiblingOK {
 			t.Fatalf("row %d source lost required/sibling root", rowIndex)
 		}
-		transported, transportedOK := epoch.transportProducerInput(&bound, cache, 0)
+		transported, transportedOK := epoch.transportProducerInput(&producer, cache, 0)
 		if !transportedOK {
 			t.Fatalf("row %d sealed transport refused", rowIndex)
 		}
@@ -142,19 +99,6 @@ func TestRuntimeInputProjectionTransportPreservesRequiredAndSiblingRoots(t *test
 		afterSibling, afterSiblingOK := transported.HandleAt(sibling.slot)
 		if !afterRequiredOK || !afterSiblingOK || afterRequired != beforeRequired || afterSibling != beforeSibling {
 			t.Fatalf("row %d transport changed required/sibling root", rowIndex)
-		}
-
-		foreign := projection[0]
-		foreign.readFactorKey = sibling.key
-		if foreign.factorOwnedBy(runtime.program) {
-			t.Fatalf("row %d accepted foreign factor key", rowIndex)
-		}
-		missing := projection[0]
-		missing.readFactor = ^uint32(0)
-		missing.readFactorKey = composition.Key{}
-		missing.readFactorSlot = shape.Slot(-1)
-		if missing.factorOwnedBy(runtime.program) {
-			t.Fatalf("row %d accepted missing factor", rowIndex)
 		}
 		return
 	}

@@ -1,4 +1,4 @@
-// form_exact.go owns the E form: one exact read folded onto one exact write.
+// form_exact.go owns the E form: an exact product folded onto one exact write.
 
 package execution
 
@@ -11,17 +11,19 @@ import (
 	"github.com/wippyai/go-lua/analysis/schema/structure"
 )
 
-// classifyExactForm claims a descriptor with exactly one sealed exact join and
-// an exact output: the read port is the form's only coordinate. A single join
-// declaring any other read form belongs to the form that executes that read,
-// so the read form is part of the claim and not an assumption.
+// classifyExactForm claims a descriptor whose joins are all exact and whose
+// output is exact. A typed family owns products wider than the built-in
+// one-read identity fold, but classification remains one engine decision.
 func classifyExactForm(rule generated.CompiledRule) (FormRow, bool) {
 	mode, modeOK := rule.OutputMode()
-	if !modeOK || mode != ruleprogram.ModeExact || rule.ReadCount() != 1 {
+	if !modeOK || mode != ruleprogram.ModeExact || rule.ReadCount() == 0 {
 		return FormRow{}, false
 	}
-	if form, ok := rule.ReadFormAt(0); !ok || form != ruleprogram.Exact {
-		return FormRow{}, false
+	for index := 0; index < rule.ReadCount(); index++ {
+		read, ok := rule.ReadAt(index)
+		if !ok || read.Form != ruleprogram.Exact || read.Input >= uint32(rule.InputCount()) || read.Input > uint32(^uint16(0)) {
+			return FormRow{}, false
+		}
 	}
 	// A carry is part of the claim: identity hands the prior output fact on
 	// unchanged, which this fold does by writing nothing else, while a
@@ -46,6 +48,9 @@ func buildExactForm[K scalar.Key, V any](plane FormPlane[K, V], rows []FormRow) 
 	sealed := make([]ExactRow[K, V], 0, len(rows))
 	addresses := make([]FormAddress, 0, len(rows))
 	for _, row := range rows {
+		if row.Rule.Available() && row.Rule.ReadCount() != 1 {
+			return nil, nil, false
+		}
 		exact, ok := NewExactRow(plane.binding, row.Unit, row.Input, row.Target, 0)
 		if !ok {
 			return nil, nil, false

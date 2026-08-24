@@ -25,7 +25,9 @@ import (
 type Form uint8
 
 const (
-	// FormExact is the one-read identity fold onto an exact write.
+	// FormExact is the exact-product form: one or more exact reads folded onto
+	// one exact write. The built-in implementation owns the one-read identity
+	// case; typed reducers claim wider products through RuleFamilies.
 	FormExact Form = iota + 1
 	// FormSource is the read-free materialized source column write.
 	FormSource
@@ -86,6 +88,56 @@ type FormRow struct {
 	Unit      carrier.Unit
 	Target    carrier.Target
 	Rule      generated.CompiledRule
+	exact     []carrier.Unit
+}
+
+// BindExact attaches the owner-issued Unit of one exact join to this sealed
+// row. It is called only by the engine while lowering the already-issued read
+// surfaces; rule packages can consume the result but cannot mint one.
+func (row FormRow) BindExact(join int, unit carrier.Unit) (FormRow, bool) {
+	if !row.Rule.Available() || join < 0 || join >= row.Rule.ReadCount() || unit.Kind() != carrier.ExactUnit {
+		return FormRow{}, false
+	}
+	plan, ok := row.Rule.ReadAt(join)
+	if !ok || plan.Form != ruleprogram.Exact || plan.Input > uint32(^uint16(0)) {
+		return FormRow{}, false
+	}
+	firstExact := -1
+	for index := 0; index < row.Rule.ReadCount(); index++ {
+		read, readOK := row.Rule.ReadAt(index)
+		if !readOK {
+			return FormRow{}, false
+		}
+		if read.Form == ruleprogram.Exact {
+			firstExact = index
+			break
+		}
+	}
+	if join == firstExact && row.Unit != (carrier.Unit{}) && row.Unit != unit {
+		return FormRow{}, false
+	}
+	if row.exact == nil {
+		row.exact = make([]carrier.Unit, row.Rule.ReadCount())
+	} else {
+		row.exact = append([]carrier.Unit(nil), row.exact...)
+	}
+	if row.exact[join] != (carrier.Unit{}) {
+		return FormRow{}, false
+	}
+	row.exact[join] = unit
+	return row, true
+}
+
+func (row FormRow) exactAt(join int) (generated.ReadPlan, carrier.Unit, bool) {
+	if !row.Rule.Available() || join < 0 || join >= len(row.exact) {
+		return generated.ReadPlan{}, carrier.Unit{}, false
+	}
+	plan, ok := row.Rule.ReadAt(join)
+	unit := row.exact[join]
+	if !ok || plan.Form != ruleprogram.Exact || plan.Input > uint32(^uint16(0)) || unit.Kind() != carrier.ExactUnit {
+		return generated.ReadPlan{}, carrier.Unit{}, false
+	}
+	return plan, unit, true
 }
 
 // FormAddress is where one plan row's invocation landed: the family offset
@@ -237,6 +289,17 @@ func ForeignExactRead[K scalar.Key, V any](foreign ForeignFactor, unit carrier.U
 		return ExactRead[K, V]{}, false
 	}
 	return NewExactRead(typed.binding, unit, input)
+}
+
+// ForeignRowExactRead seals one declared exact join against the foreign
+// Factor it names. The Unit and input port come from the sealed FormRow; a
+// family chooses only the join ordinal authored by its Program.
+func ForeignRowExactRead[K scalar.Key, V any](foreign ForeignFactor, row FormRow, join int) (ExactRead[K, V], bool) {
+	plan, unit, ok := row.exactAt(join)
+	if !ok {
+		return ExactRead[K, V]{}, false
+	}
+	return ForeignExactRead[K, V](foreign, unit, uint16(plan.Input))
 }
 
 // FormPlane is the sealed typed plane a form builder may read: the Factor's

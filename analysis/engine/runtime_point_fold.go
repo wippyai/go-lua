@@ -58,12 +58,12 @@ func (epoch *executorEpoch) transportProducerInput(producer *runtimeProducer, ca
 		return carrier.PointState{}, false
 	}
 	projection, projectionOK := producer.inputProjectionAt(index)
-	if !projectionOK || !projection.factorOwnedBy(epoch.runtime.program) || !projection.factorRootPresent(current) {
+	if !projectionOK {
 		return carrier.PointState{}, false
 	}
 	transport := projection.transport
 	point, ok := epoch.work.TransportPointState(current, transport.pre, transport.plan, transport.post)
-	if !transport.valid() || !ok || !point.Valid() || !point.Scope().Same(producer.outputScope) || !projection.factorRootPresent(point) {
+	if !transport.valid() || !ok || !point.Valid() || !point.Scope().Same(producer.outputScope) {
 		return carrier.PointState{}, false
 	}
 	return point, true
@@ -78,7 +78,7 @@ func (epoch *executorEpoch) producerInputSourceState(producer *runtimeProducer, 
 		return 0, false
 	}
 	projection, projectionOK := producer.inputProjectionAt(index)
-	if !projectionOK || !projection.factorOwnedBy(epoch.runtime.program) {
+	if !projectionOK {
 		return 0, false
 	}
 	stateIndex, stateOK := epoch.runtime.stateForGraphPoint(int(cache.state), projection.sourcePoint)

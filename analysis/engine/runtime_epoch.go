@@ -277,6 +277,28 @@ func buildGeneratedExecutionProgram(program *runtimeProgram) (*generatedExecutio
 		}
 		formRow.Member, formRow.Unit, formRow.Target = memberIndex, row.generated.unit, row.generated.target
 		formRow.Candidate = row.generated.candidate
+		exact := 0
+		for join := 0; join < descriptor.ReadCount(); join++ {
+			plan, planOK := descriptor.ReadAt(join)
+			if !planOK {
+				return nil, false
+			}
+			if plan.Form != ruleprogram.Exact {
+				continue
+			}
+			if exact >= len(row.generated.initial) || row.generated.initial[exact].Input != uint64(plan.Input) {
+				return nil, false
+			}
+			var bound bool
+			formRow, bound = formRow.BindExact(join, row.generated.initial[exact].Unit)
+			if !bound {
+				return nil, false
+			}
+			exact++
+		}
+		if exact != len(row.generated.initial) {
+			return nil, false
+		}
 		rowsByOwner[descriptor.OutputFactor()] = append(rowsByOwner[descriptor.OutputFactor()], formRow)
 		installed[memberIndex] = formRow
 	}

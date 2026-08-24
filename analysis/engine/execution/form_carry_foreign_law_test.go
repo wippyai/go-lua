@@ -312,6 +312,43 @@ func TestAForeignReadIsSealedAtItsOwnTypes(t *testing.T) {
 	}
 }
 
+// TestAnExactProductConsumesEveryOwnerIssuedJoin states the information-loss
+// boundary behind binary folds. The Program chooses join ordinals; the Units
+// are those the read Factor issued, retained in the sealed row in that same
+// order. A family cannot substitute a Unit or invent a third read.
+func TestAnExactProductConsumesEveryOwnerIssuedJoin(t *testing.T) {
+	fixture := newForeignCarryFixture(t)
+	foreign, foreignOK := NewForeignFactor(fixture.read, RouteTable{})
+	row, classified := ClassifyForm(planCompiledExactProductRule(t))
+	if !foreignOK || !classified || row.Form != FormExact {
+		t.Fatal("exact-product setup")
+	}
+	var bound bool
+	row, bound = row.BindExact(0, fixture.readUnits[0])
+	if !bound {
+		t.Fatal("bind first exact join")
+	}
+	row, bound = row.BindExact(1, fixture.readUnits[1])
+	if !bound {
+		t.Fatal("bind second exact join")
+	}
+	if _, ok := ForeignRowExactRead[uint32, readFact](foreign, row, 0); !ok {
+		t.Fatal("first owner-issued exact join was unavailable")
+	}
+	if _, ok := ForeignRowExactRead[uint32, readFact](foreign, row, 1); !ok {
+		t.Fatal("second owner-issued exact join was unavailable")
+	}
+	if _, ok := ForeignRowExactRead[uint32, readFact](foreign, row, 2); ok {
+		t.Fatal("an undeclared third exact join was admitted")
+	}
+	if _, ok := row.BindExact(1, fixture.readUnits[1]); ok {
+		t.Fatal("one exact join accepted a second Unit")
+	}
+	if _, ok := ForeignRowExactRead[uint64, uint64](foreign, row, 0); ok {
+		t.Fatal("an exact join was reinterpreted at foreign types")
+	}
+}
+
 // TestAWarmForeignCarryAllocatesNothing holds the heterogeneous fold to the
 // same budget as the homogeneous one. Two lanes are two pieces of reusable
 // storage, not two allocations: the read lane belongs to the Factor being read

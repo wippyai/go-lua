@@ -5,6 +5,7 @@ package engine
 // have no typed operand, callback, selector, or legacy bindMember path.
 
 import (
+	"github.com/wippyai/go-lua/analysis/engine/generated"
 	"github.com/wippyai/go-lua/analysis/engine/internal/composition"
 	memberrelation "github.com/wippyai/go-lua/analysis/schema/axis/member/relation"
 	ruleprogram "github.com/wippyai/go-lua/analysis/schema/rule/program"
@@ -402,15 +403,9 @@ func completeGeneratedRelationOwnersLocked(state *schemaBindingState) bool {
 			continue
 		}
 		descriptor := cell.generated.program
-		axes := []uint32{
-			descriptor.CandidateRelation().Axis,
-			descriptor.Reducer().Axis,
-			descriptor.OutputAddress().Axis,
-			descriptor.DestinationProjection().Axis,
-			descriptor.OutputAxis(),
-		}
-		if descriptor.ReadCount() != 0 {
-			axes = append(axes, descriptor.JoinRelation().Axis, descriptor.KeyProjection().Axis, descriptor.ReadAxis())
+		axes, axesOK := generatedRelationOwnerAxes(descriptor)
+		if !axesOK {
+			return false
 		}
 		seen := make(map[uint32]struct{}, len(axes))
 		for _, axis := range axes {
@@ -424,6 +419,34 @@ func completeGeneratedRelationOwnersLocked(state *schemaBindingState) bool {
 		}
 	}
 	return true
+}
+
+// generatedRelationOwnerAxes returns every axis whose sealed member rows one
+// descriptor addresses. It deliberately walks the complete ordered read
+// table: the first-read convenience accessors are not a completeness proof
+// for an exact product or any dependent join program.
+func generatedRelationOwnerAxes(descriptor generated.CompiledRule) ([]uint32, bool) {
+	if !descriptor.Available() {
+		return nil, false
+	}
+	axes := []uint32{
+		descriptor.CandidateRelation().Axis,
+		descriptor.Reducer().Axis,
+		descriptor.OutputAddress().Axis,
+		descriptor.DestinationProjection().Axis,
+		descriptor.OutputAxis(),
+	}
+	for index := 0; index < descriptor.ReadCount(); index++ {
+		read, ok := descriptor.ReadAt(index)
+		if !ok {
+			return nil, false
+		}
+		axes = append(axes, read.Relation.Axis, read.Key.Axis, read.Factor)
+		if read.PredicatePresent {
+			axes = append(axes, read.Predicate.Axis)
+		}
+	}
+	return axes, true
 }
 
 // relationOwnerForGeneratedAxis is the construction-only axis lookup. The
