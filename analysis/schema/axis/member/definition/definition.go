@@ -626,6 +626,13 @@ func (definition Definition) Complete() bool {
 		if !relation.memberSetComplete(relations, relationsByKey, carriers) {
 			return false
 		}
+		// An authored derivation is admitted only while the migration set knows
+		// about it. Registration is not a formality: the ledger is what says the
+		// authored form is scheduled to be emitted, and a derivation nothing
+		// scheduled would outlive the migration silently.
+		if !derivationOptional(relation.Derivation) && !scheduledForDeath(definition.Axis, relation.Key, relation.Derivation.Build) {
+			return false
+		}
 		if relation.CandidateProvider.Axis.Key != definition.Axis {
 			// Foreign ownership is resolved against the composition roster.
 			// The consumer definition must not retain a second owner directory.
