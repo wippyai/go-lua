@@ -189,6 +189,11 @@ func FormalFreeze() ruleprogram.Program {
 				Axis:   heapAxis,
 				Member: FormalFreezeReducer,
 			},
+			// Joins 0 and 1 are materializations join 2 depends on, not
+			// arguments. Declaring them as fold inputs is well formed to the
+			// Program on its own and wrong against the reducer, which takes
+			// exactly one selected Heap cell and its route coordinate; the
+			// call-shape law is where the two are held together.
 			Inputs: []ruleprogram.JoinRef{2},
 			Outputs: []ruleprogram.OutputDecl{
 				{

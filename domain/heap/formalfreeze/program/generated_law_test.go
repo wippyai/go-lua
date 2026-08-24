@@ -13,70 +13,76 @@ import (
 	axismember "github.com/wippyai/go-lua/analysis/schema/axis/member"
 	emitlaw "github.com/wippyai/go-lua/analysis/schema/rule/emitlaw"
 	ruleprogram "github.com/wippyai/go-lua/analysis/schema/rule/program"
-	axiscatalog "github.com/wippyai/go-lua/domain/placement"
+	axiscatalog "github.com/wippyai/go-lua/domain/heap"
 )
 
-// storageGeometry is the whole geometry the declaration carries, in the one
+// formalFreezeGeometry is the whole geometry the declaration carries, in the one
 // canonical form every emitted law suite states a declaration in. It is total
 // over the cold ABI: every join clause, contract term, fold argument, output
 // clause, carry, and transport row appears on exactly one line.
-const storageGeometry = `operand              semantic/operand/placement/storage
-candidate            relation=axis/value:value/storage-transfer/candidates issued-row=-
-join[0].read         form=exact input=0 axis=axis/value point-bound=bound
-join[0].relation     axis/value:value/storage-transfer/sources
-join[0].key          axis/value:value/storage-transfer/source-key
+const formalFreezeGeometry = `operand              semantic/operand/heap/formal-freeze
+candidate            relation=axis/call:call/mounted-call/candidates issued-row=-
+join[0].read         form=exact input=0 axis=axis/call point-bound=bound
+join[0].relation     axis/call:call/mounted-call/facts
+join[0].key          axis/call:call/mounted-call/fact-key
 join[0].predicate    -
 join[0].sources      candidate
 join[0].contract     order=canonical sparse=explicit on-opaque=refuse multiplicity=one denominator=-
-join[1].read         form=selected input=0 axis=axis/placement point-bound=bound
-join[1].relation     axis/placement:placement/store/storage-routes
-join[1].key          axis/placement:placement/store/route-key
-join[1].predicate    axis/placement:placement/store/route-tag
-join[1].sources      candidate, join 0
-join[1].contract     order=canonical sparse=explicit on-opaque=refuse multiplicity=one denominator=denominator/coordinates/placement
-carry                none
-fold.reducer         axis/placement:placement/store/reducer/storage
-fold.inputs          join 0, join 1
-output[0]            mode=route value-slot=0 route=join 1 column=axis/placement:placement/facts destination=axis/placement:placement/store/route-destination
+join[1].read         form=selected input=1 axis=axis/value point-bound=self
+join[1].relation     axis/value:value/formal-freeze/actual-members
+join[1].key          axis/value:value/formal-freeze/actual-key
+join[1].predicate    axis/value:value/formal-freeze/actual-tag
+join[1].sources      candidate
+join[1].contract     order=by-tag sparse=default on-opaque=refuse multiplicity=one denominator=denominator/coordinates/value
+join[2].read         form=selected input=2 axis=axis/heap point-bound=self
+join[2].relation     axis/heap:heap/formal-freeze/routes
+join[2].key          axis/heap:heap/formal-freeze/route-key
+join[2].predicate    -
+join[2].sources      candidate, join 0, join 1
+join[2].contract     order=canonical sparse=default on-opaque=refuse multiplicity=one denominator=denominator/coordinates/heap
+carry                mode=identity input=2 transform=-
+fold.reducer         axis/heap:heap/reducer/formal-freeze
+fold.inputs          join 2
+output[0]            mode=route value-slot=0 route=join 2 column=axis/heap:heap/facts destination=axis/heap:heap/formal-freeze/route-destination
 transport            none
 `
 
-// TestStorageGeometryIsTheOneItsLawSuiteWasEmittedFrom holds the declaration to the
+// TestFormalFreezeGeometryIsTheOneItsLawSuiteWasEmittedFrom holds the declaration to the
 // geometry above. The rendering is checked in beside the declaration and the
 // freshness law re-derives it, so a declaration that moves without
 // regeneration fails the build and one that moves with it is a reviewable
 // diff of exactly what changed.
-func TestStorageGeometryIsTheOneItsLawSuiteWasEmittedFrom(t *testing.T) {
-	if got := emitlaw.Canonical(Storage()); got != storageGeometry {
-		t.Fatalf("declared geometry has moved away from its law suite:\ngot:\n%s\nwant:\n%s", got, storageGeometry)
+func TestFormalFreezeGeometryIsTheOneItsLawSuiteWasEmittedFrom(t *testing.T) {
+	if got := emitlaw.Canonical(FormalFreeze()); got != formalFreezeGeometry {
+		t.Fatalf("declared geometry has moved away from its law suite:\ngot:\n%s\nwant:\n%s", got, formalFreezeGeometry)
 	}
 }
 
-// TestStorageAgreesWithTheCallShapeOfTheReducerItNames is the one structural law a
+// TestFormalFreezeAgreesWithTheCallShapeOfTheReducerItNames is the one structural law a
 // Program cannot settle alone. Check sees only the declaration, so a fold that
 // hands its reducer a join the owner does not take is well formed in isolation
 // and wrong against the row it names. The reducer's call shape is the owner
 // axis's statement, and this law is where the two are held together.
-func TestStorageAgreesWithTheCallShapeOfTheReducerItNames(t *testing.T) {
-	declaration := Storage()
+func TestFormalFreezeAgreesWithTheCallShapeOfTheReducerItNames(t *testing.T) {
+	declaration := FormalFreeze()
 	if problem, valid := declaration.Check(); !valid {
 		t.Fatalf("declaration is malformed: %+v", problem)
 	}
-	reducer, reducerOK := axiscatalog.AxisMemberCatalog().Reducer(schemaapi.Key("placement/store/reducer/storage"))
+	reducer, reducerOK := axiscatalog.AxisMemberCatalog().Reducer(schemaapi.Key("heap/reducer/formal-freeze"))
 	if !reducerOK {
-		t.Fatal("the reducer axis publishes no reducer named placement/store/reducer/storage")
+		t.Fatal("the reducer axis publishes no reducer named heap/reducer/formal-freeze")
 	}
 	if problem, valid := declaration.CheckAgainst(reducer); !valid {
 		t.Fatalf("declaration disagrees with its reducer's call shape: %+v", problem)
 	}
 }
 
-// TestStorageIsHandedOutFresh states that the accessor yields a declaration a caller
+// TestFormalFreezeIsHandedOutFresh states that the accessor yields a declaration a caller
 // owns. Every law that probes a malformed edit mutates what it is handed, and a
 // declaration backed by shared storage would carry one law's edit into the next
 // reader - including the composition that seals it.
-func TestStorageIsHandedOutFresh(t *testing.T) {
-	first := Storage()
+func TestFormalFreezeIsHandedOutFresh(t *testing.T) {
+	first := FormalFreeze()
 	first.OperandRole = "law/mutation/operand"
 	for index := range first.Joins {
 		first.Joins[index].Relation.Member = "law/mutation/relation"
@@ -96,33 +102,31 @@ func TestStorageIsHandedOutFresh(t *testing.T) {
 	for index := range first.Transport {
 		first.Transport[index].Exported = !first.Transport[index].Exported
 	}
-	if got := emitlaw.Canonical(Storage()); got != storageGeometry {
+	if got := emitlaw.Canonical(FormalFreeze()); got != formalFreezeGeometry {
 		t.Fatalf("a caller's edits reached the next declaration:\n%s", got)
 	}
 }
 
-// storageIdentity is the rule identity this declaration is sealed under.
-const storageIdentity = `rule                 placement-storage
+// formalFreezeIdentity is the rule identity this declaration is sealed under.
+const formalFreezeIdentity = `rule                 heap-formal-freeze
 lane                 mounted
-writes               placement
-owner                placement
-semantic             semantic/rule/placement/storage
-role[0]              semantic/operand/placement/storage
-issue[0]             occurrence=occurrence/storage-bind-transfer form=program-form/local-successor requirement=program-requirement/unrestricted
-issue[1]             occurrence=occurrence/storage-bind-transfer form=program-form/call-effect requirement=program-requirement/tail-transfer-result
-issue[2]             occurrence=occurrence/storage-write form=program-form/local-predecessor requirement=program-requirement/unrestricted
+writes               heap
+owner                heap
+semantic             semantic/rule/heap/formal-freeze
+role[0]              semantic/operand/heap/formal-freeze
+issue[0]             occurrence=occurrence/call form=program-form/call-effect requirement=program-requirement/unrestricted
 `
 
-// TestStorageRuleEntryIsTheSealedDeclaration holds the rule entry to its identity, to
+// TestFormalFreezeRuleEntryIsTheSealedDeclaration holds the rule entry to its identity, to
 // the declaration this suite was emitted from, and to handing out issuance a
 // caller owns. An entry that shared its issuance storage would let one reader's
 // edit become every later reader's declaration.
-func TestStorageRuleEntryIsTheSealedDeclaration(t *testing.T) {
+func TestFormalFreezeRuleEntryIsTheSealedDeclaration(t *testing.T) {
 	entry := RuleEntry()
-	if got := emitlaw.CanonicalEntry(entry); got != storageIdentity {
-		t.Fatalf("rule identity has moved away from its law suite:\ngot:\n%s\nwant:\n%s", got, storageIdentity)
+	if got := emitlaw.CanonicalEntry(entry); got != formalFreezeIdentity {
+		t.Fatalf("rule identity has moved away from its law suite:\ngot:\n%s\nwant:\n%s", got, formalFreezeIdentity)
 	}
-	if got := emitlaw.Canonical(entry.Program); got != storageGeometry {
+	if got := emitlaw.Canonical(entry.Program); got != formalFreezeGeometry {
 		t.Fatalf("the entry carries a different declaration than the one it is sealed over:\n%s", got)
 	}
 	for index := range entry.Issues {
@@ -133,12 +137,12 @@ func TestStorageRuleEntryIsTheSealedDeclaration(t *testing.T) {
 	for index := range entry.Roles {
 		entry.Roles[index] = "law/mutation/role"
 	}
-	if got := emitlaw.CanonicalEntry(RuleEntry()); got != storageIdentity {
+	if got := emitlaw.CanonicalEntry(RuleEntry()); got != formalFreezeIdentity {
 		t.Fatalf("a caller's edits reached the next rule entry:\n%s", got)
 	}
 }
 
-// TestStorageRefusesEveryStructuralMutation is the negative half of the declaration's
+// TestFormalFreezeRefusesEveryStructuralMutation is the negative half of the declaration's
 // structure: for every term the cold ABI carries, the edit that removes or
 // corrupts it, and the verdict Check gives it. The table is total over the
 // declaration rather than a sample of it, which is the whole reason it is
@@ -148,7 +152,7 @@ func TestStorageRuleEntryIsTheSealedDeclaration(t *testing.T) {
 // deriving. Check runs for real here, so a checker that stops refusing an edit
 // fails this law, and a checker that refuses it differently shows up as a
 // regeneration diff.
-func TestStorageRefusesEveryStructuralMutation(t *testing.T) {
+func TestFormalFreezeRefusesEveryStructuralMutation(t *testing.T) {
 	for _, law := range []struct {
 		mutation string
 		apply    func(declaration *ruleprogram.Program)
@@ -206,29 +210,57 @@ func TestStorageRefusesEveryStructuralMutation(t *testing.T) {
 			declaration.Joins[1].Sources = append(declaration.Joins[1].Sources, declaration.Joins[1].Sources[0])
 		}, kind: ruleprogram.ProblemJoin, join: 1},
 		{mutation: "join 1 sources a result that is not yet produced", apply: func(declaration *ruleprogram.Program) { declaration.Joins[1].Sources[0] = ruleprogram.PriorSource(1) }, kind: ruleprogram.ProblemJoin, join: 1},
-		{mutation: "join 1 is unbounded", apply: func(declaration *ruleprogram.Program) {
-			declaration.Joins[1].Read.Contract.Multiplicity = ruleprogram.MultiplicityMany
-		}, kind: ruleprogram.ProblemJoin, join: 1},
 		{mutation: "join 1 loses the denominator its read form requires", apply: func(declaration *ruleprogram.Program) {
 			declaration.Joins[1].Read.Contract.DenominatorRef = ruleprogram.DenominatorRef{}
 		}, kind: ruleprogram.ProblemJoin, join: 1},
 		{mutation: "join 1 declares a predicate that resolves to nothing", apply: func(declaration *ruleprogram.Program) { declaration.Joins[1].Predicate.Member = "" }, kind: ruleprogram.ProblemJoin, join: 1},
+		{mutation: "join 2 loses its relation", apply: func(declaration *ruleprogram.Program) { declaration.Joins[2].Relation.Member = "" }, kind: ruleprogram.ProblemJoin, join: 2},
+		{mutation: "join 2 loses its key projection", apply: func(declaration *ruleprogram.Program) { declaration.Joins[2].Key.Member = "" }, kind: ruleprogram.ProblemJoin, join: 2},
+		{mutation: "join 2 loses its read axis", apply: func(declaration *ruleprogram.Program) { declaration.Joins[2].Read.Axis = ruleprogram.AxisRef{} }, kind: ruleprogram.ProblemJoin, join: 2},
+		{mutation: "join 2 loses its read form", apply: func(declaration *ruleprogram.Program) { declaration.Joins[2].Read.Form = ruleprogram.ReadFormInvalid }, kind: ruleprogram.ProblemJoin, join: 2},
+		{mutation: "join 2 loses its point-bound disposition", apply: func(declaration *ruleprogram.Program) {
+			declaration.Joins[2].Read.PointBound = ruleprogram.PointBoundInvalid
+		}, kind: ruleprogram.ProblemJoin, join: 2},
+		{mutation: "join 2 loses its declared cell order", apply: func(declaration *ruleprogram.Program) {
+			declaration.Joins[2].Read.Contract.Order = ruleprogram.OrderInvalid
+		}, kind: ruleprogram.ProblemJoin, join: 2},
+		{mutation: "join 2 loses its sparsity", apply: func(declaration *ruleprogram.Program) {
+			declaration.Joins[2].Read.Contract.Sparse = ruleprogram.SparseInvalid
+		}, kind: ruleprogram.ProblemJoin, join: 2},
+		{mutation: "join 2 loses its opaque-evidence disposition", apply: func(declaration *ruleprogram.Program) {
+			declaration.Joins[2].Read.Contract.OnOpaque = ruleprogram.OnOpaqueInvalid
+		}, kind: ruleprogram.ProblemJoin, join: 2},
+		{mutation: "join 2 loses its multiplicity", apply: func(declaration *ruleprogram.Program) {
+			declaration.Joins[2].Read.Contract.Multiplicity = ruleprogram.MultiplicityInvalid
+		}, kind: ruleprogram.ProblemJoin, join: 2},
+		{mutation: "join 2 repeats one of its sources", apply: func(declaration *ruleprogram.Program) {
+			declaration.Joins[2].Sources = append(declaration.Joins[2].Sources, declaration.Joins[2].Sources[0])
+		}, kind: ruleprogram.ProblemJoin, join: 2},
+		{mutation: "join 2 sources a result that is not yet produced", apply: func(declaration *ruleprogram.Program) { declaration.Joins[2].Sources[0] = ruleprogram.PriorSource(2) }, kind: ruleprogram.ProblemJoin, join: 2},
+		{mutation: "join 2 is unbounded", apply: func(declaration *ruleprogram.Program) {
+			declaration.Joins[2].Read.Contract.Multiplicity = ruleprogram.MultiplicityMany
+		}, kind: ruleprogram.ProblemJoin, join: 2},
+		{mutation: "join 2 loses the denominator its read form requires", apply: func(declaration *ruleprogram.Program) {
+			declaration.Joins[2].Read.Contract.DenominatorRef = ruleprogram.DenominatorRef{}
+		}, kind: ruleprogram.ProblemJoin, join: 2},
 		{mutation: "the fold names no reducer", apply: func(declaration *ruleprogram.Program) { declaration.Fold.Reducer.Member = "" }, kind: ruleprogram.ProblemFold},
 		{mutation: "the fold consumes nothing", apply: func(declaration *ruleprogram.Program) { declaration.Fold.Inputs = nil }, kind: ruleprogram.ProblemInput},
 		{mutation: "the fold publishes nothing", apply: func(declaration *ruleprogram.Program) { declaration.Fold.Outputs = nil }, kind: ruleprogram.ProblemOutput},
-		{mutation: "the fold consumes a join the declaration does not carry", apply: func(declaration *ruleprogram.Program) { declaration.Fold.Inputs[0] = ruleprogram.JoinRef(2) }, kind: ruleprogram.ProblemInput},
-		{mutation: "the fold stops consuming its argument at position 1", apply: func(declaration *ruleprogram.Program) {
-			declaration.Fold.Inputs = append(declaration.Fold.Inputs[:1:1], declaration.Fold.Inputs[2:]...)
-		}, kind: ruleprogram.ProblemOutput, join: 1},
+		{mutation: "the fold consumes a join the declaration does not carry", apply: func(declaration *ruleprogram.Program) { declaration.Fold.Inputs[0] = ruleprogram.JoinRef(3) }, kind: ruleprogram.ProblemInput},
 		{mutation: "output 0 loses its destination projection", apply: func(declaration *ruleprogram.Program) { declaration.Fold.Outputs[0].Destination.Member = "" }, kind: ruleprogram.ProblemOutput},
 		{mutation: "output 0 loses its declared column", apply: func(declaration *ruleprogram.Program) { declaration.Fold.Outputs[0].Column.Key = "" }, kind: ruleprogram.ProblemOutput},
 		{mutation: "output 0 loses its publication mode", apply: func(declaration *ruleprogram.Program) { declaration.Fold.Outputs[0].Mode = ruleprogram.ModeInvalid }, kind: ruleprogram.ProblemOutput},
 		{mutation: "output 0 publishes into a value slot the fold does not have", apply: func(declaration *ruleprogram.Program) { declaration.Fold.Outputs[0].ValueSlot = 1 }, kind: ruleprogram.ProblemOutput},
 		{mutation: "routed output 0 names no route join", apply: func(declaration *ruleprogram.Program) { declaration.Fold.Outputs[0].RouteJoinPresent = false }, kind: ruleprogram.ProblemOutput},
-		{mutation: "routed output 0 routes through a join the declaration does not carry", apply: func(declaration *ruleprogram.Program) { declaration.Fold.Outputs[0].RouteJoin = ruleprogram.JoinRef(2) }, kind: ruleprogram.ProblemOutput},
+		{mutation: "routed output 0 routes through a join the declaration does not carry", apply: func(declaration *ruleprogram.Program) { declaration.Fold.Outputs[0].RouteJoin = ruleprogram.JoinRef(3) }, kind: ruleprogram.ProblemOutput},
 		{mutation: "routed output 0 routes through the exact join at 0", apply: func(declaration *ruleprogram.Program) { declaration.Fold.Outputs[0].RouteJoin = ruleprogram.JoinRef(0) }, kind: ruleprogram.ProblemJoin},
+		{mutation: "the carry loses its disposition", apply: func(declaration *ruleprogram.Program) { declaration.Carry.Mode = ruleprogram.CarryModeInvalid }, kind: ruleprogram.ProblemCarry},
+		{mutation: "the carry names an input port the declaration does not open", apply: func(declaration *ruleprogram.Program) { declaration.Carry.Input = ruleprogram.InputRef(4) }, kind: ruleprogram.ProblemInput},
+		{mutation: "the identity carry acquires a transform", apply: func(declaration *ruleprogram.Program) {
+			declaration.Carry.Transform = axismember.CarryTransformRef{Axis: declaration.Fold.Reducer.Axis, Member: "law/mutation/carry-transform"}
+		}, kind: ruleprogram.ProblemCarry},
 	} {
-		declaration := Storage().Clone()
+		declaration := FormalFreeze().Clone()
 		law.apply(&declaration)
 		problem, valid := declaration.Check()
 		if valid {
@@ -240,7 +272,7 @@ func TestStorageRefusesEveryStructuralMutation(t *testing.T) {
 	}
 }
 
-// TestStorageAdmitsTheseEditsAtDeclarationLevel states where Check's authority ends.
+// TestFormalFreezeAdmitsTheseEditsAtDeclarationLevel states where Check's authority ends.
 // Check is data-local: it seals ordering, the normal forms, fold connectivity,
 // and output arity without reopening any owner schema. The edits below are
 // therefore well formed to it and are refused, if at all, by the seal that
@@ -249,7 +281,7 @@ func TestStorageRefusesEveryStructuralMutation(t *testing.T) {
 // This law exists so that boundary is on record rather than implied by absence.
 // An edit that starts being refused here is a checker that grew, and it shows
 // up as a regeneration diff instead of passing unnoticed.
-func TestStorageAdmitsTheseEditsAtDeclarationLevel(t *testing.T) {
+func TestFormalFreezeAdmitsTheseEditsAtDeclarationLevel(t *testing.T) {
 	for _, law := range []struct {
 		mutation string
 		apply    func(declaration *ruleprogram.Program)
@@ -260,11 +292,11 @@ func TestStorageAdmitsTheseEditsAtDeclarationLevel(t *testing.T) {
 		{mutation: "join 0 is unbounded", apply: func(declaration *ruleprogram.Program) {
 			declaration.Joins[0].Read.Contract.Multiplicity = ruleprogram.MultiplicityMany
 		}},
-		{mutation: "the fold stops consuming its argument at position 0", apply: func(declaration *ruleprogram.Program) {
-			declaration.Fold.Inputs = append(declaration.Fold.Inputs[:0:0], declaration.Fold.Inputs[1:]...)
+		{mutation: "join 1 is unbounded", apply: func(declaration *ruleprogram.Program) {
+			declaration.Joins[1].Read.Contract.Multiplicity = ruleprogram.MultiplicityMany
 		}},
 	} {
-		declaration := Storage().Clone()
+		declaration := FormalFreeze().Clone()
 		law.apply(&declaration)
 		if problem, valid := declaration.Check(); !valid {
 			t.Fatalf("Check has grown to refuse a declaration where %s: %+v", law.mutation, problem)

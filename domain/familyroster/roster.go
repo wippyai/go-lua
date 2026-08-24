@@ -14,7 +14,10 @@ import (
 	"github.com/wippyai/go-lua/analysis/schema/rule/emit"
 	"github.com/wippyai/go-lua/analysis/schema/rule/emitlaw"
 	heapempty "github.com/wippyai/go-lua/domain/heap/allocation/empty"
+	freezeprogram "github.com/wippyai/go-lua/domain/heap/formalfreeze/program"
+	returnprogram "github.com/wippyai/go-lua/domain/placement/returnescape/program"
 	storeprogram "github.com/wippyai/go-lua/domain/placement/store/program"
+	refinementprogram "github.com/wippyai/go-lua/domain/value/refinement/program"
 )
 
 // GeneratedFileName is the one name an emitted family is written under. It is
@@ -91,6 +94,36 @@ func Declarations() []Declaration {
 				Spec:        storeprogram.RuleEntry(),
 			},
 			Directory: "domain/placement/store/program",
+		},
+		{
+			Target: emitlaw.Target{
+				PackagePath: "github.com/wippyai/go-lua/domain/heap/formalfreeze/program",
+				PackageName: "program",
+				Declaration: "FormalFreeze",
+				Entry:       "RuleEntry",
+				Spec:        freezeprogram.RuleEntry(),
+			},
+			Directory: "domain/heap/formalfreeze/program",
+		},
+		{
+			Target: emitlaw.Target{
+				PackagePath: "github.com/wippyai/go-lua/domain/placement/returnescape/program",
+				PackageName: "program",
+				Declaration: "ReturnEscape",
+				Entry:       "RuleEntry",
+				Spec:        returnprogram.RuleEntry(),
+			},
+			Directory: "domain/placement/returnescape/program",
+		},
+		{
+			Target: emitlaw.Target{
+				PackagePath: "github.com/wippyai/go-lua/domain/value/refinement/program",
+				PackageName: "program",
+				Declaration: "PresenceRefinement",
+				Entry:       "RuleEntry",
+				Spec:        refinementprogram.RuleEntry(),
+			},
+			Directory: "domain/value/refinement/program",
 		},
 	}
 }

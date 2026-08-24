@@ -61,6 +61,15 @@ func mutations(declaration program.Program) []mutation {
 			apply:     func(target *program.Program) { target.Candidate.AxisRelation.Member = "" },
 		})
 	}
+	if declaration.Candidate.AxisRelation.Axis != declaration.Fold.Reducer.Axis {
+		rows = append(rows, mutation{
+			name:      "the candidate is provided by the axis the rule writes instead of its own owner",
+			statement: "declaration.Candidate.AxisRelation.Axis = declaration.Fold.Reducer.Axis",
+			apply: func(target *program.Program) {
+				target.Candidate.AxisRelation.Axis = target.Fold.Reducer.Axis
+			},
+		})
+	}
 	for index := range declaration.Joins {
 		rows = append(rows, joinMutations(declaration, index)...)
 	}
