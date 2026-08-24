@@ -269,7 +269,7 @@ func routedDescriptor(t testing.TB, selectedFeeds int) generated.CompiledRule {
 // specimen this form was built for.
 func TestSelectedRouteClaimsARouteSelectionFedByAnEarlierSelection(t *testing.T) {
 	for _, feeds := range []int{0, 1, 2} {
-		row, claimed := ClassifyForm(routedDescriptor(t, feeds))
+		row, claimed := DeclaredForm(routedDescriptor(t, feeds))
 		if !claimed {
 			t.Fatalf("a routed rule with %d selected feeds was claimed by no form", feeds)
 		}

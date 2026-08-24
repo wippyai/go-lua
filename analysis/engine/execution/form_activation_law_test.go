@@ -271,37 +271,39 @@ func activationFormLawDescriptor(t testing.TB) generated.CompiledRule {
 	return descriptor
 }
 
-// TestActivationFormClassifiesItsStructuralPlanAlone states the classification
-// law: a two-join descriptor whose reads are exactly one exact trigger read
-// followed by one selected candidate read, published through a structural
-// output, is the A form and only the A form.
-func TestActivationFormClassifiesItsStructuralPlanAlone(t *testing.T) {
+// TestActivationFormIsDerivedFromItsStructuralPublication states the
+// derivation law: a structural publication transports axes across a transition
+// instead of writing a fact, and a descriptor carries that transport vector
+// exactly when its mode is structural. So the publication mode alone decides
+// this form, and the selection its branches are drawn from names the port the
+// row is opened at. Nothing about read order or read count participates.
+func TestActivationFormIsDerivedFromItsStructuralPublication(t *testing.T) {
 	descriptor := activationFormLawDescriptor(t)
-	row, claimed := ClassifyForm(descriptor)
-	if !claimed || row.Form != FormActivation {
-		t.Fatalf("classified as %q/%t, want activation", row.Form.Name(), claimed)
+	row, derived := DeclaredForm(descriptor)
+	if !derived || row.Form != FormActivation {
+		t.Fatalf("derived as %q/%t, want activation", row.Form.Name(), derived)
 	}
 	if row.Input != 1 {
-		t.Fatalf("classified read port = %d, want the selected candidate join", row.Input)
+		t.Fatalf("derived read port = %d, want the selected candidate join", row.Input)
 	}
-	if _, claimedByRoute := classifySelectedRouteForm(descriptor); claimedByRoute {
-		t.Fatal("the selected-route classifier claims a structural activation descriptor")
-	}
-	if _, claimedBySummary := classifySummaryForm(descriptor); claimedBySummary {
-		t.Fatal("the summary classifier claims a structural activation descriptor")
+	if row.Rule.TransportCount() == 0 {
+		t.Fatal("a structural publication derived the activation form with no transport vector")
 	}
 }
 
-// TestActivationFormRefusesAMisshapenStructuralDescriptor covers the near
-// misses: a descriptor either fails to seal at all, or reaches
-// classifyActivationForm and is refused there. Either refusal is sound; what
-// must never happen is admission as FormActivation.
-func TestActivationFormRefusesAMisshapenStructuralDescriptor(t *testing.T) {
+// TestAStructuralDescriptorWithNoSelectionIsNoActivation covers the near
+// misses that the derivation itself settles. A structural publication whose
+// branches are drawn from no selection has no candidate set to transport, and
+// there is no port for the row to open at, so it derives no form at all.
+//
+// Read ORDER is deliberately not one of these. Which position the trigger
+// occupies is not what makes a descriptor an activation, and the form the
+// derivation answers has no generic builder: every row of it is authored by an
+// installed family that holds the descriptor to its own declared shape. A
+// refusal on position would have been the derivation guessing at a geometry it
+// does not implement.
+func TestAStructuralDescriptorWithNoSelectionIsNoActivation(t *testing.T) {
 	for name, damage := range map[string]func(*generated.CompiledRuleSpec){
-		"reads reversed": func(spec *generated.CompiledRuleSpec) {
-			spec.Reads[0], spec.Reads[1] = spec.Reads[1], spec.Reads[0]
-			spec.Reads[0].Input, spec.Reads[1].Input = 0, 1
-		},
 		"single read": func(spec *generated.CompiledRuleSpec) {
 			spec.Reads = spec.Reads[:1]
 			spec.InputCount = 1
@@ -317,12 +319,12 @@ func TestActivationFormRefusesAMisshapenStructuralDescriptor(t *testing.T) {
 			damage(&spec)
 			descriptor, sealed := generated.NewPlanCompiledRule(spec)
 			if !sealed {
-				// The malformed shape never reached classification, which
+				// The malformed shape never reached the derivation, which
 				// already refuses it.
 				return
 			}
-			if _, claimed := classifyActivationForm(descriptor); claimed {
-				t.Fatalf("the activation classifier claimed a %s descriptor", name)
+			if row, derived := DeclaredForm(descriptor); derived {
+				t.Fatalf("a %s structural descriptor derived %q", name, row.Form.Name())
 			}
 		})
 	}

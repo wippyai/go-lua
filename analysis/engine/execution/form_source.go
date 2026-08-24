@@ -4,29 +4,12 @@
 package execution
 
 import (
-	"github.com/wippyai/go-lua/analysis/engine/generated"
 	"github.com/wippyai/go-lua/analysis/engine/internal/carrier"
 	"github.com/wippyai/go-lua/analysis/engine/internal/factbinding"
 	"github.com/wippyai/go-lua/analysis/engine/internal/facts/scalar"
 	memberrelation "github.com/wippyai/go-lua/analysis/schema/axis/member/relation"
-	ruleprogram "github.com/wippyai/go-lua/analysis/schema/rule/program"
 	"github.com/wippyai/go-lua/analysis/schema/structure"
 )
-
-// classifySourceForm claims a descriptor with no join and no input whose
-// candidate relation is published by the output Factor itself: the relation
-// member is the form's only coordinate.
-func classifySourceForm(rule generated.CompiledRule) (FormRow, bool) {
-	mode, modeOK := rule.OutputMode()
-	if !modeOK || mode != ruleprogram.ModeExact || rule.ReadCount() != 0 || rule.InputCount() != 0 {
-		return FormRow{}, false
-	}
-	candidate := rule.CandidateRelation()
-	if candidate.Axis != rule.OutputFactor() {
-		return FormRow{}, false
-	}
-	return FormRow{Form: FormSource, Relation: candidate.Member}, true
-}
 
 // buildSourceForm seals one typed Z family from this Factor's source rows. Rows
 // that name the same relation column and the same write target share one

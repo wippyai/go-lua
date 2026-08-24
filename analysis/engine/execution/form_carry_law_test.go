@@ -13,27 +13,24 @@ import (
 // which the exact fold can do with no domain call at all; a transformed carry
 // applies one owner-issued candidate-indexed transition to it, which the exact
 // fold cannot do and must never be given to silently. The two descriptors
-// differ only in their carry, so the form table must separate them there.
+// differ only in their carry, so the derivation must separate them there.
 func TestTransformedCarryIsItsOwnForm(t *testing.T) {
 	identity := planCompiledExactRule(t)
 	transformed := planCompiledTransformedCarryRule(t)
 
-	if row, ok := classifyExactForm(transformed); ok {
-		t.Fatalf("the exact form claimed a transformed carry as %q", row.Form.Name())
-	}
-	if row, ok := classifyExactForm(identity); !ok || row.Form != FormExact {
-		t.Fatalf("the exact form stopped claiming an identity carry: %q/%t", row.Form.Name(), ok)
+	if row, ok := DeclaredForm(identity); !ok || row.Form != FormExact {
+		t.Fatalf("an identity carry stopped deriving the exact form: %q/%t", row.Form.Name(), ok)
 	}
 
-	carried, ok := ClassifyForm(transformed)
+	carried, ok := DeclaredForm(transformed)
 	if !ok || carried.Form != FormCarry {
-		t.Fatalf("transformed carry classified as %q/%t, want carry", carried.Form.Name(), ok)
+		t.Fatalf("transformed carry derived as %q/%t, want carry", carried.Form.Name(), ok)
 	}
 	if carried.Input != 0 {
 		t.Fatalf("transformed carry read port = %d, want 0", carried.Input)
 	}
 	if _, present := carried.Rule.CarryTransform(); !present {
-		t.Fatal("the classified row lost the transform address it was classified from")
+		t.Fatal("the derived row lost the transform address it was derived from")
 	}
 }
 

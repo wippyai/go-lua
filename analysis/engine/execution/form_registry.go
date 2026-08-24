@@ -567,28 +567,13 @@ func (plane FormPlane[K, V]) column(relation uint32) (memberrelation.SourceColum
 	return plane.columns[relation], true
 }
 
-// formClassifier decides whether one sealed descriptor is its own form and
-// extracts that form's coordinates. It is type-neutral: classification reads
-// the plan, never a typed binding.
-type formClassifier func(generated.CompiledRule) (FormRow, bool)
-
 // formBuilder compiles every row of one form into exactly one typed family.
 type formBuilder[K scalar.Key, V any] func(FormPlane[K, V], []FormRow) (Family, []FormAddress, bool)
 
-// formClassifiers is the classifier column of the form table, indexed by
-// ordinal. A form lane appends its own entry here and owns its child file.
-var formClassifiers = [formCount]formClassifier{
-	FormExact:         classifyExactForm,
-	FormSource:        classifySourceForm,
-	FormSummary:       classifySummaryForm,
-	FormCarry:         classifyCarryForm,
-	FormSelectedRoute: classifySelectedRouteForm,
-	FormActivation:    classifyActivationForm,
-}
-
 // formBuilders is the implementation column of the form table. It is built per
 // typed instantiation at Program seal, never on a solve path. A declared
-// ordinal with no entry here is named but not executable.
+// ordinal with no entry here is named but not executable, and every row of it
+// is authored by an installed RuleFamilyInstaller.
 func formBuilders[K scalar.Key, V any]() [formCount]formBuilder[K, V] {
 	var table [formCount]formBuilder[K, V]
 	table[FormExact] = buildExactForm[K, V]
@@ -596,40 +581,190 @@ func formBuilders[K scalar.Key, V any]() [formCount]formBuilder[K, V] {
 	return table
 }
 
-// ClassifyForm resolves the one execution form of a sealed descriptor. Every
-// declared form is probed: exactly one may claim a descriptor, so two forms can
-// never silently overlap and the winner never depends on probe order.
-func ClassifyForm(rule generated.CompiledRule) (FormRow, bool) {
-	return classifyForm(rule, formClassifiers)
-}
-
-// classifyForm is ClassifyForm over an explicit classifier column, so the
-// exclusivity law can be stated over a table the test owns.
-func classifyForm(rule generated.CompiledRule, classifiers [formCount]formClassifier) (FormRow, bool) {
+// DeclaredForm answers the one execution form a sealed descriptor DECLARES.
+//
+// The form is derived from the publication mode, the carry disposition and the
+// read vocabulary the rule declares. It is not probed. A column of independent
+// classifiers could only answer by coincidence of what each one happened to
+// accept, and three of the six forms - Summary, Carry and SelectedRoute - have
+// no generic builder at all, so their probes were refusing geometry that
+// nothing behind them implements. A rule those probes turned away could not
+// reach the installer that would have executed it.
+//
+// The derivation is total and single-valued by construction, which is what the
+// exclusivity of a probe column was trying to approximate. A row whose
+// geometry a generic builder cannot build refuses at that builder, which is
+// where a build refusal belongs.
+func DeclaredForm(rule generated.CompiledRule) (FormRow, bool) {
 	if !rule.Available() {
 		return FormRow{}, false
 	}
-	var claimed FormRow
-	found := false
-	for form := Form(1); form < formCount; form++ {
-		classifier := classifiers[form]
-		if classifier == nil {
-			continue
-		}
-		row, claims := classifier(rule)
-		if !claims {
-			continue
-		}
-		if found || row.Form != form {
-			return FormRow{}, false
-		}
-		row.Rule = rule
-		claimed, found = row, true
-	}
-	if !found {
+	mode, modeOK := rule.OutputMode()
+	if !modeOK {
 		return FormRow{}, false
 	}
-	return claimed, true
+	row, derived := declaredFormRow(rule, mode)
+	if !derived || row.Form != row.Form.claimed() {
+		return FormRow{}, false
+	}
+	row.Rule = rule
+	return row, true
+}
+
+// claimed answers the ordinal a derived row may carry: itself when declared,
+// and the undeclared zero otherwise. It exists so the derivation cannot name a
+// ladder slot the table does not have.
+func (form Form) claimed() Form {
+	if !form.Declared() {
+		return 0
+	}
+	return form
+}
+
+func declaredFormRow(rule generated.CompiledRule, mode ruleprogram.OutputMode) (FormRow, bool) {
+	switch {
+	case mode == ruleprogram.ModeStructural:
+		// A structural publication transports axes across a transition rather
+		// than writing a fact, and the descriptor carries that transport
+		// vector exactly when its mode is structural. The selection its
+		// branches are drawn from names the input port the row is opened at.
+		input, inputOK := declaredSelectedInput(rule)
+		if !inputOK || rule.TransportCount() == 0 {
+			return FormRow{}, false
+		}
+		return FormRow{Form: FormActivation, Input: input}, true
+	case mode == ruleprogram.ModeRoute:
+		// A routed publication publishes at the members of the join the output
+		// names, so that join's port and relation are the row's coordinates.
+		output, outputOK := rule.OutputAt(0)
+		if !outputOK || !output.RouteJoinPresent || uint64(output.RouteJoin) >= uint64(rule.ReadCount()) {
+			return FormRow{}, false
+		}
+		route, routeOK := rule.ReadAt(int(output.RouteJoin))
+		if !routeOK || route.Form != ruleprogram.Selected || !declaredPort(rule, route.Input) {
+			return FormRow{}, false
+		}
+		return FormRow{Form: FormSelectedRoute, Input: uint16(route.Input), Relation: route.Relation.Member}, true
+	case declaredTransformedCarry(rule):
+		// A transformed carry applies one owner-issued candidate-indexed
+		// transition to every carried coordinate. No identity fold can do
+		// that, so the carry disposition alone decides this form.
+		input, inputOK := declaredFirstInput(rule)
+		if !inputOK {
+			return FormRow{}, false
+		}
+		return FormRow{Form: FormCarry, Input: input}, true
+	case rule.ReadCount() == 0:
+		// A read-free rule writes its own materialized source column, so the
+		// candidate relation it is indexed by must be published by the Factor
+		// it writes.
+		candidate := rule.CandidateRelation()
+		if rule.InputCount() != 0 || candidate.Axis != rule.OutputFactor() {
+			return FormRow{}, false
+		}
+		return FormRow{Form: FormSource, Relation: candidate.Member}, true
+	case declaredVectorRead(rule):
+		// A whole-vector read is delivered under a mandatory contract, and a
+		// declaration that did not seal one has not said what its cells mean.
+		for index := 0; index < rule.ReadCount(); index++ {
+			form, formOK := rule.ReadFormAt(index)
+			if !formOK {
+				return FormRow{}, false
+			}
+			if form != ruleprogram.Summary && form != ruleprogram.Complete {
+				continue
+			}
+			if _, contractOK := summaryFormContract(rule, index); !contractOK {
+				return FormRow{}, false
+			}
+		}
+		input, inputOK := declaredFirstInput(rule)
+		if !inputOK {
+			return FormRow{}, false
+		}
+		return FormRow{Form: FormSummary, Input: input}, true
+	case declaredExactProduct(rule):
+		input, inputOK := declaredFirstInput(rule)
+		if !inputOK {
+			return FormRow{}, false
+		}
+		return FormRow{Form: FormExact, Input: input}, true
+	default:
+		return FormRow{}, false
+	}
+}
+
+// declaredTransformedCarry reports whether the descriptor declares a carry
+// that applies an owner-issued transform rather than handing the prior fact on.
+func declaredTransformedCarry(rule generated.CompiledRule) bool {
+	carry, present := rule.CarryMode()
+	if !present || carry != ruleprogram.CarryTransform {
+		return false
+	}
+	_, transformPresent := rule.CarryTransform()
+	return transformPresent
+}
+
+// declaredVectorRead reports whether any declared read delivers a whole cell
+// vector rather than one cell.
+func declaredVectorRead(rule generated.CompiledRule) bool {
+	for index := 0; index < rule.ReadCount(); index++ {
+		form, formOK := rule.ReadFormAt(index)
+		if !formOK {
+			return false
+		}
+		if form == ruleprogram.Summary || form == ruleprogram.Complete {
+			return true
+		}
+	}
+	return false
+}
+
+// declaredExactProduct reports whether every declared read is exact.
+func declaredExactProduct(rule generated.CompiledRule) bool {
+	if rule.ReadCount() == 0 {
+		return false
+	}
+	for index := 0; index < rule.ReadCount(); index++ {
+		form, formOK := rule.ReadFormAt(index)
+		if !formOK || form != ruleprogram.Exact {
+			return false
+		}
+	}
+	return true
+}
+
+// declaredSelectedInput answers the port of the first declared selected read.
+func declaredSelectedInput(rule generated.CompiledRule) (uint16, bool) {
+	for index := 0; index < rule.ReadCount(); index++ {
+		read, readOK := rule.ReadAt(index)
+		if !readOK {
+			return 0, false
+		}
+		if read.Form != ruleprogram.Selected {
+			continue
+		}
+		if !declaredPort(rule, read.Input) {
+			return 0, false
+		}
+		return uint16(read.Input), true
+	}
+	return 0, false
+}
+
+// declaredFirstInput answers the port of the descriptor's first declared read.
+func declaredFirstInput(rule generated.CompiledRule) (uint16, bool) {
+	input := rule.ReadInput()
+	if input < 0 || !declaredPort(rule, uint32(input)) {
+		return 0, false
+	}
+	return uint16(input), true
+}
+
+// declaredPort reports whether one read names a port inside the descriptor's
+// sealed contiguous input prefix.
+func declaredPort(rule generated.CompiledRule, input uint32) bool {
+	return rule.InputCount() > 0 && uint64(input) < uint64(rule.InputCount()) && input <= uint32(^uint16(0))
 }
 
 // BuildForms compiles one Factor's generated plan rows into one typed family

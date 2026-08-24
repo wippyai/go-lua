@@ -233,9 +233,9 @@ type generatedFamilyAssignment struct {
 }
 
 // buildGeneratedExecutionProgram performs the one cold grouping step from
-// sealed member rows to typed families. Each row is classified into its sealed
-// execution form by the form table; this pass only routes the classified row to
-// its owning Factor. The solve loop later performs two dense indexes (ref ->
+// sealed member rows to typed families. Each row takes the execution form its
+// own descriptor declares; this pass only routes that row to its owning
+// Factor. The solve loop later performs two dense indexes (ref ->
 // row, family -> worker) and nothing else.
 func buildGeneratedExecutionProgram(program *runtimeProgram) (*generatedExecutionProgram, bool) {
 	if program == nil || !program.valid() {
@@ -244,8 +244,8 @@ func buildGeneratedExecutionProgram(program *runtimeProgram) (*generatedExecutio
 	memberCount := program.memberCount()
 	rowsByOwner := make([][]execution.FormRow, len(program.factorOwners))
 	assignments := make([]generatedFamilyAssignment, memberCount)
-	// installed is the row each member was classified into and handed over as.
-	// A declared Form is the presence proof, and the row carries the exact
+	// installed is the row each member declared and was handed over as. A
+	// declared Form is the presence proof, and the row carries the exact
 	// Unit/Target the owner's family was built from, which is what the member's
 	// invocation seal is authenticated against below.
 	installed := make([]execution.FormRow, memberCount)
@@ -271,8 +271,8 @@ func buildGeneratedExecutionProgram(program *runtimeProgram) (*generatedExecutio
 		if !modeOK || (row.generated.target.Mode() == carrier.StrongTarget) != (mode == ruleprogram.ModeExact) {
 			return nil, false
 		}
-		formRow, classified := execution.ClassifyForm(descriptor)
-		if !classified {
+		formRow, declared := execution.DeclaredForm(descriptor)
+		if !declared {
 			return nil, false
 		}
 		formRow.Member, formRow.Unit, formRow.Target = memberIndex, row.generated.unit, row.generated.target

@@ -338,12 +338,12 @@ func TestSummaryDeliveryAllocatesNothingWhenWarm(t *testing.T) {
 	}
 }
 
-// TestSummaryFormClassifiesItsSealedPlanAlone states the classification law:
-// a one-join descriptor whose read is Summary or Complete is the S form and
-// only the S form. Two forms claiming one descriptor is a table defect the
-// registry refuses, so an exact classifier that ignores the sealed read form
-// would silently make every summary rule unexecutable.
-func TestSummaryFormClassifiesItsSealedPlanAlone(t *testing.T) {
+// TestSummaryFormIsDerivedFromItsSealedRead states the derivation law: a
+// descriptor with a Summary or Complete read is the S form, because a
+// whole-vector read is what that form is. The derivation reads the sealed read
+// vocabulary, so a rule that declares a vector read can never be routed to a
+// form that delivers one cell.
+func TestSummaryFormIsDerivedFromItsSealedRead(t *testing.T) {
 	for _, testCase := range []struct {
 		name string
 		rule generated.CompiledRule
@@ -352,20 +352,17 @@ func TestSummaryFormClassifiesItsSealedPlanAlone(t *testing.T) {
 		{name: "complete", rule: planCompiledSummaryRule(t, ruleprogram.Complete)},
 	} {
 		t.Run(testCase.name, func(t *testing.T) {
-			row, ok := ClassifyForm(testCase.rule)
+			row, ok := DeclaredForm(testCase.rule)
 			if !ok || row.Form != FormSummary {
-				t.Fatalf("classified as %q/%t, want summary", row.Form.Name(), ok)
+				t.Fatalf("derived as %q/%t, want summary", row.Form.Name(), ok)
 			}
 			if row.Input != 0 {
-				t.Fatalf("classified read port = %d", row.Input)
-			}
-			if _, claimed := classifyExactForm(testCase.rule); claimed {
-				t.Fatal("the exact classifier claims a summary descriptor")
+				t.Fatalf("derived read port = %d", row.Input)
 			}
 		})
 	}
 	// The two ways an S read can be malformed are refused one layer below the
-	// classifier, at the descriptor seal: a complete vector selects nothing, so
+	// derivation, at the descriptor seal: a complete vector selects nothing, so
 	// it carries no predicate, and both S reads are vectors of a closed
 	// denominator, so neither seals without one.
 	if _, sealed := summaryPlanSpec(ruleprogram.Complete, true, ruleplan.DenominatorAddr{Ordinal: 0, Present: true}); sealed {

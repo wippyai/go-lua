@@ -3,41 +3,12 @@
 package execution
 
 import (
-	"github.com/wippyai/go-lua/analysis/engine/generated"
 	"github.com/wippyai/go-lua/analysis/engine/internal/carrier"
 	"github.com/wippyai/go-lua/analysis/engine/internal/factbinding"
 	"github.com/wippyai/go-lua/analysis/engine/internal/facts/scalar"
 	"github.com/wippyai/go-lua/analysis/engine/internal/facts/support"
-	ruleprogram "github.com/wippyai/go-lua/analysis/schema/rule/program"
 	"github.com/wippyai/go-lua/analysis/schema/structure"
 )
-
-// classifyExactForm claims a descriptor whose joins are all exact and whose
-// output is exact. A typed family owns products wider than the built-in
-// one-read identity fold, but classification remains one engine decision.
-func classifyExactForm(rule generated.CompiledRule) (FormRow, bool) {
-	mode, modeOK := rule.OutputMode()
-	if !modeOK || mode != ruleprogram.ModeExact || rule.ReadCount() == 0 {
-		return FormRow{}, false
-	}
-	for index := 0; index < rule.ReadCount(); index++ {
-		read, ok := rule.ReadAt(index)
-		if !ok || read.Form != ruleprogram.Exact || read.Input >= uint32(rule.InputCount()) || read.Input > uint32(^uint16(0)) {
-			return FormRow{}, false
-		}
-	}
-	// A carry is part of the claim: identity hands the prior output fact on
-	// unchanged, which this fold does by writing nothing else, while a
-	// transformed carry owes a domain call this form cannot make.
-	if carry, present := rule.CarryMode(); present && carry != ruleprogram.CarryIdentity {
-		return FormRow{}, false
-	}
-	input := rule.ReadInput()
-	if input < 0 || input >= rule.InputCount() || input > int(^uint16(0)) || rule.InputCount() <= 0 {
-		return FormRow{}, false
-	}
-	return FormRow{Form: FormExact, Input: uint16(input)}, true
-}
 
 // buildExactForm seals one typed E family from this Factor's exact rows. Rows
 // keep their discovery order, so a member's local ordinal is its position in

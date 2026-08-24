@@ -4,39 +4,12 @@
 package execution
 
 import (
-	"github.com/wippyai/go-lua/analysis/engine/generated"
 	"github.com/wippyai/go-lua/analysis/engine/internal/carrier"
 	"github.com/wippyai/go-lua/analysis/engine/internal/factbinding"
 	"github.com/wippyai/go-lua/analysis/engine/internal/facts/scalar"
 	"github.com/wippyai/go-lua/analysis/engine/internal/facts/support"
-	ruleprogram "github.com/wippyai/go-lua/analysis/schema/rule/program"
 	"github.com/wippyai/go-lua/analysis/schema/structure"
 )
-
-// classifyCarryForm claims a descriptor whose sealed carry names a transform.
-// An identity carry hands the prior output fact on unchanged and is the exact
-// form's; a transformed carry applies one owner-issued candidate-indexed
-// transition to it, which no identity fold can do.
-func classifyCarryForm(rule generated.CompiledRule) (FormRow, bool) {
-	mode, modeOK := rule.OutputMode()
-	if !modeOK || mode != ruleprogram.ModeExact || rule.ReadCount() != 1 {
-		return FormRow{}, false
-	}
-	if form, ok := rule.ReadFormAt(0); !ok || form != ruleprogram.Exact {
-		return FormRow{}, false
-	}
-	if carry, ok := rule.CarryMode(); !ok || carry != ruleprogram.CarryTransform {
-		return FormRow{}, false
-	}
-	if _, present := rule.CarryTransform(); !present {
-		return FormRow{}, false
-	}
-	input := rule.ReadInput()
-	if input < 0 || input >= rule.InputCount() || input > int(^uint16(0)) || rule.InputCount() <= 0 {
-		return FormRow{}, false
-	}
-	return FormRow{Form: FormCarry, Input: uint16(input)}, true
-}
 
 // CarryWrite is one immutable typed transformed-carry write: the row's own
 // exact write, plus the sealed closure of carried coordinates and the

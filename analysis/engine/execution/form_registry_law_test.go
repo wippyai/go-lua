@@ -12,8 +12,8 @@ import (
 
 // TestExecutionFormTableIsTotal states the registry's totality law: every
 // sealed ordinal of the append-only form table names itself, and an ordinal
-// outside the table is not a form at all. A form that carries a classifier
-// carries a name, so nothing can be classified into an anonymous ladder slot.
+// outside the table is not a form at all. A derived row may only ever carry a
+// declared ordinal, so nothing can be routed into an anonymous ladder slot.
 func TestExecutionFormTableIsTotal(t *testing.T) {
 	for form := Form(1); form < formCount; form++ {
 		if !form.Declared() {
@@ -22,12 +22,12 @@ func TestExecutionFormTableIsTotal(t *testing.T) {
 		if form.Name() == "" {
 			t.Fatalf("declared form %d has no name", form)
 		}
-		if formClassifiers[form] == nil {
-			t.Fatalf("declared form %q has no classifier", form.Name())
+		if form.claimed() != form {
+			t.Fatalf("declared form %q is not claimable by a derived row", form.Name())
 		}
 	}
 	for _, form := range []Form{0, formCount, formCount + 1, 250} {
-		if form.Declared() || form.Name() != "" {
+		if form.Declared() || form.Name() != "" || form.claimed() != 0 {
 			t.Fatalf("form %d outside the table reports declared=%t name=%q", form, form.Declared(), form.Name())
 		}
 	}
@@ -99,53 +99,67 @@ func TestExecutionFormsBuildInSealedOrdinalOrder(t *testing.T) {
 	}
 }
 
-// TestExecutionFormClassificationIsExclusive states that one sealed descriptor
-// belongs to exactly one form. Two forms claiming the same plan is a table
-// defect, and the registry refuses it rather than letting probe order decide
-// which executor a rule gets.
-func TestExecutionFormClassificationIsExclusive(t *testing.T) {
-	rule := planCompiledExactRule(t)
-	claim := func(form Form) formClassifier {
-		return func(generated.CompiledRule) (FormRow, bool) { return FormRow{Form: form}, true }
+// TestExecutionFormIsDerivedFromTheDeclaration states what replaced the
+// exclusivity of a classifier column.
+//
+// A descriptor's form is DERIVED from what it declares - its publication mode,
+// its carry disposition and its read vocabulary - so it is single-valued by
+// construction and cannot depend on the order independent probes were tried.
+// A column of probes could only approximate that, and three of the six forms
+// have no generic builder at all, so their probes were refusing geometry that
+// nothing behind them implements.
+//
+// The derivation is also a function of the declaration alone: deriving the
+// same descriptor twice answers the same row.
+func TestExecutionFormIsDerivedFromTheDeclaration(t *testing.T) {
+	for _, testCase := range []struct {
+		name string
+		rule generated.CompiledRule
+		want Form
+	}{
+		{name: "exact", rule: planCompiledExactRule(t), want: FormExact},
+		{name: "exact product", rule: planCompiledExactProductRule(t), want: FormExact},
+		{name: "source", rule: planCompiledSourceRule(t), want: FormSource},
+		{name: "transformed carry", rule: planCompiledTransformedCarryRule(t), want: FormCarry},
+	} {
+		t.Run(testCase.name, func(t *testing.T) {
+			first, firstOK := DeclaredForm(testCase.rule)
+			if !firstOK || first.Form != testCase.want {
+				t.Fatalf("derived %q/%t, want %q", first.Form.Name(), firstOK, testCase.want.Name())
+			}
+			if !first.Form.Declared() {
+				t.Fatalf("derived an undeclared ordinal %d", first.Form)
+			}
+			second, secondOK := DeclaredForm(testCase.rule)
+			if !secondOK || second.Form != first.Form || second.Input != first.Input || second.Relation != first.Relation {
+				t.Fatalf("two derivations of one declaration answered %+v and %+v", first, second)
+			}
+		})
 	}
-	var overlapping [formCount]formClassifier
-	overlapping[FormExact] = claim(FormExact)
-	overlapping[FormSource] = claim(FormSource)
-	if row, ok := classifyForm(rule, overlapping); ok {
-		t.Fatalf("two claiming forms classified as %q", row.Form.Name())
-	}
-	var mislabelled [formCount]formClassifier
-	mislabelled[FormExact] = claim(FormSource)
-	if row, ok := classifyForm(rule, mislabelled); ok {
-		t.Fatalf("classifier registered under exact answered %q", row.Form.Name())
-	}
-	var single [formCount]formClassifier
-	single[FormSource] = claim(FormSource)
-	row, ok := classifyForm(rule, single)
-	if !ok || row.Form != FormSource {
-		t.Fatalf("single claiming form classified as %q/%t", row.Form.Name(), ok)
+	if row, ok := DeclaredForm(generated.CompiledRule{}); ok {
+		t.Fatalf("an unavailable descriptor derived %q", row.Form.Name())
 	}
 }
 
-// TestExecutionFormClassifiesTheSealedPlan states that the real classifier
-// column reads the sealed descriptor: a one-join exact-output rule is the E
-// form at its declared read port, and a read-free rule over its own candidate
-// relation is the Z form at that relation member.
-func TestExecutionFormClassifiesTheSealedPlan(t *testing.T) {
-	exact, ok := ClassifyForm(planCompiledExactRule(t))
+// TestExecutionFormDerivesTheSealedPlan states that the derivation reads the
+// sealed descriptor: a one-join exact-output rule is the E form at its
+// declared read port, and a read-free rule over its own candidate relation is
+// the Z form at that relation member.
+func TestExecutionFormDerivesTheSealedPlan(t *testing.T) {
+	exact, ok := DeclaredForm(planCompiledExactRule(t))
 	if !ok || exact.Form != FormExact || exact.Input != 0 {
-		t.Fatalf("exact plan classified as %q input %d/%t", exact.Form.Name(), exact.Input, ok)
+		t.Fatalf("exact plan derived as %q input %d/%t", exact.Form.Name(), exact.Input, ok)
 	}
-	product, ok := ClassifyForm(planCompiledExactProductRule(t))
+	product, ok := DeclaredForm(planCompiledExactProductRule(t))
 	if !ok || product.Form != FormExact || product.Rule.ReadCount() != 2 {
-		t.Fatalf("exact product classified as %q reads %d/%t", product.Form.Name(), product.Rule.ReadCount(), ok)
+		t.Fatalf("exact product derived as %q reads %d/%t", product.Form.Name(), product.Rule.ReadCount(), ok)
 	}
-	source, ok := ClassifyForm(planCompiledSourceRule(t))
+	source, ok := DeclaredForm(planCompiledSourceRule(t))
 	if !ok || source.Form != FormSource || source.Relation != 4 {
-		t.Fatalf("source plan classified as %q relation %d/%t", source.Form.Name(), source.Relation, ok)
+		t.Fatalf("source plan derived as %q relation %d/%t", source.Form.Name(), source.Relation, ok)
 	}
-	if row, ok := ClassifyForm(generated.CompiledRule{}); ok {
-		t.Fatalf("unavailable descriptor classified as %q", row.Form.Name())
+	if row, ok := DeclaredForm(generated.CompiledRule{}); ok {
+		t.Fatalf("unavailable descriptor derived as %q", row.Form.Name())
 	}
 }
 

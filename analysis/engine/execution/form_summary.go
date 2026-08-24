@@ -177,25 +177,6 @@ func (row SummaryRow[K, V]) Close(ticket Ticket, scratch *Scratch[K, V]) bool {
 	return row.read.Close(ticket, scratch)
 }
 
-// classifySummaryForm claims a descriptor whose one sealed join is a summary
-// or complete read published through an exact output. The read port and the
-// contract are the form's coordinates; the contract is validated here so a row
-// that reaches a builder is already sealed under one.
-func classifySummaryForm(rule generated.CompiledRule) (FormRow, bool) {
-	mode, modeOK := rule.OutputMode()
-	if !modeOK || mode != ruleprogram.ModeExact || rule.ReadCount() != 1 {
-		return FormRow{}, false
-	}
-	if _, ok := summaryFormContract(rule, 0); !ok {
-		return FormRow{}, false
-	}
-	input := rule.ReadInput()
-	if input < 0 || input >= rule.InputCount() || input > int(^uint16(0)) {
-		return FormRow{}, false
-	}
-	return FormRow{Form: FormSummary, Input: uint16(input)}, true
-}
-
 // summaryFormContract projects one join's sealed summary contract. It is the
 // one place the plan's three separate read rows - form, scalar contract, and
 // denominator address - are folded into the value a row is opened under.

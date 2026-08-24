@@ -319,7 +319,7 @@ func TestAForeignReadIsSealedAtItsOwnTypes(t *testing.T) {
 func TestAnExactProductConsumesEveryOwnerIssuedJoin(t *testing.T) {
 	fixture := newForeignCarryFixture(t)
 	foreign, foreignOK := NewForeignFactor(fixture.read, RouteTable{})
-	row, classified := ClassifyForm(planCompiledExactProductRule(t))
+	row, classified := DeclaredForm(planCompiledExactProductRule(t))
 	if !foreignOK || !classified || row.Form != FormExact {
 		t.Fatal("exact-product setup")
 	}
