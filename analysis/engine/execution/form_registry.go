@@ -216,6 +216,7 @@ type FormPlane[K scalar.Key, V any] struct {
 	present  []bool
 	routes   RouteTable
 	routed   bool
+	selects  bool
 	foreign  []ForeignFactor
 	families *RuleFamilies[K, V]
 }
@@ -273,7 +274,23 @@ func (plane FormPlane[K, V]) forRule(rows []FormRow) (FormPlane[K, V], bool) {
 	narrowed := plane
 	narrowed.foreign = declared
 	narrowed.routed = declaresRoute(rows)
+	narrowed.selects = declaresSelection(rows)
 	return narrowed, true
+}
+
+// declaresSelection reports whether any of one rule's rows reads a dependent
+// join. It fences the coordinate universe the same way declaresRoute fences
+// the destinations: a rule whose plan selects nothing resolves no member.
+func declaresSelection(rows []FormRow) bool {
+	for _, row := range rows {
+		for index := 0; index < row.Rule.ReadCount(); index++ {
+			form, formOK := row.Rule.ReadFormAt(index)
+			if formOK && form == ruleprogram.Selected {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 // declaresRoute reports whether any of one rule's rows publishes through a

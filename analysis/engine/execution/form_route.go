@@ -195,7 +195,7 @@ func FoldSelectedRoute[K scalar.Key, V any, R RouteReducer[V]](
 		// this member's tag. A disagreement means the cells and the members are
 		// two materializations of the relation rather than one, which is the
 		// re-derivation this form exists to forbid.
-		if !member.Valid() || cell.Tag != member.Tag() {
+		if !member.Routed() || cell.Tag != member.Tag() {
 			_ = write.Discard(scratch)
 			return structure.Refuse
 		}

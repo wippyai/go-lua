@@ -3,7 +3,10 @@ package execution
 import (
 	"testing"
 
+	"github.com/wippyai/go-lua/analysis/engine/generated"
 	"github.com/wippyai/go-lua/analysis/engine/internal/carrier"
+	ruleplan "github.com/wippyai/go-lua/analysis/schema/rule/plan"
+	ruleprogram "github.com/wippyai/go-lua/analysis/schema/rule/program"
 	"github.com/wippyai/go-lua/analysis/schema/structure"
 )
 
@@ -118,10 +121,11 @@ func TestARouteMemberIsAuthenticatedAgainstItsOwnFactor(t *testing.T) {
 	}
 }
 
-// TestRouteGeometryHasNoHalves states the pairing invariant at the seal. A
-// coordinate readable with no destination, or writable with no observation, is
-// a route only one half of a row could follow, so the two universes are either
-// the same universe or there is no geometry at all.
+// TestRouteGeometryHasNoHalves states the pairing invariant at the seal. The
+// destination half is optional, but where it is present it is the SAME
+// universe: a destination set of another width would pair coordinates with
+// destinations that were never sealed against them, which is a route only one
+// half of a row could follow.
 func TestRouteGeometryHasNoHalves(t *testing.T) {
 	fixture := newSelectedFixture(t)
 	if _, sealed := NewRouteTable(fixture.units, fixture.targets[:2]); sealed {
@@ -225,5 +229,140 @@ func TestARouteMemberRefusesAWeakOrUnobservableCoordinate(t *testing.T) {
 	}
 	if _, resolved := narrowed.RouteMember(0, 1); !resolved {
 		t.Fatal("a whole geometry row resolved no route")
+	}
+}
+
+// selectedOnlyDescriptor builds one rule that reads a dependent join and
+// publishes at its own exact destination. It is the ordinary shape of a prior
+// selection: the members it observes are not the members it writes.
+func selectedOnlyDescriptor(t testing.TB) generated.CompiledRule {
+	t.Helper()
+	rule, ok := generated.NewPlanCompiledRule(generated.CompiledRuleSpec{
+		Ordinal: 11, AxisCount: 3, InputCount: 2,
+		Candidate: ruleplan.RelationAddr{Axis: 0, Member: 0},
+		Reducer:   ruleplan.ReducerAddr{Axis: 2, Member: 0},
+		Reads: []generated.ReadPlan{
+			{
+				Input: 0, Factor: 1, Axis: 0,
+				Relation: ruleplan.RelationAddr{Axis: 0, Member: 0}, Key: ruleplan.ProjectionAddr{Axis: 0, Member: 0},
+				Form:        ruleprogram.Exact,
+				Contract:    ruleplan.ReadContract{Order: ruleprogram.OrderCanonical, Sparse: ruleprogram.SparseExplicit, OnOpaque: ruleprogram.OnOpaqueRefuse, Multiplicity: ruleprogram.MultiplicityOne},
+				RowCapacity: 4, CellCapacity: 4,
+			},
+			{
+				Input: 1, Factor: 1, Axis: 0,
+				Relation: ruleplan.RelationAddr{Axis: 0, Member: 0}, Key: ruleplan.ProjectionAddr{Axis: 0, Member: 0},
+				Predicate: ruleplan.ProjectionAddr{Axis: 0, Member: 1}, PredicatePresent: true,
+				Form:        ruleprogram.Selected,
+				Contract:    ruleplan.ReadContract{Order: ruleprogram.OrderByTag, Sparse: ruleprogram.SparseDefault, OnOpaque: ruleprogram.OnOpaqueRefuse, Multiplicity: ruleprogram.MultiplicityOne},
+				Denominator: ruleplan.DenominatorAddr{Ordinal: 0, Present: true},
+				RowCapacity: 4, CellCapacity: 4,
+			},
+		},
+		Outputs: []generated.OutputPlan{{
+			Factor: 2, Axis: 2, Address: ruleplan.OutputAddr{Axis: 2, Frame: 0},
+			Destination: ruleplan.ProjectionAddr{Axis: 0, Member: 0}, Mode: ruleprogram.ModeExact, Exact: true, Strong: true,
+		}},
+	})
+	if !ok {
+		t.Fatal("selected-only descriptor")
+	}
+	return rule
+}
+
+// TestADependentJoinResolvesCoordinatesAndNoDestinations states the ordinary
+// dependent join, which is most of them. A rule selects the members of a
+// relation in order to READ them; whether it also publishes through one of
+// those joins is a separate statement its output makes.
+//
+// So the coordinate universe and the destination universe are fenced apart. A
+// rule that selects and publishes exactly resolves members it can observe and
+// no destination at all, which is what makes it impossible for such a fold to
+// stage a routed write against a member it merely read.
+func TestADependentJoinResolvesCoordinatesAndNoDestinations(t *testing.T) {
+	fixture := newSelectedFixture(t)
+	table, tableOK := NewRouteTable(fixture.units, fixture.targets)
+	if !tableOK {
+		t.Fatal("selection geometry")
+	}
+	plane, planeOK := NewFormPlane(fixture.binding, nil, nil, table, make([]ForeignFactor, 3), nil)
+	if !planeOK {
+		t.Fatal("form plane")
+	}
+	selected, selectedOK := plane.forRule([]FormRow{{Member: 0, Form: FormExact, Rule: selectedOnlyDescriptor(t)}})
+	if !selectedOK {
+		t.Fatal("narrowed selected plane")
+	}
+	member, resolved := selected.SelectedMember(0, 1)
+	if !resolved || !member.Valid() {
+		t.Fatal("a rule that declares a dependent join resolved no member")
+	}
+	if member.Routed() {
+		t.Fatal("a rule that publishes no route resolved a destination")
+	}
+	if !member.Coordinate().Unit.Same(fixture.units[0]) || member.Tag() != 1 {
+		t.Fatal("the member does not name the coordinate its position holds")
+	}
+	if _, resolved := selected.RouteMember(0, 1); resolved {
+		t.Fatal("a rule that publishes no route resolved a whole route")
+	}
+	if width := selected.SelectedWidth(); width != selectedFixtureWidth {
+		t.Fatalf("selected width = %d, want the Factor's %d", width, selectedFixtureWidth)
+	}
+
+	exact, exactOK := plane.forRule([]FormRow{{Member: 0, Form: FormExact, Rule: planCompiledExactRule(t)}})
+	if !exactOK {
+		t.Fatal("narrowed exact plane")
+	}
+	if _, resolved := exact.SelectedMember(0, 1); resolved {
+		t.Fatal("a rule that declares no dependent join resolved a member")
+	}
+	if width := exact.SelectedWidth(); width != 0 {
+		t.Fatalf("a rule that declares no dependent join sees selected width %d", width)
+	}
+}
+
+// TestAFactorWithNoDestinationsStillHasCoordinates states the geometry half of
+// the same separation. A Factor a rule selects members of but publishes no
+// route into owns a coordinate universe and no destination universe, and that
+// is a whole geometry rather than a broken one.
+func TestAFactorWithNoDestinationsStillHasCoordinates(t *testing.T) {
+	fixture := newSelectedFixture(t)
+	table, tableOK := NewRouteTable(fixture.units, nil)
+	if !tableOK {
+		t.Fatal("a Factor with no destinations was refused a geometry")
+	}
+	if table.Routed() || table.Width() != selectedFixtureWidth {
+		t.Fatalf("geometry routed=%t width=%d", table.Routed(), table.Width())
+	}
+	if _, resolved := table.routeMember(0, 1); resolved {
+		t.Fatal("a geometry with no destinations resolved a route")
+	}
+	member, resolved := table.selectedMember(0, 1)
+	if !resolved || !member.Valid() || member.Routed() {
+		t.Fatal("a geometry with no destinations resolved no observation")
+	}
+	if _, sealed := NewRouteTable(fixture.units, fixture.targets[:2]); sealed {
+		t.Fatal("a destination half of another width was sealed")
+	}
+}
+
+// TestARoutedFoldRefusesAMemberItMayOnlyRead closes the loop. A member of a
+// prior selection carries no destination, so a fold that staged one would be
+// publishing at a coordinate its plan named only as something to read.
+func TestARoutedFoldRefusesAMemberItMayOnlyRead(t *testing.T) {
+	fixture := newSelectedFixture(t)
+	write, writeOK := NewRouteWrite(fixture.binding, 0)
+	if !writeOK {
+		t.Fatal("route write")
+	}
+	cells, members := routeCells(fixture, 2)
+	readOnly := append([]RouteMember(nil), members...)
+	readOnly[1] = RouteMember{coordinate: members[1].Coordinate()}
+	run := NewRun(1, 1)
+	ticket := issueSelected(t, run, fixture, fixture.state)
+	var scratch RouteScratch[uint64, uint64]
+	if outcome := FoldSelectedRoute(ticket, write, &scratch, cells, readOnly, routeLawReducer{empty: structure.NoSelection, failAt: -1}); outcome != structure.Refuse {
+		t.Fatalf("a fold published through a member it may only read, settling %v", outcome)
 	}
 }
