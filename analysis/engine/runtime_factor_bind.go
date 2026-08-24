@@ -467,8 +467,12 @@ func collectFactorGraphCatalog[K ~uint32 | ~uint64, V any](implementation *Facto
 		if use.surface.Form == equation.SurfaceReadSelect {
 			// A ReadSelect names its target Factor only. Exact Ref routes are
 			// chosen row-locally by the staged locator; no target Unit or
-			// candidate vector is present in the graph catalog.
-			if row.kind != composition.ReadSelect || len(row.dependencies) == 0 ||
+			// candidate vector is present in the graph catalog. A selection
+			// over the candidate alone declares no dependency: dependencies
+			// order a selection against the row's own earlier joins, and a
+			// select with no such dependency is well-formed rather than
+			// unreachable, matching the declared cold row.
+			if row.kind != composition.ReadSelect ||
 				use.surface.Mode != equation.TargetModeNone || use.surface.Semantic != key || use.surface.Semantic != row.semantic || use.surface.Normalizer.Available() || !use.surface.LocalAvailable() {
 				return factorGraphCatalog[K]{}, false
 			}
