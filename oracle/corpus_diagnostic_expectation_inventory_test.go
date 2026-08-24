@@ -149,32 +149,38 @@ type corpusNativeInvalidationContract struct {
 }
 
 type corpusPlacementContract struct {
-	RequireComplete         bool           `json:"require_complete,omitempty"`
-	MinStack                int            `json:"min_stack,omitempty"`
-	MinOwnedHeap            int            `json:"min_owned_heap,omitempty"`
-	MinSharedHeap           int            `json:"min_shared_heap,omitempty"`
-	MaxStack                *int           `json:"max_stack,omitempty"`
-	MaxOwnedHeap            *int           `json:"max_owned_heap,omitempty"`
-	MaxSharedHeap           *int           `json:"max_shared_heap,omitempty"`
-	MinStackDepth           int            `json:"min_stack_depth,omitempty"`
-	MinOwnedHeapDepth       int            `json:"min_owned_heap_depth,omitempty"`
-	MinSharedDepth          int            `json:"min_shared_depth,omitempty"`
-	MinOwnerIdentity        int            `json:"min_owner_identity,omitempty"`
-	MinAllocationSites      int            `json:"min_allocation_sites,omitempty"`
-	MinFrameLocal           int            `json:"min_frame_local,omitempty"`
-	MaxNoFact               *int           `json:"max_no_fact,omitempty"`
-	MaxUnknown              *int           `json:"max_unknown,omitempty"`
-	MaxFrameLocal           *int           `json:"max_frame_local,omitempty"`
-	MinDiesBeforeSuspension int            `json:"min_dies_before_suspension,omitempty"`
-	MaxDiesBeforeSuspension *int           `json:"max_dies_before_suspension,omitempty"`
-	MinDeepFrozen           int            `json:"min_deep_frozen,omitempty"`
-	MaxDeepFrozen           *int           `json:"max_deep_frozen,omitempty"`
-	MinStackKind            map[string]int `json:"min_stack_kind,omitempty"`
-	MinOwnedHeapKind        map[string]int `json:"min_owned_heap_kind,omitempty"`
-	MinSharedHeapKind       map[string]int `json:"min_shared_heap_kind,omitempty"`
-	MaxStackKind            map[string]int `json:"max_stack_kind,omitempty"`
-	MaxOwnedHeapKind        map[string]int `json:"max_owned_heap_kind,omitempty"`
-	MaxSharedHeapKind       map[string]int `json:"max_shared_heap_kind,omitempty"`
+	RequireComplete    bool `json:"require_complete,omitempty"`
+	MinStack           int  `json:"min_stack,omitempty"`
+	MinOwnedHeap       int  `json:"min_owned_heap,omitempty"`
+	MinSharedHeap      int  `json:"min_shared_heap,omitempty"`
+	MaxStack           *int `json:"max_stack,omitempty"`
+	MaxOwnedHeap       *int `json:"max_owned_heap,omitempty"`
+	MaxSharedHeap      *int `json:"max_shared_heap,omitempty"`
+	MinStackDepth      int  `json:"min_stack_depth,omitempty"`
+	MinOwnedHeapDepth  int  `json:"min_owned_heap_depth,omitempty"`
+	MinSharedDepth     int  `json:"min_shared_depth,omitempty"`
+	MinOwnerIdentity   int  `json:"min_owner_identity,omitempty"`
+	MinAllocationSites int  `json:"min_allocation_sites,omitempty"`
+	MinFrameLocal      int  `json:"min_frame_local,omitempty"`
+	MaxNoFact          *int `json:"max_no_fact,omitempty"`
+	MaxUnknown         *int `json:"max_unknown,omitempty"`
+	MaxFrameLocal      *int `json:"max_frame_local,omitempty"`
+	// RetainEscape is an optional proof bound over authenticated present
+	// position Facts. Omission is intentional for legacy manifests: the
+	// acceptance oracle must never infer retention from Class or from an
+	// aggregate join across temporal positions.
+	MinRetainProvenPositions int            `json:"min_retain_proven_positions,omitempty"`
+	MaxRetainProvenPositions *int           `json:"max_retain_proven_positions,omitempty"`
+	MinDiesBeforeSuspension  int            `json:"min_dies_before_suspension,omitempty"`
+	MaxDiesBeforeSuspension  *int           `json:"max_dies_before_suspension,omitempty"`
+	MinDeepFrozen            int            `json:"min_deep_frozen,omitempty"`
+	MaxDeepFrozen            *int           `json:"max_deep_frozen,omitempty"`
+	MinStackKind             map[string]int `json:"min_stack_kind,omitempty"`
+	MinOwnedHeapKind         map[string]int `json:"min_owned_heap_kind,omitempty"`
+	MinSharedHeapKind        map[string]int `json:"min_shared_heap_kind,omitempty"`
+	MaxStackKind             map[string]int `json:"max_stack_kind,omitempty"`
+	MaxOwnedHeapKind         map[string]int `json:"max_owned_heap_kind,omitempty"`
+	MaxSharedHeapKind        map[string]int `json:"max_shared_heap_kind,omitempty"`
 }
 
 type corpusFixtureRun struct {
@@ -1315,13 +1321,13 @@ func validateCorpusPlacementContract(contract *corpusPlacementContract) error {
 	if contract == nil {
 		return nil
 	}
-	minimums := []int{contract.MinStack, contract.MinOwnedHeap, contract.MinSharedHeap, contract.MinStackDepth, contract.MinOwnedHeapDepth, contract.MinSharedDepth, contract.MinOwnerIdentity, contract.MinAllocationSites, contract.MinFrameLocal, contract.MinDiesBeforeSuspension, contract.MinDeepFrozen}
+	minimums := []int{contract.MinStack, contract.MinOwnedHeap, contract.MinSharedHeap, contract.MinStackDepth, contract.MinOwnedHeapDepth, contract.MinSharedDepth, contract.MinOwnerIdentity, contract.MinAllocationSites, contract.MinFrameLocal, contract.MinRetainProvenPositions, contract.MinDiesBeforeSuspension, contract.MinDeepFrozen}
 	for _, value := range minimums {
 		if value < 0 {
 			return fmt.Errorf("placement minimum is negative")
 		}
 	}
-	maximums := []*int{contract.MaxStack, contract.MaxOwnedHeap, contract.MaxSharedHeap, contract.MaxNoFact, contract.MaxUnknown, contract.MaxFrameLocal, contract.MaxDiesBeforeSuspension, contract.MaxDeepFrozen}
+	maximums := []*int{contract.MaxStack, contract.MaxOwnedHeap, contract.MaxSharedHeap, contract.MaxNoFact, contract.MaxUnknown, contract.MaxFrameLocal, contract.MaxRetainProvenPositions, contract.MaxDiesBeforeSuspension, contract.MaxDeepFrozen}
 	for _, value := range maximums {
 		if value != nil && *value < 0 {
 			return fmt.Errorf("placement maximum is negative")

@@ -61,7 +61,7 @@ func TestMountedLibraryAllocationRetainsPointSpecificPlacement(t *testing.T) {
 		if !keyOK || !originOK || module != libMount || kind != heapdomain.AllocationTable {
 			continue
 		}
-		classes := make(map[placementdomain.Placement]struct{})
+		facts := make(map[placementdomain.Fact]struct{})
 		points := make(map[struct {
 			mount identity.ContentID
 			point identity.ContentID
@@ -76,14 +76,14 @@ func TestMountedLibraryAllocationRetainsPointSpecificPlacement(t *testing.T) {
 			if !queryOK || !pointOK || !mountOK {
 				continue
 			}
-			classes[position.class] = struct{}{}
+			facts[position.fact] = struct{}{}
 			points[struct {
 				mount identity.ContentID
 				point identity.ContentID
 			}{mount: mount, point: point}] = struct{}{}
 		}
-		_, owned := classes[placementdomain.OwnedHeap]
-		_, shared := classes[placementdomain.SharedHeap]
+		_, owned := facts[placementdomain.Fact{Class: placementdomain.OwnedHeap, RetainEscape: placementdomain.EvidenceProven}]
+		_, shared := facts[placementdomain.Fact{Class: placementdomain.SharedHeap, RetainEscape: placementdomain.EvidenceProven}]
 		if owned && shared && len(points) >= 2 {
 			return
 		}

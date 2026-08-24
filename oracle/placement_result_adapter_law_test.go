@@ -16,17 +16,120 @@ func TestCorpusPlacementAdapterUsesCanonicalMonotoneJoin(t *testing.T) {
 		placementdomain.SharedHeap,
 		placementdomain.Unknown,
 	}
+	factFor := func(class placementdomain.Placement) placementdomain.Fact {
+		retain := placementdomain.EvidenceRefuted
+		if class == placementdomain.Bottom {
+			retain = placementdomain.EvidenceAbsent
+		}
+		return placementdomain.Fact{Class: class, RetainEscape: retain}
+	}
 	for _, current := range values {
 		for _, next := range values {
-			row := corpusPlacementAllocation{present: true, class: current}
-			if !corpusPlacementJoinAllocation(&row, next) {
-				t.Fatalf("join(%s,%s) refused", current, next)
+			left, right := factFor(current), factFor(next)
+			row := corpusPlacementAllocation{present: true, fact: left}
+			if !corpusPlacementJoinAllocation(&row, right) {
+				t.Fatalf("join(%s,%s) refused", left, right)
 			}
-			want := placementdomain.Join(current, next)
-			if !row.present || row.class != want {
-				t.Fatalf("join(%s,%s)=%s/%t, want %s/true", current, next, row.class, row.present, want)
+			want, wantOK := placementdomain.JoinFactChecked(left, right)
+			if !wantOK || !row.present || row.fact != want {
+				t.Fatalf("join(%s,%s)=%s/%t, want %s/true", left, right, row.fact, row.present, want)
 			}
 		}
+	}
+}
+
+func TestCorpusPlacementAdapterRetainsCanonicalFactComponents(t *testing.T) {
+	fact := placementdomain.Fact{Class: placementdomain.Stack, RetainEscape: placementdomain.EvidenceRefuted}
+	evidence := placementdomain.AllocationEvidence{Class: fact.Class, HasClass: true, RetainEscape: fact.RetainEscape}
+	position := corpusPlacementPosition{query: 1, present: true, fact: fact, evidence: evidence}
+	if !corpusPlacementPositionValid(position) {
+		t.Fatal("matching class and retain components were rejected")
+	}
+	mismatched := position
+	mismatched.fact.RetainEscape = placementdomain.EvidenceProven
+	if corpusPlacementPositionValid(mismatched) {
+		t.Fatal("mismatched retain provenance crossed the position boundary")
+	}
+	missing := position
+	missing.evidence.RetainEscape = placementdomain.EvidenceAbsent
+	if corpusPlacementPositionValid(missing) {
+		t.Fatal("present class with absent retain provenance was admitted")
+	}
+}
+
+func TestCorpusPlacementAcceptanceJudgesRetainEscapePerPosition(t *testing.T) {
+	factAt := func(query int, retain placementdomain.EvidenceState) corpusPlacementPosition {
+		fact := placementdomain.Fact{Class: placementdomain.OwnedHeap, RetainEscape: retain}
+		position := corpusPlacementPosition{
+			query:   query,
+			present: true,
+			fact:    fact,
+			evidence: placementdomain.AllocationEvidence{
+				Class:        fact.Class,
+				HasClass:     true,
+				RetainEscape: retain,
+			},
+		}
+		if !corpusPlacementPositionValid(position) {
+			t.Fatalf("fixture position %d is not valid: %#v", query, position)
+		}
+		return position
+	}
+
+	contract := &corpusPlacementContract{MinRetainProvenPositions: 1, MaxRetainProvenPositions: intPointer(1)}
+	allocationID := placementCodecIDForOracle(8)
+	correct := corpusPlacementObservation{
+		allocations: map[identity.ContentID]corpusPlacementAllocation{
+			allocationID: {
+				present: true,
+				// The aggregate is deliberately Unknown: the sampled points
+				// carry both polarities and must not erase the Proven position.
+				fact: placementdomain.Fact{Class: placementdomain.OwnedHeap, RetainEscape: placementdomain.EvidenceUnknown},
+			},
+		},
+		positions: map[identity.ContentID][]corpusPlacementPosition{
+			allocationID: {factAt(0, placementdomain.EvidenceRefuted), factAt(1, placementdomain.EvidenceProven)},
+		},
+	}
+	if mismatches := corpusPlacementRetainContractMismatches(contract, correct); len(mismatches) != 0 {
+		t.Fatalf("correct Fact positions were rejected: %v", mismatches)
+	}
+
+	wrong := correct
+	wrong.positions = map[identity.ContentID][]corpusPlacementPosition{
+		allocationID: {factAt(0, placementdomain.EvidenceRefuted), factAt(1, placementdomain.EvidenceRefuted)},
+	}
+	wrong.allocations = map[identity.ContentID]corpusPlacementAllocation{
+		allocationID: {
+			present: true,
+			fact:    placementdomain.Fact{Class: placementdomain.OwnedHeap, RetainEscape: placementdomain.EvidenceRefuted},
+		},
+	}
+	mismatches := corpusPlacementRetainContractMismatches(contract, wrong)
+	want := "placement retain_proven_positions=0, want >=1"
+	if len(mismatches) != 1 || mismatches[0] != want {
+		t.Fatalf("uniformly wrong retain polarity mismatches=%v, want [%q]", mismatches, want)
+	}
+	if mismatches := corpusPlacementRetainContractMismatches(&corpusPlacementContract{}, wrong); len(mismatches) != 0 {
+		t.Fatalf("omitted retain expectation was not backward-compatible: %v", mismatches)
+	}
+}
+
+func TestCorpusPlacementAcceptanceAliasSendManifestRetainProof(t *testing.T) {
+	project := corpusHarnessFixture(t, "placement/alias-send")
+	run, class, err := corpusHarnessExecuteDetached(t, project, corpusHarnessDiagnosticMode())
+	if err != nil {
+		t.Fatalf("alias-send Placement fixture failed at %s: %v", class, err)
+	}
+	observation := corpusPlacementProjection(run.result, run.placementSchema)
+	if defects := corpusPlacementObservationOperationalDefects(observation); len(defects) != 0 {
+		t.Fatalf("alias-send Placement fixture operational defects=%v", defects)
+	}
+	if proven := corpusPlacementRetainProvenPositions(observation); proven < 1 {
+		t.Fatalf("alias-send published %d Proven retain position(s), want at least one", proven)
+	}
+	if mismatches := corpusSemanticPlacementMismatches(project.expectation, run.result, run.placementSchema); len(mismatches) != 0 {
+		t.Fatalf("alias-send manifest retain contract mismatches=%v", mismatches)
 	}
 }
 
@@ -44,6 +147,7 @@ func TestCorpusPlacementAdapterRetainsTemporalEvidencePerPosition(t *testing.T) 
 		FrameLocal:           placementdomain.EvidenceProven,
 		DiesBeforeSuspension: placementdomain.EvidenceUnknown,
 		DeepFrozen:           placementdomain.EvidenceProven,
+		RetainEscape:         placementdomain.EvidenceRefuted,
 	}
 	second := placementdomain.AllocationEvidence{
 		Class:                placementdomain.Stack,
@@ -57,9 +161,16 @@ func TestCorpusPlacementAdapterRetainsTemporalEvidencePerPosition(t *testing.T) 
 		FrameLocal:           placementdomain.EvidenceRefuted,
 		DiesBeforeSuspension: placementdomain.EvidenceProven,
 		DeepFrozen:           placementdomain.EvidenceUnknown,
+		RetainEscape:         placementdomain.EvidenceProven,
 	}
-	positions := []corpusPlacementPosition{{query: 1, present: true, class: placementdomain.Stack, evidence: first}, {query: 2, present: true, class: placementdomain.Stack, evidence: second}}
-	aggregate, ok := corpusPlacementAggregateEvidence(corpusPlacementAllocation{present: true, class: placementdomain.Stack}, positions)
+	positions := []corpusPlacementPosition{
+		{query: 1, present: true, fact: placementdomain.Fact{Class: placementdomain.Stack, RetainEscape: placementdomain.EvidenceRefuted}, evidence: first},
+		{query: 2, present: true, fact: placementdomain.Fact{Class: placementdomain.Stack, RetainEscape: placementdomain.EvidenceProven}, evidence: second},
+	}
+	aggregate, ok := corpusPlacementAggregateEvidence(corpusPlacementAllocation{
+		present: true,
+		fact:    placementdomain.Fact{Class: placementdomain.Stack, RetainEscape: placementdomain.EvidenceUnknown},
+	}, positions)
 	if !ok {
 		t.Fatal("position-scoped temporal evidence was rejected as one conflicting fact")
 	}
@@ -78,16 +189,20 @@ func TestCorpusPlacementAdapterRetainsTemporalEvidencePerPosition(t *testing.T) 
 	if aggregate.DeepFrozen != placementdomain.EvidenceProven {
 		t.Fatalf("deep-frozen proof was not retained across positions: %v", aggregate.DeepFrozen)
 	}
+	if aggregate.RetainEscape != placementdomain.EvidenceUnknown {
+		t.Fatalf("joined retain provenance = %v, want Unknown", aggregate.RetainEscape)
+	}
 
 	foreignKind := second
 	foreignKind.Kind = placementdomain.AllocationKindClosure
-	if _, ok := corpusPlacementAggregateEvidence(corpusPlacementAllocation{present: true, class: placementdomain.Stack}, []corpusPlacementPosition{{query: 1, present: true, class: placementdomain.Stack, evidence: first}, {query: 2, present: true, class: placementdomain.Stack, evidence: foreignKind}}); ok {
+	if _, ok := corpusPlacementAggregateEvidence(corpusPlacementAllocation{present: true, fact: placementdomain.Fact{Class: placementdomain.Stack, RetainEscape: placementdomain.EvidenceUnknown}}, []corpusPlacementPosition{{query: 1, present: true, fact: positions[0].fact, evidence: first}, {query: 2, present: true, fact: positions[1].fact, evidence: foreignKind}}); ok {
 		t.Fatal("allocation kind changed across positions")
 	}
 
 	absent := second
 	absent.Class, absent.HasClass = placementdomain.Bottom, false
-	if _, ok := corpusPlacementAggregateEvidence(corpusPlacementAllocation{present: true, class: placementdomain.Stack}, []corpusPlacementPosition{{query: 1, present: false, evidence: absent}, {query: 2, present: true, class: placementdomain.Stack, evidence: second}}); !ok {
+	absent.RetainEscape = placementdomain.EvidenceAbsent
+	if _, ok := corpusPlacementAggregateEvidence(corpusPlacementAllocation{present: true, fact: placementdomain.Fact{Class: placementdomain.Stack, RetainEscape: placementdomain.EvidenceProven}}, []corpusPlacementPosition{{query: 1, present: false, fact: placementdomain.BottomFact(), evidence: absent}, {query: 2, present: true, fact: positions[1].fact, evidence: second}}); !ok {
 		t.Fatal("an absent class at one position erased a later position-scoped class")
 	}
 }

@@ -11,55 +11,61 @@ import (
 )
 
 // corpusPlacementAllocation is the oracle's detached, schema-driven view of
-// one Heap allocation root.  Placement result rows are repeated at selected
-// points, so the allocation identity is the join key and the class is folded
-// monotonically.  No value is recovered from a Program, an old checker Result,
-// or a publication-family-specific handwritten row.
+// one Heap allocation root. Placement result rows are repeated at selected
+// points, so the allocation identity is the aggregate join key and the
+// canonical Fact is folded monotonically. No value is recovered from a
+// Program, an old checker Result, or a publication-family-specific handwritten
+// row.
 type corpusPlacementAllocation struct {
 	present  bool
-	class    placementdomain.Placement
+	fact     placementdomain.Fact
 	evidence placementdomain.AllocationEvidence
 }
 
 type corpusPlacementPosition struct {
 	query    int
 	present  bool
-	class    placementdomain.Placement
+	fact     placementdomain.Fact
 	evidence placementdomain.AllocationEvidence
 }
 
-// corpusPlacementJoinAllocation is the only class combination rule in the
-// adapter. Repeated rows for one allocation are a monotone lattice fold; a
-// later query can only move the class upward.
-func corpusPlacementJoinAllocation(row *corpusPlacementAllocation, class placementdomain.Placement) bool {
+// corpusPlacementJoinAllocation is the only Fact combination rule in the
+// adapter. Repeated rows for one allocation are an explicit product-lattice
+// fold; a later query can only move the class upward and may widen retain
+// provenance through the domain's canonical join.
+func corpusPlacementJoinAllocation(row *corpusPlacementAllocation, fact placementdomain.Fact) bool {
 	if row == nil {
 		return false
 	}
+	if !fact.Valid() {
+		return false
+	}
 	if !row.present {
-		if _, ok := placementdomain.JoinChecked(class, class); !ok {
+		if _, ok := placementdomain.JoinFactChecked(fact, fact); !ok {
 			return false
 		}
-		row.class = class
+		row.fact = fact
 		row.present = true
 		return true
 	}
-	joined, joinedOK := placementdomain.JoinChecked(row.class, class)
+	joined, joinedOK := placementdomain.JoinFactChecked(row.fact, fact)
 	if !joinedOK {
 		return false
 	}
-	row.class = joined
+	row.fact = joined
 	return true
 }
 
 func corpusPlacementPositionValid(position corpusPlacementPosition) bool {
-	if position.query < 0 || !position.evidence.Valid() {
+	if position.query < 0 || !position.fact.Valid() || !position.evidence.Valid() {
 		return false
 	}
 	if !position.present {
-		return position.class == placementdomain.Bottom && !position.evidence.HasClass
+		return position.fact.Class == placementdomain.Bottom && position.fact.RetainEscape == placementdomain.EvidenceAbsent && !position.evidence.HasClass
 	}
-	_, classOK := placementdomain.JoinChecked(position.class, position.class)
-	return classOK && position.evidence.HasClass && position.evidence.Class == position.class
+	_, factOK := placementdomain.JoinFactChecked(position.fact, position.fact)
+	return factOK && position.fact.Class != placementdomain.Bottom && position.fact.RetainEscape != placementdomain.EvidenceAbsent &&
+		position.evidence.HasClass && position.evidence.Class == position.fact.Class && position.evidence.RetainEscape == position.fact.RetainEscape
 }
 
 // corpusPlacementAggregateEvidence reduces position-scoped evidence only for
@@ -71,7 +77,11 @@ func corpusPlacementPositionValid(position corpusPlacementPosition) bool {
 func corpusPlacementAggregateEvidence(allocation corpusPlacementAllocation, positions []corpusPlacementPosition) (placementdomain.AllocationEvidence, bool) {
 	result := placementdomain.AllocationEvidence{}
 	if allocation.present {
-		result.Class, result.HasClass = allocation.class, true
+		if !allocation.fact.Valid() || allocation.fact.Class == placementdomain.Bottom || allocation.fact.RetainEscape == placementdomain.EvidenceAbsent {
+			return placementdomain.AllocationEvidence{}, false
+		}
+		result.Class, result.HasClass = allocation.fact.Class, true
+		result.RetainEscape = allocation.fact.RetainEscape
 	}
 	proof := func(current, candidate placementdomain.EvidenceState) placementdomain.EvidenceState {
 		if candidate == placementdomain.EvidenceProven || current == placementdomain.EvidenceProven {
@@ -255,22 +265,23 @@ func corpusPlacementProjection(analysisResult *result.Result, expected placement
 				observation.operational = append(observation.operational, fmt.Sprintf("placement query %d allocation %s has unreadable presence", queryIndex, id))
 				continue
 			}
-			class, classOK := placementdomain.Bottom, true
+			fact := placementdomain.BottomFact()
+			factOK := !present
 			if present {
-				class, classOK = allocation.Placement()
+				fact, factOK = allocation.Fact()
 			}
 			evidence, evidenceOK := allocation.Evidence()
-			if !classOK || !evidenceOK {
+			if !factOK || !evidenceOK {
 				observation.operational = append(observation.operational, fmt.Sprintf("placement query %d allocation %s has unreadable class/evidence", queryIndex, id))
 				continue
 			}
-			position := corpusPlacementPosition{query: queryIndex, present: present, class: class, evidence: evidence}
+			position := corpusPlacementPosition{query: queryIndex, present: present, fact: fact, evidence: evidence}
 			if !corpusPlacementPositionValid(position) {
 				observation.operational = append(observation.operational, fmt.Sprintf("placement query %d allocation %s has inconsistent class/evidence", queryIndex, id))
 				continue
 			}
 			if present {
-				if !corpusPlacementJoinAllocation(&row, class) {
+				if !corpusPlacementJoinAllocation(&row, fact) {
 					observation.operational = append(observation.operational, fmt.Sprintf("placement query %d allocation %s has invalid class", queryIndex, id))
 					continue
 				}
@@ -309,14 +320,14 @@ func corpusPlacementProjection(analysisResult *result.Result, expected placement
 		if allocation.evidence.HasOwnerIdentity {
 			observation.ownerFacts++
 		}
-		if !allocation.present || allocation.class == placementdomain.Bottom {
+		if !allocation.present || allocation.fact.Class == placementdomain.Bottom {
 			observation.complete = false
 			observation.noFact++
 			continue
 		}
-		observation.classCounts[allocation.class]++
+		observation.classCounts[allocation.fact.Class]++
 		if allocation.evidence.HasDepth {
-			observation.depthCounts[allocation.class]++
+			observation.depthCounts[allocation.fact.Class]++
 		}
 		if allocation.evidence.FrameLocal == placementdomain.EvidenceProven {
 			observation.frameLocal++
@@ -328,10 +339,10 @@ func corpusPlacementProjection(analysisResult *result.Result, expected placement
 			observation.deepFrozen++
 		}
 		if allocation.evidence.HasKind {
-			counts := observation.kindCounts[allocation.class]
+			counts := observation.kindCounts[allocation.fact.Class]
 			if counts == nil {
 				counts = make(map[string]int)
-				observation.kindCounts[allocation.class] = counts
+				observation.kindCounts[allocation.fact.Class] = counts
 			}
 			counts[allocation.evidence.Kind.String()]++
 		}
@@ -368,11 +379,46 @@ func corpusPlacementProjectionDefects(run *corpusHarnessRun) []string {
 	return observation.operational
 }
 
+// corpusPlacementRetainProvenPositions counts only authenticated present
+// position Facts. RetainEscape is temporal/path-sensitive: a Refuted fact at
+// one point followed by a Proven fact at another joins to Unknown at the
+// allocation aggregate, but the position facts still establish that the
+// retaining operation was reached at the latter point. The acceptance
+// contract therefore consumes this explicit position plane rather than
+// inferring retention from Class or from the aggregate join.
+func corpusPlacementRetainProvenPositions(observation corpusPlacementObservation) int {
+	proven := 0
+	for _, positions := range observation.positions {
+		for _, position := range positions {
+			if corpusPlacementPositionValid(position) && position.present && position.fact.RetainEscape == placementdomain.EvidenceProven {
+				proven++
+			}
+		}
+	}
+	return proven
+}
+
+func corpusPlacementRetainContractMismatches(contract *corpusPlacementContract, observation corpusPlacementObservation) []string {
+	if contract == nil {
+		return nil
+	}
+	proven := corpusPlacementRetainProvenPositions(observation)
+	mismatches := make([]string, 0, 2)
+	if proven < contract.MinRetainProvenPositions {
+		mismatches = append(mismatches, fmt.Sprintf("placement retain_proven_positions=%d, want >=%d", proven, contract.MinRetainProvenPositions))
+	}
+	if contract.MaxRetainProvenPositions != nil && proven > *contract.MaxRetainProvenPositions {
+		mismatches = append(mismatches, fmt.Sprintf("placement retain_proven_positions=%d, want <=%d", proven, *contract.MaxRetainProvenPositions))
+	}
+	return mismatches
+}
+
 // corpusSemanticPlacementMismatches consumes the placement contract through
 // the domain publication facade. Only dimensions physically represented by
 // SummaryResult are evaluated here: allocation identity, presence, the
-// canonical Bottom < Stack < OwnedHeap < SharedHeap < Unknown lattice, and
-// every optional evidence field in the current produced contract.
+// canonical Bottom < Stack < OwnedHeap < SharedHeap < Unknown lattice, the
+// optional evidence fields in the current produced contract, and the
+// explicitly declared retain-proof bounds over position Facts.
 func corpusSemanticPlacementMismatches(expectation *corpusDiagnosticProjectExpectations, analysisResult *result.Result, expected placementdomain.Schema) []string {
 	if expectation == nil || expectation.manifest == nil || expectation.manifest.Check == nil || expectation.manifest.Check.Placement == nil {
 		return nil
@@ -415,6 +461,7 @@ func corpusSemanticPlacementMismatches(expectation *corpusDiagnosticProjectExpec
 	checkMaximum("dies_before_suspension", observation.diesBeforeSuspension, contract.MaxDiesBeforeSuspension)
 	checkMinimum("deep_frozen", observation.deepFrozen, contract.MinDeepFrozen)
 	checkMaximum("deep_frozen", observation.deepFrozen, contract.MaxDeepFrozen)
+	mismatches = append(mismatches, corpusPlacementRetainContractMismatches(contract, observation)...)
 	checkPlacementKindMinimum := func(label string, class placementdomain.Placement, expected map[string]int) {
 		actual := observation.kindCounts[class]
 		for _, kind := range corpusPlacementSortedKindNames(expected) {
