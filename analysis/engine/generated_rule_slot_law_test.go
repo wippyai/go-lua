@@ -365,8 +365,15 @@ func generatedRuleLawBuilder(t testing.TB, catalog ruleplan.Catalog, mismatch bo
 		if mismatch {
 			semantic = coldKey(991_700 + index)
 		}
-		if _, factorOK := DeclareFactorSlot[struct{}](builder, semantic); !factorOK {
+		factor, factorOK := DeclareFactorSlot[struct{}](builder, semantic)
+		if !factorOK {
 			t.Fatalf("generated Rule law factor %d declaration failed", index)
+		}
+		// A Factor publishes the summary read form a vector join is delivered
+		// over. The form is the Factor's statement, so a fixture whose rules
+		// may declare one has to make it.
+		if _, formOK := factor.SummaryRead(coldKey(991_800 + index)); !formOK {
+			t.Fatalf("generated Rule law summary form %d declaration failed", index)
 		}
 	}
 	return builder

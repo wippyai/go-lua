@@ -139,10 +139,61 @@ type Relation struct {
 	// relation derives its occurrence inventory from this directory instead of
 	// from an artifact's rows.
 	CandidateIdentityAt GoSymbol
+	// MemberParent, MemberCount and MemberAt declare this relation's nested
+	// ordered member set: the bounded row list one PARENT row carries. They are
+	// optional together, and a relation that declares them is one a vector read
+	// spans as a whole denominator rather than one coordinate at a time.
+	//
+	// MemberParent names the relation whose rows are the parents. MemberCount
+	// and MemberAt are direct methods on that parent's subject; MemberAt
+	// answers one row of THIS relation, which the generator densifies through
+	// this relation's own directory. A member-set relation is therefore
+	// self-provided - its rows are addressed by its own directory - so the
+	// coordinate a member projects to is reached the same way any other row's
+	// is, and there is no second projection language for members.
+	MemberParent member.RelationRef
+	MemberCount  GoSymbol
+	MemberAt     GoSymbol
 	// Derivation is the optional typed construction of a dependent relation
 	// row. It is invoked by generated composition code, never retained as a
 	// runtime callback or owner handle.
 	Derivation RelationDerivation
+}
+
+// memberSetDeclared reports whether this relation declares a nested member
+// set. The three rows are one declaration: a parent with no accessor pair, or
+// an accessor pair with no parent, states half of a set nothing can read.
+func (relation Relation) memberSetDeclared() bool {
+	return relation.MemberParent.Available() || !symbolOptional(relation.MemberCount) || !symbolOptional(relation.MemberAt)
+}
+
+// memberSetComplete validates a declared member set against the relations it
+// names. The parent must be a declared relation of this axis, this relation
+// must be self-provided so its members are addressed by its own directory, and
+// both accessors must be methods on the parent's subject.
+func (relation Relation) memberSetComplete(relations map[string]Relation, byKey map[schema.Key]Relation, carriers map[string]Carrier) bool {
+	if !relation.memberSetDeclared() {
+		return true
+	}
+	if !relation.MemberParent.Available() || !relation.MemberCount.Available() || !relation.MemberAt.Available() {
+		return false
+	}
+	if relation.CandidateProvider.Member != relation.Key {
+		return false
+	}
+	if symbolOptional(relation.CandidateOrdinal) || symbolOptional(relation.CandidateAt) {
+		return false
+	}
+	parent, parentOK := byKey[relation.MemberParent.Member]
+	if !parentOK || parent.Key == relation.Key {
+		return false
+	}
+	parentSubject, parentSubjectOK := carriers[parent.Subject]
+	if _, subjectOK := carriers[relation.Subject]; !parentSubjectOK || !subjectOK {
+		return false
+	}
+	_ = relations
+	return sameType(relation.MemberCount.Receiver, parentSubject.Type) && sameType(relation.MemberAt.Receiver, parentSubject.Type)
 }
 
 // RelationDerivation is the direct-call shape for one dependent relation's
@@ -572,6 +623,9 @@ func (definition Definition) Complete() bool {
 		relationsByKey[relation.Key] = relation
 	}
 	for _, relation := range definition.Relations {
+		if !relation.memberSetComplete(relations, relationsByKey, carriers) {
+			return false
+		}
 		if relation.CandidateProvider.Axis.Key != definition.Axis {
 			// Foreign ownership is resolved against the composition roster.
 			// The consumer definition must not retain a second owner directory.

@@ -59,6 +59,11 @@ type generatedBindingLawOwner struct {
 	candidate       uint32
 	projections     map[[2]uint32]uint32
 	acceptCandidate bool
+	// members is the nested ordered member set one parent candidate carries,
+	// keyed by (relation, parent). memberProjections is the local each member
+	// row projects to, keyed by (relation, projection, member).
+	members           map[[2]uint32][]uint32
+	memberProjections map[[3]uint32]uint32
 }
 
 var _ memberrelation.Owner = (*generatedBindingLawOwner)(nil)
@@ -84,14 +89,36 @@ func (owner *generatedBindingLawOwner) CandidateAt(relationOrdinal uint32, mount
 	return owner.candidateFor(relationOrdinal, mount, occurrence)
 }
 
-func (owner *generatedBindingLawOwner) MemberCount(uint32, uint32) (int, bool) { return 0, false }
+func (owner *generatedBindingLawOwner) MemberCount(relationOrdinal, parentCandidateOrdinal uint32) (int, bool) {
+	if owner == nil {
+		return 0, false
+	}
+	members, ok := owner.members[[2]uint32{relationOrdinal, parentCandidateOrdinal}]
+	if !ok {
+		return 0, false
+	}
+	return len(members), true
+}
 
-func (owner *generatedBindingLawOwner) MemberAt(uint32, uint32, int) (uint32, bool) {
-	return 0, false
+func (owner *generatedBindingLawOwner) MemberAt(relationOrdinal, parentCandidateOrdinal uint32, ordinal int) (uint32, bool) {
+	if owner == nil || ordinal < 0 {
+		return 0, false
+	}
+	members, ok := owner.members[[2]uint32{relationOrdinal, parentCandidateOrdinal}]
+	if !ok || ordinal >= len(members) {
+		return 0, false
+	}
+	return members[ordinal], true
 }
 
 func (owner *generatedBindingLawOwner) Project(relationOrdinal, projectionOrdinal, candidateOrdinal uint32) (uint32, bool) {
-	if owner == nil || candidateOrdinal != owner.candidate {
+	if owner == nil {
+		return 0, false
+	}
+	if local, ok := owner.memberProjections[[3]uint32{relationOrdinal, projectionOrdinal, candidateOrdinal}]; ok {
+		return local, true
+	}
+	if candidateOrdinal != owner.candidate {
 		return 0, false
 	}
 	local, ok := owner.projections[[2]uint32{relationOrdinal, projectionOrdinal}]
@@ -108,6 +135,14 @@ type generatedBindingLawFixture struct {
 	owner      *generatedBindingLawOwner
 	mount      identity.ContentID
 	occurrence identity.ContentID
+}
+
+// generatedBindingLawSummaryForm is one axis's declared summary read form
+// semantic. It is derived from the axis ordinal so each Factor publishes its
+// own form rather than sharing one identity.
+func generatedBindingLawSummaryForm(t testing.TB, axis int) identity.SemanticKey {
+	t.Helper()
+	return coldKey(962_000 + axis)
 }
 
 func generatedBindingLawIDs(t testing.TB) (identity.ContentID, identity.ContentID) {
@@ -132,6 +167,7 @@ func openGeneratedBindingLaneLaw(t testing.TB, fixture generatedRuleLawFixture, 
 	t.Helper()
 	builder := NewSchema()
 	factors := make([]*FactorSlot[uint64], fixture.catalog.AxisCount())
+	summaryForms := make([]SchemaReadForm[uint64], fixture.catalog.AxisCount())
 	for index := range factors {
 		axisRow, axisOK := fixture.catalog.AxisAt(index)
 		if !axisOK {
@@ -141,7 +177,16 @@ func openGeneratedBindingLaneLaw(t testing.TB, fixture generatedRuleLawFixture, 
 		if !factorOK {
 			t.Fatalf("generated binding law factor %d", index)
 		}
+		// Every axis of this fixture publishes a summary read form, the way an
+		// axis that answers a vector read does. The form is the Factor's
+		// statement of how a whole denominator is delivered, so a rule that
+		// declares a vector join has one to be delivered over.
+		form, formOK := factor.SummaryRead(generatedBindingLawSummaryForm(t, index))
+		if !formOK {
+			t.Fatalf("generated binding law summary form %d", index)
+		}
 		factors[index] = factor
+		summaryForms[index] = form
 	}
 	slot, slotOK := DeclareGeneratedRuleSlot(builder, fixture.catalog, 0)
 	schema, schemaOK := builder.Seal()
@@ -155,6 +200,9 @@ func openGeneratedBindingLaneLaw(t testing.TB, fixture generatedRuleLawFixture, 
 	for index, factor := range factors {
 		if !BindFactor(binding, factor, hotUintFactorSpec()) {
 			t.Fatalf("generated binding law bind factor %d", index)
+		}
+		if !BindIdentitySummaryReadForFactor[uint64](binding, factor, summaryForms[index]) {
+			t.Fatalf("generated binding law bind summary form %d", index)
 		}
 	}
 	if !BindGeneratedRule(binding, slot) {

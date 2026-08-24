@@ -566,6 +566,16 @@ func declareGeneratedReadSurfaces(state *schemaBindingState, declaration *genera
 				return nil, false
 			}
 			reads[index] = surface
+		case composition.ReadSummary:
+			keys, keysOK := generatedSummaryKeys(state, plan, denseCandidate)
+			if !keysOK {
+				return nil, false
+			}
+			surface, surfaceOK := summaryReadSurface(state, state.authority, row, keys)
+			if !surfaceOK || !surface.value.Available() || surface.value.Factor != row.factor {
+				return nil, false
+			}
+			reads[index] = surface
 		case composition.ReadSelect:
 			dependencies := make([]RuleReadSurface, len(row.dependencies))
 			for position, dependency := range row.dependencies {
@@ -584,6 +594,43 @@ func declareGeneratedReadSurfaces(state *schemaBindingState, declaration *genera
 		}
 	}
 	return reads, true
+}
+
+// generatedSummaryKeys is the owner-issued key vector a generated rule's
+// vector read is delivered over.
+//
+// An authored rule takes this vector from its operand. A generated rule has no
+// operand, so the vector comes from where the coordinates actually live: the
+// relation the join names publishes the ordered member set one candidate row
+// carries, and each member is projected through the join's own key projection.
+// Nothing is derived here that the owner did not already publish.
+//
+// The order is the owner's and it must be strictly ascending, which the
+// surface itself enforces: a summary read is a vector over a denominator, and
+// two members answering one coordinate, or members out of order, would silently
+// renumber every later cell.
+func generatedSummaryKeys(state *schemaBindingState, plan generated.ReadPlan, denseCandidate uint32) (summaryKeyVector, bool) {
+	owner, ownerOK := relationOwnerForGeneratedAxis(state, plan.Relation.Axis)
+	if !ownerOK {
+		return summaryKeyVector{}, false
+	}
+	count, countOK := owner.MemberCount(plan.Relation.Member, denseCandidate)
+	if !countOK || count < 0 {
+		return summaryKeyVector{}, false
+	}
+	keys := make([]uint64, 0, count)
+	for index := 0; index < count; index++ {
+		member, memberOK := owner.MemberAt(plan.Relation.Member, denseCandidate, index)
+		if !memberOK {
+			return summaryKeyVector{}, false
+		}
+		local, localOK := owner.Project(plan.Relation.Member, plan.Key.Member, member)
+		if !localOK {
+			return summaryKeyVector{}, false
+		}
+		keys = append(keys, uint64(local))
+	}
+	return newSummaryKeyVector(keys), true
 }
 
 // declareGeneratedWriteSurface mints this rule's one publication surface.

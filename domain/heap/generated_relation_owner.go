@@ -119,12 +119,16 @@ func (owner *RelationOwner) CandidateAt(relationOrdinal uint32, mount, occurrenc
 }
 
 // MemberCount is the census of one nested ordered member set under one parent
-// candidate. This axis declares no nested set, so it holds no members.
+// row. It is the width of the denominator a vector read over this relation
+// spans; a relation that declares no member set holds none.
 func (owner *RelationOwner) MemberCount(relationOrdinal, parentCandidateOrdinal uint32) (int, bool) {
 	return 0, false
 }
 
 // MemberAt addresses one row of a nested ordered member set by its ordinal.
+// The row it answers is a row of THIS relation, densified through this
+// relation's own directory, so a member is projected the way every other row
+// of it is and members need no projection language of their own.
 func (owner *RelationOwner) MemberAt(relationOrdinal, parentCandidateOrdinal uint32, ordinal int) (uint32, bool) {
 	return 0, false
 }

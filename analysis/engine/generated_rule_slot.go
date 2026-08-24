@@ -257,6 +257,20 @@ func DeclareGeneratedRuleSlot(
 	row.Reads = make([]coldcomposition.Read, len(joins))
 	for joinIndex, join := range joins {
 		read := coldcomposition.Read{Kind: coldcomposition.ReadExact, Input: uint64(join.Input), Factor: compositionKeyOf(readFactors[joinIndex].factor.semantic)}
+		if join.ReadForm == ruleprogram.Summary || join.ReadForm == ruleprogram.Complete {
+			// A vector read is delivered over the Factor's own declared summary
+			// form. The form's semantic is the Factor's statement, read off the
+			// row it was declared on rather than named again here, and a Factor
+			// that declares no summary form cannot answer a vector read at all.
+			summary, summaryOK := summaryReadFormSemantic(builder, readFactors[joinIndex])
+			if !summaryOK {
+				return refuse()
+			}
+			read.Kind = coldcomposition.ReadSummary
+			read.Semantic, read.Normalizer = summary, summary
+			row.Reads[joinIndex] = read
+			continue
+		}
 		if join.ReadForm == ruleprogram.Selected {
 			read.Kind = coldcomposition.ReadSelect
 			read.Semantic = read.Factor
@@ -546,4 +560,35 @@ func generatedRuntimeOutput(directory generatedFactorDirectory, catalog ruleplan
 	}
 	address.Axis = axis
 	return address, true
+}
+
+// summaryReadFormSemantic resolves the summary read form one Factor declared.
+//
+// A vector read is not a shape a rule chooses: it is delivered over a form the
+// Factor published, and the form carries the semantic the cold row and every
+// later summary surface are keyed by. A Factor that declares no summary form
+// answers no vector read, and two declared forms are two authorities over one
+// delivery, so both are refused here rather than resolved by order.
+func summaryReadFormSemantic(builder *SchemaBuilder, factor generatedFactorBinding) (coldcomposition.Key, bool) {
+	if builder == nil || factor.factor == nil {
+		return coldcomposition.Key{}, false
+	}
+	index := factor.factor.index
+	if index < 0 || index >= len(builder.candidate.Factors) {
+		return coldcomposition.Key{}, false
+	}
+	resolved := coldcomposition.Key{}
+	for _, form := range builder.candidate.Factors[index].Forms {
+		if form.Kind != coldcomposition.FactorSummaryRead && form.Kind != coldcomposition.FactorDistributiveSummaryRead {
+			continue
+		}
+		if !form.Semantic.Available() || resolved.Available() {
+			return coldcomposition.Key{}, false
+		}
+		resolved = form.Semantic
+	}
+	if !resolved.Available() {
+		return coldcomposition.Key{}, false
+	}
+	return resolved, true
 }

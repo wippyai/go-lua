@@ -365,6 +365,16 @@ func sameOwnerSymbol(symbol definition.GoSymbol, owner definition.GoType) bool {
 	return symbol.Receiver == owner && symbol.PackagePath == owner.PackagePath
 }
 
+// relationByKey resolves one declared relation by its owner-issued key.
+func relationByKey(source definition.Definition, key schema.Key) (definition.Relation, bool) {
+	for _, relation := range source.Relations {
+		if relation.Key == key {
+			return relation, true
+		}
+	}
+	return definition.Relation{}, false
+}
+
 func relationOrdinalByName(relations []definition.Relation, name string) (uint32, bool) {
 	for index, relation := range relations {
 		if relation.Name == name {
@@ -685,14 +695,63 @@ func renderRelations(packageName string, source definition.Definition) ([]byte, 
 	out.WriteString("\tif index != 0 {\n\t\treturn 0, false\n\t}\n")
 	out.WriteString("\treturn owner.candidate(relationOrdinal, mount, occurrence)\n}\n\n")
 
+	memberSets := make([]int, 0, len(source.Relations))
+	for index, relation := range source.Relations {
+		if relation.MemberParent.Available() {
+			memberSets = append(memberSets, index)
+		}
+	}
 	out.WriteString("// MemberCount is the census of one nested ordered member set under one parent\n")
-	out.WriteString("// candidate. This axis declares no nested set, so it holds no members.\n")
+	out.WriteString("// row. It is the width of the denominator a vector read over this relation\n")
+	out.WriteString("// spans; a relation that declares no member set holds none.\n")
 	out.WriteString("func (owner *RelationOwner) MemberCount(relationOrdinal, parentCandidateOrdinal uint32) (int, bool) {\n")
-	out.WriteString("\treturn 0, false\n}\n\n")
+	if len(memberSets) == 0 {
+		out.WriteString("\treturn 0, false\n}\n\n")
+	} else {
+		fmt.Fprintf(&out, "\tif %s {\n\t\treturn 0, false\n\t}\n", ownerSchemaMissing(source.Binding.Key.Normalizer.ReceiverPointer))
+		out.WriteString("\tswitch relationOrdinal {\n")
+		for _, index := range memberSets {
+			relation := source.Relations[index]
+			parent, parentOK := relationByKey(source, relation.MemberParent.Member)
+			if !parentOK {
+				return nil, fmt.Errorf("member generator: relation %s names an undeclared member parent", relation.Name)
+			}
+			fmt.Fprintf(&out, "\tcase %d:\n", index)
+			parentAt := directCall(parent.CandidateAt, owner, "owner.schema", "parent", []string{"int(parentCandidateOrdinal)"}, packageName, aliases)
+			fmt.Fprintf(&out, "\t\tparent, parentOK := %s\n", parentAt)
+			out.WriteString("\t\tif !parentOK {\n\t\t\treturn 0, false\n\t\t}\n")
+			count := directCall(relation.MemberCount, owner, "owner.schema", "parent", nil, packageName, aliases)
+			fmt.Fprintf(&out, "\t\tcount := %s\n", count)
+			out.WriteString("\t\tif count < 0 {\n\t\t\treturn 0, false\n\t\t}\n\t\treturn count, true\n")
+		}
+		out.WriteString("\tdefault:\n\t\treturn 0, false\n\t}\n}\n\n")
+	}
 
 	out.WriteString("// MemberAt addresses one row of a nested ordered member set by its ordinal.\n")
+	out.WriteString("// The row it answers is a row of THIS relation, densified through this\n")
+	out.WriteString("// relation's own directory, so a member is projected the way every other row\n")
+	out.WriteString("// of it is and members need no projection language of their own.\n")
 	out.WriteString("func (owner *RelationOwner) MemberAt(relationOrdinal, parentCandidateOrdinal uint32, ordinal int) (uint32, bool) {\n")
-	out.WriteString("\treturn 0, false\n}\n\n")
+	if len(memberSets) == 0 {
+		out.WriteString("\treturn 0, false\n}\n\n")
+	} else {
+		fmt.Fprintf(&out, "\tif %s || ordinal < 0 {\n\t\treturn 0, false\n\t}\n", ownerSchemaMissing(source.Binding.Key.Normalizer.ReceiverPointer))
+		out.WriteString("\tswitch relationOrdinal {\n")
+		for _, index := range memberSets {
+			relation := source.Relations[index]
+			parent, _ := relationByKey(source, relation.MemberParent.Member)
+			fmt.Fprintf(&out, "\tcase %d:\n", index)
+			parentAt := directCall(parent.CandidateAt, owner, "owner.schema", "parent", []string{"int(parentCandidateOrdinal)"}, packageName, aliases)
+			fmt.Fprintf(&out, "\t\tparent, parentOK := %s\n", parentAt)
+			out.WriteString("\t\tif !parentOK {\n\t\t\treturn 0, false\n\t\t}\n")
+			memberAt := directCall(relation.MemberAt, owner, "owner.schema", "parent", []string{"ordinal"}, packageName, aliases)
+			fmt.Fprintf(&out, "\t\tmember, memberOK := %s\n", memberAt)
+			out.WriteString("\t\tif !memberOK {\n\t\t\treturn 0, false\n\t\t}\n")
+			memberOrdinal := directCall(relation.CandidateOrdinal, owner, "owner.schema", "member", []string{"member"}, packageName, aliases)
+			fmt.Fprintf(&out, "\t\treturn %s\n", memberOrdinal)
+		}
+		out.WriteString("\tdefault:\n\t\treturn 0, false\n\t}\n}\n\n")
+	}
 
 	if len(global) != 0 {
 		out.WriteString("// OccurrenceCount is the sealed census of one global relation's occurrence\n")
