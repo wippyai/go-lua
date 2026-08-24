@@ -99,6 +99,45 @@ const (
 	foldProblemOutputs
 )
 
+// checkAgainst is the reducer-shape agreement: the clauses that need the owner
+// reducer row this fold names, and nothing more.
+//
+// A fold's argument list is positional against that row. A join the reducer
+// does not consume is a PREREQUISITE - the materialization another join's
+// relation depends on - and naming it as an argument is well-formed in
+// isolation and wrong against the owner: the call would be handed a carrier
+// the fold has no parameter for. Nothing local to a Program can see that, so
+// this clause exists to be reachable from a declaration package that has its
+// own catalog, and the Plan compiler calls the same one.
+//
+// The carrier and tag clauses stay with the compiler. Which carrier a join
+// yields is the joined axis's statement, and a declaration package holds only
+// its own axis's catalog.
+func (fold FoldDecl) checkAgainst(joins []JoinDecl, reducer member.Reducer) foldProblem {
+	if problem := fold.check(len(joins)); problem != foldProblemNone {
+		return problem
+	}
+	if len(reducer.Inputs) != len(fold.Inputs) {
+		return foldProblemInputs
+	}
+	if len(reducer.Outputs) != len(fold.Outputs) {
+		return foldProblemOutputs
+	}
+	for position, input := range fold.Inputs {
+		if uint64(input) >= uint64(len(joins)) {
+			return foldProblemInputs
+		}
+		join := joins[uint64(input)]
+		signature := reducer.Inputs[position]
+		if signature.Axis != join.Read.Axis.EntryReference() ||
+			signature.Form != join.Read.Form ||
+			signature.Multiplicity != join.Read.Contract.Multiplicity {
+			return foldProblemInputs
+		}
+	}
+	return foldProblemNone
+}
+
 func (fold FoldDecl) check(joinCount int) foldProblem {
 	if !fold.Reducer.Available() {
 		return foldProblemReducer

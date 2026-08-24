@@ -180,6 +180,48 @@ func (program Program) Check() (Problem, bool) {
 	if problem, valid := program.checkRoutes(); !valid {
 		return problem, false
 	}
+	if problem, valid := program.checkReachability(); !valid {
+		return problem, false
+	}
+	return Problem{}, true
+}
+
+// CheckAgainst is Check plus the reducer-shape agreement, which Check alone
+// cannot decide.
+//
+// A fold's call shape is the OWNER's statement: how many arguments it takes,
+// and in which form each arrives. Check sees only the Program, so a
+// declaration that passes the reducer a join it does not consume is
+// well-formed to Check and wrong against the row it names. That is a gate a
+// declaration package can close before any schema exists, because the reducer
+// it names belongs to the axis it writes and it holds that catalog.
+//
+// A Program that passes this is not thereby admitted: which carrier each join
+// yields is the joined axis's statement and stays with the Plan compiler,
+// which applies these same clauses through one implementation.
+func (program Program) CheckAgainst(reducer member.Reducer) (Problem, bool) {
+	if problem, valid := program.Check(); !valid {
+		return problem, false
+	}
+	if !program.Available() {
+		return Problem{}, true
+	}
+	switch program.Fold.checkAgainst(program.Joins, reducer) {
+	case foldProblemNone:
+		return Problem{}, true
+	case foldProblemInputs:
+		return Problem{Kind: ProblemInput}, false
+	case foldProblemOutputs:
+		return Problem{Kind: ProblemOutput}, false
+	default:
+		return Problem{Kind: ProblemFold}, false
+	}
+}
+
+// checkReachability states that every declared join is reached from the fold's
+// arguments through the source graph: a join nothing depends on and nothing
+// folds is a row the Program does not use.
+func (program Program) checkReachability() (Problem, bool) {
 	if len(program.Joins) != 0 {
 		reachable := make(map[uint64]struct{}, len(program.Joins))
 		pending := make([]uint64, 0, len(program.Fold.Inputs))

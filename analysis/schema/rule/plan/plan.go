@@ -661,10 +661,11 @@ func compileProgram(ruleOrdinal uint32, template *rule.Template, declaration pro
 	if reducerAxis.Key() != template.Writes() {
 		return Plan{}, compileFailure(template.ID(), rule.LawProgramShape, schema.DispositionMalformed)
 	}
-	if len(reducer.Outputs) != len(declaration.Fold.Outputs) {
-		return Plan{}, compileFailure(template.ID(), rule.LawProgramShape, schema.DispositionMalformed)
-	}
-	if len(reducer.Inputs) != len(declaration.Fold.Inputs) {
+	// The arity and the per-position axis, form and multiplicity of a fold's
+	// call are the owner reducer's statement, and a declaration package can
+	// close that gate against its own catalog before any schema exists. It is
+	// applied here through the same implementation, so the two cannot drift.
+	if _, agrees := declaration.CheckAgainst(reducer); !agrees {
 		return Plan{}, compileFailure(template.ID(), rule.LawProgramShape, schema.DispositionMalformed)
 	}
 	compiled.foldInputs = make([]uint32, len(declaration.Fold.Inputs))
@@ -673,13 +674,11 @@ func compileProgram(ruleOrdinal uint32, template *rule.Template, declaration pro
 			return Plan{}, compileFailure(template.ID(), rule.LawProgramShape, schema.DispositionMalformed)
 		}
 		compiled.foldInputs[inputIndex] = uint32(input)
-		join := declaration.Joins[uint64(input)]
+		// Which carrier a join yields, and which tag names its members, are the
+		// joined axis's statement rather than the declaration's, so they are
+		// resolved here and nowhere earlier.
 		signature := reducer.Inputs[inputIndex]
-		if signature.Axis != join.Read.Axis.EntryReference() ||
-			signature.Carrier != joinFacts[input] ||
-			signature.Form != join.Read.Form ||
-			signature.Multiplicity != join.Read.Contract.Multiplicity ||
-			signature.Tag != joinTags[input] {
+		if signature.Carrier != joinFacts[input] || signature.Tag != joinTags[input] {
 			return Plan{}, compileFailure(template.ID(), rule.LawProgramShape, schema.DispositionMalformed)
 		}
 	}
