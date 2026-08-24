@@ -68,6 +68,9 @@ func relationsAgree(left, right Relation) bool {
 			return false
 		}
 	}
+	if !correspondencesAgree(left.Correspondences, right.Correspondences) {
+		return false
+	}
 	return derivationsAgree(left.Derivation, right.Derivation)
 }
 

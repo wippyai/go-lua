@@ -587,6 +587,19 @@ func renderCold(packageName string, source definition.Definition) ([]byte, error
 			}
 			out.WriteString("}")
 		}
+		// A correspondence is cold catalog data for the same reason: it is what
+		// tells a child Program that a foreign candidate addresses these rows,
+		// and it resolves through no owner symbol of this axis at all.
+		if len(relation.Correspondences) != 0 {
+			out.WriteString(", Correspondences: []member.Correspondence{")
+			for index, correspondence := range relation.Correspondences {
+				if index != 0 {
+					out.WriteString(", ")
+				}
+				fmt.Fprintf(&out, "{Foreign: %s, Coordinate: %s}", relationProviderExpression(correspondence.Foreign), correspondence.Coordinate)
+			}
+			out.WriteString("}")
+		}
 		// A nested member set is cold catalog data, not just owner symbols. The
 		// parent and the ordinal carrier are what a child Program addresses an
 		// owner's members by, so they are emitted beside the row rather than

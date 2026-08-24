@@ -96,6 +96,11 @@ type Relation struct {
 	// exactly when Parent is: a parent with no ordinal carrier gives its
 	// members no address, and an ordinal carrier with no parent keys nothing.
 	Ordinal Carrier
+	// Correspondences are this relation's statements that its own sealed
+	// candidate order enumerates the same subjects a foreign axis's order
+	// does. A relation declares one for each foreign order a rule addressing
+	// it must reach; a relation that correlates with nothing declares none.
+	Correspondences []Correspondence
 }
 
 func (relation Relation) Available() bool {
@@ -107,6 +112,11 @@ func (relation Relation) Available() bool {
 	}
 	if relation.Parent.Declared() && !relation.Parent.Available() {
 		return false
+	}
+	for _, correspondence := range relation.Correspondences {
+		if !correspondence.Available() {
+			return false
+		}
 	}
 	for _, input := range relation.Inputs {
 		if !input.Available() {
@@ -350,6 +360,7 @@ func cloneRelations(relations []Relation) []Relation {
 			CandidateProvider: relation.CandidateProvider,
 			Parent:            relation.Parent,
 			Ordinal:           relation.Ordinal,
+			Correspondences:   cloneCorrespondences(relation.Correspondences),
 		}
 	}
 	return clone
@@ -418,7 +429,16 @@ func (catalog Catalog) Complete() bool {
 		keys[relation.Key] = struct{}{}
 		relations[relation.Key] = struct{}{}
 	}
+	keyProjections := make(map[schema.Key]schema.Key, len(catalog.Projections))
+	for _, projection := range catalog.Projections {
+		if projection.Role == Key {
+			keyProjections[projection.Key] = projection.Relation
+		}
+	}
 	for _, relation := range catalog.Relations {
+		if !correspondencesComplete(relation, keyProjections) {
+			return false
+		}
 		if !relation.Nested() {
 			continue
 		}
@@ -429,6 +449,14 @@ func (catalog Catalog) Complete() bool {
 			return false
 		}
 		if _, held := relations[relation.Parent.Member]; !held {
+			return false
+		}
+		// The emitted owner resolves a parent ordinal through the parent
+		// relation's directory on this same owner, so a parent on another axis
+		// names an ordinal this owner has no directory for. A rule that must
+		// address a nested set from a foreign candidate states a
+		// correspondence and keeps its member set at home.
+		if relation.Parent.Axis.Key != relation.CandidateProvider.AxisRelation.Axis.Key {
 			return false
 		}
 	}
@@ -598,6 +626,9 @@ func (catalog Catalog) References() schema.EntryReferences {
 	var references schema.EntryReferences
 	for _, relation := range catalog.Relations {
 		references = append(references, relation.CandidateProvider.References()...)
+		for _, correspondence := range relation.Correspondences {
+			references = append(references, correspondence.References()...)
+		}
 	}
 	for _, projection := range catalog.Projections {
 		references = append(references, projection.CandidateProvider.References()...)
@@ -633,6 +664,11 @@ const (
 	// provider emits the exact reference it emitted before the choice existed,
 	// so stating the choice remints no catalog that keeps the arm it had.
 	contentRecordIssuedProvider uint64 = 11
+	// contentRecordCorrespondence is written only by a relation that states
+	// one. A relation that correlates with nothing emits the exact stream it
+	// emitted before the statement existed, so adding the form remints no
+	// declaration that does not use it.
+	contentRecordCorrespondence uint64 = 12
 )
 
 // WriteContent writes the catalog's canonical declaration stream. Collection
@@ -665,6 +701,17 @@ func (catalog Catalog) WriteContent(content *framing.Writer) error {
 				return err
 			}
 			if err := content.String(string(input)); err != nil {
+				return err
+			}
+		}
+		for _, correspondence := range relation.Correspondences {
+			if err := content.Record(contentRecordCorrespondence); err != nil {
+				return err
+			}
+			if err := writeRelationReference(content, correspondence.Foreign); err != nil {
+				return err
+			}
+			if err := content.String(string(correspondence.Coordinate)); err != nil {
 				return err
 			}
 		}

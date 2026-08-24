@@ -168,6 +168,12 @@ type Relation struct {
 	MemberOrdinal string
 	MemberCount   GoSymbol
 	MemberAt      GoSymbol
+	// Correspondences are this relation's statements that its own sealed
+	// candidate order enumerates the same subjects a foreign axis's order
+	// does. They carry no Go symbol: the correlation is determined by two
+	// directories that already exist, and an owner asked to answer it would
+	// be a third authority over it.
+	Correspondences []RelationCorrespondence
 	// Derivation is the optional typed construction of a dependent relation
 	// row. It is invoked by generated composition code, never retained as a
 	// runtime callback or owner handle.
@@ -442,6 +448,10 @@ func (definition Definition) Catalog() (member.Catalog, bool) {
 	} else if _, factOK := carriers[signature.Fact]; !factOK {
 		return member.Catalog{}, false
 	}
+	projectionKeysByName := make(map[string]schema.Key, len(definition.Projections))
+	for _, projection := range definition.Projections {
+		projectionKeysByName[projection.Name] = projection.Key
+	}
 	relations := make([]member.Relation, len(definition.Relations))
 	relationNames := make(map[string]schema.Key, len(definition.Relations))
 	relationKeys := make(map[schema.Key]struct{}, len(definition.Relations))
@@ -469,6 +479,20 @@ func (definition Definition) Catalog() (member.Catalog, bool) {
 			inputs[inputIndex] = input.Key
 		}
 		row := member.Relation{Key: relation.Key, Subject: subject.Key, Inputs: inputs, CandidateProvider: relation.CandidateProvider}
+		// A correspondence survives into the cold catalog for the same reason a
+		// nested set does: it is what a CHILD Program consumes to know that a
+		// foreign candidate addresses these rows, and a consumer that never
+		// sees this owner's source names must still be able to read it.
+		if len(relation.Correspondences) != 0 {
+			row.Correspondences = make([]member.Correspondence, len(relation.Correspondences))
+			for position, correspondence := range relation.Correspondences {
+				coordinate, coordinateOK := projectionKeysByName[correspondence.Coordinate]
+				if !coordinateOK {
+					return member.Catalog{}, false
+				}
+				row.Correspondences[position] = member.Correspondence{Foreign: correspondence.Foreign, Coordinate: coordinate}
+			}
+		}
 		// A nested member set survives into the cold catalog. The parent and the
 		// ordinal carrier are what a CHILD Program consumes to address an
 		// owner's members, and dropping them here would leave the set visible
