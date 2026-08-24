@@ -1,0 +1,11 @@
+{
+  "description": "RED, engine gap: a table returned from a callee into a caller local must be proven OwnedHeap with proven retention at the issued return-escape positions. It publishes OwnedHeap with UNKNOWN retention because a strong write does not replace the predecessor it overwrote at that coordinate.",
+  "check": {
+    "placement": {
+      "require_complete": true,
+      "min_owned_heap": 1,
+      "max_unknown": 0,
+      "min_retain_proven_positions": 1
+    }
+  }
+}
