@@ -80,6 +80,10 @@ func StorageTransfer() definition.Definition {
 			// rows rather than rebuilding the topology from Program occurrences.
 			{Name: "ReturnBoundaryCarrier", Key: "carrier/value/return-boundary", Type: returnBoundary},
 			{Name: "ReturnBoundaryMemberCarrier", Key: "carrier/value/return-boundary-member", Type: returnBoundaryMember},
+			// The address a member is reached by under its return. A child that
+			// never sees Value's Go symbols still addresses member k through this
+			// carrier, which is why the nested set declares it beside its parent.
+			{Name: "ReturnBoundaryMemberOrdinalCarrier", Key: "carrier/value/return-boundary-member-ordinal", Type: builtinGoType("uint64")},
 		},
 		Relations: []definition.Relation{
 			{
@@ -204,6 +208,7 @@ func StorageTransfer() definition.Definition {
 				CandidateOrdinal:  valueMethod("ReturnBoundaryMemberOrdinal", "Schema", true, 0),
 				CandidateAt:       valueMethod("ReturnBoundaryMemberAt", "Schema", true, 0),
 				MemberParent:      member.RelationRef{Axis: axisReference("value"), Member: "value/return-boundary/candidates"},
+				MemberOrdinal:     "ReturnBoundaryMemberOrdinalCarrier",
 				MemberCount:       valueMethod("MemberCount", "ReturnBoundary", false, 0),
 				MemberAt:          valueMethod("MemberAt", "ReturnBoundary", false, 0),
 			},
