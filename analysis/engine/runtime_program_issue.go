@@ -17,7 +17,9 @@ import (
 	"github.com/wippyai/go-lua/analysis/engine/internal/composition"
 	"github.com/wippyai/go-lua/analysis/engine/internal/equation"
 	"github.com/wippyai/go-lua/analysis/identity"
+	memberrelation "github.com/wippyai/go-lua/analysis/schema/axis/member/relation"
 	"github.com/wippyai/go-lua/analysis/schema/executioncontext"
+	ruleplan "github.com/wippyai/go-lua/analysis/schema/rule/plan"
 )
 
 // pendingRuleIssuance is one issuance between source admission and row
@@ -477,7 +479,7 @@ func declareGeneratedIssuanceSurfaces(rowsWorkspace *programRows, state *schemaB
 	if !ruleSemanticOK {
 		return pendingRuleIssuance{}, false
 	}
-	reads, readsOK := declareGeneratedReadSurfaces(state, declaration, descriptor, anchor, ruleSemantic, denseCandidate)
+	reads, readsOK := declareGeneratedReadSurfaces(state, declaration, descriptor, anchor, ruleSemantic, coords, denseCandidate)
 	if !readsOK {
 		return pendingRuleIssuance{}, false
 	}
@@ -541,19 +543,53 @@ func declaredGeneratedCandidate(rowsWorkspace *programRows, state *schemaBinding
 	if !candidateOwnerOK {
 		return 0, execution.ProgramSource{}, false
 	}
-	// The census is read before the row: a keyed generated rule instantiates
-	// one member per occurrence, so an occurrence whose relation publishes a
-	// candidate set is not this arm's row and refuses here rather than
-	// silently taking a first candidate.
-	candidateCount, candidateCountOK := candidateOwner.CandidateCount(candidate.Member, coords.Mount, coords.Occurrence)
-	if !candidateCountOK || candidateCount != 1 {
-		return 0, execution.ProgramSource{}, false
-	}
-	dense, denseOK := candidateOwner.CandidateAt(candidate.Member, coords.Mount, coords.Occurrence, 0)
+	dense, denseOK := soleDirectoryCandidate(candidateOwner, candidate.Member, coords)
 	if !denseOK {
 		return 0, execution.ProgramSource{}, false
 	}
 	return dense, execution.ProgramSource{}, true
+}
+
+// soleDirectoryCandidate resolves the one row a directory answers for this
+// occurrence.
+//
+// The census is read before the row: a keyed generated rule instantiates one
+// member per occurrence, so an occurrence whose relation publishes a candidate
+// SET is not a single row and refuses here rather than silently taking a first
+// candidate. An occurrence the directory answers nothing for refuses the same
+// way - an absent row is not a zeroth row.
+func soleDirectoryCandidate(owner memberrelation.Owner, relation uint32, coords OperandCoords) (uint32, bool) {
+	if owner == nil {
+		return 0, false
+	}
+	count, countOK := owner.CandidateCount(relation, coords.Mount, coords.Occurrence)
+	if !countOK || count != 1 {
+		return 0, false
+	}
+	return owner.CandidateAt(relation, coords.Mount, coords.Occurrence, 0)
+}
+
+// resolveGeneratedReadCandidate translates the rule's dense candidate into the
+// ordinal of the directory THIS read is addressed by.
+//
+// A read that borrows the rule's own candidate directory is already resolved:
+// the ordinal it needs is the one the rule resolved, and resolving it again
+// would ask the same directory the same question. A read addressed by a
+// corresponded foreign directory is not. A correspondence says the two orders
+// enumerate the same subjects, never that they enumerate them in the same
+// positions - each owner numbers its own rows independently - so the shared
+// address is the OCCURRENCE both directories are addressed by, and the foreign
+// row is resolved through it. Nothing here compares two dense ordinals, maps
+// one to the other, or scans for a match.
+func resolveGeneratedReadCandidate(state *schemaBindingState, candidate ruleplan.RelationAddr, plan generated.ReadPlan, coords OperandCoords, denseCandidate uint32) (uint32, bool) {
+	if !plan.AddressingPresent || plan.Addressing == candidate {
+		return denseCandidate, true
+	}
+	owner, ownerOK := relationOwnerForGeneratedAxis(state, plan.Addressing.Axis)
+	if !ownerOK {
+		return 0, false
+	}
+	return soleDirectoryCandidate(owner, plan.Addressing.Member, coords)
 }
 
 // generatedCarryCount is the declared carry cardinality of one generated rule.
@@ -573,7 +609,7 @@ func generatedCarryCount(descriptor generated.CompiledRule) uint64 {
 // members of a relation that exists only per invocation, so what is sealed
 // here is the anchored identity of the read itself, and the members arrive
 // through the family the rule's own package installs.
-func declareGeneratedReadSurfaces(state *schemaBindingState, declaration *generatedRuleBindingCell, descriptor generated.CompiledRule, anchor ruleSurfaceAnchor, semantic identity.SemanticKey, denseCandidate uint32) ([]RuleReadSurface, bool) {
+func declareGeneratedReadSurfaces(state *schemaBindingState, declaration *generatedRuleBindingCell, descriptor generated.CompiledRule, anchor ruleSurfaceAnchor, semantic identity.SemanticKey, coords OperandCoords, denseCandidate uint32) ([]RuleReadSurface, bool) {
 	count := descriptor.ReadCount()
 	if count == 0 {
 		return nil, true
@@ -581,6 +617,7 @@ func declareGeneratedReadSurfaces(state *schemaBindingState, declaration *genera
 	if len(declaration.reads) != count {
 		return nil, false
 	}
+	candidate := descriptor.CandidateRelation()
 	reads := make([]RuleReadSurface, count)
 	for index := 0; index < count; index++ {
 		plan, planOK := descriptor.ReadAt(index)
@@ -601,7 +638,11 @@ func declareGeneratedReadSurfaces(state *schemaBindingState, declaration *genera
 			if !joinOwnerOK {
 				return nil, false
 			}
-			local, localOK := joinOwner.Project(plan.Relation.Member, plan.Key.Member, denseCandidate)
+			addressed, addressedOK := resolveGeneratedReadCandidate(state, candidate, plan, coords, denseCandidate)
+			if !addressedOK {
+				return nil, false
+			}
+			local, localOK := joinOwner.Project(plan.Relation.Member, plan.Key.Member, addressed)
 			if !localOK {
 				return nil, false
 			}
@@ -611,7 +652,11 @@ func declareGeneratedReadSurfaces(state *schemaBindingState, declaration *genera
 			}
 			reads[index] = surface
 		case composition.ReadSummary:
-			keys, keysOK := generatedSummaryKeys(state, plan, denseCandidate)
+			addressed, addressedOK := resolveGeneratedReadCandidate(state, candidate, plan, coords, denseCandidate)
+			if !addressedOK {
+				return nil, false
+			}
+			keys, keysOK := generatedSummaryKeys(state, plan, addressed)
 			if !keysOK {
 				return nil, false
 			}
@@ -653,18 +698,18 @@ func declareGeneratedReadSurfaces(state *schemaBindingState, declaration *genera
 // surface itself enforces: a summary read is a vector over a denominator, and
 // two members answering one coordinate, or members out of order, would silently
 // renumber every later cell.
-func generatedSummaryKeys(state *schemaBindingState, plan generated.ReadPlan, denseCandidate uint32) (summaryKeyVector, bool) {
+func generatedSummaryKeys(state *schemaBindingState, plan generated.ReadPlan, addressedCandidate uint32) (summaryKeyVector, bool) {
 	owner, ownerOK := relationOwnerForGeneratedAxis(state, plan.Relation.Axis)
 	if !ownerOK {
 		return summaryKeyVector{}, false
 	}
-	count, countOK := owner.MemberCount(plan.Relation.Member, denseCandidate)
+	count, countOK := owner.MemberCount(plan.Relation.Member, addressedCandidate)
 	if !countOK || count < 0 {
 		return summaryKeyVector{}, false
 	}
 	keys := make([]uint64, 0, count)
 	for index := 0; index < count; index++ {
-		member, memberOK := owner.MemberAt(plan.Relation.Member, denseCandidate, index)
+		member, memberOK := owner.MemberAt(plan.Relation.Member, addressedCandidate, index)
 		if !memberOK {
 			return summaryKeyVector{}, false
 		}
