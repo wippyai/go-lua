@@ -243,6 +243,7 @@ func exactFoldLawSpec(arity int) generated.CompiledRuleSpec {
 		spec.Reads = append(spec.Reads, generated.ReadPlan{
 			Input: 0, Factor: axis, Axis: axis,
 			Relation: ruleplan.RelationAddr{Axis: axis, Member: uint32(join)}, Key: ruleplan.ProjectionAddr{Axis: axis, Member: uint32(join)},
+			Addressing: ruleplan.RelationAddr{Axis: axis, Member: 0}, AddressingPresent: true,
 			Form: ruleprogram.Exact, PointBound: ruleprogram.PointBound, Contract: contract, RowCapacity: 2, CellCapacity: 1,
 		})
 	}

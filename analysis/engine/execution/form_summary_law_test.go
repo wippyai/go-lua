@@ -420,11 +420,16 @@ func summaryPlanSpec(form ruleprogram.ReadForm, predicate bool, denominator rule
 			Key:              ruleplan.ProjectionAddr{Axis: 0, Member: 0},
 			Predicate:        selection,
 			PredicatePresent: predicate,
-			Form:             form,
-			PointBound:       ruleprogram.PointBound,
-			Contract:         ruleplan.ReadContract{Order: ruleprogram.OrderCanonical, Sparse: ruleprogram.SparseDense, OnOpaque: ruleprogram.OnOpaqueRefuse, Multiplicity: ruleprogram.MultiplicityMany},
-			Denominator:      denominator,
-			RowCapacity:      4, CellCapacity: 4,
+			// Whether the rule's ordinal indexes this read is a property of
+			// the form, so the fixture asks the same statement the seal does
+			// rather than pinning one form's answer.
+			Addressing:        ruleplan.RelationAddr{Axis: 0, Member: 0},
+			AddressingPresent: ruleprogram.ReadFormCandidateAddressed(form),
+			Form:              form,
+			PointBound:        ruleprogram.PointBound,
+			Contract:          ruleplan.ReadContract{Order: ruleprogram.OrderCanonical, Sparse: ruleprogram.SparseDense, OnOpaque: ruleprogram.OnOpaqueRefuse, Multiplicity: ruleprogram.MultiplicityMany},
+			Denominator:       denominator,
+			RowCapacity:       4, CellCapacity: 4,
 		}},
 		Outputs: []generated.OutputPlan{{
 			Factor: 2, Axis: 2, Address: ruleplan.OutputAddr{Axis: 2, Frame: 0},

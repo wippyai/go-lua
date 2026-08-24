@@ -174,8 +174,8 @@ func planCompiledExactProductRule(t *testing.T) generated.CompiledRule {
 		Candidate: ruleplan.RelationAddr{Axis: 0, Member: 0},
 		Reducer:   ruleplan.ReducerAddr{Axis: 2, Member: 0},
 		Reads: []generated.ReadPlan{
-			{Input: 0, Factor: 1, Axis: 0, Relation: ruleplan.RelationAddr{Axis: 0, Member: 0}, Key: ruleplan.ProjectionAddr{Axis: 0, Member: 0}, Form: ruleprogram.Exact, PointBound: ruleprogram.PointBound, Contract: contract, RowCapacity: 2, CellCapacity: 1},
-			{Input: 0, Factor: 1, Axis: 0, Relation: ruleplan.RelationAddr{Axis: 0, Member: 1}, Key: ruleplan.ProjectionAddr{Axis: 0, Member: 1}, Form: ruleprogram.Exact, PointBound: ruleprogram.PointBound, Contract: contract, RowCapacity: 2, CellCapacity: 1},
+			{Input: 0, Factor: 1, Axis: 0, Relation: ruleplan.RelationAddr{Axis: 0, Member: 0}, Key: ruleplan.ProjectionAddr{Axis: 0, Member: 0}, Addressing: ruleplan.RelationAddr{Axis: 0, Member: 0}, AddressingPresent: true, Form: ruleprogram.Exact, PointBound: ruleprogram.PointBound, Contract: contract, RowCapacity: 2, CellCapacity: 1},
+			{Input: 0, Factor: 1, Axis: 0, Relation: ruleplan.RelationAddr{Axis: 0, Member: 1}, Key: ruleplan.ProjectionAddr{Axis: 0, Member: 1}, Addressing: ruleplan.RelationAddr{Axis: 0, Member: 0}, AddressingPresent: true, Form: ruleprogram.Exact, PointBound: ruleprogram.PointBound, Contract: contract, RowCapacity: 2, CellCapacity: 1},
 		},
 		Outputs: []generated.OutputPlan{{
 			Factor: 2, Axis: 2, Address: ruleplan.OutputAddr{Axis: 2, Frame: 0},
@@ -200,6 +200,7 @@ func planCompiledExactRule(t *testing.T) generated.CompiledRule {
 		Reads: []generated.ReadPlan{{
 			Input: 0, Factor: 1, Axis: 0,
 			Relation: ruleplan.RelationAddr{Axis: 0, Member: 0}, Key: ruleplan.ProjectionAddr{Axis: 0, Member: 0},
+			Addressing: ruleplan.RelationAddr{Axis: 0, Member: 0}, AddressingPresent: true,
 			Form:        ruleprogram.Exact,
 			PointBound:  ruleprogram.PointBound,
 			Contract:    ruleplan.ReadContract{Order: ruleprogram.OrderCanonical, Sparse: ruleprogram.SparseExplicit, OnOpaque: ruleprogram.OnOpaqueRefuse, Multiplicity: ruleprogram.MultiplicityOne},

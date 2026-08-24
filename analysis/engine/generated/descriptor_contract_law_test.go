@@ -20,6 +20,7 @@ func heterogeneousPlanLawSpec() CompiledRuleSpec {
 				Sources:    ruleplan.Span{Start: 0, Count: 1},
 				Relation:   ruleplan.RelationAddr{Axis: 1, Member: 4},
 				Key:        ruleplan.ProjectionAddr{Axis: 1, Member: 6},
+				Addressing: ruleplan.RelationAddr{Axis: 0, Member: 0}, AddressingPresent: true,
 				Form:       ruleprogram.Exact,
 				PointBound: ruleprogram.PointBound,
 				Contract: ruleplan.ReadContract{

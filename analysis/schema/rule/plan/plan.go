@@ -120,6 +120,25 @@ type Join struct {
 	// replace.
 	Parent        RelationAddr
 	ParentPresent bool
+	// Addressing is the directory whose candidate ordinal indexes this join:
+	// the relation that ISSUES the rows the read is resolved against. For an
+	// exact read that is the read relation's own candidate provider; for a
+	// whole-vector read over a nested member set it is the parent relation's,
+	// because the owner resolves the parent row and enumerates its members
+	// from it.
+	//
+	// AddressingPresent is explicit, and false is a statement of its own: a
+	// selected read is addressed by the selection its own family resolves, and
+	// an issued candidate is a Program row with no directory at all. Neither
+	// names one.
+	//
+	// It is compiled rather than dropped because two directories addressed by
+	// one occurrence enumerate their rows INDEPENDENTLY. A consumer handed
+	// only the rule's dense ordinal can index its own directory correctly and
+	// every other one by accident; carrying the directory is what lets the
+	// ordinal be resolved again where the rows actually live.
+	Addressing        RelationAddr
+	AddressingPresent bool
 }
 
 // Carry is the compiled optional whole-output carry. TransformPresent is
@@ -651,7 +670,8 @@ func compileProgram(ruleOrdinal uint32, template *rule.Template, declaration pro
 		if len(relation.Inputs) != len(join.Sources) {
 			return Plan{}, compileFailure(template.ID(), rule.LawProgramShape, schema.DispositionMalformed)
 		}
-		if !joinAddressedByCandidate(axisView, declaration, relationCatalog, relation, join.Read.Form) {
+		addressingRef, addressingPresent, addressed := joinAddressingDirectory(axisView, declaration, relationCatalog, relation, join.Read.Form)
+		if !addressed {
 			return Plan{}, compileFailure(template.ID(), rule.LawProgramShape, schema.DispositionMalformed)
 		}
 		for sourceIndex, source := range join.Sources {
@@ -699,6 +719,22 @@ func compileProgram(ruleOrdinal uint32, template *rule.Template, declaration pro
 				OnOpaque: join.Read.Contract.OnOpaque, Multiplicity: join.Read.Contract.Multiplicity,
 			},
 			Cardinality: join.Read.Contract.Multiplicity,
+		}
+
+		// The addressing directory is compiled in the same dense coordinates
+		// every other member address is, so a consumer can compare it with the
+		// rule's own candidate relation without reopening a catalog.
+		if addressingPresent {
+			_, addressingCatalog, addressingAxisOrdinal, addressingFailure := resolveAxisMember(axisView, addressingRef.Axis, addressingRef.Member, memberRelation)
+			if addressingFailure.Available() {
+				addressingFailure.Entry = template.ID()
+				return Plan{}, addressingFailure
+			}
+			if _, addressingOK := addressingCatalog.Relation(addressingRef.Member); !addressingOK {
+				return Plan{}, compileFailure(template.ID(), rule.LawProgramShape, schema.DispositionIncomplete)
+			}
+			compiledJoin.AddressingPresent = true
+			compiledJoin.Addressing = RelationAddr{Axis: addressingAxisOrdinal, Member: mustRelationOrdinal(addressingCatalog, addressingRef.Member)}
 		}
 
 		// The declared Parent is authenticated against the relation's own
@@ -1173,52 +1209,60 @@ func mustCarryTransformOrdinal(catalog member.Catalog, key schema.Key) uint32 {
 	return ordinal
 }
 
-// joinAddressedByCandidate is the one candidate-authority law of a join.
+// joinAddressingDirectory is the one candidate-authority law of a join, and
+// the compiled statement of which directory the join's ordinal comes from.
 //
 // A rule resolves one dense candidate and every relation it joins is addressed
 // with that ordinal. Which directory issued the ordinal a join is indexed by
 // is a property of the join: a whole-vector read over a nested member set is
 // indexed by the PARENT's ordinal, because the owner resolves the parent row
-// and enumerates its members from it, and every other read is indexed by the
-// relation's own directory. Either way that directory must be the one the
-// rule's candidate came from, or the two must be declared to enumerate the
-// same subjects.
+// and enumerates its members from it, and every other candidate-addressed read
+// is indexed by the relation's own directory. Either way that directory must
+// be the one the rule's candidate came from, or the two must be declared to
+// enumerate the same subjects.
 //
 // Without this, two axes describing one subject enumerate independently and a
 // join across their orders compiles and resolves against the wrong row. The
 // only thing that refused it was a generated owner having no case to answer
 // with, which is a refusal by absence rather than a law.
-func joinAddressedByCandidate(axisView seal.View, declaration program.Program, catalog member.Catalog, relation member.Relation, form program.ReadForm) bool {
+//
+// The directory is RETURNED rather than discarded once the law holds. A
+// declared correspondence says the two orders enumerate the same subjects, not
+// that they enumerate them in the same positions - the shared address is the
+// occurrence both directories are already addressed by - so a consumer that
+// has to resolve the corresponded row needs to know which directory to resolve
+// it in.
+func joinAddressingDirectory(axisView seal.View, declaration program.Program, catalog member.Catalog, relation member.Relation, form program.ReadForm) (member.RelationRef, bool, bool) {
+	if !program.ReadFormCandidateAddressed(form) {
+		// A selected read is addressed by the selection its own family
+		// resolves, and a closed-denominator read spans the denominator rather
+		// than one candidate's rows, so no directory of this join is indexed by
+		// the rule's ordinal and there is nothing to correspond.
+		return member.RelationRef{}, false, true
+	}
 	addressing := relation
-	switch form {
-	case program.Exact:
-		// An exact read projects the candidate ordinal through the directory
-		// this relation is addressed by.
-	case program.Summary:
+	if form == program.Summary && relation.Nested() {
 		// A whole-vector read enumerates one parent row's members, so the
 		// ordinal it is given is the PARENT's.
-		if !relation.Nested() {
-			break
-		}
 		parent, parentOK := catalog.Relation(relation.Parent.Member)
 		if !parentOK {
-			return false
+			return member.RelationRef{}, false, false
 		}
 		addressing = parent
-	default:
-		// A selected read is addressed by the selection its own family
-		// resolves, not by the rule's candidate ordinal, so no directory of
-		// this join is indexed by it and there is nothing to correspond.
-		return true
 	}
 	if addressing.CandidateProvider == declaration.Candidate {
-		return true
+		// An issued candidate is a Program row, not a relation: the join
+		// borrows the rule's own mounted row and there is no directory to name.
+		if declaration.Candidate.Issued() {
+			return member.RelationRef{}, false, true
+		}
+		return declaration.Candidate.AxisRelation, true, true
 	}
 	// An issued candidate is a Program row, not a relation, so there is no
 	// foreign order for a correspondence to name: a join addressed by another
 	// authority has nothing that could pair the two.
 	if declaration.Candidate.Issued() || !addressing.CandidateProvider.Available() || addressing.CandidateProvider.Issued() {
-		return false
+		return member.RelationRef{}, false, false
 	}
 	// The correspondence belongs to the relation that OWNS the directory being
 	// indexed, which is the one a self-provided authority names, not the row
@@ -1226,16 +1270,16 @@ func joinAddressedByCandidate(axisView seal.View, declaration program.Program, c
 	directory := addressing.CandidateProvider.AxisRelation
 	_, directoryCatalog, _, failure := resolveAxisMember(axisView, directory.Axis, directory.Member, memberRelation)
 	if failure.Available() {
-		return false
+		return member.RelationRef{}, false, false
 	}
 	owner, ownerOK := directoryCatalog.Relation(directory.Member)
 	if !ownerOK {
-		return false
+		return member.RelationRef{}, false, false
 	}
 	for _, correspondence := range owner.Correspondences {
 		if correspondence == declaration.Candidate.AxisRelation {
-			return true
+			return directory, true, true
 		}
 	}
-	return false
+	return member.RelationRef{}, false, false
 }

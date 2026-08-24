@@ -16,6 +16,9 @@ func summaryMemberSetRead() ReadPlan {
 		Relation: ruleplan.RelationAddr{Axis: 0, Member: 1},
 		Key:      ruleplan.ProjectionAddr{Axis: 0, Member: 0},
 		Parent:   ruleplan.RelationAddr{Axis: 0, Member: 2}, ParentPresent: true,
+		// A vector read over a nested member set is indexed by the PARENT's
+		// directory, which is the one the owner resolves the row in.
+		Addressing: ruleplan.RelationAddr{Axis: 0, Member: 2}, AddressingPresent: true,
 		Form: ruleprogram.Summary, PointBound: ruleprogram.PointBound,
 		Contract: ruleplan.ReadContract{
 			Order: ruleprogram.OrderCanonical, Sparse: ruleprogram.SparseExplicit,

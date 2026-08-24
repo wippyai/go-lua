@@ -152,3 +152,23 @@ func cloneJoin(join JoinDecl) JoinDecl {
 	join.Sources = append([]SourceRef(nil), join.Sources...)
 	return join
 }
+
+// ReadFormCandidateAddressed states which read forms are INDEXED BY the rule
+// candidate's ordinal, and therefore name the directory that ordinal has to
+// be resolved in.
+//
+// An exact keyed lookup and a whole-vector read both take one row of a
+// directory and read from it: the exact read projects that row, the vector
+// read enumerates the member set hanging off it. A selected read takes none -
+// its coordinates are the members of a relation that exists only per
+// invocation, resolved by the reading family - and a closed-denominator read
+// spans the whole denominator rather than one candidate's rows. Neither is
+// addressed by the candidate at all, so neither has a directory to name.
+//
+// It is a statement about the form, kept beside ReadFormAddressing because
+// both are answers to "what does this form's normal form require", and asked
+// by the plan compiler and the sealing engine rather than spelled again in
+// either.
+func ReadFormCandidateAddressed(form ReadForm) bool {
+	return form == Exact || form == Summary
+}

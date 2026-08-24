@@ -242,12 +242,25 @@ func DeclareGeneratedRuleSlot(
 				return refuse()
 			}
 		}
+		// The addressing directory is normalized into the same runtime Factor
+		// directory as the candidate it is compared against. A directory that
+		// stayed in catalog coordinates would compare equal to the candidate
+		// only by accident.
+		var normalizedAddressing ruleplan.RelationAddr
+		if join.AddressingPresent {
+			var addressingOK bool
+			normalizedAddressing, addressingOK = generatedRuntimeRelation(factorDirectory, catalog, join.Addressing)
+			if !addressingOK {
+				return refuse()
+			}
+		}
 		readFactors[joinIndex] = readFactor
 		readPlans[joinIndex] = generated.ReadPlan{
 			Input: join.Input, Factor: readFactor.ordinal, Axis: normalizedReadAxis,
 			Sources: join.Sources, Relation: normalizedJoin, Key: normalizedKey,
 			Predicate: normalizedPredicate, PredicatePresent: join.PredicatePresent,
 			Parent: normalizedParent, ParentPresent: join.ParentPresent,
+			Addressing: normalizedAddressing, AddressingPresent: join.AddressingPresent,
 			Form: join.ReadForm, Contract: join.ReadContract, Denominator: join.Denominator,
 			PointBound:  join.PointBound,
 			RowCapacity: uint16(scratch.JoinCount), CellCapacity: uint16(scratch.OutputCount),
@@ -531,6 +544,13 @@ func generatedPlanMemberAddressesInRange(
 		if join.ParentPresent && (uint64(join.Parent.Axis) >= uint64(catalog.AxisCount()) || join.Parent.Member == ^uint32(0) || join.Parent.Axis != join.Relation.Axis) {
 			return false
 		}
+		// An addressing directory is deliberately NOT held to the read
+		// relation's own axis: a corresponded directory belongs to the axis
+		// that issued the candidate, which is the foreign one whenever the
+		// correspondence is doing any work.
+		if join.AddressingPresent && (uint64(join.Addressing.Axis) >= uint64(catalog.AxisCount()) || join.Addressing.Member == ^uint32(0)) {
+			return false
+		}
 	}
 	return true
 }
@@ -548,6 +568,10 @@ func generatedPlanJoinShape(compiled ruleplan.Plan, joinIndex int, join ruleplan
 		return false
 	}
 	if !generated.ReadFormAddressShape(join.ReadForm, join.Predicate, join.PredicatePresent, join.Parent, join.ParentPresent) {
+		return false
+	}
+	_, joinIssuedCandidate := compiled.IssuedCandidate()
+	if !generated.ReadAddressingShape(join.ReadForm, joinIssuedCandidate, join.Addressing, join.AddressingPresent) {
 		return false
 	}
 	if (!join.Denominator.Present && join.Denominator.Ordinal != 0) ||

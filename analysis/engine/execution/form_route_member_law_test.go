@@ -245,6 +245,7 @@ func selectedOnlyDescriptor(t testing.TB) generated.CompiledRule {
 			{
 				Input: 0, Factor: 1, Axis: 0,
 				Relation: ruleplan.RelationAddr{Axis: 0, Member: 0}, Key: ruleplan.ProjectionAddr{Axis: 0, Member: 0},
+				Addressing: ruleplan.RelationAddr{Axis: 0, Member: 0}, AddressingPresent: true,
 				Form:        ruleprogram.Exact,
 				PointBound:  ruleprogram.PointBound,
 				Contract:    ruleplan.ReadContract{Order: ruleprogram.OrderCanonical, Sparse: ruleprogram.SparseExplicit, OnOpaque: ruleprogram.OnOpaqueRefuse, Multiplicity: ruleprogram.MultiplicityOne},

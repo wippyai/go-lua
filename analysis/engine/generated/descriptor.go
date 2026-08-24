@@ -35,11 +35,27 @@ type ReadPlan struct {
 	// requires, and cannot ask without it.
 	Parent        ruleplan.RelationAddr
 	ParentPresent bool
-	Form          ruleprogram.ReadForm
-	Contract         ruleplan.ReadContract
-	Denominator      ruleplan.DenominatorAddr
-	RowCapacity      uint16
-	CellCapacity     uint16
+	// Addressing is the sealed directory whose candidate ordinal indexes this
+	// read: the relation that ISSUES the rows the read resolves against. It is
+	// the rule's own candidate relation when the read borrows that directory,
+	// and a foreign one the plan proved corresponds to it otherwise.
+	//
+	// AddressingPresent is a statement, not a nil guard. A selected read is
+	// addressed by the selection its own family resolves and an issued
+	// candidate is a Program row with no directory, so neither names one; every
+	// candidate-addressed read of an axis-addressed rule does.
+	//
+	// It is carried because two directories addressed by one occurrence
+	// enumerate their rows independently: the ordinal the rule resolved in its
+	// own directory means nothing in a foreign one, and this is the address at
+	// which it must be resolved again.
+	Addressing        ruleplan.RelationAddr
+	AddressingPresent bool
+	Form              ruleprogram.ReadForm
+	Contract          ruleplan.ReadContract
+	Denominator       ruleplan.DenominatorAddr
+	RowCapacity       uint16
+	CellCapacity      uint16
 	// PointBound is the authored disposition copied from the sealed Plan
 	// Join: whether this Input slot's own predecessor topology point is
 	// transported into the rule, or the read resolves through its Factor's
@@ -169,7 +185,7 @@ func NewPlanCompiledRule(spec CompiledRuleSpec) (CompiledRule, bool) {
 	readCopy := append([]ReadPlan(nil), reads...)
 	outputCopy := append([]OutputPlan(nil), outputs...)
 	for index := range readCopy {
-		if !normalizeReadPlan(&readCopy[index]) {
+		if !normalizeReadPlan(&readCopy[index], spec.IssuedCandidate) {
 			return CompiledRule{}, false
 		}
 	}
@@ -191,7 +207,7 @@ func NewPlanCompiledRule(spec CompiledRuleSpec) (CompiledRule, bool) {
 		return CompiledRule{}, false
 	}
 	for _, read := range readCopy {
-		if !validReadPlan(read, spec.InputCount, spec.AxisCount) {
+		if !validReadPlan(read, spec.InputCount, spec.AxisCount, spec.IssuedCandidate) {
 			return CompiledRule{}, false
 		}
 	}
@@ -266,11 +282,37 @@ func ReadFormAddressShape(form ruleprogram.ReadForm, predicate ruleplan.Projecti
 	return ruleprogram.ReadFormAddressing(form, predicatePresent, parentPresent)
 }
 
+// ReadAddressingShape proves one sealed read's addressing directory against
+// the declaration law that decided it.
+//
+// Which reads are indexed by the rule candidate's ordinal is not this
+// package's to say - ruleprogram.ReadFormCandidateAddressed is the one
+// statement of that - and whether the rule has a directory at all is the
+// candidate arm's. Together they settle presence exactly, so an addressing
+// directory is neither optional metadata nor derived from whether the value
+// happens to be zero: the zero relation address is a real address, and a read
+// that names none must carry it zero.
+//
+// It is exported because the plan-shape fence in the schema engine holds
+// sealed reads to the same proof.
+func ReadAddressingShape(form ruleprogram.ReadForm, candidateIssued bool, addressing ruleplan.RelationAddr, addressingPresent bool) bool {
+	if addressingPresent != (ruleprogram.ReadFormCandidateAddressed(form) && !candidateIssued) {
+		return false
+	}
+	if !addressingPresent {
+		return addressing == ruleplan.RelationAddr{}
+	}
+	return validRelationAddr(addressing)
+}
+
 // normalizeReadPlan validates the complete sealed read metadata. There is no
 // legacy exact default here: a descriptor without its form or contract is
 // incomplete and is refused at the seal boundary.
-func normalizeReadPlan(read *ReadPlan) bool {
+func normalizeReadPlan(read *ReadPlan, candidateIssued bool) bool {
 	if read == nil {
+		return false
+	}
+	if !ReadAddressingShape(read.Form, candidateIssued, read.Addressing, read.AddressingPresent) {
 		return false
 	}
 	contract := read.Contract
@@ -380,14 +422,17 @@ func validCarryPlan(carry CarryPlan, inputCount, axisCount int, outputFactor uin
 	}
 }
 
-func validReadPlan(read ReadPlan, inputCount, axisCount int) bool {
+func validReadPlan(read ReadPlan, inputCount, axisCount int, candidateIssued bool) bool {
 	if inputCount < 0 || axisCount <= 0 || read.Input >= uint32(inputCount) ||
 		read.Factor == ^uint32(0) || read.Axis == ^uint32(0) ||
 		uint64(read.Factor) >= uint64(axisCount) || uint64(read.Axis) >= uint64(axisCount) ||
 		read.RowCapacity == 0 || read.CellCapacity == 0 ||
 		!validRelationAddr(read.Relation) || !validProjectionAddr(read.Key) ||
 		read.Relation.Axis != read.Key.Axis ||
-		!addressAxesInRange(axisCount, read.Relation, read.Key, read.Predicate, read.Parent) {
+		!addressAxesInRange(axisCount, read.Relation, read.Key, read.Predicate, read.Parent, read.Addressing) {
+		return false
+	}
+	if !ReadAddressingShape(read.Form, candidateIssued, read.Addressing, read.AddressingPresent) {
 		return false
 	}
 	if !read.Contract.Order.Available() || !read.Contract.Sparse.Available() || !read.Contract.OnOpaque.Available() || !read.Contract.Multiplicity.Available() {
@@ -492,7 +537,7 @@ func (rule CompiledRule) Available() bool {
 		return false
 	}
 	for _, read := range rule.reads {
-		if !validReadPlan(read, int(rule.inputCount), int(rule.axisCount)) {
+		if !validReadPlan(read, int(rule.inputCount), int(rule.axisCount), rule.issuedCandidate) {
 			return false
 		}
 	}
@@ -711,6 +756,17 @@ func (rule CompiledRule) ReadParentAt(index int) (ruleplan.RelationAddr, bool, b
 		return ruleplan.RelationAddr{}, false, false
 	}
 	return read.Parent, read.ParentPresent, true
+}
+
+// ReadAddressingAt returns the sealed addressing directory and its presence
+// for one ordered join: the relation whose candidate ordinal indexes this
+// read. A read the rule's candidate ordinal does not index names none.
+func (rule CompiledRule) ReadAddressingAt(index int) (ruleplan.RelationAddr, bool, bool) {
+	read, ok := rule.ReadAt(index)
+	if !ok {
+		return ruleplan.RelationAddr{}, false, false
+	}
+	return read.Addressing, read.AddressingPresent, true
 }
 
 // Reducer returns the normalized reducer address.

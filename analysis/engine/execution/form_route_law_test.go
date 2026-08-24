@@ -208,12 +208,14 @@ func routedDescriptor(t testing.TB, selectedFeeds int) generated.CompiledRule {
 	reads := make([]generated.ReadPlan, 0, selectedFeeds+2)
 	reads = append(reads, generated.ReadPlan{
 		Input: 0, Factor: 1, Axis: 0,
-		Relation:    ruleplan.RelationAddr{Axis: 0, Member: 0},
-		Key:         ruleplan.ProjectionAddr{Axis: 0, Member: 0},
-		Form:        ruleprogram.Exact,
-		PointBound:  ruleprogram.PointBound,
-		Contract:    ruleplan.ReadContract{Order: ruleprogram.OrderCanonical, Sparse: ruleprogram.SparseExplicit, OnOpaque: ruleprogram.OnOpaqueRefuse, Multiplicity: ruleprogram.MultiplicityOne},
-		RowCapacity: 4, CellCapacity: 4,
+		Relation:          ruleplan.RelationAddr{Axis: 0, Member: 0},
+		Key:               ruleplan.ProjectionAddr{Axis: 0, Member: 0},
+		Addressing:        ruleplan.RelationAddr{Axis: 0, Member: 0},
+		AddressingPresent: true,
+		Form:              ruleprogram.Exact,
+		PointBound:        ruleprogram.PointBound,
+		Contract:          ruleplan.ReadContract{Order: ruleprogram.OrderCanonical, Sparse: ruleprogram.SparseExplicit, OnOpaque: ruleprogram.OnOpaqueRefuse, Multiplicity: ruleprogram.MultiplicityOne},
+		RowCapacity:       4, CellCapacity: 4,
 	})
 	for feed := 0; feed < selectedFeeds; feed++ {
 		reads = append(reads, generated.ReadPlan{

@@ -15,8 +15,8 @@ func TestGeneratedRelationOwnerCompletenessWalksEveryRead(t *testing.T) {
 		Candidate: ruleplan.RelationAddr{Axis: 0, Member: 1},
 		Reducer:   ruleplan.ReducerAddr{Axis: 0, Member: 1},
 		Reads: []generated.ReadPlan{
-			{Input: 0, Factor: 0, Axis: 0, Relation: ruleplan.RelationAddr{Axis: 0, Member: 1}, Key: ruleplan.ProjectionAddr{Axis: 0, Member: 1}, Form: ruleprogram.Exact, PointBound: ruleprogram.PointBound, Contract: contract, RowCapacity: 1, CellCapacity: 1},
-			{Input: 0, Factor: 0, Axis: 0, Relation: ruleplan.RelationAddr{Axis: 0, Member: 2}, Key: ruleplan.ProjectionAddr{Axis: 0, Member: 2}, Form: ruleprogram.Exact, PointBound: ruleprogram.PointBound, Contract: contract, RowCapacity: 1, CellCapacity: 1},
+			{Input: 0, Factor: 0, Axis: 0, Relation: ruleplan.RelationAddr{Axis: 0, Member: 1}, Key: ruleplan.ProjectionAddr{Axis: 0, Member: 1}, Addressing: ruleplan.RelationAddr{Axis: 0, Member: 1}, AddressingPresent: true, Form: ruleprogram.Exact, PointBound: ruleprogram.PointBound, Contract: contract, RowCapacity: 1, CellCapacity: 1},
+			{Input: 0, Factor: 0, Axis: 0, Relation: ruleplan.RelationAddr{Axis: 0, Member: 2}, Key: ruleplan.ProjectionAddr{Axis: 0, Member: 2}, Addressing: ruleplan.RelationAddr{Axis: 0, Member: 1}, AddressingPresent: true, Form: ruleprogram.Exact, PointBound: ruleprogram.PointBound, Contract: contract, RowCapacity: 1, CellCapacity: 1},
 		},
 		Outputs: []generated.OutputPlan{{Factor: 0, Axis: 0, Address: ruleplan.OutputAddr{Axis: 0, Frame: 0}, Destination: ruleplan.ProjectionAddr{Axis: 0, Member: 3}, Mode: ruleprogram.ModeExact, Exact: true, Strong: true}},
 	})
@@ -45,8 +45,9 @@ func newExactIdentityDescriptor(rule uint32, inputCount, readInput int, readFact
 		Reducer:   ruleplan.ReducerAddr{Axis: 0, Member: 0},
 		Reads: []generated.ReadPlan{{
 			Input: uint32(readInput), Factor: readFactor, Axis: 0,
-			Relation:    ruleplan.RelationAddr{Axis: 0, Member: 0},
-			Key:         ruleplan.ProjectionAddr{Axis: 0, Member: 0},
+			Relation:   ruleplan.RelationAddr{Axis: 0, Member: 0},
+			Key:        ruleplan.ProjectionAddr{Axis: 0, Member: 0},
+			Addressing: ruleplan.RelationAddr{Axis: 0, Member: 0}, AddressingPresent: true,
 			Form:        ruleprogram.Exact,
 			PointBound:  ruleprogram.PointBound,
 			Contract:    ruleplan.ReadContract{Order: ruleprogram.OrderCanonical, Sparse: ruleprogram.SparseExplicit, OnOpaque: ruleprogram.OnOpaqueRefuse, Multiplicity: ruleprogram.MultiplicityOne},

@@ -830,6 +830,7 @@ func TestGeneratedRuleDescriptorRefusesForeignOrOutOfRangeMemberAddresses(t *tes
 		Reads: []generated.ReadPlan{{
 			Input: join.Input, Factor: join.ReadAxis, Axis: join.ReadAxis,
 			Relation: join.Relation, Key: join.Key,
+			Addressing: join.Addressing, AddressingPresent: join.AddressingPresent,
 			Form: join.ReadForm, Contract: join.ReadContract, Denominator: join.Denominator,
 			PointBound:  join.PointBound,
 			RowCapacity: uint16(scratch.JoinCount), CellCapacity: uint16(scratch.OutputCount),

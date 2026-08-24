@@ -163,3 +163,56 @@ func TestACorrespondenceToAnotherOrderDoesNotAdmitTheJoin(t *testing.T) {
 		t.Fatal("a correspondence to a different order admitted a join the rule's candidate does not address")
 	}
 }
+
+// TestAnAdmittedCorrespondenceCompilesTheForeignDirectoryAsTheJoinAddressing
+// is the resolution half of the same law.
+//
+// A correspondence says two orders enumerate the same subjects. It does NOT
+// say they enumerate them in the same positions - the shared address is the
+// occurrence both directories are addressed by, and each owner numbers its own
+// rows. A plan that admitted the join and then dropped which directory it is
+// indexed by would leave every consumer holding an ordinal of the rule's own
+// order with nothing to say where that row lives, which is the defect the
+// admission exists to prevent.
+func TestAnAdmittedCorrespondenceCompilesTheForeignDirectoryAsTheJoinAddressing(t *testing.T) {
+	fixture := configureCorrespondenceFixture(t, true)
+	compiled, failure := Compile(fixture.seal(t))
+	if failure.Available() {
+		t.Fatalf("a declared correspondence did not admit the join: contributor=%d law=%d disposition=%s", failure.Contributor, failure.Law, failure.Disposition)
+	}
+	planned, plannedOK := compiled.At(0)
+	if !plannedOK || planned.JoinCount() != 1 {
+		t.Fatalf("compiled plan = ok %t joins %d", plannedOK, planned.JoinCount())
+	}
+	join, joinOK := planned.JoinAt(0)
+	if !joinOK || !join.AddressingPresent {
+		t.Fatalf("admitted join carries no addressing directory: %+v/%t", join, joinOK)
+	}
+	if join.Addressing != join.Relation {
+		t.Fatalf("addressing directory = %+v, want the joined relation's own order %+v", join.Addressing, join.Relation)
+	}
+	if join.Addressing == planned.Candidate() {
+		t.Fatal("a corresponded join was compiled as though it were indexed by the rule candidate's own directory")
+	}
+}
+
+// TestAJoinBorrowingTheCandidateDirectoryIsAddressedByTheCandidateItself keeps
+// the other arm exact. A relation whose candidate provider IS the rule's
+// candidate is indexed by the ordinal the rule already resolved; naming a
+// separate directory for it would ask a consumer to resolve the same row
+// twice.
+func TestAJoinBorrowingTheCandidateDirectoryIsAddressedByTheCandidateItself(t *testing.T) {
+	fixture := newPlanFixture(t)
+	compiled, failure := Compile(fixture.seal(t))
+	if failure.Available() {
+		t.Fatalf("baseline plan refused: contributor=%d law=%d disposition=%s", failure.Contributor, failure.Law, failure.Disposition)
+	}
+	planned, plannedOK := compiled.At(0)
+	if !plannedOK || planned.JoinCount() == 0 {
+		t.Fatalf("compiled plan = ok %t joins %d", plannedOK, planned.JoinCount())
+	}
+	join, joinOK := planned.JoinAt(0)
+	if !joinOK || !join.AddressingPresent || join.Addressing != planned.Candidate() {
+		t.Fatalf("borrowed-directory join addressing = %+v present=%t, want the candidate %+v", join.Addressing, join.AddressingPresent, planned.Candidate())
+	}
+}
