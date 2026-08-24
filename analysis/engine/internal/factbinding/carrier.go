@@ -1919,7 +1919,13 @@ func (work *bindingWork[K, V]) extendGroups(unions *support.Work, within support
 	if uint64(len(work.partials)) > dbgFactBinding.SummaryMaxPartials {
 		dbgFactBinding.SummaryMaxPartials = uint64(len(work.partials))
 	}
-	if work.constantOverRegion(within) {
+	// A key constant over the observed region refines no prefix. Every partial
+	// region is a subset of that region - the seed is a partition of it and
+	// each later extension intersects - so the conjunction of a partial with
+	// the single covering piece is that same partial. The extension is then a
+	// pure sequence step and the whole key costs no Boolean work.
+	constant := work.constantOverRegion(within)
+	if constant {
 		dbgFactBinding.SummaryConstantKeys++
 	}
 	work.nextPartials = work.nextPartials[:0]
@@ -1933,10 +1939,14 @@ func (work *bindingWork[K, V]) extendGroups(unions *support.Work, within support
 				return false
 			}
 			dbgFactBinding.SummaryPairs++
-			dbgFactBinding.SummaryConjunctions++
-			region, ok := unions.And(prefix.region, piece.region)
-			if !ok {
-				return false
+			region := prefix.region
+			if !constant {
+				dbgFactBinding.SummaryConjunctions++
+				intersected, ok := unions.And(prefix.region, piece.region)
+				if !ok {
+					return false
+				}
+				region = intersected
 			}
 			view, ok := unions.Decompose(region)
 			if !ok {
