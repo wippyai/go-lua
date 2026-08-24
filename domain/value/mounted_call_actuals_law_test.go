@@ -185,7 +185,13 @@ func TestEveryMountedCallActualsParentPublishesCallsOwnCoordinate(t *testing.T) 
 		callee, calleeOK := parent.CalleeCoordinate()
 		expected, expectedOK := values.CoordinateForID(calleeID)
 		if !calleeIDOK || !calleeOK || !expectedOK || callee != expected {
-			t.Fatalf("parent %d callee coordinate = %#v/%t, want mounted semantic %#v/%t", index, callee, calleeOK, expected, expectedOK)
+			t.Fatalf("parent %d callee coordinate = %#v/%t, want portable Value coordinate %#v/%t", index, callee, calleeOK, expected, expectedOK)
+		}
+		// CalleeValueID is a Link-owned Boundary Value identity. Treating it as
+		// an artifact-semantic identity would cross identity domains and used to
+		// reject every valid parent during this cut.
+		if _, wrongDomain := values.CoordinateForMountedSemantic(module, calleeID); wrongDomain {
+			t.Fatalf("parent %d Boundary callee identity was admitted as artifact semantic identity", index)
 		}
 	}
 }
