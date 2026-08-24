@@ -1,0 +1,113 @@
+package familyroster_test
+
+import (
+	"os"
+	"path/filepath"
+	"strings"
+	"testing"
+
+	"github.com/wippyai/go-lua/analysis/schema"
+	"github.com/wippyai/go-lua/analysis/schema/rule/emit"
+	"github.com/wippyai/go-lua/domain/familyroster"
+	"github.com/wippyai/go-lua/domain/memberroster"
+)
+
+// TestEveryEmittedFamilyIsTheOneItsDeclarationDerives is the freshness law and
+// the whole enforcement of the executor generator.
+//
+// A rule's execution family is a function of its Program declaration and the
+// axis member vocabulary it names. This law re-derives every rostered family
+// and holds the checked-in file to it byte for byte, so a declaration that
+// moves without its family being regenerated is a build failure rather than a
+// silent disagreement between what a rule declares and what it executes.
+func TestEveryEmittedFamilyIsTheOneItsDeclarationDerives(t *testing.T) {
+	root := moduleRoot(t)
+	roster, rosterOK := memberroster.Composition()
+	if !rosterOK {
+		t.Fatal("member definition roster is not admissible")
+	}
+	families := familyroster.Families()
+	if len(families) == 0 {
+		t.Fatal("the emitted family roster is empty")
+	}
+	for _, family := range families {
+		path := filepath.Join(root, family.Directory, familyroster.GeneratedFileName)
+		if err := emit.Generate(family.Target, roster, path, true); err != nil {
+			t.Errorf("%s: %v", string(family.Key()), err)
+		}
+	}
+}
+
+// TestARosteredPackageAuthorsNoSecondFamily states the cutover's own
+// irreversibility. Once a rule's family is emitted, the package holds exactly
+// one: an authored installer beside the generated one is a second authority
+// over the same rule's execution, and the two would drift the moment the
+// declaration moved.
+//
+// The bind arm is not a second family. It resolves the axis schemas the
+// emitted installer is sealed against from its composition's authorities,
+// which is the one thing about a family that is not a function of the
+// declaration, and it constructs no rows of its own.
+func TestARosteredPackageAuthorsNoSecondFamily(t *testing.T) {
+	root := moduleRoot(t)
+	for _, family := range familyroster.Families() {
+		directory := filepath.Join(root, family.Directory)
+		entries, err := os.ReadDir(directory)
+		if err != nil {
+			t.Fatalf("%s: %v", family.Directory, err)
+		}
+		for _, entry := range entries {
+			name := entry.Name()
+			if entry.IsDir() || !strings.HasSuffix(name, ".go") || strings.HasSuffix(name, "_test.go") ||
+				name == familyroster.GeneratedFileName {
+				continue
+			}
+			source, readErr := os.ReadFile(filepath.Join(directory, name))
+			if readErr != nil {
+				t.Fatalf("%s/%s: %v", family.Directory, name, readErr)
+			}
+			if strings.Contains(string(source), "InstallRuleFamily") {
+				t.Errorf("%s/%s authors a family beside the one %s declares", family.Directory, name, string(family.Key()))
+			}
+		}
+	}
+}
+
+// TestOneRuleDeclaresOneEmittedFamily keeps the roster a registry rather than
+// a list. Two rows claiming one rule key, or one directory, would put two
+// generated files in disagreement over the same declaration.
+func TestOneRuleDeclaresOneEmittedFamily(t *testing.T) {
+	keys := map[schema.Key]struct{}{}
+	directories := map[string]struct{}{}
+	for _, family := range familyroster.Families() {
+		if !family.Key().Available() {
+			t.Fatalf("a rostered family declares no rule key: %s", family.Directory)
+		}
+		if _, duplicate := keys[family.Key()]; duplicate {
+			t.Fatalf("two rostered families claim rule %s", string(family.Key()))
+		}
+		keys[family.Key()] = struct{}{}
+		if _, duplicate := directories[family.Directory]; duplicate {
+			t.Fatalf("two rostered families are generated into %s", family.Directory)
+		}
+		directories[family.Directory] = struct{}{}
+	}
+}
+
+func moduleRoot(t *testing.T) string {
+	t.Helper()
+	directory, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for {
+		if _, statErr := os.Stat(filepath.Join(directory, "go.mod")); statErr == nil {
+			return directory
+		}
+		parent := filepath.Dir(directory)
+		if parent == directory {
+			t.Fatal("module root was not found")
+		}
+		directory = parent
+	}
+}

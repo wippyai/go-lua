@@ -1,6 +1,7 @@
 package empty
 
 import (
+	"github.com/wippyai/go-lua/analysis/engine"
 	"github.com/wippyai/go-lua/analysis/schema"
 	"github.com/wippyai/go-lua/analysis/schema/axis"
 	"github.com/wippyai/go-lua/analysis/schema/axis/member"
@@ -73,6 +74,29 @@ func RuleEntry() rule.Spec {
 			},
 		},
 	}
+}
+
+// InstallFamily is the generated lane's bind arm for this rule. It resolves
+// the one axis schema the emitted installer is sealed against, and claims the
+// rule's sealed ordinal against the Factor it writes.
+//
+// This is the whole of what a family cutover still authors: how an authority
+// record is reached is the composition's knowledge and not the rule's, so it
+// cannot be a function of the declaration the family is emitted from.
+func InstallFamily[A ruleAuthorities](binding *engine.SchemaBinding, slot *engine.GeneratedRuleSlot, authorities A) bool {
+	owner := authorities.HeapAuthority()
+	if owner == nil || !owner.Schema().Valid() {
+		return false
+	}
+	ordinal, ordinalOK := slot.Ordinal()
+	if !ordinalOK || ordinal > uint64(^uint32(0)) {
+		return false
+	}
+	installer, installerOK := NewFamilyInstaller(owner.Schema(), uint32(ordinal))
+	if !installerOK {
+		return false
+	}
+	return engine.BindRuleFamily[heapdomain.DenseCoordinate](binding, slot, owner.FactorRef(), installer)
 }
 
 // StructureSpecs is this package's contribution to the analyzer's semantic

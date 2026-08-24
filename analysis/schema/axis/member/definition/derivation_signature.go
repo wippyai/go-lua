@@ -32,11 +32,12 @@ type DerivedParam struct {
 	Slice   bool
 }
 
-// axisSchemaType is the Go type one axis's own schema is spelled as: the
+// AxisSchemaType is the Go type one axis's own schema is spelled as: the
 // receiver its declared key normalizer is a method on. An axis states that
 // type once, where it says how a key becomes a dense coordinate, so a
-// derivation naming the axis names the same type its owner does.
-func axisSchemaType(source Definition) (GoType, bool) {
+// derivation naming the axis - and a family emitted for a rule that reaches
+// it - names the same type its owner does.
+func AxisSchemaType(source Definition) (GoType, bool) {
 	receiver := source.Binding.Key.Normalizer.Receiver
 	if !receiver.Available() {
 		return GoType{}, false
@@ -74,7 +75,7 @@ func (roster Roster) DerivationSignature(axis schema.Key, relation Relation, cel
 		if !staticOK {
 			return DerivationShape{}, false
 		}
-		schemaType, schemaTypeOK := axisSchemaType(staticSource)
+		schemaType, schemaTypeOK := AxisSchemaType(staticSource)
 		if !schemaTypeOK {
 			return DerivationShape{}, false
 		}
