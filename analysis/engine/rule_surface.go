@@ -191,6 +191,17 @@ func summaryVectorDigestSource(keys summaryKeySource) [32]byte {
 	return digest
 }
 
+// authenticSummaryVector proves that a declared summary surface carries the
+// digest of the key vector handed with it. The digest is minted once, into the
+// surface, when the read is declared; a later phase authenticates the pair
+// rather than deriving a second identity over its own container.
+func authenticSummaryVector(surface equation.Surface, keys []uint64) bool {
+	if surface.Form != equation.SurfaceReadSummary || surface.Content == ([32]byte{}) {
+		return false
+	}
+	return surface.Content == summaryVectorDigestSource(summaryKeyVector{keys: keys, valid: true})
+}
+
 func sameSummaryKeySource(left []uint64, right summaryKeySource) bool {
 	if right == nil || right.SummaryKeyCount() != len(left) {
 		return false

@@ -148,7 +148,8 @@ func (bound *boundFactor[K, V]) readUnit(surface equation.Surface) (carrier.Unit
 
 // summaryReadAddress consumes the already compiled Rule read row. The Factor
 // owner supplies only the closed summary unit; no read shape or form walk is
-// repeated at member bind time.
+// repeated at member bind time. The summary identity is the one the surface
+// was declared with, authenticated here against the Factor unit's keys.
 func (bound *boundFactor[K, V]) summaryReadAddress(surface equation.Surface, row *schemaRuleReadRow) (schemaFactorBinding, uint64, []uint64, [32]byte, bool) {
 	if bound == nil || bound.implementation == nil || !factorRowAvailable(bound.implementation.row) || row == nil || row.kind != composition.ReadSummary || !row.semantic.Available() || row.factor != bound.implementation.row.schemaFactorSemanticKey() {
 		return nil, 0, nil, [32]byte{}, false
@@ -161,11 +162,10 @@ func (bound *boundFactor[K, V]) summaryReadAddress(surface equation.Surface, row
 	if row.summaryForm == nil || row.summaryForm.schemaBindingSchema() != factorRow.schemaFactorSchema() {
 		return nil, 0, nil, [32]byte{}, false
 	}
-	digest := summaryVectorDigest(unit.summaryKeys)
-	if digest == ([32]byte{}) {
+	if !authenticSummaryVector(surface, unit.summaryKeys) {
 		return nil, 0, nil, [32]byte{}, false
 	}
-	return factorRow, row.summaryOrdinal, unit.summaryKeys, digest, true
+	return factorRow, row.summaryOrdinal, unit.summaryKeys, surface.Content, true
 }
 
 // stagedUnit resolves only a Factor-issued exact Ref through the predeclared

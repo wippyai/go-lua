@@ -2,8 +2,6 @@ package engine
 
 import (
 	"sync/atomic"
-
-	"github.com/wippyai/go-lua/internal/canonical"
 )
 
 // Measure is a key-aware, well-founded transition witness for a Factor's
@@ -42,29 +40,6 @@ const (
 	summaryVectorDigestDomain         = "analysis/engine/summary-vector"
 	summaryVectorDigestVersion uint64 = 2
 )
-
-// summaryVectorDigest is the immutable identity digest for a canonical key
-// vector. Its preimage is framed under its own domain and records the key
-// width and the vector length ahead of the keys, so a vector of a different
-// key type, of a different length, or from another identity space can never
-// reach the same digest.
-func summaryVectorDigest[K ~uint32 | ~uint64](keys []K) [32]byte {
-	digest, ok := framedDigest(summaryVectorDigestDomain, summaryVectorDigestVersion, func(writer *canonical.DigestWriter) bool {
-		if writer.Uint(summaryKeyWidth[K]()) != nil || writer.Count(uint64(len(keys))) != nil {
-			return false
-		}
-		for _, key := range keys {
-			if writer.Uint(uint64(key)) != nil {
-				return false
-			}
-		}
-		return true
-	})
-	if !ok {
-		return [32]byte{}
-	}
-	return digest
-}
 
 // summaryKeyWidth reports the bit width of the vector's key type. It reads the
 // width from the type itself, so no caller can present a narrow vector as a

@@ -7,6 +7,7 @@ import (
 
 	"github.com/wippyai/go-lua/analysis/engine/internal/composition"
 	"github.com/wippyai/go-lua/analysis/identity"
+	"github.com/wippyai/go-lua/internal/canonical"
 )
 
 func framingLawContentID(seed byte) identity.ContentID {
@@ -30,15 +31,39 @@ func framingLawCapability(t *testing.T, kind ruleCapabilityKind, ordinal uint64,
 	return capability
 }
 
+// summaryVectorDigestAtWidth rebuilds the summary vector preimage with a
+// caller-chosen key width. The engine derives the width from the key type, so
+// this spelling exists only to prove the width participates in the digest.
+func summaryVectorDigestAtWidth(width uint64, keys []uint64) [32]byte {
+	digest, ok := framedDigest(summaryVectorDigestDomain, summaryVectorDigestVersion, func(writer *canonical.DigestWriter) bool {
+		if writer.Uint(width) != nil || writer.Count(uint64(len(keys))) != nil {
+			return false
+		}
+		for _, key := range keys {
+			if writer.Uint(key) != nil {
+				return false
+			}
+		}
+		return true
+	})
+	if !ok {
+		return [32]byte{}
+	}
+	return digest
+}
+
 // TestSummaryVectorDigestSeparatesKeyWidthAndDomain proves the summary key
 // vector reaches its digest under its own domain and with its key width
 // recorded: a narrow vector never digests as the wide vector spelling the same
 // values, and the digest is not the bare concatenation of the keys.
 func TestSummaryVectorDigestSeparatesKeyWidthAndDomain(t *testing.T) {
-	narrow := summaryVectorDigest([]uint32{1, 2, 3})
-	wide := summaryVectorDigest([]uint64{1, 2, 3})
+	wide := summaryVectorDigestSource(newSummaryKeyVector([]uint64{1, 2, 3}))
+	narrow := summaryVectorDigestAtWidth(32, []uint64{1, 2, 3})
 	if narrow == ([32]byte{}) || wide == ([32]byte{}) {
 		t.Fatal("summary vector digest is unavailable")
+	}
+	if wide != summaryVectorDigestAtWidth(64, []uint64{1, 2, 3}) {
+		t.Fatal("the engine digest does not record the key width its type declares")
 	}
 	if narrow == wide {
 		t.Fatal("a uint32 key vector digests as the uint64 vector spelling the same keys")
@@ -56,7 +81,7 @@ func TestSummaryVectorDigestSeparatesKeyWidthAndDomain(t *testing.T) {
 	if wide == concatenated {
 		t.Fatal("summary vector digest is the bare key concatenation and carries no domain")
 	}
-	if summaryVectorDigest([]uint64{1, 2}) == summaryVectorDigest([]uint64{1, 2, 0}) {
+	if summaryVectorDigestSource(newSummaryKeyVector([]uint64{1, 2})) == summaryVectorDigestSource(newSummaryKeyVector([]uint64{1, 2, 0})) {
 		t.Fatal("summary vector length does not participate in its digest")
 	}
 }
