@@ -6,6 +6,17 @@ import (
 	"strings"
 )
 
+// packagePattern turns a bare import path like "domain/x/y" into the
+// directory-relative pattern "./domain/x/y/..." that the go tool resolves
+// against the current directory rather than against GOPATH-style import
+// path matching, which a bare path without a leading "./" fails.
+func packagePattern(pkg string) string {
+	if strings.HasPrefix(pkg, "./") || strings.HasPrefix(pkg, "/") {
+		return pkg + "/..."
+	}
+	return "./" + pkg + "/..."
+}
+
 // firstLines returns the first n lines of s, joined back with newlines.
 func firstLines(s string, n int) string {
 	lines := strings.Split(strings.TrimRight(s, "\n"), "\n")
@@ -34,7 +45,7 @@ func RunBuild(clonePath string) Result {
 
 // RunVet runs `go vet <pkg>/...` in clonePath.
 func RunVet(clonePath, pkg string) Result {
-	target := pkg + "/..."
+	target := packagePattern(pkg)
 	cmd := exec.Command("go", "vet", target)
 	cmd.Dir = clonePath
 	out, err := cmd.CombinedOutput()

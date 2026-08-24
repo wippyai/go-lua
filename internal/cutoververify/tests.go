@@ -10,7 +10,7 @@ import (
 // bounded memory/CPU envelope, since this is a test process rather than a
 // build.
 func RunTargetedTests(clonePath, pkg string) Result {
-	target := pkg + "/..."
+	target := packagePattern(pkg)
 	cmd := exec.Command("go", "test", "-count=1", target)
 	cmd.Dir = clonePath
 	cmd.Env = append(os.Environ(), "GOMEMLIMIT=2GiB", "GOMAXPROCS=4")
