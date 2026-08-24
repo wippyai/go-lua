@@ -48,11 +48,19 @@ func TestCarryTransformRowsNameDirectCandidateMethods(t *testing.T) {
 func TestMountedCallGeometryIsDeclaredOnceByValue(t *testing.T) {
 	source := StorageTransfer()
 	relations := make(map[string]definition.Relation, len(source.Relations))
+	relationKeys := make(map[string]string, len(source.Relations))
 	for _, relation := range source.Relations {
 		if strings.Contains(string(relation.Key), "formal-freeze") {
 			t.Fatalf("Value relation %q is named for a consumer", relation.Key)
 		}
+		if _, duplicate := relations[relation.Name]; duplicate {
+			t.Fatalf("duplicate Value relation name %q", relation.Name)
+		}
+		if previous, duplicate := relationKeys[string(relation.Key)]; duplicate {
+			t.Fatalf("Value relation key %q names both %s and %s", relation.Key, previous, relation.Name)
+		}
 		relations[relation.Name] = relation
+		relationKeys[string(relation.Key)] = relation.Name
 	}
 	parents, parentsOK := relations["MountedCallParents"]
 	members, membersOK := relations["MountedCallActualMembers"]
@@ -61,11 +69,18 @@ func TestMountedCallGeometryIsDeclaredOnceByValue(t *testing.T) {
 		Member: "call/mounted-call/candidates",
 	}
 	if !parentsOK || parents.Key != "value/mounted-call/parents" || parents.Subject != "MountedCallActualsCarrier" ||
+		len(parents.Inputs) != 1 || parents.Inputs[0].Carrier != "CallCoordinateCarrier" ||
+		parents.CandidateResolver.Name != "MountedCallActualsForMountedOccurrence" ||
+		parents.CandidateOrdinal.Name != "MountedCallActualsOrdinal" || parents.CandidateAt.Name != "MountedCallActualsAt" ||
 		len(parents.Correspondences) != 1 || parents.Correspondences[0] != callCandidates {
 		t.Fatalf("mounted-call parent declaration = %#v", parents)
 	}
 	if !membersOK || members.Key != "value/mounted-call/actual-members" || members.Subject != "MountedCallArgumentCarrier" ||
-		members.MemberParent.Member != parents.Key || members.MemberOrdinal != "MountedCallActualTagCarrier" {
+		len(members.Inputs) != 1 || members.Inputs[0].Carrier != "CallCoordinateCarrier" ||
+		members.CandidateResolver.Name != "MountedCallArgumentForMountedOccurrence" ||
+		members.CandidateOrdinal.Name != "MountedCallArgumentOrdinal" || members.CandidateAt.Name != "MountedCallArgumentAt" ||
+		members.MemberParent.Member != parents.Key || members.MemberOrdinal != "MountedCallActualTagCarrier" ||
+		members.MemberCount.Name != "MemberCount" || members.MemberAt.Name != "MemberAt" {
 		t.Fatalf("mounted-call member declaration = %#v", members)
 	}
 
@@ -74,10 +89,20 @@ func TestMountedCallGeometryIsDeclaredOnceByValue(t *testing.T) {
 		"MountedCallActualKey": "value/mounted-call/actual-key",
 		"MountedCallActualTag": "value/mounted-call/actual-tag",
 	}
+	projectionNames := make(map[string]struct{}, len(source.Projections))
+	projectionKeys := make(map[string]string, len(source.Projections))
 	for _, projection := range source.Projections {
 		if strings.Contains(string(projection.Key), "formal-freeze") {
 			t.Fatalf("Value projection %q is named for a consumer", projection.Key)
 		}
+		if _, duplicate := projectionNames[projection.Name]; duplicate {
+			t.Fatalf("duplicate Value projection name %q", projection.Name)
+		}
+		if previous, duplicate := projectionKeys[string(projection.Key)]; duplicate {
+			t.Fatalf("Value projection key %q names both %s and %s", projection.Key, previous, projection.Name)
+		}
+		projectionNames[projection.Name] = struct{}{}
+		projectionKeys[string(projection.Key)] = projection.Name
 		if key, wanted := wantProjections[projection.Name]; wanted {
 			if string(projection.Key) != key {
 				t.Fatalf("projection %s key = %q, want %q", projection.Name, projection.Key, key)

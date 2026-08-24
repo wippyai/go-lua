@@ -75,3 +75,65 @@ func TestGeneratedRelationOwnerProjectsStorageTransfer(t *testing.T) {
 		t.Fatal("out-of-range candidate projected")
 	}
 }
+
+func TestGeneratedRelationOwnerProjectsMountedCallGeometry(t *testing.T) {
+	fixture := buildMountedCallArgumentFixture(t, "local function f(a, b) return a end\nf(1, 2)\n")
+	values := fixture.values
+	parent, parentOK := values.MountedCallActualsAt(0)
+	module, moduleOK := parent.Module()
+	call, callOK := parent.CallID()
+	if !parentOK || !moduleOK || !callOK {
+		t.Fatal("mounted-call parent fixture")
+	}
+
+	owner := valuedomain.NewRelationOwner(values)
+	var relations memberrelation.Owner = owner
+	catalog := valuedomain.AxisMemberCatalog()
+	parentRelation, parentRelationOK := catalog.RelationOrdinal(valuedomain.MountedCallParents)
+	memberRelation, memberRelationOK := catalog.RelationOrdinal(valuedomain.MountedCallActualMembers)
+	calleeProjection, calleeProjectionOK := catalog.ProjectionOrdinal(valuedomain.MountedCallCalleeKey)
+	actualProjection, actualProjectionOK := catalog.ProjectionOrdinal(valuedomain.MountedCallActualKey)
+	tagProjection, tagProjectionOK := catalog.ProjectionOrdinal(valuedomain.MountedCallActualTag)
+	if !parentRelationOK || !memberRelationOK || !calleeProjectionOK || !actualProjectionOK || !tagProjectionOK {
+		t.Fatal("mounted-call member ordinals")
+	}
+
+	parentCandidate, candidateOK := relations.CandidateAt(parentRelation, module, call, 0)
+	wantParent, wantParentOK := values.MountedCallActualsOrdinal(parent)
+	if !candidateOK || !wantParentOK || parentCandidate != wantParent {
+		t.Fatalf("parent candidate=%d/%t, want=%d/%t", parentCandidate, candidateOK, wantParent, wantParentOK)
+	}
+	callee, calleeOK := parent.CalleeCoordinate()
+	wantCallee, wantCalleeOK := values.CoordinateIndex(callee)
+	gotCallee, gotCalleeOK := relations.Project(parentRelation, calleeProjection, parentCandidate)
+	if !calleeOK || !wantCalleeOK || !gotCalleeOK || gotCallee != wantCallee {
+		t.Fatalf("callee projection=%d/%t, want=%d/%t", gotCallee, gotCalleeOK, wantCallee, wantCalleeOK)
+	}
+
+	count, countOK := relations.MemberCount(memberRelation, parentCandidate)
+	if !countOK || count != parent.MemberCount() || count == 0 {
+		t.Fatalf("actual member count=%d/%t, want nonzero %d", count, countOK, parent.MemberCount())
+	}
+	for ordinal := 0; ordinal < count; ordinal++ {
+		memberCandidate, memberOK := relations.MemberAt(memberRelation, parentCandidate, ordinal)
+		member, directOK := parent.MemberAt(ordinal)
+		coordinate, coordinateOK := member.Coordinate()
+		wantCoordinate, wantCoordinateOK := values.CoordinateIndex(coordinate)
+		tag, tagOK := member.ActualTag()
+		gotCoordinate, gotCoordinateOK := relations.Project(memberRelation, actualProjection, memberCandidate)
+		gotTag, gotTagOK := relations.Project(memberRelation, tagProjection, memberCandidate)
+		if !memberOK || !directOK || !coordinateOK || !wantCoordinateOK || !tagOK ||
+			!gotCoordinateOK || gotCoordinate != wantCoordinate || !gotTagOK || uint64(gotTag) != tag {
+			t.Fatalf("actual %d projection coordinate=%d/%t want=%d/%t tag=%d/%t want=%d/%t", ordinal, gotCoordinate, gotCoordinateOK, wantCoordinate, wantCoordinateOK, gotTag, gotTagOK, tag, tagOK)
+		}
+	}
+	if _, ok := relations.CandidateAt(parentRelation, module, identity.ContentID{}, 0); ok {
+		t.Fatal("missing call occurrence admitted")
+	}
+	if _, ok := relations.MemberAt(memberRelation, parentCandidate, count); ok {
+		t.Fatal("member beyond the parent census admitted")
+	}
+	if _, ok := relations.Project(parentRelation, actualProjection, parentCandidate); ok {
+		t.Fatal("actual projection admitted on the parent relation")
+	}
+}
