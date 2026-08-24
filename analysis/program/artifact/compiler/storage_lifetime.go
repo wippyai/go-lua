@@ -1,9 +1,9 @@
 package compiler
 
 import (
+	"github.com/wippyai/go-lua/analysis/identity"
 	"github.com/wippyai/go-lua/analysis/program/artifact/compiler/internal/rowidentity"
 	"github.com/wippyai/go-lua/analysis/program/flow/authored"
-	"github.com/wippyai/go-lua/analysis/program/keyspace"
 	"github.com/wippyai/go-lua/analysis/schema/program/lifecycle"
 )
 
@@ -35,60 +35,22 @@ func (compiler *compiler) copyStorageCellLifetimesFailure() CompileFailure {
 		return compileFailure(CompileStageBodyOutcomes, CompileRowBody, -1, -1, CompileReasonBodyUnavailable)
 	}
 	cells := view.Authored().Storage().Cells()
-	bodyForest := view.Body()
-	if bodyForest == nil {
+	if compiler.bodyBoundary == nil {
 		return compileFailure(CompileStageBodyOutcomes, CompileRowBody, -1, -1, CompileReasonBodyUnavailable)
 	}
-	entry, entryOK := bodyForest.Entry()
-	if !entryOK || entry == 0 {
-		return compileFailure(CompileStageBodyOutcomes, CompileRowBody, -1, -1, CompileReasonBodyUnavailable)
-	}
-	validBody := func(body keyspace.Term) bool {
-		if body == entry {
-			return true
+	// BodyBoundary has already authenticated every lexical capture and issued
+	// the exact storage identities consumed here. Lifetime must not reopen
+	// authored Functions and reconstruct that relation from Cell terms.
+	captures := compiler.bodyBoundary.FunctionCaptures()
+	captured := make(map[identity.ContentID]struct{}, len(captures)*2)
+	for captureIndex, capture := range captures {
+		inner := capture.InnerStorageCellID()
+		outer := capture.OuterStorageCellID()
+		if !capture.Available() || !inner.Available() || !outer.Available() || inner == outer {
+			return compileFailure(CompileStageBodyOutcomes, CompileRowBody, captureIndex, -1, CompileReasonBodyUnavailable)
 		}
-		_, ok := bodyForest.Activation(body)
-		return ok
-	}
-	// A capture is positive evidence that the closure environment, rather
-	// than the introducing frame, owns the captured storage. The environment
-	// remains within the mounted module until a later publication/return rule
-	// proves a stronger boundary, so Closure is the least sound class in this
-	// neutral vocabulary. This avoids both an unsound Frame result and an
-	// unauthenticated Unknown result without conflating the closure with the
-	// module entry owner.
-	captured := make(map[keyspace.Term]struct{})
-	functions := view.Authored().Functions()
-	for functionIndex := 0; functionIndex < functions.Count(); functionIndex++ {
-		function, functionOK := functions.At(functionIndex)
-		if !functionOK {
-			return compileFailure(CompileStageBodyOutcomes, CompileRowBody, functionIndex, -1, CompileReasonBodyUnavailable)
-		}
-		captureCount, captureCountOK := functions.CaptureCount(function)
-		if !captureCountOK {
-			return compileFailure(CompileStageBodyOutcomes, CompileRowBody, functionIndex, -1, CompileReasonBodyUnavailable)
-		}
-		for captureIndex := 0; captureIndex < captureCount; captureIndex++ {
-			inner, outer, captureOK := functions.CaptureAt(function, captureIndex)
-			if !captureOK {
-				return compileFailure(CompileStageBodyOutcomes, CompileRowBody, functionIndex, captureIndex, CompileReasonBodyUnavailable)
-			}
-			innerKind, innerBody, innerKey, innerOK := cells.Get(inner)
-			outerKind, outerBody, outerKey, outerOK := cells.Get(outer)
-			if !innerOK || !outerOK || inner == outer ||
-				innerKind != authored.CellLocal || outerKind != authored.CellLocal ||
-				innerKey != 0 || outerKey != 0 || innerBody == 0 || outerBody == 0 {
-				return compileFailure(CompileStageBodyOutcomes, CompileRowBody, functionIndex, captureIndex, CompileReasonBodyUnavailable)
-			}
-			if !validBody(innerBody) {
-				return compileFailure(CompileStageBodyOutcomes, CompileRowBody, functionIndex, captureIndex, CompileReasonBodyUnavailable)
-			}
-			if !validBody(outerBody) {
-				return compileFailure(CompileStageBodyOutcomes, CompileRowBody, functionIndex, captureIndex, CompileReasonBodyUnavailable)
-			}
-			captured[inner] = struct{}{}
-			captured[outer] = struct{}{}
-		}
+		captured[inner] = struct{}{}
+		captured[outer] = struct{}{}
 	}
 	compiler.publication.Lifecycle.StorageCellLifetimes = make([]lifecycle.StorageCellLifetime, 0, cells.Count())
 	for index := 0; index < cells.Count(); index++ {
@@ -113,11 +75,8 @@ func (compiler *compiler) copyStorageCellLifetimesFailure() CompileFailure {
 			if key != 0 || body == 0 {
 				return compileFailure(CompileStageBodyOutcomes, CompileRowBody, index, -1, CompileReasonBodyUnavailable)
 			}
-			if !validBody(body) {
-				return compileFailure(CompileStageBodyOutcomes, CompileRowBody, index, -1, CompileReasonBodyUnavailable)
-			}
 			lifetime := lifecycle.StorageLifetimeFrame
-			if _, escapes := captured[term]; escapes {
+			if _, escapes := captured[cellID]; escapes {
 				lifetime = lifecycle.StorageLifetimeClosure
 			}
 			row, rowOK := lifecycle.NewStorageCellLifetime(cellID, lifetime)
