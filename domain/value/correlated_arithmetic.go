@@ -8,23 +8,22 @@ import (
 	"github.com/wippyai/go-lua/domain/runtimekind"
 )
 
-// ApplyArithmetic evaluates two singleton exact numeric alternatives.
-// Program scalar semantics is the sole concrete arithmetic authority. Value
-// translates its result into an already-sealed atom; it never mints hot
-// alternatives.
+// ApplyArithmetic evaluates the complete finite Cartesian product of two
+// owner-issued numeric relations. Program scalar semantics is the sole
+// concrete arithmetic authority. Value translates each result into an
+// already-sealed atom and joins those atoms; it never mints a hot alternative
+// or asks a downstream consumer to rediscover a literal.
 //
-// Every operand pair this evaluator cannot decide - an operand that is not an
-// exact numeric singleton, or an exact result with no sealed atom - answers
-// Top, the over-approximation that admits every alternative. Answering Bottom
-// for an undecided pair would both deny reachable alternatives and break
-// monotonicity, since a union operand would then evaluate below its own
-// singleton members.
+// Top remains the owner-authored answer only for an unbounded input relation
+// (or a finite relation containing an opaque/non-numeric atom), where no
+// finite exact image is available. A finite numeric relation is different:
+// every result atom is required to have been sealed by Program/Value. A
+// missing result atom is a construction defect and therefore refuses closed,
+// rather than widening one missing cell to Top.
 //
-// Bottom is answered in exactly two cases, both of which keep the transfer
-// monotone. Arithmetic is strict, so an operand with no reachable alternative
-// yields a result with none. The other is the arithmetic trap: exact numeric
-// operands whose Lua arithmetic is undefined, so evaluation cannot reach a
-// concrete result.
+// Bottom is answered when arithmetic has no reachable successful pair: strict
+// arithmetic over an empty operand, or numeric trap pairs such as division by
+// zero. Trap pairs contribute no result and never erase other valid cells.
 func (schema *Schema) ApplyArithmetic(left, right Value, op flowkind.BinaryOp) (Value, bool) {
 	if schema == nil || !schema.owns(left) || !schema.owns(right) || !flowkind.IsBinaryArithmetic(op) {
 		return Value{}, false
@@ -32,24 +31,71 @@ func (schema *Schema) ApplyArithmetic(left, right Value, op flowkind.BinaryOp) (
 	if schema.Equal(left, schema.Bottom()) || schema.Equal(right, schema.Bottom()) {
 		return schema.Bottom(), true
 	}
-	leftScalar, leftOK := schema.ExactScalar(left)
-	rightScalar, rightOK := schema.ExactScalar(right)
-	leftLiteral, leftLiteralOK := leftScalar.Literal()
-	rightLiteral, rightLiteralOK := rightScalar.Literal()
-	if !leftOK || !rightOK || !leftLiteralOK || !rightLiteralOK ||
-		(leftLiteral.Kind != keyspace.LiteralInteger && leftLiteral.Kind != keyspace.LiteralFloat) ||
-		(rightLiteral.Kind != keyspace.LiteralInteger && rightLiteral.Kind != keyspace.LiteralFloat) {
+	// A Top relation has no finite exact image. It is the only lawful path
+	// where this evaluator widens instead of enumerating atoms.
+	if left.top || right.top {
 		return schema.Top(), true
 	}
-	result, resultOK := scalar.ExactArithmeticLiteral(leftLiteral, rightLiteral, op)
-	if !resultOK {
+
+	leftCount, rightCount := schema.ValueAtomCount(left), schema.ValueAtomCount(right)
+	resultAtoms := make([]Atom, 0, leftCount*rightCount)
+	seen := make(map[uint32]struct{}, leftCount*rightCount)
+	for leftIndex := 0; leftIndex < leftCount; leftIndex++ {
+		leftAtom, leftOK := schema.ValueAtomAt(left, leftIndex)
+		leftLiteral, leftLiteralOK := schema.numericLiteral(leftAtom)
+		if !leftOK || !leftLiteralOK {
+			// This finite relation is not a finite numeric arithmetic
+			// domain. Its dynamic result may be any owner alternative.
+			return schema.Top(), true
+		}
+		for rightIndex := 0; rightIndex < rightCount; rightIndex++ {
+			rightAtom, rightOK := schema.ValueAtomAt(right, rightIndex)
+			rightLiteral, rightLiteralOK := schema.numericLiteral(rightAtom)
+			if !rightOK || !rightLiteralOK {
+				return schema.Top(), true
+			}
+			result, resultOK := scalar.ExactArithmeticLiteral(leftLiteral, rightLiteral, op)
+			if !resultOK {
+				// Undefined numeric pairs are arithmetic traps. They have
+				// no reachable result but do not invalidate another pair.
+				continue
+			}
+			atomID := schema.atomForExactArithmetic(result)
+			if atomID == 0 {
+				// The owner promised a finite exact product but did not
+				// seal this result atom. Refuse instead of dynamically
+				// extending the atom universe or returning an invented Top.
+				return Value{}, false
+			}
+			if _, duplicate := seen[atomID]; duplicate {
+				continue
+			}
+			seen[atomID] = struct{}{}
+			resultAtoms = append(resultAtoms, Atom{schema: schema, id: atomID})
+		}
+	}
+	if len(resultAtoms) == 0 {
 		return schema.Bottom(), true
 	}
-	atom := schema.atomForExactArithmetic(result)
-	if atom == 0 {
-		return schema.Top(), true
+	return schema.Alternatives(resultAtoms...)
+}
+
+// numericLiteral is the Value-owned exact numeric projection used by the
+// finite arithmetic product. It accepts authored and Program-computed number
+// atoms only; primitive/NaN number atoms intentionally remain opaque because
+// they do not carry one concrete payload.
+func (schema *Schema) numericLiteral(atom Atom) (keyspace.LiteralValue, bool) {
+	if schema == nil || !schema.OwnsAtom(atom) {
+		return keyspace.LiteralValue{}, false
 	}
-	return schema.Singleton(Atom{schema: schema, id: atom})
+	row := schema.atoms[atom.id-1]
+	if (row.kind != atomLiteral && row.kind != atomComputedLiteral) || row.runtime != runtimekind.Number {
+		return keyspace.LiteralValue{}, false
+	}
+	if row.kind == atomLiteral && !row.hasKey || row.key.Kind != keyspace.LiteralInteger && row.key.Kind != keyspace.LiteralFloat {
+		return keyspace.LiteralValue{}, false
+	}
+	return row.key, true
 }
 
 func (schema *Schema) atomForExactArithmetic(literal keyspace.LiteralValue) uint32 {

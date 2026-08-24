@@ -1,6 +1,7 @@
 package compiler_test
 
 import (
+	"math"
 	"testing"
 
 	"github.com/wippyai/go-lua/analysis/identity"
@@ -106,7 +107,7 @@ return total
 	}
 }
 
-func TestProgramArtifactExactScalarSummaryWithholdsMergedMutation(t *testing.T) {
+func TestProgramArtifactExactScalarSummaryEnumeratesMergedFiniteMutation(t *testing.T) {
 	published, err := lower.Lower(lower.Source{Name: "artifact-exact-scalar-merge.lua", Text: []byte(`
 local function pick(flag: boolean): number
     local v: number = 0
@@ -135,23 +136,48 @@ return pick
 	if !exactPublished {
 		t.Fatal("exact scalar summary column unpublished")
 	}
-	if exactCount != 0 {
-		rows := make([]struct {
-			role    programschema.ExactScalarSummaryRole
-			subject identity.ContentID
-			literal keyspace.LiteralValue
-		}, 0, exactCount)
-		for index := 0; index < exactCount; index++ {
-			row, _ := program.ExactScalarSummaryAt(index)
-			coldLiteral, _ := row.Literal()
-			literal := keyspace.LiteralValue{Kind: keyspace.LiteralKind(coldLiteral.Kind), Integer: coldLiteral.Integer, FloatBits: coldLiteral.FloatBits}
-			rows = append(rows, struct {
-				role    programschema.ExactScalarSummaryRole
-				subject identity.ContentID
-				literal keyspace.LiteralValue
-			}{role: row.Role(), subject: row.SubjectID(), literal: literal})
+	if exactCount != 12 {
+		t.Fatalf("merged mutation exact scalar summary count=%d/%v, want 12/true", exactCount, exactPublished)
+	}
+	byRole := make(map[programschema.ExactScalarSummaryRole]map[keyspace.LiteralValue]struct{}, 3)
+	for index := 0; index < exactCount; index++ {
+		row, rowOK := program.ExactScalarSummaryAt(index)
+		coldLiteral, literalOK := row.Literal()
+		if !rowOK || !literalOK {
+			t.Fatalf("merged mutation summary[%d] unavailable: %+v/%v literal=%+v/%v", index, row, rowOK, coldLiteral, literalOK)
 		}
-		t.Fatalf("merged mutation issued %d exact scalar summaries: %+v", exactCount, rows)
+		literal := keyspace.LiteralValue{Kind: keyspace.LiteralKind(coldLiteral.Kind), Integer: coldLiteral.Integer, FloatBits: coldLiteral.FloatBits}
+		values := byRole[row.Role()]
+		if values == nil {
+			values = make(map[keyspace.LiteralValue]struct{})
+			byRole[row.Role()] = values
+		}
+		values[literal] = struct{}{}
+	}
+	integer := func(value int64) keyspace.LiteralValue {
+		return keyspace.LiteralValue{Kind: keyspace.LiteralInteger, Integer: value}
+	}
+	float := func(value float64) keyspace.LiteralValue {
+		return keyspace.LiteralValue{Kind: keyspace.LiteralFloat, FloatBits: math.Float64bits(value)}
+	}
+	wantLeft := map[keyspace.LiteralValue]struct{}{integer(0): {}, float(0.5): {}, integer(1): {}}
+	wantResult := map[keyspace.LiteralValue]struct{}{integer(0): {}, float(0.5): {}, integer(1): {}, float(1): {}, float(1.5): {}, integer(2): {}}
+	for _, want := range []struct {
+		role   programschema.ExactScalarSummaryRole
+		values map[keyspace.LiteralValue]struct{}
+	}{
+		{role: programschema.ExactScalarSummaryLeft, values: wantLeft},
+		{role: programschema.ExactScalarSummaryRight, values: wantLeft},
+		{role: programschema.ExactScalarSummaryResult, values: wantResult},
+	} {
+		if len(byRole[want.role]) != len(want.values) {
+			t.Fatalf("merged mutation role %d values=%v, want %v", want.role, byRole[want.role], want.values)
+		}
+		for literal := range want.values {
+			if _, found := byRole[want.role][literal]; !found {
+				t.Fatalf("merged mutation role %d missing literal %+v: %v", want.role, literal, byRole[want.role])
+			}
+		}
 	}
 	arithmeticCount, arithmeticPublished := program.ArithmeticSummaryCount()
 	if !arithmeticPublished || arithmeticCount != 1 {

@@ -45,8 +45,8 @@ func TestApplyArithmeticUsesProgramSemanticsAndSealedResultAtoms(t *testing.T) {
 		t.Fatal("arithmetic result did not reuse an authored literal atom")
 	}
 	missing, missingOK := schema.ApplyArithmetic(right, right, flowkind.BinaryMul)
-	if !missingOK || !missing.IsTop() {
-		t.Fatal("exact result without a sealed atom denied its reachable alternatives")
+	if missingOK || missing.IsTop() {
+		t.Fatal("exact result without a sealed atom did not refuse closed")
 	}
 	if schema.atomForExactArithmetic(integer(25)) != 0 {
 		t.Fatal("unsealed exact result was fabricated")
@@ -55,12 +55,25 @@ func TestApplyArithmeticUsesProgramSemanticsAndSealedResultAtoms(t *testing.T) {
 		Atom{schema: schema, id: schema.atomForExactArithmetic(integer(10))},
 		Atom{schema: schema, id: schema.atomForExactArithmetic(integer(5))},
 	)
-	unknown, unknownOK := schema.ApplyArithmetic(mixed, right, flowkind.BinaryAdd)
-	if !unknownOK || !unknown.IsTop() {
-		t.Fatal("mixed input produced an exact arithmetic result")
+	mixedResult, mixedResultOK := schema.ApplyArithmetic(mixed, right, flowkind.BinaryAdd)
+	if !mixedResultOK || mixedResult.IsTop() || schema.ValueAtomCount(mixedResult) != 2 {
+		t.Fatalf("finite mixed input = %#v/%v atoms=%d, want two concrete results", mixedResult, mixedResultOK, schema.ValueAtomCount(mixedResult))
 	}
-	if _, scalarOK := schema.ExactScalar(unknown); scalarOK {
-		t.Fatal("undecided arithmetic claimed an exact scalar")
+	mixedLiterals := make(map[int64]struct{}, schema.ValueAtomCount(mixedResult))
+	for index := 0; index < schema.ValueAtomCount(mixedResult); index++ {
+		atom, atomOK := schema.ValueAtomAt(mixedResult, index)
+		singleton, singletonOK := schema.Singleton(atom)
+		scalar, scalarOK := schema.ExactScalar(singleton)
+		literal, literalOK := scalar.Literal()
+		if !atomOK || !singletonOK || !scalarOK || !literalOK || literal.Kind != keyspace.LiteralInteger {
+			t.Fatalf("mixed result atom[%d] = %#v/%v singleton=%#v/%v scalar=%#v/%v literal=%#v/%v", index, atom, atomOK, singleton, singletonOK, scalar, scalarOK, literal, literalOK)
+		}
+		mixedLiterals[literal.Integer] = struct{}{}
+	}
+	for _, want := range []int64{10, 15} {
+		if _, found := mixedLiterals[want]; !found {
+			t.Fatalf("mixed result missing %d: %v", want, mixedLiterals)
+		}
 	}
 	strict, strictOK := schema.ApplyArithmetic(schema.Bottom(), right, flowkind.BinaryAdd)
 	if !strictOK || !schema.Equal(strict, schema.Bottom()) {
@@ -76,6 +89,58 @@ func TestApplyArithmeticUsesProgramSemanticsAndSealedResultAtoms(t *testing.T) {
 	}
 	if _, ok := schema.ApplyArithmetic(left, right, flowkind.BinaryEqual); ok {
 		t.Fatal("non-arithmetic operator accepted")
+	}
+}
+
+func TestApplyArithmeticEnumeratesFiniteCartesianProduct(t *testing.T) {
+	integer := func(value int64) keyspace.LiteralValue {
+		return keyspace.LiteralValue{Kind: keyspace.LiteralInteger, Integer: value}
+	}
+	schema := &Schema{atomByRow: make(map[atomRow]uint32), exactKeys: make(map[keyspace.LiteralValue]keyspace.LiteralValue), potential: 32}
+	for _, literal := range []keyspace.LiteralValue{integer(1), integer(2), integer(10), integer(20)} {
+		schema.exactKeys[literal] = literal
+		if schema.addAtom(atomRow{kind: atomLiteral, runtime: runtimekind.Number, key: literal, hasKey: true}) == 0 {
+			t.Fatal("source literal atom")
+		}
+	}
+	for _, literal := range []keyspace.LiteralValue{integer(11), integer(12), integer(21), integer(22)} {
+		if schema.addAtom(atomRow{kind: atomComputedLiteral, runtime: runtimekind.Number, key: literal}) == 0 {
+			t.Fatal("computed result atom")
+		}
+	}
+	schema.bottom = Value{schema: schema}
+	schema.top = Value{schema: schema, top: true}
+
+	left, leftOK := schema.Alternatives(
+		Atom{schema: schema, id: schema.atomForExactArithmetic(integer(1))},
+		Atom{schema: schema, id: schema.atomForExactArithmetic(integer(2))},
+	)
+	right, rightOK := schema.Alternatives(
+		Atom{schema: schema, id: schema.atomForExactArithmetic(integer(10))},
+		Atom{schema: schema, id: schema.atomForExactArithmetic(integer(20))},
+	)
+	if !leftOK || !rightOK {
+		t.Fatal("finite arithmetic operands")
+	}
+	result, resultOK := schema.ApplyArithmetic(left, right, flowkind.BinaryAdd)
+	if !resultOK || result.IsTop() || schema.ValueAtomCount(result) != 4 {
+		t.Fatalf("finite 2x2 arithmetic = %#v/%v atoms=%d, want four concrete atoms", result, resultOK, schema.ValueAtomCount(result))
+	}
+	got := make(map[int64]struct{}, schema.ValueAtomCount(result))
+	for index := 0; index < schema.ValueAtomCount(result); index++ {
+		atom, atomOK := schema.ValueAtomAt(result, index)
+		singleton, singletonOK := schema.Singleton(atom)
+		scalar, scalarOK := schema.ExactScalar(singleton)
+		literal, literalOK := scalar.Literal()
+		if !atomOK || !singletonOK || !scalarOK || !literalOK || literal.Kind != keyspace.LiteralInteger {
+			t.Fatalf("result atom[%d] = %#v/%v singleton=%#v/%v scalar=%#v/%v literal=%#v/%v", index, atom, atomOK, singleton, singletonOK, scalar, scalarOK, literal, literalOK)
+		}
+		got[literal.Integer] = struct{}{}
+	}
+	for _, want := range []int64{11, 12, 21, 22} {
+		if _, found := got[want]; !found {
+			t.Fatalf("finite 2x2 result missing %d: %v", want, got)
+		}
 	}
 }
 

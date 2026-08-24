@@ -11,9 +11,9 @@ import (
 
 // TestArithmeticTransferIsMonotone states the value binary-arithmetic
 // transfer law over a sealed finite atom universe: whenever both operands
-// grow in the Value order, the staged result grows too. The arithmetic Rule
-// stages ApplyArithmetic verbatim and denotes its Bottom result by
-// NoCandidate, so this is exactly the Rule's staging function.
+// grow in the Value order, the staged result grows too. The operand universe
+// contains only authored literals; every Add/IDiv result reachable from it is
+// sealed in the owner schema, so refusal is an invariant violation here.
 func TestArithmeticTransferIsMonotone(t *testing.T) {
 	schema, atoms := monotoneArithmeticSchema(t)
 	universe := arithmeticValueUniverse(t, schema, atoms)
@@ -22,7 +22,7 @@ func TestArithmeticTransferIsMonotone(t *testing.T) {
 			t.Helper()
 			result, ok := schema.ApplyArithmetic(left, right, op)
 			if !ok {
-				t.Fatalf("op %d rejected owned operands", op)
+				t.Fatalf("op %d refused sealed operand pair", op)
 			}
 			return result
 		}
@@ -62,18 +62,17 @@ func TestArithmeticTransferIsMonotone(t *testing.T) {
 	}
 }
 
-// monotoneArithmeticSchema seals three authored numeric literals and one
-// computed literal, which is also the shape a folded accumulator reaches: the
-// result atom of one step is an operand of the next. The sums 2+2 and 3+3 stay
-// unsealed and integer division by zero stays the one genuine trap, so the
-// universe exercises every branch of the transfer.
+// monotoneArithmeticSchema seals three authored numeric literals and the two
+// additional integer sums reachable from their complete finite operand
+// universe. The operand universe itself intentionally excludes those
+// computed atoms; integer division by zero remains the one genuine trap.
 func monotoneArithmeticSchema(t testing.TB) (*Schema, []atomRow) {
 	t.Helper()
 	integer := func(value int64) keyspace.LiteralValue {
 		return keyspace.LiteralValue{Kind: keyspace.LiteralInteger, Integer: value}
 	}
 	schema := &Schema{atomByRow: make(map[atomRow]uint32), exactKeys: make(map[keyspace.LiteralValue]keyspace.LiteralValue), potential: 32}
-	atoms := make([]atomRow, 0, 4)
+	atoms := make([]atomRow, 0, 3)
 	for _, literal := range []keyspace.LiteralValue{integer(0), integer(1), integer(2)} {
 		schema.exactKeys[literal] = literal
 		row := atomRow{kind: atomLiteral, runtime: runtimekind.Number, key: literal, hasKey: true}
@@ -82,18 +81,19 @@ func monotoneArithmeticSchema(t testing.TB) (*Schema, []atomRow) {
 		}
 		atoms = append(atoms, row)
 	}
-	computed := atomRow{kind: atomComputedLiteral, runtime: runtimekind.Number, key: integer(3)}
-	if schema.addAtom(computed) == 0 {
-		t.Fatal("computed result atom")
+	for _, literal := range []keyspace.LiteralValue{integer(3), integer(4)} {
+		computed := atomRow{kind: atomComputedLiteral, runtime: runtimekind.Number, key: literal}
+		if schema.addAtom(computed) == 0 {
+			t.Fatal("computed result atom")
+		}
 	}
-	atoms = append(atoms, computed)
 	schema.bottom = Value{schema: schema}
 	schema.top = Value{schema: schema, top: true}
 	return schema, atoms
 }
 
-// arithmeticValueUniverse enumerates every relation over the sealed atoms,
-// from Bottom through the full union, and closes with Top.
+// arithmeticValueUniverse enumerates every relation over the authored operand
+// atoms, from Bottom through the authored union, and closes with Top.
 func arithmeticValueUniverse(t testing.TB, schema *Schema, rows []atomRow) []Value {
 	t.Helper()
 	universe := make([]Value, 0, 1<<len(rows)+1)

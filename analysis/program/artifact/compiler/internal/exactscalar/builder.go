@@ -4,6 +4,8 @@
 package exactscalar
 
 import (
+	"sort"
+
 	"github.com/wippyai/go-lua/analysis/identity"
 	flowkind "github.com/wippyai/go-lua/analysis/program/flow/kind"
 	"github.com/wippyai/go-lua/analysis/program/keyspace"
@@ -19,6 +21,34 @@ type state struct {
 }
 
 func (state state) known() bool { return state.unknown || len(state.values) != 0 }
+
+// finite returns the complete finite literal image when this state has no
+// opaque remainder. Unknown states deliberately discard their retained image;
+// the explicit unbounded remainder makes any partial image unsuitable as a
+// complete arithmetic operand.
+func (state state) finite() []keyspace.LiteralValue {
+	if state.unknown || len(state.values) == 0 {
+		return nil
+	}
+	values := make([]keyspace.LiteralValue, 0, len(state.values))
+	for value := range state.values {
+		values = append(values, value)
+	}
+	sort.Slice(values, func(left, right int) bool {
+		a, b := values[left], values[right]
+		if a.Kind != b.Kind {
+			return a.Kind < b.Kind
+		}
+		if a.Integer != b.Integer {
+			return a.Integer < b.Integer
+		}
+		if a.FloatBits != b.FloatBits {
+			return a.FloatBits < b.FloatBits
+		}
+		return a.String < b.String
+	})
+	return values
+}
 
 func (state state) exact() (keyspace.LiteralValue, bool) {
 	if state.unknown || len(state.values) != 1 {
@@ -68,6 +98,175 @@ type equation struct {
 	output      identity.ContentID
 	left, right identity.ContentID
 	op          flowkind.BinaryOp
+}
+
+// equationSCCs returns the dependency component for every equation subject
+// and marks the cyclic components. Dependencies point from an operand to the
+// equation output; pure copy cycles remain finite aliases. A later
+// equation-specific check decides whether an arithmetic/unary edge actually
+// consumes a value from its own cyclic component before widening.
+func equationSCCs(equations []equation) (map[identity.ContentID]int, map[identity.ContentID]bool) {
+	adjacency := make(map[identity.ContentID][]identity.ContentID)
+	nodes := make(map[identity.ContentID]struct{})
+	add := func(from, to identity.ContentID) {
+		if !from.Available() || !to.Available() {
+			return
+		}
+		nodes[from] = struct{}{}
+		nodes[to] = struct{}{}
+		adjacency[from] = append(adjacency[from], to)
+	}
+	for _, item := range equations {
+		if !item.output.Available() {
+			continue
+		}
+		nodes[item.output] = struct{}{}
+		switch item.kind {
+		case equationCopy, equationUnaryNeg:
+			add(item.left, item.output)
+		case equationArithmetic:
+			add(item.left, item.output)
+			add(item.right, item.output)
+		}
+	}
+
+	indices := make(map[identity.ContentID]int, len(nodes))
+	lowlinks := make(map[identity.ContentID]int, len(nodes))
+	onStack := make(map[identity.ContentID]bool, len(nodes))
+	stack := make([]identity.ContentID, 0, len(nodes))
+	nextIndex := 0
+	components := make(map[identity.ContentID]int, len(nodes))
+	cyclic := make(map[identity.ContentID]bool)
+	componentID := 0
+	var visit func(identity.ContentID)
+	visit = func(node identity.ContentID) {
+		indices[node] = nextIndex
+		lowlinks[node] = nextIndex
+		nextIndex++
+		stack = append(stack, node)
+		onStack[node] = true
+		for _, next := range adjacency[node] {
+			if _, seen := indices[next]; !seen {
+				visit(next)
+				if lowlinks[next] < lowlinks[node] {
+					lowlinks[node] = lowlinks[next]
+				}
+			} else if onStack[next] && indices[next] < lowlinks[node] {
+				lowlinks[node] = indices[next]
+			}
+		}
+		if lowlinks[node] != indices[node] {
+			return
+		}
+
+		component := make([]identity.ContentID, 0, 1)
+		for {
+			last := len(stack) - 1
+			member := stack[last]
+			stack = stack[:last]
+			onStack[member] = false
+			component = append(component, member)
+			components[member] = componentID
+			if member == node {
+				break
+			}
+		}
+		if len(component) > 1 {
+			for _, member := range component {
+				cyclic[member] = true
+			}
+			componentID++
+			return
+		}
+		member := component[0]
+		for _, next := range adjacency[member] {
+			if next == member {
+				cyclic[member] = true
+				break
+			}
+		}
+		componentID++
+	}
+	for node := range nodes {
+		if _, seen := indices[node]; !seen {
+			visit(node)
+		}
+	}
+	return components, cyclic
+}
+
+func finiteUnionGrows(current, incoming map[keyspace.LiteralValue]struct{}) bool {
+	for value := range incoming {
+		if _, exists := current[value]; !exists {
+			return true
+		}
+	}
+	return false
+}
+
+func unaryFiniteResults(values []keyspace.LiteralValue) map[keyspace.LiteralValue]struct{} {
+	results := make(map[keyspace.LiteralValue]struct{})
+	for _, literal := range values {
+		result, resultOK := scalar.ExactUnaryNegLiteral(literal)
+		if !resultOK {
+			continue
+		}
+		if _, duplicate := results[result]; duplicate {
+			continue
+		}
+		results[result] = struct{}{}
+	}
+	return results
+}
+
+func unaryFiniteGrowth(values []keyspace.LiteralValue, current map[keyspace.LiteralValue]struct{}) (grows, reachable bool) {
+	for _, literal := range values {
+		result, resultOK := scalar.ExactUnaryNegLiteral(literal)
+		if !resultOK {
+			continue
+		}
+		reachable = true
+		if _, exists := current[result]; !exists {
+			return true, true
+		}
+	}
+	return false, reachable
+}
+
+func arithmeticFiniteResults(left, right []keyspace.LiteralValue, op flowkind.BinaryOp) map[keyspace.LiteralValue]struct{} {
+	results := make(map[keyspace.LiteralValue]struct{})
+	for _, leftLiteral := range left {
+		for _, rightLiteral := range right {
+			result, resultOK := scalar.ExactArithmeticLiteral(leftLiteral, rightLiteral, op)
+			// An undefined numeric pair (for example integer division by zero)
+			// contributes no reachable result. It must not erase the other
+			// finite cells or widen them to an invented unknown value.
+			if !resultOK {
+				continue
+			}
+			if _, duplicate := results[result]; duplicate {
+				continue
+			}
+			results[result] = struct{}{}
+		}
+	}
+	return results
+}
+
+func arithmeticFiniteGrowth(left, right []keyspace.LiteralValue, op flowkind.BinaryOp, current map[keyspace.LiteralValue]struct{}) (grows, reachable bool) {
+	for _, leftLiteral := range left {
+		for _, rightLiteral := range right {
+			result, resultOK := scalar.ExactArithmeticLiteral(leftLiteral, rightLiteral, op)
+			if !resultOK {
+				continue
+			}
+			reachable = true
+			if _, exists := current[result]; !exists {
+				return true, true
+			}
+		}
+	}
+	return false, reachable
 }
 
 // Input is the complete canonical row boundary needed by exact-scalar
@@ -127,13 +326,31 @@ func captureAt(input Input, boundary programschema.FunctionBoundary, index int) 
 func Compile(input Input) (*Bundle, programconstruction.Fault) {
 	states := make(map[identity.ContentID]state)
 	var equations []equation
-	join := func(id identity.ContentID, incoming state) bool {
+	recurrent := make([]bool, 0)
+	join := func(id identity.ContentID, incoming state, recurrent bool) bool {
 		if !id.Available() || !incoming.known() {
 			return false
 		}
 		current := states[id]
-		changed := incoming.unknown && !current.unknown
-		current.unknown = current.unknown || incoming.unknown
+		if current.unknown {
+			return false
+		}
+		if incoming.unknown {
+			current.unknown = true
+			current.values = nil
+			states[id] = current
+			return true
+		}
+		if recurrent && finiteUnionGrows(current.values, incoming.values) {
+			// A recurrence-derived result strictly grew its widening point.
+			// Preserve no truncated prefix: unknown is the explicit owner
+			// remainder consumed by finite arithmetic as Top.
+			current.unknown = true
+			current.values = nil
+			states[id] = current
+			return true
+		}
+		changed := false
 		if len(incoming.values) != 0 {
 			if current.values == nil {
 				current.values = make(map[keyspace.LiteralValue]struct{}, len(incoming.values))
@@ -159,22 +376,22 @@ func Compile(input Input) (*Bundle, programconstruction.Fault) {
 			if !ok {
 				return nil, programconstruction.New(programcatalog.FunctionFormal(), programconstruction.IssueExactScalarUnavailable, -1, index)
 			}
-			join(formal.CellID(), unknown)
+			join(formal.CellID(), unknown, false)
 		}
 		if boundary.HasVararg() {
 			row, ok := vararg(input, boundary)
 			if !ok {
 				return nil, programconstruction.New(programcatalog.FunctionVararg(), programconstruction.IssueExactScalarUnavailable, -1, -1)
 			}
-			join(row.CellID(), unknown)
+			join(row.CellID(), unknown, false)
 		}
 		for index := 0; index < boundary.CaptureCount(); index++ {
 			capture, ok := captureAt(input, boundary, index)
 			if !ok {
 				return nil, programconstruction.New(programcatalog.FunctionCapture(), programconstruction.IssueExactScalarUnavailable, -1, index)
 			}
-			join(capture.InnerCellID(), unknown)
-			join(capture.OuterCellID(), unknown)
+			join(capture.InnerCellID(), unknown, false)
+			join(capture.OuterCellID(), unknown, false)
 		}
 	}
 
@@ -190,11 +407,11 @@ func Compile(input Input) (*Bundle, programconstruction.Fault) {
 				return nil, programconstruction.New(programcatalog.Occurrence(), programconstruction.IssueExactScalarValueSourceAppend, index, -1)
 			}
 			if literalOK && (family == keyspace.FamilyInteger || family == keyspace.FamilyFloat) {
-				join(row.ID(), exact(literal))
-				join(span, exact(literal))
+				join(row.ID(), exact(literal), false)
+				join(span, exact(literal), false)
 			} else {
-				join(row.ID(), unknown)
-				join(span, unknown)
+				join(row.ID(), unknown, false)
+				join(span, unknown, false)
 			}
 		case programschema.OccurrenceValuesMember:
 			count, ok := programschema.OccurrenceInputCount(row, input.OccurrenceInputs)
@@ -237,28 +454,49 @@ func Compile(input Input) (*Bundle, programconstruction.Fault) {
 			if flowkind.UnaryOp(row.Code()) == flowkind.UnaryNeg {
 				equations = append(equations, equation{kind: equationUnaryNeg, output: row.ID(), left: operand})
 			} else {
-				join(row.ID(), unknown)
+				join(row.ID(), unknown, false)
 			}
 		case programschema.OccurrenceSelect, programschema.OccurrenceValueClaim, programschema.OccurrenceBinaryEquality, programschema.OccurrenceBinaryOrder:
-			join(row.ID(), unknown)
+			join(row.ID(), unknown, false)
 		case programschema.OccurrenceIndexRead:
 			if count, ok := programschema.OccurrenceInputCount(row, input.OccurrenceInputs); ok && count >= 3 {
 				if result, ok := programschema.OccurrenceInputID(row, input.OccurrenceInputs, 2); ok {
-					join(result, unknown)
+					join(result, unknown, false)
 				}
 			}
 		case programschema.OccurrenceAllocation, programschema.OccurrenceCall:
-			join(row.ID(), unknown)
+			join(row.ID(), unknown, false)
+		}
+	}
+
+	components, cyclic := equationSCCs(equations)
+	recurrent = make([]bool, len(equations))
+	sameComponent := func(left, right identity.ContentID) bool {
+		leftComponent, leftOK := components[left]
+		rightComponent, rightOK := components[right]
+		return leftOK && rightOK && leftComponent == rightComponent
+	}
+	for index, item := range equations {
+		if !cyclic[item.output] {
+			continue
+		}
+		switch item.kind {
+		case equationUnaryNeg:
+			recurrent[index] = sameComponent(item.output, item.left)
+		case equationArithmetic:
+			recurrent[index] = sameComponent(item.output, item.left) ||
+				sameComponent(item.output, item.right)
 		}
 	}
 
 	changed := true
 	for changed {
 		changed = false
-		for _, item := range equations {
+		for equationIndex, item := range equations {
+			isRecurrent := recurrent[equationIndex]
 			switch item.kind {
 			case equationCopy:
-				if join(item.output, states[item.left]) {
+				if join(item.output, states[item.left], false) {
 					changed = true
 				}
 			case equationUnaryNeg:
@@ -266,39 +504,62 @@ func Compile(input Input) (*Bundle, programconstruction.Fault) {
 				if !operand.known() {
 					continue
 				}
-				literal, literalOK := operand.exact()
-				result, resultOK := scalar.ExactUnaryNegLiteral(literal)
-				if !literalOK || !resultOK {
-					if join(item.output, unknown) {
+				values := operand.finite()
+				if len(values) == 0 {
+					if join(item.output, unknown, false) {
 						changed = true
 					}
 					continue
 				}
-				if join(item.output, exact(result)) {
+				if isRecurrent {
+					current := states[item.output]
+					if !current.unknown {
+						grows, reachable := unaryFiniteGrowth(values, current.values)
+						if !reachable || grows {
+							if join(item.output, unknown, false) {
+								changed = true
+							}
+						}
+					}
+					continue
+				}
+				results := unaryFiniteResults(values)
+				if len(results) != 0 && join(item.output, state{values: results}, isRecurrent) {
 					changed = true
+				}
+				if operand.unknown || len(results) == 0 {
+					if join(item.output, unknown, false) {
+						changed = true
+					}
 				}
 			case equationArithmetic:
 				left, right := states[item.left], states[item.right]
 				if !left.known() || !right.known() {
 					continue
 				}
-				leftLiteral, leftExact := left.exact()
-				rightLiteral, rightExact := right.exact()
-				if !leftExact || !rightExact {
-					if join(item.output, unknown) {
+				leftValues, rightValues := left.finite(), right.finite()
+				if len(leftValues) != 0 && len(rightValues) != 0 {
+					if isRecurrent {
+						current := states[item.output]
+						if !current.unknown {
+							grows, reachable := arithmeticFiniteGrowth(leftValues, rightValues, item.op, current.values)
+							if !reachable || grows {
+								if join(item.output, unknown, false) {
+									changed = true
+								}
+							}
+						}
+						continue
+					}
+					results := arithmeticFiniteResults(leftValues, rightValues, item.op)
+					if len(results) != 0 && join(item.output, state{values: results}, isRecurrent) {
 						changed = true
 					}
-					continue
 				}
-				result, resultOK := scalar.ExactArithmeticLiteral(leftLiteral, rightLiteral, item.op)
-				if !resultOK {
-					if join(item.output, unknown) {
+				if left.unknown || right.unknown || len(leftValues) == 0 || len(rightValues) == 0 {
+					if join(item.output, unknown, false) {
 						changed = true
 					}
-					continue
-				}
-				if join(item.output, exact(result)) {
-					changed = true
 				}
 			}
 		}
@@ -323,23 +584,28 @@ func Compile(input Input) (*Bundle, programconstruction.Fault) {
 			{role: programschema.ExactScalarSummaryResult, subject: row.ID()},
 		}
 		for _, use := range uses {
-			literal, ok := states[use.subject].exact()
-			if !ok {
-				continue
+			for _, literal := range states[use.subject].finite() {
+				// A finite state is a sealed complete image. Emit one
+				// immutable summary per retained atom, including all
+				// alternatives of a guarded operand and every result of
+				// its finite Cartesian product.
+				if literal.Kind != keyspace.LiteralInteger && literal.Kind != keyspace.LiteralFloat {
+					continue
+				}
+				body, ok := row.BodyID()
+				if !ok {
+					return nil, programconstruction.New(programcatalog.Occurrence(), programconstruction.IssueExactScalarUnavailable, index, -1)
+				}
+				summary, ok := programschema.NewExactScalarSummary(row.ID(), use.subject, body, use.role, programschema.SummaryLiteral{Kind: uint8(literal.Kind), Integer: literal.Integer, FloatBits: literal.FloatBits})
+				if !ok {
+					return nil, programconstruction.New(programcatalog.ExactScalarSummary(), programconstruction.IssueExactScalarUnavailable, index, -1)
+				}
+				if _, duplicate := seen[summary.ID()]; duplicate {
+					return nil, programconstruction.New(programcatalog.ExactScalarSummary(), programconstruction.IssueExactScalarUnavailable, index, -1)
+				}
+				seen[summary.ID()] = struct{}{}
+				summaries = append(summaries, summary)
 			}
-			body, ok := row.BodyID()
-			if !ok {
-				return nil, programconstruction.New(programcatalog.Occurrence(), programconstruction.IssueExactScalarUnavailable, index, -1)
-			}
-			summary, ok := programschema.NewExactScalarSummary(row.ID(), use.subject, body, use.role, programschema.SummaryLiteral{Kind: uint8(literal.Kind), Integer: literal.Integer, FloatBits: literal.FloatBits})
-			if !ok {
-				return nil, programconstruction.New(programcatalog.ExactScalarSummary(), programconstruction.IssueExactScalarUnavailable, index, -1)
-			}
-			if _, duplicate := seen[summary.ID()]; duplicate {
-				return nil, programconstruction.New(programcatalog.ExactScalarSummary(), programconstruction.IssueExactScalarUnavailable, index, -1)
-			}
-			seen[summary.ID()] = struct{}{}
-			summaries = append(summaries, summary)
 		}
 	}
 	identity.SortByContentID(summaries, func(row programschema.ExactScalarSummary) identity.ContentID { return row.ID() })
