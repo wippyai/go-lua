@@ -21,7 +21,9 @@ func memberSetDefinition() definition.Definition {
 	method := func(name string, receiver definition.GoType) definition.GoSymbol {
 		return definition.GoSymbol{PackagePath: owner.PackagePath, Name: name, Receiver: receiver, ResultIndex: 0}
 	}
-	source.Carriers = append(source.Carriers, definition.Carrier{Name: "Port", Key: "carrier/self/port", Type: port})
+	source.Carriers = append(source.Carriers,
+		definition.Carrier{Name: "Port", Key: "carrier/self/port", Type: port},
+		definition.Carrier{Name: "PortOrdinalCarrier", Key: "carrier/self/port-ordinal", Type: definition.GoType{Name: "uint32"}})
 	source.Relations = append(source.Relations, definition.Relation{
 		Name: "Ports", Key: "self/ports", Subject: "Port",
 		CandidateProvider: member.RelationRef{Axis: axis, Member: "self/ports"},
@@ -29,6 +31,7 @@ func memberSetDefinition() definition.Definition {
 		CandidateOrdinal:  method("PortOrdinal", owner),
 		CandidateAt:       method("PortAt", owner),
 		MemberParent:      member.RelationRef{Axis: axis, Member: "self/candidates"},
+		MemberOrdinal:     "PortOrdinalCarrier",
 		MemberCount:       method("PortCount", candidate),
 		MemberAt:          method("PortAt", candidate),
 	})
@@ -40,11 +43,12 @@ func memberSetDefinition() definition.Definition {
 	return source
 }
 
-// TestANestedMemberSetIsThreeRowsOrNone states the declaration is one
-// statement. A parent with no accessors names a set nothing can read, and
-// accessors with no parent name members of nothing; either half alone is a
-// declaration a generated owner could not honour.
-func TestANestedMemberSetIsThreeRowsOrNone(t *testing.T) {
+// TestANestedMemberSetIsWholeOrAbsent states the declaration is one
+// statement. A parent with no accessors names a set nothing can read,
+// accessors with no parent name members of nothing, and a set with no ordinal
+// carrier gives its members no address a consumer could reach them by. Any
+// part alone is a declaration a generated owner could not honour.
+func TestANestedMemberSetIsWholeOrAbsent(t *testing.T) {
 	if !memberSetDefinition().Complete() {
 		t.Fatal("a whole member-set declaration was refused")
 	}
@@ -53,6 +57,8 @@ func TestANestedMemberSetIsThreeRowsOrNone(t *testing.T) {
 		amend func(*definition.Relation)
 	}{
 		{name: "no-parent", amend: func(relation *definition.Relation) { relation.MemberParent = member.RelationRef{} }},
+		{name: "no-ordinal", amend: func(relation *definition.Relation) { relation.MemberOrdinal = "" }},
+		{name: "undeclared-ordinal", amend: func(relation *definition.Relation) { relation.MemberOrdinal = "Absent" }},
 		{name: "no-count", amend: func(relation *definition.Relation) { relation.MemberCount = definition.GoSymbol{} }},
 		{name: "no-accessor", amend: func(relation *definition.Relation) { relation.MemberAt = definition.GoSymbol{} }},
 		{name: "parent-is-itself", amend: func(relation *definition.Relation) {
@@ -115,5 +121,80 @@ func TestAGeneratedOwnerPublishesTheDeclaredMemberSet(t *testing.T) {
 	}
 	if !strings.Contains(string(empty.Relations), "func (owner *RelationOwner) MemberCount(relationOrdinal, parentCandidateOrdinal uint32) (int, bool) {\n\treturn 0, false\n}") {
 		t.Fatal("an axis with no member set does not publish the empty census")
+	}
+}
+
+// TestANestedMemberSetSurvivesIntoTheColdCatalog is the clause a CHILD Program
+// depends on, and the one that was missing.
+//
+// A member set declared on an owner was reaching only that owner's own
+// bind-time accessors - Go symbols nobody outside the axis can call. A child
+// Program consuming another axis's members reads the COLD catalog, so the
+// parent it hangs off and the carrier its ordinal is keyed by have to be rows
+// there. Without them the set exists and is unaddressable, which is
+// indistinguishable from an axis that declares no members at all.
+func TestANestedMemberSetSurvivesIntoTheColdCatalog(t *testing.T) {
+	source := memberSetDefinition()
+	catalog, catalogOK := source.Catalog()
+	if !catalogOK {
+		t.Fatal("a declared member set did not compose into a catalog")
+	}
+	nested, nestedOK := catalog.Relation("self/ports")
+	if !nestedOK {
+		t.Fatal("the member relation is not a catalog row")
+	}
+	if !nested.Parent.Available() || nested.Parent.Member != "self/candidates" {
+		t.Fatalf("cold row parent = %+v, want the relation its members hang off", nested.Parent)
+	}
+	if !nested.Ordinal.Available() || nested.Ordinal != "carrier/self/port-ordinal" {
+		t.Fatalf("cold row ordinal = %q, want the carrier its members are addressed by", nested.Ordinal)
+	}
+	plain, plainOK := catalog.Relation("self/candidates")
+	if !plainOK {
+		t.Fatal("the parent relation is not a catalog row")
+	}
+	if plain.Parent.Declared() || plain.Ordinal.Available() {
+		t.Fatalf("a relation with no member set carries parent %+v ordinal %q", plain.Parent, plain.Ordinal)
+	}
+
+	rendered, err := Render("self", source)
+	if err != nil {
+		t.Fatalf("render member set: %v", err)
+	}
+	if !strings.Contains(string(rendered.Cold), "Parent: ") || !strings.Contains(string(rendered.Cold), "Ordinal: ") {
+		t.Fatal("the generated cold catalog drops the nested relation metadata")
+	}
+}
+
+// TestResolvedMetadataCarriesTheMemberSet states the typed half. An emitter
+// building a child's direct calls needs the accessor pair and the ordinal's
+// type, and Present is what separates an axis with no member set from one
+// whose rows happen to be zero.
+func TestResolvedMetadataCarriesTheMemberSet(t *testing.T) {
+	metadata, err := Resolve(memberSetDefinition())
+	if err != nil {
+		t.Fatalf("resolve member set: %v", err)
+	}
+	var nested MemberSetBinding
+	var plainPresent bool
+	for _, relation := range metadata.Relations {
+		switch relation.Key {
+		case "self/ports":
+			nested = relation.MemberSet
+		case "self/candidates":
+			plainPresent = relation.MemberSet.Present
+		}
+	}
+	if !nested.Present {
+		t.Fatal("the resolved member relation carries no member set")
+	}
+	if nested.Parent.Member != "self/candidates" || nested.Ordinal.Name != "uint32" {
+		t.Fatalf("resolved member set = %+v", nested)
+	}
+	if nested.Count.Name != "PortCount" || nested.At.Name != "PortAt" {
+		t.Fatalf("resolved accessors = %s/%s", nested.Count.Name, nested.At.Name)
+	}
+	if plainPresent {
+		t.Fatal("a relation with no member set resolved one")
 	}
 }

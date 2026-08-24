@@ -94,6 +94,28 @@ type RelationBinding struct {
 	// dependent relation subject from its explicit inputs. It is metadata only;
 	// the generated RelationOwner deliberately does not retain or execute it.
 	Derivation RelationDerivationBinding
+	// MemberSet is the resolved nested ordered member set this relation
+	// declares, present exactly when it declares one. It survives resolution
+	// because a CHILD Program consumes it: the parent and the ordinal carrier
+	// address an owner's members from outside, and the accessor pair is what
+	// this axis's own bind-time owner answers them with.
+	MemberSet MemberSetBinding
+}
+
+// MemberSetBinding is the resolved nested ordered member set of one relation:
+// the parent whose rows carry the members, the carrier that keys a member
+// under its parent, and the owner accessor pair that answers the census and
+// the row.
+//
+// Present distinguishes a relation with no member set from one whose set
+// happens to resolve to zero-value rows, which is the distinction a consumer
+// has to make before it can address anything.
+type MemberSetBinding struct {
+	Present bool
+	Parent  member.RelationRef
+	Ordinal definition.GoType
+	Count   definition.GoSymbol
+	At      definition.GoSymbol
 }
 
 // RelationDerivationBinding is the resolved, callback-free source form for a
@@ -227,6 +249,16 @@ func Resolve(source definition.Definition) (Metadata, error) {
 				Count: relation.Derivation.Count, At: relation.Derivation.At,
 				StaticAxes: append([]schema.EntryReference(nil), relation.Derivation.StaticAxes...),
 			},
+		}
+		if relation.MemberParent.Available() {
+			ordinal, ordinalOK := carriers[relation.MemberOrdinal]
+			if !ordinalOK {
+				return Metadata{}, fmt.Errorf("member generator: relation %s keys its member set by an undeclared carrier", relation.Name)
+			}
+			relations[index].MemberSet = MemberSetBinding{
+				Present: true, Parent: relation.MemberParent, Ordinal: ordinal.Type,
+				Count: relation.MemberCount, At: relation.MemberAt,
+			}
 		}
 	}
 	owner := source.Binding.Key.Normalizer.Receiver
@@ -513,6 +545,13 @@ func renderCold(packageName string, source definition.Definition) ([]byte, error
 				out.WriteString(carriers[input])
 			}
 			out.WriteString("}")
+		}
+		// A nested member set is cold catalog data, not just owner symbols. The
+		// parent and the ordinal carrier are what a child Program addresses an
+		// owner's members by, so they are emitted beside the row rather than
+		// left to the bind-time accessors this axis alone can call.
+		if relation.MemberParent.Available() {
+			fmt.Fprintf(&out, ", Parent: %s, Ordinal: %s", relationProviderExpression(relation.MemberParent), carriers[relation.MemberOrdinal])
 		}
 		out.WriteString("},\n")
 	}

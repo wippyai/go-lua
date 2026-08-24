@@ -152,8 +152,14 @@ type Relation struct {
 	// coordinate a member projects to is reached the same way any other row's
 	// is, and there is no second projection language for members.
 	MemberParent member.RelationRef
-	MemberCount  GoSymbol
-	MemberAt     GoSymbol
+	// MemberOrdinal is the carrier that keys the nested member set: the address
+	// a member is reached by under its parent. It is declared with the rest of
+	// the set, and it is what a CHILD Program consumes - the cold catalog row
+	// carries the parent and the ordinal, so a consumer that never sees this
+	// owner's Go symbols can still address its members.
+	MemberOrdinal string
+	MemberCount   GoSymbol
+	MemberAt      GoSymbol
 	// Derivation is the optional typed construction of a dependent relation
 	// row. It is invoked by generated composition code, never retained as a
 	// runtime callback or owner handle.
@@ -164,7 +170,8 @@ type Relation struct {
 // set. The three rows are one declaration: a parent with no accessor pair, or
 // an accessor pair with no parent, states half of a set nothing can read.
 func (relation Relation) memberSetDeclared() bool {
-	return relation.MemberParent.Available() || !symbolOptional(relation.MemberCount) || !symbolOptional(relation.MemberAt)
+	return relation.MemberParent.Available() || relation.MemberOrdinal != "" ||
+		!symbolOptional(relation.MemberCount) || !symbolOptional(relation.MemberAt)
 }
 
 // memberSetComplete validates a declared member set against the relations it
@@ -175,7 +182,11 @@ func (relation Relation) memberSetComplete(relations map[string]Relation, byKey 
 	if !relation.memberSetDeclared() {
 		return true
 	}
-	if !relation.MemberParent.Available() || !relation.MemberCount.Available() || !relation.MemberAt.Available() {
+	if !relation.MemberParent.Available() || !relation.MemberCount.Available() || !relation.MemberAt.Available() ||
+		relation.MemberOrdinal == "" {
+		return false
+	}
+	if _, ordinalOK := carriers[relation.MemberOrdinal]; !ordinalOK {
 		return false
 	}
 	if relation.CandidateProvider.Member != relation.Key {
@@ -420,7 +431,19 @@ func (definition Definition) Catalog() (member.Catalog, bool) {
 			}
 			inputs[inputIndex] = input.Key
 		}
-		relations[index] = member.Relation{Key: relation.Key, Subject: subject.Key, Inputs: inputs, CandidateProvider: relation.CandidateProvider}
+		row := member.Relation{Key: relation.Key, Subject: subject.Key, Inputs: inputs, CandidateProvider: relation.CandidateProvider}
+		// A nested member set survives into the cold catalog. The parent and the
+		// ordinal carrier are what a CHILD Program consumes to address an
+		// owner's members, and dropping them here would leave the set visible
+		// only through Go symbols the child cannot reach.
+		if relation.memberSetDeclared() {
+			ordinal, ordinalOK := carriers[relation.MemberOrdinal]
+			if !ordinalOK {
+				return member.Catalog{}, false
+			}
+			row.Parent, row.Ordinal = relation.MemberParent, ordinal.Key
+		}
+		relations[index] = row
 		relationNames[relation.Name] = relation.Key
 		relationKeys[relation.Key] = struct{}{}
 	}
