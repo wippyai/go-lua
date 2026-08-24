@@ -111,37 +111,44 @@ func loadKnownRedManifest(t *testing.T) knownRedManifest {
 // TestKnownRedsManifestIsExactOverItsCoveredSets is the law. It runs each
 // covered set once and compares the observed failure set to the manifest in
 // both directions.
+//
+// The two-directional comparison reads observed and expected as whole sets
+// merged across every covered set, so no covered set states its half of the
+// property alone: the whole run is one subtest, and a pattern that does not
+// name it runs none of the covered sets below.
 func TestKnownRedsManifestIsExactOverItsCoveredSets(t *testing.T) {
-	manifest := loadKnownRedManifest(t)
-	repository := architectureBatteryRepositoryRoot(t)
-	excluded := make(map[string]knownRedEntry)
-	for _, entry := range manifest.Excluded {
-		excluded[entry.key()] = entry
-	}
-	expected := make(map[string]knownRedEntry)
-	for _, entry := range manifest.Reds {
-		if _, isExcluded := excluded[entry.key()]; isExcluded {
-			t.Fatalf("%s lists %s/%s as both an expected red and an excluded test", knownRedManifestPath, entry.Package, entry.Test)
+	t.Run("law", func(t *testing.T) {
+		manifest := loadKnownRedManifest(t)
+		repository := architectureBatteryRepositoryRoot(t)
+		excluded := make(map[string]knownRedEntry)
+		for _, entry := range manifest.Excluded {
+			excluded[entry.key()] = entry
 		}
-		expected[entry.key()] = entry
-	}
-	observed := make(map[string]struct{})
-	for _, set := range manifest.CoveredSets {
-		for _, failure := range knownRedRunSet(t, repository, set, excluded) {
-			observed[failure] = struct{}{}
+		expected := make(map[string]knownRedEntry)
+		for _, entry := range manifest.Reds {
+			if _, isExcluded := excluded[entry.key()]; isExcluded {
+				t.Fatalf("%s lists %s/%s as both an expected red and an excluded test", knownRedManifestPath, entry.Package, entry.Test)
+			}
+			expected[entry.key()] = entry
 		}
-	}
-	for _, key := range knownRedSortedKeys(observed) {
-		if _, listed := expected[key]; !listed {
-			t.Errorf("unlisted red: %s failed and is not in %s; a new failure is a regression, not a list entry", strings.ReplaceAll(key, "\t", " "), knownRedManifestPath)
+		observed := make(map[string]struct{})
+		for _, set := range manifest.CoveredSets {
+			for _, failure := range knownRedRunSet(t, repository, set, excluded) {
+				observed[failure] = struct{}{}
+			}
 		}
-	}
-	for key, entry := range expected {
-		if _, still := observed[key]; !still {
-			t.Errorf("%s/%s is green: remove from manifest %s (recorded reason: %s; owner: %s)", entry.Package, entry.Test, knownRedManifestPath, entry.Reason, entry.Owner)
+		for _, key := range knownRedSortedKeys(observed) {
+			if _, listed := expected[key]; !listed {
+				t.Errorf("unlisted red: %s failed and is not in %s; a new failure is a regression, not a list entry", strings.ReplaceAll(key, "\t", " "), knownRedManifestPath)
+			}
 		}
-	}
-	t.Logf("known reds: %d listed, %d observed, %d excluded from execution", len(expected), len(observed), len(excluded))
+		for key, entry := range expected {
+			if _, still := observed[key]; !still {
+				t.Errorf("%s/%s is green: remove from manifest %s (recorded reason: %s; owner: %s)", entry.Package, entry.Test, knownRedManifestPath, entry.Reason, entry.Owner)
+			}
+		}
+		t.Logf("known reds: %d listed, %d observed, %d excluded from execution", len(expected), len(observed), len(excluded))
+	})
 }
 
 // knownRedRunSet executes one covered set and returns its failure keys. The

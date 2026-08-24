@@ -465,10 +465,12 @@ func acceptanceRatchetWalk(t *testing.T, projects []corpusHarnessProject) map[st
 // name shares the acceptance prefix on purpose: a gate that selects the
 // acceptance corpus by name selects its mark with it.
 func TestCanonicalCorpusAcceptanceHighWaterMark(t *testing.T) {
-	mark := loadAcceptanceHighWater(t)
-	families := acceptanceRatchetWalk(t, corpusHarnessProjects(t))
-	t.Log(acceptanceRatchetReceipt(mark, families))
-	acceptanceRatchetJudge(t, mark, families)
+	t.Run("law", func(t *testing.T) {
+		mark := loadAcceptanceHighWater(t)
+		families := acceptanceRatchetWalk(t, corpusHarnessProjects(t))
+		t.Log(acceptanceRatchetReceipt(mark, families))
+		acceptanceRatchetJudge(t, mark, families)
+	})
 }
 
 // acceptanceRatchetReporter is the judgment's output. It is the testing

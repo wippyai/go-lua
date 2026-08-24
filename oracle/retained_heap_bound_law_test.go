@@ -63,57 +63,62 @@ const (
 // census lane's subject, not this one's; this gate only refuses to measure a
 // corpus that produced no successful analysis at all, which would let it pass
 // without having exercised the path it guards.
+// The batches are sequential and cumulative by construction - later rounds
+// are judged against the live heap earlier rounds left behind - so the whole
+// series is one subtest: a pattern that does not name it runs no batch below.
 func TestSequentialCorpusFixturesRetainNoHeapAfterClose(t *testing.T) {
-	batches := retainedHeapBatches(t)
-	// The measured boundary is the compile's own: a fixture's products must be
-	// gone once its Plan and the Workspace that owns them are closed. Each
-	// fixture therefore runs in a private Workspace it closes itself. The
-	// shared Workspace of a long-lived process answers a different question -
-	// it retains its products until Close by declared design - and would report
-	// its own reuse cache as this gate's leak.
-	mode := corpusHarnessMode{name: "retained-heap", execution: corpusHarnessDiagnosticSolve, options: corpusHarnessSolveOptions(), workspace: corpusHarnessWorkspacePerFixture}
+	t.Run("law", func(t *testing.T) {
+		batches := retainedHeapBatches(t)
+		// The measured boundary is the compile's own: a fixture's products must be
+		// gone once its Plan and the Workspace that owns them are closed. Each
+		// fixture therefore runs in a private Workspace it closes itself. The
+		// shared Workspace of a long-lived process answers a different question -
+		// it retains its products until Close by declared design - and would report
+		// its own reuse cache as this gate's leak.
+		mode := corpusHarnessMode{name: "retained-heap", execution: corpusHarnessDiagnosticSolve, options: corpusHarnessSolveOptions(), workspace: corpusHarnessWorkspacePerFixture}
 
-	// The warmup batch pays every one-time cost the analyzer defers to first
-	// use: the sealed standard-library target, engine templates, package-level
-	// singletons, and the runtime's own lazily grown structures. Measuring it
-	// would report bounded initialization as a leak.
-	analyzed, warmupOK := retainedHeapRunBatch(t, batches[0], mode)
-	if analyzed == 0 {
-		t.Fatal("warmup batch analyzed no fixtures")
-	}
-	baseline := retainedHeapLiveBytes()
-	t.Logf("warmup: %d fixtures, %d analyzed clean, live heap %s", analyzed, warmupOK, retainedHeapBytes(baseline))
+		// The warmup batch pays every one-time cost the analyzer defers to first
+		// use: the sealed standard-library target, engine templates, package-level
+		// singletons, and the runtime's own lazily grown structures. Measuring it
+		// would report bounded initialization as a leak.
+		analyzed, warmupOK := retainedHeapRunBatch(t, batches[0], mode)
+		if analyzed == 0 {
+			t.Fatal("warmup batch analyzed no fixtures")
+		}
+		baseline := retainedHeapLiveBytes()
+		t.Logf("warmup: %d fixtures, %d analyzed clean, live heap %s", analyzed, warmupOK, retainedHeapBytes(baseline))
 
-	series := make([]uint64, 0, retainedHeapRounds)
-	cumulative := 0
-	cleanTotal := 0
-	for round := 0; round < retainedHeapRounds; round++ {
-		count, clean := retainedHeapRunBatch(t, batches[round+1], mode)
-		cumulative += count
-		cleanTotal += clean
-		live := retainedHeapLiveBytes()
-		series = append(series, live)
-		t.Logf("batch %d: %d fixtures (%d cumulative, %d analyzed clean), live heap %s, delta from baseline %s",
-			round+1, count, cumulative, clean, retainedHeapBytes(live), retainedHeapSignedBytes(int64(live)-int64(baseline)))
-	}
-	if cleanTotal == 0 {
-		t.Fatalf("no measured fixture analyzed cleanly across %d fixtures; the gate cannot certify a path it never exercised", cumulative)
-	}
+		series := make([]uint64, 0, retainedHeapRounds)
+		cumulative := 0
+		cleanTotal := 0
+		for round := 0; round < retainedHeapRounds; round++ {
+			count, clean := retainedHeapRunBatch(t, batches[round+1], mode)
+			cumulative += count
+			cleanTotal += clean
+			live := retainedHeapLiveBytes()
+			series = append(series, live)
+			t.Logf("batch %d: %d fixtures (%d cumulative, %d analyzed clean), live heap %s, delta from baseline %s",
+				round+1, count, cumulative, clean, retainedHeapBytes(live), retainedHeapSignedBytes(int64(live)-int64(baseline)))
+		}
+		if cleanTotal == 0 {
+			t.Fatalf("no measured fixture analyzed cleanly across %d fixtures; the gate cannot certify a path it never exercised", cumulative)
+		}
 
-	first, last := series[0], series[len(series)-1]
-	if last <= first {
-		return
-	}
-	growth := last - first
-	if growth <= retainedHeapSettleTolerance {
-		return
-	}
-	perFixture := growth / uint64(cumulative-len(batches[1]))
-	t.Fatalf("acceptance path retains heap across sequential fixtures: live heap grew %s (%s after batch 1, %s after batch %d, about %s per additional fixture) "+
-		"against a %s tolerance, with every compiled Plan closed. Series: %s. "+
-		"An owner is holding per-fixture products past Plan.Close; find the owner and release at its lifecycle boundary rather than capping workers, evicting a cache, or reducing fixtures",
-		retainedHeapBytes(growth), retainedHeapBytes(first), retainedHeapBytes(last), retainedHeapRounds, retainedHeapBytes(perFixture),
-		retainedHeapBytes(retainedHeapSettleTolerance), retainedHeapSeries(series))
+		first, last := series[0], series[len(series)-1]
+		if last <= first {
+			return
+		}
+		growth := last - first
+		if growth <= retainedHeapSettleTolerance {
+			return
+		}
+		perFixture := growth / uint64(cumulative-len(batches[1]))
+		t.Fatalf("acceptance path retains heap across sequential fixtures: live heap grew %s (%s after batch 1, %s after batch %d, about %s per additional fixture) "+
+			"against a %s tolerance, with every compiled Plan closed. Series: %s. "+
+			"An owner is holding per-fixture products past Plan.Close; find the owner and release at its lifecycle boundary rather than capping workers, evicting a cache, or reducing fixtures",
+			retainedHeapBytes(growth), retainedHeapBytes(first), retainedHeapBytes(last), retainedHeapRounds, retainedHeapBytes(perFixture),
+			retainedHeapBytes(retainedHeapSettleTolerance), retainedHeapSeries(series))
+	})
 }
 
 // retainedHeapBatches selects retainedHeapRounds+1 disjoint fixture batches

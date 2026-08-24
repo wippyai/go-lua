@@ -3,6 +3,7 @@ package oracle
 import (
 	"context"
 	"fmt"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -62,20 +63,19 @@ func edgeMatrixPrefixEnd(t *testing.T, source []byte, cases int) int {
 	return end
 }
 
-func TestDiagnosticEdgeMatrixPrefix40(t *testing.T)  { analyzeEdgeMatrixPrefix(t, 40) }
-func TestDiagnosticEdgeMatrixPrefix100(t *testing.T) { analyzeEdgeMatrixPrefix(t, 100) }
-func TestDiagnosticEdgeMatrixPrefix150(t *testing.T) { analyzeEdgeMatrixPrefix(t, 150) }
-func TestDiagnosticEdgeMatrixPrefix160(t *testing.T) { analyzeEdgeMatrixPrefix(t, 160) }
-func TestDiagnosticEdgeMatrixPrefix170(t *testing.T) { analyzeEdgeMatrixPrefix(t, 170) }
-func TestDiagnosticEdgeMatrixPrefix180(t *testing.T) { analyzeEdgeMatrixPrefix(t, 180) }
-func TestDiagnosticEdgeMatrixPrefix190(t *testing.T) { analyzeEdgeMatrixPrefix(t, 190) }
-func TestDiagnosticEdgeMatrixPrefix220(t *testing.T) { analyzeEdgeMatrixPrefix(t, 220) }
-func TestDiagnosticEdgeMatrixPrefix240(t *testing.T) { analyzeEdgeMatrixPrefix(t, 240) }
-func TestDiagnosticEdgeMatrixPrefix242(t *testing.T) { analyzeEdgeMatrixPrefix(t, 242) }
-func TestDiagnosticEdgeMatrixPrefix244(t *testing.T) { analyzeEdgeMatrixPrefix(t, 244) }
-func TestDiagnosticEdgeMatrixPrefix248(t *testing.T) { analyzeEdgeMatrixPrefix(t, 248) }
-func TestDiagnosticEdgeMatrixPrefix250(t *testing.T) { analyzeEdgeMatrixPrefix(t, 250) }
-func TestDiagnosticEdgeMatrixPrefix260(t *testing.T) { analyzeEdgeMatrixPrefix(t, 260) }
-func TestDiagnosticEdgeMatrixPrefix300(t *testing.T) { analyzeEdgeMatrixPrefix(t, 300) }
-func TestDiagnosticEdgeMatrixPrefix340(t *testing.T) { analyzeEdgeMatrixPrefix(t, 340) }
-func TestDiagnosticEdgeMatrixPrefix370(t *testing.T) { analyzeEdgeMatrixPrefix(t, 370) }
+// diagnosticEdgeMatrixPrefixCases are the sampled prefix boundaries. Each one
+// is an independent compile-and-solve of its own truncated source, so each
+// runs as its own subtest: a pattern naming one case number touches no other
+// case's compile.
+var diagnosticEdgeMatrixPrefixCases = []int{
+	40, 100, 150, 160, 170, 180, 190, 220, 240, 242, 244, 248, 250, 260, 300, 340, 370,
+}
+
+func TestDiagnosticEdgeMatrixPrefix(t *testing.T) {
+	for _, cases := range diagnosticEdgeMatrixPrefixCases {
+		cases := cases
+		t.Run(strconv.Itoa(cases), func(t *testing.T) {
+			analyzeEdgeMatrixPrefix(t, cases)
+		})
+	}
+}

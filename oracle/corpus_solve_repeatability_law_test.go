@@ -44,49 +44,41 @@ var corpusSolveRepeatabilityLawFixtures = []string{
 // could be given.
 const corpusSolveRepeatabilityLawRounds = 3
 
-// TestCorpusFixtureSolveIsRepeatable solves each fixture repeatedly through the
-// one shared Workspace. Every round after the first reads the same sealed
-// compiler products the round before it sealed, so the rounds differ in nothing
-// the analyzer is allowed to see, and their answers must be one answer.
+// TestCorpusFixtureSolveIsRepeatable states the property for both Workspace
+// lifetimes. "warm" solves each fixture repeatedly through the one shared
+// Workspace: every round after the first reads the same sealed compiler
+// products the round before it sealed, so the rounds differ in nothing the
+// analyzer is allowed to see, and their answers must be one answer. "cold"
+// states the same property for a Workspace of its own per round, which seals
+// its own analyzer composition and its own compiler products and reaches the
+// solver through allocations no earlier round touched: a cold answer that
+// moves between rounds is reading its own heap, not its Program.
+//
+// Each fixture is its own subtest under each lifetime, so a pattern naming one
+// fixture solves only that fixture, in only the lifetime it names.
 func TestCorpusFixtureSolveIsRepeatable(t *testing.T) {
-	for _, name := range corpusSolveRepeatabilityLawFixtures {
-		project := corpusHarnessFixture(t, name)
-		first := ""
-		for round := 0; round < corpusSolveRepeatabilityLawRounds; round++ {
-			run, class, err := corpusHarnessExecuteDetached(t, project, corpusHarnessWorkspaceLawMode(corpusHarnessWorkspaceShared))
-			signature := corpusHarnessWorkspaceLawSignature(run, class, err)
-			if round == 0 {
-				first = signature
-				continue
-			}
-			if signature != first {
-				t.Errorf("fixture %s answered differently on solve %d of %d\n  first: %s\n  again: %s",
-					name, round+1, corpusSolveRepeatabilityLawRounds, first, signature)
-			}
-		}
-	}
+	t.Run("warm", func(t *testing.T) { corpusSolveRepeatabilityLawRun(t, corpusHarnessWorkspaceShared) })
+	t.Run("cold", func(t *testing.T) { corpusSolveRepeatabilityLawRun(t, corpusHarnessWorkspacePerFixture) })
 }
 
-// TestCorpusFixtureColdSolveIsRepeatable states the same property for the cold
-// path. Each round compiles into a Workspace of its own, so it seals its own
-// analyzer composition and its own compiler products, and reaches the solver
-// through allocations no earlier round touched. A cold answer that moves
-// between rounds is reading its own heap, not its Program.
-func TestCorpusFixtureColdSolveIsRepeatable(t *testing.T) {
+func corpusSolveRepeatabilityLawRun(t *testing.T, lifetime corpusHarnessWorkspaceLifetime) {
 	for _, name := range corpusSolveRepeatabilityLawFixtures {
-		project := corpusHarnessFixture(t, name)
-		first := ""
-		for round := 0; round < corpusSolveRepeatabilityLawRounds; round++ {
-			run, class, err := corpusHarnessExecuteDetached(t, project, corpusHarnessWorkspaceLawMode(corpusHarnessWorkspacePerFixture))
-			signature := corpusHarnessWorkspaceLawSignature(run, class, err)
-			if round == 0 {
-				first = signature
-				continue
+		name := name
+		t.Run(name, func(t *testing.T) {
+			project := corpusHarnessFixture(t, name)
+			first := ""
+			for round := 0; round < corpusSolveRepeatabilityLawRounds; round++ {
+				run, class, err := corpusHarnessExecuteDetached(t, project, corpusHarnessWorkspaceLawMode(lifetime))
+				signature := corpusHarnessWorkspaceLawSignature(run, class, err)
+				if round == 0 {
+					first = signature
+					continue
+				}
+				if signature != first {
+					t.Errorf("fixture %s answered differently on solve %d of %d\n  first: %s\n  again: %s",
+						name, round+1, corpusSolveRepeatabilityLawRounds, first, signature)
+				}
 			}
-			if signature != first {
-				t.Errorf("fixture %s answered differently on cold solve %d of %d\n  first: %s\n  again: %s",
-					name, round+1, corpusSolveRepeatabilityLawRounds, first, signature)
-			}
-		}
+		})
 	}
 }

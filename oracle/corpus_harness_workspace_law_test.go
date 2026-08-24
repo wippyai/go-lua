@@ -3,6 +3,8 @@ package oracle
 import (
 	"fmt"
 	"testing"
+
+	"github.com/wippyai/go-lua/domain/composite"
 )
 
 // This file is the corpus spine's Workspace law. Its subject is the analyzer
@@ -70,31 +72,37 @@ func corpusHarnessWorkspaceLawMode(lifetime corpusHarnessWorkspaceLifetime) corp
 // analyzed through the shared Workspace in declaration order and again in
 // reverse order, so every one of them is compiled behind a cache warmed by
 // different neighbours. All three answers must be identical.
+//
+// The three orders share one private baseline and are not a per-fixture
+// property, so the whole comparison runs as one subtest: a pattern that does
+// not name it selects none of the compiles below.
 func TestCorpusFixtureAnalysisIsIndependentOfCompileOrder(t *testing.T) {
-	cold := make(map[string]string, len(corpusHarnessWorkspaceLawFixtures))
-	for _, name := range corpusHarnessWorkspaceLawFixtures {
-		project := corpusHarnessFixture(t, name)
-		run, class, err := corpusHarnessExecuteDetached(t, project, corpusHarnessWorkspaceLawMode(corpusHarnessWorkspacePerFixture))
-		cold[name] = corpusHarnessWorkspaceLawSignature(run, class, err)
-	}
-	orders := map[string][]string{
-		"forward": corpusHarnessWorkspaceLawFixtures,
-		"reverse": nil,
-	}
-	for index := len(corpusHarnessWorkspaceLawFixtures) - 1; index >= 0; index-- {
-		orders["reverse"] = append(orders["reverse"], corpusHarnessWorkspaceLawFixtures[index])
-	}
-	for _, order := range []string{"forward", "reverse"} {
-		for _, name := range orders[order] {
+	t.Run("law", func(t *testing.T) {
+		cold := make(map[string]string, len(corpusHarnessWorkspaceLawFixtures))
+		for _, name := range corpusHarnessWorkspaceLawFixtures {
 			project := corpusHarnessFixture(t, name)
-			run, class, err := corpusHarnessExecuteDetached(t, project, corpusHarnessWorkspaceLawMode(corpusHarnessWorkspaceShared))
-			shared := corpusHarnessWorkspaceLawSignature(run, class, err)
-			if shared != cold[name] {
-				t.Errorf("fixture %s analyzed differently through the shared Workspace in %s order\n  private: %s\n  shared:  %s",
-					name, order, cold[name], shared)
+			run, class, err := corpusHarnessExecuteDetached(t, project, corpusHarnessWorkspaceLawMode(corpusHarnessWorkspacePerFixture))
+			cold[name] = corpusHarnessWorkspaceLawSignature(run, class, err)
+		}
+		orders := map[string][]string{
+			"forward": corpusHarnessWorkspaceLawFixtures,
+			"reverse": nil,
+		}
+		for index := len(corpusHarnessWorkspaceLawFixtures) - 1; index >= 0; index-- {
+			orders["reverse"] = append(orders["reverse"], corpusHarnessWorkspaceLawFixtures[index])
+		}
+		for _, order := range []string{"forward", "reverse"} {
+			for _, name := range orders[order] {
+				project := corpusHarnessFixture(t, name)
+				run, class, err := corpusHarnessExecuteDetached(t, project, corpusHarnessWorkspaceLawMode(corpusHarnessWorkspaceShared))
+				shared := corpusHarnessWorkspaceLawSignature(run, class, err)
+				if shared != cold[name] {
+					t.Errorf("fixture %s analyzed differently through the shared Workspace in %s order\n  private: %s\n  shared:  %s",
+						name, order, cold[name], shared)
+				}
 			}
 		}
-	}
+	})
 }
 
 // TestCorpusSpineSealsOneCompositionForTheWholeRun is the compute-once law. The
@@ -109,14 +117,21 @@ func TestCorpusSpineSealsOneCompositionForTheWholeRun(t *testing.T) {
 		t.Fatal("shared corpus Workspace sealed no analyzer composition")
 	}
 	for _, name := range corpusHarnessWorkspaceLawFixtures {
-		project := corpusHarnessFixture(t, name)
-		run, _, _ := corpusHarnessExecuteDetached(t, project, corpusHarnessWorkspaceLawMode(corpusHarnessWorkspaceShared))
-		if !run.compilation.Available() {
-			t.Fatalf("fixture %s ran with no sealed composition", name)
-		}
-		if run.compilation.Schema() != shared.Schema() {
-			t.Errorf("fixture %s sealed its own analyzer composition instead of reading its Workspace's", name)
-		}
+		name := name
+		t.Run(name, func(t *testing.T) {
+			corpusSpineSealsOneCompositionFixture(t, name, shared)
+		})
+	}
+}
+
+func corpusSpineSealsOneCompositionFixture(t *testing.T, name string, shared composite.Compilation) {
+	project := corpusHarnessFixture(t, name)
+	run, _, _ := corpusHarnessExecuteDetached(t, project, corpusHarnessWorkspaceLawMode(corpusHarnessWorkspaceShared))
+	if !run.compilation.Available() {
+		t.Fatalf("fixture %s ran with no sealed composition", name)
+	}
+	if run.compilation.Schema() != shared.Schema() {
+		t.Errorf("fixture %s sealed its own analyzer composition instead of reading its Workspace's", name)
 	}
 }
 

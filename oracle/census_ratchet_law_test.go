@@ -336,12 +336,14 @@ var (
 // selects its ratchet with it, so the full-corpus mark cannot be left unrun by
 // a gate that meant to run the census.
 func TestCanonicalFrozenCorpusCensusHighWaterMark(t *testing.T) {
-	mark := loadCensusHighWater(t)
-	counts, outcomes := censusRatchetCensus(t, corpusHarnessProjects(t))
-	censusRatchetFullMutex.Lock()
-	censusRatchetFullOutcomes = outcomes
-	censusRatchetFullMutex.Unlock()
-	censusRatchetJudge(t, "full", mark.Full, mark.WallCeiling, counts, outcomes, censusRatchetTiming{wall: censusRatchetWall(outcomes), measured: true})
+	t.Run("law", func(t *testing.T) {
+		mark := loadCensusHighWater(t)
+		counts, outcomes := censusRatchetCensus(t, corpusHarnessProjects(t))
+		censusRatchetFullMutex.Lock()
+		censusRatchetFullOutcomes = outcomes
+		censusRatchetFullMutex.Unlock()
+		censusRatchetJudge(t, "full", mark.Full, mark.WallCeiling, counts, outcomes, censusRatchetTiming{wall: censusRatchetWall(outcomes), measured: true})
+	})
 }
 
 // TestCorpusCensusHighWaterMarkSample is the fast lane. It applies the same
@@ -350,10 +352,12 @@ func TestCanonicalFrozenCorpusCensusHighWaterMark(t *testing.T) {
 // weaker judgment over the whole one: only the full lane above is authoritative
 // for the full-corpus mark.
 func TestCorpusCensusHighWaterMarkSample(t *testing.T) {
-	mark := loadCensusHighWater(t)
-	projects := corpusHarnessProjects(t)
-	counts, outcomes, timing := censusRatchetSampledCensus(t, projects, mark.Sample.Stride)
-	censusRatchetJudge(t, "sample", mark.Sample, mark.WallCeiling, counts, outcomes, timing)
+	t.Run("law", func(t *testing.T) {
+		mark := loadCensusHighWater(t)
+		projects := corpusHarnessProjects(t)
+		counts, outcomes, timing := censusRatchetSampledCensus(t, projects, mark.Sample.Stride)
+		censusRatchetJudge(t, "sample", mark.Sample, mark.WallCeiling, counts, outcomes, timing)
+	})
 }
 
 // censusRatchetSampledCensus produces the sample lane's census, reusing a
