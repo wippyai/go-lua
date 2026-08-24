@@ -110,7 +110,22 @@ func DeclareAxis(builder *engine.SchemaBuilder, context axis.Declaration) (*Sche
 }
 
 func BindAxis[A axisInputs](binding *engine.SchemaBinding, context axis.Binding[A, *SchemaFragment]) (*HotOwner, bool) {
-	return BindHot(binding, context.Fragment, context.Inputs.CallInput())
+	owner, ownerOK := BindHot(binding, context.Fragment, context.Inputs.CallInput())
+	if !ownerOK || owner == nil || context.Fragment == nil {
+		return nil, false
+	}
+	// A generated Rule may hold a plain exact read of Call's own Factor (a
+	// mounted call's own fact, at the coordinate Call already projects for
+	// it): completeGeneratedRelationOwnersLocked walks every axis a
+	// generated read table addresses, exact or selected alike, and refuses
+	// to seal one that published no owner. Call had no generated reader
+	// before formal freeze became a declared Program, so this axis never
+	// needed one; freeze's own-fact read is the first, and it is installed
+	// here exactly as the other five owner-bearing axes install theirs.
+	if !engine.BindRelationOwner(binding, context.Fragment.slot, call.NewRelationOwner(context.Inputs.CallInput())) {
+		return nil, false
+	}
+	return owner, true
 }
 
 func AlgebraAxis(owner *HotOwner) (axis.Algebra[call.Value], bool) {
