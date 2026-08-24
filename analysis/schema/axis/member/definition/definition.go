@@ -386,6 +386,16 @@ type Definition struct {
 	Projections     []Projection
 	Reducers        []Reducer
 	CarryTransforms []CarryTransform
+
+	// RelationsPackage and RelationsPath, when set, say that this axis's
+	// generated bind-time relation owner lives apart from its cold catalog:
+	// at a different package (the fact type's own algebra reaches a
+	// dependency the cold catalog's importers must not also reach) and a
+	// path relative to the cold catalog's directory. Both empty is the
+	// default: the relation owner is generated beside the cold catalog, in
+	// its package.
+	RelationsPackage string
+	RelationsPath    string
 }
 
 func identifierAvailable(name string) bool {

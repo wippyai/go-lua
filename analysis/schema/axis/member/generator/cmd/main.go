@@ -17,6 +17,7 @@ func main() {
 	sourceName := flag.String("source", "value", "axis member definition source")
 	coldPath := flag.String("cold", "", "generated cold catalog path")
 	relationPath := flag.String("relations", "", "generated bind-time relation owner path")
+	relationsPackage := flag.String("relations-package", "", "package name for the generated relation owner, when it lives apart from the axis's registered package")
 	exactFoldPath := flag.String("exact-fold", "", "generated same-axis exact-fold reducer dispatch path")
 	check := flag.Bool("check", false, "check generated outputs for freshness")
 	flag.Parse()
@@ -34,16 +35,17 @@ func main() {
 	if !sourceOK {
 		fail("member definition source does not compose: " + *sourceName)
 	}
-	if *coldPath != "" && *relationPath != "" {
-		if err := generator.GenerateAll(packageName, source, filepath.Clean(*coldPath), filepath.Clean(*relationPath), *check); err != nil {
-			fail(err.Error())
-		}
-	} else if *coldPath != "" {
+	relationsPackageName := packageName
+	if *relationsPackage != "" {
+		relationsPackageName = *relationsPackage
+	}
+	if *coldPath != "" {
 		if err := generator.Generate(packageName, source, filepath.Clean(*coldPath), *check); err != nil {
 			fail(err.Error())
 		}
-	} else if *relationPath != "" {
-		if err := generator.GenerateRelations(packageName, source, filepath.Clean(*relationPath), *check); err != nil {
+	}
+	if *relationPath != "" {
+		if err := generator.GenerateRelations(relationsPackageName, source, filepath.Clean(*relationPath), *check); err != nil {
 			fail(err.Error())
 		}
 	}

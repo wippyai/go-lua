@@ -2,7 +2,7 @@
 
 package effect
 
-//go:generate go run ../../analysis/schema/axis/member/generator/cmd -source effect -cold rule_members.go -relations generated_relation_owner.go
+//go:generate go run ../../analysis/schema/axis/member/generator/cmd -source effect -cold rule_members.go -relations owner/generated_relation_owner.go -relations-package owner
 
 import (
 	schemaapi "github.com/wippyai/go-lua/analysis/schema"

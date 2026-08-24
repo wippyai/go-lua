@@ -46,6 +46,17 @@ func MountedCall() definition.Definition {
 	return definition.Definition{
 		Name: "EffectMountedCall",
 		Axis: "effect",
+		// The relation owner binds *factor.Algebra, so it must import
+		// domain/effect/factor - which imports domain/static. Bare
+		// domain/effect does not, and internal/testfixture (which
+		// domain/static's own tests reach through) imports bare
+		// domain/effect for its Label/ParamRef/Row vocabulary. Generating
+		// the relation owner into domain/effect/owner instead - the package
+		// that already binds *factor.Algebra for the hot owner - keeps that
+		// import out of the package testfixture pulls in, so it never
+		// closes back on domain/static's test.
+		RelationsPackage: "owner",
+		RelationsPath:    "owner/generated_relation_owner.go",
 		Binding: definition.Binding{
 			Key: definition.KeyNormalization{
 				Carrier:    "EffectKeyCarrier",
