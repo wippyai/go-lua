@@ -1,6 +1,8 @@
 package engine
 
 import (
+	"sync"
+
 	"github.com/wippyai/go-lua/analysis/engine/internal/factbinding"
 	"github.com/wippyai/go-lua/analysis/engine/internal/facts/change"
 	"github.com/wippyai/go-lua/analysis/engine/internal/facts/semantic"
@@ -52,6 +54,49 @@ type DbgEngineCounters struct {
 	RegionsLinearCandidate    uint64
 	RegionInteriorPointsMax   uint64
 	RegionInteriorPointsTotal uint64
+}
+
+// DbgProgramRowCounts is the sealed TopologySpec's row population, one plane
+// per field. The L8 law reads it: construction rows are O(source), so a plane
+// that grows faster than the module it was declared from names the mint loop
+// that produced a product instead of a row.
+type DbgProgramRowCounts struct {
+	Seals              uint64
+	Points             uint64
+	Rules              uint64
+	Groups             uint64
+	Queries            uint64
+	Summaries          uint64
+	SummaryKeys        uint64
+	WeakTargets        uint64
+	EnvironmentEdges   uint64
+	FactorEdges        uint64
+	ActivationRows     uint64
+	ActivationTriggers uint64
+	GroupInputs        uint64
+	RuleReads          uint64
+	RuleWrites         uint64
+}
+
+// Construction runs concurrently across Workspaces, so this census is
+// mutex-guarded where the solve-loop counters below are not.
+var (
+	dbgProgramRowsMu sync.Mutex
+	dbgProgramRows   DbgProgramRowCounts
+)
+
+// DbgProgramRows returns the accumulated construction row population.
+func DbgProgramRows() DbgProgramRowCounts {
+	dbgProgramRowsMu.Lock()
+	defer dbgProgramRowsMu.Unlock()
+	return dbgProgramRows
+}
+
+// DbgProgramRowsReset clears the construction row population.
+func DbgProgramRowsReset() {
+	dbgProgramRowsMu.Lock()
+	defer dbgProgramRowsMu.Unlock()
+	dbgProgramRows = DbgProgramRowCounts{}
 }
 
 var dbgEngine DbgEngineCounters

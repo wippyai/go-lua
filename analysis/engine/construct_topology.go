@@ -1597,6 +1597,7 @@ func sealConstructedTopology(declaration topologyDeclaration, source constructed
 		FactorEdges:        edges.factor,
 		Summaries:          declaration.summaries,
 	}
+	recordProgramRowCensus(spec)
 	var topology *equation.Topology
 	var sealed bool
 	// Query population is sealed per family by equation topology: selected
@@ -1972,4 +1973,31 @@ func ruleOutputFactor(role RuleSlotCapability) (composition.Key, bool) {
 		return composition.Key{}, false
 	}
 	return shape.Output, true
+}
+
+// recordProgramRowCensus accumulates one sealed spec's row population.
+func recordProgramRowCensus(spec equation.TopologySpec) {
+	dbgProgramRowsMu.Lock()
+	defer dbgProgramRowsMu.Unlock()
+	dbgProgramRows.Seals++
+	dbgProgramRows.Points += uint64(len(spec.Points))
+	dbgProgramRows.Rules += uint64(len(spec.Rules))
+	dbgProgramRows.Groups += uint64(len(spec.Groups))
+	dbgProgramRows.Queries += uint64(len(spec.Queries))
+	dbgProgramRows.Summaries += uint64(len(spec.Summaries))
+	dbgProgramRows.WeakTargets += uint64(len(spec.WeakTargets))
+	dbgProgramRows.EnvironmentEdges += uint64(len(spec.EnvironmentEdges))
+	dbgProgramRows.FactorEdges += uint64(len(spec.FactorEdges))
+	dbgProgramRows.ActivationRows += uint64(len(spec.ActivationRows))
+	dbgProgramRows.ActivationTriggers += uint64(len(spec.ActivationTriggers))
+	for _, mapping := range spec.Summaries {
+		dbgProgramRows.SummaryKeys += uint64(len(mapping.Keys))
+	}
+	for _, group := range spec.Groups {
+		dbgProgramRows.GroupInputs += uint64(len(group.Inputs))
+	}
+	for _, rule := range spec.Rules {
+		dbgProgramRows.RuleReads += uint64(len(rule.Reads))
+		dbgProgramRows.RuleWrites += uint64(len(rule.Writes))
+	}
 }
