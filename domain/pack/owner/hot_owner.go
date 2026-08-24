@@ -38,46 +38,6 @@ func (owner *HotOwner) FactorRef() engine.FactorRef[pack.Value] {
 	return owner.fragment.Ref()
 }
 
-// RuleImplementation is a Pack-owned pending receipt issuer. It retains the
-// exact child Rule slot without exposing Pack's private Factor coordinate.
-type RuleImplementation[O any] struct {
-	owner *HotOwner
-	slot  *engine.RuleSlot[pack.Value, O]
-}
-
-func (issuer *RuleImplementation[O]) MountedCapability() (engine.RuleSlotCapability, bool) {
-	if issuer == nil || issuer.owner == nil || issuer.slot == nil {
-		return engine.RuleSlotCapability{}, false
-	}
-	return engine.MountedCapabilityForSlot(issuer.owner.binding, issuer.slot)
-}
-
-// BindExactWriteRule binds one Pack-output Rule through this owner's exact
-// Factor slot. Child packages provide only their typed operand callbacks and
-// transfer; they cannot choose another output Factor or coordinate universe.
-func BindExactWriteRule[O any](owner *HotOwner, slot *engine.RuleSlot[pack.Value, O], write engine.SchemaWriteSlot[pack.Value], spec engine.HotRuleSpec[pack.Value, O], projectWrite func(O) (uint64, bool)) (*RuleImplementation[O], bool) {
-	if owner == nil || owner.binding == nil || owner.fragment == nil || slot == nil {
-		return nil, false
-	}
-	if !engine.BindRule[coordinate](owner.binding, slot, write, owner.fragment.slot, spec, projectWrite) {
-		return nil, false
-	}
-	return &RuleImplementation[O]{owner: owner, slot: slot}, true
-}
-
-// ResolveRuleImplementation issues the exact shared receipt only after the
-// SchemaBinding seals. The private coordinate remains package-owned.
-func ResolveRuleImplementation[O any](issuer *RuleImplementation[O]) (*engine.RuleImplementation[coordinate, pack.Value, O], bool) {
-	if issuer == nil || issuer.owner == nil || issuer.slot == nil {
-		return nil, false
-	}
-	implementation, ok := engine.RuleImplementationAt[coordinate, pack.Value, O](issuer.owner.binding, issuer.slot)
-	if !ok {
-		return nil, false
-	}
-	return implementation, true
-}
-
 // BindHot admits Pack's concrete Factor algebra into the exact shared
 // SchemaBinding. The fragment's private slot and exact forms are checked
 // before binding; the resulting HotOwner exposes only typed capability and
@@ -92,7 +52,7 @@ func BindHot(binding *engine.SchemaBinding, fragment *SchemaFragment, schema *pa
 	}
 	owner := &HotOwner{binding: binding, fragment: fragment, schema: schema, linkOwner: schema.LinkOwner()}
 	spec, specOK := owner.FactorSpec()
-	if !specOK || !engine.BindFactor[coordinate](binding, fragment.slot, spec) {
+	if !specOK || !engine.BindFactor[pack.DenseCoordinate](binding, fragment.slot, spec) {
 		return nil, false
 	}
 	return owner, true
@@ -102,21 +62,21 @@ func BindHot(binding *engine.SchemaBinding, fragment *SchemaFragment, schema *pa
 // BindHot hands to the engine. A declaration surface projects this record
 // instead of restating the lattice, admission, or widening law, so the two
 // cannot drift.
-func (owner *HotOwner) FactorSpec() (engine.HotFactorSpec[coordinate, pack.Value], bool) {
+func (owner *HotOwner) FactorSpec() (engine.HotFactorSpec[pack.DenseCoordinate, pack.Value], bool) {
 	if owner == nil || !validPackSchema(owner.schema) {
-		return engine.HotFactorSpec[coordinate, pack.Value]{}, false
+		return engine.HotFactorSpec[pack.DenseCoordinate, pack.Value]{}, false
 	}
 	rootCount := owner.schema.RootCount()
 	if rootCount < 0 || uint64(rootCount) > uint64(^uint32(0))+1 {
-		return engine.HotFactorSpec[coordinate, pack.Value]{}, false
+		return engine.HotFactorSpec[pack.DenseCoordinate, pack.Value]{}, false
 	}
-	return engine.HotFactorSpec[coordinate, pack.Value]{
+	return engine.HotFactorSpec[pack.DenseCoordinate, pack.Value]{
 		KeyEnd:      uint64(rootCount),
 		Lattice:     owner.schema.Lattice(),
 		Default:     owner.schema.Bottom(),
 		AdmitAt:     owner.admits,
 		Fingerprint: owner.schema.Fingerprint,
-		WidenRank: engine.Measure[coordinate, pack.Value]{
+		WidenRank: engine.Measure[pack.DenseCoordinate, pack.Value]{
 			Width: 4,
 			At:    owner.widenRank,
 		},
@@ -126,24 +86,24 @@ func (owner *HotOwner) FactorSpec() (engine.HotFactorSpec[coordinate, pack.Value
 // implementation obtains a fresh sealed receipt each time. The receipt is
 // immutable and authority-fenced by SchemaBinding; no cached mutable engine
 // snapshot is retained by HotOwner.
-func (owner *HotOwner) implementation() (*engine.FactorImplementation[coordinate, pack.Value], bool) {
+func (owner *HotOwner) implementation() (*engine.FactorImplementation[pack.DenseCoordinate, pack.Value], bool) {
 	if owner == nil || !validPackSchema(owner.schema) || owner.binding == nil || owner.fragment == nil || owner.fragment.slot == nil {
 		return nil, false
 	}
-	return engine.FactorImplementationAt[coordinate, pack.Value](owner.binding, owner.fragment.slot)
+	return engine.FactorImplementationAt[pack.DenseCoordinate, pack.Value](owner.binding, owner.fragment.slot)
 }
 
 // Ref issues Pack's exact Factor capability for one Schema-local root.
-func (owner *HotOwner) Ref(root pack.Root) (engine.Ref[coordinate], bool) {
+func (owner *HotOwner) Ref(root pack.Root) (engine.Ref[pack.DenseCoordinate], bool) {
 	implementation, ok := owner.implementation()
 	if !ok || owner.schema == nil {
-		return engine.Ref[coordinate]{}, false
+		return engine.Ref[pack.DenseCoordinate]{}, false
 	}
 	index, ok := owner.schema.RootOrder(root)
 	if !ok || index < 0 || uint64(index) >= uint64(owner.schema.RootCount()) {
-		return engine.Ref[coordinate]{}, false
+		return engine.Ref[pack.DenseCoordinate]{}, false
 	}
-	return implementation.Ref(coordinate(index))
+	return implementation.Ref(pack.DenseCoordinate(index))
 }
 
 // SelectRoute emits one exact Pack payload route through the owner-issued
@@ -168,7 +128,7 @@ func (owner *HotOwner) OwnsSchema(schema *pack.Schema) bool {
 	return owner != nil && owner.schema == schema && validPackSchema(schema)
 }
 
-func (owner *HotOwner) admits(index coordinate, fact pack.Value) bool {
+func (owner *HotOwner) admits(index pack.DenseCoordinate, fact pack.Value) bool {
 	if owner == nil || !validPackSchema(owner.schema) {
 		return false
 	}
@@ -176,7 +136,7 @@ func (owner *HotOwner) admits(index coordinate, fact pack.Value) bool {
 	return ok && owner.schema.Admit(root, fact)
 }
 
-func (owner *HotOwner) widenRank(index coordinate, fact pack.Value, component int) uint64 {
+func (owner *HotOwner) widenRank(index pack.DenseCoordinate, fact pack.Value, component int) uint64 {
 	if owner == nil || !validPackSchema(owner.schema) {
 		return 0
 	}
