@@ -87,21 +87,13 @@ func suspensionCatalogLawView(t testing.TB, program programschema.Program) lifec
 	return view
 }
 
-func suspensionCatalogLawSubject(t testing.TB, route identity.ContentID, kind lifecycle.SubjectLivenessKind, subject identity.ContentID) lifecycle.SubjectLiveness {
+func suspensionCatalogLawSubject(t testing.TB, route identity.ContentID, kind lifecycle.SubjectLivenessKind, subject identity.ContentID) spanSubject {
 	t.Helper()
-	call := suspensionCatalogLawID(t, "call")
-	id, ok := lifecycle.SubjectLivenessIdentity(call, route, kind, subject)
-	if !ok {
-		t.Fatal("subject liveness identity")
-	}
-	row, ok := lifecycle.NewSubjectLiveness(id, call, route, identity.ContentID{}, identity.ContentID{}, subject, kind, lifecycle.SubjectLivenessLive)
-	if !ok {
-		t.Fatal("subject liveness row")
-	}
-	return row
+	_ = route
+	return spanSubject{kind: kind, subject: subject, state: lifecycle.SubjectLivenessLive, call: suspensionCatalogLawID(t, "call")}
 }
 
-func suspensionCatalogLawSubjectValueIDs(t testing.TB, program programschema.Program, view lifecycle.View, row lifecycle.SubjectLiveness) ([]identity.ContentID, bool) {
+func suspensionCatalogLawSubjectValueIDs(t testing.TB, program programschema.Program, view lifecycle.View, row spanSubject) ([]identity.ContentID, bool) {
 	t.Helper()
 	index, indexOK := buildValueAggregateIndex(program)
 	if !indexOK {

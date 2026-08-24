@@ -119,9 +119,21 @@ func sealCatalog(schema placementdomain.Schema, values *valuedomain.Schema, evid
 		if !stateOK || !viewOK {
 			return nil, false
 		}
-		count, countOK := view.SubjectLivenessCount()
-		if !countOK || count < 0 {
+		spanCount, spanCountOK := view.SubjectLivenessSpanCount()
+		boundaryCount, boundaryCountOK := view.SubjectYieldBoundaryCount()
+		if !spanCountOK || spanCount < 0 || !boundaryCountOK || boundaryCount < 0 {
 			return nil, false
+		}
+		// The spans are ranges over the ordered boundary sequence, so the
+		// anchor lookup is by ordinal. The sequence is dense and emitted in
+		// ordinal order, so one pass indexes it.
+		boundaries := make([]lifecycle.SubjectYieldBoundary, boundaryCount)
+		for index := 0; index < boundaryCount; index++ {
+			boundary, boundaryOK := view.SubjectYieldBoundaryAt(index)
+			if !boundaryOK || !boundary.Available() || int(boundary.Ordinal()) != index {
+				return nil, false
+			}
+			boundaries[index] = boundary
 		}
 		issuer, issuerOK := schema.Heap().OccurrenceMountForModule(module)
 		if !issuerOK {
@@ -133,15 +145,18 @@ func sealCatalog(schema placementdomain.Schema, values *valuedomain.Schema, evid
 		}
 		var valueIndex valueAggregateIndex
 		valueIndexBuilt := false
-		for index := 0; index < count; index++ {
-			row, rowOK := view.SubjectLivenessAt(index)
-			if !rowOK || !row.Available() {
+		for index := 0; index < spanCount; index++ {
+			span, spanOK := view.SubjectLivenessSpanAt(index)
+			if !spanOK || !span.Available() || int(span.Lo()) >= len(boundaries) {
 				return nil, false
 			}
-			if row.SubjectKind() == lifecycle.SubjectLivenessValues && !valueIndexBuilt {
-				// Build the Values directory only when a Values row requires it.
-				// A failed build is refused if that row is encountered; mounts with
-				// only scalar/root rows do not need this optional family.
+			// The obligation is issued once, at the boundary where the subject
+			// enters this answer. The answer is constant across the run by
+			// construction, so the later boundaries in the span carry no
+			// operand and are served by the range read.
+			anchor := boundaries[span.Lo()]
+			row := spanSubject{kind: span.SubjectKind(), subject: span.SubjectID(), state: span.State(), call: anchor.CallID()}
+			if row.kind == lifecycle.SubjectLivenessValues && !valueIndexBuilt {
 				valueIndex, _ = buildValueAggregateIndex(program)
 				valueIndexBuilt = true
 			}
@@ -149,7 +164,7 @@ func sealCatalog(schema placementdomain.Schema, values *valuedomain.Schema, evid
 			if !candidateOK {
 				return nil, false
 			}
-			id, idOK := occurrenceID(module, row.ID())
+			id, idOK := occurrenceID(module, span.ID())
 			if !idOK {
 				return nil, false
 			}
@@ -180,6 +195,21 @@ func sealCatalog(schema placementdomain.Schema, values *valuedomain.Schema, evid
 	return catalog, catalog.FencedTo(schema, values)
 }
 
+// spanSubject is the neutral projection of one liveness span together with
+// the boundary it is anchored at. It carries exactly what the per-pair row
+// used to hand these helpers: which subject, what answer, and the Call the
+// obligation is issued at.
+type spanSubject struct {
+	kind    lifecycle.SubjectLivenessKind
+	subject identity.ContentID
+	state   lifecycle.SubjectLivenessState
+	call    identity.ContentID
+}
+
+func (row spanSubject) Available() bool {
+	return row.kind.Valid() && row.subject.Available() && row.state.Valid() && row.call.Available()
+}
+
 func evidenceOccurrenceID(classID identity.ContentID) (identity.ContentID, bool) {
 	if !classID.Available() {
 		return identity.ContentID{}, false
@@ -190,11 +220,11 @@ func evidenceOccurrenceID(classID identity.ContentID) (identity.ContentID, bool)
 	return identity.ContentID(hash.Sum(nil)), true
 }
 
-func catalogOperandIndexed(schema placementdomain.Schema, values *valuedomain.Schema, module identity.ContentID, issuer heapdomain.OccurrenceMount, bodyTargets map[identity.ContentID]identity.ContentID, program programschema.Program, view lifecycle.View, row lifecycle.SubjectLiveness, valueIndex valueAggregateIndex) (operand, bool) {
-	if !schema.Valid() || values == nil || !values.Valid() || !values.OwnsHeapSchema(schema.Heap()) || !module.Available() || !program.Available() || !view.Available() || !row.Available() || !row.State().Valid() {
+func catalogOperandIndexed(schema placementdomain.Schema, values *valuedomain.Schema, module identity.ContentID, issuer heapdomain.OccurrenceMount, bodyTargets map[identity.ContentID]identity.ContentID, program programschema.Program, view lifecycle.View, row spanSubject, valueIndex valueAggregateIndex) (operand, bool) {
+	if !schema.Valid() || values == nil || !values.Valid() || !values.OwnsHeapSchema(schema.Heap()) || !module.Available() || !program.Available() || !view.Available() || !row.Available() {
 		return operand{}, false
 	}
-	result := operand{state: row.State()}
+	result := operand{state: row.state}
 	if key, keyOK := keyForRow(schema, issuer, bodyTargets, row); keyOK {
 		result.key = key
 		return result, true
@@ -202,8 +232,8 @@ func catalogOperandIndexed(schema placementdomain.Schema, values *valuedomain.Sc
 	// Root rows normally join through CallTarget. A missing body target cannot
 	// be reconstructed from a neutral row, so the catalog must refuse it rather
 	// than widen a fabricated operand across the allocation denominator.
-	if row.SubjectKind() == lifecycle.SubjectLivenessValues {
-		sources, sourcesOK := valueIndex.sourcesFor(values, module, row.SubjectID())
+	if row.kind == lifecycle.SubjectLivenessValues {
+		sources, sourcesOK := valueIndex.sourcesFor(values, module, row.subject)
 		if !sourcesOK || len(sources) == 0 {
 			return operand{}, false
 		}
@@ -298,23 +328,23 @@ func valueAggregateIDs(program programschema.Program, catalog identity.ContentID
 	return unique, open, uniqueOK
 }
 
-func subjectValueIDsIndexed(program programschema.Program, view lifecycle.View, row lifecycle.SubjectLiveness, index valueAggregateIndex) ([]identity.ContentID, bool) {
-	if !program.Available() || !view.Available() || !row.Available() || !row.SubjectID().Available() {
+func subjectValueIDsIndexed(program programschema.Program, view lifecycle.View, row spanSubject, index valueAggregateIndex) ([]identity.ContentID, bool) {
+	if !program.Available() || !view.Available() || !row.Available() {
 		return nil, false
 	}
-	switch row.SubjectKind() {
+	switch row.kind {
 	case lifecycle.SubjectLivenessCell, lifecycle.SubjectLivenessValue:
-		if row.SubjectKind() == lifecycle.SubjectLivenessCell {
-			if _, lifetimeOK := view.StorageCellLifetimeForID(row.SubjectID()); !lifetimeOK {
+		if row.kind == lifecycle.SubjectLivenessCell {
+			if _, lifetimeOK := view.StorageCellLifetimeForID(row.subject); !lifetimeOK {
 				return nil, false
 			}
 		}
-		return []identity.ContentID{row.SubjectID()}, true
+		return []identity.ContentID{row.subject}, true
 	case lifecycle.SubjectLivenessValues:
 		if !index.valid {
 			return nil, false
 		}
-		entry, entryOK := index.entries[row.SubjectID()]
+		entry, entryOK := index.entries[row.subject]
 		if !entryOK || entry.duplicate || !entry.valid {
 			return nil, false
 		}
@@ -461,17 +491,17 @@ func bodyTargetBatch(program programschema.Program) (map[identity.ContentID]iden
 	return result, true
 }
 
-func keyForRow(schema placementdomain.Schema, issuer heapdomain.OccurrenceMount, bodyTargets map[identity.ContentID]identity.ContentID, row lifecycle.SubjectLiveness) (heapdomain.Key, bool) {
+func keyForRow(schema placementdomain.Schema, issuer heapdomain.OccurrenceMount, bodyTargets map[identity.ContentID]identity.ContentID, row spanSubject) (heapdomain.Key, bool) {
 	if !schema.Valid() || !row.Available() || bodyTargets == nil || !issuer.Module().Available() || !issuer.ProgramID().Available() {
 		return heapdomain.Key{}, false
 	}
 	var allocationID identity.ContentID
-	switch row.SubjectKind() {
+	switch row.kind {
 	case lifecycle.SubjectLivenessValue:
-		allocationID = row.SubjectID()
+		allocationID = row.subject
 	case lifecycle.SubjectLivenessRoot:
 		var targetOK bool
-		allocationID, targetOK = bodyTargets[row.SubjectID()]
+		allocationID, targetOK = bodyTargets[row.subject]
 		if !targetOK {
 			return heapdomain.Key{}, false
 		}
