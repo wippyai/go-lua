@@ -6,6 +6,7 @@ import (
 
 	"github.com/wippyai/go-lua/analysis/identity"
 	"github.com/wippyai/go-lua/analysis/program/target/vocabulary"
+	"github.com/wippyai/go-lua/domain/effect/internal/valuecore"
 	"github.com/wippyai/go-lua/domain/pack"
 	"github.com/wippyai/go-lua/domain/static"
 )
@@ -71,7 +72,7 @@ type AtomBinding struct {
 }
 
 func (binding AtomBinding) valid() bool {
-	return binding.sealed && binding.owner != nil && binding.formal.Valid() && binding.owner.ownsRoot(binding.root) && binding.atom.validFor(binding.owner) && binding.atom.root == binding.root.slot && binding.atom.id == binding.formal.id
+	return binding.sealed && binding.owner != nil && binding.formal.Valid() && binding.owner.ownsRoot(binding.root) && atomValidFor(binding.atom, binding.owner) && binding.atom.Root() == binding.root.slot && binding.atom.ID() == binding.formal.id
 }
 
 // MatchesCertificate reports whether id is this binding's already-issued
@@ -79,7 +80,7 @@ func (binding AtomBinding) valid() bool {
 // can prove membership in an observed Effect value, but cannot mint an Atom
 // or a beta binding from a portable ID.
 func (binding AtomBinding) MatchesCertificate(id identity.ContentID) bool {
-	return binding.valid() && id.Available() && binding.atom.id == id
+	return binding.valid() && id.Available() && binding.atom.ID() == id
 }
 
 // Formal returns the reusable source template.
@@ -342,7 +343,7 @@ func (a *Algebra) bindFormalAtom(root Root, mounted MountedCall, formal, expecte
 	if !rowOK || !issuedOK || !formal.call.Same(issued) || !packRootOK || !packRootIDOK {
 		return AtomBinding{}, false
 	}
-	atom := Atom{owner: a, root: root.slot, id: formal.id}
+	atom := valuecore.NewAtom(a, root.slot, formal.id)
 	binding := AtomBinding{owner: a, formal: formal, root: root, atom: atom, sealed: true}
 	return binding, binding.valid()
 }

@@ -20,6 +20,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/program/target/contract"
 	"github.com/wippyai/go-lua/analysis/schema/ingress"
 	"github.com/wippyai/go-lua/analysis/schema/programmount"
+	"github.com/wippyai/go-lua/domain/effect/internal/valuecore"
 	"github.com/wippyai/go-lua/domain/pack"
 	internalhash "github.com/wippyai/go-lua/internal/hash"
 )
@@ -33,24 +34,6 @@ const (
 type Root struct {
 	owner *Algebra
 	slot  uint32
-}
-
-// Atom is one opaque, algebra-local effect-template identity.  It contains no
-// decoded Target, Pack, Boundary, or Static payload.
-type Atom struct {
-	owner *Algebra
-	root  uint32
-	id    identity.ContentID
-}
-
-// Value is Bottom, an immutable sparse atom set, or Top.  UnknownExternal is
-// an ordinary admitted atom and therefore can coexist with known atoms.
-type Value struct {
-	owner *Algebra
-	root  uint32
-	top   bool
-	atoms []Atom
-	seal  uint64
 }
 
 type rootRow struct {
@@ -339,10 +322,10 @@ func (a *Algebra) Top() Value {
 }
 
 func (a *Algebra) Singleton(atom Atom) (Value, bool) {
-	if !atom.validFor(a) {
+	if !atomValidFor(atom, a) {
 		return Value{}, false
 	}
-	return a.value(atom.root, false, []Atom{atom}), true
+	return a.value(atom.Root(), false, []Atom{atom}), true
 }
 
 func (a *Algebra) FromAtoms(atoms []Atom) (Value, bool) {
@@ -354,19 +337,19 @@ func (a *Algebra) FromAtoms(atoms []Atom) (Value, bool) {
 	}
 	out := make([]Atom, len(atoms))
 	copy(out, atoms)
-	root := out[0].root
+	root := out[0].Root()
 	for _, atom := range out {
-		if !atom.validFor(a) {
+		if !atomValidFor(atom, a) {
 			return Value{}, false
 		}
-		if atom.root != root {
+		if atom.Root() != root {
 			return Value{}, false
 		}
 	}
-	sort.Slice(out, func(i, j int) bool { return lessID(out[i].id, out[j].id) })
+	sort.Slice(out, func(i, j int) bool { return lessID(out[i].ID(), out[j].ID()) })
 	n := 1
 	for i := 1; i < len(out); i++ {
-		if out[i].id != out[n-1].id {
+		if out[i].ID() != out[n-1].ID() {
 			out[n] = out[i]
 			n++
 		}
@@ -378,29 +361,30 @@ func (a *Algebra) FromAtoms(atoms []Atom) (Value, bool) {
 }
 
 func (a *Algebra) AtomAt(value Value, index int) (Atom, bool) {
-	if !a.owns(value) || value.top || index < 0 || index >= len(value.atoms) {
+	atoms := value.Atoms()
+	if !a.owns(value) || value.IsTop() || index < 0 || index >= len(atoms) {
 		return Atom{}, false
 	}
-	return value.atoms[index], true
+	return atoms[index], true
 }
 
 // AtomID exposes the portable certificate identity of an atom without
 // exposing an inverse constructor or any of its cross-domain preimage.
 func (a *Algebra) AtomID(atom Atom) (identity.ContentID, bool) {
-	if !atom.validFor(a) {
+	if !atomValidFor(atom, a) {
 		return identity.ContentID{}, false
 	}
-	return atom.id, true
+	return atom.ID(), true
 }
 
 // TransportAtom rehomes an existing certificate to another sealed Effect
 // coordinate without decoding it or minting a new identity.  It is the only
 // transport operation for outcome/boundary rules; there is no raw-ID inlet.
 func (a *Algebra) TransportAtom(atom Atom, root Root) (Atom, bool) {
-	if !atom.validFor(a) || !a.ownsRoot(root) {
+	if !atomValidFor(atom, a) || !a.ownsRoot(root) {
 		return Atom{}, false
 	}
-	return Atom{owner: a, root: root.slot, id: atom.id}, true
+	return valuecore.NewAtom(a, root.slot, atom.ID()), true
 }
 
 // Transport rehomes one sparse owned value. Bottom and Top carry no local
@@ -409,30 +393,32 @@ func (a *Algebra) Transport(value Value, root Root) (Value, bool) {
 	if !a.owns(value) || !a.ownsRoot(root) {
 		return Value{}, false
 	}
-	if value.top {
+	if value.IsTop() {
 		return a.Top(), true
 	}
-	if len(value.atoms) == 0 {
+	values := value.Atoms()
+	if len(values) == 0 {
 		return a.Bottom(), true
 	}
-	atoms := make([]Atom, len(value.atoms))
-	for i, atom := range value.atoms {
-		atoms[i] = Atom{owner: a, root: root.slot, id: atom.id}
+	atoms := make([]Atom, len(values))
+	for i, atom := range values {
+		atoms[i] = valuecore.NewAtom(a, root.slot, atom.ID())
 	}
 	return a.value(root.slot, false, atoms), true
 }
 
 func (a *Algebra) Owns(value Value) bool { return a.owns(value) }
 func (a *Algebra) Admit(root Root, value Value) bool {
-	return a.ownsRoot(root) && a.owns(value) && (value.top || len(value.atoms) == 0 || value.root == root.slot)
+	return a.ownsRoot(root) && a.owns(value) && (value.IsTop() || len(value.Atoms()) == 0 || value.Root() == root.slot)
 }
 
 func (a *Algebra) Equal(left, right Value) bool {
-	if !a.owns(left) || !a.owns(right) || left.top != right.top || left.root != right.root || len(left.atoms) != len(right.atoms) {
+	leftAtoms, rightAtoms := left.Atoms(), right.Atoms()
+	if !a.owns(left) || !a.owns(right) || left.IsTop() != right.IsTop() || left.Root() != right.Root() || len(leftAtoms) != len(rightAtoms) {
 		return false
 	}
-	for i := range left.atoms {
-		if left.atoms[i].id != right.atoms[i].id {
+	for i := range leftAtoms {
+		if leftAtoms[i].ID() != rightAtoms[i].ID() {
 			return false
 		}
 	}
@@ -445,38 +431,40 @@ func (a *Algebra) LessOrEq(left, right Value) bool {
 	if !a.owns(left) || !a.owns(right) {
 		return false
 	}
-	if left.top {
-		return right.top
+	if left.IsTop() {
+		return right.IsTop()
 	}
-	if right.top || len(left.atoms) == 0 {
+	leftAtoms := left.Atoms()
+	if right.IsTop() || len(leftAtoms) == 0 {
 		return true
 	}
-	if left.root != right.root {
+	if left.Root() != right.Root() {
 		return false
 	}
-	if len(left.atoms) > len(right.atoms) {
+	rightAtoms := right.Atoms()
+	if len(leftAtoms) > len(rightAtoms) {
 		return false
 	}
 	i, j := 0, 0
-	for i < len(left.atoms) && j < len(right.atoms) {
-		if left.atoms[i].id == right.atoms[j].id {
+	for i < len(leftAtoms) && j < len(rightAtoms) {
+		if leftAtoms[i].ID() == rightAtoms[j].ID() {
 			i++
 			j++
 			continue
 		}
-		if lessID(left.atoms[i].id, right.atoms[j].id) {
+		if lessID(leftAtoms[i].ID(), rightAtoms[j].ID()) {
 			return false
 		}
 		j++
 	}
-	return i == len(left.atoms)
+	return i == len(leftAtoms)
 }
 
 func (a *Algebra) Join(left, right Value) (Value, bool) {
 	if !a.owns(left) || !a.owns(right) {
 		return Value{}, false
 	}
-	if left.top || right.top {
+	if left.IsTop() || right.IsTop() {
 		return a.Top(), true
 	}
 	if a.LessOrEq(left, right) {
@@ -485,27 +473,28 @@ func (a *Algebra) Join(left, right Value) (Value, bool) {
 	if a.LessOrEq(right, left) {
 		return left, true
 	}
-	if left.root != right.root {
+	if left.Root() != right.Root() {
 		return Value{}, false
 	}
-	out := make([]Atom, 0, len(left.atoms)+len(right.atoms))
+	leftAtoms, rightAtoms := left.Atoms(), right.Atoms()
+	out := make([]Atom, 0, len(leftAtoms)+len(rightAtoms))
 	i, j := 0, 0
-	for i < len(left.atoms) || j < len(right.atoms) {
-		if j == len(right.atoms) || (i < len(left.atoms) && lessID(left.atoms[i].id, right.atoms[j].id)) {
-			out = append(out, left.atoms[i])
+	for i < len(leftAtoms) || j < len(rightAtoms) {
+		if j == len(rightAtoms) || (i < len(leftAtoms) && lessID(leftAtoms[i].ID(), rightAtoms[j].ID())) {
+			out = append(out, leftAtoms[i])
 			i++
 			continue
 		}
-		if i == len(left.atoms) || lessID(right.atoms[j].id, left.atoms[i].id) {
-			out = append(out, right.atoms[j])
+		if i == len(leftAtoms) || lessID(rightAtoms[j].ID(), leftAtoms[i].ID()) {
+			out = append(out, rightAtoms[j])
 			j++
 			continue
 		}
-		out = append(out, left.atoms[i])
+		out = append(out, leftAtoms[i])
 		i++
 		j++
 	}
-	return a.value(left.root, false, out), true
+	return a.value(left.Root(), false, out), true
 }
 
 func (a *Algebra) Widen(previous, next Value) (Value, bool) { return a.Join(previous, next) }
@@ -539,17 +528,17 @@ func (a *Algebra) WidenRank(root Root, value Value, component int) uint64 {
 	if component != 0 || !a.Admit(root, value) {
 		return 0
 	}
-	if value.top {
+	if value.IsTop() {
 		return 0
 	}
-	return a.capacity + 1 - uint64(len(value.atoms))
+	return a.capacity + 1 - uint64(len(value.Atoms()))
 }
 
 func (a *Algebra) Fingerprint(value Value) uint64 {
 	if !a.owns(value) {
 		return 0
 	}
-	return value.seal
+	return value.Seal()
 }
 
 func (a *Algebra) sealMountedArtifacts(mounts []MountedArtifact) (map[mountedCallRef]artifactCallRow, bool) {
@@ -761,22 +750,24 @@ func (a *Algebra) ownsRoot(root Root) bool {
 	return a.Valid() && root.owner == a && root.slot != 0 && uint64(root.slot) <= uint64(len(a.roots))
 }
 func (a *Algebra) owns(value Value) bool {
-	return a.Valid() && value.owner == a && value.seal != 0 &&
-		uint64(len(value.atoms)) <= a.capacity &&
-		((value.top && value.root == 0 && len(value.atoms) == 0) ||
-			(!value.top && ((len(value.atoms) == 0 && value.root == 0) ||
-				(len(value.atoms) != 0 && value.root != 0 && uint64(value.root) <= uint64(len(a.roots))))))
+	atoms := value.Atoms()
+	return a.Valid() && value.Owner() == a && value.Seal() != 0 &&
+		uint64(len(atoms)) <= a.capacity &&
+		((value.IsTop() && value.Root() == 0 && len(atoms) == 0) ||
+			(!value.IsTop() && ((len(atoms) == 0 && value.Root() == 0) ||
+				(len(atoms) != 0 && value.Root() != 0 && uint64(value.Root()) <= uint64(len(a.roots))))))
 }
-func (atom Atom) validFor(a *Algebra) bool {
-	return a != nil && atom.owner == a && atom.root != 0 && uint64(atom.root) <= uint64(len(a.roots)) && atom.id.Available()
+
+// atomValidFor is the free-function counterpart of Value's owns: Atom is
+// defined in valuecore, so its validity predicate cannot be a method here.
+func atomValidFor(atom Atom, a *Algebra) bool {
+	return a != nil && atom.Owner() == a && atom.Root() != 0 && uint64(atom.Root()) <= uint64(len(a.roots)) && atom.ID().Available()
 }
 
 // value seals constructor-proven ordering and owner admission into an O(1)
 // hot header.  No caller can fabricate this private seal outside this package.
 func (a *Algebra) value(root uint32, top bool, atoms []Atom) Value {
-	value := Value{owner: a, root: root, top: top, atoms: atoms}
-	value.seal = a.valueSeal(root, top, atoms)
-	return value
+	return valuecore.NewValue(a, root, top, atoms, a.valueSeal(root, top, atoms))
 }
 
 func (a *Algebra) valueSeal(root uint32, top bool, atoms []Atom) uint64 {
@@ -791,7 +782,8 @@ func (a *Algebra) valueSeal(root uint32, top bool, atoms []Atom) uint64 {
 	}
 	h = internalhash.MixHash(h, uint64(len(atoms)))
 	for _, atom := range atoms { // constructor/cold verification only; hot callers compare the cached seal.
-		for _, byte := range atom.id {
+		id := atom.ID()
+		for _, byte := range id {
 			h = internalhash.MixHash(h, uint64(byte))
 		}
 	}

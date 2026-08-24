@@ -4,6 +4,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/identity"
 	"github.com/wippyai/go-lua/analysis/program/target/vocabulary"
 	"github.com/wippyai/go-lua/domain/call"
+	"github.com/wippyai/go-lua/domain/effect/internal/valuecore"
 )
 
 // Valid reports whether this detached mounted-call receipt was issued by its
@@ -101,7 +102,7 @@ func (a *Algebra) SelectedMountedCallOpaque(root Root, mounted MountedCall, oper
 	if !known {
 		return a.Bottom(), true
 	}
-	return a.Singleton(Atom{owner: a, root: root.slot, id: a.unknownID})
+	return a.Singleton(valuecore.NewAtom(a, root.slot, a.unknownID))
 }
 
 func (a *Algebra) MountedCallOpaqueUnknown(root Root, calls *call.Algebra, mounted MountedCall, value call.Value) (Atom, bool) {
@@ -116,7 +117,7 @@ func (a *Algebra) MountedCallOpaqueUnknown(root Root, calls *call.Algebra, mount
 	if !ok || !calls.Admits(key, value) || !a.ownsRoot(root) || row.root != root.slot {
 		return Atom{}, false
 	}
-	return Atom{owner: a, root: root.slot, id: a.unknownID}, true
+	return valuecore.NewAtom(a, root.slot, a.unknownID), true
 }
 
 // MountedCallIdentity exposes cold scalar evidence for domain-owned formal
