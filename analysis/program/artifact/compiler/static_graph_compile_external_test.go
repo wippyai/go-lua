@@ -6,7 +6,6 @@ import (
 	"github.com/wippyai/go-lua/analysis/lua/lower"
 	"github.com/wippyai/go-lua/analysis/program"
 	programartifact "github.com/wippyai/go-lua/analysis/program/artifact"
-	artifactcompiler "github.com/wippyai/go-lua/analysis/program/artifact/compiler"
 	"github.com/wippyai/go-lua/analysis/program/flow"
 	"github.com/wippyai/go-lua/analysis/program/flow/authored"
 	"github.com/wippyai/go-lua/analysis/program/keyspace"
@@ -189,8 +188,30 @@ return value
 		t.Fatal("program schema unavailable")
 	}
 	artifact, failure := compileArtifactForTest(t, canonical, compilation)
-	if artifact != nil || !failure.Available() || failure.Stage() != artifactcompiler.CompileStageSeal ||
-		failure.RowKind() != artifactcompiler.CompileRowAuthority || failure.Reason() != artifactcompiler.CompileReasonArtifactIdentity {
-		t.Fatalf("CompileDetailed admitted targetless canonical reference: artifact=%v failure=%s", artifact != nil, failure.Error())
+	if failure.Available() || artifact == nil || !artifact.Available() {
+		t.Fatalf("CompileDetailed refused canonical-path reference leaf: artifact=%v failure=%s", artifact != nil, failure.Error())
+	}
+	seenCanonical := false
+	program = artifact.Program()
+	view = staticNodeTestView(t, program)
+	count, countOK = view.StaticTypeNodeCount()
+	if !countOK {
+		t.Fatal("canonical Program static graph unavailable")
+	}
+	for index := 0; index < count; index++ {
+		row, rowOK := view.StaticTypeNodeAt(index)
+		if !rowOK {
+			t.Fatalf("canonical StaticTypeNodeAt(%d)", index)
+		}
+		if row.Kind() != staticnode.StaticNodeReference || row.Resolution() != uint8(staticrefs.CanonicalPath) {
+			continue
+		}
+		if _, targetOK := row.ReferenceTarget(); targetOK {
+			t.Fatal("canonical-path reference acquired a local declaration target")
+		}
+		seenCanonical = true
+	}
+	if !seenCanonical {
+		t.Fatal("sealed artifact lost the canonical-path reference leaf")
 	}
 }
