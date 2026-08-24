@@ -220,10 +220,10 @@ func validateSelectedQueryTable(bound *ProgramBinding, table SelectedQueryTable)
 
 // SelectedQuerySites derives mount- and context-qualified query identities
 // from semantic occurrences in selected sealed bodies. Non-callable roots are
-// always selected. A callable body is selected only when a sealed
-// DirectFunctions join from an already-selected body names it. Contexts are
-// expanded here, at the owner boundary; the engine receives one singular
-// context on every admitted query row.
+// always selected. A callable body is selected only when a sealed direct-call
+// closure or the authenticated module-root returned-callable sidecar names
+// it. Contexts are expanded here, at the owner boundary; the engine receives
+// one singular context on every admitted query row.
 func SelectedQuerySites(compilation Compilation, mounts []programmount.MountedArtifact, contexts executioncontext.Directory) (SelectedQueryTable, bool) {
 	state := compilation.catalog
 	families, familiesOK := selectedPointQueryIssuance(state)
@@ -253,8 +253,13 @@ func SelectedQuerySites(compilation Compilation, mounts []programmount.MountedAr
 			return SelectedQueryTable{}, false
 		}
 		program := mount.Program
+		catalog, catalogOK := programcatalog.CatalogID(program.SchemaID)
+		if !program.Available() || !catalogOK {
+			return SelectedQueryTable{}, false
+		}
 		bodyEntries := make(map[identity.ContentID][]identity.ContentID)
 		callable := make(map[identity.ContentID]struct{})
+		callableFunctions := make(map[identity.ContentID]identity.ContentID)
 		rootBodies := make(map[identity.ContentID][]identity.ContentID)
 		bodyCount, bodiesPublished := mount.Program.BodyCount()
 		if !bodiesPublished {
@@ -279,6 +284,14 @@ func SelectedQuerySites(compilation Compilation, mounts []programmount.MountedAr
 			}
 			bodyEntries[body.ID()] = entries
 			if body.Callable() {
+				functionID, functionOK := body.FunctionContextID()
+				if !functionOK || !functionID.Available() {
+					return SelectedQueryTable{}, false
+				}
+				if _, duplicate := callableFunctions[functionID]; duplicate {
+					return SelectedQueryTable{}, false
+				}
+				callableFunctions[functionID] = body.ID()
 				callable[body.ID()] = struct{}{}
 				continue
 			}
@@ -317,7 +330,52 @@ func SelectedQuerySites(compilation Compilation, mounts []programmount.MountedAr
 				changed = true
 			}
 		}
-		catalog, catalogOK := programcatalog.CatalogID(program.SchemaID)
+		// ModuleEntryRootFunction is the Program-side publication of Flow's
+		// authenticated executable root-Return callable selection. Consume
+		// that owner row here instead of reconstructing returned values from
+		// cold occurrences or admitting every callable body. A published empty
+		// sidecar is valid; an unavailable or internally inconsistent sidecar
+		// is malformed evidence and refuses query planning.
+		moduleEntryCount, moduleEntriesPublished := program.ModuleEntryCount()
+		rootFunctionCount, rootFunctionsPublished := programschema.ModuleEntryRootFunctionFamily().Count(&program.Frozen, catalog)
+		if !moduleEntriesPublished || !rootFunctionsPublished {
+			return SelectedQueryTable{}, false
+		}
+		for entryIndex := 0; entryIndex < moduleEntryCount; entryIndex++ {
+			entry, entryOK := program.ModuleEntryAt(entryIndex)
+			if !entryOK || !entry.Available() {
+				return SelectedQueryTable{}, false
+			}
+			rootWidth, widthOK := entry.RootWidth()
+			rootOffset, rootCount, rootSpanOK := entry.RootFunctionSpan()
+			if !widthOK || !rootSpanOK || uint64(rootOffset)+uint64(rootCount) > uint64(rootFunctionCount) {
+				return SelectedQueryTable{}, false
+			}
+			var previousPosition uint32
+			for childIndex := uint32(0); childIndex < rootCount; childIndex++ {
+				child, childOK := program.ModuleEntryRootFunctionAt(int(rootOffset + childIndex))
+				if !childOK || !child.Available() || child.EntryID() != entry.ID() || child.Position() >= rootWidth ||
+					childIndex != 0 && child.Position() <= previousPosition {
+					return SelectedQueryTable{}, false
+				}
+				previousPosition = child.Position()
+				body, bodyKnown := callableFunctions[child.FunctionID()]
+				if !bodyKnown {
+					return SelectedQueryTable{}, false
+				}
+				entries, entriesKnown := bodyEntries[body]
+				if !entriesKnown || len(entries) == 0 {
+					return SelectedQueryTable{}, false
+				}
+				if _, already := selectedBodies[body]; already {
+					continue
+				}
+				if _, isCallable := callable[body]; !isCallable {
+					return SelectedQueryTable{}, false
+				}
+				selectedBodies[body] = entries
+			}
+		}
 		pointCount, pointsPublished := programschema.PointFamily().Count(&program.Frozen, catalog)
 		if !program.Available() || !catalogOK || !pointsPublished {
 			return SelectedQueryTable{}, false

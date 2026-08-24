@@ -1,7 +1,9 @@
 package composite
 
 import (
+	"reflect"
 	"testing"
+	"unsafe"
 
 	"github.com/wippyai/go-lua/analysis/identity"
 	"github.com/wippyai/go-lua/analysis/schema"
@@ -9,6 +11,7 @@ import (
 	programschema "github.com/wippyai/go-lua/analysis/schema/program"
 	programcatalog "github.com/wippyai/go-lua/analysis/schema/program/catalog"
 	"github.com/wippyai/go-lua/analysis/schema/programmount"
+	"github.com/wippyai/go-lua/analysis/snapshot"
 )
 
 func TestQueryAdmissionDispatchesBySealedFamily(t *testing.T) {
@@ -63,6 +66,8 @@ func TestQueryAdmissionDispatchesBySealedFamily(t *testing.T) {
 	}
 }
 
+// This is also the explicit-empty owner law: a published root Return with no
+// directly returned Function remains a valid query population.
 func TestSelectedQuerySitesExcludeUncalledCallables(t *testing.T) {
 	record := mountedRecord(t, "query-sites", `local function dormant(value)
   local retained = value
@@ -76,6 +81,12 @@ return 42`)
 	table, ok := SelectedQuerySites(compilation, record.Artifacts, record.Source.ContextDirectory())
 	if !ok || table.Count() == 0 {
 		t.Fatal("selected query sites")
+	}
+	program := record.Artifacts[0].Program
+	catalog, catalogOK := programcatalog.CatalogID(program.SchemaID)
+	rootFunctionCount, rootFunctionsPublished := programschema.ModuleEntryRootFunctionFamily().Count(&program.Frozen, catalog)
+	if !program.Available() || !catalogOK || !rootFunctionsPublished || rootFunctionCount != 0 {
+		t.Fatalf("explicit-empty root-function owner = count %d/published %t", rootFunctionCount, rootFunctionsPublished)
 	}
 	selectedFamilies, selectedFamiliesOK := selectedPointQueryIssuance(compilation.catalog)
 	if !selectedFamiliesOK {
@@ -215,6 +226,120 @@ return use(1)`)
 	}
 }
 
+// TestSelectedQuerySitesAdmitReturnedCallableInteriors proves that an
+// executable callable returned by the module root is selected even when no
+// Call row names it. The root-return owner row is the only ingress evidence;
+// TestSelectedQuerySitesExcludeUncalledCallables is the paired negative law.
+func TestSelectedQuerySitesAdmitReturnedCallableInteriors(t *testing.T) {
+	record := mountedRecord(t, "returned-callable", `local function dormant(value)
+  local retained = value
+  return retained
+end
+return function(value)
+  local retained = value
+  return retained
+end`)
+	compilation, compilationOK := Build()
+	if !compilationOK {
+		t.Fatal("compilation unavailable")
+	}
+	table, ok := SelectedQuerySites(compilation, record.Artifacts, record.Source.ContextDirectory())
+	if !ok || table.Count() == 0 {
+		t.Fatal("selected query sites")
+	}
+	selectedFamilies, selectedFamiliesOK := selectedPointQueryIssuance(compilation.catalog)
+	if !selectedFamiliesOK {
+		t.Fatal("selected-point query issuance")
+	}
+	points := selectedCallableOccurrencePoints(t, record.Artifacts[0].Program)
+	if len(points) == 0 {
+		t.Fatal("returned callable published no occurrence points")
+	}
+	returnedBody, unreturnedBody := returnedAndUnreturnedCallableBodies(t, record.Artifacts[0].Program)
+	returnedPoints := points[returnedBody]
+	unreturnedPoints := points[unreturnedBody]
+	if len(returnedPoints) == 0 || len(unreturnedPoints) == 0 {
+		t.Fatal("returned/unreturned callable published no occurrence points")
+	}
+	selected := make(map[identity.ContentID]int)
+	for index := 0; index < table.Count(); index++ {
+		site, siteOK := table.At(index)
+		if !siteOK {
+			t.Fatalf("selected query site %d is unavailable", index)
+		}
+		if _, forbidden := unreturnedPoints[site.Point]; forbidden {
+			t.Fatal("nested/unreturned callable became a query site")
+		}
+		if _, inside := returnedPoints[site.Point]; inside {
+			selected[site.Point]++
+		}
+	}
+	if len(selected) == 0 {
+		t.Fatal("returned callable interior is not a query subject")
+	}
+	for point := range returnedPoints {
+		count := selected[point]
+		if count != len(selectedFamilies) {
+			t.Fatalf("returned callable point %v query lanes = %d, want %d", point, count, len(selectedFamilies))
+		}
+	}
+}
+
+// Missing cold root-function publication and a malformed mounted owner both
+// refuse admission; neither may be treated as an empty returned-callable set.
+func TestSelectedQuerySitesRejectUnavailableOrMalformedRootFunctionOwner(t *testing.T) {
+	for _, fixture := range []struct {
+		name   string
+		mutate func(testing.TB, *programmount.MountedArtifact)
+	}{
+		{
+			name: "unavailable-root-function-family",
+			mutate: func(_ testing.TB, mount *programmount.MountedArtifact) {
+				mount.Program.Frozen = snapshot.Frozen{}
+			},
+		},
+		{
+			name: "malformed-root-function-position",
+			mutate: func(t testing.TB, mount *programmount.MountedArtifact) {
+				program := mount.Program
+				entry, entryOK := program.ModuleEntryAt(0)
+				rootWidth, widthOK := entry.RootWidth()
+				rootOffset, rootCount, spanOK := entry.RootFunctionSpan()
+				if !entryOK || !widthOK || !spanOK || rootCount == 0 {
+					t.Fatal("root-function fixture span")
+				}
+				corruptRootFunctionPosition(t, mount, int(rootOffset), rootWidth)
+			},
+		},
+	} {
+		t.Run(fixture.name, func(t *testing.T) {
+			record := mountedRecord(t, "returned-callable-owner-"+fixture.name, "return function(value) return value end")
+			compilation, compilationOK := Build()
+			if !compilationOK {
+				t.Fatal("compilation unavailable")
+			}
+			mounts := append([]programmount.MountedArtifact(nil), record.Artifacts...)
+			if len(mounts) != 1 {
+				t.Fatal("single mount fixture")
+			}
+			fixture.mutate(t, &mounts[0])
+			if fixture.name == "malformed-root-function-position" && !mounts[0].Available() {
+				t.Fatal("malformed sidecar fixture failed mount preflight")
+			}
+			if fixture.name == "unavailable-root-function-family" {
+				program := mounts[0].Program
+				catalog, catalogOK := programcatalog.CatalogID(program.SchemaID)
+				if _, published := programschema.ModuleEntryRootFunctionFamily().Count(&program.Frozen, catalog); catalogOK && published {
+					t.Fatal("unavailable root-function family remained published")
+				}
+			}
+			if _, ok := SelectedQuerySites(compilation, mounts, record.Source.ContextDirectory()); ok {
+				t.Fatal("unavailable or malformed root-function owner was admitted")
+			}
+		})
+	}
+}
+
 // A control-fault chunk is still a sealed Program root. Query admission keeps
 // it in the selected population so diagnostic collection can name the fault
 // instead of failing construction at the query boundary.
@@ -323,6 +448,103 @@ func selectedCallableOccurrencePoints(t *testing.T, program programmount.Program
 		}
 	}
 	return points
+}
+
+func returnedAndUnreturnedCallableBodies(t testing.TB, program programmount.Program) (identity.ContentID, identity.ContentID) {
+	t.Helper()
+	callableByFunction := make(map[identity.ContentID]identity.ContentID)
+	bodyCount, bodiesPublished := program.BodyCount()
+	if !bodiesPublished {
+		t.Fatal("cold Body family")
+	}
+	for index := 0; index < bodyCount; index++ {
+		body, bodyOK := program.BodyAt(index)
+		function, functionOK := body.FunctionContextID()
+		if !bodyOK {
+			t.Fatal("body row")
+		}
+		if functionOK {
+			callableByFunction[function] = body.ID()
+		}
+	}
+	catalog, catalogOK := programcatalog.CatalogID(program.SchemaID)
+	rootFunctionCount, rootFunctionsPublished := programschema.ModuleEntryRootFunctionFamily().Count(&program.Frozen, catalog)
+	if !catalogOK || !rootFunctionsPublished {
+		t.Fatal("root-function owner")
+	}
+	returned := make(map[identity.ContentID]struct{})
+	for index := 0; index < rootFunctionCount; index++ {
+		child, childOK := program.ModuleEntryRootFunctionAt(index)
+		if !childOK || !child.Available() {
+			t.Fatal("root-function row")
+		}
+		body, bodyOK := callableByFunction[child.FunctionID()]
+		if !bodyOK {
+			t.Fatal("root-function body")
+		}
+		returned[body] = struct{}{}
+	}
+	if len(returned) != 1 {
+		t.Fatalf("returned callable body count = %d, want 1", len(returned))
+	}
+	var returnedBody identity.ContentID
+	for body := range returned {
+		returnedBody = body
+	}
+	var unreturnedBody identity.ContentID
+	for function := range callableByFunction {
+		candidate := callableByFunction[function]
+		if candidate == returnedBody {
+			continue
+		}
+		if unreturnedBody.Available() {
+			t.Fatal("fixture has multiple unreturned callable bodies")
+		}
+		unreturnedBody = candidate
+	}
+	if !returnedBody.Available() || !unreturnedBody.Available() {
+		t.Fatal("fixture lost returned or unreturned callable")
+	}
+	return returnedBody, unreturnedBody
+}
+
+// corruptRootFunctionPosition is test-only hostile publication setup. It
+// changes one row in a fresh fixture while preserving the Frozen metadata that
+// authenticates the mount, so SelectedQuerySites reaches its sidecar-row
+// validation rather than failing the mount preflight. Production publications
+// remain immutable; no runtime code uses this escape hatch.
+func corruptRootFunctionPosition(t testing.TB, mount *programmount.MountedArtifact, index int, position uint32) {
+	t.Helper()
+	if mount == nil || !mount.Program.Available() {
+		t.Fatal("malformed fixture program")
+	}
+	frozen := reflect.ValueOf(&mount.Program.Frozen).Elem()
+	publication := frozen.FieldByName("publication")
+	columns := writableTestValue(t, publication.FieldByName("columns"))
+	slot := int(programcatalog.ModuleEntryRootFunction().Slot())
+	if slot < 0 || slot >= columns.Len() {
+		t.Fatalf("root-function slot %d outside frozen columns", slot)
+	}
+	column := columns.Index(slot)
+	if column.IsNil() {
+		t.Fatal("root-function column unavailable")
+	}
+	columnValue := column.Elem().Elem()
+	values := writableTestValue(t, columnValue.FieldByName("values"))
+	if index < 0 || index >= values.Len() {
+		t.Fatalf("root-function row %d outside column", index)
+	}
+	row := values.Index(index)
+	positionField := writableTestValue(t, row.FieldByName("position"))
+	positionField.SetUint(uint64(position))
+}
+
+func writableTestValue(t testing.TB, value reflect.Value) reflect.Value {
+	t.Helper()
+	if !value.IsValid() || !value.CanAddr() {
+		t.Fatal("test publication field is unavailable")
+	}
+	return reflect.NewAt(value.Type(), unsafe.Pointer(value.UnsafeAddr())).Elem()
 }
 
 func selectedDirectCalleeAndSibling(t *testing.T, program programmount.Program) (identity.ContentID, identity.ContentID) {
