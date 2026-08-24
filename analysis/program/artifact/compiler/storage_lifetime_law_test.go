@@ -48,14 +48,10 @@ return read()
 	if !countOK {
 		t.Fatal("storage lifetime denominator")
 	}
-	entry, entryOK := program.EntryBody()
-	if !entryOK || !entry.Available() {
-		t.Fatal("entry body")
-	}
 	// FunctionCapture carries the exact storage-cell identities. The producer
-	// must classify a non-entry captured cell as closure-retained. An entry-body
-	// cell remains Module: capture does not transfer module ownership to the
-	// closure environment.
+	// must classify every captured local as closure-retained. Merely belonging
+	// to the entry body proves no module owner: a chunk local otherwise dies
+	// with that activation just like a local in any nested function.
 	boundaryCount, boundaryCountOK := program.FunctionBoundaryCount()
 	if !boundaryCountOK {
 		t.Fatal("function boundary denominator")
@@ -88,9 +84,6 @@ return read()
 					t.Fatalf("captured storage lifetime unavailable for %s", endpoint.storageID)
 				}
 				want := lifecycle.StorageLifetimeClosure
-				if endpoint.bodyID == entry.ID() {
-					want = lifecycle.StorageLifetimeModule
-				}
 				if row.Lifetime() != want {
 					t.Fatalf("captured storage body=%s lifetime=%v, want %v", endpoint.bodyID, row.Lifetime(), want)
 				}
@@ -116,7 +109,7 @@ return read()
 	}
 }
 
-func TestStorageLifetimeKeepsFrameAndGlobalFactsExplicit(t *testing.T) {
+func TestStorageLifetimeKeepsEntryLocalsFrameAndGlobalsExplicit(t *testing.T) {
 	_, view := compileStorageLifetimeLawProgram(t, `
 local moduleState = {}
 local function make()
@@ -147,7 +140,7 @@ return print, moduleState, output
 			t.Fatalf("storage lifetime row %d has invalid semantic class %v", index, row.Lifetime())
 		}
 	}
-	if frames == 0 || modules == 0 || unknowns == 0 {
-		t.Fatalf("explicit storage lifetime classes frame=%d module=%d unknown=%d; want all three", frames, modules, unknowns)
+	if frames == 0 || unknowns == 0 || modules != 0 {
+		t.Fatalf("storage lifetime classes frame=%d module=%d unknown=%d; entry locals must not fabricate module ownership", frames, modules, unknowns)
 	}
 }

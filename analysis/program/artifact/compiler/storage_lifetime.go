@@ -11,8 +11,7 @@ import (
 // proof consumed by mounted Value/Placement domains. The compiler only emits
 // facts available from canonical Flow ownership:
 //
-//   - a local Cell owned by the parentless module Body is module-owned;
-//   - a local Cell owned by another proven Body is frame-local;
+//   - every local Cell is frame-local unless another owner is proven;
 //   - a local Cell participating in a proven closure capture is closure-owned
 //     retained storage, because its environment must outlive the introducing
 //     frame without becoming module-entry state;
@@ -118,9 +117,7 @@ func (compiler *compiler) copyStorageCellLifetimesFailure() CompileFailure {
 				return compileFailure(CompileStageBodyOutcomes, CompileRowBody, index, -1, CompileReasonBodyUnavailable)
 			}
 			lifetime := lifecycle.StorageLifetimeFrame
-			if body == entry {
-				lifetime = lifecycle.StorageLifetimeModule
-			} else if _, escapes := captured[term]; escapes {
+			if _, escapes := captured[term]; escapes {
 				lifetime = lifecycle.StorageLifetimeClosure
 			}
 			row, rowOK := lifecycle.NewStorageCellLifetime(cellID, lifetime)
