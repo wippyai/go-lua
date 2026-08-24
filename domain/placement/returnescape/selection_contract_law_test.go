@@ -9,36 +9,6 @@ import (
 	valuedomain "github.com/wippyai/go-lua/domain/value"
 )
 
-func TestReturnSelectionTagsRecoverLogicalBoundaryOrdinal(t *testing.T) {
-	for _, item := range []struct {
-		tag   valueTag
-		count int
-		want  int
-	}{
-		{tag: 1, count: 3, want: 0},
-		{tag: 2, count: 3, want: 1},
-		{tag: 3, count: 3, want: 2},
-	} {
-		if got, ok := boundaryValueOrdinal(item.tag, item.count); !ok || got != item.want {
-			t.Fatalf("tag %d/count %d = %d/%t, want %d/true", item.tag, item.count, got, ok, item.want)
-		}
-	}
-	for _, item := range []struct {
-		tag   valueTag
-		count int
-	}{
-		{tag: 0, count: 3},
-		{tag: 4, count: 3},
-		{tag: ^valueTag(0), count: 3},
-		{tag: 1, count: 0},
-		{tag: 1, count: -1},
-	} {
-		if _, ok := boundaryValueOrdinal(item.tag, item.count); ok {
-			t.Fatalf("malformed tag %d/count %d was admitted", item.tag, item.count)
-		}
-	}
-}
-
 func TestReturnSparseStackPlacementIsDisplaced(t *testing.T) {
 	got, ok := returnValue(placement.DefaultFact(), false, routePlan{class: routeExact})
 	want := placement.Fact{Class: placement.OwnedHeap, RetainEscape: placement.EvidenceProven}

@@ -2,7 +2,6 @@ package returnescape
 
 import (
 	"github.com/wippyai/go-lua/analysis/engine/execution"
-	"github.com/wippyai/go-lua/analysis/identity"
 	"github.com/wippyai/go-lua/analysis/schema/structure"
 	"github.com/wippyai/go-lua/domain/heap"
 	placementdomain "github.com/wippyai/go-lua/domain/placement"
@@ -13,119 +12,6 @@ import (
 // route. It is a one-based Heap dense coordinate, not a second identity or
 // coordinate space.
 type routeTag uint64
-
-// valueTag is the canonical heterogeneous ReturnBoundary member tag. Fixed
-// members are carried in authored member order; the Values root is the exact
-// anchor read and is deliberately not duplicated in this selected lane. It is
-// transport evidence only and never a Value coordinate.
-type valueTag uint64
-
-type operand struct {
-	boundary valuedomain.ReturnBoundary
-	root     valuedomain.Coordinate
-	id       identity.ContentID
-}
-
-// returnOperandForSchema resolves the exact Value-owned return boundary. The
-// returned coordinate is the boundary's already-issued Value coordinate; this
-// package never reconstructs a Program value row or occurrence projection.
-func returnOperandForSchema(schema *valuedomain.Schema, module, occurrence identity.ContentID) (operand, bool) {
-	if schema == nil || !schema.Valid() || !module.Available() || !occurrence.Available() {
-		return operand{}, false
-	}
-	boundary, ok := schema.ReturnBoundary(module, occurrence)
-	if !ok || !schema.OwnsReturnBoundary(boundary) {
-		return operand{}, false
-	}
-	id, idOK := boundary.ID()
-	root, rootOK := boundary.Root()
-	if !idOK || !id.Available() || !rootOK {
-		return operand{}, false
-	}
-	if _, indexOK := schema.CoordinateIndex(root); !indexOK {
-		return operand{}, false
-	}
-	for index := 0; index < boundary.MemberCount(); index++ {
-		member, memberOK := boundary.MemberAt(index)
-		coordinate, coordinateOK := member.Coordinate()
-		if !memberOK || !coordinateOK {
-			return operand{}, false
-		}
-		if _, indexOK := schema.CoordinateIndex(coordinate); !indexOK {
-			return operand{}, false
-		}
-	}
-	return operand{boundary: boundary, root: root, id: id}, true
-}
-
-func returnOperandContentForSchema(schema *valuedomain.Schema, candidate operand) (operand, [32]byte, bool) {
-	if schema == nil || !schema.Valid() || !schema.OwnsReturnBoundary(candidate.boundary) || !candidate.id.Available() {
-		return operand{}, [32]byte{}, false
-	}
-	id, idOK := candidate.boundary.ID()
-	root, rootOK := candidate.boundary.Root()
-	_, indexOK := schema.CoordinateIndex(root)
-	if !idOK || !id.Available() || id != candidate.id || !rootOK || root != candidate.root || !indexOK {
-		return operand{}, [32]byte{}, false
-	}
-	for index := 0; index < candidate.boundary.MemberCount(); index++ {
-		member, memberOK := candidate.boundary.MemberAt(index)
-		coordinate, coordinateOK := member.Coordinate()
-		if !memberOK || !coordinateOK {
-			return operand{}, [32]byte{}, false
-		}
-		if _, memberIndexOK := schema.CoordinateIndex(coordinate); !memberIndexOK {
-			return operand{}, [32]byte{}, false
-		}
-	}
-	return candidate, [32]byte(id), true
-}
-
-func returnRootCoordinateForSchema(schema *valuedomain.Schema, candidate operand) (uint64, bool) {
-	canonical, _, ok := returnOperandContentForSchema(schema, candidate)
-	if !ok {
-		return 0, false
-	}
-	index, indexOK := schema.CoordinateIndex(canonical.root)
-	return uint64(index), indexOK
-}
-
-func boundaryValueTag(index int) (valueTag, bool) {
-	if index < 0 {
-		return 0, false
-	}
-	return valueTag(uint64(index) + 1), true
-}
-
-// boundaryValueOrdinal recovers the authored member ordinal from the tag
-// carried by a Selection. SelectionAt is ordered by resolved engine Unit, not
-// by this logical member ordinal, so callers must validate the tag instead of
-// treating the physical selection index as the member index.
-func boundaryValueOrdinal(tag valueTag, count int) (int, bool) {
-	if tag == 0 || count < 0 {
-		return 0, false
-	}
-	index := uint64(tag - 1)
-	if index >= uint64(count) || index > uint64(int(^uint(0)>>1)) {
-		return 0, false
-	}
-	return int(index), true
-}
-
-func boundaryCoordinateForTag(boundary valuedomain.ReturnBoundary, tag valueTag) (valuedomain.Coordinate, bool) {
-	if boundary.MemberCount() < 0 {
-		return valuedomain.Coordinate{}, false
-	}
-	index, indexOK := boundaryValueOrdinal(tag, boundary.MemberCount())
-	if !indexOK {
-		return valuedomain.Coordinate{}, false
-	}
-	member, memberOK := boundary.MemberAt(index)
-	if !memberOK {
-		return valuedomain.Coordinate{}, false
-	}
-	return member.Coordinate()
-}
 
 type returnFact struct {
 	fact      valuedomain.Value

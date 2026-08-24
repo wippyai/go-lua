@@ -228,25 +228,6 @@ func TestReturnPlacementDemandPreservesMonotoneDisplacement(t *testing.T) {
 	}
 }
 
-func TestReturnBoundaryOperandUsesCanonicalValueRow(t *testing.T) {
-	fixture := newReturnPlanFixture(t)
-	local, localOK := returnOperandForSchema(fixture.values, fixture.module, fixture.returnID)
-	if !localOK {
-		t.Fatal("canonical Value return-boundary row was not resolved")
-	}
-	if _, _, contentOK := returnOperandContentForSchema(fixture.values, local); !contentOK {
-		t.Fatal("canonical Value return-boundary row crossed its owner fence")
-	}
-	if _, ok := returnOperandForSchema(fixture.values, identity.ContentID{}, fixture.returnID); ok {
-		t.Fatal("unavailable module crossed return-boundary fence")
-	}
-	foreign := identity.ContentID{}
-	foreign[0] = 1
-	if _, ok := returnOperandForSchema(fixture.values, foreign, fixture.returnID); ok {
-		t.Fatal("foreign module crossed return-boundary fence")
-	}
-}
-
 func newReturnPlanFixture(t testing.TB) returnPlanFixture {
 	t.Helper()
 	program, err := lower.Lower(lower.Source{Name: "placement_returnescape.lua", Text: []byte("local first = {}; local second = {}; local third = {}; local fourth = {}; local fifth = {}; local sixth = {}; local seventh = {}; local eighth = {}; local ninth = {}; return first")})
