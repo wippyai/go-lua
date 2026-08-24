@@ -307,32 +307,33 @@ func (builder *sealBuilder) buildLivenessIndex() (*livenessIndex, error) {
 		reverseCache:    make(map[int][]bool),
 	}
 	for eventIndex, event := range builder.events {
-		owner, _, _, ownerOK := builder.source.Index().Position(event.Term)
-		if ownerOK && keyspace.TermFamily(owner) == keyspace.FamilyBody {
-			bySubject := index.eventsByOwner[owner]
-			if bySubject == nil {
-				bySubject = make(map[subjectKey][]int)
-				index.eventsByOwner[owner] = bySubject
-				index.subjectsByOwner[owner] = make(map[subjectKey]Subject)
-				index.aliasesByOwner[owner] = make(map[subjectKey][]subjectKey)
+		owner, ownerOK := builder.bodyForTerm(event.Term)
+		if !ownerOK || keyspace.TermFamily(owner) != keyspace.FamilyBody || keyspace.TermOrdinal(owner) == 0 {
+			return nil, fmt.Errorf("%w: event %d has no body owner", ErrMalformed, eventIndex)
+		}
+		bySubject := index.eventsByOwner[owner]
+		if bySubject == nil {
+			bySubject = make(map[subjectKey][]int)
+			index.eventsByOwner[owner] = bySubject
+			index.subjectsByOwner[owner] = make(map[subjectKey]Subject)
+			index.aliasesByOwner[owner] = make(map[subjectKey][]subjectKey)
+		}
+		addEventSubject := func(subject Subject) {
+			if !subject.Kind.valid() || !subject.ID.Available() {
+				return
 			}
-			addEventSubject := func(subject Subject) {
-				if !subject.Kind.valid() || !subject.ID.Available() {
-					return
-				}
-				key := makeSubjectKey(subject)
-				index.subjectsByOwner[owner][key] = subject
-				bySubject[key] = append(bySubject[key], eventIndex)
-			}
-			addEventSubject(event.Subject)
-			if !sameSubjectKey(event.Subject, event.Related) {
-				addEventSubject(event.Related)
-			}
-			if event.Kind == EventAlias && event.Subject.Kind.valid() && event.Subject.ID.Available() && event.Related.Kind.valid() && event.Related.ID.Available() {
-				left, right := makeSubjectKey(event.Subject), makeSubjectKey(event.Related)
-				index.aliasesByOwner[owner][left] = append(index.aliasesByOwner[owner][left], right)
-				index.aliasesByOwner[owner][right] = append(index.aliasesByOwner[owner][right], left)
-			}
+			key := makeSubjectKey(subject)
+			index.subjectsByOwner[owner][key] = subject
+			bySubject[key] = append(bySubject[key], eventIndex)
+		}
+		addEventSubject(event.Subject)
+		if !sameSubjectKey(event.Subject, event.Related) {
+			addEventSubject(event.Related)
+		}
+		if event.Kind == EventAlias && event.Subject.Kind.valid() && event.Subject.ID.Available() && event.Related.Kind.valid() && event.Related.ID.Available() {
+			left, right := makeSubjectKey(event.Subject), makeSubjectKey(event.Related)
+			index.aliasesByOwner[owner][left] = append(index.aliasesByOwner[owner][left], right)
+			index.aliasesByOwner[owner][right] = append(index.aliasesByOwner[owner][right], left)
 		}
 
 		// Event.Term is an existing authored coordinate.  Causal's Site path
@@ -404,16 +405,16 @@ func (index *livenessIndex) reach(node int, reverse bool) []bool {
 	return cached
 }
 
-func (builder *sealBuilder) boundarySubjects(boundary Boundary, index *livenessIndex) []Subject {
-	seen := index.subjectsByOwner[boundaryOwner(builder, boundary)]
-	if len(seen) == 0 {
-		// A malformed source index should not make a valid paired boundary look
-		// like a proof of no subjects.  The body root is the smallest fallback;
-		// its liveness remains Unknown when no local event can be attached.
-		owner := boundaryOwner(builder, boundary)
-		if subject, subjectOK := builder.subject(SubjectRoot, owner); subjectOK {
-			seen = map[subjectKey]Subject{makeSubjectKey(subject): subject}
-		}
+func subjectsForOwner(index *livenessIndex, owner keyspace.Term) ([]Subject, bool) {
+	if index == nil || keyspace.TermFamily(owner) != keyspace.FamilyBody || keyspace.TermOrdinal(owner) == 0 {
+		return nil, false
+	}
+	seen, published := index.subjectsByOwner[owner]
+	// roots() publishes one exact SubjectRoot event for every body before this
+	// index is built. An absent or empty owner entry therefore means the source
+	// directory is malformed; it is not evidence for an Unknown root.
+	if !published || len(seen) == 0 {
+		return nil, false
 	}
 	subjects := make([]Subject, 0, len(seen))
 	for _, subject := range seen {
@@ -425,7 +426,11 @@ func (builder *sealBuilder) boundarySubjects(boundary Boundary, index *livenessI
 		}
 		return bytes.Compare(subjects[left].ID[:], subjects[right].ID[:]) < 0
 	})
-	return subjects
+	return subjects, true
+}
+
+func (builder *sealBuilder) boundarySubjects(boundary Boundary, index *livenessIndex) ([]Subject, bool) {
+	return subjectsForOwner(index, boundaryOwner(builder, boundary))
 }
 
 func boundaryOwner(builder *sealBuilder, boundary Boundary) keyspace.Term {
@@ -530,7 +535,11 @@ func (builder *sealBuilder) liveness() error {
 	}
 	rows := make(map[livenessKey]*livenessAccumulator)
 	for _, boundary := range builder.boundariesRows {
-		for _, subject := range builder.boundarySubjects(boundary, index) {
+		subjects, subjectsOK := builder.boundarySubjects(boundary, index)
+		if !subjectsOK {
+			return fmt.Errorf("%w: boundary has no owner-issued subject directory", ErrMalformed)
+		}
+		for _, subject := range subjects {
 			key := livenessKey{route: boundary.YieldRoute, subject: subjectKey{kind: subject.Kind, id: subject.ID}}
 			entry := rows[key]
 			if entry == nil {
