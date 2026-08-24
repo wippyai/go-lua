@@ -177,3 +177,35 @@ func FoldExact[K scalar.Key, V any](ticket Ticket, read ExactRead[K, V], write E
 		}
 	}
 }
+
+// PublishExact stages one already-reduced fact at this row's own coordinate
+// and seals the write.
+//
+// It is the publication half of the exact form, separated from the reading
+// half on purpose. A fold that bundles read, reduce and publish can only serve
+// the one read geometry it was written against, so every new geometry looked
+// like a missing fold: a product of two exact reads, a whole member vector
+// reduced to one cell, a summary read beside an exact one. A family that
+// performs its own reads - which every installed family already does for its
+// prerequisites - reaches its publication through this, and the read geometry
+// and the publication mode compose instead of multiplying.
+//
+// region is the support the reduced fact holds over: the region the reads it
+// was derived from reported, so a publication never claims more than what was
+// observed. The Ticket stays open for Submit.
+func PublishExact[K scalar.Key, V any](
+	ticket Ticket,
+	write ExactWrite[K, V],
+	scratch *Scratch[K, V],
+	region support.Mask,
+	value V,
+) structure.ReductionOutcome {
+	if scratch == nil || !write.Valid() || !region.Valid() {
+		return structure.Refuse
+	}
+	if !write.Stage(ticket, scratch, region, value) || !write.Close(ticket, scratch) {
+		_ = scratch.Discard(ticket)
+		return structure.Refuse
+	}
+	return structure.Concrete
+}

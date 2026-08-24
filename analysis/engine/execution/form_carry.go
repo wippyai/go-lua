@@ -141,8 +141,34 @@ func FoldCarry[RK scalar.Key, RV any, K scalar.Key, V any, R CarryReducer[RV, V]
 		// of this Factor stay exactly as the predecessor left them.
 		return outcome
 	}
-	if !write.Carry(ticket, writes, region) || !write.Stage(ticket, writes, region, next) || !write.Close(ticket, writes) {
-		_ = writes.Discard(ticket)
+	return PublishCarry(ticket, write, writes, region, next)
+}
+
+// PublishCarry moves every carried coordinate through the row's sealed
+// transition and stages one already-reduced fact at the row's own coordinate,
+// both in the one patch that makes the row publish atomically.
+//
+// It is the publication half of the carry form, separated from the reading
+// half for the same reason PublishExact is: FoldCarry reduces exactly one
+// exact cell, so a rule whose carry is fed by anything else - a product of two
+// exact reads, an exact read beside a whole vector - had no fold at all. A
+// family that performs its own reads reaches its publication through this, and
+// the two halves compose.
+//
+// region is the support the reduced fact holds over, which is the region the
+// reads it came from reported. The Ticket stays open for Submit.
+func PublishCarry[K scalar.Key, V any](
+	ticket Ticket,
+	write CarryWrite[K, V],
+	scratch *Scratch[K, V],
+	region support.Mask,
+	value V,
+) structure.ReductionOutcome {
+	if scratch == nil || !write.Valid() || !region.Valid() {
+		return structure.Refuse
+	}
+	if !write.Carry(ticket, scratch, region) || !write.Stage(ticket, scratch, region, value) || !write.Close(ticket, scratch) {
+		_ = scratch.Discard(ticket)
 		return structure.Refuse
 	}
 	return structure.Concrete
