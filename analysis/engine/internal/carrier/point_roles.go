@@ -320,7 +320,14 @@ func (work *Work) publishPointState(state State, coverage contributionCoverage, 
 		}
 	}
 	point := PointState{state: state, coverage: normalized, lineage: token, roleSeal: work.contributionSeal, authority: state.authority, closed: closed}
-	return point, work.admittedPointState(point)
+	if !work.admittedPointState(point) {
+		return PointState{}, false
+	}
+	// One generation's rows are proved once here. Every later refresh that
+	// transports, folds, or compares this point admits the same immutable
+	// surface and consumes that proof instead of walking the rows again.
+	point.coverage.proof = work.contributionSeal
+	return point, true
 }
 
 // EmptyPointState is the nominal point-base route.  It deliberately reuses

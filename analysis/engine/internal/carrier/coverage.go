@@ -2,6 +2,7 @@ package carrier
 
 import (
 	"sort"
+	"sync/atomic"
 
 	"github.com/wippyai/go-lua/analysis/engine/internal/carrier/shape"
 	"github.com/wippyai/go-lua/analysis/engine/internal/facts/change"
@@ -38,7 +39,15 @@ type contributionSeal struct {
 
 type contributionCoverage struct {
 	composition *Composition
-	slots       []slotCoverage
+	// proof is the admission token of the Work that walked every authored row
+	// of this exact immutable surface once. A surface is admitted again on
+	// every refresh that transports, folds, or compares the point holding it,
+	// and its rows cannot change, so the walk is a construction-time
+	// obligation rather than a per-admission one. The token is issued per Work
+	// epoch, so a surface built by an earlier evaluator carries none and pays
+	// the whole proof again.
+	proof *contributionSeal
+	slots []slotCoverage
 	// occupied is the slot-plane issuance. Every producer writes it in the
 	// same statement that writes its slot row, so a consumer enumerates the
 	// slots that actually carry an authored relation instead of scanning the
@@ -243,7 +252,11 @@ func (work *Work) admitContribution(state State, coverage contributionCoverage) 
 	}
 	result.seal = work.contributionSeal
 	result.authority = state.authority
-	return result, work.admittedContribution(result)
+	if !work.admittedContribution(result) {
+		return Contribution{}, false
+	}
+	result.coverage.proof = work.contributionSeal
+	return result, true
 }
 
 // closedContributionRoots is the cold issuance proof for a State accepted
@@ -280,7 +293,11 @@ func (work *Work) admitConstructedContribution(state State, coverage contributio
 		return Contribution{}, false
 	}
 	result := Contribution{state: state, coverage: coverage, seal: work.contributionSeal, authority: state.authority}
-	return result, work.admittedContribution(result)
+	if !work.admittedContribution(result) {
+		return Contribution{}, false
+	}
+	result.coverage.proof = work.contributionSeal
+	return result, true
 }
 
 // exactNeutralState is the carrier's issuance-time semantic identity proof.
@@ -360,8 +377,17 @@ func (work *Work) rescopeContribution(input Contribution, target Scope) (Contrib
 	return work.admitConstructedContribution(state, input.coverage)
 }
 
+// shapeFor proves the facts that depend on the State this surface is paired
+// with. They are the only part of validity a proven surface must still answer,
+// because the same immutable rows may be offered against another State.
+func (coverage contributionCoverage) shapeFor(state State) bool {
+	return state.live() && coverage.composition != nil && state.authority.composition == coverage.composition &&
+		(len(coverage.slots) == 0 || len(coverage.slots) == coverage.composition.Count()) &&
+		(len(coverage.slots) != 0 || coverage.occupied.Empty())
+}
+
 func (coverage contributionCoverage) validFor(state State) bool {
-	if !state.live() || coverage.composition == nil || state.authority.composition != coverage.composition || len(coverage.slots) != 0 && len(coverage.slots) != coverage.composition.Count() {
+	if !coverage.shapeFor(state) {
 		return false
 	}
 	for position := range coverage.slots {
@@ -375,7 +401,7 @@ func (coverage contributionCoverage) validFor(state State) bool {
 			}
 		}
 	}
-	return len(coverage.slots) != 0 || coverage.occupied.Empty()
+	return true
 }
 
 // ownsLineage authenticates a copied token against the Work that issued it.
@@ -398,8 +424,20 @@ func (work *Work) validCoverageRow(row TargetRegion) bool {
 // validContributionCoverage is the Work-specific half of coverage validity.
 // The structural validator can prove row shape, but only the issuing Work can
 // prove that every nonzero lineage belongs to this evaluator epoch.
+//
+// A surface this Work already proved carries its admission token and answers
+// here in O(1). The shape facts that depend on the State it is paired with -
+// liveness, composition, and slot width - are cheap and are proved every
+// time, because the same immutable surface may be offered against a different
+// State.
 func (work *Work) validContributionCoverage(state State, coverage contributionCoverage) bool {
-	if work == nil || !coverage.validFor(state) || coverage.composition != work.composition {
+	if work == nil || coverage.composition != work.composition || !coverage.shapeFor(state) {
+		return false
+	}
+	if work.contributionSeal != nil && coverage.proof == work.contributionSeal {
+		return true
+	}
+	if !coverage.validFor(state) {
 		return false
 	}
 	for position, more := coverage.occupied.Next(0); more; position, more = coverage.occupied.Next(position + 1) {
@@ -407,6 +445,7 @@ func (work *Work) validContributionCoverage(state State, coverage contributionCo
 			return false
 		}
 		rows := coverage.slots[position].targets
+		dbgCoverageProofRows.Add(uint64(len(rows)))
 		for _, row := range rows {
 			if !work.validCoverageRow(row) {
 				return false
@@ -415,6 +454,17 @@ func (work *Work) validContributionCoverage(state State, coverage contributionCo
 	}
 	return true
 }
+
+// dbgCoverageProofRows counts the authored rows the deep coverage proof
+// walks. An authored surface owes that walk once, when it is constructed, so
+// a refresh that admits an already proven surface adds nothing here.
+var dbgCoverageProofRows atomic.Uint64
+
+// DbgCoverageProofRows reports the accumulated deep coverage row walk.
+func DbgCoverageProofRows() uint64 { return dbgCoverageProofRows.Load() }
+
+// DbgCoverageProofRowsReset clears the accumulated deep coverage row walk.
+func DbgCoverageProofRowsReset() { dbgCoverageProofRows.Store(0) }
 
 func (work *Work) validSlotCoverage(rows slotCoverage) bool {
 	if work == nil || !work.live() {
