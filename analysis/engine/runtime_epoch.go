@@ -18,6 +18,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/engine/internal/facts/support"
 	"github.com/wippyai/go-lua/analysis/engine/internal/schedule"
 	"github.com/wippyai/go-lua/analysis/identity"
+	ruleprogram "github.com/wippyai/go-lua/analysis/schema/rule/program"
 )
 
 // producerEpoch is an epoch-local candidate cache in graph Group order. A
@@ -258,7 +259,16 @@ func buildGeneratedExecutionProgram(program *runtimeProgram) (*generatedExecutio
 		if !descriptorOK {
 			return nil, false
 		}
-		if descriptor.OutputCount() != 1 || int(descriptor.OutputFactor()) >= len(rowsByOwner) || row.generated.target.Mode() != carrier.StrongTarget {
+		if descriptor.OutputCount() != 1 || int(descriptor.OutputFactor()) >= len(rowsByOwner) {
+			return nil, false
+		}
+		// A row's Target is its one static destination, and a routed row has
+		// none: it publishes at the members its own relation derives. The
+		// declared publication mode decides which of the two this row is, so a
+		// missing Target is a refusal for an exact row and the whole point of a
+		// routed one.
+		mode, modeOK := descriptor.OutputMode()
+		if !modeOK || (row.generated.target.Mode() == carrier.StrongTarget) != (mode == ruleprogram.ModeExact) {
 			return nil, false
 		}
 		formRow, classified := execution.ClassifyForm(descriptor)

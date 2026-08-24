@@ -30,7 +30,12 @@ type generatedMemberSpec struct {
 	narrow       []carrier.Target
 	route        runtimeFactor
 	routeNarrow  bool
-	writes       bool
+	// routed says this member publishes through the route universe of its
+	// output Factor rather than at one exact target. A routed row has no
+	// static destination at all: its destinations are the members of the
+	// relation its selected join derives, which exist only per invocation.
+	routed bool
+	writes bool
 
 	factorOrdinal int32
 	unit          carrier.Unit
@@ -46,10 +51,13 @@ type generatedMemberSpec struct {
 // generated issuance. Surfaces are minted from the bound Factor cells and are
 // retained only until the matching runtime Unit/Target are attached.
 type generatedMemberDeclaration struct {
-	cell         *generatedRuleCell
-	operand      equation.Operand
-	candidate    uint32
-	readSurface  RuleReadSurface
+	cell      *generatedRuleCell
+	operand   equation.Operand
+	candidate uint32
+	// reads are this rule's declared read surfaces in plan order. A rule with
+	// no join has none; every other rule has exactly the joins its Plan states,
+	// each already in the form its own row declares.
+	reads        []RuleReadSurface
 	writeSurface ruleWriteSurface
 }
 
@@ -73,6 +81,7 @@ type generatedMember struct {
 	narrowRows          []carrier.Target
 	route               runtimeFactor
 	routeNarrowEligible bool
+	routed              bool
 	writes              bool
 
 	unit       carrier.Unit
@@ -107,24 +116,41 @@ func newGeneratedMember(spec generatedMemberSpec) (*generatedMember, bool) {
 	if !spec.member.Key().Available() || spec.inputCount < 0 || spec.outputCount < 0 || spec.outputCount > 1 {
 		return nil, false
 	}
-	if spec.factorOrdinal < 0 || spec.target == (carrier.Target{}) {
+	if spec.factorOrdinal < 0 {
 		return nil, false
 	}
-	if spec.inputCount == 0 {
+	// A routed row's destination is not a coordinate this member holds: it is
+	// whichever members its selected join derives for one invocation. So the
+	// exact target is present exactly when the row is not routed, and a routed
+	// row must name the Factor whose route universe it claims instead.
+	if spec.routed {
+		if spec.target != (carrier.Target{}) || len(spec.targets) != 0 || len(spec.carryTargets) != 0 || spec.route == nil {
+			return nil, false
+		}
+	} else if spec.target == (carrier.Target{}) || spec.route != nil || spec.routeNarrow {
+		return nil, false
+	}
+	// The exact Unit is the coordinate of this row's first exact observation.
+	// A row whose every join is selected observes no standing coordinate, so it
+	// carries none rather than an invented one.
+	if len(spec.initial) == 0 {
 		if spec.readInput != 0 || spec.unit != (carrier.Unit{}) {
 			return nil, false
 		}
 	} else if spec.unit == (carrier.Unit{}) || spec.readInput < 0 || spec.readInput >= spec.inputCount {
 		return nil, false
 	}
+	if spec.inputCount == 0 && (len(spec.initial) != 0 || len(spec.dynamic) != 0) {
+		return nil, false
+	}
 	if spec.hasSlot != spec.writes || (spec.outputCount == 1) != spec.writes {
 		return nil, false
 	}
 	if spec.hasSlot {
-		if spec.outputSlot < 0 || !spec.factor.Available() || len(spec.targets) == 0 {
+		if spec.outputSlot < 0 || !spec.factor.Available() || (len(spec.targets) == 0) != spec.routed {
 			return nil, false
 		}
-	} else if spec.outputSlot != 0 || spec.factor.Available() || len(spec.targets) != 0 || len(spec.carryTargets) != 0 || len(spec.narrow) != 0 || spec.route != nil || spec.routeNarrow {
+	} else if spec.outputSlot != 0 || spec.factor.Available() || len(spec.targets) != 0 || len(spec.carryTargets) != 0 || len(spec.narrow) != 0 || spec.route != nil || spec.routeNarrow || spec.routed {
 		return nil, false
 	}
 	for _, carry := range spec.carries {
@@ -145,10 +171,10 @@ func newGeneratedMember(spec generatedMemberSpec) (*generatedMember, bool) {
 	if spec.routeNarrow && spec.route == nil {
 		return nil, false
 	}
-	if spec.target.Mode() != carrier.StrongTarget {
+	if !spec.routed && spec.target.Mode() != carrier.StrongTarget {
 		return nil, false
 	}
-	if spec.inputCount != 0 && spec.unit.Kind() != carrier.ExactUnit {
+	if len(spec.initial) != 0 && spec.unit.Kind() != carrier.ExactUnit {
 		return nil, false
 	}
 	return &generatedMember{
@@ -164,6 +190,7 @@ func newGeneratedMember(spec generatedMemberSpec) (*generatedMember, bool) {
 		narrowRows:          append([]carrier.Target(nil), spec.narrow...),
 		route:               spec.route,
 		routeNarrowEligible: spec.routeNarrow,
+		routed:              spec.routed,
 		writes:              spec.writes,
 		unit:                spec.unit,
 		target:              spec.target,
@@ -173,7 +200,14 @@ func newGeneratedMember(spec generatedMemberSpec) (*generatedMember, bool) {
 }
 
 func (member *generatedMember) validRuntimeMember() bool {
-	if member == nil || !member.value.Key().Available() || member.hasSlot != member.writes || member.rule == ^uint32(0) || member.target.Mode() != carrier.StrongTarget || member.routeNarrowEligible && member.route == nil {
+	if member == nil || !member.value.Key().Available() || member.hasSlot != member.writes || member.rule == ^uint32(0) || member.routeNarrowEligible && member.route == nil {
+		return false
+	}
+	if member.routed {
+		if member.target != (carrier.Target{}) || member.route == nil {
+			return false
+		}
+	} else if member.target.Mode() != carrier.StrongTarget {
 		return false
 	}
 	if member.unit != (carrier.Unit{}) && member.unit.Kind() != carrier.ExactUnit {
@@ -451,63 +485,111 @@ func bindGeneratedMember(plane *programPlane, topology *equation.Topology, membe
 	if !shapeOK || member.WriteCount() != 1 || member.Rule() == (composition.Key{}) || member.OperandFamily() != shape.OperandFamily {
 		return nil, false
 	}
+	mode, modeOK := descriptor.OutputMode()
 	writeSurface, writeOK := member.WriteAt(0)
-	if !writeOK || writeSurface != declaration.writeSurface.value ||
-		writeSurface.Form != equation.SurfaceWriteExact || writeSurface.Mode != equation.TargetModeStrong || writeSurface.Local == 0 {
-		return nil, false
-	}
-	routeRead, routeOK := member.WriteRouteRead(0)
-	if !routeOK || routeRead != 0 {
+	routeRead, routeReadOK := member.WriteRouteRead(0)
+	if !modeOK || !writeOK || !routeReadOK || writeSurface != declaration.writeSurface.value {
 		return nil, false
 	}
 	writeFactor, writeFactorOK := plane.byKey[writeSurface.Factor]
 	if !writeFactorOK || writeFactor == nil {
 		return nil, false
 	}
-	var unit carrier.Unit
-	if member.ReadCount() != 0 {
-		readSurface, readOK := member.ReadAt(0)
-		if !readOK || readSurface != declaration.readSurface.value ||
-			readSurface.Form != equation.SurfaceReadExact || readSurface.Mode != equation.TargetModeNone || readSurface.Local == 0 {
+	inputCount := descriptor.InputCount()
+	if member.ReadCount() != descriptor.ReadCount() || len(declaration.reads) != descriptor.ReadCount() {
+		return nil, false
+	}
+	spec := generatedMemberSpec{
+		member: member, factor: writeSurface.Factor, hasSlot: true, writes: true,
+		factorOrdinal: int32(descriptor.OutputFactor()),
+		rule:          ruleOrdinal,
+		candidate:     declaration.candidate, inputCount: inputCount, outputCount: descriptor.OutputCount(),
+	}
+	slot, slotOK := writeFactor.runtimeSlot()
+	if !slotOK {
+		return nil, false
+	}
+	spec.outputSlot = slot
+	// Each declared join is delivered in the form its own row states. An exact
+	// join names the one coordinate it observes; a selected join names none,
+	// because its coordinates are the members of a relation derived per
+	// invocation, and what the member carries instead is the standing
+	// permission to observe that Factor.
+	for index := 0; index < descriptor.ReadCount(); index++ {
+		plan, planOK := descriptor.ReadAt(index)
+		readSurface, readOK := member.ReadAt(index)
+		if !planOK || !readOK || readSurface != declaration.reads[index].value {
 			return nil, false
 		}
 		// A read may name a Factor other than the written one. A rule whose
-		// join is foreign is exactly the rule the engine cannot type generically,
-		// and it reaches execution through the family its owner installs; the
-		// form builders refuse a cross-Factor Unit on their own.
+		// join is foreign is exactly the rule the engine cannot type
+		// generically, and it reaches execution through the family its owner
+		// installs; the form builders refuse a cross-Factor Unit on their own.
 		readFactor, readFactorOK := plane.byKey[readSurface.Factor]
-		if !readFactorOK || readFactor == nil {
+		if !readFactorOK || readFactor == nil || uint64(plan.Input) >= uint64(inputCount) {
 			return nil, false
 		}
-		var unitOK bool
-		unit, unitOK = readFactor.readUnit(readSurface)
-		if !unitOK || unit.Kind() != carrier.ExactUnit {
+		switch readSurface.Form {
+		case equation.SurfaceReadExact:
+			if readSurface.Mode != equation.TargetModeNone || readSurface.Local == 0 {
+				return nil, false
+			}
+			unit, unitOK := readFactor.readUnit(readSurface)
+			if !unitOK || unit.Kind() != carrier.ExactUnit {
+				return nil, false
+			}
+			if len(spec.initial) == 0 {
+				spec.unit, spec.readInput = unit, int(plan.Input)
+			}
+			spec.initial = append(spec.initial, demand.Observation{Input: uint64(plan.Input), Unit: unit})
+		case equation.SurfaceReadSelect:
+			readSlot, readSlotOK := readFactor.runtimeSlot()
+			if !readSlotOK {
+				return nil, false
+			}
+			spec.dynamic = append(spec.dynamic, demand.DynamicRead{Input: uint64(plan.Input), Slot: readSlot})
+		default:
 			return nil, false
 		}
 	}
-	target, targetOK := writeFactor.writeTarget(writeSurface)
-	slot, slotOK := writeFactor.runtimeSlot()
-	if !targetOK || !slotOK || target.Mode() != carrier.StrongTarget {
+	carryInput := descriptor.CarryInput()
+	switch mode {
+	case ruleprogram.ModeExact:
+		if writeSurface.Form != equation.SurfaceWriteExact || writeSurface.Mode != equation.TargetModeStrong || writeSurface.Local == 0 || routeRead != 0 {
+			return nil, false
+		}
+		target, targetOK := writeFactor.writeTarget(writeSurface)
+		if !targetOK || target.Mode() != carrier.StrongTarget {
+			return nil, false
+		}
+		spec.target, spec.targets = target, []carrier.Target{target}
+		if carryInput >= 0 {
+			if carryInput >= inputCount {
+				return nil, false
+			}
+			spec.carries = []int{carryInput}
+			spec.carryTargets = []carrier.Target{target}
+		}
+	case ruleprogram.ModeRoute:
+		if writeSurface.Form != equation.SurfaceWriteRoute || routeRead == 0 || uint64(routeRead) > uint64(descriptor.ReadCount()) {
+			return nil, false
+		}
+		// A routed member publishes at coordinates its own derived relation
+		// answers, so it claims the output Factor's route universe rather than
+		// one exact target. A carry alongside a route would have to preserve
+		// coordinates that universe already spans; that is the hot arm's
+		// carryRouteScope and it is not declared here, so a routed generated
+		// rule that also carries is refused rather than silently dropped.
+		if carryInput >= 0 || !writeFactor.hasRouteUniverse() {
+			return nil, false
+		}
+		spec.routed = true
+		spec.route = writeFactor
+		spec.routeNarrow = writeFactor.supports(carrier.Narrow)
+	default:
 		return nil, false
 	}
-	inputCount := descriptor.InputCount()
-	spec := generatedMemberSpec{
-		member: member, outputSlot: slot, hasSlot: true, factor: writeSurface.Factor,
-		targets:       []carrier.Target{target},
-		factorOrdinal: int32(descriptor.OutputFactor()), unit: unit, target: target,
-		rule:      ruleOrdinal,
-		candidate: declaration.candidate, inputCount: inputCount, outputCount: descriptor.OutputCount(), writes: true,
-	}
-	if descriptor.ReadCount() != 0 {
-		carryInput := descriptor.CarryInput()
-		if inputCount <= 0 || carryInput < 0 || carryInput >= inputCount || descriptor.ReadInput() < 0 || descriptor.ReadInput() >= inputCount {
-			return nil, false
-		}
-		spec.carries = []int{carryInput}
-		spec.initial = []demand.Observation{{Input: uint64(descriptor.ReadInput()), Unit: unit}}
-		spec.carryTargets = []carrier.Target{target}
-		spec.readInput = descriptor.ReadInput()
-	} else if inputCount != 0 {
+	if descriptor.ReadCount() == 0 && inputCount != 0 {
 		return nil, false
 	}
 	return newGeneratedMember(spec)

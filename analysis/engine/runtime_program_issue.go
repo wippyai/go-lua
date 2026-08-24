@@ -12,6 +12,7 @@
 package engine
 
 import (
+	"github.com/wippyai/go-lua/analysis/engine/generated"
 	"github.com/wippyai/go-lua/analysis/engine/internal/composition"
 	"github.com/wippyai/go-lua/analysis/engine/internal/equation"
 	"github.com/wippyai/go-lua/analysis/identity"
@@ -455,12 +456,11 @@ func declareGeneratedIssuanceSurfaces(rowsWorkspace *programRows, state *schemaB
 		return pendingRuleIssuance{}, false
 	}
 	cell := declaration.generatedCell()
-	if cell == nil || !cell.available() {
+	if cell == nil || !cell.available() || !cell.planDigest.Available() {
 		return pendingRuleIssuance{}, false
 	}
 	descriptor := cell.program
 	candidate := descriptor.CandidateRelation()
-	destination := descriptor.DestinationProjection()
 	candidateOwner, candidateOwnerOK := relationOwnerForGeneratedAxis(state, candidate.Axis)
 	if !candidateOwnerOK {
 		return pendingRuleIssuance{}, false
@@ -477,67 +477,162 @@ func declareGeneratedIssuanceSurfaces(rowsWorkspace *programRows, state *schemaB
 	if !candidateOK {
 		return pendingRuleIssuance{}, false
 	}
-	destinationLocal, destinationOK := candidateOwner.Project(candidate.Member, destination.Member, denseCandidate)
-	if !destinationOK {
-		return pendingRuleIssuance{}, false
-	}
-	outputFactorOrdinal := uint64(descriptor.OutputFactor())
-	if outputFactorOrdinal >= uint64(len(state.factors)) {
-		return pendingRuleIssuance{}, false
-	}
-	outputFactor := state.factors[outputFactorOrdinal]
-	if outputFactor == nil {
-		return pendingRuleIssuance{}, false
-	}
-	writeSurface, writeSurfaceOK := outputFactor.schemaFactorExactWrite(state, state.authority, uint64(destinationLocal))
-	if !writeSurfaceOK || !writeSurface.value.Available() || writeSurface.value.Factor != outputFactor.schemaFactorSemanticKey() {
-		return pendingRuleIssuance{}, false
-	}
-	var readSurface RuleReadSurface
-	var carries uint64
-	if descriptor.ReadCount() != 0 {
-		join := descriptor.JoinRelation()
-		key := descriptor.KeyProjection()
-		joinOwner, joinOwnerOK := relationOwnerForGeneratedAxis(state, join.Axis)
-		if !joinOwnerOK {
-			return pendingRuleIssuance{}, false
-		}
-		sourceLocal, sourceOK := joinOwner.Project(join.Member, key.Member, denseCandidate)
-		readFactorOrdinal := uint64(descriptor.ReadFactor())
-		if !sourceOK || readFactorOrdinal >= uint64(len(state.factors)) || readFactorOrdinal != outputFactorOrdinal {
-			return pendingRuleIssuance{}, false
-		}
-		readFactor := state.factors[readFactorOrdinal]
-		if readFactor == nil || readFactor != outputFactor {
-			return pendingRuleIssuance{}, false
-		}
-		var readOK bool
-		readSurface, readOK = readFactor.schemaFactorExactRead(state, state.authority, uint64(sourceLocal))
-		if !readOK || !readSurface.value.Available() || readSurface.value.Factor != readFactor.schemaFactorSemanticKey() {
-			return pendingRuleIssuance{}, false
-		}
-		carries = 1
-	}
-	if !cell.planDigest.Available() {
-		return pendingRuleIssuance{}, false
-	}
+	// The anchor is admitted before any surface, because a selected read and a
+	// routed write are ADDRESSED BY it: neither has a static coordinate, and
+	// what identifies them instead is the occurrence and operand this issuance
+	// mints here.
 	anchor, anchorOK := admitRuleSurfaceAnchor(rowsWorkspace, site, entity, [32]byte(cell.planDigest))
 	if !anchorOK {
 		return pendingRuleIssuance{}, false
 	}
+	ruleSemantic, ruleSemanticOK := semanticKeyFromComposition(semantic)
+	if !ruleSemanticOK {
+		return pendingRuleIssuance{}, false
+	}
+	reads, readsOK := declareGeneratedReadSurfaces(state, declaration, descriptor, anchor, ruleSemantic, denseCandidate)
+	if !readsOK {
+		return pendingRuleIssuance{}, false
+	}
+	writeSurface, writeSurfaceOK := declareGeneratedWriteSurface(state, declaration, descriptor, anchor, ruleSemantic, denseCandidate)
+	if !writeSurfaceOK {
+		return pendingRuleIssuance{}, false
+	}
 	surfaces := declaredRuleSurfaces{
 		writes:  []ruleWriteSurface{writeSurface},
-		carries: carries,
+		carries: generatedCarryCount(descriptor),
 	}
-	if descriptor.ReadCount() != 0 {
-		surfaces.reads = []RuleReadSurface{readSurface}
+	if len(reads) != 0 {
+		surfaces.reads = reads
 	}
 	issuance.semantic, issuance.family, issuance.anchor, issuance.surfaces = semantic, family, anchor, surfaces
 	issuance.generated = &generatedMemberDeclaration{
 		cell: cell, operand: anchor.operand, candidate: denseCandidate,
-		readSurface: readSurface, writeSurface: writeSurface,
+		reads: reads, writeSurface: writeSurface,
 	}
 	return issuance, true
+}
+
+// generatedCarryCount is the declared carry cardinality of one generated rule.
+// A generated rule carries at most its one output Factor.
+func generatedCarryCount(descriptor generated.CompiledRule) uint64 {
+	if descriptor.CarryInput() < 0 {
+		return 0
+	}
+	return 1
+}
+
+// declareGeneratedReadSurfaces mints one surface per declared join, in plan
+// order, each in the form its own row declares.
+//
+// An exact join resolves its coordinate now, through the owner of the relation
+// the join names. A selected join resolves none: its coordinates are the
+// members of a relation that exists only per invocation, so what is sealed
+// here is the anchored identity of the read itself, and the members arrive
+// through the family the rule's own package installs.
+func declareGeneratedReadSurfaces(state *schemaBindingState, declaration *generatedRuleBindingCell, descriptor generated.CompiledRule, anchor ruleSurfaceAnchor, semantic identity.SemanticKey, denseCandidate uint32) ([]RuleReadSurface, bool) {
+	count := descriptor.ReadCount()
+	if count == 0 {
+		return nil, true
+	}
+	if len(declaration.reads) != count {
+		return nil, false
+	}
+	reads := make([]RuleReadSurface, count)
+	for index := 0; index < count; index++ {
+		plan, planOK := descriptor.ReadAt(index)
+		row := declaration.reads[index]
+		if !planOK || row == nil {
+			return nil, false
+		}
+		if uint64(plan.Factor) >= uint64(len(state.factors)) {
+			return nil, false
+		}
+		readFactor := state.factors[plan.Factor]
+		if readFactor == nil || readFactor.schemaFactorSemanticKey() != row.factor {
+			return nil, false
+		}
+		switch row.kind {
+		case composition.ReadExact:
+			joinOwner, joinOwnerOK := relationOwnerForGeneratedAxis(state, plan.Relation.Axis)
+			if !joinOwnerOK {
+				return nil, false
+			}
+			local, localOK := joinOwner.Project(plan.Relation.Member, plan.Key.Member, denseCandidate)
+			if !localOK {
+				return nil, false
+			}
+			surface, surfaceOK := readFactor.schemaFactorExactRead(state, state.authority, uint64(local))
+			if !surfaceOK || !surface.value.Available() || surface.value.Factor != row.factor {
+				return nil, false
+			}
+			reads[index] = surface
+		case composition.ReadSelect:
+			dependencies := make([]RuleReadSurface, len(row.dependencies))
+			for position, dependency := range row.dependencies {
+				if dependency >= uint64(index) {
+					return nil, false
+				}
+				dependencies[position] = reads[dependency]
+			}
+			surface, surfaceOK := anchoredSelectedReadSurface(state, state.authority, semantic, anchor, row, declaration.reads, dependencies, reads[:index])
+			if !surfaceOK || !surface.value.Available() {
+				return nil, false
+			}
+			reads[index] = surface
+		default:
+			return nil, false
+		}
+	}
+	return reads, true
+}
+
+// declareGeneratedWriteSurface mints this rule's one publication surface.
+//
+// An exact publication projects its destination from the candidate row now.
+// A routed publication projects nothing: its destinations are the members of
+// the selected join it publishes over, and a member is a coordinate only once
+// the relation is derived. What is sealed here is the anchored identity of the
+// routed write, which is what makes the deferred destinations attributable to
+// this exact issuance.
+func declareGeneratedWriteSurface(state *schemaBindingState, declaration *generatedRuleBindingCell, descriptor generated.CompiledRule, anchor ruleSurfaceAnchor, semantic identity.SemanticKey, denseCandidate uint32) (ruleWriteSurface, bool) {
+	outputFactorOrdinal := uint64(descriptor.OutputFactor())
+	if outputFactorOrdinal >= uint64(len(state.factors)) {
+		return ruleWriteSurface{}, false
+	}
+	outputFactor := state.factors[outputFactorOrdinal]
+	if outputFactor == nil {
+		return ruleWriteSurface{}, false
+	}
+	switch declaration.writeMode {
+	case directRuleWriteExact:
+		candidate := descriptor.CandidateRelation()
+		destination := descriptor.DestinationProjection()
+		candidateOwner, candidateOwnerOK := relationOwnerForGeneratedAxis(state, candidate.Axis)
+		if !candidateOwnerOK {
+			return ruleWriteSurface{}, false
+		}
+		destinationLocal, destinationOK := candidateOwner.Project(candidate.Member, destination.Member, denseCandidate)
+		if !destinationOK {
+			return ruleWriteSurface{}, false
+		}
+		surface, surfaceOK := outputFactor.schemaFactorExactWrite(state, state.authority, uint64(destinationLocal))
+		if !surfaceOK || !surface.value.Available() || surface.value.Factor != outputFactor.schemaFactorSemanticKey() {
+			return ruleWriteSurface{}, false
+		}
+		return surface, true
+	case directRuleWriteRoute:
+		route := declaration.routeRead
+		if route == 0 || route > uint64(len(declaration.reads)) {
+			return ruleWriteSurface{}, false
+		}
+		surface, surfaceOK := anchoredRouteWriteSurface(state, state.authority, semantic, anchor, declaration.ordinal, 0, route, outputFactor.schemaFactorSemanticKey(), declaration.reads[route-1])
+		if !surfaceOK || !surface.value.Available() {
+			return ruleWriteSurface{}, false
+		}
+		return surface, true
+	default:
+		return ruleWriteSurface{}, false
+	}
 }
 
 // admitRuleSurfaceAnchor mints one issuance's Occurrence and Operand into the

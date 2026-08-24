@@ -7,6 +7,7 @@ package engine
 import (
 	"github.com/wippyai/go-lua/analysis/engine/internal/composition"
 	memberrelation "github.com/wippyai/go-lua/analysis/schema/axis/member/relation"
+	ruleprogram "github.com/wippyai/go-lua/analysis/schema/rule/program"
 )
 
 // generatedRuleBindingCell is the bind-time schema identity of one generated
@@ -17,6 +18,17 @@ type generatedRuleBindingCell struct {
 	schema    *Schema
 	ordinal   uint64
 	generated *generatedRuleCell
+	// reads is this rule's sealed read geometry, one row per declared join, in
+	// plan order. It is derived once from the cold shape the Plan already
+	// sealed, so a generated read and an authored one are the same row and the
+	// anchored surface minters have exactly one implementation to serve.
+	reads []*schemaRuleReadRow
+	// writeMode and routeRead are the publication disposition the Plan
+	// declared. A routed write names the selected join it publishes over and
+	// resolves no destination here: the destinations are the members of that
+	// join's derived relation, which exist only per invocation.
+	writeMode directRuleWriteMode
+	routeRead uint64
 }
 
 var _ schemaRuleBindingCell = (*generatedRuleBindingCell)(nil)
@@ -43,10 +55,80 @@ func (cell *generatedRuleBindingCell) schemaRuleBindingState() *schemaBindingSta
 	return cell.state
 }
 
-// Generated Rules own their read surface directly from Factor cells, so they
-// have no legacy typed read rows. Returning nil keeps every legacy selector
-// path fail-closed if it is accidentally presented with this arm.
-func (*generatedRuleBindingCell) schemaRuleReadAt(uint64) *schemaRuleReadRow { return nil }
+// schemaRuleReadAt answers this rule's own sealed read geometry. A generated
+// rule has read rows for the same reason an authored one does: a selected read
+// and a routed write are anchored against the row they are declared on, and
+// that anchoring is one implementation for both arms.
+func (cell *generatedRuleBindingCell) schemaRuleReadAt(index uint64) *schemaRuleReadRow {
+	if cell == nil || index >= uint64(len(cell.reads)) {
+		return nil
+	}
+	return cell.reads[index]
+}
+
+// declareReadGeometry derives this rule's read rows and publication
+// disposition from the cold shape its Plan sealed. The cold shape is the one
+// authority: nothing here re-reads the descriptor for a fact the shape already
+// states, so a generated row cannot disagree with the composition it was
+// admitted under.
+func (cell *generatedRuleBindingCell) declareReadGeometry() bool {
+	if cell == nil || cell.schema == nil || cell.generated == nil || !cell.generated.available() {
+		return false
+	}
+	shape, shapeOK := cell.schema.ruleShapeAt(cell.ordinal)
+	if !shapeOK || shape.ReadCount != uint64(cell.generated.program.ReadCount()) {
+		return false
+	}
+	reads := make([]*schemaRuleReadRow, 0, shape.ReadCount)
+	for index := uint64(0); index < shape.ReadCount; index++ {
+		read, readOK := cell.schema.ruleReadShapeAt(cell.ordinal, index)
+		if !readOK || !read.Factor.Available() || !schemaRuleInputFitsInt(index) {
+			return false
+		}
+		row := &schemaRuleReadRow{
+			owner: cell, ownerOrdinal: cell.ordinal, readOrdinal: index,
+			input: read.Input, kind: read.Kind, factor: read.Factor,
+			semantic: read.Semantic, normalizer: read.Normalizer,
+		}
+		factorOrdinal, factorOrdinalOK := cell.schema.factorOrdinalOf(read.Factor)
+		if !factorOrdinalOK {
+			return false
+		}
+		row.factorOrdinal = factorOrdinal
+		for dependency := uint64(0); dependency < read.DependencyCount; dependency++ {
+			position, positionOK := cell.schema.ruleReadDependencyAt(cell.ordinal, index, dependency)
+			if !positionOK || position >= index {
+				return false
+			}
+			row.dependencies = append(row.dependencies, position)
+		}
+		reads = append(reads, row)
+	}
+	write, writeOK := cell.schema.ruleWriteShapeAt(cell.ordinal, 0)
+	if !writeOK || shape.WriteCount != 1 {
+		return false
+	}
+	switch write.Kind {
+	case composition.WriteExact:
+		if write.Route != 0 {
+			return false
+		}
+		cell.writeMode, cell.routeRead = directRuleWriteExact, 0
+	case composition.WriteRoute:
+		if write.Route == 0 || write.Route > shape.ReadCount {
+			return false
+		}
+		route := reads[write.Route-1]
+		if route.kind != composition.ReadSelect || route.factor != write.Factor {
+			return false
+		}
+		cell.writeMode, cell.routeRead = directRuleWriteRoute, write.Route
+	default:
+		return false
+	}
+	cell.reads = reads
+	return true
+}
 
 func (cell *generatedRuleBindingCell) schemaRuleComplete() bool {
 	if cell == nil || cell.state == nil || cell.schema == nil || cell.generated == nil ||
@@ -78,37 +160,92 @@ func (cell *generatedRuleBindingCell) schemaRuleComplete() bool {
 	if !outputFactor.Available() || shape.Output != outputFactor {
 		return false
 	}
+	// The publication disposition is the Plan's, and the cold row records it.
+	// An exact write resolves its one destination while the row is declared; a
+	// routed write names the selected join whose derived members ARE the
+	// destinations, and resolves none of them here.
+	mode, modeOK := program.OutputMode()
 	write, writeOK := cell.schema.ruleWriteShapeAt(cell.ordinal, 0)
-	if !writeOK || write.Kind != composition.WriteExact || write.Route != 0 || write.Factor != outputFactor {
+	if !modeOK || !writeOK || write.Factor != outputFactor {
+		return false
+	}
+	outputPlan, outputPlanOK := program.OutputAt(0)
+	if !outputPlanOK {
+		return false
+	}
+	switch mode {
+	case ruleprogram.ModeExact:
+		if write.Kind != composition.WriteExact || write.Route != 0 || cell.writeMode != directRuleWriteExact || cell.routeRead != 0 ||
+			outputPlan.RouteJoinPresent {
+			return false
+		}
+	case ruleprogram.ModeRoute:
+		if write.Kind != composition.WriteRoute || !outputPlan.RouteJoinPresent ||
+			write.Route != uint64(outputPlan.RouteJoin)+1 || cell.writeMode != directRuleWriteRoute || cell.routeRead != write.Route {
+			return false
+		}
+	default:
 		return false
 	}
 	if program.ReadCount() == 0 {
-		if shape.ReadCount != 0 || shape.CarryCount != 0 || program.InputCount() != 0 {
+		if shape.ReadCount != 0 || shape.CarryCount != 0 || program.InputCount() != 0 || len(cell.reads) != 0 ||
+			mode != ruleprogram.ModeExact {
 			return false
 		}
 		return cell.state.phase == schemaBindingOpen || cell.state.phase == schemaBindingSealed
 	}
-	join := program.JoinRelation()
-	key := program.KeyProjection()
-	if uint64(join.Axis) >= uint64(factorCount) || uint64(key.Axis) >= uint64(factorCount) ||
-		program.ReadAxis() >= uint32(factorCount) || program.ReadFactor() >= uint32(factorCount) ||
-		program.ReadFactor() != program.OutputFactor() {
+	if shape.ReadCount != uint64(program.ReadCount()) || len(cell.reads) != program.ReadCount() {
 		return false
 	}
-	if shape.ReadCount != 1 || shape.CarryCount != 1 {
+	// A join names the Factor it reads, which need not be the Factor this rule
+	// writes. A rule whose join is foreign is exactly the rule the engine
+	// cannot type generically, and it reaches execution through the family its
+	// own package installs.
+	for index := 0; index < program.ReadCount(); index++ {
+		plan, planOK := program.ReadAt(index)
+		row := cell.reads[index]
+		if !planOK || row == nil || uint64(plan.Factor) >= uint64(factorCount) || uint64(plan.Axis) >= uint64(factorCount) {
+			return false
+		}
+		if row.input != uint64(plan.Input) || row.factorOrdinal != uint64(plan.Factor) ||
+			row.factor != cell.schema.factorSemanticAt(uint64(plan.Factor)) {
+			return false
+		}
+		if row.kind != generatedColdReadKind(plan.Form) {
+			return false
+		}
+	}
+	if shape.CarryCount > 1 {
 		return false
 	}
-	readFactor := cell.schema.factorSemanticAt(uint64(program.ReadFactor()))
-	if !readFactor.Available() {
-		return false
-	}
-	read, readOK := cell.schema.ruleReadShapeAt(cell.ordinal, 0)
-	carry, carryOK := cell.schema.ruleCarryShapeAt(cell.ordinal, 0)
-	if !readOK || !carryOK || read.Kind != composition.ReadExact || read.Input != uint64(program.ReadInput()) || read.Factor != readFactor ||
-		carry.Input != uint64(program.CarryInput()) || carry.Factor != outputFactor || carry.Transform.Available() {
+	if shape.CarryCount == 1 {
+		carry, carryOK := cell.schema.ruleCarryShapeAt(cell.ordinal, 0)
+		if !carryOK || carry.Input != uint64(program.CarryInput()) || carry.Factor != outputFactor {
+			return false
+		}
+		if _, transformPresent := program.CarryTransform(); transformPresent != carry.Transform.Available() {
+			return false
+		}
+	} else if program.CarryInput() >= 0 {
 		return false
 	}
 	return cell.state.phase == schemaBindingOpen || cell.state.phase == schemaBindingSealed
+}
+
+// generatedColdReadKind is the one projection of a declared read form onto the
+// cold read kind. It is stated here and in the slot that builds the cold row,
+// and the completeness check above holds those two to each other.
+func generatedColdReadKind(form ruleprogram.ReadForm) composition.ReadKind {
+	switch form {
+	case ruleprogram.Exact:
+		return composition.ReadExact
+	case ruleprogram.Selected:
+		return composition.ReadSelect
+	case ruleprogram.Summary, ruleprogram.Complete:
+		return composition.ReadSummary
+	default:
+		return 0
+	}
 }
 
 func (cell *generatedRuleBindingCell) generatedCell() *generatedRuleCell {
@@ -159,10 +296,18 @@ func (cell *generatedRuleBindingCell) directRuleReadCount() uint64 {
 }
 
 func (cell *generatedRuleBindingCell) directRuleWriteMode() directRuleWriteMode {
-	return directRuleWriteExact
+	if cell == nil {
+		return 0
+	}
+	return cell.writeMode
 }
 
-func (cell *generatedRuleBindingCell) directRuleRouteRead() uint64 { return 0 }
+func (cell *generatedRuleBindingCell) directRuleRouteRead() uint64 {
+	if cell == nil {
+		return 0
+	}
+	return cell.routeRead
+}
 
 func (cell *generatedRuleBindingCell) directRuleCarryPresent() bool {
 	if cell == nil || cell.generated == nil {
@@ -215,6 +360,10 @@ func BindGeneratedRule(binding *SchemaBinding, slot *GeneratedRuleSlot) bool {
 	}
 	cell := &generatedRuleBindingCell{state: state, schema: state.schema, ordinal: ordinal, generated: generated}
 	state.rules[ordinal] = cell
+	if !cell.declareReadGeometry() {
+		state.poisonLocked()
+		return false
+	}
 	if !cell.schemaRuleComplete() {
 		state.poisonLocked()
 		return false
