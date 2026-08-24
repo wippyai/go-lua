@@ -3,9 +3,12 @@ package execution
 import (
 	"testing"
 
+	"github.com/wippyai/go-lua/analysis/engine/generated"
 	"github.com/wippyai/go-lua/analysis/engine/internal/composition"
 	"github.com/wippyai/go-lua/analysis/engine/internal/contextfiber"
 	"github.com/wippyai/go-lua/analysis/identity"
+	ruleplan "github.com/wippyai/go-lua/analysis/schema/rule/plan"
+	ruleprogram "github.com/wippyai/go-lua/analysis/schema/rule/program"
 	"github.com/wippyai/go-lua/analysis/schema/structure"
 )
 
@@ -196,5 +199,131 @@ func TestATriggerSettlesTheSameDispositionUnderAnyBranchOrder(t *testing.T) {
 func TestAnUnsealedBranchIsNotAdmittedToATriggersBranchSet(t *testing.T) {
 	if _, sealed := NewActivationBranches([]ActivationRow{{}}); sealed {
 		t.Fatal("an unsealed branch was admitted to a trigger's branch set")
+	}
+}
+
+// activationFormLawSpec is the sealed call-activation shape (FT-11, journal
+// 6165): one exact read of the trigger candidate, one selected read of its
+// branch relation, and one structural output publishing a non-empty
+// transport vector.
+func activationFormLawSpec() generated.CompiledRuleSpec {
+	return generated.CompiledRuleSpec{
+		Ordinal:    19,
+		AxisCount:  3,
+		InputCount: 2,
+		Candidate:  ruleplan.RelationAddr{Axis: 0, Member: 0},
+		Reducer:    ruleplan.ReducerAddr{Axis: 0, Member: 0},
+		Reads: []generated.ReadPlan{
+			{
+				Input: 0, Factor: 1, Axis: 1,
+				Sources:    ruleplan.Span{Start: 0, Count: 1},
+				Relation:   ruleplan.RelationAddr{Axis: 1, Member: 4},
+				Key:        ruleplan.ProjectionAddr{Axis: 1, Member: 6},
+				Form:       ruleprogram.Exact,
+				PointBound: ruleprogram.PointBound,
+				Contract: ruleplan.ReadContract{
+					Order:        ruleprogram.OrderCanonical,
+					Sparse:       ruleprogram.SparseExplicit,
+					OnOpaque:     ruleprogram.OnOpaqueRefuse,
+					Multiplicity: ruleprogram.MultiplicityOne,
+				},
+				RowCapacity:  2,
+				CellCapacity: 3,
+			},
+			{
+				Input: 1, Factor: 0, Axis: 0,
+				Sources:          ruleplan.Span{Start: 1, Count: 2},
+				Relation:         ruleplan.RelationAddr{Axis: 0, Member: 7},
+				Key:              ruleplan.ProjectionAddr{Axis: 0, Member: 8},
+				Predicate:        ruleplan.ProjectionAddr{Axis: 0, Member: 9},
+				PredicatePresent: true,
+				Form:             ruleprogram.Selected,
+				PointBound:       ruleprogram.PointBound,
+				Contract: ruleplan.ReadContract{
+					Order:        ruleprogram.OrderByTag,
+					Sparse:       ruleprogram.SparseExplicit,
+					OnOpaque:     ruleprogram.OnOpaquePropagateAuthenticated,
+					Multiplicity: ruleprogram.MultiplicityMany,
+				},
+				Denominator:  ruleplan.DenominatorAddr{Ordinal: 5, Present: true},
+				RowCapacity:  4,
+				CellCapacity: 8,
+			},
+		},
+		Outputs: []generated.OutputPlan{{
+			Factor:      0,
+			Axis:        0,
+			Address:     ruleplan.OutputAddr{Axis: 0, Frame: 3},
+			Destination: ruleplan.ProjectionAddr{Axis: 0, Member: 11},
+			Mode:        ruleprogram.ModeStructural,
+			Slot:        0,
+		}},
+		Transports: []ruleplan.Transport{{Axis: 0, Exported: true}, {Axis: 2}},
+	}
+}
+
+func activationFormLawDescriptor(t testing.TB) generated.CompiledRule {
+	t.Helper()
+	descriptor, sealed := generated.NewPlanCompiledRule(activationFormLawSpec())
+	if !sealed {
+		t.Fatal("sealed activation descriptor")
+	}
+	return descriptor
+}
+
+// TestActivationFormClassifiesItsStructuralPlanAlone states the classification
+// law: a two-join descriptor whose reads are exactly one exact trigger read
+// followed by one selected candidate read, published through a structural
+// output, is the A form and only the A form.
+func TestActivationFormClassifiesItsStructuralPlanAlone(t *testing.T) {
+	descriptor := activationFormLawDescriptor(t)
+	row, claimed := ClassifyForm(descriptor)
+	if !claimed || row.Form != FormActivation {
+		t.Fatalf("classified as %q/%t, want activation", row.Form.Name(), claimed)
+	}
+	if row.Input != 1 {
+		t.Fatalf("classified read port = %d, want the selected candidate join", row.Input)
+	}
+	if _, claimedByRoute := classifySelectedRouteForm(descriptor); claimedByRoute {
+		t.Fatal("the selected-route classifier claims a structural activation descriptor")
+	}
+	if _, claimedBySummary := classifySummaryForm(descriptor); claimedBySummary {
+		t.Fatal("the summary classifier claims a structural activation descriptor")
+	}
+}
+
+// TestActivationFormRefusesAMisshapenStructuralDescriptor covers the near
+// misses: a descriptor either fails to seal at all, or reaches
+// classifyActivationForm and is refused there. Either refusal is sound; what
+// must never happen is admission as FormActivation.
+func TestActivationFormRefusesAMisshapenStructuralDescriptor(t *testing.T) {
+	for name, damage := range map[string]func(*generated.CompiledRuleSpec){
+		"reads reversed": func(spec *generated.CompiledRuleSpec) {
+			spec.Reads[0], spec.Reads[1] = spec.Reads[1], spec.Reads[0]
+			spec.Reads[0].Input, spec.Reads[1].Input = 0, 1
+		},
+		"single read": func(spec *generated.CompiledRuleSpec) {
+			spec.Reads = spec.Reads[:1]
+			spec.InputCount = 1
+		},
+		"both exact": func(spec *generated.CompiledRuleSpec) {
+			spec.Reads[1].Form = ruleprogram.Exact
+			spec.Reads[1].PredicatePresent = false
+			spec.Reads[1].Denominator = ruleplan.DenominatorAddr{}
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			spec := activationFormLawSpec()
+			damage(&spec)
+			descriptor, sealed := generated.NewPlanCompiledRule(spec)
+			if !sealed {
+				// The malformed shape never reached classification, which
+				// already refuses it.
+				return
+			}
+			if _, claimed := classifyActivationForm(descriptor); claimed {
+				t.Fatalf("the activation classifier claimed a %s descriptor", name)
+			}
+		})
 	}
 }

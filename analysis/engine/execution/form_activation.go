@@ -15,11 +15,36 @@
 package execution
 
 import (
+	"github.com/wippyai/go-lua/analysis/engine/generated"
 	"github.com/wippyai/go-lua/analysis/engine/internal/composition"
 	"github.com/wippyai/go-lua/analysis/engine/internal/contextfiber"
 	"github.com/wippyai/go-lua/analysis/identity"
+	ruleprogram "github.com/wippyai/go-lua/analysis/schema/rule/program"
 	"github.com/wippyai/go-lua/analysis/schema/structure"
 )
+
+// classifyActivationForm claims a descriptor whose one structural output is
+// published from exactly one exact trigger read and one selected candidate
+// read - the shape a structural branch transport declares once it names both
+// its trigger coordinate and the candidate relation its branches are drawn
+// from. The other declared ModeStructural shape (heap's closed allocation) has
+// three outputs and a Complete read, so it never reaches this probe.
+func classifyActivationForm(rule generated.CompiledRule) (FormRow, bool) {
+	mode, modeOK := rule.OutputMode()
+	if !modeOK || mode != ruleprogram.ModeStructural || rule.OutputCount() != 1 || rule.ReadCount() != 2 {
+		return FormRow{}, false
+	}
+	trigger, triggerOK := rule.ReadFormAt(0)
+	candidate, candidateOK := rule.ReadFormAt(1)
+	if !triggerOK || !candidateOK || trigger != ruleprogram.Exact || candidate != ruleprogram.Selected {
+		return FormRow{}, false
+	}
+	read, readOK := rule.ReadAt(1)
+	if !readOK || read.Input > uint32(^uint16(0)) {
+		return FormRow{}, false
+	}
+	return FormRow{Form: FormActivation, Input: uint16(read.Input)}, true
+}
 
 // ActivationSpec is the complete authenticated tuple of one candidate branch.
 // It is a value handoff: the authenticating engine owns the directory and the

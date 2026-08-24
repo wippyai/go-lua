@@ -40,6 +40,13 @@ const (
 	// FormSelectedRoute is the ordered join with exactly one selected read and
 	// the bounded routed write that publishes over it.
 	FormSelectedRoute
+	// FormActivation is the structural activation form: one exact trigger read
+	// joined to one selected candidate-branch read, published through a
+	// structural output rather than an ordinary factor write. It computes no
+	// fact - the row is an authentication receipt (execution.ActivationRow),
+	// never a reduced value - so it has no generic builder: every rule this
+	// form classifies is authored through its own RuleFamilyInstaller.
+	FormActivation
 	// formCount is the exclusive upper bound of the declared ordinals. It is
 	// the last constant in the block; a new form is appended above it.
 	formCount
@@ -54,6 +61,7 @@ var formNames = [formCount]string{
 	FormSummary:       "summary",
 	FormCarry:         "carry",
 	FormSelectedRoute: "selected-route",
+	FormActivation:    "activation",
 }
 
 // Declared reports whether form names a sealed ordinal of the table.
@@ -575,6 +583,7 @@ var formClassifiers = [formCount]formClassifier{
 	FormSummary:       classifySummaryForm,
 	FormCarry:         classifyCarryForm,
 	FormSelectedRoute: classifySelectedRouteForm,
+	FormActivation:    classifyActivationForm,
 }
 
 // formBuilders is the implementation column of the form table. It is built per
