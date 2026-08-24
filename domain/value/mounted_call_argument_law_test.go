@@ -204,3 +204,79 @@ func TestPublishedMountedCallArgumentsEqualTheDerivedActuals(t *testing.T) {
 		t.Fatal("published directory holds a row beyond the derived total")
 	}
 }
+
+// TestMountedCallActualTagRanksInAuthoredOrder is the direct restatement of
+// the ordering guarantee 0e5fab95e7 left implicit when it deleted
+// domain/heap/formalfreeze's canonicalActualTag and its law
+// (TestFormalFreezeActualTagsRankInAuthoredOrder): a rule that reads a
+// dependent selection ranked by tag reads it in authored order only because
+// the tag strictly increases with the actual's own ordinal.
+//
+// The mounted-call axis no longer mints that tag itself; Value's
+// MountedCallArgument.ActualTag publishes it as the one-based form of
+// ActualIndex, so the guarantee is now a property of the published directory
+// rather than of any one rule's decode. This states it directly over that
+// directory instead of leaving it as a corollary of the parent-row span law
+// in mounted_call_actuals_law_test.go.
+func TestMountedCallActualTagRanksInAuthoredOrder(t *testing.T) {
+	const source = "local receiver = {}\n" +
+		"function receiver:method(a, b)\n" +
+		"\treturn a\n" +
+		"end\n" +
+		"local function two(a, b)\n" +
+		"\treturn a\n" +
+		"end\n" +
+		"receiver:method(1, 2)\n"
+
+	fixture := buildMountedCallArgumentFixture(t, source)
+
+	callCount, callsOK := fixture.program.CallCount()
+	if !callsOK || callCount == 0 {
+		t.Fatalf("call count = %d/%t", callCount, callsOK)
+	}
+
+	exercisedMultiActual := false
+	for callIndex := 0; callIndex < callCount; callIndex++ {
+		call, callOK := fixture.program.CallAt(callIndex)
+		if !callOK || !call.Available() {
+			t.Fatalf("call %d unavailable", callIndex)
+		}
+		actual, actualOK := fixture.pack.MountedActualProjection(fixture.module, call.ID())
+		if !actualOK {
+			t.Fatalf("call %d has no mounted actual projection", callIndex)
+		}
+		if actual.ActualCount() > 1 {
+			exercisedMultiActual = true
+		}
+
+		previousTag := uint64(0)
+		seenTags := make(map[uint64]int, actual.ActualCount())
+		for ordinal := 0; ordinal < actual.ActualCount(); ordinal++ {
+			row, rowOK := fixture.values.MountedCallArgumentFor(fixture.module, call.ID(), uint32(ordinal))
+			if !rowOK {
+				t.Fatalf("call %d actual %d has no published row", callIndex, ordinal)
+			}
+			index, indexOK := row.ActualIndex()
+			tag, tagOK := row.ActualTag()
+			if !indexOK || index != uint32(ordinal) || !tagOK || tag != uint64(ordinal)+1 {
+				t.Fatalf("call %d actual %d carries index %d/%t tag %d/%t, want %d/true %d/true", callIndex, ordinal, index, indexOK, tag, tagOK, ordinal, ordinal+1)
+			}
+			if tag == 0 {
+				t.Fatalf("call %d actual %d carries the reserved zero tag", callIndex, ordinal)
+			}
+			if ordinal > 0 && tag <= previousTag {
+				t.Fatalf("call %d actual %d tag %d does not rank after %d", callIndex, ordinal, tag, previousTag)
+			}
+			if earlier, repeated := seenTags[tag]; repeated {
+				t.Fatalf("call %d tag %d names both actual %d and %d", callIndex, tag, earlier, ordinal)
+			}
+			seenTags[tag], previousTag = ordinal, tag
+		}
+		if _, beyond := fixture.values.MountedCallArgumentFor(fixture.module, call.ID(), uint32(actual.ActualCount())); beyond {
+			t.Fatalf("call %d minted a tag for an actual beyond its own count", callIndex)
+		}
+	}
+	if !exercisedMultiActual {
+		t.Fatal("fixture exercises no multi-actual call; the tag-ranking law is not exercised")
+	}
+}
