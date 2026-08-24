@@ -48,13 +48,13 @@ func (schema *Schema) ExactFoldMappingAt(reducerOrdinal uint32) (ExactFoldMappin
 	}
 	switch reducerOrdinal {
 	case 3:
-		return ExactFoldMapping{ReducerOrdinal: 3, CandidateRelationMember: 1, ReadCount: 2, ReadRelationMember: [ExactFoldArity]uint32{15, 15}, ReadKeyMember: [ExactFoldArity]uint32{9, 10}, DestinationProjectionMember: 11}, true
+		return ExactFoldMapping{ReducerOrdinal: 3, CandidateRelationMember: 1, ReadCount: 2, ReadRelationMember: [ExactFoldArity]uint32{17, 17}, ReadKeyMember: [ExactFoldArity]uint32{12, 13}, DestinationProjectionMember: 14}, true
 	case 4:
-		return ExactFoldMapping{ReducerOrdinal: 4, CandidateRelationMember: 2, ReadCount: 2, ReadRelationMember: [ExactFoldArity]uint32{16, 16}, ReadKeyMember: [ExactFoldArity]uint32{12, 13}, DestinationProjectionMember: 14}, true
+		return ExactFoldMapping{ReducerOrdinal: 4, CandidateRelationMember: 2, ReadCount: 2, ReadRelationMember: [ExactFoldArity]uint32{18, 18}, ReadKeyMember: [ExactFoldArity]uint32{15, 16}, DestinationProjectionMember: 17}, true
 	case 5:
-		return ExactFoldMapping{ReducerOrdinal: 5, CandidateRelationMember: 4, ReadCount: 1, ReadRelationMember: [ExactFoldArity]uint32{17}, ReadKeyMember: [ExactFoldArity]uint32{15}, DestinationProjectionMember: 16}, true
+		return ExactFoldMapping{ReducerOrdinal: 5, CandidateRelationMember: 4, ReadCount: 1, ReadRelationMember: [ExactFoldArity]uint32{19}, ReadKeyMember: [ExactFoldArity]uint32{18}, DestinationProjectionMember: 19}, true
 	case 6:
-		return ExactFoldMapping{ReducerOrdinal: 6, CandidateRelationMember: 3, ReadCount: 2, ReadRelationMember: [ExactFoldArity]uint32{18, 18}, ReadKeyMember: [ExactFoldArity]uint32{17, 18}, DestinationProjectionMember: 19}, true
+		return ExactFoldMapping{ReducerOrdinal: 6, CandidateRelationMember: 3, ReadCount: 2, ReadRelationMember: [ExactFoldArity]uint32{20, 20}, ReadKeyMember: [ExactFoldArity]uint32{20, 21}, DestinationProjectionMember: 22}, true
 	default:
 		return ExactFoldMapping{}, false
 	}
