@@ -471,14 +471,49 @@ func TestResolveRejectsUnknownReducerCandidateCarrier(t *testing.T) {
 	}
 }
 
+// TestCheckedInGeneratedOutputIsFreshAndCompiles is the freshness law over
+// every registered axis, not a hand-picked subset of them: it walks the
+// roster generically so a new axis is checked the moment it registers,
+// rather than by remembering to add it here. Before this walked the roster,
+// domain/call's checked-in rule_members.go/generated_relation_owner.go
+// carried a MountedCallFacts relation and MountedCallFactKey projection its
+// own authored domain/call/memberdefinition/source.go did not declare -
+// folded in instead from a foreign contribution in
+// domain/heap/formalfreeze/memberdefinition - and this law never ran for
+// "call" at all, so the divergence between generated and authored was
+// invisible to it (c6ee4bc2d7 moved the relation to Call's own source; this
+// law is what should have caught the split before that).
 func TestCheckedInGeneratedOutputIsFreshAndCompiles(t *testing.T) {
 	root := repositoryRoot(t)
-	coldPath := filepath.Join(root, "domain", "value", "rule_members.go")
-	relationPath := filepath.Join(root, "domain", "value", "generated_relation_owner.go")
-	exactFoldPath := filepath.Join(root, "domain", "value", "generated_exact_fold.go")
-	if err := GenerateAll("value", composedSource(t, "value"), coldPath, relationPath, true); err != nil {
-		t.Fatal(err)
+	roster, rosterOK := memberroster.Composition()
+	if !rosterOK {
+		t.Fatal("member definition roster is not admissible")
 	}
+	for index := 0; index < roster.Count(); index++ {
+		source, _ := roster.At(index)
+		t.Run(source.Name, func(t *testing.T) {
+			composed := composedSource(t, source.Name)
+			coldPath := filepath.Join(root, "domain", source.Package, "rule_members.go")
+			if err := Generate(source.Package, composed, coldPath, true); err != nil {
+				t.Fatal(err)
+			}
+
+			relationsPackage := composed.RelationsPackage
+			if relationsPackage == "" {
+				relationsPackage = source.Package
+			}
+			relationsRelative := composed.RelationsPath
+			if relationsRelative == "" {
+				relationsRelative = "generated_relation_owner.go"
+			}
+			relationPath := filepath.Join(root, "domain", source.Package, relationsRelative)
+			if err := GenerateRelations(relationsPackage, composed, relationPath, true); err != nil {
+				t.Fatal(err)
+			}
+		})
+	}
+
+	exactFoldPath := filepath.Join(root, "domain", "value", "generated_exact_fold.go")
 	if err := GenerateExactFold("value", composedSource(t, "value"), exactFoldPath, true); err != nil {
 		t.Fatal(err)
 	}
@@ -487,24 +522,6 @@ func TestCheckedInGeneratedOutputIsFreshAndCompiles(t *testing.T) {
 	output, err := command.CombinedOutput()
 	if err != nil {
 		t.Fatalf("generated cold package failed to compile: %v\n%s", err, output)
-	}
-
-	staticCold := filepath.Join(root, "domain", "static", "rule_members.go")
-	staticRelations := filepath.Join(root, "domain", "static", "generated_relation_owner.go")
-	if err := GenerateAll("static", composedSource(t, "static-type"), staticCold, staticRelations, true); err != nil {
-		t.Fatal(err)
-	}
-
-	packCold := filepath.Join(root, "domain", "pack", "rule_members.go")
-	packRelations := filepath.Join(root, "domain", "pack", "generated_relation_owner.go")
-	if err := GenerateAll("pack", composedSource(t, "pack"), packCold, packRelations, true); err != nil {
-		t.Fatal(err)
-	}
-
-	heapCold := filepath.Join(root, "domain", "heap", "rule_members.go")
-	heapRelations := filepath.Join(root, "domain", "heap", "generated_relation_owner.go")
-	if err := GenerateAll("heap", composedSource(t, "heap"), heapCold, heapRelations, true); err != nil {
-		t.Fatal(err)
 	}
 }
 
