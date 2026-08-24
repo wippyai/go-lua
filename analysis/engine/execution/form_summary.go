@@ -59,14 +59,61 @@ func (contract SummaryContract) Closed() bool {
 // at that position. Compacting the absent cells away would silently renumber
 // every later cell.
 type SummaryVector[V any] struct {
-	view  factbinding.Observation[V]
-	width uint16
-	open  bool
+	view factbinding.Observation[V]
+	// members is the second backing: the cells of a nested member set, read
+	// one ordinal at a time at each member's own exact coordinate rather than
+	// delivered by a Factor cursor. See NewMemberVector for why that is a
+	// backing of this view and not a view of its own.
+	members []MemberCell[V]
+	width   uint16
+	open    bool
 }
 
-// Valid reports whether the vector still belongs to its live read cursor.
+// MemberCell is one cell of a member-set vector: the fact read at that
+// member's own coordinate, and whether that coordinate holds one. Absence is
+// carried per cell for the same reason a Factor-backed vector carries it - the
+// position of a cell is the ordinal its owner declared it at, and compacting
+// an absent cell away would renumber every later one.
+type MemberCell[V any] struct {
+	Value   V
+	Present bool
+}
+
+// NewMemberVector views one caller-owned member-set cell slice as the vector
+// its reader is declared to receive.
+//
+// A nested member set is a closed denominator the owner itself publishes -
+// its MemberCount and MemberAt ARE the denominator - so a read that spans it
+// is a whole-vector read, and the declaration that says so is a Summary read.
+// What differs is only where the cells come from: a Factor-backed summary read
+// delivers a view over Binding-owned observation storage, while a member set
+// is read one ordinal at a time through each member's own exact coordinate.
+//
+// The reader must not be able to tell. A many-valued input is ONE vector
+// argument under the reducer call shape, so a second vector type would split
+// every fold that consumes one into two spellings of the same parameter. The
+// view therefore carries a second backing rather than growing a sibling.
+//
+// The slice is caller-owned and lives for the invocation, which is what keeps
+// a warm member-set read allocation-free: a family sizes it once at its sealed
+// member width and refills it per invocation.
+func NewMemberVector[V any](cells []MemberCell[V]) (SummaryVector[V], bool) {
+	if cells == nil || len(cells) > int(^uint16(0)) {
+		return SummaryVector[V]{}, false
+	}
+	return SummaryVector[V]{members: cells, width: uint16(len(cells)), open: true}, true
+}
+
+// Valid reports whether the vector still belongs to its live read cursor, or,
+// for a member set, to the caller-owned cells it was opened over.
 func (vector SummaryVector[V]) Valid() bool {
-	return vector.open && vector.view.Valid()
+	if !vector.open {
+		return false
+	}
+	if vector.members != nil {
+		return len(vector.members) == int(vector.width)
+	}
+	return vector.view.Valid()
 }
 
 // Count is the declared cell width of this vector, absent cells included.
@@ -85,6 +132,13 @@ func (vector SummaryVector[V]) At(index int) (V, bool, bool) {
 	var zero V
 	if !vector.open || index < 0 || index >= int(vector.width) {
 		return zero, false, false
+	}
+	if vector.members != nil {
+		if len(vector.members) != int(vector.width) {
+			return zero, false, false
+		}
+		cell := vector.members[index]
+		return cell.Value, cell.Present, true
 	}
 	entry, ok := vector.view.At(index)
 	if !ok {
