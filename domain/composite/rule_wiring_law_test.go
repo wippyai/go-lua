@@ -32,7 +32,7 @@ func wiringSpec(withProgram bool) rule.Spec {
 	spec.Roles = []schema.Key{"semantic/operand/value/source"}
 	spec.Program = ruleprogram.Program{
 		OperandRole: "semantic/operand/value/source",
-		Candidate:   member.RelationRef{Axis: valueAxis, Member: valuedomain.SourceSeeds},
+		Candidate:   ruleprogram.AxisRelationCandidate(member.RelationRef{Axis: valueAxis, Member: valuedomain.SourceSeeds}),
 		Fold: ruleprogram.FoldDecl{
 			Reducer: member.ReducerRef{Axis: valueAxis, Member: valuedomain.SourceReducer},
 			Outputs: []ruleprogram.OutputDecl{{

@@ -70,7 +70,7 @@ func newPlanFixture(t *testing.T) *planFixture {
 	mainAxis := schema.EntryReference{Surface: schema.SurfaceKindAxis, Key: planAxisKey}
 	declaration := program.Program{
 		OperandRole: vocabulary.RoleKey("plan/operand"),
-		Candidate:   member.RelationRef{Axis: mainAxis, Member: planCandidateRelation},
+		Candidate:   program.AxisRelationCandidate(member.RelationRef{Axis: mainAxis, Member: planCandidateRelation}),
 		Joins: []program.JoinDecl{{
 			Sources:  []program.SourceRef{program.CandidateSource()},
 			Relation: member.RelationRef{Axis: mainAxis, Member: planJoinRelation},

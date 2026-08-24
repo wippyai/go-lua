@@ -44,8 +44,8 @@ func TestRuleEntryDeclaresCanonicalGlobalBootstrapProgram(t *testing.T) {
 	if spec.Program.Carry != nil {
 		t.Fatalf("value-bootstrap carry = %#v", spec.Program.Carry)
 	}
-	if spec.Program.Candidate.Member != valuedomain.GlobalBootstrapResults {
-		t.Fatalf("value-bootstrap candidate = %s", spec.Program.Candidate.Member)
+	if spec.Program.Candidate.AxisRelation.Member != valuedomain.GlobalBootstrapResults {
+		t.Fatalf("value-bootstrap candidate = %s", spec.Program.Candidate.AxisRelation.Member)
 	}
 	if spec.Program.Fold.Outputs[0].Mode != program.ModeExact {
 		t.Fatalf("value-bootstrap output mode = %v", spec.Program.Fold.Outputs[0].Mode)

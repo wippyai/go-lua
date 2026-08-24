@@ -35,7 +35,7 @@ func seq5742Output(key string, mode OutputMode, slot uint16) OutputDecl {
 func seq5742Program(key string, joins []JoinDecl, inputs []JoinRef, outputs []OutputDecl) Program {
 	return Program{
 		OperandRole: schema.Key("semantic/operand/" + key),
-		Candidate:   lawRelation(key + "/candidate"),
+		Candidate:   AxisRelationCandidate(lawRelation(key + "/candidate")),
 		Joins:       joins,
 		Fold: FoldDecl{
 			Reducer: lawReducer(key + "/reducer"),

@@ -81,7 +81,7 @@ func BinaryEquality() ruleprogram.Program {
 	provider := member.RelationRef{Axis: valueAxis, Member: BinaryEqualityCandidates}
 	return ruleprogram.Program{
 		OperandRole: vocabulary.RoleKey(OperandRole),
-		Candidate:   provider,
+		Candidate:   ruleprogram.AxisRelationCandidate(provider),
 		Joins: []ruleprogram.JoinDecl{
 			{
 				Sources:  []ruleprogram.SourceRef{ruleprogram.CandidateSource()},

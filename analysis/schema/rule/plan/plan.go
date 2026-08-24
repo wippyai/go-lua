@@ -182,20 +182,26 @@ type Axis = AxisDirectoryEntry
 // The slices are private on purpose. Every exported accessor returns a value
 // copy, and the compiler never retains a mutable schema or a lookup map.
 type Plan struct {
-	present      bool
-	rule         uint32
-	semantic     identity.SemanticKey
-	operand      identity.SemanticKey
-	inputCount   uint32
-	candidate    RelationAddr
-	reducer      ReducerAddr
-	sources      []Source
-	foldInputs   []uint32
-	joins        []Join
-	outputs      []Output
-	carry        Carry
-	carryPresent bool
-	transports   []Transport
+	present    bool
+	rule       uint32
+	semantic   identity.SemanticKey
+	operand    identity.SemanticKey
+	inputCount uint32
+	candidate  RelationAddr
+	// candidateIssued marks the issued-row arm of the candidate choice, and
+	// candidateIssuedRow is the issuance relation it names. On that arm
+	// candidate stays zero: an issued Program row has no Factor relation, so a
+	// reader that takes the address without asking the tag reads nothing.
+	candidateIssued    bool
+	candidateIssuedRow schema.Key
+	reducer            ReducerAddr
+	sources            []Source
+	foldInputs         []uint32
+	joins              []Join
+	outputs            []Output
+	carry              Carry
+	carryPresent       bool
+	transports         []Transport
 }
 
 // TransportCount is the declared width of this plan's activation transport
@@ -233,8 +239,17 @@ func (compiled Plan) OperandFamily() identity.SemanticKey { return compiled.oper
 func (compiled Plan) InputCount() int { return int(compiled.inputCount) }
 
 // Candidate returns the dense candidate relation address. It is zero for an
-// absent plan.
+// absent plan and for a plan on the issued-row arm, which has no relation.
 func (compiled Plan) Candidate() RelationAddr { return compiled.candidate }
+
+// IssuedCandidate returns the issuance relation this plan draws its candidate
+// rows through, and false when the plan is on the axis-relation arm.
+func (compiled Plan) IssuedCandidate() (schema.Key, bool) {
+	if !compiled.candidateIssued {
+		return "", false
+	}
+	return compiled.candidateIssuedRow, compiled.candidateIssuedRow.Available()
+}
 
 // Reducer returns the owner-issued reducer selected once for this plan.
 func (compiled Plan) Reducer() ReducerAddr { return compiled.reducer }
@@ -511,21 +526,61 @@ func compileProgram(ruleOrdinal uint32, template *rule.Template, declaration pro
 	if !declaration.Candidate.Available() {
 		return Plan{}, compileFailure(template.ID(), rule.LawProgramShape, schema.DispositionMalformed)
 	}
-
-	candidateAxis, candidateCatalog, candidateOrdinal, failure := resolveAxisMember(
-		axisView, declaration.Candidate.Axis, declaration.Candidate.Member, memberRelation,
-	)
+	// The reducer is resolved before the candidate because the two arms of the
+	// candidate choice reach the candidate carrier by different routes. An
+	// axis relation states its own subject; an issued Program row has no axis
+	// owner to state one, and its carrier is the one the owner reducer already
+	// declared it consumes. Resolving the reducer once, here, keeps that a
+	// single lookup rather than a second resolution beside the fold.
+	if !declaration.Fold.Reducer.Available() {
+		return Plan{}, compileFailure(template.ID(), rule.LawProgramShape, schema.DispositionMalformed)
+	}
+	reducerAxis, reducerCatalog, reducerAxisOrdinal, failure := resolveAxisMember(axisView, declaration.Fold.Reducer.Axis, declaration.Fold.Reducer.Member, memberReducer)
 	if failure.Available() {
 		failure.Entry = template.ID()
 		return Plan{}, failure
 	}
-	candidateRelation, candidateRelationOK := candidateCatalog.Relation(declaration.Candidate.Member)
-	if !candidateRelationOK {
+	reducer, reducerOK := reducerCatalog.Reducer(declaration.Fold.Reducer.Member)
+	if !reducerOK {
 		return Plan{}, compileFailure(template.ID(), rule.LawProgramShape, schema.DispositionIncomplete)
 	}
-	if len(candidateRelation.Inputs) != 0 {
+	if reducerAxis.Key() != template.Writes() {
 		return Plan{}, compileFailure(template.ID(), rule.LawProgramShape, schema.DispositionMalformed)
 	}
+
+	// candidateCarrier is the typed row a join's first input and a carry
+	// transform are held to. candidateRelation is the axis arm's own row, and
+	// stays absent on the issued arm: an issued Program row has no Factor
+	// relation, so nothing downstream may read one off it.
+	var candidateCarrier member.Carrier
+	var candidateRelation member.Relation
+	var candidateAxis axisEntry
+	var candidateCatalog member.Catalog
+	var candidateOrdinal uint32
+	if !declaration.Candidate.Issued() {
+		var candidateFailure schema.SealFailure
+		candidateAxis, candidateCatalog, candidateOrdinal, candidateFailure = resolveAxisMember(
+			axisView, declaration.Candidate.AxisRelation.Axis, declaration.Candidate.AxisRelation.Member, memberRelation,
+		)
+		if candidateFailure.Available() {
+			candidateFailure.Entry = template.ID()
+			return Plan{}, candidateFailure
+		}
+		var candidateRelationOK bool
+		candidateRelation, candidateRelationOK = candidateCatalog.Relation(declaration.Candidate.AxisRelation.Member)
+		if !candidateRelationOK {
+			return Plan{}, compileFailure(template.ID(), rule.LawProgramShape, schema.DispositionIncomplete)
+		}
+		if len(candidateRelation.Inputs) != 0 {
+			return Plan{}, compileFailure(template.ID(), rule.LawProgramShape, schema.DispositionMalformed)
+		}
+		candidateCarrier = candidateRelation.Subject
+	}
+	// On the issued arm candidateCarrier is still absent here. It is witnessed
+	// by the first join input the declaration sources from the candidate, and
+	// every later candidate-sourced input is held to that same witness. A
+	// Program row has no axis owner to state its carrier, so the declaration's
+	// own agreement is the statement; disagreement refuses.
 	ruleSemantic, ruleSemanticOK := roles.Key(template.Semantic())
 	operandSemantic, operandSemanticOK := roles.Key(declaration.OperandRole)
 	if !ruleSemanticOK || !operandSemanticOK || !ruleSemantic.Available() || !operandSemantic.Available() {
@@ -533,7 +588,12 @@ func compileProgram(ruleOrdinal uint32, template *rule.Template, declaration pro
 	}
 	compiled := Plan{
 		present: true, rule: ruleOrdinal, semantic: ruleSemantic, operand: operandSemantic,
-		candidate: RelationAddr{Axis: candidateOrdinal, Member: mustRelationOrdinal(candidateCatalog, declaration.Candidate.Member)},
+	}
+	if declaration.Candidate.Issued() {
+		compiled.candidateIssued = true
+		compiled.candidateIssuedRow = declaration.Candidate.IssuedRow
+	} else {
+		compiled.candidate = RelationAddr{Axis: candidateOrdinal, Member: mustRelationOrdinal(candidateCatalog, declaration.Candidate.AxisRelation.Member)}
 	}
 	if !fitsUint32(declaration.InputCount()) {
 		return Plan{}, compileFailure(template.ID(), rule.LawProgramShape, schema.DispositionMalformed)
@@ -573,12 +633,18 @@ func compileProgram(ruleOrdinal uint32, template *rule.Template, declaration pro
 			if source.Position > maxUint32 {
 				return Plan{}, compileFailure(template.ID(), rule.LawProgramShape, schema.DispositionMalformed)
 			}
-			carrier := candidateRelation.Subject
+			carrier := candidateCarrier
 			if !source.Candidate {
 				if source.Position >= uint64(len(joinFacts)) {
 					return Plan{}, compileFailure(template.ID(), rule.LawProgramShape, schema.DispositionMalformed)
 				}
 				carrier = joinFacts[source.Position]
+			} else if !carrier.Available() {
+				carrier = relation.Inputs[sourceIndex]
+				if !carrier.Available() {
+					return Plan{}, compileFailure(template.ID(), rule.LawProgramShape, schema.DispositionMalformed)
+				}
+				candidateCarrier = carrier
 			}
 			if relation.Inputs[sourceIndex] != carrier {
 				return Plan{}, compileFailure(template.ID(), rule.LawProgramShape, schema.DispositionMalformed)
@@ -653,21 +719,6 @@ func compileProgram(ruleOrdinal uint32, template *rule.Template, declaration pro
 		compiled.joins = append(compiled.joins, compiledJoin)
 	}
 
-	if !declaration.Fold.Reducer.Available() {
-		return Plan{}, compileFailure(template.ID(), rule.LawProgramShape, schema.DispositionMalformed)
-	}
-	reducerAxis, reducerCatalog, reducerAxisOrdinal, failure := resolveAxisMember(axisView, declaration.Fold.Reducer.Axis, declaration.Fold.Reducer.Member, memberReducer)
-	if failure.Available() {
-		failure.Entry = template.ID()
-		return Plan{}, failure
-	}
-	reducer, reducerOK := reducerCatalog.Reducer(declaration.Fold.Reducer.Member)
-	if !reducerOK {
-		return Plan{}, compileFailure(template.ID(), rule.LawProgramShape, schema.DispositionIncomplete)
-	}
-	if reducerAxis.Key() != template.Writes() {
-		return Plan{}, compileFailure(template.ID(), rule.LawProgramShape, schema.DispositionMalformed)
-	}
 	// The arity and the per-position axis, form and multiplicity of a fold's
 	// call are the owner reducer's statement, and a declaration package can
 	// close that gate against its own catalog before any schema exists. It is
@@ -737,9 +788,21 @@ func compileProgram(ruleOrdinal uint32, template *rule.Template, declaration pro
 		if !destinationOK {
 			return Plan{}, compileFailure(template.ID(), rule.LawProgramOutput, schema.DispositionIncomplete)
 		}
-		destinationRelation := candidateRelation.Key
-		destinationOwnerOrdinal := candidateOrdinal
-		destinationOwnerKey := candidateAxis.Key()
+		// An exact write is one cell per candidate row, addressed through the
+		// candidate relation's own coordinate space. An issued Program row has
+		// no such space, so the exact form cannot be written down for it and
+		// refuses here rather than borrowing another relation's coordinates.
+		if output.Mode == program.ModeExact && declaration.Candidate.Issued() {
+			return Plan{}, compileFailure(template.ID(), rule.LawProgramOutput, schema.DispositionMalformed)
+		}
+		var destinationRelation schema.Key
+		var destinationOwnerOrdinal uint32
+		var destinationOwnerKey schema.Key
+		if !declaration.Candidate.Issued() {
+			destinationRelation = candidateRelation.Key
+			destinationOwnerOrdinal = candidateOrdinal
+			destinationOwnerKey = candidateAxis.Key()
+		}
 		if output.Mode == program.ModeRoute {
 			routeJoinDeclaration := declaration.Joins[routeJoin]
 			routeRelationAxis, routeRelationCatalog, routeRelationAxisOrdinal, routeRelationFailure := resolveAxisMember(axisView, routeJoinDeclaration.Relation.Axis, routeJoinDeclaration.Relation.Member, memberRelation)
@@ -791,7 +854,7 @@ func compileProgram(ruleOrdinal uint32, template *rule.Template, declaration pro
 			transform, transformOK := transformCatalog.CarryTransform(declaration.Carry.Transform.Member)
 			transformOrdinal, transformOrdinalOK := transformCatalog.CarryTransformOrdinal(declaration.Carry.Transform.Member)
 			resolvedTransform, resolvedTransformOK := transformCatalog.CarryTransformAt(int(transformOrdinal))
-			if !transformOK || !transformOrdinalOK || !resolvedTransformOK || resolvedTransform.Key != declaration.Carry.Transform.Member || transformAxis.Key() != template.Writes() || transform.Candidate != candidateRelation.Subject || transform.Input != outputFact || transform.Output != outputFact {
+			if !transformOK || !transformOrdinalOK || !resolvedTransformOK || resolvedTransform.Key != declaration.Carry.Transform.Member || transformAxis.Key() != template.Writes() || transform.Candidate != candidateCarrier || transform.Input != outputFact || transform.Output != outputFact {
 				return Plan{}, compileFailure(template.ID(), rule.LawProgramShape, schema.DispositionMalformed)
 			}
 			compiled.carry.Transform = CarryTransformAddr{Axis: transformAxisOrdinal, Member: transformOrdinal}
@@ -876,13 +939,13 @@ func planAxesInRange(compiled Plan, axisCount int) bool {
 // this exact candidate. A projection of some other relation, or one owned by a
 // third axis, is refused as before.
 func consumerProjectionOfCandidate(template *rule.Template, declaration program.Program, destinationAxis axisEntry, destinationCatalog member.Catalog, destination member.Projection, mode program.OutputMode) bool {
-	if mode != program.ModeExact || destinationAxis == nil {
+	if mode != program.ModeExact || destinationAxis == nil || declaration.Candidate.Issued() {
 		return false
 	}
 	if destinationAxis.Key() != template.Writes() {
 		return false
 	}
-	if declaration.Candidate.Axis.Key == destinationAxis.Key() {
+	if declaration.Candidate.AxisRelation.Axis.Key == destinationAxis.Key() {
 		// A same-axis candidate is already the first normal form; reaching here
 		// means the projection is declared for some other relation of this axis.
 		return false
@@ -891,7 +954,7 @@ func consumerProjectionOfCandidate(template *rule.Template, declaration program.
 	if !relationOK {
 		return false
 	}
-	return relation.CandidateProvider == declaration.Candidate && destination.CandidateProvider == declaration.Candidate
+	return relation.CandidateProvider == declaration.Candidate.AxisRelation && destination.CandidateProvider == declaration.Candidate.AxisRelation
 }
 
 // routeJoinForOutput validates the explicit route-producing JoinRef. It never

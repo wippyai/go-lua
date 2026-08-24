@@ -45,8 +45,8 @@ func TestRuleEntryDeclaresCanonicalBootProgram(t *testing.T) {
 	if spec.Program.Carry != nil {
 		t.Fatalf("heap-bootstrap carry = %#v", spec.Program.Carry)
 	}
-	if spec.Program.Candidate.Member != heapdomain.BootRoots {
-		t.Fatalf("heap-bootstrap candidate = %s", spec.Program.Candidate.Member)
+	if spec.Program.Candidate.AxisRelation.Member != heapdomain.BootRoots {
+		t.Fatalf("heap-bootstrap candidate = %s", spec.Program.Candidate.AxisRelation.Member)
 	}
 	if spec.Program.Fold.Outputs[0].Mode != program.ModeExact {
 		t.Fatalf("heap-bootstrap output mode = %v", spec.Program.Fold.Outputs[0].Mode)

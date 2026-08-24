@@ -45,7 +45,7 @@ func TestStorageProgramSealsExactSelectedRouteWithoutCarry(t *testing.T) {
 	if compiled, failure := compileStorageProgram(t, declaration); failure.Available() || !compiled.Available() {
 		t.Fatalf("sealed storage plan unavailable: catalog=%+v failure=%+v", compiled, failure)
 	}
-	if declaration.Candidate.Member != testValueCandidates || declaration.Candidate.Axis.Key != "value" {
+	if declaration.Candidate.AxisRelation.Member != testValueCandidates || declaration.Candidate.AxisRelation.Axis.Key != "value" {
 		t.Fatalf("candidate provider=%+v, want Value storage-transfer candidates", declaration.Candidate)
 	}
 	if got, want := declaration.JoinCount(), 2; got != want {
@@ -179,7 +179,7 @@ func TestStorageProgramRejectsMissingProviderAndRouteGeometry(t *testing.T) {
 	}
 
 	wrongProvider := Storage()
-	wrongProvider.Candidate.Axis = schema.EntryReference{Surface: schema.SurfaceKindAxis, Key: "placement"}
+	wrongProvider.Candidate.AxisRelation.Axis = schema.EntryReference{Surface: schema.SurfaceKindAxis, Key: "placement"}
 	if _, failure := compileStorageProgram(t, wrongProvider); !failure.Available() {
 		t.Fatal("wrong owner-qualified candidate provider was admitted by the seal plan")
 	}

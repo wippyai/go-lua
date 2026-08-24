@@ -138,7 +138,7 @@ func configureHeterogeneousRouteFixture(t *testing.T) *planFixture {
 	fixture.otherSignature = axis.Signature{Key: heteroKeyCarrier, Fact: heteroFactCarrier}
 	fixture.declaration = program.Program{
 		OperandRole: vocabulary.RoleKey("plan/operand"),
-		Candidate:   member.RelationRef{Axis: valueAxis, Member: heteroCandidateRelation},
+		Candidate:   program.AxisRelationCandidate(member.RelationRef{Axis: valueAxis, Member: heteroCandidateRelation}),
 		Joins: []program.JoinDecl{
 			{
 				Sources:  []program.SourceRef{program.CandidateSource()},

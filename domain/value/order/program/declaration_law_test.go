@@ -12,12 +12,12 @@ func TestBinaryOrderProgramDeclaresTheTwoExactReadsAndIdentityCarry(t *testing.T
 	if problem, valid := declaration.Check(); !valid {
 		t.Fatalf("binary order declaration rejected: %#v", problem)
 	}
-	if declaration.Candidate.Member != BinaryOrderCandidates || declaration.JoinCount() != 2 {
+	if declaration.Candidate.AxisRelation.Member != BinaryOrderCandidates || declaration.JoinCount() != 2 {
 		t.Fatalf("candidate/joins = %#v/%d", declaration.Candidate, declaration.JoinCount())
 	}
 	for index := 0; index < declaration.JoinCount(); index++ {
 		join, joinOK := declaration.JoinAt(index)
-		if !joinOK || len(join.Sources) != 1 || !join.Sources[0].Candidate || join.Relation.Member != BinaryOrderSources || join.Read.Input != 0 || join.Read.Axis.EntryReference() != declaration.Candidate.Axis || join.Read.Form != ruleprogram.Exact || join.Read.Contract.Order != ruleprogram.OrderCanonical || join.Read.Contract.Sparse != ruleprogram.SparseExplicit || join.Read.Contract.OnOpaque != ruleprogram.OnOpaqueRefuse || join.Read.Contract.Multiplicity != ruleprogram.MultiplicityOne {
+		if !joinOK || len(join.Sources) != 1 || !join.Sources[0].Candidate || join.Relation.Member != BinaryOrderSources || join.Read.Input != 0 || join.Read.Axis.EntryReference() != declaration.Candidate.AxisRelation.Axis || join.Read.Form != ruleprogram.Exact || join.Read.Contract.Order != ruleprogram.OrderCanonical || join.Read.Contract.Sparse != ruleprogram.SparseExplicit || join.Read.Contract.OnOpaque != ruleprogram.OnOpaqueRefuse || join.Read.Contract.Multiplicity != ruleprogram.MultiplicityOne {
 			t.Fatalf("join[%d] = %#v", index, join)
 		}
 	}

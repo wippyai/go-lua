@@ -208,7 +208,7 @@ func providerDeclaration(spareJoin bool) program.Program {
 	}
 	return program.Program{
 		OperandRole: vocabulary.RoleKey("provider/operand"),
-		Candidate:   member.RelationRef{Axis: valueAxis, Member: providerCandidates},
+		Candidate:   program.AxisRelationCandidate(member.RelationRef{Axis: valueAxis, Member: providerCandidates}),
 		Joins:       joins,
 		Fold: program.FoldDecl{
 			Reducer: member.ReducerRef{Axis: placementAxis, Member: providerReducer}, Inputs: inputs,

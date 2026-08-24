@@ -41,7 +41,7 @@ func RuleEntry() rule.Spec {
 		Roles:    []schema.Key{"semantic/operand/heap/allocation-empty"},
 		Program: program.Program{
 			OperandRole: "semantic/operand/heap/allocation-empty",
-			Candidate:   member.RelationRef{Axis: heapAxis, Member: heapdomain.EmptyAllocations},
+			Candidate:   program.AxisRelationCandidate(member.RelationRef{Axis: heapAxis, Member: heapdomain.EmptyAllocations}),
 			Joins: []program.JoinDecl{{
 				Sources:  []program.SourceRef{program.CandidateSource()},
 				Relation: member.RelationRef{Axis: heapAxis, Member: heapdomain.EmptyAllocationPredecessors},

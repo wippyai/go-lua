@@ -291,7 +291,7 @@ func newGeneratedRuleLawMultiAxisFixture(t testing.TB) generatedRuleLawFixture {
 	}
 	declaration := program.Program{
 		OperandRole: generatedRuleLawOperandRole,
-		Candidate:   member.RelationRef{Axis: axisReference, Member: generatedRuleLawCandidate},
+		Candidate:   program.AxisRelationCandidate(member.RelationRef{Axis: axisReference, Member: generatedRuleLawCandidate}),
 		Joins:       []program.JoinDecl{join},
 		Fold: program.FoldDecl{
 			Reducer: member.ReducerRef{Axis: axisReference, Member: generatedRuleLawReducer},

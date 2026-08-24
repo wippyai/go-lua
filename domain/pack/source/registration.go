@@ -29,7 +29,7 @@ func RuleEntry() rule.Spec {
 		Roles:    []schema.Key{"semantic/operand/pack/source"},
 		Program: program.Program{
 			OperandRole: "semantic/operand/pack/source",
-			Candidate:   member.RelationRef{Axis: packAxis, Member: packdomain.SourceSeeds},
+			Candidate:   program.AxisRelationCandidate(member.RelationRef{Axis: packAxis, Member: packdomain.SourceSeeds}),
 			Fold: program.FoldDecl{
 				Reducer: member.ReducerRef{Axis: packAxis, Member: packdomain.SourceReducer},
 				Outputs: []program.OutputDecl{{

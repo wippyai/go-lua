@@ -161,7 +161,7 @@ func newGeneratedRuleLawFixture(t testing.TB, variant generatedRuleLawVariant, r
 	}
 	declaration := program.Program{
 		OperandRole: generatedRuleLawOperandRole,
-		Candidate:   member.RelationRef{Axis: axisReference, Member: generatedRuleLawCandidate},
+		Candidate:   program.AxisRelationCandidate(member.RelationRef{Axis: axisReference, Member: generatedRuleLawCandidate}),
 		Joins:       joins,
 		Fold: program.FoldDecl{
 			Reducer: member.ReducerRef{Axis: axisReference, Member: generatedRuleLawReducer},
@@ -176,7 +176,7 @@ func newGeneratedRuleLawFixture(t testing.TB, variant generatedRuleLawVariant, r
 	if variant == generatedRuleLawSource {
 		declaration = program.Program{
 			OperandRole: generatedRuleLawOperandRole,
-			Candidate:   member.RelationRef{Axis: axisReference, Member: generatedRuleLawCandidate},
+			Candidate:   program.AxisRelationCandidate(member.RelationRef{Axis: axisReference, Member: generatedRuleLawCandidate}),
 			Fold: program.FoldDecl{
 				Reducer: member.ReducerRef{Axis: axisReference, Member: generatedRuleLawReducer},
 				Outputs: []program.OutputDecl{output},

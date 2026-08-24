@@ -15,7 +15,7 @@ func TestReturnEscapeProgramDeclaresTheCurrentThreeReadRoute(t *testing.T) {
 	if declaration.OperandRole != "semantic/operand/placement/return-escape" {
 		t.Fatalf("operand role=%q", declaration.OperandRole)
 	}
-	if declaration.Candidate.Axis != axisReference(valueAxisKey) || declaration.Candidate.Member != returnBoundaryCandidates {
+	if declaration.Candidate.AxisRelation.Axis != axisReference(valueAxisKey) || declaration.Candidate.AxisRelation.Member != returnBoundaryCandidates {
 		t.Fatalf("candidate=%+v, want Value return-boundary candidates", declaration.Candidate)
 	}
 	if got := declaration.JoinCount(); got != 3 {
@@ -97,7 +97,7 @@ func TestReturnEscapeProgramRequiresTheExplicitRouteJoin(t *testing.T) {
 	}
 
 	foreign := ReturnEscape()
-	foreign.Candidate.Axis = schema.EntryReference{Surface: schema.SurfaceKindAxis, Key: placementAxisKey}
+	foreign.Candidate.AxisRelation.Axis = schema.EntryReference{Surface: schema.SurfaceKindAxis, Key: placementAxisKey}
 	if problem, valid := foreign.Check(); !valid {
 		// Check is intentionally owner-blind: the upward seal resolves the
 		// local key against the complete catalog. Keep this assertion explicit

@@ -69,8 +69,12 @@ func formatRows(session *Session) string {
 			continue
 		}
 		writef(&b, "rule[%d].Program.OperandRole=%s", position, declaration.OperandRole)
-		writef(&b, "rule[%d].Program.Candidate.Axis=%s", position, declaration.Candidate.Axis.Key)
-		writef(&b, "rule[%d].Program.Candidate.Member=%s", position, declaration.Candidate.Member)
+		if declaration.Candidate.Issued() {
+			writef(&b, "rule[%d].Program.Candidate.IssuedRow=%s", position, declaration.Candidate.IssuedRow)
+		} else {
+			writef(&b, "rule[%d].Program.Candidate.Axis=%s", position, declaration.Candidate.AxisRelation.Axis.Key)
+			writef(&b, "rule[%d].Program.Candidate.Member=%s", position, declaration.Candidate.AxisRelation.Member)
+		}
 		writef(&b, "rule[%d].Program.JoinCount=%d", position, declaration.JoinCount())
 		writef(&b, "rule[%d].Program.Fold.Reducer.Axis=%s", position, declaration.Fold.Reducer.Axis.Key)
 		writef(&b, "rule[%d].Program.Fold.Reducer.Member=%s", position, declaration.Fold.Reducer.Member)

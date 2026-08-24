@@ -28,7 +28,7 @@ func RuleEntry() rule.Spec {
 		Roles:    []schema.Key{"semantic/operand/value/host-global-bootstrap"},
 		Program: program.Program{
 			OperandRole: "semantic/operand/value/host-global-bootstrap",
-			Candidate:   member.RelationRef{Axis: valueAxis, Member: valuedomain.GlobalBootstrapResults},
+			Candidate:   program.AxisRelationCandidate(member.RelationRef{Axis: valueAxis, Member: valuedomain.GlobalBootstrapResults}),
 			Fold: program.FoldDecl{
 				Reducer: member.ReducerRef{Axis: valueAxis, Member: valuedomain.GlobalBootstrapReducer},
 				Outputs: []program.OutputDecl{{

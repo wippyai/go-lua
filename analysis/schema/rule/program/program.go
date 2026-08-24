@@ -28,7 +28,11 @@ const (
 )
 
 const (
-	contentRecordProgram   uint64 = 1
+	contentRecordProgram uint64 = 1
+	// contentRecordCandidate is written only by a Program whose candidate is an
+	// issued Program row. The axis-relation arm emits the exact member
+	// reference it emitted before the choice existed, so stating the choice
+	// remints no program that keeps the arm it already had.
 	contentRecordCandidate uint64 = 2
 	contentRecordJoin      uint64 = 3
 	contentRecordSource    uint64 = 4
@@ -67,7 +71,7 @@ func (transport TransportDecl) Available() bool { return transport.Axis.Availabl
 // legacy catalog; every present declaration must carry a Candidate and Fold.
 type Program struct {
 	OperandRole schema.Key
-	Candidate   member.RelationRef
+	Candidate   CandidateDecl
 	Joins       []JoinDecl
 	Fold        FoldDecl
 	Carry       *CarryDecl
@@ -326,9 +330,7 @@ func (program Program) Valid() bool {
 // after the complete surface catalog is published.
 func (program Program) References() schema.EntryReferences {
 	var references schema.EntryReferences
-	if program.Candidate.Declared() {
-		references = append(references, program.Candidate.EntryReference())
-	}
+	references = append(references, program.Candidate.References()...)
 	for _, join := range program.Joins {
 		references = append(references, join.References()...)
 	}
@@ -397,7 +399,14 @@ func (program Program) WriteContent(content *framing.Writer) error {
 	if err := content.String(string(program.OperandRole)); err != nil {
 		return err
 	}
-	if err := writeMemberReference(content, program.Candidate.Axis, program.Candidate.Member); err != nil {
+	if program.Candidate.Issued() {
+		if err := content.Record(contentRecordCandidate); err != nil {
+			return err
+		}
+		if err := content.String(string(program.Candidate.IssuedRow)); err != nil {
+			return err
+		}
+	} else if err := writeMemberReference(content, program.Candidate.AxisRelation.Axis, program.Candidate.AxisRelation.Member); err != nil {
 		return err
 	}
 	if err := content.Count(uint64(len(program.Joins))); err != nil {

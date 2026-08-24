@@ -28,7 +28,7 @@ func RuleEntry() rule.Spec {
 		Roles:    []schema.Key{"semantic/operand/heap/host-bootstrap"},
 		Program: program.Program{
 			OperandRole: "semantic/operand/heap/host-bootstrap",
-			Candidate:   member.RelationRef{Axis: heapAxis, Member: heapdomain.BootRoots},
+			Candidate:   program.AxisRelationCandidate(member.RelationRef{Axis: heapAxis, Member: heapdomain.BootRoots}),
 			Fold: program.FoldDecl{
 				Reducer: member.ReducerRef{Axis: heapAxis, Member: heapdomain.BootReducer},
 				Outputs: []program.OutputDecl{{

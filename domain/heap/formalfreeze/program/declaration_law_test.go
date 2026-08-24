@@ -29,7 +29,7 @@ func TestFormalFreezeProgramSealsARoutedWriteOverPrerequisiteJoins(t *testing.T)
 		t.Fatalf("freeze declaration does not agree with its generated reducer call shape: %+v", problem)
 	}
 
-	if declaration.Candidate.Member != MountedCallCandidates || declaration.Candidate.Axis.Key != "call" {
+	if declaration.Candidate.AxisRelation.Member != MountedCallCandidates || declaration.Candidate.AxisRelation.Axis.Key != "call" {
 		t.Fatalf("candidate=%+v, want the Call mounted-call directory", declaration.Candidate)
 	}
 	if got, want := declaration.JoinCount(), 3; got != want {

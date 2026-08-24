@@ -166,8 +166,12 @@ func writeAxisProducers(b *strings.Builder, session *Session, family, axis schem
 		writef(b, "why[%s].Axis[%s].Rule=%s", family, axis, key)
 		writef(b, "why[%s].Rule[%s].Owner=%s", family, key, template.Owner())
 		writef(b, "why[%s].Rule[%s].Writes=%s", family, key, template.Writes())
-		writef(b, "why[%s].Rule[%s].Program.Candidate.Axis=%s", family, key, declaration.Candidate.Axis.Key)
-		writef(b, "why[%s].Rule[%s].Program.Candidate.Member=%s", family, key, declaration.Candidate.Member)
+		if declaration.Candidate.Issued() {
+			writef(b, "why[%s].Rule[%s].Program.Candidate.IssuedRow=%s", family, key, declaration.Candidate.IssuedRow)
+		} else {
+			writef(b, "why[%s].Rule[%s].Program.Candidate.Axis=%s", family, key, declaration.Candidate.AxisRelation.Axis.Key)
+			writef(b, "why[%s].Rule[%s].Program.Candidate.Member=%s", family, key, declaration.Candidate.AxisRelation.Member)
+		}
 		writef(b, "why[%s].Rule[%s].Program.JoinCount=%d", family, key, declaration.JoinCount())
 		for joinIndex := 0; joinIndex < declaration.JoinCount(); joinIndex++ {
 			join, joinOK := declaration.JoinAt(joinIndex)

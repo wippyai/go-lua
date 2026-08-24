@@ -73,7 +73,7 @@ func configureForeignCandidateFixture(t *testing.T, provider member.RelationRef,
 	fixture.otherSignature = axis.Signature{Key: heteroKeyCarrier, Fact: heteroFactCarrier}
 	fixture.declaration = program.Program{
 		OperandRole: vocabulary.RoleKey("plan/operand"),
-		Candidate:   candidate,
+		Candidate:   program.AxisRelationCandidate(candidate),
 		Joins: []program.JoinDecl{{
 			Sources:  []program.SourceRef{program.CandidateSource()},
 			Relation: member.RelationRef{Axis: occurrenceAxis, Member: foreignExactRead},
