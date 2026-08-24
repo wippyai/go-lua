@@ -13,10 +13,15 @@ import (
 
 const (
 	valuePackagePath = "github.com/wippyai/go-lua/domain/value"
+	callPackagePath  = "github.com/wippyai/go-lua/domain/call"
 )
 
 func valueGoType(name string) definition.GoType {
 	return definition.GoType{PackagePath: valuePackagePath, Name: name}
+}
+
+func callGoType(name string) definition.GoType {
+	return definition.GoType{PackagePath: callPackagePath, Name: name}
 }
 
 func builtinGoType(name string) definition.GoType { return definition.GoType{Name: name} }
@@ -48,6 +53,7 @@ func StorageTransfer() definition.Definition {
 	allocationResult := valueGoType("AllocationResult")
 	freshResultCall := valueGoType("FreshResultCall")
 	mountedCallArgument := valueGoType("MountedCallArgument")
+	mountedCallActuals := valueGoType("MountedCallActuals")
 	returnBoundary := valueGoType("ReturnBoundary")
 	returnBoundaryMember := valueGoType("ReturnBoundaryMember")
 	return definition.Definition{
@@ -91,6 +97,12 @@ func StorageTransfer() definition.Definition {
 			// never sees Value's Go symbols still addresses member k through this
 			// carrier, which is why the nested set declares it beside its parent.
 			{Name: "ReturnBoundaryMemberOrdinalCarrier", Key: "carrier/value/return-boundary-member-ordinal", Type: builtinGoType("uint64")},
+			{Name: "MountedCallActualsCarrier", Key: "carrier/value/mounted-call-actuals", Type: mountedCallActuals},
+			{Name: "MountedCallActualTagCarrier", Key: "carrier/value/mounted-call-actual-tag", Type: builtinGoType("uint64")},
+			// CallCoordinate is a foreign input coordinate, not a second Call
+			// vocabulary. Repeating its canonical carrier lets Value declare the
+			// correspondence between its parent rows and Call's candidate rows.
+			{Name: "CallCoordinateCarrier", Key: "carrier/call/mounted-call", Type: callGoType("CallCoordinate")},
 		},
 		Relations: []definition.Relation{
 			{
@@ -276,6 +288,39 @@ func StorageTransfer() definition.Definition {
 				MemberCount:       valueMethod("MemberCount", "ReturnBoundary", false, 0),
 				MemberAt:          valueMethod("MemberAt", "ReturnBoundary", false, 0),
 			},
+			{
+				// One Value-owned parent row per mounted call. The occurrence is the
+				// shared semantic address used to translate between Call's candidate
+				// directory and Value's independently dense parent directory.
+				Name:              "MountedCallParents",
+				Key:               "value/mounted-call/parents",
+				Subject:           "MountedCallActualsCarrier",
+				Inputs:            []definition.RelationInput{{Carrier: "CallCoordinateCarrier"}},
+				CandidateProvider: member.AxisRelationCandidate(member.RelationRef{Axis: axisReference("value"), Member: "value/mounted-call/parents"}),
+				CandidateResolver: valueMethod("MountedCallActualsForMountedOccurrence", "Schema", true, 0),
+				CandidateOrdinal:  valueMethod("MountedCallActualsOrdinal", "Schema", true, 0),
+				CandidateAt:       valueMethod("MountedCallActualsAt", "Schema", true, 0),
+				Correspondences: []member.RelationRef{{
+					Axis: axisReference("call"), Member: "call/mounted-call/candidates",
+				}},
+			},
+			{
+				// The ordered actuals are Value's nested member set, addressed by
+				// (parent, owner-issued ordinal). Consumers select these rows instead
+				// of rebuilding call-to-actual geometry.
+				Name:              "MountedCallActualMembers",
+				Key:               "value/mounted-call/actual-members",
+				Subject:           "MountedCallArgumentCarrier",
+				Inputs:            []definition.RelationInput{{Carrier: "CallCoordinateCarrier"}},
+				CandidateProvider: member.AxisRelationCandidate(member.RelationRef{Axis: axisReference("value"), Member: "value/mounted-call/actual-members"}),
+				CandidateResolver: valueMethod("MountedCallArgumentForMountedOccurrence", "Schema", true, 0),
+				CandidateOrdinal:  valueMethod("MountedCallArgumentOrdinal", "Schema", true, 0),
+				CandidateAt:       valueMethod("MountedCallArgumentAt", "Schema", true, 0),
+				MemberParent:      member.RelationRef{Axis: axisReference("value"), Member: "value/mounted-call/parents"},
+				MemberOrdinal:     "MountedCallActualTagCarrier",
+				MemberCount:       valueMethod("MemberCount", "MountedCallActuals", false, 0),
+				MemberAt:          valueMethod("MemberAt", "MountedCallActuals", false, 0),
+			},
 		},
 		Projections: []definition.Projection{
 			{
@@ -358,6 +403,33 @@ func StorageTransfer() definition.Definition {
 				Role:              member.Key,
 				Result:            "ValueCoordinateCarrier",
 				Accessor:          valueMethod("Coordinate", "ReturnBoundaryMember", false, -1),
+			},
+			{
+				Name:              "MountedCallCalleeKey",
+				Key:               "value/mounted-call/callee-key",
+				Relation:          "MountedCallParents",
+				CandidateProvider: member.AxisRelationCandidate(member.RelationRef{Axis: axisReference("value"), Member: "value/mounted-call/parents"}),
+				Role:              member.Key,
+				Result:            "ValueCoordinateCarrier",
+				Accessor:          valueMethod("CalleeCoordinate", "MountedCallActuals", false, -1),
+			},
+			{
+				Name:              "MountedCallActualKey",
+				Key:               "value/mounted-call/actual-key",
+				Relation:          "MountedCallActualMembers",
+				CandidateProvider: member.AxisRelationCandidate(member.RelationRef{Axis: axisReference("value"), Member: "value/mounted-call/actual-members"}),
+				Role:              member.Key,
+				Result:            "ValueCoordinateCarrier",
+				Accessor:          valueMethod("Coordinate", "MountedCallArgument", false, -1),
+			},
+			{
+				Name:              "MountedCallActualTag",
+				Key:               "value/mounted-call/actual-tag",
+				Relation:          "MountedCallActualMembers",
+				CandidateProvider: member.AxisRelationCandidate(member.RelationRef{Axis: axisReference("value"), Member: "value/mounted-call/actual-members"}),
+				Role:              member.Predicate,
+				Result:            "MountedCallActualTagCarrier",
+				Accessor:          valueMethod("ActualTag", "MountedCallArgument", false, -1),
 			},
 		},
 		CarryTransforms: []definition.CarryTransform{

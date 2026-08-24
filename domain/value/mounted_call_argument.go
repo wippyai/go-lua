@@ -240,7 +240,7 @@ func (builder *valueBuilder) sealMountedCallArguments() bool {
 			}
 		}
 	}
-	return true
+	return mountedCallParentsCorrespond(builder.Schema, builder.calls)
 }
 
 // addMountedCallArgument admits one dense mounted call actual row. It fails

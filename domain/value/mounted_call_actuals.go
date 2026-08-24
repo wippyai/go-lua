@@ -32,6 +32,11 @@ type MountedCallActuals struct {
 	// Call is the earliest owner of it, so the seal copies it here rather than
 	// leaving every consumer to resolve the occurrence against Call again.
 	coordinate calldomain.CallCoordinate
+	// callee is Value's owner-issued coordinate for the portable Boundary
+	// Value identity Call published on coordinate. Value resolves it once while
+	// sealing this parent so dispatch consumers never reopen Call geometry or
+	// reconstruct a Value coordinate from a foreign dense ordinal.
+	callee Coordinate
 	// first is the dense ordinal of actual zero in mountedCallArgumentOrder and
 	// count is the member census. The rows are contiguous because they are
 	// admitted in per-call actual order by one pass of sealMountedCallArguments.
@@ -42,6 +47,7 @@ type MountedCallActuals struct {
 func (row MountedCallActuals) valid() bool {
 	return row.schema != nil && row.schema.Valid() && row.key.module.Available() &&
 		row.key.call.Available() && row.content.Available() && row.coordinate.Valid() &&
+		row.callee.Valid() && row.callee.schema == row.schema &&
 		uint64(row.first)+uint64(row.count) <= uint64(len(row.schema.mountedCallArgumentOrder))
 }
 
@@ -101,6 +107,32 @@ func (schema *Schema) MountedCallActualsForMountedOccurrence(module, occurrence 
 	return schema.MountedCallActualsFor(module, occurrence)
 }
 
+// mountedCallParentsCorrespond proves a bijection between Call's mounted-call
+// candidates and Value's parent rows by their shared semantic address. Dense
+// ordinals are deliberately ignored: each owner is free to order its own
+// directory independently.
+func mountedCallParentsCorrespond(schema *Schema, calls *calldomain.Algebra) bool {
+	if schema == nil || calls == nil || len(schema.mountedCallActualsOrder) != calls.CallCoordinateCount() {
+		return false
+	}
+	for ordinal := 0; ordinal < calls.CallCoordinateCount(); ordinal++ {
+		coordinate, coordinateOK := calls.CallCoordinateAt(ordinal)
+		if !coordinateOK || !calls.OwnsCallCoordinate(coordinate) {
+			return false
+		}
+		module, moduleOK := coordinate.ModuleID()
+		call, callOK := coordinate.CallID()
+		if !moduleOK || !callOK {
+			return false
+		}
+		parent, parentOK := schema.mountedCallActuals[mountedCallActualsKey{module: module, call: call}]
+		if !parentOK || !schema.OwnsMountedCallActuals(parent) || parent.coordinate != coordinate {
+			return false
+		}
+	}
+	return true
+}
+
 // ID returns the owner-issued identity of this parent row.
 func (row MountedCallActuals) ID() (identity.ContentID, bool) {
 	if !row.valid() {
@@ -134,6 +166,17 @@ func (row MountedCallActuals) CallCoordinate() (calldomain.CallCoordinate, bool)
 		return calldomain.CallCoordinate{}, false
 	}
 	return row.coordinate, true
+}
+
+// CalleeCoordinate returns Value's owner-issued coordinate for the portable
+// callee Value of this call. The coordinate is sealed on the parent
+// because call dispatch and every other consumer must use the same Value
+// directory rather than derive an address from Call's local ordinal.
+func (row MountedCallActuals) CalleeCoordinate() (Coordinate, bool) {
+	if !row.valid() || !row.callee.Valid() || row.callee.schema != row.schema {
+		return Coordinate{}, false
+	}
+	return row.callee, true
 }
 
 // MemberCount is the census of this call's ordered actual list.
@@ -189,7 +232,21 @@ func (builder *valueBuilder) addMountedCallActuals(module, call identity.Content
 	if !coordinateOK {
 		return false
 	}
-	row := MountedCallActuals{schema: builder.Schema, key: key, content: content, coordinate: coordinate, first: uint32(first), count: count}
+	coordinateModule, coordinateModuleOK := coordinate.ModuleID()
+	coordinateCall, coordinateCallOK := coordinate.CallID()
+	calleeID, calleeIDOK := coordinate.CalleeValueID()
+	if !coordinateModuleOK || !coordinateCallOK || !calleeIDOK || coordinateModule != module || coordinateCall != call {
+		return false
+	}
+	// Call's callee identity is the Link-owned Boundary Value identity, not an
+	// artifact semantic identity. Value therefore resolves it through its one
+	// portable coordinate directory; qualifying it as mounted semantic would
+	// address a different identity domain and reject valid calls.
+	callee, calleeOK := builder.Schema.CoordinateForID(calleeID)
+	if !calleeOK {
+		return false
+	}
+	row := MountedCallActuals{schema: builder.Schema, key: key, content: content, coordinate: coordinate, callee: callee, first: uint32(first), count: count}
 	// Every ordinal the parent will answer must already be the directory's row
 	// for this call at that ordinal. Proving the span here is what lets a
 	// consumer address a member by (parent, ordinal) without re-correlating.

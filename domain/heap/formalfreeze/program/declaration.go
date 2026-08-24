@@ -44,9 +44,9 @@ const (
 	MountedCallCandidates        schema.Key = calldomain.MountedCallCandidates
 	MountedCallFacts             schema.Key = calldomain.MountedCallFacts
 	MountedCallFactKey           schema.Key = calldomain.MountedCallFactKey
-	FormalFreezeActualMembers    schema.Key = valuedomain.FormalFreezeActualMembers
-	FormalFreezeActualKey        schema.Key = valuedomain.FormalFreezeActualKey
-	FormalFreezeActualTag        schema.Key = valuedomain.FormalFreezeActualTag
+	MountedCallActualMembers     schema.Key = valuedomain.MountedCallActualMembers
+	MountedCallActualKey         schema.Key = valuedomain.MountedCallActualKey
+	MountedCallActualTag         schema.Key = valuedomain.MountedCallActualTag
 )
 
 func axisReference(key schema.Key) schema.EntryReference {
@@ -131,9 +131,9 @@ func FormalFreeze() ruleprogram.Program {
 				// Value's default rather than a presence distinction this rule
 				// would have to draw.
 				Sources:   []ruleprogram.SourceRef{ruleprogram.CandidateSource()},
-				Relation:  member.RelationRef{Axis: valueAxis, Member: FormalFreezeActualMembers},
-				Key:       member.ProjectionRef{Axis: valueAxis, Member: FormalFreezeActualKey},
-				Predicate: member.ProjectionRef{Axis: valueAxis, Member: FormalFreezeActualTag},
+				Relation:  member.RelationRef{Axis: valueAxis, Member: MountedCallActualMembers},
+				Key:       member.ProjectionRef{Axis: valueAxis, Member: MountedCallActualKey},
+				Predicate: member.ProjectionRef{Axis: valueAxis, Member: MountedCallActualTag},
 				Read: ruleprogram.ReadDecl{
 					Input: 1,
 					Axis:  ruleprogram.AxisRef(valueAxis),

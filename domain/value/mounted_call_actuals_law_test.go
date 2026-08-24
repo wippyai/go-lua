@@ -147,6 +147,22 @@ func TestEveryMountedCallActualsParentPublishesCallsOwnCoordinate(t *testing.T) 
 	if parents == 0 {
 		t.Fatal("no mounted call actual parent rows were sealed, so this law measures nothing")
 	}
+	if parents != calls.CallCoordinateCount() {
+		t.Fatalf("Value parents = %d, Call candidates = %d", parents, calls.CallCoordinateCount())
+	}
+	// Enumerate Call's owner-local order and resolve Value by the shared
+	// semantic address. This proves the correspondence without assuming the
+	// owners assign equal dense ordinals.
+	for ordinal := 0; ordinal < calls.CallCoordinateCount(); ordinal++ {
+		coordinate, coordinateOK := calls.CallCoordinateAt(ordinal)
+		module, moduleOK := coordinate.ModuleID()
+		callID, callIDOK := coordinate.CallID()
+		parent, parentOK := values.MountedCallActualsForMountedOccurrence(module, callID)
+		published, publishedOK := parent.CallCoordinate()
+		if !coordinateOK || !moduleOK || !callIDOK || !parentOK || !publishedOK || published != coordinate {
+			t.Fatalf("Call candidate %d does not resolve to Value's matching parent", ordinal)
+		}
+	}
 	for index := 0; index < parents; index++ {
 		parent, parentOK := values.MountedCallActualsAt(index)
 		if !parentOK {
@@ -164,6 +180,12 @@ func TestEveryMountedCallActualsParentPublishesCallsOwnCoordinate(t *testing.T) 
 		published, publishedOK := calls.CallCoordinateForOccurrence(module, callID)
 		if !publishedOK || published != coordinate {
 			t.Fatalf("parent %d coordinate = %#v, want Call's own %#v/%t", index, coordinate, published, publishedOK)
+		}
+		calleeID, calleeIDOK := coordinate.CalleeValueID()
+		callee, calleeOK := parent.CalleeCoordinate()
+		expected, expectedOK := values.CoordinateForID(calleeID)
+		if !calleeIDOK || !calleeOK || !expectedOK || callee != expected {
+			t.Fatalf("parent %d callee coordinate = %#v/%t, want mounted semantic %#v/%t", index, callee, calleeOK, expected, expectedOK)
 		}
 	}
 }

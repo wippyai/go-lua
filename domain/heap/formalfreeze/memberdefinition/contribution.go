@@ -12,7 +12,6 @@ import (
 const (
 	heapPackagePath       = "github.com/wippyai/go-lua/domain/heap"
 	callPackagePath       = "github.com/wippyai/go-lua/domain/call"
-	valuePackagePath      = "github.com/wippyai/go-lua/domain/value"
 	freezePackagePath     = "github.com/wippyai/go-lua/domain/heap/formalfreeze"
 	recentPlanPackagePath = "github.com/wippyai/go-lua/domain/heap/internal/recentplan"
 )
@@ -26,8 +25,6 @@ func heapAxis() schema.EntryReference { return axisReference("heap") }
 func goType(path, name string) definition.GoType {
 	return definition.GoType{PackagePath: path, Name: name}
 }
-
-func builtinGoType(name string) definition.GoType { return definition.GoType{Name: name} }
 
 func method(path, name, receiverPath, receiver string, receiverPointer bool, resultIndex int8) definition.GoSymbol {
 	return definition.GoSymbol{
@@ -50,14 +47,6 @@ func mountedCallProvider() member.RelationRef {
 	return member.RelationRef{Axis: axisReference("call"), Member: "call/mounted-call/candidates"}
 }
 
-func actualMemberProvider() member.RelationRef {
-	return member.RelationRef{Axis: axisReference("value"), Member: "value/formal-freeze/actual-members"}
-}
-
-func callActualsProvider() member.RelationRef {
-	return member.RelationRef{Axis: axisReference("value"), Member: "value/formal-freeze/call-actuals"}
-}
-
 // Contribution is the Heap formal-freeze rule's own member declaration.
 //
 // The rule reads three things and folds one. Its candidate is a mounted call.
@@ -69,9 +58,9 @@ func callActualsProvider() member.RelationRef {
 // Join two is the freeze route set derived from those two, and it is the only
 // row here whose construction is still authored.
 //
-// The rows are declared per axis because a relation over Value coordinates is
-// Value's data whichever rule needs it, and the roster folds each row into the
-// source of the axis it names.
+// Value owns and publishes the neutral mounted-call parent/member rows. This
+// contribution declares only Heap's derived route set and reducer; it names
+// Value's rows through the rule Program rather than restating them here.
 func Contribution() definition.Contribution {
 	return definition.Contribution{
 		Axis: "heap",
@@ -83,53 +72,8 @@ func Contribution() definition.Contribution {
 			{Name: "CallCoordinateCarrier", Key: "carrier/call/mounted-call", Type: goType(callPackagePath, "CallCoordinate")},
 			{Name: "CallFactCarrier", Key: "carrier/call/fact", Type: goType(callPackagePath, "Value")},
 			{Name: "FormalFreezeRouteCarrier", Key: "carrier/heap/formal-freeze-route", Type: goType(recentPlanPackagePath, "Route")},
-			// Value-side carriers, carried to the value source with the rows
-			// they type.
-			{Name: "MountedCallActualsCarrier", Key: "carrier/value/mounted-call-actuals", Type: goType(valuePackagePath, "MountedCallActuals")},
-			{Name: "MountedCallActualTagCarrier", Key: "carrier/value/mounted-call-actual-tag", Type: builtinGoType("uint64")},
 		},
 		Relations: []definition.Relation{
-			{
-				// The parent of the actual member set: one row per mounted call,
-				// resolved under the same occurrence the mounted call candidate
-				// is. It is Value grouping its own sealed actual rows by the
-				// (module, call) prefix of their key, so it publishes no call
-				// identity of its own.
-				Axis:              "value",
-				Name:              "FormalFreezeCallActuals",
-				Key:               "value/formal-freeze/call-actuals",
-				Subject:           "MountedCallActualsCarrier",
-				CandidateProvider: member.AxisRelationCandidate(callActualsProvider()),
-				CandidateResolver: method(valuePackagePath, "MountedCallActualsForMountedOccurrence", valuePackagePath, "Schema", true, 0),
-				CandidateOrdinal:  method(valuePackagePath, "MountedCallActualsOrdinal", valuePackagePath, "Schema", true, 0),
-				CandidateAt:       method(valuePackagePath, "MountedCallActualsAt", valuePackagePath, "Schema", true, 0),
-				// Value's parent order and Call's mounted-call order enumerate
-				// the same subjects: both are addressed by the mounted call's
-				// occurrence, and the coordinate Call published is copied into
-				// each parent row at seal. Stating the correspondence is what
-				// lets this rule - whose candidate is Call's - address these
-				// rows without the two directories being correlated by hand.
-				Correspondences: []member.RelationRef{mountedCallProvider()},
-			},
-			{
-				// The ordered actuals themselves, addressed by (call, ordinal).
-				// The set is self-provided, so a member densifies through this
-				// relation's own directory and projects the way every other row
-				// of it does.
-				Axis:              "value",
-				Name:              "FormalFreezeActualMembers",
-				Key:               "value/formal-freeze/actual-members",
-				Subject:           "MountedCallArgumentCarrier",
-				Inputs:            []definition.RelationInput{{Carrier: "CallCoordinateCarrier"}},
-				CandidateProvider: member.AxisRelationCandidate(actualMemberProvider()),
-				CandidateResolver: method(valuePackagePath, "MountedCallArgumentForMountedOccurrence", valuePackagePath, "Schema", true, 0),
-				CandidateOrdinal:  method(valuePackagePath, "MountedCallArgumentOrdinal", valuePackagePath, "Schema", true, 0),
-				CandidateAt:       method(valuePackagePath, "MountedCallArgumentAt", valuePackagePath, "Schema", true, 0),
-				MemberParent:      callActualsProvider(),
-				MemberOrdinal:     "MountedCallActualTagCarrier",
-				MemberCount:       method(valuePackagePath, "MemberCount", valuePackagePath, "MountedCallActuals", false, 0),
-				MemberAt:          method(valuePackagePath, "MemberAt", valuePackagePath, "MountedCallActuals", false, 0),
-			},
 			{
 				// The freeze route set: the exact Recent allocation roots the
 				// known targets of this call all justify freezing. Its inputs are
@@ -160,29 +104,6 @@ func Contribution() definition.Contribution {
 			},
 		},
 		Projections: []definition.Projection{
-			{
-				Axis:              "value",
-				Name:              "FormalFreezeActualKey",
-				Key:               "value/formal-freeze/actual-key",
-				Relation:          "FormalFreezeActualMembers",
-				CandidateProvider: member.AxisRelationCandidate(actualMemberProvider()),
-				Role:              member.Key,
-				Result:            "ValueCoordinateCarrier",
-				Accessor:          method(valuePackagePath, "Coordinate", valuePackagePath, "MountedCallArgument", false, -1),
-			},
-			{
-				// The selection tag is the owner-issued one-based address of the
-				// actual under its call, so the rule selects a member by the tag
-				// Value published rather than by a convention of its own.
-				Axis:              "value",
-				Name:              "FormalFreezeActualTag",
-				Key:               "value/formal-freeze/actual-tag",
-				Relation:          "FormalFreezeActualMembers",
-				CandidateProvider: member.AxisRelationCandidate(actualMemberProvider()),
-				Role:              member.Predicate,
-				Result:            "MountedCallActualTagCarrier",
-				Accessor:          method(valuePackagePath, "ActualTag", valuePackagePath, "MountedCallArgument", false, -1),
-			},
 			{
 				Name:              "FormalFreezeRouteKey",
 				Key:               "heap/formal-freeze/route-key",
