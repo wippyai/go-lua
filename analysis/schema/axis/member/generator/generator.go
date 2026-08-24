@@ -71,7 +71,7 @@ type RelationBinding struct {
 	Key               schema.Key
 	Subject           definition.GoType
 	Inputs            []definition.GoType
-	CandidateProvider member.RelationRef
+	CandidateProvider member.CandidateRef
 	CandidateResolver definition.GoSymbol
 	CandidateOrdinal  definition.GoSymbol
 	CandidateAt       definition.GoSymbol
@@ -137,7 +137,7 @@ type ProjectionBinding struct {
 	Role                   member.Role
 	Result                 definition.GoType
 	Accessor               definition.GoSymbol
-	CandidateProvider      member.RelationRef
+	CandidateProvider      member.CandidateRef
 	CandidateRelation      uint32
 	CandidateProviderLocal bool
 }
@@ -265,8 +265,14 @@ func Resolve(source definition.Definition) (Metadata, error) {
 	}
 	owner := source.Binding.Key.Normalizer.Receiver
 	for index, relation := range source.Relations {
-		providerOrdinal, providerLocal := relationsByKey[relation.CandidateProvider.Member]
-		if relation.CandidateProvider.Axis.Key == source.Axis {
+		// An issued provider has no local directory to bind: there is no axis
+		// relation to take an ordinal from, so the binding stays foreign and
+		// the emitted accessors reach for nothing.
+		if relation.CandidateProvider.Issued() {
+			continue
+		}
+		providerOrdinal, providerLocal := relationsByKey[relation.CandidateProvider.AxisRelation.Member]
+		if relation.CandidateProvider.AxisRelation.Axis.Key == source.Axis {
 			if !providerLocal {
 				return Metadata{}, fmt.Errorf("member generator: relation %s candidate provider is not declared", relation.Name)
 			}
@@ -570,7 +576,7 @@ func renderCold(packageName string, source definition.Definition) ([]byte, error
 	out.WriteString("\tcatalog, ok := member.NewCatalog(\n")
 	out.WriteString("\t\t[]member.Relation{\n")
 	for _, relation := range source.Relations {
-		fmt.Fprintf(&out, "\t\t\t{Key: %s, Subject: %s, CandidateProvider: %s", relations[relation.Name], carriers[relation.Subject], relationProviderExpression(relation.CandidateProvider))
+		fmt.Fprintf(&out, "\t\t\t{Key: %s, Subject: %s, CandidateProvider: %s", relations[relation.Name], carriers[relation.Subject], candidateProviderExpression(relation.CandidateProvider))
 		if len(relation.Inputs) != 0 {
 			out.WriteString(", Inputs: []member.Carrier{")
 			for index, input := range relation.Inputs {
@@ -596,7 +602,7 @@ func renderCold(packageName string, source definition.Definition) ([]byte, error
 		if !ok {
 			return nil, fmt.Errorf("member generator: unsupported projection role %d", projection.Role)
 		}
-		fmt.Fprintf(&out, "\t\t\t{Key: %s, Relation: %s, Role: %s, Result: %s, CandidateProvider: %s},\n", projection.Name, relations[projection.Relation], role, carriers[projection.Result], relationProviderExpression(projection.CandidateProvider))
+		fmt.Fprintf(&out, "\t\t\t{Key: %s, Relation: %s, Role: %s, Result: %s, CandidateProvider: %s},\n", projection.Name, relations[projection.Relation], role, carriers[projection.Result], candidateProviderExpression(projection.CandidateProvider))
 	}
 	out.WriteString("\t\t},\n\t\t[]member.Reducer{\n")
 	for _, reducer := range source.Reducers {
@@ -1447,6 +1453,16 @@ func ownerSchemaMissing(pointer bool) string {
 		return "owner == nil || owner.schema == nil"
 	}
 	return "owner == nil"
+}
+
+// candidateProviderExpression emits whichever arm the provider states. The
+// axis arm emits the exact relation literal it emitted before the choice
+// existed, wrapped in the constructor that names the arm.
+func candidateProviderExpression(provider member.CandidateRef) string {
+	if provider.Issued() {
+		return fmt.Sprintf("member.IssuedRowCandidate(%q)", provider.IssuedRow)
+	}
+	return fmt.Sprintf("member.AxisRelationCandidate(%s)", relationProviderExpression(provider.AxisRelation))
 }
 
 func relationProviderExpression(reference member.RelationRef) string {

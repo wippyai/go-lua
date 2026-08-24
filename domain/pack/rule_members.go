@@ -23,10 +23,10 @@ func AxisMemberCatalog() member.Catalog {
 	valueAxis := schemaapi.EntryReference{Surface: schemaapi.SurfaceKindAxis, Key: "pack"}
 	catalog, ok := member.NewCatalog(
 		[]member.Relation{
-			{Key: SourceSeeds, Subject: SourceCarrier, CandidateProvider: member.RelationRef{Axis: schemaapi.EntryReference{Surface: schemaapi.SurfaceKind(2), Key: "pack"}, Member: "pack/source/candidates"}},
+			{Key: SourceSeeds, Subject: SourceCarrier, CandidateProvider: member.AxisRelationCandidate(member.RelationRef{Axis: schemaapi.EntryReference{Surface: schemaapi.SurfaceKind(2), Key: "pack"}, Member: "pack/source/candidates"})},
 		},
 		[]member.Projection{
-			{Key: SourceCoordinate, Relation: SourceSeeds, Role: member.Destination, Result: RootCarrier, CandidateProvider: member.RelationRef{Axis: schemaapi.EntryReference{Surface: schemaapi.SurfaceKind(2), Key: "pack"}, Member: "pack/source/candidates"}},
+			{Key: SourceCoordinate, Relation: SourceSeeds, Role: member.Destination, Result: RootCarrier, CandidateProvider: member.AxisRelationCandidate(member.RelationRef{Axis: schemaapi.EntryReference{Surface: schemaapi.SurfaceKind(2), Key: "pack"}, Member: "pack/source/candidates"})},
 		},
 		[]member.Reducer{
 			{Key: SourceReducer, Inputs: []member.ReducerInput{}, Outputs: []member.ReducerOutput{

@@ -28,7 +28,7 @@ func RuleEntry() rule.Spec {
 		Roles:    []schema.Key{"semantic/operand/value/storage-transfer"},
 		Program: program.Program{
 			OperandRole: "semantic/operand/value/storage-transfer",
-			Candidate:   program.AxisRelationCandidate(member.RelationRef{Axis: valueAxis, Member: valuedomain.StorageTransferCandidates}),
+			Candidate:   member.AxisRelationCandidate(member.RelationRef{Axis: valueAxis, Member: valuedomain.StorageTransferCandidates}),
 			Joins: []program.JoinDecl{{
 				Sources:  []program.SourceRef{program.CandidateSource()},
 				Relation: member.RelationRef{Axis: staticAxis, Member: staticdomain.TypeFactSources},

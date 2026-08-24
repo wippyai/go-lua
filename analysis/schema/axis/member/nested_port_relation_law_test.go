@@ -19,7 +19,7 @@ func candidateRelation() member.Relation {
 	return member.Relation{
 		Key:               "call/activation/candidates",
 		Subject:           "CallActivationCandidateCarrier",
-		CandidateProvider: portProvider(),
+		CandidateProvider: member.AxisRelationCandidate(portProvider()),
 	}
 }
 
@@ -33,7 +33,7 @@ func TestANestedRelationDeclaresBothItsParentAndItsOrdinalCarrier(t *testing.T) 
 	nested := member.Relation{
 		Key:               "call/activation/ports",
 		Subject:           "CallActivationPortCarrier",
-		CandidateProvider: portProvider(),
+		CandidateProvider: member.AxisRelationCandidate(portProvider()),
 		Parent:            portProvider(),
 		Ordinal:           "CallActivationPortOrdinalCarrier",
 	}
@@ -61,7 +61,7 @@ func TestANestedRelationNamesAParentTheCatalogHolds(t *testing.T) {
 	nested := member.Relation{
 		Key:               "call/activation/ports",
 		Subject:           "CallActivationPortCarrier",
-		CandidateProvider: portProvider(),
+		CandidateProvider: member.AxisRelationCandidate(portProvider()),
 		Parent:            member.RelationRef{Axis: portAxis(), Member: parent.Key},
 		Ordinal:           "CallActivationPortOrdinalCarrier",
 	}
@@ -94,7 +94,7 @@ func TestTheAttributeRoleIsDeclarable(t *testing.T) {
 		Relation:          "call/activation/candidates",
 		Role:              member.Attribute,
 		Result:            "CallActivationOutcomeCarrier",
-		CandidateProvider: portProvider(),
+		CandidateProvider: member.AxisRelationCandidate(portProvider()),
 	}
 	if !projection.Available() {
 		t.Fatal("an attribute projection is a declarable member")

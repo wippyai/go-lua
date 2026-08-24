@@ -86,7 +86,7 @@ func lawProgram(t *testing.T) Program {
 	t.Helper()
 	return Program{
 		OperandRole: "semantic/operand/law",
-		Candidate:   AxisRelationCandidate(lawRelation("candidate")),
+		Candidate:   member.AxisRelationCandidate(lawRelation("candidate")),
 		Joins:       []JoinDecl{lawExactJoin("input")},
 		Fold:        lawFold([]JoinRef{0}),
 	}
@@ -123,7 +123,7 @@ func TestProgramDigestCoversOperandRole(t *testing.T) {
 func TestProgramAllowsZeroJoinSeedWithUnitFold(t *testing.T) {
 	seed := Program{
 		OperandRole: "semantic/operand/law",
-		Candidate:   AxisRelationCandidate(lawRelation("seed/candidate")),
+		Candidate:   member.AxisRelationCandidate(lawRelation("seed/candidate")),
 		Fold:        lawFold(nil),
 	}
 	if problem, valid := seed.Check(); !valid {
@@ -137,7 +137,7 @@ func TestProgramRejectsMissingCandidateAndMalformedSeed(t *testing.T) {
 	if valid || problem.Kind != ProblemCandidate {
 		t.Fatalf("missing candidate valid=%v problem=%+v", valid, problem)
 	}
-	seed = Program{OperandRole: "semantic/operand/law", Candidate: AxisRelationCandidate(lawRelation("seed/candidate")), Fold: lawFold([]JoinRef{0})}
+	seed = Program{OperandRole: "semantic/operand/law", Candidate: member.AxisRelationCandidate(lawRelation("seed/candidate")), Fold: lawFold([]JoinRef{0})}
 	problem, valid = seed.Check()
 	if valid || problem.Kind != ProblemInput {
 		t.Fatalf("seed input valid=%v problem=%+v", valid, problem)
@@ -220,7 +220,7 @@ func TestProgramAdmitsOnlyTheFiveNormalFormCombinations(t *testing.T) {
 	}
 	for _, test := range cases {
 		t.Run(test.name, func(t *testing.T) {
-			program := Program{OperandRole: "semantic/operand/law", Candidate: AxisRelationCandidate(lawRelation("candidate/" + test.name)), Joins: []JoinDecl{test.join}, Fold: lawFold([]JoinRef{0})}
+			program := Program{OperandRole: "semantic/operand/law", Candidate: member.AxisRelationCandidate(lawRelation("candidate/" + test.name)), Joins: []JoinDecl{test.join}, Fold: lawFold([]JoinRef{0})}
 			if problem, valid := program.Check(); !valid {
 				t.Fatalf("normal form rejected: %+v", problem)
 			}
@@ -348,7 +348,7 @@ func TestProgramSealsCarryInputPortUnionAsAContiguousPrefix(t *testing.T) {
 }
 
 func TestProgramAdmitsCarryOnlyInputPortWithoutARead(t *testing.T) {
-	program := Program{OperandRole: "semantic/operand/law", Candidate: AxisRelationCandidate(lawRelation("carry-only/candidate")), Fold: lawFold(nil), Carry: &CarryDecl{Input: 0, Mode: CarryIdentity}}
+	program := Program{OperandRole: "semantic/operand/law", Candidate: member.AxisRelationCandidate(lawRelation("carry-only/candidate")), Fold: lawFold(nil), Carry: &CarryDecl{Input: 0, Mode: CarryIdentity}}
 	if problem, valid := program.Check(); !valid {
 		t.Fatalf("carry-only input port rejected: %+v", problem)
 	}
@@ -421,7 +421,7 @@ func TestProgramHasNoSmallJoinOrSourceCap(t *testing.T) {
 			Sources: []SourceRef{source}, Relation: lawRelation(key + "/relation"), Key: lawProjection(key + "/key"), Read: lawRead(Exact, key, false),
 		}
 	}
-	program := Program{OperandRole: "semantic/operand/law", Candidate: AxisRelationCandidate(lawRelation("large/candidate")), Joins: joins, Fold: lawFold([]JoinRef{count - 1})}
+	program := Program{OperandRole: "semantic/operand/law", Candidate: member.AxisRelationCandidate(lawRelation("large/candidate")), Joins: joins, Fold: lawFold([]JoinRef{count - 1})}
 	if problem, valid := program.Check(); !valid {
 		t.Fatalf("large ordered declaration rejected: %+v", problem)
 	}

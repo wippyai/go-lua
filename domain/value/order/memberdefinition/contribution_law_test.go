@@ -23,7 +23,7 @@ func TestContributionDeclaresOrderJoinsAndDirectFold(t *testing.T) {
 		t.Fatalf("source relation = %#v", relation)
 	}
 	provider := relation.CandidateProvider
-	if provider.Member != "value/binary-order/candidates" {
+	if provider.AxisRelation.Member != "value/binary-order/candidates" {
 		t.Fatalf("source provider = %#v", provider)
 	}
 	wantProjections := []struct {

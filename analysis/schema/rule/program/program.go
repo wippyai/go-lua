@@ -71,7 +71,7 @@ func (transport TransportDecl) Available() bool { return transport.Axis.Availabl
 // legacy catalog; every present declaration must carry a Candidate and Fold.
 type Program struct {
 	OperandRole schema.Key
-	Candidate   CandidateDecl
+	Candidate   member.CandidateRef
 	Joins       []JoinDecl
 	Fold        FoldDecl
 	Carry       *CarryDecl

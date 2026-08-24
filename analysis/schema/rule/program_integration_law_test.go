@@ -52,7 +52,7 @@ func TestRuleTemplateDigestIncludesOwnedProgram(t *testing.T) {
 	}
 	base.Program = ruleprogram.Program{
 		OperandRole: "semantic/operand/program-digest",
-		Candidate:   ruleprogram.AxisRelationCandidate(programRuleRelation("candidate/program-digest")),
+		Candidate:   member.AxisRelationCandidate(programRuleRelation("candidate/program-digest")),
 		Fold: ruleprogram.FoldDecl{
 			Reducer: programRuleReducer("reducer/program-digest"),
 			Outputs: []ruleprogram.OutputDecl{{
@@ -88,7 +88,7 @@ func TestRuleTemplateRejectsUnrecordedProgramOperandRole(t *testing.T) {
 		Roles:    []schema.Key{"semantic/operand/declared"},
 		Program: ruleprogram.Program{
 			OperandRole: "semantic/operand/foreign",
-			Candidate:   ruleprogram.AxisRelationCandidate(programRuleRelation("candidate/program-operand-fence")),
+			Candidate:   member.AxisRelationCandidate(programRuleRelation("candidate/program-operand-fence")),
 			Fold: ruleprogram.FoldDecl{
 				Reducer: programRuleReducer("reducer/program-operand-fence"),
 				Outputs: []ruleprogram.OutputDecl{{

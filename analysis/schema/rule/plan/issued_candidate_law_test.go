@@ -4,7 +4,7 @@ import (
 	"testing"
 
 	"github.com/wippyai/go-lua/analysis/schema"
-	"github.com/wippyai/go-lua/analysis/schema/rule/program"
+	"github.com/wippyai/go-lua/analysis/schema/axis/member"
 	"github.com/wippyai/go-lua/internal/framing"
 )
 
@@ -29,7 +29,7 @@ func (entry issuedCandidateEntry) EntryContent(content *framing.Writer) error {
 func configureIssuedRouteFixture(t *testing.T) *planFixture {
 	t.Helper()
 	fixture := configureHeterogeneousRouteFixture(t)
-	fixture.declaration.Candidate = program.IssuedRowCandidate(issuedCandidateRelation)
+	fixture.declaration.Candidate = member.IssuedRowCandidate(issuedCandidateRelation)
 	fixture.issuance = []schema.Entry{issuedCandidateEntry{key: issuedCandidateRelation}}
 	if problem, valid := fixture.declaration.Check(); !valid {
 		t.Fatalf("issued-row route declaration rejected: %+v", problem)
@@ -87,7 +87,7 @@ func TestAxisCandidateStillCarriesItsRelationAddress(t *testing.T) {
 // other relation's coordinates.
 func TestIssuedCandidateRefusesTheExactWriteForm(t *testing.T) {
 	fixture := newPlanFixture(t)
-	fixture.declaration.Candidate = program.IssuedRowCandidate(issuedCandidateRelation)
+	fixture.declaration.Candidate = member.IssuedRowCandidate(issuedCandidateRelation)
 	fixture.issuance = []schema.Entry{issuedCandidateEntry{key: issuedCandidateRelation}}
 	if _, failure := Compile(fixture.seal(t)); !failure.Available() {
 		t.Fatal("an exact write on an issued-row candidate was admitted")

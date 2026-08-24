@@ -24,11 +24,11 @@ func AxisMemberCatalog() member.Catalog {
 	valueAxis := schemaapi.EntryReference{Surface: schemaapi.SurfaceKindAxis, Key: "static-type"}
 	catalog, ok := member.NewCatalog(
 		[]member.Relation{
-			{Key: TypeFactTransfers, Subject: StorageTransferCarrier, CandidateProvider: member.RelationRef{Axis: schemaapi.EntryReference{Surface: schemaapi.SurfaceKind(2), Key: "static-type"}, Member: "static-type/storage-transfer/candidates"}},
-			{Key: TypeFactSources, Subject: TypeFactCarrier, CandidateProvider: member.RelationRef{Axis: schemaapi.EntryReference{Surface: schemaapi.SurfaceKind(2), Key: "static-type"}, Member: "static-type/storage-transfer/candidates"}, Inputs: []member.Carrier{StorageTransferCarrier}},
+			{Key: TypeFactTransfers, Subject: StorageTransferCarrier, CandidateProvider: member.AxisRelationCandidate(member.RelationRef{Axis: schemaapi.EntryReference{Surface: schemaapi.SurfaceKind(2), Key: "static-type"}, Member: "static-type/storage-transfer/candidates"})},
+			{Key: TypeFactSources, Subject: TypeFactCarrier, CandidateProvider: member.AxisRelationCandidate(member.RelationRef{Axis: schemaapi.EntryReference{Surface: schemaapi.SurfaceKind(2), Key: "static-type"}, Member: "static-type/storage-transfer/candidates"}), Inputs: []member.Carrier{StorageTransferCarrier}},
 		},
 		[]member.Projection{
-			{Key: TypeFactSourceKey, Relation: TypeFactSources, Role: member.Key, Result: CoordinateCarrier, CandidateProvider: member.RelationRef{Axis: schemaapi.EntryReference{Surface: schemaapi.SurfaceKind(2), Key: "static-type"}, Member: "static-type/storage-transfer/candidates"}},
+			{Key: TypeFactSourceKey, Relation: TypeFactSources, Role: member.Key, Result: CoordinateCarrier, CandidateProvider: member.AxisRelationCandidate(member.RelationRef{Axis: schemaapi.EntryReference{Surface: schemaapi.SurfaceKind(2), Key: "static-type"}, Member: "static-type/storage-transfer/candidates"})},
 		},
 		[]member.Reducer{
 			{Key: IdentityTypeFactReducer, Inputs: []member.ReducerInput{

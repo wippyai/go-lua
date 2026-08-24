@@ -76,14 +76,17 @@ func (role Role) Available() bool { return role >= Key && role <= Attribute }
 
 // Relation is one owner-issued relation declaration. Inputs retain authored
 // carrier order; an empty input list is valid for a zero-input relation.
-// CandidateProvider is the explicit owner-qualified relation whose typed
-// candidate row supplies the runtime join. It is never inferred from a
-// carrier's Go type or from same-axis placement.
+// CandidateProvider is the explicit authority whose typed candidate row
+// supplies the runtime join. It is never inferred from a carrier's Go type or
+// from same-axis placement. Its two arms are the same choice a rule states
+// over its own candidate: an owner-qualified axis relation, or an issuance
+// relation whose target rows are Program rows and which therefore publishes no
+// axis directory at all.
 type Relation struct {
 	Key               schema.Key
 	Subject           Carrier
 	Inputs            []Carrier
-	CandidateProvider RelationRef
+	CandidateProvider CandidateRef
 	// Parent names the relation whose candidate row each of this relation's
 	// rows hangs off. A relation that declares one is a nested ordered member
 	// set - a bounded port list - addressed by (parent candidate, ordinal)
@@ -128,7 +131,7 @@ type Projection struct {
 	Relation          schema.Key
 	Role              Role
 	Result            Carrier
-	CandidateProvider RelationRef
+	CandidateProvider CandidateRef
 }
 
 func (projection Projection) Available() bool {
@@ -594,14 +597,10 @@ func (catalog Catalog) CarryTransformOrdinal(key schema.Key) (uint32, bool) {
 func (catalog Catalog) References() schema.EntryReferences {
 	var references schema.EntryReferences
 	for _, relation := range catalog.Relations {
-		if relation.CandidateProvider.Axis.Declared() {
-			references = append(references, relation.CandidateProvider.Axis)
-		}
+		references = append(references, relation.CandidateProvider.References()...)
 	}
 	for _, projection := range catalog.Projections {
-		if projection.CandidateProvider.Axis.Declared() {
-			references = append(references, projection.CandidateProvider.Axis)
-		}
+		references = append(references, projection.CandidateProvider.References()...)
 	}
 	for _, reducer := range catalog.Reducers {
 		for _, input := range reducer.Inputs {
@@ -629,6 +628,11 @@ const (
 	// it emitted before the nested form existed, so adding the form remints
 	// no declaration that does not use it.
 	contentRecordNestedSet uint64 = 10
+	// contentRecordIssuedProvider is written only by a relation or projection
+	// whose candidate authority is an issued Program row. An axis-relation
+	// provider emits the exact reference it emitted before the choice existed,
+	// so stating the choice remints no catalog that keeps the arm it had.
+	contentRecordIssuedProvider uint64 = 11
 )
 
 // WriteContent writes the catalog's canonical declaration stream. Collection
@@ -650,7 +654,7 @@ func (catalog Catalog) WriteContent(content *framing.Writer) error {
 		if err := content.String(string(relation.Subject)); err != nil {
 			return err
 		}
-		if err := writeRelationReference(content, relation.CandidateProvider); err != nil {
+		if err := writeCandidateProvider(content, relation.CandidateProvider); err != nil {
 			return err
 		}
 		if err := content.Count(uint64(len(relation.Inputs))); err != nil {
@@ -696,7 +700,7 @@ func (catalog Catalog) WriteContent(content *framing.Writer) error {
 		if err := content.String(string(projection.Result)); err != nil {
 			return err
 		}
-		if err := writeRelationReference(content, projection.CandidateProvider); err != nil {
+		if err := writeCandidateProvider(content, projection.CandidateProvider); err != nil {
 			return err
 		}
 	}
@@ -775,6 +779,20 @@ func (catalog Catalog) WriteContent(content *framing.Writer) error {
 		}
 	}
 	return nil
+}
+
+// writeCandidateProvider emits whichever arm the provider states. The axis arm
+// writes the exact relation reference it wrote before the choice existed, so a
+// catalog that keeps the arm it already had is not reminted; the issued arm
+// writes its own record.
+func writeCandidateProvider(content *framing.Writer, provider CandidateRef) error {
+	if !provider.Issued() {
+		return writeRelationReference(content, provider.AxisRelation)
+	}
+	if err := content.Record(contentRecordIssuedProvider); err != nil {
+		return err
+	}
+	return content.String(string(provider.IssuedRow))
 }
 
 func writeRelationReference(content *framing.Writer, reference RelationRef) error {

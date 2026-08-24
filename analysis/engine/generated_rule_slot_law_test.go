@@ -161,7 +161,7 @@ func newGeneratedRuleLawFixture(t testing.TB, variant generatedRuleLawVariant, r
 	}
 	declaration := program.Program{
 		OperandRole: generatedRuleLawOperandRole,
-		Candidate:   program.AxisRelationCandidate(member.RelationRef{Axis: axisReference, Member: generatedRuleLawCandidate}),
+		Candidate:   member.AxisRelationCandidate(member.RelationRef{Axis: axisReference, Member: generatedRuleLawCandidate}),
 		Joins:       joins,
 		Fold: program.FoldDecl{
 			Reducer: member.ReducerRef{Axis: axisReference, Member: generatedRuleLawReducer},
@@ -176,7 +176,7 @@ func newGeneratedRuleLawFixture(t testing.TB, variant generatedRuleLawVariant, r
 	if variant == generatedRuleLawSource {
 		declaration = program.Program{
 			OperandRole: generatedRuleLawOperandRole,
-			Candidate:   program.AxisRelationCandidate(member.RelationRef{Axis: axisReference, Member: generatedRuleLawCandidate}),
+			Candidate:   member.AxisRelationCandidate(member.RelationRef{Axis: axisReference, Member: generatedRuleLawCandidate}),
 			Fold: program.FoldDecl{
 				Reducer: member.ReducerRef{Axis: axisReference, Member: generatedRuleLawReducer},
 				Outputs: []program.OutputDecl{output},
@@ -207,18 +207,18 @@ func newGeneratedRuleLawFixture(t testing.TB, variant generatedRuleLawVariant, r
 		}}
 	}
 	projections := []member.Projection{
-		{Key: generatedRuleLawKey, Relation: generatedRuleLawJoin, Role: member.Key, Result: generatedRuleLawKeyCarrier, CandidateProvider: generatedRuleLawProvider(generatedRuleLawJoin)},
-		{Key: generatedRuleLawDestination, Relation: generatedRuleLawCandidate, Role: member.Destination, Result: generatedRuleLawKeyCarrier, CandidateProvider: generatedRuleLawProvider(generatedRuleLawCandidate)},
+		{Key: generatedRuleLawKey, Relation: generatedRuleLawJoin, Role: member.Key, Result: generatedRuleLawKeyCarrier, CandidateProvider: member.AxisRelationCandidate(generatedRuleLawProvider(generatedRuleLawJoin))},
+		{Key: generatedRuleLawDestination, Relation: generatedRuleLawCandidate, Role: member.Destination, Result: generatedRuleLawKeyCarrier, CandidateProvider: member.AxisRelationCandidate(generatedRuleLawProvider(generatedRuleLawCandidate))},
 	}
 	if variant == generatedRuleLawSummary {
-		projections = append(projections, member.Projection{Key: generatedRuleLawPredicate, Relation: generatedRuleLawJoin, Role: member.Predicate, Result: generatedRuleLawKeyCarrier, CandidateProvider: generatedRuleLawProvider(generatedRuleLawJoin)})
+		projections = append(projections, member.Projection{Key: generatedRuleLawPredicate, Relation: generatedRuleLawJoin, Role: member.Predicate, Result: generatedRuleLawKeyCarrier, CandidateProvider: member.AxisRelationCandidate(generatedRuleLawProvider(generatedRuleLawJoin))})
 	}
 	relations := []member.Relation{
-		{Key: generatedRuleLawCandidate, Subject: generatedRuleLawCandidateFact, CandidateProvider: generatedRuleLawProvider(generatedRuleLawCandidate)},
-		{Key: generatedRuleLawJoin, Subject: generatedRuleLawJoinFact, Inputs: []member.Carrier{generatedRuleLawCandidateFact}, CandidateProvider: generatedRuleLawProvider(generatedRuleLawCandidate)},
+		{Key: generatedRuleLawCandidate, Subject: generatedRuleLawCandidateFact, CandidateProvider: member.AxisRelationCandidate(generatedRuleLawProvider(generatedRuleLawCandidate))},
+		{Key: generatedRuleLawJoin, Subject: generatedRuleLawJoinFact, Inputs: []member.Carrier{generatedRuleLawCandidateFact}, CandidateProvider: member.AxisRelationCandidate(generatedRuleLawProvider(generatedRuleLawCandidate))},
 	}
 	if variant == generatedRuleLawSelected || variant == generatedRuleLawRouteOutput {
-		relations = append(relations, member.Relation{Key: generatedRuleLawRouteJoin, Subject: generatedRuleLawJoinFact, Inputs: []member.Carrier{generatedRuleLawJoinFact}, CandidateProvider: generatedRuleLawProvider(generatedRuleLawJoin)})
+		relations = append(relations, member.Relation{Key: generatedRuleLawRouteJoin, Subject: generatedRuleLawJoinFact, Inputs: []member.Carrier{generatedRuleLawJoinFact}, CandidateProvider: member.AxisRelationCandidate(generatedRuleLawProvider(generatedRuleLawJoin))})
 	}
 	inputs := []member.ReducerInput{{
 		Axis: axisReference, Carrier: generatedRuleLawJoinFact,
@@ -242,10 +242,10 @@ func newGeneratedRuleLawFixture(t testing.TB, variant generatedRuleLawVariant, r
 	factCarrier := generatedRuleLawJoinFact
 	if variant == generatedRuleLawSource {
 		projections = []member.Projection{
-			{Key: generatedRuleLawDestination, Relation: generatedRuleLawCandidate, Role: member.Destination, Result: generatedRuleLawKeyCarrier, CandidateProvider: generatedRuleLawProvider(generatedRuleLawCandidate)},
+			{Key: generatedRuleLawDestination, Relation: generatedRuleLawCandidate, Role: member.Destination, Result: generatedRuleLawKeyCarrier, CandidateProvider: member.AxisRelationCandidate(generatedRuleLawProvider(generatedRuleLawCandidate))},
 		}
 		relations = []member.Relation{
-			{Key: generatedRuleLawCandidate, Subject: generatedRuleLawCandidateFact, CandidateProvider: generatedRuleLawProvider(generatedRuleLawCandidate)},
+			{Key: generatedRuleLawCandidate, Subject: generatedRuleLawCandidateFact, CandidateProvider: member.AxisRelationCandidate(generatedRuleLawProvider(generatedRuleLawCandidate))},
 		}
 		reducers = []member.Reducer{{
 			Key:     generatedRuleLawReducer,
@@ -256,11 +256,11 @@ func newGeneratedRuleLawFixture(t testing.TB, variant generatedRuleLawVariant, r
 	}
 	if variant == generatedRuleLawSelected || variant == generatedRuleLawRouteOutput {
 		projections = append(projections,
-			member.Projection{Key: generatedRuleLawRouteKey, Relation: generatedRuleLawRouteJoin, Role: member.Key, Result: generatedRuleLawKeyCarrier, CandidateProvider: generatedRuleLawProvider(generatedRuleLawJoin)},
-			member.Projection{Key: generatedRuleLawRoutePredicate, Relation: generatedRuleLawRouteJoin, Role: member.Predicate, Result: generatedRuleLawKeyCarrier, CandidateProvider: generatedRuleLawProvider(generatedRuleLawJoin)},
+			member.Projection{Key: generatedRuleLawRouteKey, Relation: generatedRuleLawRouteJoin, Role: member.Key, Result: generatedRuleLawKeyCarrier, CandidateProvider: member.AxisRelationCandidate(generatedRuleLawProvider(generatedRuleLawJoin))},
+			member.Projection{Key: generatedRuleLawRoutePredicate, Relation: generatedRuleLawRouteJoin, Role: member.Predicate, Result: generatedRuleLawKeyCarrier, CandidateProvider: member.AxisRelationCandidate(generatedRuleLawProvider(generatedRuleLawJoin))},
 		)
 		if variant == generatedRuleLawRouteOutput {
-			projections = append(projections, member.Projection{Key: generatedRuleLawRouteDestination, Relation: generatedRuleLawRouteJoin, Role: member.Destination, Result: generatedRuleLawKeyCarrier, CandidateProvider: generatedRuleLawProvider(generatedRuleLawJoin)})
+			projections = append(projections, member.Projection{Key: generatedRuleLawRouteDestination, Relation: generatedRuleLawRouteJoin, Role: member.Destination, Result: generatedRuleLawKeyCarrier, CandidateProvider: member.AxisRelationCandidate(generatedRuleLawProvider(generatedRuleLawJoin))})
 		}
 	}
 	memberCatalog, catalogOK := member.NewCatalog(relations, projections, reducers, transforms)

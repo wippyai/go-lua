@@ -74,7 +74,7 @@ func providerDirectoryMetadata() membergenerator.Metadata {
 		Relations: []membergenerator.RelationBinding{{
 			Key:                    providerCandidates,
 			Subject:                candidate,
-			CandidateProvider:      provider,
+			CandidateProvider:      member.AxisRelationCandidate(provider),
 			CandidateResolver:      providerSymbol("example/value", "StorageTransferForOccurrence", owner),
 			CandidateOrdinal:       providerSymbol("example/value", "StorageTransferOrdinal", owner),
 			CandidateAt:            providerSymbol("example/value", "StorageTransferAt", owner),
@@ -104,7 +104,7 @@ func providerConsumerMetadata() membergenerator.Metadata {
 			Key:                    providerRoutes,
 			Subject:                fact,
 			Inputs:                 []memberdefinition.GoType{candidate},
-			CandidateProvider:      provider,
+			CandidateProvider:      member.AxisRelationCandidate(provider),
 			CandidateRelation:      0,
 			CandidateProviderLocal: false,
 		}},
@@ -113,19 +113,19 @@ func providerConsumerMetadata() membergenerator.Metadata {
 				Key: providerRouteKey, Relation: providerRoutes, Role: member.Key,
 				Result:            providerType("example/placement", "Coordinate"),
 				Accessor:          providerSymbol("example/placement", "RouteKey", fact),
-				CandidateProvider: provider, CandidateRelation: 0, CandidateProviderLocal: false,
+				CandidateProvider: member.AxisRelationCandidate(provider), CandidateRelation: 0, CandidateProviderLocal: false,
 			},
 			{
 				Key: providerPredicate, Relation: providerRoutes, Role: member.Predicate,
 				Result:            providerType("example/placement", "Tag"),
 				Accessor:          providerSymbol("example/placement", "Predicate", fact),
-				CandidateProvider: provider, CandidateRelation: 0, CandidateProviderLocal: false,
+				CandidateProvider: member.AxisRelationCandidate(provider), CandidateRelation: 0, CandidateProviderLocal: false,
 			},
 			{
 				Key: providerDestination, Relation: providerRoutes, Role: member.Destination,
 				Result:            providerType("example/placement", "Coordinate"),
 				Accessor:          providerSymbol("example/placement", "Destination", fact),
-				CandidateProvider: provider, CandidateRelation: 0, CandidateProviderLocal: false,
+				CandidateProvider: member.AxisRelationCandidate(provider), CandidateRelation: 0, CandidateProviderLocal: false,
 			},
 		},
 		Reducers: []membergenerator.ReducerBinding{{
@@ -148,7 +148,7 @@ func providerCatalogsFor(t *testing.T, spareJoin bool) (member.Catalog, member.C
 	t.Helper()
 	valueProvider := member.RelationRef{Axis: providerAxisRef(providerValueAxis), Member: providerCandidates}
 	valueCatalog, valueOK := member.NewCatalog(
-		[]member.Relation{{Key: providerCandidates, Subject: "carrier/value/storage-transfer", CandidateProvider: valueProvider}},
+		[]member.Relation{{Key: providerCandidates, Subject: "carrier/value/storage-transfer", CandidateProvider: member.AxisRelationCandidate(valueProvider)}},
 		nil, nil, nil,
 	)
 	if !valueOK {
@@ -156,11 +156,11 @@ func providerCatalogsFor(t *testing.T, spareJoin bool) (member.Catalog, member.C
 	}
 	placementProvider := member.RelationRef{Axis: providerAxisRef(providerValueAxis), Member: providerCandidates}
 	placementCatalog, placementOK := member.NewCatalog(
-		[]member.Relation{{Key: providerRoutes, Subject: "carrier/placement/fact", Inputs: []member.Carrier{"carrier/value/storage-transfer"}, CandidateProvider: placementProvider}},
+		[]member.Relation{{Key: providerRoutes, Subject: "carrier/placement/fact", Inputs: []member.Carrier{"carrier/value/storage-transfer"}, CandidateProvider: member.AxisRelationCandidate(placementProvider)}},
 		[]member.Projection{
-			{Key: providerRouteKey, Relation: providerRoutes, Role: member.Key, Result: "carrier/placement/key", CandidateProvider: placementProvider},
-			{Key: providerPredicate, Relation: providerRoutes, Role: member.Predicate, Result: "carrier/placement/tag", CandidateProvider: placementProvider},
-			{Key: providerDestination, Relation: providerRoutes, Role: member.Destination, Result: "carrier/placement/key", CandidateProvider: placementProvider},
+			{Key: providerRouteKey, Relation: providerRoutes, Role: member.Key, Result: "carrier/placement/key", CandidateProvider: member.AxisRelationCandidate(placementProvider)},
+			{Key: providerPredicate, Relation: providerRoutes, Role: member.Predicate, Result: "carrier/placement/tag", CandidateProvider: member.AxisRelationCandidate(placementProvider)},
+			{Key: providerDestination, Relation: providerRoutes, Role: member.Destination, Result: "carrier/placement/key", CandidateProvider: member.AxisRelationCandidate(placementProvider)},
 		},
 		[]member.Reducer{{Key: providerReducer, Inputs: providerReducerInputs(spareJoin), Outputs: []member.ReducerOutput{{Axis: providerAxisRef(providerPlacementAxis), Carrier: "carrier/placement/fact"}}}},
 		nil,
@@ -208,7 +208,7 @@ func providerDeclaration(spareJoin bool) program.Program {
 	}
 	return program.Program{
 		OperandRole: vocabulary.RoleKey("provider/operand"),
-		Candidate:   program.AxisRelationCandidate(member.RelationRef{Axis: valueAxis, Member: providerCandidates}),
+		Candidate:   member.AxisRelationCandidate(member.RelationRef{Axis: valueAxis, Member: providerCandidates}),
 		Joins:       joins,
 		Fold: program.FoldDecl{
 			Reducer: member.ReducerRef{Axis: placementAxis, Member: providerReducer}, Inputs: inputs,
@@ -323,7 +323,7 @@ func TestBuildRejectsForeignProviderRosterDrift(t *testing.T) {
 			roster[0].Relations[0].Subject = providerType("example/value", "WrongCandidate")
 		}},
 		{name: "ownership-drift", mutate: func(roster []membergenerator.Metadata) {
-			roster[0].Relations[0].CandidateProvider.Member = "value/other-candidates"
+			roster[0].Relations[0].CandidateProvider.AxisRelation.Member = "value/other-candidates"
 		}},
 	}
 	for _, test := range tests {

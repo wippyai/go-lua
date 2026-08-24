@@ -29,7 +29,7 @@ func RuleEntry() rule.Spec {
 		Roles:    []schema.Key{"semantic/operand/heap/allocation-ingress"},
 		Program: program.Program{
 			OperandRole: "semantic/operand/heap/allocation-ingress",
-			Candidate:   program.AxisRelationCandidate(member.RelationRef{Axis: heapAxis, Member: heapdomain.IngressSeeds}),
+			Candidate:   member.AxisRelationCandidate(member.RelationRef{Axis: heapAxis, Member: heapdomain.IngressSeeds}),
 			Fold: program.FoldDecl{
 				Reducer: member.ReducerRef{Axis: heapAxis, Member: heapdomain.IngressReducer},
 				Outputs: []program.OutputDecl{{

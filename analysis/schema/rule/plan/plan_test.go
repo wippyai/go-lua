@@ -78,7 +78,7 @@ func newPlanFixture(t *testing.T) *planFixture {
 	mainAxis := schema.EntryReference{Surface: schema.SurfaceKindAxis, Key: planAxisKey}
 	declaration := program.Program{
 		OperandRole: vocabulary.RoleKey("plan/operand"),
-		Candidate:   program.AxisRelationCandidate(member.RelationRef{Axis: mainAxis, Member: planCandidateRelation}),
+		Candidate:   member.AxisRelationCandidate(member.RelationRef{Axis: mainAxis, Member: planCandidateRelation}),
 		Joins: []program.JoinDecl{{
 			Sources:  []program.SourceRef{program.CandidateSource()},
 			Relation: member.RelationRef{Axis: mainAxis, Member: planJoinRelation},
@@ -122,13 +122,13 @@ func newPlanFixture(t *testing.T) *planFixture {
 			{
 				Key:               planCandidateRelation,
 				Subject:           planCandidateCarrier,
-				CandidateProvider: member.RelationRef{Axis: mainAxis, Member: planCandidateRelation},
+				CandidateProvider: member.AxisRelationCandidate(member.RelationRef{Axis: mainAxis, Member: planCandidateRelation}),
 			},
 			{
 				Key:               planJoinRelation,
 				Subject:           planFactCarrier,
 				Inputs:            []member.Carrier{planCandidateCarrier},
-				CandidateProvider: member.RelationRef{Axis: mainAxis, Member: planCandidateRelation},
+				CandidateProvider: member.AxisRelationCandidate(member.RelationRef{Axis: mainAxis, Member: planCandidateRelation}),
 			},
 		},
 		[]member.Projection{
@@ -137,21 +137,21 @@ func newPlanFixture(t *testing.T) *planFixture {
 				Relation:          planJoinRelation,
 				Role:              member.Key,
 				Result:            planKeyCarrier,
-				CandidateProvider: member.RelationRef{Axis: mainAxis, Member: planCandidateRelation},
+				CandidateProvider: member.AxisRelationCandidate(member.RelationRef{Axis: mainAxis, Member: planCandidateRelation}),
 			},
 			{
 				Key:               planDestination,
 				Relation:          planCandidateRelation,
 				Role:              member.Destination,
 				Result:            planKeyCarrier,
-				CandidateProvider: member.RelationRef{Axis: mainAxis, Member: planCandidateRelation},
+				CandidateProvider: member.AxisRelationCandidate(member.RelationRef{Axis: mainAxis, Member: planCandidateRelation}),
 			},
 			{
 				Key:               planJoinPredicate,
 				Relation:          planJoinRelation,
 				Role:              member.Predicate,
 				Result:            planKeyCarrier,
-				CandidateProvider: member.RelationRef{Axis: mainAxis, Member: planCandidateRelation},
+				CandidateProvider: member.AxisRelationCandidate(member.RelationRef{Axis: mainAxis, Member: planCandidateRelation}),
 			},
 		},
 		[]member.Reducer{{

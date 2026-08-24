@@ -52,7 +52,7 @@ func specimenRoster(t testing.TB) definition.Roster {
 		Relations: []definition.Relation{
 			{
 				Name: "Candidates", Key: "specimen/candidates", Subject: "KeyCarrier",
-				CandidateProvider: provider,
+				CandidateProvider: member.AxisRelationCandidate(provider),
 				CandidateResolver: specimenMethod("CandidateForOccurrence", "Schema", 0),
 				CandidateOrdinal:  specimenMethod("CandidateOrdinal", "Schema", 0),
 				CandidateAt:       specimenMethod("CandidateAt", "Schema", 0),
@@ -60,18 +60,18 @@ func specimenRoster(t testing.TB) definition.Roster {
 			{
 				Name: "Predecessors", Key: "specimen/predecessors", Subject: "FactCarrier",
 				Inputs:            []definition.RelationInput{{Carrier: "KeyCarrier"}},
-				CandidateProvider: provider,
+				CandidateProvider: member.AxisRelationCandidate(provider),
 			},
 		},
 		Projections: []definition.Projection{
 			{
 				Name: "PredecessorKey", Key: "specimen/predecessor-key", Relation: "Predecessors",
-				CandidateProvider: provider, Role: member.Key, Result: "KeyCarrier",
+				CandidateProvider: member.AxisRelationCandidate(provider), Role: member.Key, Result: "KeyCarrier",
 				Accessor: specimenMethod("Coordinate", "Key", -1),
 			},
 			{
 				Name: "Coordinate", Key: "specimen/coordinate", Relation: "Candidates",
-				CandidateProvider: provider, Role: member.Destination, Result: "KeyCarrier",
+				CandidateProvider: member.AxisRelationCandidate(provider), Role: member.Destination, Result: "KeyCarrier",
 				Accessor: specimenMethod("Coordinate", "Key", -1),
 			},
 		},
@@ -115,7 +115,7 @@ func specimenSpec() rule.Spec {
 		Roles:    []schema.Key{"semantic/operand/specimen"},
 		Program: program.Program{
 			OperandRole: "semantic/operand/specimen",
-			Candidate:   program.AxisRelationCandidate(member.RelationRef{Axis: specimenAxis(), Member: "specimen/candidates"}),
+			Candidate:   member.AxisRelationCandidate(member.RelationRef{Axis: specimenAxis(), Member: "specimen/candidates"}),
 			Joins: []program.JoinDecl{{
 				Sources:  []program.SourceRef{program.CandidateSource()},
 				Relation: member.RelationRef{Axis: specimenAxis(), Member: "specimen/predecessors"},

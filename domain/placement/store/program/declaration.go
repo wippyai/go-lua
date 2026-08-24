@@ -105,7 +105,7 @@ func Storage() ruleprogram.Program {
 	placementDenominator := denominatorReference("coordinates/placement")
 	return ruleprogram.Program{
 		OperandRole: vocabulary.RoleKey(OperandRole),
-		Candidate: ruleprogram.AxisRelationCandidate(member.RelationRef{
+		Candidate: member.AxisRelationCandidate(member.RelationRef{
 			Axis:   valueAxis,
 			Member: StorageTransferCandidates,
 		}),

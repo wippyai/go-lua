@@ -115,10 +115,13 @@ type Relation struct {
 	// row into that axis's source. Left empty it is the contribution's own
 	// axis, which is what a rule declaring rows of the axis it writes means.
 	Axis schema.Key
-	// CandidateProvider explicitly names the owner-qualified dense directory
-	// used by this relation. It is required even when the provider is a
-	// same-axis relation; no carrier-type inference is permitted.
-	CandidateProvider member.RelationRef
+	// CandidateProvider explicitly names the candidate authority this relation
+	// is addressed through. It is required even when the provider is a
+	// same-axis relation; no carrier-type inference is permitted. Its issued
+	// arm names an issuance relation whose target rows are Program rows: there
+	// is no owner directory to name, so the three dense-directory symbols
+	// below are absent on that arm rather than optional.
+	CandidateProvider member.CandidateRef
 	CandidateResolver GoSymbol
 	// CandidateOrdinal and CandidateAt are the two dense-directory symbols
 	// paired with CandidateResolver. They are optional together: a relation
@@ -194,7 +197,7 @@ func (relation Relation) memberSetComplete(relations map[string]Relation, byKey 
 	if _, ordinalOK := carriers[relation.MemberOrdinal]; !ordinalOK {
 		return false
 	}
-	if relation.CandidateProvider.Member != relation.Key {
+	if relation.CandidateProvider.AxisRelation.Member != relation.Key {
 		return false
 	}
 	if symbolOptional(relation.CandidateOrdinal) || symbolOptional(relation.CandidateAt) {
@@ -271,7 +274,7 @@ type Projection struct {
 	Role              member.Role
 	Result            string
 	Accessor          GoSymbol
-	CandidateProvider member.RelationRef
+	CandidateProvider member.CandidateRef
 	// Axis is the axis whose rows this projection reads, declared under the
 	// same law as a relation's. A projection names a relation, so it folds into
 	// the source its relation does.
@@ -608,7 +611,7 @@ func (definition Definition) Complete() bool {
 			// built from declared relation inputs and static sealed axes; it can
 			// neither replace a provider directory nor coexist with ingress
 			// materialization.
-			if !relation.Derivation.complete() || relation.CandidateProvider.Axis.Key == definition.Axis && relation.CandidateProvider.Member == relation.Key ||
+			if !relation.Derivation.complete() || relation.CandidateProvider.AxisRelation.Axis.Key == definition.Axis && relation.CandidateProvider.AxisRelation.Member == relation.Key ||
 				len(relation.Inputs) == 0 || !resolverOptional || !ordinalOptional || !atOptional || !countOptional || !materializeOptional ||
 				!symbolOptional(relation.CandidateIdentityAt) {
 				return false
@@ -690,7 +693,18 @@ func (definition Definition) Complete() bool {
 		if !derivationOptional(relation.Derivation) && !scheduledForDeath(definition.Axis, relation.Key, relation.Derivation.Build) {
 			return false
 		}
-		if relation.CandidateProvider.Axis.Key != definition.Axis {
+		// An issued provider names no axis directory at all. The three dense
+		// symbols are absent on that arm rather than optional, and the relation
+		// is addressed through the Program row the rule was issued for.
+		if relation.CandidateProvider.Issued() {
+			if !symbolOptional(relation.CandidateResolver) || !symbolOptional(relation.CandidateOrdinal) ||
+				!symbolOptional(relation.CandidateAt) || !symbolOptional(relation.CandidateCount) ||
+				!symbolOptional(relation.Materialize) || !symbolOptional(relation.CandidateIdentityAt) {
+				return false
+			}
+			continue
+		}
+		if relation.CandidateProvider.AxisRelation.Axis.Key != definition.Axis {
 			// Foreign ownership is resolved against the composition roster.
 			// The consumer definition must not retain a second owner directory.
 			if !symbolOptional(relation.CandidateResolver) || !symbolOptional(relation.CandidateOrdinal) || !symbolOptional(relation.CandidateAt) || !symbolOptional(relation.CandidateCount) || !symbolOptional(relation.Materialize) || !symbolOptional(relation.CandidateIdentityAt) {
@@ -698,7 +712,7 @@ func (definition Definition) Complete() bool {
 			}
 			continue
 		}
-		provider, providerOK := relationsByKey[relation.CandidateProvider.Member]
+		provider, providerOK := relationsByKey[relation.CandidateProvider.AxisRelation.Member]
 		if !providerOK {
 			return false
 		}

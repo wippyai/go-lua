@@ -17,10 +17,10 @@ func TestAxisMemberCatalogOwnsStorageRouteGeometry(t *testing.T) {
 	tag, tagOK := catalog.Projection(StorageRouteTag)
 	destination, destinationOK := catalog.Projection(StorageRouteDestination)
 	reducer, reducerOK := catalog.Reducer(StorageReducer)
-	provider := member.RelationRef{
+	provider := member.AxisRelationCandidate(member.RelationRef{
 		Axis:   schema.EntryReference{Surface: schema.SurfaceKindAxis, Key: "value"},
 		Member: "value/storage-transfer/candidates",
-	}
+	})
 	if !relationOK || relation.Subject != StorageRouteCarrier || len(relation.Inputs) != 2 ||
 		relation.Inputs[0] != StorageTransferCarrier || relation.Inputs[1] != ValueFactCarrier || relation.CandidateProvider != provider ||
 		!keyOK || key.Relation != StorageRoutes || key.Role != member.Key || key.Result != PlacementKeyCarrier || key.CandidateProvider != provider ||

@@ -147,7 +147,7 @@ func ReturnEscape() ruleprogram.Program {
 	placement := placementAxis()
 	return ruleprogram.Program{
 		OperandRole: vocabulary.RoleKey(OperandRole),
-		Candidate: ruleprogram.AxisRelationCandidate(member.RelationRef{
+		Candidate: member.AxisRelationCandidate(member.RelationRef{
 			Axis:   value,
 			Member: returnBoundaryCandidates,
 		}),

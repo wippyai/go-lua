@@ -20,8 +20,8 @@ func testReducerInput(axis schema.EntryReference) member.ReducerInput {
 func testMemberCatalog() member.Catalog {
 	provider := member.RelationRef{Axis: schema.EntryReference{Surface: schema.SurfaceKindAxis, Key: "value"}, Member: "relation/input"}
 	catalog, ok := member.NewCatalog(
-		[]member.Relation{{Key: "relation/input", Subject: "relation/subject", Inputs: []member.Carrier{"relation/input"}, CandidateProvider: provider}},
-		[]member.Projection{{Key: "projection/key", Relation: "relation/input", Role: member.Key, Result: "projection/result", CandidateProvider: provider}},
+		[]member.Relation{{Key: "relation/input", Subject: "relation/subject", Inputs: []member.Carrier{"relation/input"}, CandidateProvider: member.AxisRelationCandidate(provider)}},
+		[]member.Projection{{Key: "projection/key", Relation: "relation/input", Role: member.Key, Result: "projection/result", CandidateProvider: member.AxisRelationCandidate(provider)}},
 		[]member.Reducer{{
 			Key:     "reducer/output",
 			Inputs:  []member.ReducerInput{testReducerInput(schema.EntryReference{Surface: schema.SurfaceKindAxis, Key: "value"})},

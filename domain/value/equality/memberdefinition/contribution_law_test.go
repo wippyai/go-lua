@@ -23,7 +23,7 @@ func TestContributionDeclaresEqualityJoinsAndDirectFold(t *testing.T) {
 		t.Fatalf("source relation = %#v", relation)
 	}
 	provider := relation.CandidateProvider
-	if provider.Member != "value/binary-equality/candidates" {
+	if provider.AxisRelation.Member != "value/binary-equality/candidates" {
 		t.Fatalf("source provider = %#v", provider)
 	}
 	wantProjections := []struct {

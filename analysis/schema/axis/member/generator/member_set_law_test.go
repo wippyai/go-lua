@@ -26,7 +26,7 @@ func memberSetDefinition() definition.Definition {
 		definition.Carrier{Name: "PortOrdinalCarrier", Key: "carrier/self/port-ordinal", Type: definition.GoType{Name: "uint32"}})
 	source.Relations = append(source.Relations, definition.Relation{
 		Name: "Ports", Key: "self/ports", Subject: "Port",
-		CandidateProvider: member.RelationRef{Axis: axis, Member: "self/ports"},
+		CandidateProvider: member.AxisRelationCandidate(member.RelationRef{Axis: axis, Member: "self/ports"}),
 		CandidateResolver: method("PortForOccurrence", owner),
 		CandidateOrdinal:  method("PortOrdinal", owner),
 		CandidateAt:       method("PortAt", owner),
@@ -37,7 +37,7 @@ func memberSetDefinition() definition.Definition {
 	})
 	source.Projections = append(source.Projections, definition.Projection{
 		Name: "PortKey", Key: "self/port/key", Relation: "Ports", Role: member.Key, Result: "Key",
-		CandidateProvider: member.RelationRef{Axis: axis, Member: "self/ports"},
+		CandidateProvider: member.AxisRelationCandidate(member.RelationRef{Axis: axis, Member: "self/ports"}),
 		Accessor:          method("Key", port),
 	})
 	return source
@@ -62,7 +62,7 @@ func TestANestedMemberSetIsWholeOrAbsent(t *testing.T) {
 		{name: "no-count", amend: func(relation *definition.Relation) { relation.MemberCount = definition.GoSymbol{} }},
 		{name: "no-accessor", amend: func(relation *definition.Relation) { relation.MemberAt = definition.GoSymbol{} }},
 		{name: "parent-is-itself", amend: func(relation *definition.Relation) {
-			relation.MemberParent = relation.CandidateProvider
+			relation.MemberParent = relation.CandidateProvider.AxisRelation
 		}},
 	} {
 		t.Run(test.name, func(t *testing.T) {
@@ -84,7 +84,7 @@ func TestANestedMemberSetIsWholeOrAbsent(t *testing.T) {
 func TestAMemberSetRelationIsAddressedByItsOwnDirectory(t *testing.T) {
 	source := memberSetDefinition()
 	relation := &source.Relations[len(source.Relations)-1]
-	relation.CandidateProvider = member.RelationRef{Axis: schema.EntryReference{Surface: schema.SurfaceKindAxis, Key: "self"}, Member: "self/candidates"}
+	relation.CandidateProvider = member.AxisRelationCandidate(member.RelationRef{Axis: schema.EntryReference{Surface: schema.SurfaceKindAxis, Key: "self"}, Member: "self/candidates"})
 	relation.CandidateResolver = definition.GoSymbol{}
 	relation.CandidateOrdinal = definition.GoSymbol{}
 	relation.CandidateAt = definition.GoSymbol{}

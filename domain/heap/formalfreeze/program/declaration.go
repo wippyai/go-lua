@@ -102,7 +102,7 @@ func FormalFreeze() ruleprogram.Program {
 	heapDenominator := denominatorReference("coordinates/heap")
 	return ruleprogram.Program{
 		OperandRole: vocabulary.RoleKey(OperandRole),
-		Candidate: ruleprogram.AxisRelationCandidate(member.RelationRef{
+		Candidate: member.AxisRelationCandidate(member.RelationRef{
 			Axis:   callAxis,
 			Member: MountedCallCandidates,
 		}),

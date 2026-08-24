@@ -33,12 +33,12 @@ func configureForeignCandidateFixture(t *testing.T, provider member.RelationRef,
 
 	occurrenceCatalog, ok := member.NewCatalog(
 		[]member.Relation{
-			{Key: heteroCandidateRelation, Subject: heteroCandidateCarrier, CandidateProvider: candidate},
-			{Key: foreignExactRead, Subject: heteroFactCarrier, Inputs: []member.Carrier{heteroCandidateCarrier}, CandidateProvider: candidate},
+			{Key: heteroCandidateRelation, Subject: heteroCandidateCarrier, CandidateProvider: member.AxisRelationCandidate(candidate)},
+			{Key: foreignExactRead, Subject: heteroFactCarrier, Inputs: []member.Carrier{heteroCandidateCarrier}, CandidateProvider: member.AxisRelationCandidate(candidate)},
 		},
 		[]member.Projection{{
 			Key: foreignExactKeyed, Relation: foreignExactRead, Role: member.Key,
-			Result: heteroKeyCarrier, CandidateProvider: candidate,
+			Result: heteroKeyCarrier, CandidateProvider: member.AxisRelationCandidate(candidate),
 		}},
 		nil, nil,
 	)
@@ -47,12 +47,12 @@ func configureForeignCandidateFixture(t *testing.T, provider member.RelationRef,
 	}
 	consumerCatalog, ok := member.NewCatalog(
 		[]member.Relation{
-			{Key: cellRelation, Subject: heteroFactCarrier, Inputs: []member.Carrier{heteroCandidateCarrier}, CandidateProvider: provider},
-			{Key: strayRelation, Subject: heteroFactCarrier, Inputs: []member.Carrier{heteroCandidateCarrier}, CandidateProvider: member.RelationRef{Axis: occurrenceAxis, Member: foreignExactRead}},
+			{Key: cellRelation, Subject: heteroFactCarrier, Inputs: []member.Carrier{heteroCandidateCarrier}, CandidateProvider: member.AxisRelationCandidate(provider)},
+			{Key: strayRelation, Subject: heteroFactCarrier, Inputs: []member.Carrier{heteroCandidateCarrier}, CandidateProvider: member.AxisRelationCandidate(member.RelationRef{Axis: occurrenceAxis, Member: foreignExactRead})},
 		},
 		[]member.Projection{
-			{Key: cellDestination, Relation: cellRelation, Role: member.Destination, Result: heteroKeyCarrier, CandidateProvider: provider},
-			{Key: strayDestination, Relation: strayRelation, Role: member.Destination, Result: heteroKeyCarrier, CandidateProvider: member.RelationRef{Axis: occurrenceAxis, Member: foreignExactRead}},
+			{Key: cellDestination, Relation: cellRelation, Role: member.Destination, Result: heteroKeyCarrier, CandidateProvider: member.AxisRelationCandidate(provider)},
+			{Key: strayDestination, Relation: strayRelation, Role: member.Destination, Result: heteroKeyCarrier, CandidateProvider: member.AxisRelationCandidate(member.RelationRef{Axis: occurrenceAxis, Member: foreignExactRead})},
 		},
 		[]member.Reducer{{
 			Key: cellReducer,
@@ -73,7 +73,7 @@ func configureForeignCandidateFixture(t *testing.T, provider member.RelationRef,
 	fixture.otherSignature = axis.Signature{Key: heteroKeyCarrier, Fact: heteroFactCarrier}
 	fixture.declaration = program.Program{
 		OperandRole: vocabulary.RoleKey("plan/operand"),
-		Candidate:   program.AxisRelationCandidate(candidate),
+		Candidate:   member.AxisRelationCandidate(candidate),
 		Joins: []program.JoinDecl{{
 			Sources:  []program.SourceRef{program.CandidateSource()},
 			Relation: member.RelationRef{Axis: occurrenceAxis, Member: foreignExactRead},

@@ -291,7 +291,7 @@ func newGeneratedRuleLawMultiAxisFixture(t testing.TB) generatedRuleLawFixture {
 	}
 	declaration := program.Program{
 		OperandRole: generatedRuleLawOperandRole,
-		Candidate:   program.AxisRelationCandidate(member.RelationRef{Axis: axisReference, Member: generatedRuleLawCandidate}),
+		Candidate:   member.AxisRelationCandidate(member.RelationRef{Axis: axisReference, Member: generatedRuleLawCandidate}),
 		Joins:       []program.JoinDecl{join},
 		Fold: program.FoldDecl{
 			Reducer: member.ReducerRef{Axis: axisReference, Member: generatedRuleLawReducer},
@@ -309,12 +309,12 @@ func newGeneratedRuleLawMultiAxisFixture(t testing.TB) generatedRuleLawFixture {
 	}
 	memberCatalog, catalogOK := member.NewCatalog(
 		[]member.Relation{
-			{Key: generatedRuleLawCandidate, Subject: generatedRuleLawCandidateFact, CandidateProvider: generatedRuleLawProvider(generatedRuleLawCandidate)},
-			{Key: generatedRuleLawJoin, Subject: generatedRuleLawJoinFact, Inputs: []member.Carrier{generatedRuleLawCandidateFact}, CandidateProvider: generatedRuleLawProvider(generatedRuleLawCandidate)},
+			{Key: generatedRuleLawCandidate, Subject: generatedRuleLawCandidateFact, CandidateProvider: member.AxisRelationCandidate(generatedRuleLawProvider(generatedRuleLawCandidate))},
+			{Key: generatedRuleLawJoin, Subject: generatedRuleLawJoinFact, Inputs: []member.Carrier{generatedRuleLawCandidateFact}, CandidateProvider: member.AxisRelationCandidate(generatedRuleLawProvider(generatedRuleLawCandidate))},
 		},
 		[]member.Projection{
-			{Key: generatedRuleLawKey, Relation: generatedRuleLawJoin, Role: member.Key, Result: generatedRuleLawKeyCarrier, CandidateProvider: generatedRuleLawProvider(generatedRuleLawJoin)},
-			{Key: generatedRuleLawDestination, Relation: generatedRuleLawCandidate, Role: member.Destination, Result: generatedRuleLawKeyCarrier, CandidateProvider: generatedRuleLawProvider(generatedRuleLawCandidate)},
+			{Key: generatedRuleLawKey, Relation: generatedRuleLawJoin, Role: member.Key, Result: generatedRuleLawKeyCarrier, CandidateProvider: member.AxisRelationCandidate(generatedRuleLawProvider(generatedRuleLawJoin))},
+			{Key: generatedRuleLawDestination, Relation: generatedRuleLawCandidate, Role: member.Destination, Result: generatedRuleLawKeyCarrier, CandidateProvider: member.AxisRelationCandidate(generatedRuleLawProvider(generatedRuleLawCandidate))},
 		},
 		[]member.Reducer{{
 			Key:     generatedRuleLawReducer,

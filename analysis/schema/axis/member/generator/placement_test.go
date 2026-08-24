@@ -17,7 +17,7 @@ func TestResolvePlacementStorageKeepsForeignCandidateOwner(t *testing.T) {
 	}
 
 	relation := metadata.Relations[0]
-	if relation.CandidateProvider.Axis.Key != "value" || relation.CandidateProvider.Member != "value/storage-transfer/candidates" || relation.CandidateProviderLocal || relation.HasCandidateRelation {
+	if relation.CandidateProvider.AxisRelation.Axis.Key != "value" || relation.CandidateProvider.AxisRelation.Member != "value/storage-transfer/candidates" || relation.CandidateProviderLocal || relation.HasCandidateRelation {
 		t.Fatalf("foreign route provider was localized: %+v", relation)
 	}
 	if relation.Derivation.State.Name != "RoutePlan" || relation.Derivation.Build.Name != "DeriveRoutes" || relation.Derivation.Count.Name != "RouteCount" || relation.Derivation.At.Name != "RouteAt" ||

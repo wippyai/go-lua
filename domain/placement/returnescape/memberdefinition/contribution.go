@@ -79,7 +79,7 @@ func Contribution() definition.Contribution {
 					{Carrier: "ValueFactCarrier"},
 					{Carrier: "ValueFactCarrier", Many: true},
 				},
-				CandidateProvider: provider,
+				CandidateProvider: member.AxisRelationCandidate(provider),
 				Derivation: definition.RelationDerivation{
 					State: returnEscapeGoType("RoutePlan"),
 					Build: returnEscapeSymbol("DeriveReturnRoutes"),
@@ -100,7 +100,7 @@ func Contribution() definition.Contribution {
 				Role:              member.Key,
 				Result:            "PlacementKeyCarrier",
 				Accessor:          routeAccessor(0),
-				CandidateProvider: provider,
+				CandidateProvider: member.AxisRelationCandidate(provider),
 			},
 			{
 				Name:              "ReturnRouteDestination",
@@ -109,7 +109,7 @@ func Contribution() definition.Contribution {
 				Role:              member.Destination,
 				Result:            "PlacementKeyCarrier",
 				Accessor:          routeAccessor(1),
-				CandidateProvider: provider,
+				CandidateProvider: member.AxisRelationCandidate(provider),
 			},
 		},
 		Reducers: []definition.Reducer{{

@@ -44,13 +44,13 @@ func configureHeterogeneousRouteFixture(t *testing.T) *planFixture {
 			{
 				Key:               heteroCandidateRelation,
 				Subject:           heteroCandidateCarrier,
-				CandidateProvider: member.RelationRef{Axis: valueAxis, Member: heteroCandidateRelation},
+				CandidateProvider: member.AxisRelationCandidate(member.RelationRef{Axis: valueAxis, Member: heteroCandidateRelation}),
 			},
 			{
 				Key:               heteroExactRelation,
 				Subject:           heteroFactCarrier,
 				Inputs:            []member.Carrier{heteroCandidateCarrier},
-				CandidateProvider: member.RelationRef{Axis: valueAxis, Member: heteroCandidateRelation},
+				CandidateProvider: member.AxisRelationCandidate(member.RelationRef{Axis: valueAxis, Member: heteroCandidateRelation}),
 			},
 		},
 		[]member.Projection{{
@@ -58,7 +58,7 @@ func configureHeterogeneousRouteFixture(t *testing.T) *planFixture {
 			Relation:          heteroExactRelation,
 			Role:              member.Key,
 			Result:            heteroKeyCarrier,
-			CandidateProvider: member.RelationRef{Axis: valueAxis, Member: heteroCandidateRelation},
+			CandidateProvider: member.AxisRelationCandidate(member.RelationRef{Axis: valueAxis, Member: heteroCandidateRelation}),
 		}},
 		nil, nil,
 	)
@@ -71,13 +71,13 @@ func configureHeterogeneousRouteFixture(t *testing.T) *planFixture {
 				Key:               heteroRouteRelation,
 				Subject:           heteroFactCarrier,
 				Inputs:            []member.Carrier{heteroCandidateCarrier, heteroFactCarrier},
-				CandidateProvider: member.RelationRef{Axis: valueAxis, Member: heteroCandidateRelation},
+				CandidateProvider: member.AxisRelationCandidate(member.RelationRef{Axis: valueAxis, Member: heteroCandidateRelation}),
 			},
 			{
 				Key:               heteroSecondRelation,
 				Subject:           heteroFactCarrier,
 				Inputs:            []member.Carrier{heteroCandidateCarrier, heteroFactCarrier},
-				CandidateProvider: member.RelationRef{Axis: valueAxis, Member: heteroCandidateRelation},
+				CandidateProvider: member.AxisRelationCandidate(member.RelationRef{Axis: valueAxis, Member: heteroCandidateRelation}),
 			},
 		},
 		[]member.Projection{
@@ -86,35 +86,35 @@ func configureHeterogeneousRouteFixture(t *testing.T) *planFixture {
 				Relation:          heteroRouteRelation,
 				Role:              member.Key,
 				Result:            heteroKeyCarrier,
-				CandidateProvider: member.RelationRef{Axis: valueAxis, Member: heteroCandidateRelation},
+				CandidateProvider: member.AxisRelationCandidate(member.RelationRef{Axis: valueAxis, Member: heteroCandidateRelation}),
 			},
 			{
 				Key:               heteroRoutePredicate,
 				Relation:          heteroRouteRelation,
 				Role:              member.Predicate,
 				Result:            heteroTagCarrier,
-				CandidateProvider: member.RelationRef{Axis: valueAxis, Member: heteroCandidateRelation},
+				CandidateProvider: member.AxisRelationCandidate(member.RelationRef{Axis: valueAxis, Member: heteroCandidateRelation}),
 			},
 			{
 				Key:               heteroSecondKey,
 				Relation:          heteroSecondRelation,
 				Role:              member.Key,
 				Result:            heteroKeyCarrier,
-				CandidateProvider: member.RelationRef{Axis: valueAxis, Member: heteroCandidateRelation},
+				CandidateProvider: member.AxisRelationCandidate(member.RelationRef{Axis: valueAxis, Member: heteroCandidateRelation}),
 			},
 			{
 				Key:               heteroSecondPredicate,
 				Relation:          heteroSecondRelation,
 				Role:              member.Predicate,
 				Result:            heteroTagCarrier,
-				CandidateProvider: member.RelationRef{Axis: valueAxis, Member: heteroCandidateRelation},
+				CandidateProvider: member.AxisRelationCandidate(member.RelationRef{Axis: valueAxis, Member: heteroCandidateRelation}),
 			},
 			{
 				Key:               heteroRouteDestination,
 				Relation:          heteroRouteRelation,
 				Role:              member.Destination,
 				Result:            heteroKeyCarrier,
-				CandidateProvider: member.RelationRef{Axis: valueAxis, Member: heteroCandidateRelation},
+				CandidateProvider: member.AxisRelationCandidate(member.RelationRef{Axis: valueAxis, Member: heteroCandidateRelation}),
 			},
 		},
 		[]member.Reducer{{
@@ -138,7 +138,7 @@ func configureHeterogeneousRouteFixture(t *testing.T) *planFixture {
 	fixture.otherSignature = axis.Signature{Key: heteroKeyCarrier, Fact: heteroFactCarrier}
 	fixture.declaration = program.Program{
 		OperandRole: vocabulary.RoleKey("plan/operand"),
-		Candidate:   program.AxisRelationCandidate(member.RelationRef{Axis: valueAxis, Member: heteroCandidateRelation}),
+		Candidate:   member.AxisRelationCandidate(member.RelationRef{Axis: valueAxis, Member: heteroCandidateRelation}),
 		Joins: []program.JoinDecl{
 			{
 				Sources:  []program.SourceRef{program.CandidateSource()},

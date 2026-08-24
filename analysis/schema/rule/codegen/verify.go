@@ -157,12 +157,24 @@ func metadataComplete(metadata membergenerator.Metadata) bool {
 		derived := relationHasDerivation(relation)
 		if derived {
 			if !relationDerivationComplete(relation.Derivation) || len(relation.Inputs) == 0 ||
-				relation.CandidateProvider.Axis.Key == metadata.Axis && relation.CandidateProvider.Member == relation.Key ||
+				relation.CandidateProvider.AxisRelation.Axis.Key == metadata.Axis && relation.CandidateProvider.AxisRelation.Member == relation.Key ||
 				!symbolAbsent(relation.CandidateResolver) || !symbolAbsent(relation.CandidateOrdinal) || !symbolAbsent(relation.CandidateAt) || !symbolAbsent(relation.CandidateCount) {
 				return false
 			}
 		}
-		localProvider := relation.CandidateProvider.Axis.Key == metadata.Axis
+		// An issued provider is neither local nor foreign to an axis: there is
+		// no axis directory to be local to. It carries none of the dense
+		// symbols and takes no relation ordinal.
+		if relation.CandidateProvider.Issued() {
+			if relation.CandidateProviderLocal || relation.HasCandidateRelation || relation.CandidateRelation != 0 ||
+				!symbolAbsent(relation.CandidateResolver) || !symbolAbsent(relation.CandidateOrdinal) ||
+				!symbolAbsent(relation.CandidateAt) || !symbolAbsent(relation.CandidateCount) ||
+				!symbolAbsent(relation.CandidateIdentityAt) {
+				return false
+			}
+			continue
+		}
+		localProvider := relation.CandidateProvider.AxisRelation.Axis.Key == metadata.Axis
 		if relation.CandidateProviderLocal != localProvider || relation.HasCandidateRelation != localProvider {
 			return false
 		}
@@ -171,7 +183,7 @@ func metadataComplete(metadata membergenerator.Metadata) bool {
 				return false
 			}
 			provider := metadata.Relations[relation.CandidateRelation]
-			if provider.Key != relation.CandidateProvider.Member || provider.CandidateProvider.Axis.Key != metadata.Axis || provider.CandidateProvider.Member != provider.Key ||
+			if provider.Key != relation.CandidateProvider.AxisRelation.Member || provider.CandidateProvider.AxisRelation.Axis.Key != metadata.Axis || provider.CandidateProvider.AxisRelation.Member != provider.Key ||
 				!provider.CandidateProviderLocal || !provider.HasCandidateRelation || provider.CandidateRelation != relation.CandidateRelation || !symbolDirectoryComplete(provider) {
 				return false
 			}
@@ -352,7 +364,13 @@ func projectionAccessorCarrier(projection membergenerator.ProjectionBinding, rel
 // different axis. The provider itself must be a local self-owned directory;
 // a consumer may never replace that proof with a local CandidateAt mirror.
 func resolveCandidateProvider(byAxis map[uint32]membergenerator.Metadata, catalog ruleplan.Catalog, relation membergenerator.RelationBinding) (membergenerator.RelationBinding, ruleplan.RelationAddr, schema.Key, bool) {
-	providerRef := relation.CandidateProvider
+	// An issued provider has no axis address to resolve. Its rows are Program
+	// rows, reached by the ordinal the mounted placement carries, so this
+	// resolver refuses it rather than inventing a directory for it.
+	if relation.CandidateProvider.Issued() {
+		return membergenerator.RelationBinding{}, ruleplan.RelationAddr{}, "", false
+	}
+	providerRef := relation.CandidateProvider.AxisRelation
 	if !providerRef.Available() {
 		return membergenerator.RelationBinding{}, ruleplan.RelationAddr{}, "", false
 	}
@@ -370,7 +388,7 @@ func resolveCandidateProvider(byAxis map[uint32]membergenerator.Metadata, catalo
 	}
 	provider := providerMetadata.Relations[providerOrdinal]
 	providerAddress := ruleplan.RelationAddr{Axis: providerAxis, Member: providerOrdinal}
-	if provider.CandidateProvider.Axis != providerRef.Axis || provider.CandidateProvider.Member != provider.Key ||
+	if provider.CandidateProvider.AxisRelation.Axis != providerRef.Axis || provider.CandidateProvider.AxisRelation.Member != provider.Key ||
 		!provider.CandidateProviderLocal || !provider.HasCandidateRelation || provider.CandidateRelation != providerOrdinal ||
 		!symbolDirectoryComplete(provider) {
 		return membergenerator.RelationBinding{}, ruleplan.RelationAddr{}, "", false

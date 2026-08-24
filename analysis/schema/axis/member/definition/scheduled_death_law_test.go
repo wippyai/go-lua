@@ -17,7 +17,7 @@ func specimenDerivation(t testing.TB) Definition {
 		Key:               "specimen/derived",
 		Subject:           "FactCarrier",
 		Inputs:            []RelationInput{{Carrier: "SeedCarrier"}},
-		CandidateProvider: member.RelationRef{Axis: specimenAxis(), Member: "specimen/candidates"},
+		CandidateProvider: member.AxisRelationCandidate(member.RelationRef{Axis: specimenAxis(), Member: "specimen/candidates"}),
 		Derivation: RelationDerivation{
 			State:      specimenType("Plan"),
 			Build:      GoSymbol{PackagePath: specimenPackage, Name: "DeriveRows"},

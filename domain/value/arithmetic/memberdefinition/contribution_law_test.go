@@ -23,7 +23,7 @@ func TestContributionDeclaresArithmeticJoinsAndDirectFold(t *testing.T) {
 		t.Fatalf("source relation = %#v", relation)
 	}
 	provider := relation.CandidateProvider
-	if provider.Member != "value/binary-arithmetic/candidates" {
+	if provider.AxisRelation.Member != "value/binary-arithmetic/candidates" {
 		t.Fatalf("source provider = %#v", provider)
 	}
 	wantProjections := []struct {

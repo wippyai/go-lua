@@ -101,7 +101,7 @@ func Storage() definition.Definition {
 				Key:               "placement/store/storage-routes",
 				Subject:           "StorageRouteCarrier",
 				Inputs:            []definition.RelationInput{{Carrier: "StorageTransferCarrier"}, {Carrier: "ValueFactCarrier"}},
-				CandidateProvider: provider,
+				CandidateProvider: member.AxisRelationCandidate(provider),
 				Derivation: definition.RelationDerivation{
 					State: storeGoType("RoutePlan"),
 					Build: storeFunction("DeriveRoutes"),
@@ -122,7 +122,7 @@ func Storage() definition.Definition {
 				Role:              member.Key,
 				Result:            "PlacementKeyCarrier",
 				Accessor:          storeMethod("Coordinates", 0),
-				CandidateProvider: provider,
+				CandidateProvider: member.AxisRelationCandidate(provider),
 			},
 			{
 				Name:              "StorageRouteTag",
@@ -131,7 +131,7 @@ func Storage() definition.Definition {
 				Role:              member.Predicate,
 				Result:            "RouteTagCarrier",
 				Accessor:          storeMethod("Predicate", -1),
-				CandidateProvider: provider,
+				CandidateProvider: member.AxisRelationCandidate(provider),
 			},
 			{
 				Name:              "StorageRouteDestination",
@@ -140,7 +140,7 @@ func Storage() definition.Definition {
 				Role:              member.Destination,
 				Result:            "PlacementKeyCarrier",
 				Accessor:          storeMethod("Coordinates", 1),
-				CandidateProvider: provider,
+				CandidateProvider: member.AxisRelationCandidate(provider),
 			},
 		},
 	}

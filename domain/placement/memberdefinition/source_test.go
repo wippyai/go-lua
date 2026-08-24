@@ -46,7 +46,7 @@ func TestStorageDefinitionIsCompleteAndForeignProviderOwned(t *testing.T) {
 		t.Fatal("composed Placement definition omitted Store's route relation")
 	}
 	provider := relation.CandidateProvider
-	if provider.Axis.Key != schema.Key("value") || provider.Member != schema.Key("value/storage-transfer/candidates") {
+	if provider.AxisRelation.Axis.Key != schema.Key("value") || provider.AxisRelation.Member != schema.Key("value/storage-transfer/candidates") {
 		t.Fatalf("route relation provider=%+v, want Value storage-transfer candidates", provider)
 	}
 	if len(relation.Inputs) != 2 || relation.Inputs[0].Carrier != "StorageTransferCarrier" || relation.Inputs[1].Carrier != "ValueFactCarrier" {

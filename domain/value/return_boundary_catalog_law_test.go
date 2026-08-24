@@ -27,7 +27,7 @@ func TestValuePublishesEveryReturnBoundaryColumnAReturnJudgmentAddresses(t *test
 
 	candidates, candidatesOK := catalog.Relation(ReturnBoundaryCandidates)
 	if !candidatesOK || candidates.Subject != ReturnBoundaryCarrier ||
-		candidates.CandidateProvider.Member != ReturnBoundaryCandidates {
+		candidates.CandidateProvider.AxisRelation.Member != ReturnBoundaryCandidates {
 		t.Fatalf("value publishes no self-provided return-boundary candidate directory: %#v", candidates)
 	}
 
@@ -46,7 +46,7 @@ func TestValuePublishesEveryReturnBoundaryColumnAReturnJudgmentAddresses(t *test
 	// and still project its coordinate the way every other row does.
 	members, membersOK := catalog.Relation(ReturnBoundaryMembers)
 	if !membersOK || members.Subject != ReturnBoundaryMemberCarrier ||
-		members.CandidateProvider.Member != ReturnBoundaryMembers {
+		members.CandidateProvider.AxisRelation.Member != ReturnBoundaryMembers {
 		t.Fatalf("value publishes no self-provided return-boundary member relation: %#v", members)
 	}
 	memberKey, memberKeyOK := catalog.Projection(ReturnBoundaryMemberKey)

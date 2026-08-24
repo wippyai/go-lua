@@ -35,15 +35,15 @@ func AxisMemberCatalog() member.Catalog {
 	valueAxis := schemaapi.EntryReference{Surface: schemaapi.SurfaceKindAxis, Key: "placement"}
 	catalog, ok := member.NewCatalog(
 		[]member.Relation{
-			{Key: StorageRoutes, Subject: StorageRouteCarrier, CandidateProvider: member.RelationRef{Axis: schemaapi.EntryReference{Surface: schemaapi.SurfaceKind(2), Key: "value"}, Member: "value/storage-transfer/candidates"}, Inputs: []member.Carrier{StorageTransferCarrier, ValueFactCarrier}},
-			{Key: ReturnRoutes, Subject: ReturnRouteCarrier, CandidateProvider: member.RelationRef{Axis: schemaapi.EntryReference{Surface: schemaapi.SurfaceKind(2), Key: "value"}, Member: "value/return-boundary/candidates"}, Inputs: []member.Carrier{ReturnBoundaryCarrier, ValueFactCarrier, ValueFactCarrier}},
+			{Key: StorageRoutes, Subject: StorageRouteCarrier, CandidateProvider: member.AxisRelationCandidate(member.RelationRef{Axis: schemaapi.EntryReference{Surface: schemaapi.SurfaceKind(2), Key: "value"}, Member: "value/storage-transfer/candidates"}), Inputs: []member.Carrier{StorageTransferCarrier, ValueFactCarrier}},
+			{Key: ReturnRoutes, Subject: ReturnRouteCarrier, CandidateProvider: member.AxisRelationCandidate(member.RelationRef{Axis: schemaapi.EntryReference{Surface: schemaapi.SurfaceKind(2), Key: "value"}, Member: "value/return-boundary/candidates"}), Inputs: []member.Carrier{ReturnBoundaryCarrier, ValueFactCarrier, ValueFactCarrier}},
 		},
 		[]member.Projection{
-			{Key: StorageRouteKey, Relation: StorageRoutes, Role: member.Key, Result: PlacementKeyCarrier, CandidateProvider: member.RelationRef{Axis: schemaapi.EntryReference{Surface: schemaapi.SurfaceKind(2), Key: "value"}, Member: "value/storage-transfer/candidates"}},
-			{Key: StorageRouteTag, Relation: StorageRoutes, Role: member.Predicate, Result: RouteTagCarrier, CandidateProvider: member.RelationRef{Axis: schemaapi.EntryReference{Surface: schemaapi.SurfaceKind(2), Key: "value"}, Member: "value/storage-transfer/candidates"}},
-			{Key: StorageRouteDestination, Relation: StorageRoutes, Role: member.Destination, Result: PlacementKeyCarrier, CandidateProvider: member.RelationRef{Axis: schemaapi.EntryReference{Surface: schemaapi.SurfaceKind(2), Key: "value"}, Member: "value/storage-transfer/candidates"}},
-			{Key: ReturnRouteKey, Relation: ReturnRoutes, Role: member.Key, Result: PlacementKeyCarrier, CandidateProvider: member.RelationRef{Axis: schemaapi.EntryReference{Surface: schemaapi.SurfaceKind(2), Key: "value"}, Member: "value/return-boundary/candidates"}},
-			{Key: ReturnRouteDestination, Relation: ReturnRoutes, Role: member.Destination, Result: PlacementKeyCarrier, CandidateProvider: member.RelationRef{Axis: schemaapi.EntryReference{Surface: schemaapi.SurfaceKind(2), Key: "value"}, Member: "value/return-boundary/candidates"}},
+			{Key: StorageRouteKey, Relation: StorageRoutes, Role: member.Key, Result: PlacementKeyCarrier, CandidateProvider: member.AxisRelationCandidate(member.RelationRef{Axis: schemaapi.EntryReference{Surface: schemaapi.SurfaceKind(2), Key: "value"}, Member: "value/storage-transfer/candidates"})},
+			{Key: StorageRouteTag, Relation: StorageRoutes, Role: member.Predicate, Result: RouteTagCarrier, CandidateProvider: member.AxisRelationCandidate(member.RelationRef{Axis: schemaapi.EntryReference{Surface: schemaapi.SurfaceKind(2), Key: "value"}, Member: "value/storage-transfer/candidates"})},
+			{Key: StorageRouteDestination, Relation: StorageRoutes, Role: member.Destination, Result: PlacementKeyCarrier, CandidateProvider: member.AxisRelationCandidate(member.RelationRef{Axis: schemaapi.EntryReference{Surface: schemaapi.SurfaceKind(2), Key: "value"}, Member: "value/storage-transfer/candidates"})},
+			{Key: ReturnRouteKey, Relation: ReturnRoutes, Role: member.Key, Result: PlacementKeyCarrier, CandidateProvider: member.AxisRelationCandidate(member.RelationRef{Axis: schemaapi.EntryReference{Surface: schemaapi.SurfaceKind(2), Key: "value"}, Member: "value/return-boundary/candidates"})},
+			{Key: ReturnRouteDestination, Relation: ReturnRoutes, Role: member.Destination, Result: PlacementKeyCarrier, CandidateProvider: member.AxisRelationCandidate(member.RelationRef{Axis: schemaapi.EntryReference{Surface: schemaapi.SurfaceKind(2), Key: "value"}, Member: "value/return-boundary/candidates"})},
 		},
 		[]member.Reducer{
 			{Key: StorageReducer, Inputs: []member.ReducerInput{

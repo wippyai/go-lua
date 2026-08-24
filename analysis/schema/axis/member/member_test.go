@@ -32,11 +32,11 @@ func completeCatalog() Catalog {
 	catalog, ok := NewCatalog(
 		[]Relation{{
 			Key: "relation/input", Subject: "subject", Inputs: []Carrier{"input/key", "input/value"},
-			CandidateProvider: relationProvider(axisRef("axis/source"), "relation/input"),
+			CandidateProvider: AxisRelationCandidate(relationProvider(axisRef("axis/source"), "relation/input")),
 		}},
 		[]Projection{
-			{Key: "projection/key", Relation: "relation/input", Role: Key, Result: "projection/key/result", CandidateProvider: relationProvider(axisRef("axis/source"), "relation/input")},
-			{Key: "projection/predicate", Relation: "relation/input", Role: Predicate, Result: "projection/predicate/result", CandidateProvider: relationProvider(axisRef("axis/source"), "relation/input")},
+			{Key: "projection/key", Relation: "relation/input", Role: Key, Result: "projection/key/result", CandidateProvider: AxisRelationCandidate(relationProvider(axisRef("axis/source"), "relation/input"))},
+			{Key: "projection/predicate", Relation: "relation/input", Role: Predicate, Result: "projection/predicate/result", CandidateProvider: AxisRelationCandidate(relationProvider(axisRef("axis/source"), "relation/input"))},
 		},
 		[]Reducer{{
 			Key:     "reducer/output",
@@ -202,7 +202,7 @@ func TestReducerInputConditionalCarriersFollowTheirReadForm(t *testing.T) {
 
 func TestCatalogCopiesSlicesAndReducerInputs(t *testing.T) {
 	inputs := []Carrier{"input/one", "input/two"}
-	relations := []Relation{{Key: "relation", Subject: "subject", Inputs: inputs, CandidateProvider: relationProvider(axisRef("axis/source"), "relation")}}
+	relations := []Relation{{Key: "relation", Subject: "subject", Inputs: inputs, CandidateProvider: AxisRelationCandidate(relationProvider(axisRef("axis/source"), "relation"))}}
 	reducerInputs := []ReducerInput{reducerInput(axisRef("axis/source"), "carrier", "")}
 	reducerOutputs := []ReducerOutput{reducerOutput(axisRef("axis/result"), "output")}
 	reducers := []Reducer{{Key: "reducer", Inputs: reducerInputs, Outputs: reducerOutputs}}
@@ -253,7 +253,7 @@ func TestMemberRefsRequireAxisOwnerAndMember(t *testing.T) {
 func TestCatalogAdmitsCandidateIndexedFactEndomorphism(t *testing.T) {
 	transform := CarryTransform{Key: "transform/value", Candidate: "candidate", Input: "fact", Output: "fact"}
 	catalog, ok := NewCatalog(
-		[]Relation{{Key: "relation", Subject: "candidate", CandidateProvider: relationProvider(axisRef("axis/source"), "relation")}},
+		[]Relation{{Key: "relation", Subject: "candidate", CandidateProvider: AxisRelationCandidate(relationProvider(axisRef("axis/source"), "relation"))}},
 		nil,
 		nil,
 		[]CarryTransform{transform},

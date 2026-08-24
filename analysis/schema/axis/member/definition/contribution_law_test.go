@@ -23,7 +23,7 @@ func specimenAxis() schema.EntryReference {
 // candidate relation with its directory, and one destination projection. It
 // declares no reducer, which is the shape Compose requires.
 func specimenBase() Definition {
-	provider := member.RelationRef{Axis: specimenAxis(), Member: "specimen/candidates"}
+	provider := member.AxisRelationCandidate(member.RelationRef{Axis: specimenAxis(), Member: "specimen/candidates"})
 	return Definition{
 		Name: "Specimen",
 		Axis: "specimen",
@@ -236,7 +236,7 @@ func TestRosterRefusesTwoOwnersOfOneVocabulary(t *testing.T) {
 // projection that addresses them. It is the shape a routed rule needs and the
 // axis base has no reason to know about.
 func routedContribution(rule schema.Key, relation string, key schema.Key) Contribution {
-	provider := member.RelationRef{Axis: specimenAxis(), Member: key}
+	provider := member.AxisRelationCandidate(member.RelationRef{Axis: specimenAxis(), Member: key})
 	return Contribution{
 		Axis: "specimen",
 		Rule: rule,
@@ -384,7 +384,7 @@ func twinRelation(name string, key schema.Key) Relation {
 	twin := specimenBase().Relations[0]
 	twin.Name = name
 	twin.Key = key
-	twin.CandidateProvider = member.RelationRef{Axis: specimenAxis(), Member: key}
+	twin.CandidateProvider = member.AxisRelationCandidate(member.RelationRef{Axis: specimenAxis(), Member: key})
 	return twin
 }
 
@@ -499,7 +499,7 @@ func TestAGlobalDirectoryOwesACensusWithoutOwingAMaterializer(t *testing.T) {
 // to join on: its key projection's accessor is a method the FOREIGN owner has,
 // which is exactly why the row cannot live on the reading rule's axis.
 func foreignAxisBase() Definition {
-	provider := member.RelationRef{Axis: schema.EntryReference{Surface: schema.SurfaceKindAxis, Key: "foreign"}, Member: "foreign/candidates"}
+	provider := member.AxisRelationCandidate(member.RelationRef{Axis: schema.EntryReference{Surface: schema.SurfaceKindAxis, Key: "foreign"}, Member: "foreign/candidates"})
 	return Definition{
 		Name: "Foreign",
 		Axis: "foreign",
@@ -535,7 +535,7 @@ func foreignSource() Source {
 // it declares them naming that axis.
 func foreignJoinContribution() Contribution {
 	contribution := specimenContribution("specimen-foreign", "Foreign", "specimen/reducer/foreign")
-	provider := member.RelationRef{Axis: schema.EntryReference{Surface: schema.SurfaceKindAxis, Key: "foreign"}, Member: "foreign/specimen-joins"}
+	provider := member.AxisRelationCandidate(member.RelationRef{Axis: schema.EntryReference{Surface: schema.SurfaceKindAxis, Key: "foreign"}, Member: "foreign/specimen-joins"})
 	contribution.Carriers = []Carrier{
 		{Name: "JoinCarrier", Key: "carrier/foreign/join", Type: specimenType("ForeignJoin")},
 	}

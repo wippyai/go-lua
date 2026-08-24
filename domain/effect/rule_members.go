@@ -21,10 +21,10 @@ const (
 func AxisMemberCatalog() member.Catalog {
 	catalog, ok := member.NewCatalog(
 		[]member.Relation{
-			{Key: MountedEffectCallCandidates, Subject: EffectMountedCallCarrier, CandidateProvider: member.RelationRef{Axis: schemaapi.EntryReference{Surface: schemaapi.SurfaceKind(2), Key: "effect"}, Member: "effect/mounted-call/candidates"}},
+			{Key: MountedEffectCallCandidates, Subject: EffectMountedCallCarrier, CandidateProvider: member.AxisRelationCandidate(member.RelationRef{Axis: schemaapi.EntryReference{Surface: schemaapi.SurfaceKind(2), Key: "effect"}, Member: "effect/mounted-call/candidates"})},
 		},
 		[]member.Projection{
-			{Key: MountedEffectCallCoordinate, Relation: MountedEffectCallCandidates, Role: member.Destination, Result: EffectKeyCarrier, CandidateProvider: member.RelationRef{Axis: schemaapi.EntryReference{Surface: schemaapi.SurfaceKind(2), Key: "effect"}, Member: "effect/mounted-call/candidates"}},
+			{Key: MountedEffectCallCoordinate, Relation: MountedEffectCallCandidates, Role: member.Destination, Result: EffectKeyCarrier, CandidateProvider: member.AxisRelationCandidate(member.RelationRef{Axis: schemaapi.EntryReference{Surface: schemaapi.SurfaceKind(2), Key: "effect"}, Member: "effect/mounted-call/candidates"})},
 		},
 		[]member.Reducer{},
 		[]member.CarryTransform{},

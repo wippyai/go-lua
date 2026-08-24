@@ -954,7 +954,7 @@ func consumerProjectionOfCandidate(template *rule.Template, declaration program.
 	if !relationOK {
 		return false
 	}
-	return relation.CandidateProvider == declaration.Candidate.AxisRelation && destination.CandidateProvider == declaration.Candidate.AxisRelation
+	return relation.CandidateProvider == declaration.Candidate && destination.CandidateProvider == declaration.Candidate
 }
 
 // routeJoinForOutput validates the explicit route-producing JoinRef. It never

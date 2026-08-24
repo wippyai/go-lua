@@ -38,7 +38,7 @@ func externalProviderDefinition() definition.Definition {
 	axis := func(name string) schema.EntryReference {
 		return schema.EntryReference{Surface: schema.SurfaceKindAxis, Key: schema.Key(name)}
 	}
-	provider := member.RelationRef{Axis: axis("value"), Member: "value/storage-transfer/candidates"}
+	provider := member.AxisRelationCandidate(member.RelationRef{Axis: axis("value"), Member: "value/storage-transfer/candidates"})
 	return definition.Definition{
 		Name: "PlacementStore", Axis: "placement",
 		Binding:     definition.Binding{Key: definition.KeyNormalization{Carrier: "Key", Dense: definition.GoType{Name: "uint32"}, Normalizer: definition.GoSymbol{PackagePath: "example/placement", Name: "Normalize", Receiver: owner, ResultIndex: 0}}},
@@ -56,7 +56,7 @@ func selfProviderDefinition() definition.Definition {
 	key := definition.GoType{PackagePath: "example/self", Name: "Key"}
 	fact := definition.GoType{PackagePath: "example/self", Name: "Fact"}
 	axis := schema.EntryReference{Surface: schema.SurfaceKindAxis, Key: "self"}
-	provider := member.RelationRef{Axis: axis, Member: "self/candidates"}
+	provider := member.AxisRelationCandidate(member.RelationRef{Axis: axis, Member: "self/candidates"})
 	method := func(name string, receiver definition.GoType) definition.GoSymbol {
 		return definition.GoSymbol{PackagePath: owner.PackagePath, Name: name, Receiver: receiver, ResultIndex: 0}
 	}
@@ -96,7 +96,7 @@ func TestResolveUsesExplicitCrossAxisCandidateProvider(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got := metadata.Relations[0].CandidateProvider; got.Axis.Key != "value" || got.Member != "value/storage-transfer/candidates" {
+	if got := metadata.Relations[0].CandidateProvider; got.AxisRelation.Axis.Key != "value" || got.AxisRelation.Member != "value/storage-transfer/candidates" {
 		t.Fatalf("provider=%+v", got)
 	}
 	if got := metadata.Projections[0].CandidateProvider; got != metadata.Relations[0].CandidateProvider {
@@ -154,15 +154,15 @@ func TestResolveRejectsProviderDriftAndAbsence(t *testing.T) {
 		name   string
 		mutate func(*definition.Definition)
 	}{
-		{name: "missing", mutate: func(source *definition.Definition) { source.Relations[0].CandidateProvider = member.RelationRef{} }},
+		{name: "missing", mutate: func(source *definition.Definition) { source.Relations[0].CandidateProvider = member.CandidateRef{} }},
 		{name: "wrong-provider", mutate: func(source *definition.Definition) {
-			source.Projections[0].CandidateProvider.Member = "value/wrong-directory"
+			source.Projections[0].CandidateProvider.AxisRelation.Member = "value/wrong-directory"
 		}},
 		{name: "foreign-directory-symbols", mutate: func(source *definition.Definition) {
 			source.Relations[0].CandidateResolver = definition.GoSymbol{PackagePath: "example/value", Name: "CandidateAt"}
 		}},
 		{name: "ambiguous-provider-without-member", mutate: func(source *definition.Definition) {
-			source.Relations[0].CandidateProvider = member.RelationRef{Axis: schema.EntryReference{Surface: schema.SurfaceKindAxis, Key: "value"}}
+			source.Relations[0].CandidateProvider = member.AxisRelationCandidate(member.RelationRef{Axis: schema.EntryReference{Surface: schema.SurfaceKindAxis, Key: "value"}})
 		}},
 	}
 	for _, test := range cases {

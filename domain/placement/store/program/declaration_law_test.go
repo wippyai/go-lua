@@ -155,7 +155,7 @@ func TestStorageRelationAuthorsTheFourFenceDeriveRoutesBuild(t *testing.T) {
 		t.Fatalf("Store relation count = %d, want one dependent route relation", len(source.Relations))
 	}
 	relation := source.Relations[0]
-	if relation.CandidateProvider.Axis.Key != valueAxisKey || relation.CandidateProvider.Member != StorageTransferCandidates ||
+	if relation.CandidateProvider.AxisRelation.Axis.Key != valueAxisKey || relation.CandidateProvider.AxisRelation.Member != StorageTransferCandidates ||
 		len(relation.Inputs) != 2 || relation.Inputs[0].Carrier != "StorageTransferCarrier" || relation.Inputs[1].Carrier != "ValueFactCarrier" {
 		t.Fatalf("Store route ownership/input shape = %+v", relation)
 	}

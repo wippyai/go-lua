@@ -81,7 +81,7 @@ func BinaryArithmetic() ruleprogram.Program {
 	provider := member.RelationRef{Axis: valueAxis, Member: BinaryArithmeticCandidates}
 	return ruleprogram.Program{
 		OperandRole: vocabulary.RoleKey(OperandRole),
-		Candidate:   ruleprogram.AxisRelationCandidate(provider),
+		Candidate:   member.AxisRelationCandidate(provider),
 		Joins: []ruleprogram.JoinDecl{
 			{
 				Sources:  []ruleprogram.SourceRef{ruleprogram.CandidateSource()},
