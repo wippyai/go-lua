@@ -121,8 +121,9 @@ func (rule *HotRule) locateValues(context engine.SelectorContext, operand operan
 	}
 	for index := 0; index < boundary.MemberCount(); index++ {
 		member, memberOK := boundary.MemberAt(index)
+		coordinate, coordinateOK := member.Coordinate()
 		tag, tagOK := boundaryValueTag(index)
-		if !memberOK || !tagOK || !valueowner.SelectRouteTyped(rule.values, context, member, tag) {
+		if !memberOK || !coordinateOK || !tagOK || !valueowner.SelectRouteTyped(rule.values, context, coordinate, tag) {
 			return false
 		}
 	}
@@ -149,8 +150,9 @@ func (rule *HotRule) collectFacts(context engine.SelectorContext, selection engi
 		if !logicalOK || !selected || cells.Count() != 1 {
 			return returnFacts{}, false
 		}
-		coordinate, coordinateOK := boundary.MemberAt(logical)
-		if !coordinateOK {
+		member, memberOK := boundary.MemberAt(logical)
+		coordinate, coordinateOK := member.Coordinate()
+		if !memberOK || !coordinateOK {
 			return returnFacts{}, false
 		}
 		fact, present, available := cells.At(0)
@@ -190,8 +192,9 @@ func (rule *HotRule) collectFactsFrame(frame engine.Frame[placementdomain.Fact, 
 		if !logicalOK || !selected || cells.Count() != 1 {
 			return returnFacts{}, false
 		}
-		coordinate, coordinateOK := boundary.MemberAt(logical)
-		if !coordinateOK {
+		member, memberOK := boundary.MemberAt(logical)
+		coordinate, coordinateOK := member.Coordinate()
+		if !memberOK || !coordinateOK {
 			return returnFacts{}, false
 		}
 		fact, present, available := cells.At(0)

@@ -441,10 +441,25 @@ func sealReturnBoundaryTopologies(program programschema.Program) (map[identity.C
 }
 
 func (schema *valueBuilder) sealComputationRows() bool {
-	if schema == nil || schema.sealProject() == nil || schema.artifacts == nil {
+	if schema == nil || schema.sealProject() == nil || schema.artifacts == nil || schema.Schema == nil ||
+		schema.returnBoundaryMemberIndex == nil {
 		return false
 	}
-	for module, mount := range schema.artifacts {
+	// The mounts are walked in project order rather than over the artifact map.
+	// The member arena and the return-boundary directory are dense projections
+	// of the order these rows are sealed in, and a map's order is not an order
+	// a directory can be a projection of.
+	mounts := schema.sealProject().Mounts()
+	for mountIndex := 0; mountIndex < mounts.Count(); mountIndex++ {
+		shard, shardOK := mounts.At(mountIndex)
+		module, moduleOK := schema.sealProject().ModuleKey(shard)
+		if !shardOK || !moduleOK || !module.Available() {
+			return false
+		}
+		mount, mountOK := schema.artifacts[module]
+		if !mountOK || !mount.Available() || mount.ModuleKey != module {
+			return false
+		}
 		program := mount.Program.Program
 		topologies, topologiesOK := sealReturnBoundaryTopologies(program)
 		if !topologiesOK {
@@ -734,18 +749,25 @@ func (schema *valueBuilder) sealComputationRows() bool {
 					return false
 				}
 				memberOffset := uint32(len(schema.returnBoundaryMembers))
-				for _, memberID := range topology.members {
+				for position, memberID := range topology.members {
 					member, memberOK := schema.sealBoundary().Values().ForMountedSemantic(module, memberID)
 					memberCoordinate, memberCoordinateOK := schema.coordinateForCold(member)
 					if !memberOK || !memberCoordinateOK {
 						return false
 					}
-					schema.returnBoundaryMembers = append(schema.returnBoundaryMembers, returnBoundaryMember{coordinate: memberCoordinate})
+					content := computationContent(schema.linkID, "val-retmember!", module, row.ID(), uint64(position))
+					memberKey := computationKey{module: module, occurrence: content}
+					if _, duplicate := schema.returnBoundaryMemberIndex[memberKey]; duplicate {
+						return false
+					}
+					schema.returnBoundaryMemberIndex[memberKey] = uint32(len(schema.returnBoundaryMembers))
+					schema.returnBoundaryMembers = append(schema.returnBoundaryMembers, returnBoundaryMember{coordinate: memberCoordinate, content: content})
 				}
 				body, bodyOK := row.BodyID()
 				boundary := ReturnBoundary{
 					schema: schema.Schema, key: key,
 					body:    body,
+					ordinal: uint32(len(schema.returnBoundaryOrder)),
 					content: computationContent(schema.linkID, "val-ret!", module, row.ID()),
 					root:    coordinate, memberOffset: memberOffset, memberCount: uint32(len(topology.members)),
 					hasTail: topology.hasTail, tailKind: topology.tailKind,
@@ -757,6 +779,7 @@ func (schema *valueBuilder) sealComputationRows() bool {
 					return false
 				}
 				schema.returnBoundaries[key] = boundary
+				schema.returnBoundaryOrder = append(schema.returnBoundaryOrder, key)
 				bodyKey := computationKey{module: module, occurrence: body}
 				schema.returnBoundariesByBody[bodyKey] = append(schema.returnBoundariesByBody[bodyKey], key)
 				if !boundary.valid() {

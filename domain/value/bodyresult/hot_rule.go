@@ -145,10 +145,11 @@ func (rule *HotRule) selectedReturns(row valuedomain.MountedCallResultSlot, fact
 				}
 				continue
 			}
-			coordinate, coordinateOK := boundary.MemberAt(0)
+			member, memberOK := boundary.MemberAt(0)
+			coordinate, coordinateOK := member.Coordinate()
 			coordinateIndex, indexOK := rule.values.Schema().CoordinateIndex(coordinate)
 			tag := uint64(coordinateIndex) + 1
-			if !coordinateOK || !indexOK || tag == 0 {
+			if !memberOK || !coordinateOK || !indexOK || tag == 0 {
 				return returnSelection{}, false
 			}
 			if _, duplicate := seen[tag]; !duplicate {

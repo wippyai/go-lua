@@ -20,7 +20,10 @@ func TestReturnBoundaryBodyIndexPointsToCanonicalRows(t *testing.T) {
 		coordinateCount:        3,
 		returnBoundaries:       make(map[computationKey]ReturnBoundary),
 		returnBoundariesByBody: make(map[computationKey][]computationKey),
-		returnBoundaryMembers:  []returnBoundaryMember{{coordinate: Coordinate{index: 2}}, {coordinate: Coordinate{index: 3}}},
+		returnBoundaryMembers: []returnBoundaryMember{
+			{coordinate: Coordinate{index: 2}, content: returnBoundaryLawID(7)},
+			{coordinate: Coordinate{index: 3}, content: returnBoundaryLawID(8)},
+		},
 	}
 	for index := range schema.returnBoundaryMembers {
 		schema.returnBoundaryMembers[index].coordinate.schema = schema
@@ -38,7 +41,8 @@ func TestReturnBoundaryBodyIndexPointsToCanonicalRows(t *testing.T) {
 	for index, row := range rows {
 		owner, ownerOK := row.BodyID()
 		member, memberOK := row.MemberAt(0)
-		if !ownerOK || owner != body || !memberOK || member.schema != schema || member.index != uint32(index+2) {
+		coordinate, coordinateOK := member.Coordinate()
+		if !ownerOK || owner != body || !memberOK || !coordinateOK || coordinate.schema != schema || coordinate.index != uint32(index+2) {
 			t.Fatalf("body return row %d lost owner/member", index)
 		}
 	}

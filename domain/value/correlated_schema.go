@@ -354,8 +354,15 @@ type coordinateRow struct {
 // ReturnBoundary's dense fixed-member arena. Keeping this row in Schema makes
 // member access owner-fenced and avoids retaining Program slices or a second
 // topology authority in the published operand.
+//
+// content is the owner-issued identity of the member at this arena position,
+// qualified by the mount and the return occurrence that carries it. A Program
+// Values member row is reachable from more than one mounted return, so the
+// arena position is named by the boundary that seals it rather than by the
+// Program row alone.
 type returnBoundaryMember struct {
 	coordinate Coordinate
+	content    identity.ContentID
 }
 
 type mountedCoordinateKey struct {
@@ -442,6 +449,12 @@ type Schema struct {
 	returnBoundaries       map[computationKey]ReturnBoundary
 	returnBoundariesByBody map[computationKey][]computationKey
 	returnBoundaryMembers  []returnBoundaryMember
+	// returnBoundaryOrder is the dense return-boundary candidate directory:
+	// mount order, then Program occurrence order. returnBoundaryMemberIndex is
+	// the inverse of the member arena, from a member's owner-issued mounted
+	// identity to its dense arena position.
+	returnBoundaryOrder       []computationKey
+	returnBoundaryMemberIndex map[computationKey]uint32
 	// freshResultCalls is the detached Value-owned admission directory for
 	// Target fresh results that have an existing fixed CallResultValue
 	// coordinate. Heap remains the sole issuer of the key; this map only joins
@@ -859,6 +872,7 @@ func SealWithFailure(source *link.Link, heaps heap.Schema, mounts []programmount
 		valueClaims:                    make(map[computationKey]ValueClaim),
 		returnBoundaries:               make(map[computationKey]ReturnBoundary),
 		returnBoundariesByBody:         make(map[computationKey][]computationKey),
+		returnBoundaryMemberIndex:      make(map[computationKey]uint32),
 		allocationResultOrdinals:       make(map[heap.Key]uint32),
 		freshResultCalls:               make(map[heap.Key]FreshResultCall),
 		freshResultCallOrdinals:        make(map[heap.Key]uint32),

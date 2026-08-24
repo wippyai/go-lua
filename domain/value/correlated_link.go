@@ -89,9 +89,14 @@ func (seed SourceSeed) Result() (Coordinate, Value, bool) {
 // optional open tail is represented only by its closed Program ordinal and is
 // intentionally not exposed as another coordinate.
 type ReturnBoundary struct {
-	schema       *Schema
-	key          computationKey
-	body         identity.ContentID
+	schema *Schema
+	key    computationKey
+	body   identity.ContentID
+	// ordinal is this row's position in Value's dense return-boundary
+	// directory. It is carried on the row so the directory's inverse is exact
+	// and costs no scan; the sealed order remains the directory's, not the
+	// row's.
+	ordinal      uint32
 	content      identity.ContentID
 	root         Coordinate
 	memberOffset uint32
@@ -192,20 +197,22 @@ func (boundary ReturnBoundary) MemberCount() int {
 
 // MemberAt returns one ordered fixed Values member from the Schema-owned
 // dense member arena. The arena is immutable after sealing and remains fenced
-// by the exact Schema that issued this boundary.
-func (boundary ReturnBoundary) MemberAt(index int) (Coordinate, bool) {
+// by the exact Schema that issued this boundary. The row it answers is the
+// member itself, so the member's coordinate and its identity are reached the
+// same way every other directory row's are.
+func (boundary ReturnBoundary) MemberAt(index int) (ReturnBoundaryMember, bool) {
 	if !boundary.valid() || index < 0 || index >= int(boundary.memberCount) {
-		return Coordinate{}, false
+		return ReturnBoundaryMember{}, false
 	}
 	position := uint64(boundary.memberOffset) + uint64(index)
 	if position >= uint64(len(boundary.schema.returnBoundaryMembers)) {
-		return Coordinate{}, false
+		return ReturnBoundaryMember{}, false
 	}
-	member := boundary.schema.returnBoundaryMembers[position]
-	if !member.coordinate.Valid() {
-		return Coordinate{}, false
+	member := ReturnBoundaryMember{schema: boundary.schema, position: uint32(position) + 1}
+	if !member.valid() {
+		return ReturnBoundaryMember{}, false
 	}
-	return member.coordinate, true
+	return member, true
 }
 
 // HasTail reports whether the canonical Values row has an open tail. The

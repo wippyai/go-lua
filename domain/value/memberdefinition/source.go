@@ -45,6 +45,8 @@ func StorageTransfer() definition.Definition {
 	allocationResult := valueGoType("AllocationResult")
 	freshResultCall := valueGoType("FreshResultCall")
 	mountedCallArgument := valueGoType("MountedCallArgument")
+	returnBoundary := valueGoType("ReturnBoundary")
+	returnBoundaryMember := valueGoType("ReturnBoundaryMember")
 	return definition.Definition{
 		Name: "ValueStorageTransfer",
 		Axis: "value",
@@ -72,6 +74,12 @@ func StorageTransfer() definition.Definition {
 			{Name: "AllocationResultCarrier", Key: "carrier/value/allocation-result", Type: allocationResult},
 			{Name: "FreshResultCallCarrier", Key: "carrier/value/fresh-result-call", Type: freshResultCall},
 			{Name: "MountedCallArgumentCarrier", Key: "carrier/value/mounted-call-argument", Type: mountedCallArgument},
+			// The return boundary and its member rows. Both types are declared by
+			// the value package, so the relations that subject them are Value's
+			// own; a placement rule that joins a return's members names these
+			// rows rather than rebuilding the topology from Program occurrences.
+			{Name: "ReturnBoundaryCarrier", Key: "carrier/value/return-boundary", Type: returnBoundary},
+			{Name: "ReturnBoundaryMemberCarrier", Key: "carrier/value/return-boundary-member", Type: returnBoundaryMember},
 		},
 		Relations: []definition.Relation{
 			{
@@ -159,6 +167,46 @@ func StorageTransfer() definition.Definition {
 				CandidateCount:      valueMethod("FreshResultCallCount", "Schema", true, 0),
 				CandidateIdentityAt: valueMethod("FreshResultCallIDAt", "Schema", true, 0),
 			},
+			{
+				// The return-boundary directory. One row per mounted executable
+				// return, in sealed mount-then-occurrence order.
+				Name:              "ReturnBoundaryCandidates",
+				Key:               "value/return-boundary/candidates",
+				Subject:           "ReturnBoundaryCarrier",
+				CandidateProvider: member.RelationRef{Axis: axisReference("value"), Member: "value/return-boundary/candidates"},
+				CandidateResolver: valueMethod("ReturnBoundary", "Schema", true, 0),
+				CandidateOrdinal:  valueMethod("ReturnBoundaryOrdinal", "Schema", true, 0),
+				CandidateAt:       valueMethod("ReturnBoundaryAt", "Schema", true, 0),
+			},
+			{
+				// The root anchor a return's fact is read at. It is a dependent
+				// relation over the candidate row: the coordinate is already
+				// issued, and the root projection below is where it is read from.
+				Name:              "ReturnBoundaryRoots",
+				Key:               "value/return-boundary/roots",
+				Subject:           "ValueFactCarrier",
+				Inputs:            []string{"ReturnBoundaryCarrier"},
+				CandidateProvider: member.RelationRef{Axis: axisReference("value"), Member: "value/return-boundary/candidates"},
+			},
+			{
+				// The ordered fixed member set one return carries: a nested
+				// member set parented by the candidate directory, addressed by
+				// (return, ordinal). The set is self-provided, so a member is
+				// densified through this relation's own directory and projects
+				// the way every other row does. The open tail is candidate
+				// metadata and is deliberately not a row here: it has no
+				// coordinate to be one.
+				Name:              "ReturnBoundaryMembers",
+				Key:               "value/return-boundary/members",
+				Subject:           "ReturnBoundaryMemberCarrier",
+				CandidateProvider: member.RelationRef{Axis: axisReference("value"), Member: "value/return-boundary/members"},
+				CandidateResolver: valueMethod("ReturnBoundaryMemberForMountedOccurrence", "Schema", true, 0),
+				CandidateOrdinal:  valueMethod("ReturnBoundaryMemberOrdinal", "Schema", true, 0),
+				CandidateAt:       valueMethod("ReturnBoundaryMemberAt", "Schema", true, 0),
+				MemberParent:      member.RelationRef{Axis: axisReference("value"), Member: "value/return-boundary/candidates"},
+				MemberCount:       valueMethod("MemberCount", "ReturnBoundary", false, 0),
+				MemberAt:          valueMethod("MemberAt", "ReturnBoundary", false, 0),
+			},
 		},
 		Projections: []definition.Projection{
 			{
@@ -223,6 +271,24 @@ func StorageTransfer() definition.Definition {
 				Role:              member.Destination,
 				Result:            "ValueCoordinateCarrier",
 				Accessor:          valueMethod("Coordinate", "FreshResultCall", false, -1),
+			},
+			{
+				Name:              "ReturnBoundaryRootKey",
+				Key:               "value/return-boundary/root-key",
+				Relation:          "ReturnBoundaryRoots",
+				CandidateProvider: member.RelationRef{Axis: axisReference("value"), Member: "value/return-boundary/candidates"},
+				Role:              member.Key,
+				Result:            "ValueCoordinateCarrier",
+				Accessor:          valueMethod("Root", "ReturnBoundary", false, -1),
+			},
+			{
+				Name:              "ReturnBoundaryMemberKey",
+				Key:               "value/return-boundary/member-key",
+				Relation:          "ReturnBoundaryMembers",
+				CandidateProvider: member.RelationRef{Axis: axisReference("value"), Member: "value/return-boundary/members"},
+				Role:              member.Key,
+				Result:            "ValueCoordinateCarrier",
+				Accessor:          valueMethod("Coordinate", "ReturnBoundaryMember", false, -1),
 			},
 		},
 		CarryTransforms: []definition.CarryTransform{

@@ -45,10 +45,11 @@ func returnOperandForSchema(schema *valuedomain.Schema, module, occurrence ident
 	}
 	for index := 0; index < boundary.MemberCount(); index++ {
 		member, memberOK := boundary.MemberAt(index)
-		if !memberOK {
+		coordinate, coordinateOK := member.Coordinate()
+		if !memberOK || !coordinateOK {
 			return operand{}, false
 		}
-		if _, indexOK := schema.CoordinateIndex(member); !indexOK {
+		if _, indexOK := schema.CoordinateIndex(coordinate); !indexOK {
 			return operand{}, false
 		}
 	}
@@ -67,10 +68,11 @@ func returnOperandContentForSchema(schema *valuedomain.Schema, candidate operand
 	}
 	for index := 0; index < candidate.boundary.MemberCount(); index++ {
 		member, memberOK := candidate.boundary.MemberAt(index)
-		if !memberOK {
+		coordinate, coordinateOK := member.Coordinate()
+		if !memberOK || !coordinateOK {
 			return operand{}, [32]byte{}, false
 		}
-		if _, memberIndexOK := schema.CoordinateIndex(member); !memberIndexOK {
+		if _, memberIndexOK := schema.CoordinateIndex(coordinate); !memberIndexOK {
 			return operand{}, [32]byte{}, false
 		}
 	}
@@ -116,7 +118,11 @@ func boundaryCoordinateForTag(boundary valuedomain.ReturnBoundary, tag valueTag)
 	if !indexOK {
 		return valuedomain.Coordinate{}, false
 	}
-	return boundary.MemberAt(index)
+	member, memberOK := boundary.MemberAt(index)
+	if !memberOK {
+		return valuedomain.Coordinate{}, false
+	}
+	return member.Coordinate()
 }
 
 type returnFact struct {

@@ -210,6 +210,12 @@ func TestResolveKeepsTypedRowsAlignedWithColdKinds(t *testing.T) {
 		// every generated ladder.
 		"value/allocation/candidates",
 		"value/fresh-result/candidates",
+		// The return-boundary candidate directory, the root join that hangs off
+		// it, and the nested ordered member set it parents. Appended for the
+		// same reason.
+		"value/return-boundary/candidates",
+		"value/return-boundary/roots",
+		"value/return-boundary/members",
 	}
 	if len(metadata.Relations) != len(wantRelations) {
 		t.Fatalf("relation inventory = %d, want %d", len(metadata.Relations), len(wantRelations))
@@ -230,6 +236,8 @@ func TestResolveKeepsTypedRowsAlignedWithColdKinds(t *testing.T) {
 		"value/mounted-call/argument-key",
 		"value/allocation/coordinate",
 		"value/fresh-result/coordinate",
+		"value/return-boundary/root-key",
+		"value/return-boundary/member-key",
 	}
 	if len(metadata.Projections) != len(wantProjections) {
 		t.Fatalf("projection inventory = %d, want %d", len(metadata.Projections), len(wantProjections))

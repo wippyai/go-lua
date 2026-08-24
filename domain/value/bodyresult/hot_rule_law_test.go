@@ -100,9 +100,10 @@ func TestBodyResultRuleSelectsEveryReturnButOnlyResultZero(t *testing.T) {
 		if !moduleOK || !bodyOK || !boundariesOK || len(boundaries) != 1 {
 			t.Fatal("canonical selected body return boundary")
 		}
-		coordinate, coordinateOK := boundaries[0].MemberAt(0)
+		member, memberOK := boundaries[0].MemberAt(0)
+		coordinate, coordinateOK := member.Coordinate()
 		index, indexOK := fixture.values.CoordinateIndex(coordinate)
-		if !coordinateOK || !indexOK {
+		if !memberOK || !coordinateOK || !indexOK {
 			t.Fatal("canonical first return member")
 		}
 		want = append(want, uint64(index)+1)

@@ -125,6 +125,24 @@ func (owner *RelationOwner) candidate(relationOrdinal uint32, mount, occurrence 
 			return 0, false
 		}
 		return owner.schema.FreshResultCallOrdinal(candidate)
+	case 8:
+		if !mount.Available() {
+			return 0, false
+		}
+		candidate, candidateOK := owner.schema.ReturnBoundary(mount, occurrence)
+		if !candidateOK {
+			return 0, false
+		}
+		return owner.schema.ReturnBoundaryOrdinal(candidate)
+	case 10:
+		if !mount.Available() {
+			return 0, false
+		}
+		candidate, candidateOK := owner.schema.ReturnBoundaryMemberForMountedOccurrence(mount, occurrence)
+		if !candidateOK {
+			return 0, false
+		}
+		return owner.schema.ReturnBoundaryMemberOrdinal(candidate)
 	default:
 		return 0, false
 	}
@@ -153,7 +171,23 @@ func (owner *RelationOwner) CandidateAt(relationOrdinal uint32, mount, occurrenc
 // row. It is the width of the denominator a vector read over this relation
 // spans; a relation that declares no member set holds none.
 func (owner *RelationOwner) MemberCount(relationOrdinal, parentCandidateOrdinal uint32) (int, bool) {
-	return 0, false
+	if owner == nil || owner.schema == nil {
+		return 0, false
+	}
+	switch relationOrdinal {
+	case 10:
+		parent, parentOK := owner.schema.ReturnBoundaryAt(int(parentCandidateOrdinal))
+		if !parentOK {
+			return 0, false
+		}
+		count := parent.MemberCount()
+		if count < 0 {
+			return 0, false
+		}
+		return count, true
+	default:
+		return 0, false
+	}
 }
 
 // MemberAt addresses one row of a nested ordered member set by its ordinal.
@@ -161,7 +195,23 @@ func (owner *RelationOwner) MemberCount(relationOrdinal, parentCandidateOrdinal 
 // relation's own directory, so a member is projected the way every other row
 // of it is and members need no projection language of their own.
 func (owner *RelationOwner) MemberAt(relationOrdinal, parentCandidateOrdinal uint32, ordinal int) (uint32, bool) {
-	return 0, false
+	if owner == nil || owner.schema == nil || ordinal < 0 {
+		return 0, false
+	}
+	switch relationOrdinal {
+	case 10:
+		parent, parentOK := owner.schema.ReturnBoundaryAt(int(parentCandidateOrdinal))
+		if !parentOK {
+			return 0, false
+		}
+		member, memberOK := parent.MemberAt(ordinal)
+		if !memberOK {
+			return 0, false
+		}
+		return owner.schema.ReturnBoundaryMemberOrdinal(member)
+	default:
+		return 0, false
+	}
 }
 
 // OccurrenceCount is the sealed census of one global relation's occurrence
@@ -331,6 +381,43 @@ func (owner *RelationOwner) Project(relationOrdinal, projectionOrdinal, candidat
 		default:
 			return 0, false
 		}
+	case 8:
+		switch projectionOrdinal {
+		default:
+			return 0, false
+		}
+	case 9:
+		switch projectionOrdinal {
+		case 7:
+			candidate, candidateOK := owner.schema.ReturnBoundaryAt(int(candidateOrdinal))
+			if !candidateOK {
+				return 0, false
+			}
+			first, projectionOK := candidate.Root()
+			if !projectionOK {
+				return 0, false
+			}
+			projected := first
+			return owner.schema.CoordinateIndex(projected)
+		default:
+			return 0, false
+		}
+	case 10:
+		switch projectionOrdinal {
+		case 8:
+			candidate, candidateOK := owner.schema.ReturnBoundaryMemberAt(int(candidateOrdinal))
+			if !candidateOK {
+				return 0, false
+			}
+			first, projectionOK := candidate.Coordinate()
+			if !projectionOK {
+				return 0, false
+			}
+			projected := first
+			return owner.schema.CoordinateIndex(projected)
+		default:
+			return 0, false
+		}
 	default:
 		return 0, false
 	}
@@ -393,7 +480,7 @@ func (owner *RelationOwner) materializeSourceColumns() bool {
 // SourceFactColumn returns the immutable typed source fact column for one relation.
 // RelationCount is the sealed relation-ordinal extent. It preserves absent
 // materializations separately from a valid empty source column.
-func (*RelationOwner) RelationCount() int { return 8 }
+func (*RelationOwner) RelationCount() int { return 11 }
 
 func (owner *RelationOwner) SourceFactColumn(relationOrdinal uint32) (memberrelation.SourceColumn[Value], bool) {
 	if owner == nil || owner.schema == nil {
