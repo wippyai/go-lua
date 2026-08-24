@@ -32,7 +32,7 @@ import (
 	placementowner "github.com/wippyai/go-lua/domain/placement/owner"
 	placementpublicationescape "github.com/wippyai/go-lua/domain/placement/publicationescape"
 	placementquery "github.com/wippyai/go-lua/domain/placement/query"
-	placementreturnescape "github.com/wippyai/go-lua/domain/placement/returnescape"
+	placementreturnescapeprogram "github.com/wippyai/go-lua/domain/placement/returnescape/program"
 	placementstoreprogram "github.com/wippyai/go-lua/domain/placement/store/program"
 	placementsuspension "github.com/wippyai/go-lua/domain/placement/suspension"
 	placementtransfer "github.com/wippyai/go-lua/domain/placement/transfer"
@@ -212,7 +212,7 @@ func semanticRoleVocabulary() []structure.Spec {
 		selectapply.StructureSpecs(),
 		programmount.StructureSpecs(),
 		modulecomposition.StructureSpecs(),
-		placementreturnescape.StructureSpecs(),
+		placementreturnescapeprogram.StructureSpecs(),
 		placementcapture.StructureSpecs(),
 		placementformal.StructureSpecs(),
 		placementcontainment.StructureSpecs(),

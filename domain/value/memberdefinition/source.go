@@ -245,9 +245,14 @@ func StorageTransfer() definition.Definition {
 				// the way every other row does. The open tail is candidate
 				// metadata and is deliberately not a row here: it has no
 				// coordinate to be one.
-				Name:              "ReturnBoundaryMembers",
-				Key:               "value/return-boundary/members",
-				Subject:           "ReturnBoundaryMemberCarrier",
+				Name:    "ReturnBoundaryMembers",
+				Key:     "value/return-boundary/members",
+				Subject: "ReturnBoundaryMemberCarrier",
+				// This Input carries no Derivation semantics for a resolver-based
+				// relation - Complete() never inspects Inputs on that path - it
+				// exists purely to satisfy the Program join arity check, mirroring
+				// ReturnBoundaryRoots exactly.
+				Inputs:            []definition.RelationInput{{Carrier: "ReturnBoundaryCarrier"}},
 				CandidateProvider: member.RelationRef{Axis: axisReference("value"), Member: "value/return-boundary/members"},
 				CandidateResolver: valueMethod("ReturnBoundaryMemberForMountedOccurrence", "Schema", true, 0),
 				CandidateOrdinal:  valueMethod("ReturnBoundaryMemberOrdinal", "Schema", true, 0),

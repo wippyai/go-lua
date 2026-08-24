@@ -51,6 +51,15 @@ var scheduledDeaths = []ScheduledDeath{
 			ResultIndex: 0,
 		},
 	},
+	{
+		Axis:     "placement",
+		Relation: "placement/return-escape/routes",
+		Build: GoSymbol{
+			PackagePath: "github.com/wippyai/go-lua/domain/placement/returnescape",
+			Name:        "DeriveReturnRoutes",
+			ResultIndex: 0,
+		},
+	},
 }
 
 // ScheduledDeaths returns the migration set. The copy is deliberate: the

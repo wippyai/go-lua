@@ -11,16 +11,23 @@ import (
 
 const (
 	StorageRoutes           schemaapi.Key  = "placement/store/storage-routes"
+	ReturnRoutes            schemaapi.Key  = "placement/return-escape/routes"
 	StorageRouteKey         schemaapi.Key  = "placement/store/route-key"
 	StorageRouteTag         schemaapi.Key  = "placement/store/route-tag"
 	StorageRouteDestination schemaapi.Key  = "placement/store/route-destination"
+	ReturnRouteKey          schemaapi.Key  = "placement/return-escape/route-key"
+	ReturnRouteDestination  schemaapi.Key  = "placement/return-escape/route-destination"
 	StorageReducer          schemaapi.Key  = "placement/store/reducer/storage"
+	ReturnEscapeReducer     schemaapi.Key  = "placement/return-escape/reducer"
 	PlacementKeyCarrier     member.Carrier = "carrier/placement/key"
 	PlacementFactCarrier    member.Carrier = "carrier/placement/fact"
 	StorageRouteCarrier     member.Carrier = "carrier/placement/storage-route"
 	RouteTagCarrier         member.Carrier = "carrier/placement/storage-route-tag"
 	StorageTransferCarrier  member.Carrier = "carrier/value/storage-transfer"
 	ValueFactCarrier        member.Carrier = "carrier/value/fact"
+	ReturnRouteTagCarrier   member.Carrier = "carrier/placement/return-route-tag"
+	ReturnRouteCarrier      member.Carrier = "carrier/placement/return-route"
+	ReturnBoundaryCarrier   member.Carrier = "carrier/value/return-boundary"
 )
 
 // AxisMemberCatalog is placement's declaration-only member vocabulary.
@@ -29,16 +36,24 @@ func AxisMemberCatalog() member.Catalog {
 	catalog, ok := member.NewCatalog(
 		[]member.Relation{
 			{Key: StorageRoutes, Subject: StorageRouteCarrier, CandidateProvider: member.RelationRef{Axis: schemaapi.EntryReference{Surface: schemaapi.SurfaceKind(2), Key: "value"}, Member: "value/storage-transfer/candidates"}, Inputs: []member.Carrier{StorageTransferCarrier, ValueFactCarrier}},
+			{Key: ReturnRoutes, Subject: ReturnRouteCarrier, CandidateProvider: member.RelationRef{Axis: schemaapi.EntryReference{Surface: schemaapi.SurfaceKind(2), Key: "value"}, Member: "value/return-boundary/candidates"}, Inputs: []member.Carrier{ReturnBoundaryCarrier, ValueFactCarrier, ValueFactCarrier}},
 		},
 		[]member.Projection{
 			{Key: StorageRouteKey, Relation: StorageRoutes, Role: member.Key, Result: PlacementKeyCarrier, CandidateProvider: member.RelationRef{Axis: schemaapi.EntryReference{Surface: schemaapi.SurfaceKind(2), Key: "value"}, Member: "value/storage-transfer/candidates"}},
 			{Key: StorageRouteTag, Relation: StorageRoutes, Role: member.Predicate, Result: RouteTagCarrier, CandidateProvider: member.RelationRef{Axis: schemaapi.EntryReference{Surface: schemaapi.SurfaceKind(2), Key: "value"}, Member: "value/storage-transfer/candidates"}},
 			{Key: StorageRouteDestination, Relation: StorageRoutes, Role: member.Destination, Result: PlacementKeyCarrier, CandidateProvider: member.RelationRef{Axis: schemaapi.EntryReference{Surface: schemaapi.SurfaceKind(2), Key: "value"}, Member: "value/storage-transfer/candidates"}},
+			{Key: ReturnRouteKey, Relation: ReturnRoutes, Role: member.Key, Result: PlacementKeyCarrier, CandidateProvider: member.RelationRef{Axis: schemaapi.EntryReference{Surface: schemaapi.SurfaceKind(2), Key: "value"}, Member: "value/return-boundary/candidates"}},
+			{Key: ReturnRouteDestination, Relation: ReturnRoutes, Role: member.Destination, Result: PlacementKeyCarrier, CandidateProvider: member.RelationRef{Axis: schemaapi.EntryReference{Surface: schemaapi.SurfaceKind(2), Key: "value"}, Member: "value/return-boundary/candidates"}},
 		},
 		[]member.Reducer{
 			{Key: StorageReducer, Inputs: []member.ReducerInput{
 				{Axis: schemaapi.EntryReference{Surface: schemaapi.SurfaceKindAxis, Key: "value"}, Carrier: ValueFactCarrier, Form: member.ReadFormExact, Multiplicity: member.MultiplicityOne},
 				{Axis: valueAxis, Carrier: PlacementFactCarrier, Form: member.ReadFormSelected, Multiplicity: member.MultiplicityOne, Tag: RouteTagCarrier},
+			}, Outputs: []member.ReducerOutput{
+				{Axis: valueAxis, Carrier: PlacementFactCarrier},
+			}},
+			{Key: ReturnEscapeReducer, Inputs: []member.ReducerInput{
+				{Axis: valueAxis, Carrier: PlacementFactCarrier, Form: member.ReadFormSelected, Multiplicity: member.MultiplicityOne, Route: ReturnRouteTagCarrier},
 			}, Outputs: []member.ReducerOutput{
 				{Axis: valueAxis, Carrier: PlacementFactCarrier},
 			}},

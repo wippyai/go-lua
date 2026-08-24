@@ -26,6 +26,7 @@ import (
 	packbase "github.com/wippyai/go-lua/domain/pack/memberdefinition"
 	packsource "github.com/wippyai/go-lua/domain/pack/source/memberdefinition"
 	placementbase "github.com/wippyai/go-lua/domain/placement/memberdefinition"
+	placementreturnescape "github.com/wippyai/go-lua/domain/placement/returnescape/memberdefinition"
 	placementstore "github.com/wippyai/go-lua/domain/placement/store/memberdefinition"
 	staticbase "github.com/wippyai/go-lua/domain/static/memberdefinition"
 	statictransfer "github.com/wippyai/go-lua/domain/static/transfer/memberdefinition"
@@ -77,6 +78,7 @@ func Composition() (definition.Roster, bool) {
 			Base:    placementbase.Storage(),
 			Contributions: []definition.Contribution{
 				placementstore.Contribution(),
+				placementreturnescape.Contribution(),
 			},
 		},
 		definition.Source{

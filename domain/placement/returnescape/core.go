@@ -2,6 +2,7 @@ package returnescape
 
 import (
 	"github.com/wippyai/go-lua/analysis/identity"
+	"github.com/wippyai/go-lua/analysis/schema/structure"
 	"github.com/wippyai/go-lua/domain/heap"
 	placementdomain "github.com/wippyai/go-lua/domain/placement"
 	valuedomain "github.com/wippyai/go-lua/domain/value"
@@ -551,13 +552,104 @@ func routeAtTag(plan routePlan, tag routeTag) (route, bool) {
 	return route{}, false
 }
 
+// Route is the routed Placement coordinate the ReturnRoutes relation
+// publishes. Key and Destination are the same allocation root: a return
+// escape reads and writes one Placement Fact at the root the Value evidence
+// names, so the relation declares that one authenticated pair rather than two
+// coordinates.
+type Route struct {
+	Key heap.Key
+	Tag uint64
+}
+
+// Coordinates is the ReturnRoutes relation's Key/Destination accessor. It is
+// a direct field projection; the relation authenticates the row before this
+// is ever called.
+func (route Route) Coordinates() (key, destination heap.Key, ok bool) {
+	return route.Key, route.Key, route.Key.Valid() && route.Key.Kind() == heap.RootAllocation && route.Tag != 0
+}
+
+// RoutePlan is the ReturnRoutes relation's declared Derivation state. It is a
+// thin exported view over the same route-planning algebra the generated
+// family's zero-allocation worker calls directly; Count/At never re-derive a
+// route from the underlying evidence.
+type RoutePlan struct {
+	plan routePlan
+}
+
+func (plan RoutePlan) RouteCount() int { return plan.plan.routeCount() }
+
+func (plan RoutePlan) RouteAt(index int) (Route, bool) {
+	candidate, ok := plan.plan.routeAt(index)
+	if !ok {
+		return Route{}, false
+	}
+	return Route{Key: candidate.key, Tag: uint64(candidate.tag)}, true
+}
+
+// DeriveReturnRoutes is the ReturnRoutes relation's declared Build. root is
+// the exact anchor Value fact: an authenticated candidate prerequisite this
+// route algebra does not fold into its own value, exactly as Store's
+// StorageFold declares an unused source input. members are already the
+// owner-resolved per-member Value facts, exactly as Store's DeriveRoutes
+// receives an already-authenticated source: a sparse member has already
+// resolved to the owner's exact Bottom, so no separate presence flag is
+// needed here. It folds the delivered vector through the same
+// routePlanForFacts algebra the generated family uses and is not itself on
+// that per-invocation hot path.
+func DeriveReturnRoutes(schema placementdomain.Schema, values *valuedomain.Schema, boundary valuedomain.ReturnBoundary, root valuedomain.Value, members []valuedomain.Value) (RoutePlan, bool) {
+	_ = root
+	if values == nil || !values.Valid() || !values.OwnsReturnBoundary(boundary) {
+		return RoutePlan{}, false
+	}
+	facts, factsOK := newReturnFacts(len(members))
+	if !factsOK {
+		return RoutePlan{}, false
+	}
+	for index, member := range members {
+		if !facts.set(index, returnFact{fact: member, present: true, available: true}) {
+			return RoutePlan{}, false
+		}
+	}
+	plan, planOK := routePlanForFacts(schema, values, facts, boundary.HasTail())
+	if !planOK {
+		return RoutePlan{}, false
+	}
+	return RoutePlan{plan: plan}, true
+}
+
+// ReturnRouteCount is the ReturnRoutes relation's declared Derivation Count.
+func ReturnRouteCount(plan RoutePlan) int { return plan.RouteCount() }
+
+// ReturnRouteAt is the ReturnRoutes relation's declared Derivation At.
+func ReturnRouteAt(plan RoutePlan, index int) (Route, bool) { return plan.RouteAt(index) }
+
 func returnValue(current placementdomain.Fact, present bool, plan routePlan) (placementdomain.Fact, bool) {
+	_ = plan
 	current, currentOK := placementdomain.AuthenticateFactCell(current, present, true)
 	if !currentOK {
 		return placementdomain.BottomFact(), false
 	}
-	// Widening means that the Value identity names every possible allocation
-	// root; it does not widen the known Return escape policy. Apply that policy
-	// to each predecessor independently.
-	return placementdomain.DisplaceFactChecked(current, placementdomain.Return)
+	result, outcome := ReturnEscapeFold(1, current)
+	return result, outcome == structure.Concrete
+}
+
+// ReturnEscapeFold is the one authored return-escape judgment. Route
+// materialization chooses the destination; this reducer only applies the
+// canonical Return displacement to the authenticated predecessor. A zero
+// route tag is not a route row and therefore refuses rather than fabricating
+// an Unknown fact.
+func ReturnEscapeFold(routeTag uint64, current placementdomain.Fact) (placementdomain.Fact, structure.ReductionOutcome) {
+	if routeTag == 0 {
+		return placementdomain.BottomFact(), structure.Refuse
+	}
+	current, currentOK := placementdomain.AuthenticateFactCell(current, true, true)
+	if !currentOK {
+		return placementdomain.BottomFact(), structure.Refuse
+	}
+	result, resultOK := placementdomain.DisplaceFactChecked(current, placementdomain.Return)
+	if !resultOK {
+		return placementdomain.BottomFact(), structure.Refuse
+	}
+	return result, structure.Concrete
 }

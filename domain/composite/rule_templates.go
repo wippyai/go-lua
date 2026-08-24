@@ -31,6 +31,7 @@ import (
 	placementowner "github.com/wippyai/go-lua/domain/placement/owner"
 	placementpublicationescape "github.com/wippyai/go-lua/domain/placement/publicationescape"
 	placementreturnescape "github.com/wippyai/go-lua/domain/placement/returnescape"
+	placementreturnescapeprogram "github.com/wippyai/go-lua/domain/placement/returnescape/program"
 	placementstore "github.com/wippyai/go-lua/domain/placement/store"
 	placementstoreprogram "github.com/wippyai/go-lua/domain/placement/store/program"
 	placementsuspension "github.com/wippyai/go-lua/domain/placement/suspension"
@@ -151,8 +152,10 @@ func ruleTemplateWiring[P Principals, A Authorities]() ([]*rule.Template, []Rule
 	add(WireGeneratedRuleWithFamily[P, A](valueorderprogram.RuleEntry(), valueexactbinary.InstallFamily[A]))
 	add(WireRule(valuerefinement.RuleEntry[P, A](), valuerefinement.DeclareRule[P], valuerefinement.RegisterRule, nil, valuerefinement.BindRule[A], nil, nil, nil))
 	// Placement displacement consumers follow the value/call/heap producers
-	// whose sealed facts they read.
-	add(WireRule(placementreturnescape.RuleEntry[P, A](), placementreturnescape.DeclareRule[P], placementreturnescape.RegisterRule, nil, placementreturnescape.BindRule[A], nil, nil, nil))
+	// whose sealed facts they read. ReturnEscape is the generated dependent
+	// family: its authored route relation is installed once through the
+	// rule's own family claimant, exactly as Store's.
+	add(WireGeneratedRuleWithFamily[P, A](placementreturnescapeprogram.RuleEntry(), placementreturnescape.InstallFamily[A]))
 	add(WireRule(placementcapture.RuleEntry[P, A](), placementcapture.DeclareRule[P], placementcapture.RegisterRule, nil, placementcapture.BindRule[A], placementcapture.FinalizeRule[A], nil, nil))
 	add(WireRule(placementformal.RuleEntry[P, A](), placementformal.DeclareRule[P], placementformal.RegisterRule, nil, placementformal.BindRule[A], placementformal.FinalizeRule[A], nil, nil))
 	// Containment is the singleton declarative rule expanded at every mounted point.
