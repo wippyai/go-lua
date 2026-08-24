@@ -882,8 +882,24 @@ func renderRelations(packageName string, source definition.Definition) ([]byte, 
 				fmt.Fprintf(&out, "\t\t\t_ = %s\n", discarded)
 			}
 			fmt.Fprintf(&out, "\t\t\tprojected := %s\n", projected)
-			normalizer := directCall(source.Binding.Key.Normalizer, owner, "owner.schema", "projected", []string{"projected"}, packageName, aliases)
-			fmt.Fprintf(&out, "\t\t\treturn %s\n", normalizer)
+			// A projection whose result is this axis's KEY is a coordinate and
+			// becomes a local through the axis's own key normalizer. A
+			// projection whose result is anything else - a selection tag, a
+			// member ordinal - is already the local it publishes: normalizing
+			// it would reinterpret an owner-issued scalar as a coordinate of a
+			// directory it was never an index into.
+			if projection.Result == source.Binding.Key.Carrier {
+				normalizer := directCall(source.Binding.Key.Normalizer, owner, "owner.schema", "projected", []string{"projected"}, packageName, aliases)
+				fmt.Fprintf(&out, "\t\t\treturn %s\n", normalizer)
+				continue
+			}
+			scalar, scalarOK := carrierByName(source, projection.Result)
+			if !scalarOK || !unsignedLocalType(scalar.Type) {
+				return nil, fmt.Errorf("member generator: projection %s publishes neither this axis's key nor an unsigned local", projection.Name)
+			}
+			out.WriteString("\t\t\tlocal := uint64(projected)\n")
+			out.WriteString("\t\t\tif local > uint64(^uint32(0)) {\n\t\t\t\treturn 0, false\n\t\t\t}\n")
+			out.WriteString("\t\t\treturn uint32(local), true\n")
 		}
 		out.WriteString("\t\tdefault:\n\t\t\treturn 0, false\n\t\t}\n")
 	}
@@ -1124,5 +1140,21 @@ func multiplicityExpression(multiplicity member.Multiplicity) (string, bool) {
 		return "member.MultiplicityMany", true
 	default:
 		return "", false
+	}
+}
+
+// unsignedLocalType reports whether a carrier is spelled as an unsigned
+// builtin, which is what a local that is not a coordinate has to be: the
+// Owner surface publishes locals as uint32, and a value that cannot widen to
+// uint64 and back is not one.
+func unsignedLocalType(typ definition.GoType) bool {
+	if typ.PackagePath != "" || typ.Pointer {
+		return false
+	}
+	switch typ.Name {
+	case "uint", "uint8", "uint16", "uint32", "uint64", "byte":
+		return true
+	default:
+		return false
 	}
 }

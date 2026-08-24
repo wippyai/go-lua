@@ -21,6 +21,22 @@ type Route struct {
 	Tag heap.RawRouteTag
 }
 
+// Coordinates exposes the two owner-issued Heap identities carried by one
+// sealed route. A freeze route reads the world at the allocation root it
+// selects and publishes back into that same root, so the key and the
+// destination are one coordinate - but both roles stay separately declared in
+// the member vocabulary, because which role a projection plays is the
+// declaration's statement and not this row's.
+func (route Route) Coordinates() (key, destination heap.Key, ok bool) {
+	return route.Key, route.Key, route.valid()
+}
+
+// valid is the row fence the two projections answer under: an exact, live
+// allocation root carrying a nonzero owner-issued route tag.
+func (route Route) valid() bool {
+	return route.Key.Valid() && route.Key.Kind() == heap.RootAllocation && route.Tag != 0
+}
+
 // Plan is a sorted, duplicate-free set of exact Heap routes. The overflow
 // suffix is only allocated when a declaration exceeds InlineWidth routes.
 type Plan struct {

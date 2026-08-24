@@ -23,6 +23,8 @@ const (
 	ReturnBoundaryRoots                schemaapi.Key  = "value/return-boundary/roots"
 	ReturnBoundaryMembers              schemaapi.Key  = "value/return-boundary/members"
 	BinaryArithmeticSources            schemaapi.Key  = "value/binary-arithmetic/sources"
+	FormalFreezeCallActuals            schemaapi.Key  = "value/formal-freeze/call-actuals"
+	FormalFreezeActualMembers          schemaapi.Key  = "value/formal-freeze/actual-members"
 	StorageTransferSourceKey           schemaapi.Key  = "value/storage-transfer/source-key"
 	StorageTransferTarget              schemaapi.Key  = "value/storage-transfer/target"
 	SourceCoordinate                   schemaapi.Key  = "value/source/coordinate"
@@ -35,6 +37,8 @@ const (
 	BinaryArithmeticLeft               schemaapi.Key  = "value/binary-arithmetic/left"
 	BinaryArithmeticRight              schemaapi.Key  = "value/binary-arithmetic/right"
 	BinaryArithmeticWrite              schemaapi.Key  = "value/binary-arithmetic/write"
+	FormalFreezeActualKey              schemaapi.Key  = "value/formal-freeze/actual-key"
+	FormalFreezeActualTag              schemaapi.Key  = "value/formal-freeze/actual-tag"
 	IdentityReducer                    schemaapi.Key  = "value/reducer/identity"
 	SourceReducer                      schemaapi.Key  = "value/reducer/source"
 	GlobalBootstrapReducer             schemaapi.Key  = "value/reducer/global-bootstrap"
@@ -53,6 +57,9 @@ const (
 	ReturnBoundaryCarrier              member.Carrier = "carrier/value/return-boundary"
 	ReturnBoundaryMemberCarrier        member.Carrier = "carrier/value/return-boundary-member"
 	ReturnBoundaryMemberOrdinalCarrier member.Carrier = "carrier/value/return-boundary-member-ordinal"
+	MountedCallActualsCarrier          member.Carrier = "carrier/value/mounted-call-actuals"
+	CallCoordinateCarrier              member.Carrier = "carrier/call/mounted-call"
+	MountedCallActualTagCarrier        member.Carrier = "carrier/value/mounted-call-actual-tag"
 )
 
 // AxisMemberCatalog is value's declaration-only member vocabulary.
@@ -73,6 +80,8 @@ func AxisMemberCatalog() member.Catalog {
 			{Key: ReturnBoundaryRoots, Subject: ValueFactCarrier, CandidateProvider: member.RelationRef{Axis: schemaapi.EntryReference{Surface: schemaapi.SurfaceKind(2), Key: "value"}, Member: "value/return-boundary/candidates"}, Inputs: []member.Carrier{ReturnBoundaryCarrier}},
 			{Key: ReturnBoundaryMembers, Subject: ReturnBoundaryMemberCarrier, CandidateProvider: member.RelationRef{Axis: schemaapi.EntryReference{Surface: schemaapi.SurfaceKind(2), Key: "value"}, Member: "value/return-boundary/members"}, Parent: member.RelationRef{Axis: schemaapi.EntryReference{Surface: schemaapi.SurfaceKind(2), Key: "value"}, Member: "value/return-boundary/candidates"}, Ordinal: ReturnBoundaryMemberOrdinalCarrier},
 			{Key: BinaryArithmeticSources, Subject: ValueFactCarrier, CandidateProvider: member.RelationRef{Axis: schemaapi.EntryReference{Surface: schemaapi.SurfaceKind(2), Key: "value"}, Member: "value/binary-arithmetic/candidates"}, Inputs: []member.Carrier{BinaryArithmeticCarrier}},
+			{Key: FormalFreezeCallActuals, Subject: MountedCallActualsCarrier, CandidateProvider: member.RelationRef{Axis: schemaapi.EntryReference{Surface: schemaapi.SurfaceKind(2), Key: "value"}, Member: "value/formal-freeze/call-actuals"}},
+			{Key: FormalFreezeActualMembers, Subject: MountedCallArgumentCarrier, CandidateProvider: member.RelationRef{Axis: schemaapi.EntryReference{Surface: schemaapi.SurfaceKind(2), Key: "value"}, Member: "value/formal-freeze/actual-members"}, Inputs: []member.Carrier{CallCoordinateCarrier}, Parent: member.RelationRef{Axis: schemaapi.EntryReference{Surface: schemaapi.SurfaceKind(2), Key: "value"}, Member: "value/formal-freeze/call-actuals"}, Ordinal: MountedCallActualTagCarrier},
 		},
 		[]member.Projection{
 			{Key: StorageTransferSourceKey, Relation: StorageTransferSources, Role: member.Key, Result: ValueCoordinateCarrier, CandidateProvider: member.RelationRef{Axis: schemaapi.EntryReference{Surface: schemaapi.SurfaceKind(2), Key: "value"}, Member: "value/storage-transfer/candidates"}},
@@ -87,6 +96,8 @@ func AxisMemberCatalog() member.Catalog {
 			{Key: BinaryArithmeticLeft, Relation: BinaryArithmeticSources, Role: member.Key, Result: ValueCoordinateCarrier, CandidateProvider: member.RelationRef{Axis: schemaapi.EntryReference{Surface: schemaapi.SurfaceKind(2), Key: "value"}, Member: "value/binary-arithmetic/candidates"}},
 			{Key: BinaryArithmeticRight, Relation: BinaryArithmeticSources, Role: member.Key, Result: ValueCoordinateCarrier, CandidateProvider: member.RelationRef{Axis: schemaapi.EntryReference{Surface: schemaapi.SurfaceKind(2), Key: "value"}, Member: "value/binary-arithmetic/candidates"}},
 			{Key: BinaryArithmeticWrite, Relation: BinaryArithmeticCandidates, Role: member.Destination, Result: ValueCoordinateCarrier, CandidateProvider: member.RelationRef{Axis: schemaapi.EntryReference{Surface: schemaapi.SurfaceKind(2), Key: "value"}, Member: "value/binary-arithmetic/candidates"}},
+			{Key: FormalFreezeActualKey, Relation: FormalFreezeActualMembers, Role: member.Key, Result: ValueCoordinateCarrier, CandidateProvider: member.RelationRef{Axis: schemaapi.EntryReference{Surface: schemaapi.SurfaceKind(2), Key: "value"}, Member: "value/formal-freeze/actual-members"}},
+			{Key: FormalFreezeActualTag, Relation: FormalFreezeActualMembers, Role: member.Predicate, Result: MountedCallActualTagCarrier, CandidateProvider: member.RelationRef{Axis: schemaapi.EntryReference{Surface: schemaapi.SurfaceKind(2), Key: "value"}, Member: "value/formal-freeze/actual-members"}},
 		},
 		[]member.Reducer{
 			{Key: IdentityReducer, Inputs: []member.ReducerInput{

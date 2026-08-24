@@ -171,7 +171,7 @@ func compileSchemaRuleReadRow(state *schemaBindingState, owner schemaRuleBinding
 			return nil, false
 		}
 	case composition.ReadSelect:
-		if shape.Semantic != shape.Factor || shape.Normalizer.Available() || shape.DependencyCount == 0 || summaryForm != nil || !validReadDependencies(state.schema, ruleOrdinal, readOrdinal, shape.DependencyCount) {
+		if shape.Semantic != shape.Factor || shape.Normalizer.Available() || summaryForm != nil || !validReadDependencies(state.schema, ruleOrdinal, readOrdinal, shape.DependencyCount) {
 			return nil, false
 		}
 		row.dependencies = make([]uint64, int(shape.DependencyCount))
@@ -438,7 +438,7 @@ func BindSelectedRuleDirectSelectedReadUnderContract[K ~uint32 | ~uint64, V, O, 
 	}
 	shape, shapeOK := state.schema.ruleReadShapeAt(cell.ordinal, readOrdinal)
 	factorOrdinal, factorOK := factorRefOrdinal(factor, state.schema)
-	if !shapeOK || shape.Kind != composition.ReadSelect || shape.DependencyCount == 0 || !validReadDependencies(state.schema, cell.ordinal, readOrdinal, shape.DependencyCount) || !factorOK || state.schema.factorSemanticAt(factorOrdinal) != shape.Factor {
+	if !shapeOK || shape.Kind != composition.ReadSelect || !validReadDependencies(state.schema, cell.ordinal, readOrdinal, shape.DependencyCount) || !factorOK || state.schema.factorSemanticAt(factorOrdinal) != shape.Factor {
 		state.poisonNamed(readForeignOwnerRefusal)
 		return Read[Selection[Tag, OrderedCells[RV]]]{}, false
 	}
@@ -489,7 +489,7 @@ func BindSelectedRuleDirectOperandReadUnderContract[K ~uint32 | ~uint64, V, O, R
 	}
 	shape, shapeOK := state.schema.ruleReadShapeAt(cell.ordinal, readOrdinal)
 	factorOrdinal, factorOK := factorRefOrdinal(factor, state.schema)
-	if !shapeOK || shape.Kind != composition.ReadSelect || shape.DependencyCount == 0 || !validReadDependencies(state.schema, cell.ordinal, readOrdinal, shape.DependencyCount) || !factorOK || state.schema.factorSemanticAt(factorOrdinal) != shape.Factor {
+	if !shapeOK || shape.Kind != composition.ReadSelect || !validReadDependencies(state.schema, cell.ordinal, readOrdinal, shape.DependencyCount) || !factorOK || state.schema.factorSemanticAt(factorOrdinal) != shape.Factor {
 		state.poisonNamed(readForeignOwnerRefusal)
 		return Read[Selection[Tag, OrderedCells[RV]]]{}, false
 	}

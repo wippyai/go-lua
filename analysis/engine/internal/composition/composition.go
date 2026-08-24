@@ -858,7 +858,13 @@ func validReads(reads []Read, inputs uint64, factors map[Key]uint64, forms map[K
 				return false
 			}
 		case ReadSelect:
-			if read.Semantic != read.Factor || read.Normalizer.Available() || len(read.Dependencies) == 0 {
+			// A selection may have no predecessor. Which members a read spans
+			// is a function of the rule's candidate first and of earlier reads
+			// only when the declaration says so, so a selection over the
+			// candidate alone states an empty dependency list rather than
+			// being unwritable. Any list that IS present is still ordered and
+			// acyclic by validDependencies above.
+			if read.Semantic != read.Factor || read.Normalizer.Available() {
 				return false
 			}
 		}

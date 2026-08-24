@@ -11,7 +11,9 @@ import (
 
 const (
 	MountedCallCandidates schemaapi.Key  = "call/mounted-call/candidates"
+	MountedCallFacts      schemaapi.Key  = "call/mounted-call/facts"
 	MountedCallCoordinate schemaapi.Key  = "call/mounted-call/coordinate"
+	MountedCallFactKey    schemaapi.Key  = "call/mounted-call/fact-key"
 	CallKeyCarrier        member.Carrier = "carrier/call/key"
 	CallFactCarrier       member.Carrier = "carrier/call/fact"
 	CallCoordinateCarrier member.Carrier = "carrier/call/mounted-call"
@@ -22,9 +24,11 @@ func AxisMemberCatalog() member.Catalog {
 	catalog, ok := member.NewCatalog(
 		[]member.Relation{
 			{Key: MountedCallCandidates, Subject: CallCoordinateCarrier, CandidateProvider: member.RelationRef{Axis: schemaapi.EntryReference{Surface: schemaapi.SurfaceKind(2), Key: "call"}, Member: "call/mounted-call/candidates"}},
+			{Key: MountedCallFacts, Subject: CallFactCarrier, CandidateProvider: member.RelationRef{Axis: schemaapi.EntryReference{Surface: schemaapi.SurfaceKind(2), Key: "call"}, Member: "call/mounted-call/candidates"}, Inputs: []member.Carrier{CallCoordinateCarrier}},
 		},
 		[]member.Projection{
 			{Key: MountedCallCoordinate, Relation: MountedCallCandidates, Role: member.Destination, Result: CallKeyCarrier, CandidateProvider: member.RelationRef{Axis: schemaapi.EntryReference{Surface: schemaapi.SurfaceKind(2), Key: "call"}, Member: "call/mounted-call/candidates"}},
+			{Key: MountedCallFactKey, Relation: MountedCallFacts, Role: member.Key, Result: CallKeyCarrier, CandidateProvider: member.RelationRef{Axis: schemaapi.EntryReference{Surface: schemaapi.SurfaceKind(2), Key: "call"}, Member: "call/mounted-call/candidates"}},
 		},
 		[]member.Reducer{},
 		[]member.CarryTransform{},

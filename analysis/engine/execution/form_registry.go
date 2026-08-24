@@ -291,6 +291,23 @@ func ForeignExactRead[K scalar.Key, V any](foreign ForeignFactor, unit carrier.U
 	return NewExactRead(typed.binding, unit, input)
 }
 
+// ForeignSelectedRead seals one selected read of a foreign input axis at the
+// read fact's own types. It is the selection sibling of ForeignExactRead: a
+// family whose route join is its own Factor still reaches a dependent
+// SELECTION of another axis, and without this it would have to erase that
+// axis's coordinate/fact pair to observe the join it declared.
+//
+// The members are supplied by the caller, as they are for a plane-local
+// selected read; what this seals is the typed read boundary, not the
+// selection. A handle typed otherwise is refused rather than reinterpreted.
+func ForeignSelectedRead[K scalar.Key, V any](foreign ForeignFactor, port uint16, contract ruleplan.ReadContract, policy ReadCellPolicy[V]) (SelectedRead[K, V], bool) {
+	typed, ok := foreign.(foreignFactor[K, V])
+	if !ok {
+		return SelectedRead[K, V]{}, false
+	}
+	return NewSelectedRead(typed.binding, port, contract, policy)
+}
+
 // ForeignRowExactRead seals one declared exact join against the foreign
 // Factor it names. The Unit and input port come from the sealed FormRow; a
 // family chooses only the join ordinal authored by its Program.

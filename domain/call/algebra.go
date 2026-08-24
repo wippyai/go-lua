@@ -415,6 +415,18 @@ func (algebra *Algebra) OwnsTargetContract(target *contract.Contract) bool {
 	return algebra != nil && algebra.Valid() && target != nil && target == algebra.contract
 }
 
+// TargetContract publishes the exact Target contract authority this Algebra
+// was sealed against. The Call algebra already owns that handle - it is what
+// OwnsTargetContract authenticates against - so a consumer that needs the
+// contract reads it here rather than being handed a second handle on one
+// authority through its own authority set.
+func (algebra *Algebra) TargetContract() (*contract.Contract, bool) {
+	if !algebra.Valid() || algebra.contract == nil {
+		return nil, false
+	}
+	return algebra.contract, true
+}
+
 func (algebra *Algebra) KeyCount() int {
 	if !algebra.Valid() {
 		return 0

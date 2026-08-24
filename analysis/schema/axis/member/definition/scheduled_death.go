@@ -42,6 +42,15 @@ var scheduledDeaths = []ScheduledDeath{
 			ResultIndex: 0,
 		},
 	},
+	{
+		Axis:     "heap",
+		Relation: "heap/formal-freeze/routes",
+		Build: GoSymbol{
+			PackagePath: "github.com/wippyai/go-lua/domain/heap/formalfreeze",
+			Name:        "DeriveFreezeRoutes",
+			ResultIndex: 0,
+		},
+	},
 }
 
 // ScheduledDeaths returns the migration set. The copy is deliberate: the

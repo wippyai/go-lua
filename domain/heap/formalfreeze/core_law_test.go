@@ -4,35 +4,8 @@ import (
 	"testing"
 
 	"github.com/wippyai/go-lua/domain/heap"
+	"github.com/wippyai/go-lua/domain/heap/internal/recentplan"
 )
-
-func TestFormalFreezeObservationBufferKeepsOrdinaryCallsAllocationFree(t *testing.T) {
-	var inline [formalFreezeInlineWidth]actualObservation
-	for count := 0; count <= len(inline); count++ {
-		observations, ok := formalFreezeObservationBuffer(count, inline[:])
-		if !ok || len(observations) != count {
-			t.Fatalf("inline buffer width %d = %d/%t", count, len(observations), ok)
-		}
-		if count != 0 && &observations[0] != &inline[0] {
-			t.Fatalf("inline width %d allocated a second image", count)
-		}
-	}
-	if allocations := testing.AllocsPerRun(1000, func() {
-		var local [formalFreezeInlineWidth]actualObservation
-		if observations, ok := formalFreezeObservationBuffer(len(local), local[:]); !ok || len(observations) != len(local) {
-			t.Fatal("inline observation buffer")
-		}
-	}); allocations != 0 {
-		t.Fatalf("ordinary formal-freeze observation buffer allocations = %v", allocations)
-	}
-	fallback, ok := formalFreezeObservationBuffer(formalFreezeInlineWidth+1, inline[:])
-	if !ok || len(fallback) != formalFreezeInlineWidth+1 || &fallback[0] == &inline[0] {
-		t.Fatal("wide-call fallback buffer")
-	}
-	if _, ok := formalFreezeObservationBuffer(-1, inline[:]); ok {
-		t.Fatal("negative observation width admitted")
-	}
-}
 
 func TestFormalFreezeParamSetCanonicalizesAndDeduplicates(t *testing.T) {
 	var set freezeParamSet
@@ -56,14 +29,14 @@ func TestFormalFreezeParamSetCanonicalizesAndDeduplicates(t *testing.T) {
 }
 
 func TestFormalFreezeRoutePlanCanonicalizesAliasesAndIntersects(t *testing.T) {
-	var left, right routePlan
+	var left, right recentplan.Plan
 	for _, tag := range []heap.RawRouteTag{9, 3, 9, 5} {
-		if !left.Add(route{Tag: tag}) {
+		if !left.Add(recentplan.Route{Tag: tag}) {
 			t.Fatalf("left route tag %d", tag)
 		}
 	}
 	for _, tag := range []heap.RawRouteTag{7, 5, 3} {
-		if !right.Add(route{Tag: tag}) {
+		if !right.Add(recentplan.Route{Tag: tag}) {
 			t.Fatalf("right route tag %d", tag)
 		}
 	}
@@ -86,12 +59,12 @@ func TestFormalFreezeRoutePlanCanonicalizesAliasesAndIntersects(t *testing.T) {
 			t.Fatalf("intersection route %d = %d/%t, want %d/true", index, got.Tag, routeOK, want)
 		}
 	}
-	if _, ok := routeForTag(intersection, 9); ok {
+	if _, ok := recentplan.RouteForTag(intersection, 9); ok {
 		t.Fatal("non-common route survived intersection")
 	}
 	if allocations := testing.AllocsPerRun(1000, func() {
-		var plan routePlan
-		if !plan.Add(route{Tag: 1}) || !plan.Add(route{Tag: 2}) || !plan.Add(route{Tag: 1}) {
+		var plan recentplan.Plan
+		if !plan.Add(recentplan.Route{Tag: 1}) || !plan.Add(recentplan.Route{Tag: 2}) || !plan.Add(recentplan.Route{Tag: 1}) {
 			t.Fatal("inline route plan")
 		}
 	}); allocations != 0 {
@@ -100,9 +73,9 @@ func TestFormalFreezeRoutePlanCanonicalizesAliasesAndIntersects(t *testing.T) {
 }
 
 func TestFormalFreezeRoutePlanInlineOverflowRemainsCanonical(t *testing.T) {
-	var plan routePlan
+	var plan recentplan.Plan
 	for tag := formalFreezeInlineWidth + 3; tag > 0; tag-- {
-		if !plan.Add(route{Tag: heap.RawRouteTag(tag)}) {
+		if !plan.Add(recentplan.Route{Tag: heap.RawRouteTag(tag)}) {
 			t.Fatalf("route tag %d", tag)
 		}
 	}

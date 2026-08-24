@@ -20,7 +20,7 @@ import (
 	heapingress "github.com/wippyai/go-lua/domain/heap/allocation/ingress"
 	heapbootstrap "github.com/wippyai/go-lua/domain/heap/bootstrap"
 	contextowner "github.com/wippyai/go-lua/domain/heap/context/owner"
-	heapformalfreeze "github.com/wippyai/go-lua/domain/heap/formalfreeze"
+	heapfreezeprogram "github.com/wippyai/go-lua/domain/heap/formalfreeze/program"
 	heapindex "github.com/wippyai/go-lua/domain/heap/index"
 	heapowner "github.com/wippyai/go-lua/domain/heap/owner"
 	heappublicationfreeze "github.com/wippyai/go-lua/domain/heap/publicationfreeze"
@@ -219,7 +219,7 @@ func semanticRoleVocabulary() []structure.Spec {
 		placementstoreprogram.StructureSpecs(),
 		placementsuspension.StructureSpecs(),
 		valuemoduleload.StructureSpecs(),
-		heapformalfreeze.StructureSpecs(),
+		heapfreezeprogram.StructureSpecs(),
 		placementpublicationescape.StructureSpecs(),
 		heappublicationfreeze.StructureSpecs(),
 		placementtransfer.StructureSpecs(),

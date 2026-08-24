@@ -7,6 +7,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/wippyai/go-lua/analysis/schema"
 	"github.com/wippyai/go-lua/domain/memberroster"
 )
 
@@ -126,17 +127,26 @@ func TestEachRuleDeclaresItsReducerInItsOwnPackage(t *testing.T) {
 			t.Fatalf("contribution %q is declared in its axis owner's base package", path)
 		}
 	}
-	counted := 0
+	// One contribution package declares one rule. The measure is the set of
+	// RULE keys the composed roster carries, not the number of contribution
+	// values in it: a contribution that declares rows of another axis is
+	// folded into that axis's source, so one authored package legitimately
+	// appears as several contributions - all of them naming the one rule that
+	// authored them. Counting values instead of rules would forbid a rule from
+	// declaring a foreign row, which is a different law and not this one.
 	roster, rosterOK := memberroster.Composition()
 	if !rosterOK {
 		t.Fatal("member definition roster is not admissible")
 	}
+	rules := map[schema.Key]struct{}{}
 	for index := 0; index < roster.Count(); index++ {
 		source, _ := roster.At(index)
-		counted += len(source.Contributions)
+		for _, contribution := range source.Contributions {
+			rules[contribution.Rule] = struct{}{}
+		}
 	}
-	if counted != len(contributions) {
-		t.Fatalf("the roster registers %d contributions from %d distinct packages; a package declaring two rules is a second central list", counted, len(contributions))
+	if len(rules) != len(contributions) {
+		t.Fatalf("the roster registers %d rules from %d distinct packages; a package declaring two rules is a second central list", len(rules), len(contributions))
 	}
 }
 

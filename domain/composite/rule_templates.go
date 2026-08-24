@@ -16,6 +16,7 @@ import (
 	heapbootstrap "github.com/wippyai/go-lua/domain/heap/bootstrap"
 	contextowner "github.com/wippyai/go-lua/domain/heap/context/owner"
 	heapformalfreeze "github.com/wippyai/go-lua/domain/heap/formalfreeze"
+	heapfreezeprogram "github.com/wippyai/go-lua/domain/heap/formalfreeze/program"
 	heapindex "github.com/wippyai/go-lua/domain/heap/index"
 	"github.com/wippyai/go-lua/domain/heap/keymatch"
 	heapowner "github.com/wippyai/go-lua/domain/heap/owner"
@@ -170,8 +171,9 @@ func ruleTemplateWiring[P Principals, A Authorities]() ([]*rule.Template, []Rule
 	// existing mounted Program CallResultValue coordinate.
 	add(WireRule(valuemoduleload.RuleEntry[P, A](), valuemoduleload.DeclareRule[P], valuemoduleload.RegisterRule, nil, valuemoduleload.BindRule[A], nil, nil, nil))
 	// Formal freeze is a terminal mounted Heap transition over the existing
-	// call-effect cut.
-	add(WireRule(heapformalfreeze.RuleEntry[P, A](), heapformalfreeze.DeclareRule[P], heapformalfreeze.RegisterRule, nil, heapformalfreeze.BindRule[A], heapformalfreeze.FinalizeRule[A], nil, nil))
+	// call-effect cut. Its authored route relation is installed once through
+	// the rule's own family claimant.
+	add(WireGeneratedRuleWithFamily[P, A](heapfreezeprogram.RuleEntry(), heapformalfreeze.InstallFamily[A]))
 	// Publication escape is the terminal mounted Placement consumer.
 	add(WireRule(placementpublicationescape.RuleEntry[P, A](), placementpublicationescape.DeclareRule[P], placementpublicationescape.RegisterRule, nil, placementpublicationescape.BindRule[A], nil, nil, nil))
 	// Publication FreezeSeal is the terminal mounted Heap consumer and follows

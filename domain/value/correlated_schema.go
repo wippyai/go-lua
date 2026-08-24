@@ -489,6 +489,14 @@ type Schema struct {
 	mountedCallArguments           map[mountedCallArgumentKey]MountedCallArgument
 	mountedCallArgumentOrder       []mountedCallArgumentKey
 	mountedCallArgumentOccurrences map[mountedCallArgumentOccurrenceKey]uint32
+	// mountedCallActuals is the per-call parent of those rows: the ordered
+	// member set one mounted call carries, grouped by the (module, call)
+	// prefix of the actual rows' own key. It mints no call identity and reads
+	// no Pack geometry - it is this Schema's own seal order projected once so
+	// a member set can be addressed by (parent, ordinal).
+	mountedCallActuals         map[mountedCallActualsKey]MountedCallActuals
+	mountedCallActualsOrder    []mountedCallActualsKey
+	mountedCallActualsOrdinals map[mountedCallActualsKey]uint32
 
 	references     []referenceRow
 	allocRefs      map[heap.Key]uint32
@@ -880,6 +888,8 @@ func SealWithFailure(source *link.Link, heaps heap.Schema, mounts []programmount
 		mountedCallResultSlots:         make(map[mountedCallResultSlotKey]MountedCallResultSlot),
 		mountedCallArguments:           make(map[mountedCallArgumentKey]MountedCallArgument),
 		mountedCallArgumentOccurrences: make(map[mountedCallArgumentOccurrenceKey]uint32),
+		mountedCallActuals:             make(map[mountedCallActualsKey]MountedCallActuals),
+		mountedCallActualsOrdinals:     make(map[mountedCallActualsKey]uint32),
 		allocRefs:                      make(map[heap.Key]uint32),
 		globalResults:                  make(map[identity.ContentID]*GlobalBootstrapResult),
 		globalOrdinals:                 make(map[identity.ContentID]uint32),

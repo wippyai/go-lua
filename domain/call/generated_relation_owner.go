@@ -131,6 +131,22 @@ func (owner *RelationOwner) Project(relationOrdinal, projectionOrdinal, candidat
 		default:
 			return 0, false
 		}
+	case 1:
+		switch projectionOrdinal {
+		case 1:
+			candidate, candidateOK := owner.schema.CallCoordinateAt(int(candidateOrdinal))
+			if !candidateOK {
+				return 0, false
+			}
+			first, projectionOK := candidate.Key()
+			if !projectionOK {
+				return 0, false
+			}
+			projected := first
+			return owner.schema.DenseKeyIndex(projected)
+		default:
+			return 0, false
+		}
 	default:
 		return 0, false
 	}

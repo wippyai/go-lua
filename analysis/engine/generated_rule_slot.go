@@ -283,12 +283,9 @@ func DeclareGeneratedRuleSlot(
 					read.Dependencies = append(read.Dependencies, uint64(source.Position))
 				}
 			}
-			// The cold row has a selected-read dependency law. A candidate-only
-			// route remains a valid Plan, but cannot be projected into this
-			// transitional row without inventing a dependency.
-			if len(read.Dependencies) == 0 {
-				return refuse()
-			}
+			// A selection over the candidate alone has no predecessor read,
+			// and the cold row now says so with an empty list rather than
+			// being handed an invented dependency to satisfy a shape law.
 		}
 		row.Reads[joinIndex] = read
 	}

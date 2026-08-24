@@ -148,6 +148,17 @@ func (row MountedCallArgument) ActualIndex() (uint32, bool) {
 	return row.key.actual, true
 }
 
+// ActualTag is the owner-issued selection tag for this actual: the one-based
+// form of the ordinal. A selection reserves zero for "no member", so the tag a
+// consumer selects a member under is published here rather than each rule
+// minting its own one-based convention beside the ordinal.
+func (row MountedCallArgument) ActualTag() (uint64, bool) {
+	if !row.valid() {
+		return 0, false
+	}
+	return uint64(row.key.actual) + 1, true
+}
+
 // ValueID returns the existing semantic Value identity carried by this
 // actual.
 func (row MountedCallArgument) ValueID() (identity.ContentID, bool) {
@@ -199,6 +210,10 @@ func (builder *valueBuilder) sealMountedCallArguments() bool {
 			if !callOK || !call.Available() {
 				return false
 			}
+			// The parent row's span opens before this call's first actual and
+			// closes after its last, so a call with no actuals still publishes
+			// the empty list it has rather than having no row at all.
+			first := len(builder.Schema.mountedCallArgumentOrder)
 			actual := uint32(0)
 			if call.Form() == programschema.CallFormMethod {
 				receiverID, receiverOK := call.ReceiverID()
@@ -219,6 +234,9 @@ func (builder *valueBuilder) sealMountedCallArguments() bool {
 					return false
 				}
 				actual++
+			}
+			if !builder.addMountedCallActuals(module, call.ID(), first, actual) {
+				return false
 			}
 		}
 	}

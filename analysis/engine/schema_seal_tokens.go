@@ -18,7 +18,7 @@ func validReadDependencies(schema *Schema, rule, read, count uint64) bool {
 		if !shapeOK || (shape.Kind != composition.ReadExact && shape.Kind != composition.ReadSelect && shape.Kind != composition.ReadSummary) {
 			return false
 		}
-		if shape.Kind == composition.ReadSelect && (shape.Semantic != shape.Factor || shape.Normalizer.Available() || shape.DependencyCount == 0 || !validReadDependencies(schema, rule, dependency, shape.DependencyCount)) {
+		if shape.Kind == composition.ReadSelect && (shape.Semantic != shape.Factor || shape.Normalizer.Available() || !validReadDependencies(schema, rule, dependency, shape.DependencyCount)) {
 			return false
 		}
 		if shape.Kind == composition.ReadSummary && (!shape.Semantic.Available() || shape.Normalizer != shape.Semantic || shape.DependencyCount != 0) {
