@@ -115,7 +115,7 @@ func specimenSpec() rule.Spec {
 		Roles:    []schema.Key{"semantic/operand/specimen"},
 		Program: program.Program{
 			OperandRole: "semantic/operand/specimen",
-			Candidate:   member.RelationRef{Axis: specimenAxis(), Member: "specimen/candidates"},
+			Candidate:   program.AxisRelationCandidate(member.RelationRef{Axis: specimenAxis(), Member: "specimen/candidates"}),
 			Joins: []program.JoinDecl{{
 				Sources:  []program.SourceRef{program.CandidateSource()},
 				Relation: member.RelationRef{Axis: specimenAxis(), Member: "specimen/predecessors"},

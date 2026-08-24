@@ -261,14 +261,22 @@ func inputPorts(declaration program.Program) int {
 
 func deriveCandidate(built *plan, resolver *axisResolver, declaration program.Program) error {
 	ruleKey := built.target.Spec.Key
-	axis, err := resolver.axis(declaration.Candidate.Axis.Key)
+	// An issued-row candidate is reached from the issuance surface rather than
+	// from an axis directory, and no axis owner declares a dense accessor for
+	// one. It is refused by name rather than emitted against a directory the
+	// declaration does not name.
+	if declaration.Candidate.Issued() {
+		return unexpressible(ruleKey, "an issued-row candidate",
+			fmt.Sprintf("candidate rows come from issuance relation %q, for which no axis owner declares a dense accessor", string(declaration.Candidate.IssuedRow)))
+	}
+	axis, err := resolver.axis(declaration.Candidate.AxisRelation.Axis.Key)
 	if err != nil {
 		return err
 	}
-	relation, relationOK := findRelation(axis.source, declaration.Candidate.Member)
+	relation, relationOK := findRelation(axis.source, declaration.Candidate.AxisRelation.Member)
 	if !relationOK {
 		return unexpressible(ruleKey, "a candidate relation its axis does not declare",
-			fmt.Sprintf("relation %q is not a member row of axis %q", string(declaration.Candidate.Member), string(axis.key)))
+			fmt.Sprintf("relation %q is not a member row of axis %q", string(declaration.Candidate.AxisRelation.Member), string(axis.key)))
 	}
 	if !relation.CandidateAt.Available() {
 		return unexpressible(ruleKey, "a candidate directory with no dense accessor",
