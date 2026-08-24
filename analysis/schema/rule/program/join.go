@@ -59,17 +59,11 @@ func (join JoinDecl) References() schema.EntryReferences {
 
 // normalForm checks the five inventory-derived combinations. It deliberately
 // returns only a boolean: the five forms are seal facts, not a runtime enum.
-// normalForm checks one ordinary join in its local census normal form.
+//
+// A join's normal form is a property of the join. Nothing about the enclosing
+// Program participates: a form that held only when some output happened to
+// name the join would not be a form, it would be a permission.
 func (join JoinDecl) normalForm(position int) bool {
-	return join.normalFormFor(position, false)
-}
-
-// normalFormFor checks one join in its local census normal form. A selected
-// route may deliberately omit a tag projection: the route directory still
-// carries its key and bounded read contract, while the tag is optional data.
-// The enclosing Program supplies that one route-specific allowance so an
-// ordinary selected read cannot silently become untagged.
-func (join JoinDecl) normalFormFor(position int, optionalSelectedPredicate bool) bool {
 	if !join.Available() {
 		return false
 	}
@@ -99,11 +93,14 @@ func (join JoinDecl) normalFormFor(position int, optionalSelectedPredicate bool)
 		// the same declaration is S4's computed-coordinate normal form.
 		return !join.Predicate.Declared()
 	case Selected:
-		// S2 is a keyed lookup with an owner-issued tag/role predicate; when
-		// Sources includes an earlier result it is the S4 variant. A routed
-		// selected row may omit that predicate: the route's tag is optional,
-		// not an implicit fallback or an untyped runtime callback.
-		return join.Predicate.Available() || (optionalSelectedPredicate && !join.Predicate.Declared())
+		// S2 is a dependent keyed relation read; when Sources includes an
+		// earlier result it is the S4 variant. The predicate is the owner's
+		// tag/role metadata and is optional: a nested member set is already
+		// addressed by (parent, ordinal), and a routed member already carries
+		// its paired tag beside its destination, so a selection with nothing
+		// to tag declares nothing. A predicate that IS declared must resolve,
+		// which the clause above already holds it to.
+		return true
 	case Summary:
 		// S3 is the selected relation summary. Predicate is the sealed
 		// selection/tag projection and the denominator is mandatory above.

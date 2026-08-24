@@ -198,6 +198,15 @@ func TestProgramAdmitsOnlyTheFiveNormalFormCombinations(t *testing.T) {
 			Key: lawProjection("selected/key"), Predicate: lawProjection("selected/predicate"),
 			Read: lawRead(Selected, "selected", true),
 		}},
+		// A selected read is a dependent keyed relation read. Its predicate is
+		// tag metadata, so a member set already addressed by (parent, ordinal)
+		// declares none - and that is the same normal form, not an exception
+		// some enclosing output grants.
+		{name: "selected-untagged", join: JoinDecl{
+			Sources: []SourceRef{CandidateSource()}, Relation: lawRelation("untagged/relation"),
+			Key:  lawProjection("untagged/key"),
+			Read: lawRead(Selected, "untagged", true),
+		}},
 		{name: "summary", join: JoinDecl{
 			Sources: []SourceRef{CandidateSource()}, Relation: lawRelation("summary/relation"),
 			Key: lawProjection("summary/key"), Predicate: lawProjection("summary/predicate"),
@@ -222,10 +231,14 @@ func TestProgramAdmitsOnlyTheFiveNormalFormCombinations(t *testing.T) {
 	if _, valid := program.Check(); valid {
 		t.Fatal("exact join with predicate admitted")
 	}
+	// What a selected read refuses is a predicate it DECLARED and cannot
+	// resolve. Declaring none is the untagged form above; declaring a broken
+	// one is a row that names a projection nothing issues.
 	program = lawProgram(t)
-	program.Joins[0].Read = lawRead(Selected, "missing/predicate", true)
+	program.Joins[0].Read = lawRead(Selected, "declared/predicate", true)
+	program.Joins[0].Predicate = member.ProjectionRef{Axis: lawMemberAxis()}
 	if _, valid := program.Check(); valid {
-		t.Fatal("selected join without predicate admitted")
+		t.Fatal("selected join with an unresolvable declared predicate admitted")
 	}
 	program = lawProgram(t)
 	program.Joins[0].Read = lawRead(Summary, "missing/denominator", false)

@@ -154,7 +154,7 @@ func (program Program) Check() (Problem, bool) {
 		return Problem{Kind: ProblemCandidate}, false
 	}
 	for index, join := range program.Joins {
-		if !join.normalFormFor(index, program.routeAllowsOptionalPredicate(index)) {
+		if !join.normalForm(index) {
 			return Problem{Join: index, Kind: ProblemJoin}, false
 		}
 	}
@@ -271,21 +271,6 @@ func (program Program) checkTransport() bool {
 		seen[reference] = struct{}{}
 	}
 	return true
-}
-
-// routeAllowsOptionalPredicate reports whether this join is explicitly named
-// by a routed output. The route row remains the single source of this
-// allowance; selected joins are not inferred from their count or position.
-func (program Program) routeAllowsOptionalPredicate(index int) bool {
-	if index < 0 || index >= len(program.Joins) {
-		return false
-	}
-	for _, output := range program.Fold.Outputs {
-		if output.Mode == ModeRoute && output.RouteJoinPresent && int(output.RouteJoin) == index {
-			return program.Joins[index].Read.Form == Selected
-		}
-	}
-	return false
 }
 
 // checkRoutes seals the route-specific part of a Fold without reopening any
