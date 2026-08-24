@@ -1116,19 +1116,17 @@ func resolveMemberCoordinates(declaration topologyDeclaration, mounts constructe
 	return memberCoordinates{}, refuseAdmission(topologyConstructionStepMemberIssuance, ordinal)
 }
 
-// mountedRulePointBoundSlots derives, from the sealed rule's own declared
+// ruleDeclaredPointBoundSlots reads, from the sealed rule's own declared
 // reads and carries, which of its Input slots are genuine topological
-// predecessors. A slot is point-bound when some read declared at that Input
-// is an exact read: an exact read observes one transported predecessor
-// PointState, while a selected or summary read resolves its coordinates
-// through the written Factor's own directory/route surface at solve time and
-// needs no predecessor point of its own. A slot with no read at all but a
-// declared carry is also point-bound: the carry has no directory/route
-// surface to resolve through either, so it can only be the identity of one
-// transported predecessor. Two reads may name the same Input (the same
-// predecessor supplies more than one Factor value), so this counts distinct
-// slots, not reads.
-func mountedRulePointBoundSlots(source constructedSourcePlane, ruleOrdinal uint64, shape composition.RuleShape) ([]bool, bool) {
+// predecessors. A slot with a declared read is point-bound exactly when that
+// read states so (RuleReadShape.PointBound): the join declaration authors
+// this per read, it is never inferred from the read's Kind here. A slot with
+// no read at all but a declared carry is unconditionally point-bound: the
+// carry has no directory/route surface to resolve through, so it can only be
+// the identity of one transported predecessor. Two reads may name the same
+// Input (the same predecessor supplies more than one Factor value), so this
+// counts distinct slots, not reads.
+func ruleDeclaredPointBoundSlots(source constructedSourcePlane, ruleOrdinal uint64, shape composition.RuleShape) ([]bool, bool) {
 	bound := make([]bool, shape.Inputs)
 	read := make([]bool, shape.Inputs)
 	for index := uint64(0); index < shape.ReadCount; index++ {
@@ -1137,7 +1135,7 @@ func mountedRulePointBoundSlots(source constructedSourcePlane, ruleOrdinal uint6
 			return nil, false
 		}
 		read[row.Input] = true
-		if row.Kind == composition.ReadExact {
+		if row.PointBound {
 			bound[row.Input] = true
 		}
 	}
@@ -1185,33 +1183,22 @@ func constructMemberGroup(declaration topologyDeclaration, source constructedSou
 		}
 		// Reducer arity (shape.Inputs) and published occurrence geometry
 		// (coordinates.inputPoints) coincide for every rule whose declared
-		// read/carry slots are each backed by their own predecessor point -
-		// the ordinary case, and the one every plane but Mount always is. A
-		// Mount rule whose slots outnumber its published points is the
-		// exception: some of its slots are not topological predecessors at
-		// all, so the expected geometry width there is the count of the
-		// slots that are, derived from the rule's own reads and carries.
-		// Deriving is attempted only when the ordinary count does not
-		// already match, so a rule the derivation cannot yet see - one
-		// point-bound purely through its own artifact geometry, with no
-		// exact read or bare carry to say so - is unaffected by it.
-		expectedPoints := shape.Inputs
-		var pointBound []bool
-		derived := false
-		if member.Plane == declaredMemberMount && uint64(len(inputPoints)) != shape.Inputs {
-			var pointBoundOK bool
-			pointBound, pointBoundOK = mountedRulePointBoundSlots(source, ruleOrdinal, shape)
-			if !pointBoundOK {
-				return equation.Group{}, refuseAdmission(topologyConstructionStepMemberGroup, ordinal)
+		// read/carry slots are each backed by their own predecessor point.
+		// The expected geometry width is always the declared point-bound
+		// count: the join declaration states, per read, whether its Input
+		// slot carries its own predecessor point or resolves through its
+		// Factor's own directory/route surface instead. This is a schema
+		// fact, not something re-derived from the member's plane or from
+		// whether the naive count happens to already match.
+		pointBound, pointBoundOK := ruleDeclaredPointBoundSlots(source, ruleOrdinal, shape)
+		if !pointBoundOK {
+			return equation.Group{}, refuseAdmission(topologyConstructionStepMemberGroup, ordinal)
+		}
+		expectedPoints := uint64(0)
+		for _, bound := range pointBound {
+			if bound {
+				expectedPoints++
 			}
-			count := uint64(0)
-			for _, bound := range pointBound {
-				if bound {
-					count++
-				}
-			}
-			expectedPoints = count
-			derived = true
 		}
 		if len(inputPoints) != int(expectedPoints) || len(inputSites) != len(inputPoints) {
 			return equation.Group{}, refuseAdmission(topologyConstructionStepMemberGroup, ordinal)
@@ -1239,22 +1226,19 @@ func constructMemberGroup(declaration topologyDeclaration, source constructedSou
 		// through the written Factor's own directory/route surface at solve
 		// time, so its Group input transports the candidate's own Point to
 		// itself.
-		slotPoints, slotSites := inputPoints, inputSites
-		if derived {
-			slotPoints = make([]identity.ContentID, shape.Inputs)
-			slotSites = make([]equation.Site, shape.Inputs)
-			cursor := 0
-			for slot := uint64(0); slot < shape.Inputs; slot++ {
-				if pointBound[slot] {
-					slotPoints[slot], slotSites[slot] = inputPoints[cursor], inputSites[cursor]
-					cursor++
-					continue
-				}
-				slotPoints[slot], slotSites[slot] = pointID, target
+		slotPoints := make([]identity.ContentID, shape.Inputs)
+		slotSites := make([]equation.Site, shape.Inputs)
+		cursor := 0
+		for slot := uint64(0); slot < shape.Inputs; slot++ {
+			if pointBound[slot] {
+				slotPoints[slot], slotSites[slot] = inputPoints[cursor], inputSites[cursor]
+				cursor++
+				continue
 			}
-			if cursor != len(inputPoints) {
-				return equation.Group{}, refuseAdmission(topologyConstructionStepMemberGroup, ordinal)
-			}
+			slotPoints[slot], slotSites[slot] = pointID, target
+		}
+		if cursor != len(inputPoints) {
+			return equation.Group{}, refuseAdmission(topologyConstructionStepMemberGroup, ordinal)
 		}
 		for slot := uint64(0); slot < shape.Inputs; slot++ {
 			inputPoint := slotPoints[slot]

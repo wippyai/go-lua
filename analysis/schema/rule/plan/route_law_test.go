@@ -145,7 +145,8 @@ func configureHeterogeneousRouteFixture(t *testing.T) *planFixture {
 				Relation: member.RelationRef{Axis: valueAxis, Member: heteroExactRelation},
 				Key:      member.ProjectionRef{Axis: valueAxis, Member: heteroExactKey},
 				Read: program.ReadDecl{
-					Input: 0, Axis: program.AxisRef(valueAxis), Form: program.Exact,
+					PointBound: program.PointBound,
+					Input:      0, Axis: program.AxisRef(valueAxis), Form: program.Exact,
 					Contract: program.ReadContract{Order: program.OrderCanonical, Sparse: program.SparseExplicit, OnOpaque: program.OnOpaqueRefuse, Multiplicity: program.MultiplicityOne, DenominatorRef: program.DenominatorRef{Surface: schema.SurfaceKindDenominator, Key: planOtherDenominator}},
 				},
 			},
@@ -155,7 +156,8 @@ func configureHeterogeneousRouteFixture(t *testing.T) *planFixture {
 				Key:       member.ProjectionRef{Axis: placementAxis, Member: heteroRouteKey},
 				Predicate: member.ProjectionRef{Axis: placementAxis, Member: heteroRoutePredicate},
 				Read: program.ReadDecl{
-					Input: 1, Axis: program.AxisRef(placementAxis), Form: program.Selected,
+					PointBound: program.PointBound,
+					Input:      1, Axis: program.AxisRef(placementAxis), Form: program.Selected,
 					Contract: program.ReadContract{Order: program.OrderCanonical, Sparse: program.SparseExplicit, OnOpaque: program.OnOpaqueRefuse, Multiplicity: program.MultiplicityOne, DenominatorRef: program.DenominatorRef{Surface: schema.SurfaceKindDenominator, Key: planDenominator}},
 				},
 			},
@@ -165,7 +167,8 @@ func configureHeterogeneousRouteFixture(t *testing.T) *planFixture {
 				Key:       member.ProjectionRef{Axis: placementAxis, Member: heteroSecondKey},
 				Predicate: member.ProjectionRef{Axis: placementAxis, Member: heteroSecondPredicate},
 				Read: program.ReadDecl{
-					Input: 2, Axis: program.AxisRef(placementAxis), Form: program.Selected,
+					PointBound: program.PointBound,
+					Input:      2, Axis: program.AxisRef(placementAxis), Form: program.Selected,
 					Contract: program.ReadContract{Order: program.OrderCanonical, Sparse: program.SparseExplicit, OnOpaque: program.OnOpaqueRefuse, Multiplicity: program.MultiplicityOne, DenominatorRef: program.DenominatorRef{Surface: schema.SurfaceKindDenominator, Key: planDenominator}},
 				},
 			},

@@ -32,9 +32,10 @@ func RuleEntry() rule.Spec {
 				Relation: member.RelationRef{Axis: valueAxis, Member: valuedomain.StorageTransferSources},
 				Key:      member.ProjectionRef{Axis: valueAxis, Member: valuedomain.StorageTransferSourceKey},
 				Read: program.ReadDecl{
-					Input: 0,
-					Axis:  program.AxisRef(valueAxis),
-					Form:  program.Exact,
+					PointBound: program.PointBound,
+					Input:      0,
+					Axis:       program.AxisRef(valueAxis),
+					Form:       program.Exact,
 					Contract: program.ReadContract{
 						Order: program.OrderCanonical, Sparse: program.SparseExplicit,
 						OnOpaque: program.OnOpaqueRefuse, Multiplicity: program.MultiplicityOne,

@@ -29,6 +29,11 @@ type ReadPlan struct {
 	Denominator      ruleplan.DenominatorAddr
 	RowCapacity      uint16
 	CellCapacity     uint16
+	// PointBound is the authored disposition copied from the sealed Plan
+	// Join: whether this Input slot's own predecessor topology point is
+	// transported into the rule, or the read resolves through its Factor's
+	// directory/route surface and shares the candidate's own point instead.
+	PointBound ruleprogram.PointBoundDecl
 }
 
 // OutputPlan is one immutable output row. Exactly one output row is admitted
@@ -275,6 +280,9 @@ func normalizeReadPlan(read *ReadPlan) bool {
 	if !ReadFormPredicateShape(read.Form, read.Predicate, read.PredicatePresent) {
 		return false
 	}
+	if !read.PointBound.Available() {
+		return false
+	}
 	if !zeroDenominator(read.Denominator) && !read.Denominator.Present {
 		return false
 	}
@@ -386,6 +394,9 @@ func validReadPlan(read ReadPlan, inputCount, axisCount int) bool {
 		return false
 	}
 	if !ReadFormPredicateShape(read.Form, read.Predicate, read.PredicatePresent) {
+		return false
+	}
+	if !read.PointBound.Available() {
 		return false
 	}
 	if ReadFormRequiresDenominator(read.Form, read.Contract.Sparse) && !read.Denominator.Present {

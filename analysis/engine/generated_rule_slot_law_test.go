@@ -95,9 +95,10 @@ func newGeneratedRuleLawFixture(t testing.TB, variant generatedRuleLawVariant, r
 	denominatorReference := schema.EntryReference{Surface: schema.SurfaceKindDenominator, Key: generatedRuleLawDenominator}
 
 	read := program.ReadDecl{
-		Input: 0,
-		Axis:  program.AxisRef(axisReference),
-		Form:  program.Exact,
+		PointBound: program.PointBound,
+		Input:      0,
+		Axis:       program.AxisRef(axisReference),
+		Form:       program.Exact,
 		Contract: program.ReadContract{
 			Order:          program.OrderCanonical,
 			Sparse:         program.SparseExplicit,
@@ -803,6 +804,7 @@ func TestGeneratedRuleDescriptorRefusesForeignOrOutOfRangeMemberAddresses(t *tes
 			Input: join.Input, Factor: join.ReadAxis, Axis: join.ReadAxis,
 			Relation: join.Relation, Key: join.Key,
 			Form: join.ReadForm, Contract: join.ReadContract, Denominator: join.Denominator,
+			PointBound:  join.PointBound,
 			RowCapacity: uint16(scratch.JoinCount), CellCapacity: uint16(scratch.OutputCount),
 		}},
 		Outputs: []generated.OutputPlan{{

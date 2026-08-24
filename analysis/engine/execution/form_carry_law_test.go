@@ -49,6 +49,7 @@ func planCompiledTransformedCarryRule(t *testing.T) generated.CompiledRule {
 			Input: 0, Factor: 2, Axis: 0,
 			Relation: ruleplan.RelationAddr{Axis: 0, Member: 0}, Key: ruleplan.ProjectionAddr{Axis: 0, Member: 0},
 			Form:        ruleprogram.Exact,
+			PointBound:  ruleprogram.PointBound,
 			Contract:    ruleplan.ReadContract{Order: ruleprogram.OrderCanonical, Sparse: ruleprogram.SparseExplicit, OnOpaque: ruleprogram.OnOpaqueRefuse, Multiplicity: ruleprogram.MultiplicityOne},
 			RowCapacity: 1, CellCapacity: 1,
 		}},

@@ -207,6 +207,7 @@ func DeclareGeneratedRuleSlot(
 			Sources: join.Sources, Relation: normalizedJoin, Key: normalizedKey,
 			Predicate: normalizedPredicate, PredicatePresent: join.PredicatePresent,
 			Form: join.ReadForm, Contract: join.ReadContract, Denominator: join.Denominator,
+			PointBound:  join.PointBound,
 			RowCapacity: uint16(scratch.JoinCount), CellCapacity: uint16(scratch.OutputCount),
 		}
 	}
@@ -256,7 +257,10 @@ func DeclareGeneratedRuleSlot(
 	}
 	row.Reads = make([]coldcomposition.Read, len(joins))
 	for joinIndex, join := range joins {
-		read := coldcomposition.Read{Kind: coldcomposition.ReadExact, Input: uint64(join.Input), Factor: compositionKeyOf(readFactors[joinIndex].factor.semantic)}
+		read := coldcomposition.Read{
+			Kind: coldcomposition.ReadExact, Input: uint64(join.Input), Factor: compositionKeyOf(readFactors[joinIndex].factor.semantic),
+			PointBound: join.PointBound == ruleprogram.PointBound,
+		}
 		if join.ReadForm == ruleprogram.Summary || join.ReadForm == ruleprogram.Complete {
 			// A vector read is delivered over the Factor's own declared summary
 			// form. The form's semantic is the Factor's statement, read off the

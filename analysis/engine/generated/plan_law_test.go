@@ -34,7 +34,7 @@ func TestPlanExecutorTableRetainsHeterogeneousReadAndOutputFactors(t *testing.T)
 	read := ReadPlan{
 		Input: 0, Factor: 1, Axis: 0,
 		Relation: ruleplan.RelationAddr{Axis: 0, Member: 0}, Key: ruleplan.ProjectionAddr{Axis: 0, Member: 0},
-		Form: ruleprogram.Exact, Contract: ruleplan.ReadContract{Order: ruleprogram.OrderCanonical, Sparse: ruleprogram.SparseExplicit, OnOpaque: ruleprogram.OnOpaqueRefuse, Multiplicity: ruleprogram.MultiplicityOne},
+		Form: ruleprogram.Exact, PointBound: ruleprogram.PointBound, Contract: ruleplan.ReadContract{Order: ruleprogram.OrderCanonical, Sparse: ruleprogram.SparseExplicit, OnOpaque: ruleprogram.OnOpaqueRefuse, Multiplicity: ruleprogram.MultiplicityOne},
 		RowCapacity: 1, CellCapacity: 1,
 	}
 	descriptor, ok := NewPlanCompiledRule(planLawSpec([]ReadPlan{read}, &CarryPlan{Input: 0, Factor: 2, Mode: ruleprogram.CarryIdentity, Identity: true}, 1))
@@ -47,7 +47,7 @@ func TestPlanExecutorTableRefusesHoleyInputPorts(t *testing.T) {
 	read := ReadPlan{
 		Input: 1, Factor: 1, Axis: 0,
 		Relation: ruleplan.RelationAddr{Axis: 0, Member: 0}, Key: ruleplan.ProjectionAddr{Axis: 0, Member: 0},
-		Form: ruleprogram.Exact, Contract: ruleplan.ReadContract{Order: ruleprogram.OrderCanonical, Sparse: ruleprogram.SparseExplicit, OnOpaque: ruleprogram.OnOpaqueRefuse, Multiplicity: ruleprogram.MultiplicityOne},
+		Form: ruleprogram.Exact, PointBound: ruleprogram.PointBound, Contract: ruleplan.ReadContract{Order: ruleprogram.OrderCanonical, Sparse: ruleprogram.SparseExplicit, OnOpaque: ruleprogram.OnOpaqueRefuse, Multiplicity: ruleprogram.MultiplicityOne},
 		RowCapacity: 1, CellCapacity: 1,
 	}
 	if descriptor, ok := NewPlanCompiledRule(planLawSpec([]ReadPlan{read}, &CarryPlan{Input: 1, Factor: 2, Mode: ruleprogram.CarryIdentity, Identity: true}, 2)); ok || descriptor.Available() {
@@ -59,7 +59,7 @@ func TestPlanExecutorTableCopiesSealRows(t *testing.T) {
 	reads := []ReadPlan{{
 		Input: 0, Factor: 1, Axis: 0,
 		Relation: ruleplan.RelationAddr{Axis: 0, Member: 0}, Key: ruleplan.ProjectionAddr{Axis: 0, Member: 0},
-		Form: ruleprogram.Exact, Contract: ruleplan.ReadContract{Order: ruleprogram.OrderCanonical, Sparse: ruleprogram.SparseExplicit, OnOpaque: ruleprogram.OnOpaqueRefuse, Multiplicity: ruleprogram.MultiplicityOne},
+		Form: ruleprogram.Exact, PointBound: ruleprogram.PointBound, Contract: ruleplan.ReadContract{Order: ruleprogram.OrderCanonical, Sparse: ruleprogram.SparseExplicit, OnOpaque: ruleprogram.OnOpaqueRefuse, Multiplicity: ruleprogram.MultiplicityOne},
 		RowCapacity: 1, CellCapacity: 1,
 	}}
 	descriptor, ok := NewPlanCompiledRule(planLawSpec(reads, &CarryPlan{Input: 0, Factor: 2, Mode: ruleprogram.CarryIdentity, Identity: true}, 1))

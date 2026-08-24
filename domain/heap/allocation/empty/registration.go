@@ -46,9 +46,10 @@ func RuleEntry() rule.Spec {
 				Relation: member.RelationRef{Axis: heapAxis, Member: heapdomain.EmptyAllocationPredecessors},
 				Key:      member.ProjectionRef{Axis: heapAxis, Member: heapdomain.EmptyAllocationPredecessorKey},
 				Read: program.ReadDecl{
-					Input: 0,
-					Axis:  program.AxisRef(heapAxis),
-					Form:  program.Exact,
+					PointBound: program.PointBound,
+					Input:      0,
+					Axis:       program.AxisRef(heapAxis),
+					Form:       program.Exact,
 					Contract: program.ReadContract{
 						Order: program.OrderCanonical, Sparse: program.SparseExplicit,
 						OnOpaque: program.OnOpaqueRefuse, Multiplicity: program.MultiplicityOne,

@@ -722,7 +722,7 @@ func appendSchemaRead[T any](rule *schemaRuleDraft, ok bool, form SchemaReadForm
 		builder.poison()
 		return SchemaReadSlot[T]{}, false
 	}
-	row := coldcomposition.Read{Kind: kind, Input: uint64(inputDraft.index), Factor: compositionKeyOf(formDraft.factor.semantic)}
+	row := coldcomposition.Read{Kind: kind, Input: uint64(inputDraft.index), Factor: compositionKeyOf(formDraft.factor.semantic), PointBound: true}
 	switch kind {
 	case coldcomposition.ReadSummary:
 		row.Semantic = compositionKeyOf(formDraft.semantic)

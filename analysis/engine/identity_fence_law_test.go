@@ -32,7 +32,7 @@ import (
 // builder.candidate declaration set in schema_slots.go is its sole preimage, so
 // this literal fences every candidate declaration the builder emits: a changed
 // field, a dropped part, or a reordered ordered sub-slice moves it.
-const schemaDeclarationFenceHex = "3c23fb3c8e76062a442249386ea2c65861eeefef208629888bdfdf19ab7a5b89"
+const schemaDeclarationFenceHex = "78f41ba22ef229ef969e5a84b027f97a7a3d553a10e529f639c848749fea7b4a"
 
 // fenceSchema declares a fixed schema through the public SchemaBuilder surface:
 // a Factor with both intrinsic forms, a Factor-output Rule with an exact

@@ -96,6 +96,12 @@ type Join struct {
 	ReadAxis         uint32
 	ReadForm         program.ReadForm
 	ReadContract     ReadContract
+	// PointBound is the authored disposition copied from the sealed
+	// ReadDecl. It states whether this Input slot's own predecessor
+	// topology point is transported into the rule, or whether the read
+	// resolves through its Factor's directory/route surface and shares the
+	// candidate's own point instead.
+	PointBound program.PointBoundDecl
 	// Cardinality is the route-width proof copied from the sealed read
 	// contract. It is retained alongside ReadContract.Multiplicity so an
 	// emitter can consume the bounded route fact without reopening the
@@ -591,11 +597,12 @@ func compileProgram(ruleOrdinal uint32, template *rule.Template, declaration pro
 		}
 
 		compiledJoin := Join{
-			Sources:  Span{Start: uint32(sourceStart), Count: uint32(len(join.Sources))},
-			Input:    uint32(join.Read.Input),
-			Relation: RelationAddr{Axis: relationAxisOrdinal, Member: mustRelationOrdinal(relationCatalog, join.Relation.Member)},
-			Key:      ProjectionAddr{Axis: keyAxisOrdinal, Member: mustProjectionOrdinal(keyCatalog, join.Key.Member)},
-			ReadForm: join.Read.Form,
+			Sources:    Span{Start: uint32(sourceStart), Count: uint32(len(join.Sources))},
+			Input:      uint32(join.Read.Input),
+			Relation:   RelationAddr{Axis: relationAxisOrdinal, Member: mustRelationOrdinal(relationCatalog, join.Relation.Member)},
+			Key:        ProjectionAddr{Axis: keyAxisOrdinal, Member: mustProjectionOrdinal(keyCatalog, join.Key.Member)},
+			ReadForm:   join.Read.Form,
+			PointBound: join.Read.PointBound,
 			ReadContract: ReadContract{
 				Order: join.Read.Contract.Order, Sparse: join.Read.Contract.Sparse,
 				OnOpaque: join.Read.Contract.OnOpaque, Multiplicity: join.Read.Contract.Multiplicity,

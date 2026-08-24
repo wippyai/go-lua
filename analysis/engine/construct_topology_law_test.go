@@ -232,3 +232,37 @@ func TestConstructedQueryTableIsAddressedInDeclaredOrder(t *testing.T) {
 		t.Fatalf("query table rows=%d ok=%t addressed=%d", len(rows), ok, len(fixture.addressed))
 	}
 }
+
+// TestSealedRuleReadShapePointBoundIsDeclaredNotDerivedFromKind proves the
+// sealed RuleReadShape.PointBound a real Plan-compiled Rule carries is the
+// authored ReadDecl.PointBound value, not something ruleDeclaredPointBoundSlots
+// (or anything else at construction time) infers from the read's Kind. The
+// fixture's second read is Selected - the form the retired Kind-based
+// heuristic always treated as not point-bound - yet its declared disposition
+// is the ordinary PointBound, and the sealed shape must say so.
+func TestSealedRuleReadShapePointBoundIsDeclaredNotDerivedFromKind(t *testing.T) {
+	fixture := newGeneratedRuleLawFixture(t, generatedRuleLawSelected, generatedRuleLawRuleRole)
+	builder := generatedRuleLawBuilder(t, fixture.catalog, false)
+	if _, declared := DeclareGeneratedRuleSlot(builder, fixture.catalog, 0); !declared {
+		t.Fatal("selected-form generated Rule declaration refused")
+	}
+	sealed, sealedOK := builder.Seal()
+	if !sealedOK || sealed == nil {
+		t.Fatal("selected-form generated Rule schema did not seal")
+	}
+	shape, shapeOK := sealed.ruleShapeAt(0)
+	if !shapeOK || shape.ReadCount != 2 {
+		t.Fatalf("sealed rule shape = %+v/%t, want two reads", shape, shapeOK)
+	}
+	exact, exactOK := sealed.ruleReadShapeAt(0, 0)
+	selected, selectedOK := sealed.ruleReadShapeAt(0, 1)
+	if !exactOK || !selectedOK || exact.Kind != composition.ReadExact || selected.Kind != composition.ReadSelect {
+		t.Fatalf("sealed reads = %+v/%t %+v/%t, want exact then selected", exact, exactOK, selected, selectedOK)
+	}
+	if !exact.PointBound {
+		t.Fatal("the exact read's declared PointBound was not preserved through Plan/generated sealing")
+	}
+	if !selected.PointBound {
+		t.Fatal("the selected read's declared PointBound (ordinary, not self) was lost or replaced with a Kind-derived value")
+	}
+}

@@ -16,7 +16,11 @@ import (
 // codecVersion changes whenever a cold semantic term changes meaning. Rule
 // admission is no longer a cold schema term, so previous CompositionIDs must
 // not be reused for the reduced declaration grammar.
-const codecVersion = 18
+//
+// Version 19 adds Read.PointBound: whether a read's Input slot carries its
+// own predecessor topology point, declared rather than derived at
+// construction time.
+const codecVersion = 19
 
 // ID is a fixed semantic digest.  It is not a Program artifact identity.
 type ID [sha256.Size]byte
@@ -76,6 +80,12 @@ type Read struct {
 	Semantic     Key
 	Normalizer   Key
 	Dependencies []uint64
+	// PointBound is the authored disposition: this Input slot's own
+	// predecessor topology point is transported into the rule. A read that
+	// is not point-bound resolves through its Factor's own directory/route
+	// surface at solve time, and the rule's Group input at that slot is the
+	// candidate's own point transported to itself.
+	PointBound bool
 }
 
 // Carry is the schema-level whole-output relation.
@@ -176,6 +186,7 @@ type RuleReadShape struct {
 	Semantic        Key
 	Normalizer      Key
 	DependencyCount uint64
+	PointBound      bool
 }
 
 type RuleCarryShape struct {
@@ -430,7 +441,7 @@ func (c *Composition) RuleReadShapeAt(rule, read uint64) (RuleReadShape, bool) {
 		return RuleReadShape{}, false
 	}
 	row := c.rules[rule].Reads[read]
-	return RuleReadShape{Kind: row.Kind, Input: row.Input, Factor: row.Factor, Semantic: row.Semantic, Normalizer: row.Normalizer, DependencyCount: uint64(len(row.Dependencies))}, true
+	return RuleReadShape{Kind: row.Kind, Input: row.Input, Factor: row.Factor, Semantic: row.Semantic, Normalizer: row.Normalizer, DependencyCount: uint64(len(row.Dependencies)), PointBound: row.PointBound}, true
 }
 
 func (c *Composition) RuleReadDependencyAt(rule, read, dependency uint64) (uint64, bool) {
@@ -1031,7 +1042,7 @@ func compositionID(factors []Factor, completion Completion, activations []Activa
 			return ID{}, false
 		}
 		for _, read := range rule.Reads {
-			if writer.Uint(uint64(read.Kind)) != nil || writer.Uint(read.Input) != nil || !key(read.Factor) || !key(read.Semantic) || !key(read.Normalizer) || !deps(read.Dependencies) {
+			if writer.Uint(uint64(read.Kind)) != nil || writer.Uint(read.Input) != nil || !key(read.Factor) || !key(read.Semantic) || !key(read.Normalizer) || !deps(read.Dependencies) || writer.Bool(read.PointBound) != nil {
 				return ID{}, false
 			}
 		}

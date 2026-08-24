@@ -424,6 +424,7 @@ func summaryPlanSpec(form ruleprogram.ReadForm, predicate bool, denominator rule
 			Predicate:        selection,
 			PredicatePresent: predicate,
 			Form:             form,
+			PointBound:       ruleprogram.PointBound,
 			Contract:         ruleplan.ReadContract{Order: ruleprogram.OrderCanonical, Sparse: ruleprogram.SparseDense, OnOpaque: ruleprogram.OnOpaqueRefuse, Multiplicity: ruleprogram.MultiplicityMany},
 			Denominator:      denominator,
 			RowCapacity:      4, CellCapacity: 4,

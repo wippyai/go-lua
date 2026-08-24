@@ -17,13 +17,13 @@ import (
 // codecVersionFence is the version compositionID frames its preimage under.
 // Raising it is a deliberate declaration that every persisted CompositionID is
 // now unreadable, so it may only change together with coldCompositionFenceHex.
-const codecVersionFence = 18
+const codecVersionFence = 19
 
 // coldCompositionFenceHex is the sealed CompositionID of fenceCandidate. It is
 // stable by design: the preimage is the sorted declaration set, the codec
 // version, and the domain tag, none of which a construction-path edit is
 // allowed to reach.
-const coldCompositionFenceHex = "5a2b7940f7002ed6206f96009ff2a227e1e9fa46b028e318ea9587a02cbac112"
+const coldCompositionFenceHex = "37c05a57248b14657925862409e84fffef5e5bd970883cb37b24cb24b280c5dc"
 
 func TestColdCodecVersionIsFenced(t *testing.T) {
 	if codecVersion != codecVersionFence {
@@ -51,8 +51,8 @@ func fenceCandidate() Candidate {
 				Key: fenceKey(31), OperandFamily: fenceKey(32),
 				OutputKind: FactorOutput, Output: factor, Inputs: 2,
 				Reads: []Read{
-					{Kind: ReadExact, Input: 0, Factor: structural},
-					{Kind: ReadSummary, Input: 1, Factor: summary, Semantic: fenceKey(21), Normalizer: fenceKey(21)},
+					{Kind: ReadExact, Input: 0, Factor: structural, PointBound: true},
+					{Kind: ReadSummary, Input: 1, Factor: summary, Semantic: fenceKey(21), Normalizer: fenceKey(21), PointBound: false},
 				},
 				Carries: []Carry{{Input: 0, Factor: factor, Transform: fenceKey(33)}},
 				Writes:  []Write{{Kind: WriteExact, Factor: factor}},

@@ -112,9 +112,10 @@ func FormalFreeze() ruleprogram.Program {
 				Relation: member.RelationRef{Axis: callAxis, Member: MountedCallFacts},
 				Key:      member.ProjectionRef{Axis: callAxis, Member: MountedCallFactKey},
 				Read: ruleprogram.ReadDecl{
-					Input: 0,
-					Axis:  ruleprogram.AxisRef(callAxis),
-					Form:  ruleprogram.Exact,
+					Input:      0,
+					Axis:       ruleprogram.AxisRef(callAxis),
+					Form:       ruleprogram.Exact,
+					PointBound: ruleprogram.PointBound,
 					Contract: ruleprogram.ReadContract{
 						Order:        ruleprogram.OrderCanonical,
 						Sparse:       ruleprogram.SparseExplicit,
@@ -137,6 +138,12 @@ func FormalFreeze() ruleprogram.Program {
 					Input: 1,
 					Axis:  ruleprogram.AxisRef(valueAxis),
 					Form:  ruleprogram.Selected,
+					// The freeze judgment's own actual-member selection has
+					// no predecessor point: it resolves through Value's
+					// selected member set at this Input, not a transported
+					// occurrence. Input 1's slot shares the candidate's own
+					// point.
+					PointBound: ruleprogram.PointBoundSelf,
 					Contract: ruleprogram.ReadContract{
 						Order:          ruleprogram.OrderByTag,
 						Sparse:         ruleprogram.SparseDefault,
@@ -162,6 +169,11 @@ func FormalFreeze() ruleprogram.Program {
 					Input: 2,
 					Axis:  ruleprogram.AxisRef(heapAxis),
 					Form:  ruleprogram.Selected,
+					// Resolved through Heap's own route/directory surface at
+					// this Input, not a transported occurrence. Input 2's
+					// slot shares the candidate's own point, the same as
+					// Input 1.
+					PointBound: ruleprogram.PointBoundSelf,
 					Contract: ruleprogram.ReadContract{
 						Order:          ruleprogram.OrderCanonical,
 						Sparse:         ruleprogram.SparseDefault,

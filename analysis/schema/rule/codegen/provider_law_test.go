@@ -183,7 +183,7 @@ func providerJoin() program.JoinDecl {
 		Key:       member.ProjectionRef{Axis: placementAxis, Member: providerRouteKey},
 		Predicate: member.ProjectionRef{Axis: placementAxis, Member: providerPredicate},
 		Read: program.ReadDecl{
-			Input: 0, Axis: program.AxisRef(placementAxis), Form: program.Selected,
+			Input: 0, Axis: program.AxisRef(placementAxis), Form: program.Selected, PointBound: program.PointBound,
 			Contract: program.ReadContract{Order: program.OrderCanonical, Sparse: program.SparseExplicit, OnOpaque: program.OnOpaqueRefuse, Multiplicity: program.MultiplicityOne, DenominatorRef: program.DenominatorRef{Surface: schema.SurfaceKindDenominator, Key: providerDenominator}},
 		},
 	}
@@ -199,6 +199,10 @@ func providerDeclaration(spareJoin bool) program.Program {
 		spare.Predicate = member.ProjectionRef{}
 		spare.Read.Form = program.Exact
 		spare.Read.Contract.Multiplicity = program.MultiplicityOne
+		// The spare join reads at its own port. A port is where the fold
+		// receives one join's value and where the runtime resolves that join's
+		// Factor requirement, so two joins cannot share one.
+		spare.Read.Input = 1
 		joins = append(joins, spare)
 		inputs = append(inputs, 1)
 	}

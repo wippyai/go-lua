@@ -211,6 +211,7 @@ func routedDescriptor(t testing.TB, selectedFeeds int) generated.CompiledRule {
 		Relation:    ruleplan.RelationAddr{Axis: 0, Member: 0},
 		Key:         ruleplan.ProjectionAddr{Axis: 0, Member: 0},
 		Form:        ruleprogram.Exact,
+		PointBound:  ruleprogram.PointBound,
 		Contract:    ruleplan.ReadContract{Order: ruleprogram.OrderCanonical, Sparse: ruleprogram.SparseExplicit, OnOpaque: ruleprogram.OnOpaqueRefuse, Multiplicity: ruleprogram.MultiplicityOne},
 		RowCapacity: 4, CellCapacity: 4,
 	})
@@ -222,6 +223,7 @@ func routedDescriptor(t testing.TB, selectedFeeds int) generated.CompiledRule {
 			Predicate:        ruleplan.ProjectionAddr{Axis: 0, Member: 1},
 			PredicatePresent: true,
 			Form:             ruleprogram.Selected,
+			PointBound:       ruleprogram.PointBound,
 			Contract:         ruleplan.ReadContract{Order: ruleprogram.OrderByTag, Sparse: ruleprogram.SparseDefault, OnOpaque: ruleprogram.OnOpaqueRefuse, Multiplicity: ruleprogram.MultiplicityOne},
 			Denominator:      ruleplan.DenominatorAddr{Ordinal: 0, Present: true},
 			RowCapacity:      4, CellCapacity: 4,
@@ -235,6 +237,7 @@ func routedDescriptor(t testing.TB, selectedFeeds int) generated.CompiledRule {
 		Predicate:        ruleplan.ProjectionAddr{Axis: 2, Member: 1},
 		PredicatePresent: true,
 		Form:             ruleprogram.Selected,
+		PointBound:       ruleprogram.PointBound,
 		Contract:         ruleplan.ReadContract{Order: ruleprogram.OrderCanonical, Sparse: ruleprogram.SparseExplicit, OnOpaque: ruleprogram.OnOpaqueRefuse, Multiplicity: ruleprogram.MultiplicityOne},
 		Denominator:      ruleplan.DenominatorAddr{Ordinal: 1, Present: true},
 		RowCapacity:      4, CellCapacity: 4,

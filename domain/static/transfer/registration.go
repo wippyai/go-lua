@@ -34,9 +34,10 @@ func RuleEntry() rule.Spec {
 				Relation: member.RelationRef{Axis: staticAxis, Member: staticdomain.TypeFactSources},
 				Key:      member.ProjectionRef{Axis: staticAxis, Member: staticdomain.TypeFactSourceKey},
 				Read: program.ReadDecl{
-					Input: 0,
-					Axis:  program.AxisRef(staticAxis),
-					Form:  program.Exact,
+					PointBound: program.PointBound,
+					Input:      0,
+					Axis:       program.AxisRef(staticAxis),
+					Form:       program.Exact,
 					Contract: program.ReadContract{
 						Order: program.OrderCanonical, Sparse: program.SparseExplicit,
 						OnOpaque: program.OnOpaqueRefuse, Multiplicity: program.MultiplicityOne,

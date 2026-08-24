@@ -82,9 +82,10 @@ func placementAxis() schema.EntryReference { return axisReference(placementAxisK
 
 func exactValueRead() ruleprogram.ReadDecl {
 	return ruleprogram.ReadDecl{
-		Input: 0,
-		Axis:  ruleprogram.AxisRef(valueAxis()),
-		Form:  ruleprogram.Exact,
+		PointBound: ruleprogram.PointBound,
+		Input:      0,
+		Axis:       ruleprogram.AxisRef(valueAxis()),
+		Form:       ruleprogram.Exact,
 		Contract: ruleprogram.ReadContract{
 			Order:          ruleprogram.OrderCanonical,
 			Sparse:         ruleprogram.SparseDefault,
@@ -97,9 +98,10 @@ func exactValueRead() ruleprogram.ReadDecl {
 
 func selectedValueRead() ruleprogram.ReadDecl {
 	return ruleprogram.ReadDecl{
-		Input: 0,
-		Axis:  ruleprogram.AxisRef(valueAxis()),
-		Form:  ruleprogram.Selected,
+		PointBound: ruleprogram.PointBound,
+		Input:      0,
+		Axis:       ruleprogram.AxisRef(valueAxis()),
+		Form:       ruleprogram.Selected,
 		Contract: ruleprogram.ReadContract{
 			Order:          ruleprogram.OrderCanonical,
 			Sparse:         ruleprogram.SparseDefault,
@@ -112,9 +114,10 @@ func selectedValueRead() ruleprogram.ReadDecl {
 
 func selectedPlacementRead() ruleprogram.ReadDecl {
 	return ruleprogram.ReadDecl{
-		Input: 0,
-		Axis:  ruleprogram.AxisRef(placementAxis()),
-		Form:  ruleprogram.Selected,
+		PointBound: ruleprogram.PointBound,
+		Input:      0,
+		Axis:       ruleprogram.AxisRef(placementAxis()),
+		Form:       ruleprogram.Selected,
 		Contract: ruleprogram.ReadContract{
 			Order:          ruleprogram.OrderCanonical,
 			Sparse:         ruleprogram.SparseDefault,

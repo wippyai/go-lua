@@ -79,7 +79,8 @@ func configureForeignCandidateFixture(t *testing.T, provider member.RelationRef,
 			Relation: member.RelationRef{Axis: occurrenceAxis, Member: foreignExactRead},
 			Key:      member.ProjectionRef{Axis: occurrenceAxis, Member: foreignExactKeyed},
 			Read: program.ReadDecl{
-				Input: 0, Axis: program.AxisRef(occurrenceAxis), Form: program.Exact,
+				PointBound: program.PointBound,
+				Input:      0, Axis: program.AxisRef(occurrenceAxis), Form: program.Exact,
 				Contract: program.ReadContract{
 					Order: program.OrderCanonical, Sparse: program.SparseExplicit,
 					OnOpaque: program.OnOpaquePropagateAuthenticated, Multiplicity: program.MultiplicityOne,

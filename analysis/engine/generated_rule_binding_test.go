@@ -276,7 +276,8 @@ func newGeneratedRuleLawMultiAxisFixture(t testing.TB) generatedRuleLawFixture {
 	axisReference := schema.EntryReference{Surface: schema.SurfaceKindAxis, Key: generatedRuleLawAxisKey}
 	denominatorReference := schema.EntryReference{Surface: schema.SurfaceKindDenominator, Key: generatedRuleLawDenominator}
 	read := program.ReadDecl{
-		Input: 0, Axis: program.AxisRef(axisReference), Form: program.Exact,
+		PointBound: program.PointBound,
+		Input:      0, Axis: program.AxisRef(axisReference), Form: program.Exact,
 		Contract: program.ReadContract{
 			Order: program.OrderCanonical, Sparse: program.SparseExplicit,
 			OnOpaque: program.OnOpaqueRefuse, Multiplicity: program.MultiplicityOne,

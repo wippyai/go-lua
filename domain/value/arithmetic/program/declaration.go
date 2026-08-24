@@ -88,9 +88,10 @@ func BinaryArithmetic() ruleprogram.Program {
 				Relation: member.RelationRef{Axis: valueAxis, Member: BinaryArithmeticSources},
 				Key:      member.ProjectionRef{Axis: valueAxis, Member: BinaryArithmeticLeft},
 				Read: ruleprogram.ReadDecl{
-					Input: 0,
-					Axis:  ruleprogram.AxisRef(valueAxis),
-					Form:  ruleprogram.Exact,
+					PointBound: ruleprogram.PointBound,
+					Input:      0,
+					Axis:       ruleprogram.AxisRef(valueAxis),
+					Form:       ruleprogram.Exact,
 					Contract: ruleprogram.ReadContract{
 						Order:        ruleprogram.OrderCanonical,
 						Sparse:       ruleprogram.SparseExplicit,
@@ -104,9 +105,10 @@ func BinaryArithmetic() ruleprogram.Program {
 				Relation: member.RelationRef{Axis: valueAxis, Member: BinaryArithmeticSources},
 				Key:      member.ProjectionRef{Axis: valueAxis, Member: BinaryArithmeticRight},
 				Read: ruleprogram.ReadDecl{
-					Input: 0,
-					Axis:  ruleprogram.AxisRef(valueAxis),
-					Form:  ruleprogram.Exact,
+					PointBound: ruleprogram.PointBound,
+					Input:      0,
+					Axis:       ruleprogram.AxisRef(valueAxis),
+					Form:       ruleprogram.Exact,
 					Contract: ruleprogram.ReadContract{
 						Order:        ruleprogram.OrderCanonical,
 						Sparse:       ruleprogram.SparseExplicit,

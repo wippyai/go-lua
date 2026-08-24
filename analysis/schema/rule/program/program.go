@@ -20,7 +20,11 @@ const (
 	// Version 7 carries the explicit route-producing JoinRef on routed output
 	// rows. Runtime binding must resolve this row from the sealed vocabulary;
 	// callers never infer it from selected-join cardinality.
-	contentVersion = 7
+	//
+	// Version 8 carries each read's authored PointBoundDecl. The predecessor
+	// topology width a rule expects is no longer re-derived from Form at
+	// construction time; it is this declared fact.
+	contentVersion = 8
 )
 
 const (
@@ -532,6 +536,9 @@ func writeReadContent(content *framing.Writer, read ReadDecl) error {
 		return err
 	}
 	if err := content.Uint(uint64(read.Contract.Multiplicity)); err != nil {
+		return err
+	}
+	if err := content.Uint(uint64(read.PointBound)); err != nil {
 		return err
 	}
 	return writeReference(content, read.Contract.DenominatorRef.EntryReference())

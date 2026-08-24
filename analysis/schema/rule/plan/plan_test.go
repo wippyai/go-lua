@@ -76,8 +76,9 @@ func newPlanFixture(t *testing.T) *planFixture {
 			Relation: member.RelationRef{Axis: mainAxis, Member: planJoinRelation},
 			Key:      member.ProjectionRef{Axis: mainAxis, Member: planJoinKey},
 			Read: program.ReadDecl{
-				Axis: program.AxisRef(mainAxis),
-				Form: program.Exact,
+				PointBound: program.PointBound,
+				Axis:       program.AxisRef(mainAxis),
+				Form:       program.Exact,
 				Contract: program.ReadContract{
 					Order:        program.OrderCanonical,
 					Sparse:       program.SparseExplicit,

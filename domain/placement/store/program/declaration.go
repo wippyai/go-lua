@@ -121,9 +121,10 @@ func Storage() ruleprogram.Program {
 					Member: StorageTransferSourceKey,
 				},
 				Read: ruleprogram.ReadDecl{
-					Input: 0,
-					Axis:  ruleprogram.AxisRef(valueAxis),
-					Form:  ruleprogram.Exact,
+					PointBound: ruleprogram.PointBound,
+					Input:      0,
+					Axis:       ruleprogram.AxisRef(valueAxis),
+					Form:       ruleprogram.Exact,
 					Contract: ruleprogram.ReadContract{
 						Order:        ruleprogram.OrderCanonical,
 						Sparse:       ruleprogram.SparseExplicit,
@@ -150,9 +151,10 @@ func Storage() ruleprogram.Program {
 					Member: StorageRouteTag,
 				},
 				Read: ruleprogram.ReadDecl{
-					Input: 0,
-					Axis:  ruleprogram.AxisRef(placementAxis),
-					Form:  ruleprogram.Selected,
+					PointBound: ruleprogram.PointBound,
+					Input:      0,
+					Axis:       ruleprogram.AxisRef(placementAxis),
+					Form:       ruleprogram.Selected,
 					Contract: ruleprogram.ReadContract{
 						Order:          ruleprogram.OrderCanonical,
 						Sparse:         ruleprogram.SparseExplicit,

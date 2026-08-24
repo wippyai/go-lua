@@ -17,10 +17,11 @@ func heterogeneousPlanLawSpec() CompiledRuleSpec {
 		Reads: []ReadPlan{
 			{
 				Input: 0, Factor: 1, Axis: 1,
-				Sources:  ruleplan.Span{Start: 0, Count: 1},
-				Relation: ruleplan.RelationAddr{Axis: 1, Member: 4},
-				Key:      ruleplan.ProjectionAddr{Axis: 1, Member: 6},
-				Form:     ruleprogram.Exact,
+				Sources:    ruleplan.Span{Start: 0, Count: 1},
+				Relation:   ruleplan.RelationAddr{Axis: 1, Member: 4},
+				Key:        ruleplan.ProjectionAddr{Axis: 1, Member: 6},
+				Form:       ruleprogram.Exact,
+				PointBound: ruleprogram.PointBound,
 				Contract: ruleplan.ReadContract{
 					Order:        ruleprogram.OrderCanonical,
 					Sparse:       ruleprogram.SparseExplicit,
@@ -38,6 +39,7 @@ func heterogeneousPlanLawSpec() CompiledRuleSpec {
 				Predicate:        ruleplan.ProjectionAddr{Axis: 0, Member: 9},
 				PredicatePresent: true,
 				Form:             ruleprogram.Selected,
+				PointBound:       ruleprogram.PointBound,
 				Contract: ruleplan.ReadContract{
 					Order:        ruleprogram.OrderByTag,
 					Sparse:       ruleprogram.SparseExplicit,

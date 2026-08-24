@@ -40,8 +40,9 @@ func lawCarryTransform(key string) member.CarryTransformRef {
 
 func lawRead(form ReadForm, key string, denominator bool) ReadDecl {
 	read := ReadDecl{
-		Axis: AxisRef(lawReference(key + "/axis")),
-		Form: form,
+		Axis:       AxisRef(lawReference(key + "/axis")),
+		Form:       form,
+		PointBound: PointBound,
 		Contract: ReadContract{
 			Order:        OrderCanonical,
 			Sparse:       SparseExplicit,
@@ -423,5 +424,39 @@ func TestProgramHasNoSmallJoinOrSourceCap(t *testing.T) {
 	program := Program{OperandRole: "semantic/operand/law", Candidate: lawRelation("large/candidate"), Joins: joins, Fold: lawFold([]JoinRef{count - 1})}
 	if problem, valid := program.Check(); !valid {
 		t.Fatalf("large ordered declaration rejected: %+v", problem)
+	}
+}
+
+// TestReadDeclPointBoundHasNoSilentDefault proves PointBound must be
+// authored: a ReadDecl that never states it is unavailable, and a Program
+// built from it refuses to seal rather than falling back to an implicit
+// disposition.
+func TestReadDeclPointBoundHasNoSilentDefault(t *testing.T) {
+	program := lawProgram(t)
+	program.Joins[0].Read.PointBound = PointBoundInvalid
+	if program.Joins[0].Read.Available() {
+		t.Fatal("a ReadDecl with no stated PointBound reported itself available")
+	}
+	if _, valid := program.Check(); valid {
+		t.Fatal("a Program with an undeclared PointBound sealed")
+	}
+}
+
+// TestReadDeclPointBoundSelfIsAuthoredIndependentlyOfForm proves PointBound
+// is stated per read, not derived from Form: an Exact read - the form the
+// retired construction-time heuristic always treated as point-bound - may
+// still be explicitly declared PointBoundSelf, and the declaration seals on
+// that authored value.
+func TestReadDeclPointBoundSelfIsAuthoredIndependentlyOfForm(t *testing.T) {
+	program := lawProgram(t)
+	if program.Joins[0].Read.Form != Exact {
+		t.Fatalf("law program's join is Form=%v, want Exact", program.Joins[0].Read.Form)
+	}
+	program.Joins[0].Read.PointBound = PointBoundSelf
+	if _, valid := program.Check(); !valid {
+		t.Fatal("an Exact read explicitly declared PointBoundSelf did not seal")
+	}
+	if program.Joins[0].Read.PointBound != PointBoundSelf {
+		t.Fatal("the authored PointBoundSelf was not preserved on the Exact-form read")
 	}
 }
