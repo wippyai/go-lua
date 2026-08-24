@@ -288,3 +288,76 @@ func TestGeneratedMemberRowIsExclusive(t *testing.T) {
 		t.Fatal("empty member row dispatched")
 	}
 }
+
+// generatedRoutedMemberSpec is the routed shape: no exact target and no static
+// output vector, the output Factor's route universe claimed instead.
+func generatedRoutedMemberSpec(t *testing.T, fixture generatedFactorAdapterFixture) generatedMemberSpec {
+	t.Helper()
+	spec := generatedMemberTestSpec(t, fixture, 0, 0)
+	spec.target, spec.targets = carrier.Target{}, nil
+	spec.routed, spec.route = true, fixture.factor
+	return spec
+}
+
+// TestARoutedMemberMayCarryWhatItsRoutesDidNotSelect states the shape a
+// routed rule usually has, and the one the generated arm used to refuse.
+//
+// A routed publication writes at the coordinates its derived relation
+// answered. Every other coordinate of that Factor is one the row must
+// PRESERVE, and preserving them is what a carry is. Refusing the pair would
+// have made every routed rule that keeps a world - which is every freeze - an
+// erasure of everything it did not route to.
+//
+// The two halves stay distinct: the carry closure is what the row preserves,
+// and it is never a destination, because a routed row has no static
+// destination at all.
+func TestARoutedMemberMayCarryWhatItsRoutesDidNotSelect(t *testing.T) {
+	fixture := newGeneratedFactorAdapterFixture(t)
+	spec := generatedRoutedMemberSpec(t, fixture)
+	spec.carries = []int{0}
+	spec.carryTargets = []carrier.Target{fixture.target}
+	member, sealed := newGeneratedMember(spec)
+	if !sealed || member == nil {
+		t.Fatal("a routed member that carries was refused")
+	}
+	if len(member.targets()) != 0 {
+		t.Fatalf("a routed member published %d static destinations", len(member.targets()))
+	}
+	if len(member.carryTargets()) != 1 || member.carryTargets()[0] != fixture.target {
+		t.Fatal("the routed member does not preserve its carried coordinates")
+	}
+	if member.routeScope() != fixture.factor {
+		t.Fatal("the routed member claims no route universe")
+	}
+	if carries := member.carries(); len(carries) != 1 || carries[0] != 0 {
+		t.Fatalf("carried inputs = %v, want the one the declaration named", carries)
+	}
+}
+
+// TestARoutedMemberHasNoStaticDestination fences the other direction. A
+// carried coordinate is not a destination, and a routed row that named one
+// would be publishing somewhere its relation never answered.
+func TestARoutedMemberHasNoStaticDestination(t *testing.T) {
+	fixture := newGeneratedFactorAdapterFixture(t)
+	for _, test := range []struct {
+		name  string
+		amend func(*generatedMemberSpec)
+	}{
+		{name: "exact-target", amend: func(spec *generatedMemberSpec) { spec.target = fixture.target }},
+		{name: "static-output-vector", amend: func(spec *generatedMemberSpec) {
+			spec.targets = []carrier.Target{fixture.target}
+		}},
+		{name: "carried-with-no-carry", amend: func(spec *generatedMemberSpec) {
+			spec.carryTargets = []carrier.Target{fixture.target}
+		}},
+		{name: "no-route-universe", amend: func(spec *generatedMemberSpec) { spec.route = nil }},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			spec := generatedRoutedMemberSpec(t, fixture)
+			test.amend(&spec)
+			if _, sealed := newGeneratedMember(spec); sealed {
+				t.Fatal("a routed member was sealed with a destination it cannot have")
+			}
+		})
+	}
+}

@@ -124,7 +124,13 @@ func newGeneratedMember(spec generatedMemberSpec) (*generatedMember, bool) {
 	// exact target is present exactly when the row is not routed, and a routed
 	// row must name the Factor whose route universe it claims instead.
 	if spec.routed {
-		if spec.target != (carrier.Target{}) || len(spec.targets) != 0 || len(spec.carryTargets) != 0 || spec.route == nil {
+		// A routed row has no exact target and no static output vector. Its
+		// carry closure may still be present: those are the coordinates the
+		// row preserves, not the ones it publishes at.
+		if spec.target != (carrier.Target{}) || len(spec.targets) != 0 || spec.route == nil {
+			return nil, false
+		}
+		if len(spec.carryTargets) != 0 && len(spec.carries) == 0 {
 			return nil, false
 		}
 	} else if spec.target == (carrier.Target{}) || spec.route != nil || spec.routeNarrow {
@@ -576,16 +582,30 @@ func bindGeneratedMember(plane *programPlane, topology *equation.Topology, membe
 		}
 		// A routed member publishes at coordinates its own derived relation
 		// answers, so it claims the output Factor's route universe rather than
-		// one exact target. A carry alongside a route would have to preserve
-		// coordinates that universe already spans; that is the hot arm's
-		// carryRouteScope and it is not declared here, so a routed generated
-		// rule that also carries is refused rather than silently dropped.
-		if carryInput >= 0 || !writeFactor.hasRouteUniverse() {
+		// one exact target.
+		if !writeFactor.hasRouteUniverse() {
 			return nil, false
 		}
 		spec.routed = true
 		spec.route = writeFactor
 		spec.routeNarrow = writeFactor.supports(carrier.Narrow)
+		if carryInput >= 0 {
+			// A routed row that also carries preserves every coordinate its
+			// routes did not select. Those coordinates are not a vector this
+			// row can name - a route set is decided per invocation - so the
+			// carry claims the Factor's whole route universe on top of its
+			// exact closure, which is the same scope the authored arm claims
+			// and the Region seal expands once per (Region, Factor).
+			if carryInput >= inputCount || !writeFactor.carryRouteScopeFor(member) {
+				return nil, false
+			}
+			carryTargets, carryTargetsOK := writeFactor.carryTargetsFor(member)
+			if !carryTargetsOK {
+				return nil, false
+			}
+			spec.carries = []int{carryInput}
+			spec.carryTargets = carryTargets
+		}
 	default:
 		return nil, false
 	}
