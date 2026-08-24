@@ -39,8 +39,6 @@ const (
 	CallCoordinateCarrier          member.Carrier = "carrier/call/mounted-call"
 	CallFactCarrier                member.Carrier = "carrier/call/fact"
 	FormalFreezeRouteCarrier       member.Carrier = "carrier/heap/formal-freeze-route"
-	MountedCallActualsCarrier      member.Carrier = "carrier/value/mounted-call-actuals"
-	MountedCallActualTagCarrier    member.Carrier = "carrier/value/mounted-call-actual-tag"
 )
 
 // AxisMemberCatalog is heap's declaration-only member vocabulary.
