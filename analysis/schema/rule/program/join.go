@@ -32,11 +32,25 @@ type JoinRef uint64
 // normal form is sealed from Read.Form, projections, and ordered Sources; no
 // public or private shape representation exists.
 type JoinDecl struct {
-	Sources   []SourceRef
-	Relation  member.RelationRef
-	Key       member.ProjectionRef
+	Sources  []SourceRef
+	Relation member.RelationRef
+	Key      member.ProjectionRef
+	// Predicate is the selection/tag projection a Selected or Summary read
+	// resolves through. It is optional on both forms for the same underlying
+	// reason a Parent is declared: a row addressed by something other than an
+	// owner-issued tag needs no tag to declare.
 	Predicate member.ProjectionRef
-	Read      ReadDecl
+	// Parent restates Relation's own declared Parent (MemberParent in the
+	// axis definition, member.Relation.Parent in the sealed catalog): the
+	// relation whose candidate row Relation's rows nest under as a bounded,
+	// ordinal-addressed member set. It is declared only when Relation is such
+	// a self-provided nested member set, and never invented to describe a
+	// relation that is not - seal/plan authenticate it against the resolved
+	// relation's real Parent/Ordinal, the same way they authenticate Key and
+	// Predicate against the relation they name. This declaration states the
+	// fact; it does not decide it.
+	Parent member.RelationRef
+	Read   ReadDecl
 }
 
 func (join JoinDecl) Available() bool {
@@ -53,6 +67,9 @@ func (join JoinDecl) References() schema.EntryReferences {
 	}
 	if join.Predicate.Declared() {
 		references = append(references, join.Predicate.EntryReference())
+	}
+	if join.Parent.Declared() {
+		references = append(references, join.Parent.EntryReference())
 	}
 	return append(references, join.Read.References()...)
 }
@@ -80,6 +97,9 @@ func (join JoinDecl) normalForm(position int) bool {
 	if join.Predicate.Declared() && !join.Predicate.Available() {
 		return false
 	}
+	if join.Parent.Declared() && !join.Parent.Available() {
+		return false
+	}
 	if join.Read.Contract.RequiresDenominator(join.Read.Form) && !join.Read.Contract.DenominatorRef.Available() {
 		return false
 	}
@@ -102,9 +122,21 @@ func (join JoinDecl) normalForm(position int) bool {
 		// which the clause above already holds it to.
 		return true
 	case Summary:
-		// S3 is the selected relation summary. Predicate is the sealed
-		// selection/tag projection and the denominator is mandatory above.
-		return join.Predicate.Available()
+		// S3 is the selected relation summary; the denominator is mandatory
+		// above. Predicate is the sealed selection/tag projection that
+		// correlates each returned cell with its row, and is required for
+		// every relation except one: a self-provided nested member set is
+		// already addressed by (parent, ordinal) - its ordinal position IS
+		// the correlation - so a Predicate declared over it would be a
+		// second, duplicate tagging authority for the same row, the same
+		// defect Selected's own untagged form exists to avoid. This
+		// declaration states that fact as Parent, restating the relation's
+		// own MemberParent/MemberOrdinal; it never infers nestedness from
+		// this join's own shape, and seal/plan authenticate the restatement
+		// against the resolved relation. No production rule declares
+		// ruleprogram.Summary yet; this restatement is what admits the
+		// first one.
+		return join.Predicate.Available() || join.Parent.Available()
 	case Complete:
 		// S5 is the closed-denominator whole-vector read.
 		return !join.Predicate.Declared()

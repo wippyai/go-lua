@@ -24,7 +24,11 @@ const (
 	// Version 8 carries each read's authored PointBoundDecl. The predecessor
 	// topology width a rule expects is no longer re-derived from Form at
 	// construction time; it is this declared fact.
-	contentVersion = 8
+	//
+	// Version 9 carries each join's declared Parent: the restated
+	// MemberParent/MemberOrdinal fact that licenses a Summary read over a
+	// self-provided nested member set to declare no Predicate.
+	contentVersion = 9
 )
 
 const (
@@ -437,6 +441,9 @@ func (program Program) WriteContent(content *framing.Writer) error {
 			return err
 		}
 		if err := writeMemberReference(content, join.Predicate.Axis, join.Predicate.Member); err != nil {
+			return err
+		}
+		if err := writeMemberReference(content, join.Parent.Axis, join.Parent.Member); err != nil {
 			return err
 		}
 		if err := writeReadContent(content, join.Read); err != nil {

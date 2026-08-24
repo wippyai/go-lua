@@ -213,6 +213,15 @@ func TestProgramAdmitsOnlyTheFiveNormalFormCombinations(t *testing.T) {
 			Key: lawProjection("summary/key"), Predicate: lawProjection("summary/predicate"),
 			Read: lawRead(Summary, "summary", true),
 		}},
+		// A summary over a self-provided nested member set is already
+		// addressed by (parent, ordinal): declaring Parent restates that fact
+		// and the Predicate a non-member-set summary needs is left out, the
+		// same shape selected-untagged states for Selected reads.
+		{name: "summary-nested", join: JoinDecl{
+			Sources: []SourceRef{CandidateSource()}, Relation: lawRelation("summary-nested/relation"),
+			Key: lawProjection("summary-nested/key"), Parent: lawRelation("summary-nested/parent"),
+			Read: lawRead(Summary, "summary-nested", true),
+		}},
 		{name: "complete", join: JoinDecl{
 			Sources: []SourceRef{CandidateSource()}, Relation: lawRelation("complete/relation"),
 			Key: lawProjection("complete/key"), Read: lawRead(Complete, "complete", true),
@@ -246,6 +255,15 @@ func TestProgramAdmitsOnlyTheFiveNormalFormCombinations(t *testing.T) {
 	program.Joins[0].Predicate = lawProjection("summary/predicate")
 	if _, valid := program.Check(); valid {
 		t.Fatal("summary without denominator admitted")
+	}
+	// Parent licenses the summary-nested form above only for the relation it
+	// names. A relation that is not a self-provided nested member set still
+	// needs Predicate: leaving both out does not seal by omission.
+	program = lawProgram(t)
+	program.Joins[0].Read = lawRead(Summary, "unlicensed/summary", true)
+	problem, valid := program.Check()
+	if valid || problem.Kind != ProblemJoin {
+		t.Fatalf("summary with neither predicate nor parent admitted: valid=%v problem=%+v", valid, problem)
 	}
 }
 
@@ -311,6 +329,20 @@ func TestProgramDigestTracksOrderedColdData(t *testing.T) {
 	program.Joins[0].Key = lawProjection("changed/key")
 	if first == program.Digest() {
 		t.Fatal("key projection omitted from digest")
+	}
+}
+
+func TestProgramDigestTracksJoinParent(t *testing.T) {
+	program := lawProgram(t)
+	program.Joins[0].Read = lawRead(Summary, "digest-parent", true)
+	program.Joins[0].Parent = lawRelation("digest-parent/parent")
+	first := program.Digest()
+	if !first.Available() {
+		t.Fatal("summary join with a declared parent has no digest")
+	}
+	program.Joins[0].Parent = lawRelation("digest-parent/other-parent")
+	if first == program.Digest() {
+		t.Fatal("join parent omitted from digest")
 	}
 }
 
