@@ -24,7 +24,7 @@ func AxisMemberCatalog() member.Catalog {
 	valueAxis := schemaapi.EntryReference{Surface: schemaapi.SurfaceKindAxis, Key: "static-type"}
 	catalog, ok := member.NewCatalog(
 		[]member.Relation{
-			{Key: TypeFactTransfers, Subject: StorageTransferCarrier, CandidateProvider: member.AxisRelationCandidate(member.RelationRef{Axis: schemaapi.EntryReference{Surface: schemaapi.SurfaceKind(2), Key: "static-type"}, Member: "static-type/storage-transfer/candidates"})},
+			{Key: TypeFactTransfers, Subject: StorageTransferCarrier, CandidateProvider: member.AxisRelationCandidate(member.RelationRef{Axis: schemaapi.EntryReference{Surface: schemaapi.SurfaceKind(2), Key: "static-type"}, Member: "static-type/storage-transfer/candidates"}), Correspondences: []member.RelationRef{member.RelationRef{Axis: schemaapi.EntryReference{Surface: schemaapi.SurfaceKind(2), Key: "value"}, Member: "value/storage-transfer/candidates"}}},
 			{Key: TypeFactSources, Subject: TypeFactCarrier, CandidateProvider: member.AxisRelationCandidate(member.RelationRef{Axis: schemaapi.EntryReference{Surface: schemaapi.SurfaceKind(2), Key: "static-type"}, Member: "static-type/storage-transfer/candidates"}), Inputs: []member.Carrier{StorageTransferCarrier}},
 		},
 		[]member.Projection{

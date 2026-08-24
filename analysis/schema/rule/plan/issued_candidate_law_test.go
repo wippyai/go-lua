@@ -22,6 +22,27 @@ func (entry issuedCandidateEntry) EntryContent(content *framing.Writer) error {
 	return content.String(string(entry.key))
 }
 
+// reprovidedCatalog restates one catalog under a different candidate
+// authority, leaving every other declaration exactly as authored.
+func reprovidedCatalog(t *testing.T, catalog member.Catalog, provider member.CandidateRef) member.Catalog {
+	t.Helper()
+	relations := make([]member.Relation, len(catalog.Relations))
+	for index, relation := range catalog.Relations {
+		relation.CandidateProvider = provider
+		relations[index] = relation
+	}
+	projections := make([]member.Projection, len(catalog.Projections))
+	for index, projection := range catalog.Projections {
+		projection.CandidateProvider = provider
+		projections[index] = projection
+	}
+	restated, ok := member.NewCatalog(relations, projections, catalog.Reducers, catalog.CarryTransforms)
+	if !ok {
+		t.Fatal("restated member catalog rejected")
+	}
+	return restated
+}
+
 // configureIssuedRouteFixture is the heterogeneous route fixture with its
 // candidate taken from a Program row space instead of a Factor axis. Every
 // join keeps the same candidate carrier, which is what the compiler holds the
@@ -29,7 +50,14 @@ func (entry issuedCandidateEntry) EntryContent(content *framing.Writer) error {
 func configureIssuedRouteFixture(t *testing.T) *planFixture {
 	t.Helper()
 	fixture := configureHeterogeneousRouteFixture(t)
-	fixture.declaration.Candidate = member.IssuedRowCandidate(issuedCandidateRelation)
+	candidate := member.IssuedRowCandidate(issuedCandidateRelation)
+	fixture.declaration.Candidate = candidate
+	// The rows a rule joins are addressed by the authority its candidate came
+	// from, so moving the candidate to a Program row space moves every join
+	// with it. A catalog left half-swapped would describe a rule indexing an
+	// axis directory with an ordinal that directory never issued.
+	fixture.catalog = reprovidedCatalog(t, fixture.catalog, candidate)
+	fixture.otherCatalog = reprovidedCatalog(t, fixture.otherCatalog, candidate)
 	fixture.issuance = []schema.Entry{issuedCandidateEntry{key: issuedCandidateRelation}}
 	if problem, valid := fixture.declaration.Check(); !valid {
 		t.Fatalf("issued-row route declaration rejected: %+v", problem)

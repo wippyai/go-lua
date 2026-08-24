@@ -35,6 +35,12 @@ func valueMethod(name, receiver string, receiverPointer bool, resultIndex int8) 
 	}
 }
 
+// storageTransferProvider is Value's storage-transfer directory: the earliest
+// owner of which transfers exist and in what order.
+func storageTransferProvider() member.RelationRef {
+	return member.RelationRef{Axis: axisReference("value"), Member: "value/storage-transfer/candidates"}
+}
+
 func axisReference(key string) schema.EntryReference {
 	return schema.EntryReference{Surface: schema.SurfaceKindAxis, Key: schema.Key(key)}
 }
@@ -68,6 +74,15 @@ func TypeFactTransfer() definition.Definition {
 		},
 		Relations: []definition.Relation{
 			{
+				// Static's own dense order over the transfers Value owns. It
+				// resolves through Value's directory, so the two enumerations
+				// are one, and the correspondence says so: a rule keyed by
+				// Value's candidate addresses these rows with that ordinal.
+				//
+				// The copy exists because a foreign-provided relation's
+				// projections are not emitted - the generator has no way to
+				// reach the foreign owner for the subject an ordinal stands
+				// for - so Static cannot yet simply name Value's directory.
 				Name:              "TypeFactTransfers",
 				Key:               "static-type/storage-transfer/candidates",
 				Subject:           "StorageTransferCarrier",
@@ -75,6 +90,7 @@ func TypeFactTransfer() definition.Definition {
 				CandidateResolver: valueMethod("StorageTransferForArtifactOccurrence", "Schema", true, 0),
 				CandidateOrdinal:  valueMethod("StorageTransferOrdinal", "Schema", true, 0),
 				CandidateAt:       valueMethod("StorageTransferAt", "Schema", true, 0),
+				Correspondences:   []member.RelationRef{storageTransferProvider()},
 			},
 			{
 				Name:              "TypeFactSources",
