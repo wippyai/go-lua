@@ -1,8 +1,11 @@
 package memberdefinition
 
 import (
+	"strings"
 	"testing"
 
+	"github.com/wippyai/go-lua/analysis/schema"
+	"github.com/wippyai/go-lua/analysis/schema/axis/member"
 	"github.com/wippyai/go-lua/analysis/schema/axis/member/definition"
 	"github.com/wippyai/go-lua/domain/value"
 )
@@ -35,6 +38,55 @@ func TestCarryTransformRowsNameDirectCandidateMethods(t *testing.T) {
 		if row.Implementation.Name != "Age" || row.Implementation.Receiver.Name != want[index].receiver || row.Implementation.ReceiverPointer != want[index].pointer {
 			t.Fatalf("transform[%d] implementation = %#v, want %s.Age", index, row.Implementation, want[index].receiver)
 		}
+	}
+}
+
+// TestMountedCallGeometryIsDeclaredOnceByValue holds the ownership boundary
+// that both call dispatch and formal freeze consume. A consumer-specific copy
+// would recreate the foreign dense-ordinal coupling this relation exists to
+// remove.
+func TestMountedCallGeometryIsDeclaredOnceByValue(t *testing.T) {
+	source := StorageTransfer()
+	relations := make(map[string]definition.Relation, len(source.Relations))
+	for _, relation := range source.Relations {
+		if strings.Contains(string(relation.Key), "formal-freeze") {
+			t.Fatalf("Value relation %q is named for a consumer", relation.Key)
+		}
+		relations[relation.Name] = relation
+	}
+	parents, parentsOK := relations["MountedCallParents"]
+	members, membersOK := relations["MountedCallActualMembers"]
+	callCandidates := member.RelationRef{
+		Axis:   schema.EntryReference{Surface: schema.SurfaceKindAxis, Key: "call"},
+		Member: "call/mounted-call/candidates",
+	}
+	if !parentsOK || parents.Key != "value/mounted-call/parents" || parents.Subject != "MountedCallActualsCarrier" ||
+		len(parents.Correspondences) != 1 || parents.Correspondences[0] != callCandidates {
+		t.Fatalf("mounted-call parent declaration = %#v", parents)
+	}
+	if !membersOK || members.Key != "value/mounted-call/actual-members" || members.Subject != "MountedCallArgumentCarrier" ||
+		members.MemberParent.Member != parents.Key || members.MemberOrdinal != "MountedCallActualTagCarrier" {
+		t.Fatalf("mounted-call member declaration = %#v", members)
+	}
+
+	wantProjections := map[string]string{
+		"MountedCallCalleeKey": "value/mounted-call/callee-key",
+		"MountedCallActualKey": "value/mounted-call/actual-key",
+		"MountedCallActualTag": "value/mounted-call/actual-tag",
+	}
+	for _, projection := range source.Projections {
+		if strings.Contains(string(projection.Key), "formal-freeze") {
+			t.Fatalf("Value projection %q is named for a consumer", projection.Key)
+		}
+		if key, wanted := wantProjections[projection.Name]; wanted {
+			if string(projection.Key) != key {
+				t.Fatalf("projection %s key = %q, want %q", projection.Name, projection.Key, key)
+			}
+			delete(wantProjections, projection.Name)
+		}
+	}
+	if len(wantProjections) != 0 {
+		t.Fatalf("missing neutral mounted-call projections: %#v", wantProjections)
 	}
 }
 
