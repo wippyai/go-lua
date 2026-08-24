@@ -1333,6 +1333,22 @@ func validateCorpusPlacementContract(contract *corpusPlacementContract) error {
 			return fmt.Errorf("placement maximum is negative")
 		}
 	}
+	for field, bounds := range map[string]struct {
+		minimum int
+		maximum *int
+	}{
+		"stack":                   {contract.MinStack, contract.MaxStack},
+		"owned_heap":              {contract.MinOwnedHeap, contract.MaxOwnedHeap},
+		"shared_heap":             {contract.MinSharedHeap, contract.MaxSharedHeap},
+		"frame_local":             {contract.MinFrameLocal, contract.MaxFrameLocal},
+		"retain_proven_positions": {contract.MinRetainProvenPositions, contract.MaxRetainProvenPositions},
+		"dies_before_suspension":  {contract.MinDiesBeforeSuspension, contract.MaxDiesBeforeSuspension},
+		"deep_frozen":             {contract.MinDeepFrozen, contract.MaxDeepFrozen},
+	} {
+		if bounds.maximum != nil && *bounds.maximum < bounds.minimum {
+			return fmt.Errorf("placement.%s has max below min", field)
+		}
+	}
 	for label, counts := range map[string]map[string]int{
 		"min_stack_kind": contract.MinStackKind, "min_owned_heap_kind": contract.MinOwnedHeapKind, "min_shared_heap_kind": contract.MinSharedHeapKind,
 		"max_stack_kind": contract.MaxStackKind, "max_owned_heap_kind": contract.MaxOwnedHeapKind, "max_shared_heap_kind": contract.MaxSharedHeapKind,

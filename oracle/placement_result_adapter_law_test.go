@@ -115,6 +115,17 @@ func TestCorpusPlacementAcceptanceJudgesRetainEscapePerPosition(t *testing.T) {
 	}
 }
 
+func TestCorpusPlacementContractRefusesContradictoryBounds(t *testing.T) {
+	maximum := 1
+	contract := &corpusPlacementContract{
+		MinRetainProvenPositions: 2,
+		MaxRetainProvenPositions: &maximum,
+	}
+	if err := validateCorpusPlacementContract(contract); err == nil {
+		t.Fatal("placement contract admitted max_retain_proven_positions below its minimum")
+	}
+}
+
 func TestCorpusPlacementAcceptanceAliasSendManifestRetainProof(t *testing.T) {
 	project := corpusHarnessFixture(t, "placement/alias-send")
 	run, class, err := corpusHarnessExecuteDetached(t, project, corpusHarnessDiagnosticMode())
