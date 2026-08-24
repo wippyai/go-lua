@@ -100,7 +100,7 @@ func domainAreas(domainDir string) ([]AreaLOC, LOC, error) {
 	}
 	names := make([]string, 0, len(entries))
 	for _, e := range entries {
-		if e.IsDir() {
+		if e.IsDir() && !skipDir(domainDir, filepath.Join(domainDir, e.Name())) {
 			names = append(names, e.Name())
 		}
 	}
