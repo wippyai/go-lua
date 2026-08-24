@@ -56,11 +56,31 @@ func (axis ExactRead[K, V]) context(ticket Ticket) (*carrier.Work, carrier.State
 // candidate or a default.
 func (axis ExactRead[K, V]) Read(ticket Ticket, scratch *Scratch[K, V]) ReadStatus {
 	work, state, within, ok := axis.context(ticket)
-	if !ok || scratch == nil || !within.Entails(state.Support()) {
+	if !ok {
+		return ReadRefuse
+	}
+	return axis.readWithin(ticket, scratch, work, state, within)
+}
+
+// ReadWithin advances the same canonical exact cursor over one authenticated
+// Product source region. The region must be a subset of the Ticket input
+// support; the cursor, partition order, and sparse presence semantics remain
+// owned by factbinding rather than by a family-specific refinement loop.
+func (axis ExactRead[K, V]) ReadWithin(ticket Ticket, scratch *Scratch[K, V], within support.Mask) ReadStatus {
+	work, state, ticketWithin, ok := axis.context(ticket)
+	if !ok || !within.Valid() || within.Manager() != ticketWithin.Manager() || !within.Entails(ticketWithin) {
+		return ReadRefuse
+	}
+	return axis.readWithin(ticket, scratch, work, state, within)
+}
+
+func (axis ExactRead[K, V]) readWithin(ticket Ticket, scratch *Scratch[K, V], work *carrier.Work, state carrier.State, within support.Mask) ReadStatus {
+	if scratch == nil || !within.Entails(state.Support()) {
 		return ReadRefuse
 	}
 	if scratch.readOpen {
-		if scratch.readSummary || !scratch.validFor(ticket) || scratch.readBinding != axis.binding || !scratch.readUnit.Same(axis.unit) || scratch.readPort != axis.port {
+		sameWithin := scratch.readWithin.SameHandle(within) || scratch.readWithin.Equal(within)
+		if scratch.readSummary || !scratch.validFor(ticket) || scratch.readBinding != axis.binding || !scratch.readUnit.Same(axis.unit) || scratch.readPort != axis.port || !sameWithin {
 			return ReadRefuse
 		}
 	} else {
@@ -70,6 +90,7 @@ func (axis ExactRead[K, V]) Read(ticket Ticket, scratch *Scratch[K, V]) ReadStat
 		scratch.readBinding = axis.binding
 		scratch.readUnit = axis.unit
 		scratch.readPort = axis.port
+		scratch.readWithin = within
 		scratch.readSummary = false
 		if !axis.binding.BeginDirectObservation(&scratch.cursor, work, state, axis.unit, within) {
 			scratch.finish()

@@ -238,6 +238,27 @@ func (ticket Ticket) OutputCount() int {
 	return len(ticket.issuer.outputHandles)
 }
 
+// Within returns the authenticated input support region of this live
+// invocation. It is consumed by the canonical execution/product refinement;
+// callers cannot construct or replace the region because Ticket remains the
+// sole issuer authority.
+func (ticket Ticket) Within() (support.Mask, bool) {
+	if !ticket.Valid() {
+		return support.Mask{}, false
+	}
+	return ticket.issuer.within, true
+}
+
+// Checkpoint samples the live evaluator epoch that authenticated this
+// invocation. Execution-owned structural traversals use it to stop before
+// publishing a partial refinement when the carrier epoch is revoked.
+func (ticket Ticket) Checkpoint() bool {
+	if !ticket.Valid() {
+		return false
+	}
+	return ticket.issuer.work.Checkpoint()
+}
+
 func (ticket Ticket) InputHandleAt(index int) (uint32, bool) {
 	if !ticket.Valid() || index < 0 || index >= len(ticket.issuer.inputHandles) {
 		return 0, false

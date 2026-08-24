@@ -3,15 +3,15 @@
 // geometry; their generated owner dispatch is the only semantic distinction.
 //
 // The installer is deliberately cold: it authenticates the reducer and its
-// candidate through Value's generated directory and retains only dense
-// ordinals. The worker never keeps a candidate map, callback, or owner
-// capability; it redeems the already-authenticated ordinals through the
-// generated Schema dispatch at execution time.
+// candidate through Value's generated directory and seals the concrete
+// payload. The worker never keeps a candidate map, callback, or owner
+// capability and performs only direct dispatch over that immutable payload.
 package exactbinary
 
 import (
 	"github.com/wippyai/go-lua/analysis/engine"
 	engineexecution "github.com/wippyai/go-lua/analysis/engine/execution"
+	exactproduct "github.com/wippyai/go-lua/analysis/engine/execution/product"
 	"github.com/wippyai/go-lua/analysis/engine/generated"
 	ruleprogram "github.com/wippyai/go-lua/analysis/schema/rule/program"
 	"github.com/wippyai/go-lua/analysis/schema/structure"
@@ -19,15 +19,15 @@ import (
 	valueowner "github.com/wippyai/go-lua/domain/value/owner"
 )
 
-// exactBinaryRow is the immutable invocation geometry for one candidate.
-// reducer and candidate are owner-issued dense addresses; the typed read and
-// write descriptors are sealed from the same Value Factor plane.
+// exactBinaryRow is the immutable invocation geometry for one candidate. The
+// payload contains the owner-issued reducer/candidate identity and concrete
+// fold value; typed read and write descriptors are sealed from the same Value
+// Factor plane.
 type exactBinaryRow struct {
-	reducer   uint32
-	candidate uint32
-	left      engineexecution.ExactRead[valuedomain.DenseCoordinate, valuedomain.Value]
-	right     engineexecution.ExactRead[valuedomain.DenseCoordinate, valuedomain.Value]
-	write     engineexecution.ExactWrite[valuedomain.DenseCoordinate, valuedomain.Value]
+	payload valuedomain.ExactBinaryPayload
+	left    engineexecution.ExactRead[valuedomain.DenseCoordinate, valuedomain.Value]
+	right   engineexecution.ExactRead[valuedomain.DenseCoordinate, valuedomain.Value]
+	write   engineexecution.ExactWrite[valuedomain.DenseCoordinate, valuedomain.Value]
 }
 
 // family is one shared implementation for every Value same-axis exact-binary
@@ -36,6 +36,7 @@ type exactBinaryRow struct {
 type family struct {
 	rows   []exactBinaryRow
 	values *valuedomain.Schema
+	rule   uint32
 }
 
 func (sealed *family) NewExecutor(run *engineexecution.Run) engineexecution.Executor {
@@ -51,18 +52,21 @@ func (*family) OutputCapacity() int { return 1 }
 // worker is an epoch-local invocation lane. Its scratch values are allocated
 // once by NewExecutor and reused by every warm invocation.
 type worker struct {
-	family *family
-	run    *engineexecution.Run
-	left   engineexecution.Scratch[valuedomain.DenseCoordinate, valuedomain.Value]
-	right  engineexecution.Scratch[valuedomain.DenseCoordinate, valuedomain.Value]
-	write  engineexecution.Scratch[valuedomain.DenseCoordinate, valuedomain.Value]
+	family       *family
+	run          *engineexecution.Run
+	left         engineexecution.Scratch[valuedomain.DenseCoordinate, valuedomain.Value]
+	right        engineexecution.Scratch[valuedomain.DenseCoordinate, valuedomain.Value]
+	write        engineexecution.Scratch[valuedomain.DenseCoordinate, valuedomain.Value]
+	leftProduct  exactproduct.Extender[valuedomain.DenseCoordinate, valuedomain.Value, struct{}]
+	rightProduct exactproduct.Extender[valuedomain.DenseCoordinate, valuedomain.Value, exactproduct.Cons[exactproduct.Cell[valuedomain.Value], struct{}]]
 }
 
-// Execute performs the exact-binary fold. Each read is stepped once and then
-// closed before the next read or the owner dispatch. Sparse absence is the
-// explicit NoCandidate case. Any structural failure leaves execution to the
-// engine's fail-stop path; in particular a false owner dispatch is never
-// converted into a submitted Refuse result.
+// Execute performs the exact-binary fold. The canonical product cursor emits
+// every common-refinement cell; the worker consumes all cells before closing
+// its one output transaction. Sparse absence is the explicit NoCandidate
+// case. Any structural failure leaves execution to the engine's fail-stop
+// path; in particular a false owner dispatch is never converted into a
+// submitted Refuse result.
 func (lane *worker) Execute(frame engineexecution.Frame, ticket engineexecution.Ticket) (engineexecution.Result, bool) {
 	if lane == nil || lane.family == nil || lane.family.values == nil || lane.run == nil ||
 		!frame.Valid(ticket) || !lane.run.Owns(ticket) || ticket.InputCount() != 1 || ticket.OutputCount() != 1 {
@@ -73,115 +77,98 @@ func (lane *worker) Execute(frame engineexecution.Frame, ticket engineexecution.
 		return engineexecution.Result{}, false
 	}
 	row := lane.family.rows[local]
+	rule, ruleOK := ticket.RuleOrdinal()
+	if !ruleOK || rule != lane.family.rule {
+		return engineexecution.Result{}, false
+	}
+	payloadReducer, payloadReducerOK := row.payload.ReducerOrdinal()
+	payloadCandidate, payloadCandidateOK := row.payload.CandidateOrdinal()
 	candidate, candidateOK := ticket.CandidateOrdinal()
-	if !candidateOK || candidate != row.candidate {
+	if !payloadReducerOK || !valuedomain.SupportsExactBinaryReducer(payloadReducer) ||
+		!payloadCandidateOK || !candidateOK || candidate != payloadCandidate {
 		return engineexecution.Result{}, false
 	}
 
 	if !row.left.Valid() || !row.right.Valid() || !row.write.Valid() {
 		return engineexecution.Result{}, false
 	}
-
-	var left valuedomain.Value
-	leftRegion, leftRegionOK := lane.left.Region()
-	switch row.left.Read(ticket, &lane.left) {
-	case engineexecution.ReadAvailable:
-		var leftValueOK bool
-		left, leftValueOK = lane.left.Value()
-		leftPresent := lane.left.Present()
-		leftRegion, leftRegionOK = lane.left.Region()
-		if !leftRegionOK || !row.left.Close(ticket, &lane.left) {
-			_ = lane.left.Discard(ticket)
-			return engineexecution.Result{}, false
-		}
-		if !leftPresent {
-			return lane.settle(ticket, structure.NoCandidate)
-		}
-		if !leftValueOK || !lane.family.values.Equal(left, left) {
-			return engineexecution.Result{}, false
-		}
-	case engineexecution.ReadExhausted:
-		if !row.left.Close(ticket, &lane.left) {
-			_ = lane.left.Discard(ticket)
-			return engineexecution.Result{}, false
-		}
-		return lane.settle(ticket, structure.NoCandidate)
-	case engineexecution.ReadRefuse:
-		_ = lane.left.Discard(ticket)
-		return lane.settle(ticket, structure.Refuse)
-	default:
+	seed, seedStatus, seedOK := exactproduct.NewSeed(ticket)
+	if !seedOK || seedStatus == exactproduct.RefineRefuse {
 		return engineexecution.Result{}, false
 	}
-
-	var right valuedomain.Value
-	rightRegion, rightRegionOK := lane.right.Region()
-	switch row.right.Read(ticket, &lane.right) {
-	case engineexecution.ReadAvailable:
-		var rightValueOK bool
-		right, rightValueOK = lane.right.Value()
-		rightPresent := lane.right.Present()
-		rightRegion, rightRegionOK = lane.right.Region()
-		if !rightRegionOK || !row.right.Close(ticket, &lane.right) {
-			_ = lane.right.Discard(ticket)
-			return engineexecution.Result{}, false
-		}
-		if !rightPresent {
-			return lane.settle(ticket, structure.NoCandidate)
-		}
-		if !rightValueOK || !lane.family.values.Equal(right, right) {
-			return engineexecution.Result{}, false
-		}
-	case engineexecution.ReadExhausted:
-		if !row.right.Close(ticket, &lane.right) {
-			_ = lane.right.Discard(ticket)
-			return engineexecution.Result{}, false
-		}
-		return lane.settle(ticket, structure.NoCandidate)
-	case engineexecution.ReadRefuse:
-		_ = lane.right.Discard(ticket)
-		return lane.settle(ticket, structure.Refuse)
-	default:
+	if seedStatus == exactproduct.RefineEmpty {
+		return lane.settle(ticket, structure.NoCandidate, 0)
+	}
+	leftRows, leftStatus, leftOK := lane.leftProduct.Extend(ticket, seed.Rows(), row.left, &lane.left)
+	if !leftOK || leftStatus != exactproduct.RefineAvailable {
 		return engineexecution.Result{}, false
 	}
-	if !leftRegion.Equal(rightRegion) {
+	rows, rightStatus, rightOK := lane.rightProduct.Extend(ticket, leftRows, row.right, &lane.right)
+	if !rightOK || rightStatus != exactproduct.RefineAvailable {
 		return engineexecution.Result{}, false
 	}
-
-	result, outcome, dispatched := lane.family.values.ReduceExactBinary(row.reducer, row.candidate, left, right)
-	if !dispatched {
-		// Dispatch validity is a construction/runtime-structure fence, not a
-		// domain refusal. The caller aborts the open Run on false execution.
-		return engineexecution.Result{}, false
-	}
-	if !outcome.Available() {
-		return engineexecution.Result{}, false
-	}
-	switch outcome {
-	case structure.Concrete:
-		if !lane.family.values.Equal(result, result) ||
-			!row.write.Stage(ticket, &lane.write, leftRegion, result) ||
-			!row.write.Close(ticket, &lane.write) {
+	concrete := 0
+	for index := 0; index < rows.Count(); index++ {
+		if !ticket.Checkpoint() {
 			_ = lane.write.Discard(ticket)
 			return engineexecution.Result{}, false
 		}
-		return lane.settle(ticket, structure.Concrete)
-	case structure.Refuse, structure.NoCandidate:
-		return lane.settle(ticket, outcome)
-	default:
-		// An exact binary row has no selected/opaque publication contract. A
-		// generated owner returning one is a malformed dispatch result, not a
-		// value to widen or invent locally.
+		region, rightTuple, rowOK := rows.At(index)
+		if !rowOK {
+			_ = lane.write.Discard(ticket)
+			return engineexecution.Result{}, false
+		}
+		rightCell := rightTuple.Head()
+		leftTuple := rightTuple.Tail()
+		leftCell := leftTuple.Head()
+		left, leftPresent := leftCell.Value(), leftCell.Present()
+		right, rightPresent := rightCell.Value(), rightCell.Present()
+		if !region.Valid() {
+			_ = lane.write.Discard(ticket)
+			return engineexecution.Result{}, false
+		}
+		if !leftPresent || !rightPresent {
+			// Sparse absence is an explicit empty region, not a default value.
+			continue
+		}
+		if !lane.family.values.Equal(left, left) || !lane.family.values.Equal(right, right) {
+			_ = lane.write.Discard(ticket)
+			return engineexecution.Result{}, false
+		}
+		result, outcome, dispatched := lane.family.values.ReduceExactBinaryPayload(row.payload, left, right)
+		if !dispatched || !outcome.Available() {
+			_ = lane.write.Discard(ticket)
+			return engineexecution.Result{}, false
+		}
+		switch outcome {
+		case structure.Concrete:
+			if !lane.family.values.Equal(result, result) || !row.write.Stage(ticket, &lane.write, region, result) {
+				_ = lane.write.Discard(ticket)
+				return engineexecution.Result{}, false
+			}
+			concrete++
+		case structure.NoCandidate:
+			// The explicit empty successor contributes no patch for this cell.
+		default:
+			_ = lane.write.Discard(ticket)
+			return engineexecution.Result{}, false
+		}
+	}
+	if concrete == 0 {
+		return lane.settle(ticket, structure.NoCandidate, 0)
+	}
+	if !row.write.Close(ticket, &lane.write) {
+		_ = lane.write.Discard(ticket)
 		return engineexecution.Result{}, false
 	}
+	// One accepted write patch is one concrete result, regardless of how many
+	// product cells were staged into that patch.
+	return lane.settle(ticket, structure.Concrete, 1)
 }
 
-func (lane *worker) settle(ticket engineexecution.Ticket, outcome structure.ReductionOutcome) (engineexecution.Result, bool) {
+func (lane *worker) settle(ticket engineexecution.Ticket, outcome structure.ReductionOutcome, count int) (engineexecution.Result, bool) {
 	if lane == nil || !outcome.Available() || !ticket.Submit(outcome) {
 		return engineexecution.Result{}, false
-	}
-	count := 0
-	if outcome == structure.Concrete {
-		count = 1
 	}
 	return engineexecution.NewResult(outcome, count)
 }
@@ -203,7 +190,7 @@ func (install installer) InstallRuleFamily(
 		return nil, nil, false
 	}
 
-	sealed := &family{values: install.values, rows: make([]exactBinaryRow, 0, len(rows))}
+	sealed := &family{values: install.values, rule: ruleOrdinal, rows: make([]exactBinaryRow, 0, len(rows))}
 	addresses := make([]engineexecution.FormAddress, 0, len(rows))
 	for _, planRow := range rows {
 		if planRow.Member < 0 || !exactBinaryShape(planRow.Rule, planRow.Form) {
@@ -223,8 +210,20 @@ func (install installer) InstallRuleFamily(
 		reducer := planRow.Rule.Reducer()
 		candidate := planRow.Rule.CandidateRelation()
 		if reducer.Axis != output.Axis || candidate.Axis != output.Axis ||
-			!valuedomain.SupportsExactBinaryReducer(reducer.Member) ||
-			!install.values.ExactBinaryCandidateAvailable(reducer.Member, planRow.Candidate) {
+			!valuedomain.SupportsExactBinaryReducer(reducer.Member) {
+			return nil, nil, false
+		}
+		mapping, mappingOK := install.values.ExactBinaryMappingAt(reducer.Member)
+		if !mappingOK || mapping.ReducerOrdinal != reducer.Member ||
+			!exactBinaryMappingMatches(planRow.Rule, mapping) {
+			return nil, nil, false
+		}
+		payload, payloadOK := install.values.ExactBinaryPayloadAt(reducer.Member, candidate.Member, planRow.Candidate)
+		payloadReducer, payloadReducerOK := payload.ReducerOrdinal()
+		payloadCandidate, payloadCandidateOK := payload.CandidateOrdinal()
+		payloadRelation, payloadRelationOK := payload.CandidateRelationMember()
+		if !payloadOK || !payloadReducerOK || !payloadCandidateOK || !payloadRelationOK ||
+			payloadReducer != reducer.Member || payloadRelation != candidate.Member || payloadCandidate != planRow.Candidate {
 			return nil, nil, false
 		}
 
@@ -237,11 +236,29 @@ func (install installer) InstallRuleFamily(
 		}
 		addresses = append(addresses, engineexecution.FormAddress{Member: planRow.Member, Local: uint32(len(sealed.rows))})
 		sealed.rows = append(sealed.rows, exactBinaryRow{
-			reducer: reducer.Member, candidate: planRow.Candidate,
-			left: left, right: right, write: write,
+			payload: payload,
+			left:    left, right: right, write: write,
 		})
 	}
 	return sealed, addresses, true
+}
+
+// exactBinaryMappingMatches authenticates every owner-local member coordinate
+// in one generated exact-binary descriptor. The generated Value owner issues
+// the mapping; this helper only compares that sealed payload to the descriptor
+// and retains no family-owned relation table.
+func exactBinaryMappingMatches(rule generated.CompiledRule, mapping valuedomain.ExactBinaryMapping) bool {
+	if !rule.Available() || mapping.ReducerOrdinal != rule.Reducer().Member ||
+		mapping.CandidateRelationMember != rule.CandidateRelation().Member {
+		return false
+	}
+	first, firstOK := rule.ReadAt(0)
+	second, secondOK := rule.ReadAt(1)
+	output, outputOK := rule.OutputAt(0)
+	return firstOK && secondOK && outputOK &&
+		first.Relation.Member == mapping.Read0RelationMember && first.Key.Member == mapping.Read0KeyMember &&
+		second.Relation.Member == mapping.Read1RelationMember && second.Key.Member == mapping.Read1KeyMember &&
+		output.Destination.Member == mapping.DestinationProjectionMember
 }
 
 func exactBinaryShape(rule generated.CompiledRule, form engineexecution.Form) bool {

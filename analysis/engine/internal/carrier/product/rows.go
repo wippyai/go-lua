@@ -11,7 +11,34 @@ import (
 // partition an unselected Factor observation.
 type Rows struct {
 	manager *guard.Manager
-	cells   []support.Mask
+	// first is the inline one-cell representation used by the seed and by the
+	// common identity product. Keeping that cell in the value avoids a slice
+	// allocation for every invocation's initial support row. cells is retained
+	// for genuine multi-cell refinements and for package-internal fixtures that
+	// construct Rows directly.
+	first support.Mask
+	cells []support.Mask
+	// declared is the immutable support identity over which this row set was
+	// sealed.  It is deliberately retained beside the cells: a product may
+	// publish a cross only after it has proved both operands cover the same
+	// declared support.
+	declared support.Mask
+	// seal is an opaque publication witness.  A boolean flag is insufficient:
+	// the witness is minted only by NewRows, a successful exact-cover Seal, or
+	// CrossWork after it has re-proved every pair intersection. It is embedded
+	// by value so the authenticated seed remains allocation-free.
+	seal rowsSeal
+	// crossOwner/crossGeneration fence Rows backed by CrossWork's reusable
+	// buffers. A subsequent Cross invalidates the prior carrier view before its
+	// regions are overwritten.
+	crossOwner      *CrossWork
+	crossGeneration uint64
+}
+
+type rowsSeal struct {
+	manager  *guard.Manager
+	declared support.Mask
+	count    int
 }
 
 // NewRows starts the one-row Product for a nonempty input-support intersection.
@@ -19,23 +46,390 @@ func NewRows(initial support.Mask) (Rows, bool) {
 	if !initial.Valid() || support.Empty(initial) {
 		return Rows{}, false
 	}
-	return Rows{manager: initial.Manager(), cells: []support.Mask{initial}}, true
+	return Rows{
+		manager:  initial.Manager(),
+		first:    initial,
+		declared: initial,
+		seal:     rowsSeal{manager: initial.Manager(), declared: initial, count: 1},
+	}, true
 }
 
 // Count returns the number of exact Product cells.
 func (rows Rows) Count() int {
-	if rows.manager == nil {
+	if rows.manager == nil || !rows.crossLive() {
 		return 0
 	}
-	return len(rows.cells)
+	if rows.cells != nil {
+		return len(rows.cells)
+	}
+	if rows.first.Valid() && rows.first.Manager() == rows.manager && !support.Empty(rows.first) {
+		return 1
+	}
+	return 0
+}
+
+// Valid reports whether rows carry a carrier-issued exact-cover witness.  The
+// witness is structural authority; callers cannot promote an arbitrary slice
+// of support cells into a cross operand by claiming that a cursor completed.
+func (rows Rows) Valid() bool {
+	if rows.manager == nil || !rows.crossLive() || rows.seal.manager != rows.manager ||
+		rows.seal.declared != rows.declared || !rows.declared.Valid() ||
+		rows.declared.Manager() != rows.manager || rows.seal.count != rows.Count() || rows.Count() == 0 {
+		return false
+	}
+	for index := 0; index < rows.Count(); index++ {
+		cell, ok := rows.At(index)
+		if !ok || !cell.Valid() || cell.Manager() != rows.manager || support.Empty(cell) {
+			return false
+		}
+	}
+	return true
+}
+
+// Support returns the declared support identity sealed by this Rows value.
+// An unsealed package fixture has no support identity and returns an invalid
+// mask; it is consequently ineligible for CrossWork.
+func (rows Rows) Support() support.Mask {
+	if !rows.crossLive() || rows.seal.manager == nil || !rows.declared.Valid() || rows.seal.declared != rows.declared {
+		return support.Mask{}
+	}
+	return rows.declared
 }
 
 // At returns one exact Product cell.
 func (rows Rows) At(index int) (support.Mask, bool) {
-	if rows.manager == nil || index < 0 || index >= len(rows.cells) {
+	if rows.manager == nil || !rows.crossLive() || index < 0 || index >= rows.Count() {
 		return support.Mask{}, false
 	}
-	return rows.cells[index], true
+	if rows.cells != nil {
+		return rows.cells[index], true
+	}
+	return rows.first, true
+}
+
+func (rows Rows) crossLive() bool {
+	return rows.crossOwner == nil || rows.crossOwner.manager != nil && rows.crossOwner.generation == rows.crossGeneration
+}
+
+func (rows Rows) cell(index int) (support.Mask, bool) { return rows.At(index) }
+
+func rowsFromCells(manager *guard.Manager, cells []support.Mask) Rows {
+	if len(cells) == 1 {
+		return Rows{manager: manager, first: cells[0]}
+	}
+	return Rows{manager: manager, cells: cells}
+}
+
+func sealedRows(manager *guard.Manager, declared support.Mask, cells []support.Mask) Rows {
+	if len(cells) == 1 {
+		return Rows{
+			manager:  manager,
+			first:    cells[0],
+			declared: declared,
+			seal:     rowsSeal{manager: manager, declared: declared, count: 1},
+		}
+	}
+	return Rows{
+		manager:  manager,
+		cells:    cells,
+		declared: declared,
+		seal:     rowsSeal{manager: manager, declared: declared, count: len(cells)},
+	}
+}
+
+// CrossPairs is an opaque source-major mapping for one CrossWork result.  It
+// carries only left/right row indices; support geometry stays owned by Rows and
+// is re-proved by CrossWork on every call.
+type CrossPairs struct {
+	pairs      []crossPair
+	leftCount  int
+	rightCount int
+	owner      *CrossWork
+	generation uint64
+}
+
+type crossPair struct {
+	left  int
+	right int
+}
+
+// Count returns the number of nonempty left/right intersections.
+func (pairs CrossPairs) Count() int {
+	if pairs.owner != nil && (pairs.owner.manager == nil || pairs.owner.generation != pairs.generation) {
+		return 0
+	}
+	return len(pairs.pairs)
+}
+
+// At returns the left and right row indices for one nonempty intersection.
+// The mapping is immutable from the caller's perspective and is meaningful
+// only with the Rows returned by the same CrossWork call.
+func (pairs CrossPairs) At(index int) (left, right int, ok bool) {
+	if pairs.owner != nil && (pairs.owner.manager == nil || pairs.owner.generation != pairs.generation) || index < 0 || index >= len(pairs.pairs) {
+		return 0, 0, false
+	}
+	pair := pairs.pairs[index]
+	return pair.left, pair.right, true
+}
+
+// CrossWork owns reusable support construction and pair buffers for one exact
+// product crossing. It never accepts caller-computed intersections, offsets, or
+// a claimed cached result. A cache miss traverses every left×right pair,
+// computes its exact intersections, and re-proves the complete output cover;
+// only a same-handle hit may republish that carrier-owned sealed geometry.
+type CrossWork struct {
+	manager *guard.Manager
+	proof   *support.Work
+	regions []support.Mask
+	pairs   []crossPair
+	// cache keys are copied immutable support handles, never caller geometry.
+	// A hit republishes the carrier's own previously sealed geometry under a new
+	// generation; a miss recomputes and re-proves every pair. This cache stores
+	// no typed value or semantic answer.
+	cacheLeft    []support.Mask
+	cacheRight   []support.Mask
+	cacheSupport support.Mask
+	cacheValid   bool
+	// generation revokes Rows/CrossPairs views before reusable buffers are
+	// overwritten by the next call or released by Close.
+	generation uint64
+}
+
+// NewCrossWork opens one reusable cross shell. A zero manager is accepted so a
+// caller may also use the zero CrossWork value and let the first Cross bind its
+// immutable support manager.
+func NewCrossWork(manager *guard.Manager) *CrossWork {
+	work := &CrossWork{manager: manager}
+	if manager != nil {
+		work.proof = support.New(manager)
+	}
+	return work
+}
+
+// Close releases the reusable shell and all retained pair/region capacity.
+func (work *CrossWork) Close() {
+	if work == nil {
+		return
+	}
+	if work.proof != nil {
+		work.proof.Close()
+	}
+	work.manager = nil
+	work.generation++
+	work.proof = nil
+	work.regions = nil
+	work.pairs = nil
+	work.cacheLeft = nil
+	work.cacheRight = nil
+	work.cacheSupport = support.Mask{}
+	work.cacheValid = false
+}
+
+func (work *CrossWork) ensure(manager *guard.Manager) bool {
+	if work == nil || manager == nil {
+		return false
+	}
+	if work.manager != manager {
+		if work.proof != nil {
+			work.proof.Close()
+		}
+		work.manager = manager
+		work.proof = support.New(manager)
+		work.regions = work.regions[:0]
+		work.pairs = work.pairs[:0]
+		work.cacheLeft = work.cacheLeft[:0]
+		work.cacheRight = work.cacheRight[:0]
+		work.cacheSupport = support.Mask{}
+		work.cacheValid = false
+	}
+	if work.proof == nil {
+		work.manager = manager
+		work.proof = support.New(manager)
+	}
+	return work.proof != nil && work.proof.OwnsManager(manager)
+}
+
+func (work *CrossWork) cacheMatches(left, right Rows, declared support.Mask) bool {
+	if work == nil || !work.cacheValid || !declared.SameHandle(work.cacheSupport) ||
+		len(work.cacheLeft) != left.Count() || len(work.cacheRight) != right.Count() {
+		return false
+	}
+	for index, expected := range work.cacheLeft {
+		actual, ok := left.At(index)
+		if !ok || !actual.SameHandle(expected) {
+			return false
+		}
+	}
+	for index, expected := range work.cacheRight {
+		actual, ok := right.At(index)
+		if !ok || !actual.SameHandle(expected) {
+			return false
+		}
+	}
+	return len(work.regions) == len(work.pairs) && len(work.regions) != 0
+}
+
+func (work *CrossWork) rememberCache(left, right Rows, declared support.Mask) bool {
+	if work == nil {
+		return false
+	}
+	if cap(work.cacheLeft) < left.Count() {
+		work.cacheLeft = make([]support.Mask, left.Count())
+	} else {
+		work.cacheLeft = work.cacheLeft[:left.Count()]
+	}
+	if cap(work.cacheRight) < right.Count() {
+		work.cacheRight = make([]support.Mask, right.Count())
+	} else {
+		work.cacheRight = work.cacheRight[:right.Count()]
+	}
+	for index := range work.cacheLeft {
+		cell, ok := left.At(index)
+		if !ok {
+			return false
+		}
+		work.cacheLeft[index] = cell
+	}
+	for index := range work.cacheRight {
+		cell, ok := right.At(index)
+		if !ok {
+			return false
+		}
+		work.cacheRight[index] = cell
+	}
+	work.cacheSupport = declared
+	work.cacheValid = true
+	return true
+}
+
+// Cross computes every nonempty left×right intersection internally on a cache
+// miss and returns the carrier-sealed output rows plus an opaque pair mapping.
+// Both operands must carry a valid carrier seal over the same declared support
+// identity. A failed checkpoint or proof clears this call's output buffers
+// before return; no partial result or prior semantic answer is published.
+func (work *CrossWork) Cross(left, right Rows, checkpoint func() bool) (Rows, CrossPairs, bool) {
+	if work == nil || !left.Valid() || !right.Valid() || left.manager == nil ||
+		right.manager != left.manager || left.Count() == 0 || right.Count() == 0 {
+		return Rows{}, CrossPairs{}, false
+	}
+	leftSupport, rightSupport := left.Support(), right.Support()
+	if !leftSupport.Valid() || !rightSupport.Valid() ||
+		leftSupport.Manager() != left.manager || rightSupport.Manager() != left.manager ||
+		!(leftSupport.SameHandle(rightSupport) || leftSupport.Equal(rightSupport)) {
+		return Rows{}, CrossPairs{}, false
+	}
+	if checkpoint != nil && !checkpoint() {
+		return Rows{}, CrossPairs{}, false
+	}
+	if work.generation == ^uint64(0) {
+		return Rows{}, CrossPairs{}, false
+	}
+	work.generation++
+	if !work.ensure(left.manager) {
+		return Rows{}, CrossPairs{}, false
+	}
+	if work.cacheMatches(left, right, leftSupport) {
+		if checkpoint != nil && !checkpoint() {
+			return Rows{}, CrossPairs{}, false
+		}
+		result := sealedRows(left.manager, leftSupport, work.regions)
+		result.crossOwner = work
+		result.crossGeneration = work.generation
+		if !result.Valid() {
+			return Rows{}, CrossPairs{}, false
+		}
+		return result, CrossPairs{pairs: work.pairs, leftCount: left.Count(), rightCount: right.Count(), owner: work, generation: work.generation}, true
+	}
+	work.cacheValid = false
+	work.regions = work.regions[:0]
+	work.pairs = work.pairs[:0]
+	if !work.proof.BeginTransaction(checkpoint) {
+		return Rows{}, CrossPairs{}, false
+	}
+	union := work.proof.False()
+
+	for leftIndex := 0; leftIndex < left.Count(); leftIndex++ {
+		leftCell, leftOK := left.At(leftIndex)
+		if !leftOK || !leftCell.Valid() || leftCell.Manager() != left.manager || support.Empty(leftCell) {
+			work.proof.Discard()
+			work.regions = work.regions[:0]
+			work.pairs = work.pairs[:0]
+			return Rows{}, CrossPairs{}, false
+		}
+		for rightIndex := 0; rightIndex < right.Count(); rightIndex++ {
+			if checkpoint != nil && !checkpoint() {
+				work.proof.Discard()
+				work.regions = work.regions[:0]
+				work.pairs = work.pairs[:0]
+				return Rows{}, CrossPairs{}, false
+			}
+			rightCell, rightOK := right.At(rightIndex)
+			if !rightOK || !rightCell.Valid() || rightCell.Manager() != left.manager || support.Empty(rightCell) {
+				work.proof.Discard()
+				work.regions = work.regions[:0]
+				work.pairs = work.pairs[:0]
+				return Rows{}, CrossPairs{}, false
+			}
+			intersection, intersectionOK := work.proof.And(leftCell, rightCell)
+			if !intersectionOK {
+				work.proof.Discard()
+				work.regions = work.regions[:0]
+				work.pairs = work.pairs[:0]
+				return Rows{}, CrossPairs{}, false
+			}
+			if work.proof.Empty(intersection) {
+				continue
+			}
+			if !entails(work.proof, intersection, leftSupport) {
+				work.proof.Discard()
+				work.regions = work.regions[:0]
+				work.pairs = work.pairs[:0]
+				return Rows{}, CrossPairs{}, false
+			}
+			overlap, overlapOK := work.proof.And(union, intersection)
+			if !overlapOK || !work.proof.Empty(overlap) {
+				work.proof.Discard()
+				work.regions = work.regions[:0]
+				work.pairs = work.pairs[:0]
+				return Rows{}, CrossPairs{}, false
+			}
+			union, overlapOK = work.proof.Or(union, intersection)
+			if !overlapOK {
+				work.proof.Discard()
+				work.regions = work.regions[:0]
+				work.pairs = work.pairs[:0]
+				return Rows{}, CrossPairs{}, false
+			}
+			work.regions = append(work.regions, intersection)
+			work.pairs = append(work.pairs, crossPair{left: leftIndex, right: rightIndex})
+		}
+	}
+	if len(work.regions) == 0 || len(work.regions) != len(work.pairs) || checkpoint != nil && !checkpoint() ||
+		!entails(work.proof, union, leftSupport) || !entails(work.proof, leftSupport, union) || !work.proof.Seal() {
+		work.proof.Discard()
+		work.regions = work.regions[:0]
+		work.pairs = work.pairs[:0]
+		return Rows{}, CrossPairs{}, false
+	}
+
+	// The single transaction above re-proved nonempty cells, manager ownership,
+	// subset, pairwise disjointness, and exact union coverage before publication.
+	// No caller-supplied offsets or intersection list can bypass that cut.
+	result := sealedRows(left.manager, leftSupport, work.regions)
+	result.crossOwner = work
+	result.crossGeneration = work.generation
+	if !result.Valid() {
+		work.regions = work.regions[:0]
+		work.pairs = work.pairs[:0]
+		return Rows{}, CrossPairs{}, false
+	}
+	if !work.rememberCache(left, right, leftSupport) {
+		work.regions = work.regions[:0]
+		work.pairs = work.pairs[:0]
+		work.cacheValid = false
+		return Rows{}, CrossPairs{}, false
+	}
+	return result, CrossPairs{pairs: work.pairs, leftCount: left.Count(), rightCount: right.Count(), owner: work, generation: work.generation}, true
 }
 
 // PrefixQuotientWithCheckpoint compacts the output of one just-sealed
@@ -55,9 +449,10 @@ func (rows Rows) PrefixQuotientWithCheckpoint(sources SourceRows, checkpoint fun
 		return Rows{}, nil, false
 	}
 
-	merged := make([]support.Mask, 0, len(rows.cells))
-	representatives := make([]int, 0, len(rows.cells))
-	previous := make([]int, 0, len(rows.cells))
+	count := rows.Count()
+	merged := make([]support.Mask, 0, count)
+	representatives := make([]int, 0, count)
+	previous := make([]int, 0, count)
 	buckets := make(map[uint64]int)
 	var unionWork *support.Work
 	published := false
@@ -104,7 +499,11 @@ func (rows Rows) PrefixQuotientWithCheckpoint(sources SourceRows, checkpoint fun
 				present = candidate >= 0
 			}
 			if found < 0 {
-				merged = append(merged, rows.cells[index])
+				cell, cellOK := rows.At(index)
+				if !cellOK {
+					return Rows{}, nil, false
+				}
+				merged = append(merged, cell)
 				representatives = append(representatives, index)
 				prior := -1
 				if candidate, exists := buckets[hash]; exists {
@@ -120,7 +519,11 @@ func (rows Rows) PrefixQuotientWithCheckpoint(sources SourceRows, checkpoint fun
 					return Rows{}, nil, false
 				}
 			}
-			next, ok := unionWork.Or(merged[found], rows.cells[index])
+			cell, cellOK := rows.At(index)
+			if !cellOK {
+				return Rows{}, nil, false
+			}
+			next, ok := unionWork.Or(merged[found], cell)
 			if !ok || !unionWork.Valid(next) {
 				return Rows{}, nil, false
 			}
@@ -131,17 +534,27 @@ func (rows Rows) PrefixQuotientWithCheckpoint(sources SourceRows, checkpoint fun
 		return Rows{}, nil, false
 	}
 	published = true
-	return Rows{manager: rows.manager, cells: merged}, representatives, true
+	if rows.seal.manager != nil && rows.declared.Valid() {
+		return sealedRows(rows.manager, rows.declared, merged), representatives, true
+	}
+	// Package-local fixtures may exercise prefix quotient before they have a
+	// declared cover identity.  Preserve their historical structural result,
+	// but never mint a CrossWork-eligible seal for them.
+	return rowsFromCells(rows.manager, merged), representatives, true
 }
 
 // validPrefixQuotientSources checks the complete, canonical source-major map
 // before equality observes any output index.  A source range for a sealed
 // refinement is never empty, and together the ranges cover every cell once.
 func (rows Rows) validPrefixQuotientSources(sources SourceRows, checkpoint func() bool) bool {
-	if rows.manager == nil || len(rows.cells) == 0 {
+	if rows.manager == nil || rows.Count() == 0 {
 		return false
 	}
-	for _, cell := range rows.cells {
+	for index := 0; index < rows.Count(); index++ {
+		cell, cellOK := rows.At(index)
+		if !cellOK {
+			return false
+		}
 		if checkpoint != nil && !checkpoint() {
 			return false
 		}
@@ -151,7 +564,7 @@ func (rows Rows) validPrefixQuotientSources(sources SourceRows, checkpoint func(
 	}
 
 	if sources.identity != 0 {
-		return sources.identity == len(rows.cells) && len(sources.offsets) == 0
+		return sources.identity == rows.Count() && len(sources.offsets) == 0
 	}
 	if len(sources.offsets) < 2 || sources.offsets[0] != 0 {
 		return false
@@ -162,38 +575,52 @@ func (rows Rows) validPrefixQuotientSources(sources SourceRows, checkpoint func(
 			return false
 		}
 		start, end := sources.offsets[source], sources.offsets[source+1]
-		if start != previous || start < 0 || end <= start || end > len(rows.cells) {
+		if start != previous || start < 0 || end <= start || end > rows.Count() {
 			return false
 		}
 		previous = end
 	}
-	return previous == len(rows.cells)
+	return previous == rows.Count()
 }
 
 // BeginRefine starts one Factor-owned unit observation pass.
 func (rows Rows) BeginRefine() *Refinement {
-	return rows.BeginRefineWithCheckpoint(nil)
+	if rows.manager == nil || rows.Count() == 0 {
+		return nil
+	}
+	return &Refinement{source: rows, identity: true, active: -1}
 }
 
 // BeginRefineWithCheckpoint binds one opaque evaluator liveness probe to the
 // disposable refinement. The probe affects only whether the candidate
 // completes; source/output rows retain their normal exact identities.
 func (rows Rows) BeginRefineWithCheckpoint(checkpoint func() bool) *Refinement {
-	if rows.manager == nil || len(rows.cells) == 0 {
+	if rows.manager == nil || rows.Count() == 0 {
 		return nil
 	}
-	return &Refinement{
-		source:     rows,
-		identity:   true,
-		active:     -1,
-		checkpoint: checkpoint,
+	return &Refinement{source: rows, identity: true, active: -1, checkpoint: checkpoint}
+}
+
+// BeginRefineWithWork starts a refinement with one caller-owned reusable proof
+// shell.  A non-identity Seal publishes the shell, retaining its map capacity
+// for the next transaction; a failed/cancelled Seal discards it.  The shell is
+// never used as a semantic answer cache: every refinement re-proves its own
+// nonempty, ownership, disjointness, subset, and union obligations.
+func (rows Rows) BeginRefineWithWork(proof *support.Work, checkpoint func() bool) *Refinement {
+	if rows.manager == nil || rows.Count() == 0 {
+		return nil
 	}
+	return &Refinement{source: rows, proof: proof, identity: true, active: -1, checkpoint: checkpoint}
 }
 
 // Refinement is a candidate replacement for one Rows partition pass.
 type Refinement struct {
 	source     Rows
 	checkpoint func() bool
+	// proof is an optional owner-supplied reusable exact-cover shell.  It is
+	// sealed on success and discarded on failure, so a later refinement can
+	// reopen the same BDD work without retaining a prior semantic result.
+	proof *support.Work
 
 	// identity remains true while every started source emitted exactly one
 	// semantically equal replacement. This needs neither a candidate BDD
@@ -212,10 +639,12 @@ type Refinement struct {
 	active  int
 
 	// validation owns the only candidate BDD work for a non-identity exact-cover
-	// proof. It is allocated lazily when the identity law no longer applies,
-	// then discarded after either terminal outcome.
+	// proof. It is allocated lazily when the identity law no longer applies. A
+	// successful transaction is sealed (for warm capacity reuse); a failed one
+	// is discarded before any Rows can escape.
 	validation *support.Work
-	closed     bool
+
+	closed bool
 }
 
 func (refinement *Refinement) live() bool {
@@ -231,7 +660,7 @@ func (refinement *Refinement) live() bool {
 // advances to the next source, the preceding source cannot receive more
 // pieces.
 func (refinement *Refinement) Add(source int, piece support.Mask) bool {
-	if !refinement.live() || source < 0 || source >= len(refinement.source.cells) ||
+	if !refinement.live() || source < 0 || source >= refinement.source.Count() ||
 		!piece.Valid() || piece.Manager() != refinement.source.manager || support.Empty(piece) {
 		return false
 	}
@@ -239,7 +668,8 @@ func (refinement *Refinement) Add(source int, piece support.Mask) bool {
 		return false
 	}
 	if refinement.identity {
-		if source == refinement.active+1 && sameMask(piece, refinement.source.cells[source]) {
+		parent, parentOK := refinement.source.At(source)
+		if source == refinement.active+1 && parentOK && sameMask(piece, parent) {
 			refinement.active = source
 			return true
 		}
@@ -342,54 +772,72 @@ func (sources SourceRows) Source(piece int) (int, bool) {
 // source-major cell buffer plus compact source ranges to its result.  Opaque
 // observation equality owns any row merge.
 func (refinement *Refinement) Seal() (Rows, SourceRows, bool) {
-	if !refinement.live() {
+	if refinement == nil || refinement.closed {
+		return Rows{}, SourceRows{}, false
+	}
+	if refinement.checkpoint != nil && !refinement.checkpoint() {
+		refinement.closed = true
+		refinement.discard()
 		return Rows{}, SourceRows{}, false
 	}
 	refinement.closed = true
 	if refinement.source.manager == nil ||
-		refinement.active != len(refinement.source.cells)-1 {
+		refinement.active != refinement.source.Count()-1 {
 		refinement.discard()
 		return Rows{}, SourceRows{}, false
 	}
 	if refinement.identity {
 		result := refinement.source
 		refinement.discard()
-		return result, SourceRows{identity: len(result.cells)}, true
+		return result, SourceRows{identity: result.Count()}, true
 	}
 	if refinement.validation == nil {
 		refinement.discard()
 		return Rows{}, SourceRows{}, false
 	}
-	refinement.offsets[len(refinement.source.cells)] = len(refinement.pieces)
-	for source := range refinement.source.cells {
-		// Seal closes this single-use candidate before validating it, so that a
-		// second caller cannot publish the same rows.  From this point its
-		// liveness is the opaque epoch probe alone; live() also rejects closed
-		// candidates and therefore must not be used here.
+	count := refinement.source.Count()
+	refinement.offsets[count] = len(refinement.pieces)
+	for source := 0; source < count; source++ {
 		if refinement.checkpoint != nil && !refinement.checkpoint() {
 			refinement.discard()
 			return Rows{}, SourceRows{}, false
 		}
 		start, end := refinement.offsets[source], refinement.offsets[source+1]
-		parent := refinement.source.cells[source]
+		parent, parentOK := refinement.source.At(source)
+		if !parentOK {
+			refinement.discard()
+			return Rows{}, SourceRows{}, false
+		}
 		if start == end || !exactPartition(refinement.validation, parent, refinement.pieces[start:end]) {
 			refinement.discard()
 			return Rows{}, SourceRows{}, false
 		}
 	}
 
-	// exactPartition built only disposable proof candidates.  Outputs are the
-	// already-sealed Factor masks admitted by Add, so publishing the work would
-	// retain pages that no output can reference.
-	refinement.validation.Discard()
+	// Publish the complete proof before transferring the output.  Seal retains
+	// reusable map capacity while the immutable output masks remain the sole
+	// semantic result.  A cancelled or failed proof never reaches this cut.
+	if !refinement.validation.Seal() {
+		refinement.discard()
+		return Rows{}, SourceRows{}, false
+	}
 	manager := refinement.source.manager
 	pieces, offsets := refinement.pieces, refinement.offsets
+	declared := refinement.source.declared
 	refinement.source = Rows{}
-	refinement.pieces = nil
-	refinement.offsets = nil
-	refinement.validation = nil
+	// pieces and offsets are transferred to the result, but remain owned by
+	// this linear Refinement so a later Begin...Into can reuse their capacity.
+	// Product's generation fence invalidates the prior typed result before this
+	// owner writes those buffers again.
 	refinement.active = -1
-	return Rows{manager: manager, cells: pieces}, SourceRows{offsets: offsets}, true
+	refinement.identity = false
+	refinement.checkpoint = nil
+	if declared.Valid() {
+		return sealedRows(manager, declared, pieces), SourceRows{offsets: offsets}, true
+	}
+	// Unauthenticated package fixtures can still exercise source-range laws,
+	// but they do not acquire a declared support identity for CrossWork.
+	return rowsFromCells(manager, pieces), SourceRows{offsets: offsets}, true
 }
 
 // discard releases every retained predecessor and candidate buffer after a
@@ -399,11 +847,15 @@ func (refinement *Refinement) discard() {
 		refinement.validation.Discard()
 	}
 	refinement.source = Rows{}
-	refinement.pieces = nil
-	refinement.offsets = nil
-	refinement.validation = nil
+	if refinement.pieces != nil {
+		refinement.pieces = refinement.pieces[:0]
+	}
+	if refinement.offsets != nil {
+		refinement.offsets = refinement.offsets[:0]
+	}
 	refinement.identity = false
 	refinement.active = -1
+	refinement.checkpoint = nil
 }
 
 // materialize turns the prefix of one-for-one identity emissions into the
@@ -413,18 +865,40 @@ func (refinement *Refinement) materialize() bool {
 	if !refinement.live() || !refinement.identity || refinement.source.manager == nil {
 		return false
 	}
-	validation := support.New(refinement.source.manager)
+	validation := refinement.validation
 	if validation == nil {
-		return false
-	}
-	if refinement.checkpoint != nil && !validation.SetCheckpoint(refinement.checkpoint) {
-		validation.Discard()
-		return false
+		validation = refinement.proof
+		if validation == nil {
+			validation = support.New(refinement.source.manager)
+		}
+		if validation == nil {
+			return false
+		}
+		// BeginTransaction reopens a previously sealed/discarded reusable Work,
+		// while also claiming a fresh Work returned by support.New.  It is the
+		// only proof transaction this refinement is allowed to own.
+		if !validation.BeginTransaction(refinement.checkpoint) {
+			return false
+		}
 	}
 	count := refinement.active + 1
-	pieces := make([]support.Mask, count, len(refinement.source.cells))
-	copy(pieces, refinement.source.cells[:count])
-	offsets := make([]int, len(refinement.source.cells)+1)
+	sourceCount := refinement.source.Count()
+	if cap(refinement.pieces) < sourceCount {
+		refinement.pieces = make([]support.Mask, 0, sourceCount)
+	}
+	pieces := refinement.pieces[:count]
+	for source := 0; source < count; source++ {
+		piece, ok := refinement.source.At(source)
+		if !ok {
+			validation.Discard()
+			return false
+		}
+		pieces[source] = piece
+	}
+	if cap(refinement.offsets) < sourceCount+1 {
+		refinement.offsets = make([]int, 0, sourceCount+1)
+	}
+	offsets := refinement.offsets[:sourceCount+1]
 	for source := 0; source < count; source++ {
 		offsets[source] = source
 	}
@@ -435,6 +909,11 @@ func (refinement *Refinement) materialize() bool {
 	return true
 }
 
+// sameMask keeps the existing identity-refinement theorem: an identical
+// support handle takes the no-work fast path, while a semantically equal mask
+// from a later BDD generation is also an admissible identity replacement.
+// The latter leaves the identity path through materialize, where the ordinary
+// exact-cover proof remains the publication authority.
 func sameMask(left, right support.Mask) bool {
 	return left.SameHandle(right) || left.Equal(right)
 }

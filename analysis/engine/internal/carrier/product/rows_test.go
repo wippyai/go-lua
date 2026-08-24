@@ -217,6 +217,14 @@ func TestRefinementRejectsEmptyOverlapAndForeignManagerPieces(t *testing.T) {
 		t.Fatal("overlapping pieces sealed as an exact partition")
 	}
 
+	duplicateRefinement := initial.BeginRefine()
+	if duplicateRefinement == nil || !duplicateRefinement.Add(0, regions.a) || !duplicateRefinement.Add(0, regions.a) {
+		t.Fatal("duplicate setup")
+	}
+	if _, _, ok := duplicateRefinement.Seal(); ok {
+		t.Fatal("duplicate pieces sealed as an exact partition")
+	}
+
 	foreignManager, err := guard.New([]guard.Atom{1, 2})
 	if err != nil {
 		t.Fatal(err)
@@ -431,6 +439,154 @@ func TestCheckpointDropsPartialRefinementBeforeRowsEscape(t *testing.T) {
 	t.Fatal("checkpoint did not interrupt refinement")
 }
 
+func TestReusableProofWorkCleansUpCancelledCoverAndSealsNextCover(t *testing.T) {
+	regions := newRegions(t)
+	rows, ok := NewRows(regions.all)
+	if !ok {
+		t.Fatal("rows")
+	}
+	proof := support.New(regions.manager)
+	if proof == nil {
+		t.Fatal("proof")
+	}
+	active := true
+	refinement := rows.BeginRefineWithWork(proof, func() bool { return active })
+	if refinement == nil || !refinement.Add(0, regions.a) {
+		t.Fatal("cancelled cover setup")
+	}
+	active = false
+	if _, _, ok := refinement.Seal(); ok {
+		t.Fatal("cancelled cover sealed")
+	}
+	active = true
+	recovered := rows.BeginRefineWithWork(proof, nil)
+	if recovered == nil || !recovered.Add(0, regions.all) {
+		t.Fatal("recovered cover setup")
+	}
+	sealed, _, ok := recovered.Seal()
+	if !ok || !sealed.Valid() || sealed.Count() != 1 {
+		t.Fatal("reusable proof work did not seal the recovered cover")
+	}
+}
+
+func TestCrossWorkOwnsExactIntersectionsAndOpaquePairs(t *testing.T) {
+	regions := newRegions(t)
+	seed, ok := NewRows(regions.all)
+	if !ok {
+		t.Fatal("seed")
+	}
+	left := splitOnA(t, seed, regions)
+	right := splitOnB(t, seed, regions)
+	var cross CrossWork
+	result, pairs, ok := cross.Cross(left, right, nil)
+	if !ok || !result.Valid() || result.Count() != 4 || pairs.Count() != 4 {
+		t.Fatalf("cross result=%d pairs=%d ok=%t", result.Count(), pairs.Count(), ok)
+	}
+	wantPairs := [][2]int{{0, 0}, {0, 1}, {1, 0}, {1, 1}}
+	for index, want := range wantPairs {
+		gotLeft, gotRight, pairOK := pairs.At(index)
+		if !pairOK || gotLeft != want[0] || gotRight != want[1] {
+			t.Fatalf("pair[%d]=(%d,%d)/%t want (%d,%d)", index, gotLeft, gotRight, pairOK, want[0], want[1])
+		}
+		cell, cellOK := result.At(index)
+		leftCell, leftOK := left.At(gotLeft)
+		rightCell, rightOK := right.At(gotRight)
+		wantCell, wantOK := support.Intersect(leftCell, rightCell)
+		if !cellOK || !leftOK || !rightOK || !wantOK || !cell.Equal(wantCell) {
+			t.Fatalf("pair[%d] did not retain its exact carrier intersection", index)
+		}
+	}
+	// The reusable buffers are generation-fenced before their next write.
+	if _, _, secondOK := cross.Cross(left, right, nil); !secondOK {
+		t.Fatal("warm cross")
+	}
+	if result.Count() != 0 || pairs.Count() != 0 {
+		t.Fatal("stale CrossWork views remained readable")
+	}
+}
+
+func TestCrossWorkRejectsUnauthenticatedOrMismatchedCovers(t *testing.T) {
+	regions := newRegions(t)
+	seed, ok := NewRows(regions.all)
+	if !ok {
+		t.Fatal("seed")
+	}
+	left := splitOnA(t, seed, regions)
+	var cross CrossWork
+	// A package-local cell slice without a carrier seal is not a cross operand.
+	forged := Rows{manager: regions.manager, cells: []support.Mask{regions.a}}
+	if _, _, ok := cross.Cross(left, forged, nil); ok {
+		t.Fatal("unauthenticated rows crossed")
+	}
+	// A valid cover over a different declared support cannot silently produce a
+	// partial product over the left support.
+	other, ok := NewRows(regions.a)
+	if !ok {
+		t.Fatal("other seed")
+	}
+	if _, _, ok := cross.Cross(left, other, nil); ok {
+		t.Fatal("mismatched declared support crossed")
+	}
+}
+
+func TestCrossWorkRecomputesOnHandleMismatchAndReusesAfterCheckpointFailure(t *testing.T) {
+	regions := newRegions(t)
+	seed, ok := NewRows(regions.all)
+	if !ok {
+		t.Fatal("seed")
+	}
+	left := splitOnA(t, seed, regions)
+	rightB := splitOnB(t, seed, regions)
+	rightA := splitOnA(t, seed, regions)
+	var cross CrossWork
+	first, _, ok := cross.Cross(left, rightB, nil)
+	if !ok || first.Count() != 4 {
+		t.Fatal("first cross")
+	}
+	// Same cardinality, different physical support handles: a cached answer is
+	// not accepted. The recomputed A×A crossing has only two nonempty pairs.
+	second, pairs, ok := cross.Cross(left, rightA, nil)
+	if !ok || second.Count() != 2 || pairs.Count() != 2 {
+		t.Fatalf("handle-mismatch cross=%d pairs=%d ok=%t", second.Count(), pairs.Count(), ok)
+	}
+	checks := 0
+	cancelledRows, cancelledPairs, ok := cross.Cross(left, rightB, func() bool {
+		checks++
+		return checks < 2
+	})
+	if ok || cancelledRows.Count() != 0 || cancelledPairs.Count() != 0 {
+		t.Fatal("cancelled cross published a result")
+	}
+	if _, _, ok := cross.Cross(left, rightB, nil); !ok {
+		t.Fatal("CrossWork did not recover after checkpoint failure")
+	}
+}
+
+func TestCrossWorkWarmHandleHitAllocatesNothing(t *testing.T) {
+	regions := newRegions(t)
+	seed, ok := NewRows(regions.all)
+	if !ok {
+		t.Fatal("seed")
+	}
+	left := splitOnA(t, seed, regions)
+	right := splitOnB(t, seed, regions)
+	var cross CrossWork
+	if _, _, ok := cross.Cross(left, right, nil); !ok {
+		t.Fatal("cold cross")
+	}
+	if _, _, ok := cross.Cross(left, right, nil); !ok {
+		t.Fatal("warm cross")
+	}
+	allocations := testing.AllocsPerRun(50, func() {
+		if _, _, ok := cross.Cross(left, right, nil); !ok {
+			t.Fatal("warm cross")
+		}
+	})
+	if allocations != 0 {
+		t.Fatalf("warm CrossWork allocated %v times", allocations)
+	}
+}
+
 // BenchmarkSameHandleIdentityRefinementAllocationScaling measures only the
 // direct-handle no-op route. General exact-cover work is measured separately
 // below and must never be inferred from this benchmark.
@@ -535,6 +691,7 @@ func BenchmarkPrefixQuotientAdversarialEqualPrefixes(b *testing.B) {
 type regions struct {
 	manager      *guard.Manager
 	all, a, notA support.Mask
+	b, notB      support.Mask
 	notAAndB     support.Mask
 	notAAndNotB  support.Mask
 }
@@ -575,7 +732,7 @@ func newRegions(tb testing.TB) regions {
 		tb.Fatal("not a and not b publication")
 	}
 	return regions{
-		manager: manager, all: all, a: a, notA: notA,
+		manager: manager, all: all, a: a, notA: notA, b: b, notB: notB,
 		notAAndB: notAAndB, notAAndNotB: notAAndNotB,
 	}
 }
@@ -595,6 +752,19 @@ func splitOnA(t *testing.T, rows Rows, regions regions) Rows {
 		if !found || source != 0 {
 			t.Fatalf("first source[%d] = %d/%t, want 0", piece, source, found)
 		}
+	}
+	return result
+}
+
+func splitOnB(t *testing.T, rows Rows, regions regions) Rows {
+	t.Helper()
+	refinement := rows.BeginRefine()
+	if refinement == nil || !refinement.Add(0, regions.b) || !refinement.Add(0, regions.notB) {
+		t.Fatal("B refinement setup")
+	}
+	result, sources, ok := refinement.Seal()
+	if !ok || result.Count() != 2 || sources.Count() != 2 {
+		t.Fatal("B refinement seal")
 	}
 	return result
 }

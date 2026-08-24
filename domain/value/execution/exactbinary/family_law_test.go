@@ -55,6 +55,88 @@ func TestExactBinaryShapeIsOneStrictSharedProgram(t *testing.T) {
 	}
 }
 
+func TestExactBinaryMappingRefusesNearestNegativeMembers(t *testing.T) {
+	rule := exactBinaryLawRule(t)
+	mapping := valuedomain.ExactBinaryMapping{
+		ReducerOrdinal:              rule.Reducer().Member,
+		CandidateRelationMember:     rule.CandidateRelation().Member,
+		Read0RelationMember:         0,
+		Read0KeyMember:              0,
+		Read1RelationMember:         1,
+		Read1KeyMember:              1,
+		DestinationProjectionMember: 2,
+	}
+	if !exactBinaryMappingMatches(rule, mapping) {
+		t.Fatal("valid generated member mapping was refused")
+	}
+	for _, testCase := range []struct {
+		name   string
+		mutate func(*valuedomain.ExactBinaryMapping)
+	}{
+		{name: "candidate relation member", mutate: func(mapping *valuedomain.ExactBinaryMapping) {
+			mapping.CandidateRelationMember++
+		}},
+		{name: "first read relation member", mutate: func(mapping *valuedomain.ExactBinaryMapping) {
+			mapping.Read0RelationMember++
+		}},
+		{name: "first read key member", mutate: func(mapping *valuedomain.ExactBinaryMapping) {
+			mapping.Read0KeyMember++
+		}},
+		{name: "second read relation member", mutate: func(mapping *valuedomain.ExactBinaryMapping) {
+			mapping.Read1RelationMember++
+		}},
+		{name: "second read key member", mutate: func(mapping *valuedomain.ExactBinaryMapping) {
+			mapping.Read1KeyMember++
+		}},
+		{name: "destination projection member", mutate: func(mapping *valuedomain.ExactBinaryMapping) {
+			mapping.DestinationProjectionMember++
+		}},
+		{name: "reducer mapping", mutate: func(mapping *valuedomain.ExactBinaryMapping) {
+			mapping.ReducerOrdinal++
+		}},
+	} {
+		t.Run(testCase.name, func(t *testing.T) {
+			candidate := mapping
+			testCase.mutate(&candidate)
+			if exactBinaryMappingMatches(rule, candidate) {
+				t.Fatalf("nearest-negative %s mapping admitted", testCase.name)
+			}
+		})
+	}
+}
+
+func TestExactBinaryShapeRefusesNearestNegativeFactorAndOutputStrength(t *testing.T) {
+	for _, testCase := range []struct {
+		name string
+		make func(*generated.CompiledRuleSpec)
+	}{
+		{name: "factor", make: func(spec *generated.CompiledRuleSpec) {
+			spec.Reads[0].Factor = 1
+		}},
+		{name: "output slot", make: func(spec *generated.CompiledRuleSpec) {
+			spec.Outputs[0].Slot = 1
+		}},
+		{name: "output strength", make: func(spec *generated.CompiledRuleSpec) {
+			spec.Outputs[0].Strong = false
+		}},
+	} {
+		t.Run(testCase.name, func(t *testing.T) {
+			spec := exactBinaryLawSpec()
+			testCase.make(&spec)
+			candidate, sealed := generated.NewPlanCompiledRule(spec)
+			if testCase.name == "factor" {
+				if !sealed || exactBinaryShape(candidate, engineexecution.FormExact) {
+					t.Fatalf("nearest-negative %s admitted", testCase.name)
+				}
+				return
+			}
+			if sealed {
+				t.Fatalf("nearest-negative %s admitted", testCase.name)
+			}
+		})
+	}
+}
+
 func TestExactBinaryShapeHotProbeAllocatesNothing(t *testing.T) {
 	rule := exactBinaryLawRule(t)
 	allocations := testing.AllocsPerRun(200, func() {
@@ -74,6 +156,16 @@ func exactBinaryLawRule(t *testing.T) generated.CompiledRule {
 
 func exactBinaryRuleWith(t *testing.T, amend func(*generated.CompiledRuleSpec)) generated.CompiledRule {
 	t.Helper()
+	spec := exactBinaryLawSpec()
+	amend(&spec)
+	rule, ok := generated.NewPlanCompiledRule(spec)
+	if !ok {
+		t.Fatal("sealed exact-binary law descriptor")
+	}
+	return rule
+}
+
+func exactBinaryLawSpec() generated.CompiledRuleSpec {
 	contract := ruleplan.ReadContract{
 		Order:        ruleprogram.OrderCanonical,
 		Sparse:       ruleprogram.SparseExplicit,
@@ -81,7 +173,7 @@ func exactBinaryRuleWith(t *testing.T, amend func(*generated.CompiledRuleSpec)) 
 		Multiplicity: ruleprogram.MultiplicityOne,
 	}
 	axis := uint32(2)
-	spec := generated.CompiledRuleSpec{
+	return generated.CompiledRuleSpec{
 		Ordinal: 11, AxisCount: 3, InputCount: 1,
 		Candidate: ruleplan.RelationAddr{Axis: axis, Member: 0},
 		Reducer:   ruleplan.ReducerAddr{Axis: axis, Member: 3},
@@ -103,10 +195,4 @@ func exactBinaryRuleWith(t *testing.T, amend func(*generated.CompiledRuleSpec)) 
 		}},
 		Carry: &generated.CarryPlan{Input: 0, Factor: axis, Mode: ruleprogram.CarryIdentity, Identity: true},
 	}
-	amend(&spec)
-	rule, ok := generated.NewPlanCompiledRule(spec)
-	if !ok {
-		t.Fatal("sealed exact-binary law descriptor")
-	}
-	return rule
 }

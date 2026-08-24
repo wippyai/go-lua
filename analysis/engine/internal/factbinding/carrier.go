@@ -325,7 +325,7 @@ func (binding *Binding[K, V]) NewWork() (carrier.SlotWork, bool) {
 		entailsWork.Close()
 		return nil, false
 	}
-	return &bindingWork[K, V]{binding: binding, roots: roots, supportWork: supportWork, entailsWork: entailsWork, readWork: readWork, observations: observations}, true
+	return &bindingWork[K, V]{binding: binding, roots: roots, supportWork: supportWork, entailsWork: entailsWork, readWork: readWork, observations: observations, readMemo: newObservationReadMemo[K, V](len(binding.unitList))}, true
 }
 
 // bindingWork is private typed evaluator state for exactly one Binding.
@@ -378,6 +378,20 @@ type bindingWork[K scalar.Key, V any] struct {
 	observationCursorRoot   carrier.RootHandle
 	observationCursorUnit   carrier.Unit
 	observationCursorFailed bool
+	// readMemo retains owner-local immutable exact partitions for this evaluator
+	// lane. Its capacity is fixed from the Binding's sealed Unit inventory. A
+	// warm read of the same root/unit/region/key copies its already sealed cells
+	// into generation scratch instead of reopening Boolean construction; a
+	// different identity deterministically evicts one slot and reruns
+	// PartitionKey. Entries are cleared at root-epoch close; RootHandle is the
+	// complete immutable published-plane identity, so no fact revision can
+	// reuse an entry accidentally. This is bounded scratch storage, never a
+	// Binding/global answer cache.
+	readMemo observationReadMemo[K, V]
+	// partitionVisit is the Work-owned adapter for PartitionKey. Keeping the
+	// callback on the same owner avoids minting a capturing closure for every
+	// product source region; it reads only the current pieces scratch.
+	partitionVisit func(V, bool, support.Mask) bool
 	// scratch and changes belong to the enclosing evaluator's merge/compare
 	// lifecycle, not to one observation generation. Every sole operation
 	// begins with SoleScratch.prepare (which Clear's it); Merge3Under clears
@@ -551,6 +565,8 @@ func (work *bindingWork[K, V]) CloseRootEpoch() {
 		work.readWork = nil
 	}
 	work.clearObservationScratch()
+	work.readMemo.clear()
+	work.partitionVisit = nil
 	work.binding = nil
 }
 
@@ -969,6 +985,92 @@ type observationPiece[V any] struct {
 	entry       ObservationEntry[V]
 	fingerprint uint64
 	region      support.Mask
+}
+
+type observationReadMemo[K scalar.Key, V any] struct {
+	entries []observationReadEntry[K, V]
+	next    int
+}
+
+type observationReadEntry[K scalar.Key, V any] struct {
+	root   carrier.RootHandle
+	unit   carrier.Unit
+	key    K
+	within support.Mask
+	pieces []observationPiece[V]
+	valid  bool
+}
+
+// newObservationReadMemo sizes the owner-local exact-read table from the
+// Binding's sealed Unit inventory. One Unit may have one retained root/region
+// observation; a different root or region deterministically evicts another
+// entry and simply takes the normal PartitionKey miss path.
+func newObservationReadMemo[K scalar.Key, V any](unitCount int) observationReadMemo[K, V] {
+	if unitCount <= 0 {
+		return observationReadMemo[K, V]{}
+	}
+	return observationReadMemo[K, V]{entries: make([]observationReadEntry[K, V], unitCount)}
+}
+
+func (memo *observationReadMemo[K, V]) lookup(root carrier.RootHandle, unit carrier.Unit, key K, within support.Mask) ([]observationPiece[V], bool) {
+	if memo == nil {
+		return nil, false
+	}
+	for index := range memo.entries {
+		entry := &memo.entries[index]
+		if entry.valid && entry.root == root && entry.unit == unit && entry.key == key && entry.within == within {
+			return entry.pieces, true
+		}
+	}
+	return nil, false
+}
+
+func (memo *observationReadMemo[K, V]) replace(root carrier.RootHandle, unit carrier.Unit, key K, within support.Mask, pieces []observationPiece[V]) {
+	if memo == nil {
+		return
+	}
+	for index := range memo.entries {
+		entry := &memo.entries[index]
+		if entry.valid && entry.root == root && entry.unit == unit && entry.key == key && entry.within == within {
+			clear(entry.pieces)
+			entry.pieces = append(entry.pieces[:0], pieces...)
+			return
+		}
+	}
+	for index := range memo.entries {
+		if !memo.entries[index].valid {
+			clear(memo.entries[index].pieces)
+			memo.entries[index] = observationReadEntry[K, V]{root: root, unit: unit, key: key, within: within, pieces: append(memo.entries[index].pieces[:0], pieces...), valid: true}
+			return
+		}
+	}
+	if len(memo.entries) == 0 {
+		return
+	}
+	index := memo.next % len(memo.entries)
+	memo.next = (index + 1) % len(memo.entries)
+	entry := &memo.entries[index]
+	entry.root, entry.unit, entry.key, entry.within = root, unit, key, within
+	clear(entry.pieces)
+	entry.pieces = append(entry.pieces[:0], pieces...)
+	entry.valid = true
+}
+
+func (memo *observationReadMemo[K, V]) clear() {
+	if memo == nil {
+		return
+	}
+	for index := range memo.entries {
+		clear(memo.entries[index].pieces)
+		memo.entries[index].pieces = memo.entries[index].pieces[:0]
+		memo.entries[index].valid = false
+		memo.entries[index].root = carrier.RootHandle{}
+		memo.entries[index].unit = carrier.Unit{}
+		var zero K
+		memo.entries[index].key = zero
+		memo.entries[index].within = support.Mask{}
+	}
+	memo.next = 0
 }
 
 // observationCell is one entry of a discovered sequence linked to the prefix
@@ -1874,12 +1976,28 @@ func (work *bindingWork[K, V]) observeSummary(input semantic.Plane[planeFactor, 
 // every observed fold, which is the engine's densest Boolean call site, so the
 // shell is owned here rather than minted inside the read.
 func (work *bindingWork[K, V]) partitionKey(input semantic.Plane[planeFactor, K, V], key K, within support.Mask) bool {
-	work.pieces = work.pieces[:0]
-	return work.binding.plane.domain.PartitionKey(input, key, within, work.readWork, func(value V, present bool, region support.Mask) bool {
-		entry := ObservationEntry[V]{value: value, present: present}
-		work.pieces = append(work.pieces, observationPiece[V]{entry: entry, fingerprint: work.entryFingerprint(entry), region: region})
+	if pieces, found := work.readMemo.lookup(work.observationCursorRoot, work.observationCursorUnit, key, within); found {
+		work.pieces = append(work.pieces[:0], pieces...)
 		return true
-	})
+	}
+	work.pieces = work.pieces[:0]
+	if work.partitionVisit == nil {
+		work.partitionVisit = work.acceptPartition
+	}
+	completed := work.binding.plane.domain.PartitionKey(input, key, within, work.readWork, work.partitionVisit)
+	if completed {
+		work.readMemo.replace(work.observationCursorRoot, work.observationCursorUnit, key, within, work.pieces)
+	}
+	return completed
+}
+
+func (work *bindingWork[K, V]) acceptPartition(value V, present bool, region support.Mask) bool {
+	if work == nil {
+		return false
+	}
+	entry := ObservationEntry[V]{value: value, present: present}
+	work.pieces = append(work.pieces, observationPiece[V]{entry: entry, fingerprint: work.entryFingerprint(entry), region: region})
+	return true
 }
 
 // constantOverRegion reports whether the partition just read for one declared

@@ -24,55 +24,135 @@ func SupportsExactBinaryReducer(reducerOrdinal uint32) bool {
 	}
 }
 
-// ExactBinaryCandidateAvailable authenticates one candidate ordinal against
-// the reducer's canonical owner directory during family construction.
-func (schema *Schema) ExactBinaryCandidateAvailable(reducerOrdinal, candidateOrdinal uint32) bool {
+// ExactBinaryMapping is one generated reducer/member correspondence.
+type ExactBinaryMapping struct {
+	ReducerOrdinal              uint32
+	CandidateRelationMember     uint32
+	Read0RelationMember         uint32
+	Read0KeyMember              uint32
+	Read1RelationMember         uint32
+	Read1KeyMember              uint32
+	DestinationProjectionMember uint32
+}
+
+// ExactBinaryMappingAt issues the canonical geometry for one reducer.
+func (schema *Schema) ExactBinaryMappingAt(reducerOrdinal uint32) (ExactBinaryMapping, bool) {
 	if schema == nil {
-		return false
+		return ExactBinaryMapping{}, false
 	}
 	switch reducerOrdinal {
 	case 3:
-		_, candidateOK := schema.BinaryArithmeticAt(int(candidateOrdinal))
-		return candidateOK
+		return ExactBinaryMapping{ReducerOrdinal: 3, CandidateRelationMember: 1, Read0RelationMember: 14, Read0KeyMember: 9, Read1RelationMember: 14, Read1KeyMember: 10, DestinationProjectionMember: 11}, true
 	case 4:
-		_, candidateOK := schema.BinaryEqualityAt(int(candidateOrdinal))
-		return candidateOK
+		return ExactBinaryMapping{ReducerOrdinal: 4, CandidateRelationMember: 2, Read0RelationMember: 15, Read0KeyMember: 12, Read1RelationMember: 15, Read1KeyMember: 13, DestinationProjectionMember: 14}, true
 	case 5:
-		_, candidateOK := schema.BinaryOrderAt(int(candidateOrdinal))
-		return candidateOK
+		return ExactBinaryMapping{ReducerOrdinal: 5, CandidateRelationMember: 3, Read0RelationMember: 16, Read0KeyMember: 15, Read1RelationMember: 16, Read1KeyMember: 16, DestinationProjectionMember: 17}, true
 	default:
-		return false
+		return ExactBinaryMapping{}, false
 	}
 }
 
-// ReduceExactBinary redeems the canonical candidate and invokes its owner fold.
-// The final boolean is structural dispatch validity, not a semantic outcome.
-func (schema *Schema) ReduceExactBinary(reducerOrdinal, candidateOrdinal uint32, left, right Value) (Value, structure.ReductionOutcome, bool) {
-	var zero Value
+// ExactBinaryPayload is one sealed concrete exact-binary reducer payload.
+// Its unexported cells can only be populated by the owner below.
+type ExactBinaryPayload struct {
+	owner                   *Schema
+	reducerOrdinal          uint32
+	candidateRelationMember uint32
+	candidateOrdinal        uint32
+	available               bool
+	candidate3              BinaryArithmetic
+	candidate4              BinaryEquality
+	candidate5              BinaryOrder
+}
+
+// ReducerOrdinal returns the sealed reducer identity of this payload.
+func (candidate ExactBinaryPayload) ReducerOrdinal() (uint32, bool) {
+	if !candidate.available {
+		return 0, false
+	}
+	return candidate.reducerOrdinal, true
+}
+
+// CandidateOrdinal returns the sealed candidate identity of this payload.
+func (candidate ExactBinaryPayload) CandidateOrdinal() (uint32, bool) {
+	if !candidate.available {
+		return 0, false
+	}
+	return candidate.candidateOrdinal, true
+}
+
+// CandidateRelationMember returns the owner-issued relation member
+// whose directory redeemed this payload.
+func (candidate ExactBinaryPayload) CandidateRelationMember() (uint32, bool) {
+	if !candidate.available {
+		return 0, false
+	}
+	return candidate.candidateRelationMember, true
+}
+
+// ExactBinaryPayloadAt redeems one candidate into an immutable concrete payload.
+func (schema *Schema) ExactBinaryPayloadAt(reducerOrdinal, candidateRelationMember, candidateOrdinal uint32) (ExactBinaryPayload, bool) {
 	if schema == nil {
-		return zero, structure.Refuse, false
+		return ExactBinaryPayload{}, false
 	}
 	switch reducerOrdinal {
 	case 3:
+		if candidateRelationMember != 1 {
+			return ExactBinaryPayload{}, false
+		}
 		candidate, candidateOK := schema.BinaryArithmeticAt(int(candidateOrdinal))
 		if !candidateOK {
-			return zero, structure.Refuse, false
+			return ExactBinaryPayload{}, false
 		}
-		result, reduction := ArithmeticValue(candidate, left, right)
-		return result, reduction, true
+		return ExactBinaryPayload{owner: schema, reducerOrdinal: 3, candidateRelationMember: candidateRelationMember, candidateOrdinal: candidateOrdinal, available: true, candidate3: candidate}, true
 	case 4:
+		if candidateRelationMember != 2 {
+			return ExactBinaryPayload{}, false
+		}
 		candidate, candidateOK := schema.BinaryEqualityAt(int(candidateOrdinal))
 		if !candidateOK {
-			return zero, structure.Refuse, false
+			return ExactBinaryPayload{}, false
 		}
-		result, reduction := EqualityValue(candidate, left, right)
-		return result, reduction, true
+		return ExactBinaryPayload{owner: schema, reducerOrdinal: 4, candidateRelationMember: candidateRelationMember, candidateOrdinal: candidateOrdinal, available: true, candidate4: candidate}, true
 	case 5:
+		if candidateRelationMember != 3 {
+			return ExactBinaryPayload{}, false
+		}
 		candidate, candidateOK := schema.BinaryOrderAt(int(candidateOrdinal))
 		if !candidateOK {
-			return zero, structure.Refuse, false
+			return ExactBinaryPayload{}, false
 		}
-		result, reduction := OrderValue(candidate, left, right)
+		return ExactBinaryPayload{owner: schema, reducerOrdinal: 5, candidateRelationMember: candidateRelationMember, candidateOrdinal: candidateOrdinal, available: true, candidate5: candidate}, true
+	default:
+		return ExactBinaryPayload{}, false
+	}
+}
+
+// ReduceExactBinaryPayload invokes the owner fold on a sealed payload.
+// The final boolean is structural dispatch validity, not a semantic outcome.
+func (schema *Schema) ReduceExactBinaryPayload(candidate ExactBinaryPayload, left, right Value) (Value, structure.ReductionOutcome, bool) {
+	var zero Value
+	if schema == nil || !candidate.available || candidate.owner != schema {
+		return zero, structure.Refuse, false
+	}
+	switch candidate.reducerOrdinal {
+	case 3:
+		result, reduction := ArithmeticValue(candidate.candidate3, left, right)
+		if !reduction.Available() || reduction == structure.Refuse {
+			return zero, reduction, false
+		}
+		return result, reduction, true
+	case 4:
+		result, reduction := EqualityValue(candidate.candidate4, left, right)
+		if !reduction.Available() || reduction == structure.Refuse {
+			return zero, reduction, false
+		}
+		return result, reduction, true
+	case 5:
+		result, reduction := OrderValue(candidate.candidate5, left, right)
+		if !reduction.Available() || reduction == structure.Refuse {
+			return zero, reduction, false
+		}
 		return result, reduction, true
 	default:
 		return zero, structure.Refuse, false

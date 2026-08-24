@@ -26,6 +26,7 @@ type Scratch[K scalar.Key, V any] struct {
 	readBinding *factbinding.Binding[K, V]
 	readUnit    carrier.Unit
 	readPort    uint16
+	readWithin  support.Mask
 	readOpen    bool
 	readSummary bool
 	cursor      factbinding.DirectObservation[K, V]
@@ -58,6 +59,7 @@ func (scratch *Scratch[K, V]) reset(ticket Ticket) bool {
 	scratch.readBinding = nil
 	scratch.readUnit = carrier.Unit{}
 	scratch.readPort = 0
+	scratch.readWithin = support.Mask{}
 	scratch.readOpen = false
 	scratch.readSummary = false
 	scratch.cursor = factbinding.DirectObservation[K, V]{}
@@ -84,6 +86,7 @@ func (scratch *Scratch[K, V]) finish() {
 	scratch.readBinding = nil
 	scratch.readUnit = carrier.Unit{}
 	scratch.readPort = 0
+	scratch.readWithin = support.Mask{}
 	scratch.readOpen = false
 	scratch.readSummary = false
 	scratch.cursor = factbinding.DirectObservation[K, V]{}
@@ -157,4 +160,18 @@ func (scratch *Scratch[K, V]) Region() (support.Mask, bool) {
 	}
 	region := scratch.row.Region()
 	return region, region.Valid()
+}
+
+// Reuse resets a closed read-only scratch lane for another exact observation
+// under the same live Ticket. Product refinement uses this linear cut between
+// source rows; an open read or an unaccepted write patch can never be reused.
+func (scratch *Scratch[K, V]) Reuse(ticket Ticket) bool {
+	if scratch == nil || !scratch.validFor(ticket) || scratch.readOpen || scratch.patch != nil {
+		return false
+	}
+	scratch.finish()
+	// Leave the lane closed so the next Read performs the normal ticket-bound
+	// reset. Resetting here would make that same open Ticket look like a
+	// second concurrent scratch owner and the next cursor step would refuse.
+	return true
 }

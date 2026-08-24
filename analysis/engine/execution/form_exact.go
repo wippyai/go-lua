@@ -7,6 +7,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/engine/internal/carrier"
 	"github.com/wippyai/go-lua/analysis/engine/internal/factbinding"
 	"github.com/wippyai/go-lua/analysis/engine/internal/facts/scalar"
+	"github.com/wippyai/go-lua/analysis/engine/internal/facts/support"
 	ruleprogram "github.com/wippyai/go-lua/analysis/schema/rule/program"
 	"github.com/wippyai/go-lua/analysis/schema/structure"
 )
@@ -83,9 +84,10 @@ func NewExactRow[K scalar.Key, V any](binding *factbinding.Binding[K, V], unit c
 
 type exactFamily[K scalar.Key, V any] struct{ rows []ExactRow[K, V] }
 type exactWorker[K scalar.Key, V any] struct {
-	family  *exactFamily[K, V]
-	run     *Run
-	scratch Scratch[K, V]
+	family       *exactFamily[K, V]
+	run          *Run
+	readScratch  Scratch[K, V]
+	writeScratch Scratch[K, V]
 }
 
 // NewExactFamily builds one reusable executor for one typed rule family.
@@ -120,8 +122,8 @@ func (worker *exactWorker[K, V]) Execute(frame Frame, ticket Ticket) (Result, bo
 		return Result{}, false
 	}
 	row := worker.family.rows[local]
-	outcome := FoldExact(ticket, row.read, row.write, &worker.scratch)
-	if !ticket.Submit(outcome) {
+	outcome, valid := FoldExact(ticket, row.read, row.write, &worker.readScratch, &worker.writeScratch)
+	if !valid || !ticket.Submit(outcome) {
 		return Result{}, false
 	}
 	count := 0
@@ -131,37 +133,76 @@ func (worker *exactWorker[K, V]) Execute(frame Frame, ticket Ticket) (Result, bo
 	return NewResult(outcome, count)
 }
 
-// FoldExact is the one-read identity fold: the first exact cell is staged to
-// the write axis, sparse absence and an empty cursor are NoCandidate, and any
-// other cursor failure is Refuse. Ticket remains open for Submit.
-func FoldExact[K scalar.Key, V any](ticket Ticket, read ExactRead[K, V], write ExactWrite[K, V], scratch *Scratch[K, V]) structure.ReductionOutcome {
-	if scratch == nil || !read.Valid() || !write.Valid() {
-		return structure.Refuse
+// FoldExact consumes the complete exact cursor, staging every present row
+// into one write transaction. Sparse rows are omitted; an entirely sparse or
+// empty cursor is a valid NoCandidate. The boolean is structural validity:
+// Refuse is never submitted as a semantic reduction outcome.
+func FoldExact[K scalar.Key, V any](ticket Ticket, read ExactRead[K, V], write ExactWrite[K, V], readScratch, writeScratch *Scratch[K, V]) (structure.ReductionOutcome, bool) {
+	within, withinOK := ticket.Within()
+	if !ticket.Valid() || !ticket.Checkpoint() || !withinOK || !within.Valid() || !read.Valid() || !write.Valid() || readScratch == nil || writeScratch == nil {
+		return structure.Refuse, false
 	}
-	switch read.Read(ticket, scratch) {
-	case ReadAvailable:
-		region, regionOK := scratch.Region()
-		value, valueOK := scratch.Value()
-		present := scratch.Present()
-		if !read.Close(ticket, scratch) {
-			_ = scratch.Discard(ticket)
-			return structure.Refuse
+	// Empty support still authenticates the complete declared operation. It is
+	// a valid sparse result only when this ticket owns both the read port and
+	// output slot; otherwise returning NoCandidate would compensate for a
+	// malformed family row that happened not to execute.
+	_, _, _, readOK := read.context(ticket)
+	_, _, _, writeOK := write.context(ticket)
+	if !readOK || !writeOK || int(write.output) >= ticket.OutputCount() {
+		return structure.Refuse, false
+	}
+	if support.Empty(within) {
+		return structure.NoCandidate, true
+	}
+	observed := false
+	staged := false
+	for {
+		if !ticket.Checkpoint() {
+			_ = readScratch.Discard(ticket)
+			_ = writeScratch.Discard(ticket)
+			return structure.Refuse, false
 		}
-		if !present {
-			return structure.NoCandidate
+		switch read.Read(ticket, readScratch) {
+		case ReadAvailable:
+			observed = true
+			region, regionOK := readScratch.Region()
+			value, valueOK := readScratch.Value()
+			if !regionOK || !valueOK {
+				_ = readScratch.Discard(ticket)
+				_ = writeScratch.Discard(ticket)
+				return structure.Refuse, false
+			}
+			if readScratch.Present() {
+				if !write.Stage(ticket, writeScratch, region, value) {
+					_ = readScratch.Discard(ticket)
+					_ = writeScratch.Discard(ticket)
+					return structure.Refuse, false
+				}
+				staged = true
+			}
+		case ReadExhausted:
+			if !read.Close(ticket, readScratch) {
+				_ = readScratch.Discard(ticket)
+				_ = writeScratch.Discard(ticket)
+				return structure.Refuse, false
+			}
+			if !observed {
+				_ = readScratch.Discard(ticket)
+				_ = writeScratch.Discard(ticket)
+				return structure.Refuse, false
+			}
+			if !staged {
+				return structure.NoCandidate, true
+			}
+			if !write.Close(ticket, writeScratch) {
+				_ = writeScratch.Discard(ticket)
+				return structure.Refuse, false
+			}
+			return structure.Concrete, true
+		default:
+			_ = readScratch.Discard(ticket)
+			_ = writeScratch.Discard(ticket)
+			return structure.Refuse, false
 		}
-		if regionOK && valueOK && write.Stage(ticket, scratch, region, value) && write.Close(ticket, scratch) {
-			return structure.Concrete
-		}
-		_ = scratch.Discard(ticket)
-		return structure.Refuse
-	case ReadExhausted:
-		if read.Close(ticket, scratch) {
-			return structure.NoCandidate
-		}
-		return structure.Refuse
-	default:
-		_ = scratch.Discard(ticket)
-		return structure.Refuse
 	}
 }
