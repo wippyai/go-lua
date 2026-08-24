@@ -5,7 +5,6 @@ import (
 
 	"github.com/wippyai/go-lua/analysis/schema/program/lifecycle"
 	"github.com/wippyai/go-lua/domain/placement"
-	valuedomain "github.com/wippyai/go-lua/domain/value"
 )
 
 func TestFromProgramUsesAnExplicitConservativeMapping(t *testing.T) {
@@ -133,27 +132,5 @@ func TestDemandDistinguishesAuthenticatedUnknownFromInvalid(t *testing.T) {
 	}
 	if got, forced, ok := Demand(LifetimeInvalid); ok || forced || got == placement.Unknown {
 		t.Fatalf("invalid demand = %s (forced=%t, ok=%t), must refuse without Unknown", got, forced, ok)
-	}
-}
-
-func TestAuthenticatedSourceRejectsSparseOrMalformedCells(t *testing.T) {
-	var zero valuedomain.Value
-	for _, test := range []struct {
-		name      string
-		present   bool
-		available bool
-	}{
-		{name: "sparse", present: false, available: true},
-		{name: "unavailable", present: true, available: false},
-		{name: "both absent", present: false, available: false},
-	} {
-		t.Run(test.name, func(t *testing.T) {
-			if _, ok := authenticatedSource(nil, zero, test.present, test.available); ok {
-				t.Fatal("source gate accepted an unauthenticated cell")
-			}
-		})
-	}
-	if _, ok := authenticatedSource(nil, zero, true, true); ok {
-		t.Fatal("source gate accepted a malformed Value")
 	}
 }

@@ -13,6 +13,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/schema"
 	"github.com/wippyai/go-lua/analysis/schema/rule/emit"
 	heapempty "github.com/wippyai/go-lua/domain/heap/allocation/empty"
+	storeprogram "github.com/wippyai/go-lua/domain/placement/store/program"
 )
 
 // GeneratedFileName is the one name an emitted family is written under. It is
@@ -41,6 +42,14 @@ func Families() []Family {
 				Spec:        heapempty.RuleEntry(),
 			},
 			Directory: "domain/heap/allocation/empty",
+		},
+		{
+			Target: emit.Target{
+				PackagePath: "github.com/wippyai/go-lua/domain/placement/store",
+				PackageName: "store",
+				Spec:        storeprogram.RuleEntry(),
+			},
+			Directory: "domain/placement/store",
 		},
 	}
 }

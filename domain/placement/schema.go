@@ -92,3 +92,18 @@ func (schema Schema) KeyAt(index int) (heap.Key, bool) {
 	}
 	return schema.heap.AllocationKeyAt(index)
 }
+
+// KeyIndex normalizes one owner-issued allocation key to Placement's dense
+// coordinate.  Placement deliberately keeps Heap as the sole key directory;
+// this method is only the typed owner projection consumed by generated member
+// metadata and does not retain a second index.
+func (schema Schema) KeyIndex(key heap.Key) (uint32, bool) {
+	if !schema.valid() {
+		return 0, false
+	}
+	index, ok := schema.heap.AllocationKeyIndex(key)
+	if !ok || index < 0 || uint64(index) > uint64(^uint32(0)) {
+		return 0, false
+	}
+	return uint32(index), true
+}

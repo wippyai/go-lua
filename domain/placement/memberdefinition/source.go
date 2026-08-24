@@ -130,7 +130,7 @@ func Storage() definition.Definition {
 				Relation:          "StorageRoutes",
 				Role:              member.Predicate,
 				Result:            "RouteTagCarrier",
-				Accessor:          storeMethod("Predicate", 0),
+				Accessor:          storeMethod("Predicate", -1),
 				CandidateProvider: provider,
 			},
 			{
