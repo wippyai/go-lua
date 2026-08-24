@@ -139,7 +139,7 @@ func (contribution Contribution) Clone() Contribution {
 	clone.Relations = make([]Relation, len(contribution.Relations))
 	for index, relation := range contribution.Relations {
 		clone.Relations[index] = relation
-		clone.Relations[index].Inputs = append([]string(nil), relation.Inputs...)
+		clone.Relations[index].Inputs = append([]RelationInput(nil), relation.Inputs...)
 		clone.Relations[index].Derivation.StaticAxes = append([]schema.EntryReference(nil), relation.Derivation.StaticAxes...)
 	}
 	clone.Reducers = make([]Reducer, len(contribution.Reducers))
@@ -227,7 +227,7 @@ func (source Source) Compose() (Definition, bool) {
 				continue
 			}
 			row := relation
-			row.Inputs = append([]string(nil), relation.Inputs...)
+			row.Inputs = append([]RelationInput(nil), relation.Inputs...)
 			row.Derivation.StaticAxes = append([]schema.EntryReference(nil), relation.Derivation.StaticAxes...)
 			relations[relation.Name] = row
 			base.Relations = append(base.Relations, row)
@@ -354,7 +354,10 @@ func foldForeignRows(sources []Source, axes map[schema.Key]int) ([]Source, bool)
 					order = append(order, axis)
 				}
 				row.Relations = append(row.Relations, relation)
-				names := append(append([]string(nil), relation.Subject), relation.Inputs...)
+				names := append([]string(nil), relation.Subject)
+				for _, input := range relation.Inputs {
+					names = append(names, input.Carrier)
+				}
 				carriers, carriersOK := namedCarriers(contribution.Carriers, row.Carriers, names)
 				if !carriersOK {
 					return nil, false

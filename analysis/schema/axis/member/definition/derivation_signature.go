@@ -14,12 +14,22 @@ import "github.com/wippyai/go-lua/analysis/schema"
 // it, and which coordinates it resolves to are the sealed knowledge of the
 // family that calls this, exactly as they are for a reducer.
 type DerivationShape struct {
-	BuildParams  []GoType
-	BuildResults []GoType
-	CountParams  []GoType
-	CountResults []GoType
-	AtParams     []GoType
-	AtResults    []GoType
+	BuildParams  []DerivedParam
+	BuildResults []DerivedParam
+	CountParams  []DerivedParam
+	CountResults []DerivedParam
+	AtParams     []DerivedParam
+	AtResults    []DerivedParam
+}
+
+// DerivedParam is one position of a derived derivation call. Element and Slice
+// are set only where the declaration says the position is many-valued: an
+// input delivered as the ordered cells of a selected join is a slice of the
+// execution cell view instantiated at that input's own carrier.
+type DerivedParam struct {
+	Type    GoType
+	Element GoType
+	Slice   bool
 }
 
 // axisSchemaType is the Go type one axis's own schema is spelled as: the
@@ -42,7 +52,7 @@ func axisSchemaType(source Definition) (GoType, bool) {
 // static axis is resolved through the roster, because a derivation reaching
 // another axis's schema is naming that axis's own published type rather than
 // one its consumer chose.
-func (roster Roster) DerivationSignature(axis schema.Key, relation Relation) (DerivationShape, bool) {
+func (roster Roster) DerivationSignature(axis schema.Key, relation Relation, cell GoType) (DerivationShape, bool) {
 	if !relation.Derivation.complete() {
 		return DerivationShape{}, false
 	}
@@ -58,7 +68,7 @@ func (roster Roster) DerivationSignature(axis schema.Key, relation Relation) (De
 	if !subjectOK {
 		return DerivationShape{}, false
 	}
-	params := make([]GoType, 0, len(relation.Derivation.StaticAxes)+len(relation.Inputs))
+	params := make([]DerivedParam, 0, len(relation.Derivation.StaticAxes)+len(relation.Inputs))
 	for _, static := range relation.Derivation.StaticAxes {
 		staticSource, staticOK := roster.definitionForAxis(static.Key)
 		if !staticOK {
@@ -68,23 +78,34 @@ func (roster Roster) DerivationSignature(axis schema.Key, relation Relation) (De
 		if !schemaTypeOK {
 			return DerivationShape{}, false
 		}
-		params = append(params, schemaType)
+		params = append(params, DerivedParam{Type: schemaType})
 	}
 	for _, input := range relation.Inputs {
-		carrier, carrierOK := carriers[input]
+		carrier, carrierOK := carriers[input.Carrier]
 		if !carrierOK {
 			return DerivationShape{}, false
 		}
-		params = append(params, carrier.Type)
+		if !input.Many {
+			params = append(params, DerivedParam{Type: carrier.Type})
+			continue
+		}
+		// A many-valued input is the ordered cells of a selected join. The cell
+		// view is the execution layer's, named by the caller for the same
+		// reason the reducer's is: this package states the shape without
+		// naming that package.
+		if !cell.Available() {
+			return DerivationShape{}, false
+		}
+		params = append(params, DerivedParam{Type: cell, Element: carrier.Type, Slice: true})
 	}
 	state := relation.Derivation.State
 	return DerivationShape{
 		BuildParams:  params,
-		BuildResults: []GoType{state, {Name: "bool"}},
-		CountParams:  []GoType{state},
-		CountResults: []GoType{{Name: "int"}},
-		AtParams:     []GoType{state, {Name: "int"}},
-		AtResults:    []GoType{subject.Type, {Name: "bool"}},
+		BuildResults: []DerivedParam{{Type: state}, {Type: GoType{Name: "bool"}}},
+		CountParams:  []DerivedParam{{Type: state}},
+		CountResults: []DerivedParam{{Type: GoType{Name: "int"}}},
+		AtParams:     []DerivedParam{{Type: state}, {Type: GoType{Name: "int"}}},
+		AtResults:    []DerivedParam{{Type: subject.Type}, {Type: GoType{Name: "bool"}}},
 	}, true
 }
 

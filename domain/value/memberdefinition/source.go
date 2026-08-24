@@ -114,7 +114,7 @@ func StorageTransfer() definition.Definition {
 				Name:              "StorageTransferSources",
 				Key:               "value/storage-transfer/sources",
 				Subject:           "ValueFactCarrier",
-				Inputs:            []string{"StorageTransferCarrier"},
+				Inputs:            []definition.RelationInput{{Carrier: "StorageTransferCarrier"}},
 				CandidateProvider: member.RelationRef{Axis: axisReference("value"), Member: "value/storage-transfer/candidates"},
 			},
 			{
@@ -157,7 +157,7 @@ func StorageTransfer() definition.Definition {
 				Name:              "MountedCallArguments",
 				Key:               "value/mounted-call/arguments",
 				Subject:           "ValueFactCarrier",
-				Inputs:            []string{"MountedCallArgumentCarrier"},
+				Inputs:            []definition.RelationInput{{Carrier: "MountedCallArgumentCarrier"}},
 				CandidateProvider: member.RelationRef{Axis: axisReference("value"), Member: "value/mounted-call/argument-candidates"},
 			},
 			{
@@ -204,7 +204,7 @@ func StorageTransfer() definition.Definition {
 				Name:              "ReturnBoundaryRoots",
 				Key:               "value/return-boundary/roots",
 				Subject:           "ValueFactCarrier",
-				Inputs:            []string{"ReturnBoundaryCarrier"},
+				Inputs:            []definition.RelationInput{{Carrier: "ReturnBoundaryCarrier"}},
 				CandidateProvider: member.RelationRef{Axis: axisReference("value"), Member: "value/return-boundary/candidates"},
 			},
 			{

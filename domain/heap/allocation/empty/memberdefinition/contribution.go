@@ -41,7 +41,7 @@ func Contribution() definition.Contribution {
 			Name:              "EmptyAllocationPredecessors",
 			Key:               "heap/empty-allocation/predecessors",
 			Subject:           "HeapFactCarrier",
-			Inputs:            []string{"HeapKeyCarrier"},
+			Inputs:            []definition.RelationInput{{Carrier: "HeapKeyCarrier"}},
 			CandidateProvider: member.RelationRef{Axis: heapAxis(), Member: "heap/empty-allocation/candidates"},
 		}},
 		Projections: []definition.Projection{{

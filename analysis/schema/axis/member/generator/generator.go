@@ -232,7 +232,8 @@ func Resolve(source definition.Definition) (Metadata, error) {
 		relationsByName[relation.Name] = relation
 		relationsByKey[relation.Key] = uint32(index)
 		inputTypes := make([]definition.GoType, len(relation.Inputs))
-		for inputIndex, inputName := range relation.Inputs {
+		for inputIndex, declaredInput := range relation.Inputs {
+			inputName := declaredInput.Carrier
 			inputTypes[inputIndex] = carriers[inputName].Type
 		}
 		if !relation.CandidateProvider.Available() {
@@ -278,7 +279,8 @@ func Resolve(source definition.Definition) (Metadata, error) {
 			if relation.Key != provider.Key {
 				providerCarrier := carriers[provider.Subject]
 				inputCarrier := false
-				for _, inputName := range relation.Inputs {
+				for _, declaredInput := range relation.Inputs {
+					inputName := declaredInput.Carrier
 					if input, ok := carriers[inputName]; ok && sameGoType(input.Type, providerCarrier.Type) {
 						inputCarrier = true
 						break
@@ -542,7 +544,7 @@ func renderCold(packageName string, source definition.Definition) ([]byte, error
 				if index != 0 {
 					out.WriteString(", ")
 				}
-				out.WriteString(carriers[input])
+				out.WriteString(carriers[input.Carrier])
 			}
 			out.WriteString("}")
 		}

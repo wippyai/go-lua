@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	memberdefinition "github.com/wippyai/go-lua/analysis/schema/axis/member/definition"
+	"github.com/wippyai/go-lua/analysis/schema/rule/codegen"
 	"github.com/wippyai/go-lua/domain/memberroster"
 )
 
@@ -44,7 +45,7 @@ func TestEveryAuthoredDerivationHasTheDerivedCallShape(t *testing.T) {
 				continue
 			}
 			authored++
-			shape, derivedOK := roster.DerivationSignature(composed.Axis, relation)
+			shape, derivedOK := roster.DerivationSignature(composed.Axis, relation, codegen.DerivationCellType)
 			if !derivedOK {
 				drift = append(drift, fmt.Sprintf("%s: declared rows derive no call shape", relation.Key))
 				continue
@@ -52,8 +53,8 @@ func TestEveryAuthoredDerivationHasTheDerivedCallShape(t *testing.T) {
 			for _, call := range []struct {
 				role    string
 				symbol  memberdefinition.GoSymbol
-				params  []memberdefinition.GoType
-				results []memberdefinition.GoType
+				params  []memberdefinition.DerivedParam
+				results []memberdefinition.DerivedParam
 			}{
 				{role: "Build", symbol: relation.Derivation.Build, params: shape.BuildParams, results: shape.BuildResults},
 				{role: "Count", symbol: relation.Derivation.Count, params: shape.CountParams, results: shape.CountResults},
@@ -80,7 +81,7 @@ func TestEveryAuthoredDerivationHasTheDerivedCallShape(t *testing.T) {
 
 // compareDerivationCall reports the first disagreement between a derived call
 // shape and the implementation's actual one, or the empty string.
-func compareDerivationCall(file *ast.File, declaring string, decl *ast.FuncDecl, params, results []memberdefinition.GoType) string {
+func compareDerivationCall(file *ast.File, declaring string, decl *ast.FuncDecl, params, results []memberdefinition.DerivedParam) string {
 	actualParams := flattenFields(decl.Type.Params)
 	if len(actualParams) != len(params) {
 		return fmt.Sprintf("takes %d parameters, the declaration derives %d (%s)", len(actualParams), len(params), describeDerivedTypes(params))
@@ -102,13 +103,35 @@ func compareDerivationCall(file *ast.File, declaring string, decl *ast.FuncDecl,
 	return ""
 }
 
-func compareDerivedType(file *ast.File, declaring string, expr ast.Expr, want memberdefinition.GoType, role string, position int) string {
+func compareDerivedType(file *ast.File, declaring string, expr ast.Expr, want memberdefinition.DerivedParam, role string, position int) string {
+	if want.Slice {
+		slice, isSlice := expr.(*ast.ArrayType)
+		if !isSlice || slice.Len != nil {
+			return fmt.Sprintf("%s %d is not a slice, the declaration derives %s", role, position, describeDerivedParam(want))
+		}
+		expr = slice.Elt
+		elementPath, elementSpelling, elementOK := typeArgument(file, declaring, expr)
+		if !elementOK || elementPath != want.Element.PackagePath || elementSpelling != want.Element.Name {
+			return fmt.Sprintf("%s %d delivers %s, the declaration derives %s", role, position, describeType(elementPath, elementSpelling), describeType(want.Element.PackagePath, want.Element.Name))
+		}
+	}
 	_, pointer := expr.(*ast.StarExpr)
 	path, name := resolvedType(file, declaring, expr)
-	if path == want.PackagePath && name == want.Name && pointer == want.Pointer {
+	if path == want.Type.PackagePath && name == want.Type.Name && pointer == want.Type.Pointer {
 		return ""
 	}
-	return fmt.Sprintf("%s %d is %s, the declaration derives %s", role, position, describeDerivedType(path, name, pointer), describeDerivedType(want.PackagePath, want.Name, want.Pointer))
+	return fmt.Sprintf("%s %d is %s, the declaration derives %s", role, position, describeDerivedType(path, name, pointer), describeDerivedParam(want))
+}
+
+func describeDerivedParam(want memberdefinition.DerivedParam) string {
+	spelled := describeDerivedType(want.Type.PackagePath, want.Type.Name, want.Type.Pointer)
+	if want.Element.Available() {
+		spelled += "[" + describeType(want.Element.PackagePath, want.Element.Name) + "]"
+	}
+	if want.Slice {
+		return "[]" + spelled
+	}
+	return spelled
 }
 
 func describeDerivedType(path, name string, pointer bool) string {
@@ -119,10 +142,10 @@ func describeDerivedType(path, name string, pointer bool) string {
 	return spelled
 }
 
-func describeDerivedTypes(types []memberdefinition.GoType) string {
-	spelled := make([]string, 0, len(types))
-	for _, typ := range types {
-		spelled = append(spelled, describeDerivedType(typ.PackagePath, typ.Name, typ.Pointer))
+func describeDerivedTypes(params []memberdefinition.DerivedParam) string {
+	spelled := make([]string, 0, len(params))
+	for _, param := range params {
+		spelled = append(spelled, describeDerivedParam(param))
 	}
 	return strings.Join(spelled, ", ")
 }

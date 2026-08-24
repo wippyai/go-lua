@@ -100,7 +100,7 @@ func Storage() definition.Definition {
 				Name:              "StorageRoutes",
 				Key:               "placement/store/storage-routes",
 				Subject:           "StorageRouteCarrier",
-				Inputs:            []string{"StorageTransferCarrier", "ValueFactCarrier"},
+				Inputs:            []definition.RelationInput{{Carrier: "StorageTransferCarrier"}, {Carrier: "ValueFactCarrier"}},
 				CandidateProvider: provider,
 				Derivation: definition.RelationDerivation{
 					State: storeGoType("RoutePlan"),

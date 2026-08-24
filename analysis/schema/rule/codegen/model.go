@@ -512,6 +512,17 @@ const (
 // named a container of its own would be asking for a second copy of a vector
 // the read boundary already owns. An emitter instantiates it at the input's
 // declared fact carrier.
+// DerivationCellType is the view one many-valued derivation input is
+// delivered through: the cells a selected join answered, in the order it
+// answered them. It is a constant of this package for the same reason the
+// vector and the outcome are - a derivation reads the cells the execution
+// layer already materialized, and an owner naming a container of its own
+// would be asking for a second copy of them.
+var DerivationCellType = memberdefinition.GoType{
+	PackagePath: "github.com/wippyai/go-lua/analysis/engine/execution",
+	Name:        "SelectedCell",
+}
+
 var ReducerVectorType = memberdefinition.GoType{
 	PackagePath: "github.com/wippyai/go-lua/analysis/engine/execution",
 	Name:        "SummaryVector",

@@ -80,7 +80,7 @@ func TypeFactTransfer() definition.Definition {
 				Name:              "TypeFactSources",
 				Key:               "static-type/storage-transfer/sources",
 				Subject:           "TypeFactCarrier",
-				Inputs:            []string{"StorageTransferCarrier"},
+				Inputs:            []definition.RelationInput{{Carrier: "StorageTransferCarrier"}},
 				CandidateProvider: member.RelationRef{Axis: axisReference("static-type"), Member: "static-type/storage-transfer/candidates"},
 			},
 		},

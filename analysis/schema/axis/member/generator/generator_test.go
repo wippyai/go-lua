@@ -44,7 +44,7 @@ func externalProviderDefinition() definition.Definition {
 		Binding:     definition.Binding{Key: definition.KeyNormalization{Carrier: "Key", Dense: definition.GoType{Name: "uint32"}, Normalizer: definition.GoSymbol{PackagePath: "example/placement", Name: "Normalize", Receiver: owner, ResultIndex: 0}}},
 		Signature:   definition.Signature{Key: "Key", Fact: "Fact"},
 		Carriers:    []definition.Carrier{{Name: "Candidate", Key: "carrier/value/storage-transfer", Type: candidate}, {Name: "Fact", Key: "carrier/placement/fact", Type: fact}, {Name: "Key", Key: "carrier/placement/key", Type: key}},
-		Relations:   []definition.Relation{{Name: "Route", Key: "placement/store/route", Subject: "Fact", Inputs: []string{"Candidate", "Fact"}, CandidateProvider: provider}},
+		Relations:   []definition.Relation{{Name: "Route", Key: "placement/store/route", Subject: "Fact", Inputs: []definition.RelationInput{{Carrier: "Candidate"}, {Carrier: "Fact"}}, CandidateProvider: provider}},
 		Projections: []definition.Projection{{Name: "Destination", Key: "placement/store/destination", Relation: "Route", Role: member.Destination, Result: "Key", CandidateProvider: provider, Accessor: definition.GoSymbol{PackagePath: "example/placement", Name: "Destination", Receiver: fact, ResultIndex: 0}}},
 		Reducers:    []definition.Reducer{{Name: "Store", Key: "placement/reducer/store", Inputs: []definition.ReducerInput{{Axis: axis("placement"), Carrier: "Fact", Form: member.ReadFormExact, Multiplicity: member.MultiplicityOne}}, Outputs: []definition.ReducerOutput{{Axis: axis("placement"), Carrier: "Fact"}}, Implementation: definition.GoSymbol{PackagePath: "example/placement", Name: "Store", ResultIndex: 0}}},
 	}
@@ -81,7 +81,7 @@ func localDependentDefinition() definition.Definition {
 	provider := source.Relations[0].CandidateProvider
 	fact := definition.GoType{PackagePath: "example/self", Name: "Fact"}
 	source.Relations = append(source.Relations, definition.Relation{
-		Name: "UsesCandidate", Key: "self/uses-candidate", Subject: "Fact", Inputs: []string{"Candidate", "Fact"},
+		Name: "UsesCandidate", Key: "self/uses-candidate", Subject: "Fact", Inputs: []definition.RelationInput{{Carrier: "Candidate"}, {Carrier: "Fact"}},
 		CandidateProvider: provider,
 	})
 	source.Projections = append(source.Projections, definition.Projection{
@@ -129,7 +129,7 @@ func TestResolveRequiresDeclaredProviderCarrierForLocalDependentRelation(t *test
 	if len(metadata.Relations) != 2 || !metadata.Relations[1].CandidateProviderLocal || metadata.Relations[1].CandidateRelation != 0 {
 		t.Fatalf("dependent provider metadata=%+v", metadata.Relations)
 	}
-	accepted.Relations[1].Inputs = []string{"Fact"}
+	accepted.Relations[1].Inputs = []definition.RelationInput{{Carrier: "Fact"}}
 	if _, err := Resolve(accepted); err == nil {
 		t.Fatal("dependent relation admitted without the provider subject carrier")
 	}

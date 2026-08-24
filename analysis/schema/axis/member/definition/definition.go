@@ -108,7 +108,7 @@ type Relation struct {
 	Name    string
 	Key     schema.Key
 	Subject string
-	Inputs  []string
+	Inputs  []RelationInput
 	// Axis is the axis whose rows these are. A relation over call coordinates
 	// is call-axis data whichever rule declares it, so a contribution states
 	// the axis per row rather than per contribution and the roster folds the
@@ -210,6 +210,24 @@ func (relation Relation) memberSetComplete(relations map[string]Relation, byKey 
 	}
 	_ = relations
 	return sameType(relation.MemberCount.Receiver, parentSubject.Type) && sameType(relation.MemberAt.Receiver, parentSubject.Type)
+}
+
+// RelationInput is one carrier a dependent relation's derivation consumes.
+//
+// Many says the input arrives as the ordered CELLS of a selected join rather
+// than as one carrier value. A derivation over a whole selection - which is
+// what a route set computed from every mounted actual is - cannot be handed
+// one member at a time without asking it to rebuild the correlation the read
+// already established, so the delivery is declared here and the derived Build
+// signature carries it.
+//
+// The delivery is owner-local on purpose. It says how THIS axis's Build is
+// called, not how another axis addresses these rows, so it is not a cold
+// catalog row: a child consuming the relation still addresses it by candidate
+// and projection exactly as before.
+type RelationInput struct {
+	Carrier string
+	Many    bool
 }
 
 // RelationDerivation is the direct-call shape for one dependent relation's
@@ -429,7 +447,8 @@ func (definition Definition) Catalog() (member.Catalog, bool) {
 			return member.Catalog{}, false
 		}
 		inputs := make([]member.Carrier, len(relation.Inputs))
-		for inputIndex, inputName := range relation.Inputs {
+		for inputIndex, declared := range relation.Inputs {
+			inputName := declared.Carrier
 			input, inputOK := carriers[inputName]
 			if !inputOK {
 				return member.Catalog{}, false
@@ -708,7 +727,8 @@ func (definition Definition) Complete() bool {
 			return false
 		}
 		inputCarrier := false
-		for _, inputName := range relation.Inputs {
+		for _, declaredInput := range relation.Inputs {
+			inputName := declaredInput.Carrier
 			input, inputOK := carriers[inputName]
 			if inputOK && sameType(input.Type, providerCarrier.Type) {
 				inputCarrier = true
@@ -772,8 +792,8 @@ func projectionReceiverMatches(accessor GoSymbol, relation Relation, carriers ma
 	if subject, ok := carriers[relation.Subject]; ok && sameType(subject.Type, accessor.Receiver) {
 		return true
 	}
-	for _, inputName := range relation.Inputs {
-		if input, ok := carriers[inputName]; ok && sameType(input.Type, accessor.Receiver) {
+	for _, declaredInput := range relation.Inputs {
+		if input, ok := carriers[declaredInput.Carrier]; ok && sameType(input.Type, accessor.Receiver) {
 			return true
 		}
 	}
@@ -788,7 +808,7 @@ func (definition Definition) Clone() Definition {
 	clone.Relations = make([]Relation, len(definition.Relations))
 	for index, relation := range definition.Relations {
 		clone.Relations[index] = relation
-		clone.Relations[index].Inputs = append([]string(nil), relation.Inputs...)
+		clone.Relations[index].Inputs = append([]RelationInput(nil), relation.Inputs...)
 		clone.Relations[index].CandidateProvider = relation.CandidateProvider
 		clone.Relations[index].CandidateResolver = cloneSymbol(relation.CandidateResolver)
 		clone.Relations[index].CandidateOrdinal = cloneSymbol(relation.CandidateOrdinal)

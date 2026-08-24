@@ -56,7 +56,7 @@ func Contribution() definition.Contribution {
 			Name:              "BinaryArithmeticSources",
 			Key:               "value/binary-arithmetic/sources",
 			Subject:           "ValueFactCarrier",
-			Inputs:            []string{"BinaryArithmeticCarrier"},
+			Inputs:            []definition.RelationInput{{Carrier: "BinaryArithmeticCarrier"}},
 			CandidateProvider: provider,
 		}},
 		Projections: []definition.Projection{
