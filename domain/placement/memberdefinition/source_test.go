@@ -31,11 +31,20 @@ func TestStorageDefinitionIsCompleteAndForeignProviderOwned(t *testing.T) {
 	if !source.Complete() {
 		t.Fatal("Placement Store definition is incomplete")
 	}
-	if source.Axis != schema.Key("placement") || len(source.Relations) != 1 || len(source.Projections) != 3 || len(source.Reducers) != 1 {
-		t.Fatalf("unexpected source shape: axis=%q relations=%d projections=%d reducers=%d", source.Axis, len(source.Relations), len(source.Projections), len(source.Reducers))
+	if source.Axis != schema.Key("placement") {
+		t.Fatalf("unexpected source axis: %q", source.Axis)
 	}
 
-	relation := source.Relations[0]
+	var relation definition.Relation
+	for _, candidate := range source.Relations {
+		if candidate.Key == "placement/store/storage-routes" {
+			relation = candidate
+			break
+		}
+	}
+	if relation.Key == "" {
+		t.Fatal("composed Placement definition omitted Store's route relation")
+	}
 	provider := relation.CandidateProvider
 	if provider.Axis.Key != schema.Key("value") || provider.Member != schema.Key("value/storage-transfer/candidates") {
 		t.Fatalf("route relation provider=%+v, want Value storage-transfer candidates", provider)
@@ -60,17 +69,35 @@ func TestStorageDefinitionIsCompleteAndForeignProviderOwned(t *testing.T) {
 		{"StorageRouteTag", "RouteTagCarrier", "Predicate", member.Predicate},
 		{"StorageRouteDestination", "PlacementKeyCarrier", "Coordinates", member.Destination},
 	}
-	for index, want := range wantProjections {
-		projection := source.Projections[index]
+	for _, want := range wantProjections {
+		var projection definition.Projection
+		for _, candidate := range source.Projections {
+			if candidate.Name == want.name {
+				projection = candidate
+				break
+			}
+		}
+		if projection.Name == "" {
+			t.Fatalf("composed Placement definition omitted projection %s", want.name)
+		}
 		if projection.Name != want.name || projection.Result != want.result || projection.Accessor.Name != want.accessor || projection.CandidateProvider != provider {
-			t.Fatalf("projection[%d]=%+v, want name=%s result=%s accessor=%s role=%d provider=%+v", index, projection, want.name, want.result, want.accessor, want.role, provider)
+			t.Fatalf("projection=%+v, want name=%s result=%s accessor=%s role=%d provider=%+v", projection, want.name, want.result, want.accessor, want.role, provider)
 		}
 		if projection.Role != want.role {
-			t.Fatalf("projection[%d] role=%d, want %d", index, projection.Role, want.role)
+			t.Fatalf("projection %s role=%d, want %d", want.name, projection.Role, want.role)
 		}
 	}
 
-	reducer := source.Reducers[0]
+	var reducer definition.Reducer
+	for _, candidate := range source.Reducers {
+		if candidate.Key == "placement/store/reducer/storage" {
+			reducer = candidate
+			break
+		}
+	}
+	if reducer.Key == "" {
+		t.Fatal("composed Placement definition omitted Store's reducer")
+	}
 	if reducer.Candidate != "StorageTransferCarrier" || len(reducer.Inputs) != 2 || len(reducer.Outputs) != 1 || reducer.Implementation.Name != "StorageFold" {
 		t.Fatalf("storage reducer=%+v", reducer)
 	}
