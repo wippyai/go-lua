@@ -4,6 +4,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/engine"
 	"github.com/wippyai/go-lua/analysis/identity"
 	"github.com/wippyai/go-lua/analysis/program/link"
+	"github.com/wippyai/go-lua/domain/effect"
 	"github.com/wippyai/go-lua/domain/effect/factor"
 )
 
@@ -68,7 +69,7 @@ func BindHot(binding *engine.SchemaBinding, fragment *SchemaFragment, algebra *f
 	}
 	owner := &HotOwner{binding: binding, fragment: fragment, algebra: algebra, linkOwner: algebra.LinkOwner()}
 	spec, specOK := owner.FactorSpec()
-	if !specOK || !engine.BindFactor[coordinate](binding, fragment.slot, spec) {
+	if !specOK || !engine.BindFactor[effect.DenseCoordinate](binding, fragment.slot, spec) {
 		return nil, false
 	}
 	return owner, true
@@ -78,21 +79,21 @@ func BindHot(binding *engine.SchemaBinding, fragment *SchemaFragment, algebra *f
 // BindHot hands to the engine. A declaration surface projects this record
 // instead of restating the lattice, admission, or widening law, so the two
 // cannot drift.
-func (owner *HotOwner) FactorSpec() (engine.HotFactorSpec[coordinate, factor.Value], bool) {
+func (owner *HotOwner) FactorSpec() (engine.HotFactorSpec[effect.DenseCoordinate, factor.Value], bool) {
 	if owner == nil || owner.algebra == nil || !owner.algebra.Valid() || !validCoordinateCount(owner.algebra.RootCount()) {
-		return engine.HotFactorSpec[coordinate, factor.Value]{}, false
+		return engine.HotFactorSpec[effect.DenseCoordinate, factor.Value]{}, false
 	}
 	lattice, ok := owner.algebra.Lattice()
 	if !ok {
-		return engine.HotFactorSpec[coordinate, factor.Value]{}, false
+		return engine.HotFactorSpec[effect.DenseCoordinate, factor.Value]{}, false
 	}
-	return engine.HotFactorSpec[coordinate, factor.Value]{
+	return engine.HotFactorSpec[effect.DenseCoordinate, factor.Value]{
 		KeyEnd:      uint64(owner.algebra.RootCount()),
 		Lattice:     lattice,
 		Default:     owner.algebra.Default(),
 		AdmitAt:     owner.admits,
 		Fingerprint: owner.algebra.Fingerprint,
-		WidenRank: engine.Measure[coordinate, factor.Value]{
+		WidenRank: engine.Measure[effect.DenseCoordinate, factor.Value]{
 			Width: 1,
 			At:    owner.widenRank,
 		},
@@ -154,7 +155,7 @@ func BindExactReadRule[O, RV any](owner *HotOwner, slot *engine.RuleSlot[factor.
 	if owner == nil || owner.binding == nil || owner.fragment == nil || slot == nil {
 		return nil, engine.Read[engine.OrderedCells[RV]]{}, false
 	}
-	read, ok := engine.BindRuleWithOpaqueExactRead[coordinate](owner.binding, slot, readSlot, readFactor, write, owner.fragment.Ref(), spec, projectRead, projectWrite)
+	read, ok := engine.BindRuleWithOpaqueExactRead[effect.DenseCoordinate](owner.binding, slot, readSlot, readFactor, write, owner.fragment.Ref(), spec, projectRead, projectWrite)
 	if !ok {
 		return nil, engine.Read[engine.OrderedCells[RV]]{}, false
 	}
@@ -169,7 +170,7 @@ func BindSelectedRuleDirect[O any](owner *HotOwner, slot *engine.RuleSlot[factor
 	if owner == nil || owner.binding == nil || owner.fragment == nil || slot == nil {
 		return nil, false
 	}
-	if !engine.BindSelectedExactRuleDirect[coordinate](owner.binding, slot, write, owner.fragment.Ref(), spec, projectWrite) {
+	if !engine.BindSelectedExactRuleDirect[effect.DenseCoordinate](owner.binding, slot, write, owner.fragment.Ref(), spec, projectWrite) {
 		return nil, false
 	}
 	return &RuleImplementation[O]{owner: owner, slot: slot}, true
@@ -182,7 +183,7 @@ func AddSelectedRuleDirectExactRead[O, RV any](issuer *RuleImplementation[O], sl
 	if issuer == nil || issuer.owner == nil || issuer.slot == nil {
 		return engine.Read[engine.OrderedCells[RV]]{}, false
 	}
-	return engine.BindSelectedRuleDirectExactRead[coordinate](issuer.owner.binding, issuer.slot, slot, factor, project)
+	return engine.BindSelectedRuleDirectExactRead[effect.DenseCoordinate](issuer.owner.binding, issuer.slot, slot, factor, project)
 }
 
 // AddSelectedRuleDirectOperandRead fills one operand-dependent selected
@@ -194,23 +195,23 @@ func AddSelectedRuleDirectOperandRead[O, RV any, Tag interface {
 	if issuer == nil || issuer.owner == nil || issuer.slot == nil || locate == nil {
 		return engine.Read[engine.Selection[Tag, engine.OrderedCells[RV]]]{}, false
 	}
-	return engine.BindSelectedRuleDirectOperandRead[coordinate, factor.Value, O, RV, Tag](issuer.owner.binding, issuer.slot, slot, source, locate)
+	return engine.BindSelectedRuleDirectOperandRead[effect.DenseCoordinate, factor.Value, O, RV, Tag](issuer.owner.binding, issuer.slot, slot, source, locate)
 }
 
 // ResolveRuleImplementation issues the engine receipt only after the exact
 // shared SchemaBinding seals.
-func ResolveRuleImplementation[O any](issuer *RuleImplementation[O]) (*engine.RuleImplementation[coordinate, factor.Value, O], bool) {
+func ResolveRuleImplementation[O any](issuer *RuleImplementation[O]) (*engine.RuleImplementation[effect.DenseCoordinate, factor.Value, O], bool) {
 	if issuer == nil || issuer.owner == nil || issuer.slot == nil {
 		return nil, false
 	}
-	implementation, ok := engine.RuleImplementationAt[coordinate, factor.Value, O](issuer.owner.binding, issuer.slot)
+	implementation, ok := engine.RuleImplementationAt[effect.DenseCoordinate, factor.Value, O](issuer.owner.binding, issuer.slot)
 	if !ok {
 		return nil, false
 	}
 	return implementation, true
 }
 
-func ResolveRuleImplementationFor[O any](owner *HotOwner, issuer *RuleImplementation[O]) (*engine.RuleImplementation[coordinate, factor.Value, O], bool) {
+func ResolveRuleImplementationFor[O any](owner *HotOwner, issuer *RuleImplementation[O]) (*engine.RuleImplementation[effect.DenseCoordinate, factor.Value, O], bool) {
 	if owner == nil || issuer == nil || issuer.owner != owner {
 		return nil, false
 	}
@@ -220,19 +221,19 @@ func ResolveRuleImplementationFor[O any](owner *HotOwner, issuer *RuleImplementa
 // Ref issues the exact Factor coordinate proof for one algebra-owned body
 // root. Foreign roots, including roots from another same-Link algebra, fail
 // closed at the algebra owner fence.
-func (owner *HotOwner) Ref(root factor.Root) (engine.Ref[coordinate], bool) {
+func (owner *HotOwner) Ref(root factor.Root) (engine.Ref[effect.DenseCoordinate], bool) {
 	if owner == nil || owner.binding == nil || owner.fragment == nil || owner.algebra == nil {
-		return engine.Ref[coordinate]{}, false
+		return engine.Ref[effect.DenseCoordinate]{}, false
 	}
 	index, ok := owner.algebra.RootIndex(root)
 	if !ok || index < 0 || uint64(index) > uint64(^uint32(0)) {
-		return engine.Ref[coordinate]{}, false
+		return engine.Ref[effect.DenseCoordinate]{}, false
 	}
-	implementation, ok := engine.FactorImplementationAt[coordinate, factor.Value](owner.binding, owner.fragment.slot)
+	implementation, ok := engine.FactorImplementationAt[effect.DenseCoordinate, factor.Value](owner.binding, owner.fragment.slot)
 	if !ok {
-		return engine.Ref[coordinate]{}, false
+		return engine.Ref[effect.DenseCoordinate]{}, false
 	}
-	return implementation.Ref(coordinate(index))
+	return implementation.Ref(effect.DenseCoordinate(index))
 }
 
 // SelectRouteTyped emits one exact selected Effect root without exporting the
@@ -244,12 +245,12 @@ func SelectRouteTyped[Tag interface {
 	return ok && engine.SelectRoute(context, ref, tag)
 }
 
-func (owner *HotOwner) admits(index coordinate, value factor.Value) bool {
+func (owner *HotOwner) admits(index effect.DenseCoordinate, value factor.Value) bool {
 	root, ok := owner.rootAt(index)
 	return ok && owner.algebra.Admit(root, value)
 }
 
-func (owner *HotOwner) widenRank(index coordinate, value factor.Value, component int) uint64 {
+func (owner *HotOwner) widenRank(index effect.DenseCoordinate, value factor.Value, component int) uint64 {
 	root, ok := owner.rootAt(index)
 	if !ok {
 		return 0
@@ -257,7 +258,7 @@ func (owner *HotOwner) widenRank(index coordinate, value factor.Value, component
 	return owner.algebra.WidenRank(root, value, component)
 }
 
-func (owner *HotOwner) rootAt(index coordinate) (factor.Root, bool) {
+func (owner *HotOwner) rootAt(index effect.DenseCoordinate) (factor.Root, bool) {
 	if owner == nil || owner.algebra == nil || uint64(index) >= uint64(owner.algebra.RootCount()) {
 		return factor.Root{}, false
 	}

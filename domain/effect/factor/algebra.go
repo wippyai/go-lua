@@ -302,6 +302,16 @@ func (a *Algebra) RootIndex(root Root) (int, bool) {
 	return int(root.slot - 1), true
 }
 
+// DenseKeyIndex is the axis member key-binding form of RootIndex: the same
+// dense coordinate, in the uint32 width the generated relation owner
+// normalizes against.
+func (a *Algebra) DenseKeyIndex(root Root) (uint32, bool) {
+	if !a.ownsRoot(root) {
+		return 0, false
+	}
+	return root.slot - 1, true
+}
+
 // RootID is Effect's portable body-root proof. Dense root slots remain hot
 // owner state and never enter rule operands or replay identities.
 func (a *Algebra) RootID(root Root) (identity.ContentID, bool) {

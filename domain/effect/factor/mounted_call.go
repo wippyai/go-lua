@@ -125,3 +125,37 @@ func (a *Algebra) MountedCallIdentity(mounted MountedCall) (applicationID, modul
 	row, ok := a.mountedCallRow(mounted)
 	return row.applicationID, row.moduleID, row.contextID, ok
 }
+
+// MountedCallForOccurrence is the axis member candidate resolver: the sole
+// path from a mounted Program occurrence to Effect's canonical mounted-call
+// receipt. It composes the dense inverse and the cold accessor rather than
+// adding a second occurrence directory.
+func (a *Algebra) MountedCallForOccurrence(moduleID, occurrenceID identity.ContentID) (MountedCall, bool) {
+	ordinal, ok := a.MountedCallOrdinalForOccurrence(moduleID, occurrenceID)
+	if !ok {
+		return MountedCall{}, false
+	}
+	return a.MountedCallAt(ordinal)
+}
+
+// MountedCallOrdinal is the candidate directory's own inverse: the dense
+// position MountedCallAt would return this exact receipt from. It is the
+// owner-receiver form the axis member candidate directory addresses, in the
+// uint32 width the generated relation owner returns it in.
+func (a *Algebra) MountedCallOrdinal(mounted MountedCall) (uint32, bool) {
+	if !a.Valid() || !mounted.Valid() || mounted.owner != a {
+		return 0, false
+	}
+	return mounted.slot - 1, true
+}
+
+// Root is the axis member destination projection: the body coordinate this
+// mounted call's Effect contribution is transported through. It is declared
+// on the candidate value itself, exactly as CallCoordinate carries its own
+// Key, so the generated projection needs no algebra-mediated indirection.
+func (mounted MountedCall) Root() (Root, bool) {
+	if mounted.owner == nil {
+		return Root{}, false
+	}
+	return mounted.owner.RootForMountedCall(mounted)
+}

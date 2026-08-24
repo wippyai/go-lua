@@ -9,6 +9,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/schema/programmount"
 	"github.com/wippyai/go-lua/analysis/schema/structure"
 	"github.com/wippyai/go-lua/analysis/schema/vocabulary"
+	"github.com/wippyai/go-lua/domain/effect"
 	"github.com/wippyai/go-lua/domain/effect/factor"
 	"github.com/wippyai/go-lua/domain/pack"
 )
@@ -114,8 +115,10 @@ func AxisEntry[A axisInputs]() axis.Spec[A] {
 		// The effect factor's facts are published as one column, written by this
 		// axis's own principal: the lane whose rules write the factor is the lane
 		// the engine admits to fill the column a consumer reads it out of.
-		Frame:    axis.Frame{Outputs: []axis.Output{{Key: "effect/facts", Writer: "effect"}}},
-		Semantic: "semantic/factor/effect",
+		Frame:     axis.Frame{Outputs: []axis.Output{{Key: "effect/facts", Writer: "effect"}}},
+		Catalog:   effect.AxisMemberCatalog(),
+		Signature: axis.Signature{Key: effect.EffectKeyCarrier, Fact: effect.EffectFactCarrier},
+		Semantic:  "semantic/factor/effect",
 		Mount: axis.NewMount(func(context axis.Mounting[A]) (*factor.Algebra, MountRejection, bool) {
 			return mountEffectAlgebra[A](context.Inputs)
 		}),
@@ -142,15 +145,15 @@ func AlgebraAxis(owner *HotOwner) (axis.Algebra[factor.Value], bool) {
 	return adoptFactor(spec)
 }
 
-func adoptFactor(spec engine.HotFactorSpec[coordinate, factor.Value]) (axis.Algebra[factor.Value], bool) {
-	return axis.Adopt(axis.CarrierAlgebra[coordinate, factor.Value]{
+func adoptFactor(spec engine.HotFactorSpec[effect.DenseCoordinate, factor.Value]) (axis.Algebra[factor.Value], bool) {
+	return axis.Adopt(axis.CarrierAlgebra[effect.DenseCoordinate, factor.Value]{
 		KeyEnd:      spec.KeyEnd,
 		Lattice:     spec.Lattice,
 		Default:     spec.Default,
 		AdmitAt:     spec.AdmitAt,
 		Fingerprint: spec.Fingerprint,
-		Widen:       axis.CarrierRank[coordinate, factor.Value]{Width: spec.WidenRank.Width, At: spec.WidenRank.At},
-		Narrow:      axis.CarrierRank[coordinate, factor.Value]{Width: spec.NarrowRank.Width, At: spec.NarrowRank.At},
+		Widen:       axis.CarrierRank[effect.DenseCoordinate, factor.Value]{Width: spec.WidenRank.Width, At: spec.WidenRank.At},
+		Narrow:      axis.CarrierRank[effect.DenseCoordinate, factor.Value]{Width: spec.NarrowRank.Width, At: spec.NarrowRank.At},
 	})
 }
 

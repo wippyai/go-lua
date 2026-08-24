@@ -16,6 +16,7 @@ package memberroster
 import (
 	"github.com/wippyai/go-lua/analysis/schema/axis/member/definition"
 	callbase "github.com/wippyai/go-lua/domain/call/memberdefinition"
+	effectbase "github.com/wippyai/go-lua/domain/effect/memberdefinition"
 	heapbase "github.com/wippyai/go-lua/domain/heap/memberdefinition"
 
 	heapclosed "github.com/wippyai/go-lua/domain/heap/allocation/closed/memberdefinition"
@@ -97,6 +98,11 @@ func Composition() (definition.Roster, bool) {
 			Package: "call",
 			Name:    "call",
 			Base:    callbase.MountedCall(),
+		},
+		definition.Source{
+			Package: "effect",
+			Name:    "effect",
+			Base:    effectbase.MountedCall(),
 		},
 	)
 }
