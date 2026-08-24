@@ -36,6 +36,7 @@ import (
 	valueequality "github.com/wippyai/go-lua/domain/value/equality/memberdefinition"
 	valuebase "github.com/wippyai/go-lua/domain/value/memberdefinition"
 	valueorder "github.com/wippyai/go-lua/domain/value/order/memberdefinition"
+	valuerefinement "github.com/wippyai/go-lua/domain/value/refinement/memberdefinition"
 	valuesource "github.com/wippyai/go-lua/domain/value/source/memberdefinition"
 	valuetransfer "github.com/wippyai/go-lua/domain/value/transfer/memberdefinition"
 )
@@ -54,6 +55,7 @@ func Composition() (definition.Roster, bool) {
 				valuebootstrap.Contribution(),
 				valuearithmetic.Contribution(),
 				valueequality.Contribution(),
+				valuerefinement.Contribution(),
 				valueorder.Contribution(),
 			},
 		},

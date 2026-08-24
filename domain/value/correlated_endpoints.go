@@ -726,6 +726,92 @@ func (schema *Schema) BinaryOrderAt(index int) (BinaryOrder, bool) {
 	return row, true
 }
 
+// Write projects the owner-issued narrowed-write coordinate from the sealed
+// endpoint vector.
+func (row PresenceRefinement) Write() (Coordinate, bool) {
+	vector, ok := row.EndpointVector()
+	if !ok {
+		return Coordinate{}, false
+	}
+	return vector.Coordinate(EndpointWrite)
+}
+
+// Left projects the owner-issued guarded-read coordinate from the sealed
+// endpoint vector.
+func (row PresenceRefinement) Left() (Coordinate, bool) {
+	vector, ok := row.EndpointVector()
+	if !ok {
+		return Coordinate{}, false
+	}
+	return vector.Coordinate(EndpointLeft)
+}
+
+// PresenceRefinementForArtifactOccurrence resolves the owner-issued
+// refinement row for one mounted Program occurrence. Its endpoint ordinal is
+// subsequently redeemed through PresenceRefinementAt, which addresses the
+// shared endpoint table directly.
+func (schema *Schema) PresenceRefinementForArtifactOccurrence(module, occurrence identity.ContentID) (PresenceRefinement, bool) {
+	if schema == nil || !module.Available() || !occurrence.Available() {
+		return PresenceRefinement{}, false
+	}
+	row, ok := schema.PresenceRefinement(module, occurrence)
+	if !ok || !schema.OwnsPresenceRefinement(row) {
+		return PresenceRefinement{}, false
+	}
+	_, vectorOK := row.EndpointVector()
+	return row, vectorOK
+}
+
+// EndpointOrdinal is the one dense candidate address PresenceRefinement uses.
+// It is the ordinal in the Schema's shared endpoint table, not a
+// refinement family-local index.
+func (row PresenceRefinement) EndpointOrdinal() (uint32, bool) {
+	vector, ok := row.EndpointVector()
+	if !ok {
+		return 0, false
+	}
+	ordinal, ordinalOK := vector.Ordinal()
+	if !ordinalOK || uint64(ordinal) > uint64(^uint32(0)) {
+		return 0, false
+	}
+	return uint32(ordinal), true
+}
+
+// Ordinal is the owner-issued dense candidate address. It is an alias of
+// EndpointOrdinal: there is no second refinement candidate index.
+func (row PresenceRefinement) Ordinal() (uint32, bool) {
+	return row.EndpointOrdinal()
+}
+
+// PresenceRefinementOrdinal returns the shared endpoint-table ordinal of one
+// owner-issued refinement row. It deliberately does not consult or create a
+// family-local map.
+func (schema *Schema) PresenceRefinementOrdinal(row PresenceRefinement) (uint32, bool) {
+	if schema == nil || !schema.OwnsPresenceRefinement(row) {
+		return 0, false
+	}
+	return row.EndpointOrdinal()
+}
+
+// PresenceRefinementAt redeems a dense refinement candidate by the ordinal of
+// the existing endpoint table. Endpoint rows belonging to another family
+// refuse; they remain part of the shared denominator and are never
+// renumbered.
+func (schema *Schema) PresenceRefinementAt(index int) (PresenceRefinement, bool) {
+	if schema == nil || !schema.endpointsSealed() || index < 0 || index >= len(schema.endpoints) {
+		return PresenceRefinement{}, false
+	}
+	endpoint := schema.endpoints[index]
+	if endpoint.family != endpointFamilyPresenceRefinement {
+		return PresenceRefinement{}, false
+	}
+	row, ok := schema.presenceRefinements[endpoint.key]
+	if !ok || row.endpoints != uint32(index+1) || !schema.OwnsPresenceRefinement(row) {
+		return PresenceRefinement{}, false
+	}
+	return row, true
+}
+
 func (row BinaryEquality) Endpoint(role EndpointRole) (uint64, bool) {
 	vector, ok := row.EndpointVector()
 	if !ok {

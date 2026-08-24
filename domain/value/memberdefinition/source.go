@@ -71,6 +71,7 @@ func StorageTransfer() definition.Definition {
 			{Name: "BinaryArithmeticCarrier", Key: "carrier/value/binary-arithmetic", Type: binaryArithmetic},
 			{Name: "BinaryEqualityCarrier", Key: "carrier/value/binary-equality", Type: binaryEquality},
 			{Name: "BinaryOrderCarrier", Key: "carrier/value/binary-order", Type: binaryOrder},
+			{Name: "PresenceRefinementCarrier", Key: "carrier/value/presence-refinement", Type: valueGoType("PresenceRefinement")},
 			{Name: "SourceSeedCarrier", Key: "carrier/value/source-seed", Type: valueGoType("SourceSeed")},
 			{Name: "GlobalBootstrapResultCarrier", Key: "carrier/value/global-bootstrap-result", Type: valueGoType("GlobalBootstrapResult")},
 			// These are the owner-issued candidate relationships whose
@@ -139,6 +140,19 @@ func StorageTransfer() definition.Definition {
 				CandidateResolver: valueMethod("BinaryOrderForArtifactOccurrence", "Schema", true, 0),
 				CandidateOrdinal:  valueMethod("BinaryOrderOrdinal", "Schema", true, 0),
 				CandidateAt:       valueMethod("BinaryOrderAt", "Schema", true, 0),
+			},
+			{
+				// The one refinement candidate directory. Its endpoint
+				// vector is the same sealed table arithmetic/equality/order
+				// use; the refinement family retains its own owner-issued
+				// candidate relation over that shared table.
+				Name:              "PresenceRefinementCandidates",
+				Key:               "value/presence-refinement/candidates",
+				Subject:           "PresenceRefinementCarrier",
+				CandidateProvider: member.RelationRef{Axis: axisReference("value"), Member: "value/presence-refinement/candidates"},
+				CandidateResolver: valueMethod("PresenceRefinementForArtifactOccurrence", "Schema", true, 0),
+				CandidateOrdinal:  valueMethod("PresenceRefinementOrdinal", "Schema", true, 0),
+				CandidateAt:       valueMethod("PresenceRefinementAt", "Schema", true, 0),
 			},
 			{
 				Name:              "StorageTransferSources",

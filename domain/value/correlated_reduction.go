@@ -38,6 +38,24 @@ func ArithmeticValue(candidate BinaryArithmetic, left, right Value) (Value, stru
 	return result, structure.Concrete
 }
 
+// PresenceRefinementValue is Value's complete branch-narrowing judgment. The
+// candidate authenticates the guarded polarity and owning Schema; execution
+// supplies the one already owner-issued exact cell at the guarded coordinate.
+func PresenceRefinementValue(candidate PresenceRefinement, fact Value) (Value, structure.ReductionOutcome) {
+	if candidate.schema == nil || !candidate.schema.OwnsPresenceRefinement(candidate) || !candidate.schema.owns(fact) {
+		return Value{}, structure.Refuse
+	}
+	present, ok := candidate.Present()
+	if !ok {
+		return Value{}, structure.Refuse
+	}
+	result, ok := candidate.schema.FilterPresence(fact, present)
+	if !ok {
+		return Value{}, structure.Refuse
+	}
+	return result, structure.Concrete
+}
+
 // EqualityValue is Value's complete binary-equality judgment. The candidate
 // authenticates the equality polarity and owning Schema; execution supplies
 // the two already owner-issued exact cells and owns missing-cell handling.

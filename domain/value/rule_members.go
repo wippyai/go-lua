@@ -14,6 +14,7 @@ const (
 	BinaryArithmeticCandidates         schemaapi.Key  = "value/binary-arithmetic/candidates"
 	BinaryEqualityCandidates           schemaapi.Key  = "value/binary-equality/candidates"
 	BinaryOrderCandidates              schemaapi.Key  = "value/binary-order/candidates"
+	PresenceRefinementCandidates       schemaapi.Key  = "value/presence-refinement/candidates"
 	StorageTransferSources             schemaapi.Key  = "value/storage-transfer/sources"
 	SourceSeeds                        schemaapi.Key  = "value/source/candidates"
 	GlobalBootstrapResults             schemaapi.Key  = "value/global-bootstrap/candidates"
@@ -26,6 +27,7 @@ const (
 	ReturnBoundaryMembers              schemaapi.Key  = "value/return-boundary/members"
 	BinaryArithmeticSources            schemaapi.Key  = "value/binary-arithmetic/sources"
 	BinaryEqualitySources              schemaapi.Key  = "value/binary-equality/sources"
+	PresenceRefinementSources          schemaapi.Key  = "value/presence-refinement/sources"
 	BinaryOrderSources                 schemaapi.Key  = "value/binary-order/sources"
 	FormalFreezeCallActuals            schemaapi.Key  = "value/formal-freeze/call-actuals"
 	FormalFreezeActualMembers          schemaapi.Key  = "value/formal-freeze/actual-members"
@@ -44,6 +46,8 @@ const (
 	BinaryEqualityLeft                 schemaapi.Key  = "value/binary-equality/left"
 	BinaryEqualityRight                schemaapi.Key  = "value/binary-equality/right"
 	BinaryEqualityWrite                schemaapi.Key  = "value/binary-equality/write"
+	PresenceRefinementSourceKey        schemaapi.Key  = "value/presence-refinement/source-key"
+	PresenceRefinementWrite            schemaapi.Key  = "value/presence-refinement/write"
 	BinaryOrderLeft                    schemaapi.Key  = "value/binary-order/left"
 	BinaryOrderRight                   schemaapi.Key  = "value/binary-order/right"
 	BinaryOrderWrite                   schemaapi.Key  = "value/binary-order/write"
@@ -54,6 +58,7 @@ const (
 	GlobalBootstrapReducer             schemaapi.Key  = "value/reducer/global-bootstrap"
 	BinaryArithmeticReducer            schemaapi.Key  = "value/binary-arithmetic/reducer"
 	BinaryEqualityReducer              schemaapi.Key  = "value/binary-equality/reducer"
+	PresenceRefinementReducer          schemaapi.Key  = "value/presence-refinement/reducer"
 	BinaryOrderReducer                 schemaapi.Key  = "value/binary-order/reducer"
 	AllocationCarryTransform           schemaapi.Key  = "transform/value/allocation"
 	FreshResultCarryTransform          schemaapi.Key  = "transform/value/callresult-freshresult"
@@ -63,6 +68,7 @@ const (
 	BinaryArithmeticCarrier            member.Carrier = "carrier/value/binary-arithmetic"
 	BinaryEqualityCarrier              member.Carrier = "carrier/value/binary-equality"
 	BinaryOrderCarrier                 member.Carrier = "carrier/value/binary-order"
+	PresenceRefinementCarrier          member.Carrier = "carrier/value/presence-refinement"
 	SourceSeedCarrier                  member.Carrier = "carrier/value/source-seed"
 	GlobalBootstrapResultCarrier       member.Carrier = "carrier/value/global-bootstrap-result"
 	AllocationResultCarrier            member.Carrier = "carrier/value/allocation-result"
@@ -85,6 +91,7 @@ func AxisMemberCatalog() member.Catalog {
 			{Key: BinaryArithmeticCandidates, Subject: BinaryArithmeticCarrier, CandidateProvider: member.RelationRef{Axis: schemaapi.EntryReference{Surface: schemaapi.SurfaceKind(2), Key: "value"}, Member: "value/binary-arithmetic/candidates"}},
 			{Key: BinaryEqualityCandidates, Subject: BinaryEqualityCarrier, CandidateProvider: member.RelationRef{Axis: schemaapi.EntryReference{Surface: schemaapi.SurfaceKind(2), Key: "value"}, Member: "value/binary-equality/candidates"}},
 			{Key: BinaryOrderCandidates, Subject: BinaryOrderCarrier, CandidateProvider: member.RelationRef{Axis: schemaapi.EntryReference{Surface: schemaapi.SurfaceKind(2), Key: "value"}, Member: "value/binary-order/candidates"}},
+			{Key: PresenceRefinementCandidates, Subject: PresenceRefinementCarrier, CandidateProvider: member.RelationRef{Axis: schemaapi.EntryReference{Surface: schemaapi.SurfaceKind(2), Key: "value"}, Member: "value/presence-refinement/candidates"}},
 			{Key: StorageTransferSources, Subject: ValueFactCarrier, CandidateProvider: member.RelationRef{Axis: schemaapi.EntryReference{Surface: schemaapi.SurfaceKind(2), Key: "value"}, Member: "value/storage-transfer/candidates"}, Inputs: []member.Carrier{StorageTransferCarrier}},
 			{Key: SourceSeeds, Subject: SourceSeedCarrier, CandidateProvider: member.RelationRef{Axis: schemaapi.EntryReference{Surface: schemaapi.SurfaceKind(2), Key: "value"}, Member: "value/source/candidates"}},
 			{Key: GlobalBootstrapResults, Subject: GlobalBootstrapResultCarrier, CandidateProvider: member.RelationRef{Axis: schemaapi.EntryReference{Surface: schemaapi.SurfaceKind(2), Key: "value"}, Member: "value/global-bootstrap/candidates"}},
@@ -97,6 +104,7 @@ func AxisMemberCatalog() member.Catalog {
 			{Key: ReturnBoundaryMembers, Subject: ReturnBoundaryMemberCarrier, CandidateProvider: member.RelationRef{Axis: schemaapi.EntryReference{Surface: schemaapi.SurfaceKind(2), Key: "value"}, Member: "value/return-boundary/members"}, Inputs: []member.Carrier{ReturnBoundaryCarrier}, Parent: member.RelationRef{Axis: schemaapi.EntryReference{Surface: schemaapi.SurfaceKind(2), Key: "value"}, Member: "value/return-boundary/candidates"}, Ordinal: ReturnBoundaryMemberOrdinalCarrier},
 			{Key: BinaryArithmeticSources, Subject: ValueFactCarrier, CandidateProvider: member.RelationRef{Axis: schemaapi.EntryReference{Surface: schemaapi.SurfaceKind(2), Key: "value"}, Member: "value/binary-arithmetic/candidates"}, Inputs: []member.Carrier{BinaryArithmeticCarrier}},
 			{Key: BinaryEqualitySources, Subject: ValueFactCarrier, CandidateProvider: member.RelationRef{Axis: schemaapi.EntryReference{Surface: schemaapi.SurfaceKind(2), Key: "value"}, Member: "value/binary-equality/candidates"}, Inputs: []member.Carrier{BinaryEqualityCarrier}},
+			{Key: PresenceRefinementSources, Subject: ValueFactCarrier, CandidateProvider: member.RelationRef{Axis: schemaapi.EntryReference{Surface: schemaapi.SurfaceKind(2), Key: "value"}, Member: "value/presence-refinement/candidates"}, Inputs: []member.Carrier{PresenceRefinementCarrier}},
 			{Key: BinaryOrderSources, Subject: ValueFactCarrier, CandidateProvider: member.RelationRef{Axis: schemaapi.EntryReference{Surface: schemaapi.SurfaceKind(2), Key: "value"}, Member: "value/binary-order/candidates"}, Inputs: []member.Carrier{BinaryOrderCarrier}},
 			{Key: FormalFreezeCallActuals, Subject: MountedCallActualsCarrier, CandidateProvider: member.RelationRef{Axis: schemaapi.EntryReference{Surface: schemaapi.SurfaceKind(2), Key: "value"}, Member: "value/formal-freeze/call-actuals"}},
 			{Key: FormalFreezeActualMembers, Subject: MountedCallArgumentCarrier, CandidateProvider: member.RelationRef{Axis: schemaapi.EntryReference{Surface: schemaapi.SurfaceKind(2), Key: "value"}, Member: "value/formal-freeze/actual-members"}, Inputs: []member.Carrier{CallCoordinateCarrier}, Parent: member.RelationRef{Axis: schemaapi.EntryReference{Surface: schemaapi.SurfaceKind(2), Key: "value"}, Member: "value/formal-freeze/call-actuals"}, Ordinal: MountedCallActualTagCarrier},
@@ -117,6 +125,8 @@ func AxisMemberCatalog() member.Catalog {
 			{Key: BinaryEqualityLeft, Relation: BinaryEqualitySources, Role: member.Key, Result: ValueCoordinateCarrier, CandidateProvider: member.RelationRef{Axis: schemaapi.EntryReference{Surface: schemaapi.SurfaceKind(2), Key: "value"}, Member: "value/binary-equality/candidates"}},
 			{Key: BinaryEqualityRight, Relation: BinaryEqualitySources, Role: member.Key, Result: ValueCoordinateCarrier, CandidateProvider: member.RelationRef{Axis: schemaapi.EntryReference{Surface: schemaapi.SurfaceKind(2), Key: "value"}, Member: "value/binary-equality/candidates"}},
 			{Key: BinaryEqualityWrite, Relation: BinaryEqualityCandidates, Role: member.Destination, Result: ValueCoordinateCarrier, CandidateProvider: member.RelationRef{Axis: schemaapi.EntryReference{Surface: schemaapi.SurfaceKind(2), Key: "value"}, Member: "value/binary-equality/candidates"}},
+			{Key: PresenceRefinementSourceKey, Relation: PresenceRefinementSources, Role: member.Key, Result: ValueCoordinateCarrier, CandidateProvider: member.RelationRef{Axis: schemaapi.EntryReference{Surface: schemaapi.SurfaceKind(2), Key: "value"}, Member: "value/presence-refinement/candidates"}},
+			{Key: PresenceRefinementWrite, Relation: PresenceRefinementCandidates, Role: member.Destination, Result: ValueCoordinateCarrier, CandidateProvider: member.RelationRef{Axis: schemaapi.EntryReference{Surface: schemaapi.SurfaceKind(2), Key: "value"}, Member: "value/presence-refinement/candidates"}},
 			{Key: BinaryOrderLeft, Relation: BinaryOrderSources, Role: member.Key, Result: ValueCoordinateCarrier, CandidateProvider: member.RelationRef{Axis: schemaapi.EntryReference{Surface: schemaapi.SurfaceKind(2), Key: "value"}, Member: "value/binary-order/candidates"}},
 			{Key: BinaryOrderRight, Relation: BinaryOrderSources, Role: member.Key, Result: ValueCoordinateCarrier, CandidateProvider: member.RelationRef{Axis: schemaapi.EntryReference{Surface: schemaapi.SurfaceKind(2), Key: "value"}, Member: "value/binary-order/candidates"}},
 			{Key: BinaryOrderWrite, Relation: BinaryOrderCandidates, Role: member.Destination, Result: ValueCoordinateCarrier, CandidateProvider: member.RelationRef{Axis: schemaapi.EntryReference{Surface: schemaapi.SurfaceKind(2), Key: "value"}, Member: "value/binary-order/candidates"}},
@@ -143,6 +153,11 @@ func AxisMemberCatalog() member.Catalog {
 			}},
 			{Key: BinaryEqualityReducer, Inputs: []member.ReducerInput{
 				{Axis: valueAxis, Carrier: ValueFactCarrier, Form: member.ReadFormExact, Multiplicity: member.MultiplicityOne},
+				{Axis: valueAxis, Carrier: ValueFactCarrier, Form: member.ReadFormExact, Multiplicity: member.MultiplicityOne},
+			}, Outputs: []member.ReducerOutput{
+				{Axis: valueAxis, Carrier: ValueFactCarrier},
+			}},
+			{Key: PresenceRefinementReducer, Inputs: []member.ReducerInput{
 				{Axis: valueAxis, Carrier: ValueFactCarrier, Form: member.ReadFormExact, Multiplicity: member.MultiplicityOne},
 			}, Outputs: []member.ReducerOutput{
 				{Axis: valueAxis, Carrier: ValueFactCarrier},

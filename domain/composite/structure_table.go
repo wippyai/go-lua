@@ -49,7 +49,7 @@ import (
 	valuemoduleload "github.com/wippyai/go-lua/domain/value/moduleload"
 	valueorderprogram "github.com/wippyai/go-lua/domain/value/order/program"
 	valueowner "github.com/wippyai/go-lua/domain/value/owner"
-	valuerefinement "github.com/wippyai/go-lua/domain/value/refinement"
+	valuerefinementprogram "github.com/wippyai/go-lua/domain/value/refinement/program"
 	valueresultalias "github.com/wippyai/go-lua/domain/value/resultalias"
 	valueruntimekind "github.com/wippyai/go-lua/domain/value/runtimekind"
 	valuesource "github.com/wippyai/go-lua/domain/value/source"
@@ -205,7 +205,7 @@ func semanticRoleVocabulary() []structure.Spec {
 		valuearithmeticprogram.StructureSpecs(),
 		valueequalityprogram.StructureSpecs(),
 		valueorderprogram.StructureSpecs(),
-		valuerefinement.StructureSpecs(),
+		valuerefinementprogram.StructureSpecs(),
 		valueruntimekind.StructureSpecs(),
 		denominatorpublication.StructureSpecs(),
 		typedomain.ChannelSelectStructureSpecs(),

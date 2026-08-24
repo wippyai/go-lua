@@ -48,9 +48,9 @@ const (
 // metadata is returned only through Resolve and is never retained by runtime
 // code.
 type Artifact struct {
-	Cold        []byte
-	Relations   []byte
-	ExactBinary []byte
+	Cold      []byte
+	Relations []byte
+	ExactFold []byte
 }
 
 // KeyBinding is the resolved axis-level key normalization needed by a future
@@ -437,11 +437,11 @@ func Render(packageName string, source definition.Definition) (Artifact, error) 
 	if err != nil {
 		return Artifact{}, err
 	}
-	exactBinary, err := renderExactBinary(packageName, source)
+	exactFold, err := renderExactFold(packageName, source)
 	if err != nil {
 		return Artifact{}, err
 	}
-	return Artifact{Cold: cold, Relations: relations, ExactBinary: exactBinary}, nil
+	return Artifact{Cold: cold, Relations: relations, ExactFold: exactFold}, nil
 }
 
 // Generate writes the generated cold output, or checks that the path is
@@ -483,22 +483,22 @@ func GenerateRelations(packageName string, source definition.Definition, relatio
 	return nil
 }
 
-// GenerateExactBinary writes or checks the generated same-axis exact-binary
+// GenerateExactFold writes or checks the generated same-axis exact-fold
 // reducer dispatch. It is a separate artifact because the relation owner is a
 // construction directory, while reducer dispatch belongs to execution.
-func GenerateExactBinary(packageName string, source definition.Definition, path string, check bool) error {
+func GenerateExactFold(packageName string, source definition.Definition, path string, check bool) error {
 	if path == "" {
-		return errors.New("member generator: exact-binary path is required")
+		return errors.New("member generator: exact-fold path is required")
 	}
 	artifact, err := Render(packageName, source)
 	if err != nil {
 		return err
 	}
 	if check {
-		return fresh(path, artifact.ExactBinary)
+		return fresh(path, artifact.ExactFold)
 	}
-	if err := os.WriteFile(path, artifact.ExactBinary, 0o644); err != nil {
-		return fmt.Errorf("member generator: write exact-binary output: %w", err)
+	if err := os.WriteFile(path, artifact.ExactFold, 0o644); err != nil {
+		return fmt.Errorf("member generator: write exact-fold output: %w", err)
 	}
 	return nil
 }
@@ -622,26 +622,37 @@ func renderCold(packageName string, source definition.Definition) ([]byte, error
 	return format.Source([]byte(out.String()))
 }
 
-type exactBinaryReducer struct {
-	ordinal   uint32
-	reducer   ReducerBinding
-	candidate RelationBinding
+// exactFoldArity is the greatest number of exact reads one generated fold
+// consumes. It is the execution layer's typed product depth: the shared
+// family chains one product extender per read, so a reducer that declares
+// more reads is outside this generated shape and stays explicit.
+const exactFoldArity = 3
+
+type exactFoldReducer struct {
+	ordinal               uint32
+	reducer               ReducerBinding
+	candidate             RelationBinding
+	readRelation          uint32
+	readKeys              []uint32
+	destinationProjection uint32
 }
 
-// exactBinaryReducers selects the one reducer shape that the shared axis
-// executor understands. Selection is generation-time only. A reducer outside
+// exactFoldReducers selects every reducer shape the shared axis executor
+// understands: one canonical candidate directory, between one and
+// exactFoldArity same-axis exact multiplicity-one reads of the fact carrier,
+// and one fact output. Selection is generation-time only. A reducer outside
 // this shape remains explicit and must be claimed by another sealed family;
 // it is never coerced into this one at runtime.
-func exactBinaryReducers(source definition.Definition, metadata Metadata) ([]exactBinaryReducer, error) {
+func exactFoldReducers(source definition.Definition, metadata Metadata) ([]exactFoldReducer, error) {
 	fact, factOK := carrierByName(source, source.Signature.Fact)
 	if !factOK {
 		return nil, errors.New("member generator: fact carrier is missing")
 	}
 	axis := schema.EntryReference{Surface: schema.SurfaceKindAxis, Key: source.Axis}
-	selected := make([]exactBinaryReducer, 0)
+	selected := make([]exactFoldReducer, 0)
 	for ordinal, reducer := range metadata.Reducers {
 		if !reducer.CandidatePresent || reducer.CandidateConstant || reducer.Implementation.Name == "" || reducer.Implementation.Receiver.Name != "" ||
-			len(reducer.Inputs) != 2 || len(reducer.Outputs) != 1 {
+			len(reducer.Inputs) < 1 || len(reducer.Inputs) > exactFoldArity || len(reducer.Outputs) != 1 {
 			continue
 		}
 		shape := true
@@ -661,33 +672,102 @@ func exactBinaryReducers(source definition.Definition, metadata Metadata) ([]exa
 			}
 		}
 		if providers != 1 {
-			return nil, fmt.Errorf("member generator: exact-binary reducer %s has %d canonical candidate providers", reducer.Key, providers)
+			// The candidate carrier alone underdetermines the directory: an axis
+			// whose key carrier subjects several candidate directories has no
+			// single canonical provider for this reducer, because Relation and
+			// Projection carry no rule provenance to attribute one by. Such a
+			// reducer is outside this generated shape; SupportsExactFoldReducer
+			// answers false for it and its install fails closed.
+			continue
 		}
-		selected = append(selected, exactBinaryReducer{ordinal: uint32(ordinal), reducer: reducer, candidate: provider})
+		readRelation, readKeys, destination, geometryOK := exactFoldGeometry(metadata, provider, fact.Type, len(reducer.Inputs))
+		if !geometryOK {
+			return nil, fmt.Errorf("member generator: exact-fold reducer %s has no canonical read/write member geometry", reducer.Key)
+		}
+		selected = append(selected, exactFoldReducer{
+			ordinal:               uint32(ordinal),
+			reducer:               reducer,
+			candidate:             provider,
+			readRelation:          readRelation,
+			readKeys:              readKeys,
+			destinationProjection: destination,
+		})
 	}
 	return selected, nil
 }
 
-// renderExactBinary emits the axis-local concrete reducer switch. It contains
+// exactFoldGeometry resolves the owner-issued member coordinates consumed by
+// one folding reducer. The relation/projection ordinals are part of the axis
+// member catalog, not a rule-family convention: the generator derives them
+// from the provider reference and the typed source/destination rows, then
+// emits the result into the owner dispatch below. The declared key
+// projections are taken in catalog order, which is the join order the rule's
+// Program states.
+func exactFoldGeometry(metadata Metadata, provider RelationBinding, fact definition.GoType, reads int) (uint32, []uint32, uint32, bool) {
+	if !provider.HasCandidateRelation || !provider.CandidateProviderLocal || reads < 1 || reads > exactFoldArity {
+		return 0, nil, 0, false
+	}
+	readRelation := ^uint32(0)
+	for index, relation := range metadata.Relations {
+		if relation.Key == provider.Key || relation.CandidateProvider != provider.CandidateProvider ||
+			!relation.CandidateProviderLocal || !sameGoType(relation.Subject, fact) {
+			continue
+		}
+		if readRelation != ^uint32(0) {
+			return 0, nil, 0, false
+		}
+		readRelation = uint32(index)
+	}
+	if readRelation == ^uint32(0) {
+		return 0, nil, 0, false
+	}
+
+	keys := make([]uint32, 0, reads)
+	destination := ^uint32(0)
+	for index, projection := range metadata.Projections {
+		if projection.CandidateProvider != provider.CandidateProvider || !projection.CandidateProviderLocal {
+			continue
+		}
+		if projection.Relation == metadata.Relations[readRelation].Key && projection.Role == member.Key && sameGoType(projection.Result, metadata.Key.Input) {
+			if len(keys) >= reads {
+				return 0, nil, 0, false
+			}
+			keys = append(keys, uint32(index))
+			continue
+		}
+		if projection.Relation == provider.Key && projection.Role == member.Destination && sameGoType(projection.Result, metadata.Key.Input) {
+			if destination != ^uint32(0) {
+				return 0, nil, 0, false
+			}
+			destination = uint32(index)
+		}
+	}
+	if len(keys) != reads || destination == ^uint32(0) {
+		return 0, nil, 0, false
+	}
+	return readRelation, keys, destination, true
+}
+
+// renderExactFold emits the axis-local concrete reducer switch. It contains
 // no function table, reflection, callback, or fallback. The boolean result is
 // a construction fence: a sealed executor proves the reducer is supported
 // before solve, so false is never a semantic Refuse outcome.
-func renderExactBinary(packageName string, source definition.Definition) ([]byte, error) {
+func renderExactFold(packageName string, source definition.Definition) ([]byte, error) {
 	metadata, err := Resolve(source)
 	if err != nil {
 		return nil, err
 	}
-	reducers, err := exactBinaryReducers(source, metadata)
+	reducers, err := exactFoldReducers(source, metadata)
 	if err != nil {
 		return nil, err
 	}
 	owner := source.Binding.Key.Normalizer.Receiver
 	if owner.Name == "" {
-		return nil, errors.New("member generator: exact-binary schema receiver is missing")
+		return nil, errors.New("member generator: exact-fold schema receiver is missing")
 	}
 	fact, factOK := carrierByName(source, source.Signature.Fact)
 	if !factOK {
-		return nil, errors.New("member generator: exact-binary fact carrier is missing")
+		return nil, errors.New("member generator: exact-fold fact carrier is missing")
 	}
 	aliases := make(packageAliases)
 	add := func(path string) {
@@ -724,11 +804,11 @@ func renderExactBinary(packageName string, source definition.Definition) ([]byte
 
 	var out strings.Builder
 	out.WriteString("// Code generated by axis member definition generator; DO NOT EDIT.\n")
-	out.WriteString("// This file is the concrete same-axis exact-binary reducer dispatch.\n\n")
+	out.WriteString("// This file is the concrete same-axis exact-fold reducer dispatch.\n\n")
 	fmt.Fprintf(&out, "package %s\n\n", packageName)
 	out.WriteString("//go:generate go run ../../analysis/schema/axis/member/generator/cmd -source ")
 	out.WriteString(string(source.Axis))
-	out.WriteString(" -exact-binary generated_exact_binary.go\n\n")
+	out.WriteString(" -exact-fold generated_exact_fold.go\n\n")
 	out.WriteString("import (\n")
 	for _, path := range aliases.paths() {
 		fmt.Fprintf(&out, "\t%s %q\n", aliases[path], path)
@@ -739,39 +819,129 @@ func renderExactBinary(packageName string, source definition.Definition) ([]byte
 	outcome := aliases[OutcomePackagePath] + "." + OutcomeType
 	refuse := aliases[OutcomePackagePath] + "." + OutcomeRefuse
 
-	out.WriteString("// SupportsExactBinaryReducer reports whether the sealed axis member ordinal\n")
+	// ExactFoldArity is the read width every sealed payload and mapping is
+	// dimensioned by. It is the execution layer's typed product depth rather
+	// than an owner's choice, so it is published beside the dispatch that
+	// consumes it.
+	out.WriteString("// ExactFoldArity is the greatest number of exact reads one generated fold\n")
+	out.WriteString("// consumes. The shared execution family chains one product extender per\n")
+	out.WriteString("// read, so a reducer declaring more reads is outside this generated shape.\n")
+	fmt.Fprintf(&out, "const ExactFoldArity = %d\n\n", exactFoldArity)
+
+	out.WriteString("// SupportsExactFoldReducer reports whether the sealed axis member ordinal\n")
 	out.WriteString("// names this generated execution shape. Unknown ordinals fail construction.\n")
-	fmt.Fprintf(&out, "func SupportsExactBinaryReducer(reducerOrdinal uint32) bool {\n\tswitch reducerOrdinal {\n")
+	fmt.Fprintf(&out, "func SupportsExactFoldReducer(reducerOrdinal uint32) bool {\n\tswitch reducerOrdinal {\n")
 	for _, selected := range reducers {
 		fmt.Fprintf(&out, "\tcase %d:\n\t\treturn true\n", selected.ordinal)
 	}
 	out.WriteString("\tdefault:\n\t\treturn false\n\t}\n}\n\n")
-	out.WriteString("// ExactBinaryCandidateAvailable authenticates one candidate ordinal against\n")
-	out.WriteString("// the reducer's canonical owner directory during family construction.\n")
-	fmt.Fprintf(&out, "func (schema *%s) ExactBinaryCandidateAvailable(reducerOrdinal, candidateOrdinal uint32) bool {\n", ownerType)
-	out.WriteString("\tif schema == nil {\n\t\treturn false\n\t}\n\tswitch reducerOrdinal {\n")
-	for _, selected := range reducers {
-		fmt.Fprintf(&out, "\tcase %d:\n", selected.ordinal)
-		candidateAt := directCall(selected.candidate.CandidateAt, owner, "schema", "candidate", []string{"int(candidateOrdinal)"}, packageName, aliases)
-		fmt.Fprintf(&out, "\t\t_, candidateOK := %s\n\t\treturn candidateOK\n", candidateAt)
-	}
-	out.WriteString("\tdefault:\n\t\treturn false\n\t}\n}\n\n")
 
-	out.WriteString("// ReduceExactBinary redeems the canonical candidate and invokes its owner fold.\n")
-	out.WriteString("// The final boolean is structural dispatch validity, not a semantic outcome.\n")
-	fmt.Fprintf(&out, "func (schema *%s) ReduceExactBinary(reducerOrdinal, candidateOrdinal uint32, left, right %s) (%s, %s, bool) {\n", ownerType, factType, factType, outcome)
-	fmt.Fprintf(&out, "\tvar zero %s\n\tif schema == nil {\n\t\treturn zero, %s, false\n\t}\n", factType, refuse)
-	out.WriteString("\tswitch reducerOrdinal {\n")
+	// ExactFoldMapping is the owner-issued correspondence between one reducer
+	// member and the relation/projection members that its exact program
+	// consumes. Runtime installation authenticates this mapping before
+	// redeeming a candidate payload; no candidate ordinal can stand in for a
+	// different relation member, and no read position can stand in for
+	// another.
+	out.WriteString("// ExactFoldMapping is one generated reducer/member correspondence.\n")
+	out.WriteString("type ExactFoldMapping struct {\n")
+	out.WriteString("\tReducerOrdinal uint32\n")
+	out.WriteString("\tCandidateRelationMember uint32\n")
+	out.WriteString("\tReadCount uint32\n")
+	out.WriteString("\tReadRelationMember [ExactFoldArity]uint32\n")
+	out.WriteString("\tReadKeyMember [ExactFoldArity]uint32\n")
+	out.WriteString("\tDestinationProjectionMember uint32\n")
+	out.WriteString("}\n\n")
+	out.WriteString("// ExactFoldMappingAt issues the canonical geometry for one reducer.\n")
+	fmt.Fprintf(&out, "func (schema *%s) ExactFoldMappingAt(reducerOrdinal uint32) (ExactFoldMapping, bool) {\n", ownerType)
+	out.WriteString("\tif schema == nil {\n\t\treturn ExactFoldMapping{}, false\n\t}\n\tswitch reducerOrdinal {\n")
 	for _, selected := range reducers {
+		relations := make([]string, 0, len(selected.readKeys))
+		keys := make([]string, 0, len(selected.readKeys))
+		for _, key := range selected.readKeys {
+			relations = append(relations, fmt.Sprintf("%d", selected.readRelation))
+			keys = append(keys, fmt.Sprintf("%d", key))
+		}
 		fmt.Fprintf(&out, "\tcase %d:\n", selected.ordinal)
+		fmt.Fprintf(&out, "\t\treturn ExactFoldMapping{ReducerOrdinal: %d, CandidateRelationMember: %d, ReadCount: %d, ReadRelationMember: [ExactFoldArity]uint32{%s}, ReadKeyMember: [ExactFoldArity]uint32{%s}, DestinationProjectionMember: %d}, true\n",
+			selected.ordinal, selected.candidate.CandidateRelation, len(selected.readKeys), strings.Join(relations, ", "), strings.Join(keys, ", "), selected.destinationProjection)
+	}
+	out.WriteString("\tdefault:\n\t\treturn ExactFoldMapping{}, false\n\t}\n}\n\n")
+
+	// ExactFoldPayload is the immutable, concrete candidate payload a
+	// generated family seals at bind time. It is deliberately a closed sum of
+	// candidate types rather than an erased interface value: execution carries
+	// this payload directly and never redeems a candidate ordinal through the
+	// owner directory again.
+	out.WriteString("// ExactFoldPayload is one sealed concrete exact-fold reducer payload.\n")
+	out.WriteString("// Its unexported cells can only be populated by the owner below.\n")
+	out.WriteString("type ExactFoldPayload struct {\n")
+	fmt.Fprintf(&out, "\towner *%s\n", ownerType)
+	out.WriteString("\treducerOrdinal uint32\n")
+	out.WriteString("\tcandidateRelationMember uint32\n")
+	out.WriteString("\tcandidateOrdinal uint32\n")
+	out.WriteString("\treadCount uint32\n")
+	out.WriteString("\tavailable bool\n")
+	for _, selected := range reducers {
+		field := exactFoldPayloadField(selected.ordinal)
+		candidateType := qualifiedType(selected.reducer.Candidate, packageName, aliases)
+		fmt.Fprintf(&out, "\t%s %s\n", field, candidateType)
+	}
+	out.WriteString("}\n\n")
+	out.WriteString("// ReducerOrdinal returns the sealed reducer identity of this payload.\n")
+	out.WriteString("func (candidate ExactFoldPayload) ReducerOrdinal() (uint32, bool) {\n")
+	out.WriteString("\tif !candidate.available {\n\t\treturn 0, false\n\t}\n\treturn candidate.reducerOrdinal, true\n}\n\n")
+	out.WriteString("// CandidateOrdinal returns the sealed candidate identity of this payload.\n")
+	out.WriteString("func (candidate ExactFoldPayload) CandidateOrdinal() (uint32, bool) {\n")
+	out.WriteString("\tif !candidate.available {\n\t\treturn 0, false\n\t}\n\treturn candidate.candidateOrdinal, true\n}\n\n")
+	out.WriteString("// CandidateRelationMember returns the owner-issued relation member\n")
+	out.WriteString("// whose directory redeemed this payload.\n")
+	out.WriteString("func (candidate ExactFoldPayload) CandidateRelationMember() (uint32, bool) {\n")
+	out.WriteString("\tif !candidate.available {\n\t\treturn 0, false\n\t}\n\treturn candidate.candidateRelationMember, true\n}\n\n")
+	out.WriteString("// ReadCount is the number of exact reads this payload's fold consumes.\n")
+	out.WriteString("func (candidate ExactFoldPayload) ReadCount() (int, bool) {\n")
+	out.WriteString("\tif !candidate.available {\n\t\treturn 0, false\n\t}\n\treturn int(candidate.readCount), true\n}\n\n")
+
+	// ExactFoldPayloadAt is the one cold directory redemption. The installer
+	// calls it once per sealed row and retains the returned concrete payload;
+	// warm execution calls only ReduceExactFoldPayload below.
+	out.WriteString("// ExactFoldPayloadAt redeems one candidate into an immutable concrete payload.\n")
+	fmt.Fprintf(&out, "func (schema *%s) ExactFoldPayloadAt(reducerOrdinal, candidateRelationMember, candidateOrdinal uint32) (ExactFoldPayload, bool) {\n", ownerType)
+	out.WriteString("\tif schema == nil {\n\t\treturn ExactFoldPayload{}, false\n\t}\n\tswitch reducerOrdinal {\n")
+	for _, selected := range reducers {
+		field := exactFoldPayloadField(selected.ordinal)
 		candidateAt := directCall(selected.candidate.CandidateAt, owner, "schema", "candidate", []string{"int(candidateOrdinal)"}, packageName, aliases)
+		fmt.Fprintf(&out, "\tcase %d:\n", selected.ordinal)
+		fmt.Fprintf(&out, "\t\tif candidateRelationMember != %d {\n\t\t\treturn ExactFoldPayload{}, false\n\t\t}\n", selected.candidate.CandidateRelation)
 		fmt.Fprintf(&out, "\t\tcandidate, candidateOK := %s\n", candidateAt)
-		fmt.Fprintf(&out, "\t\tif !candidateOK {\n\t\t\treturn zero, %s, false\n\t\t}\n", refuse)
-		fold := directCall(selected.reducer.Implementation, owner, "schema", "candidate", []string{"candidate", "left", "right"}, packageName, aliases)
+		fmt.Fprintf(&out, "\t\tif !candidateOK {\n\t\t\treturn ExactFoldPayload{}, false\n\t\t}\n")
+		fmt.Fprintf(&out, "\t\treturn ExactFoldPayload{owner: schema, reducerOrdinal: %d, candidateRelationMember: candidateRelationMember, candidateOrdinal: candidateOrdinal, readCount: %d, available: true, %s: candidate}, true\n", selected.ordinal, len(selected.readKeys), field)
+	}
+	out.WriteString("\tdefault:\n\t\treturn ExactFoldPayload{}, false\n\t}\n}\n\n")
+
+	// ReduceExactFoldPayload is the warm direct dispatch. It receives the
+	// concrete payload sealed above and the dense read vector the family
+	// drained, so no candidate table, callback, reflection, or repeated cold
+	// authority derivation is reachable from Execute.
+	out.WriteString("// ReduceExactFoldPayload invokes the owner fold on a sealed payload.\n")
+	out.WriteString("// The final boolean is structural dispatch validity, not a semantic outcome.\n")
+	fmt.Fprintf(&out, "func (schema *%s) ReduceExactFoldPayload(candidate ExactFoldPayload, reads [ExactFoldArity]%s) (%s, %s, bool) {\n", ownerType, factType, factType, outcome)
+	fmt.Fprintf(&out, "\tvar zero %s\n\tif schema == nil || !candidate.available || candidate.owner != schema {\n\t\treturn zero, %s, false\n\t}\n", factType, refuse)
+	out.WriteString("\tswitch candidate.reducerOrdinal {\n")
+	for _, selected := range reducers {
+		field := exactFoldPayloadField(selected.ordinal)
+		arguments := make([]string, 0, len(selected.readKeys)+1)
+		arguments = append(arguments, "candidate."+field)
+		for position := range selected.readKeys {
+			arguments = append(arguments, fmt.Sprintf("reads[%d]", position))
+		}
+		fold := directCall(selected.reducer.Implementation, owner, "schema", "candidate", arguments, packageName, aliases)
+		fmt.Fprintf(&out, "\tcase %d:\n", selected.ordinal)
+		fmt.Fprintf(&out, "\t\tif candidate.readCount != %d {\n\t\t\treturn zero, %s, false\n\t\t}\n", len(selected.readKeys), refuse)
 		fmt.Fprintf(&out, "\t\tresult, reduction := %s\n", fold)
+		fmt.Fprintf(&out, "\t\tif !reduction.Available() || reduction == %s {\n\t\t\treturn zero, reduction, false\n\t\t}\n", refuse)
 		out.WriteString("\t\treturn result, reduction, true\n")
 	}
-	fmt.Fprintf(&out, "\tdefault:\n\t\treturn zero, %s, false\n\t}\n}\n", refuse)
+	fmt.Fprintf(&out, "\tdefault:\n\t\treturn zero, %s, false\n\t}\n}\n\n", refuse)
 	return format.Source([]byte(out.String()))
 }
 
@@ -1216,6 +1386,10 @@ func qualifiedType(typ definition.GoType, packageName string, aliases packageAli
 		return alias + "." + typ.Name
 	}
 	return typ.Name
+}
+
+func exactFoldPayloadField(ordinal uint32) string {
+	return fmt.Sprintf("candidate%d", ordinal)
 }
 
 func directCall(symbol definition.GoSymbol, owner definition.GoType, ownerExpr, candidateExpr string, args []string, packageName string, aliases packageAliases) string {

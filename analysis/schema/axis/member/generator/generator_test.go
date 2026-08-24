@@ -470,11 +470,11 @@ func TestCheckedInGeneratedOutputIsFreshAndCompiles(t *testing.T) {
 	root := repositoryRoot(t)
 	coldPath := filepath.Join(root, "domain", "value", "rule_members.go")
 	relationPath := filepath.Join(root, "domain", "value", "generated_relation_owner.go")
-	exactBinaryPath := filepath.Join(root, "domain", "value", "generated_exact_binary.go")
+	exactFoldPath := filepath.Join(root, "domain", "value", "generated_exact_fold.go")
 	if err := GenerateAll("value", composedSource(t, "value"), coldPath, relationPath, true); err != nil {
 		t.Fatal(err)
 	}
-	if err := GenerateExactBinary("value", composedSource(t, "value"), exactBinaryPath, true); err != nil {
+	if err := GenerateExactFold("value", composedSource(t, "value"), exactFoldPath, true); err != nil {
 		t.Fatal(err)
 	}
 	command := exec.Command("go", "test", "./domain/value", "-run", "^TestAxisMemberCatalogOwnsStorageTransferGeometry$", "-count=1")
@@ -500,6 +500,29 @@ func TestCheckedInGeneratedOutputIsFreshAndCompiles(t *testing.T) {
 	heapRelations := filepath.Join(root, "domain", "heap", "generated_relation_owner.go")
 	if err := GenerateAll("heap", composedSource(t, "heap"), heapCold, heapRelations, true); err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestGeneratorCommandWritesEveryRequestedOutput(t *testing.T) {
+	root := repositoryRoot(t)
+	directory := t.TempDir()
+	coldPath := filepath.Join(directory, "cold.go")
+	relationsPath := filepath.Join(directory, "relations.go")
+	exactFoldPath := filepath.Join(directory, "exact_fold.go")
+	command := exec.Command("go", "run", "./analysis/schema/axis/member/generator/cmd",
+		"-source", "value", "-cold", coldPath, "-relations", relationsPath, "-exact-fold", exactFoldPath)
+	command.Dir = root
+	if output, err := command.CombinedOutput(); err != nil {
+		t.Fatalf("generator command failed: %v\n%s", err, output)
+	}
+	for _, path := range []string{coldPath, relationsPath, exactFoldPath} {
+		contents, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatalf("generator did not write %s: %v", path, err)
+		}
+		if len(contents) == 0 {
+			t.Fatalf("generator wrote empty output %s", path)
+		}
 	}
 }
 

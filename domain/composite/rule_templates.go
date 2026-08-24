@@ -44,12 +44,12 @@ import (
 	valuebodyresult "github.com/wippyai/go-lua/domain/value/bodyresult"
 	valuebootstrap "github.com/wippyai/go-lua/domain/value/bootstrap"
 	valueequalityprogram "github.com/wippyai/go-lua/domain/value/equality/program"
-	valueexactbinary "github.com/wippyai/go-lua/domain/value/execution/exactbinary"
+	valueexactfold "github.com/wippyai/go-lua/domain/value/execution/exactfold"
 	valuefreshresult "github.com/wippyai/go-lua/domain/value/freshresult"
 	valuemoduleload "github.com/wippyai/go-lua/domain/value/moduleload"
 	valueorderprogram "github.com/wippyai/go-lua/domain/value/order/program"
 	valueowner "github.com/wippyai/go-lua/domain/value/owner"
-	valuerefinement "github.com/wippyai/go-lua/domain/value/refinement"
+	valuerefinementprogram "github.com/wippyai/go-lua/domain/value/refinement/program"
 	valueresultalias "github.com/wippyai/go-lua/domain/value/resultalias"
 	valueruntimekind "github.com/wippyai/go-lua/domain/value/runtimekind"
 	valuesource "github.com/wippyai/go-lua/domain/value/source"
@@ -147,10 +147,10 @@ func ruleTemplateWiring[P Principals, A Authorities]() ([]*rule.Template, []Rule
 	add(WireGeneratedRule[P, A](valuebootstrap.RuleEntry()))
 	add(WireGeneratedRule[P, A](heapbootstrap.RuleEntry()))
 	add(WireGeneratedRule[P, A](valuetransfer.RuleEntry()))
-	add(WireGeneratedRuleWithFamily[P, A](valuearithmeticprogram.RuleEntry(), valueexactbinary.InstallFamily[A]))
-	add(WireGeneratedRuleWithFamily[P, A](valueequalityprogram.RuleEntry(), valueexactbinary.InstallFamily[A]))
-	add(WireGeneratedRuleWithFamily[P, A](valueorderprogram.RuleEntry(), valueexactbinary.InstallFamily[A]))
-	add(WireRule(valuerefinement.RuleEntry[P, A](), valuerefinement.DeclareRule[P], valuerefinement.RegisterRule, nil, valuerefinement.BindRule[A], nil, nil, nil))
+	add(WireGeneratedRuleWithFamily[P, A](valuearithmeticprogram.RuleEntry(), valueexactfold.InstallFamily[A]))
+	add(WireGeneratedRuleWithFamily[P, A](valueequalityprogram.RuleEntry(), valueexactfold.InstallFamily[A]))
+	add(WireGeneratedRuleWithFamily[P, A](valueorderprogram.RuleEntry(), valueexactfold.InstallFamily[A]))
+	add(WireGeneratedRuleWithFamily[P, A](valuerefinementprogram.RuleEntry(), valueexactfold.InstallFamily[A]))
 	// Placement displacement consumers follow the value/call/heap producers
 	// whose sealed facts they read. ReturnEscape is the generated dependent
 	// family: its authored route relation is installed once through the
