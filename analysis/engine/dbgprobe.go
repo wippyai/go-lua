@@ -1,6 +1,7 @@
 package engine
 
 import (
+	"github.com/wippyai/go-lua/analysis/engine/internal/factbinding"
 	"github.com/wippyai/go-lua/analysis/engine/internal/facts/change"
 	"github.com/wippyai/go-lua/analysis/engine/internal/facts/semantic"
 )
@@ -70,6 +71,16 @@ func DbgMerge() (mergeMany, cells, cellPairs, cellWidth, maxOperand uint64) {
 
 // DbgMergeReset clears the many-way merge counters.
 func DbgMergeReset() { semantic.DbgSemanticReset() }
+
+// DbgSummary re-exports the correlated summary group-product counters so a
+// corpus lane outside the internal tree can read the fold's Boolean volume.
+func DbgSummary() (extendKeys, constantKeys, pairs, conjunctions, maxPartials uint64) {
+	counters := factbinding.DbgFactBinding()
+	return counters.SummaryExtendKeys, counters.SummaryConstantKeys, counters.SummaryPairs, counters.SummaryConjunctions, counters.SummaryMaxPartials
+}
+
+// DbgSummaryReset clears the correlated summary group-product counters.
+func DbgSummaryReset() { factbinding.DbgFactBindingReset() }
 
 // dbgRegionReuseRefusal attributes one accumulator reuse refusal to the exact
 // clause that refused it.

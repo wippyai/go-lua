@@ -204,7 +204,7 @@ func (work *bindingWork[K, V]) beginSummaryObservation(input semantic.Plane[plan
 		return false
 	}
 	for _, key := range keys[1:] {
-		if !work.live() || !work.partitionKey(input, key, within) || !work.extendGroups(unions) {
+		if !work.live() || !work.partitionKey(input, key, within) || !work.extendGroups(unions, within) {
 			unions.Discard()
 			return false
 		}

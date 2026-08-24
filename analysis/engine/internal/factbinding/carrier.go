@@ -1882,6 +1882,15 @@ func (work *bindingWork[K, V]) partitionKey(input semantic.Plane[planeFactor, K,
 	})
 }
 
+// constantOverRegion reports whether the partition just read for one declared
+// key covers the whole observed region with a single piece. That piece's
+// region is then the observed region itself, so the key names the same
+// stored-or-absent entry at every valuation of the region and distinguishes
+// nothing within it.
+func (work *bindingWork[K, V]) constantOverRegion(within support.Mask) bool {
+	return len(work.pieces) == 1 && work.pieces[0].region.SameHandle(within)
+}
+
 func (work *bindingWork[K, V]) seedGroups(unions *support.Work) bool {
 	if unions == nil || len(work.pieces) == 0 {
 		return false
@@ -1902,9 +1911,16 @@ func (work *bindingWork[K, V]) seedGroups(unions *support.Work) bool {
 	return len(work.partials) != 0
 }
 
-func (work *bindingWork[K, V]) extendGroups(unions *support.Work) bool {
+func (work *bindingWork[K, V]) extendGroups(unions *support.Work, within support.Mask) bool {
 	if unions == nil || len(work.partials) == 0 || len(work.pieces) == 0 {
 		return false
+	}
+	dbgFactBinding.SummaryExtendKeys++
+	if uint64(len(work.partials)) > dbgFactBinding.SummaryMaxPartials {
+		dbgFactBinding.SummaryMaxPartials = uint64(len(work.partials))
+	}
+	if work.constantOverRegion(within) {
+		dbgFactBinding.SummaryConstantKeys++
 	}
 	work.nextPartials = work.nextPartials[:0]
 	work.clearBuckets()
@@ -1916,6 +1932,8 @@ func (work *bindingWork[K, V]) extendGroups(unions *support.Work) bool {
 			if !work.live() {
 				return false
 			}
+			dbgFactBinding.SummaryPairs++
+			dbgFactBinding.SummaryConjunctions++
 			region, ok := unions.And(prefix.region, piece.region)
 			if !ok {
 				return false

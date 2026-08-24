@@ -18,6 +18,7 @@ func analyzeCanonicalRealFixture(t *testing.T, name string) {
 	value.DbgValueReset()
 	engineprobe.DbgEngineReset()
 	engineprobe.DbgMergeReset()
+	engineprobe.DbgSummaryReset()
 	run := corpusHarnessFixtureRun(t, name, corpusHarnessDiagnosticMode())
 	t.Logf("canonical real fixture %s value: owns=%d valid=%d validRows=%d maxRows=%d leq=%d join=%d joinBuild=%d equal=%d",
 		name, value.DbgValue().Owns, value.DbgValue().Valid, value.DbgValue().ValidRows, value.DbgValue().MaxRows,
@@ -33,6 +34,9 @@ func analyzeCanonicalRealFixture(t *testing.T, name string) {
 	mergeMany, cells, cellPairs, cellWidth, maxOperand := engineprobe.DbgMerge()
 	t.Logf("canonical real fixture %s merge: mergeMany=%d cells=%d cellPairs=%d cellWidth=%d maxOperand=%d",
 		name, mergeMany, cells, cellPairs, cellWidth, maxOperand)
+	extendKeys, constantKeys, pairs, conjunctions, maxPartials := engineprobe.DbgSummary()
+	t.Logf("canonical real fixture %s summary: extendKeys=%d constantKeys=%d pairs=%d conjunctions=%d maxPartials=%d",
+		name, extendKeys, constantKeys, pairs, conjunctions, maxPartials)
 	engine := run.solveDiagnostics.Engine
 	t.Logf("canonical real fixture %s: seal=%s compile=%s solve=%s total=%s", name, run.cost.seal, run.cost.compile, run.cost.solve, run.cost.total())
 	t.Logf("canonical real fixture %s engine: epochs=%d revisions=%d passes=%d refreshes=%d evaluates=%d evalFails=%d folds=%d rhs=%d restarts=%d activations=%d maxQueue=%d maxEpisode=%d pubs=%d semanticPubs=%d rawPubs=%d rawOnly=%d bumps=%d wakes=%d wakesByReason=%v ifaceRefresh=%d ifaceDone=%d ifaceFallback=%d leq=%d geq=%d eq=%d incomp=%d unknown=%d",
