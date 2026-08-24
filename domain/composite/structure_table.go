@@ -44,10 +44,10 @@ import (
 	valuearithmeticprogram "github.com/wippyai/go-lua/domain/value/arithmetic/program"
 	valuebodyresult "github.com/wippyai/go-lua/domain/value/bodyresult"
 	valuebootstrap "github.com/wippyai/go-lua/domain/value/bootstrap"
-	valueequality "github.com/wippyai/go-lua/domain/value/equality"
+	valueequalityprogram "github.com/wippyai/go-lua/domain/value/equality/program"
 	valuefreshresult "github.com/wippyai/go-lua/domain/value/freshresult"
 	valuemoduleload "github.com/wippyai/go-lua/domain/value/moduleload"
-	valueorder "github.com/wippyai/go-lua/domain/value/order"
+	valueorderprogram "github.com/wippyai/go-lua/domain/value/order/program"
 	valueowner "github.com/wippyai/go-lua/domain/value/owner"
 	valuerefinement "github.com/wippyai/go-lua/domain/value/refinement"
 	valueresultalias "github.com/wippyai/go-lua/domain/value/resultalias"
@@ -203,8 +203,8 @@ func semanticRoleVocabulary() []structure.Spec {
 		heapbootstrap.StructureSpecs(),
 		valuetransfer.StructureSpecs(),
 		valuearithmeticprogram.StructureSpecs(),
-		valueequality.StructureSpecs(),
-		valueorder.StructureSpecs(),
+		valueequalityprogram.StructureSpecs(),
+		valueorderprogram.StructureSpecs(),
 		valuerefinement.StructureSpecs(),
 		valueruntimekind.StructureSpecs(),
 		denominatorpublication.StructureSpecs(),

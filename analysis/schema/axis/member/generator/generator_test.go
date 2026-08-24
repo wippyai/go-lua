@@ -201,6 +201,8 @@ func TestResolveKeepsTypedRowsAlignedWithColdKinds(t *testing.T) {
 	wantRelations := []schema.Key{
 		"value/storage-transfer/candidates",
 		"value/binary-arithmetic/candidates",
+		"value/binary-equality/candidates",
+		"value/binary-order/candidates",
 		"value/storage-transfer/sources",
 		"value/source/candidates",
 		"value/global-bootstrap/candidates",
@@ -218,6 +220,10 @@ func TestResolveKeepsTypedRowsAlignedWithColdKinds(t *testing.T) {
 		"value/return-boundary/roots",
 		"value/return-boundary/members",
 		"value/binary-arithmetic/sources",
+		"value/binary-equality/sources",
+		"value/binary-order/sources",
+		"value/formal-freeze/call-actuals",
+		"value/formal-freeze/actual-members",
 	}
 	if len(metadata.Relations) != len(wantRelations) {
 		t.Fatalf("relation inventory = %d, want %d", len(metadata.Relations), len(wantRelations))
@@ -243,6 +249,14 @@ func TestResolveKeepsTypedRowsAlignedWithColdKinds(t *testing.T) {
 		"value/binary-arithmetic/left",
 		"value/binary-arithmetic/right",
 		"value/binary-arithmetic/write",
+		"value/binary-equality/left",
+		"value/binary-equality/right",
+		"value/binary-equality/write",
+		"value/binary-order/left",
+		"value/binary-order/right",
+		"value/binary-order/write",
+		"value/formal-freeze/actual-key",
+		"value/formal-freeze/actual-tag",
 	}
 	if len(metadata.Projections) != len(wantProjections) {
 		t.Fatalf("projection inventory = %d, want %d", len(metadata.Projections), len(wantProjections))
@@ -257,7 +271,14 @@ func TestResolveKeepsTypedRowsAlignedWithColdKinds(t *testing.T) {
 	if metadata.Projections[0].Accessor.ResultIndex != 0 || metadata.Projections[1].Accessor.ResultIndex != 1 || metadata.Projections[4].Accessor.ResultIndex != -1 || metadata.Projections[0].Result.Name != "Coordinate" {
 		t.Fatalf("projection metadata = %#v", metadata.Projections)
 	}
-	wantReducers := []schema.Key{"value/reducer/identity", "value/reducer/source", "value/reducer/global-bootstrap", "value/binary-arithmetic/reducer"}
+	wantReducers := []schema.Key{
+		"value/reducer/identity",
+		"value/reducer/source",
+		"value/reducer/global-bootstrap",
+		"value/binary-arithmetic/reducer",
+		"value/binary-equality/reducer",
+		"value/binary-order/reducer",
+	}
 	if len(metadata.Reducers) != len(wantReducers) {
 		t.Fatalf("reducer inventory = %d, want %d", len(metadata.Reducers), len(wantReducers))
 	}
@@ -449,7 +470,11 @@ func TestCheckedInGeneratedOutputIsFreshAndCompiles(t *testing.T) {
 	root := repositoryRoot(t)
 	coldPath := filepath.Join(root, "domain", "value", "rule_members.go")
 	relationPath := filepath.Join(root, "domain", "value", "generated_relation_owner.go")
+	exactBinaryPath := filepath.Join(root, "domain", "value", "generated_exact_binary.go")
 	if err := GenerateAll("value", composedSource(t, "value"), coldPath, relationPath, true); err != nil {
+		t.Fatal(err)
+	}
+	if err := GenerateExactBinary("value", composedSource(t, "value"), exactBinaryPath, true); err != nil {
 		t.Fatal(err)
 	}
 	command := exec.Command("go", "test", "./domain/value", "-run", "^TestAxisMemberCatalogOwnsStorageTransferGeometry$", "-count=1")

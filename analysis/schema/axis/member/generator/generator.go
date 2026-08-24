@@ -48,8 +48,9 @@ const (
 // metadata is returned only through Resolve and is never retained by runtime
 // code.
 type Artifact struct {
-	Cold      []byte
-	Relations []byte
+	Cold        []byte
+	Relations   []byte
+	ExactBinary []byte
 }
 
 // KeyBinding is the resolved axis-level key normalization needed by a future
@@ -436,7 +437,11 @@ func Render(packageName string, source definition.Definition) (Artifact, error) 
 	if err != nil {
 		return Artifact{}, err
 	}
-	return Artifact{Cold: cold, Relations: relations}, nil
+	exactBinary, err := renderExactBinary(packageName, source)
+	if err != nil {
+		return Artifact{}, err
+	}
+	return Artifact{Cold: cold, Relations: relations, ExactBinary: exactBinary}, nil
 }
 
 // Generate writes the generated cold output, or checks that the path is
@@ -474,6 +479,26 @@ func GenerateRelations(packageName string, source definition.Definition, relatio
 	}
 	if err := os.WriteFile(relationPath, artifact.Relations, 0o644); err != nil {
 		return fmt.Errorf("member generator: write relation output: %w", err)
+	}
+	return nil
+}
+
+// GenerateExactBinary writes or checks the generated same-axis exact-binary
+// reducer dispatch. It is a separate artifact because the relation owner is a
+// construction directory, while reducer dispatch belongs to execution.
+func GenerateExactBinary(packageName string, source definition.Definition, path string, check bool) error {
+	if path == "" {
+		return errors.New("member generator: exact-binary path is required")
+	}
+	artifact, err := Render(packageName, source)
+	if err != nil {
+		return err
+	}
+	if check {
+		return fresh(path, artifact.ExactBinary)
+	}
+	if err := os.WriteFile(path, artifact.ExactBinary, 0o644); err != nil {
+		return fmt.Errorf("member generator: write exact-binary output: %w", err)
 	}
 	return nil
 }
@@ -594,6 +619,159 @@ func renderCold(packageName string, source definition.Definition) ([]byte, error
 		fmt.Fprintf(&out, "\t\t\t{Key: %s, Candidate: %s, Input: %s, Output: %s},\n", transform.Name, carriers[transform.Candidate], carriers[transform.Input], carriers[transform.Output])
 	}
 	fmt.Fprintf(&out, "\t\t},\n\t)\n\tif !ok {\n\t\tpanic(%q)\n\t}\n\treturn catalog\n}\n", packageName+": invalid axis member catalog")
+	return format.Source([]byte(out.String()))
+}
+
+type exactBinaryReducer struct {
+	ordinal   uint32
+	reducer   ReducerBinding
+	candidate RelationBinding
+}
+
+// exactBinaryReducers selects the one reducer shape that the shared axis
+// executor understands. Selection is generation-time only. A reducer outside
+// this shape remains explicit and must be claimed by another sealed family;
+// it is never coerced into this one at runtime.
+func exactBinaryReducers(source definition.Definition, metadata Metadata) ([]exactBinaryReducer, error) {
+	fact, factOK := carrierByName(source, source.Signature.Fact)
+	if !factOK {
+		return nil, errors.New("member generator: fact carrier is missing")
+	}
+	axis := schema.EntryReference{Surface: schema.SurfaceKindAxis, Key: source.Axis}
+	selected := make([]exactBinaryReducer, 0)
+	for ordinal, reducer := range metadata.Reducers {
+		if !reducer.CandidatePresent || reducer.CandidateConstant || reducer.Implementation.Name == "" || reducer.Implementation.Receiver.Name != "" ||
+			len(reducer.Inputs) != 2 || len(reducer.Outputs) != 1 {
+			continue
+		}
+		shape := true
+		for _, input := range reducer.Inputs {
+			shape = shape && input.Axis == axis && sameGoType(input.Type, fact.Type) && input.Form == member.ReadFormExact && input.Multiplicity == member.MultiplicityOne && input.Tag.Name == "" && input.Route.Name == ""
+		}
+		shape = shape && reducer.Outputs[0].Axis == axis && sameGoType(reducer.Outputs[0].Type, fact.Type)
+		if !shape {
+			continue
+		}
+		var provider RelationBinding
+		providers := 0
+		for _, relation := range metadata.Relations {
+			if relation.CandidateProviderLocal && sameGoType(relation.Subject, reducer.Candidate) && relation.CandidateAt.Name != "" {
+				provider = relation
+				providers++
+			}
+		}
+		if providers != 1 {
+			return nil, fmt.Errorf("member generator: exact-binary reducer %s has %d canonical candidate providers", reducer.Key, providers)
+		}
+		selected = append(selected, exactBinaryReducer{ordinal: uint32(ordinal), reducer: reducer, candidate: provider})
+	}
+	return selected, nil
+}
+
+// renderExactBinary emits the axis-local concrete reducer switch. It contains
+// no function table, reflection, callback, or fallback. The boolean result is
+// a construction fence: a sealed executor proves the reducer is supported
+// before solve, so false is never a semantic Refuse outcome.
+func renderExactBinary(packageName string, source definition.Definition) ([]byte, error) {
+	metadata, err := Resolve(source)
+	if err != nil {
+		return nil, err
+	}
+	reducers, err := exactBinaryReducers(source, metadata)
+	if err != nil {
+		return nil, err
+	}
+	owner := source.Binding.Key.Normalizer.Receiver
+	if owner.Name == "" {
+		return nil, errors.New("member generator: exact-binary schema receiver is missing")
+	}
+	fact, factOK := carrierByName(source, source.Signature.Fact)
+	if !factOK {
+		return nil, errors.New("member generator: exact-binary fact carrier is missing")
+	}
+	aliases := make(packageAliases)
+	add := func(path string) {
+		if path == "" || packagePathPackage(path) == packageName {
+			return
+		}
+		if _, exists := aliases[path]; exists {
+			return
+		}
+		alias := packagePathPackage(path)
+		for suffix := 2; ; suffix++ {
+			used := false
+			for _, existing := range aliases {
+				if existing == alias {
+					used = true
+					break
+				}
+			}
+			if !used {
+				break
+			}
+			alias = fmt.Sprintf("%s%d", packagePathPackage(path), suffix)
+		}
+		aliases[path] = alias
+	}
+	add(OutcomePackagePath)
+	add(owner.PackagePath)
+	add(fact.Type.PackagePath)
+	for _, selected := range reducers {
+		add(selected.candidate.CandidateAt.PackagePath)
+		add(selected.reducer.Implementation.PackagePath)
+		add(selected.reducer.Candidate.PackagePath)
+	}
+
+	var out strings.Builder
+	out.WriteString("// Code generated by axis member definition generator; DO NOT EDIT.\n")
+	out.WriteString("// This file is the concrete same-axis exact-binary reducer dispatch.\n\n")
+	fmt.Fprintf(&out, "package %s\n\n", packageName)
+	out.WriteString("//go:generate go run ../../analysis/schema/axis/member/generator/cmd -source ")
+	out.WriteString(string(source.Axis))
+	out.WriteString(" -exact-binary generated_exact_binary.go\n\n")
+	out.WriteString("import (\n")
+	for _, path := range aliases.paths() {
+		fmt.Fprintf(&out, "\t%s %q\n", aliases[path], path)
+	}
+	out.WriteString(")\n\n")
+	ownerType := qualifiedType(owner, packageName, aliases)
+	factType := qualifiedType(fact.Type, packageName, aliases)
+	outcome := aliases[OutcomePackagePath] + "." + OutcomeType
+	refuse := aliases[OutcomePackagePath] + "." + OutcomeRefuse
+
+	out.WriteString("// SupportsExactBinaryReducer reports whether the sealed axis member ordinal\n")
+	out.WriteString("// names this generated execution shape. Unknown ordinals fail construction.\n")
+	fmt.Fprintf(&out, "func SupportsExactBinaryReducer(reducerOrdinal uint32) bool {\n\tswitch reducerOrdinal {\n")
+	for _, selected := range reducers {
+		fmt.Fprintf(&out, "\tcase %d:\n\t\treturn true\n", selected.ordinal)
+	}
+	out.WriteString("\tdefault:\n\t\treturn false\n\t}\n}\n\n")
+	out.WriteString("// ExactBinaryCandidateAvailable authenticates one candidate ordinal against\n")
+	out.WriteString("// the reducer's canonical owner directory during family construction.\n")
+	fmt.Fprintf(&out, "func (schema *%s) ExactBinaryCandidateAvailable(reducerOrdinal, candidateOrdinal uint32) bool {\n", ownerType)
+	out.WriteString("\tif schema == nil {\n\t\treturn false\n\t}\n\tswitch reducerOrdinal {\n")
+	for _, selected := range reducers {
+		fmt.Fprintf(&out, "\tcase %d:\n", selected.ordinal)
+		candidateAt := directCall(selected.candidate.CandidateAt, owner, "schema", "candidate", []string{"int(candidateOrdinal)"}, packageName, aliases)
+		fmt.Fprintf(&out, "\t\t_, candidateOK := %s\n\t\treturn candidateOK\n", candidateAt)
+	}
+	out.WriteString("\tdefault:\n\t\treturn false\n\t}\n}\n\n")
+
+	out.WriteString("// ReduceExactBinary redeems the canonical candidate and invokes its owner fold.\n")
+	out.WriteString("// The final boolean is structural dispatch validity, not a semantic outcome.\n")
+	fmt.Fprintf(&out, "func (schema *%s) ReduceExactBinary(reducerOrdinal, candidateOrdinal uint32, left, right %s) (%s, %s, bool) {\n", ownerType, factType, factType, outcome)
+	fmt.Fprintf(&out, "\tvar zero %s\n\tif schema == nil {\n\t\treturn zero, %s, false\n\t}\n", factType, refuse)
+	out.WriteString("\tswitch reducerOrdinal {\n")
+	for _, selected := range reducers {
+		fmt.Fprintf(&out, "\tcase %d:\n", selected.ordinal)
+		candidateAt := directCall(selected.candidate.CandidateAt, owner, "schema", "candidate", []string{"int(candidateOrdinal)"}, packageName, aliases)
+		fmt.Fprintf(&out, "\t\tcandidate, candidateOK := %s\n", candidateAt)
+		fmt.Fprintf(&out, "\t\tif !candidateOK {\n\t\t\treturn zero, %s, false\n\t\t}\n", refuse)
+		fold := directCall(selected.reducer.Implementation, owner, "schema", "candidate", []string{"candidate", "left", "right"}, packageName, aliases)
+		fmt.Fprintf(&out, "\t\tresult, reduction := %s\n", fold)
+		out.WriteString("\t\treturn result, reduction, true\n")
+	}
+	fmt.Fprintf(&out, "\tdefault:\n\t\treturn zero, %s, false\n\t}\n}\n", refuse)
 	return format.Source([]byte(out.String()))
 }
 

@@ -368,6 +368,90 @@ func TestBinaryArithmeticUsesTheSharedEndpointOrdinal(t *testing.T) {
 	}
 }
 
+// TestBinaryEqualityAndOrderUseTheSharedEndpointOrdinal pins both relational
+// candidate cuts: each row round-trips through the one endpoint table, and
+// its write/left/right projections are no-argument views over that row.
+func TestBinaryEqualityAndOrderUseTheSharedEndpointOrdinal(t *testing.T) {
+	fixture := newEndpointFixture(t, "endpoint_relational_roundtrip")
+	equalitySeen, orderSeen := 0, 0
+	for _, occurrence := range fixture.occurrences {
+		if row, rowOK := fixture.values.BinaryEquality(fixture.module, occurrence); rowOK {
+			if !fixture.values.OwnsBinaryEquality(row) {
+				t.Fatal("equality row is not owner-issued")
+			}
+			equalitySeen++
+			resolved, resolvedOK := fixture.values.BinaryEqualityForArtifactOccurrence(fixture.module, occurrence)
+			ordinal, ordinalOK := fixture.values.BinaryEqualityOrdinal(row)
+			rowOrdinal, rowOrdinalOK := row.Ordinal()
+			at, atOK := fixture.values.BinaryEqualityAt(int(ordinal))
+			if !resolvedOK || !ordinalOK || !rowOrdinalOK || !atOK || ordinal != uint32(rowOrdinal) {
+				t.Fatalf("equality resolution ordinal=%d/%t row=%d/%t resolved=%t at=%t", ordinal, ordinalOK, rowOrdinal, rowOrdinalOK, resolvedOK, atOK)
+			}
+			resolvedID, resolvedIDOK := resolved.ID()
+			rowID, rowIDOK := row.ID()
+			atID, atIDOK := at.ID()
+			if !resolvedIDOK || !rowIDOK || !atIDOK || resolvedID != rowID || atID != rowID {
+				t.Fatal("equality occurrence and ordinal redemption disagree")
+			}
+			result, left, right, _, endpointsOK := row.Endpoints()
+			write, writeOK := row.Write()
+			leftProjection, leftOK := row.Left()
+			rightProjection, rightOK := row.Right()
+			if !endpointsOK || !writeOK || !leftOK || !rightOK || write != result || leftProjection != left || rightProjection != right {
+				t.Fatal("equality endpoint projections disagree")
+			}
+		}
+		if row, rowOK := fixture.values.BinaryOrder(fixture.module, occurrence); rowOK {
+			if !fixture.values.OwnsBinaryOrder(row) {
+				t.Fatal("order row is not owner-issued")
+			}
+			orderSeen++
+			resolved, resolvedOK := fixture.values.BinaryOrderForArtifactOccurrence(fixture.module, occurrence)
+			ordinal, ordinalOK := fixture.values.BinaryOrderOrdinal(row)
+			rowOrdinal, rowOrdinalOK := row.Ordinal()
+			at, atOK := fixture.values.BinaryOrderAt(int(ordinal))
+			if !resolvedOK || !ordinalOK || !rowOrdinalOK || !atOK || ordinal != uint32(rowOrdinal) {
+				t.Fatalf("order resolution ordinal=%d/%t row=%d/%t resolved=%t at=%t", ordinal, ordinalOK, rowOrdinal, rowOrdinalOK, resolvedOK, atOK)
+			}
+			resolvedID, resolvedIDOK := resolved.ID()
+			rowID, rowIDOK := row.ID()
+			atID, atIDOK := at.ID()
+			if !resolvedIDOK || !rowIDOK || !atIDOK || resolvedID != rowID || atID != rowID {
+				t.Fatal("order occurrence and ordinal redemption disagree")
+			}
+			result, left, right, _, endpointsOK := row.Endpoints()
+			write, writeOK := row.Write()
+			leftProjection, leftOK := row.Left()
+			rightProjection, rightOK := row.Right()
+			if !endpointsOK || !writeOK || !leftOK || !rightOK || write != result || leftProjection != left || rightProjection != right {
+				t.Fatal("order endpoint projections disagree")
+			}
+		}
+	}
+	if equalitySeen == 0 || orderSeen == 0 {
+		t.Fatalf("fixture admitted equality=%d order=%d operands", equalitySeen, orderSeen)
+	}
+	if _, ok := fixture.values.BinaryEqualityAt(-1); ok {
+		t.Fatal("equality ordinal accepted a negative address")
+	}
+	if _, ok := fixture.values.BinaryOrderAt(fixture.values.EndpointCount()); ok {
+		t.Fatal("order ordinal accepted an address past the shared table")
+	}
+	foreign := fixture.seal(t)
+	for _, occurrence := range fixture.occurrences {
+		if row, ok := fixture.values.BinaryEquality(fixture.module, occurrence); ok {
+			if _, ordinalOK := foreign.BinaryEqualityOrdinal(row); ordinalOK {
+				t.Fatal("foreign Schema accepted an equality ordinal")
+			}
+		}
+		if row, ok := fixture.values.BinaryOrder(fixture.module, occurrence); ok {
+			if _, ordinalOK := foreign.BinaryOrderOrdinal(row); ordinalOK {
+				t.Fatal("foreign Schema accepted an order ordinal")
+			}
+		}
+	}
+}
+
 // TestEndpointVectorRefusesForeignRows keeps the owner fence: a vector issued
 // by one Schema is not admitted by another over the same program.
 func TestEndpointVectorRefusesForeignRows(t *testing.T) {

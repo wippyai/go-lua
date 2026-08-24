@@ -6,12 +6,12 @@ import (
 	"github.com/wippyai/go-lua/analysis/schema/axis/member"
 )
 
-func TestContributionDeclaresArithmeticJoinsAndDirectFold(t *testing.T) {
+func TestContributionDeclaresEqualityJoinsAndDirectFold(t *testing.T) {
 	contribution := Contribution()
 	if !contribution.Available() {
-		t.Fatal("arithmetic contribution is not available")
+		t.Fatal("equality contribution is not available")
 	}
-	if contribution.Axis != "value" || contribution.Rule != "value-binary-arithmetic" {
+	if contribution.Axis != "value" || contribution.Rule != "value-binary-equality" {
 		t.Fatalf("contribution identity = %q/%q", contribution.Axis, contribution.Rule)
 	}
 	if len(contribution.Relations) != 1 || len(contribution.Projections) != 3 || len(contribution.Reducers) != 1 {
@@ -19,20 +19,20 @@ func TestContributionDeclaresArithmeticJoinsAndDirectFold(t *testing.T) {
 	}
 
 	relation := contribution.Relations[0]
-	if relation.Name != "BinaryArithmeticSources" || relation.Subject != "ValueFactCarrier" || len(relation.Inputs) != 1 || relation.Inputs[0].Carrier != "BinaryArithmeticCarrier" {
+	if relation.Name != "BinaryEqualitySources" || relation.Subject != "ValueFactCarrier" || len(relation.Inputs) != 1 || relation.Inputs[0].Carrier != "BinaryEqualityCarrier" {
 		t.Fatalf("source relation = %#v", relation)
 	}
 	provider := relation.CandidateProvider
-	if provider.Member != "value/binary-arithmetic/candidates" {
+	if provider.Member != "value/binary-equality/candidates" {
 		t.Fatalf("source provider = %#v", provider)
 	}
 	wantProjections := []struct {
 		name, key, relation, accessor string
 		role                          member.Role
 	}{
-		{"BinaryArithmeticLeft", "value/binary-arithmetic/left", "BinaryArithmeticSources", "Left", member.Key},
-		{"BinaryArithmeticRight", "value/binary-arithmetic/right", "BinaryArithmeticSources", "Right", member.Key},
-		{"BinaryArithmeticWrite", "value/binary-arithmetic/write", "BinaryArithmeticCandidates", "Write", member.Destination},
+		{"BinaryEqualityLeft", "value/binary-equality/left", "BinaryEqualitySources", "Left", member.Key},
+		{"BinaryEqualityRight", "value/binary-equality/right", "BinaryEqualitySources", "Right", member.Key},
+		{"BinaryEqualityWrite", "value/binary-equality/write", "BinaryEqualityCandidates", "Write", member.Destination},
 	}
 	for index, want := range wantProjections {
 		projection := contribution.Projections[index]
@@ -42,7 +42,7 @@ func TestContributionDeclaresArithmeticJoinsAndDirectFold(t *testing.T) {
 	}
 
 	reducer := contribution.Reducers[0]
-	if reducer.Name != "BinaryArithmeticReducer" || reducer.Key != "value/binary-arithmetic/reducer" || reducer.Candidate != "BinaryArithmeticCarrier" || len(reducer.Inputs) != 2 || len(reducer.Outputs) != 1 {
+	if reducer.Name != "BinaryEqualityReducer" || reducer.Key != "value/binary-equality/reducer" || reducer.Candidate != "BinaryEqualityCarrier" || len(reducer.Inputs) != 2 || len(reducer.Outputs) != 1 {
 		t.Fatalf("reducer = %#v", reducer)
 	}
 	for index, input := range reducer.Inputs {
@@ -50,7 +50,7 @@ func TestContributionDeclaresArithmeticJoinsAndDirectFold(t *testing.T) {
 			t.Fatalf("reducer input[%d] = %#v", index, input)
 		}
 	}
-	if reducer.Outputs[0].Axis.Key != "value" || reducer.Outputs[0].Carrier != "ValueFactCarrier" || reducer.Implementation.Name != "ArithmeticValue" || reducer.Implementation.PackagePath != valuePackagePath {
+	if reducer.Outputs[0].Axis.Key != "value" || reducer.Outputs[0].Carrier != "ValueFactCarrier" || reducer.Implementation.Name != "EqualityValue" || reducer.Implementation.PackagePath != valuePackagePath {
 		t.Fatalf("reducer output/implementation = %#v/%#v", reducer.Outputs[0], reducer.Implementation)
 	}
 }

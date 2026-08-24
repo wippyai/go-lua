@@ -39,14 +39,14 @@ import (
 	statictransfer "github.com/wippyai/go-lua/domain/static/transfer"
 	valuedomain "github.com/wippyai/go-lua/domain/value"
 	valueallocation "github.com/wippyai/go-lua/domain/value/allocation"
-	valuearithmeticexecution "github.com/wippyai/go-lua/domain/value/arithmetic/execution"
 	valuearithmeticprogram "github.com/wippyai/go-lua/domain/value/arithmetic/program"
 	valuebodyresult "github.com/wippyai/go-lua/domain/value/bodyresult"
 	valuebootstrap "github.com/wippyai/go-lua/domain/value/bootstrap"
-	valueequality "github.com/wippyai/go-lua/domain/value/equality"
+	valueequalityprogram "github.com/wippyai/go-lua/domain/value/equality/program"
+	valueexactbinary "github.com/wippyai/go-lua/domain/value/execution/exactbinary"
 	valuefreshresult "github.com/wippyai/go-lua/domain/value/freshresult"
 	valuemoduleload "github.com/wippyai/go-lua/domain/value/moduleload"
-	valueorder "github.com/wippyai/go-lua/domain/value/order"
+	valueorderprogram "github.com/wippyai/go-lua/domain/value/order/program"
 	valueowner "github.com/wippyai/go-lua/domain/value/owner"
 	valuerefinement "github.com/wippyai/go-lua/domain/value/refinement"
 	valueresultalias "github.com/wippyai/go-lua/domain/value/resultalias"
@@ -146,9 +146,9 @@ func ruleTemplateWiring[P Principals, A Authorities]() ([]*rule.Template, []Rule
 	add(WireGeneratedRule[P, A](valuebootstrap.RuleEntry()))
 	add(WireGeneratedRule[P, A](heapbootstrap.RuleEntry()))
 	add(WireGeneratedRule[P, A](valuetransfer.RuleEntry()))
-	add(WireGeneratedRuleWithFamily[P, A](valuearithmeticprogram.RuleEntry(), valuearithmeticexecution.InstallFamily[A]))
-	add(WireRule(valueequality.RuleEntry[P, A](), valueequality.DeclareRule[P], valueequality.RegisterRule, nil, valueequality.BindRule[A], nil, nil, nil))
-	add(WireRule(valueorder.RuleEntry[P, A](), valueorder.DeclareRule[P], valueorder.RegisterRule, nil, valueorder.BindRule[A], nil, nil, nil))
+	add(WireGeneratedRuleWithFamily[P, A](valuearithmeticprogram.RuleEntry(), valueexactbinary.InstallFamily[A]))
+	add(WireGeneratedRuleWithFamily[P, A](valueequalityprogram.RuleEntry(), valueexactbinary.InstallFamily[A]))
+	add(WireGeneratedRuleWithFamily[P, A](valueorderprogram.RuleEntry(), valueexactbinary.InstallFamily[A]))
 	add(WireRule(valuerefinement.RuleEntry[P, A](), valuerefinement.DeclareRule[P], valuerefinement.RegisterRule, nil, valuerefinement.BindRule[A], nil, nil, nil))
 	// Placement displacement consumers follow the value/call/heap producers
 	// whose sealed facts they read.

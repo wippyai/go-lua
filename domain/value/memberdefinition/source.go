@@ -42,6 +42,8 @@ func StorageTransfer() definition.Definition {
 	coordinate := valueGoType("Coordinate")
 	storageTransfer := valueGoType("StorageTransfer")
 	binaryArithmetic := valueGoType("BinaryArithmetic")
+	binaryEquality := valueGoType("BinaryEquality")
+	binaryOrder := valueGoType("BinaryOrder")
 	value := valueGoType("Value")
 	allocationResult := valueGoType("AllocationResult")
 	freshResultCall := valueGoType("FreshResultCall")
@@ -67,9 +69,11 @@ func StorageTransfer() definition.Definition {
 			{Name: "ValueFactCarrier", Key: "carrier/value/fact", Type: value},
 			{Name: "StorageTransferCarrier", Key: "carrier/value/storage-transfer", Type: storageTransfer},
 			{Name: "BinaryArithmeticCarrier", Key: "carrier/value/binary-arithmetic", Type: binaryArithmetic},
+			{Name: "BinaryEqualityCarrier", Key: "carrier/value/binary-equality", Type: binaryEquality},
+			{Name: "BinaryOrderCarrier", Key: "carrier/value/binary-order", Type: binaryOrder},
 			{Name: "SourceSeedCarrier", Key: "carrier/value/source-seed", Type: valueGoType("SourceSeed")},
 			{Name: "GlobalBootstrapResultCarrier", Key: "carrier/value/global-bootstrap-result", Type: valueGoType("GlobalBootstrapResult")},
-			// These are the two owner-issued candidate relationships whose
+			// These are the owner-issued candidate relationships whose
 			// transformed carries write the Value factor. Each is the subject of
 			// its own published directory below; no receipt or callback is
 			// retained in the cold catalog.
@@ -109,6 +113,32 @@ func StorageTransfer() definition.Definition {
 				CandidateResolver: valueMethod("BinaryArithmeticForArtifactOccurrence", "Schema", true, 0),
 				CandidateOrdinal:  valueMethod("BinaryArithmeticOrdinal", "Schema", true, 0),
 				CandidateAt:       valueMethod("BinaryArithmeticAt", "Schema", true, 0),
+			},
+			{
+				// Equality candidates use the same sealed endpoint projection as
+				// arithmetic, but retain their own owner-issued candidate relation.
+				// The family directory is therefore canonical and disjoint: no
+				// equality row is inferred from arithmetic rows or renumbered in a
+				// family-local table.
+				Name:              "BinaryEqualityCandidates",
+				Key:               "value/binary-equality/candidates",
+				Subject:           "BinaryEqualityCarrier",
+				CandidateProvider: member.RelationRef{Axis: axisReference("value"), Member: "value/binary-equality/candidates"},
+				CandidateResolver: valueMethod("BinaryEqualityForArtifactOccurrence", "Schema", true, 0),
+				CandidateOrdinal:  valueMethod("BinaryEqualityOrdinal", "Schema", true, 0),
+				CandidateAt:       valueMethod("BinaryEqualityAt", "Schema", true, 0),
+			},
+			{
+				// Order candidates are likewise a distinct owner directory over
+				// the shared endpoint table. Its canonical ordinal is issued by
+				// Value; this declaration does not create a second denominator.
+				Name:              "BinaryOrderCandidates",
+				Key:               "value/binary-order/candidates",
+				Subject:           "BinaryOrderCarrier",
+				CandidateProvider: member.RelationRef{Axis: axisReference("value"), Member: "value/binary-order/candidates"},
+				CandidateResolver: valueMethod("BinaryOrderForArtifactOccurrence", "Schema", true, 0),
+				CandidateOrdinal:  valueMethod("BinaryOrderOrdinal", "Schema", true, 0),
+				CandidateAt:       valueMethod("BinaryOrderAt", "Schema", true, 0),
 			},
 			{
 				Name:              "StorageTransferSources",

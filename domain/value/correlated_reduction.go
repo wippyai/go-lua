@@ -38,6 +38,51 @@ func ArithmeticValue(candidate BinaryArithmetic, left, right Value) (Value, stru
 	return result, structure.Concrete
 }
 
+// EqualityValue is Value's complete binary-equality judgment. The candidate
+// authenticates the equality polarity and owning Schema; execution supplies
+// the two already owner-issued exact cells and owns missing-cell handling.
+// Unlike order, equality preserves the existing semantic behavior of staging
+// an explicitly computed Bottom result as a concrete Value fact.
+func EqualityValue(candidate BinaryEquality, left, right Value) (Value, structure.ReductionOutcome) {
+	if candidate.schema == nil || !candidate.schema.OwnsBinaryEquality(candidate) ||
+		!candidate.schema.owns(left) || !candidate.schema.owns(right) {
+		return Value{}, structure.Refuse
+	}
+	notEqual, ok := candidate.NotEqual()
+	if !ok {
+		return Value{}, structure.Refuse
+	}
+	result, ok := candidate.schema.CompareEquality(left, right, notEqual)
+	if !ok {
+		return Value{}, structure.Refuse
+	}
+	return result, structure.Concrete
+}
+
+// OrderValue is Value's complete relational-order judgment. The candidate
+// authenticates the closed operator and owning Schema; execution supplies the
+// two already owner-issued exact cells and owns missing-cell handling. An
+// explicitly Bottom comparison has no reachable order candidate, matching the
+// existing order rule's NoCandidate policy.
+func OrderValue(candidate BinaryOrder, left, right Value) (Value, structure.ReductionOutcome) {
+	if candidate.schema == nil || !candidate.schema.OwnsBinaryOrder(candidate) ||
+		!candidate.schema.owns(left) || !candidate.schema.owns(right) {
+		return Value{}, structure.Refuse
+	}
+	op, ok := candidate.Op()
+	if !ok {
+		return Value{}, structure.Refuse
+	}
+	result, ok := candidate.schema.CompareOrder(left, right, op)
+	if !ok {
+		return Value{}, structure.Refuse
+	}
+	if candidate.schema.Equal(result, candidate.schema.Bottom()) {
+		return Value{}, structure.NoCandidate
+	}
+	return result, structure.Concrete
+}
+
 // SourceFact is Value's zero-input source reducer. It rederives the immutable
 // source fact from one owner-issued SourceSeed.
 func SourceFact(seed SourceSeed) (Value, structure.ReductionOutcome) {

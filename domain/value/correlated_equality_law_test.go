@@ -3,7 +3,9 @@ package value
 import (
 	"testing"
 
+	"github.com/wippyai/go-lua/analysis/identity"
 	"github.com/wippyai/go-lua/analysis/program/keyspace"
+	"github.com/wippyai/go-lua/analysis/schema/structure"
 	"github.com/wippyai/go-lua/domain/runtimekind"
 )
 
@@ -64,6 +66,44 @@ func TestCompareEqualityUsesOwnedExactScalarsAndNilability(t *testing.T) {
 	}
 	if _, ok := (&Schema{}).CompareEquality(nilValue, nilValue, false); ok {
 		t.Fatal("foreign schema accepted equality operands")
+	}
+}
+
+func TestEqualityValueAuthenticatesOwnerAndPreservesBottomPolicy(t *testing.T) {
+	integer := keyspace.LiteralValue{Kind: keyspace.LiteralInteger, Integer: 1}
+	schema := &Schema{atomByRow: make(map[atomRow]uint32), exactKeys: make(map[keyspace.LiteralValue]keyspace.LiteralValue), potential: 8}
+	schema.exactKeys[integer] = integer
+	if schema.addAtom(atomRow{kind: atomFalse}) == 0 || schema.addAtom(atomRow{kind: atomTrue}) == 0 ||
+		schema.addAtom(atomRow{kind: atomLiteral, runtime: runtimekind.Number, key: integer, hasKey: true}) == 0 {
+		t.Fatal("test atoms unavailable")
+	}
+	schema.bottom = Value{schema: schema}
+	schema.top = Value{schema: schema, top: true}
+	one := wantsValue(t, schema, atomRow{kind: atomLiteral, runtime: runtimekind.Number, key: integer, hasKey: true})
+	candidate := BinaryEquality{
+		schema:  schema,
+		key:     computationKey{module: identity.ContentID{1}, occurrence: identity.ContentID{2}},
+		content: identity.ContentID{3},
+	}
+	result, outcome := EqualityValue(candidate, one, one)
+	if outcome != structure.Concrete || schema.Truthiness(result) != TruthTrue {
+		t.Fatalf("EqualityValue outcome/result = %v/%v, want Concrete/true", outcome, schema.Truthiness(result))
+	}
+	bottomResult, bottomOutcome := EqualityValue(candidate, schema.Bottom(), one)
+	if bottomOutcome != structure.Concrete || !schema.Equal(bottomResult, schema.Bottom()) {
+		t.Fatalf("EqualityValue Bottom = %v/%v, want Concrete/Bottom", bottomOutcome, schema.Equal(bottomResult, schema.Bottom()))
+	}
+	foreign := *schema
+	if _, foreignOutcome := EqualityValue(candidate, Value{schema: &foreign, top: true}, one); foreignOutcome != structure.Refuse {
+		t.Fatalf("foreign Value outcome = %v, want Refuse", foreignOutcome)
+	}
+	if _, missingOutcome := EqualityValue(candidate, Value{}, one); missingOutcome != structure.Refuse {
+		t.Fatalf("missing Value outcome = %v, want executor-owned Refuse at fold boundary", missingOutcome)
+	}
+	malformed := candidate
+	malformed.content = identity.ContentID{}
+	if _, malformedOutcome := EqualityValue(malformed, one, one); malformedOutcome != structure.Refuse {
+		t.Fatalf("malformed candidate outcome = %v, want Refuse", malformedOutcome)
 	}
 }
 

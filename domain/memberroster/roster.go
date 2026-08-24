@@ -31,7 +31,9 @@ import (
 	statictransfer "github.com/wippyai/go-lua/domain/static/transfer/memberdefinition"
 	valuearithmetic "github.com/wippyai/go-lua/domain/value/arithmetic/memberdefinition"
 	valuebootstrap "github.com/wippyai/go-lua/domain/value/bootstrap/memberdefinition"
+	valueequality "github.com/wippyai/go-lua/domain/value/equality/memberdefinition"
 	valuebase "github.com/wippyai/go-lua/domain/value/memberdefinition"
+	valueorder "github.com/wippyai/go-lua/domain/value/order/memberdefinition"
 	valuesource "github.com/wippyai/go-lua/domain/value/source/memberdefinition"
 	valuetransfer "github.com/wippyai/go-lua/domain/value/transfer/memberdefinition"
 )
@@ -49,6 +51,8 @@ func Composition() (definition.Roster, bool) {
 				valuesource.Contribution(),
 				valuebootstrap.Contribution(),
 				valuearithmetic.Contribution(),
+				valueequality.Contribution(),
+				valueorder.Contribution(),
 			},
 		},
 		definition.Source{

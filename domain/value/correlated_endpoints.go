@@ -542,6 +542,190 @@ func (schema *Schema) BinaryArithmeticAt(index int) (BinaryArithmetic, bool) {
 	return row, true
 }
 
+// EndpointOrdinal is the one dense candidate address BinaryEquality uses.
+// It is the ordinal in the Schema's shared endpoint table, not an equality
+// family-local index.
+func (row BinaryEquality) EndpointOrdinal() (uint32, bool) {
+	vector, ok := row.EndpointVector()
+	if !ok {
+		return 0, false
+	}
+	ordinal, ordinalOK := vector.Ordinal()
+	if !ordinalOK || uint64(ordinal) > uint64(^uint32(0)) {
+		return 0, false
+	}
+	return uint32(ordinal), true
+}
+
+// Ordinal is the owner-issued dense candidate address. It is an alias of
+// EndpointOrdinal: there is no second equality candidate index.
+func (row BinaryEquality) Ordinal() (uint32, bool) {
+	return row.EndpointOrdinal()
+}
+
+// Write projects the owner-issued equality write coordinate from the sealed
+// endpoint vector.
+func (row BinaryEquality) Write() (Coordinate, bool) {
+	vector, ok := row.EndpointVector()
+	if !ok {
+		return Coordinate{}, false
+	}
+	return vector.Coordinate(EndpointWrite)
+}
+
+// Left projects the first owner-issued equality input coordinate.
+func (row BinaryEquality) Left() (Coordinate, bool) {
+	vector, ok := row.EndpointVector()
+	if !ok {
+		return Coordinate{}, false
+	}
+	return vector.Coordinate(EndpointLeft)
+}
+
+// Right projects the second owner-issued equality input coordinate.
+func (row BinaryEquality) Right() (Coordinate, bool) {
+	vector, ok := row.EndpointVector()
+	if !ok {
+		return Coordinate{}, false
+	}
+	return vector.Coordinate(EndpointRight)
+}
+
+// BinaryEqualityForArtifactOccurrence resolves the owner-issued equality row
+// for one mounted Program occurrence. Its endpoint ordinal is subsequently
+// redeemed through BinaryEqualityAt, which addresses the shared endpoint
+// table directly.
+func (schema *Schema) BinaryEqualityForArtifactOccurrence(module, occurrence identity.ContentID) (BinaryEquality, bool) {
+	if schema == nil || !module.Available() || !occurrence.Available() {
+		return BinaryEquality{}, false
+	}
+	row, ok := schema.BinaryEquality(module, occurrence)
+	if !ok || !schema.OwnsBinaryEquality(row) {
+		return BinaryEquality{}, false
+	}
+	_, vectorOK := row.EndpointVector()
+	return row, vectorOK
+}
+
+// BinaryEqualityOrdinal returns the shared endpoint-table ordinal of one
+// owner-issued equality row.
+func (schema *Schema) BinaryEqualityOrdinal(row BinaryEquality) (uint32, bool) {
+	if schema == nil || !schema.OwnsBinaryEquality(row) {
+		return 0, false
+	}
+	return row.EndpointOrdinal()
+}
+
+// BinaryEqualityAt redeems a dense equality candidate by the ordinal of the
+// existing endpoint table. Endpoint rows belonging to another family refuse;
+// they remain part of the shared denominator and are never renumbered.
+func (schema *Schema) BinaryEqualityAt(index int) (BinaryEquality, bool) {
+	if schema == nil || !schema.endpointsSealed() || index < 0 || index >= len(schema.endpoints) {
+		return BinaryEquality{}, false
+	}
+	endpoint := schema.endpoints[index]
+	if endpoint.family != endpointFamilyEquality {
+		return BinaryEquality{}, false
+	}
+	row, ok := schema.binaryEqualities[endpoint.key]
+	if !ok || row.endpoints != uint32(index+1) || !schema.OwnsBinaryEquality(row) {
+		return BinaryEquality{}, false
+	}
+	return row, true
+}
+
+// EndpointOrdinal is the one dense candidate address BinaryOrder uses. It is
+// the ordinal in the Schema's shared endpoint table, not an order
+// family-local index.
+func (row BinaryOrder) EndpointOrdinal() (uint32, bool) {
+	vector, ok := row.EndpointVector()
+	if !ok {
+		return 0, false
+	}
+	ordinal, ordinalOK := vector.Ordinal()
+	if !ordinalOK || uint64(ordinal) > uint64(^uint32(0)) {
+		return 0, false
+	}
+	return uint32(ordinal), true
+}
+
+// Ordinal is the owner-issued dense candidate address. It is an alias of
+// EndpointOrdinal: there is no second order candidate index.
+func (row BinaryOrder) Ordinal() (uint32, bool) {
+	return row.EndpointOrdinal()
+}
+
+// Write projects the owner-issued order write coordinate from the sealed
+// endpoint vector.
+func (row BinaryOrder) Write() (Coordinate, bool) {
+	vector, ok := row.EndpointVector()
+	if !ok {
+		return Coordinate{}, false
+	}
+	return vector.Coordinate(EndpointWrite)
+}
+
+// Left projects the first owner-issued order input coordinate.
+func (row BinaryOrder) Left() (Coordinate, bool) {
+	vector, ok := row.EndpointVector()
+	if !ok {
+		return Coordinate{}, false
+	}
+	return vector.Coordinate(EndpointLeft)
+}
+
+// Right projects the second owner-issued order input coordinate.
+func (row BinaryOrder) Right() (Coordinate, bool) {
+	vector, ok := row.EndpointVector()
+	if !ok {
+		return Coordinate{}, false
+	}
+	return vector.Coordinate(EndpointRight)
+}
+
+// BinaryOrderForArtifactOccurrence resolves the owner-issued order row for
+// one mounted Program occurrence. Its endpoint ordinal is subsequently
+// redeemed through BinaryOrderAt, which addresses the shared endpoint table
+// directly.
+func (schema *Schema) BinaryOrderForArtifactOccurrence(module, occurrence identity.ContentID) (BinaryOrder, bool) {
+	if schema == nil || !module.Available() || !occurrence.Available() {
+		return BinaryOrder{}, false
+	}
+	row, ok := schema.BinaryOrder(module, occurrence)
+	if !ok || !schema.OwnsBinaryOrder(row) {
+		return BinaryOrder{}, false
+	}
+	_, vectorOK := row.EndpointVector()
+	return row, vectorOK
+}
+
+// BinaryOrderOrdinal returns the shared endpoint-table ordinal of one
+// owner-issued order row.
+func (schema *Schema) BinaryOrderOrdinal(row BinaryOrder) (uint32, bool) {
+	if schema == nil || !schema.OwnsBinaryOrder(row) {
+		return 0, false
+	}
+	return row.EndpointOrdinal()
+}
+
+// BinaryOrderAt redeems a dense order candidate by the ordinal of the
+// existing endpoint table. Endpoint rows belonging to another family refuse;
+// they remain part of the shared denominator and are never renumbered.
+func (schema *Schema) BinaryOrderAt(index int) (BinaryOrder, bool) {
+	if schema == nil || !schema.endpointsSealed() || index < 0 || index >= len(schema.endpoints) {
+		return BinaryOrder{}, false
+	}
+	endpoint := schema.endpoints[index]
+	if endpoint.family != endpointFamilyOrder {
+		return BinaryOrder{}, false
+	}
+	row, ok := schema.binaryOrders[endpoint.key]
+	if !ok || row.endpoints != uint32(index+1) || !schema.OwnsBinaryOrder(row) {
+		return BinaryOrder{}, false
+	}
+	return row, true
+}
+
 func (row BinaryEquality) Endpoint(role EndpointRole) (uint64, bool) {
 	vector, ok := row.EndpointVector()
 	if !ok {
