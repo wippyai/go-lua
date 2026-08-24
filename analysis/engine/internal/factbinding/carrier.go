@@ -429,6 +429,17 @@ type bindingWork[K scalar.Key, V any] struct {
 	pointFoldEffects          map[carrier.LineageToken]support.Mask
 	pointFoldBaselines        map[carrier.LineageToken]support.Mask
 	pointFoldBaselineOperands map[carrier.LineageToken]int
+	// pointFoldRetained is the per-position complement of the displacement a
+	// routed write authored, folded once for the whole fold rather than per
+	// observed key. Positions with no routed row are absent.
+	pointFoldRetained []pointFoldRetainedRegion
+}
+
+// pointFoldRetainedRegion is one Target position's retained predecessor
+// region: everything the routed writes at that position did not answer.
+type pointFoldRetainedRegion struct {
+	position int
+	region   support.Mask
 }
 
 type pointFoldCoverageRegion struct {
@@ -444,6 +455,49 @@ type pointFoldCoverageRegion struct {
 // repeated or descending position instead of discovering the order afterwards.
 type pointFoldRun struct {
 	next, end int
+}
+
+// retainedAt answers one position's retained predecessor region. The second
+// result reports whether any routed write authored a displacement there, so
+// the ordinary position pays no conjunction at all.
+func (work *bindingWork[K, V]) retainedAt(position int) (support.Mask, bool) {
+	rows := work.pointFoldRetained
+	index := sort.Search(len(rows), func(index int) bool { return rows[index].position >= position })
+	if index >= len(rows) || rows[index].position != position {
+		return support.Mask{}, false
+	}
+	return rows[index].region, true
+}
+
+// buildPointFoldRetained folds every authored displacement region into one
+// retained complement per position. pointFoldRows is already ascending in
+// position, so this is one linear pass over the same rows the key lookup
+// binary-searches.
+func (work *bindingWork[K, V]) buildPointFoldRetained(delta *support.Work) bool {
+	work.pointFoldRetained = work.pointFoldRetained[:0]
+	for index := 0; index < len(work.pointFoldRows); index++ {
+		row := work.pointFoldRows[index]
+		if row.role != carrier.CoverageDisplacement {
+			continue
+		}
+		if count := len(work.pointFoldRetained); count != 0 && work.pointFoldRetained[count-1].position == row.position {
+			region, valid := delta.Or(work.pointFoldRetained[count-1].region, row.region)
+			if !valid {
+				return false
+			}
+			work.pointFoldRetained[count-1].region = region
+			continue
+		}
+		work.pointFoldRetained = append(work.pointFoldRetained, pointFoldRetainedRegion{position: row.position, region: row.region})
+	}
+	for index := range work.pointFoldRetained {
+		region, valid := delta.Not(work.pointFoldRetained[index].region)
+		if !valid {
+			return false
+		}
+		work.pointFoldRetained[index].region = region
+	}
+	return true
 }
 
 // mergePointFoldRuns turns the concatenated per-operand runs into the single
@@ -706,8 +760,10 @@ func (work *bindingWork[K, V]) FoldPointRHSUnder(before, base carrier.RootHandle
 	defer func() {
 		clear(work.pointFoldPlanes)
 		clear(work.pointFoldRows)
+		clear(work.pointFoldRetained)
 		work.pointFoldPlanes = work.pointFoldPlanes[:0]
 		work.pointFoldRows = work.pointFoldRows[:0]
+		work.pointFoldRetained = work.pointFoldRetained[:0]
 	}()
 	clear(work.pointFoldRows)
 	work.pointFoldRows = work.pointFoldRows[:0]
@@ -751,6 +807,9 @@ func (work *bindingWork[K, V]) FoldPointRHSUnder(before, base carrier.RootHandle
 		}
 	}
 	work.mergePointFoldRuns()
+	if !work.buildPointFoldRetained(delta) {
+		return carrier.ChangeHandle{}, false
+	}
 	falseRegion := delta.False()
 	if !falseRegion.Valid() {
 		return carrier.ChangeHandle{}, false
@@ -782,6 +841,14 @@ func (work *bindingWork[K, V]) FoldPointRHSUnder(before, base carrier.RootHandle
 			clear(work.pointFoldBaselineOperands)
 			rowIndex := sort.Search(len(work.pointFoldRows), func(index int) bool { return work.pointFoldRows[index].position >= position })
 			end := rowIndex
+			// A routed write states the complete value of the coordinate it
+			// read, so its region is the part of this cell the operation has
+			// already answered. retainedAt is the complement of that region,
+			// folded once for the whole position: every transported
+			// predecessor keeps exactly what the routed writes did not
+			// answer, which is the before/after program-point distinction
+			// stated as one region conjunction.
+			retained, displaced := work.retainedAt(position)
 			for end < len(work.pointFoldRows) && work.pointFoldRows[end].position == position {
 				row := work.pointFoldRows[end]
 				if row.lineage.Valid() {
@@ -815,6 +882,13 @@ func (work *bindingWork[K, V]) FoldPointRHSUnder(before, base carrier.RootHandle
 						return false
 					}
 					region, valid = delta.And(region, complement)
+					if !valid {
+						return false
+					}
+				}
+				if displaced {
+					var valid bool
+					region, valid = delta.And(region, retained)
 					if !valid {
 						return false
 					}

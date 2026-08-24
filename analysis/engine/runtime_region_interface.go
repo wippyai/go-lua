@@ -52,8 +52,14 @@ func (epoch *executorEpoch) regionRHS(point equation.Point, pointIndex, regionIn
 // evidence for every ingress operand that moved since this episode last
 // remembered its interfaces. Admits is fail-closed, so an operand whose
 // producer classified no direction refuses reuse exactly as a descent does.
+// A displaced accumulator is additionally refused: incremental reuse is
+// sound because folding the moved operands onto the retained row equals
+// folding every operand onto Init, and that equality is a property of the
+// join. A routed write superseded a predecessor inside a displaced row, so
+// folding a later operand onto it would rejoin the predecessor that write
+// already answered.
 func regionAccumulatorEvidenceAdmits(episode *regionEpoch) bool {
-	return episode != nil && episode.phase == phaseAscent && episode.hasAccumulator && episode.pending.Admits()
+	return episode != nil && episode.phase == phaseAscent && episode.hasAccumulator && !episode.accumulator.Displaced() && episode.pending.Admits()
 }
 
 // regionOperandTerms chooses the operands one head refold must admit.

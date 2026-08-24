@@ -177,6 +177,23 @@ func (binding *Binding[K, V]) BeginInto(scratch *PatchScratch[K, V], work *carri
 // Binding capability: strong updates have exact singleton authority, while a
 // weak target joins only the finite typed surface frozen at declaration time.
 func (patch *Patch[K, V]) Write(target carrier.Target, when support.Mask, value V) bool {
+	return patch.write(target, when, value, false)
+}
+
+// WriteRouted is the routed half of the same mutation. A routed output names
+// a selected read on its own Factor and reduces the cell that read observed,
+// so the staged value is the complete value of that coordinate after the
+// operation rather than one more term reaching it. The authored row therefore
+// states a displacement, and the point fold gives it the predecessor region
+// it read instead of joining the two.
+func (patch *Patch[K, V]) WriteRouted(target carrier.Target, when support.Mask, value V) bool {
+	if target.Mode() != carrier.StrongTarget {
+		return false
+	}
+	return patch.write(target, when, value, true)
+}
+
+func (patch *Patch[K, V]) write(target carrier.Target, when support.Mask, value V, routed bool) bool {
 	if patch == nil || patch.binding == nil || patch.patch == nil || !when.Valid() || support.Empty(when) || !when.Entails(patch.support) {
 		return false
 	}
@@ -194,6 +211,10 @@ func (patch *Patch[K, V]) Write(target carrier.Target, when support.Mask, value 
 		}
 	} else {
 		return false
+	}
+	if routed {
+		patch.authored = append(patch.authored, carrier.NewDisplacementRegion(target, when))
+		return true
 	}
 	patch.authored = append(patch.authored, carrier.NewTargetRegion(target, when))
 	return true
@@ -311,11 +332,13 @@ func containsTransformTarget[K scalar.Key, V any](left, right TransformClosure[K
 	return false
 }
 
-// WriteJoined performs one strong exact write after reducing every value for
+// WriteJoined performs one strong routed write after reducing every value for
 // that exact target through the owning Factor's admitted Join. It is used by
 // a route-output batch when distinct semantic routes resolve to one physical
 // coordinate. The target is still a presealed singleton capability; this
-// method does not turn a may-alias surface into a generic strong update.
+// method does not turn a may-alias surface into a generic strong update. The
+// authored row is a displacement for the same reason WriteRouted's is: the
+// joined value is the complete value of one routed coordinate.
 func (patch *Patch[K, V]) WriteJoined(target carrier.Target, when support.Mask, values []V) bool {
 	if patch == nil || patch.binding == nil || patch.patch == nil || !when.Valid() || support.Empty(when) || !when.Entails(patch.support) || len(values) == 0 {
 		return false
@@ -331,7 +354,7 @@ func (patch *Patch[K, V]) WriteJoined(target carrier.Target, when support.Mask, 
 	if !patch.patch.Set(descriptor.keys[0], when, joined) {
 		return false
 	}
-	patch.authored = append(patch.authored, carrier.NewTargetRegion(target, when))
+	patch.authored = append(patch.authored, carrier.NewDisplacementRegion(target, when))
 	return true
 }
 

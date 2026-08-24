@@ -49,12 +49,28 @@ type contributionCoverage struct {
 // CoverageRole distinguishes a carried predecessor surface from a sibling
 // authored effect.  Effect is deliberately the zero value so existing raw
 // TargetRegion literals remain ordinary authored rows.
+//
+// CoverageDisplacement is the authored row of a routed strong write. Its
+// declaration proves the write is the reduction of the value read at that
+// same coordinate on that same Factor, so the row states the complete value
+// of its cell rather than one more term to join: within its own region it
+// supersedes every predecessor generation reaching the same Target. The
+// distinction is the program point - a routed write publishes the cell after
+// the operation, and the baselines the fold transports in are the cell before
+// it. A published point carries no displacement row: publishPointState
+// restamps every row of a new generation as a baseline of that generation.
 type CoverageRole uint8
 
 const (
 	CoverageEffect CoverageRole = iota
 	CoverageBaseline
+	CoverageDisplacement
 )
+
+// validRole reports whether a role is one this carrier authors.
+func (role CoverageRole) validRole() bool {
+	return role == CoverageEffect || role == CoverageBaseline || role == CoverageDisplacement
+}
 
 // LineageToken is an opaque identity for one published PointState generation.
 // It carries no roots or coverage and is comparable, so typed fold code can
@@ -94,6 +110,13 @@ func (row TargetRegion) Role() CoverageRole    { return row.role }
 // attached to the canonical coverage row.
 func NewTargetRegion(target Target, region support.Mask) TargetRegion {
 	return TargetRegion{target: target, region: region, role: CoverageEffect}
+}
+
+// NewDisplacementRegion creates the authored row of a routed strong write.
+// The region is the one the write's own selected read observed its
+// predecessor in, so the row displaces exactly what it read and nothing else.
+func NewDisplacementRegion(target Target, region support.Mask) TargetRegion {
+	return TargetRegion{target: target, region: region, role: CoverageDisplacement}
 }
 
 func (row TargetRegion) WithLineage(lineage LineageToken, role CoverageRole) TargetRegion {
@@ -347,7 +370,7 @@ func (coverage contributionCoverage) validFor(state State) bool {
 		}
 		for index, row := range coverage.slots[position].targets {
 			slot, ok := row.target.Slot()
-			if !ok || int(slot) != position || !coverage.composition.OwnsTarget(slot, row.target) || !row.region.Valid() || row.region.Manager() != coverage.composition.guards || support.Empty(row.region) || row.role != CoverageEffect && row.role != CoverageBaseline || row.role == CoverageBaseline && !row.lineage.Valid() || row.lineage.value != nil && !row.lineage.Valid() || index > 0 && compareCoverageRows(row, coverage.slots[position].targets[index-1]) < 0 {
+			if !ok || int(slot) != position || !coverage.composition.OwnsTarget(slot, row.target) || !row.region.Valid() || row.region.Manager() != coverage.composition.guards || support.Empty(row.region) || !row.role.validRole() || row.role == CoverageBaseline && !row.lineage.Valid() || row.lineage.value != nil && !row.lineage.Valid() || index > 0 && compareCoverageRows(row, coverage.slots[position].targets[index-1]) < 0 {
 				return false
 			}
 		}
@@ -363,7 +386,7 @@ func (work *Work) ownsLineage(token LineageToken) bool {
 }
 
 func (work *Work) validCoverageRow(row TargetRegion) bool {
-	if work == nil || row.role != CoverageEffect && row.role != CoverageBaseline {
+	if work == nil || !row.role.validRole() {
 		return false
 	}
 	if row.role == CoverageBaseline && !row.lineage.Valid() {

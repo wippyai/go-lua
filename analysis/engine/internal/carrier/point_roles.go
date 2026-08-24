@@ -83,6 +83,13 @@ func (point PointState) Valid() bool {
 type PointRHS struct {
 	point    PointState
 	roleSeal *contributionSeal
+	// displaced records that this RHS is not a pure join of its operands: at
+	// least one routed write superseded a predecessor inside it. A retained
+	// accumulator is reusable only because folding the moved operands onto it
+	// equals folding every operand onto Init, and that equality is a property
+	// of the join. A displaced row therefore refuses that reuse instead of
+	// letting a later operand rejoin a predecessor the routed write answered.
+	displaced bool
 }
 
 func (rhs PointRHS) State() State          { return rhs.point.State() }
@@ -92,6 +99,10 @@ func (rhs PointRHS) HandleAt(slot shape.Slot) (RootHandle, bool) {
 	return rhs.point.HandleAt(slot)
 }
 func (rhs PointRHS) Valid() bool { return rhs.roleSeal != nil && rhs.point.Valid() }
+
+// Displaced reports whether a routed write superseded a predecessor inside
+// this RHS, which makes it inadmissible as an incremental fold accumulator.
+func (rhs PointRHS) Displaced() bool { return rhs.displaced }
 
 // OwnsRuleContribution, OwnsPointState, and OwnsPointRHS are the public
 // nominal ownership cuts. They deliberately expose no raw State or coverage

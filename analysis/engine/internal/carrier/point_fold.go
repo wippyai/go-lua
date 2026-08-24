@@ -37,6 +37,10 @@ type pointFoldTransaction struct {
 	// below read it instead of rescanning every operand for a slot most of
 	// them never author.
 	slotSources []int
+	// displaced is set by any admitted operand that authored a routed
+	// displacement. It travels onto the published RHS so a Region head can
+	// refuse to reuse a row the join law no longer describes.
+	displaced bool
 }
 
 // BeginPointRHSFold opens the one linear canonical point-fold transaction.
@@ -79,6 +83,9 @@ func (work *Work) appendPointFoldOperand(state State, coverage contributionCover
 		return false
 	}
 	transaction.terms = append(transaction.terms, pointFoldOperand{state: state, coverage: coverage, closed: closed})
+	if coverageDisplaces(coverage) {
+		transaction.displaced = true
+	}
 	return true
 }
 
@@ -218,7 +225,7 @@ func (work *Work) FinishPointRHSFold() (PointRHS, ChangeSet, bool) {
 	if !pointOK {
 		return PointRHS{}, ChangeSet{}, false
 	}
-	result := PointRHS{point: point, roleSeal: work.contributionSeal}
+	result := PointRHS{point: point, roleSeal: work.contributionSeal, displaced: transaction.displaced || transaction.base.displaced}
 	return result, changes, work.admittedPointRHS(result) && work.composition.OwnsChangeSet(changes)
 }
 
@@ -226,11 +233,28 @@ func emptyContributionCoverage(coverage contributionCoverage) bool {
 	return coverage.occupied.Empty()
 }
 
+// coverageDisplaces reports whether one operand authored a routed
+// displacement anywhere in its surface.
+func coverageDisplaces(coverage contributionCoverage) bool {
+	for position, more := coverage.occupied.Next(0); more; position, more = coverage.occupied.Next(position + 1) {
+		if position < 0 || position >= len(coverage.slots) {
+			return false
+		}
+		for _, row := range coverage.slots[position].targets {
+			if row.role == CoverageDisplacement {
+				return true
+			}
+		}
+	}
+	return false
+}
+
 func (transaction *pointFoldTransaction) clear() {
 	if transaction == nil {
 		return
 	}
 	transaction.active = false
+	transaction.displaced = false
 	transaction.reference = PointState{}
 	transaction.base = PointRHS{}
 	clear(transaction.terms)

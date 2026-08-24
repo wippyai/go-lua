@@ -87,7 +87,7 @@ func (write RouteWrite[K, V]) Stage(
 			return false
 		}
 	}
-	if !scratch.patch.Write(target, when, value) {
+	if !scratch.patch.WriteRouted(target, when, value) {
 		return false
 	}
 	scratch.staged++
