@@ -40,7 +40,7 @@ func TestStorageDefinitionIsCompleteAndForeignProviderOwned(t *testing.T) {
 	if provider.Axis.Key != schema.Key("value") || provider.Member != schema.Key("value/storage-transfer/candidates") {
 		t.Fatalf("route relation provider=%+v, want Value storage-transfer candidates", provider)
 	}
-	if len(relation.Inputs) != 2 || relation.Inputs[0] != "StorageTransferCarrier" || relation.Inputs[1] != "ValueFactCarrier" {
+	if len(relation.Inputs) != 2 || relation.Inputs[0].Carrier != "StorageTransferCarrier" || relation.Inputs[1].Carrier != "ValueFactCarrier" {
 		t.Fatalf("route inputs=%v, want candidate then exact Value fact", relation.Inputs)
 	}
 	if relation.CandidateResolver.Available() || relation.CandidateOrdinal.Available() || relation.CandidateAt.Available() || relation.Materialize.Available() {
