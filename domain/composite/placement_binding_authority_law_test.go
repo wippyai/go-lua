@@ -32,6 +32,14 @@ import (
 // shared binding is part of every Placement consumer's authority contract.
 // The local and foreign owners intentionally use the same cold schema and
 // concrete domain schemas; only their private SchemaBinding identities differ.
+//
+// ReturnEscape carries no case here: it cut to a generated RuleFamily, whose
+// authority is the family-claim fence (ac0408205b) - engine.BindRuleFamily
+// types the claim against the Factor named at the family's own declaration,
+// so a family typed at a foreign coordinate is refused where it is bound,
+// not admitted and later caught by a schema-equality check on a separately
+// declared/bound Rule the way capture, containment, and formal - still on
+// that older protocol - are proven here.
 func TestPlacementRuleBindersRejectEqualSchemaForeignAuthorities(t *testing.T) {
 	placementSchema, values, heapSchema, calls := placementBindingLawSchemas(t)
 	builder := engine.NewSchema()
