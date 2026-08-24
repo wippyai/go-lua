@@ -85,8 +85,20 @@ func (contract ReadContract) Available() bool {
 }
 
 func (contract ReadContract) RequiresDenominator(form ReadForm) bool {
+	return RequiresDenominator(form, contract.Sparse)
+}
+
+// RequiresDenominator names the reads whose empty state is a closed fact
+// rather than a plain absence: a selected route, a summary or complete
+// vector, and any read materialized through a declared default or dense
+// denominator. Those reads are unsealed without one.
+//
+// It takes the two facts it decides on rather than a whole contract, so a
+// surface holding a sealed read's form and sparsity - and no authored
+// reference - asks this law instead of restating it.
+func RequiresDenominator(form ReadForm, sparse Sparse) bool {
 	return form == Selected || form == Summary || form == Complete ||
-		contract.Sparse == SparseDefault || contract.Sparse == SparseDense
+		sparse == SparseDefault || sparse == SparseDense
 }
 
 // PointBoundDecl states whether a read's Input slot is backed by its own

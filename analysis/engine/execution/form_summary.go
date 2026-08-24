@@ -241,12 +241,16 @@ func summaryFormContract(rule generated.CompiledRule, join int) (SummaryContract
 	if !formOK || !contractOK || !denominatorOK {
 		return SummaryContract{}, false
 	}
-	// A complete read has no selection predicate; a summary read is selected by
-	// one. The predicate is the sealed difference between the two vectors, so a
-	// descriptor that disagrees with its own form is refused rather than
-	// delivered as the other one.
-	_, predicatePresent, predicateOK := rule.ReadPredicateAt(join)
-	if !predicateOK || predicatePresent != (form == ruleprogram.Summary) {
+	// Which addressing a form requires is the declaration's own law, asked
+	// here rather than restated: a complete read is closed and names nothing,
+	// while a summary read is correlated either by an owner-issued predicate
+	// or by the ordinal of the member set it spans. A descriptor that
+	// disagrees with its own form is refused rather than delivered as the
+	// other one.
+	predicate, predicatePresent, predicateOK := rule.ReadPredicateAt(join)
+	parent, parentPresent, parentOK := rule.ReadParentAt(join)
+	if !predicateOK || !parentOK ||
+		!generated.ReadFormAddressShape(form, predicate, predicatePresent, parent, parentPresent) {
 		return SummaryContract{}, false
 	}
 	sealed := SummaryContract{Form: form, Contract: contract, Denominator: denominator}

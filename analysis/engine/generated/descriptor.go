@@ -24,7 +24,18 @@ type ReadPlan struct {
 	Key              ruleplan.ProjectionAddr
 	Predicate        ruleplan.ProjectionAddr
 	PredicatePresent bool
-	Form             ruleprogram.ReadForm
+	// Parent is the sealed restatement of the join's Parent: the relation
+	// whose candidate rows this read's relation nests under as a bounded,
+	// ordinal-addressed member set. ParentPresent is explicit because the
+	// zero relation address is a valid one.
+	//
+	// It is the addressing fact a Summary read over a self-provided member
+	// set is admissible by, so it is carried here rather than recovered: the
+	// seal below asks the declaration's own law which addressing a form
+	// requires, and cannot ask without it.
+	Parent        ruleplan.RelationAddr
+	ParentPresent bool
+	Form          ruleprogram.ReadForm
 	Contract         ruleplan.ReadContract
 	Denominator      ruleplan.DenominatorAddr
 	RowCapacity      uint16
@@ -236,40 +247,23 @@ func zeroDenominator(address ruleplan.DenominatorAddr) bool {
 	return !address.Present && address.Ordinal == 0
 }
 
-// ReadFormPredicateShape is the one statement of which sealed read forms carry
-// a selection predicate. It is the normal form the cold declaration already
-// seals: an exact lookup and a closed complete vector select nothing, a
-// summary vector is selected by exactly one owner-issued predicate, and a
-// selected read may omit it only because a routed row's tag is optional data.
-// The zero address is the absent encoding, so a present predicate must name a
-// member and an absent one must be zero.
+// ReadFormAddressShape proves one sealed read's addressing metadata against
+// the declaration law that decided it. The dense encoding is this package's
+// own: the zero address is the absent one, so a present address must name a
+// member and an absent one must be zero. Which addressing a form requires is
+// not this package's to say - ruleprogram.ReadFormAddressing is the one
+// statement of that, and it is asked here rather than spelled again.
 //
-// It is exported because the plan-shape fence in the schema engine reads the
-// same law; a second spelling of it there is a second authority over which
-// declarations exist.
-func ReadFormPredicateShape(form ruleprogram.ReadForm, predicate ruleplan.ProjectionAddr, present bool) bool {
-	if present != (predicate != ruleplan.ProjectionAddr{}) || present && !validProjectionAddr(predicate) {
+// It is exported because the plan-shape fence in the schema engine holds
+// sealed reads to the same proof.
+func ReadFormAddressShape(form ruleprogram.ReadForm, predicate ruleplan.ProjectionAddr, predicatePresent bool, parent ruleplan.RelationAddr, parentPresent bool) bool {
+	if predicatePresent != (predicate != ruleplan.ProjectionAddr{}) || predicatePresent && !validProjectionAddr(predicate) {
 		return false
 	}
-	switch form {
-	case ruleprogram.Exact, ruleprogram.Complete:
-		return !present
-	case ruleprogram.Summary:
-		return present
-	case ruleprogram.Selected:
-		return true
-	default:
+	if parentPresent != (parent != ruleplan.RelationAddr{}) || parentPresent && !validRelationAddr(parent) {
 		return false
 	}
-}
-
-// ReadFormRequiresDenominator names the reads whose empty state is a closed
-// fact rather than a plain absence: a selected route, a summary or complete
-// vector, and any read materialized through a declared default or dense
-// denominator. Those reads are unsealed without one.
-func ReadFormRequiresDenominator(form ruleprogram.ReadForm, sparse ruleprogram.Sparse) bool {
-	return form == ruleprogram.Selected || form == ruleprogram.Summary || form == ruleprogram.Complete ||
-		sparse == ruleprogram.SparseDefault || sparse == ruleprogram.SparseDense
+	return ruleprogram.ReadFormAddressing(form, predicatePresent, parentPresent)
 }
 
 // normalizeReadPlan validates the complete sealed read metadata. There is no
@@ -283,7 +277,7 @@ func normalizeReadPlan(read *ReadPlan) bool {
 	if !contract.Order.Available() || !contract.Sparse.Available() || !contract.OnOpaque.Available() || !contract.Multiplicity.Available() {
 		return false
 	}
-	if !ReadFormPredicateShape(read.Form, read.Predicate, read.PredicatePresent) {
+	if !ReadFormAddressShape(read.Form, read.Predicate, read.PredicatePresent, read.Parent, read.ParentPresent) {
 		return false
 	}
 	if !read.PointBound.Available() {
@@ -295,7 +289,7 @@ func normalizeReadPlan(read *ReadPlan) bool {
 	if read.Denominator.Present && read.Denominator.Ordinal == ^uint32(0) {
 		return false
 	}
-	if ReadFormRequiresDenominator(read.Form, contract.Sparse) && !read.Denominator.Present {
+	if ruleprogram.RequiresDenominator(read.Form, contract.Sparse) && !read.Denominator.Present {
 		return false
 	}
 	if read.Sources.Count == 0 {
@@ -393,19 +387,19 @@ func validReadPlan(read ReadPlan, inputCount, axisCount int) bool {
 		read.RowCapacity == 0 || read.CellCapacity == 0 ||
 		!validRelationAddr(read.Relation) || !validProjectionAddr(read.Key) ||
 		read.Relation.Axis != read.Key.Axis ||
-		!addressAxesInRange(axisCount, read.Relation, read.Key, read.Predicate) {
+		!addressAxesInRange(axisCount, read.Relation, read.Key, read.Predicate, read.Parent) {
 		return false
 	}
 	if !read.Contract.Order.Available() || !read.Contract.Sparse.Available() || !read.Contract.OnOpaque.Available() || !read.Contract.Multiplicity.Available() {
 		return false
 	}
-	if !ReadFormPredicateShape(read.Form, read.Predicate, read.PredicatePresent) {
+	if !ReadFormAddressShape(read.Form, read.Predicate, read.PredicatePresent, read.Parent, read.ParentPresent) {
 		return false
 	}
 	if !read.PointBound.Available() {
 		return false
 	}
-	if ReadFormRequiresDenominator(read.Form, read.Contract.Sparse) && !read.Denominator.Present {
+	if ruleprogram.RequiresDenominator(read.Form, read.Contract.Sparse) && !read.Denominator.Present {
 		return false
 	}
 	if !zeroDenominator(read.Denominator) && !read.Denominator.Present || read.Denominator.Present && read.Denominator.Ordinal == ^uint32(0) {
@@ -705,6 +699,18 @@ func (rule CompiledRule) ReadPredicateAt(index int) (ruleplan.ProjectionAddr, bo
 		return ruleplan.ProjectionAddr{}, false, false
 	}
 	return read.Predicate, read.PredicatePresent, true
+}
+
+// ReadParentAt returns the sealed parent relation address and its presence for
+// one ordered join: the relation whose candidate rows this read's relation
+// nests under. A read over a relation that is not a nested member set names
+// none.
+func (rule CompiledRule) ReadParentAt(index int) (ruleplan.RelationAddr, bool, bool) {
+	read, ok := rule.ReadAt(index)
+	if !ok {
+		return ruleplan.RelationAddr{}, false, false
+	}
+	return read.Parent, read.ParentPresent, true
 }
 
 // Reducer returns the normalized reducer address.

@@ -107,39 +107,42 @@ func (join JoinDecl) normalForm(position int) bool {
 		return false
 	}
 
-	switch join.Read.Form {
-	case Exact:
-		// S1 is the exact keyed lookup. If a key consumes an earlier result,
-		// the same declaration is S4's computed-coordinate normal form.
-		return !join.Predicate.Declared()
+	return ReadFormAddressing(join.Read.Form, join.Predicate.Declared(), join.Parent.Declared())
+}
+
+// ReadFormAddressing is the one statement of which addressing facts each read
+// form's normal form requires. It is a function of the form and of what the
+// declaration declares, so a downstream surface that has to know whether a
+// sealed read is admissible asks this rather than spelling the five cases
+// again.
+//
+//   - S1 is the exact keyed lookup. If a key consumes an earlier result, the
+//     same declaration is S4's computed-coordinate normal form.
+//   - S2 is a dependent keyed relation read; when Sources includes an earlier
+//     result it is the S4 variant. The predicate is the owner's tag/role
+//     metadata and is optional: a nested member set is already addressed by
+//     (parent, ordinal), and a routed member already carries its paired tag
+//     beside its destination, so a selection with nothing to tag declares
+//     nothing.
+//   - S3 is the selected relation summary. Predicate is the sealed
+//     selection/tag projection that correlates each returned cell with its
+//     row, and is required for every relation except one: a self-provided
+//     nested member set is already addressed by (parent, ordinal) - its
+//     ordinal position IS the correlation - so a Predicate declared over it
+//     would be a second, duplicate tagging authority for the same row, the
+//     same defect Selected's own untagged form exists to avoid. The parent
+//     restatement states that fact; it never infers nestedness from the
+//     join's own shape, and seal/plan authenticate the restatement against
+//     the resolved relation.
+//   - S5 is the closed-denominator whole-vector read.
+func ReadFormAddressing(form ReadForm, predicateDeclared, parentDeclared bool) bool {
+	switch form {
+	case Exact, Complete:
+		return !predicateDeclared
 	case Selected:
-		// S2 is a dependent keyed relation read; when Sources includes an
-		// earlier result it is the S4 variant. The predicate is the owner's
-		// tag/role metadata and is optional: a nested member set is already
-		// addressed by (parent, ordinal), and a routed member already carries
-		// its paired tag beside its destination, so a selection with nothing
-		// to tag declares nothing. A predicate that IS declared must resolve,
-		// which the clause above already holds it to.
 		return true
 	case Summary:
-		// S3 is the selected relation summary; the denominator is mandatory
-		// above. Predicate is the sealed selection/tag projection that
-		// correlates each returned cell with its row, and is required for
-		// every relation except one: a self-provided nested member set is
-		// already addressed by (parent, ordinal) - its ordinal position IS
-		// the correlation - so a Predicate declared over it would be a
-		// second, duplicate tagging authority for the same row, the same
-		// defect Selected's own untagged form exists to avoid. This
-		// declaration states that fact as Parent, restating the relation's
-		// own MemberParent/MemberOrdinal; it never infers nestedness from
-		// this join's own shape, and seal/plan authenticate the restatement
-		// against the resolved relation. No production rule declares
-		// ruleprogram.Summary yet; this restatement is what admits the
-		// first one.
-		return join.Predicate.Available() || join.Parent.Available()
-	case Complete:
-		// S5 is the closed-denominator whole-vector read.
-		return !join.Predicate.Declared()
+		return predicateDeclared || parentDeclared
 	default:
 		return false
 	}

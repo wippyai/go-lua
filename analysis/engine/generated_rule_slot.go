@@ -211,11 +211,20 @@ func DeclareGeneratedRuleSlot(
 				return refuse()
 			}
 		}
+		var normalizedParent ruleplan.RelationAddr
+		if join.ParentPresent {
+			var parentOK bool
+			normalizedParent, parentOK = generatedRuntimeRelation(factorDirectory, catalog, join.Parent)
+			if !parentOK {
+				return refuse()
+			}
+		}
 		readFactors[joinIndex] = readFactor
 		readPlans[joinIndex] = generated.ReadPlan{
 			Input: join.Input, Factor: readFactor.ordinal, Axis: normalizedReadAxis,
 			Sources: join.Sources, Relation: normalizedJoin, Key: normalizedKey,
 			Predicate: normalizedPredicate, PredicatePresent: join.PredicatePresent,
+			Parent: normalizedParent, ParentPresent: join.ParentPresent,
 			Form: join.ReadForm, Contract: join.ReadContract, Denominator: join.Denominator,
 			PointBound:  join.PointBound,
 			RowCapacity: uint16(scratch.JoinCount), CellCapacity: uint16(scratch.OutputCount),
@@ -430,6 +439,11 @@ func generatedPlanMemberAddressesInRange(
 		if join.PredicatePresent && (uint64(join.Predicate.Axis) >= uint64(catalog.AxisCount()) || join.Predicate.Member == ^uint32(0) || join.Predicate.Axis != join.Relation.Axis) {
 			return false
 		}
+		// A parent restatement addresses a relation of the same owner axis:
+		// a member set nests under a candidate directory its own axis issues.
+		if join.ParentPresent && (uint64(join.Parent.Axis) >= uint64(catalog.AxisCount()) || join.Parent.Member == ^uint32(0) || join.Parent.Axis != join.Relation.Axis) {
+			return false
+		}
 	}
 	return true
 }
@@ -446,14 +460,14 @@ func generatedPlanJoinShape(compiled ruleplan.Plan, joinIndex int, join ruleplan
 		join.Cardinality != join.ReadContract.Multiplicity {
 		return false
 	}
-	if !generated.ReadFormPredicateShape(join.ReadForm, join.Predicate, join.PredicatePresent) {
+	if !generated.ReadFormAddressShape(join.ReadForm, join.Predicate, join.PredicatePresent, join.Parent, join.ParentPresent) {
 		return false
 	}
 	if (!join.Denominator.Present && join.Denominator.Ordinal != 0) ||
 		join.Denominator.Present && join.Denominator.Ordinal == ^uint32(0) {
 		return false
 	}
-	if generated.ReadFormRequiresDenominator(join.ReadForm, join.ReadContract.Sparse) && !join.Denominator.Present {
+	if ruleprogram.RequiresDenominator(join.ReadForm, join.ReadContract.Sparse) && !join.Denominator.Present {
 		return false
 	}
 	for offset := uint32(0); offset < join.Sources.Count; offset++ {
