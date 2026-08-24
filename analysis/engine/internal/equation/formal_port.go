@@ -91,11 +91,18 @@ func (batch *Batch) AdmitFormalPort(role composition.Key, mode PortMode, reads [
 		batch.rejectOpen()
 		return FormalPort{}, false
 	}
-	row := uint32(len(batch.sites) + 1)
-	batch.sites = append(batch.sites, siteRow{
+	admitted := siteRow{
 		source: source, scope: EmptyScope(), init: FalseExpr(), disposition: InitAbsent,
 		formal: true, formalRole: role, formalMode: mode, formalReads: canonicalReads,
-	})
+	}
+	key, ok := deriveSiteKey(admitted)
+	if !ok {
+		batch.rejectOpen()
+		return FormalPort{}, false
+	}
+	admitted.key = key
+	row := uint32(len(batch.sites) + 1)
+	batch.sites = append(batch.sites, admitted)
 	batch.siteBySource[source] = row
 	batch.formalAt[role] = row
 	return FormalPort{batch: batch, row: row}, true

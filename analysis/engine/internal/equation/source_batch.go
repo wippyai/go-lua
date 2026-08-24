@@ -2,6 +2,7 @@ package equation
 
 import (
 	"sort"
+	"sync/atomic"
 
 	"github.com/wippyai/go-lua/analysis/engine/internal/composition"
 	"github.com/wippyai/go-lua/internal/canonical"
@@ -205,8 +206,15 @@ func (batch *Batch) AdmitSite(source composition.Key, scope Scope, init Expr, di
 		}
 		return Site{batch: batch, row: existing}, true
 	}
+	admitted := siteRow{source: source, scope: scope, init: init, disposition: disposition}
+	key, ok := deriveSiteKey(admitted)
+	if !ok {
+		batch.rejectOpen()
+		return Site{}, false
+	}
+	admitted.key = key
 	row := uint32(len(batch.sites) + 1)
-	batch.sites = append(batch.sites, siteRow{source: source, scope: scope, init: init, disposition: disposition})
+	batch.sites = append(batch.sites, admitted)
 	batch.siteBySource[source] = row
 	return Site{batch: batch, row: row}, true
 }
@@ -235,15 +243,21 @@ func (batch *Batch) admitOccurrence(kind OccurrenceKind, site Site, entity compo
 		batch.rejectOpen()
 		return Occurrence{}, false
 	}
-	if _, ok := batch.openSiteFor(site); !ok {
+	siteRowValue, ok := batch.openSiteFor(site)
+	if !ok {
 		return Occurrence{}, false
 	}
 	index := occurrenceIndex{kind: kind, site: site.row, entity: entity}
 	if existing, found := batch.occurrenceAt[index]; found {
 		return Occurrence{batch: batch, row: existing}, true
 	}
+	key, ok := deriveOccurrenceKey(kind, siteRowValue.key, entity)
+	if !ok {
+		batch.rejectOpen()
+		return Occurrence{}, false
+	}
 	row := uint32(len(batch.occurrences) + 1)
-	batch.occurrences = append(batch.occurrences, occurrenceRow{kind: kind, site: site.row, entity: entity})
+	batch.occurrences = append(batch.occurrences, occurrenceRow{kind: kind, site: site.row, entity: entity, key: key})
 	batch.occurrenceAt[index] = row
 	return Occurrence{batch: batch, row: row}, true
 }
@@ -261,15 +275,21 @@ func (batch *Batch) admitOperandInRealm(occurrence Occurrence, entity, realm com
 		batch.rejectOpen()
 		return Operand{}, false
 	}
-	if _, ok := batch.openOccurrenceFor(occurrence); !ok {
+	occurrenceRowValue, ok := batch.openOccurrenceFor(occurrence)
+	if !ok {
 		return Operand{}, false
 	}
 	index := operandIndex{occurrence: occurrence.row, entity: entity, realm: realm}
 	if existing, found := batch.operandAt[index]; found {
 		return Operand{batch: batch, row: existing}, true
 	}
+	key, ok := deriveOperandKey(occurrenceRowValue.key, entity, realm)
+	if !ok {
+		batch.rejectOpen()
+		return Operand{}, false
+	}
 	row := uint32(len(batch.operands) + 1)
-	batch.operands = append(batch.operands, operandRow{occurrence: occurrence.row, entity: entity, realm: realm})
+	batch.operands = append(batch.operands, operandRow{occurrence: occurrence.row, entity: entity, key: key, realm: realm})
 	batch.operandAt[index] = row
 	return Operand{batch: batch, row: row}, true
 }
@@ -302,11 +322,10 @@ func (batch *Batch) SealWithFailure() SealFailure {
 			}
 		}
 		key, ok := deriveSiteKey(*row)
-		if !ok {
+		if !ok || key != row.key {
 			batch.rejectOpen()
 			return sealRefused(SealFailureFamilySource, "site-identity")
 		}
-		row.key = key
 	}
 	if formalCount != len(batch.formalAt) {
 		batch.rejectOpen()
@@ -320,11 +339,10 @@ func (batch *Batch) SealWithFailure() SealFailure {
 			return sealRefused(SealFailureFamilySource, "occurrence-row")
 		}
 		key, ok := deriveOccurrenceKey(row.kind, site.key, row.entity)
-		if !ok {
+		if !ok || key != row.key {
 			batch.rejectOpen()
 			return sealRefused(SealFailureFamilySource, "occurrence-identity")
 		}
-		row.key = key
 	}
 	for index := range batch.operands {
 		row := &batch.operands[index]
@@ -334,11 +352,10 @@ func (batch *Batch) SealWithFailure() SealFailure {
 			return sealRefused(SealFailureFamilySource, "operand-row")
 		}
 		key, ok := deriveOperandKey(occurrence.key, row.entity, row.realm)
-		if !ok {
+		if !ok || key != row.key {
 			batch.rejectOpen()
 			return sealRefused(SealFailureFamilySource, "operand-identity")
 		}
-		row.key = key
 	}
 	key, ok := deriveBatchKey(batch)
 	if !ok {
@@ -689,15 +706,7 @@ func (occurrence Occurrence) IdentityKey() composition.Key {
 		return row.key
 	}
 	if row, ok := occurrence.batch.openOccurrence(occurrence.row); ok {
-		site, siteOK := occurrence.batch.openSite(row.site)
-		if !siteOK {
-			return composition.Key{}
-		}
-		siteKey, siteKeyOK := deriveSiteKey(site)
-		key, keyOK := deriveOccurrenceKey(row.kind, siteKey, row.entity)
-		if siteKeyOK && keyOK {
-			return key
-		}
+		return row.key
 	}
 	return composition.Key{}
 }
@@ -768,13 +777,7 @@ func (operand Operand) IdentityKey() composition.Key {
 		return row.key
 	}
 	if operand.batch.phase == batchOpen && operand.row != 0 && uint64(operand.row) <= uint64(len(operand.batch.operands)) {
-		row := operand.batch.operands[operand.row-1]
-		occurrence := Occurrence{batch: operand.batch, row: row.occurrence}
-		occurrenceKey := occurrence.IdentityKey()
-		key, keyOK := deriveOperandKey(occurrenceKey, row.entity, row.realm)
-		if keyOK {
-			return key
-		}
+		return operand.batch.operands[operand.row-1].key
 	}
 	return composition.Key{}
 }
@@ -810,7 +813,15 @@ func sameBaseOccurrence(left, right Occurrence) bool {
 	return left.Available() && right.Available() && left.batch == right.batch && left.row == right.row
 }
 
+// sourceRowIdentityDerivations counts derivations of one source row's
+// portable identity. A row owes exactly one at admission, where the identity
+// is issued into the row, and one at seal, where the stored identity is
+// authenticated. Every other observer reads the stored field, so the number
+// of surfaces anchoring a row never enters this count.
+var sourceRowIdentityDerivations atomic.Uint64
+
 func deriveSiteKey(row siteRow) (composition.Key, bool) {
+	sourceRowIdentityDerivations.Add(1)
 	if row.formal {
 		return deriveFormalPortSiteKey(row)
 	}
@@ -820,12 +831,14 @@ func deriveSiteKey(row siteRow) (composition.Key, bool) {
 }
 
 func deriveOccurrenceKey(kind OccurrenceKind, site, entity composition.Key) (composition.Key, bool) {
+	sourceRowIdentityDerivations.Add(1)
 	return identityKey("analysis/engine/equation/occurrence", func(writer *canonical.DigestWriter) bool {
 		return validOccurrenceKind(kind) && writeKey(writer, site) && writeKey(writer, entity) && writer.Uint(uint64(kind)) == nil
 	})
 }
 
 func deriveOperandKey(occurrence, entity, realm composition.Key) (composition.Key, bool) {
+	sourceRowIdentityDerivations.Add(1)
 	return identityKey("analysis/engine/equation/operand", func(writer *canonical.DigestWriter) bool {
 		return writeKey(writer, occurrence) && writeKey(writer, entity) && (!realm.Available() || writeKey(writer, realm))
 	})
