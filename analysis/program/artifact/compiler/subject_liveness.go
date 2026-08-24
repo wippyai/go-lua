@@ -35,7 +35,12 @@ func (compiler *compiler) copySubjectLivenessFailure() CompileFailure {
 	projected := make(map[identity.ContentID]*subjectLivenessProjection, projection.LivenessCount())
 	for index := 0; index < projection.LivenessCount(); index++ {
 		flowRow, rowOK := projection.LivenessAt(index)
-		if !rowOK || !flowRow.ID.Available() || !flowRow.YieldRoute.Available() || !flowRow.Subject.ID.Available() {
+		if !rowOK || !flowRow.ID.Available() || keyspace.TermFamily(flowRow.Call) != keyspace.FamilyCall ||
+			keyspace.TermOrdinal(flowRow.Call) == 0 || !flowRow.YieldRoute.Available() || !flowRow.Subject.ID.Available() {
+			return compileFailure(CompileStageBodyOutcomes, CompileRowBody, index, -1, CompileReasonBodyUnavailable)
+		}
+		callIdentities, callOK := compiler.input.CallIdentityAt(int(keyspace.TermOrdinal(flowRow.Call)) - 1)
+		if !callOK || !callIdentities.Call.Available() {
 			return compileFailure(CompileStageBodyOutcomes, CompileRowBody, index, -1, CompileReasonBodyUnavailable)
 		}
 		// SubjectFlow always names the authored subject with Flow's semantic
@@ -51,13 +56,13 @@ func (compiler *compiler) copySubjectLivenessFailure() CompileFailure {
 			return compileFailure(CompileStageBodyOutcomes, CompileRowBody, index, -1, CompileReasonBodyUnavailable)
 		}
 		for subjectIndex, subject := range subjects {
-			id, idOK := lifecycle.SubjectLivenessIdentity(flowRow.YieldRoute, subject.kind, subject.id)
+			id, idOK := lifecycle.SubjectLivenessIdentity(callIdentities.Call, flowRow.YieldRoute, subject.kind, subject.id)
 			if !idOK {
 				return compileFailure(CompileStageBodyOutcomes, CompileRowBody, index, subjectIndex, CompileReasonBodyUnavailable)
 			}
 			current, exists := projected[id]
 			if exists {
-				if current.yieldRoute != flowRow.YieldRoute ||
+				if current.call != callIdentities.Call || current.yieldRoute != flowRow.YieldRoute ||
 					current.yieldFromPath != flowRow.YieldFromPath ||
 					current.yieldToPath != flowRow.YieldToPath ||
 					current.subject != subject {
@@ -67,6 +72,7 @@ func (compiler *compiler) copySubjectLivenessFailure() CompileFailure {
 				continue
 			}
 			projected[id] = &subjectLivenessProjection{
+				call:          callIdentities.Call,
 				yieldRoute:    flowRow.YieldRoute,
 				yieldFromPath: flowRow.YieldFromPath,
 				yieldToPath:   flowRow.YieldToPath,
@@ -86,6 +92,7 @@ func (compiler *compiler) copySubjectLivenessFailure() CompileFailure {
 		state, stateOK := artifactSubjectLivenessState(subjectflow.AggregateLiveness(projection.states))
 		row, emitted := lifecycle.NewSubjectLiveness(
 			id,
+			projection.call,
 			projection.yieldRoute,
 			projection.yieldFromPath,
 			projection.yieldToPath,
@@ -95,6 +102,22 @@ func (compiler *compiler) copySubjectLivenessFailure() CompileFailure {
 		)
 		if !stateOK || !emitted {
 			return compileFailure(CompileStageBodyOutcomes, CompileRowBody, index, -1, CompileReasonBodyUnavailable)
+		}
+		// Program issues the executable view in the same transaction as its
+		// lifecycle judgment. The Call occurrence remains the point authority:
+		// the lifecycle route may authenticate the same point, but it cannot
+		// replace or reconstruct Call's finish geometry.
+		yieldPoint := row.YieldFromPathID()
+		_, callFinish, callGeometryOK := compiler.issuanceRows.Geometry(programschema.OccurrenceCall, row.CallID())
+		if !yieldPoint.Available() || !callGeometryOK || len(callFinish) != 1 || callFinish[0] != yieldPoint || !compiler.appendOccurrence(
+			programschema.OccurrenceSubjectLiveness,
+			row.ID(),
+			identity.ContentID{},
+			callFinish,
+			[]identity.ContentID{row.CallID()},
+			0,
+		) {
+			return compileFailure(CompileStageOccurrences, CompileRowOccurrence, index, -1, CompileReasonOccurrenceUnavailable)
 		}
 		compiler.publication.Lifecycle.SubjectLifetimes = append(compiler.publication.Lifecycle.SubjectLifetimes, row)
 	}
@@ -107,6 +130,7 @@ type subjectLivenessCoordinate struct {
 }
 
 type subjectLivenessProjection struct {
+	call          identity.ContentID
 	yieldRoute    identity.ContentID
 	yieldFromPath identity.ContentID
 	yieldToPath   identity.ContentID

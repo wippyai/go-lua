@@ -120,3 +120,46 @@ func TestRowsGeometryRelationIsolatesSharedOccurrenceIdentity(t *testing.T) {
 		}
 	}
 }
+
+func TestSubjectLivenessOccurrenceJoinsCanonicalCallAndFinishGeometry(t *testing.T) {
+	rowID, callID, pointID := issuanceRowID(30), issuanceRowID(31), issuanceRowID(32)
+	occurrence, occurrenceOK := programschema.NewOccurrence(
+		programschema.OccurrenceSubjectLiveness, rowID, identity.ContentID{}, 0,
+		0, 1, 0, 1, keyspace.FamilyInvalid, keyspace.LiteralValue{}, false,
+	)
+	point, pointOK := programschema.NewOccurrencePoint(pointID)
+	input, inputOK := programschema.NewOccurrenceInput(callID)
+	call, callOK := programschema.NewCall(
+		callID, issuanceRowID(33), issuanceRowID(34), issuanceRowID(35), issuanceRowID(36), issuanceRowID(37), issuanceRowID(38),
+		issuanceRowID(39), issuanceRowID(40), identity.ContentID{}, identity.ContentID{}, identity.ContentID{},
+		programschema.CallFormPlain, 0, 0, 0, 0, 0, 0, false, false,
+	)
+	if !occurrenceOK || !pointOK || !inputOK || !callOK {
+		t.Fatal("subject-liveness issuance fixture unavailable")
+	}
+	builder := NewBuilder()
+	if !builder.AddGeometry(programschema.OccurrenceSubjectLiveness, rowID, nil, []identity.ContentID{pointID}) {
+		t.Fatal("subject-liveness finish geometry refused")
+	}
+	table := programIssuanceTable(t)
+	rows, rowsOK := builder.Seal(table, &programpublication.Publication{
+		Occurrences: []programschema.Occurrence{occurrence}, OccurrencePoints: []programschema.OccurrencePoint{point},
+		OccurrenceInputs: []programschema.OccurrenceInput{input}, Calls: []programschema.Call{call},
+	})
+	if !rowsOK {
+		t.Fatal("subject-liveness issuance rows refused sealing")
+	}
+	source, sourceOK := rows.At(RowOccurrence, 0)
+	callRelation, callRelationOK := table.Entry(RelationOccurrenceCall, schemaissuance.KindRelation)
+	geometryRelation, geometryRelationOK := table.Entry(RelationOccurrenceFinishGeometry, schemaissuance.KindRelation)
+	calls, callsOK := rows.Follow(source, callRelation)
+	points, pointsOK := rows.Follow(source, geometryRelation)
+	if !sourceOK || !callRelationOK || !geometryRelationOK || !callsOK || len(calls) != 1 || !pointsOK || len(points) != 1 {
+		t.Fatalf("subject-liveness joins source=%t call=%t/%d geometry=%t/%d", sourceOK, callsOK, len(calls), pointsOK, len(points))
+	}
+	joinedCall, joinedCallOK := rows.Read(calls[0], FieldCallID)
+	joinedPoint, joinedPointOK := rows.Read(points[0], FieldGeometryPointID)
+	if !joinedCallOK || joinedCall.Identity != callID || !joinedPointOK || joinedPoint.Identity != pointID {
+		t.Fatalf("subject-liveness joins call=%+v/%t point=%+v/%t", joinedCall, joinedCallOK, joinedPoint, joinedPointOK)
+	}
+}

@@ -9,6 +9,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/program/keyspace"
 	"github.com/wippyai/go-lua/analysis/program/storage"
 	"github.com/wippyai/go-lua/analysis/program/valuesource"
+	programschema "github.com/wippyai/go-lua/analysis/schema/program"
 	programissuance "github.com/wippyai/go-lua/analysis/schema/program/issuance"
 	"github.com/wippyai/go-lua/analysis/schema/program/lifecycle"
 )
@@ -50,7 +51,7 @@ return combine(setmetatable({ x = 1 }, VecMT), setmetatable({ x = 2 }, VecMT))
 	}
 	for _, fixture := range fixtures {
 		t.Run(fixture.name, func(t *testing.T) {
-			_, view := compileStorageLifetimeLawProgram(t, fixture.text)
+			sealed, view := compileStorageLifetimeLawProgram(t, fixture.text)
 			count, published := view.SubjectLivenessCount()
 			if !published || count == 0 {
 				t.Fatalf("subject-liveness denominator = %d/%t", count, published)
@@ -66,6 +67,21 @@ return combine(setmetatable({ x = 1 }, VecMT), setmetatable({ x = 2 }, VecMT))
 					t.Fatalf("Program published duplicate subject-liveness coordinate at row %d", index)
 				}
 				seen[id] = struct{}{}
+				ordinal, occurrenceOK := sealed.OccurrenceOrdinalForID(programschema.OccurrenceSubjectLiveness, row.ID())
+				point, pointOK := sealed.OccurrencePointID(ordinal, 0)
+				call, callOK := sealed.OccurrenceInputID(ordinal, 0)
+				if !occurrenceOK || !pointOK || point != row.YieldFromPathID() || !callOK || call != row.CallID() {
+					t.Fatalf("subject-liveness occurrence %d = occurrence:%t point:%x/%t call:%x/%t, want point:%x call:%x", index, occurrenceOK, point, pointOK, call, callOK, row.YieldFromPathID(), row.CallID())
+				}
+				if _, extraPoint := sealed.OccurrencePointID(ordinal, 1); extraPoint {
+					t.Fatalf("subject-liveness occurrence %d published a second execution point", index)
+				}
+				if _, extraInput := sealed.OccurrenceInputID(ordinal, 1); extraInput {
+					t.Fatalf("subject-liveness occurrence %d published a second input", index)
+				}
+			}
+			if occurrenceCount, ok := sealed.OccurrenceKindCount(programschema.OccurrenceSubjectLiveness); !ok || occurrenceCount != count {
+				t.Fatalf("subject-liveness occurrence denominator = %d/%t, want lifecycle denominator %d", occurrenceCount, ok, count)
 			}
 		})
 	}

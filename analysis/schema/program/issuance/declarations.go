@@ -76,6 +76,11 @@ const (
 	FieldOccurrenceInput0 schema.Key = "program-field/occurrence.input.0"
 	FieldOccurrenceInput1 schema.Key = "program-field/occurrence.input.1"
 	FieldOccurrenceInput2 schema.Key = "program-field/occurrence.input.2"
+	// FieldOccurrenceCallID is the canonical Call foreign key of an executable
+	// Call-bearing occurrence. The row projection derives it from the owning
+	// occurrence
+	// shape; relation declarations never guess which physical input carries it.
+	FieldOccurrenceCallID schema.Key = "program-field/occurrence.call-id"
 
 	FieldCallID              schema.Key = "program-field/call.id"
 	FieldCallForm            schema.Key = "program-field/call.form"
@@ -185,6 +190,7 @@ func Entries(codeFamilies ...CodeFamily) ([]*schemaissuance.Entry, bool) {
 		{FieldOccurrenceInput0, RowOccurrence, schemaissuance.IdentityType(TypeContentID), schemaissuance.CardinalityOptional},
 		{FieldOccurrenceInput1, RowOccurrence, schemaissuance.IdentityType(TypeContentID), schemaissuance.CardinalityOptional},
 		{FieldOccurrenceInput2, RowOccurrence, schemaissuance.IdentityType(TypeContentID), schemaissuance.CardinalityOptional},
+		{FieldOccurrenceCallID, RowOccurrence, schemaissuance.IdentityType(TypeContentID), schemaissuance.CardinalityOptional},
 		{FieldCallID, RowCall, schemaissuance.IdentityType(TypeContentID), schemaissuance.CardinalityOne},
 		{FieldCallForm, RowCall, schemaissuance.UintType(TypeCallForm), schemaissuance.CardinalityOne},
 		{FieldCallArgumentCount, RowCall, schemaissuance.UintType(TypeArgumentCount), schemaissuance.CardinalityOne},
@@ -253,7 +259,7 @@ func appendMachineDeclarations(entries *[]*schemaissuance.Entry, codeFamilies []
 	trueProgram := schemaissuance.Program{{Op: schemaissuance.OpLiteral, Out: 1, Type: schemaissuance.BoolType(), Literal: 1}}
 	relations := []schemaissuance.Spec{
 		{Key: RelationOccurrenceCall, Kind: schemaissuance.KindRelation, Ordinal: 1, Space: RowOccurrence, Target: RowCall, Cardinality: schemaissuance.CardinalityOptional,
-			Joins: []schemaissuance.JoinField{join(FieldOccurrenceID, FieldCallID)}, Program: trueProgram, Result: 1},
+			Joins: []schemaissuance.JoinField{join(FieldOccurrenceCallID, FieldCallID)}, Program: trueProgram, Result: 1},
 		{Key: RelationCallValuedResultZero, Kind: schemaissuance.KindRelation, Ordinal: 2, Space: RowCall, Target: RowCallResultSlot, Cardinality: schemaissuance.CardinalityOptional,
 			Joins: []schemaissuance.JoinField{join(FieldCallID, FieldResultSlotCallID)}, Program: schemaissuance.Program{
 				{Op: schemaissuance.OpItem, Out: 1},
@@ -380,6 +386,7 @@ func familyDeclarations(codeFamilies []CodeFamily) ([]schemaissuance.Spec, bool)
 		{"occurrence/formal-entry", programschema.OccurrenceFormalEntry},
 		{"occurrence/operation-predicate-refinement", programschema.OccurrenceOperationPredicateRefinement},
 		{"occurrence/binary-concat", programschema.OccurrenceBinaryConcat},
+		{"occurrence/subject-liveness", programschema.OccurrenceSubjectLiveness},
 	}
 	declarations := make([]schemaissuance.Spec, 0, len(families))
 	for index, family := range families {

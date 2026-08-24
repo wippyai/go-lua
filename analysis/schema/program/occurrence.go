@@ -48,10 +48,15 @@ const (
 	// primitive projection; the row names the operand pair and the evaluation
 	// span under which the concatenation is reached.
 	OccurrenceBinaryConcat
+	// OccurrenceSubjectLiveness is the Program owner's executable view of one
+	// lifecycle.SubjectLiveness row. Identity remains the lifecycle row ID;
+	// its sole finish Point and Call input are owner-issued references, not a
+	// consumer-side reconstruction.
+	OccurrenceSubjectLiveness
 )
 
 func (kind OccurrenceKind) Valid() bool {
-	return kind >= OccurrencePointAttachment && kind <= OccurrenceBinaryConcat
+	return kind >= OccurrencePointAttachment && kind <= OccurrenceSubjectLiveness
 }
 
 // occurrenceOutputOperand names the operand position at which a family whose
@@ -134,6 +139,9 @@ func (row Occurrence) Available() bool {
 		return false
 	}
 	if row.kind == OccurrenceBinaryConcat && (!row.body.Available() || row.inputCount != 2) {
+		return false
+	}
+	if row.kind == OccurrenceSubjectLiveness && (row.body.Available() || row.pointCount != 1 || row.inputCount != 1 || row.code != 0) {
 		return false
 	}
 	if row.kind == OccurrenceBinaryPresenceRefinement && (!row.body.Available() || row.pointCount != 1 || row.inputCount != 4) {

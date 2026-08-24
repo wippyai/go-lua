@@ -127,7 +127,7 @@ func TestNonValueProducingOccurrenceKindsPublishNoOutput(t *testing.T) {
 		occurrenceOutputLawID(t, "closed-three"),
 	}
 	id := occurrenceOutputLawID(t, "closed-kind")
-	for kind := programschema.OccurrencePointAttachment; kind <= programschema.OccurrenceOperationPredicateRefinement; kind++ {
+	for kind := programschema.OccurrencePointAttachment; kind <= programschema.OccurrenceSubjectLiveness; kind++ {
 		if _, expected := producing[kind]; expected {
 			continue
 		}

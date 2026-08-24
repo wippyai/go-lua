@@ -323,6 +323,14 @@ func (rows Rows) Read(row Row, field schema.Key) (Scalar, bool) {
 			}
 			id, ok := programschema.OccurrenceInputID(value, rows.publication.OccurrenceInputs, position)
 			return Identity(TypeContentID, id), ok
+		case FieldOccurrenceCallID:
+			switch value.Kind() {
+			case programschema.OccurrenceCall:
+				return Identity(TypeContentID, value.ID()), true
+			case programschema.OccurrenceSubjectLiveness:
+				id, ok := programschema.OccurrenceInputID(value, rows.publication.OccurrenceInputs, 0)
+				return Identity(TypeContentID, id), ok
+			}
 		}
 	case RowCall:
 		value := rows.publication.Calls[row.Index]
