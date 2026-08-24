@@ -37,7 +37,7 @@ func (owner *HotOwner) LinkID() identity.ContentID {
 
 // RuleImplementation is Heap's opaque pending rule-receipt issuer. It keeps
 // the typed Rule slot private to the Heap Factor owner so child rules cannot
-// restate Heap's output factor or its private dense Coordinate type.
+// restate Heap's output factor or its dense coordinate type.
 type RuleImplementation[O any] struct {
 	owner *HotOwner
 	slot  *engine.RuleSlot[heap.Value, O]
@@ -64,7 +64,7 @@ func BindSelectedRouteRuleDirect[O any](owner *HotOwner, slot *engine.RuleSlot[h
 	if owner == nil || owner.binding == nil || owner.fragment == nil || slot == nil || output != owner.fragment.Ref() {
 		return nil, false
 	}
-	if !engine.BindSelectedRouteRuleDirect[Coordinate](owner.binding, slot, carry, write, output, spec, carrySpec, projectWrite) {
+	if !engine.BindSelectedRouteRuleDirect[heap.DenseCoordinate](owner.binding, slot, carry, write, output, spec, carrySpec, projectWrite) {
 		return nil, false
 	}
 	return &RuleImplementation[O]{owner: owner, slot: slot}, true
@@ -76,7 +76,7 @@ func AddSelectedRouteRuleDirectExactRead[O any, RV any](issuer *RuleImplementati
 	if issuer == nil || issuer.owner == nil || issuer.slot == nil {
 		return engine.Read[engine.OrderedCells[RV]]{}, false
 	}
-	return engine.BindSelectedRuleDirectExactRead[Coordinate](issuer.owner.binding, issuer.slot, slot, factor, project)
+	return engine.BindSelectedRuleDirectExactRead[heap.DenseCoordinate](issuer.owner.binding, issuer.slot, slot, factor, project)
 }
 
 // AddSelectedRouteRuleDirectOperandRead installs an operand-dependent
@@ -87,7 +87,7 @@ func AddSelectedRouteRuleDirectOperandRead[O any, RV any, Tag interface {
 	if issuer == nil || issuer.owner == nil || issuer.slot == nil {
 		return engine.Read[engine.Selection[Tag, engine.OrderedCells[RV]]]{}, false
 	}
-	return engine.BindSelectedRuleDirectOperandRead[Coordinate, heap.Value, O, RV, Tag](issuer.owner.binding, issuer.slot, slot, factor, locate)
+	return engine.BindSelectedRuleDirectOperandRead[heap.DenseCoordinate, heap.Value, O, RV, Tag](issuer.owner.binding, issuer.slot, slot, factor, locate)
 }
 
 // AddSelectedRouteRuleDirectOperandReadUnderContract installs the same
@@ -100,7 +100,7 @@ func AddSelectedRouteRuleDirectOperandReadUnderContract[O any, RV any, Tag inter
 	if issuer == nil || issuer.owner == nil || issuer.slot == nil {
 		return engine.Read[engine.Selection[Tag, engine.OrderedCells[RV]]]{}, false
 	}
-	return engine.BindSelectedRuleDirectOperandReadUnderContract[Coordinate, heap.Value, O, RV, Tag](issuer.owner.binding, issuer.slot, slot, factor, locate, contract)
+	return engine.BindSelectedRuleDirectOperandReadUnderContract[heap.DenseCoordinate, heap.Value, O, RV, Tag](issuer.owner.binding, issuer.slot, slot, factor, locate, contract)
 }
 
 // BindHot attaches Heap's already-sealed algebra to its one exact cold Factor
@@ -116,10 +116,10 @@ func BindHot(binding *engine.SchemaBinding, fragment *SchemaFragment, schema hea
 	}
 	owner := &HotOwner{binding: binding, fragment: fragment, schema: schema, linkOwner: schema.LinkOwner(), rank: rank}
 	spec, specOK := owner.FactorSpec()
-	if !specOK || !engine.BindFactor[Coordinate](binding, fragment.slot, spec) {
+	if !specOK || !engine.BindFactor[heap.DenseCoordinate](binding, fragment.slot, spec) {
 		return nil, false
 	}
-	if !engine.BindIdentitySummaryReadForFactor[Coordinate, heap.Value](binding, fragment.slot, fragment.summaryRead) {
+	if !engine.BindIdentitySummaryReadForFactor[heap.DenseCoordinate, heap.Value](binding, fragment.slot, fragment.summaryRead) {
 		return nil, false
 	}
 	return owner, true
@@ -129,16 +129,16 @@ func BindHot(binding *engine.SchemaBinding, fragment *SchemaFragment, schema hea
 // BindHot hands to the engine. A declaration surface projects this record
 // instead of restating the lattice, admission, or widening law, so the two
 // cannot drift.
-func (owner *HotOwner) FactorSpec() (engine.HotFactorSpec[Coordinate, heap.Value], bool) {
+func (owner *HotOwner) FactorSpec() (engine.HotFactorSpec[heap.DenseCoordinate, heap.Value], bool) {
 	if owner == nil || !owner.schema.Valid() {
-		return engine.HotFactorSpec[Coordinate, heap.Value]{}, false
+		return engine.HotFactorSpec[heap.DenseCoordinate, heap.Value]{}, false
 	}
 	keyEnd := owner.schema.KeyCount()
 	if keyEnd < 0 || uint64(keyEnd) > uint64(^uint32(0)) {
-		return engine.HotFactorSpec[Coordinate, heap.Value]{}, false
+		return engine.HotFactorSpec[heap.DenseCoordinate, heap.Value]{}, false
 	}
 	schema := owner.schema
-	return engine.HotFactorSpec[Coordinate, heap.Value]{
+	return engine.HotFactorSpec[heap.DenseCoordinate, heap.Value]{
 		KeyEnd:  uint64(keyEnd),
 		Lattice: schema.Domain(),
 		Default: schema.Default(),
@@ -150,7 +150,7 @@ func (owner *HotOwner) FactorSpec() (engine.HotFactorSpec[Coordinate, heap.Value
 			}
 			return fingerprint
 		},
-		WidenRank: engine.Measure[Coordinate, heap.Value]{Width: owner.rank.Width(), At: owner.widenRank},
+		WidenRank: engine.Measure[heap.DenseCoordinate, heap.Value]{Width: owner.rank.Width(), At: owner.widenRank},
 	}, true
 }
 
@@ -171,7 +171,7 @@ func (owner *HotOwner) MatchesBinding(binding *engine.SchemaBinding) bool {
 }
 
 // FactorRef returns this owner's sealed Factor surface without exposing its
-// private carrier Coordinate or engine FactorSlot.
+// dense carrier coordinate or engine FactorSlot.
 func (owner *HotOwner) FactorRef() engine.FactorRef[heap.Value] {
 	if owner == nil || owner.fragment == nil {
 		return engine.FactorRef[heap.Value]{}
@@ -191,12 +191,12 @@ func (owner *HotOwner) SummaryRead() engine.SchemaReadForm[heap.Value] {
 
 // BindExactWriteRule binds a typed Heap-output rule through this exact owner's
 // private Factor slot. Child packages supply only their cold Rule/write proofs
-// and behavior; they cannot choose another output Factor or Coordinate type.
+// and behavior; they cannot choose another output Factor or coordinate type.
 func BindExactWriteRule[O any](owner *HotOwner, slot *engine.RuleSlot[heap.Value, O], write engine.SchemaWriteSlot[heap.Value], spec engine.HotRuleSpec[heap.Value, O], projectWrite func(O) (uint64, bool)) (*RuleImplementation[O], bool) {
 	if owner == nil || owner.binding == nil || owner.fragment == nil || slot == nil {
 		return nil, false
 	}
-	if !engine.BindRule[Coordinate](owner.binding, slot, write, owner.fragment.slot, spec, projectWrite) {
+	if !engine.BindRule[heap.DenseCoordinate](owner.binding, slot, write, owner.fragment.slot, spec, projectWrite) {
 		return nil, false
 	}
 	return &RuleImplementation[O]{owner: owner, slot: slot}, true
@@ -204,13 +204,13 @@ func BindExactWriteRule[O any](owner *HotOwner, slot *engine.RuleSlot[heap.Value
 
 // BindExactReadAndCarryRule binds Heap's one exact-read/one transformed-carry
 // output lane. The child receives the typed read receipt needed by its
-// transfer and evidence checks, but never Heap's dense Coordinate or Factor
+// transfer and evidence checks, but never Heap's dense coordinate or Factor
 // slot.
 func BindExactReadAndCarryRule[O any](owner *HotOwner, slot *engine.RuleSlot[heap.Value, O], read engine.SchemaReadSlot[heap.Value], carry engine.SchemaCarrySlot[heap.Value], write engine.SchemaWriteSlot[heap.Value], spec engine.HotRuleSpec[heap.Value, O], carrySpec engine.HotCarrySpec[heap.Value, O], projectRead func(O) (uint64, bool), projectWrite func(O) (uint64, bool)) (*RuleImplementation[O], engine.Read[engine.OrderedCells[heap.Value]], bool) {
 	if owner == nil || owner.binding == nil || owner.fragment == nil || slot == nil {
 		return nil, engine.Read[engine.OrderedCells[heap.Value]]{}, false
 	}
-	runtimeRead, ok := engine.BindRuleWithExactReadAndCarry[Coordinate, heap.Value, O, Coordinate, heap.Value](owner.binding, slot, read, owner.fragment.slot, carry, write, owner.fragment.slot, spec, carrySpec, projectRead, projectWrite)
+	runtimeRead, ok := engine.BindRuleWithExactReadAndCarry[heap.DenseCoordinate, heap.Value, O, heap.DenseCoordinate, heap.Value](owner.binding, slot, read, owner.fragment.slot, carry, write, owner.fragment.slot, spec, carrySpec, projectRead, projectWrite)
 	if !ok {
 		return nil, engine.Read[engine.OrderedCells[heap.Value]]{}, false
 	}
@@ -219,20 +219,20 @@ func BindExactReadAndCarryRule[O any](owner *HotOwner, slot *engine.RuleSlot[hea
 
 // BindExactAndSummaryReadAndCarry binds the one heterogeneous Heap/Value
 // read lane needed by closed allocation directly at its declared ordinals.
-// FactorRefs keep both owner Coordinate types private while the engine owns
+// FactorRefs keep both owner coordinate types out of the caller while the engine owns
 // the shared binding cell; no construction transaction is retained.
 func BindExactAndSummaryReadAndCarry[O, EV, SV, S any](owner *HotOwner, slot *engine.RuleSlot[heap.Value, O], exactSlot engine.SchemaReadSlot[EV], exactFactor engine.FactorRef[EV], summarySlot engine.SchemaReadSlot[SV], summaryFactor engine.FactorRef[SV], summaryForm engine.SchemaReadForm[SV], carry engine.SchemaCarrySlot[heap.Value], write engine.SchemaWriteSlot[heap.Value], spec engine.HotRuleSpec[heap.Value, O], carrySpec engine.HotCarrySpec[heap.Value, O], projectRead func(O) (uint64, bool), projectWrite func(O) (uint64, bool)) (*RuleImplementation[O], engine.Read[engine.OrderedCells[EV]], engine.Read[S], bool) {
 	if owner == nil || owner.binding == nil || owner.fragment == nil || slot == nil {
 		return nil, engine.Read[engine.OrderedCells[EV]]{}, engine.Read[S]{}, false
 	}
-	if !engine.BindSelectedRuleDirect[Coordinate](owner.binding, slot, carry, write, owner.fragment.Ref(), spec, carrySpec, projectWrite) {
+	if !engine.BindSelectedRuleDirect[heap.DenseCoordinate](owner.binding, slot, carry, write, owner.fragment.Ref(), spec, carrySpec, projectWrite) {
 		return nil, engine.Read[engine.OrderedCells[EV]]{}, engine.Read[S]{}, false
 	}
-	exactRead, exactOK := engine.BindSelectedRuleDirectExactRead[Coordinate, heap.Value, O, EV](owner.binding, slot, exactSlot, exactFactor, projectRead)
+	exactRead, exactOK := engine.BindSelectedRuleDirectExactRead[heap.DenseCoordinate, heap.Value, O, EV](owner.binding, slot, exactSlot, exactFactor, projectRead)
 	if !exactOK {
 		return nil, engine.Read[engine.OrderedCells[EV]]{}, engine.Read[S]{}, false
 	}
-	summaryRead, summaryOK := engine.BindSelectedRuleDirectSummaryRead[Coordinate, heap.Value, O, SV, S](owner.binding, slot, summarySlot, summaryFactor, summaryForm)
+	summaryRead, summaryOK := engine.BindSelectedRuleDirectSummaryRead[heap.DenseCoordinate, heap.Value, O, SV, S](owner.binding, slot, summarySlot, summaryFactor, summaryForm)
 	if !summaryOK {
 		return nil, engine.Read[engine.OrderedCells[EV]]{}, engine.Read[S]{}, false
 	}
@@ -240,7 +240,7 @@ func BindExactAndSummaryReadAndCarry[O, EV, SV, S any](owner *HotOwner, slot *en
 }
 
 // BindExactQuery binds one typed query to this owner's exact Heap Factor
-// surface while keeping the private carrier Coordinate sealed here.
+// surface while keeping the carrier coordinate sealed here.
 func BindExactQuery[R any](owner *HotOwner, query *engine.QuerySlot[R], spec engine.HotExactQuerySpec[heap.Value, R]) bool {
 	if owner == nil || owner.binding == nil || owner.fragment == nil || query == nil {
 		return false
@@ -249,12 +249,12 @@ func BindExactQuery[R any](owner *HotOwner, query *engine.QuerySlot[R], spec eng
 }
 
 // ResolveRuleImplementation issues the engine receipt only after the shared
-// binding seals. Heap's Coordinate remains private to this owner package.
-func ResolveRuleImplementation[O any](issuer *RuleImplementation[O]) (*engine.RuleImplementation[Coordinate, heap.Value, O], bool) {
+// binding seals. Heap's dense coordinate is the one its axis publishes.
+func ResolveRuleImplementation[O any](issuer *RuleImplementation[O]) (*engine.RuleImplementation[heap.DenseCoordinate, heap.Value, O], bool) {
 	if issuer == nil || issuer.owner == nil || issuer.slot == nil {
 		return nil, false
 	}
-	implementation, ok := engine.RuleImplementationAt[Coordinate, heap.Value, O](issuer.owner.binding, issuer.slot)
+	implementation, ok := engine.RuleImplementationAt[heap.DenseCoordinate, heap.Value, O](issuer.owner.binding, issuer.slot)
 	if !ok {
 		return nil, false
 	}
@@ -263,28 +263,28 @@ func ResolveRuleImplementation[O any](issuer *RuleImplementation[O]) (*engine.Ru
 
 // ResolveRuleImplementationFor rejects a receipt issued by another equal
 // Heap binding before resolving the private engine implementation.
-func ResolveRuleImplementationFor[O any](owner *HotOwner, issuer *RuleImplementation[O]) (*engine.RuleImplementation[Coordinate, heap.Value, O], bool) {
+func ResolveRuleImplementationFor[O any](owner *HotOwner, issuer *RuleImplementation[O]) (*engine.RuleImplementation[heap.DenseCoordinate, heap.Value, O], bool) {
 	if owner == nil || issuer == nil || issuer.owner != owner {
 		return nil, false
 	}
 	return ResolveRuleImplementation(issuer)
 }
 
-// Ref issues the exact Heap Coordinate proof for an existing schema Key only
+// Ref issues the exact Heap coordinate proof for an existing schema Key only
 // after the shared binding publishes its immutable Factor implementation.
-func (owner *HotOwner) Ref(key heap.Key) (engine.Ref[Coordinate], bool) {
+func (owner *HotOwner) Ref(key heap.Key) (engine.Ref[heap.DenseCoordinate], bool) {
 	if owner == nil || owner.binding == nil || owner.fragment == nil || !owner.schema.OwnsKey(key) {
-		return engine.Ref[Coordinate]{}, false
+		return engine.Ref[heap.DenseCoordinate]{}, false
 	}
 	index, present := owner.schema.KeyIndex(key)
 	if !present || index < 0 || uint64(index) > uint64(^uint32(0)) {
-		return engine.Ref[Coordinate]{}, false
+		return engine.Ref[heap.DenseCoordinate]{}, false
 	}
-	implementation, ok := engine.FactorImplementationAt[Coordinate, heap.Value](owner.binding, owner.fragment.slot)
+	implementation, ok := engine.FactorImplementationAt[heap.DenseCoordinate, heap.Value](owner.binding, owner.fragment.slot)
 	if !ok {
-		return engine.Ref[Coordinate]{}, false
+		return engine.Ref[heap.DenseCoordinate]{}, false
 	}
-	return implementation.Ref(Coordinate(index))
+	return implementation.Ref(heap.DenseCoordinate(index))
 }
 
 // SelectRoute emits one exact Heap route through this owner-native receipt.
@@ -301,12 +301,12 @@ func SelectRouteTyped[Tag interface {
 	return ok && engine.SelectRoute(context, ref, tag)
 }
 
-func (owner *HotOwner) admits(index Coordinate, value heap.Value) bool {
+func (owner *HotOwner) admits(index heap.DenseCoordinate, value heap.Value) bool {
 	key, ok := owner.keyAt(index)
 	return ok && owner.schema.Admits(key, value)
 }
 
-func (owner *HotOwner) widenRank(index Coordinate, value heap.Value, component int) uint64 {
+func (owner *HotOwner) widenRank(index heap.DenseCoordinate, value heap.Value, component int) uint64 {
 	key, ok := owner.keyAt(index)
 	if !ok {
 		return 0
@@ -314,7 +314,7 @@ func (owner *HotOwner) widenRank(index Coordinate, value heap.Value, component i
 	return owner.rank.At(key, value, component)
 }
 
-func (owner *HotOwner) keyAt(index Coordinate) (heap.Key, bool) {
+func (owner *HotOwner) keyAt(index heap.DenseCoordinate) (heap.Key, bool) {
 	if owner == nil || uint64(index) >= uint64(owner.schema.KeyCount()) {
 		return heap.Key{}, false
 	}

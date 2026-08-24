@@ -96,7 +96,7 @@ func BindHot(binding *engine.SchemaBinding, fragment *SchemaFragment, algebra *c
 	}
 	owner := &HotOwner{binding: binding, fragment: fragment, algebra: algebra}
 	spec, specOK := owner.FactorSpec()
-	if !specOK || !engine.BindFactor[coordinate](binding, fragment.slot, spec) {
+	if !specOK || !engine.BindFactor[call.DenseCoordinate](binding, fragment.slot, spec) {
 		return nil, false
 	}
 	return owner, true
@@ -106,21 +106,21 @@ func BindHot(binding *engine.SchemaBinding, fragment *SchemaFragment, algebra *c
 // BindHot hands to the engine. A declaration surface projects this record
 // instead of restating the lattice, admission, or widening law, so the two
 // cannot drift.
-func (owner *HotOwner) FactorSpec() (engine.HotFactorSpec[coordinate, call.Value], bool) {
+func (owner *HotOwner) FactorSpec() (engine.HotFactorSpec[call.DenseCoordinate, call.Value], bool) {
 	if owner == nil || owner.algebra == nil || !owner.algebra.Valid() || !validCoordinateCount(owner.algebra.KeyCount()) {
-		return engine.HotFactorSpec[coordinate, call.Value]{}, false
+		return engine.HotFactorSpec[call.DenseCoordinate, call.Value]{}, false
 	}
 	lattice, ok := owner.algebra.Lattice()
 	if !ok {
-		return engine.HotFactorSpec[coordinate, call.Value]{}, false
+		return engine.HotFactorSpec[call.DenseCoordinate, call.Value]{}, false
 	}
-	return engine.HotFactorSpec[coordinate, call.Value]{
+	return engine.HotFactorSpec[call.DenseCoordinate, call.Value]{
 		KeyEnd:      uint64(owner.algebra.KeyCount()),
 		Lattice:     lattice,
 		Default:     owner.algebra.Default(),
 		AdmitAt:     owner.admits,
 		Fingerprint: owner.algebra.Fingerprint,
-		WidenRank: engine.Measure[coordinate, call.Value]{
+		WidenRank: engine.Measure[call.DenseCoordinate, call.Value]{
 			Width: 1,
 			At:    owner.widenRank,
 		},
@@ -154,7 +154,7 @@ func BindExactReadRule[O any](owner *HotOwner, slot *engine.RuleSlot[call.Value,
 	if owner == nil || owner.binding == nil || owner.fragment == nil || slot == nil {
 		return nil, engine.Read[engine.OrderedCells[call.Value]]{}, false
 	}
-	runtimeRead, ok := engine.BindRuleWithOpaqueExactRead[coordinate](owner.binding, slot, read, readFactor, write, writeFactor, spec, projectRead, projectWrite)
+	runtimeRead, ok := engine.BindRuleWithOpaqueExactRead[call.DenseCoordinate](owner.binding, slot, read, readFactor, write, writeFactor, spec, projectRead, projectWrite)
 	if !ok {
 		return nil, engine.Read[engine.OrderedCells[call.Value]]{}, false
 	}
@@ -165,7 +165,7 @@ func BindHeterogeneousExactReadRule[RV, O any](owner *HotOwner, slot *engine.Rul
 	if owner == nil || owner.binding == nil || owner.fragment == nil || slot == nil {
 		return nil, engine.Read[engine.OrderedCells[RV]]{}, false
 	}
-	runtimeRead, ok := engine.BindRuleWithOpaqueExactRead[coordinate](owner.binding, slot, read, readFactor, write, owner.fragment.Ref(), spec, projectRead, projectWrite)
+	runtimeRead, ok := engine.BindRuleWithOpaqueExactRead[call.DenseCoordinate](owner.binding, slot, read, readFactor, write, owner.fragment.Ref(), spec, projectRead, projectWrite)
 	if !ok {
 		return nil, engine.Read[engine.OrderedCells[RV]]{}, false
 	}
@@ -174,11 +174,11 @@ func BindHeterogeneousExactReadRule[RV, O any](owner *HotOwner, slot *engine.Rul
 
 // ResolveRuleImplementation resolves the exact implementation after the shared
 // SchemaBinding seals.
-func ResolveRuleImplementation[O any](issuer *RuleImplementation[O]) (*engine.RuleImplementation[coordinate, call.Value, O], bool) {
+func ResolveRuleImplementation[O any](issuer *RuleImplementation[O]) (*engine.RuleImplementation[call.DenseCoordinate, call.Value, O], bool) {
 	if issuer == nil || issuer.owner == nil || issuer.slot == nil {
 		return nil, false
 	}
-	implementation, ok := engine.RuleImplementationAt[coordinate, call.Value, O](issuer.owner.binding, issuer.slot)
+	implementation, ok := engine.RuleImplementationAt[call.DenseCoordinate, call.Value, O](issuer.owner.binding, issuer.slot)
 	if !ok {
 		return nil, false
 	}
@@ -219,7 +219,7 @@ func BindExactActivationRule(owner *HotOwner, slot *engine.SchemaActivationRuleS
 	if owner == nil || owner.binding == nil || owner.fragment == nil || owner.algebra == nil || !owner.algebra.Valid() || slot == nil {
 		return nil, engine.Read[engine.OrderedCells[call.Value]]{}, false
 	}
-	runtimeRead, ok := engine.BindActivationRuleWithExactRead[coordinate, call.Value](owner.binding, slot, read, owner.fragment.slot, spec)
+	runtimeRead, ok := engine.BindActivationRuleWithExactRead[call.DenseCoordinate, call.Value](owner.binding, slot, read, owner.fragment.slot, spec)
 	if !ok {
 		return nil, engine.Read[engine.OrderedCells[call.Value]]{}, false
 	}
@@ -260,19 +260,19 @@ func ResolveActivationRuleImplementationFor(owner *HotOwner, issuer *ActivationR
 // Ref issues one opaque Call source-key capability.  Implementation lookup
 // is fresh and sealed on every call; HotOwner never retains a mutable or
 // race-prone implementation snapshot.
-func (owner *HotOwner) Ref(key call.Key) (engine.Ref[coordinate], bool) {
+func (owner *HotOwner) Ref(key call.Key) (engine.Ref[call.DenseCoordinate], bool) {
 	if owner == nil || owner.binding == nil || owner.fragment == nil || owner.algebra == nil || !key.Valid() {
-		return engine.Ref[coordinate]{}, false
+		return engine.Ref[call.DenseCoordinate]{}, false
 	}
 	index, ok := owner.algebra.KeyIndex(key)
 	if !ok {
-		return engine.Ref[coordinate]{}, false
+		return engine.Ref[call.DenseCoordinate]{}, false
 	}
-	implementation, ok := engine.FactorImplementationAt[coordinate, call.Value](owner.binding, owner.fragment.slot)
+	implementation, ok := engine.FactorImplementationAt[call.DenseCoordinate, call.Value](owner.binding, owner.fragment.slot)
 	if !ok {
-		return engine.Ref[coordinate]{}, false
+		return engine.Ref[call.DenseCoordinate]{}, false
 	}
-	return implementation.Ref(coordinate(index))
+	return implementation.Ref(call.DenseCoordinate(index))
 }
 
 // SelectRoute emits one exact Call route through this owner's sealed Factor
@@ -289,7 +289,7 @@ func SelectRouteTyped[Tag interface {
 	return ok && engine.SelectRoute(context, ref, tag)
 }
 
-func (owner *HotOwner) admits(index coordinate, value call.Value) bool {
+func (owner *HotOwner) admits(index call.DenseCoordinate, value call.Value) bool {
 	if owner == nil || owner.algebra == nil || uint64(index) >= uint64(owner.algebra.KeyCount()) {
 		return false
 	}
@@ -297,7 +297,7 @@ func (owner *HotOwner) admits(index coordinate, value call.Value) bool {
 	return ok && owner.algebra.Admits(key, value)
 }
 
-func (owner *HotOwner) widenRank(index coordinate, value call.Value, component int) uint64 {
+func (owner *HotOwner) widenRank(index call.DenseCoordinate, value call.Value, component int) uint64 {
 	if owner == nil || owner.algebra == nil {
 		return 0
 	}

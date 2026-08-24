@@ -45,7 +45,7 @@ func BindSelectedRuleDirect[O any](owner *HotOwner, slot *engine.RuleSlot[value.
 	if owner == nil || owner.binding == nil || owner.fragment == nil || slot == nil {
 		return nil, false
 	}
-	if !engine.BindSelectedRuleDirect[coordinate](owner.binding, slot, carry, write, output, spec, carrySpec, projectWrite) {
+	if !engine.BindSelectedRuleDirect[value.DenseCoordinate](owner.binding, slot, carry, write, output, spec, carrySpec, projectWrite) {
 		return nil, false
 	}
 	return &RuleImplementation[O]{owner: owner, slot: slot}, true
@@ -58,7 +58,7 @@ func AddSelectedRuleDirectExactRead[O any, RV any](issuer *RuleImplementation[O]
 	if issuer == nil || issuer.owner == nil || issuer.slot == nil {
 		return engine.Read[engine.OrderedCells[RV]]{}, false
 	}
-	return engine.BindSelectedRuleDirectExactRead[coordinate](issuer.owner.binding, issuer.slot, slot, factor, project)
+	return engine.BindSelectedRuleDirectExactRead[value.DenseCoordinate](issuer.owner.binding, issuer.slot, slot, factor, project)
 }
 
 // AddSelectedRuleDirectOperandRead installs an operand-dependent selector at
@@ -70,7 +70,7 @@ func AddSelectedRuleDirectOperandRead[O any, RV any, Tag interface {
 	if issuer == nil || issuer.owner == nil || issuer.slot == nil {
 		return engine.Read[engine.Selection[Tag, engine.OrderedCells[RV]]]{}, false
 	}
-	return engine.BindSelectedRuleDirectOperandRead[coordinate, value.Value, O, RV, Tag](issuer.owner.binding, issuer.slot, slot, factor, locate)
+	return engine.BindSelectedRuleDirectOperandRead[value.DenseCoordinate, value.Value, O, RV, Tag](issuer.owner.binding, issuer.slot, slot, factor, locate)
 }
 
 // BindHot admits Value's concrete algebra into the exact SchemaBinding. It
@@ -82,13 +82,13 @@ func BindHot(binding *engine.SchemaBinding, fragment *SchemaFragment, schema *va
 	}
 	owner := &HotOwner{binding: binding, fragment: fragment, schema: schema}
 	spec, specOK := owner.FactorSpec()
-	if !specOK || !engine.BindFactor[coordinate](binding, fragment.slot, spec) {
+	if !specOK || !engine.BindFactor[value.DenseCoordinate](binding, fragment.slot, spec) {
 		return nil, false
 	}
-	if !engine.BindIdentitySummaryReadForFactor[coordinate, value.Value](binding, fragment.slot, fragment.summaryRead) {
+	if !engine.BindIdentitySummaryReadForFactor[value.DenseCoordinate, value.Value](binding, fragment.slot, fragment.summaryRead) {
 		return nil, false
 	}
-	if !engine.BindIdentitySummaryReadForFactor[coordinate, value.Value](binding, fragment.slot, fragment.foldRead) {
+	if !engine.BindIdentitySummaryReadForFactor[value.DenseCoordinate, value.Value](binding, fragment.slot, fragment.foldRead) {
 		return nil, false
 	}
 	return owner, true
@@ -98,21 +98,21 @@ func BindHot(binding *engine.SchemaBinding, fragment *SchemaFragment, schema *va
 // BindHot hands to the engine. A declaration surface projects this record
 // instead of restating the lattice, admission, or widening law, so the two
 // cannot drift.
-func (owner *HotOwner) FactorSpec() (engine.HotFactorSpec[coordinate, value.Value], bool) {
+func (owner *HotOwner) FactorSpec() (engine.HotFactorSpec[value.DenseCoordinate, value.Value], bool) {
 	if owner == nil || owner.schema == nil {
-		return engine.HotFactorSpec[coordinate, value.Value]{}, false
+		return engine.HotFactorSpec[value.DenseCoordinate, value.Value]{}, false
 	}
 	keyEnd := owner.schema.CoordinateCount()
 	if keyEnd < 0 || uint64(keyEnd) > uint64(^uint32(0)) {
-		return engine.HotFactorSpec[coordinate, value.Value]{}, false
+		return engine.HotFactorSpec[value.DenseCoordinate, value.Value]{}, false
 	}
-	return engine.HotFactorSpec[coordinate, value.Value]{
+	return engine.HotFactorSpec[value.DenseCoordinate, value.Value]{
 		KeyEnd:      uint64(keyEnd),
 		Lattice:     owner.schema.Domain(),
 		Default:     owner.schema.Default(),
 		AdmitAt:     owner.admits,
 		Fingerprint: owner.schema.Fingerprint,
-		WidenRank: engine.Measure[coordinate, value.Value]{
+		WidenRank: engine.Measure[value.DenseCoordinate, value.Value]{
 			Width: 1,
 			At:    owner.widenRank,
 		},
@@ -142,11 +142,11 @@ func (owner *HotOwner) FactorRef() engine.FactorRef[value.Value] {
 	return owner.fragment.Ref()
 }
 
-func (owner *HotOwner) implementationAt() (*engine.FactorImplementation[coordinate, value.Value], bool) {
+func (owner *HotOwner) implementationAt() (*engine.FactorImplementation[value.DenseCoordinate, value.Value], bool) {
 	if owner == nil || owner.binding == nil || owner.fragment == nil {
 		return nil, false
 	}
-	implementation, ok := engine.FactorImplementationAt[coordinate, value.Value](owner.binding, owner.fragment.slot)
+	implementation, ok := engine.FactorImplementationAt[value.DenseCoordinate, value.Value](owner.binding, owner.fragment.slot)
 	if !ok {
 		return nil, false
 	}
@@ -161,7 +161,7 @@ func BindExactWriteRule[O any](owner *HotOwner, slot *engine.RuleSlot[value.Valu
 	if owner == nil || owner.binding == nil || owner.fragment == nil || slot == nil {
 		return nil, false
 	}
-	if !engine.BindRule[coordinate](owner.binding, slot, write, owner.fragment.slot, spec, projectWrite) {
+	if !engine.BindRule[value.DenseCoordinate](owner.binding, slot, write, owner.fragment.slot, spec, projectWrite) {
 		return nil, false
 	}
 	return &RuleImplementation[O]{owner: owner, slot: slot}, true
@@ -174,7 +174,7 @@ func BindCarryRule[O any](owner *HotOwner, slot *engine.RuleSlot[value.Value, O]
 	if owner == nil || owner.binding == nil || owner.fragment == nil || slot == nil {
 		return nil, false
 	}
-	if !engine.BindRuleWithCarry[coordinate](owner.binding, slot, carry, write, owner.fragment.slot, spec, carrySpec, projectWrite) {
+	if !engine.BindRuleWithCarry[value.DenseCoordinate](owner.binding, slot, carry, write, owner.fragment.slot, spec, carrySpec, projectWrite) {
 		return nil, false
 	}
 	return &RuleImplementation[O]{owner: owner, slot: slot}, true
@@ -187,7 +187,7 @@ func BindSelectedRouteCarryRule[O any](owner *HotOwner, slot *engine.RuleSlot[va
 	if owner == nil || owner.binding == nil || owner.fragment == nil || slot == nil {
 		return nil, false
 	}
-	if !engine.BindSelectedRouteRuleDirect[coordinate](owner.binding, slot, carry, write, owner.fragment.Ref(), spec, carrySpec, nil) {
+	if !engine.BindSelectedRouteRuleDirect[value.DenseCoordinate](owner.binding, slot, carry, write, owner.fragment.Ref(), spec, carrySpec, nil) {
 		return nil, false
 	}
 	return &RuleImplementation[O]{owner: owner, slot: slot}, true
@@ -201,7 +201,7 @@ func BindExactReadAndCarryRule[O any](owner *HotOwner, slot *engine.RuleSlot[val
 	if owner == nil || owner.binding == nil || owner.fragment == nil || slot == nil {
 		return nil, engine.Read[engine.OrderedCells[value.Value]]{}, false
 	}
-	runtimeRead, ok := engine.BindRuleWithExactReadAndCarry[coordinate, value.Value, O, coordinate, value.Value](owner.binding, slot, read, owner.fragment.slot, carry, write, owner.fragment.slot, spec, carrySpec, projectRead, projectWrite)
+	runtimeRead, ok := engine.BindRuleWithExactReadAndCarry[value.DenseCoordinate, value.Value, O, value.DenseCoordinate, value.Value](owner.binding, slot, read, owner.fragment.slot, carry, write, owner.fragment.slot, spec, carrySpec, projectRead, projectWrite)
 	if !ok {
 		return nil, engine.Read[engine.OrderedCells[value.Value]]{}, false
 	}
@@ -230,11 +230,11 @@ func BindSummaryQuery[R any](owner *HotOwner, query *engine.QuerySlot[R], form e
 // ResolveRuleImplementation issues the owner-fenced sealed Rule row. The
 // operand resolver was admitted into the cell before SchemaBinding.Seal; no
 // post-seal mutation or lazy installation is possible.
-func ResolveRuleImplementation[O any](issuer *RuleImplementation[O]) (*engine.RuleImplementation[coordinate, value.Value, O], bool) {
+func ResolveRuleImplementation[O any](issuer *RuleImplementation[O]) (*engine.RuleImplementation[value.DenseCoordinate, value.Value, O], bool) {
 	if issuer == nil || issuer.owner == nil || issuer.slot == nil {
 		return nil, false
 	}
-	implementation, ok := engine.RuleImplementationAt[coordinate, value.Value, O](issuer.owner.binding, issuer.slot)
+	implementation, ok := engine.RuleImplementationAt[value.DenseCoordinate, value.Value, O](issuer.owner.binding, issuer.slot)
 	if !ok {
 		return nil, false
 	}
@@ -244,7 +244,7 @@ func ResolveRuleImplementation[O any](issuer *RuleImplementation[O]) (*engine.Ru
 // ResolveRuleImplementationFor is the explicit owner fence used by child
 // binders that retain more than one equal-Schema HotOwner. A receipt issued
 // by another binding is rejected before engine resolution.
-func ResolveRuleImplementationFor[O any](owner *HotOwner, issuer *RuleImplementation[O]) (*engine.RuleImplementation[coordinate, value.Value, O], bool) {
+func ResolveRuleImplementationFor[O any](owner *HotOwner, issuer *RuleImplementation[O]) (*engine.RuleImplementation[value.DenseCoordinate, value.Value, O], bool) {
 	if owner == nil || issuer == nil || issuer.owner != owner {
 		return nil, false
 	}
@@ -253,16 +253,16 @@ func ResolveRuleImplementationFor[O any](owner *HotOwner, issuer *RuleImplementa
 
 // Ref issues the exact Value key capability after binding publication. The
 // caller supplies a Value schema coordinate, never a dense engine coordinate.
-func (owner *HotOwner) Ref(location value.Coordinate) (engine.Ref[coordinate], bool) {
+func (owner *HotOwner) Ref(location value.Coordinate) (engine.Ref[value.DenseCoordinate], bool) {
 	implementation, ok := owner.implementationAt()
 	if !ok || owner.schema == nil {
-		return engine.Ref[coordinate]{}, false
+		return engine.Ref[value.DenseCoordinate]{}, false
 	}
 	index, ok := owner.schema.CoordinateIndex(location)
 	if !ok || uint64(index) >= uint64(owner.schema.CoordinateCount()) {
-		return engine.Ref[coordinate]{}, false
+		return engine.Ref[value.DenseCoordinate]{}, false
 	}
-	return implementation.Ref(coordinate(index))
+	return implementation.Ref(value.DenseCoordinate(index))
 }
 
 // SelectRoute emits one exact Value route without exposing the owner's
@@ -281,7 +281,7 @@ func SelectRouteTyped[Tag interface {
 	return ok && engine.SelectRoute(context, ref, tag)
 }
 
-func (owner *HotOwner) admits(index coordinate, fact value.Value) bool {
+func (owner *HotOwner) admits(index value.DenseCoordinate, fact value.Value) bool {
 	if owner == nil || owner.schema == nil {
 		return false
 	}
@@ -289,7 +289,7 @@ func (owner *HotOwner) admits(index coordinate, fact value.Value) bool {
 	return ok && owner.schema.AdmitsCoordinate(location, fact)
 }
 
-func (owner *HotOwner) widenRank(index coordinate, fact value.Value, component int) uint64 {
+func (owner *HotOwner) widenRank(index value.DenseCoordinate, fact value.Value, component int) uint64 {
 	if owner == nil || owner.schema == nil || component != 0 {
 		return 0
 	}

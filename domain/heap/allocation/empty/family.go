@@ -5,7 +5,6 @@ import (
 	"github.com/wippyai/go-lua/analysis/engine/execution"
 	"github.com/wippyai/go-lua/analysis/schema/structure"
 	heapdomain "github.com/wippyai/go-lua/domain/heap"
-	heapowner "github.com/wippyai/go-lua/domain/heap/owner"
 )
 
 // reducer is one row's judgment: the Heap world its predecessor left, extended
@@ -27,8 +26,8 @@ func (fold reducer) Reduce(predecessor heapdomain.Value, present bool) (heapdoma
 // row is the sealed static half of one empty-constructor invocation.
 type row struct {
 	fold  reducer
-	read  execution.ExactRead[heapowner.Coordinate, heapdomain.Value]
-	write execution.CarryWrite[heapowner.Coordinate, heapdomain.Value]
+	read  execution.ExactRead[heapdomain.DenseCoordinate, heapdomain.Value]
+	write execution.CarryWrite[heapdomain.DenseCoordinate, heapdomain.Value]
 }
 
 type family struct{ rows []row }
@@ -49,8 +48,8 @@ func (*family) OutputCapacity() int { return 1 }
 type worker struct {
 	family *family
 	run    *execution.Run
-	reads  execution.Scratch[heapowner.Coordinate, heapdomain.Value]
-	writes execution.Scratch[heapowner.Coordinate, heapdomain.Value]
+	reads  execution.Scratch[heapdomain.DenseCoordinate, heapdomain.Value]
+	writes execution.Scratch[heapdomain.DenseCoordinate, heapdomain.Value]
 }
 
 func (lane *worker) Execute(frame execution.Frame, ticket execution.Ticket) (execution.Result, bool) {
@@ -82,7 +81,7 @@ type installer struct {
 	rule   uint32
 }
 
-func (install installer) InstallRuleFamily(plane execution.FormPlane[heapowner.Coordinate, heapdomain.Value], ruleOrdinal uint32, rows []execution.FormRow) (execution.Family, []execution.FormAddress, bool) {
+func (install installer) InstallRuleFamily(plane execution.FormPlane[heapdomain.DenseCoordinate, heapdomain.Value], ruleOrdinal uint32, rows []execution.FormRow) (execution.Family, []execution.FormAddress, bool) {
 	if !install.schema.Valid() || ruleOrdinal != install.rule || !plane.Valid() || len(rows) == 0 {
 		return nil, nil, false
 	}
@@ -122,5 +121,5 @@ func InstallFamily[A ruleAuthorities](binding *engine.SchemaBinding, slot *engin
 	if !ordinalOK || ordinal > uint64(^uint32(0)) {
 		return false
 	}
-	return engine.BindRuleFamily[heapowner.Coordinate](binding, slot, owner.FactorRef(), installer{schema: owner.Schema(), rule: uint32(ordinal)})
+	return engine.BindRuleFamily[heapdomain.DenseCoordinate](binding, slot, owner.FactorRef(), installer{schema: owner.Schema(), rule: uint32(ordinal)})
 }

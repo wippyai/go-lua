@@ -4,10 +4,29 @@
 package static
 
 import (
+	"github.com/wippyai/go-lua/analysis/engine/execution"
 	"github.com/wippyai/go-lua/analysis/identity"
 	memberrelation "github.com/wippyai/go-lua/analysis/schema/axis/member/relation"
 	value "github.com/wippyai/go-lua/domain/value"
 )
+
+// DenseCoordinate is static-type's dense Factor coordinate: the position a key of this
+// axis occupies in the Factor its owner binds. It is published here rather
+// than hand-exported by an owner, so one axis has exactly one coordinate
+// type and a family of another axis names this one instead of erasing it to
+// a builtin width. It carries no capability: it is an index, and every value
+// of it an owner hands out is one that owner minted.
+type DenseCoordinate uint32
+
+// ForeignRead seals one exact read of a bound static-type Factor at this axis's own
+// coordinate and fact types. It is the read handle a rule family of another
+// axis holds: that family may not name this pair, and this handle is why it
+// never has to erase one to reach the read. The coordinate is the one the
+// reading rule's own selection derived, and a handle bound at any other
+// pair of types is refused rather than reinterpreted.
+func ForeignRead(foreign execution.ForeignFactor, coordinate execution.SelectedCoordinate, input uint16) (execution.ExactRead[DenseCoordinate, TypeFact], bool) {
+	return execution.ForeignExactRead[DenseCoordinate, TypeFact](foreign, coordinate.Unit, input)
+}
 
 // RelationOwner is the generated bind-time owner for static-type's member relations.
 type RelationOwner struct {

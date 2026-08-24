@@ -255,9 +255,21 @@ type CarryTransform struct {
 // symbol. The generator derives the call signature as (Carrier.Type) -> Dense,
 // with the owner's boolean validity result retained by the emitted call.
 type KeyNormalization struct {
-	Carrier    string
+	Carrier string
+	// Dense is the builtin width the axis's dense Factor coordinate occupies.
+	// The coordinate type itself is not authored here: the generator publishes
+	// one named type per axis over this width, so an owner never hand-exports
+	// a Factor key type and a consumer of another axis never erases one to
+	// uint32 in order to name it.
 	Dense      GoType
 	Normalizer GoSymbol
+}
+
+// denseWidthAvailable reports whether a declared dense width is one of the two
+// builtin widths a Factor coordinate is defined over. A qualified type here
+// would be a hand-exported coordinate, which is the thing generation replaces.
+func denseWidthAvailable(width GoType) bool {
+	return width.PackagePath == "" && (width.Name == "uint32" || width.Name == "uint64")
 }
 
 // Binding is the member-definition axis binding used in this migration. It
@@ -448,7 +460,7 @@ func (definition Definition) Catalog() (member.Catalog, bool) {
 
 func (binding Binding) complete(carriers map[string]Carrier) bool {
 	keyCarrier, keyOK := carriers[binding.Key.Carrier]
-	return keyOK && binding.Key.Dense.Available() && binding.Key.Normalizer.Available() && keyCarrier.Type.Available()
+	return keyOK && denseWidthAvailable(binding.Key.Dense) && binding.Key.Normalizer.Available() && keyCarrier.Type.Available()
 }
 
 // Complete validates both the cold declaration graph and every member-level

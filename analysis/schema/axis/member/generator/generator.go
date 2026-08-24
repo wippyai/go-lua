@@ -29,6 +29,20 @@ const (
 	OutcomeRefuse      = "Refuse"
 )
 
+// The generator-published dense Factor coordinate of an axis. One name is
+// used for every axis because the type is not an owner's choice: it is the
+// position a key of that axis occupies in the Factor its owner binds, and an
+// axis that hand-exported its own spelling would be a second authority over
+// the same coordinate.
+const (
+	CoordinateType = "DenseCoordinate"
+
+	// The execution package the generated read handle is typed against. It is
+	// named here rather than by an axis so no owner can hand a consumer a read
+	// sealed against something else.
+	ExecutionPackagePath = "github.com/wippyai/go-lua/analysis/engine/execution"
+)
+
 // Artifact is the pair of generated owner artifacts. Cold is the declaration
 // catalog; Relations is the immutable bind-time relation owner. Typed
 // metadata is returned only through Resolve and is never retained by runtime
@@ -41,9 +55,13 @@ type Artifact struct {
 // KeyBinding is the resolved axis-level key normalization needed by a future
 // composition generator.
 type KeyBinding struct {
-	Carrier    member.Carrier
-	Input      definition.GoType
-	Dense      definition.GoType
+	Carrier member.Carrier
+	Input   definition.GoType
+	Dense   definition.GoType
+	// Coordinate is the generated dense Factor coordinate type of this axis,
+	// resolved in the axis's own package. It is derived, never authored: the
+	// declaration states a width and the generator publishes the type.
+	Coordinate definition.GoType
 	Normalizer definition.GoSymbol
 }
 
@@ -316,11 +334,21 @@ func Resolve(source definition.Definition) (Metadata, error) {
 			Implementation: transform.Implementation,
 		}
 	}
+	// The dense coordinate is published in the axis's own package, which is the
+	// package its fact carrier is declared in: a Factor is the pair of that
+	// fact and the coordinate it is indexed by, and they cannot be owned by two
+	// packages. A key carrier borrowed from another axis therefore does not
+	// decide where the coordinate lands.
+	factCarrier := carriers[source.Signature.Fact]
+	if factCarrier.Type.PackagePath == "" {
+		return Metadata{}, errors.New("member generator: fact carrier has no declaring package")
+	}
+	coordinateType := definition.GoType{PackagePath: factCarrier.Type.PackagePath, Name: CoordinateType}
 	return Metadata{
 		Axis:            source.Axis,
 		FactCarrier:     member.Carrier(carriers[source.Signature.Fact].Key),
 		FactType:        carriers[source.Signature.Fact].Type,
-		Key:             KeyBinding{Carrier: keyCarrier.Key, Input: keyCarrier.Type, Dense: source.Binding.Key.Dense, Normalizer: source.Binding.Key.Normalizer},
+		Key:             KeyBinding{Carrier: keyCarrier.Key, Input: keyCarrier.Type, Dense: source.Binding.Key.Dense, Coordinate: coordinateType, Normalizer: source.Binding.Key.Normalizer},
 		Relations:       relations,
 		Projections:     projections,
 		Reducers:        reducers,
@@ -566,12 +594,30 @@ func renderRelations(packageName string, source definition.Definition) ([]byte, 
 	out.WriteString("// This file is the immutable bind-time relation owner for the axis.\n\n")
 	fmt.Fprintf(&out, "package %s\n\n", packageName)
 	out.WriteString("import (\n")
+	fmt.Fprintf(&out, "\t%q\n", ExecutionPackagePath)
 	out.WriteString("\t\"github.com/wippyai/go-lua/analysis/identity\"\n")
 	out.WriteString("\tmemberrelation \"github.com/wippyai/go-lua/analysis/schema/axis/member/relation\"\n")
 	for _, path := range aliases.paths() {
 		fmt.Fprintf(&out, "\t%s %q\n", aliases[path], path)
 	}
 	out.WriteString(")\n\n")
+	qualifiedFact := qualifiedType(factType, packageName, aliases)
+	fmt.Fprintf(&out, "// %s is %s's dense Factor coordinate: the position a key of this\n", CoordinateType, source.Axis)
+	out.WriteString("// axis occupies in the Factor its owner binds. It is published here rather\n")
+	out.WriteString("// than hand-exported by an owner, so one axis has exactly one coordinate\n")
+	out.WriteString("// type and a family of another axis names this one instead of erasing it to\n")
+	out.WriteString("// a builtin width. It carries no capability: it is an index, and every value\n")
+	out.WriteString("// of it an owner hands out is one that owner minted.\n")
+	fmt.Fprintf(&out, "type %s %s\n\n", CoordinateType, metadata.Key.Dense.Name)
+	fmt.Fprintf(&out, "// ForeignRead seals one exact read of a bound %s Factor at this axis's own\n", source.Axis)
+	out.WriteString("// coordinate and fact types. It is the read handle a rule family of another\n")
+	out.WriteString("// axis holds: that family may not name this pair, and this handle is why it\n")
+	out.WriteString("// never has to erase one to reach the read. The coordinate is the one the\n")
+	out.WriteString("// reading rule's own selection derived, and a handle bound at any other\n")
+	out.WriteString("// pair of types is refused rather than reinterpreted.\n")
+	fmt.Fprintf(&out, "func ForeignRead(foreign execution.ForeignFactor, coordinate execution.SelectedCoordinate, input uint16) (execution.ExactRead[%s, %s], bool) {\n", CoordinateType, qualifiedFact)
+	fmt.Fprintf(&out, "\treturn execution.ForeignExactRead[%s, %s](foreign, coordinate.Unit, input)\n", CoordinateType, qualifiedFact)
+	out.WriteString("}\n\n")
 	fmt.Fprintf(&out, "// RelationOwner is the generated bind-time owner for %s's member relations.\n", source.Axis)
 	out.WriteString("type RelationOwner struct {\n")
 	fmt.Fprintf(&out, "\tschema %s\n", ownerFieldType)

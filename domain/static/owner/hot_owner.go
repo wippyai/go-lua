@@ -46,7 +46,7 @@ func BindSeedRuleDirect[O any](owner *HotOwner, slot *engine.RuleSlot[staticdoma
 	if owner == nil || owner.binding == nil || owner.fragment == nil || slot == nil {
 		return nil, false
 	}
-	if !engine.BindSelectedExactRuleDirect[coordinate](owner.binding, slot, write, owner.fragment.Ref(), spec, projectWrite) {
+	if !engine.BindSelectedExactRuleDirect[staticdomain.DenseCoordinate](owner.binding, slot, write, owner.fragment.Ref(), spec, projectWrite) {
 		return nil, false
 	}
 	return &RuleImplementation[O]{owner: owner, slot: slot}, true
@@ -60,7 +60,7 @@ func AddSelectedRuleDirectExactRead[O any, RV any](issuer *RuleImplementation[O]
 	if issuer == nil || issuer.owner == nil || issuer.slot == nil {
 		return engine.Read[engine.OrderedCells[RV]]{}, false
 	}
-	return engine.BindSelectedRuleDirectExactRead[coordinate](issuer.owner.binding, issuer.slot, slot, factor, project)
+	return engine.BindSelectedRuleDirectExactRead[staticdomain.DenseCoordinate](issuer.owner.binding, issuer.slot, slot, factor, project)
 }
 
 // BindCarryRuleDirect installs a Static-output exact-write Rule through
@@ -71,7 +71,7 @@ func BindCarryRuleDirect[O any](owner *HotOwner, slot *engine.RuleSlot[staticdom
 	if owner == nil || owner.binding == nil || owner.fragment == nil || slot == nil || output != owner.fragment.Ref() {
 		return nil, false
 	}
-	if !engine.BindSelectedRuleDirect[coordinate](owner.binding, slot, carry, write, output, spec, carrySpec, projectWrite) {
+	if !engine.BindSelectedRuleDirect[staticdomain.DenseCoordinate](owner.binding, slot, carry, write, output, spec, carrySpec, projectWrite) {
 		return nil, false
 	}
 	return &RuleImplementation[O]{owner: owner, slot: slot}, true
@@ -85,7 +85,7 @@ func BindExactReadAndCarryRule[O any](owner *HotOwner, slot *engine.RuleSlot[sta
 	if owner == nil || owner.binding == nil || owner.fragment == nil || slot == nil {
 		return nil, engine.Read[engine.OrderedCells[staticdomain.TypeFact]]{}, false
 	}
-	runtimeRead, ok := engine.BindRuleWithExactReadAndCarry[coordinate, staticdomain.TypeFact, O, coordinate, staticdomain.TypeFact](owner.binding, slot, read, owner.fragment.slot, carry, write, owner.fragment.slot, spec, carrySpec, projectRead, projectWrite)
+	runtimeRead, ok := engine.BindRuleWithExactReadAndCarry[staticdomain.DenseCoordinate, staticdomain.TypeFact, O, staticdomain.DenseCoordinate, staticdomain.TypeFact](owner.binding, slot, read, owner.fragment.slot, carry, write, owner.fragment.slot, spec, carrySpec, projectRead, projectWrite)
 	if !ok {
 		return nil, engine.Read[engine.OrderedCells[staticdomain.TypeFact]]{}, false
 	}
@@ -95,18 +95,18 @@ func BindExactReadAndCarryRule[O any](owner *HotOwner, slot *engine.RuleSlot[sta
 // ResolveRuleImplementation issues Static's sealed engine receipt only after
 // the shared binding seals. No rule package can recover Static's coordinate
 // or factor slot from this accessor.
-func ResolveRuleImplementation[O any](issuer *RuleImplementation[O]) (*engine.RuleImplementation[coordinate, staticdomain.TypeFact, O], bool) {
+func ResolveRuleImplementation[O any](issuer *RuleImplementation[O]) (*engine.RuleImplementation[staticdomain.DenseCoordinate, staticdomain.TypeFact, O], bool) {
 	if issuer == nil || issuer.owner == nil || issuer.slot == nil {
 		return nil, false
 	}
-	implementation, ok := engine.RuleImplementationAt[coordinate, staticdomain.TypeFact, O](issuer.owner.binding, issuer.slot)
+	implementation, ok := engine.RuleImplementationAt[staticdomain.DenseCoordinate, staticdomain.TypeFact, O](issuer.owner.binding, issuer.slot)
 	return implementation, ok
 }
 
 // ResolveRuleImplementationFor is the explicit owner fence used when a rule
 // retains more than one equal-looking Static owner. An issuer from another
 // binding must never cross into this one.
-func ResolveRuleImplementationFor[O any](owner *HotOwner, issuer *RuleImplementation[O]) (*engine.RuleImplementation[coordinate, staticdomain.TypeFact, O], bool) {
+func ResolveRuleImplementationFor[O any](owner *HotOwner, issuer *RuleImplementation[O]) (*engine.RuleImplementation[staticdomain.DenseCoordinate, staticdomain.TypeFact, O], bool) {
 	if owner == nil || issuer == nil || issuer.owner != owner {
 		return nil, false
 	}
@@ -123,27 +123,27 @@ func BindHot(binding *engine.SchemaBinding, fragment *SchemaFragment, statics *s
 	}
 	owner := &HotOwner{binding: binding, fragment: fragment, static: statics, values: values, classes: classes}
 	spec, ok := owner.FactorSpec()
-	if !ok || !engine.BindFactor[coordinate](binding, fragment.slot, spec) {
+	if !ok || !engine.BindFactor[staticdomain.DenseCoordinate](binding, fragment.slot, spec) {
 		return nil, false
 	}
 	return owner, true
 }
 
-func (owner *HotOwner) FactorSpec() (engine.HotFactorSpec[coordinate, staticdomain.TypeFact], bool) {
+func (owner *HotOwner) FactorSpec() (engine.HotFactorSpec[staticdomain.DenseCoordinate, staticdomain.TypeFact], bool) {
 	if owner == nil || owner.classes == nil || owner.values == nil {
-		return engine.HotFactorSpec[coordinate, staticdomain.TypeFact]{}, false
+		return engine.HotFactorSpec[staticdomain.DenseCoordinate, staticdomain.TypeFact]{}, false
 	}
 	count := owner.values.CoordinateCount()
 	if count <= 0 || uint64(count) > uint64(^uint32(0)) {
-		return engine.HotFactorSpec[coordinate, staticdomain.TypeFact]{}, false
+		return engine.HotFactorSpec[staticdomain.DenseCoordinate, staticdomain.TypeFact]{}, false
 	}
-	return engine.HotFactorSpec[coordinate, staticdomain.TypeFact]{
+	return engine.HotFactorSpec[staticdomain.DenseCoordinate, staticdomain.TypeFact]{
 		KeyEnd:      uint64(count),
 		Lattice:     owner.classes.TypeFactLattice(),
 		Default:     owner.classes.TypeBottom(),
 		AdmitAt:     owner.admits,
 		Fingerprint: owner.classes.TypeFactFingerprint,
-		WidenRank:   engine.Measure[coordinate, staticdomain.TypeFact]{Width: 1, At: owner.widenRank},
+		WidenRank:   engine.Measure[staticdomain.DenseCoordinate, staticdomain.TypeFact]{Width: 1, At: owner.widenRank},
 	}, true
 }
 
@@ -200,26 +200,26 @@ func (owner *HotOwner) ExactWrite() engine.SchemaWriteForm[staticdomain.TypeFact
 	return owner.fragment.ExactWrite()
 }
 
-func (owner *HotOwner) Ref(location valuedomain.Coordinate) (engine.Ref[coordinate], bool) {
+func (owner *HotOwner) Ref(location valuedomain.Coordinate) (engine.Ref[staticdomain.DenseCoordinate], bool) {
 	if owner == nil || owner.binding == nil || owner.fragment == nil || owner.values == nil {
-		return engine.Ref[coordinate]{}, false
+		return engine.Ref[staticdomain.DenseCoordinate]{}, false
 	}
 	index, ok := owner.values.CoordinateIndex(location)
 	if !ok {
-		return engine.Ref[coordinate]{}, false
+		return engine.Ref[staticdomain.DenseCoordinate]{}, false
 	}
-	implementation, ok := engine.FactorImplementationAt[coordinate, staticdomain.TypeFact](owner.binding, owner.fragment.slot)
+	implementation, ok := engine.FactorImplementationAt[staticdomain.DenseCoordinate, staticdomain.TypeFact](owner.binding, owner.fragment.slot)
 	if !ok {
-		return engine.Ref[coordinate]{}, false
+		return engine.Ref[staticdomain.DenseCoordinate]{}, false
 	}
-	return implementation.Ref(coordinate(index))
+	return implementation.Ref(staticdomain.DenseCoordinate(index))
 }
 
-func (owner *HotOwner) admits(at coordinate, fact staticdomain.TypeFact) bool {
+func (owner *HotOwner) admits(at staticdomain.DenseCoordinate, fact staticdomain.TypeFact) bool {
 	return owner != nil && owner.classes != nil && owner.values != nil && uint64(at) < uint64(owner.values.CoordinateCount()) && owner.classes.OwnsTypeFact(fact)
 }
 
-func (owner *HotOwner) widenRank(at coordinate, fact staticdomain.TypeFact, component int) uint64 {
+func (owner *HotOwner) widenRank(at staticdomain.DenseCoordinate, fact staticdomain.TypeFact, component int) uint64 {
 	if component != 0 || !owner.admits(at, fact) {
 		return 0
 	}
