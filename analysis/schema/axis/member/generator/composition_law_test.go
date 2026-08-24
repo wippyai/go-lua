@@ -123,8 +123,15 @@ func TestGeneratedOutputDiffIsConfinedToTheDroppedRulesRows(t *testing.T) {
 				t.Fatalf("dropping %q rewrote the unrelated row %q:\nwant %s\ngot  %s", contribution.Rule, name, block, reducedBlocks[name])
 			}
 		}
-		if string(reduced.Relations) != string(full.Relations) {
-			t.Fatalf("dropping %q changed the bind-time relation owner", contribution.Rule)
+		for _, relation := range contribution.Relations {
+			if strings.Contains(string(reduced.Cold), string(relation.Key)) || strings.Contains(string(reduced.Relations), string(relation.Key)) {
+				t.Fatalf("dropping %q left its relation row %q behind", contribution.Rule, relation.Key)
+			}
+		}
+		for _, projection := range contribution.Projections {
+			if strings.Contains(string(reduced.Cold), string(projection.Key)) || strings.Contains(string(reduced.Relations), string(projection.Key)) {
+				t.Fatalf("dropping %q left its projection row %q behind", contribution.Rule, projection.Key)
+			}
 		}
 	}
 }

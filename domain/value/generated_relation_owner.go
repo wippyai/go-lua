@@ -41,8 +41,8 @@ func ForeignSelectedMember(foreign execution.ForeignFactor, dense uint32, tag ui
 // RelationOwner is the generated bind-time owner for value's member relations.
 type RelationOwner struct {
 	schema        *Schema
-	sourceColumn2 memberrelation.SourceColumn[Value]
 	sourceColumn3 memberrelation.SourceColumn[Value]
+	sourceColumn4 memberrelation.SourceColumn[Value]
 }
 
 var _ memberrelation.Owner = (*RelationOwner)(nil)
@@ -80,7 +80,16 @@ func (owner *RelationOwner) candidate(relationOrdinal uint32, mount, occurrence 
 			return 0, false
 		}
 		return owner.schema.StorageTransferOrdinal(candidate)
-	case 2:
+	case 1:
+		if !mount.Available() {
+			return 0, false
+		}
+		candidate, candidateOK := owner.schema.BinaryArithmeticForArtifactOccurrence(mount, occurrence)
+		if !candidateOK {
+			return 0, false
+		}
+		return owner.schema.BinaryArithmeticOrdinal(candidate)
+	case 3:
 		if !mount.Available() {
 			return 0, false
 		}
@@ -89,7 +98,7 @@ func (owner *RelationOwner) candidate(relationOrdinal uint32, mount, occurrence 
 			return 0, false
 		}
 		return owner.schema.SourceSeedOrdinal(candidate)
-	case 3:
+	case 4:
 		if mount.Available() {
 			return 0, false
 		}
@@ -98,7 +107,7 @@ func (owner *RelationOwner) candidate(relationOrdinal uint32, mount, occurrence 
 			return 0, false
 		}
 		return owner.schema.GlobalBootstrapResultOrdinal(candidate)
-	case 4:
+	case 5:
 		if !mount.Available() {
 			return 0, false
 		}
@@ -107,7 +116,7 @@ func (owner *RelationOwner) candidate(relationOrdinal uint32, mount, occurrence 
 			return 0, false
 		}
 		return owner.schema.MountedCallArgumentOrdinal(candidate)
-	case 6:
+	case 7:
 		if !mount.Available() {
 			return 0, false
 		}
@@ -116,7 +125,7 @@ func (owner *RelationOwner) candidate(relationOrdinal uint32, mount, occurrence 
 			return 0, false
 		}
 		return owner.schema.AllocationResultOrdinal(candidate)
-	case 7:
+	case 8:
 		if mount.Available() {
 			return 0, false
 		}
@@ -125,7 +134,7 @@ func (owner *RelationOwner) candidate(relationOrdinal uint32, mount, occurrence 
 			return 0, false
 		}
 		return owner.schema.FreshResultCallOrdinal(candidate)
-	case 8:
+	case 9:
 		if !mount.Available() {
 			return 0, false
 		}
@@ -134,7 +143,7 @@ func (owner *RelationOwner) candidate(relationOrdinal uint32, mount, occurrence 
 			return 0, false
 		}
 		return owner.schema.ReturnBoundaryOrdinal(candidate)
-	case 10:
+	case 11:
 		if !mount.Available() {
 			return 0, false
 		}
@@ -175,7 +184,7 @@ func (owner *RelationOwner) MemberCount(relationOrdinal, parentCandidateOrdinal 
 		return 0, false
 	}
 	switch relationOrdinal {
-	case 10:
+	case 11:
 		parent, parentOK := owner.schema.ReturnBoundaryAt(int(parentCandidateOrdinal))
 		if !parentOK {
 			return 0, false
@@ -199,7 +208,7 @@ func (owner *RelationOwner) MemberAt(relationOrdinal, parentCandidateOrdinal uin
 		return 0, false
 	}
 	switch relationOrdinal {
-	case 10:
+	case 11:
 		parent, parentOK := owner.schema.ReturnBoundaryAt(int(parentCandidateOrdinal))
 		if !parentOK {
 			return 0, false
@@ -221,13 +230,13 @@ func (owner *RelationOwner) OccurrenceCount(relationOrdinal uint32) (int, bool) 
 		return 0, false
 	}
 	switch relationOrdinal {
-	case 3:
+	case 4:
 		count := owner.schema.GlobalBootstrapResultCount()
 		if count < 0 {
 			return 0, false
 		}
 		return count, true
-	case 7:
+	case 8:
 		count := owner.schema.FreshResultCallCount()
 		if count < 0 {
 			return 0, false
@@ -245,9 +254,9 @@ func (owner *RelationOwner) OccurrenceIDAt(relationOrdinal uint32, index int) (i
 		return identity.ContentID{}, false
 	}
 	switch relationOrdinal {
-	case 3:
+	case 4:
 		return owner.schema.GlobalBootstrapResultIDAt(index)
-	case 7:
+	case 8:
 		return owner.schema.FreshResultCallIDAt(index)
 	default:
 		return identity.ContentID{}, false
@@ -279,6 +288,22 @@ func (owner *RelationOwner) Project(relationOrdinal, projectionOrdinal, candidat
 		}
 	case 1:
 		switch projectionOrdinal {
+		case 11:
+			candidate, candidateOK := owner.schema.BinaryArithmeticAt(int(candidateOrdinal))
+			if !candidateOK {
+				return 0, false
+			}
+			first, projectionOK := candidate.Write()
+			if !projectionOK {
+				return 0, false
+			}
+			projected := first
+			return owner.schema.CoordinateIndex(projected)
+		default:
+			return 0, false
+		}
+	case 2:
+		switch projectionOrdinal {
 		case 0:
 			candidate, candidateOK := owner.schema.StorageTransferAt(int(candidateOrdinal))
 			if !candidateOK {
@@ -294,7 +319,7 @@ func (owner *RelationOwner) Project(relationOrdinal, projectionOrdinal, candidat
 		default:
 			return 0, false
 		}
-	case 2:
+	case 3:
 		switch projectionOrdinal {
 		case 2:
 			candidate, candidateOK := owner.schema.SourceSeedAt(int(candidateOrdinal))
@@ -311,7 +336,7 @@ func (owner *RelationOwner) Project(relationOrdinal, projectionOrdinal, candidat
 		default:
 			return 0, false
 		}
-	case 3:
+	case 4:
 		switch projectionOrdinal {
 		case 3:
 			candidate, candidateOK := owner.schema.GlobalBootstrapResultAt(int(candidateOrdinal))
@@ -328,12 +353,12 @@ func (owner *RelationOwner) Project(relationOrdinal, projectionOrdinal, candidat
 		default:
 			return 0, false
 		}
-	case 4:
+	case 5:
 		switch projectionOrdinal {
 		default:
 			return 0, false
 		}
-	case 5:
+	case 6:
 		switch projectionOrdinal {
 		case 4:
 			candidate, candidateOK := owner.schema.MountedCallArgumentAt(int(candidateOrdinal))
@@ -349,7 +374,7 @@ func (owner *RelationOwner) Project(relationOrdinal, projectionOrdinal, candidat
 		default:
 			return 0, false
 		}
-	case 6:
+	case 7:
 		switch projectionOrdinal {
 		case 5:
 			candidate, candidateOK := owner.schema.AllocationResultAt(int(candidateOrdinal))
@@ -365,7 +390,7 @@ func (owner *RelationOwner) Project(relationOrdinal, projectionOrdinal, candidat
 		default:
 			return 0, false
 		}
-	case 7:
+	case 8:
 		switch projectionOrdinal {
 		case 6:
 			candidate, candidateOK := owner.schema.FreshResultCallAt(int(candidateOrdinal))
@@ -381,12 +406,12 @@ func (owner *RelationOwner) Project(relationOrdinal, projectionOrdinal, candidat
 		default:
 			return 0, false
 		}
-	case 8:
+	case 9:
 		switch projectionOrdinal {
 		default:
 			return 0, false
 		}
-	case 9:
+	case 10:
 		switch projectionOrdinal {
 		case 7:
 			candidate, candidateOK := owner.schema.ReturnBoundaryAt(int(candidateOrdinal))
@@ -402,7 +427,7 @@ func (owner *RelationOwner) Project(relationOrdinal, projectionOrdinal, candidat
 		default:
 			return 0, false
 		}
-	case 10:
+	case 11:
 		switch projectionOrdinal {
 		case 8:
 			candidate, candidateOK := owner.schema.ReturnBoundaryMemberAt(int(candidateOrdinal))
@@ -410,6 +435,33 @@ func (owner *RelationOwner) Project(relationOrdinal, projectionOrdinal, candidat
 				return 0, false
 			}
 			first, projectionOK := candidate.Coordinate()
+			if !projectionOK {
+				return 0, false
+			}
+			projected := first
+			return owner.schema.CoordinateIndex(projected)
+		default:
+			return 0, false
+		}
+	case 12:
+		switch projectionOrdinal {
+		case 9:
+			candidate, candidateOK := owner.schema.BinaryArithmeticAt(int(candidateOrdinal))
+			if !candidateOK {
+				return 0, false
+			}
+			first, projectionOK := candidate.Left()
+			if !projectionOK {
+				return 0, false
+			}
+			projected := first
+			return owner.schema.CoordinateIndex(projected)
+		case 10:
+			candidate, candidateOK := owner.schema.BinaryArithmeticAt(int(candidateOrdinal))
+			if !candidateOK {
+				return 0, false
+			}
+			first, projectionOK := candidate.Right()
 			if !projectionOK {
 				return 0, false
 			}
@@ -428,41 +480,18 @@ func (owner *RelationOwner) materializeSourceColumns() bool {
 	if owner == nil || owner.schema == nil {
 		return false
 	}
-	count2 := owner.schema.SourceSeedCount()
-	if count2 < 0 {
-		return false
-	}
-	facts2 := make([]Value, count2)
-	outcomes2 := make([]structure.ReductionOutcome, count2)
-	for index := 0; index < count2; index++ {
-		candidate, candidateOK := owner.schema.SourceSeedAt(index)
-		if !candidateOK {
-			return false
-		}
-		fact, outcome := SourceFact(candidate)
-		if outcome == structure.Refuse {
-			return false
-		}
-		facts2[index] = fact
-		outcomes2[index] = outcome
-	}
-	column2, column2OK := memberrelation.NewSourceColumn(facts2, outcomes2)
-	if !column2OK {
-		return false
-	}
-	owner.sourceColumn2 = column2
-	count3 := owner.schema.GlobalBootstrapResultCount()
+	count3 := owner.schema.SourceSeedCount()
 	if count3 < 0 {
 		return false
 	}
 	facts3 := make([]Value, count3)
 	outcomes3 := make([]structure.ReductionOutcome, count3)
 	for index := 0; index < count3; index++ {
-		candidate, candidateOK := owner.schema.GlobalBootstrapResultAt(index)
+		candidate, candidateOK := owner.schema.SourceSeedAt(index)
 		if !candidateOK {
 			return false
 		}
-		fact, outcome := GlobalBootstrapFact(candidate)
+		fact, outcome := SourceFact(candidate)
 		if outcome == structure.Refuse {
 			return false
 		}
@@ -474,23 +503,46 @@ func (owner *RelationOwner) materializeSourceColumns() bool {
 		return false
 	}
 	owner.sourceColumn3 = column3
+	count4 := owner.schema.GlobalBootstrapResultCount()
+	if count4 < 0 {
+		return false
+	}
+	facts4 := make([]Value, count4)
+	outcomes4 := make([]structure.ReductionOutcome, count4)
+	for index := 0; index < count4; index++ {
+		candidate, candidateOK := owner.schema.GlobalBootstrapResultAt(index)
+		if !candidateOK {
+			return false
+		}
+		fact, outcome := GlobalBootstrapFact(candidate)
+		if outcome == structure.Refuse {
+			return false
+		}
+		facts4[index] = fact
+		outcomes4[index] = outcome
+	}
+	column4, column4OK := memberrelation.NewSourceColumn(facts4, outcomes4)
+	if !column4OK {
+		return false
+	}
+	owner.sourceColumn4 = column4
 	return true
 }
 
 // SourceFactColumn returns the immutable typed source fact column for one relation.
 // RelationCount is the sealed relation-ordinal extent. It preserves absent
 // materializations separately from a valid empty source column.
-func (*RelationOwner) RelationCount() int { return 11 }
+func (*RelationOwner) RelationCount() int { return 13 }
 
 func (owner *RelationOwner) SourceFactColumn(relationOrdinal uint32) (memberrelation.SourceColumn[Value], bool) {
 	if owner == nil || owner.schema == nil {
 		return memberrelation.SourceColumn[Value]{}, false
 	}
 	switch relationOrdinal {
-	case 2:
-		return owner.sourceColumn2, true
 	case 3:
 		return owner.sourceColumn3, true
+	case 4:
+		return owner.sourceColumn4, true
 	default:
 		return memberrelation.SourceColumn[Value]{}, false
 	}

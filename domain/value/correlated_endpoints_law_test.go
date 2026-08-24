@@ -324,6 +324,50 @@ func TestEndpointVectorsAreDistinctPerOperand(t *testing.T) {
 	}
 }
 
+// TestBinaryArithmeticUsesTheSharedEndpointOrdinal pins the arithmetic
+// candidate cut: arithmetic rows round-trip through the one endpoint table,
+// while their write/left/right projections are owner-issued no-argument
+// accessors over that same vector.
+func TestBinaryArithmeticUsesTheSharedEndpointOrdinal(t *testing.T) {
+	fixture := newEndpointFixture(t, "endpoint_arithmetic_roundtrip")
+	seen := 0
+	for _, occurrence := range fixture.occurrences {
+		row, rowOK := fixture.values.BinaryArithmetic(fixture.module, occurrence)
+		if !rowOK || !fixture.values.OwnsBinaryArithmetic(row) {
+			continue
+		}
+		seen++
+		ordinal, ordinalOK := fixture.values.BinaryArithmeticOrdinal(row)
+		if !ordinalOK {
+			t.Fatal("arithmetic row has no endpoint ordinal")
+		}
+		vector, vectorOK := row.EndpointVector()
+		if !vectorOK {
+			t.Fatal("arithmetic row has no endpoint vector")
+		}
+		vectorOrdinal, vectorOrdinalOK := vector.Ordinal()
+		if !vectorOrdinalOK || uint32(vectorOrdinal) != ordinal {
+			t.Fatalf("arithmetic ordinal=%d, vector ordinal=%d/%t", ordinal, vectorOrdinal, vectorOrdinalOK)
+		}
+		at, atOK := fixture.values.BinaryArithmeticAt(int(ordinal))
+		atID, atIDOK := at.ID()
+		rowID, rowIDOK := row.ID()
+		if !atOK || !atIDOK || !rowIDOK || atID != rowID {
+			t.Fatalf("arithmetic endpoint roundtrip at=%+v/%t id=%v/%t row=%v/%t", at, atOK, atID, atIDOK, rowID, rowIDOK)
+		}
+		result, left, right, _, endpointsOK := row.Endpoints()
+		write, writeOK := row.Write()
+		leftProjection, leftOK := row.Left()
+		rightProjection, rightOK := row.Right()
+		if !endpointsOK || !writeOK || !leftOK || !rightOK || write != result || leftProjection != left || rightProjection != right {
+			t.Fatalf("arithmetic projections write=%+v/%t left=%+v/%t right=%+v/%t endpoints=%+v/%+v/%+v/%t", write, writeOK, leftProjection, leftOK, rightProjection, rightOK, result, left, right, endpointsOK)
+		}
+	}
+	if seen == 0 {
+		t.Fatal("fixture admitted no arithmetic operand")
+	}
+}
+
 // TestEndpointVectorRefusesForeignRows keeps the owner fence: a vector issued
 // by one Schema is not admitted by another over the same program.
 func TestEndpointVectorRefusesForeignRows(t *testing.T) {

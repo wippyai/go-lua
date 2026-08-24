@@ -41,6 +41,7 @@ func axisReference(key string) schema.EntryReference {
 func StorageTransfer() definition.Definition {
 	coordinate := valueGoType("Coordinate")
 	storageTransfer := valueGoType("StorageTransfer")
+	binaryArithmetic := valueGoType("BinaryArithmetic")
 	value := valueGoType("Value")
 	allocationResult := valueGoType("AllocationResult")
 	freshResultCall := valueGoType("FreshResultCall")
@@ -65,6 +66,7 @@ func StorageTransfer() definition.Definition {
 			{Name: "ValueCoordinateCarrier", Key: "carrier/value/coordinate", Type: coordinate},
 			{Name: "ValueFactCarrier", Key: "carrier/value/fact", Type: value},
 			{Name: "StorageTransferCarrier", Key: "carrier/value/storage-transfer", Type: storageTransfer},
+			{Name: "BinaryArithmeticCarrier", Key: "carrier/value/binary-arithmetic", Type: binaryArithmetic},
 			{Name: "SourceSeedCarrier", Key: "carrier/value/source-seed", Type: valueGoType("SourceSeed")},
 			{Name: "GlobalBootstrapResultCarrier", Key: "carrier/value/global-bootstrap-result", Type: valueGoType("GlobalBootstrapResult")},
 			// These are the two owner-issued candidate relationships whose
@@ -94,6 +96,19 @@ func StorageTransfer() definition.Definition {
 				CandidateResolver: valueMethod("StorageTransferForArtifactOccurrence", "Schema", true, 0),
 				CandidateOrdinal:  valueMethod("StorageTransferOrdinal", "Schema", true, 0),
 				CandidateAt:       valueMethod("StorageTransferAt", "Schema", true, 0),
+			},
+			{
+				// Arithmetic candidates are addressed by the one endpoint table
+				// sealed by Value. BinaryArithmeticOrdinal and BinaryArithmeticAt
+				// therefore use the endpoint ordinal directly; no family-local
+				// candidate directory is authored here.
+				Name:              "BinaryArithmeticCandidates",
+				Key:               "value/binary-arithmetic/candidates",
+				Subject:           "BinaryArithmeticCarrier",
+				CandidateProvider: member.RelationRef{Axis: axisReference("value"), Member: "value/binary-arithmetic/candidates"},
+				CandidateResolver: valueMethod("BinaryArithmeticForArtifactOccurrence", "Schema", true, 0),
+				CandidateOrdinal:  valueMethod("BinaryArithmeticOrdinal", "Schema", true, 0),
+				CandidateAt:       valueMethod("BinaryArithmeticAt", "Schema", true, 0),
 			},
 			{
 				Name:              "StorageTransferSources",

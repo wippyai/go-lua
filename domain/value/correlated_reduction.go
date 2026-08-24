@@ -15,6 +15,29 @@ func IdentityValue(input Value) (Value, structure.ReductionOutcome) {
 	return input, structure.Concrete
 }
 
+// ArithmeticValue is Value's complete binary-arithmetic judgment. The
+// candidate authenticates the operator and owning Schema; the two inputs are
+// already owner-issued exact cells. Execution supplies those cells and their
+// common support region, but owns none of this semantic decision.
+func ArithmeticValue(candidate BinaryArithmetic, left, right Value) (Value, structure.ReductionOutcome) {
+	if candidate.schema == nil || !candidate.schema.OwnsBinaryArithmetic(candidate) ||
+		!candidate.schema.owns(left) || !candidate.schema.owns(right) {
+		return Value{}, structure.Refuse
+	}
+	op, ok := candidate.Op()
+	if !ok {
+		return Value{}, structure.Refuse
+	}
+	result, ok := candidate.schema.ApplyArithmetic(left, right, op)
+	if !ok {
+		return Value{}, structure.Refuse
+	}
+	if candidate.schema.Equal(result, candidate.schema.Bottom()) {
+		return Value{}, structure.NoCandidate
+	}
+	return result, structure.Concrete
+}
+
 // SourceFact is Value's zero-input source reducer. It rederives the immutable
 // source fact from one owner-issued SourceSeed.
 func SourceFact(seed SourceSeed) (Value, structure.ReductionOutcome) {

@@ -29,6 +29,7 @@ import (
 	placementstore "github.com/wippyai/go-lua/domain/placement/store/memberdefinition"
 	staticbase "github.com/wippyai/go-lua/domain/static/memberdefinition"
 	statictransfer "github.com/wippyai/go-lua/domain/static/transfer/memberdefinition"
+	valuearithmetic "github.com/wippyai/go-lua/domain/value/arithmetic/memberdefinition"
 	valuebootstrap "github.com/wippyai/go-lua/domain/value/bootstrap/memberdefinition"
 	valuebase "github.com/wippyai/go-lua/domain/value/memberdefinition"
 	valuesource "github.com/wippyai/go-lua/domain/value/source/memberdefinition"
@@ -47,6 +48,7 @@ func Composition() (definition.Roster, bool) {
 				valuetransfer.Contribution(),
 				valuesource.Contribution(),
 				valuebootstrap.Contribution(),
+				valuearithmetic.Contribution(),
 			},
 		},
 		definition.Source{

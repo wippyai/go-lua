@@ -24,7 +24,15 @@ func TestGeneratedRelationOwnerProjectsStorageTransfer(t *testing.T) {
 
 	owner := valuedomain.NewRelationOwner(local)
 	var relations memberrelation.Owner = owner
-	candidate, candidateOK := relations.CandidateAt(0, mount, occurrence, 0)
+	catalog := valuedomain.AxisMemberCatalog()
+	candidateRelation, candidateRelationOK := catalog.RelationOrdinal(valuedomain.StorageTransferCandidates)
+	sourceRelation, sourceRelationOK := catalog.RelationOrdinal(valuedomain.StorageTransferSources)
+	targetProjection, targetProjectionOK := catalog.ProjectionOrdinal(valuedomain.StorageTransferTarget)
+	sourceProjection, sourceProjectionOK := catalog.ProjectionOrdinal(valuedomain.StorageTransferSourceKey)
+	if !candidateRelationOK || !sourceRelationOK || !targetProjectionOK || !sourceProjectionOK {
+		t.Fatal("storage transfer member ordinals")
+	}
+	candidate, candidateOK := relations.CandidateAt(candidateRelation, mount, occurrence, 0)
 	wantCandidate, wantCandidateOK := local.StorageTransferOrdinal(transfer)
 	if !candidateOK || !wantCandidateOK || candidate != wantCandidate {
 		t.Fatalf("candidate ordinal=%d/%t, want=%d/%t", candidate, candidateOK, wantCandidate, wantCandidateOK)
@@ -36,34 +44,34 @@ func TestGeneratedRelationOwnerProjectsStorageTransfer(t *testing.T) {
 	if !endpointsOK || !wantFromOK || !wantToOK {
 		t.Fatal("storage transfer endpoints")
 	}
-	gotFrom, gotFromOK := relations.Project(1, 0, candidate)
-	gotTo, gotToOK := relations.Project(0, 1, candidate)
+	gotFrom, gotFromOK := relations.Project(sourceRelation, sourceProjection, candidate)
+	gotTo, gotToOK := relations.Project(candidateRelation, targetProjection, candidate)
 	if !gotFromOK || gotFrom != wantFrom || !gotToOK || gotTo != wantTo {
 		t.Fatalf("projected endpoints from=%d/%t want=%d; to=%d/%t want=%d", gotFrom, gotFromOK, wantFrom, gotTo, gotToOK, wantTo)
 	}
 
-	if _, ok := relations.CandidateAt(0, identity.ContentID{}, occurrence, 0); ok {
+	if _, ok := relations.CandidateAt(candidateRelation, identity.ContentID{}, occurrence, 0); ok {
 		t.Fatal("unavailable mount admitted")
 	}
-	if _, ok := relations.CandidateAt(0, mount, identity.ContentID{}, 0); ok {
+	if _, ok := relations.CandidateAt(candidateRelation, mount, identity.ContentID{}, 0); ok {
 		t.Fatal("unavailable occurrence admitted")
 	}
-	if _, ok := relations.CandidateAt(1, mount, occurrence, 0); ok {
+	if _, ok := relations.CandidateAt(sourceRelation, mount, occurrence, 0); ok {
 		t.Fatal("derived relation exposed a candidate directory")
 	}
 	if _, ok := relations.CandidateAt(99, mount, occurrence, 0); ok {
 		t.Fatal("out-of-range relation admitted")
 	}
-	if _, ok := relations.CandidateAt(0, foreignMount, foreignOccurrence, 0); ok {
+	if _, ok := relations.CandidateAt(candidateRelation, foreignMount, foreignOccurrence, 0); ok {
 		t.Fatal("foreign occurrence crossed the local relation owner")
 	}
 	if _, ok := relations.Project(99, 1, candidate); ok {
 		t.Fatal("out-of-range relation projected")
 	}
-	if _, ok := relations.Project(0, 99, candidate); ok {
+	if _, ok := relations.Project(candidateRelation, 99, candidate); ok {
 		t.Fatal("out-of-range projection projected")
 	}
-	if _, ok := relations.Project(0, 1, uint32(local.StorageTransferCount())); ok {
+	if _, ok := relations.Project(candidateRelation, targetProjection, uint32(local.StorageTransferCount())); ok {
 		t.Fatal("out-of-range candidate projected")
 	}
 }

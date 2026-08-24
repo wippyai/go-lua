@@ -3,8 +3,10 @@ package value
 import (
 	"testing"
 
+	"github.com/wippyai/go-lua/analysis/identity"
 	flowkind "github.com/wippyai/go-lua/analysis/program/flow/kind"
 	"github.com/wippyai/go-lua/analysis/program/keyspace"
+	"github.com/wippyai/go-lua/analysis/schema/structure"
 	"github.com/wippyai/go-lua/domain/runtimekind"
 )
 
@@ -74,5 +76,46 @@ func TestApplyArithmeticUsesProgramSemanticsAndSealedResultAtoms(t *testing.T) {
 	}
 	if _, ok := schema.ApplyArithmetic(left, right, flowkind.BinaryEqual); ok {
 		t.Fatal("non-arithmetic operator accepted")
+	}
+}
+
+func TestArithmeticValueOwnsTheCompleteReductionOutcome(t *testing.T) {
+	integer := func(value int64) keyspace.LiteralValue {
+		return keyspace.LiteralValue{Kind: keyspace.LiteralInteger, Integer: value}
+	}
+	schema := &Schema{atomByRow: make(map[atomRow]uint32), exactKeys: make(map[keyspace.LiteralValue]keyspace.LiteralValue), potential: 32}
+	for _, literal := range []keyspace.LiteralValue{integer(10), integer(5)} {
+		schema.exactKeys[literal] = literal
+		if schema.addAtom(atomRow{kind: atomLiteral, runtime: runtimekind.Number, key: literal, hasKey: true}) == 0 {
+			t.Fatal("source literal atom")
+		}
+	}
+	if schema.addAtom(atomRow{kind: atomComputedLiteral, runtime: runtimekind.Number, key: integer(15)}) == 0 {
+		t.Fatal("computed result atom")
+	}
+	schema.bottom = Value{schema: schema}
+	schema.top = Value{schema: schema, top: true}
+	candidate := BinaryArithmetic{
+		schema:  schema,
+		key:     computationKey{module: identity.ContentID{1}, occurrence: identity.ContentID{2}},
+		content: identity.ContentID{3},
+		op:      flowkind.BinaryAdd,
+	}
+	left := wantsValue(t, schema, atomRow{kind: atomLiteral, runtime: runtimekind.Number, key: integer(10), hasKey: true})
+	right := wantsValue(t, schema, atomRow{kind: atomLiteral, runtime: runtimekind.Number, key: integer(5), hasKey: true})
+
+	result, outcome := ArithmeticValue(candidate, left, right)
+	if outcome != structure.Concrete {
+		t.Fatalf("ArithmeticValue outcome = %v, want Concrete", outcome)
+	}
+	scalar, scalarOK := schema.ExactScalar(result)
+	literal, literalOK := scalar.Literal()
+	if !scalarOK || !literalOK || literal != integer(15) {
+		t.Fatalf("ArithmeticValue result = %+v/%v literal=%+v/%v, want integer 15", scalar, scalarOK, literal, literalOK)
+	}
+
+	foreign := *schema
+	if _, outcome := ArithmeticValue(candidate, Value{schema: &foreign, top: true}, right); outcome != structure.Refuse {
+		t.Fatalf("foreign operand outcome = %v, want Refuse", outcome)
 	}
 }

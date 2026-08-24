@@ -3,6 +3,7 @@ package memberdefinition
 import (
 	"testing"
 
+	"github.com/wippyai/go-lua/analysis/schema/axis/member/definition"
 	"github.com/wippyai/go-lua/domain/value"
 )
 
@@ -34,5 +35,30 @@ func TestCarryTransformRowsNameDirectCandidateMethods(t *testing.T) {
 		if row.Implementation.Name != "Age" || row.Implementation.Receiver.Name != want[index].receiver || row.Implementation.ReceiverPointer != want[index].pointer {
 			t.Fatalf("transform[%d] implementation = %#v, want %s.Age", index, row.Implementation, want[index].receiver)
 		}
+	}
+}
+
+func TestStorageTransferPublishesTheSharedArithmeticCandidateDirectory(t *testing.T) {
+	source := StorageTransfer()
+	var candidate *definition.Relation
+	for index := range source.Relations {
+		if source.Relations[index].Name == "BinaryArithmeticCandidates" {
+			candidate = &source.Relations[index]
+			break
+		}
+	}
+	if candidate == nil {
+		t.Fatal("value source does not publish BinaryArithmeticCandidates")
+	}
+	if candidate.Key != "value/binary-arithmetic/candidates" || candidate.Subject != "BinaryArithmeticCarrier" {
+		t.Fatalf("arithmetic candidate = %#v", *candidate)
+	}
+	if candidate.CandidateResolver.Name != "BinaryArithmeticForArtifactOccurrence" ||
+		candidate.CandidateOrdinal.Name != "BinaryArithmeticOrdinal" ||
+		candidate.CandidateAt.Name != "BinaryArithmeticAt" {
+		t.Fatalf("arithmetic directory methods = %#v", *candidate)
+	}
+	if len(source.Carriers) < 4 || source.Carriers[3].Name != "BinaryArithmeticCarrier" {
+		t.Fatalf("arithmetic carrier was not added to the owner source: %#v", source.Carriers)
 	}
 }

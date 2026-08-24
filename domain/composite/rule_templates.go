@@ -38,7 +38,8 @@ import (
 	statictransfer "github.com/wippyai/go-lua/domain/static/transfer"
 	valuedomain "github.com/wippyai/go-lua/domain/value"
 	valueallocation "github.com/wippyai/go-lua/domain/value/allocation"
-	valuearithmetic "github.com/wippyai/go-lua/domain/value/arithmetic"
+	valuearithmeticexecution "github.com/wippyai/go-lua/domain/value/arithmetic/execution"
+	valuearithmeticprogram "github.com/wippyai/go-lua/domain/value/arithmetic/program"
 	valuebodyresult "github.com/wippyai/go-lua/domain/value/bodyresult"
 	valuebootstrap "github.com/wippyai/go-lua/domain/value/bootstrap"
 	valueequality "github.com/wippyai/go-lua/domain/value/equality"
@@ -144,7 +145,7 @@ func ruleTemplateWiring[P Principals, A Authorities]() ([]*rule.Template, []Rule
 	add(WireGeneratedRule[P, A](valuebootstrap.RuleEntry()))
 	add(WireGeneratedRule[P, A](heapbootstrap.RuleEntry()))
 	add(WireGeneratedRule[P, A](valuetransfer.RuleEntry()))
-	add(WireRule(valuearithmetic.RuleEntry[P, A](), valuearithmetic.DeclareRule[P], valuearithmetic.RegisterRule, nil, valuearithmetic.BindRule[A], nil, nil, nil))
+	add(WireGeneratedRuleWithFamily[P, A](valuearithmeticprogram.RuleEntry(), valuearithmeticexecution.InstallFamily[A]))
 	add(WireRule(valueequality.RuleEntry[P, A](), valueequality.DeclareRule[P], valueequality.RegisterRule, nil, valueequality.BindRule[A], nil, nil, nil))
 	add(WireRule(valueorder.RuleEntry[P, A](), valueorder.DeclareRule[P], valueorder.RegisterRule, nil, valueorder.BindRule[A], nil, nil, nil))
 	add(WireRule(valuerefinement.RuleEntry[P, A](), valuerefinement.DeclareRule[P], valuerefinement.RegisterRule, nil, valuerefinement.BindRule[A], nil, nil, nil))

@@ -41,7 +41,7 @@ import (
 	statictransfer "github.com/wippyai/go-lua/domain/static/transfer"
 	typedomain "github.com/wippyai/go-lua/domain/type"
 	valueallocation "github.com/wippyai/go-lua/domain/value/allocation"
-	valuearithmetic "github.com/wippyai/go-lua/domain/value/arithmetic"
+	valuearithmeticprogram "github.com/wippyai/go-lua/domain/value/arithmetic/program"
 	valuebodyresult "github.com/wippyai/go-lua/domain/value/bodyresult"
 	valuebootstrap "github.com/wippyai/go-lua/domain/value/bootstrap"
 	valueequality "github.com/wippyai/go-lua/domain/value/equality"
@@ -202,7 +202,7 @@ func semanticRoleVocabulary() []structure.Spec {
 		valuebootstrap.StructureSpecs(),
 		heapbootstrap.StructureSpecs(),
 		valuetransfer.StructureSpecs(),
-		valuearithmetic.StructureSpecs(),
+		valuearithmeticprogram.StructureSpecs(),
 		valueequality.StructureSpecs(),
 		valueorder.StructureSpecs(),
 		valuerefinement.StructureSpecs(),

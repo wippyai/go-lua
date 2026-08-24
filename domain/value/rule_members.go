@@ -11,6 +11,7 @@ import (
 
 const (
 	StorageTransferCandidates          schemaapi.Key  = "value/storage-transfer/candidates"
+	BinaryArithmeticCandidates         schemaapi.Key  = "value/binary-arithmetic/candidates"
 	StorageTransferSources             schemaapi.Key  = "value/storage-transfer/sources"
 	SourceSeeds                        schemaapi.Key  = "value/source/candidates"
 	GlobalBootstrapResults             schemaapi.Key  = "value/global-bootstrap/candidates"
@@ -21,6 +22,7 @@ const (
 	ReturnBoundaryCandidates           schemaapi.Key  = "value/return-boundary/candidates"
 	ReturnBoundaryRoots                schemaapi.Key  = "value/return-boundary/roots"
 	ReturnBoundaryMembers              schemaapi.Key  = "value/return-boundary/members"
+	BinaryArithmeticSources            schemaapi.Key  = "value/binary-arithmetic/sources"
 	StorageTransferSourceKey           schemaapi.Key  = "value/storage-transfer/source-key"
 	StorageTransferTarget              schemaapi.Key  = "value/storage-transfer/target"
 	SourceCoordinate                   schemaapi.Key  = "value/source/coordinate"
@@ -30,14 +32,19 @@ const (
 	FreshResultCoordinate              schemaapi.Key  = "value/fresh-result/coordinate"
 	ReturnBoundaryRootKey              schemaapi.Key  = "value/return-boundary/root-key"
 	ReturnBoundaryMemberKey            schemaapi.Key  = "value/return-boundary/member-key"
+	BinaryArithmeticLeft               schemaapi.Key  = "value/binary-arithmetic/left"
+	BinaryArithmeticRight              schemaapi.Key  = "value/binary-arithmetic/right"
+	BinaryArithmeticWrite              schemaapi.Key  = "value/binary-arithmetic/write"
 	IdentityReducer                    schemaapi.Key  = "value/reducer/identity"
 	SourceReducer                      schemaapi.Key  = "value/reducer/source"
 	GlobalBootstrapReducer             schemaapi.Key  = "value/reducer/global-bootstrap"
+	BinaryArithmeticReducer            schemaapi.Key  = "value/binary-arithmetic/reducer"
 	AllocationCarryTransform           schemaapi.Key  = "transform/value/allocation"
 	FreshResultCarryTransform          schemaapi.Key  = "transform/value/callresult-freshresult"
 	ValueCoordinateCarrier             member.Carrier = "carrier/value/coordinate"
 	ValueFactCarrier                   member.Carrier = "carrier/value/fact"
 	StorageTransferCarrier             member.Carrier = "carrier/value/storage-transfer"
+	BinaryArithmeticCarrier            member.Carrier = "carrier/value/binary-arithmetic"
 	SourceSeedCarrier                  member.Carrier = "carrier/value/source-seed"
 	GlobalBootstrapResultCarrier       member.Carrier = "carrier/value/global-bootstrap-result"
 	AllocationResultCarrier            member.Carrier = "carrier/value/allocation-result"
@@ -54,6 +61,7 @@ func AxisMemberCatalog() member.Catalog {
 	catalog, ok := member.NewCatalog(
 		[]member.Relation{
 			{Key: StorageTransferCandidates, Subject: StorageTransferCarrier, CandidateProvider: member.RelationRef{Axis: schemaapi.EntryReference{Surface: schemaapi.SurfaceKind(2), Key: "value"}, Member: "value/storage-transfer/candidates"}},
+			{Key: BinaryArithmeticCandidates, Subject: BinaryArithmeticCarrier, CandidateProvider: member.RelationRef{Axis: schemaapi.EntryReference{Surface: schemaapi.SurfaceKind(2), Key: "value"}, Member: "value/binary-arithmetic/candidates"}},
 			{Key: StorageTransferSources, Subject: ValueFactCarrier, CandidateProvider: member.RelationRef{Axis: schemaapi.EntryReference{Surface: schemaapi.SurfaceKind(2), Key: "value"}, Member: "value/storage-transfer/candidates"}, Inputs: []member.Carrier{StorageTransferCarrier}},
 			{Key: SourceSeeds, Subject: SourceSeedCarrier, CandidateProvider: member.RelationRef{Axis: schemaapi.EntryReference{Surface: schemaapi.SurfaceKind(2), Key: "value"}, Member: "value/source/candidates"}},
 			{Key: GlobalBootstrapResults, Subject: GlobalBootstrapResultCarrier, CandidateProvider: member.RelationRef{Axis: schemaapi.EntryReference{Surface: schemaapi.SurfaceKind(2), Key: "value"}, Member: "value/global-bootstrap/candidates"}},
@@ -64,6 +72,7 @@ func AxisMemberCatalog() member.Catalog {
 			{Key: ReturnBoundaryCandidates, Subject: ReturnBoundaryCarrier, CandidateProvider: member.RelationRef{Axis: schemaapi.EntryReference{Surface: schemaapi.SurfaceKind(2), Key: "value"}, Member: "value/return-boundary/candidates"}},
 			{Key: ReturnBoundaryRoots, Subject: ValueFactCarrier, CandidateProvider: member.RelationRef{Axis: schemaapi.EntryReference{Surface: schemaapi.SurfaceKind(2), Key: "value"}, Member: "value/return-boundary/candidates"}, Inputs: []member.Carrier{ReturnBoundaryCarrier}},
 			{Key: ReturnBoundaryMembers, Subject: ReturnBoundaryMemberCarrier, CandidateProvider: member.RelationRef{Axis: schemaapi.EntryReference{Surface: schemaapi.SurfaceKind(2), Key: "value"}, Member: "value/return-boundary/members"}, Parent: member.RelationRef{Axis: schemaapi.EntryReference{Surface: schemaapi.SurfaceKind(2), Key: "value"}, Member: "value/return-boundary/candidates"}, Ordinal: ReturnBoundaryMemberOrdinalCarrier},
+			{Key: BinaryArithmeticSources, Subject: ValueFactCarrier, CandidateProvider: member.RelationRef{Axis: schemaapi.EntryReference{Surface: schemaapi.SurfaceKind(2), Key: "value"}, Member: "value/binary-arithmetic/candidates"}, Inputs: []member.Carrier{BinaryArithmeticCarrier}},
 		},
 		[]member.Projection{
 			{Key: StorageTransferSourceKey, Relation: StorageTransferSources, Role: member.Key, Result: ValueCoordinateCarrier, CandidateProvider: member.RelationRef{Axis: schemaapi.EntryReference{Surface: schemaapi.SurfaceKind(2), Key: "value"}, Member: "value/storage-transfer/candidates"}},
@@ -75,6 +84,9 @@ func AxisMemberCatalog() member.Catalog {
 			{Key: FreshResultCoordinate, Relation: FreshResultCalls, Role: member.Destination, Result: ValueCoordinateCarrier, CandidateProvider: member.RelationRef{Axis: schemaapi.EntryReference{Surface: schemaapi.SurfaceKind(2), Key: "value"}, Member: "value/fresh-result/candidates"}},
 			{Key: ReturnBoundaryRootKey, Relation: ReturnBoundaryRoots, Role: member.Key, Result: ValueCoordinateCarrier, CandidateProvider: member.RelationRef{Axis: schemaapi.EntryReference{Surface: schemaapi.SurfaceKind(2), Key: "value"}, Member: "value/return-boundary/candidates"}},
 			{Key: ReturnBoundaryMemberKey, Relation: ReturnBoundaryMembers, Role: member.Key, Result: ValueCoordinateCarrier, CandidateProvider: member.RelationRef{Axis: schemaapi.EntryReference{Surface: schemaapi.SurfaceKind(2), Key: "value"}, Member: "value/return-boundary/members"}},
+			{Key: BinaryArithmeticLeft, Relation: BinaryArithmeticSources, Role: member.Key, Result: ValueCoordinateCarrier, CandidateProvider: member.RelationRef{Axis: schemaapi.EntryReference{Surface: schemaapi.SurfaceKind(2), Key: "value"}, Member: "value/binary-arithmetic/candidates"}},
+			{Key: BinaryArithmeticRight, Relation: BinaryArithmeticSources, Role: member.Key, Result: ValueCoordinateCarrier, CandidateProvider: member.RelationRef{Axis: schemaapi.EntryReference{Surface: schemaapi.SurfaceKind(2), Key: "value"}, Member: "value/binary-arithmetic/candidates"}},
+			{Key: BinaryArithmeticWrite, Relation: BinaryArithmeticCandidates, Role: member.Destination, Result: ValueCoordinateCarrier, CandidateProvider: member.RelationRef{Axis: schemaapi.EntryReference{Surface: schemaapi.SurfaceKind(2), Key: "value"}, Member: "value/binary-arithmetic/candidates"}},
 		},
 		[]member.Reducer{
 			{Key: IdentityReducer, Inputs: []member.ReducerInput{
@@ -86,6 +98,12 @@ func AxisMemberCatalog() member.Catalog {
 				{Axis: valueAxis, Carrier: ValueFactCarrier},
 			}},
 			{Key: GlobalBootstrapReducer, Inputs: []member.ReducerInput{}, Outputs: []member.ReducerOutput{
+				{Axis: valueAxis, Carrier: ValueFactCarrier},
+			}},
+			{Key: BinaryArithmeticReducer, Inputs: []member.ReducerInput{
+				{Axis: valueAxis, Carrier: ValueFactCarrier, Form: member.ReadFormExact, Multiplicity: member.MultiplicityOne},
+				{Axis: valueAxis, Carrier: ValueFactCarrier, Form: member.ReadFormExact, Multiplicity: member.MultiplicityOne},
+			}, Outputs: []member.ReducerOutput{
 				{Axis: valueAxis, Carrier: ValueFactCarrier},
 			}},
 		},

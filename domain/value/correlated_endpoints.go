@@ -49,7 +49,13 @@ func (role EndpointRole) Available() bool {
 // endpointRow holds one operand's resolved endpoints. Each cell is a dense
 // coordinate index biased by one, so zero is the sealed absence of a role.
 type endpointRow struct {
-	roles [endpointRoleCount]uint32
+	// key and family are the owner-issued identity of the row in the one
+	// endpoint table.  Keeping them beside the role cells lets a consumer
+	// redeem a family row by its endpoint ordinal without constructing a
+	// second per-family order.  The table remains the sole denominator.
+	key    computationKey
+	family endpointFamily
+	roles  [endpointRoleCount]uint32
 }
 
 // Endpoints is the owner-fenced handle for one row of the projection.
@@ -179,7 +185,7 @@ func (builder *valueBuilder) sealEndpointVectors() bool {
 			// would then have no stable ordinal for either.
 			return false
 		}
-		rows[index] = endpointRow{roles: draft.roles}
+		rows[index] = endpointRow{key: draft.key, family: draft.family, roles: draft.roles}
 		slot := uint32(index + 1)
 		if !builder.installEndpointSlot(draft, slot) {
 			return false
@@ -437,6 +443,103 @@ func (row BinaryArithmetic) Endpoint(role EndpointRole) (uint64, bool) {
 		return 0, false
 	}
 	return vector.Index(role)
+}
+
+// EndpointOrdinal is the one dense candidate address BinaryArithmetic uses.
+// It is the ordinal in the Schema's shared endpoint table, not an arithmetic
+// family-local index.  Keeping the address on the existing table means a
+// Program candidate can round-trip through the same owner directory every
+// consumer family already uses.
+func (row BinaryArithmetic) EndpointOrdinal() (uint32, bool) {
+	vector, ok := row.EndpointVector()
+	if !ok {
+		return 0, false
+	}
+	ordinal, ordinalOK := vector.Ordinal()
+	if !ordinalOK || uint64(ordinal) > uint64(^uint32(0)) {
+		return 0, false
+	}
+	return uint32(ordinal), true
+}
+
+// Ordinal is the owner-issued dense candidate address.  It is intentionally
+// an alias of EndpointOrdinal: there is no second arithmetic candidate index.
+func (row BinaryArithmetic) Ordinal() (uint32, bool) {
+	return row.EndpointOrdinal()
+}
+
+// Write projects the owner-issued write coordinate without reopening the
+// original computation row.  The endpoint vector is the authority for this
+// declaration, so a pre-seal or foreign row refuses.
+func (row BinaryArithmetic) Write() (Coordinate, bool) {
+	vector, ok := row.EndpointVector()
+	if !ok {
+		return Coordinate{}, false
+	}
+	return vector.Coordinate(EndpointWrite)
+}
+
+// Left projects the first owner-issued input coordinate.
+func (row BinaryArithmetic) Left() (Coordinate, bool) {
+	vector, ok := row.EndpointVector()
+	if !ok {
+		return Coordinate{}, false
+	}
+	return vector.Coordinate(EndpointLeft)
+}
+
+// Right projects the second owner-issued input coordinate.
+func (row BinaryArithmetic) Right() (Coordinate, bool) {
+	vector, ok := row.EndpointVector()
+	if !ok {
+		return Coordinate{}, false
+	}
+	return vector.Coordinate(EndpointRight)
+}
+
+// BinaryArithmeticForArtifactOccurrence resolves the owner-issued arithmetic
+// row for one mounted Program occurrence.  The row's candidate ordinal is
+// subsequently redeemed through BinaryArithmeticAt, which addresses the
+// shared endpoint table directly.
+func (schema *Schema) BinaryArithmeticForArtifactOccurrence(module, occurrence identity.ContentID) (BinaryArithmetic, bool) {
+	if schema == nil || !module.Available() || !occurrence.Available() {
+		return BinaryArithmetic{}, false
+	}
+	row, ok := schema.BinaryArithmetic(module, occurrence)
+	if !ok || !schema.OwnsBinaryArithmetic(row) {
+		return BinaryArithmetic{}, false
+	}
+	_, vectorOK := row.EndpointVector()
+	return row, vectorOK
+}
+
+// BinaryArithmeticOrdinal returns the shared endpoint-table ordinal of one
+// owner-issued arithmetic row.  It deliberately does not consult or create
+// a family-local map.
+func (schema *Schema) BinaryArithmeticOrdinal(row BinaryArithmetic) (uint32, bool) {
+	if schema == nil || !schema.OwnsBinaryArithmetic(row) {
+		return 0, false
+	}
+	return row.EndpointOrdinal()
+}
+
+// BinaryArithmeticAt redeems a dense arithmetic candidate by the ordinal of
+// the existing endpoint table.  Endpoint rows belonging to another family
+// refuse; they are still part of the denominator and are never renumbered for
+// arithmetic.
+func (schema *Schema) BinaryArithmeticAt(index int) (BinaryArithmetic, bool) {
+	if schema == nil || !schema.endpointsSealed() || index < 0 || index >= len(schema.endpoints) {
+		return BinaryArithmetic{}, false
+	}
+	endpoint := schema.endpoints[index]
+	if endpoint.family != endpointFamilyArithmetic {
+		return BinaryArithmetic{}, false
+	}
+	row, ok := schema.binaryArithmetics[endpoint.key]
+	if !ok || row.endpoints != uint32(index+1) || !schema.OwnsBinaryArithmetic(row) {
+		return BinaryArithmetic{}, false
+	}
+	return row, true
 }
 
 func (row BinaryEquality) Endpoint(role EndpointRole) (uint64, bool) {

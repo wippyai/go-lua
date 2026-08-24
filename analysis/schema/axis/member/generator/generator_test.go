@@ -200,6 +200,7 @@ func TestResolveKeepsTypedRowsAlignedWithColdKinds(t *testing.T) {
 	// different ordinal in every generated ladder.
 	wantRelations := []schema.Key{
 		"value/storage-transfer/candidates",
+		"value/binary-arithmetic/candidates",
 		"value/storage-transfer/sources",
 		"value/source/candidates",
 		"value/global-bootstrap/candidates",
@@ -216,6 +217,7 @@ func TestResolveKeepsTypedRowsAlignedWithColdKinds(t *testing.T) {
 		"value/return-boundary/candidates",
 		"value/return-boundary/roots",
 		"value/return-boundary/members",
+		"value/binary-arithmetic/sources",
 	}
 	if len(metadata.Relations) != len(wantRelations) {
 		t.Fatalf("relation inventory = %d, want %d", len(metadata.Relations), len(wantRelations))
@@ -238,6 +240,9 @@ func TestResolveKeepsTypedRowsAlignedWithColdKinds(t *testing.T) {
 		"value/fresh-result/coordinate",
 		"value/return-boundary/root-key",
 		"value/return-boundary/member-key",
+		"value/binary-arithmetic/left",
+		"value/binary-arithmetic/right",
+		"value/binary-arithmetic/write",
 	}
 	if len(metadata.Projections) != len(wantProjections) {
 		t.Fatalf("projection inventory = %d, want %d", len(metadata.Projections), len(wantProjections))
@@ -252,7 +257,7 @@ func TestResolveKeepsTypedRowsAlignedWithColdKinds(t *testing.T) {
 	if metadata.Projections[0].Accessor.ResultIndex != 0 || metadata.Projections[1].Accessor.ResultIndex != 1 || metadata.Projections[4].Accessor.ResultIndex != -1 || metadata.Projections[0].Result.Name != "Coordinate" {
 		t.Fatalf("projection metadata = %#v", metadata.Projections)
 	}
-	wantReducers := []schema.Key{"value/reducer/identity", "value/reducer/source", "value/reducer/global-bootstrap"}
+	wantReducers := []schema.Key{"value/reducer/identity", "value/reducer/source", "value/reducer/global-bootstrap", "value/binary-arithmetic/reducer"}
 	if len(metadata.Reducers) != len(wantReducers) {
 		t.Fatalf("reducer inventory = %d, want %d", len(metadata.Reducers), len(wantReducers))
 	}
@@ -269,6 +274,10 @@ func TestResolveKeepsTypedRowsAlignedWithColdKinds(t *testing.T) {
 	}
 	if !metadata.Reducers[1].CandidatePresent || metadata.Reducers[1].CandidateConstant || metadata.Reducers[1].Candidate.Name != "SourceSeed" {
 		t.Fatalf("source reducer candidate metadata = %#v", metadata.Reducers[1])
+	}
+	arithmetic := metadata.Reducers[3]
+	if !arithmetic.CandidatePresent || arithmetic.Candidate.Name != "BinaryArithmetic" || len(arithmetic.Inputs) != 2 || arithmetic.Inputs[0].Type.Name != "Value" || arithmetic.Inputs[1].Type.Name != "Value" || arithmetic.Implementation.Name != "ArithmeticValue" {
+		t.Fatalf("arithmetic reducer metadata = %#v", arithmetic)
 	}
 }
 
