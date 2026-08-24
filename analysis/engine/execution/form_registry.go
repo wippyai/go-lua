@@ -291,6 +291,32 @@ func ForeignExactRead[K scalar.Key, V any](foreign ForeignFactor, unit carrier.U
 	return NewExactRead(typed.binding, unit, input)
 }
 
+// ForeignMemberExactRead seals one exact read of a foreign input axis at a
+// dense coordinate the caller already resolved through that axis's own
+// nested-member directory - MemberAt/Project - rather than through a route
+// table. It is the third read primitive beside ForeignExactRead (one Unit the
+// caller already holds) and ForeignSelectedMember (a coordinate resolved
+// through a foreign RouteTable's selection geometry): a self-provided nested
+// member set names its own members through its owner's directory and has no
+// route table to select through, because it publishes no route and observes
+// no selection - it is an ordinary exact coordinate the caller has already
+// authenticated by construction.
+//
+// The caller states the read types because it is the only party that knows
+// them. A handle typed otherwise, or a dense coordinate outside this axis's
+// declared exact universe, is refused rather than reinterpreted or widened.
+func ForeignMemberExactRead[K scalar.Key, V any](foreign ForeignFactor, dense uint32, input uint16) (ExactRead[K, V], bool) {
+	typed, ok := foreign.(foreignFactor[K, V])
+	if !ok || typed.binding == nil || uint64(dense) >= uint64(len(typed.routes.units)) {
+		return ExactRead[K, V]{}, false
+	}
+	unit := typed.routes.units[int(dense)]
+	if unit == (carrier.Unit{}) || unit.Kind() != carrier.ExactUnit {
+		return ExactRead[K, V]{}, false
+	}
+	return NewExactRead(typed.binding, unit, input)
+}
+
 // ForeignSelectedRead seals one selected read of a foreign input axis at the
 // read fact's own types. It is the selection sibling of ForeignExactRead: a
 // family whose route join is its own Factor still reaches a dependent
