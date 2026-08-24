@@ -172,8 +172,17 @@ func (algebra *Algebra[K, V]) admits(key K, value V) bool {
 // retain a published root without visiting its terminals, so every directly
 // admitted value must be a fixed point of semantic Join. Widen and Narrow are
 // recurrence strategies and are intentionally not invoked by ordinary writes.
+//
+// A value must first be equal to itself. That is not part of the Join law, it
+// is what makes the value a fact at all: every consumer compares it - to the
+// Factor default, to a predecessor, to another cell of the same vector - and a
+// value the Factor's own equality will not call equal to itself gives all of
+// them an answer that depends on nothing. Same cannot stand in for it here.
+// Same says two values are the same object, not that the Factor considers them
+// equal, so a Join fixed point that holds only under Same would admit exactly
+// the value every reader would then have to re-authenticate for itself.
 func (algebra *Algebra[K, V]) joinStable(value V) bool {
-	return algebra.sameValue(algebra.join(value, value), value)
+	return algebra.equal(value, value) && algebra.sameValue(algebra.join(value, value), value)
 }
 
 // validateWiden is invoked inside the synchronized typed FDD operation, once
