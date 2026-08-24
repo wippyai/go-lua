@@ -50,16 +50,26 @@ type SelectedRead[K scalar.Key, V any] struct {
 	policy       ReadCellPolicy[V]
 }
 
-// declaredSelectedPolicy derives one selected read's whole materialization
-// policy from its declared contract and the bound Factor's own algebra
-// endpoints. Sparse and OnOpaque are the only two clauses that can seal a
-// substitution, so the derivation is total over them: a FactorDefault read
-// fills an unwritten coordinate from the Factor's own Default, and a
-// PropagateAuthenticated read widens to the Factor's own Top. Neither
-// endpoint is invented here - both come from the same binding the read is
-// sealed against - so the policy is a function of the contract, not a second
-// declaration a caller could disagree with it about.
-func declaredSelectedPolicy[K scalar.Key, V any](binding *factbinding.Binding[K, V], contract ruleplan.ReadContract) (ReadCellPolicy[V], bool) {
+// declaredCellPolicy derives one read's substitutions from its declared
+// contract and the bound Factor's own algebra endpoints. Sparse and OnOpaque
+// are the only two clauses that can seal one, so the derivation is total over
+// them: a FactorDefault read fills an unwritten coordinate from the Factor's
+// own Default, and a PropagateAuthenticated read carries the Factor's own Top
+// as what a widened delivery becomes. Neither endpoint is invented here - both
+// come from the same binding the read is sealed against - so the policy is a
+// function of the contract, not a second declaration a caller could disagree
+// with it about.
+//
+// Whether a delivery IS widened is the read axis's own statement and not this
+// derivation's: a selection widens its whole delivery, while an exact read
+// names one observed coordinate and widens only where its locator reports an
+// opaque alternative.
+//
+// It serves both read axes. A selected read seals it internally because its
+// cursor delivers the cell; an exact read leaves the delivery to its caller,
+// so the caller seals the same derivation over the same binding rather than
+// spelling a substitution of its own.
+func declaredCellPolicy[K scalar.Key, V any](binding *factbinding.Binding[K, V], contract ruleplan.ReadContract) (ReadCellPolicy[V], bool) {
 	var defaulted bool
 	var fallback, top V
 	if contract.Sparse == ruleprogram.SparseDefault {
@@ -76,9 +86,7 @@ func declaredSelectedPolicy[K scalar.Key, V any](binding *factbinding.Binding[K,
 		}
 		top = value
 	}
-	policy := NewReadCellPolicy(defaulted, fallback, top)
-	policy.widened = contract.OnOpaque == ruleprogram.OnOpaquePropagateAuthenticated
-	return policy, true
+	return NewReadCellPolicy(defaulted, fallback, top), true
 }
 
 // NewSelectedRead seals one selected read against a typed binding and the
@@ -86,7 +94,7 @@ func declaredSelectedPolicy[K scalar.Key, V any](binding *factbinding.Binding[K,
 // here: this read delivers one cell per member, and a multiplicity that says
 // otherwise is a contract this read cannot carry.
 //
-// The sealed policy is declaredSelectedPolicy's derivation over contract and
+// The sealed policy is declaredCellPolicy's derivation over contract and
 // binding; the policy argument is not read. A caller cannot seal a
 // substitution the contract did not declare, and the contract's Sparse and
 // OnOpaque clauses are the one authority over what a delivered cell holds.
@@ -106,9 +114,18 @@ func NewSelectedRead[K scalar.Key, V any](
 	if contract.Multiplicity == ruleprogram.MultiplicityMany {
 		return SelectedRead[K, V]{}, false
 	}
-	policy, sealed := declaredSelectedPolicy[K, V](binding, contract)
+	policy, sealed := declaredCellPolicy[K, V](binding, contract)
 	if !sealed {
 		return SelectedRead[K, V]{}, false
+	}
+	// A selection over an authenticated-propagating contract is widened for
+	// its whole delivery: the members it spans are drawn from an alternative
+	// set the read did not observe, so every cell is the Factor's Top. An
+	// exact read names one observed coordinate instead, so it carries the
+	// substitution alone and widens only where its own locator says the
+	// alternative is opaque.
+	if contract.OnOpaque == ruleprogram.OnOpaquePropagateAuthenticated {
+		policy = policy.Widen()
 	}
 	return SelectedRead[K, V]{
 		binding:      binding,

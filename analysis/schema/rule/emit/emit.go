@@ -52,15 +52,10 @@ func outcomeType() definition.GoType {
 	return definition.GoType{PackagePath: structurePackagePath, Name: "ReductionOutcome"}
 }
 
-// vectorType is the one view a many-valued read delivers its cells through.
+// vectorType is the one view a many-valued delivery is handed through, whether
+// a fold or a relation derivation consumes it.
 func vectorType() definition.GoType {
 	return definition.GoType{PackagePath: executionPackagePath, Name: "SummaryVector"}
-}
-
-// cellType is the view one many-valued derivation input is delivered through:
-// the cells a selected join answered, in the order it answered them.
-func cellType() definition.GoType {
-	return definition.GoType{PackagePath: executionPackagePath, Name: "SelectedCell"}
 }
 
 // Unexpressible is the emitter's one refusal. It names the rule, the clause of

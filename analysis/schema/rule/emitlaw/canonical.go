@@ -33,6 +33,7 @@ func Canonical(declaration program.Program) string {
 		line(&out, prefix+".relation", relationForm(join.Relation))
 		line(&out, prefix+".key", projectionForm(join.Key))
 		line(&out, prefix+".predicate", projectionForm(join.Predicate))
+		line(&out, prefix+".parent", relationForm(join.Parent))
 		line(&out, prefix+".sources", sourcesForm(join.Sources))
 		line(&out, prefix+".contract", contractForm(join.Read.Contract))
 	}

@@ -505,27 +505,30 @@ const (
 	ReducerArgumentVector    = memberdefinition.ArgumentVector
 )
 
-// ReducerVectorType is the one view a many-valued read delivers its cells
+// ReducerVectorType is the view a whole-vector read delivers its cells
 // through. It is a constant of this package for the same reason the outcome
-// type is: a fold over a whole denominator reads the cells the execution layer
-// already materialized, in the order that layer sealed, and an owner that
-// named a container of its own would be asking for a second copy of a vector
-// the read boundary already owns. An emitter instantiates it at the input's
-// declared fact carrier.
-// DerivationCellType is the view one many-valued derivation input is
-// delivered through: the cells a selected join answered, in the order it
-// answered them. It is a constant of this package for the same reason the
-// vector and the outcome are - a derivation reads the cells the execution
-// layer already materialized, and an owner naming a container of its own
-// would be asking for a second copy of them.
-var DerivationCellType = memberdefinition.GoType{
-	PackagePath: "github.com/wippyai/go-lua/analysis/engine/execution",
-	Name:        "SelectedCell",
-}
-
+// type is: the execution layer already materialized those cells in the order
+// it sealed, and an owner that named a container of its own would be asking
+// for a second copy of a vector the read boundary already owns. An emitter
+// instantiates it at the input's declared fact carrier.
+//
+// It is what a Summary delivery is handed as, wherever it is consumed: the
+// fold of a whole denominator and the Build of a relation derived over one see
+// the same view, because a many-valued input is ONE vector argument.
 var ReducerVectorType = memberdefinition.GoType{
 	PackagePath: "github.com/wippyai/go-lua/analysis/engine/execution",
 	Name:        "SummaryVector",
+}
+
+// DerivationCellType is the view a SELECTED delivery is handed through: the
+// cells a selection answered, each paired with the owner-issued tag that
+// selection correlated it by. It is a distinct view from the vector above
+// because it carries a distinct fact - a selection establishes a tag per cell
+// and a whole-vector read establishes none, so a derivation over a selection
+// reads what its own read proved rather than a view that drops it.
+var DerivationCellType = memberdefinition.GoType{
+	PackagePath: "github.com/wippyai/go-lua/analysis/engine/execution",
+	Name:        "SelectedCell",
 }
 
 // Arguments derives the complete parameter vector of this reducer's direct

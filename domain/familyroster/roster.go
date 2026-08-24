@@ -55,6 +55,14 @@ func Families() []Family {
 			},
 			Directory: "domain/placement/store",
 		},
+		{
+			Target: emit.Target{
+				PackagePath: "github.com/wippyai/go-lua/domain/placement/returnescape",
+				PackageName: "returnescape",
+				Spec:        returnprogram.RuleEntry(),
+			},
+			Directory: "domain/placement/returnescape",
+		},
 	}
 }
 

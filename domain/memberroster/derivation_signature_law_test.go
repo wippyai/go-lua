@@ -45,7 +45,7 @@ func TestEveryAuthoredDerivationHasTheDerivedCallShape(t *testing.T) {
 				continue
 			}
 			authored++
-			shape, derivedOK := roster.DerivationSignature(composed.Axis, relation, codegen.DerivationCellType)
+			shape, derivedOK := roster.DerivationSignature(composed.Axis, relation, codegen.DerivationCellType, codegen.ReducerVectorType)
 			if !derivedOK {
 				drift = append(drift, fmt.Sprintf("%s: declared rows derive no call shape", relation.Key))
 				continue
@@ -110,6 +110,11 @@ func compareDerivedType(file *ast.File, declaring string, expr ast.Expr, want me
 			return fmt.Sprintf("%s %d is not a slice, the declaration derives %s", role, position, describeDerivedParam(want))
 		}
 		expr = slice.Elt
+	}
+	// A many-valued position is an execution view instantiated at the input's
+	// own carrier, so the element it delivers is checked against the carrier
+	// the declaration named rather than against the view alone.
+	if want.Element.Available() {
 		elementPath, elementSpelling, elementOK := typeArgument(file, declaring, expr)
 		if !elementOK || elementPath != want.Element.PackagePath || elementSpelling != want.Element.Name {
 			return fmt.Sprintf("%s %d delivers %s, the declaration derives %s", role, position, describeType(elementPath, elementSpelling), describeType(want.Element.PackagePath, want.Element.Name))

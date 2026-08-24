@@ -86,7 +86,7 @@ func Contribution() definition.Contribution {
 				Inputs: []definition.RelationInput{
 					{Carrier: "CallCoordinateCarrier"},
 					{Carrier: "CallFactCarrier"},
-					{Carrier: "ValueFactCarrier", Many: true},
+					{Carrier: "ValueFactCarrier", Many: true, Form: member.ReadFormSelected},
 				},
 				CandidateProvider: member.AxisRelationCandidate(mountedCallProvider()),
 				Derivation: definition.RelationDerivation{

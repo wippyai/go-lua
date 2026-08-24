@@ -1,6 +1,7 @@
 package returnescape
 
 import (
+	"github.com/wippyai/go-lua/analysis/engine/execution"
 	"github.com/wippyai/go-lua/analysis/identity"
 	"github.com/wippyai/go-lua/analysis/schema/structure"
 	"github.com/wippyai/go-lua/domain/heap"
@@ -569,6 +570,13 @@ func (route Route) Coordinates() (key, destination heap.Key, ok bool) {
 	return route.Key, route.Key, route.Key.Valid() && route.Key.Kind() == heap.RootAllocation && route.Tag != 0
 }
 
+// Predicate is the ReturnRoutes relation's declared selection tag: the route
+// coordinate this member is published at, paired with the destination
+// Coordinates answers. A zero tag is not a route row.
+func (route Route) Predicate() (uint64, bool) {
+	return route.Tag, route.Tag != 0
+}
+
 // RoutePlan is the ReturnRoutes relation's declared Derivation state. It is a
 // thin exported view over the same route-planning algebra the generated
 // family's zero-allocation worker calls directly; Count/At never re-derive a
@@ -597,17 +605,24 @@ func (plan RoutePlan) RouteAt(index int) (Route, bool) {
 // needed here. It folds the delivered vector through the same
 // routePlanForFacts algebra the generated family uses and is not itself on
 // that per-invocation hot path.
-func DeriveReturnRoutes(schema placementdomain.Schema, values *valuedomain.Schema, boundary valuedomain.ReturnBoundary, root valuedomain.Value, members []valuedomain.Value) (RoutePlan, bool) {
+func DeriveReturnRoutes(schema placementdomain.Schema, values *valuedomain.Schema, boundary valuedomain.ReturnBoundary, root valuedomain.Value, members execution.SummaryVector[valuedomain.Value]) (RoutePlan, bool) {
 	_ = root
-	if values == nil || !values.Valid() || !values.OwnsReturnBoundary(boundary) {
+	if values == nil || !values.Valid() || !values.OwnsReturnBoundary(boundary) || !members.Valid() {
 		return RoutePlan{}, false
 	}
-	facts, factsOK := newReturnFacts(len(members))
+	facts, factsOK := newReturnFacts(members.Count())
 	if !factsOK {
 		return RoutePlan{}, false
 	}
-	for index, member := range members {
-		if !facts.set(index, returnFact{fact: member, present: true, available: true}) {
+	for index := 0; index < members.Count(); index++ {
+		member, present, cell := members.At(index)
+		// A member vector is a closed denominator: every declared ordinal is a
+		// cell. An absence is admitted only as the owner's own exact Bottom,
+		// which is the one value a coordinate the Factor never wrote holds.
+		if !cell || !authenticatedReturnFact(values, member, present, true) {
+			return RoutePlan{}, false
+		}
+		if !facts.set(index, returnFact{fact: member, present: present, available: true}) {
 			return RoutePlan{}, false
 		}
 	}

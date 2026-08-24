@@ -26,18 +26,21 @@ join[0].read         form=exact input=0 axis=axis/value point-bound=bound
 join[0].relation     axis/value:value/return-boundary/roots
 join[0].key          axis/value:value/return-boundary/root-key
 join[0].predicate    -
+join[0].parent       -
 join[0].sources      candidate
 join[0].contract     order=canonical sparse=default on-opaque=propagate-authenticated multiplicity=one denominator=denominator/coordinates/value
-join[1].read         form=selected input=0 axis=axis/value point-bound=bound
+join[1].read         form=summary input=0 axis=axis/value point-bound=bound
 join[1].relation     axis/value:value/return-boundary/members
 join[1].key          axis/value:value/return-boundary/member-key
 join[1].predicate    -
+join[1].parent       axis/value:value/return-boundary/candidates
 join[1].sources      candidate
-join[1].contract     order=canonical sparse=default on-opaque=propagate-authenticated multiplicity=one denominator=denominator/coordinates/value
+join[1].contract     order=canonical sparse=default on-opaque=propagate-authenticated multiplicity=many denominator=denominator/coordinates/value
 join[2].read         form=selected input=0 axis=axis/placement point-bound=bound
 join[2].relation     axis/placement:placement/return-escape/routes
 join[2].key          axis/placement:placement/return-escape/route-key
-join[2].predicate    -
+join[2].predicate    axis/placement:placement/return-escape/route-tag
+join[2].parent       -
 join[2].sources      candidate, join 0, join 1
 join[2].contract     order=canonical sparse=default on-opaque=refuse multiplicity=one denominator=denominator/coordinates/placement
 carry                none
@@ -216,6 +219,7 @@ func TestReturnEscapeRefusesEveryStructuralMutation(t *testing.T) {
 		{mutation: "join 1 loses the denominator its read form requires", apply: func(declaration *ruleprogram.Program) {
 			declaration.Joins[1].Read.Contract.DenominatorRef = ruleprogram.DenominatorRef{}
 		}, kind: ruleprogram.ProblemJoin, join: 1},
+		{mutation: "join 1 restates a parent that resolves to nothing", apply: func(declaration *ruleprogram.Program) { declaration.Joins[1].Parent.Member = "" }, kind: ruleprogram.ProblemJoin, join: 1},
 		{mutation: "join 2 loses its relation", apply: func(declaration *ruleprogram.Program) { declaration.Joins[2].Relation.Member = "" }, kind: ruleprogram.ProblemJoin, join: 2},
 		{mutation: "join 2 loses its key projection", apply: func(declaration *ruleprogram.Program) { declaration.Joins[2].Key.Member = "" }, kind: ruleprogram.ProblemJoin, join: 2},
 		{mutation: "join 2 loses its read axis", apply: func(declaration *ruleprogram.Program) { declaration.Joins[2].Read.Axis = ruleprogram.AxisRef{} }, kind: ruleprogram.ProblemJoin, join: 2},
@@ -245,6 +249,7 @@ func TestReturnEscapeRefusesEveryStructuralMutation(t *testing.T) {
 		{mutation: "join 2 loses the denominator its read form requires", apply: func(declaration *ruleprogram.Program) {
 			declaration.Joins[2].Read.Contract.DenominatorRef = ruleprogram.DenominatorRef{}
 		}, kind: ruleprogram.ProblemJoin, join: 2},
+		{mutation: "join 2 declares a predicate that resolves to nothing", apply: func(declaration *ruleprogram.Program) { declaration.Joins[2].Predicate.Member = "" }, kind: ruleprogram.ProblemJoin, join: 2},
 		{mutation: "the fold names no reducer", apply: func(declaration *ruleprogram.Program) { declaration.Fold.Reducer.Member = "" }, kind: ruleprogram.ProblemFold},
 		{mutation: "the fold consumes nothing", apply: func(declaration *ruleprogram.Program) { declaration.Fold.Inputs = nil }, kind: ruleprogram.ProblemInput},
 		{mutation: "the fold publishes nothing", apply: func(declaration *ruleprogram.Program) { declaration.Fold.Outputs = nil }, kind: ruleprogram.ProblemOutput},

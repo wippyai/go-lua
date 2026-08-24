@@ -16,6 +16,7 @@ const (
 	StorageRouteTag         schemaapi.Key  = "placement/store/route-tag"
 	StorageRouteDestination schemaapi.Key  = "placement/store/route-destination"
 	ReturnRouteKey          schemaapi.Key  = "placement/return-escape/route-key"
+	ReturnRouteTag          schemaapi.Key  = "placement/return-escape/route-tag"
 	ReturnRouteDestination  schemaapi.Key  = "placement/return-escape/route-destination"
 	StorageReducer          schemaapi.Key  = "placement/store/reducer/storage"
 	ReturnEscapeReducer     schemaapi.Key  = "placement/return-escape/reducer"
@@ -43,6 +44,7 @@ func AxisMemberCatalog() member.Catalog {
 			{Key: StorageRouteTag, Relation: StorageRoutes, Role: member.Predicate, Result: RouteTagCarrier, CandidateProvider: member.AxisRelationCandidate(member.RelationRef{Axis: schemaapi.EntryReference{Surface: schemaapi.SurfaceKind(2), Key: "value"}, Member: "value/storage-transfer/candidates"})},
 			{Key: StorageRouteDestination, Relation: StorageRoutes, Role: member.Destination, Result: PlacementKeyCarrier, CandidateProvider: member.AxisRelationCandidate(member.RelationRef{Axis: schemaapi.EntryReference{Surface: schemaapi.SurfaceKind(2), Key: "value"}, Member: "value/storage-transfer/candidates"})},
 			{Key: ReturnRouteKey, Relation: ReturnRoutes, Role: member.Key, Result: PlacementKeyCarrier, CandidateProvider: member.AxisRelationCandidate(member.RelationRef{Axis: schemaapi.EntryReference{Surface: schemaapi.SurfaceKind(2), Key: "value"}, Member: "value/return-boundary/candidates"})},
+			{Key: ReturnRouteTag, Relation: ReturnRoutes, Role: member.Predicate, Result: ReturnRouteTagCarrier, CandidateProvider: member.AxisRelationCandidate(member.RelationRef{Axis: schemaapi.EntryReference{Surface: schemaapi.SurfaceKind(2), Key: "value"}, Member: "value/return-boundary/candidates"})},
 			{Key: ReturnRouteDestination, Relation: ReturnRoutes, Role: member.Destination, Result: PlacementKeyCarrier, CandidateProvider: member.AxisRelationCandidate(member.RelationRef{Axis: schemaapi.EntryReference{Surface: schemaapi.SurfaceKind(2), Key: "value"}, Member: "value/return-boundary/candidates"})},
 		},
 		[]member.Reducer{
@@ -53,7 +55,7 @@ func AxisMemberCatalog() member.Catalog {
 				{Axis: valueAxis, Carrier: PlacementFactCarrier},
 			}},
 			{Key: ReturnEscapeReducer, Inputs: []member.ReducerInput{
-				{Axis: valueAxis, Carrier: PlacementFactCarrier, Form: member.ReadFormSelected, Multiplicity: member.MultiplicityOne, Route: ReturnRouteTagCarrier},
+				{Axis: valueAxis, Carrier: PlacementFactCarrier, Form: member.ReadFormSelected, Multiplicity: member.MultiplicityOne, Tag: ReturnRouteTagCarrier},
 			}, Outputs: []member.ReducerOutput{
 				{Axis: valueAxis, Carrier: PlacementFactCarrier},
 			}},

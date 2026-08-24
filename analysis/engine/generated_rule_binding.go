@@ -285,10 +285,11 @@ func (cell *generatedRuleBindingCell) schemaRuleComplete() bool {
 // completeness check above cannot disagree about what a declared form is.
 //
 // A vector over a self-provided nested member set is the one form whose kind is
-// not its form alone: that set's own MemberCount and MemberAt are its
-// denominator, and each ordinal is observed at its own exact coordinate, so the
-// read asks its Factor for nothing a keyed lookup does not. The parent
-// restatement is the declaration that says so.
+// not its form alone. That set's own MemberCount and MemberAt are its
+// denominator, so no Factor summary form answers it and its cells are not the
+// row's own exact coordinate either: the installing family resolves which
+// coordinates the vector spans, which is precisely what a selection cold row
+// states. The parent restatement is the declaration that says so.
 func generatedColdReadKind(form ruleprogram.ReadForm, parentPresent bool) composition.ReadKind {
 	switch form {
 	case ruleprogram.Exact:
@@ -297,7 +298,7 @@ func generatedColdReadKind(form ruleprogram.ReadForm, parentPresent bool) compos
 		return composition.ReadSelect
 	case ruleprogram.Summary, ruleprogram.Complete:
 		if parentPresent {
-			return composition.ReadExact
+			return composition.ReadSelect
 		}
 		return composition.ReadSummary
 	default:

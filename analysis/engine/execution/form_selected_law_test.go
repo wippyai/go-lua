@@ -269,7 +269,7 @@ func TestSelectedReadWidenedDeliversTopAtEveryMember(t *testing.T) {
 }
 
 // TestSelectedReadPolicyIsTotalOverTheContractNotTheCaller states the whole
-// derivation law: the sealed policy is declaredSelectedPolicy's function of
+// derivation law: the sealed policy is declaredCellPolicy's function of
 // the contract and the binding's own Default/Top, and the policy argument a
 // caller passes is not read at all - every read below is sealed with the
 // zero ReadCellPolicy, and the delivered cells still come out exactly as the

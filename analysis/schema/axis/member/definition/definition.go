@@ -237,6 +237,13 @@ func (relation Relation) memberSetComplete(relations map[string]Relation, byKey 
 type RelationInput struct {
 	Carrier string
 	Many    bool
+	// Form is the read form the delivery arrives under, and it is declared
+	// exactly when Many is. It is what decides the view a many-valued position
+	// takes: a selection hands over tagged cells, and a whole-vector read over
+	// a closed denominator hands over one vector whose positions are its
+	// denominator. The two establish different facts, so the delivery is
+	// stated here rather than inferred from the carrier.
+	Form member.ReadForm
 }
 
 // RelationDerivation is the direct-call shape for one dependent relation's

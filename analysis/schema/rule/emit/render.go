@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/wippyai/go-lua/analysis/schema/axis/member"
 	"github.com/wippyai/go-lua/analysis/schema/axis/member/definition"
 	"github.com/wippyai/go-lua/analysis/schema/rule/program"
 )
@@ -65,7 +66,7 @@ func reducerFields(built *plan) []string {
 			fields = append(fields, "candidate")
 			continue
 		}
-		if argument.Role != definition.ArgumentFact {
+		if argument.Role != definition.ArgumentFact && argument.Role != definition.ArgumentVector {
 			continue
 		}
 		if _, delivered := built.deliveredFact[argument.Input]; delivered {
@@ -85,6 +86,11 @@ func renderReducer(out *strings.Builder, built *plan) error {
 	for _, argument := range built.fold.arguments {
 		if argument.Role == definition.ArgumentCandidate {
 			fmt.Fprintf(out, "\tcandidate %s\n", imports.typeName(argument.Type))
+			continue
+		}
+		if argument.Role == definition.ArgumentVector {
+			fmt.Fprintf(out, "\tinput%d %s[%s]\n", built.fold.inputs[argument.Input].position,
+				imports.typeName(argument.Type), imports.typeName(argument.Element))
 			continue
 		}
 		if argument.Role != definition.ArgumentFact {
@@ -133,8 +139,10 @@ func foldCall(built *plan) (string, error) {
 			return "", unexpressible(built.target.Spec.Key, "a fold input that takes its own route coordinate",
 				fmt.Sprintf("input %d declares a route carrier, and the emitted fold delivers cells and tags only", argument.Input))
 		case definition.ArgumentVector:
-			return "", unexpressible(built.target.Spec.Key, "a many-valued fold input",
-				fmt.Sprintf("input %d is delivered as a vector, and no emitted shape observes a whole denominator yet", argument.Input))
+			// A many-valued input is one vector argument. The invocation fills
+			// the reducer's field with the vector it delivered, so the fold
+			// reads the same view every other consumer of that read does.
+			arguments = append(arguments, fmt.Sprintf("fold.input%d", built.fold.inputs[argument.Input].position))
 		default:
 			return "", unexpressible(built.target.Spec.Key, "an unknown fold argument role", fmt.Sprintf("input %d", argument.Input))
 		}
@@ -146,9 +154,13 @@ func renderCarryReduce(out *strings.Builder, built *plan) error {
 	imports := built.imports
 	structure := imports.use(structurePackagePath)
 	read := built.joins[0]
+	// FoldCarry delivers the exact cell to Reduce itself, so this shape has no
+	// call site to seal a materialization policy at. Only an explicitly sparse
+	// read is therefore expressible here: its absence is delivered unchanged,
+	// which is the one reading that needs no substitution.
 	if read.read.Contract.Sparse != program.SparseExplicit {
 		return unexpressible(built.target.Spec.Key, fmt.Sprintf("an exact carry read with %s sparsity", sparseName(read.read.Contract.Sparse)),
-			"the carry fold hands sparse absence to the domain, so only an explicitly sparse read has a derived reading of it")
+			"the carry fold hands sparse absence to the domain, and the fold primitive seals no cell policy to substitute through")
 	}
 	if len(built.fold.results) != 2 {
 		return unexpressible(built.target.Spec.Key, fmt.Sprintf("a carry fold answering %d results", len(built.fold.results)),
@@ -221,9 +233,21 @@ func renderRow(out *strings.Builder, built *plan) error {
 		case program.Exact:
 			fmt.Fprintf(out, "\t%s %s.ExactRead[%s, %s]\n", join.name, execution,
 				imports.typeName(join.axis.dense), imports.typeName(join.axis.fact))
+			fmt.Fprintf(out, "\t%sPolicy %s.ReadCellPolicy[%s]\n", join.name, execution, imports.typeName(join.axis.fact))
 		case program.Selected:
 			fmt.Fprintf(out, "\t%s %s.SelectedRead[%s, %s]\n", join.name, execution,
 				imports.typeName(join.axis.dense), imports.typeName(join.axis.fact))
+		case program.Summary:
+			if join.memberSet == nil {
+				return unexpressible(built.target.Spec.Key, "a summary read over a Factor cursor",
+					fmt.Sprintf("join %d spans a partition the emitted installer opens no vector cursor over", join.position))
+			}
+			// One sealed exact read per declared ordinal. The set's width is
+			// the candidate's own census, so it is a row-local slice rather
+			// than a family-wide constant.
+			fmt.Fprintf(out, "\t%s []%s.ExactRead[%s, %s]\n", join.name, execution,
+				imports.typeName(join.axis.dense), imports.typeName(join.axis.fact))
+			fmt.Fprintf(out, "\t%sPolicy %s.ReadCellPolicy[%s]\n", join.name, execution, imports.typeName(join.axis.fact))
 		default:
 			return unexpressible(built.target.Spec.Key, fmt.Sprintf("a %s read", readFormName(join.read.Form)),
 				fmt.Sprintf("join %d has no sealed read primitive in the emitted vocabulary", join.position))
@@ -257,10 +281,16 @@ func renderFamily(out *strings.Builder, built *plan) {
 			imports.typeName(built.write.dense), imports.typeName(built.write.fact))
 		out.WriteString("\twidth int\n")
 	}
+	for _, join := range memberSetJoins(built) {
+		fmt.Fprintf(out, "\t%sWidth int\n", join.name)
+	}
 	out.WriteString("}\n\n")
 
 	fmt.Fprintf(out, "func (sealed *%s) NewExecutor(run *%s.Run) %s.Executor {\n", familyType, execution, execution)
 	out.WriteString("\tif sealed == nil || run == nil {\n\t\treturn nil\n\t}\n")
+	for _, join := range memberSetJoins(built) {
+		fmt.Fprintf(out, "\tif sealed.%sWidth < 0 {\n\t\treturn nil\n\t}\n", join.name)
+	}
 	if built.shape == shapeSelectedRoute {
 		out.WriteString("\tif sealed.width < 0 {\n\t\treturn nil\n\t}\n")
 		out.WriteString("\t// Every buffer is sized once at the sealed width of the selection this rule\n")
@@ -269,6 +299,10 @@ func renderFamily(out *strings.Builder, built *plan) {
 		out.WriteString("\t\tfamily:  sealed,\n\t\trun:     run,\n")
 		fmt.Fprintf(out, "\t\tmembers: make([]%s.RouteMember, sealed.width),\n", execution)
 		fmt.Fprintf(out, "\t\tcells:   make([]%s.SelectedCell[%s], sealed.width),\n", execution, imports.typeName(built.write.fact))
+		for _, join := range memberSetJoins(built) {
+			fmt.Fprintf(out, "\t\t%sCells: make([]%s.MemberCell[%s], sealed.%sWidth),\n",
+				join.name, execution, imports.typeName(join.axis.fact), join.name)
+		}
 		out.WriteString("\t}\n}\n\n")
 	} else {
 		fmt.Fprintf(out, "\treturn &%s{family: sealed, run: run}\n}\n\n", workerType)
@@ -295,6 +329,14 @@ func renderWorker(out *strings.Builder, built *plan) error {
 		case program.Selected:
 			fmt.Fprintf(out, "\t%s %s.SelectedScratch[%s, %s]\n", join.name, execution,
 				imports.typeName(join.axis.dense), imports.typeName(join.axis.fact))
+		case program.Summary:
+			// One scratch lane serves every ordinal of the set: the members are
+			// read in declaration order and the lane is returned to service
+			// between them, so the vector costs one cursor rather than one per
+			// member.
+			fmt.Fprintf(out, "\t%s %s.Scratch[%s, %s]\n", join.name, execution,
+				imports.typeName(join.axis.dense), imports.typeName(join.axis.fact))
+			fmt.Fprintf(out, "\t%sCells []%s.MemberCell[%s]\n", join.name, execution, imports.typeName(join.axis.fact))
 		}
 	}
 	switch built.shape {
@@ -387,10 +429,15 @@ func renderRouteExecute(out *strings.Builder, built *plan) error {
 
 	invocation := map[string]string{}
 	for _, join := range built.joins {
-		if join == route || join.read.Form != program.Exact {
+		if join == route {
 			continue
 		}
-		invocation[fmt.Sprintf("input%d", join.position)] = fmt.Sprintf("input%d", join.position)
+		switch join.read.Form {
+		case program.Exact:
+			invocation[fmt.Sprintf("input%d", join.position)] = fmt.Sprintf("input%d", join.position)
+		case program.Summary:
+			invocation[fmt.Sprintf("input%d", join.position)] = fmt.Sprintf("%sVector", join.name)
+		}
 	}
 
 	out.WriteString("// Execute performs one routed invocation: the prerequisite reads are taken,\n")
@@ -402,15 +449,19 @@ func renderRouteExecute(out *strings.Builder, built *plan) error {
 		if join == route {
 			continue
 		}
-		if join.read.Form != program.Exact {
+		switch join.read.Form {
+		case program.Exact:
+			fmt.Fprintf(out, "\tvar input%d %s\n", join.position, imports.typeName(join.axis.fact))
+			fmt.Fprintf(out, "\tswitch lane.%sCell(row.%s, row.%sPolicy, ticket, &input%d) {\n", join.name, join.name, join.name, join.position)
+			fmt.Fprintf(out, "\tcase %s.NoCandidate:\n\t\treturn lane.settle(ticket, %s.NoCandidate)\n", structure, structure)
+			fmt.Fprintf(out, "\tcase %s.Refuse:\n\t\treturn lane.settle(ticket, %s.Refuse)\n", structure, structure)
+			out.WriteString("\t}\n")
+		case program.Summary:
+			renderMemberVector(out, built, join)
+		default:
 			return unexpressible(built.target.Spec.Key, fmt.Sprintf("a %s prerequisite of a routed output", readFormName(join.read.Form)),
-				fmt.Sprintf("join %d is neither the route join nor an exact prerequisite", join.position))
+				fmt.Sprintf("join %d is neither the route join nor a prerequisite the emitted worker delivers", join.position))
 		}
-		fmt.Fprintf(out, "\tvar input%d %s\n", join.position, imports.typeName(join.axis.fact))
-		fmt.Fprintf(out, "\tswitch lane.%sCell(row.%s, ticket, &input%d) {\n", join.name, join.name, join.position)
-		fmt.Fprintf(out, "\tcase %s.NoCandidate:\n\t\treturn lane.settle(ticket, %s.NoCandidate)\n", structure, structure)
-		fmt.Fprintf(out, "\tcase %s.Refuse:\n\t\treturn lane.settle(ticket, %s.Refuse)\n", structure, structure)
-		out.WriteString("\t}\n")
 	}
 
 	arguments := make([]string, 0, len(derivation.staticAxes)+len(derivation.arguments))
@@ -422,8 +473,11 @@ func renderRouteExecute(out *strings.Builder, built *plan) error {
 		case argument.candidate:
 			arguments = append(arguments, "row.candidate")
 		case argument.many:
-			return unexpressible(built.target.Spec.Key, "a relation derivation over a whole selection",
-				fmt.Sprintf("relation %q consumes the cells of join %d, and no emitted shape observes a prerequisite selection yet", route.relation.Name, argument.join.position))
+			if argument.join == nil || argument.join.memberSet == nil || argument.form != member.ReadFormSummary {
+				return unexpressible(built.target.Spec.Key, "a relation derivation over a whole selection",
+					fmt.Sprintf("relation %q consumes the cells of join %d, and only a whole-vector read has an emitted delivery", route.relation.Name, argument.join.position))
+			}
+			arguments = append(arguments, fmt.Sprintf("%sVector", argument.join.name))
 		default:
 			arguments = append(arguments, fmt.Sprintf("input%d", argument.join.position))
 		}
@@ -467,14 +521,80 @@ func renderRouteExecute(out *strings.Builder, built *plan) error {
 	renderExecuteEpilogue(out, built)
 
 	for _, join := range built.joins {
-		if join == route || join.read.Form != program.Exact {
+		if join == route {
 			continue
 		}
-		if err := renderExactCell(out, built, join); err != nil {
-			return err
+		switch join.read.Form {
+		case program.Exact:
+			if err := renderExactCell(out, built, join); err != nil {
+				return err
+			}
+		case program.Summary:
+			renderMemberCell(out, built, join)
 		}
 	}
 	return nil
+}
+
+// memberSetJoins is the declaration's ordered member-set reads: the joins whose
+// relation is a self-provided nested member set, and whose Summary read is
+// therefore delivered as one vector per invocation.
+func memberSetJoins(built *plan) []*joinPlan {
+	joins := make([]*joinPlan, 0, len(built.joins))
+	for _, join := range built.joins {
+		if join.memberSet != nil {
+			joins = append(joins, join)
+		}
+	}
+	return joins
+}
+
+// renderMemberVector emits one invocation's delivery of a nested member set:
+// every declared ordinal is read at its own sealed coordinate into the lane's
+// cell buffer, and the filled buffer is viewed as the vector its reader is
+// declared to receive. Absence is carried per cell, so an unwritten member
+// stays the cell its owner declared at that ordinal.
+func renderMemberVector(out *strings.Builder, built *plan, join *joinPlan) {
+	imports := built.imports
+	execution := imports.use(executionPackagePath)
+	structure := imports.use(structurePackagePath)
+	fmt.Fprintf(out, "\t%sCount := len(row.%s)\n", join.name, join.name)
+	fmt.Fprintf(out, "\tif %sCount > len(lane.%sCells) {\n\t\treturn lane.settle(ticket, %s.Refuse)\n\t}\n",
+		join.name, join.name, structure)
+	fmt.Fprintf(out, "\t%sCells := lane.%sCells[:%sCount]\n", join.name, join.name, join.name)
+	fmt.Fprintf(out, "\tfor index := 0; index < %sCount; index++ {\n", join.name)
+	fmt.Fprintf(out, "\t\tif lane.%sCell(row.%s[index], row.%sPolicy, ticket, &%sCells[index]) != %s.Concrete {\n\t\t\treturn lane.settle(ticket, %s.Refuse)\n\t\t}\n",
+		join.name, join.name, join.name, join.name, structure, structure)
+	out.WriteString("\t}\n")
+	fmt.Fprintf(out, "\t%sVector, %sVectorOK := %s.NewMemberVector(%sCells)\n", join.name, join.name, execution, join.name)
+	fmt.Fprintf(out, "\tif !%sVectorOK {\n\t\treturn lane.settle(ticket, %s.Refuse)\n\t}\n", join.name, structure)
+}
+
+// renderMemberCell emits the cursor discipline one member of a nested set is
+// read under: open, take the cell, close, and return the lane to service so the
+// next ordinal opens on it. A member coordinate the plane never declared is not
+// an absence - it is a census disagreeing with the Factor - so it refuses
+// rather than settling as an absent candidate.
+func renderMemberCell(out *strings.Builder, built *plan, join *joinPlan) {
+	imports := built.imports
+	execution := imports.use(executionPackagePath)
+	structure := imports.use(structurePackagePath)
+	fmt.Fprintf(out, "// %sCell takes one member of a nested set at its own sealed coordinate.\n", join.name)
+	fmt.Fprintf(out, "func (lane *%s) %sCell(read %s.ExactRead[%s, %s], policy %s.ReadCellPolicy[%s], ticket %s.Ticket, destination *%s.MemberCell[%s]) %s.ReductionOutcome {\n",
+		workerType, join.name, execution, imports.typeName(join.axis.dense), imports.typeName(join.axis.fact),
+		execution, imports.typeName(join.axis.fact),
+		execution, execution, imports.typeName(join.axis.fact), structure)
+	fmt.Fprintf(out, "\tif lane == nil || destination == nil || !read.Valid() {\n\t\treturn %s.Refuse\n\t}\n", structure)
+	fmt.Fprintf(out, "\tif read.Read(ticket, &lane.%s) != %s.ReadAvailable {\n\t\t_ = lane.%s.Discard(ticket)\n\t\treturn %s.Refuse\n\t}\n",
+		join.name, execution, join.name, structure)
+	fmt.Fprintf(out, "\tcell, available := lane.%s.Value()\n", join.name)
+	fmt.Fprintf(out, "\tpresent := lane.%s.Present()\n", join.name)
+	fmt.Fprintf(out, "\tif !read.Close(ticket, &lane.%s) || !lane.%s.Reuse(ticket) {\n\t\t_ = lane.%s.Discard(ticket)\n\t\treturn %s.Refuse\n\t}\n",
+		join.name, join.name, join.name, structure)
+	fmt.Fprintf(out, "\tif !available {\n\t\treturn %s.Refuse\n\t}\n", structure)
+	out.WriteString("\tcell, present = policy.Cell(cell, present)\n")
+	fmt.Fprintf(out, "\t*destination = %s.MemberCell[%s]{Value: cell, Present: present}\n", execution, imports.typeName(join.axis.fact))
+	fmt.Fprintf(out, "\treturn %s.Concrete\n}\n\n", structure)
 }
 
 // projectionExpression emits the destructuring of one owner projection
@@ -482,14 +602,22 @@ func renderRouteExecute(out *strings.Builder, built *plan) error {
 // result convention is the owner's: a sole-result accessor binds one name, a
 // paired one binds both and the index selects.
 func projectionExpression(built *plan, projection definition.Projection, receiver, indent string, out *strings.Builder) (string, error) {
+	return projectionExpressionRefusing(built, projection, receiver, indent,
+		"return lane.settle(ticket, "+built.imports.use(structurePackagePath)+".Refuse)", out)
+}
+
+// projectionExpressionRefusing is projectionExpression under a caller-supplied
+// refusal. The destructuring is the owner's convention either way; only the
+// statement a failed projection returns through belongs to the surface it is
+// emitted into.
+func projectionExpressionRefusing(built *plan, projection definition.Projection, receiver, indent, refusal string, out *strings.Builder) (string, error) {
 	imports := built.imports
 	call := imports.call(projection.Accessor, receiver)
 	prefix := strings.ToLower(projection.Name[:1]) + projection.Name[1:]
 	switch projection.Accessor.ResultIndex {
 	case -1:
 		fmt.Fprintf(out, "%s%s, %sOK := %s\n", indent, prefix, prefix, call)
-		fmt.Fprintf(out, "%sif !%sOK {\n%s\treturn lane.settle(ticket, %s.Refuse)\n%s}\n",
-			indent, prefix, indent, imports.use(structurePackagePath), indent)
+		fmt.Fprintf(out, "%sif !%sOK {\n%s\t%s\n%s}\n", indent, prefix, indent, refusal, indent)
 		return prefix, nil
 	case 0:
 		fmt.Fprintf(out, "%s%s, %sPaired, %sOK := %s\n", indent, prefix, prefix, prefix, call)
@@ -501,28 +629,27 @@ func projectionExpression(built *plan, projection definition.Projection, receive
 		return "", unexpressible(built.target.Spec.Key, "a projection accessor with an unreachable result index",
 			fmt.Sprintf("projection %q names result %d", projection.Name, projection.Accessor.ResultIndex))
 	}
-	fmt.Fprintf(out, "%sif !%sOK {\n%s\treturn lane.settle(ticket, %s.Refuse)\n%s}\n",
-		indent, prefix, indent, imports.use(structurePackagePath), indent)
+	fmt.Fprintf(out, "%sif !%sOK {\n%s\t%s\n%s}\n", indent, prefix, indent, refusal, indent)
 	return prefix, nil
 }
 
 // renderExactCell emits the one cursor discipline an exact prerequisite read
-// follows: open, close, and answer the cell under this read's declared
-// sparsity. An absent coordinate under explicit sparsity is this rule's absent
-// candidate, which is a disposition and not a refusal.
+// follows: open, close, and answer the cell under this read's own sealed
+// materialization policy. An exact cursor delivers the observed coordinate
+// unchanged and leaves the substitution to its caller, so the row's policy -
+// derived by the execution layer from the declared contract and the Factor the
+// read is sealed against - is what says whether an unwritten coordinate is this
+// rule's absent candidate or the Factor's declared default.
 func renderExactCell(out *strings.Builder, built *plan, join *joinPlan) error {
 	imports := built.imports
 	execution := imports.use(executionPackagePath)
 	structure := imports.use(structurePackagePath)
-	if join.read.Contract.Sparse != program.SparseExplicit {
-		return unexpressible(built.target.Spec.Key, fmt.Sprintf("an exact prerequisite with %s sparsity", sparseName(join.read.Contract.Sparse)),
-			fmt.Sprintf("join %d declares a substitution the emitted cursor has no derived reading of", join.position))
-	}
 	fmt.Fprintf(out, "// %sCell takes one exact prerequisite cell. The cursor is closed before the\n", join.name)
-	out.WriteString("// value is used, and the read's declared explicit sparsity settles an unwritten\n")
-	out.WriteString("// coordinate as an absent candidate.\n")
-	fmt.Fprintf(out, "func (lane *%s) %sCell(read %s.ExactRead[%s, %s], ticket %s.Ticket, destination *%s) %s.ReductionOutcome {\n",
+	out.WriteString("// value is used, and the row's sealed policy settles what an unwritten\n")
+	out.WriteString("// coordinate delivers.\n")
+	fmt.Fprintf(out, "func (lane *%s) %sCell(read %s.ExactRead[%s, %s], policy %s.ReadCellPolicy[%s], ticket %s.Ticket, destination *%s) %s.ReductionOutcome {\n",
 		workerType, join.name, execution, imports.typeName(join.axis.dense), imports.typeName(join.axis.fact),
+		execution, imports.typeName(join.axis.fact),
 		execution, imports.typeName(join.axis.fact), structure)
 	fmt.Fprintf(out, "\tif lane == nil || destination == nil || !read.Valid() {\n\t\treturn %s.Refuse\n\t}\n", structure)
 	fmt.Fprintf(out, "\tswitch read.Read(ticket, &lane.%s) {\n", join.name)
@@ -532,6 +659,7 @@ func renderExactCell(out *strings.Builder, built *plan, join *joinPlan) error {
 	fmt.Fprintf(out, "\t\tif !read.Close(ticket, &lane.%s) {\n\t\t\t_ = lane.%s.Discard(ticket)\n\t\t\treturn %s.Refuse\n\t\t}\n",
 		join.name, join.name, structure)
 	fmt.Fprintf(out, "\t\tif !available {\n\t\t\treturn %s.Refuse\n\t\t}\n", structure)
+	fmt.Fprintf(out, "\t\tcell, present = policy.Cell(cell, present)\n")
 	fmt.Fprintf(out, "\t\tif !present {\n\t\t\treturn %s.NoCandidate\n\t\t}\n", structure)
 	out.WriteString("\t\t*destination = cell\n")
 	fmt.Fprintf(out, "\t\treturn %s.Concrete\n", structure)

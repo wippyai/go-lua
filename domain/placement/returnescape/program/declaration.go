@@ -96,17 +96,22 @@ func exactValueRead() ruleprogram.ReadDecl {
 	}
 }
 
-func selectedValueRead() ruleprogram.ReadDecl {
+// summaryValueRead is the whole delivered vector of one return's fixed member
+// set. The set is a closed denominator its own owner publishes - MemberCount
+// and MemberAt ARE that denominator - so the read spans all of it, and the
+// declaration that says so is a Summary read correlated by the parent ordinal
+// rather than by a selection tag.
+func summaryValueRead() ruleprogram.ReadDecl {
 	return ruleprogram.ReadDecl{
 		PointBound: ruleprogram.PointBound,
 		Input:      0,
 		Axis:       ruleprogram.AxisRef(valueAxis()),
-		Form:       ruleprogram.Selected,
+		Form:       ruleprogram.Summary,
 		Contract: ruleprogram.ReadContract{
 			Order:          ruleprogram.OrderCanonical,
 			Sparse:         ruleprogram.SparseDefault,
 			OnOpaque:       ruleprogram.OnOpaquePropagateAuthenticated,
-			Multiplicity:   ruleprogram.MultiplicityOne,
+			Multiplicity:   ruleprogram.MultiplicityMany,
 			DenominatorRef: denominatorReference(valueCoordinateDenominator),
 		},
 	}
@@ -133,7 +138,7 @@ func selectedPlacementRead() ruleprogram.ReadDecl {
 //
 //	Value return-boundary candidate
 //	    -> exact root/anchor Value fact
-//	    -> selected heterogeneous member Value facts
+//	    -> the delivered vector of its fixed member set
 //	    -> selected Placement RouteMember rows
 //
 // The last join is the only route source and is named explicitly by the
@@ -169,7 +174,8 @@ func ReturnEscape() ruleprogram.Program {
 				},
 				Relation: member.RelationRef{Axis: value, Member: returnBoundaryMembers},
 				Key:      member.ProjectionRef{Axis: value, Member: returnBoundaryMemberKey},
-				Read:     selectedValueRead(),
+				Parent:   member.RelationRef{Axis: value, Member: returnBoundaryCandidates},
+				Read:     summaryValueRead(),
 			},
 			{
 				// Candidate, then the exact root read (join 0), then the
@@ -183,9 +189,10 @@ func ReturnEscape() ruleprogram.Program {
 					ruleprogram.PriorSource(0),
 					ruleprogram.PriorSource(1),
 				},
-				Relation: member.RelationRef{Axis: placement, Member: returnEscapeRoutes},
-				Key:      member.ProjectionRef{Axis: placement, Member: returnEscapeRouteKey},
-				Read:     selectedPlacementRead(),
+				Relation:  member.RelationRef{Axis: placement, Member: returnEscapeRoutes},
+				Key:       member.ProjectionRef{Axis: placement, Member: returnEscapeRouteKey},
+				Predicate: member.ProjectionRef{Axis: placement, Member: returnEscapeRouteTag},
+				Read:      selectedPlacementRead(),
 			},
 		},
 		Fold: ruleprogram.FoldDecl{

@@ -56,6 +56,10 @@ type derivationArg struct {
 	candidate bool
 	join      *joinPlan
 	many      bool
+	// form is the delivery the relation input declares for a many-valued
+	// position: a selection hands over its tagged cells, a whole-vector read
+	// hands over one vector.
+	form member.ReadForm
 }
 
 // derivationPlan is the direct-call construction of one dependent relation.
@@ -66,6 +70,16 @@ type derivationPlan struct {
 	at         definition.GoSymbol
 	staticAxes []*axisPlan
 	arguments  []derivationArg
+}
+
+// memberSetPlan is the delivery of one Summary read over a self-provided
+// nested member set. The set's own MemberCount/MemberAt enumerate it off the
+// parent candidate row, and the join's key projection addresses each member at
+// its own coordinate, so the vector is sealed one exact read per ordinal
+// rather than opened as a Factor cursor.
+type memberSetPlan struct {
+	count definition.GoSymbol
+	at    definition.GoSymbol
 }
 
 // joinPlan is one declared read, resolved to the primitive that seals it and
@@ -80,6 +94,7 @@ type joinPlan struct {
 	predicate    definition.Projection
 	hasPredicate bool
 	derivation   *derivationPlan
+	memberSet    *memberSetPlan
 	name         string
 }
 
@@ -333,12 +348,64 @@ func deriveJoins(built *plan, resolver *axisResolver, declaration program.Progra
 			}
 			row.derivation = derivation
 		} else if relation.MemberParent.Available() {
-			return unexpressible(ruleKey, fmt.Sprintf("join %d over a nested member set", position),
-				fmt.Sprintf("relation %q addresses its rows through MemberParent/MemberAt, and the emitted installer has no member-vector delivery yet", relation.Name))
+			memberSet, err := deriveMemberSet(built, declaration, join, relation, relationAxis, position)
+			if err != nil {
+				return err
+			}
+			row.memberSet = memberSet
 		}
 		built.joins = append(built.joins, row)
 	}
 	return nil
+}
+
+// deriveMemberSet resolves one Summary read over a self-provided nested member
+// set. Every refusal names the declared clause: the emitter states what the
+// declaration says about this relation, and never infers nestedness from the
+// join's own shape.
+func deriveMemberSet(built *plan, declaration program.Program, join program.JoinDecl, relation definition.Relation, relationAxis *axisPlan, position int) (*memberSetPlan, error) {
+	ruleKey := built.target.Spec.Key
+	if join.Read.Form != program.Summary {
+		return nil, unexpressible(ruleKey, fmt.Sprintf("a %s read over a nested member set", readFormName(join.Read.Form)),
+			fmt.Sprintf("relation %q is addressed by (parent, ordinal), which is the whole closed denominator a Summary read spans", relation.Name))
+	}
+	// The declaration restates the relation's own Parent. The restatement is
+	// what admits the untagged summary form, so a join that omits it, or one
+	// that names a relation the catalog does not agree is the parent, has not
+	// stated the fact this delivery rests on.
+	if join.Parent != relation.MemberParent {
+		return nil, unexpressible(ruleKey, fmt.Sprintf("join %d whose parent restatement disagrees with its relation", position),
+			fmt.Sprintf("relation %q declares parent %q", relation.Name, string(relation.MemberParent.Member)))
+	}
+	if join.Parent != declaration.Candidate.AxisRelation {
+		return nil, unexpressible(ruleKey, fmt.Sprintf("join %d over a member set of a foreign candidate", position),
+			fmt.Sprintf("relation %q nests under %q, and the emitted installer enumerates a member set off the rule's own candidate row", relation.Name, string(join.Parent.Member)))
+	}
+	if !relation.MemberCount.Available() || !relation.MemberAt.Available() {
+		return nil, unexpressible(ruleKey, fmt.Sprintf("join %d over a member set with no census", position),
+			fmt.Sprintf("relation %q declares no MemberCount/MemberAt, so the emitted installer has no ordinals to seal a read at", relation.Name))
+	}
+	if _, parentOK := findRelation(relationAxis.source, join.Parent.Member); !parentOK {
+		return nil, unexpressible(ruleKey, "a parent relation its axis does not declare", string(join.Parent.Member))
+	}
+	if !sameGoType(relation.MemberCount.Receiver, built.candidate.subject) || !sameGoType(relation.MemberAt.Receiver, built.candidate.subject) {
+		return nil, unexpressible(ruleKey, fmt.Sprintf("join %d whose member census is not issued by the candidate carrier", position),
+			fmt.Sprintf("relation %q enumerates through %s, the candidate carrier is %s", relation.Name, relation.MemberCount.Receiver.Name, built.candidate.subject.Name))
+	}
+	if !relationAxis.foreignTo(built.write) {
+		return nil, unexpressible(ruleKey, fmt.Sprintf("join %d over a member set of the written axis", position),
+			"a member set is sealed one exact read per ordinal through the read axis's foreign handle, and a rule's own Factor publishes no such handle")
+	}
+	if _, memberOK := carrierType(relationAxis.source, relation.Subject); !memberOK {
+		return nil, unexpressible(ruleKey, "a member relation whose subject carrier is undeclared", relation.Subject)
+	}
+	return &memberSetPlan{count: relation.MemberCount, at: relation.MemberAt}, nil
+}
+
+// foreignTo reports whether this axis is read through a foreign handle rather
+// than through the plane the rule writes.
+func (axis *axisPlan) foreignTo(write *axisPlan) bool {
+	return axis != nil && write != nil && axis.key != write.key
 }
 
 func deriveRelation(built *plan, resolver *axisResolver, join program.JoinDecl, relation definition.Relation, position int) (*derivationPlan, error) {
@@ -362,7 +429,7 @@ func deriveRelation(built *plan, resolver *axisResolver, join program.JoinDecl, 
 	}
 	for index, source := range join.Sources {
 		declared := relation.Inputs[index]
-		argument := derivationArg{many: declared.Many}
+		argument := derivationArg{many: declared.Many, form: declared.Form}
 		if source.Candidate {
 			argument.candidate = true
 			if !sameGoType(built.candidate.subject, mustCarrier(built.candidate.axis.source, declared.Carrier)) {

@@ -81,6 +81,12 @@ func renderInstaller(out *strings.Builder, built *plan) error {
 		out.WriteString("\tif width < 0 {\n\t\treturn nil, nil, false\n\t}\n")
 		out.WriteString("\tsealed.plane, sealed.width = plane, width\n")
 	}
+	for _, join := range memberSetJoins(built) {
+		// The cell buffer is sized once at the widest member set any row of
+		// this rule declares, so a warm invocation over any row allocates
+		// nothing.
+		fmt.Fprintf(out, "\t%sWidth := 0\n", join.name)
+	}
 	fmt.Fprintf(out, "\taddresses := make([]%s.FormAddress, 0, len(rows))\n", execution)
 	out.WriteString("\tfor _, planRow := range rows {\n")
 	fmt.Fprintf(out, "\t\tif planRow.Form != %s.%s || !planRow.Rule.Available() || planRow.Rule.ReadCount() != %d || planRow.Rule.OutputCount() != %d {\n\t\t\treturn nil, nil, false\n\t\t}\n",
@@ -130,12 +136,23 @@ func renderInstaller(out *strings.Builder, built *plan) error {
 
 	sealedNames := make([]string, 0, len(built.joins)+1)
 	for _, join := range built.joins {
+		if join.memberSet != nil {
+			if err := renderMemberSetSeal(out, built, join); err != nil {
+				return err
+			}
+			sealedNames = append(sealedNames, fmt.Sprintf("%s: %sSealed", join.name, join.name),
+				fmt.Sprintf("%sPolicy: %sPolicy", join.name, join.name))
+			continue
+		}
 		expression, err := readExpression(built, join, firstExact)
 		if err != nil {
 			return err
 		}
 		fmt.Fprintf(out, "%s", expression)
 		sealedNames = append(sealedNames, fmt.Sprintf("%s: %sSealed", join.name, join.name))
+		if join.read.Form == program.Exact {
+			sealedNames = append(sealedNames, fmt.Sprintf("%sPolicy: %sPolicy", join.name, join.name))
+		}
 	}
 	switch built.shape {
 	case shapeCarry:
@@ -146,6 +163,9 @@ func renderInstaller(out *strings.Builder, built *plan) error {
 	}
 	out.WriteString("\t\tif !writeSealedOK")
 	for _, join := range built.joins {
+		if join.memberSet != nil {
+			continue
+		}
 		fmt.Fprintf(out, " || !%sSealedOK", join.name)
 	}
 	out.WriteString(" {\n\t\t\treturn nil, nil, false\n\t\t}\n")
@@ -154,7 +174,52 @@ func renderInstaller(out *strings.Builder, built *plan) error {
 	fmt.Fprintf(out, "\t\taddresses = append(addresses, %s.FormAddress{Member: planRow.Member, Local: uint32(len(sealed.rows))})\n", execution)
 	fmt.Fprintf(out, "\t\tsealed.rows = append(sealed.rows, %s{candidate: candidate, %s})\n", rowType, strings.Join(sealedNames, ", "))
 	out.WriteString("\t}\n")
+	for _, join := range memberSetJoins(built) {
+		fmt.Fprintf(out, "\tsealed.%sWidth = %sWidth\n", join.name, join.name)
+	}
 	out.WriteString("\treturn sealed, addresses, true\n}\n")
+	return nil
+}
+
+// renderMemberSetSeal emits the install-time enumeration of one nested member
+// set. The census is the candidate row's own, the coordinate of each ordinal is
+// the join's declared key projection over that member row, and the read is
+// sealed at that coordinate through the read axis's foreign handle. Nothing
+// here consults a route table or mints a selection tag: the set is already
+// addressed by (parent, ordinal).
+func renderMemberSetSeal(out *strings.Builder, built *plan, join *joinPlan) error {
+	imports := built.imports
+	execution := imports.use(executionPackagePath)
+	dense := imports.typeName(join.axis.dense)
+	fact := imports.typeName(join.axis.fact)
+	if join.key.Result != join.axis.source.Binding.Key.Carrier {
+		return unexpressible(built.target.Spec.Key, "a member key that is not the axis's own key carrier",
+			fmt.Sprintf("projection %q publishes %s", join.key.Name, join.key.Result))
+	}
+	fmt.Fprintf(out, "\t\tforeign%d, foreign%dOK := plane.Foreign(plan%d.Factor)\n", join.position, join.position, join.position)
+	fmt.Fprintf(out, "\t\tif !foreign%dOK {\n\t\t\treturn nil, nil, false\n\t\t}\n", join.position)
+	fmt.Fprintf(out, "\t\t%sCount := %s\n", join.name, imports.call(join.memberSet.count, "candidate"))
+	fmt.Fprintf(out, "\t\tif %sCount < 0 {\n\t\t\treturn nil, nil, false\n\t\t}\n", join.name)
+	fmt.Fprintf(out, "\t\t%sSealed := make([]%s.ExactRead[%s, %s], %sCount)\n", join.name, execution, dense, fact, join.name)
+	fmt.Fprintf(out, "\t\tfor index := 0; index < %sCount; index++ {\n", join.name)
+	fmt.Fprintf(out, "\t\t\tmemberRow, memberRowOK := %s\n", imports.call(join.memberSet.at, "candidate", "index"))
+	out.WriteString("\t\t\tif !memberRowOK {\n\t\t\t\treturn nil, nil, false\n\t\t\t}\n")
+	keyExpression, err := projectionExpressionRefusing(built, join.key, "memberRow", "\t\t\t", "return nil, nil, false", out)
+	if err != nil {
+		return err
+	}
+	fmt.Fprintf(out, "\t\t\tmemberDense, memberDenseOK := %s\n",
+		imports.call(join.axis.normalizer, "install."+join.axis.param, keyExpression))
+	out.WriteString("\t\t\tif !memberDenseOK {\n\t\t\t\treturn nil, nil, false\n\t\t\t}\n")
+	fmt.Fprintf(out, "\t\t\tmemberRead, memberReadOK := %s.ForeignMemberExactRead[%s, %s](foreign%d, uint32(memberDense), uint16(plan%d.Input))\n",
+		execution, dense, fact, join.position, join.position)
+	out.WriteString("\t\t\tif !memberReadOK {\n\t\t\t\treturn nil, nil, false\n\t\t\t}\n")
+	fmt.Fprintf(out, "\t\t\t%sSealed[index] = memberRead\n", join.name)
+	out.WriteString("\t\t}\n")
+	fmt.Fprintf(out, "\t\tif %sCount > %sWidth {\n\t\t\t%sWidth = %sCount\n\t\t}\n", join.name, join.name, join.name, join.name)
+	fmt.Fprintf(out, "\t\t%sPolicy, %sPolicyOK := %s.ForeignReadCellPolicy[%s, %s](foreign%d, plan%d.Contract)\n",
+		join.name, join.name, execution, dense, fact, join.position, join.position)
+	fmt.Fprintf(out, "\t\tif !%sPolicyOK {\n\t\t\treturn nil, nil, false\n\t\t}\n", join.name)
 	return nil
 }
 
@@ -191,6 +256,9 @@ func readExpression(built *plan, join *joinPlan, firstExact int) (string, error)
 	case join.read.Form == program.Exact && join.foreign:
 		fmt.Fprintf(&out, "\t\t%sSealed, %sSealedOK := %s.ForeignRowExactRead[%s, %s](foreign%d, planRow, %d)\n",
 			join.name, join.name, execution, dense, fact, join.position, join.position)
+		fmt.Fprintf(&out, "\t\t%sPolicy, %sPolicyOK := %s.ForeignReadCellPolicy[%s, %s](foreign%d, plan%d.Contract)\n",
+			join.name, join.name, execution, dense, fact, join.position, join.position)
+		fmt.Fprintf(&out, "\t\tif !%sPolicyOK {\n\t\t\treturn nil, nil, false\n\t\t}\n", join.name)
 	case join.read.Form == program.Exact:
 		if join.position != firstExact {
 			return "", unexpressible(built.target.Spec.Key, fmt.Sprintf("a second axis-local exact read at join %d", join.position),
@@ -198,6 +266,9 @@ func readExpression(built *plan, join *joinPlan, firstExact int) (string, error)
 		}
 		fmt.Fprintf(&out, "\t\t%sSealed, %sSealedOK := plane.ExactRead(planRow.Unit, uint16(plan%d.Input))\n",
 			join.name, join.name, join.position)
+		fmt.Fprintf(&out, "\t\t%sPolicy, %sPolicyOK := plane.ReadCellPolicy(plan%d.Contract)\n",
+			join.name, join.name, join.position)
+		fmt.Fprintf(&out, "\t\tif !%sPolicyOK {\n\t\t\treturn nil, nil, false\n\t\t}\n", join.name)
 	case join.read.Form == program.Selected:
 		policy, err := readCellPolicy(built, join)
 		if err != nil {
@@ -217,19 +288,15 @@ func readExpression(built *plan, join *joinPlan, firstExact int) (string, error)
 	return out.String(), nil
 }
 
-// readCellPolicy is the substitution one read's declared sparsity derives. An
-// explicitly sparse read delivers every coordinate unchanged, which is the
-// zero policy. A read that declares the Factor's default or a dense
-// denominator substitutes a fact this emitter cannot name: the axis publishes
-// no declared default or top symbol, so the substitution is refused rather
-// than guessed.
+// readCellPolicy is the policy value a sealed selected read is opened with. It
+// is the zero policy for every declared sparsity, because the substitution a
+// read delivers is derived by the read primitive itself from the contract and
+// the Factor it is sealed against - the Factor's own Default fills an unwritten
+// coordinate and its own Top widens an opaque one. Naming a substitution here
+// would be a second authority over what a delivered cell holds, and the
+// primitive does not read one.
 func readCellPolicy(built *plan, join *joinPlan) (string, error) {
 	imports := built.imports
 	execution := imports.use(executionPackagePath)
-	if join.read.Contract.Sparse != program.SparseExplicit {
-		return "", unexpressible(built.target.Spec.Key, fmt.Sprintf("a selected read with %s sparsity", sparseName(join.read.Contract.Sparse)),
-			fmt.Sprintf("join %d substitutes the Factor's default at an unwritten coordinate, and axis %q declares no default or top accessor for the emitted policy to seal",
-				join.position, string(join.axis.key)))
-	}
 	return fmt.Sprintf("%s.ReadCellPolicy[%s]{}", execution, imports.typeName(join.axis.fact)), nil
 }

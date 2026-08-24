@@ -341,7 +341,7 @@ func ForeignMemberExactRead[K scalar.Key, V any](foreign ForeignFactor, dense ui
 // selected read; what this seals is the typed read boundary, not the
 // selection. A handle typed otherwise is refused rather than reinterpreted.
 //
-// The sealed policy is declaredSelectedPolicy's derivation over contract and
+// The sealed policy is declaredCellPolicy's derivation over contract and
 // binding; the policy argument is not read.
 func ForeignSelectedRead[K scalar.Key, V any](foreign ForeignFactor, port uint16, contract ruleplan.ReadContract, _ ReadCellPolicy[V]) (SelectedRead[K, V], bool) {
 	typed, ok := foreign.(foreignFactor[K, V])
@@ -519,8 +519,29 @@ func (plane FormPlane[K, V]) ExactRead(unit carrier.Unit, input uint16) (ExactRe
 	return NewExactRead(plane.binding, unit, input)
 }
 
+// ReadCellPolicy seals the substitutions one read's declared contract derives
+// from this plane's own Factor. An exact read delivers the observed coordinate
+// unchanged and leaves the substitution to its caller, so the caller seals the
+// derivation here rather than naming a fallback of its own.
+func (plane FormPlane[K, V]) ReadCellPolicy(contract ruleplan.ReadContract) (ReadCellPolicy[V], bool) {
+	if !plane.Valid() {
+		return ReadCellPolicy[V]{}, false
+	}
+	return declaredCellPolicy[K, V](plane.binding, contract)
+}
+
+// ForeignReadCellPolicy seals the same derivation over a foreign input axis, at
+// that axis's own fact types.
+func ForeignReadCellPolicy[K scalar.Key, V any](foreign ForeignFactor, contract ruleplan.ReadContract) (ReadCellPolicy[V], bool) {
+	typed, ok := foreign.(foreignFactor[K, V])
+	if !ok || typed.binding == nil {
+		return ReadCellPolicy[V]{}, false
+	}
+	return declaredCellPolicy[K, V](typed.binding, contract)
+}
+
 // SelectedRead seals one selected read of this plane under the contract its
-// plan row declared. The sealed policy is declaredSelectedPolicy's
+// plan row declared. The sealed policy is declaredCellPolicy's
 // derivation over contract and binding; the policy argument is not read.
 func (plane FormPlane[K, V]) SelectedRead(input uint16, contract ruleplan.ReadContract, _ ReadCellPolicy[V]) (SelectedRead[K, V], bool) {
 	if !plane.Valid() {

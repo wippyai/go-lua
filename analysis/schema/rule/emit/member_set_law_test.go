@@ -1,0 +1,441 @@
+package emit
+
+import (
+	"strings"
+	"testing"
+
+	"github.com/wippyai/go-lua/analysis/schema"
+	"github.com/wippyai/go-lua/analysis/schema/axis"
+	"github.com/wippyai/go-lua/analysis/schema/axis/member"
+	"github.com/wippyai/go-lua/analysis/schema/axis/member/definition"
+	"github.com/wippyai/go-lua/analysis/schema/rule"
+	"github.com/wippyai/go-lua/analysis/schema/rule/program"
+)
+
+// The declaration below restates the returnescape family's own shape as its
+// own local specimen: a candidate on axis "value", a self-provided nested
+// member set on that same axis, and a routed publication on axis "placement"
+// whose relation derivation consumes the member set as a delivered vector.
+// That two-axis routed shape is the one member-vector delivery is proven
+// against in production, so these laws are built over it rather than over an
+// invented shape the roster's own admission gate might refuse for reasons
+// unrelated to member-vector delivery.
+//
+// The routed relation's Derivation.Build is the live, registered
+// "placement/return-escape/routes" migration row (definition.ScheduledDeaths):
+// a fresh Derivation cannot be declared here, because the roster's own
+// composition (Source.Compose, via Definition.Complete) refuses an authored
+// derivation the migration ledger does not know about before the emitter ever
+// sees the declaration. The axis, relation key and Build symbol are therefore
+// the returnescape family's own; every carrier, candidate directory and
+// specimen-owned symbol beside them is local to this file.
+
+func memberSetValueAxisRef() schema.EntryReference {
+	return schema.EntryReference{Surface: schema.SurfaceKindAxis, Key: "value"}
+}
+
+func memberSetPlacementAxisRef() schema.EntryReference {
+	return schema.EntryReference{Surface: schema.SurfaceKindAxis, Key: "placement"}
+}
+
+// memberSetValueDefinition is the candidate axis: the return-boundary
+// candidate directory, the nested self-provided member set that hangs off it,
+// and a second, ordinary candidate directory (AltCandidates) used only by the
+// "foreign candidate" refusal law to give the rule a real candidate that is
+// not the member set's own declared parent.
+func memberSetValueDefinition() definition.Definition {
+	value := memberSetValueAxisRef()
+	return definition.Definition{
+		Name: "MemberSetValue",
+		Axis: "value",
+		Binding: definition.Binding{Key: definition.KeyNormalization{
+			Carrier:    "ValueKey",
+			Dense:      definition.GoType{Name: "uint32"},
+			Normalizer: specimenMethod("KeyIndex", "ValueSchema", 0),
+		}},
+		Signature: definition.Signature{Key: "ValueKey", Fact: "ValueFact"},
+		Carriers: []definition.Carrier{
+			{Name: "ValueKey", Key: "carrier/value/key", Type: specimenType("ValueKey")},
+			{Name: "ValueFact", Key: "carrier/value/fact", Type: specimenType("ValueFact")},
+			{Name: "ReturnBoundaryCarrier", Key: "carrier/value/boundary", Type: specimenType("ReturnBoundary")},
+			{Name: "ReturnBoundaryMemberCarrier", Key: "carrier/value/member", Type: specimenType("ReturnBoundaryMember")},
+			{Name: "ReturnBoundaryMemberOrdinalCarrier", Key: "carrier/value/member-ordinal", Type: definition.GoType{Name: "int"}},
+		},
+		Relations: []definition.Relation{
+			{
+				Name: "ReturnBoundaryCandidates", Key: "value/return-boundary/candidates", Subject: "ReturnBoundaryCarrier",
+				CandidateProvider: member.AxisRelationCandidate(member.RelationRef{Axis: value, Member: "value/return-boundary/candidates"}),
+				CandidateResolver: specimenMethod("ReturnBoundary", "ValueSchema", 0),
+				CandidateOrdinal:  specimenMethod("ReturnBoundaryOrdinal", "ValueSchema", 0),
+				CandidateAt:       specimenMethod("ReturnBoundaryAt", "ValueSchema", 0),
+			},
+			{
+				// A self-provided nested member set: its own directory
+				// densifies its rows, and it nests under the candidate
+				// directory above by restating that relation as its Parent.
+				Name: "ReturnBoundaryMembers", Key: "value/return-boundary/members", Subject: "ReturnBoundaryMemberCarrier",
+				CandidateProvider: member.AxisRelationCandidate(member.RelationRef{Axis: value, Member: "value/return-boundary/members"}),
+				CandidateResolver: specimenMethod("ReturnBoundaryMemberForOccurrence", "ValueSchema", 0),
+				CandidateOrdinal:  specimenMethod("ReturnBoundaryMemberOrdinal", "ValueSchema", 0),
+				CandidateAt:       specimenMethod("ReturnBoundaryMemberAt", "ValueSchema", 0),
+				MemberParent:      member.RelationRef{Axis: value, Member: "value/return-boundary/candidates"},
+				MemberOrdinal:     "ReturnBoundaryMemberOrdinalCarrier",
+				MemberCount:       specimenMethod("MemberCount", "ReturnBoundary", 0),
+				MemberAt:          specimenMethod("MemberAt", "ReturnBoundary", 0),
+			},
+			{
+				// An ordinary candidate directory that is not the member
+				// set's parent. Only the "foreign candidate" refusal law
+				// below names this as the rule's Candidate.
+				Name: "AltCandidates", Key: "value/alt/candidates", Subject: "ReturnBoundaryCarrier",
+				CandidateProvider: member.AxisRelationCandidate(member.RelationRef{Axis: value, Member: "value/alt/candidates"}),
+				CandidateResolver: specimenMethod("AltCandidate", "ValueSchema", 0),
+				CandidateOrdinal:  specimenMethod("AltCandidateOrdinal", "ValueSchema", 0),
+				CandidateAt:       specimenMethod("AltCandidateAt", "ValueSchema", 0),
+			},
+		},
+		Projections: []definition.Projection{
+			{
+				Name: "ReturnBoundaryMemberKey", Key: "value/return-boundary/member-key", Relation: "ReturnBoundaryMembers",
+				CandidateProvider: member.AxisRelationCandidate(member.RelationRef{Axis: value, Member: "value/return-boundary/members"}),
+				Role:              member.Key, Result: "ValueKey",
+				Accessor: specimenMethod("Coordinate", "ReturnBoundaryMember", -1),
+			},
+		},
+	}
+}
+
+// memberSetPlacementDefinition is the write axis: the routed derivation
+// relation the returnescape family emits, and a second self-provided
+// candidate/member pair (SelfCandidates/SelfMembers) used only by the
+// "written axis" refusal law - a member set the write axis itself hosts has
+// no foreign handle to be sealed through.
+func memberSetPlacementDefinition() definition.Definition {
+	placement := memberSetPlacementAxisRef()
+	value := memberSetValueAxisRef()
+	provider := member.RelationRef{Axis: value, Member: "value/return-boundary/candidates"}
+	return definition.Definition{
+		Name: "MemberSetPlacement",
+		Axis: "placement",
+		Binding: definition.Binding{Key: definition.KeyNormalization{
+			Carrier:    "PlacementKey",
+			Dense:      definition.GoType{Name: "uint32"},
+			Normalizer: specimenMethod("KeyIndex", "PlacementSchema", 0),
+		}},
+		Signature: definition.Signature{Key: "PlacementKey", Fact: "PlacementFact"},
+		Carriers: []definition.Carrier{
+			{Name: "PlacementKey", Key: "carrier/placement/key", Type: specimenType("PlacementKey")},
+			{Name: "PlacementFact", Key: "carrier/placement/fact", Type: specimenType("PlacementFact")},
+			{Name: "RouteTagCarrier", Key: "carrier/placement/route-tag", Type: definition.GoType{Name: "uint64"}},
+			{Name: "RouteCarrier", Key: "carrier/placement/route", Type: specimenType("Route")},
+			{Name: "ReturnBoundaryCarrier", Key: "carrier/placement/boundary", Type: specimenType("ReturnBoundary")},
+			{Name: "ValueFactCarrier", Key: "carrier/placement/value-fact", Type: specimenType("ValueFact")},
+			{Name: "SelfOrdinalCarrier", Key: "carrier/placement/self-ordinal", Type: definition.GoType{Name: "int"}},
+		},
+		Relations: []definition.Relation{
+			{
+				Name: "Routes", Key: "placement/return-escape/routes", Subject: "RouteCarrier",
+				// Candidate then the delivered member vector, in the
+				// derivation's own declared input order.
+				Inputs: []definition.RelationInput{
+					{Carrier: "ReturnBoundaryCarrier"},
+					{Carrier: "ValueFactCarrier", Many: true, Form: member.ReadFormSummary},
+				},
+				CandidateProvider: member.AxisRelationCandidate(provider),
+				Derivation: definition.RelationDerivation{
+					State:      specimenType("RoutePlan"),
+					Build:      definition.GoSymbol{PackagePath: "github.com/wippyai/go-lua/domain/placement/returnescape", Name: "DeriveReturnRoutes", ResultIndex: 0},
+					Count:      definition.GoSymbol{PackagePath: "github.com/wippyai/go-lua/domain/placement/returnescape", Name: "ReturnRouteCount", ResultIndex: 0},
+					At:         definition.GoSymbol{PackagePath: "github.com/wippyai/go-lua/domain/placement/returnescape", Name: "ReturnRouteAt", ResultIndex: 0},
+					StaticAxes: []schema.EntryReference{placement, value},
+				},
+			},
+			{
+				Name: "SelfCandidates", Key: "placement/self/candidates", Subject: "RouteCarrier",
+				CandidateProvider: member.AxisRelationCandidate(member.RelationRef{Axis: placement, Member: "placement/self/candidates"}),
+				CandidateResolver: specimenMethod("SelfCandidate", "PlacementSchema", 0),
+				CandidateOrdinal:  specimenMethod("SelfCandidateOrdinal", "PlacementSchema", 0),
+				CandidateAt:       specimenMethod("SelfCandidateAt", "PlacementSchema", 0),
+			},
+			{
+				Name: "SelfMembers", Key: "placement/self/members", Subject: "RouteCarrier",
+				CandidateProvider: member.AxisRelationCandidate(member.RelationRef{Axis: placement, Member: "placement/self/members"}),
+				CandidateResolver: specimenMethod("SelfMemberForOccurrence", "PlacementSchema", 0),
+				CandidateOrdinal:  specimenMethod("SelfMemberOrdinal", "PlacementSchema", 0),
+				CandidateAt:       specimenMethod("SelfMemberDirectoryAt", "PlacementSchema", 0),
+				MemberParent:      member.RelationRef{Axis: placement, Member: "placement/self/candidates"},
+				MemberOrdinal:     "SelfOrdinalCarrier",
+				MemberCount:       specimenMethod("SelfMemberCount", "Route", 0),
+				MemberAt:          specimenMethod("SelfMemberAt", "Route", 0),
+			},
+		},
+		Projections: []definition.Projection{
+			{
+				Name: "RouteKey", Key: "placement/return-escape/route-key", Relation: "Routes",
+				Role: member.Key, Result: "PlacementKey",
+				Accessor:          specimenMethod("Coordinate", "Route", -1),
+				CandidateProvider: member.AxisRelationCandidate(provider),
+			},
+			{
+				Name: "RouteTag", Key: "placement/return-escape/route-tag", Relation: "Routes",
+				Role: member.Predicate, Result: "RouteTagCarrier",
+				Accessor:          specimenMethod("Predicate", "Route", -1),
+				CandidateProvider: member.AxisRelationCandidate(provider),
+			},
+			{
+				Name: "SelfMemberKey", Key: "placement/self/member-key", Relation: "SelfMembers",
+				Role: member.Key, Result: "PlacementKey",
+				Accessor:          specimenMethod("Coordinate", "Route", -1),
+				CandidateProvider: member.AxisRelationCandidate(member.RelationRef{Axis: placement, Member: "placement/self/members"}),
+			},
+		},
+	}
+}
+
+func memberSetPlacementContribution() definition.Contribution {
+	placement := memberSetPlacementAxisRef()
+	return definition.Contribution{
+		Axis: "placement",
+		Rule: memberSetRuleKey,
+		Reducers: []definition.Reducer{{
+			Name: "RouteReducer", Key: "placement/return-escape/reducer",
+			Inputs: []definition.ReducerInput{{
+				Axis: placement, Carrier: "PlacementFact",
+				Form: member.ReadFormSelected, Multiplicity: member.MultiplicityOne,
+				Tag: "RouteTagCarrier",
+			}},
+			Outputs:        []definition.ReducerOutput{{Axis: placement, Carrier: "PlacementFact"}},
+			Implementation: definition.GoSymbol{PackagePath: specimenPackage, Name: "RouteFold", ResultIndex: 0},
+		}},
+	}
+}
+
+func memberSetRoster(t testing.TB) definition.Roster {
+	t.Helper()
+	roster, rosterOK := definition.NewRoster(
+		definition.Source{Package: "membersetvalue", Name: "membersetvalue", Base: memberSetValueDefinition()},
+		definition.Source{
+			Package: "membersetplacement", Name: "membersetplacement",
+			Base:          memberSetPlacementDefinition(),
+			Contributions: []definition.Contribution{memberSetPlacementContribution()},
+		},
+	)
+	if !rosterOK {
+		t.Fatal("member-set roster is not admissible")
+	}
+	return roster
+}
+
+const memberSetRuleKey schema.Key = "specimen-member-route"
+
+func memberSetSpec() rule.Spec {
+	value := memberSetValueAxisRef()
+	placement := memberSetPlacementAxisRef()
+	return rule.Spec{
+		Key:      memberSetRuleKey,
+		Writes:   "placement",
+		Owner:    "placement",
+		Issues:   []rule.Issuance{{Occurrence: "occurrence/member-route", Requirement: "program-requirement/unrestricted", Form: "program-form/local-successor"}},
+		Lane:     rule.LaneMounted,
+		Semantic: "semantic/rule/member-route",
+		Roles:    []schema.Key{"semantic/operand/member-route"},
+		Program: program.Program{
+			OperandRole: "semantic/operand/member-route",
+			Candidate:   member.AxisRelationCandidate(member.RelationRef{Axis: value, Member: "value/return-boundary/candidates"}),
+			Joins: []program.JoinDecl{
+				{
+					// A self-provided nested member set: its census
+					// densifies through its own directory, so the join
+					// restates the relation's own Parent instead of naming a
+					// Predicate.
+					Sources:  []program.SourceRef{program.CandidateSource()},
+					Relation: member.RelationRef{Axis: value, Member: "value/return-boundary/members"},
+					Key:      member.ProjectionRef{Axis: value, Member: "value/return-boundary/member-key"},
+					Parent:   member.RelationRef{Axis: value, Member: "value/return-boundary/candidates"},
+					Read: program.ReadDecl{
+						PointBound: program.PointBound, Input: 0,
+						Axis: program.AxisRef(value), Form: program.Summary,
+						Contract: program.ReadContract{
+							Order: program.OrderCanonical, Sparse: program.SparseDefault,
+							OnOpaque: program.OnOpaquePropagateAuthenticated, Multiplicity: program.MultiplicityMany,
+						},
+					},
+				},
+				{
+					// The routed join: candidate then the delivered member
+					// vector (join 0), the derivation's own declared input
+					// order.
+					Sources:   []program.SourceRef{program.CandidateSource(), program.PriorSource(0)},
+					Relation:  member.RelationRef{Axis: placement, Member: "placement/return-escape/routes"},
+					Key:       member.ProjectionRef{Axis: placement, Member: "placement/return-escape/route-key"},
+					Predicate: member.ProjectionRef{Axis: placement, Member: "placement/return-escape/route-tag"},
+					Read: program.ReadDecl{
+						PointBound: program.PointBound, Input: 0,
+						Axis: program.AxisRef(placement), Form: program.Selected,
+						Contract: program.ReadContract{
+							Order: program.OrderCanonical, Sparse: program.SparseDefault,
+							OnOpaque: program.OnOpaqueRefuse, Multiplicity: program.MultiplicityOne,
+						},
+					},
+				},
+			},
+			Fold: program.FoldDecl{
+				Reducer: member.ReducerRef{Axis: placement, Member: "placement/return-escape/reducer"},
+				Inputs:  []program.JoinRef{1},
+				Outputs: []program.OutputDecl{{
+					Column:      axis.OutputRef{Axis: placement, Key: "placement/facts"},
+					Destination: member.ProjectionRef{Axis: placement, Member: "placement/return-escape/route-key"},
+					Mode:        program.ModeRoute, ValueSlot: 0,
+					RouteJoin: 1, RouteJoinPresent: true,
+				}},
+			},
+		},
+	}
+}
+
+func memberSetTarget() Target {
+	return Target{PackagePath: "example/rule/memberroute", PackageName: "memberroute", Spec: memberSetSpec()}
+}
+
+func renderMemberSetTarget(t testing.TB, target Target) string {
+	t.Helper()
+	source, err := Render(target, memberSetRoster(t))
+	if err != nil {
+		t.Fatalf("member-set declaration did not emit: %v", err)
+	}
+	return string(source)
+}
+
+// TestMemberSetJoinDeliversOneVectorFromOrdinalSealedReads is the acceptance
+// law for member-vector delivery. A routed output publishes through a
+// selected join whose relation derivation consumes a Summary join over a
+// self-provided nested member set, the join restating the relation's own
+// Parent. The emitted family's installer seals one exact read per declared
+// ordinal off the candidate row's own MemberCount/MemberAt through the
+// foreign handle, the worker views the filled cells as one
+// execution.MemberVector, and the derivation's Build call is handed that
+// vector rather than the underlying cell slice.
+func TestMemberSetJoinDeliversOneVectorFromOrdinalSealedReads(t *testing.T) {
+	source := renderMemberSetTarget(t, memberSetTarget())
+
+	installer, installerFound := typeBody(source, "familyInstaller")
+	if !installerFound {
+		t.Fatalf("the emitted source declares no installer type:\n%s", source)
+	}
+	_ = installer
+
+	if !strings.Contains(source, "candidate.MemberCount()") {
+		t.Fatalf("the installer does not seal the member set's width off the relation's declared MemberCount:\n%s", source)
+	}
+	if !strings.Contains(source, "candidate.MemberAt(index)") {
+		t.Fatalf("the installer does not read each ordinal off the relation's declared MemberAt:\n%s", source)
+	}
+	if !strings.Contains(source, "execution.ForeignMemberExactRead[") {
+		t.Fatalf("the installer seals no member read through the foreign handle's ForeignMemberExactRead:\n%s", source)
+	}
+	if !strings.Contains(source, "execution.NewMemberVector(read0Cells)") {
+		t.Fatalf("the worker does not view the filled cell buffer through execution.NewMemberVector:\n%s", source)
+	}
+
+	call, found := callArguments(source, "DeriveReturnRoutes")
+	if !found {
+		t.Fatalf("the emitted family makes no call to the declared derivation:\n%s", source)
+	}
+	sawVector := false
+	for _, argument := range call {
+		if argument == "read0Cells" {
+			t.Fatalf("the derivation is handed the raw cell slice %q rather than the sealed vector:\n%s", argument, source)
+		}
+		if argument == "read0Vector" {
+			sawVector = true
+		}
+	}
+	if !sawVector {
+		t.Fatalf("the derivation call %v does not carry the sealed member vector:\n%s", call, source)
+	}
+}
+
+// TestAMemberSetJoinIsRefusedByName proves, one subtest per clause, that each
+// shape deriveMemberSet has no form for is refused by name - the rule, the
+// clause, and why - exactly as TestAnUnexpressibleDeclarationIsRefusedByName
+// proves it for the rest of the declaration.
+//
+// deriveMemberSet states a fifth clause - "a member set with no census" - for
+// a nested relation declaring no MemberCount/MemberAt. It has no probe here:
+// definition.Relation.memberSetComplete, invoked from Definition.Complete via
+// Source.Compose - which this package's own composeRoster runs before any
+// join is derived - already refuses admitting a relation that declares
+// MemberParent without also declaring MemberCount, MemberAt and
+// MemberOrdinal together. No roster this test file can build ever reaches
+// deriveMemberSet holding such a relation: the refusal happens one step
+// earlier, named "a member source that does not compose" - a different,
+// correctly-named refusal for a different fact, not this one.
+func TestAMemberSetJoinIsRefusedByName(t *testing.T) {
+	for _, probe := range []struct {
+		name   string
+		mutate func(*rule.Spec)
+		clause string
+	}{
+		{
+			name: "a non-Summary read over a nested member set",
+			mutate: func(spec *rule.Spec) {
+				spec.Program.Joins[0].Read.Form = program.Exact
+			},
+			clause: "read over a nested member set",
+		},
+		{
+			name: "a Parent restatement naming a relation the resolved relation does not declare as its parent",
+			mutate: func(spec *rule.Spec) {
+				spec.Program.Joins[0].Parent = member.RelationRef{
+					Axis: memberSetValueAxisRef(), Member: "value/return-boundary/members",
+				}
+			},
+			clause: "parent restatement disagrees with its relation",
+		},
+		{
+			name: "a member set nesting under something other than the rule's own candidate",
+			mutate: func(spec *rule.Spec) {
+				spec.Program.Candidate = member.AxisRelationCandidate(member.RelationRef{
+					Axis: memberSetValueAxisRef(), Member: "value/alt/candidates",
+				})
+			},
+			clause: "member set of a foreign candidate",
+		},
+		{
+			name: "a member set on the axis the rule writes",
+			mutate: func(spec *rule.Spec) {
+				placement := memberSetPlacementAxisRef()
+				spec.Program.Candidate = member.AxisRelationCandidate(member.RelationRef{Axis: placement, Member: "placement/self/candidates"})
+				spec.Program.Joins[0].Relation = member.RelationRef{Axis: placement, Member: "placement/self/members"}
+				spec.Program.Joins[0].Key = member.ProjectionRef{Axis: placement, Member: "placement/self/member-key"}
+				spec.Program.Joins[0].Parent = member.RelationRef{Axis: placement, Member: "placement/self/candidates"}
+				spec.Program.Joins[0].Read.Axis = program.AxisRef(placement)
+			},
+			clause: "member set of the written axis",
+		},
+	} {
+		t.Run(probe.name, func(t *testing.T) {
+			spec := memberSetSpec()
+			probe.mutate(&spec)
+			target := memberSetTarget()
+			target.Spec = spec
+			source, err := Render(target, memberSetRoster(t))
+			if err == nil {
+				t.Fatalf("an unexpressible member-set declaration emitted a family:\n%s", source)
+			}
+			refusal, named := err.(Unexpressible)
+			if !named {
+				t.Fatalf("refusal is not named as unexpressible: %v", err)
+			}
+			if refusal.Rule != spec.Key {
+				t.Fatalf("refusal names rule %q, the declaration is %q", string(refusal.Rule), string(spec.Key))
+			}
+			if !strings.Contains(refusal.Clause, probe.clause) {
+				t.Fatalf("refusal clause is %q, want it to name %q", refusal.Clause, probe.clause)
+			}
+			if refusal.Detail == "" {
+				t.Fatal("refusal names a clause with no reason")
+			}
+		})
+	}
+}

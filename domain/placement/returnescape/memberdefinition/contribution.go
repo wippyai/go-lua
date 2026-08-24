@@ -37,6 +37,15 @@ func returnEscapeSymbol(name string) definition.GoSymbol {
 	return definition.GoSymbol{PackagePath: returnEscapePackagePath, Name: name, ResultIndex: 0}
 }
 
+func returnEscapeTagAccessor() definition.GoSymbol {
+	return definition.GoSymbol{
+		PackagePath: returnEscapePackagePath,
+		Name:        "Predicate",
+		Receiver:    returnEscapeGoType("Route"),
+		ResultIndex: -1,
+	}
+}
+
 func routeAccessor(resultIndex int8) definition.GoSymbol {
 	return definition.GoSymbol{
 		PackagePath: returnEscapePackagePath,
@@ -77,7 +86,7 @@ func Contribution() definition.Contribution {
 				Inputs: []definition.RelationInput{
 					{Carrier: "ReturnBoundaryCarrier"},
 					{Carrier: "ValueFactCarrier"},
-					{Carrier: "ValueFactCarrier", Many: true},
+					{Carrier: "ValueFactCarrier", Many: true, Form: member.ReadFormSummary},
 				},
 				CandidateProvider: member.AxisRelationCandidate(provider),
 				Derivation: definition.RelationDerivation{
@@ -103,6 +112,20 @@ func Contribution() definition.Contribution {
 				CandidateProvider: member.AxisRelationCandidate(provider),
 			},
 			{
+				// The route coordinate a member is published at, paired with
+				// the destination below. A routed member carries its tag beside
+				// its destination, so the selection that observes it is
+				// correlated by this projection rather than by a second
+				// addressing mode.
+				Name:              "ReturnRouteTag",
+				Key:               "placement/return-escape/route-tag",
+				Relation:          "ReturnRoutes",
+				Role:              member.Predicate,
+				Result:            "ReturnRouteTagCarrier",
+				Accessor:          returnEscapeTagAccessor(),
+				CandidateProvider: member.AxisRelationCandidate(provider),
+			},
+			{
 				Name:              "ReturnRouteDestination",
 				Key:               "placement/return-escape/route-destination",
 				Relation:          "ReturnRoutes",
@@ -115,16 +138,15 @@ func Contribution() definition.Contribution {
 		Reducers: []definition.Reducer{{
 			Name: "ReturnEscapeReducer",
 			Key:  "placement/return-escape/reducer",
-			// This input's carrying join declares no Predicate (5a441b2819: a
-			// tag is required exactly when the join declares one), so the tag
-			// is not a schema-checked selection Tag; it is transport from the
-			// routed join's own RouteMember pair, declared here as Route.
+			// The carrying join declares ReturnRouteTag as its Predicate, so a
+			// tag is required exactly as 5a441b2819 states: the selection is
+			// correlated by the owner-issued projection this input names.
 			Inputs: []definition.ReducerInput{{
 				Axis:         placementAxis(),
 				Carrier:      "PlacementFactCarrier",
 				Form:         member.ReadFormSelected,
 				Multiplicity: member.MultiplicityOne,
-				Route:        "ReturnRouteTagCarrier",
+				Tag:          "ReturnRouteTagCarrier",
 			}},
 			Outputs:        []definition.ReducerOutput{{Axis: placementAxis(), Carrier: "PlacementFactCarrier"}},
 			Implementation: definition.GoSymbol{PackagePath: returnEscapePackagePath, Name: "ReturnEscapeFold", ResultIndex: 0},

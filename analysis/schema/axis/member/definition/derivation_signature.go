@@ -1,6 +1,9 @@
 package definition
 
-import "github.com/wippyai/go-lua/analysis/schema"
+import (
+	"github.com/wippyai/go-lua/analysis/schema"
+	"github.com/wippyai/go-lua/analysis/schema/axis/member"
+)
 
 // DerivationShape is the direct-call shape one authored relation derivation
 // must have. It is derived from the declaration and from nothing else, which
@@ -23,9 +26,10 @@ type DerivationShape struct {
 }
 
 // DerivedParam is one position of a derived derivation call. Element and Slice
-// are set only where the declaration says the position is many-valued: an
-// input delivered as the ordered cells of a selected join is a slice of the
-// execution cell view instantiated at that input's own carrier.
+// are set only where the declaration says the position is many-valued: such an
+// input is an execution view instantiated at that input's own carrier, and a
+// selection delivers a slice of tagged cells while a whole-vector read
+// delivers one vector.
 type DerivedParam struct {
 	Type    GoType
 	Element GoType
@@ -53,7 +57,7 @@ func AxisSchemaType(source Definition) (GoType, bool) {
 // static axis is resolved through the roster, because a derivation reaching
 // another axis's schema is naming that axis's own published type rather than
 // one its consumer chose.
-func (roster Roster) DerivationSignature(axis schema.Key, relation Relation, cell GoType) (DerivationShape, bool) {
+func (roster Roster) DerivationSignature(axis schema.Key, relation Relation, cell, vector GoType) (DerivationShape, bool) {
 	if !relation.Derivation.complete() {
 		return DerivationShape{}, false
 	}
@@ -90,14 +94,28 @@ func (roster Roster) DerivationSignature(axis schema.Key, relation Relation, cel
 			params = append(params, DerivedParam{Type: carrier.Type})
 			continue
 		}
-		// A many-valued input is the ordered cells of a selected join. The cell
-		// view is the execution layer's, named by the caller for the same
-		// reason the reducer's is: this package states the shape without
-		// naming that package.
-		if !cell.Available() {
+		// A many-valued input arrives as the whole delivery its own read
+		// establishes, and the two reads establish different facts: a
+		// selection pairs every cell with the tag it correlated that cell by,
+		// while a whole-vector read over a closed denominator establishes the
+		// cell's position and nothing else. The input declares which read
+		// feeds it, so the view is derived rather than assumed, and both views
+		// are named by the caller for the same reason the reducer's is - this
+		// package states the shape without naming that package.
+		switch input.Form {
+		case member.ReadFormSelected:
+			if !cell.Available() {
+				return DerivationShape{}, false
+			}
+			params = append(params, DerivedParam{Type: cell, Element: carrier.Type, Slice: true})
+		case member.ReadFormSummary:
+			if !vector.Available() {
+				return DerivationShape{}, false
+			}
+			params = append(params, DerivedParam{Type: vector, Element: carrier.Type})
+		default:
 			return DerivationShape{}, false
 		}
-		params = append(params, DerivedParam{Type: cell, Element: carrier.Type, Slice: true})
 	}
 	state := relation.Derivation.State
 	return DerivationShape{

@@ -37,9 +37,10 @@ func (fold familyReducer) Reduce(cell heap.Value, present bool) (heap.Value, str
 // familyRow is the sealed static half of one plan row: the candidate its fold
 // is indexed by and every primitive the installer sealed through the plane.
 type familyRow struct {
-	candidate heap.Key
-	read0     execution.ExactRead[heap.DenseCoordinate, heap.Value]
-	write     execution.CarryWrite[heap.DenseCoordinate, heap.Value]
+	candidate   heap.Key
+	read0       execution.ExactRead[heap.DenseCoordinate, heap.Value]
+	read0Policy execution.ReadCellPolicy[heap.Value]
+	write       execution.CarryWrite[heap.DenseCoordinate, heap.Value]
 }
 
 // sealedFamily is this rule's whole installed family: one row per plan row and
@@ -157,12 +158,16 @@ func (install familyInstaller) InstallRuleFamily(plane execution.FormPlane[heap.
 			return nil, nil, false
 		}
 		read0Sealed, read0SealedOK := plane.ExactRead(planRow.Unit, uint16(plan0.Input))
+		read0Policy, read0PolicyOK := plane.ReadCellPolicy(plan0.Contract)
+		if !read0PolicyOK {
+			return nil, nil, false
+		}
 		writeSealed, writeSealedOK := plane.RowCarry(planRow, candidate.Age)
 		if !writeSealedOK || !read0SealedOK {
 			return nil, nil, false
 		}
 		addresses = append(addresses, execution.FormAddress{Member: planRow.Member, Local: uint32(len(sealed.rows))})
-		sealed.rows = append(sealed.rows, familyRow{candidate: candidate, read0: read0Sealed, write: writeSealed})
+		sealed.rows = append(sealed.rows, familyRow{candidate: candidate, read0: read0Sealed, read0Policy: read0Policy, write: writeSealed})
 	}
 	return sealed, addresses, true
 }

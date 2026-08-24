@@ -1,6 +1,7 @@
 package definition
 
 import (
+	"github.com/wippyai/go-lua/analysis/schema/axis/member"
 	"testing"
 
 	"github.com/wippyai/go-lua/analysis/schema"
@@ -10,6 +11,12 @@ import (
 // is delivered through, named by the caller the way the sealed disposition is.
 func specimenCellView() GoType {
 	return GoType{PackagePath: "example/execution", Name: "SelectedCell"}
+}
+
+// specimenVectorView is the execution vector view a whole-vector derivation
+// input is delivered through, named by the caller for the same reason.
+func specimenVectorView() GoType {
+	return GoType{PackagePath: "example/execution", Name: "SummaryVector"}
 }
 
 // specimenDerivationRoster admits the specimen source so a derivation can be
@@ -40,7 +47,7 @@ func TestADerivationsCallShapeIsAFunctionOfItsDeclaration(t *testing.T) {
 	source := specimenDerivation(t)
 	roster := specimenDerivationRoster(t, source)
 	relation := source.Relations[len(source.Relations)-1]
-	shape, derived := roster.DerivationSignature("specimen", relation, specimenCellView())
+	shape, derived := roster.DerivationSignature("specimen", relation, specimenCellView(), specimenVectorView())
 	if !derived {
 		t.Fatal("a whole derivation derived no call shape")
 	}
@@ -73,28 +80,28 @@ func TestADerivedShapeFollowsEveryDeclaredRow(t *testing.T) {
 	base := specimenDerivation(t)
 	roster := specimenDerivationRoster(t, base)
 	relation := base.Relations[len(base.Relations)-1]
-	original, derived := roster.DerivationSignature("specimen", relation, specimenCellView())
+	original, derived := roster.DerivationSignature("specimen", relation, specimenCellView(), specimenVectorView())
 	if !derived {
 		t.Fatal("baseline shape")
 	}
 
 	widened := relation
 	widened.Inputs = append(append([]RelationInput(nil), relation.Inputs...), RelationInput{Carrier: "KeyCarrier"})
-	shape, derivedOK := roster.DerivationSignature("specimen", widened, specimenCellView())
+	shape, derivedOK := roster.DerivationSignature("specimen", widened, specimenCellView(), specimenVectorView())
 	if !derivedOK || len(shape.BuildParams) != len(original.BuildParams)+1 {
 		t.Fatal("a declared input did not widen the call")
 	}
 
 	restated := relation
 	restated.Derivation.State = specimenType("OtherPlan")
-	shape, derivedOK = roster.DerivationSignature("specimen", restated, specimenCellView())
+	shape, derivedOK = roster.DerivationSignature("specimen", restated, specimenCellView(), specimenVectorView())
 	if !derivedOK || shape.BuildResults[0].Type != specimenType("OtherPlan") || shape.CountParams[0].Type != specimenType("OtherPlan") {
 		t.Fatal("the derivation State is not the type the call threads")
 	}
 
 	foreign := relation
 	foreign.Derivation.StaticAxes = []schema.EntryReference{{Surface: schema.SurfaceKindAxis, Key: "absent"}}
-	if _, derivedOK = roster.DerivationSignature("specimen", foreign, specimenCellView()); derivedOK {
+	if _, derivedOK = roster.DerivationSignature("specimen", foreign, specimenCellView(), specimenVectorView()); derivedOK {
 		t.Fatal("a static axis no source owns resolved a schema type")
 	}
 }
@@ -111,9 +118,9 @@ func TestADerivedShapeFollowsEveryDeclaredRow(t *testing.T) {
 func TestAManyValuedDerivationInputIsTheCellsOfItsJoin(t *testing.T) {
 	source := specimenDerivation(t)
 	relation := &source.Relations[len(source.Relations)-1]
-	relation.Inputs = []RelationInput{{Carrier: "SeedCarrier"}, {Carrier: "FactCarrier", Many: true}}
+	relation.Inputs = []RelationInput{{Carrier: "SeedCarrier"}, {Carrier: "FactCarrier", Many: true, Form: member.ReadFormSelected}}
 	roster := specimenDerivationRoster(t, source)
-	shape, derived := roster.DerivationSignature("specimen", *relation, specimenCellView())
+	shape, derived := roster.DerivationSignature("specimen", *relation, specimenCellView(), specimenVectorView())
 	if !derived {
 		t.Fatal("a many-valued derivation input derived no call shape")
 	}
@@ -130,7 +137,7 @@ func TestAManyValuedDerivationInputIsTheCellsOfItsJoin(t *testing.T) {
 	// many-valued input and is derived without one has no spelling for the
 	// delivery, and inventing one here would be this package choosing an
 	// execution type.
-	if _, derivedOK := roster.DerivationSignature("specimen", *relation, GoType{}); derivedOK {
+	if _, derivedOK := roster.DerivationSignature("specimen", *relation, GoType{}, specimenVectorView()); derivedOK {
 		t.Fatal("a many-valued input derived a shape with no cell view")
 	}
 }

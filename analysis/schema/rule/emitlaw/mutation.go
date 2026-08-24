@@ -191,6 +191,17 @@ func joinMutations(declaration program.Program, index int) []mutation {
 			mandatory: true,
 		})
 	}
+	if join.Parent.Declared() {
+		// The parent restatement is what admits an untagged summary. A join
+		// that loses it is correlated by nothing, and one that keeps a name
+		// resolving to no relation restates a fact the catalog does not hold.
+		rows = append(rows, mutation{
+			name:      fmt.Sprintf("join %d restates a parent that resolves to nothing", index),
+			statement: fmt.Sprintf(`declaration.Joins[%d].Parent.Member = ""`, index),
+			apply:     func(target *program.Program) { target.Joins[index].Parent.Member = "" },
+			mandatory: true,
+		})
+	}
 	return rows
 }
 
