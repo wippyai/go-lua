@@ -229,15 +229,21 @@ func TestSelectedReadDeliversTheFactorDefaultAtAnUnwrittenCoordinate(t *testing.
 }
 
 // TestSelectedReadWidenedDeliversTopAtEveryMember states that widening
-// dominates every other substitution. A read whose alternative set is opaque
-// delivers the Factor's Top at every coordinate, because Top is the sound
-// over-approximation of anything the unobserved alternative could have written -
-// and it does so uniformly, so no Fold can branch on which member was opaque.
+// dominates every other substitution. A read whose declared contract widens
+// on an opaque alternative delivers the Factor's Top at every coordinate,
+// because Top is the sound over-approximation of anything the unobserved
+// alternative could have written - and it does so uniformly, so no Fold can
+// branch on which member was opaque.
 func TestSelectedReadWidenedDeliversTopAtEveryMember(t *testing.T) {
 	fixture := newSelectedFixture(t)
 	const factorTop = ^uint64(0)
-	read, ok := NewSelectedRead(fixture.binding, 0, selectedContract(ruleprogram.OrderCanonical, ruleprogram.SparseDefault),
-		NewReadCellPolicy(true, 41, factorTop).Widen())
+	propagating := ruleplan.ReadContract{
+		Order:        ruleprogram.OrderCanonical,
+		Sparse:       ruleprogram.SparseDefault,
+		OnOpaque:     ruleprogram.OnOpaquePropagateAuthenticated,
+		Multiplicity: ruleprogram.MultiplicityOne,
+	}
+	read, ok := NewSelectedRead(fixture.binding, 0, propagating, NewReadCellPolicy(true, 41, factorTop))
 	if !ok {
 		t.Fatal("selected read")
 	}
@@ -252,6 +258,61 @@ func TestSelectedReadWidenedDeliversTopAtEveryMember(t *testing.T) {
 	for index := range coordinates {
 		if !cells[index].Present || cells[index].Value != factorTop {
 			t.Fatalf("member %d = %d, want the Factor Top at every member", index, cells[index].Value)
+		}
+	}
+}
+
+// TestSelectedReadOnOpaqueGovernsWideningNotTheCaller states the OnOpaque
+// clause itself: a PropagateAuthenticated contract widens the sealed read
+// even when the caller's own policy was never widened, and a Refuse contract
+// never widens even when the caller's policy was. The declared clause is the
+// one authority over the widened arm; a caller-sealed policy has no
+// competing vote on it.
+func TestSelectedReadOnOpaqueGovernsWideningNotTheCaller(t *testing.T) {
+	fixture := newSelectedFixture(t)
+	const factorDefault, factorTop = uint64(41), ^uint64(0)
+
+	propagating := ruleplan.ReadContract{
+		Order:        ruleprogram.OrderCanonical,
+		Sparse:       ruleprogram.SparseDefault,
+		OnOpaque:     ruleprogram.OnOpaquePropagateAuthenticated,
+		Multiplicity: ruleprogram.MultiplicityOne,
+	}
+	// The caller's policy is deliberately never widened. A declared
+	// PropagateAuthenticated contract must widen it anyway.
+	read, ok := NewSelectedRead(fixture.binding, 0, propagating, NewReadCellPolicy(true, factorDefault, factorTop))
+	if !ok {
+		t.Fatal("selected read")
+	}
+	run := NewRun(1, 1)
+	ticket := issueSelected(t, run, fixture, fixture.state)
+	coordinates := fixture.canonicalMembers(3)
+	cells := make([]SelectedCell[uint64], selectedFixtureWidth)
+	var scratch SelectedScratch[uint64, uint64]
+	if status := read.Observe(ticket, &scratch, coordinates, cells); status != ReadAvailable {
+		t.Fatalf("observe status = %d", status)
+	}
+	for index := range coordinates {
+		if !cells[index].Present || cells[index].Value != factorTop {
+			t.Fatalf("member %d = %d, want the declared OnOpaque clause to widen a caller policy that never was", index, cells[index].Value)
+		}
+	}
+
+	// The reverse: a Refuse contract never widens even when the caller's own
+	// policy was already widened before it was sealed.
+	refusing := selectedContract(ruleprogram.OrderCanonical, ruleprogram.SparseDefault)
+	read, ok = NewSelectedRead(fixture.binding, 0, refusing, NewReadCellPolicy(true, factorDefault, factorTop).Widen())
+	if !ok {
+		t.Fatal("selected read")
+	}
+	ticket = issueSelected(t, NewRun(1, 1), fixture, fixture.state)
+	var otherScratch SelectedScratch[uint64, uint64]
+	if status := read.Observe(ticket, &otherScratch, coordinates, cells); status != ReadAvailable {
+		t.Fatalf("observe status = %d", status)
+	}
+	for index := range coordinates {
+		if !cells[index].Present || cells[index].Value != factorDefault {
+			t.Fatalf("member %d = %d, want the declared Refuse clause to hold the Factor default, not the caller's own widened policy", index, cells[index].Value)
 		}
 	}
 }

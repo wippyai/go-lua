@@ -54,6 +54,12 @@ type SelectedRead[K scalar.Key, V any] struct {
 // contract its plan row declared. Summary and Complete clauses are refused
 // here: this read delivers one cell per member, and a multiplicity that says
 // otherwise is a contract this read cannot carry.
+//
+// The declared OnOpaque clause governs the sealed policy's widened arm
+// directly: a PropagateAuthenticated contract widens the policy regardless of
+// what the caller passed, and a Refuse contract never does. OnOpaque is the
+// one authority over widening; a caller-sealed policy carries no competing
+// vote on it.
 func NewSelectedRead[K scalar.Key, V any](
 	binding *factbinding.Binding[K, V],
 	port uint16,
@@ -70,6 +76,7 @@ func NewSelectedRead[K scalar.Key, V any](
 	if contract.Multiplicity == ruleprogram.MultiplicityMany {
 		return SelectedRead[K, V]{}, false
 	}
+	policy.widened = contract.OnOpaque == ruleprogram.OnOpaquePropagateAuthenticated
 	return SelectedRead[K, V]{
 		binding:      binding,
 		port:         port,
