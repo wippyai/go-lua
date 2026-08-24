@@ -7,6 +7,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/identity"
 	"github.com/wippyai/go-lua/analysis/schema"
 	"github.com/wippyai/go-lua/analysis/schema/executioncontext"
+	programstate "github.com/wippyai/go-lua/analysis/schema/program/state"
 	"github.com/wippyai/go-lua/internal/canonical"
 )
 
@@ -34,8 +35,19 @@ type mountedArtifactRows struct {
 	pointMeta map[identity.ContentID]artifactPointMetadata
 	sites     map[identity.ContentID]equation.Site
 	mounted   map[artifactMountedPoint]equation.Site
-	ruleSet   map[artifactMountedRule]struct{}
+	ruleSet   map[artifactMountedRule]artifactMountedRuleSource
 	bootstrap *linkBootstrapRows
+}
+
+// artifactMountedRuleSource is the candidate row one mounted placement was
+// issued for, carried with the immutable state of the Program that issued it.
+// State travels with the ordinal because a generated Family holds rows from
+// several mounted Programs, so equal ordinals from different mounts are
+// different rows.
+type artifactMountedRuleSource struct {
+	state   programstate.State
+	ordinal uint32
+	present bool
 }
 
 type linkBootstrapRows struct {
@@ -553,7 +565,7 @@ func buildMountedArtifactRows(mounts []sealedProgramMount, schemaID identity.Con
 			seenTransportFactors[factor] = struct{}{}
 		}
 	}
-	result := &mountedArtifactRows{pointMeta: make(map[identity.ContentID]artifactPointMetadata), sites: make(map[identity.ContentID]equation.Site), mounted: make(map[artifactMountedPoint]equation.Site), ruleSet: make(map[artifactMountedRule]struct{}), bootstrap: &linkBootstrapRows{owner: bootstrap.OwnerID(), point: bootstrapPoint, roles: roles}}
+	result := &mountedArtifactRows{pointMeta: make(map[identity.ContentID]artifactPointMetadata), sites: make(map[identity.ContentID]equation.Site), mounted: make(map[artifactMountedPoint]equation.Site), ruleSet: make(map[artifactMountedRule]artifactMountedRuleSource), bootstrap: &linkBootstrapRows{owner: bootstrap.OwnerID(), point: bootstrapPoint, roles: roles}}
 	seenMounts := make(map[identity.ContentID]struct{}, len(mounts))
 	for _, mount := range mounts {
 		if mount.template == nil || !mount.template.Available() || !mount.module.Available() || mount.template.SchemaID() != schemaID {
@@ -599,7 +611,7 @@ func buildMountedArtifactRows(mounts []sealedProgramMount, schemaID identity.Con
 				}
 			}
 		}
-		if !appendMountedProgramMount(result, mount.module, template, mount.capabilities, mount.factors) {
+		if !appendMountedProgramMount(result, mount.module, template, mount.capabilities, mount.factors, mount.state) {
 			return nil, programAssemblyFailureSnapshotNamespace
 		}
 	}
@@ -633,7 +645,7 @@ func sealedRoleCapability(capabilities map[rows.ArtifactScalarRole]RuleSlotCapab
 // shared mounted planes. Scalar relations were closed once by
 // artifact.NewArtifactScalarTemplate; this pass only resolves Link roles, substitutes
 // mount-qualified IDs, and checks that those substitutions stay in the mount.
-func appendMountedProgramMount(rows *mountedArtifactRows, mount identity.ContentID, template *rows.ArtifactScalarTemplate, capabilities map[rows.ArtifactScalarRole]RuleSlotCapability, factors map[rows.ArtifactScalarFactor]FactorSlotCapability) bool {
+func appendMountedProgramMount(rows *mountedArtifactRows, mount identity.ContentID, template *rows.ArtifactScalarTemplate, capabilities map[rows.ArtifactScalarRole]RuleSlotCapability, factors map[rows.ArtifactScalarFactor]FactorSlotCapability, state programstate.State) bool {
 	if rows == nil || rows.pointMeta == nil || rows.ruleSet == nil || template == nil || !template.Available() || !mount.Available() {
 		return false
 	}
@@ -735,7 +747,13 @@ func appendMountedProgramMount(rows *mountedArtifactRows, mount identity.Content
 		if _, duplicate := rows.ruleSet[key]; duplicate {
 			return false
 		}
-		rows.ruleSet[key] = struct{}{}
+		// A placement that names a candidate row is only admissible from a
+		// Program whose state this Link mounted: the ordinal addresses that
+		// publication and nothing else.
+		if rule.SourcePresent && !state.Available() {
+			return false
+		}
+		rows.ruleSet[key] = artifactMountedRuleSource{state: state, ordinal: rule.Source, present: rule.SourcePresent}
 	}
 	return true
 }
@@ -770,4 +788,15 @@ func (rows *mountedArtifactRows) mountedRule(role RuleSlotCapability, mount, poi
 	}
 	_, ok := rows.ruleSet[artifactMountedRule{role: role, mount: mount, point: point, occurrence: occurrence}]
 	return ok
+}
+
+// mountedRuleSource returns the candidate row this mounted placement was
+// issued for. The second result distinguishes an admitted placement carrying
+// no candidate row from a coordinate this plane does not address at all.
+func (rows *mountedArtifactRows) mountedRuleSource(role RuleSlotCapability, mount, point, occurrence identity.ContentID) (artifactMountedRuleSource, bool) {
+	if rows == nil || rows.ruleSet == nil {
+		return artifactMountedRuleSource{}, false
+	}
+	source, ok := rows.ruleSet[artifactMountedRule{role: role, mount: mount, point: point, occurrence: occurrence}]
+	return source, ok
 }

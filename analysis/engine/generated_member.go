@@ -43,6 +43,7 @@ type generatedMemberSpec struct {
 	readInput     int // construction-only Plan coordinate; descriptor owns hot value
 	rule          uint32
 	candidate     uint32
+	source        execution.ProgramSource
 	inputCount    int // construction-only Plan shape
 	outputCount   int // construction-only Plan shape
 }
@@ -54,6 +55,9 @@ type generatedMemberDeclaration struct {
 	cell      *generatedRuleCell
 	operand   equation.Operand
 	candidate uint32
+	// source is the row-local Program capability a rule whose candidates are
+	// Program rows carries. It is the zero value for every other rule.
+	source execution.ProgramSource
 	// reads are this rule's declared read surfaces in plan order. A rule with
 	// no join has none; every other rule has exactly the joins its Plan states,
 	// each already in the form its own row declares.
@@ -69,6 +73,10 @@ type generatedMemberDeclaration struct {
 // Target.
 type generatedMember struct {
 	value equation.RuleMember
+
+	// source is the row-local Program capability this member's rule carries
+	// when its candidates are Program rows.
+	source execution.ProgramSource
 
 	slot                shape.Slot
 	hasSlot             bool
@@ -202,6 +210,7 @@ func newGeneratedMember(spec generatedMemberSpec) (*generatedMember, bool) {
 		target:              spec.target,
 		rule:                spec.rule,
 		candidate:           spec.candidate,
+		source:              spec.source,
 	}, true
 }
 
@@ -509,7 +518,7 @@ func bindGeneratedMember(plane *programPlane, topology *equation.Topology, membe
 		member: member, factor: writeSurface.Factor, hasSlot: true, writes: true,
 		factorOrdinal: int32(descriptor.OutputFactor()),
 		rule:          ruleOrdinal,
-		candidate:     declaration.candidate, inputCount: inputCount, outputCount: descriptor.OutputCount(),
+		candidate:     declaration.candidate, source: declaration.source, inputCount: inputCount, outputCount: descriptor.OutputCount(),
 	}
 	slot, slotOK := writeFactor.runtimeSlot()
 	if !slotOK {

@@ -12,6 +12,7 @@
 package engine
 
 import (
+	"github.com/wippyai/go-lua/analysis/engine/execution"
 	"github.com/wippyai/go-lua/analysis/engine/generated"
 	"github.com/wippyai/go-lua/analysis/engine/internal/composition"
 	"github.com/wippyai/go-lua/analysis/engine/internal/equation"
@@ -460,20 +461,7 @@ func declareGeneratedIssuanceSurfaces(rowsWorkspace *programRows, state *schemaB
 		return pendingRuleIssuance{}, false
 	}
 	descriptor := cell.program
-	candidate := descriptor.CandidateRelation()
-	candidateOwner, candidateOwnerOK := relationOwnerForGeneratedAxis(state, candidate.Axis)
-	if !candidateOwnerOK {
-		return pendingRuleIssuance{}, false
-	}
-	// The census is read before the row: a keyed generated rule instantiates
-	// one member per occurrence, so an occurrence whose relation publishes a
-	// candidate set is not this arm's row and refuses here rather than
-	// silently taking a first candidate.
-	candidateCount, candidateCountOK := candidateOwner.CandidateCount(candidate.Member, coords.Mount, coords.Occurrence)
-	if !candidateCountOK || candidateCount != 1 {
-		return pendingRuleIssuance{}, false
-	}
-	denseCandidate, candidateOK := candidateOwner.CandidateAt(candidate.Member, coords.Mount, coords.Occurrence, 0)
+	denseCandidate, programSource, candidateOK := declaredGeneratedCandidate(rowsWorkspace, state, descriptor, issuance.role, coords)
 	if !candidateOK {
 		return pendingRuleIssuance{}, false
 	}
@@ -506,10 +494,56 @@ func declareGeneratedIssuanceSurfaces(rowsWorkspace *programRows, state *schemaB
 	}
 	issuance.semantic, issuance.family, issuance.anchor, issuance.surfaces = semantic, family, anchor, surfaces
 	issuance.generated = &generatedMemberDeclaration{
-		cell: cell, operand: anchor.operand, candidate: denseCandidate,
+		cell: cell, operand: anchor.operand, candidate: denseCandidate, source: programSource,
 		reads: reads, writeSurface: writeSurface,
 	}
 	return issuance, true
+}
+
+// declaredGeneratedCandidate resolves one generated rule's dense candidate
+// under whichever authority its plan named.
+//
+// An axis relation answers from its owner directory, keyed by the mount and
+// occurrence this issuance is for. An issued Program row answers from the
+// mounted placement itself: issuance resolved that ordinal while it held both
+// the occurrence and the row space, so the engine transports the answer and
+// resolves nothing. The Program state travels with it because equal ordinals
+// from different mounted Programs are different rows.
+func declaredGeneratedCandidate(rowsWorkspace *programRows, state *schemaBindingState, descriptor generated.CompiledRule, role RuleSlotCapability, coords OperandCoords) (uint32, execution.ProgramSource, bool) {
+	if descriptor.IssuedCandidate() {
+		// An issued candidate is a mounted row. The Link plane has no mount,
+		// so a rule declaring one cannot be admitted there at all.
+		if rowsWorkspace == nil || rowsWorkspace.mountedRows == nil || !coords.Mount.Available() {
+			return 0, execution.ProgramSource{}, false
+		}
+		source, addressed := rowsWorkspace.mountedRows.mountedRuleSource(role, coords.Mount, coords.Point, coords.Occurrence)
+		if !addressed || !source.present {
+			return 0, execution.ProgramSource{}, false
+		}
+		capability, capabilityOK := execution.NewProgramSource(source.state, source.ordinal)
+		if !capabilityOK {
+			return 0, execution.ProgramSource{}, false
+		}
+		return source.ordinal, capability, true
+	}
+	candidate := descriptor.CandidateRelation()
+	candidateOwner, candidateOwnerOK := relationOwnerForGeneratedAxis(state, candidate.Axis)
+	if !candidateOwnerOK {
+		return 0, execution.ProgramSource{}, false
+	}
+	// The census is read before the row: a keyed generated rule instantiates
+	// one member per occurrence, so an occurrence whose relation publishes a
+	// candidate set is not this arm's row and refuses here rather than
+	// silently taking a first candidate.
+	candidateCount, candidateCountOK := candidateOwner.CandidateCount(candidate.Member, coords.Mount, coords.Occurrence)
+	if !candidateCountOK || candidateCount != 1 {
+		return 0, execution.ProgramSource{}, false
+	}
+	dense, denseOK := candidateOwner.CandidateAt(candidate.Member, coords.Mount, coords.Occurrence, 0)
+	if !denseOK {
+		return 0, execution.ProgramSource{}, false
+	}
+	return dense, execution.ProgramSource{}, true
 }
 
 // generatedCarryCount is the declared carry cardinality of one generated rule.

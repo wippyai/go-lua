@@ -109,6 +109,12 @@ type ArtifactScalarRule struct {
 	InputCount uint8
 	Route      identity.ContentID
 	Native     bool
+	// Source is the dense ordinal of the candidate row issuance resolved for
+	// this placement, and SourcePresent states whether one exists. Ordinal
+	// zero is a real row, so presence is explicit. The row space is sealed in
+	// the rule's compiled plan, which is why only the ordinal travels.
+	Source        uint32
+	SourcePresent bool
 }
 
 // InputPointCount returns the dense number of point roles. A negative result

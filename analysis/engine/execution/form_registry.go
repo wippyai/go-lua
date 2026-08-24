@@ -92,11 +92,17 @@ type FormRow struct {
 	// it has to say which candidate it is. It is the same coordinate the
 	// invocation is later authenticated against.
 	Candidate uint32
-	Relation  uint32
-	Unit      carrier.Unit
-	Target    carrier.Target
-	Rule      generated.CompiledRule
-	exact     []carrier.Unit
+	// Source is the row-local Program capability a rule whose candidates are
+	// Program rows carries. It holds the mounted publication the Candidate
+	// ordinal addresses, so a family spanning several mounted Programs never
+	// reads one mount's ordinal against another's rows. Every other rule
+	// carries the zero value and resolves its candidate through its axis owner.
+	Source   ProgramSource
+	Relation uint32
+	Unit     carrier.Unit
+	Target   carrier.Target
+	Rule     generated.CompiledRule
+	exact    []carrier.Unit
 }
 
 // BindExact attaches the owner-issued Unit of one exact join to this sealed

@@ -7,6 +7,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/engine/rows"
 	"github.com/wippyai/go-lua/analysis/identity"
 	"github.com/wippyai/go-lua/analysis/schema/executioncontext"
+	programstate "github.com/wippyai/go-lua/analysis/schema/program/state"
 )
 
 // MountedProgramRole is one template role bound to this Link's mounted
@@ -30,6 +31,11 @@ type MountedProgramArtifact struct {
 	Roles    []MountedProgramRole
 	Factors  []MountedProgramFactor
 	Module   identity.ContentID
+	// State is the immutable cold publication this template was lowered from.
+	// A rule whose candidates are Program rows is redeemed against it, so the
+	// mount carries the publication its ordinals address rather than leaving a
+	// consumer to find one by artifact identity.
+	State programstate.State
 }
 
 // ProgramAdmissionStage names which admission pass refused. The declaration
@@ -114,6 +120,7 @@ type sealedProgramMount struct {
 	capabilities map[rows.ArtifactScalarRole]RuleSlotCapability
 	factors      map[rows.ArtifactScalarFactor]FactorSlotCapability
 	module       identity.ContentID
+	state        programstate.State
 }
 
 // CommittedProgram is the committed program one construction published: the
@@ -591,7 +598,7 @@ func sealMountedProgramArtifacts(mounts []MountedProgramArtifact) ([]sealedProgr
 			if existing.template != mount.Template {
 				return nil, false
 			}
-			sealed = append(sealed, sealedProgramMount{template: existing.template, capabilities: existing.capabilities, factors: existing.factors, module: mount.Module})
+			sealed = append(sealed, sealedProgramMount{template: existing.template, capabilities: existing.capabilities, factors: existing.factors, module: mount.Module, state: existing.state})
 			continue
 		}
 		if len(mount.Roles) != mount.Template.RoleCount() {
@@ -647,7 +654,7 @@ func sealMountedProgramArtifacts(mounts []MountedProgramArtifact) ([]sealedProgr
 				return nil, false
 			}
 		}
-		row := sealedProgramMount{template: mount.Template, capabilities: capabilities, factors: factors, module: mount.Module}
+		row := sealedProgramMount{template: mount.Template, capabilities: capabilities, factors: factors, module: mount.Module, state: mount.State}
 		byArtifact[artifactID] = row
 		sealed = append(sealed, row)
 	}

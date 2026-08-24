@@ -277,6 +277,7 @@ func buildGeneratedExecutionProgram(program *runtimeProgram) (*generatedExecutio
 		}
 		formRow.Member, formRow.Unit, formRow.Target = memberIndex, row.generated.unit, row.generated.target
 		formRow.Candidate = row.generated.candidate
+		formRow.Source = row.generated.source
 		exact := 0
 		for join := 0; join < descriptor.ReadCount(); join++ {
 			plan, planOK := descriptor.ReadAt(join)

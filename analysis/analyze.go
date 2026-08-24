@@ -662,7 +662,15 @@ func (state *compiledState) assembleCommittedProgram() (*engine.CommittedProgram
 		if !productOK || product.Template == nil || !product.Template.Available() {
 			return nil, composite.SelectedQueryTable{}, anadiag.AnalyzeDiagnosticAssembleStageMount, composite.AdmissionFailure{}, engine.ProgramAssembleRefusal{}, false
 		}
-		inputs = append(inputs, engine.MountedProgramArtifact{Template: product.Template, Roles: roles, Factors: factors, Module: mount.ModuleKey})
+		// The mount carries the publication its issued candidate ordinals
+		// address. A Program that publishes no readable cold state cannot back
+		// a placement that names one, so the mount refuses rather than
+		// admitting an ordinal with nothing behind it.
+		state, stateOK := mount.Snapshot.Program().ColdState()
+		if !stateOK {
+			return nil, composite.SelectedQueryTable{}, anadiag.AnalyzeDiagnosticAssembleStageMount, composite.AdmissionFailure{}, engine.ProgramAssembleRefusal{}, false
+		}
+		inputs = append(inputs, engine.MountedProgramArtifact{Template: product.Template, Roles: roles, Factors: factors, Module: mount.ModuleKey, State: state})
 	}
 	sealed := state.artifacts.mounts
 	sealedOK := len(sealed) != 0

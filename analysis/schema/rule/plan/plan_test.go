@@ -45,6 +45,14 @@ type planFixture struct {
 	otherSignature axis.Signature
 	declaration    program.Program
 	outputWriter   schema.Key
+	// issuance stands in for the sealed issuance surface. A Program whose
+	// candidate is an issued row names a relation there, and the seal resolves
+	// that reference like any other.
+	issuance []schema.Entry
+	// expectRefusal turns the fixture's own seal verdict into data for the one
+	// law that is about that verdict, and refusal records it.
+	expectRefusal bool
+	refusal       schema.SealFailure
 }
 
 // planNoopSurface is only the wiring needed to make the test schema complete.
@@ -166,6 +174,16 @@ func (fixture *planFixture) seal(t *testing.T) *seal.Schema {
 	return fixture.sealOrder(t, false)
 }
 
+// sealFailure is the same fixture read for the declaration table's own verdict
+// rather than for the table. A law about an unresolvable reference cannot use
+// seal, which fatals on exactly that verdict.
+func (fixture *planFixture) sealFailure(t *testing.T) schema.SealFailure {
+	t.Helper()
+	fixture.expectRefusal = true
+	fixture.sealOrder(t, false)
+	return fixture.refusal
+}
+
 func (fixture *planFixture) sealOrder(t *testing.T, reverseAxis bool) *seal.Schema {
 	t.Helper()
 	mainUniverse, ok := identity.DeriveContentID("go-lua/plan-law/main", []byte(planAxisKey))
@@ -276,12 +294,8 @@ func (fixture *planFixture) sealOrder(t *testing.T, reverseAxis bool) *seal.Sche
 	if !builder.Register(axis.NewSurface(axes)) {
 		t.Fatal("axis surface registration failed")
 	}
-	for _, kind := range []schema.SurfaceKind{
-		schema.SurfaceKindIssuance,
-	} {
-		if !builder.Register(planNoopSurface{kind: kind}) {
-			t.Fatalf("surface %d stand-in registration failed", kind)
-		}
+	if !builder.Register(planNoopSurface{kind: schema.SurfaceKindIssuance, entries: fixture.issuance}) {
+		t.Fatal("issuance stand-in registration failed")
 	}
 	if !builder.Register(rule.NewSurface([]*rule.Template{programRule, absentRule})) {
 		t.Fatal("rule surface registration failed")
@@ -306,6 +320,10 @@ func (fixture *planFixture) sealOrder(t *testing.T, reverseAxis bool) *seal.Sche
 		}
 	}
 	table, failure := builder.Seal()
+	if fixture.expectRefusal {
+		fixture.refusal = failure
+		return table
+	}
 	if failure.Available() || table == nil {
 		t.Fatalf("fixture schema rejected: contributor=%d law=%d disposition=%s", failure.Contributor, failure.Law, failure.Disposition)
 	}

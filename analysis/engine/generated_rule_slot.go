@@ -141,6 +141,10 @@ func DeclareGeneratedRuleSlot(
 	if !outputOK {
 		return refuse()
 	}
+	// An issued-row candidate has no Factor relation to normalize. Its rows are
+	// Program rows, and the ordinal reaches the runtime on the mounted
+	// placement, so the address stays zero and the tag carries the choice.
+	_, issuedCandidate := compiled.IssuedCandidate()
 
 	// Output and reducer addresses are checked against the same sealed axis
 	// directory before their factors are selected. Frame/value-slot identity is
@@ -155,7 +159,10 @@ func DeclareGeneratedRuleSlot(
 		}
 	}
 	if output.Mode == ruleprogram.ModeExact {
-		if output.RouteJoinPresent || output.RouteJoin != 0 || output.Destination.Axis != compiled.Candidate().Axis {
+		// An exact write addresses the candidate relation's own coordinate
+		// space, which an issued Program row has none of. The plan refuses the
+		// pairing; the descriptor states the same law rather than inheriting it.
+		if issuedCandidate || output.RouteJoinPresent || output.RouteJoin != 0 || output.Destination.Axis != compiled.Candidate().Axis {
 			return refuse()
 		}
 	} else if !output.RouteJoinPresent || uint64(output.RouteJoin) >= uint64(len(joins)) || joins[output.RouteJoin].ReadForm != ruleprogram.Selected || output.Destination.Axis != joins[output.RouteJoin].Relation.Axis {
@@ -164,7 +171,7 @@ func DeclareGeneratedRuleSlot(
 	// Validate all addresses while they still use the Plan's own axis
 	// directory. This preserves the owner-local member/frame coordinates and
 	// keeps the generated constructor's shape checks independent of mapping.
-	if !generatedPlanMemberAddressesInRange(catalog, compiled.Candidate(), joins, compiled.Reducer(), output.Address, output.Destination) {
+	if !generatedPlanMemberAddressesInRange(catalog, compiled.Candidate(), issuedCandidate, joins, compiled.Reducer(), output.Address, output.Destination) {
 		return refuse()
 	}
 	outputFactor, outputFactorOK := generatedPlanFactor(factorDirectory, catalog, output.Address.Axis)
@@ -172,6 +179,9 @@ func DeclareGeneratedRuleSlot(
 		return refuse()
 	}
 	normalizedCandidate, candidateOK := generatedRuntimeRelation(factorDirectory, catalog, compiled.Candidate())
+	if issuedCandidate {
+		normalizedCandidate, candidateOK = ruleplan.RelationAddr{}, true
+	}
 	normalizedReducer, reducerOK := generatedRuntimeReducer(factorDirectory, catalog, compiled.Reducer())
 	normalizedOutput, outputAddressOK := generatedRuntimeOutput(factorDirectory, catalog, output.Address)
 	normalizedDestination, destinationOK := generatedRuntimeProjection(factorDirectory, catalog, output.Destination)
@@ -299,7 +309,7 @@ func DeclareGeneratedRuleSlot(
 	draft := &schemaRuleDraft{builder: builder, index: ruleIndex, output: outputFactor.factor}
 	descriptor, descriptorOK := generated.NewPlanCompiledRule(generated.CompiledRuleSpec{
 		Ordinal: compiled.Rule(), AxisCount: factorDirectory.count, InputCount: compiled.InputCount(),
-		Candidate: normalizedCandidate, Reducer: normalizedReducer,
+		Candidate: normalizedCandidate, IssuedCandidate: issuedCandidate, Reducer: normalizedReducer,
 		Reads: readPlans,
 		Outputs: []generated.OutputPlan{{
 			Factor: outputFactor.ordinal, Axis: normalizedOutputAxis, Address: normalizedOutput,
@@ -387,13 +397,25 @@ func DeclareGeneratedRuleSlot(
 func generatedPlanMemberAddressesInRange(
 	catalog ruleplan.Catalog,
 	candidate ruleplan.RelationAddr,
+	candidateIssued bool,
 	joins []ruleplan.Join,
 	reducer ruleplan.ReducerAddr,
 	output ruleplan.OutputAddr,
 	destination ruleplan.ProjectionAddr,
 ) bool {
-	if uint64(candidate.Axis) >= uint64(catalog.AxisCount()) || candidate.Member == ^uint32(0) ||
-		uint64(reducer.Axis) >= uint64(catalog.AxisCount()) || reducer.Member == ^uint32(0) ||
+	// An issued-row candidate has no relation address. Range-checking its zero
+	// would report that the first relation of the first axis is in range,
+	// which is a true answer to a question the declaration never asked. The
+	// converse is deliberately not stated: the first relation of the first
+	// axis is a real address, so a zero value does not identify the arm.
+	if candidateIssued {
+		if candidate != (ruleplan.RelationAddr{}) {
+			return false
+		}
+	} else if uint64(candidate.Axis) >= uint64(catalog.AxisCount()) || candidate.Member == ^uint32(0) {
+		return false
+	}
+	if uint64(reducer.Axis) >= uint64(catalog.AxisCount()) || reducer.Member == ^uint32(0) ||
 		uint64(output.Axis) >= uint64(catalog.AxisCount()) || output.Frame == ^uint32(0) ||
 		uint64(destination.Axis) >= uint64(catalog.AxisCount()) || destination.Member == ^uint32(0) ||
 		reducer.Axis != output.Axis {

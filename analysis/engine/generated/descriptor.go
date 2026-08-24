@@ -102,6 +102,7 @@ type CompiledRule struct {
 	planGeometry      bool
 	axisCount         uint32
 	candidateRelation ruleplan.RelationAddr
+	issuedCandidate   bool
 	reducer           ruleplan.ReducerAddr
 }
 
@@ -116,11 +117,16 @@ type CompiledRuleSpec struct {
 	AxisCount  int
 	InputCount int
 	Candidate  ruleplan.RelationAddr
-	Reducer    ruleplan.ReducerAddr
-	Reads      []ReadPlan
-	Outputs    []OutputPlan
-	Carry      *CarryPlan
-	Transports []ruleplan.Transport
+	// IssuedCandidate marks a rule whose candidate rows are Program rows. Its
+	// Candidate address stays zero: an issued row has no Factor relation, and
+	// the ordinal reaches the runtime on the mounted placement instead of
+	// through an axis owner's directory.
+	IssuedCandidate bool
+	Reducer         ruleplan.ReducerAddr
+	Reads           []ReadPlan
+	Outputs         []OutputPlan
+	Carry           *CarryPlan
+	Transports      []ruleplan.Transport
 }
 
 // NewPlanCompiledRule seals a generated descriptor from one already compiled
@@ -162,7 +168,7 @@ func NewPlanCompiledRule(spec CompiledRuleSpec) (CompiledRule, bool) {
 	rule := CompiledRule{
 		ordinal: spec.Ordinal, inputCount: uint16(spec.InputCount), reads: readCopy, outputs: outputCopy, carry: carry,
 		transports:   append([]ruleplan.Transport(nil), spec.Transports...),
-		planGeometry: true, axisCount: uint32(spec.AxisCount), candidateRelation: spec.Candidate, reducer: spec.Reducer,
+		planGeometry: true, axisCount: uint32(spec.AxisCount), candidateRelation: spec.Candidate, issuedCandidate: spec.IssuedCandidate, reducer: spec.Reducer,
 	}
 	if carry != nil && !normalizeCarryPlan(carry, spec.InputCount, spec.AxisCount, outputCopy[0].Factor) {
 		return CompiledRule{}, false
@@ -633,6 +639,12 @@ func (rule CompiledRule) CandidateRelation() ruleplan.RelationAddr {
 		return ruleplan.RelationAddr{}
 	}
 	return rule.candidateRelation
+}
+
+// IssuedCandidate reports whether this rule's candidate rows are Program rows
+// rather than rows of a Factor axis. CandidateRelation is zero when it is.
+func (rule CompiledRule) IssuedCandidate() bool {
+	return rule.Available() && rule.planGeometry && rule.issuedCandidate
 }
 
 // JoinRelation returns the first generated join's normalized relation address.
