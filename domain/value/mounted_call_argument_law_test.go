@@ -7,6 +7,7 @@ import (
 	artifactcompiler "github.com/wippyai/go-lua/analysis/program/artifact/compiler"
 	programschema "github.com/wippyai/go-lua/analysis/schema/program"
 	"github.com/wippyai/go-lua/analysis/schema/programmount"
+	calldomain "github.com/wippyai/go-lua/domain/call"
 	"github.com/wippyai/go-lua/domain/call/calltest"
 	"github.com/wippyai/go-lua/domain/composite"
 	"github.com/wippyai/go-lua/domain/composite/snapshottest"
@@ -25,6 +26,7 @@ import (
 type mountedCallArgumentFixture struct {
 	pack    *packdomain.Schema
 	values  *valuedomain.Schema
+	calls   *calldomain.Algebra
 	module  identity.ContentID
 	program programschema.Program
 }
@@ -86,11 +88,12 @@ func buildMountedCallArgumentFixture(t *testing.T, source string) mountedCallArg
 	if heapFailure != heapdomain.SealFailureNone {
 		t.Fatalf("seal heap: %s", heapFailure)
 	}
-	values, valueFailure := valuedomain.SealWithFailure(linked, heaps, calltest.MustSeal(t, linked, []programmount.MountedArtifact{valueMount}), []programmount.MountedArtifact{valueMount}, structural)
+	calls := calltest.MustSeal(t, linked, []programmount.MountedArtifact{valueMount})
+	values, valueFailure := valuedomain.SealWithFailure(linked, heaps, calls, []programmount.MountedArtifact{valueMount}, structural)
 	if valueFailure != valuedomain.SealFailureNone || values == nil {
 		t.Fatalf("seal value: %s", valueFailure)
 	}
-	return mountedCallArgumentFixture{pack: packSchema, values: values, module: module, program: artifact.Program()}
+	return mountedCallArgumentFixture{pack: packSchema, values: values, calls: calls, module: module, program: artifact.Program()}
 }
 
 // TestPublishedMountedCallArgumentsEqualTheDerivedActuals is the two-way

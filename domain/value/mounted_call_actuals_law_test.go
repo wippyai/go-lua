@@ -119,3 +119,51 @@ func TestEveryMountedCallActualsParentSpansExactlyItsOwnActuals(t *testing.T) {
 		t.Fatal("no multi-actual call was exercised, so member ordering is unmeasured")
 	}
 }
+
+// TestEveryMountedCallActualsParentPublishesCallsOwnCoordinate is the
+// correspondence law of Value's per-call parent row.
+//
+// The parent row and Call's mounted-call directory enumerate the same
+// subjects, and the row states which of Call's rows it is by carrying the
+// coordinate Call published for that occurrence. Call is the earliest owner of
+// that coordinate, so the seal copies it once instead of leaving every rule
+// keyed by a mounted call to resolve the occurrence against Call again - which
+// is the re-correlation the parent row exists to remove.
+//
+// The claim has to hold for every sealed row, not most of them: a parent that
+// published no coordinate, or one Call does not own, would make the
+// correspondence a coincidence of two independent enumerations.
+func TestEveryMountedCallActualsParentPublishesCallsOwnCoordinate(t *testing.T) {
+	const source = "local function two(a, b)\n" +
+		"\treturn a\n" +
+		"end\n" +
+		"two(1, 2)\n" +
+		"two(3, 4)\n"
+
+	fixture := buildMountedCallArgumentFixture(t, source)
+	values, calls := fixture.values, fixture.calls
+
+	parents := values.MountedCallActualsCount()
+	if parents == 0 {
+		t.Fatal("no mounted call actual parent rows were sealed, so this law measures nothing")
+	}
+	for index := 0; index < parents; index++ {
+		parent, parentOK := values.MountedCallActualsAt(index)
+		if !parentOK {
+			t.Fatalf("parent %d is not addressable in its own directory", index)
+		}
+		module, moduleOK := parent.Module()
+		callID, callIDOK := parent.CallID()
+		coordinate, coordinateOK := parent.CallCoordinate()
+		if !moduleOK || !callIDOK || !coordinateOK {
+			t.Fatalf("parent %d publishes module=%t call=%t coordinate=%t", index, moduleOK, callIDOK, coordinateOK)
+		}
+		if !calls.OwnsCallCoordinate(coordinate) {
+			t.Fatalf("parent %d publishes a coordinate Call does not own", index)
+		}
+		published, publishedOK := calls.CallCoordinateForOccurrence(module, callID)
+		if !publishedOK || published != coordinate {
+			t.Fatalf("parent %d coordinate = %#v, want Call's own %#v/%t", index, coordinate, published, publishedOK)
+		}
+	}
+}

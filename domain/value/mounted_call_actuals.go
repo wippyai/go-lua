@@ -1,6 +1,9 @@
 package value
 
-import "github.com/wippyai/go-lua/analysis/identity"
+import (
+	"github.com/wippyai/go-lua/analysis/identity"
+	calldomain "github.com/wippyai/go-lua/domain/call"
+)
 
 // mountedCallActualsKey is the parent address of one mounted call's ordered
 // actual list. It is the (module, call) prefix of the actual rows' own key, so
@@ -25,6 +28,10 @@ type MountedCallActuals struct {
 	schema  *Schema
 	key     mountedCallActualsKey
 	content identity.ContentID
+	// coordinate is the mounted-call coordinate Call published for this call.
+	// Call is the earliest owner of it, so the seal copies it here rather than
+	// leaving every consumer to resolve the occurrence against Call again.
+	coordinate calldomain.CallCoordinate
 	// first is the dense ordinal of actual zero in mountedCallArgumentOrder and
 	// count is the member census. The rows are contiguous because they are
 	// admitted in per-call actual order by one pass of sealMountedCallArguments.
@@ -34,7 +41,7 @@ type MountedCallActuals struct {
 
 func (row MountedCallActuals) valid() bool {
 	return row.schema != nil && row.schema.Valid() && row.key.module.Available() &&
-		row.key.call.Available() && row.content.Available() &&
+		row.key.call.Available() && row.content.Available() && row.coordinate.Valid() &&
 		uint64(row.first)+uint64(row.count) <= uint64(len(row.schema.mountedCallArgumentOrder))
 }
 
@@ -118,6 +125,17 @@ func (row MountedCallActuals) CallID() (identity.ContentID, bool) {
 	return row.key.call, true
 }
 
+// CallCoordinate returns the mounted-call coordinate Call published for this
+// call. It is the key this parent row's order and Call's own candidate order
+// agree on, which is what lets a rule keyed by a mounted call address these
+// actuals without re-correlating the two directories.
+func (row MountedCallActuals) CallCoordinate() (calldomain.CallCoordinate, bool) {
+	if !row.valid() || !row.coordinate.Valid() {
+		return calldomain.CallCoordinate{}, false
+	}
+	return row.coordinate, true
+}
+
 // MemberCount is the census of this call's ordered actual list.
 func (row MountedCallActuals) MemberCount() int {
 	if !row.valid() {
@@ -164,7 +182,14 @@ func (builder *valueBuilder) addMountedCallActuals(module, call identity.Content
 	if !content.Available() {
 		return false
 	}
-	row := MountedCallActuals{schema: builder.Schema, key: key, content: content, first: uint32(first), count: count}
+	// The coordinate is Call's, and its absence is a refusal: a call whose
+	// occurrence Call does not name has no coordinate to publish, and a zero
+	// one would be a default standing in for a fact nobody derived.
+	coordinate, coordinateOK := builder.callCoordinateForOccurrence(module, call)
+	if !coordinateOK {
+		return false
+	}
+	row := MountedCallActuals{schema: builder.Schema, key: key, content: content, coordinate: coordinate, first: uint32(first), count: count}
 	// Every ordinal the parent will answer must already be the directory's row
 	// for this call at that ordinal. Proving the span here is what lets a
 	// consumer address a member by (parent, ordinal) without re-correlating.
