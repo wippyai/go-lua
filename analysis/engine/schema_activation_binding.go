@@ -2,6 +2,28 @@ package engine
 
 import "github.com/wippyai/go-lua/analysis/engine/internal/composition"
 
+// The A form's cold geometry, decided from the declaration.
+//
+// A structural activation rule genuinely has two reads: one exact read at the
+// trigger coordinate, and one selected read over the candidate relation whose
+// members are the branches it chooses among. That is what the sealed execution
+// form table classifies the form by - execution.DeclaredForm derives
+// FormActivation from a structural publication with a selected read and a
+// transport vector - and it is what the generated A form declares.
+//
+// The two hand-declared entries below are the other shape. Neither declares the
+// candidate selection: the fold walks the branches from a column its own
+// package sealed at bind - domain/call/activation's route table - which is the
+// candidate relation restated by hand rather than declared as the join it is.
+// So one form has two cold shapes, and the hand one is the shape that changes.
+//
+// It changes when the generated activation lane can execute. The read side of
+// that change is what the reconciliation actually costs: an activation member
+// with a selected read needs the anchored selected-read surface at activation
+// issuance, and the candidate relation needs a member-relation owner on the
+// axis the trigger is indexed by. Until then these entries stay, and they stay
+// named as the shape that is not the form's own.
+
 // HotActivationSpec is the Link-local implementation half of one cold
 // SchemaActivationRuleSlot. The slot supplies semantic shape and activation
 // family; this value supplies only the typed fold callback.
