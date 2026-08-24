@@ -207,9 +207,12 @@ func TestSelectedReadRefusesMembersOutsideTheDeclaredOrder(t *testing.T) {
 // the unwritten coordinate at all.
 func TestSelectedReadDeliversTheFactorDefaultAtAnUnwrittenCoordinate(t *testing.T) {
 	fixture := newSelectedFixture(t)
-	const factorDefault uint64 = 41
+	factorDefault, defaultOK := fixture.binding.Default()
+	if !defaultOK {
+		t.Fatal("fixture default")
+	}
 	read, ok := NewSelectedRead(fixture.binding, 0, selectedContract(ruleprogram.OrderCanonical, ruleprogram.SparseDefault),
-		NewReadCellPolicy(true, factorDefault, ^uint64(0)))
+		ReadCellPolicy[uint64]{})
 	if !ok {
 		t.Fatal("selected read")
 	}
@@ -236,14 +239,17 @@ func TestSelectedReadDeliversTheFactorDefaultAtAnUnwrittenCoordinate(t *testing.
 // branch on which member was opaque.
 func TestSelectedReadWidenedDeliversTopAtEveryMember(t *testing.T) {
 	fixture := newSelectedFixture(t)
-	const factorTop = ^uint64(0)
+	factorTop, topOK := fixture.binding.Top()
+	if !topOK {
+		t.Fatal("fixture top")
+	}
 	propagating := ruleplan.ReadContract{
 		Order:        ruleprogram.OrderCanonical,
 		Sparse:       ruleprogram.SparseDefault,
 		OnOpaque:     ruleprogram.OnOpaquePropagateAuthenticated,
 		Multiplicity: ruleprogram.MultiplicityOne,
 	}
-	read, ok := NewSelectedRead(fixture.binding, 0, propagating, NewReadCellPolicy(true, 41, factorTop))
+	read, ok := NewSelectedRead(fixture.binding, 0, propagating, ReadCellPolicy[uint64]{})
 	if !ok {
 		t.Fatal("selected read")
 	}
@@ -262,15 +268,21 @@ func TestSelectedReadWidenedDeliversTopAtEveryMember(t *testing.T) {
 	}
 }
 
-// TestSelectedReadOnOpaqueGovernsWideningNotTheCaller states the OnOpaque
-// clause itself: a PropagateAuthenticated contract widens the sealed read
-// even when the caller's own policy was never widened, and a Refuse contract
-// never widens even when the caller's policy was. The declared clause is the
-// one authority over the widened arm; a caller-sealed policy has no
-// competing vote on it.
-func TestSelectedReadOnOpaqueGovernsWideningNotTheCaller(t *testing.T) {
+// TestSelectedReadPolicyIsTotalOverTheContractNotTheCaller states the whole
+// derivation law: the sealed policy is declaredSelectedPolicy's function of
+// the contract and the binding's own Default/Top, and the policy argument a
+// caller passes is not read at all - every read below is sealed with the
+// zero ReadCellPolicy, and the delivered cells still come out exactly as the
+// contract and binding declare. OnOpaque is the same single authority over
+// the widened arm proven here as a corollary: PropagateAuthenticated widens
+// even though nothing was ever widened by a caller, and Refuse never widens.
+func TestSelectedReadPolicyIsTotalOverTheContractNotTheCaller(t *testing.T) {
 	fixture := newSelectedFixture(t)
-	const factorDefault, factorTop = uint64(41), ^uint64(0)
+	factorDefault, defaultOK := fixture.binding.Default()
+	factorTop, topOK := fixture.binding.Top()
+	if !defaultOK || !topOK {
+		t.Fatal("fixture algebra endpoints")
+	}
 
 	propagating := ruleplan.ReadContract{
 		Order:        ruleprogram.OrderCanonical,
@@ -278,9 +290,7 @@ func TestSelectedReadOnOpaqueGovernsWideningNotTheCaller(t *testing.T) {
 		OnOpaque:     ruleprogram.OnOpaquePropagateAuthenticated,
 		Multiplicity: ruleprogram.MultiplicityOne,
 	}
-	// The caller's policy is deliberately never widened. A declared
-	// PropagateAuthenticated contract must widen it anyway.
-	read, ok := NewSelectedRead(fixture.binding, 0, propagating, NewReadCellPolicy(true, factorDefault, factorTop))
+	read, ok := NewSelectedRead(fixture.binding, 0, propagating, ReadCellPolicy[uint64]{})
 	if !ok {
 		t.Fatal("selected read")
 	}
@@ -294,14 +304,15 @@ func TestSelectedReadOnOpaqueGovernsWideningNotTheCaller(t *testing.T) {
 	}
 	for index := range coordinates {
 		if !cells[index].Present || cells[index].Value != factorTop {
-			t.Fatalf("member %d = %d, want the declared OnOpaque clause to widen a caller policy that never was", index, cells[index].Value)
+			t.Fatalf("member %d = %d, want the declared OnOpaque clause to widen to the binding's own Top with no caller policy at all", index, cells[index].Value)
 		}
 	}
 
-	// The reverse: a Refuse contract never widens even when the caller's own
-	// policy was already widened before it was sealed.
+	// The reverse: a Refuse contract never widens, and its FactorDefault
+	// clause fills an unwritten coordinate from the binding's own Default -
+	// again with no caller policy contributing anything.
 	refusing := selectedContract(ruleprogram.OrderCanonical, ruleprogram.SparseDefault)
-	read, ok = NewSelectedRead(fixture.binding, 0, refusing, NewReadCellPolicy(true, factorDefault, factorTop).Widen())
+	read, ok = NewSelectedRead(fixture.binding, 0, refusing, ReadCellPolicy[uint64]{})
 	if !ok {
 		t.Fatal("selected read")
 	}
@@ -312,7 +323,7 @@ func TestSelectedReadOnOpaqueGovernsWideningNotTheCaller(t *testing.T) {
 	}
 	for index := range coordinates {
 		if !cells[index].Present || cells[index].Value != factorDefault {
-			t.Fatalf("member %d = %d, want the declared Refuse clause to hold the Factor default, not the caller's own widened policy", index, cells[index].Value)
+			t.Fatalf("member %d = %d, want the binding's own Default with no caller policy contributing anything", index, cells[index].Value)
 		}
 	}
 }

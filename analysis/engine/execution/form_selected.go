@@ -50,21 +50,51 @@ type SelectedRead[K scalar.Key, V any] struct {
 	policy       ReadCellPolicy[V]
 }
 
+// declaredSelectedPolicy derives one selected read's whole materialization
+// policy from its declared contract and the bound Factor's own algebra
+// endpoints. Sparse and OnOpaque are the only two clauses that can seal a
+// substitution, so the derivation is total over them: a FactorDefault read
+// fills an unwritten coordinate from the Factor's own Default, and a
+// PropagateAuthenticated read widens to the Factor's own Top. Neither
+// endpoint is invented here - both come from the same binding the read is
+// sealed against - so the policy is a function of the contract, not a second
+// declaration a caller could disagree with it about.
+func declaredSelectedPolicy[K scalar.Key, V any](binding *factbinding.Binding[K, V], contract ruleplan.ReadContract) (ReadCellPolicy[V], bool) {
+	var defaulted bool
+	var fallback, top V
+	if contract.Sparse == ruleprogram.SparseDefault {
+		value, ok := binding.Default()
+		if !ok {
+			return ReadCellPolicy[V]{}, false
+		}
+		defaulted, fallback = true, value
+	}
+	if contract.OnOpaque == ruleprogram.OnOpaquePropagateAuthenticated {
+		value, ok := binding.Top()
+		if !ok {
+			return ReadCellPolicy[V]{}, false
+		}
+		top = value
+	}
+	policy := NewReadCellPolicy(defaulted, fallback, top)
+	policy.widened = contract.OnOpaque == ruleprogram.OnOpaquePropagateAuthenticated
+	return policy, true
+}
+
 // NewSelectedRead seals one selected read against a typed binding and the
 // contract its plan row declared. Summary and Complete clauses are refused
 // here: this read delivers one cell per member, and a multiplicity that says
 // otherwise is a contract this read cannot carry.
 //
-// The declared OnOpaque clause governs the sealed policy's widened arm
-// directly: a PropagateAuthenticated contract widens the policy regardless of
-// what the caller passed, and a Refuse contract never does. OnOpaque is the
-// one authority over widening; a caller-sealed policy carries no competing
-// vote on it.
+// The sealed policy is declaredSelectedPolicy's derivation over contract and
+// binding; the policy argument is not read. A caller cannot seal a
+// substitution the contract did not declare, and the contract's Sparse and
+// OnOpaque clauses are the one authority over what a delivered cell holds.
 func NewSelectedRead[K scalar.Key, V any](
 	binding *factbinding.Binding[K, V],
 	port uint16,
 	contract ruleplan.ReadContract,
-	policy ReadCellPolicy[V],
+	_ ReadCellPolicy[V],
 ) (SelectedRead[K, V], bool) {
 	if binding == nil || !contract.Order.Available() || !contract.Sparse.Available() ||
 		!contract.OnOpaque.Available() || !contract.Multiplicity.Available() {
@@ -76,7 +106,10 @@ func NewSelectedRead[K scalar.Key, V any](
 	if contract.Multiplicity == ruleprogram.MultiplicityMany {
 		return SelectedRead[K, V]{}, false
 	}
-	policy.widened = contract.OnOpaque == ruleprogram.OnOpaquePropagateAuthenticated
+	policy, sealed := declaredSelectedPolicy[K, V](binding, contract)
+	if !sealed {
+		return SelectedRead[K, V]{}, false
+	}
 	return SelectedRead[K, V]{
 		binding:      binding,
 		port:         port,

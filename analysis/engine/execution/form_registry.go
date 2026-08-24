@@ -340,12 +340,15 @@ func ForeignMemberExactRead[K scalar.Key, V any](foreign ForeignFactor, dense ui
 // The members are supplied by the caller, as they are for a plane-local
 // selected read; what this seals is the typed read boundary, not the
 // selection. A handle typed otherwise is refused rather than reinterpreted.
-func ForeignSelectedRead[K scalar.Key, V any](foreign ForeignFactor, port uint16, contract ruleplan.ReadContract, policy ReadCellPolicy[V]) (SelectedRead[K, V], bool) {
+//
+// The sealed policy is declaredSelectedPolicy's derivation over contract and
+// binding; the policy argument is not read.
+func ForeignSelectedRead[K scalar.Key, V any](foreign ForeignFactor, port uint16, contract ruleplan.ReadContract, _ ReadCellPolicy[V]) (SelectedRead[K, V], bool) {
 	typed, ok := foreign.(foreignFactor[K, V])
 	if !ok {
 		return SelectedRead[K, V]{}, false
 	}
-	return NewSelectedRead(typed.binding, port, contract, policy)
+	return NewSelectedRead(typed.binding, port, contract, ReadCellPolicy[V]{})
 }
 
 // ForeignRowExactRead seals one declared exact join against the foreign
@@ -517,12 +520,13 @@ func (plane FormPlane[K, V]) ExactRead(unit carrier.Unit, input uint16) (ExactRe
 }
 
 // SelectedRead seals one selected read of this plane under the contract its
-// plan row declared and the materialization the read boundary derived.
-func (plane FormPlane[K, V]) SelectedRead(input uint16, contract ruleplan.ReadContract, policy ReadCellPolicy[V]) (SelectedRead[K, V], bool) {
+// plan row declared. The sealed policy is declaredSelectedPolicy's
+// derivation over contract and binding; the policy argument is not read.
+func (plane FormPlane[K, V]) SelectedRead(input uint16, contract ruleplan.ReadContract, _ ReadCellPolicy[V]) (SelectedRead[K, V], bool) {
 	if !plane.Valid() {
 		return SelectedRead[K, V]{}, false
 	}
-	return NewSelectedRead(plane.binding, input, contract, policy)
+	return NewSelectedRead(plane.binding, input, contract, ReadCellPolicy[V]{})
 }
 
 // RouteWrite seals one bounded routed write of this plane.

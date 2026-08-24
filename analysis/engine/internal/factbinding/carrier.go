@@ -116,6 +116,16 @@ func (binding *Binding[K, V]) Default() (V, bool) {
 	return binding.algebra.Default()
 }
 
+// Top is the Factor's declared lattice top: the sound over-approximation of
+// any value an opaque alternative could have written.
+func (binding *Binding[K, V]) Top() (V, bool) {
+	if binding == nil || binding.algebra == nil {
+		var zero V
+		return zero, false
+	}
+	return binding.algebra.Top()
+}
+
 // Equal is the Factor's declared value equality.
 func (binding *Binding[K, V]) Equal(left, right V) bool {
 	return binding != nil && binding.algebra != nil && binding.algebra.Equal(left, right)
