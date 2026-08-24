@@ -26,18 +26,21 @@ join[0].read         form=exact input=0 axis=axis/call point-bound=bound
 join[0].relation     axis/call:call/mounted-call/facts
 join[0].key          axis/call:call/mounted-call/fact-key
 join[0].predicate    -
+join[0].parent       -
 join[0].sources      candidate
 join[0].contract     order=canonical sparse=explicit on-opaque=refuse multiplicity=one denominator=-
 join[1].read         form=selected input=1 axis=axis/value point-bound=self
-join[1].relation     axis/value:value/formal-freeze/actual-members
-join[1].key          axis/value:value/formal-freeze/actual-key
-join[1].predicate    axis/value:value/formal-freeze/actual-tag
+join[1].relation     axis/value:value/mounted-call/actual-members
+join[1].key          axis/value:value/mounted-call/actual-key
+join[1].predicate    axis/value:value/mounted-call/actual-tag
+join[1].parent       -
 join[1].sources      candidate
 join[1].contract     order=by-tag sparse=default on-opaque=refuse multiplicity=one denominator=denominator/coordinates/value
 join[2].read         form=selected input=2 axis=axis/heap point-bound=self
 join[2].relation     axis/heap:heap/formal-freeze/routes
 join[2].key          axis/heap:heap/formal-freeze/route-key
 join[2].predicate    -
+join[2].parent       -
 join[2].sources      candidate, join 0, join 1
 join[2].contract     order=canonical sparse=default on-opaque=refuse multiplicity=one denominator=denominator/coordinates/heap
 carry                mode=identity input=2 transform=-
