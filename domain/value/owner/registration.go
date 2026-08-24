@@ -9,6 +9,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/schema/programmount"
 	"github.com/wippyai/go-lua/analysis/schema/structure"
 	"github.com/wippyai/go-lua/analysis/schema/vocabulary"
+	calldomain "github.com/wippyai/go-lua/domain/call"
 	"github.com/wippyai/go-lua/domain/heap"
 	"github.com/wippyai/go-lua/domain/value"
 )
@@ -25,6 +26,7 @@ type axisInputs interface {
 	MountedArtifactCount() int
 	MountedArtifactAt(index int) (programmount.MountedArtifact, bool)
 	HeapInput() heap.Schema
+	CallInput() *calldomain.Algebra
 	ValueInput() *value.Schema
 	StructureInput() structure.Table
 }
@@ -32,7 +34,9 @@ type axisInputs interface {
 // mountValueSchema seals this Link's value universe from the mounted artifacts.
 // Each mount is qualified by its own module key, so two occurrences of one
 // reusable Program artifact stay distinct coordinates and a repeated module key
-// is rejected before the seal opens.
+// is rejected before the seal opens. Call's sealed algebra is the peer
+// authority a call-result candidate row copies its mounted-call coordinate
+// from, so it is supplied to the seal rather than reopened by a hot rule.
 func mountValueSchema[A axisInputs](inputs A) (*value.Schema, value.SealFailure, bool) {
 	source := inputs.LinkSource()
 	count := inputs.MountedArtifactCount()
@@ -55,7 +59,7 @@ func mountValueSchema[A axisInputs](inputs A) (*value.Schema, value.SealFailure,
 		seen[row.ModuleKey] = struct{}{}
 		mounts = append(mounts, row)
 	}
-	schema, failure := value.SealWithFailure(source, inputs.HeapInput(), mounts, inputs.StructureInput())
+	schema, failure := value.SealWithFailure(source, inputs.HeapInput(), inputs.CallInput(), mounts, inputs.StructureInput())
 	if failure != value.SealFailureNone {
 		return nil, failure, false
 	}
@@ -73,10 +77,11 @@ func AxisEntry[A axisInputs]() axis.Spec[A] {
 		Lifetime:    axis.LifetimeLink,
 		Mutability:  axis.MutabilitySolve,
 		Concurrency: axis.ConcurrencySingleWriter,
-		// The value universe is sealed over the heap family, so the heap axis
-		// is this axis's declared dependency and its authority is present
-		// before this mount opens.
-		Dependencies: []schema.Key{"heap"},
+		// The value universe is sealed over the heap family and over Call's
+		// mounted-call coordinate projection, so both are this axis's declared
+		// dependencies and both authorities are present before this mount
+		// opens.
+		Dependencies: []schema.Key{"heap", "call"},
 		// The value factor's facts are published as one column, written by this
 		// axis's own principal: the lane whose rules write the factor is the
 		// lane the engine admits to fill the column a consumer reads it out of.

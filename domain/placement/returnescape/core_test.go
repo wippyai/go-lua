@@ -12,12 +12,14 @@ import (
 	linkproject "github.com/wippyai/go-lua/analysis/program/link/project"
 	"github.com/wippyai/go-lua/analysis/program/target/compiler"
 	"github.com/wippyai/go-lua/analysis/program/target/declaration"
+	"github.com/wippyai/go-lua/analysis/program/target/vocabulary"
 	"github.com/wippyai/go-lua/analysis/schema"
 	"github.com/wippyai/go-lua/analysis/schema/ingress"
 	programschema "github.com/wippyai/go-lua/analysis/schema/program"
 	"github.com/wippyai/go-lua/analysis/schema/programmount"
 	"github.com/wippyai/go-lua/analysis/schema/seal"
 	"github.com/wippyai/go-lua/analysis/schema/structure"
+	"github.com/wippyai/go-lua/domain/call/calltest"
 	"github.com/wippyai/go-lua/domain/heap"
 	"github.com/wippyai/go-lua/domain/materialization"
 	"github.com/wippyai/go-lua/domain/placement"
@@ -251,7 +253,11 @@ func newReturnPlanFixture(t testing.TB) returnPlanFixture {
 	if err != nil {
 		t.Fatal(err)
 	}
-	contract, err := compiler.Seal(&declaration.Spec{Semantics: domaincontract.NewSemantics()})
+	requireOperation, requireErr := testfixture.ScopedRequireOperation()
+	if requireErr != nil {
+		t.Fatal(requireErr)
+	}
+	contract, err := compiler.Seal(&declaration.Spec{Semantics: domaincontract.NewSemantics(), Operations: []vocabulary.OperationSpec{requireOperation}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -287,7 +293,7 @@ func newReturnPlanFixture(t testing.TB) returnPlanFixture {
 		t.Fatal("value artifact mount")
 	}
 	heapSchema, heapFailure := heap.SealWithArtifacts(linked, []programmount.MountedArtifact{mount})
-	values, valueFailure := valuedomain.SealWithFailure(linked, heapSchema, []programmount.MountedArtifact{valueMount}, structural)
+	values, valueFailure := valuedomain.SealWithFailure(linked, heapSchema, calltest.MustSeal(t, linked, []programmount.MountedArtifact{valueMount}), []programmount.MountedArtifact{valueMount}, structural)
 	if heapFailure != heap.SealFailureNone || valueFailure != valuedomain.SealFailureNone || values == nil {
 		t.Fatalf("schema seal heap=%v value=%v", heapFailure, valueFailure)
 	}

@@ -19,6 +19,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/program/target/vocabulary"
 	"github.com/wippyai/go-lua/analysis/schema/program/calltarget"
 	"github.com/wippyai/go-lua/analysis/schema/programmount"
+	calldomain "github.com/wippyai/go-lua/domain/call"
 	"github.com/wippyai/go-lua/domain/materialization"
 	"github.com/wippyai/go-lua/domain/runtimekind"
 )
@@ -575,6 +576,23 @@ type valueBuilder struct {
 	// is construction-only: the published Value Schema retains only the
 	// presealed atom rows and projections, never a second catalog reference.
 	structural structure.Table
+	// calls is Call's sealed algebra for the same Link. Value reads exactly
+	// one published projection from it - the mounted-call coordinate of a
+	// call-result candidate row - and copies that coordinate into the row, so
+	// no hot rule reopens Call to rediscover the occurrence it already owns.
+	calls *calldomain.Algebra
+}
+
+// callCoordinateForOccurrence copies Call's published coordinate for one
+// mounted occurrence. Absence is a refusal: a call-result candidate whose
+// occurrence Call does not name has no coordinate to publish, and a zero
+// coordinate would be a default standing in for a fact nobody derived.
+func (builder *valueBuilder) callCoordinateForOccurrence(module, occurrence identity.ContentID) (calldomain.CallCoordinate, bool) {
+	if builder == nil || builder.calls == nil {
+		return calldomain.CallCoordinate{}, false
+	}
+	coordinate, ok := builder.calls.CallCoordinateForOccurrence(module, occurrence)
+	return coordinate, ok && builder.calls.OwnsCallCoordinate(coordinate)
 }
 
 func (builder *valueBuilder) sealProject() *linkproject.Component   { return builder.project }
@@ -833,8 +851,15 @@ func (failure SealFailure) String() string {
 // Seal derives the complete finite Value alternative vocabulary from the
 // already-sealed Link.  It does not inspect AST/binder state, materialize a
 // candidate product, or create a second raw Program identity.
-func SealWithFailure(source *link.Link, heaps heap.Schema, mounts []programmount.MountedArtifact, structural structure.Table) (*Schema, SealFailure) {
+func SealWithFailure(source *link.Link, heaps heap.Schema, calls *calldomain.Algebra, mounts []programmount.MountedArtifact, structural structure.Table) (*Schema, SealFailure) {
 	if source == nil || !source.ContentID().Available() || !heaps.LinkOwner().Matches(source.OwnerCapability()) || heaps.LinkContentID() != source.ContentID() || len(mounts) != source.Project().Mounts().Count() || structural.Count(structure.CategoryRuntimeKind) != int(runtimekind.Count)-1 {
+		return nil, SealFailureInput
+	}
+	// Call is this seal's declared peer authority. Its coordinate projection is
+	// the earliest owner of the mounted-call coordinate a call-result candidate
+	// row publishes, so the algebra is required for the same Link rather than
+	// reconstructed here.
+	if calls == nil || !calls.Valid() || !calls.LinkOwner().Matches(source.OwnerCapability()) {
 		return nil, SealFailureInput
 	}
 	artifacts := make(map[identity.ContentID]programmount.MountedArtifact, len(mounts))
@@ -900,7 +925,7 @@ func SealWithFailure(source *link.Link, heaps heap.Schema, mounts []programmount
 		typeRefs:                       make(map[identity.ContentID]uint32),
 		capabilityID:                   make(map[identity.ContentID]uint32),
 	}
-	builder := &valueBuilder{Schema: schema, project: source.Project(), boundary: source.Boundary(), host: source.Host(), module: source.Module(), moduleFacts: make(map[moduleLoadFactKey]Value), artifacts: artifacts, structural: structural}
+	builder := &valueBuilder{Schema: schema, project: source.Project(), boundary: source.Boundary(), host: source.Host(), module: source.Module(), moduleFacts: make(map[moduleLoadFactKey]Value), artifacts: artifacts, structural: structural, calls: calls}
 	if !builder.sealMountedCallResultGeometry() {
 		return nil, SealFailureComputation
 	}

@@ -9,6 +9,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/schema"
 	programschema "github.com/wippyai/go-lua/analysis/schema/program"
 	"github.com/wippyai/go-lua/analysis/schema/programmount"
+	"github.com/wippyai/go-lua/domain/call/calltest"
 	callowner "github.com/wippyai/go-lua/domain/call/owner"
 	"github.com/wippyai/go-lua/domain/composite"
 	"github.com/wippyai/go-lua/domain/composite/snapshottest"
@@ -87,7 +88,7 @@ func TestResultAliasIssuesExactlyTheResultSlotOperandsItSeals(t *testing.T) {
 	if !structuralOK {
 		t.Fatal("structure vocabulary")
 	}
-	values, valueFailure := valuedomain.SealWithFailure(linked, heaps, []programmount.MountedArtifact{mount}, structural)
+	values, valueFailure := valuedomain.SealWithFailure(linked, heaps, calltest.MustSeal(t, linked, []programmount.MountedArtifact{mount}), []programmount.MountedArtifact{mount}, structural)
 	if heapFailure != heapdomain.SealFailureNone || valueFailure != valuedomain.SealFailureNone || values == nil {
 		t.Fatalf("seal schemas heap=%s value=%s", heapFailure, valueFailure)
 	}

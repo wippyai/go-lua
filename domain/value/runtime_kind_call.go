@@ -3,6 +3,7 @@ package value
 import (
 	"github.com/wippyai/go-lua/analysis/identity"
 	flowkind "github.com/wippyai/go-lua/analysis/program/flow/kind"
+	calldomain "github.com/wippyai/go-lua/domain/call"
 )
 
 // RuntimeKindCall is Value's owner-fenced interpretation of one strict
@@ -19,6 +20,10 @@ type RuntimeKindCall struct {
 	write      Coordinate
 	endpoints  uint32
 	call       identity.ContentID
+	// coordinate is Call's own coordinate for the mounted occurrence this row
+	// interprets, copied at seal. A refinement row names the guarded source
+	// call, so the coordinate is that call's.
+	coordinate calldomain.CallCoordinate
 	op         flowkind.BinaryOp
 	truth      bool
 	refinement bool
@@ -39,11 +44,23 @@ func (row RuntimeKindCall) valid() bool {
 	if row.schema == nil || !row.key.module.Available() || !row.key.occurrence.Available() || !row.content.Available() {
 		return false
 	}
+	if !row.coordinate.Valid() {
+		return false
+	}
 	if row.refinement {
 		return row.result.Valid() && row.input.Valid() && row.call.Available() && row.comparison.Valid() && row.write.Valid() &&
 			(row.op == flowkind.BinaryEqual || row.op == flowkind.BinaryNotEqual)
 	}
 	return row.result.Valid() && row.input.Valid() && row.write.Valid()
+}
+
+// Call is the mounted-call coordinate Call published for the occurrence this
+// row interprets.
+func (row RuntimeKindCall) Call() (calldomain.CallCoordinate, bool) {
+	if !row.valid() {
+		return calldomain.CallCoordinate{}, false
+	}
+	return row.coordinate, true
 }
 
 // OwnsRuntimeKindCall reports whether row was issued by this exact Value

@@ -4,7 +4,9 @@ import (
 	"testing"
 
 	"github.com/wippyai/go-lua/analysis/program/target/vocabulary"
+	"github.com/wippyai/go-lua/domain/call/calltest"
 	"github.com/wippyai/go-lua/domain/composite/snapshottest"
+	"github.com/wippyai/go-lua/internal/testfixture"
 
 	"github.com/wippyai/go-lua/analysis/identity"
 	"github.com/wippyai/go-lua/analysis/lua/lower"
@@ -43,13 +45,17 @@ func portableAnyTypes(count int) []schematype.Type {
 
 func selectorLawContract(t testing.TB) (*contract.Contract, vocabulary.Operation) {
 	t.Helper()
+	requireOperation, requireErr := testfixture.ScopedRequireOperation()
+	if requireErr != nil {
+		t.Fatal(requireErr)
+	}
 	contract, err := compiler.Seal(&declaration.Spec{Semantics: domaincontract.NewSemantics(), Operations: []vocabulary.OperationSpec{{
 		Bindings:   []vocabulary.BindingSpec{{Namespace: vocabulary.BindingBuiltin, Member: []string{"send"}}},
 		ValuesVars: 1,
 		Input:      vocabulary.ValuesSpec{Fixed: portableAnyTypes(2), Tail: vocabulary.ValuesVariable, Var: 0},
 		Outcomes:   []vocabulary.OutcomeSpec{{Kind: flowkind.OutcomeNormal, Values: vocabulary.ValuesSpec{Tail: vocabulary.ValuesClosed}}},
 		Effects:    vocabulary.RowSpec{Tail: vocabulary.RowClosed},
-	}}})
+	}, requireOperation}})
 	if err != nil || contract == nil {
 		t.Fatalf("seal selector Target: %v", err)
 	}
@@ -129,7 +135,7 @@ func selectorLawSchemaSource(t testing.TB, contract *contract.Contract, label, s
 	heapMount, heapMountOK := programmount.MountedArtifactFromSnapshot(snapshot, module)
 	valueMount, valueMountOK := programmount.MountedArtifactFromSnapshot(snapshot, module)
 	heaps, heapFailure := heapdomain.SealWithArtifacts(linked, []programmount.MountedArtifact{heapMount})
-	values, valueFailure := valuedomain.SealWithFailure(linked, heaps, []programmount.MountedArtifact{valueMount}, structural)
+	values, valueFailure := valuedomain.SealWithFailure(linked, heaps, calltest.MustSeal(t, linked, []programmount.MountedArtifact{valueMount}), []programmount.MountedArtifact{valueMount}, structural)
 	if !structuralOK || !heapMountOK || !valueMountOK || heapFailure != heapdomain.SealFailureNone || valueFailure != valuedomain.SealFailureNone || values == nil {
 		t.Fatalf("selector Value seal structural=%t heapMount=%t valueMount=%t heap=%v value=%v", structuralOK, heapMountOK, valueMountOK, heapFailure, valueFailure)
 	}

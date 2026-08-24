@@ -72,8 +72,7 @@ func BindHot(fragment *SchemaFragment, values *valueowner.HotOwner, calls *callo
 		return nil, false
 	}
 	callRead, callOK := valueowner.AddSelectedRuleDirectExactRead(implementation, fragment.callRead, calls.FactorRef(), func(row valuedomain.ModuleLoadCall) (uint64, bool) {
-		module, occurrence, ok := row.CallOccurrence()
-		return projectCall(calls.Algebra(), module, occurrence, ok)
+		return projectCall(values.Schema(), row)
 	})
 	valueRead, valueOK := valueowner.AddSelectedRuleDirectExactRead(implementation, fragment.valueRead, values.FactorRef(), func(row valuedomain.ModuleLoadCall) (uint64, bool) {
 		return row.Endpoint(valuedomain.EndpointLeft)
@@ -117,14 +116,14 @@ func hotContent(schema *valuedomain.Schema, row valuedomain.ModuleLoadCall) (val
 	return row, [32]byte(id), true
 }
 
-// projectCall reads Call's sealed occurrence projection. The mounted inverse,
-// the detached identity, the application key and its dense slot are one
-// owner-issued row there.
-func projectCall(algebra *call.Algebra, module, occurrence identity.ContentID, ok bool) (uint64, bool) {
-	if !ok || algebra == nil {
+// projectCall reads the mounted-call coordinate the operand row publishes.
+// Call issued that coordinate while Value sealed the row, so the bind-time
+// projection is a field read on an owner-fenced operand.
+func projectCall(schema *valuedomain.Schema, row valuedomain.ModuleLoadCall) (uint64, bool) {
+	if schema == nil || !schema.OwnsModuleLoadCall(row) {
 		return 0, false
 	}
-	coordinate, coordinateOK := algebra.CallCoordinateForOccurrence(module, occurrence)
+	coordinate, coordinateOK := row.Call()
 	index, indexOK := coordinate.CoordinateIndex()
 	return index, coordinateOK && indexOK
 }

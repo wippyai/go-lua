@@ -7,6 +7,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/program/keyspace"
 	"github.com/wippyai/go-lua/analysis/schema/programmount"
 	"github.com/wippyai/go-lua/analysis/schema/structure"
+	"github.com/wippyai/go-lua/domain/call/calltest"
 	"github.com/wippyai/go-lua/domain/composite"
 	"github.com/wippyai/go-lua/domain/composite/snapshottest"
 	heapdomain "github.com/wippyai/go-lua/domain/heap"
@@ -54,7 +55,7 @@ func TestRuntimeKindNamesUsesTheSealedVocabulary(t *testing.T) {
 	if heapFailure != heapdomain.SealFailureNone {
 		t.Fatalf("runtime-kind names heap seal: %s", heapFailure)
 	}
-	values, valueFailure := valuedomain.SealWithFailure(linked, heaps, []programmount.MountedArtifact{valueMount}, structural)
+	values, valueFailure := valuedomain.SealWithFailure(linked, heaps, calltest.MustSeal(t, linked, []programmount.MountedArtifact{valueMount}), []programmount.MountedArtifact{valueMount}, structural)
 	if valueFailure != valuedomain.SealFailureNone || values == nil {
 		t.Fatalf("runtime-kind names value seal: %s", valueFailure)
 	}

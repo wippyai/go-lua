@@ -4,9 +4,11 @@ import (
 	"testing"
 
 	"github.com/wippyai/go-lua/analysis/program/link"
+	"github.com/wippyai/go-lua/analysis/schema"
 	"github.com/wippyai/go-lua/analysis/schema/axis"
 	"github.com/wippyai/go-lua/analysis/schema/programmount"
 	"github.com/wippyai/go-lua/analysis/schema/structure"
+	calldomain "github.com/wippyai/go-lua/domain/call"
 	"github.com/wippyai/go-lua/domain/heap"
 	"github.com/wippyai/go-lua/domain/value"
 )
@@ -18,6 +20,7 @@ type stubInputs struct {
 	source *link.Link
 	rows   []programmount.MountedArtifact
 	heaps  heap.Schema
+	calls  *calldomain.Algebra
 	values *value.Schema
 }
 
@@ -34,6 +37,8 @@ func (inputs stubInputs) MountedArtifactAt(index int) (programmount.MountedArtif
 }
 
 func (inputs stubInputs) HeapInput() heap.Schema { return inputs.heaps }
+
+func (inputs stubInputs) CallInput() *calldomain.Algebra { return inputs.calls }
 
 func (inputs stubInputs) ValueInput() *value.Schema { return inputs.values }
 
@@ -93,18 +98,28 @@ func TestValueAxisDeclaresItsOwnMount(t *testing.T) {
 // declares that edge and the mount phase supplies the heap authority because of
 // it rather than because of a hand-kept order.
 func TestValueAxisDeclaresItsHeapEdge(t *testing.T) {
+	assertValueAxisDependency(t, "heap")
+}
+
+// TestValueAxisDeclaresItsCallEdge states the same ownership for Call: a
+// call-result candidate row publishes Call's own mounted-call coordinate, so
+// the axis declares the edge that makes Call's algebra present before this
+// mount opens instead of a hot rule reaching for it at bind time.
+func TestValueAxisDeclaresItsCallEdge(t *testing.T) {
+	assertValueAxisDependency(t, "call")
+}
+
+func assertValueAxisDependency(t *testing.T, key schema.Key) {
+	t.Helper()
 	entry, ok := axis.New(AxisEntry[stubInputs]())
 	if !ok || entry == nil {
 		t.Fatalf("value axis declaration rejected")
 	}
-	declared := false
 	for index := 0; index < entry.DependencyCount(); index++ {
 		dependency, dependencyOK := entry.DependencyAt(index)
-		if dependencyOK && dependency == "heap" {
-			declared = true
+		if dependencyOK && dependency == key {
+			return
 		}
 	}
-	if !declared {
-		t.Fatalf("value axis seals over the heap family with no declared edge to it")
-	}
+	t.Fatalf("value axis seals over %s with no declared edge to it", key)
 }

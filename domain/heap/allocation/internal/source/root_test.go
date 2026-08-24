@@ -3,7 +3,9 @@ package source_test
 import (
 	"testing"
 
+	"github.com/wippyai/go-lua/domain/call/calltest"
 	"github.com/wippyai/go-lua/domain/composite/snapshottest"
+	"github.com/wippyai/go-lua/internal/testfixture"
 
 	lualower "github.com/wippyai/go-lua/analysis/lua/lower"
 	artifactcompiler "github.com/wippyai/go-lua/analysis/program/artifact/compiler"
@@ -12,6 +14,7 @@ import (
 	linkproject "github.com/wippyai/go-lua/analysis/program/link/project"
 	"github.com/wippyai/go-lua/analysis/program/target/compiler"
 	"github.com/wippyai/go-lua/analysis/program/target/declaration"
+	"github.com/wippyai/go-lua/analysis/program/target/vocabulary"
 	"github.com/wippyai/go-lua/analysis/schema/programmount"
 	"github.com/wippyai/go-lua/domain/composite"
 	heapdomain "github.com/wippyai/go-lua/domain/heap"
@@ -178,7 +181,7 @@ func TestClosedRevalidateForFencesExactSchemaInstances(t *testing.T) {
 	if !structuralOK {
 		t.Fatal("structure vocabulary")
 	}
-	otherValues, otherValuesFailure := valuedomain.SealWithFailure(linked, otherHeap, sourceValueMounts(t, linked, compilation), structural)
+	otherValues, otherValuesFailure := valuedomain.SealWithFailure(linked, otherHeap, calltest.MustSeal(t, linked, sourceValueMounts(t, linked, compilation)), sourceValueMounts(t, linked, compilation), structural)
 	var otherAllocation heapdomain.Key
 	for index := 0; index < otherHeap.KeyCount(); index++ {
 		candidate, candidateOK := otherHeap.KeyAt(index)
@@ -445,7 +448,11 @@ func sourceFixture(t testing.TB, text string) (heapdomain.Schema, *valuedomain.S
 	if err != nil {
 		t.Fatal(err)
 	}
-	contract, err := compiler.Seal(&declaration.Spec{Semantics: domaincontract.NewSemantics()})
+	requireOperation, requireErr := testfixture.ScopedRequireOperation()
+	if requireErr != nil {
+		t.Fatal(requireErr)
+	}
+	contract, err := compiler.Seal(&declaration.Spec{Semantics: domaincontract.NewSemantics(), Operations: []vocabulary.OperationSpec{requireOperation}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -463,7 +470,7 @@ func sourceFixture(t testing.TB, text string) (heapdomain.Schema, *valuedomain.S
 	if !structuralOK {
 		t.Fatal("structure vocabulary")
 	}
-	values, valueFailure := valuedomain.SealWithFailure(linked, heap, sourceValueMounts(t, linked, compilation), structural)
+	values, valueFailure := valuedomain.SealWithFailure(linked, heap, calltest.MustSeal(t, linked, sourceValueMounts(t, linked, compilation)), sourceValueMounts(t, linked, compilation), structural)
 	if heapFailure != heapdomain.SealFailureNone {
 		t.Fatal("Heap schema")
 	}

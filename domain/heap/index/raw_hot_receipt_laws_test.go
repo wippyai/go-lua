@@ -13,6 +13,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/engine"
 	"github.com/wippyai/go-lua/analysis/snapshot"
 	calldomain "github.com/wippyai/go-lua/domain/call"
+	"github.com/wippyai/go-lua/domain/call/calltest"
 	callowner "github.com/wippyai/go-lua/domain/call/owner"
 	"github.com/wippyai/go-lua/domain/composite"
 	heapdomain "github.com/wippyai/go-lua/domain/heap"
@@ -682,7 +683,7 @@ return b.source`)})
 	if !structuralOK {
 		t.Fatal("structure vocabulary")
 	}
-	valueSchema, valueFailure := valuedomain.SealWithFailure(linked, heapSchema, []programmount.MountedArtifact{valueMount}, structural)
+	valueSchema, valueFailure := valuedomain.SealWithFailure(linked, heapSchema, calltest.MustSeal(t, linked, []programmount.MountedArtifact{valueMount}), []programmount.MountedArtifact{valueMount}, structural)
 	calls, callsOK := calldomain.NewWithMountedArtifacts(linked, []calldomain.MountedArtifact{callMount})
 	packMount, packMountOK := programmount.MountedArtifactFromSnapshot(snapshottest.MustLower(t, artifact), module)
 	staticMount := staticdomain.MountedProgram{Program: snapshottest.MustMount(t, artifact, module).Program, ModuleID: module, NamespaceID: module}

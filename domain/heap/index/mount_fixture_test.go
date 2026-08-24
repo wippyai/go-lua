@@ -1,8 +1,11 @@
 package index_test
 
 import (
-	"github.com/wippyai/go-lua/domain/composite/snapshottest"
 	"testing"
+
+	"github.com/wippyai/go-lua/domain/call/calltest"
+	"github.com/wippyai/go-lua/domain/composite/snapshottest"
+	typeauthority "github.com/wippyai/go-lua/domain/type/authority"
 
 	programartifact "github.com/wippyai/go-lua/analysis/program/artifact"
 	artifactcompiler "github.com/wippyai/go-lua/analysis/program/artifact/compiler"
@@ -16,7 +19,6 @@ import (
 	"github.com/wippyai/go-lua/domain/heap/keymatch"
 	packdomain "github.com/wippyai/go-lua/domain/pack"
 	staticdomain "github.com/wippyai/go-lua/domain/static"
-	"github.com/wippyai/go-lua/domain/type/authority"
 	valuedomain "github.com/wippyai/go-lua/domain/value"
 )
 
@@ -77,7 +79,7 @@ func indexSchemas(t testing.TB, linked *link.Link) (heapdomain.Schema, *valuedom
 	if !structuralOK {
 		t.Fatal("structure vocabulary")
 	}
-	values, valueFailure := valuedomain.SealWithFailure(linked, heap, mounts.value, structural)
+	values, valueFailure := valuedomain.SealWithFailure(linked, heap, calltest.MustSeal(t, linked, mounts.value), mounts.value, structural)
 	calls, callsOK := calldomain.NewWithMountedArtifacts(linked, mounts.call)
 	executionSchemaID := mounts.compilation.ExecutionSchemaID()
 	issuance, issuanceOK := composite.ArtifactIssuanceDirectory(mounts.compilation)

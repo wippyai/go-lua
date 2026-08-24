@@ -24,6 +24,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/schema/structure"
 	schematype "github.com/wippyai/go-lua/analysis/schema/typecontract"
 	calldomain "github.com/wippyai/go-lua/domain/call"
+	"github.com/wippyai/go-lua/domain/call/calltest"
 	callowner "github.com/wippyai/go-lua/domain/call/owner"
 	heapdomain "github.com/wippyai/go-lua/domain/heap"
 	"github.com/wippyai/go-lua/domain/materialization"
@@ -454,7 +455,7 @@ return payload`)})
 	packMount, packMountOK := programmount.MountedArtifactFromSnapshot(snapshot, module)
 	heapSchema, heapFailure := heapdomain.SealWithArtifacts(linked, []programmount.MountedArtifact{heapMount})
 	placementSchema, placementOK := placementdomain.NewSchema(heapSchema)
-	values, valueFailure := valuedomain.SealWithFailure(linked, heapSchema, []programmount.MountedArtifact{valueMount}, structural)
+	values, valueFailure := valuedomain.SealWithFailure(linked, heapSchema, calltest.MustSeal(t, linked, []programmount.MountedArtifact{valueMount}), []programmount.MountedArtifact{valueMount}, structural)
 	if !heapMountOK || !valueMountOK || !packMountOK || heapFailure != heapdomain.SealFailureNone || !placementOK || valueFailure != valuedomain.SealFailureNone || values == nil {
 		t.Fatalf("transfer fixture Heap/Value schemas heapMount=%t valueMount=%t packMount=%t heap=%v placement=%t value=%v", heapMountOK, valueMountOK, packMountOK, heapFailure, placementOK, valueFailure)
 	}

@@ -4,7 +4,9 @@ import (
 	"crypto/sha256"
 	"testing"
 
+	"github.com/wippyai/go-lua/domain/call/calltest"
 	"github.com/wippyai/go-lua/domain/composite/snapshottest"
+	"github.com/wippyai/go-lua/internal/testfixture"
 
 	"github.com/wippyai/go-lua/analysis/engine"
 	"github.com/wippyai/go-lua/analysis/identity"
@@ -14,6 +16,7 @@ import (
 	linkproject "github.com/wippyai/go-lua/analysis/program/link/project"
 	"github.com/wippyai/go-lua/analysis/program/target/compiler"
 	"github.com/wippyai/go-lua/analysis/program/target/declaration"
+	"github.com/wippyai/go-lua/analysis/program/target/vocabulary"
 	"github.com/wippyai/go-lua/analysis/schema/programmount"
 	"github.com/wippyai/go-lua/domain/composite"
 	heapdomain "github.com/wippyai/go-lua/domain/heap"
@@ -69,7 +72,7 @@ func TestClosedMountedReceiptRejectsForeignSchemaInstance(t *testing.T) {
 	if !structuralOK {
 		t.Fatal("structure vocabulary")
 	}
-	foreignValues, valueFailure := valuedomain.SealWithFailure(mounts.linked, foreignHeap, mounts.value, structural)
+	foreignValues, valueFailure := valuedomain.SealWithFailure(mounts.linked, foreignHeap, calltest.MustSeal(t, mounts.linked, mounts.value), mounts.value, structural)
 	if heapFailure != heapdomain.SealFailureNone || valueFailure != valuedomain.SealFailureNone {
 		t.Fatal("foreign closed schemas")
 	}
@@ -95,7 +98,11 @@ func closedReceiptFixture(t testing.TB, text string) (heapdomain.Schema, *valued
 	if err != nil {
 		t.Fatal(err)
 	}
-	contract, err := compiler.Seal(&declaration.Spec{Semantics: domaincontract.NewSemantics()})
+	requireOperation, requireErr := testfixture.ScopedRequireOperation()
+	if requireErr != nil {
+		t.Fatal(requireErr)
+	}
+	contract, err := compiler.Seal(&declaration.Spec{Semantics: domaincontract.NewSemantics(), Operations: []vocabulary.OperationSpec{requireOperation}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -109,7 +116,7 @@ func closedReceiptFixture(t testing.TB, text string) (heapdomain.Schema, *valued
 	if !structuralOK {
 		t.Fatal("structure vocabulary")
 	}
-	valueSchema, valueFailure := valuedomain.SealWithFailure(linked, heapSchema, mounts.value, structural)
+	valueSchema, valueFailure := valuedomain.SealWithFailure(linked, heapSchema, calltest.MustSeal(t, linked, mounts.value), mounts.value, structural)
 	if heapFailure != heapdomain.SealFailureNone || valueFailure != valuedomain.SealFailureNone {
 		t.Fatalf("closed schemas heap=%v value=%v", heapFailure, valueFailure)
 	}

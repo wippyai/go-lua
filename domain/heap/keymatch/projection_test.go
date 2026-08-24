@@ -5,7 +5,9 @@ import (
 	"testing"
 
 	"github.com/wippyai/go-lua/analysis/program/target/vocabulary"
+	"github.com/wippyai/go-lua/domain/call/calltest"
 	"github.com/wippyai/go-lua/domain/composite/snapshottest"
+	"github.com/wippyai/go-lua/internal/testfixture"
 
 	lualower "github.com/wippyai/go-lua/analysis/lua/lower"
 	artifactcompiler "github.com/wippyai/go-lua/analysis/program/artifact/compiler"
@@ -301,7 +303,11 @@ func fixture(t testing.TB, module, text string) (heapdomain.Schema, *valuedomain
 	if err != nil {
 		t.Fatal(err)
 	}
-	contract, err := compiler.Seal(&declaration.Spec{Semantics: domaincontract.NewSemantics()})
+	requireOperation, requireErr := testfixture.ScopedRequireOperation()
+	if requireErr != nil {
+		t.Fatal(requireErr)
+	}
+	contract, err := compiler.Seal(&declaration.Spec{Semantics: domaincontract.NewSemantics(), Operations: []vocabulary.OperationSpec{requireOperation}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -318,7 +324,7 @@ func fixture(t testing.TB, module, text string) (heapdomain.Schema, *valuedomain
 	if !structuralOK {
 		t.Fatal("structure vocabulary")
 	}
-	values, valueFailure := valuedomain.SealWithFailure(linked, heap, keymatchValueMounts(t, linked, compilation), structural)
+	values, valueFailure := valuedomain.SealWithFailure(linked, heap, calltest.MustSeal(t, linked, keymatchValueMounts(t, linked, compilation)), keymatchValueMounts(t, linked, compilation), structural)
 	if heapFailure != heapdomain.SealFailureNone || valueFailure != valuedomain.SealFailureNone {
 		t.Fatal("domain schema")
 	}
@@ -331,7 +337,11 @@ func bootFixture(t testing.TB, module string) (heapdomain.Schema, *valuedomain.S
 	if err != nil {
 		t.Fatal(err)
 	}
-	contract, err := compiler.Seal(&declaration.Spec{Semantics: domaincontract.NewSemantics(), InitialRoots: []vocabulary.InitialRootSpec{{
+	requireOperation, requireErr := testfixture.ScopedRequireOperation()
+	if requireErr != nil {
+		t.Fatal(requireErr)
+	}
+	contract, err := compiler.Seal(&declaration.Spec{Semantics: domaincontract.NewSemantics(), Operations: []vocabulary.OperationSpec{requireOperation}, InitialRoots: []vocabulary.InitialRootSpec{{
 		Identity: "GlobalEnvRoot",
 		Shape: vocabulary.BootShapeSpec{
 			Aggregate: vocabulary.BootAggregateTable,
@@ -354,7 +364,7 @@ func bootFixture(t testing.TB, module string) (heapdomain.Schema, *valuedomain.S
 	if !structuralOK {
 		t.Fatal("structure vocabulary")
 	}
-	values, valueFailure := valuedomain.SealWithFailure(linked, heap, keymatchValueMounts(t, linked, compilation), structural)
+	values, valueFailure := valuedomain.SealWithFailure(linked, heap, calltest.MustSeal(t, linked, keymatchValueMounts(t, linked, compilation)), keymatchValueMounts(t, linked, compilation), structural)
 	if heapFailure != heapdomain.SealFailureNone || valueFailure != valuedomain.SealFailureNone {
 		t.Fatal("boot domain schema")
 	}

@@ -5,6 +5,7 @@ import (
 
 	artifactcompiler "github.com/wippyai/go-lua/analysis/program/artifact/compiler"
 	"github.com/wippyai/go-lua/analysis/schema/programmount"
+	"github.com/wippyai/go-lua/domain/call/calltest"
 	"github.com/wippyai/go-lua/domain/composite"
 	"github.com/wippyai/go-lua/domain/composite/snapshottest"
 	heapdomain "github.com/wippyai/go-lua/domain/heap"
@@ -67,7 +68,7 @@ return next()
 	if heapFailure != heapdomain.SealFailureNone || !structuralOK {
 		t.Fatalf("heap seal=%s structural=%t", heapFailure, structuralOK)
 	}
-	schema, valueFailure := valuedomain.SealWithFailure(linked, heaps, []programmount.MountedArtifact{valueMount}, structural)
+	schema, valueFailure := valuedomain.SealWithFailure(linked, heaps, calltest.MustSeal(t, linked, []programmount.MountedArtifact{valueMount}), []programmount.MountedArtifact{valueMount}, structural)
 	if valueFailure != valuedomain.SealFailureNone || schema == nil {
 		t.Fatalf("value seal=%s", valueFailure)
 	}

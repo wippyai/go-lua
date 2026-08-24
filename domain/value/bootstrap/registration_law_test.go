@@ -4,7 +4,9 @@ import (
 	"testing"
 
 	"github.com/wippyai/go-lua/analysis/program/target/vocabulary"
+	"github.com/wippyai/go-lua/domain/call/calltest"
 	"github.com/wippyai/go-lua/domain/composite/snapshottest"
+	"github.com/wippyai/go-lua/internal/testfixture"
 
 	"github.com/wippyai/go-lua/analysis/identity"
 	"github.com/wippyai/go-lua/analysis/lua/lower"
@@ -158,8 +160,13 @@ func bootstrapFixture(t testing.TB, name string) *bootstrapFixtureState {
 	if err != nil {
 		t.Fatal(err)
 	}
+	requireOperation, requireErr := testfixture.ScopedRequireOperation()
+	if requireErr != nil {
+		t.Fatal(requireErr)
+	}
 	contract, err := compiler.Seal(&declaration.Spec{
 		Semantics:    domaincontract.NewSemantics(),
+		Operations:   []vocabulary.OperationSpec{requireOperation},
 		InitialRoots: []vocabulary.InitialRootSpec{{Identity: "GlobalEnvRoot", Shape: vocabulary.BootShapeSpec{Aggregate: vocabulary.BootAggregateTable, Value: vocabulary.InitialValueSpec{Kind: vocabulary.InitialValueRoot, Root: "GlobalEnvRoot"}}}},
 		InitialEntries: []vocabulary.InitialEntrySpec{
 			{Root: "GlobalEnvRoot", Key: bootstrapLiteral("_G"), Value: vocabulary.InitialValueSpec{Kind: vocabulary.InitialValueRoot, Root: "GlobalEnvRoot"}, Mutability: vocabulary.InitialMutable},
@@ -200,7 +207,7 @@ func bootstrapFixture(t testing.TB, name string) *bootstrapFixtureState {
 	if !structuralOK {
 		t.Fatal("structure vocabulary")
 	}
-	schema, valueFailure := valuedomain.SealWithFailure(linked, heaps, []programmount.MountedArtifact{valueMount}, structural)
+	schema, valueFailure := valuedomain.SealWithFailure(linked, heaps, calltest.MustSeal(t, linked, []programmount.MountedArtifact{valueMount}), []programmount.MountedArtifact{valueMount}, structural)
 	if heapFailure != heapdomain.SealFailureNone || valueFailure != valuedomain.SealFailureNone || schema.GlobalBootstrapResultCount() == 0 {
 		t.Fatalf("schema seal heap=%s value=%s globals=%d", heapFailure, valueFailure, schema.GlobalBootstrapResultCount())
 	}

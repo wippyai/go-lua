@@ -210,14 +210,14 @@ func newBodyResultLawFixture(t testing.TB, name string) *bodyResultLawFixture {
 	heapMount, heapMountOK := programmount.MountedArtifactFromSnapshot(snapshot, module)
 	valueMount, valueMountOK := programmount.MountedArtifactFromSnapshot(snapshot, module)
 	heaps, heapFailure := heapdomain.SealWithArtifacts(linked, []programmount.MountedArtifact{heapMount})
-	values, valueFailure := valuedomain.SealWithFailure(linked, heaps, []programmount.MountedArtifact{valueMount}, structural)
-	if !heapMountOK || !valueMountOK || heapFailure != heapdomain.SealFailureNone || valueFailure != valuedomain.SealFailureNone || values == nil {
-		t.Fatalf("seal Value fixture heapMount=%t valueMount=%t heap=%s value=%s", heapMountOK, valueMountOK, heapFailure, valueFailure)
-	}
 	mountedProgram := programmount.Program{ModuleKey: module, Program: artifact.Program()}
 	calls, callsOK := calldomain.NewWithMountedArtifacts(linked, []calldomain.MountedArtifact{{Program: mountedProgram, Snapshot: snapshot}})
 	if !callsOK || calls == nil {
 		t.Fatal("Call algebra")
+	}
+	values, valueFailure := valuedomain.SealWithFailure(linked, heaps, calls, []programmount.MountedArtifact{valueMount}, structural)
+	if !heapMountOK || !valueMountOK || heapFailure != heapdomain.SealFailureNone || valueFailure != valuedomain.SealFailureNone || values == nil {
+		t.Fatalf("seal Value fixture heapMount=%t valueMount=%t heap=%s value=%s", heapMountOK, valueMountOK, heapFailure, valueFailure)
 	}
 
 	count, countOK := artifact.Program().CallCount()

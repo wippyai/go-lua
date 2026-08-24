@@ -16,7 +16,9 @@ import (
 	linkproject "github.com/wippyai/go-lua/analysis/program/link/project"
 	"github.com/wippyai/go-lua/analysis/program/target/compiler"
 	"github.com/wippyai/go-lua/analysis/program/target/declaration"
+	"github.com/wippyai/go-lua/analysis/program/target/vocabulary"
 	"github.com/wippyai/go-lua/analysis/schema/programmount"
+	"github.com/wippyai/go-lua/domain/call/calltest"
 	"github.com/wippyai/go-lua/domain/composite"
 	"github.com/wippyai/go-lua/domain/composite/snapshottest"
 	"github.com/wippyai/go-lua/domain/heap/allocation/catalog"
@@ -168,7 +170,7 @@ return t, e
 	if !structuralOK {
 		t.Fatal("form directory structure vocabulary")
 	}
-	values, valueFailure := valuedomain.SealWithFailure(linked, heap, valueMounts, structural)
+	values, valueFailure := valuedomain.SealWithFailure(linked, heap, calltest.MustSeal(t, linked, valueMounts), valueMounts, structural)
 	if valueFailure != valuedomain.SealFailureNone {
 		t.Fatalf("form directory value seal: %v", valueFailure)
 	}
@@ -307,7 +309,11 @@ func formDirectoryProgram(t testing.TB, name, text string) *program.Program {
 func formDirectoryFixture(t testing.TB, name, text string) (heapdomain.Schema, *valuedomain.Schema) {
 	t.Helper()
 	p := formDirectoryProgram(t, name, text)
-	target, err := compiler.Seal(&declaration.Spec{Semantics: domaincontract.NewSemantics()})
+	requireOperation, requireErr := testfixture.ScopedRequireOperation()
+	if requireErr != nil {
+		t.Fatal(requireErr)
+	}
+	target, err := compiler.Seal(&declaration.Spec{Semantics: domaincontract.NewSemantics(), Operations: []vocabulary.OperationSpec{requireOperation}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -343,7 +349,7 @@ func formDirectoryFixture(t testing.TB, name, text string) (heapdomain.Schema, *
 	if !structuralOK {
 		t.Fatal("form directory structure vocabulary")
 	}
-	values, valueFailure := valuedomain.SealWithFailure(linked, heap, []programmount.MountedArtifact{valueMount}, structural)
+	values, valueFailure := valuedomain.SealWithFailure(linked, heap, calltest.MustSeal(t, linked, []programmount.MountedArtifact{valueMount}), []programmount.MountedArtifact{valueMount}, structural)
 	if valueFailure != valuedomain.SealFailureNone {
 		t.Fatalf("form directory value seal: %v", valueFailure)
 	}

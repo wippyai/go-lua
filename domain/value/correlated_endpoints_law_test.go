@@ -13,6 +13,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/schema/programmount"
 	"github.com/wippyai/go-lua/analysis/schema/seal"
 	"github.com/wippyai/go-lua/analysis/schema/structure"
+	"github.com/wippyai/go-lua/domain/call/calltest"
 	heapdomain "github.com/wippyai/go-lua/domain/heap"
 	"github.com/wippyai/go-lua/domain/runtimekind"
 	valuedomain "github.com/wippyai/go-lua/domain/value"
@@ -115,7 +116,7 @@ func (fixture *endpointFixture) seal(t testing.TB) *valuedomain.Schema {
 	if heapFailure != heapdomain.SealFailureNone {
 		t.Fatalf("seal heap schema: %s", heapFailure)
 	}
-	values, valueFailure := valuedomain.SealWithFailure(fixture.linked, heaps, []programmount.MountedArtifact{fixture.valueMount}, fixture.structural)
+	values, valueFailure := valuedomain.SealWithFailure(fixture.linked, heaps, calltest.MustSeal(t, fixture.linked, []programmount.MountedArtifact{fixture.valueMount}), []programmount.MountedArtifact{fixture.valueMount}, fixture.structural)
 	if valueFailure != valuedomain.SealFailureNone || values == nil {
 		t.Fatalf("seal value schema: %s", valueFailure)
 	}

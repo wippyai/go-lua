@@ -12,6 +12,7 @@ import (
 	linkproject "github.com/wippyai/go-lua/analysis/program/link/project"
 	"github.com/wippyai/go-lua/analysis/schema/ingress"
 	"github.com/wippyai/go-lua/analysis/schema/programmount"
+	"github.com/wippyai/go-lua/domain/call/calltest"
 	"github.com/wippyai/go-lua/domain/composite"
 	"github.com/wippyai/go-lua/domain/heap"
 	placementdomain "github.com/wippyai/go-lua/domain/placement"
@@ -232,7 +233,7 @@ func newSuspensionLawSchemasForSource(t testing.TB, source string) (placementdom
 	heapSchema, heapFailure := heap.SealWithArtifacts(linked, []programmount.MountedArtifact{mount})
 	placementSchema, placementOK := placementdomain.NewSchema(heapSchema)
 	valueMount, valueMountOK := programmount.MountedArtifactFromSnapshot(snapshot, module)
-	values, valueFailure := valuedomain.SealWithFailure(linked, heapSchema, []programmount.MountedArtifact{valueMount}, structural)
+	values, valueFailure := valuedomain.SealWithFailure(linked, heapSchema, calltest.MustSeal(t, linked, []programmount.MountedArtifact{valueMount}), []programmount.MountedArtifact{valueMount}, structural)
 	if !receiptOK || !grammarOK || !issuanceOK || failure.Available() || artifact == nil || !lowered || !shardOK || !moduleOK || !programIDOK || !structuralOK || !mountOK || !valueMountOK || heapFailure != heap.SealFailureNone || !placementOK || valueFailure != valuedomain.SealFailureNone || values == nil {
 		t.Fatalf("suspension binding law fixture grammar=%t failure=%v artifact=%v ingress=%t shard=%t module=%t program=%t structural=%t mount=%t valueMount=%t heap=%v placement=%t value=%v", grammarOK, failure, artifact, lowered, shardOK, moduleOK, programIDOK, structuralOK, mountOK, valueMountOK, heapFailure, placementOK, valueFailure)
 	}

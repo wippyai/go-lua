@@ -20,6 +20,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/schema/seal"
 	"github.com/wippyai/go-lua/analysis/schema/structure"
 	schemavocabulary "github.com/wippyai/go-lua/analysis/schema/vocabulary"
+	"github.com/wippyai/go-lua/domain/call/calltest"
 	heapdomain "github.com/wippyai/go-lua/domain/heap"
 	"github.com/wippyai/go-lua/domain/materialization"
 	placementdomain "github.com/wippyai/go-lua/domain/placement"
@@ -385,8 +386,13 @@ func newPublicationEscapeFixtureSource(t testing.TB, sourceText string) publicat
 	if err != nil {
 		t.Fatal(err)
 	}
+	requireOperation, requireErr := testfixture.ScopedRequireOperation()
+	if requireErr != nil {
+		t.Fatal(requireErr)
+	}
 	contract, err := compiler.Seal(&declaration.Spec{
-		Semantics: typecontract.NewSemantics(),
+		Semantics:  typecontract.NewSemantics(),
+		Operations: []targetvocabulary.OperationSpec{requireOperation},
 		InitialRoots: []targetvocabulary.InitialRootSpec{{
 			Identity: "GlobalEnvRoot",
 			Shape: targetvocabulary.BootShapeSpec{
@@ -421,7 +427,7 @@ func newPublicationEscapeFixtureSource(t testing.TB, sourceText string) publicat
 	mount, mountOK := programmount.MountedArtifactFromSnapshot(snapshot, module)
 	valueMount, valueMountOK := programmount.MountedArtifactFromSnapshot(snapshot, module)
 	heapSchema, heapFailure := heapdomain.SealWithArtifacts(linked, []programmount.MountedArtifact{mount})
-	values, valueFailure := valuedomain.SealWithFailure(linked, heapSchema, []programmount.MountedArtifact{valueMount}, structural)
+	values, valueFailure := valuedomain.SealWithFailure(linked, heapSchema, calltest.MustSeal(t, linked, []programmount.MountedArtifact{valueMount}), []programmount.MountedArtifact{valueMount}, structural)
 	projected, projectedOK := placementdomain.NewSchema(heapSchema)
 	if !lowered || !mountOK || !valueMountOK || heapFailure != heapdomain.SealFailureNone || valueFailure != valuedomain.SealFailureNone || values == nil || !projectedOK {
 		t.Fatalf("fixture lowered=%t mount=%t valueMount=%t heap=%v value=%v placement=%t", lowered, mountOK, valueMountOK, heapFailure, valueFailure, projectedOK)

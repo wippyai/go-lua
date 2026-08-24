@@ -19,6 +19,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/schema/programmount"
 	"github.com/wippyai/go-lua/analysis/schema/seal"
 	"github.com/wippyai/go-lua/analysis/schema/structure"
+	"github.com/wippyai/go-lua/domain/call/calltest"
 	"github.com/wippyai/go-lua/domain/heap"
 	"github.com/wippyai/go-lua/domain/materialization"
 	"github.com/wippyai/go-lua/domain/placement"
@@ -163,7 +164,7 @@ func formalSoundnessSchemas(t testing.TB) (placement.Schema, *valuedomain.Schema
 	heapSchema, heapFailure := heap.SealWithArtifacts(linked, []programmount.MountedArtifact{mount})
 	placementSchema, placementOK := placement.NewSchema(heapSchema)
 	valueMount, valueMountOK := programmount.MountedArtifactFromSnapshot(snapshot, module)
-	values, valueFailure := valuedomain.SealWithFailure(linked, heapSchema, []programmount.MountedArtifact{valueMount}, structural)
+	values, valueFailure := valuedomain.SealWithFailure(linked, heapSchema, calltest.MustSeal(t, linked, []programmount.MountedArtifact{valueMount}), []programmount.MountedArtifact{valueMount}, structural)
 	if !grammarOK || failure.Available() || artifact == nil || !lowered || !shardOK || !moduleOK || !programIDOK || !mountOK || !valueMountOK || heapFailure != heap.SealFailureNone || !placementOK || valueFailure != valuedomain.SealFailureNone || values == nil {
 		t.Fatalf("formal soundness fixture grammar=%t artifact=%v ingress=%t shard=%t module=%t program=%t mount=%t valueMount=%t heap=%v placement=%t value=%v", grammarOK, failure, lowered, shardOK, moduleOK, programIDOK, mountOK, valueMountOK, heapFailure, placementOK, valueFailure)
 	}

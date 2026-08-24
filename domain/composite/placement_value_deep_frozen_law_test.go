@@ -10,7 +10,9 @@ import (
 	linkproject "github.com/wippyai/go-lua/analysis/program/link/project"
 	targetcompiler "github.com/wippyai/go-lua/analysis/program/target/compiler"
 	"github.com/wippyai/go-lua/analysis/program/target/declaration"
+	"github.com/wippyai/go-lua/analysis/program/target/vocabulary"
 	"github.com/wippyai/go-lua/analysis/schema/programmount"
+	"github.com/wippyai/go-lua/domain/call/calltest"
 	"github.com/wippyai/go-lua/domain/composite"
 	"github.com/wippyai/go-lua/domain/composite/snapshottest"
 	heapdomain "github.com/wippyai/go-lua/domain/heap"
@@ -19,6 +21,7 @@ import (
 	"github.com/wippyai/go-lua/domain/runtimekind"
 	typecontract "github.com/wippyai/go-lua/domain/type/typecontract"
 	valuedomain "github.com/wippyai/go-lua/domain/value"
+	"github.com/wippyai/go-lua/internal/testfixture"
 )
 
 // TestDecodeSummaryResultRequiresExpectedSchemaIdentity keeps the publication
@@ -250,7 +253,11 @@ func newDeepFrozenValueFixture(t testing.TB) deepFrozenValueFixture {
 	if err != nil {
 		t.Fatal(err)
 	}
-	contract, err := targetcompiler.Seal(&declaration.Spec{Semantics: typecontract.NewSemantics()})
+	requireOperation, requireErr := testfixture.ScopedRequireOperation()
+	if requireErr != nil {
+		t.Fatal(requireErr)
+	}
+	contract, err := targetcompiler.Seal(&declaration.Spec{Semantics: typecontract.NewSemantics(), Operations: []vocabulary.OperationSpec{requireOperation}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -289,7 +296,7 @@ func newDeepFrozenValueFixture(t testing.TB) deepFrozenValueFixture {
 		t.Fatal("artifact mount or structural vocabulary")
 	}
 	heapSchema, heapFailure := heapdomain.SealWithArtifacts(linked, []programmount.MountedArtifact{heapMount})
-	values, valueFailure := valuedomain.SealWithFailure(linked, heapSchema, []programmount.MountedArtifact{valueMount}, structural)
+	values, valueFailure := valuedomain.SealWithFailure(linked, heapSchema, calltest.MustSeal(t, linked, []programmount.MountedArtifact{valueMount}), []programmount.MountedArtifact{valueMount}, structural)
 	if heapFailure != heapdomain.SealFailureNone || valueFailure != valuedomain.SealFailureNone || values == nil {
 		t.Fatalf("schema seal heap=%v value=%v", heapFailure, valueFailure)
 	}

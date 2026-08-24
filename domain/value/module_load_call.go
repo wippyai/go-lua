@@ -9,6 +9,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/program/target/contract"
 	"github.com/wippyai/go-lua/analysis/program/target/vocabulary"
 	programschema "github.com/wippyai/go-lua/analysis/schema/program"
+	calldomain "github.com/wippyai/go-lua/domain/call"
 	"github.com/wippyai/go-lua/domain/heap"
 	"github.com/wippyai/go-lua/domain/materialization"
 )
@@ -28,6 +29,11 @@ type ModuleLoadCall struct {
 	fact      Value
 	endpoints uint32
 	require   vocabulary.Operation
+	// call is Call's own coordinate for this mounted occurrence, copied at
+	// seal. Call's algebra is the earliest owner of that coordinate; a
+	// consumer of this row reads it here instead of resolving the occurrence
+	// against Call again.
+	call calldomain.CallCoordinate
 	// composed is true only when Program's authored Import term was resolved
 	// through Module composition. Path/boot projection is deliberately not an
 	// export proof for dynamic fresh-result routing.
@@ -53,7 +59,16 @@ func (schema *Schema) ModuleLoadCall(module, occurrence identity.ContentID) (Mod
 
 func (row ModuleLoadCall) valid() bool {
 	return row.schema != nil && row.key.module.Available() && row.key.occurrence.Available() &&
-		row.content.Available() && row.result.Valid() && row.argument.Valid() && row.require != 0
+		row.content.Available() && row.result.Valid() && row.argument.Valid() && row.require != 0 &&
+		row.call.Valid()
+}
+
+// Call is the mounted-call coordinate Call published for this occurrence.
+func (row ModuleLoadCall) Call() (calldomain.CallCoordinate, bool) {
+	if !row.valid() {
+		return calldomain.CallCoordinate{}, false
+	}
+	return row.call, true
 }
 
 func (schema *Schema) OwnsModuleLoadCall(row ModuleLoadCall) bool {
@@ -244,10 +259,20 @@ func (schema *valueBuilder) sealModuleLoadRows() bool {
 			if !importFound {
 				fact, _ = schema.moduleLoadFact(module, path)
 			}
+			// This pass has already joined the call to Project's own
+			// application row, which is exactly what Call's mounted-call
+			// directory is built from. An absent coordinate here is a broken
+			// join between two sealed authorities, not an operand this rule
+			// may interpret with a default.
+			coordinate, coordinateOK := schema.callCoordinateForOccurrence(module, call.ID())
+			if !coordinateOK {
+				return false
+			}
 			content := computationContent(schema.linkID, "val-callresult-moduleload!", module, call.ID(), uint64(require))
 			row := ModuleLoadCall{
 				schema: schema.Schema, key: computationKey{module: module, occurrence: call.ID()}, content: content,
 				result: resultCoordinate, argument: argumentCoordinate, expected: expected, fact: fact, require: require, composed: composed,
+				call: coordinate,
 			}
 			if !row.valid() {
 				return false

@@ -589,8 +589,17 @@ func (schema *valueBuilder) sealComputationRows() bool {
 				if !resultOK || !inputOK || !rcOK || !icOK {
 					return false
 				}
+				// Call names every executable mounted call application. An
+				// occurrence Call does not name has no mounted-call coordinate
+				// to publish, so this vertical seals no row for it; the row is
+				// never issued with a default coordinate standing in for the
+				// fact Call did not derive.
+				coordinate, coordinateOK := schema.callCoordinateForOccurrence(module, call.ID())
+				if !coordinateOK {
+					continue
+				}
 				content := computationContent(schema.linkID, "val-runtime-kind-call!", module, row.ID())
-				runtimeCall := RuntimeKindCall{schema: schema.Schema, key: key, content: content, result: rc, input: ic, comparison: ic, write: rc}
+				runtimeCall := RuntimeKindCall{schema: schema.Schema, key: key, content: content, result: rc, input: ic, comparison: ic, write: rc, coordinate: coordinate}
 				if !runtimeCall.valid() {
 					return false
 				}
@@ -640,8 +649,15 @@ func (schema *valueBuilder) sealComputationRows() bool {
 				if truth {
 					truthCode = 1
 				}
+				// The guarded predicate is an interpretation of the same
+				// mounted call. Without Call's coordinate for that occurrence
+				// the refinement has no call fact to read and seals no row.
+				coordinate, coordinateOK := schema.callCoordinateForOccurrence(module, sourceCallID)
+				if !coordinateOK {
+					continue
+				}
 				content := computationContent(schema.linkID, "val-runtime-kind-predicate!", module, row.ID(), uint64(op), truthCode)
-				runtimeCall := RuntimeKindCall{schema: schema.Schema, key: key, content: content, result: rc, input: ic, comparison: pc, write: ic, call: sourceCallID, op: op, truth: truth, refinement: true}
+				runtimeCall := RuntimeKindCall{schema: schema.Schema, key: key, content: content, result: rc, input: ic, comparison: pc, write: ic, call: sourceCallID, op: op, truth: truth, refinement: true, coordinate: coordinate}
 				if !runtimeCall.valid() {
 					return false
 				}

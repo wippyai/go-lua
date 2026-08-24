@@ -13,6 +13,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/schema/ingress"
 	"github.com/wippyai/go-lua/analysis/schema/programmount"
 	calldomain "github.com/wippyai/go-lua/domain/call"
+	"github.com/wippyai/go-lua/domain/call/calltest"
 	callowner "github.com/wippyai/go-lua/domain/call/owner"
 	"github.com/wippyai/go-lua/domain/composite"
 	"github.com/wippyai/go-lua/domain/composite/snapshottest"
@@ -138,7 +139,7 @@ func placementBindingLawSchemas(t testing.TB) (placementdomain.Schema, *valuedom
 	heapSchema, heapFailure := heapdomain.SealWithArtifacts(linked, []programmount.MountedArtifact{heapMount})
 	placementSchema, placementOK := placementdomain.NewSchema(heapSchema)
 	valueMount, valueMountOK := programmount.MountedArtifactFromSnapshot(snapshot, module)
-	values, valueFailure := valuedomain.SealWithFailure(linked, heapSchema, []programmount.MountedArtifact{valueMount}, structural)
+	values, valueFailure := valuedomain.SealWithFailure(linked, heapSchema, calltest.MustSeal(t, linked, []programmount.MountedArtifact{valueMount}), []programmount.MountedArtifact{valueMount}, structural)
 	mountedProgram := snapshottest.MustMount(t, artifact, module)
 	calls, callsOK := calldomain.NewWithMountedArtifacts(linked, []calldomain.MountedArtifact{{Program: mountedProgram, Snapshot: snapshot}})
 	if !receiptOK || !grammarOK || !issuanceOK || failure.Available() || artifact == nil || !lowered || !shardOK || !moduleOK || !programIDOK || !structuralOK || !heapMountOK || heapFailure != heapdomain.SealFailureNone || !placementOK || !valueMountOK || valueFailure != valuedomain.SealFailureNone || values == nil || !callsOK || calls == nil {

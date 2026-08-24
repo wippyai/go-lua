@@ -17,6 +17,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/schema/programmount"
 	"github.com/wippyai/go-lua/analysis/schema/seal"
 	"github.com/wippyai/go-lua/analysis/schema/structure"
+	"github.com/wippyai/go-lua/domain/call/calltest"
 	"github.com/wippyai/go-lua/domain/heap"
 	"github.com/wippyai/go-lua/domain/materialization"
 	"github.com/wippyai/go-lua/domain/placement"
@@ -85,7 +86,7 @@ func routePlanFixtureForStore(t testing.TB, width int) routePlanFixture {
 	mount, mountOK := programmount.MountedArtifactFromSnapshot(snapshot, module)
 	valueMount, valueMountOK := programmount.MountedArtifactFromSnapshot(snapshot, module)
 	heapSchema, heapFailure := heap.SealWithArtifacts(linked, []programmount.MountedArtifact{mount})
-	values, valueFailure := valuedomain.SealWithFailure(linked, heapSchema, []programmount.MountedArtifact{valueMount}, structural)
+	values, valueFailure := valuedomain.SealWithFailure(linked, heapSchema, calltest.MustSeal(t, linked, []programmount.MountedArtifact{valueMount}), []programmount.MountedArtifact{valueMount}, structural)
 	projected, projectedOK := placement.NewSchema(heapSchema)
 	if !lowered || !mountOK || !valueMountOK || heapFailure != heap.SealFailureNone || valueFailure != valuedomain.SealFailureNone || !projectedOK || values == nil {
 		t.Fatalf("seal lowered=%t mount=%t valueMount=%t heap=%v value=%v placement=%t", lowered, mountOK, valueMountOK, heapFailure, valueFailure, projectedOK)
