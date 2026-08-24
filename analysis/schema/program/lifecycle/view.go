@@ -92,40 +92,92 @@ func (view View) StorageCellLifetimeForID(id identity.ContentID) (StorageCellLif
 	return found, found.Available()
 }
 
-// SubjectLivenessCount is the sealed width of the neutral suspension
-// liveness family.
-func (view View) SubjectLivenessCount() (int, bool) {
-	return lifecycleFamilyCount(view, SubjectLivenessFamily())
+// SubjectYieldBoundaryCount is the sealed width of the ordered yield
+// boundary sequence the liveness spans are ranges over.
+func (view View) SubjectYieldBoundaryCount() (int, bool) {
+	return lifecycleFamilyCount(view, SubjectYieldBoundaryFamily())
 }
 
-// SubjectLivenessAt returns one all-path liveness row by emitted ordinal.
-func (view View) SubjectLivenessAt(index int) (SubjectLiveness, bool) {
-	return lifecycleFamilyAt(view, SubjectLivenessFamily(), index)
+// SubjectYieldBoundaryAt returns one boundary by emitted ordinal.
+func (view View) SubjectYieldBoundaryAt(index int) (SubjectYieldBoundary, bool) {
+	return lifecycleFamilyAt(view, SubjectYieldBoundaryFamily(), index)
 }
 
-// SubjectLivenessFor resolves one all-path row by its mounted-neutral route
-// and subject identity. The family remains the sole authority; this cold scan
-// intentionally retains no inverse map beside the publication.
-func (view View) SubjectLivenessFor(yieldRoute identity.ContentID, kind SubjectLivenessKind, subject identity.ContentID) (SubjectLiveness, bool) {
-	if !view.Available() || !yieldRoute.Available() || !kind.Valid() || !subject.Available() {
-		return SubjectLiveness{}, false
+// SubjectLivenessSpanCount is the sealed width of the liveness span plane.
+func (view View) SubjectLivenessSpanCount() (int, bool) {
+	return lifecycleFamilyCount(view, SubjectLivenessSpanFamily())
+}
+
+// SubjectLivenessSpanAt returns one span by emitted ordinal.
+func (view View) SubjectLivenessSpanAt(index int) (SubjectLivenessSpan, bool) {
+	return lifecycleFamilyAt(view, SubjectLivenessSpanFamily(), index)
+}
+
+// SubjectYieldBoundaryFor resolves one boundary by its mounted-neutral route.
+// The family remains the sole authority; this cold scan intentionally retains
+// no inverse map beside the publication.
+func (view View) SubjectYieldBoundaryFor(yieldRoute identity.ContentID) (SubjectYieldBoundary, bool) {
+	if !view.Available() || !yieldRoute.Available() {
+		return SubjectYieldBoundary{}, false
 	}
-	count, published := view.SubjectLivenessCount()
+	count, published := view.SubjectYieldBoundaryCount()
 	if !published {
-		return SubjectLiveness{}, false
+		return SubjectYieldBoundary{}, false
 	}
-	var found SubjectLiveness
+	var found SubjectYieldBoundary
 	for index := 0; index < count; index++ {
-		candidate, held := view.SubjectLivenessAt(index)
-		if !held || candidate.YieldRouteID() != yieldRoute || candidate.SubjectKind() != kind || candidate.SubjectID() != subject {
+		candidate, held := view.SubjectYieldBoundaryAt(index)
+		if !held || candidate.YieldRouteID() != yieldRoute {
 			continue
 		}
 		if found.Available() {
-			return SubjectLiveness{}, false
+			return SubjectYieldBoundary{}, false
 		}
 		found = candidate
 	}
 	return found, found.Available()
+}
+
+// SubjectLivenessAtBoundary is the one read that answers a (yield route,
+// subject) liveness fact. The plane stores live ranges, so the answer is a
+// range membership over the sealed span table rather than a stored pair. A
+// subject that carries no span covering the boundary carries no answer for
+// it, exactly as an absent pair row carried none.
+func (view View) SubjectLivenessAtBoundary(yieldRoute identity.ContentID, kind SubjectLivenessKind, subject identity.ContentID) (SubjectLivenessState, bool) {
+	if !view.Available() || !yieldRoute.Available() || !kind.Valid() || !subject.Available() {
+		return SubjectLivenessUnknown, false
+	}
+	boundary, located := view.SubjectYieldBoundaryFor(yieldRoute)
+	if !located {
+		return SubjectLivenessUnknown, false
+	}
+	return view.SubjectLivenessAtOrdinal(boundary.Ordinal(), kind, subject)
+}
+
+// SubjectLivenessAtOrdinal answers the same fact for a boundary the caller
+// has already resolved. A well-formed plane holds at most one span per
+// (subject, ordinal); two are a malformed publication, not a join.
+func (view View) SubjectLivenessAtOrdinal(ordinal uint32, kind SubjectLivenessKind, subject identity.ContentID) (SubjectLivenessState, bool) {
+	if !view.Available() || !kind.Valid() || !subject.Available() {
+		return SubjectLivenessUnknown, false
+	}
+	count, published := view.SubjectLivenessSpanCount()
+	if !published {
+		return SubjectLivenessUnknown, false
+	}
+	answered := false
+	state := SubjectLivenessUnknown
+	for index := 0; index < count; index++ {
+		span, held := view.SubjectLivenessSpanAt(index)
+		if !held || span.SubjectKind() != kind || span.SubjectID() != subject || !span.Covers(ordinal) {
+			continue
+		}
+		if answered {
+			return SubjectLivenessUnknown, false
+		}
+		answered, state = true, span.State()
+	}
+	return state, answered
 }
 
 func (view View) SubjectEventCount() (int, bool) {

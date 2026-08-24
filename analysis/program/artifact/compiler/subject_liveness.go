@@ -1,6 +1,8 @@
 package compiler
 
 import (
+	"bytes"
+	"fmt"
 	"github.com/wippyai/go-lua/analysis/identity"
 	flowkind "github.com/wippyai/go-lua/analysis/program/flow/kind"
 	"github.com/wippyai/go-lua/analysis/program/flow/subjectflow"
@@ -9,6 +11,8 @@ import (
 	"github.com/wippyai/go-lua/analysis/program/valuesource"
 	programschema "github.com/wippyai/go-lua/analysis/schema/program"
 	"github.com/wippyai/go-lua/analysis/schema/program/lifecycle"
+	"os"
+	"sort"
 )
 
 // copySubjectLivenessFailure projects Flow's neutral all-path suspension rows
@@ -32,15 +36,45 @@ func (compiler *compiler) copySubjectLivenessFailure() CompileFailure {
 	// one of its finite members). Program owns one liveness judgment per
 	// (yield route, kind, Program subject) coordinate, so collect every Flow
 	// verdict before publishing the sealed Program row.
-	projected := make(map[identity.ContentID]*subjectLivenessProjection, projection.LivenessCount())
+	// The suspension plane is published as live ranges over the ordered yield
+	// boundary, not as one row per (boundary, subject) pair. Flow numbers the
+	// boundaries in program order; this seam translates each authored subject
+	// to its Program coordinates, folds every Flow verdict for one coordinate
+	// at one boundary, and then emits the maximal runs.
+	ordinalCount := projection.YieldOrdinalCount()
+	boundaryByRoute := make(map[identity.ContentID]lifecycle.SubjectYieldBoundary, ordinalCount)
+	compiler.publication.Lifecycle.SubjectBoundaries = make([]lifecycle.SubjectYieldBoundary, 0, ordinalCount)
+	for index := 0; index < ordinalCount; index++ {
+		entry, entryOK := projection.YieldOrdinalAt(index)
+		if !entryOK || keyspace.TermFamily(entry.Call) != keyspace.FamilyCall || keyspace.TermOrdinal(entry.Call) == 0 {
+			return compileFailure(CompileStageBodyOutcomes, CompileRowBody, index, -1, CompileReasonBodyUnavailable)
+		}
+		callIdentities, callOK := compiler.input.CallIdentityAt(int(keyspace.TermOrdinal(entry.Call)) - 1)
+		if !callOK || !callIdentities.Call.Available() {
+			return compileFailure(CompileStageBodyOutcomes, CompileRowBody, index, -1, CompileReasonBodyUnavailable)
+		}
+		id, idOK := lifecycle.SubjectYieldBoundaryIdentity(callIdentities.Call, entry.YieldRoute)
+		row, emitted := lifecycle.NewSubjectYieldBoundary(id, callIdentities.Call, entry.YieldRoute, entry.YieldFromPath, entry.YieldToPath, entry.Ordinal)
+		if !idOK || !emitted {
+			return compileFailure(CompileStageBodyOutcomes, CompileRowBody, index, -1, CompileReasonBodyUnavailable)
+		}
+		boundaryByRoute[entry.YieldRoute] = row
+		compiler.publication.Lifecycle.SubjectBoundaries = append(compiler.publication.Lifecycle.SubjectBoundaries, row)
+	}
+
+	// answers[coordinate][ordinal] collects every Flow verdict reaching one
+	// Program coordinate at one boundary. More than one authored subject can
+	// resolve to the same Program value, so the fold is the same all-normal-
+	// arms law the pair plane applied.
+	answers := make(map[subjectLivenessCoordinate]map[uint32][]subjectflow.LivenessState)
 	for index := 0; index < projection.LivenessCount(); index++ {
 		flowRow, rowOK := projection.LivenessAt(index)
 		if !rowOK || !flowRow.ID.Available() || keyspace.TermFamily(flowRow.Call) != keyspace.FamilyCall ||
 			keyspace.TermOrdinal(flowRow.Call) == 0 || !flowRow.YieldRoute.Available() || !flowRow.Subject.ID.Available() {
 			return compileFailure(CompileStageBodyOutcomes, CompileRowBody, index, -1, CompileReasonBodyUnavailable)
 		}
-		callIdentities, callOK := compiler.input.CallIdentityAt(int(keyspace.TermOrdinal(flowRow.Call)) - 1)
-		if !callOK || !callIdentities.Call.Available() {
+		boundary, located := boundaryByRoute[flowRow.YieldRoute]
+		if !located {
 			return compileFailure(CompileStageBodyOutcomes, CompileRowBody, index, -1, CompileReasonBodyUnavailable)
 		}
 		// SubjectFlow always names the authored subject with Flow's semantic
@@ -53,75 +87,120 @@ func (compiler *compiler) copySubjectLivenessFailure() CompileFailure {
 		subjects, subjectsOK := compiler.subjectLivenessCoordinates(programID, flowRow.Subject)
 		_, stateOK := artifactSubjectLivenessState(flowRow.State)
 		if !flowSubjectOK || flowSubjectID != flowRow.Subject.ID || !subjectsOK || !stateOK {
+			fmt.Fprintf(os.Stderr, "ZZPROBE liveness row %d: kind=%v term=%v flowSubjectOK=%t idMatch=%t subjectsOK=%t stateOK=%t\n", index, flowRow.Subject.Kind, flowRow.Subject.Term, flowSubjectOK, flowSubjectID == flowRow.Subject.ID, subjectsOK, stateOK)
 			return compileFailure(CompileStageBodyOutcomes, CompileRowBody, index, -1, CompileReasonBodyUnavailable)
 		}
-		for subjectIndex, subject := range subjects {
-			id, idOK := lifecycle.SubjectLivenessIdentity(callIdentities.Call, flowRow.YieldRoute, subject.kind, subject.id)
-			if !idOK {
-				return compileFailure(CompileStageBodyOutcomes, CompileRowBody, index, subjectIndex, CompileReasonBodyUnavailable)
+		for _, subject := range subjects {
+			byOrdinal := answers[subject]
+			if byOrdinal == nil {
+				byOrdinal = make(map[uint32][]subjectflow.LivenessState)
+				answers[subject] = byOrdinal
 			}
-			current, exists := projected[id]
-			if exists {
-				if current.call != callIdentities.Call || current.yieldRoute != flowRow.YieldRoute ||
-					current.yieldFromPath != flowRow.YieldFromPath ||
-					current.yieldToPath != flowRow.YieldToPath ||
-					current.subject != subject {
-					return compileFailure(CompileStageBodyOutcomes, CompileRowBody, index, subjectIndex, CompileReasonBodyUnavailable)
-				}
-				current.states = append(current.states, flowRow.State)
+			byOrdinal[boundary.Ordinal()] = append(byOrdinal[boundary.Ordinal()], flowRow.State)
+		}
+	}
+
+	coordinates := make([]subjectLivenessCoordinate, 0, len(answers))
+	for coordinate := range answers {
+		coordinates = append(coordinates, coordinate)
+	}
+	sort.Slice(coordinates, func(left, right int) bool {
+		if coordinates[left].kind != coordinates[right].kind {
+			return coordinates[left].kind < coordinates[right].kind
+		}
+		return bytes.Compare(coordinates[left].id[:], coordinates[right].id[:]) < 0
+	})
+
+	compiler.publication.Lifecycle.SubjectSpans = make([]lifecycle.SubjectLivenessSpan, 0, len(coordinates))
+	for index, coordinate := range coordinates {
+		byOrdinal := answers[coordinate]
+		ordinals := make([]uint32, 0, len(byOrdinal))
+		for ordinal := range byOrdinal {
+			ordinals = append(ordinals, ordinal)
+		}
+		sort.Slice(ordinals, func(left, right int) bool { return ordinals[left] < ordinals[right] })
+		// One run is a maximal stretch of consecutive ordinals carrying one
+		// answer. A gap in the ordinals ends a run: the boundaries between
+		// belong to another body and this subject has no answer for them.
+		runLo, runHi := uint32(0), uint32(0)
+		runState := lifecycle.SubjectLivenessState(0)
+		flush := func() CompileFailure {
+			if runState == 0 {
+				return CompileFailure{}
+			}
+			id, idOK := lifecycle.SubjectLivenessSpanIdentity(coordinate.kind, coordinate.id, runLo, runHi)
+			row, emitted := lifecycle.NewSubjectLivenessSpan(id, coordinate.id, coordinate.kind, runLo, runHi, runState)
+			if !idOK || !emitted {
+				return compileFailure(CompileStageBodyOutcomes, CompileRowBody, index, -1, CompileReasonBodyUnavailable)
+			}
+			if failure := compiler.appendSubjectLivenessSpanOccurrence(row); failure.Available() {
+				return failure
+			}
+			compiler.publication.Lifecycle.SubjectSpans = append(compiler.publication.Lifecycle.SubjectSpans, row)
+			return CompileFailure{}
+		}
+		for _, ordinal := range ordinals {
+			state, stateOK := artifactSubjectLivenessState(subjectflow.AggregateLiveness(byOrdinal[ordinal]))
+			if !stateOK {
+				return compileFailure(CompileStageBodyOutcomes, CompileRowBody, index, -1, CompileReasonBodyUnavailable)
+			}
+			if runState == state && ordinal == runHi+1 {
+				runHi = ordinal
 				continue
 			}
-			projected[id] = &subjectLivenessProjection{
-				call:          callIdentities.Call,
-				yieldRoute:    flowRow.YieldRoute,
-				yieldFromPath: flowRow.YieldFromPath,
-				yieldToPath:   flowRow.YieldToPath,
-				subject:       subject,
-				states:        []subjectflow.LivenessState{flowRow.State},
+			if failure := flush(); failure.Available() {
+				return failure
 			}
+			runLo, runHi, runState = ordinal, ordinal, state
 		}
-	}
-	ids := make([]identity.ContentID, 0, len(projected))
-	for id := range projected {
-		ids = append(ids, id)
-	}
-	identity.SortContentIDs(ids)
-	compiler.publication.Lifecycle.SubjectLifetimes = make([]lifecycle.SubjectLiveness, 0, len(ids))
-	for index, id := range ids {
-		projection := projected[id]
-		state, stateOK := artifactSubjectLivenessState(subjectflow.AggregateLiveness(projection.states))
-		row, emitted := lifecycle.NewSubjectLiveness(
-			id,
-			projection.call,
-			projection.yieldRoute,
-			projection.yieldFromPath,
-			projection.yieldToPath,
-			projection.subject.id,
-			projection.subject.kind,
-			state,
-		)
-		if !stateOK || !emitted {
-			return compileFailure(CompileStageBodyOutcomes, CompileRowBody, index, -1, CompileReasonBodyUnavailable)
+		if failure := flush(); failure.Available() {
+			return failure
 		}
-		// Program issues the executable view in the same transaction as its
-		// lifecycle judgment. The Call occurrence remains the point authority:
-		// the lifecycle route may authenticate the same point, but it cannot
-		// replace or reconstruct Call's finish geometry.
-		yieldPoint := row.YieldFromPathID()
-		_, callFinish, callGeometryOK := compiler.issuanceRows.Geometry(programschema.OccurrenceCall, row.CallID())
-		if !yieldPoint.Available() || !callGeometryOK || len(callFinish) != 1 || callFinish[0] != yieldPoint || !compiler.appendOccurrence(
-			programschema.OccurrenceSubjectLiveness,
-			row.ID(),
-			identity.ContentID{},
-			callFinish,
-			[]identity.ContentID{row.CallID()},
-			0,
-		) {
-			return compileFailure(CompileStageOccurrences, CompileRowOccurrence, index, -1, CompileReasonOccurrenceUnavailable)
-		}
-		compiler.publication.Lifecycle.SubjectLifetimes = append(compiler.publication.Lifecycle.SubjectLifetimes, row)
 	}
 	return CompileFailure{}
+}
+
+// appendSubjectLivenessSpanOccurrence issues the executable view of one span.
+// The occurrence is anchored at the span's LO boundary: the obligation is
+// issued once, where the subject enters this answer, and the answer is by
+// definition constant across the maximal run, so the boundaries after it
+// carry no occurrence of their own and are served by the range read.
+func (compiler *compiler) appendSubjectLivenessSpanOccurrence(span lifecycle.SubjectLivenessSpan) CompileFailure {
+	anchor, located := compiler.subjectLivenessBoundaryAt(span.Lo())
+	if !located {
+		return compileFailure(CompileStageOccurrences, CompileRowOccurrence, int(span.Lo()), -1, CompileReasonOccurrenceUnavailable)
+	}
+	// The Call occurrence remains the point authority: the lifecycle route may
+	// authenticate the same point, but it cannot replace or reconstruct Call's
+	// finish geometry.
+	yieldPoint := anchor.YieldFromPathID()
+	_, callFinish, callGeometryOK := compiler.issuanceRows.Geometry(programschema.OccurrenceCall, anchor.CallID())
+	if !yieldPoint.Available() || !callGeometryOK || len(callFinish) != 1 || callFinish[0] != yieldPoint || !compiler.appendOccurrence(
+		programschema.OccurrenceSubjectLiveness,
+		span.ID(),
+		identity.ContentID{},
+		callFinish,
+		[]identity.ContentID{anchor.CallID()},
+		0,
+	) {
+		return compileFailure(CompileStageOccurrences, CompileRowOccurrence, int(span.Lo()), -1, CompileReasonOccurrenceUnavailable)
+	}
+	return CompileFailure{}
+}
+
+// subjectLivenessBoundaryAt resolves the boundary a span is anchored at. The
+// published sequence is dense and emitted in ordinal order, so the ordinal is
+// the index.
+func (compiler *compiler) subjectLivenessBoundaryAt(ordinal uint32) (lifecycle.SubjectYieldBoundary, bool) {
+	rows := compiler.publication.Lifecycle.SubjectBoundaries
+	if int(ordinal) >= len(rows) {
+		return lifecycle.SubjectYieldBoundary{}, false
+	}
+	row := rows[ordinal]
+	if !row.Available() || row.Ordinal() != ordinal {
+		return lifecycle.SubjectYieldBoundary{}, false
+	}
+	return row, true
 }
 
 type subjectLivenessCoordinate struct {

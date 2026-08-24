@@ -20,12 +20,12 @@ func livenessPublication(t *testing.T, count int) (programissuance.Rows, schemai
 	builder := programissuance.NewBuilder()
 	publication := &programpublication.Publication{}
 	for index := 0; index < count; index++ {
-		call, route, subject := lawID(byte(60+index)), lawID(byte(70+index)), lawID(byte(80+index))
-		id, idOK := lifecycle.SubjectLivenessIdentity(call, route, lifecycle.SubjectLivenessCell, subject)
+		call, subject := lawID(byte(60+index)), lawID(byte(80+index))
+		id, idOK := lifecycle.SubjectLivenessSpanIdentity(lifecycle.SubjectLivenessCell, subject, uint32(index), uint32(index))
 		if !idOK {
-			t.Fatal("liveness identity unavailable")
+			t.Fatal("liveness span identity unavailable")
 		}
-		row, rowOK := lifecycle.NewSubjectLiveness(id, call, route, identity.ContentID{}, identity.ContentID{}, subject, lifecycle.SubjectLivenessCell, lifecycle.SubjectLivenessLive)
+		row, rowOK := lifecycle.NewSubjectLivenessSpan(id, subject, lifecycle.SubjectLivenessCell, uint32(index), uint32(index), lifecycle.SubjectLivenessLive)
 		occurrence, occurrenceOK := programschema.NewOccurrence(
 			programschema.OccurrenceSubjectLiveness, id, identity.ContentID{}, 0,
 			uint32(index), 1, uint32(index), 1, keyspace.FamilyInvalid, keyspace.LiteralValue{}, false,
@@ -38,7 +38,7 @@ func livenessPublication(t *testing.T, count int) (programissuance.Rows, schemai
 		if !builder.AddGeometry(programschema.OccurrenceSubjectLiveness, id, nil, []identity.ContentID{lawID(byte(90 + index))}) {
 			t.Fatalf("liveness finish geometry %d refused", index)
 		}
-		publication.Lifecycle.SubjectLifetimes = append(publication.Lifecycle.SubjectLifetimes, row)
+		publication.Lifecycle.SubjectSpans = append(publication.Lifecycle.SubjectSpans, row)
 		publication.Occurrences = append(publication.Occurrences, occurrence)
 		publication.OccurrencePoints = append(publication.OccurrencePoints, point)
 		publication.OccurrenceInputs = append(publication.OccurrenceInputs, input)
@@ -82,7 +82,7 @@ func TestIssuanceResolvesTheCandidateRowOncePerAdmittedOccurrence(t *testing.T) 
 		if !resolved {
 			t.Fatalf("request %d carries no candidate row", index)
 		}
-		if source.Space != programissuance.RowSubjectLiveness || source.Index != int(request.Occurrence()) {
+		if source.Space != programissuance.RowSubjectLivenessSpan || source.Index != int(request.Occurrence()) {
 			t.Fatalf("request %d candidate row = %+v, want liveness ordinal %d", index, source, request.Occurrence())
 		}
 	}

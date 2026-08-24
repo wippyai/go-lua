@@ -570,6 +570,10 @@ func (builder *sealBuilder) liveness() error {
 		}
 	}
 
+	if err := builder.orderYieldBoundaries(); err != nil {
+		return err
+	}
+
 	keys := make([]livenessKey, 0, len(rows))
 	for key := range rows {
 		keys = append(keys, key)
@@ -592,6 +596,56 @@ func (builder *sealBuilder) liveness() error {
 			return fmt.Errorf("%w: liveness identity is unavailable", ErrMalformed)
 		}
 		builder.livenessRows = append(builder.livenessRows, entry.row)
+	}
+	return nil
+}
+
+// orderYieldBoundaries numbers the distinct yield routes in program order.
+// The Program plane publishes liveness as ranges over this ordinal, so the
+// order has to follow control flow for a run to mean anything: a body's
+// routes are numbered by the ordinal of the call that yields them, and the
+// bodies are laid out one after another so every body owns a contiguous
+// block and a run inside a body is a run inside the sequence.
+func (builder *sealBuilder) orderYieldBoundaries() error {
+	type routeRow struct {
+		owner keyspace.Term
+		call  keyspace.Term
+		row   YieldOrdinal
+	}
+	seen := make(map[identity.ContentID]int, len(builder.boundariesRows))
+	ordered := make([]routeRow, 0, len(builder.boundariesRows))
+	for _, boundary := range builder.boundariesRows {
+		owner := boundaryOwner(builder, boundary)
+		if owner == 0 {
+			return fmt.Errorf("%w: yield boundary has no body owner", ErrMalformed)
+		}
+		if index, duplicate := seen[boundary.YieldRoute]; duplicate {
+			// One route can pair with several re-entry arms. They are one
+			// boundary in the sequence, and they must agree on where it is.
+			if ordered[index].owner != owner || ordered[index].call != boundary.Call {
+				return fmt.Errorf("%w: yield route %x is owned by two bodies", ErrMalformed, boundary.YieldRoute[:4])
+			}
+			continue
+		}
+		seen[boundary.YieldRoute] = len(ordered)
+		ordered = append(ordered, routeRow{owner: owner, call: boundary.Call, row: YieldOrdinal{
+			Call: boundary.Call, YieldRoute: boundary.YieldRoute,
+			YieldFromPath: boundary.YieldFromPath, YieldToPath: boundary.YieldToPath,
+		}})
+	}
+	sort.Slice(ordered, func(left, right int) bool {
+		if ordered[left].owner != ordered[right].owner {
+			return ordered[left].owner < ordered[right].owner
+		}
+		if ordered[left].call != ordered[right].call {
+			return ordered[left].call < ordered[right].call
+		}
+		return bytes.Compare(ordered[left].row.YieldRoute[:], ordered[right].row.YieldRoute[:]) < 0
+	})
+	builder.yieldOrder = make([]YieldOrdinal, len(ordered))
+	for index, entry := range ordered {
+		entry.row.Ordinal = uint32(index)
+		builder.yieldOrder[index] = entry.row
 	}
 	return nil
 }

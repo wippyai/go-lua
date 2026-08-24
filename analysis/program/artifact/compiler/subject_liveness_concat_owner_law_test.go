@@ -69,15 +69,15 @@ func TestArtifactSubjectLivenessResolvesConcatResultOwner(t *testing.T) {
 	if !viewOK {
 		t.Fatal("lifecycle plane is not published")
 	}
-	count, published := view.SubjectLivenessCount()
+	count, published := view.SubjectLivenessSpanCount()
 	if !published {
-		t.Fatal("subject liveness family is not published")
+		t.Fatal("subject liveness span family is not published")
 	}
 	named := false
 	for index := 0; index < count; index++ {
-		row, rowOK := view.SubjectLivenessAt(index)
+		row, rowOK := view.SubjectLivenessSpanAt(index)
 		if !rowOK {
-			t.Fatalf("subject liveness row %d is unavailable", index)
+			t.Fatalf("subject liveness span %d is unavailable", index)
 		}
 		if _, isConcat := concatSpans[row.SubjectID()]; !isConcat {
 			continue
@@ -88,6 +88,6 @@ func TestArtifactSubjectLivenessResolvesConcatResultOwner(t *testing.T) {
 		named = true
 	}
 	if !named {
-		t.Fatal("no published liveness row names the concat result's span identity")
+		t.Fatal("no published liveness span names the concat result's span identity")
 	}
 }

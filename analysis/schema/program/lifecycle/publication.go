@@ -9,7 +9,8 @@ import (
 // through View over an authenticated program state.
 type Publication struct {
 	StorageCellLifetimes []StorageCellLifetime
-	SubjectLifetimes     []SubjectLiveness
+	SubjectSpans         []SubjectLivenessSpan
+	SubjectBoundaries    []SubjectYieldBoundary
 	SubjectEvents        []SubjectEvent
 	AliasRouteScopes     []SubjectAliasRouteScope
 	AliasRouteMembers    []SubjectAliasRouteScopeMember
@@ -22,7 +23,8 @@ func (publication Publication) Append(builder *snapshot.FrozenBuilder, catalogID
 		return false
 	}
 	return StorageCellLifetimeFamily().Put(builder, publication.StorageCellLifetimes, catalogID) &&
-		SubjectLivenessFamily().Put(builder, publication.SubjectLifetimes, catalogID) &&
+		SubjectLivenessSpanFamily().Put(builder, publication.SubjectSpans, catalogID) &&
+		SubjectYieldBoundaryFamily().Put(builder, publication.SubjectBoundaries, catalogID) &&
 		SubjectEventFamily().Put(builder, publication.SubjectEvents, catalogID) &&
 		SubjectAliasRouteScopeFamily().Put(builder, publication.AliasRouteScopes, catalogID) &&
 		SubjectAliasRouteScopeMemberFamily().Put(builder, publication.AliasRouteMembers, catalogID) &&

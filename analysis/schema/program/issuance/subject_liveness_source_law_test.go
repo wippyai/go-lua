@@ -11,7 +11,7 @@ import (
 	programpublication "github.com/wippyai/go-lua/analysis/schema/program/publication"
 )
 
-// livenessFixture seals one publication holding count subject-liveness rows
+// livenessFixture seals one publication holding count subject-liveness spans
 // and the executable occurrence view of each, in the same order the compiler
 // emits them.
 func livenessFixture(t *testing.T, count int) (Rows, schemaissuance.Table, []identity.ContentID) {
@@ -21,12 +21,12 @@ func livenessFixture(t *testing.T, count int) (Rows, schemaissuance.Table, []ide
 	publication := &programpublication.Publication{}
 	ids := make([]identity.ContentID, 0, count)
 	for index := 0; index < count; index++ {
-		call, route, subject := issuanceRowID(byte(60+index)), issuanceRowID(byte(70+index)), issuanceRowID(byte(80+index))
-		id, idOK := lifecycle.SubjectLivenessIdentity(call, route, lifecycle.SubjectLivenessCell, subject)
+		call, subject := issuanceRowID(byte(60+index)), issuanceRowID(byte(80+index))
+		id, idOK := lifecycle.SubjectLivenessSpanIdentity(lifecycle.SubjectLivenessCell, subject, uint32(index), uint32(index))
 		if !idOK {
-			t.Fatal("liveness identity unavailable")
+			t.Fatal("liveness span identity unavailable")
 		}
-		row, rowOK := lifecycle.NewSubjectLiveness(id, call, route, identity.ContentID{}, identity.ContentID{}, subject, lifecycle.SubjectLivenessCell, lifecycle.SubjectLivenessLive)
+		row, rowOK := lifecycle.NewSubjectLivenessSpan(id, subject, lifecycle.SubjectLivenessCell, uint32(index), uint32(index), lifecycle.SubjectLivenessLive)
 		occurrence, occurrenceOK := programschema.NewOccurrence(
 			programschema.OccurrenceSubjectLiveness, id, identity.ContentID{}, 0,
 			uint32(index), 1, uint32(index), 1, keyspace.FamilyInvalid, keyspace.LiteralValue{}, false,
@@ -36,7 +36,7 @@ func livenessFixture(t *testing.T, count int) (Rows, schemaissuance.Table, []ide
 		if !rowOK || !occurrenceOK || !pointOK || !inputOK {
 			t.Fatalf("liveness fixture row %d unavailable", index)
 		}
-		publication.Lifecycle.SubjectLifetimes = append(publication.Lifecycle.SubjectLifetimes, row)
+		publication.Lifecycle.SubjectSpans = append(publication.Lifecycle.SubjectSpans, row)
 		publication.Occurrences = append(publication.Occurrences, occurrence)
 		publication.OccurrencePoints = append(publication.OccurrencePoints, point)
 		publication.OccurrenceInputs = append(publication.OccurrenceInputs, input)
@@ -54,18 +54,18 @@ func livenessFixture(t *testing.T, count int) (Rows, schemaissuance.Table, []ide
 // an address if the space it indexes is declared.
 func TestSubjectLivenessIsAnAddressableRowSpace(t *testing.T) {
 	rows, _, ids := livenessFixture(t, 3)
-	count, supported := rows.Count(RowSubjectLiveness)
+	count, supported := rows.Count(RowSubjectLivenessSpan)
 	if !supported || count != len(ids) {
 		t.Fatalf("liveness space count=%d supported=%t, want %d", count, supported, len(ids))
 	}
 	for index, want := range ids {
-		row, rowOK := rows.At(RowSubjectLiveness, index)
-		field, fieldOK := rows.Read(row, FieldSubjectLivenessID)
+		row, rowOK := rows.At(RowSubjectLivenessSpan, index)
+		field, fieldOK := rows.Read(row, FieldSubjectLivenessSpanID)
 		if !rowOK || !fieldOK || field.Kind != ScalarIdentity || field.Identity != want {
 			t.Fatalf("liveness row %d = %+v/%t, want %v", index, field, fieldOK, want)
 		}
 	}
-	if _, rowOK := rows.At(RowSubjectLiveness, len(ids)); rowOK {
+	if _, rowOK := rows.At(RowSubjectLivenessSpan, len(ids)); rowOK {
 		t.Fatal("liveness space admitted an ordinal past its census")
 	}
 }
@@ -86,10 +86,10 @@ func TestOccurrenceReachesExactlyOneLivenessRow(t *testing.T) {
 		if !sourceOK || !followed || len(targets) != 1 {
 			t.Fatalf("occurrence %d reached %d liveness rows, want one", index, len(targets))
 		}
-		if targets[0].Space != RowSubjectLiveness || targets[0].Index != index {
+		if targets[0].Space != RowSubjectLivenessSpan || targets[0].Index != index {
 			t.Fatalf("occurrence %d reached %+v, want liveness ordinal %d", index, targets[0], index)
 		}
-		field, fieldOK := rows.Read(targets[0], FieldSubjectLivenessID)
+		field, fieldOK := rows.Read(targets[0], FieldSubjectLivenessSpanID)
 		if !fieldOK || field.Identity != want {
 			t.Fatalf("occurrence %d reached identity %+v, want %v", index, field, want)
 		}
@@ -103,17 +103,17 @@ func TestNonLivenessOccurrenceReachesNoLivenessRow(t *testing.T) {
 	table := programIssuanceTable(t)
 	builder := NewBuilder()
 	unary := issuanceOccurrence(t, programschema.OccurrenceUnary, issuanceRowID(50))
-	call, route, subject := issuanceRowID(51), issuanceRowID(52), issuanceRowID(53)
-	id, idOK := lifecycle.SubjectLivenessIdentity(call, route, lifecycle.SubjectLivenessCell, subject)
+	subject := issuanceRowID(53)
+	id, idOK := lifecycle.SubjectLivenessSpanIdentity(lifecycle.SubjectLivenessCell, subject, 0, 0)
 	if !idOK {
-		t.Fatal("liveness identity unavailable")
+		t.Fatal("liveness span identity unavailable")
 	}
-	liveness, livenessOK := lifecycle.NewSubjectLiveness(id, call, route, identity.ContentID{}, identity.ContentID{}, subject, lifecycle.SubjectLivenessCell, lifecycle.SubjectLivenessLive)
+	liveness, livenessOK := lifecycle.NewSubjectLivenessSpan(id, subject, lifecycle.SubjectLivenessCell, 0, 0, lifecycle.SubjectLivenessLive)
 	if !livenessOK {
-		t.Fatal("liveness row unavailable")
+		t.Fatal("liveness span unavailable")
 	}
 	publication := &programpublication.Publication{Occurrences: []programschema.Occurrence{unary}}
-	publication.Lifecycle.SubjectLifetimes = []lifecycle.SubjectLiveness{liveness}
+	publication.Lifecycle.SubjectSpans = []lifecycle.SubjectLivenessSpan{liveness}
 	rows, sealed := builder.Seal(table, publication)
 	relation, relationOK := table.Entry(RelationOccurrenceSubjectLiveness, schemaissuance.KindRelation)
 	source, sourceOK := rows.At(RowOccurrence, 0)

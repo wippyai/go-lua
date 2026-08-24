@@ -45,7 +45,8 @@ func TestArtifactIdentityFieldsPreserveEmptySegmentOrder(t *testing.T) {
 	}
 	want := artifactIdentityOperations{
 		u(StorageCellLifetimeLawVersion), u(0),
-		u(SubjectLivenessLawVersion), u(0),
+		u(SubjectYieldBoundaryLawVersion), u(0),
+		u(SubjectLivenessSpanLawVersion), u(0),
 		u(SubjectEventLawVersion), u(0),
 		u(AliasRouteScopeLawVersion), u(0), u(0),
 		u(AliasCandidateLawVersion), u(0),

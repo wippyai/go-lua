@@ -104,7 +104,8 @@ const (
 	staticTypeNodeReferenceSourceKeyIndex
 	staticTypeNodeReferenceCanonicalKeyIndex
 	storageCellLifetimeIndex
-	subjectLivenessIndex
+	subjectLivenessSpanIndex
+	subjectYieldBoundaryIndex
 	callResultIndex
 	subjectEventIndex
 	subjectAliasRouteScopeIndex
@@ -180,19 +181,23 @@ var manifest = [...]Definition{
 	staticTypeNodeReferenceSourceKeyIndex:        {slot: 53, name: "static-type-node-reference-source-key"},
 	staticTypeNodeReferenceCanonicalKeyIndex:     {slot: 54, name: "static-type-node-reference-canonical-key"},
 	storageCellLifetimeIndex:                     {slot: 55, name: "storage-cell-lifetime"},
-	subjectLivenessIndex:                         {slot: 56, name: "subject-liveness"},
-	callResultIndex:                              {slot: 57, name: "call-result"},
-	subjectEventIndex:                            {slot: 58, name: "subject-event"},
-	subjectAliasRouteScopeIndex:                  {slot: 59, name: "subject-alias-route-scope"},
-	subjectAliasRouteScopeMemberIndex:            {slot: 60, name: "subject-alias-route-scope-member"},
-	subjectAliasCandidateIndex:                   {slot: 61, name: "subject-alias-candidate"},
-	moduleImportIndex:                            {slot: 62, name: "module-import"},
-	moduleRequestIndex:                           {slot: 63, name: "module-request"},
-	moduleEntryIndex:                             {slot: 64, name: "module-entry"},
-	moduleEntryRootCellIndex:                     {slot: 65, name: "module-entry-root-cell"},
-	moduleEntryMemberIndex:                       {slot: 66, name: "module-entry-member"},
-	moduleEntryRootFunctionIndex:                 {slot: 67, name: "module-entry-root-function"},
-	callResultSlotIndex:                          {slot: 68, name: "call-result-slot"},
+	// The live-range plane replaces the per-pair subject-liveness family and
+	// takes its column: a catalog identity is derived from the schema it was
+	// compiled against, so no snapshot addresses slot 56 under both shapes.
+	subjectLivenessSpanIndex:          {slot: 56, name: "subject-liveness-span"},
+	subjectYieldBoundaryIndex:         {slot: 57, name: "subject-yield-boundary"},
+	callResultIndex:                   {slot: 58, name: "call-result"},
+	subjectEventIndex:                 {slot: 59, name: "subject-event"},
+	subjectAliasRouteScopeIndex:       {slot: 60, name: "subject-alias-route-scope"},
+	subjectAliasRouteScopeMemberIndex: {slot: 61, name: "subject-alias-route-scope-member"},
+	subjectAliasCandidateIndex:        {slot: 62, name: "subject-alias-candidate"},
+	moduleImportIndex:                 {slot: 63, name: "module-import"},
+	moduleRequestIndex:                {slot: 64, name: "module-request"},
+	moduleEntryIndex:                  {slot: 65, name: "module-entry"},
+	moduleEntryRootCellIndex:          {slot: 66, name: "module-entry-root-cell"},
+	moduleEntryMemberIndex:            {slot: 67, name: "module-entry-member"},
+	moduleEntryRootFunctionIndex:      {slot: 68, name: "module-entry-root-function"},
+	callResultSlotIndex:               {slot: 69, name: "call-result-slot"},
 }
 
 // DefinitionCount is the number of declarations in the complete manifest.
@@ -282,7 +287,8 @@ func StaticTypeNodeReferenceCanonicalKey() Definition {
 	return manifest[staticTypeNodeReferenceCanonicalKeyIndex]
 }
 func StorageCellLifetime() Definition    { return manifest[storageCellLifetimeIndex] }
-func SubjectLiveness() Definition        { return manifest[subjectLivenessIndex] }
+func SubjectYieldBoundary() Definition   { return manifest[subjectYieldBoundaryIndex] }
+func SubjectLivenessSpan() Definition    { return manifest[subjectLivenessSpanIndex] }
 func CallResult() Definition             { return manifest[callResultIndex] }
 func SubjectEvent() Definition           { return manifest[subjectEventIndex] }
 func SubjectAliasRouteScope() Definition { return manifest[subjectAliasRouteScopeIndex] }

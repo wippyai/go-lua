@@ -229,6 +229,23 @@ type Result struct {
 	candidates  []AliasCandidate
 	boundaries  []Boundary
 	liveness    []Liveness
+	// yieldOrder is the program-ordered yield boundary sequence the Program
+	// plane publishes its liveness as ranges over. Each body occupies a
+	// contiguous block of ordinals, so a run inside a body is a run inside
+	// the sequence and no consumer needs to name the body.
+	yieldOrder []YieldOrdinal
+}
+
+// YieldOrdinal is one distinct yield route and its position in the ordered
+// sequence. The order is program order: the owning body first, then the call
+// term ordinal, then the route identity for a call that yields more than one
+// route.
+type YieldOrdinal struct {
+	Call          keyspace.Term
+	YieldRoute    identity.ContentID
+	YieldFromPath identity.ContentID
+	YieldToPath   identity.ContentID
+	Ordinal       uint32
 }
 
 var (
@@ -335,6 +352,22 @@ func (result *Result) BoundaryAt(index int) (Boundary, bool) {
 		return Boundary{}, false
 	}
 	return result.boundaries[index], true
+}
+
+// YieldOrdinalCount is the width of the ordered yield boundary sequence.
+func (result *Result) YieldOrdinalCount() int {
+	if !result.Available() {
+		return 0
+	}
+	return len(result.yieldOrder)
+}
+
+// YieldOrdinalAt returns one ordered boundary by its position.
+func (result *Result) YieldOrdinalAt(index int) (YieldOrdinal, bool) {
+	if !result.Available() || index < 0 || index >= len(result.yieldOrder) {
+		return YieldOrdinal{}, false
+	}
+	return result.yieldOrder[index], true
 }
 
 func (result *Result) LivenessCount() int {

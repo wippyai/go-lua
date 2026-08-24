@@ -96,6 +96,7 @@ func Seal(
 		candidates:  append([]AliasCandidate(nil), builder.aliasCandidates...),
 		boundaries:  append([]Boundary(nil), builder.boundariesRows...),
 		liveness:    append([]Liveness(nil), builder.livenessRows...),
+		yieldOrder:  append([]YieldOrdinal(nil), builder.yieldOrder...),
 	}, nil
 }
 
@@ -115,6 +116,7 @@ type sealBuilder struct {
 	aliasCandidates       []AliasCandidate
 	boundariesRows        []Boundary
 	livenessRows          []Liveness
+	yieldOrder            []YieldOrdinal
 }
 
 type aliasCandidateState struct {

@@ -10,10 +10,14 @@ const (
 	StorageCellLifetimeLawVersion uint64 = 2
 	// Version 2 adds the canonical artifact Call occurrence which authorizes
 	// mounted consumers to join liveness to the selected Call/Target fact.
-	SubjectLivenessLawVersion uint64 = 2
-	SubjectEventLawVersion    uint64 = 1
-	AliasRouteScopeLawVersion uint64 = 1
-	AliasCandidateLawVersion  uint64 = 1
+	SubjectYieldBoundaryLawVersion uint64 = 1
+
+	// SubjectLivenessSpanLawVersion covers the live-range plane that replaced
+	// the per-pair rows.
+	SubjectLivenessSpanLawVersion uint64 = 1
+	SubjectEventLawVersion        uint64 = 1
+	AliasRouteScopeLawVersion     uint64 = 1
+	AliasCandidateLawVersion      uint64 = 1
 )
 
 // WriteArtifactIdentityFields replays the historical lifecycle portion of an
@@ -34,17 +38,29 @@ func (view View) WriteArtifactIdentityFields(writer identity.IdentityWriter) boo
 		}
 	}
 
-	livenessCount, livenessPublished := view.SubjectLivenessCount()
-	if !livenessPublished || !writer.WriteUint(SubjectLivenessLawVersion) || !writer.WriteUint(uint64(livenessCount)) {
+	spanCount, spansPublished := view.SubjectLivenessSpanCount()
+	if !spansPublished || !writer.WriteUint(SubjectLivenessSpanLawVersion) || !writer.WriteUint(uint64(spanCount)) {
 		return false
 	}
-	for index := 0; index < livenessCount; index++ {
-		row, held := view.SubjectLivenessAt(index)
+	for index := 0; index < spanCount; index++ {
+		row, held := view.SubjectLivenessSpanAt(index)
+		if !held || !row.Available() ||
+			!writer.WriteContentID(row.ID()) || !writer.WriteUint(uint64(row.SubjectKind())) || !writer.WriteContentID(row.SubjectID()) ||
+			!writer.WriteUint(uint64(row.Lo())) || !writer.WriteUint(uint64(row.Hi())) || !writer.WriteUint(uint64(row.State())) {
+			return false
+		}
+	}
+
+	boundaryCount, boundariesPublished := view.SubjectYieldBoundaryCount()
+	if !boundariesPublished || !writer.WriteUint(SubjectYieldBoundaryLawVersion) || !writer.WriteUint(uint64(boundaryCount)) {
+		return false
+	}
+	for index := 0; index < boundaryCount; index++ {
+		row, held := view.SubjectYieldBoundaryAt(index)
 		if !held || !row.Available() ||
 			!writer.WriteContentID(row.ID()) || !writer.WriteContentID(row.CallID()) || !writer.WriteContentID(row.YieldRouteID()) ||
 			!writer.WriteContentID(row.YieldFromPathID()) || !writer.WriteContentID(row.YieldToPathID()) ||
-			!writer.WriteUint(uint64(row.SubjectKind())) || !writer.WriteContentID(row.SubjectID()) ||
-			!writer.WriteUint(uint64(row.State())) {
+			!writer.WriteUint(uint64(row.Ordinal())) {
 			return false
 		}
 	}

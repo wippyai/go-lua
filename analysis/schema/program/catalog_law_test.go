@@ -299,8 +299,11 @@ func TestProgramFamilyAccessorsBindCatalogDefinitions(t *testing.T) {
 		{"ModuleEntryMemberFamily", ModuleEntryMemberFamily().Definition(), programcatalog.ModuleEntryMember()},
 		{"CallResultSlotFamily", CallResultSlotFamily().Definition(), programcatalog.CallResultSlot()},
 	}
-	if len(bindings)+22 != programcatalog.DefinitionCount() {
-		t.Fatalf("composed accessor bindings = %d, manifest definitions = %d", len(bindings)+22, programcatalog.DefinitionCount())
+	// The remainder are bound by the sibling planes that own them - lifecycle,
+	// heap, static type and diagnostics - rather than by this table.
+	const boundElsewhere = 23
+	if len(bindings)+boundElsewhere != programcatalog.DefinitionCount() {
+		t.Fatalf("composed accessor bindings = %d, manifest definitions = %d", len(bindings)+boundElsewhere, programcatalog.DefinitionCount())
 	}
 	for _, binding := range bindings {
 		if binding.got != binding.want {

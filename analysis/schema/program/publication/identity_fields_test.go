@@ -68,8 +68,10 @@ func TestArtifactIdentityManifestEmptyKAT(t *testing.T) {
 	want := identityManifestOperations{
 		// Point, Values.
 		u(2), u(2), u(0), u(0),
-		// Lifecycle.
-		u(2), u(0), u(2), u(0), u(1), u(0), u(1), u(0), u(0), u(1), u(0),
+		// Lifecycle: storage lifetime, the liveness span plane, the yield
+		// boundary sequence it is a range over, subject events, alias scope
+		// (two counts), alias candidates.
+		u(2), u(0), u(1), u(0), u(1), u(0), u(1), u(0), u(1), u(0), u(0), u(1), u(0),
 		// Call, CallResultSlot, Body, Module, Occurrence, Summary.
 		u(2), u(0), u(4), u(0), u(2), u(0), u(0), u(4), u(0), u(0), u(0), u(0),
 		u(1), u(0), u(0), u(0), u(0), u(0), u(0),

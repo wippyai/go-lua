@@ -22,9 +22,12 @@ func TestSubjectLivenessStateProjectionDoesNotFabricateUnknown(t *testing.T) {
 }
 
 // TestSubjectLivenessProjectionFoldsSharedProgramCoordinates pins the
-// projection denominator: distinct Flow subjects may resolve to the same
-// Program-owned value coordinate, but an Artifact publishes exactly one
-// all-path liveness judgment for that coordinate.
+// projection denominator restated for the live-range plane: distinct Flow
+// subjects may resolve to the same Program-owned value coordinate, but an
+// Artifact publishes one span per coordinate and run, and exactly one
+// occurrence per span. The occurrence is anchored at the span's LO boundary,
+// because that is where the obligation is issued; the answer is constant
+// across the run by construction, so the later boundaries carry none.
 func TestSubjectLivenessProjectionFoldsSharedProgramCoordinates(t *testing.T) {
 	fixtures := []struct {
 		name string
@@ -52,38 +55,85 @@ return combine(setmetatable({ x = 1 }, VecMT), setmetatable({ x = 2 }, VecMT))
 	for _, fixture := range fixtures {
 		t.Run(fixture.name, func(t *testing.T) {
 			sealed, view := compileStorageLifetimeLawProgram(t, fixture.text)
-			count, published := view.SubjectLivenessCount()
+			count, published := view.SubjectLivenessSpanCount()
 			if !published || count == 0 {
-				t.Fatalf("subject-liveness denominator = %d/%t", count, published)
+				t.Fatalf("subject-liveness span denominator = %d/%t", count, published)
+			}
+			boundaryCount, boundariesPublished := view.SubjectYieldBoundaryCount()
+			if !boundariesPublished || boundaryCount == 0 {
+				t.Fatalf("subject-yield-boundary denominator = %d/%t", boundaryCount, boundariesPublished)
 			}
 			seen := make(map[[32]byte]struct{}, count)
 			for index := 0; index < count; index++ {
-				row, ok := view.SubjectLivenessAt(index)
+				row, ok := view.SubjectLivenessSpanAt(index)
 				if !ok || !row.Available() {
-					t.Fatalf("subject-liveness row %d unavailable", index)
+					t.Fatalf("subject-liveness span %d unavailable", index)
 				}
 				id := [32]byte(row.ID())
 				if _, duplicate := seen[id]; duplicate {
-					t.Fatalf("Program published duplicate subject-liveness coordinate at row %d", index)
+					t.Fatalf("Program published duplicate subject-liveness span at row %d", index)
 				}
 				seen[id] = struct{}{}
+				anchor, anchored := view.SubjectYieldBoundaryAt(int(row.Lo()))
+				if !anchored || anchor.Ordinal() != row.Lo() {
+					t.Fatalf("span %d has no boundary at its lo ordinal %d", index, row.Lo())
+				}
 				ordinal, occurrenceOK := sealed.OccurrenceOrdinalForID(programschema.OccurrenceSubjectLiveness, row.ID())
 				point, pointOK := sealed.OccurrencePointID(ordinal, 0)
 				call, callOK := sealed.OccurrenceInputID(ordinal, 0)
-				if !occurrenceOK || !pointOK || point != row.YieldFromPathID() || !callOK || call != row.CallID() {
-					t.Fatalf("subject-liveness occurrence %d = occurrence:%t point:%x/%t call:%x/%t, want point:%x call:%x", index, occurrenceOK, point, pointOK, call, callOK, row.YieldFromPathID(), row.CallID())
+				if !occurrenceOK || !pointOK || point != anchor.YieldFromPathID() || !callOK || call != anchor.CallID() {
+					t.Fatalf("span occurrence %d = occurrence:%t point:%x/%t call:%x/%t, want point:%x call:%x", index, occurrenceOK, point, pointOK, call, callOK, anchor.YieldFromPathID(), anchor.CallID())
 				}
 				if _, extraPoint := sealed.OccurrencePointID(ordinal, 1); extraPoint {
-					t.Fatalf("subject-liveness occurrence %d published a second execution point", index)
+					t.Fatalf("span occurrence %d published a second execution point", index)
 				}
 				if _, extraInput := sealed.OccurrenceInputID(ordinal, 1); extraInput {
-					t.Fatalf("subject-liveness occurrence %d published a second input", index)
+					t.Fatalf("span occurrence %d published a second input", index)
 				}
 			}
 			if occurrenceCount, ok := sealed.OccurrenceKindCount(programschema.OccurrenceSubjectLiveness); !ok || occurrenceCount != count {
-				t.Fatalf("subject-liveness occurrence denominator = %d/%t, want lifecycle denominator %d", occurrenceCount, ok, count)
+				t.Fatalf("subject-liveness occurrence denominator = %d/%t, want span denominator %d", occurrenceCount, ok, count)
 			}
 		})
+	}
+}
+
+// TestSubjectLivenessSpanAnswersEveryBoundaryItCovers is the other half of the
+// re-encoding: a span is only lossless if every boundary inside it reads the
+// span's state. The pair plane stored that answer; the range plane derives it,
+// and this law is what says the derivation is total and agrees.
+func TestSubjectLivenessSpanAnswersEveryBoundaryItCovers(t *testing.T) {
+	_, view := compileStorageLifetimeLawProgram(t, `
+local data: any = {a = "1", b = 2, c = true}
+local s, n, b = string(data.a), integer(data.b), boolean(data.c)
+	`)
+	count, published := view.SubjectLivenessSpanCount()
+	if !published || count == 0 {
+		t.Fatalf("subject-liveness span denominator = %d/%t", count, published)
+	}
+	covered := 0
+	for index := 0; index < count; index++ {
+		span, ok := view.SubjectLivenessSpanAt(index)
+		if !ok || !span.Available() {
+			t.Fatalf("span %d unavailable", index)
+		}
+		for ordinal := span.Lo(); ordinal <= span.Hi(); ordinal++ {
+			boundary, located := view.SubjectYieldBoundaryAt(int(ordinal))
+			if !located || boundary.Ordinal() != ordinal {
+				t.Fatalf("span %d covers ordinal %d, which names no boundary", index, ordinal)
+			}
+			state, answered := view.SubjectLivenessAtBoundary(boundary.YieldRouteID(), span.SubjectKind(), span.SubjectID())
+			if !answered {
+				t.Fatalf("span %d covers ordinal %d but the range read returned no answer", index, ordinal)
+			}
+			if state != span.State() {
+				t.Fatalf("span %d covers ordinal %d reading %v, want the span's own %v", index, ordinal, state, span.State())
+			}
+			covered++
+		}
+	}
+	if covered == 0 {
+		t.Fatal("no span covered a boundary, so the law proved nothing")
 	}
 }
 

@@ -23,8 +23,11 @@ func lifecycleLawID(t *testing.T, name string) identity.ContentID {
 func lifecycleLawView(t *testing.T, publication Publication, catalog identity.ContentID) View {
 	t.Helper()
 	builder := snapshot.NewFrozen(catalog, identity.StoreID(1))
-	for slot := uint32(0); slot < 58; slot++ {
-		if slot >= 55 && slot <= 56 {
+	// The lifecycle publication owns storage-cell-lifetime, the liveness span
+	// plane and the yield boundary sequence; call-result sits between them and
+	// belongs to another publication, so the filler supplies it.
+	for slot := uint32(0); slot < 59; slot++ {
+		if slot >= 55 && slot <= 57 {
 			continue
 		}
 		axis := snapshot.Axis[uint32, uint32]{SchemaID: catalog, Slot: slot}
@@ -58,8 +61,11 @@ func TestLifecycleFamiliesBindCanonicalSlots(t *testing.T) {
 	if got, want := StorageCellLifetimeFamily().Definition(), programcatalog.StorageCellLifetime(); got != want {
 		t.Fatalf("storage lifetime definition = %d/%s, want %d/%s", got.Slot(), got.Name(), want.Slot(), want.Name())
 	}
-	if got, want := SubjectLivenessFamily().Definition(), programcatalog.SubjectLiveness(); got != want {
-		t.Fatalf("subject liveness definition = %d/%s, want %d/%s", got.Slot(), got.Name(), want.Slot(), want.Name())
+	if got, want := SubjectYieldBoundaryFamily().Definition(), programcatalog.SubjectYieldBoundary(); got != want {
+		t.Fatalf("subject yield boundary definition = %d/%s, want %d/%s", got.Slot(), got.Name(), want.Slot(), want.Name())
+	}
+	if got, want := SubjectLivenessSpanFamily().Definition(), programcatalog.SubjectLivenessSpan(); got != want {
+		t.Fatalf("subject liveness span definition = %d/%s, want %d/%s", got.Slot(), got.Name(), want.Slot(), want.Name())
 	}
 	if got, want := SubjectAliasRouteScopeFamily().Definition(), programcatalog.SubjectAliasRouteScope(); got != want {
 		t.Fatalf("alias route scope definition = %d/%s, want %d/%s", got.Slot(), got.Name(), want.Slot(), want.Name())
@@ -77,8 +83,11 @@ func TestLifecyclePublicationAppendsAllEmptyColumns(t *testing.T) {
 	if count, published := view.StorageCellLifetimeCount(); !published || count != 0 {
 		t.Fatalf("storage lifetime count/published = %d/%v", count, published)
 	}
-	if count, published := view.SubjectLivenessCount(); !published || count != 0 {
-		t.Fatalf("subject liveness count/published = %d/%v", count, published)
+	if count, published := view.SubjectYieldBoundaryCount(); !published || count != 0 {
+		t.Fatalf("subject yield boundary count/published = %d/%v", count, published)
+	}
+	if count, published := view.SubjectLivenessSpanCount(); !published || count != 0 {
+		t.Fatalf("subject liveness span count/published = %d/%v", count, published)
 	}
 	if count, published := view.AliasRouteScopeCount(); !published || count != 0 {
 		t.Fatalf("alias route scope count/published = %d/%v", count, published)
@@ -92,7 +101,10 @@ func TestLifecyclePublicationAppendsAllEmptyColumns(t *testing.T) {
 	if _, held := view.StorageCellLifetimeForID(lifecycleLawID(t, "missing-cell")); held {
 		t.Fatal("missing storage lifetime resolved")
 	}
-	if _, held := view.SubjectLivenessFor(lifecycleLawID(t, "route"), SubjectLivenessRoot, lifecycleLawID(t, "subject")); held {
+	if _, held := view.SubjectYieldBoundaryFor(lifecycleLawID(t, "route")); held {
+		t.Fatal("missing subject yield boundary resolved")
+	}
+	if _, held := view.SubjectLivenessAtBoundary(lifecycleLawID(t, "route"), SubjectLivenessRoot, lifecycleLawID(t, "subject")); held {
 		t.Fatal("missing subject liveness resolved")
 	}
 }

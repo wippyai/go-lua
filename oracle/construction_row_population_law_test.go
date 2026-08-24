@@ -29,11 +29,21 @@ import (
 // constant factor. Two is generous: a linear plane holds this ratio at 1.
 const rowPopulationLawTolerance = 2.0
 
-// rowPopulationLawPrefixes are two prefixes of the same fixture. The fixture is
-// a list of independent cases, so the larger prefix is the smaller one plus
-// more of the same, and every plane it declares should grow with it and no
+// rowPopulationLawPrefixes are two prefixes of the same fixture. The larger is
+// the smaller plus more of the same, so every plane should grow with it and no
 // faster.
-var rowPopulationLawPrefixes = [2]int{40, 100}
+//
+// They are 100 and 150 rather than 40 and 100 because the first 146 lines of
+// this fixture are almost entirely type declarations: prefix40 declares 280
+// points but only 8 yield boundaries, while prefix100 declares 606 points and
+// 49. The two are not the same kind of program, so rows per point moves
+// between them for a reason that is not growth. Prefix100 and prefix150 are
+// both in the executable-code regime and are the honest pair to compare.
+// rowPopulationLawReferencePrefix is measured and logged alongside them so the
+// whole curve stays visible to a reader.
+var rowPopulationLawPrefixes = [2]int{100, 150}
+
+const rowPopulationLawReferencePrefix = 40
 
 type rowPopulationSample struct {
 	cases int
@@ -44,6 +54,10 @@ type rowPopulationSample struct {
 // TestConstructionRowsAreLinearInSource states the L8 population law over the
 // edge-matrix prefix ladder.
 func TestConstructionRowsAreLinearInSource(t *testing.T) {
+	reference := measureConstructionRowPopulation(t, rowPopulationLawReferencePrefix)
+	t.Logf("reference prefix%d points=%d rules=%d ruleReads=%d heapAllocMB=%d (logged, not asserted: this prefix is mostly type declarations)",
+		rowPopulationLawReferencePrefix, reference.rows.Points, reference.rows.Rules, reference.rows.RuleReads, reference.heap>>20)
+
 	samples := [2]rowPopulationSample{}
 	for index, cases := range rowPopulationLawPrefixes {
 		samples[index] = measureConstructionRowPopulation(t, cases)

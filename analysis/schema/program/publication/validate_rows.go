@@ -175,25 +175,46 @@ func (validator *validator) validateSealRows(state *validationState) bool {
 		}
 		seenLifetimes[row.ID()] = struct{}{}
 	}
-	// Subject-liveness rows are the corresponding all-path neutral bridge.
-	// Their constructors authenticate the derived row identity and paired
-	// endpoint provenance; sealing still owns the publication-wide uniqueness
-	// and content gate so a malformed or repeated row cannot cross the Artifact
-	// boundary.
-	livenessCount, livenessPublished := lifecycleView.SubjectLivenessCount()
-	if !livenessPublished {
+	// The suspension plane is published as an ordered boundary sequence plus
+	// per-subject live ranges over it. Their constructors authenticate the
+	// derived row identity; sealing owns the publication-wide uniqueness gate
+	// so a malformed or repeated row cannot cross the Artifact boundary.
+	boundaryCount, boundariesPublished := lifecycleView.SubjectYieldBoundaryCount()
+	if !boundariesPublished {
 		return false
 	}
-	seenLiveness := make(map[identity.ContentID]struct{}, livenessCount)
-	for index := 0; index < livenessCount; index++ {
-		row, held := lifecycleView.SubjectLivenessAt(index)
+	seenBoundaries := make(map[identity.ContentID]struct{}, boundaryCount)
+	seenOrdinals := make(map[uint32]struct{}, boundaryCount)
+	for index := 0; index < boundaryCount; index++ {
+		row, held := lifecycleView.SubjectYieldBoundaryAt(index)
 		if !held || !row.Available() {
 			return false
 		}
-		if _, duplicate := seenLiveness[row.ID()]; duplicate {
+		if _, duplicate := seenBoundaries[row.ID()]; duplicate {
 			return false
 		}
-		seenLiveness[row.ID()] = struct{}{}
+		// The ordinal is the coordinate every span is a range over. Two
+		// boundaries at one ordinal would make a range ambiguous.
+		if _, duplicate := seenOrdinals[row.Ordinal()]; duplicate {
+			return false
+		}
+		seenBoundaries[row.ID()] = struct{}{}
+		seenOrdinals[row.Ordinal()] = struct{}{}
+	}
+	spanCount, spansPublished := lifecycleView.SubjectLivenessSpanCount()
+	if !spansPublished {
+		return false
+	}
+	seenSpans := make(map[identity.ContentID]struct{}, spanCount)
+	for index := 0; index < spanCount; index++ {
+		row, held := lifecycleView.SubjectLivenessSpanAt(index)
+		if !held || !row.Available() {
+			return false
+		}
+		if _, duplicate := seenSpans[row.ID()]; duplicate {
+			return false
+		}
+		seenSpans[row.ID()] = struct{}{}
 	}
 	// Alias and Unknown events are the authenticated local boundary facts.
 	// Their Flow semantic paths and causal route identities are checked at

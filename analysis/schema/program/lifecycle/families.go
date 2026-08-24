@@ -12,8 +12,12 @@ func StorageCellLifetimeFamily() programfamily.Family[StorageCellLifetime] {
 	return programfamily.New[StorageCellLifetime](programcatalog.StorageCellLifetime())
 }
 
-func SubjectLivenessFamily() programfamily.Family[SubjectLiveness] {
-	return programfamily.New[SubjectLiveness](programcatalog.SubjectLiveness())
+func SubjectYieldBoundaryFamily() programfamily.Family[SubjectYieldBoundary] {
+	return programfamily.New[SubjectYieldBoundary](programcatalog.SubjectYieldBoundary())
+}
+
+func SubjectLivenessSpanFamily() programfamily.Family[SubjectLivenessSpan] {
+	return programfamily.New[SubjectLivenessSpan](programcatalog.SubjectLivenessSpan())
 }
 
 func SubjectEventFamily() programfamily.Family[SubjectEvent] {

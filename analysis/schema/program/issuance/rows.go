@@ -184,16 +184,16 @@ type relationIndex struct {
 // Relation joins are indexed exactly once at Seal; Follow never scans a
 // canonical Program column or rebuilds an inverse.
 type Rows struct {
-	publication      *programpublication.Publication
-	occurrences      int
-	calls            int
-	resultSlots      int
-	moduleImports    int
-	subjectLifetimes int
-	closures         []closureProof
-	geometry         []geometryPoint
-	predecessors     []predecessor
-	relations        map[schema.Key]relationIndex
+	publication   *programpublication.Publication
+	occurrences   int
+	calls         int
+	resultSlots   int
+	moduleImports int
+	subjectSpans  int
+	closures      []closureProof
+	geometry      []geometryPoint
+	predecessors  []predecessor
+	relations     map[schema.Key]relationIndex
 }
 
 func (builder *Builder) Seal(table schemaissuance.Table, publication *programpublication.Publication) (Rows, bool) {
@@ -203,7 +203,7 @@ func (builder *Builder) Seal(table schemaissuance.Table, publication *programpub
 	rows := Rows{
 		publication: publication,
 		occurrences: len(publication.Occurrences), calls: len(publication.Calls), resultSlots: len(publication.CallResultSlots),
-		moduleImports: len(publication.ModuleImports), subjectLifetimes: len(publication.Lifecycle.SubjectLifetimes),
+		moduleImports: len(publication.ModuleImports), subjectSpans: len(publication.Lifecycle.SubjectSpans),
 		relations: make(map[schema.Key]relationIndex),
 	}
 	occurrenceIDs := make(map[identity.ContentID]uint32, len(publication.Occurrences))
@@ -288,8 +288,8 @@ func (rows Rows) Count(space schema.Key) (int, bool) {
 		return len(rows.predecessors), true
 	case RowModuleImport:
 		return rows.moduleImports, true
-	case RowSubjectLiveness:
-		return rows.subjectLifetimes, true
+	case RowSubjectLivenessSpan:
+		return rows.subjectSpans, true
 	default:
 		return 0, false
 	}
@@ -404,9 +404,9 @@ func (rows Rows) Read(row Row, field schema.Key) (Scalar, bool) {
 		if field == FieldModuleImportCallID {
 			return Identity(TypeContentID, value.CallID()), true
 		}
-	case RowSubjectLiveness:
-		value := rows.publication.Lifecycle.SubjectLifetimes[row.Index]
-		if field == FieldSubjectLivenessID {
+	case RowSubjectLivenessSpan:
+		value := rows.publication.Lifecycle.SubjectSpans[row.Index]
+		if field == FieldSubjectLivenessSpanID {
 			return Identity(TypeContentID, value.ID()), true
 		}
 	}
