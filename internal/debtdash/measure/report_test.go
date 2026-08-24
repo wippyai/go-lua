@@ -11,9 +11,15 @@ func TestMeasureFixture(t *testing.T) {
 		t.Fatalf("Measure: %v", err)
 	}
 
+	// areaa carries generated_helper.go and rule_members.go (non-test) plus
+	// generated_extra_test.go (test, name-matched); areab carries marked.go
+	// (non-test, content-matched) plus stamped_test.go (test, content-only
+	// matched, exercising the isGeneratedByContent path independent of
+	// name). Both are excluded from the authored NonTest/Test buckets and
+	// land in GeneratedNonTest/GeneratedTest instead.
 	wantAreas := []AreaLOC{
-		{Name: "areaa", LOC: LOC{NonTest: 43, Test: 14}},
-		{Name: "areab", LOC: LOC{NonTest: 16, Test: 5}},
+		{Name: "areaa", LOC: LOC{NonTest: 33, Test: 14, GeneratedNonTest: 10, GeneratedTest: 7}},
+		{Name: "areab", LOC: LOC{NonTest: 11, Test: 5, GeneratedNonTest: 5, GeneratedTest: 7}},
 		{Name: "composite", LOC: LOC{NonTest: 9, Test: 0}},
 	}
 	if len(report.DomainAreas) != len(wantAreas) {
@@ -25,12 +31,12 @@ func TestMeasureFixture(t *testing.T) {
 		}
 	}
 
-	wantDomainTotal := LOC{NonTest: 68, Test: 19}
+	wantDomainTotal := LOC{NonTest: 53, Test: 19, GeneratedNonTest: 15, GeneratedTest: 14}
 	if report.DomainTotal != wantDomainTotal {
 		t.Errorf("DomainTotal = %+v, want %+v", report.DomainTotal, wantDomainTotal)
 	}
 
-	if want := (LOC{NonTest: 22, Test: 0}); report.EngineLOC != want {
+	if want := (LOC{NonTest: 17, Test: 0, GeneratedNonTest: 5, GeneratedTest: 0}); report.EngineLOC != want {
 		t.Errorf("EngineLOC = %+v, want %+v", report.EngineLOC, want)
 	}
 	if want := (LOC{NonTest: 19, Test: 0}); report.SchemaLOC != want {
@@ -46,11 +52,11 @@ func TestMeasureFixture(t *testing.T) {
 		t.Errorf("CmdLOC = %+v, want %+v", report.CmdLOC, want)
 	}
 
-	if report.GeneratedFiles != 4 {
-		t.Errorf("GeneratedFiles = %d, want 4", report.GeneratedFiles)
+	if report.GeneratedFiles != 6 {
+		t.Errorf("GeneratedFiles = %d, want 6", report.GeneratedFiles)
 	}
-	if report.GeneratedLOC != 20 {
-		t.Errorf("GeneratedLOC = %d, want 20", report.GeneratedLOC)
+	if report.GeneratedLOC != 34 {
+		t.Errorf("GeneratedLOC = %d, want 34", report.GeneratedLOC)
 	}
 
 	if report.ResidueFiles != 4 {
@@ -84,12 +90,12 @@ func TestMeasureFixture(t *testing.T) {
 		t.Errorf("RuleTemplatesLegacy = %d, want 3", report.RuleTemplatesLegacy)
 	}
 
-	if report.EmittedDomainFiles != 2 {
-		t.Errorf("EmittedDomainFiles = %d, want 2", report.EmittedDomainFiles)
+	if report.EmittedDomainFiles != 4 {
+		t.Errorf("EmittedDomainFiles = %d, want 4", report.EmittedDomainFiles)
 	}
 
-	if report.TotalTestFuncs != 5 {
-		t.Errorf("TotalTestFuncs = %d, want 5", report.TotalTestFuncs)
+	if report.TotalTestFuncs != 7 {
+		t.Errorf("TotalTestFuncs = %d, want 7", report.TotalTestFuncs)
 	}
 	if report.LawTestFuncs != 2 {
 		t.Errorf("LawTestFuncs = %d, want 2", report.LawTestFuncs)

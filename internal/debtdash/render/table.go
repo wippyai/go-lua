@@ -19,6 +19,11 @@ type row struct {
 // FormatTable renders one plain-text table: a metric column, one column
 // per labeled snapshot in the given order, and - when more than one
 // snapshot is given - a trailing delta column from the first to the last.
+//
+// Every "LOC (nt/t)" row reports authored lines only (measure.LOC.NonTest
+// and .Test already exclude generated_*.go, rule_members.go, and files
+// carrying an emitter's "Code generated" header); the paired "generated
+// LOC (nt/t)" row next to the domain total reports what was excluded.
 func FormatTable(labels []Labeled) string {
 	if len(labels) == 0 {
 		return ""
@@ -32,6 +37,9 @@ func FormatTable(labels []Labeled) string {
 		}))
 	}
 	rows = append(rows, locRow("domain/ TOTAL LOC (nt/t)", labels, func(r Report) LOC { return r.DomainTotal }))
+	rows = append(rows, pairRow("domain/ TOTAL generated LOC (nt/t)", labels,
+		func(r Report) int { return r.DomainTotal.GeneratedNonTest },
+		func(r Report) int { return r.DomainTotal.GeneratedTest }))
 	rows = append(rows, locRow("analysis/engine LOC (nt/t)", labels, func(r Report) LOC { return r.EngineLOC }))
 	rows = append(rows, locRow("analysis/schema LOC (nt/t)", labels, func(r Report) LOC { return r.SchemaLOC }))
 	rows = append(rows, locRow("analysis/(rest) LOC (nt/t)", labels, func(r Report) LOC { return r.AnalysisRest }))

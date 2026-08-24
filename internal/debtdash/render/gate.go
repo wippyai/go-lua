@@ -30,9 +30,20 @@ type GateReport struct {
 // Debt-gate ceilings from journal seq 6656, pinned at commit A
 // (7a7f57cb88): the cutover is not complete until every authored-debt
 // metric is strictly below its commit-A value.
+//
+// domainNonTestCeiling and domainTestCeiling were originally pinned at
+// 110827 and 79060 (measure.locInDir counted every file under domain/,
+// generated or not, as authored). Once locInDir excludes generated_*.go,
+// rule_members.go, and files carrying an emitter's "Code generated"
+// header (FT-56, journal 6679), commit A's own domain/ tree measures as
+// 1356 nt / 269 t generated lines that no longer belong in the authored
+// total, so the ceilings are re-derived under the same exclusion:
+// 110827-1356=109471 and 79060-269=78791. Re-deriving keeps the gate
+// comparing authored LOC to authored LOC instead of quietly loosening it
+// by the width of whatever was previously miscounted as authored.
 const (
-	domainNonTestCeiling  = 110827
-	domainTestCeiling     = 79060
+	domainNonTestCeiling  = 109471
+	domainTestCeiling     = 78791
 	engineExportedCeiling = 2041
 	schemaExportedCeiling = 2413
 )
