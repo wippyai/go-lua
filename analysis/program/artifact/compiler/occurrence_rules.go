@@ -60,9 +60,20 @@ func (compiler *compiler) deriveRuleOccurrencesFailure() CompileFailure {
 			}
 			inputSpec = inputDeclaration.Key()
 		}
+		// The candidate row is the one issuance already resolved while it held
+		// both the driving occurrence and the space its rows live in. The
+		// compiler publishes that answer; it does not re-derive it.
+		var source programschema.RuleOccurrenceSource
+		if candidate, resolved := request.Source(); resolved {
+			if candidate.Index < 0 || uint64(candidate.Index) > uint64(^uint32(0)) {
+				compiler.publication.RuleOccurrences = nil
+				return compileFailure(CompileStageOccurrences, CompileRowOccurrence, index, -1, CompileReasonOccurrenceUnavailable)
+			}
+			source = programschema.RuleOccurrenceSource{Space: candidate.Space, Ordinal: uint32(candidate.Index)}
+		}
 		if !nativeOK || !compiler.appendRuleOccurrenceVector(
 			subscription.Rule(), subscription.Writes(), request.Occurrence(),
-			emission.Point(), inputs, request.Stage().Key(), inputSpec, route, native,
+			emission.Point(), inputs, request.Stage().Key(), inputSpec, route, native, source,
 		) {
 			compiler.publication.RuleOccurrences = nil
 			return compileFailure(CompileStageOccurrences, CompileRowOccurrence, index, -1, CompileReasonOccurrenceUnavailable)

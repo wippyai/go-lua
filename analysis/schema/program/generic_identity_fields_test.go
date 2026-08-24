@@ -163,7 +163,7 @@ func TestEnvironmentAndLocalTransferIdentityFieldsPreserveWitnessAndKeyOrder(t *
 
 func TestRuleOccurrenceIdentityFieldsPreserveKeyAndOptionalPayloadOrder(t *testing.T) {
 	pointID := genericIdentityID(31)
-	rule, ruleOK := programschema.NewRuleOccurrenceWithInputs(schema.Key("rule-key"), schema.Key("writes-key"), 0, pointID, nil, programissuance.StageBase, programissuance.InputNone, identity.ContentID{}, false)
+	rule, ruleOK := programschema.NewRuleOccurrenceWithInputs(schema.Key("rule-key"), schema.Key("writes-key"), 0, pointID, nil, programissuance.StageBase, programissuance.InputNone, identity.ContentID{}, false, programschema.RuleOccurrenceSource{})
 	if !ruleOK {
 		t.Fatal("rule occurrence")
 	}
@@ -191,8 +191,8 @@ func TestRuleOccurrenceIdentityFieldsPreserveKeyAndOptionalPayloadOrder(t *testi
 
 func TestRuleOccurrenceNativeBitParticipatesInIdentity(t *testing.T) {
 	pointID, inputID := genericIdentityID(32), genericIdentityID(33)
-	ordinary, ordinaryOK := programschema.NewRuleOccurrenceWithInputs(schema.Key("rule-key"), schema.Key("writes-key"), 0, pointID, []identity.ContentID{inputID}, programissuance.StageCallDispatch, programissuance.InputPreviousStage, identity.ContentID{}, false)
-	native, nativeOK := programschema.NewRuleOccurrenceWithInputs(schema.Key("rule-key"), schema.Key("writes-key"), 0, pointID, []identity.ContentID{inputID}, programissuance.StageCallDispatch, programissuance.InputPreviousStage, identity.ContentID{}, true)
+	ordinary, ordinaryOK := programschema.NewRuleOccurrenceWithInputs(schema.Key("rule-key"), schema.Key("writes-key"), 0, pointID, []identity.ContentID{inputID}, programissuance.StageCallDispatch, programissuance.InputPreviousStage, identity.ContentID{}, false, programschema.RuleOccurrenceSource{})
+	native, nativeOK := programschema.NewRuleOccurrenceWithInputs(schema.Key("rule-key"), schema.Key("writes-key"), 0, pointID, []identity.ContentID{inputID}, programissuance.StageCallDispatch, programissuance.InputPreviousStage, identity.ContentID{}, true, programschema.RuleOccurrenceSource{})
 	if !ordinaryOK || !nativeOK {
 		t.Fatal("rule occurrence variants")
 	}
@@ -214,7 +214,7 @@ func TestRuleOccurrenceInputRolesPreserveOrdinalAliasing(t *testing.T) {
 		schema.Key("aliased-input-rule"), schema.Key("aliased-input-axis"), 0,
 		pointID, []identity.ContentID{inputID, inputID},
 		programissuance.StageComputation, programissuance.InputPreviousStage,
-		identity.ContentID{}, false,
+		identity.ContentID{}, false, programschema.RuleOccurrenceSource{},
 	)
 	if !ruleOK || rule.InputPointCount() != 2 {
 		t.Fatalf("aliased ordinal inputs were not sealed: rule=%+v", rule)

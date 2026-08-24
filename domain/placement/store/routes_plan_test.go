@@ -125,8 +125,8 @@ func TestDeriveRoutesAuthenticatesCandidateAndKeepsFrameTransfersEmpty(t *testin
 		t.Fatal("allocation source fact")
 	}
 	plan, planOK := DeriveRoutes(fixture.placement, fixture.values, persistent, source)
-	route, routeOK := plan.RouteAt(0)
-	if !planOK || !routeOK || plan.RouteCount() != 1 {
+	route, routeOK := RouteAt(plan, 0)
+	if !planOK || !routeOK || RouteCount(plan) != 1 {
 		t.Fatalf("authenticated route plan=%#v/%t route=%#v/%t", plan, planOK, route, routeOK)
 	}
 	got, outcome := StorageFold(persistent, source, route.Tag, placement.DefaultFact())
@@ -153,7 +153,7 @@ func TestRouteReducerAdmitsAuthenticatedSparsePlacementDefault(t *testing.T) {
 		t.Fatal("allocation source fact")
 	}
 	plan, planOK := DeriveRoutes(fixture.placement, fixture.values, candidate, source)
-	route, routeOK := plan.RouteAt(0)
+	route, routeOK := RouteAt(plan, 0)
 	if !planOK || !routeOK || route.Tag == 0 {
 		t.Fatalf("authenticated route plan=%#v/%t route=%#v/%t", plan, planOK, route, routeOK)
 	}
@@ -234,7 +234,7 @@ func TestPlanClassesAndCanonicalTags(t *testing.T) {
 	fixture := routePlanFixtureForStore(t, 8)
 
 	bottom, bottomOK := planRoutes(fixture.placement, fixture.values, fixture.values.Bottom())
-	if !bottomOK || !bottom.Valid() || !bottom.Bottom() || bottom.Widened() || bottom.RouteCount() != 0 {
+	if !bottomOK || !bottom.Valid() || !bottom.Bottom() || bottom.Widened() || RouteCount(bottom) != 0 {
 		t.Fatalf("Bottom plan = %#v/%t, want valid Bottom with no routes", bottom, bottomOK)
 	}
 
@@ -257,7 +257,7 @@ func TestPlanClassesAndCanonicalTags(t *testing.T) {
 		t.Fatal("scalar fact")
 	}
 	scalarPlan, scalarPlanOK := planRoutes(fixture.placement, fixture.values, scalar)
-	if !scalarPlanOK || !scalarPlan.Valid() || scalarPlan.Bottom() || scalarPlan.Widened() || scalarPlan.RouteCount() != 0 {
+	if !scalarPlanOK || !scalarPlan.Valid() || scalarPlan.Bottom() || scalarPlan.Widened() || RouteCount(scalarPlan) != 0 {
 		t.Fatalf("scalar plan = %#v/%t, want valid scalar with no routes", scalarPlan, scalarPlanOK)
 	}
 
@@ -270,10 +270,10 @@ func TestPlanClassesAndCanonicalTags(t *testing.T) {
 		t.Fatal("allocation fact")
 	}
 	exact, exactOK := planRoutes(fixture.placement, fixture.values, fact)
-	if !exactOK || !exact.Valid() || exact.Bottom() || exact.Widened() || exact.RouteCount() != 1 {
+	if !exactOK || !exact.Valid() || exact.Bottom() || exact.Widened() || RouteCount(exact) != 1 {
 		t.Fatalf("exact plan = %#v/%t, want one exact route", exact, exactOK)
 	}
-	route, routeOK := exact.RouteAt(0)
+	route, routeOK := RouteAt(exact, 0)
 	dense, denseOK := fixture.placement.Heap().KeyIndex(route.Key)
 	if !routeOK || !denseOK || route.Tag != uint64(dense)+1 || route.Key != fixture.keys[0] {
 		t.Fatalf("exact route = %#v/%t dense=%d/%t", route, routeOK, dense, denseOK)
@@ -293,12 +293,12 @@ func TestPlanClassesAndCanonicalTags(t *testing.T) {
 		t.Fatal("joined fact")
 	}
 	joinedPlan, joinedPlanOK := planRoutes(fixture.placement, fixture.values, joined)
-	if !joinedPlanOK || !joinedPlan.Valid() || joinedPlan.Widened() || joinedPlan.RouteCount() != 3 {
+	if !joinedPlanOK || !joinedPlan.Valid() || joinedPlan.Widened() || RouteCount(joinedPlan) != 3 {
 		t.Fatalf("joined plan = %#v/%t, want three exact routes", joinedPlan, joinedPlanOK)
 	}
 	previousTag := uint64(0)
-	for index := 0; index < joinedPlan.RouteCount(); index++ {
-		candidate, candidateOK := joinedPlan.RouteAt(index)
+	for index := 0; index < RouteCount(joinedPlan); index++ {
+		candidate, candidateOK := RouteAt(joinedPlan, index)
 		if !candidateOK || candidate.Tag <= previousTag {
 			t.Fatalf("joined route %d = %#v/%t after tag %d", index, candidate, candidateOK, previousTag)
 		}
@@ -309,11 +309,11 @@ func TestPlanClassesAndCanonicalTags(t *testing.T) {
 	}
 
 	top, topOK := planRoutes(fixture.placement, fixture.values, fixture.values.Top())
-	if !topOK || !top.Valid() || !top.Widened() || top.Bottom() || top.RouteCount() != len(fixture.keys) {
+	if !topOK || !top.Valid() || !top.Widened() || top.Bottom() || RouteCount(top) != len(fixture.keys) {
 		t.Fatalf("Top plan = %#v/%t, want widened allocation routes", top, topOK)
 	}
-	for index := 0; index < top.RouteCount(); index++ {
-		candidate, candidateOK := top.RouteAt(index)
+	for index := 0; index < RouteCount(top); index++ {
+		candidate, candidateOK := RouteAt(top, index)
 		if !candidateOK || candidate.Key.Kind() != heap.RootAllocation {
 			t.Fatalf("Top route %d = %#v/%t", index, candidate, candidateOK)
 		}
@@ -331,7 +331,7 @@ func TestPlanClassesAndCanonicalTags(t *testing.T) {
 		t.Fatal("opaque fact")
 	}
 	opaquePlan, opaquePlanOK := planRoutes(fixture.placement, fixture.values, opaqueFact)
-	if !opaquePlanOK || !opaquePlan.Widened() || opaquePlan.RouteCount() != top.RouteCount() {
+	if !opaquePlanOK || !opaquePlan.Widened() || RouteCount(opaquePlan) != RouteCount(top) {
 		t.Fatalf("opaque plan = %#v/%t, want widened allocation routes", opaquePlan, opaquePlanOK)
 	}
 }
@@ -363,7 +363,7 @@ func TestPlanRejectsForeignFactsAndIsConcurrent(t *testing.T) {
 	}
 	exactPlan, exactPlanOK := planRoutes(fixture.placement, fixture.values, localFact)
 	widePlan, widePlanOK := planRoutes(fixture.placement, fixture.values, fixture.values.Top())
-	if !exactPlanOK || exactPlan.RouteCount() != 1 || !widePlanOK || !widePlan.Widened() || widePlan.RouteCount() != len(fixture.keys) {
+	if !exactPlanOK || RouteCount(exactPlan) != 1 || !widePlanOK || !widePlan.Widened() || RouteCount(widePlan) != len(fixture.keys) {
 		t.Fatal("plans for concurrency")
 	}
 
@@ -376,8 +376,8 @@ func TestPlanRejectsForeignFactsAndIsConcurrent(t *testing.T) {
 		go func() {
 			defer wait.Done()
 			for iteration := 0; iteration < iterations; iteration++ {
-				exact, exactOK := exactPlan.RouteAt(0)
-				wide, wideOK := widePlan.RouteAt(iteration % widePlan.RouteCount())
+				exact, exactOK := RouteAt(exactPlan, 0)
+				wide, wideOK := RouteAt(widePlan, iteration%RouteCount(widePlan))
 				_, routeOK := widePlan.routeAtTag(wide.Tag)
 				if !exactOK || exact.Tag == 0 || !wideOK || wide.Key.Kind() != heap.RootAllocation || !routeOK {
 					errors <- "concurrent Plan result"
@@ -409,16 +409,16 @@ func TestPlanInlineOverflowRemainsCanonical(t *testing.T) {
 		t.Fatal("overflow fact")
 	}
 	plan, planOK := planRoutes(fixture.placement, fixture.values, fact)
-	if !planOK || !plan.Valid() || plan.Widened() || plan.RouteCount() != len(atoms) {
+	if !planOK || !plan.Valid() || plan.Widened() || RouteCount(plan) != len(atoms) {
 		t.Fatalf("overflow plan = %#v/%t", plan, planOK)
 	}
-	for index := 0; index < plan.RouteCount(); index++ {
-		candidate, candidateOK := plan.RouteAt(index)
+	for index := 0; index < RouteCount(plan); index++ {
+		candidate, candidateOK := RouteAt(plan, index)
 		if !candidateOK {
 			t.Fatalf("overflow route %d unavailable", index)
 		}
 		if index > 0 {
-			prior, priorOK := plan.RouteAt(index - 1)
+			prior, priorOK := RouteAt(plan, index-1)
 			if !priorOK || prior.Tag >= candidate.Tag {
 				t.Fatalf("overflow route order at %d: prior=%#v current=%#v", index, prior, candidate)
 			}
@@ -438,7 +438,7 @@ func TestPlanAllocations(t *testing.T) {
 	}
 	if got := testing.AllocsPerRun(100, func() {
 		plan, ok := planRoutes(fixture.placement, fixture.values, fact)
-		if !ok || !plan.Valid() || plan.RouteCount() != 1 {
+		if !ok || !plan.Valid() || RouteCount(plan) != 1 {
 			t.Fatal("exact plan")
 		}
 	}); got != 0 {
@@ -446,7 +446,7 @@ func TestPlanAllocations(t *testing.T) {
 	}
 	if got := testing.AllocsPerRun(100, func() {
 		plan, ok := planRoutes(fixture.placement, fixture.values, fixture.values.Top())
-		if !ok || !plan.Widened() || plan.RouteCount() != len(fixture.keys) {
+		if !ok || !plan.Widened() || RouteCount(plan) != len(fixture.keys) {
 			t.Fatal("wide plan")
 		}
 	}); got != 0 {
@@ -473,7 +473,7 @@ func BenchmarkPlanExact(b *testing.B) {
 	b.ResetTimer()
 	for index := 0; index < b.N; index++ {
 		storePlanBenchmarkPlan, storePlanBenchmarkOK = planRoutes(fixture.placement, fixture.values, fact)
-		if !storePlanBenchmarkOK || storePlanBenchmarkPlan.RouteCount() != 1 {
+		if !storePlanBenchmarkOK || RouteCount(storePlanBenchmarkPlan) != 1 {
 			b.Fatal("exact Plan")
 		}
 	}
@@ -488,7 +488,7 @@ func BenchmarkPlanTopScaling(b *testing.B) {
 			b.ResetTimer()
 			for index := 0; index < b.N; index++ {
 				storePlanBenchmarkPlan, storePlanBenchmarkOK = planRoutes(fixture.placement, fixture.values, fact)
-				if !storePlanBenchmarkOK || !storePlanBenchmarkPlan.Widened() || storePlanBenchmarkPlan.RouteCount() != len(fixture.keys) {
+				if !storePlanBenchmarkOK || !storePlanBenchmarkPlan.Widened() || RouteCount(storePlanBenchmarkPlan) != len(fixture.keys) {
 					b.Fatal("wide Plan")
 				}
 			}

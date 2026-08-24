@@ -14,6 +14,11 @@ type SubscriptionSpec struct {
 	Form        schema.Key
 	Rule        schema.Key
 	Writes      schema.Key
+	// Source is the relation this rule reaches its candidate row through, and
+	// is empty for a rule whose candidates are not Program rows. It is
+	// transported from the rule's own Program declaration rather than authored
+	// beside it, so the candidate authority stays in one place.
+	Source schema.Key
 }
 
 // Subscription is the admitted execution binding. The declaration pointers
@@ -22,6 +27,7 @@ type Subscription struct {
 	family      *Entry
 	requirement *Entry
 	form        *Entry
+	source      *Entry
 	rule        schema.Key
 	writes      schema.Key
 }
@@ -29,8 +35,13 @@ type Subscription struct {
 func (row Subscription) Family() *Entry      { return row.family }
 func (row Subscription) Requirement() *Entry { return row.requirement }
 func (row Subscription) Form() *Entry        { return row.form }
-func (row Subscription) Rule() schema.Key    { return row.rule }
-func (row Subscription) Writes() schema.Key  { return row.writes }
+
+// Source is the relation reaching this subscription's candidate row, and nil
+// when the rule draws its candidates from somewhere other than a Program row
+// space.
+func (row Subscription) Source() *Entry     { return row.source }
+func (row Subscription) Rule() schema.Key   { return row.rule }
+func (row Subscription) Writes() schema.Key { return row.writes }
 func (row Subscription) Available() bool {
 	return row.family != nil && row.family.kind == KindFamily &&
 		row.requirement != nil && row.requirement.kind == KindRequirement &&
@@ -64,6 +75,16 @@ func NewPlan(table Table, specs []SubscriptionSpec) (Plan, bool) {
 		row := Subscription{
 			family: family, requirement: requirement, form: form,
 			rule: spec.Rule, writes: spec.Writes,
+		}
+		if spec.Source.Available() {
+			source, sourceOK := table.Entry(spec.Source, KindRelation)
+			// A candidate source is read from the rows the rule is issued over.
+			// A relation rooted in another space would hand the rule a row no
+			// occurrence of its family can reach.
+			if !sourceOK || !familyOK || source.space != family.space {
+				return Plan{}, false
+			}
+			row.source = source
 		}
 		if !familyOK || !requirementOK || !formOK || !row.Available() ||
 			!formOutputsAvailable(form, requirement) ||

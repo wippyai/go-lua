@@ -99,9 +99,9 @@ func makeLawProgram(t *testing.T) lawProgram {
 	basePoint, basePointOK := programschema.NewOccurrencePoint(basePointID)
 	summaryPoint, summaryPointOK := programschema.NewOccurrencePoint(summaryPointID)
 	effectPoint, effectPointOK := programschema.NewOccurrencePoint(returnPointID)
-	dispatchRule, ok := programschema.NewRuleOccurrenceWithInputs(schema.Key("module-call-transition-law"), schema.Key("module-call-transition-law-axis"), 0, dispatchPointID, []identity.ContentID{basePointID}, programissuance.StageCallDispatch, programissuance.InputPreviousStage, identity.ContentID{}, true)
-	summaryRule, summaryRuleOK := programschema.NewRuleOccurrenceWithInputs(schema.Key("module-call-transition-summary-law"), schema.Key("module-call-transition-law-axis"), 0, summaryPointID, []identity.ContentID{dispatchPointID}, programissuance.StageCallSummary, programissuance.InputCallDispatchStage, identity.ContentID{}, true)
-	returnRule, returnRuleOK := programschema.NewRuleOccurrenceWithInputs(schema.Key("module-call-transition-effect-law"), schema.Key("module-call-transition-law-axis"), 0, returnPointID, []identity.ContentID{summaryPointID}, programissuance.StageCallEffect, programissuance.InputCallSummaryStage, identity.ContentID{}, true)
+	dispatchRule, ok := programschema.NewRuleOccurrenceWithInputs(schema.Key("module-call-transition-law"), schema.Key("module-call-transition-law-axis"), 0, dispatchPointID, []identity.ContentID{basePointID}, programissuance.StageCallDispatch, programissuance.InputPreviousStage, identity.ContentID{}, true, programschema.RuleOccurrenceSource{})
+	summaryRule, summaryRuleOK := programschema.NewRuleOccurrenceWithInputs(schema.Key("module-call-transition-summary-law"), schema.Key("module-call-transition-law-axis"), 0, summaryPointID, []identity.ContentID{dispatchPointID}, programissuance.StageCallSummary, programissuance.InputCallDispatchStage, identity.ContentID{}, true, programschema.RuleOccurrenceSource{})
+	returnRule, returnRuleOK := programschema.NewRuleOccurrenceWithInputs(schema.Key("module-call-transition-effect-law"), schema.Key("module-call-transition-law-axis"), 0, returnPointID, []identity.ContentID{summaryPointID}, programissuance.StageCallEffect, programissuance.InputCallSummaryStage, identity.ContentID{}, true, programschema.RuleOccurrenceSource{})
 	if !ok || !basePointOK || !summaryPointOK || !effectPointOK || !summaryRuleOK || !returnRuleOK {
 		t.Fatal("call dispatch rule occurrence")
 	}

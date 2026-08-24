@@ -20,6 +20,12 @@ const (
 	RowGeometryPoint  schema.Key = "program-row/occurrence-geometry-point"
 	RowPredecessor    schema.Key = "program-row/routed-predecessor"
 	RowModuleImport   schema.Key = "program-row/module-import"
+	// RowSubjectLiveness is the Program owner's published lifecycle judgment,
+	// one row per subject and route. It is a row space of its own rather than
+	// a projection of RowOccurrence because a consumer addressed by an
+	// occurrence ordinal would still have to find the liveness row by
+	// identity; naming the space directly makes the ordinal the address.
+	RowSubjectLiveness schema.Key = "program-row/subject-liveness"
 )
 
 // Nominal scalar types. Shared identity types are shared deliberately only
@@ -109,6 +115,12 @@ const (
 	FieldPredecessorPointID      schema.Key = "program-field/routed-predecessor.point-id"
 
 	FieldModuleImportCallID schema.Key = "program-field/module-import.call-id"
+
+	// FieldSubjectLivenessID is the canonical identity of one liveness row. It
+	// is the same identity the OccurrenceSubjectLiveness occurrence carries by
+	// owner law, which is what lets the relation below join the two spaces
+	// without a second key.
+	FieldSubjectLivenessID schema.Key = "program-field/subject-liveness.id"
 )
 
 // Canonical relation, output, and requirement declarations.
@@ -121,6 +133,10 @@ const (
 	RelationOccurrenceFinishGeometry schema.Key = "program-relation/occurrence-finish-geometry"
 	RelationOccurrencePredecessor    schema.Key = "program-relation/occurrence-predecessor"
 	RelationCallModuleImport         schema.Key = "program-relation/call-module-import"
+	// RelationOccurrenceSubjectLiveness reaches the liveness row an executable
+	// subject-liveness occurrence is the view of. It is the candidate source a
+	// rule issued on that occurrence family draws its rows through.
+	RelationOccurrenceSubjectLiveness schema.Key = "program-relation/occurrence-subject-liveness"
 
 	OutputOccurrence   schema.Key = "program-output/occurrence"
 	OutputCall         schema.Key = "program-output/call"
@@ -182,7 +198,7 @@ func Entries(codeFamilies ...CodeFamily) ([]*schemaissuance.Entry, bool) {
 		TypeGeometryKind,
 		TypeGeometryPosition,
 	}
-	rows := []schema.Key{RowOccurrence, RowCall, RowCallResultSlot, RowClosureProof, RowGeometryPoint, RowPredecessor, RowModuleImport}
+	rows := []schema.Key{RowOccurrence, RowCall, RowCallResultSlot, RowClosureProof, RowGeometryPoint, RowPredecessor, RowModuleImport, RowSubjectLiveness}
 	fields := []fieldDeclaration{
 		{FieldOccurrenceKind, RowOccurrence, schemaissuance.UintType(TypeOccurrenceKind), schemaissuance.CardinalityOne},
 		{FieldOccurrenceID, RowOccurrence, schemaissuance.IdentityType(TypeContentID), schemaissuance.CardinalityOne},
@@ -213,6 +229,7 @@ func Entries(codeFamilies ...CodeFamily) ([]*schemaissuance.Entry, bool) {
 		{FieldPredecessorRouteID, RowPredecessor, schemaissuance.IdentityType(schemaissuance.TypeRouteIdentity), schemaissuance.CardinalityOne},
 		{FieldPredecessorPointID, RowPredecessor, schemaissuance.IdentityType(schemaissuance.TypePointIdentity), schemaissuance.CardinalityOne},
 		{FieldModuleImportCallID, RowModuleImport, schemaissuance.IdentityType(TypeContentID), schemaissuance.CardinalityOne},
+		{FieldSubjectLivenessID, RowSubjectLiveness, schemaissuance.IdentityType(TypeContentID), schemaissuance.CardinalityOne},
 	}
 	entries := make([]*schemaissuance.Entry, 0, len(types)+len(rows)+len(fields))
 	for index, key := range types {
@@ -291,6 +308,8 @@ func appendMachineDeclarations(entries *[]*schemaissuance.Entry, codeFamilies []
 			Joins: []schemaissuance.JoinField{join(FieldOccurrenceID, FieldPredecessorOccurrenceID)}, Program: trueProgram, Result: 1},
 		{Key: RelationCallModuleImport, Kind: schemaissuance.KindRelation, Ordinal: 8, Space: RowCall, Target: RowModuleImport, Cardinality: schemaissuance.CardinalityOptional,
 			Joins: []schemaissuance.JoinField{join(FieldCallID, FieldModuleImportCallID)}, Program: trueProgram, Result: 1},
+		{Key: RelationOccurrenceSubjectLiveness, Kind: schemaissuance.KindRelation, Ordinal: 9, Space: RowOccurrence, Target: RowSubjectLiveness, Cardinality: schemaissuance.CardinalityOptional,
+			Joins: []schemaissuance.JoinField{join(FieldOccurrenceID, FieldSubjectLivenessID)}, Program: trueProgram, Result: 1},
 	}
 	for _, spec := range relations {
 		if !add(spec) {

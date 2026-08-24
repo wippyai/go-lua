@@ -184,15 +184,16 @@ type relationIndex struct {
 // Relation joins are indexed exactly once at Seal; Follow never scans a
 // canonical Program column or rebuilds an inverse.
 type Rows struct {
-	publication   *programpublication.Publication
-	occurrences   int
-	calls         int
-	resultSlots   int
-	moduleImports int
-	closures      []closureProof
-	geometry      []geometryPoint
-	predecessors  []predecessor
-	relations     map[schema.Key]relationIndex
+	publication      *programpublication.Publication
+	occurrences      int
+	calls            int
+	resultSlots      int
+	moduleImports    int
+	subjectLifetimes int
+	closures         []closureProof
+	geometry         []geometryPoint
+	predecessors     []predecessor
+	relations        map[schema.Key]relationIndex
 }
 
 func (builder *Builder) Seal(table schemaissuance.Table, publication *programpublication.Publication) (Rows, bool) {
@@ -202,8 +203,8 @@ func (builder *Builder) Seal(table schemaissuance.Table, publication *programpub
 	rows := Rows{
 		publication: publication,
 		occurrences: len(publication.Occurrences), calls: len(publication.Calls), resultSlots: len(publication.CallResultSlots),
-		moduleImports: len(publication.ModuleImports),
-		relations:     make(map[schema.Key]relationIndex),
+		moduleImports: len(publication.ModuleImports), subjectLifetimes: len(publication.Lifecycle.SubjectLifetimes),
+		relations: make(map[schema.Key]relationIndex),
 	}
 	occurrenceIDs := make(map[identity.ContentID]uint32, len(publication.Occurrences))
 	consumedGeometry := 0
@@ -287,6 +288,8 @@ func (rows Rows) Count(space schema.Key) (int, bool) {
 		return len(rows.predecessors), true
 	case RowModuleImport:
 		return rows.moduleImports, true
+	case RowSubjectLiveness:
+		return rows.subjectLifetimes, true
 	default:
 		return 0, false
 	}
@@ -400,6 +403,11 @@ func (rows Rows) Read(row Row, field schema.Key) (Scalar, bool) {
 		value := rows.publication.ModuleImports[row.Index]
 		if field == FieldModuleImportCallID {
 			return Identity(TypeContentID, value.CallID()), true
+		}
+	case RowSubjectLiveness:
+		value := rows.publication.Lifecycle.SubjectLifetimes[row.Index]
+		if field == FieldSubjectLivenessID {
+			return Identity(TypeContentID, value.ID()), true
 		}
 	}
 	return Scalar{}, false

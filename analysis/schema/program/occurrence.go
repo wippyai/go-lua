@@ -233,13 +233,27 @@ type RuleOccurrence struct {
 	inputSpec  schema.Key
 	route      identity.ContentID
 	native     bool
+	source     RuleOccurrenceSource
 }
+
+// RuleOccurrenceSource is the candidate row issuance resolved for one placed
+// rule: the Program row space the rule's candidates live in and the dense
+// ordinal of its own row there. Ordinal zero is a real row, so the space is
+// what states presence. The pair is one value because an ordinal without its
+// space addresses nothing.
+type RuleOccurrenceSource struct {
+	Space   schema.Key
+	Ordinal uint32
+}
+
+// Available reports whether a source was resolved.
+func (source RuleOccurrenceSource) Available() bool { return source.Space.Available() }
 
 // NewRuleOccurrenceWithInputs seals one ordered point-role vector. The vector
 // is copied into the row's fixed dense storage; callers cannot mutate the
 // published placement after construction.
-func NewRuleOccurrenceWithInputs(key, writes schema.Key, occurrence uint32, point identity.ContentID, inputs []identity.ContentID, stage, inputSpec schema.Key, route identity.ContentID, native bool) (RuleOccurrence, bool) {
-	row := RuleOccurrence{key: key, writes: writes, occurrence: occurrence, point: point, stage: stage, inputSpec: inputSpec, route: route, native: native}
+func NewRuleOccurrenceWithInputs(key, writes schema.Key, occurrence uint32, point identity.ContentID, inputs []identity.ContentID, stage, inputSpec schema.Key, route identity.ContentID, native bool, source RuleOccurrenceSource) (RuleOccurrence, bool) {
+	row := RuleOccurrence{key: key, writes: writes, occurrence: occurrence, point: point, stage: stage, inputSpec: inputSpec, route: route, native: native, source: source}
 	if len(inputs) > len(row.inputs) {
 		return RuleOccurrence{}, false
 	}
@@ -326,6 +340,13 @@ func (row RuleOccurrence) Stage() schema.Key {
 	return row.stage
 }
 func (row RuleOccurrence) Native() (bool, bool) { return row.native, row.Available() }
+
+// Source is the candidate row issuance resolved for this placement, and false
+// when the rule draws its candidates from somewhere other than a Program row
+// space.
+func (row RuleOccurrence) Source() (RuleOccurrenceSource, bool) {
+	return row.source, row.Available() && row.source.Available()
+}
 func (row RuleOccurrence) PredecessorRouteID() (identity.ContentID, bool) {
 	return row.route, row.Available() && row.route.Available()
 }

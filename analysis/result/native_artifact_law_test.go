@@ -72,6 +72,7 @@ func nativeOccurrenceScaleProgram(t *testing.T, width int) programschema.Program
 			programissuance.InputPreviousStage,
 			identity.ContentID{},
 			true,
+			programschema.RuleOccurrenceSource{},
 		)
 		if !ruleOK {
 			t.Fatalf("build rule occurrence %d", ordinal)

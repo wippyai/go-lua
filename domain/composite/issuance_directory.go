@@ -27,6 +27,11 @@ func ArtifactIssuanceDirectory(compilation Compilation) (issuanceschema.Plan, bo
 		if !entry.Key().Available() || !entry.Writes().Available() {
 			return issuanceschema.Plan{}, false
 		}
+		// The candidate source is the rule Program's own statement. The
+		// subscription transports it so the issuance machine can resolve the
+		// row while it owns the join; it is not authored a second time beside
+		// the subscription.
+		issuedRow := entry.Program().Candidate.IssuedRow
 		for index := 0; index < entry.IssuanceCount(); index++ {
 			issued, ok := entry.IssuanceAt(index)
 			if !ok || !issued.Available() {
@@ -34,7 +39,7 @@ func ArtifactIssuanceDirectory(compilation Compilation) (issuanceschema.Plan, bo
 			}
 			subscriptions = append(subscriptions, issuanceschema.SubscriptionSpec{
 				Family: issued.Occurrence, Requirement: issued.Requirement, Form: issued.Form,
-				Rule: entry.Key(), Writes: entry.Writes(),
+				Rule: entry.Key(), Writes: entry.Writes(), Source: issuedRow,
 			})
 		}
 	}

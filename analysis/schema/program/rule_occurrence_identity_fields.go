@@ -47,6 +47,14 @@ func (row Program) WriteRuleOccurrenceIdentityFields(writer identity.StringIdent
 			!writer.WriteString(string(rule.InputSpec())) || !writer.WriteContentID(route) || !writer.WriteBool(native) {
 			return false
 		}
+		// The candidate row is replayed only by a rule that has one, so a rule
+		// whose candidates are not Program rows keeps the preimage it had
+		// before the source existed.
+		if source, resolved := rule.Source(); resolved {
+			if !writer.WriteString(string(source.Space)) || !writer.WriteUint(uint64(source.Ordinal)) {
+				return false
+			}
+		}
 	}
 	return true
 }

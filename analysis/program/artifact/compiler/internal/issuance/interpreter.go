@@ -28,10 +28,15 @@ func (input Input) Points() []identity.ContentID {
 type Request struct {
 	subscription schemaissuance.Subscription
 	occurrence   uint32
-	stage        *schemaissuance.Entry
-	base         identity.ContentID
-	parameters   []value
-	inputs       []Input
+	// source is the candidate row this request's rule reaches through its
+	// declared source relation. It is resolved once, here, while issuance owns
+	// both the driving occurrence row and the row space it points into; no
+	// later stage repeats the lookup.
+	source     programissuance.Row
+	stage      *schemaissuance.Entry
+	base       identity.ContentID
+	parameters []value
+	inputs     []Input
 	// input is kept only as an authored-request compatibility field while
 	// callers migrate to inputs. Scheduler normalization always treats inputs
 	// as the canonical ordered vector.
@@ -42,8 +47,14 @@ type Request struct {
 
 func (request Request) Subscription() schemaissuance.Subscription { return request.subscription }
 func (request Request) Occurrence() uint32                        { return request.occurrence }
-func (request Request) Stage() *schemaissuance.Entry              { return request.stage }
-func (request Request) Base() identity.ContentID                  { return request.base }
+
+// Source returns the resolved candidate row and false when this request's
+// subscription declares no source relation.
+func (request Request) Source() (programissuance.Row, bool) {
+	return request.source, request.source.Available()
+}
+func (request Request) Stage() *schemaissuance.Entry { return request.stage }
+func (request Request) Base() identity.ContentID     { return request.base }
 func (request Request) Input() Input {
 	if len(request.inputs) != 0 {
 		return Input{declaration: request.inputs[0].declaration, points: request.inputs[0].Points()}
@@ -95,6 +106,7 @@ type value struct {
 }
 
 type context struct {
+	source       programissuance.Row
 	plan         schemaissuance.Plan
 	table        schemaissuance.Table
 	rows         programissuance.Rows
@@ -203,6 +215,16 @@ func Evaluate(plan schemaissuance.Plan, rows programissuance.Rows) ([]Request, b
 			}
 			if !familyResult.boolean {
 				continue
+			}
+			if source := subscription.Source(); source != nil {
+				// Exactly one candidate row per admitted occurrence. A missing
+				// or ambiguous row is a refusal here rather than a candidate
+				// the runtime would have to disambiguate later.
+				targets, followed := rows.Follow(current, source)
+				if !followed || len(targets) != 1 || !targets[0].Available() {
+					return nil, false
+				}
+				base.source = targets[0]
 			}
 			admitted, selections, requirementOK := executeRequirement(requirement, base)
 			if !requirementOK {
@@ -534,7 +556,7 @@ func runProgram(entry *schemaissuance.Entry, ctx context, registers registerFram
 				requestArguments := append([]value(nil), arguments...)
 				requestArguments[baseIndex].points = []identity.ContentID{point}
 				output.requests = append(output.requests, Request{
-					subscription: ctx.subscription, occurrence: ctx.occurrence, stage: stage, base: point,
+					subscription: ctx.subscription, occurrence: ctx.occurrence, source: ctx.source, stage: stage, base: point,
 					parameters: requestArguments, inputs: cloneInputs(inputs), driverIndex: pointIndex,
 				})
 			}
