@@ -6,9 +6,9 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/wippyai/go-lua/analysis/schema/axis/member"
 	"github.com/wippyai/go-lua/analysis/schema/axis/member/definition"
 	memberdefinition "github.com/wippyai/go-lua/analysis/schema/axis/member/definition"
+	"github.com/wippyai/go-lua/analysis/schema/rule/codegen"
 	"github.com/wippyai/go-lua/domain/memberroster"
 )
 
@@ -18,14 +18,24 @@ func outcomeGoType() memberdefinition.GoType {
 	return memberdefinition.GoType{PackagePath: outcomePackage, Name: "ReductionOutcome"}
 }
 
+// vectorGoType is the one view a many-valued read delivers its cells through.
+// It is the execution layer's, named here for the same reason the disposition
+// is: both are analyzer vocabulary a declaration derives against rather than
+// chooses.
+func vectorGoType() memberdefinition.GoType {
+	return codegen.ReducerVectorType
+}
+
 // TestEveryDeclaredFoldHasTheDerivedCallShape is the enforcement half of the
 // call-shape contract, and the first consumer that holds a declaration to it.
 //
 // A reducer's signature is DERIVED from its declared rows - the optional
-// candidate carrier, then each input's tag carrier when tagged followed by its
-// fact carrier, answering the declared output carriers and one disposition. An
-// implementation whose parameters disagree is not a reducer the generated call
-// can reach: the emitter would pass carriers it does not accept.
+// candidate carrier, then each input's route and tag carriers when it has
+// them, followed by that input's fact carrier or, when the read is
+// many-valued, one view over it - answering the declared output carriers and
+// one disposition. An implementation whose parameters disagree is not a
+// reducer the generated call can reach: the emitter would pass carriers it
+// does not accept.
 //
 // Sealed per-rule data is deliberately absent from the derived vector. A fold
 // that needs the owner schema, a derived plan, or a projection takes it from
@@ -33,13 +43,13 @@ func outcomeGoType() memberdefinition.GoType {
 // receiver is not counted as a parameter here. That is the whole reason the
 // signature cannot grow plumbing.
 //
-// This law is RED on placement/store/reducer/storage and is left red rather
-// than narrowed. StorageFold takes the candidate, the Value source and the
-// selected Placement cell, but not the route tag its own declaration names, so
-// it cannot tell which member of the selection it was handed. That is the same
-// fold whose second result is still a bool instead of the sealed disposition;
-// both are one edit for the placement line, and narrowing this law would hide
-// exactly the gap it exists to measure.
+// This law is RED on heap/reducer/closed and is left red rather than narrowed.
+// resultClosed takes the Heap schema, the Value schema and a selector
+// projection alongside its carriers - three positions of exactly the plumbing
+// the call shape exists to forbid - and delivers its many-valued input through
+// the engine's own ordered-cell type rather than the view the execution layer
+// materializes. Every one of those is the heap-closed cutover's work, and
+// narrowing this law would hide the measurement of it.
 func TestEveryDeclaredFoldHasTheDerivedCallShape(t *testing.T) {
 	root := moduleRoot(t)
 	roster, rosterOK := memberroster.Composition()
@@ -54,17 +64,7 @@ func TestEveryDeclaredFoldHasTheDerivedCallShape(t *testing.T) {
 			t.Fatalf("member definition source %q does not compose", source.Name)
 		}
 		for _, reducer := range composed.Reducers {
-			if manyInput(reducer) {
-				// How a many-valued input is delivered as carrier values is the
-				// one clause of the call shape that is not settled: a Summary or
-				// Complete read hands the fold a whole cell vector, and the
-				// carrier vocabulary has no spelling for a sequence yet. That
-				// belongs with the form that executes those reads, so this law
-				// states nothing about it rather than inventing a shape that
-				// form would then have to live with.
-				continue
-			}
-			arguments, results, derivedOK := composed.ReducerSignature(reducer, outcomeGoType())
+			arguments, results, derivedOK := composed.ReducerSignature(reducer, outcomeGoType(), vectorGoType())
 			if !derivedOK {
 				drift = append(drift, fmt.Sprintf("%s (rule %s): declared rows name a carrier the axis does not declare", reducer.Key, reducer.Rule))
 				continue
@@ -84,16 +84,6 @@ func TestEveryDeclaredFoldHasTheDerivedCallShape(t *testing.T) {
 	}
 }
 
-// manyInput reports whether any declared input is many-valued.
-func manyInput(reducer memberdefinition.Reducer) bool {
-	for _, input := range reducer.Inputs {
-		if input.Multiplicity == member.MultiplicityMany {
-			return true
-		}
-	}
-	return false
-}
-
 // compareSignature reports the first disagreement between a declaration's
 // derived call shape and the implementation's actual one, or the empty string.
 func compareSignature(file *ast.File, declaring string, decl *ast.FuncDecl, arguments []definition.Argument, results []memberdefinition.GoType) string {
@@ -105,6 +95,16 @@ func compareSignature(file *ast.File, declaring string, decl *ast.FuncDecl, argu
 		path, name := resolvedType(file, declaring, parameters[position])
 		if path != argument.Type.PackagePath || name != argument.Type.Name {
 			return fmt.Sprintf("parameter %d is %s, the declaration derives %s", position, describeType(path, name), describeType(argument.Type.PackagePath, argument.Type.Name))
+		}
+		if !argument.Element.Available() {
+			continue
+		}
+		elementPath, elementName, instantiated := typeArgument(file, declaring, parameters[position])
+		if !instantiated {
+			return fmt.Sprintf("parameter %d is not instantiated, the declaration derives a view over %s", position, describeType(argument.Element.PackagePath, argument.Element.Name))
+		}
+		if elementPath != argument.Element.PackagePath || elementName != argument.Element.Name {
+			return fmt.Sprintf("parameter %d delivers %s, the declaration derives %s", position, describeType(elementPath, elementName), describeType(argument.Element.PackagePath, argument.Element.Name))
 		}
 	}
 	returned := flattenFields(decl.Type.Results)
@@ -153,8 +153,12 @@ func describeArguments(arguments []definition.Argument) string {
 		switch argument.Role {
 		case definition.ArgumentCandidate:
 			role = "candidate"
+		case definition.ArgumentRoute:
+			role = "route"
 		case definition.ArgumentTag:
 			role = "tag"
+		case definition.ArgumentVector:
+			role = "vector"
 		}
 		spelled = append(spelled, role+" "+describeType(argument.Type.PackagePath, argument.Type.Name))
 	}

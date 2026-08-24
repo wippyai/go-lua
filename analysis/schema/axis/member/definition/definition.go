@@ -735,8 +735,9 @@ func (definition Definition) Clone() Definition {
 }
 
 // ArgumentRole names what one position of a reducer's direct call carries.
-// The three roles are the whole vocabulary: there is deliberately no role for
-// an owner schema, a derived route plan, a projection, or an ordinal.
+// The roles below are the whole vocabulary: every one of them is a carrier
+// value the declaration named, and there is deliberately no role for an owner
+// schema, a derived route plan, a projection, or an ordinal.
 type ArgumentRole uint8
 
 const (
@@ -755,13 +756,26 @@ const (
 	// ArgumentFact is one declared input's fact carrier, delivered under that
 	// input's sealed read contract.
 	ArgumentFact
+	// ArgumentVector is the whole delivered cell vector of a many-valued
+	// input. A Summary or Complete read answers one row with every cell of its
+	// sealed denominator, and a fold over such a read is a fold over the
+	// vector: decomposing it into one invocation per cell would ask the fold
+	// to reassemble a correlation the read already established, and there is
+	// no per-cell invocation for it to be handed. It is a derived role, not an
+	// authored one - which inputs are many-valued is the read's multiplicity,
+	// not an owner's choice of parameter.
+	ArgumentVector
 )
 
 // Argument is one position of a reducer's derived direct-call signature.
 type Argument struct {
-	Role  ArgumentRole
-	Type  GoType
-	Input int
+	Role ArgumentRole
+	Type GoType
+	// Element is the cell type a vector position delivers. It is the one place
+	// the call shape names a type argument, because the vector view is the one
+	// instantiated type in a signature; every other role leaves it zero.
+	Element GoType
+	Input   int
 }
 
 // ArgumentInput is one declared input reduced to the carrier types its
@@ -774,20 +788,37 @@ type ArgumentInput struct {
 	Tag    GoType
 	Tagged bool
 	Fact   GoType
+	// Vector is the view type a many-valued read delivers its cells through,
+	// and Many says this input is one. The view is named by the caller because
+	// it belongs to the execution layer's vocabulary, the same way the sealed
+	// disposition is.
+	Vector GoType
+	Many   bool
 }
 
 // ComposeArguments is the one statement of a reducer's parameter order: the
 // optional candidate carrier first, then for each input its route coordinate
-// when routed, its tag carrier when tagged, and its fact carrier. A route
-// precedes the tag and the tag precedes the fact, outermost address first: the
-// route says where the invocation publishes, the tag says which member of the
-// selection it folds, and the fact is that member.
+// when routed, its tag carrier when tagged, and the input itself - one fact
+// when the read delivers one member, one vector when it delivers a whole
+// denominator. A route precedes the tag and the tag precedes the input,
+// outermost address first: the route says where the invocation publishes, the
+// tag says which member of the selection it folds, and the input is that
+// member.
+//
+// A many-valued input takes exactly one position and it carries no tag. Its
+// members are identified by their sealed position in the delivered vector -
+// that order IS the denominator the read declared - so a tag naming one member
+// has nothing to name in a delivery that carries them all.
 func ComposeArguments(candidate GoType, candidatePresent bool, inputs []ArgumentInput) []Argument {
 	arguments := make([]Argument, 0, len(inputs)*3+1)
 	if candidatePresent {
 		arguments = append(arguments, Argument{Role: ArgumentCandidate, Type: candidate, Input: -1})
 	}
 	for index, input := range inputs {
+		if input.Many {
+			arguments = append(arguments, Argument{Role: ArgumentVector, Type: input.Vector, Element: input.Fact, Input: index})
+			continue
+		}
 		if input.Routed {
 			arguments = append(arguments, Argument{Role: ArgumentRoute, Type: input.Route, Input: index})
 		}
@@ -806,16 +837,21 @@ func ComposeArguments(candidate GoType, candidatePresent bool, inputs []Argument
 //
 // The parameters are carrier values only - the optional candidate carrier, then
 // for each declared input its route coordinate when routed, its tag carrier
-// when tagged, and its fact carrier. Nothing else is ever a parameter. The owner schema, the derived
-// route plan and the projections a fold consults are the sealed state of the
-// installed Family that calls the reducer, bound once when the owner installs
-// it. That is what keeps a signature from growing plumbing: its width is a
-// function of the declared rows alone.
+// when tagged, and the input itself: one fact carrier, or one vector view of
+// that carrier when the read is many-valued. Nothing else is ever a parameter.
+// The owner schema, the derived route plan and the projections a fold consults
+// are the sealed state of the installed Family that calls the reducer, bound
+// once when the owner installs it. That is what keeps a signature from growing
+// plumbing: its width is a function of the declared rows alone.
+//
+// vector is the view type a many-valued read delivers through. It is supplied
+// by the caller for the same reason outcome is: both belong to the execution
+// vocabulary, and this package states the shape without naming that package.
 //
 // The results are the declared output carriers in row order followed by the one
 // sealed disposition, which a caller supplies as outcome so this package states
 // the shape without naming the vocabulary's package.
-func (definition Definition) ReducerSignature(reducer Reducer, outcome GoType) ([]Argument, []GoType, bool) {
+func (definition Definition) ReducerSignature(reducer Reducer, outcome, vector GoType) ([]Argument, []GoType, bool) {
 	carriers, _, carriersOK := definition.carrierIndex()
 	if !carriersOK {
 		return nil, nil, false
@@ -835,6 +871,13 @@ func (definition Definition) ReducerSignature(reducer Reducer, outcome GoType) (
 			return nil, nil, false
 		}
 		inputs[index] = ArgumentInput{Fact: fact.Type}
+		if input.Multiplicity == member.MultiplicityMany {
+			if !vector.Available() {
+				return nil, nil, false
+			}
+			inputs[index].Vector, inputs[index].Many = vector, true
+			continue
+		}
 		if input.Route != "" {
 			route, routeOK := carriers[input.Route]
 			if !routeOK {

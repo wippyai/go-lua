@@ -29,29 +29,43 @@ func routedCall() ReducerCall {
 }
 
 // TestReducerArgumentsAreCarrierValuesOnly is the call-shape law. Every
-// position of a reducer's direct call is a carrier value the declaration named:
-// the candidate carrier, an input's tag carrier, or an input's fact carrier.
-// There is no fourth role, so an owner schema, a derived route plan, a
-// projection, or an ordinal can never appear in the signature - those are the
-// sealed state of the installed Family that calls the reducer, bound once when
-// the owner installs it.
+// position of a reducer's direct call carries a carrier value the declaration
+// named: the candidate carrier, an input's route coordinate, an input's tag
+// carrier, or the input's own fact carrier - delivered directly, or through
+// the analyzer's sealed view when the read is many-valued. An owner schema, a
+// derived route plan, a projection, or an ordinal can never appear, because
+// there is no role for one: those are the sealed state of the installed Family
+// that calls the reducer, bound once when the owner installs it.
 func TestReducerArgumentsAreCarrierValuesOnly(t *testing.T) {
-	call := routedCall()
-	declared := map[definition.GoType]bool{call.Candidate: true}
-	for _, input := range call.Inputs {
-		declared[input.Type] = true
-		if input.Tagged {
-			declared[input.Tag] = true
+	for _, call := range []ReducerCall{routedCall(), summaryCall()} {
+		declared := map[definition.GoType]bool{call.Candidate: true}
+		for _, input := range call.Inputs {
+			declared[input.Type] = true
+			if input.Routed {
+				declared[input.Route] = true
+			}
+			if input.Tagged {
+				declared[input.Tag] = true
+			}
 		}
-	}
-	for position, argument := range call.Arguments() {
-		switch argument.Role {
-		case ReducerArgumentCandidate, ReducerArgumentTag, ReducerArgumentFact:
-		default:
-			t.Fatalf("argument %d carries role %d, which is not a declared carrier role", position, argument.Role)
-		}
-		if !declared[argument.Type] {
-			t.Fatalf("argument %d is %v, a type no carrier row declared", position, argument.Type)
+		for position, argument := range call.Arguments() {
+			carried := argument.Type
+			switch argument.Role {
+			case ReducerArgumentCandidate, ReducerArgumentRoute, ReducerArgumentTag, ReducerArgumentFact:
+			case ReducerArgumentVector:
+				// A vector position's own type is the analyzer's view, which no
+				// owner declares. What it CARRIES is the declared carrier the
+				// view is instantiated at, and that is what the law is about.
+				if argument.Type != ReducerVectorType {
+					t.Fatalf("argument %d is delivered through %v, not the sealed view", position, argument.Type)
+				}
+				carried = argument.Element
+			default:
+				t.Fatalf("argument %d carries role %d, which is not a declared carrier role", position, argument.Role)
+			}
+			if !declared[carried] {
+				t.Fatalf("argument %d is %v, a type no carrier row declared", position, carried)
+			}
 		}
 	}
 }
@@ -129,5 +143,75 @@ func TestReducerResultsEndWithTheSealedDisposition(t *testing.T) {
 	}
 	if results[1] != ReducerOutcomeType {
 		t.Fatalf("last result = %v, want %v", results[1], ReducerOutcomeType)
+	}
+}
+
+// summaryCall is the call shape of a fold over a whole denominator: a
+// candidate carrier and one many-valued input whose declaration also names a
+// tag carrier.
+func summaryCall() ReducerCall {
+	return ReducerCall{
+		Key:              "reducer/summary",
+		Candidate:        callShapeType("Candidate"),
+		CandidatePresent: true,
+		Inputs: []ReducerInput{
+			{Join: 0, Type: callShapeType("Source"), Form: member.ReadFormExact, Multiplicity: member.MultiplicityOne},
+			{Join: 1, Type: callShapeType("Cell"), Form: member.ReadFormSummary, Multiplicity: member.MultiplicityMany, Tag: callShapeType("Coordinate"), Tagged: true},
+		},
+		Outputs: []Output{{valueType: callShapeType("Fact")}},
+		Outcome: ReducerOutcomeType,
+	}
+}
+
+// TestAManyValuedInputIsOneVectorPositionOverItsOwnCarrier states how a fold
+// over a whole denominator is called. The read delivers every cell of its
+// sealed denominator in one row, so the fold is handed that vector: there is
+// no per-cell invocation, and decomposing the row into one would ask the fold
+// to rebuild a correlation the read already established.
+//
+// The view is the execution layer's, instantiated at the input's own declared
+// fact carrier, so an owner names no container of its own and the cells are
+// read where they were materialized.
+func TestAManyValuedInputIsOneVectorPositionOverItsOwnCarrier(t *testing.T) {
+	arguments := summaryCall().Arguments()
+	want := []ReducerArgument{
+		{Role: ReducerArgumentCandidate, Type: callShapeType("Candidate"), Input: -1},
+		{Role: ReducerArgumentFact, Type: callShapeType("Source"), Input: 0},
+		{Role: ReducerArgumentVector, Type: ReducerVectorType, Element: callShapeType("Cell"), Input: 1},
+	}
+	if len(arguments) != len(want) {
+		t.Fatalf("argument count = %d, want %d", len(arguments), len(want))
+	}
+	for index, argument := range arguments {
+		if argument != want[index] {
+			t.Fatalf("argument %d = %+v, want %+v", index, argument, want[index])
+		}
+	}
+}
+
+// TestAManyValuedInputCarriesNoTag states why the tag position disappears. A
+// tag says WHICH member of a selection an invocation folds; a vector delivers
+// them all, in the order its sealed denominator declares, so the position of a
+// cell is already its identity. A tag argument beside the whole vector would
+// name one member the call is not about.
+func TestAManyValuedInputCarriesNoTag(t *testing.T) {
+	for _, argument := range summaryCall().Arguments() {
+		if argument.Role == ReducerArgumentTag {
+			t.Fatalf("a many-valued input contributed a tag position carrying %v", argument.Type)
+		}
+	}
+	tagged := summaryCall()
+	tagged.Inputs[1].Multiplicity = member.MultiplicityOne
+	found := false
+	for _, argument := range tagged.Arguments() {
+		if argument.Role == ReducerArgumentTag {
+			found = true
+		}
+		if argument.Role == ReducerArgumentVector {
+			t.Fatal("a single-valued input was delivered as a vector")
+		}
+	}
+	if !found {
+		t.Fatal("the same declaration read at one member contributed no tag position")
 	}
 }

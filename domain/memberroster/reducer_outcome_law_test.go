@@ -120,9 +120,27 @@ func resolvedType(file *ast.File, declaring string, expr ast.Expr) (string, stri
 			return "", typed.Sel.Name
 		}
 		return importPath(file, qualifier.Name), typed.Sel.Name
+	case *ast.IndexExpr:
+		// A generic instantiation resolves to the generic type it names. Its
+		// type argument is compared separately, against the element the
+		// declaration derives, so the two halves of a vector position are held
+		// to the declaration independently.
+		return resolvedType(file, declaring, typed.X)
 	default:
 		return "", "?"
 	}
+}
+
+// typeArgument resolves the single type argument of a generic instantiation.
+// A parameter that is not one has no argument, which is how a vector position
+// spelled as a bare type is caught.
+func typeArgument(file *ast.File, declaring string, expr ast.Expr) (string, string, bool) {
+	indexed, isIndexed := expr.(*ast.IndexExpr)
+	if !isIndexed {
+		return "", "", false
+	}
+	path, name := resolvedType(file, declaring, indexed.Index)
+	return path, name, true
 }
 
 func importPath(file *ast.File, qualifier string) string {

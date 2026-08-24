@@ -502,7 +502,20 @@ const (
 	ReducerArgumentRoute     = memberdefinition.ArgumentRoute
 	ReducerArgumentTag       = memberdefinition.ArgumentTag
 	ReducerArgumentFact      = memberdefinition.ArgumentFact
+	ReducerArgumentVector    = memberdefinition.ArgumentVector
 )
+
+// ReducerVectorType is the one view a many-valued read delivers its cells
+// through. It is a constant of this package for the same reason the outcome
+// type is: a fold over a whole denominator reads the cells the execution layer
+// already materialized, in the order that layer sealed, and an owner that
+// named a container of its own would be asking for a second copy of a vector
+// the read boundary already owns. An emitter instantiates it at the input's
+// declared fact carrier.
+var ReducerVectorType = memberdefinition.GoType{
+	PackagePath: "github.com/wippyai/go-lua/analysis/engine/execution",
+	Name:        "SummaryVector",
+}
 
 // Arguments derives the complete parameter vector of this reducer's direct
 // call. It is the one statement of the call shape: the emitter emits this
@@ -511,18 +524,25 @@ const (
 //
 // The vector is carrier values only - the optional candidate carrier, then for
 // each declared input its route coordinate when the input is routed, its tag
-// carrier when the input is tagged, and its fact carrier. Nothing else is ever
-// a parameter. In particular the owner
+// carrier when the input is tagged, and the input itself: one fact carrier, or
+// one view over that carrier when the sealed read is many-valued. Nothing else
+// is ever a parameter. In particular the owner
 // schema, the derived route plan, and the projections a fold consults are NOT
 // passed: they are the sealed state of the installed Family that calls this
 // reducer, bound once when the owner installs it and immutable thereafter.
 // That is what keeps this signature from growing plumbing - a fold that needs
 // more owner knowledge takes it from its Family, and the call shape is a
 // function of the declaration alone.
+//
+// Which inputs are many-valued is read off the sealed plan's own multiplicity,
+// never off a row an owner could set independently of the read it describes.
 func (call ReducerCall) Arguments() []ReducerArgument {
 	inputs := make([]memberdefinition.ArgumentInput, len(call.Inputs))
 	for index, input := range call.Inputs {
 		inputs[index] = memberdefinition.ArgumentInput{Route: input.Route, Routed: input.Routed, Tag: input.Tag, Tagged: input.Tagged, Fact: input.Type}
+		if input.Multiplicity == member.MultiplicityMany {
+			inputs[index].Vector, inputs[index].Many = ReducerVectorType, true
+		}
 	}
 	return memberdefinition.ComposeArguments(call.Candidate, call.CandidatePresent, inputs)
 }
