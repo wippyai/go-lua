@@ -105,6 +105,21 @@ func (cell *generatedRuleBindingCell) declareReadGeometry() bool {
 		}
 		reads = append(reads, row)
 	}
+	mode, modeOK := cell.generated.program.OutputMode()
+	if !modeOK {
+		return false
+	}
+	if mode == ruleprogram.ModeStructural {
+		// A structural rule declares no write shape at all. Its publication is
+		// the activation row set the cold row's family admits, and there is no
+		// Factor cell for a write to address.
+		if shape.WriteCount != 0 {
+			return false
+		}
+		cell.writeMode, cell.routeRead = directRuleWriteStructural, 0
+		cell.reads = reads
+		return true
+	}
 	write, writeOK := cell.schema.ruleWriteShapeAt(cell.ordinal, 0)
 	if !writeOK || shape.WriteCount != 1 {
 		return false
@@ -154,11 +169,27 @@ func (cell *generatedRuleBindingCell) schemaRuleComplete() bool {
 		return false
 	}
 	shape, shapeOK := cell.schema.ruleShapeAt(cell.ordinal)
-	if !shapeOK || shape.OutputKind != composition.FactorOutput || shape.Inputs != uint64(program.InputCount()) || shape.WriteCount != 1 {
+	if !shapeOK || shape.Inputs != uint64(program.InputCount()) {
 		return false
 	}
 	outputFactor := cell.schema.factorSemanticAt(uint64(program.OutputFactor()))
-	if !outputFactor.Available() || shape.Output != outputFactor {
+	if !outputFactor.Available() {
+		return false
+	}
+	structural := shape.OutputKind == composition.StructuralOutput
+	if structural {
+		// The cold structural row names no output Factor and no write. What it
+		// names instead is the activation family its candidate branches are
+		// admitted under, and the axis the descriptor still carries is the one
+		// its rows are indexed by - which is what routes them to a typed plane
+		// at execution, not a cell they publish into.
+		if shape.Output.Available() || shape.WriteCount != 0 || shape.CarryCount != 0 ||
+			shape.ActivationCount != 1 || !shape.ActivationFamily.Available() ||
+			program.TransportCount() == 0 || program.CarryInput() >= 0 ||
+			cell.writeMode != directRuleWriteStructural || cell.routeRead != 0 {
+			return false
+		}
+	} else if shape.OutputKind != composition.FactorOutput || shape.WriteCount != 1 || shape.Output != outputFactor {
 		return false
 	}
 	// The publication disposition is the Plan's, and the cold row records it.
@@ -166,27 +197,39 @@ func (cell *generatedRuleBindingCell) schemaRuleComplete() bool {
 	// routed write names the selected join whose derived members ARE the
 	// destinations, and resolves none of them here.
 	mode, modeOK := program.OutputMode()
-	write, writeOK := cell.schema.ruleWriteShapeAt(cell.ordinal, 0)
-	if !modeOK || !writeOK || write.Factor != outputFactor {
+	if !modeOK || (mode == ruleprogram.ModeStructural) != structural {
 		return false
 	}
 	outputPlan, outputPlanOK := program.OutputAt(0)
 	if !outputPlanOK {
 		return false
 	}
-	switch mode {
-	case ruleprogram.ModeExact:
-		if write.Kind != composition.WriteExact || write.Route != 0 || cell.writeMode != directRuleWriteExact || cell.routeRead != 0 ||
-			outputPlan.RouteJoinPresent {
+	if structural {
+		// A structural publication stages no fact, so it carries neither the
+		// exact writer's evidence nor a route. Its joins are the whole of what
+		// it observes, and a rule that observes nothing selects no branch.
+		if outputPlan.RouteJoinPresent || outputPlan.Exact || outputPlan.Strong || program.ReadCount() == 0 {
 			return false
 		}
-	case ruleprogram.ModeRoute:
-		if write.Kind != composition.WriteRoute || !outputPlan.RouteJoinPresent ||
-			write.Route != uint64(outputPlan.RouteJoin)+1 || cell.writeMode != directRuleWriteRoute || cell.routeRead != write.Route {
+	} else {
+		write, writeOK := cell.schema.ruleWriteShapeAt(cell.ordinal, 0)
+		if !writeOK || write.Factor != outputFactor {
 			return false
 		}
-	default:
-		return false
+		switch mode {
+		case ruleprogram.ModeExact:
+			if write.Kind != composition.WriteExact || write.Route != 0 || cell.writeMode != directRuleWriteExact || cell.routeRead != 0 ||
+				outputPlan.RouteJoinPresent {
+				return false
+			}
+		case ruleprogram.ModeRoute:
+			if write.Kind != composition.WriteRoute || !outputPlan.RouteJoinPresent ||
+				write.Route != uint64(outputPlan.RouteJoin)+1 || cell.writeMode != directRuleWriteRoute || cell.routeRead != write.Route {
+				return false
+			}
+		default:
+			return false
+		}
 	}
 	if program.ReadCount() == 0 {
 		if shape.ReadCount != 0 || shape.CarryCount != 0 || program.InputCount() != 0 || len(cell.reads) != 0 ||
@@ -212,7 +255,7 @@ func (cell *generatedRuleBindingCell) schemaRuleComplete() bool {
 			row.factor != cell.schema.factorSemanticAt(uint64(plan.Factor)) {
 			return false
 		}
-		if row.kind != generatedColdReadKind(plan.Form) {
+		if row.kind != generatedColdReadKind(plan.Form, plan.ParentPresent) {
 			return false
 		}
 	}
@@ -237,16 +280,25 @@ func (cell *generatedRuleBindingCell) schemaRuleComplete() bool {
 	return cell.state.phase == schemaBindingOpen || cell.state.phase == schemaBindingSealed
 }
 
-// generatedColdReadKind is the one projection of a declared read form onto the
-// cold read kind. It is stated here and in the slot that builds the cold row,
-// and the completeness check above holds those two to each other.
-func generatedColdReadKind(form ruleprogram.ReadForm) composition.ReadKind {
+// generatedColdReadKind is the one projection of a declared read onto the cold
+// read kind. The slot that builds the cold row calls it too, so the row and the
+// completeness check above cannot disagree about what a declared form is.
+//
+// A vector over a self-provided nested member set is the one form whose kind is
+// not its form alone: that set's own MemberCount and MemberAt are its
+// denominator, and each ordinal is observed at its own exact coordinate, so the
+// read asks its Factor for nothing a keyed lookup does not. The parent
+// restatement is the declaration that says so.
+func generatedColdReadKind(form ruleprogram.ReadForm, parentPresent bool) composition.ReadKind {
 	switch form {
 	case ruleprogram.Exact:
 		return composition.ReadExact
 	case ruleprogram.Selected:
 		return composition.ReadSelect
 	case ruleprogram.Summary, ruleprogram.Complete:
+		if parentPresent {
+			return composition.ReadExact
+		}
 		return composition.ReadSummary
 	default:
 		return 0

@@ -622,6 +622,13 @@ func (contribution surface) Seal(view seal.View, sealed seal.Sealed) schema.Seal
 			// into runtime construction.
 			return seal.SurfaceLawFailure(schema.SurfaceKindRule, template.id, LawProgramShape, schema.DispositionIncomplete)
 		}
+		if template.program.ActivationRole.Available() && !template.declaresRole(template.program.ActivationRole) {
+			// The activation family the program's candidate branches are grouped
+			// under is the same kind of consumed identity as the operand family,
+			// and it is held to the same rule: a family named nowhere in the
+			// rule's own roles is a name threaded into cold construction.
+			return seal.SurfaceLawFailure(schema.SurfaceKindRule, template.id, LawProgramShape, schema.DispositionIncomplete)
+		}
 	}
 	return schema.SealFailure{}
 }

@@ -481,6 +481,16 @@ func declareGeneratedIssuanceSurfaces(rowsWorkspace *programRows, state *schemaB
 	if !readsOK {
 		return pendingRuleIssuance{}, false
 	}
+	// A structural rule publishes no Factor surface: its output is the
+	// activation row set its candidate branches mount into the construct
+	// topology, and the issuance arm that mounts them is the generated
+	// activation lane. That lane is not built. The rule binds and installs its
+	// family through the ordinary seam; this is where it stops, named by the
+	// disposition rather than by a write surface that cannot be minted for a
+	// rule that writes nothing.
+	if declaration.writeMode == directRuleWriteStructural {
+		return pendingRuleIssuance{}, false
+	}
 	writeSurface, writeSurfaceOK := declareGeneratedWriteSurface(state, declaration, descriptor, anchor, ruleSemantic, denseCandidate)
 	if !writeSurfaceOK {
 		return pendingRuleIssuance{}, false

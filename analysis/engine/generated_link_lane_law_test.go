@@ -77,7 +77,7 @@ func generatedLinkLawOccurrences(t testing.TB) []identity.ContentID {
 // Link handoff, carries a Link capability and never a mounted one. Lane is the
 // only degree of freedom - there is no second generated lifecycle.
 func TestLinkGeneratedSlotIssuesTheLinkLaneCapability(t *testing.T) {
-	fixture := openGeneratedBindingLaneLaw(t, newGeneratedRuleLawFixture(t, generatedRuleLawExact, generatedRuleLawRuleRole), true)
+	fixture := openGeneratedBindingLaneLaw(t, newGeneratedRuleLawFixture(t, generatedRuleLawExact, generatedRuleLawRuleRole), true, 0)
 	if !fixture.cap.Link() || fixture.cap.Mounted() || fixture.cap.MountedPoint() || fixture.cap.Activation() {
 		t.Fatalf("Link generated capability lanes link=%t mounted=%t mountedPoint=%t activation=%t",
 			fixture.cap.Link(), fixture.cap.Mounted(), fixture.cap.MountedPoint(), fixture.cap.Activation())
@@ -97,7 +97,7 @@ func TestLinkGeneratedSlotIssuesTheLinkLaneCapability(t *testing.T) {
 // sealed plan names, read through the axis owner's own occurrence directory.
 // No rule callback and no owner-issued catalog participates.
 func TestGeneratedLinkOccurrenceInventoryIsTheCandidateDirectory(t *testing.T) {
-	fixture := openGeneratedBindingLaneLaw(t, newGeneratedRuleLawFixture(t, generatedRuleLawExact, generatedRuleLawRuleRole), true)
+	fixture := openGeneratedBindingLaneLaw(t, newGeneratedRuleLawFixture(t, generatedRuleLawExact, generatedRuleLawRuleRole), true, 0)
 	base := generatedBindingLawOwnerForDescriptor(t, fixture)
 	occurrences := generatedLinkLawOccurrences(t)
 	directory := &generatedLinkLawDirectory{generatedBindingLawOwner: *base, occurrences: occurrences}
@@ -145,7 +145,7 @@ func TestGeneratedOccurrenceInventoryRefusesAMountedCandidateRelation(t *testing
 // adjacent to the positive law: the relation owner is an axis authority only
 // once the binding is terminal.
 func TestGeneratedOccurrenceInventoryRequiresASealedBinding(t *testing.T) {
-	fixture := openGeneratedBindingLaneLaw(t, newGeneratedRuleLawFixture(t, generatedRuleLawExact, generatedRuleLawRuleRole), true)
+	fixture := openGeneratedBindingLaneLaw(t, newGeneratedRuleLawFixture(t, generatedRuleLawExact, generatedRuleLawRuleRole), true, 0)
 	base := generatedBindingLawOwnerForDescriptor(t, fixture)
 	directory := &generatedLinkLawDirectory{generatedBindingLawOwner: *base, occurrences: generatedLinkLawOccurrences(t)}
 	if !BindRelationOwner(fixture.binding, fixture.factors[0], directory) {

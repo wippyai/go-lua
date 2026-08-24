@@ -157,23 +157,36 @@ func generatedBindingLawIDs(t testing.TB) (identity.ContentID, identity.ContentI
 
 func openGeneratedBindingLaw(t testing.TB, fixture generatedRuleLawFixture) generatedBindingLawFixture {
 	t.Helper()
-	return openGeneratedBindingLaneLaw(t, fixture, false)
+	return openGeneratedBindingLaneLaw(t, fixture, false, 0)
+}
+
+// openGeneratedBindingSpareLaw seals the same binding with additional bound
+// Factors the Plan names no axis for. A spare Factor is what a claim fenced by
+// the rule's own output axis has to be refused against: without one, every
+// Factor in the binding is the right answer by accident.
+func openGeneratedBindingSpareLaw(t testing.TB, fixture generatedRuleLawFixture, spare int) generatedBindingLawFixture {
+	t.Helper()
+	return openGeneratedBindingLaneLaw(t, fixture, false, spare)
 }
 
 // openGeneratedBindingLaneLaw seals one generated Rule on the lane under test.
 // The two lanes differ only in which capability the composition issues, so the
 // fixture keeps one construction and names the lane.
-func openGeneratedBindingLaneLaw(t testing.TB, fixture generatedRuleLawFixture, link bool) generatedBindingLawFixture {
+func openGeneratedBindingLaneLaw(t testing.TB, fixture generatedRuleLawFixture, link bool, spare int) generatedBindingLawFixture {
 	t.Helper()
 	builder := NewSchema()
-	factors := make([]*FactorSlot[uint64], fixture.catalog.AxisCount())
-	summaryForms := make([]SchemaReadForm[uint64], fixture.catalog.AxisCount())
+	factors := make([]*FactorSlot[uint64], fixture.catalog.AxisCount()+spare)
+	summaryForms := make([]SchemaReadForm[uint64], len(factors))
 	for index := range factors {
-		axisRow, axisOK := fixture.catalog.AxisAt(index)
-		if !axisOK {
-			t.Fatalf("generated binding law axis %d", index)
+		semantic := coldKey(964_000 + index)
+		if index < fixture.catalog.AxisCount() {
+			axisRow, axisOK := fixture.catalog.AxisAt(index)
+			if !axisOK {
+				t.Fatalf("generated binding law axis %d", index)
+			}
+			semantic = axisRow.Semantic
 		}
-		factor, factorOK := DeclareFactorSlot[uint64](builder, axisRow.Semantic)
+		factor, factorOK := DeclareFactorSlot[uint64](builder, semantic)
 		if !factorOK {
 			t.Fatalf("generated binding law factor %d", index)
 		}

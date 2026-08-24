@@ -210,6 +210,11 @@ type directRuleWriteMode uint8
 const (
 	directRuleWriteExact directRuleWriteMode = iota + 1
 	directRuleWriteRoute
+	// directRuleWriteStructural is the publication disposition of a rule that
+	// writes no fact. Its output is the activation row set its candidate
+	// branches mount into the construct topology, so it names no write shape
+	// and no destination: there is no Factor cell for one to address.
+	directRuleWriteStructural
 )
 
 // schemaRuleInputFitsInt is the single admission bound for a declared Rule

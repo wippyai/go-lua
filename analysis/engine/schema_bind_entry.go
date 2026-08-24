@@ -178,13 +178,37 @@ func BindRuleFamily[K ~uint32 | ~uint64, V any](binding *SchemaBinding, slot Rul
 		state.poisonLocked()
 		return false
 	}
-	// The claim is fenced by the Factor the rule writes to. A family installed
-	// against any other Factor is typed in a key and fact the rule never
-	// publishes, and the claim would simply never be resolved: the Factor it
-	// names does not own the rule's rows. Refusing it here names the mistake
+	// The claim is fenced by the Factor the rule publishes at. A family
+	// installed against any other Factor is typed in a key and fact the rule
+	// never publishes, and the claim would simply never be resolved: the Factor
+	// it names does not own the rule's rows. Refusing it here names the mistake
 	// where it is made.
+	//
+	// Which Factor that is comes from the rule's own declared geometry, and the
+	// two output kinds state it differently. A fact-writing rule names its
+	// output Factor in the cold row, and the claim is fenced by that semantic.
+	// A structural rule writes no fact and names no output Factor at all: its
+	// output is the activation row set its candidate branches mount into the
+	// construct topology. What its rows still have is the axis they are indexed
+	// by, which is the axis whose typed plane they are built on, so that axis
+	// is what fences the claim. One seam, two declared geometries.
 	shape, shapeOK := state.schema.ruleShapeAt(ruleOrdinal)
-	if !shapeOK || shape.OutputKind != composition.FactorOutput || shape.Output != state.factors[factorOrdinal].schemaFactorSemanticKey() {
+	if !shapeOK {
+		state.poisonLocked()
+		return false
+	}
+	switch shape.OutputKind {
+	case composition.FactorOutput:
+		if shape.Output != state.factors[factorOrdinal].schemaFactorSemanticKey() {
+			state.poisonLocked()
+			return false
+		}
+	case composition.StructuralOutput:
+		if !structuralRuleFamilyAxis(state, ruleOrdinal, shape, factorOrdinal) {
+			state.poisonLocked()
+			return false
+		}
+	default:
 		state.poisonLocked()
 		return false
 	}
@@ -434,6 +458,30 @@ func FactorImplementationAt[K ~uint32 | ~uint64, V any](binding *SchemaBinding, 
 	// never mutated after Seal, so concurrent callers cannot observe a
 	// descriptor being rewritten underneath a live runtime binder.
 	return cell.sealedImplementation(state, state.authority)
+}
+
+// structuralRuleFamilyAxis reports whether one structural rule's family claim
+// names the axis its rows are indexed by.
+//
+// A structural rule has no Output semantic for the claim to be fenced by, so
+// the fence is the output axis its sealed descriptor carries - the same axis
+// the execution ladder routes its rows to. The descriptor exists only once the
+// rule itself is bound, which is where a structural claim is made: the rule
+// installs its own family at its own bind, on the ordinal it just took.
+//
+// The activation family is required alongside it. A structural row whose cold
+// capability is a prune rather than an activation publishes no candidate
+// branch set, so a family claiming to author its execution would author rows
+// nothing mounts.
+func structuralRuleFamilyAxis(state *schemaBindingState, ruleOrdinal uint64, shape composition.RuleShape, factorOrdinal uint64) bool {
+	if state == nil || shape.ActivationCount != 1 || !shape.ActivationFamily.Available() || shape.Output.Available() || shape.WriteCount != 0 {
+		return false
+	}
+	cell, generated := state.rules[ruleOrdinal].(*generatedRuleBindingCell)
+	if !generated || cell == nil || cell.generated == nil || !cell.generated.available() {
+		return false
+	}
+	return uint64(cell.generated.program.OutputFactor()) == factorOrdinal
 }
 
 // ruleFamilyTargetCell resolves the declaration cell of a family claim target.

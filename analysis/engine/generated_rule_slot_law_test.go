@@ -19,36 +19,38 @@ import (
 )
 
 const (
-	generatedRuleLawAxisKey             schema.Key     = "axis/generated-rule-law"
-	generatedRuleLawCandidate           schema.Key     = "relation/generated-rule-law-candidate"
-	generatedRuleLawJoin                schema.Key     = "relation/generated-rule-law-join"
-	generatedRuleLawRouteJoin           schema.Key     = "relation/generated-rule-law-route-join"
-	generatedRuleLawKey                 schema.Key     = "projection/generated-rule-law-key"
-	generatedRuleLawRouteKey            schema.Key     = "projection/generated-rule-law-route-key"
-	generatedRuleLawPredicate           schema.Key     = "projection/generated-rule-law-predicate"
-	generatedRuleLawRoutePredicate      schema.Key     = "projection/generated-rule-law-route-predicate"
-	generatedRuleLawDestination         schema.Key     = "projection/generated-rule-law-destination"
-	generatedRuleLawRouteDestination    schema.Key     = "projection/generated-rule-law-route-destination"
-	generatedRuleLawReducer             schema.Key     = "reducer/generated-rule-law"
-	generatedRuleLawOutput              schema.Key     = "output/generated-rule-law"
-	generatedRuleLawDenominator         schema.Key     = "coordinates/axis/generated-rule-law"
-	generatedRuleLawTransform           schema.Key     = "transform/generated-rule-law"
-	generatedRuleLawProgram             schema.Key     = "rule/generated-rule-law"
-	generatedRuleLawAbsent              schema.Key     = "rule/generated-rule-law-absent"
-	generatedRuleLawAxisRoleSpelling                   = "generated-rule-law/axis"
-	generatedRuleLawRuleRoleSpelling                   = "generated-rule-law/rule"
-	generatedRuleLawOperandRoleSpelling                = "generated-rule-law/operand"
-	generatedRuleLawAbsentRoleSpelling                 = "generated-rule-law/absent"
-	generatedRuleLawCandidateFact       member.Carrier = "carrier/generated-rule-law-candidate"
-	generatedRuleLawJoinFact            member.Carrier = "carrier/generated-rule-law-join"
-	generatedRuleLawKeyCarrier          member.Carrier = "carrier/generated-rule-law-key"
+	generatedRuleLawAxisKey                schema.Key     = "axis/generated-rule-law"
+	generatedRuleLawCandidate              schema.Key     = "relation/generated-rule-law-candidate"
+	generatedRuleLawJoin                   schema.Key     = "relation/generated-rule-law-join"
+	generatedRuleLawRouteJoin              schema.Key     = "relation/generated-rule-law-route-join"
+	generatedRuleLawKey                    schema.Key     = "projection/generated-rule-law-key"
+	generatedRuleLawRouteKey               schema.Key     = "projection/generated-rule-law-route-key"
+	generatedRuleLawPredicate              schema.Key     = "projection/generated-rule-law-predicate"
+	generatedRuleLawRoutePredicate         schema.Key     = "projection/generated-rule-law-route-predicate"
+	generatedRuleLawDestination            schema.Key     = "projection/generated-rule-law-destination"
+	generatedRuleLawRouteDestination       schema.Key     = "projection/generated-rule-law-route-destination"
+	generatedRuleLawReducer                schema.Key     = "reducer/generated-rule-law"
+	generatedRuleLawOutput                 schema.Key     = "output/generated-rule-law"
+	generatedRuleLawDenominator            schema.Key     = "coordinates/axis/generated-rule-law"
+	generatedRuleLawTransform              schema.Key     = "transform/generated-rule-law"
+	generatedRuleLawProgram                schema.Key     = "rule/generated-rule-law"
+	generatedRuleLawAbsent                 schema.Key     = "rule/generated-rule-law-absent"
+	generatedRuleLawAxisRoleSpelling                      = "generated-rule-law/axis"
+	generatedRuleLawRuleRoleSpelling                      = "generated-rule-law/rule"
+	generatedRuleLawOperandRoleSpelling                   = "generated-rule-law/operand"
+	generatedRuleLawActivationRoleSpelling                = "generated-rule-law/activation-family"
+	generatedRuleLawAbsentRoleSpelling                    = "generated-rule-law/absent"
+	generatedRuleLawCandidateFact          member.Carrier = "carrier/generated-rule-law-candidate"
+	generatedRuleLawJoinFact               member.Carrier = "carrier/generated-rule-law-join"
+	generatedRuleLawKeyCarrier             member.Carrier = "carrier/generated-rule-law-key"
 )
 
 var (
-	generatedRuleLawAxisRole    = vocabulary.RoleKey(generatedRuleLawAxisRoleSpelling)
-	generatedRuleLawRuleRole    = vocabulary.RoleKey(generatedRuleLawRuleRoleSpelling)
-	generatedRuleLawOperandRole = vocabulary.RoleKey(generatedRuleLawOperandRoleSpelling)
-	generatedRuleLawAbsentRole  = vocabulary.RoleKey(generatedRuleLawAbsentRoleSpelling)
+	generatedRuleLawAxisRole       = vocabulary.RoleKey(generatedRuleLawAxisRoleSpelling)
+	generatedRuleLawRuleRole       = vocabulary.RoleKey(generatedRuleLawRuleRoleSpelling)
+	generatedRuleLawOperandRole    = vocabulary.RoleKey(generatedRuleLawOperandRoleSpelling)
+	generatedRuleLawActivationRole = vocabulary.RoleKey(generatedRuleLawActivationRoleSpelling)
+	generatedRuleLawAbsentRole     = vocabulary.RoleKey(generatedRuleLawAbsentRoleSpelling)
 )
 
 type generatedRuleLawVariant uint8
@@ -63,6 +65,11 @@ const (
 	generatedRuleLawSummary
 	generatedRuleLawComplete
 	generatedRuleLawStructural
+	// generatedRuleLawActivation is the well-formed A form: one exact read at
+	// the trigger coordinate, one selected read over the candidate relation its
+	// branches are drawn from, a structural publication, and the transport
+	// vector one candidate route instantiates when it crosses its transition.
+	generatedRuleLawActivation
 )
 
 type generatedRuleLawSurface struct {
@@ -123,7 +130,7 @@ func newGeneratedRuleLawFixture(t testing.TB, variant generatedRuleLawVariant, r
 		Mode:      program.ModeExact,
 		ValueSlot: 0,
 	}
-	if variant == generatedRuleLawSelected || variant == generatedRuleLawRouteOutput {
+	if variant == generatedRuleLawSelected || variant == generatedRuleLawRouteOutput || variant == generatedRuleLawActivation {
 		routeRead := read
 		routeRead.Input = 1
 		routeRead.Form = program.Selected
@@ -149,7 +156,7 @@ func newGeneratedRuleLawFixture(t testing.TB, variant generatedRuleLawVariant, r
 	if variant == generatedRuleLawComplete {
 		join.Read.Form = program.Complete
 	}
-	if variant == generatedRuleLawStructural {
+	if variant == generatedRuleLawStructural || variant == generatedRuleLawActivation {
 		output.Mode = program.ModeStructural
 	}
 	if variant == generatedRuleLawSummary || variant == generatedRuleLawComplete {
@@ -170,8 +177,16 @@ func newGeneratedRuleLawFixture(t testing.TB, variant generatedRuleLawVariant, r
 		},
 		Carry: &program.CarryDecl{Input: carryInput, Mode: program.CarryIdentity},
 	}
-	if variant == generatedRuleLawSelected || variant == generatedRuleLawRouteOutput {
+	if variant == generatedRuleLawSelected || variant == generatedRuleLawRouteOutput || variant == generatedRuleLawActivation {
 		declaration.Fold.Inputs = []program.JoinRef{0, 1}
+	}
+	if variant == generatedRuleLawActivation {
+		// A structural publication stages no fact, so it has no prior fact to
+		// carry. Its vector and the family its branches are grouped under are
+		// the one declaration the cold structural row is built from.
+		declaration.Carry = nil
+		declaration.Transport = []program.TransportDecl{{Axis: program.AxisRef(axisReference)}}
+		declaration.ActivationRole = generatedRuleLawActivationRole
 	}
 	if variant == generatedRuleLawSource {
 		declaration = program.Program{
@@ -217,7 +232,7 @@ func newGeneratedRuleLawFixture(t testing.TB, variant generatedRuleLawVariant, r
 		{Key: generatedRuleLawCandidate, Subject: generatedRuleLawCandidateFact, CandidateProvider: member.AxisRelationCandidate(generatedRuleLawProvider(generatedRuleLawCandidate))},
 		{Key: generatedRuleLawJoin, Subject: generatedRuleLawJoinFact, Inputs: []member.Carrier{generatedRuleLawCandidateFact}, CandidateProvider: member.AxisRelationCandidate(generatedRuleLawProvider(generatedRuleLawCandidate))},
 	}
-	if variant == generatedRuleLawSelected || variant == generatedRuleLawRouteOutput {
+	if variant == generatedRuleLawSelected || variant == generatedRuleLawRouteOutput || variant == generatedRuleLawActivation {
 		relations = append(relations, member.Relation{Key: generatedRuleLawRouteJoin, Subject: generatedRuleLawJoinFact, Inputs: []member.Carrier{generatedRuleLawJoinFact}, CandidateProvider: member.AxisRelationCandidate(generatedRuleLawProvider(generatedRuleLawJoin))})
 	}
 	inputs := []member.ReducerInput{{
@@ -231,7 +246,7 @@ func newGeneratedRuleLawFixture(t testing.TB, variant generatedRuleLawVariant, r
 	if variant == generatedRuleLawComplete {
 		inputs[0].Form = member.ReadFormComplete
 	}
-	if variant == generatedRuleLawSelected || variant == generatedRuleLawRouteOutput {
+	if variant == generatedRuleLawSelected || variant == generatedRuleLawRouteOutput || variant == generatedRuleLawActivation {
 		inputs = append(inputs, member.ReducerInput{Axis: axisReference, Carrier: generatedRuleLawJoinFact, Form: member.ReadFormSelected, Multiplicity: member.MultiplicityOne, Tag: generatedRuleLawKeyCarrier})
 	}
 	reducers := []member.Reducer{{
@@ -254,7 +269,7 @@ func newGeneratedRuleLawFixture(t testing.TB, variant generatedRuleLawVariant, r
 		}}
 		factCarrier = generatedRuleLawCandidateFact
 	}
-	if variant == generatedRuleLawSelected || variant == generatedRuleLawRouteOutput {
+	if variant == generatedRuleLawSelected || variant == generatedRuleLawRouteOutput || variant == generatedRuleLawActivation {
 		projections = append(projections,
 			member.Projection{Key: generatedRuleLawRouteKey, Relation: generatedRuleLawRouteJoin, Role: member.Key, Result: generatedRuleLawKeyCarrier, CandidateProvider: member.AxisRelationCandidate(generatedRuleLawProvider(generatedRuleLawJoin))},
 			member.Projection{Key: generatedRuleLawRoutePredicate, Relation: generatedRuleLawRouteJoin, Role: member.Predicate, Result: generatedRuleLawKeyCarrier, CandidateProvider: member.AxisRelationCandidate(generatedRuleLawProvider(generatedRuleLawJoin))},
@@ -290,8 +305,13 @@ func newGeneratedRuleLawFixture(t testing.TB, variant generatedRuleLawVariant, r
 		Writes:   generatedRuleLawAxisKey,
 		Owner:    generatedRuleLawAxisKey,
 		Semantic: ruleRole,
-		Roles:    []schema.Key{generatedRuleLawOperandRole},
-		Program:  declaration,
+		Roles: func() []schema.Key {
+			if variant == generatedRuleLawActivation {
+				return []schema.Key{generatedRuleLawOperandRole, generatedRuleLawActivationRole}
+			}
+			return []schema.Key{generatedRuleLawOperandRole}
+		}(),
+		Program: declaration,
 	})
 	if !ruleOK {
 		t.Fatal("generated Rule law Program rule rejected")
@@ -307,9 +327,10 @@ func newGeneratedRuleLawFixture(t testing.TB, variant generatedRuleLawVariant, r
 		t.Fatal("generated Rule law absent rule rejected")
 	}
 
-	roles := make([]schema.Entry, 0, 4)
+	roles := make([]schema.Entry, 0, 5)
 	for ordinal, role := range []schema.Key{
 		generatedRuleLawAxisRole, ruleRole, generatedRuleLawOperandRole, generatedRuleLawAbsentRole,
+		generatedRuleLawActivationRole,
 	} {
 		entry, entryOK := structure.New(structure.Spec{
 			Key: role, Category: structure.CategorySemanticRole, Ordinal: uint16(ordinal + 1), Spelling: string(role), Accepted: true,
@@ -588,12 +609,18 @@ func TestGeneratedRuleSlotRejectsFactorDirectoryMismatch(t *testing.T) {
 	}
 }
 
+// TestGeneratedRuleSlotRejectsUnsupportedPlanShapes is the refusal table of the
+// structural arm. A structural publication is admitted - it is the A form's own
+// declaration - but only when it says what it publishes: the vector one
+// candidate route instantiates and the family its branches are admitted under
+// are one declaration, and a row that declares neither transports nothing
+// across nothing.
 func TestGeneratedRuleSlotRejectsUnsupportedPlanShapes(t *testing.T) {
 	variants := []struct {
 		name    string
 		variant generatedRuleLawVariant
 	}{
-		{name: "structural-output", variant: generatedRuleLawStructural},
+		{name: "structural-output-instantiating-nothing", variant: generatedRuleLawStructural},
 	}
 	for _, test := range variants {
 		t.Run(test.name, func(t *testing.T) {

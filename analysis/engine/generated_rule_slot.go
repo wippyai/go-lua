@@ -64,12 +64,18 @@ func (cell *generatedRuleCell) available() bool {
 // any read/write/carry geometry. Runtime Program capabilities are deliberately
 // absent from this cold declaration path; a later binding phase owns them.
 //
-// The admitted vertical is one exact or routed factor output, an ordered table
-// of Exact/Selected joins, and an optional identity carry. The descriptor is
-// the canonical copy of every Plan row; the cold composition row below is only
-// the existing engine shape projection and never a source for missing Plan
-// metadata. Summary/Complete reads, structural outputs, and transformed
-// carries remain explicit seal refusals.
+// The admitted vertical is one exact, routed, or structural output, an ordered
+// table of Exact/Selected joins, and an optional identity carry. The descriptor
+// is the canonical copy of every Plan row; the cold composition row below is
+// only the existing engine shape projection and never a source for missing Plan
+// metadata. Summary/Complete reads and transformed carries remain explicit seal
+// refusals.
+//
+// A structural output publishes no fact. Its cold row names no Output Factor
+// and no Write, and carries instead the activation family its candidate
+// branches are grouped under - the family the Plan resolved from the rule's own
+// declared role. The output axis it still names is the axis its rows are
+// indexed by, which is what routes the row to a typed plane at execution.
 func DeclareGeneratedRuleSlot(
 	builder *SchemaBuilder,
 	catalog ruleplan.Catalog,
@@ -149,8 +155,17 @@ func DeclareGeneratedRuleSlot(
 	// Output and reducer addresses are checked against the same sealed axis
 	// directory before their factors are selected. Frame/value-slot identity is
 	// retained in the generated descriptor; only structural output is refused.
-	if (output.Mode != ruleprogram.ModeExact && output.Mode != ruleprogram.ModeRoute) || output.Slot != 0 ||
-		compiled.Reducer().Axis != output.Address.Axis {
+	if !output.Mode.Available() || output.Slot != 0 || compiled.Reducer().Axis != output.Address.Axis {
+		return refuse()
+	}
+	// The transport vector and the activation family are the structural arm's
+	// own declaration, and the Program layer holds them to each other. Stating
+	// the biconditional again here is what keeps a fact-writing rule from
+	// reaching a cold row that claims a family, and a structural one from
+	// reaching a row that claims none.
+	activationFamily := compiled.ActivationFamily()
+	if (output.Mode == ruleprogram.ModeStructural) != (compiled.TransportCount() != 0) ||
+		(output.Mode == ruleprogram.ModeStructural) != activationFamily.Available() {
 		return refuse()
 	}
 	for joinIndex, join := range joins {
@@ -158,15 +173,23 @@ func DeclareGeneratedRuleSlot(
 			return refuse()
 		}
 	}
-	if output.Mode == ruleprogram.ModeExact {
-		// An exact write addresses the candidate relation's own coordinate
-		// space, which an issued Program row has none of. The plan refuses the
+	if output.Mode == ruleprogram.ModeExact || output.Mode == ruleprogram.ModeStructural {
+		// Both arms address the candidate relation's own coordinate space,
+		// which an issued Program row has none of. The plan refuses the
 		// pairing; the descriptor states the same law rather than inheriting it.
 		if issuedCandidate || output.RouteJoinPresent || output.RouteJoin != 0 || output.Destination.Axis != compiled.Candidate().Axis {
 			return refuse()
 		}
 	} else if !output.RouteJoinPresent || uint64(output.RouteJoin) >= uint64(len(joins)) || joins[output.RouteJoin].ReadForm != ruleprogram.Selected || output.Destination.Axis != joins[output.RouteJoin].Relation.Axis {
 		return refuse()
+	}
+	// A structural publication computes no fact, so there is no prior fact for
+	// it to carry: a carry names the output Factor's own value, and this arm
+	// has no output Factor value at all.
+	if output.Mode == ruleprogram.ModeStructural {
+		if _, carryDeclared := compiled.Carry(); carryDeclared {
+			return refuse()
+		}
 	}
 	// Validate all addresses while they still use the Plan's own axis
 	// directory. This preserves the owner-local member/frame coordinates and
@@ -251,11 +274,36 @@ func DeclareGeneratedRuleSlot(
 			normalizedCarryTransform = ruleplan.CarryTransformAddr{Axis: transformAxis, Member: carry.Transform.Member}
 		}
 	}
+	// The transport vector is normalized into the runtime Factor directory like
+	// every other address in the descriptor. A transported axis is a Factor the
+	// candidate route instantiates, so an axis with no Factor row is a
+	// transport nothing could carry.
+	transports := make([]ruleplan.Transport, compiled.TransportCount())
+	for transportIndex := range transports {
+		transport, transportOK := compiled.TransportAt(transportIndex)
+		if !transportOK {
+			return refuse()
+		}
+		transportAxis, transportAxisOK := generatedRuntimeAxis(factorDirectory, catalog, transport.Axis)
+		if !transportAxisOK {
+			return refuse()
+		}
+		transports[transportIndex] = ruleplan.Transport{Axis: transportAxis, Exported: transport.Exported}
+	}
 	if !builder.claim(semantic) {
 		return nil, false
 	}
 	builder.phase = schemaBuilderChildren
 	if !schemaSlotCardinality(len(builder.candidate.Rules)) {
+		return refuse()
+	}
+	// The family the structural arm's branches are grouped under is declared
+	// here, on the one declaration that names it. A family several activation
+	// rules share is one cold row: the first rule that names it declares it and
+	// every later one resolves the same row, so the composition never holds two
+	// authorities over one family.
+	activationRange, activationRangeOK := declareGeneratedActivationFamily(builder, activationFamily)
+	if !activationRangeOK {
 		return refuse()
 	}
 
@@ -271,16 +319,24 @@ func DeclareGeneratedRuleSlot(
 			Factor: compositionKeyOf(outputFactor.factor.semantic),
 		}},
 	}
-	if output.Mode == ruleprogram.ModeRoute {
+	switch output.Mode {
+	case ruleprogram.ModeRoute:
 		row.Writes[0] = coldcomposition.Write{Kind: coldcomposition.WriteRoute, Factor: compositionKeyOf(outputFactor.factor.semantic), Route: uint64(output.RouteJoin) + 1}
+	case ruleprogram.ModeStructural:
+		// A structural row publishes no fact. It names no Output Factor and no
+		// Write, and its one declared capability is the activation family its
+		// branches are admitted under.
+		row.OutputKind, row.Output, row.Writes = coldcomposition.StructuralOutput, coldcomposition.Key{}, nil
+		row.Activations = []coldcomposition.ActivationRange{activationRange}
 	}
 	row.Reads = make([]coldcomposition.Read, len(joins))
 	for joinIndex, join := range joins {
 		read := coldcomposition.Read{
-			Kind: coldcomposition.ReadExact, Input: uint64(join.Input), Factor: compositionKeyOf(readFactors[joinIndex].factor.semantic),
+			Kind: generatedColdReadKind(join.ReadForm, join.ParentPresent), Input: uint64(join.Input),
+			Factor:     compositionKeyOf(readFactors[joinIndex].factor.semantic),
 			PointBound: join.PointBound == ruleprogram.PointBound,
 		}
-		if join.ReadForm == ruleprogram.Summary || join.ReadForm == ruleprogram.Complete {
+		if read.Kind == coldcomposition.ReadSummary {
 			// A vector read is delivered over the Factor's own declared summary
 			// form. The form's semantic is the Factor's statement, read off the
 			// row it was declared on rather than named again here, and a Factor
@@ -289,13 +345,11 @@ func DeclareGeneratedRuleSlot(
 			if !summaryOK {
 				return refuse()
 			}
-			read.Kind = coldcomposition.ReadSummary
 			read.Semantic, read.Normalizer = summary, summary
 			row.Reads[joinIndex] = read
 			continue
 		}
-		if join.ReadForm == ruleprogram.Selected {
-			read.Kind = coldcomposition.ReadSelect
+		if read.Kind == coldcomposition.ReadSelect {
 			read.Semantic = read.Factor
 			for offset := uint32(0); offset < join.Sources.Count; offset++ {
 				source, sourceOK := compiled.SourceAt(int(join.Sources.Start + offset))
@@ -315,7 +369,13 @@ func DeclareGeneratedRuleSlot(
 	if carryOK {
 		row.Carries = []coldcomposition.Carry{{Input: uint64(carry.Input), Factor: compositionKeyOf(outputFactor.factor.semantic)}}
 	}
+	// A structural row owns no output Factor draft. The draft's output is what
+	// licenses a write or carry slot to be minted against this rule, and a rule
+	// that publishes no fact has neither to mint.
 	draft := &schemaRuleDraft{builder: builder, index: ruleIndex, output: outputFactor.factor}
+	if output.Mode == ruleprogram.ModeStructural {
+		draft.output = nil
+	}
 	descriptor, descriptorOK := generated.NewPlanCompiledRule(generated.CompiledRuleSpec{
 		Ordinal: compiled.Rule(), AxisCount: factorDirectory.count, InputCount: compiled.InputCount(),
 		Candidate: normalizedCandidate, IssuedCandidate: issuedCandidate, Reducer: normalizedReducer,
@@ -326,6 +386,7 @@ func DeclareGeneratedRuleSlot(
 			RouteJoin: output.RouteJoin, RouteJoinPresent: output.RouteJoinPresent,
 			Exact: output.Mode == ruleprogram.ModeExact, Strong: output.Mode == ruleprogram.ModeExact,
 		}},
+		Transports: transports,
 		Carry: func() *generated.CarryPlan {
 			if !carryOK {
 				return nil
@@ -396,6 +457,32 @@ func DeclareGeneratedRuleSlot(
 	}
 	draft.token.generated = cell
 	return &GeneratedRuleSlot{slotHandle: handle}, true
+}
+
+// declareGeneratedActivationFamily resolves the one cold activation family row
+// a structural generated rule's branches are grouped under, declaring it if no
+// earlier rule already named it.
+//
+// The row is the family's whole cold content, so a family two activation rules
+// share is one row reached twice rather than two authorities over one identity.
+// An absent semantic is the fact-writing arm and yields no range.
+func declareGeneratedActivationFamily(builder *SchemaBuilder, semantic identity.SemanticKey) (coldcomposition.ActivationRange, bool) {
+	if builder == nil {
+		return coldcomposition.ActivationRange{}, false
+	}
+	if !semantic.Available() {
+		return coldcomposition.ActivationRange{}, true
+	}
+	for _, declared := range builder.families {
+		if declared != nil && declared.semantic == semantic {
+			return coldcomposition.ActivationRange{Family: compositionKeyOf(semantic)}, true
+		}
+	}
+	family, ok := DeclareSchemaActivationFamily(builder, semantic)
+	if !ok || !family.available() {
+		return coldcomposition.ActivationRange{}, false
+	}
+	return coldcomposition.ActivationRange{Family: compositionKeyOf(semantic)}, true
 }
 
 // generatedPlanMemberAddressesInRange is the final dense-coordinate fence
