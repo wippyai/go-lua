@@ -35,6 +35,9 @@ func render(built *plan) ([]byte, error) {
 		return nil, err
 	}
 	renderFamily(&body, built)
+	if built.shape == shapeExactFold {
+		renderExactTuples(&body, built)
+	}
 	if err := renderWorker(&body, built); err != nil {
 		return nil, err
 	}
@@ -127,10 +130,11 @@ func renderReducer(out *strings.Builder, built *plan) error {
 func renderExactReduce(out *strings.Builder, built *plan) error {
 	imports := built.imports
 	structure := imports.use(structurePackagePath)
-	read := built.joins[0]
-	if read.read.Contract.Sparse != program.SparseExplicit {
-		return unexpressible(built.target.Spec.Key, fmt.Sprintf("an exact fold read with %s sparsity", sparseName(read.read.Contract.Sparse)),
-			"the heterogeneous exact fold preserves absence and never materializes a default")
+	for _, read := range built.joins {
+		if read.read.Contract.Sparse != program.SparseExplicit {
+			return unexpressible(built.target.Spec.Key, fmt.Sprintf("an exact fold read with %s sparsity", sparseName(read.read.Contract.Sparse)),
+				"the exact fold preserves absence and never materializes a default")
+		}
 	}
 	if len(built.fold.results) != 2 {
 		return unexpressible(built.target.Spec.Key, fmt.Sprintf("an exact fold answering %d results", len(built.fold.results)),
@@ -140,11 +144,16 @@ func renderExactReduce(out *strings.Builder, built *plan) error {
 	if err != nil {
 		return err
 	}
-	out.WriteString("// Reduce is the one irreducible typed judgment of this exact family. The\n")
-	out.WriteString("// execution worker authenticates presence before calling it, so absence never\n")
-	out.WriteString("// becomes a default fact and the fold receives only declared carriers.\n")
-	fmt.Fprintf(out, "func (fold %s) Reduce(cell %s) (%s, %s.ReductionOutcome) {\n",
-		reducerType, imports.typeName(read.axis.fact), imports.typeName(built.fold.results[0]), structure)
+	parameters := make([]string, 0, len(built.fold.inputs))
+	for _, join := range built.fold.inputs {
+		parameters = append(parameters, exactCellName(join)+" "+imports.typeName(join.axis.fact))
+	}
+	out.WriteString("// Reduce is the one irreducible typed judgment of this exact family. It is\n")
+	out.WriteString("// called once per cell of the canonical product its declared reads refine, and\n")
+	out.WriteString("// the worker authenticates presence before calling it, so absence never becomes\n")
+	out.WriteString("// a default fact and the fold receives only declared carriers.\n")
+	fmt.Fprintf(out, "func (fold %s) Reduce(%s) (%s, %s.ReductionOutcome) {\n",
+		reducerType, strings.Join(parameters, ", "), imports.typeName(built.fold.results[0]), structure)
 	fmt.Fprintf(out, "\treturn %s\n}\n\n", call)
 	return nil
 }
@@ -395,6 +404,14 @@ func renderWorker(out *strings.Builder, built *plan) error {
 		fmt.Fprintf(out, "\twrite %s.Scratch[%s, %s]\n", execution,
 			imports.typeName(built.write.dense), imports.typeName(built.write.fact))
 	case shapeExactFold:
+		// One extender per declared read. The chain is allocated once with the
+		// worker, so a warm invocation refines the canonical product without
+		// allocating a cell, region, or tuple buffer of its own.
+		productPackage := imports.use(productPackagePath)
+		for index, join := range built.joins {
+			fmt.Fprintf(out, "\t%s %s.Extender[%s, %s, %s]\n", exactProductName(join), productPackage,
+				imports.typeName(join.axis.dense), imports.typeName(join.axis.fact), exactTupleName(built, index-1))
+		}
 		fmt.Fprintf(out, "\twrite %s.Scratch[%s, %s]\n", execution,
 			imports.typeName(built.write.dense), imports.typeName(built.write.fact))
 	case shapeSelectedRoute:
@@ -428,34 +445,79 @@ func renderExactExecute(out *strings.Builder, built *plan) error {
 	imports := built.imports
 	execution := imports.use(executionPackagePath)
 	structure := imports.use(structurePackagePath)
-	read := built.joins[0]
-	out.WriteString("// Execute consumes the one exact existence fact, applies the typed fold, and\n")
-	out.WriteString("// publishes through the consumer-owned target sealed for this candidate.\n")
+	productPackage := imports.use(productPackagePath)
+	last := built.joins[len(built.joins)-1]
+	out.WriteString("// Execute drains the canonical product its declared exact reads refine, applies\n")
+	out.WriteString("// the typed fold once per cell, and stages every concrete result into the one\n")
+	out.WriteString("// write transaction the row publishes through. A cell publishes under the\n")
+	out.WriteString("// region the reads it was derived from reported, so nothing here claims support\n")
+	out.WriteString("// the product did not prove.\n")
 	renderExecutePrologue(out, built)
-	fmt.Fprintf(out, "\tswitch row.%s.Read(ticket, &lane.%s) {\n", read.name, read.name)
-	fmt.Fprintf(out, "\tcase %s.ReadAvailable:\n", execution)
-	fmt.Fprintf(out, "\t\tcell, available := lane.%s.Value()\n", read.name)
-	fmt.Fprintf(out, "\t\tpresent := lane.%s.Present()\n", read.name)
-	fmt.Fprintf(out, "\t\tregion, regionOK := lane.%s.Region()\n", read.name)
-	fmt.Fprintf(out, "\t\tif !row.%s.Close(ticket, &lane.%s) {\n\t\t\t_ = lane.%s.Discard(ticket)\n\t\t\treturn lane.settle(ticket, %s.Refuse)\n\t\t}\n",
-		read.name, read.name, read.name, structure)
-	fmt.Fprintf(out, "\t\tif !available || !regionOK {\n\t\t\treturn lane.settle(ticket, %s.Refuse)\n\t\t}\n", structure)
-	fmt.Fprintf(out, "\t\tcell, present = row.%sPolicy.Cell(cell, present)\n", read.name)
-	fmt.Fprintf(out, "\t\tif !present {\n\t\t\treturn lane.settle(ticket, %s.NoCandidate)\n\t\t}\n", structure)
-	fmt.Fprintf(out, "\t\tvalue, outcome := (%s{%s}).Reduce(cell)\n",
-		reducerType, strings.Join(reducerLiteralFields(built, nil), ", "))
-	fmt.Fprintf(out, "\t\tif outcome != %s.Concrete {\n\t\t\treturn lane.settle(ticket, outcome)\n\t\t}\n", structure)
-	fmt.Fprintf(out, "\t\toutcome = %s.PublishExact(ticket, row.write, &lane.write, region, value)\n", execution)
-	fmt.Fprintf(out, "\t\tif !ticket.Submit(outcome) {\n\t\t\treturn %s.Result{}, false\n\t\t}\n", execution)
-	fmt.Fprintf(out, "\t\twritten := 0\n\t\tif outcome == %s.Concrete {\n\t\t\twritten = 1\n\t\t}\n", structure)
-	fmt.Fprintf(out, "\t\treturn %s.NewResult(outcome, written)\n", execution)
-	fmt.Fprintf(out, "\tcase %s.ReadExhausted:\n", execution)
-	fmt.Fprintf(out, "\t\tif !row.%s.Close(ticket, &lane.%s) {\n\t\t\treturn lane.settle(ticket, %s.Refuse)\n\t\t}\n", read.name, read.name, structure)
-	fmt.Fprintf(out, "\t\treturn lane.settle(ticket, %s.NoCandidate)\n", structure)
-	out.WriteString("\tdefault:\n")
-	fmt.Fprintf(out, "\t\t_ = lane.%s.Discard(ticket)\n\t\treturn lane.settle(ticket, %s.Refuse)\n", read.name, structure)
-	out.WriteString("\t}\n}\n\n")
+	fmt.Fprintf(out, "\tseed, seedStatus, seedOK := %s.NewSeed(ticket)\n", productPackage)
+	fmt.Fprintf(out, "\tif !seedOK || seedStatus == %s.RefineRefuse {\n\t\treturn %s.Result{}, false\n\t}\n", productPackage, execution)
+	out.WriteString("\t// Empty support is an authenticated absent candidate, never a refusal.\n")
+	fmt.Fprintf(out, "\tif seedStatus == %s.RefineEmpty {\n\t\treturn lane.settle(ticket, %s.NoCandidate)\n\t}\n", productPackage, structure)
+	input := "seed.Rows()"
+	for _, join := range built.joins {
+		rows := fmt.Sprintf("rows%d", join.position)
+		fmt.Fprintf(out, "\t%s, status%d, status%dOK := lane.%s.Extend(ticket, %s, row.%s, &lane.%s)\n",
+			rows, join.position, join.position, exactProductName(join), input, join.name, join.name)
+		fmt.Fprintf(out, "\tif !status%dOK || status%d != %s.RefineAvailable {\n\t\treturn %s.Result{}, false\n\t}\n",
+			join.position, join.position, productPackage, execution)
+		input = rows
+	}
+	fmt.Fprintf(out, "\tstaged := 0\n\tfor index := 0; index < rows%d.Count(); index++ {\n", last.position)
+	fmt.Fprintf(out, "\t\tif !ticket.Checkpoint() {\n\t\t\t_ = lane.write.Discard(ticket)\n\t\t\treturn %s.Result{}, false\n\t\t}\n", execution)
+	fmt.Fprintf(out, "\t\tregion, tuple, tupleOK := rows%d.At(index)\n", last.position)
+	fmt.Fprintf(out, "\t\tif !tupleOK || !region.Valid() {\n\t\t\t_ = lane.write.Discard(ticket)\n\t\t\treturn %s.Result{}, false\n\t\t}\n", execution)
+	present := make([]string, 0, len(built.joins))
+	for _, join := range built.joins {
+		cell := exactCellExpression(built, join)
+		fmt.Fprintf(out, "\t\t%s, present%d := row.%sPolicy.Cell(%s.Value(), %s.Present())\n",
+			exactCellName(join), join.position, join.name, cell, cell)
+		present = append(present, fmt.Sprintf("!present%d", join.position))
+	}
+	out.WriteString("\t\t// A cell whose declared reads are not all present is this rule's absent\n")
+	out.WriteString("\t\t// candidate over exactly that region, and contributes no patch.\n")
+	fmt.Fprintf(out, "\t\tif %s {\n\t\t\tcontinue\n\t\t}\n", strings.Join(present, " || "))
+	arguments := make([]string, 0, len(built.fold.inputs))
+	for _, join := range built.fold.inputs {
+		arguments = append(arguments, exactCellName(join))
+	}
+	for _, join := range built.joins {
+		if _, consumed := foldInputPosition(built, join); !consumed {
+			fmt.Fprintf(out, "\t\t_ = %s\n", exactCellName(join))
+		}
+	}
+	fmt.Fprintf(out, "\t\tvalue, outcome := (%s{%s}).Reduce(%s)\n",
+		reducerType, strings.Join(reducerLiteralFields(built, nil), ", "), strings.Join(arguments, ", "))
+	fmt.Fprintf(out, "\t\tswitch outcome {\n\t\tcase %s.Concrete:\n", structure)
+	fmt.Fprintf(out, "\t\t\tif !row.write.Stage(ticket, &lane.write, region, value) {\n\t\t\t\t_ = lane.write.Discard(ticket)\n\t\t\t\treturn %s.Result{}, false\n\t\t\t}\n", execution)
+	out.WriteString("\t\t\tstaged++\n")
+	fmt.Fprintf(out, "\t\tcase %s.NoCandidate:\n", structure)
+	out.WriteString("\t\t\t// The declared absent successor publishes nothing for this cell.\n")
+	out.WriteString("\t\tdefault:\n")
+	out.WriteString("\t\t\t_ = lane.write.Discard(ticket)\n\t\t\treturn lane.settle(ticket, outcome)\n")
+	out.WriteString("\t\t}\n\t}\n")
+	fmt.Fprintf(out, "\tif staged == 0 {\n\t\treturn lane.settle(ticket, %s.NoCandidate)\n\t}\n", structure)
+	fmt.Fprintf(out, "\tif !row.write.Close(ticket, &lane.write) {\n\t\t_ = lane.write.Discard(ticket)\n\t\treturn %s.Result{}, false\n\t}\n", execution)
+	out.WriteString("\t// One accepted patch is one concrete result, however many cells it holds.\n")
+	fmt.Fprintf(out, "\tif !ticket.Submit(%s.Concrete) {\n\t\treturn %s.Result{}, false\n\t}\n", structure, execution)
+	fmt.Fprintf(out, "\treturn %s.NewResult(%s.Concrete, 1)\n}\n\n", execution, structure)
 	return nil
+}
+
+// foldInputPosition answers the fold input position one declared read is
+// consumed at. A read the fold does not consume is still drained: it is a
+// declared prerequisite of the product, and its absence still refines away the
+// cells this rule has no evidence over.
+func foldInputPosition(built *plan, join *joinPlan) (int, bool) {
+	for position, input := range built.fold.inputs {
+		if input == join {
+			return position, true
+		}
+	}
+	return 0, false
 }
 
 func renderExecutePrologue(out *strings.Builder, built *plan) {
@@ -772,4 +834,53 @@ func renderExactCell(out *strings.Builder, built *plan, join *joinPlan) error {
 	fmt.Fprintf(out, "\t\t_ = lane.%s.Discard(ticket)\n\t\treturn %s.Refuse\n", join.name, structure)
 	out.WriteString("\t}\n}\n\n")
 	return nil
+}
+
+// exactProductName is the worker field one declared read's product extender is
+// held under. It is keyed by the read's own declared position, so the chain a
+// family builds is the declaration's read order and not a discovery order.
+func exactProductName(join *joinPlan) string {
+	return fmt.Sprintf("product%d", join.position)
+}
+
+// exactTupleName is the emitted alias of the product tuple after the read at
+// index has been consed on. Index -1 is the seed's empty tuple, which the
+// product package spells as the empty struct.
+func exactTupleName(built *plan, index int) string {
+	if index < 0 || index >= len(built.joins) {
+		return "struct{}"
+	}
+	return fmt.Sprintf("productTuple%d", built.joins[index].position)
+}
+
+// renderExactTuples writes the typed product tuple aliases one exact fold's
+// read chain constructs. They are aliases rather than defined types because
+// the product package owns the shape; naming it here only keeps the extender
+// and cursor declarations readable.
+func renderExactTuples(out *strings.Builder, built *plan) {
+	imports := built.imports
+	productPackage := imports.use(productPackagePath)
+	out.WriteString("// The typed product tuples this rule's read chain constructs. Each alias is\n")
+	out.WriteString("// the tuple after one more declared read has been consed on, so the head is\n")
+	out.WriteString("// always the newest read and the tail walks back to the first.\n")
+	out.WriteString("type (\n")
+	for index, join := range built.joins {
+		fmt.Fprintf(out, "\t%s = %s.Cons[%s.Cell[%s], %s]\n", exactTupleName(built, index), productPackage,
+			productPackage, imports.typeName(join.axis.fact), exactTupleName(built, index-1))
+	}
+	out.WriteString(")\n\n")
+}
+
+// exactCellExpression spells the product cell of one declared read inside a
+// tuple of the whole chain. The extender conses the newest read at the head, so
+// a read is reached by walking the tail back from the last one.
+func exactCellExpression(built *plan, join *joinPlan) string {
+	expression := "tuple"
+	for index := len(built.joins) - 1; index > 0; index-- {
+		if built.joins[index] == join {
+			break
+		}
+		expression += ".Tail()"
+	}
+	return expression + ".Head()"
 }

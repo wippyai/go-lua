@@ -328,10 +328,12 @@ func TestADerivedFoldSealsItsJudgmentOnceFromTheDeclaredStaticAxes(t *testing.T)
 
 // TestADerivedFoldCallCarriesOnlyDeclaredCarriers is the reducer contract at
 // this form. Sealed state reaches the judgment as its receiver, so the call
-// itself still passes carrier values and nothing else.
+// itself still passes carrier values and nothing else. Each cell is named by
+// the declared read that observed it, so one read's value can never reach the
+// judgment under another read's name.
 func TestADerivedFoldCallCarriesOnlyDeclaredCarriers(t *testing.T) {
 	source := renderDerived(t, derivedTarget())
-	if !strings.Contains(source, "fold.state.Fold(fold.candidate, cell)") {
+	if !strings.Contains(source, "fold.state.Fold(fold.candidate, cell0)") {
 		t.Fatalf("the emitted fold call is not the declared judgment over its carriers:\n%s", source)
 	}
 }

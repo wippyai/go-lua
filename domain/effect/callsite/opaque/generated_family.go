@@ -10,6 +10,7 @@ package opaque
 
 import (
 	"github.com/wippyai/go-lua/analysis/engine/execution"
+	"github.com/wippyai/go-lua/analysis/engine/execution/product"
 	"github.com/wippyai/go-lua/analysis/schema/rule/program"
 	"github.com/wippyai/go-lua/analysis/schema/structure"
 	"github.com/wippyai/go-lua/domain/call"
@@ -30,11 +31,12 @@ type familyReducer struct {
 	candidate factor.MountedCall
 }
 
-// Reduce is the one irreducible typed judgment of this exact family. The
-// execution worker authenticates presence before calling it, so absence never
-// becomes a default fact and the fold receives only declared carriers.
-func (fold familyReducer) Reduce(cell call.Value) (factor.Value, structure.ReductionOutcome) {
-	return fold.state.Effect(fold.candidate, cell)
+// Reduce is the one irreducible typed judgment of this exact family. It is
+// called once per cell of the canonical product its declared reads refine, and
+// the worker authenticates presence before calling it, so absence never becomes
+// a default fact and the fold receives only declared carriers.
+func (fold familyReducer) Reduce(cell0 call.Value) (factor.Value, structure.ReductionOutcome) {
+	return fold.state.Effect(fold.candidate, cell0)
 }
 
 // familyRow is the sealed static half of one plan row: the candidate its fold
@@ -64,14 +66,22 @@ func (sealed *sealedFamily) NewExecutor(run *execution.Run) execution.Executor {
 func (*sealedFamily) InputCapacity() int  { return 1 }
 func (*sealedFamily) OutputCapacity() int { return 1 }
 
+// The typed product tuples this rule's read chain constructs. Each alias is
+// the tuple after one more declared read has been consed on, so the head is
+// always the newest read and the tail walks back to the first.
+type (
+	productTuple0 = product.Cons[product.Cell[call.Value], struct{}]
+)
+
 // familyWorker is one epoch's reusable invocation lane. Every scratch lives for
 // the worker's lifetime, so a warm invocation opens its cursors and its write
 // transaction without allocating.
 type familyWorker struct {
-	family *sealedFamily
-	run    *execution.Run
-	read0  execution.Scratch[call.DenseCoordinate, call.Value]
-	write  execution.Scratch[owner.DenseCoordinate, factor.Value]
+	family   *sealedFamily
+	run      *execution.Run
+	read0    execution.Scratch[call.DenseCoordinate, call.Value]
+	product0 product.Extender[call.DenseCoordinate, call.Value, struct{}]
+	write    execution.Scratch[owner.DenseCoordinate, factor.Value]
 }
 
 // settle submits one non-publishing disposition. Every refusal path in this
@@ -83,8 +93,11 @@ func (lane *familyWorker) settle(ticket execution.Ticket, outcome structure.Redu
 	return execution.NewResult(outcome, 0)
 }
 
-// Execute consumes the one exact existence fact, applies the typed fold, and
-// publishes through the consumer-owned target sealed for this candidate.
+// Execute drains the canonical product its declared exact reads refine, applies
+// the typed fold once per cell, and stages every concrete result into the one
+// write transaction the row publishes through. A cell publishes under the
+// region the reads it was derived from reported, so nothing here claims support
+// the product did not prove.
 func (lane *familyWorker) Execute(frame execution.Frame, ticket execution.Ticket) (execution.Result, bool) {
 	if lane == nil || lane.family == nil || lane.run == nil || !frame.Valid(ticket) || !lane.run.Owns(ticket) {
 		return execution.Result{}, false
@@ -94,44 +107,62 @@ func (lane *familyWorker) Execute(frame execution.Frame, ticket execution.Ticket
 		return execution.Result{}, false
 	}
 	row := lane.family.rows[local]
-	switch row.read0.Read(ticket, &lane.read0) {
-	case execution.ReadAvailable:
-		cell, available := lane.read0.Value()
-		present := lane.read0.Present()
-		region, regionOK := lane.read0.Region()
-		if !row.read0.Close(ticket, &lane.read0) {
-			_ = lane.read0.Discard(ticket)
-			return lane.settle(ticket, structure.Refuse)
-		}
-		if !available || !regionOK {
-			return lane.settle(ticket, structure.Refuse)
-		}
-		cell, present = row.read0Policy.Cell(cell, present)
-		if !present {
-			return lane.settle(ticket, structure.NoCandidate)
-		}
-		value, outcome := (familyReducer{state: lane.family.state, candidate: row.candidate}).Reduce(cell)
-		if outcome != structure.Concrete {
-			return lane.settle(ticket, outcome)
-		}
-		outcome = execution.PublishExact(ticket, row.write, &lane.write, region, value)
-		if !ticket.Submit(outcome) {
+	seed, seedStatus, seedOK := product.NewSeed(ticket)
+	if !seedOK || seedStatus == product.RefineRefuse {
+		return execution.Result{}, false
+	}
+	// Empty support is an authenticated absent candidate, never a refusal.
+	if seedStatus == product.RefineEmpty {
+		return lane.settle(ticket, structure.NoCandidate)
+	}
+	rows0, status0, status0OK := lane.product0.Extend(ticket, seed.Rows(), row.read0, &lane.read0)
+	if !status0OK || status0 != product.RefineAvailable {
+		return execution.Result{}, false
+	}
+	staged := 0
+	for index := 0; index < rows0.Count(); index++ {
+		if !ticket.Checkpoint() {
+			_ = lane.write.Discard(ticket)
 			return execution.Result{}, false
 		}
-		written := 0
-		if outcome == structure.Concrete {
-			written = 1
+		region, tuple, tupleOK := rows0.At(index)
+		if !tupleOK || !region.Valid() {
+			_ = lane.write.Discard(ticket)
+			return execution.Result{}, false
 		}
-		return execution.NewResult(outcome, written)
-	case execution.ReadExhausted:
-		if !row.read0.Close(ticket, &lane.read0) {
-			return lane.settle(ticket, structure.Refuse)
+		cell0, present0 := row.read0Policy.Cell(tuple.Head().Value(), tuple.Head().Present())
+		// A cell whose declared reads are not all present is this rule's absent
+		// candidate over exactly that region, and contributes no patch.
+		if !present0 {
+			continue
 		}
-		return lane.settle(ticket, structure.NoCandidate)
-	default:
-		_ = lane.read0.Discard(ticket)
-		return lane.settle(ticket, structure.Refuse)
+		value, outcome := (familyReducer{state: lane.family.state, candidate: row.candidate}).Reduce(cell0)
+		switch outcome {
+		case structure.Concrete:
+			if !row.write.Stage(ticket, &lane.write, region, value) {
+				_ = lane.write.Discard(ticket)
+				return execution.Result{}, false
+			}
+			staged++
+		case structure.NoCandidate:
+			// The declared absent successor publishes nothing for this cell.
+		default:
+			_ = lane.write.Discard(ticket)
+			return lane.settle(ticket, outcome)
+		}
 	}
+	if staged == 0 {
+		return lane.settle(ticket, structure.NoCandidate)
+	}
+	if !row.write.Close(ticket, &lane.write) {
+		_ = lane.write.Discard(ticket)
+		return execution.Result{}, false
+	}
+	// One accepted patch is one concrete result, however many cells it holds.
+	if !ticket.Submit(structure.Concrete) {
+		return execution.Result{}, false
+	}
+	return execution.NewResult(structure.Concrete, 1)
 }
 
 // familyInstaller authors this rule's execution family. The axis schemas it

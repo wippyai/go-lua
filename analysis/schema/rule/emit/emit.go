@@ -39,6 +39,7 @@ const (
 	executionPackagePath = "github.com/wippyai/go-lua/analysis/engine/execution"
 	structurePackagePath = "github.com/wippyai/go-lua/analysis/schema/structure"
 	programPackagePath   = "github.com/wippyai/go-lua/analysis/schema/rule/program"
+	productPackagePath   = "github.com/wippyai/go-lua/analysis/engine/execution/product"
 
 	// denseCoordinateType is the NAME of an axis's generator-published dense
 	// Factor coordinate. One name serves every axis because the name is not an

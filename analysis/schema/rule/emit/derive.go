@@ -250,7 +250,8 @@ func derive(target Target, roster definition.Roster) (*plan, error) {
 }
 
 // deriveDelivery states which fold inputs the execution primitive hands the
-// reducer directly. A carry fold delivers its one exact cell; a routed fold
+// reducer directly. A carry fold delivers its one exact cell; an exact product
+// delivers one cell per declared read of the product it drains; a routed fold
 // delivers the selected cell and the tag it was observed under.
 func deriveDelivery(built *plan) {
 	built.deliveredFact = map[int]string{}
@@ -262,8 +263,11 @@ func deriveDelivery(built *plan) {
 			built.deliveredFact[0] = "cell"
 		}
 	case shapeExactFold:
-		if len(built.fold.inputs) == 1 {
-			built.deliveredFact[0] = "cell"
+		// The product cursor materializes every read's cell for one common
+		// refinement cell, so each declared read is delivered by the
+		// invocation and none of them is sealed into the reducer.
+		for position, join := range built.fold.inputs {
+			built.deliveredFact[position] = exactCellName(join)
 		}
 	case shapeSelectedRoute:
 		for position, join := range built.fold.inputs {
@@ -585,9 +589,15 @@ func deriveShape(built *plan, resolver *axisResolver, declaration program.Progra
 				return unexpressible(ruleKey, "an authored exact output with no identity carry",
 					"a heterogeneous exact fold retains the written Factor through its declared identity carry")
 			}
-			if len(built.joins) != 1 || built.joins[0].read.Form != program.Exact {
-				return unexpressible(ruleKey, fmt.Sprintf("an authored exact fold over %d non-scalar reads", len(built.joins)),
-					"the emitted E fold currently consumes exactly one exact cell")
+			if len(built.joins) == 0 {
+				return unexpressible(ruleKey, "an authored exact fold over no read",
+					"an exact fold reduces the cells its declared reads observe, and a rule that reads nothing writes its own source column instead")
+			}
+			for _, join := range built.joins {
+				if join.read.Form != program.Exact {
+					return unexpressible(ruleKey, fmt.Sprintf("an exact fold beside a %s read", readFormName(join.read.Form)),
+						fmt.Sprintf("join %d is not exact, and an exact product is the common refinement of exact cell partitions", join.position))
+				}
 			}
 			destination, destinationOK := findProjection(destinationAxis.source, output.Destination.Member)
 			if !destinationOK {
@@ -914,4 +924,12 @@ func sparseName(sparse program.Sparse) string {
 	default:
 		return "undeclared"
 	}
+}
+
+// exactCellName is the invocation-local name one exact read's product cell is
+// delivered under. It is keyed by the join's own declared position so a fold
+// that consumes a subset of the declared reads still names each cell by the
+// read that observed it.
+func exactCellName(join *joinPlan) string {
+	return fmt.Sprintf("cell%d", join.position)
 }
