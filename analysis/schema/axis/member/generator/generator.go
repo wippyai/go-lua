@@ -1194,6 +1194,56 @@ func renderRelations(packageName string, source definition.Definition) ([]byte, 
 		out.WriteString("\tdefault:\n\t\treturn 0, false\n\t}\n}\n\n")
 	}
 
+	keyVectors := make([]int, 0, len(source.Relations))
+	for index, relation := range source.Relations {
+		if relation.KeyVectorCount.Available() && relation.KeyVectorAt.Available() {
+			keyVectors = append(keyVectors, index)
+		}
+	}
+	out.WriteString("// KeyVectorCount is the span one row of this directory publishes: the number\n")
+	out.WriteString("// of coordinates of another axis that row was constructed from. It is the\n")
+	out.WriteString("// width of the denominator a vector read over those coordinates spans, and a\n")
+	out.WriteString("// relation whose rows publish no such vector holds none.\n")
+	out.WriteString("func (owner *RelationOwner) KeyVectorCount(relationOrdinal, candidateOrdinal uint32) (int, bool) {\n")
+	if len(keyVectors) == 0 {
+		out.WriteString("\treturn 0, false\n}\n\n")
+	} else {
+		fmt.Fprintf(&out, "\tif %s {\n\t\treturn 0, false\n\t}\n", ownerSchemaMissing(source.Binding.Key.Normalizer.ReceiverPointer))
+		out.WriteString("\tswitch relationOrdinal {\n")
+		for _, index := range keyVectors {
+			relation := source.Relations[index]
+			fmt.Fprintf(&out, "\tcase %d:\n", index)
+			rowAt := directCall(relation.CandidateAt, owner, "owner.schema", "row", []string{"int(candidateOrdinal)"}, packageName, aliases)
+			fmt.Fprintf(&out, "\t\trow, rowOK := %s\n", rowAt)
+			out.WriteString("\t\tif !rowOK {\n\t\t\treturn 0, false\n\t\t}\n")
+			count := directCall(relation.KeyVectorCount, owner, "owner.schema", "row", nil, packageName, aliases)
+			fmt.Fprintf(&out, "\t\tcount := %s\n", count)
+			out.WriteString("\t\tif count < 0 {\n\t\t\treturn 0, false\n\t\t}\n\t\treturn count, true\n")
+		}
+		out.WriteString("\tdefault:\n\t\treturn 0, false\n\t}\n}\n\n")
+	}
+
+	out.WriteString("// KeyVectorAt is one coordinate of that vector, at the ordinal the row holds\n")
+	out.WriteString("// it at. The coordinate is dense in the axis the vector spans, which is the\n")
+	out.WriteString("// axis that issued it; this owner passes it through and normalizes nothing.\n")
+	out.WriteString("func (owner *RelationOwner) KeyVectorAt(relationOrdinal, candidateOrdinal uint32, ordinal int) (uint32, bool) {\n")
+	if len(keyVectors) == 0 {
+		out.WriteString("\treturn 0, false\n}\n\n")
+	} else {
+		fmt.Fprintf(&out, "\tif %s || ordinal < 0 {\n\t\treturn 0, false\n\t}\n", ownerSchemaMissing(source.Binding.Key.Normalizer.ReceiverPointer))
+		out.WriteString("\tswitch relationOrdinal {\n")
+		for _, index := range keyVectors {
+			relation := source.Relations[index]
+			fmt.Fprintf(&out, "\tcase %d:\n", index)
+			rowAt := directCall(relation.CandidateAt, owner, "owner.schema", "row", []string{"int(candidateOrdinal)"}, packageName, aliases)
+			fmt.Fprintf(&out, "\t\trow, rowOK := %s\n", rowAt)
+			out.WriteString("\t\tif !rowOK {\n\t\t\treturn 0, false\n\t\t}\n")
+			keyAt := directCall(relation.KeyVectorAt, owner, "owner.schema", "row", []string{"ordinal"}, packageName, aliases)
+			fmt.Fprintf(&out, "\t\treturn %s\n", keyAt)
+		}
+		out.WriteString("\tdefault:\n\t\treturn 0, false\n\t}\n}\n\n")
+	}
+
 	if len(global) != 0 {
 		out.WriteString("// OccurrenceCount is the sealed census of one global relation's occurrence\n")
 		out.WriteString("// directory. A mounted relation has no directory of its own and is refused.\n")

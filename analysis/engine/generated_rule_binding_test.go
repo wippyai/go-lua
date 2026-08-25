@@ -651,3 +651,11 @@ func TestGeneratedRuntimeRowsDoNotRetainRelationOwners(t *testing.T) {
 		}
 	}
 }
+
+func (owner *generatedBindingLawOwner) KeyVectorCount(relationOrdinal, candidateOrdinal uint32) (int, bool) {
+	return 0, false
+}
+
+func (owner *generatedBindingLawOwner) KeyVectorAt(relationOrdinal, candidateOrdinal uint32, ordinal int) (uint32, bool) {
+	return 0, false
+}

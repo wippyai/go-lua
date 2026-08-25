@@ -24,8 +24,10 @@ func (localOwner) CandidateAt(uint32, identity.ContentID, identity.ContentID, in
 	return 0, true
 }
 
-func (localOwner) MemberCount(uint32, uint32) (int, bool)      { return 0, false }
-func (localOwner) MemberAt(uint32, uint32, int) (uint32, bool) { return 0, false }
+func (localOwner) MemberCount(uint32, uint32) (int, bool)         { return 0, false }
+func (localOwner) MemberAt(uint32, uint32, int) (uint32, bool)    { return 0, false }
+func (localOwner) KeyVectorCount(uint32, uint32) (int, bool)      { return 0, false }
+func (localOwner) KeyVectorAt(uint32, uint32, int) (uint32, bool) { return 0, false }
 func (localOwner) Project(uint32, uint32, uint32) (uint32, bool) {
 	return 0, true
 }

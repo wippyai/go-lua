@@ -97,6 +97,21 @@ func (owner *RelationOwner) MemberAt(relationOrdinal, parentCandidateOrdinal uin
 	return 0, false
 }
 
+// KeyVectorCount is the span one row of this directory publishes: the number
+// of coordinates of another axis that row was constructed from. It is the
+// width of the denominator a vector read over those coordinates spans, and a
+// relation whose rows publish no such vector holds none.
+func (owner *RelationOwner) KeyVectorCount(relationOrdinal, candidateOrdinal uint32) (int, bool) {
+	return 0, false
+}
+
+// KeyVectorAt is one coordinate of that vector, at the ordinal the row holds
+// it at. The coordinate is dense in the axis the vector spans, which is the
+// axis that issued it; this owner passes it through and normalizes nothing.
+func (owner *RelationOwner) KeyVectorAt(relationOrdinal, candidateOrdinal uint32, ordinal int) (uint32, bool) {
+	return 0, false
+}
+
 // Project projects one dense candidate through one relation/projection pair to a local coordinate ordinal.
 func (owner *RelationOwner) Project(relationOrdinal, projectionOrdinal, candidateOrdinal uint32) (uint32, bool) {
 	if owner == nil {

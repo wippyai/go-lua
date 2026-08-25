@@ -289,14 +289,19 @@ func (cell *generatedRuleBindingCell) schemaRuleComplete() bool {
 // row's own exact coordinate either: the installing family resolves which
 // coordinates the vector spans, which is precisely what a selection cold row
 // states. The parent restatement is the declaration that says so.
-func generatedColdReadKind(form ruleprogram.ReadForm, parentPresent bool) composition.ReadKind {
+// generatedColdReadKind maps one declared read form onto the cold row kind it
+// is lowered as. A whole-vector read whose cells are addressed one at a time -
+// a nested member set, or a span its candidate published - is delivered
+// through the selection surface, because that is the surface a per-cell
+// delivery has; a vector read over a Factor's own summary form is not.
+func generatedColdReadKind(form ruleprogram.ReadForm, memberAddressed bool) composition.ReadKind {
 	switch form {
 	case ruleprogram.Exact:
 		return composition.ReadExact
 	case ruleprogram.Selected:
 		return composition.ReadSelect
 	case ruleprogram.Summary, ruleprogram.Complete:
-		if parentPresent {
+		if memberAddressed {
 			return composition.ReadSelect
 		}
 		return composition.ReadSummary

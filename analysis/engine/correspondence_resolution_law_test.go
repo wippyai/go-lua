@@ -48,8 +48,10 @@ func (owner directoryOwner) CandidateAt(relation uint32, mount, occurrence ident
 	return rows[index], true
 }
 
-func (directoryOwner) MemberCount(uint32, uint32) (int, bool)      { return 0, false }
-func (directoryOwner) MemberAt(uint32, uint32, int) (uint32, bool) { return 0, false }
+func (directoryOwner) MemberCount(uint32, uint32) (int, bool)         { return 0, false }
+func (directoryOwner) MemberAt(uint32, uint32, int) (uint32, bool)    { return 0, false }
+func (directoryOwner) KeyVectorCount(uint32, uint32) (int, bool)      { return 0, false }
+func (directoryOwner) KeyVectorAt(uint32, uint32, int) (uint32, bool) { return 0, false }
 func (directoryOwner) Project(uint32, uint32, uint32) (uint32, bool) {
 	return 0, false
 }

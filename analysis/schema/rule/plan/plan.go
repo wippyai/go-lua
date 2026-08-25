@@ -120,6 +120,13 @@ type Join struct {
 	// replace.
 	Parent        RelationAddr
 	ParentPresent bool
+	// KeyVector is the compiled restatement of JoinDecl.KeyVector: the
+	// directory whose rows publish the ordered dense key vector this read is
+	// taken over. It is the third addressing a whole-vector read can have, and
+	// it is compiled for the same reason Parent is - a consumer that lost it
+	// would have to rediscover the span from the join's shape.
+	KeyVector        RelationAddr
+	KeyVectorPresent bool
 	// Addressing is the directory whose candidate ordinal indexes this join:
 	// the relation that ISSUES the rows the read is resolved against. For an
 	// exact read that is the read relation's own candidate provider; for a
@@ -784,6 +791,28 @@ func compileProgram(ruleOrdinal uint32, template *rule.Template, declaration pro
 			}
 			compiledJoin.ParentPresent = true
 			compiledJoin.Parent = RelationAddr{Axis: parentAxisOrdinal, Member: mustRelationOrdinal(parentCatalog, join.Parent.Member)}
+		}
+
+		// The declared KeyVector is authenticated the same way: the directory
+		// it names must be the relation's own candidate provider, and that
+		// directory must actually publish a key vector. A read cannot borrow a
+		// span from a row that carries none, and it cannot take one from a
+		// directory it is not joined from.
+		if join.KeyVector.Declared() {
+			if relation.Nested() || relation.CandidateProvider.AxisRelation != join.KeyVector {
+				return Plan{}, compileFailure(template.ID(), rule.LawProgramShape, schema.DispositionMalformed)
+			}
+			keyVectorAxis, keyVectorCatalog, keyVectorAxisOrdinal, keyVectorFailure := resolveAxisMember(axisView, join.KeyVector.Axis, join.KeyVector.Member, memberRelation)
+			if keyVectorFailure.Available() {
+				keyVectorFailure.Entry = template.ID()
+				return Plan{}, keyVectorFailure
+			}
+			publisher, publisherOK := keyVectorCatalog.Relation(join.KeyVector.Member)
+			if !publisherOK || !publisher.PublishesKeyVector || keyVectorAxis.Key() != join.KeyVector.Axis.Key {
+				return Plan{}, compileFailure(template.ID(), rule.LawProgramShape, schema.DispositionMalformed)
+			}
+			compiledJoin.KeyVectorPresent = true
+			compiledJoin.KeyVector = RelationAddr{Axis: keyVectorAxisOrdinal, Member: mustRelationOrdinal(keyVectorCatalog, join.KeyVector.Member)}
 		}
 
 		if join.Predicate.Declared() {

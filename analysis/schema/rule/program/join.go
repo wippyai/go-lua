@@ -50,7 +50,19 @@ type JoinDecl struct {
 	// Predicate against the relation they name. This declaration states the
 	// fact; it does not decide it.
 	Parent member.RelationRef
-	Read   ReadDecl
+	// KeyVector names the directory whose rows publish the ordered dense key
+	// vector this read is taken over: the coordinates a candidate row was
+	// constructed from, which the axis they belong to issued one at a time and
+	// groups nowhere. It is the third way a whole-vector read can be
+	// addressed, declared only when Relation's own candidate provider is such
+	// a directory, and authenticated against the sealed catalog exactly as
+	// Parent is.
+	//
+	// A read declares one addressing, never two: a predicate names a tagged
+	// selection, a parent names a nested member set, and this names a
+	// candidate-published span.
+	KeyVector member.RelationRef
+	Read      ReadDecl
 }
 
 func (join JoinDecl) Available() bool {
@@ -107,7 +119,7 @@ func (join JoinDecl) normalForm(position int) bool {
 		return false
 	}
 
-	return ReadFormAddressing(join.Read.Form, join.Predicate.Declared(), join.Parent.Declared())
+	return ReadFormAddressing(join.Read.Form, join.Predicate.Declared(), join.Parent.Declared(), join.KeyVector.Declared())
 }
 
 // ReadFormAddressing is the one statement of which addressing facts each read
@@ -135,14 +147,24 @@ func (join JoinDecl) normalForm(position int) bool {
 //     join's own shape, and seal/plan authenticate the restatement against
 //     the resolved relation.
 //   - S5 is the closed-denominator whole-vector read.
-func ReadFormAddressing(form ReadForm, predicateDeclared, parentDeclared bool) bool {
+func ReadFormAddressing(form ReadForm, predicateDeclared, parentDeclared, keyVectorDeclared bool) bool {
 	switch form {
 	case Exact, Complete:
 		return !predicateDeclared
 	case Selected:
 		return true
 	case Summary:
-		return predicateDeclared || parentDeclared
+		// A whole-vector read is addressed exactly one way. The three are a
+		// tagged selection, a nested member set, and a span the candidate row
+		// publishes; a read declaring two states two denominators for one
+		// vector, and a read declaring none states no width at all.
+		declared := 0
+		for _, addressing := range []bool{predicateDeclared, parentDeclared, keyVectorDeclared} {
+			if addressing {
+				declared++
+			}
+		}
+		return declared == 1
 	default:
 		return false
 	}

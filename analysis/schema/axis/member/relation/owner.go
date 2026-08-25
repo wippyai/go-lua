@@ -119,6 +119,17 @@ type Owner interface {
 	// variable-length projection result.
 	MemberCount(relationOrdinal, parentCandidateOrdinal uint32) (int, bool)
 	MemberAt(relationOrdinal, parentCandidateOrdinal uint32, ordinal int) (uint32, bool)
+	// KeyVectorCount and KeyVectorAt publish the ordered dense key vector one
+	// row of this directory carries: the coordinates of ANOTHER axis that row
+	// was constructed from. It is the second span a whole-vector read can be
+	// taken over, and it is answered here rather than by the read's own axis
+	// because the row is the only place those coordinates are grouped - the
+	// axis they belong to issued them one at a time and groups them nowhere.
+	//
+	// The coordinate is dense in the axis it spans, which is the axis that
+	// issued it. This owner passes it through and normalizes nothing.
+	KeyVectorCount(relationOrdinal, candidateOrdinal uint32) (int, bool)
+	KeyVectorAt(relationOrdinal, candidateOrdinal uint32, ordinal int) (uint32, bool)
 	Project(relationOrdinal, projectionOrdinal, candidateOrdinal uint32) (uint32, bool)
 }
 

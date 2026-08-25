@@ -112,7 +112,7 @@ func renderInstaller(out *strings.Builder, built *plan) error {
 		out.WriteString("\tif width < 0 {\n\t\treturn nil, nil, false\n\t}\n")
 		out.WriteString("\tsealed.plane, sealed.width = plane, width\n")
 	}
-	for _, join := range memberSetJoins(built) {
+	for _, join := range vectorSpanJoins(built) {
 		// The cell buffer is sized once at the widest member set any row of
 		// this rule declares, so a warm invocation over any row allocates
 		// nothing.
@@ -198,7 +198,7 @@ func renderInstaller(out *strings.Builder, built *plan) error {
 
 	sealedNames := make([]string, 0, len(built.joins)+1)
 	for _, join := range built.joins {
-		if join.memberSet != nil {
+		if join.vectorSpan != nil {
 			if err := renderMemberSetSeal(out, built, join); err != nil {
 				return err
 			}
@@ -230,7 +230,7 @@ func renderInstaller(out *strings.Builder, built *plan) error {
 		sealGuards = append(sealGuards, "!writeSealedOK")
 	}
 	for _, join := range built.joins {
-		if join.memberSet != nil {
+		if join.vectorSpan != nil {
 			continue
 		}
 		sealGuards = append(sealGuards, "!"+join.name+"SealedOK")
@@ -245,7 +245,7 @@ func renderInstaller(out *strings.Builder, built *plan) error {
 	fmt.Fprintf(out, "\t\taddresses = append(addresses, %s.FormAddress{Member: planRow.Member, Local: uint32(len(sealed.rows))})\n", execution)
 	fmt.Fprintf(out, "\t\tsealed.rows = append(sealed.rows, %s{candidate: candidate, %s})\n", rowType, strings.Join(sealedNames, ", "))
 	out.WriteString("\t}\n")
-	for _, join := range memberSetJoins(built) {
+	for _, join := range vectorSpanJoins(built) {
 		fmt.Fprintf(out, "\tsealed.%sWidth = %sWidth\n", join.name, join.name)
 	}
 	out.WriteString("\treturn sealed, addresses, true\n}\n")

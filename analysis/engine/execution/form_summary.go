@@ -243,14 +243,16 @@ func summaryFormContract(rule generated.CompiledRule, join int) (SummaryContract
 	}
 	// Which addressing a form requires is the declaration's own law, asked
 	// here rather than restated: a complete read is closed and names nothing,
-	// while a summary read is correlated either by an owner-issued predicate
-	// or by the ordinal of the member set it spans. A descriptor that
+	// while a summary read is correlated by an owner-issued predicate, by the
+	// ordinal of the member set it spans, or by the position it holds in the
+	// key vector its candidate published. A descriptor that
 	// disagrees with its own form is refused rather than delivered as the
 	// other one.
 	predicate, predicatePresent, predicateOK := rule.ReadPredicateAt(join)
 	parent, parentPresent, parentOK := rule.ReadParentAt(join)
-	if !predicateOK || !parentOK ||
-		!generated.ReadFormAddressShape(form, predicate, predicatePresent, parent, parentPresent) {
+	keyVector, keyVectorPresent, keyVectorOK := rule.ReadKeyVectorAt(join)
+	if !predicateOK || !parentOK || !keyVectorOK ||
+		!generated.ReadFormAddressShape(form, predicate, predicatePresent, parent, parentPresent, keyVector, keyVectorPresent) {
 		return SummaryContract{}, false
 	}
 	sealed := SummaryContract{Form: form, Contract: contract, Denominator: denominator}

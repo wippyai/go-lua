@@ -248,6 +248,14 @@ func DeclareGeneratedRuleSlot(
 				return refuse()
 			}
 		}
+		var normalizedKeyVector ruleplan.RelationAddr
+		if join.KeyVectorPresent {
+			var keyVectorOK bool
+			normalizedKeyVector, keyVectorOK = generatedRuntimeRelation(factorDirectory, catalog, join.KeyVector)
+			if !keyVectorOK {
+				return refuse()
+			}
+		}
 		// The addressing directory is normalized into the same runtime Factor
 		// directory as the candidate it is compared against. A directory that
 		// stayed in catalog coordinates would compare equal to the candidate
@@ -266,6 +274,7 @@ func DeclareGeneratedRuleSlot(
 			Sources: join.Sources, Relation: normalizedJoin, Key: normalizedKey,
 			Predicate: normalizedPredicate, PredicatePresent: join.PredicatePresent,
 			Parent: normalizedParent, ParentPresent: join.ParentPresent,
+			KeyVector: normalizedKeyVector, KeyVectorPresent: join.KeyVectorPresent,
 			Addressing: normalizedAddressing, AddressingPresent: join.AddressingPresent,
 			Form: join.ReadForm, Contract: join.ReadContract, Denominator: join.Denominator,
 			PointBound:  join.PointBound,
@@ -373,7 +382,7 @@ func DeclareGeneratedRuleSlot(
 	row.Reads = make([]coldcomposition.Read, len(joins))
 	for joinIndex, join := range joins {
 		read := coldcomposition.Read{
-			Kind: generatedColdReadKind(join.ReadForm, join.ParentPresent), Input: uint64(join.Input),
+			Kind: generatedColdReadKind(join.ReadForm, join.ParentPresent || join.KeyVectorPresent), Input: uint64(join.Input),
 			Factor:     compositionKeyOf(readFactors[joinIndex].factor.semantic),
 			PointBound: join.PointBound == ruleprogram.PointBound,
 		}
@@ -595,7 +604,7 @@ func generatedPlanJoinShape(compiled ruleplan.Plan, joinIndex int, join ruleplan
 		join.Cardinality != join.ReadContract.Multiplicity {
 		return false
 	}
-	if !generated.ReadFormAddressShape(join.ReadForm, join.Predicate, join.PredicatePresent, join.Parent, join.ParentPresent) {
+	if !generated.ReadFormAddressShape(join.ReadForm, join.Predicate, join.PredicatePresent, join.Parent, join.ParentPresent, join.KeyVector, join.KeyVectorPresent) {
 		return false
 	}
 	_, joinIssuedCandidate := compiled.IssuedCandidate()

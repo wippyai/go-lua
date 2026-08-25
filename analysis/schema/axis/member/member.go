@@ -105,6 +105,14 @@ type Relation struct {
 	// exactly when Parent is: a parent with no ordinal carrier gives its
 	// members no address, and an ordinal carrier with no parent keys nothing.
 	Ordinal Carrier
+	// PublishesKeyVector says rows of this directory carry an ordered dense
+	// key vector of another axis: the coordinates the row was constructed
+	// from. It is the span a whole-vector read over that other axis is taken
+	// over when no directory there groups them, and a child Program consumes
+	// it the way it consumes Parent - to know where the span comes from. The
+	// accessors themselves stay in the owner's source; what survives here is
+	// that they exist.
+	PublishesKeyVector bool
 	// Correspondences name the foreign axis relations whose candidate orders
 	// enumerate the same subjects this relation's own order does. A relation
 	// declares one for each foreign order a rule addressing it must reach; a
@@ -120,6 +128,12 @@ func (relation Relation) Available() bool {
 		return false
 	}
 	if relation.Parent.Declared() && !relation.Parent.Available() {
+		return false
+	}
+	// A directory that publishes a key vector is not itself a nested member
+	// set: it is the row a vector read of another axis is spanned by, and a
+	// relation addressed under a parent takes its own span from there.
+	if relation.PublishesKeyVector && relation.Parent.Declared() {
 		return false
 	}
 	for _, correspondence := range relation.Correspondences {

@@ -35,6 +35,13 @@ type ReadPlan struct {
 	// requires, and cannot ask without it.
 	Parent        ruleplan.RelationAddr
 	ParentPresent bool
+	// KeyVector is the sealed restatement of the join's KeyVector: the
+	// directory whose rows publish the ordered dense key vector this read is
+	// taken over. KeyVectorPresent is explicit for the same reason
+	// ParentPresent is - the zero relation address is a valid one - and the
+	// two are alternatives, because a vector read has one denominator.
+	KeyVector        ruleplan.RelationAddr
+	KeyVectorPresent bool
 	// Addressing is the sealed directory whose candidate ordinal indexes this
 	// read: the relation that ISSUES the rows the read resolves against. It is
 	// the rule's own candidate relation when the read borrows that directory,
@@ -293,7 +300,7 @@ func zeroDenominator(address ruleplan.DenominatorAddr) bool {
 //
 // It is exported because the plan-shape fence in the schema engine holds
 // sealed reads to the same proof.
-func ReadFormAddressShape(form ruleprogram.ReadForm, predicate ruleplan.ProjectionAddr, predicatePresent bool, parent ruleplan.RelationAddr, parentPresent bool) bool {
+func ReadFormAddressShape(form ruleprogram.ReadForm, predicate ruleplan.ProjectionAddr, predicatePresent bool, parent ruleplan.RelationAddr, parentPresent bool, keyVector ruleplan.RelationAddr, keyVectorPresent bool) bool {
 	// Presence is the declaration's own statement and the address is checked
 	// against it, exactly as ReadAddressingShape below states for the third
 	// address. Reading presence off "the value is non-zero" instead would say
@@ -314,7 +321,14 @@ func ReadFormAddressShape(form ruleprogram.ReadForm, predicate ruleplan.Projecti
 	} else if parent != (ruleplan.RelationAddr{}) {
 		return false
 	}
-	return ruleprogram.ReadFormAddressing(form, predicatePresent, parentPresent)
+	if keyVectorPresent {
+		if !validRelationAddr(keyVector) {
+			return false
+		}
+	} else if keyVector != (ruleplan.RelationAddr{}) {
+		return false
+	}
+	return ruleprogram.ReadFormAddressing(form, predicatePresent, parentPresent, keyVectorPresent)
 }
 
 // ReadAddressingShape proves one sealed read's addressing directory against
@@ -354,7 +368,7 @@ func normalizeReadPlan(read *ReadPlan, candidateIssued bool) bool {
 	if !contract.Order.Available() || !contract.Sparse.Available() || !contract.OnOpaque.Available() || !contract.Multiplicity.Available() {
 		return false
 	}
-	if !ReadFormAddressShape(read.Form, read.Predicate, read.PredicatePresent, read.Parent, read.ParentPresent) {
+	if !ReadFormAddressShape(read.Form, read.Predicate, read.PredicatePresent, read.Parent, read.ParentPresent, read.KeyVector, read.KeyVectorPresent) {
 		return false
 	}
 	if !read.PointBound.Available() {
@@ -513,7 +527,7 @@ func validReadPlan(read ReadPlan, inputCount, axisCount int, candidateIssued boo
 	if !read.Contract.Order.Available() || !read.Contract.Sparse.Available() || !read.Contract.OnOpaque.Available() || !read.Contract.Multiplicity.Available() {
 		return false
 	}
-	if !ReadFormAddressShape(read.Form, read.Predicate, read.PredicatePresent, read.Parent, read.ParentPresent) {
+	if !ReadFormAddressShape(read.Form, read.Predicate, read.PredicatePresent, read.Parent, read.ParentPresent, read.KeyVector, read.KeyVectorPresent) {
 		return false
 	}
 	if !read.PointBound.Available() {
@@ -816,6 +830,17 @@ func (rule CompiledRule) ReadParentAt(index int) (ruleplan.RelationAddr, bool, b
 		return ruleplan.RelationAddr{}, false, false
 	}
 	return read.Parent, read.ParentPresent, true
+}
+
+// ReadKeyVectorAt returns the sealed directory whose rows publish the key
+// vector one ordered join is taken over, and its presence. A read spanned by a
+// predicate or a member set names none.
+func (rule CompiledRule) ReadKeyVectorAt(index int) (ruleplan.RelationAddr, bool, bool) {
+	read, ok := rule.ReadAt(index)
+	if !ok {
+		return ruleplan.RelationAddr{}, false, false
+	}
+	return read.KeyVector, read.KeyVectorPresent, true
 }
 
 // ReadAddressingAt returns the sealed addressing directory and its presence

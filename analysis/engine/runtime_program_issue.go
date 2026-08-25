@@ -685,12 +685,12 @@ func declareGeneratedReadSurfaces(state *schemaBindingState, declaration *genera
 			// rows the owner already published under one parent. Enumerate them
 			// here, at the row the read is addressed by, so the family that
 			// consumes them supplies nothing and resolves nothing.
-			if plan.ParentPresent && plan.Form == ruleprogram.Summary {
+			if (plan.ParentPresent || plan.KeyVectorPresent) && plan.Form == ruleprogram.Summary {
 				addressed, addressedOK := resolveGeneratedReadCandidate(state, candidate, plan, coords, denseCandidate)
 				if !addressedOK {
 					return nil, nil, false
 				}
-				coordinates, coordinatesOK := generatedMemberCoordinates(state, plan, addressed)
+				coordinates, coordinatesOK := generatedVectorCoordinates(state, plan, addressed)
 				if !coordinatesOK {
 					return nil, nil, false
 				}
@@ -717,7 +717,7 @@ func declareGeneratedReadSurfaces(state *schemaBindingState, declaration *genera
 // two members answering one coordinate, or members out of order, would silently
 // renumber every later cell.
 func generatedSummaryKeys(state *schemaBindingState, plan generated.ReadPlan, addressedCandidate uint32) (summaryKeyVector, bool) {
-	coordinates, coordinatesOK := generatedMemberCoordinates(state, plan, addressedCandidate)
+	coordinates, coordinatesOK := generatedVectorCoordinates(state, plan, addressedCandidate)
 	if !coordinatesOK {
 		return summaryKeyVector{}, false
 	}
@@ -726,6 +726,48 @@ func generatedSummaryKeys(state *schemaBindingState, plan generated.ReadPlan, ad
 		keys = append(keys, uint64(coordinate))
 	}
 	return newSummaryKeyVector(keys), true
+}
+
+// generatedVectorCoordinates answers the ordered coordinates one whole-vector
+// read spans, from whichever of the two addressings the declaration states.
+//
+// A nested member set is enumerated at the row it hangs off and each member is
+// projected to its own coordinate. A candidate-published key vector is already
+// coordinates of the read axis - the row holds them because they are what it
+// was constructed from - so it is read off that row and nothing is projected.
+// Both answer the same thing: the ordered denominator this read is taken over.
+func generatedVectorCoordinates(state *schemaBindingState, plan generated.ReadPlan, addressedCandidate uint32) ([]uint32, bool) {
+	if plan.KeyVectorPresent {
+		return generatedKeyVectorCoordinates(state, plan, addressedCandidate)
+	}
+	return generatedMemberCoordinates(state, plan, addressedCandidate)
+}
+
+// generatedKeyVectorCoordinates reads the ordered dense key vector the
+// addressed candidate row publishes. The directory that publishes it is the
+// one the join names, and it is asked through its own axis owner: the
+// coordinates belong to the read axis, but only this row groups them.
+func generatedKeyVectorCoordinates(state *schemaBindingState, plan generated.ReadPlan, addressedCandidate uint32) ([]uint32, bool) {
+	owner, ownerOK := relationOwnerForGeneratedAxis(state, plan.KeyVector.Axis)
+	if !ownerOK {
+		return nil, false
+	}
+	count, countOK := owner.KeyVectorCount(plan.KeyVector.Member, addressedCandidate)
+	if !countOK || count < 0 {
+		return nil, false
+	}
+	coordinates := make([]uint32, 0, count)
+	for index := 0; index < count; index++ {
+		coordinate, coordinateOK := owner.KeyVectorAt(plan.KeyVector.Member, addressedCandidate, index)
+		if !coordinateOK {
+			return nil, false
+		}
+		if index != 0 && coordinate <= coordinates[index-1] {
+			return nil, false
+		}
+		coordinates = append(coordinates, coordinate)
+	}
+	return coordinates, true
 }
 
 // generatedMemberCoordinates enumerates one nested member set and projects

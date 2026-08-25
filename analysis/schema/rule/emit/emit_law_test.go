@@ -268,7 +268,7 @@ func TestAnUnexpressibleDeclarationIsRefusedByName(t *testing.T) {
 			clause: "a structural output with no branch vocabulary",
 		},
 		{
-			name: "a structural publication beside a carry",
+			name:   "a structural publication beside a carry",
 			mutate: func(spec *rule.Spec) { spec.Program.Fold.Outputs[0].Mode = program.ModeStructural },
 			clause: "a structural output beside a carry",
 		},

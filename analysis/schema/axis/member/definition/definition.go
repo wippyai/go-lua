@@ -169,6 +169,24 @@ type Relation struct {
 	MemberOrdinal string
 	MemberCount   GoSymbol
 	MemberAt      GoSymbol
+	// KeyVectorCount and KeyVectorAt declare that rows of THIS directory
+	// publish an ordered dense key vector of another axis: the coordinates a
+	// row was constructed from, in the order it holds them.
+	//
+	// It is the second way a whole-vector read gets its span. A nested member
+	// set hangs off a parent row of the read's own axis and is enumerated
+	// there; a constructor's operand vector has no such directory - the row
+	// that knows which coordinates it consumes belongs to another axis, and
+	// the read axis groups them nowhere. Publishing the vector here keeps both
+	// halves with their owners: the row answers coordinates it already holds,
+	// and the read axis resolves cells at coordinates it issued.
+	//
+	// Both are direct methods on this relation's own subject, declared
+	// together or not at all - a span with no accessor addresses nothing, and
+	// an accessor with no span is unbounded. At answers one dense coordinate
+	// of the read axis at an ordinal.
+	KeyVectorCount GoSymbol
+	KeyVectorAt    GoSymbol
 	// Correspondences name the foreign axis relations whose candidate orders
 	// enumerate the same subjects this relation's own order does. They carry
 	// no Go symbol: the correlation is determined by two directories that
@@ -187,6 +205,32 @@ type Relation struct {
 func (relation Relation) memberSetDeclared() bool {
 	return relation.MemberParent.Available() || relation.MemberOrdinal != "" ||
 		!symbolOptional(relation.MemberCount) || !symbolOptional(relation.MemberAt)
+}
+
+// keyVectorDeclared reports whether rows of this relation publish an ordered
+// dense key vector of another axis. The two accessors are one declaration for
+// the same reason the member-set triple is: a span with no accessor addresses
+// nothing.
+func (relation Relation) keyVectorDeclared() bool {
+	return !symbolOptional(relation.KeyVectorCount) || !symbolOptional(relation.KeyVectorAt)
+}
+
+// keyVectorComplete validates a declared key vector. Both accessors must be
+// present and be methods on this relation's own subject - the row that holds
+// the coordinates - because a directory publishes the vector its own rows
+// carry and no other.
+func (relation Relation) keyVectorComplete(carriers map[string]Carrier) bool {
+	if !relation.keyVectorDeclared() {
+		return true
+	}
+	if !relation.KeyVectorCount.Available() || !relation.KeyVectorAt.Available() {
+		return false
+	}
+	subject, subjectOK := carriers[relation.Subject]
+	if !subjectOK {
+		return false
+	}
+	return sameType(relation.KeyVectorCount.Receiver, subject.Type) && sameType(relation.KeyVectorAt.Receiver, subject.Type)
 }
 
 // memberSetComplete validates a declared member set against the relations it
@@ -606,6 +650,11 @@ func (definition Definition) Catalog() (member.Catalog, bool) {
 			}
 			row.Parent, row.Ordinal = relation.MemberParent, ordinal.Key
 		}
+		// A published key vector survives for the same reason and in the same
+		// currency: a child Program needs to know a row of this directory
+		// carries the span a vector read over another axis is taken over, and
+		// the accessors that answer it are this owner's.
+		row.PublishesKeyVector = relation.keyVectorDeclared()
 		relations[index] = row
 		relationNames[relation.Name] = relation.Key
 		relationKeys[relation.Key] = struct{}{}
@@ -817,7 +866,7 @@ func (definition Definition) Complete() bool {
 		relationsByKey[relation.Key] = relation
 	}
 	for _, relation := range definition.Relations {
-		if !relation.memberSetComplete(relations, relationsByKey, carriers) {
+		if !relation.memberSetComplete(relations, relationsByKey, carriers) || !relation.keyVectorComplete(carriers) {
 			return false
 		}
 		// An authored derivation is admitted only while the migration set knows

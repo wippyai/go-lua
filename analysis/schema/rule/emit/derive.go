@@ -93,15 +93,18 @@ type derivationPlan struct {
 	arguments  []derivationArg
 }
 
-// memberSetPlan is the delivery of one Summary read over a self-provided
+// vectorSpanPlan is the delivery of one Summary read over a self-provided
 // nested member set. The set's own MemberCount/MemberAt enumerate it off the
 // parent candidate row, and the join's key projection addresses each member at
 // its own coordinate, so the vector is sealed one exact read per ordinal
 // rather than opened as a Factor cursor.
-type memberSetPlan struct {
-	count definition.GoSymbol
-	at    definition.GoSymbol
-}
+// vectorSpanPlan marks one Summary join as delivered cell by cell over an
+// ordered span. Which addressing produced that span - a nested member set of
+// the read's own axis, or a key vector the candidate publishes - is settled
+// when the join is derived; by delivery time both are the same fact, the
+// ordered coordinates this read is taken over, and the engine has already
+// lowered them onto the plan row.
+type vectorSpanPlan struct{}
 
 // joinPlan is one declared read, resolved to the primitive that seals it and
 // the owner rows that address its relation.
@@ -115,7 +118,7 @@ type joinPlan struct {
 	predicate    definition.Projection
 	hasPredicate bool
 	derivation   *derivationPlan
-	memberSet    *memberSetPlan
+	vectorSpan   *vectorSpanPlan
 	name         string
 }
 
@@ -455,22 +458,59 @@ func deriveJoins(built *plan, resolver *axisResolver, declaration program.Progra
 			}
 			row.derivation = derivation
 		} else if relation.MemberParent.Available() {
-			memberSet, err := deriveMemberSet(built, declaration, join, relation, relationAxis, position)
+			vectorSpan, err := deriveMemberSet(built, declaration, join, relation, relationAxis, position)
 			if err != nil {
 				return err
 			}
-			row.memberSet = memberSet
+			row.vectorSpan = vectorSpan
+		} else if join.KeyVector.Declared() {
+			vector, err := deriveKeyVector(built, join, relation, relationAxis, position)
+			if err != nil {
+				return err
+			}
+			row.vectorSpan = vector
 		}
 		built.joins = append(built.joins, row)
 	}
 	return nil
 }
 
+// deriveKeyVector resolves one Summary read spanned by the key vector its
+// candidate publishes. It states the same fact deriveMemberSet does - the
+// ordered denominator this read is taken over - from the other addressing, so
+// the emitted delivery below is identical: one exact read per coordinate, in
+// the order the row published them, viewed as the vector the fold receives.
+//
+// What it refuses is the shape whose delivery would be a guess. The span comes
+// from the candidate's own row, so a read whose relation is not joined from
+// that directory borrows a denominator it has no claim to; and the coordinates
+// are of the read axis, so a read of the axis this rule writes has no foreign
+// handle to seal them through.
+func deriveKeyVector(built *plan, join program.JoinDecl, relation definition.Relation, relationAxis *axisPlan, position int) (*vectorSpanPlan, error) {
+	ruleKey := built.target.Spec.Key
+	if join.Read.Form != program.Summary {
+		return nil, unexpressible(ruleKey, fmt.Sprintf("a %s read spanned by a published key vector", readFormName(join.Read.Form)),
+			fmt.Sprintf("join %d takes a whole denominator, which only a Summary read spans", position))
+	}
+	if relation.CandidateProvider.AxisRelation != join.KeyVector {
+		return nil, unexpressible(ruleKey, fmt.Sprintf("join %d whose key vector is not published by the directory it is joined from", position),
+			fmt.Sprintf("relation %q is joined from %q", relation.Name, string(relation.CandidateProvider.AxisRelation.Member)))
+	}
+	if !relationAxis.foreignTo(built.write) {
+		return nil, unexpressible(ruleKey, fmt.Sprintf("join %d over a key vector of the written axis", position),
+			"a published span is sealed one exact read per coordinate through the read axis's foreign handle, and a rule's own Factor publishes no such handle")
+	}
+	if _, subjectOK := carrierType(relationAxis.source, relation.Subject); !subjectOK {
+		return nil, unexpressible(ruleKey, "a key-vector relation whose subject carrier is undeclared", relation.Subject)
+	}
+	return &vectorSpanPlan{}, nil
+}
+
 // deriveMemberSet resolves one Summary read over a self-provided nested member
 // set. Every refusal names the declared clause: the emitter states what the
 // declaration says about this relation, and never infers nestedness from the
 // join's own shape.
-func deriveMemberSet(built *plan, declaration program.Program, join program.JoinDecl, relation definition.Relation, relationAxis *axisPlan, position int) (*memberSetPlan, error) {
+func deriveMemberSet(built *plan, declaration program.Program, join program.JoinDecl, relation definition.Relation, relationAxis *axisPlan, position int) (*vectorSpanPlan, error) {
 	ruleKey := built.target.Spec.Key
 	if join.Read.Form != program.Summary {
 		return nil, unexpressible(ruleKey, fmt.Sprintf("a %s read over a nested member set", readFormName(join.Read.Form)),
@@ -505,7 +545,7 @@ func deriveMemberSet(built *plan, declaration program.Program, join program.Join
 	if _, memberOK := carrierType(relationAxis.source, relation.Subject); !memberOK {
 		return nil, unexpressible(ruleKey, "a member relation whose subject carrier is undeclared", relation.Subject)
 	}
-	return &memberSetPlan{count: relation.MemberCount, at: relation.MemberAt}, nil
+	return &vectorSpanPlan{}, nil
 }
 
 // foreignTo reports whether this axis is read through a foreign handle rather
@@ -654,6 +694,18 @@ func deriveShape(built *plan, resolver *axisResolver, declaration program.Progra
 				case program.Selected:
 					selected++
 					selection = join
+				case program.Summary:
+					// A whole vector over a closed span is a settled partition
+					// like an exact cell: its width and order were fixed by
+					// the span itself before this rule ran, so folding it
+					// needs no relation derived per invocation. A vector with
+					// no declared span is the one this form cannot fold - it
+					// has no denominator at all.
+					if join.vectorSpan == nil {
+						return unexpressible(ruleKey, "an exact fold over a vector with no span",
+							fmt.Sprintf("join %d declares neither a member set nor a published key vector, so its width is stated nowhere", join.position))
+					}
+					exact++
 				default:
 					return unexpressible(ruleKey, fmt.Sprintf("an exact fold beside a %s read", readFormName(join.read.Form)),
 						fmt.Sprintf("join %d is neither exact nor selected, and an exact conclusion is folded over cells its reads observed", join.position))
@@ -745,7 +797,7 @@ func deriveShape(built *plan, resolver *axisResolver, declaration program.Progra
 				fmt.Sprintf("join %d", uint64(declaration.Activation.Branch)))
 		}
 		branch := built.joins[uint64(declaration.Activation.Branch)]
-		if branch.memberSet == nil || branch.read.Form != program.Summary {
+		if branch.vectorSpan == nil || branch.read.Form != program.Summary {
 			return unexpressible(ruleKey, "a structural output over a branch set that is not a cold member set",
 				fmt.Sprintf("join %d is read as %s over a relation that declares no parent; the construct plane mounts one member per branch before any solve, so a per-invocation selection has no branches to mount",
 					branch.position, readFormName(branch.read.Form)))

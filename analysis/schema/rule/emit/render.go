@@ -311,7 +311,7 @@ func renderRow(out *strings.Builder, built *plan) error {
 			fmt.Fprintf(out, "\t%s %s.SelectedRead[%s, %s]\n", join.name, execution,
 				imports.typeName(join.axis.dense), imports.typeName(join.axis.fact))
 		case program.Summary:
-			if join.memberSet == nil {
+			if join.vectorSpan == nil {
 				return unexpressible(built.target.Spec.Key, "a summary read over a Factor cursor",
 					fmt.Sprintf("join %d spans a partition the emitted installer opens no vector cursor over", join.position))
 			}
@@ -360,14 +360,14 @@ func renderFamily(out *strings.Builder, built *plan) {
 			imports.typeName(built.write.dense), imports.typeName(built.write.fact))
 		out.WriteString("\twidth int\n")
 	}
-	for _, join := range memberSetJoins(built) {
+	for _, join := range vectorSpanJoins(built) {
 		fmt.Fprintf(out, "\t%sWidth int\n", join.name)
 	}
 	out.WriteString("}\n\n")
 
 	fmt.Fprintf(out, "func (sealed *%s) NewExecutor(run *%s.Run) %s.Executor {\n", familyType, execution, execution)
 	out.WriteString("\tif sealed == nil || run == nil {\n\t\treturn nil\n\t}\n")
-	for _, join := range memberSetJoins(built) {
+	for _, join := range vectorSpanJoins(built) {
 		fmt.Fprintf(out, "\tif sealed.%sWidth < 0 {\n\t\treturn nil\n\t}\n", join.name)
 	}
 	if built.shape == shapeSelectedExact {
@@ -391,12 +391,12 @@ func renderFamily(out *strings.Builder, built *plan) {
 		if built.route.carry != nil {
 			fmt.Fprintf(out, "\t\tcarries: make([]%s.RouteCarry[%s], sealed.width),\n", execution, imports.typeName(built.write.fact))
 		}
-		for _, join := range memberSetJoins(built) {
+		for _, join := range vectorSpanJoins(built) {
 			fmt.Fprintf(out, "\t\t%sCells: make([]%s.MemberCell[%s], sealed.%sWidth),\n",
 				join.name, execution, imports.typeName(join.axis.fact), join.name)
 		}
 		out.WriteString("\t}\n}\n\n")
-	} else if sets := memberSetJoins(built); len(sets) != 0 {
+	} else if sets := vectorSpanJoins(built); len(sets) != 0 {
 		// The member-set buffers are sized once at the widest set any row of
 		// this rule declares, so a warm invocation over any row allocates
 		// nothing.
@@ -765,7 +765,7 @@ func renderRouteExecute(out *strings.Builder, built *plan) error {
 		case argument.candidate:
 			arguments = append(arguments, "row.candidate")
 		case argument.many:
-			if argument.join == nil || argument.join.memberSet == nil || argument.form != member.ReadFormSummary {
+			if argument.join == nil || argument.join.vectorSpan == nil || argument.form != member.ReadFormSummary {
 				return unexpressible(built.target.Spec.Key, "a relation derivation over a whole selection",
 					fmt.Sprintf("relation %q consumes the cells of join %d, and only a whole-vector read has an emitted delivery", route.relation.Name, argument.join.position))
 			}
@@ -854,13 +854,13 @@ func renderRouteExecute(out *strings.Builder, built *plan) error {
 	return nil
 }
 
-// memberSetJoins is the declaration's ordered member-set reads: the joins whose
+// vectorSpanJoins is the declaration's ordered member-set reads: the joins whose
 // relation is a self-provided nested member set, and whose Summary read is
 // therefore delivered as one vector per invocation.
-func memberSetJoins(built *plan) []*joinPlan {
+func vectorSpanJoins(built *plan) []*joinPlan {
 	joins := make([]*joinPlan, 0, len(built.joins))
 	for _, join := range built.joins {
-		if join.memberSet != nil {
+		if join.vectorSpan != nil {
 			joins = append(joins, join)
 		}
 	}

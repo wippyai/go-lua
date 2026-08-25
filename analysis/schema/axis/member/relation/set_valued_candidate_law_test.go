@@ -169,3 +169,11 @@ func TestABranchSettlesExactlyOneOutcome(t *testing.T) {
 		t.Fatal("a local outside the vocabulary settles no outcome")
 	}
 }
+
+func (owner *setOwner) KeyVectorCount(relationOrdinal, candidateOrdinal uint32) (int, bool) {
+	return 0, false
+}
+
+func (owner *setOwner) KeyVectorAt(relationOrdinal, candidateOrdinal uint32, ordinal int) (uint32, bool) {
+	return 0, false
+}

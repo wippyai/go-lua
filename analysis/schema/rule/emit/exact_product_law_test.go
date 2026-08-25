@@ -309,9 +309,10 @@ func TestOneReadIsOneCaseOfTheExactProduct(t *testing.T) {
 }
 
 // TestAnExactFoldRefusesANonExactRead is the refusal law for this shape. The
-// product is the common refinement of exact cell partitions; a read that
-// delivers anything else has no partition to cross and is named rather than
-// silently dropped from the chain.
+// product is the common refinement of SETTLED partitions - an exact cell is
+// one, and so is a whole vector whose span fixed its width and order before
+// the rule ran. A vector read that declares no span has no partition to cross
+// at all, and it is named rather than silently dropped from the chain.
 func TestAnExactFoldRefusesANonExactRead(t *testing.T) {
 	spec := exactProductSpec(2)
 	spec.Program.Joins[1].Read.Form = program.Summary
@@ -321,7 +322,7 @@ func TestAnExactFoldRefusesANonExactRead(t *testing.T) {
 	if err == nil {
 		t.Fatal("a summary read was admitted into an exact product")
 	}
-	if !strings.Contains(err.Error(), "an exact fold beside a Summary read") {
+	if !strings.Contains(err.Error(), "an exact fold over a vector with no span") {
 		t.Fatalf("refusal does not name the clause: %v", err)
 	}
 }
