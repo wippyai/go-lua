@@ -380,13 +380,20 @@ func committedPointIDs(program *CommittedProgram) []identity.ContentID {
 
 // TestSelectedOverlayRejectsNonExactWriteMetadata keeps observation demand
 // closed when a committed member publishes a route or weak write.
+//
+// The routed-write case is the shape a routed publication actually commits: a
+// SurfaceWriteRoute anchor that carries no local at all, because where such a
+// row publishes is decided per route at execution. There is nothing here to
+// convert into a read coordinate, which is why an observation over a routed
+// member states an owner-issued coordinate instead of deriving one.
 func TestSelectedOverlayRejectsNonExactWriteMetadata(t *testing.T) {
 	factor := compositionKeyOf(coldKey(998_700))
 	write := equation.Surface{Factor: factor, Form: equation.SurfaceWriteExact, Local: 7, Mode: equation.TargetModeStrong}
 	for name, fixture := range map[string]selectedOverlayObservationWriteLaw{
-		"route":      {count: 1, surface: write, route: 1},
-		"weak":       {count: 1, surface: equation.Surface{Factor: factor, Form: equation.SurfaceWriteExact, Local: 7, Mode: equation.TargetModeWeak}},
-		"two-writes": {count: 2, surface: write},
+		"route":        {count: 1, surface: write, route: 1},
+		"routed-write": {count: 1, surface: equation.Surface{Factor: factor, Form: equation.SurfaceWriteRoute, Mode: equation.TargetModeStrong}, route: 2},
+		"weak":         {count: 1, surface: equation.Surface{Factor: factor, Form: equation.SurfaceWriteExact, Local: 7, Mode: equation.TargetModeWeak}},
+		"two-writes":   {count: 2, surface: write},
 	} {
 		if read, accepted := exactObservationReadSurface(fixture, factor); accepted || read.Available() {
 			t.Fatalf("exact observation accepted non-exact metadata %s", name)
