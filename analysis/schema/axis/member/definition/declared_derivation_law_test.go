@@ -160,6 +160,17 @@ func TestOnlyAnAuthoredDerivationOwesTheLedgerARow(t *testing.T) {
 // declaredSpecimenSource is the specimen axis with two enumerations declared
 // on it and its relation stated in the declared form, composing them: the
 // alternatives of a fact, and what each alternative in turn yields.
+// specimenWiden is the specimen's lattice endpoint. Its directory yields the
+// seed carrier while the source chain yields the key one, so the endpoint owes
+// its own judgment: a directory row is not the item the value decomposes to.
+func specimenWiden() DerivationWiden {
+	return DerivationWiden{
+		Predicate: declaredSpecimenSymbol("IsTop"),
+		Source:    []EnumerationRef{{Axis: specimenAxis(), Name: "Directory"}},
+		Resolve:   declaredSpecimenSymbol("ResolveDirectoryRow"),
+	}
+}
+
 func declaredSpecimenSource(t testing.TB) (Definition, Relation) {
 	t.Helper()
 	source := specimenBase()
@@ -262,10 +273,7 @@ func TestAComposedSourceThatDoesNotReadWhatItIsGivenIsRefused(t *testing.T) {
 // rather than an item it has not reached yet.
 func TestAWidenEndpointIsAskedOfWhatTheDerivationEnumerates(t *testing.T) {
 	source, relation := declaredSpecimenSource(t)
-	relation.Derivation.Widen = DerivationWiden{
-		Predicate: declaredSpecimenSymbol("IsTop"),
-		Source:    []EnumerationRef{{Axis: specimenAxis(), Name: "Directory"}},
-	}
+	relation.Derivation.Widen = specimenWiden()
 	roster := declaredSpecimenRoster(t, source)
 	shape, ok := roster.DeclaredDerivationSignature("specimen", relation, specimenType("Key"))
 	if !ok || len(shape.WidenParams) != 1 {
@@ -312,10 +320,7 @@ func TestAnEnumerationOverNothingIsTheOwnersDirectory(t *testing.T) {
 // not from the value that reached the endpoint.
 func TestAWidenedAnswerIsReadOutOfTheOwnersSchema(t *testing.T) {
 	source, relation := declaredSpecimenSource(t)
-	relation.Derivation.Widen = DerivationWiden{
-		Predicate: declaredSpecimenSymbol("IsTop"),
-		Source:    []EnumerationRef{{Axis: specimenAxis(), Name: "Directory"}},
-	}
+	relation.Derivation.Widen = specimenWiden()
 	roster := declaredSpecimenRoster(t, source)
 	shape, ok := roster.DeclaredDerivationSignature("specimen", relation, specimenType("Key"))
 	if !ok || len(shape.Widened) != 1 {
@@ -392,5 +397,45 @@ func TestAnEnumerationStatesTheOrderItYieldsIn(t *testing.T) {
 	half.Order = schema.EntryReference{Surface: schema.SurfaceKindAxis}
 	if half.complete() {
 		t.Fatal("an enumeration naming a surface but no axis was admitted; which axis it yields in order of is undecided")
+	}
+}
+
+// TestAWidenEndpointYieldingAnotherItemStatesItsOwnJudgment says where a
+// judgment belongs: to a source CHAIN, not to the derivation.
+//
+// The widened chain enumerates the owner's directory, and a directory row is
+// not necessarily the item the value that reached the endpoint decomposes to -
+// one symbol cannot be handed both. So the endpoint states its own judgment
+// exactly where the two chains disagree, and stating a second where they agree
+// would be two answers to what a member is.
+func TestAWidenEndpointYieldingAnotherItemStatesItsOwnJudgment(t *testing.T) {
+	source, relation := declaredSpecimenSource(t)
+	relation.Derivation.Widen = specimenWiden()
+	roster := declaredSpecimenRoster(t, source)
+	shape, ok := roster.DeclaredDerivationSignature("specimen", relation, specimenType("Key"))
+	if !ok {
+		t.Fatal("an endpoint stating its own judgment derived no shape")
+	}
+	if len(shape.WidenResolveParams) != len(shape.ResolveParams) {
+		t.Fatalf("the endpoint's judgment takes %d positions, the derivation's takes %d", len(shape.WidenResolveParams), len(shape.ResolveParams))
+	}
+	item := shape.WidenResolveParams[len(shape.WidenResolveParams)-1]
+	if item.Type != specimenType("Seed") {
+		t.Fatalf("the endpoint's judgment is handed %+v, want the item its own directory yields", item.Type)
+	}
+	if shape.ResolveParams[len(shape.ResolveParams)-1].Type == item.Type {
+		t.Fatal("the two chains yield one item, so this specimen states nothing about two")
+	}
+
+	missing := relation
+	missing.Derivation.Widen.Resolve = GoSymbol{}
+	if _, admitted := roster.DeclaredDerivationSignature("specimen", missing, specimenType("Key")); admitted {
+		t.Fatal("a widened chain yielding another item was admitted with no judgment for it")
+	}
+
+	agreeing := relation
+	agreeing.Derivation.Widen.Source = []EnumerationRef{{Axis: specimenAxis(), Name: "Parts"}}
+	if _, admitted := roster.DeclaredDerivationSignature("specimen", agreeing, specimenType("Key")); admitted {
+		t.Fatal("a widened chain yielding the source's own item took a second judgment")
 	}
 }

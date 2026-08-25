@@ -173,6 +173,11 @@ type DeclaredDerivationShape struct {
 	WidenResults []DerivedParam
 	// Widened is the shape of the sources the widened answer is read out of.
 	Widened []EnumerationShape
+	// WidenResolveParams is the widen chain's own judgment, present exactly
+	// when the endpoint states one. It is the derivation's judgment with the
+	// innermost item taken from the widen chain instead of the source chain.
+	WidenResolveParams  []DerivedParam
+	WidenResolveResults []DerivedParam
 }
 
 // EnumerationShape is one declared enumeration's own call shape.
@@ -247,11 +252,22 @@ func (roster Roster) DeclaredDerivationSignature(axis schema.Key, relation Relat
 		shape.WidenResults = []DerivedParam{{Type: GoType{Name: "bool"}}}
 		// The widened answer is read out of the owner's own directory, so its
 		// sources chain from the axis schema rather than from the fact.
-		widened, _, widenedOK := roster.enumerationChain(derivation.Widen.Source, subject.Type)
+		widened, widenedItem, widenedOK := roster.enumerationChain(derivation.Widen.Source, subject.Type)
 		if !widenedOK {
 			return DeclaredDerivationShape{}, false
 		}
 		shape.Widened = widened
+		// One judgment answers both chains only when both chains yield the
+		// same item. Where they do not, the endpoint owes its own, and a
+		// second one where they agree would be two answers to what a member is.
+		sameItem := sameType(widenedItem, item)
+		if sameItem == derivation.Widen.Resolve.Available() {
+			return DeclaredDerivationShape{}, false
+		}
+		if !sameItem {
+			shape.WidenResolveParams = append(append([]DerivedParam{}, params...), DerivedParam{Type: widenedItem})
+			shape.WidenResolveResults = shape.ResolveResults
+		}
 	}
 	return shape, true
 }

@@ -113,6 +113,12 @@ type declaredPlan struct {
 	sources  []enumerationPlan
 	resolve  definition.GoSymbol
 	widen    *widenPlan
+	// widenResolve is the judgment a WIDENED item is resolved by. A widen
+	// endpoint enumerates a different sequence, and a directory's row is not
+	// necessarily the same thing as an item of the value that reached the
+	// endpoint, so the endpoint may state its own judgment; when it states
+	// none the two chains yield the same item and one judgment answers both.
+	widenResolve definition.GoSymbol
 	// key is the relation's own declared Key projection and order is the axis
 	// that numbers the coordinates it yields. Together they are the ONE
 	// admissible order of a member set: the engine canonicalizes a selection
@@ -143,6 +149,41 @@ type enumerationPlan struct {
 	// order is the axis whose dense numbering this enumeration promises to
 	// yield in, empty when its owner promises nothing.
 	order schema.Key
+}
+
+// own spells one owner symbol applied to the value this enumeration reads.
+//
+// There are three shapes and the declaration already says which: a method on
+// the value itself, a method on the axis's own SCHEMA taking that value -
+// which is how an owner whose read is fenced by its schema answers, and the
+// normal case rather than the exception - and a free function taking it first.
+// A sequence read out of the axis's schema is already reading the receiver, so
+// it never takes the second shape.
+func (source enumerationPlan) own(imports *importSet, symbol definition.GoSymbol, over string, args ...string) string {
+	if !source.schema && sameOwnerReceiver(symbol, source.axis.schemaType) {
+		return imports.call(symbol, source.axis.param, append([]string{over}, args...)...)
+	}
+	if symbol.Receiver.Name != "" {
+		return imports.call(symbol, over, args...)
+	}
+	return imports.call(symbol, "", append([]string{over}, args...)...)
+}
+
+// census and accessor spell this enumeration's two declared symbols.
+func (source enumerationPlan) census(imports *importSet, over string) string {
+	return source.own(imports, source.count, over)
+}
+
+func (source enumerationPlan) accessor(imports *importSet, over, cursor string) string {
+	return source.own(imports, source.at, over, cursor)
+}
+
+// sameOwnerReceiver reports whether a symbol is a method on the given schema
+// type. Pointerness is not part of the question: an axis states its schema
+// type once and the emitter spells the receiver the way the symbol declares it.
+func sameOwnerReceiver(symbol definition.GoSymbol, schemaType definition.GoType) bool {
+	return symbol.Receiver.Name != "" && symbol.Receiver.Name == schemaType.Name &&
+		symbol.Receiver.PackagePath == schemaType.PackagePath
 }
 
 // widenPlan is the lattice endpoint a derived set stops being enumerable at.
@@ -706,6 +747,9 @@ func deriveDeclared(built *plan, resolver *axisResolver, relation definition.Rel
 	if err != nil {
 		return nil, err
 	}
+	if err := fenceOwnerSchemas(ruleKey, relation, declaration, sources); err != nil {
+		return nil, err
+	}
 	// The outer level is read out of one of the relation's own inputs. One
 	// reading anything else would be handed a value the invocation never gives
 	// it.
@@ -768,8 +812,45 @@ func deriveDeclared(built *plan, resolver *axisResolver, relation definition.Rel
 		// no order at all - has to be placed member by member.
 		lazy := len(widened) == 1 && widened[0].order.Available() && widened[0].order == relationAxis.key
 		declared.widen = &widenPlan{predicate: declaration.Widen.Predicate, sources: widened, lazy: lazy}
+		// One judgment answers both chains only where both yield the same item.
+		if sameGoType(widened[len(widened)-1].item, sources[len(sources)-1].item) {
+			if declaration.Widen.Resolve.Available() {
+				return nil, unexpressible(ruleKey, "a derived member set with two judgments for one item",
+					fmt.Sprintf("relation %q states a widen judgment, and its widened chain yields the same item its source chain does", relation.Name))
+			}
+		} else {
+			if !declaration.Widen.Resolve.Available() {
+				return nil, unexpressible(ruleKey, "a derived member set whose widened items no judgment answers",
+					fmt.Sprintf("relation %q widens to %s and sources %s, and states one judgment for both", relation.Name, widened[len(widened)-1].item.Name, sources[len(sources)-1].item.Name))
+			}
+			declared.widenResolve = declaration.Widen.Resolve
+		}
 	}
 	return declared, nil
+}
+
+// fenceOwnerSchemas holds every enumeration whose accessors are fenced by its
+// owner's schema to a derivation that names that owner. The generated Build is
+// a free function, so an axis's schema reaches it only as a static axis the
+// derivation declared; an enumeration read through a schema the invocation is
+// never handed has nothing to be read out of.
+func fenceOwnerSchemas(ruleKey schema.Key, relation definition.Relation, declaration definition.RelationDerivation, sources []enumerationPlan) error {
+	for _, source := range sources {
+		if source.schema || !sameOwnerReceiver(source.count, source.axis.schemaType) {
+			continue
+		}
+		named := false
+		for _, static := range declaration.StaticAxes {
+			if static.Key == source.axis.key {
+				named = true
+			}
+		}
+		if !named {
+			return unexpressible(ruleKey, "a derived member set reading through a schema its derivation does not name",
+				fmt.Sprintf("relation %q reads a source fenced by axis %q's own schema, which its declared static axes do not include", relation.Name, string(source.axis.key)))
+		}
+	}
+	return nil
 }
 
 // deriveEnumerations resolves one composed source list, holding each level to
@@ -1409,4 +1490,12 @@ func sparseName(sparse program.Sparse) string {
 // read that observed it.
 func exactCellName(join *joinPlan) string {
 	return fmt.Sprintf("cell%d", join.position)
+}
+
+// widenJudgment answers the symbol a widened item is resolved by.
+func (declared *declaredPlan) widenJudgment() definition.GoSymbol {
+	if declared.widenResolve.Available() {
+		return declared.widenResolve
+	}
+	return declared.resolve
 }

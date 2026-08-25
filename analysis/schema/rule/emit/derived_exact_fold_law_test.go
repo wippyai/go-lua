@@ -96,6 +96,13 @@ func siteBase() definition.Definition {
 				Count: definition.GoSymbol{PackagePath: sitePackage, Name: "DirectoryCount", ResultIndex: 0},
 				At:    definition.GoSymbol{PackagePath: sitePackage, Name: "DirectoryAt", ResultIndex: 0},
 			},
+			{
+				// The same directory read as the owner's own keys: a widened
+				// answer whose rows are not the items the source chain yields.
+				Name: "KeyDirectory", Item: "SiteKeyCarrier",
+				Count: definition.GoSymbol{PackagePath: sitePackage, Name: "KeyDirectoryCount", ResultIndex: 0},
+				At:    definition.GoSymbol{PackagePath: sitePackage, Name: "KeyDirectoryAt", ResultIndex: 0},
+			},
 		},
 		Relations: []definition.Relation{
 			{
@@ -944,5 +951,115 @@ func TestAWidenedSetIsPlacedWhenItsDirectoryIsNumberedByAnotherAxis(t *testing.T
 	}
 	if strings.Contains(build, "built.widened = true") {
 		t.Fatalf("a directory in another axis's order was read where it lies:\n%s", build)
+	}
+}
+
+// TestASourceMayBeFencedByItsOwnersSchema states the third shape an owner's
+// accessor takes, and the reason the first two are not enough.
+//
+// How a value decomposes is its owner's answer, and an owner whose reads are
+// fenced by its own schema answers with a method ON that schema taking the
+// value - that is the normal case, not the exception: the fence is what makes
+// the answer trustworthy. The declaration already says which shape a symbol
+// is, because it says what the symbol's receiver is, so nothing here is
+// configured.
+func TestASourceMayBeFencedByItsOwnersSchema(t *testing.T) {
+	source := renderDerivedSelectionWith(t, derivedRosterWithEnumeration(t, "Alternatives", func(enumeration *definition.Enumeration) {
+		enumeration.Count = siteMethod("AlternativeCount", "Schema", true, 0)
+		enumeration.At = siteMethod("AlternativeAt", "Schema", true, 0)
+	}))
+	build, found := functionBody(source, "deriveDerived1Rows")
+	if !found {
+		t.Fatalf("the emitted construction has no Build:\n%s", source)
+	}
+	if !strings.Contains(build, "siteSchema.AlternativeCount(given1)") {
+		t.Fatalf("a source fenced by its owner's schema is not read through it:\n%s", build)
+	}
+	if !strings.Contains(build, "siteSchema.AlternativeAt(given1, cursor0)") {
+		t.Fatalf("a fenced source's accessor is not handed the value it reads:\n%s", build)
+	}
+}
+
+// TestAFencedSourceIsRefusedWhenItsDerivationDoesNotNameTheOwner is what that
+// shape rests on. The generated Build is a free function, so an axis's schema
+// reaches it only as a static axis the derivation declared; a source read
+// through a schema the invocation is never handed has nothing to be read out
+// of, and that is refused by name rather than emitted as a call to a variable
+// that does not exist.
+func TestAFencedSourceIsRefusedWhenItsDerivationDoesNotNameTheOwner(t *testing.T) {
+	base := siteBase()
+	for index := range base.Enumerations {
+		if base.Enumerations[index].Name == "Alternatives" {
+			base.Enumerations[index].Count = siteMethod("AlternativeCount", "Schema", true, 0)
+			base.Enumerations[index].At = siteMethod("AlternativeAt", "Schema", true, 0)
+		}
+	}
+	for index := range base.Relations {
+		if base.Relations[index].Name != "BodyRoutes" {
+			continue
+		}
+		derivation := declaredSiteDerivation()
+		derivation.StaticAxes = []schema.EntryReference{wireAxis(), siteAxis()}
+		base.Relations[index].Derivation = derivation
+	}
+	roster, rosterOK := definition.NewRoster(
+		definition.Source{Package: "site", Name: "site", Base: base, Contributions: []definition.Contribution{siteContribution(), consumerContribution(), selectionContribution()}},
+		definition.Source{Package: "wire", Name: "wire", Base: wireBase()},
+	)
+	if !rosterOK {
+		t.Fatal("the amended site roster is not admissible")
+	}
+	target := derivedTarget()
+	target.Spec = derivedSelectionSpec()
+	if _, err := Render(target, roster); err != nil {
+		t.Fatalf("a derivation naming its owner refused to emit: %v", err)
+	}
+}
+
+// TestAWidenEndpointThatYieldsAnotherItemStatesItsOwnJudgment is the second
+// half of the same reading: a judgment belongs to a source CHAIN, not to the
+// derivation. The widened chain enumerates the owner's directory, whose rows
+// are not necessarily the same thing as the items of the value that reached
+// the endpoint, and one symbol cannot be handed both.
+func TestAWidenEndpointThatYieldsAnotherItemStatesItsOwnJudgment(t *testing.T) {
+	roster := derivedRosterWithDerivation(t, func(derivation *definition.RelationDerivation) {
+		derivation.Widen.Source = []definition.EnumerationRef{{Axis: siteAxis(), Name: "KeyDirectory"}}
+		derivation.Widen.Resolve = definition.GoSymbol{PackagePath: sitePackage, Name: "ResolveDirectoryRoute", ResultIndex: 0}
+	})
+	target := derivedTarget()
+	target.Spec = derivedSelectionSpec()
+	rendered, err := Render(target, roster)
+	if err != nil {
+		t.Fatalf("a widen endpoint stating its own judgment did not emit: %v", err)
+	}
+	build, _ := functionBody(string(rendered), "deriveDerived1Rows")
+	if !strings.Contains(build, "ResolveDirectoryRoute(") {
+		t.Fatalf("the widened arm does not use the judgment its endpoint states:\n%s", build)
+	}
+	if strings.Count(build, "ResolveRoute(") != 1 {
+		t.Fatalf("the source judgment answers a widened item:\n%s", build)
+	}
+}
+
+// TestAWidenEndpointYieldingAnotherItemIsRefusedWithoutOne is the refusal that
+// makes the choice honest in both directions: a chain whose items differ and
+// names no judgment for them would hand one symbol two types, and a chain
+// whose items agree and names a second would be two answers to what a member
+// is.
+func TestAWidenEndpointYieldingAnotherItemIsRefusedWithoutOne(t *testing.T) {
+	target := derivedTarget()
+	target.Spec = derivedSelectionSpec()
+
+	missing := derivedRosterWithDerivation(t, func(derivation *definition.RelationDerivation) {
+		derivation.Widen.Source = []definition.EnumerationRef{{Axis: siteAxis(), Name: "KeyDirectory"}}
+	})
+	if source, err := Render(target, missing); err == nil {
+		t.Fatalf("a widened chain yielding another item emitted without a judgment for it:\n%s", source)
+	}
+	spare := derivedRosterWithDerivation(t, func(derivation *definition.RelationDerivation) {
+		derivation.Widen.Resolve = definition.GoSymbol{PackagePath: sitePackage, Name: "ResolveDirectoryRoute", ResultIndex: 0}
+	})
+	if source, err := Render(target, spare); err == nil {
+		t.Fatalf("a widened chain yielding the source's own item took a second judgment:\n%s", source)
 	}
 }

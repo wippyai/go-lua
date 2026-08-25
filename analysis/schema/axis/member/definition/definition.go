@@ -355,6 +355,15 @@ type DerivationWiden struct {
 	// of the fact: what "everything" means at a lattice endpoint is the
 	// owner's whole directory, which the fact by definition failed to name.
 	Source []EnumerationRef
+	// Resolve is the judgment a WIDENED item is turned into a row by. The
+	// endpoint enumerates a different sequence, and a directory's row is not
+	// necessarily the same thing as an item of the value that reached the
+	// endpoint - so a judgment belongs to a source CHAIN rather than to the
+	// derivation, and this is the widen chain's. It is stated only where the
+	// two chains yield different items; where they yield the same one, one
+	// judgment answers both and stating a second would be two answers to what
+	// a member is.
+	Resolve GoSymbol
 }
 
 // Declared reports whether a widen endpoint is stated.

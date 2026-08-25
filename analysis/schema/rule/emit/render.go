@@ -1412,18 +1412,12 @@ func renderDerivedWidenedAt(out *strings.Builder, built *plan, join *joinPlan) e
 		return err
 	}
 	over := "state." + prefixed("widen", source.axis.param)
-	enumerate := func(symbol definition.GoSymbol, args ...string) string {
-		if symbol.Receiver.Name != "" {
-			return imports.call(symbol, over, args...)
-		}
-		return imports.call(symbol, "", append([]string{over}, args...)...)
-	}
 	resolveArguments := make([]string, 0, len(names)+1)
 	for _, name := range names {
 		resolveArguments = append(resolveArguments, "state."+name)
 	}
 	resolve := func(item string) string {
-		return imports.call(declared.resolve, "", append(append([]string{}, resolveArguments...), item)...)
+		return imports.call(declared.widenJudgment(), "", append(append([]string{}, resolveArguments...), item)...)
 	}
 
 	fmt.Fprintf(out, "// %s answers one member of a widened set out of the directory it\n", derivedWidenedAtName(declared.position))
@@ -1432,10 +1426,10 @@ func renderDerivedWidenedAt(out *strings.Builder, built *plan, join *joinPlan) e
 	fmt.Fprintf(out, "func %s(state %s, index int) (%s, bool) {\n", derivedWidenedAtName(declared.position), state, subject)
 	fmt.Fprintf(out, "\tvar absent %s\n", subject)
 	out.WriteString("\tif !state.widened || index < 0 || index >= state.count {\n\t\treturn absent, false\n\t}\n")
-	fmt.Fprintf(out, "\twidenCount := %s\n", enumerate(source.count))
+	fmt.Fprintf(out, "\twidenCount := %s\n", source.census(imports, over))
 	out.WriteString("\tif state.widenPrefix {\n")
 	out.WriteString("\t\tif index >= widenCount {\n\t\t\treturn absent, false\n\t\t}\n")
-	fmt.Fprintf(out, "\t\twidenItem, widenItemOK := %s\n", enumerate(source.at, "index"))
+	fmt.Fprintf(out, "\t\twidenItem, widenItemOK := %s\n", source.accessor(imports, over, "index"))
 	out.WriteString("\t\tif !widenItemOK {\n\t\t\treturn absent, false\n\t\t}\n")
 	fmt.Fprintf(out, "\t\twidenRow, widenPresent, widenResolved := %s\n", resolve("widenItem"))
 	out.WriteString("\t\tif !widenResolved || !widenPresent {\n\t\t\treturn absent, false\n\t\t}\n")
@@ -1444,7 +1438,7 @@ func renderDerivedWidenedAt(out *strings.Builder, built *plan, join *joinPlan) e
 	out.WriteString("\t// counting the members that contribute.\n")
 	out.WriteString("\tordinal := 0\n")
 	out.WriteString("\tfor widenCursor := 0; widenCursor < widenCount; widenCursor++ {\n")
-	fmt.Fprintf(out, "\t\twidenItem, widenItemOK := %s\n", enumerate(source.at, "widenCursor"))
+	fmt.Fprintf(out, "\t\twidenItem, widenItemOK := %s\n", source.accessor(imports, over, "widenCursor"))
 	out.WriteString("\t\tif !widenItemOK {\n\t\t\treturn absent, false\n\t\t}\n")
 	fmt.Fprintf(out, "\t\twidenRow, widenPresent, widenResolved := %s\n", resolve("widenItem"))
 	out.WriteString("\t\tif !widenResolved {\n\t\t\treturn absent, false\n\t\t}\n")
@@ -1546,37 +1540,28 @@ func renderDerivedBuild(out *strings.Builder, built *plan, join *joinPlan) error
 		fmt.Fprintf(out, "%sbuilt, placed = %s(built, dense, %s)\n", indent, derivedInsertName(declared.position), row)
 		fmt.Fprintf(out, "%sif !placed {\n%s\treturn %s{}, false\n%s}\n", indent, indent, state, indent)
 	}
-	resolve := func(indent, item, row string) {
-		call := imports.call(declared.resolve, "", append(append([]string{}, statics...), arguments[declared.candidateArgument], item)...)
+	resolve := func(indent string, judgment definition.GoSymbol, item, row string) {
+		call := imports.call(judgment, "", append(append([]string{}, statics...), arguments[declared.candidateArgument], item)...)
 		fmt.Fprintf(out, "%s%s, present, resolved := %s\n", indent, row, call)
 		fmt.Fprintf(out, "%sif !resolved {\n%s\treturn %s{}, false\n%s}\n", indent, indent, state, indent)
 		fmt.Fprintf(out, "%sif present {\n", indent)
 		place(indent+"\t", row)
 		fmt.Fprintf(out, "%s}\n", indent)
 	}
-	// An enumeration's census and accessor are spelled the way their owner
-	// declared them: a method reads the value it is a method ON, and a free
-	// function takes it as its first argument. Neither is this file's choice.
-	enumerate := func(symbol definition.GoSymbol, over string, args ...string) string {
-		if symbol.Receiver.Name != "" {
-			return imports.call(symbol, over, args...)
-		}
-		return imports.call(symbol, "", append([]string{over}, args...)...)
-	}
-	walk := func(sources []enumerationPlan, root, prefix, indent string) {
+	walk := func(sources []enumerationPlan, judgment definition.GoSymbol, root, prefix, indent string) {
 		over := root
 		for level, source := range sources {
 			count := prefixed(prefix, fmt.Sprintf("count%d", level))
 			cursor := prefixed(prefix, fmt.Sprintf("cursor%d", level))
 			item := prefixed(prefix, fmt.Sprintf("item%d", level))
-			fmt.Fprintf(out, "%s%s := %s\n", indent, count, enumerate(source.count, over))
+			fmt.Fprintf(out, "%s%s := %s\n", indent, count, source.census(imports, over))
 			fmt.Fprintf(out, "%sfor %s := 0; %s < %s; %s++ {\n", indent, cursor, cursor, count, cursor)
 			indent += "\t"
-			fmt.Fprintf(out, "%s%s, %sOK := %s\n", indent, item, item, enumerate(source.at, over, cursor))
+			fmt.Fprintf(out, "%s%s, %sOK := %s\n", indent, item, item, source.accessor(imports, over, cursor))
 			fmt.Fprintf(out, "%sif !%sOK {\n%s\treturn %s{}, false\n%s}\n", indent, item, indent, state, indent)
 			over = item
 		}
-		resolve(indent, over, prefixed(prefix, "row"))
+		resolve(indent, judgment, over, prefixed(prefix, "row"))
 		for level := len(sources) - 1; level >= 0; level-- {
 			indent = indent[:len(indent)-1]
 			fmt.Fprintf(out, "%s}\n", indent)
@@ -1584,19 +1569,22 @@ func renderDerivedBuild(out *strings.Builder, built *plan, join *joinPlan) error
 	}
 
 	if declared.widen != nil {
-		fmt.Fprintf(out, "\tif %s {\n", enumerate(declared.widen.predicate, arguments[declared.sourceArgument]))
+		// The endpoint is asked of the value the OUTER source reads, so the
+		// owner it belongs to is that source's axis.
+		endpoint := declared.sources[0].own(imports, declared.widen.predicate, arguments[declared.sourceArgument])
+		fmt.Fprintf(out, "\tif %s {\n", endpoint)
 		// The widened answer is read out of the owner's own schema, so its
 		// outer level starts from that axis rather than from the value.
 		if lazyWiden(declared) {
-			if err := renderLazyWiden(out, built, join, statics, arguments, enumerate); err != nil {
+			if err := renderLazyWiden(out, built, join, statics, arguments); err != nil {
 				return err
 			}
 		} else {
-			walk(declared.widen.sources, declared.widen.sources[0].axis.param, "widen", "\t\t")
+			walk(declared.widen.sources, declared.widenJudgment(), declared.widen.sources[0].axis.param, "widen", "\t\t")
 		}
 		out.WriteString("\t\treturn built, true\n\t}\n")
 	}
-	walk(declared.sources, arguments[declared.sourceArgument], "", "\t")
+	walk(declared.sources, declared.resolve, arguments[declared.sourceArgument], "", "\t")
 	out.WriteString("\treturn built, true\n}\n\n")
 	return nil
 }
@@ -1607,7 +1595,7 @@ func renderDerivedBuild(out *strings.Builder, built *plan, join *joinPlan) error
 // the directory once, and holds that directory to the promise the laziness
 // rests on: the coordinates it yields are strictly ascending, or the answer is
 // refused rather than answered in an order it never had.
-func renderLazyWiden(out *strings.Builder, built *plan, join *joinPlan, statics, arguments []string, enumerate func(definition.GoSymbol, string, ...string) string) error {
+func renderLazyWiden(out *strings.Builder, built *plan, join *joinPlan, statics, arguments []string) error {
 	imports := built.imports
 	declared := join.derivation.declared
 	state := declared.state()
@@ -1626,11 +1614,11 @@ func renderLazyWiden(out *strings.Builder, built *plan, join *joinPlan, statics,
 	}
 	fmt.Fprintf(out, "\t\tvar widenPrevious %s\n", dense)
 	out.WriteString("\t\tvar widenSeen bool\n\t\tvar widenGap bool\n")
-	fmt.Fprintf(out, "\t\twidenCount := %s\n", enumerate(source.count, over))
+	fmt.Fprintf(out, "\t\twidenCount := %s\n", source.census(imports, over))
 	out.WriteString("\t\tfor widenCursor := 0; widenCursor < widenCount; widenCursor++ {\n")
-	fmt.Fprintf(out, "\t\t\twidenItem, widenItemOK := %s\n", enumerate(source.at, over, "widenCursor"))
+	fmt.Fprintf(out, "\t\t\twidenItem, widenItemOK := %s\n", source.accessor(imports, over, "widenCursor"))
 	fmt.Fprintf(out, "\t\t\tif !widenItemOK {\n\t\t\t\treturn %s{}, false\n\t\t\t}\n", state)
-	call := imports.call(declared.resolve, "", append(append([]string{}, kept...), "widenItem")...)
+	call := imports.call(declared.widenJudgment(), "", append(append([]string{}, kept...), "widenItem")...)
 	fmt.Fprintf(out, "\t\t\twidenRow, widenPresent, widenResolved := %s\n", call)
 	fmt.Fprintf(out, "\t\t\tif !widenResolved {\n\t\t\t\treturn %s{}, false\n\t\t\t}\n", state)
 	out.WriteString("\t\t\tif !widenPresent {\n\t\t\t\twidenGap = true\n\t\t\t\tcontinue\n\t\t\t}\n")
