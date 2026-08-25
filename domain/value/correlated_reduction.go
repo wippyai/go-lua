@@ -24,11 +24,7 @@ func ArithmeticValue(candidate BinaryArithmetic, left, right Value) (Value, stru
 		!candidate.schema.owns(left) || !candidate.schema.owns(right) {
 		return Value{}, structure.Refuse
 	}
-	op, ok := candidate.Op()
-	if !ok {
-		return Value{}, structure.Refuse
-	}
-	result, ok := candidate.schema.ApplyArithmetic(left, right, op)
+	result, ok := candidate.schema.ApplyArithmetic(candidate, left, right)
 	if !ok {
 		return Value{}, structure.Refuse
 	}

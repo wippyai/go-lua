@@ -7,6 +7,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/identity"
 	flowkind "github.com/wippyai/go-lua/analysis/program/flow/kind"
 	programschema "github.com/wippyai/go-lua/analysis/schema/program"
+	"github.com/wippyai/go-lua/domain/value/arithmetic/resultpolicy"
 )
 
 type computationKey struct {
@@ -43,6 +44,10 @@ type BinaryArithmetic struct {
 	result, left, right Coordinate
 	endpoints           uint32
 	op                  flowkind.BinaryOp
+	// policy is Program's occurrence-scoped statement about this expression's
+	// exact result image. It is carried on the row because the image is a
+	// property of this occurrence, not of the operator or of the schema.
+	policy resultpolicy.Policy
 }
 
 func (schema *Schema) BinaryArithmetic(module, occurrence identity.ContentID) (BinaryArithmetic, bool) {
@@ -55,7 +60,7 @@ func (schema *Schema) BinaryArithmetic(module, occurrence identity.ContentID) (B
 
 func (row BinaryArithmetic) valid() bool {
 	return row.schema != nil && row.key.module.Available() && row.key.occurrence.Available() &&
-		row.content.Available() && flowkind.IsBinaryArithmetic(row.op)
+		row.content.Available() && flowkind.IsBinaryArithmetic(row.op) && row.policy.Available()
 }
 
 func (schema *Schema) OwnsBinaryArithmetic(row BinaryArithmetic) bool {
@@ -461,6 +466,10 @@ func (schema *valueBuilder) sealComputationRows() bool {
 			return false
 		}
 		program := mount.Program.Program
+		arithmeticPolicies, arithmeticPoliciesOK := resultpolicy.Seal(program)
+		if !arithmeticPoliciesOK {
+			return false
+		}
 		topologies, topologiesOK := sealReturnBoundaryTopologies(program)
 		if !topologiesOK {
 			return false
@@ -486,11 +495,15 @@ func (schema *valueBuilder) sealComputationRows() bool {
 				rc, rcOK := schema.coordinateForCold(result)
 				lc, lcOK := schema.coordinateForCold(left)
 				rr, rrOK := schema.coordinateForCold(right)
-				if !rowOK || !resultOK || !leftOK || !rightOK || !rcOK || !lcOK || !rrOK || !flowkind.IsBinaryArithmetic(op) {
+				policy, policyOK := arithmeticPolicies.For(row.ID())
+				if !rowOK || !resultOK || !leftOK || !rightOK || !rcOK || !lcOK || !rrOK || !flowkind.IsBinaryArithmetic(op) || !policyOK {
 					return false
 				}
 				content := computationContent(schema.linkID, "val-arithmetic!", module, row.ID(), row.Code())
-				arithmetic := BinaryArithmetic{schema: schema.Schema, key: key, content: content, result: rc, left: lc, right: rr, op: op}
+				arithmetic := BinaryArithmetic{
+					schema: schema.Schema, key: key, content: content,
+					result: rc, left: lc, right: rr, op: op, policy: policy,
+				}
 				if !arithmetic.valid() {
 					return false
 				}

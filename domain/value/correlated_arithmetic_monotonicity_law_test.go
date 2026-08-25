@@ -7,6 +7,7 @@ import (
 	flowkind "github.com/wippyai/go-lua/analysis/program/flow/kind"
 	"github.com/wippyai/go-lua/analysis/program/keyspace"
 	"github.com/wippyai/go-lua/domain/runtimekind"
+	"github.com/wippyai/go-lua/domain/value/arithmetic/resultpolicy"
 )
 
 // TestArithmeticTransferIsMonotone states the value binary-arithmetic
@@ -18,9 +19,16 @@ func TestArithmeticTransferIsMonotone(t *testing.T) {
 	schema, atoms := monotoneArithmeticSchema(t)
 	universe := arithmeticValueUniverse(t, schema, atoms)
 	for _, op := range []flowkind.BinaryOp{flowkind.BinaryAdd, flowkind.BinaryIDiv} {
+		candidate := arithmeticCandidateForLaw(schema, op, resultpolicy.ClosedImage(
+			keyspace.LiteralValue{Kind: keyspace.LiteralInteger, Integer: 0},
+			keyspace.LiteralValue{Kind: keyspace.LiteralInteger, Integer: 1},
+			keyspace.LiteralValue{Kind: keyspace.LiteralInteger, Integer: 2},
+			keyspace.LiteralValue{Kind: keyspace.LiteralInteger, Integer: 3},
+			keyspace.LiteralValue{Kind: keyspace.LiteralInteger, Integer: 4},
+		))
 		stage := func(left, right Value) Value {
 			t.Helper()
-			result, ok := schema.ApplyArithmetic(left, right, op)
+			result, ok := schema.ApplyArithmetic(candidate, left, right)
 			if !ok {
 				t.Fatalf("op %d refused sealed operand pair", op)
 			}
@@ -49,9 +57,16 @@ func TestArithmeticTransferIsMonotone(t *testing.T) {
 		}
 	}
 	exact := 0
+	add := arithmeticCandidateForLaw(schema, flowkind.BinaryAdd, resultpolicy.ClosedImage(
+		keyspace.LiteralValue{Kind: keyspace.LiteralInteger, Integer: 0},
+		keyspace.LiteralValue{Kind: keyspace.LiteralInteger, Integer: 1},
+		keyspace.LiteralValue{Kind: keyspace.LiteralInteger, Integer: 2},
+		keyspace.LiteralValue{Kind: keyspace.LiteralInteger, Integer: 3},
+		keyspace.LiteralValue{Kind: keyspace.LiteralInteger, Integer: 4},
+	))
 	for _, left := range universe {
 		for _, right := range universe {
-			result, ok := schema.ApplyArithmetic(left, right, flowkind.BinaryAdd)
+			result, ok := schema.ApplyArithmetic(add, left, right)
 			if ok && !schema.Equal(result, schema.Bottom()) && !result.IsTop() {
 				exact++
 			}

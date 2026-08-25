@@ -1,7 +1,6 @@
 package value
 
 import (
-	flowkind "github.com/wippyai/go-lua/analysis/program/flow/kind"
 	"github.com/wippyai/go-lua/analysis/program/keyspace"
 	"github.com/wippyai/go-lua/analysis/program/scalar"
 	"github.com/wippyai/go-lua/analysis/schema/program"
@@ -24,10 +23,11 @@ import (
 // Bottom is answered when arithmetic has no reachable successful pair: strict
 // arithmetic over an empty operand, or numeric trap pairs such as division by
 // zero. Trap pairs contribute no result and never erase other valid cells.
-func (schema *Schema) ApplyArithmetic(left, right Value, op flowkind.BinaryOp) (Value, bool) {
-	if schema == nil || !schema.owns(left) || !schema.owns(right) || !flowkind.IsBinaryArithmetic(op) {
+func (schema *Schema) ApplyArithmetic(candidate BinaryArithmetic, left, right Value) (Value, bool) {
+	if schema == nil || !schema.OwnsBinaryArithmetic(candidate) || !schema.owns(left) || !schema.owns(right) {
 		return Value{}, false
 	}
+	op := candidate.op
 	if schema.Equal(left, schema.Bottom()) || schema.Equal(right, schema.Bottom()) {
 		return schema.Bottom(), true
 	}
@@ -37,13 +37,20 @@ func (schema *Schema) ApplyArithmetic(left, right Value, op flowkind.BinaryOp) (
 		return schema.Top(), true
 	}
 
+	closed := candidate.policy.Closed()
 	leftCount, rightCount := schema.ValueAtomCount(left), schema.ValueAtomCount(right)
-	resultAtoms := make([]Atom, 0, leftCount*rightCount)
-	seen := make(map[uint32]struct{}, leftCount*rightCount)
+	var resultAtoms []Atom
+	var seen map[uint32]struct{}
+	if closed {
+		resultAtoms = make([]Atom, 0, leftCount*rightCount)
+		seen = make(map[uint32]struct{}, leftCount*rightCount)
+	}
+	openResult := false
 	for leftIndex := 0; leftIndex < leftCount; leftIndex++ {
 		leftAtom, leftOK := schema.ValueAtomAt(left, leftIndex)
 		leftLiteral, leftLiteralOK := schema.numericLiteral(leftAtom)
-		if !leftOK || !leftLiteralOK {
+		leftAbstractOK := schema.abstractNumericAtom(leftAtom)
+		if !leftOK || !leftLiteralOK && !leftAbstractOK {
 			// This finite relation is not a finite numeric arithmetic
 			// domain. Its dynamic result may be any owner alternative.
 			return schema.Top(), true
@@ -51,14 +58,38 @@ func (schema *Schema) ApplyArithmetic(left, right Value, op flowkind.BinaryOp) (
 		for rightIndex := 0; rightIndex < rightCount; rightIndex++ {
 			rightAtom, rightOK := schema.ValueAtomAt(right, rightIndex)
 			rightLiteral, rightLiteralOK := schema.numericLiteral(rightAtom)
-			if !rightOK || !rightLiteralOK {
+			rightAbstractOK := schema.abstractNumericAtom(rightAtom)
+			if !rightOK || !rightLiteralOK && !rightAbstractOK {
 				return schema.Top(), true
+			}
+			if !leftLiteralOK || !rightLiteralOK {
+				if closed {
+					// Program proved this occurrence's operand images finite
+					// and Value carries an abstract numeric atom for one of
+					// them. The two disagree about the same expression.
+					return Value{}, false
+				}
+				// Program declared this occurrence's exact image open. Its
+				// abstract numeric operands therefore stay inside the sealed
+				// numeric relation instead of widening to Value Top.
+				openResult = true
+				continue
 			}
 			result, resultOK := scalar.ExactArithmeticLiteral(leftLiteral, rightLiteral, op)
 			if !resultOK {
 				// Undefined numeric pairs are arithmetic traps. They have
 				// no reachable result but do not invalidate another pair.
 				continue
+			}
+			if !closed {
+				// An exact pair of an open occurrence proves nothing about
+				// the occurrence: a recurrence reaches this pair once and
+				// another value of it on the next iteration.
+				openResult = true
+				continue
+			}
+			if !candidate.policy.Admits(result) {
+				return Value{}, false
 			}
 			atomID := schema.atomForExactArithmetic(result)
 			if atomID == 0 {
@@ -74,10 +105,27 @@ func (schema *Schema) ApplyArithmetic(left, right Value, op flowkind.BinaryOp) (
 			resultAtoms = append(resultAtoms, Atom{schema: schema, id: atomID})
 		}
 	}
+	if !closed {
+		if !openResult {
+			return schema.Bottom(), true
+		}
+		return schema.ForRuntimeKinds(runtimekind.Bit(runtimekind.Number))
+	}
 	if len(resultAtoms) == 0 {
 		return schema.Bottom(), true
 	}
 	return schema.Alternatives(resultAtoms...)
+}
+
+func (schema *Schema) abstractNumericAtom(atom Atom) bool {
+	if schema == nil || !schema.OwnsAtom(atom) {
+		return false
+	}
+	row := schema.atoms[atom.id-1]
+	if row.runtime != runtimekind.Number || (row.kind != atomPrimitive && row.kind != atomNaN && row.kind != atomOpaqueKind) {
+		return false
+	}
+	return true
 }
 
 // numericLiteral is the Value-owned exact numeric projection used by the
