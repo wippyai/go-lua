@@ -388,7 +388,7 @@ func normalizeReadPlan(read *ReadPlan, candidateIssued bool) bool {
 	if read.Denominator.Present && read.Denominator.Ordinal == ^uint32(0) {
 		return false
 	}
-	if ruleprogram.RequiresDenominator(read.Form, contract.Sparse) && !read.Denominator.Present {
+	if ruleprogram.RequiresFactorDenominator(read.Form, contract.Sparse, read.ParentPresent || read.KeyVectorPresent) && !read.Denominator.Present {
 		return false
 	}
 	if read.Sources.Count == 0 {
@@ -538,7 +538,7 @@ func validReadPlan(read ReadPlan, inputCount, axisCount int, candidateIssued boo
 	if !read.PointBound.Available() {
 		return false
 	}
-	if ruleprogram.RequiresDenominator(read.Form, read.Contract.Sparse) && !read.Denominator.Present {
+	if ruleprogram.RequiresFactorDenominator(read.Form, read.Contract.Sparse, read.ParentPresent || read.KeyVectorPresent) && !read.Denominator.Present {
 		return false
 	}
 	if !zeroDenominator(read.Denominator) && !read.Denominator.Present || read.Denominator.Present && read.Denominator.Ordinal == ^uint32(0) {

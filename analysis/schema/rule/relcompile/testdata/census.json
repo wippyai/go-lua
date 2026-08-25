@@ -218,11 +218,11 @@
   {
     "family": "typestate",
     "plane": "family",
-    "rule": "typestate",
+    "rule": "typestate-obligation",
     "status": "COUPLING-FINDING",
-    "site": "program",
-    "missing": "declaration",
-    "reason": "the declarative rule declaration is not committed at this revision; the family runs on its wired registration arm"
+    "site": "program.joins[1].predicate",
+    "missing": "operation",
+    "reason": "undeclared"
   },
   {
     "family": "value/allocation",

@@ -173,7 +173,7 @@ func joinMutations(declaration program.Program, index int) []mutation {
 			},
 		},
 	}
-	if join.Read.Contract.RequiresDenominator(join.Read.Form) {
+	if program.RequiresFactorDenominator(join.Read.Form, join.Read.Contract.Sparse, join.Parent.Declared() || join.KeyVector.Declared()) {
 		rows = append(rows, mutation{
 			name:      fmt.Sprintf("join %d loses the denominator its read form requires", index),
 			statement: fmt.Sprintf("declaration.Joins[%d].Read.Contract.DenominatorRef = %s.DenominatorRef{}", index, programPackage),

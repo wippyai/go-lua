@@ -174,10 +174,11 @@ func (join JoinDecl) normalForm(position int) bool {
 	if join.Parent.Declared() && !join.Parent.Available() {
 		return false
 	}
-	if join.Read.Contract.RequiresDenominator(join.Read.Form) && !join.Read.Contract.DenominatorRef.Available() {
+	memberAddressed := join.Parent.Declared() || join.KeyVector.Declared()
+	if RequiresFactorDenominator(join.Read.Form, join.Read.Contract.Sparse, memberAddressed) && !join.Read.Contract.DenominatorRef.Available() {
 		return false
 	}
-	if !join.Read.Contract.RequiresDenominator(join.Read.Form) && join.Read.Contract.DenominatorRef.Declared() && !join.Read.Contract.DenominatorRef.Available() {
+	if !RequiresFactorDenominator(join.Read.Form, join.Read.Contract.Sparse, memberAddressed) && join.Read.Contract.DenominatorRef.Declared() && !join.Read.Contract.DenominatorRef.Available() {
 		return false
 	}
 

@@ -84,19 +84,20 @@ func (contract ReadContract) Available() bool {
 		contract.OnOpaque.Available() && contract.Multiplicity.Available()
 }
 
-func (contract ReadContract) RequiresDenominator(form ReadForm) bool {
-	return RequiresDenominator(form, contract.Sparse)
-}
-
-// RequiresDenominator names the reads whose empty state is a closed fact
-// rather than a plain absence: a selected route, a summary or complete
-// vector, and any read materialized through a declared default or dense
-// denominator. Those reads are unsealed without one.
+// RequiresFactorDenominator is the one denominator law shared by declaration,
+// plan, generated descriptor, emitter and runtime shape fences.
 //
-// It takes the two facts it decides on rather than a whole contract, so a
-// surface holding a sealed read's form and sparsity - and no authored
-// reference - asks this law instead of restating it.
-func RequiresDenominator(form ReadForm, sparse Sparse) bool {
+// A direct Summary or Complete read closes over a Factor's denominator and
+// therefore needs its explicit address. A Summary addressed by a Parent or a
+// KeyVector does not: it already owns its span denominator - the parent's
+// member set, or the directory that publishes the vector - so demanding a
+// second Factor denominator beside it would be two authorities over one span.
+// Complete cannot be member-addressed at all, but the parameter stays explicit
+// so every caller asks this one law instead of spelling its own.
+func RequiresFactorDenominator(form ReadForm, sparse Sparse, memberAddressed bool) bool {
+	if form == Summary && memberAddressed {
+		return false
+	}
 	return form == Selected || form == Summary || form == Complete ||
 		sparse == SparseDefault || sparse == SparseDense
 }

@@ -618,7 +618,7 @@ func generatedPlanJoinShape(compiled ruleplan.Plan, joinIndex int, join ruleplan
 		join.Denominator.Present && join.Denominator.Ordinal == ^uint32(0) {
 		return false
 	}
-	if ruleprogram.RequiresDenominator(join.ReadForm, join.ReadContract.Sparse) && !join.Denominator.Present {
+	if ruleprogram.RequiresFactorDenominator(join.ReadForm, join.ReadContract.Sparse, join.ParentPresent || join.KeyVectorPresent) && !join.Denominator.Present {
 		return false
 	}
 	for offset := uint32(0); offset < join.Sources.Count; offset++ {

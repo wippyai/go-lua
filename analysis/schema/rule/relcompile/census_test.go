@@ -34,6 +34,7 @@ import (
 	placementsuspension "github.com/wippyai/go-lua/domain/placement/suspension/program"
 	placementtransfer "github.com/wippyai/go-lua/domain/placement/transfer/program"
 	statictransfer "github.com/wippyai/go-lua/domain/static/transfer"
+	typestate "github.com/wippyai/go-lua/domain/typestate/program"
 	valueallocation "github.com/wippyai/go-lua/domain/value/allocation/program"
 	valuearithmetic "github.com/wippyai/go-lua/domain/value/arithmetic/program"
 	valuebodyresult "github.com/wippyai/go-lua/domain/value/bodyresult/program"
@@ -85,6 +86,7 @@ func declared() []specimen {
 		{Family: "placement/suspension-evidence", Plane: "family", Spec: placementsuspension.EvidenceRuleEntry()},
 		{Family: "placement/transfer", Plane: "family", Spec: placementtransfer.RuleEntry()},
 		{Family: "static/transfer", Plane: "family", Spec: statictransfer.RuleEntry()},
+		{Family: "typestate", Plane: "family", Spec: typestate.RuleEntry()},
 		{Family: "value/allocation", Plane: "seed", Spec: valueallocation.RuleEntry()},
 		{Family: "value/arithmetic", Plane: "family", Spec: valuearithmetic.RuleEntry()},
 		{Family: "value/bodyresult", Plane: "family", Spec: valuebodyresult.RuleEntry()},
@@ -109,7 +111,6 @@ func uncommitted() []entry {
 	rows := []entry{
 		{Family: "placement/allocationbirth", Rule: "placement-allocation-birth"},
 		{Family: "placement/freshbirth", Rule: "placement-fresh-birth"},
-		{Family: "typestate", Rule: "typestate"},
 	}
 	for index := range rows {
 		rows[index].Plane = "family"
