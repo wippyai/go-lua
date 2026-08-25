@@ -39,7 +39,7 @@ type ProposalBatch struct {
 }
 
 func (batch ProposalBatch) Available() bool {
-	return batch.buffer != nil && batch.buffer.lease == batch.lease && batch.buffer.closed && batch.result.Available() && batch.proposals != nil
+	return batch.buffer != nil && batch.buffer.lease == batch.lease && batch.buffer.closed && !batch.buffer.failed && batch.result.Available() && batch.proposals != nil
 }
 
 func (batch ProposalBatch) Outcome() outcome.Result {

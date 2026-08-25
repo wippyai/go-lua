@@ -619,6 +619,30 @@ func TestBoundedManyAndReusableBatch(t *testing.T) {
 	}
 }
 
+func TestSealedBatchIsInvalidatedByIllegalBufferReuse(t *testing.T) {
+	exact, _ := model.NewCardinality(model.ExactlyOne, 0)
+	value := newFixture(t, exact)
+	present := mustPresence(t, model.Present)
+	proposal, ok := binding.NewProposal(value.outputToken, value.outputValue, present)
+	if !ok {
+		t.Fatal("proposal")
+	}
+	buffer, ok := binding.NewProposalBuffer(value.signature, value.runtime, value.outputWitness, value.outputScope)
+	if !ok || !buffer.Append(proposal) {
+		t.Fatal("proposal buffer")
+	}
+	batch, ok := buffer.Seal(outcome.Result{Code: outcome.Produced})
+	if !ok || !batch.Available() || batch.Len() != 1 {
+		t.Fatal("sealed batch")
+	}
+	if buffer.Append(proposal) {
+		t.Fatal("closed buffer accepted a write")
+	}
+	if batch.Available() || batch.Len() != 0 {
+		t.Fatal("stale batch survived illegal buffer reuse")
+	}
+}
+
 func TestFactoryAdmitsOnlyTheExactSealedSignature(t *testing.T) {
 	exact, _ := model.NewCardinality(model.ExactlyOne, 0)
 	value := newFixture(t, exact)
