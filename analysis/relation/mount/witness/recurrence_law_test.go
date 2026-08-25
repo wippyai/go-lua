@@ -193,7 +193,7 @@ func recurrenceMount(t *testing.T, value recurrenceFixture, cert certificate.Cer
 		dependencies: map[model.DependencyID]uint64{value.dependencyA: 1, value.dependencyB: 2},
 		regions:      map[model.ScopeID]witness.Region{value.scopeA: finite("recurrence-region-a"), value.scopeB: finite("recurrence-region-b")},
 	}
-	mounted, ok := witness.Specialize(cert, inventory, nil, algebraRegistry{algebra: testAlgebra{typeID: value.typeID}})
+	mounted, ok := witness.Specialize(cert, inventory, nil, algebraRegistry{algebra: testAlgebra{typeID: value.typeID}}, newLineageFactory(t, value.owner))
 	if !ok || !mounted.Available() {
 		t.Fatal("positive recurrence mount refused")
 	}
@@ -239,6 +239,15 @@ func TestMountedCatalogueAndWideningPermitsAreCanonicalAndDefensive(t *testing.T
 	if len(bookColumns) != len(columns) || bookColumns[0] != columns[0] || bookColumns[1] != columns[1] {
 		t.Fatal("mounted column catalogue diverged from the canonical Book order")
 	}
+	schemas := mounted.Columns()
+	if len(schemas) != len(columns) {
+		t.Fatalf("mounted schema catalogue length = %d, want %d", len(schemas), len(columns))
+	}
+	for index, schema := range schemas {
+		if !schema.Available() || schema.ID() != columns[index] || schema.Relation() != columns[index].Relation() || schema.Type() != value.typeID {
+			t.Fatalf("mounted schema catalogue[%d] = %#v, want column %v with type %v", index, schema, columns[index], value.typeID)
+		}
+	}
 	digest := mounted.Digest()
 	repeatedColumns := mounted.ColumnIDs()
 	if len(repeatedColumns) != len(columns) || repeatedColumns[0] != columns[0] || repeatedColumns[1] != columns[1] {
@@ -248,6 +257,11 @@ func TestMountedCatalogueAndWideningPermitsAreCanonicalAndDefensive(t *testing.T
 	untouchedColumns := mounted.ColumnIDs()
 	if len(untouchedColumns) != 2 || !untouchedColumns[0].Available() || mounted.Digest() != digest {
 		t.Fatal("column catalogue exposed mutable storage")
+	}
+	schemas[0] = model.ColumnSchema{}
+	untouchedSchemas := mounted.Columns()
+	if len(untouchedSchemas) != 2 || !untouchedSchemas[0].Available() || mounted.Digest() != digest {
+		t.Fatal("schema catalogue exposed mutable storage")
 	}
 
 	permits := mounted.WideningPermits()

@@ -7,6 +7,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/relation/mount/arrangement"
 	"github.com/wippyai/go-lua/analysis/relation/schema/model"
 	"github.com/wippyai/go-lua/analysis/relation/semantic/binding"
+	"github.com/wippyai/go-lua/analysis/relation/semantic/lineage"
 	"github.com/wippyai/go-lua/analysis/relation/semantic/signature"
 )
 
@@ -27,6 +28,9 @@ func newMounted(
 	arrangementPlan arrangement.Plan,
 	runtime binding.Fence,
 	issuer binding.Issuer,
+	lineageAuthority lineage.Authority,
+	lineageOwner model.OwnerID,
+	lineageIdentity identity.ContentID,
 	signatures []signature.Signature,
 	bindings map[signature.Identity]binding.Binding,
 	algebras map[model.TypeID]binding.ValueAlgebra,
@@ -36,7 +40,7 @@ func newMounted(
 	scopeValues map[model.ScopeID]Scope,
 	wideningPermits []WideningPermit,
 ) (Mounted, bool) {
-	if !certificateValue.Available() || !book.Available() || !arrangementPlan.Available() || !runtime.Available() || !issuer.Available() || book.Fence() != arrangementPlan.Fence() || book.Fence().SchemaID() != certificateValue.SchemaID() || book.Fence().CertificateDigest() != certificateValue.Digest() {
+	if !certificateValue.Available() || !book.Available() || !arrangementPlan.Available() || !runtime.Available() || !issuer.Available() || lineageAuthority == nil || !lineageOwner.Available() || !lineageIdentity.Available() || book.Fence() != arrangementPlan.Fence() || book.Fence().SchemaID() != certificateValue.SchemaID() || book.Fence().CertificateDigest() != certificateValue.Digest() {
 		return Mounted{}, false
 	}
 	if len(signatures) != len(bindings) {
@@ -107,6 +111,9 @@ func newMounted(
 		fence:           book.Fence(),
 		runtime:         runtime,
 		issuer:          issuer,
+		lineage:         lineageAuthority,
+		lineageOwner:    lineageOwner,
+		lineageIdentity: lineageIdentity,
 		book:            book,
 		arrangement:     arrangementPlan,
 		columns:         columns,
@@ -131,13 +138,42 @@ func newMounted(
 // mountedColumns takes the complete logical catalogue from the owner Book
 // and checks it against the certificate's column declarations once during
 // admission. Mounted accessors only return this immutable snapshot.
-func mountedColumns(certificateValue certificate.Certificate, book address.Book) ([]model.ColumnID, bool) {
+func mountedColumns(certificateValue certificate.Certificate, book address.Book) ([]model.ColumnSchema, bool) {
 	if !certificateValue.Available() || !book.Available() {
 		return nil, false
 	}
+	certificateColumns := certificateValue.Columns()
+	certificateRelations := certificateValue.Relations()
+	relations := make(map[model.RelationID]model.RelationSchema, len(certificateRelations))
+	for _, relation := range certificateRelations {
+		id := relation.ID()
+		if !relation.Available() || !id.Available() {
+			return nil, false
+		}
+		if _, duplicate := relations[id]; duplicate {
+			return nil, false
+		}
+		relations[id] = relation
+	}
+	byID := make(map[model.ColumnID]model.ColumnSchema, len(certificateColumns))
+	for _, column := range certificateColumns {
+		id := column.ID()
+		if !column.Available() || !id.Available() {
+			return nil, false
+		}
+		if _, duplicate := byID[id]; duplicate {
+			return nil, false
+		}
+		relation, relationOK := relations[column.Relation()]
+		if !relationOK || !relation.HasColumn(id) {
+			return nil, false
+		}
+		byID[id] = column
+	}
 	fromBook := book.ColumnIDs()
+	result := make([]model.ColumnSchema, len(fromBook))
 	bookColumns := make(map[model.ColumnID]struct{}, len(fromBook))
-	for _, id := range fromBook {
+	for index, id := range fromBook {
 		if !id.Available() {
 			return nil, false
 		}
@@ -148,27 +184,16 @@ func mountedColumns(certificateValue certificate.Certificate, book address.Book)
 		if _, ok := book.Column(id); !ok {
 			return nil, false
 		}
-	}
-	fromCertificate := make(map[model.ColumnID]struct{}, len(certificateValue.Columns()))
-	for _, column := range certificateValue.Columns() {
-		id := column.ID()
-		if !column.Available() || !id.Available() {
+		column, columnOK := byID[id]
+		if !columnOK {
 			return nil, false
 		}
-		if _, duplicate := fromCertificate[id]; duplicate {
-			return nil, false
-		}
-		fromCertificate[id] = struct{}{}
+		result[index] = column
 	}
-	if len(fromBook) != len(fromCertificate) {
+	if len(fromBook) != len(byID) {
 		return nil, false
 	}
-	for _, id := range fromBook {
-		if _, ok := fromCertificate[id]; !ok {
-			return nil, false
-		}
-	}
-	return append([]model.ColumnID(nil), fromBook...), true
+	return result, true
 }
 
 func cloneBindings(values map[signature.Identity]binding.Binding) map[signature.Identity]binding.Binding {
@@ -204,18 +229,27 @@ func cloneScopes(values map[model.ScopeID]Scope) map[model.ScopeID]Scope {
 }
 
 func digestMounted(value mountedData, certificateDigest identity.ContentID) (identity.ContentID, bool) {
-	parts := make([][]byte, 0, 12+len(value.columns)+len(value.identities)+len(value.types)+len(value.denominators)+len(value.scopes)+len(value.wideningPermits))
+	parts := make([][]byte, 0, 14+len(value.columns)+len(value.identities)+len(value.types)+len(value.denominators)+len(value.scopes)+len(value.wideningPermits))
 	parts = append(parts, contentBytes(certificateDigest), contentBytes(value.book.Digest()), contentBytes(value.arrangement.Digest()))
 	fence := value.fence
 	parts = append(parts, contentBytes(fence.SchemaID().Owner().Content()), contentBytes(fence.SchemaID().Content()), contentBytes(fence.CertificateDigest()), contentBytes(identity.ContentID(fence.MountID())))
 	appendUint64(&parts, uint64(fence.StoreID()))
 	appendUint64(&parts, uint64(fence.Generation()))
+	if value.lineage == nil || !value.lineageOwner.Available() || !value.lineageIdentity.Available() {
+		return identity.ContentID{}, false
+	}
+	parts = append(parts, contentBytes(value.lineageOwner.Content()), contentBytes(value.lineageIdentity))
 	for _, column := range value.columns {
 		if !column.Available() {
 			return identity.ContentID{}, false
 		}
+		columnID := column.ID()
 		relation := column.Relation()
-		parts = append(parts, contentBytes(relation.Owner().Content()), contentBytes(relation.Content()), contentBytes(column.Owner().Content()), contentBytes(column.Content()))
+		typeID := column.Type()
+		if !columnID.Available() || !relation.Available() || !typeID.Available() {
+			return identity.ContentID{}, false
+		}
+		parts = append(parts, contentBytes(relation.Owner().Content()), contentBytes(relation.Content()), contentBytes(columnID.Owner().Content()), contentBytes(columnID.Content()), contentBytes(typeID.Owner().Content()), contentBytes(typeID.Content()))
 	}
 	for _, id := range value.identities {
 		parts = append(parts, contentBytes(id.Operation.Owner().Content()), contentBytes(id.Operation.Content()))

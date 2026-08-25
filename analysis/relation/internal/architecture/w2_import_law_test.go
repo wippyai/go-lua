@@ -34,6 +34,7 @@ var w2MountInputsByLayer = map[string][]string{
 		"analysis/relation/schema/model",
 		"analysis/relation/schema/plan",
 		"analysis/relation/semantic/binding",
+		"analysis/relation/semantic/lineage",
 		"analysis/relation/semantic/signature",
 	},
 }

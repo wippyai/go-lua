@@ -1,24 +1,26 @@
 package witness
 
 import (
+	"github.com/wippyai/go-lua/analysis/identity"
 	"github.com/wippyai/go-lua/analysis/relation/check/certificate"
 	"github.com/wippyai/go-lua/analysis/relation/mount/address"
 	"github.com/wippyai/go-lua/analysis/relation/mount/arrangement"
 	"github.com/wippyai/go-lua/analysis/relation/schema/model"
 	"github.com/wippyai/go-lua/analysis/relation/semantic/binding"
+	"github.com/wippyai/go-lua/analysis/relation/semantic/lineage"
 	"github.com/wippyai/go-lua/analysis/relation/semantic/signature"
 )
 
 // Specialize admits one complete checked certificate into one exact mounted
 // inventory. Every certificate-facing obligation is consumed at this single
 // boundary: addresses and arrangements, one exact typed operation factory,
-// one exact algebra registry, all algebra requirements, denominator
-// row/evidence witnesses, scope formulas, and the validated recurrence-head
-// projection.
+// one exact algebra registry, one exact lineage authority, all algebra
+// requirements, denominator row/evidence witnesses, scope formulas, and the
+// validated recurrence-head projection.
 //
 // The returned Mounted owns only immutable snapshots. A false result always
 // returns the zero capability.
-func Specialize(cert certificate.Certificate, inventory Inventory, factory binding.Factory, algebraRegistry binding.AlgebraRegistry) (Mounted, bool) {
+func Specialize(cert certificate.Certificate, inventory Inventory, factory binding.Factory, algebraRegistry binding.AlgebraRegistry, lineageFactory lineage.Factory) (Mounted, bool) {
 	if inventory == nil || !cert.Available() {
 		return Mounted{}, false
 	}
@@ -38,6 +40,10 @@ func Specialize(cert certificate.Certificate, inventory Inventory, factory bindi
 	}
 	issuer, ok := binding.NewIssuer(runtime)
 	if !ok {
+		return Mounted{}, false
+	}
+	lineageAuthority, lineageOwner, lineageIdentity, lineageOK := bindLineage(lineageFactory, runtime)
+	if !lineageOK {
 		return Mounted{}, false
 	}
 
@@ -152,7 +158,30 @@ func Specialize(cert certificate.Certificate, inventory Inventory, factory bindi
 		permits = append(permits, permit)
 	}
 
-	return newMounted(cert, book, arrangementPlan, runtime, issuer, signatures, bindings, algebras, denominatorRefs, witnesses, scopeIDs, scopeValues, permits)
+	return newMounted(cert, book, arrangementPlan, runtime, issuer, lineageAuthority, lineageOwner, lineageIdentity, signatures, bindings, algebras, denominatorRefs, witnesses, scopeIDs, scopeValues, permits)
+}
+
+// bindLineage admits exactly one immutable proof-sidecar authority for this
+// mounted runtime.  The authority ABI is deliberately narrower than the
+// mount: it must report the exact runtime fence and carry non-zero owner and
+// identity values, but it contributes no mutable inventory lookup.
+func bindLineage(factory lineage.Factory, runtime binding.Fence) (lineage.Authority, model.OwnerID, identity.ContentID, bool) {
+	if factory == nil || !runtime.Available() {
+		return nil, model.OwnerID{}, identity.ContentID{}, false
+	}
+	authority, ok := factory.Bind(runtime)
+	if !ok || authority == nil {
+		return nil, model.OwnerID{}, identity.ContentID{}, false
+	}
+	if fence := authority.Fence(); !fence.Available() || !fence.Same(runtime) {
+		return nil, model.OwnerID{}, identity.ContentID{}, false
+	}
+	owner := authority.Owner()
+	identityValue := authority.Identity()
+	if !owner.Available() || !identityValue.Available() {
+		return nil, model.OwnerID{}, identity.ContentID{}, false
+	}
+	return authority, owner, identityValue, true
 }
 
 func certificateDenominators(signatures []signature.Signature) ([]model.DenominatorRef, bool) {

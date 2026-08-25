@@ -64,7 +64,7 @@ func newBasicMountFixture(t *testing.T) basicMountFixture {
 		scope: scope, scope2: scope2, typeID: typeID,
 		region: finite("hostile/basic-region"), region2: finite("hostile/basic-region2"),
 	}
-	mounted, ok := witness.Specialize(cert, inventory, nil, algebraRegistry{algebra: testAlgebra{typeID: typeID}})
+	mounted, ok := witness.Specialize(cert, inventory, nil, algebraRegistry{algebra: testAlgebra{typeID: typeID}}, newLineageFactory(t, owner))
 	if !ok || !mounted.Available() {
 		t.Fatal("basic mount")
 	}
@@ -98,7 +98,7 @@ func TestMountedScopeConjunctionCanonicalAndFenceLaw(t *testing.T) {
 
 	staleInventory := *value.inventory
 	staleInventory.fence, _ = address.NewFence(value.schema, value.cert.Digest(), value.store, identity.MountID{0x41}, identity.Generation(2))
-	stale, staleOK := witness.Specialize(value.cert, &staleInventory, nil, algebraRegistry{algebra: testAlgebra{typeID: value.typeID}})
+	stale, staleOK := witness.Specialize(value.cert, &staleInventory, nil, algebraRegistry{algebra: testAlgebra{typeID: value.typeID}}, newLineageFactory(t, value.owner))
 	if !staleOK {
 		t.Fatal("stale mount fixture")
 	}
@@ -112,7 +112,7 @@ func TestMountedScopeConjunctionCanonicalAndFenceLaw(t *testing.T) {
 
 	foreignInventory := *value.inventory
 	foreignInventory.fence, _ = address.NewFence(value.schema, value.cert.Digest(), value.store, identity.MountID{0x42}, identity.Generation(1))
-	foreign, foreignOK := witness.Specialize(value.cert, &foreignInventory, nil, algebraRegistry{algebra: testAlgebra{typeID: value.typeID}})
+	foreign, foreignOK := witness.Specialize(value.cert, &foreignInventory, nil, algebraRegistry{algebra: testAlgebra{typeID: value.typeID}}, newLineageFactory(t, value.owner))
 	if !foreignOK {
 		t.Fatal("foreign mount fixture")
 	}

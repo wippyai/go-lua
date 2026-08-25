@@ -10,6 +10,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/relation/mount/arrangement"
 	"github.com/wippyai/go-lua/analysis/relation/schema/model"
 	"github.com/wippyai/go-lua/analysis/relation/semantic/binding"
+	"github.com/wippyai/go-lua/analysis/relation/semantic/lineage"
 	"github.com/wippyai/go-lua/analysis/relation/semantic/signature"
 )
 
@@ -22,13 +23,16 @@ const mountedDigestDomain = "analysis/relation/mount/witness/mounted/v1"
 type Mounted struct{ data *mountedData }
 
 type mountedData struct {
-	fence       address.Fence
-	runtime     binding.Fence
-	issuer      binding.Issuer
-	book        address.Book
-	arrangement arrangement.Plan
-	digest      identity.ContentID
-	columns     []model.ColumnID
+	fence           address.Fence
+	runtime         binding.Fence
+	issuer          binding.Issuer
+	lineage         lineage.Authority
+	lineageOwner    model.OwnerID
+	lineageIdentity identity.ContentID
+	book            address.Book
+	arrangement     arrangement.Plan
+	digest          identity.ContentID
+	columns         []model.ColumnSchema
 
 	bindings   map[signature.Identity]binding.Binding
 	identities []signature.Identity
@@ -47,7 +51,7 @@ type mountedData struct {
 
 // Available reports whether the mounted artifact is complete.
 func (mounted Mounted) Available() bool {
-	return mounted.data != nil && mounted.data.fence.Available() && mounted.data.runtime.Available() && mounted.data.issuer.Available() && mounted.data.book.Available() && mounted.data.arrangement.Available() && mounted.data.digest.Available()
+	return mounted.data != nil && mounted.data.fence.Available() && mounted.data.runtime.Available() && mounted.data.issuer.Available() && mounted.data.lineage != nil && mounted.data.lineageOwner.Available() && mounted.data.lineageIdentity.Available() && mounted.data.book.Available() && mounted.data.arrangement.Available() && mounted.data.digest.Available()
 }
 
 // Fence returns the exact address/runtime certificate fence captured at
@@ -66,6 +70,17 @@ func (mounted Mounted) RuntimeFence() binding.Fence {
 		return binding.Fence{}
 	}
 	return mounted.data.runtime
+}
+
+// Lineage returns the exact proof-sidecar authority admitted for this
+// mounted runtime. The authority is bound to RuntimeFence and exposes only
+// validation/join operations; no inventory fallback or second interface is
+// introduced at the mount boundary.
+func (mounted Mounted) Lineage() (lineage.Authority, bool) {
+	if !mounted.Available() {
+		return nil, false
+	}
+	return mounted.data.lineage, true
 }
 
 // Book returns the immutable logical-to-address snapshot. Book itself has no
@@ -87,14 +102,28 @@ func (mounted Mounted) Arrangement() arrangement.Plan {
 	return mounted.data.arrangement
 }
 
-// ColumnIDs returns the complete canonical catalogue of columns admitted by
-// this mount. The stored snapshot is returned defensively; callers cannot
-// alter the geometry catalogue or the mounted digest.
+// Columns returns the complete canonical catalogue of column declarations
+// admitted by this mount. The stored snapshot is returned defensively;
+// callers cannot alter the geometry catalogue or the mounted digest.
+func (mounted Mounted) Columns() []model.ColumnSchema {
+	if !mounted.Available() {
+		return nil
+	}
+	return append([]model.ColumnSchema(nil), mounted.data.columns...)
+}
+
+// ColumnIDs returns the complete canonical catalogue of column identities
+// admitted by this mount. IDs are derived from the schema catalogue rather
+// than stored as a second authority.
 func (mounted Mounted) ColumnIDs() []model.ColumnID {
 	if !mounted.Available() {
 		return nil
 	}
-	return append([]model.ColumnID(nil), mounted.data.columns...)
+	result := make([]model.ColumnID, len(mounted.data.columns))
+	for index, column := range mounted.data.columns {
+		result[index] = column.ID()
+	}
+	return append([]model.ColumnID(nil), result...)
 }
 
 // Digest returns the deterministic mounted capability identity. It includes

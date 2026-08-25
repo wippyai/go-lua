@@ -52,7 +52,8 @@ func TestSpecializeResolvesEachCertifiedObligationExactlyOnce(t *testing.T) {
 	inventory := &countedInventory{evidenceInventory: &fixture.evidence}
 	factory := &countedFactory{value: fixture.operation}
 	registry := &countedAlgebraRegistry{algebra: testAlgebra{typeID: fixture.typeID}}
-	mounted, ok := witness.Specialize(fixture.cert, inventory, factory, registry)
+	lineageFactory := &countedLineageFactory{owner: fixture.owner, identity: content(t, "counted-lineage"), ok: true}
+	mounted, ok := witness.Specialize(fixture.cert, inventory, factory, registry, lineageFactory)
 	if !ok || !mounted.Available() {
 		t.Fatal("counted semantic mount refused")
 	}
@@ -68,15 +69,25 @@ func TestSpecializeResolvesEachCertifiedObligationExactlyOnce(t *testing.T) {
 	if registry.calls != 1 {
 		t.Fatalf("AlgebraRegistry.Resolve calls = %d, want exactly one", registry.calls)
 	}
+	if lineageFactory.calls != 1 {
+		t.Fatalf("LineageFactory.Bind calls = %d, want exactly one", lineageFactory.calls)
+	}
+	lineageAuthority, lineageOK := mounted.Lineage()
+	if !lineageOK || lineageAuthority == nil || lineageAuthority.Fence() != mounted.RuntimeFence() || lineageAuthority.Owner() != fixture.owner || lineageAuthority.Identity() != lineageFactory.identity {
+		t.Fatal("mounted lineage authority was not exact")
+	}
+	if _, lineageOK = mounted.Lineage(); !lineageOK || lineageFactory.calls != 1 {
+		t.Fatal("lineage lookup was not defensive")
+	}
 }
 
 func TestMountedDigestIsDeterministicAndGenerationFenced(t *testing.T) {
 	fixture := newSemanticAdmissionFixture(t)
-	first, ok := witness.Specialize(fixture.cert, &fixture.evidence, operationFactory{value: fixture.operation}, algebraRegistry{algebra: testAlgebra{typeID: fixture.typeID}})
+	first, ok := witness.Specialize(fixture.cert, &fixture.evidence, operationFactory{value: fixture.operation}, algebraRegistry{algebra: testAlgebra{typeID: fixture.typeID}}, newLineageFactory(t, fixture.owner))
 	if !ok || !first.Available() {
 		t.Fatal("first semantic mount refused")
 	}
-	second, ok := witness.Specialize(fixture.cert, &fixture.evidence, operationFactory{value: fixture.operation}, algebraRegistry{algebra: testAlgebra{typeID: fixture.typeID}})
+	second, ok := witness.Specialize(fixture.cert, &fixture.evidence, operationFactory{value: fixture.operation}, algebraRegistry{algebra: testAlgebra{typeID: fixture.typeID}}, newLineageFactory(t, fixture.owner))
 	if !ok || !second.Available() {
 		t.Fatal("second semantic mount refused")
 	}
@@ -91,7 +102,7 @@ func TestMountedDigestIsDeterministicAndGenerationFenced(t *testing.T) {
 	}
 	alteredEvidence := fixture.evidence
 	alteredEvidence.mountInventory = &alteredInventory
-	altered, ok := witness.Specialize(fixture.cert, &alteredEvidence, operationFactory{value: fixture.operation}, algebraRegistry{algebra: testAlgebra{typeID: fixture.typeID}})
+	altered, ok := witness.Specialize(fixture.cert, &alteredEvidence, operationFactory{value: fixture.operation}, algebraRegistry{algebra: testAlgebra{typeID: fixture.typeID}}, newLineageFactory(t, fixture.owner))
 	if !ok || !altered.Available() {
 		t.Fatal("altered-generation mount refused unexpectedly")
 	}
@@ -115,12 +126,12 @@ func TestSpecializeRefusesUnavailableDenominatorEvidence(t *testing.T) {
 	fixture := newSemanticAdmissionFixture(t)
 	missingEvidence := fixture.evidence
 	missingEvidence.evidence = identity.ContentID{}
-	if mounted, ok := witness.Specialize(fixture.cert, &missingEvidence, operationFactory{value: fixture.operation}, algebraRegistry{algebra: testAlgebra{typeID: fixture.typeID}}); ok || mounted.Available() {
+	if mounted, ok := witness.Specialize(fixture.cert, &missingEvidence, operationFactory{value: fixture.operation}, algebraRegistry{algebra: testAlgebra{typeID: fixture.typeID}}, newLineageFactory(t, fixture.owner)); ok || mounted.Available() {
 		t.Fatal("unavailable denominator evidence accepted")
 	}
 	nilRows := fixture.evidence
 	nilRows.rows = nil
-	if mounted, ok := witness.Specialize(fixture.cert, &nilRows, operationFactory{value: fixture.operation}, algebraRegistry{algebra: testAlgebra{typeID: fixture.typeID}}); ok || mounted.Available() {
+	if mounted, ok := witness.Specialize(fixture.cert, &nilRows, operationFactory{value: fixture.operation}, algebraRegistry{algebra: testAlgebra{typeID: fixture.typeID}}, newLineageFactory(t, fixture.owner)); ok || mounted.Available() {
 		t.Fatal("unstable/nil denominator row evidence accepted")
 	}
 }

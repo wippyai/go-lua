@@ -150,7 +150,7 @@ func TestSpecializeAdmitsAddressArrangementRegionAndAlgebra(t *testing.T) {
 		t.Fatal("new fence")
 	}
 	inventory := &mountInventory{fence: fence, relation: relation, column: column, key: key, scope: scope, scope2: scope2, typeID: typeID, region: finite("scope"), region2: finite("scope2")}
-	mounted, ok := witness.Specialize(cert, inventory, nil, algebraRegistry{algebra: testAlgebra{typeID: typeID}})
+	mounted, ok := witness.Specialize(cert, inventory, nil, algebraRegistry{algebra: testAlgebra{typeID: typeID}}, newLineageFactory(t, owner))
 	if !ok || !mounted.Available() {
 		t.Fatal("valid mount refused")
 	}
@@ -196,7 +196,7 @@ func TestSpecializeAdmitsAddressArrangementRegionAndAlgebra(t *testing.T) {
 	}
 	staleInventory := *inventory
 	staleInventory.fence, _ = address.NewFence(schemaID, cert.Digest(), store, identity.MountID{1}, identity.Generation(2))
-	staleMounted, staleOK := witness.Specialize(cert, &staleInventory, nil, algebraRegistry{algebra: testAlgebra{typeID: typeID}})
+	staleMounted, staleOK := witness.Specialize(cert, &staleInventory, nil, algebraRegistry{algebra: testAlgebra{typeID: typeID}}, newLineageFactory(t, owner))
 	if !staleOK {
 		t.Fatal("stale fixture mount refused")
 	}
@@ -235,24 +235,24 @@ func TestSpecializeRefusesForeignFenceAndMissingRegion(t *testing.T) {
 	store, _ := identity.IssueStore()
 	fence, _ := address.NewFence(schemaID, cert.Digest(), store, identity.MountID{1}, identity.Generation(1))
 	base := &mountInventory{fence: fence, relation: relation, column: column, key: key, scope: scope, typeID: typeID, region: finite("hostile-scope")}
-	if _, ok := witness.Specialize(cert, base, nil, algebraRegistry{algebra: testAlgebra{typeID: typeID}}); !ok {
+	if _, ok := witness.Specialize(cert, base, nil, algebraRegistry{algebra: testAlgebra{typeID: typeID}}, newLineageFactory(t, owner)); !ok {
 		t.Fatal("baseline hostile fixture refused")
 	}
 	foreign := *base
 	foreign.fence, _ = address.NewFence(schemaID, identity.ContentID{0: 9}, store, identity.MountID{2}, identity.Generation(1))
-	if mounted, ok := witness.Specialize(cert, &foreign, nil, algebraRegistry{algebra: testAlgebra{typeID: typeID}}); ok || mounted.Available() {
+	if mounted, ok := witness.Specialize(cert, &foreign, nil, algebraRegistry{algebra: testAlgebra{typeID: typeID}}, newLineageFactory(t, owner)); ok || mounted.Available() {
 		t.Fatal("foreign arrangement/address fence accepted")
 	}
 	missingRegion := *base
 	missingRegion.region = nil
-	if mounted, ok := witness.Specialize(cert, &missingRegion, nil, algebraRegistry{algebra: testAlgebra{typeID: typeID}}); ok || mounted.Available() {
+	if mounted, ok := witness.Specialize(cert, &missingRegion, nil, algebraRegistry{algebra: testAlgebra{typeID: typeID}}, newLineageFactory(t, owner)); ok || mounted.Available() {
 		t.Fatal("missing scope formula accepted")
 	}
 }
 
 func TestSpecializeAdmitsExactOperationAndRejectsWrongDenominatorRows(t *testing.T) {
 	value := newSemanticAdmissionFixture(t)
-	mounted, ok := witness.Specialize(value.cert, &value.evidence, operationFactory{value: value.operation}, algebraRegistry{algebra: testAlgebra{typeID: value.typeID}})
+	mounted, ok := witness.Specialize(value.cert, &value.evidence, operationFactory{value: value.operation}, algebraRegistry{algebra: testAlgebra{typeID: value.typeID}}, newLineageFactory(t, value.owner))
 	if !ok || !mounted.Available() {
 		t.Fatal("semantic mount refused")
 	}
@@ -290,7 +290,7 @@ func TestSpecializeAdmitsExactOperationAndRejectsWrongDenominatorRows(t *testing
 	}
 	duplicateEvidence := value.evidence
 	duplicateEvidence.rows = []model.RowID{value.row, value.row}
-	if duplicateMounted, duplicateOK := witness.Specialize(value.cert, &duplicateEvidence, operationFactory{value: value.operation}, algebraRegistry{algebra: testAlgebra{typeID: value.typeID}}); duplicateOK || duplicateMounted.Available() {
+	if duplicateMounted, duplicateOK := witness.Specialize(value.cert, &duplicateEvidence, operationFactory{value: value.operation}, algebraRegistry{algebra: testAlgebra{typeID: value.typeID}}, newLineageFactory(t, value.owner)); duplicateOK || duplicateMounted.Available() {
 		t.Fatal("duplicate denominator row accepted")
 	}
 	foreignRelation := issueRelation(t, value.owner, "semantic-foreign-relation")
@@ -300,7 +300,7 @@ func TestSpecializeAdmitsExactOperationAndRejectsWrongDenominatorRows(t *testing
 	}
 	foreignEvidence := value.evidence
 	foreignEvidence.rows = []model.RowID{foreignRow}
-	if foreignMounted, foreignOK := witness.Specialize(value.cert, &foreignEvidence, operationFactory{value: value.operation}, algebraRegistry{algebra: testAlgebra{typeID: value.typeID}}); foreignOK || foreignMounted.Available() {
+	if foreignMounted, foreignOK := witness.Specialize(value.cert, &foreignEvidence, operationFactory{value: value.operation}, algebraRegistry{algebra: testAlgebra{typeID: value.typeID}}, newLineageFactory(t, value.owner)); foreignOK || foreignMounted.Available() {
 		t.Fatal("wrong-relation denominator row accepted")
 	}
 }
