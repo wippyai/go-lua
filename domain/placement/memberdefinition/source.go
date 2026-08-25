@@ -147,15 +147,6 @@ func Storage() definition.Definition {
 				},
 			},
 		},
-		// The storage routes are computed from the value the read before
-		// them delivered, so they are published through this selection and
-		// stamped with the tag the reading rule joins on.
-		Selections: []definition.Selection{{
-			Name:     "StorageRouteSelection",
-			Key:      "placement/store/route-selection",
-			Relation: "StorageRoutes",
-			Tag:      "StorageRouteTag",
-		}},
 		Projections: []definition.Projection{
 			{
 				Name:              "StorageRouteKey",

@@ -42,7 +42,7 @@ join[2].read         form=selected input=2 axis=axis/heap point-bound=self
 join[2].relation     axis/heap:heap/formal-freeze/routes
 join[2].key          axis/heap:heap/formal-freeze/route-key
 join[2].predicate    axis/heap:heap/formal-freeze/route-tag
-join[2].selection    -
+join[2].selection    axis/heap:heap/formal-freeze/route-selection
 join[2].parent       -
 join[2].sources      candidate, join 0, join 1
 join[2].contract     order=canonical sparse=default on-opaque=refuse multiplicity=one denominator=denominator/coordinates/heap

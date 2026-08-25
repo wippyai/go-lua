@@ -34,7 +34,7 @@ join[1].read         form=selected input=1 axis=axis/value point-bound=self
 join[1].relation     axis/value:value/fresh-result/routes
 join[1].key          axis/value:value/fresh-result/route-key
 join[1].predicate    axis/value:value/fresh-result/route-tag
-join[1].selection    -
+join[1].selection    axis/value:value/fresh-result/route-selection
 join[1].parent       -
 join[1].sources      candidate, join 0
 join[1].contract     order=canonical sparse=default on-opaque=refuse multiplicity=one denominator=denominator/coordinates/value

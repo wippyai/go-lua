@@ -247,26 +247,6 @@ func Declarations() []Declaration {
 	return []Declaration{
 		{
 			Target: emitlaw.Target{
-				PackagePath: "github.com/wippyai/go-lua/domain/placement/allocationbirth/program",
-				PackageName: "program",
-				Declaration: "AllocationBirth",
-				Entry:       "RuleEntry",
-				Spec:        allocationbirthprogram.RuleEntry(),
-			},
-			Directory: "domain/placement/allocationbirth/program",
-		},
-		{
-			Target: emitlaw.Target{
-				PackagePath: "github.com/wippyai/go-lua/domain/placement/freshbirth/program",
-				PackageName: "program",
-				Declaration: "FreshBirth",
-				Entry:       "RuleEntry",
-				Spec:        freshbirthprogram.RuleEntry(),
-			},
-			Directory: "domain/placement/freshbirth/program",
-		},
-		{
-			Target: emitlaw.Target{
 				PackagePath: "github.com/wippyai/go-lua/domain/placement/store/program",
 				PackageName: "program",
 				Declaration: "Storage",
