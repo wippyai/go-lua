@@ -33,7 +33,7 @@ func TestDerived1RowsAnswersItsMembersInCoordinateOrder(t *testing.T) {
 	// ones already held.
 	for coordinate := 2 * derived1InlineWidth; coordinate > 0; coordinate-- {
 		var placed bool
-		built, placed = insertDerived1Row(built, uint32(coordinate), row)
+		built, placed = insertDerived1Row(built, uint32(coordinate), uint64(coordinate), row)
 		if !placed {
 			t.Fatalf("the member at coordinate %d was refused by its own set", coordinate)
 		}
@@ -55,18 +55,24 @@ func TestDerived1RowsAnswersItsMembersInCoordinateOrder(t *testing.T) {
 	}
 }
 
-// TestDerived1RowsRefusesTwoMembersOnOneCoordinate is the other half of the
-// order. A selection carries one cell per member, so two members on one
-// coordinate have no second ordinal between them and the set is refused rather
-// than observed twice.
-func TestDerived1RowsRefusesTwoMembersOnOneCoordinate(t *testing.T) {
+// TestDerived1RowsHoldsOneMemberPerAddress is the other half of the order.
+// A member is reached at a coordinate and at the tag its predicate answers,
+// and that pair is its whole address. An item resolving to an address the set
+// already holds is the same member named twice and adds no ordinal; two
+// members on one coordinate under different tags are two cells where a
+// selection carries one, and have no answer.
+func TestDerived1RowsHoldsOneMemberPerAddress(t *testing.T) {
 	var row bodyroute.Route
-	built, placed := insertDerived1Row(derived1Rows{}, 1, row)
+	built, placed := insertDerived1Row(derived1Rows{}, 1, 1, row)
 	if !placed {
 		t.Fatal("the first member of a set was refused")
 	}
-	if _, repeated := insertDerived1Row(built, 1, row); repeated {
-		t.Fatal("two members on one coordinate were admitted; a selection carries one cell per member")
+	aliased, aliasedOK := insertDerived1Row(built, 1, 1, row)
+	if !aliasedOK || derived1Count(aliased) != 1 {
+		t.Fatal("one member named twice was taken as two, or refused")
+	}
+	if _, contended := insertDerived1Row(built, 1, 2, row); contended {
+		t.Fatal("two members on one coordinate were admitted; a selection carries one cell there")
 	}
 }
 
@@ -80,7 +86,7 @@ func TestDerived1RowsFillsItsDeclaredWidthWithoutAllocating(t *testing.T) {
 		var built derived1Rows
 		for coordinate := derived1InlineWidth; coordinate > 0; coordinate-- {
 			var placed bool
-			built, placed = insertDerived1Row(built, uint32(coordinate), row)
+			built, placed = insertDerived1Row(built, uint32(coordinate), uint64(coordinate), row)
 			if !placed {
 				return
 			}

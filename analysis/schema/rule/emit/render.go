@@ -1291,17 +1291,19 @@ func renderDeclaredDerivation(out *strings.Builder, built *plan, join *joinPlan)
 	width := derivedWidthName(declared.position)
 	subject := imports.typeName(declared.subject)
 	dense := imports.typeName(declared.order.normalized)
+	tag := imports.typeName(declared.predicateType)
 
 	fmt.Fprintf(out, "// %s is how many members join %d's set holds by value. It is the\n", width, declared.position)
 	out.WriteString("// width its relation declares, which is that relation's own statement of how\n")
 	out.WriteString("// many members it ordinarily answers.\n")
 	fmt.Fprintf(out, "const %s = %d\n\n", width, declared.inlineWidth)
 
-	fmt.Fprintf(out, "// %s is one member and the coordinate its relation's declared key\n", entry)
-	out.WriteString("// normalizes to. The coordinate is taken once, where the member is resolved,\n")
-	out.WriteString("// because it is what the set is ordered by and asking the owner for it again\n")
-	out.WriteString("// per comparison would let two answers to one question disagree.\n")
-	fmt.Fprintf(out, "type %s struct {\n\tdense %s\n\trow   %s\n}\n\n", entry, dense, subject)
+	fmt.Fprintf(out, "// %s is one member and the address it is reached at: the coordinate\n", entry)
+	out.WriteString("// its relation's declared key normalizes to, and the tag its declared\n")
+	out.WriteString("// predicate answers. Both are taken once, where the member is resolved,\n")
+	out.WriteString("// because asking the owner for them again per comparison would let two\n")
+	out.WriteString("// answers to one question disagree.\n")
+	fmt.Fprintf(out, "type %s struct {\n\tdense %s\n\ttag   %s\n\trow   %s\n}\n\n", entry, dense, tag, subject)
 
 	fmt.Fprintf(out, "// %s is the member set one invocation of join %d's declared relation\n", state, declared.position)
 	out.WriteString("// answers. It is sealed by the Build below and read by nothing else.\n")
@@ -1464,20 +1466,31 @@ func renderDerivedInsert(out *strings.Builder, built *plan, declared *declaredPl
 	entry := derivedMemberName(declared.position)
 	subject := imports.typeName(declared.subject)
 	dense := imports.typeName(declared.order.normalized)
+	tag := imports.typeName(declared.predicateType)
 	insert := derivedInsertName(declared.position)
 
-	fmt.Fprintf(out, "// %s places one resolved member at its canonical position. The set\n", insert)
-	out.WriteString("// is ordered ascending by the coordinate its relation's declared key\n")
+	fmt.Fprintf(out, "// %s places one resolved member at its canonical position.\n", insert)
+	out.WriteString("//\n")
+	out.WriteString("// The set is ordered ascending by the coordinate its relation's declared key\n")
 	out.WriteString("// normalizes to, because that is the order the engine canonicalizes a\n")
-	out.WriteString("// selection by, and a member already on that coordinate is refused rather\n")
-	out.WriteString("// than observed twice.\n")
-	fmt.Fprintf(out, "func %s(built %s, dense %s, row %s) (%s, bool) {\n", insert, state, dense, subject, state)
+	out.WriteString("// selection by.\n")
+	out.WriteString("//\n")
+	out.WriteString("// A member is reached at that coordinate AND at the tag its predicate\n")
+	out.WriteString("// answers, and that pair is its whole address. Two items resolving to one\n")
+	out.WriteString("// address are one member named twice - an alias of the same thing - and the\n")
+	out.WriteString("// second adds no ordinal. Two items on one coordinate under DIFFERENT tags\n")
+	out.WriteString("// are two members where a selection carries one cell, which has no answer\n")
+	out.WriteString("// and is refused.\n")
+	fmt.Fprintf(out, "func %s(built %s, dense %s, tag %s, row %s) (%s, bool) {\n", insert, state, dense, tag, subject, state)
 	out.WriteString("\tposition := 0\n")
 	out.WriteString("\tfor position < built.count {\n")
 	fmt.Fprintf(out, "\t\tcurrent, currentOK := %s(built, position)\n", derivedMemberAtName(declared.position))
-	fmt.Fprintf(out, "\t\tif !currentOK || current.dense == dense {\n\t\t\treturn %s{}, false\n\t\t}\n", state)
+	fmt.Fprintf(out, "\t\tif !currentOK {\n\t\t\treturn %s{}, false\n\t\t}\n", state)
+	out.WriteString("\t\tif current.dense == dense {\n")
+	fmt.Fprintf(out, "\t\t\tif current.tag != tag {\n\t\t\t\treturn %s{}, false\n\t\t\t}\n", state)
+	out.WriteString("\t\t\treturn built, true\n\t\t}\n")
 	out.WriteString("\t\tif current.dense > dense {\n\t\t\tbreak\n\t\t}\n\t\tposition++\n\t}\n")
-	fmt.Fprintf(out, "\tplaced := %s{dense: dense, row: row}\n", entry)
+	fmt.Fprintf(out, "\tplaced := %s{dense: dense, tag: tag, row: row}\n", entry)
 	out.WriteString("\tif built.count < len(built.inline) {\n")
 	out.WriteString("\t\tfor index := built.count; index > position; index-- {\n\t\t\tbuilt.inline[index] = built.inline[index-1]\n\t\t}\n")
 	out.WriteString("\t\tbuilt.inline[position] = placed\n\t\tbuilt.count++\n\t\treturn built, true\n\t}\n")
@@ -1541,12 +1554,21 @@ func renderDerivedBuild(out *strings.Builder, built *plan, join *joinPlan) error
 		}
 		return name
 	}
-	place := func(indent, row string) {
+	address := func(indent, row string) (string, string) {
 		key := coordinate(indent, row)
+		predicate, err := projectionExpressionRefusing(built, declared.predicate, row, indent, refusal, out)
+		if err != nil {
+			failed = err
+			predicate = "tag"
+		}
+		return key, predicate
+	}
+	place := func(indent, row string) {
+		key, tag := address(indent, row)
 		fmt.Fprintf(out, "%sdense, denseOK := %s\n", indent, imports.call(declared.order.normalizer, declared.order.param, key))
 		fmt.Fprintf(out, "%sif !denseOK {\n%s\t%s\n%s}\n", indent, indent, refusal, indent)
 		fmt.Fprintf(out, "%svar placed bool\n", indent)
-		fmt.Fprintf(out, "%sbuilt, placed = %s(built, dense, %s)\n", indent, derivedInsertName(declared.position), row)
+		fmt.Fprintf(out, "%sbuilt, placed = %s(built, dense, %s, %s)\n", indent, derivedInsertName(declared.position), tag, row)
 		fmt.Fprintf(out, "%sif !placed {\n%s\t%s\n%s}\n", indent, indent, refusal, indent)
 	}
 	resolve := func(indent string, judgment definition.GoSymbol, item, row string) {

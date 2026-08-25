@@ -119,6 +119,12 @@ type declaredPlan struct {
 	// endpoint, so the endpoint may state its own judgment; when it states
 	// none the two chains yield the same item and one judgment answers both.
 	widenResolve definition.GoSymbol
+	// predicate is the relation's declared Predicate projection and
+	// predicateType is what it answers. Together with the coordinate it is the
+	// ADDRESS a member is reached at, which is what decides whether two
+	// resolved items are two members or one member twice.
+	predicate     definition.Projection
+	predicateType definition.GoType
 	// key is the relation's own declared Key projection and order is the axis
 	// that numbers the coordinates it yields. Together they are the ONE
 	// admissible order of a member set: the engine canonicalizes a selection
@@ -549,7 +555,7 @@ func deriveJoins(built *plan, resolver *axisResolver, declaration program.Progra
 			row.predicate, row.hasPredicate = predicate, true
 		}
 		if relation.Derivation.AuthoredDerivation() || relation.Derivation.DeclaredDerivation() {
-			derivation, err := deriveRelation(built, resolver, join, relation, relationAxis, key, position)
+			derivation, err := deriveRelation(built, resolver, join, relation, relationAxis, key, row.predicate, row.hasPredicate, position)
 			if err != nil {
 				return err
 			}
@@ -651,7 +657,7 @@ func (axis *axisPlan) foreignTo(write *axisPlan) bool {
 	return axis != nil && write != nil && axis.key != write.key
 }
 
-func deriveRelation(built *plan, resolver *axisResolver, join program.JoinDecl, relation definition.Relation, relationAxis *axisPlan, key definition.Projection, position int) (*derivationPlan, error) {
+func deriveRelation(built *plan, resolver *axisResolver, join program.JoinDecl, relation definition.Relation, relationAxis *axisPlan, key, predicate definition.Projection, hasPredicate bool, position int) (*derivationPlan, error) {
 	ruleKey := built.target.Spec.Key
 	derivation := &derivationPlan{
 		state: relation.Derivation.State,
@@ -695,7 +701,7 @@ func deriveRelation(built *plan, resolver *axisResolver, join program.JoinDecl, 
 		derivation.arguments = append(derivation.arguments, argument)
 	}
 	if relation.Derivation.DeclaredDerivation() {
-		declared, err := deriveDeclared(built, resolver, relation, relationAxis, key, position)
+		declared, err := deriveDeclared(built, resolver, relation, relationAxis, key, predicate, hasPredicate, position)
 		if err != nil {
 			return nil, err
 		}
@@ -722,7 +728,7 @@ func derivedSinkName(position int) string  { return fmt.Sprintf("derived%dRowsSi
 // deriveDeclared resolves the declared operators into the construction this
 // emitter writes. Every refusal names the clause that leaves the generated
 // construction unable to answer something it must answer.
-func deriveDeclared(built *plan, resolver *axisResolver, relation definition.Relation, relationAxis *axisPlan, key definition.Projection, position int) (*declaredPlan, error) {
+func deriveDeclared(built *plan, resolver *axisResolver, relation definition.Relation, relationAxis *axisPlan, key, predicate definition.Projection, hasPredicate bool, position int) (*declaredPlan, error) {
 	ruleKey := built.target.Spec.Key
 	declaration := relation.Derivation
 	subject, subjectOK := carrierType(relationAxis.source, relation.Subject)
@@ -764,9 +770,22 @@ func deriveDeclared(built *plan, resolver *axisResolver, relation definition.Rel
 		return nil, unexpressible(ruleKey, "a derived member set read out of a value its relation is not given",
 			fmt.Sprintf("relation %q reads its outer source out of %s, which is none of its declared inputs", relation.Name, sources[0].over.Name))
 	}
+	// A member is reached at a coordinate AND a tag: the engine addresses one
+	// cell per member of a selection by both. Without the tag two items landing
+	// on one coordinate cannot be told apart, and the construction would have
+	// to guess whether that is an alias or a contradiction.
+	if !hasPredicate {
+		return nil, unexpressible(ruleKey, "a derived member set whose members carry no address",
+			fmt.Sprintf("relation %q declares no predicate projection, so two members on one coordinate cannot be told apart", relation.Name))
+	}
+	predicateType, predicateTypeOK := carrierType(relationAxis.source, predicate.Result)
+	if !predicateTypeOK {
+		return nil, unexpressible(ruleKey, "a derived member set whose predicate carrier is undeclared", predicate.Result)
+	}
 	declared := &declaredPlan{
 		position: position, subject: subject, sources: sources,
 		resolve: declaration.Resolve, order: relationAxis, key: key,
+		predicate: predicate, predicateType: predicateType,
 		sourceArgument: -1, candidateArgument: -1,
 		inlineWidth: declaration.InlineWidth,
 	}

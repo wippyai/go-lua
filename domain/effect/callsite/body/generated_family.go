@@ -200,12 +200,14 @@ func (lane *familyWorker) Execute(frame execution.Frame, ticket execution.Ticket
 // many members it ordinarily answers.
 const derived1InlineWidth = 4
 
-// derived1Member is one member and the coordinate its relation's declared key
-// normalizes to. The coordinate is taken once, where the member is resolved,
-// because it is what the set is ordered by and asking the owner for it again
-// per comparison would let two answers to one question disagree.
+// derived1Member is one member and the address it is reached at: the coordinate
+// its relation's declared key normalizes to, and the tag its declared
+// predicate answers. Both are taken once, where the member is resolved,
+// because asking the owner for them again per comparison would let two
+// answers to one question disagree.
 type derived1Member struct {
 	dense uint32
+	tag   uint64
 	row   bodyroute.Route
 }
 
@@ -249,24 +251,37 @@ func derived1At(state derived1Rows, index int) (bodyroute.Route, bool) {
 	return member.row, true
 }
 
-// insertDerived1Row places one resolved member at its canonical position. The set
-// is ordered ascending by the coordinate its relation's declared key
+// insertDerived1Row places one resolved member at its canonical position.
+//
+// The set is ordered ascending by the coordinate its relation's declared key
 // normalizes to, because that is the order the engine canonicalizes a
-// selection by, and a member already on that coordinate is refused rather
-// than observed twice.
-func insertDerived1Row(built derived1Rows, dense uint32, row bodyroute.Route) (derived1Rows, bool) {
+// selection by.
+//
+// A member is reached at that coordinate AND at the tag its predicate
+// answers, and that pair is its whole address. Two items resolving to one
+// address are one member named twice - an alias of the same thing - and the
+// second adds no ordinal. Two items on one coordinate under DIFFERENT tags
+// are two members where a selection carries one cell, which has no answer
+// and is refused.
+func insertDerived1Row(built derived1Rows, dense uint32, tag uint64, row bodyroute.Route) (derived1Rows, bool) {
 	position := 0
 	for position < built.count {
 		current, currentOK := derived1MemberAt(built, position)
-		if !currentOK || current.dense == dense {
+		if !currentOK {
 			return derived1Rows{}, false
+		}
+		if current.dense == dense {
+			if current.tag != tag {
+				return derived1Rows{}, false
+			}
+			return built, true
 		}
 		if current.dense > dense {
 			break
 		}
 		position++
 	}
-	placed := derived1Member{dense: dense, row: row}
+	placed := derived1Member{dense: dense, tag: tag, row: row}
 	if built.count < len(built.inline) {
 		for index := built.count; index > position; index-- {
 			built.inline[index] = built.inline[index-1]
@@ -320,12 +335,16 @@ func deriveDerived1Rows(effectSchema *factor.Algebra, callSchema *call.Algebra, 
 				if !bodyRouteKeyOK {
 					return derived1Rows{}, false
 				}
+				bodyRouteTag, bodyRouteTagOK := widenRow.Predicate()
+				if !bodyRouteTagOK {
+					return derived1Rows{}, false
+				}
 				dense, denseOK := effectSchema.DenseKeyIndex(bodyRouteKey)
 				if !denseOK {
 					return derived1Rows{}, false
 				}
 				var placed bool
-				built, placed = insertDerived1Row(built, dense, widenRow)
+				built, placed = insertDerived1Row(built, dense, bodyRouteTag, widenRow)
 				if !placed {
 					return derived1Rows{}, false
 				}
@@ -348,12 +367,16 @@ func deriveDerived1Rows(effectSchema *factor.Algebra, callSchema *call.Algebra, 
 			if !bodyRouteKeyOK {
 				return derived1Rows{}, false
 			}
+			bodyRouteTag, bodyRouteTagOK := row.Predicate()
+			if !bodyRouteTagOK {
+				return derived1Rows{}, false
+			}
 			dense, denseOK := effectSchema.DenseKeyIndex(bodyRouteKey)
 			if !denseOK {
 				return derived1Rows{}, false
 			}
 			var placed bool
-			built, placed = insertDerived1Row(built, dense, row)
+			built, placed = insertDerived1Row(built, dense, bodyRouteTag, row)
 			if !placed {
 				return derived1Rows{}, false
 			}

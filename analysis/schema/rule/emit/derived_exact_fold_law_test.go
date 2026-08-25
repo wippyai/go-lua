@@ -705,11 +705,12 @@ func TestAGeneratedMemberSetIsHeldByValue(t *testing.T) {
 	}
 }
 
-// TestAGeneratedMemberSetRefusesTwoRowsOnOneCoordinate is the other half of
-// the order. A selection carries one cell per member, so two rows resolving to
-// one coordinate have no second ordinal between them and the set is refused
-// rather than observed twice.
-func TestAGeneratedMemberSetRefusesTwoRowsOnOneCoordinate(t *testing.T) {
+// TestAGeneratedMemberSetHoldsOneMemberPerAddress is the other half of the
+// order. A member is reached at a coordinate AND at the tag its predicate
+// answers: two items resolving to one address are one member named twice, and
+// two items on one coordinate under different tags are two members where a
+// selection carries one cell.
+func TestAGeneratedMemberSetHoldsOneMemberPerAddress(t *testing.T) {
 	source, err := renderDerivedSelection(t, derivedSelectionSpec())
 	if err != nil {
 		t.Fatalf("a declared derivation did not emit: %v", err)
@@ -718,8 +719,8 @@ func TestAGeneratedMemberSetRefusesTwoRowsOnOneCoordinate(t *testing.T) {
 	if !found {
 		t.Fatalf("the emitted construction has no canonical placement:\n%s", source)
 	}
-	if !strings.Contains(insert, "current.dense == dense") {
-		t.Fatalf("placement never compares a member with one already on its coordinate, so a repeat is admitted:\n%s", insert)
+	if !strings.Contains(insert, "current.dense == dense") || !strings.Contains(insert, "current.tag != tag") {
+		t.Fatalf("placement does not tell an alias of one member from two members on one coordinate:\n%s", insert)
 	}
 }
 
@@ -738,7 +739,7 @@ func TestAGeneratedMemberSetOwesTheLawsOfItsOwnConstruction(t *testing.T) {
 	suite := string(source)
 	for _, law := range []string{
 		"func TestDerived1RowsAnswersItsMembersInCoordinateOrder(",
-		"func TestDerived1RowsRefusesTwoMembersOnOneCoordinate(",
+		"func TestDerived1RowsHoldsOneMemberPerAddress(",
 		"func TestDerived1RowsFillsItsDeclaredWidthWithoutAllocating(",
 	} {
 		if !strings.Contains(suite, law) {
