@@ -12,6 +12,7 @@ import (
 const (
 	closedPackagePath = "github.com/wippyai/go-lua/domain/heap/allocation/closed"
 	valuePackagePath  = "github.com/wippyai/go-lua/domain/value"
+	heapPackagePath   = "github.com/wippyai/go-lua/domain/heap"
 )
 
 func axisReference(key string) schema.EntryReference {
@@ -20,6 +21,15 @@ func axisReference(key string) schema.EntryReference {
 
 func valueGoType(name string) definition.GoType {
 	return definition.GoType{PackagePath: valuePackagePath, Name: name}
+}
+
+func heapMethod(name, receiver string, resultIndex int8) definition.GoSymbol {
+	return definition.GoSymbol{
+		PackagePath: heapPackagePath,
+		Name:        name,
+		Receiver:    definition.GoType{PackagePath: heapPackagePath, Name: receiver},
+		ResultIndex: resultIndex,
+	}
 }
 
 func valueMethod(name, receiver string, receiverPointer bool, resultIndex int8) definition.GoSymbol {
@@ -70,6 +80,17 @@ func Contribution() definition.Contribution {
 		// is the Heap constructor - reach it.
 		Relations: []definition.Relation{
 			{
+				// The Heap world this constructor extends, read at the
+				// allocation coordinate it writes. It is this rule's own axis,
+				// declared here beside the rows it folds with for the same
+				// reason: the predecessor is part of how this rule decides.
+				Name:              "ClosedAllocationPredecessors",
+				Key:               "heap/closed-allocation/predecessors",
+				Subject:           "HeapFactCarrier",
+				Inputs:            []definition.RelationInput{{Carrier: "HeapKeyCarrier"}},
+				CandidateProvider: member.AxisRelationCandidate(member.RelationRef{Axis: axisReference("heap"), Member: "heap/closed-allocation/candidates"}),
+			},
+			{
 				Name:              "ClosedOperandParents",
 				Key:               "value/closed-allocation/parents",
 				Axis:              "value",
@@ -98,6 +119,15 @@ func Contribution() definition.Contribution {
 			},
 		},
 		Projections: []definition.Projection{
+			{
+				Name:              "ClosedAllocationPredecessorKey",
+				Key:               "heap/closed-allocation/predecessor-key",
+				Relation:          "ClosedAllocationPredecessors",
+				CandidateProvider: member.AxisRelationCandidate(member.RelationRef{Axis: axisReference("heap"), Member: "heap/closed-allocation/candidates"}),
+				Role:              member.Key,
+				Result:            "HeapKeyCarrier",
+				Accessor:          heapMethod("ClosedAllocation", "Key", -1),
+			},
 			{
 				Name:              "ClosedOperandKey",
 				Key:               "value/closed-allocation/operand-key",
