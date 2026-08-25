@@ -415,6 +415,20 @@ func BindGeneratedRule(binding *SchemaBinding, slot *GeneratedRuleSlot) bool {
 		state.poisonLocked()
 		return false
 	}
+	// A structural rule's branches are admitted under an activation family, and
+	// that family's cell is bound where the rule that declares it is bound -
+	// the same place the hand-declared activation lane binds it. Without this
+	// the cold schema counts a family the Binding never seats, and Seal refuses
+	// the whole composition rather than the one rule that owes it.
+	shape, shapeOK := state.schema.ruleShapeAt(ordinal)
+	if !shapeOK {
+		state.poisonLocked()
+		return false
+	}
+	if shape.OutputKind == composition.StructuralOutput && !bindActivationFamilyLocked(state, shape.ActivationFamily) {
+		state.poisonLocked()
+		return false
+	}
 	cell := &generatedRuleBindingCell{state: state, schema: state.schema, ordinal: ordinal, generated: generated}
 	state.rules[ordinal] = cell
 	if !cell.declareReadGeometry() {

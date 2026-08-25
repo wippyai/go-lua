@@ -6,6 +6,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/engine/internal/composition"
 	"github.com/wippyai/go-lua/analysis/engine/internal/equation"
 	"github.com/wippyai/go-lua/analysis/identity"
+	"github.com/wippyai/go-lua/analysis/schema/executioncontext"
 	"github.com/wippyai/go-lua/analysis/schema/vocabulary"
 )
 
@@ -112,6 +113,9 @@ func (fixture generatedIssuanceLifecycleFixture) declare() (pendingRuleIssuance,
 		fixture.rows,
 		fixture.bindingFixture.binding.state,
 		fixture.cell,
+		// This fixture's rule publishes a fact, so the Link directory it would
+		// fan an activation branch over is never reached.
+		executioncontext.Directory{},
 		fixture.coords,
 		fixture.site,
 		fixture.entity,

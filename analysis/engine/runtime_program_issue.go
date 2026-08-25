@@ -113,7 +113,7 @@ func declareMountedProgram(rowsWorkspace *programRows, mounts []sealedProgramMou
 	anchored := make(map[equation.Surface]struct{})
 	claimedLink := make(map[linkBootstrapClaim]struct{}, len(admission.Link))
 	for ordinal, row := range admission.Link {
-		issuance, ok := admitLinkRuleIssuance(rowsWorkspace, rows, state, row, claimedLink)
+		issuance, ok := admitLinkRuleIssuance(rowsWorkspace, rows, state, contexts, row, claimedLink)
 		if !ok || !claimAnchoredSurfaces(anchored, issuance.surfaces) {
 			return topologyDeclaration{}, programSealFailure{phase: programSealFailureLinkIssuance, ordinal: uint32(ordinal), link: row.Capability}, ProgramAdmissionLink, false
 		}
@@ -124,7 +124,7 @@ func declareMountedProgram(rowsWorkspace *programRows, mounts []sealedProgramMou
 	// owner seals an operand for it, and an owner that cannot refuses the
 	// whole assemble rather than being silently skipped here.
 	for ordinal, row := range admission.Mounted {
-		issuance, ok := admitMountedRuleIssuance(rowsWorkspace, rows, state, row)
+		issuance, ok := admitMountedRuleIssuance(rowsWorkspace, rows, state, contexts, row)
 		claimedOK := ok && claimAnchoredSurfaces(anchored, issuance.surfaces)
 		if !claimedOK {
 			return topologyDeclaration{}, programSealFailure{phase: programSealFailureMountedIssuance, ordinal: uint32(ordinal), mounted: row.Capability}, ProgramAdmissionMounted, false
@@ -132,7 +132,7 @@ func declareMountedProgram(rowsWorkspace *programRows, mounts []sealedProgramMou
 		pending = append(pending, issuance)
 	}
 	for ordinal, row := range admission.MountedPoint {
-		issuances, ok := admitMountedPointRuleIssuances(rowsWorkspace, rows, state, mounts, row)
+		issuances, ok := admitMountedPointRuleIssuances(rowsWorkspace, rows, state, contexts, mounts, row)
 		if !ok {
 			return topologyDeclaration{}, programSealFailure{phase: programSealFailureMountedIssuance, ordinal: uint32(ordinal), mounted: row.Capability}, ProgramAdmissionMounted, false
 		}
@@ -209,7 +209,7 @@ func declareMountedProgram(rowsWorkspace *programRows, mounts []sealedProgramMou
 // admitMountedPointRuleIssuances expands one closure occurrence over the
 // stable mount/template Point order. No artifact RuleOccurrence row is
 // consulted: the Point plane itself is this lane's complete denominator.
-func admitMountedPointRuleIssuances(rowsWorkspace *programRows, rows *mountedArtifactRows, state *schemaBindingState, mounts []sealedProgramMount, row MountedPointRuleAdmission) ([]pendingRuleIssuance, bool) {
+func admitMountedPointRuleIssuances(rowsWorkspace *programRows, rows *mountedArtifactRows, state *schemaBindingState, contexts executioncontext.Directory, mounts []sealedProgramMount, row MountedPointRuleAdmission) ([]pendingRuleIssuance, bool) {
 	if !row.Capability.mountedPoint() || !row.Occurrence.Available() {
 		return nil, false
 	}
@@ -230,7 +230,7 @@ func admitMountedPointRuleIssuances(rowsWorkspace *programRows, rows *mountedArt
 				}
 				coords := OperandCoords{Mount: mount.module, Point: point.ID, Occurrence: row.Occurrence}
 				issuance := pendingRuleIssuance{plane: declaredMemberMountedPoint, role: row.Capability, mount: mount.module, point: point.ID, occurrence: row.Occurrence, member: member, coords: coords}
-				declared, ok := declareGeneratedIssuanceSurfaces(rowsWorkspace, state, generated, coords, site, entity, issuance)
+				declared, ok := declareGeneratedIssuanceSurfaces(rowsWorkspace, state, generated, contexts, coords, site, entity, issuance)
 				if !ok {
 					return nil, false
 				}
@@ -321,7 +321,7 @@ func claimAnchoredSurfaces(claimed map[equation.Surface]struct{}, surfaces decla
 // its declaration for the operand and surfaces. The member identity is
 // mount+point+occurrence qualified, so equal reusable artifacts and same IDs
 // on different mounts cannot alias.
-func admitMountedRuleIssuance(rowsWorkspace *programRows, rows *mountedArtifactRows, state *schemaBindingState, row MountedRuleAdmission) (pendingRuleIssuance, bool) {
+func admitMountedRuleIssuance(rowsWorkspace *programRows, rows *mountedArtifactRows, state *schemaBindingState, contexts executioncontext.Directory, row MountedRuleAdmission) (pendingRuleIssuance, bool) {
 	if !row.Capability.mounted() || row.Capability.activation || !row.Mount.Available() || !row.Point.Available() || !row.Occurrence.Available() {
 		return pendingRuleIssuance{}, false
 	}
@@ -339,7 +339,7 @@ func admitMountedRuleIssuance(rowsWorkspace *programRows, rows *mountedArtifactR
 		}
 		coords := OperandCoords{Mount: row.Mount, Point: row.Point, Occurrence: row.Occurrence}
 		issuance := pendingRuleIssuance{plane: declaredMemberMount, role: row.Capability, mount: row.Mount, point: row.Point, occurrence: row.Occurrence, member: member, activationID: activation, coords: coords}
-		return declareGeneratedIssuanceSurfaces(rowsWorkspace, state, generated, coords, site, entity, issuance)
+		return declareGeneratedIssuanceSurfaces(rowsWorkspace, state, generated, contexts, coords, site, entity, issuance)
 	}
 	binder, binderOK := resolveOrdinaryRuleCell(row.Capability)
 	if !binderOK {
@@ -374,7 +374,7 @@ func admitMountedRuleIssuance(rowsWorkspace *programRows, rows *mountedArtifactR
 // bootstrap catalog. It has no mount and cannot address an arbitrary site or
 // occurrence: the witness admits only the exact capability+occurrence address,
 // and each such address is claimed once.
-func admitLinkRuleIssuance(rowsWorkspace *programRows, rows *mountedArtifactRows, state *schemaBindingState, row LinkRuleAdmission, claimed map[linkBootstrapClaim]struct{}) (pendingRuleIssuance, bool) {
+func admitLinkRuleIssuance(rowsWorkspace *programRows, rows *mountedArtifactRows, state *schemaBindingState, contexts executioncontext.Directory, row LinkRuleAdmission, claimed map[linkBootstrapClaim]struct{}) (pendingRuleIssuance, bool) {
 	if !row.Capability.link() || !row.Occurrence.Available() {
 		return pendingRuleIssuance{}, false
 	}
@@ -401,7 +401,7 @@ func admitLinkRuleIssuance(rowsWorkspace *programRows, rows *mountedArtifactRows
 	// used at this pre-seal boundary; admitFrom authenticates the open-batch
 	// capability and preserves the same fence as mounted rows.
 	if generated, generatedOK := resolveGeneratedRuleCell(row.Capability); generatedOK {
-		return declareGeneratedIssuanceSurfaces(rowsWorkspace, state, generated, coords, rows.bootstrap.site, entity, issuance)
+		return declareGeneratedIssuanceSurfaces(rowsWorkspace, state, generated, contexts, coords, rows.bootstrap.site, entity, issuance)
 	}
 	binder, binderOK := resolveOrdinaryRuleCell(row.Capability)
 	if !binderOK {
@@ -439,7 +439,7 @@ func declareIssuanceSurfaces(rowsWorkspace *programRows, state *schemaBindingSta
 // resolves candidate/source/destination dense locals through the axis owners,
 // then mints exact Factor surfaces from those locals. No operand provider,
 // callback, type-erased value, or legacy binder participates.
-func declareGeneratedIssuanceSurfaces(rowsWorkspace *programRows, state *schemaBindingState, declaration *generatedRuleBindingCell, coords OperandCoords, site equation.Site, entity composition.Key, issuance pendingRuleIssuance) (pendingRuleIssuance, bool) {
+func declareGeneratedIssuanceSurfaces(rowsWorkspace *programRows, state *schemaBindingState, declaration *generatedRuleBindingCell, contexts executioncontext.Directory, coords OperandCoords, site equation.Site, entity composition.Key, issuance pendingRuleIssuance) (pendingRuleIssuance, bool) {
 	// Site is intentionally still open here: admitRuleSurfaceAnchor owns the
 	// Batch admission and authenticates the opaque Site against that exact open
 	// Batch. Site.Available is a post-seal predicate, so requiring it here would
@@ -484,15 +484,14 @@ func declareGeneratedIssuanceSurfaces(rowsWorkspace *programRows, state *schemaB
 	if !readsOK {
 		return pendingRuleIssuance{}, false
 	}
-	// A structural rule publishes no Factor surface: its output is the
+	// A structural rule publishes no Factor surface. Its output is the
 	// activation row set its candidate branches mount into the construct
-	// topology, and the issuance arm that mounts them is the generated
-	// activation lane. That lane is not built. The rule binds and installs its
-	// family through the ordinary seam; this is where it stops, named by the
-	// disposition rather than by a write surface that cannot be minted for a
-	// rule that writes nothing.
+	// topology, so instead of minting a write it states those branches: the
+	// identities each one is mounted by, the application they are all
+	// alternatives of, and the transport vector each instantiates.
 	if declaration.writeMode == directRuleWriteStructural {
-		return pendingRuleIssuance{}, false
+		return declareGeneratedActivationIssuance(state, declaration, descriptor, contexts, coords,
+			semantic, family, anchor, denseCandidate, programSource, reads, memberSets, issuance)
 	}
 	writeSurface, writeSurfaceOK := declareGeneratedWriteSurface(state, declaration, descriptor, anchor, ruleSemantic, denseCandidate)
 	if !writeSurfaceOK {
@@ -1045,4 +1044,191 @@ func appendDeclaredSummary(summaries []equation.SummaryMapping, mapping *ruleSum
 		return nil, false
 	}
 	return append(summaries, equation.SummaryMapping{Surface: mapping.surface, Keys: keys}), true
+}
+
+// declareGeneratedActivationIssuance states one structural rule's issuance:
+// the branch set its trigger declares, the identities each branch is mounted
+// by, and the transport vector each one instantiates.
+//
+// It is the generated counterpart of admitActivationRuleIssuance above, and it
+// asks no owner for any of it. The branches are the cold member set the plan
+// already enumerated at this row; their identities are owner-issued
+// projections the descriptor names; the application is a projection of the
+// trigger's own candidate row; and the vector is the descriptor's own.
+//
+// The execution CONTEXT each branch runs on is not projected and never could
+// be: which Contexts two modules are connected by is the Link's sealed
+// directory, held by this pass. One branch therefore fans out into one
+// candidate per admitted edge, exactly as the hand lane's activationRoutes
+// does, and the construct plane authenticates every one of them again.
+func declareGeneratedActivationIssuance(
+	state *schemaBindingState, declaration *generatedRuleBindingCell, descriptor generated.CompiledRule,
+	contexts executioncontext.Directory, coords OperandCoords, semantic, family composition.Key,
+	anchor ruleSurfaceAnchor, denseCandidate uint32, programSource execution.ProgramSource,
+	reads []RuleReadSurface, memberSets []generatedMemberSet, issuance pendingRuleIssuance,
+) (pendingRuleIssuance, bool) {
+	// An activation is mounted. Its trigger is a Point of a mounted artifact,
+	// and the Link plane has no mount for one to be placed under.
+	if issuance.plane != declaredMemberMount || !coords.Mount.Available() || !issuance.point.Available() ||
+		!issuance.activationID.Available() || !contexts.Available() {
+		return pendingRuleIssuance{}, false
+	}
+	branch, branchOK := descriptor.ActivationBranch()
+	if !branchOK {
+		return pendingRuleIssuance{}, false
+	}
+	branchRead, branchReadOK := descriptor.ReadAt(int(branch.Branch))
+	if !branchReadOK {
+		return pendingRuleIssuance{}, false
+	}
+	// The branch coordinates are the ones this pass already enumerated for the
+	// branch read. Walking the owner again would be a second enumeration of
+	// one set, free to answer differently.
+	coordinates, coordinatesOK := generatedMemberSetAt(memberSets, int(branch.Branch))
+	if !coordinatesOK {
+		return pendingRuleIssuance{}, false
+	}
+	candidateOwner, candidateOwnerOK := identityOwnerForGeneratedAxis(state, descriptor.CandidateRelation().Axis)
+	branchOwner, branchOwnerOK := identityOwnerForGeneratedAxis(state, branchRead.Relation.Axis)
+	if !candidateOwnerOK || !branchOwnerOK {
+		return pendingRuleIssuance{}, false
+	}
+	application, applicationOK := projectedSemanticIdentity(candidateOwner, descriptor.CandidateRelation().Member, branch.Application.Member, denseCandidate)
+	if !applicationOK {
+		return pendingRuleIssuance{}, false
+	}
+	issuer, issuerOK := declaredGeneratedActivationIssuer(state, descriptor, semantic, family)
+	if !issuerOK {
+		return pendingRuleIssuance{}, false
+	}
+	candidates := make([]MountedActivationCandidate, 0, len(coordinates))
+	for _, coordinate := range coordinates {
+		relation := branchRead.Relation.Member
+		target, targetOK := projectedSemanticIdentity(branchOwner, relation, branch.Target.Member, coordinate)
+		endpoint, endpointOK := projectedSemanticIdentity(branchOwner, relation, branch.Endpoint.Member, coordinate)
+		module, moduleOK := projectedContentIdentity(branchOwner, relation, branch.Mount.Member, coordinate)
+		body, bodyOK := projectedContentIdentity(branchOwner, relation, branch.Body.Member, coordinate)
+		if !targetOK || !endpointOK || !moduleOK || !bodyOK || target == endpoint {
+			return pendingRuleIssuance{}, false
+		}
+		// A module the Link's directory holds no Context for is a mount the
+		// Link never made, and refuses the occurrence. A module it does hold
+		// but connects to this trigger by no edge is another actor's copy of a
+		// shared library: it is resident, contributes no candidate, and
+		// refuses nothing.
+		edges, triggerResident, bodyResident := contexts.ActivationRoutes(coords.Mount, module)
+		if !triggerResident || !bodyResident {
+			return pendingRuleIssuance{}, false
+		}
+		for _, edge := range edges {
+			candidates = append(candidates, MountedActivationCandidate{
+				Target: target, Endpoint: endpoint, Mount: module, Body: body,
+				TransitionID: edge.ID(), FromContextID: edge.FromContextID(), ToContextID: edge.ToContextID(),
+			})
+		}
+	}
+	issuance.semantic, issuance.family, issuance.anchor = semantic, family, anchor
+	// No write, and no carry: a structural row publishes no fact, so there is
+	// no coordinate for either to be taken over.
+	issuance.surfaces = declaredRuleSurfaces{reads: reads}
+	issuance.activation = true
+	issuance.application = application
+	issuance.candidates = candidates
+	issuance.issuer = issuer
+	issuance.generated = &generatedMemberDeclaration{
+		cell: declaration.generatedCell(), operand: anchor.operand, candidate: denseCandidate, source: programSource,
+		reads: reads, memberSets: memberSets,
+	}
+	return issuance, true
+}
+
+// generatedMemberSetAt answers the coordinates this pass enumerated for one
+// declared join.
+func generatedMemberSetAt(memberSets []generatedMemberSet, join int) ([]uint32, bool) {
+	for _, set := range memberSets {
+		if set.join == join {
+			return set.coordinates, true
+		}
+	}
+	return nil, false
+}
+
+// identityOwnerForGeneratedAxis resolves the owner surface that answers an
+// axis's identity columns. An axis that declares none does not implement it,
+// which is the whole reason the surface is optional.
+func identityOwnerForGeneratedAxis(state *schemaBindingState, axis uint32) (memberrelation.IdentityProjection, bool) {
+	owner, ownerOK := relationOwnerForGeneratedAxis(state, axis)
+	if !ownerOK {
+		return nil, false
+	}
+	projection, projects := owner.(memberrelation.IdentityProjection)
+	return projection, projects
+}
+
+// projectedSemanticIdentity reads one owner-issued semantic axis off a row.
+// The frame is the owner's own: a column that answers none is a content
+// identity in a position that names a semantic axis, which is a different
+// identity rather than the same one under a default frame.
+func projectedSemanticIdentity(owner memberrelation.IdentityProjection, relation, projection, candidate uint32) (identity.SemanticKey, bool) {
+	content, frame, ok := owner.ProjectIdentity(relation, projection, candidate)
+	if !ok || frame == 0 {
+		return identity.SemanticKey{}, false
+	}
+	return identity.NewSemanticKey([32]byte(content), frame)
+}
+
+// projectedContentIdentity reads one owner-issued content identity off a row.
+// A framed answer here is a semantic axis in a position that names a module or
+// a body path, and is refused rather than truncated to its digest.
+func projectedContentIdentity(owner memberrelation.IdentityProjection, relation, projection, candidate uint32) (identity.ContentID, bool) {
+	content, frame, ok := owner.ProjectIdentity(relation, projection, candidate)
+	if !ok || frame != 0 || !content.Available() {
+		return identity.ContentID{}, false
+	}
+	return content, true
+}
+
+// declaredGeneratedActivationIssuer derives one structural rule's transport
+// issuer from its own sealed descriptor.
+//
+// The hand lane is handed two AnyFactorRef lists and seals their symmetry. A
+// declared vector needs neither: TransportDecl states one axis per row, so the
+// row's existence IS the import and Exported is the return direction, and the
+// symmetry the issuer used to check is a property of the shape. Nothing here
+// can name an export whose axis was never imported, because there is no second
+// list for it to be named in.
+func declaredGeneratedActivationIssuer(state *schemaBindingState, descriptor generated.CompiledRule, semantic, family composition.Key) (*MountedActivationCandidateIssuer, bool) {
+	if state == nil || !semantic.Available() || !family.Available() || descriptor.TransportCount() == 0 {
+		return nil, false
+	}
+	imports := make([]composition.Key, 0, descriptor.TransportCount())
+	exports := make([]composition.Key, 0, descriptor.TransportCount())
+	seen := make(map[composition.Key]struct{}, descriptor.TransportCount())
+	state.mu.Lock()
+	defer state.mu.Unlock()
+	if state.phase != schemaBindingSealed || state.authority == nil {
+		return nil, false
+	}
+	for index := 0; index < descriptor.TransportCount(); index++ {
+		transport, transportOK := descriptor.TransportAt(index)
+		if !transportOK || uint64(transport.Axis) >= uint64(len(state.factors)) || state.factors[transport.Axis] == nil {
+			return nil, false
+		}
+		port := state.factors[transport.Axis].schemaFactorSemanticKey()
+		if !port.Available() {
+			return nil, false
+		}
+		if _, duplicate := seen[port]; duplicate {
+			return nil, false
+		}
+		seen[port] = struct{}{}
+		imports = append(imports, port)
+		if transport.Exported {
+			exports = append(exports, port)
+		}
+	}
+	if len(exports) == 0 {
+		return nil, false
+	}
+	return &MountedActivationCandidateIssuer{state: state, rule: semantic, family: family, imports: imports, exports: exports}, true
 }

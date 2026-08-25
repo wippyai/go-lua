@@ -6,6 +6,7 @@ import (
 
 	"github.com/wippyai/go-lua/analysis/engine/internal/composition"
 	"github.com/wippyai/go-lua/analysis/identity"
+	"github.com/wippyai/go-lua/analysis/schema/executioncontext"
 )
 
 // mountedPointLawID supplies stable, disjoint identities for the small
@@ -65,7 +66,7 @@ func TestMountedPointCapabilityRejectsWrongLaneAndForeignCapability(t *testing.T
 	if !ordinaryOK || !ordinary.Mounted() || ordinary.MountedPoint() {
 		t.Fatal("ordinary mounted capability")
 	}
-	if _, accepted := admitMountedPointRuleIssuances(nil, nil, nil, nil, MountedPointRuleAdmission{
+	if _, accepted := admitMountedPointRuleIssuances(nil, nil, nil, executioncontext.Directory{}, nil, MountedPointRuleAdmission{
 		Capability: ordinary,
 		Occurrence: mountedPointLawID(1),
 	}); accepted {

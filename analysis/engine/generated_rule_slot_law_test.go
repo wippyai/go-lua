@@ -215,7 +215,10 @@ func newGeneratedRuleLawFixture(t testing.TB, variant generatedRuleLawVariant, r
 		// carry. Its vector and the family its branches are grouped under are
 		// the one declaration the cold structural row is built from.
 		declaration.Carry = nil
-		declaration.Transport = []program.TransportDecl{{Axis: program.AxisRef(axisReference)}}
+		// The axis is carried into the mounted body and its result is carried
+		// back out to the trigger, which is what makes the edge a call rather
+		// than a one-way hand-off.
+		declaration.Transport = []program.TransportDecl{{Axis: program.AxisRef(axisReference), Exported: true}}
 		declaration.ActivationRole = generatedRuleLawActivationRole
 		branchProjection := func(key schema.Key) member.ProjectionRef {
 			return member.ProjectionRef{Axis: axisReference, Member: key}
