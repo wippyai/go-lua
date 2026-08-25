@@ -15,6 +15,7 @@ package memberroster
 
 import (
 	"github.com/wippyai/go-lua/analysis/schema/axis/member/definition"
+	callactivation "github.com/wippyai/go-lua/domain/call/activation/memberdefinition"
 	calldispatch "github.com/wippyai/go-lua/domain/call/dispatch/memberdefinition"
 	callbase "github.com/wippyai/go-lua/domain/call/memberdefinition"
 	effectcallsite "github.com/wippyai/go-lua/domain/effect/callsite/memberdefinition"
@@ -110,6 +111,7 @@ func Composition() (definition.Roster, bool) {
 			Base:    callbase.MountedCall(),
 			Contributions: []definition.Contribution{
 				calldispatch.Contribution(),
+				callactivation.Contribution(),
 			},
 		},
 		definition.Source{

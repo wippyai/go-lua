@@ -44,6 +44,8 @@ type RelationOwner struct {
 
 var _ memberrelation.Owner = (*RelationOwner)(nil)
 
+var _ memberrelation.IdentityProjection = (*RelationOwner)(nil)
+
 // NewRelationOwner binds the generated relation owner to one immutable axis schema.
 func NewRelationOwner(schema *Algebra) *RelationOwner {
 	if schema == nil {
@@ -74,12 +76,21 @@ func (owner *RelationOwner) candidate(relationOrdinal uint32, mount, occurrence 
 		if !mount.Available() {
 			return 0, false
 		}
+		candidate, candidateOK := owner.schema.ActivationBranchForOccurrence(mount, occurrence)
+		if !candidateOK {
+			return 0, false
+		}
+		return owner.schema.ActivationBranchOrdinal(candidate)
+	case 3:
+		if !mount.Available() {
+			return 0, false
+		}
 		candidate, candidateOK := owner.schema.CallCoordinateForOccurrence(mount, occurrence)
 		if !candidateOK {
 			return 0, false
 		}
 		return owner.schema.CallCoordinateOrdinal(candidate)
-	case 3:
+	case 4:
 		if !mount.Available() {
 			return 0, false
 		}
@@ -116,7 +127,23 @@ func (owner *RelationOwner) CandidateAt(relationOrdinal uint32, mount, occurrenc
 // row. It is the width of the denominator a vector read over this relation
 // spans; a relation that declares no member set holds none.
 func (owner *RelationOwner) MemberCount(relationOrdinal, parentCandidateOrdinal uint32) (int, bool) {
-	return 0, false
+	if owner == nil || owner.schema == nil {
+		return 0, false
+	}
+	switch relationOrdinal {
+	case 2:
+		parent, parentOK := owner.schema.CallCoordinateAt(int(parentCandidateOrdinal))
+		if !parentOK {
+			return 0, false
+		}
+		count := parent.ActivationBranchCount()
+		if count < 0 {
+			return 0, false
+		}
+		return count, true
+	default:
+		return 0, false
+	}
 }
 
 // MemberAt addresses one row of a nested ordered member set by its ordinal.
@@ -124,7 +151,23 @@ func (owner *RelationOwner) MemberCount(relationOrdinal, parentCandidateOrdinal 
 // relation's own directory, so a member is projected the way every other row
 // of it is and members need no projection language of their own.
 func (owner *RelationOwner) MemberAt(relationOrdinal, parentCandidateOrdinal uint32, ordinal int) (uint32, bool) {
-	return 0, false
+	if owner == nil || owner.schema == nil || ordinal < 0 {
+		return 0, false
+	}
+	switch relationOrdinal {
+	case 2:
+		parent, parentOK := owner.schema.CallCoordinateAt(int(parentCandidateOrdinal))
+		if !parentOK {
+			return 0, false
+		}
+		member, memberOK := parent.ActivationBranchAt(ordinal)
+		if !memberOK {
+			return 0, false
+		}
+		return owner.schema.ActivationBranchOrdinal(member)
+	default:
+		return 0, false
+	}
 }
 
 // KeyVectorCount is the span one row of this directory publishes: the number
@@ -182,7 +225,12 @@ func (owner *RelationOwner) Project(relationOrdinal, projectionOrdinal, candidat
 		}
 	case 2:
 		switch projectionOrdinal {
-		case 2:
+		default:
+			return 0, false
+		}
+	case 3:
+		switch projectionOrdinal {
+		case 7:
 			candidate, candidateOK := owner.schema.CallCoordinateAt(int(candidateOrdinal))
 			if !candidateOK {
 				return 0, false
@@ -196,9 +244,9 @@ func (owner *RelationOwner) Project(relationOrdinal, projectionOrdinal, candidat
 		default:
 			return 0, false
 		}
-	case 3:
+	case 4:
 		switch projectionOrdinal {
-		case 3:
+		case 8:
 			candidate, candidateOK := owner.schema.CallCoordinateAt(int(candidateOrdinal))
 			if !candidateOK {
 				return 0, false
@@ -214,5 +262,84 @@ func (owner *RelationOwner) Project(relationOrdinal, projectionOrdinal, candidat
 		}
 	default:
 		return 0, false
+	}
+}
+
+// ProjectIdentity answers one candidate row's owner-issued identity: the
+// canonical digest, and the frame it was issued under. A content identity is
+// issued under no frame and answers zero; a semantic axis answers the frame
+// its own owner minted it at, which is what reconstitutes the key.
+func (owner *RelationOwner) ProjectIdentity(relationOrdinal, projectionOrdinal, candidateOrdinal uint32) (identity.ContentID, uint64, bool) {
+	if owner == nil || owner.schema == nil {
+		return identity.ContentID{}, 0, false
+	}
+	switch relationOrdinal {
+	case 0:
+		switch projectionOrdinal {
+		case 2:
+			candidate, candidateOK := owner.schema.CallCoordinateAt(int(candidateOrdinal))
+			if !candidateOK {
+				return identity.ContentID{}, 0, false
+			}
+			first, projectionOK := candidate.ActivationApplication()
+			if !projectionOK {
+				return identity.ContentID{}, 0, false
+			}
+			projected := first
+			return identity.ContentID(projected.Digest()), projected.Version(), true
+		default:
+			return identity.ContentID{}, 0, false
+		}
+	case 2:
+		switch projectionOrdinal {
+		case 3:
+			candidate, candidateOK := owner.schema.ActivationBranchAt(int(candidateOrdinal))
+			if !candidateOK {
+				return identity.ContentID{}, 0, false
+			}
+			first, projectionOK := candidate.ActivationTarget()
+			if !projectionOK {
+				return identity.ContentID{}, 0, false
+			}
+			projected := first
+			return identity.ContentID(projected.Digest()), projected.Version(), true
+		case 4:
+			candidate, candidateOK := owner.schema.ActivationBranchAt(int(candidateOrdinal))
+			if !candidateOK {
+				return identity.ContentID{}, 0, false
+			}
+			first, projectionOK := candidate.ActivationEndpoint()
+			if !projectionOK {
+				return identity.ContentID{}, 0, false
+			}
+			projected := first
+			return identity.ContentID(projected.Digest()), projected.Version(), true
+		case 5:
+			candidate, candidateOK := owner.schema.ActivationBranchAt(int(candidateOrdinal))
+			if !candidateOK {
+				return identity.ContentID{}, 0, false
+			}
+			first, projectionOK := candidate.ModuleKey()
+			if !projectionOK {
+				return identity.ContentID{}, 0, false
+			}
+			projected := first
+			return projected, 0, true
+		case 6:
+			candidate, candidateOK := owner.schema.ActivationBranchAt(int(candidateOrdinal))
+			if !candidateOK {
+				return identity.ContentID{}, 0, false
+			}
+			first, projectionOK := candidate.BodyPath()
+			if !projectionOK {
+				return identity.ContentID{}, 0, false
+			}
+			projected := first
+			return projected, 0, true
+		default:
+			return identity.ContentID{}, 0, false
+		}
+	default:
+		return identity.ContentID{}, 0, false
 	}
 }

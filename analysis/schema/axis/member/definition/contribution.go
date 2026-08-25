@@ -127,7 +127,15 @@ func (contribution Contribution) rowsAvailable() bool {
 		}
 	}
 	for _, reducer := range contribution.Reducers {
-		if !identifierAvailable(reducer.Name) || !reducer.Key.Available() || !reducer.Implementation.Available() || len(reducer.Outputs) == 0 {
+		if !identifierAvailable(reducer.Name) || !reducer.Key.Available() || !reducer.Implementation.Available() {
+			return false
+		}
+		// A fold's declared outputs are the facts it publishes. A structural
+		// fold publishes none - its whole result is the disposition of the
+		// branch it was invoked for - and declares no output carrier. Every
+		// other fold still owes one, so the exception is the marker's and not
+		// an empty list's.
+		if (len(reducer.Outputs) == 0) != reducer.Structural {
 			return false
 		}
 	}

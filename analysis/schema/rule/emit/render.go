@@ -145,6 +145,8 @@ func renderReducer(out *strings.Builder, built *plan) error {
 		return renderSelectedExactReduce(out, built)
 	case shapeSelectedRoute:
 		return renderRouteReduce(out, built)
+	case shapeStructural:
+		return renderStructuralReduce(out, built)
 	default:
 		return unexpressible(built.target.Spec.Key, "an unclassified fold", "the declaration derives no emitted shape")
 	}
@@ -190,6 +192,12 @@ func foldCall(built *plan) (string, error) {
 		switch argument.Role {
 		case definition.ArgumentCandidate:
 			arguments = append(arguments, "fold.candidate")
+		case definition.ArgumentBranch:
+			// The branch ordinal is the invocation's own, handed over by the
+			// fold primitive. It is never a field: a reducer sealed with one
+			// would answer for the branch it was built for rather than the one
+			// it was asked about.
+			arguments = append(arguments, "branch")
 		case definition.ArgumentFact:
 			expression, present := built.deliveredFact[argument.Input]
 			if !present {
@@ -262,6 +270,30 @@ func renderCarryReduce(out *strings.Builder, built *plan) error {
 	fmt.Fprintf(out, "\t\treturn absent, %s.NoCandidate\n", structure)
 	out.WriteString("\t}\n")
 	fmt.Fprintf(out, "\treturn %s\n}\n\n", call)
+	return nil
+}
+
+// renderStructuralReduce emits the A form's Reduce: one branch ordinal in, one
+// disposition out. There is no value to return because a structural
+// publication writes no fact, which is exactly what its reducer declaring no
+// output carrier means.
+func renderStructuralReduce(out *strings.Builder, built *plan) error {
+	imports := built.imports
+	structure := imports.use(structurePackagePath)
+	call, err := foldCall(built)
+	if err != nil {
+		return err
+	}
+	if len(built.fold.results) != 1 {
+		return unexpressible(built.target.Spec.Key, "a structural fold that returns a value",
+			"a structural publication writes no fact, so its reducer concludes a disposition and nothing else")
+	}
+	fmt.Fprintf(out, "func (fold %s) Reduce(branch uint64) %s.ReductionOutcome {\n", reducerType, structure)
+	fmt.Fprintf(out, "\treturn %s\n}\n\n", call)
+	fmt.Fprintf(out, "func (fold %s) Empty() %s.ReductionOutcome {\n", reducerType, structure)
+	out.WriteString("\t// A trigger with no branch to settle instantiates nothing, which is a\n")
+	out.WriteString("\t// concluded row and not a refusal.\n")
+	fmt.Fprintf(out, "\treturn %s.NoSelection\n}\n\n", structure)
 	return nil
 }
 

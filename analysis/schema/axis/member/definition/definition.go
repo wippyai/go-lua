@@ -828,7 +828,11 @@ func (definition Definition) Catalog() (member.Catalog, bool) {
 	reducers := make([]member.Reducer, len(definition.Reducers))
 	reducerKeys := make(map[schema.Key]struct{}, len(definition.Reducers))
 	for index, reducer := range definition.Reducers {
-		if !identifierAvailable(reducer.Name) || !reducer.Key.Available() || len(reducer.Outputs) == 0 {
+		// A structural fold declares no output carrier: its whole result is the
+		// disposition of the branch it was invoked for. Every other fold owes
+		// one, so the exception is the marker's rather than an empty list's.
+		if !identifierAvailable(reducer.Name) || !reducer.Key.Available() ||
+			(len(reducer.Outputs) == 0) != reducer.Structural {
 			return member.Catalog{}, false
 		}
 		if _, duplicate := reducerKeys[reducer.Key]; duplicate {
@@ -1295,6 +1299,16 @@ const (
 	// a selection establishes the tag it correlated each cell by.
 	// ManyValuedView is the one place that choice is made.
 	ArgumentVector
+	// ArgumentBranch is the ordinal of the candidate branch one STRUCTURAL
+	// invocation is settling. It is how such a fold learns which branch it was
+	// asked about - a structural row is invoked once per branch of the set its
+	// declaration names, and that set is enumerated rather than read, so there
+	// is no cell and no tag carrier to identify a branch by.
+	//
+	// It is a derived role, not an authored one: whether a fold is structural
+	// is its publication's statement, not an owner's choice of parameter. It
+	// follows the candidate and precedes every declared input.
+	ArgumentBranch
 )
 
 // Argument is one position of a reducer's derived direct-call signature.
@@ -1377,9 +1391,25 @@ func ManyValuedView(form member.ReadForm, cell, vector GoType) (view GoType, sli
 // that order IS the denominator the read declared - so a tag naming one member
 // has nothing to name in a delivery that carries them all.
 func ComposeArguments(candidate GoType, candidatePresent bool, inputs []ArgumentInput) []Argument {
-	arguments := make([]Argument, 0, len(inputs)*3+1)
+	return composeArguments(candidate, candidatePresent, false, inputs)
+}
+
+// ComposeStructuralArguments is ComposeArguments for a fold that settles one
+// candidate branch per invocation. The branch ordinal is the one thing such a
+// call carries that an ordinary fold does not, because a structural row's
+// branch set is enumerated and its members reach the fold as an address rather
+// than as a cell.
+func ComposeStructuralArguments(candidate GoType, candidatePresent bool, inputs []ArgumentInput) []Argument {
+	return composeArguments(candidate, candidatePresent, true, inputs)
+}
+
+func composeArguments(candidate GoType, candidatePresent, structural bool, inputs []ArgumentInput) []Argument {
+	arguments := make([]Argument, 0, len(inputs)*3+2)
 	if candidatePresent {
 		arguments = append(arguments, Argument{Role: ArgumentCandidate, Type: candidate, Input: -1})
+	}
+	if structural {
+		arguments = append(arguments, Argument{Role: ArgumentBranch, Type: GoType{Name: "uint64"}, Input: -1})
 	}
 	for index, input := range inputs {
 		if input.Many {
@@ -1464,7 +1494,7 @@ func (definition Definition) ReducerSignature(reducer Reducer, outcome, cell, ve
 			inputs[index].Tag, inputs[index].Tagged = tag.Type, true
 		}
 	}
-	arguments := ComposeArguments(candidate.Type, reducer.Candidate != "", inputs)
+	arguments := composeArguments(candidate.Type, reducer.Candidate != "", reducer.Structural, inputs)
 	results := make([]GoType, 0, len(reducer.Outputs)+1)
 	for _, output := range reducer.Outputs {
 		carrier, carrierOK := carriers[output.Carrier]
