@@ -91,6 +91,50 @@ type derivationPlan struct {
 	at         definition.GoSymbol
 	staticAxes []*axisPlan
 	arguments  []derivationArg
+	// declared is the construction this emitter WRITES, present exactly when
+	// the relation states the declared operators instead of an authored
+	// quartet. The four symbols above then name generated functions of this
+	// file rather than the owner's own.
+	declared *declaredPlan
+}
+
+// declaredPlan is one derived member set's whole generated construction: what
+// it reads its items out of, the judgment that turns an item into a row, the
+// endpoint it widens at, and the axis whose numbering orders the answer.
+type declaredPlan struct {
+	position int
+	subject  definition.GoType
+	sources  []enumerationPlan
+	resolve  definition.GoSymbol
+	widen    *widenPlan
+	// key is the relation's own declared Key projection and order is the axis
+	// that numbers the coordinates it yields. Together they are the ONE
+	// admissible order of a member set: the engine canonicalizes a selection
+	// by the coordinate its cells are read at, so nothing else may decide it.
+	key definition.Projection
+	// order is the axis whose numbering fixes the member order, and
+	// sourceArgument is which of the derivation's own arguments the outer
+	// level is read out of.
+	order             *axisPlan
+	sourceArgument    int
+	candidateArgument int
+}
+
+// enumerationPlan is one level of a composed source: the axis that declares
+// it, what it is read out of, and the element it yields.
+type enumerationPlan struct {
+	axis   *axisPlan
+	over   definition.GoType
+	item   definition.GoType
+	count  definition.GoSymbol
+	at     definition.GoSymbol
+	schema bool
+}
+
+// widenPlan is the lattice endpoint a derived set stops being enumerable at.
+type widenPlan struct {
+	predicate definition.GoSymbol
+	sources   []enumerationPlan
 }
 
 // vectorSpanPlan is the delivery of one Summary read over a self-provided
@@ -451,8 +495,8 @@ func deriveJoins(built *plan, resolver *axisResolver, declaration program.Progra
 			}
 			row.predicate, row.hasPredicate = predicate, true
 		}
-		if relation.Derivation.State.Available() {
-			derivation, err := deriveRelation(built, resolver, join, relation, position)
+		if relation.Derivation.AuthoredDerivation() || relation.Derivation.DeclaredDerivation() {
+			derivation, err := deriveRelation(built, resolver, join, relation, relationAxis, key, position)
 			if err != nil {
 				return err
 			}
@@ -554,13 +598,19 @@ func (axis *axisPlan) foreignTo(write *axisPlan) bool {
 	return axis != nil && write != nil && axis.key != write.key
 }
 
-func deriveRelation(built *plan, resolver *axisResolver, join program.JoinDecl, relation definition.Relation, position int) (*derivationPlan, error) {
+func deriveRelation(built *plan, resolver *axisResolver, join program.JoinDecl, relation definition.Relation, relationAxis *axisPlan, key definition.Projection, position int) (*derivationPlan, error) {
 	ruleKey := built.target.Spec.Key
 	derivation := &derivationPlan{
 		state: relation.Derivation.State,
 		build: relation.Derivation.Build,
 		count: relation.Derivation.Count,
 		at:    relation.Derivation.At,
+	}
+	if relation.Derivation.DeclaredDerivation() {
+		derivation.state = definition.GoType{Name: derivedStateName(position)}
+		derivation.build = definition.GoSymbol{Name: derivedBuildName(position), ResultIndex: 0}
+		derivation.count = definition.GoSymbol{Name: derivedCountName(position), ResultIndex: 0}
+		derivation.at = definition.GoSymbol{Name: derivedAtName(position), ResultIndex: 0}
 	}
 	for _, static := range relation.Derivation.StaticAxes {
 		axis, err := resolver.axis(static.Key)
@@ -591,7 +641,148 @@ func deriveRelation(built *plan, resolver *axisResolver, join program.JoinDecl, 
 		}
 		derivation.arguments = append(derivation.arguments, argument)
 	}
+	if relation.Derivation.DeclaredDerivation() {
+		declared, err := deriveDeclared(built, resolver, relation, relationAxis, key, position)
+		if err != nil {
+			return nil, err
+		}
+		derivation.declared = declared
+	}
 	return derivation, nil
+}
+
+func derivedStateName(position int) string { return fmt.Sprintf("derived%dRows", position) }
+func derivedBuildName(position int) string { return fmt.Sprintf("deriveDerived%dRows", position) }
+func derivedCountName(position int) string { return fmt.Sprintf("derived%dCount", position) }
+func derivedAtName(position int) string    { return fmt.Sprintf("derived%dAt", position) }
+func derivedOrderName(position int) string { return fmt.Sprintf("orderDerived%dRows", position) }
+
+// deriveDeclared resolves the declared operators into the construction this
+// emitter writes. Every refusal names the clause that leaves the generated
+// construction unable to answer something it must answer.
+func deriveDeclared(built *plan, resolver *axisResolver, relation definition.Relation, relationAxis *axisPlan, key definition.Projection, position int) (*declaredPlan, error) {
+	ruleKey := built.target.Spec.Key
+	declaration := relation.Derivation
+	subject, subjectOK := carrierType(relationAxis.source, relation.Subject)
+	if !subjectOK {
+		return nil, unexpressible(ruleKey, "a derived member set whose subject carrier is undeclared", relation.Subject)
+	}
+	// The coordinates are numbered by ONE axis and the generated construction
+	// is a free function, so that axis's schema reaches it only as a static
+	// axis the derivation declared. Without it there is no normalizer, and the
+	// only order left would be the order items happened to come out in.
+	ordering := false
+	for _, static := range declaration.StaticAxes {
+		if static.Key == relationAxis.key {
+			ordering = true
+		}
+	}
+	if !ordering {
+		return nil, unexpressible(ruleKey, "a derived member set whose ordering axis it does not name",
+			fmt.Sprintf("relation %q is ordered by axis %q, which its declared static axes do not include", relation.Name, string(relationAxis.key)))
+	}
+	sources, err := deriveEnumerations(built, resolver, relation, declaration.Source, position)
+	if err != nil {
+		return nil, err
+	}
+	// The outer level is read out of one of the relation's own inputs. One
+	// reading anything else would be handed a value the invocation never gives
+	// it.
+	given := false
+	for _, input := range relation.Inputs {
+		carrier, carrierOK := carrierType(relationAxis.source, input.Carrier)
+		if carrierOK && sameGoType(carrier, sources[0].over) {
+			given = true
+		}
+	}
+	if !given {
+		return nil, unexpressible(ruleKey, "a derived member set read out of a value its relation is not given",
+			fmt.Sprintf("relation %q reads its outer source out of %s, which is none of its declared inputs", relation.Name, sources[0].over.Name))
+	}
+	declared := &declaredPlan{
+		position: position, subject: subject, sources: sources,
+		resolve: declaration.Resolve, order: relationAxis, key: key,
+		sourceArgument: -1, candidateArgument: -1,
+	}
+	for index, input := range relation.Inputs {
+		carrier, carrierOK := carrierType(relationAxis.source, input.Carrier)
+		if carrierOK && sameGoType(carrier, sources[0].over) && declared.sourceArgument < 0 {
+			declared.sourceArgument = index
+		}
+		if sameGoType(carrier, built.candidate.subject) && declared.candidateArgument < 0 {
+			declared.candidateArgument = index
+		}
+	}
+	if declared.sourceArgument < 0 || declared.candidateArgument < 0 {
+		return nil, unexpressible(ruleKey, "a derived member set that cannot name its own source or candidate argument",
+			fmt.Sprintf("relation %q declares inputs that match neither the outer source nor the candidate carrier", relation.Name))
+	}
+	if declaration.Widen.Declared() {
+		widened, err := deriveEnumerations(built, resolver, relation, declaration.Widen.Source, position)
+		if err != nil {
+			return nil, err
+		}
+		if !widened[0].schema {
+			return nil, unexpressible(ruleKey, "a derived member set widening to something that is not its owner's directory",
+				fmt.Sprintf("relation %q widens to an enumeration read out of a value, and a fact that reached a lattice endpoint named no value to read", relation.Name))
+		}
+		declared.widen = &widenPlan{predicate: declaration.Widen.Predicate, sources: widened}
+	}
+	return declared, nil
+}
+
+// deriveEnumerations resolves one composed source list, holding each level to
+// reading what the level before it yielded.
+func deriveEnumerations(built *plan, resolver *axisResolver, relation definition.Relation, sources []definition.EnumerationRef, position int) ([]enumerationPlan, error) {
+	ruleKey := built.target.Spec.Key
+	if len(sources) == 0 {
+		return nil, unexpressible(ruleKey, "a derived member set with nothing to read its items out of",
+			fmt.Sprintf("relation %q names no source enumeration", relation.Name))
+	}
+	plans := make([]enumerationPlan, 0, len(sources))
+	var item definition.GoType
+	for _, source := range sources {
+		axis, err := resolver.axis(source.Axis.Key)
+		if err != nil {
+			return nil, err
+		}
+		enumeration, enumerationOK := findEnumeration(axis.source, source.Name)
+		if !enumerationOK {
+			return nil, unexpressible(ruleKey, "a source enumeration its axis does not declare",
+				fmt.Sprintf("axis %q declares no enumeration %q", string(axis.key), source.Name))
+		}
+		element, elementOK := carrierType(axis.source, enumeration.Item)
+		if !elementOK {
+			return nil, unexpressible(ruleKey, "a source enumeration whose element carrier is undeclared", enumeration.Item)
+		}
+		over := axis.schemaType
+		if !enumeration.OverSchema() {
+			carrier, carrierOK := carrierType(axis.source, enumeration.Over)
+			if !carrierOK {
+				return nil, unexpressible(ruleKey, "a source enumeration whose subject carrier is undeclared", enumeration.Over)
+			}
+			over = carrier
+		}
+		if item.Available() && !sameGoType(item, over) {
+			return nil, unexpressible(ruleKey, "a composed source that does not read what the one before it yielded",
+				fmt.Sprintf("enumeration %q reads %s, the level before it yields %s", enumeration.Name, over.Name, item.Name))
+		}
+		plans = append(plans, enumerationPlan{
+			axis: axis, over: over, item: element,
+			count: enumeration.Count, at: enumeration.At, schema: enumeration.OverSchema(),
+		})
+		item = element
+	}
+	return plans, nil
+}
+
+func findEnumeration(source definition.Definition, name string) (definition.Enumeration, bool) {
+	for _, enumeration := range source.Enumerations {
+		if enumeration.Name == name {
+			return enumeration, true
+		}
+	}
+	return definition.Enumeration{}, false
 }
 
 func deriveShape(built *plan, resolver *axisResolver, declaration program.Program, output program.OutputDecl) error {

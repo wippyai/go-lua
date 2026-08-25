@@ -41,6 +41,11 @@ func render(built *plan) ([]byte, error) {
 	if err := renderWorker(&body, built); err != nil {
 		return nil, err
 	}
+	for _, join := range declaredDerivations(built) {
+		if err := renderDeclaredDerivation(&body, built, join); err != nil {
+			return nil, err
+		}
+	}
 	if err := renderInstaller(&body, built); err != nil {
 		return nil, err
 	}
@@ -1178,3 +1183,202 @@ func renderSelectedExactExecute(out *strings.Builder, built *plan) error {
 	renderExecuteEpilogue(out, built)
 	return nil
 }
+
+// declaredDerivations answers the derived joins whose construction this file
+// writes, in declaration order.
+func declaredDerivations(built *plan) []*joinPlan {
+	joins := make([]*joinPlan, 0, len(built.joins))
+	for _, join := range built.joins {
+		if join.derivation != nil && join.derivation.declared != nil {
+			joins = append(joins, join)
+		}
+	}
+	return joins
+}
+
+// renderDeclaredDerivation writes one derived member set's whole construction:
+// the sealed rows, the ordering its relation declares, and the Build that
+// enumerates, resolves and orders them.
+//
+// What is generated here is exactly what every authored Build wrote by hand -
+// enumerate, resolve, union, widen at the endpoint, order, refuse a repeat -
+// and the reason to generate it is that four of those five are the same in
+// every one of them, and a mistake in any is a soundness mistake rather than a
+// compile error.
+func renderDeclaredDerivation(out *strings.Builder, built *plan, join *joinPlan) error {
+	imports := built.imports
+	declared := join.derivation.declared
+	state := declared.state()
+	subject := imports.typeName(declared.subject)
+	orderAxis := declared.order.param
+
+	fmt.Fprintf(out, "// %s is the member set one invocation of join %d's declared relation\n", state, declared.position)
+	out.WriteString("// answers. It is sealed by the Build below and read by nothing else.\n")
+	fmt.Fprintf(out, "type %s struct {\n\trows []%s\n}\n\n", state, subject)
+
+	fmt.Fprintf(out, "func %s(state %s) int { return len(state.rows) }\n\n", derivedCountName(declared.position), state)
+
+	fmt.Fprintf(out, "func %s(state %s, index int) (%s, bool) {\n", derivedAtName(declared.position), state, subject)
+	fmt.Fprintf(out, "\tif index < 0 || index >= len(state.rows) {\n\t\tvar absent %s\n\t\treturn absent, false\n\t}\n", subject)
+	out.WriteString("\treturn state.rows[index], true\n}\n\n")
+
+	if err := renderDerivedOrder(out, built, declared, orderAxis); err != nil {
+		return err
+	}
+	return renderDerivedBuild(out, built, join, orderAxis)
+}
+
+// renderDerivedOrder writes the one admissible order of a member set.
+//
+// The engine canonicalizes a selection by the coordinate its cells are read
+// at, so ascending by the relation's own declared Key projection - normalized
+// through the axis that numbers those coordinates - is not a choice. Every row
+// is normalized once before the sort so a comparison can never be asked about
+// a coordinate its owner refuses, and the pass afterwards refuses a repeat: a
+// selection carries one cell per member, and two rows on one coordinate have
+// no second ordinal between them.
+func renderDerivedOrder(out *strings.Builder, built *plan, declared *declaredPlan, orderAxis string) error {
+	imports := built.imports
+	slicesPackage := imports.use("slices")
+	state := declared.state()
+	subject := imports.typeName(declared.subject)
+	schemaType := imports.typeName(declared.order.schemaType)
+	keyOf := func(receiver string) string { return imports.call(declared.key.Accessor, receiver) }
+	denseOf := func(key string) string { return imports.call(declared.order.normalizer, orderAxis, key) }
+
+	fmt.Fprintf(out, "// %s fixes the canonical member order of one derived set.\n", derivedOrderName(declared.position))
+	out.WriteString("// It is ascending by the relation's own declared key, normalized through the\n")
+	out.WriteString("// axis that numbers those coordinates, because that is the order the engine\n")
+	out.WriteString("// canonicalizes a selection by. Two rows on one coordinate address one member\n")
+	out.WriteString("// twice and are refused rather than observed twice.\n")
+	fmt.Fprintf(out, "func %s(%s %s, built %s) (%s, bool) {\n", derivedOrderName(declared.position), orderAxis, schemaType, state, state)
+	out.WriteString("\tfor _, row := range built.rows {\n")
+	fmt.Fprintf(out, "\t\tkey, keyOK := %s\n", keyOf("row"))
+	fmt.Fprintf(out, "\t\tif !keyOK {\n\t\t\treturn %s{}, false\n\t\t}\n", state)
+	fmt.Fprintf(out, "\t\tif _, denseOK := %s; !denseOK {\n\t\t\treturn %s{}, false\n\t\t}\n", denseOf("key"), state)
+	out.WriteString("\t}\n")
+	fmt.Fprintf(out, "\t%s.SortFunc(built.rows, func(left, right %s) int {\n", slicesPackage, subject)
+	fmt.Fprintf(out, "\t\tleftKey, _ := %s\n\t\trightKey, _ := %s\n", keyOf("left"), keyOf("right"))
+	fmt.Fprintf(out, "\t\tleftDense, _ := %s\n\t\trightDense, _ := %s\n", denseOf("leftKey"), denseOf("rightKey"))
+	out.WriteString("\t\tswitch {\n\t\tcase leftDense < rightDense:\n\t\t\treturn -1\n\t\tcase leftDense > rightDense:\n\t\t\treturn 1\n\t\tdefault:\n\t\t\treturn 0\n\t\t}\n\t})\n")
+	out.WriteString("\tfor index := 1; index < len(built.rows); index++ {\n")
+	fmt.Fprintf(out, "\t\tpreviousKey, _ := %s\n", keyOf("built.rows[index-1]"))
+	fmt.Fprintf(out, "\t\tcurrentKey, _ := %s\n", keyOf("built.rows[index]"))
+	fmt.Fprintf(out, "\t\tpreviousDense, _ := %s\n", denseOf("previousKey"))
+	fmt.Fprintf(out, "\t\tcurrentDense, _ := %s\n", denseOf("currentKey"))
+	fmt.Fprintf(out, "\t\tif currentDense <= previousDense {\n\t\t\treturn %s{}, false\n\t\t}\n", state)
+	out.WriteString("\t}\n\treturn built, true\n}\n\n")
+	return nil
+}
+
+// renderDerivedBuild writes the construction itself: the endpoint test, the
+// composed enumeration on either side of it, the one authored judgment per
+// item, and the order both answers leave through.
+func renderDerivedBuild(out *strings.Builder, built *plan, join *joinPlan, orderAxis string) error {
+	imports := built.imports
+	derivation := join.derivation
+	declared := derivation.declared
+	state := declared.state()
+
+	parameters := make([]string, 0, len(derivation.staticAxes)+len(derivation.arguments))
+	statics := make([]string, 0, len(derivation.staticAxes))
+	for _, axis := range derivation.staticAxes {
+		name := axis.param
+		parameters = append(parameters, name+" "+imports.typeName(axis.schemaType))
+		statics = append(statics, name)
+	}
+	arguments := make([]string, 0, len(derivation.arguments))
+	for index, argument := range derivation.arguments {
+		name := fmt.Sprintf("given%d", index)
+		typeName, err := derivationArgumentType(built, argument)
+		if err != nil {
+			return err
+		}
+		parameters = append(parameters, name+" "+typeName)
+		arguments = append(arguments, name)
+	}
+
+	fmt.Fprintf(out, "// %s answers join %d's member set for one invocation.\n", derivedBuildName(declared.position), declared.position)
+	out.WriteString("// A source that reached its lattice endpoint named no alternatives at all, so\n")
+	out.WriteString("// the answer there is the owner's whole directory rather than the ones that\n")
+	out.WriteString("// happen to be written down. Both answers leave through the same order.\n")
+	fmt.Fprintf(out, "func %s(%s) (%s, bool) {\n", derivedBuildName(declared.position), strings.Join(parameters, ", "), state)
+	fmt.Fprintf(out, "\tvar built %s\n", state)
+
+	resolve := func(indent, item string) {
+		call := imports.call(declared.resolve, "", append(append([]string{}, statics...), arguments[declared.candidateArgument], item)...)
+		fmt.Fprintf(out, "%srow, present, resolved := %s\n", indent, call)
+		fmt.Fprintf(out, "%sif !resolved {\n%s\treturn %s{}, false\n%s}\n", indent, indent, state, indent)
+		fmt.Fprintf(out, "%sif present {\n%s\tbuilt.rows = append(built.rows, row)\n%s}\n", indent, indent, indent)
+	}
+	walk := func(sources []enumerationPlan, root string) {
+		over := root
+		indent := "\t"
+		for level, source := range sources {
+			fmt.Fprintf(out, "%scount%d := %s\n", indent, level, imports.call(source.count, "", over))
+			fmt.Fprintf(out, "%sfor cursor%d := 0; cursor%d < count%d; cursor%d++ {\n", indent, level, level, level, level)
+			indent += "\t"
+			fmt.Fprintf(out, "%sitem%d, item%dOK := %s\n", indent, level, level, imports.call(source.at, "", over, fmt.Sprintf("cursor%d", level)))
+			fmt.Fprintf(out, "%sif !item%dOK {\n%s\treturn %s{}, false\n%s}\n", indent, level, indent, state, indent)
+			over = fmt.Sprintf("item%d", level)
+		}
+		resolve(indent, over)
+		for level := len(sources) - 1; level >= 0; level-- {
+			indent = indent[:len(indent)-1]
+			fmt.Fprintf(out, "%s}\n", indent)
+		}
+	}
+
+	if declared.widen != nil {
+		fmt.Fprintf(out, "\tif %s {\n", imports.call(declared.widen.predicate, "", arguments[declared.sourceArgument]))
+		// The widened answer is read out of the owner's own schema, so its
+		// outer level starts from that axis rather than from the value.
+		walkWiden(out, built, declared, statics, arguments, state)
+		fmt.Fprintf(out, "\t\treturn %s(%s, built)\n\t}\n", derivedOrderName(declared.position), orderAxis)
+	}
+	walk(declared.sources, arguments[declared.sourceArgument])
+	fmt.Fprintf(out, "\treturn %s(%s, built)\n}\n\n", derivedOrderName(declared.position), orderAxis)
+	return nil
+}
+
+// walkWiden writes the widened answer's enumeration. It starts from the axis
+// schema the outer level names, because a fact at a lattice endpoint has no
+// value left to be read out of.
+func walkWiden(out *strings.Builder, built *plan, declared *declaredPlan, statics, arguments []string, state string) {
+	imports := built.imports
+	sources := declared.widen.sources
+	over := sources[0].axis.param
+	indent := "\t\t"
+	for level, source := range sources {
+		fmt.Fprintf(out, "%swidenCount%d := %s\n", indent, level, imports.call(source.count, "", over))
+		fmt.Fprintf(out, "%sfor widenCursor%d := 0; widenCursor%d < widenCount%d; widenCursor%d++ {\n", indent, level, level, level, level)
+		indent += "\t"
+		fmt.Fprintf(out, "%swidenItem%d, widenItem%dOK := %s\n", indent, level, level, imports.call(source.at, "", over, fmt.Sprintf("widenCursor%d", level)))
+		fmt.Fprintf(out, "%sif !widenItem%dOK {\n%s\treturn %s{}, false\n%s}\n", indent, level, indent, state, indent)
+		over = fmt.Sprintf("widenItem%d", level)
+	}
+	call := imports.call(declared.resolve, "", append(append([]string{}, statics...), arguments[declared.candidateArgument], over)...)
+	fmt.Fprintf(out, "%swidenRow, widenPresent, widenResolved := %s\n", indent, call)
+	fmt.Fprintf(out, "%sif !widenResolved {\n%s\treturn %s{}, false\n%s}\n", indent, indent, state, indent)
+	fmt.Fprintf(out, "%sif widenPresent {\n%s\tbuilt.rows = append(built.rows, widenRow)\n%s}\n", indent, indent, indent)
+	for level := len(sources) - 1; level >= 0; level-- {
+		indent = indent[:len(indent)-1]
+		fmt.Fprintf(out, "%s}\n", indent)
+	}
+}
+
+// derivationArgumentType spells the Go type one derivation argument arrives as.
+func derivationArgumentType(built *plan, argument derivationArg) (string, error) {
+	imports := built.imports
+	if argument.candidate {
+		return imports.typeName(built.candidate.subject), nil
+	}
+	if argument.many {
+		return "", unexpressible(built.target.Spec.Key, "a generated derivation over a many-valued delivery",
+			"a declared derivation reads its items out of a value, and a whole delivery has no generated enumeration yet")
+	}
+	return imports.typeName(argument.join.axis.fact), nil
+}
+
+// state is the generated name of one derived member set's sealed rows.
+func (declared *declaredPlan) state() string { return derivedStateName(declared.position) }

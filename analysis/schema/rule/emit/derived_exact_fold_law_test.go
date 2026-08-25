@@ -80,6 +80,22 @@ func siteBase() definition.Definition {
 			{Name: "SiteMountedCarrier", Key: "carrier/site/mounted", Type: siteType("Mounted")},
 			{Name: "WireFactCarrier", Key: "carrier/wire/fact", Type: wireType("Value")},
 			{Name: "WireSubjectCarrier", Key: "carrier/wire/coordinate", Type: wireType("Coordinate")},
+			{Name: "SiteRouteCarrier", Key: "carrier/site/route", Type: siteType("Route")},
+			{Name: "SiteTagCarrier", Key: "carrier/site/route-tag", Type: definition.GoType{Name: "uint64"}},
+		},
+		Enumerations: []definition.Enumeration{
+			{
+				Name: "Alternatives", Over: "WireFactCarrier", Item: "WireSubjectCarrier",
+				Count: definition.GoSymbol{PackagePath: sitePackage, Name: "AlternativeCount", ResultIndex: 0},
+				At:    definition.GoSymbol{PackagePath: sitePackage, Name: "AlternativeAt", ResultIndex: 0},
+			},
+			{
+				// Over is empty: the owner's whole directory, which is what a
+				// widened answer is read out of.
+				Name: "Directory", Item: "WireSubjectCarrier",
+				Count: definition.GoSymbol{PackagePath: sitePackage, Name: "DirectoryCount", ResultIndex: 0},
+				At:    definition.GoSymbol{PackagePath: sitePackage, Name: "DirectoryAt", ResultIndex: 0},
+			},
 		},
 		Relations: []definition.Relation{
 			{
@@ -93,6 +109,15 @@ func siteBase() definition.Definition {
 				Name: "WireBirths", Key: "site/wire-births", Subject: "WireSubjectCarrier",
 				CandidateProvider: wireProvider(),
 			},
+			{
+				Name: "BodyRoutes", Key: "site/body-routes", Subject: "SiteRouteCarrier",
+				Inputs: []definition.RelationInput{
+					{Carrier: "SiteMountedCarrier"},
+					{Carrier: "WireFactCarrier"},
+				},
+				CandidateProvider: siteProvider(),
+				Derivation:        declaredSiteDerivation(),
+			},
 		},
 		Projections: []definition.Projection{
 			{
@@ -104,6 +129,16 @@ func siteBase() definition.Definition {
 				Name: "WireBirthDestination", Key: "site/wire-birth-destination", Relation: "WireBirths",
 				CandidateProvider: wireProvider(), Role: member.Destination, Result: "SiteKeyCarrier",
 				Accessor: wireMethod("Root", "Coordinate", false, -1),
+			},
+			{
+				Name: "BodyRouteKey", Key: "site/body-route-key", Relation: "BodyRoutes",
+				CandidateProvider: siteProvider(), Role: member.Key, Result: "SiteKeyCarrier",
+				Accessor: siteMethod("Coordinate", "Route", false, -1),
+			},
+			{
+				Name: "BodyRouteTag", Key: "site/body-route-tag", Relation: "BodyRoutes",
+				CandidateProvider: siteProvider(), Role: member.Predicate, Result: "SiteTagCarrier",
+				Accessor: siteMethod("Predicate", "Route", false, -1),
 			},
 		},
 	}
@@ -195,10 +230,29 @@ func consumerContribution() definition.Contribution {
 	}
 }
 
+// selectionContribution is the fold of a conclusion over a derived selection:
+// one many-valued selected input, handed the cells the member set observed.
+func selectionContribution() definition.Contribution {
+	return definition.Contribution{
+		Axis: "site",
+		Rule: "site-selection",
+		Reducers: []definition.Reducer{{
+			Name: "SelectionReducer", Key: "site/reducer/selection", Candidate: "SiteMountedCarrier",
+			Inputs: []definition.ReducerInput{{
+				Axis: siteAxis(), Carrier: "SiteFactCarrier",
+				Form: member.ReadFormSelected, Multiplicity: member.MultiplicityMany,
+				Tag: "SiteTagCarrier",
+			}},
+			Outputs:        []definition.ReducerOutput{{Axis: siteAxis(), Carrier: "SiteFactCarrier"}},
+			Implementation: definition.GoSymbol{PackagePath: sitePackage, Name: "SelectionFold", ResultIndex: 0},
+		}},
+	}
+}
+
 func derivedRoster(t testing.TB) definition.Roster {
 	t.Helper()
 	roster, rosterOK := definition.NewRoster(
-		definition.Source{Package: "site", Name: "site", Base: siteBase(), Contributions: []definition.Contribution{siteContribution(), consumerContribution()}},
+		definition.Source{Package: "site", Name: "site", Base: siteBase(), Contributions: []definition.Contribution{siteContribution(), consumerContribution(), selectionContribution()}},
 		definition.Source{Package: "wire", Name: "wire", Base: wireBase()},
 	)
 	if !rosterOK {
@@ -529,4 +583,180 @@ func TestAnExactConclusionOverASelectionIsRefusedWhenItsMembersAreNotDerived(t *
 			}
 		})
 	}
+}
+
+// declaredSiteDerivation is the site specimen's member set stated in the
+// DECLARED form: what it reads its items out of, the one judgment that turns
+// an item into a row, and the endpoint past which the answer is the owner's
+// whole directory.
+func declaredSiteDerivation() definition.RelationDerivation {
+	return definition.RelationDerivation{
+		StaticAxes: []schema.EntryReference{siteAxis(), wireAxis()},
+		Source:     []definition.EnumerationRef{{Axis: siteAxis(), Name: "Alternatives"}},
+		Resolve:    definition.GoSymbol{PackagePath: sitePackage, Name: "ResolveRoute", ResultIndex: 0},
+		Widen: definition.DerivationWiden{
+			Predicate: definition.GoSymbol{PackagePath: sitePackage, Name: "IsTop", ResultIndex: 0},
+			Source:    []definition.EnumerationRef{{Axis: siteAxis(), Name: "Directory"}},
+		},
+	}
+}
+
+// derivedSelectionSpec is the conclusion-over-a-selection declaration whose
+// member set is DERIVED by the declared operators rather than by an authored
+// Build. It is the emitter's whole consumer for the vocabulary.
+func derivedSelectionSpec() rule.Spec {
+	spec := selectionSpec()
+	spec.Program.Joins[1].Relation = member.RelationRef{Axis: siteAxis(), Member: "site/body-routes"}
+	spec.Program.Joins[1].Key = member.ProjectionRef{Axis: siteAxis(), Member: "site/body-route-key"}
+	spec.Program.Joins[1].Predicate = member.ProjectionRef{Axis: siteAxis(), Member: "site/body-route-tag"}
+	spec.Program.Joins[1].Sources = []program.SourceRef{program.CandidateSource(), program.PriorSource(0)}
+	spec.Program.Fold.Reducer = member.ReducerRef{Axis: siteAxis(), Member: "site/reducer/selection"}
+	return spec
+}
+
+func renderDerivedSelection(t testing.TB, spec rule.Spec) (string, error) {
+	t.Helper()
+	target := derivedTarget()
+	target.Spec = spec
+	source, err := Render(target, derivedRoster(t))
+	return string(source), err
+}
+
+// TestAGeneratedMemberSetIsOrderedByTheKeyItsRelationDeclares is the order law,
+// and the one the whole arm exists to make unbreakable.
+//
+// The engine canonicalizes a selection by the coordinate its cells are read
+// at, so a member set has exactly one admissible order: ascending by the
+// relation's OWN declared Key projection, normalized through the axis that
+// numbers those coordinates. Every authored Build wrote that by hand. The
+// generated one must write the same thing, and it must write it on BOTH paths
+// - the ordinary answer and the widened one - because a widened set that came
+// back in directory order would be just as wrong.
+func TestAGeneratedMemberSetIsOrderedByTheKeyItsRelationDeclares(t *testing.T) {
+	source, err := renderDerivedSelection(t, derivedSelectionSpec())
+	if err != nil {
+		t.Fatalf("a declared derivation did not emit: %v", err)
+	}
+	order, found := functionBody(source, "orderDerived1Rows")
+	if !found {
+		t.Fatalf("the emitted construction has no ordering step:\n%s", source)
+	}
+	// The declared Key projection, and nothing else, decides the order.
+	if !strings.Contains(order, ".Coordinate()") {
+		t.Fatalf("the ordering step does not read the relation's declared Key projection:\n%s", order)
+	}
+	// Normalized through the axis that numbers the coordinates, so the order is
+	// the engine's own rather than whatever the carrier compares as.
+	if !strings.Contains(order, ".KeyIndex(") {
+		t.Fatalf("the ordering step does not normalize the key through its axis:\n%s", order)
+	}
+	if !strings.Contains(order, "SortFunc") {
+		t.Fatalf("the ordering step does not sort:\n%s", order)
+	}
+	build, buildFound := functionBody(source, "deriveDerived1Rows")
+	if !buildFound {
+		t.Fatalf("the emitted construction has no Build:\n%s", source)
+	}
+	if occurrences := strings.Count(build, "orderDerived1Rows("); occurrences != 2 {
+		t.Fatalf("the Build orders its answer %d times; both the ordinary and the widened path are ordered:\n%s", occurrences, build)
+	}
+}
+
+// TestAGeneratedMemberSetRefusesTwoRowsOnOneCoordinate is the other half of
+// the order. A selection carries one cell per member, so two rows resolving to
+// one coordinate have no second ordinal between them and the set is refused
+// rather than observed twice.
+func TestAGeneratedMemberSetRefusesTwoRowsOnOneCoordinate(t *testing.T) {
+	source, err := renderDerivedSelection(t, derivedSelectionSpec())
+	if err != nil {
+		t.Fatalf("a declared derivation did not emit: %v", err)
+	}
+	order, _ := functionBody(source, "orderDerived1Rows")
+	if !strings.Contains(order, "index-1") && !strings.Contains(order, "index -1") {
+		t.Fatalf("the ordering step never compares a row with the one before it, so a repeat is admitted:\n%s", order)
+	}
+}
+
+// TestADeclaredDerivationIsRefusedWhenItCannotOrderItsOwnRows is the refusal
+// the order law rests on.
+//
+// The coordinates are numbered by one axis, and the generated Build is a free
+// function - so that axis's schema reaches it only as a static axis it
+// declared. A derivation that does not name it cannot normalize a key, and the
+// only orders left would be the order items happened to come out in. That is
+// refused by name here rather than emitted as a silent declaration order.
+func TestADeclaredDerivationIsRefusedWhenItCannotOrderItsOwnRows(t *testing.T) {
+	spec := derivedSelectionSpec()
+	roster := derivedRosterWithDerivation(t, func(derivation *definition.RelationDerivation) {
+		derivation.StaticAxes = []schema.EntryReference{wireAxis()}
+	})
+	target := derivedTarget()
+	target.Spec = spec
+	source, err := Render(target, roster)
+	if err == nil {
+		t.Fatalf("a derivation that cannot normalize its own key emitted a family:\n%s", source)
+	}
+	refusal, named := err.(Unexpressible)
+	if !named || !strings.Contains(refusal.Clause, "a derived member set whose ordering axis it does not name") {
+		t.Fatalf("refusal is %v, want it to name the missing ordering axis", err)
+	}
+}
+
+// TestADeclaredDerivationReadsSomethingItWasGiven fences the source chain at
+// its outer end. The first enumeration is read out of one of the relation's
+// own declared inputs; one reading anything else would be handed a value the
+// invocation never gives it.
+func TestADeclaredDerivationReadsSomethingItWasGiven(t *testing.T) {
+	roster := derivedRosterWithDerivation(t, func(derivation *definition.RelationDerivation) {
+		derivation.Source = []definition.EnumerationRef{{Axis: siteAxis(), Name: "Directory"}}
+	})
+	target := derivedTarget()
+	target.Spec = derivedSelectionSpec()
+	source, err := Render(target, roster)
+	if err == nil {
+		t.Fatalf("a derivation reading something it was never given emitted a family:\n%s", source)
+	}
+	refusal, named := err.(Unexpressible)
+	if !named || !strings.Contains(refusal.Clause, "a derived member set read out of a value its relation is not given") {
+		t.Fatalf("refusal is %v, want it to name the unreachable source", err)
+	}
+}
+
+// functionBody answers the body of the named top-level function in source.
+func functionBody(source, name string) (string, bool) {
+	marker := "\nfunc " + name + "("
+	start := strings.Index(source, marker)
+	if start < 0 {
+		return "", false
+	}
+	rest := source[start:]
+	end := strings.Index(rest, "\n}\n")
+	if end < 0 {
+		return "", false
+	}
+	return rest[:end], true
+}
+
+// derivedRosterWithDerivation admits the site specimen with its declared
+// derivation amended, so a law can state what an ill-formed one is refused for
+// without restating the whole axis around it.
+func derivedRosterWithDerivation(t testing.TB, amend func(*definition.RelationDerivation)) definition.Roster {
+	t.Helper()
+	base := siteBase()
+	for index := range base.Relations {
+		if base.Relations[index].Name != "BodyRoutes" {
+			continue
+		}
+		derivation := declaredSiteDerivation()
+		amend(&derivation)
+		base.Relations[index].Derivation = derivation
+	}
+	roster, rosterOK := definition.NewRoster(
+		definition.Source{Package: "site", Name: "site", Base: base, Contributions: []definition.Contribution{siteContribution(), consumerContribution(), selectionContribution()}},
+		definition.Source{Package: "wire", Name: "wire", Base: wireBase()},
+	)
+	if !rosterOK {
+		t.Fatal("the amended site roster is not admissible")
+	}
+	return roster
 }
