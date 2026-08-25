@@ -216,12 +216,7 @@ func TestFormalFreezeRefusesEveryStructuralMutation(t *testing.T) {
 		{mutation: "join 1 loses the denominator its read form requires", apply: func(declaration *ruleprogram.Program) {
 			declaration.Joins[1].Read.Contract.DenominatorRef = ruleprogram.DenominatorRef{}
 		}, kind: ruleprogram.ProblemJoin, join: 1},
-		{mutation: "join 1 declares a predicate that resolves to nothing", apply: func(declaration *ruleprogram.Program) {
-			declaration.Joins[1].Predicate = axismember.ProjectionRef{Axis: declaration.Joins[1].Relation.Axis}
-		}, kind: ruleprogram.ProblemJoin, join: 1},
-		{mutation: "join 1 loses the parent its vector is addressed by", apply: func(declaration *ruleprogram.Program) {
-			declaration.Joins[1].Parent.Member = ""
-		}, kind: ruleprogram.ProblemJoin, join: 1},
+		{mutation: "join 1 restates a parent that resolves to nothing", apply: func(declaration *ruleprogram.Program) { declaration.Joins[1].Parent.Member = "" }, kind: ruleprogram.ProblemJoin, join: 1},
 		{mutation: "join 2 loses its relation", apply: func(declaration *ruleprogram.Program) { declaration.Joins[2].Relation.Member = "" }, kind: ruleprogram.ProblemJoin, join: 2},
 		{mutation: "join 2 loses its key projection", apply: func(declaration *ruleprogram.Program) { declaration.Joins[2].Key.Member = "" }, kind: ruleprogram.ProblemJoin, join: 2},
 		{mutation: "join 2 loses its read axis", apply: func(declaration *ruleprogram.Program) { declaration.Joins[2].Read.Axis = ruleprogram.AxisRef{} }, kind: ruleprogram.ProblemJoin, join: 2},

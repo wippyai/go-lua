@@ -321,6 +321,10 @@ func (install familyInstaller) InstallRuleFamily(plane execution.FormPlane[place
 		if !outputOK || output.Mode != program.ModeRoute || !output.RouteJoinPresent || output.RouteJoin != 2 || output.Slot != 0 {
 			return nil, nil, false
 		}
+		carryMode, carryPresent := planRow.Rule.CarryMode()
+		if carryPresent || carryMode != 0 {
+			return nil, nil, false
+		}
 		plan0, plan0OK := planRow.Rule.ReadAt(0)
 		if !plan0OK || plan0.Form != program.Exact || plan0.Input != 0 || plan0.PointBound != program.PointBound {
 			return nil, nil, false

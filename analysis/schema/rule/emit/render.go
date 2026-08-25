@@ -359,6 +359,9 @@ func renderFamily(out *strings.Builder, built *plan) {
 		fmt.Fprintf(out, "\t\tmembers: make([]%s.RouteMember, sealed.width),\n", execution)
 		fmt.Fprintf(out, "\t\tcells:   make([]%s.SelectedCell[%s], sealed.width),\n", execution, imports.typeName(built.write.fact))
 		fmt.Fprintf(out, "\t\troutes:  make([]%s, sealed.width),\n", imports.typeName(built.route.destinationType))
+		if built.route.carry != nil {
+			fmt.Fprintf(out, "\t\tcarries: make([]%s.RouteCarry[%s], sealed.width),\n", execution, imports.typeName(built.write.fact))
+		}
 		for _, join := range memberSetJoins(built) {
 			fmt.Fprintf(out, "\t\t%sCells: make([]%s.MemberCell[%s], sealed.%sWidth),\n",
 				join.name, execution, imports.typeName(join.axis.fact), join.name)
@@ -420,6 +423,9 @@ func renderWorker(out *strings.Builder, built *plan) error {
 		fmt.Fprintf(out, "\tmembers []%s.RouteMember\n", execution)
 		fmt.Fprintf(out, "\tcells   []%s.SelectedCell[%s]\n", execution, imports.typeName(built.write.fact))
 		fmt.Fprintf(out, "\troutes  []%s\n", imports.typeName(built.route.destinationType))
+		if built.route.carry != nil {
+			fmt.Fprintf(out, "\tcarries []%s.RouteCarry[%s]\n", execution, imports.typeName(built.write.fact))
+		}
 	}
 	out.WriteString("}\n\n")
 
@@ -643,8 +649,15 @@ func renderRouteExecute(out *strings.Builder, built *plan) error {
 	fmt.Fprintf(out, "\tderived, derivedOK := %s\n", imports.call(derivation.build, "", arguments...))
 	fmt.Fprintf(out, "\tif !derivedOK {\n\t\treturn lane.settle(ticket, %s.Refuse)\n\t}\n", structure)
 	fmt.Fprintf(out, "\tcount := %s\n", imports.call(derivation.count, "", "derived"))
-	fmt.Fprintf(out, "\tif count < 0 || count > len(lane.members) || count > len(lane.cells) || count > len(lane.routes) {\n\t\treturn lane.settle(ticket, %s.Refuse)\n\t}\n", structure)
+	carryFence := ""
+	if built.route.carry != nil {
+		carryFence = " || count > len(lane.carries)"
+	}
+	fmt.Fprintf(out, "\tif count < 0 || count > len(lane.members) || count > len(lane.cells) || count > len(lane.routes)%s {\n\t\treturn lane.settle(ticket, %s.Refuse)\n\t}\n", carryFence, structure)
 	out.WriteString("\tmembers := lane.members[:count]\n\tcells := lane.cells[:count]\n\troutes := lane.routes[:count]\n")
+	if built.route.carry != nil {
+		out.WriteString("\tcarries := lane.carries[:count]\n")
+	}
 	out.WriteString("\tfor index := 0; index < count; index++ {\n")
 	fmt.Fprintf(out, "\t\tselected, selectedOK := %s\n", imports.call(derivation.at, "", "derived", "index"))
 	fmt.Fprintf(out, "\t\tif !selectedOK {\n\t\t\treturn lane.settle(ticket, %s.Refuse)\n\t\t}\n", structure)
@@ -672,6 +685,12 @@ func renderRouteExecute(out *strings.Builder, built *plan) error {
 	fmt.Fprintf(out, "\t\tif !memberOK {\n\t\t\treturn lane.settle(ticket, %s.Refuse)\n\t\t}\n", structure)
 	out.WriteString("\t\tmembers[index] = member\n")
 	fmt.Fprintf(out, "\t\troutes[index] = %s\n", destinationExpression)
+	if built.route.carry != nil {
+		// One closure per published row, taken over the row the relation
+		// answered. It is a method value on that row, so the family holds no
+		// function field and the transition is the row's own.
+		fmt.Fprintf(out, "\t\tcarries[index] = %s\n", imports.methodValue(built.route.carry.Implementation, "selected"))
+	}
 	out.WriteString("\t}\n")
 
 	out.WriteString("\t// An empty derived relation is a read that named nothing, which is exhausted\n")
@@ -680,8 +699,13 @@ func renderRouteExecute(out *strings.Builder, built *plan) error {
 	out.WriteString("\tif count == 0 {\n")
 	fmt.Fprintf(out, "\t\tif status != %s.ReadExhausted {\n\t\t\treturn lane.settle(ticket, %s.Refuse)\n\t\t}\n", execution, structure)
 	fmt.Fprintf(out, "\t} else if status != %s.ReadAvailable {\n\t\treturn lane.settle(ticket, %s.Refuse)\n\t}\n", execution, structure)
-	fmt.Fprintf(out, "\toutcome := %s.FoldSelectedRoute(ticket, row.write, &lane.write, cells, members, routes, %s{%s})\n",
-		execution, reducerType, strings.Join(reducerLiteralFields(built, invocation), ", "))
+	if built.route.carry != nil {
+		fmt.Fprintf(out, "\toutcome := %s.FoldSelectedRouteCarry(ticket, row.write, &lane.write, cells, members, routes, carries, %s{%s})\n",
+			execution, reducerType, strings.Join(reducerLiteralFields(built, invocation), ", "))
+	} else {
+		fmt.Fprintf(out, "\toutcome := %s.FoldSelectedRoute(ticket, row.write, &lane.write, cells, members, routes, %s{%s})\n",
+			execution, reducerType, strings.Join(reducerLiteralFields(built, invocation), ", "))
+	}
 	renderExecuteEpilogue(out, built)
 
 	for _, join := range built.joins {

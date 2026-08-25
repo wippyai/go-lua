@@ -161,6 +161,14 @@ type routePlan struct {
 	slot            uint16
 	destination     definition.Projection
 	destinationType definition.GoType
+	// carry is the transition each published row moves the image at its own
+	// destination through. It is nil for a declaration with no carry and for
+	// an identity carry, which is the trivial closure and needs no vector.
+	carry *definition.CarryTransform
+	// carryMode is what the declaration said, retained separately because the
+	// emitted fence restates the declared mode and the trivial closure is a
+	// declared answer rather than the absence of one.
+	carryMode program.CarryMode
 }
 
 // plan is one rule's complete emission plan.
@@ -557,12 +565,16 @@ func deriveShape(built *plan, resolver *axisResolver, declaration program.Progra
 			return unexpressible(ruleKey, "a routed output whose destination carrier is not the routed axis key type",
 				fmt.Sprintf("destination %s, routed key %s", destinationType.Name, keyType.Name))
 		}
-		if declaration.Carry != nil {
-			return unexpressible(ruleKey, "a routed output beside a whole-output carry",
-				"a routed row publishes at derived members and has no single coordinate a carry closure could be taken over")
+		rowCarry, err := deriveRoutedCarry(built, resolver, declaration, route)
+		if err != nil {
+			return err
 		}
 		built.shape, built.form = shapeSelectedRoute, "FormSelectedRoute"
-		built.route = &routePlan{join: route, slot: output.ValueSlot, destination: destination, destinationType: destinationType}
+		routeCarryMode := program.CarryMode(0)
+		if declaration.Carry != nil {
+			routeCarryMode = declaration.Carry.Mode
+		}
+		built.route = &routePlan{join: route, slot: output.ValueSlot, destination: destination, destinationType: destinationType, carry: rowCarry, carryMode: routeCarryMode}
 		return nil
 	case program.ModeExact:
 		if declaration.Carry == nil || declaration.Carry.Mode != program.CarryTransform {
@@ -648,6 +660,62 @@ func deriveShape(built *plan, resolver *axisResolver, declaration program.Progra
 		return unexpressible(ruleKey, fmt.Sprintf("output mode %s", outputModeName(output.Mode)),
 			"only exact and routed publications have an emitted family")
 	}
+}
+
+// deriveRoutedCarry admits the carry of a routed publication. The carry of a
+// routed row is indexed by the ROW, because a candidate that publishes at N
+// derived destinations has N images to carry and N transitions to carry them
+// through: asking which of them is "the" carry has no answer. The exact form
+// is the same statement at one row, and an identity carry is the trivial
+// closure at every row, so it needs no vector and emits the plain routed fold.
+//
+// A transform is therefore a method on the row of the derived relation that
+// produced the route. A transform issued by the CANDIDATE carrier is refused by
+// name: it is the shape that has no answer, not a shape this arm has not got to
+// yet.
+func deriveRoutedCarry(built *plan, resolver *axisResolver, declaration program.Program, route *joinPlan) (*definition.CarryTransform, error) {
+	ruleKey := built.target.Spec.Key
+	if declaration.Carry == nil {
+		return nil, nil
+	}
+	if uint64(declaration.Carry.Input) != uint64(route.read.Input) {
+		return nil, unexpressible(ruleKey, "a routed carry at an input its route is not read at",
+			fmt.Sprintf("carry input %d, route read input %d", uint64(declaration.Carry.Input), uint64(route.read.Input)))
+	}
+	if declaration.Carry.Mode == program.CarryIdentity {
+		return nil, nil
+	}
+	transformAxis, err := resolver.axis(declaration.Carry.Transform.Axis.Key)
+	if err != nil {
+		return nil, err
+	}
+	transform, transformOK := findCarryTransform(transformAxis.source, declaration.Carry.Transform.Member)
+	if !transformOK {
+		return nil, unexpressible(ruleKey, "a carry transform its axis does not declare", string(declaration.Carry.Transform.Member))
+	}
+	if !transform.Implementation.Available() || transform.Implementation.Receiver.Name == "" {
+		return nil, unexpressible(ruleKey, "a carry transform with no row-bound implementation",
+			fmt.Sprintf("transform %q declares no method on the route relation's subject, so a published row has no closure to seal", transform.Name))
+	}
+	subject, subjectOK := carrierType(route.axis.source, route.relation.Subject)
+	if !subjectOK {
+		return nil, unexpressible(ruleKey, "a route relation whose subject carrier is undeclared", route.relation.Subject)
+	}
+	if sameGoType(transform.Implementation.Receiver, built.candidate.subject) && !sameGoType(built.candidate.subject, subject) {
+		return nil, unexpressible(ruleKey, "a routed carry indexed by the candidate",
+			fmt.Sprintf("transform %q is a method on the candidate carrier %s, and a candidate that publishes at derived destinations has one image and one transition per row rather than one of each",
+				transform.Name, built.candidate.subject.Name))
+	}
+	if !sameGoType(transform.Implementation.Receiver, subject) {
+		return nil, unexpressible(ruleKey, "a routed carry issued by a type that is not the route relation's subject",
+			fmt.Sprintf("transform %q is a method on %s, the route rows are %s", transform.Name, transform.Implementation.Receiver.Name, subject.Name))
+	}
+	fact := built.write.source.Signature.Fact
+	if transform.Input != fact || transform.Output != fact {
+		return nil, unexpressible(ruleKey, "a routed carry that does not map the written fact",
+			fmt.Sprintf("transform %q maps %s to %s, the written fact is %s", transform.Name, transform.Input, transform.Output, fact))
+	}
+	return &transform, nil
 }
 
 func deriveFold(built *plan, resolver *axisResolver, declaration program.Program) error {

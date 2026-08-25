@@ -143,6 +143,18 @@ func renderInstaller(out *strings.Builder, built *plan) error {
 		}
 	}
 
+	if built.shape == shapeSelectedRoute {
+		fmt.Fprintf(out, "\t\tcarryMode, carryPresent := planRow.Rule.CarryMode()\n")
+		switch built.route.carryMode {
+		case program.CarryTransform:
+			fmt.Fprintf(out, "\t\tif !carryPresent || carryMode != %s.CarryTransform {\n\t\t\treturn nil, nil, false\n\t\t}\n", ruleprogram)
+		case program.CarryIdentity:
+			fmt.Fprintf(out, "\t\tif !carryPresent || carryMode != %s.CarryIdentity {\n\t\t\treturn nil, nil, false\n\t\t}\n", ruleprogram)
+		default:
+			out.WriteString("\t\tif carryPresent || carryMode != 0 {\n\t\t\treturn nil, nil, false\n\t\t}\n")
+		}
+	}
+
 	firstExact := -1
 	for _, join := range built.joins {
 		if join.read.Form == program.Exact {

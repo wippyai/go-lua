@@ -71,6 +71,21 @@ func (binding *Binding[K, V]) TransformClosure(targets []carrier.Target) (Transf
 	return TransformClosure[K, V]{binding: binding, keys: keys, targets: ordered}, true
 }
 
+// TargetTransformClosure is the closure over exactly one declared target. It
+// is the singleton case of TransformClosure, answered from the key vector and
+// the singleton the target already sealed, so a caller that needs one closure
+// per published row - a routed carry - allocates nothing per row.
+func (binding *Binding[K, V]) TargetTransformClosure(target carrier.Target) (TransformClosure[K, V], bool) {
+	if binding == nil || !binding.live() {
+		return TransformClosure[K, V]{}, false
+	}
+	descriptor, present := binding.targets[target]
+	if !present || len(descriptor.keys) == 0 || len(descriptor.self) != 1 || descriptor.self[0] != target {
+		return TransformClosure[K, V]{}, false
+	}
+	return TransformClosure[K, V]{binding: binding, keys: descriptor.keys, targets: descriptor.self}, true
+}
+
 func uniqueTargets(targets []carrier.Target) []carrier.Target {
 	if len(targets) == 0 {
 		return nil

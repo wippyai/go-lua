@@ -286,10 +286,15 @@ type declaredUnit[K scalar.Key] struct {
 }
 
 type declaredTarget[K scalar.Key] struct {
-	order         targetOrder
-	position      int
-	keys          []K
-	units         []carrier.Unit
+	order    targetOrder
+	position int
+	keys     []K
+	units    []carrier.Unit
+	// self is this target alone, retained at declaration so a closure over one
+	// target is assembled without allocating a slice per invocation. A routed
+	// carry takes one such closure per published row, so the singleton is read
+	// on the hot path and is sealed here where it is already known.
+	self          []carrier.Target
 	notifications []carrier.Unit
 }
 
@@ -503,7 +508,7 @@ func (binding *Binding[K, V]) declareTarget(mode carrier.TargetMode, units []car
 	if !ok {
 		return carrier.Target{}, false
 	}
-	binding.targets[target] = declaredTarget[K]{order: targetOrder{mode: mode, id: id}, position: len(binding.targetList), keys: keys, units: append([]carrier.Unit(nil), units...)}
+	binding.targets[target] = declaredTarget[K]{order: targetOrder{mode: mode, id: id}, position: len(binding.targetList), keys: keys, units: append([]carrier.Unit(nil), units...), self: []carrier.Target{target}}
 	binding.targetList = append(binding.targetList, target)
 	return target, true
 }
