@@ -343,19 +343,28 @@ type DerivationWiden struct {
 	// enumeration. It is the owner's own statement - IsTop, HasOpaque - and
 	// never a shape this package guesses from the carrier.
 	Predicate GoSymbol
-	// Directory is the relation whose whole candidate set the widened answer
-	// is. It is a declared relation, so what "everything" means is a row
-	// somebody wrote rather than a loop inside a Build.
-	Directory member.RelationRef
+	// Source is what the widened answer is read out of. It is an enumeration
+	// like any other, and it is read out of an axis's SCHEMA rather than out
+	// of the fact: what "everything" means at a lattice endpoint is the
+	// owner's whole directory, which the fact by definition failed to name.
+	Source []EnumerationRef
 }
 
 // Declared reports whether a widen endpoint is stated.
 func (widen DerivationWiden) Declared() bool {
-	return widen.Predicate.Available() || widen.Directory.Available()
+	return widen.Predicate.Available() || len(widen.Source) != 0
 }
 
 func (widen DerivationWiden) complete() bool {
-	return widen.Predicate.Available() && widen.Directory.Available()
+	if !widen.Predicate.Available() || len(widen.Source) == 0 {
+		return false
+	}
+	for _, source := range widen.Source {
+		if !source.Available() {
+			return false
+		}
+	}
+	return true
 }
 
 // Enumeration is one axis's statement of how a sequence is read out of one of
@@ -368,17 +377,25 @@ func (widen DerivationWiden) complete() bool {
 // enumeration name it once each and share the owner's two symbols.
 type Enumeration struct {
 	Name string
-	// Over is the carrier a sequence is read out of, and Item is the carrier
-	// of one element of it.
-	Over  string
+	// Over is the carrier a sequence is read out of. An EMPTY Over is a
+	// statement, not an omission: the sequence is read out of the axis's own
+	// SCHEMA. That is what a directory is - every row the owner has, answered
+	// by the owner rather than by a value - and it is what a derivation widens
+	// to when its source fact reaches a lattice endpoint.
+	Over string
+	// Item is the carrier of one element of the sequence.
 	Item  string
 	Count GoSymbol
 	At    GoSymbol
 }
 
+// OverSchema reports that this enumeration reads its sequence out of the
+// axis's own schema rather than out of one of its carriers.
+func (enumeration Enumeration) OverSchema() bool { return enumeration.Over == "" }
+
 func (enumeration Enumeration) complete() bool {
-	return identifierAvailable(enumeration.Name) && identifierAvailable(enumeration.Over) &&
-		identifierAvailable(enumeration.Item) && enumeration.Count.Available() && enumeration.At.Available()
+	return identifierAvailable(enumeration.Name) && identifierAvailable(enumeration.Item) &&
+		enumeration.Count.Available() && enumeration.At.Available()
 }
 
 // DeclaredDerivation reports whether a relation states the declared form.

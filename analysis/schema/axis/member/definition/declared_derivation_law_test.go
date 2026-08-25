@@ -23,7 +23,7 @@ func declaredDerivation() RelationDerivation {
 		Resolve: declaredSpecimenSymbol("ResolveRow"),
 		Widen: DerivationWiden{
 			Predicate: declaredSpecimenSymbol("IsTop"),
-			Directory: member.RelationRef{Axis: specimenAxis(), Member: "specimen/candidates"},
+			Source:    []EnumerationRef{{Axis: specimenAxis(), Name: "Directory"}},
 		},
 	}
 }
@@ -76,7 +76,7 @@ func TestADeclaredDerivationIsWholeOrRefused(t *testing.T) {
 		{name: "one axis named twice", amend: func(d *RelationDerivation) {
 			d.StaticAxes = []schema.EntryReference{specimenAxis(), specimenAxis()}
 		}},
-		{name: "a widen endpoint with no directory", amend: func(d *RelationDerivation) { d.Widen.Directory = member.RelationRef{} }},
+		{name: "a widen endpoint with nothing to read the whole set out of", amend: func(d *RelationDerivation) { d.Widen.Source = nil }},
 		{name: "a widen directory with no endpoint", amend: func(d *RelationDerivation) { d.Widen.Predicate = GoSymbol{} }},
 	} {
 		t.Run(probe.name, func(t *testing.T) {
@@ -105,9 +105,11 @@ func TestADerivationThatWidensNowhereIsStillWhole(t *testing.T) {
 }
 
 // TestAnEnumerationIsTheOwnersWholeStatement holds the axis-level row to the
-// same standard. It names what it reads a sequence out of, what one element
-// is, and the owner's two symbols; a partial one would be a sequence nothing
-// can walk.
+// same standard: a name, an element carrier, and the owner's two symbols. A
+// partial one would be a sequence nothing can walk.
+//
+// What it reads OUT OF is deliberately not on that list; an empty one is the
+// directory case, stated by the law below.
 func TestAnEnumerationIsTheOwnersWholeStatement(t *testing.T) {
 	whole := Enumeration{
 		Name: "Alternatives", Over: "FactCarrier", Item: "SeedCarrier",
@@ -122,7 +124,6 @@ func TestAnEnumerationIsTheOwnersWholeStatement(t *testing.T) {
 		amend func(*Enumeration)
 	}{
 		{name: "no name", amend: func(e *Enumeration) { e.Name = "" }},
-		{name: "nothing to read out of", amend: func(e *Enumeration) { e.Over = "" }},
 		{name: "no element carrier", amend: func(e *Enumeration) { e.Item = "" }},
 		{name: "no census", amend: func(e *Enumeration) { e.Count = GoSymbol{} }},
 		{name: "no accessor", amend: func(e *Enumeration) { e.At = GoSymbol{} }},
@@ -171,6 +172,13 @@ func declaredSpecimenSource(t testing.TB) (Definition, Relation) {
 			Name: "Parts", Over: "SeedCarrier", Item: "KeyCarrier",
 			Count: declaredSpecimenSymbol("PartCount"),
 			At:    declaredSpecimenSymbol("PartAt"),
+		},
+		{
+			// Read out of the axis's own schema: this is the owner's whole
+			// directory, which is what a widened answer is.
+			Name: "Directory", Item: "SeedCarrier",
+			Count: declaredSpecimenSymbol("DirectoryCount"),
+			At:    declaredSpecimenSymbol("DirectoryAt"),
 		},
 	}
 	relation := Relation{
@@ -254,7 +262,7 @@ func TestAWidenEndpointIsAskedOfWhatTheDerivationEnumerates(t *testing.T) {
 	source, relation := declaredSpecimenSource(t)
 	relation.Derivation.Widen = DerivationWiden{
 		Predicate: declaredSpecimenSymbol("IsTop"),
-		Directory: member.RelationRef{Axis: specimenAxis(), Member: "specimen/candidates"},
+		Source:    []EnumerationRef{{Axis: specimenAxis(), Name: "Directory"}},
 	}
 	roster := declaredSpecimenRoster(t, source)
 	shape, ok := roster.DeclaredDerivationSignature("specimen", relation, specimenType("Key"))
@@ -266,5 +274,56 @@ func TestAWidenEndpointIsAskedOfWhatTheDerivationEnumerates(t *testing.T) {
 	}
 	if len(shape.WidenResults) != 1 || shape.WidenResults[0].Type.Name != "bool" {
 		t.Fatalf("the endpoint answers %+v, want one boolean", shape.WidenResults)
+	}
+}
+
+// TestAnEnumerationOverNothingIsTheOwnersDirectory states the one enumeration
+// that reads no carrier.
+//
+// A derivation that reaches a lattice endpoint has a fact that failed to name
+// its alternatives, so there is no value left to read them out of - the answer
+// is the owner's whole directory, which only the owner's schema can produce.
+// An empty Over is therefore a statement rather than a missing field, and it
+// is the only way a widened answer can be enumerated at all.
+func TestAnEnumerationOverNothingIsTheOwnersDirectory(t *testing.T) {
+	directory := Enumeration{
+		Name: "Directory", Item: "SeedCarrier",
+		Count: declaredSpecimenSymbol("DirectoryCount"),
+		At:    declaredSpecimenSymbol("DirectoryAt"),
+	}
+	if !directory.complete() {
+		t.Fatal("an enumeration over the owner's own schema was refused")
+	}
+	if !directory.OverSchema() {
+		t.Fatal("an enumeration naming no carrier does not read as the owner's directory")
+	}
+	overCarrier := directory
+	overCarrier.Over = "FactCarrier"
+	if overCarrier.OverSchema() {
+		t.Fatal("an enumeration naming a carrier reads as the owner's directory")
+	}
+}
+
+// TestAWidenedAnswerIsReadOutOfTheOwnersSchema pins where the widened rows
+// come from. The endpoint predicate is asked of the fact, but the rows it
+// widens to are the owner's, so their enumeration chains from the schema and
+// not from the value that reached the endpoint.
+func TestAWidenedAnswerIsReadOutOfTheOwnersSchema(t *testing.T) {
+	source, relation := declaredSpecimenSource(t)
+	relation.Derivation.Widen = DerivationWiden{
+		Predicate: declaredSpecimenSymbol("IsTop"),
+		Source:    []EnumerationRef{{Axis: specimenAxis(), Name: "Directory"}},
+	}
+	roster := declaredSpecimenRoster(t, source)
+	shape, ok := roster.DeclaredDerivationSignature("specimen", relation, specimenType("Key"))
+	if !ok || len(shape.Widened) != 1 {
+		t.Fatalf("the widened answer derived no shape: %+v %t", shape, ok)
+	}
+	schemaType, schemaOK := AxisSchemaType(source)
+	if !schemaOK {
+		t.Fatal("the specimen axis declares no schema type")
+	}
+	if shape.Widened[0].CountParams[0].Type != schemaType {
+		t.Fatalf("the widened answer is read out of %+v, want the axis's own schema %+v", shape.Widened[0].CountParams[0].Type, schemaType)
 	}
 }

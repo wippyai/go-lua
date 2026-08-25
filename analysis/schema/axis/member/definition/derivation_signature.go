@@ -171,6 +171,8 @@ type DeclaredDerivationShape struct {
 	// when the derivation declares no endpoint.
 	WidenParams  []DerivedParam
 	WidenResults []DerivedParam
+	// Widened is the shape of the sources the widened answer is read out of.
+	Widened []EnumerationShape
 }
 
 // EnumerationShape is one declared enumeration's own call shape.
@@ -212,38 +214,11 @@ func (roster Roster) DeclaredDerivationSignature(axis schema.Key, relation Relat
 		return DeclaredDerivationShape{}, false
 	}
 	shape := DeclaredDerivationShape{}
-	var item GoType
-	for _, source := range derivation.Source {
-		sourceOwner, sourceOwnerOK := roster.definitionForAxis(source.Axis.Key)
-		if !sourceOwnerOK {
-			return DeclaredDerivationShape{}, false
-		}
-		enumeration, enumerationOK := findEnumeration(sourceOwner, source.Name)
-		if !enumerationOK {
-			return DeclaredDerivationShape{}, false
-		}
-		sourceCarriers, _, sourceCarriersOK := sourceOwner.carrierIndex()
-		if !sourceCarriersOK {
-			return DeclaredDerivationShape{}, false
-		}
-		over, overOK := sourceCarriers[enumeration.Over]
-		element, elementOK := sourceCarriers[enumeration.Item]
-		if !overOK || !elementOK {
-			return DeclaredDerivationShape{}, false
-		}
-		// Each further source is enumerated over what the one before yielded,
-		// so the composition is checked here rather than assumed by position.
-		if item.Available() && !sameType(item, over.Type) {
-			return DeclaredDerivationShape{}, false
-		}
-		shape.Sources = append(shape.Sources, EnumerationShape{
-			CountParams:  []DerivedParam{{Type: over.Type}},
-			CountResults: []DerivedParam{{Type: GoType{Name: "int"}}},
-			AtParams:     []DerivedParam{{Type: over.Type}, {Type: GoType{Name: "int"}}},
-			AtResults:    []DerivedParam{{Type: element.Type}, {Type: GoType{Name: "bool"}}},
-		})
-		item = element.Type
+	sources, item, sourcesOK := roster.enumerationChain(derivation.Source, subject.Type)
+	if !sourcesOK {
+		return DeclaredDerivationShape{}, false
 	}
+	shape.Sources = sources
 	params := make([]DerivedParam, 0, len(derivation.StaticAxes)+2)
 	for _, static := range derivation.StaticAxes {
 		staticSource, staticOK := roster.definitionForAxis(static.Key)
@@ -264,20 +239,29 @@ func (roster Roster) DeclaredDerivationSignature(axis schema.Key, relation Relat
 		{Type: subject.Type}, {Type: GoType{Name: "bool"}}, {Type: GoType{Name: "bool"}},
 	}
 	if derivation.Widen.Declared() {
-		first, firstOK := roster.enumerationOver(derivation.Source[0])
+		first, firstOK := roster.enumerationOver(derivation.Source[0], owner)
 		if !firstOK {
 			return DeclaredDerivationShape{}, false
 		}
 		shape.WidenParams = []DerivedParam{{Type: first}}
 		shape.WidenResults = []DerivedParam{{Type: GoType{Name: "bool"}}}
+		// The widened answer is read out of the owner's own directory, so its
+		// sources chain from the axis schema rather than from the fact.
+		widened, _, widenedOK := roster.enumerationChain(derivation.Widen.Source, subject.Type)
+		if !widenedOK {
+			return DeclaredDerivationShape{}, false
+		}
+		shape.Widened = widened
 	}
 	return shape, true
 }
 
-// enumerationOver answers the carrier type one declared enumeration reads its
-// sequence out of. The widen endpoint is asked of that same value, because
-// what is beyond enumeration is a property of the thing being enumerated.
-func (roster Roster) enumerationOver(reference EnumerationRef) (GoType, bool) {
+// enumerationOver answers the type one declared enumeration reads its sequence
+// out of: a carrier of its axis, or that axis's own schema when the
+// enumeration is the owner's directory. The widen endpoint is asked of the
+// same value the outer source reads, because what is beyond enumeration is a
+// property of the thing being enumerated.
+func (roster Roster) enumerationOver(reference EnumerationRef, consumer Definition) (GoType, bool) {
 	owner, ownerOK := roster.definitionForAxis(reference.Axis.Key)
 	if !ownerOK {
 		return GoType{}, false
@@ -286,12 +270,58 @@ func (roster Roster) enumerationOver(reference EnumerationRef) (GoType, bool) {
 	if !enumerationOK {
 		return GoType{}, false
 	}
+	if enumeration.OverSchema() {
+		return AxisSchemaType(owner)
+	}
 	carriers, _, carriersOK := owner.carrierIndex()
 	if !carriersOK {
 		return GoType{}, false
 	}
 	over, overOK := carriers[enumeration.Over]
+	_ = consumer
 	return over.Type, overOK
+}
+
+// enumerationChain resolves one composed source list into its per-level call
+// shapes, holding each level to reading what the level before it yielded. The
+// last level's item is what a resolve is finally handed.
+func (roster Roster) enumerationChain(sources []EnumerationRef, subject GoType) ([]EnumerationShape, GoType, bool) {
+	shapes := make([]EnumerationShape, 0, len(sources))
+	var item GoType
+	if len(sources) == 0 {
+		return nil, GoType{}, false
+	}
+	for _, source := range sources {
+		owner, ownerOK := roster.definitionForAxis(source.Axis.Key)
+		if !ownerOK {
+			return nil, GoType{}, false
+		}
+		enumeration, enumerationOK := findEnumeration(owner, source.Name)
+		if !enumerationOK {
+			return nil, GoType{}, false
+		}
+		carriers, _, carriersOK := owner.carrierIndex()
+		if !carriersOK {
+			return nil, GoType{}, false
+		}
+		over, overOK := roster.enumerationOver(source, owner)
+		element, elementOK := carriers[enumeration.Item]
+		if !overOK || !elementOK {
+			return nil, GoType{}, false
+		}
+		if item.Available() && !sameType(item, over) {
+			return nil, GoType{}, false
+		}
+		shapes = append(shapes, EnumerationShape{
+			CountParams:  []DerivedParam{{Type: over}},
+			CountResults: []DerivedParam{{Type: GoType{Name: "int"}}},
+			AtParams:     []DerivedParam{{Type: over}, {Type: GoType{Name: "int"}}},
+			AtResults:    []DerivedParam{{Type: element.Type}, {Type: GoType{Name: "bool"}}},
+		})
+		item = element.Type
+	}
+	_ = subject
+	return shapes, item, true
 }
 
 func findEnumeration(source Definition, name string) (Enumeration, bool) {
