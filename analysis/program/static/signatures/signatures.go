@@ -9,10 +9,10 @@
 package signatures
 
 import (
+	"github.com/wippyai/go-lua/internal/rows"
 	"github.com/wippyai/go-lua/analysis/program/keyspace"
 	"github.com/wippyai/go-lua/analysis/program/source"
 	"github.com/wippyai/go-lua/analysis/schema/denominator"
-	"github.com/wippyai/go-lua/internal/rows"
 )
 
 // Parameter is one authored fixed parameter of a TypeFunction. An absent

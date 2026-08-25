@@ -11,9 +11,9 @@ package contracts
 
 import (
 	"github.com/wippyai/go-lua/analysis/identity"
+	"github.com/wippyai/go-lua/internal/rows"
 	"github.com/wippyai/go-lua/analysis/program/keyspace"
 	"github.com/wippyai/go-lua/analysis/schema/denominator"
-	"github.com/wippyai/go-lua/internal/rows"
 )
 
 // FunctionContract is the authored static sidecar of one Flow Function.

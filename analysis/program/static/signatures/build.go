@@ -3,10 +3,10 @@ package signatures
 import (
 	"errors"
 
+	"github.com/wippyai/go-lua/internal/rows"
 	"github.com/wippyai/go-lua/analysis/program/keyspace"
 	"github.com/wippyai/go-lua/analysis/program/source"
 	staticrole "github.com/wippyai/go-lua/analysis/program/static/role"
-	"github.com/wippyai/go-lua/internal/rows"
 )
 
 // Build validates and seals the complete authored TypeFunction and TypeAsserts

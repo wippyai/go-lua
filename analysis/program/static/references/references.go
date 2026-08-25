@@ -9,9 +9,9 @@
 package references
 
 import (
+	"github.com/wippyai/go-lua/internal/rows"
 	"github.com/wippyai/go-lua/analysis/program/keyspace"
 	"github.com/wippyai/go-lua/analysis/schema/denominator"
-	"github.com/wippyai/go-lua/internal/rows"
 )
 
 // Resolution preserves the authored binder result independently from its
@@ -58,8 +58,8 @@ func (row TypeRefRow) Resolved() bool {
 
 // Table is the sealed immutable TypeRef relation.
 type Table struct {
-	ref  rows.Table[TypeRefRow]
-	keys rows.Pool[keyspace.Key]
+	ref       rows.Table[TypeRefRow]
+	keys      rows.Pool[keyspace.Key]
 }
 
 // Count is the sealed TypeRef denominator.

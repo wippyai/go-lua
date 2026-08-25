@@ -2,10 +2,10 @@ package operators
 
 import (
 	flowrole "github.com/wippyai/go-lua/analysis/program/flow/role"
+	"github.com/wippyai/go-lua/internal/rows"
 	"github.com/wippyai/go-lua/analysis/program/internal/wire"
 	staticrole "github.com/wippyai/go-lua/analysis/program/static/role"
 	"github.com/wippyai/go-lua/internal/framing"
-	"github.com/wippyai/go-lua/internal/rows"
 )
 
 const (

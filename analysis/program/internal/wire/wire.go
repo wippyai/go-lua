@@ -9,10 +9,10 @@
 package wire
 
 import (
+	"github.com/wippyai/go-lua/internal/rows"
 	"github.com/wippyai/go-lua/analysis/program/keyspace"
 	"github.com/wippyai/go-lua/analysis/program/source"
 	"github.com/wippyai/go-lua/internal/framing"
-	"github.com/wippyai/go-lua/internal/rows"
 )
 
 // Count is the allocation gate for every decoded collection. The canonical

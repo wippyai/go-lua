@@ -90,3 +90,4 @@ func validAnnotation(counts [keyspace.FamilyCount]uint32, row Annotation) bool {
 		staticrole.AnnotationTarget(counts, row.Target) &&
 		row.Name != 0 && keyspace.ValidTerm(row.Values, keyspace.FamilyValues, int(counts[keyspace.FamilyValues]))
 }
+
