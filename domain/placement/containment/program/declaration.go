@@ -35,10 +35,6 @@ const (
 	ContainmentRouteTag         schema.Key = "placement/containment/route-tag"
 	ContainmentRouteDestination schema.Key = "placement/containment/route-destination"
 	ContainmentReducer          schema.Key = "placement/containment/reducer"
-	// The route vector is produced from the two complete vectors read before
-	// it, so the read names the operation Placement publishes its rows
-	// through rather than a coordinate nothing has computed yet.
-	ContainmentRouteSelection schema.Key = "placement/containment/route-selection"
 )
 
 func RuleEntry() rule.Spec {

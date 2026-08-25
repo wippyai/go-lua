@@ -41,12 +41,6 @@ const (
 	suspensionRouteTag         schema.Key = "placement/suspension/route-tag"
 	suspensionRouteDestination schema.Key = "placement/suspension/route-destination"
 	suspensionReducer          schema.Key = "placement/suspension/reducer"
-	// Both dependent vectors are produced: which Value cells the subject's
-	// liveness is decided from is read out of the publication the candidate
-	// was redeemed from, and the allocation it is published into is resolved
-	// through the mounted call its boundary names.
-	suspensionSourceSelection schema.Key = "value/suspension/source-selection"
-	suspensionRouteSelection  schema.Key = "placement/suspension/route-selection"
 
 	placementFactsColumn       schema.Key = "placement/facts"
 	valueCoordinateDenominator schema.Key = "coordinates/value"
@@ -259,8 +253,6 @@ func SuspensionEvidence() ruleprogram.Program {
 		evidenceRouteTag         schema.Key = "placement/suspension-evidence/route-tag"
 		evidenceRouteSelection   schema.Key = "placement/suspension-evidence/route-selection"
 		evidenceRouteDestination schema.Key = "placement/suspension-evidence/route-destination"
-		evidenceSourceSelection  schema.Key = "value/suspension-evidence/source-selection"
-		evidenceRouteSelection   schema.Key = "placement/suspension-evidence/route-selection"
 		evidenceAxisKey          schema.Key = "placement-suspension-evidence"
 		evidenceReducer          schema.Key = "placement-suspension-evidence/reducer"
 		evidenceFactsColumn      schema.Key = "placement/suspension-evidence/facts"

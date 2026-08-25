@@ -106,11 +106,14 @@ const (
 	AllocationResultReducer            schemaapi.Key  = "value/allocation/reducer"
 	ResultAliasReducer                 schemaapi.Key  = "value/result-alias/reducer"
 	BodyResultReducer                  schemaapi.Key  = "value/body-result/reducer"
-	AllocationCarryTransform           schemaapi.Key  = "transform/value/allocation"
-	FreshResultRouteCarryTransform     schemaapi.Key  = "transform/value/fresh-result-route"
+	FreshResultRouteSelection          schemaapi.Key  = "value/fresh-result/route-selection"
+	ResultAliasRouteSelection          schemaapi.Key  = "value/result-alias/route-selection"
+	BodyReturnRouteSelection           schemaapi.Key  = "value/body-result/route-selection"
 	CaptureSourceSelection             schemaapi.Key  = "value/closure-capture/source-selection"
 	SuspensionSourceSelection          schemaapi.Key  = "value/suspension/source-selection"
 	EvidenceSourceSelection            schemaapi.Key  = "value/suspension-evidence/source-selection"
+	AllocationCarryTransform           schemaapi.Key  = "transform/value/allocation"
+	FreshResultRouteCarryTransform     schemaapi.Key  = "transform/value/fresh-result-route"
 	ValueCoordinateCarrier             member.Carrier = "carrier/value/coordinate"
 	ValueFactCarrier                   member.Carrier = "carrier/value/fact"
 	ValueAtomCarrier                   member.Carrier = "carrier/value/atom"
@@ -324,6 +327,9 @@ func AxisMemberCatalog() member.Catalog {
 		panic("value: invalid axis member catalog")
 	}
 	catalog, ok = catalog.WithSelections([]member.Selection{
+		{Key: FreshResultRouteSelection, Relation: FreshResultRoutes, Tag: FreshResultRouteTag},
+		{Key: ResultAliasRouteSelection, Relation: ResultAliasRoutes, Tag: ResultAliasRouteTag},
+		{Key: BodyReturnRouteSelection, Relation: BodyReturnRoutes, Tag: BodyReturnRouteTag},
 		{Key: CaptureSourceSelection, Relation: CaptureSources, Tag: CaptureSourceTag},
 		{Key: SuspensionSourceSelection, Relation: SuspensionSources, Tag: SuspensionSourceTag},
 		{Key: EvidenceSourceSelection, Relation: EvidenceSources, Tag: EvidenceSourceTag},
