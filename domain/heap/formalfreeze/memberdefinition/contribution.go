@@ -149,6 +149,15 @@ func Contribution() definition.Contribution {
 				Accessor:          method(recentPlanPackagePath, "Coordinates", recentPlanPackagePath, "Route", false, 1),
 			},
 		},
+		// The routes this rule reads are computed from the actuals the reads
+		// before it delivered, so they are published by the derivation this
+		// package already owns rather than enumerated from a directory.
+		Selections: []definition.Selection{{
+			Name:     "FormalFreezeRouteSelection",
+			Key:      "heap/formal-freeze/route-selection",
+			Relation: "FormalFreezeRoutes",
+			Tag:      "FormalFreezeRouteTag",
+		}},
 		Reducers: []definition.Reducer{{
 			Name: "FormalFreezeReducer",
 			Key:  "heap/reducer/formal-freeze",

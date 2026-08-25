@@ -41,6 +41,7 @@ const (
 	FormalFreezeRouteKey         schema.Key = heapdomain.FormalFreezeRouteKey
 	FormalFreezeRouteTag         schema.Key = heapdomain.FormalFreezeRouteTag
 	FormalFreezeRouteDestination schema.Key = heapdomain.FormalFreezeRouteDestination
+	FormalFreezeRouteSelection   schema.Key = heapdomain.FormalFreezeRouteSelection
 	FormalFreezeReducer          schema.Key = heapdomain.FormalFreezeReducer
 	MountedCallCandidates        schema.Key = calldomain.MountedCallCandidates
 	MountedCallFacts             schema.Key = calldomain.MountedCallFacts
@@ -180,6 +181,10 @@ func FormalFreeze() ruleprogram.Program {
 				Relation:  member.RelationRef{Axis: heapAxis, Member: FormalFreezeRoutes},
 				Key:       member.ProjectionRef{Axis: heapAxis, Member: FormalFreezeRouteKey},
 				Predicate: member.ProjectionRef{Axis: heapAxis, Member: FormalFreezeRouteTag},
+				// The routes are computed from the actuals join 1 delivered,
+				// so Heap publishes them through its own derivation rather
+				// than this rule enumerating a directory.
+				Selection: member.SelectionRef{Axis: heapAxis, Member: FormalFreezeRouteSelection},
 				Read: ruleprogram.ReadDecl{
 					Input: 2,
 					Axis:  ruleprogram.AxisRef(heapAxis),

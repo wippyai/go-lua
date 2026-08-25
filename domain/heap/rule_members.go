@@ -36,6 +36,7 @@ const (
 	EmptyAllocationReducer            schemaapi.Key  = "heap/reducer/empty"
 	FormalFreezeReducer               schemaapi.Key  = "heap/reducer/formal-freeze"
 	PublicationFreezeReducer          schemaapi.Key  = "heap/reducer/publication-freeze"
+	FormalFreezeRouteSelection        schemaapi.Key  = "heap/formal-freeze/route-selection"
 	EmptyAllocationCarryTransform     schemaapi.Key  = "transform/heap/allocation-empty"
 	ClosedAllocationCarryTransform    schemaapi.Key  = "transform/heap/allocation-closed"
 	HeapKeyCarrier                    member.Carrier = "carrier/heap/key"
@@ -118,6 +119,12 @@ func AxisMemberCatalog() member.Catalog {
 	)
 	if !ok {
 		panic("heap: invalid axis member catalog")
+	}
+	catalog, ok = catalog.WithSelections([]member.Selection{
+		{Key: FormalFreezeRouteSelection, Relation: FormalFreezeRoutes, Tag: FormalFreezeRouteTag},
+	})
+	if !ok {
+		panic("heap: invalid axis selection catalog")
 	}
 	return catalog
 }

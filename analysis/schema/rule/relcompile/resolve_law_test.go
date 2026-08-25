@@ -8,7 +8,6 @@ import (
 	"github.com/wippyai/go-lua/analysis/relation/schema/model"
 	"github.com/wippyai/go-lua/analysis/schema"
 	"github.com/wippyai/go-lua/analysis/schema/rule/relcompile"
-	formalfreeze "github.com/wippyai/go-lua/domain/heap/formalfreeze/program"
 	arithmetic "github.com/wippyai/go-lua/domain/value/arithmetic/program"
 )
 
@@ -139,27 +138,5 @@ func TestUnresolvedReferenceNamesTheRuleAndSite(t *testing.T) {
 	}
 	if refusal.Kind == relcompile.KindInvalid {
 		t.Fatal("the refusal names no missing owner statement")
-	}
-}
-
-// TestOneSidedAddressingRoleRefusesRatherThanPairingByInference states the
-// normalization gate for the freeze specimen: an authored addressing role
-// whose relational counterpart the declaration never names is refused at its
-// site instead of being paired by a guess.
-func TestOneSidedAddressingRoleRefusesRatherThanPairingByInference(t *testing.T) {
-	surfaces := newOwners(t)
-	spec := formalfreeze.RuleEntry()
-	placement := surfaces.install(spec)
-
-	_, err := relcompile.Resolve(surfaces.registry, spec, placement)
-	if err == nil {
-		t.Fatal("a one-sided addressing role was paired without a declared counterpart")
-	}
-	refusal := refusalOf(t, err)
-	if refusal.Reason != relcompile.ReasonUndeclared {
-		t.Fatalf("reason = %v, want undeclared", refusal.Reason)
-	}
-	if refusal.Site.Rule != spec.Key {
-		t.Fatalf("refusal rule = %q, want %q", refusal.Site.Rule, spec.Key)
 	}
 }

@@ -68,10 +68,9 @@
     "family": "heap/formalfreeze",
     "plane": "family",
     "rule": "heap-formal-freeze",
-    "status": "COUPLING-FINDING",
-    "site": "program.joins[2].predicate",
-    "missing": "operation",
-    "reason": "undeclared"
+    "status": "COMPILES",
+    "sketch": "Publish(Apply(Select(Join(Join(Input,Select(Input)),Select(Input))))) | Publish(Merge(Apply(Select(Join(Join(Join(Join(Input,Select(Input)),Complete(Select(Input))),Select(Input)),Complete(Select(Input))))),Select(Input)))",
+    "expressions": 2
   },
   {
     "family": "heap/index",
