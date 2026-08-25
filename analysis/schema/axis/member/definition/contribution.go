@@ -45,6 +45,11 @@ type Contribution struct {
 	// apart would let a rule contribute a projection over rows it never
 	// declared.
 	Projections []Projection
+	// Selections are the operations that publish this rule's produced rows.
+	// A rule whose read is selected rather than enumerated declares the
+	// operation that computes those rows beside the relation they land in,
+	// for the same reason its reducer is declared beside its Program.
+	Selections []Selection
 	// Reducers are this rule's reducer definitions, in declaration order.
 	Reducers []Reducer
 }
@@ -126,6 +131,13 @@ func (contribution Contribution) rowsAvailable() bool {
 			return false
 		}
 	}
+	for _, selection := range contribution.Selections {
+		if !identifierAvailable(selection.Name) || !selection.Key.Available() ||
+			!identifierAvailable(selection.Relation) || !identifierAvailable(selection.Tag) ||
+			!selection.Implementation.Available() {
+			return false
+		}
+	}
 	for _, reducer := range contribution.Reducers {
 		if !identifierAvailable(reducer.Name) || !reducer.Key.Available() || !reducer.Implementation.Available() {
 			return false
@@ -147,6 +159,7 @@ func (contribution Contribution) Clone() Contribution {
 	clone := contribution
 	clone.Carriers = append([]Carrier(nil), contribution.Carriers...)
 	clone.Projections = append([]Projection(nil), contribution.Projections...)
+	clone.Selections = append([]Selection(nil), contribution.Selections...)
 	clone.Relations = make([]Relation, len(contribution.Relations))
 	for index, relation := range contribution.Relations {
 		clone.Relations[index] = relation
@@ -199,6 +212,10 @@ func (source Source) Compose() (Definition, bool) {
 	relations := make(map[string]Relation, len(base.Relations))
 	for _, relation := range base.Relations {
 		relations[relation.Name] = relation
+	}
+	selections := make(map[string]Selection, len(base.Selections))
+	for _, selection := range base.Selections {
+		selections[selection.Name] = selection
 	}
 	projections := make(map[string]Projection, len(base.Projections))
 	for _, projection := range base.Projections {
@@ -255,6 +272,17 @@ func (source Source) Compose() (Definition, bool) {
 			}
 			projections[projection.Name] = projection
 			base.Projections = append(base.Projections, projection)
+		}
+		for _, selection := range contribution.Selections {
+			existing, declared := selections[selection.Name]
+			if declared {
+				if existing != selection {
+					return Definition{}, false
+				}
+				continue
+			}
+			selections[selection.Name] = selection
+			base.Selections = append(base.Selections, selection)
 		}
 		for _, reducer := range contribution.Reducers {
 			if _, duplicate := reducerNames[reducer.Name]; duplicate {

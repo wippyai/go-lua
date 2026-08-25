@@ -751,6 +751,24 @@ type CarryTransform struct {
 	Implementation GoSymbol
 }
 
+// Selection is a named owner-issued operation that publishes the rows of one
+// of this axis's relations. Relation and Tag refer to a relation and a
+// projection in this same definition; the implementation is kept as a
+// source-level Go symbol descriptor and never crosses into the runtime schema
+// as a callback.
+//
+// It is how a produced read stops being a callback the declaration never
+// mentioned: the rows a selection returns depend on values earlier reads
+// delivered, so the operation that computes them is named here and the rows it
+// publishes are tagged, which is what lets a reading rule join them.
+type Selection struct {
+	Name           string
+	Key            schema.Key
+	Relation       string
+	Tag            string
+	Implementation GoSymbol
+}
+
 // KeyNormalization is the one axis-level conversion from an owner key carrier
 // to the dense key consumed by the engine. Carrier supplies the input Go type;
 // Dense names the normalized output type; Normalizer is the direct owner
@@ -803,6 +821,10 @@ type Definition struct {
 	Projections     []Projection
 	Reducers        []Reducer
 	CarryTransforms []CarryTransform
+	// Selections are this axis's operations that publish produced rows. A
+	// relation whose rows are computed rather than enumerated is populated by
+	// one of these.
+	Selections []Selection
 	// Enumerations are this axis's statements of how a sequence is read out of
 	// one of its own carriers. A rule's derivation names one rather than
 	// carrying its own pair of symbols, so two rules decomposing one carrier
@@ -970,6 +992,7 @@ func (definition Definition) Catalog() (member.Catalog, bool) {
 	}
 	projections := make([]member.Projection, len(definition.Projections))
 	projectionKeys := make(map[schema.Key]struct{}, len(definition.Projections))
+	projectionNames := make(map[string]schema.Key, len(definition.Projections))
 	for index, projection := range definition.Projections {
 		if !identifierAvailable(projection.Name) || !projection.Key.Available() || !projection.Role.Available() {
 			return member.Catalog{}, false
@@ -986,6 +1009,7 @@ func (definition Definition) Catalog() (member.Catalog, bool) {
 			return member.Catalog{}, false
 		}
 		projections[index] = member.Projection{Key: projection.Key, Relation: relation, Role: projection.Role, Result: result.Key, CandidateProvider: projection.CandidateProvider}
+		projectionNames[projection.Name] = projection.Key
 		projectionKeys[projection.Key] = struct{}{}
 	}
 	reducers := make([]member.Reducer, len(definition.Reducers))
@@ -1054,7 +1078,31 @@ func (definition Definition) Catalog() (member.Catalog, bool) {
 		transforms[index] = member.CarryTransform{Key: transform.Key, Candidate: candidate.Key, Input: input.Key, Output: output.Key}
 		transformKeys[transform.Key] = struct{}{}
 	}
-	return member.NewCatalog(relations, projections, reducers, transforms)
+	catalog, ok := member.NewCatalog(relations, projections, reducers, transforms)
+	if !ok {
+		return member.Catalog{}, false
+	}
+	if len(definition.Selections) == 0 {
+		return catalog, true
+	}
+	selections := make([]member.Selection, len(definition.Selections))
+	selectionKeys := make(map[schema.Key]struct{}, len(definition.Selections))
+	for index, selection := range definition.Selections {
+		if !identifierAvailable(selection.Name) || !selection.Key.Available() || !selection.Implementation.Available() {
+			return member.Catalog{}, false
+		}
+		if _, duplicate := selectionKeys[selection.Key]; duplicate {
+			return member.Catalog{}, false
+		}
+		relation, relationOK := relationNames[selection.Relation]
+		tag, tagOK := projectionNames[selection.Tag]
+		if !relationOK || !tagOK {
+			return member.Catalog{}, false
+		}
+		selections[index] = member.Selection{Key: selection.Key, Relation: relation, Tag: tag}
+		selectionKeys[selection.Key] = struct{}{}
+	}
+	return catalog.WithSelections(selections)
 }
 
 func (binding Binding) complete(carriers map[string]Carrier) bool {
@@ -1417,6 +1465,11 @@ func (definition Definition) Clone() Definition {
 		clone.Reducers[index].Implementation = cloneSymbol(reducer.Implementation)
 		clone.Reducers[index].Derivation.Build = cloneSymbol(reducer.Derivation.Build)
 		clone.Reducers[index].Derivation.StaticAxes = append([]schema.EntryReference(nil), reducer.Derivation.StaticAxes...)
+	}
+	clone.Selections = make([]Selection, len(definition.Selections))
+	for index, selection := range definition.Selections {
+		clone.Selections[index] = selection
+		clone.Selections[index].Implementation = cloneSymbol(selection.Implementation)
 	}
 	clone.CarryTransforms = make([]CarryTransform, len(definition.CarryTransforms))
 	for index, transform := range definition.CarryTransforms {

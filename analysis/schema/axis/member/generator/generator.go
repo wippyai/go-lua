@@ -657,8 +657,41 @@ func renderCold(packageName string, source definition.Definition) ([]byte, error
 	for _, transform := range source.CarryTransforms {
 		fmt.Fprintf(&out, "\t\t\t{Key: %s, Candidate: %s, Input: %s, Output: %s},\n", transform.Name, carriers[transform.Candidate], carriers[transform.Input], carriers[transform.Output])
 	}
-	fmt.Fprintf(&out, "\t\t},\n\t)\n\tif !ok {\n\t\tpanic(%q)\n\t}\n\treturn catalog\n}\n", packageName+": invalid axis member catalog")
+	fmt.Fprintf(&out, "\t\t},\n\t)\n\tif !ok {\n\t\tpanic(%q)\n\t}\n", packageName+": invalid axis member catalog")
+	// An axis that publishes produced rows extends its catalog with the
+	// operations that publish them. An axis that publishes none emits nothing,
+	// so its generated catalog is exactly the one it had.
+	if len(source.Selections) != 0 {
+		out.WriteString("\tcatalog, ok = catalog.WithSelections([]member.Selection{\n")
+		for _, selection := range source.Selections {
+			fmt.Fprintf(&out, "\t\t{Key: %s, Relation: %s, Tag: %s},\n",
+				selection.Name, relationKeyName(source, selection.Relation), projectionKeyName(source, selection.Tag))
+		}
+		fmt.Fprintf(&out, "\t})\n\tif !ok {\n\t\tpanic(%q)\n\t}\n", packageName+": invalid axis selection catalog")
+	}
+	out.WriteString("\treturn catalog\n}\n")
 	return format.Source([]byte(out.String()))
+}
+
+// relationKeyName and projectionKeyName resolve a definition-local member name
+// to the exported constant the generated catalog names it by, so a selection
+// refers to its relation and tag the same way every other row does.
+func relationKeyName(source definition.Definition, name string) string {
+	for _, relation := range source.Relations {
+		if relation.Name == name {
+			return relation.Name
+		}
+	}
+	return name
+}
+
+func projectionKeyName(source definition.Definition, name string) string {
+	for _, projection := range source.Projections {
+		if projection.Name == name {
+			return projection.Name
+		}
+	}
+	return name
 }
 
 // exactFoldArity is the greatest number of exact reads one generated fold
