@@ -154,3 +154,151 @@ func (roster Roster) ReducerDerivationSignature(derivation ReducerDerivation) ([
 	}
 	return params, []DerivedParam{{Type: derivation.State}, {Type: GoType{Name: "bool"}}}, true
 }
+
+// DeclaredDerivationShape is the direct-call shape one DECLARED derivation's
+// authored parts must have. Everything else about the construction is
+// generated, so these three are the whole of what an owner still writes.
+type DeclaredDerivationShape struct {
+	// CountParams/CountResults and AtParams/AtResults belong to the source
+	// enumerations, in the order the derivation composes them.
+	Sources []EnumerationShape
+	// ResolveParams is the static axis schemas, then the candidate carrier,
+	// then the innermost item. ResolveResults is the row, whether the item
+	// contributes one at all, and the owner's validity.
+	ResolveParams  []DerivedParam
+	ResolveResults []DerivedParam
+	// WidenParams/WidenResults are the endpoint predicate's, and are empty
+	// when the derivation declares no endpoint.
+	WidenParams  []DerivedParam
+	WidenResults []DerivedParam
+}
+
+// EnumerationShape is one declared enumeration's own call shape.
+type EnumerationShape struct {
+	CountParams  []DerivedParam
+	CountResults []DerivedParam
+	AtParams     []DerivedParam
+	AtResults    []DerivedParam
+}
+
+// DeclaredDerivationSignature derives the call shape of one relation's
+// declared derivation.
+//
+// The composition reads outermost-first: the first source is enumerated over
+// the relation's own declared input, and each further source is enumerated
+// over the item the one before it yields. That is what makes a two-level
+// derivation - members, then what each member projects to - flat: it is two
+// declared enumerations, not an authored nested step.
+//
+// Resolve is handed the innermost item and answers one row, whether that item
+// contributes a row at all, and its own validity. The middle result is what
+// absorbs filtering: an item the judgment declines is absent rather than
+// refused, so a derivation needs no separate predicate to skip one.
+func (roster Roster) DeclaredDerivationSignature(axis schema.Key, relation Relation, candidate GoType) (DeclaredDerivationShape, bool) {
+	derivation := relation.Derivation
+	if !derivation.DeclaredDerivation() || !derivation.declaredComplete() {
+		return DeclaredDerivationShape{}, false
+	}
+	owner, ownerOK := roster.definitionForAxis(axis)
+	if !ownerOK {
+		return DeclaredDerivationShape{}, false
+	}
+	carriers, _, carriersOK := owner.carrierIndex()
+	if !carriersOK {
+		return DeclaredDerivationShape{}, false
+	}
+	subject, subjectOK := carriers[relation.Subject]
+	if !subjectOK {
+		return DeclaredDerivationShape{}, false
+	}
+	shape := DeclaredDerivationShape{}
+	var item GoType
+	for _, source := range derivation.Source {
+		sourceOwner, sourceOwnerOK := roster.definitionForAxis(source.Axis.Key)
+		if !sourceOwnerOK {
+			return DeclaredDerivationShape{}, false
+		}
+		enumeration, enumerationOK := findEnumeration(sourceOwner, source.Name)
+		if !enumerationOK {
+			return DeclaredDerivationShape{}, false
+		}
+		sourceCarriers, _, sourceCarriersOK := sourceOwner.carrierIndex()
+		if !sourceCarriersOK {
+			return DeclaredDerivationShape{}, false
+		}
+		over, overOK := sourceCarriers[enumeration.Over]
+		element, elementOK := sourceCarriers[enumeration.Item]
+		if !overOK || !elementOK {
+			return DeclaredDerivationShape{}, false
+		}
+		// Each further source is enumerated over what the one before yielded,
+		// so the composition is checked here rather than assumed by position.
+		if item.Available() && !sameType(item, over.Type) {
+			return DeclaredDerivationShape{}, false
+		}
+		shape.Sources = append(shape.Sources, EnumerationShape{
+			CountParams:  []DerivedParam{{Type: over.Type}},
+			CountResults: []DerivedParam{{Type: GoType{Name: "int"}}},
+			AtParams:     []DerivedParam{{Type: over.Type}, {Type: GoType{Name: "int"}}},
+			AtResults:    []DerivedParam{{Type: element.Type}, {Type: GoType{Name: "bool"}}},
+		})
+		item = element.Type
+	}
+	params := make([]DerivedParam, 0, len(derivation.StaticAxes)+2)
+	for _, static := range derivation.StaticAxes {
+		staticSource, staticOK := roster.definitionForAxis(static.Key)
+		if !staticOK {
+			return DeclaredDerivationShape{}, false
+		}
+		schemaType, schemaTypeOK := AxisSchemaType(staticSource)
+		if !schemaTypeOK {
+			return DeclaredDerivationShape{}, false
+		}
+		params = append(params, DerivedParam{Type: schemaType})
+	}
+	if candidate.Available() {
+		params = append(params, DerivedParam{Type: candidate})
+	}
+	shape.ResolveParams = append(params, DerivedParam{Type: item})
+	shape.ResolveResults = []DerivedParam{
+		{Type: subject.Type}, {Type: GoType{Name: "bool"}}, {Type: GoType{Name: "bool"}},
+	}
+	if derivation.Widen.Declared() {
+		first, firstOK := roster.enumerationOver(derivation.Source[0])
+		if !firstOK {
+			return DeclaredDerivationShape{}, false
+		}
+		shape.WidenParams = []DerivedParam{{Type: first}}
+		shape.WidenResults = []DerivedParam{{Type: GoType{Name: "bool"}}}
+	}
+	return shape, true
+}
+
+// enumerationOver answers the carrier type one declared enumeration reads its
+// sequence out of. The widen endpoint is asked of that same value, because
+// what is beyond enumeration is a property of the thing being enumerated.
+func (roster Roster) enumerationOver(reference EnumerationRef) (GoType, bool) {
+	owner, ownerOK := roster.definitionForAxis(reference.Axis.Key)
+	if !ownerOK {
+		return GoType{}, false
+	}
+	enumeration, enumerationOK := findEnumeration(owner, reference.Name)
+	if !enumerationOK {
+		return GoType{}, false
+	}
+	carriers, _, carriersOK := owner.carrierIndex()
+	if !carriersOK {
+		return GoType{}, false
+	}
+	over, overOK := carriers[enumeration.Over]
+	return over.Type, overOK
+}
+
+func findEnumeration(source Definition, name string) (Enumeration, bool) {
+	for _, enumeration := range source.Enumerations {
+		if enumeration.Name == name {
+			return enumeration, true
+		}
+	}
+	return Enumeration{}, false
+}

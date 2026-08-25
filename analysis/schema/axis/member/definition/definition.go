@@ -84,9 +84,10 @@ func symbolOptional(symbol GoSymbol) bool {
 		!symbol.ReceiverPointer && symbol.ResultIndex == 0
 }
 
+// derivationOptional reports that a relation derives nothing at all - neither
+// form is stated, so its rows come from somewhere else entirely.
 func derivationOptional(derivation RelationDerivation) bool {
-	return derivation.State == (GoType{}) && symbolOptional(derivation.Build) &&
-		symbolOptional(derivation.Count) && symbolOptional(derivation.At) && len(derivation.StaticAxes) == 0
+	return !derivation.AuthoredDerivation() && !derivation.DeclaredDerivation() && len(derivation.StaticAxes) == 0
 }
 
 func cloneSymbol(symbol GoSymbol) GoSymbol { return symbol }
@@ -302,14 +303,119 @@ type RelationDerivation struct {
 	Count      GoSymbol
 	At         GoSymbol
 	StaticAxes []schema.EntryReference
+
+	// Source, Resolve and Widen are the DECLARED form of the same derivation.
+	// A relation states them instead of State/Build/Count/At, and the emitter
+	// writes the construction from them.
+	//
+	// What they replace is not the judgment - that stays authored, as Resolve
+	// - but everything every hand-written Build did around it: enumerating a
+	// source, unioning the rows, widening to a directory at a lattice
+	// endpoint, ordering by the coordinate the rows are read at, and refusing
+	// a repeat. All six authored Builds wrote those five by hand, identically,
+	// and a mistake in any of them is a soundness mistake.
+	Source  []EnumerationRef
+	Resolve GoSymbol
+	Widen   DerivationWiden
 }
 
-func (derivation RelationDerivation) complete() bool {
-	if !derivation.State.Available() || !derivation.Build.Available() || !derivation.Count.Available() || !derivation.At.Available() || len(derivation.StaticAxes) == 0 {
+// EnumerationRef names one axis's declared enumeration.
+type EnumerationRef struct {
+	Axis schema.EntryReference
+	Name string
+}
+
+// Available reports whether this reference names an enumeration at all.
+func (reference EnumerationRef) Available() bool {
+	return reference.Axis.Surface == schema.SurfaceKindAxis && reference.Axis.Key.Available() && identifierAvailable(reference.Name)
+}
+
+// DerivationWiden is the lattice endpoint at which a derived set stops being
+// enumerable and becomes a whole declared directory.
+//
+// Every authored derivation had one: a Top or opaque fact denotes alternatives
+// the read did not observe, and the sound answer is the whole directory rather
+// than the alternatives that happen to be written down. Declaring it puts that
+// answer where it can be read, instead of inside a Build where each one spelled
+// it differently.
+type DerivationWiden struct {
+	// Predicate answers, of the source fact, whether the set is beyond
+	// enumeration. It is the owner's own statement - IsTop, HasOpaque - and
+	// never a shape this package guesses from the carrier.
+	Predicate GoSymbol
+	// Directory is the relation whose whole candidate set the widened answer
+	// is. It is a declared relation, so what "everything" means is a row
+	// somebody wrote rather than a loop inside a Build.
+	Directory member.RelationRef
+}
+
+// Declared reports whether a widen endpoint is stated.
+func (widen DerivationWiden) Declared() bool {
+	return widen.Predicate.Available() || widen.Directory.Available()
+}
+
+func (widen DerivationWiden) complete() bool {
+	return widen.Predicate.Available() && widen.Directory.Available()
+}
+
+// Enumeration is one axis's statement of how a sequence is read out of one of
+// its own carriers: the atoms of a fact, the allocations a fact projects to,
+// the targets a call value dispatches to.
+//
+// It is declared on the AXIS rather than on a rule, because how an owner's
+// value decomposes is the owner's answer and every rule that decomposes it the
+// same way is asking the same question. Two rules sourcing from one
+// enumeration name it once each and share the owner's two symbols.
+type Enumeration struct {
+	Name string
+	// Over is the carrier a sequence is read out of, and Item is the carrier
+	// of one element of it.
+	Over  string
+	Item  string
+	Count GoSymbol
+	At    GoSymbol
+}
+
+func (enumeration Enumeration) complete() bool {
+	return identifierAvailable(enumeration.Name) && identifierAvailable(enumeration.Over) &&
+		identifierAvailable(enumeration.Item) && enumeration.Count.Available() && enumeration.At.Available()
+}
+
+// DeclaredDerivation reports whether a relation states the declared form.
+func (derivation RelationDerivation) DeclaredDerivation() bool {
+	return len(derivation.Source) != 0 || derivation.Resolve.Available() || derivation.Widen.Declared()
+}
+
+// AuthoredDerivation reports whether a relation states the authored form: the
+// State/Build/Count/At quartet that the declared form replaces and that the
+// scheduled-death ledger admits one row at a time.
+func (derivation RelationDerivation) AuthoredDerivation() bool {
+	return derivation.State.Available() || derivation.Build.Available() ||
+		derivation.Count.Available() || derivation.At.Available()
+}
+
+// declaredComplete states the row-local law of the declared form: at least one
+// source enumeration, the one authored judgment that resolves an item, a widen
+// endpoint stated whole or not at all, and at least one axis to resolve
+// against.
+func (derivation RelationDerivation) declaredComplete() bool {
+	if len(derivation.Source) == 0 || !derivation.Resolve.Available() || len(derivation.StaticAxes) == 0 {
 		return false
 	}
-	seen := make(map[schema.Key]struct{}, len(derivation.StaticAxes))
-	for _, axis := range derivation.StaticAxes {
+	for _, source := range derivation.Source {
+		if !source.Available() {
+			return false
+		}
+	}
+	if derivation.Widen.Declared() && !derivation.Widen.complete() {
+		return false
+	}
+	return staticAxesDistinct(derivation.StaticAxes)
+}
+
+func staticAxesDistinct(axes []schema.EntryReference) bool {
+	seen := make(map[schema.Key]struct{}, len(axes))
+	for _, axis := range axes {
 		if axis.Surface != schema.SurfaceKindAxis || !axis.Key.Available() {
 			return false
 		}
@@ -319,6 +425,24 @@ func (derivation RelationDerivation) complete() bool {
 		seen[axis.Key] = struct{}{}
 	}
 	return true
+}
+
+// complete states the row-local law of a derivation in whichever form it is
+// declared. The two forms are exclusive: a relation that states both is two
+// answers to how its rows are built, and which one a consumer reads would
+// decide the rows.
+func (derivation RelationDerivation) complete() bool {
+	authored, declared := derivation.AuthoredDerivation(), derivation.DeclaredDerivation()
+	if authored == declared {
+		return false
+	}
+	if declared {
+		return derivation.declaredComplete()
+	}
+	if !derivation.State.Available() || !derivation.Build.Available() || !derivation.Count.Available() || !derivation.At.Available() || len(derivation.StaticAxes) == 0 {
+		return false
+	}
+	return staticAxesDistinct(derivation.StaticAxes)
 }
 
 // Projection is a named owner-issued projection declaration. Relation and
@@ -499,6 +623,11 @@ type Definition struct {
 	Projections     []Projection
 	Reducers        []Reducer
 	CarryTransforms []CarryTransform
+	// Enumerations are this axis's statements of how a sequence is read out of
+	// one of its own carriers. A rule's derivation names one rather than
+	// carrying its own pair of symbols, so two rules decomposing one carrier
+	// the same way ask the owner once.
+	Enumerations []Enumeration
 
 	// ImportPath is the Go package this axis's cold catalog is generated into.
 	// It is the one place an axis says where it lives: every other package the
@@ -873,7 +1002,11 @@ func (definition Definition) Complete() bool {
 		// about it. Registration is not a formality: the ledger is what says the
 		// authored form is scheduled to be emitted, and a derivation nothing
 		// scheduled would outlive the migration silently.
-		if !derivationOptional(relation.Derivation) && !scheduledForDeath(definition.Axis, relation.Key, relation.Derivation.Build) {
+		// The ledger admits the AUTHORED form, which is the one scheduled to be
+		// replaced. A declared derivation has no Build to schedule: its
+		// construction is generated, so there is nothing for a migration set to
+		// know about and nothing to outlive it.
+		if relation.Derivation.AuthoredDerivation() && !scheduledForDeath(definition.Axis, relation.Key, relation.Derivation.Build) {
 			return false
 		}
 		// An issued provider names no axis directory at all. The three dense
