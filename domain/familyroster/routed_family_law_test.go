@@ -39,12 +39,19 @@ func emittedFamily(t *testing.T, key schema.Key) string {
 // a geometry of its own would be a second derivation of the relation the
 // declaration already names, and the two would disagree the moment either
 // moved.
+//
+// Store's relation is a DECLARED derivation, so Build, Count and At are the
+// three the emitter generates for join 1 rather than three the owner authored.
+// Which of the two a relation uses is the declaration's own statement, and the
+// law holds the same thing either way: the worker calls the relation's Build
+// once with the carriers the declaration names, and reads every row back
+// through that relation's own Count and At.
 func TestARoutedWorkerDerivesItsRouteSetFromTheDeclaredRelation(t *testing.T) {
 	source := emittedFamily(t, "placement-storage")
 	for _, required := range []string{
-		"DeriveRoutes(lane.family.placementSchema, lane.family.valueSchema, row.candidate, input0)",
-		"count := RouteCount(derived)",
-		"selected, selectedOK := RouteAt(derived, index)",
+		"deriveDerived1Rows(lane.family.placementSchema, lane.family.valueSchema, row.candidate, input0)",
+		"count := derived1Count(derived)",
+		"selected, selectedOK := derived1At(derived, index)",
 		"selected.Coordinates()",
 		"selected.Predicate()",
 		"lane.family.placementSchema.KeyIndex(storageRouteKey)",
