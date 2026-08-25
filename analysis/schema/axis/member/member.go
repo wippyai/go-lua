@@ -361,6 +361,10 @@ type Catalog struct {
 	Projections     []Projection
 	Reducers        []Reducer
 	CarryTransforms []CarryTransform
+	// Selections are the operations this axis publishes produced rows
+	// through. A read whose rows are produced rather than enumerated names one
+	// of these instead of pairing against a column that does not exist yet.
+	Selections []Selection
 }
 
 // NewCatalog admits and deep-copies one declaration catalog. Empty input is
@@ -438,12 +442,25 @@ func cloneReducers(reducers []Reducer) []Reducer {
 }
 
 // Clone returns an independent declaration copy, preserving nil slices.
+// WithSelections returns this catalog extended by the operations that publish
+// its produced rows. It is separate from construction so an axis that
+// publishes none keeps the catalog it already had.
+func (catalog Catalog) WithSelections(selections []Selection) (Catalog, bool) {
+	extended := catalog.Clone()
+	extended.Selections = append([]Selection(nil), selections...)
+	if !extended.Complete() {
+		return Catalog{}, false
+	}
+	return extended, true
+}
+
 func (catalog Catalog) Clone() Catalog {
 	clone := Catalog{
 		Relations:       cloneRelations(catalog.Relations),
 		Projections:     append([]Projection(nil), catalog.Projections...),
 		Reducers:        cloneReducers(catalog.Reducers),
 		CarryTransforms: append([]CarryTransform(nil), catalog.CarryTransforms...),
+		Selections:      append([]Selection(nil), catalog.Selections...),
 	}
 	return clone
 }
@@ -453,7 +470,8 @@ func (catalog Catalog) Clone() Catalog {
 func (catalog Catalog) HasMembers() bool { return catalog.MemberCount() != 0 }
 
 func (catalog Catalog) MemberCount() int {
-	return len(catalog.Relations) + len(catalog.Projections) + len(catalog.Reducers) + len(catalog.CarryTransforms)
+	return len(catalog.Relations) + len(catalog.Projections) + len(catalog.Reducers) +
+		len(catalog.CarryTransforms) + len(catalog.Selections)
 }
 
 // Complete reports whether the catalog is empty (legacy absence) or a valid,
@@ -518,6 +536,37 @@ func (catalog Catalog) Complete() bool {
 		for _, column := range relation.Addressing.Columns() {
 			owner, declared := columns[column]
 			if !declared || owner != relation.Key {
+				return false
+			}
+		}
+	}
+	// A selection publishes rows into a relation this catalog declares and
+	// stamps them with a projection over that same relation, so the reading
+	// rule joins produced rows exactly as it joins enumerated ones. Where the
+	// relation also names its tag coordinate the two must agree: one column,
+	// one authority.
+	for _, selection := range catalog.Selections {
+		if !selection.Available() {
+			return false
+		}
+		if _, duplicate := keys[selection.Key]; duplicate {
+			return false
+		}
+		keys[selection.Key] = struct{}{}
+		if _, relationExists := relations[selection.Relation]; !relationExists {
+			return false
+		}
+		owner, declared := columns[selection.Tag]
+		if !declared || owner != selection.Relation {
+			return false
+		}
+	}
+	for _, relation := range catalog.Relations {
+		if !relation.Addressing.Tag.Available() {
+			continue
+		}
+		for _, selection := range catalog.Selections {
+			if selection.Relation == relation.Key && selection.Tag != relation.Addressing.Tag {
 				return false
 			}
 		}
@@ -727,6 +776,12 @@ const (
 	// canonical stream is exactly the stream it had before the coordinates
 	// could be named.
 	contentRecordAddressing uint64 = 13
+
+	// contentRecordSelection carries one operation that publishes a relation's
+	// produced rows. It is a tagged trailing collection: an axis that publishes
+	// none emits nothing, so its canonical stream is exactly the stream it had
+	// before produced rows could be named.
+	contentRecordSelection uint64 = 14
 )
 
 // WriteContent writes the catalog's canonical declaration stream. Collection
@@ -894,7 +949,47 @@ func (catalog Catalog) WriteContent(content *framing.Writer) error {
 			return err
 		}
 	}
+	if len(catalog.Selections) != 0 {
+		if err := content.Count(uint64(len(catalog.Selections))); err != nil {
+			return err
+		}
+		for _, selection := range catalog.Selections {
+			if err := content.Record(contentRecordSelection); err != nil {
+				return err
+			}
+			if err := content.String(string(selection.Key)); err != nil {
+				return err
+			}
+			if err := content.String(string(selection.Relation)); err != nil {
+				return err
+			}
+			if err := content.String(string(selection.Tag)); err != nil {
+				return err
+			}
+		}
+	}
 	return nil
+}
+
+// SelectionCount is the number of operations this axis publishes rows through.
+func (catalog Catalog) SelectionCount() int { return len(catalog.Selections) }
+
+// SelectionAt returns one selection at its declaration position.
+func (catalog Catalog) SelectionAt(index int) (Selection, bool) {
+	if index < 0 || index >= len(catalog.Selections) {
+		return Selection{}, false
+	}
+	return catalog.Selections[index], true
+}
+
+// Selection resolves one selection by the key its owner declared it under.
+func (catalog Catalog) Selection(key schema.Key) (Selection, bool) {
+	for _, selection := range catalog.Selections {
+		if selection.Key == key {
+			return selection, true
+		}
+	}
+	return Selection{}, false
 }
 
 // writeCandidateProvider emits whichever arm the provider states. The axis arm
