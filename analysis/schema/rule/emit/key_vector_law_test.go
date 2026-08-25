@@ -108,9 +108,9 @@ func TestAPublishedKeyVectorIsDeliveredAsOneVectorOverItsOwnCoordinates(t *testi
 	if !strings.Contains(source, "execution.NewMemberVector(read0Cells)") {
 		t.Fatalf("the worker does not view the filled cells as one vector:\n%s", source)
 	}
-	call, found := callArguments(source, "DeriveReturnRoutes")
+	call, found := callArguments(source, "deriveDerived1Rows")
 	if !found {
-		t.Fatalf("the emitted family makes no call to the declared derivation:\n%s", source)
+		t.Fatalf("the emitted family makes no call to the construction its declaration derives:\n%s", source)
 	}
 	delivered := false
 	for _, argument := range call {

@@ -1697,6 +1697,23 @@ func renderDerivedBuild(out *strings.Builder, built *plan, join *joinPlan) error
 			count := prefixed(prefix, fmt.Sprintf("count%d", level))
 			cursor := prefixed(prefix, fmt.Sprintf("cursor%d", level))
 			item := prefixed(prefix, fmt.Sprintf("item%d", level))
+			if source.delivery != 0 {
+				// A delivery is walked directly: its census and its accessor
+				// are the execution view's own, and the three things a cell
+				// answers - the value, whether that coordinate holds one, and
+				// whether the index names a cell at all - go to the owner's
+				// judgment, which is the only symbol declared about it.
+				cell := prefixed(prefix, fmt.Sprintf("cell%d", level))
+				fmt.Fprintf(out, "%s%s := %s.Count()\n", indent, count, over)
+				fmt.Fprintf(out, "%sfor %s := 0; %s < %s; %s++ {\n", indent, cursor, cursor, count, cursor)
+				indent += "\t"
+				fmt.Fprintf(out, "%s%s, %sPresent, %sAvailable := %s.At(%s)\n", indent, cell, cell, cell, over, cursor)
+				fmt.Fprintf(out, "%s%s, %sOK := %s\n", indent, item, item,
+					source.own(imports, source.admit, cell, cell+"Present", cell+"Available"))
+				fmt.Fprintf(out, "%sif !%sOK {\n%s\treturn %s{}, false\n%s}\n", indent, item, indent, state, indent)
+				over = item
+				continue
+			}
 			fmt.Fprintf(out, "%s%s := %s\n", indent, count, source.census(imports, over))
 			fmt.Fprintf(out, "%sfor %s := 0; %s < %s; %s++ {\n", indent, cursor, cursor, count, cursor)
 			indent += "\t"
@@ -1801,8 +1818,15 @@ func derivationArgumentType(built *plan, argument derivationArg) (string, error)
 		return imports.typeName(built.candidate.subject), nil
 	}
 	if argument.many {
-		return "", unexpressible(built.target.Spec.Key, "a generated derivation over a many-valued delivery",
-			"a declared derivation reads its items out of a value, and a whole delivery has no generated enumeration yet")
+		// The view a many-valued position arrives under is the execution
+		// vocabulary's, chosen where the read form was declared, so it is
+		// spelled from that form and from the carrier it delivers cells of.
+		view, _, viewOK := definition.ManyValuedView(argument.form, cellType(), vectorType())
+		if !viewOK || !argument.element.Available() {
+			return "", unexpressible(built.target.Spec.Key, "a derivation over a delivery with no declared view",
+				"a many-valued position arrives as the delivery its own read form establishes, and this one declares none")
+		}
+		return imports.typeName(view) + "[" + imports.typeName(argument.element) + "]", nil
 	}
 	return imports.typeName(argument.join.axis.fact), nil
 }

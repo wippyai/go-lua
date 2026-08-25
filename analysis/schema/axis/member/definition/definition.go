@@ -327,15 +327,52 @@ type RelationDerivation struct {
 	InlineWidth int
 }
 
-// EnumerationRef names one axis's declared enumeration.
+// EnumerationRef names one level of a composed source: an axis's declared
+// enumeration over a value, or the whole DELIVERY of one of the relation's own
+// many-valued inputs.
 type EnumerationRef struct {
 	Axis schema.EntryReference
 	Name string
+	// Delivery names the relation input whose whole delivery is this sequence,
+	// one-based so the zero value is "an axis's enumeration". A delivery is
+	// not one of an axis's enumerations and names none of its symbols: its
+	// census and its accessor belong to the execution vocabulary, and it is
+	// the emitter that instantiated that view when it chose how a many-valued
+	// input arrives. So a declaration naming a delivery names the input, and
+	// the one thing the owner still has to say about it.
+	Delivery int
+	// Admit is that one thing: the owner's judgment over ONE CELL of the
+	// delivery - the value, whether that coordinate holds one, and whether the
+	// index names a cell at all - answering the item the next level reads.
+	//
+	// It is required on a delivery level and refused anywhere else. A cell is
+	// not a value: absence is first-class, and the only absent cell an owner
+	// admits is its own declared default, which presence metadata must never
+	// manufacture. Dropping the presence bit would let a read that delivered
+	// something else at an unwritten coordinate be enumerated as a fact.
+	//
+	// What the cell was OBSERVED OVER is deliberately not here. A vector's
+	// per-cell supports are conjoined by the execution layer into the one
+	// region the invocation concluded over; a relation judgment that also read
+	// them would be a second authority over that region.
+	Admit GoSymbol
 }
 
-// Available reports whether this reference names an enumeration at all.
+// DeliverySource reports whether this level is an input's whole delivery
+// rather than an axis's enumeration.
+func (reference EnumerationRef) DeliverySource() bool { return reference.Delivery > 0 }
+
+// Available reports whether this reference names a source level at all. The
+// two forms are exclusive: a level naming both an enumeration and a delivery
+// would be two answers to what its sequence is.
 func (reference EnumerationRef) Available() bool {
-	return reference.Axis.Surface == schema.SurfaceKindAxis && reference.Axis.Key.Available() && identifierAvailable(reference.Name)
+	if reference.Axis.Surface != schema.SurfaceKindAxis || !reference.Axis.Key.Available() {
+		return false
+	}
+	if reference.DeliverySource() {
+		return reference.Name == "" && reference.Admit.Available()
+	}
+	return identifierAvailable(reference.Name) && !reference.Admit.Available()
 }
 
 // DerivationWiden is the lattice endpoint at which a derived set stops being

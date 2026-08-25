@@ -144,11 +144,11 @@ func (lane *familyWorker) Execute(frame execution.Frame, ticket execution.Ticket
 	}
 	// The route set is the relation's own answer, derived once per invocation from
 	// the carriers its declaration names. Nothing below re-derives it.
-	derived, derivedOK := DeriveReturnRoutes(lane.family.placementSchema, lane.family.valueSchema, row.candidate, input0, read1Vector)
+	derived, derivedOK := deriveDerived2Rows(lane.family.placementSchema, lane.family.valueSchema, row.candidate, input0, read1Vector)
 	if !derivedOK {
 		return lane.settle(ticket, structure.Refuse)
 	}
-	count := ReturnRouteCount(derived)
+	count := derived2Count(derived)
 	if count < 0 || count > len(lane.members) || count > len(lane.cells) || count > len(lane.routes) {
 		return lane.settle(ticket, structure.Refuse)
 	}
@@ -156,7 +156,7 @@ func (lane *familyWorker) Execute(frame execution.Frame, ticket execution.Ticket
 	cells := lane.cells[:count]
 	routes := lane.routes[:count]
 	for index := 0; index < count; index++ {
-		selected, selectedOK := ReturnRouteAt(derived, index)
+		selected, selectedOK := derived2At(derived, index)
 		if !selectedOK {
 			return lane.settle(ticket, structure.Refuse)
 		}
@@ -267,6 +267,287 @@ func (lane *familyWorker) read1Cell(read execution.ExactRead[value.DenseCoordina
 	cell, present = policy.Cell(cell, present)
 	*destination = execution.MemberCell[value.Value]{Value: cell, Present: present, Region: region}
 	return structure.Concrete
+}
+
+// derived2InlineWidth is how many members join 2's set holds by value. It is the
+// width its relation declares, which is that relation's own statement of how
+// many members it ordinarily answers.
+const derived2InlineWidth = 8
+
+// derived2Member is one member and the address it is reached at: the coordinate
+// its relation's declared key normalizes to, and the tag its declared
+// predicate answers. Both are taken once, where the member is resolved,
+// because asking the owner for them again per comparison would let two
+// answers to one question disagree.
+type derived2Member struct {
+	dense uint32
+	tag   uint64
+	row   Route
+}
+
+// derived2Rows is the member set one invocation of join 2's declared relation
+// answers. It is sealed by the Build below and read by nothing else.
+//
+// The ordinary answer is held BY VALUE in the bounded inline prefix and only a
+// wider one reaches the explicit spill, so an invocation answering within the
+// declared width allocates nothing at all.
+type derived2Rows struct {
+	inline [derived2InlineWidth]derived2Member
+	spill  []derived2Member
+	count  int
+
+	// A widened answer is the owner's whole directory, which already lies in
+	// the order this relation is ordered by, so nothing above holds it: the set
+	// records that it widened, the census it took, and the inputs one member is
+	// resolved from, and answers each member on demand.
+	widened bool
+	// widenPrefix states that every member the directory yields contributes one
+	// row, so an ordinal IS a directory position and no scan is needed.
+	widenPrefix          bool
+	widenPlacementSchema placement.Schema
+	widenValueSchema     *value.Schema
+	widenCandidate       value.ReturnBoundary
+}
+
+func derived2Count(state derived2Rows) int { return state.count }
+
+// derived2MemberAt answers one member of the set together with the coordinate it
+// is ordered at. The inline prefix holds the first members and the spill holds
+// the rest, in one order across both.
+func derived2MemberAt(state derived2Rows, index int) (derived2Member, bool) {
+	// A widened set placed nothing, so it holds no member here to answer with.
+	if state.widened {
+		return derived2Member{}, false
+	}
+	if index < 0 || index >= state.count {
+		return derived2Member{}, false
+	}
+	if index < len(state.inline) {
+		return state.inline[index], true
+	}
+	spilled := index - len(state.inline)
+	if spilled >= len(state.spill) {
+		return derived2Member{}, false
+	}
+	return state.spill[spilled], true
+}
+
+func derived2At(state derived2Rows, index int) (Route, bool) {
+	if state.widened {
+		return derived2WidenedAt(state, index)
+	}
+	member, memberOK := derived2MemberAt(state, index)
+	if !memberOK {
+		var absent Route
+		return absent, false
+	}
+	return member.row, true
+}
+
+// insertDerived2Row places one resolved member at its canonical position.
+//
+// The set is ordered ascending by the coordinate its relation's declared key
+// normalizes to, because that is the order the engine canonicalizes a
+// selection by.
+//
+// A member is reached at that coordinate AND at the tag its predicate
+// answers, and that pair is its whole address. Two items resolving to one
+// address are one member named twice - an alias of the same thing - and the
+// second adds no ordinal. Two items on one coordinate under DIFFERENT tags
+// are two members where a selection carries one cell, which has no answer
+// and is refused.
+func insertDerived2Row(built derived2Rows, dense uint32, tag uint64, row Route) (derived2Rows, bool) {
+	position := 0
+	for position < built.count {
+		current, currentOK := derived2MemberAt(built, position)
+		if !currentOK {
+			return derived2Rows{}, false
+		}
+		if current.dense == dense {
+			if current.tag != tag {
+				return derived2Rows{}, false
+			}
+			return built, true
+		}
+		if current.dense > dense {
+			break
+		}
+		position++
+	}
+	placed := derived2Member{dense: dense, tag: tag, row: row}
+	if built.count < len(built.inline) {
+		for index := built.count; index > position; index-- {
+			built.inline[index] = built.inline[index-1]
+		}
+		built.inline[position] = placed
+		built.count++
+		return built, true
+	}
+	// The prefix is full. A member belonging inside it displaces the last one
+	// held there, and that one takes the first spilled position instead.
+	if position < len(built.inline) {
+		carried := built.inline[len(built.inline)-1]
+		for index := len(built.inline) - 1; index > position; index-- {
+			built.inline[index] = built.inline[index-1]
+		}
+		built.inline[position] = placed
+		placed = carried
+		position = len(built.inline)
+	}
+	spilled := position - len(built.inline)
+	if spilled > len(built.spill) {
+		return derived2Rows{}, false
+	}
+	built.spill = append(built.spill, derived2Member{})
+	copy(built.spill[spilled+1:], built.spill[spilled:len(built.spill)-1])
+	built.spill[spilled] = placed
+	built.count++
+	return built, true
+}
+
+// derived2WidenedAt answers one member of a widened set out of the directory it
+// lies in. Nothing was copied when the set was built, so the member is
+// resolved here, from the same inputs the census was taken over.
+func derived2WidenedAt(state derived2Rows, index int) (Route, bool) {
+	var absent Route
+	if !state.widened || index < 0 || index >= state.count {
+		return absent, false
+	}
+	widenCount := state.widenPlacementSchema.DenseKeyCount()
+	if state.widenPrefix {
+		if index >= widenCount {
+			return absent, false
+		}
+		widenItem, widenItemOK := state.widenPlacementSchema.KeyAt(index)
+		if !widenItemOK {
+			return absent, false
+		}
+		widenRow, widenPresent, widenResolved := ResolveDirectoryRoute(state.widenPlacementSchema, state.widenValueSchema, state.widenCandidate, widenItem)
+		if !widenResolved || !widenPresent {
+			return absent, false
+		}
+		return widenRow, true
+	}
+	// The directory declines some of what it yields, so an ordinal is reached by
+	// counting the members that contribute.
+	ordinal := 0
+	for widenCursor := 0; widenCursor < widenCount; widenCursor++ {
+		widenItem, widenItemOK := state.widenPlacementSchema.KeyAt(widenCursor)
+		if !widenItemOK {
+			return absent, false
+		}
+		widenRow, widenPresent, widenResolved := ResolveDirectoryRoute(state.widenPlacementSchema, state.widenValueSchema, state.widenCandidate, widenItem)
+		if !widenResolved {
+			return absent, false
+		}
+		if !widenPresent {
+			continue
+		}
+		if ordinal == index {
+			return widenRow, true
+		}
+		ordinal++
+	}
+	return absent, false
+}
+
+// deriveDerived2Rows answers join 2's member set for one invocation.
+// A source that reached its lattice endpoint named no alternatives at all, so
+// the answer there is the owner's whole directory rather than the ones that
+// happen to be written down. Both answers are placed the same way, so both
+// leave in the one order a selection is canonicalized by.
+func deriveDerived2Rows(placementSchema placement.Schema, valueSchema *value.Schema, given0 value.ReturnBoundary, given1 value.Value, given2 execution.SummaryVector[value.Value]) (derived2Rows, bool) {
+	var built derived2Rows
+	// The endpoint is the one judgment that runs whether or not the source
+	// yields anything, so it is where an invocation nothing else would look at
+	// is authenticated.
+	beyond, admissible := BeyondAllocations(placementSchema, valueSchema, given0, given2)
+	if !admissible {
+		return derived2Rows{}, false
+	}
+	if beyond {
+		built.widened = true
+		built.widenPrefix = true
+		built.widenPlacementSchema = placementSchema
+		built.widenValueSchema = valueSchema
+		built.widenCandidate = given0
+		var widenPrevious uint32
+		var widenSeen bool
+		var widenGap bool
+		widenCount := placementSchema.DenseKeyCount()
+		for widenCursor := 0; widenCursor < widenCount; widenCursor++ {
+			widenItem, widenItemOK := placementSchema.KeyAt(widenCursor)
+			if !widenItemOK {
+				return derived2Rows{}, false
+			}
+			widenRow, widenPresent, widenResolved := ResolveDirectoryRoute(placementSchema, valueSchema, given0, widenItem)
+			if !widenResolved {
+				return derived2Rows{}, false
+			}
+			if !widenPresent {
+				widenGap = true
+				continue
+			}
+			if widenGap {
+				built.widenPrefix = false
+			}
+			returnRouteKey, returnRouteKeyPaired, returnRouteKeyOK := widenRow.Coordinates()
+			_ = returnRouteKeyPaired
+			if !returnRouteKeyOK {
+				return derived2Rows{}, false
+			}
+			dense, denseOK := placementSchema.KeyIndex(returnRouteKey)
+			if !denseOK {
+				return derived2Rows{}, false
+			}
+			if widenSeen && dense <= widenPrevious {
+				return derived2Rows{}, false
+			}
+			widenPrevious, widenSeen = dense, true
+			built.count++
+		}
+		return built, true
+	}
+	count0 := given2.Count()
+	for cursor0 := 0; cursor0 < count0; cursor0++ {
+		cell0, cell0Present, cell0Available := given2.At(cursor0)
+		item0, item0OK := valueSchema.AuthenticateFactorCell(cell0, cell0Present, cell0Available)
+		if !item0OK {
+			return derived2Rows{}, false
+		}
+		count1 := valueSchema.ValueAtomCount(item0)
+		for cursor1 := 0; cursor1 < count1; cursor1++ {
+			item1, item1OK := valueSchema.ValueAtomAt(item0, cursor1)
+			if !item1OK {
+				return derived2Rows{}, false
+			}
+			row, present, resolved := ResolveRoute(placementSchema, valueSchema, given0, item1)
+			if !resolved {
+				return derived2Rows{}, false
+			}
+			if present {
+				returnRouteKey, returnRouteKeyPaired, returnRouteKeyOK := row.Coordinates()
+				_ = returnRouteKeyPaired
+				if !returnRouteKeyOK {
+					return derived2Rows{}, false
+				}
+				returnRouteTag, returnRouteTagOK := row.Predicate()
+				if !returnRouteTagOK {
+					return derived2Rows{}, false
+				}
+				dense, denseOK := placementSchema.KeyIndex(returnRouteKey)
+				if !denseOK {
+					return derived2Rows{}, false
+				}
+				var placed bool
+				built, placed = insertDerived2Row(built, dense, returnRouteTag, row)
+				if !placed {
+					return derived2Rows{}, false
+				}
+			}
+		}
+	}
+	return built, true
 }
 
 // familyInstaller authors this rule's execution family. The axis schemas it

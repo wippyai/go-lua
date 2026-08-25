@@ -4,93 +4,93 @@ import (
 	"sync"
 	"testing"
 
+	"github.com/wippyai/go-lua/analysis/engine/execution"
+	"github.com/wippyai/go-lua/analysis/schema/structure"
 	"github.com/wippyai/go-lua/domain/materialization"
 	"github.com/wippyai/go-lua/domain/placement"
 	valuedomain "github.com/wippyai/go-lua/domain/value"
 )
 
 func TestReturnSparseStackPlacementIsDisplaced(t *testing.T) {
-	got, ok := returnValue(placement.DefaultFact(), false, routePlan{class: routeExact})
-	want := placement.Fact{Class: placement.OwnedHeap, RetainEscape: placement.EvidenceProven}
-	if !ok || got != want {
-		t.Fatalf("sparse Stack predecessor = %s/%t, want OwnedHeap/true", got, ok)
+	// A sparse predecessor arrives as the Factor's own declared default, which
+	// is the one absence the fold admits; the route it is published at is the
+	// relation's answer and not this reducer's.
+	current, currentOK := placement.AuthenticateFactCell(placement.DefaultFact(), false, true)
+	if !currentOK {
+		t.Fatal("sparse Placement default")
 	}
-	if got, ok := returnValue(placement.BottomFact(), false, routePlan{class: routeExact}); ok || got != placement.BottomFact() {
-		t.Fatalf("sparse non-default predecessor = %s/%t, want Bottom/false", got, ok)
+	got, outcome := ReturnEscapeFold(1, current)
+	want := placement.Fact{Class: placement.OwnedHeap, RetainEscape: placement.EvidenceProven}
+	if outcome != structure.Concrete || got != want {
+		t.Fatalf("sparse Stack predecessor = %s/%v, want OwnedHeap/Concrete", got, outcome)
+	}
+	if _, sparseOK := placement.AuthenticateFactCell(placement.BottomFact(), false, true); sparseOK {
+		t.Fatal("a sparse non-default predecessor was admitted")
 	}
 	shared := placement.Fact{Class: placement.SharedHeap, RetainEscape: placement.EvidenceRefuted}
-	if got, ok := returnValue(shared, true, routePlan{class: routeWidened}); !ok || got != (placement.Fact{Class: placement.SharedHeap, RetainEscape: placement.EvidenceProven}) {
-		t.Fatalf("widened identity changed known Return policy = %s/%t, want SharedHeap/true", got, ok)
+	if got, outcome := ReturnEscapeFold(1, shared); outcome != structure.Concrete ||
+		got != (placement.Fact{Class: placement.SharedHeap, RetainEscape: placement.EvidenceProven}) {
+		t.Fatalf("known Return policy changed = %s/%v, want SharedHeap/Concrete", got, outcome)
 	}
 }
 
-func TestReturnFactsRejectDuplicateIndexedCell(t *testing.T) {
-	facts, ok := newReturnFacts(2)
-	if !ok || !facts.set(1, returnFact{available: true}) {
-		t.Fatal("initial indexed fact")
-	}
-	if facts.set(1, returnFact{available: true}) {
-		t.Fatal("duplicate indexed fact was admitted")
-	}
-	if item, itemOK := facts.at(0); !itemOK || item.available {
-		t.Fatalf("missing indexed fact was not preserved: %#v/%t", item, itemOK)
-	}
-}
-
+// TestReturnExactRoutesStayCanonicalWithSuffixOnlySpill states the shape of
+// the generated set: rows arrive in any order and are held ascending by the
+// coordinate they address, the inline prefix fills first, and only the excess
+// reaches the spill. A row on an address already held adds no ordinal.
 func TestReturnExactRoutesStayCanonicalWithSuffixOnlySpill(t *testing.T) {
-	var plan routePlan
-	for _, tag := range []routeTag{9, 2, 7, 1, 6, 4, 8, 3, 5} {
-		if !plan.addRoute(route{tag: tag}) {
-			t.Fatalf("add route tag %d", tag)
+	var plan derived2Rows
+	for _, tag := range []uint64{9, 2, 7, 1, 6, 4, 8, 3, 5} {
+		var placed bool
+		plan, placed = insertDerived2Row(plan, uint32(tag-1), tag, Route{Tag: tag})
+		if !placed {
+			t.Fatalf("place route tag %d", tag)
 		}
 	}
-	if plan.routeCount() != 9 {
-		t.Fatalf("exact route count = %d, want 9", plan.routeCount())
+	if derived2Count(plan) != 9 {
+		t.Fatalf("exact route count = %d, want 9", derived2Count(plan))
 	}
 	if got := len(plan.spill); got != 9-len(plan.inline) {
 		t.Fatalf("exact spill length = %d, want suffix length %d", got, 9-len(plan.inline))
 	}
-	for index := 0; index < plan.routeCount(); index++ {
-		want := routeTag(index + 1)
-		candidate, candidateOK := plan.routeAt(index)
-		if !candidateOK || candidate.tag != want {
-			t.Fatalf("exact route %d = %#v/%t, want tag %d", index, candidate, candidateOK, want)
-		}
-		byTag, byTagOK := routeAtTag(plan, want)
-		if !byTagOK || byTag != candidate {
-			t.Fatalf("exact routeAtTag(%d) = %#v/%t, want %#v/true", want, byTag, byTagOK, candidate)
+	for index := 0; index < derived2Count(plan); index++ {
+		want := uint64(index + 1)
+		route, routeOK := derived2At(plan, index)
+		if !routeOK || route.Tag != want {
+			t.Fatalf("exact route %d = %#v/%t, want tag %d", index, route, routeOK, want)
 		}
 	}
-	if !plan.addRoute(route{tag: 5}) || plan.routeCount() != 9 {
-		t.Fatal("duplicate exact route changed the canonical set")
+	repeated, repeatedOK := insertDerived2Row(plan, 4, 5, Route{Tag: 5})
+	if !repeatedOK || derived2Count(repeated) != 9 {
+		t.Fatal("one route named twice changed the canonical set")
 	}
 }
 
+// TestReturnWidenedRoutesAreLazyOwnerSchemaViews is the widening half of the
+// allocation bar. A widened answer is the owner's whole directory, which
+// already lies in the order this relation is ordered by, so the set records
+// that it widened and keeps what one row is resolved from - it copies nothing.
 func TestReturnWidenedRoutesAreLazyOwnerSchemaViews(t *testing.T) {
 	fixture := newReturnPlanFixture(t)
-	plan, ok := routePlanFor(fixture.placement, fixture.values, fixture.values.Top())
-	if !ok || plan.class != routeWidened || !plan.allRoot {
-		t.Fatalf("Top plan = %#v/%t, want widened all-root view", plan, ok)
+	plan, ok := returnRoutes(t, fixture, returnCell(fixture.values.Top()))
+	if !ok || !plan.widened {
+		t.Fatalf("Top route set = %#v/%t, want a widened view", plan, ok)
 	}
-	if plan.spill != nil || plan.allRootDenseSize != fixture.placement.DenseKeyCount() {
-		t.Fatalf("Top plan retained copied routes: spill=%v dense=%d", plan.spill, plan.allRootDenseSize)
+	if plan.spill != nil || derived2Count(plan) != len(fixture.allocations) {
+		t.Fatalf("Top route set copied its rows: spill=%v count=%d", plan.spill, derived2Count(plan))
 	}
-	if plan.allRootSchema.ContentID() != fixture.placement.ContentID() {
-		t.Fatal("Top plan lost its owner Placement schema")
+	if plan.widenPlacementSchema.ContentID() != fixture.placement.ContentID() {
+		t.Fatal("Top route set lost the owner Placement schema it resolves through")
 	}
-	for index := 0; index < plan.routeCount(); index++ {
-		candidate, candidateOK := plan.routeAt(index)
-		if !candidateOK {
-			t.Fatalf("Top route %d unavailable", index)
-		}
-		byTag, byTagOK := routeAtTag(plan, candidate.tag)
-		if !byTagOK || byTag != candidate {
-			t.Fatalf("Top routeAtTag(%d) = %#v/%t, want %#v/true", candidate.tag, byTag, byTagOK, candidate)
+	for index := 0; index < derived2Count(plan); index++ {
+		route, routeOK := derived2At(plan, index)
+		if !routeOK || route.Tag == 0 {
+			t.Fatalf("Top route %d unavailable: %#v/%t", index, route, routeOK)
 		}
 	}
 }
 
-func TestReturnRoutePlanCommonPathsDoNotAllocateRouteScratch(t *testing.T) {
+func TestReturnRouteSetCommonPathsDoNotAllocate(t *testing.T) {
 	fixture := newReturnPlanFixture(t)
 	atom, atomOK := fixture.values.Allocation(fixture.allocations[0], materialization.Recent)
 	if !atomOK {
@@ -108,31 +108,39 @@ func TestReturnRoutePlanCommonPathsDoNotAllocateRouteScratch(t *testing.T) {
 	if !opaqueOK {
 		t.Fatal("opaque value")
 	}
-	var plan routePlan
-	var planOK bool
-	if got := testing.AllocsPerRun(100, func() {
-		plan, planOK = routePlanFor(fixture.placement, fixture.values, exact)
-	}); got != 0 || !planOK || plan.class != routeExact || plan.routeCount() != 1 {
-		t.Fatalf("exact route planner allocations=%v plan=%#v/%t", got, plan, planOK)
-	}
-	if got := testing.AllocsPerRun(100, func() {
-		plan, planOK = routePlanFor(fixture.placement, fixture.values, fixture.values.Top())
-	}); got != 0 || !planOK || plan.class != routeWidened || !plan.allRoot {
-		t.Fatalf("Top route planner allocations=%v plan=%#v/%t", got, plan, planOK)
-	}
-	if got := testing.AllocsPerRun(100, func() {
-		plan, planOK = routePlanFor(fixture.placement, fixture.values, opaque)
-	}); got != 0 || !planOK || plan.class != routeWidened || !plan.allRoot {
-		t.Fatalf("opaque route planner allocations=%v plan=%#v/%t", got, plan, planOK)
+	for _, item := range []struct {
+		name    string
+		fact    valuedomain.Value
+		widened bool
+		count   int
+	}{
+		{"exact", exact, false, 1},
+		{"top", fixture.values.Top(), true, len(fixture.allocations)},
+		{"opaque", opaque, true, len(fixture.allocations)},
+	} {
+		vector, vectorOK := execution.NewMemberVector([]execution.MemberCell[valuedomain.Value]{returnCell(item.fact)})
+		if !vectorOK {
+			t.Fatal("member vector")
+		}
+		var plan derived2Rows
+		var planOK bool
+		got := testing.AllocsPerRun(100, func() {
+			plan, planOK = deriveDerived2Rows(fixture.placement, fixture.values, fixture.boundary, fixture.values.Bottom(), vector)
+		})
+		if got != 0 || !planOK || plan.widened != item.widened || derived2Count(plan) != item.count {
+			t.Fatalf("%s route set allocations=%v plan=%#v/%t", item.name, got, plan, planOK)
+		}
 	}
 }
 
-func TestReturnWidenedRoutePlanIsConcurrent(t *testing.T) {
+func TestReturnWidenedRouteSetIsConcurrent(t *testing.T) {
 	fixture := newReturnPlanFixture(t)
-	plan, planOK := routePlanFor(fixture.placement, fixture.values, fixture.values.Top())
-	if !planOK || !plan.allRoot || plan.routeCount() == 0 {
-		t.Fatal("widened return plan")
+	plan, planOK := returnRoutes(t, fixture, returnCell(fixture.values.Top()))
+	if !planOK || !plan.widened || derived2Count(plan) == 0 {
+		t.Fatal("widened return route set")
 	}
+	// A widened set holds the owner's schema and resolves each member on
+	// demand, so reading one concurrently reads that schema concurrently.
 	const workers = 8
 	const iterations = 100
 	failed := make(chan struct{}, 1)
@@ -142,9 +150,8 @@ func TestReturnWidenedRoutePlanIsConcurrent(t *testing.T) {
 		go func() {
 			defer wait.Done()
 			for iteration := 0; iteration < iterations; iteration++ {
-				candidate, candidateOK := plan.routeAt(iteration % plan.routeCount())
-				byTag, byTagOK := routeAtTag(plan, candidate.tag)
-				if !candidateOK || !byTagOK || byTag != candidate {
+				route, routeOK := derived2At(plan, iteration%derived2Count(plan))
+				if !routeOK || route.Tag == 0 {
 					select {
 					case failed <- struct{}{}:
 					default:
@@ -157,7 +164,7 @@ func TestReturnWidenedRoutePlanIsConcurrent(t *testing.T) {
 	wait.Wait()
 	select {
 	case <-failed:
-		t.Fatal("concurrent widened return plan changed")
+		t.Fatal("concurrent widened return route set changed")
 	default:
 	}
 }

@@ -144,13 +144,12 @@ func memberSetPlacementDefinition() definition.Definition {
 					{Carrier: "ValueFactCarrier", Many: true, Form: member.ReadFormSummary},
 				},
 				CandidateProvider: member.AxisRelationCandidate(provider),
-				Derivation: definition.RelationDerivation{
-					State:      specimenType("RoutePlan"),
-					Build:      definition.GoSymbol{PackagePath: "github.com/wippyai/go-lua/domain/placement/returnescape", Name: "DeriveReturnRoutes", ResultIndex: 0},
-					Count:      definition.GoSymbol{PackagePath: "github.com/wippyai/go-lua/domain/placement/returnescape", Name: "ReturnRouteCount", ResultIndex: 0},
-					At:         definition.GoSymbol{PackagePath: "github.com/wippyai/go-lua/domain/placement/returnescape", Name: "ReturnRouteAt", ResultIndex: 0},
-					StaticAxes: []schema.EntryReference{placement, value},
-				},
+				// Stated in the DECLARED form over the delivery of its own
+				// many-valued input, which is the shape the relation this
+				// specimen mirrors takes: the vector is what the invocation is
+				// handed, its cells are admitted by the owner of the values
+				// they carry, and one admitted value resolves to one route.
+				Derivation: memberSetDeliveryDerivation(),
 			},
 			{
 				Name: "SelfCandidates", Key: "placement/self/candidates", Subject: "RouteCarrier",
@@ -357,9 +356,9 @@ func TestMemberSetJoinDeliversOneVectorFromOrdinalSealedReads(t *testing.T) {
 		t.Fatalf("the worker does not view the filled cell buffer through execution.NewMemberVector:\n%s", source)
 	}
 
-	call, found := callArguments(source, "DeriveReturnRoutes")
+	call, found := callArguments(source, "deriveDerived1Rows")
 	if !found {
-		t.Fatalf("the emitted family makes no call to the declared derivation:\n%s", source)
+		t.Fatalf("the emitted family makes no call to the construction its declaration derives:\n%s", source)
 	}
 	sawVector := false
 	for _, argument := range call {
@@ -488,5 +487,102 @@ func TestAMemberSetJoinIsRefusedByName(t *testing.T) {
 				t.Fatal("refusal names a clause with no reason")
 			}
 		})
+	}
+}
+
+// memberSetDeliveryRoster admits the member-set specimen with its route
+// relation stated in the DECLARED form over the delivery of its own
+// many-valued input.
+// memberSetDeliveryDerivation is the specimen route relation's declared
+// derivation: the whole delivery of its own many-valued input, admitted one
+// cell at a time by the owner of the values it carries.
+func memberSetDeliveryDerivation() definition.RelationDerivation {
+	return definition.RelationDerivation{
+		StaticAxes: []schema.EntryReference{memberSetPlacementAxisRef(), memberSetValueAxisRef()},
+		Source: []definition.EnumerationRef{{
+			Axis:     memberSetValueAxisRef(),
+			Delivery: 2,
+			Admit: definition.GoSymbol{
+				PackagePath: specimenPackage, Name: "AdmitCell",
+				Receiver: definition.GoType{PackagePath: specimenPackage, Name: "ValueSchema"}, ResultIndex: 0,
+			},
+		}},
+		Resolve:     definition.GoSymbol{PackagePath: specimenPackage, Name: "ResolveRoute", ResultIndex: 0},
+		InlineWidth: 4,
+	}
+}
+
+func memberSetDeliveryRoster(t testing.TB, amend func(*definition.RelationDerivation)) definition.Roster {
+	t.Helper()
+	base := memberSetPlacementDefinition()
+	derivation := memberSetDeliveryDerivation()
+	amend(&derivation)
+	for index := range base.Relations {
+		if base.Relations[index].Name == "Routes" {
+			base.Relations[index].Derivation = derivation
+		}
+	}
+	roster, rosterOK := definition.NewRoster(
+		definition.Source{Package: "membersetvalue", Name: "membersetvalue", Base: memberSetValueDefinition()},
+		definition.Source{
+			Package: "membersetplacement", Name: "membersetplacement",
+			Base:          base,
+			Contributions: []definition.Contribution{memberSetPlacementContribution()},
+		},
+	)
+	if !rosterOK {
+		t.Fatal("the amended member-set roster is not admissible")
+	}
+	return roster
+}
+
+// TestADerivedMemberSetMayBeReadOutOfItsOwnInputsDelivery states the source
+// level that is not an axis's enumeration.
+//
+// A many-valued input arrives as a whole delivery whose census and accessor
+// belong to the execution vocabulary - the emitter chose that view when it
+// instantiated it - so the declaration names the INPUT and nothing else about
+// how it is walked. What it does name is the owner's judgment over one cell,
+// because a cell is not a value: it carries whether that coordinate holds one
+// and whether the index names a cell at all, and only the owner may say which
+// of those it admits.
+func TestADerivedMemberSetMayBeReadOutOfItsOwnInputsDelivery(t *testing.T) {
+	source, err := Render(memberSetTarget(), memberSetDeliveryRoster(t, func(*definition.RelationDerivation) {}))
+	if err != nil {
+		t.Fatalf("a derivation over its own input's delivery did not emit: %v", err)
+	}
+	build, found := functionBody(string(source), "deriveDerived1Rows")
+	if !found {
+		t.Fatalf("the emitted construction has no Build:\n%s", source)
+	}
+	if !strings.Contains(build, "count0 := given1.Count()") {
+		t.Fatalf("the delivery is not censused by the view it arrives as:\n%s", build)
+	}
+	if !strings.Contains(build, "cell0, cell0Present, cell0Available := given1.At(cursor0)") {
+		t.Fatalf("the delivery's cells are not read whole:\n%s", build)
+	}
+	if !strings.Contains(build, "item0, item0OK := valueSchema.AdmitCell(cell0, cell0Present, cell0Available)") {
+		t.Fatalf("a cell is not admitted by its owner's judgment:\n%s", build)
+	}
+}
+
+// TestADeliverySourceIsRefusedWhereItCannotBeWalked fences the level at both
+// ends. An input that delivers one value has no cells, and a delivery composed
+// under another level would be read out of an item - but an input is what the
+// invocation is HANDED, never something read out of one.
+func TestADeliverySourceIsRefusedWhereItCannotBeWalked(t *testing.T) {
+	single := memberSetDeliveryRoster(t, func(derivation *definition.RelationDerivation) {
+		derivation.Source[0].Delivery = 1
+	})
+	if source, err := Render(memberSetTarget(), single); err == nil {
+		t.Fatalf("an input delivering one value was read as a delivery:\n%s", source)
+	}
+	nested := memberSetDeliveryRoster(t, func(derivation *definition.RelationDerivation) {
+		derivation.Source = append([]definition.EnumerationRef{
+			{Axis: memberSetValueAxisRef(), Name: "Members"},
+		}, derivation.Source...)
+	})
+	if source, err := Render(memberSetTarget(), nested); err == nil {
+		t.Fatalf("a delivery was composed under another level:\n%s", source)
 	}
 }

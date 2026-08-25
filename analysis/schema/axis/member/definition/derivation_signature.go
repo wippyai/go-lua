@@ -191,12 +191,23 @@ type DeclaredDerivationShape struct {
 	WidenResolveResults []DerivedParam
 }
 
-// EnumerationShape is one declared enumeration's own call shape.
+// EnumerationShape is one declared source level's own call shape.
+//
+// A DELIVERY level has no census or accessor here, and that is the statement
+// rather than an omission: its sequence is the execution vocabulary's own view,
+// instantiated by the emitter, so no owner declares symbols for it. What the
+// owner does declare is the judgment over one of its cells.
 type EnumerationShape struct {
 	CountParams  []DerivedParam
 	CountResults []DerivedParam
 	AtParams     []DerivedParam
 	AtResults    []DerivedParam
+	// AdmitParams/AdmitResults are the cell judgment's, present exactly on a
+	// delivery level: the cell's value, whether that coordinate holds one, and
+	// whether the index names a cell at all, answering the item the next level
+	// reads and its own validity.
+	AdmitParams  []DerivedParam
+	AdmitResults []DerivedParam
 }
 
 // DeclaredDerivationSignature derives the call shape of one relation's
@@ -230,7 +241,20 @@ func (roster Roster) DeclaredDerivationSignature(axis schema.Key, relation Relat
 		return DeclaredDerivationShape{}, false
 	}
 	shape := DeclaredDerivationShape{}
-	sources, item, sourcesOK := roster.enumerationChain(derivation.Source, subject.Type)
+	// The carriers the relation's own many-valued inputs deliver, one-based,
+	// so a delivery level resolves the input it names.
+	deliveries := map[int]GoType{}
+	for index, input := range relation.Inputs {
+		if !input.Many {
+			continue
+		}
+		carrier, carrierOK := carriers[input.Carrier]
+		if !carrierOK {
+			return DeclaredDerivationShape{}, false
+		}
+		deliveries[index+1] = carrier.Type
+	}
+	sources, item, sourcesOK := roster.enumerationChain(derivation.Source, subject.Type, deliveries)
 	if !sourcesOK {
 		return DeclaredDerivationShape{}, false
 	}
@@ -263,7 +287,10 @@ func (roster Roster) DeclaredDerivationSignature(axis schema.Key, relation Relat
 		shape.WidenResults = []DerivedParam{{Type: GoType{Name: "bool"}}, {Type: GoType{Name: "bool"}}}
 		// The widened answer is read out of the owner's own directory, so its
 		// sources chain from the axis schema rather than from the fact.
-		widened, widenedItem, widenedOK := roster.enumerationChain(derivation.Widen.Source, subject.Type)
+		// A widened answer is read out of the owner's directory, never out of a
+		// delivery: a fact that reached a lattice endpoint named no vector
+		// either.
+		widened, widenedItem, widenedOK := roster.enumerationChain(derivation.Widen.Source, subject.Type, nil)
 		if !widenedOK {
 			return DeclaredDerivationShape{}, false
 		}
@@ -312,13 +339,30 @@ func (roster Roster) enumerationOver(reference EnumerationRef, consumer Definiti
 // enumerationChain resolves one composed source list into its per-level call
 // shapes, holding each level to reading what the level before it yielded. The
 // last level's item is what a resolve is finally handed.
-func (roster Roster) enumerationChain(sources []EnumerationRef, subject GoType) ([]EnumerationShape, GoType, bool) {
+func (roster Roster) enumerationChain(sources []EnumerationRef, subject GoType, deliveries map[int]GoType) ([]EnumerationShape, GoType, bool) {
 	shapes := make([]EnumerationShape, 0, len(sources))
 	var item GoType
 	if len(sources) == 0 {
 		return nil, GoType{}, false
 	}
 	for _, source := range sources {
+		if source.DeliverySource() {
+			// A delivery is the whole many-valued arrival of one of the
+			// relation's own inputs, so what it yields is that input's own
+			// carrier - once the owner's cell judgment has admitted it.
+			delivered, deliveredOK := deliveries[source.Delivery]
+			if !deliveredOK || item.Available() {
+				return nil, GoType{}, false
+			}
+			shapes = append(shapes, EnumerationShape{
+				AdmitParams: []DerivedParam{
+					{Type: delivered}, {Type: GoType{Name: "bool"}}, {Type: GoType{Name: "bool"}},
+				},
+				AdmitResults: []DerivedParam{{Type: delivered}, {Type: GoType{Name: "bool"}}},
+			})
+			item = delivered
+			continue
+		}
 		owner, ownerOK := roster.definitionForAxis(source.Axis.Key)
 		if !ownerOK {
 			return nil, GoType{}, false

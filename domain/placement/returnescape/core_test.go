@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"testing"
 
+	"github.com/wippyai/go-lua/analysis/engine/execution"
 	"github.com/wippyai/go-lua/analysis/identity"
 	"github.com/wippyai/go-lua/analysis/lua/lower"
 	programartifact "github.com/wippyai/go-lua/analysis/program/artifact"
@@ -34,10 +35,56 @@ type returnPlanFixture struct {
 	placement   placement.Schema
 	module      identity.ContentID
 	returnID    identity.ContentID
+	boundary    valuedomain.ReturnBoundary
 	allocations []heap.Key
 }
 
-func TestReturnRoutePlanScalarAndExactAllocation(t *testing.T) {
+// The route relation is DECLARED, so the laws below are stated over the three
+// authored judgments and the construction the emitter writes from them. Its
+// unit is the whole delivered member vector, which is what the rule is handed,
+// rather than one fact at a time: a cell is not a value, and which cells the
+// owner admits is half of what the set answers.
+//
+// One thing the authored plan carried is gone rather than restated elsewhere:
+// a route class separating a Bottom relation from an ordinary scalar. It had
+// no reader outside this file - a consumer of this relation sees rows - so
+// what survives of it is what was ever observable, which is how many rows
+// there are and in what order.
+
+// returnCell is one present, owner-issued cell of a delivered member vector.
+func returnCell(fact valuedomain.Value) execution.MemberCell[valuedomain.Value] {
+	return execution.MemberCell[valuedomain.Value]{Value: fact, Present: true}
+}
+
+// returnRoutes derives one boundary's whole route set the way the emitted
+// family does, over a member vector built from the given cells.
+func returnRoutes(t testing.TB, fixture returnPlanFixture, cells ...execution.MemberCell[valuedomain.Value]) (derived2Rows, bool) {
+	t.Helper()
+	if cells == nil {
+		cells = []execution.MemberCell[valuedomain.Value]{}
+	}
+	vector, vectorOK := execution.NewMemberVector(cells)
+	if !vectorOK {
+		t.Fatal("member vector")
+	}
+	return deriveDerived2Rows(fixture.placement, fixture.values, fixture.boundary, fixture.values.Bottom(), vector)
+}
+
+// assertReturnRoutesAscend states the order both arms leave through: ascending
+// by the coordinate a route's key normalizes to, which is its tag minus one.
+func assertReturnRoutesAscend(t testing.TB, plan derived2Rows) {
+	t.Helper()
+	previous := uint64(0)
+	for index := 0; index < derived2Count(plan); index++ {
+		route, routeOK := derived2At(plan, index)
+		if !routeOK || route.Tag <= previous {
+			t.Fatalf("route %d = %#v/%t after tag %d", index, route, routeOK, previous)
+		}
+		previous = route.Tag
+	}
+}
+
+func TestAReturnRouteSetAnswersScalarAndExactAllocationCells(t *testing.T) {
 	fixture := newReturnPlanFixture(t)
 	scalarAtom, scalarOK := fixture.values.OpaqueKind(runtimekind.Number)
 	if !scalarOK {
@@ -47,9 +94,9 @@ func TestReturnRoutePlanScalarAndExactAllocation(t *testing.T) {
 	if !scalarOK {
 		t.Fatal("numeric scalar value")
 	}
-	plan, ok := routePlanFor(fixture.placement, fixture.values, scalar)
-	if !ok || plan.class != routeScalar || plan.routeCount() != 0 {
-		t.Fatalf("scalar return plan = %#v/%t", plan, ok)
+	plan, ok := returnRoutes(t, fixture, returnCell(scalar))
+	if !ok || plan.widened || derived2Count(plan) != 0 {
+		t.Fatalf("scalar return route set = %#v/%t, want no routes", plan, ok)
 	}
 
 	atom, atomOK := fixture.values.Allocation(fixture.allocations[0], materialization.Recent)
@@ -60,14 +107,14 @@ func TestReturnRoutePlanScalarAndExactAllocation(t *testing.T) {
 	if !factOK {
 		t.Fatal("allocation value")
 	}
-	plan, ok = routePlanFor(fixture.placement, fixture.values, fact)
-	firstRoute, firstRouteOK := plan.routeAt(0)
-	if !ok || plan.class != routeExact || plan.routeCount() != 1 || !firstRouteOK || firstRoute.key != fixture.allocations[0] {
-		t.Fatalf("exact allocation return plan = %#v/%t", plan, ok)
+	plan, ok = returnRoutes(t, fixture, returnCell(fact))
+	route, routeOK := derived2At(plan, 0)
+	if !ok || plan.widened || derived2Count(plan) != 1 || !routeOK || route.Key != fixture.allocations[0] {
+		t.Fatalf("exact allocation return route set = %#v/%t", plan, ok)
 	}
 }
 
-func TestReturnRoutePlanAliasesAndAlternateJoinsDeduplicateAndOrderRoots(t *testing.T) {
+func TestAReturnRouteSetHoldsOneRoutePerRootAcrossCellsAndAlternatives(t *testing.T) {
 	fixture := newReturnPlanFixture(t)
 	if len(fixture.allocations) < 2 {
 		t.Skip("fixture has one allocation root")
@@ -78,28 +125,42 @@ func TestReturnRoutePlanAliasesAndAlternateJoinsDeduplicateAndOrderRoots(t *test
 	if !firstOK || !secondOK || !aliasOK {
 		t.Fatal("allocation alternatives")
 	}
+	// Two materializations of one root, in one value, are one route.
 	fact, factOK := fixture.values.Alternatives(first, alias, second)
 	if !factOK {
 		t.Fatal("alternate allocation value")
 	}
-	plan, ok := routePlanFor(fixture.placement, fixture.values, fact)
-	if !ok || plan.class != routeExact || plan.routeCount() != 2 {
-		t.Fatalf("alternate return plan = %#v/%t", plan, ok)
+	plan, ok := returnRoutes(t, fixture, returnCell(fact))
+	if !ok || plan.widened || derived2Count(plan) != 2 {
+		t.Fatalf("alternate return route set = %#v/%t", plan, ok)
 	}
-	firstRoute, firstRouteOK := plan.routeAt(0)
-	secondRoute, secondRouteOK := plan.routeAt(1)
-	firstIndex, firstIndexOK := fixture.placement.Heap().KeyIndex(firstRoute.key)
-	secondIndex, secondIndexOK := fixture.placement.Heap().KeyIndex(secondRoute.key)
-	if !firstRouteOK || !secondRouteOK || !firstIndexOK || !secondIndexOK || firstIndex >= secondIndex {
-		t.Fatalf("alternate routes are not Heap ordered: %d/%d", firstIndex, secondIndex)
+	assertReturnRoutesAscend(t, plan)
+
+	// And two CELLS naming one root are one route too: the set is one member
+	// per address however many cells reached it.
+	firstOnly, firstOnlyOK := fixture.values.Singleton(first)
+	aliasOnly, aliasOnlyOK := fixture.values.Singleton(alias)
+	if !firstOnlyOK || !aliasOnlyOK {
+		t.Fatal("singleton alternatives")
+	}
+	across, acrossOK := returnRoutes(t, fixture, returnCell(firstOnly), returnCell(aliasOnly))
+	if !acrossOK || across.widened || derived2Count(across) != 1 {
+		t.Fatalf("route set across cells = %#v/%t, want one route", across, acrossOK)
 	}
 }
 
-func TestReturnRoutePlanTopAndOpaqueWidenEveryAllocationRoot(t *testing.T) {
+func TestAReturnRouteSetWidensToEveryAllocationRootAtItsEndpoint(t *testing.T) {
 	fixture := newReturnPlanFixture(t)
-	plan, ok := routePlanFor(fixture.placement, fixture.values, fixture.values.Top())
-	if !ok || plan.class != routeWidened || plan.routeCount() != len(fixture.allocations) {
-		t.Fatalf("top return plan = %#v/%t", plan, ok)
+	plan, ok := returnRoutes(t, fixture, returnCell(fixture.values.Top()))
+	if !ok || !plan.widened || derived2Count(plan) != len(fixture.allocations) {
+		t.Fatalf("top return route set = %#v/%t", plan, ok)
+	}
+	assertReturnRoutesAscend(t, plan)
+	for index := 0; index < derived2Count(plan); index++ {
+		route, routeOK := derived2At(plan, index)
+		if !routeOK || route.Key.Kind() != heap.RootAllocation {
+			t.Fatalf("widened route %d = %#v/%t", index, route, routeOK)
+		}
 	}
 	opaqueAtom, opaqueOK := fixture.values.OpaqueReference(valuedomain.ReferenceTable)
 	if !opaqueOK {
@@ -109,92 +170,62 @@ func TestReturnRoutePlanTopAndOpaqueWidenEveryAllocationRoot(t *testing.T) {
 	if !opaqueOK {
 		t.Fatal("opaque reference value")
 	}
-	plan, ok = routePlanFor(fixture.placement, fixture.values, opaque)
-	if !ok || plan.class != routeWidened || plan.routeCount() != len(fixture.allocations) {
-		t.Fatalf("opaque return plan = %#v/%t", plan, ok)
+	plan, ok = returnRoutes(t, fixture, returnCell(opaque))
+	if !ok || !plan.widened || derived2Count(plan) != len(fixture.allocations) {
+		t.Fatalf("opaque return route set = %#v/%t", plan, ok)
 	}
 }
 
-func TestReturnRoutePlanFactsRequiresEvidenceAndOnlyAuthenticatedWidening(t *testing.T) {
+// TestAReturnRouteSetAdmitsOnlyTheCellsItsOwnerIssued is the cell law, and it
+// is why the delivery's source level names a judgment at all.
+//
+// A cell is not a value. The only absent cell an owner admits is its own
+// sparse Bottom default; presence metadata never manufactures one, and a
+// foreign, zero, or non-Bottom sparse cell is refused rather than enumerated
+// as a fact. Because the endpoint runs whether or not the vector yields
+// anything, that refusal reaches an empty delivery too.
+func TestAReturnRouteSetAdmitsOnlyTheCellsItsOwnerIssued(t *testing.T) {
 	fixture := newReturnPlanFixture(t)
 
-	var unavailable returnFacts
-	unavailable.append(returnFact{available: false})
-	if plan, ok := routePlanForFacts(fixture.placement, fixture.values, unavailable, false); ok {
-		t.Fatalf("missing selected return cell fabricated plan: %#v", plan)
+	if plan, ok := returnRoutes(t, fixture, execution.MemberCell[valuedomain.Value]{}); ok {
+		t.Fatalf("absent selected return cell fabricated a route set: %#v", plan)
 	}
-	var absent returnFacts
-	absent.append(returnFact{available: true})
-	if plan, ok := routePlanForFacts(fixture.placement, fixture.values, absent, false); ok {
-		t.Fatalf("absent selected return fact fabricated plan: %#v", plan)
+	if plan, ok := returnRoutes(t, fixture, execution.MemberCell[valuedomain.Value]{Present: true}); ok {
+		t.Fatalf("malformed Value cell fabricated a route set: %#v", plan)
 	}
-	var sparseBottom returnFacts
-	sparseBottom.append(returnFact{fact: fixture.values.Bottom(), available: true})
-	if plan, ok := routePlanForFacts(fixture.placement, fixture.values, sparseBottom, false); !ok || plan.class != routeScalar || plan.routeCount() != 0 {
-		t.Fatalf("owner-authenticated sparse Bottom return fact = %#v/%t, want scalar no-route plan", plan, ok)
-	}
-
-	var malformed returnFacts
-	malformed.append(returnFact{present: true, available: true})
-	if plan, ok := routePlanForFacts(fixture.placement, fixture.values, malformed, false); ok {
-		t.Fatalf("malformed Value fact fabricated plan: %#v", plan)
-	}
-	if plan, ok := routePlanForFacts(fixture.placement, fixture.values, malformed, true); ok {
-		t.Fatalf("malformed Value fact bypassed authenticated open-tail widening: %#v", plan)
-	}
-
-	var top returnFacts
-	top.append(returnFact{fact: fixture.values.Top(), present: true, available: true})
-	if plan, ok := routePlanForFacts(fixture.placement, fixture.values, top, false); !ok || plan.class != routeWidened || plan.routeCount() != len(fixture.allocations) {
-		t.Fatalf("authenticated Top return fact = %#v/%t", plan, ok)
-	}
-
-	opaqueAtom, opaqueOK := fixture.values.OpaqueReference(valuedomain.ReferenceTable)
-	if !opaqueOK {
-		t.Fatal("opaque reference atom")
-	}
-	opaque, opaqueOK := fixture.values.Singleton(opaqueAtom)
-	if !opaqueOK {
-		t.Fatal("opaque reference value")
-	}
-	var opaqueFacts returnFacts
-	opaqueFacts.append(returnFact{fact: opaque, present: true, available: true})
-	if plan, ok := routePlanForFacts(fixture.placement, fixture.values, opaqueFacts, false); !ok || plan.class != routeWidened || plan.routeCount() != len(fixture.allocations) {
-		t.Fatalf("authenticated opaque return fact = %#v/%t", plan, ok)
-	}
-
-	if plan, ok := routePlanForFacts(fixture.placement, fixture.values, returnFacts{}, true); !ok || plan.class != routeWidened || plan.routeCount() != len(fixture.allocations) {
-		t.Fatalf("authenticated open-tail return fact = %#v/%t", plan, ok)
+	sparseBottom, sparseOK := returnRoutes(t, fixture, execution.MemberCell[valuedomain.Value]{Value: fixture.values.Bottom()})
+	if !sparseOK || sparseBottom.widened || derived2Count(sparseBottom) != 0 {
+		t.Fatalf("owner-authenticated sparse Bottom cell = %#v/%t, want a valid empty route set", sparseBottom, sparseOK)
 	}
 
 	foreign := newReturnPlanFixture(t)
-	if plan, ok := routePlanFor(fixture.placement, fixture.values, foreign.values.Bottom()); ok {
-		t.Fatalf("foreign Bottom Value fabricated plan: %#v", plan)
+	if plan, ok := returnRoutes(t, fixture, returnCell(foreign.values.Bottom())); ok {
+		t.Fatalf("foreign Bottom Value fabricated a route set: %#v", plan)
 	}
-	if plan, ok := routePlanFor(fixture.placement, fixture.values, foreign.values.Top()); ok {
-		t.Fatalf("foreign Top Value fabricated plan: %#v", plan)
+	if plan, ok := returnRoutes(t, fixture, returnCell(foreign.values.Top())); ok {
+		t.Fatalf("foreign Top Value fabricated a route set: %#v", plan)
 	}
-	var foreignFacts returnFacts
-	foreignFacts.append(returnFact{fact: foreign.values.Top(), present: true, available: true})
-	if plan, ok := routePlanForFacts(fixture.placement, fixture.values, foreignFacts, false); ok {
-		t.Fatalf("foreign Top selected Value fabricated plan: %#v", plan)
+	if _, ok := deriveDerived2Rows(fixture.placement, fixture.values, valuedomain.ReturnBoundary{}, fixture.values.Bottom(), mustMemberVector(t)); ok {
+		t.Fatal("a forged ReturnBoundary candidate derived a route set")
+	}
+	empty, emptyOK := returnRoutes(t, fixture)
+	if !emptyOK || empty.widened || derived2Count(empty) != 0 {
+		t.Fatalf("empty delivery = %#v/%t, want a valid empty route set", empty, emptyOK)
 	}
 }
 
+// mustMemberVector builds an empty delivery, which is the one a forged
+// candidate must still be refused against.
+func mustMemberVector(t testing.TB) execution.SummaryVector[valuedomain.Value] {
+	t.Helper()
+	vector, vectorOK := execution.NewMemberVector([]execution.MemberCell[valuedomain.Value]{})
+	if !vectorOK {
+		t.Fatal("member vector")
+	}
+	return vector
+}
+
 func TestReturnPlacementDemandPreservesMonotoneDisplacement(t *testing.T) {
-	fixture := newReturnPlanFixture(t)
-	atom, atomOK := fixture.values.Allocation(fixture.allocations[0], materialization.Recent)
-	if !atomOK {
-		t.Fatal("allocation atom")
-	}
-	fact, factOK := fixture.values.Singleton(atom)
-	if !factOK {
-		t.Fatal("allocation value")
-	}
-	plan, planOK := routePlanFor(fixture.placement, fixture.values, fact)
-	if !planOK || plan.class != routeExact {
-		t.Fatal("exact return plan")
-	}
 	for _, item := range []struct {
 		current placement.Fact
 		want    placement.Fact
@@ -204,27 +235,18 @@ func TestReturnPlacementDemandPreservesMonotoneDisplacement(t *testing.T) {
 		{placement.Fact{Class: placement.SharedHeap, RetainEscape: placement.EvidenceRefuted}, placement.Fact{Class: placement.SharedHeap, RetainEscape: placement.EvidenceProven}},
 		{placement.UnknownFact(), placement.Fact{Class: placement.Unknown, RetainEscape: placement.EvidenceProven}},
 	} {
-		got, ok := returnValue(item.current, true, plan)
-		if !ok || got != item.want {
-			t.Fatalf("return demand(%v) = %v/%t, want %v", item.current, got, ok, item.want)
+		got, outcome := ReturnEscapeFold(1, item.current)
+		if outcome != structure.Concrete || got != item.want {
+			t.Fatalf("return demand(%v) = %v/%v, want %v", item.current, got, outcome, item.want)
 		}
 	}
-	if got, ok := returnValue(placement.BottomFact(), true, plan); ok || got == placement.UnknownFact() {
-		t.Fatalf("missing Bottom placement seed = %v/%t, must refuse without Unknown", got, ok)
+	// A missing predecessor refuses rather than fabricating Unknown, and a
+	// zero tag is not a route row whatever the predecessor holds.
+	if got, outcome := ReturnEscapeFold(1, placement.BottomFact()); outcome == structure.Concrete || got == placement.UnknownFact() {
+		t.Fatalf("missing Bottom placement seed = %v/%v, must refuse without Unknown", got, outcome)
 	}
-	if got, ok := returnValue(placement.DefaultFact(), false, plan); !ok || got != (placement.Fact{Class: placement.OwnedHeap, RetainEscape: placement.EvidenceProven}) {
-		t.Fatalf("sparse Placement default = %v/%t, want owned-heap/proven/true", got, ok)
-	}
-	topPlan, topOK := routePlanFor(fixture.placement, fixture.values, fixture.values.Top())
-	if !topOK || topPlan.class != routeWidened {
-		t.Fatal("top return plan")
-	}
-	got, ok := returnValue(placement.DefaultFact(), true, topPlan)
-	if !ok || got != (placement.Fact{Class: placement.OwnedHeap, RetainEscape: placement.EvidenceProven}) {
-		t.Fatalf("widened return demand = %v/%t, want OwnedHeap/Proven", got, ok)
-	}
-	if got, ok := returnValue(placement.BottomFact(), true, topPlan); ok || got == placement.UnknownFact() {
-		t.Fatalf("missing Bottom seed on widened return = %v/%t, must refuse without Unknown", got, ok)
+	if got, outcome := ReturnEscapeFold(0, placement.DefaultFact()); outcome == structure.Concrete || got == placement.UnknownFact() {
+		t.Fatalf("zero route tag = %v/%v, must refuse without Unknown", got, outcome)
 	}
 }
 
@@ -308,7 +330,14 @@ func newReturnPlanFixture(t testing.TB) returnPlanFixture {
 	if len(allocations) == 0 {
 		t.Fatal("allocation roots")
 	}
-	return returnPlanFixture{values: values, placement: projected, module: module, returnID: returnID, allocations: allocations}
+	boundary, boundaryOK := values.ReturnBoundary(module, returnID)
+	if !boundaryOK {
+		t.Fatal("return boundary")
+	}
+	return returnPlanFixture{
+		values: values, placement: projected, module: module, returnID: returnID,
+		boundary: boundary, allocations: allocations,
+	}
 }
 
 // syntheticStructuralVocabulary supplies the neutral structural projection
@@ -383,21 +412,28 @@ func (surface emptySurface) Seal(seal.View, seal.Sealed) schema.SealFailure {
 // BenchmarkAllAllocationRoutesDensePass measures the one-time owner-schema
 // validation/counting pass. Route materialization remains lazy after this
 // setup, so the widened plan does not retain a copied root catalogue.
-func BenchmarkReturnAllRootPlanDensePass(b *testing.B) {
+// BenchmarkReturnRouteSetWidened measures the widened arm, which reads the
+// owner's directory where it lies and copies nothing.
+func BenchmarkReturnRouteSetWidened(b *testing.B) {
 	fixture := newReturnPlanFixture(b)
+	cells := []execution.MemberCell[valuedomain.Value]{returnCell(fixture.values.Top())}
+	vector, vectorOK := execution.NewMemberVector(cells)
+	if !vectorOK {
+		b.Fatal("member vector")
+	}
 	b.ReportAllocs()
 	b.ResetTimer()
 	for index := 0; index < b.N; index++ {
-		if plan, ok := allAllocationPlan(fixture.placement); !ok || !plan.allRoot || plan.routeCount() != len(fixture.allocations) {
-			b.Fatal("dense allocation route plan")
+		plan, planOK := deriveDerived2Rows(fixture.placement, fixture.values, fixture.boundary, fixture.values.Bottom(), vector)
+		if !planOK || !plan.widened || derived2Count(plan) != len(fixture.allocations) {
+			b.Fatal("widened return route set")
 		}
 	}
 }
 
-// BenchmarkReturnRoutePlanExact isolates the selected-read planner. The
-// exact relation exercises direct Value atom pulls, route ordering, and alias
-// deduplication without rebuilding the mounted fixture in the loop.
-func BenchmarkReturnRoutePlanExact(b *testing.B) {
+// BenchmarkReturnRouteSetExact measures the ordinary arm at one route, which
+// is the answer a return usually has and the one held entirely by value.
+func BenchmarkReturnRouteSetExact(b *testing.B) {
 	fixture := newReturnPlanFixture(b)
 	atom, atomOK := fixture.values.Allocation(fixture.allocations[0], materialization.Recent)
 	if !atomOK {
@@ -407,51 +443,24 @@ func BenchmarkReturnRoutePlanExact(b *testing.B) {
 	if !factOK {
 		b.Fatal("allocation value")
 	}
-	b.ReportAllocs()
-	b.ResetTimer()
-	for index := 0; index < b.N; index++ {
-		plan, planOK := routePlanFor(fixture.placement, fixture.values, fact)
-		if !planOK || plan.class != routeExact || plan.routeCount() != 1 {
-			b.Fatal("exact route plan")
-		}
-	}
-}
-
-// BenchmarkReturnRoutePlanExactTwo covers the bounded two-alternative route
-// case. It keeps canonical insertion and Value atom pulls on the caller's
-// stack just like the one-route benchmark above.
-func BenchmarkReturnRoutePlanExactTwo(b *testing.B) {
-	fixture := newReturnPlanFixture(b)
-	if len(fixture.allocations) < 2 {
-		b.Skip("fixture has one allocation root")
-	}
-	first, firstOK := fixture.values.Allocation(fixture.allocations[0], materialization.Recent)
-	second, secondOK := fixture.values.Allocation(fixture.allocations[1], materialization.Recent)
-	if !firstOK || !secondOK {
-		b.Fatal("allocation atoms")
-	}
-	fact, factOK := fixture.values.Alternatives(first, second)
-	if !factOK {
-		b.Fatal("two-route value")
+	vector, vectorOK := execution.NewMemberVector([]execution.MemberCell[valuedomain.Value]{returnCell(fact)})
+	if !vectorOK {
+		b.Fatal("member vector")
 	}
 	b.ReportAllocs()
 	b.ResetTimer()
 	for index := 0; index < b.N; index++ {
-		plan, planOK := routePlanFor(fixture.placement, fixture.values, fact)
-		if !planOK || plan.class != routeExact || plan.routeCount() != 2 {
-			b.Fatal("two exact routes")
+		plan, planOK := deriveDerived2Rows(fixture.placement, fixture.values, fixture.boundary, fixture.values.Bottom(), vector)
+		if !planOK || derived2Count(plan) != 1 {
+			b.Fatal("exact return route set")
 		}
 	}
 }
 
-// BenchmarkReturnRoutePlanExactScaling exercises an exact Value with enough
-// allocation alternatives to cross the bounded inline route prefix. Only the
-// suffix is heap-backed; the four-route common prefix remains in the plan.
-func BenchmarkReturnRoutePlanExactScaling(b *testing.B) {
+// BenchmarkReturnRouteSetExactScaling walks the inline prefix into the spill,
+// which is where a wide exact answer stops being free.
+func BenchmarkReturnRouteSetExactScaling(b *testing.B) {
 	fixture := newReturnPlanFixture(b)
-	if len(fixture.allocations) <= len((routePlan{}).inline) {
-		b.Skip("fixture has no exact spill width")
-	}
 	atoms := make([]valuedomain.Atom, 0, len(fixture.allocations))
 	for _, key := range fixture.allocations {
 		atom, atomOK := fixture.values.Allocation(key, materialization.Recent)
@@ -462,76 +471,42 @@ func BenchmarkReturnRoutePlanExactScaling(b *testing.B) {
 	}
 	fact, factOK := fixture.values.Alternatives(atoms...)
 	if !factOK {
-		b.Fatal("wide exact value")
+		b.Fatal("alternate allocation value")
+	}
+	vector, vectorOK := execution.NewMemberVector([]execution.MemberCell[valuedomain.Value]{returnCell(fact)})
+	if !vectorOK {
+		b.Fatal("member vector")
 	}
 	b.ReportAllocs()
 	b.ResetTimer()
 	for index := 0; index < b.N; index++ {
-		plan, planOK := routePlanFor(fixture.placement, fixture.values, fact)
-		if !planOK || plan.class != routeExact || plan.routeCount() != len(fixture.allocations) || len(plan.spill) != len(fixture.allocations)-len(plan.inline) {
-			b.Fatal("wide exact route plan")
+		plan, planOK := deriveDerived2Rows(fixture.placement, fixture.values, fixture.boundary, fixture.values.Bottom(), vector)
+		if !planOK || derived2Count(plan) != len(fixture.allocations) {
+			b.Fatal("wide exact return route set")
 		}
 	}
 }
 
-// BenchmarkReturnRoutePlanTop measures the widened return planner without
-// charging a copied route catalogue. The returned plan retains only the
-// immutable owner schema and dense root count.
-func BenchmarkReturnRoutePlanTop(b *testing.B) {
+// BenchmarkReturnRouteSetWidenedSelectionScaling reads every member of a
+// widened set. Nothing was copied when the set was built, so this is where the
+// owner's directory is actually walked.
+func BenchmarkReturnRouteSetWidenedSelectionScaling(b *testing.B) {
 	fixture := newReturnPlanFixture(b)
-	top := fixture.values.Top()
-	b.ReportAllocs()
-	b.ResetTimer()
-	for index := 0; index < b.N; index++ {
-		plan, planOK := routePlanFor(fixture.placement, fixture.values, top)
-		if !planOK || plan.class != routeWidened || !plan.allRoot || plan.spill != nil || plan.routeCount() != len(fixture.allocations) {
-			b.Fatal("top widened route plan")
-		}
+	vector, vectorOK := execution.NewMemberVector([]execution.MemberCell[valuedomain.Value]{returnCell(fixture.values.Top())})
+	if !vectorOK {
+		b.Fatal("member vector")
 	}
-}
-
-// BenchmarkReturnRoutePlanOpaque measures the same lazy widened path for an
-// authenticated opaque reference alternative.
-func BenchmarkReturnRoutePlanOpaque(b *testing.B) {
-	fixture := newReturnPlanFixture(b)
-	atom, atomOK := fixture.values.OpaqueReference(valuedomain.ReferenceTable)
-	if !atomOK {
-		b.Fatal("opaque reference atom")
-	}
-	opaque, opaqueOK := fixture.values.Singleton(atom)
-	if !opaqueOK {
-		b.Fatal("opaque reference value")
+	plan, planOK := deriveDerived2Rows(fixture.placement, fixture.values, fixture.boundary, fixture.values.Bottom(), vector)
+	if !planOK || !plan.widened {
+		b.Fatal("widened return route set")
 	}
 	b.ReportAllocs()
 	b.ResetTimer()
 	for index := 0; index < b.N; index++ {
-		plan, planOK := routePlanFor(fixture.placement, fixture.values, opaque)
-		if !planOK || plan.class != routeWidened || !plan.allRoot || plan.spill != nil || plan.routeCount() != len(fixture.allocations) {
-			b.Fatal("opaque widened route plan")
-		}
-	}
-}
-
-// BenchmarkReturnRoutePlanWidenedSelectionScaling walks every route in one
-// lazy widened plan. It keeps the selection side of widening visible as the
-// mounted allocation denominator grows, rather than measuring only setup.
-func BenchmarkReturnRoutePlanWidenedSelectionScaling(b *testing.B) {
-	fixture := newReturnPlanFixture(b)
-	plan, planOK := routePlanFor(fixture.placement, fixture.values, fixture.values.Top())
-	if !planOK || plan.class != routeWidened || !plan.allRoot {
-		b.Fatal("top widened route plan")
-	}
-	b.ReportAllocs()
-	b.ResetTimer()
-	for iteration := 0; iteration < b.N; iteration++ {
-		for routeIndex := 0; routeIndex < plan.routeCount(); routeIndex++ {
-			candidate, candidateOK := plan.routeAt(routeIndex)
-			if !candidateOK {
-				b.Fatal("lazy widened route")
-			}
-			byTag, byTagOK := routeAtTag(plan, candidate.tag)
-			if !byTagOK || byTag != candidate {
-				b.Fatal("lazy widened tag lookup")
+		for routeIndex := 0; routeIndex < derived2Count(plan); routeIndex++ {
+			route, routeOK := derived2At(plan, routeIndex)
+			if !routeOK || route.Tag == 0 {
+				b.Fatal("widened route member")
 			}
 		}
 	}

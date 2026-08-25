@@ -83,6 +83,10 @@ type derivationArg struct {
 	candidate bool
 	join      *joinPlan
 	many      bool
+	// element is the carrier one many-valued position delivers cells of. The
+	// delivery itself is an execution view over it, so the view is spelled
+	// from this rather than from the axis the read named.
+	element definition.GoType
 	// form is the delivery the relation input declares for a many-valued
 	// position: a selection hands over its tagged cells, a whole-vector read
 	// hands over one vector.
@@ -155,6 +159,13 @@ type enumerationPlan struct {
 	// order is the axis whose dense numbering this enumeration promises to
 	// yield in, empty when its owner promises nothing.
 	order schema.Key
+	// delivery is the one-based relation input whose whole delivery this level
+	// reads, zero when the level is an axis's enumeration. A delivery has no
+	// census or accessor of its own: the sequence is the execution view this
+	// emitter instantiated, so it is walked directly and admit is the only
+	// symbol an owner declares about it.
+	delivery int
+	admit    definition.GoSymbol
 }
 
 // own spells one owner symbol applied to the value this enumeration reads.
@@ -740,6 +751,9 @@ func deriveRelation(built *plan, resolver *axisResolver, join program.JoinDecl, 
 	for index, source := range join.Sources {
 		declared := relation.Inputs[index]
 		argument := derivationArg{many: declared.Many, form: declared.Form}
+		if carrier, carrierOK := carrierType(relationAxis.source, declared.Carrier); carrierOK {
+			argument.element = carrier
+		}
 		if source.Candidate {
 			argument.candidate = true
 			if !sameGoType(built.candidate.subject, mustCarrier(built.candidate.axis.source, declared.Carrier)) {
@@ -756,7 +770,7 @@ func deriveRelation(built *plan, resolver *axisResolver, join program.JoinDecl, 
 		derivation.arguments = append(derivation.arguments, argument)
 	}
 	if relation.Derivation.DeclaredDerivation() {
-		declared, err := deriveDeclared(built, resolver, relation, relationAxis, key, predicate, hasPredicate, position)
+		declared, err := deriveDeclared(built, resolver, relation, relationAxis, derivation, key, predicate, hasPredicate, position)
 		if err != nil {
 			return nil, err
 		}
@@ -783,7 +797,7 @@ func derivedSinkName(position int) string  { return fmt.Sprintf("derived%dRowsSi
 // deriveDeclared resolves the declared operators into the construction this
 // emitter writes. Every refusal names the clause that leaves the generated
 // construction unable to answer something it must answer.
-func deriveDeclared(built *plan, resolver *axisResolver, relation definition.Relation, relationAxis *axisPlan, key, predicate definition.Projection, hasPredicate bool, position int) (*declaredPlan, error) {
+func deriveDeclared(built *plan, resolver *axisResolver, relation definition.Relation, relationAxis *axisPlan, derivation *derivationPlan, key, predicate definition.Projection, hasPredicate bool, position int) (*declaredPlan, error) {
 	ruleKey := built.target.Spec.Key
 	declaration := relation.Derivation
 	subject, subjectOK := carrierType(relationAxis.source, relation.Subject)
@@ -804,7 +818,7 @@ func deriveDeclared(built *plan, resolver *axisResolver, relation definition.Rel
 		return nil, unexpressible(ruleKey, "a derived member set whose ordering axis it does not name",
 			fmt.Sprintf("relation %q is ordered by axis %q, which its declared static axes do not include", relation.Name, string(relationAxis.key)))
 	}
-	sources, err := deriveEnumerations(built, resolver, relation, declaration.Source, position)
+	sources, err := deriveEnumerations(built, resolver, relation, relationAxis, declaration.Source, position)
 	if err != nil {
 		return nil, err
 	}
@@ -814,10 +828,12 @@ func deriveDeclared(built *plan, resolver *axisResolver, relation definition.Rel
 	// The outer level is read out of one of the relation's own inputs. One
 	// reading anything else would be handed a value the invocation never gives
 	// it.
-	given := false
+	// A delivery names the input it reads, so it is given by construction; an
+	// enumeration is given when what it reads is one of the declared inputs.
+	given := sources[0].delivery != 0
 	for _, input := range relation.Inputs {
 		carrier, carrierOK := carrierType(relationAxis.source, input.Carrier)
-		if carrierOK && sameGoType(carrier, sources[0].over) {
+		if carrierOK && !input.Many && sameGoType(carrier, sources[0].over) {
 			given = true
 		}
 	}
@@ -844,12 +860,15 @@ func deriveDeclared(built *plan, resolver *axisResolver, relation definition.Rel
 		sourceArgument: -1, candidateArgument: -1,
 		inlineWidth: declaration.InlineWidth,
 	}
+	if sources[0].delivery != 0 {
+		declared.sourceArgument = sources[0].delivery - 1
+	}
 	for index, input := range relation.Inputs {
 		carrier, carrierOK := carrierType(relationAxis.source, input.Carrier)
-		if carrierOK && sameGoType(carrier, sources[0].over) && declared.sourceArgument < 0 {
+		if carrierOK && !input.Many && sameGoType(carrier, sources[0].over) && declared.sourceArgument < 0 {
 			declared.sourceArgument = index
 		}
-		if sameGoType(carrier, built.candidate.subject) && declared.candidateArgument < 0 {
+		if !input.Many && sameGoType(carrier, built.candidate.subject) && declared.candidateArgument < 0 {
 			declared.candidateArgument = index
 		}
 	}
@@ -858,7 +877,7 @@ func deriveDeclared(built *plan, resolver *axisResolver, relation definition.Rel
 			fmt.Sprintf("relation %q declares inputs that match neither the outer source nor the candidate carrier", relation.Name))
 	}
 	if declaration.Widen.Declared() {
-		widened, err := deriveEnumerations(built, resolver, relation, declaration.Widen.Source, position)
+		widened, err := deriveEnumerations(built, resolver, relation, relationAxis, declaration.Widen.Source, position)
 		if err != nil {
 			return nil, err
 		}
@@ -910,7 +929,11 @@ func deriveDeclared(built *plan, resolver *axisResolver, relation definition.Rel
 // never handed has nothing to be read out of.
 func fenceOwnerSchemas(ruleKey schema.Key, relation definition.Relation, declaration definition.RelationDerivation, sources []enumerationPlan) error {
 	for _, source := range sources {
-		if source.schema || !sameOwnerReceiver(source.count, source.axis.schemaType) {
+		fenced := source.count
+		if source.delivery != 0 {
+			fenced = source.admit
+		}
+		if source.schema || !sameOwnerReceiver(fenced, source.axis.schemaType) {
 			continue
 		}
 		named := false
@@ -929,7 +952,7 @@ func fenceOwnerSchemas(ruleKey schema.Key, relation definition.Relation, declara
 
 // deriveEnumerations resolves one composed source list, holding each level to
 // reading what the level before it yielded.
-func deriveEnumerations(built *plan, resolver *axisResolver, relation definition.Relation, sources []definition.EnumerationRef, position int) ([]enumerationPlan, error) {
+func deriveEnumerations(built *plan, resolver *axisResolver, relation definition.Relation, relationAxis *axisPlan, sources []definition.EnumerationRef, position int) ([]enumerationPlan, error) {
 	ruleKey := built.target.Spec.Key
 	if len(sources) == 0 {
 		return nil, unexpressible(ruleKey, "a derived member set with nothing to read its items out of",
@@ -941,6 +964,30 @@ func deriveEnumerations(built *plan, resolver *axisResolver, relation definition
 		axis, err := resolver.axis(source.Axis.Key)
 		if err != nil {
 			return nil, err
+		}
+		if source.DeliverySource() {
+			// A delivery is the whole many-valued arrival of one of the
+			// relation's own inputs. It is the outer level or nothing: an
+			// input is what the invocation is handed, never something read out
+			// of an item.
+			if item.Available() {
+				return nil, unexpressible(ruleKey, "a derived member set reading a delivery out of an item",
+					fmt.Sprintf("relation %q composes input %d's delivery under another level, and an input is handed to the invocation rather than read out of one", relation.Name, source.Delivery))
+			}
+			if source.Delivery > len(relation.Inputs) || !relation.Inputs[source.Delivery-1].Many {
+				return nil, unexpressible(ruleKey, "a derived member set reading a delivery of an input that delivers one value",
+					fmt.Sprintf("relation %q reads input %d as a delivery, and that input is not many-valued", relation.Name, source.Delivery))
+			}
+			element, elementOK := carrierType(relationAxis.source, relation.Inputs[source.Delivery-1].Carrier)
+			if !elementOK {
+				return nil, unexpressible(ruleKey, "a derived member set whose delivered carrier is undeclared", relation.Inputs[source.Delivery-1].Carrier)
+			}
+			plans = append(plans, enumerationPlan{
+				axis: axis, over: element, item: element,
+				delivery: source.Delivery, admit: source.Admit,
+			})
+			item = element
+			continue
 		}
 		enumeration, enumerationOK := findEnumeration(axis.source, source.Name)
 		if !enumerationOK {

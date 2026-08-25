@@ -70,15 +70,6 @@ var scheduledDeaths = []ScheduledDeath{
 		},
 	},
 	{
-		Axis:     "placement",
-		Relation: "placement/return-escape/routes",
-		Build: GoSymbol{
-			PackagePath: "github.com/wippyai/go-lua/domain/placement/returnescape",
-			Name:        "DeriveReturnRoutes",
-			ResultIndex: 0,
-		},
-	},
-	{
 		Axis:     "value",
 		Relation: "value/result-alias/routes",
 		Build: GoSymbol{

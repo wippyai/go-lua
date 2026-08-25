@@ -454,3 +454,41 @@ func TestAWidenEndpointYieldingAnotherItemStatesItsOwnJudgment(t *testing.T) {
 		t.Fatal("a widened chain yielding the source's own item took a second judgment")
 	}
 }
+
+// TestASourceLevelIsAnEnumerationOrADelivery states the two forms a composed
+// source level takes, and that they are exclusive.
+//
+// An axis's enumeration reads a value the owner decomposes. A delivery is the
+// whole many-valued arrival of one of the relation's OWN inputs: its census
+// and accessor are the execution vocabulary's, chosen by the emitter when it
+// instantiated the view, so a declaration naming one names the input and the
+// owner's cell judgment and nothing else. A level naming both would be two
+// answers to what its sequence is.
+func TestASourceLevelIsAnEnumerationOrADelivery(t *testing.T) {
+	enumeration := EnumerationRef{Axis: specimenAxis(), Name: "Alternatives"}
+	if !enumeration.Available() || enumeration.DeliverySource() {
+		t.Fatal("an axis enumeration does not read as one")
+	}
+	delivery := EnumerationRef{Axis: specimenAxis(), Delivery: 1, Admit: declaredSpecimenSymbol("AdmitCell")}
+	if !delivery.Available() || !delivery.DeliverySource() {
+		t.Fatal("a delivery level does not read as one")
+	}
+	both := delivery
+	both.Name = "Alternatives"
+	if both.Available() {
+		t.Fatal("a level naming an enumeration and a delivery was admitted; which sequence it reads would be undecided")
+	}
+	spare := enumeration
+	spare.Admit = declaredSpecimenSymbol("AdmitCell")
+	if spare.Available() {
+		t.Fatal("an axis enumeration took a cell judgment; only a delivery has cells")
+	}
+	// A cell is not a value. Without the owner's judgment over one, a read
+	// that delivered something other than the owner's default at an unwritten
+	// coordinate would be enumerated as a fact.
+	unadmitted := delivery
+	unadmitted.Admit = GoSymbol{}
+	if unadmitted.Available() {
+		t.Fatal("a delivery level with no cell judgment was admitted")
+	}
+}
