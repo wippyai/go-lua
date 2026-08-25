@@ -90,25 +90,24 @@ func TestEveryDeclaredFoldHasTheDerivedCallShape(t *testing.T) {
 
 // compareSignature reports the first disagreement between a declaration's
 // derived call shape and the implementation's actual one, or the empty string.
+//
+// The comparison itself is compareDerivedType's, which is the one statement of
+// what a derived position looks like in source: a slice where the declaration
+// says the delivery is one, an instantiated view where it names an element,
+// and the named type otherwise. A fold's declared arguments carry exactly
+// those three facts, so they are compared as the derived positions they are
+// rather than through a second reading that would have to learn each of them
+// again - and did not: it could not see a slice at all, so every fold taking
+// the cells of a selection read as an unresolvable type.
 func compareSignature(file *ast.File, declaring string, decl *ast.FuncDecl, arguments []definition.Argument, results []memberdefinition.GoType) string {
 	parameters := flattenFields(decl.Type.Params)
 	if len(parameters) != len(arguments) {
 		return fmt.Sprintf("takes %d parameters, the declaration derives %d (%s)", len(parameters), len(arguments), describeArguments(arguments))
 	}
 	for position, argument := range arguments {
-		path, name := resolvedType(file, declaring, parameters[position])
-		if path != argument.Type.PackagePath || name != argument.Type.Name {
-			return fmt.Sprintf("parameter %d is %s, the declaration derives %s", position, describeType(path, name), describeType(argument.Type.PackagePath, argument.Type.Name))
-		}
-		if !argument.Element.Available() {
-			continue
-		}
-		elementPath, elementName, instantiated := typeArgument(file, declaring, parameters[position])
-		if !instantiated {
-			return fmt.Sprintf("parameter %d is not instantiated, the declaration derives a view over %s", position, describeType(argument.Element.PackagePath, argument.Element.Name))
-		}
-		if elementPath != argument.Element.PackagePath || elementName != argument.Element.Name {
-			return fmt.Sprintf("parameter %d delivers %s, the declaration derives %s", position, describeType(elementPath, elementName), describeType(argument.Element.PackagePath, argument.Element.Name))
+		want := memberdefinition.DerivedParam{Type: argument.Type, Element: argument.Element, Slice: argument.Slice}
+		if problem := compareDerivedType(file, declaring, parameters[position], want, "parameter", position); problem != "" {
+			return problem
 		}
 	}
 	returned := flattenFields(decl.Type.Results)
@@ -116,9 +115,8 @@ func compareSignature(file *ast.File, declaring string, decl *ast.FuncDecl, argu
 		return fmt.Sprintf("returns %d results, the declaration derives %d", len(returned), len(results))
 	}
 	for position, want := range results {
-		path, name := resolvedType(file, declaring, returned[position])
-		if path != want.PackagePath || name != want.Name {
-			return fmt.Sprintf("result %d is %s, the declaration derives %s", position, describeType(path, name), describeType(want.PackagePath, want.Name))
+		if problem := compareDerivedType(file, declaring, returned[position], memberdefinition.DerivedParam{Type: want}, "result", position); problem != "" {
+			return problem
 		}
 	}
 	return ""

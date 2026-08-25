@@ -94,7 +94,12 @@ func StorageTransfer() definition.Definition {
 			{Name: "BinaryOrderCarrier", Key: "carrier/value/binary-order", Type: binaryOrder},
 			{Name: "PresenceRefinementCarrier", Key: "carrier/value/presence-refinement", Type: valueGoType("PresenceRefinement")},
 			{Name: "SourceSeedCarrier", Key: "carrier/value/source-seed", Type: valueGoType("SourceSeed")},
-			{Name: "GlobalBootstrapResultCarrier", Key: "carrier/value/global-bootstrap-result", Type: valueGoType("GlobalBootstrapResult")},
+			// The owner answers this row by POINTER everywhere it answers it -
+			// resolver, dense accessor, and the materializer that turns one
+			// into a fact - so the carrier is the pointer, not the struct. A
+			// carrier that named the value would derive a call shape no symbol
+			// on either side of it has.
+			{Name: "GlobalBootstrapResultCarrier", Key: "carrier/value/global-bootstrap-result", Type: valueGoPointerType("GlobalBootstrapResult")},
 			// These are the owner-issued candidate relationships whose
 			// transformed carries write the Value factor. Each is the subject of
 			// its own published directory below; no receipt or callback is

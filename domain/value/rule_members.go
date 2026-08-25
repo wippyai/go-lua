@@ -97,6 +97,7 @@ const (
 	FreshResultRouteCarryTransform     schemaapi.Key  = "transform/value/fresh-result-route"
 	ValueCoordinateCarrier             member.Carrier = "carrier/value/coordinate"
 	ValueFactCarrier                   member.Carrier = "carrier/value/fact"
+	ValueAtomCarrier                   member.Carrier = "carrier/value/atom"
 	StorageTransferCarrier             member.Carrier = "carrier/value/storage-transfer"
 	BinaryArithmeticCarrier            member.Carrier = "carrier/value/binary-arithmetic"
 	BinaryEqualityCarrier              member.Carrier = "carrier/value/binary-equality"

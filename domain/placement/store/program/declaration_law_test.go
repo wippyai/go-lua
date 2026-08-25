@@ -14,20 +14,24 @@ import (
 	seal "github.com/wippyai/go-lua/analysis/schema/seal"
 	"github.com/wippyai/go-lua/analysis/schema/structure"
 	"github.com/wippyai/go-lua/analysis/schema/vocabulary"
+	heapdomain "github.com/wippyai/go-lua/domain/heap"
 	placementdomain "github.com/wippyai/go-lua/domain/placement"
 	placementmember "github.com/wippyai/go-lua/domain/placement/memberdefinition"
 	storedomain "github.com/wippyai/go-lua/domain/placement/store"
 	valuedomain "github.com/wippyai/go-lua/domain/value"
 )
 
-const testRouteKey = schema.Key("placement/store/route-key")
+const (
+	testRouteKey     = schema.Key("placement/store/route-key")
+	storePackagePath = "github.com/wippyai/go-lua/domain/placement/store"
+)
 
 // The structural half of this declaration's laws - its geometry, its identity,
 // its agreement with the reducer call shape, and the refusal of every
 // malformed edit of a term the cold ABI carries - is emitted from the
 // declaration into generated_law_test.go. What stays here is what a
 // declaration cannot decide alone: how the seal resolves it against a complete
-// catalog, and what the route relation's Build actually is.
+// catalog, and what the route relation's authored judgments actually are.
 
 // TestStorageProgramSealsThroughACompleteCatalog is the seam Check cannot
 // reach. Check is data-local by design, so a candidate provider on the wrong
@@ -60,18 +64,24 @@ func TestStorageProgramSealsThroughACompleteCatalog(t *testing.T) {
 	}
 }
 
-// The route relation's Build is an authored direct call. Its four arguments
-// are the two static owner schemas followed by the candidate and exact Value
-// fact; no callback, fallback plan, or owner lookup can be inserted by the
-// declaration layer.
-func TestStorageRelationAuthorsTheFourFenceDeriveRoutesBuild(t *testing.T) {
-	// Keep the authored Build ABI concrete at the seam: two static owner
-	// schemas, then the Value-owned candidate and its exact Value fact. The
-	// relation metadata below must continue to name this direct function rather
-	// than an adapter that can smuggle in fallback or Unknown behavior.
-	var authoredBuild func(placementdomain.Schema, *valuedomain.Schema, valuedomain.StorageTransfer, valuedomain.Value) (storedomain.RoutePlan, bool) = storedomain.DeriveRoutes
-	if authoredBuild == nil {
-		t.Fatal("Store route Build is unavailable")
+// The route relation states its construction and authors only the judgments
+// inside it. What survives from the authored Build's law is the fence it
+// existed for: every symbol the declaration names is a DIRECT function with a
+// concrete ABI, so no callback, fallback plan, or owner lookup can be inserted
+// by the declaration layer and no adapter can smuggle in Unknown behaviour.
+// There are three of them now instead of one, and each answers a strictly
+// smaller question.
+func TestStorageRelationAuthorsItsThreeRouteJudgments(t *testing.T) {
+	// Keep each authored ABI concrete at the seam. The two static owner
+	// schemas and the Value-owned candidate lead every one of them; what
+	// differs is the last position, which is the thing being judged: one atom
+	// of the Value, one row of Placement's own directory, or the whole Value
+	// when the question is whether it named a closed list at all.
+	var resolveAtom func(placementdomain.Schema, *valuedomain.Schema, valuedomain.StorageTransfer, valuedomain.Atom) (storedomain.Route, bool, bool) = storedomain.ResolveRoute
+	var resolveDirectory func(placementdomain.Schema, *valuedomain.Schema, valuedomain.StorageTransfer, heapdomain.Key) (storedomain.Route, bool, bool) = storedomain.ResolveDirectoryRoute
+	var beyond func(placementdomain.Schema, *valuedomain.Schema, valuedomain.StorageTransfer, valuedomain.Value) (bool, bool) = storedomain.BeyondAllocations
+	if resolveAtom == nil || resolveDirectory == nil || beyond == nil {
+		t.Fatal("a Store route judgment is unavailable")
 	}
 	source := placementmember.Storage()
 	if !source.Complete() {
@@ -89,11 +99,45 @@ func TestStorageRelationAuthorsTheFourFenceDeriveRoutesBuild(t *testing.T) {
 		relation.CandidateCount.Available() || relation.Materialize.Available() || relation.CandidateIdentityAt.Available() {
 		t.Fatal("foreign Value candidate directory leaked into Placement Store")
 	}
+
 	derivation := relation.Derivation
-	if derivation.State.Name != "RoutePlan" || derivation.Build.Name != "DeriveRoutes" || derivation.Count.Name != "RouteCount" || derivation.At.Name != "RouteAt" ||
-		derivation.Build.PackagePath != "github.com/wippyai/go-lua/domain/placement/store" || len(derivation.StaticAxes) != 2 ||
-		derivation.StaticAxes[0].Key != AxisKey || derivation.StaticAxes[1].Key != valueAxisKey {
-		t.Fatalf("Store route derivation = %+v", derivation)
+	// The authored quartet is gone, and its absence is the statement: a
+	// relation carrying both forms would be two answers to what its rows are.
+	if derivation.AuthoredDerivation() {
+		t.Fatalf("Store route derivation still states an authored construction: %+v", derivation)
+	}
+	if !derivation.DeclaredDerivation() {
+		t.Fatalf("Store route derivation states no construction at all: %+v", derivation)
+	}
+	if len(derivation.StaticAxes) != 2 || derivation.StaticAxes[0].Key != AxisKey || derivation.StaticAxes[1].Key != valueAxisKey {
+		t.Fatalf("Store route static axes = %+v", derivation.StaticAxes)
+	}
+	// The rows are the atoms of the Value the relation is given, read through
+	// Value's own schema, and each is judged by this package's own symbol.
+	if len(derivation.Source) != 1 || derivation.Source[0].Axis.Key != valueAxisKey || derivation.Source[0].Name != "Atoms" {
+		t.Fatalf("Store route source = %+v, want Value's own atom enumeration", derivation.Source)
+	}
+	if derivation.Resolve.Name != "ResolveRoute" || derivation.Resolve.PackagePath != storePackagePath {
+		t.Fatalf("Store route judgment = %+v", derivation.Resolve)
+	}
+	if derivation.InlineWidth <= 0 {
+		t.Fatalf("Store route set states no inline width, so every answer would allocate: %d", derivation.InlineWidth)
+	}
+	// A Value that named no closed list of allocations widens to Placement's
+	// whole directory, whose rows are Heap keys rather than atoms - so the
+	// endpoint states its own judgment for what one of those means.
+	widen := derivation.Widen
+	if !widen.Declared() {
+		t.Fatal("Store route set declares no lattice endpoint, so an opaque Value would answer an exact set")
+	}
+	if widen.Predicate.Name != "BeyondAllocations" || widen.Predicate.PackagePath != storePackagePath {
+		t.Fatalf("Store route endpoint = %+v", widen.Predicate)
+	}
+	if len(widen.Source) != 1 || widen.Source[0].Axis.Key != AxisKey || widen.Source[0].Name != "AllocationDirectory" {
+		t.Fatalf("Store widened source = %+v, want Placement's own coordinate directory", widen.Source)
+	}
+	if widen.Resolve.Name != "ResolveDirectoryRoute" || widen.Resolve.PackagePath != storePackagePath {
+		t.Fatalf("Store widened judgment = %+v", widen.Resolve)
 	}
 }
 
