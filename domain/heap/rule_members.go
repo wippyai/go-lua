@@ -37,6 +37,8 @@ const (
 	ClosedAllocationCarrier        member.Carrier = "carrier/heap/allocation-closed"
 	ValueFactCarrier               member.Carrier = "carrier/value/fact"
 	ValueCoordinateCarrier         member.Carrier = "carrier/value/coordinate"
+	ClosedOperandsCarrier          member.Carrier = "carrier/value/closed-operands"
+	ClosedOperandCarrier           member.Carrier = "carrier/value/closed-operand"
 	CallCoordinateCarrier          member.Carrier = "carrier/call/mounted-call"
 	CallFactCarrier                member.Carrier = "carrier/call/fact"
 	FormalFreezeRouteCarrier       member.Carrier = "carrier/heap/formal-freeze-route"

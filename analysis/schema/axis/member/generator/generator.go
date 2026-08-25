@@ -607,6 +607,14 @@ func renderCold(packageName string, source definition.Definition) ([]byte, error
 		if relation.MemberParent.Available() {
 			fmt.Fprintf(&out, ", Parent: %s, Ordinal: %s", relationProviderExpression(relation.MemberParent), carriers[relation.MemberOrdinal])
 		}
+		// A published key vector is cold catalog data for the same reason a
+		// nested set is: it is the other addressing a whole-vector read can
+		// have, and the Program that restates it is authenticated against this
+		// row. The accessors stay with the owner; what a child reads here is
+		// that the span exists and comes from this directory.
+		if relation.KeyVectorCount.Available() && relation.KeyVectorAt.Available() {
+			out.WriteString(", PublishesKeyVector: true")
+		}
 		out.WriteString("},\n")
 	}
 	out.WriteString("\t\t},\n\t\t[]member.Projection{\n")

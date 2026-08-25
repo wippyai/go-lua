@@ -3,6 +3,8 @@ package value
 import (
 	"sort"
 
+	"github.com/wippyai/go-lua/analysis/identity"
+
 	programschema "github.com/wippyai/go-lua/analysis/schema/program"
 	programcatalog "github.com/wippyai/go-lua/analysis/schema/program/catalog"
 	"github.com/wippyai/go-lua/analysis/schema/program/heapallocation"
@@ -141,4 +143,101 @@ func (schema *Schema) ClosedOperandKeyAt(root heap.Key, index int) (uint32, bool
 		return 0, false
 	}
 	return schema.CoordinateIndex(coordinates[index])
+}
+
+// ClosedOperands is one closed constructor seen from this axis: the row that
+// carries the operand vector published above.
+//
+// It exists because the vector needs a row to hang off. The constructor itself
+// is a Heap row and Heap cannot hold this axis's numbering, so a reader that
+// wants the span asks the axis that states it, at a row addressed by the same
+// occurrence the Heap row is. Nothing about the constructor is re-decided
+// here: the row is a handle onto the schema and the allocation, and every
+// answer it gives is the published vector's.
+type ClosedOperands struct {
+	schema *Schema
+	root   heap.Key
+}
+
+// Root is the allocation this row is the operand view of.
+func (operands ClosedOperands) Root() heap.Key { return operands.root }
+
+// KeyVectorCount and KeyVectorAt are the span a whole-vector read over this
+// constructor's operands is taken over, in this axis's dense keys. They are
+// the pair the reading rule's declaration names, and they answer exactly what
+// ClosedOperandKeyCount and ClosedOperandKeyAt answer - the row holds no
+// second version of the vector.
+func (operands ClosedOperands) KeyVectorCount() int {
+	if operands.schema == nil {
+		return -1
+	}
+	return operands.schema.ClosedOperandKeyCount(operands.root)
+}
+
+func (operands ClosedOperands) KeyVectorAt(index int) (uint32, bool) {
+	if operands.schema == nil {
+		return 0, false
+	}
+	return operands.schema.ClosedOperandKeyAt(operands.root, index)
+}
+
+// ClosedOperand is one cell of that vector: the coordinate the constructor
+// reads at one position. It carries the coordinate and nothing else, because
+// that is all a cell of this vector is - the operands are Value coordinates
+// this axis already issued, and giving them a second identity of their own
+// would number the same reads twice.
+type ClosedOperand struct {
+	coordinate Coordinate
+}
+
+// Coordinate is this operand's key: the coordinate its cell is read at.
+func (operand ClosedOperand) Coordinate() Coordinate { return operand.coordinate }
+
+// ClosedOperandsCount and ClosedOperandsAt are this axis's directory of
+// constructor operand rows. Its order is the Heap closed-allocation order,
+// taken from the Heap schema this one was sealed against rather than built
+// beside it: the two directories enumerate the same constructors, and a
+// correspondence between them is only true if neither renumbers.
+func (schema *Schema) ClosedOperandsCount() int {
+	if schema == nil || !schema.heap.Valid() {
+		return 0
+	}
+	return schema.heap.ClosedAllocationCount()
+}
+
+func (schema *Schema) ClosedOperandsAt(index int) (ClosedOperands, bool) {
+	if schema == nil || !schema.heap.Valid() {
+		return ClosedOperands{}, false
+	}
+	root, rootOK := schema.heap.ClosedAllocationAt(index)
+	if !rootOK {
+		return ClosedOperands{}, false
+	}
+	return ClosedOperands{schema: schema, root: root}, true
+}
+
+// ClosedOperandsOrdinal is the position one operand row holds in that
+// directory. A row of another schema is refused rather than located by its
+// allocation: the row is an owner handle, and two schemas sealed from one Link
+// are deliberately not interchangeable.
+func (schema *Schema) ClosedOperandsOrdinal(operands ClosedOperands) (uint32, bool) {
+	if schema == nil || operands.schema != schema || !schema.heap.Valid() {
+		return 0, false
+	}
+	return schema.heap.ClosedAllocationOrdinal(operands.root)
+}
+
+// ClosedOperandsForMountedOccurrence resolves the operand row of the
+// constructor one mounted occurrence denotes. It is the address both
+// directories share, which is what lets a rule whose candidate is the Heap
+// constructor reach this axis's row for the same one.
+func (schema *Schema) ClosedOperandsForMountedOccurrence(module, occurrence identity.ContentID) (ClosedOperands, bool) {
+	if schema == nil || !schema.heap.Valid() {
+		return ClosedOperands{}, false
+	}
+	root, rootOK := schema.heap.ClosedAllocationForMountedOccurrence(module, occurrence)
+	if !rootOK {
+		return ClosedOperands{}, false
+	}
+	return ClosedOperands{schema: schema, root: root}, true
 }

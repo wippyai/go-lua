@@ -34,6 +34,8 @@ const (
 	BinaryOrderSources                 schemaapi.Key  = "value/binary-order/sources"
 	ModuleLoadCallCandidates           schemaapi.Key  = "value/module-load/candidates"
 	ModuleLoadArguments                schemaapi.Key  = "value/module-load/arguments"
+	ClosedOperandParents               schemaapi.Key  = "value/closed-allocation/parents"
+	ClosedOperandCells                 schemaapi.Key  = "value/closed-allocation/operands"
 	StorageTransferSourceKey           schemaapi.Key  = "value/storage-transfer/source-key"
 	StorageTransferTarget              schemaapi.Key  = "value/storage-transfer/target"
 	SourceCoordinate                   schemaapi.Key  = "value/source/coordinate"
@@ -62,6 +64,7 @@ const (
 	BinaryOrderWrite                   schemaapi.Key  = "value/binary-order/write"
 	ModuleLoadArgumentKey              schemaapi.Key  = "value/module-load/argument-key"
 	ModuleLoadResultCoordinate         schemaapi.Key  = "value/module-load/coordinate"
+	ClosedOperandKey                   schemaapi.Key  = "value/closed-allocation/operand-key"
 	IdentityReducer                    schemaapi.Key  = "value/reducer/identity"
 	SourceReducer                      schemaapi.Key  = "value/reducer/source"
 	GlobalBootstrapReducer             schemaapi.Key  = "value/reducer/global-bootstrap"
@@ -96,6 +99,8 @@ const (
 	CallFactCarrier                    member.Carrier = "carrier/call/fact"
 	FreshResultRouteTagCarrier         member.Carrier = "carrier/value/fresh-result-route-tag"
 	ModuleLoadCallCarrier              member.Carrier = "carrier/value/module-load-call"
+	ClosedOperandsCarrier              member.Carrier = "carrier/value/closed-operands"
+	ClosedOperandCarrier               member.Carrier = "carrier/value/closed-operand"
 )
 
 // AxisMemberCatalog is value's declaration-only member vocabulary.
@@ -127,6 +132,8 @@ func AxisMemberCatalog() member.Catalog {
 			{Key: BinaryOrderSources, Subject: ValueFactCarrier, CandidateProvider: member.AxisRelationCandidate(member.RelationRef{Axis: schemaapi.EntryReference{Surface: schemaapi.SurfaceKind(2), Key: "value"}, Member: "value/binary-order/candidates"}), Inputs: []member.Carrier{BinaryOrderCarrier}},
 			{Key: ModuleLoadCallCandidates, Subject: ModuleLoadCallCarrier, CandidateProvider: member.AxisRelationCandidate(member.RelationRef{Axis: schemaapi.EntryReference{Surface: schemaapi.SurfaceKind(2), Key: "value"}, Member: "value/module-load/candidates"})},
 			{Key: ModuleLoadArguments, Subject: ValueFactCarrier, CandidateProvider: member.AxisRelationCandidate(member.RelationRef{Axis: schemaapi.EntryReference{Surface: schemaapi.SurfaceKind(2), Key: "value"}, Member: "value/module-load/candidates"}), Inputs: []member.Carrier{ModuleLoadCallCarrier}},
+			{Key: ClosedOperandParents, Subject: ClosedOperandsCarrier, CandidateProvider: member.AxisRelationCandidate(member.RelationRef{Axis: schemaapi.EntryReference{Surface: schemaapi.SurfaceKind(2), Key: "value"}, Member: "value/closed-allocation/parents"}), Correspondences: []member.RelationRef{member.RelationRef{Axis: schemaapi.EntryReference{Surface: schemaapi.SurfaceKind(2), Key: "heap"}, Member: "heap/closed-allocation/candidates"}}, PublishesKeyVector: true},
+			{Key: ClosedOperandCells, Subject: ClosedOperandCarrier, CandidateProvider: member.AxisRelationCandidate(member.RelationRef{Axis: schemaapi.EntryReference{Surface: schemaapi.SurfaceKind(2), Key: "value"}, Member: "value/closed-allocation/parents"}), Inputs: []member.Carrier{ClosedOperandsCarrier}},
 		},
 		[]member.Projection{
 			{Key: StorageTransferSourceKey, Relation: StorageTransferSources, Role: member.Key, Result: ValueCoordinateCarrier, CandidateProvider: member.AxisRelationCandidate(member.RelationRef{Axis: schemaapi.EntryReference{Surface: schemaapi.SurfaceKind(2), Key: "value"}, Member: "value/storage-transfer/candidates"})},
@@ -157,6 +164,7 @@ func AxisMemberCatalog() member.Catalog {
 			{Key: BinaryOrderWrite, Relation: BinaryOrderCandidates, Role: member.Destination, Result: ValueCoordinateCarrier, CandidateProvider: member.AxisRelationCandidate(member.RelationRef{Axis: schemaapi.EntryReference{Surface: schemaapi.SurfaceKind(2), Key: "value"}, Member: "value/binary-order/candidates"})},
 			{Key: ModuleLoadArgumentKey, Relation: ModuleLoadArguments, Role: member.Key, Result: ValueCoordinateCarrier, CandidateProvider: member.AxisRelationCandidate(member.RelationRef{Axis: schemaapi.EntryReference{Surface: schemaapi.SurfaceKind(2), Key: "value"}, Member: "value/module-load/candidates"})},
 			{Key: ModuleLoadResultCoordinate, Relation: ModuleLoadCallCandidates, Role: member.Destination, Result: ValueCoordinateCarrier, CandidateProvider: member.AxisRelationCandidate(member.RelationRef{Axis: schemaapi.EntryReference{Surface: schemaapi.SurfaceKind(2), Key: "value"}, Member: "value/module-load/candidates"})},
+			{Key: ClosedOperandKey, Relation: ClosedOperandCells, Role: member.Key, Result: ValueCoordinateCarrier, CandidateProvider: member.AxisRelationCandidate(member.RelationRef{Axis: schemaapi.EntryReference{Surface: schemaapi.SurfaceKind(2), Key: "value"}, Member: "value/closed-allocation/parents"})},
 		},
 		[]member.Reducer{
 			{Key: IdentityReducer, Inputs: []member.ReducerInput{
