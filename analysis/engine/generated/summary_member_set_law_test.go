@@ -60,9 +60,16 @@ func TestGeneratedSealRefusesAnUncorrelatedSummary(t *testing.T) {
 	}
 }
 
-// The absent parent encoding is the zero address. A read carrying an address
-// it does not declare present, or declaring one it does not carry, is a
-// descriptor disagreeing with itself.
+// The absent parent carries the zero address, and a declared one carries a
+// valid address. A read holding an address it does not declare present, or
+// declaring a parent at no valid address, is a descriptor disagreeing with
+// itself.
+//
+// The zero address is NOT the disagreement: relation 0 of axis 0 is a real
+// relation, and a member set hanging off the first relation an axis declares
+// is the ordinary case. Presence is declared and never inferred from the
+// value, which is the encoding ReadAddressingShape states for the third
+// address and this one is held to as well.
 func TestGeneratedSealRefusesADisagreeingParentEncoding(t *testing.T) {
 	read := summaryMemberSetRead()
 	read.ParentPresent = false
@@ -70,9 +77,14 @@ func TestGeneratedSealRefusesADisagreeingParentEncoding(t *testing.T) {
 		t.Fatal("an undeclared parent address sealed")
 	}
 	read = summaryMemberSetRead()
-	read.Parent = ruleplan.RelationAddr{}
+	read.Parent = ruleplan.RelationAddr{Axis: ^uint32(0), Member: ^uint32(0)}
 	if _, ok := NewPlanCompiledRule(planLawSpec([]ReadPlan{read}, &CarryPlan{Input: 0, Factor: 2, Mode: ruleprogram.CarryIdentity, Identity: true}, 1)); ok {
-		t.Fatal("a declared parent with no address sealed")
+		t.Fatal("a declared parent at no valid address sealed")
+	}
+	read = summaryMemberSetRead()
+	read.Parent = ruleplan.RelationAddr{}
+	if _, ok := NewPlanCompiledRule(planLawSpec([]ReadPlan{read}, &CarryPlan{Input: 0, Factor: 2, Mode: ruleprogram.CarryIdentity, Identity: true}, 1)); !ok {
+		t.Fatal("a member set whose parent is the first relation of the first axis was refused")
 	}
 }
 

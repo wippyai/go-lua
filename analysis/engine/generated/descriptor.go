@@ -272,18 +272,33 @@ func zeroDenominator(address ruleplan.DenominatorAddr) bool {
 
 // ReadFormAddressShape proves one sealed read's addressing metadata against
 // the declaration law that decided it. The dense encoding is this package's
-// own: the zero address is the absent one, so a present address must name a
-// member and an absent one must be zero. Which addressing a form requires is
+// own: a present address must be a valid one and an absent one must be zero.
+// The zero address is a REAL address - relation 0 of axis 0 - so presence is
+// declared and never inferred from it. Which addressing a form requires is
 // not this package's to say - ruleprogram.ReadFormAddressing is the one
 // statement of that, and it is asked here rather than spelled again.
 //
 // It is exported because the plan-shape fence in the schema engine holds
 // sealed reads to the same proof.
 func ReadFormAddressShape(form ruleprogram.ReadForm, predicate ruleplan.ProjectionAddr, predicatePresent bool, parent ruleplan.RelationAddr, parentPresent bool) bool {
-	if predicatePresent != (predicate != ruleplan.ProjectionAddr{}) || predicatePresent && !validProjectionAddr(predicate) {
+	// Presence is the declaration's own statement and the address is checked
+	// against it, exactly as ReadAddressingShape below states for the third
+	// address. Reading presence off "the value is non-zero" instead would say
+	// that relation 0 of axis 0 does not exist, which makes the FIRST relation
+	// and the FIRST projection an axis declares unusable as a parent or a
+	// predicate - and those are the ordinary ones, not edge cases.
+	if predicatePresent {
+		if !validProjectionAddr(predicate) {
+			return false
+		}
+	} else if predicate != (ruleplan.ProjectionAddr{}) {
 		return false
 	}
-	if parentPresent != (parent != ruleplan.RelationAddr{}) || parentPresent && !validRelationAddr(parent) {
+	if parentPresent {
+		if !validRelationAddr(parent) {
+			return false
+		}
+	} else if parent != (ruleplan.RelationAddr{}) {
 		return false
 	}
 	return ruleprogram.ReadFormAddressing(form, predicatePresent, parentPresent)
