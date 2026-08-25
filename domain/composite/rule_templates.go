@@ -42,6 +42,7 @@ import (
 	placementstoreprogram "github.com/wippyai/go-lua/domain/placement/store/program"
 	placementsuspension "github.com/wippyai/go-lua/domain/placement/suspension"
 	placementtransfer "github.com/wippyai/go-lua/domain/placement/transfer"
+	placementtransferprogram "github.com/wippyai/go-lua/domain/placement/transfer/program"
 	staticowner "github.com/wippyai/go-lua/domain/static/owner"
 	statictransfer "github.com/wippyai/go-lua/domain/static/transfer"
 	valuedomain "github.com/wippyai/go-lua/domain/value"
@@ -199,8 +200,10 @@ func ruleTemplateWiring[P Principals, A Authorities]() ([]*rule.Template, []Rule
 	add(WireRule(heappublicationfreeze.RuleEntry[P, A](), heappublicationfreeze.DeclareRule[P], heappublicationfreeze.RegisterRule, nil, heappublicationfreeze.BindRule[A], heappublicationfreeze.FinalizeRule[A], nil, nil))
 	// Target-transfer is appended to preserve established rule ordinals. It is
 	// a mounted invocation consumer: Call and Pack actuals are read, Target is
-	// joined through Link's exact Contract, and only Placement is written.
-	add(WireRule(placementtransfer.RuleEntry[P, A](), placementtransfer.DeclareRule[P], placementtransfer.RegisterRule, nil, placementtransfer.BindRule[A], placementtransfer.FinalizeRule[A], nil, nil))
+	// joined through Link's exact Contract, and only Placement is written. Its
+	// authored route relation is installed once through the rule's own family
+	// claimant, exactly as ReturnEscape's.
+	add(WireGeneratedRuleWithFamily[P, A](placementtransferprogram.RuleEntry(), placementtransfer.InstallFamily[A]))
 	// The two Target result consumers are appended to preserve established
 	// rule ordinals. ResultAlias is a mounted consumer of the selected Call
 	// and the mounted actual it aliases; fresh-result is the Link producer

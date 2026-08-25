@@ -1,10 +1,12 @@
 package transfer
 
 import (
+	"crypto/sha256"
 	"fmt"
 	"testing"
 
 	"github.com/wippyai/go-lua/analysis/engine"
+	"github.com/wippyai/go-lua/analysis/engine/execution"
 	"github.com/wippyai/go-lua/analysis/identity"
 	"github.com/wippyai/go-lua/analysis/lua/lower"
 	programartifact "github.com/wippyai/go-lua/analysis/program/artifact"
@@ -40,23 +42,57 @@ import (
 	"github.com/wippyai/go-lua/internal/testfixture"
 )
 
-// transferHotLawFixture is deliberately the smallest real owner join that
+// transferRouteLawFixture is deliberately the smallest real owner join that
 // reaches planFor: Link owns the Target Contract, Call owns the mounted
 // application/candidate, Pack owns actual order and selectors, and Value/
 // Placement own the exact allocation fact and root coordinate.
-type transferHotLawFixture struct {
-	packs        *packdomain.Schema
-	calls        *calldomain.Algebra
-	placement    placementdomain.Schema
-	values       *valuedomain.Schema
-	contract     *contract.Contract
-	mounted      calldomain.MountedCall
-	key          calldomain.Key
-	callFact     calldomain.Value
-	openFact     calldomain.Value
-	payloadID    identity.ContentID
-	payloadRoot  heapdomain.Key
-	observations []actualObservation
+//
+// cells is the call's own mounted actual member set in Value's ordinal order,
+// which is exactly what the declaration delivers the derivation.
+type transferRouteLawFixture struct {
+	packs       *packdomain.Schema
+	calls       *calldomain.Algebra
+	placement   placementdomain.Schema
+	values      *valuedomain.Schema
+	contract    *contract.Contract
+	mounted     calldomain.MountedCall
+	key         calldomain.Key
+	callFact    calldomain.Value
+	openFact    calldomain.Value
+	payloadID   identity.ContentID
+	payloadRoot heapdomain.Key
+	cells       []execution.MemberCell[valuedomain.Value]
+}
+
+// actuals views the fixture's own member cells as the whole vector the
+// declaration delivers. A vector is a view over caller-owned cells, so a law
+// that varies one cell copies the slice and views the copy.
+func (fixture transferRouteLawFixture) actuals(t testing.TB) execution.SummaryVector[valuedomain.Value] {
+	t.Helper()
+	return transferActuals(t, fixture.cells)
+}
+
+// rootedActual is the ordinal of the one actual carrying real allocation
+// evidence. Every other cell of the fixture is the Value Factor default, which
+// an absent cell is allowed to hold.
+func (fixture transferRouteLawFixture) rootedActual(t testing.TB) int {
+	t.Helper()
+	for index, cell := range fixture.cells {
+		if !fixture.values.Equal(cell.Value, fixture.values.Bottom()) {
+			return index
+		}
+	}
+	t.Fatal("fixture has no rooted actual")
+	return -1
+}
+
+func transferActuals(t testing.TB, cells []execution.MemberCell[valuedomain.Value]) execution.SummaryVector[valuedomain.Value] {
+	t.Helper()
+	vector, ok := execution.NewMemberVector(cells)
+	if !ok {
+		t.Fatal("mounted actual member vector")
+	}
+	return vector
 }
 
 // TestTransferMayDeliverDisplacesTheExactPayloadRootWithoutPublicationEffect
@@ -70,14 +106,14 @@ type transferHotLawFixture struct {
 // occurrence-mount seam, so this test does not claim a mounted solve/result
 // publication.
 func TestTransferMayDeliverDisplacesTheExactPayloadRootWithoutPublicationEffect(t *testing.T) {
-	fixture := newTransferHotLawFixture(t, true, "transfer-deliver-hot")
+	fixture := newTransferRouteLawFixture(t, true, "transfer-deliver-hot")
 	operation, operationOK := fixture.contract.Operations.Lookup(vocabulary.BindingSpec{
 		Namespace: vocabulary.BindingBuiltin, Member: []string{"send"},
 	})
 	if !operationOK || fixture.contract.Operations.TransferCount(operation) != 1 || fixture.contract.Operations.EffectCount(operation) != 0 {
 		t.Fatalf("transfer Target operation = %d/%t, transfers=%d effects=%d; want one TransferSpec and no PublicationEffect/invocation effect", operation, operationOK, fixture.contract.Operations.TransferCount(operation), fixture.contract.Operations.EffectCount(operation))
 	}
-	plan, planOK := planFor(fixture.packs, fixture.calls, fixture.placement, fixture.values, fixture.contract, fixture.mounted, fixture.callFact, fixture.observations)
+	plan, planOK := planFor(fixture.packs, fixture.calls, fixture.placement, fixture.values, fixture.contract, fixture.mounted, fixture.callFact, fixture.actuals(t))
 	if !planOK || plan.routeCount() != 1 {
 		t.Fatalf("MayDeliver transfer plan = %t/%d, want one exact route", planOK, plan.routeCount())
 	}
@@ -95,26 +131,35 @@ func TestTransferMayDeliverDisplacesTheExactPayloadRootWithoutPublicationEffect(
 // reject-only relation is not a fallback route, while absent and foreign
 // predecessor evidence cannot be compensated by the Target transfer row.
 func TestTransferRejectOnlyHasNoPlacementRouteAndBadFactsRefuse(t *testing.T) {
-	fixture := newTransferHotLawFixture(t, false, "transfer-reject-hot")
-	plan, planOK := planFor(fixture.packs, fixture.calls, fixture.placement, fixture.values, fixture.contract, fixture.mounted, fixture.callFact, fixture.observations)
+	fixture := newTransferRouteLawFixture(t, false, "transfer-reject-hot")
+	plan, planOK := planFor(fixture.packs, fixture.calls, fixture.placement, fixture.values, fixture.contract, fixture.mounted, fixture.callFact, fixture.actuals(t))
 	if !planOK || plan.routeCount() != 0 {
 		t.Fatalf("reject-only transfer plan = %t/%d, want valid no-route", planOK, plan.routeCount())
 	}
-	missing := append([]actualObservation(nil), fixture.observations...)
-	if len(missing) == 0 {
-		t.Fatal("reject fixture has no fixed actual for missing-evidence law")
-	}
-	missing[0] = actualObservation{}
-	if _, missingOK := planFor(fixture.packs, fixture.calls, fixture.placement, fixture.values, fixture.contract, fixture.mounted, fixture.callFact, missing); missingOK {
+	missing := append([]execution.MemberCell[valuedomain.Value](nil), fixture.cells...)
+	rooted := fixture.rootedActual(t)
+	// A cell that claims absence while carrying a value is the one shape a
+	// delivered member set can still be wrong in: the owner's Factor default
+	// is the only value an absent coordinate holds.
+	missing[rooted].Present = false
+	if _, missingOK := planFor(fixture.packs, fixture.calls, fixture.placement, fixture.values, fixture.contract, fixture.mounted, fixture.callFact, transferActuals(t, missing)); missingOK {
 		t.Fatal("missing Value fact was compensated into a reject-only plan")
 	}
-	foreign := newTransferHotLawFixture(t, true, "transfer-foreign-hot")
-	if _, foreignOK := planFor(fixture.packs, fixture.calls, fixture.placement, fixture.values, foreign.contract, fixture.mounted, fixture.callFact, fixture.observations); foreignOK {
+	// A vector narrower than Pack's sealed actual count is not this call's
+	// member set at all, and no shorter delivery is completed here.
+	if len(fixture.cells) > 1 {
+		short := append([]execution.MemberCell[valuedomain.Value](nil), fixture.cells[:len(fixture.cells)-1]...)
+		if _, shortOK := planFor(fixture.packs, fixture.calls, fixture.placement, fixture.values, fixture.contract, fixture.mounted, fixture.callFact, transferActuals(t, short)); shortOK {
+			t.Fatal("a member vector narrower than the sealed actual count was completed")
+		}
+	}
+	foreign := newTransferRouteLawFixture(t, true, "transfer-foreign-hot")
+	if _, foreignOK := planFor(fixture.packs, fixture.calls, fixture.placement, fixture.values, foreign.contract, fixture.mounted, fixture.callFact, fixture.actuals(t)); foreignOK {
 		t.Fatal("foreign Target Contract crossed the Call owner fence")
 	}
-	foreignValue := append([]actualObservation(nil), fixture.observations...)
-	foreignValue[0].fact = foreign.values.Bottom()
-	if _, foreignValueOK := planFor(fixture.packs, fixture.calls, fixture.placement, fixture.values, fixture.contract, fixture.mounted, fixture.callFact, foreignValue); foreignValueOK {
+	foreignValue := append([]execution.MemberCell[valuedomain.Value](nil), fixture.cells...)
+	foreignValue[0].Value = foreign.values.Bottom()
+	if _, foreignValueOK := planFor(fixture.packs, fixture.calls, fixture.placement, fixture.values, fixture.contract, fixture.mounted, fixture.callFact, transferActuals(t, foreignValue)); foreignValueOK {
 		t.Fatal("foreign Value fact crossed the coordinate owner fence")
 	}
 }
@@ -124,12 +169,12 @@ func TestTransferRejectOnlyHasNoPlacementRouteAndBadFactsRefuse(t *testing.T) {
 // authenticated Target remains alongside that alternative, the exact
 // declared payload route remains the complete result.
 func TestTransferOpaqueDispatchHasNoDeliveryAuthority(t *testing.T) {
-	fixture := newTransferHotLawFixture(t, true, "transfer-opaque-no-authority")
-	exact, exactOK := planFor(fixture.packs, fixture.calls, fixture.placement, fixture.values, fixture.contract, fixture.mounted, fixture.callFact, fixture.observations)
+	fixture := newTransferRouteLawFixture(t, true, "transfer-opaque-no-authority")
+	exact, exactOK := planFor(fixture.packs, fixture.calls, fixture.placement, fixture.values, fixture.contract, fixture.mounted, fixture.callFact, fixture.actuals(t))
 	if !exactOK || exact.routeCount() != 1 {
 		t.Fatalf("exact transfer plan = %t/%d, want one route", exactOK, exact.routeCount())
 	}
-	opaque, opaqueOK := planFor(fixture.packs, fixture.calls, fixture.placement, fixture.values, fixture.contract, fixture.mounted, fixture.openFact, fixture.observations)
+	opaque, opaqueOK := planFor(fixture.packs, fixture.calls, fixture.placement, fixture.values, fixture.contract, fixture.mounted, fixture.openFact, fixture.actuals(t))
 	if !opaqueOK || opaque.routeCount() != 0 {
 		t.Fatalf("opaque-only transfer plan = %t/%d, want valid no-route", opaqueOK, opaque.routeCount())
 	}
@@ -141,7 +186,7 @@ func TestTransferOpaqueDispatchHasNoDeliveryAuthority(t *testing.T) {
 	if !dispatchOK || !knownAndOpaque.HasOpaqueAlternative() || knownAndOpaque.KnownTargetCount() != 1 {
 		t.Fatalf("known-plus-opaque dispatch = %t/%t/%d", dispatchOK, knownAndOpaque.HasOpaqueAlternative(), knownAndOpaque.KnownTargetCount())
 	}
-	combined, combinedOK := planFor(fixture.packs, fixture.calls, fixture.placement, fixture.values, fixture.contract, fixture.mounted, knownAndOpaque, fixture.observations)
+	combined, combinedOK := planFor(fixture.packs, fixture.calls, fixture.placement, fixture.values, fixture.contract, fixture.mounted, knownAndOpaque, fixture.actuals(t))
 	if !combinedOK || combined.routeCount() != exact.routeCount() {
 		t.Fatalf("known-plus-opaque transfer plan = %t/%d, want exact %d", combinedOK, combined.routeCount(), exact.routeCount())
 	}
@@ -157,8 +202,8 @@ func TestTransferOpaqueDispatchHasNoDeliveryAuthority(t *testing.T) {
 // consumer's Placement demand remains payload-derived; the alias does not
 // become a second move/copy or actor/context authority.
 func TestTransferAliasIsDescriptiveMetadataOnly(t *testing.T) {
-	fixture := newTransferHotLawFixtureWithAlias(t, true, "transfer-alias-descriptive-hot", 0)
-	plan, planOK := planFor(fixture.packs, fixture.calls, fixture.placement, fixture.values, fixture.contract, fixture.mounted, fixture.callFact, fixture.observations)
+	fixture := newTransferRouteLawFixtureWithAlias(t, true, "transfer-alias-descriptive-hot", 0)
+	plan, planOK := planFor(fixture.packs, fixture.calls, fixture.placement, fixture.values, fixture.contract, fixture.mounted, fixture.callFact, fixture.actuals(t))
 	if !planOK || plan.routeCount() != 1 {
 		t.Fatalf("descriptive-alias plan = %t/%d, want one payload route", planOK, plan.routeCount())
 	}
@@ -201,8 +246,8 @@ func TestTransferStaticMetadataDoesNotInventRuntimeDestination(t *testing.T) {
 	for _, variant := range variants {
 		t.Run(variant.name, func(t *testing.T) {
 			target := transferHotLawContractWithMetadata(t, true, 1, variant.endpoint, variant.identity, variant.capabilities)
-			fixture := newTransferHotLawFixtureWithTarget(t, target, "transfer-static-metadata-"+variant.name)
-			plan, planOK := planFor(fixture.packs, fixture.calls, fixture.placement, fixture.values, fixture.contract, fixture.mounted, fixture.callFact, fixture.observations)
+			fixture := newTransferRouteLawFixtureWithTarget(t, target, "transfer-static-metadata-"+variant.name)
+			plan, planOK := planFor(fixture.packs, fixture.calls, fixture.placement, fixture.values, fixture.contract, fixture.mounted, fixture.callFact, fixture.actuals(t))
 			if !planOK || plan.routeCount() != 1 {
 				t.Fatalf("static metadata plan = %t/%d, want one payload route", planOK, plan.routeCount())
 			}
@@ -214,23 +259,23 @@ func TestTransferStaticMetadataDoesNotInventRuntimeDestination(t *testing.T) {
 	}
 }
 
-// TestTransferPlannerRoutesOnlyAuthenticatedPayloadAllocation proves that a
-// valid route tag round-trips only for the exact Heap allocation selected by
-// Value. A tag for another owner-issued allocation must not be compensated into
-// a payload route.
+// TestTransferPlannerRoutesOnlyAuthenticatedPayloadAllocation proves that the
+// plan carries a tag only for the exact Heap allocation Value selected. A tag
+// the owner issues for another allocation is not a route of this plan, so the
+// routed worker that pairs a cell with its member by tag can never reach one.
 func TestTransferPlannerRoutesOnlyAuthenticatedPayloadAllocation(t *testing.T) {
-	fixture := newTransferHotLawFixture(t, true, "transfer-exact-allocation-route")
-	plan, planOK := planFor(fixture.packs, fixture.calls, fixture.placement, fixture.values, fixture.contract, fixture.mounted, fixture.callFact, fixture.observations)
+	fixture := newTransferRouteLawFixture(t, true, "transfer-exact-allocation-route")
+	plan, planOK := planFor(fixture.packs, fixture.calls, fixture.placement, fixture.values, fixture.contract, fixture.mounted, fixture.callFact, fixture.actuals(t))
 	if !planOK || plan.routeCount() != 1 {
 		t.Fatalf("exact allocation plan = %t/%d, want one route", planOK, plan.routeCount())
 	}
-	route, routeOK := plan.routeAt(0)
-	if !routeOK || route.key != fixture.payloadRoot {
-		t.Fatalf("exact allocation route = %#v/%t, want payload root", route, routeOK)
+	row, rowOK := plan.routeAt(0)
+	if !rowOK || row.key != fixture.payloadRoot {
+		t.Fatalf("exact allocation route = %#v/%t, want payload root", row, rowOK)
 	}
-	roundTrip, roundTripOK := routeForTag(plan, route.tag)
-	if !roundTripOK || roundTrip.key != fixture.payloadRoot {
-		t.Fatalf("exact allocation tag round-trip = %#v/%t", roundTrip, roundTripOK)
+	payloadTag, payloadTagOK := routeTagFor(plan.schema, fixture.payloadRoot)
+	if !payloadTagOK || row.tag != payloadTag {
+		t.Fatalf("exact allocation tag = %d/%t, want the owner-issued %d", row.tag, payloadTagOK, payloadTag)
 	}
 	foreignFound := false
 	for dense := 0; dense < fixture.placement.DenseKeyCount(); dense++ {
@@ -242,8 +287,11 @@ func TestTransferPlannerRoutesOnlyAuthenticatedPayloadAllocation(t *testing.T) {
 		if !foreignTagOK {
 			continue
 		}
-		if _, admitted := routeForTag(plan, foreignTag); admitted {
-			t.Fatalf("foreign allocation %v crossed exact route fence", candidate)
+		for index := 0; index < plan.routeCount(); index++ {
+			admitted, admittedOK := plan.routeAt(index)
+			if admittedOK && admitted.tag == foreignTag {
+				t.Fatalf("foreign allocation %v crossed exact route fence", candidate)
+			}
 		}
 		foreignFound = true
 		break
@@ -253,43 +301,93 @@ func TestTransferPlannerRoutesOnlyAuthenticatedPayloadAllocation(t *testing.T) {
 	}
 }
 
-// TestTransferHotBindRequiresTheExactLinkAuthorityJoin proves the runtime
-// binder itself is fenced to the same Placement/Value/Call owners and exact
-// Target Contract/Pack Schema that planFor consumes.
-func TestTransferHotBindRequiresTheExactLinkAuthorityJoin(t *testing.T) {
-	fixture := newTransferHotLawFixture(t, true, "transfer-hot-bind")
+// transferOwnerSemantic seals one distinct owner semantic key per fixture
+// principal, which is all a declaration needs to issue an owner here.
+func transferOwnerSemantic(seed byte) identity.SemanticKey {
+	digest := sha256.Sum256([]byte{0x74, seed})
+	key, ok := identity.NewSemanticKey(digest, 1)
+	if !ok {
+		panic("transfer owner semantic")
+	}
+	return key
+}
+
+// transferAuthorities is the composition record this rule's family install arm
+// reads: the three mounted owners the declaration names, and the Pack schema
+// its route derivation is sealed against.
+type transferAuthorities struct {
+	placement *placementowner.HotOwner
+	values    *valueowner.HotOwner
+	calls     *callowner.HotOwner
+	packs     *packdomain.Schema
+}
+
+func (authorities transferAuthorities) PlacementAuthority() *placementowner.HotOwner {
+	return authorities.placement
+}
+
+func (authorities transferAuthorities) ValueAuthority() *valueowner.HotOwner {
+	return authorities.values
+}
+
+func (authorities transferAuthorities) CallAuthority() *callowner.HotOwner {
+	return authorities.calls
+}
+
+func (authorities transferAuthorities) PackSchema() *packdomain.Schema { return authorities.packs }
+
+// transferAuthorityJoin seals one composition's three mounted owners over one
+// fixture's schemas and answers the binding that issued them.
+func transferAuthorityJoin(t testing.TB, fixture transferRouteLawFixture) (transferAuthorities, *engine.SchemaBinding) {
+	t.Helper()
 	builder := engine.NewSchema()
-	callFragment, callOK := callowner.DeclareSchema(builder, transferRegistrationSemantic(21))
-	valueFragment, valueOK := valueowner.DeclareSchema(builder, transferRegistrationSemantic(22), transferRegistrationSemantic(23), transferRegistrationSemantic(24))
-	placementFragment, placementOK := placementowner.DeclareSchema(builder, transferRegistrationSemantic(25), transferRegistrationSemantic(26))
-	transferFragment, transferOK := DeclareSchema(builder, transferRegistrationSemantic(27), transferRegistrationSemantic(28), valueFragment, callFragment, placementFragment)
+	callFragment, callOK := callowner.DeclareSchema(builder, transferOwnerSemantic(21))
+	valueFragment, valueOK := valueowner.DeclareSchema(builder, transferOwnerSemantic(22), transferOwnerSemantic(23), transferOwnerSemantic(24))
+	placementFragment, placementOK := placementowner.DeclareSchema(builder, transferOwnerSemantic(25), transferOwnerSemantic(26))
 	cold, coldOK := builder.Seal()
-	if !callOK || !valueOK || !placementOK || !transferOK || !coldOK || cold == nil {
-		t.Fatalf("transfer hot declaration call=%t value=%t placement=%t transfer=%t cold=%t", callOK, valueOK, placementOK, transferOK, coldOK)
+	if !callOK || !valueOK || !placementOK || !coldOK || cold == nil {
+		t.Fatalf("transfer owner declaration call=%t value=%t placement=%t cold=%t", callOK, valueOK, placementOK, coldOK)
 	}
 	binding := engine.NewSchemaBinding(cold)
 	callHot, callHotOK := callowner.BindHot(binding, callFragment, fixture.calls)
 	valueHot, valueHotOK := valueowner.BindHot(binding, valueFragment, fixture.values)
 	placementHot, placementHotOK := placementowner.BindHot(binding, placementFragment, fixture.placement)
-	if !callHotOK || !valueHotOK || !placementHotOK || callHot == nil || valueHot == nil || placementHot == nil {
-		t.Fatalf("transfer hot owner bind call=%t value=%t placement=%t", callHotOK, valueHotOK, placementHotOK)
+	if !callHotOK || !valueHotOK || !placementHotOK {
+		t.Fatalf("transfer owner bind call=%t value=%t placement=%t", callHotOK, valueHotOK, placementHotOK)
 	}
-	hot, hotOK := BindHot(binding, transferFragment, placementHot, valueHot, callHot, fixture.contract, fixture.packs)
-	if !hotOK || hot == nil {
-		t.Fatal("transfer hot bind rejected the exact Link authority join")
+	return transferAuthorities{placement: placementHot, values: valueHot, calls: callHot, packs: fixture.packs}, binding
+}
+
+// TestTransferFamilyInstallsOnlyAgainstTheLinkAuthorityJoinItWasIssuedBy is the
+// install-time fence the deleted hot binder used to carry. Two structurally
+// equal compositions issue two owner sets, and the family is sealed against the
+// schemas of exactly one of them; the Pack schema must belong to the same Link
+// owner Call's algebra names, because that owner is the join every Target
+// declaration this rule reads is authenticated under.
+func TestTransferFamilyInstallsOnlyAgainstTheLinkAuthorityJoinItWasIssuedBy(t *testing.T) {
+	fixture := newTransferRouteLawFixture(t, true, "transfer-family-install")
+	local, localBinding := transferAuthorityJoin(t, fixture)
+	foreignFixture := newTransferRouteLawFixture(t, true, "transfer-family-install-foreign")
+	foreign, _ := transferAuthorityJoin(t, foreignFixture)
+
+	if !local.placement.MatchesBinding(localBinding) || local.placement.MatchesBinding(nil) {
+		t.Fatal("a Placement owner did not answer for the binding that issued it")
 	}
-	if _, registered := engine.RegisterMountedSlot(binding, transferFragment.RuleSlot()); !registered {
-		t.Fatal("transfer hot rule slot registration")
-	}
-	if !binding.Seal() {
-		t.Fatal("transfer hot binding seal")
-	}
-	if implementation, implementationOK := hot.Implementation(); !implementationOK || implementation == nil {
-		t.Fatal("transfer hot bind did not publish an owner-fenced implementation")
-	}
-	foreign := newTransferHotLawFixture(t, true, "transfer-hot-bind-foreign")
-	if _, foreignOK := BindHot(binding, transferFragment, placementHot, valueHot, callHot, foreign.contract, fixture.packs); foreignOK {
-		t.Fatal("transfer hot bind accepted a foreign Target Contract")
+	for _, law := range []struct {
+		name        string
+		binding     *engine.SchemaBinding
+		authorities transferAuthorities
+	}{
+		{name: "foreign-placement", binding: localBinding, authorities: transferAuthorities{placement: foreign.placement, values: local.values, calls: local.calls, packs: local.packs}},
+		{name: "foreign-value", binding: localBinding, authorities: transferAuthorities{placement: local.placement, values: foreign.values, calls: local.calls, packs: local.packs}},
+		{name: "foreign-call", binding: localBinding, authorities: transferAuthorities{placement: local.placement, values: local.values, calls: foreign.calls, packs: local.packs}},
+		{name: "foreign-pack", binding: localBinding, authorities: transferAuthorities{placement: local.placement, values: local.values, calls: local.calls, packs: foreign.packs}},
+		{name: "absent-pack", binding: localBinding, authorities: transferAuthorities{placement: local.placement, values: local.values, calls: local.calls}},
+		{name: "absent-binding", authorities: local},
+	} {
+		if InstallFamily(law.binding, nil, law.authorities) {
+			t.Fatalf("the family installed under %s", law.name)
+		}
 	}
 }
 
@@ -303,7 +401,7 @@ var (
 // invocation-local: all scratch state is stack-resident for the bounded exact
 // fixture, while an opaque-only dispatch remains a valid no-route result.
 func TestTransferPlannerExactAndOpaqueAreZeroAllocation(t *testing.T) {
-	fixture := newTransferHotLawFixture(t, true, "transfer-planner-alloc-law")
+	fixture := newTransferRouteLawFixture(t, true, "transfer-planner-alloc-law")
 	for _, test := range []struct {
 		name      string
 		fact      calldomain.Value
@@ -314,7 +412,7 @@ func TestTransferPlannerExactAndOpaqueAreZeroAllocation(t *testing.T) {
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			allocs := testing.AllocsPerRun(100, func() {
-				plan, ok := planFor(fixture.packs, fixture.calls, fixture.placement, fixture.values, fixture.contract, fixture.mounted, test.fact, fixture.observations)
+				plan, ok := planFor(fixture.packs, fixture.calls, fixture.placement, fixture.values, fixture.contract, fixture.mounted, test.fact, fixture.actuals(t))
 				if !ok || test.wantRoute && plan.routeCount() == 0 || !test.wantRoute && plan.routeCount() != 0 {
 					t.Fatalf("transfer planner result = %t/%d", ok, plan.routeCount())
 				}
@@ -331,7 +429,7 @@ func TestTransferPlannerExactAndOpaqueAreZeroAllocation(t *testing.T) {
 // both ordinary exact dispatch and opaque-only dispatch. The real
 // Link/Call/Pack/Value/Placement fixture is sealed before timing.
 func BenchmarkTransferPlannerExactAndOpaque(b *testing.B) {
-	fixture := newTransferHotLawFixture(b, true, "transfer-planner-benchmark")
+	fixture := newTransferRouteLawFixture(b, true, "transfer-planner-benchmark")
 	for _, test := range []struct {
 		name string
 		fact calldomain.Value
@@ -341,10 +439,11 @@ func BenchmarkTransferPlannerExactAndOpaque(b *testing.B) {
 	} {
 		test := test
 		b.Run(test.name, func(b *testing.B) {
+			actuals := fixture.actuals(b)
 			b.ReportAllocs()
 			b.ResetTimer()
 			for index := 0; index < b.N; index++ {
-				transferBenchmarkPlan, transferBenchmarkOK = planFor(fixture.packs, fixture.calls, fixture.placement, fixture.values, fixture.contract, fixture.mounted, test.fact, fixture.observations)
+				transferBenchmarkPlan, transferBenchmarkOK = planFor(fixture.packs, fixture.calls, fixture.placement, fixture.values, fixture.contract, fixture.mounted, test.fact, actuals)
 			}
 			if !transferBenchmarkOK {
 				b.Fatalf("transfer planner result = %t/%d", transferBenchmarkOK, transferBenchmarkPlan.routeCount())
@@ -382,9 +481,13 @@ func transferHotLawContractWithMetadata(t testing.TB, mayDeliver bool, aliasOrdi
 		Semantics: typecontract.NewSemantics(),
 		Operations: []vocabulary.OperationSpec{
 			{
+				// Require is the module-load producer the Boundary names, so
+				// its normal outcome carries the one result value a module
+				// root is answered at. A require declaring no result answers
+				// no module, and Value refuses the whole schema for it.
 				Bindings: []vocabulary.BindingSpec{{Namespace: vocabulary.BindingBuiltin, Member: []string{"require"}}},
 				Input:    vocabulary.ValuesSpec{Tail: vocabulary.ValuesClosed},
-				Outcomes: []vocabulary.OutcomeSpec{{Kind: flowkind.OutcomeNormal, Values: vocabulary.ValuesSpec{Tail: vocabulary.ValuesClosed}}},
+				Outcomes: []vocabulary.OutcomeSpec{{Kind: flowkind.OutcomeNormal, Values: vocabulary.ValuesSpec{Fixed: []schematype.Type{transferAnyType(t)}, Tail: vocabulary.ValuesClosed}}},
 				Effects:  vocabulary.RowSpec{Tail: vocabulary.RowClosed},
 			},
 			{
@@ -415,15 +518,15 @@ func transferHotLawContractWithMetadata(t testing.TB, mayDeliver bool, aliasOrdi
 	return sealed
 }
 
-func newTransferHotLawFixture(t testing.TB, mayDeliver bool, name string) transferHotLawFixture {
-	return newTransferHotLawFixtureWithAlias(t, mayDeliver, name, 1)
+func newTransferRouteLawFixture(t testing.TB, mayDeliver bool, name string) transferRouteLawFixture {
+	return newTransferRouteLawFixtureWithAlias(t, mayDeliver, name, 1)
 }
 
-func newTransferHotLawFixtureWithAlias(t testing.TB, mayDeliver bool, name string, aliasOrdinal vocabulary.ValueFormal) transferHotLawFixture {
-	return newTransferHotLawFixtureWithTarget(t, transferHotLawContractWithAlias(t, mayDeliver, aliasOrdinal), name)
+func newTransferRouteLawFixtureWithAlias(t testing.TB, mayDeliver bool, name string, aliasOrdinal vocabulary.ValueFormal) transferRouteLawFixture {
+	return newTransferRouteLawFixtureWithTarget(t, transferHotLawContractWithAlias(t, mayDeliver, aliasOrdinal), name)
 }
 
-func newTransferHotLawFixtureWithTarget(t testing.TB, target *contract.Contract, name string) transferHotLawFixture {
+func newTransferRouteLawFixtureWithTarget(t testing.TB, target *contract.Contract, name string) transferRouteLawFixture {
 	t.Helper()
 	program, err := lower.Lower(lower.Source{Name: name + ".lua", Text: []byte(`local receiver = {}
 local payload = {value = 1}
@@ -481,7 +584,7 @@ return payload`)})
 	var callFact calldomain.Value
 	var callFactOK bool
 	var payloadID identity.ContentID
-	var observations []actualObservation
+	var cells []execution.MemberCell[valuedomain.Value]
 	var payloadRoot heapdomain.Key
 	found := false
 	callCount, callCountOK := artifact.Program().CallCount()
@@ -515,25 +618,25 @@ return payload`)})
 		if !payloadRoot.Valid() {
 			continue
 		}
-		observations = make([]actualObservation, actual.ActualCount())
-		for ordinal := range observations {
-			observations[ordinal] = actualObservation{fact: values.Bottom(), present: true, valid: true}
+		cells = make([]execution.MemberCell[valuedomain.Value], actual.ActualCount())
+		for ordinal := range cells {
+			cells[ordinal] = execution.MemberCell[valuedomain.Value]{Value: values.Bottom(), Present: true}
 			source, sourceOK := actual.ActualAt(ordinal)
 			if !sourceOK {
-				observations = nil
+				cells = nil
 				break
 			}
 			if source.ID() == payloadID {
 				atom, atomOK := values.Allocation(payloadRoot, materialization.Recent)
 				fact, factOK := values.Singleton(atom)
 				if !atomOK || !factOK {
-					observations = nil
+					cells = nil
 					break
 				}
-				observations[ordinal] = actualObservation{fact: fact, present: true, valid: true}
+				cells[ordinal] = execution.MemberCell[valuedomain.Value]{Value: fact, Present: true}
 			}
 		}
-		if len(observations) != actual.ActualCount() {
+		if len(cells) != actual.ActualCount() {
 			continue
 		}
 		candidateTargets := make([]calldomain.Target, 0, calls.SupportCount(candidateKey))
@@ -558,7 +661,7 @@ return payload`)})
 	if !openOK || !openFact.HasOpaqueAlternative() {
 		t.Fatal("transfer fixture open Call dispatch")
 	}
-	return transferHotLawFixture{packs: packs, calls: calls, placement: placementSchema, values: values, contract: target, mounted: mounted, key: key, callFact: callFact, openFact: openFact, payloadID: payloadID, payloadRoot: payloadRoot, observations: observations}
+	return transferRouteLawFixture{packs: packs, calls: calls, placement: placementSchema, values: values, contract: target, mounted: mounted, key: key, callFact: callFact, openFact: openFact, payloadID: payloadID, payloadRoot: payloadRoot, cells: cells}
 }
 
 // transferStructuralVocabulary supplies only the neutral structural keys

@@ -259,21 +259,31 @@ func TestTransferDemandScratchIsSortedDeduplicatedAndBounded(t *testing.T) {
 	}
 }
 
-func TestTransferObservationBufferKeepsInvocationLocalBounds(t *testing.T) {
-	var inline [8]actualObservation
-	observations, ok := observationBuffer(len(inline), inline[:])
-	if !ok || len(observations) != len(inline) || cap(observations) != len(inline) {
-		t.Fatalf("inline observation buffer = len %d cap %d/%t", len(observations), cap(observations), ok)
+// TestTransferRoutePlanOverflowsWithoutLosingCanonicalOrder states the
+// invocation-local bound of the route plan itself: the ordinary prefix is
+// inline, a wider plan spills into an invocation-local suffix, and both halves
+// are answered through one canonical order.
+func TestTransferRoutePlanOverflowsWithoutLosingCanonicalOrder(t *testing.T) {
+	fixture := newTransferRouteLawFixture(t, true, "transfer-route-plan-overflow")
+	plan := routePlan{schema: fixture.placement}
+	for index := 0; index < routeInlineWidth+3; index++ {
+		if !plan.appendRoute(route{key: fixture.payloadRoot, tag: routeTag(index + 1)}) {
+			t.Fatalf("route %d was not appended", index)
+		}
 	}
-	observations[0].present = true
-	if !inline[0].present {
-		t.Fatal("inline observation buffer did not use invocation storage")
+	if plan.count != routeInlineWidth+3 || len(plan.extra) != 3 {
+		t.Fatalf("route plan = count %d/overflow %d, want %d/3", plan.count, len(plan.extra), routeInlineWidth+3)
 	}
-	wide, wideOK := observationBuffer(len(inline)+1, inline[:])
-	if !wideOK || len(wide) != len(inline)+1 || cap(wide) < len(wide) {
-		t.Fatalf("wide observation buffer = len %d cap %d/%t", len(wide), cap(wide), wideOK)
+	for index := 0; index < plan.count; index++ {
+		row, rowOK := plan.routeAt(index)
+		if !rowOK || row.tag != routeTag(index+1) || row.key != fixture.payloadRoot {
+			t.Fatalf("route %d = %#v/%t, want tag %d at the payload root", index, row, rowOK, index+1)
+		}
 	}
-	if _, negativeOK := observationBuffer(-1, inline[:]); negativeOK {
-		t.Fatal("negative observation count was admitted")
+	if _, negativeOK := plan.routeAt(-1); negativeOK {
+		t.Fatal("a negative route index was admitted")
+	}
+	if _, pastOK := plan.routeAt(plan.count); pastOK {
+		t.Fatal("a route index past the plan was admitted")
 	}
 }

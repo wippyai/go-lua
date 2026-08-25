@@ -1,9 +1,7 @@
 package transfer
 
 import (
-	"crypto/sha256"
-
-	"github.com/wippyai/go-lua/analysis/identity"
+	"github.com/wippyai/go-lua/analysis/engine/execution"
 	"github.com/wippyai/go-lua/analysis/program/target/contract"
 	"github.com/wippyai/go-lua/analysis/program/target/vocabulary"
 	calldomain "github.com/wippyai/go-lua/domain/call"
@@ -12,92 +10,6 @@ import (
 	"github.com/wippyai/go-lua/domain/placement"
 	valuedomain "github.com/wippyai/go-lua/domain/value"
 )
-
-// operand is one invocation-local Target-transfer proof.  It retains only
-// Call's mounted handle, its canonical application key, and the Pack/Call
-// owner-fenced identity needed by the engine admission callback.  No target,
-// endpoint, actor, context, or route table is retained here.
-type operand struct {
-	packs   *packdomain.Schema
-	mounted calldomain.MountedCall
-	key     calldomain.Key
-	id      identity.ContentID
-}
-
-func mountedOperandID(module, occurrence, application, keyID identity.ContentID) identity.ContentID {
-	const prefix = "wippy.analysis.placement.transfer.invocation.v1\x00"
-	hash := sha256.New()
-	_, _ = hash.Write([]byte(prefix))
-	_, _ = hash.Write(module[:])
-	_, _ = hash.Write(occurrence[:])
-	_, _ = hash.Write(application[:])
-	_, _ = hash.Write(keyID[:])
-	return identity.ContentID(hash.Sum(nil))
-}
-
-// mountedForOperand authenticates the mounted module+occurrence against both
-// Call and Pack.  The Pack projection is the sole actual-order authority.
-func mountedForOperand(packs *packdomain.Schema, algebra *calldomain.Algebra, candidate operand) (packdomain.MountedActualProjection, identity.ContentID, identity.ContentID, identity.ContentID, bool) {
-	if packs == nil || algebra == nil || !algebra.Valid() || candidate.packs != packs || !candidate.mounted.Valid() ||
-		!packs.LinkOwner().Available() || !packs.LinkOwner().Matches(algebra.LinkOwner()) {
-		return packdomain.MountedActualProjection{}, identity.ContentID{}, identity.ContentID{}, identity.ContentID{}, false
-	}
-	application, occurrence, module, _, _, identityOK := algebra.MountedCallIdentity(candidate.mounted)
-	key, keyOK := algebra.KeyForMountedCall(candidate.mounted)
-	keyID, keyIDOK := key.ContentID()
-	actual, actualOK := packs.MountedActualProjection(module, occurrence)
-	if !actualOK || !actual.Valid() || !actual.OwnedBy(packs) || !identityOK || !keyOK || !key.IsApplication() ||
-		!key.Valid() || !keyIDOK || !keyID.Available() || candidate.key != key {
-		return packdomain.MountedActualProjection{}, identity.ContentID{}, identity.ContentID{}, identity.ContentID{}, false
-	}
-	expected := mountedOperandID(module, occurrence, application, keyID)
-	if candidate.id != expected || !expected.Available() {
-		return packdomain.MountedActualProjection{}, identity.ContentID{}, identity.ContentID{}, identity.ContentID{}, false
-	}
-	return actual, module, occurrence, application, true
-}
-
-func operandContent(packs *packdomain.Schema, algebra *calldomain.Algebra, candidate operand) (operand, [32]byte, bool) {
-	_, _, _, _, ok := mountedForOperand(packs, algebra, candidate)
-	if !ok {
-		return operand{}, [32]byte{}, false
-	}
-	return candidate, [32]byte(candidate.id), true
-}
-
-func operandForOccurrence(packs *packdomain.Schema, algebra *calldomain.Algebra, module, occurrence identity.ContentID) (operand, bool) {
-	if packs == nil || algebra == nil || !algebra.Valid() || !module.Available() || !occurrence.Available() ||
-		!packs.LinkOwner().Available() || !packs.LinkOwner().Matches(algebra.LinkOwner()) {
-		return operand{}, false
-	}
-	mounted, mountedOK := algebra.MountedCallForOccurrence(module, occurrence)
-	application, callID, moduleID, _, _, identityOK := algebra.MountedCallIdentity(mounted)
-	key, keyOK := algebra.KeyForMountedCall(mounted)
-	keyID, keyIDOK := key.ContentID()
-	actual, actualOK := packs.MountedActualProjection(module, occurrence)
-	if !mountedOK || !identityOK || callID != occurrence || moduleID != module || !keyOK || !key.IsApplication() ||
-		!key.Valid() || !keyIDOK || !keyID.Available() || !actualOK || !actual.Valid() || !actual.OwnedBy(packs) {
-		return operand{}, false
-	}
-	id := mountedOperandID(module, occurrence, application, keyID)
-	return operand{packs: packs, mounted: mounted, key: key, id: id}, id.Available()
-}
-
-// actualTag is the one-based authored actual ordinal carried through the
-// selected Value read.  The engine may reorder physical selector Units, so
-// the hot checker verifies the semantic tag before using it as an index.
-type actualTag uint64
-
-func canonicalActualTag(index int) (actualTag, bool) {
-	if index < 0 {
-		return 0, false
-	}
-	tag := uint64(index) + 1
-	if tag == 0 {
-		return 0, false
-	}
-	return actualTag(tag), true
-}
 
 // routeTag encodes Heap's dense allocation-root coordinate and the semantic
 // escape kind.  It is transport evidence only; Placement's owner rechecks
@@ -356,54 +268,6 @@ func allSendPlan(schema placement.Schema) (routePlan, bool) {
 	return routePlan{allSend: true, schema: schema}, true
 }
 
-func routeForTag(plan routePlan, tag routeTag) (route, bool) {
-	if !plan.schema.Valid() || tag == 0 {
-		return route{}, false
-	}
-	if plan.allSend {
-		raw := uint64(tag)
-		code := raw & routeTagMask
-		want := uint64(placement.Send) + 1
-		if code != want {
-			return route{}, false
-		}
-		coordinate := raw >> routeTagShift
-		if coordinate == 0 || coordinate-1 > uint64(^uint(0)>>1) {
-			return route{}, false
-		}
-		dense := int(coordinate - 1)
-		key, keyOK := plan.schema.KeyAt(dense)
-		if !keyOK || key.Kind() != heap.RootAllocation {
-			return route{}, false
-		}
-		return route{key: key, tag: tag}, true
-	}
-	left, right := 0, plan.count
-	for left < right {
-		middle := left + (right-left)/2
-		candidate, candidateOK := plan.routeAt(middle)
-		if !candidateOK {
-			return route{}, false
-		}
-		if candidate.tag < tag {
-			left = middle + 1
-		} else {
-			right = middle
-		}
-	}
-	if left < plan.count {
-		candidate, candidateOK := plan.routeAt(left)
-		return candidate, candidateOK && candidate.tag == tag
-	}
-	return route{}, false
-}
-
-type actualObservation struct {
-	fact    valuedomain.Value
-	present bool
-	valid   bool
-}
-
 func coordinateForActual(values *valuedomain.Schema, actual packdomain.MountedActualProjection, index int) (valuedomain.Coordinate, bool) {
 	if values == nil || !values.Valid() || index < 0 || index >= actual.ActualCount() {
 		return valuedomain.Coordinate{}, false
@@ -487,11 +351,17 @@ func transferMayDeliver(operations interface {
 	return mayDeliver, true
 }
 
-func addFactDemand(schema placement.Schema, values *valuedomain.Schema, observation actualObservation, scratch *demandScratch) (allSend bool, ok bool) {
+// actualDemand adds the exact Placement demand one delivered actual cell
+// carries. The cell is a member of the whole vector Value published for this
+// call, so its presence bit and the Factor default its declared sparsity
+// substituted are the only absence policy; an authenticated opaque reference
+// widens the identity to every Send root rather than naming one.
+func actualDemand(schema placement.Schema, values *valuedomain.Schema, actuals execution.SummaryVector[valuedomain.Value], ordinal int, scratch *demandScratch) (allSend bool, ok bool) {
 	if values == nil || !schema.Valid() || scratch == nil {
 		return false, false
 	}
-	fact, factOK := values.AuthenticateFactorCell(observation.fact, observation.present, observation.valid)
+	value, present, cell := actuals.At(ordinal)
+	fact, factOK := values.AuthenticateFactorCell(value, present, cell)
 	if !factOK {
 		return false, false
 	}
@@ -514,7 +384,7 @@ func addFactDemand(schema placement.Schema, values *valuedomain.Schema, observat
 func addPayloadDemand(operations interface {
 	Input(vocabulary.Operation) (vocabulary.Values, bool)
 	ValuesTail(vocabulary.Values) (vocabulary.ValuesTail, vocabulary.ValuesVar, bool)
-}, target vocabulary.Operation, payload vocabulary.InputSource, packs *packdomain.Schema, actual packdomain.MountedActualProjection, observations []actualObservation, schema placement.Schema, values *valuedomain.Schema, runtimeTail bool, scratch *demandScratch) (allSend bool, ok bool) {
+}, target vocabulary.Operation, payload vocabulary.InputSource, packs *packdomain.Schema, actual packdomain.MountedActualProjection, actuals execution.SummaryVector[valuedomain.Value], schema placement.Schema, values *valuedomain.Schema, runtimeTail bool, scratch *demandScratch) (allSend bool, ok bool) {
 	if operations == nil || target == 0 || packs == nil || values == nil || scratch == nil {
 		return false, false
 	}
@@ -525,14 +395,14 @@ func addPayloadDemand(operations interface {
 	}
 	switch payload.Kind {
 	case vocabulary.InputSourceValueFormal:
-		if start >= actual.ActualCount() || start >= len(observations) {
+		if start >= actual.ActualCount() || start >= actuals.Count() {
 			// A fixed Target formal beyond Pack's sealed prefix can be redeemed
 			// only by Pack's authenticated open tail.  The identity is then
 			// widened conservatively, but the authenticated MayDeliver still
 			// supplies the Send/SharedHeap displacement.
 			return runtimeTail, runtimeTail
 		}
-		return addFactDemand(schema, values, observations[start], scratch)
+		return actualDemand(schema, values, actuals, start, scratch)
 	case vocabulary.InputSourceValuesVar:
 		input, inputOK := operations.Input(target)
 		tail, variable, tailOK := operations.ValuesTail(input)
@@ -547,7 +417,7 @@ func addPayloadDemand(operations interface {
 			return runtimeTail, true
 		}
 		for index := start; index < actual.ActualCount(); index++ {
-			memberSend, memberOK := addFactDemand(schema, values, observations[index], scratch)
+			memberSend, memberOK := actualDemand(schema, values, actuals, index, scratch)
 			if !memberOK {
 				return false, false
 			}
@@ -566,7 +436,12 @@ func addPayloadDemand(operations interface {
 // planFor is the Target-transfer to Placement reduction. It reads only the
 // already-authenticated Call/Value/Pack facts and the exact Target Contract;
 // no runtime delivery strategy or Effect result is inferred here.
-func planFor(packs *packdomain.Schema, calls *calldomain.Algebra, schema placement.Schema, values *valuedomain.Schema, targetContract *contract.Contract, mounted calldomain.MountedCall, callFact calldomain.Value, observations []actualObservation) (routePlan, bool) {
+//
+// The actuals arrive as the whole vector Value published for this call, in
+// its own ordinal order: a cell's POSITION is the ordinal its owner declared
+// it at, so the reduction addresses a member by that position and holds no
+// per-invocation copy of the delivery.
+func planFor(packs *packdomain.Schema, calls *calldomain.Algebra, schema placement.Schema, values *valuedomain.Schema, targetContract *contract.Contract, mounted calldomain.MountedCall, callFact calldomain.Value, actuals execution.SummaryVector[valuedomain.Value]) (routePlan, bool) {
 	if packs == nil || calls == nil || !calls.Valid() || !schema.Valid() || values == nil || !values.Valid() || targetContract == nil ||
 		!calls.OwnsTargetContract(targetContract) || !values.OwnsHeapSchema(schema.Heap()) || !values.LinkOwner().Matches(calls.LinkOwner()) ||
 		!packs.LinkOwner().Available() || !packs.LinkOwner().Matches(calls.LinkOwner()) {
@@ -576,16 +451,17 @@ func planFor(packs *packdomain.Schema, calls *calldomain.Algebra, schema placeme
 	actual, actualOK := packs.MountedActualProjection(module, callID)
 	key, keyOK := calls.KeyForMountedCall(mounted)
 	if !identityOK || !actualOK || !actual.Valid() || !actual.OwnedBy(packs) || !keyOK || !calls.Admits(key, callFact) ||
-		len(observations) != actual.ActualCount() {
+		!actuals.Valid() || actuals.Count() != actual.ActualCount() {
 		return routePlan{}, false
 	}
 	runtimeTail := false
 	if _, open := actual.TailID(); open {
 		runtimeTail = true
 	}
-	for index, observation := range observations {
+	for index := 0; index < actuals.Count(); index++ {
+		value, present, cell := actuals.At(index)
 		coordinate, coordinateOK := coordinateForActual(values, actual, index)
-		fact, factOK := values.AuthenticateFactorCell(observation.fact, observation.present, observation.valid)
+		fact, factOK := values.AuthenticateFactorCell(value, present, cell)
 		if !factOK || !coordinateOK || !values.AdmitsCoordinate(coordinate, fact) {
 			return routePlan{}, false
 		}
@@ -636,7 +512,7 @@ func planFor(packs *packdomain.Schema, calls *calldomain.Algebra, schema placeme
 			if !mayDeliver {
 				continue
 			}
-			payloadOpen, payloadOK := addPayloadDemand(operations, operation, payload, packs, actual, observations, schema, values, runtimeTail, &demands)
+			payloadOpen, payloadOK := addPayloadDemand(operations, operation, payload, packs, actual, actuals, schema, values, runtimeTail, &demands)
 			if !payloadOK {
 				return routePlan{}, false
 			}

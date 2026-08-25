@@ -10,25 +10,34 @@ import (
 )
 
 const (
-	StorageRoutes           schemaapi.Key  = "placement/store/storage-routes"
-	ReturnRoutes            schemaapi.Key  = "placement/return-escape/routes"
-	StorageRouteKey         schemaapi.Key  = "placement/store/route-key"
-	StorageRouteTag         schemaapi.Key  = "placement/store/route-tag"
-	StorageRouteDestination schemaapi.Key  = "placement/store/route-destination"
-	ReturnRouteKey          schemaapi.Key  = "placement/return-escape/route-key"
-	ReturnRouteTag          schemaapi.Key  = "placement/return-escape/route-tag"
-	ReturnRouteDestination  schemaapi.Key  = "placement/return-escape/route-destination"
-	StorageReducer          schemaapi.Key  = "placement/store/reducer/storage"
-	ReturnEscapeReducer     schemaapi.Key  = "placement/return-escape/reducer"
-	PlacementKeyCarrier     member.Carrier = "carrier/placement/key"
-	PlacementFactCarrier    member.Carrier = "carrier/placement/fact"
-	StorageRouteCarrier     member.Carrier = "carrier/placement/storage-route"
-	RouteTagCarrier         member.Carrier = "carrier/placement/storage-route-tag"
-	StorageTransferCarrier  member.Carrier = "carrier/value/storage-transfer"
-	ValueFactCarrier        member.Carrier = "carrier/value/fact"
-	ReturnRouteTagCarrier   member.Carrier = "carrier/placement/return-route-tag"
-	ReturnRouteCarrier      member.Carrier = "carrier/placement/return-route"
-	ReturnBoundaryCarrier   member.Carrier = "carrier/value/return-boundary"
+	StorageRoutes            schemaapi.Key  = "placement/store/storage-routes"
+	ReturnRoutes             schemaapi.Key  = "placement/return-escape/routes"
+	TransferRoutes           schemaapi.Key  = "placement/transfer/routes"
+	StorageRouteKey          schemaapi.Key  = "placement/store/route-key"
+	StorageRouteTag          schemaapi.Key  = "placement/store/route-tag"
+	StorageRouteDestination  schemaapi.Key  = "placement/store/route-destination"
+	ReturnRouteKey           schemaapi.Key  = "placement/return-escape/route-key"
+	ReturnRouteTag           schemaapi.Key  = "placement/return-escape/route-tag"
+	ReturnRouteDestination   schemaapi.Key  = "placement/return-escape/route-destination"
+	TransferRouteKey         schemaapi.Key  = "placement/transfer/route-key"
+	TransferRouteTag         schemaapi.Key  = "placement/transfer/route-tag"
+	TransferRouteDestination schemaapi.Key  = "placement/transfer/route-destination"
+	StorageReducer           schemaapi.Key  = "placement/store/reducer/storage"
+	ReturnEscapeReducer      schemaapi.Key  = "placement/return-escape/reducer"
+	TransferReducer          schemaapi.Key  = "placement/transfer/reducer"
+	PlacementKeyCarrier      member.Carrier = "carrier/placement/key"
+	PlacementFactCarrier     member.Carrier = "carrier/placement/fact"
+	StorageRouteCarrier      member.Carrier = "carrier/placement/storage-route"
+	RouteTagCarrier          member.Carrier = "carrier/placement/storage-route-tag"
+	StorageTransferCarrier   member.Carrier = "carrier/value/storage-transfer"
+	ValueFactCarrier         member.Carrier = "carrier/value/fact"
+	ReturnRouteTagCarrier    member.Carrier = "carrier/placement/return-route-tag"
+	ReturnRouteCarrier       member.Carrier = "carrier/placement/return-route"
+	ReturnBoundaryCarrier    member.Carrier = "carrier/value/return-boundary"
+	CallCoordinateCarrier    member.Carrier = "carrier/call/mounted-call"
+	CallFactCarrier          member.Carrier = "carrier/call/fact"
+	TransferRouteCarrier     member.Carrier = "carrier/placement/transfer-route"
+	TransferRouteTagCarrier  member.Carrier = "carrier/placement/transfer-route-tag"
 )
 
 // AxisMemberCatalog is placement's declaration-only member vocabulary.
@@ -38,6 +47,7 @@ func AxisMemberCatalog() member.Catalog {
 		[]member.Relation{
 			{Key: StorageRoutes, Subject: StorageRouteCarrier, CandidateProvider: member.AxisRelationCandidate(member.RelationRef{Axis: schemaapi.EntryReference{Surface: schemaapi.SurfaceKind(2), Key: "value"}, Member: "value/storage-transfer/candidates"}), Inputs: []member.Carrier{StorageTransferCarrier, ValueFactCarrier}},
 			{Key: ReturnRoutes, Subject: ReturnRouteCarrier, CandidateProvider: member.AxisRelationCandidate(member.RelationRef{Axis: schemaapi.EntryReference{Surface: schemaapi.SurfaceKind(2), Key: "value"}, Member: "value/return-boundary/candidates"}), Inputs: []member.Carrier{ReturnBoundaryCarrier, ValueFactCarrier, ValueFactCarrier}},
+			{Key: TransferRoutes, Subject: TransferRouteCarrier, CandidateProvider: member.AxisRelationCandidate(member.RelationRef{Axis: schemaapi.EntryReference{Surface: schemaapi.SurfaceKind(2), Key: "call"}, Member: "call/mounted-call/candidates"}), Inputs: []member.Carrier{CallCoordinateCarrier, CallFactCarrier, ValueFactCarrier}},
 		},
 		[]member.Projection{
 			{Key: StorageRouteKey, Relation: StorageRoutes, Role: member.Key, Result: PlacementKeyCarrier, CandidateProvider: member.AxisRelationCandidate(member.RelationRef{Axis: schemaapi.EntryReference{Surface: schemaapi.SurfaceKind(2), Key: "value"}, Member: "value/storage-transfer/candidates"})},
@@ -46,6 +56,9 @@ func AxisMemberCatalog() member.Catalog {
 			{Key: ReturnRouteKey, Relation: ReturnRoutes, Role: member.Key, Result: PlacementKeyCarrier, CandidateProvider: member.AxisRelationCandidate(member.RelationRef{Axis: schemaapi.EntryReference{Surface: schemaapi.SurfaceKind(2), Key: "value"}, Member: "value/return-boundary/candidates"})},
 			{Key: ReturnRouteTag, Relation: ReturnRoutes, Role: member.Predicate, Result: ReturnRouteTagCarrier, CandidateProvider: member.AxisRelationCandidate(member.RelationRef{Axis: schemaapi.EntryReference{Surface: schemaapi.SurfaceKind(2), Key: "value"}, Member: "value/return-boundary/candidates"})},
 			{Key: ReturnRouteDestination, Relation: ReturnRoutes, Role: member.Destination, Result: PlacementKeyCarrier, CandidateProvider: member.AxisRelationCandidate(member.RelationRef{Axis: schemaapi.EntryReference{Surface: schemaapi.SurfaceKind(2), Key: "value"}, Member: "value/return-boundary/candidates"})},
+			{Key: TransferRouteKey, Relation: TransferRoutes, Role: member.Key, Result: PlacementKeyCarrier, CandidateProvider: member.AxisRelationCandidate(member.RelationRef{Axis: schemaapi.EntryReference{Surface: schemaapi.SurfaceKind(2), Key: "call"}, Member: "call/mounted-call/candidates"})},
+			{Key: TransferRouteTag, Relation: TransferRoutes, Role: member.Predicate, Result: TransferRouteTagCarrier, CandidateProvider: member.AxisRelationCandidate(member.RelationRef{Axis: schemaapi.EntryReference{Surface: schemaapi.SurfaceKind(2), Key: "call"}, Member: "call/mounted-call/candidates"})},
+			{Key: TransferRouteDestination, Relation: TransferRoutes, Role: member.Destination, Result: PlacementKeyCarrier, CandidateProvider: member.AxisRelationCandidate(member.RelationRef{Axis: schemaapi.EntryReference{Surface: schemaapi.SurfaceKind(2), Key: "call"}, Member: "call/mounted-call/candidates"})},
 		},
 		[]member.Reducer{
 			{Key: StorageReducer, Inputs: []member.ReducerInput{
@@ -56,6 +69,11 @@ func AxisMemberCatalog() member.Catalog {
 			}},
 			{Key: ReturnEscapeReducer, Inputs: []member.ReducerInput{
 				{Axis: valueAxis, Carrier: PlacementFactCarrier, Form: member.ReadFormSelected, Multiplicity: member.MultiplicityOne, Tag: ReturnRouteTagCarrier},
+			}, Outputs: []member.ReducerOutput{
+				{Axis: valueAxis, Carrier: PlacementFactCarrier},
+			}},
+			{Key: TransferReducer, Inputs: []member.ReducerInput{
+				{Axis: valueAxis, Carrier: PlacementFactCarrier, Form: member.ReadFormSelected, Multiplicity: member.MultiplicityOne, Tag: TransferRouteTagCarrier},
 			}, Outputs: []member.ReducerOutput{
 				{Axis: valueAxis, Carrier: PlacementFactCarrier},
 			}},
