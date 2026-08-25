@@ -11,12 +11,12 @@ import (
 // call in this package while the fixture obtains Pack's owner-issued sources
 // through the public mounted schema APIs.
 type RawGetSemanticSourceLookupFixture struct {
-	rule    *RawGetRule
-	payload rawPayload
-	sources []pack.SemanticSource
-	facts   []valuedomain.Value
-	reads   int
-	view    rawGetView
+	topology *Topology
+	payload  rawPayload
+	sources  []pack.SemanticSource
+	facts    []valuedomain.Value
+	reads    int
+	view     RawGetFrame
 }
 
 // NewRawGetSemanticSourceLookupFixture builds its reverse source directory
@@ -41,12 +41,12 @@ func NewRawGetSemanticSourceLookupFixture(sources []pack.SemanticSource, coordin
 		}
 	}
 	fixture := &RawGetSemanticSourceLookupFixture{
-		rule:    &RawGetRule{runtime: &rawGetRuntime{topology: &Topology{catalog: &rawCatalog{payloads: []rawPayload{{}, payload}, sources: all, sourceRefs: refs, byPayloadSource: reverse}}}},
-		payload: payload,
-		sources: append([]pack.SemanticSource(nil), sources...),
-		facts:   append([]valuedomain.Value(nil), facts...),
+		topology: &Topology{catalog: &rawCatalog{payloads: []rawPayload{{}, payload}, sources: all, sourceRefs: refs, byPayloadSource: reverse}},
+		payload:  payload,
+		sources:  append([]pack.SemanticSource(nil), sources...),
+		facts:    append([]valuedomain.Value(nil), facts...),
 	}
-	fixture.view.source = fixture.readSource
+	fixture.view.Source = fixture.readSource
 	return fixture, true
 }
 
@@ -63,12 +63,12 @@ func (fixture *RawGetSemanticSourceLookupFixture) readSource(tag RawSourceTag) r
 // returns the number of owner Value reads. It is intentionally reusable so
 // warm allocation and linear-frontier laws can measure the same rule/catalog.
 func (fixture *RawGetSemanticSourceLookupFixture) Lookup() (int, bool) {
-	if fixture == nil || fixture.rule == nil || len(fixture.sources) != len(fixture.facts) || len(fixture.sources) == 0 {
+	if fixture == nil || fixture.topology == nil || len(fixture.sources) != len(fixture.facts) || len(fixture.sources) == 0 {
 		return 0, false
 	}
 	fixture.reads = 0
 	for _, source := range fixture.sources {
-		selected := fixture.rule.sourceValue(fixture.view, heapdomain.RawPayloadTag(1), source)
+		selected := fixture.topology.sourceValue(fixture.view, heapdomain.RawPayloadTag(1), source)
 		if !selected.valid || !selected.found || !selected.present {
 			return fixture.reads, false
 		}

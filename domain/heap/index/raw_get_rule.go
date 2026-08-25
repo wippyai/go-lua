@@ -41,16 +41,9 @@ type rawGetRuntime struct {
 	heapRoute       func(engine.SelectorContext, heapdomain.Key, heapdomain.RawRouteTag) bool
 	packRoute       func(engine.SelectorContext, pack.Root, heapdomain.RawPayloadTag) bool
 	visitReceiver   func(valuedomain.Value, CallState, func(Route) bool) bool
-	visitRawRoute   func(heapdomain.RawRouteTag, heapdomain.Value, heapdomain.KeySelector, func(heapdomain.RawAccess) bool) bool
 	selectorForSlot func(heapdomain.Slot) (heapdomain.KeySelector, bool)
 }
 
-func (rule *RawGetRule) valueSchema() *valuedomain.Schema {
-	if rule == nil || rule.runtime == nil {
-		return nil
-	}
-	return rule.runtime.values
-}
 func (rule *RawGetRule) callAlgebra() *calldomain.Algebra {
 	if rule == nil || rule.runtime == nil {
 		return nil
@@ -63,50 +56,16 @@ func (rule *RawGetRule) heapSchema() heapdomain.Schema {
 	}
 	return rule.runtime.heap
 }
-func (rule *RawGetRule) packSchema() *pack.Schema {
-	if rule == nil || rule.runtime == nil || rule.runtime.topology == nil {
-		return nil
-	}
-	return rule.runtime.topology.packs
-}
-func (rule *RawGetRule) payloadAt(tag heapdomain.RawPayloadTag) (rawPayload, bool) {
-	if rule == nil || rule.runtime == nil || rule.runtime.topology == nil || rule.runtime.topology.catalog == nil {
-		return rawPayload{}, false
-	}
-	return payloadAt(rule.runtime.topology.catalog.payloads, tag)
-}
-func (rule *RawGetRule) sourceAt(tag RawSourceTag) (rawSource, bool) {
-	if rule == nil || rule.runtime == nil || rule.runtime.topology == nil || rule.runtime.topology.catalog == nil {
-		return rawSource{}, false
-	}
-	return sourceAt(rule.runtime.topology.catalog.sources, tag)
-}
 
-// bootInitial reads the sealed Target boot-slot receipt selected by this route
-// and Present tuple. Value issued the fact at Seal; the hot lane resolves it
-// from Topology's own cold table and never reopens the Value schema, so the
-// rule consumes nothing its declared footprint does not name.
-func (rule *RawGetRule) bootInitial(route heapdomain.RawRouteTag, raw heapdomain.RawAccess, present heapdomain.Present) (valuedomain.Value, bool) {
-	tag, ok := raw.PayloadTag(present)
-	if !ok {
-		return valuedomain.Value{}, false
-	}
-	return rule.bootInitialAt(route, tag)
-}
-
+// bootInitialAt reads the sealed Target boot-slot receipt for one route and
+// payload tag. Value issued the fact at Seal; this resolves it from
+// Topology's own cold table and never reopens the Value schema.
 func (rule *RawGetRule) bootInitialAt(route heapdomain.RawRouteTag, payload heapdomain.RawPayloadTag) (valuedomain.Value, bool) {
 	if rule == nil || rule.runtime == nil || rule.runtime.topology == nil || rule.runtime.topology.catalog == nil || route == 0 || payload == 0 {
 		return valuedomain.Value{}, false
 	}
 	value, ok := rule.runtime.topology.catalog.bootInitials[rawBootInitial{route: route, payload: payload}]
 	return value, ok
-}
-
-func (rule *RawGetRule) sourceTag(payload heapdomain.RawPayloadTag, source pack.SemanticSource) (RawSourceTag, bool) {
-	if rule == nil || rule.runtime == nil || rule.runtime.topology == nil || rule.runtime.topology.catalog == nil {
-		return 0, false
-	}
-	return rule.runtime.topology.catalog.sourceTag(payload, source)
 }
 
 type rawGetScratch struct {

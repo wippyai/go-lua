@@ -6,36 +6,27 @@ import (
 	valuedomain "github.com/wippyai/go-lua/domain/value"
 )
 
-func rawSetRuleForTest(topology *Topology) *RawSetRule {
-	if topology == nil || !topology.valid() {
-		return nil
-	}
-	return &RawSetRule{runtime: &rawSetRuntime{values: topology.values, heap: topology.heap}, topology: topology}
-}
-
 // ApplyRawSetTopPayload runs the production unconstrained right-hand-side
 // branch over one real sealed RawAccess and returns its joined write result.
 func ApplyRawSetTopPayload(topology *Topology, raw heapdomain.RawAccess, slot heapdomain.Slot, payload heapdomain.Payload, keyChild heapdomain.Containment) (heapdomain.Value, bool) {
-	rule := rawSetRuleForTest(topology)
-	if rule == nil {
+	if topology == nil || !topology.valid() {
 		return heapdomain.Value{}, false
 	}
 	result := topology.heap.Bottom()
 	var frozen, changed bool
-	ok := rule.applyTop(topology.heap, raw, Index{}, slot, payload, keyChild, &result, &frozen, &changed)
+	ok := topology.applyTop(topology.heap, raw, Index{}, slot, payload, keyChild, &result, &frozen, &changed)
 	return result, ok && changed && !frozen
 }
 
 // ApplyRawSetSourcePayload runs the production enumerated right-hand-side
 // branch over the same RawAccess, so a law can compare the two on equal terms.
 func ApplyRawSetSourcePayload(topology *Topology, raw heapdomain.RawAccess, slot heapdomain.Slot, payload heapdomain.Payload, keyChild heapdomain.Containment, source valuedomain.Value) (heapdomain.Value, bool) {
-	rule := rawSetRuleForTest(topology)
-	if rule == nil {
+	if topology == nil || !topology.valid() {
 		return heapdomain.Value{}, false
 	}
 	result := topology.heap.Bottom()
 	var frozen, changed, preserved bool
-	ok := rule.applySourceValue(topology.heap, raw, source, Index{}, slot, payload, keyChild, &result, &frozen, &changed, &preserved)
+	ok := topology.applySourceValue(topology.heap, raw, source, Index{}, slot, payload, keyChild, &result, &frozen, &changed, &preserved)
 	return result, ok && changed && !frozen
 }
 
@@ -46,7 +37,6 @@ func ReadStoredPayload(topology *Topology, key heapdomain.Key, fact heapdomain.V
 	if topology == nil || !topology.valid() {
 		return valuedomain.Value{}, false
 	}
-	rule := &RawGetRule{runtime: &rawGetRuntime{topology: topology, values: topology.values, heap: topology.heap, calls: topology.calls}}
 	result, any := topology.values.Bottom(), false
 	ok := topology.heap.VisitRawAccess(key, fact, role, selector, func(raw heapdomain.RawAccess) bool {
 		if raw.IsTop() {
@@ -62,7 +52,7 @@ func ReadStoredPayload(topology *Topology, key heapdomain.Key, fact heapdomain.V
 				return false
 			}
 			containment, _, containmentOK := present.Containment()
-			if !containmentOK || !rule.reduceAndJoin(containment, source, &result, &any) {
+			if !containmentOK || !topology.reduceAndJoin(containment, source, &result, &any) {
 				return false
 			}
 		}

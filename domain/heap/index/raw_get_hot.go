@@ -43,7 +43,6 @@ func BindRawGetHot(binding *engine.SchemaBinding, fragment *RawGetSchemaFragment
 	// stays allocation-free for exact demand and O(outputs) when widened.
 	runtime.visitCallDemand = topology.VisitReceiverCallDemand
 	runtime.visitReceiver = topology.VisitReceiver
-	runtime.visitRawRoute = topology.heap.VisitRawAccessRoute
 	runtime.selectorForSlot = topology.heap.SelectorForSlot
 	runtime.callRoute = func(context engine.SelectorContext, key calldomain.Key, tag uint64) bool {
 		return calls.SelectRoute(context, key, tag)

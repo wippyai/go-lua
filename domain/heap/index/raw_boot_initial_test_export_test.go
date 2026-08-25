@@ -31,14 +31,13 @@ func SealedBootInitialWithoutValueSchema(topology *Topology, route heapdomain.Ra
 	return rule.bootInitialAt(route, payload)
 }
 
-// ApplyBootInitialPresent runs the production RawGetRule boot branch over one
+// ApplyBootInitialPresent runs the production RawGet boot branch over one
 // real sealed RawAccess/Present pair and returns its joined transfer result.
 func ApplyBootInitialPresent(topology *Topology, route heapdomain.RawRouteTag, raw heapdomain.RawAccess, present heapdomain.Present) (valuedomain.Value, bool, bool) {
 	if topology == nil || !topology.valid() {
 		return valuedomain.Value{}, false, false
 	}
-	rule := &RawGetRule{runtime: &rawGetRuntime{topology: topology, values: topology.values, heap: topology.heap, calls: topology.calls}}
 	result, any := topology.values.Bottom(), false
-	ok := rule.applyPresent(route, raw, present, rawGetView{}, &rawGetCensus{}, &result, &any)
+	ok := topology.applyPresent(route, raw, present, RawGetFrame{}, &rawGetCensus{}, &result, &any)
 	return result, any, ok
 }

@@ -58,12 +58,6 @@ func (rule *RawSetRule) packSchema() *pack.Schema {
 	return rule.topology.packs
 }
 
-func (rule *RawSetRule) sourceTag(payload heapdomain.RawPayloadTag, source pack.SemanticSource) (RawSourceTag, bool) {
-	if rule == nil || rule.topology == nil || rule.topology.catalog == nil {
-		return 0, false
-	}
-	return rule.topology.catalog.sourceTag(payload, source)
-}
 func (rule *RawSetRule) valueRoute(context engine.SelectorContext, coordinate valuedomain.Coordinate, tag uint64) bool {
 	if rule == nil || rule.runtime == nil || rule.runtime.valueRoute == nil {
 		return false
@@ -205,22 +199,4 @@ func (rule *RawSetRule) visitContextKeySelectors(context engine.SelectorContext,
 	// RouteWrite transfer settles that authenticated empty selection via
 	// NoSelection/NoCandidate.
 	return rule.topology.selectors.Visit(fact, visit)
-}
-
-func keyContainmentFromSelector(schema heapdomain.Schema, selector heapdomain.KeySelector) (heapdomain.Containment, bool) {
-	if !selector.Valid() {
-		return heapdomain.Containment{}, false
-	}
-	none, ok := schema.ContainmentNone()
-	return none, ok
-}
-
-func staticSetSelector(rule *RawSetRule, access Index) (heapdomain.KeySelector, heapdomain.Containment, bool) {
-	slot, ok := access.Slot()
-	if !ok {
-		return heapdomain.KeySelector{}, heapdomain.Containment{}, false
-	}
-	selector, selectorOK := rule.heapSchema().SelectorForSlot(slot)
-	keyChild, childOK := keyContainmentFromSelector(rule.heapSchema(), selector)
-	return selector, keyChild, selectorOK && childOK
 }

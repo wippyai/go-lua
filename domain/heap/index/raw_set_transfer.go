@@ -3,24 +3,9 @@ package index
 import (
 	"github.com/wippyai/go-lua/analysis/engine"
 	heapdomain "github.com/wippyai/go-lua/domain/heap"
-	"github.com/wippyai/go-lua/domain/heap/keymatch"
 	"github.com/wippyai/go-lua/domain/pack"
-	"github.com/wippyai/go-lua/domain/runtimekind"
 	valuedomain "github.com/wippyai/go-lua/domain/value"
 )
-
-// rawSetView is the authenticated finite observation consumed by Fold.
-// Pack/Value facts remain owner-issued selections; the view carries no new
-// coordinates or mutation authority.
-type rawSetView struct {
-	key         rawSelected[valuedomain.Value]
-	keyCount    int
-	heapCount   int
-	packCount   int
-	pack        func(heapdomain.RawPayloadTag) rawSelected[pack.Value]
-	sourceCount int
-	source      func(RawSourceTag) rawSelected[valuedomain.Value]
-}
 
 func (rule *RawSetRule) fold(frame engine.Frame[heapdomain.Value, Index]) engine.RuleResult[heapdomain.Value] {
 	operand, ok := engine.Operand(frame)
@@ -53,16 +38,16 @@ func (rule *RawSetRule) fold(frame engine.Frame[heapdomain.Value, Index]) engine
 	// covers absent receivers, selected-but-absent dynamic keys, and
 	// definitely invalid dynamic nil/NaN keys; Pack/Value selectors must
 	// be empty downstream of that route.
-	if view.heapCount == 0 {
+	if view.HeapCount == 0 {
 		if _, dynamic := operand.DynamicKey(); dynamic {
-			if receiverPresent && view.keyCount != 1 || !receiverPresent && view.keyCount != 0 {
+			if receiverPresent && view.KeyCount != 1 || !receiverPresent && view.KeyCount != 0 {
 				return engine.RuleResult[heapdomain.Value]{}
 			}
 			// A live receiver's no-route branch is still authenticated by
 			// one exact dynamic-key selection. Its cell may be absent only
 			// because every downstream selection is empty; routed Heap
 			// mutation remains stricter below.
-			if receiverPresent && (!view.key.valid || !view.key.found) {
+			if receiverPresent && (!view.Key.valid || !view.Key.found) {
 				return engine.RuleResult[heapdomain.Value]{}
 			}
 		}
@@ -93,79 +78,79 @@ func transferRawSetView(
 	packs engine.Selection[heapdomain.RawPayloadTag, engine.OrderedCells[pack.Value]],
 	sources engine.Selection[RawSourceTag, engine.OrderedCells[valuedomain.Value]],
 	scratch *rawSetScratch,
-) (rawSetView, bool) {
+) (RawSetFrame, bool) {
 	if scratch == nil {
-		return rawSetView{}, false
+		return RawSetFrame{}, false
 	}
-	view := rawSetView{}
+	view := RawSetFrame{}
 	var ok bool
-	view.keyCount, ok = engine.SelectionCount(frame, keys)
+	view.KeyCount, ok = engine.SelectionCount(frame, keys)
 	if !ok {
-		return rawSetView{}, false
+		return RawSetFrame{}, false
 	}
-	view.heapCount, ok = engine.SelectionCount(frame, heaps)
+	view.HeapCount, ok = engine.SelectionCount(frame, heaps)
 	if !ok {
-		return rawSetView{}, false
+		return RawSetFrame{}, false
 	}
-	view.packCount, ok = engine.SelectionCount(frame, packs)
+	view.PackCount, ok = engine.SelectionCount(frame, packs)
 	if !ok {
-		return rawSetView{}, false
+		return RawSetFrame{}, false
 	}
-	view.sourceCount, ok = engine.SelectionCount(frame, sources)
+	view.SourceCount, ok = engine.SelectionCount(frame, sources)
 	if !ok {
-		return rawSetView{}, false
+		return RawSetFrame{}, false
 	}
-	if !buildTransferIndex(frame, packs, view.packCount, &scratch.pack) ||
-		!buildTransferIndex(frame, sources, view.sourceCount, &scratch.source) {
-		return rawSetView{}, false
+	if !buildTransferIndex(frame, packs, view.PackCount, &scratch.pack) ||
+		!buildTransferIndex(frame, sources, view.SourceCount, &scratch.source) {
+		return RawSetFrame{}, false
 	}
 	if _, dynamic := operand.DynamicKey(); dynamic {
-		if view.keyCount > 1 {
-			return rawSetView{}, false
+		if view.KeyCount > 1 {
+			return RawSetFrame{}, false
 		}
-		if view.keyCount == 1 {
-			view.key = transferSelectionValue(frame, keys, nil, uint64(1))
-			if !view.key.valid || !view.key.found {
-				return rawSetView{}, false
+		if view.KeyCount == 1 {
+			view.Key = transferSelectionValue(frame, keys, nil, uint64(1))
+			if !view.Key.valid || !view.Key.found {
+				return RawSetFrame{}, false
 			}
 		}
-	} else if view.keyCount != 0 {
-		return rawSetView{}, false
+	} else if view.KeyCount != 0 {
+		return RawSetFrame{}, false
 	}
-	view.pack = func(tag heapdomain.RawPayloadTag) rawSelected[pack.Value] {
+	view.Pack = func(tag heapdomain.RawPayloadTag) rawSelected[pack.Value] {
 		return transferSelectionValue(frame, packs, &scratch.pack, tag)
 	}
-	view.source = func(tag RawSourceTag) rawSelected[valuedomain.Value] {
+	view.Source = func(tag RawSourceTag) rawSelected[valuedomain.Value] {
 		return transferSelectionValue(frame, sources, &scratch.source, tag)
 	}
 	return view, true
 }
 
-func rawSetSelectionShape(access Index, descriptor rawPayload, view rawSetView) bool {
-	if view.keyCount < 0 || view.heapCount < 0 || view.packCount < 0 || view.sourceCount < 0 {
+func rawSetSelectionShape(access Index, descriptor rawPayload, view RawSetFrame) bool {
+	if view.KeyCount < 0 || view.HeapCount < 0 || view.PackCount < 0 || view.SourceCount < 0 {
 		return false
 	}
 	if descriptor.kind != rawPayloadFixed && descriptor.kind != rawPayloadTail && descriptor.kind != rawPayloadNil {
 		return false
 	}
 	if _, dynamic := access.DynamicKey(); dynamic {
-		if view.keyCount > 1 || view.heapCount > 0 && view.keyCount != 1 {
+		if view.KeyCount > 1 || view.HeapCount > 0 && view.KeyCount != 1 {
 			return false
 		}
-		if view.keyCount == 1 && (!view.key.valid || !view.key.found) {
+		if view.KeyCount == 1 && (!view.Key.valid || !view.Key.found) {
 			return false
 		}
 		// A routed write must be downstream of the one present dynamic-key
 		// observation. A selected-but-absent key lawfully settles only the
 		// explicit all-empty no-route branch; it cannot carry a Heap route.
-		if view.heapCount > 0 && (!view.key.valid || !view.key.found || !view.key.present) {
+		if view.HeapCount > 0 && (!view.Key.valid || !view.Key.found || !view.Key.present) {
 			return false
 		}
-	} else if view.keyCount != 0 {
+	} else if view.KeyCount != 0 {
 		return false
 	}
-	if view.heapCount == 0 {
-		return view.packCount == 0 && view.sourceCount == 0
+	if view.HeapCount == 0 {
+		return view.PackCount == 0 && view.SourceCount == 0
 	}
 	wantPack := 0
 	switch descriptor.kind {
@@ -176,313 +161,14 @@ func rawSetSelectionShape(access Index, descriptor rawPayload, view rawSetView) 
 	default:
 		return false
 	}
-	return view.packCount == wantPack && view.sourceCount == int(descriptor.sourceCount)
+	return view.PackCount == wantPack && view.SourceCount == int(descriptor.sourceCount)
 }
 
-// mutateRoute is the common Heap-owned reducer used by Fold. It consumes one
-// selected predecessor route, one exact sealed RHS
-// descriptor, and existing Pack/Value observations, then joins only the
-// branches returned by RawStore/RawDelete. Frozen/error outcomes widen to
-// Heap.Top and are never converted into ordinary writes.
-func (rule *RawSetRule) mutateRoute(access Index, route heapdomain.RawRouteTag, fact heapdomain.Value, view rawSetView) (heapdomain.Value, bool) {
+func (rule *RawSetRule) mutateRoute(access Index, route heapdomain.RawRouteTag, fact heapdomain.Value, view RawSetFrame) (heapdomain.Value, bool) {
 	if !rule.owns(access) || !fact.Valid() {
 		return heapdomain.Value{}, false
 	}
-	descriptor, descriptorOK := rule.payloadForWrite(access)
-	if !descriptorOK {
-		return heapdomain.Value{}, false
-	}
-	if (descriptor.IsTail() && view.pack == nil) ||
-		(descriptor.IsFixed() && view.source == nil) {
-		return heapdomain.Value{}, false
-	}
-	indexAccess, indexOK := access.IndexAccess()
-	slot, slotOK := rule.heapSchema().SlotForIndexAccess(indexAccess)
-	payload, payloadOK := rule.heapSchema().PayloadForIndexAccess(indexAccess)
-	if !indexOK || !slotOK || !payloadOK {
-		return heapdomain.Value{}, false
-	}
-	values := rule.valueSchema()
-	if _, dynamic := access.DynamicKey(); dynamic && view.key.found && !values.Equal(view.key.value, view.key.value) {
-		return heapdomain.Value{}, false
-	}
-	schema := rule.heapSchema()
-	result := schema.Bottom()
-	var frozen, changed, preserved bool
-	apply := func(selector heapdomain.KeySelector, keyChild heapdomain.Containment) bool {
-		if !selector.Valid() || !keyChild.Valid() {
-			return false
-		}
-		return schema.VisitRawAccessRoute(route, fact, selector, func(raw heapdomain.RawAccess) bool {
-			if !raw.Valid() {
-				return false
-			}
-			return rule.applyPayload(raw, descriptor.row, descriptor.tag, view, access, slot, payload, keyChild, &result, &frozen, &changed, &preserved)
-		})
-	}
-	if _, dynamic := access.DynamicKey(); dynamic {
-		if !view.key.valid || !view.key.found || !view.key.present || view.key.value.IsBottom() {
-			return fact, true
-		}
-		if view.key.value.IsTop() {
-			unknown, unknownOK := schema.ContainmentUnknown()
-			if !unknownOK || !rule.topology.selectors.Visit(view.key.value, func(selector heapdomain.KeySelector) bool { return apply(selector, unknown) }) {
-				return heapdomain.Value{}, false
-			}
-		} else {
-			selectors := 0
-			if !values.VisitAtoms(view.key.value, func(atom valuedomain.Atom) bool {
-				alternative, projected := keymatch.Project(schema, values, atom)
-				if !projected {
-					return true
-				}
-				selectors++
-				return apply(alternative.Selector(), alternative.Containment())
-			}) {
-				return heapdomain.Value{}, false
-			}
-			if selectors == 0 {
-				preserved = true
-			}
-		}
-	} else {
-		selector, keyChild, selectorOK := staticSetSelector(rule, access)
-		if !selectorOK || !apply(selector, keyChild) {
-			return heapdomain.Value{}, false
-		}
-	}
-	if frozen {
-		return schema.Top(), true
-	}
-	if preserved {
-		joined, joinedOK := heapdomain.Join(result, fact)
-		if !joinedOK {
-			return heapdomain.Value{}, false
-		}
-		result = joined
-	}
-	if !changed && !preserved {
-		return fact, true
-	}
-	return result, true
-}
-
-func (rule *RawSetRule) applyPayload(
-	raw heapdomain.RawAccess, descriptor rawPayload, payloadTag heapdomain.RawPayloadTag,
-	view rawSetView, access Index, slot heapdomain.Slot, payload heapdomain.Payload,
-	keyChild heapdomain.Containment, result *heapdomain.Value, frozen, changed, preserved *bool,
-) bool {
-	if result == nil || frozen == nil || changed == nil || preserved == nil {
-		return false
-	}
-	schema := rule.heapSchema()
-	switch descriptor.kind {
-	case rawPayloadNil:
-		return rule.applyDelete(schema, raw, result, frozen, changed)
-	case rawPayloadFixed:
-		if descriptor.sourceCount != 1 {
-			return false
-		}
-		tags, tagsOK := rule.topology.catalog.sourceTags(payloadTag)
-		if !tagsOK || len(tags) != 1 {
-			return false
-		}
-		tag := tags[0]
-		return rule.applySourceTag(schema, raw, tag, view, access, slot, payload, keyChild, result, frozen, changed, preserved)
-	case rawPayloadTail:
-		selected := view.pack(payloadTag)
-		if !selected.valid || !selected.found {
-			return false
-		}
-		if !selected.present || selected.value.IsBottom() {
-			*preserved = true
-			return true
-		}
-		root, rootOK := descriptor.payload.Root()
-		selection, selectionOK := descriptor.payload.Selection()
-		values, valuesOK := descriptor.payload.Values()
-		if !rootOK || !selectionOK || !valuesOK {
-			return false
-		}
-		observation, observed := rule.packSchema().ObserveScalar(root, selected.value, values, selection)
-		if !observed {
-			return false
-		}
-		if observation.IsBottom() {
-			*preserved = true
-			return true
-		}
-		if observation.IsTop() {
-			return rule.applyTop(schema, raw, access, slot, payload, keyChild, result, frozen, changed)
-		}
-		for index := 0; index < observation.Count(); index++ {
-			scalar, scalarOK := observation.At(index)
-			if !scalarOK || !rule.applyScalar(raw, descriptor, payloadTag, scalar, view, access, slot, payload, keyChild, result, frozen, changed, preserved) {
-				return false
-			}
-		}
-		return true
-	case rawPayloadInitial:
-		return false
-	default:
-		return false
-	}
-}
-
-func (rule *RawSetRule) applyScalar(
-	raw heapdomain.RawAccess, descriptor rawPayload, payloadTag heapdomain.RawPayloadTag, scalar pack.Scalar, view rawSetView,
-	access Index, slot heapdomain.Slot, payload heapdomain.Payload, keyChild heapdomain.Containment,
-	result *heapdomain.Value, frozen, changed, preserved *bool,
-) bool {
-	if scalar.Kind() == pack.ScalarEndpoint {
-		source, sourceOK := rule.packSchema().ScalarSource(scalar)
-		tag, tagOK := rule.sourceTag(payloadTag, source)
-		return sourceOK && tagOK && rule.applySourceTag(rule.heapSchema(), raw, tag, view, access, slot, payload, keyChild, result, frozen, changed, preserved)
-	}
-	kinds, kindsOK := descriptor.payload.ScalarMayRuntimeKinds(scalar)
-	value, valueOK := rule.valueSchema().ForRuntimeKinds(kinds)
-	return kindsOK && valueOK && rule.applySourceValue(rule.heapSchema(), raw, value, access, slot, payload, keyChild, result, frozen, changed, preserved)
-}
-
-func (rule *RawSetRule) applySourceTag(
-	schema heapdomain.Schema, raw heapdomain.RawAccess, tag RawSourceTag, view rawSetView,
-	access Index, slot heapdomain.Slot, payload heapdomain.Payload, keyChild heapdomain.Containment,
-	result *heapdomain.Value, frozen, changed, preserved *bool,
-) bool {
-	selected := view.source(tag)
-	if !selected.valid || !selected.found {
-		return false
-	}
-	if !selected.present || selected.value.IsBottom() {
-		*preserved = true
-		return true
-	}
-	return rule.applySourceValue(schema, raw, selected.value, access, slot, payload, keyChild, result, frozen, changed, preserved)
-}
-
-func (rule *RawSetRule) applySourceValue(
-	schema heapdomain.Schema, raw heapdomain.RawAccess, source valuedomain.Value,
-	access Index, slot heapdomain.Slot, payload heapdomain.Payload, keyChild heapdomain.Containment,
-	result *heapdomain.Value, frozen, changed, preserved *bool,
-) bool {
-	values := rule.valueSchema()
-	if !values.Equal(source, source) {
-		return false
-	}
-	if source.IsBottom() {
-		*preserved = true
-		return true
-	}
-	if source.IsTop() {
-		return rule.applyTop(schema, raw, access, slot, payload, keyChild, result, frozen, changed)
-	}
-	atoms := 0
-	if !values.VisitAtoms(source, func(atom valuedomain.Atom) bool {
-		atoms++
-		if atom.RuntimeKinds().Contains(runtimekind.Nil) {
-			return rule.applyDelete(schema, raw, result, frozen, changed)
-		}
-		valueChild, valueChildOK := keymatch.Containment(schema, values, atom)
-		cell, cellOK := schema.CellPresent(slot, payload, valueChild, keyChild)
-		return valueChildOK && cellOK && rule.applyStore(schema, raw, cell, result, frozen, changed)
-	}) {
-		return false
-	}
-	if atoms == 0 {
-		*preserved = true
-	}
-	return true
-}
-
-// applyTop stores an unconstrained right-hand side. Top denotes every sealed
-// alternative, so the write must install the child edges an enumerated source
-// would install: the read lens selects a disjoint stored class per containment
-// kind, and one opaque edge therefore answers only the untracked band while
-// dropping every tracked allocation and boot child the same write admits.
-// Every alternative lands at the same selected key, so their disjunction is one
-// cell rather than one world apiece, and the payload-class quotient keeps that
-// cell finite by collapsing alternatives that denote the same child edge.
-func (rule *RawSetRule) applyTop(
-	schema heapdomain.Schema, raw heapdomain.RawAccess, access Index, slot heapdomain.Slot,
-	payload heapdomain.Payload, keyChild heapdomain.Containment, result *heapdomain.Value, frozen, changed *bool,
-) bool {
-	values := rule.valueSchema()
-	if values == nil || rule.topology == nil || rule.topology.selectors == nil {
-		return false
-	}
-	// Top admits nil, so raw absence remains one branch of the write.
-	if !rule.applyDelete(schema, raw, result, frozen, changed) {
-		return false
-	}
-	var merged heapdomain.CellState
-	have := false
-	if !rule.topology.selectors.VisitPayloadClasses(values.Top(), func(atom valuedomain.Atom) bool {
-		if atom.RuntimeKinds().Contains(runtimekind.Nil) {
-			return true
-		}
-		valueChild, valueChildOK := keymatch.Containment(schema, values, atom)
-		if !valueChildOK {
-			return false
-		}
-		cell, cellOK := schema.CellPresent(slot, payload, valueChild, keyChild)
-		if !cellOK {
-			return false
-		}
-		if !have {
-			merged, have = cell, true
-			return true
-		}
-		union, unionOK := schema.CellUnion(merged, cell)
-		if !unionOK {
-			return false
-		}
-		merged = union
-		return true
-	}) {
-		return false
-	}
-	if !have {
-		return true
-	}
-	return rule.applyStore(schema, raw, merged, result, frozen, changed)
-}
-
-func (rule *RawSetRule) applyStore(schema heapdomain.Schema, raw heapdomain.RawAccess, cell heapdomain.CellState, result *heapdomain.Value, frozen, changed *bool) bool {
-	branches, ok := schema.RawStore(raw, cell, heapdomain.MutationLicence{})
-	if !ok {
-		return false
-	}
-	if branches.FrozenError() {
-		*frozen = true
-	}
-	if next, nextOK := branches.Normal(); nextOK {
-		joined, joinedOK := heapdomain.Join(*result, next)
-		if !joinedOK {
-			return false
-		}
-		*result = joined
-		*changed = true
-	}
-	return true
-}
-
-func (rule *RawSetRule) applyDelete(schema heapdomain.Schema, raw heapdomain.RawAccess, result *heapdomain.Value, frozen, changed *bool) bool {
-	branches, ok := schema.RawDelete(raw, heapdomain.MutationLicence{})
-	if !ok {
-		return false
-	}
-	if branches.FrozenError() {
-		*frozen = true
-	}
-	if next, nextOK := branches.Normal(); nextOK {
-		joined, joinedOK := heapdomain.Join(*result, next)
-		if !joinedOK {
-			return false
-		}
-		*result = joined
-		*changed = true
-	}
-	return true
+	return rule.topology.RawSetMutateRoute(access, route, fact, view)
 }
 
 func (rule *RawSetRule) takeSetScratch() *rawSetScratch {
