@@ -478,3 +478,48 @@ func TestACorrespondedReadRefusesWhenItsOwnDirectoryHasNoRow(t *testing.T) {
 		t.Fatal("a read issued against a directory that named no row for this occurrence")
 	}
 }
+
+// TestACorrespondedRowIsResolvedAtTheOccurrenceTheCandidateNames is the
+// addressing law for a directory whose rows do not all come from one
+// occurrence family.
+//
+// A correspondence is resolved at the occurrence both directories are
+// addressed by, and that is the candidate's own whenever the candidate row IS
+// the subject. A row that NAMES a subject sealed elsewhere is not enumerated
+// under its own occurrence in the corresponded directory: here the candidate's
+// occurrence answers nothing at all, while the occurrence the row names
+// answers 7. Asking under the candidate's own would refuse a row that exists,
+// and a rule declaring such a read would issue a plan that resolves nothing.
+func TestACorrespondedRowIsResolvedAtTheOccurrenceTheCandidateNames(t *testing.T) {
+	named := contentID(1)
+	own := contentID(2)
+	mount := contentID(9)
+	owner := directoryOwner{rows: map[directoryAddress][]uint32{
+		{relation: 4, mount: mount, occurrence: named}: {7},
+	}}
+	if resolved, ok := soleDirectoryCandidateAt(owner, 4, mount, named); !ok || resolved != 7 {
+		t.Fatalf("resolution at the named occurrence = %d/%t, want 7", resolved, ok)
+	}
+	if resolved, ok := soleDirectoryCandidate(owner, 4, OperandCoords{Mount: mount, Occurrence: own}); ok {
+		t.Fatalf("the candidate's own occurrence resolved %d in a directory that never enumerated it", resolved)
+	}
+}
+
+// TestANamedAddressIdentityNeverFallsBackToTheCandidateOccurrence completes the
+// arm. A read whose declaration names an addressing identity cannot resolve
+// without reading that identity off the candidate's row: falling back to the
+// candidate's own occurrence IS the defect the declaration exists to prevent,
+// and it would be invisible because the wrong row reads perfectly well.
+func TestANamedAddressIdentityNeverFallsBackToTheCandidateOccurrence(t *testing.T) {
+	candidate := ruleplan.RelationAddr{Axis: 1, Member: 2}
+	named := generated.ReadPlan{
+		Form:       ruleprogram.Exact,
+		Addressing: ruleplan.RelationAddr{Axis: 0, Member: 4}, AddressingPresent: true,
+		AddressIdentity: ruleplan.ProjectionAddr{Axis: 1, Member: 5}, AddressIdentityPresent: true,
+	}
+	// A nil binding state reaches no owner, so neither the foreign directory
+	// nor the candidate's identity projection can answer.
+	if resolved, ok := resolveGeneratedReadCandidate(nil, candidate, named, OperandCoords{}, 3); ok {
+		t.Fatalf("a read naming an addressing identity resolved %d with no owner to read it from", resolved)
+	}
+}

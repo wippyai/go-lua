@@ -559,14 +559,21 @@ func declaredGeneratedCandidate(rowsWorkspace *programRows, state *schemaBinding
 // candidate. An occurrence the directory answers nothing for refuses the same
 // way - an absent row is not a zeroth row.
 func soleDirectoryCandidate(owner memberrelation.Owner, relation uint32, coords OperandCoords) (uint32, bool) {
+	return soleDirectoryCandidateAt(owner, relation, coords.Mount, coords.Occurrence)
+}
+
+// soleDirectoryCandidateAt is soleDirectoryCandidate over an explicit
+// occurrence. The mount is always the invocation's; only which subject the
+// directory is asked about can differ from the candidate's own.
+func soleDirectoryCandidateAt(owner memberrelation.Owner, relation uint32, mount, occurrence identity.ContentID) (uint32, bool) {
 	if owner == nil {
 		return 0, false
 	}
-	count, countOK := owner.CandidateCount(relation, coords.Mount, coords.Occurrence)
+	count, countOK := owner.CandidateCount(relation, mount, occurrence)
 	if !countOK || count != 1 {
 		return 0, false
 	}
-	return owner.CandidateAt(relation, coords.Mount, coords.Occurrence, 0)
+	return owner.CandidateAt(relation, mount, occurrence, 0)
 }
 
 // resolveGeneratedReadCandidate translates the rule's dense candidate into the
@@ -589,7 +596,25 @@ func resolveGeneratedReadCandidate(state *schemaBindingState, candidate ruleplan
 	if !ownerOK {
 		return 0, false
 	}
-	return soleDirectoryCandidate(owner, plan.Addressing.Member, coords)
+	// Which subject the foreign directory is asked about is the candidate's own
+	// occurrence, unless the declaration names another. It may: a directory can
+	// hold rows drawn from several occurrence families, and a row that NAMES a
+	// subject sealed elsewhere is not enumerated under its own occurrence in
+	// the corresponded directory. The identity is read off this candidate's row
+	// by its own axis, which is the only authority for it.
+	occurrence := coords.Occurrence
+	if plan.AddressIdentityPresent {
+		candidateOwner, candidateOwnerOK := identityOwnerForGeneratedAxis(state, candidate.Axis)
+		if !candidateOwnerOK {
+			return 0, false
+		}
+		named, namedOK := projectedContentIdentity(candidateOwner, candidate.Member, plan.AddressIdentity.Member, denseCandidate)
+		if !namedOK {
+			return 0, false
+		}
+		occurrence = named
+	}
+	return soleDirectoryCandidateAt(owner, plan.Addressing.Member, coords.Mount, occurrence)
 }
 
 // generatedCarryCount is the declared carry cardinality of one generated rule.

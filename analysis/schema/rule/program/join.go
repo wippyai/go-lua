@@ -62,7 +62,26 @@ type JoinDecl struct {
 	// selection, a parent names a nested member set, and this names a
 	// candidate-published span.
 	KeyVector member.RelationRef
-	Read      ReadDecl
+	// AddressIdentity names the occurrence the corresponded foreign directory
+	// this read is addressed by is enumerated under, projected from THIS rule's
+	// own candidate row in the member.Identity role.
+	//
+	// A correspondence says two directories enumerate the same subjects, never
+	// that they enumerate them in the same positions, so a corresponded read is
+	// resolved through the occurrence both directories are addressed by. That
+	// occurrence is the candidate's own whenever the candidate row IS the
+	// subject. It is not when the row NAMES one: a directory may hold rows
+	// drawn from several occurrence families, where one family's row is an
+	// interpretation of a subject sealed elsewhere, and asking the foreign
+	// directory under such a row's own occurrence asks for a subject it never
+	// enumerated.
+	//
+	// It is declared only for that case, and only beside a read whose relation
+	// is a corresponded foreign directory. The identity is owner-issued because
+	// no dense coordinate carries it - the same reason an activation's branch
+	// vocabulary is declared rather than derived.
+	AddressIdentity member.ProjectionRef
+	Read            ReadDecl
 }
 
 func (join JoinDecl) Available() bool {
@@ -82,6 +101,9 @@ func (join JoinDecl) References() schema.EntryReferences {
 	}
 	if join.Parent.Declared() {
 		references = append(references, join.Parent.EntryReference())
+	}
+	if join.AddressIdentity.Declared() {
+		references = append(references, join.AddressIdentity.EntryReference())
 	}
 	return append(references, join.Read.References()...)
 }

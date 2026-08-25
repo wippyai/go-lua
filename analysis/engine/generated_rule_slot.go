@@ -276,6 +276,7 @@ func DeclareGeneratedRuleSlot(
 			Parent: normalizedParent, ParentPresent: join.ParentPresent,
 			KeyVector: normalizedKeyVector, KeyVectorPresent: join.KeyVectorPresent,
 			Addressing: normalizedAddressing, AddressingPresent: join.AddressingPresent,
+			AddressIdentity: join.AddressIdentity, AddressIdentityPresent: join.AddressIdentityPresent,
 			Form: join.ReadForm, Contract: join.ReadContract, Denominator: join.Denominator,
 			PointBound:  join.PointBound,
 			RowCapacity: uint16(scratch.JoinCount), CellCapacity: uint16(scratch.OutputCount),

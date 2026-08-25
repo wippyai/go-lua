@@ -58,11 +58,19 @@ type ReadPlan struct {
 	// which it must be resolved again.
 	Addressing        ruleplan.RelationAddr
 	AddressingPresent bool
-	Form              ruleprogram.ReadForm
-	Contract          ruleplan.ReadContract
-	Denominator       ruleplan.DenominatorAddr
-	RowCapacity       uint16
-	CellCapacity      uint16
+	// AddressIdentity is the owner-issued occurrence the corresponded foreign
+	// directory above is enumerated under, projected from the rule's own
+	// candidate row. Absent, the candidate's own occurrence is that address,
+	// which is the ordinary case and the only one a directory of a single
+	// occurrence family ever needs. Present, the candidate row NAMES a subject
+	// rather than being one, and this is the identity it names.
+	AddressIdentity        ruleplan.ProjectionAddr
+	AddressIdentityPresent bool
+	Form                   ruleprogram.ReadForm
+	Contract               ruleplan.ReadContract
+	Denominator            ruleplan.DenominatorAddr
+	RowCapacity            uint16
+	CellCapacity           uint16
 	// PointBound is the authored disposition copied from the sealed Plan
 	// Join: whether this Input slot's own predecessor topology point is
 	// transported into the rule, or the read resolves through its Factor's

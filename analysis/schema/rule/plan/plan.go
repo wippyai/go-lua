@@ -146,6 +146,14 @@ type Join struct {
 	// ordinal be resolved again where the rows actually live.
 	Addressing        RelationAddr
 	AddressingPresent bool
+	// AddressIdentity is the owner-issued occurrence the corresponded foreign
+	// directory above is enumerated under, projected from the rule's own
+	// candidate row. AddressIdentityPresent false says the candidate's own
+	// occurrence is that address, which is the ordinary case; true says the
+	// candidate row NAMES a subject rather than being one, so the address is
+	// the identity it names.
+	AddressIdentity        ProjectionAddr
+	AddressIdentityPresent bool
 }
 
 // Carry is the compiled optional whole-output carry. TransformPresent is
@@ -770,6 +778,35 @@ func compileProgram(ruleOrdinal uint32, template *rule.Template, declaration pro
 			}
 			compiledJoin.AddressingPresent = true
 			compiledJoin.Addressing = RelationAddr{Axis: addressingAxisOrdinal, Member: mustRelationOrdinal(addressingCatalog, addressingRef.Member)}
+		}
+
+		// A corresponded read is resolved through the occurrence both
+		// directories are addressed by. That is the candidate's own occurrence
+		// unless the declaration names another, which it may do only where
+		// there is a foreign directory to address: a read borrowing the rule's
+		// own candidate directory is already resolved, and an identity beside
+		// it would name an address nothing asks for.
+		//
+		// The identity is authenticated exactly as Key and Predicate are - a
+		// projection of the relation it is declared over, on that relation's
+		// own axis - except that the relation here is the rule's CANDIDATE,
+		// because the row the occurrence is read off is the candidate's.
+		if join.AddressIdentity.Declared() {
+			if !compiledJoin.AddressingPresent || compiledJoin.Addressing == compiled.candidate {
+				return Plan{}, compileFailure(template.ID(), rule.LawProgramShape, schema.DispositionMalformed)
+			}
+			identityAxis, identityCatalog, identityAxisOrdinal, identityFailure := resolveAxisMember(axisView, join.AddressIdentity.Axis, join.AddressIdentity.Member, memberProjection)
+			if identityFailure.Available() {
+				identityFailure.Entry = template.ID()
+				return Plan{}, identityFailure
+			}
+			projection, projectionOK := identityCatalog.Projection(join.AddressIdentity.Member)
+			if !projectionOK || projection.Role != member.Identity || projection.Relation != candidateRelation.Key ||
+				identityAxisOrdinal != compiled.candidate.Axis || identityAxis.Key() != candidateAxis.Key() {
+				return Plan{}, compileFailure(template.ID(), rule.LawProgramShape, schema.DispositionMalformed)
+			}
+			compiledJoin.AddressIdentityPresent = true
+			compiledJoin.AddressIdentity = ProjectionAddr{Axis: identityAxisOrdinal, Member: mustProjectionOrdinal(identityCatalog, join.AddressIdentity.Member)}
 		}
 
 		// The declared Parent is authenticated against the relation's own
