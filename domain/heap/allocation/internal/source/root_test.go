@@ -523,3 +523,69 @@ func sourceMountedArtifacts(t testing.TB, linked *link.Link, compilation composi
 	}
 	return heapMounts, valueMounts
 }
+
+// TestClosedOperandVectorIsTheOneValueAxisPublishes is the single-authority
+// law. WHICH Value coordinates a constructor reads, and in which order, is a
+// fact in Value's own numbering: a coordinate's dense index is the position
+// that axis assigned it, and no upstream owner holds one. So the axis states
+// the vector and this descriptor composes its field topology over it.
+//
+// The law is that the two are the SAME vector, coordinate for coordinate and
+// key for key, for every closed constructor in a real program - not that they
+// agree in width, which two independent walks would also manage while
+// disagreeing about order. A rule reading these operands is spanned by the
+// published vector while the fold applies values through these fields, so a
+// drift between them would pair every cell with the wrong field.
+func TestClosedOperandVectorIsTheOneValueAxisPublishes(t *testing.T) {
+	heaps, values, _ := sourceFixture(t, `
+local x = {}
+local y = function() end
+local repeated = { [x] = x, [x] = x }
+local sparse = { [y] = x }
+local named = { alpha = x, beta = y }
+return repeated, sparse, named
+`)
+	constructors := 0
+	for _, allocation := range allocationKeys(heaps) {
+		closed, closedOK := source.NewClosed(heaps, values, allocation)
+		if !closedOK {
+			continue
+		}
+		constructors++
+		published, publishedOK := values.ClosedOperandCoordinates(allocation)
+		if !publishedOK {
+			t.Fatalf("value publishes no operand vector for a constructor it admitted: %v", allocation)
+		}
+		if closed.CoordinateCount() != len(published) || closed.SummaryKeyCount() != len(published) {
+			t.Fatalf("operand vector widths disagree: descriptor=%d keys=%d published=%d",
+				closed.CoordinateCount(), closed.SummaryKeyCount(), len(published))
+		}
+		for index := range published {
+			coordinate, coordinateOK := closed.CoordinateAt(index)
+			key, keyOK := closed.SummaryKeyAt(index)
+			dense, denseOK := values.ClosedOperandKeyAt(allocation, index)
+			if !coordinateOK || !keyOK || !denseOK {
+				t.Fatalf("operand %d of %v is unreadable", index, allocation)
+			}
+			if coordinate != published[index] {
+				t.Fatalf("operand %d of %v is a different coordinate than the one Value published", index, allocation)
+			}
+			if key != uint64(dense) {
+				t.Fatalf("operand %d of %v is delivered at key %d, published at %d", index, allocation, key, dense)
+			}
+		}
+		for index := 0; index < closed.Count(); index++ {
+			field, fieldOK := closed.At(index)
+			if !fieldOK {
+				t.Fatalf("field %d of %v is unreadable", index, allocation)
+			}
+			ordinal := field.ValueOrdinal()
+			if int(ordinal) >= len(published) || published[ordinal] != field.Value() {
+				t.Fatalf("field %d of %v addresses position %d of the published vector, which holds another coordinate", index, allocation, ordinal)
+			}
+		}
+	}
+	if constructors == 0 {
+		t.Fatal("the fixture admitted no closed constructor, so the law proved nothing")
+	}
+}

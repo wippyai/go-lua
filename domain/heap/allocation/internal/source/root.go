@@ -6,7 +6,6 @@ package source
 import (
 	"crypto/sha256"
 	"encoding/binary"
-	"sort"
 
 	"github.com/wippyai/go-lua/analysis/identity"
 	programschema "github.com/wippyai/go-lua/analysis/schema/program"
@@ -141,7 +140,7 @@ func NewClosed(schema heap.Schema, valueSchema *valuedomain.Schema, allocation h
 	if !fieldsOK || len(coords) == 0 {
 		return Closed{}, false
 	}
-	keys, keysOK := denseSummaryKeys(valueSchema, coords)
+	keys, keysOK := denseSummaryKeys(valueSchema, allocation, coords)
 	if !keysOK {
 		return Closed{}, false
 	}
@@ -255,6 +254,16 @@ func (closed Closed) valid() bool {
 	return closed.heap.Valid() && closed.heap.ContentID().Available() && closed.values != nil && closed.values.LinkOwner().Matches(closed.heap.LinkOwner()) && closed.values.OwnsHeapSchema(closed.heap) && rootIDOK && closed.root.Key().Kind() == heap.RootAllocation && closed.root.Form() == FormClosed && len(closed.coords) != 0 && len(closed.coords) == len(closed.keys) && len(closed.fields) != 0
 }
 
+// closedFields composes one constructor's field topology over the operand
+// vector its Value axis published.
+//
+// The two halves belong to different owners and are kept that way. WHICH Value
+// coordinates this constructor reads, in which order, is a fact in Value's own
+// numbering and is answered by the axis that mints it; a constructor cannot
+// state it, and deriving it a second time here would be a second numbering of
+// the same reads. What this owner composes is the part that is Heap's: the
+// slot, payload, selector and exact key of each field, and the position each
+// field's coordinate holds in that published vector.
 func closedFields(schema heap.Schema, valueSchema *valuedomain.Schema, root Root) ([]Field, []valuedomain.Coordinate, bool) {
 	if valueSchema == nil {
 		return nil, nil, false
@@ -263,79 +272,11 @@ func closedFields(schema heap.Schema, valueSchema *valuedomain.Schema, root Root
 	if !rootOK || !module.Available() {
 		return nil, nil, false
 	}
-	fieldCount := schema.FieldCount(root.key)
-	coordinates := make([]valuedomain.Coordinate, 0, fieldCount*2)
-	appendCoordinate := func(coordinate valuedomain.Coordinate) bool {
-		if _, ok := valueSchema.CoordinateIndex(coordinate); !ok {
-			return false
-		}
-		coordinates = append(coordinates, coordinate)
-		return true
-	}
-	for index := 0; index < fieldCount; index++ {
-		field, fieldOK := schema.FieldAt(root.key, index)
-		descriptor, descriptorOK := schema.ArtifactFieldFor(field)
-		program, values, valuesOK := schema.ArtifactValuesForField(field)
-		catalog, catalogOK := programcatalog.CatalogID(program.SchemaID)
-		memberOffset, memberCount, memberSpanOK := values.MemberSpan()
-		member, memberOK := programschema.ValuesMemberFamily().At(&program.Frozen, catalog, int(memberOffset))
-		value, valueRefOK := valueSchema.CoordinateForMountedSemantic(module, member.ID())
-		_, width, finalOpen, geometryOK := descriptor.Values()
-		if !fieldOK || !descriptorOK || !valuesOK || !program.Available() || !catalogOK || !memberSpanOK || memberCount != 1 || !geometryOK || finalOpen || width != 1 || !memberOK || !valueRefOK {
-			return nil, nil, false
-		}
-		switch descriptor.Kind() {
-		case heapallocation.FieldKindKey:
-			if normalized, normalizedOK := descriptor.NormalizedKey(); !normalizedOK || normalized != 0 {
-				return nil, nil, false
-			}
-			if descriptor.SharesFirstValueCell() {
-				coordinate, coordinateOK := value, valueRefOK
-				if !coordinateOK || !appendCoordinate(coordinate) {
-					return nil, nil, false
-				}
-				continue
-			}
-			if !valueRefOK || !appendCoordinate(value) {
-				return nil, nil, false
-			}
-			sourceSlot, sourceSlotOK := schema.SlotForField(field)
-			if !sourceSlotOK {
-				return nil, nil, false
-			}
-			_, _, dynamicID, dynamicOK := sourceSlot.Origin()
-			coordinate, coordinateOK := valueSchema.CoordinateForID(dynamicID)
-			if !dynamicOK || !coordinateOK || !appendCoordinate(coordinate) {
-				return nil, nil, false
-			}
-		case heapallocation.FieldKindList, heapallocation.FieldKindName, heapallocation.FieldKindExact:
-			// FieldExact nil/NaN is represented by a zero normalized key. It is
-			// non-storable and must not fall through to the dynamic branch.
-			normalized, normalizedOK := descriptor.NormalizedKey()
-			if !normalizedOK || normalized == 0 {
-				return nil, nil, false
-			}
-			if !valueRefOK || !appendCoordinate(value) {
-				return nil, nil, false
-			}
-		default:
-			return nil, nil, false
-		}
-	}
-	sort.Slice(coordinates, func(left, right int) bool {
-		leftIndex, leftOK := valueSchema.CoordinateIndex(coordinates[left])
-		rightIndex, rightOK := valueSchema.CoordinateIndex(coordinates[right])
-		return leftOK && rightOK && leftIndex < rightIndex
-	})
-	unique := coordinates[:0]
-	for _, coordinate := range coordinates {
-		if len(unique) == 0 || unique[len(unique)-1] != coordinate {
-			unique = append(unique, coordinate)
-		}
-	}
-	if len(unique) == 0 {
+	unique, uniqueOK := valueSchema.ClosedOperandCoordinates(root.key)
+	if !uniqueOK || len(unique) == 0 {
 		return nil, nil, false
 	}
+	fieldCount := schema.FieldCount(root.key)
 	fields := make([]Field, 0, fieldCount)
 	for index := 0; index < fieldCount; index++ {
 		field, fieldOK := schema.FieldAt(root.key, index)
@@ -438,13 +379,25 @@ func equalDenseKeys(left, right []uint64) bool {
 	return true
 }
 
-func denseSummaryKeys(schema *valuedomain.Schema, coordinates []valuedomain.Coordinate) ([]uint64, bool) {
+// denseSummaryKeys takes this constructor's operand vector in the dense
+// currency the Value axis publishes it in. The keys are read off that axis
+// rather than converted here: a coordinate's dense index is Value's numbering,
+// and computing it beside the published vector would be a second statement of
+// the same order that agrees only while both are correct.
+//
+// Strictly ascending is checked because it is what the vector MEANS - one cell
+// per coordinate, in dense order - and a violation renumbers every later cell
+// silently rather than failing.
+func denseSummaryKeys(schema *valuedomain.Schema, root heap.Key, coordinates []valuedomain.Coordinate) ([]uint64, bool) {
 	if schema == nil || len(coordinates) == 0 {
 		return nil, false
 	}
+	if schema.ClosedOperandKeyCount(root) != len(coordinates) {
+		return nil, false
+	}
 	keys := make([]uint64, len(coordinates))
-	for index, coordinate := range coordinates {
-		dense, ok := schema.CoordinateIndex(coordinate)
+	for index := range coordinates {
+		dense, ok := schema.ClosedOperandKeyAt(root, index)
 		if !ok {
 			return nil, false
 		}
