@@ -227,3 +227,68 @@ func TestASelectionFoldRefusesAnUnusableWriteOrScratch(t *testing.T) {
 		t.Fatalf("a fold with no prerequisite support answered %d", outcome)
 	}
 }
+
+// narrowerSupport is a region strictly inside this fixture's own, built from
+// the same manager so the two are comparable by entailment.
+func narrowerSupport(t testing.TB, fixture selectedFixture) support.Mask {
+	t.Helper()
+	// The cold construction the support package uses for its own sealed
+	// regions: open a shell, take the value, seal it.
+	work := support.New(fixture.whole.Manager())
+	if work == nil {
+		t.Fatal("support work")
+	}
+	narrower := work.False()
+	if !work.Seal() {
+		work.Discard()
+		t.Fatal("seal the narrower support")
+	}
+	if !narrower.Valid() || narrower.Equal(fixture.whole) || !narrower.Entails(fixture.whole) {
+		t.Fatal("the narrower support is not strictly inside the fixture's own")
+	}
+	return narrower
+}
+
+// TestAMemberProvedOverMoreThanItsPrerequisiteDoesNotNarrowTheConclusion is
+// the recursion law, and the case that made the first version of this
+// primitive refuse a solve.
+//
+// A call site whose body set contains its own site reads a member at a
+// coordinate this very rule writes. Before the fixpoint has put anything
+// there the cell is absent - and absent EVERYWHERE, so it is proved over a
+// wider support than the prerequisite that reached it. Intersecting with a
+// support that contains the running meet leaves the meet alone; requiring the
+// two to be equal instead refused the fold, and a recursive call site could
+// never conclude.
+func TestAMemberProvedOverMoreThanItsPrerequisiteDoesNotNarrowTheConclusion(t *testing.T) {
+	fixture := newSelectedFixture(t)
+	ticket := issueSelected(t, NewRun(1, 1), fixture, fixture.state)
+	var scratch Scratch[uint64, uint64]
+	calls := 0
+	cells := selectionCells(fixture, 2)
+	outcome := FoldSelectedExact(ticket, selectionWrite(t, fixture), &scratch, narrowerSupport(t, fixture), cells,
+		selectionLawReducer{outcome: structure.Concrete, calls: &calls})
+	if calls != 1 {
+		t.Fatalf("the fold was called %d times; a member proved over MORE than its prerequisite is not a delivery this form cannot reduce", calls)
+	}
+	_ = outcome
+}
+
+// TestAMemberProvedOverLessNarrowsTheConclusionToIt is the other direction. A
+// conclusion may only hold where every read it consumed holds, so a member
+// that proved less than everything before it moves the meet down to itself
+// rather than being published over the wider support that reached it.
+func TestAMemberProvedOverLessNarrowsTheConclusionToIt(t *testing.T) {
+	fixture := newSelectedFixture(t)
+	ticket := issueSelected(t, NewRun(1, 1), fixture, fixture.state)
+	var scratch Scratch[uint64, uint64]
+	calls := 0
+	cells := selectionCells(fixture, 2)
+	cells[1].Region = narrowerSupport(t, fixture)
+	outcome := FoldSelectedExact(ticket, selectionWrite(t, fixture), &scratch, fixture.whole, cells,
+		selectionLawReducer{outcome: structure.Concrete, calls: &calls})
+	if calls != 1 {
+		t.Fatalf("the fold was called %d times; a member proved over LESS than its prerequisite narrows the conclusion rather than refusing it", calls)
+	}
+	_ = outcome
+}

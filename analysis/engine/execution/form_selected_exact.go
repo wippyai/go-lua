@@ -38,13 +38,17 @@ type SelectionReducer[V any, W any] interface {
 // one of its own, because the mask type it would have to name is engine
 // internal and the conjunction it would have to compute is not its to compute.
 //
-// Every delivered member is observed at the window the invocation opened, so
-// the prerequisite's region and the members' regions are one region, and the
-// conjunction of them all is that region. This holds the delivery to exactly
-// that: a member carrying a support of its own is a delivery this form has no
-// way to reduce to a single conclusion, and it is refused by name rather than
-// published under whichever region happened to come first. That refusal is
-// what keeps the published fact from ever claiming more than every read proved.
+// The conjunction is taken by entailment. A member observed at a coordinate
+// this rule itself writes - which is what a recursive call site reads - is
+// proved over a WIDER support than the prerequisite, because an unwritten cell
+// is absent everywhere; intersecting with it leaves the running meet alone.
+// A member proved over less than everything before it narrows the meet, since
+// the conclusion may only hold where every read holds. Two supports neither of
+// which contains the other have a meet this cannot name, and that is refused
+// by name rather than published under whichever one came first.
+//
+// So the published fact never claims more than every read proved, and the
+// refusal is reserved for the one case the ordering cannot answer.
 //
 // An empty selection is not a refusal and not an absent candidate by itself.
 // The fold still reaches its one conclusion, over no members, and what that
@@ -63,7 +67,18 @@ func FoldSelectedExact[K scalar.Key, V any, W any, R SelectionReducer[V, W]](
 	}
 	region := prerequisite
 	for _, cell := range cells {
-		if !cell.Region.Valid() || !cell.Region.Equal(region) {
+		if !cell.Region.Valid() {
+			return structure.Refuse
+		}
+		switch {
+		case region.Entails(cell.Region):
+			// The running meet is already inside this member's support, so
+			// intersecting with it changes nothing.
+		case cell.Region.Entails(region):
+			// This member proved less than everything before it, and the
+			// conclusion may only hold where every read holds.
+			region = cell.Region
+		default:
 			return structure.Refuse
 		}
 	}
