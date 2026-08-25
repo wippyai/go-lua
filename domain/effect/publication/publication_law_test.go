@@ -1,6 +1,7 @@
 package publication
 
 import (
+	"fmt"
 	"reflect"
 	"strings"
 	"testing"
@@ -108,7 +109,7 @@ func TestDirectoryAnswersForItsOwnAdmissionsOnly(t *testing.T) {
 		if status != snapshot.ReadHit {
 			t.Fatalf("admitted %v: status %v", want.ID, status)
 		}
-		if row != want {
+		if !reflect.DeepEqual(row, want) {
 			t.Fatalf("admitted %v resolved to another row", want.ID)
 		}
 	}
@@ -135,7 +136,7 @@ func TestDirectoryEnumeratesEveryAdmittedRowInSealedOrder(t *testing.T) {
 			t.Fatalf("member %d is %v ok %v, want %v", index, id, walked, want.ID)
 		}
 		row, status := Published(&published, address, id)
-		if status != snapshot.ReadHit || row != want {
+		if status != snapshot.ReadHit || !reflect.DeepEqual(row, want) {
 			t.Fatalf("member %d does not resolve to its row", index)
 		}
 	}
@@ -153,7 +154,7 @@ func TestDirectoryReadsAreRepeatable(t *testing.T) {
 
 	first, firstStatus := Published(&published, address, row.ID)
 	second, secondStatus := Published(&published, address, row.ID)
-	if firstStatus != snapshot.ReadHit || secondStatus != snapshot.ReadHit || first != second {
+	if firstStatus != snapshot.ReadHit || secondStatus != snapshot.ReadHit || !reflect.DeepEqual(first, second) {
 		t.Fatalf("repeated read differs: %v/%v", firstStatus, secondStatus)
 	}
 }
@@ -290,5 +291,189 @@ func TestPublicationVocabulariesRankTheAuthoredEnums(t *testing.T) {
 	}
 	if _, ranked := declared.At(structure.CategoryPublicationEffectKind, uint16(vocabulary.PublicationEffectInvalid)); ranked {
 		t.Fatal("the invalid zero is ranked as a member")
+	}
+}
+
+// directoryLawCall is one mounted call claiming a span of the row column.
+func directoryLawCall(t *testing.T, tag string, offset, length uint32) CallRow {
+	t.Helper()
+	return CallRow{
+		ID:          directoryLawIdentity(t, "batch/"+tag),
+		Module:      directoryLawIdentity(t, "module"),
+		Call:        directoryLawIdentity(t, "call/"+tag),
+		Application: directoryLawIdentity(t, "application"),
+		RowOffset:   offset,
+		RowLength:   length,
+	}
+}
+
+// A mounted call that published nothing is a published fact. The row column
+// states rows, so it cannot distinguish a call whose program authored no
+// publication from a call the directory never saw; the calls column states
+// the call itself, and an empty span is that call's complete answer.
+func TestMountedCallWithNoPublicationIsAPublishedFact(t *testing.T) {
+	rows := []Row{directoryLawRow(t, "a")}
+	calls := []CallRow{directoryLawCall(t, "loud", 0, 1), directoryLawCall(t, "silent", 1, 0)}
+
+	denominator, derived := CallsDenominatorID(directoryLawIdentity(t, "link"), calls)
+	if !derived {
+		t.Fatal("calls denominator")
+	}
+	content, sealed := CallsContent(calls, len(rows), denominator)
+	if !sealed {
+		t.Fatal("calls content")
+	}
+	schemaID := directoryLawIdentity(t, "link-schema")
+	address := CallsAxis(schemaID, 0)
+	builder := snapshot.NewBuilder(schemaID, identity.StoreID(11), identity.Generation(1))
+	if err := snapshot.PutColumn(&builder, address, content); err != nil {
+		t.Fatalf("put calls column: %v", err)
+	}
+	published, err := builder.Seal()
+	if err != nil {
+		t.Fatalf("seal: %v", err)
+	}
+
+	silent, status := MountedCall(&published, address, calls[1].ID)
+	if status != snapshot.ReadHit {
+		t.Fatalf("silent call status %v", status)
+	}
+	if silent.RowLength != 0 {
+		t.Fatalf("silent call claims %d rows", silent.RowLength)
+	}
+	stranger := directoryLawIdentity(t, "batch/absent")
+	if _, status := MountedCall(&published, address, stranger); status == snapshot.ReadHit {
+		t.Fatal("a call the directory never admitted resolved")
+	}
+}
+
+// The calls tile the rows exactly. A span that skipped a row would publish a
+// receipt no call admits, and a span that overlapped would let one receipt
+// answer under two calls, so the seal refuses both rather than publishing a
+// directory a consumer has to reconcile.
+func TestCallSpansTileTheRowColumnExactly(t *testing.T) {
+	denominator, derived := CallsDenominatorID(directoryLawIdentity(t, "link"), nil)
+	if !derived {
+		t.Fatal("calls denominator")
+	}
+	for name, calls := range map[string][]CallRow{
+		"gap":       {directoryLawCall(t, "a", 0, 1), directoryLawCall(t, "b", 2, 1)},
+		"overlap":   {directoryLawCall(t, "a", 0, 2), directoryLawCall(t, "b", 1, 1)},
+		"short":     {directoryLawCall(t, "a", 0, 1)},
+		"past-end":  {directoryLawCall(t, "a", 0, 4)},
+		"duplicate": {directoryLawCall(t, "a", 0, 2), directoryLawCall(t, "a", 2, 1)},
+	} {
+		if _, sealed := CallsContent(calls, 3, denominator); sealed {
+			t.Fatalf("%s spans sealed", name)
+		}
+	}
+	exact := []CallRow{directoryLawCall(t, "a", 0, 2), directoryLawCall(t, "b", 2, 0), directoryLawCall(t, "c", 2, 1)}
+	if _, sealed := CallsContent(exact, 3, denominator); !sealed {
+		t.Fatal("exact tiling refused")
+	}
+}
+
+// One mounted coordinate names one call. Two rows sharing a module and
+// occurrence would make the provenance a consumer selects by ambiguous, so
+// the seal refuses them even though their own identities differ.
+func TestOneMountedCoordinateNamesOneCall(t *testing.T) {
+	denominator, derived := CallsDenominatorID(directoryLawIdentity(t, "link"), nil)
+	if !derived {
+		t.Fatal("calls denominator")
+	}
+	first, second := directoryLawCall(t, "a", 0, 1), directoryLawCall(t, "b", 1, 1)
+	second.Call = first.Call
+	if _, sealed := CallsContent([]CallRow{first, second}, 2, denominator); sealed {
+		t.Fatal("two calls sealed under one mounted coordinate")
+	}
+}
+
+// A row's subject members are read through the row's own span, so a consumer
+// reaches them holding neither Effect's algebra nor the mounted pack. The
+// span addresses that row's members and no other row's.
+func TestSubjectMembersAreReadThroughTheRowsOwnSpan(t *testing.T) {
+	first, second := directoryLawRow(t, "a"), directoryLawRow(t, "b")
+	first.SubjectOffset, first.SubjectLength = 0, 2
+	second.SubjectOffset, second.SubjectLength = 2, 1
+	rows := []Row{first, second}
+
+	members := make([]MemberRow, 0, 3)
+	for _, row := range rows {
+		for position := 0; position < int(row.SubjectLength); position++ {
+			id, derived := MemberID(row.ID, position)
+			if !derived {
+				t.Fatal("member identity")
+			}
+			members = append(members, MemberRow{
+				ID:       id,
+				RowID:    row.ID,
+				Semantic: directoryLawIdentity(t, fmt.Sprintf("semantic/%v/%d", row.ID, position)),
+				Member:   uint32(position),
+			})
+		}
+	}
+
+	denominator, derived := MembersDenominatorID(directoryLawIdentity(t, "link"), members)
+	if !derived {
+		t.Fatal("members denominator")
+	}
+	content, sealed := MembersContent(members, rows, denominator)
+	if !sealed {
+		t.Fatal("members content")
+	}
+	schemaID := directoryLawIdentity(t, "link-schema")
+	address := MembersAxis(schemaID, 0)
+	builder := snapshot.NewBuilder(schemaID, identity.StoreID(11), identity.Generation(1))
+	if err := snapshot.PutColumn(&builder, address, content); err != nil {
+		t.Fatalf("put members column: %v", err)
+	}
+	published, err := builder.Seal()
+	if err != nil {
+		t.Fatalf("seal: %v", err)
+	}
+
+	for _, row := range rows {
+		for position := 0; position < int(row.SubjectLength); position++ {
+			member, read := SubjectMember(&published, address, row, position)
+			if !read {
+				t.Fatalf("row %v member %d unread", row.ID, position)
+			}
+			if member.RowID != row.ID || member.Member != uint32(position) {
+				t.Fatalf("row %v member %d resolved to another row's member", row.ID, position)
+			}
+		}
+		if _, read := SubjectMember(&published, address, row, int(row.SubjectLength)); read {
+			t.Fatalf("row %v reads past its own span", row.ID)
+		}
+	}
+}
+
+// A member column that did not tile the rows' spans would let a row's span
+// address another row's members, so the seal refuses it.
+func TestMemberSpansTileTheRowsExactly(t *testing.T) {
+	row := directoryLawRow(t, "a")
+	row.SubjectOffset, row.SubjectLength = 0, 2
+	denominator, derived := MembersDenominatorID(directoryLawIdentity(t, "link"), nil)
+	if !derived {
+		t.Fatal("members denominator")
+	}
+	first, _ := MemberID(row.ID, 0)
+	second, _ := MemberID(row.ID, 1)
+	semantic := directoryLawIdentity(t, "semantic")
+	foreign := directoryLawIdentity(t, "row/z")
+
+	for name, members := range map[string][]MemberRow{
+		"short":       {{ID: first, RowID: row.ID, Semantic: semantic, Member: 0}},
+		"foreign-row": {{ID: first, RowID: row.ID, Semantic: semantic, Member: 0}, {ID: second, RowID: foreign, Semantic: semantic, Member: 1}},
+		"misordered":  {{ID: first, RowID: row.ID, Semantic: semantic, Member: 1}, {ID: second, RowID: row.ID, Semantic: semantic, Member: 0}},
+		"overlong": {
+			{ID: first, RowID: row.ID, Semantic: semantic, Member: 0},
+			{ID: second, RowID: row.ID, Semantic: semantic, Member: 1},
+			{ID: directoryLawIdentity(t, "member/extra"), RowID: row.ID, Semantic: semantic, Member: 2},
+		},
+	} {
+		if _, sealed := MembersContent(members, []Row{row}, denominator); sealed {
+			t.Fatalf("%s members sealed", name)
+		}
 	}
 }

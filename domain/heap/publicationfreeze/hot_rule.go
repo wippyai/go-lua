@@ -5,8 +5,8 @@ import (
 	"github.com/wippyai/go-lua/analysis/identity"
 	calldomain "github.com/wippyai/go-lua/domain/call"
 	callowner "github.com/wippyai/go-lua/domain/call/owner"
-	effectfactor "github.com/wippyai/go-lua/domain/effect/factor"
 	effectowner "github.com/wippyai/go-lua/domain/effect/owner"
+	effectpublication "github.com/wippyai/go-lua/domain/effect/publication"
 	heapdomain "github.com/wippyai/go-lua/domain/heap"
 	"github.com/wippyai/go-lua/domain/heap/internal/recentplan"
 	heapowner "github.com/wippyai/go-lua/domain/heap/owner"
@@ -15,20 +15,28 @@ import (
 	valueowner "github.com/wippyai/go-lua/domain/value/owner"
 )
 
+// callCoordinateKey is the mounted module/call coordinate a resolved operand
+// is looked up by. It mirrors the join OperandCoords already carries.
+type callCoordinateKey struct {
+	module identity.ContentID
+	call   identity.ContentID
+}
+
 // HotRule is the Effect publication FreezeSeal consumer. Effect remains the
-// authority that issued each sealed batch; Call gates operation alternatives,
-// Value supplies exact mounted subjects, and Heap owns the freeze transition.
+// authority that issued each published call; Call gates operation
+// alternatives, Value supplies exact mounted subjects, and Heap owns the
+// freeze transition.
 type HotRule struct {
-	implementation *heapowner.RuleImplementation[effectfactor.MountedPublicationBatch]
-	owner          *heapowner.HotOwner
-	values         *valueowner.HotOwner
-	calls          *callowner.HotOwner
-	effects        *effectowner.HotOwner
-	batchIndex     *effectfactor.MountedPublicationBatchIndex
-	preparedByID   map[identity.ContentID]*preparedBatch
-	callRead       engine.Read[engine.OrderedCells[calldomain.Value]]
-	valueRead      engine.Read[engine.Selection[sourceTag, engine.OrderedCells[valuedomain.Value]]]
-	heapRead       engine.Read[engine.Selection[heapdomain.RawRouteTag, engine.OrderedCells[heapdomain.Value]]]
+	implementation    *heapowner.RuleImplementation[effectpublication.CallRow]
+	owner             *heapowner.HotOwner
+	values            *valueowner.HotOwner
+	calls             *callowner.HotOwner
+	effects           *effectowner.HotOwner
+	preparedByID      map[identity.ContentID]*preparedCall
+	callsByCoordinate map[callCoordinateKey]effectpublication.CallRow
+	callRead          engine.Read[engine.OrderedCells[calldomain.Value]]
+	valueRead         engine.Read[engine.Selection[sourceTag, engine.OrderedCells[valuedomain.Value]]]
+	heapRead          engine.Read[engine.Selection[heapdomain.RawRouteTag, engine.OrderedCells[heapdomain.Value]]]
 }
 
 // BindHot binds the exact Call/Value predecessors and Heap route write. The
@@ -53,24 +61,23 @@ func BindHot(
 	if !linkOwner.Available() || !values.Schema().LinkOwner().Matches(linkOwner) || !owner.Schema().LinkOwner().Matches(linkOwner) || !effects.Algebra().LinkOwner().Matches(linkOwner) {
 		return nil, false
 	}
-	batchIndex, indexOK := effectfactor.NewMountedPublicationBatchIndex(effects.Algebra())
-	if !indexOK || batchIndex == nil || !batchIndex.Valid() {
+	directory, directoryOK := effectpublication.Detach(effects.Algebra(), values.Schema())
+	if !directoryOK {
 		return nil, false
 	}
 	rule := &HotRule{
-		owner:        owner,
-		values:       values,
-		calls:        calls,
-		effects:      effects,
-		batchIndex:   batchIndex,
-		preparedByID: make(map[identity.ContentID]*preparedBatch, batchIndex.Count()),
+		owner:             owner,
+		values:            values,
+		calls:             calls,
+		effects:           effects,
+		preparedByID:      make(map[identity.ContentID]*preparedCall, len(directory.Calls)),
+		callsByCoordinate: make(map[callCoordinateKey]effectpublication.CallRow, len(directory.Calls)),
 	}
-	for index := 0; index < batchIndex.Count(); index++ {
-		batch, batchOK := batchIndex.BatchAt(index)
-		if !batchOK {
+	for _, call := range directory.Calls {
+		if !call.Available() {
 			return nil, false
 		}
-		prepared, preparedOK := prepareBatch(values.Schema(), calls.Algebra(), batch)
+		prepared, preparedOK := prepareCall(values.Schema(), calls.Algebra(), directory, call)
 		if !preparedOK {
 			return nil, false
 		}
@@ -78,19 +85,24 @@ func BindHot(
 			return nil, false
 		}
 		rule.preparedByID[prepared.id] = prepared
+		coordinate := callCoordinateKey{module: call.Module, call: call.Call}
+		if _, duplicate := rule.callsByCoordinate[coordinate]; duplicate {
+			return nil, false
+		}
+		rule.callsByCoordinate[coordinate] = call
 	}
 
-	implementation, ok := heapowner.BindSelectedRouteRuleDirect(owner, fragment.slot, fragment.carry, fragment.write, owner.FactorRef(), engine.HotRuleSpec[heapdomain.Value, effectfactor.MountedPublicationBatch]{
+	implementation, ok := heapowner.BindSelectedRouteRuleDirect(owner, fragment.slot, fragment.carry, fragment.write, owner.FactorRef(), engine.HotRuleSpec[heapdomain.Value, effectpublication.CallRow]{
 		OperandContent:  rule.operandContent,
 		OperandResolver: rule.resolveOperand,
 		Fold:            rule.fold,
-	}, engine.HotCarrySpec[heapdomain.Value, effectfactor.MountedPublicationBatch]{}, nil)
+	}, engine.HotCarrySpec[heapdomain.Value, effectpublication.CallRow]{}, nil)
 	if !ok || implementation == nil {
 		return nil, false
 	}
 	rule.implementation = implementation
-	callRead, callOK := heapowner.AddSelectedRouteRuleDirectExactRead(implementation, fragment.callRead, calls.FactorRef(), func(batch effectfactor.MountedPublicationBatch) (uint64, bool) {
-		key, keyOK := rule.callKeyForBatch(batch)
+	callRead, callOK := heapowner.AddSelectedRouteRuleDirectExactRead(implementation, fragment.callRead, calls.FactorRef(), func(call effectpublication.CallRow) (uint64, bool) {
+		key, keyOK := rule.callKeyForCall(call)
 		if !keyOK {
 			return 0, false
 		}
@@ -101,12 +113,12 @@ func BindHot(
 		return nil, false
 	}
 	rule.callRead = callRead
-	valueRead, valueOK := heapowner.AddSelectedRouteRuleDirectOperandRead[effectfactor.MountedPublicationBatch, valuedomain.Value, sourceTag](implementation, fragment.valueRead, values.FactorRef(), rule.locateValues)
+	valueRead, valueOK := heapowner.AddSelectedRouteRuleDirectOperandRead[effectpublication.CallRow, valuedomain.Value, sourceTag](implementation, fragment.valueRead, values.FactorRef(), rule.locateValues)
 	if !valueOK {
 		return nil, false
 	}
 	rule.valueRead = valueRead
-	heapRead, heapOK := heapowner.AddSelectedRouteRuleDirectOperandRead[effectfactor.MountedPublicationBatch, heapdomain.Value, heapdomain.RawRouteTag](implementation, fragment.heapRead, owner.FactorRef(), rule.locateHeap)
+	heapRead, heapOK := heapowner.AddSelectedRouteRuleDirectOperandRead[effectpublication.CallRow, heapdomain.Value, heapdomain.RawRouteTag](implementation, fragment.heapRead, owner.FactorRef(), rule.locateHeap)
 	if !heapOK {
 		return nil, false
 	}
@@ -115,7 +127,7 @@ func BindHot(
 }
 
 // Implementation returns the pending Heap-owned Rule issuer.
-func (rule *HotRule) Implementation() (*heapowner.RuleImplementation[effectfactor.MountedPublicationBatch], bool) {
+func (rule *HotRule) Implementation() (*heapowner.RuleImplementation[effectpublication.CallRow], bool) {
 	if rule == nil || rule.implementation == nil || rule.owner == nil {
 		return nil, false
 	}
@@ -123,55 +135,55 @@ func (rule *HotRule) Implementation() (*heapowner.RuleImplementation[effectfacto
 	return rule.implementation, ok
 }
 
-func (rule *HotRule) resolveOperand(coords engine.OperandCoords) (effectfactor.MountedPublicationBatch, bool) {
-	if rule == nil || rule.batchIndex == nil || !coords.Mount.Available() || !coords.Occurrence.Available() {
-		return effectfactor.MountedPublicationBatch{}, false
+func (rule *HotRule) resolveOperand(coords engine.OperandCoords) (effectpublication.CallRow, bool) {
+	if rule == nil || rule.callsByCoordinate == nil || !coords.Mount.Available() || !coords.Occurrence.Available() {
+		return effectpublication.CallRow{}, false
 	}
-	batch, batchOK := rule.batchIndex.BatchForCall(coords.Mount, coords.Occurrence)
-	if !batchOK || rule.preparedFor(batch) == nil {
-		return effectfactor.MountedPublicationBatch{}, false
+	call, found := rule.callsByCoordinate[callCoordinateKey{module: coords.Mount, call: coords.Occurrence}]
+	if !found || rule.preparedFor(call) == nil {
+		return effectpublication.CallRow{}, false
 	}
-	return batch, true
+	return call, true
 }
 
-func (rule *HotRule) preparedFor(batch effectfactor.MountedPublicationBatch) *preparedBatch {
-	if rule == nil || rule.batchIndex == nil || rule.preparedByID == nil || !rule.batchIndex.Owns(batch) {
+// preparedFor is the operand fence. A published call is an inert value rather
+// than an owner-issued handle, so the fence is equality with the row this rule
+// prepared: an operand that is not one of them, or one that carries the
+// identity of a prepared call under any other field, resolves to nothing.
+func (rule *HotRule) preparedFor(call effectpublication.CallRow) *preparedCall {
+	if rule == nil || rule.preparedByID == nil || rule.callsByCoordinate == nil || !call.Available() {
 		return nil
 	}
-	id, ok := batch.SealedContentID()
-	if !ok {
+	issued, found := rule.callsByCoordinate[callCoordinateKey{module: call.Module, call: call.Call}]
+	if !found || issued != call {
 		return nil
 	}
-	prepared := rule.preparedByID[id]
-	if prepared == nil || prepared.id != id {
+	prepared := rule.preparedByID[call.ID]
+	if prepared == nil || prepared.id != call.ID {
 		return nil
 	}
 	return prepared
 }
 
-func (rule *HotRule) operandContent(batch effectfactor.MountedPublicationBatch) (effectfactor.MountedPublicationBatch, [32]byte, bool) {
-	if rule == nil || rule.preparedFor(batch) == nil {
-		return effectfactor.MountedPublicationBatch{}, [32]byte{}, false
+func (rule *HotRule) operandContent(call effectpublication.CallRow) (effectpublication.CallRow, [32]byte, bool) {
+	if rule == nil || rule.preparedFor(call) == nil || !call.ID.Available() {
+		return effectpublication.CallRow{}, [32]byte{}, false
 	}
-	id, ok := batch.SealedContentID()
-	if !ok || !id.Available() {
-		return effectfactor.MountedPublicationBatch{}, [32]byte{}, false
-	}
-	return batch, [32]byte(id), true
+	return call, [32]byte(call.ID), true
 }
 
-func (rule *HotRule) callKeyForBatch(batch effectfactor.MountedPublicationBatch) (calldomain.Key, bool) {
+func (rule *HotRule) callKeyForCall(call effectpublication.CallRow) (calldomain.Key, bool) {
 	if rule == nil || rule.preparedByID == nil {
 		return calldomain.Key{}, false
 	}
-	prepared := rule.preparedFor(batch)
+	prepared := rule.preparedFor(call)
 	if prepared == nil || !prepared.callKeyOK || !prepared.callKey.Valid() {
 		return calldomain.Key{}, false
 	}
 	return prepared.callKey, true
 }
 
-func (rule *HotRule) callValueSelector(context engine.SelectorContext, batch effectfactor.MountedPublicationBatch) (calldomain.Value, bool, bool) {
+func (rule *HotRule) callValueSelector(context engine.SelectorContext, call effectpublication.CallRow) (calldomain.Value, bool, bool) {
 	if rule == nil || rule.calls == nil || rule.calls.Algebra() == nil {
 		return calldomain.Value{}, false, false
 	}
@@ -180,7 +192,7 @@ func (rule *HotRule) callValueSelector(context engine.SelectorContext, batch eff
 		return calldomain.Value{}, false, false
 	}
 	value, present, available := cells.At(0)
-	key, keyOK := rule.callKeyForBatch(batch)
+	key, keyOK := rule.callKeyForCall(call)
 	if !available || !keyOK {
 		return calldomain.Value{}, false, false
 	}
@@ -191,7 +203,7 @@ func (rule *HotRule) callValueSelector(context engine.SelectorContext, batch eff
 	return value, true, rule.calls.Algebra().Admits(key, value)
 }
 
-func (rule *HotRule) callValueFrame(frame engine.Frame[heapdomain.Value, effectfactor.MountedPublicationBatch], batch effectfactor.MountedPublicationBatch) (calldomain.Value, bool, bool) {
+func (rule *HotRule) callValueFrame(frame engine.Frame[heapdomain.Value, effectpublication.CallRow], call effectpublication.CallRow) (calldomain.Value, bool, bool) {
 	if rule == nil || rule.calls == nil || rule.calls.Algebra() == nil {
 		return calldomain.Value{}, false, false
 	}
@@ -200,7 +212,7 @@ func (rule *HotRule) callValueFrame(frame engine.Frame[heapdomain.Value, effectf
 		return calldomain.Value{}, false, false
 	}
 	value, present, available := cells.At(0)
-	key, keyOK := rule.callKeyForBatch(batch)
+	key, keyOK := rule.callKeyForCall(call)
 	if !available || !keyOK {
 		return calldomain.Value{}, false, false
 	}
@@ -211,7 +223,7 @@ func (rule *HotRule) callValueFrame(frame engine.Frame[heapdomain.Value, effectf
 	return value, true, rule.calls.Algebra().Admits(key, value)
 }
 
-func (rule *HotRule) operationGateForBatch(batch *preparedBatch, value calldomain.Value) (operationGate, bool) {
+func (rule *HotRule) operationGateForCall(batch *preparedCall, value calldomain.Value) (operationGate, bool) {
 	if rule == nil || batch == nil || rule.calls == nil || rule.calls.Algebra() == nil {
 		return operationGate{}, false
 	}
@@ -246,19 +258,19 @@ func (rule *HotRule) operationGateForBatch(batch *preparedBatch, value calldomai
 	return gate, true
 }
 
-func (rule *HotRule) locateValues(context engine.SelectorContext, batch effectfactor.MountedPublicationBatch) bool {
-	value, present, callOK := rule.callValueSelector(context, batch)
+func (rule *HotRule) locateValues(context engine.SelectorContext, call effectpublication.CallRow) bool {
+	value, present, callOK := rule.callValueSelector(context, call)
 	if !callOK {
 		return false
 	}
-	prepared := rule.preparedFor(batch)
+	prepared := rule.preparedFor(call)
 	if prepared == nil || rule.values == nil {
 		return false
 	}
 	if !present {
 		return true
 	}
-	gate, gateOK := rule.operationGateForBatch(prepared, value)
+	gate, gateOK := rule.operationGateForCall(prepared, value)
 	if !gateOK {
 		return false
 	}
@@ -272,19 +284,19 @@ func (rule *HotRule) locateValues(context engine.SelectorContext, batch effectfa
 	return true
 }
 
-func (rule *HotRule) locateHeap(context engine.SelectorContext, batch effectfactor.MountedPublicationBatch) bool {
-	callValue, present, callOK := rule.callValueSelector(context, batch)
+func (rule *HotRule) locateHeap(context engine.SelectorContext, call effectpublication.CallRow) bool {
+	callValue, present, callOK := rule.callValueSelector(context, call)
 	if !callOK || rule.owner == nil || rule.values == nil || rule.values.Schema() == nil {
 		return false
 	}
 	if !present {
 		return true
 	}
-	prepared := rule.preparedFor(batch)
+	prepared := rule.preparedFor(call)
 	if prepared == nil {
 		return false
 	}
-	gate, gateOK := rule.operationGateForBatch(prepared, callValue)
+	gate, gateOK := rule.operationGateForCall(prepared, callValue)
 	if !gateOK {
 		return false
 	}
@@ -336,7 +348,7 @@ func (rule *HotRule) collectFacts(context engine.SelectorContext, sources source
 	return facts, true
 }
 
-func (rule *HotRule) collectFrameFacts(frame engine.Frame[heapdomain.Value, effectfactor.MountedPublicationBatch], sources sourceBuffer, selection engine.Selection[sourceTag, engine.OrderedCells[valuedomain.Value]]) (factBuffer, bool) {
+func (rule *HotRule) collectFrameFacts(frame engine.Frame[heapdomain.Value, effectpublication.CallRow], sources sourceBuffer, selection engine.Selection[sourceTag, engine.OrderedCells[valuedomain.Value]]) (factBuffer, bool) {
 	if rule == nil || rule.values == nil || rule.values.Schema() == nil {
 		return factBuffer{}, false
 	}
@@ -366,13 +378,13 @@ func routeForTag(plan routePlan, tag heapdomain.RawRouteTag) (route, bool) {
 	return recentplan.RouteForTag(plan, tag)
 }
 
-func (rule *HotRule) fold(frame engine.Frame[heapdomain.Value, effectfactor.MountedPublicationBatch]) engine.RuleResult[heapdomain.Value] {
-	batch, batchOK := engine.Operand(frame)
-	if !batchOK || rule == nil || rule.owner == nil || rule.values == nil || rule.calls == nil {
+func (rule *HotRule) fold(frame engine.Frame[heapdomain.Value, effectpublication.CallRow]) engine.RuleResult[heapdomain.Value] {
+	call, callRowOK := engine.Operand(frame)
+	if !callRowOK || rule == nil || rule.owner == nil || rule.values == nil || rule.calls == nil {
 		return engine.RuleResult[heapdomain.Value]{}
 	}
 	heapSelection, heapOK := engine.ReadValue(frame, rule.heapRead)
-	callValue, callPresent, callOK := rule.callValueFrame(frame, batch)
+	callValue, callPresent, callOK := rule.callValueFrame(frame, call)
 	if !heapOK || !callOK {
 		return engine.RuleResult[heapdomain.Value]{}
 	}
@@ -386,11 +398,11 @@ func (rule *HotRule) fold(frame engine.Frame[heapdomain.Value, effectfactor.Moun
 		}
 		return engine.NoSelection(frame, heapSelection)
 	}
-	prepared := rule.preparedFor(batch)
+	prepared := rule.preparedFor(call)
 	if prepared == nil {
 		return engine.RuleResult[heapdomain.Value]{}
 	}
-	gate, gateOK := rule.operationGateForBatch(prepared, callValue)
+	gate, gateOK := rule.operationGateForCall(prepared, callValue)
 	if !gateOK {
 		return engine.RuleResult[heapdomain.Value]{}
 	}

@@ -30,7 +30,7 @@ func TestPublicationFreezeOperationGateProjectsOnlySelectedOperations(t *testing
 	if !firstOK || !secondOK {
 		t.Fatal("source tag setup")
 	}
-	var prepared preparedBatch
+	var prepared preparedCall
 	if !prepared.sources.add(sourceSpec{tag: firstTag, rowID: firstID, operation: vocabulary.Operation(1)}) ||
 		!prepared.sources.add(sourceSpec{tag: secondTag, rowID: secondID, operation: vocabulary.Operation(2)}) {
 		t.Fatal("source setup")

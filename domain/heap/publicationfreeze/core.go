@@ -10,11 +10,10 @@ import (
 	"github.com/wippyai/go-lua/analysis/identity"
 	"github.com/wippyai/go-lua/analysis/program/target/vocabulary"
 	calldomain "github.com/wippyai/go-lua/domain/call"
-	effectfactor "github.com/wippyai/go-lua/domain/effect/factor"
+	effectpublication "github.com/wippyai/go-lua/domain/effect/publication"
 	heapdomain "github.com/wippyai/go-lua/domain/heap"
 	"github.com/wippyai/go-lua/domain/heap/internal/recentplan"
 	"github.com/wippyai/go-lua/domain/materialization"
-	packtransfer "github.com/wippyai/go-lua/domain/pack/transfer"
 	valuedomain "github.com/wippyai/go-lua/domain/value"
 )
 
@@ -36,7 +35,7 @@ type freezeRow struct {
 	subjectTags []sourceTag
 }
 
-type preparedBatch struct {
+type preparedCall struct {
 	id        identity.ContentID
 	callKey   calldomain.Key
 	callKeyOK bool
@@ -151,82 +150,59 @@ func sourceTagForMember(id identity.ContentID, member int) (sourceTag, bool) {
 	return sourceTag(tag), true
 }
 
-// prepareBatch authenticates the complete Effect batch, validates every
-// context row without consuming it, and retains only valid FreezeSeal rows.
-// The Call key is cached here because module/occurrence provenance is static
+// prepareCall authenticates one published call's FreezeSeal rows out of the
+// Effect publication directory and retains only valid FreezeSeal rows. The
+// Call key is cached here because module/occurrence provenance is static
 // after BindHot; hot selector and fold paths must not repeat that projection.
-func prepareBatch(values *valuedomain.Schema, calls *calldomain.Algebra, batch effectfactor.MountedPublicationBatch) (*preparedBatch, bool) {
-	if values == nil || !values.Valid() || calls == nil || !calls.Valid() || !batch.Valid() {
+func prepareCall(values *valuedomain.Schema, calls *calldomain.Algebra, directory effectpublication.Directory, call effectpublication.CallRow) (*preparedCall, bool) {
+	if values == nil || !values.Valid() || calls == nil || !calls.Valid() || !call.Available() {
 		return nil, false
 	}
-	id, idOK := batch.SealedContentID()
-	module, call, provenanceOK := batch.CallProvenance()
-	if !idOK || !id.Available() || !provenanceOK || !module.Available() || !call.Available() {
+	if int(call.RowOffset)+int(call.RowLength) > len(directory.Rows) {
 		return nil, false
 	}
-	_, callKey, callKeyOK := calls.MountedCallKeyForOccurrence(module, call)
+	_, callKey, callKeyOK := calls.MountedCallKeyForOccurrence(call.Module, call.Call)
 	if !callKeyOK || !callKey.Valid() {
 		return nil, false
 	}
-	prepared := &preparedBatch{id: id, callKey: callKey, callKeyOK: true}
+	prepared := &preparedCall{id: call.ID, callKey: callKey, callKeyOK: true}
 	var seen contentIDBuffer
-	for index := 0; index < batch.RowCount(); index++ {
-		publication, publicationOK := batch.RowAt(index)
-		if !publicationOK {
+	for _, publication := range directory.Rows[call.RowOffset : call.RowOffset+call.RowLength] {
+		if !publication.MountedAt(call.Module, call.Call) {
 			return nil, false
 		}
-		if !publication.Valid() {
-			return nil, false
-		}
-		rowModule, rowCall, rowOK := publication.CallProvenance()
-		rowID, rowIDOK := publication.ContentID()
-		if !rowOK || rowModule != module || rowCall != call || !rowIDOK || !rowID.Available() {
-			return nil, false
-		}
-		if !seen.add(rowID) {
+		if !seen.add(publication.ID) {
 			return nil, false
 		}
 
-		// Context is an authenticated mounted input, but FreezeSeal does not
-		// consume it. Validate its owner/semantic join when it is closed.
-		context, contextPresent := publication.ContextInput()
-		if contextPresent {
-			if !context.Valid() {
-				return nil, false
-			}
-			for member := 0; member < context.MemberCount(); member++ {
-				if _, contextOK := packtransfer.CoordinateForInputMember(values, context, member); !contextOK {
-					return nil, false
-				}
-			}
-		}
-
-		if publication.Kind() != vocabulary.PublicationEffectFreezeSeal || publication.Mutability() != vocabulary.PublicationMutabilitySeal {
+		// The subject and context members of a published row are proven to
+		// resolve at admission (domain/effect/publication.Detach); this
+		// consumer does not re-derive that proof.
+		if publication.Kind != vocabulary.PublicationEffectFreezeSeal || publication.Mutability != vocabulary.PublicationMutabilitySeal {
 			continue
 		}
-		operation := publication.Operation()
+		operation := publication.Operation
 		if operation == 0 {
 			return nil, false
 		}
-		subject, subjectOK := publication.SubjectInput()
-		if !subjectOK || !subject.Valid() {
+		if int(publication.SubjectOffset)+int(publication.SubjectLength) > len(directory.Members) {
 			return nil, false
 		}
-		row := freezeRow{id: rowID, operation: operation}
-		if subject.IsOpen() {
-			row.subjectOpen = true
-		}
-		for member := 0; member < subject.MemberCount(); member++ {
-			coordinate, coordinateOK := packtransfer.CoordinateForInputMember(values, subject, member)
-			tag, tagOK := sourceTagForMember(rowID, member)
+		row := freezeRow{id: publication.ID, operation: operation, subjectOpen: publication.SubjectOpen}
+		for _, member := range directory.Members[publication.SubjectOffset : publication.SubjectOffset+publication.SubjectLength] {
+			if member.RowID != publication.ID {
+				return nil, false
+			}
+			coordinate, coordinateOK := values.CoordinateForMountedSemantic(publication.Module, member.Semantic)
+			tag, tagOK := sourceTagForMember(publication.ID, int(member.Member))
 			if !coordinateOK || !tagOK {
 				return nil, false
 			}
 			row.subjectTags = append(row.subjectTags, tag)
-			if member == 0 {
+			if member.Member == 0 {
 				row.subjectTag = tag
 			}
-			if !prepared.sources.add(sourceSpec{tag: tag, rowID: rowID, operation: operation, member: member, coordinate: coordinate}) {
+			if !prepared.sources.add(sourceSpec{tag: tag, rowID: publication.ID, operation: operation, member: int(member.Member), coordinate: coordinate}) {
 				return nil, false
 			}
 		}
@@ -301,7 +277,7 @@ func (sources sourceBuffer) find(tag sourceTag) (sourceSpec, bool) {
 	return sourceSpec{}, false
 }
 
-func (prepared *preparedBatch) sourcesForGate(gate operationGate) sourceBuffer {
+func (prepared *preparedCall) sourcesForGate(gate operationGate) sourceBuffer {
 	if prepared == nil || gate.opaque || gate.unsupported {
 		return sourceBuffer{}
 	}
@@ -493,7 +469,7 @@ func exactRecentAllocation(values *valuedomain.Schema, fact valuedomain.Value, p
 // operation alternative. Any open/top Call, unsupported target, missing
 // FreezeSeal row, open subject, or non-exact Value fact yields an empty valid
 // plan rather than a strong Heap transition.
-func planFor(schema heapdomain.Schema, values *valuedomain.Schema, prepared *preparedBatch, gate operationGate, facts factBuffer) (routePlan, bool) {
+func planFor(schema heapdomain.Schema, values *valuedomain.Schema, prepared *preparedCall, gate operationGate, facts factBuffer) (routePlan, bool) {
 	if !schema.Valid() || values == nil || !values.Valid() || !values.OwnsHeapSchema(schema) || prepared == nil {
 		return routePlan{}, false
 	}

@@ -16,7 +16,7 @@ var publicationFreezePlanningSink int
 // construction stay outside the timed loop.
 func BenchmarkExactPublicationFreezePlanning(b *testing.B) {
 	rowID := identity.ContentID{1}
-	var prepared preparedBatch
+	var prepared preparedCall
 	prepared.rows = []freezeRow{{id: rowID, operation: vocabulary.Operation(1), subjectTag: sourceTag(1)}}
 	if !prepared.sources.add(sourceSpec{tag: sourceTag(1), rowID: rowID, operation: vocabulary.Operation(1)}) {
 		b.Fatal("exact source setup")
@@ -62,7 +62,7 @@ func TestPublicationFreezeHotBuffersOrdinaryPathAllocationFree(t *testing.T) {
 		if !gate.add(vocabulary.Operation(1)) || !gate.add(vocabulary.Operation(2)) || !gate.admits(vocabulary.Operation(2)) {
 			t.Fatal("operation gate")
 		}
-		var prepared preparedBatch
+		var prepared preparedCall
 		if !prepared.sources.add(sourceSpec{tag: 1, rowID: rowID, operation: vocabulary.Operation(1)}) {
 			t.Fatal("source buffer")
 		}

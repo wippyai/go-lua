@@ -277,20 +277,26 @@ func (state *compiledState) publishComposition(module *linkmodule.Component, con
 	if effects == nil || !vocabularyOK {
 		return anadiag.AnalyzeDiagnosticCompositionFailureInput, effectpublication.AxisKey
 	}
-	publicationRows, publicationRowsOK := effectpublication.Rows(effects.Algebra())
-	if !publicationRowsOK {
+	publicationDirectory, publicationDirectoryOK := effectpublication.Detach(effects.Algebra(), state.binding.ValueSchema())
+	if !publicationDirectoryOK {
 		return anadiag.AnalyzeDiagnosticCompositionFailureRows, effectpublication.AxisKey
 	}
-	publicationDenominator, publicationDenominatorOK := effectpublication.DenominatorID(state.sourceID, publicationRows)
-	if !publicationDenominatorOK {
+	publicationDenominator, publicationDenominatorOK := effectpublication.DenominatorID(state.sourceID, publicationDirectory.Rows)
+	callsDenominator, callsDenominatorOK := effectpublication.CallsDenominatorID(state.sourceID, publicationDirectory.Calls)
+	membersDenominator, membersDenominatorOK := effectpublication.MembersDenominatorID(state.sourceID, publicationDirectory.Members)
+	if !publicationDenominatorOK || !callsDenominatorOK || !membersDenominatorOK {
 		return anadiag.AnalyzeDiagnosticCompositionFailureDenominator, effectpublication.AxisKey
 	}
-	publicationContent, publicationContentOK := effectpublication.Content(publicationRows, publicationDenominator, declaredVocabulary)
-	if !publicationContentOK {
+	publicationContent, publicationContentOK := effectpublication.Content(publicationDirectory.Rows, publicationDenominator, declaredVocabulary)
+	callsContent, callsContentOK := effectpublication.CallsContent(publicationDirectory.Calls, len(publicationDirectory.Rows), callsDenominator)
+	membersContent, membersContentOK := effectpublication.MembersContent(publicationDirectory.Members, publicationDirectory.Rows, membersDenominator)
+	if !publicationContentOK || !callsContentOK || !membersContentOK {
 		return anadiag.AnalyzeDiagnosticCompositionFailureContent, effectpublication.AxisKey
 	}
 	publicationWrite, publicationMinted := engine.MintColumnWrite[identity.ContentID, effectpublication.Row](state.binding.SchemaBinding(), effectpublication.OutputKey, effectpublication.AxisKey)
-	if !publicationMinted || !publicationWrite.Available() {
+	callsWrite, callsMinted := engine.MintColumnWrite[identity.ContentID, effectpublication.CallRow](state.binding.SchemaBinding(), effectpublication.CallsOutputKey, effectpublication.AxisKey)
+	membersWrite, membersMinted := engine.MintColumnWrite[identity.ContentID, effectpublication.MemberRow](state.binding.SchemaBinding(), effectpublication.MembersOutputKey, effectpublication.AxisKey)
+	if !publicationMinted || !publicationWrite.Available() || !callsMinted || !callsWrite.Available() || !membersMinted || !membersWrite.Available() {
 		return anadiag.AnalyzeDiagnosticCompositionFailureColumnGrant, effectpublication.AxisKey
 	}
 	builder := snapshot.NewBuilder(schemaID, store, identity.Generation(1))
@@ -328,6 +334,12 @@ func (state *compiledState) publishComposition(module *linkmodule.Component, con
 		return anadiag.AnalyzeDiagnosticCompositionFailureWrite, modulecomposition.ModuleExportCallableIngressAxisKey
 	}
 	if err := engine.PublishColumn(publicationWrite, &builder, publicationContent); err != nil {
+		return anadiag.AnalyzeDiagnosticCompositionFailureWrite, effectpublication.AxisKey
+	}
+	if err := engine.PublishColumn(membersWrite, &builder, membersContent); err != nil {
+		return anadiag.AnalyzeDiagnosticCompositionFailureWrite, effectpublication.AxisKey
+	}
+	if err := engine.PublishColumn(callsWrite, &builder, callsContent); err != nil {
 		return anadiag.AnalyzeDiagnosticCompositionFailureWrite, effectpublication.AxisKey
 	}
 	sealed, err := builder.Seal()
