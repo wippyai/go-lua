@@ -1,0 +1,1278 @@
+{
+  "schema_version": 1,
+  "pinned_ref": "2056438af0fdbbd729fe2822e6bf16940b226fe9",
+  "authority": [
+    "docs/architecture/relation-engine.md \u00a711 Wave 5 and \u00a712",
+    "journal 7305 (residue census and dependency layers)",
+    "journal 7315 (vocabulary triage)",
+    "journal 7318 (laws are not projections)",
+    "journal 7328 (rulings on the FT-80 map)",
+    "journal 7329 (placement by altitude)",
+    "journal 7336 (query, diagnostic and seed plane census)",
+    "journal 7337 and 7339 (isolated replacement, one rewire, full protocol deletion)"
+  ],
+  "rule": "This manifest is read-only until the Wave 5 atomic cut. It states what the cut deletes, in what order, and what each deletion owes the law suite. No entry may be executed on its own: Wave 5 is one landing.",
+  "layers": [
+    {
+      "id": "L0",
+      "name": "worktree noise",
+      "order": 0,
+      "description": "Untracked files a checkout slip left in the shared tree. Not part of any commit."
+    },
+    {
+      "id": "L1",
+      "name": "dies with a pending family cut",
+      "order": 1,
+      "description": "Journal 7305 Layer 1: protocol residue that the placement and heap/index family cuts remove without the deletion lane touching it."
+    },
+    {
+      "id": "L2.1",
+      "name": "composite wiring",
+      "order": 2,
+      "description": "Journal 7305 Layer 2.1: the cold principals record and the wire arms, blocked strictly on L1."
+    },
+    {
+      "id": "L2.2",
+      "name": "owner protocol arms",
+      "order": 3,
+      "description": "Journal 7305 Layer 2.2: DeclareAxis / BindAxis / AlgebraAxis / BindHot in the eight owner packages."
+    },
+    {
+      "id": "L2.3",
+      "name": "fragment collapse",
+      "order": 4,
+      "description": "Journal 7305 Layer 2.3: the nine SchemaFragment types and the ten surviving accessor sites."
+    },
+    {
+      "id": "L2.4",
+      "name": "scheduled-death ledger",
+      "order": 5,
+      "description": "Journal 7305 Layer 2.4: the seven rows in analysis/schema/axis/member/definition/scheduled_death.go. The file deletes when the table is empty; no row empties itself."
+    },
+    {
+      "id": "L3",
+      "name": "engine protocol",
+      "order": 6,
+      "description": "The old execution protocol: execution, catalog, generated workers, emit, runtime reconstruction. Unreachable only after the constructor rewire."
+    },
+    {
+      "id": "L4",
+      "name": "read paths",
+      "order": 7,
+      "description": "Query and diagnostic access paths that reconstruct relations outside the canonical snapshot."
+    }
+  ],
+  "entries": [
+    {
+      "id": "L0-resurrected-residue",
+      "paths": [
+        "domain/value/freshresult/hot_rule.go",
+        "domain/value/freshresult/registration.go",
+        "domain/value/freshresult/schema_fragment.go",
+        "analysis/schema/rule/program/candidate_law_test.go"
+      ],
+      "kind": "file-group",
+      "disposition": "delete",
+      "cut_step": 0,
+      "residue_layer": "L0",
+      "authority": "journal 7305 Layer 0: four files deleted by eea87631e4 / ce1ddcbd1f that a checkout-index slip left untracked in the shared worktree",
+      "measured": {
+        "files": 0,
+        "non_test_loc": 0
+      },
+      "blocked_by": [],
+      "laws_die": [],
+      "laws_restated": [],
+      "proof_obligation": "",
+      "expect_present": false,
+      "note": "Not tracked at the pinned ref. A git add -A in the shared tree resurrects three residue files and one deleted law. Delete from the working tree; no commit."
+    },
+    {
+      "id": "S1-analyzer-constructor",
+      "paths": [
+        "analysis/analyze.go",
+        "analysis/compile.go"
+      ],
+      "kind": "file-group",
+      "disposition": "restate",
+      "cut_step": 1,
+      "residue_layer": "",
+      "authority": "docs/architecture/relation-engine.md \u00a711 Wave 5 step 1: rewire the analyzer constructor to analysis/engine/relation/runtime",
+      "measured": {
+        "files": 2,
+        "non_test_loc": 1487
+      },
+      "blocked_by": [],
+      "laws_die": [],
+      "laws_restated": [
+        {
+          "law": "the analyzer constructs one solved result per compiled target",
+          "target": "analysis/engine/relation/runtime composition law"
+        }
+      ],
+      "proof_obligation": "",
+      "expect_present": true,
+      "note": "The only entry that runs before every deletion. Nothing below is reachable-dead until it lands."
+    },
+    {
+      "id": "S2-engine-execution",
+      "paths": [
+        "analysis/engine/execution"
+      ],
+      "kind": "package",
+      "disposition": "delete",
+      "cut_step": 2,
+      "residue_layer": "L3",
+      "authority": "\u00a712 delete: analysis/engine/execution form classification and workers",
+      "measured": {
+        "files": 22,
+        "non_test_loc": 4922
+      },
+      "blocked_by": [
+        "S1-analyzer-constructor"
+      ],
+      "laws_die": [
+        "per-form executor selection laws (form_registry declaredFormRow arms)"
+      ],
+      "laws_restated": [
+        {
+          "law": "a rule of any declared shape is evaluated by one operator tree",
+          "target": "analysis/relation/check certificate laws + analysis/engine/relation/eval kernel laws"
+        }
+      ],
+      "proof_obligation": "",
+      "expect_present": true,
+      "note": ""
+    },
+    {
+      "id": "S2-executioncatalog",
+      "paths": [
+        "analysis/engine/internal/executioncatalog"
+      ],
+      "kind": "package",
+      "disposition": "delete",
+      "cut_step": 2,
+      "residue_layer": "L3",
+      "authority": "\u00a712 delete: analysis/engine/internal/executioncatalog",
+      "measured": {
+        "files": 1,
+        "non_test_loc": 99
+      },
+      "blocked_by": [
+        "S2-engine-execution"
+      ],
+      "laws_die": [],
+      "laws_restated": [],
+      "proof_obligation": "",
+      "expect_present": true,
+      "note": ""
+    },
+    {
+      "id": "S3-generated-family-workers",
+      "paths": [
+        "domain/call/activation/generated_family.go",
+        "domain/call/dispatch/generated_family.go",
+        "domain/effect/callsite/body/generated_family.go",
+        "domain/effect/callsite/opaque/generated_family.go",
+        "domain/effect/callsite/selected/generated_family.go",
+        "domain/heap/allocation/closed/generated_family.go",
+        "domain/heap/allocation/empty/generated_family.go",
+        "domain/heap/formalfreeze/generated_family.go",
+        "domain/heap/publicationfreeze/generated_family.go",
+        "domain/placement/formal/generated_family.go",
+        "domain/placement/returnescape/generated_family.go",
+        "domain/placement/store/generated_family.go",
+        "domain/placement/transfer/generated_family.go",
+        "domain/value/allocation/generated_family.go",
+        "domain/value/bodyresult/generated_family.go",
+        "domain/value/freshresult/generated_family.go",
+        "domain/value/moduleload/generated_family.go",
+        "domain/value/resultalias/generated_family.go",
+        "domain/value/runtimekind/generated_family.go"
+      ],
+      "kind": "file-group",
+      "disposition": "delete",
+      "cut_step": 3,
+      "residue_layer": "L3",
+      "authority": "\u00a712 delete: generated family executors and installer choreography",
+      "measured": {
+        "files": 19,
+        "non_test_loc": 6472
+      },
+      "blocked_by": [
+        "S2-engine-execution"
+      ],
+      "laws_die": [
+        "per-family generated worker restatement laws"
+      ],
+      "laws_restated": [
+        {
+          "law": "every declared family publishes its answers under its sealed layout",
+          "target": "relcompile census law over the sealed plan rows"
+        }
+      ],
+      "proof_obligation": "",
+      "expect_present": true,
+      "note": ""
+    },
+    {
+      "id": "S3-generated-relation-owners",
+      "paths": [
+        "domain/call/generated_relation_owner.go",
+        "domain/effect/owner/generated_relation_owner.go",
+        "domain/heap/generated_relation_owner.go",
+        "domain/pack/generated_relation_owner.go",
+        "domain/placement/generated_relation_owner.go",
+        "domain/static/generated_relation_owner.go",
+        "domain/value/generated_relation_owner.go",
+        "domain/value/generated_exact_fold.go"
+      ],
+      "kind": "file-group",
+      "disposition": "delete",
+      "cut_step": 3,
+      "residue_layer": "L3",
+      "authority": "\u00a712 delete: generated family executors and installer choreography",
+      "measured": {
+        "files": 8,
+        "non_test_loc": 2676
+      },
+      "blocked_by": [
+        "S3-generated-family-workers"
+      ],
+      "laws_die": [],
+      "laws_restated": [],
+      "proof_obligation": "",
+      "expect_present": true,
+      "note": ""
+    },
+    {
+      "id": "S3-generated-rule-members",
+      "paths": [
+        "domain/call/rule_members.go",
+        "domain/effect/rule_members.go",
+        "domain/heap/rule_members.go",
+        "domain/pack/rule_members.go",
+        "domain/placement/rule_members.go",
+        "domain/static/rule_members.go",
+        "domain/value/rule_members.go"
+      ],
+      "kind": "file-group",
+      "disposition": "delete",
+      "cut_step": 3,
+      "residue_layer": "L3",
+      "authority": "\u00a712 delete: duplicated family/member/rule registries derivable from declarations",
+      "measured": {
+        "files": 7,
+        "non_test_loc": 760
+      },
+      "blocked_by": [
+        "S3-generated-family-workers"
+      ],
+      "laws_die": [],
+      "laws_restated": [],
+      "proof_obligation": "",
+      "expect_present": true,
+      "note": ""
+    },
+    {
+      "id": "S3-engine-generated-descriptors",
+      "paths": [
+        "analysis/engine/generated",
+        "analysis/engine/generated_member.go",
+        "analysis/engine/generated_occurrence_catalog.go",
+        "analysis/engine/generated_rule_slot.go"
+      ],
+      "kind": "file-group",
+      "disposition": "delete",
+      "cut_step": 3,
+      "residue_layer": "L3",
+      "authority": "\u00a712 delete: obsolete generated descriptors",
+      "measured": {
+        "files": 4,
+        "non_test_loc": 2709
+      },
+      "blocked_by": [
+        "S3-generated-family-workers"
+      ],
+      "laws_die": [],
+      "laws_restated": [],
+      "proof_obligation": "",
+      "expect_present": true,
+      "note": ""
+    },
+    {
+      "id": "S3-installer-choreography",
+      "paths": [
+        "analysis/schema/rule/emit/installer.go"
+      ],
+      "kind": "file",
+      "disposition": "delete",
+      "cut_step": 3,
+      "residue_layer": "L3",
+      "authority": "\u00a711 Wave 5 step 3: installer-only APIs",
+      "measured": {
+        "files": 1,
+        "non_test_loc": 447
+      },
+      "blocked_by": [
+        "S3-generated-family-workers"
+      ],
+      "laws_die": [],
+      "laws_restated": [],
+      "proof_obligation": "",
+      "expect_present": true,
+      "note": ""
+    },
+    {
+      "id": "S4-placement-hot-rules",
+      "paths": [
+        "domain/placement/capture/hot_rule.go",
+        "domain/placement/containment/hot_rule.go",
+        "domain/placement/publicationescape/hot_rule.go",
+        "domain/placement/suspension/hot_rule.go",
+        "domain/placement/suspension/evidence_hot_rule.go"
+      ],
+      "kind": "file-group",
+      "disposition": "delete",
+      "cut_step": 4,
+      "residue_layer": "L1",
+      "authority": "\u00a712 delete: HotRule, HotOwner and BindHot protocol; journal 7305 Layer 1 (FT-77 placement families)",
+      "measured": {
+        "files": 5,
+        "non_test_loc": 1407
+      },
+      "blocked_by": [],
+      "laws_die": [],
+      "laws_restated": [],
+      "proof_obligation": "",
+      "expect_present": true,
+      "note": "Journal 7305 measures these with capture/containment/publicationescape/suspension registration and schema_fragment as 16 files / 129 occurrences."
+    },
+    {
+      "id": "S4-owner-hot-owners",
+      "paths": [
+        "domain/call/owner/hot_owner.go",
+        "domain/effect/owner/hot_owner.go",
+        "domain/heap/context/owner/hot_owner.go",
+        "domain/heap/owner/hot_owner.go",
+        "domain/pack/owner/hot_owner.go",
+        "domain/placement/owner/hot_owner.go",
+        "domain/static/owner/hot_owner.go",
+        "domain/value/owner/hot_owner.go"
+      ],
+      "kind": "file-group",
+      "disposition": "delete",
+      "cut_step": 4,
+      "residue_layer": "L2.2",
+      "authority": "\u00a712 delete: HotRule, HotOwner and BindHot protocol",
+      "measured": {
+        "files": 8,
+        "non_test_loc": 2111
+      },
+      "blocked_by": [],
+      "laws_die": [],
+      "laws_restated": [],
+      "proof_obligation": "",
+      "expect_present": true,
+      "note": "Eight owner packages. Delete DeclareAxis / BindAxis / AlgebraAxis / BindHot; AxisEntry() and StructureSpecs() are the retained declaration surface."
+    },
+    {
+      "id": "S4-placement-registrations",
+      "paths": [
+        "domain/placement/capture/registration.go",
+        "domain/placement/containment/registration.go",
+        "domain/placement/publicationescape/registration.go",
+        "domain/placement/suspension/registration.go",
+        "domain/heap/index/registration.go"
+      ],
+      "kind": "file-group",
+      "disposition": "delete",
+      "cut_step": 4,
+      "residue_layer": "L1",
+      "authority": "journal 7305 Layer 1: registration 13 -> 9 with the placement cuts, 9 -> 8 with heap/index",
+      "measured": {
+        "files": 5,
+        "non_test_loc": 475
+      },
+      "blocked_by": [],
+      "laws_die": [],
+      "laws_restated": [],
+      "proof_obligation": "",
+      "expect_present": true,
+      "note": "Journal 7336(4): containment, capture, suspension and publicationescape already carry declarative program/declaration.go siblings, so these are the wired arm only."
+    },
+    {
+      "id": "S4-owner-registrations",
+      "paths": [
+        "domain/call/owner/registration.go",
+        "domain/effect/owner/registration.go",
+        "domain/heap/context/owner/registration.go",
+        "domain/heap/owner/registration.go",
+        "domain/pack/owner/registration.go",
+        "domain/placement/owner/registration.go",
+        "domain/static/owner/registration.go",
+        "domain/value/owner/registration.go"
+      ],
+      "kind": "file-group",
+      "disposition": "delete",
+      "cut_step": 4,
+      "residue_layer": "L2.2",
+      "authority": "journal 7305 Layer 2.2: owner protocol arms, registration 8 -> 0",
+      "measured": {
+        "files": 8,
+        "non_test_loc": 965
+      },
+      "blocked_by": [
+        "S4-placement-registrations"
+      ],
+      "laws_die": [],
+      "laws_restated": [],
+      "proof_obligation": "",
+      "expect_present": true,
+      "note": "Journal 7305/7328(4): AlgebraAxis stands in nine copies and is cuttable with no Layer-1 dependency."
+    },
+    {
+      "id": "S4-schema-fragments",
+      "paths": [
+        "domain/call/owner/schema_fragment.go",
+        "domain/effect/owner/schema_fragment.go",
+        "domain/heap/context/owner/schema_fragment.go",
+        "domain/heap/owner/schema_fragment.go",
+        "domain/pack/owner/schema_fragment.go",
+        "domain/placement/capture/schema_fragment.go",
+        "domain/placement/containment/schema_fragment.go",
+        "domain/placement/owner/schema_fragment.go",
+        "domain/placement/publicationescape/schema_fragment.go",
+        "domain/placement/suspension/schema_fragment.go",
+        "domain/static/owner/schema_fragment.go",
+        "domain/value/owner/schema_fragment.go",
+        "domain/placement/suspension/evidence_factor.go"
+      ],
+      "kind": "file-group",
+      "disposition": "delete",
+      "cut_step": 4,
+      "residue_layer": "L2.3",
+      "authority": "journal 7305 Layer 2.3: the fragment collapse; \u00a712 delete: duplicated registries derivable from declarations",
+      "measured": {
+        "files": 13,
+        "non_test_loc": 1302
+      },
+      "blocked_by": [
+        "S4-owner-registrations"
+      ],
+      "laws_die": [],
+      "laws_restated": [],
+      "proof_obligation": "",
+      "expect_present": true,
+      "note": "Measured at 7305: 58 non-test accessor consumers, 48 inside files this manifest deletes whole. The ten survivors are restated by S4-fragment-consumers."
+    },
+    {
+      "id": "S4-fragment-consumers",
+      "paths": [
+        "domain/call/query/query.go",
+        "domain/effect/owner/query.go",
+        "domain/value/owner/query.go",
+        "domain/placement/query/query.go",
+        "domain/probe/declaration.go"
+      ],
+      "kind": "file-group",
+      "disposition": "restate",
+      "cut_step": 4,
+      "residue_layer": "L2.3",
+      "authority": "journal 7305 Layer 2.3: the ten surviving accessor sites restate onto one generic factor",
+      "measured": {
+        "files": 5,
+        "non_test_loc": 773
+      },
+      "blocked_by": [
+        "S4-schema-fragments"
+      ],
+      "laws_die": [],
+      "laws_restated": [
+        {
+          "law": "a declaration-surface fixture conforms to the surface it pins",
+          "target": "domain/probe/declaration.go against the generic factor, in the same commit"
+        }
+      ],
+      "proof_obligation": "",
+      "expect_present": true,
+      "note": ""
+    },
+    {
+      "id": "S4-heap-index-hot",
+      "paths": [
+        "domain/heap/index/raw_get_hot.go",
+        "domain/heap/index/raw_set_hot.go",
+        "domain/heap/index/raw_set_rule.go",
+        "domain/heap/index/schema_fragment.go"
+      ],
+      "kind": "file-group",
+      "disposition": "delete",
+      "cut_step": 4,
+      "residue_layer": "L1",
+      "authority": "journal 7305 Layer 1 (CX-48, the S4 computed-coordinate shape); \u00a710 hostile corpus: RawGet and RawSet",
+      "measured": {
+        "files": 4,
+        "non_test_loc": 628
+      },
+      "blocked_by": [
+        "S4-schema-fragments"
+      ],
+      "laws_die": [],
+      "laws_restated": [],
+      "proof_obligation": "",
+      "expect_present": true,
+      "note": "Journal 7336(5): heap/index is the only rule pair with no declaration at all, so its plan is authored by relcompile before this deletes."
+    },
+    {
+      "id": "S4-engine-hot-binding",
+      "paths": [
+        "analysis/engine/schema_bind_entry.go",
+        "analysis/engine/schema_rule_binding.go",
+        "analysis/engine/generated_rule_binding.go"
+      ],
+      "kind": "file-group",
+      "disposition": "delete",
+      "cut_step": 4,
+      "residue_layer": "L3",
+      "authority": "\u00a712 delete: HotRule, HotOwner and BindHot protocol - the engine half",
+      "measured": {
+        "files": 3,
+        "non_test_loc": 1645
+      },
+      "blocked_by": [
+        "S4-owner-hot-owners"
+      ],
+      "laws_die": [],
+      "laws_restated": [],
+      "proof_obligation": "",
+      "expect_present": true,
+      "note": ""
+    },
+    {
+      "id": "S4-composite-wiring",
+      "paths": [
+        "domain/composite/rule_table.go",
+        "domain/composite/rule_templates.go",
+        "domain/composite/axis_table.go",
+        "domain/composite/rule_wire.go",
+        "domain/composite/binding.go",
+        "domain/composite/program_binding.go"
+      ],
+      "kind": "file-group",
+      "disposition": "delete",
+      "cut_step": 4,
+      "residue_layer": "L2.1",
+      "authority": "journal 7305 Layer 2.1: composite wiring first - the cold principals record, the nine-method principals interface, the nine axisPayloadForKey extractions",
+      "measured": {
+        "files": 6,
+        "non_test_loc": 2146
+      },
+      "blocked_by": [
+        "S4-schema-fragments"
+      ],
+      "laws_die": [],
+      "laws_restated": [],
+      "proof_obligation": "",
+      "expect_present": true,
+      "note": "7305: principals has 38 non-test references across 10 files; the four outside composite are a different spelling and must be checked, not swept."
+    },
+    {
+      "id": "S5-emit-machinery",
+      "paths": [
+        "analysis/schema/rule/emit/derive.go",
+        "analysis/schema/rule/emit/emit.go",
+        "analysis/schema/rule/emit/imports.go",
+        "analysis/schema/rule/emit/render.go",
+        "analysis/schema/rule/emit/law.go",
+        "analysis/schema/rule/emit/cmd"
+      ],
+      "kind": "file-group",
+      "disposition": "delete",
+      "cut_step": 5,
+      "residue_layer": "L3",
+      "authority": "\u00a712 delete: emitter/render/installer machinery whose product was executable Go protocol",
+      "measured": {
+        "files": 6,
+        "non_test_loc": 4059
+      },
+      "blocked_by": [
+        "S3-generated-family-workers",
+        "S3-installer-choreography"
+      ],
+      "laws_die": [
+        "emitter -check idempotence over generated Go"
+      ],
+      "laws_restated": [
+        {
+          "law": "the sealed schema states every rule the declarations authored",
+          "target": "analysis/relation/check certificate over plan rows"
+        }
+      ],
+      "proof_obligation": "",
+      "expect_present": true,
+      "note": ""
+    },
+    {
+      "id": "S5-codegen-model",
+      "paths": [
+        "analysis/schema/rule/codegen"
+      ],
+      "kind": "package",
+      "disposition": "delete",
+      "cut_step": 5,
+      "residue_layer": "L3",
+      "authority": "\u00a712 delete: emitter machinery; codegen imports analysis/engine/execution and cannot outlive it",
+      "measured": {
+        "files": 2,
+        "non_test_loc": 1402
+      },
+      "blocked_by": [
+        "S5-emit-machinery",
+        "S2-engine-execution"
+      ],
+      "laws_die": [],
+      "laws_restated": [],
+      "proof_obligation": "",
+      "expect_present": true,
+      "note": ""
+    },
+    {
+      "id": "S5-emitted-law-renderer",
+      "paths": [
+        "analysis/schema/rule/emitlaw"
+      ],
+      "kind": "package",
+      "disposition": "restate",
+      "cut_step": 5,
+      "residue_layer": "L3",
+      "authority": "journal 7318 carve-out: LAWS ARE NOT PROJECTIONS - the emitted law suites survive as the independent restatement and become the certificate checker of the sealed schema",
+      "measured": {
+        "files": 5,
+        "non_test_loc": 1393
+      },
+      "blocked_by": [
+        "S5-emit-machinery"
+      ],
+      "laws_die": [],
+      "laws_restated": [
+        {
+          "law": "every emitted family law suite",
+          "target": "re-pointed at sealed plan rows in analysis/relation/check/certificate"
+        }
+      ],
+      "proof_obligation": "",
+      "expect_present": true,
+      "note": "This entry exists to refuse the reflex that the law renderer dies with the emitter. It does not."
+    },
+    {
+      "id": "S6-engine-runtime",
+      "paths": [
+        "analysis/engine/runtime_activation_admit.go",
+        "analysis/engine/runtime_artifact_read_index.go",
+        "analysis/engine/runtime_assembly.go",
+        "analysis/engine/runtime_binding.go",
+        "analysis/engine/runtime_binding_catalog.go",
+        "analysis/engine/runtime_diagnostics.go",
+        "analysis/engine/runtime_epoch.go",
+        "analysis/engine/runtime_epoch_activation.go",
+        "analysis/engine/runtime_epoch_queue.go",
+        "analysis/engine/runtime_executor.go",
+        "analysis/engine/runtime_factor.go",
+        "analysis/engine/runtime_factor_bind.go",
+        "analysis/engine/runtime_frame.go",
+        "analysis/engine/runtime_input_projection.go",
+        "analysis/engine/runtime_member.go",
+        "analysis/engine/runtime_observation.go",
+        "analysis/engine/runtime_operands.go",
+        "analysis/engine/runtime_output.go",
+        "analysis/engine/runtime_point_fold.go",
+        "analysis/engine/runtime_point_refresh.go",
+        "analysis/engine/runtime_point_state_snapshot.go",
+        "analysis/engine/runtime_program.go",
+        "analysis/engine/runtime_program_admit.go",
+        "analysis/engine/runtime_program_assemble.go",
+        "analysis/engine/runtime_program_bind.go",
+        "analysis/engine/runtime_program_bootstrap.go",
+        "analysis/engine/runtime_program_construct.go",
+        "analysis/engine/runtime_program_issue.go",
+        "analysis/engine/runtime_program_lower.go",
+        "analysis/engine/runtime_program_observation.go",
+        "analysis/engine/runtime_program_plane.go",
+        "analysis/engine/runtime_program_seal.go",
+        "analysis/engine/runtime_provenance.go",
+        "analysis/engine/runtime_query_admit.go",
+        "analysis/engine/runtime_read.go",
+        "analysis/engine/runtime_region_discharge.go",
+        "analysis/engine/runtime_region_interface.go",
+        "analysis/engine/runtime_region_newton.go",
+        "analysis/engine/runtime_regions.go",
+        "analysis/engine/runtime_reindex.go",
+        "analysis/engine/runtime_rule.go",
+        "analysis/engine/runtime_rule_admit.go",
+        "analysis/engine/runtime_selected_overlay.go",
+        "analysis/engine/runtime_state_plane.go"
+      ],
+      "kind": "file-group",
+      "disposition": "delete",
+      "cut_step": 6,
+      "residue_layer": "L3",
+      "authority": "\u00a712 delete: repeated runtime validation, topology reconstruction and address inference; \u00a711 Wave 5 step 6",
+      "measured": {
+        "files": 44,
+        "non_test_loc": 22547
+      },
+      "blocked_by": [
+        "S4-engine-hot-binding",
+        "S2-engine-execution"
+      ],
+      "laws_die": [
+        "runtime re-validation laws over facts already certified at seal"
+      ],
+      "laws_restated": [
+        {
+          "law": "the runtime redeems a proven plan and never decides executability",
+          "target": "analysis/relation/check + analysis/engine/relation/runtime"
+        }
+      ],
+      "proof_obligation": "",
+      "expect_present": true,
+      "note": ""
+    },
+    {
+      "id": "S6-engine-schema-binding",
+      "paths": [
+        "analysis/engine/schema_activation_binding.go",
+        "analysis/engine/schema_binding.go",
+        "analysis/engine/schema_factor_binding.go",
+        "analysis/engine/schema_query_binding.go",
+        "analysis/engine/schema_query_runtime.go",
+        "analysis/engine/schema_rule_project.go",
+        "analysis/engine/schema_rule_read_binding.go",
+        "analysis/engine/schema_seal_tokens.go",
+        "analysis/engine/schema_slots.go"
+      ],
+      "kind": "file-group",
+      "disposition": "delete",
+      "cut_step": 6,
+      "residue_layer": "L3",
+      "authority": "\u00a711 Wave 5 step 6: old lowering, binding, issuance and seal paths",
+      "measured": {
+        "files": 9,
+        "non_test_loc": 3645
+      },
+      "blocked_by": [
+        "S6-engine-runtime"
+      ],
+      "laws_die": [],
+      "laws_restated": [],
+      "proof_obligation": "",
+      "expect_present": true,
+      "note": ""
+    },
+    {
+      "id": "S6-engine-topology",
+      "paths": [
+        "analysis/engine/construct_topology.go",
+        "analysis/engine/binding_topology.go",
+        "analysis/engine/binding_topology_directory.go",
+        "analysis/engine/program_point_transition.go",
+        "analysis/engine/program_rows.go",
+        "analysis/engine/activation.go",
+        "analysis/engine/activation_candidate_binding.go",
+        "analysis/engine/selector.go",
+        "analysis/engine/factor.go",
+        "analysis/engine/factor_capability.go",
+        "analysis/engine/rule.go",
+        "analysis/engine/rule_capability.go",
+        "analysis/engine/rule_operand.go",
+        "analysis/engine/rule_surface.go",
+        "analysis/engine/operand_resolver.go",
+        "analysis/engine/operand_entity.go",
+        "analysis/engine/state.go",
+        "analysis/engine/composition.go",
+        "analysis/engine/read_contract.go",
+        "analysis/engine/semantic_key.go",
+        "analysis/engine/framed_identity.go",
+        "analysis/engine/doc.go"
+      ],
+      "kind": "file-group",
+      "disposition": "delete",
+      "cut_step": 6,
+      "residue_layer": "L3",
+      "authority": "\u00a712 delete: repeated runtime validation, topology reconstruction and address inference",
+      "measured": {
+        "files": 22,
+        "non_test_loc": 5929
+      },
+      "blocked_by": [
+        "S6-engine-runtime"
+      ],
+      "laws_die": [],
+      "laws_restated": [],
+      "proof_obligation": "",
+      "expect_present": true,
+      "note": ""
+    },
+    {
+      "id": "S6-engine-internals",
+      "paths": [
+        "analysis/engine/internal/composition",
+        "analysis/engine/internal/contextfiber",
+        "analysis/engine/internal/demand",
+        "analysis/engine/internal/factbinding",
+        "analysis/engine/internal/facts/semantic",
+        "analysis/engine/internal/facts/stage",
+        "analysis/engine/internal/linkexecutionplan"
+      ],
+      "kind": "package-group",
+      "disposition": "delete",
+      "cut_step": 6,
+      "residue_layer": "L3",
+      "authority": "\u00a712 delete: runtime reconstruction; each of these packages is addressed in the old protocol vocabulary and has no consumer outside analysis/engine",
+      "measured": {
+        "files": 22,
+        "non_test_loc": 11938
+      },
+      "blocked_by": [
+        "S6-engine-runtime",
+        "S2-engine-execution"
+      ],
+      "laws_die": [],
+      "laws_restated": [],
+      "proof_obligation": "",
+      "expect_present": true,
+      "note": ""
+    },
+    {
+      "id": "S6-derivable-registries",
+      "paths": [
+        "domain/familyroster/roster.go",
+        "domain/memberroster/roster.go",
+        "domain/composite/rule_registry.go",
+        "domain/composite/diagnostic_registry.go",
+        "analysis/catalog/declarations.go"
+      ],
+      "kind": "file-group",
+      "disposition": "delete",
+      "cut_step": 6,
+      "residue_layer": "L3",
+      "authority": "\u00a712 delete: duplicated family/member/rule registries derivable from declarations",
+      "measured": {
+        "files": 5,
+        "non_test_loc": 1699
+      },
+      "blocked_by": [
+        "S4-composite-wiring"
+      ],
+      "laws_die": [],
+      "laws_restated": [
+        {
+          "law": "every declared family is rostered exactly once",
+          "target": "relcompile census over declarations"
+        }
+      ],
+      "proof_obligation": "",
+      "expect_present": true,
+      "note": ""
+    },
+    {
+      "id": "S6-engine-publication-reads",
+      "paths": [
+        "analysis/engine/publication_column.go",
+        "analysis/engine/snapshot_materialize.go",
+        "analysis/engine/result_cell.go",
+        "analysis/engine/query.go",
+        "analysis/engine/query_result.go",
+        "analysis/engine/heterogeneous_query.go",
+        "analysis/engine/solve_report.go"
+      ],
+      "kind": "file-group",
+      "disposition": "delete",
+      "cut_step": 6,
+      "residue_layer": "L3",
+      "authority": "\u00a712 delete: query/diagnostic access paths that reconstruct relations outside the canonical snapshot - the engine-side half",
+      "measured": {
+        "files": 7,
+        "non_test_loc": 2032
+      },
+      "blocked_by": [
+        "S6-engine-runtime"
+      ],
+      "laws_die": [],
+      "laws_restated": [
+        {
+          "law": "a solved answer is published once, through one write door",
+          "target": "analysis/snapshot publication laws read by S8-read-paths"
+        }
+      ],
+      "proof_obligation": "",
+      "expect_present": true,
+      "note": ""
+    },
+    {
+      "id": "S6-engine-probes",
+      "paths": [
+        "analysis/engine/dbgprobe.go",
+        "analysis/engine/zzprobe_typprobe.go"
+      ],
+      "kind": "file-group",
+      "disposition": "delete",
+      "cut_step": 8,
+      "residue_layer": "L3",
+      "authority": "\u00a711 Wave 5 step 8: the final scan; probes are scrubbed last",
+      "measured": {
+        "files": 2,
+        "non_test_loc": 212
+      },
+      "blocked_by": [
+        "S6-engine-runtime"
+      ],
+      "laws_die": [],
+      "laws_restated": [],
+      "proof_obligation": "",
+      "expect_present": true,
+      "note": "Deliberately last. A debug probe stays until the replacement engine fully works; scrubbing it early removes the instrument that would have named the defect."
+    },
+    {
+      "id": "S7-implementation-restatement-laws",
+      "paths": [
+        "analysis/engine"
+      ],
+      "kind": "law-class",
+      "disposition": "restate",
+      "cut_step": 7,
+      "residue_layer": "",
+      "authority": "\u00a711 Wave 5 step 7: replace implementation-restatement tests with logical, certificate, physical or external-parity laws",
+      "measured": {
+        "files": 51,
+        "non_test_loc": 0
+      },
+      "blocked_by": [],
+      "laws_die": [],
+      "laws_restated": [
+        {
+          "law": "51 test files importing analysis/engine at the pinned ref",
+          "target": "analysis/relation/check (logical), analysis/relation/mount (physical), internal/relationoracle (differential), internal/relparity (external)"
+        },
+        {
+          "law": "36 test files naming HotRule / BindHot / HotOwner / SchemaFragment",
+          "target": "sealed plan-row laws; the protocol they restate does not survive to be tested"
+        }
+      ],
+      "proof_obligation": "",
+      "expect_present": true,
+      "note": "Measured, not enumerated: the set is defined by the import and by the symbol, so the W5 lane recomputes it at cut time rather than trusting a stale list. The path names the import that defines the set, not a deletion target; files=51 counts the test files importing analysis/engine at the pinned ref and the loc column is left at zero because test lines are not part of the delete-set measurement."
+    },
+    {
+      "id": "S8-read-paths",
+      "paths": [
+        "analysis/result",
+        "analysis/diagnostic",
+        "analysis/inspect",
+        "analysis/catalog/publication.go",
+        "analysis/lua/selectapply"
+      ],
+      "kind": "package-group",
+      "disposition": "restate",
+      "cut_step": 8,
+      "residue_layer": "L4",
+      "authority": "\u00a712 delete: query/diagnostic access paths that reconstruct relations outside the canonical snapshot; journal 7329: snapshot and result read relations directly, no engine on the read path",
+      "measured": {
+        "files": 35,
+        "non_test_loc": 9514
+      },
+      "blocked_by": [
+        "S6-engine-runtime"
+      ],
+      "laws_die": [],
+      "laws_restated": [
+        {
+          "law": "a published answer is read at the identity its owner issued",
+          "target": "analysis/snapshot read laws with no analysis/engine import"
+        }
+      ],
+      "proof_obligation": "",
+      "expect_present": true,
+      "note": "These five are the packages that import analysis/engine outside the domain wiring. The restatement target is the import-direction scan of \u00a711 Wave 5 step 8: none of them may import the engine after the cut."
+    },
+    {
+      "id": "K-facts-scalar",
+      "paths": [
+        "analysis/engine/internal/facts/scalar"
+      ],
+      "kind": "package-group",
+      "disposition": "keep-if-generic",
+      "cut_step": 6,
+      "residue_layer": "L3",
+      "authority": "\u00a712 tail: generic decision-diagram, terminal, support/guard, scheduling and fixpoint primitives that pass the new package boundary",
+      "measured": {
+        "files": 1,
+        "non_test_loc": 13
+      },
+      "blocked_by": [],
+      "laws_die": [],
+      "laws_restated": [],
+      "proof_obligation": "Relocate out of analysis/engine/internal and show the exported API names no old-protocol type and no rule form. Import evidence at the pinned ref: imports nothing inside the module. If relocation cannot be done without an engine type in a signature, the package is protocol and deletes with S6.",
+      "expect_present": true,
+      "note": ""
+    },
+    {
+      "id": "K-facts-terminal",
+      "paths": [
+        "analysis/engine/internal/facts/terminal"
+      ],
+      "kind": "package-group",
+      "disposition": "keep-if-generic",
+      "cut_step": 6,
+      "residue_layer": "L3",
+      "authority": "\u00a712 tail: generic decision-diagram, terminal, support/guard, scheduling and fixpoint primitives that pass the new package boundary",
+      "measured": {
+        "files": 1,
+        "non_test_loc": 432
+      },
+      "blocked_by": [],
+      "laws_die": [],
+      "laws_restated": [],
+      "proof_obligation": "Relocate out of analysis/engine/internal and show the exported API names no old-protocol type and no rule form. Import evidence at the pinned ref: imports nothing inside the module. If relocation cannot be done without an engine type in a signature, the package is protocol and deletes with S6.",
+      "expect_present": true,
+      "note": ""
+    },
+    {
+      "id": "K-facts-change",
+      "paths": [
+        "analysis/engine/internal/facts/change"
+      ],
+      "kind": "package-group",
+      "disposition": "keep-if-generic",
+      "cut_step": 6,
+      "residue_layer": "L3",
+      "authority": "\u00a712 tail: generic decision-diagram, terminal, support/guard, scheduling and fixpoint primitives that pass the new package boundary",
+      "measured": {
+        "files": 3,
+        "non_test_loc": 321
+      },
+      "blocked_by": [],
+      "laws_die": [],
+      "laws_restated": [],
+      "proof_obligation": "Relocate out of analysis/engine/internal and show the exported API names no old-protocol type and no rule form. Import evidence at the pinned ref: imports nothing inside the module. If relocation cannot be done without an engine type in a signature, the package is protocol and deletes with S6.",
+      "expect_present": true,
+      "note": ""
+    },
+    {
+      "id": "K-schedule",
+      "paths": [
+        "analysis/engine/internal/schedule"
+      ],
+      "kind": "package-group",
+      "disposition": "keep-if-generic",
+      "cut_step": 6,
+      "residue_layer": "L3",
+      "authority": "\u00a712 tail: generic decision-diagram, terminal, support/guard, scheduling and fixpoint primitives that pass the new package boundary",
+      "measured": {
+        "files": 1,
+        "non_test_loc": 860
+      },
+      "blocked_by": [],
+      "laws_die": [],
+      "laws_restated": [],
+      "proof_obligation": "Relocate out of analysis/engine/internal and show the exported API names no old-protocol type and no rule form. Import evidence at the pinned ref: imports nothing inside the module. If relocation cannot be done without an engine type in a signature, the package is protocol and deletes with S6.",
+      "expect_present": true,
+      "note": ""
+    },
+    {
+      "id": "K-guard",
+      "paths": [
+        "analysis/engine/internal/guard"
+      ],
+      "kind": "package-group",
+      "disposition": "keep-if-generic",
+      "cut_step": 6,
+      "residue_layer": "L3",
+      "authority": "\u00a712 tail: generic decision-diagram, terminal, support/guard, scheduling and fixpoint primitives that pass the new package boundary",
+      "measured": {
+        "files": 9,
+        "non_test_loc": 2469
+      },
+      "blocked_by": [],
+      "laws_die": [],
+      "laws_restated": [],
+      "proof_obligation": "Relocate out of analysis/engine/internal and show the exported API names no old-protocol type and no rule form. Import evidence at the pinned ref: imports internal/canonical only. If relocation cannot be done without an engine type in a signature, the package is protocol and deletes with S6.",
+      "expect_present": true,
+      "note": ""
+    },
+    {
+      "id": "K-facts-support",
+      "paths": [
+        "analysis/engine/internal/facts/support"
+      ],
+      "kind": "package-group",
+      "disposition": "keep-if-generic",
+      "cut_step": 6,
+      "residue_layer": "L3",
+      "authority": "\u00a712 tail: generic decision-diagram, terminal, support/guard, scheduling and fixpoint primitives that pass the new package boundary",
+      "measured": {
+        "files": 1,
+        "non_test_loc": 757
+      },
+      "blocked_by": [],
+      "laws_die": [],
+      "laws_restated": [],
+      "proof_obligation": "Relocate out of analysis/engine/internal and show the exported API names no old-protocol type and no rule form. Import evidence at the pinned ref: imports analysis/engine/internal/guard only. If relocation cannot be done without an engine type in a signature, the package is protocol and deletes with S6.",
+      "expect_present": true,
+      "note": ""
+    },
+    {
+      "id": "K-facts-diagram",
+      "paths": [
+        "analysis/engine/internal/facts/diagram"
+      ],
+      "kind": "package-group",
+      "disposition": "keep-if-generic",
+      "cut_step": 6,
+      "residue_layer": "L3",
+      "authority": "\u00a712 tail: generic decision-diagram, terminal, support/guard, scheduling and fixpoint primitives that pass the new package boundary",
+      "measured": {
+        "files": 8,
+        "non_test_loc": 4767
+      },
+      "blocked_by": [],
+      "laws_die": [],
+      "laws_restated": [],
+      "proof_obligation": "Relocate out of analysis/engine/internal and show the exported API names no old-protocol type and no rule form. Import evidence at the pinned ref: imports scalar, support, terminal and guard only. If relocation cannot be done without an engine type in a signature, the package is protocol and deletes with S6.",
+      "expect_present": true,
+      "note": ""
+    },
+    {
+      "id": "K-carrier",
+      "paths": [
+        "analysis/engine/internal/carrier",
+        "analysis/engine/internal/carrier/shape",
+        "analysis/engine/internal/carrier/product"
+      ],
+      "kind": "package-group",
+      "disposition": "keep-if-generic",
+      "cut_step": 6,
+      "residue_layer": "L3",
+      "authority": "\u00a712 tail: generic decision-diagram, terminal, support/guard, scheduling and fixpoint primitives that pass the new package boundary",
+      "measured": {
+        "files": 13,
+        "non_test_loc": 9512
+      },
+      "blocked_by": [],
+      "laws_die": [],
+      "laws_restated": [],
+      "proof_obligation": "Relocate out of analysis/engine/internal and show the exported API names no old-protocol type and no rule form. Import evidence at the pinned ref: imports change, support, guard, carrier/shape and analysis/identity only. If relocation cannot be done without an engine type in a signature, the package is protocol and deletes with S6.",
+      "expect_present": true,
+      "note": ""
+    },
+    {
+      "id": "K-lifetime",
+      "paths": [
+        "analysis/engine/internal/lifetime"
+      ],
+      "kind": "package-group",
+      "disposition": "keep-if-generic",
+      "cut_step": 6,
+      "residue_layer": "L3",
+      "authority": "\u00a712 tail: generic decision-diagram, terminal, support/guard, scheduling and fixpoint primitives that pass the new package boundary",
+      "measured": {
+        "files": 1,
+        "non_test_loc": 87
+      },
+      "blocked_by": [],
+      "laws_die": [],
+      "laws_restated": [],
+      "proof_obligation": "Relocate out of analysis/engine/internal and show the exported API names no old-protocol type and no rule form. Import evidence at the pinned ref: imports analysis/identity only. If relocation cannot be done without an engine type in a signature, the package is protocol and deletes with S6.",
+      "expect_present": true,
+      "note": ""
+    },
+    {
+      "id": "K-equation",
+      "paths": [
+        "analysis/engine/internal/equation"
+      ],
+      "kind": "package",
+      "disposition": "keep-if-generic",
+      "cut_step": 6,
+      "residue_layer": "L3",
+      "authority": "\u00a712 tail: fixpoint primitives; \u00a78 physical execution keeps WTO and widening as physical policy",
+      "measured": {
+        "files": 20,
+        "non_test_loc": 10128
+      },
+      "blocked_by": [],
+      "laws_die": [],
+      "laws_restated": [],
+      "proof_obligation": "This is the weakest keep in the set: at the pinned ref it imports analysis/engine/internal/composition, analysis/schema and analysis/schema/population, so it is not generic as it stands. The obligation is to separate the fixpoint and WTO core from the composition-coupled part; the core moves to analysis/engine/relation/solve, the remainder deletes with S6-engine-internals. A keep that cannot be split is a delete.",
+      "expect_present": true,
+      "note": ""
+    },
+    {
+      "id": "K-engine-rows",
+      "paths": [
+        "analysis/engine/rows",
+        "analysis/engine/rows/scalarlower"
+      ],
+      "kind": "package-group",
+      "disposition": "keep-if-generic",
+      "cut_step": 6,
+      "residue_layer": "L3",
+      "authority": "\u00a712 tail: thin typed semantic and column bindings",
+      "measured": {
+        "files": 6,
+        "non_test_loc": 1778
+      },
+      "blocked_by": [],
+      "laws_die": [],
+      "laws_restated": [],
+      "proof_obligation": "Row lowering is the relation store's column discipline if it is generic. At the pinned ref rows imports analysis/schema and analysis/schema/issuance and scalarlower adds ingress, program, program/catalog and structure. The obligation is to show the lowering is addressed by sealed columns rather than by issuance ordinals; if it is, it relocates under the store, otherwise it deletes with S6.",
+      "expect_present": true,
+      "note": ""
+    },
+    {
+      "id": "K-snapshot",
+      "paths": [
+        "analysis/snapshot"
+      ],
+      "kind": "package",
+      "disposition": "keep-if-generic",
+      "cut_step": 8,
+      "residue_layer": "L4",
+      "authority": "\u00a71 governing decision 6 and journal 7337: analysis/snapshot remains the canonical immutable publication store, reused rather than wrapped",
+      "measured": {
+        "files": 11,
+        "non_test_loc": 2284
+      },
+      "blocked_by": [],
+      "laws_die": [],
+      "laws_restated": [],
+      "proof_obligation": "No obligation to relocate; the obligation is negative. After the cut analysis/snapshot must import no deleted package and must not be duplicated by a second publication representation.",
+      "expect_present": true,
+      "note": ""
+    },
+    {
+      "id": "L24-scheduled-death-ledger",
+      "paths": [
+        "analysis/schema/axis/member/definition/scheduled_death.go"
+      ],
+      "kind": "file",
+      "disposition": "delete",
+      "cut_step": 6,
+      "residue_layer": "L2.4",
+      "authority": "journal 7305 Layer 2.4: seven authored relation Builds; the file deletes when the table is empty",
+      "measured": {
+        "files": 1,
+        "non_test_loc": 124
+      },
+      "blocked_by": [
+        "S3-generated-family-workers"
+      ],
+      "laws_die": [],
+      "laws_restated": [],
+      "proof_obligation": "",
+      "expect_present": true,
+      "note": "heap/publication-freeze/routes, heap/formal-freeze/routes, value/fresh-result/routes, placement/formal/routes, placement/transfer/routes, value/result-alias/routes, value/body-result/routes. The deletion lane cannot empty a row itself."
+    }
+  ]
+}
