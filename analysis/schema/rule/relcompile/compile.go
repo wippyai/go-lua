@@ -59,7 +59,7 @@ func Compile(declaration Declaration) (plan.ExecutionSchema, error) {
 		}
 		scopes[scope.ID()] = struct{}{}
 	}
-	signatures := make(map[signature.Identity]struct{}, len(declaration.Signatures))
+	signatures := make(map[signature.Identity]signature.Signature, len(declaration.Signatures))
 
 	builder := plan.NewBuilder(declaration.SchemaID)
 	for _, relation := range declaration.Relations {
@@ -89,7 +89,7 @@ func Compile(declaration Declaration) (plan.ExecutionSchema, error) {
 		if _, duplicate := signatures[semantic.Identity()]; duplicate {
 			return plan.ExecutionSchema{}, fmt.Errorf("relcompile: duplicate semantic signature")
 		}
-		signatures[semantic.Identity()] = struct{}{}
+		signatures[semantic.Identity()] = semantic
 		if !builder.AddSignature(semantic) {
 			return plan.ExecutionSchema{}, fmt.Errorf("relcompile: add semantic signature")
 		}
@@ -133,7 +133,7 @@ func Compile(declaration Declaration) (plan.ExecutionSchema, error) {
 	return compiled, nil
 }
 
-func lowerRule(rule Rule, relations map[model.RelationID]struct{}, columns map[model.ColumnID]struct{}, keys map[model.KeyID]struct{}, scopes map[model.ScopeID]struct{}, signatures map[signature.Identity]struct{}) (algebra.Expression, []model.RelationID, []model.RelationID, error) {
+func lowerRule(rule Rule, relations map[model.RelationID]struct{}, columns map[model.ColumnID]struct{}, keys map[model.KeyID]struct{}, scopes map[model.ScopeID]struct{}, signatures map[signature.Identity]signature.Signature) (algebra.Expression, []model.RelationID, []model.RelationID, error) {
 	if !rule.ID.Available() || !rule.Expression.Available() || !rule.Candidate.Available() {
 		return nil, nil, nil, fmt.Errorf("relcompile: incomplete rule identity")
 	}
@@ -217,6 +217,7 @@ func lowerRule(rule Rule, relations map[model.RelationID]struct{}, columns map[m
 			return nil, nil, nil, fmt.Errorf("relcompile: semantic operation is not declared")
 		}
 		expression = algebra.NewApply([]algebra.Expression{expression}, algebra.NewApplyContract(rule.Apply))
+		reads = appendOperationReads(reads, signatures[rule.Apply])
 	}
 	if rule.Carry != nil {
 		if rule.Publish == nil {
@@ -237,6 +238,7 @@ func lowerRule(rule Rule, relations map[model.RelationID]struct{}, columns map[m
 				return nil, nil, nil, fmt.Errorf("relcompile: carry transform operation is not declared")
 			}
 			carried = algebra.NewApply([]algebra.Expression{carried}, algebra.NewApplyContract(*rule.Carry.Transform))
+			reads = appendOperationReads(reads, signatures[*rule.Carry.Transform])
 		}
 		expression = algebra.NewMerge([]algebra.Expression{expression, carried}, algebra.NewMergeContract(rule.Publish.Key))
 		reads = appendUniqueRelation(reads, rule.Carry.Relation)
@@ -247,6 +249,23 @@ func lowerRule(rule Rule, relations map[model.RelationID]struct{}, columns map[m
 		return expression, reads, writes, nil
 	}
 	return expression, reads, nil, nil
+}
+
+// appendOperationReads adds the relations one semantic operation reads to a
+// rule's dependency projection: the relation each declared input is delivered
+// from, the denominator that input is closed against, and the denominator the
+// operation's output authority is proven under. They are relations the rule
+// depends on even when no join names them, so they belong to the projection
+// the dependency graph is built from.
+func appendOperationReads(reads []model.RelationID, operation signature.Signature) []model.RelationID {
+	if !operation.Available() {
+		return reads
+	}
+	for _, input := range operation.Inputs() {
+		reads = appendUniqueRelation(reads, input.Relation)
+		reads = appendUniqueRelation(reads, input.Denominator.Relation())
+	}
+	return appendUniqueRelation(reads, operation.Authority().Denominator.Relation())
 }
 
 func validColumns(values []model.ColumnID, columns map[model.ColumnID]struct{}) bool {
