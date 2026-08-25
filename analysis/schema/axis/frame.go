@@ -1,6 +1,9 @@
 package axis
 
-import "github.com/wippyai/go-lua/analysis/schema"
+import (
+	"github.com/wippyai/go-lua/analysis/schema"
+	"github.com/wippyai/go-lua/analysis/schema/axis/member"
+)
 
 // OutputRef is the owner-qualified reference to one nested output column of an
 // axis. Axis is the root declaration resolved by schema/seal; Key remains a
@@ -19,6 +22,13 @@ func (reference OutputRef) Declared() bool {
 }
 
 func (reference OutputRef) AxisReference() schema.EntryReference { return reference.Axis }
+
+// ID returns the identity the owning axis issued for this published column.
+// An output column is a member of its axis like any other, so it is named by
+// the one member assigner rather than by a second derivation here.
+func (reference OutputRef) ID() schema.EntryID {
+	return member.IssueID(reference.Axis, reference.Key)
+}
 
 // Frame is one axis's published half: the columns this axis's facts are read
 // out of once the engine publishes them, and the principal admitted to write
