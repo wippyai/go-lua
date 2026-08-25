@@ -31,6 +31,16 @@ func (route Route) Coordinates() (key, destination heap.Key, ok bool) {
 	return route.Key, route.Key, route.valid()
 }
 
+// Predicate exposes the owner-issued route tag as the selected-read
+// predicate. A routed output publishes at the members a selection observed, so
+// the emitted worker pairs a cell with its member by this tag; without it a
+// route set is addressable but its cells are not. It returns the projected
+// value and the direct-call validity bit, and introduces no duplicate tag and
+// no derived discriminator - the tag is the one Heap already issued.
+func (route Route) Predicate() (tag uint64, ok bool) {
+	return uint64(route.Tag), route.valid()
+}
+
 // valid is the row fence the two projections answer under: an exact, live
 // allocation root carrying a nonzero owner-issued route tag.
 func (route Route) valid() bool {
