@@ -119,7 +119,7 @@ func Derive(cert certificate.Certificate, book address.Book, inventory Inventory
 			return Plan{}, false
 		}
 	}
-	handles := make([]Handle, len(state.accesses))
+	layouts := make([]Layout, len(state.accesses))
 	seenHandles := make(map[Handle]struct{}, len(state.accesses))
 	for index, access := range state.accesses {
 		handle, ok := inventory.Resolve(access)
@@ -130,24 +130,35 @@ func Derive(cert certificate.Certificate, book address.Book, inventory Inventory
 			return Plan{}, false
 		}
 		seenHandles[handle] = struct{}{}
-		handles[index] = handle
+		var keyColumns []model.ColumnID
+		if access.Key().Available() {
+			key, keyOK := state.keys[access.Key()]
+			if !keyOK || !key.Available() {
+				return Plan{}, false
+			}
+			keyColumns = key.Columns()
+		}
+		layout, layoutOK := newLayout(fence, handle, access, keyColumns)
+		if !layoutOK {
+			return Plan{}, false
+		}
+		layouts[index] = layout
 	}
 
 	data := &planData{
 		fence:      fence,
-		accesses:   state.accesses,
-		handles:    handles,
+		layouts:    layouts,
 		deliveries: state.deliveries,
 	}
-	logicalParts := make([][]byte, 0, len(data.accesses)+len(data.deliveries))
+	logicalParts := make([][]byte, 0, len(data.layouts)+len(data.deliveries))
 	appendPlanDigestParts(&logicalParts, *data)
 	logicalDigest, ok := identity.DeriveContentID(planDigestDomain+"/logical", logicalParts...)
 	if !ok {
 		return Plan{}, false
 	}
 	physicalParts := append([][]byte(nil), logicalParts...)
-	for _, handle := range data.handles {
-		physicalParts = append(physicalParts, handleDigest(handle))
+	for _, layout := range data.layouts {
+		physicalParts = append(physicalParts, contentBytes(layout.Digest()))
 	}
 	digest, ok := identity.DeriveContentID(planDigestDomain, physicalParts...)
 	if !ok {

@@ -8,18 +8,17 @@ import (
 	"github.com/wippyai/go-lua/analysis/relation/schema/model"
 )
 
-// Plan is the immutable logical arrangement plan for one checked certificate
-// and one mounted fence. It records logical requirements and opaque,
-// generation-fenced arrangement handles; the local coordinate inside each
-// handle is intentionally inaccessible.
+// Plan is the immutable arrangement plan for one checked certificate and one
+// mounted fence. It records logical requirements and opaque,
+// generation-fenced physical layouts; the local coordinate inside each
+// layout's handle is intentionally inaccessible.
 type Plan struct{ data *planData }
 
 type planData struct {
 	fence         address.Fence
 	digest        identity.ContentID
 	logicalDigest identity.ContentID
-	accesses      []Access
-	handles       []Handle
+	layouts       []Layout
 	deliveries    []DeliveryRequirement
 }
 
@@ -29,8 +28,7 @@ func (plan Plan) Available() bool {
 }
 
 // Digest is the deterministic mounted plan identity. It includes the
-// resolved opaque arrangement handles and changes when physical assignment
-// changes.
+// resolved physical layouts and changes when physical assignment changes.
 func (plan Plan) Digest() identity.ContentID {
 	if plan.data == nil {
 		return identity.ContentID{}
@@ -61,9 +59,22 @@ func (plan Plan) Accesses() []Access {
 	if !plan.Available() {
 		return nil
 	}
-	result := make([]Access, len(plan.data.accesses))
-	for index, access := range plan.data.accesses {
-		result[index] = cloneAccess(access)
+	result := make([]Access, len(plan.data.layouts))
+	for index, layout := range plan.data.layouts {
+		result[index] = layout.Access()
+	}
+	return result
+}
+
+// Layouts returns canonical physical layouts in the same order as Accesses.
+// Every nested vector is copied so callers cannot mutate Plan.
+func (plan Plan) Layouts() []Layout {
+	if !plan.Available() {
+		return nil
+	}
+	result := make([]Layout, len(plan.data.layouts))
+	for index, layout := range plan.data.layouts {
+		result[index] = cloneLayout(layout)
 	}
 	return result
 }
@@ -73,26 +84,25 @@ func (plan Plan) HasAccess(required Access) bool {
 	if !plan.Available() || !required.Available() {
 		return false
 	}
-	for _, candidate := range plan.data.accesses {
-		if candidate.Equal(required) {
+	for _, layout := range plan.data.layouts {
+		if layout.Access().Equal(required) {
 			return true
 		}
 	}
 	return false
 }
 
-// Resolve returns the opaque physical handle for one logical access.
-func (plan Plan) Resolve(required Access) (Handle, bool) {
-	if !plan.Available() || !required.Available() || len(plan.data.handles) != len(plan.data.accesses) {
-		return Handle{}, false
+// Resolve returns the immutable physical layout for one logical access.
+func (plan Plan) Resolve(required Access) (Layout, bool) {
+	if !plan.Available() || !required.Available() {
+		return Layout{}, false
 	}
-	for index, candidate := range plan.data.accesses {
-		if candidate.Equal(required) {
-			handle := plan.data.handles[index]
-			return handle, handle.ValidFor(plan.data.fence)
+	for _, layout := range plan.data.layouts {
+		if layout.Access().Equal(required) {
+			return layout, layout.ValidFor(plan.data.fence)
 		}
 	}
-	return Handle{}, false
+	return Layout{}, false
 }
 
 // DeliveryRequirements returns canonical semantic delivery requirements.
@@ -107,11 +117,12 @@ func (plan Plan) DeliveryRequirements() []DeliveryRequirement {
 // and every logical requirement still resolves in that book.  The check is
 // deliberately exact: stale and foreign books are refused.
 func (plan Plan) ValidFor(book address.Book) bool {
-	if !plan.Available() || !book.Available() || !plan.data.fence.Same(book.Fence()) || len(plan.data.handles) != len(plan.data.accesses) {
+	if !plan.Available() || !book.Available() || !plan.data.fence.Same(book.Fence()) {
 		return false
 	}
-	for index, access := range plan.data.accesses {
-		if !plan.data.handles[index].ValidFor(book.Fence()) {
+	for _, layout := range plan.data.layouts {
+		access := layout.Access()
+		if !layout.ValidFor(book.Fence()) {
 			return false
 		}
 		if relation, ok := book.Relation(access.relation); !ok || !relation.ValidFor(book.Fence()) {
@@ -143,6 +154,12 @@ func (plan Plan) ValidFor(book address.Book) bool {
 func cloneAccess(access Access) Access {
 	access.columns = append([]model.ColumnID(nil), access.columns...)
 	return access
+}
+
+func cloneLayout(layout Layout) Layout {
+	layout.access = cloneAccess(layout.access)
+	layout.keyColumns = append([]model.ColumnID(nil), layout.keyColumns...)
+	return layout
 }
 
 func canonicalizeAccesses(values []Access) []Access {
@@ -188,8 +205,8 @@ func canonicalizeDeliveries(values []DeliveryRequirement) []DeliveryRequirement 
 }
 
 func appendPlanDigestParts(parts *[][]byte, plan planData) {
-	for _, access := range plan.accesses {
-		*parts = append(*parts, accessDigest(access))
+	for _, layout := range plan.layouts {
+		*parts = append(*parts, accessDigest(layout.access))
 	}
 	for _, delivery := range plan.deliveries {
 		*parts = append(*parts, deliveryRequirementDigest(delivery))

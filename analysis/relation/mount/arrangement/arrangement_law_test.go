@@ -173,8 +173,27 @@ func TestDeriveIsLogicalAcrossPhysicalReorder(t *testing.T) {
 	if len(accesses) != 1 {
 		t.Fatalf("access count = %d, want one", len(accesses))
 	}
-	if handle, ok := first.Resolve(accesses[0]); !ok || !handle.ValidFor(book.Fence()) {
-		t.Fatal("logical lookup did not return a valid opaque handle")
+	firstLayout, ok := first.Resolve(accesses[0])
+	if !ok || !firstLayout.ValidFor(book.Fence()) || !firstLayout.Handle().ValidFor(book.Fence()) {
+		t.Fatal("logical lookup did not return a valid fenced layout")
+	}
+	secondLayout, ok := second.Resolve(accesses[0])
+	if !ok || firstLayout.Digest() == secondLayout.Digest() {
+		t.Fatal("physical layout reorder was not retained")
+	}
+	foreignFence, ok := address.NewFence(value.certificate.SchemaID(), value.certificate.Digest(), addresses.fence.StoreID(), identity.MountID{0: 9}, addresses.fence.Generation())
+	if !ok {
+		t.Fatal("foreign fence")
+	}
+	if firstLayout.ValidFor(foreignFence) {
+		t.Fatal("foreign layout accepted")
+	}
+	staleFence, ok := address.NewFence(value.certificate.SchemaID(), value.certificate.Digest(), addresses.fence.StoreID(), addresses.fence.MountID(), identity.Generation(uint64(addresses.fence.Generation())+1))
+	if !ok {
+		t.Fatal("stale fence")
+	}
+	if firstLayout.ValidFor(staleFence) {
+		t.Fatal("stale layout accepted")
 	}
 	accesses[0] = arrangement.Access{}
 	if len(first.Accesses()) != 1 || !first.HasAccess(first.Accesses()[0]) {
@@ -221,6 +240,7 @@ type censusFixture struct {
 	relationA    model.RelationID
 	relationB    model.RelationID
 	columnA      model.ColumnID
+	columnA2     model.ColumnID
 	columnB      model.ColumnID
 	keyA         model.KeyID
 	keyB         model.KeyID
@@ -258,6 +278,10 @@ func newCensusFixture(t *testing.T) censusFixture {
 	columnA, ok := model.IssueColumnID(relationA, token(t, "census-column-a"))
 	if !ok {
 		t.Fatal("column A")
+	}
+	columnA2, ok := model.IssueColumnID(relationA, token(t, "census-column-a2"))
+	if !ok {
+		t.Fatal("column A2")
 	}
 	columnB, ok := model.IssueColumnID(relationB, token(t, "census-column-b"))
 	if !ok {
@@ -309,7 +333,7 @@ func newCensusFixture(t *testing.T) censusFixture {
 	expressionLabels := []string{"input", "select", "project", "join", "merge", "group", "complete", "apply", "publish"}
 	builder := plan.NewBuilder(schema)
 	for _, relation := range []model.RelationSchema{
-		model.DefineRelationSchema(relationA, []model.ColumnID{columnA}, []model.KeyID{keyA}, scope),
+		model.DefineRelationSchema(relationA, []model.ColumnID{columnA, columnA2}, []model.KeyID{keyA}, scope),
 		model.DefineRelationSchema(relationB, []model.ColumnID{columnB}, []model.KeyID{keyB}, scope),
 	} {
 		if !builder.AddRelation(relation) {
@@ -318,6 +342,7 @@ func newCensusFixture(t *testing.T) censusFixture {
 	}
 	for _, column := range []model.ColumnSchema{
 		model.DefineColumnSchema(columnA, typeID),
+		model.DefineColumnSchema(columnA2, typeID),
 		model.DefineColumnSchema(columnB, typeID),
 	} {
 		if !builder.AddColumn(column) {
@@ -325,7 +350,7 @@ func newCensusFixture(t *testing.T) censusFixture {
 		}
 	}
 	for _, key := range []model.KeySchema{
-		model.DefineKeySchema(keyA, []model.ColumnID{columnA}),
+		model.DefineKeySchema(keyA, []model.ColumnID{columnA2, columnA}),
 		model.DefineKeySchema(keyB, []model.ColumnID{columnB}),
 	} {
 		if !builder.AddKey(key) {
@@ -386,7 +411,7 @@ func newCensusFixture(t *testing.T) censusFixture {
 	if refusal != nil {
 		t.Fatalf("census certificate: %v", refusal)
 	}
-	return censusFixture{certificate: checked, owner: owner, schema: schema, typeID: typeID, relationA: relationA, relationB: relationB, columnA: columnA, columnB: columnB, keyA: keyA, keyB: keyB, scope: scope, denominatorA: denominatorA, denominatorB: denominatorB, operations: operations, expressions: expressions}
+	return censusFixture{certificate: checked, owner: owner, schema: schema, typeID: typeID, relationA: relationA, relationB: relationB, columnA: columnA, columnA2: columnA2, columnB: columnB, keyA: keyA, keyB: keyB, scope: scope, denominatorA: denominatorA, denominatorB: denominatorB, operations: operations, expressions: expressions}
 }
 
 func censusCardinality(t *testing.T, kind model.CardinalityKind) model.Cardinality {
@@ -411,7 +436,7 @@ func (value censusFixture) addresses(t *testing.T) *addressInventory {
 	return &addressInventory{
 		fence:     fence,
 		relations: map[model.RelationID]uint64{value.relationA: 1, value.relationB: 2},
-		columns:   map[model.ColumnID]uint64{value.columnA: 3, value.columnB: 4},
+		columns:   map[model.ColumnID]uint64{value.columnA: 3, value.columnA2: 4, value.columnB: 5},
 		keys:      map[model.KeyID]uint64{value.keyA: 5, value.keyB: 6},
 		scopes:    map[model.ScopeID]uint64{value.scope: 7},
 		expressions: map[model.ExpressionID]uint64{
@@ -471,6 +496,89 @@ func TestDeriveCensusCoversAllExpressionsAndDeliveryShapes(t *testing.T) {
 	if got := len(derived.Accesses()); got != 8 || mount.calls != uint64(got) {
 		t.Fatalf("physical access census = %d (resolver calls %d), want 8 deduplicated accesses", got, mount.calls)
 	}
+	keyAAccess, accessOK := arrangement.NewKeyAccess(value.keyA)
+	if !accessOK {
+		t.Fatal("composite key access")
+	}
+	keyALayout, layoutOK := derived.Resolve(keyAAccess)
+	if !layoutOK {
+		t.Fatal("composite key layout")
+	}
+	keyColumns := keyALayout.KeyColumns()
+	if len(keyColumns) != 2 || keyColumns[0] != value.columnA2 || keyColumns[1] != value.columnA || keyALayout.Columns() != nil || len(keyAAccess.Columns()) != 0 {
+		t.Fatalf("composite key layout order/identity = %v/%v", keyColumns, keyAAccess.Columns())
+	}
+	keyBAccess, accessOK := arrangement.NewKeyAccess(value.keyB)
+	if !accessOK {
+		t.Fatal("single key access")
+	}
+	keyBLayout, layoutOK := derived.Resolve(keyBAccess)
+	if !layoutOK || len(keyBLayout.KeyColumns()) != 1 || keyBLayout.KeyColumns()[0] != value.columnB {
+		t.Fatal("single key layout columns")
+	}
+	scan, scanOK := arrangement.NewRelationAccess(value.relationA)
+	emptyVector, vectorOK := arrangement.NewVectorAccess(value.relationA, nil)
+	if !scanOK || !vectorOK || !scan.Equal(emptyVector) {
+		t.Fatal("relation scan/vector equivalence contract changed")
+	}
+	scanLayout, scanLayoutOK := derived.Resolve(scan)
+	emptyLayout, emptyLayoutOK := derived.Resolve(emptyVector)
+	if !scanLayoutOK || !emptyLayoutOK || !scanLayout.Equal(emptyLayout) || scanLayout.KeyColumns() != nil {
+		t.Fatal("relation scan layout equivalence")
+	}
+	vectorAccess, vectorOK := arrangement.NewVectorAccess(value.relationA, []model.ColumnID{value.columnA})
+	if !vectorOK {
+		t.Fatal("vector access")
+	}
+	vectorLayout, vectorLayoutOK := derived.Resolve(vectorAccess)
+	if !vectorLayoutOK || vectorLayout.KeyColumns() != nil || len(vectorLayout.Columns()) != 1 || vectorLayout.Columns()[0] != value.columnA {
+		t.Fatal("unkeyed vector layout")
+	}
+	layouts := derived.Layouts()
+	planAccesses := derived.Accesses()
+	if len(layouts) != len(planAccesses) {
+		t.Fatal("layout/access census mismatch")
+	}
+	for index, layout := range layouts {
+		if !layout.Access().Equal(planAccesses[index]) {
+			t.Fatal("layout/access duplicate projections diverged")
+		}
+		gotColumns, wantColumns := layout.Columns(), planAccesses[index].Columns()
+		if len(gotColumns) != len(wantColumns) {
+			t.Fatal("layout/access column projection diverged")
+		}
+		for columnIndex := range gotColumns {
+			if gotColumns[columnIndex] != wantColumns[columnIndex] {
+				t.Fatal("layout/access column projection diverged")
+			}
+		}
+		if len(gotColumns) > 0 {
+			gotColumns[0] = model.ColumnID{}
+			if fresh := derived.Layouts()[index].Columns(); fresh[0] != wantColumns[0] {
+				t.Fatal("layout columns were not defensive")
+			}
+		}
+	}
+	for index, layout := range layouts {
+		if layout.Access().Equal(keyAAccess) {
+			keyValues := layout.KeyColumns()
+			keyValues[0] = model.ColumnID{}
+			accessValues := layout.Access().Columns()
+			if len(accessValues) != 0 {
+				accessValues[0] = model.ColumnID{}
+			}
+			columnValues := layout.Columns()
+			if len(columnValues) != 0 {
+				columnValues[0] = model.ColumnID{}
+			}
+			fresh := derived.Layouts()[index]
+			freshKeys := fresh.KeyColumns()
+			if freshKeys[0] != value.columnA2 || freshKeys[1] != value.columnA {
+				t.Fatal("layout key columns were not defensive")
+			}
+			break
+		}
+	}
 
 	deliveries := derived.DeliveryRequirements()
 	if len(deliveries) != 3 {
@@ -478,7 +586,7 @@ func TestDeriveCensusCoversAllExpressionsAndDeliveryShapes(t *testing.T) {
 	}
 	seenKinds := map[signature.DeliveryKind]bool{}
 	var scalarAccess, completeAccess arrangement.Access
-	var scalarHandle, completeHandle arrangement.Handle
+	var scalarLayout, completeLayout arrangement.Layout
 	expectedPhysical := append([]arrangement.Access(nil), requirements...)
 	for _, delivery := range deliveries {
 		seenKinds[delivery.Delivery().Kind] = true
@@ -510,15 +618,15 @@ func TestDeriveCensusCoversAllExpressionsAndDeliveryShapes(t *testing.T) {
 		if !known {
 			expectedPhysical = append(expectedPhysical, access)
 		}
-		handle, handleOK := derived.Resolve(access)
-		if !handleOK {
-			t.Fatal("delivery physical handle")
+		layout, layoutOK := derived.Resolve(access)
+		if !layoutOK {
+			t.Fatal("delivery physical layout")
 		}
 		switch delivery.Delivery().Kind {
 		case signature.ScalarDelivery:
-			scalarAccess, scalarHandle = access, handle
+			scalarAccess, scalarLayout = access, layout
 		case signature.CompleteSpanDelivery:
-			completeAccess, completeHandle = access, handle
+			completeAccess, completeLayout = access, layout
 		}
 	}
 	if !seenKinds[signature.ScalarDelivery] || !seenKinds[signature.BoundedSpanDelivery] || !seenKinds[signature.CompleteSpanDelivery] {
@@ -539,8 +647,8 @@ func TestDeriveCensusCoversAllExpressionsAndDeliveryShapes(t *testing.T) {
 			t.Fatal("plan contains an undeclared physical access")
 		}
 	}
-	if !scalarAccess.Equal(completeAccess) || scalarHandle != completeHandle {
-		t.Fatal("different delivery shapes did not share one physical access and handle")
+	if !scalarAccess.Equal(completeAccess) || !scalarLayout.Equal(completeLayout) {
+		t.Fatal("different delivery shapes did not share one physical access and layout")
 	}
 
 	// Join vectors are authored left-to-right and remain distinct logical
