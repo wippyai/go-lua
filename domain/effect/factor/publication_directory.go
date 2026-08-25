@@ -101,7 +101,19 @@ func (row PublicationRow) MountedAt(module, call identity.ContentID) bool {
 type PublicationDirectory struct {
 	Rows    []PublicationRow
 	Calls   []PublicationCallRow
-	Members []PublicationMemberRow
+	Members []PublicationSubject
+}
+
+// MemberRows is the published projection of this directory's subject members:
+// what each member is, without the Value handle the algebra resolved for it.
+// It is the form the member column seals, so the column states published rows
+// and never holds a coordinate that cannot leave the schema that issued it.
+func (directory PublicationDirectory) MemberRows() []PublicationMemberRow {
+	rows := make([]PublicationMemberRow, 0, len(directory.Members))
+	for index := range directory.Members {
+		rows = append(rows, directory.Members[index].Row())
+	}
+	return rows
 }
 
 // PublicationMemberRow is one semantic member of one publication's subject
@@ -116,6 +128,59 @@ type PublicationMemberRow struct {
 	Semantic identity.ContentID
 	// Member is the member's position in its pack's own order.
 	Member uint32
+}
+
+// PublicationSubject is one member of a publication's subject pack as the
+// algebra that sealed it holds one: the published row, and the Value
+// coordinate that member resolves to.
+//
+// The coordinate is a handle Value's Schema issues and cannot leave it, which
+// is why the published row carries the member's identity instead. A rule that
+// reads Value at this member holds the schema as well as the algebra, so it
+// takes the coordinate from here rather than resolving it again per
+// invocation; a reader that holds neither still reads the published row.
+type PublicationSubject struct {
+	row        PublicationMemberRow
+	coordinate valuedomain.Coordinate
+}
+
+// Row is the published member this subject stands for.
+func (subject PublicationSubject) Row() PublicationMemberRow { return subject.row }
+
+// Coordinate is the Value coordinate this member resolves to. It answers only
+// for a member whose row is complete and whose coordinate its schema still
+// issues, so a consumer never reads Value at a coordinate this Link retired.
+func (subject PublicationSubject) Coordinate() (valuedomain.Coordinate, bool) {
+	if !subject.row.Available() || !subject.coordinate.Valid() {
+		return valuedomain.Coordinate{}, false
+	}
+	return subject.coordinate, true
+}
+
+// Predicate is the tag a selection over these members pairs its cells by. It
+// folds the member's own identity, so it names exactly the member the
+// directory admitted and two publications naming one semantic member carry
+// two tags.
+func (subject PublicationSubject) Predicate() (tag uint64, ok bool) {
+	if !subject.row.Available() {
+		return 0, false
+	}
+	return PublicationMemberTag(subject.row.ID)
+}
+
+// PublicationMemberTag folds one subject member's identity to the selection
+// tag its cell is paired by. It is the one derivation of that tag: a consumer
+// that folded its own would be a second authority over which cell is which
+// member.
+func PublicationMemberTag(id identity.ContentID) (uint64, bool) {
+	if !id.Available() {
+		return 0, false
+	}
+	tag := binary.BigEndian.Uint64(id[:8])
+	if tag == 0 {
+		tag = 1
+	}
+	return tag, true
 }
 
 // Available reports whether this row states a complete subject member.
@@ -188,7 +253,7 @@ func DetachPublications(owner *Algebra, values *valuedomain.Schema) (Publication
 	count := owner.MountedCallCount()
 	directory := PublicationDirectory{
 		Rows: make([]PublicationRow, 0), Calls: make([]PublicationCallRow, 0, count),
-		Members: make([]PublicationMemberRow, 0),
+		Members: make([]PublicationSubject, 0),
 	}
 	for ordinal := 0; ordinal < count; ordinal++ {
 		mounted, mountedOK := owner.MountedCallAt(ordinal)
@@ -233,7 +298,7 @@ func DetachPublications(owner *Algebra, values *valuedomain.Schema) (Publication
 // detach reads one sealed receipt into the published row. Every field is
 // taken from the receipt's own accessors, so a receipt that stopped
 // authenticating cannot reach the directory as a partially read row.
-func detach(receipt MountedPublication, values *valuedomain.Schema, memberOffset uint32) (PublicationRow, []PublicationMemberRow, bool) {
+func detach(receipt MountedPublication, values *valuedomain.Schema, memberOffset uint32) (PublicationRow, []PublicationSubject, bool) {
 	id, idOK := receipt.ContentID()
 	module, call, provenanceOK := receipt.CallProvenance()
 	application, applicationOK := receipt.ApplicationID()
@@ -247,13 +312,14 @@ func detach(receipt MountedPublication, values *valuedomain.Schema, memberOffset
 	if !subjectIDOK || !subject.Valid() {
 		return PublicationRow{}, nil, false
 	}
-	members := make([]PublicationMemberRow, 0, subject.MemberCount())
+	members := make([]PublicationSubject, 0, subject.MemberCount())
 	for member := 0; member < subject.MemberCount(); member++ {
 		semantic, semanticOK := subject.MemberAt(member)
 		if !semanticOK {
 			return PublicationRow{}, nil, false
 		}
-		if _, resolved := packtransfer.CoordinateForInputMember(values, subject, member); !resolved {
+		coordinate, resolved := packtransfer.CoordinateForInputMember(values, subject, member)
+		if !resolved {
 			return PublicationRow{}, nil, false
 		}
 		memberID, memberIDOK := PublicationMemberID(id, member)
@@ -264,7 +330,7 @@ func detach(receipt MountedPublication, values *valuedomain.Schema, memberOffset
 		if !memberRow.Available() {
 			return PublicationRow{}, nil, false
 		}
-		members = append(members, memberRow)
+		members = append(members, PublicationSubject{row: memberRow, coordinate: coordinate})
 	}
 	contextID := identity.ContentID{}
 	context, hasContext := receipt.ContextInput()

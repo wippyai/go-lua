@@ -5,6 +5,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/wippyai/go-lua/analysis/identity"
 	"github.com/wippyai/go-lua/domain/effect/factor"
 )
 
@@ -36,5 +37,49 @@ func TestDirectoryRowCarriesNoLiveCapability(t *testing.T) {
 				}
 			}
 		}
+	}
+}
+
+// A subject member's tag is stable, scoped to the member it names, and never
+// zero. It is what a selection over a publication's subject pairs its cells
+// by, so two members sharing a tag would let one member's fact answer for
+// another, and a zero tag would name no member at all.
+func TestPublicationMemberTagIsStableAndMemberScoped(t *testing.T) {
+	first := identity.ContentID([32]byte{1})
+	second := identity.ContentID([32]byte{2})
+
+	left, leftOK := factor.PublicationMemberTag(first)
+	repeat, repeatOK := factor.PublicationMemberTag(first)
+	right, rightOK := factor.PublicationMemberTag(second)
+	if !leftOK || !repeatOK || !rightOK {
+		t.Fatal("member tags refused an available identity")
+	}
+	if left != repeat {
+		t.Fatalf("one member folded two tags: %d and %d", left, repeat)
+	}
+	if left == right {
+		t.Fatalf("two members share tag %d", left)
+	}
+	if left == 0 || right == 0 {
+		t.Fatal("a member folded the zero tag")
+	}
+	if _, ok := factor.PublicationMemberTag(identity.ContentID{}); ok {
+		t.Fatal("an unavailable identity acquired a tag")
+	}
+}
+
+// Two publications naming one semantic member are two members, so their tags
+// differ: the tag folds the member's own identity, which the directory derives
+// from the row it belongs to and its position in that row's pack.
+func TestOneSemanticMemberUnderTwoPublicationsCarriesTwoTags(t *testing.T) {
+	left, leftOK := factor.PublicationMemberID(identity.ContentID([32]byte{1}), 0)
+	right, rightOK := factor.PublicationMemberID(identity.ContentID([32]byte{2}), 0)
+	if !leftOK || !rightOK || left == right {
+		t.Fatal("one member identity served two publications")
+	}
+	leftTag, leftTagOK := factor.PublicationMemberTag(left)
+	rightTag, rightTagOK := factor.PublicationMemberTag(right)
+	if !leftTagOK || !rightTagOK || leftTag == rightTag {
+		t.Fatalf("two publications share member tag %d", leftTag)
 	}
 }

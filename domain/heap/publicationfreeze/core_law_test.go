@@ -5,31 +5,19 @@ import (
 
 	"github.com/wippyai/go-lua/analysis/identity"
 	"github.com/wippyai/go-lua/analysis/program/target/vocabulary"
+	effectfactor "github.com/wippyai/go-lua/domain/effect/factor"
 	heapdomain "github.com/wippyai/go-lua/domain/heap"
 )
-
-func TestPublicationFreezeSourceTagsAreStableAndReceiptScoped(t *testing.T) {
-	first := identity.ContentID([32]byte{1})
-	second := identity.ContentID([32]byte{2})
-	left, leftOK := sourceTagFor(first)
-	repeat, repeatOK := sourceTagFor(first)
-	right, rightOK := sourceTagFor(second)
-	if !leftOK || !repeatOK || !rightOK || left != repeat || left == right {
-		t.Fatalf("source tags = %v/%v/%v, want stable distinct tags", left, repeat, right)
-	}
-	if _, zeroOK := sourceTagFor(identity.ContentID{}); zeroOK {
-		t.Fatal("zero receipt ID acquired a source tag")
-	}
-}
 
 func TestPublicationFreezeOperationGateProjectsOnlySelectedOperations(t *testing.T) {
 	firstID := identity.ContentID([32]byte{1})
 	secondID := identity.ContentID([32]byte{2})
-	firstTag, firstOK := sourceTagFor(firstID)
-	secondTag, secondOK := sourceTagFor(secondID)
+	firstRaw, firstOK := effectfactor.PublicationMemberTag(firstID)
+	secondRaw, secondOK := effectfactor.PublicationMemberTag(secondID)
 	if !firstOK || !secondOK {
 		t.Fatal("source tag setup")
 	}
+	firstTag, secondTag := sourceTag(firstRaw), sourceTag(secondRaw)
 	var prepared preparedCall
 	if !prepared.sources.add(sourceSpec{tag: firstTag, rowID: firstID, operation: vocabulary.Operation(1)}) ||
 		!prepared.sources.add(sourceSpec{tag: secondTag, rowID: secondID, operation: vocabulary.Operation(2)}) {

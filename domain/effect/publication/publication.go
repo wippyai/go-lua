@@ -219,10 +219,11 @@ func MembersDenominatorID(linkID identity.ContentID, members []factor.Publicatio
 	parts := make([][]byte, 0, len(members)+2)
 	parts = append(parts, linkID[:], count[:])
 	for index := range members {
-		if !members[index].Available() {
+		member := members[index]
+		if !member.Available() {
 			return identity.ContentID{}, false
 		}
-		id := members[index].ID
+		id := member.ID
 		parts = append(parts, id[:])
 	}
 	return identity.DeriveContentID(factor.PublicationMemberDomain, parts...)

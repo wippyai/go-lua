@@ -4,9 +4,6 @@
 package publicationfreeze
 
 import (
-	"crypto/sha256"
-	"encoding/binary"
-
 	"github.com/wippyai/go-lua/analysis/identity"
 	"github.com/wippyai/go-lua/analysis/program/target/vocabulary"
 	calldomain "github.com/wippyai/go-lua/domain/call"
@@ -118,38 +115,6 @@ func (gate *operationGate) add(operation vocabulary.Operation) bool {
 	return true
 }
 
-func sourceTagFor(id identity.ContentID) (sourceTag, bool) {
-	return sourceTagForMember(id, 0)
-}
-
-func sourceTagForMember(id identity.ContentID, member int) (sourceTag, bool) {
-	if !id.Available() || member < 0 {
-		return 0, false
-	}
-	const domain = "wippy.analysis.heap.publication-freeze.source.v1\x00"
-	if member == 0 {
-		var preimage [len(domain) + 32]byte
-		copy(preimage[:], domain)
-		copy(preimage[len(domain):], id[:])
-		digest := sha256.Sum256(preimage[:])
-		tag := binary.BigEndian.Uint64(digest[:8])
-		if tag == 0 {
-			tag = 1
-		}
-		return sourceTag(tag), true
-	}
-	var preimage [len(domain) + 32 + 4]byte
-	copy(preimage[:], domain)
-	copy(preimage[len(domain):], id[:])
-	binary.BigEndian.PutUint32(preimage[len(domain)+32:], uint32(member))
-	digest := sha256.Sum256(preimage[:])
-	tag := binary.BigEndian.Uint64(digest[:8])
-	if tag == 0 {
-		tag = 1
-	}
-	return sourceTag(tag), true
-}
-
 // prepareCall authenticates one published call's FreezeSeal rows out of the
 // Effect publication directory and retains only valid FreezeSeal rows. The
 // Call key is cached here because module/occurrence provenance is static
@@ -189,15 +154,20 @@ func prepareCall(values *valuedomain.Schema, calls *calldomain.Algebra, director
 			return nil, false
 		}
 		row := freezeRow{id: publication.ID, operation: operation, subjectOpen: publication.SubjectOpen}
-		for _, member := range directory.Members[publication.SubjectOffset : publication.SubjectOffset+publication.SubjectLength] {
+		for _, subject := range directory.Members[publication.SubjectOffset : publication.SubjectOffset+publication.SubjectLength] {
+			member := subject.Row()
 			if member.RowID != publication.ID {
 				return nil, false
 			}
-			coordinate, coordinateOK := values.CoordinateForMountedSemantic(publication.Module, member.Semantic)
-			tag, tagOK := sourceTagForMember(publication.ID, int(member.Member))
+			// The coordinate and the tag are the algebra's, taken from the
+			// subject it sealed. Resolving either here would be a second
+			// authority over which Value cell is which member.
+			coordinate, coordinateOK := subject.Coordinate()
+			rawTag, tagOK := subject.Predicate()
 			if !coordinateOK || !tagOK {
 				return nil, false
 			}
+			tag := sourceTag(rawTag)
 			row.subjectTags = append(row.subjectTags, tag)
 			if member.Member == 0 {
 				row.subjectTag = tag

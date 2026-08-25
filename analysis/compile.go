@@ -284,13 +284,13 @@ func (state *compiledState) publishComposition(module *linkmodule.Component, con
 	}
 	publicationDenominator, publicationDenominatorOK := effectpublication.DenominatorID(state.sourceID, publicationDirectory.Rows)
 	callsDenominator, callsDenominatorOK := effectpublication.CallsDenominatorID(state.sourceID, publicationDirectory.Calls)
-	membersDenominator, membersDenominatorOK := effectpublication.MembersDenominatorID(state.sourceID, publicationDirectory.Members)
+	membersDenominator, membersDenominatorOK := effectpublication.MembersDenominatorID(state.sourceID, publicationDirectory.MemberRows())
 	if !publicationDenominatorOK || !callsDenominatorOK || !membersDenominatorOK {
 		return anadiag.AnalyzeDiagnosticCompositionFailureDenominator, effectpublication.AxisKey
 	}
 	publicationContent, publicationContentOK := effectpublication.Content(publicationDirectory.Rows, publicationDenominator, declaredVocabulary)
 	callsContent, callsContentOK := effectpublication.CallsContent(publicationDirectory.Calls, len(publicationDirectory.Rows), callsDenominator)
-	membersContent, membersContentOK := effectpublication.MembersContent(publicationDirectory.Members, publicationDirectory.Rows, membersDenominator)
+	membersContent, membersContentOK := effectpublication.MembersContent(publicationDirectory.MemberRows(), publicationDirectory.Rows, membersDenominator)
 	if !publicationContentOK || !callsContentOK || !membersContentOK {
 		return anadiag.AnalyzeDiagnosticCompositionFailureContent, effectpublication.AxisKey
 	}
