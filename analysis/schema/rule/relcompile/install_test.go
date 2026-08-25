@@ -255,6 +255,10 @@ func (surfaces *owners) install(spec rule.Spec) relcompile.Placement {
 		surfaces.installJoin(declaration, candidateScope)
 	}
 
+	if program.Activation != nil {
+		surfaces.relation(relcompile.NewName(program.Activation.Branch.Axis, program.Activation.Branch.Member), candidateScope)
+	}
+
 	for _, output := range program.Fold.Outputs {
 		destination := surfaces.installOutput(output, candidateScope)
 		surfaces.operation(relcompile.NewName(program.Fold.Reducer.Axis, program.Fold.Reducer.Member), destination)

@@ -69,11 +69,8 @@ func Resolve(registry *Registry, spec rule.Spec, placement Placement) ([]Rule, e
 		relations = append(relations, joined)
 	}
 
-	if program.TransportCount() != 0 {
-		return nil, refuse(resolver.site("program.transport"), Name{Entry: entry}, KindExpression, ReasonUnlowered)
-	}
-	if program.Activation != nil {
-		return nil, refuse(resolver.site("program.activation"), Name{Entry: entry}, KindExpression, ReasonUnlowered)
+	if err := resolver.structural(program); err != nil {
+		return nil, err
 	}
 
 	operation, err := resolver.operation(program.Fold)
@@ -260,6 +257,32 @@ func (resolver ruleResolver) operation(fold ruleprogram.FoldDecl) (signature.Ide
 	site := resolver.site("program.fold.reducer")
 	name := NewName(fold.Reducer.Axis, fold.Reducer.Member)
 	return resolver.registry.Signature(site, name)
+}
+
+// structural resolves the branch and transport vocabulary of an activation
+// publication. A branch set is a nested member set of the rule's own candidate
+// row and a transported axis is the relation carried across the activation
+// edge, so both are ordinary relations joined by ordinary column vectors. The
+// declaration names the branch relation and the transported axes but not the
+// column a branch row is addressed by its parent through, nor the relation one
+// transported axis crosses the edge as, so each refuses at its own site.
+func (resolver ruleResolver) structural(program ruleprogram.Program) error {
+	if program.Activation != nil {
+		branch := NewName(program.Activation.Branch.Axis, program.Activation.Branch.Member)
+		if _, err := resolver.registry.Relation(resolver.site("program.activation.branch"), branch); err != nil {
+			return err
+		}
+		return refuse(resolver.site("program.activation.branch"), branch, KindColumn, ReasonUndeclared)
+	}
+	for index := 0; index < program.TransportCount(); index++ {
+		declaration, ok := program.TransportAt(index)
+		if !ok {
+			continue
+		}
+		site := resolver.site(fmt.Sprintf("program.transport[%d].axis", index))
+		return refuse(site, Name{Entry: schema.EntryReference(declaration.Axis)}, KindRelation, ReasonUndeclared)
+	}
+	return nil
 }
 
 // carry resolves the authored whole-output carry into the alternative
