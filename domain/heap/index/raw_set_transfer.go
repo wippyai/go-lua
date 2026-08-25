@@ -46,7 +46,7 @@ func (rule *RawSetRule) fold(frame engine.Frame[heapdomain.Value, Index]) engine
 	scratch := rule.takeSetScratch()
 	defer rule.putSetScratch(scratch)
 	view, viewOK := transferRawSetView(frame, operand, keys, heaps, packs, sources, scratch)
-	if !viewOK || !rawSetSelectionShape(operand, descriptor.descriptor, view) {
+	if !viewOK || !rawSetSelectionShape(operand, descriptor.row, view) {
 		return engine.RuleResult[heapdomain.Value]{}
 	}
 	// An empty Heap route is the explicit no-candidate disposition. This
@@ -192,8 +192,8 @@ func (rule *RawSetRule) mutateRoute(access Index, route heapdomain.RawRouteTag, 
 	if !descriptorOK {
 		return heapdomain.Value{}, false
 	}
-	if (descriptor.descriptor.kind == rawPayloadTail && view.pack == nil) ||
-		(descriptor.descriptor.kind == rawPayloadFixed && view.source == nil) {
+	if (descriptor.IsTail() && view.pack == nil) ||
+		(descriptor.IsFixed() && view.source == nil) {
 		return heapdomain.Value{}, false
 	}
 	indexAccess, indexOK := access.IndexAccess()
@@ -217,7 +217,7 @@ func (rule *RawSetRule) mutateRoute(access Index, route heapdomain.RawRouteTag, 
 			if !raw.Valid() {
 				return false
 			}
-			return rule.applyPayload(raw, descriptor.descriptor, descriptor.tag, view, access, slot, payload, keyChild, &result, &frozen, &changed, &preserved)
+			return rule.applyPayload(raw, descriptor.row, descriptor.tag, view, access, slot, payload, keyChild, &result, &frozen, &changed, &preserved)
 		})
 	}
 	if _, dynamic := access.DynamicKey(); dynamic {

@@ -3,6 +3,7 @@ package index
 import (
 	"github.com/wippyai/go-lua/analysis/engine"
 	heapdomain "github.com/wippyai/go-lua/domain/heap"
+	valuedomain "github.com/wippyai/go-lua/domain/value"
 )
 
 // locatePack and locateSource project only the RHS descriptor for this write
@@ -25,11 +26,11 @@ func (rule *RawSetRule) locatePack(context engine.SelectorContext, access Index)
 	if !validateSelectedRoutes(context, selected, count) {
 		return false
 	}
-	if count == 0 || descriptor.descriptor.kind != rawPayloadTail {
+	if count == 0 || !descriptor.IsTail() {
 		return true
 	}
-	root, rootOK := descriptor.descriptor.payload.Root()
-	return rootOK && rule.packRoute(context, root, descriptor.tag)
+	root, rootOK := descriptor.Root()
+	return rootOK && rule.packRoute(context, root, descriptor.Tag())
 }
 
 func (rule *RawSetRule) locateSource(context engine.SelectorContext, access Index) bool {
@@ -48,17 +49,9 @@ func (rule *RawSetRule) locateSource(context engine.SelectorContext, access Inde
 	if count == 0 {
 		return true
 	}
-	tags, tagsOK := rule.topology.catalog.sourceTags(descriptor.tag)
-	if !tagsOK {
-		return false
-	}
-	for _, tag := range tags {
-		source, sourceOK := sourceAt(rule.sourcesFor(access), tag)
-		if !sourceOK || !rule.sourceRoute(context, source.coordinate, tag) {
-			return false
-		}
-	}
-	return true
+	return rule.topology.VisitPayloadSources(descriptor.Tag(), func(tag RawSourceTag, coordinate valuedomain.Coordinate) bool {
+		return rule.sourceRoute(context, coordinate, tag)
+	})
 }
 
 func validateSelectedRoutes(context engine.SelectorContext, selection engine.Selection[heapdomain.RawRouteTag, engine.OrderedCells[heapdomain.Value]], count int) bool {

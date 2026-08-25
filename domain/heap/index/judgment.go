@@ -38,6 +38,10 @@ func (payload RawPayload) Tag() heapdomain.RawPayloadTag { return payload.tag }
 // the only payload kind a pack route is published for.
 func (payload RawPayload) IsTail() bool { return payload.row.kind == rawPayloadTail }
 
+// IsFixed reports whether this payload is a fixed slot of its pack, which is
+// the payload kind a write answers from a semantic source rather than a root.
+func (payload RawPayload) IsFixed() bool { return payload.row.kind == rawPayloadFixed }
+
 // Root returns the pack root this payload projects, when it has one.
 func (payload RawPayload) Root() (pack.Root, bool) {
 	if !payload.Available() {
@@ -56,6 +60,20 @@ func (topology *Topology) RawPayloadAt(tag heapdomain.RawPayloadTag) (RawPayload
 		return RawPayload{}, false
 	}
 	return RawPayload{tag: tag, row: row}, true
+}
+
+// RawWritePayload answers the payload descriptor one write candidate
+// addresses. The tag is reissued from the candidate's own access geometry, so
+// the descriptor is the one Heap named and never one this layer chose.
+func (topology *Topology) RawWritePayload(access Index) (RawPayload, bool) {
+	if topology == nil || !topology.valid() || !access.valid() || access.topology != topology {
+		return RawPayload{}, false
+	}
+	tag, ok := topology.heap.RawPayloadTagForIndexAccess(access.indexAccess)
+	if !ok {
+		return RawPayload{}, false
+	}
+	return topology.RawPayloadAt(tag)
 }
 
 // RawSourceCoordinate answers the value coordinate one semantic source names.

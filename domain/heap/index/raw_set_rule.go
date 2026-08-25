@@ -89,11 +89,6 @@ func (rule *RawSetRule) packRoute(context engine.SelectorContext, root pack.Root
 	return rule.runtime.packRoute(context, root, tag)
 }
 
-type rawSetPayload struct {
-	tag        heapdomain.RawPayloadTag
-	descriptor rawPayload
-}
-
 // rawSetScratch is solve-local indexing storage. Tags remain the semantic
 // route/source identities issued by Heap/Value/Pack; these indexes only avoid
 // repeatedly scanning one authenticated Selection during one reduction.
@@ -112,13 +107,11 @@ func (rule *RawSetRule) owns(access Index) bool {
 
 // payloadForWrite reissues the exact Heap payload tag from IndexAccessGeometry
 // before using the cold descriptor lookup.
-func (rule *RawSetRule) payloadForWrite(access Index) (rawSetPayload, bool) {
+func (rule *RawSetRule) payloadForWrite(access Index) (RawPayload, bool) {
 	if !rule.owns(access) || rule.topology.catalog == nil {
-		return rawSetPayload{}, false
+		return RawPayload{}, false
 	}
-	tag, ok := rule.topology.heap.RawPayloadTagForIndexAccess(access.indexAccess)
-	descriptor, descriptorOK := payloadAt(rule.topology.catalog.payloads, tag)
-	return rawSetPayload{tag: tag, descriptor: descriptor}, ok && descriptorOK && descriptor.kind != rawPayloadInvalid
+	return rule.topology.RawWritePayload(access)
 }
 
 func (rule *RawSetRule) sourcesFor(access Index) []rawSource {

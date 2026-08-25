@@ -411,6 +411,12 @@ type Schema struct {
 	// built once with the range and read by every publication, so a publisher
 	// neither sorts nor allocates.
 	coordinateOrder []canonicalCoordinate
+	// coordinateIdentities is the dense-indexed inverse of the coordinate
+	// range: the portable identity this schema issued for the coordinate held
+	// at each dense factor position. It is derived once with the canonical
+	// order, so naming a coordinate is a read and never a scan, and the name
+	// is the one the seal assigned rather than a second numbering.
+	coordinateIdentities []identity.ContentID
 	// mountedCoordinates is the detached semantic lookup consumed by downstream
 	// domains after the Boundary source graph has been released.
 	mountedCoordinates map[mountedCoordinateKey]uint32
@@ -1226,12 +1232,14 @@ func (schema *Schema) installCanonicalCoordinateOrder() bool {
 	// range of none derives an order of none.
 	count := len(schema.coordinates)
 	order := make([]canonicalCoordinate, 0, count)
+	identities := make([]identity.ContentID, count)
 	occupied := make([]bool, count)
 	for id, row := range schema.coordinates {
 		if !id.Available() || row.coordinate == 0 || uint64(row.coordinate) > uint64(count) || occupied[row.coordinate-1] {
 			return false
 		}
 		occupied[row.coordinate-1] = true
+		identities[row.coordinate-1] = id
 		order = append(order, canonicalCoordinate{id: id, dense: row.coordinate - 1})
 	}
 	identity.SortByContentID(order, func(row canonicalCoordinate) identity.ContentID { return row.id })
@@ -1241,6 +1249,7 @@ func (schema *Schema) installCanonicalCoordinateOrder() bool {
 		}
 	}
 	schema.coordinateOrder = order
+	schema.coordinateIdentities = identities
 	return true
 }
 
@@ -2473,6 +2482,23 @@ func (schema *valueBuilder) coordinateForCold(value linkboundary.Value) (Coordin
 		return Coordinate{}, false
 	}
 	return schema.CoordinateForID(id)
+}
+
+// CoordinateContentID answers the portable identity this Schema issued for one
+// of its own coordinates. It is the exact inverse of CoordinateForID over the
+// sealed range, and it reads the name the seal already assigned rather than
+// deriving a second one, so a consumer that must address a coordinate row by
+// content never mints an identity of its own.
+func (schema *Schema) CoordinateContentID(coordinate Coordinate) (identity.ContentID, bool) {
+	dense, ok := schema.CoordinateIndex(coordinate)
+	if !ok || uint64(dense) >= uint64(len(schema.coordinateIdentities)) {
+		return identity.ContentID{}, false
+	}
+	value := schema.coordinateIdentities[dense]
+	if !value.Available() {
+		return identity.ContentID{}, false
+	}
+	return value, true
 }
 
 // CoordinateIndex maps only a Coordinate issued by this exact Schema to its
