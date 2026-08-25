@@ -28,12 +28,12 @@ func activationLawProjection(key string) member.ProjectionRef {
 func activationLawBranch() ActivationDecl {
 	return ActivationDecl{
 		Branch:      lawRelation("activation-law/branches"),
-		Transport:   []TransportDecl{{Axis: AxisRef(lawReference("activation-law/transport"))}},
 		Application: activationLawProjection("activation-law/application"),
 		Target:      activationLawProjection("activation-law/target"),
 		Endpoint:    activationLawProjection("activation-law/endpoint"),
 		Mount:       activationLawProjection("activation-law/mount"),
 		Body:        activationLawProjection("activation-law/body"),
+		Transport:   lawRelation("activation-law/branches"),
 	}
 }
 
@@ -54,6 +54,7 @@ func activationLawProgram() Program {
 		[]JoinRef{0},
 		[]OutputDecl{seq5742Output("activation-law/write", ModeStructural, 0)},
 	)
+	program.Transport = []TransportDecl{{Axis: AxisRef(lawReference("activation-law/transport"))}}
 	program.ActivationRole = schema.Key("semantic/activation-family/activation-law")
 	program.Activation = &branch
 	return program
@@ -69,12 +70,11 @@ func TestAStructuralPublicationDeclaresItsBranchIdentities(t *testing.T) {
 	}
 	missing := activationLawProgram()
 	missing.Activation = nil
-	if problem, valid := missing.Check(); valid || problem.Kind != ProblemTransport {
+	if problem, valid := missing.Check(); valid || problem.Kind != ProblemActivation {
 		t.Fatalf("a structural publication with no branch identities: valid=%v problem=%+v", valid, problem)
 	}
 	fact := seq5742Specimens()["value-transfer"]
 	branch := activationLawBranch()
-	branch.Transport = nil
 	fact.Activation = &branch
 	if problem, valid := fact.Check(); valid || problem.Kind != ProblemActivation {
 		t.Fatalf("a fact-writing rule declaring branch identities: valid=%v problem=%+v", valid, problem)
@@ -154,13 +154,13 @@ func TestTheBranchIdentitiesAreCarriedIntoTheDigest(t *testing.T) {
 func TestTheBranchIdentitiesAreResolvableReferences(t *testing.T) {
 	declared := activationLawProgram()
 	absent := activationLawProgram()
-	absent.ActivationRole, absent.Activation = "", nil
+	absent.Transport, absent.ActivationRole, absent.Activation = nil, "", nil
 	// One reference per identity projection, the branch relation itself, and
-	// one owner reference per ordered transport axis.
-	want := len(absent.References()) + len(declared.Activation.projections()) + 1 + len(declared.Activation.Transport)
+	// the one relation the whole vector crosses the edge as.
+	want := len(absent.References()) + len(declared.Activation.projections()) + 2 + len(declared.Transport)
 	if len(declared.References()) != want {
-		t.Fatalf("the branch vocabulary contributes %d references, want %d - one per projection, one for the branch relation and one per transport axis",
-			len(declared.References())-len(absent.References()), len(declared.Activation.projections())+1+len(declared.Activation.Transport))
+		t.Fatalf("the branch vocabulary contributes %d references, want %d - one per projection, one for the branch relation and one for the crossing",
+			len(declared.References())-len(absent.References())-len(declared.Transport), len(declared.Activation.projections())+2)
 	}
 	for _, reference := range declared.Activation.references() {
 		if !reference.Declared() {

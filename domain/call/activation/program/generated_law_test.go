@@ -96,10 +96,8 @@ func TestActivationIsHandedOutFresh(t *testing.T) {
 	if first.Carry != nil {
 		first.Carry.Mode = ruleprogram.CarryModeInvalid
 	}
-	if first.Activation != nil {
-		for index := range first.Activation.Transport {
-			first.Activation.Transport[index].Exported = !first.Activation.Transport[index].Exported
-		}
+	for index := range first.Transport {
+		first.Transport[index].Exported = !first.Transport[index].Exported
 	}
 	if got := emitlaw.Canonical(Activation()); got != activationGeometry {
 		t.Fatalf("a caller's edits reached the next declaration:\n%s", got)
@@ -196,24 +194,12 @@ func TestActivationRefusesEveryStructuralMutation(t *testing.T) {
 		{mutation: "output 0 loses its publication mode", apply: func(declaration *ruleprogram.Program) { declaration.Fold.Outputs[0].Mode = ruleprogram.ModeInvalid }, kind: ruleprogram.ProblemOutput},
 		{mutation: "output 0 publishes into a value slot the fold does not have", apply: func(declaration *ruleprogram.Program) { declaration.Fold.Outputs[0].ValueSlot = 1 }, kind: ruleprogram.ProblemOutput},
 		{mutation: "output 0 claims a route it does not publish through", apply: func(declaration *ruleprogram.Program) { declaration.Fold.Outputs[0].RouteJoinPresent = true }, kind: ruleprogram.ProblemOutput},
-		{mutation: "transport row 0 loses its axis", apply: func(declaration *ruleprogram.Program) {
-			declaration.Activation.Transport[0].Axis = ruleprogram.AxisRef{}
-		}, kind: ruleprogram.ProblemTransport},
-		{mutation: "transport row 1 loses its axis", apply: func(declaration *ruleprogram.Program) {
-			declaration.Activation.Transport[1].Axis = ruleprogram.AxisRef{}
-		}, kind: ruleprogram.ProblemTransport},
-		{mutation: "transport row 2 loses its axis", apply: func(declaration *ruleprogram.Program) {
-			declaration.Activation.Transport[2].Axis = ruleprogram.AxisRef{}
-		}, kind: ruleprogram.ProblemTransport},
-		{mutation: "transport row 3 loses its axis", apply: func(declaration *ruleprogram.Program) {
-			declaration.Activation.Transport[3].Axis = ruleprogram.AxisRef{}
-		}, kind: ruleprogram.ProblemTransport},
-		{mutation: "transport row 4 loses its axis", apply: func(declaration *ruleprogram.Program) {
-			declaration.Activation.Transport[4].Axis = ruleprogram.AxisRef{}
-		}, kind: ruleprogram.ProblemTransport},
-		{mutation: "transport row 5 loses its axis", apply: func(declaration *ruleprogram.Program) {
-			declaration.Activation.Transport[5].Axis = ruleprogram.AxisRef{}
-		}, kind: ruleprogram.ProblemTransport},
+		{mutation: "transport row 0 loses its axis", apply: func(declaration *ruleprogram.Program) { declaration.Transport[0].Axis = ruleprogram.AxisRef{} }, kind: ruleprogram.ProblemTransport},
+		{mutation: "transport row 1 loses its axis", apply: func(declaration *ruleprogram.Program) { declaration.Transport[1].Axis = ruleprogram.AxisRef{} }, kind: ruleprogram.ProblemTransport},
+		{mutation: "transport row 2 loses its axis", apply: func(declaration *ruleprogram.Program) { declaration.Transport[2].Axis = ruleprogram.AxisRef{} }, kind: ruleprogram.ProblemTransport},
+		{mutation: "transport row 3 loses its axis", apply: func(declaration *ruleprogram.Program) { declaration.Transport[3].Axis = ruleprogram.AxisRef{} }, kind: ruleprogram.ProblemTransport},
+		{mutation: "transport row 4 loses its axis", apply: func(declaration *ruleprogram.Program) { declaration.Transport[4].Axis = ruleprogram.AxisRef{} }, kind: ruleprogram.ProblemTransport},
+		{mutation: "transport row 5 loses its axis", apply: func(declaration *ruleprogram.Program) { declaration.Transport[5].Axis = ruleprogram.AxisRef{} }, kind: ruleprogram.ProblemTransport},
 	} {
 		declaration := Activation().Clone()
 		law.apply(&declaration)

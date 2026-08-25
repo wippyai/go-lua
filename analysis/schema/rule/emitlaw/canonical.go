@@ -45,14 +45,12 @@ func Canonical(declaration program.Program) string {
 	for index, output := range declaration.Fold.Outputs {
 		line(&out, fmt.Sprintf("output[%d]", index), outputForm(output))
 	}
-	if declaration.Activation == nil || len(declaration.Activation.Transport) == 0 {
+	if len(declaration.Transport) == 0 {
 		line(&out, "transport", "none")
 	}
-	if declaration.Activation != nil {
-		for index, transport := range declaration.Activation.Transport {
-			line(&out, fmt.Sprintf("transport[%d]", index),
-				fmt.Sprintf("axis=%s exported=%t", reference(transport.Axis.EntryReference()), transport.Exported))
-		}
+	for index, transport := range declaration.Transport {
+		line(&out, fmt.Sprintf("transport[%d]", index),
+			fmt.Sprintf("axis=%s exported=%t", reference(transport.Axis.EntryReference()), transport.Exported))
 	}
 	return out.String()
 }
