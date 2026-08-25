@@ -87,7 +87,7 @@ func (access *rawAccess) step(rule schema.Key, candidate relcompile.Name, read r
 	access.t.Helper()
 	routeRelation := access.factRelation(heapAxis, route)
 	operation := relationName(heapAxis, route+"#expansion")
-	access.surfaces.expansion(operation, access.destinationColumn(routeRelation), bound)
+	access.surfaces.expansion(operation, access.destinationColumn(routeRelation), bound, 1, candidate)
 	access.rules = append(access.rules, relcompile.Rule{
 		ID:         access.dependencyOf(rule),
 		Expression: access.expressionOf(rule),
@@ -229,7 +229,7 @@ func rawGetPlan(t *testing.T) *rawAccess {
 	sourceRoutes := access.step("raw-get/source-routes", packRoutes, packs, "heap/raw-get-source-routes", 64)
 
 	reduction := relationName(heapAxis, "heap/raw-get-reduction")
-	access.surfaces.operation(reduction, access.destinationColumn(values))
+	access.surfaces.operation(reduction, access.destinationColumn(values), 3, candidates)
 	access.rules = append(access.rules, relcompile.Rule{
 		ID:         access.dependencyOf("raw-get/result"),
 		Expression: access.expressionOf("raw-get/result"),
@@ -265,7 +265,7 @@ func rawSetPlan(t *testing.T) *rawAccess {
 	sourceRoutes := access.step("raw-set/source-routes", packRoutes, packs, "heap/raw-set-source-routes", 64)
 
 	update := relationName(heapAxis, "heap/raw-set-cell-update")
-	access.surfaces.operation(update, access.destinationColumn(heaps))
+	access.surfaces.operation(update, access.destinationColumn(heaps), 3, candidates)
 	access.rules = append(access.rules, relcompile.Rule{
 		ID:         access.dependencyOf("raw-set/commit"),
 		Expression: access.expressionOf("raw-set/commit"),
@@ -285,26 +285,19 @@ func rawSetPlan(t *testing.T) *rawAccess {
 
 func (access *rawAccess) compile(t *testing.T, label schema.Key) planResult {
 	t.Helper()
-	owner, err := access.surfaces.registry.Owner(relcompile.Site{Path: "raw-access"}, axisRef(heapAxis))
-	if err != nil {
-		t.Fatalf("resolve heap owner: %v", err)
-	}
-	schemaID, ok := model.IssueSchemaID(owner, access.surfaces.token("schema", relcompile.EntryName(schema.SurfaceKindRule, label)))
-	if !ok {
-		t.Fatalf("issue schema identity for %s", label)
-	}
-	declaration := access.surfaces.registry.Declaration(schemaID)
+	declaration := access.surfaces.registry.Declaration(access.surfaces.schema())
 	declaration.Rules = access.rules
 	compiled, err := relcompile.Compile(declaration)
 	if err != nil {
 		t.Fatalf("compile %s: %v", label, err)
 	}
-	return planResult{count: len(compiled.Expressions()), sketch: sketch(compiled)}
+	return planResult{count: len(compiled.Expressions()), sketch: sketch(compiled), certified: certification(compiled)}
 }
 
 type planResult struct {
-	count  int
-	sketch string
+	count     int
+	sketch    string
+	certified string
 }
 
 // rawAccessCensus contributes the two authored raw indexed access rows. Their
@@ -317,12 +310,12 @@ func rawAccessCensus(t *testing.T) []entry {
 	return []entry{
 		{
 			Family: "heap/index", Plane: "family", Rule: "raw-get", Status: statusCompiles,
-			Sketch: get.sketch, Expressions: get.count,
+			Sketch: get.sketch, Expressions: get.count, Certified: get.certified,
 			Reason: "plan authored from the read chain; the rule declaration carries no Program",
 		},
 		{
 			Family: "heap/index", Plane: "family", Rule: "raw-set", Status: statusCompiles,
-			Sketch: set.sketch, Expressions: set.count,
+			Sketch: set.sketch, Expressions: set.count, Certified: set.certified,
 			Reason: "plan authored from the read chain; the rule declaration carries no Program",
 		},
 	}
@@ -388,7 +381,7 @@ func TestRawSetChainEndsInAnAuthenticatedHeapPublication(t *testing.T) {
 // expansion installs one finite expansion signature: a bounded output span
 // over the destination's own denominator, which is what makes a value-
 // dependent route emission expressible without a callback.
-func (surfaces *owners) expansion(name relcompile.Name, destination relcompile.Name, bound uint32) {
+func (surfaces *owners) expansion(name relcompile.Name, destination relcompile.Name, bound uint32, reads int, candidate relcompile.Name) {
 	surfaces.t.Helper()
 	surfaces.owner(name.Entry)
 	if !surfaces.once("operation", name) {
@@ -405,27 +398,26 @@ func (surfaces *owners) expansion(name relcompile.Name, destination relcompile.N
 	if err != nil {
 		surfaces.t.Fatalf("resolve operation owner %v: %v", name, err)
 	}
-	schemaID, ok := model.IssueSchemaID(owner, surfaces.token("schema", relcompile.Name{Entry: name.Entry}))
-	if !ok {
-		surfaces.t.Fatalf("issue schema identity for %v", name)
+	schemaID := surfaces.schema()
+	site := relcompile.Site{Path: "census.expansion"}
+	// The rows an expansion publishes are computed from the results it reads,
+	// so it is applied to the same kind of projected operand row a fold is.
+	operand := candidate
+	first := surfaces.coordinateName(candidate, relcompile.CoordinateAddress)
+	if reads != 0 {
+		operand = relcompile.NewName(name.Entry, name.Member+"#operand")
+		first = surfaces.operandRelation(operand, reads)
 	}
-	column, err := surfaces.registry.Column(relcompile.Site{Path: "census.expansion"}, destination)
+	reference := surfaces.denominatorOf(operand)
+	column, err := surfaces.registry.Column(site, first)
 	if err != nil {
-		surfaces.t.Fatalf("resolve destination %v: %v", destination, err)
+		surfaces.t.Fatalf("resolve operand column %v: %v", first, err)
 	}
-	key, err := surfaces.registry.PublicationKey(relcompile.Site{Path: "census.expansion"}, destination)
-	if err != nil {
-		surfaces.t.Fatalf("resolve publication key of %v: %v", destination, err)
-	}
-	reference, ok := model.NewDenominatorRef(column.Relation(), key)
-	if !ok {
-		surfaces.t.Fatalf("construct denominator for %v", destination)
-	}
-	delivery, ok := signature.NewBoundedSpanDelivery(bound, key)
+	delivery, ok := signature.NewBoundedSpanDelivery(bound, reference.Key())
 	if !ok {
 		surfaces.t.Fatal("construct bounded span delivery")
 	}
-	valueType, err := surfaces.registry.Type(relcompile.Site{Path: "census.expansion"}, relcompile.NewName(destination.Entry, destination.Member+"#type"))
+	valueType, err := surfaces.registry.ColumnType(site, first)
 	if err != nil {
 		surfaces.t.Fatalf("resolve destination type %v: %v", destination, err)
 	}
@@ -441,14 +433,14 @@ func (surfaces *owners) expansion(name relcompile.Name, destination relcompile.N
 		Identity: signature.Identity{Operation: operation, Version: 1},
 		Fence:    signature.Fence{Owner: owner, Schema: schemaID},
 		Inputs: []signature.Input{{
-			Relation: column.Relation(), Column: column, Type: valueType,
+			Relation: reference.Relation(), Column: column, Type: valueType,
 			Presence: signature.AllowMissing, Delivery: delivery, Denominator: reference,
 		}},
-		Outputs: []signature.Output{{
-			Relation: column.Relation(), Column: column, Type: valueType,
-			Presence: signature.ProducePresent,
-		}},
-		Authority:   signature.OutputAuthority{Denominator: reference},
+		// An expansion publishes rows, and a row is whole: the operation yields
+		// every column the relation it lands in declares, so the publication
+		// of its result owes nothing the operation did not produce.
+		Outputs:     surfaces.destinationOutputs(surfaces.relationOf(destination)),
+		Authority:   signature.OutputAuthority{Denominator: surfaces.denominatorOf(surfaces.relationOf(destination))},
 		Cardinality: cardinality,
 		Outcomes:    accepted,
 	})
