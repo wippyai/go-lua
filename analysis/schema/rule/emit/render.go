@@ -396,11 +396,28 @@ func renderFamily(out *strings.Builder, built *plan) {
 				join.name, execution, imports.typeName(join.axis.fact), join.name)
 		}
 		out.WriteString("\t}\n}\n\n")
+	} else if sets := memberSetJoins(built); len(sets) != 0 {
+		// The member-set buffers are sized once at the widest set any row of
+		// this rule declares, so a warm invocation over any row allocates
+		// nothing.
+		fmt.Fprintf(out, "\treturn &%s{\n", workerType)
+		out.WriteString("\t\tfamily: sealed,\n\t\trun:    run,\n")
+		for _, join := range sets {
+			fmt.Fprintf(out, "\t\t%sCells: make([]%s.MemberCell[%s], sealed.%sWidth),\n",
+				join.name, execution, imports.typeName(join.axis.fact), join.name)
+		}
+		out.WriteString("\t}\n}\n\n")
 	} else {
 		fmt.Fprintf(out, "\treturn &%s{family: sealed, run: run}\n}\n\n", workerType)
 	}
 	fmt.Fprintf(out, "func (*%s) InputCapacity() int  { return %d }\n", familyType, built.inputPorts)
-	fmt.Fprintf(out, "func (*%s) OutputCapacity() int { return %d }\n\n", familyType, len(built.target.Spec.Program.Fold.Outputs))
+	// A structural row publishes no Factor patch, so it claims no output slot
+	// at all: its whole publication is the branch set it settles.
+	outputs := len(built.target.Spec.Program.Fold.Outputs)
+	if built.shape == shapeStructural {
+		outputs = 0
+	}
+	fmt.Fprintf(out, "func (*%s) OutputCapacity() int { return %d }\n\n", familyType, outputs)
 }
 
 func renderWorker(out *strings.Builder, built *plan) error {
@@ -479,6 +496,83 @@ func renderWorker(out *strings.Builder, built *plan) error {
 		return renderSelectedExactExecute(out, built)
 	case shapeSelectedRoute:
 		return renderRouteExecute(out, built)
+	case shapeStructural:
+		return renderStructuralExecute(out, built)
+	}
+	return nil
+}
+
+// renderStructuralExecute writes the A form's invocation: the prerequisite
+// reads are taken, the cold branch set the trigger declares is delivered one
+// member at a time, and the fold settles each branch in turn.
+//
+// Nothing is published at a coordinate. What the row publishes is the ordinals
+// of the branches that activated, and the mounted member each ordinal stands
+// for was resolved cold by the engine that mounted it.
+func renderStructuralExecute(out *strings.Builder, built *plan) error {
+	imports := built.imports
+	execution := imports.use(executionPackagePath)
+	structure := imports.use(structurePackagePath)
+	branch := built.branch.join
+
+	invocation := map[string]string{}
+	for _, join := range built.joins {
+		if join == branch {
+			continue
+		}
+		switch join.read.Form {
+		case program.Exact:
+			invocation[fmt.Sprintf("input%d", join.position)] = fmt.Sprintf("input%d", join.position)
+		case program.Summary:
+			invocation[fmt.Sprintf("input%d", join.position)] = fmt.Sprintf("%sVector", join.name)
+		}
+	}
+
+	out.WriteString("// Execute settles one trigger's candidate branches: the prerequisite reads are\n")
+	out.WriteString("// taken, the cold branch set is delivered a member at a time, and each branch\n")
+	out.WriteString("// the trigger names is published by its own ordinal.\n")
+	renderExecutePrologue(out, built)
+
+	for _, join := range built.joins {
+		if join == branch {
+			continue
+		}
+		switch join.read.Form {
+		case program.Exact:
+			fmt.Fprintf(out, "\tvar input%d %s\n", join.position, imports.typeName(join.axis.fact))
+			fmt.Fprintf(out, "\tswitch lane.%sCell(row.%s, row.%sPolicy, ticket, &input%d) {\n", join.name, join.name, join.name, join.position)
+			fmt.Fprintf(out, "\tcase %s.NoCandidate:\n\t\treturn lane.settle(ticket, %s.NoCandidate)\n", structure, structure)
+			fmt.Fprintf(out, "\tcase %s.Refuse:\n\t\treturn lane.settle(ticket, %s.Refuse)\n", structure, structure)
+			out.WriteString("\t}\n")
+		case program.Summary:
+			renderMemberVector(out, built, join)
+		default:
+			return unexpressible(built.target.Spec.Key, fmt.Sprintf("a %s prerequisite of a structural output", readFormName(join.read.Form)),
+				fmt.Sprintf("join %d is neither the branch set nor a prerequisite the emitted worker delivers", join.position))
+		}
+	}
+
+	renderMemberVector(out, built, branch)
+	fmt.Fprintf(out, "\t_ = %sVector\n", branch.name)
+	fmt.Fprintf(out, "\toutcome := %s.FoldBranchSet[%s](lane.run, &ticket, %sCells, %s{%s})\n",
+		execution, imports.typeName(branch.axis.fact), branch.name, reducerType, strings.Join(reducerLiteralFields(built, invocation), ", "))
+	fmt.Fprintf(out, "\tif !ticket.Submit(outcome) {\n\t\treturn %s.Result{}, false\n\t}\n", execution)
+	out.WriteString("\t// A structural row concludes no fact, so its Concrete disposition carries no\n")
+	out.WriteString("\t// value slot at all.\n")
+	fmt.Fprintf(out, "\treturn %s.NewResult(outcome, 0)\n}\n\n", execution)
+
+	for _, join := range built.joins {
+		switch join.read.Form {
+		case program.Exact:
+			if join == branch {
+				continue
+			}
+			if err := renderExactCell(out, built, join); err != nil {
+				return err
+			}
+		case program.Summary:
+			renderMemberCell(out, built, join)
+		}
 	}
 	return nil
 }

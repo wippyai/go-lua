@@ -256,10 +256,21 @@ func TestAnUnexpressibleDeclarationIsRefusedByName(t *testing.T) {
 			},
 			clause: "a transformed carry beside a Summary read",
 		},
+		// A structural publication DOES have an emitted family now. What is
+		// refused by name is a structural row that has not said what it
+		// mounts, or one that claims a coordinate it does not publish into.
 		{
-			name:   "a structural publication has no emitted family",
+			name: "a structural publication that names no branch vocabulary",
+			mutate: func(spec *rule.Spec) {
+				spec.Program.Fold.Outputs[0].Mode = program.ModeStructural
+				spec.Program.Carry = nil
+			},
+			clause: "a structural output with no branch vocabulary",
+		},
+		{
+			name: "a structural publication beside a carry",
 			mutate: func(spec *rule.Spec) { spec.Program.Fold.Outputs[0].Mode = program.ModeStructural },
-			clause: "output mode Structural",
+			clause: "a structural output beside a carry",
 		},
 	} {
 		t.Run(probe.name, func(t *testing.T) {

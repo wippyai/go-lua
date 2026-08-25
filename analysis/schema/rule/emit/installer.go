@@ -132,6 +132,12 @@ func renderInstaller(out *strings.Builder, built *plan) error {
 	case shapeSelectedRoute:
 		fmt.Fprintf(out, " || output.Mode != %s.ModeRoute || !output.RouteJoinPresent || output.RouteJoin != %d",
 			ruleprogram, built.route.join.position)
+	case shapeStructural:
+		// A structural row publishes at no route and at no coordinate of its
+		// own: its output is the branch set it mounts, so the fence asserts
+		// the declared mode and the absence of a route rather than either
+		// publication disposition.
+		fmt.Fprintf(out, " || output.Mode != %s.ModeStructural || output.RouteJoinPresent", ruleprogram)
 	}
 	fmt.Fprintf(out, " || output.Slot != %d {\n\t\t\treturn nil, nil, false\n\t\t}\n", built.outputSlot)
 
@@ -219,15 +225,22 @@ func renderInstaller(out *strings.Builder, built *plan) error {
 	case shapeSelectedRoute:
 		out.WriteString("\t\twriteSealed, writeSealedOK := plane.RouteWrite(uint16(output.Slot))\n")
 	}
-	out.WriteString("\t\tif !writeSealedOK")
+	sealGuards := make([]string, 0, len(built.joins)+1)
+	if built.shape != shapeStructural {
+		sealGuards = append(sealGuards, "!writeSealedOK")
+	}
 	for _, join := range built.joins {
 		if join.memberSet != nil {
 			continue
 		}
-		fmt.Fprintf(out, " || !%sSealedOK", join.name)
+		sealGuards = append(sealGuards, "!"+join.name+"SealedOK")
 	}
-	out.WriteString(" {\n\t\t\treturn nil, nil, false\n\t\t}\n")
-	sealedNames = append(sealedNames, "write: writeSealed")
+	if len(sealGuards) != 0 {
+		fmt.Fprintf(out, "\t\tif %s {\n\t\t\treturn nil, nil, false\n\t\t}\n", strings.Join(sealGuards, " || "))
+	}
+	if built.shape != shapeStructural {
+		sealedNames = append(sealedNames, "write: writeSealed")
+	}
 
 	fmt.Fprintf(out, "\t\taddresses = append(addresses, %s.FormAddress{Member: planRow.Member, Local: uint32(len(sealed.rows))})\n", execution)
 	fmt.Fprintf(out, "\t\tsealed.rows = append(sealed.rows, %s{candidate: candidate, %s})\n", rowType, strings.Join(sealedNames, ", "))

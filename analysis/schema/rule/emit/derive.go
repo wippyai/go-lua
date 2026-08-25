@@ -42,6 +42,11 @@ const (
 	// as a cadence, because this row concludes one fact FROM every member
 	// instead of one fact AT each.
 	shapeSelectedExact
+	// shapeStructural settles one candidate branch of its trigger at a time
+	// and publishes the ordinals of those that activated. It writes no fact at
+	// all: its output is the activation row set its branches mount, so it
+	// seals no write primitive and its fold declares no output carrier.
+	shapeStructural
 )
 
 // axisPlan is one axis's emitted vocabulary: the Go types and owner symbols
@@ -112,6 +117,12 @@ type joinPlan struct {
 	derivation   *derivationPlan
 	memberSet    *memberSetPlan
 	name         string
+}
+
+// branchPlan is the declared branch set of a structural publication: the join
+// whose cold members are the candidate branches this row settles.
+type branchPlan struct {
+	join *joinPlan
 }
 
 // carryPlan is the declared whole-output carry: the input port it names and
@@ -193,6 +204,7 @@ type plan struct {
 	// selection is the dependent selected join an exact conclusion is folded
 	// over. It is nil for every other shape.
 	selection  *joinPlan
+	branch     *branchPlan
 	outputSlot uint16
 	inputPorts int
 	axes       []*axisPlan
@@ -301,6 +313,16 @@ func deriveDelivery(built *plan) {
 				built.deliveredFact[position] = "cell.Value"
 				built.deliveredTag[position] = "cell.Tag"
 				built.deliveredRoute[position] = "routeCoordinate"
+			}
+		}
+	case shapeStructural:
+		// The branch is delivered one member at a time, tagged by the ordinal
+		// its parent addresses it at - the only address a cold member set's
+		// rows have.
+		for position, join := range built.fold.inputs {
+			if join == built.branch.join {
+				built.deliveredFact[position] = "cell"
+				built.deliveredTag[position] = "branch"
 			}
 		}
 	}
@@ -707,9 +729,37 @@ func deriveShape(built *plan, resolver *axisResolver, declaration program.Progra
 		built.shape, built.form = shapeCarry, "FormCarry"
 		built.carry = &carryPlan{input: uint64ToUint32(uint64(declaration.Carry.Input)), transform: transform}
 		return nil
+	case program.ModeStructural:
+		// A structural publication writes no fact, so there is nothing for a
+		// carry to preserve and no coordinate for it to be taken over.
+		if declaration.Carry != nil {
+			return unexpressible(ruleKey, "a structural output beside a carry",
+				"a structural row publishes no Factor, so it has no coordinate a carry could preserve")
+		}
+		if declaration.Activation == nil {
+			return unexpressible(ruleKey, "a structural output with no branch vocabulary",
+				"a structural row mounts its branches as owner-issued identities, and a row that names none has not said what it mounts")
+		}
+		if uint64(declaration.Activation.Branch) >= uint64(len(built.joins)) {
+			return unexpressible(ruleKey, "a branch reference naming an undeclared join",
+				fmt.Sprintf("join %d", uint64(declaration.Activation.Branch)))
+		}
+		branch := built.joins[uint64(declaration.Activation.Branch)]
+		if branch.memberSet == nil || branch.read.Form != program.Summary {
+			return unexpressible(ruleKey, "a structural output over a branch set that is not a cold member set",
+				fmt.Sprintf("join %d is read as %s over a relation that declares no parent; the construct plane mounts one member per branch before any solve, so a per-invocation selection has no branches to mount",
+					branch.position, readFormName(branch.read.Form)))
+		}
+		if branch.foreign {
+			return unexpressible(ruleKey, "a structural output over a foreign branch set",
+				"a row's branches hang off its own candidate row, so the branch join names the axis the rule is indexed by")
+		}
+		built.shape, built.form = shapeStructural, "FormActivation"
+		built.branch = &branchPlan{join: branch}
+		return nil
 	default:
 		return unexpressible(ruleKey, fmt.Sprintf("output mode %s", outputModeName(output.Mode)),
-			"only exact and routed publications have an emitted family")
+			"only exact, routed and structural publications have an emitted family")
 	}
 }
 
