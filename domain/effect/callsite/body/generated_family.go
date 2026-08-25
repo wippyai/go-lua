@@ -316,11 +316,11 @@ func deriveDerived1Rows(effectSchema *factor.Algebra, callSchema *call.Algebra, 
 				return derived1Rows{}, false
 			}
 			if present {
-				key, keyOK := widenRow.Coordinate()
-				if !keyOK {
+				bodyRouteKey, bodyRouteKeyOK := widenRow.Coordinate()
+				if !bodyRouteKeyOK {
 					return derived1Rows{}, false
 				}
-				dense, denseOK := effectSchema.DenseKeyIndex(key)
+				dense, denseOK := effectSchema.DenseKeyIndex(bodyRouteKey)
 				if !denseOK {
 					return derived1Rows{}, false
 				}
@@ -344,11 +344,11 @@ func deriveDerived1Rows(effectSchema *factor.Algebra, callSchema *call.Algebra, 
 			return derived1Rows{}, false
 		}
 		if present {
-			key, keyOK := row.Coordinate()
-			if !keyOK {
+			bodyRouteKey, bodyRouteKeyOK := row.Coordinate()
+			if !bodyRouteKeyOK {
 				return derived1Rows{}, false
 			}
-			dense, denseOK := effectSchema.DenseKeyIndex(key)
+			dense, denseOK := effectSchema.DenseKeyIndex(bodyRouteKey)
 			if !denseOK {
 				return derived1Rows{}, false
 			}

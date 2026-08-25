@@ -1529,16 +1529,25 @@ func renderDerivedBuild(out *strings.Builder, built *plan, join *joinPlan) error
 	fmt.Fprintf(out, "func %s(%s) (%s, bool) {\n", derivedBuildName(declared.position), strings.Join(parameters, ", "), state)
 	fmt.Fprintf(out, "\tvar built %s\n", state)
 
+	var failed error
+	refusal := fmt.Sprintf("return %s{}, false", state)
+	// The coordinate a member is placed at is taken through the relation's own
+	// declared Key projection, destructured the way its owner wrote it.
+	coordinate := func(indent, row string) string {
+		name, err := projectionExpressionRefusing(built, declared.key, row, indent, refusal, out)
+		if err != nil {
+			failed = err
+			return "key"
+		}
+		return name
+	}
 	place := func(indent, row string) {
-		keyOf := imports.call(declared.key.Accessor, row)
-		denseOf := imports.call(declared.order.normalizer, declared.order.param, "key")
-		fmt.Fprintf(out, "%skey, keyOK := %s\n", indent, keyOf)
-		fmt.Fprintf(out, "%sif !keyOK {\n%s\treturn %s{}, false\n%s}\n", indent, indent, state, indent)
-		fmt.Fprintf(out, "%sdense, denseOK := %s\n", indent, denseOf)
-		fmt.Fprintf(out, "%sif !denseOK {\n%s\treturn %s{}, false\n%s}\n", indent, indent, state, indent)
+		key := coordinate(indent, row)
+		fmt.Fprintf(out, "%sdense, denseOK := %s\n", indent, imports.call(declared.order.normalizer, declared.order.param, key))
+		fmt.Fprintf(out, "%sif !denseOK {\n%s\t%s\n%s}\n", indent, indent, refusal, indent)
 		fmt.Fprintf(out, "%svar placed bool\n", indent)
 		fmt.Fprintf(out, "%sbuilt, placed = %s(built, dense, %s)\n", indent, derivedInsertName(declared.position), row)
-		fmt.Fprintf(out, "%sif !placed {\n%s\treturn %s{}, false\n%s}\n", indent, indent, state, indent)
+		fmt.Fprintf(out, "%sif !placed {\n%s\t%s\n%s}\n", indent, indent, refusal, indent)
 	}
 	resolve := func(indent string, judgment definition.GoSymbol, item, row string) {
 		call := imports.call(judgment, "", append(append([]string{}, statics...), arguments[declared.candidateArgument], item)...)
@@ -1587,7 +1596,7 @@ func renderDerivedBuild(out *strings.Builder, built *plan, join *joinPlan) error
 	}
 	walk(declared.sources, declared.resolve, arguments[declared.sourceArgument], "", "\t")
 	out.WriteString("\treturn built, true\n}\n\n")
-	return nil
+	return failed
 }
 
 // renderLazyWiden writes the widened arm of a set that is read where it lies.
@@ -1624,10 +1633,13 @@ func renderLazyWiden(out *strings.Builder, built *plan, join *joinPlan, statics,
 	fmt.Fprintf(out, "\t\t\tif !widenResolved {\n\t\t\t\treturn %s{}, false\n\t\t\t}\n", state)
 	out.WriteString("\t\t\tif !widenPresent {\n\t\t\t\twidenGap = true\n\t\t\t\tcontinue\n\t\t\t}\n")
 	out.WriteString("\t\t\tif widenGap {\n\t\t\t\tbuilt.widenPrefix = false\n\t\t\t}\n")
-	fmt.Fprintf(out, "\t\t\tkey, keyOK := %s\n", imports.call(declared.key.Accessor, "widenRow"))
-	fmt.Fprintf(out, "\t\t\tif !keyOK {\n\t\t\t\treturn %s{}, false\n\t\t\t}\n", state)
-	fmt.Fprintf(out, "\t\t\tdense, denseOK := %s\n", imports.call(declared.order.normalizer, declared.order.param, "key"))
-	fmt.Fprintf(out, "\t\t\tif !denseOK {\n\t\t\t\treturn %s{}, false\n\t\t\t}\n", state)
+	refusal := fmt.Sprintf("return %s{}, false", state)
+	key, keyErr := projectionExpressionRefusing(built, declared.key, "widenRow", "\t\t\t", refusal, out)
+	if keyErr != nil {
+		return keyErr
+	}
+	fmt.Fprintf(out, "\t\t\tdense, denseOK := %s\n", imports.call(declared.order.normalizer, declared.order.param, key))
+	fmt.Fprintf(out, "\t\t\tif !denseOK {\n\t\t\t\t%s\n\t\t\t}\n", refusal)
 	fmt.Fprintf(out, "\t\t\tif widenSeen && dense <= widenPrevious {\n\t\t\t\treturn %s{}, false\n\t\t\t}\n", state)
 	out.WriteString("\t\t\twidenPrevious, widenSeen = dense, true\n")
 	out.WriteString("\t\t\tbuilt.count++\n\t\t}\n")
