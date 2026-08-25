@@ -97,16 +97,14 @@ func formatRows(session *Session) string {
 			writef(&b, "rule[%d].Program.Carry.Mode=%s", position, carryModeSpelling(declaration.Carry.Mode))
 			writef(&b, "rule[%d].Program.Carry.Input=%d", position, uint64(declaration.Carry.Input))
 		}
-		transportCount := 0
-		if declaration.Activation != nil {
-			transportCount = len(declaration.Activation.Transport)
-		}
-		writef(&b, "rule[%d].Program.TransportCount=%d", position, transportCount)
-		if declaration.Activation != nil {
-			for transportIndex, transport := range declaration.Activation.Transport {
-				writef(&b, "rule[%d].Program.Transport[%d].Axis=%s", position, transportIndex, transport.Axis.EntryReference().Key)
-				writef(&b, "rule[%d].Program.Transport[%d].Exported=%t", position, transportIndex, transport.Exported)
+		writef(&b, "rule[%d].Program.TransportCount=%d", position, declaration.TransportCount())
+		for transportIndex := 0; transportIndex < declaration.TransportCount(); transportIndex++ {
+			transport, transportOK := declaration.TransportAt(transportIndex)
+			if !transportOK {
+				continue
 			}
+			writef(&b, "rule[%d].Program.Transport[%d].Axis=%s", position, transportIndex, transport.Axis.EntryReference().Key)
+			writef(&b, "rule[%d].Program.Transport[%d].Exported=%t", position, transportIndex, transport.Exported)
 		}
 	}
 
