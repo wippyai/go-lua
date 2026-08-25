@@ -43,6 +43,10 @@ join[2].predicate    axis/placement:placement/transfer/route-tag
 join[2].parent       -
 join[2].sources      candidate, join 0, join 1
 join[2].contract     order=canonical sparse=default on-opaque=refuse multiplicity=one denominator=denominator/coordinates/placement
+observation          points=1 reads=3
+observation[0]       read=0 point=0
+observation[1]       read=1 point=0
+observation[2]       read=2 point=0
 carry                none
 fold.reducer         axis/placement:placement/transfer/reducer
 fold.inputs          join 2

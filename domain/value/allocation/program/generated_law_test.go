@@ -22,6 +22,8 @@ import (
 // clause, carry, and transport row appears on exactly one line.
 const allocationResultGeometry = `operand              semantic/operand/value/allocation
 candidate            relation=axis/value:value/allocation/candidates issued-row=-
+observation          points=1 reads=0
+observation.carry    point=0
 carry                mode=transform input=0 transform=axis/value:transform/value/allocation
 fold.reducer         axis/value:value/allocation/reducer
 fold.inputs          none

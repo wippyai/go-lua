@@ -43,6 +43,11 @@ join[2].predicate    -
 join[2].parent       -
 join[2].sources      candidate
 join[2].contract     order=canonical sparse=explicit on-opaque=refuse multiplicity=one denominator=-
+observation          points=1 reads=3
+observation[0]       read=0 point=0
+observation[1]       read=1 point=0
+observation[2]       read=2 point=0
+observation.carry    point=0
 carry                mode=identity input=0 transform=-
 fold.reducer         axis/value:value/runtime-kind/reducer
 fold.inputs          join 0, join 1, join 2

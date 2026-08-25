@@ -37,6 +37,7 @@ func Canonical(declaration program.Program) string {
 		line(&out, prefix+".sources", sourcesForm(join.Sources))
 		line(&out, prefix+".contract", contractForm(join.Read.Contract))
 	}
+	observation(&out, declaration)
 	line(&out, "carry", carryForm(declaration.Carry))
 	line(&out, "fold.reducer", reducerForm(declaration.Fold.Reducer))
 	line(&out, "fold.inputs", inputsForm(declaration.Fold.Inputs))
@@ -51,6 +52,33 @@ func Canonical(declaration program.Program) string {
 			fmt.Sprintf("axis=%s exported=%t", reference(transport.Axis.EntryReference()), transport.Exported))
 	}
 	return out.String()
+}
+
+// observation renders the point each read is taken at, and how many distinct
+// points the rule observes in all.
+//
+// A port IS an observation point - it selects the predecessor state a read
+// resolves against - so this is the one clause of a read that cannot be
+// checked by looking at the read alone. Two reads on one port observe one
+// point, which is legal and sometimes intended; what makes it reviewable is
+// seeing the census beside the reads, because a declaration copied from
+// another rule keeps the ports it was copied with and every other clause of it
+// can be right while the points are wrong.
+func observation(out *strings.Builder, declaration program.Program) {
+	points := map[uint64]struct{}{}
+	for _, join := range declaration.Joins {
+		points[join.Read.Input.Uint64()] = struct{}{}
+	}
+	if declaration.Carry != nil {
+		points[declaration.Carry.Input.Uint64()] = struct{}{}
+	}
+	line(out, "observation", fmt.Sprintf("points=%d reads=%d", len(points), len(declaration.Joins)))
+	for index, join := range declaration.Joins {
+		line(out, fmt.Sprintf("observation[%d]", index), fmt.Sprintf("read=%d point=%d", index, join.Read.Input.Uint64()))
+	}
+	if declaration.Carry != nil {
+		line(out, "observation.carry", fmt.Sprintf("point=%d", declaration.Carry.Input.Uint64()))
+	}
 }
 
 // CanonicalEntry renders the rule identity the declaration is sealed under.

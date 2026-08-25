@@ -36,6 +36,9 @@ join[1].predicate    axis/placement:placement/store/route-tag
 join[1].parent       -
 join[1].sources      candidate, join 0
 join[1].contract     order=canonical sparse=explicit on-opaque=refuse multiplicity=one denominator=denominator/coordinates/placement
+observation          points=1 reads=2
+observation[0]       read=0 point=0
+observation[1]       read=1 point=0
 carry                none
 fold.reducer         axis/placement:placement/store/reducer/storage
 fold.inputs          join 0, join 1

@@ -36,6 +36,10 @@ join[1].predicate    axis/value:value/body-result/route-tag
 join[1].parent       -
 join[1].sources      candidate, join 0
 join[1].contract     order=by-tag sparse=explicit on-opaque=refuse multiplicity=one denominator=denominator/coordinates/value
+observation          points=1 reads=2
+observation[0]       read=0 point=0
+observation[1]       read=1 point=0
+observation.carry    point=0
 carry                mode=identity input=0 transform=-
 fold.reducer         axis/value:value/body-result/reducer
 fold.inputs          join 0, join 1

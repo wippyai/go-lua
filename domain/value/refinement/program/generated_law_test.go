@@ -29,6 +29,9 @@ join[0].predicate    -
 join[0].parent       -
 join[0].sources      candidate
 join[0].contract     order=canonical sparse=explicit on-opaque=refuse multiplicity=one denominator=-
+observation          points=1 reads=1
+observation[0]       read=0 point=0
+observation.carry    point=0
 carry                mode=identity input=0 transform=-
 fold.reducer         axis/value:value/presence-refinement/reducer
 fold.inputs          join 0

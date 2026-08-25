@@ -36,6 +36,10 @@ join[1].predicate    -
 join[1].parent       -
 join[1].sources      candidate
 join[1].contract     order=canonical sparse=explicit on-opaque=refuse multiplicity=many denominator=denominator/coordinates/value
+observation          points=2 reads=2
+observation[0]       read=0 point=0
+observation[1]       read=1 point=1
+observation.carry    point=0
 carry                mode=transform input=0 transform=axis/heap:transform/heap/allocation-closed
 fold.reducer         axis/heap:heap/reducer/closed
 fold.inputs          join 0, join 1

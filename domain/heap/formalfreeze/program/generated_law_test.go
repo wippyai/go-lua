@@ -43,6 +43,11 @@ join[2].predicate    axis/heap:heap/formal-freeze/route-tag
 join[2].parent       -
 join[2].sources      candidate, join 0, join 1
 join[2].contract     order=canonical sparse=default on-opaque=refuse multiplicity=one denominator=denominator/coordinates/heap
+observation          points=3 reads=3
+observation[0]       read=0 point=0
+observation[1]       read=1 point=1
+observation[2]       read=2 point=2
+observation.carry    point=2
 carry                mode=identity input=2 transform=-
 fold.reducer         axis/heap:heap/reducer/formal-freeze
 fold.inputs          join 2

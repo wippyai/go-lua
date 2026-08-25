@@ -36,6 +36,9 @@ join[1].predicate    axis/effect:effect/callsite/body-route-tag
 join[1].parent       -
 join[1].sources      candidate, join 0
 join[1].contract     order=by-tag sparse=explicit on-opaque=refuse multiplicity=one denominator=denominator/coordinates/effect
+observation          points=1 reads=2
+observation[0]       read=0 point=0
+observation[1]       read=1 point=0
 carry                none
 fold.reducer         axis/effect:effect/callsite-body/reducer
 fold.inputs          join 1
