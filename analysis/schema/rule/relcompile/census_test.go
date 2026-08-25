@@ -25,18 +25,11 @@ import (
 	heapformalfreeze "github.com/wippyai/go-lua/domain/heap/formalfreeze/program"
 	heappublicationfreeze "github.com/wippyai/go-lua/domain/heap/publicationfreeze/program"
 	packsource "github.com/wippyai/go-lua/domain/pack/source"
-	placementallocationbirth "github.com/wippyai/go-lua/domain/placement/allocationbirth/program"
-	placementcapture "github.com/wippyai/go-lua/domain/placement/capture/program"
-	placementcontainment "github.com/wippyai/go-lua/domain/placement/containment/program"
 	placementformal "github.com/wippyai/go-lua/domain/placement/formal/program"
-	placementfreshbirth "github.com/wippyai/go-lua/domain/placement/freshbirth/program"
-	placementpublicationescape "github.com/wippyai/go-lua/domain/placement/publicationescape/program"
 	placementreturnescape "github.com/wippyai/go-lua/domain/placement/returnescape/program"
 	placementstore "github.com/wippyai/go-lua/domain/placement/store/program"
-	placementsuspension "github.com/wippyai/go-lua/domain/placement/suspension/program"
 	placementtransfer "github.com/wippyai/go-lua/domain/placement/transfer/program"
 	statictransfer "github.com/wippyai/go-lua/domain/static/transfer"
-	typestate "github.com/wippyai/go-lua/domain/typestate/program"
 	valueallocation "github.com/wippyai/go-lua/domain/value/allocation/program"
 	valuearithmetic "github.com/wippyai/go-lua/domain/value/arithmetic/program"
 	valuebodyresult "github.com/wippyai/go-lua/domain/value/bodyresult/program"
@@ -78,19 +71,11 @@ func declared() []specimen {
 		{Family: "heap/formalfreeze", Plane: "family", Spec: heapformalfreeze.RuleEntry()},
 		{Family: "heap/publicationfreeze", Plane: "family", Spec: heappublicationfreeze.RuleEntry()},
 		{Family: "pack/source", Plane: "seed", Spec: packsource.RuleEntry()},
-		{Family: "placement/allocationbirth", Plane: "family", Spec: placementallocationbirth.RuleEntry()},
-		{Family: "placement/capture", Plane: "family", Spec: placementcapture.RuleEntry()},
-		{Family: "placement/containment", Plane: "family", Spec: placementcontainment.RuleEntry()},
 		{Family: "placement/formal", Plane: "family", Spec: placementformal.RuleEntry()},
-		{Family: "placement/freshbirth", Plane: "family", Spec: placementfreshbirth.RuleEntry()},
-		{Family: "placement/publicationescape", Plane: "family", Spec: placementpublicationescape.RuleEntry()},
 		{Family: "placement/returnescape", Plane: "family", Spec: placementreturnescape.RuleEntry()},
 		{Family: "placement/store", Plane: "family", Spec: placementstore.RuleEntry()},
-		{Family: "placement/suspension", Plane: "family", Spec: placementsuspension.RuleEntry()},
-		{Family: "placement/suspension-evidence", Plane: "family", Spec: placementsuspension.EvidenceRuleEntry()},
 		{Family: "placement/transfer", Plane: "family", Spec: placementtransfer.RuleEntry()},
 		{Family: "static/transfer", Plane: "family", Spec: statictransfer.RuleEntry()},
-		{Family: "typestate", Plane: "family", Spec: typestate.RuleEntry()},
 		{Family: "value/allocation", Plane: "seed", Spec: valueallocation.RuleEntry()},
 		{Family: "value/arithmetic", Plane: "family", Spec: valuearithmetic.RuleEntry()},
 		{Family: "value/bodyresult", Plane: "family", Spec: valuebodyresult.RuleEntry()},
@@ -105,6 +90,31 @@ func declared() []specimen {
 		{Family: "value/source", Plane: "seed", Spec: valuesource.RuleEntry()},
 		{Family: "value/transfer", Plane: "family", Spec: valuetransfer.RuleEntry()},
 	}
+}
+
+// uncommitted is every family whose declarative rule declaration is not part
+// of this revision. The family exists and still runs on its wired
+// registration arm, so it is a row like any other: the corpus is not covered
+// while a declaration the census cannot read is left out of the matrix.
+func uncommitted() []entry {
+	rows := []entry{
+		{Family: "placement/allocationbirth", Rule: "placement-allocation-birth"},
+		{Family: "placement/capture", Rule: "placement-closure-capture"},
+		{Family: "placement/containment", Rule: "placement-containment"},
+		{Family: "placement/freshbirth", Rule: "placement-fresh-birth"},
+		{Family: "placement/publicationescape", Rule: "placement-publication-escape"},
+		{Family: "placement/suspension", Rule: "placement-suspension"},
+		{Family: "placement/suspension-evidence", Rule: "placement-suspension-evidence"},
+		{Family: "typestate", Rule: "typestate"},
+	}
+	for index := range rows {
+		rows[index].Plane = "family"
+		rows[index].Status = statusCoupling
+		rows[index].Site = "program"
+		rows[index].Missing = "declaration"
+		rows[index].Reason = "the declarative rule declaration is not committed at this revision; the family runs on its wired registration arm"
+	}
+	return rows
 }
 
 // entry is one machine-readable census row.
@@ -233,6 +243,7 @@ func TestDeclarationCensus(t *testing.T) {
 		rows = append(rows, survey(t, row))
 	}
 	rows = append(rows, rawAccessCensus(t)...)
+	rows = append(rows, uncommitted()...)
 	sort.Slice(rows, func(left, right int) bool {
 		if rows[left].Family != rows[right].Family {
 			return rows[left].Family < rows[right].Family
@@ -298,7 +309,7 @@ func TestEveryDeclaredFamilyHasOneCensusRow(t *testing.T) {
 		}
 		seen[string(row.Spec.Key)] = true
 	}
-	count += len(rawAccessCensus(t))
+	count += len(rawAccessCensus(t)) + len(uncommitted())
 
 	pinned, err := os.ReadFile(filepath.Join("testdata", "census.json"))
 	if err != nil {

@@ -311,7 +311,7 @@ func (surfaces *owners) installJoin(declaration ruleprogram.JoinDecl, scope relc
 	// The occurrence identity is projected from the rule's own candidate row,
 	// so the column belongs to the candidate relation and never to the foreign
 	// directory the read reaches through it.
-	if projection, ok := declaration.AddressIdentity.AxisProjection(); ok {
+	if projection := declaration.AddressIdentity; projection.Available() {
 		surfaces.column(relcompile.NewName(projection.Axis, projection.Member), candidate)
 		surfaces.coordinate(joined, relcompile.CoordinateOccurrence)
 	}

@@ -252,8 +252,8 @@ func (resolver ruleResolver) join(index int, declaration ruleprogram.JoinDecl, r
 	// own candidate row and the read relation publishes the occurrence column
 	// its rows are enumerated under, so the correspondence is an equijoin.
 	if declaration.AddressIdentity.Declared() {
-		projection, ok := declaration.AddressIdentity.AxisProjection()
-		if !ok {
+		projection := declaration.AddressIdentity
+		if !projection.Available() {
 			return nil, Name{}, refuse(resolver.site(path+".addressIdentity"), joined, KindColumn, ReasonUndeclared)
 		}
 		identity, err := resolver.registry.Column(resolver.site(path+".addressIdentity"), NewName(projection.Axis, projection.Member))

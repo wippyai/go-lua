@@ -113,27 +113,28 @@
     "family": "placement/allocationbirth",
     "plane": "family",
     "rule": "placement-allocation-birth",
-    "status": "COMPILES",
-    "sketch": "Publish(Merge(Apply(Select(Join(Input,Select(Input)))),Select(Input)))",
-    "expressions": 1
+    "status": "COUPLING-FINDING",
+    "site": "program",
+    "missing": "declaration",
+    "reason": "the declarative rule declaration is not committed at this revision; the family runs on its wired registration arm"
   },
   {
     "family": "placement/capture",
     "plane": "family",
     "rule": "placement-closure-capture",
     "status": "COUPLING-FINDING",
-    "site": "program.joins[1].predicate",
-    "missing": "operation",
-    "reason": "undeclared"
+    "site": "program",
+    "missing": "declaration",
+    "reason": "the declarative rule declaration is not committed at this revision; the family runs on its wired registration arm"
   },
   {
     "family": "placement/containment",
     "plane": "family",
     "rule": "placement-containment",
     "status": "COUPLING-FINDING",
-    "site": "program.joins[2].sources",
-    "missing": "operation",
-    "reason": "undeclared"
+    "site": "program",
+    "missing": "declaration",
+    "reason": "the declarative rule declaration is not committed at this revision; the family runs on its wired registration arm"
   },
   {
     "family": "placement/formal",
@@ -148,18 +149,19 @@
     "family": "placement/freshbirth",
     "plane": "family",
     "rule": "placement-fresh-birth",
-    "status": "COMPILES",
-    "sketch": "Publish(Merge(Apply(Select(Join(Input,Select(Input)))),Select(Input)))",
-    "expressions": 1
+    "status": "COUPLING-FINDING",
+    "site": "program",
+    "missing": "declaration",
+    "reason": "the declarative rule declaration is not committed at this revision; the family runs on its wired registration arm"
   },
   {
     "family": "placement/publicationescape",
     "plane": "family",
     "rule": "placement-publication-escape",
     "status": "COUPLING-FINDING",
-    "site": "program.joins[1].predicate",
-    "missing": "operation",
-    "reason": "undeclared"
+    "site": "program",
+    "missing": "declaration",
+    "reason": "the declarative rule declaration is not committed at this revision; the family runs on its wired registration arm"
   },
   {
     "family": "placement/returnescape",
@@ -184,18 +186,18 @@
     "plane": "family",
     "rule": "placement-suspension",
     "status": "COUPLING-FINDING",
-    "site": "program.joins[1].predicate",
-    "missing": "operation",
-    "reason": "undeclared"
+    "site": "program",
+    "missing": "declaration",
+    "reason": "the declarative rule declaration is not committed at this revision; the family runs on its wired registration arm"
   },
   {
     "family": "placement/suspension-evidence",
     "plane": "family",
     "rule": "placement-suspension-evidence",
     "status": "COUPLING-FINDING",
-    "site": "program.joins[1].predicate",
-    "missing": "operation",
-    "reason": "undeclared"
+    "site": "program",
+    "missing": "declaration",
+    "reason": "the declarative rule declaration is not committed at this revision; the family runs on its wired registration arm"
   },
   {
     "family": "placement/transfer",
@@ -217,11 +219,11 @@
   {
     "family": "typestate",
     "plane": "family",
-    "rule": "typestate-obligation",
+    "rule": "typestate",
     "status": "COUPLING-FINDING",
-    "site": "program.joins[1].predicate",
-    "missing": "operation",
-    "reason": "undeclared"
+    "site": "program",
+    "missing": "declaration",
+    "reason": "the declarative rule declaration is not committed at this revision; the family runs on its wired registration arm"
   },
   {
     "family": "value/allocation",
