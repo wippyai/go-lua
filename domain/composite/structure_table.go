@@ -53,7 +53,7 @@ import (
 	valueorderprogram "github.com/wippyai/go-lua/domain/value/order/program"
 	valueowner "github.com/wippyai/go-lua/domain/value/owner"
 	valuerefinementprogram "github.com/wippyai/go-lua/domain/value/refinement/program"
-	valueresultalias "github.com/wippyai/go-lua/domain/value/resultalias"
+	valueresultaliasprogram "github.com/wippyai/go-lua/domain/value/resultalias/program"
 	valueruntimekindprogram "github.com/wippyai/go-lua/domain/value/runtimekind/program"
 	valuesource "github.com/wippyai/go-lua/domain/value/source"
 	valuetransfer "github.com/wippyai/go-lua/domain/value/transfer"
@@ -229,7 +229,7 @@ func semanticRoleVocabulary() []structure.Spec {
 		placementpublicationescape.StructureSpecs(),
 		heappublicationfreeze.StructureSpecs(),
 		placementtransfer.StructureSpecs(),
-		valueresultalias.StructureSpecs(),
+		valueresultaliasprogram.StructureSpecs(),
 		valuefreshresult.StructureSpecs(),
 		valuebodyresult.StructureSpecs(),
 		statictransfer.StructureSpecs(),

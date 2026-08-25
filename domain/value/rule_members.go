@@ -37,6 +37,8 @@ const (
 	RuntimeKindCallCandidates          schemaapi.Key  = "value/runtime-kind/candidates"
 	RuntimeKindSubjects                schemaapi.Key  = "value/runtime-kind/subjects"
 	RuntimeKindComparisons             schemaapi.Key  = "value/runtime-kind/comparisons"
+	MountedCallResultSlotCandidates    schemaapi.Key  = "value/mounted-call-result/candidates"
+	ResultAliasRoutes                  schemaapi.Key  = "value/result-alias/routes"
 	ClosedOperandParents               schemaapi.Key  = "value/closed-allocation/parents"
 	ClosedOperandCells                 schemaapi.Key  = "value/closed-allocation/operands"
 	StorageTransferSourceKey           schemaapi.Key  = "value/storage-transfer/source-key"
@@ -71,6 +73,9 @@ const (
 	RuntimeKindComparisonKey           schemaapi.Key  = "value/runtime-kind/comparison-key"
 	RuntimeKindWriteCoordinate         schemaapi.Key  = "value/runtime-kind/coordinate"
 	RuntimeKindCallOccurrence          schemaapi.Key  = "value/runtime-kind/call-occurrence"
+	MountedCallResultSlotCoordinate    schemaapi.Key  = "value/mounted-call-result/coordinate"
+	ResultAliasRouteKey                schemaapi.Key  = "value/result-alias/route-key"
+	ResultAliasRouteTag                schemaapi.Key  = "value/result-alias/route-tag"
 	ClosedOperandKey                   schemaapi.Key  = "value/closed-allocation/operand-key"
 	IdentityReducer                    schemaapi.Key  = "value/reducer/identity"
 	SourceReducer                      schemaapi.Key  = "value/reducer/source"
@@ -83,6 +88,7 @@ const (
 	ModuleLoadCallReducer              schemaapi.Key  = "value/module-load/reducer"
 	RuntimeKindCallReducer             schemaapi.Key  = "value/runtime-kind/reducer"
 	AllocationResultReducer            schemaapi.Key  = "value/allocation/reducer"
+	ResultAliasReducer                 schemaapi.Key  = "value/result-alias/reducer"
 	AllocationCarryTransform           schemaapi.Key  = "transform/value/allocation"
 	FreshResultRouteCarryTransform     schemaapi.Key  = "transform/value/fresh-result-route"
 	ValueCoordinateCarrier             member.Carrier = "carrier/value/coordinate"
@@ -110,6 +116,9 @@ const (
 	ModuleLoadCallCarrier              member.Carrier = "carrier/value/module-load-call"
 	RuntimeKindCallCarrier             member.Carrier = "carrier/value/runtime-kind-call"
 	RuntimeKindCallOccurrenceCarrier   member.Carrier = "carrier/value/runtime-kind-call-occurrence"
+	MountedCallResultSlotCarrier       member.Carrier = "carrier/value/mounted-call-result-slot"
+	ResultAliasRouteCarrier            member.Carrier = "carrier/value/result-alias-route"
+	ResultAliasRouteTagCarrier         member.Carrier = "carrier/value/result-alias-route-tag"
 	ClosedOperandsCarrier              member.Carrier = "carrier/value/closed-operands"
 	ClosedOperandCarrier               member.Carrier = "carrier/value/closed-operand"
 )
@@ -146,6 +155,8 @@ func AxisMemberCatalog() member.Catalog {
 			{Key: RuntimeKindCallCandidates, Subject: RuntimeKindCallCarrier, CandidateProvider: member.AxisRelationCandidate(member.RelationRef{Axis: schemaapi.EntryReference{Surface: schemaapi.SurfaceKind(2), Key: "value"}, Member: "value/runtime-kind/candidates"})},
 			{Key: RuntimeKindSubjects, Subject: ValueFactCarrier, CandidateProvider: member.AxisRelationCandidate(member.RelationRef{Axis: schemaapi.EntryReference{Surface: schemaapi.SurfaceKind(2), Key: "value"}, Member: "value/runtime-kind/candidates"}), Inputs: []member.Carrier{RuntimeKindCallCarrier}},
 			{Key: RuntimeKindComparisons, Subject: ValueFactCarrier, CandidateProvider: member.AxisRelationCandidate(member.RelationRef{Axis: schemaapi.EntryReference{Surface: schemaapi.SurfaceKind(2), Key: "value"}, Member: "value/runtime-kind/candidates"}), Inputs: []member.Carrier{RuntimeKindCallCarrier}},
+			{Key: MountedCallResultSlotCandidates, Subject: MountedCallResultSlotCarrier, CandidateProvider: member.AxisRelationCandidate(member.RelationRef{Axis: schemaapi.EntryReference{Surface: schemaapi.SurfaceKind(2), Key: "value"}, Member: "value/mounted-call-result/candidates"})},
+			{Key: ResultAliasRoutes, Subject: ResultAliasRouteCarrier, CandidateProvider: member.AxisRelationCandidate(member.RelationRef{Axis: schemaapi.EntryReference{Surface: schemaapi.SurfaceKind(2), Key: "value"}, Member: "value/mounted-call-result/candidates"}), Inputs: []member.Carrier{MountedCallResultSlotCarrier, CallFactCarrier}},
 			{Key: ClosedOperandParents, Subject: ClosedOperandsCarrier, CandidateProvider: member.AxisRelationCandidate(member.RelationRef{Axis: schemaapi.EntryReference{Surface: schemaapi.SurfaceKind(2), Key: "value"}, Member: "value/closed-allocation/parents"}), Correspondences: []member.RelationRef{member.RelationRef{Axis: schemaapi.EntryReference{Surface: schemaapi.SurfaceKind(2), Key: "heap"}, Member: "heap/closed-allocation/candidates"}}, PublishesKeyVector: true},
 			{Key: ClosedOperandCells, Subject: ClosedOperandCarrier, CandidateProvider: member.AxisRelationCandidate(member.RelationRef{Axis: schemaapi.EntryReference{Surface: schemaapi.SurfaceKind(2), Key: "value"}, Member: "value/closed-allocation/parents"}), Inputs: []member.Carrier{ClosedOperandsCarrier}},
 		},
@@ -182,6 +193,9 @@ func AxisMemberCatalog() member.Catalog {
 			{Key: RuntimeKindComparisonKey, Relation: RuntimeKindComparisons, Role: member.Key, Result: ValueCoordinateCarrier, CandidateProvider: member.AxisRelationCandidate(member.RelationRef{Axis: schemaapi.EntryReference{Surface: schemaapi.SurfaceKind(2), Key: "value"}, Member: "value/runtime-kind/candidates"})},
 			{Key: RuntimeKindWriteCoordinate, Relation: RuntimeKindCallCandidates, Role: member.Destination, Result: ValueCoordinateCarrier, CandidateProvider: member.AxisRelationCandidate(member.RelationRef{Axis: schemaapi.EntryReference{Surface: schemaapi.SurfaceKind(2), Key: "value"}, Member: "value/runtime-kind/candidates"})},
 			{Key: RuntimeKindCallOccurrence, Relation: RuntimeKindCallCandidates, Role: member.Identity, Result: RuntimeKindCallOccurrenceCarrier, CandidateProvider: member.AxisRelationCandidate(member.RelationRef{Axis: schemaapi.EntryReference{Surface: schemaapi.SurfaceKind(2), Key: "value"}, Member: "value/runtime-kind/candidates"})},
+			{Key: MountedCallResultSlotCoordinate, Relation: MountedCallResultSlotCandidates, Role: member.Destination, Result: ValueCoordinateCarrier, CandidateProvider: member.AxisRelationCandidate(member.RelationRef{Axis: schemaapi.EntryReference{Surface: schemaapi.SurfaceKind(2), Key: "value"}, Member: "value/mounted-call-result/candidates"})},
+			{Key: ResultAliasRouteKey, Relation: ResultAliasRoutes, Role: member.Key, Result: ValueCoordinateCarrier, CandidateProvider: member.AxisRelationCandidate(member.RelationRef{Axis: schemaapi.EntryReference{Surface: schemaapi.SurfaceKind(2), Key: "value"}, Member: "value/mounted-call-result/candidates"})},
+			{Key: ResultAliasRouteTag, Relation: ResultAliasRoutes, Role: member.Predicate, Result: ResultAliasRouteTagCarrier, CandidateProvider: member.AxisRelationCandidate(member.RelationRef{Axis: schemaapi.EntryReference{Surface: schemaapi.SurfaceKind(2), Key: "value"}, Member: "value/mounted-call-result/candidates"})},
 			{Key: ClosedOperandKey, Relation: ClosedOperandCells, Role: member.Key, Result: ValueCoordinateCarrier, CandidateProvider: member.AxisRelationCandidate(member.RelationRef{Axis: schemaapi.EntryReference{Surface: schemaapi.SurfaceKind(2), Key: "value"}, Member: "value/closed-allocation/parents"})},
 		},
 		[]member.Reducer{
@@ -239,6 +253,12 @@ func AxisMemberCatalog() member.Catalog {
 				{Axis: valueAxis, Carrier: ValueFactCarrier},
 			}},
 			{Key: AllocationResultReducer, Inputs: []member.ReducerInput{}, Outputs: []member.ReducerOutput{
+				{Axis: valueAxis, Carrier: ValueFactCarrier},
+			}},
+			{Key: ResultAliasReducer, Inputs: []member.ReducerInput{
+				{Axis: schemaapi.EntryReference{Surface: schemaapi.SurfaceKindAxis, Key: "call"}, Carrier: CallFactCarrier, Form: member.ReadFormExact, Multiplicity: member.MultiplicityOne},
+				{Axis: valueAxis, Carrier: ValueFactCarrier, Form: member.ReadFormSelected, Multiplicity: member.MultiplicityMany, Tag: ResultAliasRouteTagCarrier},
+			}, Outputs: []member.ReducerOutput{
 				{Axis: valueAxis, Carrier: ValueFactCarrier},
 			}},
 		},

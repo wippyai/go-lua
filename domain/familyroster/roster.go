@@ -25,6 +25,7 @@ import (
 	freshresultprogram "github.com/wippyai/go-lua/domain/value/freshresult/program"
 	valuemoduleloadprogram "github.com/wippyai/go-lua/domain/value/moduleload/program"
 	refinementprogram "github.com/wippyai/go-lua/domain/value/refinement/program"
+	valueresultaliasprogram "github.com/wippyai/go-lua/domain/value/resultalias/program"
 	valueruntimekindprogram "github.com/wippyai/go-lua/domain/value/runtimekind/program"
 )
 
@@ -125,6 +126,14 @@ func Families() []Family {
 				Spec:        valueruntimekindprogram.RuleEntry(),
 			},
 			Directory: "domain/value/runtimekind",
+		},
+		{
+			Target: emit.Target{
+				PackagePath: "github.com/wippyai/go-lua/domain/value/resultalias",
+				PackageName: "resultalias",
+				Spec:        valueresultaliasprogram.RuleEntry(),
+			},
+			Directory: "domain/value/resultalias",
 		},
 		{
 			Target: emit.Target{
@@ -291,6 +300,16 @@ func Declarations() []Declaration {
 				Spec:        valueallocationprogram.RuleEntry(),
 			},
 			Directory: "domain/value/allocation/program",
+		},
+		{
+			Target: emitlaw.Target{
+				PackagePath: "github.com/wippyai/go-lua/domain/value/resultalias/program",
+				PackageName: "program",
+				Declaration: "ResultAliasCallResult",
+				Entry:       "RuleEntry",
+				Spec:        valueresultaliasprogram.RuleEntry(),
+			},
+			Directory: "domain/value/resultalias/program",
 		},
 	}
 }

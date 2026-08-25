@@ -60,6 +60,7 @@ import (
 	valueowner "github.com/wippyai/go-lua/domain/value/owner"
 	valuerefinementprogram "github.com/wippyai/go-lua/domain/value/refinement/program"
 	valueresultalias "github.com/wippyai/go-lua/domain/value/resultalias"
+	valueresultaliasprogram "github.com/wippyai/go-lua/domain/value/resultalias/program"
 	valueruntimekind "github.com/wippyai/go-lua/domain/value/runtimekind"
 	valueruntimekindprogram "github.com/wippyai/go-lua/domain/value/runtimekind/program"
 	valuesource "github.com/wippyai/go-lua/domain/value/source"
@@ -204,7 +205,7 @@ func ruleTemplateWiring[P Principals, A Authorities]() ([]*rule.Template, []Rule
 	// and the mounted actual it aliases; fresh-result is the Link producer
 	// that hands a mounted call result the Heap fresh root Value it allocates,
 	// enumerated from Value's own admitted fresh-result directory.
-	add(WireRule(valueresultalias.RuleEntry[P, A](), valueresultalias.DeclareRule[P], valueresultalias.RegisterRule, nil, valueresultalias.BindRule[A], valueresultalias.FinalizeRule[A], nil, nil))
+	add(WireGeneratedRuleWithFamily[P, A](valueresultaliasprogram.RuleEntry(), valueresultalias.InstallFamily[A]))
 	add(WireGeneratedRuleWithFamily[P, A](valuefreshresultprogram.RuleEntry(), valuefreshresult.InstallFamily[A]))
 	// Body-result is the Value-owned executable-body counterpart to the two
 	// Target result consumers above. It consumes selected Call body targets and

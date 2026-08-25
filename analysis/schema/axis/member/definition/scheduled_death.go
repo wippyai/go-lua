@@ -69,6 +69,15 @@ var scheduledDeaths = []ScheduledDeath{
 			ResultIndex: 0,
 		},
 	},
+	{
+		Axis:     "value",
+		Relation: "value/result-alias/routes",
+		Build: GoSymbol{
+			PackagePath: "github.com/wippyai/go-lua/domain/value/resultalias/aliasroute",
+			Name:        "Derive",
+			ResultIndex: 0,
+		},
+	},
 }
 
 // ScheduledDeaths returns the migration set. The copy is deliberate: the

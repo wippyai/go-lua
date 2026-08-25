@@ -31,6 +31,10 @@ type MountedCallResultSlot struct {
 	sourceKind programschema.CallResultSlotSourceKind
 	value      identity.ContentID
 	coordinate Coordinate
+	// directory is the one-based dense candidate address of a result-zero
+	// row. Later result ordinals carry none: they belong to another output
+	// geometry and no rule folds them through this directory.
+	directory uint32
 }
 
 func (row MountedCallResultSlot) valid() bool {
@@ -192,6 +196,12 @@ func (builder *valueBuilder) sealMountedCallResultSlots() bool {
 			value:      valueID,
 			coordinate: coordinate,
 		}
+		if key.ordinal == 0 {
+			if uint64(len(builder.Schema.mountedCallResultSlotDirectory)) >= uint64(^uint32(0)) {
+				return false
+			}
+			row.directory = uint32(len(builder.Schema.mountedCallResultSlotDirectory)) + 1
+		}
 		if !row.valid() {
 			return false
 		}
@@ -199,6 +209,42 @@ func (builder *valueBuilder) sealMountedCallResultSlots() bool {
 			return false
 		}
 		builder.Schema.mountedCallResultSlots[key] = row
+		if row.directory != 0 {
+			builder.Schema.mountedCallResultSlotDirectory = append(builder.Schema.mountedCallResultSlotDirectory, row)
+		}
 	}
 	return true
+}
+
+// MountedCallResultSlotForMountedOccurrence resolves the owner-issued
+// result-zero slot of one mounted Program call occurrence. It is the candidate
+// resolver of the result-zero directory: a call that seals no valued first
+// result has no row here, which is the same set the result-slot requirement
+// issues a placement for.
+func (schema *Schema) MountedCallResultSlotForMountedOccurrence(module, occurrence identity.ContentID) (MountedCallResultSlot, bool) {
+	row, ok := schema.MountedCallResultSlotFor(module, occurrence, 0)
+	return row, ok && row.directory != 0
+}
+
+// MountedCallResultSlotOrdinal returns the dense candidate address of one
+// owner-issued result-zero slot.
+func (schema *Schema) MountedCallResultSlotOrdinal(row MountedCallResultSlot) (uint32, bool) {
+	if schema == nil || !schema.OwnsMountedCallResultSlot(row) || row.directory == 0 {
+		return 0, false
+	}
+	return row.directory - 1, true
+}
+
+// MountedCallResultSlotAt redeems one dense result-zero candidate. The order is
+// the sealed publication order of the slot geometry, and a later result ordinal
+// is never reachable through it.
+func (schema *Schema) MountedCallResultSlotAt(index int) (MountedCallResultSlot, bool) {
+	if schema == nil || index < 0 || index >= len(schema.mountedCallResultSlotDirectory) {
+		return MountedCallResultSlot{}, false
+	}
+	row := schema.mountedCallResultSlotDirectory[index]
+	if !schema.OwnsMountedCallResultSlot(row) || row.directory != uint32(index)+1 {
+		return MountedCallResultSlot{}, false
+	}
+	return row, true
 }

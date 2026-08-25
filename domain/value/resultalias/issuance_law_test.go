@@ -5,19 +5,15 @@ import (
 
 	"github.com/wippyai/go-lua/analysis/identity"
 	artifactcompiler "github.com/wippyai/go-lua/analysis/program/artifact/compiler"
-	"github.com/wippyai/go-lua/analysis/program/target/contract"
 	"github.com/wippyai/go-lua/analysis/schema"
 	programschema "github.com/wippyai/go-lua/analysis/schema/program"
 	"github.com/wippyai/go-lua/analysis/schema/programmount"
 	"github.com/wippyai/go-lua/domain/call/calltest"
-	callowner "github.com/wippyai/go-lua/domain/call/owner"
 	"github.com/wippyai/go-lua/domain/composite"
 	"github.com/wippyai/go-lua/domain/composite/snapshottest"
 	heapdomain "github.com/wippyai/go-lua/domain/heap"
-	packdomain "github.com/wippyai/go-lua/domain/pack"
 	valuedomain "github.com/wippyai/go-lua/domain/value"
-	valueowner "github.com/wippyai/go-lua/domain/value/owner"
-	"github.com/wippyai/go-lua/domain/value/resultalias"
+	resultaliasprogram "github.com/wippyai/go-lua/domain/value/resultalias/program"
 	"github.com/wippyai/go-lua/internal/testfixture"
 )
 
@@ -32,18 +28,6 @@ const aliasSubject = "local m = setmetatable({}, {})\n" +
 	"return m, co, upper, now\n"
 
 const ruleKey = schema.Key("value-callresult-resultalias")
-
-type lawPrincipals struct{}
-
-func (lawPrincipals) ValuePrincipal() *valueowner.SchemaFragment { return nil }
-func (lawPrincipals) CallPrincipal() *callowner.SchemaFragment   { return nil }
-
-type lawAuthorities struct{}
-
-func (lawAuthorities) ValueAuthority() *valueowner.HotOwner { return nil }
-func (lawAuthorities) CallAuthority() *callowner.HotOwner   { return nil }
-func (lawAuthorities) TargetContract() *contract.Contract   { return nil }
-func (lawAuthorities) PackSchema() *packdomain.Schema       { return nil }
 
 // TestResultAliasIssuesExactlyTheResultSlotOperandsItSeals is the declared
 // admissibility law of this rule. Value seals one ResultAlias operand per
@@ -93,7 +77,7 @@ func TestResultAliasIssuesExactlyTheResultSlotOperandsItSeals(t *testing.T) {
 		t.Fatalf("seal schemas heap=%s value=%s", heapFailure, valueFailure)
 	}
 
-	spec := resultalias.RuleEntry[lawPrincipals, lawAuthorities]()
+	spec := resultaliasprogram.RuleEntry()
 	if len(spec.Issues) != 1 || !spec.Issues[0].Available() {
 		t.Fatalf("rule declares %d issuances, want the one result-slot subscription", len(spec.Issues))
 	}

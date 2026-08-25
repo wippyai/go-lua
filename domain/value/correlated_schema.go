@@ -481,6 +481,11 @@ type Schema struct {
 	// Program CallResult/CallResultSlot rows remain in the cold builder
 	// directory.
 	mountedCallResultSlots map[mountedCallResultSlotKey]MountedCallResultSlot
+	// mountedCallResultSlotDirectory is the dense candidate order of the
+	// result-zero rows above. A rule that folds one mounted call's first
+	// result is addressed through it, so the family has one owner-issued
+	// numbering of those rows rather than a directory of its own.
+	mountedCallResultSlotDirectory []MountedCallResultSlot
 	// mountedCallArguments is the immutable, Value-owned projection of every
 	// admitted Program Call actual: the receiver first for a method-form call,
 	// then each declared argument in order, matching Pack's fixed endpoint
