@@ -18,7 +18,7 @@ const (
 	// axis declares the transition they issue because a carry transform is an
 	// axis-level row.
 	freshResultPackagePath = "github.com/wippyai/go-lua/domain/value/freshresult"
-	callPackagePath  = "github.com/wippyai/go-lua/domain/call"
+	callPackagePath        = "github.com/wippyai/go-lua/domain/call"
 )
 
 func valueGoType(name string) definition.GoType {
@@ -87,6 +87,7 @@ func StorageTransfer() definition.Definition {
 		Carriers: []definition.Carrier{
 			{Name: "ValueCoordinateCarrier", Key: "carrier/value/coordinate", Type: coordinate},
 			{Name: "ValueFactCarrier", Key: "carrier/value/fact", Type: value},
+			{Name: "ValueAtomCarrier", Key: "carrier/value/atom", Type: valueGoType("Atom")},
 			{Name: "StorageTransferCarrier", Key: "carrier/value/storage-transfer", Type: storageTransfer},
 			{Name: "BinaryArithmeticCarrier", Key: "carrier/value/binary-arithmetic", Type: binaryArithmetic},
 			{Name: "BinaryEqualityCarrier", Key: "carrier/value/binary-equality", Type: binaryEquality},
@@ -123,6 +124,18 @@ func StorageTransfer() definition.Definition {
 			// vocabulary. Repeating its canonical carrier lets Value declare the
 			// correspondence between its parent rows and Call's candidate rows.
 			{Name: "CallCoordinateCarrier", Key: "carrier/call/mounted-call", Type: callGoType("CallCoordinate")},
+		},
+		Enumerations: []definition.Enumeration{
+			{
+				// The atoms one Value relation decomposes to. The census and
+				// the accessor are the SCHEMA's, not the value's: an atom is
+				// only an atom of this owner, and answering without the
+				// ownership fence would answer for a value this schema never
+				// issued.
+				Name: "Atoms", Over: "ValueFactCarrier", Item: "ValueAtomCarrier",
+				Count: valueMethod("ValueAtomCount", "Schema", true, -1),
+				At:    valueMethod("ValueAtomAt", "Schema", true, 0),
+			},
 		},
 		Relations: []definition.Relation{
 			{

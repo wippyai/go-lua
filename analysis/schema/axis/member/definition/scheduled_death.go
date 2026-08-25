@@ -34,15 +34,6 @@ type ScheduledDeath struct {
 // being authored - never to quiet a refusal.
 var scheduledDeaths = []ScheduledDeath{
 	{
-		Axis:     "placement",
-		Relation: "placement/store/storage-routes",
-		Build: GoSymbol{
-			PackagePath: "github.com/wippyai/go-lua/domain/placement/store",
-			Name:        "DeriveRoutes",
-			ResultIndex: 0,
-		},
-	},
-	{
 		Axis:     "heap",
 		Relation: "heap/formal-freeze/routes",
 		Build: GoSymbol{

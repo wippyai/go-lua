@@ -319,7 +319,14 @@ func insertDerived1Row(built derived1Rows, dense uint32, tag uint64, row bodyrou
 // leave in the one order a selection is canonicalized by.
 func deriveDerived1Rows(effectSchema *factor.Algebra, callSchema *call.Algebra, given0 factor.MountedCall, given1 call.Value) (derived1Rows, bool) {
 	var built derived1Rows
-	if bodyroute.BeyondTargets(effectSchema, callSchema, given0, given1) {
+	// The endpoint is the one judgment that runs whether or not the source
+	// yields anything, so it is where an invocation nothing else would look at
+	// is authenticated.
+	beyond, admissible := bodyroute.BeyondTargets(effectSchema, callSchema, given0, given1)
+	if !admissible {
+		return derived1Rows{}, false
+	}
+	if beyond {
 		widenCount0 := callSchema.BodyTargetCount()
 		for widenCursor0 := 0; widenCursor0 < widenCount0; widenCursor0++ {
 			widenItem0, widenItem0OK := callSchema.BodyTargetAt(widenCursor0)

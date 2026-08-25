@@ -292,8 +292,13 @@ func TestAWidenEndpointIsAskedOfWhatTheDerivationEnumerates(t *testing.T) {
 	if shape.WidenParams[len(shape.WidenParams)-1].Type != specimenType("Fact") {
 		t.Fatalf("the endpoint is asked of %+v, want the carrier the outer source enumerates", shape.WidenParams[len(shape.WidenParams)-1].Type)
 	}
-	if len(shape.WidenResults) != 1 || shape.WidenResults[0].Type.Name != "bool" {
-		t.Fatalf("the endpoint answers %+v, want one boolean", shape.WidenResults)
+	// Two answers: whether the set is beyond enumeration, and the endpoint's
+	// own validity. The second is what makes this the derivation's one
+	// judgment over the whole invocation - Resolve is asked per item, so a
+	// source yielding none would otherwise be authenticated by nothing.
+	if len(shape.WidenResults) != 2 ||
+		shape.WidenResults[0].Type.Name != "bool" || shape.WidenResults[1].Type.Name != "bool" {
+		t.Fatalf("the endpoint answers %+v, want two booleans", shape.WidenResults)
 	}
 }
 

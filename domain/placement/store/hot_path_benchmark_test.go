@@ -49,24 +49,26 @@ func BenchmarkStorageApply(b *testing.B) {
 	}
 }
 
-// BenchmarkRoutePlanRouteAtTag isolates staged route validation. Route plans
-// are emitted in dense Heap order, so lookup must not allocate or rescan the
-// route set for each settled row.
-func BenchmarkRoutePlanRouteAtTag(b *testing.B) {
+// BenchmarkRouteSetIndexedRead isolates reading one member of a wide route
+// set. Members are held in ascending coordinate order, so an ordinal is a
+// direct address and reading one must neither allocate nor rescan the set.
+func BenchmarkRouteSetIndexedRead(b *testing.B) {
 	const width = 128
-	var plan RoutePlan
-	for index := 0; index < width; index++ {
-		if !plan.addExact(Route{Tag: uint64(index + 1)}) {
-			b.Fatal("route plan setup")
+	var plan derived1Rows
+	for index := width; index > 0; index-- {
+		var placed bool
+		plan, placed = insertDerived1Row(plan, uint32(index), uint64(index), Route{Tag: uint64(index)})
+		if !placed {
+			b.Fatal("route set setup")
 		}
 	}
-	tag := uint64(width/2 + 1)
+	ordinal := width / 2
 	b.ReportAllocs()
 	b.ResetTimer()
 	for index := 0; index < b.N; index++ {
-		storeRouteBenchmarkResult, storeRouteBenchmarkOK = plan.routeAtTag(tag)
+		storeRouteBenchmarkResult, storeRouteBenchmarkOK = derived1At(plan, ordinal)
 	}
-	if !storeRouteBenchmarkOK || storeRouteBenchmarkResult.Tag != tag {
+	if !storeRouteBenchmarkOK || storeRouteBenchmarkResult.Tag != uint64(ordinal+1) {
 		b.Fatal("route lookup")
 	}
 }

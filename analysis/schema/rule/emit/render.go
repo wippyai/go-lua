@@ -1711,7 +1711,12 @@ func renderDerivedBuild(out *strings.Builder, built *plan, join *joinPlan) error
 		// minus the item there is not one of yet.
 		endpoint := imports.call(declared.widen.predicate, "",
 			append(append([]string{}, statics...), arguments[declared.candidateArgument], arguments[declared.sourceArgument])...)
-		fmt.Fprintf(out, "\tif %s {\n", endpoint)
+		out.WriteString("\t// The endpoint is the one judgment that runs whether or not the source\n")
+		out.WriteString("\t// yields anything, so it is where an invocation nothing else would look at\n")
+		out.WriteString("\t// is authenticated.\n")
+		fmt.Fprintf(out, "\tbeyond, admissible := %s\n", endpoint)
+		fmt.Fprintf(out, "\tif !admissible {\n\t\t%s\n\t}\n", refusal)
+		out.WriteString("\tif beyond {\n")
 		// The widened answer is read out of the owner's own schema, so its
 		// outer level starts from that axis rather than from the value.
 		if lazyWiden(declared) {

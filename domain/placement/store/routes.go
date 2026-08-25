@@ -1,3 +1,12 @@
+// The Store route judgments.
+//
+// Which Placement coordinates a storage transfer reaches is a DECLARED
+// relation: what to enumerate, how to union it, what to widen to when the
+// value names no closed list of allocations, and the order the routes come
+// back in are stated by the relation and written by the emitter. What is left
+// here is what only this domain can answer - what one atom of a Value means to
+// Placement, what one row of Placement's own directory means, and when there
+// is no list of alternatives to enumerate at all.
 package store
 
 import (
@@ -6,7 +15,7 @@ import (
 	valuedomain "github.com/wippyai/go-lua/domain/value"
 )
 
-// Route is one exact Placement route selected from a Value reference. Tag is
+// Route is one exact Placement route reached from a Value reference. Tag is
 // the one-based dense Heap coordinate carried by the engine selection; Key is
 // the owner-issued Heap root identity.
 type Route struct {
@@ -14,297 +23,128 @@ type Route struct {
 	Tag uint64
 }
 
-type routeClass uint8
-
-const (
-	routeInvalid routeClass = iota
-	routeBottom
-	routeExact
-	routeScalar
-	routeWidened
-)
-
-// RoutePlan is the closed routing result for one Value fact. A scalar has no
-// Placement route; Bottom is kept distinct so a consumer cannot confuse a
-// missing Value with an ordinary scalar.
-type RoutePlan struct {
-	class routeClass
-
-	// Exact plans keep their common, small route set in the plan value. The
-	// spill suffix is explicit and invocation-local; it is only used when an
-	// exact Value contains more routes than the bounded inline prefix. Keeping
-	// the prefix by value means the normal one/two-route store transfer never
-	// allocates a slice just to return its plan.
-	inline [routeInlineWidth]Route
-	spill  []Route
-	count  int
-
-	// A widened plan is a view over the owner's canonical dense coordinates.
-	// It deliberately does not retain a copied allocation-root catalogue. The
-	// owner schema is immutable and therefore safe to carry across concurrent
-	// rule invocations.
-	allRoot          bool
-	allRootPrefix    bool
-	allRootSchema    placement.Schema
-	allRootDenseSize int
+// authenticated fences every judgment below on the two schema authorities and
+// the Value-owned candidate before any of them looks at a value. It is stated
+// once because all three ask the same question first, and a judgment that
+// answered about an unauthenticated transfer would answer about nothing.
+func authenticated(schema placement.Schema, values *valuedomain.Schema, transfer valuedomain.StorageTransfer) bool {
+	return schema.Valid() && values != nil && values.Valid() &&
+		values.OwnsHeapSchema(schema.Heap()) && values.OwnsStorageTransfer(transfer)
 }
 
-const routeInlineWidth = 8
-
-func (plan RoutePlan) Valid() bool   { return plan.class != routeInvalid }
-func (plan RoutePlan) Bottom() bool  { return plan.class == routeBottom }
-func (plan RoutePlan) Widened() bool { return plan.class == routeWidened }
-
-func (plan RoutePlan) routeCount() int {
-	if plan.count < 0 {
-		return 0
+// BeyondAllocations answers whether this transfer's route set has a closed
+// list of alternatives at all.
+//
+// It does not, in two ways, and both are properties of the whole invocation
+// rather than of the value alone. A Value that is Top named no alternatives.
+// A Value carrying an opaque reference named some and admitted there are
+// others. Either way the sound answer is every allocation the owner has, which
+// only Placement's own directory can produce.
+//
+// A frame-local transfer is the third case and the reason the candidate is
+// part of the question: it reaches no store, so it has no routes to widen TO,
+// and answering from the value alone would widen a whole directory to discover
+// that every row of it declines.
+func BeyondAllocations(schema placement.Schema, values *valuedomain.Schema, transfer valuedomain.StorageTransfer, fact valuedomain.Value) (bool, bool) {
+	if !authenticated(schema, values, transfer) {
+		return false, false
 	}
-	return plan.count
-}
-
-func (plan RoutePlan) routeAt(index int) (Route, bool) {
-	if index < 0 || index >= plan.routeCount() {
-		return Route{}, false
-	}
-	if plan.allRoot {
-		return plan.allRootAt(index)
-	}
-	if index < len(plan.inline) {
-		return plan.inline[index], true
-	}
-	spill := index - len(plan.inline)
-	if spill < 0 || spill >= len(plan.spill) {
-		return Route{}, false
-	}
-	return plan.spill[spill], true
-}
-
-// DeriveRoutes is the sole Store relation derivation. It authenticates the
-// two static schema authorities and the Value-owned StorageTransfer candidate
-// before looking at the supplied Value fact. Frame-local transfers are a
-// valid empty route relation; they do not enter Placement's selected-read
-// denominator. Persistent transfers delegate exactly once to planRoutes.
-func DeriveRoutes(schema placement.Schema, values *valuedomain.Schema, transfer valuedomain.StorageTransfer, fact valuedomain.Value) (RoutePlan, bool) {
-	if !schema.Valid() || values == nil || !values.Valid() || !values.OwnsHeapSchema(schema.Heap()) || !values.OwnsStorageTransfer(transfer) {
-		return RoutePlan{}, false
+	// Authenticate the relation before reading Top: the extremum is
+	// owner-local and a foreign Value must not widen this Heap. This is the
+	// only judgment of the derivation that runs whether or not the value
+	// yields an atom, so a Bottom or foreign relation is refused here or
+	// nowhere.
+	if !values.Equal(fact, fact) {
+		return false, false
 	}
 	if !transfer.Persistent() {
-		return RoutePlan{class: routeScalar}, true
+		return false, true
 	}
-	return planRoutes(schema, values, fact)
+	if fact.IsTop() {
+		return true, true
+	}
+	for index, count := 0, values.ValueAtomCount(fact); index < count; index++ {
+		atom, atomOK := values.ValueAtomAt(fact, index)
+		if !atomOK {
+			return false, false
+		}
+		classification, classificationOK := placement.ClassifyAtom(values, atom)
+		if !classificationOK || !classification.Valid() {
+			return false, false
+		}
+		if classification.Class == placement.AtomClassOpaque {
+			return true, true
+		}
+	}
+	return false, true
 }
 
-// planRoutes is the private route-set algebra after DeriveRoutes has fenced
-// the relation candidate. It has no public authority and cannot admit a
-// StorageTransfer on its own.
-func planRoutes(schema placement.Schema, values *valuedomain.Schema, fact valuedomain.Value) (RoutePlan, bool) {
-	projection, projectionOK := placement.ProjectValueAllocations(schema, values, fact)
-	if !projectionOK {
-		return RoutePlan{}, false
+// ResolveRoute answers what one atom of a Value contributes to a transfer's
+// route set.
+//
+// An allocation atom contributes the Placement coordinate of its Heap root,
+// tagged by the one-based dense position that root occupies. Every other exact
+// class - a scalar, a boot handle, a structural root - carries no local route
+// and contributes nothing; that is an absence, not a refusal, which is how a
+// judgment declines an item without failing the set. A frame-local transfer
+// declines every atom for the same reason it widens to nothing.
+//
+// An opaque atom reaching here is a contradiction: the endpoint answers before
+// this arm is entered, so a set still being enumerated has none. It refuses
+// rather than quietly dropping an alternative the answer depends on.
+func ResolveRoute(schema placement.Schema, values *valuedomain.Schema, transfer valuedomain.StorageTransfer, atom valuedomain.Atom) (Route, bool, bool) {
+	if !authenticated(schema, values, transfer) {
+		return Route{}, false, false
 	}
-	if projection.IsBottom() {
-		return RoutePlan{class: routeBottom}, true
+	if !transfer.Persistent() {
+		return Route{}, false, true
 	}
-	if projection.IsTop() {
-		plan, ok := allAllocationPlan(schema)
-		if !ok {
-			return RoutePlan{}, false
-		}
-		plan.class = routeWidened
-		return plan, true
+	classification, classificationOK := placement.ClassifyAtom(values, atom)
+	if !classificationOK || !classification.Valid() {
+		return Route{}, false, false
 	}
-	// Pull exact alternatives directly into bounded dense-coordinate scratch.
-	// Insertion keeps the route set canonical while it is built, so no sort,
-	// map, or post-hoc copied root catalogue is needed.
-	var plan RoutePlan
-	for index := 0; index < projection.ExactCount(); index++ {
-		key, keyOK := projection.ExactAt(index)
-		if !keyOK {
-			return RoutePlan{}, false
-		}
-		dense, denseOK := schema.Heap().AllocationKeyIndex(key)
-		if !denseOK || !plan.addExact(Route{Key: key, Tag: uint64(dense) + 1}) {
-			return RoutePlan{}, false
-		}
+	switch classification.Class {
+	case placement.AtomClassAllocation:
+	case placement.AtomClassOpaque:
+		return Route{}, false, false
+	default:
+		return Route{}, false, true
 	}
-	if projection.HasOpaque() {
-		widened, ok := allAllocationPlan(schema)
-		if !ok {
-			return RoutePlan{}, false
-		}
-		widened.class = routeWidened
-		return widened, true
+	key := classification.Key
+	heapSchema := schema.Heap()
+	if !heapSchema.OwnsKey(key) || key.Kind() != heap.RootAllocation {
+		return Route{}, false, false
 	}
-	if plan.count == 0 {
-		plan.class = routeScalar
-		return plan, true
+	// Heap numbers its own allocation roots and Placement's directory is that
+	// numbering; the round trip proves the two agree rather than assuming it.
+	dense, denseOK := heapSchema.AllocationKeyIndex(key)
+	canonical, canonicalOK := schema.KeyAt(dense)
+	if !denseOK || dense < 0 || !canonicalOK || canonical != key {
+		return Route{}, false, false
 	}
-	plan.class = routeExact
-	return plan, true
+	return Route{Key: key, Tag: uint64(dense) + 1}, true, true
 }
 
-// RouteCount is the direct composition accessor for a sealed RoutePlan. It is
-// the derived Build's own Count companion, so it is a free function rather
-// than a method: a derivation call shape names the plan it counts, not a
-// receiver that hides it.
-func RouteCount(plan RoutePlan) int { return plan.routeCount() }
-
-// RouteAt is the direct composition accessor for one RoutePlan row, the
-// derived Build's At companion for the same reason RouteCount is a function.
-func RouteAt(plan RoutePlan, index int) (Route, bool) { return plan.routeAt(index) }
-
-// allAllocationPlan keeps widening lazy. It counts and authenticates the
-// owner's allocation coordinates once, then RouteAt/routeAtTag derive each
-// selected route from that same schema. Heap seals Program and fresh
-// allocation roots before Boot roots, so the common representation is a
-// direct dense prefix; the defensive non-prefix form remains allocation-free
-// and scans the owner when indexed.
-func allAllocationPlan(schema placement.Schema) (RoutePlan, bool) {
-	if !schema.Valid() {
-		return RoutePlan{}, false
+// ResolveDirectoryRoute answers what one row of Placement's own coordinate
+// directory contributes to a widened route set.
+//
+// The directory is every coordinate the owner has; only its allocation roots
+// are routes, and the rest decline. It is a separate judgment from ResolveRoute
+// because a directory row is a Heap key the owner already numbered, not an
+// atom of a Value that has to be classified and authenticated back to one.
+func ResolveDirectoryRoute(schema placement.Schema, values *valuedomain.Schema, transfer valuedomain.StorageTransfer, key heap.Key) (Route, bool, bool) {
+	if !authenticated(schema, values, transfer) {
+		return Route{}, false, false
 	}
-	denseCount := schema.DenseKeyCount()
-	if denseCount < 0 {
-		return RoutePlan{}, false
+	if !transfer.Persistent() {
+		return Route{}, false, true
 	}
-	plan := RoutePlan{
-		allRoot:          true,
-		allRootSchema:    schema,
-		allRootDenseSize: denseCount,
-		allRootPrefix:    true,
+	dense, denseOK := schema.KeyIndex(key)
+	if !denseOK {
+		return Route{}, false, false
 	}
-	for dense := 0; dense < denseCount; dense++ {
-		key, keyOK := schema.KeyAt(dense)
-		if !keyOK {
-			return RoutePlan{}, false
-		}
-		if key.Kind() != heap.RootAllocation {
-			plan.allRootPrefix = false
-			continue
-		}
-		plan.count++
+	if key.Kind() != heap.RootAllocation {
+		return Route{}, false, true
 	}
-	return plan, true
-}
-
-func (plan RoutePlan) routeAtTag(tag uint64) (Route, bool) {
-	if plan.allRoot {
-		return plan.allRootAtTag(tag)
-	}
-	count := plan.routeCount()
-	low, high := 0, count
-	for low < high {
-		middle := low + (high-low)/2
-		candidate, candidateOK := plan.routeAt(middle)
-		if !candidateOK {
-			return Route{}, false
-		}
-		if candidate.Tag < tag {
-			low = middle + 1
-			continue
-		}
-		high = middle
-	}
-	index := low
-	if index < count {
-		candidate, candidateOK := plan.routeAt(index)
-		if candidateOK && candidate.Tag == tag {
-			return candidate, true
-		}
-	}
-	return Route{}, false
-}
-
-func (plan RoutePlan) allRootAt(index int) (Route, bool) {
-	if !plan.allRoot || index < 0 || index >= plan.count || plan.allRootDenseSize < 0 || !plan.allRootSchema.Valid() {
-		return Route{}, false
-	}
-	if plan.allRootPrefix {
-		key, keyOK := plan.allRootSchema.KeyAt(index)
-		return Route{Key: key, Tag: uint64(index) + 1}, keyOK && key.Kind() == heap.RootAllocation
-	}
-	ordinal := 0
-	for dense := 0; dense < plan.allRootDenseSize; dense++ {
-		key, keyOK := plan.allRootSchema.KeyAt(dense)
-		if !keyOK {
-			return Route{}, false
-		}
-		if key.Kind() != heap.RootAllocation {
-			continue
-		}
-		if ordinal == index {
-			return Route{Key: key, Tag: uint64(dense) + 1}, true
-		}
-		ordinal++
-	}
-	return Route{}, false
-}
-
-func (plan RoutePlan) allRootAtTag(tag uint64) (Route, bool) {
-	if !plan.allRoot || tag == 0 || plan.allRootDenseSize < 0 || !plan.allRootSchema.Valid() {
-		return Route{}, false
-	}
-	dense := tag - 1
-	if dense >= uint64(plan.allRootDenseSize) {
-		return Route{}, false
-	}
-	key, keyOK := plan.allRootSchema.KeyAt(int(dense))
-	if !keyOK || key.Kind() != heap.RootAllocation {
-		return Route{}, false
-	}
-	return Route{Key: key, Tag: tag}, true
-}
-
-// addExact inserts one exact route in canonical dense-tag order and
-// deduplicates aliases. The inline prefix is bounded; only routes beyond it
-// use the explicit spill suffix.
-func (plan *RoutePlan) addExact(candidate Route) bool {
-	if plan == nil || plan.allRoot || plan.count < 0 || candidate.Tag == 0 {
-		return false
-	}
-	position := 0
-	for position < plan.count {
-		current, currentOK := plan.routeAt(position)
-		if !currentOK {
-			return false
-		}
-		switch {
-		case current.Tag == candidate.Tag:
-			return current.Key == candidate.Key
-		case current.Tag > candidate.Tag:
-			goto insert
-		default:
-			position++
-		}
-	}
-
-insert:
-	if plan.count < len(plan.inline) {
-		for index := plan.count; index > position; index-- {
-			plan.inline[index] = plan.inline[index-1]
-		}
-		plan.inline[position] = candidate
-		plan.count++
-		return true
-	}
-	if position < len(plan.inline) {
-		carried := plan.inline[len(plan.inline)-1]
-		for index := len(plan.inline) - 1; index > position; index-- {
-			plan.inline[index] = plan.inline[index-1]
-		}
-		plan.inline[position] = candidate
-		plan.spill = append(plan.spill, Route{})
-		copy(plan.spill[1:], plan.spill[:len(plan.spill)-1])
-		plan.spill[0] = carried
-	} else {
-		spill := position - len(plan.inline)
-		if spill < 0 || spill > len(plan.spill) {
-			return false
-		}
-		plan.spill = append(plan.spill, Route{})
-		copy(plan.spill[spill+1:], plan.spill[spill:len(plan.spill)-1])
-		plan.spill[spill] = candidate
-	}
-	plan.count++
-	return true
+	return Route{Key: key, Tag: uint64(dense) + 1}, true, true
 }

@@ -96,6 +96,19 @@ func Storage() definition.Definition {
 			{Name: "StorageTransferCarrier", Key: "carrier/value/storage-transfer", Type: valueGoType("StorageTransfer")},
 			{Name: "ValueFactCarrier", Key: "carrier/value/fact", Type: valueGoType("Value")},
 		},
+		Enumerations: []definition.Enumeration{
+			{
+				// Over nothing: the owner's whole coordinate directory, which
+				// is what a route set widens to when the value it is derived
+				// from names no closed list of allocations. It yields in this
+				// axis's own dense order, so a set ordered by this axis IS the
+				// directory and reading it copies nothing.
+				Name: "AllocationDirectory", Item: "PlacementKeyCarrier",
+				Count: placementMethod("DenseKeyCount", "Schema", false, -1),
+				At:    placementMethod("KeyAt", "Schema", false, 0),
+				Order: axisReference("placement"),
+			},
+		},
 		Relations: []definition.Relation{
 			{
 				Name:              "StorageRoutes",
@@ -103,14 +116,33 @@ func Storage() definition.Definition {
 				Subject:           "StorageRouteCarrier",
 				Inputs:            []definition.RelationInput{{Carrier: "StorageTransferCarrier"}, {Carrier: "ValueFactCarrier"}},
 				CandidateProvider: member.AxisRelationCandidate(provider),
+				// Declared rather than authored: what to enumerate, how to
+				// union it, what to widen to when the value names no closed
+				// list of allocations, and the order the routes come back in
+				// are all stated here and written by the emitter. What is left
+				// authored is what only this domain can answer - what one atom
+				// of a Value means to Placement, what one row of Placement's
+				// own directory means, and when there is no list to enumerate
+				// at all.
 				Derivation: definition.RelationDerivation{
-					State: storeGoType("RoutePlan"),
-					Build: storeFunction("DeriveRoutes"),
-					Count: storeFunction("RouteCount"),
-					At:    storeFunction("RouteAt"),
 					StaticAxes: []schema.EntryReference{
 						axisReference("placement"),
 						axisReference("value"),
+					},
+					Source:  []definition.EnumerationRef{{Axis: axisReference("value"), Name: "Atoms"}},
+					Resolve: storeFunction("ResolveRoute"),
+					// A store transfer routes to one allocation, or to a
+					// couple where a value carries alternatives; a wider
+					// answer is the widened one, which is not held by value at
+					// all.
+					InlineWidth: 8,
+					Widen: definition.DerivationWiden{
+						Predicate: storeFunction("BeyondAllocations"),
+						Source:    []definition.EnumerationRef{{Axis: axisReference("placement"), Name: "AllocationDirectory"}},
+						// A directory row is a Heap key, not an atom of a
+						// Value, so the endpoint answers what one of those
+						// means with its own judgment.
+						Resolve: storeFunction("ResolveDirectoryRoute"),
 					},
 				},
 			},

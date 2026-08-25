@@ -1080,7 +1080,13 @@ func TestALatticeEndpointIsAJudgmentOverTheWholeInvocation(t *testing.T) {
 	if !found {
 		t.Fatalf("the emitted construction has no Build:\n%s", source)
 	}
-	if !strings.Contains(build, "if site.IsTop(siteSchema, wireSchema, given0, given1) {") {
+	if !strings.Contains(build, "beyond, admissible := site.IsTop(siteSchema, wireSchema, given0, given1)") {
 		t.Fatalf("the endpoint is not asked over the whole invocation:\n%s", build)
+	}
+	// The endpoint is the only judgment that runs whether or not the source
+	// yields an item, so it is where an invocation nothing else would look at
+	// is authenticated, and its refusal is the set's.
+	if !strings.Contains(build, "if !admissible {\n\t\treturn derived1Rows{}, false\n\t}") {
+		t.Fatalf("the endpoint's refusal does not refuse the set:\n%s", build)
 	}
 }

@@ -76,13 +76,18 @@ func ResolveRoute(effects *effectfactor.Algebra, calls *calldomain.Algebra, moun
 
 // BeyondTargets answers whether a call site's member set is beyond
 // enumeration: the call named no closed list of alternatives, so the bodies it
-// reaches are every body there is rather than the ones written down.
+// reaches are every body there is rather than the ones written down. It
+// answers its own validity beside that, because it is the one judgment of this
+// derivation that runs whether or not the call names a single target - a site
+// whose call value is empty reaches nothing else that could authenticate it.
 //
 // It is asked of the same things ResolveRoute is asked of, minus the target
 // there is not one of yet, because whether a set has a closed list can depend
-// on what the set is OF. Here it depends only on the call's own value, and the
-// judgment says so by ignoring the rest rather than by not being handed them.
-func BeyondTargets(effects *effectfactor.Algebra, calls *calldomain.Algebra, mounted effectfactor.MountedCall, fact calldomain.Value) bool {
-	_, _, _ = effects, calls, mounted
-	return fact.IsTop()
+// on what the set is OF.
+func BeyondTargets(effects *effectfactor.Algebra, calls *calldomain.Algebra, mounted effectfactor.MountedCall, fact calldomain.Value) (bool, bool) {
+	if effects == nil || !effects.Valid() || calls == nil || !calls.Valid() ||
+		!calls.LinkOwner().Matches(effects.LinkOwner()) || !mounted.Valid() {
+		return false, false
+	}
+	return fact.IsTop(), true
 }

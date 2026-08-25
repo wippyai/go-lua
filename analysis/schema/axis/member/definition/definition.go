@@ -346,7 +346,15 @@ func (reference EnumerationRef) Available() bool {
 // answer where it can be read, instead of inside a Build where each one spelled
 // it differently.
 type DerivationWiden struct {
-	// Predicate answers whether this derivation's set is beyond enumeration.
+	// Predicate answers whether this derivation's set is beyond enumeration,
+	// and whether the invocation is admissible at all.
+	//
+	// The second answer is what makes this the derivation's ONE judgment over
+	// the whole invocation, and it has nowhere else to live: Resolve is asked
+	// per item, so a source that yields no items - a Bottom value, a forged
+	// candidate whose value has no atoms, a fact this schema never issued -
+	// would never be authenticated by anything, and the set would answer
+	// "no rows" where its owner refuses.
 	// It is a judgment over the same things Resolve is a judgment over, minus
 	// the item there is not one of yet: the static axis schemas, the candidate,
 	// and the value the outer source reads. Whether a set has a closed list of
