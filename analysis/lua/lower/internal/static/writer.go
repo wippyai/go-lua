@@ -20,16 +20,16 @@ import (
 // Declaration IDs, rather than source names, are the sole lexical reference
 // authority; names are retained only as authored reference spelling.
 type Writer struct {
-	static           *assembly.Collector
-	flow             *assembly.Collector
-	binding          *bind.Result
-	scopes           *lexical.Bodies
-	sourceName       string
-	terms            map[bind.TypeDeclID]keyspace.Term
+	static     *assembly.Collector
+	flow       *assembly.Collector
+	binding    *bind.Result
+	scopes     *lexical.Bodies
+	sourceName string
+	terms      map[bind.TypeDeclID]keyspace.Term
 	// rootBody hosts the ambient namespace declarations. It is the chunk Body,
 	// captured when that Body is prepared, because an ambient name is in scope
 	// for the whole Program rather than for the Body that first names it.
-	rootBody keyspace.Term
+	rootBody         keyspace.Term
 	children         []keyspace.Term
 	fields           []keyspace.Term
 	interfaceMembers []assembly.StaticInterfaceMember

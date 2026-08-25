@@ -4,10 +4,10 @@ import (
 	"errors"
 
 	flowrole "github.com/wippyai/go-lua/analysis/program/flow/role"
-	"github.com/wippyai/go-lua/internal/rows"
 	"github.com/wippyai/go-lua/analysis/program/keyspace"
 	staticrole "github.com/wippyai/go-lua/analysis/program/static/role"
 	"github.com/wippyai/go-lua/analysis/schema/denominator"
+	"github.com/wippyai/go-lua/internal/rows"
 )
 
 // Build validates and seals authored operator rows. It retains no input

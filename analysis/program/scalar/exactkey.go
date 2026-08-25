@@ -159,4 +159,3 @@ func CompareCanonical(left, right Ref) int {
 	}
 	return 0
 }
-

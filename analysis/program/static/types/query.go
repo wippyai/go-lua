@@ -1,8 +1,8 @@
 package types
 
 import (
-	"github.com/wippyai/go-lua/internal/rows"
 	"github.com/wippyai/go-lua/analysis/program/keyspace"
+	"github.com/wippyai/go-lua/internal/rows"
 )
 
 // View is the immutable query surface over a sealed type forest. It holds the

@@ -119,10 +119,11 @@ func Contribution() definition.Contribution {
 		// before them delivered, so they are published through this
 		// selection and stamped with the tag the reading rule joins on.
 		Selections: []definition.Selection{{
-			Name:     "FreshResultRouteSelection",
-			Key:      "value/fresh-result/route-selection",
-			Relation: "FreshResultRoutes",
-			Tag:      "FreshResultRouteTag",
+			Name:           "FreshResultRouteSelection",
+			Key:            "value/fresh-result/route-selection",
+			Relation:       "FreshResultRoutes",
+			Tag:            "FreshResultRouteTag",
+			Implementation: freshResultFunction("DeriveFreshResultRoutes"),
 		}},
 		Reducers: []definition.Reducer{{
 			Name:      "FreshResultReducer",

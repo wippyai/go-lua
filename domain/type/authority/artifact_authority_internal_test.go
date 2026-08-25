@@ -57,7 +57,7 @@ func TestStaticReferenceResolutionShapeLaw(t *testing.T) {
 		name       string
 		resolution staticrefs.Resolution
 		children   int
-		edge staticReferenceEdge
+		edge       staticReferenceEdge
 	}{
 		{name: "unresolved leaf", resolution: staticrefs.Unresolved, children: 0, edge: staticReferenceUnresolved},
 		{name: "unresolved target", resolution: staticrefs.Unresolved, children: 1},

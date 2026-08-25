@@ -34,6 +34,7 @@ type StaticTypeNodeReferenceSourceKey struct {
 	key      keyspace.Key
 	position uint32
 }
+
 // StaticTypeNodeReferenceCanonicalKey is one segment of a reference's
 // canonical path. It carries the segment's exact spelling as well as its key:
 // the canonical path names a declaration outside this Program, so a consumer

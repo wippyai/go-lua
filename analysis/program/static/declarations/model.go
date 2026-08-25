@@ -10,10 +10,10 @@
 package declarations
 
 import (
-	"github.com/wippyai/go-lua/internal/rows"
 	"github.com/wippyai/go-lua/analysis/program/keyspace"
 	"github.com/wippyai/go-lua/analysis/program/source"
 	"github.com/wippyai/go-lua/analysis/schema/denominator"
+	"github.com/wippyai/go-lua/internal/rows"
 )
 
 // TypeAlias is one authored named static type binding.

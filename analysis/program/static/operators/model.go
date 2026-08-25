@@ -7,8 +7,8 @@
 package operators
 
 import (
-	"github.com/wippyai/go-lua/internal/rows"
 	"github.com/wippyai/go-lua/analysis/program/keyspace"
+	"github.com/wippyai/go-lua/internal/rows"
 )
 
 // TypeOf is an authored request to derive the type of a Flow value occurrence

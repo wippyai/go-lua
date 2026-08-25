@@ -9,9 +9,9 @@
 package types
 
 import (
-	"github.com/wippyai/go-lua/internal/rows"
 	"github.com/wippyai/go-lua/analysis/program/keyspace"
 	"github.com/wippyai/go-lua/analysis/schema/denominator"
+	"github.com/wippyai/go-lua/internal/rows"
 )
 
 // PrimitiveKind is the complete parser-authored primitive type vocabulary.

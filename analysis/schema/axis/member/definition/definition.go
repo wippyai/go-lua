@@ -768,10 +768,11 @@ type CarryTransform struct {
 // that those derived rows are SELECTED: they carry a tag a reading rule
 // correlates them by.
 type Selection struct {
-	Name     string
-	Key      schema.Key
-	Relation string
-	Tag      string
+	Name           string
+	Key            schema.Key
+	Relation       string
+	Tag            string
+	Implementation GoSymbol
 }
 
 // KeyNormalization is the one axis-level conversion from an owner key carrier
@@ -998,10 +999,6 @@ func (definition Definition) Catalog() (member.Catalog, bool) {
 	projections := make([]member.Projection, len(definition.Projections))
 	projectionKeys := make(map[schema.Key]struct{}, len(definition.Projections))
 	projectionNames := make(map[string]schema.Key, len(definition.Projections))
-	derivedRelations := make(map[string]bool, len(definition.Relations))
-	for _, relation := range definition.Relations {
-		derivedRelations[relation.Name] = relation.Derivation.DeclaredDerivation() || relation.Derivation.AuthoredDerivation()
-	}
 	for index, projection := range definition.Projections {
 		if !identifierAvailable(projection.Name) || !projection.Key.Available() || !projection.Role.Available() {
 			return member.Catalog{}, false
@@ -1097,7 +1094,7 @@ func (definition Definition) Catalog() (member.Catalog, bool) {
 	selections := make([]member.Selection, len(definition.Selections))
 	selectionKeys := make(map[schema.Key]struct{}, len(definition.Selections))
 	for index, selection := range definition.Selections {
-		if !identifierAvailable(selection.Name) || !selection.Key.Available() {
+		if !identifierAvailable(selection.Name) || !selection.Key.Available() || !selection.Implementation.Available() {
 			return member.Catalog{}, false
 		}
 		if _, duplicate := selectionKeys[selection.Key]; duplicate {
@@ -1106,12 +1103,6 @@ func (definition Definition) Catalog() (member.Catalog, bool) {
 		relation, relationOK := relationNames[selection.Relation]
 		tag, tagOK := projectionNames[selection.Tag]
 		if !relationOK || !tagOK {
-			return member.Catalog{}, false
-		}
-		// A selection is a statement about DERIVED rows. A relation whose rows
-		// are enumerated from a directory has nothing to select, so naming one
-		// here would make a plain read look produced.
-		if !derivedRelations[selection.Relation] {
 			return member.Catalog{}, false
 		}
 		selections[index] = member.Selection{Key: selection.Key, Relation: relation, Tag: tag}
@@ -1481,7 +1472,11 @@ func (definition Definition) Clone() Definition {
 		clone.Reducers[index].Derivation.Build = cloneSymbol(reducer.Derivation.Build)
 		clone.Reducers[index].Derivation.StaticAxes = append([]schema.EntryReference(nil), reducer.Derivation.StaticAxes...)
 	}
-	clone.Selections = append([]Selection(nil), definition.Selections...)
+	clone.Selections = make([]Selection, len(definition.Selections))
+	for index, selection := range definition.Selections {
+		clone.Selections[index] = selection
+		clone.Selections[index].Implementation = cloneSymbol(selection.Implementation)
+	}
 	clone.CarryTransforms = make([]CarryTransform, len(definition.CarryTransforms))
 	for index, transform := range definition.CarryTransforms {
 		clone.CarryTransforms[index] = transform

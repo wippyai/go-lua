@@ -8,8 +8,8 @@ import (
 	"github.com/wippyai/go-lua/analysis/program/target/contract"
 	"github.com/wippyai/go-lua/analysis/program/target/vocabulary"
 	"github.com/wippyai/go-lua/domain/type/typ"
-	"github.com/wippyai/go-lua/domain/type/typeexpr"
 	domaincontract "github.com/wippyai/go-lua/domain/type/typecontract"
+	"github.com/wippyai/go-lua/domain/type/typeexpr"
 	manifestwire "github.com/wippyai/go-lua/manifest/wire"
 	"github.com/wippyai/go-lua/types/signature"
 )

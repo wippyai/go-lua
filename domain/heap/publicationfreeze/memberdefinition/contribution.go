@@ -155,10 +155,11 @@ func Contribution() definition.Contribution {
 		// before them delivered, so they are published through this
 		// selection and stamped with the tag the reading rule joins on.
 		Selections: []definition.Selection{{
-			Name:     "PublicationFreezeRouteSelection",
-			Key:      "heap/publication-freeze/route-selection",
-			Relation: "PublicationFreezeRoutes",
-			Tag:      "PublicationFreezeRouteTag",
+			Name:           "PublicationFreezeRouteSelection",
+			Key:            "heap/publication-freeze/route-selection",
+			Relation:       "PublicationFreezeRoutes",
+			Tag:            "PublicationFreezeRouteTag",
+			Implementation: freezeFunction("DerivePublicationFreezeRoutes"),
 		}},
 		Reducers: []definition.Reducer{{
 			Name: "PublicationFreezeReducer",

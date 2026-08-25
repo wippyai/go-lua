@@ -1,11 +1,11 @@
 package types
 
 import (
-	"github.com/wippyai/go-lua/internal/rows"
 	"github.com/wippyai/go-lua/analysis/program/internal/wire"
 	"github.com/wippyai/go-lua/analysis/program/keyspace"
 	staticrole "github.com/wippyai/go-lua/analysis/program/static/role"
 	"github.com/wippyai/go-lua/internal/framing"
+	"github.com/wippyai/go-lua/internal/rows"
 )
 
 // The per-row wire minima are the adversarial-arity floor for each relation:
