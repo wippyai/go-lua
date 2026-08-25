@@ -36,6 +36,7 @@ func TestProjectKeepsTypeConformanceOnItsOwnPlane(t *testing.T) {
 		Conformance: anadiag.Conformance{
 			Site: diagnostic.SiteCallArgument, Owner: observationID(4), Measured: observationID(5),
 			Declared: observationID(6), Span: observationID(7), Position: 0,
+			ValueID:     coordinateID,
 			DeclaredMay: runtimekind.Bit(runtimekind.String), Target: "string", Subject: "x", Callee: "takes_string",
 			Evidence: []identity.ContentID{observationID(8)},
 			Producers: []anadiag.Producer{{
@@ -109,4 +110,40 @@ func resultGeometryMount(t *testing.T) (programmount.MountedArtifact, identity.C
 		t.Fatal("mount geometry snapshot")
 	}
 	return mount, module
+}
+
+// TestGeometryAddressesValueRowsByMountedPortableIdentity states what replaced
+// the dense Value ordinal at this boundary. A diagnostic population carries the
+// owner-issued ValueID from the sealed observation site and nothing else, so
+// the geometry has to answer for the pair (mount, ValueID) - a positional index
+// into a Value-width vector is not available to it and is not reconstructed.
+//
+// Mount-qualification is the half that a bare identity map would lose: two
+// mounts may each issue the same portable ValueID for their own value, and the
+// rows they name are different rows. An identity the census never issued has no
+// row, and none is invented for it.
+func TestGeometryAddressesValueRowsByMountedPortableIdentity(t *testing.T) {
+	mount, module := resultGeometryMount(t)
+	coordinateID := resultGeometryID(1)
+	coordinate, coordinateOK := NewValueCoordinate(coordinateID, module)
+	if !coordinateOK {
+		t.Fatal("value coordinate")
+	}
+	geometry, projected := Project(resultGeometryID(9), []programmount.MountedArtifact{mount}, []ValueCoordinate{coordinate}, nil)
+	if !projected || !geometry.Valid() {
+		t.Fatal("result geometry projection")
+	}
+	row, rowOK := geometry.valueResultID(module, coordinateID)
+	if !rowOK || !row.Available() {
+		t.Fatalf("mounted portable identity resolved to %v/%v", row, rowOK)
+	}
+	if _, ok := geometry.valueResultID(resultGeometryID(2), coordinateID); ok {
+		t.Fatal("a foreign mount reached another mount's value row")
+	}
+	if _, ok := geometry.valueResultID(module, resultGeometryID(3)); ok {
+		t.Fatal("an identity the census never issued resolved to a row")
+	}
+	if _, ok := geometry.valueResultID(identity.ContentID{}, coordinateID); ok {
+		t.Fatal("an absent mount resolved to a row")
+	}
 }

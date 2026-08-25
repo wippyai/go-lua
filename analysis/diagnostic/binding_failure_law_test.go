@@ -110,6 +110,7 @@ func TestConformanceObservationRequiresProducerGeometry(t *testing.T) {
 		Measured:    identity.ContentID{3},
 		Declared:    identity.ContentID{4},
 		Span:        identity.ContentID{5},
+		ValueID:     identity.ContentID{11},
 		DeclaredMay: runtimekind.Bit(runtimekind.String),
 		Target:      "string",
 		Callee:      "takes_string",

@@ -7,7 +7,6 @@ import (
 	"github.com/wippyai/go-lua/analysis/identity"
 	"github.com/wippyai/go-lua/analysis/program/link"
 	"github.com/wippyai/go-lua/analysis/program/link/mounted"
-	"github.com/wippyai/go-lua/analysis/result"
 	"github.com/wippyai/go-lua/analysis/schema/programmount"
 	"github.com/wippyai/go-lua/analysis/schema/structure"
 	"github.com/wippyai/go-lua/domain/composite"
@@ -92,11 +91,7 @@ func TestMountedObservationCensusCapturesTheCompiledObservationSites(t *testing.
 			if !ok || !census.Available() {
 				t.Fatalf("seal mounted observation sites: ok=%v available=%v", ok, census.Available())
 			}
-			coordinates, coordinatesOK := result.Coordinates(testCase.linked)
-			if !coordinatesOK {
-				t.Fatal("compile value coordinates")
-			}
-			observations, observationsOK := testCase.state.artifacts.observationCensus(coordinates)
+			observations, observationsOK := testCase.state.artifacts.observationCensus()
 			if !observationsOK {
 				t.Fatal("compile diagnostic observations")
 			}
@@ -139,12 +134,12 @@ func TestMountedObservationCensusCapturesTheCompiledObservationSites(t *testing.
 				if observation.Kind == structure.DiagnosticObservationBranchCondition {
 					branches++
 				}
-				coordinate, measured := observation.Coordinate()
+				observedValue, measured := observation.MeasuredValueID()
 				if !measured {
-					t.Fatalf("census site %s measures no coordinate", observation.Local)
+					t.Fatalf("census site %s measures no ValueID", observation.Local)
 				}
-				if site.ValueID != coordinates[coordinate].ID() {
-					t.Fatalf("census site %s value %s, observed coordinate %s", observation.Local, site.ValueID, coordinates[coordinate].ID())
+				if site.ValueID != observedValue {
+					t.Fatalf("census site %s value %s, observed value %s", observation.Local, site.ValueID, observedValue)
 				}
 				if site.ProducerCount() != len(producers) {
 					t.Fatalf("census site %s carries %d producers, observed %d", observation.Local, site.ProducerCount(), len(producers))

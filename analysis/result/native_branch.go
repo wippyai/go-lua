@@ -24,11 +24,10 @@ func buildNativeBranchPublication(
 	geometry Geometry,
 	mounts []programmount.MountedArtifact,
 	selected []anadiag.ObservationKey,
-	schema *valuedomain.Schema,
 	published *snapshot.Snapshot,
 	observationPlan snapshot.QueryPlan[identity.ContentID, engine.Answer],
 ) ([]nativePublicationRow, bool) {
-	if !geometry.Valid() || schema == nil || published == nil || !published.Published() || !observationPlan.Available() {
+	if !geometry.Valid() || published == nil || !published.Published() || !observationPlan.Available() {
 		return nil, false
 	}
 	type observedKey struct {
@@ -47,7 +46,7 @@ func buildNativeBranchPublication(
 		}
 		observationID := selectedObservation.Key
 		observation, readable := publishedObservation[valuedomain.ValueSummaryObservation](published, observationPlan, observationID)
-		if !observationID.Available() || !readable || !validNativeValueSummary(observation, schema.CoordinateCount()) {
+		if !observationID.Available() || !readable || !validNativeValueSummary(observation) {
 			return nil, false
 		}
 		observed[lookup] = observation
@@ -59,7 +58,11 @@ func buildNativeBranchPublication(
 	}
 	expected := make(map[observedKey]struct{})
 	for _, subject := range geometry.BranchObservations {
-		if subject.Kind != structure.DiagnosticObservationBranchCondition || !subject.Available() || int(subject.ValueIndex) >= len(geometry.values) {
+		if subject.Kind != structure.DiagnosticObservationBranchCondition || !subject.Available() {
+			return nil, false
+		}
+		coordinate, coordinateOK := geometry.valueResultID(subject.Mount, subject.Branch.ValueID)
+		if !coordinateOK {
 			return nil, false
 		}
 		// One projected branch row may be read under several exact actor
@@ -100,18 +103,24 @@ func buildNativeBranchPublication(
 					complete = false
 					continue
 				}
-				condition := int(subject.ValueIndex)
-				if !observation.Present[condition] {
+				_, present, valueValid := observation.ValueAtID(subject.Branch.ValueID)
+				if !valueValid {
+					return nil, false
+				}
+				if !present {
 					complete = false
 					continue
 				}
 				// A branch observation authenticates the condition coordinate. Other
 				// cells share its point snapshot but are not native-publication uses;
 				// publishing them globally leaks path-local literals across merges.
-				if !appendNativeScalarRows(&rows, byID, schema, observation.Values[condition], geometry.values[condition], subject, subjectBody, point, context) {
+				if !appendNativeScalarRows(&rows, byID, observation, subject.Branch.ValueID, coordinate, subject, subjectBody, point, context) {
 					return nil, false
 				}
-				pointTruth := schema.Truthiness(observation.Values[condition])
+				pointTruth, truthPresent, truthValid := observation.TruthinessAtID(subject.Branch.ValueID)
+				if !truthValid || !truthPresent {
+					return nil, false
+				}
 				if pointTruth == valuedomain.TruthNone {
 					complete = false
 					continue
@@ -356,12 +365,15 @@ func nativeSummaryLiteral(summary programschema.ExactScalarSummary, mount, artif
 	return keyspace.LiteralValue{Kind: keyspace.LiteralKind(coldLiteral.Kind), Integer: coldLiteral.Integer, FloatBits: coldLiteral.FloatBits}, true
 }
 
-func validNativeValueSummary(observation valuedomain.ValueSummaryObservation, width int) bool {
-	return observation.Valid && observation.Rows <= 1 && len(observation.Values) == width && len(observation.Present) == width
+func validNativeValueSummary(observation valuedomain.ValueSummaryObservation) bool {
+	return observation.Valid && observation.Rows <= 1 && len(observation.Values) != 0 && len(observation.Values) == len(observation.Present)
 }
 
-func appendNativeScalarRows(rows *[]nativePublicationRow, seen map[identity.ContentID]struct{}, schema *valuedomain.Schema, value valuedomain.Value, coordinate identity.ContentID, subject anadiag.Observation, body, point, context identity.ContentID) bool {
-	scalar, exact := schema.ExactScalar(value)
+func appendNativeScalarRows(rows *[]nativePublicationRow, seen map[identity.ContentID]struct{}, observation valuedomain.ValueSummaryObservation, valueID, coordinate identity.ContentID, subject anadiag.Observation, body, point, context identity.ContentID) bool {
+	scalar, exact, valid := observation.ExactScalarAtID(valueID)
+	if !valid {
+		return false
+	}
 	if !exact {
 		return true
 	}

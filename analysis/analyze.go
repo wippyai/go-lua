@@ -177,7 +177,7 @@ func (workspace *Workspace) compileWithDiagnostics(source *link.Link) (*Plan, Co
 		diagnostics.FailCurrentPhase()
 		return nil, CompileUnsupported, diagnostics
 	}
-	observations, observationsOK := artifacts.observationCensus(values)
+	observations, observationsOK := artifacts.observationCensus()
 	mounts := artifacts.mounts
 	mountsOK := len(mounts) != 0
 	geometry, resultOK := result.Geometry{}, false
@@ -385,7 +385,7 @@ func (plan *Plan) solveWithPolicy(ctx context.Context, options engine.SolveDiagn
 		diagnostics.Fail(anadiag.AnalyzeDiagnosticReasonDetach)
 		return nil, nil, AnalyzeIncomplete, diagnostics
 	}
-	projection, detached := result.Detach(state.compilation, geometry, state.mounts, binding.ValueSchema(), policy, queryPublications, &published, queryRead, observationRead, anadiag.ChannelSelectInput{
+	projection, detached := result.Detach(state.compilation, geometry, state.mounts, policy, queryPublications, &published, queryRead, observationRead, anadiag.ChannelSelectInput{
 		Published: &state.composition,
 		Column:    state.selectColumn,
 		Sites:     state.selectSites,

@@ -28,7 +28,7 @@ type GuardSubject struct {
 	ID, TrueFindingID, FalseFindingID, Mount identity.ContentID
 	Context                                  executioncontext.Context
 	Location                                 DiagnosticLocation
-	ValueIndex                               uint32
+	ValueID                                  identity.ContentID
 	Points                                   []identity.ContentID
 }
 
@@ -92,17 +92,12 @@ func PublishedObservation[R any](published *snapshot.Snapshot, plan snapshot.Que
 	return engine.AnswerValue[R](answer)
 }
 
-// PublishedBranchConditionTruth reads the schema result cell from one
-// published Value summary.
-func PublishedBranchConditionTruth(schema *valuedomain.Schema, valueIndex uint32, observation valuedomain.ValueSummaryObservation) (valuedomain.Truth, bool) {
-	if schema == nil || !observation.Valid || len(observation.Values) != len(observation.Present) {
-		return valuedomain.TruthNone, false
-	}
-	resultIdx := int(valueIndex)
-	if resultIdx < 0 || resultIdx >= len(observation.Present) || !observation.Present[resultIdx] {
-		return valuedomain.TruthNone, false
-	}
-	return schema.Truthiness(observation.Values[resultIdx]), true
+// PublishedBranchConditionTruth reads the owner-issued ValueID from one
+// published Value summary. The dense summary image is private to Value; the
+// diagnostic collector never carries a ValueSchema or a coordinate ordinal.
+func PublishedBranchConditionTruth(valueID identity.ContentID, observation valuedomain.ValueSummaryObservation) (valuedomain.Truth, bool) {
+	truth, present, valid := observation.TruthinessAtID(valueID)
+	return truth, valid && present
 }
 
 // CollectGuardPolarity reads each selected branch observation once. A polarity
@@ -112,13 +107,11 @@ func CollectGuardPolarity(
 	report *DiagnosticReport,
 	subjects []GuardSubject,
 	selected []ObservationKey,
-	valueWidth int,
-	schema *valuedomain.Schema,
 	published *snapshot.Snapshot,
 	observationPlan snapshot.QueryPlan[identity.ContentID, engine.Answer],
 	trueSeverity, falseSeverity FindingSeverity,
 ) bool {
-	if report == nil || schema == nil || published == nil || !published.Published() || !observationPlan.Available() || valueWidth < 0 ||
+	if report == nil || published == nil || !published.Published() || !observationPlan.Available() ||
 		(trueSeverity != FindingSeverityInvalid && !trueSeverity.Available()) ||
 		(falseSeverity != FindingSeverityInvalid && !falseSeverity.Available()) ||
 		(trueSeverity == FindingSeverityInvalid && falseSeverity == FindingSeverityInvalid) {
@@ -126,7 +119,7 @@ func CollectGuardPolarity(
 	}
 	expected := make(map[pointKey]struct{})
 	for _, subject := range subjects {
-		if !subject.ID.Available() || !subject.Mount.Available() || !subject.Context.Available() || !subject.Location.Available() || len(subject.Points) == 0 {
+		if !subject.ID.Available() || !subject.Mount.Available() || !subject.Context.Available() || !subject.Location.Available() || !subject.ValueID.Available() || len(subject.Points) == 0 {
 			return false
 		}
 		for _, point := range subject.Points {
@@ -160,7 +153,7 @@ func CollectGuardPolarity(
 			report.SetCollectionFailure(DiagnosticCollectionQueryInvalid)
 			return true
 		}
-		if len(observation.Values) != len(observation.Present) || len(observation.Values) != valueWidth || observation.Rows > 1 {
+		if len(observation.Values) != len(observation.Present) || observation.Rows > 1 {
 			report.SetCollectionFailure(DiagnosticCollectionValueShapeMismatch)
 			return true
 		}
@@ -183,7 +176,7 @@ func CollectGuardPolarity(
 			if observation.Rows == 0 {
 				continue
 			}
-			truth, ok := PublishedBranchConditionTruth(schema, subject.ValueIndex, observation)
+			truth, ok := PublishedBranchConditionTruth(subject.ValueID, observation)
 			if !ok {
 				invalidEvidence = true
 				break
@@ -221,9 +214,7 @@ func CollectBranch(
 	policy DiagnosticPolicy,
 	guards []GuardSubject,
 	guardRows []ObservationKey,
-	valueWidth int,
 	conformances []ConformanceSubject,
-	schema *valuedomain.Schema,
 	published *snapshot.Snapshot,
 	observationPlan snapshot.QueryPlan[identity.ContentID, engine.Answer],
 	selects ChannelSelectInput,
@@ -272,10 +263,10 @@ func CollectBranch(
 			return false
 		}
 	}
-	if collectGuards && (schema == nil || published == nil || !CollectGuardPolarity(report, guards, guardRows, valueWidth, schema, published, observationPlan, trueSeverity, falseSeverity)) {
+	if collectGuards && (published == nil || !CollectGuardPolarity(report, guards, guardRows, published, observationPlan, trueSeverity, falseSeverity)) {
 		return false
 	}
-	if len(conformanceSeverities) != 0 && (schema == nil || published == nil || !CollectConformance(report, conformances, valueWidth, schema, published, observationPlan, conformanceSeverities)) {
+	if len(conformanceSeverities) != 0 && (published == nil || !CollectConformance(report, conformances, published, observationPlan, conformanceSeverities)) {
 		return false
 	}
 	if collectSelect && !CollectChannelSelect(report, selects, selectSeverity) {
@@ -291,8 +282,6 @@ func CollectReport(
 	policy DiagnosticPolicy,
 	branches, conformances, statics []Observation,
 	branchRows []ObservationKey,
-	valueWidth int,
-	schema *valuedomain.Schema,
 	published *snapshot.Snapshot,
 	observationPlan snapshot.QueryPlan[identity.ContentID, engine.Answer],
 	selects ChannelSelectInput,
@@ -313,7 +302,7 @@ func CollectReport(
 	if !staticsOK {
 		return false
 	}
-	if !CollectBranch(report, policy, guards, branchRows, valueWidth, subjects, schema, published, observationPlan, selects) {
+	if !CollectBranch(report, policy, guards, branchRows, subjects, published, observationPlan, selects) {
 		return false
 	}
 	if !CollectStatic(report, staticSubjects, policy) {
@@ -349,7 +338,7 @@ func GuardSubjects(rows []Observation, contexts executioncontext.Directory) ([]G
 		for _, context := range eligible {
 			subjects = append(subjects, GuardSubject{
 				ID: row.ID, TrueFindingID: trueID, FalseFindingID: falseID,
-				Mount: row.Mount, Context: context, Location: location, ValueIndex: row.ValueIndex,
+				Mount: row.Mount, Context: context, Location: location, ValueID: row.Branch.ValueID,
 				Points: append([]identity.ContentID(nil), row.Points...),
 			})
 		}
@@ -381,7 +370,7 @@ func conformanceSubjects(rows []Observation, contexts executioncontext.Directory
 		for _, context := range eligible {
 			subjects = append(subjects, ConformanceSubject{
 				ID: row.ID, FindingID: id, Mount: row.Mount, Context: context,
-				Location: location, Site: row.Site, Position: row.Position, Actual: row.Actual,
+				Location: location, Site: row.Site, Position: row.Position, ValueID: row.Conformance.ValueID,
 				DeclaredMay: row.DeclaredMay, Target: row.Target, Member: row.Conformance.Member,
 				Subject: row.Conformance.Subject, Callee: row.Conformance.Callee,
 				Points: conformanceProducerPoints(row.Conformance.Producers),

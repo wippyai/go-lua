@@ -4,6 +4,7 @@ import (
 	"testing"
 
 	"github.com/wippyai/go-lua/analysis/engine"
+	"github.com/wippyai/go-lua/analysis/identity"
 )
 
 // TestBeginValueSummaryShapesTheSchemaCoordinateWidth pins the fold's opening
@@ -80,5 +81,28 @@ func TestAccumulateValueSummaryRejectsMalformedFoldInput(t *testing.T) {
 		if result.Valid || result.Values != nil || result.Present != nil || result.Rows != 0 {
 			t.Fatalf("%s returned %+v, want the zero observation", name, result)
 		}
+	}
+}
+
+// TestValueSummaryProjectsPortableIDsThroughItsOwner pins the C5a boundary:
+// readers use the ValueID issued by the sealed owner, while the dense image
+// remains private to Value. A foreign or absent ID never becomes a fabricated
+// dense coordinate.
+func TestValueSummaryProjectsPortableIDsThroughItsOwner(t *testing.T) {
+	firstID := identity.ContentID{1}
+	secondID := identity.ContentID{2}
+	schema := summaryCodecSchema(firstID, secondID)
+	observation := ValueSummaryObservation{
+		Values:  []Value{{schema: schema, top: true}, {}},
+		Present: []bool{true, false}, Rows: 1, Valid: true, owner: schema,
+	}
+	if _, present, valid := observation.ValueAtID(firstID); !present || !valid {
+		t.Fatal("owner did not project the present portable ValueID")
+	}
+	if _, present, valid := observation.ValueAtID(secondID); present || !valid {
+		t.Fatal("owner confused an absent portable ValueID with an invalid one")
+	}
+	if _, _, valid := observation.ValueAtID(identity.ContentID{3}); valid {
+		t.Fatal("owner admitted a foreign portable ValueID")
 	}
 }

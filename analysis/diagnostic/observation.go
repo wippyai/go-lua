@@ -35,11 +35,6 @@ func RowID(role string, mount, artifact, local identity.ContentID) (identity.Con
 	return identity.ContentID(hash.Sum(nil)), true
 }
 
-// ValueCoordinate is one Link-substituted Value cell the census joins.
-type ValueCoordinate struct {
-	Mount, ID identity.ContentID
-}
-
 // DeclaredType is one declaration as the conformance judgment needs it: the
 // runtime families the declared type admits, and the spelling a finding names
 // it by. Both are projections of the declared type graph, which this layer
@@ -75,13 +70,13 @@ func (producer Producer) Available() bool {
 
 // Branch is the mounted branch-condition payload.
 type Branch struct {
-	Points     []identity.ContentID
-	Producers  []Producer
-	ValueIndex uint32
+	Points    []identity.ContentID
+	Producers []Producer
+	ValueID   identity.ContentID
 }
 
 func (payload Branch) Available() bool {
-	return validProducerGeometry(payload.Points, payload.Producers)
+	return payload.ValueID.Available() && validProducerGeometry(payload.Points, payload.Producers)
 }
 
 // validProducerGeometry is the bijection every produced-value observation is
@@ -215,7 +210,7 @@ type Conformance struct {
 	Declared    identity.ContentID
 	Span        identity.ContentID
 	Position    uint32
-	Actual      uint32
+	ValueID     identity.ContentID
 	DeclaredMay runtimekind.Set
 	Target      string
 	// Member is the declared field text a structural site names: the field the
@@ -248,7 +243,7 @@ type Conformance struct {
 
 func (payload Conformance) Available() bool {
 	if !payload.Site.Available() || !payload.Owner.Available() || !payload.Measured.Available() || !payload.Declared.Available() ||
-		!payload.Span.Available() || !payload.DeclaredMay.Valid() || len(payload.Evidence) == 0 {
+		!payload.Span.Available() || !payload.ValueID.Available() || !payload.DeclaredMay.Valid() || len(payload.Evidence) == 0 {
 		return false
 	}
 	if payload.Site == schemadiag.SiteCallArgument {
@@ -263,7 +258,7 @@ func (payload Conformance) Available() bool {
 
 func (payload Conformance) empty() bool {
 	return !payload.Site.Declared() && !payload.Owner.Available() && !payload.Measured.Available() && !payload.Declared.Available() &&
-		!payload.Span.Available() && payload.Position == 0 && payload.Actual == 0 &&
+		!payload.Span.Available() && payload.Position == 0 && !payload.ValueID.Available() &&
 		payload.DeclaredMay == 0 && payload.Target == "" && payload.Member == "" && payload.Subject == "" && payload.Callee == "" &&
 		len(payload.Evidence) == 0 && len(payload.Producers) == 0
 }
@@ -280,18 +275,16 @@ type Observation struct {
 	Conformance
 }
 
-// Coordinate is the Value cell a produced-value population measures. A branch
-// condition names it as the condition's own coordinate and a conformance
-// subject as the measured actual, so a reader asks the row rather than reading
-// one population's field off the other.
-func (observation Observation) Coordinate() (uint32, bool) {
+// MeasuredValueID returns the owner-issued portable Value identity measured by
+// a value-bearing observation. Static observations do not measure a Value.
+func (observation Observation) MeasuredValueID() (identity.ContentID, bool) {
 	switch observation.Kind {
 	case structure.DiagnosticObservationBranchCondition:
-		return observation.Branch.ValueIndex, true
+		return observation.Branch.ValueID, observation.Branch.ValueID.Available()
 	case structure.DiagnosticObservationTypeConformance:
-		return observation.Conformance.Actual, true
+		return observation.Conformance.ValueID, observation.Conformance.ValueID.Available()
 	default:
-		return 0, false
+		return identity.ContentID{}, false
 	}
 }
 
@@ -325,24 +318,9 @@ func (observation Observation) Available() bool {
 
 // ProjectSites materializes mounted observation rows from sealed Snapshot
 // sites. Compile-time reconstruction is not a source.
-func ProjectSites(sites mounted.ObservationSites, mounts []programmount.MountedArtifact, coordinates []ValueCoordinate, declared DeclaredTypes) ([]Observation, bool) {
+func ProjectSites(sites mounted.ObservationSites, mounts []programmount.MountedArtifact, declared DeclaredTypes) ([]Observation, bool) {
 	if !sites.Available() || len(mounts) == 0 {
 		return nil, false
-	}
-	type valueKey struct {
-		mount identity.ContentID
-		id    identity.ContentID
-	}
-	coordinateByID := make(map[valueKey]uint32, len(coordinates))
-	for index, coordinate := range coordinates {
-		if uint64(index) > uint64(^uint32(0)) || !coordinate.Mount.Available() || !coordinate.ID.Available() {
-			return nil, false
-		}
-		key := valueKey{mount: coordinate.Mount, id: coordinate.ID}
-		if _, duplicate := coordinateByID[key]; duplicate {
-			return nil, false
-		}
-		coordinateByID[key] = uint32(index)
 	}
 	mountByKey := make(map[identity.ContentID]programmount.MountedArtifact, len(mounts))
 	for _, mount := range mounts {
@@ -387,13 +365,12 @@ func ProjectSites(sites mounted.ObservationSites, mounts []programmount.MountedA
 		}
 		switch site.Kind {
 		case structure.DiagnosticObservationBranchCondition:
-			valueIndex, valueOK := coordinateByID[valueKey{mount: site.Mount, id: site.ValueID}]
 			points, pointsOK := programDiagnosticEvidence(view, observationIndex)
 			producers, producersOK := siteProducers(site)
-			if !valueOK || !pointsOK || !producersOK || uint64(valueIndex) >= uint64(len(coordinates)) {
+			if !site.ValueID.Available() || !pointsOK || !producersOK {
 				return nil, false
 			}
-			row.Branch = Branch{Points: append([]identity.ContentID(nil), points...), Producers: producers, ValueIndex: valueIndex}
+			row.Branch = Branch{Points: append([]identity.ContentID(nil), points...), Producers: producers, ValueID: site.ValueID}
 		case structure.DiagnosticObservationTypeReferenceUnresolved:
 			path, pathOK := programDiagnosticPath(view, observationIndex)
 			name, nameOK := view.DiagnosticPathName(observationIndex)
@@ -415,16 +392,15 @@ func ProjectSites(sites mounted.ObservationSites, mounts []programmount.MountedA
 			position, positionOK := observation.Position()
 			points, pointsOK := programDiagnosticEvidence(view, observationIndex)
 			producers, producersOK := siteProducers(site)
-			valueIndex, valueOK := coordinateByID[valueKey{mount: site.Mount, id: site.ValueID}]
 			declaredMay, target, declaredOK := declaredMay(declared, observation.DeclaredStaticTypeID())
-			if !positionOK || !pointsOK || !producersOK || !valueOK || !declaredOK || uint64(valueIndex) >= uint64(len(coordinates)) {
+			if !positionOK || !pointsOK || !producersOK || !site.ValueID.Available() || !declaredOK {
 				return nil, false
 			}
 			row.Conformance = Conformance{
 				Site:  diagnosticObservationSite(observation.Site()),
 				Owner: observation.OwnerID(), Measured: observation.MeasuredValueID(),
 				Declared: observation.DeclaredStaticTypeID(), Span: observation.SpanID(), Position: position,
-				Actual: valueIndex, DeclaredMay: declaredMay, Target: target,
+				ValueID: site.ValueID, DeclaredMay: declaredMay, Target: target,
 				Member:  conformanceMemberText(cold, observation),
 				Subject: observation.Name(), Callee: observation.CalleeName(),
 				Evidence:  append([]identity.ContentID(nil), points...),

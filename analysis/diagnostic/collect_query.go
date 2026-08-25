@@ -21,7 +21,7 @@ type ConformanceSubject struct {
 	Location             DiagnosticLocation
 	Site                 schemadiag.Site
 	Position             uint32
-	Actual               uint32
+	ValueID              identity.ContentID
 	DeclaredMay          runtimekind.Set
 	Target               string
 	// Member is the declared field a structural site names. An absent-member
@@ -62,18 +62,16 @@ type ConformanceSubject struct {
 func CollectConformance(
 	report *DiagnosticReport,
 	subjects []ConformanceSubject,
-	valueWidth int,
-	schema *valuedomain.Schema,
 	published *snapshot.Snapshot,
 	observationPlan snapshot.QueryPlan[identity.ContentID, engine.Answer],
 	severities map[schemadiag.Site]FindingSeverity,
 ) bool {
-	if report == nil || schema == nil || published == nil || !published.Published() || !observationPlan.Available() || valueWidth < 0 || len(severities) == 0 {
+	if report == nil || published == nil || !published.Published() || !observationPlan.Available() || len(severities) == 0 {
 		return false
 	}
 	for _, subject := range subjects {
 		if !subject.ID.Available() || !subject.FindingID.Available() || !subject.Mount.Available() || !subject.Context.Available() || !subject.Location.Available() ||
-			!subject.Site.Available() || !subject.DeclaredMay.Valid() || len(subject.Points) == 0 {
+			!subject.Site.Available() || !subject.ValueID.Available() || !subject.DeclaredMay.Valid() || len(subject.Points) == 0 {
 			return false
 		}
 		severity, enabled := severities[subject.Site]
@@ -92,7 +90,7 @@ func CollectConformance(
 		if subject.DeclaredMay == runtimekind.All {
 			continue
 		}
-		observed, exact, anyEvidence, readable := observedValue(report, subject, valueWidth, schema, published, observationPlan)
+		observed, exact, anyEvidence, readable := observedValue(report, subject, published, observationPlan)
 		if !readable {
 			return anyEvidence
 		}
@@ -151,8 +149,6 @@ func conformanceVerdict(declaredMay, observed runtimekind.Set) conformance.Verdi
 func observedValue(
 	report *DiagnosticReport,
 	subject ConformanceSubject,
-	valueWidth int,
-	schema *valuedomain.Schema,
 	published *snapshot.Snapshot,
 	observationPlan snapshot.QueryPlan[identity.ContentID, engine.Answer],
 ) (observed runtimekind.Set, exact diagnosticObservedSpelling, anyEvidence, readable bool) {
@@ -171,27 +167,30 @@ func observedValue(
 			report.SetCollectionFailure(DiagnosticCollectionQueryInvalid)
 			return 0, exact, true, false
 		}
-		if len(summary.Values) != len(summary.Present) || len(summary.Values) != valueWidth || summary.Rows > 1 {
+		if len(summary.Values) != len(summary.Present) || summary.Rows > 1 {
 			report.SetCollectionFailure(DiagnosticCollectionValueShapeMismatch)
 			return 0, exact, true, false
 		}
 		if summary.Rows == 0 {
 			continue
 		}
-		index := int(subject.Actual)
-		if index < 0 || index >= len(summary.Values) {
+		kinds, present, valueValid := summary.RuntimeKindsAtID(subject.ValueID)
+		if !valueValid {
 			report.SetCollectionFailure(DiagnosticCollectionValueShapeMismatch)
 			return 0, exact, true, false
 		}
-		if !summary.Present[index] {
+		if !present {
 			continue
 		}
-		kinds := schema.RuntimeKinds(summary.Values[index])
 		if !kinds.Valid() {
 			return 0, exact, false, false
 		}
 		observed |= kinds
-		spelling, spellingOK := exactSpelling(schema, summary.Values[index])
+		spelling, spellingOK, spellingValid := exactSpelling(summary, subject.ValueID)
+		if !spellingValid {
+			report.SetCollectionFailure(DiagnosticCollectionValueShapeMismatch)
+			return 0, exact, true, false
+		}
 		switch {
 		case !spellingOK:
 			agreed = false
@@ -211,22 +210,26 @@ func observedValue(
 // exactSpelling is the constant one measured value carries, when it carries
 // one. The projection is the value domain's own public scalar constant; this
 // layer renders it and never reads the value's atoms.
-func exactSpelling(schema *valuedomain.Schema, value valuedomain.Value) (diagnosticObservedSpelling, bool) {
-	scalar, exact := schema.ExactScalar(value)
+func exactSpelling(summary valuedomain.ValueSummaryObservation, valueID identity.ContentID) (diagnosticObservedSpelling, bool, bool) {
+	scalar, exact, valid := summary.ExactScalarAtID(valueID)
+	if !valid {
+		return EmptyObservedSpelling(), false, false
+	}
 	if !exact {
-		return EmptyObservedSpelling(), false
+		return EmptyObservedSpelling(), false, true
 	}
 	switch scalar.Kind() {
 	case valuedomain.ExactScalarNil:
-		return ObservedNil(), true
+		return ObservedNil(), true, true
 	case valuedomain.ExactScalarBoolean, valuedomain.ExactScalarLiteral:
 		literal, held := scalar.Literal()
 		if !held {
-			return EmptyObservedSpelling(), false
+			return EmptyObservedSpelling(), false, true
 		}
-		return ObservedLiteral(literal)
+		spelling, spellingOK := ObservedLiteral(literal)
+		return spelling, spellingOK, true
 	default:
-		return EmptyObservedSpelling(), false
+		return EmptyObservedSpelling(), false, true
 	}
 }
 

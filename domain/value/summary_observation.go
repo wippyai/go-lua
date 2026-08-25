@@ -1,6 +1,10 @@
 package value
 
-import "github.com/wippyai/go-lua/analysis/engine"
+import (
+	"github.com/wippyai/go-lua/analysis/engine"
+	"github.com/wippyai/go-lua/analysis/identity"
+	"github.com/wippyai/go-lua/domain/runtimekind"
+)
 
 // ValueSummaryObservation is the detached result of the Value summary query.
 // It is declared beside the schema that folds it: a fold's output shape
@@ -98,6 +102,67 @@ func (schema *Schema) OwnsSummaryObservation(observation ValueSummaryObservation
 	return schema != nil && summaryObservationOwned(schema, observation)
 }
 
+// ValueAtID projects one owner-issued portable ValueID through this exact
+// summary answer. The summary remains a dense private image internally; the
+// owner is the only code allowed to resolve its portable identity to that
+// image. The two booleans distinguish an invalid/foreign lookup from an
+// admitted coordinate with no present fact.
+func (observation ValueSummaryObservation) ValueAtID(id identity.ContentID) (Value, bool, bool) {
+	var zero Value
+	if !summaryObservationProjectable(observation.owner, observation) || !id.Available() {
+		return zero, false, false
+	}
+	coordinate, coordinateOK := observation.owner.CoordinateForID(id)
+	if !coordinateOK {
+		return zero, false, false
+	}
+	index, indexOK := observation.owner.CoordinateIndex(coordinate)
+	if !indexOK || uint64(index) >= uint64(len(observation.Values)) || uint64(index) >= uint64(len(observation.Present)) {
+		return zero, false, false
+	}
+	if !observation.Present[index] {
+		return zero, false, true
+	}
+	value := observation.Values[index]
+	if !observation.owner.owns(value) {
+		return zero, false, false
+	}
+	return value, true, true
+}
+
+// RuntimeKindsAtID is the owner projection used by diagnostics. It never
+// exposes the summary's private dense coordinate or asks a consumer to carry
+// ValueSchema/width plumbing. present is false for an admitted zero row;
+// valid is false for a foreign or malformed identity.
+func (observation ValueSummaryObservation) RuntimeKindsAtID(id identity.ContentID) (runtimekind.Set, bool, bool) {
+	value, present, valid := observation.ValueAtID(id)
+	if !valid || !present {
+		return 0, present, valid
+	}
+	return observation.owner.RuntimeKinds(value), true, true
+}
+
+// TruthinessAtID is the owner projection for branch diagnostics.
+func (observation ValueSummaryObservation) TruthinessAtID(id identity.ContentID) (Truth, bool, bool) {
+	value, present, valid := observation.ValueAtID(id)
+	if !valid || !present {
+		return TruthNone, present, valid
+	}
+	return observation.owner.Truthiness(value), true, true
+}
+
+// ExactScalarAtID is the owner projection for the exact spelling carried by
+// a conformance answer. Non-scalar values are valid but simply have no exact
+// scalar, so the second result is false while the third remains true.
+func (observation ValueSummaryObservation) ExactScalarAtID(id identity.ContentID) (ExactScalar, bool, bool) {
+	value, present, valid := observation.ValueAtID(id)
+	if !valid || !present {
+		return ExactScalar{}, false, valid
+	}
+	scalar, exact := observation.owner.ExactScalar(value)
+	return scalar, exact, true
+}
+
 func EqualValueSummary(schema *Schema, left, right ValueSummaryObservation) bool {
 	if schema == nil || left.owner != schema || right.owner != schema || !summaryObservationOwned(schema, left) || !summaryObservationOwned(schema, right) || left.Valid != right.Valid || left.Rows != right.Rows || len(left.Values) != len(right.Values) || len(left.Present) != len(right.Present) {
 		return false
@@ -132,7 +197,7 @@ func FingerprintValueSummary(schema *Schema, value ValueSummaryObservation) uint
 // retaining that exact pointer prevents an equal-content foreign Schema from
 // entering a running fold or a frozen result.
 func summaryObservationOwned(schema *Schema, observation ValueSummaryObservation) bool {
-	if schema == nil || observation.owner != schema || !observation.Valid || len(observation.Values) == 0 || len(observation.Values) != len(observation.Present) || len(observation.Values) != schema.CoordinateCount() || observation.Rows > 1 {
+	if !summaryObservationProjectable(schema, observation) {
 		return false
 	}
 	any := false
@@ -146,6 +211,17 @@ func summaryObservationOwned(schema *Schema, observation ValueSummaryObservation
 		any = true
 	}
 	return observation.Rows == summaryRowsForPresence(any)
+}
+
+// summaryObservationProjectable is the constant-time boundary needed by one
+// addressed read. Full-vector ownership and row/presence validation belongs to
+// construction, folding, equality, and fingerprinting; replaying it for every
+// diagnostic cell would turn N addressed reads into an O(N²) scan. The
+// projector validates the selected cell itself before returning it.
+func summaryObservationProjectable(schema *Schema, observation ValueSummaryObservation) bool {
+	return schema != nil && observation.owner == schema && observation.Valid &&
+		len(observation.Values) != 0 && len(observation.Values) == len(observation.Present) &&
+		len(observation.Values) == schema.CoordinateCount() && observation.Rows <= 1
 }
 
 func summaryRowsForPresence(present bool) uint32 {

@@ -23,7 +23,6 @@ import (
 	"github.com/wippyai/go-lua/analysis/program/link"
 	linkmodule "github.com/wippyai/go-lua/analysis/program/link/module"
 	"github.com/wippyai/go-lua/analysis/program/link/mounted"
-	"github.com/wippyai/go-lua/analysis/result"
 	"github.com/wippyai/go-lua/analysis/schema/executioncontext"
 	"github.com/wippyai/go-lua/analysis/schema/ingress"
 	"github.com/wippyai/go-lua/analysis/schema/modulecomposition"
@@ -357,15 +356,11 @@ type compiledArtifactSet struct {
 	declared anadiag.DeclaredTypes
 }
 
-func (artifacts *compiledArtifactSet) observationCensus(coordinates []result.ValueCoordinate) ([]anadiag.Observation, bool) {
+func (artifacts *compiledArtifactSet) observationCensus() ([]anadiag.Observation, bool) {
 	if artifacts == nil {
 		return nil, false
 	}
-	values := make([]anadiag.ValueCoordinate, len(coordinates))
-	for index, coordinate := range coordinates {
-		values[index] = anadiag.ValueCoordinate{Mount: coordinate.MountID(), ID: coordinate.ID()}
-	}
-	return anadiag.ProjectSites(artifacts.sites, artifacts.mounts, values, artifacts.declared)
+	return anadiag.ProjectSites(artifacts.sites, artifacts.mounts, artifacts.declared)
 }
 
 // sealDeclaredConformanceTypes publishes the declared-type column every

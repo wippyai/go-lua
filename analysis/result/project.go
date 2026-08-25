@@ -14,7 +14,6 @@ import (
 	"github.com/wippyai/go-lua/analysis/schema/structure"
 	"github.com/wippyai/go-lua/analysis/snapshot"
 	"github.com/wippyai/go-lua/domain/composite"
-	valuedomain "github.com/wippyai/go-lua/domain/value"
 )
 
 // artifactResultProjection is an immutable, detached result. Result
@@ -37,7 +36,6 @@ func Detach(
 	compilation composite.Compilation,
 	geometry Geometry,
 	mounts []programmount.MountedArtifact,
-	valueSchema *valuedomain.Schema,
 	policy *anadiag.DiagnosticPolicy,
 	queries []composite.QueryPublication,
 	published *snapshot.Snapshot,
@@ -52,14 +50,11 @@ func Detach(
 	if !compilation.Available() || !geometry.Valid() || len(queries) == 0 || published == nil || !published.Published() || !queryPlan.Available() || !observationPlan.Available() || !declarations.Available() || !collections.Available() || !contexts.Available() {
 		return nil, false
 	}
-	if !anadiag.BindConditionCoordinates(geometry.BranchObservations, valueSchema) {
-		return nil, false
-	}
 	diagnosticObservations, publicationsOK := anadiag.Publications(compilation, contexts, geometry.BranchObservations)
 	if !publicationsOK {
 		return nil, false
 	}
-	nativeRows, nativeOK := buildNativeBranchPublication(geometry, mounts, diagnosticObservations, valueSchema, published, observationPlan)
+	nativeRows, nativeOK := buildNativeBranchPublication(geometry, mounts, diagnosticObservations, published, observationPlan)
 	if !nativeOK {
 		return nil, false
 	}
@@ -71,7 +66,7 @@ func Detach(
 	if policy != nil && len(policy.Enabled) != 0 {
 		report := anadiag.NewReport(result.SourceID(), result.ContentID(), compilation, vocabulary, declarations, collections)
 		if !anadiag.CollectReport(report, *policy, geometry.BranchObservations, geometry.ConformanceObservations, geometry.StaticObservations,
-			diagnosticObservations, len(geometry.values), valueSchema, published, observationPlan, selects, contexts) {
+			diagnosticObservations, published, observationPlan, selects, contexts) {
 			return nil, false
 		}
 		if !report.Available() {
@@ -263,11 +258,19 @@ func mountedResultID(role string, mount, artifact, local identity.ContentID) (id
 type Geometry struct {
 	source                  identity.ContentID
 	bodies                  []GeometryBody
-	values                  []identity.ContentID
+	values                  map[geometryValueKey]identity.ContentID
 	BranchObservations      []anadiag.Observation
 	ConformanceObservations []anadiag.Observation
 	StaticObservations      []anadiag.Observation
 	PointBodies             map[Point][]int
+}
+
+// geometryValueKey is the owner-issued mounted Value identity a detached
+// Result row is reached by. It is deliberately not Value's private dense
+// coordinate: the diagnostic populations carry this portable key from the
+// sealed observation site, and Result resolves it once, at its own boundary.
+type geometryValueKey struct {
+	mount, value identity.ContentID
 }
 
 type GeometryBody struct {
@@ -288,7 +291,7 @@ func Project(
 	geometry := Geometry{
 		source:                  sourceID,
 		bodies:                  make([]GeometryBody, 0),
-		values:                  make([]identity.ContentID, len(coordinates)),
+		values:                  make(map[geometryValueKey]identity.ContentID, len(coordinates)),
 		BranchObservations:      make([]anadiag.Observation, 0, len(observations)),
 		ConformanceObservations: make([]anadiag.Observation, 0, len(observations)),
 		StaticObservations:      make([]anadiag.Observation, 0, len(observations)),
@@ -415,7 +418,7 @@ func Project(
 			}
 		}
 	}
-	for index, coordinate := range coordinates {
+	for _, coordinate := range coordinates {
 		if !coordinate.id.Available() || !coordinate.mount.Available() {
 			return Geometry{}, false
 		}
@@ -424,7 +427,11 @@ func Project(
 		if !artifactOK || !idOK {
 			return Geometry{}, false
 		}
-		geometry.values[index] = id
+		key := geometryValueKey{mount: coordinate.mount, value: coordinate.id}
+		if _, duplicate := geometry.values[key]; duplicate {
+			return Geometry{}, false
+		}
+		geometry.values[key] = id
 	}
 	// Branch conditions and conformance subjects are the produced-value
 	// populations: both name a Value coordinate and the occurrences that
@@ -433,16 +440,16 @@ func Project(
 	// owns - the mount's artifact and the coordinate's mount.
 	for _, produced := range [][]anadiag.Observation{geometry.BranchObservations, geometry.ConformanceObservations} {
 		for _, observation := range produced {
-			coordinate, measured := observation.Coordinate()
+			valueID, measured := observation.MeasuredValueID()
 			if !observation.ID.Available() || !observation.Mount.Available() || !observation.Artifact.Available() ||
-				!observation.Local.Available() || !measured || uint64(coordinate) >= uint64(len(coordinates)) {
+				!observation.Local.Available() || !measured {
 				return Geometry{}, false
 			}
 			artifactID, artifactOK := artifactIDs[observation.Mount]
 			if !artifactOK || artifactID != observation.Artifact {
 				return Geometry{}, false
 			}
-			if coordinates[coordinate].mount != observation.Mount {
+			if _, known := geometry.values[geometryValueKey{mount: observation.Mount, value: valueID}]; !known {
 				return Geometry{}, false
 			}
 		}
@@ -492,12 +499,15 @@ func (geometry Geometry) Valid() bool {
 		geometry.PointBodies != nil
 }
 
-// ValueCount is the sealed Value-axis width the geometry projects.
-func (geometry Geometry) ValueCount() int {
-	if !geometry.Valid() {
-		return 0
+// valueResultID resolves one mounted portable Value identity to the detached
+// Result row it names. A key the census never issued has no row, and none is
+// invented for it.
+func (geometry Geometry) valueResultID(mount, value identity.ContentID) (identity.ContentID, bool) {
+	if !geometry.Valid() || !mount.Available() || !value.Available() {
+		return identity.ContentID{}, false
 	}
-	return len(geometry.values)
+	result, ok := geometry.values[geometryValueKey{mount: mount, value: value}]
+	return result, ok && result.Available()
 }
 
 // BodySite is the mount-qualified Program body identity at index.

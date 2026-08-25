@@ -8,7 +8,6 @@ import (
 	"github.com/wippyai/go-lua/analysis/schema/structure"
 	"github.com/wippyai/go-lua/domain/composite"
 	publication "github.com/wippyai/go-lua/domain/composite/publication"
-	valuedomain "github.com/wippyai/go-lua/domain/value"
 )
 
 // producedValue is the population-neutral view of one observation row that
@@ -205,24 +204,4 @@ func observationContexts(directory executioncontext.Directory, mount identity.Co
 		result = append(result, context)
 	}
 	return result, len(result) != 0
-}
-
-// BindConditionCoordinates validates the Value-schema coordinate already
-// carried by each projected observation. ProjectSites obtains that coordinate
-// from the sealed mounted ObservationSite.ValueID; this boundary must not
-// reconstruct it from producer occurrences, which are execution geometry and
-// not a second identity authority.
-func BindConditionCoordinates(branches []Observation, schema *valuedomain.Schema) bool {
-	if schema == nil {
-		return true
-	}
-	for _, observation := range branches {
-		if observation.Kind != structure.DiagnosticObservationBranchCondition {
-			continue
-		}
-		if uint64(observation.ValueIndex) >= uint64(schema.CoordinateCount()) {
-			return false
-		}
-	}
-	return true
 }

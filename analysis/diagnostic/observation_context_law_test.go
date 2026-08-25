@@ -72,7 +72,7 @@ func TestPublicationsCarryEveryContextQualifiedObservationAddress(t *testing.T) 
 		Kind:     structure.DiagnosticObservationBranchCondition,
 		Location: programsource.Span{File: "main.lua", StartLine: 1, StartCol: 1, EndLine: 1, EndCol: 2},
 		Branch: Branch{
-			Points: []identity.ContentID{point}, ValueIndex: 0,
+			Points: []identity.ContentID{point}, ValueID: observationContextLawID("condition-value"),
 			Producers: []Producer{{Key: "value-summary", Occurrence: identity.ContentID{4}, Point: point, Anchor: point}},
 		},
 	}
