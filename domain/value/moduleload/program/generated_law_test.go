@@ -26,6 +26,7 @@ join[0].read         form=exact input=0 axis=axis/value point-bound=bound
 join[0].relation     axis/value:value/module-load/arguments
 join[0].key          axis/value:value/module-load/argument-key
 join[0].predicate    -
+join[0].selection    -
 join[0].parent       -
 join[0].sources      candidate
 join[0].contract     order=canonical sparse=explicit on-opaque=refuse multiplicity=one denominator=-
@@ -33,6 +34,7 @@ join[1].read         form=exact input=0 axis=axis/call point-bound=bound
 join[1].relation     axis/call:call/module-load/sites
 join[1].key          axis/call:call/module-load/site-key
 join[1].predicate    -
+join[1].selection    -
 join[1].parent       -
 join[1].sources      candidate
 join[1].contract     order=canonical sparse=explicit on-opaque=refuse multiplicity=one denominator=-

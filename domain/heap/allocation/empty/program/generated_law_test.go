@@ -26,6 +26,7 @@ join[0].read         form=exact input=0 axis=axis/heap point-bound=bound
 join[0].relation     axis/heap:heap/empty-allocation/predecessors
 join[0].key          axis/heap:heap/empty-allocation/predecessor-key
 join[0].predicate    -
+join[0].selection    -
 join[0].parent       -
 join[0].sources      candidate
 join[0].contract     order=canonical sparse=explicit on-opaque=refuse multiplicity=one denominator=-

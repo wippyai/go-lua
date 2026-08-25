@@ -40,6 +40,8 @@ const (
 	MountedCallResultSlotCandidates    schemaapi.Key  = "value/mounted-call-result/candidates"
 	ResultAliasRoutes                  schemaapi.Key  = "value/result-alias/routes"
 	BodyReturnRoutes                   schemaapi.Key  = "value/body-result/routes"
+	AllocationFacts                    schemaapi.Key  = "value/allocation/facts"
+	FreshResultFacts                   schemaapi.Key  = "value/fresh-result/facts"
 	ClosedOperandParents               schemaapi.Key  = "value/closed-allocation/parents"
 	ClosedOperandCells                 schemaapi.Key  = "value/closed-allocation/operands"
 	StorageTransferSourceKey           schemaapi.Key  = "value/storage-transfer/source-key"
@@ -79,6 +81,8 @@ const (
 	ResultAliasRouteTag                schemaapi.Key  = "value/result-alias/route-tag"
 	BodyReturnRouteKey                 schemaapi.Key  = "value/body-result/route-key"
 	BodyReturnRouteTag                 schemaapi.Key  = "value/body-result/route-tag"
+	AllocationFactKey                  schemaapi.Key  = "value/allocation/fact-key"
+	FreshResultFactKey                 schemaapi.Key  = "value/fresh-result/fact-key"
 	ClosedOperandKey                   schemaapi.Key  = "value/closed-allocation/operand-key"
 	IdentityReducer                    schemaapi.Key  = "value/reducer/identity"
 	SourceReducer                      schemaapi.Key  = "value/reducer/source"
@@ -166,6 +170,8 @@ func AxisMemberCatalog() member.Catalog {
 			{Key: MountedCallResultSlotCandidates, Subject: MountedCallResultSlotCarrier, CandidateProvider: member.AxisRelationCandidate(member.RelationRef{Axis: schemaapi.EntryReference{Surface: schemaapi.SurfaceKind(2), Key: "value"}, Member: "value/mounted-call-result/candidates"})},
 			{Key: ResultAliasRoutes, Subject: ResultAliasRouteCarrier, CandidateProvider: member.AxisRelationCandidate(member.RelationRef{Axis: schemaapi.EntryReference{Surface: schemaapi.SurfaceKind(2), Key: "value"}, Member: "value/mounted-call-result/candidates"}), Inputs: []member.Carrier{MountedCallResultSlotCarrier, CallFactCarrier}},
 			{Key: BodyReturnRoutes, Subject: BodyReturnRouteCarrier, CandidateProvider: member.AxisRelationCandidate(member.RelationRef{Axis: schemaapi.EntryReference{Surface: schemaapi.SurfaceKind(2), Key: "value"}, Member: "value/mounted-call-result/candidates"}), Inputs: []member.Carrier{MountedCallResultSlotCarrier, CallFactCarrier}},
+			{Key: AllocationFacts, Subject: ValueFactCarrier, CandidateProvider: member.AxisRelationCandidate(member.RelationRef{Axis: schemaapi.EntryReference{Surface: schemaapi.SurfaceKind(2), Key: "value"}, Member: "value/allocation/candidates"}), Inputs: []member.Carrier{AllocationResultCarrier}},
+			{Key: FreshResultFacts, Subject: ValueFactCarrier, CandidateProvider: member.AxisRelationCandidate(member.RelationRef{Axis: schemaapi.EntryReference{Surface: schemaapi.SurfaceKind(2), Key: "value"}, Member: "value/fresh-result/candidates"}), Inputs: []member.Carrier{FreshResultCallCarrier}},
 			{Key: ClosedOperandParents, Subject: ClosedOperandsCarrier, CandidateProvider: member.AxisRelationCandidate(member.RelationRef{Axis: schemaapi.EntryReference{Surface: schemaapi.SurfaceKind(2), Key: "value"}, Member: "value/closed-allocation/parents"}), Correspondences: []member.RelationRef{member.RelationRef{Axis: schemaapi.EntryReference{Surface: schemaapi.SurfaceKind(2), Key: "heap"}, Member: "heap/closed-allocation/candidates"}}, PublishesKeyVector: true},
 			{Key: ClosedOperandCells, Subject: ClosedOperandCarrier, CandidateProvider: member.AxisRelationCandidate(member.RelationRef{Axis: schemaapi.EntryReference{Surface: schemaapi.SurfaceKind(2), Key: "heap"}, Member: "heap/closed-allocation/candidates"}), Inputs: []member.Carrier{HeapKeyCarrier}},
 		},
@@ -207,6 +213,8 @@ func AxisMemberCatalog() member.Catalog {
 			{Key: ResultAliasRouteTag, Relation: ResultAliasRoutes, Role: member.Predicate, Result: ResultAliasRouteTagCarrier, CandidateProvider: member.AxisRelationCandidate(member.RelationRef{Axis: schemaapi.EntryReference{Surface: schemaapi.SurfaceKind(2), Key: "value"}, Member: "value/mounted-call-result/candidates"})},
 			{Key: BodyReturnRouteKey, Relation: BodyReturnRoutes, Role: member.Key, Result: ValueCoordinateCarrier, CandidateProvider: member.AxisRelationCandidate(member.RelationRef{Axis: schemaapi.EntryReference{Surface: schemaapi.SurfaceKind(2), Key: "value"}, Member: "value/mounted-call-result/candidates"})},
 			{Key: BodyReturnRouteTag, Relation: BodyReturnRoutes, Role: member.Predicate, Result: BodyReturnRouteTagCarrier, CandidateProvider: member.AxisRelationCandidate(member.RelationRef{Axis: schemaapi.EntryReference{Surface: schemaapi.SurfaceKind(2), Key: "value"}, Member: "value/mounted-call-result/candidates"})},
+			{Key: AllocationFactKey, Relation: AllocationFacts, Role: member.Key, Result: ValueCoordinateCarrier, CandidateProvider: member.AxisRelationCandidate(member.RelationRef{Axis: schemaapi.EntryReference{Surface: schemaapi.SurfaceKind(2), Key: "value"}, Member: "value/allocation/candidates"})},
+			{Key: FreshResultFactKey, Relation: FreshResultFacts, Role: member.Key, Result: ValueCoordinateCarrier, CandidateProvider: member.AxisRelationCandidate(member.RelationRef{Axis: schemaapi.EntryReference{Surface: schemaapi.SurfaceKind(2), Key: "value"}, Member: "value/fresh-result/candidates"})},
 			{Key: ClosedOperandKey, Relation: ClosedOperandCells, Role: member.Key, Result: ValueCoordinateCarrier, CandidateProvider: member.AxisRelationCandidate(member.RelationRef{Axis: schemaapi.EntryReference{Surface: schemaapi.SurfaceKind(2), Key: "heap"}, Member: "heap/closed-allocation/candidates"})},
 		},
 		[]member.Reducer{

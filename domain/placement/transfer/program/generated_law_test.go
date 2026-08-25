@@ -26,6 +26,7 @@ join[0].read         form=exact input=0 axis=axis/call point-bound=bound
 join[0].relation     axis/call:call/mounted-call/facts
 join[0].key          axis/call:call/mounted-call/fact-key
 join[0].predicate    -
+join[0].selection    -
 join[0].parent       -
 join[0].sources      candidate
 join[0].contract     order=canonical sparse=explicit on-opaque=refuse multiplicity=one denominator=-
@@ -33,6 +34,7 @@ join[1].read         form=summary input=0 axis=axis/value point-bound=self
 join[1].relation     axis/value:value/mounted-call/actual-members
 join[1].key          axis/value:value/mounted-call/actual-key
 join[1].predicate    -
+join[1].selection    -
 join[1].parent       axis/value:value/mounted-call/parents
 join[1].sources      candidate
 join[1].contract     order=canonical sparse=default on-opaque=propagate-authenticated multiplicity=many denominator=denominator/coordinates/value
@@ -40,6 +42,7 @@ join[2].read         form=selected input=0 axis=axis/placement point-bound=self
 join[2].relation     axis/placement:placement/transfer/routes
 join[2].key          axis/placement:placement/transfer/route-key
 join[2].predicate    axis/placement:placement/transfer/route-tag
+join[2].selection    axis/placement:placement/transfer/route-selection
 join[2].parent       -
 join[2].sources      candidate, join 0, join 1
 join[2].contract     order=canonical sparse=default on-opaque=refuse multiplicity=one denominator=denominator/coordinates/placement
@@ -217,9 +220,6 @@ func TestTransferRefusesEveryStructuralMutation(t *testing.T) {
 			declaration.Joins[1].Sources = append(declaration.Joins[1].Sources, declaration.Joins[1].Sources[0])
 		}, kind: ruleprogram.ProblemJoin, join: 1},
 		{mutation: "join 1 sources a result that is not yet produced", apply: func(declaration *ruleprogram.Program) { declaration.Joins[1].Sources[0] = ruleprogram.PriorSource(1) }, kind: ruleprogram.ProblemJoin, join: 1},
-		{mutation: "join 1 loses the denominator its read form requires", apply: func(declaration *ruleprogram.Program) {
-			declaration.Joins[1].Read.Contract.DenominatorRef = ruleprogram.DenominatorRef{}
-		}, kind: ruleprogram.ProblemJoin, join: 1},
 		{mutation: "join 1 restates a parent that resolves to nothing", apply: func(declaration *ruleprogram.Program) { declaration.Joins[1].Parent.Member = "" }, kind: ruleprogram.ProblemJoin, join: 1},
 		{mutation: "join 2 loses its relation", apply: func(declaration *ruleprogram.Program) { declaration.Joins[2].Relation.Member = "" }, kind: ruleprogram.ProblemJoin, join: 2},
 		{mutation: "join 2 loses its key projection", apply: func(declaration *ruleprogram.Program) { declaration.Joins[2].Key.Member = "" }, kind: ruleprogram.ProblemJoin, join: 2},

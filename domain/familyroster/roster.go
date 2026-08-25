@@ -22,7 +22,9 @@ import (
 	heapemptyprogram "github.com/wippyai/go-lua/domain/heap/allocation/empty/program"
 	freezeprogram "github.com/wippyai/go-lua/domain/heap/formalfreeze/program"
 	publicationfreezeprogram "github.com/wippyai/go-lua/domain/heap/publicationfreeze/program"
+	allocationbirthprogram "github.com/wippyai/go-lua/domain/placement/allocationbirth/program"
 	formalprogram "github.com/wippyai/go-lua/domain/placement/formal/program"
+	freshbirthprogram "github.com/wippyai/go-lua/domain/placement/freshbirth/program"
 	returnprogram "github.com/wippyai/go-lua/domain/placement/returnescape/program"
 	storeprogram "github.com/wippyai/go-lua/domain/placement/store/program"
 	transferprogram "github.com/wippyai/go-lua/domain/placement/transfer/program"
@@ -442,6 +444,26 @@ func Declarations() []Declaration {
 				Spec:        valuebodyresultprogram.RuleEntry(),
 			},
 			Directory: "domain/value/bodyresult/program",
+		},
+		{
+			Target: emitlaw.Target{
+				PackagePath: "github.com/wippyai/go-lua/domain/placement/allocationbirth/program",
+				PackageName: "program",
+				Declaration: "AllocationBirth",
+				Entry:       "RuleEntry",
+				Spec:        allocationbirthprogram.RuleEntry(),
+			},
+			Directory: "domain/placement/allocationbirth/program",
+		},
+		{
+			Target: emitlaw.Target{
+				PackagePath: "github.com/wippyai/go-lua/domain/placement/freshbirth/program",
+				PackageName: "program",
+				Declaration: "FreshBirth",
+				Entry:       "RuleEntry",
+				Spec:        freshbirthprogram.RuleEntry(),
+			},
+			Directory: "domain/placement/freshbirth/program",
 		},
 	}
 }

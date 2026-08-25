@@ -33,6 +33,7 @@ func Canonical(declaration program.Program) string {
 		line(&out, prefix+".relation", relationForm(join.Relation))
 		line(&out, prefix+".key", projectionForm(join.Key))
 		line(&out, prefix+".predicate", projectionForm(join.Predicate))
+		line(&out, prefix+".selection", selectionForm(join.Selection))
 		line(&out, prefix+".parent", relationForm(join.Parent))
 		line(&out, prefix+".sources", sourcesForm(join.Sources))
 		line(&out, prefix+".contract", contractForm(join.Read.Contract))
@@ -142,6 +143,13 @@ func projectionForm(projection member.ProjectionRef) string {
 		return "-"
 	}
 	return fmt.Sprintf("%s:%s", reference(projection.Axis), key(projection.Member))
+}
+
+func selectionForm(selection member.SelectionRef) string {
+	if !selection.Declared() {
+		return "-"
+	}
+	return fmt.Sprintf("%s:%s", reference(selection.Axis), key(selection.Member))
 }
 
 func reducerForm(reducer member.ReducerRef) string {

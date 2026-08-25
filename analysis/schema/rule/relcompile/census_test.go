@@ -25,9 +25,11 @@ import (
 	heapformalfreeze "github.com/wippyai/go-lua/domain/heap/formalfreeze/program"
 	heappublicationfreeze "github.com/wippyai/go-lua/domain/heap/publicationfreeze/program"
 	packsource "github.com/wippyai/go-lua/domain/pack/source"
+	placementallocationbirth "github.com/wippyai/go-lua/domain/placement/allocationbirth/program"
 	placementcapture "github.com/wippyai/go-lua/domain/placement/capture/program"
 	placementcontainment "github.com/wippyai/go-lua/domain/placement/containment/program"
 	placementformal "github.com/wippyai/go-lua/domain/placement/formal/program"
+	placementfreshbirth "github.com/wippyai/go-lua/domain/placement/freshbirth/program"
 	placementpublicationescape "github.com/wippyai/go-lua/domain/placement/publicationescape/program"
 	placementreturnescape "github.com/wippyai/go-lua/domain/placement/returnescape/program"
 	placementstore "github.com/wippyai/go-lua/domain/placement/store/program"
@@ -76,9 +78,11 @@ func declared() []specimen {
 		{Family: "heap/formalfreeze", Plane: "family", Spec: heapformalfreeze.RuleEntry()},
 		{Family: "heap/publicationfreeze", Plane: "family", Spec: heappublicationfreeze.RuleEntry()},
 		{Family: "pack/source", Plane: "seed", Spec: packsource.RuleEntry()},
+		{Family: "placement/allocationbirth", Plane: "family", Spec: placementallocationbirth.RuleEntry()},
 		{Family: "placement/capture", Plane: "family", Spec: placementcapture.RuleEntry()},
 		{Family: "placement/containment", Plane: "family", Spec: placementcontainment.RuleEntry()},
 		{Family: "placement/formal", Plane: "family", Spec: placementformal.RuleEntry()},
+		{Family: "placement/freshbirth", Plane: "family", Spec: placementfreshbirth.RuleEntry()},
 		{Family: "placement/publicationescape", Plane: "family", Spec: placementpublicationescape.RuleEntry()},
 		{Family: "placement/returnescape", Plane: "family", Spec: placementreturnescape.RuleEntry()},
 		{Family: "placement/store", Plane: "family", Spec: placementstore.RuleEntry()},
@@ -107,20 +111,12 @@ func declared() []specimen {
 // of this revision. The family exists and still runs on its wired
 // registration arm, so it is a row like any other: the corpus is not covered
 // while a declaration the census cannot read is left out of the matrix.
-func uncommitted() []entry {
-	rows := []entry{
-		{Family: "placement/allocationbirth", Rule: "placement-allocation-birth"},
-		{Family: "placement/freshbirth", Rule: "placement-fresh-birth"},
-	}
-	for index := range rows {
-		rows[index].Plane = "family"
-		rows[index].Status = statusCoupling
-		rows[index].Site = "program"
-		rows[index].Missing = "declaration"
-		rows[index].Reason = "the declarative rule declaration is not committed at this revision; the family runs on its wired registration arm"
-	}
-	return rows
-}
+//
+// Every family's declaration is committed at this revision, so the list is
+// empty. It stays because the census is total over the corpus, and a family
+// whose declaration is written and not yet committed is a row the matrix owes
+// rather than one it may omit.
+func uncommitted() []entry { return nil }
 
 // entry is one machine-readable census row.
 type entry struct {

@@ -564,6 +564,9 @@ func renderCold(packageName string, source definition.Definition) ([]byte, error
 	for _, transform := range source.CarryTransforms {
 		fmt.Fprintf(&out, "\t%s schemaapi.Key = %q\n", transform.Name, transform.Key)
 	}
+	for _, selection := range source.Selections {
+		fmt.Fprintf(&out, "\t%s schemaapi.Key = %q\n", selection.Name, selection.Key)
+	}
 	for _, carrier := range source.Carriers {
 		fmt.Fprintf(&out, "\t%s member.Carrier = %q\n", carrier.Name, carrier.Key)
 	}

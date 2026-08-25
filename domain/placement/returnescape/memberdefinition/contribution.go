@@ -168,6 +168,15 @@ func Contribution() definition.Contribution {
 				CandidateProvider: member.AxisRelationCandidate(provider),
 			},
 		},
+		Selections: []definition.Selection{{
+			// The rows of ReturnRoutes do not exist until the reads before this
+			// one have delivered their cells, so an operation publishes them
+			// and stamps each with ReturnRouteTag. Its body is the owner judgment
+			// named here, never a second copy of it.
+			Name: "ReturnRouteSelection", Key: "placement/return-escape/route-selection",
+			Relation: "ReturnRoutes", Tag: "ReturnRouteTag",
+			Implementation: returnEscapeSymbol("ResolveRoute"),
+		}},
 		Reducers: []definition.Reducer{{
 			Name: "ReturnEscapeReducer",
 			Key:  "placement/return-escape/reducer",

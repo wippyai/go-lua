@@ -30,8 +30,13 @@ import (
 	heappublicationfreeze "github.com/wippyai/go-lua/domain/heap/publicationfreeze/memberdefinition"
 	packbase "github.com/wippyai/go-lua/domain/pack/memberdefinition"
 	packsource "github.com/wippyai/go-lua/domain/pack/source/memberdefinition"
+	placementallocationbirth "github.com/wippyai/go-lua/domain/placement/allocationbirth/memberdefinition"
+	placementcapture "github.com/wippyai/go-lua/domain/placement/capture/memberdefinition"
+	placementcontainment "github.com/wippyai/go-lua/domain/placement/containment/memberdefinition"
 	placementformal "github.com/wippyai/go-lua/domain/placement/formal/memberdefinition"
+	placementfreshbirth "github.com/wippyai/go-lua/domain/placement/freshbirth/memberdefinition"
 	placementbase "github.com/wippyai/go-lua/domain/placement/memberdefinition"
+	placementpublicationescape "github.com/wippyai/go-lua/domain/placement/publicationescape/memberdefinition"
 	placementreturnescape "github.com/wippyai/go-lua/domain/placement/returnescape/memberdefinition"
 	placementstore "github.com/wippyai/go-lua/domain/placement/store/memberdefinition"
 	placementtransfer "github.com/wippyai/go-lua/domain/placement/transfer/memberdefinition"
@@ -102,6 +107,11 @@ func Composition() (definition.Roster, bool) {
 				placementreturnescape.Contribution(),
 				placementtransfer.Contribution(),
 				placementformal.Contribution(),
+				placementallocationbirth.Contribution(),
+				placementfreshbirth.Contribution(),
+				placementcapture.Contribution(),
+				placementcontainment.Contribution(),
+				placementpublicationescape.Contribution(),
 			},
 		},
 		definition.Source{

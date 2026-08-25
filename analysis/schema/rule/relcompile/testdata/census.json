@@ -112,10 +112,9 @@
     "family": "placement/allocationbirth",
     "plane": "family",
     "rule": "placement-allocation-birth",
-    "status": "COUPLING-FINDING",
-    "site": "program",
-    "missing": "declaration",
-    "reason": "the declarative rule declaration is not committed at this revision; the family runs on its wired registration arm"
+    "status": "COMPILES",
+    "sketch": "Publish(Merge(Apply(Select(Join(Input,Select(Input)))),Select(Input)))",
+    "expressions": 1
   },
   {
     "family": "placement/capture",
@@ -139,19 +138,17 @@
     "family": "placement/formal",
     "plane": "family",
     "rule": "placement-formal",
-    "status": "COUPLING-FINDING",
-    "site": "program.joins[2].predicate",
-    "missing": "operation",
-    "reason": "undeclared"
+    "status": "COMPILES",
+    "sketch": "Publish(Apply(Select(Join(Join(Input,Select(Input)),Select(Input))))) | Publish(Apply(Select(Join(Join(Join(Join(Input,Select(Input)),Complete(Select(Input))),Select(Input)),Complete(Select(Input))))))",
+    "expressions": 2
   },
   {
     "family": "placement/freshbirth",
     "plane": "family",
     "rule": "placement-fresh-birth",
-    "status": "COUPLING-FINDING",
-    "site": "program",
-    "missing": "declaration",
-    "reason": "the declarative rule declaration is not committed at this revision; the family runs on its wired registration arm"
+    "status": "COMPILES",
+    "sketch": "Publish(Merge(Apply(Select(Join(Input,Select(Input)))),Select(Input)))",
+    "expressions": 1
   },
   {
     "family": "placement/publicationescape",
@@ -166,19 +163,17 @@
     "family": "placement/returnescape",
     "plane": "family",
     "rule": "placement-return-escape",
-    "status": "COUPLING-FINDING",
-    "site": "program.joins[2].predicate",
-    "missing": "operation",
-    "reason": "undeclared"
+    "status": "COMPILES",
+    "sketch": "Publish(Apply(Select(Join(Join(Input,Select(Input)),Select(Input))))) | Publish(Apply(Select(Join(Join(Join(Join(Input,Complete(Select(Input))),Complete(Select(Input))),Select(Input)),Complete(Select(Input))))))",
+    "expressions": 2
   },
   {
     "family": "placement/store",
     "plane": "family",
     "rule": "placement-storage",
-    "status": "COUPLING-FINDING",
-    "site": "program.joins[1].predicate",
-    "missing": "operation",
-    "reason": "undeclared"
+    "status": "COMPILES",
+    "sketch": "Publish(Apply(Select(Join(Input,Select(Input))))) | Publish(Apply(Select(Join(Join(Input,Select(Input)),Select(Input)))))",
+    "expressions": 2
   },
   {
     "family": "placement/suspension",
@@ -202,10 +197,9 @@
     "family": "placement/transfer",
     "plane": "family",
     "rule": "placement-transfer",
-    "status": "COUPLING-FINDING",
-    "site": "program.joins[2].predicate",
-    "missing": "operation",
-    "reason": "undeclared"
+    "status": "COMPILES",
+    "sketch": "Publish(Apply(Select(Join(Join(Input,Select(Input)),Select(Input))))) | Publish(Apply(Select(Join(Join(Join(Join(Input,Select(Input)),Complete(Select(Input))),Select(Input)),Complete(Select(Input))))))",
+    "expressions": 2
   },
   {
     "family": "static/transfer",
@@ -219,10 +213,9 @@
     "family": "typestate",
     "plane": "family",
     "rule": "typestate-obligation",
-    "status": "COUPLING-FINDING",
-    "site": "program.joins[1].predicate",
-    "missing": "operation",
-    "reason": "undeclared"
+    "status": "COMPILES",
+    "sketch": "Publish(Apply(Select(Join(Input,Select(Input))))) | Publish(Merge(Apply(Select(Join(Join(Input,Select(Input)),Complete(Select(Input))))),Select(Input)))",
+    "expressions": 2
   },
   {
     "family": "value/allocation",

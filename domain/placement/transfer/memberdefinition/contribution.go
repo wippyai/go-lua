@@ -140,6 +140,15 @@ func Contribution() definition.Contribution {
 				Accessor:          routeAccessor("Coordinates", 1),
 			},
 		},
+		Selections: []definition.Selection{{
+			// The rows of TransferRoutes do not exist until the reads before this
+			// one have delivered their cells, so an operation publishes them
+			// and stamps each with TransferRouteTag. Its body is the owner judgment
+			// named here, never a second copy of it.
+			Name: "TransferRouteSelection", Key: "placement/transfer/route-selection",
+			Relation: "TransferRoutes", Tag: "TransferRouteTag",
+			Implementation: transferFunction("DeriveTransferRoutes"),
+		}},
 		Reducers: []definition.Reducer{{
 			Name: "TransferReducer",
 			Key:  "placement/transfer/reducer",

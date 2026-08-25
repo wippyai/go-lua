@@ -26,6 +26,7 @@ join[0].read         form=exact input=0 axis=axis/value point-bound=bound
 join[0].relation     axis/value:value/storage-transfer/sources
 join[0].key          axis/value:value/storage-transfer/source-key
 join[0].predicate    -
+join[0].selection    -
 join[0].parent       -
 join[0].sources      candidate
 join[0].contract     order=canonical sparse=explicit on-opaque=refuse multiplicity=one denominator=-
@@ -33,6 +34,7 @@ join[1].read         form=selected input=0 axis=axis/placement point-bound=bound
 join[1].relation     axis/placement:placement/store/storage-routes
 join[1].key          axis/placement:placement/store/route-key
 join[1].predicate    axis/placement:placement/store/route-tag
+join[1].selection    axis/placement:placement/store/route-selection
 join[1].parent       -
 join[1].sources      candidate, join 0
 join[1].contract     order=canonical sparse=explicit on-opaque=refuse multiplicity=one denominator=denominator/coordinates/placement

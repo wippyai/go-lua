@@ -39,6 +39,10 @@ const (
 	TransferRouteTag         schema.Key = placementdomain.TransferRouteTag
 	TransferRouteDestination schema.Key = placementdomain.TransferRouteDestination
 	TransferReducer          schema.Key = placementdomain.TransferReducer
+	// TransferRouteSelection is the operation Placement publishes the transfer
+	// route rows through; which routes exist depends on the mounted actual
+	// vector the earlier reads delivered.
+	TransferRouteSelection   schema.Key = placementdomain.TransferRouteSelection
 	MountedCallCandidates    schema.Key = calldomain.MountedCallCandidates
 	MountedCallFacts         schema.Key = calldomain.MountedCallFacts
 	MountedCallFactKey       schema.Key = calldomain.MountedCallFactKey
@@ -173,6 +177,7 @@ func Transfer() ruleprogram.Program {
 				Relation:  member.RelationRef{Axis: placement, Member: TransferRoutes},
 				Key:       member.ProjectionRef{Axis: placement, Member: TransferRouteKey},
 				Predicate: member.ProjectionRef{Axis: placement, Member: TransferRouteTag},
+				Selection: member.SelectionRef{Axis: placement, Member: TransferRouteSelection},
 				Read: ruleprogram.ReadDecl{
 					Input: 0,
 					Axis:  ruleprogram.AxisRef(placement),

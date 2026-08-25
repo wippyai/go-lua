@@ -40,6 +40,9 @@ const (
 	returnEscapeRouteTag         schema.Key = "placement/return-escape/route-tag"
 	returnEscapeRouteDestination schema.Key = "placement/return-escape/route-destination"
 	returnEscapeReducer          schema.Key = "placement/return-escape/reducer"
+	// The route rows are produced by the operation named here: which members
+	// escape depends on the boundary vector the earlier reads delivered.
+	returnEscapeRouteSelection schema.Key = "placement/return-escape/route-selection"
 
 	valueCoordinateColumn      schema.Key = "value/facts"
 	placementFactsColumn       schema.Key = "placement/facts"
@@ -192,6 +195,7 @@ func ReturnEscape() ruleprogram.Program {
 				Relation:  member.RelationRef{Axis: placement, Member: returnEscapeRoutes},
 				Key:       member.ProjectionRef{Axis: placement, Member: returnEscapeRouteKey},
 				Predicate: member.ProjectionRef{Axis: placement, Member: returnEscapeRouteTag},
+				Selection: member.SelectionRef{Axis: placement, Member: returnEscapeRouteSelection},
 				Read:      selectedPlacementRead(),
 			},
 		},

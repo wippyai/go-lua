@@ -79,6 +79,11 @@ const (
 	// requirement authority, so the kind is read from the owner rather than
 	// carried as a runtime callback.
 	JudgmentReducer schema.Key = "typestate/reducer/judgment"
+	// StateCellSelection is the operation this axis publishes the cell rows
+	// through. Which cell a mounted call reaches is computed from the receiver
+	// fact the read before it delivered, so the row does not exist until that
+	// cell is known and the read names the operation that publishes it.
+	StateCellSelection schema.Key = "typestate/state/cell-selection"
 )
 
 // The Value carriers this axis's members are typed against. A carrier is a
@@ -156,6 +161,16 @@ func AxisMemberCatalog() member.Catalog {
 	if !ok {
 		panic("typestate: invalid axis member catalog")
 	}
+	// The cell rows are produced: which cell a mounted call reaches is
+	// computed from the receiver fact the read before it delivered, so the
+	// axis publishes them through this operation and stamps each with the
+	// protocol the reading rule joins on.
+	catalog, ok = catalog.WithSelections([]member.Selection{
+		{Key: StateCellSelection, Relation: StateCells, Tag: StateCellProtocol},
+	})
+	if !ok {
+		panic("typestate: invalid axis selection catalog")
+	}
 	return catalog
 }
 
@@ -206,6 +221,7 @@ func Obligation() ruleprogram.Program {
 				Relation:  member.RelationRef{Axis: typestateAxis, Member: StateCells},
 				Key:       member.ProjectionRef{Axis: typestateAxis, Member: StateCellKey},
 				Predicate: member.ProjectionRef{Axis: typestateAxis, Member: StateCellProtocol},
+				Selection: member.SelectionRef{Axis: typestateAxis, Member: StateCellSelection},
 				Read: ruleprogram.ReadDecl{
 					Input: 0,
 					Axis:  ruleprogram.AxisRef(typestateAxis),

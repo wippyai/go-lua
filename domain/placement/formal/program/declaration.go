@@ -57,6 +57,12 @@ const (
 	FormalRouteTag  schema.Key = placementdomain.FormalRouteTag
 	FormalRouteDest schema.Key = placementdomain.FormalRouteDestination
 	FormalReducer   schema.Key = placementdomain.FormalReducer
+
+	// FormalRouteSelection is the operation Placement publishes the route
+	// rows through. Which routes a mounted call has depends on the actual
+	// vector the reads before it delivered, so the rows are produced rather
+	// than enumerated and the read names the operation that publishes them.
+	FormalRouteSelection schema.Key = placementdomain.FormalRouteSelection
 )
 
 func axisReference(key schema.Key) schema.EntryReference {
@@ -204,6 +210,10 @@ func Formal() ruleprogram.Program {
 				Predicate: member.ProjectionRef{
 					Axis:   placementAxis,
 					Member: FormalRouteTag,
+				},
+				Selection: member.SelectionRef{
+					Axis:   placementAxis,
+					Member: FormalRouteSelection,
 				},
 				Read: ruleprogram.ReadDecl{
 					Input: 0,

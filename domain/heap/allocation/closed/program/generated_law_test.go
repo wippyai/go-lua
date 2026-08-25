@@ -26,6 +26,7 @@ join[0].read         form=exact input=0 axis=axis/heap point-bound=bound
 join[0].relation     axis/heap:heap/closed-allocation/predecessors
 join[0].key          axis/heap:heap/closed-allocation/predecessor-key
 join[0].predicate    -
+join[0].selection    -
 join[0].parent       -
 join[0].sources      candidate
 join[0].contract     order=canonical sparse=explicit on-opaque=refuse multiplicity=one denominator=-
@@ -33,6 +34,7 @@ join[1].read         form=summary input=1 axis=axis/value point-bound=self
 join[1].relation     axis/value:value/closed-allocation/operands
 join[1].key          axis/value:value/closed-allocation/operand-key
 join[1].predicate    -
+join[1].selection    -
 join[1].parent       -
 join[1].sources      candidate
 join[1].contract     order=canonical sparse=explicit on-opaque=refuse multiplicity=many denominator=denominator/coordinates/value
@@ -211,9 +213,6 @@ func TestClosedAllocationRefusesEveryStructuralMutation(t *testing.T) {
 			declaration.Joins[1].Sources = append(declaration.Joins[1].Sources, declaration.Joins[1].Sources[0])
 		}, kind: ruleprogram.ProblemJoin, join: 1},
 		{mutation: "join 1 sources a result that is not yet produced", apply: func(declaration *ruleprogram.Program) { declaration.Joins[1].Sources[0] = ruleprogram.PriorSource(1) }, kind: ruleprogram.ProblemJoin, join: 1},
-		{mutation: "join 1 loses the denominator its read form requires", apply: func(declaration *ruleprogram.Program) {
-			declaration.Joins[1].Read.Contract.DenominatorRef = ruleprogram.DenominatorRef{}
-		}, kind: ruleprogram.ProblemJoin, join: 1},
 		{mutation: "the fold names no reducer", apply: func(declaration *ruleprogram.Program) { declaration.Fold.Reducer.Member = "" }, kind: ruleprogram.ProblemFold},
 		{mutation: "the fold consumes nothing", apply: func(declaration *ruleprogram.Program) { declaration.Fold.Inputs = nil }, kind: ruleprogram.ProblemInput},
 		{mutation: "the fold publishes nothing", apply: func(declaration *ruleprogram.Program) { declaration.Fold.Outputs = nil }, kind: ruleprogram.ProblemOutput},

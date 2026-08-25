@@ -37,11 +37,15 @@ const (
 	// Placement owns the route relation and its projections. Value owns the
 	// candidate/source relation and its key projection; these aliases keep the
 	// foreign side explicit in every declaration law.
-	StorageRoutes             schema.Key = placementdomain.StorageRoutes
-	StorageRouteKey           schema.Key = placementdomain.StorageRouteKey
-	StorageRouteTag           schema.Key = placementdomain.StorageRouteTag
-	StorageRouteDestination   schema.Key = placementdomain.StorageRouteDestination
-	StorageReducer            schema.Key = placementdomain.StorageReducer
+	StorageRoutes           schema.Key = placementdomain.StorageRoutes
+	StorageRouteKey         schema.Key = placementdomain.StorageRouteKey
+	StorageRouteTag         schema.Key = placementdomain.StorageRouteTag
+	StorageRouteDestination schema.Key = placementdomain.StorageRouteDestination
+	StorageReducer          schema.Key = placementdomain.StorageReducer
+	// StorageRouteSelection is the operation Placement publishes the storage
+	// route rows through; they are produced from the transfer source the
+	// earlier read delivered rather than enumerated.
+	StorageRouteSelection     schema.Key = placementdomain.StorageRouteSelection
 	StorageTransferCandidates schema.Key = valuedomain.StorageTransferCandidates
 	StorageTransferSources    schema.Key = valuedomain.StorageTransferSources
 	StorageTransferSourceKey  schema.Key = valuedomain.StorageTransferSourceKey
@@ -149,6 +153,10 @@ func Storage() ruleprogram.Program {
 				Predicate: member.ProjectionRef{
 					Axis:   placementAxis,
 					Member: StorageRouteTag,
+				},
+				Selection: member.SelectionRef{
+					Axis:   placementAxis,
+					Member: StorageRouteSelection,
 				},
 				Read: ruleprogram.ReadDecl{
 					PointBound: ruleprogram.PointBound,
