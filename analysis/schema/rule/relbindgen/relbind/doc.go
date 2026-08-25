@@ -17,4 +17,6 @@
 // one hand-authored judgment whose Evaluate names only the decoded argument
 // and the bounded emitter the generated artifact declares, so the mathematics
 // stays where its owner wrote it and the generated half stays free of it.
+//
+//go:generate go run ./cmd/relbind -root ../../../..
 package relbind
