@@ -110,6 +110,16 @@ type ActivationDecl struct {
 	// constructed point plane.
 	Mount member.ProjectionRef
 	Body  member.ProjectionRef
+	// Transport is the relation the whole transport vector crosses the
+	// activation edge as.
+	//
+	// It is one relation and not one per transported axis. What crosses is a
+	// branch: the vector is instantiated once per candidate branch, so the
+	// rows that cross are the branch set's rows and naming a relation per axis
+	// would put a second authority beside the Link's own directory over the
+	// same crossing. The axes carried are the vector's rows; where they are
+	// carried is this one statement.
+	Transport member.RelationRef
 }
 
 // Available reports whether every identity the mounted branch is keyed or
@@ -117,7 +127,8 @@ type ActivationDecl struct {
 // one of them is a member the construct plane could not address.
 func (activation ActivationDecl) Available() bool {
 	return activation.Branch.Available() && activation.Application.Available() && activation.Target.Available() &&
-		activation.Endpoint.Available() && activation.Mount.Available() && activation.Body.Available()
+		activation.Endpoint.Available() && activation.Mount.Available() && activation.Body.Available() &&
+		activation.Transport.Available()
 }
 
 // projections is the branch vocabulary in declaration order. One order serves
@@ -131,9 +142,12 @@ func (activation ActivationDecl) projections() []member.ProjectionRef {
 }
 
 func (activation ActivationDecl) references() schema.EntryReferences {
-	references := make(schema.EntryReferences, 0, 6)
+	references := make(schema.EntryReferences, 0, 7)
 	if activation.Branch.Declared() {
 		references = append(references, activation.Branch.EntryReference())
+	}
+	if activation.Transport.Declared() {
+		references = append(references, activation.Transport.EntryReference())
 	}
 	for _, projection := range activation.projections() {
 		if projection.Declared() {

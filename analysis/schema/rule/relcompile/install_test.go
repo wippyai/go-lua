@@ -278,6 +278,15 @@ func (surfaces *owners) install(spec rule.Spec) relcompile.Placement {
 		surfaces.relation(branch, candidateScope)
 		surfaces.coordinate(branch, relcompile.CoordinateParent)
 		surfaces.coordinate(branch, relcompile.CoordinateOrdinal)
+		crossing := relcompile.NewName(program.Activation.Transport.Axis, program.Activation.Transport.Member)
+		surfaces.relation(crossing, candidateScope)
+		for index := 0; index < program.TransportCount(); index++ {
+			row, ok := program.TransportAt(index)
+			if !ok {
+				continue
+			}
+			surfaces.owner(schema.EntryReference(row.Axis))
+		}
 	}
 
 	for _, output := range program.Fold.Outputs {

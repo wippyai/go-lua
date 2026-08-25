@@ -460,14 +460,31 @@ func (resolver ruleResolver) structural(program ruleprogram.Program) error {
 		if _, err := resolver.registry.Addressed(resolver.site("program.activation.branch"), branch, CoordinateOrdinal); err != nil {
 			return err
 		}
-	}
-	for index := 0; index < program.TransportCount(); index++ {
-		declaration, ok := program.TransportAt(index)
-		if !ok {
-			continue
+		// The vector crosses as one relation because what crosses is a branch.
+		// Each transported axis is a row of that vector, so the axes are
+		// resolved against the same crossing rather than against a relation
+		// each, which would be a second authority over one edge.
+		crossing := NewName(program.Activation.Transport.Axis, program.Activation.Transport.Member)
+		if _, err := resolver.registry.Relation(resolver.site("program.activation.transport"), crossing); err != nil {
+			return err
 		}
-		site := resolver.site(fmt.Sprintf("program.transport[%d].axis", index))
-		return refuse(site, Name{Entry: schema.EntryReference(declaration.Axis)}, KindRelation, ReasonUndeclared)
+		if _, err := resolver.registry.Addressed(resolver.site("program.activation.transport"), crossing, CoordinateAddress); err != nil {
+			return err
+		}
+		for index := 0; index < program.TransportCount(); index++ {
+			declaration, ok := program.TransportAt(index)
+			if !ok {
+				continue
+			}
+			site := resolver.site(fmt.Sprintf("program.transport[%d].axis", index))
+			if _, err := resolver.registry.Owner(site, schema.EntryReference(declaration.Axis)); err != nil {
+				return err
+			}
+		}
+		return nil
+	}
+	if program.TransportCount() != 0 {
+		return refuse(resolver.site("program.transport"), Name{Entry: resolver.entry}, KindRelation, ReasonUndeclared)
 	}
 	return nil
 }

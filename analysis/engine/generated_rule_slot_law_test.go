@@ -213,6 +213,7 @@ func newGeneratedRuleLawFixture(t testing.TB, variant generatedRuleLawVariant, r
 			Endpoint:    branchProjection(generatedRuleLawEndpoint),
 			Mount:       branchProjection(generatedRuleLawBranchMount),
 			Body:        branchProjection(generatedRuleLawBranchBody),
+			Transport:   member.RelationRef{Axis: axisReference, Member: generatedRuleLawBranchJoin},
 		}
 	}
 	if variant == generatedRuleLawSource {

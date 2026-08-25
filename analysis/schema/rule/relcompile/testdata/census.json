@@ -3,10 +3,9 @@
     "family": "call/activation",
     "plane": "family",
     "rule": "call-activation",
-    "status": "COUPLING-FINDING",
-    "site": "program.transport[0].axis",
-    "missing": "relation",
-    "reason": "undeclared"
+    "status": "COMPILES",
+    "sketch": "Publish(Apply(Select(Join(Input,Select(Input)))))",
+    "expressions": 1
   },
   {
     "family": "call/dispatch",
