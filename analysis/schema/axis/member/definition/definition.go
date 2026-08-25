@@ -918,6 +918,9 @@ func (definition Definition) Complete() bool {
 		if !relationOK || relation.CandidateProvider != projection.CandidateProvider || !projectionReceiverMatches(projection.Accessor, relation, carriers) {
 			return false
 		}
+		if !identityRoleAgrees(projection, carriers) {
+			return false
+		}
 	}
 	for _, reducer := range definition.Reducers {
 		if !reducer.Implementation.Available() {
@@ -947,6 +950,49 @@ func (definition Definition) Complete() bool {
 		}
 	}
 	return true
+}
+
+// identityPackagePath is the analyzer's one identity tree. A carrier from any
+// other package is a value this analyzer minted and addresses by a local.
+const identityPackagePath = "github.com/wippyai/go-lua/analysis/identity"
+
+// IdentityCarrier answers whether one carrier is an owner-issued identity, and
+// whether it carries the frame it was issued under.
+//
+// The analyzer mints exactly two things shaped like an identity: a content
+// identity, which is a digest issued under no frame, and a semantic key, which
+// is that digest and the frame its owner minted it at. Those are the two the
+// owner's ProjectIdentity surface can answer, so they are the two a projection
+// in the Identity role may publish.
+func IdentityCarrier(typ GoType) (framed bool, issued bool) {
+	if typ.PackagePath != identityPackagePath || typ.Pointer {
+		return false, false
+	}
+	switch typ.Name {
+	case "ContentID":
+		return false, true
+	case "SemanticKey":
+		return true, true
+	default:
+		return false, false
+	}
+}
+
+// identityRoleAgrees holds a projection's role and its result carrier to one
+// statement. The Identity role publishes an owner-issued identity and every
+// other role publishes a local, so the two questions have one answer and a
+// declaration that disagrees with itself is refused where it is written.
+//
+// The converse half is what keeps Attribute's own statement true: an identity
+// spelled in a local role would be read through Project and truncated to a
+// coordinate of a directory it was never an index into.
+func identityRoleAgrees(projection Projection, carriers map[string]Carrier) bool {
+	result, resultOK := carriers[projection.Result]
+	if !resultOK {
+		return false
+	}
+	_, issued := IdentityCarrier(result.Type)
+	return issued == (projection.Role == member.Identity)
 }
 
 func projectionReceiverMatches(accessor GoSymbol, relation Relation, carriers map[string]Carrier) bool {

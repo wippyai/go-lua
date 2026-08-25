@@ -70,9 +70,18 @@ const (
 	// declared vocabulary ordinal rather than a factor surface index, so a
 	// Program can read a row it joins on without a fourth addressing mode.
 	Attribute
+	// Identity is a candidate-row column whose value is an owner-issued
+	// content identity rather than a local. Every role above publishes a
+	// local: a dense coordinate of some directory, or a declared vocabulary
+	// ordinal. A local is the address of a row this analyzer minted, and a
+	// uint32 carries one. An identity is not an address - it names a subject
+	// the analyzer did not mint, a module, a body path, the semantic axis a
+	// role is issued under - and no dense width carries one, so it is read
+	// through the owner's identity surface instead of its local projection.
+	Identity
 )
 
-func (role Role) Available() bool { return role >= Key && role <= Attribute }
+func (role Role) Available() bool { return role >= Key && role <= Identity }
 
 // Relation is one owner-issued relation declaration. Inputs retain authored
 // carrier order; an empty input list is valid for a zero-input relation.

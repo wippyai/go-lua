@@ -99,7 +99,12 @@ func TestTheAttributeRoleIsDeclarable(t *testing.T) {
 	if !projection.Available() {
 		t.Fatal("an attribute projection is a declarable member")
 	}
-	if beyond := member.Attribute + 1; beyond.Available() {
-		t.Fatal("the projection role vocabulary is closed at Attribute")
+	// Attribute is the last role whose projected value is a LOCAL: the address
+	// of a row this analyzer minted, which the owner answers from Project. The
+	// ordinal after it is Identity, which is read from a different surface
+	// entirely, so this law's closure statement is about the local roles and
+	// the vocabulary's own end is stated where Identity is declared.
+	if beyond := member.Attribute + 1; beyond != member.Identity {
+		t.Fatal("the local projection roles are closed at Attribute")
 	}
 }

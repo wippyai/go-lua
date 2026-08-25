@@ -150,3 +150,28 @@ type OccurrenceDirectory interface {
 	OccurrenceCount(relationOrdinal uint32) (int, bool)
 	OccurrenceIDAt(relationOrdinal uint32, index int) (identity.ContentID, bool)
 }
+
+// IdentityProjection is the owner surface of a relation whose rows carry
+// owner-issued content identities. Project above answers a LOCAL: the address
+// of a row this analyzer minted, which a uint32 carries. An identity is not an
+// address - it names a subject the analyzer did not mint, a module, a body
+// path, the semantic axis a role is issued under - and no dense width carries
+// one, so a projection declared in the member.Identity role is read here.
+//
+// It is a separate interface for the reason OccurrenceDirectory above is: only
+// owners that declare at least one identity projection implement it, and an
+// axis publishing only locals stays a complete Owner rather than carrying a
+// refusing method for a capability it never declared.
+type IdentityProjection interface {
+	// ProjectIdentity answers one candidate row's owner-issued identity: the
+	// canonical digest, and the frame it was issued under. A content identity
+	// is issued under no frame and answers zero; a semantic axis answers the
+	// frame its owner minted it at, which is what reconstitutes the key.
+	//
+	// One call answers both because a digest without its frame is not an
+	// identity - SemanticKey refuses version zero - so a second call for the
+	// frame would be a second authority over one value, free to disagree with
+	// the first. A pair the owner declares no identity row for refuses: an
+	// absent identity and the identity of nothing are different statements.
+	ProjectIdentity(relationOrdinal, projectionOrdinal, candidateOrdinal uint32) (identity.ContentID, uint64, bool)
+}

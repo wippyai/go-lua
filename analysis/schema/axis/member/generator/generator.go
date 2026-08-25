@@ -1067,6 +1067,18 @@ func renderRelations(packageName string, source definition.Definition) ([]byte, 
 	if len(global) != 0 {
 		out.WriteString("var _ memberrelation.OccurrenceDirectory = (*RelationOwner)(nil)\n\n")
 	}
+	// The identity surface is claimed exactly where it is declared. An axis
+	// that publishes only locals is a complete Owner and grows no method for a
+	// capability none of its relations names.
+	identityProjections := make([]int, 0, len(source.Projections))
+	for index, projection := range source.Projections {
+		if projection.Role == member.Identity {
+			identityProjections = append(identityProjections, index)
+		}
+	}
+	if len(identityProjections) != 0 {
+		out.WriteString("var _ memberrelation.IdentityProjection = (*RelationOwner)(nil)\n\n")
+	}
 	out.WriteString("// NewRelationOwner binds the generated relation owner to one immutable axis schema.\n")
 	out.WriteString("func NewRelationOwner(schema ")
 	out.WriteString(ownerFieldType)
@@ -1216,6 +1228,13 @@ func renderRelations(packageName string, source definition.Definition) ([]byte, 
 			if projection.Relation != relation.Name {
 				continue
 			}
+			// An identity column has no local. Project answers the address of a
+			// row this analyzer minted, and reducing a digest to one would be a
+			// truncation rather than a projection, so the identity surface
+			// below is the only arm an identity row gets.
+			if projection.Role == member.Identity {
+				continue
+			}
 			projectionBinding := metadata.Projections[projectionIndex]
 			// A foreign provider is consumed by composition-generated code,
 			// which already holds its typed candidate row. This owner-local
@@ -1234,29 +1253,8 @@ func renderRelations(packageName string, source definition.Definition) ([]byte, 
 			candidateRelation := source.Relations[projectionBinding.CandidateRelation]
 			fmt.Fprintf(&out, "\t\tcase %d:\n", projectionIndex)
 			candidateAt := directCall(candidateRelation.CandidateAt, owner, "owner.schema", "candidate", []string{"int(candidateOrdinal)"}, packageName, aliases)
-			fmt.Fprintf(&out, "\t\t\tcandidate, candidateOK := %s\n", candidateAt)
-			out.WriteString("\t\t\tif !candidateOK {\n\t\t\t\treturn 0, false\n\t\t\t}\n")
 			accessor := directCall(projection.Accessor, owner, "owner.schema", "candidate", nil, packageName, aliases)
-			// A sole-result accessor publishes exactly this projection and no
-			// value beside it, so the call binds one name. Binding a second
-			// would force every owner to publish a fact it may not have, which
-			// is how a paired accessor gets written around an unpaired one.
-			projected, discarded := "first", ""
-			results := "first, second, projectionOK := "
-			switch projection.Accessor.ResultIndex {
-			case -1:
-				results = "first, projectionOK := "
-			case 1:
-				projected, discarded = "second", "first"
-			default:
-				discarded = "second"
-			}
-			fmt.Fprintf(&out, "\t\t\t%s%s\n", results, accessor)
-			out.WriteString("\t\t\tif !projectionOK {\n\t\t\t\treturn 0, false\n\t\t\t}\n")
-			if discarded != "" {
-				fmt.Fprintf(&out, "\t\t\t_ = %s\n", discarded)
-			}
-			fmt.Fprintf(&out, "\t\t\tprojected := %s\n", projected)
+			renderProjectedRow(&out, projection.Accessor, candidateAt, accessor, "return 0, false")
 			// A projection whose result is this axis's KEY is a coordinate and
 			// becomes a local through the axis's own key normalizer. A
 			// projection whose result is anything else - a selection tag, a
@@ -1280,6 +1278,12 @@ func renderRelations(packageName string, source definition.Definition) ([]byte, 
 	}
 	out.WriteString("\tdefault:\n\t\treturn 0, false\n\t}\n")
 	out.WriteString("}\n\n")
+
+	if len(identityProjections) != 0 {
+		if err := renderIdentityProjection(&out, source, metadata, identityProjections, owner, packageName, aliases); err != nil {
+			return nil, err
+		}
+	}
 
 	if len(materializable) != 0 {
 		out.WriteString("// materializeSourceColumns seals each owner-issued source fact column once.\n")
@@ -1491,6 +1495,39 @@ func carrierByName(source definition.Definition, name string) (definition.Carrie
 	return definition.Carrier{}, false
 }
 
+// renderProjectedRow emits the head every projection arm shares: fetch the
+// candidate row this ordinal addresses, apply the declared accessor, and bind
+// the answer to `projected`.
+//
+// The refusal is the caller's. The two projection surfaces answer different
+// shapes - a local and an identity - and everything up to the answer is the
+// same read, so the read is written once and each surface spells its own
+// absence.
+func renderProjectedRow(out *strings.Builder, accessor definition.GoSymbol, candidateAt, accessorCall, refusal string) {
+	fmt.Fprintf(out, "\t\t\tcandidate, candidateOK := %s\n", candidateAt)
+	fmt.Fprintf(out, "\t\t\tif !candidateOK {\n\t\t\t\t%s\n\t\t\t}\n", refusal)
+	// A sole-result accessor publishes exactly this projection and no value
+	// beside it, so the call binds one name. Binding a second would force every
+	// owner to publish a fact it may not have, which is how a paired accessor
+	// gets written around an unpaired one.
+	projected, discarded := "first", ""
+	results := "first, second, projectionOK := "
+	switch accessor.ResultIndex {
+	case -1:
+		results = "first, projectionOK := "
+	case 1:
+		projected, discarded = "second", "first"
+	default:
+		discarded = "second"
+	}
+	fmt.Fprintf(out, "\t\t\t%s%s\n", results, accessorCall)
+	fmt.Fprintf(out, "\t\t\tif !projectionOK {\n\t\t\t\t%s\n\t\t\t}\n", refusal)
+	if discarded != "" {
+		fmt.Fprintf(out, "\t\t\t_ = %s\n", discarded)
+	}
+	fmt.Fprintf(out, "\t\t\tprojected := %s\n", projected)
+}
+
 func roleExpression(role member.Role) (string, bool) {
 	switch role {
 	case member.Key:
@@ -1499,6 +1536,8 @@ func roleExpression(role member.Role) (string, bool) {
 		return "member.Predicate", true
 	case member.Destination:
 		return "member.Destination", true
+	case member.Identity:
+		return "member.Identity", true
 	default:
 		return "", false
 	}
@@ -1546,4 +1585,83 @@ func unsignedLocalType(typ definition.GoType) bool {
 	default:
 		return false
 	}
+}
+
+// renderIdentityProjection emits the owner's identity surface: one arm per
+// column declared in the Identity role, answering the digest and the frame it
+// was issued under.
+//
+// The frame is the owner's own and is never a constant this emitter invents. A
+// content identity is issued under no frame and answers zero; a semantic key
+// already carries the frame its owner minted it at, so the arm reads it off
+// the value. Which of the two a column is is the declared carrier's statement,
+// not a shape probed from the accessor.
+func renderIdentityProjection(out *strings.Builder, source definition.Definition, metadata Metadata, identityProjections []int, owner definition.GoType, packageName string, aliases packageAliases) error {
+	byRelation := make(map[int][]int, len(identityProjections))
+	order := make([]int, 0, len(source.Relations))
+	for _, projectionIndex := range identityProjections {
+		projection := source.Projections[projectionIndex]
+		binding := metadata.Projections[projectionIndex]
+		// A foreign provider is consumed by composition-generated code, which
+		// already holds its typed candidate row, on the same terms the local
+		// projection states above.
+		if !binding.CandidateProviderLocal {
+			continue
+		}
+		relationIndex := -1
+		for index, relation := range source.Relations {
+			if relation.Name == projection.Relation {
+				relationIndex = index
+				break
+			}
+		}
+		if relationIndex < 0 {
+			return fmt.Errorf("member generator: identity projection %s names an undeclared relation", projection.Name)
+		}
+		providerRelation := source.Relations[binding.CandidateRelation]
+		providerSubject, providerSubjectOK := carrierByName(source, providerRelation.Subject)
+		if !providerSubjectOK || !sameGoType(projection.Accessor.Receiver, providerSubject.Type) {
+			continue
+		}
+		if _, held := byRelation[relationIndex]; !held {
+			order = append(order, relationIndex)
+		}
+		byRelation[relationIndex] = append(byRelation[relationIndex], projectionIndex)
+	}
+
+	const refusal = "return identity.ContentID{}, 0, false"
+	out.WriteString("// ProjectIdentity answers one candidate row's owner-issued identity: the\n")
+	out.WriteString("// canonical digest, and the frame it was issued under. A content identity is\n")
+	out.WriteString("// issued under no frame and answers zero; a semantic axis answers the frame\n")
+	out.WriteString("// its own owner minted it at, which is what reconstitutes the key.\n")
+	out.WriteString("func (owner *RelationOwner) ProjectIdentity(relationOrdinal, projectionOrdinal, candidateOrdinal uint32) (identity.ContentID, uint64, bool) {\n")
+	fmt.Fprintf(out, "\tif %s {\n\t\t%s\n\t}\n", ownerSchemaMissing(source.Binding.Key.Normalizer.ReceiverPointer), refusal)
+	out.WriteString("\tswitch relationOrdinal {\n")
+	for _, relationIndex := range order {
+		fmt.Fprintf(out, "\tcase %d:\n", relationIndex)
+		out.WriteString("\t\tswitch projectionOrdinal {\n")
+		for _, projectionIndex := range byRelation[relationIndex] {
+			projection := source.Projections[projectionIndex]
+			binding := metadata.Projections[projectionIndex]
+			candidateRelation := source.Relations[binding.CandidateRelation]
+			result, resultOK := carrierByName(source, projection.Result)
+			framed, issued := definition.IdentityCarrier(result.Type)
+			if !resultOK || !issued {
+				return fmt.Errorf("member generator: identity projection %s publishes no owner-issued identity", projection.Name)
+			}
+			fmt.Fprintf(out, "\t\tcase %d:\n", projectionIndex)
+			candidateAt := directCall(candidateRelation.CandidateAt, owner, "owner.schema", "candidate", []string{"int(candidateOrdinal)"}, packageName, aliases)
+			accessor := directCall(projection.Accessor, owner, "owner.schema", "candidate", nil, packageName, aliases)
+			renderProjectedRow(out, projection.Accessor, candidateAt, accessor, refusal)
+			if framed {
+				out.WriteString("\t\t\treturn identity.ContentID(projected.Digest()), projected.Version(), true\n")
+				continue
+			}
+			out.WriteString("\t\t\treturn projected, 0, true\n")
+		}
+		fmt.Fprintf(out, "\t\tdefault:\n\t\t\t%s\n\t\t}\n", refusal)
+	}
+	fmt.Fprintf(out, "\tdefault:\n\t\t%s\n\t}\n", refusal)
+	out.WriteString("}\n\n")
+	return nil
 }
