@@ -118,6 +118,10 @@ type Relation struct {
 	// declares one for each foreign order a rule addressing it must reach; a
 	// relation that correlates with nothing declares none.
 	Correspondences []RelationRef
+	// Addressing names the columns of this relation its own rows are
+	// addressed by. A join onto this relation pairs against a column named
+	// here, so which column that is stays the relation's own statement.
+	Addressing Addressing
 }
 
 func (relation Relation) Available() bool {
@@ -134,6 +138,9 @@ func (relation Relation) Available() bool {
 	// set: it is the row a vector read of another axis is spanned by, and a
 	// relation addressed under a parent takes its own span from there.
 	if relation.PublishesKeyVector && relation.Parent.Declared() {
+		return false
+	}
+	if !relation.Addressing.consistent(relation.Parent.Declared()) {
 		return false
 	}
 	for _, correspondence := range relation.Correspondences {
@@ -394,6 +401,7 @@ func cloneRelations(relations []Relation) []Relation {
 			Ordinal:            relation.Ordinal,
 			PublishesKeyVector: relation.PublishesKeyVector,
 			Correspondences:    cloneCorrespondences(relation.Correspondences),
+			Addressing:         relation.Addressing,
 		}
 	}
 	return clone
@@ -488,6 +496,7 @@ func (catalog Catalog) Complete() bool {
 			return false
 		}
 	}
+	columns := make(map[schema.Key]schema.Key, len(catalog.Projections))
 	for _, projection := range catalog.Projections {
 		if !projection.Available() {
 			return false
@@ -499,6 +508,19 @@ func (catalog Catalog) Complete() bool {
 			return false
 		}
 		keys[projection.Key] = struct{}{}
+		columns[projection.Key] = projection.Relation
+	}
+	// An addressing coordinate is an ordinary column, so every one a relation
+	// names is a projection this catalog declares over that same relation. A
+	// relation that named a foreign column would be addressed through rows it
+	// does not own.
+	for _, relation := range catalog.Relations {
+		for _, column := range relation.Addressing.Columns() {
+			owner, declared := columns[column]
+			if !declared || owner != relation.Key {
+				return false
+			}
+		}
 	}
 	for _, reducer := range catalog.Reducers {
 		if !reducer.Available() {
@@ -698,6 +720,13 @@ const (
 	// emitted before the statement existed, so adding the form remints no
 	// declaration that does not use it.
 	contentRecordCorrespondence uint64 = 12
+
+	// contentRecordAddressing carries the columns a relation states its own
+	// rows are addressed by. It is a tagged trailing extension of the relation
+	// record: a relation that declares no addressing emits nothing, so its
+	// canonical stream is exactly the stream it had before the coordinates
+	// could be named.
+	contentRecordAddressing uint64 = 13
 )
 
 // WriteContent writes the catalog's canonical declaration stream. Collection
@@ -739,6 +768,20 @@ func (catalog Catalog) WriteContent(content *framing.Writer) error {
 			}
 			if err := writeRelationReference(content, correspondence); err != nil {
 				return err
+			}
+		}
+		if relation.Addressing.Declared() {
+			if err := content.Record(contentRecordAddressing); err != nil {
+				return err
+			}
+			for _, column := range [...]schema.Key{
+				relation.Addressing.Address, relation.Addressing.Parent,
+				relation.Addressing.Ordinal, relation.Addressing.Tag,
+				relation.Addressing.Occurrence,
+			} {
+				if err := content.String(string(column)); err != nil {
+					return err
+				}
 			}
 		}
 		if !relation.Nested() {
