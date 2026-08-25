@@ -335,7 +335,7 @@ func (binding *Binding[K, V]) NewWork() (carrier.SlotWork, bool) {
 		entailsWork.Close()
 		return nil, false
 	}
-	return &bindingWork[K, V]{binding: binding, roots: roots, supportWork: supportWork, entailsWork: entailsWork, readWork: readWork, observations: observations, readMemo: newObservationReadMemo[K, V](len(binding.unitList))}, true
+	return &bindingWork[K, V]{binding: binding, roots: roots, supportWork: supportWork, entailsWork: entailsWork, readWork: readWork, observations: observations, readMemo: newObservationReadMemo[K, V](binding.declaredKeyCount()), readKeyOffsets: binding.declaredKeyOffsets()}, true
 }
 
 // bindingWork is private typed evaluator state for exactly one Binding.
@@ -383,10 +383,15 @@ type bindingWork[K scalar.Key, V any] struct {
 	// Exact observation traversal is a Work-local state machine.  Both the
 	// callback adapter and DirectObservation advance this same state; neither
 	// path owns a second partition or emission implementation.
-	observationCursorMode   directObservationMode
-	observationCursorIndex  int
-	observationCursorRoot   carrier.RootHandle
-	observationCursorUnit   carrier.Unit
+	observationCursorMode  directObservationMode
+	observationCursorIndex int
+	observationCursorRoot  carrier.RootHandle
+	observationCursorUnit  carrier.Unit
+	// observationCursorKeys is the observed Unit's base coordinate in the
+	// sealed declared-key inventory; a key read under this cursor is at that
+	// base plus the key's position in the Unit's frozen vector.
+	observationCursorKeys   int
+	readKeyOffsets          []int
 	observationCursorFailed bool
 	// readMemo retains owner-local immutable exact partitions for this evaluator
 	// lane. Its capacity is fixed from the Binding's sealed Unit inventory. A
@@ -1068,14 +1073,19 @@ type observationPiece[V any] struct {
 	region      support.Mask
 }
 
+// observationReadMemo holds the partition pieces of the declared keys it has
+// read. An entry's coordinate is that key's position in the Binding's sealed
+// key inventory - the Unit's offset plus the key's position in the Unit's
+// frozen vector - so the memo is addressed rather than searched, and its size
+// is the declared inventory rather than a function of how many reads were
+// offered. Root and region remain stamped on the entry, because pieces read
+// under one root or region are not the pieces read under another.
 type observationReadMemo[K scalar.Key, V any] struct {
 	entries []observationReadEntry[K, V]
-	next    int
 }
 
 type observationReadEntry[K scalar.Key, V any] struct {
 	root   carrier.RootHandle
-	unit   carrier.Unit
 	key    K
 	within support.Mask
 	pieces []observationPiece[V]
@@ -1083,58 +1093,35 @@ type observationReadEntry[K scalar.Key, V any] struct {
 }
 
 // newObservationReadMemo sizes the owner-local exact-read table from the
-// Binding's sealed Unit inventory. One Unit may have one retained root/region
-// observation; a different root or region deterministically evicts another
-// entry and simply takes the normal PartitionKey miss path.
-func newObservationReadMemo[K scalar.Key, V any](unitCount int) observationReadMemo[K, V] {
-	if unitCount <= 0 {
+// Binding's sealed declared-key inventory. Every declared key of every Unit
+// has its own coordinate, so no read ever displaces another key's entry.
+func newObservationReadMemo[K scalar.Key, V any](keyCount int) observationReadMemo[K, V] {
+	if keyCount <= 0 {
 		return observationReadMemo[K, V]{}
 	}
-	return observationReadMemo[K, V]{entries: make([]observationReadEntry[K, V], unitCount)}
+	return observationReadMemo[K, V]{entries: make([]observationReadEntry[K, V], keyCount)}
 }
 
-func (memo *observationReadMemo[K, V]) lookup(root carrier.RootHandle, unit carrier.Unit, key K, within support.Mask) ([]observationPiece[V], bool) {
-	if memo == nil {
+func (memo *observationReadMemo[K, V]) lookup(coordinate int, root carrier.RootHandle, key K, within support.Mask) ([]observationPiece[V], bool) {
+	if memo == nil || coordinate < 0 || coordinate >= len(memo.entries) {
 		return nil, false
 	}
-	for index := range memo.entries {
-		entry := &memo.entries[index]
-		if entry.valid && entry.root == root && entry.unit == unit && entry.key == key && entry.within == within {
-			return entry.pieces, true
-		}
+	dbgFactBinding.ReadMemoProbes++
+	entry := &memo.entries[coordinate]
+	if !entry.valid || entry.root != root || entry.key != key || entry.within != within {
+		return nil, false
 	}
-	return nil, false
+	return entry.pieces, true
 }
 
-func (memo *observationReadMemo[K, V]) replace(root carrier.RootHandle, unit carrier.Unit, key K, within support.Mask, pieces []observationPiece[V]) {
-	if memo == nil {
+func (memo *observationReadMemo[K, V]) replace(coordinate int, root carrier.RootHandle, key K, within support.Mask, pieces []observationPiece[V]) {
+	if memo == nil || coordinate < 0 || coordinate >= len(memo.entries) {
 		return
 	}
-	for index := range memo.entries {
-		entry := &memo.entries[index]
-		if entry.valid && entry.root == root && entry.unit == unit && entry.key == key && entry.within == within {
-			clear(entry.pieces)
-			entry.pieces = append(entry.pieces[:0], pieces...)
-			return
-		}
-	}
-	for index := range memo.entries {
-		if !memo.entries[index].valid {
-			clear(memo.entries[index].pieces)
-			memo.entries[index] = observationReadEntry[K, V]{root: root, unit: unit, key: key, within: within, pieces: append(memo.entries[index].pieces[:0], pieces...), valid: true}
-			return
-		}
-	}
-	if len(memo.entries) == 0 {
-		return
-	}
-	index := memo.next % len(memo.entries)
-	memo.next = (index + 1) % len(memo.entries)
-	entry := &memo.entries[index]
-	entry.root, entry.unit, entry.key, entry.within = root, unit, key, within
+	entry := &memo.entries[coordinate]
 	clear(entry.pieces)
+	entry.root, entry.key, entry.within, entry.valid = root, key, within, true
 	entry.pieces = append(entry.pieces[:0], pieces...)
-	entry.valid = true
 }
 
 func (memo *observationReadMemo[K, V]) clear() {
@@ -1146,12 +1133,10 @@ func (memo *observationReadMemo[K, V]) clear() {
 		memo.entries[index].pieces = memo.entries[index].pieces[:0]
 		memo.entries[index].valid = false
 		memo.entries[index].root = carrier.RootHandle{}
-		memo.entries[index].unit = carrier.Unit{}
 		var zero K
 		memo.entries[index].key = zero
 		memo.entries[index].within = support.Mask{}
 	}
-	memo.next = 0
 }
 
 // observationCell is one entry of a discovered sequence linked to the prefix
@@ -2056,8 +2041,24 @@ func (work *bindingWork[K, V]) observeSummary(input semantic.Plane[planeFactor, 
 // It lends readWork for the refinement. This read runs once per declared key of
 // every observed fold, which is the engine's densest Boolean call site, so the
 // shell is owned here rather than minted inside the read.
-func (work *bindingWork[K, V]) partitionKey(input semantic.Plane[planeFactor, K, V], key K, within support.Mask) bool {
-	if pieces, found := work.readMemo.lookup(work.observationCursorRoot, work.observationCursorUnit, key, within); found {
+// declaredKeyBase resolves the observed Unit's base coordinate in the sealed
+// declared-key inventory. An undeclared Unit has no coordinate and its reads
+// take the ordinary recomputing path.
+func (work *bindingWork[K, V]) declaredKeyBase(unit carrier.Unit) int {
+	descriptor, declared := work.binding.units[unit]
+	if !declared || descriptor.position < 0 || descriptor.position >= len(work.readKeyOffsets) {
+		return -1
+	}
+	return work.readKeyOffsets[descriptor.position]
+}
+
+func (work *bindingWork[K, V]) partitionKey(input semantic.Plane[planeFactor, K, V], key K, keyIndex int, within support.Mask) bool {
+	dbgFactBinding.ReadMemoReads++
+	coordinate := -1
+	if work.observationCursorKeys >= 0 {
+		coordinate = work.observationCursorKeys + keyIndex
+	}
+	if pieces, found := work.readMemo.lookup(coordinate, work.observationCursorRoot, key, within); found {
 		work.pieces = append(work.pieces[:0], pieces...)
 		return true
 	}
@@ -2067,7 +2068,7 @@ func (work *bindingWork[K, V]) partitionKey(input semantic.Plane[planeFactor, K,
 	}
 	completed := work.binding.plane.domain.PartitionKey(input, key, within, work.readWork, work.partitionVisit)
 	if completed {
-		work.readMemo.replace(work.observationCursorRoot, work.observationCursorUnit, key, within, work.pieces)
+		work.readMemo.replace(coordinate, work.observationCursorRoot, key, within, work.pieces)
 	}
 	return completed
 }

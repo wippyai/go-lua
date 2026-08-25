@@ -16,6 +16,15 @@ type DbgFactBindingCounters struct {
 	SummaryPairs        uint64
 	SummaryConjunctions uint64
 	SummaryMaxPartials  uint64
+
+	// ReadMemoReads counts declared-key reads offered to the observation read
+	// memo and ReadMemoProbes counts the entries those reads examine to
+	// resolve one. One entry per read is the law: a memo entry is addressed
+	// by the key's coordinate in the observed Unit's declared vector, so a
+	// read that examines more than its own entry is searching a table whose
+	// address it already holds.
+	ReadMemoReads  uint64
+	ReadMemoProbes uint64
 }
 
 var dbgFactBinding DbgFactBindingCounters

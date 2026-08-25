@@ -147,6 +147,7 @@ func (work *bindingWork[K, V]) beginSummaryObservation(input semantic.Plane[plan
 	work.observationCursorIndex = 0
 	work.observationCursorRoot = root
 	work.observationCursorUnit = unit
+	work.observationCursorKeys = work.declaredKeyBase(unit)
 	if support.Empty(within) {
 		return true
 	}
@@ -176,11 +177,11 @@ func (work *bindingWork[K, V]) beginSummaryObservation(input semantic.Plane[plan
 	work.resetSpine()
 	constant := true
 	cell, count := -1, 0
-	for _, key := range keys {
+	for index, key := range keys {
 		if !work.live() {
 			return false
 		}
-		if !work.partitionKey(input, key, within) {
+		if !work.partitionKey(input, key, index, within) {
 			return false
 		}
 		if len(work.pieces) != 1 {
@@ -197,14 +198,14 @@ func (work *bindingWork[K, V]) beginSummaryObservation(input semantic.Plane[plan
 	}
 
 	unions := work.newSupportWork()
-	if unions == nil || len(keys) == 0 || !work.partitionKey(input, keys[0], within) || !work.seedGroups(unions) {
+	if unions == nil || len(keys) == 0 || !work.partitionKey(input, keys[0], 0, within) || !work.seedGroups(unions) {
 		if unions != nil {
 			unions.Discard()
 		}
 		return false
 	}
-	for _, key := range keys[1:] {
-		if !work.live() || !work.partitionKey(input, key, within) || !work.extendGroups(unions, within) {
+	for offset, key := range keys[1:] {
+		if !work.live() || !work.partitionKey(input, key, offset+1, within) || !work.extendGroups(unions, within) {
 			unions.Discard()
 			return false
 		}
@@ -247,10 +248,11 @@ func (work *bindingWork[K, V]) beginExactObservation(input semantic.Plane[planeF
 	work.observationCursorIndex = 0
 	work.observationCursorRoot = root
 	work.observationCursorUnit = unit
+	work.observationCursorKeys = work.declaredKeyBase(unit)
 	if support.Empty(within) {
 		return true
 	}
-	if !work.partitionKey(input, key, within) || len(work.pieces) == 0 {
+	if !work.partitionKey(input, key, 0, within) || len(work.pieces) == 0 {
 		return false
 	}
 	// A single or pairwise-distinct partition is already in canonical order.

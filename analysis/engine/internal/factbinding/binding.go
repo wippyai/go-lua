@@ -382,6 +382,30 @@ func (binding *Binding[K, V]) DeclareExact(key K) (carrier.Unit, bool) {
 // DeclareSummary seals one finite, canonical typed dependency surface.  Its
 // key set is both the summary's coverage witness and its later invalidation
 // closure; summaries never gain candidates after this cut.
+// declaredKeyCount is the Binding's sealed declared-key inventory: every
+// declared key of every Unit, counted once. It is the size of a table that
+// gives each declared key its own coordinate.
+func (binding *Binding[K, V]) declaredKeyCount() int {
+	count := 0
+	for _, declared := range binding.units {
+		count += len(declared.keys)
+	}
+	return count
+}
+
+// declaredKeyOffsets is each Unit's base coordinate in that inventory, in
+// declaration order, so a Unit's key at position index is addressed at the
+// Unit's offset plus index.
+func (binding *Binding[K, V]) declaredKeyOffsets() []int {
+	offsets := make([]int, len(binding.unitList))
+	base := 0
+	for position, unit := range binding.unitList {
+		offsets[position] = base
+		base += len(binding.units[unit].keys)
+	}
+	return offsets
+}
+
 func (binding *Binding[K, V]) DeclareSummary(keys []K) (carrier.Unit, bool) {
 	return binding.declareSummary(keys, false)
 }

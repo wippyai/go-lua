@@ -178,7 +178,7 @@ func TestObservationReadMemoClearsAtCloseAndNewWork(t *testing.T) {
 	}
 }
 
-func TestObservationReadMemoCapacityIsUnitBoundAndEvicts(t *testing.T) {
+func TestObservationReadMemoCapacityIsDeclaredKeyBoundAndEvicts(t *testing.T) {
 	manager, err := guard.New([]guard.Atom{1})
 	if err != nil {
 		t.Fatal(err)
@@ -191,15 +191,16 @@ func TestObservationReadMemoCapacityIsUnitBoundAndEvicts(t *testing.T) {
 	if !ok || typed == nil {
 		t.Fatal("typed memo owner")
 	}
-	bound := len(binding.unitList)
+	bound := binding.declaredKeyCount()
 	if bound == 0 || cap(typed.readMemo.entries) > bound || len(typed.readMemo.entries) > bound {
 		t.Fatalf("read memo capacity = len %d cap %d, want bound %d", len(typed.readMemo.entries), cap(typed.readMemo.entries), bound)
 	}
 
 	// Each commit issues a distinct root, while the read alternates among the
-	// whole support and both proper regions. Once the Unit-derived table fills,
-	// later identities must evict and recompute; the observed current value and
-	// exact requested region remain the authority for every iteration.
+	// whole support and both proper regions. A declared key holds one entry,
+	// so a new root or region at that coordinate evicts the old one and
+	// recomputes; the observed current value and exact requested region
+	// remain the authority for every iteration.
 	state := initial
 	regions := []support.Mask{whole, on, off}
 	for value := uint64(1); value <= 64; value++ {
@@ -216,5 +217,46 @@ func TestObservationReadMemoCapacityIsUnitBoundAndEvicts(t *testing.T) {
 	}
 	if !work.Close() {
 		t.Fatal("close bounded memo work")
+	}
+}
+
+// TestObservationReadMemoIsAddressedByKeyCoordinate states that the memo is
+// read by coordinate. A declared key's pieces live at that key's position in
+// the observed Unit's frozen key vector, so one read examines one entry. A
+// memo that examines more entries than the reads offered to it is searching a
+// table whose address it already holds, and that search grows with the
+// Binding's sealed inventory while the read it caches does not.
+func TestObservationReadMemoIsAddressedByKeyCoordinate(t *testing.T) {
+	manager, err := guard.New([]guard.Atom{1})
+	if err != nil {
+		t.Fatal(err)
+	}
+	whole, on, _, _, _ := observationMasks(t, manager)
+	binding, initial, slot, composition, declared := newObservationBinding(t, manager)
+	work := newWork(t, composition)
+	slotWork := memoSlotWork(t, work, slot)
+
+	// A branched value makes the summary traverse its declared keys twice:
+	// once to probe for a constant vector and once to build the groups. The
+	// second traversal is exactly what the memo exists to serve.
+	state := commitMemoValue(t, binding, work, initial, declared.target[0], on, 5)
+	root, rootOK := state.HandleAt(slot)
+	if !rootOK {
+		t.Fatal("committed root")
+	}
+	DbgFactBindingReset()
+	if rows := observe(t, binding, slotWork, root, declared.summary, whole); len(rows) == 0 {
+		t.Fatal("summary observation produced no row")
+	}
+	counters := DbgFactBinding()
+	if counters.ReadMemoReads == 0 {
+		t.Fatal("the summary observation offered no declared-key read to the memo")
+	}
+	if counters.ReadMemoProbes != counters.ReadMemoReads {
+		t.Errorf("read memo examined %d entries for %d reads: the entry is addressed by the key's coordinate, so a read examines exactly its own entry",
+			counters.ReadMemoProbes, counters.ReadMemoReads)
+	}
+	if !work.Close() {
+		t.Fatal("close coordinate memo work")
 	}
 }
