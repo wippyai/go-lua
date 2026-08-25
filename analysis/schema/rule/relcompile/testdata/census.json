@@ -19,10 +19,9 @@
     "family": "effect/callsite/body",
     "plane": "family",
     "rule": "effect-body",
-    "status": "COUPLING-FINDING",
-    "site": "program.joins[1].predicate",
-    "missing": "operation",
-    "reason": "undeclared"
+    "status": "COMPILES",
+    "sketch": "Publish(Apply(Select(Join(Input,Select(Input))))) | Publish(Apply(Select(Join(Join(Input,Select(Input)),Select(Input)))))",
+    "expressions": 2
   },
   {
     "family": "effect/callsite/opaque",

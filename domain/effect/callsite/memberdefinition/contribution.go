@@ -245,6 +245,15 @@ func BodyContribution() definition.Contribution {
 				Role: member.Predicate, Result: "BodyRouteTagCarrier", Accessor: bodyRouteMethod("Predicate"),
 			},
 		},
+		// The body routes are computed from the call fact the read before them
+		// delivered, so they are published through this selection and stamped
+		// with the tag the reading rule joins on.
+		Selections: []definition.Selection{{
+			Name:     "BodyRouteSelection",
+			Key:      "effect/callsite/body-route-selection",
+			Relation: "BodyRoutes",
+			Tag:      "BodyRouteTag",
+		}},
 		Reducers: []definition.Reducer{{
 			Name:      "BodyCallEffectReducer",
 			Key:       "effect/callsite-body/reducer",

@@ -40,6 +40,7 @@ const (
 	BodyRoutes                  schema.Key = effectdomain.BodyRoutes
 	BodyRouteKey                schema.Key = effectdomain.BodyRouteKey
 	BodyRouteTag                schema.Key = effectdomain.BodyRouteTag
+	BodyRouteSelection          schema.Key = effectdomain.BodyRouteSelection
 	Reducer                     schema.Key = effectdomain.BodyCallEffectReducer
 )
 
@@ -120,6 +121,7 @@ func BodyCallEffect() ruleprogram.Program {
 				Relation:  member.RelationRef{Axis: effectAxis, Member: BodyRoutes},
 				Key:       member.ProjectionRef{Axis: effectAxis, Member: BodyRouteKey},
 				Predicate: member.ProjectionRef{Axis: effectAxis, Member: BodyRouteTag},
+				Selection: member.SelectionRef{Axis: effectAxis, Member: BodyRouteSelection},
 				Read: ruleprogram.ReadDecl{
 					PointBound: ruleprogram.PointBound,
 					Input:      0,

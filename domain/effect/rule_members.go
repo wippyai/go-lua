@@ -18,6 +18,7 @@ const (
 	SelectedCallEffectReducer   schemaapi.Key  = "effect/callsite-selected/reducer"
 	OpaqueCallEffectReducer     schemaapi.Key  = "effect/callsite-opaque/reducer"
 	BodyCallEffectReducer       schemaapi.Key  = "effect/callsite-body/reducer"
+	BodyRouteSelection          schemaapi.Key  = "effect/callsite/body-route-selection"
 	EffectKeyCarrier            member.Carrier = "carrier/effect/key"
 	EffectFactCarrier           member.Carrier = "carrier/effect/fact"
 	EffectMountedCallCarrier    member.Carrier = "carrier/effect/mounted-call"
@@ -60,6 +61,12 @@ func AxisMemberCatalog() member.Catalog {
 	)
 	if !ok {
 		panic("effect: invalid axis member catalog")
+	}
+	catalog, ok = catalog.WithSelections([]member.Selection{
+		{Key: BodyRouteSelection, Relation: BodyRoutes, Tag: BodyRouteTag},
+	})
+	if !ok {
+		panic("effect: invalid axis selection catalog")
 	}
 	return catalog
 }
