@@ -400,3 +400,12 @@ func (inputs LinkInputs) StructureInput() structure.Table { return inputs.vocabu
 func (inputs LinkInputs) PackInput() *packdomain.Schema { return inputs.PackSchema }
 
 func (inputs LinkInputs) EffectInput() *effectfactor.Algebra { return inputs.EffectAlgebra }
+
+// IndexTopology is the mount phase's sealed heap index topology. It is a
+// derivation over several sealed factors, so it is read from the record the
+// phase produced and never sealed a second time by a consumer.
+func (inputs LinkInputs) IndexTopology() *heapindex.Topology { return inputs.topology }
+
+// KeySelection is the mount phase's sealed heap key and class projection, read
+// from the record the phase produced for the same reason.
+func (inputs LinkInputs) KeySelection() *keymatch.SelectorProjection { return inputs.keySelection }

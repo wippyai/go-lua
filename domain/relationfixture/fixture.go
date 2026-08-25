@@ -1,15 +1,18 @@
-// Package relationfixture seals the analysis world every axis binds its
-// laws against. Every authority in it is the production one: a real Link, a
-// real heap schema, a real correlated value schema, a real call algebra, a
-// real pack schema and a real sealed index topology over a program that
-// indexes a table.
+// Package relationfixture seals the analysis world every axis binds its laws
+// against.
+//
+// Every authority in it is the production one, and it is mounted the way
+// production mounts it: the composition's own mount phase derives the sealed
+// authorities and the phase's post-mount derivations from one real linked
+// program, and this package reads them off the record it produced. It seals
+// nothing itself, so a law proven here is proven against the same authorities
+// the analyzer runs on and never against a second construction of them.
 package relationfixture
 
 import (
 	"testing"
 
 	"github.com/wippyai/go-lua/analysis/lua/lower"
-	programartifact "github.com/wippyai/go-lua/analysis/program/artifact"
 	artifactcompiler "github.com/wippyai/go-lua/analysis/program/artifact/compiler"
 	flowkind "github.com/wippyai/go-lua/analysis/program/flow/kind"
 	"github.com/wippyai/go-lua/analysis/program/link"
@@ -21,13 +24,11 @@ import (
 	"github.com/wippyai/go-lua/analysis/schema/programmount"
 	schematype "github.com/wippyai/go-lua/analysis/schema/typecontract"
 	calldomain "github.com/wippyai/go-lua/domain/call"
-	"github.com/wippyai/go-lua/domain/call/calltest"
 	"github.com/wippyai/go-lua/domain/composite"
 	"github.com/wippyai/go-lua/domain/composite/snapshottest"
 	effectfactor "github.com/wippyai/go-lua/domain/effect/factor"
 	heapdomain "github.com/wippyai/go-lua/domain/heap"
 	indexdomain "github.com/wippyai/go-lua/domain/heap/index"
-	"github.com/wippyai/go-lua/domain/heap/keymatch"
 	"github.com/wippyai/go-lua/domain/materialization"
 	packdomain "github.com/wippyai/go-lua/domain/pack"
 	staticdomain "github.com/wippyai/go-lua/domain/static"
@@ -36,10 +37,8 @@ import (
 	valuedomain "github.com/wippyai/go-lua/domain/value"
 )
 
-// Sealed is the sealed analysis world every axis binds its laws against.
-// Every authority in it is the production one: a real Link, a real heap
-// schema, a real correlated value schema, a real call algebra, and a real
-// sealed index topology over a program that indexes a table.
+// Sealed is one mounted analysis world: the authorities the mount phase sealed
+// and the receiver a binding law observes through.
 type Sealed struct {
 	Heap     heapdomain.Schema
 	Values   *valuedomain.Schema
@@ -68,6 +67,7 @@ func portableAnyTypes(count int) []schematype.Type {
 	return values
 }
 
+// New mounts the fixture world through the composition's own mount phase.
 func New(t testing.TB) Sealed {
 	t.Helper()
 	program, err := lower.Lower(lower.Source{Name: "relbindgen_binding_law.lua", Text: []byte(fixtureSource)})
@@ -88,84 +88,61 @@ func New(t testing.TB) Sealed {
 		t.Fatal(err)
 	}
 	compilation, compilationOK := composite.Build()
-	executionSchemaID := compilation.ExecutionSchemaID()
+	grammar := compilation.ExecutionSchemaID()
 	issuance, issuanceOK := composite.ArtifactIssuanceDirectory(compilation)
-	if !compilationOK || !executionSchemaID.Available() || !issuanceOK {
-		t.Fatal("binding fixture compilation")
+	if !compilationOK || !grammar.Available() || !issuanceOK {
+		t.Fatal("the binding fixture has no program schema receipt")
 	}
-	mountCount := linked.Project().Mounts().Count()
-	heapMounts := make([]programmount.MountedArtifact, 0, mountCount)
-	valueMounts := make([]programmount.MountedArtifact, 0, mountCount)
-	packMounts := make([]programmount.MountedArtifact, 0, mountCount)
-	callMounts := make([]calldomain.MountedArtifact, 0, mountCount)
-	effectMounts := make([]effectfactor.MountedArtifact, 0, mountCount)
-	staticMounts := make([]staticdomain.MountedProgram, 0, mountCount)
-	programs := make([]programschema.Program, 0, mountCount)
-	for index := 0; index < mountCount; index++ {
-		shard, shardOK := linked.Project().Mounts().At(index)
-		source, sourceOK := linked.Project().Mounts().Program(shard)
+
+	mounts := linked.Project().Mounts()
+	programs := make([]programschema.Program, mounts.Count())
+	rows := make([]programmount.MountedArtifact, mounts.Count())
+	statics := make([]staticdomain.MountedProgram, mounts.Count())
+	for index := 0; index < mounts.Count(); index++ {
+		shard, shardOK := mounts.At(index)
+		source, sourceOK := mounts.Program(shard)
 		module, moduleOK := linked.Project().ModuleKey(shard)
 		if !shardOK || !sourceOK || source == nil || !moduleOK {
-			t.Fatal("binding fixture mount")
+			t.Fatalf("binding fixture mount %d has no artifact source", index)
 		}
-		var artifact *programartifact.Artifact
-		artifact, failure := artifactcompiler.CompileDetailed(source, executionSchemaID, issuance)
-		if failure.Available() || artifact == nil {
-			t.Fatalf("binding fixture artifact: %v", failure)
+		artifact, failure := artifactcompiler.CompileDetailed(source, grammar, issuance)
+		if failure.Available() || artifact == nil || !artifact.Available() {
+			t.Fatalf("binding fixture artifact %d: %v", index, failure)
 		}
 		lowered := snapshottest.MustLower(t, artifact)
-		heapMount, heapOK := programmount.MountedArtifactFromSnapshot(lowered, module)
-		valueMount, valueOK := programmount.MountedArtifactFromSnapshot(lowered, module)
-		packMount, packOK := programmount.MountedArtifactFromSnapshot(lowered, module)
-		if !heapOK || !valueOK || !packOK {
-			t.Fatal("binding fixture mounted artifact")
+		mounted, mountedOK := programmount.MountedArtifactFromSnapshot(lowered, module)
+		if !mountedOK {
+			t.Fatalf("binding fixture mounted artifact %d", index)
 		}
-		mounted := snapshottest.MustMount(t, artifact, module)
-		heapMounts = append(heapMounts, heapMount)
-		valueMounts = append(valueMounts, valueMount)
-		packMounts = append(packMounts, packMount)
-		callMounts = append(callMounts, calldomain.MountedArtifact{Program: mounted, Snapshot: lowered})
-		effectMounts = append(effectMounts, effectfactor.MountedArtifact{ModuleKey: module, Snapshot: lowered})
-		staticMounts = append(staticMounts, staticdomain.MountedProgram{Program: mounted.Program, ModuleID: module, NamespaceID: module})
-		programs = append(programs, artifact.Program())
+		programs[index] = artifact.Program()
+		rows[index] = mounted
+		statics[index] = staticdomain.MountedProgram{Program: mounted.Program.Program, ModuleID: module, NamespaceID: module}
 	}
-	heap, heapFailure := heapdomain.SealWithArtifacts(linked, heapMounts)
-	structural, structuralOK := composite.StructureVocabulary(compilation)
-	if heapFailure != heapdomain.SealFailureNone || !structuralOK {
-		t.Fatalf("binding fixture heap seal: %v", heapFailure)
-	}
-	values, valueFailure := valuedomain.SealWithFailure(linked, heap, calltest.MustSeal(t, linked, valueMounts), valueMounts, structural)
-	calls, callsOK := calldomain.NewWithMountedArtifacts(linked, callMounts)
-	if valueFailure != valuedomain.SealFailureNone || !callsOK {
-		t.Fatalf("binding fixture value seal: %v calls=%t", valueFailure, callsOK)
-	}
+
 	boundary, _ := linked.Boundary().Target()
 	types, typeErr := typeauthority.SealProgramRows(linked.ContentID(), programs, nil)
 	if typeErr != nil || types == nil {
 		t.Fatalf("binding fixture type seal: %v", typeErr)
 	}
-	statics, _, staticErr := staticdomain.SealMountedPrograms(staticdomain.MountContext{LinkID: linked.ContentID(), Target: boundary}, types, staticMounts)
-	if staticErr != nil || statics == nil {
+	inventory, _, staticErr := staticdomain.SealMountedPrograms(staticdomain.MountContext{LinkID: linked.ContentID(), Target: boundary}, types, statics)
+	if staticErr != nil || inventory == nil {
 		t.Fatalf("binding fixture static seal: %v", staticErr)
 	}
-	packs, packsOK := packdomain.SealMountedArtifacts(linked, statics, packMounts)
-	if !packsOK || packs == nil {
-		t.Fatal("binding fixture pack seal")
+
+	record, failure := composite.MountLink(compilation, composite.LinkInputs{Source: linked, Artifacts: rows, StaticAuthority: inventory})
+	if failure.Available() {
+		t.Fatalf("binding fixture mount: %v", failure)
 	}
-	selectors, selectorsOK := keymatch.NewSelectorProjection(heap, values)
-	if !selectorsOK {
-		t.Fatal("binding fixture key selection")
+	fixture := Sealed{
+		Heap:     record.HeapInput(),
+		Values:   record.ValueInput(),
+		Calls:    record.CallInput(),
+		Packs:    record.PackInput(),
+		Classes:  inventory.Classes(),
+		Effects:  record.EffectInput(),
+		Topology: record.IndexTopology(),
 	}
-	topology, sealed := indexdomain.Seal(heap, values, calls, packs, selectors)
-	if !sealed || topology == nil {
-		t.Fatal("binding fixture topology seal")
-	}
-	effects, effectsOK := effectfactor.NewWithMountedArtifacts(linked, packs, boundary, effectMounts)
-	if !effectsOK || effects == nil {
-		t.Fatal("binding fixture effect seal")
-	}
-	fixture := Sealed{Heap: heap, Values: values, Calls: calls, Packs: packs, Classes: statics.Classes(), Effects: effects, Topology: topology}
-	fixture.Root, fixture.Receiver = fixtureReceiver(t, heap, values)
+	fixture.Root, fixture.Receiver = fixtureReceiver(t, fixture.Heap, fixture.Values)
 	return fixture
 }
 
