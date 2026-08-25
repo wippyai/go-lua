@@ -39,6 +39,7 @@ const (
 	// to see which owner published each row.
 	FormalFreezeRoutes           schema.Key = heapdomain.FormalFreezeRoutes
 	FormalFreezeRouteKey         schema.Key = heapdomain.FormalFreezeRouteKey
+	FormalFreezeRouteTag         schema.Key = heapdomain.FormalFreezeRouteTag
 	FormalFreezeRouteDestination schema.Key = heapdomain.FormalFreezeRouteDestination
 	FormalFreezeReducer          schema.Key = heapdomain.FormalFreezeReducer
 	MountedCallCandidates        schema.Key = calldomain.MountedCallCandidates
@@ -176,8 +177,9 @@ func FormalFreeze() ruleprogram.Program {
 					ruleprogram.PriorSource(0),
 					ruleprogram.PriorSource(1),
 				},
-				Relation: member.RelationRef{Axis: heapAxis, Member: FormalFreezeRoutes},
-				Key:      member.ProjectionRef{Axis: heapAxis, Member: FormalFreezeRouteKey},
+				Relation:  member.RelationRef{Axis: heapAxis, Member: FormalFreezeRoutes},
+				Key:       member.ProjectionRef{Axis: heapAxis, Member: FormalFreezeRouteKey},
+				Predicate: member.ProjectionRef{Axis: heapAxis, Member: FormalFreezeRouteTag},
 				Read: ruleprogram.ReadDecl{
 					Input: 2,
 					Axis:  ruleprogram.AxisRef(heapAxis),

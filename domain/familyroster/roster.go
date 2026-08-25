@@ -205,6 +205,14 @@ func Families() []Family {
 			},
 			Directory: "domain/value/allocation",
 		},
+		{
+			Target: emit.Target{
+				PackagePath: "github.com/wippyai/go-lua/domain/heap/formalfreeze",
+				PackageName: "formalfreeze",
+				Spec:        freezeprogram.RuleEntry(),
+			},
+			Directory: "domain/heap/formalfreeze",
+		},
 	}
 }
 

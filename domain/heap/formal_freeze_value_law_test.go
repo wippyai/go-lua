@@ -47,6 +47,19 @@ func formalFreezePredecessor(t testing.TB, schema heapdomain.Schema, key heapdom
 	return relation
 }
 
+// formalFreezeTag is the owner-issued Recent route tag of one root: the exact
+// identity a routed selection pairs its cells by, and the one the fold is
+// handed. A law states the tag its schema issued rather than a number of its
+// own, because the tag is schema-local and only its issuer can name it.
+func formalFreezeTag(t testing.TB, schema heapdomain.Schema, key heapdomain.Key) uint64 {
+	t.Helper()
+	tag, tagOK := schema.RouteTag(key, materialization.Recent)
+	if !tagOK {
+		t.Fatal("recent route tag")
+	}
+	return uint64(tag)
+}
+
 // TestFormalFreezeFactPublishesTheNormalSuccessorOfItsRoute is the family's
 // freeze semantics: at the route it is handed, the fact published is the normal
 // branch of the owner's shallow freeze of that route's predecessor. The fold
@@ -56,7 +69,7 @@ func TestFormalFreezeFactPublishesTheNormalSuccessorOfItsRoute(t *testing.T) {
 	key := formalFreezeRoot(t, schema)
 	predecessor := formalFreezePredecessor(t, schema, key)
 
-	fact, outcome := heapdomain.FormalFreezeFact(key, predecessor)
+	fact, outcome := heapdomain.FormalFreezeFact(formalFreezeTag(t, schema, key), predecessor)
 	if outcome != structure.Concrete {
 		t.Fatalf("outcome = %d, want Concrete", outcome)
 	}
@@ -92,7 +105,7 @@ func TestFormalFreezeFactPublishesBottomWhenTheFreezeIssuesNoNormalBranch(t *tes
 		t.Fatal("a predecessor holding only the zero world")
 	}
 	for _, predecessor := range []heapdomain.Value{schema.Bottom(), unallocated} {
-		fact, outcome := heapdomain.FormalFreezeFact(key, predecessor)
+		fact, outcome := heapdomain.FormalFreezeFact(formalFreezeTag(t, schema, key), predecessor)
 		if outcome != structure.Concrete {
 			t.Fatalf("outcome = %d, want Concrete", outcome)
 		}
@@ -125,7 +138,7 @@ func TestFormalFreezeFactDeclaresAbsenceToBeBottom(t *testing.T) {
 	if !heapdomain.Equal(schema.Default(), schema.Bottom()) {
 		t.Fatal("the Heap Factor default an unwritten route is delivered as is not Bottom")
 	}
-	fact, outcome := heapdomain.FormalFreezeFact(key, schema.Default())
+	fact, outcome := heapdomain.FormalFreezeFact(formalFreezeTag(t, schema, key), schema.Default())
 	if outcome != structure.Concrete {
 		t.Fatalf("default predecessor outcome = %d, want Concrete", outcome)
 	}
@@ -146,27 +159,37 @@ func TestFormalFreezeFactSettlesNoSelectionOnTheZeroRoute(t *testing.T) {
 	predecessor := formalFreezePredecessor(t, schema, key)
 
 	for _, input := range []heapdomain.Value{{}, schema.Default(), schema.Bottom(), predecessor} {
-		if _, outcome := heapdomain.FormalFreezeFact(heapdomain.Key{}, input); outcome != structure.NoSelection {
+		if _, outcome := heapdomain.FormalFreezeFact(0, input); outcome != structure.NoSelection {
 			t.Fatalf("zero-route outcome = %d, want NoSelection", outcome)
 		}
 	}
 }
 
-// TestFormalFreezeFactRefusesACoordinateItsPredecessorDoesNotBelongTo states
-// that the fold reaches no owner authority of its own. Its candidate is the
-// whole proof of which schema it decides in, so a coordinate of another schema,
-// or a root that has no Recent reference to freeze, has no transition this fold
-// may issue - and a refusal is not the zero route's NoSelection, which is an
-// answer about a population rather than about a malformed candidate.
-func TestFormalFreezeFactRefusesACoordinateItsPredecessorDoesNotBelongTo(t *testing.T) {
+// TestFormalFreezeFactRefusesARouteItsPredecessorDoesNotAdmit states that the
+// fold reaches no owner authority of its own. A tag is a schema-local numeric
+// identity, so the schema it is admitted against is the one its predecessor
+// belongs to and nothing else: a tag naming a role this judgment is not about,
+// or a root with no Recent reference to freeze, has no transition this fold may
+// issue - and a refusal is not the zero tag's NoSelection, which is an answer
+// about a population rather than about a malformed route.
+//
+// A predecessor with no owner at all is the same refusal: without one there is
+// no schema in which the tag means anything, and decoding it in some other
+// schema would be the fold reaching for an authority it was not handed.
+func TestFormalFreezeFactRefusesARouteItsPredecessorDoesNotAdmit(t *testing.T) {
 	_, schema, _ := compactHeapFixture(t, "formal_freeze_refusal", formalFreezeSource, nil)
 	key := formalFreezeRoot(t, schema)
 	predecessor := formalFreezePredecessor(t, schema, key)
 
-	_, foreign, _ := compactHeapFixture(t, "formal_freeze_foreign", formalFreezeSource, nil)
-	foreignKey := formalFreezeRoot(t, foreign)
-	if _, outcome := heapdomain.FormalFreezeFact(foreignKey, predecessor); outcome != structure.Refuse {
-		t.Fatal("a foreign coordinate concluded something other than Refuse over a local world")
+	if _, outcome := heapdomain.FormalFreezeFact(formalFreezeTag(t, schema, key), heapdomain.Value{}); outcome != structure.Refuse {
+		t.Fatal("a predecessor owning no schema concluded something other than Refuse")
+	}
+	summary, summaryOK := schema.RouteTag(key, materialization.Summary)
+	if !summaryOK {
+		t.Fatal("summary route tag")
+	}
+	if _, outcome := heapdomain.FormalFreezeFact(uint64(summary), predecessor); outcome != structure.Refuse {
+		t.Fatal("a route of a role this judgment is not about concluded something other than Refuse")
 	}
 	for index := 0; index < schema.KeyCount(); index++ {
 		candidate, candidateOK := schema.KeyAt(index)
@@ -176,7 +199,11 @@ func TestFormalFreezeFactRefusesACoordinateItsPredecessorDoesNotBelongTo(t *test
 		if _, referenceOK := schema.Reference(candidate, materialization.Recent); referenceOK {
 			continue
 		}
-		if _, outcome := heapdomain.FormalFreezeFact(candidate, predecessor); outcome != structure.Refuse {
+		tag, tagOK := schema.RouteTag(candidate, materialization.Recent)
+		if !tagOK {
+			continue
+		}
+		if _, outcome := heapdomain.FormalFreezeFact(uint64(tag), predecessor); outcome != structure.Refuse {
 			t.Fatal("a root with no Recent reference concluded something other than Refuse")
 		}
 	}

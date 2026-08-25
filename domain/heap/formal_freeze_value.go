@@ -14,30 +14,23 @@ import (
 // rule declares; this fold is only ever handed a member of that relation and
 // therefore states no plan of its own.
 //
-// The candidate is the route's allocation coordinate. It carries its own owner,
-// so the fold recovers the schema it decides in from the candidate itself.
-//
-//   - The zero coordinate is NoSelection. It is the one invocation a route form
-//     makes over an empty route set, and the answer says the call is a real
-//     occurrence whose freeze has no exact Recent root to publish at -
-//     unresolved, open, opaque and ambiguous evidence all land here, which is a
-//     different answer from refusing to look and from the call not being a
-//     candidate at all.
-//   - A route whose predecessor freezes publishes the normal successor. A
-//     transition the owner cannot issue is Refuse: this fold never widens a
-//     freeze it could not prove.
-//   - A predecessor that issues no normal branch publishes the empty normal
-//     image. The routed output must still settle one exact Heap target, and
-//     Bottom is that target rather than a fabricated frozen object. Bottom is
-//     also this Factor's declared default, so an unwritten route coordinate
-//     reaches the fold as Bottom and takes the same answer: absence is not a
-//     distinction this judgment draws, and making the two disagree is a change
-//     to the freeze judgment rather than to a read's sparse clause.
-func FormalFreezeFact(key Key, predecessor Value) (Value, structure.ReductionOutcome) {
-	if key == (Key{}) {
+// The route arrives as the owner-issued TAG its cells were paired by, because
+// that is what a routed form hands a member reducer whose declaration names
+// the tag carrier. The coordinate is recovered by admitting the tag back
+// through the schema that issued it, which the predecessor carries: a tag this
+// schema did not issue is refused rather than decoded into a neighbouring root.
+func FormalFreezeFact(routeTag uint64, predecessor Value) (Value, structure.ReductionOutcome) {
+	if routeTag == 0 {
 		return Value{}, structure.NoSelection
 	}
-	schema := Schema{owner: key.owner}
+	if predecessor.owner == nil {
+		return Value{}, structure.Refuse
+	}
+	schema := Schema{owner: predecessor.owner}
+	key, role, routeOK := schema.RouteForTag(RawRouteTag(routeTag))
+	if !routeOK || role != materialization.Recent {
+		return Value{}, structure.Refuse
+	}
 	reference, referenceOK := schema.Reference(key, materialization.Recent)
 	if !referenceOK {
 		return Value{}, structure.Refuse

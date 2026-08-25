@@ -87,7 +87,11 @@ func Contribution() definition.Contribution {
 				Inputs: []definition.RelationInput{
 					{Carrier: "CallCoordinateCarrier"},
 					{Carrier: "CallFactCarrier"},
-					{Carrier: "ValueFactCarrier", Many: true, Form: member.ReadFormSelected},
+					// The call's actuals arrive as the whole vector Value
+					// publishes for the call, which is what join 1 declares and
+					// what a member-set reader delivers. Naming it a selection
+					// described a delivery its reader does not perform.
+					{Carrier: "ValueFactCarrier", Many: true, Form: member.ReadFormSummary},
 				},
 				CandidateProvider: member.AxisRelationCandidate(mountedCallProvider()),
 				Derivation: definition.RelationDerivation{
@@ -153,7 +157,10 @@ func Contribution() definition.Contribution {
 				Carrier:      "HeapFactCarrier",
 				Form:         member.ReadFormSelected,
 				Multiplicity: member.MultiplicityOne,
-				Route:        "HeapKeyCarrier",
+				// A routed form hands a member reducer the owner-issued tag its
+				// cells were paired by. The coordinate is recovered from the tag
+				// inside the judgment, by the schema that issued it.
+				Tag: "FormalFreezeRouteTagCarrier",
 			}},
 			Outputs: []definition.ReducerOutput{{
 				Axis:    heapAxis(),

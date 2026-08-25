@@ -39,7 +39,7 @@ join[1].contract     order=canonical sparse=default on-opaque=refuse multiplicit
 join[2].read         form=selected input=2 axis=axis/heap point-bound=self
 join[2].relation     axis/heap:heap/formal-freeze/routes
 join[2].key          axis/heap:heap/formal-freeze/route-key
-join[2].predicate    -
+join[2].predicate    axis/heap:heap/formal-freeze/route-tag
 join[2].parent       -
 join[2].sources      candidate, join 0, join 1
 join[2].contract     order=canonical sparse=default on-opaque=refuse multiplicity=one denominator=denominator/coordinates/heap
@@ -246,6 +246,7 @@ func TestFormalFreezeRefusesEveryStructuralMutation(t *testing.T) {
 		{mutation: "join 2 loses the denominator its read form requires", apply: func(declaration *ruleprogram.Program) {
 			declaration.Joins[2].Read.Contract.DenominatorRef = ruleprogram.DenominatorRef{}
 		}, kind: ruleprogram.ProblemJoin, join: 2},
+		{mutation: "join 2 declares a predicate that resolves to nothing", apply: func(declaration *ruleprogram.Program) { declaration.Joins[2].Predicate.Member = "" }, kind: ruleprogram.ProblemJoin, join: 2},
 		{mutation: "the fold names no reducer", apply: func(declaration *ruleprogram.Program) { declaration.Fold.Reducer.Member = "" }, kind: ruleprogram.ProblemFold},
 		{mutation: "the fold consumes nothing", apply: func(declaration *ruleprogram.Program) { declaration.Fold.Inputs = nil }, kind: ruleprogram.ProblemInput},
 		{mutation: "the fold publishes nothing", apply: func(declaration *ruleprogram.Program) { declaration.Fold.Outputs = nil }, kind: ruleprogram.ProblemOutput},

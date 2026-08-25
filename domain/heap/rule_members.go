@@ -101,7 +101,7 @@ func AxisMemberCatalog() member.Catalog {
 				{Axis: valueAxis, Carrier: HeapFactCarrier},
 			}},
 			{Key: FormalFreezeReducer, Inputs: []member.ReducerInput{
-				{Axis: valueAxis, Carrier: HeapFactCarrier, Form: member.ReadFormSelected, Multiplicity: member.MultiplicityOne, Route: HeapKeyCarrier},
+				{Axis: valueAxis, Carrier: HeapFactCarrier, Form: member.ReadFormSelected, Multiplicity: member.MultiplicityOne, Tag: FormalFreezeRouteTagCarrier},
 			}, Outputs: []member.ReducerOutput{
 				{Axis: valueAxis, Carrier: HeapFactCarrier},
 			}},
