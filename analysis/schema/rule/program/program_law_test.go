@@ -177,10 +177,11 @@ func TestJoinSourcesAreCandidateOrEarlierResultsOnly(t *testing.T) {
 
 	program = lawProgram(t)
 	program.Joins = append(program.Joins, JoinDecl{
-		Sources:  []SourceRef{{Position: 0}},
-		Relation: lawRelation("second/relation"),
-		Key:      lawProjection("second/key"),
-		Read:     lawRead(Exact, "second", false),
+		Sources:   []SourceRef{{Position: 0}},
+		Relation:  lawRelation("second/relation"),
+		Key:       lawProjection("second/key"),
+		Selection: lawSelection("second/selection"),
+		Read:      lawRead(Exact, "second", false),
 	})
 	program.Fold.Inputs = []JoinRef{1}
 	if problem, valid = program.Check(); !valid {
@@ -197,7 +198,8 @@ func TestProgramAdmitsOnlyTheFiveNormalFormCombinations(t *testing.T) {
 		{name: "selected", join: JoinDecl{
 			Sources: []SourceRef{CandidateSource()}, Relation: lawRelation("selected/relation"),
 			Key: lawProjection("selected/key"), Predicate: lawProjection("selected/predicate"),
-			Read: lawRead(Selected, "selected", true),
+			Selection: lawSelection("selected/selection"),
+			Read:      lawRead(Selected, "selected", true),
 		}},
 		// A selected read is a dependent keyed relation read. Its predicate is
 		// tag metadata, so a member set already addressed by (parent, ordinal)
@@ -211,7 +213,8 @@ func TestProgramAdmitsOnlyTheFiveNormalFormCombinations(t *testing.T) {
 		{name: "summary", join: JoinDecl{
 			Sources: []SourceRef{CandidateSource()}, Relation: lawRelation("summary/relation"),
 			Key: lawProjection("summary/key"), Predicate: lawProjection("summary/predicate"),
-			Read: lawRead(Summary, "summary", true),
+			Selection: lawSelection("summary/selection"),
+			Read:      lawRead(Summary, "summary", true),
 		}},
 		// A summary over a self-provided nested member set is already
 		// addressed by (parent, ordinal): declaring Parent restates that fact
@@ -238,6 +241,7 @@ func TestProgramAdmitsOnlyTheFiveNormalFormCombinations(t *testing.T) {
 
 	program := lawProgram(t)
 	program.Joins[0].Predicate = lawProjection("unexpected/predicate")
+	program.Joins[0].Selection = lawSelection("unexpected/selection")
 	if _, valid := program.Check(); valid {
 		t.Fatal("exact join with predicate admitted")
 	}
@@ -350,6 +354,7 @@ func TestProgramDigestTracksReadInputPort(t *testing.T) {
 	program := lawProgram(t)
 	second := lawExactJoin("second-input")
 	second.Sources = []SourceRef{PriorSource(0)}
+	second.Selection = lawSelection("second-input/selection")
 	second.Read.Input = 1
 	program.Joins = append(program.Joins, second)
 	program.Fold.Inputs = []JoinRef{0, 1}
@@ -451,6 +456,9 @@ func TestProgramHasNoSmallJoinOrSourceCap(t *testing.T) {
 		key := "join/" + string(rune(index))
 		joins[index] = JoinDecl{
 			Sources: []SourceRef{source}, Relation: lawRelation(key + "/relation"), Key: lawProjection(key + "/key"), Read: lawRead(Exact, key, false),
+		}
+		if index != 0 {
+			joins[index].Selection = lawSelection(key + "/selection")
 		}
 	}
 	program := Program{OperandRole: "semantic/operand/law", Candidate: member.AxisRelationCandidate(lawRelation("large/candidate")), Joins: joins, Fold: lawFold([]JoinRef{count - 1})}

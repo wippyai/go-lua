@@ -18,8 +18,10 @@ const (
 	heteroExactKey          schema.Key     = "projection/hetero-value-key"
 	heteroRouteKey          schema.Key     = "projection/hetero-route-key"
 	heteroRoutePredicate    schema.Key     = "projection/hetero-route-predicate"
+	heteroRouteSelection    schema.Key     = "selection/hetero-route"
 	heteroSecondKey         schema.Key     = "projection/hetero-second-key"
 	heteroSecondPredicate   schema.Key     = "projection/hetero-second-predicate"
+	heteroSecondSelection   schema.Key     = "selection/hetero-second"
 	heteroRouteDestination  schema.Key     = "projection/hetero-route-destination"
 	heteroReducer           schema.Key     = "reducer/hetero-route"
 	heteroCandidateCarrier  member.Carrier = "carrier/hetero-candidate"
@@ -155,6 +157,7 @@ func configureHeterogeneousRouteFixture(t *testing.T) *planFixture {
 				Relation:  member.RelationRef{Axis: placementAxis, Member: heteroRouteRelation},
 				Key:       member.ProjectionRef{Axis: placementAxis, Member: heteroRouteKey},
 				Predicate: member.ProjectionRef{Axis: placementAxis, Member: heteroRoutePredicate},
+				Selection: member.SelectionRef{Axis: placementAxis, Member: heteroRouteSelection},
 				Read: program.ReadDecl{
 					PointBound: program.PointBound,
 					Input:      1, Axis: program.AxisRef(placementAxis), Form: program.Selected,
@@ -166,6 +169,7 @@ func configureHeterogeneousRouteFixture(t *testing.T) *planFixture {
 				Relation:  member.RelationRef{Axis: placementAxis, Member: heteroSecondRelation},
 				Key:       member.ProjectionRef{Axis: placementAxis, Member: heteroSecondKey},
 				Predicate: member.ProjectionRef{Axis: placementAxis, Member: heteroSecondPredicate},
+				Selection: member.SelectionRef{Axis: placementAxis, Member: heteroSecondSelection},
 				Read: program.ReadDecl{
 					PointBound: program.PointBound,
 					Input:      2, Axis: program.AxisRef(placementAxis), Form: program.Selected,

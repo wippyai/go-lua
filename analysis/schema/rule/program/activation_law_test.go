@@ -34,6 +34,7 @@ func activationLawBranch() ActivationDecl {
 		Endpoint:    activationLawProjection("activation-law/endpoint"),
 		Mount:       activationLawProjection("activation-law/mount"),
 		Body:        activationLawProjection("activation-law/body"),
+		Crossing:    lawRelation("activation-law/branches"),
 	}
 }
 

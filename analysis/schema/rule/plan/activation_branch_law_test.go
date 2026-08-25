@@ -68,6 +68,7 @@ func newActivationBranchFixture(t *testing.T) *planFixture {
 		Endpoint:    member.ProjectionRef{Axis: mainAxis, Member: branchEndpointKey},
 		Mount:       member.ProjectionRef{Axis: mainAxis, Member: branchMountKey},
 		Body:        member.ProjectionRef{Axis: mainAxis, Member: branchBodyKey},
+		Crossing:    member.RelationRef{Axis: mainAxis, Member: nestedMemberRelation},
 	}
 	return fixture
 }

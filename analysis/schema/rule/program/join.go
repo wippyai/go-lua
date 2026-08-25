@@ -102,10 +102,11 @@ func (join JoinDecl) Available() bool {
 	if join.Selection.Declared() && !join.Selection.Available() {
 		return false
 	}
-	// A selection belongs to a produced read. The converse - that every
-	// produced read names one - is the same law from the other side and is
-	// stated here once every declaration names its operation.
-	return !join.Selection.Available() || join.Produced()
+	// A selection and a produced read are one statement. A read whose rows are
+	// produced has no coordinate to pair against until the operation has run,
+	// so it names the operation; a read that enumerates a directory has rows
+	// already, so naming one would make a plain read look produced.
+	return join.Selection.Available() == join.Produced()
 }
 
 // Produced reports whether this read's rows are published by an operation

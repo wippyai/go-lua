@@ -55,6 +55,7 @@ func lawDeclaration() program.Program {
 				Relation:  member.RelationRef{Axis: axisReference(lawAxisKey), Member: "law/routes"},
 				Key:       member.ProjectionRef{Axis: axisReference(lawAxisKey), Member: "law/route-key"},
 				Predicate: member.ProjectionRef{Axis: axisReference(lawAxisKey), Member: "law/route-tag"},
+				Selection: member.SelectionRef{Axis: axisReference(lawAxisKey), Member: "law/route-selection"},
 				Read: program.ReadDecl{
 					Axis:       program.AxisRef(axisReference(lawAxisKey)),
 					Form:       program.Selected,

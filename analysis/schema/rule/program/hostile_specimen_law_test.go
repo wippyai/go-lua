@@ -20,7 +20,16 @@ func seq5742Join(key string, sources []SourceRef, form ReadForm, predicate, deno
 	if predicate {
 		join.Predicate = lawProjection(key + "/predicate")
 	}
+	// A produced read names the operation that publishes its rows, so a
+	// specimen of one names it too.
+	if join.Produced() {
+		join.Selection = lawSelection(key + "/selection")
+	}
 	return join
+}
+
+func lawSelection(key string) member.SelectionRef {
+	return member.SelectionRef{Axis: lawMemberAxis(), Member: schema.Key(key)}
 }
 
 func seq5742Output(key string, mode OutputMode, slot uint16) OutputDecl {

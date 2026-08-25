@@ -33,6 +33,8 @@ const (
 	generatedRuleLawKey                    schema.Key     = "projection/generated-rule-law-key"
 	generatedRuleLawRouteKey               schema.Key     = "projection/generated-rule-law-route-key"
 	generatedRuleLawPredicate              schema.Key     = "projection/generated-rule-law-predicate"
+	generatedRuleLawRouteSelection         schema.Key     = "generated-rule-law/route-selection"
+	generatedRuleLawSummarySelection       schema.Key     = "generated-rule-law/summary-selection"
 	generatedRuleLawRoutePredicate         schema.Key     = "projection/generated-rule-law-route-predicate"
 	generatedRuleLawDestination            schema.Key     = "projection/generated-rule-law-destination"
 	generatedRuleLawRouteDestination       schema.Key     = "projection/generated-rule-law-route-destination"
@@ -153,6 +155,7 @@ func newGeneratedRuleLawFixture(t testing.TB, variant generatedRuleLawVariant, r
 			Key:       member.ProjectionRef{Axis: axisReference, Member: generatedRuleLawRouteKey},
 			Read:      routeRead,
 			Predicate: member.ProjectionRef{Axis: axisReference, Member: generatedRuleLawRoutePredicate},
+			Selection: member.SelectionRef{Axis: axisReference, Member: generatedRuleLawRouteSelection},
 		}
 		joins = append(joins, routeJoin)
 		if variant == generatedRuleLawRouteOutput {
@@ -165,6 +168,7 @@ func newGeneratedRuleLawFixture(t testing.TB, variant generatedRuleLawVariant, r
 	if variant == generatedRuleLawSummary {
 		join.Read.Form = program.Summary
 		join.Predicate = member.ProjectionRef{Axis: axisReference, Member: generatedRuleLawPredicate}
+		join.Selection = member.SelectionRef{Axis: axisReference, Member: generatedRuleLawSummarySelection}
 	}
 	if variant == generatedRuleLawComplete {
 		join.Read.Form = program.Complete
@@ -207,12 +211,16 @@ func newGeneratedRuleLawFixture(t testing.TB, variant generatedRuleLawVariant, r
 		}
 		declaration.Activation = &program.ActivationDecl{
 			Branch:      member.RelationRef{Axis: axisReference, Member: generatedRuleLawBranchJoin},
-			Transport:   []program.TransportDecl{{Axis: program.AxisRef(axisReference), Exported: true}},
 			Application: branchProjection(generatedRuleLawApplication),
 			Target:      branchProjection(generatedRuleLawTarget),
 			Endpoint:    branchProjection(generatedRuleLawEndpoint),
 			Mount:       branchProjection(generatedRuleLawBranchMount),
 			Body:        branchProjection(generatedRuleLawBranchBody),
+			// The axis is carried into the mounted body and its result is
+			// carried back out to the trigger, which is what makes the edge a
+			// call rather than a one-way hand-off.
+			Transport: []program.TransportDecl{{Axis: program.AxisRef(axisReference), Exported: true}},
+			Crossing:  member.RelationRef{Axis: axisReference, Member: generatedRuleLawBranchJoin},
 		}
 	}
 	if variant == generatedRuleLawSource {

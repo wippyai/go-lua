@@ -26,11 +26,12 @@ import (
 //     nested Summary read itself to carry a reducer tag.
 
 const (
-	nestedMemberRelation schema.Key     = "relation/plan-nested-member"
-	nestedMemberKey      schema.Key     = "projection/plan-nested-member-key"
-	nestedMemberOrdinal  member.Carrier = "carrier/plan/nested-member-ordinal"
-	consumerRelationKey  schema.Key     = "relation/plan-nested-consumer"
-	consumerRelationProj schema.Key     = "projection/plan-nested-consumer-key"
+	nestedMemberRelation      schema.Key     = "relation/plan-nested-member"
+	nestedMemberKey           schema.Key     = "projection/plan-nested-member-key"
+	nestedMemberOrdinal       member.Carrier = "carrier/plan/nested-member-ordinal"
+	consumerRelationKey       schema.Key     = "relation/plan-nested-consumer"
+	consumerRelationProj      schema.Key     = "projection/plan-nested-consumer-key"
+	consumerRelationSelection schema.Key     = "selection/plan-nested-consumer"
 )
 
 // addNestedMemberSetCatalog extends fixture's member catalog with a nested
@@ -106,9 +107,10 @@ func nestedMemberSetJoins(parentMember schema.Key) []program.JoinDecl {
 			},
 		},
 		{
-			Sources:  []program.SourceRef{program.PriorSource(0)},
-			Relation: member.RelationRef{Axis: mainAxis, Member: consumerRelationKey},
-			Key:      member.ProjectionRef{Axis: mainAxis, Member: consumerRelationProj},
+			Sources:   []program.SourceRef{program.PriorSource(0)},
+			Relation:  member.RelationRef{Axis: mainAxis, Member: consumerRelationKey},
+			Key:       member.ProjectionRef{Axis: mainAxis, Member: consumerRelationProj},
+			Selection: member.SelectionRef{Axis: mainAxis, Member: consumerRelationSelection},
 			Read: program.ReadDecl{
 				PointBound: program.PointBound,
 				Axis:       program.AxisRef(mainAxis),
