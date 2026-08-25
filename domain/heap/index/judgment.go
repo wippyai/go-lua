@@ -1,6 +1,7 @@
 package index
 
 import (
+	"github.com/wippyai/go-lua/analysis/identity"
 	heapdomain "github.com/wippyai/go-lua/domain/heap"
 	"github.com/wippyai/go-lua/domain/pack"
 	valuedomain "github.com/wippyai/go-lua/domain/value"
@@ -60,6 +61,27 @@ func (topology *Topology) RawPayloadAt(tag heapdomain.RawPayloadTag) (RawPayload
 		return RawPayload{}, false
 	}
 	return RawPayload{tag: tag, row: row}, true
+}
+
+// CoordinateName answers the portable identity the sealed value schema issued
+// for one of its coordinates. A raw-access route whose destination is a value
+// coordinate publishes its row under this name, so the row is addressed by the
+// identity the coordinate's own owner assigned and never by one the route
+// derived.
+func (topology *Topology) CoordinateName(coordinate valuedomain.Coordinate) (identity.ContentID, bool) {
+	if topology == nil || !topology.valid() {
+		return identity.ContentID{}, false
+	}
+	return topology.values.CoordinateContentID(coordinate)
+}
+
+// PackRootName answers the portable identity the sealed pack schema issued for
+// one of its roots, which is the name a pack route publishes its row under.
+func (topology *Topology) PackRootName(root pack.Root) (identity.ContentID, bool) {
+	if topology == nil || !topology.valid() || topology.packs == nil {
+		return identity.ContentID{}, false
+	}
+	return topology.packs.RootID(root)
 }
 
 // RawWritePayload answers the payload descriptor one write candidate
