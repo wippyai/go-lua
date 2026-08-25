@@ -19,23 +19,32 @@ import (
 
 const formalFreezeInlineWidth = recentplan.InlineWidth
 
-// exactRecentAllocation accepts only one enumerable, owner-fenced Value atom.
-// Opaque references, Summary/Exact materializations, scalar alternatives and
-// ambiguous unions all fail closed rather than widening a freeze route.
+// freezeActualRoot is this derivation's one reading of an actual cell: the
+// exact Recent allocation root that cell names, if it names one.
 //
-// The cell carries the read's own presence bit and the Factor default the
-// read's declared sparsity substituted, so there is no second absence policy
-// here: an unwritten actual is Value's declared default and Bottom is refused
-// on its own merits.
-func exactRecentAllocation(values *valuedomain.Schema, actuals execution.SummaryVector[valuedomain.Value], ordinal int) (heap.Key, bool) {
+// A cell is not a value. It carries whether that coordinate holds one and
+// whether the index names a cell at all, and what those mean together is the
+// owner's judgment, not this rule's: AuthenticateFactorCell admits a present
+// owner-fenced fact or the owner's own sparse Bottom and refuses everything
+// else. An absent cell is therefore answered as Bottom - no exact root, and no
+// route - while a cell the owner does not admit is malformed owner state that
+// fails the whole relation.
+//
+// The three results are the root, whether the admitted fact names one, and
+// whether the cell was admissible at all. Opaque references,
+// Summary/Exact materializations, scalar alternatives and ambiguous unions all
+// name no root rather than widening a freeze route.
+func freezeActualRoot(values *valuedomain.Schema, actuals execution.SummaryVector[valuedomain.Value], ordinal int) (heap.Key, bool, bool) {
 	if values == nil {
-		return heap.Key{}, false
+		return heap.Key{}, false, false
 	}
-	value, _, cellOK := actuals.At(ordinal)
-	if !cellOK {
-		return heap.Key{}, false
+	value, present, cellOK := actuals.At(ordinal)
+	fact, admitted := values.AuthenticateFactorCell(value, present, cellOK)
+	if !admitted {
+		return heap.Key{}, false, false
 	}
-	return values.ExactRecentAllocation(value, true)
+	root, rooted := values.ExactRecentAllocation(fact, present)
+	return root, rooted, true
 }
 
 // freezeParamSet is the allocation-free representation of one target's exact

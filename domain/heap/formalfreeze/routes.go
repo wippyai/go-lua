@@ -82,8 +82,11 @@ func DeriveFreezeRoutes(
 			if !paramOK || param < 0 || param >= actuals.Count() {
 				return recentplan.Plan{}, true
 			}
-			root, rootOK := exactRecentAllocation(values, actuals, param)
-			if !rootOK {
+			root, rooted, admitted := freezeActualRoot(values, actuals, param)
+			if !admitted {
+				return recentplan.Plan{}, false
+			}
+			if !rooted {
 				return recentplan.Plan{}, true
 			}
 			tag, tagOK := schema.RouteTag(root, materialization.Recent)
