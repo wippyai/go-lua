@@ -341,23 +341,27 @@ func readExpression(built *plan, join *joinPlan, firstExact int) (string, error)
 	execution := imports.use(executionPackagePath)
 	dense := imports.typeName(join.axis.dense)
 	fact := imports.typeName(join.axis.fact)
+	// An exact read of the written axis past the first is sealed through that
+	// axis's own read handle, addressed by the Unit the plan row carries for
+	// this join. Only the first exact join's Unit is the row's own; every later
+	// one is a coordinate of the same Factor at a different cell, which the
+	// Factor answers as a read of itself. The shared same-axis exact fold seals
+	// its whole read chain this way, so this is the vocabulary's own idiom
+	// rather than a second one.
+	rowBound := join.read.Form == program.Exact && !join.foreign && join.position != firstExact
 	var out strings.Builder
-	if join.foreign {
+	if join.foreign || rowBound {
 		fmt.Fprintf(&out, "\t\tforeign%d, foreign%dOK := plane.Foreign(plan%d.Factor)\n", join.position, join.position, join.position)
 		fmt.Fprintf(&out, "\t\tif !foreign%dOK {\n\t\t\treturn nil, nil, false\n\t\t}\n", join.position)
 	}
 	switch {
-	case join.read.Form == program.Exact && join.foreign:
+	case join.read.Form == program.Exact && (join.foreign || rowBound):
 		fmt.Fprintf(&out, "\t\t%sSealed, %sSealedOK := %s.ForeignRowExactRead[%s, %s](foreign%d, planRow, %d)\n",
 			join.name, join.name, execution, dense, fact, join.position, join.position)
 		fmt.Fprintf(&out, "\t\t%sPolicy, %sPolicyOK := %s.ForeignReadCellPolicy[%s, %s](foreign%d, plan%d.Contract)\n",
 			join.name, join.name, execution, dense, fact, join.position, join.position)
 		fmt.Fprintf(&out, "\t\tif !%sPolicyOK {\n\t\t\treturn nil, nil, false\n\t\t}\n", join.name)
 	case join.read.Form == program.Exact:
-		if join.position != firstExact {
-			return "", unexpressible(built.target.Spec.Key, fmt.Sprintf("a second axis-local exact read at join %d", join.position),
-				"only the first exact join's Unit is the plan row's own; a later one needs a row-bound axis-local read primitive, which the execution vocabulary does not publish")
-		}
 		fmt.Fprintf(&out, "\t\t%sSealed, %sSealedOK := plane.ExactRead(planRow.Unit, uint16(plan%d.Input))\n",
 			join.name, join.name, join.position)
 		fmt.Fprintf(&out, "\t\t%sPolicy, %sPolicyOK := plane.ReadCellPolicy(plan%d.Contract)\n",
