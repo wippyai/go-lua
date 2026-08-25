@@ -47,6 +47,7 @@ import (
 	valueorder "github.com/wippyai/go-lua/domain/value/order/program"
 	valuerefinement "github.com/wippyai/go-lua/domain/value/refinement/program"
 	valueresultalias "github.com/wippyai/go-lua/domain/value/resultalias/program"
+	valueruntimekind "github.com/wippyai/go-lua/domain/value/runtimekind/program"
 	valuesource "github.com/wippyai/go-lua/domain/value/source"
 	valuetransfer "github.com/wippyai/go-lua/domain/value/transfer"
 )
@@ -100,22 +101,10 @@ func declared() []specimen {
 		{Family: "value/order", Plane: "family", Spec: valueorder.RuleEntry()},
 		{Family: "value/refinement", Plane: "family", Spec: valuerefinement.RuleEntry()},
 		{Family: "value/resultalias", Plane: "family", Spec: valueresultalias.RuleEntry()},
+		{Family: "value/runtimekind", Plane: "family", Spec: valueruntimekind.RuleEntry()},
 		{Family: "value/source", Plane: "seed", Spec: valuesource.RuleEntry()},
 		{Family: "value/transfer", Plane: "family", Spec: valuetransfer.RuleEntry()},
 	}
-}
-
-// unbuildable is every authored declaration the census cannot survey because
-// the declaration itself does not compile at this revision. It is a row like
-// any other: the corpus is not covered while one of its declarations is
-// unbuildable, and hiding the gap would make the matrix say otherwise.
-func unbuildable() []entry {
-	return []entry{{
-		Family: "value/runtimekind", Plane: "family", Rule: "value-runtime-kind",
-		Status: statusCoupling,
-		Site:   "program.joins[].addressIdentity",
-		Reason: "declaration does not compile: it assigns member.ProjectionRef to the AddressSource arm the rule/program surface now declares",
-	}}
 }
 
 // entry is one machine-readable census row.
@@ -244,7 +233,6 @@ func TestDeclarationCensus(t *testing.T) {
 		rows = append(rows, survey(t, row))
 	}
 	rows = append(rows, rawAccessCensus(t)...)
-	rows = append(rows, unbuildable()...)
 	sort.Slice(rows, func(left, right int) bool {
 		if rows[left].Family != rows[right].Family {
 			return rows[left].Family < rows[right].Family
@@ -310,7 +298,7 @@ func TestEveryDeclaredFamilyHasOneCensusRow(t *testing.T) {
 		}
 		seen[string(row.Spec.Key)] = true
 	}
-	count += len(rawAccessCensus(t)) + len(unbuildable())
+	count += len(rawAccessCensus(t))
 
 	pinned, err := os.ReadFile(filepath.Join("testdata", "census.json"))
 	if err != nil {
@@ -322,5 +310,21 @@ func TestEveryDeclaredFamilyHasOneCensusRow(t *testing.T) {
 	}
 	if len(rows) != count {
 		t.Fatalf("pinned census rows = %d, want %d", len(rows), count)
+	}
+}
+
+// TestEveryResidualIsAnUndeclaredOwnerStatement states the shape of what is
+// left. A row that does not lower is waiting on a statement its owner has not
+// made, never on a lowering this compiler has not written: no residual reports
+// an unlowered authored fact, so the remaining work is declaration work.
+func TestEveryResidualIsAnUndeclaredOwnerStatement(t *testing.T) {
+	for _, row := range declared() {
+		result := survey(t, row)
+		if result.Status == statusCompiles {
+			continue
+		}
+		if result.Reason != "undeclared" {
+			t.Fatalf("%s reports residual %q; every residual is an undeclared owner statement", result.Family, result.Reason)
+		}
 	}
 }

@@ -112,11 +112,11 @@ func (access *rawAccess) destinationColumn(relation relcompile.Name) relcompile.
 func (access *rawAccess) join(source relcompile.Name, joined relcompile.Name) relcompile.JoinSpec {
 	access.t.Helper()
 	site := relcompile.Site{Rule: "raw-access", Path: "join"}
-	left, err := access.surfaces.registry.Address(site, source)
+	left, err := access.surfaces.registry.Addressed(site, source, relcompile.CoordinateAddress)
 	if err != nil {
 		access.t.Fatalf("resolve address of %v: %v", source, err)
 	}
-	right, err := access.surfaces.registry.Address(site, joined)
+	right, err := access.surfaces.registry.Addressed(site, joined, relcompile.CoordinateAddress)
 	if err != nil {
 		access.t.Fatalf("resolve address of %v: %v", joined, err)
 	}

@@ -61,11 +61,11 @@ func Resolve(registry *Registry, spec rule.Spec, placement Placement) ([]Rule, e
 		if !ok {
 			return nil, refuse(resolver.site(fmt.Sprintf("program.joins[%d]", index)), Name{Entry: entry}, KindRelation, ReasonUndeclared)
 		}
-		join, joined, err := resolver.join(index, declaration, relations)
+		lowered, joined, err := resolver.join(index, declaration, relations)
 		if err != nil {
 			return nil, err
 		}
-		joins = append(joins, join)
+		joins = append(joins, lowered...)
 		relations = append(relations, joined)
 	}
 
@@ -158,61 +158,120 @@ func (resolver ruleResolver) candidateRelation(candidate member.CandidateRef) (N
 // source relation's declared address column against the joined relation's
 // authored key projection. Every further authored addressing role names one
 // side alone, so it refuses here rather than being paired by inference.
-func (resolver ruleResolver) join(index int, declaration ruleprogram.JoinDecl, relations []Name) (JoinSpec, Name, error) {
+func (resolver ruleResolver) join(index int, declaration ruleprogram.JoinDecl, relations []Name) ([]JoinSpec, Name, error) {
 	path := fmt.Sprintf("program.joins[%d]", index)
 	joined := NewName(declaration.Relation.Axis, declaration.Relation.Member)
 	joinedID, err := resolver.registry.Relation(resolver.site(path+".relation"), joined)
 	if err != nil {
-		return JoinSpec{}, Name{}, err
+		return nil, Name{}, err
 	}
+	portScope, err := resolver.portScope(path, declaration.Read.Input)
+	if err != nil {
+		return nil, Name{}, err
+	}
+	completion, err := resolver.completion(path, declaration.Read.Contract)
+	if err != nil {
+		return nil, Name{}, err
+	}
+
+	// A selection produces the rows it returns: which rows those are depends
+	// on values the reads before it delivered, so it is an operation that
+	// publishes them and not a column vector anything could pair against. The
+	// declaration names the tag such an operation stamps its rows with, and
+	// names no operation, so it refuses here rather than being paired by a
+	// guess. Its lowering is the one the raw indexed access plans use.
 	if declaration.Predicate.Available() {
-		return JoinSpec{}, Name{}, refuse(resolver.site(path+".predicate"), NewName(declaration.Predicate.Axis, declaration.Predicate.Member), KindColumn, ReasonUndeclared)
-	}
-	if declaration.Parent.Available() {
-		return JoinSpec{}, Name{}, refuse(resolver.site(path+".parent"), NewName(declaration.Parent.Axis, declaration.Parent.Member), KindRelation, ReasonUndeclared)
-	}
-	if declaration.KeyVector.Available() {
-		return JoinSpec{}, Name{}, refuse(resolver.site(path+".keyVector"), NewName(declaration.KeyVector.Axis, declaration.KeyVector.Member), KindRelation, ReasonUndeclared)
-	}
-	if declaration.AddressIdentity.Declared() {
-		return JoinSpec{}, Name{}, refuse(resolver.site(path+".addressIdentity"), joined, KindColumn, ReasonUndeclared)
+		return nil, Name{}, refuse(resolver.site(path+".predicate"), joined, KindOperation, ReasonUndeclared)
 	}
 	if len(declaration.Sources) != 1 {
-		return JoinSpec{}, Name{}, refuse(resolver.site(path+".sources"), joined, KindRelation, ReasonUndeclared)
+		return nil, Name{}, refuse(resolver.site(path+".sources"), joined, KindOperation, ReasonUndeclared)
 	}
 
 	source := declaration.Sources[0]
 	sourceName, err := resolver.sourceRelation(path, source, relations)
 	if err != nil {
-		return JoinSpec{}, Name{}, err
+		return nil, Name{}, err
 	}
-	left, err := resolver.registry.Address(resolver.site(path+".sources[0]"), sourceName)
+	left, err := resolver.registry.Addressed(resolver.site(path+".sources[0]"), sourceName, CoordinateAddress)
 	if err != nil {
-		return JoinSpec{}, Name{}, err
+		return nil, Name{}, err
 	}
 	right, err := resolver.registry.Column(resolver.site(path+".key"), NewName(declaration.Key.Axis, declaration.Key.Member))
 	if err != nil {
-		return JoinSpec{}, Name{}, err
+		return nil, Name{}, err
 	}
 	if right.Relation() != joinedID {
-		return JoinSpec{}, Name{}, refuse(resolver.site(path+".key"), NewName(declaration.Key.Axis, declaration.Key.Member), KindColumn, ReasonForeign)
+		return nil, Name{}, refuse(resolver.site(path+".key"), NewName(declaration.Key.Axis, declaration.Key.Member), KindColumn, ReasonForeign)
 	}
 
-	portScope, err := resolver.portScope(path, declaration.Read.Input)
-	if err != nil {
-		return JoinSpec{}, Name{}, err
-	}
-	completion, err := resolver.completion(path, declaration.Read.Contract)
-	if err != nil {
-		return JoinSpec{}, Name{}, err
-	}
-	return JoinSpec{
+	specs := []JoinSpec{{
 		Relation:     joinedID,
 		LeftColumns:  []model.ColumnID{left},
 		RightColumns: []model.ColumnID{right},
 		Scope:        portScope,
 		Complete:     completion,
-	}, joined, nil
+	}}
+
+	// A nested member set hangs off a parent row, and a candidate-published
+	// span hangs off the directory that publishes it. Both are ordinary
+	// equijoins once the read relation publishes the coordinate that carries
+	// its parent's address.
+	for _, nesting := range [...]struct {
+		field    string
+		relation member.RelationRef
+	}{
+		{field: ".parent", relation: declaration.Parent},
+		{field: ".keyVector", relation: declaration.KeyVector},
+	} {
+		if !nesting.relation.Available() {
+			continue
+		}
+		base := NewName(nesting.relation.Axis, nesting.relation.Member)
+		baseID, err := resolver.registry.Relation(resolver.site(path+nesting.field), base)
+		if err != nil {
+			return nil, Name{}, err
+		}
+		child, err := resolver.registry.Addressed(resolver.site(path+nesting.field), joined, CoordinateParent)
+		if err != nil {
+			return nil, Name{}, err
+		}
+		parent, err := resolver.registry.Addressed(resolver.site(path+nesting.field), base, CoordinateAddress)
+		if err != nil {
+			return nil, Name{}, err
+		}
+		specs = append(specs, JoinSpec{
+			Relation:     baseID,
+			LeftColumns:  []model.ColumnID{child},
+			RightColumns: []model.ColumnID{parent},
+			Scope:        portScope,
+		})
+	}
+
+	// A corresponded foreign directory is reached under the occurrence both
+	// directories are addressed by. The rule projects that identity from its
+	// own candidate row and the read relation publishes the occurrence column
+	// its rows are enumerated under, so the correspondence is an equijoin.
+	if declaration.AddressIdentity.Declared() {
+		projection, ok := declaration.AddressIdentity.AxisProjection()
+		if !ok {
+			return nil, Name{}, refuse(resolver.site(path+".addressIdentity"), joined, KindColumn, ReasonUndeclared)
+		}
+		identity, err := resolver.registry.Column(resolver.site(path+".addressIdentity"), NewName(projection.Axis, projection.Member))
+		if err != nil {
+			return nil, Name{}, err
+		}
+		occurrence, err := resolver.registry.Addressed(resolver.site(path+".addressIdentity"), joined, CoordinateOccurrence)
+		if err != nil {
+			return nil, Name{}, err
+		}
+		specs = append(specs, JoinSpec{
+			Relation:     joinedID,
+			LeftColumns:  []model.ColumnID{identity},
+			RightColumns: []model.ColumnID{occurrence},
+			Scope:        portScope,
+		})
+	}
+	return specs, joined, nil
 }
 
 func (resolver ruleResolver) sourceRelation(path string, source ruleprogram.SourceRef, relations []Name) (Name, error) {
@@ -272,7 +331,12 @@ func (resolver ruleResolver) structural(program ruleprogram.Program) error {
 		if _, err := resolver.registry.Relation(resolver.site("program.activation.branch"), branch); err != nil {
 			return err
 		}
-		return refuse(resolver.site("program.activation.branch"), branch, KindColumn, ReasonUndeclared)
+		if _, err := resolver.registry.Addressed(resolver.site("program.activation.branch"), branch, CoordinateParent); err != nil {
+			return err
+		}
+		if _, err := resolver.registry.Addressed(resolver.site("program.activation.branch"), branch, CoordinateOrdinal); err != nil {
+			return err
+		}
 	}
 	for index := 0; index < program.TransportCount(); index++ {
 		declaration, ok := program.TransportAt(index)

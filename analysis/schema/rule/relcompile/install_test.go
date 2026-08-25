@@ -94,19 +94,33 @@ func (surfaces *owners) relation(name relcompile.Name, scope relcompile.Name) {
 	if err := surfaces.registry.InstallRelation(name, surfaces.token("relation", name), scope); err != nil {
 		surfaces.t.Fatalf("install relation %v: %v", name, err)
 	}
-	address := relcompile.NewName(name.Entry, name.Member+"#address")
-	surfaces.column(address, name)
-	if err := surfaces.registry.DeclareAddress(name, address); err != nil {
-		surfaces.t.Fatalf("declare address of %v: %v", name, err)
-	}
+	surfaces.coordinate(name, relcompile.CoordinateAddress)
 	key := relcompile.NewName(name.Entry, name.Member+"#key")
 	if surfaces.once("key", key) {
+		address := relcompile.NewName(name.Entry, name.Member+"#address")
 		if err := surfaces.registry.InstallKey(key, surfaces.token("key", key), name, address); err != nil {
 			surfaces.t.Fatalf("install key %v: %v", key, err)
 		}
 	}
 	if err := surfaces.registry.DeclarePublicationKey(name, key); err != nil {
 		surfaces.t.Fatalf("declare publication key of %v: %v", name, err)
+	}
+}
+
+// coordinate stands in for the relation owner declaring one column its own
+// rows are addressed by. The census declares exactly the coordinates the
+// authored rule declaration names a use for, so a row that lowers proves the
+// lowering works once the owner publishes them and never that the compiler
+// invented one.
+func (surfaces *owners) coordinate(relation relcompile.Name, coordinate relcompile.Coordinate) {
+	surfaces.t.Helper()
+	column := relcompile.NewName(relation.Entry, relation.Member+"#"+schema.Key(coordinate.String()))
+	if !surfaces.once("coordinate", column) {
+		return
+	}
+	surfaces.column(column, relation)
+	if err := surfaces.registry.DeclareCoordinate(relation, coordinate, column); err != nil {
+		surfaces.t.Fatalf("declare %s of %v: %v", coordinate, relation, err)
 	}
 }
 
@@ -241,10 +255,14 @@ func (surfaces *owners) install(spec rule.Spec) relcompile.Placement {
 			surfaces.scope(relcompile.EntryName(schema.SurfaceKindStructure, schema.Key(fmt.Sprintf("census/port/%d", port)))))
 	}
 
+	var candidate relcompile.Name
 	if reference := program.Candidate.AxisRelation; reference.Available() {
-		surfaces.relation(relcompile.NewName(reference.Axis, reference.Member), candidateScope)
+		candidate = relcompile.NewName(reference.Axis, reference.Member)
 	} else if program.Candidate.IssuedRow.Available() {
-		surfaces.relation(relcompile.EntryName(schema.SurfaceKindIssuance, program.Candidate.IssuedRow), candidateScope)
+		candidate = relcompile.EntryName(schema.SurfaceKindIssuance, program.Candidate.IssuedRow)
+	}
+	if candidate.Available() {
+		surfaces.relation(candidate, candidateScope)
 	}
 
 	for index := 0; index < program.JoinCount(); index++ {
@@ -252,11 +270,14 @@ func (surfaces *owners) install(spec rule.Spec) relcompile.Placement {
 		if !ok {
 			continue
 		}
-		surfaces.installJoin(declaration, candidateScope)
+		surfaces.installJoin(declaration, candidateScope, candidate)
 	}
 
 	if program.Activation != nil {
-		surfaces.relation(relcompile.NewName(program.Activation.Branch.Axis, program.Activation.Branch.Member), candidateScope)
+		branch := relcompile.NewName(program.Activation.Branch.Axis, program.Activation.Branch.Member)
+		surfaces.relation(branch, candidateScope)
+		surfaces.coordinate(branch, relcompile.CoordinateParent)
+		surfaces.coordinate(branch, relcompile.CoordinateOrdinal)
 	}
 
 	for _, output := range program.Fold.Outputs {
@@ -270,7 +291,7 @@ func (surfaces *owners) install(spec rule.Spec) relcompile.Placement {
 	return placement
 }
 
-func (surfaces *owners) installJoin(declaration ruleprogram.JoinDecl, scope relcompile.Name) {
+func (surfaces *owners) installJoin(declaration ruleprogram.JoinDecl, scope relcompile.Name, candidate relcompile.Name) {
 	surfaces.t.Helper()
 	joined := relcompile.NewName(declaration.Relation.Axis, declaration.Relation.Member)
 	if !joined.Available() {
@@ -279,11 +300,20 @@ func (surfaces *owners) installJoin(declaration ruleprogram.JoinDecl, scope relc
 	surfaces.relation(joined, scope)
 	surfaces.installProjection(declaration.Key, joined)
 	surfaces.installProjection(declaration.Predicate, joined)
-	if declaration.Parent.Available() {
-		surfaces.relation(relcompile.NewName(declaration.Parent.Axis, declaration.Parent.Member), scope)
+	for _, nested := range []member.RelationRef{declaration.Parent, declaration.KeyVector} {
+		if !nested.Available() {
+			continue
+		}
+		surfaces.relation(relcompile.NewName(nested.Axis, nested.Member), scope)
+		surfaces.coordinate(joined, relcompile.CoordinateParent)
+		surfaces.coordinate(joined, relcompile.CoordinateOrdinal)
 	}
-	if declaration.KeyVector.Available() {
-		surfaces.relation(relcompile.NewName(declaration.KeyVector.Axis, declaration.KeyVector.Member), scope)
+	// The occurrence identity is projected from the rule's own candidate row,
+	// so the column belongs to the candidate relation and never to the foreign
+	// directory the read reaches through it.
+	if projection, ok := declaration.AddressIdentity.AxisProjection(); ok {
+		surfaces.column(relcompile.NewName(projection.Axis, projection.Member), candidate)
+		surfaces.coordinate(joined, relcompile.CoordinateOccurrence)
 	}
 	surfaces.denominator(declaration.Read.Contract.DenominatorRef, scope)
 }

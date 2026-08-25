@@ -220,15 +220,15 @@ func TestAddressAndPublicationKeyAreOwnerStatements(t *testing.T) {
 	}
 
 	site := Site{Rule: "heap-formal-freeze", Path: "program.joins[0].sources[0]"}
-	if _, err := registry.Address(site, relation); err == nil {
+	if _, err := registry.Addressed(site, relation, CoordinateAddress); err == nil {
 		t.Fatal("a relation with no declared address column was joined onto")
 	} else if reason := refusalOf(t, err).Reason; reason != ReasonUndeclared {
 		t.Fatalf("reason = %v, want undeclared", reason)
 	}
-	if err := registry.DeclareAddress(relation, column); err != nil {
+	if err := registry.DeclareCoordinate(relation, CoordinateAddress, column); err != nil {
 		t.Fatalf("declare address: %v", err)
 	}
-	address, err := registry.Address(site, relation)
+	address, err := registry.Addressed(site, relation, CoordinateAddress)
 	if err != nil {
 		t.Fatalf("resolve address: %v", err)
 	}

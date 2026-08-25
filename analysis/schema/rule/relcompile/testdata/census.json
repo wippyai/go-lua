@@ -4,8 +4,8 @@
     "plane": "family",
     "rule": "call-activation",
     "status": "COUPLING-FINDING",
-    "site": "program.activation.branch",
-    "missing": "column",
+    "site": "program.transport[0].axis",
+    "missing": "relation",
     "reason": "undeclared"
   },
   {
@@ -22,7 +22,7 @@
     "rule": "effect-body",
     "status": "COUPLING-FINDING",
     "site": "program.joins[1].predicate",
-    "missing": "column",
+    "missing": "operation",
     "reason": "undeclared"
   },
   {
@@ -70,8 +70,8 @@
     "plane": "family",
     "rule": "heap-formal-freeze",
     "status": "COUPLING-FINDING",
-    "site": "program.joins[1].parent",
-    "missing": "relation",
+    "site": "program.joins[2].predicate",
+    "missing": "operation",
     "reason": "undeclared"
   },
   {
@@ -97,8 +97,8 @@
     "plane": "family",
     "rule": "heap-publication-freeze",
     "status": "COUPLING-FINDING",
-    "site": "program.joins[1].parent",
-    "missing": "relation",
+    "site": "program.joins[2].predicate",
+    "missing": "operation",
     "reason": "undeclared"
   },
   {
@@ -123,7 +123,7 @@
     "rule": "placement-closure-capture",
     "status": "COUPLING-FINDING",
     "site": "program.joins[1].predicate",
-    "missing": "column",
+    "missing": "operation",
     "reason": "undeclared"
   },
   {
@@ -132,7 +132,7 @@
     "rule": "placement-containment",
     "status": "COUPLING-FINDING",
     "site": "program.joins[2].sources",
-    "missing": "relation",
+    "missing": "operation",
     "reason": "undeclared"
   },
   {
@@ -140,8 +140,8 @@
     "plane": "family",
     "rule": "placement-formal",
     "status": "COUPLING-FINDING",
-    "site": "program.joins[1].parent",
-    "missing": "relation",
+    "site": "program.joins[2].predicate",
+    "missing": "operation",
     "reason": "undeclared"
   },
   {
@@ -158,7 +158,7 @@
     "rule": "placement-publication-escape",
     "status": "COUPLING-FINDING",
     "site": "program.joins[1].predicate",
-    "missing": "column",
+    "missing": "operation",
     "reason": "undeclared"
   },
   {
@@ -166,8 +166,8 @@
     "plane": "family",
     "rule": "placement-return-escape",
     "status": "COUPLING-FINDING",
-    "site": "program.joins[1].parent",
-    "missing": "relation",
+    "site": "program.joins[2].predicate",
+    "missing": "operation",
     "reason": "undeclared"
   },
   {
@@ -176,7 +176,7 @@
     "rule": "placement-storage",
     "status": "COUPLING-FINDING",
     "site": "program.joins[1].predicate",
-    "missing": "column",
+    "missing": "operation",
     "reason": "undeclared"
   },
   {
@@ -185,7 +185,7 @@
     "rule": "placement-suspension",
     "status": "COUPLING-FINDING",
     "site": "program.joins[1].predicate",
-    "missing": "column",
+    "missing": "operation",
     "reason": "undeclared"
   },
   {
@@ -194,7 +194,7 @@
     "rule": "placement-suspension-evidence",
     "status": "COUPLING-FINDING",
     "site": "program.joins[1].predicate",
-    "missing": "column",
+    "missing": "operation",
     "reason": "undeclared"
   },
   {
@@ -202,8 +202,8 @@
     "plane": "family",
     "rule": "placement-transfer",
     "status": "COUPLING-FINDING",
-    "site": "program.joins[1].parent",
-    "missing": "relation",
+    "site": "program.joins[2].predicate",
+    "missing": "operation",
     "reason": "undeclared"
   },
   {
@@ -220,7 +220,7 @@
     "rule": "typestate-obligation",
     "status": "COUPLING-FINDING",
     "site": "program.joins[1].predicate",
-    "missing": "column",
+    "missing": "operation",
     "reason": "undeclared"
   },
   {
@@ -245,7 +245,7 @@
     "rule": "value-callresult-body",
     "status": "COUPLING-FINDING",
     "site": "program.joins[1].predicate",
-    "missing": "column",
+    "missing": "operation",
     "reason": "undeclared"
   },
   {
@@ -270,7 +270,7 @@
     "rule": "value-callresult-freshresult",
     "status": "COUPLING-FINDING",
     "site": "program.joins[1].predicate",
-    "missing": "column",
+    "missing": "operation",
     "reason": "undeclared"
   },
   {
@@ -303,16 +303,16 @@
     "rule": "value-callresult-resultalias",
     "status": "COUPLING-FINDING",
     "site": "program.joins[1].predicate",
-    "missing": "column",
+    "missing": "operation",
     "reason": "undeclared"
   },
   {
     "family": "value/runtimekind",
     "plane": "family",
-    "rule": "value-runtime-kind",
-    "status": "COUPLING-FINDING",
-    "site": "program.joins[].addressIdentity",
-    "reason": "declaration does not compile: it assigns member.ProjectionRef to the AddressSource arm the rule/program surface now declares"
+    "rule": "value-runtime-kind-call",
+    "status": "COMPILES",
+    "sketch": "Publish(Merge(Apply(Select(Join(Join(Join(Join(Input,Select(Input)),Select(Input)),Select(Input)),Select(Input)))),Select(Input)))",
+    "expressions": 1
   },
   {
     "family": "value/source",

@@ -202,12 +202,12 @@ func refuse(site Site, name Name, kind EntryKind, reason ReasonKind) error {
 // relationEntry accumulates the columns and keys installed under one relation
 // so the immutable RelationSchema is built once, in install order.
 type relationEntry struct {
-	id      model.RelationID
-	scope   model.ScopeID
-	address model.ColumnID
-	publish model.KeyID
-	columns []model.ColumnID
-	keys    []model.KeyID
+	id          model.RelationID
+	scope       model.ScopeID
+	coordinates map[Coordinate]model.ColumnID
+	publish     model.KeyID
+	columns     []model.ColumnID
+	keys        []model.KeyID
 }
 
 // Registry is the one canonical identity registry of the declaration
@@ -374,7 +374,9 @@ func (registry *Registry) InstallRelation(name Name, issued identity.ContentID, 
 	if !ok {
 		return refuse(site, name, KindRelation, ReasonUnavailable)
 	}
-	registry.relations[name] = &relationEntry{id: relation, scope: scopeID}
+	registry.relations[name] = &relationEntry{
+		id: relation, scope: scopeID, coordinates: map[Coordinate]model.ColumnID{},
+	}
 	registry.relationOrder = append(registry.relationOrder, name)
 	return nil
 }
@@ -582,12 +584,58 @@ func (registry *Registry) DeclarePublicationKey(relation Name, key Name) error {
 	return nil
 }
 
-// DeclareAddress records the column a relation's rows are addressed by. It is
-// the relation owner's own statement, not a derivation: an oriented equijoin
-// onto this relation pairs a source row with this column, and a relation that
-// declares none cannot be joined onto.
-func (registry *Registry) DeclareAddress(relation Name, column Name) error {
-	site := Site{Path: "registry.address"}
+// Coordinate is the closed set of addressing coordinates a relation may
+// publish. It mirrors what the declaration surface lets a relation say about
+// its own rows, so the compiler never resolves a coordinate an owner has no
+// way to declare.
+type Coordinate uint8
+
+const (
+	// CoordinateInvalid is the unavailable zero value.
+	CoordinateInvalid Coordinate = iota
+	// CoordinateAddress is the column one row of the relation is identified
+	// by, and the side an oriented equijoin onto the relation pairs against.
+	CoordinateAddress
+	// CoordinateParent is the column carrying the address of the parent row
+	// this row hangs off.
+	CoordinateParent
+	// CoordinateOrdinal is the column keying a row within its parent's set.
+	CoordinateOrdinal
+	// CoordinateTag is the column a selection correlates a returned row with
+	// the source row that selected it.
+	CoordinateTag
+	// CoordinateOccurrence is the column naming the occurrence family a row is
+	// enumerated under.
+	CoordinateOccurrence
+)
+
+// String returns the canonical coordinate label.
+func (coordinate Coordinate) String() string {
+	switch coordinate {
+	case CoordinateAddress:
+		return "address"
+	case CoordinateParent:
+		return "parent"
+	case CoordinateOrdinal:
+		return "ordinal"
+	case CoordinateTag:
+		return "tag"
+	case CoordinateOccurrence:
+		return "occurrence"
+	default:
+		return "invalid"
+	}
+}
+
+// DeclareCoordinate records one column a relation's rows are addressed by. It
+// is the relation owner's own statement, not a derivation: an equijoin onto
+// this relation pairs against a coordinate declared here, and a relation that
+// publishes none for what a read needs cannot be joined that way.
+func (registry *Registry) DeclareCoordinate(relation Name, coordinate Coordinate, column Name) error {
+	site := Site{Path: "registry.coordinate"}
+	if coordinate == CoordinateInvalid {
+		return refuse(site, relation, KindAddress, ReasonUnavailable)
+	}
 	entry, ok := registry.relations[relation]
 	if !ok {
 		return refuse(site, relation, KindRelation, ReasonUnknown)
@@ -599,10 +647,16 @@ func (registry *Registry) DeclareAddress(relation Name, column Name) error {
 	if id.Relation() != entry.id {
 		return refuse(site, column, KindColumn, ReasonForeign)
 	}
-	if entry.address.Available() {
+	if _, declared := entry.coordinates[coordinate]; declared {
 		return refuse(site, relation, KindAddress, ReasonDuplicateName)
 	}
-	entry.address = id
+	for declared, existing := range entry.coordinates {
+		if existing == id {
+			_ = declared
+			return refuse(site, column, KindColumn, ReasonDuplicateName)
+		}
+	}
+	entry.coordinates[coordinate] = id
 	return nil
 }
 
@@ -655,8 +709,11 @@ func (registry *Registry) Relation(site Site, name Name) (model.RelationID, erro
 	return entry.id, nil
 }
 
-// Address resolves the column a relation's rows are addressed by.
-func (registry *Registry) Address(site Site, name Name) (model.ColumnID, error) {
+// Addressed resolves one coordinate a relation publishes about its own rows.
+// A coordinate the relation does not publish refuses as undeclared, naming the
+// relation and the coordinate, because the other side of that equijoin is the
+// owner's statement to make and never the compiler's to guess.
+func (registry *Registry) Addressed(site Site, name Name, coordinate Coordinate) (model.ColumnID, error) {
 	if !name.Available() {
 		return model.ColumnID{}, refuse(site, name, KindRelation, ReasonUnavailable)
 	}
@@ -664,10 +721,14 @@ func (registry *Registry) Address(site Site, name Name) (model.ColumnID, error) 
 	if !ok {
 		return model.ColumnID{}, refuse(site, name, KindRelation, ReasonUnknown)
 	}
-	if !entry.address.Available() {
-		return model.ColumnID{}, refuse(site, name, KindAddress, ReasonUndeclared)
+	column, declared := entry.coordinates[coordinate]
+	if !declared {
+		return model.ColumnID{}, Refusal{
+			Site: Site{Rule: site.Rule, Path: site.Path + "#" + coordinate.String()},
+			Name: name, Kind: KindAddress, Reason: ReasonUndeclared,
+		}
 	}
-	return entry.address, nil
+	return column, nil
 }
 
 // Column resolves one authored column name.
