@@ -9,6 +9,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/engine/internal/equation"
 	"github.com/wippyai/go-lua/analysis/engine/internal/executioncatalog"
 	"github.com/wippyai/go-lua/analysis/engine/internal/facts/support"
+	"github.com/wippyai/go-lua/analysis/identity"
 	ruleprogram "github.com/wippyai/go-lua/analysis/schema/rule/program"
 	"github.com/wippyai/go-lua/analysis/schema/structure"
 )
@@ -37,6 +38,14 @@ type generatedMemberSpec struct {
 	// relation its selected join derives, which exist only per invocation.
 	routed bool
 	writes bool
+
+	// structural marks a row that publishes no fact at all. Its output is the
+	// set of already-mounted activation members its settled branches name, so
+	// it holds no slot, no Factor, no target and no route.
+	structural  bool
+	activations [][]equation.Member
+	topology    *equation.Topology
+	graph       *equation.Graph
 
 	factorOrdinal int32
 	unit          carrier.Unit
@@ -68,6 +77,14 @@ type generatedMemberDeclaration struct {
 	// consumes them; nothing re-enumerates.
 	memberSets   []generatedMemberSet
 	writeSurface ruleWriteSurface
+	// activationBranches groups this row's candidate rows by the branch
+	// ordinal they were enumerated from, and application is the identity every
+	// one of them is an alternative of. They are present only for a structural
+	// row, and they are what lets the member bind resolve each branch to the
+	// activation member the construct plane mounted for it - once, cold,
+	// rather than per fold.
+	activationBranches [][]MountedActivationCandidate
+	application        identity.SemanticKey
 }
 
 // generatedMemberSet is one join's ordered nested member set, as axis-local
@@ -110,6 +127,14 @@ type generatedMember struct {
 	rule       uint32
 	candidate  uint32
 	invocation generatedRowSeal
+
+	// structural, activations, topology and graph are the A form's half. The
+	// branch-to-member resolution is done once at bind, where the topology is
+	// in scope, so execution accepts members it was handed and resolves none.
+	structural  bool
+	activations [][]equation.Member
+	topology    *equation.Topology
+	graph       *equation.Graph
 }
 
 // generatedRowSeal binds one member row to the one execution row it dispatches
@@ -144,7 +169,23 @@ func newGeneratedMember(spec generatedMemberSpec) (*generatedMember, bool) {
 	// whichever members its selected join derives for one invocation. So the
 	// exact target is present exactly when the row is not routed, and a routed
 	// row must name the Factor whose route universe it claims instead.
-	if spec.routed {
+	switch {
+	case spec.structural:
+		// A structural row publishes no fact, so it has no target, no route
+		// and no carry: there is no coordinate for any of them to be taken
+		// over. What it publishes instead are the mounted members its settled
+		// branches name, and it must have been handed those and the authority
+		// to accept them.
+		if spec.routed || spec.target != (carrier.Target{}) || len(spec.targets) != 0 || spec.route != nil || spec.routeNarrow {
+			return nil, false
+		}
+		if len(spec.carries) != 0 || len(spec.carryTargets) != 0 || spec.writes || spec.hasSlot || spec.outputCount != 0 {
+			return nil, false
+		}
+		if spec.topology == nil || spec.graph == nil {
+			return nil, false
+		}
+	case spec.routed:
 		// A routed row has no exact target and no static output vector. Its
 		// carry closure may still be present: those are the coordinates the
 		// row preserves, not the ones it publishes at.
@@ -154,8 +195,10 @@ func newGeneratedMember(spec generatedMemberSpec) (*generatedMember, bool) {
 		if len(spec.carryTargets) != 0 && len(spec.carries) == 0 {
 			return nil, false
 		}
-	} else if spec.target == (carrier.Target{}) || spec.route != nil || spec.routeNarrow {
-		return nil, false
+	default:
+		if spec.target == (carrier.Target{}) || spec.route != nil || spec.routeNarrow {
+			return nil, false
+		}
 	}
 	// The exact Unit is the coordinate of this row's first exact observation.
 	// A row whose every join is selected observes no standing coordinate, so it
@@ -198,7 +241,7 @@ func newGeneratedMember(spec generatedMemberSpec) (*generatedMember, bool) {
 	if spec.routeNarrow && spec.route == nil {
 		return nil, false
 	}
-	if !spec.routed && spec.target.Mode() != carrier.StrongTarget {
+	if !spec.routed && !spec.structural && spec.target.Mode() != carrier.StrongTarget {
 		return nil, false
 	}
 	if len(spec.initial) != 0 && spec.unit.Kind() != carrier.ExactUnit {
@@ -225,6 +268,10 @@ func newGeneratedMember(spec generatedMemberSpec) (*generatedMember, bool) {
 		rule:                spec.rule,
 		candidate:           spec.candidate,
 		source:              spec.source,
+		structural:          spec.structural,
+		activations:         spec.activations,
+		topology:            spec.topology,
+		graph:               spec.graph,
 	}, true
 }
 
@@ -232,12 +279,20 @@ func (member *generatedMember) validRuntimeMember() bool {
 	if member == nil || !member.value.Key().Available() || member.hasSlot != member.writes || member.rule == ^uint32(0) || member.routeNarrowEligible && member.route == nil {
 		return false
 	}
-	if member.routed {
+	switch {
+	case member.structural:
+		if member.routed || member.target != (carrier.Target{}) || member.route != nil ||
+			member.topology == nil || member.graph == nil {
+			return false
+		}
+	case member.routed:
 		if member.target != (carrier.Target{}) || member.route == nil {
 			return false
 		}
-	} else if member.target.Mode() != carrier.StrongTarget {
-		return false
+	default:
+		if member.target.Mode() != carrier.StrongTarget {
+			return false
+		}
 	}
 	if member.unit != (carrier.Unit{}) && member.unit.Kind() != carrier.ExactUnit {
 		return false
@@ -462,20 +517,42 @@ func (member *generatedMember) executeGeneratedAt(epoch *executorEpoch, base car
 		_ = worker.run.Abort()
 		return generatedMemberRefusal(member, "execute")
 	}
-	disposition, patches, drained := worker.run.Consume()
+	disposition, patches, branches, drained := worker.run.Consume()
 	if !drained || disposition != result.Outcome() || len(patches) != result.Count() {
 		_ = worker.run.Abort()
 		return generatedMemberRefusal(member, "drain")
 	}
+	// A row publishes patches or branches and never both, so a branch staged by
+	// a row that writes a fact is an invocation publishing through a channel
+	// its declaration never opened.
+	if len(branches) != 0 && !member.structural {
+		return generatedMemberRefusal(member, "foreign-branch")
+	}
 	switch result.Outcome() {
 	case structure.NoCandidate, structure.NoSelection:
-		if result.Count() != 0 {
+		if result.Count() != 0 || len(branches) != 0 {
 			return generatedMemberRefusal(member, "empty-outcome")
 		}
 		result := memberResult{boundary: boundaryNone, valid: true}
 		result.reads = generatedMemberReads(member)
 		return result
 	case structure.Concrete:
+		if member.structural {
+			// A structural row concludes no fact, so its Concrete disposition
+			// carries no value slot at all. An activation that settled no
+			// branch is a trigger that instantiates nothing, which stays
+			// admitted on its own declaration.
+			if result.Count() != 0 || len(patches) != 0 {
+				return generatedMemberRefusal(member, "structural-count")
+			}
+			accepted, admitted := member.acceptSettledBranches(branches, within, epoch.work.Checkpoint)
+			if !admitted {
+				return generatedMemberRefusal(member, "activation")
+			}
+			result := memberResult{activations: accepted, boundary: boundaryNone, valid: true}
+			result.reads = generatedMemberReads(member)
+			return result
+		}
 		if result.Count() != 1 || len(patches) != 1 {
 			return generatedMemberRefusal(member, "concrete-count")
 		}
@@ -485,6 +562,53 @@ func (member *generatedMember) executeGeneratedAt(epoch *executorEpoch, base car
 	default:
 		return generatedMemberRefusal(member, "outcome")
 	}
+}
+
+// acceptSettledBranches converts the branch ordinals one invocation settled
+// into accepted topology members.
+//
+// Nothing is resolved here. Which mounted members a branch stands for was
+// settled at bind, where the topology was in scope, so this walk only accepts
+// them under the invocation's own support premise. That is the whole
+// difference from the hand lane, which rebuilds a semantic locator inside
+// every fold and asks the directory to select on it again.
+func (member *generatedMember) acceptSettledBranches(branches []uint32, within support.Mask, checkpoint func() bool) ([]equation.AcceptedMember, bool) {
+	if member == nil || !member.structural || member.topology == nil || member.graph == nil {
+		return nil, false
+	}
+	if len(branches) == 0 {
+		return nil, true
+	}
+	// Every settled ordinal is addressed before any of them is accepted. A row
+	// that settled a branch this member does not hold publishes nothing at
+	// all, rather than publishing the prefix that happened to resolve first.
+	total := 0
+	for _, branch := range branches {
+		if uint64(branch) >= uint64(len(member.activations)) {
+			return nil, false
+		}
+		total += len(member.activations[branch])
+	}
+	premise, premiseOK := activationPremise(member.graph, within, checkpoint)
+	if !premiseOK {
+		return nil, false
+	}
+	accepted := make([]equation.AcceptedMember, 0, total)
+	for _, branch := range branches {
+		for _, mounted := range member.activations[branch] {
+			if !mounted.Available() {
+				return nil, false
+			}
+			record, admitted := member.topology.Accept(mounted, premise)
+			if !admitted {
+				return nil, false
+			}
+			if record.Available() {
+				accepted = append(accepted, record)
+			}
+		}
+	}
+	return canonicalAcceptedMembers(member.topology, accepted)
 }
 
 // generatedMemberExecution is the named constructor seam for engine tests and
@@ -514,35 +638,56 @@ func bindGeneratedMember(plane *programPlane, topology *equation.Topology, membe
 		return nil, false
 	}
 	shape, shapeOK := plane.runtime.schema.ruleShapeAt(uint64(ruleOrdinal))
-	if !shapeOK || member.WriteCount() != 1 || member.Rule() == (composition.Key{}) || member.OperandFamily() != shape.OperandFamily {
+	if !shapeOK || member.Rule() == (composition.Key{}) || member.OperandFamily() != shape.OperandFamily {
 		return nil, false
 	}
 	mode, modeOK := descriptor.OutputMode()
-	writeSurface, writeOK := member.WriteAt(0)
-	routeRead, routeReadOK := member.WriteRouteRead(0)
-	if !modeOK || !writeOK || !routeReadOK || writeSurface != declaration.writeSurface.value {
+	if !modeOK {
 		return nil, false
 	}
-	writeFactor, writeFactorOK := plane.byKey[writeSurface.Factor]
-	if !writeFactorOK || writeFactor == nil {
+	// A structural row writes nothing, so it has no write surface to
+	// authenticate and no Factor to resolve one against. The two geometries
+	// are told apart by the declared publication mode and never by probing
+	// whether a surface happens to be present.
+	structural := mode == ruleprogram.ModeStructural
+	if structural != (member.WriteCount() == 0) || member.WriteCount() > 1 {
 		return nil, false
+	}
+	var writeSurface equation.Surface
+	var routeRead uint64
+	var writeFactor runtimeFactor
+	if !structural {
+		var writeOK, routeReadOK, writeFactorOK bool
+		writeSurface, writeOK = member.WriteAt(0)
+		routeRead, routeReadOK = member.WriteRouteRead(0)
+		if !writeOK || !routeReadOK || writeSurface != declaration.writeSurface.value {
+			return nil, false
+		}
+		writeFactor, writeFactorOK = plane.byKey[writeSurface.Factor]
+		if !writeFactorOK || writeFactor == nil {
+			return nil, false
+		}
 	}
 	inputCount := descriptor.InputCount()
 	if member.ReadCount() != descriptor.ReadCount() || len(declaration.reads) != descriptor.ReadCount() {
 		return nil, false
 	}
 	spec := generatedMemberSpec{
-		member: member, factor: writeSurface.Factor, hasSlot: true, writes: true,
+		member:        member,
 		factorOrdinal: int32(descriptor.OutputFactor()),
 		rule:          ruleOrdinal,
-		candidate:     declaration.candidate, source: declaration.source, inputCount: inputCount, outputCount: descriptor.OutputCount(),
+		candidate:     declaration.candidate, source: declaration.source, inputCount: inputCount,
 		memberSets: declaration.memberSets,
 	}
-	slot, slotOK := writeFactor.runtimeSlot()
-	if !slotOK {
-		return nil, false
+	if !structural {
+		spec.factor, spec.hasSlot, spec.writes = writeSurface.Factor, true, true
+		spec.outputCount = descriptor.OutputCount()
+		slot, slotOK := writeFactor.runtimeSlot()
+		if !slotOK {
+			return nil, false
+		}
+		spec.outputSlot = slot
 	}
-	spec.outputSlot = slot
 	// Each declared join is delivered in the form its own row states. An exact
 	// join names the one coordinate it observes; a selected join names none,
 	// because its coordinates are the members of a relation derived per
@@ -633,6 +778,20 @@ func bindGeneratedMember(plane *programPlane, topology *equation.Topology, membe
 			spec.carries = []int{carryInput}
 			spec.carryTargets = carryTargets
 		}
+	case ruleprogram.ModeStructural:
+		// A structural row carries nothing: a carry preserves the coordinates
+		// of a Factor this row does not publish into.
+		if carryInput >= 0 {
+			return nil, false
+		}
+		branches, branchesOK := bindGeneratedActivationBranches(topology, member, declaration)
+		if !branchesOK {
+			return nil, false
+		}
+		spec.structural = true
+		spec.activations = branches
+		spec.topology = topology
+		spec.graph = plane.runtime.graph
 	default:
 		return nil, false
 	}
@@ -640,6 +799,48 @@ func bindGeneratedMember(plane *programPlane, topology *equation.Topology, membe
 		return nil, false
 	}
 	return newGeneratedMember(spec)
+}
+
+// bindGeneratedActivationBranches resolves each declared branch to the
+// activation members the construct plane mounted for it.
+//
+// It runs once, cold, where the topology is in scope. Every candidate the
+// issuance enumerated must resolve: a branch the construct plane did not mount
+// is a row this member could settle and nothing could accept, and answering
+// that with a shorter list would make the disposition of a real branch
+// unpublishable rather than refused.
+func bindGeneratedActivationBranches(topology *equation.Topology, member equation.RuleMember, declaration *generatedMemberDeclaration) ([][]equation.Member, bool) {
+	if topology == nil || declaration == nil || !declaration.application.Available() {
+		return nil, false
+	}
+	trigger := member.Key()
+	application := compositionKeyOf(declaration.application)
+	if !trigger.Available() || !application.Available() {
+		return nil, false
+	}
+	branches := make([][]equation.Member, len(declaration.activationBranches))
+	for ordinal, candidates := range declaration.activationBranches {
+		mounted := make([]equation.Member, 0, len(candidates))
+		for _, candidate := range candidates {
+			locator := equation.PairLocator{
+				Application: application,
+				Target:      compositionKeyOf(candidate.Target),
+				Endpoint:    compositionKeyOf(candidate.Endpoint),
+				Context: equation.ActivationContext{
+					TransitionID:  candidate.TransitionID,
+					FromContextID: candidate.FromContextID,
+					ToContextID:   candidate.ToContextID,
+				},
+			}
+			selected, found := topology.SelectActivationMember(trigger, locator)
+			if !found || !selected.Available() {
+				return nil, false
+			}
+			mounted = append(mounted, selected)
+		}
+		branches[ordinal] = mounted
+	}
+	return branches, true
 }
 
 // memberSetsOf is this member's nested member sets, in declaration join order.

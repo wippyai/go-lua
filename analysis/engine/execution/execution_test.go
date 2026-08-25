@@ -541,7 +541,7 @@ func TestExecutionExecutorUsesOpaqueFrameAndRunDrain(t *testing.T) {
 	if !executed || !result.Valid() || result.Outcome() != structure.NoCandidate || result.Count() != 0 {
 		t.Fatalf("opaque execution result = %+v/%t", result, executed)
 	}
-	if _, _, drained := run.Consume(); !drained {
+	if _, _, _, drained := run.Consume(); !drained {
 		t.Fatal("run drain")
 	}
 	if _, executed = executor.Execute(frame, ticket); executed {

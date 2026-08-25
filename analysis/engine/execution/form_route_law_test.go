@@ -191,7 +191,7 @@ func readRouteValue(t testing.TB, fixture selectedFixture, state carrier.State, 
 	if !run.Submit(&ticket, structure.NoCandidate) {
 		t.Fatal("route read settle")
 	}
-	_, _, _ = run.Consume()
+	_, _, _, _ = run.Consume()
 	return value, valueOK && present
 }
 

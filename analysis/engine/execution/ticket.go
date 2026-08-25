@@ -33,6 +33,16 @@ type Run struct {
 	outputs []carrier.Patch
 	drain   []carrier.Patch
 	used    []bool
+	// branches is the publication of a STRUCTURAL invocation: the ordinals of
+	// the candidate branches this row settled. A structural row writes no fact
+	// and stages no patch, so this is the whole of what it publishes. The
+	// slice is retained between invocations and re-sliced rather than
+	// reallocated, so a warm structural row allocates nothing.
+	branches []uint32
+	// branchDrain is the slice one completed invocation's branches are handed
+	// over as. It aliases the staging slice's prefix until the next Issue, on
+	// the same terms the patch drain buffer does.
+	branchDrain []uint32
 
 	// The issued Catalog row belongs to the same invocation authority as the
 	// transaction. It is copied from sealed Program data by Issue; no worker
@@ -116,6 +126,7 @@ func (run *Run) Issue(catalog *executioncatalog.Catalog, row executioncatalog.Ro
 		run.outputs[index] = carrier.Patch{}
 		run.used[index] = false
 	}
+	run.branches = run.branches[:0]
 	run.next++
 	run.open = run.next
 	return Ticket{issuer: run, serial: run.next, epoch: epoch, relationRevision: relationRevision, generation: generation}, true
@@ -318,6 +329,34 @@ func (run *Run) hasOutput() bool {
 	return false
 }
 
+// Activate stages one candidate branch of this invocation as settled.
+//
+// The branch is addressed by its ORDINAL in the cold branch set the issuance
+// enumerated for this row. That is the only address a nested member set's rows
+// have - it is what the relation's own Ordinal carrier names them by - so
+// nothing here mints a coordinate, names a Factor, or resolves a member. Which
+// mounted activation member an ordinal stands for was settled once, cold, by
+// the engine that mounted it.
+//
+// One branch settles once. A second call for the same ordinal is two
+// dispositions for one branch, which no order between them could resolve.
+func (run *Run) Activate(ticket *Ticket, branch int) bool {
+	if run == nil || ticket == nil || ticket.issuer != run || !ticket.Valid() {
+		return false
+	}
+	if branch < 0 || uint64(branch) > uint64(^uint32(0)) {
+		return false
+	}
+	ordinal := uint32(branch)
+	for _, staged := range run.branches {
+		if staged == ordinal {
+			return false
+		}
+	}
+	run.branches = append(run.branches, ordinal)
+	return true
+}
+
 // Submit is the one final reducer boundary. It owns the fixed outcome and
 // atomically transitions the live Ticket into Run's submitted state after all
 // independent output slots have been sealed. Patches stay private until
@@ -334,6 +373,9 @@ func (run *Run) Submit(ticket *Ticket, outcome structure.ReductionOutcome) bool 
 	}
 	if outcome != structure.Concrete {
 		run.discardOutputs()
+		// A disposition that concludes no fact concludes no branch either: an
+		// invocation that settled nothing has nothing staged to publish.
+		run.branches = run.branches[:0]
 		return run.submitTicket(ticket, outcome)
 	}
 	if outcome == structure.Concrete {
@@ -385,26 +427,40 @@ func (run *Run) Drain(destination []carrier.Patch) (structure.ReductionOutcome, 
 		run.used[index] = false
 	}
 	run.submitted = 0
+	// Copied into its own buffer for the same reason the patches are: the
+	// staging slice is reused by the next invocation, and a handed-over view
+	// that aliased it would be rewritten underneath its reader.
+	run.branchDrain = append(run.branchDrain[:0], run.branches...)
+	run.branches = run.branches[:0]
 	run.submittedOutcome = structure.Refuse
 	run.clearInvocation()
 	return outcome, count, true
 }
 
-// Consume is Drain against Run's sealed drain buffer. The returned patch
-// slice aliases that buffer until the next Issue and allocates nothing on
-// the hot path.
-func (run *Run) Consume() (structure.ReductionOutcome, []carrier.Patch, bool) {
+// Consume is Drain against Run's sealed drain buffers. The returned patch and
+// branch slices alias those buffers until the next Issue and allocate nothing
+// on the hot path.
+//
+// A row publishes patches or branches and never both: a fact-writing row has
+// no branch set, and a structural row publishes no Factor surface at all. The
+// two are returned side by side because they are one drain - one invocation
+// settles one disposition, whichever way it publishes it.
+func (run *Run) Consume() (structure.ReductionOutcome, []carrier.Patch, []uint32, bool) {
 	if run == nil {
-		return structure.Refuse, nil, false
+		return structure.Refuse, nil, nil, false
 	}
 	outcome, count, ok := run.Drain(run.drain)
 	if !ok {
-		return outcome, nil, false
+		return outcome, nil, nil, false
+	}
+	branches := run.branchDrain
+	if len(branches) == 0 {
+		branches = nil
 	}
 	if count == 0 {
-		return outcome, nil, true
+		return outcome, nil, branches, true
 	}
-	return outcome, run.drain[:count], true
+	return outcome, run.drain[:count], branches, true
 }
 
 func (run *Run) discardOutputs() {

@@ -1102,7 +1102,12 @@ func declareGeneratedActivationIssuance(
 		return pendingRuleIssuance{}, false
 	}
 	candidates := make([]MountedActivationCandidate, 0, len(coordinates))
-	for _, coordinate := range coordinates {
+	// The flat list is what the construct plane admits; the grouping is what
+	// the member bind resolves branch ordinals through. Both are stated here,
+	// from one walk, so they cannot disagree about which branch a candidate
+	// came from.
+	grouped := make([][]MountedActivationCandidate, len(coordinates))
+	for branchOrdinal, coordinate := range coordinates {
 		relation := branchRead.Relation.Member
 		target, targetOK := projectedSemanticIdentity(branchOwner, relation, branch.Target.Member, coordinate)
 		endpoint, endpointOK := projectedSemanticIdentity(branchOwner, relation, branch.Endpoint.Member, coordinate)
@@ -1121,10 +1126,12 @@ func declareGeneratedActivationIssuance(
 			return pendingRuleIssuance{}, false
 		}
 		for _, edge := range edges {
-			candidates = append(candidates, MountedActivationCandidate{
+			candidate := MountedActivationCandidate{
 				Target: target, Endpoint: endpoint, Mount: module, Body: body,
 				TransitionID: edge.ID(), FromContextID: edge.FromContextID(), ToContextID: edge.ToContextID(),
-			})
+			}
+			candidates = append(candidates, candidate)
+			grouped[branchOrdinal] = append(grouped[branchOrdinal], candidate)
 		}
 	}
 	issuance.semantic, issuance.family, issuance.anchor = semantic, family, anchor
@@ -1138,6 +1145,7 @@ func declareGeneratedActivationIssuance(
 	issuance.generated = &generatedMemberDeclaration{
 		cell: declaration.generatedCell(), operand: anchor.operand, candidate: denseCandidate, source: programSource,
 		reads: reads, memberSets: memberSets,
+		activationBranches: grouped, application: application,
 	}
 	return issuance, true
 }

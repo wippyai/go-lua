@@ -58,7 +58,7 @@ func TestExecutionSourceFamilyConcludesTheSealedRowOutcome(t *testing.T) {
 			if !executed || !result.Valid() || result.Outcome() != testCase.outcome || result.Count() != testCase.patches {
 				t.Fatalf("source result = %+v/%t, want outcome %v with %d patches", result, executed, testCase.outcome, testCase.patches)
 			}
-			disposition, patches, drained := run.Consume()
+			disposition, patches, _, drained := run.Consume()
 			if !drained || disposition != testCase.outcome || len(patches) != testCase.patches {
 				t.Fatalf("source drain = %v/%d/%t", disposition, len(patches), drained)
 			}
@@ -155,7 +155,7 @@ func TestExecutionWarmInvocationAllocatesOnlyAcceptedChange(t *testing.T) {
 				return false
 			}
 			result, executed := executor.Execute(frame, ticket)
-			disposition, patches, drained := run.Consume()
+			disposition, patches, _, drained := run.Consume()
 			return executed && drained && disposition == structure.Concrete && len(patches) == result.Count()
 		}
 		measureWarmInvocation(t, invoke, 9)
@@ -180,7 +180,7 @@ func TestExecutionWarmInvocationAllocatesOnlyAcceptedChange(t *testing.T) {
 				return false
 			}
 			result, executed := executor.Execute(frame, ticket)
-			disposition, patches, drained := run.Consume()
+			disposition, patches, _, drained := run.Consume()
 			return executed && drained && disposition == structure.Concrete && len(patches) == result.Count()
 		}
 		measureWarmInvocation(t, invoke, 2)

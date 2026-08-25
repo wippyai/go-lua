@@ -429,8 +429,22 @@ func (compiled *compiledActivationRule) admitSelections(values []activationSelec
 			accepted = append(accepted, record)
 		}
 	}
-	// Sparse selected relations are canonicalized here. There is no bitmap,
-	// candidate ordinal, or eager family enumeration on this execution path.
+	return canonicalAcceptedMembers(compiled.topology, accepted)
+}
+
+// canonicalAcceptedMembers is the one canonical order and merge for a set of
+// accepted activation members, shared by the hand lane above and the generated
+// structural member.
+//
+// Sparse selected relations are canonicalized here. There is no bitmap,
+// candidate ordinal, or eager family enumeration on this execution path. One
+// member accepted twice is one member: the two premises are merged rather than
+// published as two rows, because the same edge reached under two supports is
+// still one edge.
+func canonicalAcceptedMembers(topology *equation.Topology, accepted []equation.AcceptedMember) ([]equation.AcceptedMember, bool) {
+	if topology == nil {
+		return nil, false
+	}
 	sort.Slice(accepted, func(left, right int) bool {
 		comparison, comparable := accepted[left].Member().Compare(accepted[right].Member())
 		return comparable && comparison < 0
@@ -441,7 +455,7 @@ func (compiled *compiledActivationRule) admitSelections(values []activationSelec
 			return nil, false
 		}
 		if retained != 0 && accepted[retained-1].Member().Same(record.Member()) {
-			merged, ok := compiled.topology.MergeAccepted(accepted[retained-1], record)
+			merged, ok := topology.MergeAccepted(accepted[retained-1], record)
 			if !ok {
 				return nil, false
 			}

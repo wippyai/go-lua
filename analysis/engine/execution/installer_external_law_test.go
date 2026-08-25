@@ -221,7 +221,7 @@ func externalPublish(t testing.TB, fixture *externalFixture, target carrier.Targ
 	if !write.Stage(ticket, &scratch, fixture.whole, value) || !write.Close(ticket, &scratch) || !ticket.Submit(structure.Concrete) {
 		t.Fatal("publish stage")
 	}
-	disposition, drained, drainedOK := run.Consume()
+	disposition, drained, _, drainedOK := run.Consume()
 	if !drainedOK || disposition != structure.Concrete || len(drained) != 1 {
 		t.Fatal("publish drain")
 	}
@@ -284,7 +284,7 @@ func TestARulePackageOutsideTheEngineAuthorsItsOwnFamily(t *testing.T) {
 	if !executed || result.Outcome() != structure.Concrete || result.Count() != 1 {
 		t.Fatalf("out-of-package execute = %v/%d/%t", result.Outcome(), result.Count(), executed)
 	}
-	disposition, patches, drained := run.Consume()
+	disposition, patches, _, drained := run.Consume()
 	if !drained || disposition != structure.Concrete || len(patches) != 1 {
 		t.Fatalf("out-of-package drain = %v/%d/%t", disposition, len(patches), drained)
 	}
@@ -319,6 +319,6 @@ func externalObserve(t testing.TB, fixture *externalFixture, unit carrier.Unit) 
 		t.Fatal("observe close")
 	}
 	_ = ticket.Submit(structure.NoCandidate)
-	_, _, _ = run.Consume()
+	_, _, _, _ = run.Consume()
 	return value
 }

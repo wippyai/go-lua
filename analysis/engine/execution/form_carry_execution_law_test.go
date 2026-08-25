@@ -142,7 +142,7 @@ func (fixture *carryFixture) observe(t testing.TB, unit carrier.Unit) (uint64, b
 		t.Fatal("observe close")
 	}
 	_ = run.Submit(&ticket, structure.NoCandidate)
-	_, _, _ = run.Consume()
+	_, _, _, _ = run.Consume()
 	return value, valueOK && present
 }
 
@@ -246,7 +246,7 @@ func TestATransformedCarryThatPublishesNothingCarriesNothing(t *testing.T) {
 			if !run.Submit(&ticket, outcome) {
 				t.Fatal("submit carry invocation")
 			}
-			disposition, patches, drained := run.Consume()
+			disposition, patches, _, drained := run.Consume()
 			if !drained || disposition != outcome || len(patches) != 0 {
 				t.Fatalf("a refused row staged %d patches", len(patches))
 			}
@@ -308,7 +308,7 @@ func TestAWarmTransformedCarryAllocatesNothingBeyondItsPublication(t *testing.T)
 		if !run.Submit(&ticket, outcome) {
 			return false
 		}
-		disposition, patches, drained := run.Consume()
+		disposition, patches, _, drained := run.Consume()
 		return drained && disposition == structure.NoSelection && len(patches) == 0
 	}
 	measureWarmInvocation(t, invoke, 0)

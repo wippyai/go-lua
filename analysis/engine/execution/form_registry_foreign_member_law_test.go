@@ -117,7 +117,7 @@ func TestForeignMemberExactReadReadsTheAuthenticatedValue(t *testing.T) {
 	if !run.Submit(&ticket, structure.NoCandidate) {
 		t.Fatal("submit member read invocation")
 	}
-	if _, _, drained := run.Consume(); !drained {
+	if _, _, _, drained := run.Consume(); !drained {
 		t.Fatal("member read consume")
 	}
 }
@@ -157,7 +157,7 @@ func TestForeignMemberExactReadAllocatesNothing(t *testing.T) {
 		if !run.Submit(&ticket, structure.NoCandidate) {
 			return false
 		}
-		_, _, drained := run.Consume()
+		_, _, _, drained := run.Consume()
 		return drained
 	}
 	measureWarmInvocation(t, invoke, 0)
