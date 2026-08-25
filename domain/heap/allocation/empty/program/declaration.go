@@ -33,11 +33,8 @@ func axisReference(key schema.Key) schema.EntryReference {
 	return schema.EntryReference{Surface: schema.SurfaceKindAxis, Key: key}
 }
 
-// RuleEntry is the canonical callback-free empty-allocation declaration: the
-// predecessor world it folds over, the constructor directory it draws
-// candidates from, and the allocation transition its carry applies.
+// RuleEntry is the canonical callback-free empty-allocation declaration.
 func RuleEntry() rule.Spec {
-	heapAxis := axisReference(AxisKey)
 	return rule.Spec{
 		Key:    RuleKey,
 		Writes: AxisKey,
@@ -46,41 +43,59 @@ func RuleEntry() rule.Spec {
 			{Occurrence: "occurrence/allocation-empty", Requirement: "program-requirement/unrestricted", Form: "program-form/local-finish"},
 		},
 		Lane:     rule.LaneMounted,
-		Semantic: schema.Key("semantic/" + RuleRole),
-		Roles:    []schema.Key{schema.Key("semantic/" + OperandRole)},
-		Program: ruleprogram.Program{
-			OperandRole: schema.Key("semantic/" + OperandRole),
-			Candidate:   member.AxisRelationCandidate(member.RelationRef{Axis: heapAxis, Member: heapdomain.EmptyAllocations}),
-			Joins: []ruleprogram.JoinDecl{{
-				Sources:  []ruleprogram.SourceRef{ruleprogram.CandidateSource()},
-				Relation: member.RelationRef{Axis: heapAxis, Member: heapdomain.EmptyAllocationPredecessors},
-				Key:      member.ProjectionRef{Axis: heapAxis, Member: heapdomain.EmptyAllocationPredecessorKey},
-				Read: ruleprogram.ReadDecl{
-					PointBound: ruleprogram.PointBound,
-					Input:      0,
-					Axis:       ruleprogram.AxisRef(heapAxis),
-					Form:       ruleprogram.Exact,
-					Contract: ruleprogram.ReadContract{
-						Order: ruleprogram.OrderCanonical, Sparse: ruleprogram.SparseExplicit,
-						OnOpaque: ruleprogram.OnOpaqueRefuse, Multiplicity: ruleprogram.MultiplicityOne,
-					},
+		Semantic: vocabulary.RoleKey(RuleRole),
+		Roles:    []schema.Key{vocabulary.RoleKey(OperandRole)},
+		Program:  EmptyAllocation(),
+	}
+}
+
+// EmptyAllocation is the empty-allocation Program: the constructor directory
+// the rule draws candidates from, the predecessor world it extends, and the
+// allocation transition its carry applies.
+//
+// The one join is the fold's only argument: the fold concludes the one Heap
+// world an empty constructor denotes from the world it extends. The carry is
+// the owner-issued allocation transition, because a constructor publishes at a
+// coordinate whose prior fact is its own predecessor.
+func EmptyAllocation() ruleprogram.Program {
+	heapAxis := axisReference(AxisKey)
+	return ruleprogram.Program{
+		OperandRole: vocabulary.RoleKey(OperandRole),
+		Candidate: member.AxisRelationCandidate(member.RelationRef{
+			Axis:   heapAxis,
+			Member: heapdomain.EmptyAllocations,
+		}),
+		Joins: []ruleprogram.JoinDecl{{
+			Sources:  []ruleprogram.SourceRef{ruleprogram.CandidateSource()},
+			Relation: member.RelationRef{Axis: heapAxis, Member: heapdomain.EmptyAllocationPredecessors},
+			Key:      member.ProjectionRef{Axis: heapAxis, Member: heapdomain.EmptyAllocationPredecessorKey},
+			Read: ruleprogram.ReadDecl{
+				PointBound: ruleprogram.PointBound,
+				Input:      0,
+				Axis:       ruleprogram.AxisRef(heapAxis),
+				Form:       ruleprogram.Exact,
+				Contract: ruleprogram.ReadContract{
+					Order:        ruleprogram.OrderCanonical,
+					Sparse:       ruleprogram.SparseExplicit,
+					OnOpaque:     ruleprogram.OnOpaqueRefuse,
+					Multiplicity: ruleprogram.MultiplicityOne,
 				},
+			},
+		}},
+		Fold: ruleprogram.FoldDecl{
+			Reducer: member.ReducerRef{Axis: heapAxis, Member: heapdomain.EmptyAllocationReducer},
+			Inputs:  []ruleprogram.JoinRef{0},
+			Outputs: []ruleprogram.OutputDecl{{
+				Column:      axis.OutputRef{Axis: heapAxis, Key: OutputKey},
+				Destination: member.ProjectionRef{Axis: heapAxis, Member: heapdomain.EmptyAllocationCoordinate},
+				Mode:        ruleprogram.ModeExact,
+				ValueSlot:   0,
 			}},
-			Fold: ruleprogram.FoldDecl{
-				Reducer: member.ReducerRef{Axis: heapAxis, Member: heapdomain.EmptyAllocationReducer},
-				Inputs:  []ruleprogram.JoinRef{0},
-				Outputs: []ruleprogram.OutputDecl{{
-					Column:      axis.OutputRef{Axis: heapAxis, Key: OutputKey},
-					Destination: member.ProjectionRef{Axis: heapAxis, Member: heapdomain.EmptyAllocationCoordinate},
-					Mode:        ruleprogram.ModeExact,
-					ValueSlot:   0,
-				}},
-			},
-			Carry: &ruleprogram.CarryDecl{
-				Input:     0,
-				Mode:      ruleprogram.CarryTransform,
-				Transform: member.CarryTransformRef{Axis: heapAxis, Member: heapdomain.EmptyAllocationCarryTransform},
-			},
+		},
+		Carry: &ruleprogram.CarryDecl{
+			Input:     0,
+			Mode:      ruleprogram.CarryTransform,
+			Transform: member.CarryTransformRef{Axis: heapAxis, Member: heapdomain.EmptyAllocationCarryTransform},
 		},
 	}
 }

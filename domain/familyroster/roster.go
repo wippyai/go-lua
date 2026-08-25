@@ -247,6 +247,26 @@ func Declarations() []Declaration {
 		},
 		{
 			Target: emitlaw.Target{
+				PackagePath: "github.com/wippyai/go-lua/domain/heap/allocation/empty/program",
+				PackageName: "program",
+				Declaration: "EmptyAllocation",
+				Entry:       "RuleEntry",
+				Spec:        heapemptyprogram.RuleEntry(),
+			},
+			Directory: "domain/heap/allocation/empty/program",
+		},
+		{
+			Target: emitlaw.Target{
+				PackagePath: "github.com/wippyai/go-lua/domain/heap/allocation/closed/program",
+				PackageName: "program",
+				Declaration: "ClosedAllocation",
+				Entry:       "RuleEntry",
+				Spec:        heapclosedprogram.RuleEntry(),
+			},
+			Directory: "domain/heap/allocation/closed/program",
+		},
+		{
+			Target: emitlaw.Target{
 				PackagePath: "github.com/wippyai/go-lua/domain/heap/publicationfreeze/program",
 				PackageName: "program",
 				Declaration: "PublicationFreeze",
