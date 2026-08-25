@@ -1063,3 +1063,23 @@ func TestAWidenEndpointYieldingAnotherItemIsRefusedWithoutOne(t *testing.T) {
 		t.Fatalf("a widened chain yielding the source's own item took a second judgment:\n%s", source)
 	}
 }
+
+// TestALatticeEndpointIsAJudgmentOverTheWholeInvocation says what the endpoint
+// is asked.
+//
+// Whether a set has a closed list of alternatives can depend on what the set is
+// OF, not only on the value the outer source reads: a storage transfer that
+// reaches no store has no directory to widen to however its value looks. So
+// the endpoint is a judgment over exactly what Resolve is a judgment over,
+// minus the item there is not one of yet - the static axis schemas, the
+// candidate, and the source value.
+func TestALatticeEndpointIsAJudgmentOverTheWholeInvocation(t *testing.T) {
+	source := renderDerivedSelectionWith(t, derivedRoster(t))
+	build, found := functionBody(source, "deriveDerived1Rows")
+	if !found {
+		t.Fatalf("the emitted construction has no Build:\n%s", source)
+	}
+	if !strings.Contains(build, "if site.IsTop(siteSchema, wireSchema, given0, given1) {") {
+		t.Fatalf("the endpoint is not asked over the whole invocation:\n%s", build)
+	}
+}

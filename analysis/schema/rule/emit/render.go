@@ -1569,9 +1569,10 @@ func renderDerivedBuild(out *strings.Builder, built *plan, join *joinPlan) error
 	}
 
 	if declared.widen != nil {
-		// The endpoint is asked of the value the OUTER source reads, so the
-		// owner it belongs to is that source's axis.
-		endpoint := declared.sources[0].own(imports, declared.widen.predicate, arguments[declared.sourceArgument])
+		// The endpoint is a judgment over what Resolve is a judgment over,
+		// minus the item there is not one of yet.
+		endpoint := imports.call(declared.widen.predicate, "",
+			append(append([]string{}, statics...), arguments[declared.candidateArgument], arguments[declared.sourceArgument])...)
 		fmt.Fprintf(out, "\tif %s {\n", endpoint)
 		// The widened answer is read out of the owner's own schema, so its
 		// outer level starts from that axis rather than from the value.

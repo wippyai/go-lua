@@ -304,7 +304,7 @@ func insertDerived1Row(built derived1Rows, dense uint32, row bodyroute.Route) (d
 // leave in the one order a selection is canonicalized by.
 func deriveDerived1Rows(effectSchema *factor.Algebra, callSchema *call.Algebra, given0 factor.MountedCall, given1 call.Value) (derived1Rows, bool) {
 	var built derived1Rows
-	if given1.IsTop() {
+	if bodyroute.BeyondTargets(effectSchema, callSchema, given0, given1) {
 		widenCount0 := callSchema.BodyTargetCount()
 		for widenCursor0 := 0; widenCursor0 < widenCount0; widenCursor0++ {
 			widenItem0, widenItem0OK := callSchema.BodyTargetAt(widenCursor0)

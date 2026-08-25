@@ -267,20 +267,30 @@ func TestAComposedSourceThatDoesNotReadWhatItIsGivenIsRefused(t *testing.T) {
 	}
 }
 
-// TestAWidenEndpointIsAskedOfWhatTheDerivationEnumerates states where the
-// endpoint is tested. What is beyond enumeration is a property of the value
-// being enumerated, so the predicate reads the OUTER source's own carrier
-// rather than an item it has not reached yet.
+// TestAWidenEndpointIsAskedOfWhatTheDerivationEnumerates states what the
+// endpoint is asked.
+//
+// It is a judgment over exactly what Resolve is a judgment over, minus the item
+// there is not one of yet: the static axis schemas, the candidate, and the
+// OUTER source's own carrier. The last position is what is being enumerated,
+// and the ones before it are why - whether a set has a closed list of
+// alternatives can depend on what the set is OF, so an endpoint that could see
+// only the value would be answering a different question.
 func TestAWidenEndpointIsAskedOfWhatTheDerivationEnumerates(t *testing.T) {
 	source, relation := declaredSpecimenSource(t)
 	relation.Derivation.Widen = specimenWiden()
 	roster := declaredSpecimenRoster(t, source)
 	shape, ok := roster.DeclaredDerivationSignature("specimen", relation, specimenType("Key"))
-	if !ok || len(shape.WidenParams) != 1 {
+	if !ok || len(shape.WidenParams) != len(shape.ResolveParams) {
 		t.Fatalf("the endpoint derived no shape: %+v %t", shape, ok)
 	}
-	if shape.WidenParams[0].Type != specimenType("Fact") {
-		t.Fatalf("the endpoint is asked of %+v, want the carrier the outer source enumerates", shape.WidenParams[0].Type)
+	for index := 0; index < len(shape.WidenParams)-1; index++ {
+		if shape.WidenParams[index] != shape.ResolveParams[index] {
+			t.Fatalf("the endpoint's position %d is %+v, the judgment's is %+v", index, shape.WidenParams[index], shape.ResolveParams[index])
+		}
+	}
+	if shape.WidenParams[len(shape.WidenParams)-1].Type != specimenType("Fact") {
+		t.Fatalf("the endpoint is asked of %+v, want the carrier the outer source enumerates", shape.WidenParams[len(shape.WidenParams)-1].Type)
 	}
 	if len(shape.WidenResults) != 1 || shape.WidenResults[0].Type.Name != "bool" {
 		t.Fatalf("the endpoint answers %+v, want one boolean", shape.WidenResults)

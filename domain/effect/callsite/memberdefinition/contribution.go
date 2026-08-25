@@ -214,11 +214,8 @@ func bodyRoutes() definition.Relation {
 				// A call value that named no alternatives reaches every body
 				// there is, and only Call's own directory can say which those
 				// are.
-				Predicate: definition.GoSymbol{
-					PackagePath: callPackagePath, Name: "IsTop",
-					Receiver: definition.GoType{PackagePath: callPackagePath, Name: "Value"}, ResultIndex: -1,
-				},
-				Source: []definition.EnumerationRef{{Axis: axisReference("call"), Name: "BodyTargets"}},
+				Predicate: bodyRouteFunction("BeyondTargets"),
+				Source:    []definition.EnumerationRef{{Axis: axisReference("call"), Name: "BodyTargets"}},
 			},
 		},
 	}

@@ -167,8 +167,10 @@ type DeclaredDerivationShape struct {
 	// contributes one at all, and the owner's validity.
 	ResolveParams  []DerivedParam
 	ResolveResults []DerivedParam
-	// WidenParams/WidenResults are the endpoint predicate's, and are empty
-	// when the derivation declares no endpoint.
+	// WidenParams/WidenResults are the endpoint's, and are empty when the
+	// derivation declares no endpoint. The endpoint is a judgment over what
+	// Resolve is a judgment over, minus the item: static axis schemas, the
+	// candidate, and the value the outer source reads.
 	WidenParams  []DerivedParam
 	WidenResults []DerivedParam
 	// Widened is the shape of the sources the widened answer is read out of.
@@ -248,7 +250,7 @@ func (roster Roster) DeclaredDerivationSignature(axis schema.Key, relation Relat
 		if !firstOK {
 			return DeclaredDerivationShape{}, false
 		}
-		shape.WidenParams = []DerivedParam{{Type: first}}
+		shape.WidenParams = append(append([]DerivedParam{}, params...), DerivedParam{Type: first})
 		shape.WidenResults = []DerivedParam{{Type: GoType{Name: "bool"}}}
 		// The widened answer is read out of the owner's own directory, so its
 		// sources chain from the axis schema rather than from the fact.

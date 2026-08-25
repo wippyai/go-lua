@@ -73,3 +73,16 @@ func ResolveRoute(effects *effectfactor.Algebra, calls *calldomain.Algebra, moun
 	}
 	return Route{root: root, tag: uint64(index), set: true}, true, true
 }
+
+// BeyondTargets answers whether a call site's member set is beyond
+// enumeration: the call named no closed list of alternatives, so the bodies it
+// reaches are every body there is rather than the ones written down.
+//
+// It is asked of the same things ResolveRoute is asked of, minus the target
+// there is not one of yet, because whether a set has a closed list can depend
+// on what the set is OF. Here it depends only on the call's own value, and the
+// judgment says so by ignoring the rest rather than by not being handed them.
+func BeyondTargets(effects *effectfactor.Algebra, calls *calldomain.Algebra, mounted effectfactor.MountedCall, fact calldomain.Value) bool {
+	_, _, _ = effects, calls, mounted
+	return fact.IsTop()
+}

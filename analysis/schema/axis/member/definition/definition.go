@@ -346,9 +346,14 @@ func (reference EnumerationRef) Available() bool {
 // answer where it can be read, instead of inside a Build where each one spelled
 // it differently.
 type DerivationWiden struct {
-	// Predicate answers, of the source fact, whether the set is beyond
-	// enumeration. It is the owner's own statement - IsTop, HasOpaque - and
-	// never a shape this package guesses from the carrier.
+	// Predicate answers whether this derivation's set is beyond enumeration.
+	// It is a judgment over the same things Resolve is a judgment over, minus
+	// the item there is not one of yet: the static axis schemas, the candidate,
+	// and the value the outer source reads. Whether a set has a closed list of
+	// alternatives can depend on what the set is OF - a transfer that reaches
+	// no store at all has no routes to widen to - so the candidate is part of
+	// the question, and a predicate that could only see the value would answer
+	// a different one.
 	Predicate GoSymbol
 	// Source is what the widened answer is read out of. It is an enumeration
 	// like any other, and it is read out of an axis's SCHEMA rather than out
