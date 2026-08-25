@@ -39,6 +39,7 @@ import (
 	placementpublicationescape "github.com/wippyai/go-lua/domain/placement/publicationescape/memberdefinition"
 	placementreturnescape "github.com/wippyai/go-lua/domain/placement/returnescape/memberdefinition"
 	placementstore "github.com/wippyai/go-lua/domain/placement/store/memberdefinition"
+	placementsuspension "github.com/wippyai/go-lua/domain/placement/suspension/memberdefinition"
 	placementtransfer "github.com/wippyai/go-lua/domain/placement/transfer/memberdefinition"
 	staticbase "github.com/wippyai/go-lua/domain/static/memberdefinition"
 	statictransfer "github.com/wippyai/go-lua/domain/static/transfer/memberdefinition"
@@ -112,6 +113,7 @@ func Composition() (definition.Roster, bool) {
 				placementcapture.Contribution(),
 				placementcontainment.Contribution(),
 				placementpublicationescape.Contribution(),
+				placementsuspension.Contribution(),
 			},
 		},
 		definition.Source{

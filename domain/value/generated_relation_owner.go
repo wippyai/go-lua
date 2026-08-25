@@ -226,7 +226,7 @@ func (owner *RelationOwner) candidate(relationOrdinal uint32, mount, occurrence 
 			return 0, false
 		}
 		return owner.schema.MountedCallResultSlotOrdinal(candidate)
-	case 33:
+	case 34:
 		if !mount.Available() {
 			return 0, false
 		}
@@ -355,7 +355,7 @@ func (owner *RelationOwner) KeyVectorCount(relationOrdinal, candidateOrdinal uin
 		return 0, false
 	}
 	switch relationOrdinal {
-	case 33:
+	case 34:
 		row, rowOK := owner.schema.ClosedOperandsAt(int(candidateOrdinal))
 		if !rowOK {
 			return 0, false
@@ -378,7 +378,7 @@ func (owner *RelationOwner) KeyVectorAt(relationOrdinal, candidateOrdinal uint32
 		return 0, false
 	}
 	switch relationOrdinal {
-	case 33:
+	case 34:
 		row, rowOK := owner.schema.ClosedOperandsAt(int(candidateOrdinal))
 		if !rowOK {
 			return 0, false
@@ -951,6 +951,11 @@ func (owner *RelationOwner) Project(relationOrdinal, projectionOrdinal, candidat
 		default:
 			return 0, false
 		}
+	case 35:
+		switch projectionOrdinal {
+		default:
+			return 0, false
+		}
 	default:
 		return 0, false
 	}
@@ -1044,7 +1049,7 @@ func (owner *RelationOwner) materializeSourceColumns() bool {
 // SourceFactColumn returns the immutable typed source fact column for one relation.
 // RelationCount is the sealed relation-ordinal extent. It preserves absent
 // materializations separately from a valid empty source column.
-func (*RelationOwner) RelationCount() int { return 35 }
+func (*RelationOwner) RelationCount() int { return 36 }
 
 func (owner *RelationOwner) SourceFactColumn(relationOrdinal uint32) (memberrelation.SourceColumn[Value], bool) {
 	if owner == nil || owner.schema == nil {

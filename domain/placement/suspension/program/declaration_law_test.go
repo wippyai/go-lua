@@ -44,17 +44,24 @@ func assertSuspensionShape(t *testing.T, declaration ruleprogram.Program, output
 		t.Fatalf("join count=%d, want anchor/source/route", declaration.JoinCount())
 	}
 
+	// The anchor read is the denominator the source vector is complete
+	// against, so it is a closed-denominator read and not an exact cell the
+	// fold could consume.
 	first, firstOK := declaration.JoinAt(0)
-	if !firstOK || first.Read.Form != ruleprogram.Exact || first.Read.Axis.EntryReference().Key != valueAxisKey ||
-		first.Relation.Member != anchor || first.Sources[0] != ruleprogram.CandidateSource() || first.Predicate.Declared() {
-		t.Fatalf("anchor join=%+v, want candidate-only exact Value read", first)
+	if !firstOK || first.Read.Form != ruleprogram.Complete || first.Read.Axis.EntryReference().Key != valueAxisKey ||
+		first.Relation.Member != anchor || first.Sources[0] != ruleprogram.CandidateSource() || first.Predicate.Declared() ||
+		first.Read.Contract.DenominatorRef.EntryReference().Key != valueCoordinateDenominator {
+		t.Fatalf("anchor join=%+v, want the candidate-only Value denominator read", first)
 	}
 
+	// The judgment folds the whole vector of the subject's cells, so the read
+	// delivers the span rather than one selected cell of it.
 	second, secondOK := declaration.JoinAt(1)
-	if !secondOK || second.Read.Form != ruleprogram.Selected || second.Relation.Member != sources ||
+	if !secondOK || second.Read.Form != ruleprogram.Summary || second.Relation.Member != sources ||
 		second.Key.Member != sourceKey || second.Predicate.Member != sourceTag ||
+		second.Read.Contract.Multiplicity != ruleprogram.MultiplicityMany ||
 		len(second.Sources) != 2 || !second.Sources[0].Candidate || second.Sources[1] != ruleprogram.PriorSource(0) {
-		t.Fatalf("source join=%+v, want candidate + anchor selected Value read", second)
+		t.Fatalf("source join=%+v, want candidate + anchor whole-vector Value read", second)
 	}
 
 	third, thirdOK := declaration.JoinAt(2)
@@ -70,8 +77,11 @@ func assertSuspensionShape(t *testing.T, declaration ruleprogram.Program, output
 		t.Fatalf("route contract=%+v, want bounded Placement route delivery", third.Read.Contract)
 	}
 
-	if declaration.Fold.Reducer.Member != reducer || len(declaration.Fold.Inputs) != 3 || declaration.Fold.Inputs[0] != 0 || declaration.Fold.Inputs[1] != 1 || declaration.Fold.Inputs[2] != 2 {
-		t.Fatalf("fold=%+v, want reducer and all three reads", declaration.Fold)
+	// A denominator is not a fold input: the fold takes exactly what the
+	// judgment takes, the source vector and the routed cell.
+	if declaration.Fold.Reducer.Member != reducer || len(declaration.Fold.Inputs) != 2 ||
+		declaration.Fold.Inputs[0] != 1 || declaration.Fold.Inputs[1] != 2 {
+		t.Fatalf("fold=%+v, want the vector and the routed cell", declaration.Fold)
 	}
 	if len(declaration.Fold.Outputs) != 1 {
 		t.Fatalf("outputs=%d, want one routed receipt", len(declaration.Fold.Outputs))

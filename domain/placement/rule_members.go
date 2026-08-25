@@ -18,6 +18,7 @@ const (
 	FreshBirthDestinations        schemaapi.Key  = "placement/fresh-birth/destinations"
 	CaptureRoutes                 schemaapi.Key  = "placement/closure-capture/routes"
 	ContainmentRoutes             schemaapi.Key  = "placement/containment/routes"
+	SuspensionRoutes              schemaapi.Key  = "placement/suspension/routes"
 	StorageRouteKey               schemaapi.Key  = "placement/store/route-key"
 	StorageRouteTag               schemaapi.Key  = "placement/store/route-tag"
 	StorageRouteDestination       schemaapi.Key  = "placement/store/route-destination"
@@ -38,6 +39,9 @@ const (
 	ContainmentRouteKey           schemaapi.Key  = "placement/containment/route-key"
 	ContainmentRouteTag           schemaapi.Key  = "placement/containment/route-tag"
 	ContainmentRouteDestination   schemaapi.Key  = "placement/containment/route-destination"
+	SuspensionRouteKey            schemaapi.Key  = "placement/suspension/route-key"
+	SuspensionRouteTag            schemaapi.Key  = "placement/suspension/route-tag"
+	SuspensionRouteDestination    schemaapi.Key  = "placement/suspension/route-destination"
 	StorageReducer                schemaapi.Key  = "placement/store/reducer/storage"
 	ReturnEscapeReducer           schemaapi.Key  = "placement/return-escape/reducer"
 	TransferReducer               schemaapi.Key  = "placement/transfer/reducer"
@@ -47,12 +51,14 @@ const (
 	CaptureReducer                schemaapi.Key  = "placement/closure-capture/reducer"
 	ContainmentReducer            schemaapi.Key  = "placement/containment/reducer"
 	PublicationEscapeReducer      schemaapi.Key  = "placement/publication-escape/reducer"
+	SuspensionReducer             schemaapi.Key  = "placement/suspension/reducer"
 	StorageRouteSelection         schemaapi.Key  = "placement/store/route-selection"
 	ReturnRouteSelection          schemaapi.Key  = "placement/return-escape/route-selection"
 	TransferRouteSelection        schemaapi.Key  = "placement/transfer/route-selection"
 	FormalRouteSelection          schemaapi.Key  = "placement/formal/route-selection"
 	CaptureRouteSelection         schemaapi.Key  = "placement/closure-capture/route-selection"
 	ContainmentRouteSelection     schemaapi.Key  = "placement/containment/route-selection"
+	SuspensionRouteSelection      schemaapi.Key  = "placement/suspension/route-selection"
 	PlacementKeyCarrier           member.Carrier = "carrier/placement/key"
 	PlacementFactCarrier          member.Carrier = "carrier/placement/fact"
 	StorageRouteCarrier           member.Carrier = "carrier/placement/storage-route"
@@ -79,6 +85,10 @@ const (
 	ContainmentRouteCarrier       member.Carrier = "carrier/placement/containment-route"
 	ContainmentRouteTagCarrier    member.Carrier = "carrier/placement/containment-route-tag"
 	PublicationRequirementCarrier member.Carrier = "carrier/placement/publication-requirement"
+	SubjectLivenessCarrier        member.Carrier = "carrier/program/subject-liveness"
+	SuspensionRouteTagCarrier     member.Carrier = "carrier/placement/suspension-route-tag"
+	SuspensionSourceCarrier       member.Carrier = "carrier/value/suspension-source"
+	SuspensionRouteCarrier        member.Carrier = "carrier/placement/suspension-route"
 )
 
 // AxisMemberCatalog is placement's declaration-only member vocabulary.
@@ -94,6 +104,7 @@ func AxisMemberCatalog() member.Catalog {
 			{Key: FreshBirthDestinations, Subject: FreshResultCallCarrier, CandidateProvider: member.AxisRelationCandidate(member.RelationRef{Axis: schemaapi.EntryReference{Surface: schemaapi.SurfaceKind(2), Key: "value"}, Member: "value/fresh-result/candidates"})},
 			{Key: CaptureRoutes, Subject: CaptureRouteCarrier, CandidateProvider: member.IssuedRowCandidate("program-relation/occurrence-closure-proof"), Inputs: []member.Carrier{PlacementKeyCarrier, ValueFactCarrier}},
 			{Key: ContainmentRoutes, Subject: ContainmentRouteCarrier, CandidateProvider: member.IssuedRowCandidate("program-relation/occurrence-entry-geometry"), Inputs: []member.Carrier{PlacementFactCarrier, HeapFactCarrier}},
+			{Key: SuspensionRoutes, Subject: SuspensionRouteCarrier, CandidateProvider: member.IssuedRowCandidate("program-relation/occurrence-subject-liveness"), Inputs: []member.Carrier{SubjectLivenessCarrier}},
 		},
 		[]member.Projection{
 			{Key: StorageRouteKey, Relation: StorageRoutes, Role: member.Key, Result: PlacementKeyCarrier, CandidateProvider: member.AxisRelationCandidate(member.RelationRef{Axis: schemaapi.EntryReference{Surface: schemaapi.SurfaceKind(2), Key: "value"}, Member: "value/storage-transfer/candidates"})},
@@ -116,6 +127,9 @@ func AxisMemberCatalog() member.Catalog {
 			{Key: ContainmentRouteKey, Relation: ContainmentRoutes, Role: member.Key, Result: PlacementKeyCarrier, CandidateProvider: member.IssuedRowCandidate("program-relation/occurrence-entry-geometry")},
 			{Key: ContainmentRouteTag, Relation: ContainmentRoutes, Role: member.Predicate, Result: ContainmentRouteTagCarrier, CandidateProvider: member.IssuedRowCandidate("program-relation/occurrence-entry-geometry")},
 			{Key: ContainmentRouteDestination, Relation: ContainmentRoutes, Role: member.Destination, Result: PlacementKeyCarrier, CandidateProvider: member.IssuedRowCandidate("program-relation/occurrence-entry-geometry")},
+			{Key: SuspensionRouteKey, Relation: SuspensionRoutes, Role: member.Key, Result: PlacementKeyCarrier, CandidateProvider: member.IssuedRowCandidate("program-relation/occurrence-subject-liveness")},
+			{Key: SuspensionRouteTag, Relation: SuspensionRoutes, Role: member.Predicate, Result: SuspensionRouteTagCarrier, CandidateProvider: member.IssuedRowCandidate("program-relation/occurrence-subject-liveness")},
+			{Key: SuspensionRouteDestination, Relation: SuspensionRoutes, Role: member.Destination, Result: PlacementKeyCarrier, CandidateProvider: member.IssuedRowCandidate("program-relation/occurrence-subject-liveness")},
 		},
 		[]member.Reducer{
 			{Key: StorageReducer, Inputs: []member.ReducerInput{
@@ -166,6 +180,12 @@ func AxisMemberCatalog() member.Catalog {
 			}, Outputs: []member.ReducerOutput{
 				{Axis: valueAxis, Carrier: PlacementFactCarrier},
 			}},
+			{Key: SuspensionReducer, Inputs: []member.ReducerInput{
+				{Axis: schemaapi.EntryReference{Surface: schemaapi.SurfaceKindAxis, Key: "value"}, Carrier: ValueFactCarrier, Form: member.ReadFormSummary, Multiplicity: member.MultiplicityMany, Tag: SuspensionRouteTagCarrier},
+				{Axis: valueAxis, Carrier: PlacementFactCarrier, Form: member.ReadFormSelected, Multiplicity: member.MultiplicityOne, Tag: SuspensionRouteTagCarrier, Route: PlacementKeyCarrier},
+			}, Outputs: []member.ReducerOutput{
+				{Axis: valueAxis, Carrier: PlacementFactCarrier},
+			}},
 		},
 		[]member.CarryTransform{},
 	)
@@ -179,6 +199,7 @@ func AxisMemberCatalog() member.Catalog {
 		{Key: FormalRouteSelection, Relation: FormalRoutes, Tag: FormalRouteTag},
 		{Key: CaptureRouteSelection, Relation: CaptureRoutes, Tag: CaptureRouteTag},
 		{Key: ContainmentRouteSelection, Relation: ContainmentRoutes, Tag: ContainmentRouteTag},
+		{Key: SuspensionRouteSelection, Relation: SuspensionRoutes, Tag: SuspensionRouteTag},
 	})
 	if !ok {
 		panic("placement: invalid axis selection catalog")

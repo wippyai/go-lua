@@ -41,6 +41,12 @@ const (
 	suspensionRouteTag         schema.Key = "placement/suspension/route-tag"
 	suspensionRouteDestination schema.Key = "placement/suspension/route-destination"
 	suspensionReducer          schema.Key = "placement/suspension/reducer"
+	// Both dependent vectors are produced: which Value cells the subject's
+	// liveness is decided from is read out of the publication the candidate
+	// was redeemed from, and the allocation it is published into is resolved
+	// through the mounted call its boundary names.
+	suspensionSourceSelection schema.Key = "value/suspension/source-selection"
+	suspensionRouteSelection  schema.Key = "placement/suspension/route-selection"
 
 	placementFactsColumn       schema.Key = "placement/facts"
 	valueCoordinateDenominator schema.Key = "coordinates/value"
@@ -94,36 +100,53 @@ func denominatorReference(key schema.Key) ruleprogram.DenominatorRef {
 func valueAxis() schema.EntryReference     { return axisReference(valueAxisKey) }
 func placementAxis() schema.EntryReference { return axisReference(placementAxisKey) }
 
-func exactValueRead() ruleprogram.ReadDecl {
+// anchorRead is the denominator statement of the source vector: the closed
+// Value world the subject's cells are complete against. It is not a value the
+// fold consumes - nothing is folded from an anchor - so it names no fold input
+// and the vector read below is complete against it.
+func anchorRead() ruleprogram.ReadDecl {
 	return ruleprogram.ReadDecl{
 		Input:      0,
 		Axis:       ruleprogram.AxisRef(valueAxis()),
-		Form:       ruleprogram.Exact,
+		Form:       ruleprogram.Complete,
 		PointBound: ruleprogram.PointBound,
 		Contract: ruleprogram.ReadContract{
 			Order:          ruleprogram.OrderCanonical,
-			Sparse:         ruleprogram.SparseDefault,
+			Sparse:         ruleprogram.SparseDense,
 			OnOpaque:       ruleprogram.OnOpaquePropagateAuthenticated,
-			Multiplicity:   ruleprogram.MultiplicityOne,
+			Multiplicity:   ruleprogram.MultiplicityMany,
 			DenominatorRef: denominatorReference(valueCoordinateDenominator),
 		},
 	}
 }
 
-func selectedValueRead() ruleprogram.ReadDecl {
+// sourceVectorRead is the whole-vector delivery of the subject's Value cells.
+// The judgment folds the vector, not one cell of it, so the read states the
+// span it delivers rather than a per-cell selection.
+func sourceVectorRead() ruleprogram.ReadDecl {
 	return ruleprogram.ReadDecl{
 		Input:      0,
 		Axis:       ruleprogram.AxisRef(valueAxis()),
-		Form:       ruleprogram.Selected,
+		Form:       ruleprogram.Summary,
 		PointBound: ruleprogram.PointBound,
 		Contract: ruleprogram.ReadContract{
 			Order:          ruleprogram.OrderCanonical,
 			Sparse:         ruleprogram.SparseDefault,
 			OnOpaque:       ruleprogram.OnOpaquePropagateAuthenticated,
-			Multiplicity:   ruleprogram.MultiplicityOne,
+			Multiplicity:   ruleprogram.MultiplicityMany,
 			DenominatorRef: denominatorReference(valueCoordinateDenominator),
 		},
 	}
+}
+
+// selectionRef names the operation a produced read is published through, and
+// names none where the axis those rows land in publishes none: a reference to
+// an axis with no member is a malformed row rather than an absent one.
+func selectionRef(axis schema.EntryReference, key schema.Key) member.SelectionRef {
+	if !key.Available() {
+		return member.SelectionRef{}
+	}
+	return member.SelectionRef{Axis: axis, Member: key}
 }
 
 func selectedPlacementRead() ruleprogram.ReadDecl {
@@ -153,7 +176,7 @@ func declaration(outputAxisKey schema.Key, candidate member.CandidateRef, anchor
 				Sources:  []ruleprogram.SourceRef{ruleprogram.CandidateSource()},
 				Relation: member.RelationRef{Axis: value, Member: anchor},
 				Key:      member.ProjectionRef{Axis: value, Member: anchorKey},
-				Read:     exactValueRead(),
+				Read:     anchorRead(),
 			},
 			{
 				Sources: []ruleprogram.SourceRef{
@@ -163,8 +186,8 @@ func declaration(outputAxisKey schema.Key, candidate member.CandidateRef, anchor
 				Relation:  member.RelationRef{Axis: value, Member: sources},
 				Key:       member.ProjectionRef{Axis: value, Member: sourceKey},
 				Predicate: member.ProjectionRef{Axis: value, Member: sourceTag},
-				Selection: member.SelectionRef{Axis: value, Member: sourceSelection},
-				Read:      selectedValueRead(),
+				Selection: selectionRef(value, sourceSelection),
+				Read:      sourceVectorRead(),
 			},
 			{
 				Sources: []ruleprogram.SourceRef{
@@ -174,13 +197,16 @@ func declaration(outputAxisKey schema.Key, candidate member.CandidateRef, anchor
 				},
 				Relation:  member.RelationRef{Axis: outputAxis, Member: routes},
 				Key:       member.ProjectionRef{Axis: outputAxis, Member: routeKey},
-				Selection: member.SelectionRef{Axis: outputAxis, Member: routeSelection},
+				Selection: selectionRef(outputAxis, routeSelection),
 				Read:      selectedOutputRead(outputAxis),
 			},
 		},
 		Fold: ruleprogram.FoldDecl{
 			Reducer: member.ReducerRef{Axis: outputAxis, Member: reducer},
-			Inputs:  []ruleprogram.JoinRef{0, 1, 2},
+			// The anchor read states the denominator the vector is complete
+			// against; a denominator is not a fold input, so the fold takes
+			// the vector and the routed cell and nothing else.
+			Inputs: []ruleprogram.JoinRef{1, 2},
 			Outputs: []ruleprogram.OutputDecl{{
 				Column:           axis.OutputRef{Axis: outputAxis, Key: outputColumn},
 				Destination:      member.ProjectionRef{Axis: outputAxis, Member: routeDestination},
@@ -241,8 +267,11 @@ func SuspensionEvidence() ruleprogram.Program {
 		evidenceAxisKey,
 		member.IssuedRowCandidate(programissuance.RelationOccurrenceSubjectLiveness),
 		evidenceAnchors, evidenceAnchorKey,
-		evidenceSources, evidenceSourceKey, evidenceSourceTag, evidenceSourceSelection,
-		evidenceRoutes, evidenceRouteKey, evidenceRouteTag, evidenceRouteSelection, evidenceRouteDestination,
+		// The evidence producer's rows land in an axis no member source
+		// registers yet, so the operations that publish them are declared with
+		// that axis and named here when it exists.
+		evidenceSources, evidenceSourceKey, evidenceSourceTag, "",
+		evidenceRoutes, evidenceRouteKey, evidenceRouteTag, "", evidenceRouteDestination,
 		evidenceReducer, evidenceFactsColumn,
 	)
 	declaration.OperandRole = vocabulary.RoleKey(EvidenceOperandRole)
