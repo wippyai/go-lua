@@ -44,12 +44,6 @@ type rawGetRuntime struct {
 	selectorForSlot func(heapdomain.Slot) (heapdomain.KeySelector, bool)
 }
 
-func (rule *RawGetRule) callAlgebra() *calldomain.Algebra {
-	if rule == nil || rule.runtime == nil {
-		return nil
-	}
-	return rule.runtime.calls
-}
 func (rule *RawGetRule) heapSchema() heapdomain.Schema {
 	if rule == nil || rule.runtime == nil {
 		return heapdomain.Schema{}
@@ -58,14 +52,14 @@ func (rule *RawGetRule) heapSchema() heapdomain.Schema {
 }
 
 // bootInitialAt reads the sealed Target boot-slot receipt for one route and
-// payload tag. Value issued the fact at Seal; this resolves it from
-// Topology's own cold table and never reopens the Value schema.
+// payload tag. Value issued the fact at Seal, and the owner resolves it from
+// its own cold table without reopening the Value schema, so this states where
+// the read comes from and never how it is performed.
 func (rule *RawGetRule) bootInitialAt(route heapdomain.RawRouteTag, payload heapdomain.RawPayloadTag) (valuedomain.Value, bool) {
-	if rule == nil || rule.runtime == nil || rule.runtime.topology == nil || rule.runtime.topology.catalog == nil || route == 0 || payload == 0 {
+	if rule == nil || rule.runtime == nil {
 		return valuedomain.Value{}, false
 	}
-	value, ok := rule.runtime.topology.catalog.bootInitials[rawBootInitial{route: route, payload: payload}]
-	return value, ok
+	return rule.runtime.topology.catalogBootInitial(route, payload)
 }
 
 type rawGetScratch struct {

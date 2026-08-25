@@ -108,13 +108,6 @@ func (rule *RawSetRule) payloadForWrite(access Index) (RawPayload, bool) {
 	return rule.topology.RawWritePayload(access)
 }
 
-func (rule *RawSetRule) sourcesFor(access Index) []rawSource {
-	if rule != nil && rule.owns(access) && rule.topology.catalog != nil {
-		return rule.topology.catalog.sources
-	}
-	return nil
-}
-
 func (rule *RawSetRule) locateKey(context engine.SelectorContext, access Index) bool {
 	_, present, valid := selectorSingle(context, rule.receiver)
 	if !rule.owns(access) || !valid {
