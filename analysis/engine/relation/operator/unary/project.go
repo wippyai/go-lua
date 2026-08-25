@@ -210,18 +210,29 @@ func Project(input, target read.Reader, mounted witness.Mounted, plan ProjectPla
 		return false, false, false
 	}
 	declaredSource := input.Layout().Access().Relation()
+	targetColumns := target.Layout().KeyColumns()
+	mappingByTarget := make(map[model.ColumnID]Mapping, len(plan.mappings))
+	targetTypes := make(map[model.ColumnID]model.TypeID, len(plan.mappings))
 	for _, mapping := range plan.mappings {
 		if mapping.Source().Relation() != declaredSource {
 			return false, false, false
 		}
+		if _, duplicate := mappingByTarget[mapping.Target()]; duplicate {
+			return false, false, false
+		}
+		targetType, typeOK := target.Type(mapping.Target())
+		if !typeOK || !targetType.Available() {
+			return false, false, false
+		}
+		mappingByTarget[mapping.Target()] = mapping
+		targetTypes[mapping.Target()] = targetType
 	}
 
 	refused := false
 	completed, valid = Scan(input, func(source read.Row) bool {
-		targetColumns := target.Layout().KeyColumns()
 		keyValues := make([]binding.ValueToken, len(targetColumns))
 		for index, targetColumn := range targetColumns {
-			mapping, found := mappingForTarget(plan.mappings, targetColumn)
+			mapping, found := mappingByTarget[targetColumn]
 			if !found {
 				refused = true
 				return false
@@ -260,8 +271,8 @@ func Project(input, target read.Reader, mounted witness.Mounted, plan ProjectPla
 					refused = true
 					return false
 				}
-				targetType, typeOK := target.Type(mapping.Target())
-				if !typeOK || !targetType.Available() || (part.Value().Available() && part.Value().Type() != targetType) {
+				targetType, typeOK := targetTypes[mapping.Target()]
+				if !typeOK || (part.Value().Available() && part.Value().Type() != targetType) {
 					refused = true
 					return false
 				}
@@ -327,13 +338,4 @@ func cellAvailable[T cellView](cell T) bool {
 		return false
 	}
 	return !cell.Value().Available() || cell.Value().Type() == cell.Type()
-}
-
-func mappingForTarget(mappings []Mapping, target model.ColumnID) (Mapping, bool) {
-	for _, mapping := range mappings {
-		if mapping.Target() == target {
-			return mapping, true
-		}
-	}
-	return Mapping{}, false
 }
