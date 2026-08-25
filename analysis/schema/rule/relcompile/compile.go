@@ -96,6 +96,7 @@ func Compile(declaration Declaration) (plan.ExecutionSchema, error) {
 	}
 	expressions := make(map[model.ExpressionID]struct{}, len(declaration.Rules))
 	dependencies := make(map[model.DependencyID]struct{}, len(declaration.Rules))
+	footprints := make([]footprint, 0, len(declaration.Rules))
 
 	for _, rule := range declaration.Rules {
 		expression, reads, writes, err := lowerRule(rule, relations, columns, keys, scopes, signatures)
@@ -123,6 +124,16 @@ func Compile(declaration Declaration) (plan.ExecutionSchema, error) {
 		)
 		if !dependency.Available() || !builder.AddDependency(dependency) {
 			return plan.ExecutionSchema{}, fmt.Errorf("relcompile: invalid dependency")
+		}
+		footprints = append(footprints, footprint{id: rule.ID, reads: reads, writes: writes})
+	}
+
+	// Recurrence is a property of the footprints the rules already stated, so
+	// the compiler derives the components rather than asking an author to
+	// restate the graph beside the rules that form it.
+	for _, component := range declareComponents(footprints) {
+		if !component.Available() || !builder.AddSCC(component) {
+			return plan.ExecutionSchema{}, fmt.Errorf("relcompile: invalid strongly connected component")
 		}
 	}
 
