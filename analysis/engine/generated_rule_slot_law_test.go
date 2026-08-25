@@ -315,6 +315,14 @@ func newGeneratedRuleLawFixture(t testing.TB, variant generatedRuleLawVariant, r
 		Inputs:  inputs,
 		Outputs: []member.ReducerOutput{{Axis: axisReference, Carrier: generatedRuleLawJoinFact}},
 	}}
+	if variant == generatedRuleLawActivation || variant == generatedRuleLawStructural {
+		// A structural fold publishes no fact, so it declares no output
+		// carrier: its whole result is the branch's own disposition. Both
+		// structural specimens declare it, so what separates them is only
+		// whether they say WHAT they transport - which is the slot's own
+		// refusal, not the fold contract's.
+		reducers[0].Outputs, reducers[0].Structural = nil, true
+	}
 	factCarrier := generatedRuleLawJoinFact
 	if variant == generatedRuleLawSource {
 		projections = []member.Projection{

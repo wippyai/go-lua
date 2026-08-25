@@ -639,7 +639,11 @@ func renderCold(packageName string, source definition.Definition) ([]byte, error
 		for _, output := range reducer.Outputs {
 			fmt.Fprintf(&out, "\t\t\t\t{Axis: %s, Carrier: %s},\n", coldEntryReferenceExpression(output.Axis, source.Axis), carriers[output.Carrier])
 		}
-		fmt.Fprintf(&out, "\t\t\t}},\n")
+		out.WriteString("\t\t\t}")
+		if reducer.Structural {
+			out.WriteString(", Structural: true")
+		}
+		out.WriteString("},\n")
 	}
 	out.WriteString("\t\t},\n\t\t[]member.CarryTransform{\n")
 	for _, transform := range source.CarryTransforms {

@@ -165,3 +165,76 @@ func TestTheBranchIdentitiesAreResolvableReferences(t *testing.T) {
 		}
 	}
 }
+
+// foldLawInputsFor builds the reducer input row every join of one declaration
+// requires. The laws below are about OUTPUT arity, so the input side is taken
+// from the joins themselves rather than restated and left free to disagree.
+func foldLawInputsFor(program Program) []member.ReducerInput {
+	inputs := make([]member.ReducerInput, 0, len(program.Fold.Inputs))
+	for _, reference := range program.Fold.Inputs {
+		join := program.Joins[uint64(reference)]
+		input := member.ReducerInput{
+			Axis:         join.Read.Axis.EntryReference(),
+			Carrier:      "carrier/fold-law/fact",
+			Form:         join.Read.Form,
+			Multiplicity: join.Read.Contract.Multiplicity,
+		}
+		if join.Read.Form == Summary {
+			input.Tag = "carrier/fold-law/ordinal"
+		}
+		inputs = append(inputs, input)
+	}
+	return inputs
+}
+
+// TestAStructuralFoldAgreesWithItsReducerAboutPublishingNoFact states the
+// biconditional the reducer contract now carries. The equality between
+// declared output carriers and declared output columns is not weakened: it is
+// restated as "equal unless the publication is structural, in which case there
+// are no carriers at all", and the reducer's own marker must agree.
+func TestAStructuralFoldAgreesWithItsReducerAboutPublishingNoFact(t *testing.T) {
+	program := activationLawProgram()
+	structuralReducer := member.Reducer{
+		Key:        "activation-law/reducer",
+		Structural: true,
+		Inputs:     foldLawInputsFor(program),
+	}
+	if problem := program.Fold.checkAgainst(program.Joins, structuralReducer); problem != foldProblemNone {
+		t.Fatalf("a structural fold and its carrier-free reducer disagreed: %v", problem)
+	}
+
+	// A carrier on a structural fold is a fact it has nowhere to publish.
+	publishing := structuralReducer
+	publishing.Structural = false
+	publishing.Outputs = []member.ReducerOutput{{Axis: lawMemberAxis(), Carrier: "carrier/activation-law/fact"}}
+	if program.Fold.checkAgainst(program.Joins, publishing) == foldProblemNone {
+		t.Fatal("a structural fold accepted a reducer that publishes a fact")
+	}
+
+	// A marker without the shape, and a shape without the marker, are both a
+	// declaration disagreeing with itself.
+	mismatched := structuralReducer
+	mismatched.Structural = false
+	if program.Fold.checkAgainst(program.Joins, mismatched) == foldProblemNone {
+		t.Fatal("a carrier-free reducer that does not declare itself structural was admitted")
+	}
+}
+
+// TestAnOrdinaryFoldStillMatchesItsReducerCarrierForCarrier is the half that
+// must not move: every fact-writing rule keeps one output carrier per column.
+func TestAnOrdinaryFoldStillMatchesItsReducerCarrierForCarrier(t *testing.T) {
+	transfer := seq5742Specimens()["value-transfer"]
+	ordinary := member.Reducer{
+		Key:     "value-transfer/reducer",
+		Inputs:  foldLawInputsFor(transfer),
+		Outputs: []member.ReducerOutput{{Axis: lawMemberAxis(), Carrier: "carrier/value-transfer/fact"}},
+	}
+	if problem := transfer.Fold.checkAgainst(transfer.Joins, ordinary); problem != foldProblemNone {
+		t.Fatalf("an ordinary fold and its one-carrier reducer disagreed: %v", problem)
+	}
+	structural := ordinary
+	structural.Structural, structural.Outputs = true, nil
+	if transfer.Fold.checkAgainst(transfer.Joins, structural) == foldProblemNone {
+		t.Fatal("a fact-writing fold accepted a reducer that publishes nothing")
+	}
+}

@@ -882,8 +882,22 @@ func compileProgram(ruleOrdinal uint32, template *rule.Template, declaration pro
 			return Plan{}, compileFailure(template.ID(), rule.LawProgramOutput, schema.DispositionMalformed)
 		}
 		outputFact = outputSignature.Fact
-		reducerOutput := reducer.Outputs[output.ValueSlot]
-		if reducerOutput.Axis != output.Column.Axis || reducerOutput.Carrier != outputSignature.Fact {
+		// A structural publication declares no output CARRIER - its fold
+		// concludes a disposition, not a fact - so there is no reducer row for
+		// the column to agree with. The column itself is still resolved above:
+		// a structural row is indexed by it even though it writes nothing into
+		// it. FoldDecl.checkAgainst already holds the two arities to their
+		// biconditional, so an empty list here is the structural case and
+		// never an ordinary reducer that lost a row.
+		if output.Mode != program.ModeStructural {
+			if uint64(output.ValueSlot) >= uint64(len(reducer.Outputs)) {
+				return Plan{}, compileFailure(template.ID(), rule.LawProgramOutput, schema.DispositionMalformed)
+			}
+			reducerOutput := reducer.Outputs[output.ValueSlot]
+			if reducerOutput.Axis != output.Column.Axis || reducerOutput.Carrier != outputSignature.Fact {
+				return Plan{}, compileFailure(template.ID(), rule.LawProgramOutput, schema.DispositionMalformed)
+			}
+		} else if len(reducer.Outputs) != 0 {
 			return Plan{}, compileFailure(template.ID(), rule.LawProgramOutput, schema.DispositionMalformed)
 		}
 		frameIndex, frameOK, writerOK := findOutput(outputAxis, output.Column.Key, template.Writes())

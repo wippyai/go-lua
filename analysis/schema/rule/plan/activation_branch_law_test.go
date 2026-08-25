@@ -53,6 +53,9 @@ func newActivationBranchFixture(t *testing.T) *planFixture {
 	fixture.declaration.Joins = nestedMemberSetJoins(planCandidateRelation)[:1]
 	fixture.declaration.Fold.Inputs = []program.JoinRef{0}
 	fixture.declaration.Fold.Outputs[0].Mode = program.ModeStructural
+	// A structural fold publishes no fact, so it declares no output carrier at
+	// all: its whole result is the disposition of the branch it was invoked
+	// for.
 	fixture.catalog.Reducers[0].Inputs = []member.ReducerInput{{
 		Axis:         mainAxis,
 		Carrier:      planFactCarrier,
@@ -60,6 +63,8 @@ func newActivationBranchFixture(t *testing.T) *planFixture {
 		Multiplicity: member.MultiplicityMany,
 		Tag:          nestedMemberOrdinal,
 	}}
+	fixture.catalog.Reducers[0].Outputs = nil
+	fixture.catalog.Reducers[0].Structural = true
 	fixture.declaration.Transport = []program.TransportDecl{{Axis: program.AxisRef(mainAxis)}}
 	fixture.declaration.ActivationRole = vocabulary.RoleKey("plan/activation-family")
 	fixture.declaration.Activation = &program.ActivationDecl{

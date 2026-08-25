@@ -332,6 +332,11 @@ type Reducer struct {
 	Candidate string
 	Inputs    []ReducerInput
 	Outputs   []ReducerOutput
+	// Structural marks a fold that publishes no fact: its whole result is the
+	// disposition of the branch it was invoked for. It declares no output
+	// carrier, and the marker is what tells that apart from an ordinary
+	// reducer whose output was simply left out.
+	Structural bool
 	// Derivation is the optional sealed state this reducer's judgment is
 	// issued by. A fold whose answer rests on its axes' cold schemas cannot
 	// take them as parameters - that is what keeps a call shape from growing
@@ -666,7 +671,7 @@ func (definition Definition) Catalog() (member.Catalog, bool) {
 			}
 			outputs[outputIndex] = member.ReducerOutput{Axis: output.Axis, Carrier: carrier.Key}
 		}
-		reducers[index] = member.Reducer{Key: reducer.Key, Inputs: inputs, Outputs: outputs}
+		reducers[index] = member.Reducer{Key: reducer.Key, Inputs: inputs, Outputs: outputs, Structural: reducer.Structural}
 		reducerKeys[reducer.Key] = struct{}{}
 	}
 	transforms := make([]member.CarryTransform, len(definition.CarryTransforms))

@@ -120,7 +120,26 @@ func (fold FoldDecl) checkAgainst(joins []JoinDecl, reducer member.Reducer) fold
 	if len(reducer.Inputs) != len(fold.Inputs) {
 		return foldProblemInputs
 	}
-	if len(reducer.Outputs) != len(fold.Outputs) {
+	// A fold's declared output CARRIERS are the facts it publishes, and its
+	// declared output COLUMNS are where it publishes them. For every ordinary
+	// publication those are the same count: one carrier per column.
+	//
+	// A structural publication writes no fact into any column - its output is
+	// the activation row set its branches mount - so it declares no carrier at
+	// all while still naming the column its rows are indexed by. The equality
+	// therefore holds exactly when the publication is not structural, and the
+	// reducer's own Structural marker must agree with the modes the fold
+	// declares. A declaration where the two disagree is one half of it
+	// describing a fact the other half does not publish.
+	structural, uniform := fold.structuralPublication()
+	if !uniform || reducer.Structural != structural {
+		return foldProblemOutputs
+	}
+	if structural {
+		if len(reducer.Outputs) != 0 {
+			return foldProblemOutputs
+		}
+	} else if len(reducer.Outputs) != len(fold.Outputs) {
 		return foldProblemOutputs
 	}
 	for position, input := range fold.Inputs {
@@ -172,6 +191,23 @@ func multiplicityAgrees(form ReadForm, routed bool, read, fold Multiplicity) boo
 		return fold == MultiplicityOne || fold == MultiplicityMany
 	}
 	return read == fold
+}
+
+// structuralPublication answers whether this fold publishes structurally, and
+// whether its columns agree with each other about it. A fold whose columns
+// disagree publishes a fact and no fact at once, which no reducer signature
+// could satisfy.
+func (fold FoldDecl) structuralPublication() (structural bool, uniform bool) {
+	if len(fold.Outputs) == 0 {
+		return false, false
+	}
+	structural = fold.Outputs[0].Mode == ModeStructural
+	for _, output := range fold.Outputs[1:] {
+		if (output.Mode == ModeStructural) != structural {
+			return false, false
+		}
+	}
+	return structural, true
 }
 
 func (fold FoldDecl) check(joinCount int) foldProblem {

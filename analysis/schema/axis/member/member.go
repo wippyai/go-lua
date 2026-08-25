@@ -210,10 +210,19 @@ type Reducer struct {
 	Key     schema.Key
 	Inputs  []ReducerInput
 	Outputs []ReducerOutput
+	// Structural marks a fold that publishes no fact. A fold's declared
+	// outputs are the facts it publishes, and a structural publication has
+	// none: its whole result is the disposition of the branch it was invoked
+	// for, which is what a ReductionOutcome already is.
+	//
+	// It is declared on the row rather than inferred from an empty output
+	// list, so an ordinary reducer that simply lost its output is still
+	// refused instead of silently reading as structural.
+	Structural bool
 }
 
 func (reducer Reducer) Available() bool {
-	if !reducer.Key.Available() || len(reducer.Outputs) == 0 {
+	if !reducer.Key.Available() || (len(reducer.Outputs) == 0) != reducer.Structural {
 		return false
 	}
 	for _, input := range reducer.Inputs {
@@ -396,9 +405,10 @@ func cloneReducers(reducers []Reducer) []Reducer {
 	clone := make([]Reducer, len(reducers))
 	for index, reducer := range reducers {
 		clone[index] = Reducer{
-			Key:     reducer.Key,
-			Inputs:  cloneReducerInputs(reducer.Inputs),
-			Outputs: cloneReducerOutputs(reducer.Outputs),
+			Key:        reducer.Key,
+			Inputs:     cloneReducerInputs(reducer.Inputs),
+			Outputs:    cloneReducerOutputs(reducer.Outputs),
+			Structural: reducer.Structural,
 		}
 	}
 	return clone
@@ -561,9 +571,10 @@ func (catalog Catalog) Reducer(key schema.Key) (Reducer, bool) {
 	for _, reducer := range catalog.Reducers {
 		if reducer.Key == key {
 			return Reducer{
-				Key:     reducer.Key,
-				Inputs:  cloneReducerInputs(reducer.Inputs),
-				Outputs: cloneReducerOutputs(reducer.Outputs),
+				Key:        reducer.Key,
+				Inputs:     cloneReducerInputs(reducer.Inputs),
+				Outputs:    cloneReducerOutputs(reducer.Outputs),
+				Structural: reducer.Structural,
 			}, true
 		}
 	}
