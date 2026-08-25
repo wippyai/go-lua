@@ -5,14 +5,15 @@ import (
 	"github.com/wippyai/go-lua/analysis/relation/semantic/signature"
 )
 
-// planGapRawPackRoutes is the reason the two raw-access pack expansions carry.
-// The owner publishes the enumeration, and the authored plan does not deliver
-// everything it reads: the payloads a selected route carries are enumerated
-// under a key selector, and the authored step joins the route relation onto
-// the heap facts alone, so the key selector the key route determined never
-// reaches the frame. The remedy is a join the plan states, not a lowering this
-// layer invents, so the rows are declared, named, and left unbound.
-const planGapRawPackRoutes = "w0-plan-incomplete: the authored pack expansion does not deliver the key selector its enumeration reads"
+// The two reasons the remaining raw-access operations carry. Both are the same
+// finding: the owner publishes the judgment, and the authored plan's join list
+// does not deliver the frame that judgment reads. The remedy is a join the
+// plan states, never a lowering this layer invents or a frame it fills in, so
+// the rows are declared, named, and left unbound.
+const (
+	planGapRawPackRoutes = "w0-plan-incomplete: the authored pack expansion joins the route relation onto the heap facts alone, so the key selector its enumeration reads never reaches the frame"
+	planGapRawReduction  = "w0-plan-incomplete: the authored reduction joins three relations, and the owner reduction reads the call and heap fact selections the plan does not deliver"
+)
 
 // scalar is the delivery a single-cell input carries.
 const scalar = signature.ScalarDelivery
@@ -372,6 +373,14 @@ func families() []Family {
 		{
 			Census: "heap/index", Rule: "raw-set", Stem: "RawSetPackRoutes", Axis: "heap",
 			Pending: planGapRawPackRoutes,
+		},
+		{
+			Census: "heap/index", Rule: "raw-get", Stem: "RawGetResult", Axis: "heap",
+			Pending: planGapRawReduction,
+		},
+		{
+			Census: "heap/index", Rule: "raw-set", Stem: "RawSetCommit", Axis: "heap",
+			Pending: planGapRawReduction,
 		},
 	}
 }
