@@ -46,6 +46,7 @@ import (
 	statictransfer "github.com/wippyai/go-lua/domain/static/transfer"
 	valuedomain "github.com/wippyai/go-lua/domain/value"
 	valueallocation "github.com/wippyai/go-lua/domain/value/allocation"
+	valueallocationprogram "github.com/wippyai/go-lua/domain/value/allocation/program"
 	valuearithmeticprogram "github.com/wippyai/go-lua/domain/value/arithmetic/program"
 	valuebodyresult "github.com/wippyai/go-lua/domain/value/bodyresult"
 	valuebootstrap "github.com/wippyai/go-lua/domain/value/bootstrap"
@@ -139,7 +140,10 @@ func ruleTemplateWiring[P Principals, A Authorities]() ([]*rule.Template, []Rule
 	add(WireGeneratedRule[P, A](valuesource.RuleEntry()))
 	add(WireGeneratedRule[P, A](packsource.RuleEntry()))
 	add(WireGeneratedRule[P, A](heapingress.RuleEntry()))
-	add(WireRule(valueallocation.RuleEntry[P, A](), valueallocation.DeclareRule[P], valueallocation.RegisterRule, nil, valueallocation.BindRule[A], nil, nil, nil))
+	// The constructor result is a Program whose fold reads nothing and whose
+	// publication is a transformed carry, so it installs the family the engine
+	// has no generic builder for.
+	add(WireGeneratedRuleWithFamily[P, A](valueallocationprogram.RuleEntry(), valueallocation.InstallFamily[A]))
 	// The empty constructor is a Program whose fold is a transformed carry, so
 	// it installs the family the engine has no generic builder for.
 	add(WireGeneratedRuleWithFamily[P, A](heapempty.RuleEntry(), heapempty.InstallFamily[A]))

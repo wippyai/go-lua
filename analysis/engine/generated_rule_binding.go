@@ -230,14 +230,16 @@ func (cell *generatedRuleBindingCell) schemaRuleComplete() bool {
 			return false
 		}
 	}
+	// A read-free rule authenticates no join and publishes exactly. Whether it
+	// opens an input port is the carry's own statement, not the read count's: a
+	// source column names none, and a read-free transformed carry names the one
+	// port its carry carries at. The carry block below is what answers that, for
+	// every rule alike.
 	if program.ReadCount() == 0 {
-		if shape.ReadCount != 0 || shape.CarryCount != 0 || program.InputCount() != 0 || len(cell.reads) != 0 ||
-			mode != ruleprogram.ModeExact {
+		if shape.ReadCount != 0 || len(cell.reads) != 0 || mode != ruleprogram.ModeExact {
 			return false
 		}
-		return cell.state.phase == schemaBindingOpen || cell.state.phase == schemaBindingSealed
-	}
-	if shape.ReadCount != uint64(program.ReadCount()) || len(cell.reads) != program.ReadCount() {
+	} else if shape.ReadCount != uint64(program.ReadCount()) || len(cell.reads) != program.ReadCount() {
 		return false
 	}
 	// A join names the Factor it reads, which need not be the Factor this rule

@@ -22,6 +22,7 @@ import (
 	returnprogram "github.com/wippyai/go-lua/domain/placement/returnescape/program"
 	storeprogram "github.com/wippyai/go-lua/domain/placement/store/program"
 	freshresultprogram "github.com/wippyai/go-lua/domain/value/freshresult/program"
+	valueallocationprogram "github.com/wippyai/go-lua/domain/value/allocation/program"
 	valuemoduleloadprogram "github.com/wippyai/go-lua/domain/value/moduleload/program"
 	refinementprogram "github.com/wippyai/go-lua/domain/value/refinement/program"
 )
@@ -116,6 +117,11 @@ func Families() []Family {
 				Spec:        freshresultprogram.RuleEntry(),
 			},
 			Directory: "domain/value/freshresult",
+				PackagePath: "github.com/wippyai/go-lua/domain/value/allocation",
+				PackageName: "allocation",
+				Spec:        valueallocationprogram.RuleEntry(),
+			},
+			Directory: "domain/value/allocation",
 		},
 	}
 }

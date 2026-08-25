@@ -74,6 +74,7 @@ const (
 	PresenceRefinementReducer          schemaapi.Key  = "value/presence-refinement/reducer"
 	BinaryOrderReducer                 schemaapi.Key  = "value/binary-order/reducer"
 	ModuleLoadCallReducer              schemaapi.Key  = "value/module-load/reducer"
+	AllocationResultReducer            schemaapi.Key  = "value/allocation/reducer"
 	AllocationCarryTransform           schemaapi.Key  = "transform/value/allocation"
 	FreshResultRouteCarryTransform     schemaapi.Key  = "transform/value/fresh-result-route"
 	ValueCoordinateCarrier             member.Carrier = "carrier/value/coordinate"
@@ -211,6 +212,9 @@ func AxisMemberCatalog() member.Catalog {
 				{Axis: valueAxis, Carrier: ValueFactCarrier, Form: member.ReadFormExact, Multiplicity: member.MultiplicityOne},
 				{Axis: schemaapi.EntryReference{Surface: schemaapi.SurfaceKindAxis, Key: "call"}, Carrier: CallFactCarrier, Form: member.ReadFormExact, Multiplicity: member.MultiplicityOne},
 			}, Outputs: []member.ReducerOutput{
+				{Axis: valueAxis, Carrier: ValueFactCarrier},
+			}},
+			{Key: AllocationResultReducer, Inputs: []member.ReducerInput{}, Outputs: []member.ReducerOutput{
 				{Axis: valueAxis, Carrier: ValueFactCarrier},
 			}},
 		},

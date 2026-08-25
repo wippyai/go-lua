@@ -795,8 +795,18 @@ func bindGeneratedMember(plane *programPlane, topology *equation.Topology, membe
 	default:
 		return nil, false
 	}
-	if descriptor.ReadCount() == 0 && inputCount != 0 {
-		return nil, false
+	// A read-free rule opens an input port only for its carry: a source column
+	// opens none, and a read-free transformed carry opens exactly the one its
+	// carry carries at. Any further port would be a read this member never
+	// delivers a cell for.
+	if descriptor.ReadCount() == 0 {
+		ports := 0
+		if carryInput >= 0 {
+			ports = carryInput + 1
+		}
+		if inputCount != ports {
+			return nil, false
+		}
 	}
 	return newGeneratedMember(spec)
 }
