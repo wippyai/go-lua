@@ -32,6 +32,7 @@ const (
 	FreshResultRoutes           schema.Key = valuedomain.FreshResultRoutes
 	FreshResultRouteKey         schema.Key = valuedomain.FreshResultRouteKey
 	FreshResultRouteTag         schema.Key = valuedomain.FreshResultRouteTag
+	FreshResultRouteSelection   schema.Key = valuedomain.FreshResultRouteSelection
 	FreshResultRouteDestination schema.Key = valuedomain.FreshResultRouteDestination
 	FreshResultReducer          schema.Key = valuedomain.FreshResultReducer
 	FreshResultRouteCarry       schema.Key = valuedomain.FreshResultRouteCarryTransform
@@ -119,6 +120,7 @@ func FreshResult() ruleprogram.Program {
 				Relation:  member.RelationRef{Axis: valueAxis, Member: FreshResultRoutes},
 				Key:       member.ProjectionRef{Axis: valueAxis, Member: FreshResultRouteKey},
 				Predicate: member.ProjectionRef{Axis: valueAxis, Member: FreshResultRouteTag},
+				Selection: member.SelectionRef{Axis: valueAxis, Member: FreshResultRouteSelection},
 				Read: ruleprogram.ReadDecl{
 					Input: 1,
 					Axis:  ruleprogram.AxisRef(valueAxis),

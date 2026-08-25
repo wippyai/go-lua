@@ -115,6 +115,15 @@ func Contribution() definition.Contribution {
 				Accessor:          freshResultMethod("Predicate", "Route", -1),
 			},
 		},
+		// The routes this rule reads are computed from the cells the reads
+		// before them delivered, so they are published through this
+		// selection and stamped with the tag the reading rule joins on.
+		Selections: []definition.Selection{{
+			Name:     "FreshResultRouteSelection",
+			Key:      "value/fresh-result/route-selection",
+			Relation: "FreshResultRoutes",
+			Tag:      "FreshResultRouteTag",
+		}},
 		Reducers: []definition.Reducer{{
 			Name:      "FreshResultReducer",
 			Key:       "value/reducer/fresh-result",

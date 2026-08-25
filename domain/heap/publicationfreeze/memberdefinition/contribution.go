@@ -151,6 +151,15 @@ func Contribution() definition.Contribution {
 				Accessor:          routeMethod("Coordinates", 1),
 			},
 		},
+		// The routes this rule reads are computed from the cells the reads
+		// before them delivered, so they are published through this
+		// selection and stamped with the tag the reading rule joins on.
+		Selections: []definition.Selection{{
+			Name:     "PublicationFreezeRouteSelection",
+			Key:      "heap/publication-freeze/route-selection",
+			Relation: "PublicationFreezeRoutes",
+			Tag:      "PublicationFreezeRouteTag",
+		}},
 		Reducers: []definition.Reducer{{
 			Name: "PublicationFreezeReducer",
 			Key:  "heap/reducer/publication-freeze",

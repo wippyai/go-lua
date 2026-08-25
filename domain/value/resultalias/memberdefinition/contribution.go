@@ -99,6 +99,15 @@ func Contribution() definition.Contribution {
 				Role: member.Predicate, Result: "ResultAliasRouteTagCarrier", Accessor: aliasRouteMethod("Predicate"),
 			},
 		},
+		// The routes this rule reads are computed from the cells the reads
+		// before them delivered, so they are published through this
+		// selection and stamped with the tag the reading rule joins on.
+		Selections: []definition.Selection{{
+			Name:     "ResultAliasRouteSelection",
+			Key:      "value/result-alias/route-selection",
+			Relation: "ResultAliasRoutes",
+			Tag:      "ResultAliasRouteTag",
+		}},
 		Reducers: []definition.Reducer{{
 			Name:      "ResultAliasReducer",
 			Key:       "value/result-alias/reducer",

@@ -41,6 +41,7 @@ const (
 	ResultAliasRoutes               schema.Key = valuedomain.ResultAliasRoutes
 	ResultAliasRouteKey             schema.Key = valuedomain.ResultAliasRouteKey
 	ResultAliasRouteTag             schema.Key = valuedomain.ResultAliasRouteTag
+	ResultAliasRouteSelection       schema.Key = valuedomain.ResultAliasRouteSelection
 	CallResultSlotSites             schema.Key = calldomain.CallResultSlotSites
 	CallResultSlotSiteKey           schema.Key = calldomain.CallResultSlotSiteKey
 	Reducer                         schema.Key = valuedomain.ResultAliasReducer
@@ -132,6 +133,7 @@ func ResultAliasCallResult() ruleprogram.Program {
 				Relation:  member.RelationRef{Axis: valueAxis, Member: ResultAliasRoutes},
 				Key:       member.ProjectionRef{Axis: valueAxis, Member: ResultAliasRouteKey},
 				Predicate: member.ProjectionRef{Axis: valueAxis, Member: ResultAliasRouteTag},
+				Selection: member.SelectionRef{Axis: valueAxis, Member: ResultAliasRouteSelection},
 				Read: ruleprogram.ReadDecl{
 					PointBound: ruleprogram.PointBound,
 					Input:      0,

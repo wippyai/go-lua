@@ -49,6 +49,7 @@ const (
 	PublicationFreezeRoutes           schema.Key = heapdomain.PublicationFreezeRoutes
 	PublicationFreezeRouteKey         schema.Key = heapdomain.PublicationFreezeRouteKey
 	PublicationFreezeRouteTag         schema.Key = heapdomain.PublicationFreezeRouteTag
+	PublicationFreezeRouteSelection   schema.Key = heapdomain.PublicationFreezeRouteSelection
 	PublicationFreezeRouteDestination schema.Key = heapdomain.PublicationFreezeRouteDestination
 	PublicationFreezeReducer          schema.Key = heapdomain.PublicationFreezeReducer
 )
@@ -180,6 +181,7 @@ func PublicationFreeze() ruleprogram.Program {
 				Relation:  member.RelationRef{Axis: heapAxis, Member: PublicationFreezeRoutes},
 				Key:       member.ProjectionRef{Axis: heapAxis, Member: PublicationFreezeRouteKey},
 				Predicate: member.ProjectionRef{Axis: heapAxis, Member: PublicationFreezeRouteTag},
+				Selection: member.SelectionRef{Axis: heapAxis, Member: PublicationFreezeRouteSelection},
 				Read: ruleprogram.ReadDecl{
 					Input:      2,
 					Axis:       ruleprogram.AxisRef(heapAxis),

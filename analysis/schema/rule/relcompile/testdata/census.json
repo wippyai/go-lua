@@ -94,10 +94,9 @@
     "family": "heap/publicationfreeze",
     "plane": "family",
     "rule": "heap-publication-freeze",
-    "status": "COUPLING-FINDING",
-    "site": "program.joins[2].predicate",
-    "missing": "operation",
-    "reason": "undeclared"
+    "status": "COMPILES",
+    "sketch": "Publish(Apply(Select(Join(Join(Input,Select(Input)),Select(Input))))) | Publish(Merge(Apply(Select(Join(Join(Join(Join(Input,Select(Input)),Complete(Select(Input))),Select(Input)),Complete(Select(Input))))),Select(Input)))",
+    "expressions": 2
   },
   {
     "family": "pack/source",
@@ -235,10 +234,9 @@
     "family": "value/bodyresult",
     "plane": "family",
     "rule": "value-callresult-body",
-    "status": "COUPLING-FINDING",
-    "site": "program.joins[1].predicate",
-    "missing": "operation",
-    "reason": "undeclared"
+    "status": "COMPILES",
+    "sketch": "Publish(Apply(Select(Join(Input,Select(Input))))) | Publish(Merge(Apply(Select(Join(Join(Input,Select(Input)),Select(Input)))),Select(Input)))",
+    "expressions": 2
   },
   {
     "family": "value/bootstrap",
@@ -260,10 +258,9 @@
     "family": "value/freshresult",
     "plane": "family",
     "rule": "value-callresult-freshresult",
-    "status": "COUPLING-FINDING",
-    "site": "program.joins[1].predicate",
-    "missing": "operation",
-    "reason": "undeclared"
+    "status": "COMPILES",
+    "sketch": "Publish(Apply(Select(Join(Input,Select(Input))))) | Publish(Merge(Apply(Select(Join(Join(Input,Select(Input)),Complete(Select(Input))))),Apply(Select(Input))))",
+    "expressions": 2
   },
   {
     "family": "value/moduleload",
@@ -293,10 +290,9 @@
     "family": "value/resultalias",
     "plane": "family",
     "rule": "value-callresult-resultalias",
-    "status": "COUPLING-FINDING",
-    "site": "program.joins[1].predicate",
-    "missing": "operation",
-    "reason": "undeclared"
+    "status": "COMPILES",
+    "sketch": "Publish(Apply(Select(Join(Input,Select(Input))))) | Publish(Merge(Apply(Select(Join(Join(Input,Select(Input)),Select(Input)))),Select(Input)))",
+    "expressions": 2
   },
   {
     "family": "value/runtimekind",

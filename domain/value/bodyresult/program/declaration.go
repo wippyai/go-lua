@@ -41,6 +41,7 @@ const (
 	BodyReturnRoutes                schema.Key = valuedomain.BodyReturnRoutes
 	BodyReturnRouteKey              schema.Key = valuedomain.BodyReturnRouteKey
 	BodyReturnRouteTag              schema.Key = valuedomain.BodyReturnRouteTag
+	BodyReturnRouteSelection        schema.Key = valuedomain.BodyReturnRouteSelection
 	CallResultSlotSites             schema.Key = calldomain.CallResultSlotSites
 	CallResultSlotSiteKey           schema.Key = calldomain.CallResultSlotSiteKey
 	Reducer                         schema.Key = valuedomain.BodyResultReducer
@@ -127,6 +128,7 @@ func BodyCallResult() ruleprogram.Program {
 				Relation:  member.RelationRef{Axis: valueAxis, Member: BodyReturnRoutes},
 				Key:       member.ProjectionRef{Axis: valueAxis, Member: BodyReturnRouteKey},
 				Predicate: member.ProjectionRef{Axis: valueAxis, Member: BodyReturnRouteTag},
+				Selection: member.SelectionRef{Axis: valueAxis, Member: BodyReturnRouteSelection},
 				Read: ruleprogram.ReadDecl{
 					PointBound: ruleprogram.PointBound,
 					Input:      0,

@@ -97,6 +97,15 @@ func Contribution() definition.Contribution {
 				Role: member.Predicate, Result: "BodyReturnRouteTagCarrier", Accessor: returnRouteMethod("Predicate"),
 			},
 		},
+		// The routes this rule reads are computed from the cells the reads
+		// before them delivered, so they are published through this
+		// selection and stamped with the tag the reading rule joins on.
+		Selections: []definition.Selection{{
+			Name:     "BodyReturnRouteSelection",
+			Key:      "value/body-result/route-selection",
+			Relation: "BodyReturnRoutes",
+			Tag:      "BodyReturnRouteTag",
+		}},
 		Reducers: []definition.Reducer{{
 			Name:      "BodyResultReducer",
 			Key:       "value/body-result/reducer",
