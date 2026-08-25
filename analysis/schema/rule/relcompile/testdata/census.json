@@ -123,18 +123,18 @@
     "plane": "family",
     "rule": "placement-closure-capture",
     "status": "COUPLING-FINDING",
-    "site": "program",
-    "missing": "declaration",
-    "reason": "the declarative rule declaration is not committed at this revision; the family runs on its wired registration arm"
+    "site": "program.joins[1].predicate",
+    "missing": "operation",
+    "reason": "undeclared"
   },
   {
     "family": "placement/containment",
     "plane": "family",
     "rule": "placement-containment",
     "status": "COUPLING-FINDING",
-    "site": "program",
-    "missing": "declaration",
-    "reason": "the declarative rule declaration is not committed at this revision; the family runs on its wired registration arm"
+    "site": "program.joins[2].sources",
+    "missing": "operation",
+    "reason": "undeclared"
   },
   {
     "family": "placement/formal",
@@ -159,9 +159,9 @@
     "plane": "family",
     "rule": "placement-publication-escape",
     "status": "COUPLING-FINDING",
-    "site": "program",
-    "missing": "declaration",
-    "reason": "the declarative rule declaration is not committed at this revision; the family runs on its wired registration arm"
+    "site": "program.joins[1].predicate",
+    "missing": "operation",
+    "reason": "undeclared"
   },
   {
     "family": "placement/returnescape",
@@ -186,18 +186,18 @@
     "plane": "family",
     "rule": "placement-suspension",
     "status": "COUPLING-FINDING",
-    "site": "program",
-    "missing": "declaration",
-    "reason": "the declarative rule declaration is not committed at this revision; the family runs on its wired registration arm"
+    "site": "program.joins[1].predicate",
+    "missing": "operation",
+    "reason": "undeclared"
   },
   {
     "family": "placement/suspension-evidence",
     "plane": "family",
     "rule": "placement-suspension-evidence",
     "status": "COUPLING-FINDING",
-    "site": "program",
-    "missing": "declaration",
-    "reason": "the declarative rule declaration is not committed at this revision; the family runs on its wired registration arm"
+    "site": "program.joins[1].predicate",
+    "missing": "operation",
+    "reason": "undeclared"
   },
   {
     "family": "placement/transfer",

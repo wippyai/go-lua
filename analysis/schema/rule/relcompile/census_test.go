@@ -25,9 +25,13 @@ import (
 	heapformalfreeze "github.com/wippyai/go-lua/domain/heap/formalfreeze/program"
 	heappublicationfreeze "github.com/wippyai/go-lua/domain/heap/publicationfreeze/program"
 	packsource "github.com/wippyai/go-lua/domain/pack/source"
+	placementcapture "github.com/wippyai/go-lua/domain/placement/capture/program"
+	placementcontainment "github.com/wippyai/go-lua/domain/placement/containment/program"
 	placementformal "github.com/wippyai/go-lua/domain/placement/formal/program"
+	placementpublicationescape "github.com/wippyai/go-lua/domain/placement/publicationescape/program"
 	placementreturnescape "github.com/wippyai/go-lua/domain/placement/returnescape/program"
 	placementstore "github.com/wippyai/go-lua/domain/placement/store/program"
+	placementsuspension "github.com/wippyai/go-lua/domain/placement/suspension/program"
 	placementtransfer "github.com/wippyai/go-lua/domain/placement/transfer/program"
 	statictransfer "github.com/wippyai/go-lua/domain/static/transfer"
 	valueallocation "github.com/wippyai/go-lua/domain/value/allocation/program"
@@ -71,9 +75,14 @@ func declared() []specimen {
 		{Family: "heap/formalfreeze", Plane: "family", Spec: heapformalfreeze.RuleEntry()},
 		{Family: "heap/publicationfreeze", Plane: "family", Spec: heappublicationfreeze.RuleEntry()},
 		{Family: "pack/source", Plane: "seed", Spec: packsource.RuleEntry()},
+		{Family: "placement/capture", Plane: "family", Spec: placementcapture.RuleEntry()},
+		{Family: "placement/containment", Plane: "family", Spec: placementcontainment.RuleEntry()},
 		{Family: "placement/formal", Plane: "family", Spec: placementformal.RuleEntry()},
+		{Family: "placement/publicationescape", Plane: "family", Spec: placementpublicationescape.RuleEntry()},
 		{Family: "placement/returnescape", Plane: "family", Spec: placementreturnescape.RuleEntry()},
 		{Family: "placement/store", Plane: "family", Spec: placementstore.RuleEntry()},
+		{Family: "placement/suspension", Plane: "family", Spec: placementsuspension.RuleEntry()},
+		{Family: "placement/suspension-evidence", Plane: "family", Spec: placementsuspension.EvidenceRuleEntry()},
 		{Family: "placement/transfer", Plane: "family", Spec: placementtransfer.RuleEntry()},
 		{Family: "static/transfer", Plane: "family", Spec: statictransfer.RuleEntry()},
 		{Family: "value/allocation", Plane: "seed", Spec: valueallocation.RuleEntry()},
@@ -99,12 +108,7 @@ func declared() []specimen {
 func uncommitted() []entry {
 	rows := []entry{
 		{Family: "placement/allocationbirth", Rule: "placement-allocation-birth"},
-		{Family: "placement/capture", Rule: "placement-closure-capture"},
-		{Family: "placement/containment", Rule: "placement-containment"},
 		{Family: "placement/freshbirth", Rule: "placement-fresh-birth"},
-		{Family: "placement/publicationescape", Rule: "placement-publication-escape"},
-		{Family: "placement/suspension", Rule: "placement-suspension"},
-		{Family: "placement/suspension-evidence", Rule: "placement-suspension-evidence"},
 		{Family: "typestate", Rule: "typestate"},
 	}
 	for index := range rows {
