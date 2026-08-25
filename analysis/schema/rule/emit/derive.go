@@ -411,8 +411,16 @@ func deriveDelivery(built *plan) {
 	case shapeExactFold:
 		// The product cursor materializes every read's cell for one common
 		// refinement cell, so each declared read is delivered by the
-		// invocation and none of them is sealed into the reducer.
+		// invocation and none of them is sealed into the reducer. A spanned
+		// join is delivered the same way and as the whole view its own read
+		// established: read once per invocation, since its span is the
+		// denominator the declaration named and does not vary by which cell of
+		// the product is being folded.
 		for position, join := range built.fold.inputs {
+			if join.vectorSpan != nil {
+				built.deliveredFact[position] = join.name + "Vector"
+				continue
+			}
 			built.deliveredFact[position] = exactCellName(join)
 		}
 	case shapeSelectedExact:
@@ -567,7 +575,7 @@ func deriveJoins(built *plan, resolver *axisResolver, declaration program.Progra
 			}
 			row.vectorSpan = vectorSpan
 		} else if join.KeyVector.Declared() {
-			vector, err := deriveKeyVector(built, join, relation, relationAxis, position)
+			vector, err := deriveKeyVector(built, resolver, join, relation, relationAxis, position)
 			if err != nil {
 				return err
 			}
@@ -576,6 +584,21 @@ func deriveJoins(built *plan, resolver *axisResolver, declaration program.Progra
 		built.joins = append(built.joins, row)
 	}
 	return nil
+}
+
+// foldsMoreThanOneExactCell reports whether this declaration's reads are wider
+// than the single exact cell FoldCarry reduces. A whole vector is wider by
+// itself: it delivers a cell per coordinate of its span.
+func foldsMoreThanOneExactCell(built *plan) bool {
+	if len(built.joins) > 1 {
+		return true
+	}
+	for _, join := range built.joins {
+		if join.read.Form == program.Summary {
+			return true
+		}
+	}
+	return false
 }
 
 // deriveKeyVector resolves one Summary read spanned by the key vector its
@@ -589,15 +612,20 @@ func deriveJoins(built *plan, resolver *axisResolver, declaration program.Progra
 // that directory borrows a denominator it has no claim to; and the coordinates
 // are of the read axis, so a read of the axis this rule writes has no foreign
 // handle to seal them through.
-func deriveKeyVector(built *plan, join program.JoinDecl, relation definition.Relation, relationAxis *axisPlan, position int) (*vectorSpanPlan, error) {
+func deriveKeyVector(built *plan, resolver *axisResolver, join program.JoinDecl, relation definition.Relation, relationAxis *axisPlan, position int) (*vectorSpanPlan, error) {
 	ruleKey := built.target.Spec.Key
 	if join.Read.Form != program.Summary {
 		return nil, unexpressible(ruleKey, fmt.Sprintf("a %s read spanned by a published key vector", readFormName(join.Read.Form)),
 			fmt.Sprintf("join %d takes a whole denominator, which only a Summary read spans", position))
 	}
-	if relation.CandidateProvider.AxisRelation != join.KeyVector {
+	// The span belongs to the rows it was published for: the directory this
+	// read is joined from, or one that declares it enumerates the same
+	// subjects. A correspondence is how two owners state that their orders are
+	// those same subjects, and it is the publisher's own statement.
+	provider := relation.CandidateProvider.AxisRelation
+	if provider != join.KeyVector && !publisherCorresponds(resolver, join.KeyVector, provider) {
 		return nil, unexpressible(ruleKey, fmt.Sprintf("join %d whose key vector is not published by the directory it is joined from", position),
-			fmt.Sprintf("relation %q is joined from %q", relation.Name, string(relation.CandidateProvider.AxisRelation.Member)))
+			fmt.Sprintf("relation %q is joined from %q", relation.Name, string(provider.Member)))
 	}
 	if !relationAxis.foreignTo(built.write) {
 		return nil, unexpressible(ruleKey, fmt.Sprintf("join %d over a key vector of the written axis", position),
@@ -607,6 +635,28 @@ func deriveKeyVector(built *plan, join program.JoinDecl, relation definition.Rel
 		return nil, unexpressible(ruleKey, "a key-vector relation whose subject carrier is undeclared", relation.Subject)
 	}
 	return &vectorSpanPlan{}, nil
+}
+
+// publisherCorresponds reports whether the directory publishing a span
+// declares that another directory enumerates the same subjects its own order
+// does. The statement lives with the publisher, because a correspondence is
+// between two directories that already exist and neither owner may claim the
+// other's order alone.
+func publisherCorresponds(resolver *axisResolver, publisher, other member.RelationRef) bool {
+	axis, err := resolver.axis(publisher.Axis.Key)
+	if err != nil {
+		return false
+	}
+	declared, declaredOK := findRelation(axis.source, publisher.Member)
+	if !declaredOK {
+		return false
+	}
+	for _, correspondence := range declared.Correspondences {
+		if correspondence == other {
+			return true
+		}
+	}
+	return false
 }
 
 // deriveMemberSet resolves one Summary read over a self-provided nested member
@@ -990,7 +1040,14 @@ func deriveShape(built *plan, resolver *axisResolver, declaration program.Progra
 		built.route = &routePlan{join: route, slot: output.ValueSlot, destination: destination, destinationType: destinationType, carry: rowCarry, carryMode: routeCarryMode}
 		return nil
 	case program.ModeExact:
-		if declaration.Carry == nil || declaration.Carry.Mode != program.CarryTransform {
+		// A transformed carry over ONE exact cell is FoldCarry's own shape and
+		// stays there. A wider read set is not: FoldCarry reduces a single
+		// cell, and a rule that folds a product or a whole vector reaches its
+		// publication through PublishCarry instead, over the same sealed
+		// CarryWrite. Which of the two a declaration gets is decided by what it
+		// reads, not by whether it carries.
+		transformCarry := declaration.Carry != nil && declaration.Carry.Mode == program.CarryTransform
+		if !transformCarry || foldsMoreThanOneExactCell(built) {
 			destinationAxis, err := resolver.axis(output.Destination.Axis.Key)
 			if err != nil {
 				return err
@@ -1057,6 +1114,21 @@ func deriveShape(built *plan, resolver *axisResolver, declaration program.Progra
 					fmt.Sprintf("projection %q publishes %s, output key is %s", destination.Name, destination.Result, built.write.source.Binding.Key.Carrier))
 			}
 			built.exact = &exactPlan{destination: destination, candidateOwned: candidateOwned, carried: declaration.Carry != nil}
+			if transformCarry {
+				transformAxis, transformErr := resolver.axis(declaration.Carry.Transform.Axis.Key)
+				if transformErr != nil {
+					return transformErr
+				}
+				transform, transformOK := findCarryTransform(transformAxis.source, declaration.Carry.Transform.Member)
+				if !transformOK {
+					return unexpressible(ruleKey, "a carry transform its axis does not declare", string(declaration.Carry.Transform.Member))
+				}
+				if !transform.Implementation.Available() || !sameGoType(transform.Implementation.Receiver, built.candidate.subject) {
+					return unexpressible(ruleKey, "a carry transform issued by a type that is not the candidate carrier",
+						fmt.Sprintf("transform %q is not a method on %s", transform.Name, built.candidate.subject.Name))
+				}
+				built.carry = &carryPlan{input: uint64ToUint32(uint64(declaration.Carry.Input)), transform: transform}
+			}
 			if selected == 0 {
 				built.shape, built.form = shapeExactFold, "FormExact"
 				return nil

@@ -5,7 +5,7 @@
 package closed
 
 import (
-	"github.com/wippyai/go-lua/analysis/engine"
+	"github.com/wippyai/go-lua/analysis/engine/execution"
 	"github.com/wippyai/go-lua/analysis/schema/structure"
 	heapdomain "github.com/wippyai/go-lua/domain/heap"
 	"github.com/wippyai/go-lua/domain/heap/allocation/internal/source"
@@ -19,8 +19,21 @@ import (
 // answer is a lattice value paired with the sealed outcome that value is
 // delivered under - it schedules nothing, locates nothing, and publishes
 // nothing.
-func resultClosed(schema heapdomain.Schema, values *valuedomain.Schema, projection *keymatch.SelectorProjection, operand source.Closed, predecessor heapdomain.Value, cells engine.OrderedCells[valuedomain.Value]) (heapdomain.Value, structure.ReductionOutcome) {
-	if values == nil || !operand.FencedTo(schema, values) || cells.Count() != operand.CoordinateCount() {
+func (judgment Judgment) resultClosed(root heapdomain.Key, predecessor heapdomain.Value, cells execution.SummaryVector[valuedomain.Value]) (heapdomain.Value, structure.ReductionOutcome) {
+	if !judgment.Valid() {
+		return heapdomain.Value{}, structure.Refuse
+	}
+	schema, values, projection := judgment.heaps, judgment.values, judgment.projection
+	// What a constructor consists of is resolved from the schemas this
+	// judgment was sealed with, at the coordinate the candidate names. The
+	// descriptor is not carried beside the row: it is a function of the two
+	// schemas, and a copy travelling with the candidate would be a second
+	// answer that goes stale on its own.
+	operand, operandOK := source.NewClosed(schema, values, root)
+	if !operandOK {
+		return heapdomain.Value{}, structure.Refuse
+	}
+	if !operand.FencedTo(schema, values) || cells.Count() != operand.CoordinateCount() {
 		return heapdomain.Value{}, structure.Refuse
 	}
 	inputs := make([]valuedomain.Value, cells.Count())

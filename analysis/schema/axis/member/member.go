@@ -386,13 +386,14 @@ func cloneRelations(relations []Relation) []Relation {
 	clone := make([]Relation, len(relations))
 	for index, relation := range relations {
 		clone[index] = Relation{
-			Key:               relation.Key,
-			Subject:           relation.Subject,
-			Inputs:            cloneCarriers(relation.Inputs),
-			CandidateProvider: relation.CandidateProvider,
-			Parent:            relation.Parent,
-			Ordinal:           relation.Ordinal,
-			Correspondences:   cloneCorrespondences(relation.Correspondences),
+			Key:                relation.Key,
+			Subject:            relation.Subject,
+			Inputs:             cloneCarriers(relation.Inputs),
+			CandidateProvider:  relation.CandidateProvider,
+			Parent:             relation.Parent,
+			Ordinal:            relation.Ordinal,
+			PublishesKeyVector: relation.PublishesKeyVector,
+			Correspondences:    cloneCorrespondences(relation.Correspondences),
 		}
 	}
 	return clone

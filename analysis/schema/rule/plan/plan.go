@@ -837,7 +837,7 @@ func compileProgram(ruleOrdinal uint32, template *rule.Template, declaration pro
 		// span from a row that carries none, and it cannot take one from a
 		// directory it is not joined from.
 		if join.KeyVector.Declared() {
-			if relation.Nested() || relation.CandidateProvider.AxisRelation != join.KeyVector {
+			if relation.Nested() {
 				return Plan{}, compileFailure(template.ID(), rule.LawProgramShape, schema.DispositionMalformed)
 			}
 			keyVectorAxis, keyVectorCatalog, keyVectorAxisOrdinal, keyVectorFailure := resolveAxisMember(axisView, join.KeyVector.Axis, join.KeyVector.Member, memberRelation)
@@ -847,6 +847,15 @@ func compileProgram(ruleOrdinal uint32, template *rule.Template, declaration pro
 			}
 			publisher, publisherOK := keyVectorCatalog.Relation(join.KeyVector.Member)
 			if !publisherOK || !publisher.PublishesKeyVector || keyVectorAxis.Key() != join.KeyVector.Axis.Key {
+				return Plan{}, compileFailure(template.ID(), rule.LawProgramShape, schema.DispositionMalformed)
+			}
+			// The publisher is the directory this read is joined from, or one
+			// that enumerates the same subjects: a span belongs to the rows it
+			// was published for, and a correspondence is how two owners state
+			// that their orders are those same subjects. Any other directory
+			// would be a width taken from rows this read never addressed.
+			provider := relation.CandidateProvider.AxisRelation
+			if provider != join.KeyVector && !relationCorresponds(publisher, provider) {
 				return Plan{}, compileFailure(template.ID(), rule.LawProgramShape, schema.DispositionMalformed)
 			}
 			compiledJoin.KeyVectorPresent = true
@@ -890,6 +899,13 @@ func compileProgram(ruleOrdinal uint32, template *rule.Template, declaration pro
 			tag = predicate.Result
 		case compiledJoin.ParentPresent:
 			tag = relation.Ordinal
+		case compiledJoin.KeyVectorPresent:
+			// A span published as dense keys names each cell by the
+			// coordinate it sits at, so the correlation is the read axis's own
+			// key. It is the same kind of statement a member set's ordinal
+			// makes - the address the owner published the cell under - and the
+			// delivery carries it as position, not as a second value.
+			tag = readSignature.Key
 		}
 		joinFacts = append(joinFacts, readSignature.Fact)
 		joinTags = append(joinTags, tag)
@@ -1488,4 +1504,17 @@ func joinAddressingDirectory(axisView seal.View, declaration program.Program, ca
 		}
 	}
 	return member.RelationRef{}, false, false
+}
+
+// relationCorresponds reports whether one directory declares that another
+// enumerates the same subjects its own order does. The statement is the
+// publisher's own, because a correspondence is between two directories that
+// already exist and neither owner may claim the other's order alone.
+func relationCorresponds(publisher member.Relation, other member.RelationRef) bool {
+	for _, correspondence := range publisher.Correspondences {
+		if correspondence == other {
+			return true
+		}
+	}
+	return false
 }

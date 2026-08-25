@@ -837,6 +837,16 @@ func (rule CompiledRule) ReadParentAt(index int) (ruleplan.RelationAddr, bool, b
 	return read.Parent, read.ParentPresent, true
 }
 
+// MemberAddressed reports whether this read's cells are addressed one at a
+// time - by a nested member set, or by a span its candidate published - rather
+// than delivered through the Factor's own summary cursor. It is the ONE
+// statement of that distinction, because the cold row kind and the bound
+// read's kind are checked against each other and would drift apart the moment
+// each decided it for itself.
+func (read ReadPlan) MemberAddressed() bool {
+	return read.ParentPresent || read.KeyVectorPresent
+}
+
 // ReadKeyVectorAt returns the sealed directory whose rows publish the key
 // vector one ordered join is taken over, and its presence. A read spanned by a
 // predicate or a member set names none.

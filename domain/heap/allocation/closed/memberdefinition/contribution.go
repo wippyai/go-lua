@@ -63,6 +63,7 @@ func Contribution() definition.Contribution {
 		Carriers: []definition.Carrier{
 			{Name: "ValueFactCarrier", Key: "carrier/value/fact", Type: valueGoType("Value")},
 			{Name: "ValueCoordinateCarrier", Key: "carrier/value/coordinate", Type: valueGoType("Coordinate")},
+			{Name: "HeapKeyCarrier", Key: "carrier/heap/key", Type: definition.GoType{PackagePath: heapPackagePath, Name: "Key"}},
 			{Name: "ClosedOperandsCarrier", Key: "carrier/value/closed-operands", Type: valueGoType("ClosedOperands")},
 			{Name: "ClosedOperandCarrier", Key: "carrier/value/closed-operand", Type: valueGoType("ClosedOperand")},
 		},
@@ -114,8 +115,11 @@ func Contribution() definition.Contribution {
 				Key:               "value/closed-allocation/operands",
 				Axis:              "value",
 				Subject:           "ClosedOperandCarrier",
-				Inputs:            []definition.RelationInput{{Carrier: "ClosedOperandsCarrier"}},
-				CandidateProvider: member.AxisRelationCandidate(valueRelation("value/closed-allocation/parents")),
+				// The cells are derived from the constructor this read is
+				// joined from - the source the join names - and the span they
+				// sit in is published by the Value row that corresponds to it.
+				Inputs:            []definition.RelationInput{{Carrier: "HeapKeyCarrier"}},
+				CandidateProvider: member.AxisRelationCandidate(member.RelationRef{Axis: axisReference("heap"), Member: "heap/closed-allocation/candidates"}),
 			},
 		},
 		Projections: []definition.Projection{
@@ -133,7 +137,7 @@ func Contribution() definition.Contribution {
 				Key:               "value/closed-allocation/operand-key",
 				Axis:              "value",
 				Relation:          "ClosedOperandCells",
-				CandidateProvider: member.AxisRelationCandidate(valueRelation("value/closed-allocation/parents")),
+				CandidateProvider: member.AxisRelationCandidate(member.RelationRef{Axis: axisReference("heap"), Member: "heap/closed-allocation/candidates"}),
 				Role:              member.Key,
 				Result:            "ValueCoordinateCarrier",
 				Accessor:          valueMethod("Coordinate", "ClosedOperand", false, -1),
@@ -142,7 +146,14 @@ func Contribution() definition.Contribution {
 		Reducers: []definition.Reducer{{
 			Name:      "ClosedAllocationReducer",
 			Key:       "heap/reducer/closed",
-			Candidate: "ClosedAllocationCarrier",
+			// The candidate a rule folds is the SUBJECT of the relation it
+			// draws candidates from, which for a constructor is the
+			// allocation coordinate. The structural descriptor it denotes is
+			// resolved by the judgment from the schemas it was sealed with -
+			// one authority for what a constructor consists of, reached where
+			// the fold already rests, rather than a second one carried beside
+			// the row.
+			Candidate: "HeapKeyCarrier",
 			Inputs: []definition.ReducerInput{
 				{
 					Axis:         axisReference("heap"),
@@ -153,6 +164,10 @@ func Contribution() definition.Contribution {
 				{
 					Axis:         axisReference("value"),
 					Carrier:      "ValueFactCarrier",
+					// The tag is the coordinate each cell sits at: the span
+					// the candidate published IS a list of them, so the
+					// correlation this read proved is named by the read
+					// axis's own key rather than by a second address.
 					Form:         member.ReadFormSummary,
 					Multiplicity: member.MultiplicityMany,
 					Tag:          "ValueCoordinateCarrier",
@@ -162,7 +177,22 @@ func Contribution() definition.Contribution {
 				Axis:    axisReference("heap"),
 				Carrier: "HeapFactCarrier",
 			}},
-			Implementation: definition.GoSymbol{PackagePath: closedPackagePath, Name: "resultClosed", ResultIndex: 0},
+			// The fold rests on cold owner knowledge - the two schemas the
+			// constructor is fenced to and the selector projection derived
+			// from them - so that knowledge is SEALED as the rule's state
+			// from the axes named here, and the judgment is what the fold is
+			// a method on. Its arguments stay carriers.
+			Derivation: definition.ReducerDerivation{
+				State:      definition.GoType{PackagePath: closedPackagePath, Name: "Judgment"},
+				Build:      definition.GoSymbol{PackagePath: closedPackagePath, Name: "NewJudgment", ResultIndex: 0},
+				StaticAxes: []schema.EntryReference{axisReference("heap"), axisReference("value")},
+			},
+			Implementation: definition.GoSymbol{
+				PackagePath: closedPackagePath,
+				Name:        "resultClosed",
+				Receiver:    definition.GoType{PackagePath: closedPackagePath, Name: "Judgment"},
+				ResultIndex: 0,
+			},
 		}},
 	}
 }

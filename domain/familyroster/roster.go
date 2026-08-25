@@ -17,6 +17,7 @@ import (
 	callsitebodyprogram "github.com/wippyai/go-lua/domain/effect/callsite/body/program"
 	callsiteopaqueprogram "github.com/wippyai/go-lua/domain/effect/callsite/opaque/program"
 	callsiteselectedprogram "github.com/wippyai/go-lua/domain/effect/callsite/selected/program"
+	heapclosedprogram "github.com/wippyai/go-lua/domain/heap/allocation/closed/program"
 	heapempty "github.com/wippyai/go-lua/domain/heap/allocation/empty"
 	freezeprogram "github.com/wippyai/go-lua/domain/heap/formalfreeze/program"
 	returnprogram "github.com/wippyai/go-lua/domain/placement/returnescape/program"
@@ -64,6 +65,14 @@ func Families() []Family {
 				Spec:        heapempty.RuleEntry(),
 			},
 			Directory: "domain/heap/allocation/empty",
+		},
+		{
+			Target: emit.Target{
+				PackagePath: "github.com/wippyai/go-lua/domain/heap/allocation/closed",
+				PackageName: "closed",
+				Spec:        heapclosedprogram.RuleEntry(),
+			},
+			Directory: "domain/heap/allocation/closed",
 		},
 		{
 			Target: emit.Target{

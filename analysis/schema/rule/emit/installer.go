@@ -147,9 +147,15 @@ func renderInstaller(out *strings.Builder, built *plan) error {
 	}
 	if built.shape == shapeExactFold || built.shape == shapeSelectedExact {
 		fmt.Fprintf(out, "\t\tcarryMode, carryPresent := planRow.Rule.CarryMode()\n")
-		if built.exact.carried {
+		switch {
+		case built.carry != nil:
+			// A fold that carries by transform publishes through the same
+			// sealed CarryWrite the narrow carry form uses; what differs is
+			// the read set it reduces, which is this shape's own.
+			fmt.Fprintf(out, "\t\tif !carryPresent || carryMode != %s.CarryTransform {\n\t\t\treturn nil, nil, false\n\t\t}\n", ruleprogram)
+		case built.exact.carried:
 			fmt.Fprintf(out, "\t\tif !carryPresent || carryMode != %s.CarryIdentity {\n\t\t\treturn nil, nil, false\n\t\t}\n", ruleprogram)
-		} else {
+		default:
 			// The declaration names no carry, so a row that arrived carrying
 			// one is a plan that no longer matches the declaration this family
 			// was emitted from. The undeclared mode is named as the zero it is.
@@ -214,6 +220,11 @@ func renderInstaller(out *strings.Builder, built *plan) error {
 		fmt.Fprintf(out, "\t\twriteSealed, writeSealedOK := plane.RowCarry(planRow, %s)\n",
 			imports.methodValue(built.carry.transform.Implementation, "candidate"))
 	case shapeExactFold, shapeSelectedExact:
+		if built.carry != nil {
+			fmt.Fprintf(out, "\t\twriteSealed, writeSealedOK := plane.RowCarry(planRow, %s)\n",
+				imports.methodValue(built.carry.transform.Implementation, "candidate"))
+			break
+		}
 		out.WriteString("\t\twriteSealed, writeSealedOK := plane.ExactWrite(planRow.Target, uint16(output.Slot))\n")
 	case shapeSelectedRoute:
 		out.WriteString("\t\twriteSealed, writeSealedOK := plane.RouteWrite(uint16(output.Slot))\n")

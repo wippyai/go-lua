@@ -256,7 +256,7 @@ func (cell *generatedRuleBindingCell) schemaRuleComplete() bool {
 			row.factor != cell.schema.factorSemanticAt(uint64(plan.Factor)) {
 			return false
 		}
-		if row.kind != generatedColdReadKind(plan.Form, plan.ParentPresent) {
+		if row.kind != generatedColdReadKind(plan.Form, plan.MemberAddressed()) {
 			return false
 		}
 	}

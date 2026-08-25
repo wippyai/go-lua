@@ -67,6 +67,17 @@ func render(built *plan) ([]byte, error) {
 // sliceView spells the slice marker a many-valued delivery carries when its
 // read established one cell per member. A whole-vector read delivers one
 // vector and carries none.
+// manyValuedArgument answers the declared argument of one fold input when that
+// input is delivered as a whole many-valued view rather than as one cell.
+func manyValuedArgument(built *plan, input int) (definition.Argument, bool) {
+	for _, argument := range built.fold.arguments {
+		if argument.Role == definition.ArgumentVector && argument.Input == input {
+			return argument, true
+		}
+	}
+	return definition.Argument{}, false
+}
+
 func sliceView(argument definition.Argument) string {
 	if argument.Slice {
 		return "[]"
@@ -170,7 +181,16 @@ func renderExactReduce(out *strings.Builder, built *plan) error {
 		return err
 	}
 	parameters := make([]string, 0, len(built.fold.inputs))
-	for _, join := range built.fold.inputs {
+	for index, join := range built.fold.inputs {
+		// A many-valued input arrives as the view its own read established -
+		// the ONE statement of that choice is the declaration's, and the
+		// signature restates it here rather than deciding again. A spanned
+		// vector is that case: what the fold receives is the whole delivery,
+		// not one of its cells.
+		if argument, many := manyValuedArgument(built, index); many {
+			parameters = append(parameters, join.name+"Vector "+sliceView(argument)+imports.typeName(argument.Type)+"["+imports.typeName(argument.Element)+"]")
+			continue
+		}
 		parameters = append(parameters, exactCellName(join)+" "+imports.typeName(join.axis.fact))
 	}
 	out.WriteString("// Reduce is the one irreducible typed judgment of this exact family. It is\n")
@@ -371,6 +391,11 @@ func renderRow(out *strings.Builder, built *plan) error {
 		fmt.Fprintf(out, "\twrite %s.CarryWrite[%s, %s]\n", execution,
 			imports.typeName(built.write.dense), imports.typeName(built.write.fact))
 	case shapeExactFold, shapeSelectedExact:
+		if built.carry != nil {
+			fmt.Fprintf(out, "\twrite %s.CarryWrite[%s, %s]\n", execution,
+				imports.typeName(built.write.dense), imports.typeName(built.write.fact))
+			break
+		}
 		fmt.Fprintf(out, "\twrite %s.ExactWrite[%s, %s]\n", execution,
 			imports.typeName(built.write.dense), imports.typeName(built.write.fact))
 	case shapeSelectedRoute:
@@ -619,7 +644,20 @@ func renderExactExecute(out *strings.Builder, built *plan) error {
 	execution := imports.use(executionPackagePath)
 	structure := imports.use(structurePackagePath)
 	productPackage := imports.use(productPackagePath)
-	last := built.joins[len(built.joins)-1]
+	// The product is refined by the exact reads; the last of THEM names the
+	// rows the fold drains. A spanned join refines nothing - it delivers one
+	// vector per invocation - so it is not the tail even when it is declared
+	// last.
+	var last *joinPlan
+	for _, join := range built.joins {
+		if join.vectorSpan == nil {
+			last = join
+		}
+	}
+	if last == nil {
+		return unexpressible(built.target.Spec.Key, "an exact fold refined by no exact read",
+			"the canonical product is refined by exact cells, and a declaration whose reads are all vectors names no product to drain")
+	}
 	out.WriteString("// Execute drains the canonical product its declared exact reads refine, applies\n")
 	out.WriteString("// the typed fold once per cell, and stages every concrete result into the one\n")
 	out.WriteString("// write transaction the row publishes through. A cell publishes under the\n")
@@ -630,8 +668,27 @@ func renderExactExecute(out *strings.Builder, built *plan) error {
 	fmt.Fprintf(out, "\tif !seedOK || seedStatus == %s.RefineRefuse {\n\t\treturn %s.Result{}, false\n\t}\n", productPackage, execution)
 	out.WriteString("\t// Empty support is an authenticated absent candidate, never a refusal.\n")
 	fmt.Fprintf(out, "\tif seedStatus == %s.RefineEmpty {\n\t\treturn lane.settle(ticket, %s.NoCandidate)\n\t}\n", productPackage, structure)
+	// A spanned join is read ONCE per invocation, not once per product cell:
+	// its span is the denominator the declaration named, and the cells that
+	// fill it are the same for every refinement of the exact product. What it
+	// contributes to a cell is the conjunction of its own cells' supports,
+	// taken below where the product's region is known.
+	for _, join := range vectorSpanJoins(built) {
+		fmt.Fprintf(out, "\t%sCount := len(row.%s)\n", join.name, join.name)
+		fmt.Fprintf(out, "\tif %sCount > len(lane.%sCells) {\n\t\treturn lane.settle(ticket, %s.Refuse)\n\t}\n", join.name, join.name, structure)
+		fmt.Fprintf(out, "\t%sCells := lane.%sCells[:%sCount]\n", join.name, join.name, join.name)
+		fmt.Fprintf(out, "\tfor index := 0; index < %sCount; index++ {\n", join.name)
+		fmt.Fprintf(out, "\t\tif lane.%sCell(row.%s[index], row.%sPolicy, ticket, &%sCells[index]) != %s.Concrete {\n\t\t\treturn lane.settle(ticket, %s.Refuse)\n\t\t}\n",
+			join.name, join.name, join.name, join.name, structure, structure)
+		out.WriteString("\t}\n")
+		fmt.Fprintf(out, "\t%sVector, %sVectorOK := %s.NewMemberVector(%sCells)\n", join.name, join.name, execution, join.name)
+		fmt.Fprintf(out, "\tif !%sVectorOK {\n\t\treturn lane.settle(ticket, %s.Refuse)\n\t}\n", join.name, structure)
+	}
 	input := "seed.Rows()"
 	for _, join := range built.joins {
+		if join.vectorSpan != nil {
+			continue
+		}
 		rows := fmt.Sprintf("rows%d", join.position)
 		fmt.Fprintf(out, "\t%s, status%d, status%dOK := lane.%s.Extend(ticket, %s, row.%s, &lane.%s)\n",
 			rows, join.position, join.position, exactProductName(join), input, join.name, join.name)
@@ -643,8 +700,23 @@ func renderExactExecute(out *strings.Builder, built *plan) error {
 	fmt.Fprintf(out, "\t\tif !ticket.Checkpoint() {\n\t\t\t_ = lane.write.Discard(ticket)\n\t\t\treturn %s.Result{}, false\n\t\t}\n", execution)
 	fmt.Fprintf(out, "\t\tregion, tuple, tupleOK := rows%d.At(index)\n", last.position)
 	fmt.Fprintf(out, "\t\tif !tupleOK || !region.Valid() {\n\t\t\t_ = lane.write.Discard(ticket)\n\t\t\treturn %s.Result{}, false\n\t\t}\n", execution)
+	for _, join := range vectorSpanJoins(built) {
+		// A conclusion holds only where every read it consumed holds, so the
+		// cell's region narrows to the conjunction with every cell of the
+		// vector. Supports neither of which contains the other are refused
+		// there by name rather than resolved by arrival order.
+		fmt.Fprintf(out, "\t\tregion, regionOK := %s.ConjoinCells(region, %sCells)\n", execution, join.name)
+		fmt.Fprintf(out, "\t\tif !regionOK {\n\t\t\t_ = lane.write.Discard(ticket)\n\t\t\treturn lane.settle(ticket, %s.Refuse)\n\t\t}\n", structure)
+		fmt.Fprintf(out, "\t\t_ = region\n")
+	}
 	present := make([]string, 0, len(built.joins))
 	for _, join := range built.joins {
+		// A vector's cells carry their own presence, one per coordinate of the
+		// span, and the fold is what decides what an absent operand means.
+		// Only the exact cells gate the row.
+		if join.vectorSpan != nil {
+			continue
+		}
 		cell := exactCellExpression(built, join)
 		fmt.Fprintf(out, "\t\t%s, present%d := row.%sPolicy.Cell(%s.Value(), %s.Present())\n",
 			exactCellName(join), join.position, join.name, cell, cell)
@@ -655,9 +727,16 @@ func renderExactExecute(out *strings.Builder, built *plan) error {
 	fmt.Fprintf(out, "\t\tif %s {\n\t\t\tcontinue\n\t\t}\n", strings.Join(present, " || "))
 	arguments := make([]string, 0, len(built.fold.inputs))
 	for _, join := range built.fold.inputs {
+		if join.vectorSpan != nil {
+			arguments = append(arguments, join.name+"Vector")
+			continue
+		}
 		arguments = append(arguments, exactCellName(join))
 	}
 	for _, join := range built.joins {
+		if join.vectorSpan != nil {
+			continue
+		}
 		if _, consumed := foldInputPosition(built, join); !consumed {
 			fmt.Fprintf(out, "\t\t_ = %s\n", exactCellName(join))
 		}
@@ -665,6 +744,13 @@ func renderExactExecute(out *strings.Builder, built *plan) error {
 	fmt.Fprintf(out, "\t\tvalue, outcome := (%s{%s}).Reduce(%s)\n",
 		reducerType, strings.Join(reducerLiteralFields(built, nil), ", "), strings.Join(arguments, ", "))
 	fmt.Fprintf(out, "\t\tswitch outcome {\n\t\tcase %s.Concrete:\n", structure)
+	if built.carry != nil {
+		// Every carried coordinate passes through the candidate's transition
+		// in the same patch the reduced fact is staged in, so the row's whole
+		// publication - what it concluded and what it retained - lands
+		// atomically or not at all.
+		fmt.Fprintf(out, "\t\t\tif !row.write.Carry(ticket, &lane.write, region) {\n\t\t\t\t_ = lane.write.Discard(ticket)\n\t\t\t\treturn %s.Result{}, false\n\t\t\t}\n", execution)
+	}
 	fmt.Fprintf(out, "\t\t\tif !row.write.Stage(ticket, &lane.write, region, value) {\n\t\t\t\t_ = lane.write.Discard(ticket)\n\t\t\t\treturn %s.Result{}, false\n\t\t\t}\n", execution)
 	out.WriteString("\t\t\tstaged++\n")
 	fmt.Fprintf(out, "\t\tcase %s.NoCandidate:\n", structure)
@@ -677,6 +763,11 @@ func renderExactExecute(out *strings.Builder, built *plan) error {
 	out.WriteString("\t// One accepted patch is one concrete result, however many cells it holds.\n")
 	fmt.Fprintf(out, "\tif !ticket.Submit(%s.Concrete) {\n\t\treturn %s.Result{}, false\n\t}\n", structure, execution)
 	fmt.Fprintf(out, "\treturn %s.NewResult(%s.Concrete, 1)\n}\n\n", execution, structure)
+	// A spanned join reads its cells through the same cursor discipline every
+	// member set is read under, whichever form delivers them.
+	for _, join := range vectorSpanJoins(built) {
+		renderMemberCell(out, built, join)
+	}
 	return nil
 }
 
@@ -990,11 +1081,17 @@ func renderMemberCell(out *strings.Builder, built *plan, join *joinPlan) {
 		join.name, execution, join.name, structure)
 	fmt.Fprintf(out, "\tcell, available := lane.%s.Value()\n", join.name)
 	fmt.Fprintf(out, "\tpresent := lane.%s.Present()\n", join.name)
+	// The support this member was observed over travels with it. A vector's
+	// cells are read one coordinate at a time and each answers over what its
+	// own read proved, so the conclusion folded from them holds over the
+	// conjunction of their supports - which the fold cannot take if the cell
+	// arrives without one.
+	fmt.Fprintf(out, "\tregion, regionOK := lane.%s.Region()\n", join.name)
 	fmt.Fprintf(out, "\tif !read.Close(ticket, &lane.%s) || !lane.%s.Reuse(ticket) {\n\t\t_ = lane.%s.Discard(ticket)\n\t\treturn %s.Refuse\n\t}\n",
 		join.name, join.name, join.name, structure)
-	fmt.Fprintf(out, "\tif !available {\n\t\treturn %s.Refuse\n\t}\n", structure)
+	fmt.Fprintf(out, "\tif !available || !regionOK {\n\t\treturn %s.Refuse\n\t}\n", structure)
 	out.WriteString("\tcell, present = policy.Cell(cell, present)\n")
-	fmt.Fprintf(out, "\t*destination = %s.MemberCell[%s]{Value: cell, Present: present}\n", execution, imports.typeName(join.axis.fact))
+	fmt.Fprintf(out, "\t*destination = %s.MemberCell[%s]{Value: cell, Present: present, Region: region}\n", execution, imports.typeName(join.axis.fact))
 	fmt.Fprintf(out, "\treturn %s.Concrete\n}\n\n", structure)
 }
 
@@ -1112,9 +1209,19 @@ func renderExactTuples(out *strings.Builder, built *plan) {
 // tuple of the whole chain. The extender conses the newest read at the head, so
 // a read is reached by walking the tail back from the last one.
 func exactCellExpression(built *plan, join *joinPlan) string {
+	// The tuple holds one cell per join the PRODUCT refines, in declaration
+	// order. A spanned join refines nothing - it is delivered once per
+	// invocation - so it occupies no position here, and walking past it would
+	// read every later cell at the wrong depth.
+	product := make([]*joinPlan, 0, len(built.joins))
+	for _, candidate := range built.joins {
+		if candidate.vectorSpan == nil {
+			product = append(product, candidate)
+		}
+	}
 	expression := "tuple"
-	for index := len(built.joins) - 1; index > 0; index-- {
-		if built.joins[index] == join {
+	for index := len(product) - 1; index > 0; index-- {
+		if product[index] == join {
 			break
 		}
 		expression += ".Tail()"

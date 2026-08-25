@@ -222,7 +222,7 @@ func (row FormRow) BindMembers(join int, coordinates []uint32) (FormRow, bool) {
 		return FormRow{}, false
 	}
 	plan, ok := row.Rule.ReadAt(join)
-	if !ok || !plan.ParentPresent || plan.Form != ruleprogram.Summary && plan.Form != ruleprogram.Complete {
+	if !ok || !plan.MemberAddressed() || plan.Form != ruleprogram.Summary && plan.Form != ruleprogram.Complete {
 		return FormRow{}, false
 	}
 	if row.members == nil {
@@ -839,7 +839,7 @@ func declaredFormRow(rule generated.CompiledRule, mode ruleprogram.OutputMode) (
 			return FormRow{}, false
 		}
 		return FormRow{Form: FormSelectedRoute, Input: uint16(route.Input), Relation: route.Relation.Member}, true
-	case declaredTransformedCarry(rule):
+	case declaredTransformedCarry(rule) && !foldsMoreThanOneExactCell(rule):
 		// A transformed carry applies one owner-issued candidate-indexed
 		// transition to every carried coordinate. No identity fold can do
 		// that, so the carry disposition alone decides that this is a carry.
@@ -849,6 +849,13 @@ func declaredFormRow(rule generated.CompiledRule, mode ruleprogram.OutputMode) (
 		// its publication to; it answers from its candidate and publishes over
 		// the invocation's own support. Its port is the one its carry names,
 		// because no read names one.
+		//
+		// A carry over ONE exact cell is this form. A WIDER read set is not,
+		// and this arm does not claim it: FoldCarry reduces a single cell, so
+		// a rule folding a product of cells, or a whole vector beside one,
+		// reaches its publication through the exact product and stages the
+		// carry into the same patch. What decides is what the rule reads, and
+		// the emitted family decides it the same way.
 		if rule.ReadCount() == 0 {
 			carried := rule.CarryInput()
 			if carried < 0 || !declaredPort(rule, uint32(carried)) {
@@ -913,6 +920,25 @@ func declaredFormRow(rule generated.CompiledRule, mode ruleprogram.OutputMode) (
 
 // declaredTransformedCarry reports whether the descriptor declares a carry
 // that applies an owner-issued transform rather than handing the prior fact on.
+// foldsMoreThanOneExactCell reports whether one declaration's reads are wider
+// than the single exact cell the carry fold reduces. A whole vector is wider
+// by itself: it delivers one cell per coordinate of its span.
+func foldsMoreThanOneExactCell(rule generated.CompiledRule) bool {
+	if rule.ReadCount() > 1 {
+		return true
+	}
+	for index := 0; index < rule.ReadCount(); index++ {
+		read, readOK := rule.ReadAt(index)
+		if !readOK {
+			return false
+		}
+		if read.Form == ruleprogram.Summary {
+			return true
+		}
+	}
+	return false
+}
+
 func declaredTransformedCarry(rule generated.CompiledRule) bool {
 	carry, present := rule.CarryMode()
 	if !present || carry != ruleprogram.CarryTransform {
@@ -924,15 +950,28 @@ func declaredTransformedCarry(rule generated.CompiledRule) bool {
 
 // declaredVectorRead reports whether any declared read delivers a whole cell
 // vector rather than one cell.
+// declaredVectorRead reports whether this rule is delivered through a Factor's
+// own summary cursor.
+//
+// A whole-vector read whose cells are MEMBER-ADDRESSED is not that: its
+// coordinates were published one at a time - by a nested member set, or by the
+// span its candidate holds - and the engine seals one exact read per
+// coordinate rather than opening a cursor over a partition. Such a read is
+// folded by the form its other reads decide, so this arm leaves it alone
+// instead of claiming a delivery it does not have.
 func declaredVectorRead(rule generated.CompiledRule) bool {
 	for index := 0; index < rule.ReadCount(); index++ {
-		form, formOK := rule.ReadFormAt(index)
-		if !formOK {
+		read, readOK := rule.ReadAt(index)
+		if !readOK {
 			return false
 		}
-		if form == ruleprogram.Summary || form == ruleprogram.Complete {
-			return true
+		if read.Form != ruleprogram.Summary && read.Form != ruleprogram.Complete {
+			continue
 		}
+		if read.MemberAddressed() {
+			continue
+		}
+		return true
 	}
 	return false
 }
@@ -969,10 +1008,22 @@ func declaredExactProduct(rule generated.CompiledRule) bool {
 		return false
 	}
 	for index := 0; index < rule.ReadCount(); index++ {
-		form, formOK := rule.ReadFormAt(index)
-		if !formOK || form != ruleprogram.Exact {
+		read, readOK := rule.ReadAt(index)
+		if !readOK {
 			return false
 		}
+		if read.Form == ruleprogram.Exact {
+			continue
+		}
+		// A whole vector over a span is a settled partition like an exact
+		// cell: its width and order were fixed by the span before the rule
+		// ran, and its cells are sealed one per coordinate. What refines the
+		// product is the exact reads; the vector is delivered beside them and
+		// narrows the conclusion to what its own cells proved.
+		if read.Form == ruleprogram.Summary && read.MemberAddressed() {
+			continue
+		}
+		return false
 	}
 	return true
 }

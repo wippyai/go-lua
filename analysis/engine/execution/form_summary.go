@@ -77,6 +77,11 @@ type SummaryVector[V any] struct {
 type MemberCell[V any] struct {
 	Value   V
 	Present bool
+	// Region is the support this cell was observed over. A vector's cells are
+	// read one coordinate at a time and each answers over what its own read
+	// proved, so the conclusion folded from them holds over the conjunction of
+	// their supports and not over the window the invocation opened.
+	Region support.Mask
 }
 
 // NewMemberVector views one caller-owned member-set cell slice as the vector

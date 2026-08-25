@@ -67,20 +67,11 @@ func FoldSelectedExact[K scalar.Key, V any, W any, R SelectionReducer[V, W]](
 	}
 	region := prerequisite
 	for _, cell := range cells {
-		if !cell.Region.Valid() {
+		conjoined, ok := ConjoinSupport(region, cell.Region)
+		if !ok {
 			return structure.Refuse
 		}
-		switch {
-		case region.Entails(cell.Region):
-			// The running meet is already inside this member's support, so
-			// intersecting with it changes nothing.
-		case cell.Region.Entails(region):
-			// This member proved less than everything before it, and the
-			// conclusion may only hold where every read holds.
-			region = cell.Region
-		default:
-			return structure.Refuse
-		}
+		region = conjoined
 	}
 	value, outcome := reducer.Reduce(cells)
 	if !outcome.Available() {

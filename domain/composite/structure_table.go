@@ -18,7 +18,7 @@ import (
 	effectowner "github.com/wippyai/go-lua/domain/effect/owner"
 	effectpublication "github.com/wippyai/go-lua/domain/effect/publication"
 	executionowner "github.com/wippyai/go-lua/domain/execution/owner"
-	heapclosed "github.com/wippyai/go-lua/domain/heap/allocation/closed"
+	heapclosedprogram "github.com/wippyai/go-lua/domain/heap/allocation/closed/program"
 	heapempty "github.com/wippyai/go-lua/domain/heap/allocation/empty"
 	heapingress "github.com/wippyai/go-lua/domain/heap/allocation/ingress"
 	heapbootstrap "github.com/wippyai/go-lua/domain/heap/bootstrap"
@@ -197,7 +197,7 @@ func semanticRoleVocabulary() []structure.Spec {
 		heapingress.StructureSpecs(),
 		valueallocationprogram.StructureSpecs(),
 		heapempty.StructureSpecs(),
-		heapclosed.StructureSpecs(),
+		heapclosedprogram.StructureSpecs(),
 		heapindex.StructureSpecs(),
 		calldispatchprogram.StructureSpecs(),
 		callsitebodyprogram.StructureSpecs(),

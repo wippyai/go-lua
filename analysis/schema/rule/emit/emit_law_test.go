@@ -246,7 +246,7 @@ func TestAnUnexpressibleDeclarationIsRefusedByName(t *testing.T) {
 		// where the written Factor reaches a coordinate no directory of its
 		// own enumerates, and is stated there.
 		{
-			name: "a summary read has no sealed primitive",
+			name: "a summary read the product cannot span",
 			mutate: func(spec *rule.Spec) {
 				spec.Program.Joins[0].Read.Form = program.Summary
 				spec.Program.Joins[0].Predicate = member.ProjectionRef{Axis: specimenAxis(), Member: "specimen/coordinate"}
@@ -254,7 +254,11 @@ func TestAnUnexpressibleDeclarationIsRefusedByName(t *testing.T) {
 					Surface: schema.SurfaceKindDenominator, Key: "coordinates/specimen",
 				}
 			},
-			clause: "a transformed carry beside a Summary read",
+			// A vector delivered by a Factor's own cursor declares no span, so
+			// the product that would fold it has no width for its cells. The
+			// refusal names that, which is the reason, rather than naming the
+			// carry beside it.
+			clause: "an exact fold over a vector with no span",
 		},
 		// A structural publication DOES have an emitted family now. What is
 		// refused by name is a structural row that has not said what it
