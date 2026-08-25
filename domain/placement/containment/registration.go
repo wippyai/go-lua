@@ -34,17 +34,17 @@ func RuleEntry[P rulePrincipals, A ruleAuthorities]() rule.Spec {
 		Owner:    "placement",
 		Lane:     rule.LaneMountedPoint,
 		Semantic: "semantic/rule/placement/containment",
-		Roles:    []schema.Key{"semantic/operand/placement/containment"},
+		Roles:    []schema.Key{"semantic/Operand/placement/containment"},
 	}
 }
 
 func DeclareRule[P rulePrincipals](builder *engine.SchemaBuilder, context rule.Declaration[P]) (*SchemaFragment, bool) {
 	semantic, semanticOK := context.Roles.Key(vocabulary.RoleKey("rule/placement/containment"))
-	operand, operandOK := context.Roles.Key(vocabulary.RoleKey("operand/placement/containment"))
+	Operand, operandOK := context.Roles.Key(vocabulary.RoleKey("Operand/placement/containment"))
 	if !semanticOK || !operandOK {
 		return nil, false
 	}
-	return DeclareSchema(builder, semantic, operand, context.Principals.PlacementPrincipal(), context.Principals.HeapPrincipal())
+	return DeclareSchema(builder, semantic, Operand, context.Principals.PlacementPrincipal(), context.Principals.HeapPrincipal())
 }
 
 func RegisterRule(binding *engine.SchemaBinding, context rule.Registration[*SchemaFragment]) (engine.RuleSlotCapability, bool) {
@@ -72,5 +72,5 @@ func OccurrenceCatalog(hot *HotRule) (rule.OccurrenceCatalog, bool) {
 // StructureSpecs contributes the containment rule's rule and operand
 // identities to the semantic role vocabulary.
 func StructureSpecs() []structure.Spec {
-	return vocabulary.RoleSpecs("rule/placement/containment", "operand/placement/containment")
+	return vocabulary.RoleSpecs("rule/placement/containment", "Operand/placement/containment")
 }

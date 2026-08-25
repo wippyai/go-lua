@@ -1745,7 +1745,11 @@ func (definition Definition) CompleteRefusal() string {
 			projection.Name, projection.Relation, string(definition.Axis))
 	}
 	for _, relation := range definition.Relations {
-		if derivationOptional(relation.Derivation) {
+		// Only the AUTHORED form owes a ledger row, which is the condition
+		// admission itself applies: a declared derivation has no Build to
+		// schedule, and reporting one as unregistered names a row that is not
+		// the refusal.
+		if !relation.Derivation.AuthoredDerivation() {
 			continue
 		}
 		if !scheduledForDeath(definition.Axis, relation.Key, relation.Derivation.Build) {

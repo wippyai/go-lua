@@ -106,7 +106,7 @@ func TestContainmentVisitorRejectsForeignOwnerAndDirectKeyFence(t *testing.T) {
 		t.Fatal("foreign root identity")
 	}
 	if _, ok := fixture.heap.KeyForID(foreignID); ok {
-		t.Fatal("foreign root identity received a parent operand")
+		t.Fatal("foreign root identity received a parent Operand")
 	}
 }
 
@@ -118,7 +118,7 @@ func TestContainmentRulePublishesOneCompleteSummaryOperand(t *testing.T) {
 	}
 	id, idOK := rule.IDAt(0)
 	if !idOK || id != fixture.placement.ContentID() {
-		t.Fatalf("closure operand id=%t/%t", idOK, id == fixture.placement.ContentID())
+		t.Fatalf("closure Operand id=%t/%t", idOK, id == fixture.placement.ContentID())
 	}
 	if _, ok := rule.IDAt(-1); ok {
 		t.Fatal("negative occurrence index accepted")
@@ -149,30 +149,30 @@ func TestContainmentRuleRoutePlanExactAndUnknownIdentityBroadcast(t *testing.T) 
 	child := mustReference(t, fixture.heap, fixture.roots[1], materialization.Recent)
 	exact := mustExact(t, fixture.heap, child)
 	exactValue := mustValue(t, fixture, fixture.roots[0], none, exact, none)
-	if opaque, complete := rule.containmentEvidence(exactValue); opaque || !complete {
+	if opaque, complete := containmentEvidence(rule.heap.Schema(), exactValue); opaque || !complete {
 		t.Fatalf("exact containment evidence = opaque:%t complete:%t, want false/true", opaque, complete)
 	}
-	if !rule.walkContainments(exactValue, func(heapdomain.Key) bool { return true }) {
+	if !walkContainments(rule.heap.Schema(), exactValue, func(heapdomain.Key) bool { return true }) {
 		t.Fatal("exact route walk was not complete")
 	}
 	unknown := mustUnknown(t, fixture.heap)
 	unknownValue := mustValue(t, fixture, fixture.roots[0], none, unknown, none)
-	if opaque, complete := rule.containmentEvidence(unknownValue); !opaque || !complete {
+	if opaque, complete := containmentEvidence(rule.heap.Schema(), unknownValue); !opaque || !complete {
 		t.Fatalf("opaque containment evidence = opaque:%t complete:%t, want true/true", opaque, complete)
 	}
-	if rule.walkContainments(unknownValue, func(heapdomain.Key) bool { return true }) {
+	if walkContainments(rule.heap.Schema(), unknownValue, func(heapdomain.Key) bool { return true }) {
 		t.Fatal("unknown identity route walk was treated as complete")
 	}
 	unknownMetaObject := mustObject(t, fixture.heap, unknown)
 	unknownMetaValue := mustRelation(t, fixture.heap, fixture.roots[0], unknownMetaObject)
-	if rule.walkContainments(unknownMetaValue, func(heapdomain.Key) bool { return true }) {
+	if walkContainments(rule.heap.Schema(), unknownMetaValue, func(heapdomain.Key) bool { return true }) {
 		t.Fatal("unknown metatable route walk was treated as complete")
 	}
 	top := fixture.heap.Top()
-	if opaque, complete := rule.containmentEvidence(top); opaque || complete {
+	if opaque, complete := containmentEvidence(rule.heap.Schema(), top); opaque || complete {
 		t.Fatalf("Top containment walk = opaque:%t complete:%t, want false/false before authenticated Top widening", opaque, complete)
 	}
-	if rule.walkContainments(top, func(heapdomain.Key) bool { return true }) {
+	if walkContainments(rule.heap.Schema(), top, func(heapdomain.Key) bool { return true }) {
 		t.Fatal("Top route walk was treated as complete")
 	}
 	// Unknown containment is identity uncertainty only. Both unknown values
@@ -243,11 +243,11 @@ func TestContainmentUnknownChildIdentityRetainsKnownParentPlacement(t *testing.T
 func TestContainmentMissingOrForeignEvidenceRefusesWithoutWidening(t *testing.T) {
 	fixture := newContainmentFixture(t)
 	rule := bindContainmentLaw(t, fixture)
-	if opaque, complete := rule.containmentEvidence(heapdomain.Value{}); opaque || complete {
+	if opaque, complete := containmentEvidence(rule.heap.Schema(), heapdomain.Value{}); opaque || complete {
 		t.Fatalf("missing containment evidence = opaque:%t complete:%t, want false/false", opaque, complete)
 	}
 	foreign := newContainmentFixtureNamed(t, "placement-containment-foreign-evidence")
-	if opaque, complete := rule.containmentEvidence(foreign.heap.Top()); opaque || complete {
+	if opaque, complete := containmentEvidence(rule.heap.Schema(), foreign.heap.Top()); opaque || complete {
 		t.Fatalf("foreign containment evidence = opaque:%t complete:%t, want false/false", opaque, complete)
 	}
 }
@@ -305,8 +305,8 @@ func TestContainmentWideRouteWalkIsAllocationFree(t *testing.T) {
 	}
 	rule := bindContainmentLaw(t, fixture)
 	seen := 0
-	firstOK := rule.walkContainments(value, func(heapdomain.Key) bool { return true })
-	secondOK := rule.walkContainments(value, func(_ heapdomain.Key) bool {
+	firstOK := walkContainments(rule.heap.Schema(), value, func(heapdomain.Key) bool { return true })
+	secondOK := walkContainments(rule.heap.Schema(), value, func(_ heapdomain.Key) bool {
 		seen++
 		return true
 	})
@@ -316,7 +316,7 @@ func TestContainmentWideRouteWalkIsAllocationFree(t *testing.T) {
 	complete := true
 	allocs := testing.AllocsPerRun(100, func() {
 		count := 0
-		if !rule.walkContainments(value, func(heapdomain.Key) bool { return true }) || !rule.walkContainments(value, func(_ heapdomain.Key) bool {
+		if !walkContainments(rule.heap.Schema(), value, func(heapdomain.Key) bool { return true }) || !walkContainments(rule.heap.Schema(), value, func(_ heapdomain.Key) bool {
 			count++
 			return true
 		}) || count != exactEdges {
@@ -349,7 +349,7 @@ func TestContainmentWideBroadcastIsAllocationFreeAndDeterministic(t *testing.T) 
 	}
 	checkOrder := func() bool {
 		index := 0
-		complete := rule.walkAllRoots(func(key heapdomain.Key) bool {
+		complete := walkAllRoots(rule.owner.Schema(), rule.heap.Schema(), func(key heapdomain.Key) bool {
 			if index >= len(expected) || expected[index] != key {
 				return false
 			}
@@ -364,7 +364,7 @@ func TestContainmentWideBroadcastIsAllocationFreeAndDeterministic(t *testing.T) 
 	complete := true
 	allocs := testing.AllocsPerRun(100, func() {
 		count := 0
-		if !rule.walkAllRoots(func(heapdomain.Key) bool {
+		if !walkAllRoots(rule.owner.Schema(), rule.heap.Schema(), func(heapdomain.Key) bool {
 			count++
 			return true
 		}) || count != len(expected) {
@@ -442,7 +442,7 @@ func BenchmarkContainmentWideRoutePlan(b *testing.B) {
 	b.ResetTimer()
 	for iteration := 0; iteration < b.N; iteration++ {
 		seen := 0
-		if !rule.walkContainments(value, func(heapdomain.Key) bool { return true }) || !rule.walkContainments(value, func(_ heapdomain.Key) bool {
+		if !walkContainments(rule.heap.Schema(), value, func(heapdomain.Key) bool { return true }) || !walkContainments(rule.heap.Schema(), value, func(_ heapdomain.Key) bool {
 			seen++
 			return true
 		}) || seen != exactEdges {
@@ -471,7 +471,7 @@ func BenchmarkContainmentWideBroadcast(b *testing.B) {
 	b.ResetTimer()
 	for iteration := 0; iteration < b.N; iteration++ {
 		seen := 0
-		if !rule.walkAllRoots(func(heapdomain.Key) bool {
+		if !walkAllRoots(rule.owner.Schema(), rule.heap.Schema(), func(heapdomain.Key) bool {
 			seen++
 			return true
 		}) || seen != rootCount {

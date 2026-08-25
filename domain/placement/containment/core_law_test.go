@@ -6,7 +6,7 @@ func TestContainmentOperandSummaryKeysAreCompleteAndScalar(t *testing.T) {
 	fixture := newContainmentFixture(t)
 	candidate, candidateOK := operandForSchema(fixture.placement)
 	if !candidateOK {
-		t.Fatal("Placement schema did not issue the containment closure operand")
+		t.Fatal("Placement schema did not issue the containment closure Operand")
 	}
 	count := candidate.SummaryKeyCount()
 	if count != fixture.placement.KeyCount() {
@@ -32,10 +32,10 @@ func TestContainmentOperandSummaryKeysRejectForeignAndMalformedCandidates(t *tes
 	canonical, canonicalOK := operandForSchema(fixture.placement)
 	foreign, foreignOK := operandForSchema(foreignFixture.placement)
 	if !canonicalOK || !foreignOK {
-		t.Fatal("containment operand setup")
+		t.Fatal("containment Operand setup")
 	}
 	if _, _, accepted := operandContentForSchema(fixture.placement, foreign); accepted {
-		t.Fatal("foreign Placement summary-key operand crossed the owner fence")
+		t.Fatal("foreign Placement summary-key Operand crossed the owner fence")
 	}
 
 	malformed := canonical
@@ -46,12 +46,12 @@ func TestContainmentOperandSummaryKeysRejectForeignAndMalformedCandidates(t *tes
 		malformed.summaryKeys[0] = uint64(len(malformed.summaryKeys))
 	}
 	if _, _, accepted := operandContentForSchema(fixture.placement, malformed); accepted {
-		t.Fatal("malformed Placement summary-key operand was admitted")
+		t.Fatal("malformed Placement summary-key Operand was admitted")
 	}
 
 	missing := canonical
 	missing.summaryKeys = nil
 	if _, _, accepted := operandContentForSchema(fixture.placement, missing); accepted {
-		t.Fatal("missing Placement summary-key operand was admitted")
+		t.Fatal("missing Placement summary-key Operand was admitted")
 	}
 }

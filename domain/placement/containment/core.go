@@ -9,7 +9,7 @@ import (
 // mounted-point rule. The Placement schema identity fences both ordered
 // summary reads; its dense allocation coordinates are retained as the
 // source-owned summary range rather than rebuilt for each mounted issuance.
-type operand struct {
+type Operand struct {
 	id          identity.ContentID
 	summaryKeys []uint64
 }
@@ -30,12 +30,12 @@ func summaryKeysForSchema(schema placement.Schema) ([]uint64, bool) {
 	return keys, true
 }
 
-func operandForSchema(schema placement.Schema) (operand, bool) {
+func operandForSchema(schema placement.Schema) (Operand, bool) {
 	keys, keysOK := summaryKeysForSchema(schema)
 	if !keysOK {
-		return operand{}, false
+		return Operand{}, false
 	}
-	return operand{id: schema.ContentID(), summaryKeys: keys}, true
+	return Operand{id: schema.ContentID(), summaryKeys: keys}, true
 }
 
 func completeSummaryKeys(schema placement.Schema, keys []uint64) bool {
@@ -50,9 +50,9 @@ func completeSummaryKeys(schema placement.Schema, keys []uint64) bool {
 	return true
 }
 
-func operandContentForSchema(schema placement.Schema, candidate operand) (operand, [32]byte, bool) {
+func operandContentForSchema(schema placement.Schema, candidate Operand) (Operand, [32]byte, bool) {
 	if !schema.Valid() || !schema.ContentID().Available() || candidate.id != schema.ContentID() || candidate.summaryKeys == nil || !completeSummaryKeys(schema, candidate.summaryKeys) {
-		return operand{}, [32]byte{}, false
+		return Operand{}, [32]byte{}, false
 	}
 	return candidate, [32]byte(candidate.id), true
 }
@@ -60,14 +60,14 @@ func operandContentForSchema(schema placement.Schema, candidate operand) (operan
 // SummaryKeyCount and SummaryKeyAt implement the engine's read-only
 // source-owned summary seam. Only scalar reads cross the package boundary;
 // the owner-retained slice is never exposed to selector admission.
-func (candidate operand) SummaryKeyCount() int {
+func (candidate Operand) SummaryKeyCount() int {
 	if !candidate.id.Available() || candidate.summaryKeys == nil {
 		return -1
 	}
 	return len(candidate.summaryKeys)
 }
 
-func (candidate operand) SummaryKeyAt(index int) (uint64, bool) {
+func (candidate Operand) SummaryKeyAt(index int) (uint64, bool) {
 	if candidate.SummaryKeyCount() < 0 || index < 0 || index >= len(candidate.summaryKeys) {
 		return 0, false
 	}

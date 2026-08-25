@@ -1,9 +1,9 @@
 package containment
 
 import (
-	"testing"
 	"github.com/wippyai/go-lua/analysis/schema/structure"
 	placementdomain "github.com/wippyai/go-lua/domain/placement"
+	"testing"
 )
 
 func TestContainmentFoldUsesOnlyAuthenticatedPlacementFacts(t *testing.T) {

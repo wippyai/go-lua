@@ -14,7 +14,7 @@ import (
 // Placement read is the sole routed-write address source; its dependencies
 // keep the two summary planes together in the cold schema.
 type SchemaFragment struct {
-	slot             *engine.RuleSlot[placement.Fact, operand]
+	slot             *engine.RuleSlot[placement.Fact, Operand]
 	input            engine.SchemaInput
 	placementSummary engine.SchemaReadSlot[placement.Fact]
 	heapSummary      engine.SchemaReadSlot[heapdomain.Value]
@@ -26,7 +26,7 @@ type SchemaFragment struct {
 	semantic         identity.SemanticKey
 }
 
-func (fragment *SchemaFragment) RuleSlot() *engine.RuleSlot[placement.Fact, operand] {
+func (fragment *SchemaFragment) RuleSlot() *engine.RuleSlot[placement.Fact, Operand] {
 	if fragment == nil {
 		return nil
 	}
@@ -40,7 +40,7 @@ func DeclareSchema(builder *engine.SchemaBuilder, semantic, operandFamily identi
 	if builder == nil || placementPrincipal == nil || heapPrincipal == nil || !identity.DistinctKeys(semantic, operandFamily) {
 		return nil, false
 	}
-	slot, ok := engine.NewRuleSlot[placement.Fact, operand](builder, engine.SchemaRuleSpec[placement.Fact]{
+	slot, ok := engine.NewRuleSlot[placement.Fact, Operand](builder, engine.SchemaRuleSpec[placement.Fact]{
 		Semantic: semantic, OperandFamily: operandFamily, Inputs: 1,
 		Output: placementPrincipal.Ref(),
 	})

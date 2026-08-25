@@ -15,10 +15,10 @@ const routeTagLowMask = uint64(^uint32(0))
 // operand addresses complete local Placement and Heap summaries; exact child
 // routes are discovered only while the staged selector is live.
 type HotRule struct {
-	implementation   *placementowner.RuleImplementation[operand]
+	implementation   *placementowner.RuleImplementation[Operand]
 	owner            *placementowner.HotOwner
 	heap             *heapowner.HotOwner
-	closure          operand
+	closure          Operand
 	placementSummary engine.Read[engine.OrderedCells[placement.Fact]]
 	heapSummary      engine.Read[engine.OrderedCells[heapdomain.Value]]
 	routes           engine.Read[engine.Selection[uint64, engine.OrderedCells[placement.Fact]]]
@@ -63,17 +63,17 @@ func BindHot(binding *engine.SchemaBinding, fragment *SchemaFragment, owner *pla
 		return nil, false
 	}
 	rule := &HotRule{owner: owner, heap: heap, closure: closure}
-	implementation, bound := placementowner.BindSelectedRouteRuleDirect(owner, fragment.slot, fragment.carry, fragment.write, owner.FactorRef(), engine.HotRuleSpec[placement.Fact, operand]{
+	implementation, bound := placementowner.BindSelectedRouteRuleDirect(owner, fragment.slot, fragment.carry, fragment.write, owner.FactorRef(), engine.HotRuleSpec[placement.Fact, Operand]{
 		OperandContent: rule.operandContent, OperandResolver: rule.resolveOperand, Fold: rule.fold,
-	}, engine.HotCarrySpec[placement.Fact, operand]{}, nil)
+	}, engine.HotCarrySpec[placement.Fact, Operand]{}, nil)
 	if !bound || implementation == nil {
 		return nil, false
 	}
-	placementSummary, placementOK := placementowner.AddSelectedRuleDirectSummaryRead[operand, placement.Fact, engine.OrderedCells[placement.Fact]](
+	placementSummary, placementOK := placementowner.AddSelectedRuleDirectSummaryRead[Operand, placement.Fact, engine.OrderedCells[placement.Fact]](
 		implementation, fragment.placementSummary, owner.FactorRef(), owner.FoldSummaryRead())
-	heapSummary, heapOK := placementowner.AddSelectedRuleDirectSummaryRead[operand, heapdomain.Value, engine.OrderedCells[heapdomain.Value]](
+	heapSummary, heapOK := placementowner.AddSelectedRuleDirectSummaryRead[Operand, heapdomain.Value, engine.OrderedCells[heapdomain.Value]](
 		implementation, fragment.heapSummary, heap.FactorRef(), heap.SummaryRead())
-	routes, routesOK := placementowner.AddSelectedRuleDirectOperandRead[operand, placement.Fact, uint64](implementation, fragment.routes, owner.FactorRef(), rule.locate)
+	routes, routesOK := placementowner.AddSelectedRuleDirectOperandRead[Operand, placement.Fact, uint64](implementation, fragment.routes, owner.FactorRef(), rule.locate)
 	if !placementOK || !heapOK || !routesOK {
 		return nil, false
 	}
@@ -81,17 +81,17 @@ func BindHot(binding *engine.SchemaBinding, fragment *SchemaFragment, owner *pla
 	return rule, true
 }
 
-func (rule *HotRule) operandContent(candidate operand) (operand, [32]byte, bool) {
+func (rule *HotRule) operandContent(candidate Operand) (Operand, [32]byte, bool) {
 	if rule == nil || rule.owner == nil {
-		return operand{}, [32]byte{}, false
+		return Operand{}, [32]byte{}, false
 	}
 	return operandContentForSchema(rule.owner.Schema(), candidate)
 }
 
-func (rule *HotRule) resolveOperand(coords engine.OperandCoords) (operand, bool) {
+func (rule *HotRule) resolveOperand(coords engine.OperandCoords) (Operand, bool) {
 	if rule == nil || rule.owner == nil || rule.heap == nil || !coords.Mount.Available() || !coords.Point.Available() ||
 		coords.Occurrence != rule.closure.id || rule.owner.Schema().Heap() != rule.heap.Schema() {
-		return operand{}, false
+		return Operand{}, false
 	}
 	return rule.closure, true
 }
@@ -110,14 +110,14 @@ func (rule *HotRule) IDAt(index int) (identity.ContentID, bool) {
 	return rule.closure.id, true
 }
 
-func (rule *HotRule) Implementation() (*placementowner.RuleImplementation[operand], bool) {
+func (rule *HotRule) Implementation() (*placementowner.RuleImplementation[Operand], bool) {
 	if rule == nil || rule.implementation == nil {
 		return nil, false
 	}
 	return rule.implementation, true
 }
 
-func (rule *HotRule) accepts(candidate operand) bool {
+func (rule *HotRule) accepts(candidate Operand) bool {
 	if rule == nil || rule.owner == nil || rule.heap == nil || rule.owner.Schema().Heap() != rule.heap.Schema() {
 		return false
 	}
@@ -148,7 +148,7 @@ func (rule *HotRule) validSummaryShapes(placements engine.OrderedCells[placement
 	return true
 }
 
-func (rule *HotRule) locate(context engine.SelectorContext, candidate operand) bool {
+func (rule *HotRule) locate(context engine.SelectorContext, candidate Operand) bool {
 	if !rule.accepts(candidate) {
 		return false
 	}
@@ -157,124 +157,18 @@ func (rule *HotRule) locate(context engine.SelectorContext, candidate operand) b
 	if !placementsOK || !heapsOK || !rule.validSummaryShapes(placements, heaps) {
 		return false
 	}
-	for parentIndex := 0; parentIndex < placements.Count(); parentIndex++ {
-		parent, parentPresent, parentAvailable := placements.At(parentIndex)
-		parent, parentOK := placement.AuthenticateFactCell(parent, parentPresent, parentAvailable)
-		parentKey, parentKeyOK := rule.owner.Schema().KeyAt(parentIndex)
-		heapIndex, heapIndexOK := rule.heap.Schema().AllocationKeyIndex(parentKey)
-		heapValue, heapOK := summaryCell(heaps, heapIndex, rule.heap.Schema().Bottom(), heapdomain.Equal)
-		if !parentOK || !parentKeyOK || !heapIndexOK || !heapOK || !validPlacement(parent) || !heapValue.Valid() {
-			return false
-		}
-		if heapdomain.Equal(heapValue, rule.heap.Schema().Bottom()) {
-			continue
-		}
-		emit := func(child heapdomain.Key) bool {
-			childIndex, childOK := rule.heap.Schema().AllocationKeyIndex(child)
-			if !childOK || childIndex < 0 || childIndex >= placements.Count() || child.Kind() != heapdomain.RootAllocation {
-				return false
-			}
-			tag, tagOK := routeTag(parentIndex, childIndex)
-			return tagOK && rule.owner.SelectRouteSet(context, child, tag)
-		}
-		if heapdomain.Equal(heapValue, rule.heap.Schema().Top()) {
-			if !rule.walkAllRoots(emit) {
-				return false
-			}
-			continue
-		}
-		opaque, complete := rule.containmentEvidence(heapValue)
-		if !complete {
-			return false
-		}
-		if opaque {
-			if !rule.walkAllRoots(emit) {
-				return false
-			}
-			continue
-		}
-		if !rule.walkContainments(heapValue, emit) {
+	plan, planOK := DeriveContainmentRoutes(rule.owner.Schema(), rule.heap.Schema(), placements, heaps)
+	if !planOK {
+		return false
+	}
+	for index := 0; index < plan.RouteCount(); index++ {
+		item, itemOK := plan.RouteAt(index)
+		child, _ := item.Coordinates()
+		if !itemOK || !rule.owner.SelectRouteSet(context, child, item.Predicate()) {
 			return false
 		}
 	}
 	return true
-}
-
-func (rule *HotRule) walkAllRoots(emit func(heapdomain.Key) bool) bool {
-	if rule == nil || rule.owner == nil || rule.heap == nil || emit == nil {
-		return false
-	}
-	schema := rule.owner.Schema()
-	if !schema.Valid() || schema.Heap() != rule.heap.Schema() {
-		return false
-	}
-	for dense := 0; dense < schema.DenseKeyCount(); dense++ {
-		key, keyOK := schema.KeyAt(dense)
-		if !keyOK || !key.Valid() {
-			return false
-		}
-		if key.Kind() != heapdomain.RootAllocation {
-			continue
-		}
-		if !schema.Heap().OwnsKey(key) {
-			return false
-		}
-		if !emit(key) {
-			return false
-		}
-	}
-	return true
-}
-
-func (rule *HotRule) containmentEvidence(value heapdomain.Value) (opaque, complete bool) {
-	if rule == nil || rule.heap == nil || !value.Valid() || value.IsTop() {
-		return false, false
-	}
-	heapSchema := rule.heap.Schema()
-	complete = heapSchema.VisitContainments(value, func(observation heapdomain.ContainmentVisit) bool {
-		if !observation.Valid() {
-			return false
-		}
-		switch observation.Kind() {
-		case heapdomain.ContainmentNone:
-			return true
-		case heapdomain.ContainmentUnknown:
-			opaque = true
-			return true
-		case heapdomain.ContainmentExact:
-			reference, referenceOK := observation.Reference()
-			child, _, childOK := reference.Key()
-			return referenceOK && childOK && heapSchema.OwnsKey(child)
-		default:
-			return false
-		}
-	})
-	return opaque, complete
-}
-
-func (rule *HotRule) walkContainments(value heapdomain.Value, emit func(heapdomain.Key) bool) bool {
-	if rule == nil || rule.heap == nil || !value.Valid() || value.IsTop() || emit == nil {
-		return false
-	}
-	heapSchema := rule.heap.Schema()
-	return heapSchema.VisitContainments(value, func(observation heapdomain.ContainmentVisit) bool {
-		if !observation.Valid() {
-			return false
-		}
-		switch observation.Kind() {
-		case heapdomain.ContainmentNone:
-			return true
-		case heapdomain.ContainmentExact:
-			reference, referenceOK := observation.Reference()
-			child, _, childOK := reference.Key()
-			if !referenceOK || !childOK || !heapSchema.OwnsKey(child) {
-				return false
-			}
-			return child.Kind() != heapdomain.RootAllocation || emit(child)
-		default:
-			return false
-		}
-	})
 }
 
 // routePlacement keeps the placement-policy coordinate separate from the
@@ -289,7 +183,7 @@ func routePlacement(current, parent placement.Fact, child heapdomain.Value, sche
 	return placement.ThroughContainerChecked(current, parent)
 }
 
-func (rule *HotRule) fold(frame engine.Frame[placement.Fact, operand]) engine.RuleResult[placement.Fact] {
+func (rule *HotRule) fold(frame engine.Frame[placement.Fact, Operand]) engine.RuleResult[placement.Fact] {
 	candidate, operandOK := engine.Operand(frame)
 	if !operandOK || !rule.accepts(candidate) {
 		return engine.RuleResult[placement.Fact]{}
