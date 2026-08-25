@@ -117,6 +117,9 @@ func Families() []Family {
 				Spec:        freshresultprogram.RuleEntry(),
 			},
 			Directory: "domain/value/freshresult",
+		},
+		{
+			Target: emit.Target{
 				PackagePath: "github.com/wippyai/go-lua/domain/value/allocation",
 				PackageName: "allocation",
 				Spec:        valueallocationprogram.RuleEntry(),
@@ -245,6 +248,7 @@ func Declarations() []Declaration {
 		},
 		{
 			Target: emitlaw.Target{
+<<<<<<< HEAD
 				PackagePath: "github.com/wippyai/go-lua/domain/value/freshresult/program",
 				PackageName: "program",
 				Declaration: "FreshResult",
@@ -252,6 +256,15 @@ func Declarations() []Declaration {
 				Spec:        freshresultprogram.RuleEntry(),
 			},
 			Directory: "domain/value/freshresult/program",
+=======
+				PackagePath: "github.com/wippyai/go-lua/domain/value/allocation/program",
+				PackageName: "program",
+				Declaration: "AllocationResult",
+				Entry:       "RuleEntry",
+				Spec:        valueallocationprogram.RuleEntry(),
+			},
+			Directory: "domain/value/allocation/program",
+>>>>>>> 4d40c92350 (law: a mutation states a term the declaration actually carries)
 		},
 	}
 }

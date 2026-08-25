@@ -213,26 +213,36 @@ func foldMutations(declaration program.Program) []mutation {
 			apply:     func(target *program.Program) { target.Fold.Reducer.Member = "" },
 			mandatory: true,
 		},
-		{
+	}
+	// A mutation states a law about a term the declaration actually carries. A
+	// fold that consumes nothing has no input vector to empty and no input
+	// position to misdirect, so these two rows would ask the checker to refuse
+	// a declaration identical to the one it just admitted. They are gated on
+	// the term, exactly as the per-join rows are gated on the join restating a
+	// predicate or a parent, and stay mandatory for every fold that has one.
+	if len(declaration.Fold.Inputs) != 0 {
+		rows = append(rows, mutation{
 			name:      "the fold consumes nothing",
 			statement: "declaration.Fold.Inputs = nil",
 			apply:     func(target *program.Program) { target.Fold.Inputs = nil },
 			mandatory: true,
-		},
-		{
-			name:      "the fold publishes nothing",
-			statement: "declaration.Fold.Outputs = nil",
-			apply:     func(target *program.Program) { target.Fold.Outputs = nil },
-			mandatory: true,
-		},
-		{
+		})
+	}
+	rows = append(rows, mutation{
+		name:      "the fold publishes nothing",
+		statement: "declaration.Fold.Outputs = nil",
+		apply:     func(target *program.Program) { target.Fold.Outputs = nil },
+		mandatory: true,
+	})
+	if len(declaration.Fold.Inputs) != 0 {
+		rows = append(rows, mutation{
 			name:      "the fold consumes a join the declaration does not carry",
 			statement: fmt.Sprintf("declaration.Fold.Inputs[0] = %s.JoinRef(%d)", programPackage, len(declaration.Joins)),
 			apply: func(target *program.Program) {
 				target.Fold.Inputs[0] = program.JoinRef(len(declaration.Joins))
 			},
 			mandatory: true,
-		},
+		})
 	}
 	if len(declaration.Fold.Inputs) > 1 {
 		for position := range declaration.Fold.Inputs {
