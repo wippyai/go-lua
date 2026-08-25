@@ -3,19 +3,44 @@ package memberdefinition
 import (
 	"testing"
 
+	"github.com/wippyai/go-lua/analysis/schema"
 	"github.com/wippyai/go-lua/analysis/schema/axis/member"
 	"github.com/wippyai/go-lua/analysis/schema/structure"
 	placementdomain "github.com/wippyai/go-lua/domain/placement"
 	containment "github.com/wippyai/go-lua/domain/placement/containment"
 )
 
-func TestContainmentContributionDeclaresOnlyTheIrreducibleFold(t *testing.T) {
+func TestContainmentContributionDeclaresItsRouteRowsAndTheIrreducibleFold(t *testing.T) {
 	contribution := Contribution()
 	if !contribution.Available() || contribution.Axis != "placement" || contribution.Rule != "placement-containment" {
 		t.Fatalf("containment contribution identity=%q/%q available=%t", contribution.Axis, contribution.Rule, contribution.Available())
 	}
-	if len(contribution.Relations) != 0 || len(contribution.Projections) != 0 || len(contribution.Reducers) != 1 {
-		t.Fatalf("containment contribution relations=%d projections=%d reducers=%d, want only one reducer", len(contribution.Relations), len(contribution.Projections), len(contribution.Reducers))
+	// The route vector this rule reads is its own statement: one relation,
+	// its three projections, and the operation that publishes its rows. The
+	// fold stays the one irreducible judgment beside them.
+	if len(contribution.Relations) != 1 || len(contribution.Projections) != 3 || len(contribution.Selections) != 1 || len(contribution.Reducers) != 1 {
+		t.Fatalf("containment contribution relations=%d projections=%d selections=%d reducers=%d",
+			len(contribution.Relations), len(contribution.Projections), len(contribution.Selections), len(contribution.Reducers))
+	}
+	routes := contribution.Relations[0]
+	if routes.Key != "placement/containment/routes" || routes.Subject != "ContainmentRouteCarrier" || !routes.CandidateProvider.Issued() {
+		t.Fatalf("containment route relation=%+v, want the issued-candidate route vector", routes)
+	}
+	roles := map[member.Role]schema.Key{}
+	for _, projection := range contribution.Projections {
+		if projection.Relation != "ContainmentRoutes" || !projection.CandidateProvider.Issued() {
+			t.Fatalf("containment projection=%+v, want a route projection under the issued candidate", projection)
+		}
+		roles[projection.Role] = projection.Key
+	}
+	if roles[member.Key] != "placement/containment/route-key" || roles[member.Predicate] != "placement/containment/route-tag" ||
+		roles[member.Destination] != "placement/containment/route-destination" {
+		t.Fatalf("containment route projections=%+v, want key, tag and destination", roles)
+	}
+	selection := contribution.Selections[0]
+	if selection.Key != "placement/containment/route-selection" || selection.Relation != "ContainmentRoutes" ||
+		selection.Tag != "ContainmentRouteTag" || selection.Implementation.Name != "DeriveContainmentRoutes" {
+		t.Fatalf("containment selection=%+v, want the declared route operation", selection)
 	}
 
 	reducer := contribution.Reducers[0]

@@ -3,6 +3,7 @@ package program
 import (
 	"testing"
 
+	programissuance "github.com/wippyai/go-lua/analysis/schema/program/issuance"
 	ruleprogram "github.com/wippyai/go-lua/analysis/schema/rule/program"
 )
 
@@ -11,7 +12,11 @@ func TestContainmentProgramDeclaresTwoCompleteVectorsAndOneRoutedJoin(t *testing
 	if problem, valid := declaration.Check(); !valid {
 		t.Fatalf("containment declaration rejected: %+v", problem)
 	}
-	if declaration.Candidate.AxisRelation.Member != ContainmentCandidates || declaration.JoinCount() != 3 {
+	// The candidate is the issued Program row, not an axis relation: a
+	// rule-specific candidate directory in the axis owner's schema would be a
+	// second authority over rows Program already issues.
+	if !declaration.Candidate.Issued() || declaration.Candidate.IssuedRow != programissuance.RelationOccurrenceEntryGeometry ||
+		declaration.Candidate.AxisRelation.Declared() || declaration.JoinCount() != 3 {
 		t.Fatalf("candidate=%+v joins=%d", declaration.Candidate, declaration.JoinCount())
 	}
 	first, _ := declaration.JoinAt(0)

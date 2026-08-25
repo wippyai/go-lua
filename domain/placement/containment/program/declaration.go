@@ -5,6 +5,8 @@
 package program
 
 import (
+	programissuance "github.com/wippyai/go-lua/analysis/schema/program/issuance"
+
 	"github.com/wippyai/go-lua/analysis/schema"
 	"github.com/wippyai/go-lua/analysis/schema/axis"
 	"github.com/wippyai/go-lua/analysis/schema/axis/member"
@@ -23,7 +25,6 @@ const (
 
 	heapAxisKey schema.Key = "heap"
 
-	ContainmentCandidates       schema.Key = "placement/containment/candidates"
 	ContainmentPlacementSummary schema.Key = "placement/containment/placement-summary"
 	ContainmentPlacementKey     schema.Key = "placement/containment/placement-summary-coordinate"
 	ContainmentHeapSummary      schema.Key = "heap/containment/heap-summary"
@@ -34,6 +35,10 @@ const (
 	ContainmentRouteTag         schema.Key = "placement/containment/route-tag"
 	ContainmentRouteDestination schema.Key = "placement/containment/route-destination"
 	ContainmentReducer          schema.Key = "placement/containment/reducer"
+	// The route vector is produced from the two complete vectors read before
+	// it, so the read names the operation Placement publishes its rows
+	// through rather than a coordinate nothing has computed yet.
+	ContainmentRouteSelection schema.Key = "placement/containment/route-selection"
 )
 
 func RuleEntry() rule.Spec {
@@ -63,10 +68,15 @@ func denominatorReference(key schema.Key) ruleprogram.DenominatorRef {
 func PlacementContainment() ruleprogram.Program {
 	placementAxis := axisReference(AxisKey)
 	heapAxis := axisReference(heapAxisKey)
-	candidate := member.RelationRef{Axis: placementAxis, Member: ContainmentCandidates}
 	return ruleprogram.Program{
 		OperandRole: vocabulary.RoleKey(OperandRole),
-		Candidate:   member.AxisRelationCandidate(candidate),
+		// The rows this rule folds are the mounted points Program already
+		// issues it at. Reaching them through the issued entry-geometry row
+		// keeps Program the one candidate authority: a rule-specific
+		// directory in the Placement schema would be a second one, and an
+		// axis owner publishes owner semantics rather than one rule's
+		// enumeration.
+		Candidate: member.IssuedRowCandidate(programissuance.RelationOccurrenceEntryGeometry),
 		Joins: []ruleprogram.JoinDecl{
 			{
 				Sources:  []ruleprogram.SourceRef{ruleprogram.CandidateSource()},
