@@ -13,6 +13,11 @@ package heap
 type DbgHeapCounters struct {
 	PartitionValidations uint64
 	DefaultDerivations   uint64
+
+	// FreshRootMaterializations counts fresh Root rows built out of the
+	// sealed catalog. A reader that only needs to know a fresh row exists,
+	// or what kind every fresh row has, builds none.
+	FreshRootMaterializations uint64
 }
 
 var dbgHeap DbgHeapCounters

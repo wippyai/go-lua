@@ -1013,6 +1013,7 @@ func (owner *schema) freshCount() uint64 {
 }
 
 func (owner *schema) freshRoot(slot uint32) (fresh.Root, bool) {
+	dbgHeap.FreshRootMaterializations++
 	if owner == nil || owner.fresh == nil || slot <= owner.programRootCount {
 		return fresh.Root{}, false
 	}
@@ -1038,9 +1039,11 @@ func (owner *schema) rootAt(slot uint32) (rootRow, bool) {
 	freshStart := uint64(owner.programRootCount) + 1
 	if uint64(slot) >= freshStart {
 		freshIndex := uint64(slot) - freshStart
+		// A fresh row's kind is the same for every fresh row, and the
+		// catalog proved its rows when it was built, so membership answers
+		// this without materializing the Root and discarding it.
 		if freshIndex < owner.freshCount() {
-			_, freshOK := owner.freshRoot(slot)
-			return rootRow{kind: RootAllocation}, freshOK
+			return rootRow{kind: RootAllocation}, owner.fresh.Has(freshIndex)
 		}
 	}
 	bootIndex := uint64(slot) - owner.freshCount()

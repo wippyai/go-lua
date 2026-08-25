@@ -159,7 +159,21 @@ func Build(source *link.Link, mounted []MountedProgram) (*Catalog, bool) {
 		catalog.count += uint64(len(selected))
 		catalog.offsets = append(catalog.offsets, catalog.count)
 	}
+	// Every counted index is proved here, once, so membership below is the
+	// range test and no reader has to materialize a Root to learn that one
+	// exists.
+	for index := uint64(0); index < catalog.count; index++ {
+		if _, ok := catalog.At(index); !ok {
+			return nil, false
+		}
+	}
 	return catalog, true
+}
+
+// Has reports whether index addresses a fresh root. Build proved every index
+// it counted, so membership is the count.
+func (catalog *Catalog) Has(index uint64) bool {
+	return catalog != nil && index < catalog.count
 }
 
 func (catalog *Catalog) internTargetTemplates(contract *targetcontract.Contract) bool {
