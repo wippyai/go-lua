@@ -19,7 +19,7 @@ type rawSetView struct {
 	packCount   int
 	pack        func(heapdomain.RawPayloadTag) rawSelected[pack.Value]
 	sourceCount int
-	source      func(rawSourceTag) rawSelected[valuedomain.Value]
+	source      func(RawSourceTag) rawSelected[valuedomain.Value]
 }
 
 func (rule *RawSetRule) fold(frame engine.Frame[heapdomain.Value, Index]) engine.RuleResult[heapdomain.Value] {
@@ -91,7 +91,7 @@ func transferRawSetView(
 	keys engine.Selection[uint64, engine.OrderedCells[valuedomain.Value]],
 	heaps engine.Selection[heapdomain.RawRouteTag, engine.OrderedCells[heapdomain.Value]],
 	packs engine.Selection[heapdomain.RawPayloadTag, engine.OrderedCells[pack.Value]],
-	sources engine.Selection[rawSourceTag, engine.OrderedCells[valuedomain.Value]],
+	sources engine.Selection[RawSourceTag, engine.OrderedCells[valuedomain.Value]],
 	scratch *rawSetScratch,
 ) (rawSetView, bool) {
 	if scratch == nil {
@@ -135,7 +135,7 @@ func transferRawSetView(
 	view.pack = func(tag heapdomain.RawPayloadTag) rawSelected[pack.Value] {
 		return transferSelectionValue(frame, packs, &scratch.pack, tag)
 	}
-	view.source = func(tag rawSourceTag) rawSelected[valuedomain.Value] {
+	view.source = func(tag RawSourceTag) rawSelected[valuedomain.Value] {
 		return transferSelectionValue(frame, sources, &scratch.source, tag)
 	}
 	return view, true
@@ -345,7 +345,7 @@ func (rule *RawSetRule) applyScalar(
 }
 
 func (rule *RawSetRule) applySourceTag(
-	schema heapdomain.Schema, raw heapdomain.RawAccess, tag rawSourceTag, view rawSetView,
+	schema heapdomain.Schema, raw heapdomain.RawAccess, tag RawSourceTag, view rawSetView,
 	access Index, slot heapdomain.Slot, payload heapdomain.Payload, keyChild heapdomain.Containment,
 	result *heapdomain.Value, frozen, changed, preserved *bool,
 ) bool {

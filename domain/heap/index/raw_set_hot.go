@@ -74,7 +74,7 @@ func BindRawSetHot(binding *engine.SchemaBinding, fragment *RawSetSchemaFragment
 	if core.packRead, ok = heapowner.AddSelectedRouteRuleDirectOperandRead[Index, pack.Value, heapdomain.RawPayloadTag](implementation, fragment.packRead, fragment.packRef, core.locatePack); !ok {
 		return nil, false
 	}
-	if core.source, ok = heapowner.AddSelectedRouteRuleDirectOperandRead[Index, valuedomain.Value, rawSourceTag](implementation, fragment.sourceRead, fragment.valueRef, core.locateSource); !ok {
+	if core.source, ok = heapowner.AddSelectedRouteRuleDirectOperandRead[Index, valuedomain.Value, RawSourceTag](implementation, fragment.sourceRead, fragment.valueRef, core.locateSource); !ok {
 		return nil, false
 	}
 	rule.implementation = implementation
@@ -106,7 +106,7 @@ func hotRawSetRuntime(values *valueowner.HotOwner, heap *heapowner.HotOwner, pac
 	runtime.valueRoute = func(context engine.SelectorContext, coordinate valuedomain.Coordinate, tag uint64) bool {
 		return values.SelectRoute(context, coordinate, tag)
 	}
-	runtime.sourceRoute = func(context engine.SelectorContext, coordinate valuedomain.Coordinate, tag rawSourceTag) bool {
+	runtime.sourceRoute = func(context engine.SelectorContext, coordinate valuedomain.Coordinate, tag RawSourceTag) bool {
 		return valueowner.SelectRouteTyped(values, context, coordinate, tag)
 	}
 	runtime.heapRoute = func(context engine.SelectorContext, key heapdomain.Key, tag heapdomain.RawRouteTag) bool {

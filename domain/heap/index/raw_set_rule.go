@@ -19,7 +19,7 @@ type RawSetRule struct {
 	key      engine.Read[engine.Selection[uint64, engine.OrderedCells[valuedomain.Value]]]
 	heapRead engine.Read[engine.Selection[heapdomain.RawRouteTag, engine.OrderedCells[heapdomain.Value]]]
 	packRead engine.Read[engine.Selection[heapdomain.RawPayloadTag, engine.OrderedCells[pack.Value]]]
-	source   engine.Read[engine.Selection[rawSourceTag, engine.OrderedCells[valuedomain.Value]]]
+	source   engine.Read[engine.Selection[RawSourceTag, engine.OrderedCells[valuedomain.Value]]]
 
 	scratch  sync.Pool
 	runtime  *rawSetRuntime
@@ -34,7 +34,7 @@ type rawSetRuntime struct {
 	values      *valuedomain.Schema
 	heap        heapdomain.Schema
 	valueRoute  func(engine.SelectorContext, valuedomain.Coordinate, uint64) bool
-	sourceRoute func(engine.SelectorContext, valuedomain.Coordinate, rawSourceTag) bool
+	sourceRoute func(engine.SelectorContext, valuedomain.Coordinate, RawSourceTag) bool
 	heapRoute   func(engine.SelectorContext, heapdomain.Key, heapdomain.RawRouteTag) bool
 	packRoute   func(engine.SelectorContext, pack.Root, heapdomain.RawPayloadTag) bool
 }
@@ -58,7 +58,7 @@ func (rule *RawSetRule) packSchema() *pack.Schema {
 	return rule.topology.packs
 }
 
-func (rule *RawSetRule) sourceTag(payload heapdomain.RawPayloadTag, source pack.SemanticSource) (rawSourceTag, bool) {
+func (rule *RawSetRule) sourceTag(payload heapdomain.RawPayloadTag, source pack.SemanticSource) (RawSourceTag, bool) {
 	if rule == nil || rule.topology == nil || rule.topology.catalog == nil {
 		return 0, false
 	}
@@ -70,7 +70,7 @@ func (rule *RawSetRule) valueRoute(context engine.SelectorContext, coordinate va
 	}
 	return rule.runtime.valueRoute(context, coordinate, tag)
 }
-func (rule *RawSetRule) sourceRoute(context engine.SelectorContext, coordinate valuedomain.Coordinate, tag rawSourceTag) bool {
+func (rule *RawSetRule) sourceRoute(context engine.SelectorContext, coordinate valuedomain.Coordinate, tag RawSourceTag) bool {
 	if rule == nil || rule.runtime == nil || rule.runtime.sourceRoute == nil {
 		return false
 	}

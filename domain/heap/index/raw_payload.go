@@ -26,7 +26,10 @@ type rawPayload struct {
 	sourceCount uint32
 }
 
-type rawSourceTag uint64
+// RawSourceTag names one semantic source of one payload. It is the catalog's
+// own identity for a source row, and it is the identity a raw-access source
+// expansion publishes each of its rows under.
+type RawSourceTag uint64
 
 type rawPayloadSource struct {
 	payload heapdomain.RawPayloadTag
@@ -52,8 +55,8 @@ type rawBootInitial struct {
 type rawCatalog struct {
 	payloads        []rawPayload
 	sources         []rawSource
-	sourceRefs      []rawSourceTag
-	byPayloadSource map[rawPayloadSource]rawSourceTag
+	sourceRefs      []RawSourceTag
+	byPayloadSource map[rawPayloadSource]RawSourceTag
 	bootInitials    map[rawBootInitial]valuedomain.Value
 }
 
@@ -66,7 +69,7 @@ type rawSetRouteFact struct {
 	tag  heapdomain.RawRouteTag
 }
 
-func buildRawPayloads(topology *Topology, packs *pack.Schema) ([]rawPayload, []rawSource, []rawSourceTag, map[rawPayloadSource]rawSourceTag, bool) {
+func buildRawPayloads(topology *Topology, packs *pack.Schema) ([]rawPayload, []rawSource, []RawSourceTag, map[rawPayloadSource]RawSourceTag, bool) {
 	if topology == nil || !topology.baseValid() || packs == nil || packs != topology.packs {
 		return nil, nil, nil, nil, false
 	}
@@ -76,9 +79,9 @@ func buildRawPayloads(topology *Topology, packs *pack.Schema) ([]rawPayload, []r
 	}
 	result := []rawPayload{{}}
 	var sources []rawSource
-	var sourceRefs []rawSourceTag
-	byPayloadSource := make(map[rawPayloadSource]rawSourceTag)
-	sourceTags := make(map[pack.SemanticSource]rawSourceTag)
+	var sourceRefs []RawSourceTag
+	byPayloadSource := make(map[rawPayloadSource]RawSourceTag)
+	sourceTags := make(map[pack.SemanticSource]RawSourceTag)
 	visited := 0
 	complete := topology.heap.VisitRawPayloadTags(func(tag heapdomain.RawPayloadTag, payload heapdomain.Payload) bool {
 		visited = int(tag)
@@ -210,7 +213,7 @@ func buildRawBootInitials(topology *Topology, values *valuedomain.Schema) (map[r
 	return result, true
 }
 
-func appendRawSource(all *[]rawSource, refs *[]rawSourceTag, tags map[pack.SemanticSource]rawSourceTag, byPayloadSource map[rawPayloadSource]rawSourceTag, payload *rawPayload, payloadTag heapdomain.RawPayloadTag, source pack.SemanticSource, coordinate valuedomain.Coordinate) bool {
+func appendRawSource(all *[]rawSource, refs *[]RawSourceTag, tags map[pack.SemanticSource]RawSourceTag, byPayloadSource map[rawPayloadSource]RawSourceTag, payload *rawPayload, payloadTag heapdomain.RawPayloadTag, source pack.SemanticSource, coordinate valuedomain.Coordinate) bool {
 	if all == nil || refs == nil || tags == nil || byPayloadSource == nil || payload == nil || !source.Available() || !coordinate.Valid() || payloadTag == 0 || uint64(len(*all)) == ^uint64(0) || uint64(len(*refs)) >= uint64(^uint32(0)) || payload.sourceCount == ^uint32(0) {
 		return false
 	}
@@ -232,7 +235,7 @@ func appendRawSource(all *[]rawSource, refs *[]rawSourceTag, tags map[pack.Seman
 		}
 	} else {
 		*all = append(*all, rawSource{coordinate: coordinate})
-		tag = rawSourceTag(len(*all))
+		tag = RawSourceTag(len(*all))
 		tags[source] = tag
 	}
 	if payload.sourceCount == 0 {
@@ -248,7 +251,7 @@ func appendRawSource(all *[]rawSource, refs *[]rawSourceTag, tags map[pack.Seman
 	return true
 }
 
-func payloadSources(payloads []rawPayload, refs []rawSourceTag, tag heapdomain.RawPayloadTag) ([]rawSourceTag, bool) {
+func payloadSources(payloads []rawPayload, refs []RawSourceTag, tag heapdomain.RawPayloadTag) ([]RawSourceTag, bool) {
 	payload, ok := payloadAt(payloads, tag)
 	if !ok {
 		return nil, false
@@ -262,7 +265,7 @@ func payloadSources(payloads []rawPayload, refs []rawSourceTag, tag heapdomain.R
 	return refs[start:end], true
 }
 
-func (catalog *rawCatalog) sourceTag(payload heapdomain.RawPayloadTag, source pack.SemanticSource) (rawSourceTag, bool) {
+func (catalog *rawCatalog) sourceTag(payload heapdomain.RawPayloadTag, source pack.SemanticSource) (RawSourceTag, bool) {
 	if catalog == nil || catalog.byPayloadSource == nil || payload == 0 || !source.Available() {
 		return 0, false
 	}
@@ -270,7 +273,7 @@ func (catalog *rawCatalog) sourceTag(payload heapdomain.RawPayloadTag, source pa
 	return tag, ok
 }
 
-func (catalog *rawCatalog) sourceTags(payload heapdomain.RawPayloadTag) ([]rawSourceTag, bool) {
+func (catalog *rawCatalog) sourceTags(payload heapdomain.RawPayloadTag) ([]RawSourceTag, bool) {
 	if catalog == nil {
 		return nil, false
 	}
@@ -288,7 +291,7 @@ func payloadAt(values []rawPayload, tag heapdomain.RawPayloadTag) (rawPayload, b
 	return value, value.kind != rawPayloadInvalid
 }
 
-func sourceAt(values []rawSource, tag rawSourceTag) (rawSource, bool) {
+func sourceAt(values []rawSource, tag RawSourceTag) (rawSource, bool) {
 	if tag == 0 || uint64(tag) > uint64(len(values)) {
 		return rawSource{}, false
 	}

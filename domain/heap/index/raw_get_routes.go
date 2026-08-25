@@ -3,16 +3,18 @@ package index
 import (
 	"github.com/wippyai/go-lua/analysis/engine"
 	heapdomain "github.com/wippyai/go-lua/domain/heap"
+	valuedomain "github.com/wippyai/go-lua/domain/value"
 )
 
 func (rule *RawGetRule) locatePack(context engine.SelectorContext, access Index) bool {
 	seen := rule.takeScratch()
 	defer rule.putScratch(seen)
-	return rule.visitSelectedPayloads(context, access, func(tag heapdomain.RawPayloadTag, payload rawPayload) bool {
-		if payload.kind != rawPayloadTail || marked(seen.payload, uint64(tag)) {
+	return rule.visitSelectedPayloads(context, access, func(payload RawPayload) bool {
+		tag := payload.Tag()
+		if !payload.IsTail() || marked(seen.payload, uint64(tag)) {
 			return true
 		}
-		root, ok := payload.payload.Root()
+		root, ok := payload.Root()
 		if !ok {
 			return false
 		}
@@ -27,29 +29,21 @@ func (rule *RawGetRule) locatePack(context engine.SelectorContext, access Index)
 func (rule *RawGetRule) locateSource(context engine.SelectorContext, access Index) bool {
 	seen := rule.takeScratch()
 	defer rule.putScratch(seen)
-	return rule.visitSelectedPayloads(context, access, func(payloadTag heapdomain.RawPayloadTag, payload rawPayload) bool {
-		tags, tagsOK := rule.runtime.topology.catalog.sourceTags(payloadTag)
-		if !tagsOK {
-			return false
-		}
-		for _, tag := range tags {
+	return rule.visitSelectedPayloads(context, access, func(payload RawPayload) bool {
+		return rule.runtime.topology.VisitPayloadSources(payload.Tag(), func(tag RawSourceTag, coordinate valuedomain.Coordinate) bool {
 			if marked(seen.source, uint64(tag)) {
-				continue
+				return true
 			}
-			source, ok := rule.sourceAt(tag)
-			if !ok {
-				return false
-			}
-			if rule.runtime.sourceRoute == nil || !rule.runtime.sourceRoute(context, source.coordinate, tag) {
+			if rule.runtime.sourceRoute == nil || !rule.runtime.sourceRoute(context, coordinate, tag) {
 				return false
 			}
 			mark(seen.source, uint64(tag))
-		}
-		return true
+			return true
+		})
 	})
 }
 
-func (rule *RawGetRule) visitSelectedPayloads(context engine.SelectorContext, access Index, visit func(heapdomain.RawPayloadTag, rawPayload) bool) bool {
+func (rule *RawGetRule) visitSelectedPayloads(context engine.SelectorContext, access Index, visit func(RawPayload) bool) bool {
 	if rule == nil || !rule.owns(access) || visit == nil {
 		return false
 	}
@@ -81,33 +75,7 @@ func (rule *RawGetRule) visitSelectedPayloads(context engine.SelectorContext, ac
 			if !present {
 				continue
 			}
-			if rule.runtime.visitRawRoute == nil || !rule.runtime.visitRawRoute(route, fact, selector, func(raw heapdomain.RawAccess) bool {
-				if raw.IsTop() {
-					return true
-				}
-				cell, ok := raw.Cell()
-				if !ok {
-					return false
-				}
-				for n := 0; n < cell.PresentCount(); n++ {
-					present, ok := cell.PresentAt(n)
-					if !ok {
-						return false
-					}
-					tag, ok := raw.PayloadTag(present)
-					if !ok { // Target boot payloads intentionally have no Program descriptor need.
-						if _, _, initial := raw.InitialPayload(present); initial {
-							continue
-						}
-						return false
-					}
-					payload, ok := rule.payloadAt(tag)
-					if !ok || !visit(tag, payload) {
-						return false
-					}
-				}
-				return true
-			}) {
+			if !rule.runtime.topology.VisitRoutePayloads(route, fact, selector, visit) {
 				return false
 			}
 		}

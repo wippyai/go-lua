@@ -22,7 +22,7 @@ type rawGetView struct {
 	packCount   int
 	pack        func(heapdomain.RawPayloadTag) rawSelected[pack.Value]
 	sourceCount int
-	source      func(rawSourceTag) rawSelected[valuedomain.Value]
+	source      func(RawSourceTag) rawSelected[valuedomain.Value]
 }
 
 type rawSelected[V any] struct {
@@ -78,7 +78,7 @@ func transferSelectionsEmpty(
 	calls engine.Selection[uint64, engine.OrderedCells[calldomain.Value]],
 	heaps engine.Selection[heapdomain.RawRouteTag, engine.OrderedCells[heapdomain.Value]],
 	packs engine.Selection[heapdomain.RawPayloadTag, engine.OrderedCells[pack.Value]],
-	sources engine.Selection[rawSourceTag, engine.OrderedCells[valuedomain.Value]],
+	sources engine.Selection[RawSourceTag, engine.OrderedCells[valuedomain.Value]],
 ) bool {
 	keyCount, keyOK := engine.SelectionCount(frame, keys)
 	callCount, callOK := engine.SelectionCount(frame, calls)
@@ -94,7 +94,7 @@ func transferRawGetView(
 	calls engine.Selection[uint64, engine.OrderedCells[calldomain.Value]],
 	heaps engine.Selection[heapdomain.RawRouteTag, engine.OrderedCells[heapdomain.Value]],
 	packs engine.Selection[heapdomain.RawPayloadTag, engine.OrderedCells[pack.Value]],
-	sources engine.Selection[rawSourceTag, engine.OrderedCells[valuedomain.Value]],
+	sources engine.Selection[RawSourceTag, engine.OrderedCells[valuedomain.Value]],
 	scratch *rawGetScratch,
 ) (rawGetView, bool) {
 	if scratch == nil {
@@ -143,7 +143,7 @@ func transferRawGetView(
 	view.pack = func(tag heapdomain.RawPayloadTag) rawSelected[pack.Value] {
 		return transferSelectionValue(frame, packs, &scratch.pack, tag)
 	}
-	view.source = func(tag rawSourceTag) rawSelected[valuedomain.Value] {
+	view.source = func(tag RawSourceTag) rawSelected[valuedomain.Value] {
 		return transferSelectionValue(frame, sources, &scratch.value, tag)
 	}
 	return view, true

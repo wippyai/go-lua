@@ -51,10 +51,10 @@ func BindRawGetHot(binding *engine.SchemaBinding, fragment *RawGetSchemaFragment
 	runtime.valueRoute = func(context engine.SelectorContext, coordinate valuedomain.Coordinate, tag uint64) bool {
 		return values.SelectRoute(context, coordinate, tag)
 	}
-	// The semantic-source read is declared over rawSourceTag, so its routes
+	// The semantic-source read is declared over RawSourceTag, so its routes
 	// carry that tag type. Emitting the same ordinal as a bare uint64 mints a
 	// route the staged sink cannot accept.
-	runtime.sourceRoute = func(context engine.SelectorContext, coordinate valuedomain.Coordinate, tag rawSourceTag) bool {
+	runtime.sourceRoute = func(context engine.SelectorContext, coordinate valuedomain.Coordinate, tag RawSourceTag) bool {
 		return valueowner.SelectRouteTyped(values, context, coordinate, tag)
 	}
 	runtime.heapRoute = func(context engine.SelectorContext, key heapdomain.Key, tag heapdomain.RawRouteTag) bool {
@@ -97,7 +97,7 @@ func BindRawGetHot(binding *engine.SchemaBinding, fragment *RawGetSchemaFragment
 	if core.packRead, ok = valueowner.AddSelectedRuleDirectOperandRead[Index, pack.Value, heapdomain.RawPayloadTag](implementation, fragment.packRead, packs.FactorRef(), core.locatePack); !ok {
 		return nil, false
 	}
-	if core.sourceRead, ok = valueowner.AddSelectedRuleDirectOperandRead[Index, valuedomain.Value, rawSourceTag](implementation, fragment.sourceRead, values.FactorRef(), core.locateSource); !ok {
+	if core.sourceRead, ok = valueowner.AddSelectedRuleDirectOperandRead[Index, valuedomain.Value, RawSourceTag](implementation, fragment.sourceRead, values.FactorRef(), core.locateSource); !ok {
 		return nil, false
 	}
 	rule.implementation = implementation

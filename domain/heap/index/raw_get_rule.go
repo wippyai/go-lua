@@ -19,7 +19,7 @@ type RawGetRule struct {
 	call       engine.Read[engine.Selection[uint64, engine.OrderedCells[calldomain.Value]]]
 	heapRead   engine.Read[engine.Selection[heapdomain.RawRouteTag, engine.OrderedCells[heapdomain.Value]]]
 	packRead   engine.Read[engine.Selection[heapdomain.RawPayloadTag, engine.OrderedCells[pack.Value]]]
-	sourceRead engine.Read[engine.Selection[rawSourceTag, engine.OrderedCells[valuedomain.Value]]]
+	sourceRead engine.Read[engine.Selection[RawSourceTag, engine.OrderedCells[valuedomain.Value]]]
 
 	scratch sync.Pool
 	runtime *rawGetRuntime
@@ -37,7 +37,7 @@ type rawGetRuntime struct {
 	visitCallDemand func(valuedomain.Value, func(calldomain.Key, uint64) bool) bool
 	callRoute       func(engine.SelectorContext, calldomain.Key, uint64) bool
 	valueRoute      func(engine.SelectorContext, valuedomain.Coordinate, uint64) bool
-	sourceRoute     func(engine.SelectorContext, valuedomain.Coordinate, rawSourceTag) bool
+	sourceRoute     func(engine.SelectorContext, valuedomain.Coordinate, RawSourceTag) bool
 	heapRoute       func(engine.SelectorContext, heapdomain.Key, heapdomain.RawRouteTag) bool
 	packRoute       func(engine.SelectorContext, pack.Root, heapdomain.RawPayloadTag) bool
 	visitReceiver   func(valuedomain.Value, CallState, func(Route) bool) bool
@@ -75,7 +75,7 @@ func (rule *RawGetRule) payloadAt(tag heapdomain.RawPayloadTag) (rawPayload, boo
 	}
 	return payloadAt(rule.runtime.topology.catalog.payloads, tag)
 }
-func (rule *RawGetRule) sourceAt(tag rawSourceTag) (rawSource, bool) {
+func (rule *RawGetRule) sourceAt(tag RawSourceTag) (rawSource, bool) {
 	if rule == nil || rule.runtime == nil || rule.runtime.topology == nil || rule.runtime.topology.catalog == nil {
 		return rawSource{}, false
 	}
@@ -102,7 +102,7 @@ func (rule *RawGetRule) bootInitialAt(route heapdomain.RawRouteTag, payload heap
 	return value, ok
 }
 
-func (rule *RawGetRule) sourceTag(payload heapdomain.RawPayloadTag, source pack.SemanticSource) (rawSourceTag, bool) {
+func (rule *RawGetRule) sourceTag(payload heapdomain.RawPayloadTag, source pack.SemanticSource) (RawSourceTag, bool) {
 	if rule == nil || rule.runtime == nil || rule.runtime.topology == nil || rule.runtime.topology.catalog == nil {
 		return 0, false
 	}

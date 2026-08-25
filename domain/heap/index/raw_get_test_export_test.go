@@ -28,9 +28,9 @@ func NewRawGetSemanticSourceLookupFixture(sources []pack.SemanticSource, coordin
 		return nil, false
 	}
 	all := make([]rawSource, 0, len(sources))
-	refs := make([]rawSourceTag, 0, len(sources))
-	tags := make(map[pack.SemanticSource]rawSourceTag, len(sources))
-	reverse := make(map[rawPayloadSource]rawSourceTag, len(sources))
+	refs := make([]RawSourceTag, 0, len(sources))
+	tags := make(map[pack.SemanticSource]RawSourceTag, len(sources))
+	reverse := make(map[rawPayloadSource]RawSourceTag, len(sources))
 	payload := rawPayload{kind: rawPayloadTail}
 	for index, source := range sources {
 		if !source.Available() || !coordinates[index].Valid() {
@@ -50,7 +50,7 @@ func NewRawGetSemanticSourceLookupFixture(sources []pack.SemanticSource, coordin
 	return fixture, true
 }
 
-func (fixture *RawGetSemanticSourceLookupFixture) readSource(tag rawSourceTag) rawSelected[valuedomain.Value] {
+func (fixture *RawGetSemanticSourceLookupFixture) readSource(tag RawSourceTag) rawSelected[valuedomain.Value] {
 	index := int(tag) - 1
 	if fixture == nil || index < 0 || index >= len(fixture.facts) {
 		return rawSelected[valuedomain.Value]{}
