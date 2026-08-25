@@ -65,3 +65,59 @@ func planCompiledTransformedCarryRule(t *testing.T) generated.CompiledRule {
 	}
 	return rule
 }
+
+// TestAReadFreeTransformedCarryIsItsOwnForm states that the carry disposition
+// decides that a descriptor is a carry, and the declared read vocabulary
+// decides which carry it is. A carry over one exact cell reduces that cell and
+// holds its publication to the region the cell reported; a carry that declares
+// no read has neither, answers from its candidate, and publishes over the
+// invocation's own support. Handing the second to FoldCarry would open a cursor
+// the declaration never named.
+//
+// The port it opens at is the one its carry declares, because no read declares
+// one. That port is already held to the descriptor's sealed input prefix by
+// generated.NewPlanCompiledRule, which refuses to seal a carry naming a port
+// no input declares, so a descriptor reaching the classifier cannot carry one.
+func TestAReadFreeTransformedCarryIsItsOwnForm(t *testing.T) {
+	readFree := planCompiledReadFreeCarryRule(t, 0)
+
+	row, ok := DeclaredForm(readFree)
+	if !ok || row.Form != FormSourceCarry {
+		t.Fatalf("read-free transformed carry derived as %q/%t, want source-carry", row.Form.Name(), ok)
+	}
+	if row.Input != 0 {
+		t.Fatalf("read-free carry port = %d, want the port its carry names", row.Input)
+	}
+	if _, present := row.Rule.CarryTransform(); !present {
+		t.Fatal("the derived row lost the transform address it was derived from")
+	}
+	if carried, carriedOK := DeclaredForm(planCompiledTransformedCarryRule(t)); !carriedOK || carried.Form != FormCarry {
+		t.Fatalf("the one-read carry stopped deriving its own form: %q/%t", carried.Form.Name(), carriedOK)
+	}
+}
+
+// planCompiledReadFreeCarryRule seals a transformed-carry descriptor that
+// declares no read, with its carry naming the given input port.
+func planCompiledReadFreeCarryRule(t *testing.T, port uint32) generated.CompiledRule {
+	t.Helper()
+	rule, ok := generated.NewPlanCompiledRule(generated.CompiledRuleSpec{
+		AxisCount: 3, InputCount: 1,
+		Candidate: ruleplan.RelationAddr{Axis: 0, Member: 0},
+		Reducer:   ruleplan.ReducerAddr{Axis: 2, Member: 1},
+		// The declared read vector is empty, not absent: this rule reads
+		// nothing, which is a statement it makes rather than one it omits.
+		Reads: []generated.ReadPlan{},
+		Outputs: []generated.OutputPlan{{
+			Factor: 2, Axis: 2, Address: ruleplan.OutputAddr{Axis: 2, Frame: 0},
+			Destination: ruleplan.ProjectionAddr{Axis: 0, Member: 0}, Mode: ruleprogram.ModeExact, Exact: true, Strong: true,
+		}},
+		Carry: &generated.CarryPlan{
+			Input: port, Factor: 2, Mode: ruleprogram.CarryTransform,
+			Transform: ruleplan.CarryTransformAddr{Axis: 2, Member: 1}, TransformPresent: true,
+		},
+	})
+	if !ok {
+		t.Fatal("sealed read-free transformed carry plan")
+	}
+	return rule
+}

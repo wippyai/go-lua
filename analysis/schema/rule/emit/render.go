@@ -135,6 +135,9 @@ func renderReducer(out *strings.Builder, built *plan) error {
 
 	switch built.shape {
 	case shapeCarry:
+		if len(built.joins) == 0 {
+			return renderSourceCarryReduce(out, built)
+		}
 		return renderCarryReduce(out, built)
 	case shapeExactFold:
 		return renderExactReduce(out, built)
@@ -494,6 +497,9 @@ func renderWorker(out *strings.Builder, built *plan) error {
 
 	switch built.shape {
 	case shapeCarry:
+		if len(built.joins) == 0 {
+			return renderSourceCarryExecute(out, built)
+		}
 		return renderCarryExecute(out, built)
 	case shapeExactFold:
 		return renderExactExecute(out, built)
@@ -680,6 +686,52 @@ func renderExecuteEpilogue(out *strings.Builder, built *plan) {
 	out.WriteString("\twritten := 0\n")
 	fmt.Fprintf(out, "\tif outcome == %s.Concrete {\n\t\twritten = 1\n\t}\n", structure)
 	fmt.Fprintf(out, "\treturn %s.NewResult(outcome, written)\n}\n\n", execution)
+}
+
+// renderSourceCarryReduce writes the judgment of a carry that reads nothing.
+// The candidate is the whole of its input, so Reduce takes no cell: a rule of
+// this shape answers from the directory row it is indexed by and from whatever
+// cold state its family was sealed with.
+func renderSourceCarryReduce(out *strings.Builder, built *plan) error {
+	imports := built.imports
+	structure := imports.use(structurePackagePath)
+	if len(built.fold.inputs) != 0 {
+		return unexpressible(built.target.Spec.Key, fmt.Sprintf("a read-free carry folding %d inputs", len(built.fold.inputs)),
+			"a fold with no declared read has no cell to consume, so its reducer takes the candidate alone")
+	}
+	if len(built.fold.results) != 2 {
+		return unexpressible(built.target.Spec.Key, fmt.Sprintf("a carry fold answering %d results", len(built.fold.results)),
+			"a carry fold publishes one fact and one disposition")
+	}
+	call, err := foldCall(built)
+	if err != nil {
+		return err
+	}
+	out.WriteString("// Reduce answers the fact this row publishes from its candidate alone. The\n")
+	out.WriteString("// declaration names no read, so there is no cell here and no absence to\n")
+	out.WriteString("// interpret: the whole of this judgment is the directory row the invocation\n")
+	out.WriteString("// is indexed by.\n")
+	fmt.Fprintf(out, "func (fold %s) Reduce() (%s, %s.ReductionOutcome) {\n",
+		reducerType, imports.typeName(built.fold.results[0]), structure)
+	fmt.Fprintf(out, "\treturn %s\n}\n\n", call)
+	return nil
+}
+
+// renderSourceCarryExecute writes the invocation of a carry that reads nothing.
+// It opens no cursor, so the publication holds over the invocation's own
+// authenticated support - the honest region for a judgment that is a function
+// of the candidate, and the one FoldSourceCarry publishes under.
+func renderSourceCarryExecute(out *strings.Builder, built *plan) error {
+	imports := built.imports
+	execution := imports.use(executionPackagePath)
+	out.WriteString("// Execute performs one read-free carry invocation: the candidate's judgment is\n")
+	out.WriteString("// taken, and every carried coordinate passes through the candidate's transition\n")
+	out.WriteString("// in the same patch the row publishes through.\n")
+	renderExecutePrologue(out, built)
+	fmt.Fprintf(out, "\toutcome := %s.FoldSourceCarry(ticket, %s{%s}, row.write, &lane.write)\n",
+		execution, reducerType, strings.Join(reducerLiteralFields(built, nil), ", "))
+	renderExecuteEpilogue(out, built)
+	return nil
 }
 
 func renderCarryExecute(out *strings.Builder, built *plan) error {

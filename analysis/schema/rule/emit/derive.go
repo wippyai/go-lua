@@ -965,11 +965,22 @@ func deriveShape(built *plan, resolver *axisResolver, declaration program.Progra
 					fmt.Sprintf("join %d is not exact, and the carry fold reduces one exact cell", join.position))
 			}
 		}
-		if len(built.joins) != 1 {
+		if len(built.joins) > 1 {
 			return unexpressible(ruleKey, fmt.Sprintf("a transformed carry over %d reads", len(built.joins)),
 				"FoldCarry reduces exactly one exact cell; a wider carry has no fold in the execution vocabulary")
 		}
-		built.shape, built.form = shapeCarry, "FormCarry"
+		// One shape, two forms, chosen by what the declaration reads. A carry
+		// over one exact cell reduces that cell and publishes under the region
+		// it reported; a carry that reads nothing answers from its candidate
+		// alone and publishes over the invocation's own support. The installer
+		// half is the same either way - the same sealed CarryWrite and the same
+		// declared transition - so the read count is the only distinction, and
+		// the form the row is admitted under states it.
+		built.shape = shapeCarry
+		built.form = "FormCarry"
+		if len(built.joins) == 0 {
+			built.form = "FormSourceCarry"
+		}
 		built.carry = &carryPlan{input: uint64ToUint32(uint64(declaration.Carry.Input)), transform: transform}
 		return nil
 	case program.ModeStructural:

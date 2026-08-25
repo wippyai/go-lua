@@ -60,6 +60,19 @@ const (
 	// every rule this form classifies is authored through its own
 	// RuleFamilyInstaller.
 	FormSelectedExact
+	// FormSourceCarry is the read-free transformed carry: a row that declares
+	// no read at all, whose judgment rests on its candidate alone, published
+	// at its own exact coordinate with the carried prior facts of its Factor
+	// passing through an owner-issued transform.
+	//
+	// It is FormCarry's read-free case and not a variant of it: FoldCarry
+	// reduces one exact cell and holds its publication to the region that cell
+	// reported, and there is no such cell or region here. It is not FormSource
+	// either, whose row is a materialized column the owner sealed rather than a
+	// judgment, and which carries nothing. Like FormCarry it has no generic
+	// builder: the transform is candidate-indexed owner knowledge, so every
+	// rule this form classifies is authored through its own RuleFamilyInstaller.
+	FormSourceCarry
 	// formCount is the exclusive upper bound of the declared ordinals. It is
 	// the last constant in the block; a new form is appended above it.
 	formCount
@@ -76,6 +89,7 @@ var formNames = [formCount]string{
 	FormSelectedRoute: "selected-route",
 	FormActivation:    "activation",
 	FormSelectedExact: "selected-exact",
+	FormSourceCarry:   "source-carry",
 }
 
 // Declared reports whether form names a sealed ordinal of the table.
@@ -732,10 +746,10 @@ func formBuilders[K scalar.Key, V any]() [formCount]formBuilder[K, V] {
 // The form is derived from the publication mode, the carry disposition and the
 // read vocabulary the rule declares. It is not probed. A column of independent
 // classifiers could only answer by coincidence of what each one happened to
-// accept, and three of the six forms - Summary, Carry and SelectedRoute - have
-// no generic builder at all, so their probes were refusing geometry that
-// nothing behind them implements. A rule those probes turned away could not
-// reach the installer that would have executed it.
+// accept, and most of the declared forms - every one but Exact and Source -
+// have no generic builder at all, so their probes were refusing geometry
+// that nothing behind them implements. A rule those probes turned away could
+// not reach the installer that would have executed it.
 //
 // The derivation is total and single-valued by construction, which is what the
 // exclusivity of a probe column was trying to approximate. A row whose
@@ -795,7 +809,20 @@ func declaredFormRow(rule generated.CompiledRule, mode ruleprogram.OutputMode) (
 	case declaredTransformedCarry(rule):
 		// A transformed carry applies one owner-issued candidate-indexed
 		// transition to every carried coordinate. No identity fold can do
-		// that, so the carry disposition alone decides this form.
+		// that, so the carry disposition alone decides that this is a carry.
+		//
+		// Which carry it is, the declared read vocabulary decides. A carry
+		// that reads nothing has no cell to reduce and no read region to hold
+		// its publication to; it answers from its candidate and publishes over
+		// the invocation's own support. Its port is the one its carry names,
+		// because no read names one.
+		if rule.ReadCount() == 0 {
+			carried := rule.CarryInput()
+			if carried < 0 || !declaredPort(rule, uint32(carried)) {
+				return FormRow{}, false
+			}
+			return FormRow{Form: FormSourceCarry, Input: uint16(carried)}, true
+		}
 		input, inputOK := declaredFirstInput(rule)
 		if !inputOK {
 			return FormRow{}, false
