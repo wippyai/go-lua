@@ -134,7 +134,20 @@ func DeclareAxis(builder *engine.SchemaBuilder, context axis.Declaration) (*Sche
 }
 
 func BindAxis[A axisInputs](binding *engine.SchemaBinding, context axis.Binding[A, *SchemaFragment]) (*HotOwner, bool) {
-	return BindHot(binding, context.Fragment, context.Inputs.EffectInput())
+	owner, ownerOK := BindHot(binding, context.Fragment, context.Inputs.EffectInput())
+	if !ownerOK || owner == nil || context.Fragment == nil {
+		return nil, false
+	}
+	// A generated Rule draws its candidates from Effect's own mounted-call
+	// directory and publishes at the Root that directory projects, so the
+	// seal walks this axis looking for the owner that answers both. Effect
+	// had no generated reader before the two exact call-site rules became
+	// declared Programs; they are the first, and the owner is installed here
+	// exactly as the other owner-bearing axes install theirs.
+	if !engine.BindRelationOwner(binding, context.Fragment.slot, NewRelationOwner(context.Inputs.EffectInput())) {
+		return nil, false
+	}
+	return owner, true
 }
 
 func AlgebraAxis(owner *HotOwner) (axis.Algebra[factor.Value], bool) {

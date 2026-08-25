@@ -17,45 +17,11 @@ type schemaFragment struct {
 	semantic identity.SemanticKey
 }
 
-// SelectedSchemaFragment and OpaqueSchemaFragment are disjoint cold
-// capabilities despite their identical incidence. A hot binder therefore
-// cannot attach selected semantics to the opaque semantic row or vice versa.
-type SelectedSchemaFragment struct{ core *schemaFragment }
-type OpaqueSchemaFragment struct{ core *schemaFragment }
-
-func (fragment *SelectedSchemaFragment) RuleSlot() *engine.RuleSlot[effectfactor.Value, effectfactor.MountedCall] {
-	if fragment == nil || fragment.core == nil {
-		return nil
-	}
-	return fragment.core.slot
-}
-func (fragment *OpaqueSchemaFragment) RuleSlot() *engine.RuleSlot[effectfactor.Value, effectfactor.MountedCall] {
-	if fragment == nil || fragment.core == nil {
-		return nil
-	}
-	return fragment.core.slot
-}
 func (fragment *BodySchemaFragment) RuleSlot() *engine.RuleSlot[effectfactor.Value, effectfactor.MountedCall] {
 	if fragment == nil || fragment.core == nil {
 		return nil
 	}
 	return fragment.core.slot
-}
-
-func DeclareSelectedSchema(builder *engine.SchemaBuilder, semantic, operandFamily identity.SemanticKey, calls *callowner.SchemaFragment, effects *effectowner.SchemaFragment) (*SelectedSchemaFragment, bool) {
-	core, ok := declareSchema(builder, semantic, operandFamily, calls, effects)
-	if !ok {
-		return nil, false
-	}
-	return &SelectedSchemaFragment{core: core}, true
-}
-
-func DeclareOpaqueSchema(builder *engine.SchemaBuilder, semantic, operandFamily identity.SemanticKey, calls *callowner.SchemaFragment, effects *effectowner.SchemaFragment) (*OpaqueSchemaFragment, bool) {
-	core, ok := declareSchema(builder, semantic, operandFamily, calls, effects)
-	if !ok {
-		return nil, false
-	}
-	return &OpaqueSchemaFragment{core: core}, true
 }
 
 func declareSchema(builder *engine.SchemaBuilder, semantic, operandFamily identity.SemanticKey, calls *callowner.SchemaFragment, effects *effectowner.SchemaFragment) (*schemaFragment, bool) {

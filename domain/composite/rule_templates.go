@@ -8,6 +8,10 @@ import (
 	calldispatchprogram "github.com/wippyai/go-lua/domain/call/dispatch/program"
 	callowner "github.com/wippyai/go-lua/domain/call/owner"
 	callsite "github.com/wippyai/go-lua/domain/effect/callsite"
+	callsiteopaque "github.com/wippyai/go-lua/domain/effect/callsite/opaque"
+	callsiteopaqueprogram "github.com/wippyai/go-lua/domain/effect/callsite/opaque/program"
+	callsiteselected "github.com/wippyai/go-lua/domain/effect/callsite/selected"
+	callsiteselectedprogram "github.com/wippyai/go-lua/domain/effect/callsite/selected/program"
 	effectowner "github.com/wippyai/go-lua/domain/effect/owner"
 	heapdomain "github.com/wippyai/go-lua/domain/heap"
 	allocationcatalog "github.com/wippyai/go-lua/domain/heap/allocation/catalog"
@@ -140,8 +144,8 @@ func ruleTemplateWiring[P Principals, A Authorities]() ([]*rule.Template, []Rule
 	add(WireRule(heapindex.RawGetEntry[P, A](), heapindex.DeclareRawGet[P], heapindex.RegisterRawGet, nil, heapindex.BindRawGet[A], nil, nil, nil))
 	add(WireRule(heapindex.RawSetEntry[P, A](), heapindex.DeclareRawSet[P], heapindex.RegisterRawSet, nil, heapindex.BindRawSet[A], nil, nil, nil))
 	add(WireGeneratedRuleWithFamily[P, A](calldispatchprogram.RuleEntry(), calldispatch.InstallFamily[A]))
-	add(WireRule(callsite.SelectedEntry[P, A](), callsite.DeclareSelected[P], callsite.RegisterSelected, nil, callsite.BindSelected[A], callsite.FinalizeSelected[A], nil, nil))
-	add(WireRule(callsite.OpaqueEntry[P, A](), callsite.DeclareOpaque[P], callsite.RegisterOpaque, nil, callsite.BindOpaque[A], callsite.FinalizeOpaque[A], nil, nil))
+	add(WireGeneratedRuleWithFamily[P, A](callsiteselectedprogram.RuleEntry(), callsiteselected.InstallFamily[A]))
+	add(WireGeneratedRuleWithFamily[P, A](callsiteopaqueprogram.RuleEntry(), callsiteopaque.InstallFamily[A]))
 	add(WireRule(callsite.BodyEntry[P, A](), callsite.DeclareBody[P], callsite.RegisterBody, nil, callsite.BindBody[A], callsite.FinalizeBody[A], nil, nil))
 	add(WireRule(callactivation.RuleEntry[P, A](), callactivation.DeclareRule[P], callactivation.RegisterRule, nil, callactivation.BindRule[A], nil, nil, activationRule))
 	add(WireRule(valueruntimekind.RuleEntry[P, A](), valueruntimekind.DeclareRule[P], valueruntimekind.RegisterRule, nil, valueruntimekind.BindRule[A], nil, nil, nil))

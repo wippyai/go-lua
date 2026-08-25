@@ -14,6 +14,8 @@ import (
 	"github.com/wippyai/go-lua/analysis/schema/rule/emit"
 	"github.com/wippyai/go-lua/analysis/schema/rule/emitlaw"
 	calldispatchprogram "github.com/wippyai/go-lua/domain/call/dispatch/program"
+	callsiteopaqueprogram "github.com/wippyai/go-lua/domain/effect/callsite/opaque/program"
+	callsiteselectedprogram "github.com/wippyai/go-lua/domain/effect/callsite/selected/program"
 	heapempty "github.com/wippyai/go-lua/domain/heap/allocation/empty"
 	freezeprogram "github.com/wippyai/go-lua/domain/heap/formalfreeze/program"
 	returnprogram "github.com/wippyai/go-lua/domain/placement/returnescape/program"
@@ -71,6 +73,22 @@ func Families() []Family {
 				Spec:        calldispatchprogram.RuleEntry(),
 			},
 			Directory: "domain/call/dispatch",
+		},
+		{
+			Target: emit.Target{
+				PackagePath: "github.com/wippyai/go-lua/domain/effect/callsite/selected",
+				PackageName: "selected",
+				Spec:        callsiteselectedprogram.RuleEntry(),
+			},
+			Directory: "domain/effect/callsite/selected",
+		},
+		{
+			Target: emit.Target{
+				PackagePath: "github.com/wippyai/go-lua/domain/effect/callsite/opaque",
+				PackageName: "opaque",
+				Spec:        callsiteopaqueprogram.RuleEntry(),
+			},
+			Directory: "domain/effect/callsite/opaque",
 		},
 	}
 }
@@ -151,6 +169,26 @@ func Declarations() []Declaration {
 				Spec:        calldispatchprogram.RuleEntry(),
 			},
 			Directory: "domain/call/dispatch/program",
+		},
+		{
+			Target: emitlaw.Target{
+				PackagePath: "github.com/wippyai/go-lua/domain/effect/callsite/selected/program",
+				PackageName: "program",
+				Declaration: "SelectedCallEffect",
+				Entry:       "RuleEntry",
+				Spec:        callsiteselectedprogram.RuleEntry(),
+			},
+			Directory: "domain/effect/callsite/selected/program",
+		},
+		{
+			Target: emitlaw.Target{
+				PackagePath: "github.com/wippyai/go-lua/domain/effect/callsite/opaque/program",
+				PackageName: "program",
+				Declaration: "OpaqueCallEffect",
+				Entry:       "RuleEntry",
+				Spec:        callsiteopaqueprogram.RuleEntry(),
+			},
+			Directory: "domain/effect/callsite/opaque/program",
 		},
 	}
 }

@@ -17,6 +17,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/schema/axis/member/definition"
 	calldispatch "github.com/wippyai/go-lua/domain/call/dispatch/memberdefinition"
 	callbase "github.com/wippyai/go-lua/domain/call/memberdefinition"
+	effectcallsite "github.com/wippyai/go-lua/domain/effect/callsite/memberdefinition"
 	effectbase "github.com/wippyai/go-lua/domain/effect/memberdefinition"
 	heapbase "github.com/wippyai/go-lua/domain/heap/memberdefinition"
 
@@ -109,6 +110,10 @@ func Composition() (definition.Roster, bool) {
 			Package: "effect",
 			Name:    "effect",
 			Base:    effectbase.MountedCall(),
+			Contributions: []definition.Contribution{
+				effectcallsite.SelectedContribution(),
+				effectcallsite.OpaqueContribution(),
+			},
 		},
 	)
 }

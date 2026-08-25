@@ -154,3 +154,57 @@ func describeDerivedTypes(params []memberdefinition.DerivedParam) string {
 	}
 	return strings.Join(spelled, ", ")
 }
+
+// TestEveryDeclaredFoldStateHasTheDerivedCallShape holds a reducer's sealed
+// state to the same contract its relations' derivations are held to.
+//
+// A fold whose judgment rests on its axes' cold schemas cannot take them as
+// parameters - that is what keeps a call shape from growing plumbing - so it
+// declares the state they are sealed into, and the installed family seals it
+// once from exactly the axes the declaration names. The Build that seals it is
+// therefore derived from the declaration alone: the schemas of its ordered
+// static axes in, the state and its validity out.
+//
+// The law measures nothing until a fold declares a state, so it says so rather
+// than passing vacuously.
+func TestEveryDeclaredFoldStateHasTheDerivedCallShape(t *testing.T) {
+	root := moduleRoot(t)
+	roster, rosterOK := memberroster.Composition()
+	if !rosterOK {
+		t.Fatal("member definition roster is not admissible")
+	}
+	var drift []string
+	declared := 0
+	for index := 0; index < roster.Count(); index++ {
+		source, _ := roster.At(index)
+		composed, composedOK := source.Compose()
+		if !composedOK {
+			t.Fatalf("member definition source %q does not compose", source.Name)
+		}
+		for _, reducer := range composed.Reducers {
+			if !reducer.Derivation.Declared() {
+				continue
+			}
+			declared++
+			params, results, derivedOK := roster.ReducerDerivationSignature(reducer.Derivation)
+			if !derivedOK {
+				drift = append(drift, fmt.Sprintf("%s (rule %s): declared state derives no call shape", reducer.Key, reducer.Rule))
+				continue
+			}
+			decl, file, declOK := findFunction(t, root, reducer.Derivation.Build)
+			if !declOK {
+				drift = append(drift, fmt.Sprintf("%s (rule %s): state Build %s is not declared", reducer.Key, reducer.Rule, reducer.Derivation.Build.Name))
+				continue
+			}
+			if problem := compareDerivationCall(file, reducer.Derivation.Build.PackagePath, decl, params, results); problem != "" {
+				drift = append(drift, fmt.Sprintf("%s (rule %s) state Build: %s", reducer.Key, reducer.Rule, problem))
+			}
+		}
+	}
+	if declared == 0 {
+		t.Fatal("no fold declares a sealed state, so this law measures nothing")
+	}
+	if len(drift) != 0 {
+		t.Fatalf("fold states whose Build is not the one their declaration derives:\n\t%s", strings.Join(drift, "\n\t"))
+	}
+}

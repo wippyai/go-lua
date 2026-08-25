@@ -12,13 +12,17 @@ import (
 const (
 	MountedEffectCallCandidates schemaapi.Key  = "effect/mounted-call/candidates"
 	MountedEffectCallCoordinate schemaapi.Key  = "effect/mounted-call/coordinate"
+	SelectedCallEffectReducer   schemaapi.Key  = "effect/callsite-selected/reducer"
+	OpaqueCallEffectReducer     schemaapi.Key  = "effect/callsite-opaque/reducer"
 	EffectKeyCarrier            member.Carrier = "carrier/effect/key"
 	EffectFactCarrier           member.Carrier = "carrier/effect/fact"
 	EffectMountedCallCarrier    member.Carrier = "carrier/effect/mounted-call"
+	CallFactCarrier             member.Carrier = "carrier/call/fact"
 )
 
 // AxisMemberCatalog is effect's declaration-only member vocabulary.
 func AxisMemberCatalog() member.Catalog {
+	valueAxis := schemaapi.EntryReference{Surface: schemaapi.SurfaceKindAxis, Key: "effect"}
 	catalog, ok := member.NewCatalog(
 		[]member.Relation{
 			{Key: MountedEffectCallCandidates, Subject: EffectMountedCallCarrier, CandidateProvider: member.AxisRelationCandidate(member.RelationRef{Axis: schemaapi.EntryReference{Surface: schemaapi.SurfaceKind(2), Key: "effect"}, Member: "effect/mounted-call/candidates"})},
@@ -26,7 +30,18 @@ func AxisMemberCatalog() member.Catalog {
 		[]member.Projection{
 			{Key: MountedEffectCallCoordinate, Relation: MountedEffectCallCandidates, Role: member.Destination, Result: EffectKeyCarrier, CandidateProvider: member.AxisRelationCandidate(member.RelationRef{Axis: schemaapi.EntryReference{Surface: schemaapi.SurfaceKind(2), Key: "effect"}, Member: "effect/mounted-call/candidates"})},
 		},
-		[]member.Reducer{},
+		[]member.Reducer{
+			{Key: SelectedCallEffectReducer, Inputs: []member.ReducerInput{
+				{Axis: schemaapi.EntryReference{Surface: schemaapi.SurfaceKindAxis, Key: "call"}, Carrier: CallFactCarrier, Form: member.ReadFormExact, Multiplicity: member.MultiplicityOne},
+			}, Outputs: []member.ReducerOutput{
+				{Axis: valueAxis, Carrier: EffectFactCarrier},
+			}},
+			{Key: OpaqueCallEffectReducer, Inputs: []member.ReducerInput{
+				{Axis: schemaapi.EntryReference{Surface: schemaapi.SurfaceKindAxis, Key: "call"}, Carrier: CallFactCarrier, Form: member.ReadFormExact, Multiplicity: member.MultiplicityOne},
+			}, Outputs: []member.ReducerOutput{
+				{Axis: valueAxis, Carrier: EffectFactCarrier},
+			}},
+		},
 		[]member.CarryTransform{},
 	)
 	if !ok {
