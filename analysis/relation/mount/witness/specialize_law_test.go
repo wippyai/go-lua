@@ -207,7 +207,7 @@ func TestSpecializeAdmitsAddressArrangementRegionAndAlgebra(t *testing.T) {
 	if _, ok := mounted.ConjoinScopes(left, staleScope); ok || mounted.EntailsScopes(left, staleScope) {
 		t.Fatal("stale scope crossed the exact runtime fence")
 	}
-	if len(mounted.WideningHeads()) != 0 || len(mounted.Denominators()) != 0 {
+	if len(mounted.WideningPermits()) != 0 || len(mounted.Denominators()) != 0 {
 		t.Fatal("empty certificate projections were not preserved")
 	}
 }

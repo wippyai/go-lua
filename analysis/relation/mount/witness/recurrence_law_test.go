@@ -208,22 +208,61 @@ func TestMountedAdmitsExactPositiveRecurrenceHeads(t *testing.T) {
 		t.Fatalf("positive recurrence certificate refused: %v", refusal)
 	}
 	mounted := recurrenceMount(t, value, cert)
-	dependencyA := plan.DefineDependencyRef(value.dependencyA)
-	dependencyB := plan.DefineDependencyRef(value.dependencyB)
-	relationA, _ := plan.NewRelationRef(value.relationA)
-	relationB, _ := plan.NewRelationRef(value.relationB)
-	headA, ok := mounted.Widening(dependencyA, relationA)
-	if !ok || !headA.Available() || headA.Dependency().ID() != value.dependencyA || headA.Relation().ID() != value.relationA {
+	headA, ok := mounted.Widening(value.dependencyA, value.relationA)
+	if !ok || !headA.Available() || headA.Dependency() != value.dependencyA || headA.Relation() != value.relationA || !headA.Evidence().Available() {
 		t.Fatal("exact widening head A was not admitted")
 	}
-	if headB, ok := mounted.Widening(dependencyB, relationB); !ok || !headB.Available() {
+	if headB, ok := mounted.Widening(value.dependencyB, value.relationB); !ok || !headB.Available() || !headB.Evidence().Available() {
 		t.Fatal("exact widening head B was not admitted")
 	}
-	if _, ok := mounted.Widening(dependencyA, relationB); ok {
+	if _, ok := mounted.Widening(value.dependencyA, value.relationB); ok {
 		t.Fatal("wrong relation widening pair accepted")
 	}
-	if _, ok := mounted.Widening(dependencyB, relationA); ok {
+	if _, ok := mounted.Widening(value.dependencyB, value.relationA); ok {
 		t.Fatal("wrong dependency/relation widening pair accepted")
+	}
+}
+
+func TestMountedCatalogueAndWideningPermitsAreCanonicalAndDefensive(t *testing.T) {
+	value := newRecurrenceFixture(t)
+	cert, refusal := certificate.Check(recurrenceSchema(t, value, plan.Positive))
+	if refusal != nil || !cert.Available() {
+		t.Fatalf("positive recurrence certificate refused: %v", refusal)
+	}
+	mounted := recurrenceMount(t, value, cert)
+
+	columns := mounted.ColumnIDs()
+	if len(columns) != 2 || !columns[0].Available() || !columns[1].Available() || columns[0] == columns[1] {
+		t.Fatalf("mounted column catalogue = %#v", columns)
+	}
+	bookColumns := mounted.Book().ColumnIDs()
+	if len(bookColumns) != len(columns) || bookColumns[0] != columns[0] || bookColumns[1] != columns[1] {
+		t.Fatal("mounted column catalogue diverged from the canonical Book order")
+	}
+	digest := mounted.Digest()
+	repeatedColumns := mounted.ColumnIDs()
+	if len(repeatedColumns) != len(columns) || repeatedColumns[0] != columns[0] || repeatedColumns[1] != columns[1] {
+		t.Fatal("mounted column catalogue was not deterministic")
+	}
+	columns[0] = model.ColumnID{}
+	untouchedColumns := mounted.ColumnIDs()
+	if len(untouchedColumns) != 2 || !untouchedColumns[0].Available() || mounted.Digest() != digest {
+		t.Fatal("column catalogue exposed mutable storage")
+	}
+
+	permits := mounted.WideningPermits()
+	if len(permits) != 2 {
+		t.Fatalf("widening permit count = %d", len(permits))
+	}
+	repeatedPermits := mounted.WideningPermits()
+	for index, permit := range permits {
+		if !permit.Available() || permit.Dependency() != repeatedPermits[index].Dependency() || permit.Relation() != repeatedPermits[index].Relation() || permit.Evidence() != repeatedPermits[index].Evidence() {
+			t.Fatal("widening permit projection was not deterministic")
+		}
+	}
+	permits[0] = witness.WideningPermit{}
+	if recovered, ok := mounted.Widening(value.dependencyA, value.relationA); !ok || !recovered.Available() {
+		t.Fatal("widening permit projection exposed mutable storage")
 	}
 }
 

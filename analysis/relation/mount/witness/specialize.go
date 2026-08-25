@@ -134,6 +134,7 @@ func Specialize(cert certificate.Certificate, inventory Inventory, factory bindi
 	}
 
 	heads := cert.WideningHeads()
+	permits := make([]WideningPermit, 0, len(heads))
 	for _, head := range heads {
 		if !head.Available() || !head.Dependency().Available() || !head.Relation().Available() {
 			return Mounted{}, false
@@ -144,9 +145,14 @@ func Specialize(cert certificate.Certificate, inventory Inventory, factory bindi
 		if relationAddress, relationOK := book.Relation(head.Relation().ID()); !relationOK || !relationAddress.ValidFor(fence) {
 			return Mounted{}, false
 		}
+		permit, permitOK := newWideningPermit(head)
+		if !permitOK {
+			return Mounted{}, false
+		}
+		permits = append(permits, permit)
 	}
 
-	return newMounted(cert, book, arrangementPlan, runtime, issuer, signatures, bindings, algebras, denominatorRefs, witnesses, scopeIDs, scopeValues, heads)
+	return newMounted(cert, book, arrangementPlan, runtime, issuer, signatures, bindings, algebras, denominatorRefs, witnesses, scopeIDs, scopeValues, permits)
 }
 
 func certificateDenominators(signatures []signature.Signature) ([]model.DenominatorRef, bool) {

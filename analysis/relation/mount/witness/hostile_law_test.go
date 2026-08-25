@@ -131,15 +131,10 @@ func TestMountedExactWideningLookupRefusesUnadmitted(t *testing.T) {
 	if !ok {
 		t.Fatal("dependency")
 	}
-	dependency := plan.DefineDependencyRef(dependencyID)
-	relation, ok := plan.NewRelationRef(value.relation)
-	if !ok {
-		t.Fatal("relation ref")
-	}
-	if _, ok := value.mounted.Widening(dependency, relation); ok {
+	if _, ok := value.mounted.Widening(dependencyID, value.relation); ok {
 		t.Fatal("unadmitted widening head accepted")
 	}
-	if _, ok := value.mounted.Widening(plan.DependencyRef{}, plan.RelationRef{}); ok {
+	if _, ok := value.mounted.Widening(model.DependencyID{}, model.RelationID{}); ok {
 		t.Fatal("zero widening head accepted")
 	}
 }

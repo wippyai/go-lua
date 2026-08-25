@@ -6,7 +6,6 @@ import (
 	"github.com/wippyai/go-lua/analysis/relation/mount/address"
 	"github.com/wippyai/go-lua/analysis/relation/mount/arrangement"
 	"github.com/wippyai/go-lua/analysis/relation/schema/model"
-	"github.com/wippyai/go-lua/analysis/relation/schema/plan"
 	"github.com/wippyai/go-lua/analysis/relation/semantic/binding"
 	"github.com/wippyai/go-lua/analysis/relation/semantic/signature"
 )
@@ -35,12 +34,16 @@ func newMounted(
 	witnesses map[model.DenominatorRef]binding.DenominatorWitness,
 	scopeIDs []model.ScopeID,
 	scopeValues map[model.ScopeID]Scope,
-	wideningHeads []plan.WideningHead,
+	wideningPermits []WideningPermit,
 ) (Mounted, bool) {
 	if !certificateValue.Available() || !book.Available() || !arrangementPlan.Available() || !runtime.Available() || !issuer.Available() || book.Fence() != arrangementPlan.Fence() || book.Fence().SchemaID() != certificateValue.SchemaID() || book.Fence().CertificateDigest() != certificateValue.Digest() {
 		return Mounted{}, false
 	}
 	if len(signatures) != len(bindings) {
+		return Mounted{}, false
+	}
+	columns, columnsOK := mountedColumns(certificateValue, book)
+	if !columnsOK {
 		return Mounted{}, false
 	}
 	identities := make([]signature.Identity, len(signatures))
@@ -93,28 +96,29 @@ func newMounted(
 		}
 	}
 
-	heads := append([]plan.WideningHead(nil), wideningHeads...)
-	for _, head := range heads {
-		if !head.Available() {
+	permits := append([]WideningPermit(nil), wideningPermits...)
+	for _, permit := range permits {
+		if !permit.Available() {
 			return Mounted{}, false
 		}
 	}
 
 	data := &mountedData{
-		fence:         book.Fence(),
-		runtime:       runtime,
-		issuer:        issuer,
-		book:          book,
-		arrangement:   arrangementPlan,
-		bindings:      cloneBindings(bindings),
-		identities:    identities,
-		types:         types,
-		algebras:      cloneAlgebras(algebras),
-		denominators:  denominatorRefs,
-		witnesses:     cloneWitnesses(witnesses),
-		scopes:        scopeIDs,
-		scopeByID:     cloneScopes(scopeValues),
-		wideningHeads: heads,
+		fence:           book.Fence(),
+		runtime:         runtime,
+		issuer:          issuer,
+		book:            book,
+		arrangement:     arrangementPlan,
+		columns:         columns,
+		bindings:        cloneBindings(bindings),
+		identities:      identities,
+		types:           types,
+		algebras:        cloneAlgebras(algebras),
+		denominators:    denominatorRefs,
+		witnesses:       cloneWitnesses(witnesses),
+		scopes:          scopeIDs,
+		scopeByID:       cloneScopes(scopeValues),
+		wideningPermits: permits,
 	}
 	digest, ok := digestMounted(*data, certificateValue.Digest())
 	if !ok {
@@ -122,6 +126,49 @@ func newMounted(
 	}
 	data.digest = digest
 	return Mounted{data: data}, true
+}
+
+// mountedColumns takes the complete logical catalogue from the owner Book
+// and checks it against the certificate's column declarations once during
+// admission. Mounted accessors only return this immutable snapshot.
+func mountedColumns(certificateValue certificate.Certificate, book address.Book) ([]model.ColumnID, bool) {
+	if !certificateValue.Available() || !book.Available() {
+		return nil, false
+	}
+	fromBook := book.ColumnIDs()
+	bookColumns := make(map[model.ColumnID]struct{}, len(fromBook))
+	for _, id := range fromBook {
+		if !id.Available() {
+			return nil, false
+		}
+		if _, duplicate := bookColumns[id]; duplicate {
+			return nil, false
+		}
+		bookColumns[id] = struct{}{}
+		if _, ok := book.Column(id); !ok {
+			return nil, false
+		}
+	}
+	fromCertificate := make(map[model.ColumnID]struct{}, len(certificateValue.Columns()))
+	for _, column := range certificateValue.Columns() {
+		id := column.ID()
+		if !column.Available() || !id.Available() {
+			return nil, false
+		}
+		if _, duplicate := fromCertificate[id]; duplicate {
+			return nil, false
+		}
+		fromCertificate[id] = struct{}{}
+	}
+	if len(fromBook) != len(fromCertificate) {
+		return nil, false
+	}
+	for _, id := range fromBook {
+		if _, ok := fromCertificate[id]; !ok {
+			return nil, false
+		}
+	}
+	return append([]model.ColumnID(nil), fromBook...), true
 }
 
 func cloneBindings(values map[signature.Identity]binding.Binding) map[signature.Identity]binding.Binding {
@@ -157,12 +204,19 @@ func cloneScopes(values map[model.ScopeID]Scope) map[model.ScopeID]Scope {
 }
 
 func digestMounted(value mountedData, certificateDigest identity.ContentID) (identity.ContentID, bool) {
-	parts := make([][]byte, 0, 12+len(value.identities)+len(value.types)+len(value.denominators)+len(value.scopes)+len(value.wideningHeads))
+	parts := make([][]byte, 0, 12+len(value.columns)+len(value.identities)+len(value.types)+len(value.denominators)+len(value.scopes)+len(value.wideningPermits))
 	parts = append(parts, contentBytes(certificateDigest), contentBytes(value.book.Digest()), contentBytes(value.arrangement.Digest()))
 	fence := value.fence
 	parts = append(parts, contentBytes(fence.SchemaID().Owner().Content()), contentBytes(fence.SchemaID().Content()), contentBytes(fence.CertificateDigest()), contentBytes(identity.ContentID(fence.MountID())))
 	appendUint64(&parts, uint64(fence.StoreID()))
 	appendUint64(&parts, uint64(fence.Generation()))
+	for _, column := range value.columns {
+		if !column.Available() {
+			return identity.ContentID{}, false
+		}
+		relation := column.Relation()
+		parts = append(parts, contentBytes(relation.Owner().Content()), contentBytes(relation.Content()), contentBytes(column.Owner().Content()), contentBytes(column.Content()))
+	}
 	for _, id := range value.identities {
 		parts = append(parts, contentBytes(id.Operation.Owner().Content()), contentBytes(id.Operation.Content()))
 		appendUint64(&parts, id.Version)
@@ -191,8 +245,11 @@ func digestMounted(value mountedData, certificateDigest identity.ContentID) (ide
 		regionIdentity, _ := scope.identity()
 		parts = append(parts, contentBytes(scopeID.Owner().Content()), contentBytes(scopeID.Content()), contentBytes(regionIdentity))
 	}
-	for _, head := range value.wideningHeads {
-		parts = append(parts, contentBytes(head.Digest()))
+	for _, permit := range value.wideningPermits {
+		if !permit.Available() {
+			return identity.ContentID{}, false
+		}
+		parts = append(parts, contentBytes(permit.Dependency().Owner().Content()), contentBytes(permit.Dependency().Content()), contentBytes(permit.Relation().Owner().Content()), contentBytes(permit.Relation().Content()), contentBytes(permit.Evidence()))
 	}
 	return identity.DeriveContentID(mountedDigestDomain, parts...)
 }

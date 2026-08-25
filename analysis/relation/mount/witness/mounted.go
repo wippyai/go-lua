@@ -9,7 +9,6 @@ import (
 	"github.com/wippyai/go-lua/analysis/relation/mount/address"
 	"github.com/wippyai/go-lua/analysis/relation/mount/arrangement"
 	"github.com/wippyai/go-lua/analysis/relation/schema/model"
-	"github.com/wippyai/go-lua/analysis/relation/schema/plan"
 	"github.com/wippyai/go-lua/analysis/relation/semantic/binding"
 	"github.com/wippyai/go-lua/analysis/relation/semantic/signature"
 )
@@ -29,6 +28,7 @@ type mountedData struct {
 	book        address.Book
 	arrangement arrangement.Plan
 	digest      identity.ContentID
+	columns     []model.ColumnID
 
 	bindings   map[signature.Identity]binding.Binding
 	identities []signature.Identity
@@ -42,7 +42,7 @@ type mountedData struct {
 	scopes    []model.ScopeID
 	scopeByID map[model.ScopeID]Scope
 
-	wideningHeads []plan.WideningHead
+	wideningPermits []WideningPermit
 }
 
 // Available reports whether the mounted artifact is complete.
@@ -87,9 +87,19 @@ func (mounted Mounted) Arrangement() arrangement.Plan {
 	return mounted.data.arrangement
 }
 
+// ColumnIDs returns the complete canonical catalogue of columns admitted by
+// this mount. The stored snapshot is returned defensively; callers cannot
+// alter the geometry catalogue or the mounted digest.
+func (mounted Mounted) ColumnIDs() []model.ColumnID {
+	if !mounted.Available() {
+		return nil
+	}
+	return append([]model.ColumnID(nil), mounted.data.columns...)
+}
+
 // Digest returns the deterministic mounted capability identity. It includes
-// the certificate, exact fence, address snapshot, arrangement plan, and every
-// admitted semantic proof projection.
+// the certificate, exact fence, address snapshot, complete column catalogue,
+// arrangement plan, and every admitted semantic proof projection.
 func (mounted Mounted) Digest() identity.ContentID {
 	if mounted.data == nil {
 		return identity.ContentID{}
@@ -276,27 +286,27 @@ func (mounted Mounted) EntailsScopes(left, right Scope) bool {
 	return left.region.Entails(right.region)
 }
 
-// WideningHeads returns exactly the certificate's validated recurrence-head
-// projection; no raw SCC or registry data is reconstructed at mount.
-func (mounted Mounted) WideningHeads() []plan.WideningHead {
+// WideningPermits returns the complete defensive set of opaque recurrence
+// permits admitted by this mount.
+func (mounted Mounted) WideningPermits() []WideningPermit {
 	if !mounted.Available() {
 		return nil
 	}
-	return append([]plan.WideningHead(nil), mounted.data.wideningHeads...)
+	return append([]WideningPermit(nil), mounted.data.wideningPermits...)
 }
 
-// Widening returns exactly one admitted recurrence-head permit for the
-// requested dependency/relation pair.
-func (mounted Mounted) Widening(dependency plan.DependencyRef, relation plan.RelationRef) (plan.WideningHead, bool) {
+// Widening returns exactly one opaque admitted recurrence permit for the
+// requested logical dependency/relation pair.
+func (mounted Mounted) Widening(dependency model.DependencyID, relation model.RelationID) (WideningPermit, bool) {
 	if !mounted.Available() || !dependency.Available() || !relation.Available() {
-		return plan.WideningHead{}, false
+		return WideningPermit{}, false
 	}
-	for _, head := range mounted.data.wideningHeads {
-		if head.Dependency().ID() == dependency.ID() && head.Relation().ID() == relation.ID() {
-			return head, true
+	for _, permit := range mounted.data.wideningPermits {
+		if permit.Available() && permit.Dependency() == dependency && permit.Relation() == relation {
+			return permit, true
 		}
 	}
-	return plan.WideningHead{}, false
+	return WideningPermit{}, false
 }
 
 func canonicalizeIdentities(values []signature.Identity) []signature.Identity {
