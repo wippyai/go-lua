@@ -42,6 +42,11 @@ type mountedData struct {
 
 	denominators []model.DenominatorRef
 	witnesses    map[model.DenominatorRef]binding.DenominatorWitness
+	// rows is the sole relation-local row directory for this mounted
+	// runtime.  Denominators prove membership; they never assign the row's
+	// physical address.  The directory is the union of admitted memberships,
+	// sorted by owner-issued RowID identity.
+	rows map[model.RelationID][]model.RowID
 
 	scopes     []model.ScopeID
 	scopeByID  map[model.ScopeID]binding.ScopeToken
@@ -52,7 +57,7 @@ type mountedData struct {
 
 // Available reports whether the mounted artifact is complete.
 func (mounted Mounted) Available() bool {
-	return mounted.data != nil && mounted.data.fence.Available() && mounted.data.runtime.Available() && mounted.data.issuer.Available() && mounted.data.lineage != nil && mounted.data.lineageOwner.Available() && mounted.data.lineageIdentity.Available() && mounted.data.book.Available() && mounted.data.arrangement.Available() && mounted.data.scopeArena != nil && mounted.data.scopeArena.available() && mounted.data.digest.Available()
+	return mounted.data != nil && mounted.data.fence.Available() && mounted.data.runtime.Available() && mounted.data.issuer.Available() && mounted.data.lineage != nil && mounted.data.lineageOwner.Available() && mounted.data.lineageIdentity.Available() && mounted.data.book.Available() && mounted.data.arrangement.Available() && mounted.data.rows != nil && mounted.data.scopeArena != nil && mounted.data.scopeArena.available() && mounted.data.digest.Available()
 }
 
 // Fence returns the exact address/runtime certificate fence captured at
@@ -230,18 +235,39 @@ func (mounted Mounted) IssueValue(typeID model.TypeID, opaque identity.ContentID
 	return mounted.data.issuer.IssueValue(typeID, opaque)
 }
 
-// RowIndex resolves an authenticated logical row to the dense index captured
-// by the denominator witness. No hash or physical registry is consulted; the
-// index is a private snapshot of inventory's logical row order.
-func (mounted Mounted) RowIndex(ref model.DenominatorRef, row model.RowID) (int, bool) {
-	if !mounted.Available() || !ref.Available() || !row.Available() || row.Relation() != ref.Relation() {
+// RowIndex resolves an authenticated relation-local row directory position.
+// The directory is the union of admitted denominator memberships, sorted by
+// owner-issued RowID identity once during admission. Denominators prove
+// membership; they never assign scalar addresses.
+func (mounted Mounted) RowIndex(relation model.RelationID, row model.RowID) (int, bool) {
+	if !mounted.Available() || !relation.Available() || !row.Available() || row.Relation() != relation {
 		return 0, false
 	}
-	witness, ok := mounted.data.witnesses[ref]
-	if !ok || !witness.ValidFor(mounted.data.runtime) || !witness.Matches(ref) {
+	rows, ok := mounted.data.rows[relation]
+	if !ok {
 		return 0, false
 	}
-	return witness.Index(row)
+	index := sort.Search(len(rows), func(index int) bool {
+		return !rowLess(rows[index], row)
+	})
+	if index < len(rows) && rows[index] == row {
+		return index, true
+	}
+	return 0, false
+}
+
+// RowAt resolves the inverse of RowIndex from the immutable mounted relation
+// directory. The round-trip is relation-local and independent of which
+// denominator admitted the row.
+func (mounted Mounted) RowAt(relation model.RelationID, index int) (model.RowID, bool) {
+	if !mounted.Available() || !relation.Available() || index < 0 {
+		return model.RowID{}, false
+	}
+	rows, ok := mounted.data.rows[relation]
+	if !ok || index >= len(rows) {
+		return model.RowID{}, false
+	}
+	return rows[index], true
 }
 
 // Scopes returns all exact scope identities admitted by the certificate.

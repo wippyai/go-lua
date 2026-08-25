@@ -47,13 +47,13 @@ func (region lawRegion) Entails(other witness.Region) bool {
 	return ok
 }
 
-type lawRegionMapper func(witness.Region) (support.Mask, bool)
-
-func (mapper lawRegionMapper) Map(region witness.Region) (support.Mask, bool) {
-	if mapper == nil {
-		return support.Mask{}, false
+func lawMapper(t testing.TB, mounted witness.Mounted, manager *guard.Manager, fn func(witness.Region) (support.Mask, bool)) geometry.RegionMapper {
+	t.Helper()
+	mapper, ok := geometry.NewRegionMapper(mounted, manager, fn)
+	if !ok {
+		t.Fatal("region mapper")
 	}
-	return mapper(region)
+	return mapper
 }
 
 type mountInventory struct {
@@ -386,23 +386,25 @@ func trueMask(t testing.TB, manager *guard.Manager) support.Mask {
 func TestGeometryResolvesAuthenticatedCellToDeterministicScalarKey(t *testing.T) {
 	fixture := newGeometryFixture(t, 1)
 	mask := trueMask(t, fixture.manager)
-	value, ok := geometry.New(fixture.mounted, lawRegionMapper(func(witness.Region) (support.Mask, bool) {
+	value, ok := geometry.New(fixture.mounted, lawMapper(t, fixture.mounted, fixture.manager, func(witness.Region) (support.Mask, bool) {
 		return mask, true
-	}), fixture.manager)
+	}))
 	if !ok {
 		t.Fatal("geometry")
 	}
-	first, ok := value.Key(fixture.cell)
-	if !ok || first != 0 {
-		t.Fatalf("key = %d/%t, want 0/true", first, ok)
+	first, ok := value.LogicalKey(fixture.cell)
+	if !ok || !first.Available() || first.Row() != fixture.cell.Row() {
+		t.Fatalf("logical key = %#v/%t, want authenticated row", first, ok)
 	}
-	second, ok := value.Key(fixture.cell)
+	second, ok := value.LogicalKey(fixture.cell)
 	if !ok || second != first {
-		t.Fatalf("repeated key = %d/%t, want %d/true", second, ok, first)
+		t.Fatalf("repeated logical key = %#v/%t, want %#v/true", second, ok, first)
 	}
 	resolved, ok := value.Resolve(fixture.cell)
-	if !ok || !resolved.Available() || resolved.Key() != first || !resolved.Mask().Equal(mask) {
-		t.Fatal("coordinate did not retain the exact key and full scope mask")
+	index, indexOK := fixture.mounted.RowIndex(fixture.cell.Relation(), fixture.cell.Row())
+	row, rowOK := fixture.mounted.RowAt(fixture.cell.Relation(), index)
+	if !ok || !resolved.Available() || resolved.Logical() != first || !resolved.Mask().Equal(mask) || !indexOK || !rowOK || row != fixture.cell.Row() || resolved.Dense() != geometry.Key(index) {
+		t.Fatal("coordinate did not retain the authenticated logical key, dense slot, and full scope mask")
 	}
 }
 
@@ -410,16 +412,16 @@ func TestGeometryRefusesStaleAndForeignCellOrScope(t *testing.T) {
 	fixture := newGeometryFixture(t, 1)
 	foreign := newGeometryFixture(t, 2)
 	mask := trueMask(t, fixture.manager)
-	value, ok := geometry.New(fixture.mounted, lawRegionMapper(func(witness.Region) (support.Mask, bool) {
+	value, ok := geometry.New(fixture.mounted, lawMapper(t, fixture.mounted, fixture.manager, func(witness.Region) (support.Mask, bool) {
 		return mask, true
-	}), fixture.manager)
+	}))
 	if !ok {
 		t.Fatal("geometry")
 	}
 	if _, ok := value.Mask(foreign.firstScope); ok {
 		t.Fatal("foreign scope crossed the exact fence")
 	}
-	if _, ok := value.Key(foreign.cell); ok {
+	if _, ok := value.LogicalKey(foreign.cell); ok {
 		t.Fatal("foreign cell crossed the exact fence")
 	}
 	if !value.Available() {
@@ -429,9 +431,9 @@ func TestGeometryRefusesStaleAndForeignCellOrScope(t *testing.T) {
 
 func TestGeometryRefusesUnavailableRegionConversion(t *testing.T) {
 	fixture := newGeometryFixture(t, 1)
-	value, ok := geometry.New(fixture.mounted, lawRegionMapper(func(witness.Region) (support.Mask, bool) {
+	value, ok := geometry.New(fixture.mounted, lawMapper(t, fixture.mounted, fixture.manager, func(witness.Region) (support.Mask, bool) {
 		return support.Mask{}, false
-	}), fixture.manager)
+	}))
 	if !ok {
 		t.Fatal("geometry")
 	}
@@ -447,9 +449,9 @@ func TestGeometryRefusesMaskFromForeignGuardManager(t *testing.T) {
 		t.Fatal("foreign guard manager: ", err)
 	}
 	foreignMask := trueMask(t, foreignManager)
-	value, ok := geometry.New(fixture.mounted, lawRegionMapper(func(witness.Region) (support.Mask, bool) {
+	value, ok := geometry.New(fixture.mounted, lawMapper(t, fixture.mounted, fixture.manager, func(witness.Region) (support.Mask, bool) {
 		return foreignMask, true
-	}), fixture.manager)
+	}))
 	if !ok {
 		t.Fatal("geometry")
 	}
@@ -461,18 +463,18 @@ func TestGeometryRefusesMaskFromForeignGuardManager(t *testing.T) {
 func TestGeometryDoesNotScopeQualifyTheRowKey(t *testing.T) {
 	fixture := newGeometryFixture(t, 1)
 	mask := trueMask(t, fixture.manager)
-	value, ok := geometry.New(fixture.mounted, lawRegionMapper(func(witness.Region) (support.Mask, bool) {
+	value, ok := geometry.New(fixture.mounted, lawMapper(t, fixture.mounted, fixture.manager, func(witness.Region) (support.Mask, bool) {
 		return mask, true
-	}), fixture.manager)
+	}))
 	if !ok {
 		t.Fatal("geometry")
 	}
-	first, ok := value.Key(fixture.cell)
+	first, ok := value.LogicalKey(fixture.cell)
 	if !ok {
 		t.Fatal("first key")
 	}
-	second, ok := value.Key(fixture.secondCell)
+	second, ok := value.LogicalKey(fixture.secondCell)
 	if !ok || second != first {
-		t.Fatalf("scope-qualified key = %d/%t, want same row key %d/true", second, ok, first)
+		t.Fatalf("scope-qualified logical key = %#v/%t, want same row key %#v/true", second, ok, first)
 	}
 }

@@ -1,6 +1,9 @@
 package witness
 
 import (
+	"bytes"
+	"sort"
+
 	"github.com/wippyai/go-lua/analysis/identity"
 	"github.com/wippyai/go-lua/analysis/relation/check/certificate"
 	"github.com/wippyai/go-lua/analysis/relation/mount/address"
@@ -89,6 +92,10 @@ func newMounted(
 			return Mounted{}, false
 		}
 	}
+	rows, rowsOK := mountedRows(denominatorRefs, witnesses, runtime)
+	if !rowsOK {
+		return Mounted{}, false
+	}
 
 	scopeIDs = canonicalizeScopes(scopeIDs)
 	if len(scopeIDs) != len(scopeTokens) {
@@ -124,6 +131,7 @@ func newMounted(
 		algebras:        cloneAlgebras(algebras),
 		denominators:    denominatorRefs,
 		witnesses:       cloneWitnesses(witnesses),
+		rows:            rows,
 		scopes:          scopeIDs,
 		scopeByID:       cloneScopeTokens(scopeTokens),
 		scopeArena:      scopeArena,
@@ -135,6 +143,78 @@ func newMounted(
 	}
 	data.digest = digest
 	return Mounted{data: data}, true
+}
+
+// mountedRows builds the one relation-local row directory from the union of
+// all admitted denominator memberships. A denominator's local order is never
+// reused as a logical or physical relation address; only owner-issued RowID
+// identity determines the canonical order here.
+func mountedRows(refs []model.DenominatorRef, witnesses map[model.DenominatorRef]binding.DenominatorWitness, runtime binding.Fence) (map[model.RelationID][]model.RowID, bool) {
+	result := make(map[model.RelationID][]model.RowID)
+	seen := make(map[model.RelationID]map[model.RowID]struct{})
+	for _, ref := range refs {
+		if !ref.Available() {
+			return nil, false
+		}
+		value, ok := witnesses[ref]
+		if !ok || !value.ValidFor(runtime) || !value.Matches(ref) {
+			return nil, false
+		}
+		rows := result[ref.Relation()]
+		members := seen[ref.Relation()]
+		if members == nil {
+			members = make(map[model.RowID]struct{})
+			seen[ref.Relation()] = members
+		}
+		for index := 0; index < value.Len(); index++ {
+			row, rowOK := value.At(index)
+			if !rowOK || !row.Available() || row.Relation() != ref.Relation() {
+				return nil, false
+			}
+			if _, duplicate := members[row]; duplicate {
+				continue
+			}
+			members[row] = struct{}{}
+			rows = append(rows, row)
+		}
+		result[ref.Relation()] = rows
+	}
+	for relation, rows := range result {
+		sort.Slice(rows, func(left, right int) bool { return rowLess(rows[left], rows[right]) })
+		for index := 1; index < len(rows); index++ {
+			if rows[index-1] == rows[index] || rows[index].Relation() != relation {
+				return nil, false
+			}
+		}
+		result[relation] = rows
+	}
+	return result, validRowDirectory(result)
+}
+
+func validRowDirectory(values map[model.RelationID][]model.RowID) bool {
+	if values == nil {
+		return false
+	}
+	for relation, rows := range values {
+		if !relation.Available() {
+			return false
+		}
+		for index, row := range rows {
+			if !row.Available() || row.Relation() != relation || (index > 0 && !rowLess(rows[index-1], row)) {
+				return false
+			}
+		}
+	}
+	return true
+}
+
+func rowLess(left, right model.RowID) bool {
+	leftOwner, rightOwner := left.Owner().Content(), right.Owner().Content()
+	if compared := bytes.Compare(leftOwner[:], rightOwner[:]); compared != 0 {
+		return compared < 0
+	}
+	leftContent, rightContent := left.Content(), right.Content()
+	return bytes.Compare(leftContent[:], rightContent[:]) < 0
 }
 
 // mountedColumns freezes the certificate's canonical column catalogue and
@@ -274,6 +354,12 @@ func digestMounted(value mountedData, certificateDigest identity.ContentID) (ide
 		}
 		parts = append(parts, contentBytes(ref.Relation().Owner().Content()), contentBytes(ref.Relation().Content()), contentBytes(ref.Key().Relation().Owner().Content()), contentBytes(ref.Key().Content()), contentBytes(evidenceID))
 	}
+	for _, relation := range canonicalRowRelations(value.rows) {
+		parts = append(parts, contentBytes(relation.Owner().Content()), contentBytes(relation.Content()))
+		for _, row := range value.rows[relation] {
+			parts = append(parts, contentBytes(row.Owner().Content()), contentBytes(row.Content()))
+		}
+	}
 	for _, scopeID := range value.scopes {
 		token, tokenOK := value.scopeByID[scopeID]
 		if !tokenOK {
@@ -292,4 +378,15 @@ func digestMounted(value mountedData, certificateDigest identity.ContentID) (ide
 		parts = append(parts, contentBytes(permit.Dependency().Owner().Content()), contentBytes(permit.Dependency().Content()), contentBytes(permit.Relation().Owner().Content()), contentBytes(permit.Relation().Content()), contentBytes(permit.Evidence()))
 	}
 	return identity.DeriveContentID(mountedDigestDomain, parts...)
+}
+
+func canonicalRowRelations(values map[model.RelationID][]model.RowID) []model.RelationID {
+	result := make([]model.RelationID, 0, len(values))
+	for relation := range values {
+		result = append(result, relation)
+	}
+	sort.Slice(result, func(left, right int) bool {
+		return compareNominal(result[left].Owner().Content(), result[left].Content(), result[right].Owner().Content(), result[right].Content()) < 0
+	})
+	return result
 }
