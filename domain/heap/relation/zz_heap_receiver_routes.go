@@ -14,12 +14,12 @@ import (
 // finite expansion at owner-named rows binding.
 type HeapReceiverRoutesColumns struct {
 	Value     *relbindgen.Column[valuedomain.Value]
-	HeapRoute *relbindgen.Column[RouteFact]
+	HeapRoute *relbindgen.Column[HeapRouteFact]
 }
 
 // NewHeapReceiverRoutesColumns names this family's own owner columns. A column an axis
 // other than this one publishes is handed in, never reached for.
-func NewHeapReceiverRoutesColumns(value *relbindgen.Column[valuedomain.Value], heapRoute *relbindgen.Column[RouteFact]) (HeapReceiverRoutesColumns, bool) {
+func NewHeapReceiverRoutesColumns(value *relbindgen.Column[valuedomain.Value], heapRoute *relbindgen.Column[HeapRouteFact]) (HeapReceiverRoutesColumns, bool) {
 	columns := HeapReceiverRoutesColumns{Value: value, HeapRoute: heapRoute}
 	if !columns.Available() {
 		return HeapReceiverRoutesColumns{}, false
@@ -44,7 +44,7 @@ type HeapReceiverRoutesArgument struct {
 // buffer or an engine value, so the mathematics stays where its owner wrote
 // it and this artifact stays free of it.
 type HeapReceiverRoutesJudgment interface {
-	relbindgen.Operation[HeapReceiverRoutesArgument, RouteFact]
+	relbindgen.Operation[HeapReceiverRoutesArgument, HeapRouteFact]
 	Available() bool
 }
 
@@ -58,7 +58,7 @@ func BindHeapReceiverRoutes(operation signature.Signature, judgment HeapReceiver
 	if judgment == nil || !judgment.Available() || !columns.Available() {
 		return nil, false
 	}
-	return relbindgen.Bind(relbindgen.Spec[HeapReceiverRoutesArgument, RouteFact]{
+	return relbindgen.Bind(relbindgen.Spec[HeapReceiverRoutesArgument, HeapRouteFact]{
 		Signature: operation,
 		Decoder:   heapReceiverRoutesDecoder{columns: columns},
 		Encoder:   heapReceiverRoutesEncoder{columns: columns},
@@ -84,6 +84,6 @@ type heapReceiverRoutesEncoder struct {
 	columns HeapReceiverRoutesColumns
 }
 
-func (encoder heapReceiverRoutesEncoder) Encode(outputs relbindgen.Outputs, value RouteFact) bool {
+func (encoder heapReceiverRoutesEncoder) Encode(outputs relbindgen.Outputs, value HeapRouteFact) bool {
 	return relbindgen.PutColumn(outputs, 0, encoder.columns.HeapRoute, value)
 }

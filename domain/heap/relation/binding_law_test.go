@@ -98,7 +98,7 @@ func TestReceiverRoutesPublishTheRootsTheOwnerNames(t *testing.T) {
 	receiverType := place.TypeID(t, "type/value")
 	routeType := place.TypeID(t, "type/route")
 	receiverColumn := harness.NewColumn[valuedomain.Value](t, receiverType, "store/value", reserve)
-	routeStore := harness.NewColumn[relation.RouteFact](t, routeType, "store/route", reserve)
+	routeStore := harness.NewColumn[relation.HeapRouteFact](t, routeType, "store/route", reserve)
 	columns, ok := relation.NewHeapReceiverRoutesColumns(receiverColumn, routeStore)
 	if !ok {
 		t.Fatal("receiver route columns")
@@ -268,8 +268,8 @@ func TestTheHeapAlgebraResolvesByTypeAlone(t *testing.T) {
 	fixture := relationfixture.New(t)
 	place := harness.New(t, "row/cell")
 	heapType := place.TypeID(t, "type/heap")
-	types := relation.PayloadTypes{Heap: heapType, HeapCandidate: place.TypeID(t, "type/heap-key"), HeapRoute: place.TypeID(t, "type/route")}
-	tags := relation.PayloadTags{Heap: harness.Content(t, "store/heap"), HeapCandidate: harness.Content(t, "store/heap-key"), HeapRoute: harness.Content(t, "store/route")}
+	types := relation.PayloadTypes{Heap: heapType, HeapCandidate: place.TypeID(t, "type/heap-key"), HeapRoute: place.TypeID(t, "type/route"), KeyRoute: place.TypeID(t, "type/key-route"), CallRoute: place.TypeID(t, "type/call-route"), PackRoute: place.TypeID(t, "type/pack-route"), SourceRoute: place.TypeID(t, "type/source-route"), ReadCandidate: place.TypeID(t, "type/read-candidate"), WriteCandidate: place.TypeID(t, "type/write-candidate")}
+	tags := relation.PayloadTags{Heap: harness.Content(t, "store/heap"), HeapCandidate: harness.Content(t, "store/heap-key"), HeapRoute: harness.Content(t, "store/route"), KeyRoute: harness.Content(t, "store/key-route"), CallRoute: harness.Content(t, "store/call-route"), PackRoute: harness.Content(t, "store/pack-route"), SourceRoute: harness.Content(t, "store/source-route"), ReadCandidate: harness.Content(t, "store/read-candidate"), WriteCandidate: harness.Content(t, "store/write-candidate")}
 	payloads, ok := relation.NewPayloads(types, tags, reserve)
 	if !ok {
 		t.Fatal("install the heap columns")

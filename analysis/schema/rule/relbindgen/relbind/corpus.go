@@ -5,21 +5,22 @@ import (
 	"github.com/wippyai/go-lua/analysis/relation/semantic/signature"
 )
 
-// abiGapRawAccess is the reason the two indexed raw-access rows carry. Their
-// owner mathematics exists and is monotone, but the payload-tail expansion,
-// the semantic-source expansion and both reductions are reachable only through
-// symbols the owner does not export and through the operand type of the
-// protocol this engine replaces. A binding cannot name them, so the rows are
-// declared, named, and left unbound until the owner publishes them.
-const abiGapRawAccess = "w0-abi-gap: domain/heap/index publishes its route and reduction mathematics only through unexported symbols and the legacy operand type"
+// planGapRawPackRoutes is the reason the two raw-access pack expansions carry.
+// The owner publishes the enumeration, and the authored plan does not deliver
+// everything it reads: the payloads a selected route carries are enumerated
+// under a key selector, and the authored step joins the route relation onto
+// the heap facts alone, so the key selector the key route determined never
+// reaches the frame. The remedy is a join the plan states, not a lowering this
+// layer invents, so the rows are declared, named, and left unbound.
+const planGapRawPackRoutes = "w0-plan-incomplete: the authored pack expansion does not deliver the key selector its enumeration reads"
 
 // scalar is the delivery a single-cell input carries.
 const scalar = signature.ScalarDelivery
 
-// receiverRouteBound is the declared output bound of the receiver-route
-// expansion. It is the sealed signature's own contract, and the emitter
+// rawAccessRouteBound is the declared output bound every raw-access route
+// expansion carries. It is the bound the authored plan states, so the emitter
 // refuses the row that would exceed it rather than truncating the expansion.
-const receiverRouteBound = 64
+const rawAccessRouteBound = 64
 
 // axes are the emission targets. Every produced artifact lives beside the
 // owner whose mathematics it carries, so the generic substrate keeps no
@@ -71,7 +72,13 @@ func payloads() []Payload {
 		{Key: "packsource-candidate", Axis: "pack", Field: "PackSourceCandidate", Type: "packdomain.Source", Alias: "packdomain", Path: "github.com/wippyai/go-lua/domain/pack"},
 		{Key: "call-candidate", Axis: "call", Field: "CallCandidate", Type: "calldomain.CallCoordinate", Alias: "calldomain", Path: "github.com/wippyai/go-lua/domain/call"},
 		{Key: "value-summary", Axis: "value", Field: "ValueSummary", Type: "valuedomain.ValueSummaryObservation", Alias: "valuedomain", Path: "github.com/wippyai/go-lua/domain/value"},
-		{Key: "heap-route", Axis: "heap", Field: "HeapRoute", Type: "RouteFact"},
+		{Key: "heap-key-route", Axis: "heap", Field: "KeyRoute", Type: "KeyRouteFact"},
+		{Key: "heap-call-route", Axis: "heap", Field: "CallRoute", Type: "CallRouteFact"},
+		{Key: "heap-route", Axis: "heap", Field: "HeapRoute", Type: "HeapRouteFact"},
+		{Key: "heap-pack-route", Axis: "heap", Field: "PackRoute", Type: "PackRouteFact"},
+		{Key: "heap-source-route", Axis: "heap", Field: "SourceRoute", Type: "SourceRouteFact"},
+		{Key: "heap-read-candidate", Axis: "heap", Field: "ReadCandidate", Type: "indexdomain.Index", Alias: "indexdomain", Path: "github.com/wippyai/go-lua/domain/heap/index"},
+		{Key: "heap-write-candidate", Axis: "heap", Field: "WriteCandidate", Type: "indexdomain.Index", Alias: "indexdomain", Path: "github.com/wippyai/go-lua/domain/heap/index"},
 		{Key: "effect-candidate", Axis: "effect", Field: "EffectCandidate", Type: "effectfactor.MountedCall", Alias: "effectfactor", Path: "github.com/wippyai/go-lua/domain/effect/factor"},
 	}
 }
@@ -296,7 +303,57 @@ func families() []Family {
 				{Field: "Receiver", Payload: "value", Delivery: scalar},
 			},
 			Result: "heap-route", Outputs: []Column{{Payload: "heap-route"}},
-			Cardinality: model.BoundedMany, Bound: receiverRouteBound, Address: KeyedDestination,
+			Cardinality: model.BoundedMany, Bound: rawAccessRouteBound, Address: KeyedDestination,
+		},
+		{
+			Census: "heap/index", Rule: "raw-get", Stem: "RawGetKeyRoutes", Axis: "heap",
+			Judgment: "RawGetKeyRoutesOperation",
+			Inputs: []Slot{
+				{Field: "Candidate", Payload: "heap-read-candidate", Delivery: scalar},
+				{Field: "Receiver", Payload: "value", Delivery: scalar},
+			},
+			Result: "heap-key-route", Outputs: []Column{{Payload: "heap-key-route"}},
+			Cardinality: model.BoundedMany, Bound: rawAccessRouteBound, Address: KeyedDestination,
+		},
+		{
+			Census: "heap/index", Rule: "raw-get", Stem: "RawGetCallRoutes", Axis: "heap",
+			Judgment: "RawGetCallRoutesOperation",
+			Inputs: []Slot{
+				{Field: "Key", Payload: "heap-key-route", Delivery: scalar},
+				{Field: "Receiver", Payload: "value", Delivery: scalar},
+			},
+			Result: "heap-call-route", Outputs: []Column{{Payload: "heap-call-route"}},
+			Cardinality: model.BoundedMany, Bound: rawAccessRouteBound, Address: KeyedDestination,
+		},
+		{
+			Census: "heap/index", Rule: "raw-get", Stem: "RawGetSourceRoutes", Axis: "heap",
+			Judgment: "RawGetSourceRoutesOperation",
+			Inputs: []Slot{
+				{Field: "Pack", Payload: "heap-pack-route", Delivery: scalar},
+				{Field: "Values", Payload: "pack", Delivery: scalar},
+			},
+			Result: "heap-source-route", Outputs: []Column{{Payload: "heap-source-route"}},
+			Cardinality: model.BoundedMany, Bound: rawAccessRouteBound, Address: KeyedDestination,
+		},
+		{
+			Census: "heap/index", Rule: "raw-set", Stem: "RawSetKeyRoutes", Axis: "heap",
+			Judgment: "RawSetKeyRoutesOperation",
+			Inputs: []Slot{
+				{Field: "Candidate", Payload: "heap-write-candidate", Delivery: scalar},
+				{Field: "Receiver", Payload: "value", Delivery: scalar},
+			},
+			Result: "heap-key-route", Outputs: []Column{{Payload: "heap-key-route"}},
+			Cardinality: model.BoundedMany, Bound: rawAccessRouteBound, Address: KeyedDestination,
+		},
+		{
+			Census: "heap/index", Rule: "raw-set", Stem: "RawSetSourceRoutes", Axis: "heap",
+			Judgment: "RawSetSourceRoutesOperation",
+			Inputs: []Slot{
+				{Field: "Pack", Payload: "heap-pack-route", Delivery: scalar},
+				{Field: "Values", Payload: "pack", Delivery: scalar},
+			},
+			Result: "heap-source-route", Outputs: []Column{{Payload: "heap-source-route"}},
+			Cardinality: model.BoundedMany, Bound: rawAccessRouteBound, Address: KeyedDestination,
 		},
 		{
 			Arm: "cell update at the row it read", Stem: "HeapAscent", Axis: "heap",
@@ -309,12 +366,12 @@ func families() []Family {
 			Cardinality: model.ExactlyOne, Address: 0,
 		},
 		{
-			Census: "heap/index", Rule: "raw-get", Stem: "HeapIndexRawGet", Axis: "heap",
-			Pending: abiGapRawAccess,
+			Census: "heap/index", Rule: "raw-get", Stem: "RawGetPackRoutes", Axis: "heap",
+			Pending: planGapRawPackRoutes,
 		},
 		{
-			Census: "heap/index", Rule: "raw-set", Stem: "HeapIndexRawSet", Axis: "heap",
-			Pending: abiGapRawAccess,
+			Census: "heap/index", Rule: "raw-set", Stem: "RawSetPackRoutes", Axis: "heap",
+			Pending: planGapRawPackRoutes,
 		},
 	}
 }

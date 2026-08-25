@@ -8,40 +8,59 @@ import (
 	"github.com/wippyai/go-lua/analysis/relation/semantic/binding"
 	"github.com/wippyai/go-lua/analysis/schema/rule/relbindgen"
 	heapdomain "github.com/wippyai/go-lua/domain/heap"
+	indexdomain "github.com/wippyai/go-lua/domain/heap/index"
 )
 
 // PayloadTypes names the owner-issued TypeID each column of this axis
 // carries.
 type PayloadTypes struct {
-	Heap          model.TypeID
-	HeapCandidate model.TypeID
-	HeapRoute     model.TypeID
+	Heap           model.TypeID
+	HeapCandidate  model.TypeID
+	KeyRoute       model.TypeID
+	CallRoute      model.TypeID
+	HeapRoute      model.TypeID
+	PackRoute      model.TypeID
+	SourceRoute    model.TypeID
+	ReadCandidate  model.TypeID
+	WriteCandidate model.TypeID
 }
 
 // Available reports whether every column has an owner-issued type.
 func (types PayloadTypes) Available() bool {
-	return types.Heap.Available() && types.HeapCandidate.Available() && types.HeapRoute.Available()
+	return types.Heap.Available() && types.HeapCandidate.Available() && types.KeyRoute.Available() && types.CallRoute.Available() && types.HeapRoute.Available() && types.PackRoute.Available() && types.SourceRoute.Available() && types.ReadCandidate.Available() && types.WriteCandidate.Available()
 }
 
 // PayloadTags names the store fence each column of this axis interns under.
 type PayloadTags struct {
-	Heap          identity.ContentID
-	HeapCandidate identity.ContentID
-	HeapRoute     identity.ContentID
+	Heap           identity.ContentID
+	HeapCandidate  identity.ContentID
+	KeyRoute       identity.ContentID
+	CallRoute      identity.ContentID
+	HeapRoute      identity.ContentID
+	PackRoute      identity.ContentID
+	SourceRoute    identity.ContentID
+	ReadCandidate  identity.ContentID
+	WriteCandidate identity.ContentID
 }
 
 // Available reports whether every column has a store fence.
 func (tags PayloadTags) Available() bool {
-	return tags.Heap.Available() && tags.HeapCandidate.Available() && tags.HeapRoute.Available()
+	return tags.Heap.Available() && tags.HeapCandidate.Available() && tags.KeyRoute.Available() && tags.CallRoute.Available() && tags.HeapRoute.Available() && tags.PackRoute.Available() && tags.SourceRoute.Available() && tags.ReadCandidate.Available() && tags.WriteCandidate.Available()
 }
 
 // Payloads is this axis's thin typed owner-column publisher: one Column per
 // payload type the axis declares, each over its own solve-local store, and
 // the only place one of its domain values crosses into a value token.
 type Payloads struct {
-	Heap          *relbindgen.Column[heapdomain.Value]
-	HeapCandidate *relbindgen.Column[heapdomain.Key]
-	HeapRoute     *relbindgen.Column[RouteFact]
+	Heap           *relbindgen.Column[heapdomain.Value]
+	HeapCandidate  *relbindgen.Column[heapdomain.Key]
+	KeyRoute       *relbindgen.Column[KeyRouteFact]
+	CallRoute      *relbindgen.Column[CallRouteFact]
+	HeapRoute      *relbindgen.Column[HeapRouteFact]
+	PackRoute      *relbindgen.Column[PackRouteFact]
+	SourceRoute    *relbindgen.Column[SourceRouteFact]
+	ReadCandidate  *relbindgen.Column[indexdomain.Index]
+	WriteCandidate *relbindgen.Column[indexdomain.Index]
 }
 
 // NewPayloads installs one column per declared payload over a store fenced
@@ -67,11 +86,53 @@ func NewPayloads(types PayloadTypes, tags PayloadTags, reserve int) (Payloads, b
 	if payloads.HeapCandidate, ok = relbindgen.NewColumn(types.HeapCandidate, heapCandidateStore); !ok {
 		return Payloads{}, false
 	}
-	heapRouteStore, ok := relbindgen.NewStore[RouteFact](tags.HeapRoute, reserve)
+	keyRouteStore, ok := relbindgen.NewStore[KeyRouteFact](tags.KeyRoute, reserve)
+	if !ok {
+		return Payloads{}, false
+	}
+	if payloads.KeyRoute, ok = relbindgen.NewColumn(types.KeyRoute, keyRouteStore); !ok {
+		return Payloads{}, false
+	}
+	callRouteStore, ok := relbindgen.NewStore[CallRouteFact](tags.CallRoute, reserve)
+	if !ok {
+		return Payloads{}, false
+	}
+	if payloads.CallRoute, ok = relbindgen.NewColumn(types.CallRoute, callRouteStore); !ok {
+		return Payloads{}, false
+	}
+	heapRouteStore, ok := relbindgen.NewStore[HeapRouteFact](tags.HeapRoute, reserve)
 	if !ok {
 		return Payloads{}, false
 	}
 	if payloads.HeapRoute, ok = relbindgen.NewColumn(types.HeapRoute, heapRouteStore); !ok {
+		return Payloads{}, false
+	}
+	packRouteStore, ok := relbindgen.NewStore[PackRouteFact](tags.PackRoute, reserve)
+	if !ok {
+		return Payloads{}, false
+	}
+	if payloads.PackRoute, ok = relbindgen.NewColumn(types.PackRoute, packRouteStore); !ok {
+		return Payloads{}, false
+	}
+	sourceRouteStore, ok := relbindgen.NewStore[SourceRouteFact](tags.SourceRoute, reserve)
+	if !ok {
+		return Payloads{}, false
+	}
+	if payloads.SourceRoute, ok = relbindgen.NewColumn(types.SourceRoute, sourceRouteStore); !ok {
+		return Payloads{}, false
+	}
+	readCandidateStore, ok := relbindgen.NewStore[indexdomain.Index](tags.ReadCandidate, reserve)
+	if !ok {
+		return Payloads{}, false
+	}
+	if payloads.ReadCandidate, ok = relbindgen.NewColumn(types.ReadCandidate, readCandidateStore); !ok {
+		return Payloads{}, false
+	}
+	writeCandidateStore, ok := relbindgen.NewStore[indexdomain.Index](tags.WriteCandidate, reserve)
+	if !ok {
+		return Payloads{}, false
+	}
+	if payloads.WriteCandidate, ok = relbindgen.NewColumn(types.WriteCandidate, writeCandidateStore); !ok {
 		return Payloads{}, false
 	}
 	return payloads, true
@@ -79,7 +140,7 @@ func NewPayloads(types PayloadTypes, tags PayloadTags, reserve int) (Payloads, b
 
 // Available reports whether every column carries live storage.
 func (payloads Payloads) Available() bool {
-	return payloads.Heap.Available() && payloads.HeapCandidate.Available() && payloads.HeapRoute.Available()
+	return payloads.Heap.Available() && payloads.HeapCandidate.Available() && payloads.KeyRoute.Available() && payloads.CallRoute.Available() && payloads.HeapRoute.Available() && payloads.PackRoute.Available() && payloads.SourceRoute.Available() && payloads.ReadCandidate.Available() && payloads.WriteCandidate.Available()
 }
 
 // Lattices are this axis's ascent witnesses. Each names the owner's own
