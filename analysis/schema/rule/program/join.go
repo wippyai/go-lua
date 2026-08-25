@@ -81,11 +81,48 @@ type JoinDecl struct {
 	// no dense coordinate carries it - the same reason an activation's branch
 	// vocabulary is declared rather than derived.
 	AddressIdentity member.ProjectionRef
-	Read            ReadDecl
+	// Selection names the owner-issued operation that publishes the rows this
+	// read returns.
+	//
+	// A read whose rows are PRODUCED rather than enumerated has no coordinate
+	// to be paired against until the reads before it have delivered their
+	// cells, so what it reads is an operation's output and not a column
+	// vector. The operation publishes into Relation and stamps each row with
+	// Predicate, which is why the two are declared together: a read that names
+	// a tag names the operation that stamps it, and a read that consumes an
+	// earlier result names the operation that consumed it.
+	Selection member.SelectionRef
+	Read      ReadDecl
 }
 
 func (join JoinDecl) Available() bool {
-	return len(join.Sources) != 0 && join.Relation.Available() && join.Key.Available() && join.Read.Available()
+	if len(join.Sources) == 0 || !join.Relation.Available() || !join.Key.Available() || !join.Read.Available() {
+		return false
+	}
+	if join.Selection.Declared() && !join.Selection.Available() {
+		return false
+	}
+	// A selection belongs to a produced read. The converse - that every
+	// produced read names one - is the same law from the other side and is
+	// stated here once every declaration names its operation.
+	return !join.Selection.Available() || join.Produced()
+}
+
+// Produced reports whether this read's rows are published by an operation
+// rather than enumerated from a declared directory. A read that correlates its
+// rows by a tag was selected, and a read computed from an earlier result was
+// selected by the values that result delivered; either way there is no
+// coordinate to pair against until the operation has run.
+func (join JoinDecl) Produced() bool {
+	if join.Predicate.Declared() {
+		return true
+	}
+	for _, source := range join.Sources {
+		if !source.Candidate {
+			return true
+		}
+	}
+	return false
 }
 
 func (join JoinDecl) References() schema.EntryReferences {
@@ -104,6 +141,9 @@ func (join JoinDecl) References() schema.EntryReferences {
 	}
 	if join.AddressIdentity.Declared() {
 		references = append(references, join.AddressIdentity.EntryReference())
+	}
+	if join.Selection.Declared() {
+		references = append(references, join.Selection.EntryReference())
 	}
 	return append(references, join.Read.References()...)
 }

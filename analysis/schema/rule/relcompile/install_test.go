@@ -300,6 +300,18 @@ func (surfaces *owners) installJoin(declaration ruleprogram.JoinDecl, scope relc
 	surfaces.relation(joined, scope)
 	surfaces.installProjection(declaration.Key, joined)
 	surfaces.installProjection(declaration.Predicate, joined)
+	// An operation that publishes produced rows is a member of the axis those
+	// rows belong to, so the owner installs its signature the way it installs
+	// a reducer's, and the relation publishes the tag it stamps.
+	if declaration.Selection.Available() {
+		surfaces.coordinate(joined, relcompile.CoordinateTag)
+		destination := relcompile.NewName(declaration.Predicate.Axis, declaration.Predicate.Member)
+		if !declaration.Predicate.Available() {
+			destination = relcompile.NewName(joined.Entry, joined.Member+"#tag")
+		}
+		surfaces.expansion(relcompile.NewName(declaration.Selection.Axis, declaration.Selection.Member), destination, 64)
+		surfaces.expression(schema.EntryReference{Surface: schema.SurfaceKindAxis, Key: declaration.Selection.Axis.Key}, declaration.Selection.Member)
+	}
 	for _, nested := range []member.RelationRef{declaration.Parent, declaration.KeyVector} {
 		if !nested.Available() {
 			continue

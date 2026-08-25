@@ -44,7 +44,8 @@ func Resolve(registry *Registry, spec rule.Spec, placement Placement) ([]Rule, e
 		return nil, refuse(Site{Rule: spec.Key, Path: "program.inputs"}, Name{Entry: entry}, KindScope, ReasonUndeclared)
 	}
 
-	resolver := ruleResolver{registry: registry, rule: spec.Key, entry: entry, placement: placement}
+	producers := make([]Rule, 0, program.JoinCount())
+	resolver := ruleResolver{registry: registry, rule: spec.Key, entry: entry, placement: placement, producers: &producers}
 	candidate, err := resolver.candidateRelation(program.Candidate)
 	if err != nil {
 		return nil, err
@@ -81,7 +82,8 @@ func Resolve(registry *Registry, spec rule.Spec, placement Placement) ([]Rule, e
 	if len(program.Fold.Outputs) == 0 {
 		return nil, refuse(resolver.site("program.fold.outputs"), Name{Entry: entry}, KindPublicationKey, ReasonUndeclared)
 	}
-	rules := make([]Rule, 0, len(program.Fold.Outputs))
+	rules := make([]Rule, 0, len(program.Fold.Outputs)+len(producers))
+	rules = append(rules, producers...)
 	for index, output := range program.Fold.Outputs {
 		published, err := resolver.publication(index, output)
 		if err != nil {
@@ -124,6 +126,14 @@ type ruleResolver struct {
 	rule      schema.Key
 	entry     schema.EntryReference
 	placement Placement
+	// produced collects the dependencies that publish the rows this rule's
+	// selected reads consume. They are rules like any other and are returned
+	// beside the reading rule.
+	producers *[]Rule
+}
+
+func (resolver ruleResolver) produce(rule Rule) {
+	*resolver.producers = append(*resolver.producers, rule)
 }
 
 func (resolver ruleResolver) site(path string) Site {
@@ -175,16 +185,21 @@ func (resolver ruleResolver) join(index int, declaration ruleprogram.JoinDecl, r
 	}
 
 	// A selection produces the rows it returns: which rows those are depends
-	// on values the reads before it delivered, so it is an operation that
-	// publishes them and not a column vector anything could pair against. The
-	// declaration names the tag such an operation stamps its rows with, and
-	// names no operation, so it refuses here rather than being paired by a
-	// guess. Its lowering is the one the raw indexed access plans use.
-	if declaration.Predicate.Available() {
-		return nil, Name{}, refuse(resolver.site(path+".predicate"), joined, KindOperation, ReasonUndeclared)
-	}
-	if len(declaration.Sources) != 1 {
-		return nil, Name{}, refuse(resolver.site(path+".sources"), joined, KindOperation, ReasonUndeclared)
+	// on the values the reads before it delivered, so it is an operation that
+	// publishes them and not a column vector anything could pair against. A
+	// read that names its operation lowers the way the raw indexed access
+	// plans do - one Apply publishing into the read relation, then an ordinary
+	// equijoin onto the tag it stamps. A read that names none refuses here
+	// rather than being paired by a guess.
+	if declaration.Produced() {
+		if !declaration.Selection.Available() {
+			site := path + ".predicate"
+			if !declaration.Predicate.Available() {
+				site = path + ".sources"
+			}
+			return nil, Name{}, refuse(resolver.site(site), joined, KindOperation, ReasonUndeclared)
+		}
+		return resolver.produced(index, declaration, joined, joinedID, relations, portScope, completion)
 	}
 
 	source := declaration.Sources[0]
@@ -272,6 +287,114 @@ func (resolver ruleResolver) join(index int, declaration ruleprogram.JoinDecl, r
 		})
 	}
 	return specs, joined, nil
+}
+
+// produced lowers one read whose rows an operation publishes. The operation
+// becomes its own dependency over the results the read consumes, and the read
+// itself is an equijoin onto the tag those rows carry, so nothing about it is
+// a form: it is one Apply and one join over declared columns.
+func (resolver ruleResolver) produced(index int, declaration ruleprogram.JoinDecl, joined Name, joinedID model.RelationID, relations []Name, portScope model.ScopeID, completion *model.DenominatorRef) ([]JoinSpec, Name, error) {
+	path := fmt.Sprintf("program.joins[%d]", index)
+	operation, err := resolver.registry.Signature(resolver.site(path+".selection"),
+		NewName(declaration.Selection.Axis, declaration.Selection.Member))
+	if err != nil {
+		return nil, Name{}, err
+	}
+	tag, err := resolver.registry.Column(resolver.site(path+".predicate"),
+		NewName(declaration.Predicate.Axis, declaration.Predicate.Member))
+	if err != nil {
+		tag, err = resolver.registry.Addressed(resolver.site(path+".selection"), joined, CoordinateTag)
+		if err != nil {
+			return nil, Name{}, err
+		}
+	}
+	if tag.Relation() != joinedID {
+		return nil, Name{}, refuse(resolver.site(path+".predicate"), joined, KindColumn, ReasonForeign)
+	}
+	producer, err := resolver.selection(index, declaration, joined, joinedID, relations, portScope, operation)
+	if err != nil {
+		return nil, Name{}, err
+	}
+	resolver.produce(producer)
+
+	source := declaration.Sources[0]
+	sourceName, err := resolver.sourceRelation(path, source, relations)
+	if err != nil {
+		return nil, Name{}, err
+	}
+	left, err := resolver.registry.Addressed(resolver.site(path+".sources[0]"), sourceName, CoordinateAddress)
+	if err != nil {
+		return nil, Name{}, err
+	}
+	return []JoinSpec{{
+		Relation:     joinedID,
+		LeftColumns:  []model.ColumnID{left},
+		RightColumns: []model.ColumnID{tag},
+		Scope:        portScope,
+		Complete:     completion,
+	}}, joined, nil
+}
+
+// selection builds the dependency that publishes the produced rows: the
+// operation applied over the candidate and every earlier result the read
+// consumes, publishing into the relation those rows land in.
+func (resolver ruleResolver) selection(index int, declaration ruleprogram.JoinDecl, joined Name, joinedID model.RelationID, relations []Name, portScope model.ScopeID, operation signature.Identity) (Rule, error) {
+	path := fmt.Sprintf("program.joins[%d].selection", index)
+	name := NewName(declaration.Selection.Axis, declaration.Selection.Member)
+	dependency, err := resolver.registry.Dependency(resolver.site(path), name)
+	if err != nil {
+		return Rule{}, err
+	}
+	expression, err := resolver.registry.Expression(resolver.site(path), name)
+	if err != nil {
+		return Rule{}, err
+	}
+	candidate, err := resolver.registry.Relation(resolver.site(path), relations[0])
+	if err != nil {
+		return Rule{}, err
+	}
+	joins := make([]JoinSpec, 0, len(declaration.Sources))
+	for position, source := range declaration.Sources {
+		if source.Candidate {
+			continue
+		}
+		consumed, err := resolver.sourceRelation(path, source, relations)
+		if err != nil {
+			return Rule{}, err
+		}
+		left, err := resolver.registry.Addressed(resolver.site(path), relations[0], CoordinateAddress)
+		if err != nil {
+			return Rule{}, err
+		}
+		right, err := resolver.registry.Addressed(resolver.site(path), consumed, CoordinateAddress)
+		if err != nil {
+			return Rule{}, err
+		}
+		consumedID, err := resolver.registry.Relation(resolver.site(path), consumed)
+		if err != nil {
+			return Rule{}, err
+		}
+		_ = position
+		joins = append(joins, JoinSpec{
+			Relation:     consumedID,
+			LeftColumns:  []model.ColumnID{left},
+			RightColumns: []model.ColumnID{right},
+			Scope:        portScope,
+		})
+	}
+	key, err := resolver.registry.PublicationKey(resolver.site(path), NewName(declaration.Predicate.Axis, declaration.Predicate.Member))
+	if err != nil {
+		return Rule{}, err
+	}
+	return Rule{
+		ID:         dependency,
+		Expression: expression,
+		Candidate:  candidate,
+		Joins:      joins,
+		Scope:      portScope,
+		Apply:      operation,
+		Publish:    &Publication{Relation: joinedID, Key: key},
+	}, nil
 }
 
 func (resolver ruleResolver) sourceRelation(path string, source ruleprogram.SourceRef, relations []Name) (Name, error) {
