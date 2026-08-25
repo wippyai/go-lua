@@ -356,6 +356,21 @@ type EnumerationRef struct {
 	// region the invocation concluded over; a relation judgment that also read
 	// them would be a second authority over that region.
 	Admit GoSymbol
+	// Indexed says the delivery is read AT ONE ORDINAL - the one the level
+	// before it yields - instead of being walked from end to end.
+	//
+	// It is what a two-level derivation over a vector looks like when the
+	// outer level names positions rather than values: a call's freeze
+	// selectors are ordinals into the actuals its site delivers, so the set is
+	// "for each selector, the actual at it", not "for each actual". Walking
+	// the delivery there would answer over every actual the call has, and
+	// selecting from the walked answer afterwards would be a second addressing
+	// of rows the owner already addressed by position.
+	//
+	// An indexed level therefore yields exactly one item, and it cannot be the
+	// outer level: the ordinal has to come from somewhere, and there is
+	// nothing before the first level to name one.
+	Indexed bool
 }
 
 // DeliverySource reports whether this level is an input's whole delivery
@@ -372,7 +387,9 @@ func (reference EnumerationRef) Available() bool {
 	if reference.DeliverySource() {
 		return reference.Name == "" && reference.Admit.Available()
 	}
-	return identifierAvailable(reference.Name) && !reference.Admit.Available()
+	// Only a delivery has ordinals to be indexed at; an axis's enumeration is
+	// read out of a value and has none.
+	return identifierAvailable(reference.Name) && !reference.Admit.Available() && !reference.Indexed
 }
 
 // DerivationWiden is the lattice endpoint at which a derived set stops being

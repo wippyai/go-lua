@@ -166,6 +166,26 @@ type enumerationPlan struct {
 	// symbol an owner declares about it.
 	delivery int
 	admit    definition.GoSymbol
+	// indexed says the delivery is read at the one ordinal the level before it
+	// yields rather than walked, so this level contributes one item and no
+	// cadence of its own.
+	indexed bool
+}
+
+// integerOrdinal reports whether a carrier is a position into a vector. The
+// declaration says which carrier an ordinal is; this only holds it to being
+// one of the spellings a vector can actually be indexed at.
+func integerOrdinal(carrier definition.GoType) bool {
+	if carrier.PackagePath != "" || carrier.Pointer {
+		return false
+	}
+	switch carrier.Name {
+	case "int", "int8", "int16", "int32", "int64",
+		"uint", "uint8", "uint16", "uint32", "uint64":
+		return true
+	default:
+		return false
+	}
 }
 
 // own spells one owner symbol applied to the value this enumeration reads.
@@ -967,12 +987,22 @@ func deriveEnumerations(built *plan, resolver *axisResolver, relation definition
 		}
 		if source.DeliverySource() {
 			// A delivery is the whole many-valued arrival of one of the
-			// relation's own inputs. It is the outer level or nothing: an
-			// input is what the invocation is handed, never something read out
-			// of an item.
-			if item.Available() {
-				return nil, unexpressible(ruleKey, "a derived member set reading a delivery out of an item",
-					fmt.Sprintf("relation %q composes input %d's delivery under another level, and an input is handed to the invocation rather than read out of one", relation.Name, source.Delivery))
+			// relation's own inputs. WALKED, it is the outer level or nothing:
+			// an input is what the invocation is handed, never something read
+			// out of an item. INDEXED, it is the reverse - it reads the one
+			// cell the level before it names, so it cannot be outermost.
+			if source.Indexed == !item.Available() {
+				clause := "a derived member set reading a delivery out of an item"
+				detail := fmt.Sprintf("relation %q walks input %d's delivery under another level, and an input is handed to the invocation rather than read out of one", relation.Name, source.Delivery)
+				if source.Indexed {
+					clause = "a derived member set indexing a delivery with no ordinal to index it at"
+					detail = fmt.Sprintf("relation %q indexes input %d's delivery at its outer level, and nothing before it yields an ordinal", relation.Name, source.Delivery)
+				}
+				return nil, unexpressible(ruleKey, clause, detail)
+			}
+			if source.Indexed && !integerOrdinal(item) {
+				return nil, unexpressible(ruleKey, "a derived member set indexing a delivery at something that is not an ordinal",
+					fmt.Sprintf("relation %q indexes input %d's delivery at %s, and a position into a vector is an integer", relation.Name, source.Delivery, item.Name))
 			}
 			if source.Delivery > len(relation.Inputs) || !relation.Inputs[source.Delivery-1].Many {
 				return nil, unexpressible(ruleKey, "a derived member set reading a delivery of an input that delivers one value",
@@ -984,7 +1014,7 @@ func deriveEnumerations(built *plan, resolver *axisResolver, relation definition
 			}
 			plans = append(plans, enumerationPlan{
 				axis: axis, over: element, item: element,
-				delivery: source.Delivery, admit: source.Admit,
+				delivery: source.Delivery, admit: source.Admit, indexed: source.Indexed,
 			})
 			item = element
 			continue

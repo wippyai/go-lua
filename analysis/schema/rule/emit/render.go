@@ -1697,6 +1697,18 @@ func renderDerivedBuild(out *strings.Builder, built *plan, join *joinPlan) error
 			count := prefixed(prefix, fmt.Sprintf("count%d", level))
 			cursor := prefixed(prefix, fmt.Sprintf("cursor%d", level))
 			item := prefixed(prefix, fmt.Sprintf("item%d", level))
+			if source.delivery != 0 && source.indexed {
+				// An indexed delivery reads ONE cell, at the ordinal the level
+				// before it yields, and contributes no cadence of its own.
+				cell := prefixed(prefix, fmt.Sprintf("cell%d", level))
+				fmt.Fprintf(out, "%s%s, %sPresent, %sAvailable := %s.At(int(%s))\n",
+					indent, cell, cell, cell, arguments[source.delivery-1], over)
+				fmt.Fprintf(out, "%s%s, %sOK := %s\n", indent, item, item,
+					source.own(imports, source.admit, cell, cell+"Present", cell+"Available"))
+				fmt.Fprintf(out, "%sif !%sOK {\n%s\treturn %s{}, false\n%s}\n", indent, item, indent, state, indent)
+				over = item
+				continue
+			}
 			if source.delivery != 0 {
 				// A delivery is walked directly: its census and its accessor
 				// are the execution view's own, and the three things a cell
@@ -1722,7 +1734,13 @@ func renderDerivedBuild(out *strings.Builder, built *plan, join *joinPlan) error
 			over = item
 		}
 		resolve(indent, judgment, over, prefixed(prefix, "row"))
+		// One closing brace per level that OPENED a cadence. An indexed
+		// delivery reads a single cell in the loop it is nested in and opens
+		// none of its own.
 		for level := len(sources) - 1; level >= 0; level-- {
+			if sources[level].indexed {
+				continue
+			}
 			indent = indent[:len(indent)-1]
 			fmt.Fprintf(out, "%s}\n", indent)
 		}

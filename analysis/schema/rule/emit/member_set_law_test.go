@@ -62,6 +62,13 @@ func memberSetValueDefinition() definition.Definition {
 			{Name: "ReturnBoundaryMemberCarrier", Key: "carrier/value/member", Type: specimenType("ReturnBoundaryMember")},
 			{Name: "ReturnBoundaryMemberOrdinalCarrier", Key: "carrier/value/member-ordinal", Type: definition.GoType{Name: "int"}},
 		},
+		Enumerations: []definition.Enumeration{{
+			// The POSITIONS a boundary names, not the values at them. It is
+			// what an indexed delivery is indexed by.
+			Name: "MemberOrdinals", Over: "ReturnBoundaryCarrier", Item: "ReturnBoundaryMemberOrdinalCarrier",
+			Count: specimenMethod("MemberOrdinalCount", "ReturnBoundary", -1),
+			At:    specimenMethod("MemberOrdinalAt", "ReturnBoundary", 0),
+		}},
 		Relations: []definition.Relation{
 			{
 				Name: "ReturnBoundaryCandidates", Key: "value/return-boundary/candidates", Subject: "ReturnBoundaryCarrier",
@@ -585,4 +592,68 @@ func TestADeliverySourceIsRefusedWhereItCannotBeWalked(t *testing.T) {
 	if source, err := Render(memberSetTarget(), nested); err == nil {
 		t.Fatalf("a delivery was composed under another level:\n%s", source)
 	}
+}
+
+// TestADeliveryMayBeIndexedByTheLevelBeforeIt is the second half of a nested
+// derivation over a vector: the outer level names POSITIONS and the inner one
+// reads the delivery at them.
+//
+// Walking the delivery instead would answer over every cell the read carries,
+// and selecting from that answer afterwards would be a second addressing of
+// rows the owner already addressed by position. So an indexed level reads one
+// cell, in the cadence the level before it opened, and opens none of its own.
+func TestADeliveryMayBeIndexedByTheLevelBeforeIt(t *testing.T) {
+	source, err := Render(memberSetTarget(), memberSetDeliveryRoster(t, func(derivation *definition.RelationDerivation) {
+		derivation.Source = []definition.EnumerationRef{
+			{Axis: memberSetValueAxisRef(), Name: "MemberOrdinals"},
+			indexedDeliveryLevel(),
+		}
+	}))
+	if err != nil {
+		t.Fatalf("a derivation indexing its own delivery did not emit: %v", err)
+	}
+	build, found := functionBody(string(source), "deriveDerived1Rows")
+	if !found {
+		t.Fatalf("the emitted construction has no Build:\n%s", source)
+	}
+	if !strings.Contains(build, "count0 := given0.MemberOrdinalCount()") {
+		t.Fatalf("the outer level does not enumerate the positions:\n%s", build)
+	}
+	if !strings.Contains(build, "cell1, cell1Present, cell1Available := given1.At(int(item0))") {
+		t.Fatalf("the delivery is not read at the ordinal the level before it yields:\n%s", build)
+	}
+	// One cadence, not two: the indexed level opens no loop of its own.
+	if occurrences := strings.Count(build, "for cursor"); occurrences != 1 {
+		t.Fatalf("the construction opens %d cadences over a one-level walk:\n%s", occurrences, build)
+	}
+}
+
+// TestAnIndexedDeliveryIsRefusedWhereItHasNoOrdinal fences the level at both
+// ends. Nothing precedes the outer level, so an indexed one there has no
+// ordinal to read at; and a position into a vector is an integer, so a level
+// yielding anything else names no cell.
+func TestAnIndexedDeliveryIsRefusedWhereItHasNoOrdinal(t *testing.T) {
+	outermost := memberSetDeliveryRoster(t, func(derivation *definition.RelationDerivation) {
+		derivation.Source = []definition.EnumerationRef{indexedDeliveryLevel()}
+	})
+	if source, err := Render(memberSetTarget(), outermost); err == nil {
+		t.Fatalf("an indexed delivery was read with nothing before it:\n%s", source)
+	}
+	notAnOrdinal := memberSetDeliveryRoster(t, func(derivation *definition.RelationDerivation) {
+		derivation.Source = []definition.EnumerationRef{
+			{Axis: memberSetValueAxisRef(), Name: "Members"},
+			indexedDeliveryLevel(),
+		}
+	})
+	if source, err := Render(memberSetTarget(), notAnOrdinal); err == nil {
+		t.Fatalf("a delivery was indexed at something that is not an ordinal:\n%s", source)
+	}
+}
+
+// indexedDeliveryLevel is the specimen's inner level: input 1's delivery, read
+// at the ordinal the level before it yields.
+func indexedDeliveryLevel() definition.EnumerationRef {
+	level := memberSetDeliveryDerivation().Source[0]
+	level.Indexed = true
+	return level
 }
