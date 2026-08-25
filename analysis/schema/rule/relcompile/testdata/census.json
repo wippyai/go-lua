@@ -1,0 +1,335 @@
+[
+  {
+    "family": "call/activation",
+    "plane": "family",
+    "rule": "call-activation",
+    "status": "COUPLING-FINDING",
+    "site": "program.transport[0].axis",
+    "missing": "relation",
+    "reason": "undeclared"
+  },
+  {
+    "family": "call/dispatch",
+    "plane": "family",
+    "rule": "call-dispatch",
+    "status": "COMPILES",
+    "sketch": "Publish(Apply(Select(Join(Input,Select(Input)))))",
+    "expressions": 1
+  },
+  {
+    "family": "effect/callsite/body",
+    "plane": "family",
+    "rule": "effect-body",
+    "status": "COUPLING-FINDING",
+    "site": "program.joins[1].predicate",
+    "missing": "operation",
+    "reason": "undeclared"
+  },
+  {
+    "family": "effect/callsite/opaque",
+    "plane": "family",
+    "rule": "effect-opaque",
+    "status": "COMPILES",
+    "sketch": "Publish(Apply(Select(Join(Input,Select(Input)))))",
+    "expressions": 1
+  },
+  {
+    "family": "effect/callsite/selected",
+    "plane": "family",
+    "rule": "effect-selected",
+    "status": "COMPILES",
+    "sketch": "Publish(Apply(Select(Join(Input,Select(Input)))))",
+    "expressions": 1
+  },
+  {
+    "family": "heap/allocation/empty",
+    "plane": "family",
+    "rule": "heap-empty",
+    "status": "COMPILES",
+    "sketch": "Publish(Merge(Apply(Select(Join(Input,Select(Input)))),Apply(Select(Input))))",
+    "expressions": 1
+  },
+  {
+    "family": "heap/allocation/ingress",
+    "plane": "seed",
+    "rule": "heap-ingress",
+    "status": "COMPILES",
+    "sketch": "Publish(Apply(Select(Input)))",
+    "expressions": 1
+  },
+  {
+    "family": "heap/bootstrap",
+    "plane": "seed",
+    "rule": "heap-bootstrap",
+    "status": "COMPILES",
+    "sketch": "Publish(Apply(Select(Input)))",
+    "expressions": 1
+  },
+  {
+    "family": "heap/formalfreeze",
+    "plane": "family",
+    "rule": "heap-formal-freeze",
+    "status": "COUPLING-FINDING",
+    "site": "program.joins[2].predicate",
+    "missing": "operation",
+    "reason": "undeclared"
+  },
+  {
+    "family": "heap/index",
+    "plane": "family",
+    "rule": "raw-get",
+    "status": "COMPILES",
+    "sketch": "Publish(Apply(Select(Join(Input,Select(Input))))) | Publish(Apply(Select(Join(Input,Select(Input))))) | Publish(Apply(Select(Join(Input,Select(Input))))) | Publish(Apply(Select(Join(Input,Select(Input))))) | Publish(Apply(Select(Join(Input,Select(Input))))) | Publish(Merge(Apply(Select(Join(Join(Join(Input,Select(Input)),Select(Input)),Select(Input)))),Select(Input)))",
+    "reason": "plan authored from the read chain; the rule declaration carries no Program",
+    "expressions": 6
+  },
+  {
+    "family": "heap/index",
+    "plane": "family",
+    "rule": "raw-set",
+    "status": "COMPILES",
+    "sketch": "Publish(Apply(Select(Join(Input,Select(Input))))) | Publish(Apply(Select(Join(Input,Select(Input))))) | Publish(Apply(Select(Join(Input,Select(Input))))) | Publish(Apply(Select(Join(Input,Select(Input))))) | Publish(Merge(Apply(Select(Join(Join(Join(Input,Select(Input)),Select(Input)),Complete(Select(Input))))),Select(Input)))",
+    "reason": "plan authored from the read chain; the rule declaration carries no Program",
+    "expressions": 5
+  },
+  {
+    "family": "heap/publicationfreeze",
+    "plane": "family",
+    "rule": "heap-publication-freeze",
+    "status": "COUPLING-FINDING",
+    "site": "program.joins[2].predicate",
+    "missing": "operation",
+    "reason": "undeclared"
+  },
+  {
+    "family": "pack/source",
+    "plane": "seed",
+    "rule": "pack-source",
+    "status": "COMPILES",
+    "sketch": "Publish(Apply(Select(Input)))",
+    "expressions": 1
+  },
+  {
+    "family": "placement/allocationbirth",
+    "plane": "family",
+    "rule": "placement-allocation-birth",
+    "status": "COUPLING-FINDING",
+    "site": "program",
+    "missing": "declaration",
+    "reason": "the declarative rule declaration is not committed at this revision; the family runs on its wired registration arm"
+  },
+  {
+    "family": "placement/capture",
+    "plane": "family",
+    "rule": "placement-closure-capture",
+    "status": "COUPLING-FINDING",
+    "site": "program.joins[1].predicate",
+    "missing": "operation",
+    "reason": "undeclared"
+  },
+  {
+    "family": "placement/containment",
+    "plane": "family",
+    "rule": "placement-containment",
+    "status": "COUPLING-FINDING",
+    "site": "program.joins[2].sources",
+    "missing": "operation",
+    "reason": "undeclared"
+  },
+  {
+    "family": "placement/formal",
+    "plane": "family",
+    "rule": "placement-formal",
+    "status": "COUPLING-FINDING",
+    "site": "program.joins[2].predicate",
+    "missing": "operation",
+    "reason": "undeclared"
+  },
+  {
+    "family": "placement/freshbirth",
+    "plane": "family",
+    "rule": "placement-fresh-birth",
+    "status": "COUPLING-FINDING",
+    "site": "program",
+    "missing": "declaration",
+    "reason": "the declarative rule declaration is not committed at this revision; the family runs on its wired registration arm"
+  },
+  {
+    "family": "placement/publicationescape",
+    "plane": "family",
+    "rule": "placement-publication-escape",
+    "status": "COUPLING-FINDING",
+    "site": "program.joins[1].predicate",
+    "missing": "operation",
+    "reason": "undeclared"
+  },
+  {
+    "family": "placement/returnescape",
+    "plane": "family",
+    "rule": "placement-return-escape",
+    "status": "COUPLING-FINDING",
+    "site": "program.joins[2].predicate",
+    "missing": "operation",
+    "reason": "undeclared"
+  },
+  {
+    "family": "placement/store",
+    "plane": "family",
+    "rule": "placement-storage",
+    "status": "COUPLING-FINDING",
+    "site": "program.joins[1].predicate",
+    "missing": "operation",
+    "reason": "undeclared"
+  },
+  {
+    "family": "placement/suspension",
+    "plane": "family",
+    "rule": "placement-suspension",
+    "status": "COUPLING-FINDING",
+    "site": "program.joins[1].predicate",
+    "missing": "operation",
+    "reason": "undeclared"
+  },
+  {
+    "family": "placement/suspension-evidence",
+    "plane": "family",
+    "rule": "placement-suspension-evidence",
+    "status": "COUPLING-FINDING",
+    "site": "program.joins[1].predicate",
+    "missing": "operation",
+    "reason": "undeclared"
+  },
+  {
+    "family": "placement/transfer",
+    "plane": "family",
+    "rule": "placement-transfer",
+    "status": "COUPLING-FINDING",
+    "site": "program.joins[2].predicate",
+    "missing": "operation",
+    "reason": "undeclared"
+  },
+  {
+    "family": "static/transfer",
+    "plane": "family",
+    "rule": "static-transfer",
+    "status": "COMPILES",
+    "sketch": "Publish(Merge(Apply(Select(Join(Input,Select(Input)))),Select(Input)))",
+    "expressions": 1
+  },
+  {
+    "family": "typestate",
+    "plane": "family",
+    "rule": "typestate",
+    "status": "COUPLING-FINDING",
+    "site": "program",
+    "missing": "declaration",
+    "reason": "the declarative rule declaration is not committed at this revision; the family runs on its wired registration arm"
+  },
+  {
+    "family": "value/allocation",
+    "plane": "seed",
+    "rule": "value-allocation",
+    "status": "COMPILES",
+    "sketch": "Publish(Merge(Apply(Select(Input)),Apply(Select(Input))))",
+    "expressions": 1
+  },
+  {
+    "family": "value/arithmetic",
+    "plane": "family",
+    "rule": "value-binary-arithmetic",
+    "status": "COMPILES",
+    "sketch": "Publish(Merge(Apply(Select(Join(Join(Input,Select(Input)),Select(Input)))),Select(Input)))",
+    "expressions": 1
+  },
+  {
+    "family": "value/bodyresult",
+    "plane": "family",
+    "rule": "value-callresult-body",
+    "status": "COUPLING-FINDING",
+    "site": "program.joins[1].predicate",
+    "missing": "operation",
+    "reason": "undeclared"
+  },
+  {
+    "family": "value/bootstrap",
+    "plane": "seed",
+    "rule": "value-bootstrap",
+    "status": "COMPILES",
+    "sketch": "Publish(Apply(Select(Input)))",
+    "expressions": 1
+  },
+  {
+    "family": "value/equality",
+    "plane": "family",
+    "rule": "value-binary-equality",
+    "status": "COMPILES",
+    "sketch": "Publish(Merge(Apply(Select(Join(Join(Input,Select(Input)),Select(Input)))),Select(Input)))",
+    "expressions": 1
+  },
+  {
+    "family": "value/freshresult",
+    "plane": "family",
+    "rule": "value-callresult-freshresult",
+    "status": "COUPLING-FINDING",
+    "site": "program.joins[1].predicate",
+    "missing": "operation",
+    "reason": "undeclared"
+  },
+  {
+    "family": "value/moduleload",
+    "plane": "family",
+    "rule": "value-callresult-moduleload",
+    "status": "COMPILES",
+    "sketch": "Publish(Merge(Apply(Select(Join(Join(Input,Select(Input)),Select(Input)))),Select(Input)))",
+    "expressions": 1
+  },
+  {
+    "family": "value/order",
+    "plane": "family",
+    "rule": "value-binary-order",
+    "status": "COMPILES",
+    "sketch": "Publish(Merge(Apply(Select(Join(Join(Input,Select(Input)),Select(Input)))),Select(Input)))",
+    "expressions": 1
+  },
+  {
+    "family": "value/refinement",
+    "plane": "family",
+    "rule": "value-presence-refinement",
+    "status": "COMPILES",
+    "sketch": "Publish(Merge(Apply(Select(Join(Input,Select(Input)))),Select(Input)))",
+    "expressions": 1
+  },
+  {
+    "family": "value/resultalias",
+    "plane": "family",
+    "rule": "value-callresult-resultalias",
+    "status": "COUPLING-FINDING",
+    "site": "program.joins[1].predicate",
+    "missing": "operation",
+    "reason": "undeclared"
+  },
+  {
+    "family": "value/runtimekind",
+    "plane": "family",
+    "rule": "value-runtime-kind-call",
+    "status": "COMPILES",
+    "sketch": "Publish(Merge(Apply(Select(Join(Join(Join(Join(Input,Select(Input)),Select(Input)),Select(Input)),Select(Input)))),Select(Input)))",
+    "expressions": 1
+  },
+  {
+    "family": "value/source",
+    "plane": "seed",
+    "rule": "value-source",
+    "status": "COMPILES",
+    "sketch": "Publish(Apply(Select(Input)))",
+    "expressions": 1
+  },
+  {
+    "family": "value/transfer",
+    "plane": "family",
+    "rule": "value-transfer",
+    "status": "COMPILES",
+    "sketch": "Publish(Merge(Apply(Select(Join(Input,Select(Input)))),Select(Input)))",
+    "expressions": 1
+  }
+]

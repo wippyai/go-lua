@@ -243,6 +243,15 @@ func (certificate Certificate) Expressions() []plan.ExpressionRef {
 	return certificate.registry.Expressions()
 }
 
+// ExpressionIDs returns the canonical logical expression identities without
+// exposing plan nodes to consumers that only bind physical addresses.
+func (certificate Certificate) ExpressionIDs() []model.ExpressionID {
+	if certificate.registry == nil {
+		return nil
+	}
+	return certificate.registry.ExpressionIDs()
+}
+
 // Dependencies returns defensive copies of the canonical dependency
 // declarations.
 func (certificate Certificate) Dependencies() []plan.Dependency {
@@ -250,6 +259,15 @@ func (certificate Certificate) Dependencies() []plan.Dependency {
 		return nil
 	}
 	return certificate.registry.Dependencies()
+}
+
+// DependencyIDs returns the canonical logical dependency identities without
+// exposing dependency declarations to consumers that only bind addresses.
+func (certificate Certificate) DependencyIDs() []model.DependencyID {
+	if certificate.registry == nil {
+		return nil
+	}
+	return certificate.registry.DependencyIDs()
 }
 
 // Signatures returns defensive copies of the canonical semantic signatures.

@@ -10,6 +10,18 @@ func transportAxis(key string) AxisRef {
 	return AxisRef(schema.EntryReference{Surface: schema.SurfaceKindAxis, Key: schema.Key(key)})
 }
 
+// transportRow is one transported axis crossing the activation edge.
+func transportRow(key string) TransportDecl {
+	return TransportDecl{Axis: transportAxis(key)}
+}
+
+// exportedRow is a transported axis whose body result is carried back.
+func exportedRow(key string) TransportDecl {
+	row := transportRow(key)
+	row.Exported = true
+	return row
+}
+
 // transportProgram is the call-activation shape with a declared transport
 // vector: one exact candidate read and one structural publication. The branch
 // set is named by the vocabulary and enumerated through its owner, so it is
@@ -41,7 +53,7 @@ func transportProgram(rows []TransportDecl) Program {
 // nothing groups, and a family with no vector groups branches that instantiate
 // nothing; neither half can be declared alone.
 func TestAnActivationVectorAndItsFamilyAreOneDeclaration(t *testing.T) {
-	vectorWithoutFamily := transportProgram([]TransportDecl{{Axis: transportAxis("value")}})
+	vectorWithoutFamily := transportProgram([]TransportDecl{transportRow("value")})
 	vectorWithoutFamily.ActivationRole = ""
 	if problem, valid := vectorWithoutFamily.Check(); valid || problem.Kind != ProblemTransport {
 		t.Fatalf("a transport vector with no activation family = %#v valid=%t", problem, valid)
@@ -58,8 +70,8 @@ func TestAnActivationVectorAndItsFamilyAreOneDeclaration(t *testing.T) {
 // does: two activation rules whose branches are grouped under different
 // families are two declarations.
 func TestTheActivationFamilyIsPartOfTheProgramsSealedIdentity(t *testing.T) {
-	first := transportProgram([]TransportDecl{{Axis: transportAxis("value")}})
-	second := transportProgram([]TransportDecl{{Axis: transportAxis("value")}})
+	first := transportProgram([]TransportDecl{transportRow("value")})
+	second := transportProgram([]TransportDecl{transportRow("value")})
 	second.ActivationRole = "semantic/activation-family/call-tail"
 	if first.Digest() == second.Digest() {
 		t.Fatal("the activation family is not part of the sealed identity")
@@ -74,9 +86,9 @@ func TestTheActivationFamilyIsPartOfTheProgramsSealedIdentity(t *testing.T) {
 // down at all.
 func TestATransportVectorCannotExportAnAxisItDoesNotImport(t *testing.T) {
 	rows := []TransportDecl{
-		{Axis: transportAxis("value"), Exported: true},
-		{Axis: transportAxis("call")},
-		{Axis: transportAxis("heap"), Exported: true},
+		exportedRow("value"),
+		transportRow("call"),
+		exportedRow("heap"),
 	}
 	program := transportProgram(rows)
 	if problem, valid := program.Check(); !valid {
@@ -105,8 +117,8 @@ func TestATransportVectorCannotExportAnAxisItDoesNotImport(t *testing.T) {
 // axis would be two authorities for one crossing.
 func TestOneAxisCrossesAnActivationEdgeOnce(t *testing.T) {
 	program := transportProgram([]TransportDecl{
-		{Axis: transportAxis("value")},
-		{Axis: transportAxis("value"), Exported: true},
+		transportRow("value"),
+		exportedRow("value"),
 	})
 	problem, valid := program.Check()
 	if valid || problem.Kind != ProblemTransport {
@@ -129,8 +141,8 @@ func TestATransportVectorNamesOnlyDeclaredAxes(t *testing.T) {
 // so seal resolves each axis, and it changes the Program digest. A vector the
 // digest ignored would let two different transports share one sealed identity.
 func TestATransportVectorIsPartOfTheProgramsIdentityAndReferences(t *testing.T) {
-	imported := transportProgram([]TransportDecl{{Axis: transportAxis("value")}})
-	exported := transportProgram([]TransportDecl{{Axis: transportAxis("value"), Exported: true}})
+	imported := transportProgram([]TransportDecl{transportRow("value")})
+	exported := transportProgram([]TransportDecl{exportedRow("value")})
 	none := transportProgram(nil)
 	if !imported.Digest().Available() || !exported.Digest().Available() || !none.Digest().Available() {
 		t.Fatal("every admissible program digests")
