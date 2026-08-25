@@ -14,14 +14,23 @@ import (
 // one-based capture ordinal; Placement route tags are the one-based dense
 // Heap coordinate.  They are opaque engine evidence, not a second identity
 // or coordinate space.
-type routeTag uint64
+type RouteTag uint64
 
-type source struct {
+type Source struct {
 	module     identity.ContentID
 	id         identity.ContentID
 	coordinate valuedomain.Coordinate
-	tag        routeTag
+	tag        RouteTag
 }
+
+// Coordinate is the Value coordinate this capture source is read at. It is
+// the key projection of the capture-source relation.
+func (candidate Source) Coordinate() valuedomain.Coordinate { return candidate.coordinate }
+
+// Predicate is the tag the selection stamps this row with: the one-based
+// capture ordinal, which is what correlates a returned cell with the source
+// it was selected for.
+func (candidate Source) Predicate() uint64 { return uint64(candidate.tag) }
 
 // operand is one closure allocation root together with the canonical Value
 // coordinates named by its Program capture rows. Every source coordinate is
@@ -31,7 +40,7 @@ type operand struct {
 	key        heapdomain.Key
 	id         identity.ContentID
 	coordinate uint64
-	sources    []source
+	sources    []Source
 }
 
 func rootOperandForSchema(schema placementdomain.Schema, key heapdomain.Key) (operand, bool) {
@@ -49,16 +58,16 @@ func rootOperandForSchema(schema placementdomain.Schema, key heapdomain.Key) (op
 	return operand{key: key, id: id, coordinate: uint64(index)}, true
 }
 
-func sourceCanonical(values *valuedomain.Schema, candidate source) (source, bool) {
+func sourceCanonical(values *valuedomain.Schema, candidate Source) (Source, bool) {
 	if values == nil || !values.Valid() || !candidate.module.Available() || !candidate.id.Available() || candidate.tag == 0 {
-		return source{}, false
+		return Source{}, false
 	}
 	coordinate, coordinateOK := values.CoordinateForMountedSemantic(candidate.module, candidate.id)
 	if !coordinateOK || coordinate != candidate.coordinate {
-		return source{}, false
+		return Source{}, false
 	}
 	if _, indexOK := values.CoordinateIndex(candidate.coordinate); !indexOK {
-		return source{}, false
+		return Source{}, false
 	}
 	return candidate, true
 }
@@ -67,7 +76,7 @@ func sourceCanonical(values *valuedomain.Schema, candidate source) (source, bool
 // tag. The engine exposes Selection rows in physical Unit order, so the
 // selection ordinal is not the capture ordinal. A source tag is one-based and
 // must name exactly one declared source.
-func sourceOrdinal(candidate operand, tag routeTag) (int, bool) {
+func sourceOrdinal(candidate operand, tag RouteTag) (int, bool) {
 	if tag == 0 || len(candidate.sources) == 0 {
 		return 0, false
 	}
@@ -84,11 +93,11 @@ func operandContentForSchema(schema placementdomain.Schema, values *valuedomain.
 	if !ok || candidate.id != canonical.id || candidate.coordinate != canonical.coordinate || values == nil || !values.Valid() {
 		return operand{}, [32]byte{}, false
 	}
-	var seenTags map[routeTag]struct{}
+	var seenTags map[RouteTag]struct{}
 	if len(candidate.sources) > 1 {
-		seenTags = make(map[routeTag]struct{}, len(candidate.sources))
+		seenTags = make(map[RouteTag]struct{}, len(candidate.sources))
 	}
-	var previousTag routeTag
+	var previousTag RouteTag
 	for index, item := range candidate.sources {
 		checked, sourceOK := sourceCanonical(values, item)
 		if !sourceOK {
@@ -126,18 +135,45 @@ func captureOperandForSchema(schema placementdomain.Schema, values *valuedomain.
 	if !baseOK || base.id != canonical.id || base.coordinate != canonical.coordinate || len(base.sources) != 0 {
 		return operand{}, false, false
 	}
-	module, programID, allocationID, kind, _, originOK := schema.Heap().AllocationOriginForKey(canonical.key)
-	if !originOK || kind != heapdomain.AllocationClosure || !module.Available() || !programID.Available() || !allocationID.Available() {
-		return operand{}, false, false
+	sources, include, sourcesOK := DeriveCaptureSources(schema, values, canonical.key)
+	if !sourcesOK || !include {
+		return operand{}, false, sourcesOK
 	}
 	candidate = canonical
+	candidate.sources = sources
+	return candidate, true, true
+}
+
+// DeriveCaptureSources is the operation that publishes the capture-source
+// rows of one closure allocation root: one row per declared capture, in the
+// authored capture order, each carrying the canonical Value coordinate of the
+// cell it closes over and the one-based ordinal that tags it.
+//
+// It takes the sealed inputs alone - the Placement schema, the Value schema,
+// and the allocation key - so the rows a reading rule joins are produced by a
+// statement of this owner and not by a traversal the declaration never named.
+// include distinguishes a capture-free boundary, which is an excluded
+// candidate rather than a refusal, from a boundary this owner cannot
+// authenticate.
+func DeriveCaptureSources(schema placementdomain.Schema, values *valuedomain.Schema, key heapdomain.Key) (sources []Source, include, ok bool) {
+	if !schema.Valid() || values == nil || !values.Valid() || !values.OwnsHeapSchema(schema.Heap()) {
+		return nil, false, false
+	}
+	canonical, canonicalOK := rootOperandForSchema(schema, key)
+	if !canonicalOK {
+		return nil, false, false
+	}
+	module, programID, allocationID, kind, _, originOK := schema.Heap().AllocationOriginForKey(canonical.key)
+	if !originOK || kind != heapdomain.AllocationClosure || !module.Available() || !programID.Available() || !allocationID.Available() {
+		return nil, false, false
+	}
 	mount, mountOK := schema.Heap().MountedArtifactForModule(module)
 	if !mountOK || mount.ProgramID != programID || mount.Snapshot == nil {
-		return operand{}, false, false
+		return nil, false, false
 	}
 	program := mount.Snapshot.Program()
 	if !program.Available() {
-		return operand{}, false, false
+		return nil, false, false
 	}
 	state, stateOK := program.ColdState()
 	targets, targetsOK := calltarget.NewView(state)
@@ -146,44 +182,53 @@ func captureOperandForSchema(schema placementdomain.Schema, values *valuedomain.
 	allocation, allocationOK := allocations.AllocationForID(allocationID)
 	boundary, boundaryOK := program.FunctionBoundaryForBody(target.BodyID())
 	if !stateOK || !targetsOK || !allocationsOK || !targetOK || !allocationOK || allocation.Role() != heapallocation.RoleClosure || !boundaryOK {
-		return operand{}, false, false
+		return nil, false, false
 	}
 	count := boundary.CaptureCount()
 	if count == 0 {
-		return operand{}, false, true
+		return nil, false, true
 	}
 	offset, spanCount, spanOK := boundary.CaptureSpan()
 	if !spanOK || int(spanCount) != count || uint64(offset)+uint64(spanCount) > uint64(^uint32(0)) {
-		return operand{}, false, false
+		return nil, false, false
 	}
-	candidate.sources = make([]source, 0, count)
+	rows := make([]Source, 0, count)
 	for index := 0; index < count; index++ {
 		capture, captureOK := program.FunctionCaptureAt(int(offset) + index)
 		position, positionOK := capture.Position()
 		if !captureOK || !positionOK || position != index || capture.InnerBodyID() != boundary.BodyID() {
-			return operand{}, false, false
+			return nil, false, false
 		}
 		storageID := capture.OuterStorageCellID()
 		if !storageID.Available() {
-			return operand{}, false, false
+			return nil, false, false
 		}
 		coordinate, coordinateOK := values.CoordinateForMountedSemantic(module, storageID)
-		item := source{module: module, id: storageID, coordinate: coordinate, tag: routeTag(uint64(index) + 1)}
+		item := Source{module: module, id: storageID, coordinate: coordinate, tag: RouteTag(uint64(index) + 1)}
 		if !coordinateOK || !coordinate.Valid() {
-			return operand{}, false, false
+			return nil, false, false
 		}
-		candidate.sources = append(candidate.sources, item)
+		rows = append(rows, item)
 	}
-	if len(candidate.sources) != count {
-		return operand{}, false, false
+	if len(rows) != count {
+		return nil, false, false
 	}
-	return candidate, true, true
+	return rows, true, true
 }
 
-type route struct {
+type Route struct {
 	key heapdomain.Key
-	tag routeTag
+	tag RouteTag
 }
+
+// Coordinates are the cell this route reads and the cell it publishes into.
+// A capture route moves nothing: the closure's placement is joined into the
+// captured allocation's own cell, so both endpoints are that one key.
+func (item Route) Coordinates() (heapdomain.Key, heapdomain.Key) { return item.key, item.key }
+
+// Predicate is the tag the selection stamps this row with: the one-based
+// dense Heap coordinate of the allocation the route names.
+func (item Route) Predicate() uint64 { return uint64(item.tag) }
 
 type routeClass uint8
 
@@ -194,10 +239,10 @@ const (
 	routeWidened
 )
 
-type routePlan struct {
+type RoutePlan struct {
 	class  routeClass
-	inline [captureRouteInlineCapacity]route
-	spill  []route
+	inline [captureRouteInlineCapacity]Route
+	spill  []Route
 	count  int
 
 	// Widened plans are a view over the owner's canonical dense coordinates.
@@ -214,16 +259,16 @@ type routePlan struct {
 // suffix; widened plans retain only the immutable owner-schema view above.
 const captureRouteInlineCapacity = 8
 
-func (plan routePlan) routeCount() int {
+func (plan RoutePlan) RouteCount() int {
 	if plan.count < 0 {
 		return 0
 	}
 	return plan.count
 }
 
-func (plan routePlan) routeAt(index int) (route, bool) {
-	if index < 0 || index >= plan.routeCount() {
-		return route{}, false
+func (plan RoutePlan) RouteAt(index int) (Route, bool) {
+	if index < 0 || index >= plan.RouteCount() {
+		return Route{}, false
 	}
 	if plan.allRoot {
 		return plan.allRootAt(index)
@@ -233,61 +278,61 @@ func (plan routePlan) routeAt(index int) (route, bool) {
 	}
 	spillIndex := index - len(plan.inline)
 	if spillIndex < 0 || spillIndex >= len(plan.spill) {
-		return route{}, false
+		return Route{}, false
 	}
 	return plan.spill[spillIndex], true
 }
 
-func (plan routePlan) allRootAt(index int) (route, bool) {
+func (plan RoutePlan) allRootAt(index int) (Route, bool) {
 	if !plan.allRoot || index < 0 || index >= plan.count || !plan.allRootSchema.Valid() {
-		return route{}, false
+		return Route{}, false
 	}
 	if plan.allRootPrefix {
 		key, keyOK := plan.allRootSchema.KeyAt(index)
-		return route{key: key, tag: routeTag(uint64(index) + 1)}, keyOK && key.Kind() == heapdomain.RootAllocation
+		return Route{key: key, tag: RouteTag(uint64(index) + 1)}, keyOK && key.Kind() == heapdomain.RootAllocation
 	}
 	ordinal := 0
 	for dense := 0; dense < plan.allRootDenseSize; dense++ {
 		key, keyOK := plan.allRootSchema.KeyAt(dense)
 		if !keyOK {
-			return route{}, false
+			return Route{}, false
 		}
 		if key.Kind() != heapdomain.RootAllocation {
 			continue
 		}
 		if ordinal == index {
-			return route{key: key, tag: routeTag(uint64(dense) + 1)}, true
+			return Route{key: key, tag: RouteTag(uint64(dense) + 1)}, true
 		}
 		ordinal++
 	}
-	return route{}, false
+	return Route{}, false
 }
 
-func (plan routePlan) allRootAtTag(tag routeTag) (route, bool) {
+func (plan RoutePlan) allRootAtTag(tag RouteTag) (Route, bool) {
 	if !plan.allRoot || tag == 0 || !plan.allRootSchema.Valid() {
-		return route{}, false
+		return Route{}, false
 	}
 	dense := uint64(tag - 1)
 	if dense >= uint64(plan.allRootDenseSize) {
-		return route{}, false
+		return Route{}, false
 	}
 	key, keyOK := plan.allRootSchema.KeyAt(int(dense))
 	if !keyOK || key.Kind() != heapdomain.RootAllocation {
-		return route{}, false
+		return Route{}, false
 	}
-	return route{key: key, tag: tag}, true
+	return Route{key: key, tag: tag}, true
 }
 
 // addRoute inserts one exact route in canonical dense-tag order and
 // deduplicates repeated allocation atoms. The first overflow route allocates
 // only the suffix; the inline prefix remains part of the returned plan value.
-func (plan *routePlan) addRoute(candidate route) bool {
+func (plan *RoutePlan) addRoute(candidate Route) bool {
 	if plan == nil || plan.allRoot || plan.count < 0 || candidate.tag == 0 {
 		return false
 	}
 	position := 0
 	for position < plan.count {
-		current, currentOK := plan.routeAt(position)
+		current, currentOK := plan.RouteAt(position)
 		if !currentOK {
 			return false
 		}
@@ -313,7 +358,7 @@ func (plan *routePlan) addRoute(candidate route) bool {
 			plan.inline[index] = plan.inline[index-1]
 		}
 		plan.inline[position] = candidate
-		plan.spill = append(plan.spill, route{})
+		plan.spill = append(plan.spill, Route{})
 		copy(plan.spill[1:], plan.spill[:len(plan.spill)-1])
 		plan.spill[0] = carried
 	} else {
@@ -321,7 +366,7 @@ func (plan *routePlan) addRoute(candidate route) bool {
 		if spillIndex < 0 || spillIndex > len(plan.spill) {
 			return false
 		}
-		plan.spill = append(plan.spill, route{})
+		plan.spill = append(plan.spill, Route{})
 		copy(plan.spill[spillIndex+1:], plan.spill[spillIndex:len(plan.spill)-1])
 		plan.spill[spillIndex] = candidate
 	}
@@ -329,44 +374,44 @@ func (plan *routePlan) addRoute(candidate route) bool {
 	return true
 }
 
-type sourceFact struct {
+type SourceFact struct {
 	fact      valuedomain.Value
 	present   bool
 	available bool
 }
 
-func routePlanForFacts(schema placementdomain.Schema, values *valuedomain.Schema, facts []sourceFact) (routePlan, bool) {
+func DeriveCaptureRoutes(schema placementdomain.Schema, values *valuedomain.Schema, facts []SourceFact) (RoutePlan, bool) {
 	if !schema.Valid() || values == nil || !values.Valid() || !values.OwnsHeapSchema(schema.Heap()) {
-		return routePlan{}, false
+		return RoutePlan{}, false
 	}
 	// Collect every exact source directly into the plan's canonical inline
 	// route set. The selected-read path is physical-order independent because
 	// addRoute recovers dense Heap tag order while it unions each source.
-	var plan routePlan
+	var plan RoutePlan
 	for _, item := range facts {
 		if !item.available || !values.Equal(item.fact, item.fact) {
-			return routePlan{}, false
+			return RoutePlan{}, false
 		}
 		if !item.present {
 			if !values.Equal(item.fact, values.Bottom()) {
-				return routePlan{}, false
+				return RoutePlan{}, false
 			}
 			continue
 		}
 		widen, factOK := collectValueRoutes(schema, values, item.fact, &plan)
 		if !factOK {
-			return routePlan{}, false
+			return RoutePlan{}, false
 		}
 		if widen {
 			plan, allOK := allAllocationPlan(schema)
 			if !allOK {
-				return routePlan{}, false
+				return RoutePlan{}, false
 			}
 			plan.class = routeWidened
 			return plan, true
 		}
 	}
-	if plan.routeCount() == 0 {
+	if plan.RouteCount() == 0 {
 		plan.class = routeScalar
 		return plan, true
 	}
@@ -377,7 +422,7 @@ func routePlanForFacts(schema placementdomain.Schema, values *valuedomain.Schema
 // collectValueRoutes joins one exact Value fact directly into an owned route
 // plan. It avoids a temporary index map and post-hoc sort on the selected-read
 // hot path while retaining every owner/canonical-key check.
-func collectValueRoutes(schema placementdomain.Schema, values *valuedomain.Schema, fact valuedomain.Value, plan *routePlan) (widen bool, ok bool) {
+func collectValueRoutes(schema placementdomain.Schema, values *valuedomain.Schema, fact valuedomain.Value, plan *RoutePlan) (widen bool, ok bool) {
 	if plan == nil {
 		return false, false
 	}
@@ -397,7 +442,7 @@ func collectValueRoutes(schema placementdomain.Schema, values *valuedomain.Schem
 			return false, false
 		}
 		dense, denseOK := schema.Heap().AllocationKeyIndex(key)
-		if !denseOK || !plan.addRoute(route{key: key, tag: routeTag(uint64(dense) + 1)}) {
+		if !denseOK || !plan.addRoute(Route{key: key, tag: RouteTag(uint64(dense) + 1)}) {
 			return false, false
 		}
 	}
@@ -408,15 +453,15 @@ func collectValueRoutes(schema placementdomain.Schema, values *valuedomain.Schem
 // owner's allocation coordinates once, then routeAt/routeAtTag derive each
 // selected route from that same immutable schema without copying a root
 // catalogue.
-func allAllocationPlan(schema placementdomain.Schema) (routePlan, bool) {
+func allAllocationPlan(schema placementdomain.Schema) (RoutePlan, bool) {
 	if !schema.Valid() {
-		return routePlan{}, false
+		return RoutePlan{}, false
 	}
 	denseCount := schema.DenseKeyCount()
 	if denseCount < 0 {
-		return routePlan{}, false
+		return RoutePlan{}, false
 	}
-	plan := routePlan{
+	plan := RoutePlan{
 		allRoot:          true,
 		allRootPrefix:    true,
 		allRootSchema:    schema,
@@ -425,7 +470,7 @@ func allAllocationPlan(schema placementdomain.Schema) (routePlan, bool) {
 	for dense := 0; dense < denseCount; dense++ {
 		key, keyOK := schema.KeyAt(dense)
 		if !keyOK {
-			return routePlan{}, false
+			return RoutePlan{}, false
 		}
 		if key.Kind() != heapdomain.RootAllocation {
 			plan.allRootPrefix = false
@@ -436,16 +481,16 @@ func allAllocationPlan(schema placementdomain.Schema) (routePlan, bool) {
 	return plan, true
 }
 
-func routeAtTag(plan routePlan, tag routeTag) (route, bool) {
+func RouteAtTag(plan RoutePlan, tag RouteTag) (Route, bool) {
 	if plan.allRoot {
 		return plan.allRootAtTag(tag)
 	}
-	low, high := 0, plan.routeCount()
+	low, high := 0, plan.RouteCount()
 	for low < high {
 		middle := low + (high-low)/2
-		candidate, candidateOK := plan.routeAt(middle)
+		candidate, candidateOK := plan.RouteAt(middle)
 		if !candidateOK {
-			return route{}, false
+			return Route{}, false
 		}
 		if candidate.tag < tag {
 			low = middle + 1
@@ -453,11 +498,11 @@ func routeAtTag(plan routePlan, tag routeTag) (route, bool) {
 			high = middle
 		}
 	}
-	candidate, candidateOK := plan.routeAt(low)
+	candidate, candidateOK := plan.RouteAt(low)
 	if candidateOK && candidate.tag == tag {
 		return candidate, true
 	}
-	return route{}, false
+	return Route{}, false
 }
 
 func oneOrderedCell[T any](cells engine.OrderedCells[T]) (value T, present, available bool) {

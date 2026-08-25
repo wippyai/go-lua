@@ -6,9 +6,9 @@ import (
 )
 
 var (
-	captureRouteBenchmarkResult route
+	captureRouteBenchmarkResult Route
 	captureRouteBenchmarkOK     bool
-	capturePlanBenchmarkResult  routePlan
+	capturePlanBenchmarkResult  RoutePlan
 	capturePlanBenchmarkOK      bool
 )
 
@@ -19,17 +19,17 @@ func BenchmarkCaptureRouteLookup(b *testing.B) {
 	for _, width := range []int{1, 16, 128, 1024} {
 		width := width
 		b.Run(strconv.Itoa(width), func(b *testing.B) {
-			var plan routePlan
+			var plan RoutePlan
 			for index := 0; index < width; index++ {
-				if !plan.addRoute(route{tag: routeTag(index + 1)}) {
-					b.Fatal("route setup")
+				if !plan.addRoute(Route{tag: RouteTag(index + 1)}) {
+					b.Fatal("Route setup")
 				}
 			}
-			tag := routeTag(width/2 + 1)
+			tag := RouteTag(width/2 + 1)
 			b.ReportAllocs()
 			b.ResetTimer()
 			for index := 0; index < b.N; index++ {
-				captureRouteBenchmarkResult, captureRouteBenchmarkOK = routeAtTag(plan, tag)
+				captureRouteBenchmarkResult, captureRouteBenchmarkOK = RouteAtTag(plan, tag)
 			}
 		})
 	}
@@ -46,16 +46,16 @@ func BenchmarkCaptureExactRoutePlanInline(b *testing.B) {
 			b.ReportAllocs()
 			b.ResetTimer()
 			for index := 0; index < b.N; index++ {
-				var plan routePlan
+				var plan RoutePlan
 				ok := true
 				for tag := 1; tag <= width; tag++ {
-					ok = ok && plan.addRoute(route{tag: routeTag(tag)})
+					ok = ok && plan.addRoute(Route{tag: RouteTag(tag)})
 				}
 				capturePlanBenchmarkResult = plan
-				capturePlanBenchmarkOK = ok && plan.routeCount() == width
+				capturePlanBenchmarkOK = ok && plan.RouteCount() == width
 			}
 			if !capturePlanBenchmarkOK {
-				b.Fatalf("exact route plan width %d", width)
+				b.Fatalf("exact Route plan width %d", width)
 			}
 		})
 	}

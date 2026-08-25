@@ -9,8 +9,8 @@ import (
 // sealed route evidence; it selects a destination but does not alter the
 // containment policy. Invalid evidence refuses and never widens a missing
 // predecessor into Unknown.
-func CaptureFold(parent placementdomain.Fact, routeTag uint64, current placementdomain.Fact) (placementdomain.Fact, structure.ReductionOutcome) {
-	if routeTag == 0 {
+func CaptureFold(parent placementdomain.Fact, RouteTag uint64, current placementdomain.Fact) (placementdomain.Fact, structure.ReductionOutcome) {
+	if RouteTag == 0 {
 		return placementdomain.BottomFact(), structure.Refuse
 	}
 	result, resultOK := placementdomain.ThroughContainerChecked(current, parent)

@@ -31,7 +31,13 @@ const (
 	captureRouteTag    schema.Key = "placement/closure-capture/route-tag"
 	captureDestination schema.Key = "placement/closure-capture/route-destination"
 	captureReducer     schema.Key = "placement/closure-capture/reducer"
-	captureOutput      schema.Key = "placement/facts"
+	// Both dependent vectors are produced rather than enumerated: the capture
+	// rows exist once the closure's boundary is resolved, and the route rows
+	// once the Value cells those captures name are known. Each read names the
+	// operation its axis publishes them through.
+	captureSourceSelection schema.Key = "value/closure-capture/source-selection"
+	captureRouteSelection  schema.Key = "placement/closure-capture/route-selection"
+	captureOutput          schema.Key = "placement/facts"
 )
 
 func RuleIssues() []rule.Issuance {
@@ -66,6 +72,10 @@ func relation(axisKey, memberKey schema.Key) member.RelationRef {
 
 func projection(axisKey, memberKey schema.Key) member.ProjectionRef {
 	return member.ProjectionRef{Axis: axisReference(axisKey), Member: memberKey}
+}
+
+func selection(axisKey, memberKey schema.Key) member.SelectionRef {
+	return member.SelectionRef{Axis: axisReference(axisKey), Member: memberKey}
 }
 
 func denominator(key schema.Key) ruleprogram.DenominatorRef {
@@ -104,6 +114,7 @@ func ClosureCapture() ruleprogram.Program {
 				Relation:  relation(valueAxisKey, captureSources),
 				Key:       projection(valueAxisKey, captureSourceKey),
 				Predicate: projection(valueAxisKey, captureSourceTag),
+				Selection: selection(valueAxisKey, captureSourceSelection),
 				Read: ruleprogram.ReadDecl{
 					Input: 0, Axis: ruleprogram.AxisRef(valueAxis), Form: ruleprogram.Selected,
 					PointBound: ruleprogram.PointBound,
@@ -115,9 +126,10 @@ func ClosureCapture() ruleprogram.Program {
 				},
 			},
 			{
-				Sources:  []ruleprogram.SourceRef{ruleprogram.CandidateSource(), ruleprogram.PriorSource(0), ruleprogram.PriorSource(1)},
-				Relation: relation(placementAxisKey, captureRoutes),
-				Key:      projection(placementAxisKey, captureRouteKey),
+				Sources:   []ruleprogram.SourceRef{ruleprogram.CandidateSource(), ruleprogram.PriorSource(0), ruleprogram.PriorSource(1)},
+				Relation:  relation(placementAxisKey, captureRoutes),
+				Key:       projection(placementAxisKey, captureRouteKey),
+				Selection: selection(placementAxisKey, captureRouteSelection),
 				Read: ruleprogram.ReadDecl{
 					Input: 0, Axis: ruleprogram.AxisRef(placementAxis), Form: ruleprogram.Selected,
 					PointBound: ruleprogram.PointBound,

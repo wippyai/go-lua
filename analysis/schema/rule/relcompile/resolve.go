@@ -382,7 +382,12 @@ func (resolver ruleResolver) selection(index int, declaration ruleprogram.JoinDe
 			Scope:        portScope,
 		})
 	}
-	key, err := resolver.registry.PublicationKey(resolver.site(path), NewName(declaration.Predicate.Axis, declaration.Predicate.Member))
+	// The operation publishes into the relation the read names, so the key its
+	// rows are published under is that relation's own. Reading it off the
+	// authored predicate would hold only for a read that declares one, and a
+	// read whose rows carry the relation's declared tag coordinate declares
+	// none.
+	key, err := resolver.registry.RelationPublicationKey(resolver.site(path), joined)
 	if err != nil {
 		return Rule{}, err
 	}

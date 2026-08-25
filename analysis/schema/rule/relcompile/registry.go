@@ -857,6 +857,24 @@ func (registry *Registry) PublicationKey(site Site, column Name) (model.KeyID, e
 	return entry.publish, nil
 }
 
+// RelationPublicationKey resolves the key one relation's rows are published
+// under. It is the same statement PublicationKey answers through a column of
+// that relation, asked of the relation directly: a producer publishes into a
+// relation, and the column it stamps is one of that relation's own.
+func (registry *Registry) RelationPublicationKey(site Site, relation Name) (model.KeyID, error) {
+	if !relation.Available() {
+		return model.KeyID{}, refuse(site, relation, KindRelation, ReasonUnavailable)
+	}
+	entry, ok := registry.relations[relation]
+	if !ok {
+		return model.KeyID{}, refuse(site, relation, KindRelation, ReasonUnknown)
+	}
+	if !entry.publish.Available() {
+		return model.KeyID{}, refuse(site, relation, KindPublicationKey, ReasonUndeclared)
+	}
+	return entry.publish, nil
+}
+
 // Declaration projects the installed registries into the resolved shape the
 // compiler consumes. Relation, column, key and scope order is install order,
 // which is the authored declaration order.

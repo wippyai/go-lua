@@ -376,6 +376,7 @@ func foldForeignRows(sources []Source, axes map[schema.Key]int) ([]Source, bool)
 			home := contribution
 			home.Relations = nil
 			home.Projections = nil
+			home.Selections = nil
 			foreign := make(map[schema.Key]Contribution, 1)
 			order := make([]schema.Key, 0, 1)
 			for _, relation := range contribution.Relations {
@@ -434,6 +435,29 @@ func foldForeignRows(sources []Source, axes map[schema.Key]int) ([]Source, bool)
 				row.Carriers = carriers
 				foreign[axis] = row
 			}
+			// A selection publishes into one relation and stamps one
+			// projection of it, so it belongs to the axis those rows belong
+			// to. Moving the relation and leaving the operation behind would
+			// leave the operation naming rows its own axis never declares,
+			// which is the refusal this fold exists to prevent.
+			for _, selection := range contribution.Selections {
+				axis := selectionAxis(contribution, selection)
+				if axis == contribution.Axis {
+					home.Selections = append(home.Selections, selection)
+					continue
+				}
+				target, targetOK := axes[axis]
+				if !targetOK || target == index {
+					return nil, false
+				}
+				row, seen := foreign[axis]
+				if !seen {
+					row = Contribution{Axis: axis, Rule: contribution.Rule}
+					order = append(order, axis)
+				}
+				row.Selections = append(row.Selections, selection)
+				foreign[axis] = row
+			}
 			retained[index] = append(retained[index], home)
 			for _, axis := range order {
 				target := axes[axis]
@@ -447,6 +471,23 @@ func foldForeignRows(sources []Source, axes map[schema.Key]int) ([]Source, bool)
 		folded[index].Contributions = append(retained[index], received[index]...)
 	}
 	return folded, true
+}
+
+// selectionAxis is the axis one selection belongs to: the axis of the
+// relation it publishes into. A relation the authoring contribution does not
+// declare is one its own axis already carries, so the selection stays home and
+// composition refuses it there if that axis declares neither.
+func selectionAxis(contribution Contribution, selection Selection) schema.Key {
+	for _, relation := range contribution.Relations {
+		if relation.Name != selection.Relation {
+			continue
+		}
+		if relation.Axis.Available() {
+			return relation.Axis
+		}
+		return contribution.Axis
+	}
+	return contribution.Axis
 }
 
 // namedCarriers appends the declared carriers a routed row is typed in, taking

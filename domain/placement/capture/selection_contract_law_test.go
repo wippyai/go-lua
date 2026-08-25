@@ -3,9 +3,9 @@ package capture
 import "testing"
 
 func TestCaptureSelectionTagsRecoverLogicalSourceOrdinal(t *testing.T) {
-	candidate := operand{sources: []source{{tag: 1}, {tag: 2}, {tag: 3}}}
+	candidate := operand{sources: []Source{{tag: 1}, {tag: 2}, {tag: 3}}}
 	for _, item := range []struct {
-		tag  routeTag
+		tag  RouteTag
 		want int
 	}{
 		{tag: 3, want: 2},
@@ -16,9 +16,9 @@ func TestCaptureSelectionTagsRecoverLogicalSourceOrdinal(t *testing.T) {
 			t.Fatalf("tag %d = %d/%t, want %d/true", item.tag, got, ok, item.want)
 		}
 	}
-	for _, tag := range []routeTag{0, 4, ^routeTag(0)} {
+	for _, tag := range []RouteTag{0, 4, ^RouteTag(0)} {
 		if _, ok := sourceOrdinal(candidate, tag); ok {
-			t.Fatalf("malformed source tag %d was admitted", tag)
+			t.Fatalf("malformed Source tag %d was admitted", tag)
 		}
 	}
 }

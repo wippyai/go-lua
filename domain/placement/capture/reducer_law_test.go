@@ -9,7 +9,7 @@ import (
 
 func TestCaptureFoldUsesOnlyAuthenticatedParentAndRouteEvidence(t *testing.T) {
 	if _, outcome := CaptureFold(placement.DefaultFact(), 0, placement.DefaultFact()); outcome != structure.Refuse {
-		t.Fatal("zero route tag was admitted")
+		t.Fatal("zero Route tag was admitted")
 	}
 	if _, outcome := CaptureFold(placement.BottomFact(), 1, placement.DefaultFact()); outcome != structure.Refuse {
 		t.Fatal("Bottom parent was admitted")

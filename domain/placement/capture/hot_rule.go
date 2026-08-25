@@ -18,8 +18,8 @@ type HotRule struct {
 	schema         placementdomain.Schema
 	valueSchema    *valuedomain.Schema
 	parentRead     engine.Read[engine.OrderedCells[placementdomain.Fact]]
-	valueRead      engine.Read[engine.Selection[routeTag, engine.OrderedCells[valuedomain.Value]]]
-	placementRead  engine.Read[engine.Selection[routeTag, engine.OrderedCells[placementdomain.Fact]]]
+	valueRead      engine.Read[engine.Selection[RouteTag, engine.OrderedCells[valuedomain.Value]]]
+	placementRead  engine.Read[engine.Selection[RouteTag, engine.OrderedCells[placementdomain.Fact]]]
 }
 
 // Capture source rows are normally short. Keep the authored-order fact plane
@@ -57,12 +57,12 @@ func BindHot(binding *engine.SchemaBinding, fragment *SchemaFragment, owner *pla
 		return nil, false
 	}
 	rule.parentRead = parentRead
-	valueRead, valueOK := placementowner.AddSelectedRuleDirectOperandRead[operand, valuedomain.Value, routeTag](implementation, fragment.values, values.FactorRef(), rule.locateSources)
+	valueRead, valueOK := placementowner.AddSelectedRuleDirectOperandRead[operand, valuedomain.Value, RouteTag](implementation, fragment.values, values.FactorRef(), rule.locateSources)
 	if !valueOK {
 		return nil, false
 	}
 	rule.valueRead = valueRead
-	placementRead, placementOK := placementowner.AddSelectedRuleDirectOperandRead[operand, placementdomain.Fact, routeTag](implementation, fragment.placements, owner.FactorRef(), rule.locateRoutes)
+	placementRead, placementOK := placementowner.AddSelectedRuleDirectOperandRead[operand, placementdomain.Fact, RouteTag](implementation, fragment.placements, owner.FactorRef(), rule.locateRoutes)
 	if !placementOK {
 		return nil, false
 	}
@@ -132,15 +132,15 @@ func (rule *HotRule) locateRoutes(context engine.SelectorContext, candidate oper
 	if count != len(candidate.sources) || count == 0 {
 		return false
 	}
-	var factsInline [captureFactInlineCapacity]sourceFact
+	var factsInline [captureFactInlineCapacity]SourceFact
 	var seenInline [captureFactInlineCapacity]bool
-	var facts []sourceFact
+	var facts []SourceFact
 	var seen []bool
 	if count <= captureFactInlineCapacity {
 		facts = factsInline[:count]
 		seen = seenInline[:count]
 	} else {
-		facts = make([]sourceFact, count)
+		facts = make([]SourceFact, count)
 		seen = make([]bool, count)
 	}
 	for physical := 0; physical < count; physical++ {
@@ -150,7 +150,7 @@ func (rule *HotRule) locateRoutes(context engine.SelectorContext, candidate oper
 			return false
 		}
 		fact, present, available := cells.At(0)
-		facts[logical] = sourceFact{fact: fact, present: present, available: available}
+		facts[logical] = SourceFact{fact: fact, present: present, available: available}
 		seen[logical] = true
 	}
 	for _, present := range seen {
@@ -158,12 +158,12 @@ func (rule *HotRule) locateRoutes(context engine.SelectorContext, candidate oper
 			return false
 		}
 	}
-	plan, planOK := routePlanForFacts(rule.schema, rule.valueSchema, facts)
+	plan, planOK := DeriveCaptureRoutes(rule.schema, rule.valueSchema, facts)
 	if !planOK {
 		return false
 	}
-	for index := 0; index < plan.routeCount(); index++ {
-		item, itemOK := plan.routeAt(index)
+	for index := 0; index < plan.RouteCount(); index++ {
+		item, itemOK := plan.RouteAt(index)
 		if !itemOK {
 			return false
 		}
@@ -198,14 +198,14 @@ func (rule *HotRule) fold(frame engine.Frame[placementdomain.Fact, operand]) eng
 		return engine.RuleResult[placementdomain.Fact]{}
 	}
 	count, countOK := engine.SelectionCount(frame, placementSelection)
-	if !countOK || count != plan.routeCount() {
+	if !countOK || count != plan.RouteCount() {
 		return engine.RuleResult[placementdomain.Fact]{}
 	}
 	if count == 0 {
 		return engine.NoSelection(frame, placementSelection)
 	}
-	return engine.Routed(frame, placementSelection, func(tag routeTag, prior engine.OrderedCells[placementdomain.Fact]) (placementdomain.Fact, bool) {
-		expected, routeOK := routeAtTag(plan, tag)
+	return engine.Routed(frame, placementSelection, func(tag RouteTag, prior engine.OrderedCells[placementdomain.Fact]) (placementdomain.Fact, bool) {
+		expected, routeOK := RouteAtTag(plan, tag)
 		if !routeOK || prior.Count() != 1 {
 			return placementdomain.BottomFact(), false
 		}
@@ -221,40 +221,40 @@ func (rule *HotRule) fold(frame engine.Frame[placementdomain.Fact, operand]) eng
 	})
 }
 
-func (rule *HotRule) transferFacts(frame engine.Frame[placementdomain.Fact, operand], selection engine.Selection[routeTag, engine.OrderedCells[valuedomain.Value]], candidate operand) (routePlan, bool) {
+func (rule *HotRule) transferFacts(frame engine.Frame[placementdomain.Fact, operand], selection engine.Selection[RouteTag, engine.OrderedCells[valuedomain.Value]], candidate operand) (RoutePlan, bool) {
 	count, countOK := engine.SelectionCount(frame, selection)
 	if !countOK || count != len(candidate.sources) || count == 0 {
-		return routePlan{}, false
+		return RoutePlan{}, false
 	}
-	var factsInline [captureFactInlineCapacity]sourceFact
+	var factsInline [captureFactInlineCapacity]SourceFact
 	var seenInline [captureFactInlineCapacity]bool
-	var facts []sourceFact
+	var facts []SourceFact
 	var seen []bool
 	if count <= captureFactInlineCapacity {
 		facts = factsInline[:count]
 		seen = seenInline[:count]
 	} else {
-		facts = make([]sourceFact, count)
+		facts = make([]SourceFact, count)
 		seen = make([]bool, count)
 	}
 	for physical := 0; physical < count; physical++ {
 		tag, cells, selectedOK := engine.SelectionAt(frame, selection, physical)
 		logical, logicalOK := sourceOrdinal(candidate, tag)
 		if !logicalOK || seen[logical] || !selectedOK || cells.Count() != 1 {
-			return routePlan{}, false
+			return RoutePlan{}, false
 		}
 		fact, present, available := cells.At(0)
-		facts[logical] = sourceFact{fact: fact, present: present, available: available}
+		facts[logical] = SourceFact{fact: fact, present: present, available: available}
 		seen[logical] = true
 	}
 	for _, present := range seen {
 		if !present {
-			return routePlan{}, false
+			return RoutePlan{}, false
 		}
 	}
-	plan, planOK := routePlanForFacts(rule.schema, rule.valueSchema, facts)
+	plan, planOK := DeriveCaptureRoutes(rule.schema, rule.valueSchema, facts)
 	if !planOK {
-		return routePlan{}, false
+		return RoutePlan{}, false
 	}
 	return plan, true
 }

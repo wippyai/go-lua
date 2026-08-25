@@ -16,6 +16,7 @@ const (
 	FormalRoutes                  schemaapi.Key  = "placement/formal/routes"
 	AllocationBirthDestinations   schemaapi.Key  = "placement/allocation-birth/destinations"
 	FreshBirthDestinations        schemaapi.Key  = "placement/fresh-birth/destinations"
+	CaptureRoutes                 schemaapi.Key  = "placement/closure-capture/routes"
 	StorageRouteKey               schemaapi.Key  = "placement/store/route-key"
 	StorageRouteTag               schemaapi.Key  = "placement/store/route-tag"
 	StorageRouteDestination       schemaapi.Key  = "placement/store/route-destination"
@@ -30,6 +31,9 @@ const (
 	FormalRouteDestination        schemaapi.Key  = "placement/formal/route-destination"
 	AllocationBirthDestination    schemaapi.Key  = "placement/allocation-birth/destination"
 	FreshBirthDestination         schemaapi.Key  = "placement/fresh-birth/destination"
+	CaptureRouteKey               schemaapi.Key  = "placement/closure-capture/route-key"
+	CaptureRouteTag               schemaapi.Key  = "placement/closure-capture/route-tag"
+	CaptureRouteDestination       schemaapi.Key  = "placement/closure-capture/route-destination"
 	StorageReducer                schemaapi.Key  = "placement/store/reducer/storage"
 	ReturnEscapeReducer           schemaapi.Key  = "placement/return-escape/reducer"
 	TransferReducer               schemaapi.Key  = "placement/transfer/reducer"
@@ -43,6 +47,7 @@ const (
 	ReturnRouteSelection          schemaapi.Key  = "placement/return-escape/route-selection"
 	TransferRouteSelection        schemaapi.Key  = "placement/transfer/route-selection"
 	FormalRouteSelection          schemaapi.Key  = "placement/formal/route-selection"
+	CaptureRouteSelection         schemaapi.Key  = "placement/closure-capture/route-selection"
 	PlacementKeyCarrier           member.Carrier = "carrier/placement/key"
 	PlacementFactCarrier          member.Carrier = "carrier/placement/fact"
 	StorageRouteCarrier           member.Carrier = "carrier/placement/storage-route"
@@ -61,6 +66,9 @@ const (
 	AllocationResultCarrier       member.Carrier = "carrier/value/allocation-result"
 	ValueCoordinateCarrier        member.Carrier = "carrier/value/coordinate"
 	FreshResultCallCarrier        member.Carrier = "carrier/value/fresh-result-call"
+	CaptureSourceCarrier          member.Carrier = "carrier/value/closure-capture-source"
+	CaptureSourceTagCarrier       member.Carrier = "carrier/value/closure-capture-source-tag"
+	CaptureRouteCarrier           member.Carrier = "carrier/placement/capture-route"
 	CaptureRouteTagCarrier        member.Carrier = "carrier/placement/capture-route-tag"
 	PublicationRequirementCarrier member.Carrier = "carrier/placement/publication-requirement"
 )
@@ -76,6 +84,7 @@ func AxisMemberCatalog() member.Catalog {
 			{Key: FormalRoutes, Subject: FormalRouteCarrier, CandidateProvider: member.AxisRelationCandidate(member.RelationRef{Axis: schemaapi.EntryReference{Surface: schemaapi.SurfaceKind(2), Key: "call"}, Member: "call/mounted-call/candidates"}), Inputs: []member.Carrier{CallCoordinateCarrier, CallFactCarrier, ValueFactCarrier}},
 			{Key: AllocationBirthDestinations, Subject: AllocationResultCarrier, CandidateProvider: member.AxisRelationCandidate(member.RelationRef{Axis: schemaapi.EntryReference{Surface: schemaapi.SurfaceKind(2), Key: "value"}, Member: "value/allocation/candidates"})},
 			{Key: FreshBirthDestinations, Subject: FreshResultCallCarrier, CandidateProvider: member.AxisRelationCandidate(member.RelationRef{Axis: schemaapi.EntryReference{Surface: schemaapi.SurfaceKind(2), Key: "value"}, Member: "value/fresh-result/candidates"})},
+			{Key: CaptureRoutes, Subject: CaptureRouteCarrier, CandidateProvider: member.IssuedRowCandidate("program-relation/occurrence-closure-proof"), Inputs: []member.Carrier{PlacementKeyCarrier, ValueFactCarrier}},
 		},
 		[]member.Projection{
 			{Key: StorageRouteKey, Relation: StorageRoutes, Role: member.Key, Result: PlacementKeyCarrier, CandidateProvider: member.AxisRelationCandidate(member.RelationRef{Axis: schemaapi.EntryReference{Surface: schemaapi.SurfaceKind(2), Key: "value"}, Member: "value/storage-transfer/candidates"})},
@@ -92,6 +101,9 @@ func AxisMemberCatalog() member.Catalog {
 			{Key: FormalRouteDestination, Relation: FormalRoutes, Role: member.Destination, Result: PlacementKeyCarrier, CandidateProvider: member.AxisRelationCandidate(member.RelationRef{Axis: schemaapi.EntryReference{Surface: schemaapi.SurfaceKind(2), Key: "call"}, Member: "call/mounted-call/candidates"})},
 			{Key: AllocationBirthDestination, Relation: AllocationBirthDestinations, Role: member.Destination, Result: PlacementKeyCarrier, CandidateProvider: member.AxisRelationCandidate(member.RelationRef{Axis: schemaapi.EntryReference{Surface: schemaapi.SurfaceKind(2), Key: "value"}, Member: "value/allocation/candidates"})},
 			{Key: FreshBirthDestination, Relation: FreshBirthDestinations, Role: member.Destination, Result: PlacementKeyCarrier, CandidateProvider: member.AxisRelationCandidate(member.RelationRef{Axis: schemaapi.EntryReference{Surface: schemaapi.SurfaceKind(2), Key: "value"}, Member: "value/fresh-result/candidates"})},
+			{Key: CaptureRouteKey, Relation: CaptureRoutes, Role: member.Key, Result: PlacementKeyCarrier, CandidateProvider: member.IssuedRowCandidate("program-relation/occurrence-closure-proof")},
+			{Key: CaptureRouteTag, Relation: CaptureRoutes, Role: member.Predicate, Result: CaptureRouteTagCarrier, CandidateProvider: member.IssuedRowCandidate("program-relation/occurrence-closure-proof")},
+			{Key: CaptureRouteDestination, Relation: CaptureRoutes, Role: member.Destination, Result: PlacementKeyCarrier, CandidateProvider: member.IssuedRowCandidate("program-relation/occurrence-closure-proof")},
 		},
 		[]member.Reducer{
 			{Key: StorageReducer, Inputs: []member.ReducerInput{
@@ -153,6 +165,7 @@ func AxisMemberCatalog() member.Catalog {
 		{Key: ReturnRouteSelection, Relation: ReturnRoutes, Tag: ReturnRouteTag},
 		{Key: TransferRouteSelection, Relation: TransferRoutes, Tag: TransferRouteTag},
 		{Key: FormalRouteSelection, Relation: FormalRoutes, Tag: FormalRouteTag},
+		{Key: CaptureRouteSelection, Relation: CaptureRoutes, Tag: CaptureRouteTag},
 	})
 	if !ok {
 		panic("placement: invalid axis selection catalog")

@@ -120,10 +120,9 @@
     "family": "placement/capture",
     "plane": "family",
     "rule": "placement-closure-capture",
-    "status": "COUPLING-FINDING",
-    "site": "program.joins[1].predicate",
-    "missing": "operation",
-    "reason": "undeclared"
+    "status": "COMPILES",
+    "sketch": "Publish(Apply(Select(Join(Input,Select(Input))))) | Publish(Apply(Select(Join(Join(Input,Select(Input)),Select(Input))))) | Publish(Merge(Apply(Select(Join(Join(Join(Input,Select(Input)),Select(Input)),Select(Input)))),Select(Input)))",
+    "expressions": 3
   },
   {
     "family": "placement/containment",

@@ -31,11 +31,11 @@ import (
 type captureRoutePlanBenchmarkFixture struct {
 	placement placementdomain.Schema
 	values    *valuedomain.Schema
-	facts     []sourceFact
+	facts     []SourceFact
 }
 
 var (
-	captureHotPlanBenchmarkResult routePlan
+	captureHotPlanBenchmarkResult RoutePlan
 	captureHotPlanBenchmarkOK     bool
 )
 
@@ -52,10 +52,10 @@ func BenchmarkCaptureRoutePlanForFacts(b *testing.B) {
 			b.ReportAllocs()
 			b.ResetTimer()
 			for index := 0; index < b.N; index++ {
-				captureHotPlanBenchmarkResult, captureHotPlanBenchmarkOK = routePlanForFacts(fixture.placement, fixture.values, facts)
+				captureHotPlanBenchmarkResult, captureHotPlanBenchmarkOK = DeriveCaptureRoutes(fixture.placement, fixture.values, facts)
 			}
-			if !captureHotPlanBenchmarkOK || captureHotPlanBenchmarkResult.routeCount() != width {
-				b.Fatalf("capture route plan width %d = %d/%t", width, captureHotPlanBenchmarkResult.routeCount(), captureHotPlanBenchmarkOK)
+			if !captureHotPlanBenchmarkOK || captureHotPlanBenchmarkResult.RouteCount() != width {
+				b.Fatalf("capture Route plan width %d = %d/%t", width, captureHotPlanBenchmarkResult.RouteCount(), captureHotPlanBenchmarkOK)
 			}
 		})
 	}
@@ -80,14 +80,14 @@ func BenchmarkCaptureWidenedRoutePlanForFacts(b *testing.B) {
 	} {
 		item := item
 		b.Run(item.name, func(b *testing.B) {
-			facts := []sourceFact{{fact: item.fact, present: true, available: true}}
+			facts := []SourceFact{{fact: item.fact, present: true, available: true}}
 			b.ReportAllocs()
 			b.ResetTimer()
 			for index := 0; index < b.N; index++ {
-				captureHotPlanBenchmarkResult, captureHotPlanBenchmarkOK = routePlanForFacts(fixture.placement, fixture.values, facts)
+				captureHotPlanBenchmarkResult, captureHotPlanBenchmarkOK = DeriveCaptureRoutes(fixture.placement, fixture.values, facts)
 			}
-			if !captureHotPlanBenchmarkOK || !captureHotPlanBenchmarkResult.allRoot || captureHotPlanBenchmarkResult.routeCount() != len(fixture.facts) {
-				b.Fatalf("widened %s plan = all-root %t/count %d, want true/%d", item.name, captureHotPlanBenchmarkResult.allRoot, captureHotPlanBenchmarkResult.routeCount(), len(fixture.facts))
+			if !captureHotPlanBenchmarkOK || !captureHotPlanBenchmarkResult.allRoot || captureHotPlanBenchmarkResult.RouteCount() != len(fixture.facts) {
+				b.Fatalf("widened %s plan = all-root %t/count %d, want true/%d", item.name, captureHotPlanBenchmarkResult.allRoot, captureHotPlanBenchmarkResult.RouteCount(), len(fixture.facts))
 			}
 		})
 	}
@@ -147,7 +147,7 @@ func newCaptureRoutePlanBenchmarkFixture(t testing.TB) captureRoutePlanBenchmark
 	if !placementOK {
 		t.Fatal("placement schema")
 	}
-	var facts []sourceFact
+	var facts []SourceFact
 	for index := 0; index < heapSchema.KeyCount(); index++ {
 		key, keyOK := heapSchema.KeyAt(index)
 		if !keyOK || key.Kind() != heapdomain.RootAllocation {
@@ -158,7 +158,7 @@ func newCaptureRoutePlanBenchmarkFixture(t testing.TB) captureRoutePlanBenchmark
 		if !atomOK || !factOK {
 			t.Fatal("allocation Value fact")
 		}
-		facts = append(facts, sourceFact{fact: fact, present: true, available: true})
+		facts = append(facts, SourceFact{fact: fact, present: true, available: true})
 	}
 	if len(facts) < captureRouteInlineCapacity+1 {
 		t.Fatalf("capture fixture allocation roots = %d, want at least %d", len(facts), captureRouteInlineCapacity+1)
