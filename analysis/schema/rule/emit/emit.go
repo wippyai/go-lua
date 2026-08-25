@@ -40,10 +40,10 @@ const (
 	structurePackagePath = "github.com/wippyai/go-lua/analysis/schema/structure"
 	programPackagePath   = "github.com/wippyai/go-lua/analysis/schema/rule/program"
 
-	// denseCoordinateType is the generator-published dense Factor coordinate
-	// of an axis. One name serves every axis because the type is not an
-	// owner's choice; the member generator publishes it per axis over the
-	// declared dense width.
+	// denseCoordinateType is the NAME of an axis's generator-published dense
+	// Factor coordinate. One name serves every axis because the name is not an
+	// owner's choice; WHICH package publishes it is, and the axis's own
+	// definition states that beside where its relation owner is generated.
 	denseCoordinateType = "DenseCoordinate"
 )
 

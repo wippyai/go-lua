@@ -44,8 +44,9 @@ func MountedCall() definition.Definition {
 	value := effectGoType("Value")
 	mounted := effectGoType("MountedCall")
 	return definition.Definition{
-		Name: "EffectMountedCall",
-		Axis: "effect",
+		Name:       "EffectMountedCall",
+		Axis:       "effect",
+		ImportPath: "github.com/wippyai/go-lua/domain/effect",
 		// The relation owner binds *factor.Algebra, so it must import
 		// domain/effect/factor - which imports domain/static. Bare
 		// domain/effect does not, and internal/testfixture (which

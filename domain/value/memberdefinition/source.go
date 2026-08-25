@@ -20,6 +20,10 @@ func valueGoType(name string) definition.GoType {
 	return definition.GoType{PackagePath: valuePackagePath, Name: name}
 }
 
+func valueGoPointerType(name string) definition.GoType {
+	return definition.GoType{PackagePath: valuePackagePath, Name: name, Pointer: true}
+}
+
 func callGoType(name string) definition.GoType {
 	return definition.GoType{PackagePath: callPackagePath, Name: name}
 }
@@ -50,15 +54,16 @@ func StorageTransfer() definition.Definition {
 	binaryEquality := valueGoType("BinaryEquality")
 	binaryOrder := valueGoType("BinaryOrder")
 	value := valueGoType("Value")
-	allocationResult := valueGoType("AllocationResult")
+	allocationResult := valueGoPointerType("AllocationResult")
 	freshResultCall := valueGoType("FreshResultCall")
 	mountedCallArgument := valueGoType("MountedCallArgument")
 	mountedCallActuals := valueGoType("MountedCallActuals")
 	returnBoundary := valueGoType("ReturnBoundary")
 	returnBoundaryMember := valueGoType("ReturnBoundaryMember")
 	return definition.Definition{
-		Name: "ValueStorageTransfer",
-		Axis: "value",
+		Name:       "ValueStorageTransfer",
+		Axis:       "value",
+		ImportPath: "github.com/wippyai/go-lua/domain/value",
 		Binding: definition.Binding{
 			Key: definition.KeyNormalization{
 				Carrier:    "ValueCoordinateCarrier",

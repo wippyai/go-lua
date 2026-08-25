@@ -70,7 +70,7 @@ func renderInstaller(out *strings.Builder, built *plan) error {
 		fmt.Fprintf(out, "\treturn %s\n}\n\n", strings.Join(guards, " && "))
 	}
 
-	if built.shape == shapeExactFold {
+	if built.shape == shapeExactFold && !built.exact.candidateOwned {
 		if err := renderExactDestinationProjector(out, built); err != nil {
 			return err
 		}
@@ -79,7 +79,22 @@ func renderInstaller(out *strings.Builder, built *plan) error {
 	fmt.Fprintf(out, "func (install %s) InstallRuleFamily(plane %s.FormPlane[%s, %s], _ uint32, rows []%s.FormRow) (%s.Family, []%s.FormAddress, bool) {\n",
 		installerType, execution, dense, fact, execution, execution, execution)
 	out.WriteString("\tif !install.available() || !plane.Valid() || len(rows) == 0 {\n\t\treturn nil, nil, false\n\t}\n")
+	if state := built.fold.state; state != nil {
+		arguments := make([]string, 0, len(state.staticAxes))
+		for _, axis := range state.staticAxes {
+			arguments = append(arguments, "install."+axis.param)
+		}
+		// The judgment's state is sealed once, here, from schemas that are
+		// immutable for the life of this binding. Sealing it per row would be
+		// the same answer stored many times; sealing it per invocation would
+		// allocate on a warm path.
+		fmt.Fprintf(out, "\tstate, stateOK := %s\n", imports.call(state.build, "", arguments...))
+		out.WriteString("\tif !stateOK {\n\t\treturn nil, nil, false\n\t}\n")
+	}
 	fmt.Fprintf(out, "\tsealed := &%s{rows: make([]%s, 0, len(rows))", familyType, rowType)
+	if built.fold.state != nil {
+		out.WriteString(", state: state")
+	}
 	for _, axis := range built.familyAxes {
 		fmt.Fprintf(out, ", %s: install.%s", axis.param, axis.param)
 	}
@@ -118,7 +133,14 @@ func renderInstaller(out *strings.Builder, built *plan) error {
 	}
 	if built.shape == shapeExactFold {
 		fmt.Fprintf(out, "\t\tcarryMode, carryPresent := planRow.Rule.CarryMode()\n")
-		fmt.Fprintf(out, "\t\tif !carryPresent || carryMode != %s.CarryIdentity {\n\t\t\treturn nil, nil, false\n\t\t}\n", ruleprogram)
+		if built.exact.carried {
+			fmt.Fprintf(out, "\t\tif !carryPresent || carryMode != %s.CarryIdentity {\n\t\t\treturn nil, nil, false\n\t\t}\n", ruleprogram)
+		} else {
+			// The declaration names no carry, so a row that arrived carrying
+			// one is a plan that no longer matches the declaration this family
+			// was emitted from. The undeclared mode is named as the zero it is.
+			out.WriteString("\t\tif carryPresent || carryMode != 0 {\n\t\t\treturn nil, nil, false\n\t\t}\n")
+		}
 	}
 
 	firstExact := -1

@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/wippyai/go-lua/analysis/schema"
+	memberdefinition "github.com/wippyai/go-lua/analysis/schema/axis/member/definition"
 	"github.com/wippyai/go-lua/domain/memberroster"
 )
 
@@ -165,4 +166,38 @@ func callPackage(imports map[string]string, expr ast.Expr) (string, bool) {
 	}
 	path, known := imports[qualifier.Name]
 	return path, known
+}
+
+// TestEveryComposedAxisNamesThePackageItIsGeneratedInto is the roster-level
+// half of the definition's package statement.
+//
+// A definition is internally consistent without knowing where it will be
+// written, so the vocabulary law does not ask. The COMPOSITION does: every
+// axis in this roster has a cold catalog on disk, a relation owner beside or
+// below it, and a dense Factor coordinate that emitted families type their
+// primitives at - and each of those is spelled from this one path. An axis
+// that names none would be one whose generated symbols no downstream emitter
+// can reach, discovered as an unexplained refusal rather than as this.
+func TestEveryComposedAxisNamesThePackageItIsGeneratedInto(t *testing.T) {
+	roster, rosterOK := memberroster.Composition()
+	if !rosterOK {
+		t.Fatal("member definition roster is not admissible")
+	}
+	if roster.Count() == 0 {
+		t.Fatal("the roster carries no axis, so this law measures nothing")
+	}
+	for index := 0; index < roster.Count(); index++ {
+		source, _ := roster.At(index)
+		composed, composedOK := source.Compose()
+		if !composedOK {
+			t.Fatalf("member definition source %q does not compose", source.Name)
+		}
+		cold, coldOK := memberdefinition.ColdImportPath(composed)
+		if !coldOK {
+			t.Fatalf("axis %q names no package, so nothing can spell its cold catalog", composed.Axis)
+		}
+		if _, denseOK := memberdefinition.DenseCoordinateType(composed, "DenseCoordinate"); !denseOK {
+			t.Fatalf("axis %q at %q publishes no dense coordinate an emitted family could type against", composed.Axis, cold)
+		}
+	}
 }

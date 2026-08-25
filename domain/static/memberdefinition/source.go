@@ -54,8 +54,9 @@ func TypeFactTransfer() definition.Definition {
 	storageTransfer := valueGoType("StorageTransfer")
 	typeFact := staticGoType("TypeFact")
 	return definition.Definition{
-		Name: "StaticTypeFactTransfer",
-		Axis: "static-type",
+		Name:       "StaticTypeFactTransfer",
+		Axis:       "static-type",
+		ImportPath: "github.com/wippyai/go-lua/domain/static",
 		Binding: definition.Binding{
 			Key: definition.KeyNormalization{
 				Carrier:    "CoordinateCarrier",

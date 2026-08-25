@@ -45,8 +45,9 @@ func axisReference(key string) schema.EntryReference {
 // closed allocation rules.
 func AllocationCarry() definition.Definition {
 	return definition.Definition{
-		Name: "HeapAllocationCarry",
-		Axis: "heap",
+		Name:       "HeapAllocationCarry",
+		Axis:       "heap",
+		ImportPath: "github.com/wippyai/go-lua/domain/heap",
 		Binding: definition.Binding{Key: definition.KeyNormalization{
 			Carrier:    "HeapKeyCarrier",
 			Dense:      builtinGoType("uint32"),

@@ -151,6 +151,8 @@ func (contribution Contribution) Clone() Contribution {
 		clone.Reducers[index].Inputs = append([]ReducerInput(nil), reducer.Inputs...)
 		clone.Reducers[index].Outputs = append([]ReducerOutput(nil), reducer.Outputs...)
 		clone.Reducers[index].Implementation = cloneSymbol(reducer.Implementation)
+		clone.Reducers[index].Derivation.Build = cloneSymbol(reducer.Derivation.Build)
+		clone.Reducers[index].Derivation.StaticAxes = append([]schema.EntryReference(nil), reducer.Derivation.StaticAxes...)
 	}
 	return clone
 }
@@ -259,6 +261,7 @@ func (source Source) Compose() (Definition, bool) {
 			row.Rule = contribution.Rule
 			row.Inputs = append([]ReducerInput(nil), reducer.Inputs...)
 			row.Outputs = append([]ReducerOutput(nil), reducer.Outputs...)
+			row.Derivation.StaticAxes = append([]schema.EntryReference(nil), reducer.Derivation.StaticAxes...)
 			composed = append(composed, row)
 		}
 	}

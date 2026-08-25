@@ -6,6 +6,7 @@ package definition
 
 import (
 	"go/token"
+	"path"
 	"strings"
 
 	"github.com/wippyai/go-lua/analysis/schema"
@@ -328,10 +329,57 @@ type Reducer struct {
 	// reducers that fold only joined inputs have no candidate argument. The
 	// generated call model represents that absence as the constant true guard,
 	// rather than inventing a carrier or looking one up from a relation.
-	Candidate      string
-	Inputs         []ReducerInput
-	Outputs        []ReducerOutput
+	Candidate string
+	Inputs    []ReducerInput
+	Outputs   []ReducerOutput
+	// Derivation is the optional sealed state this reducer's judgment is
+	// issued by. A fold whose answer rests on its axes' cold schemas cannot
+	// take them as parameters - that is what keeps a call shape from growing
+	// plumbing - so it names the state those schemas are sealed into once, and
+	// Implementation is a method on that state. A reducer that needs no cold
+	// schema declares nothing here and stays a free function over carriers.
+	Derivation     ReducerDerivation
 	Implementation GoSymbol
+}
+
+// ReducerDerivation is the install-time construction of one reducer's sealed
+// state. It is the same construction a dependent relation declares, narrowed
+// to the one thing a fold needs: Build answers State from the schemas of its
+// ordered static axes, the installed family holds that State, and every
+// invocation calls Implementation on it.
+//
+// It is built once per family, never per row and never per invocation: the
+// schemas it seals are immutable for the life of the binding, so a state
+// rebuilt on an invocation path would be the same answer allocated again.
+type ReducerDerivation struct {
+	State      GoType
+	Build      GoSymbol
+	StaticAxes []schema.EntryReference
+}
+
+// Declared reports whether a reducer names a sealed state at all.
+func (derivation ReducerDerivation) Declared() bool {
+	return derivation.State.Available() || derivation.Build.Available() || len(derivation.StaticAxes) != 0
+}
+
+// complete states the row-local law of a declared reducer state: a state type,
+// the symbol that seals it, and at least one axis whose schema it is sealed
+// from, each axis named once.
+func (derivation ReducerDerivation) complete() bool {
+	if !derivation.State.Available() || !derivation.Build.Available() || len(derivation.StaticAxes) == 0 {
+		return false
+	}
+	seen := make(map[schema.Key]struct{}, len(derivation.StaticAxes))
+	for _, axis := range derivation.StaticAxes {
+		if axis.Surface != schema.SurfaceKindAxis || !axis.Key.Available() {
+			return false
+		}
+		if _, duplicate := seen[axis.Key]; duplicate {
+			return false
+		}
+		seen[axis.Key] = struct{}{}
+	}
+	return true
 }
 
 // CarryTransform is a named owner-issued typed transform. Input and Output
@@ -403,6 +451,15 @@ type Definition struct {
 	Reducers        []Reducer
 	CarryTransforms []CarryTransform
 
+	// ImportPath is the Go package this axis's cold catalog is generated into.
+	// It is the one place an axis says where it lives: every other package the
+	// generator writes into is a subdirectory of it, named by the path below,
+	// and every consumer that has to SPELL a generated symbol - a law suite
+	// naming the cold catalog, an emitted family typing a primitive at the
+	// dense coordinate - reads it from here rather than guessing it off a
+	// carrier's package.
+	ImportPath string
+
 	// RelationsPackage and RelationsPath, when set, say that this axis's
 	// generated bind-time relation owner lives apart from its cold catalog:
 	// at a different package (the fact type's own algebra reaches a
@@ -412,6 +469,52 @@ type Definition struct {
 	// its package.
 	RelationsPackage string
 	RelationsPath    string
+}
+
+// ColdImportPath is the import path of the package this axis's cold catalog is
+// generated into. It is the ONE path an axis authors: the package clause, the
+// relation owner's package, and the dense coordinate's package are all read
+// off it, so a consumer never learns a second spelling of where an axis lives.
+//
+// An axis that names none is refused HERE, by the consumer that needs to spell
+// one of its generated symbols, rather than by the vocabulary law: a
+// definition is internally consistent without knowing where it will be
+// written, and only a generator's consumer has to know.
+func ColdImportPath(source Definition) (string, bool) {
+	if source.ImportPath == "" {
+		return "", false
+	}
+	return source.ImportPath, true
+}
+
+// RelationsImportPath is the import path of the package the bind-time relation
+// owner is generated into: the axis's own package, or the subdirectory
+// RelationsPath names when the owner lives apart from the cold catalog.
+func RelationsImportPath(source Definition) (string, bool) {
+	cold, coldOK := ColdImportPath(source)
+	if !coldOK {
+		return "", false
+	}
+	if source.RelationsPath == "" {
+		return cold, true
+	}
+	directory := path.Dir(source.RelationsPath)
+	if directory == "." {
+		return cold, true
+	}
+	return cold + "/" + directory, true
+}
+
+// DenseCoordinateType is the Go type one axis's dense Factor coordinate is
+// spelled as. The member generator publishes it beside the relation owner, so
+// it is named in whichever package that owner is generated into. One
+// statement, read by everything that types a primitive at this axis.
+func DenseCoordinateType(source Definition, name string) (GoType, bool) {
+	relations, relationsOK := RelationsImportPath(source)
+	if !relationsOK {
+		return GoType{}, false
+	}
+	return GoType{PackagePath: relations, Name: name}, true
 }
 
 func identifierAvailable(name string) bool {
@@ -602,6 +705,14 @@ func (definition Definition) Complete() bool {
 	}
 	carriers, _, carriersOK := definition.carrierIndex()
 	if !carriersOK || definition.Binding.Key.Carrier != definition.Signature.Key || !definition.Binding.complete(carriers) {
+		return false
+	}
+	// Where the relation owner is generated is one statement in two parts: the
+	// package clause and the file. Whether the axis names its own package at
+	// all is not a vocabulary law - a definition is internally consistent
+	// without it - so it is answered by the consumers that have to SPELL a
+	// generated symbol, and by the roster law that every composed axis does.
+	if (definition.RelationsPackage != "") != (definition.RelationsPath != "") {
 		return false
 	}
 	relations := make(map[string]Relation, len(definition.Relations))
@@ -818,6 +929,17 @@ func (definition Definition) Complete() bool {
 				return false
 			}
 		}
+		// A declared state and the method that reads it are one statement: the
+		// implementation is issued by the state, so a state with a free
+		// function beside it, or a receiver with no state behind it, names
+		// half a fold.
+		if reducer.Derivation.Declared() != (reducer.Implementation.Receiver.Name != "") {
+			return false
+		}
+		if reducer.Derivation.Declared() &&
+			(!reducer.Derivation.complete() || !sameType(reducer.Derivation.State, reducer.Implementation.Receiver)) {
+			return false
+		}
 	}
 	for _, transform := range definition.CarryTransforms {
 		if !transform.Implementation.Available() {
@@ -876,6 +998,8 @@ func (definition Definition) Clone() Definition {
 		clone.Reducers[index].Inputs = append([]ReducerInput(nil), reducer.Inputs...)
 		clone.Reducers[index].Outputs = append([]ReducerOutput(nil), reducer.Outputs...)
 		clone.Reducers[index].Implementation = cloneSymbol(reducer.Implementation)
+		clone.Reducers[index].Derivation.Build = cloneSymbol(reducer.Derivation.Build)
+		clone.Reducers[index].Derivation.StaticAxes = append([]schema.EntryReference(nil), reducer.Derivation.StaticAxes...)
 	}
 	clone.CarryTransforms = make([]CarryTransform, len(definition.CarryTransforms))
 	for index, transform := range definition.CarryTransforms {

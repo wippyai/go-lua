@@ -230,10 +230,11 @@ func derive(target Target, roster definition.Roster) (*suite, error) {
 }
 
 // reducerAxisPackage resolves the Go package the reducer's axis publishes its
-// member catalog from. It is read off the axis's own fact carrier rather than
-// assembled from the axis key: which package an axis lives in is a fact the
-// roster carries, and spelling it from a key would be a naming rule held as a
-// contract.
+// member catalog from. It is the axis's own declared import path, which is
+// where the member generator writes that catalog. It is not read off a
+// carrier: an axis whose fact type lives in a package of its own - because
+// that type reaches a dependency the cold catalog's importers must not - would
+// hand this a package with no catalog in it.
 func reducerAxisPackage(ruleKey schema.Key, roster definition.Roster, axisKey schema.Key) (string, error) {
 	for index := 0; index < roster.Count(); index++ {
 		source, sourceOK := roster.At(index)
@@ -244,18 +245,12 @@ func reducerAxisPackage(ruleKey schema.Key, roster definition.Roster, axisKey sc
 		if !composedOK || composed.Axis != axisKey {
 			continue
 		}
-		for _, carrier := range composed.Carriers {
-			if carrier.Name != composed.Signature.Fact {
-				continue
-			}
-			if carrier.Type.PackagePath == "" {
-				return "", unexpressible(ruleKey, "a reducer axis whose fact carrier names no package",
-					fmt.Sprintf("axis %q publishes carrier %q without an import path", string(axisKey), carrier.Name))
-			}
-			return carrier.Type.PackagePath, nil
+		cold, coldOK := definition.ColdImportPath(composed)
+		if !coldOK {
+			return "", unexpressible(ruleKey, "a reducer axis that names no package",
+				fmt.Sprintf("axis %q declares no import path, so its member catalog cannot be spelled", string(axisKey)))
 		}
-		return "", unexpressible(ruleKey, "a reducer axis with no fact carrier",
-			fmt.Sprintf("axis %q declares signature fact %q, which its carrier list does not publish", string(axisKey), composed.Signature.Fact))
+		return cold, nil
 	}
 	return "", unexpressible(ruleKey, "a reducer on an axis the roster does not carry", string(axisKey))
 }

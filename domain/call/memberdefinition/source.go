@@ -44,8 +44,9 @@ func MountedCall() definition.Definition {
 	value := callGoType("Value")
 	coordinate := callGoType("CallCoordinate")
 	return definition.Definition{
-		Name: "CallMountedCall",
-		Axis: "call",
+		Name:       "CallMountedCall",
+		Axis:       "call",
+		ImportPath: "github.com/wippyai/go-lua/domain/call",
 		Binding: definition.Binding{
 			Key: definition.KeyNormalization{
 				Carrier:    "CallKeyCarrier",

@@ -143,3 +143,30 @@ func (roster Roster) definitionForAxis(axis schema.Key) (Definition, bool) {
 	}
 	return Definition{}, false
 }
+
+// ReducerDerivationSignature derives the call shape of one reducer's authored
+// state Build. It is the relation derivation's shape narrowed to what a fold
+// needs: the schemas of the ordered static axes in, the sealed state and its
+// validity out.
+//
+// Each static axis is resolved through the roster for the same reason a
+// relation's is - a fold reaching another axis's schema is naming that axis's
+// own published type rather than one its consumer chose.
+func (roster Roster) ReducerDerivationSignature(derivation ReducerDerivation) ([]DerivedParam, []DerivedParam, bool) {
+	if !derivation.complete() {
+		return nil, nil, false
+	}
+	params := make([]DerivedParam, 0, len(derivation.StaticAxes))
+	for _, static := range derivation.StaticAxes {
+		staticSource, staticOK := roster.definitionForAxis(static.Key)
+		if !staticOK {
+			return nil, nil, false
+		}
+		schemaType, schemaTypeOK := AxisSchemaType(staticSource)
+		if !schemaTypeOK {
+			return nil, nil, false
+		}
+		params = append(params, DerivedParam{Type: schemaType})
+	}
+	return params, []DerivedParam{{Type: derivation.State}, {Type: GoType{Name: "bool"}}}, true
+}

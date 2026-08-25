@@ -37,8 +37,9 @@ func specimenRoster(t testing.TB) definition.Roster {
 	t.Helper()
 	provider := member.RelationRef{Axis: specimenAxis(), Member: "specimen/candidates"}
 	base := definition.Definition{
-		Name: "Specimen",
-		Axis: "specimen",
+		Name:       "Specimen",
+		Axis:       "specimen",
+		ImportPath: specimenPackage,
 		Binding: definition.Binding{Key: definition.KeyNormalization{
 			Carrier:    "KeyCarrier",
 			Dense:      definition.GoType{Name: "uint32"},
@@ -239,11 +240,11 @@ func TestAnUnexpressibleDeclarationIsRefusedByName(t *testing.T) {
 		mutate func(*rule.Spec)
 		clause string
 	}{
-		{
-			name:   "an identity carry has no installer-authored form",
-			mutate: func(spec *rule.Spec) { spec.Program.Carry = nil },
-			clause: "an authored exact output with no identity carry",
-		},
+		// The specimen's candidate belongs to the axis it writes, so dropping
+		// its carry states the derived exact fold rather than a shape with no
+		// form. The identity-carry law belongs to the heterogeneous consumer,
+		// where the written Factor reaches a coordinate no directory of its
+		// own enumerates, and is stated there.
 		{
 			name: "a summary read has no sealed primitive",
 			mutate: func(spec *rule.Spec) {

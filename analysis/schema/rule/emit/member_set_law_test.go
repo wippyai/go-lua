@@ -46,8 +46,9 @@ func memberSetPlacementAxisRef() schema.EntryReference {
 func memberSetValueDefinition() definition.Definition {
 	value := memberSetValueAxisRef()
 	return definition.Definition{
-		Name: "MemberSetValue",
-		Axis: "value",
+		Name:       "MemberSetValue",
+		Axis:       "value",
+		ImportPath: specimenPackage,
 		Binding: definition.Binding{Key: definition.KeyNormalization{
 			Carrier:    "ValueKey",
 			Dense:      definition.GoType{Name: "uint32"},
@@ -115,8 +116,9 @@ func memberSetPlacementDefinition() definition.Definition {
 	value := memberSetValueAxisRef()
 	provider := member.RelationRef{Axis: value, Member: "value/return-boundary/candidates"}
 	return definition.Definition{
-		Name: "MemberSetPlacement",
-		Axis: "placement",
+		Name:       "MemberSetPlacement",
+		Axis:       "placement",
+		ImportPath: specimenPackage,
 		Binding: definition.Binding{Key: definition.KeyNormalization{
 			Carrier:    "PlacementKey",
 			Dense:      definition.GoType{Name: "uint32"},

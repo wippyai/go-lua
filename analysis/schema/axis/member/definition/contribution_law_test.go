@@ -25,8 +25,9 @@ func specimenAxis() schema.EntryReference {
 func specimenBase() Definition {
 	provider := member.AxisRelationCandidate(member.RelationRef{Axis: specimenAxis(), Member: "specimen/candidates"})
 	return Definition{
-		Name: "Specimen",
-		Axis: "specimen",
+		Name:       "Specimen",
+		Axis:       "specimen",
+		ImportPath: specimenPackage,
 		Binding: Binding{Key: KeyNormalization{
 			Carrier:    "KeyCarrier",
 			Dense:      GoType{Name: "uint32"},
@@ -501,8 +502,9 @@ func TestAGlobalDirectoryOwesACensusWithoutOwingAMaterializer(t *testing.T) {
 func foreignAxisBase() Definition {
 	provider := member.AxisRelationCandidate(member.RelationRef{Axis: schema.EntryReference{Surface: schema.SurfaceKindAxis, Key: "foreign"}, Member: "foreign/candidates"})
 	return Definition{
-		Name: "Foreign",
-		Axis: "foreign",
+		Name:       "Foreign",
+		Axis:       "foreign",
+		ImportPath: specimenPackage,
 		Binding: Binding{Key: KeyNormalization{
 			Carrier:    "ForeignKeyCarrier",
 			Dense:      GoType{Name: "uint32"},

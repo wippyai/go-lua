@@ -76,8 +76,9 @@ func candidateProvider() member.RelationRef {
 func Storage() definition.Definition {
 	provider := candidateProvider()
 	return definition.Definition{
-		Name: "PlacementStorage",
-		Axis: "placement",
+		Name:       "PlacementStorage",
+		Axis:       "placement",
+		ImportPath: "github.com/wippyai/go-lua/domain/placement",
 		Binding: definition.Binding{Key: definition.KeyNormalization{
 			Carrier:    "PlacementKeyCarrier",
 			Dense:      builtinGoType("uint32"),

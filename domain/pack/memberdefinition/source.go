@@ -42,8 +42,9 @@ func Source() definition.Definition {
 	value := packGoType("Value")
 	source := packGoType("Source")
 	return definition.Definition{
-		Name: "PackSource",
-		Axis: "pack",
+		Name:       "PackSource",
+		Axis:       "pack",
+		ImportPath: "github.com/wippyai/go-lua/domain/pack",
 		Binding: definition.Binding{
 			Key: definition.KeyNormalization{
 				Carrier:    "RootCarrier",

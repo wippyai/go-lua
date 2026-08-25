@@ -82,7 +82,16 @@ func renderReducer(out *strings.Builder, built *plan) error {
 	out.WriteString("// " + reducerType + " is the sealed semantic half of one invocation. It holds the\n")
 	out.WriteString("// carriers this row's fold is indexed by, and its type is the family's, so the\n")
 	out.WriteString("// call below is a static direct call rather than an interface dispatch.\n")
+	if built.fold.state != nil {
+		out.WriteString("//\n")
+		out.WriteString("// It also carries the state the declared judgment is issued by. That state is\n")
+		out.WriteString("// the family's, sealed once from the axis schemas the declaration names, so a\n")
+		out.WriteString("// fold resting on cold owner knowledge still takes only carriers as arguments.\n")
+	}
 	fmt.Fprintf(out, "type %s struct {\n", reducerType)
+	if built.fold.state != nil {
+		fmt.Fprintf(out, "\tstate %s\n", imports.typeName(built.fold.state.state))
+	}
 	for _, argument := range built.fold.arguments {
 		if argument.Role == definition.ArgumentCandidate {
 			fmt.Fprintf(out, "\tcandidate %s\n", imports.typeName(argument.Type))
@@ -178,7 +187,11 @@ func foldCall(built *plan) (string, error) {
 			return "", unexpressible(built.target.Spec.Key, "an unknown fold argument role", fmt.Sprintf("input %d", argument.Input))
 		}
 	}
-	return imports.call(built.fold.reducer.Implementation, "", arguments...), nil
+	receiver := ""
+	if built.fold.state != nil {
+		receiver = "fold.state"
+	}
+	return imports.call(built.fold.reducer.Implementation, receiver, arguments...), nil
 }
 
 func renderCarryReduce(out *strings.Builder, built *plan) error {
@@ -307,6 +320,9 @@ func renderFamily(out *strings.Builder, built *plan) {
 	out.WriteString("// installer returns.\n")
 	fmt.Fprintf(out, "type %s struct {\n", familyType)
 	fmt.Fprintf(out, "\trows []%s\n", rowType)
+	if built.fold.state != nil {
+		fmt.Fprintf(out, "\tstate %s\n", imports.typeName(built.fold.state.state))
+	}
 	for _, axis := range built.familyAxes {
 		fmt.Fprintf(out, "\t%s %s\n", axis.param, imports.typeName(axis.schemaType))
 	}
@@ -482,7 +498,10 @@ func renderCarryExecute(out *strings.Builder, built *plan) error {
 // named by the caller; every other field takes the row's sealed carrier.
 func reducerLiteralFields(built *plan, invocation map[string]string) []string {
 	fields := reducerFields(built)
-	spelled := make([]string, 0, len(fields))
+	spelled := make([]string, 0, len(fields)+1)
+	if built.fold.state != nil {
+		spelled = append(spelled, "state: lane.family.state")
+	}
 	for _, field := range fields {
 		value := "row." + field
 		if invocation != nil {

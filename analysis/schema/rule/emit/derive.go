@@ -24,9 +24,13 @@ const (
 	// transition.
 	shapeCarry
 	// shapeExactFold reads one exact foreign fact, applies the declared typed
-	// reducer, and publishes at the consumer-owned exact destination projected
-	// from the candidate.  The installer also owns the construction-time
-	// projection because it is the only sealed object holding both schemas.
+	// reducer, and publishes at the exact destination projected from the
+	// candidate. It covers both consumer normal forms. When the candidate
+	// belongs to another axis the installer also owns the construction-time
+	// projection, because it is the only sealed object holding both schemas,
+	// and the written Factor reaches the row through its identity carry. When
+	// the candidate belongs to the written axis that axis's own relation owner
+	// projects the row, and the publication carries nothing.
 	shapeExactFold
 	// shapeSelectedRoute publishes one fact per selected route of a dependent
 	// relation the declaration derives.
@@ -115,6 +119,17 @@ type carryPlan struct {
 // normalized by the written axis; neither owner can perform both halves.
 type exactPlan struct {
 	destination definition.Projection
+	// candidateOwned states that the candidate directory belongs to the axis
+	// the rule writes, so the destination is projected by that axis's own
+	// relation owner. The heterogeneous rule is the other case: it projects
+	// its own destination at construction, because no single owner holds both
+	// the candidate directory and the output key.
+	candidateOwned bool
+	// carried states whether the declaration names an identity carry. It is
+	// restated by the emitted fence rather than required by it: a rule
+	// publishing at its own candidate's coordinate has a predecessor world to
+	// retain only if it says so.
+	carried bool
 }
 
 // foldPlan is the declared reducer and the call shape its declaration derives.
@@ -123,6 +138,21 @@ type foldPlan struct {
 	arguments []definition.Argument
 	results   []definition.GoType
 	inputs    []*joinPlan
+	state     *foldStatePlan
+}
+
+// foldStatePlan is the install-time construction of one reducer's sealed
+// state: the type the installed family holds, the symbol that seals it, and
+// the axes whose cold schemas it is sealed from.
+//
+// It is what lets a judgment that rests on those schemas stay a call over
+// carriers. The state is the family's, so it is built once when the family is
+// installed and read by every invocation; the schemas themselves never reach
+// the fold's parameter vector.
+type foldStatePlan struct {
+	state      definition.GoType
+	build      definition.GoSymbol
+	staticAxes []*axisPlan
 }
 
 // routePlan is the selected join a routed output publishes through.
@@ -532,21 +562,32 @@ func deriveShape(built *plan, resolver *axisResolver, declaration program.Progra
 		return nil
 	case program.ModeExact:
 		if declaration.Carry == nil || declaration.Carry.Mode != program.CarryTransform {
-			if declaration.Carry == nil || declaration.Carry.Mode != program.CarryIdentity {
+			destinationAxis, err := resolver.axis(output.Destination.Axis.Key)
+			if err != nil {
+				return err
+			}
+			if destinationAxis.key != built.write.key {
+				return unexpressible(ruleKey, "an authored exact destination declared by an axis the rule does not write",
+					fmt.Sprintf("destination axis %q, written axis %q", string(destinationAxis.key), string(built.write.key)))
+			}
+			// Which owner answers the destination is the declaration's own
+			// statement of where its candidate lives. A candidate on ANOTHER
+			// axis has no owner holding both the directory and the output key,
+			// so the emitted installer projects the row itself, and the
+			// written Factor reaches a coordinate that belongs to no directory
+			// of its own through the declared identity carry. A candidate on
+			// the WRITTEN axis has such an owner - its own - so the row
+			// publishes at the coordinate that owner already projects, and
+			// what it carries is whatever the declaration says it carries,
+			// including nothing at all.
+			candidateOwned := destinationAxis.key == built.candidate.axis.key
+			if !candidateOwned && (declaration.Carry == nil || declaration.Carry.Mode != program.CarryIdentity) {
 				return unexpressible(ruleKey, "an authored exact output with no identity carry",
 					"a heterogeneous exact fold retains the written Factor through its declared identity carry")
 			}
 			if len(built.joins) != 1 || built.joins[0].read.Form != program.Exact {
 				return unexpressible(ruleKey, fmt.Sprintf("an authored exact fold over %d non-scalar reads", len(built.joins)),
 					"the emitted E fold currently consumes exactly one exact cell")
-			}
-			destinationAxis, err := resolver.axis(output.Destination.Axis.Key)
-			if err != nil {
-				return err
-			}
-			if destinationAxis.key != built.write.key || destinationAxis.key == built.candidate.axis.key {
-				return unexpressible(ruleKey, "an authored exact destination outside the foreign consumer normal form",
-					"the destination must be declared by the written axis for a candidate owned by another axis")
 			}
 			destination, destinationOK := findProjection(destinationAxis.source, output.Destination.Member)
 			if !destinationOK {
@@ -561,7 +602,7 @@ func deriveShape(built *plan, resolver *axisResolver, declaration program.Progra
 					fmt.Sprintf("projection %q publishes %s, output key is %s", destination.Name, destination.Result, built.write.source.Binding.Key.Carrier))
 			}
 			built.shape, built.form = shapeExactFold, "FormExact"
-			built.exact = &exactPlan{destination: destination}
+			built.exact = &exactPlan{destination: destination, candidateOwned: candidateOwned, carried: declaration.Carry != nil}
 			return nil
 		}
 		transformAxis, err := resolver.axis(declaration.Carry.Transform.Axis.Key)
@@ -624,8 +665,51 @@ func deriveFold(built *plan, resolver *axisResolver, declaration program.Program
 		return unexpressible(ruleKey, "a fold whose inputs and reducer rows disagree",
 			fmt.Sprintf("the fold names %d inputs and reducer %q declares %d", len(inputs), reducer.Name, len(reducer.Inputs)))
 	}
-	built.fold = foldPlan{reducer: reducer, arguments: arguments, results: results, inputs: inputs}
+	state, err := deriveFoldState(built, resolver, reducer)
+	if err != nil {
+		return err
+	}
+	built.fold = foldPlan{reducer: reducer, arguments: arguments, results: results, inputs: inputs, state: state}
 	return nil
+}
+
+// deriveFoldState resolves the sealed state a reducer's judgment is issued by.
+// A reducer that declares none is a free function over its carriers and this
+// answers nothing; one that declares a state has its axes resolved here, so
+// the schemas it is sealed from are the installer's own parameters.
+func deriveFoldState(built *plan, resolver *axisResolver, reducer definition.Reducer) (*foldStatePlan, error) {
+	ruleKey := built.target.Spec.Key
+	derivation := reducer.Derivation
+	receiver := reducer.Implementation.Receiver.Name != ""
+	if derivation.Declared() != receiver {
+		return nil, unexpressible(ruleKey, "a fold whose sealed state and implementation disagree",
+			fmt.Sprintf("reducer %q declares state %t and an implementation issued by a receiver %t; a state is read by the method it issues",
+				reducer.Name, derivation.Declared(), receiver))
+	}
+	if !derivation.Declared() {
+		return nil, nil
+	}
+	if !sameGoType(derivation.State, reducer.Implementation.Receiver) {
+		return nil, unexpressible(ruleKey, "a fold whose implementation is issued by a type that is not its declared state",
+			fmt.Sprintf("reducer %q declares state %s and a method on %s", reducer.Name, derivation.State.Name, reducer.Implementation.Receiver.Name))
+	}
+	if len(derivation.StaticAxes) == 0 || !derivation.Build.Available() {
+		return nil, unexpressible(ruleKey, "a fold state with no construction",
+			fmt.Sprintf("reducer %q declares no Build over static axes, so the installer has no state to seal", reducer.Name))
+	}
+	axes := make([]*axisPlan, 0, len(derivation.StaticAxes))
+	for _, static := range derivation.StaticAxes {
+		if static.Surface != schema.SurfaceKindAxis {
+			return nil, unexpressible(ruleKey, "a fold state sealed against a surface that is not an axis",
+				fmt.Sprintf("reducer %q names %q", reducer.Name, string(static.Key)))
+		}
+		resolved, err := resolver.axis(static.Key)
+		if err != nil {
+			return nil, err
+		}
+		axes = append(axes, resolved)
+	}
+	return &foldStatePlan{state: derivation.State, build: derivation.Build, staticAxes: axes}, nil
 }
 
 // axisResolver resolves each axis the declaration names exactly once and keeps
@@ -663,12 +747,16 @@ func (resolver *axisResolver) axis(key schema.Key) (*axisPlan, error) {
 	if !paramOK {
 		return nil, unexpressible(resolver.rule, "an axis key that is not a Go identifier", string(key))
 	}
+	dense, denseOK := definition.DenseCoordinateType(source, denseCoordinateType)
+	if !denseOK {
+		return nil, unexpressible(resolver.rule, "an axis that publishes no dense coordinate", string(key))
+	}
 	resolved := &axisPlan{
 		key:        key,
 		source:     source,
 		schemaType: schemaType,
 		fact:       fact,
-		dense:      definition.GoType{PackagePath: schemaType.PackagePath, Name: denseCoordinateType},
+		dense:      dense,
 		normalizer: source.Binding.Key.Normalizer,
 		param:      param + "Schema",
 	}
