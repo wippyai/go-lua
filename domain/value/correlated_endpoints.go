@@ -898,6 +898,96 @@ func (schema *Schema) ModuleLoadCallAt(index int) (ModuleLoadCall, bool) {
 	return row, true
 }
 
+// EndpointOrdinal is the one dense candidate address RuntimeKindCall uses. It
+// is the ordinal in the Schema's shared endpoint table, so the rule that folds
+// these rows addresses them through the directory every other endpoint family
+// is already addressed by.
+func (row RuntimeKindCall) EndpointOrdinal() (uint32, bool) {
+	vector, ok := row.EndpointVector()
+	if !ok {
+		return 0, false
+	}
+	ordinal, ordinalOK := vector.Ordinal()
+	if !ordinalOK || uint64(ordinal) > uint64(^uint32(0)) {
+		return 0, false
+	}
+	return uint32(ordinal), true
+}
+
+// Ordinal is the owner-issued dense candidate address. It is an alias of
+// EndpointOrdinal: there is no second runtime-kind candidate index.
+func (row RuntimeKindCall) Ordinal() (uint32, bool) {
+	return row.EndpointOrdinal()
+}
+
+// Subject projects the owner-issued coordinate of the value this
+// interpretation observes: the sole actual of the plain call, and the narrowed
+// subject of its guarded arm.
+func (row RuntimeKindCall) Subject() (Coordinate, bool) {
+	vector, ok := row.EndpointVector()
+	if !ok {
+		return Coordinate{}, false
+	}
+	return vector.Coordinate(EndpointLeft)
+}
+
+// Comparison projects the owner-issued coordinate the sealed predicate is
+// evaluated against. Only a guarded arm declares a compared role; a plain
+// runtime-kind call compares against the value it already observes.
+func (row RuntimeKindCall) Comparison() (Coordinate, bool) {
+	vector, ok := row.EndpointVector()
+	if !ok {
+		return Coordinate{}, false
+	}
+	if compared, declared := vector.Coordinate(EndpointCompared); declared {
+		return compared, true
+	}
+	return vector.Coordinate(EndpointLeft)
+}
+
+// RuntimeKindCallForMountedOccurrence resolves the owner-issued runtime-kind
+// row for one mounted Program occurrence. Its candidate ordinal is
+// subsequently redeemed through RuntimeKindCallAt, which addresses the shared
+// endpoint table directly.
+func (schema *Schema) RuntimeKindCallForMountedOccurrence(module, occurrence identity.ContentID) (RuntimeKindCall, bool) {
+	if schema == nil || !module.Available() || !occurrence.Available() {
+		return RuntimeKindCall{}, false
+	}
+	row, ok := schema.RuntimeKindCall(module, occurrence)
+	if !ok || !schema.OwnsRuntimeKindCall(row) {
+		return RuntimeKindCall{}, false
+	}
+	_, vectorOK := row.EndpointVector()
+	return row, vectorOK
+}
+
+// RuntimeKindCallOrdinal returns the shared endpoint-table ordinal of one
+// owner-issued runtime-kind row.
+func (schema *Schema) RuntimeKindCallOrdinal(row RuntimeKindCall) (uint32, bool) {
+	if schema == nil || !schema.OwnsRuntimeKindCall(row) {
+		return 0, false
+	}
+	return row.EndpointOrdinal()
+}
+
+// RuntimeKindCallAt redeems a dense runtime-kind candidate by the ordinal of
+// the existing endpoint table. Endpoint rows belonging to another family
+// refuse; they remain part of the shared denominator and are never renumbered.
+func (schema *Schema) RuntimeKindCallAt(index int) (RuntimeKindCall, bool) {
+	if schema == nil || !schema.endpointsSealed() || index < 0 || index >= len(schema.endpoints) {
+		return RuntimeKindCall{}, false
+	}
+	endpoint := schema.endpoints[index]
+	if endpoint.family != endpointFamilyRuntimeKind {
+		return RuntimeKindCall{}, false
+	}
+	row, ok := schema.runtimeKindCalls[endpoint.key]
+	if !ok || row.endpoints != uint32(index+1) || !schema.OwnsRuntimeKindCall(row) {
+		return RuntimeKindCall{}, false
+	}
+	return row, true
+}
+
 func (row BinaryEquality) Endpoint(role EndpointRole) (uint64, bool) {
 	vector, ok := row.EndpointVector()
 	if !ok {

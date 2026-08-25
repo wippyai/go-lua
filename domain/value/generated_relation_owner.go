@@ -51,6 +51,8 @@ var _ memberrelation.SourceColumns[Value] = (*RelationOwner)(nil)
 
 var _ memberrelation.OccurrenceDirectory = (*RelationOwner)(nil)
 
+var _ memberrelation.IdentityProjection = (*RelationOwner)(nil)
+
 // NewRelationOwner binds the generated relation owner to one immutable axis schema.
 func NewRelationOwner(schema *Schema) *RelationOwner {
 	if schema == nil {
@@ -210,6 +212,15 @@ func (owner *RelationOwner) candidate(relationOrdinal uint32, mount, occurrence 
 		if !mount.Available() {
 			return 0, false
 		}
+		candidate, candidateOK := owner.schema.RuntimeKindCallForMountedOccurrence(mount, occurrence)
+		if !candidateOK {
+			return 0, false
+		}
+		return owner.schema.RuntimeKindCallOrdinal(candidate)
+	case 27:
+		if !mount.Available() {
+			return 0, false
+		}
 		candidate, candidateOK := owner.schema.ClosedOperandsForMountedOccurrence(mount, occurrence)
 		if !candidateOK {
 			return 0, false
@@ -335,7 +346,7 @@ func (owner *RelationOwner) KeyVectorCount(relationOrdinal, candidateOrdinal uin
 		return 0, false
 	}
 	switch relationOrdinal {
-	case 24:
+	case 27:
 		row, rowOK := owner.schema.ClosedOperandsAt(int(candidateOrdinal))
 		if !rowOK {
 			return 0, false
@@ -358,7 +369,7 @@ func (owner *RelationOwner) KeyVectorAt(relationOrdinal, candidateOrdinal uint32
 		return 0, false
 	}
 	switch relationOrdinal {
-	case 24:
+	case 27:
 		row, rowOK := owner.schema.ClosedOperandsAt(int(candidateOrdinal))
 		if !rowOK {
 			return 0, false
@@ -812,16 +823,95 @@ func (owner *RelationOwner) Project(relationOrdinal, projectionOrdinal, candidat
 		}
 	case 24:
 		switch projectionOrdinal {
+		case 30:
+			candidate, candidateOK := owner.schema.RuntimeKindCallAt(int(candidateOrdinal))
+			if !candidateOK {
+				return 0, false
+			}
+			first, projectionOK := candidate.WriteTarget()
+			if !projectionOK {
+				return 0, false
+			}
+			projected := first
+			return owner.schema.CoordinateIndex(projected)
 		default:
 			return 0, false
 		}
 	case 25:
+		switch projectionOrdinal {
+		case 28:
+			candidate, candidateOK := owner.schema.RuntimeKindCallAt(int(candidateOrdinal))
+			if !candidateOK {
+				return 0, false
+			}
+			first, projectionOK := candidate.Subject()
+			if !projectionOK {
+				return 0, false
+			}
+			projected := first
+			return owner.schema.CoordinateIndex(projected)
+		default:
+			return 0, false
+		}
+	case 26:
+		switch projectionOrdinal {
+		case 29:
+			candidate, candidateOK := owner.schema.RuntimeKindCallAt(int(candidateOrdinal))
+			if !candidateOK {
+				return 0, false
+			}
+			first, projectionOK := candidate.Comparison()
+			if !projectionOK {
+				return 0, false
+			}
+			projected := first
+			return owner.schema.CoordinateIndex(projected)
+		default:
+			return 0, false
+		}
+	case 27:
+		switch projectionOrdinal {
+		default:
+			return 0, false
+		}
+	case 28:
 		switch projectionOrdinal {
 		default:
 			return 0, false
 		}
 	default:
 		return 0, false
+	}
+}
+
+// ProjectIdentity answers one candidate row's owner-issued identity: the
+// canonical digest, and the frame it was issued under. A content identity is
+// issued under no frame and answers zero; a semantic axis answers the frame
+// its own owner minted it at, which is what reconstitutes the key.
+func (owner *RelationOwner) ProjectIdentity(relationOrdinal, projectionOrdinal, candidateOrdinal uint32) (identity.ContentID, uint64, bool) {
+	if owner == nil || owner.schema == nil {
+		return identity.ContentID{}, 0, false
+	}
+	switch relationOrdinal {
+	case 24:
+		switch projectionOrdinal {
+		case 31:
+			candidate, candidateOK := owner.schema.RuntimeKindCallAt(int(candidateOrdinal))
+			if !candidateOK {
+				return identity.ContentID{}, 0, false
+			}
+			first, second, projectionOK := candidate.CallOccurrence()
+			if !projectionOK {
+				return identity.ContentID{}, 0, false
+			}
+			_ = first
+			projected := second
+			return projected, 0, true
+		default:
+			return identity.ContentID{}, 0, false
+		}
+	default:
+		return identity.ContentID{}, 0, false
 	}
 }
 
@@ -882,7 +972,7 @@ func (owner *RelationOwner) materializeSourceColumns() bool {
 // SourceFactColumn returns the immutable typed source fact column for one relation.
 // RelationCount is the sealed relation-ordinal extent. It preserves absent
 // materializations separately from a valid empty source column.
-func (*RelationOwner) RelationCount() int { return 26 }
+func (*RelationOwner) RelationCount() int { return 29 }
 
 func (owner *RelationOwner) SourceFactColumn(relationOrdinal uint32) (memberrelation.SourceColumn[Value], bool) {
 	if owner == nil || owner.schema == nil {

@@ -10,27 +10,13 @@ import (
 	"github.com/wippyai/go-lua/analysis/schema/rule"
 	"github.com/wippyai/go-lua/analysis/schema/structure"
 	"github.com/wippyai/go-lua/domain/call/calltest"
-	callowner "github.com/wippyai/go-lua/domain/call/owner"
 	"github.com/wippyai/go-lua/domain/composite"
 	"github.com/wippyai/go-lua/domain/composite/snapshottest"
 	heapdomain "github.com/wippyai/go-lua/domain/heap"
 	valuedomain "github.com/wippyai/go-lua/domain/value"
-	valueowner "github.com/wippyai/go-lua/domain/value/owner"
-	"github.com/wippyai/go-lua/domain/value/runtimekind"
+	runtimekindprogram "github.com/wippyai/go-lua/domain/value/runtimekind/program"
 	"github.com/wippyai/go-lua/internal/testfixture"
 )
-
-// lawPrincipals and lawAuthorities satisfy the rule's own need interfaces
-// structurally, so the declaration can be read without a composition root.
-type lawPrincipals struct{}
-
-func (lawPrincipals) ValuePrincipal() *valueowner.SchemaFragment { return nil }
-func (lawPrincipals) CallPrincipal() *callowner.SchemaFragment   { return nil }
-
-type lawAuthorities struct{}
-
-func (lawAuthorities) ValueAuthority() *valueowner.HotOwner { return nil }
-func (lawAuthorities) CallAuthority() *callowner.HotOwner   { return nil }
 
 // TestRuntimeKindRuleSubscribesToEveryOccurrenceFamilyItSeals is the placement
 // half of this rule's denominator. Value seals a RuntimeKindCall operand for
@@ -84,7 +70,7 @@ func TestRuntimeKindRuleSubscribesToEveryOccurrenceFamilyItSeals(t *testing.T) {
 		t.Fatalf("seal schemas heap=%s value=%s", heapFailure, valueFailure)
 	}
 
-	spec := runtimekind.RuleEntry[lawPrincipals, lawAuthorities]()
+	spec := runtimekindprogram.RuleEntry()
 	declared := make(map[schema.Key]rule.Issuance, len(spec.Issues))
 	for _, issuance := range spec.Issues {
 		if _, duplicate := declared[issuance.Occurrence]; duplicate {

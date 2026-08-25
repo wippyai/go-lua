@@ -34,6 +34,9 @@ const (
 	BinaryOrderSources                 schemaapi.Key  = "value/binary-order/sources"
 	ModuleLoadCallCandidates           schemaapi.Key  = "value/module-load/candidates"
 	ModuleLoadArguments                schemaapi.Key  = "value/module-load/arguments"
+	RuntimeKindCallCandidates          schemaapi.Key  = "value/runtime-kind/candidates"
+	RuntimeKindSubjects                schemaapi.Key  = "value/runtime-kind/subjects"
+	RuntimeKindComparisons             schemaapi.Key  = "value/runtime-kind/comparisons"
 	ClosedOperandParents               schemaapi.Key  = "value/closed-allocation/parents"
 	ClosedOperandCells                 schemaapi.Key  = "value/closed-allocation/operands"
 	StorageTransferSourceKey           schemaapi.Key  = "value/storage-transfer/source-key"
@@ -64,6 +67,10 @@ const (
 	BinaryOrderWrite                   schemaapi.Key  = "value/binary-order/write"
 	ModuleLoadArgumentKey              schemaapi.Key  = "value/module-load/argument-key"
 	ModuleLoadResultCoordinate         schemaapi.Key  = "value/module-load/coordinate"
+	RuntimeKindSubjectKey              schemaapi.Key  = "value/runtime-kind/subject-key"
+	RuntimeKindComparisonKey           schemaapi.Key  = "value/runtime-kind/comparison-key"
+	RuntimeKindWriteCoordinate         schemaapi.Key  = "value/runtime-kind/coordinate"
+	RuntimeKindCallOccurrence          schemaapi.Key  = "value/runtime-kind/call-occurrence"
 	ClosedOperandKey                   schemaapi.Key  = "value/closed-allocation/operand-key"
 	IdentityReducer                    schemaapi.Key  = "value/reducer/identity"
 	SourceReducer                      schemaapi.Key  = "value/reducer/source"
@@ -74,6 +81,7 @@ const (
 	PresenceRefinementReducer          schemaapi.Key  = "value/presence-refinement/reducer"
 	BinaryOrderReducer                 schemaapi.Key  = "value/binary-order/reducer"
 	ModuleLoadCallReducer              schemaapi.Key  = "value/module-load/reducer"
+	RuntimeKindCallReducer             schemaapi.Key  = "value/runtime-kind/reducer"
 	AllocationResultReducer            schemaapi.Key  = "value/allocation/reducer"
 	AllocationCarryTransform           schemaapi.Key  = "transform/value/allocation"
 	FreshResultRouteCarryTransform     schemaapi.Key  = "transform/value/fresh-result-route"
@@ -100,6 +108,8 @@ const (
 	CallFactCarrier                    member.Carrier = "carrier/call/fact"
 	FreshResultRouteTagCarrier         member.Carrier = "carrier/value/fresh-result-route-tag"
 	ModuleLoadCallCarrier              member.Carrier = "carrier/value/module-load-call"
+	RuntimeKindCallCarrier             member.Carrier = "carrier/value/runtime-kind-call"
+	RuntimeKindCallOccurrenceCarrier   member.Carrier = "carrier/value/runtime-kind-call-occurrence"
 	ClosedOperandsCarrier              member.Carrier = "carrier/value/closed-operands"
 	ClosedOperandCarrier               member.Carrier = "carrier/value/closed-operand"
 )
@@ -133,6 +143,9 @@ func AxisMemberCatalog() member.Catalog {
 			{Key: BinaryOrderSources, Subject: ValueFactCarrier, CandidateProvider: member.AxisRelationCandidate(member.RelationRef{Axis: schemaapi.EntryReference{Surface: schemaapi.SurfaceKind(2), Key: "value"}, Member: "value/binary-order/candidates"}), Inputs: []member.Carrier{BinaryOrderCarrier}},
 			{Key: ModuleLoadCallCandidates, Subject: ModuleLoadCallCarrier, CandidateProvider: member.AxisRelationCandidate(member.RelationRef{Axis: schemaapi.EntryReference{Surface: schemaapi.SurfaceKind(2), Key: "value"}, Member: "value/module-load/candidates"})},
 			{Key: ModuleLoadArguments, Subject: ValueFactCarrier, CandidateProvider: member.AxisRelationCandidate(member.RelationRef{Axis: schemaapi.EntryReference{Surface: schemaapi.SurfaceKind(2), Key: "value"}, Member: "value/module-load/candidates"}), Inputs: []member.Carrier{ModuleLoadCallCarrier}},
+			{Key: RuntimeKindCallCandidates, Subject: RuntimeKindCallCarrier, CandidateProvider: member.AxisRelationCandidate(member.RelationRef{Axis: schemaapi.EntryReference{Surface: schemaapi.SurfaceKind(2), Key: "value"}, Member: "value/runtime-kind/candidates"})},
+			{Key: RuntimeKindSubjects, Subject: ValueFactCarrier, CandidateProvider: member.AxisRelationCandidate(member.RelationRef{Axis: schemaapi.EntryReference{Surface: schemaapi.SurfaceKind(2), Key: "value"}, Member: "value/runtime-kind/candidates"}), Inputs: []member.Carrier{RuntimeKindCallCarrier}},
+			{Key: RuntimeKindComparisons, Subject: ValueFactCarrier, CandidateProvider: member.AxisRelationCandidate(member.RelationRef{Axis: schemaapi.EntryReference{Surface: schemaapi.SurfaceKind(2), Key: "value"}, Member: "value/runtime-kind/candidates"}), Inputs: []member.Carrier{RuntimeKindCallCarrier}},
 			{Key: ClosedOperandParents, Subject: ClosedOperandsCarrier, CandidateProvider: member.AxisRelationCandidate(member.RelationRef{Axis: schemaapi.EntryReference{Surface: schemaapi.SurfaceKind(2), Key: "value"}, Member: "value/closed-allocation/parents"}), Correspondences: []member.RelationRef{member.RelationRef{Axis: schemaapi.EntryReference{Surface: schemaapi.SurfaceKind(2), Key: "heap"}, Member: "heap/closed-allocation/candidates"}}, PublishesKeyVector: true},
 			{Key: ClosedOperandCells, Subject: ClosedOperandCarrier, CandidateProvider: member.AxisRelationCandidate(member.RelationRef{Axis: schemaapi.EntryReference{Surface: schemaapi.SurfaceKind(2), Key: "value"}, Member: "value/closed-allocation/parents"}), Inputs: []member.Carrier{ClosedOperandsCarrier}},
 		},
@@ -165,6 +178,10 @@ func AxisMemberCatalog() member.Catalog {
 			{Key: BinaryOrderWrite, Relation: BinaryOrderCandidates, Role: member.Destination, Result: ValueCoordinateCarrier, CandidateProvider: member.AxisRelationCandidate(member.RelationRef{Axis: schemaapi.EntryReference{Surface: schemaapi.SurfaceKind(2), Key: "value"}, Member: "value/binary-order/candidates"})},
 			{Key: ModuleLoadArgumentKey, Relation: ModuleLoadArguments, Role: member.Key, Result: ValueCoordinateCarrier, CandidateProvider: member.AxisRelationCandidate(member.RelationRef{Axis: schemaapi.EntryReference{Surface: schemaapi.SurfaceKind(2), Key: "value"}, Member: "value/module-load/candidates"})},
 			{Key: ModuleLoadResultCoordinate, Relation: ModuleLoadCallCandidates, Role: member.Destination, Result: ValueCoordinateCarrier, CandidateProvider: member.AxisRelationCandidate(member.RelationRef{Axis: schemaapi.EntryReference{Surface: schemaapi.SurfaceKind(2), Key: "value"}, Member: "value/module-load/candidates"})},
+			{Key: RuntimeKindSubjectKey, Relation: RuntimeKindSubjects, Role: member.Key, Result: ValueCoordinateCarrier, CandidateProvider: member.AxisRelationCandidate(member.RelationRef{Axis: schemaapi.EntryReference{Surface: schemaapi.SurfaceKind(2), Key: "value"}, Member: "value/runtime-kind/candidates"})},
+			{Key: RuntimeKindComparisonKey, Relation: RuntimeKindComparisons, Role: member.Key, Result: ValueCoordinateCarrier, CandidateProvider: member.AxisRelationCandidate(member.RelationRef{Axis: schemaapi.EntryReference{Surface: schemaapi.SurfaceKind(2), Key: "value"}, Member: "value/runtime-kind/candidates"})},
+			{Key: RuntimeKindWriteCoordinate, Relation: RuntimeKindCallCandidates, Role: member.Destination, Result: ValueCoordinateCarrier, CandidateProvider: member.AxisRelationCandidate(member.RelationRef{Axis: schemaapi.EntryReference{Surface: schemaapi.SurfaceKind(2), Key: "value"}, Member: "value/runtime-kind/candidates"})},
+			{Key: RuntimeKindCallOccurrence, Relation: RuntimeKindCallCandidates, Role: member.Identity, Result: RuntimeKindCallOccurrenceCarrier, CandidateProvider: member.AxisRelationCandidate(member.RelationRef{Axis: schemaapi.EntryReference{Surface: schemaapi.SurfaceKind(2), Key: "value"}, Member: "value/runtime-kind/candidates"})},
 			{Key: ClosedOperandKey, Relation: ClosedOperandCells, Role: member.Key, Result: ValueCoordinateCarrier, CandidateProvider: member.AxisRelationCandidate(member.RelationRef{Axis: schemaapi.EntryReference{Surface: schemaapi.SurfaceKind(2), Key: "value"}, Member: "value/closed-allocation/parents"})},
 		},
 		[]member.Reducer{
@@ -211,6 +228,13 @@ func AxisMemberCatalog() member.Catalog {
 			{Key: ModuleLoadCallReducer, Inputs: []member.ReducerInput{
 				{Axis: valueAxis, Carrier: ValueFactCarrier, Form: member.ReadFormExact, Multiplicity: member.MultiplicityOne},
 				{Axis: schemaapi.EntryReference{Surface: schemaapi.SurfaceKindAxis, Key: "call"}, Carrier: CallFactCarrier, Form: member.ReadFormExact, Multiplicity: member.MultiplicityOne},
+			}, Outputs: []member.ReducerOutput{
+				{Axis: valueAxis, Carrier: ValueFactCarrier},
+			}},
+			{Key: RuntimeKindCallReducer, Inputs: []member.ReducerInput{
+				{Axis: schemaapi.EntryReference{Surface: schemaapi.SurfaceKindAxis, Key: "call"}, Carrier: CallFactCarrier, Form: member.ReadFormExact, Multiplicity: member.MultiplicityOne},
+				{Axis: valueAxis, Carrier: ValueFactCarrier, Form: member.ReadFormExact, Multiplicity: member.MultiplicityOne},
+				{Axis: valueAxis, Carrier: ValueFactCarrier, Form: member.ReadFormExact, Multiplicity: member.MultiplicityOne},
 			}, Outputs: []member.ReducerOutput{
 				{Axis: valueAxis, Carrier: ValueFactCarrier},
 			}},

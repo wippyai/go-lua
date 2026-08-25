@@ -61,6 +61,7 @@ import (
 	valuerefinementprogram "github.com/wippyai/go-lua/domain/value/refinement/program"
 	valueresultalias "github.com/wippyai/go-lua/domain/value/resultalias"
 	valueruntimekind "github.com/wippyai/go-lua/domain/value/runtimekind"
+	valueruntimekindprogram "github.com/wippyai/go-lua/domain/value/runtimekind/program"
 	valuesource "github.com/wippyai/go-lua/domain/value/source"
 	valuetransfer "github.com/wippyai/go-lua/domain/value/transfer"
 )
@@ -155,7 +156,7 @@ func ruleTemplateWiring[P Principals, A Authorities]() ([]*rule.Template, []Rule
 	add(WireGeneratedRuleWithFamily[P, A](callsiteopaqueprogram.RuleEntry(), callsiteopaque.InstallFamily[A]))
 	add(WireGeneratedRuleWithFamily[P, A](callsitebodyprogram.RuleEntry(), callsitebody.InstallFamily[A]))
 	add(WireRule(callactivation.RuleEntry[P, A](), callactivation.DeclareRule[P], callactivation.RegisterRule, nil, callactivation.BindRule[A], nil, nil, activationRule))
-	add(WireRule(valueruntimekind.RuleEntry[P, A](), valueruntimekind.DeclareRule[P], valueruntimekind.RegisterRule, nil, valueruntimekind.BindRule[A], nil, nil, nil))
+	add(WireGeneratedRuleWithFamily[P, A](valueruntimekindprogram.RuleEntry(), valueruntimekind.InstallFamily[A]))
 	add(WireGeneratedRule[P, A](valuebootstrap.RuleEntry()))
 	add(WireGeneratedRule[P, A](heapbootstrap.RuleEntry()))
 	add(WireGeneratedRule[P, A](valuetransfer.RuleEntry()))

@@ -25,6 +25,7 @@ import (
 	freshresultprogram "github.com/wippyai/go-lua/domain/value/freshresult/program"
 	valuemoduleloadprogram "github.com/wippyai/go-lua/domain/value/moduleload/program"
 	refinementprogram "github.com/wippyai/go-lua/domain/value/refinement/program"
+	valueruntimekindprogram "github.com/wippyai/go-lua/domain/value/runtimekind/program"
 )
 
 // GeneratedFileName is the one name an emitted family is written under. It is
@@ -116,6 +117,14 @@ func Families() []Family {
 				Spec:        valuemoduleloadprogram.RuleEntry(),
 			},
 			Directory: "domain/value/moduleload",
+		},
+		{
+			Target: emit.Target{
+				PackagePath: "github.com/wippyai/go-lua/domain/value/runtimekind",
+				PackageName: "runtimekind",
+				Spec:        valueruntimekindprogram.RuleEntry(),
+			},
+			Directory: "domain/value/runtimekind",
 		},
 		{
 			Target: emit.Target{
@@ -252,6 +261,16 @@ func Declarations() []Declaration {
 				Spec:        valuemoduleloadprogram.RuleEntry(),
 			},
 			Directory: "domain/value/moduleload/program",
+		},
+		{
+			Target: emitlaw.Target{
+				PackagePath: "github.com/wippyai/go-lua/domain/value/runtimekind/program",
+				PackageName: "program",
+				Declaration: "RuntimeKindCallResult",
+				Entry:       "RuleEntry",
+				Spec:        valueruntimekindprogram.RuleEntry(),
+			},
+			Directory: "domain/value/runtimekind/program",
 		},
 		{
 			Target: emitlaw.Target{
