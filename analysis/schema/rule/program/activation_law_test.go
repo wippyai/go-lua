@@ -27,7 +27,7 @@ func activationLawProjection(key string) member.ProjectionRef {
 
 func activationLawBranch() ActivationDecl {
 	return ActivationDecl{
-		Branch:      1,
+		Branch:      lawRelation("activation-law/branches"),
 		Application: activationLawProjection("activation-law/application"),
 		Target:      activationLawProjection("activation-law/target"),
 		Endpoint:    activationLawProjection("activation-law/endpoint"),
@@ -36,22 +36,23 @@ func activationLawBranch() ActivationDecl {
 	}
 }
 
-// activationLawProgram is the A form as a whole: an exact trigger read, a
-// parent-declaring branch vector over the same candidate row, a structural
-// publication, the transport vector one branch instantiates, the family its
-// branches are grouped under, and the branch identities.
+// activationLawProgram is the A form as a whole: ONE exact trigger read, a
+// structural publication, the transport vector one branch instantiates, the
+// family its branches are grouped under, and the branch identities.
+//
+// There is no branch READ. The branch set is enumerated through its relation's
+// own owner - a branch carries no fact any judgment consumes and has no
+// coordinate to be read at - so the A form declares one read, not two.
 func activationLawProgram() Program {
 	branch := activationLawBranch()
 	program := seq5742Program(
 		"activation-law",
 		[]JoinDecl{
 			seq5742Join("activation-law/trigger", []SourceRef{CandidateSource()}, Exact, false, false),
-			seq5742Join("activation-law/branch", []SourceRef{CandidateSource()}, Summary, false, true),
 		},
-		[]JoinRef{0, 1},
+		[]JoinRef{0},
 		[]OutputDecl{seq5742Output("activation-law/write", ModeStructural, 0)},
 	)
-	program.Joins[1].Parent = lawRelation("activation-law/candidate")
 	program.Transport = []TransportDecl{{Axis: AxisRef(lawReference("activation-law/transport"))}}
 	program.ActivationRole = schema.Key("semantic/activation-family/activation-law")
 	program.Activation = &branch
@@ -85,6 +86,7 @@ func TestAStructuralPublicationDeclaresItsBranchIdentities(t *testing.T) {
 // address.
 func TestEveryBranchIdentityIsRequired(t *testing.T) {
 	for name, damage := range map[string]func(*ActivationDecl){
+		"branch":      func(branch *ActivationDecl) { branch.Branch = member.RelationRef{} },
 		"application": func(branch *ActivationDecl) { branch.Application = member.ProjectionRef{} },
 		"target":      func(branch *ActivationDecl) { branch.Target = member.ProjectionRef{} },
 		"endpoint":    func(branch *ActivationDecl) { branch.Endpoint = member.ProjectionRef{} },
@@ -103,25 +105,22 @@ func TestEveryBranchIdentityIsRequired(t *testing.T) {
 	}
 }
 
-// TestTheBranchJoinIsTheOneWhoseMembersAreBranches ties the identity
-// vocabulary to the read it projects over. A branch reference naming a join
-// that does not exist, or one whose members are not a cold member set, names
-// rows the issuance pass could not enumerate.
-func TestTheBranchJoinIsTheOneWhoseMembersAreBranches(t *testing.T) {
+// TestTheBranchSetIsNamedAsARelationAndNotAsARead is the shape the A form
+// rests on. A branch carries no fact any judgment consumes and has no
+// coordinate of its own to be read at, so the vocabulary names the RELATION
+// whose members the branches are; the issuance pass walks it through that
+// relation's owner. Whether it is a nested member set of this rule's candidate
+// is the catalog's answer and is checked where the catalog is in scope.
+func TestTheBranchSetIsNamedAsARelationAndNotAsARead(t *testing.T) {
 	program := activationLawProgram()
-	branch := activationLawBranch()
-	branch.Branch = 7
-	program.Activation = &branch
-	if problem, valid := program.Check(); valid || problem.Kind != ProblemActivation {
-		t.Fatalf("a branch reference naming no declared join: valid=%v problem=%+v", valid, problem)
+	if program.JoinCount() != 1 {
+		t.Fatalf("the A form declares %d reads, want only its trigger read", program.JoinCount())
 	}
-
-	program = activationLawProgram()
-	branch = activationLawBranch()
-	branch.Branch = 0
+	branch := activationLawBranch()
+	branch.Branch = member.RelationRef{}
 	program.Activation = &branch
 	if problem, valid := program.Check(); valid || problem.Kind != ProblemActivation {
-		t.Fatalf("a branch reference naming the exact trigger read: valid=%v problem=%+v", valid, problem)
+		t.Fatalf("a vocabulary naming no branch relation: valid=%v problem=%+v", valid, problem)
 	}
 }
 
@@ -155,9 +154,11 @@ func TestTheBranchIdentitiesAreResolvableReferences(t *testing.T) {
 	declared := activationLawProgram()
 	absent := activationLawProgram()
 	absent.Transport, absent.ActivationRole, absent.Activation = nil, "", nil
-	if len(declared.References()) != len(absent.References())+len(declared.Activation.projections())+len(declared.Transport) {
-		t.Fatalf("branch identities contribute %d references, want one per projection",
-			len(declared.References())-len(absent.References())-len(declared.Transport))
+	// One reference per identity projection, plus the branch relation itself.
+	want := len(absent.References()) + len(declared.Activation.projections()) + 1 + len(declared.Transport)
+	if len(declared.References()) != want {
+		t.Fatalf("the branch vocabulary contributes %d references, want %d - one per projection and one for the relation",
+			len(declared.References())-len(absent.References())-len(declared.Transport), len(declared.Activation.projections())+1)
 	}
 	for _, reference := range declared.Activation.references() {
 		if !reference.Declared() {

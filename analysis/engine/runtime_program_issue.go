@@ -1119,20 +1119,22 @@ func declareGeneratedActivationIssuance(
 	if !branchOK {
 		return pendingRuleIssuance{}, false
 	}
-	branchRead, branchReadOK := descriptor.ReadAt(int(branch.Branch))
-	if !branchReadOK {
+	// The branch set is ENUMERATED here, through the owner that publishes it,
+	// and never read: a branch carries no fact any judgment consumes and has
+	// no coordinate of its own to be read at. Walking the owner is the whole
+	// cost, and it is paid once per trigger at issuance rather than once per
+	// branch on every invocation.
+	branchOwner, branchOwnerOK := relationOwnerForGeneratedAxis(state, branch.Branch.Axis)
+	if !branchOwnerOK {
 		return pendingRuleIssuance{}, false
 	}
-	// The branch coordinates are the ones this pass already enumerated for the
-	// branch read. Walking the owner again would be a second enumeration of
-	// one set, free to answer differently.
-	coordinates, coordinatesOK := generatedMemberSetAt(memberSets, int(branch.Branch))
+	coordinates, coordinatesOK := generatedBranchCoordinates(branchOwner, branch.Branch.Member, denseCandidate)
 	if !coordinatesOK {
 		return pendingRuleIssuance{}, false
 	}
 	candidateOwner, candidateOwnerOK := identityOwnerForGeneratedAxis(state, descriptor.CandidateRelation().Axis)
-	branchOwner, branchOwnerOK := identityOwnerForGeneratedAxis(state, branchRead.Relation.Axis)
-	if !candidateOwnerOK || !branchOwnerOK {
+	branchIdentities, branchIdentitiesOK := identityOwnerForGeneratedAxis(state, branch.Branch.Axis)
+	if !candidateOwnerOK || !branchIdentitiesOK {
 		return pendingRuleIssuance{}, false
 	}
 	application, applicationOK := projectedSemanticIdentity(candidateOwner, descriptor.CandidateRelation().Member, branch.Application.Member, denseCandidate)
@@ -1150,11 +1152,11 @@ func declareGeneratedActivationIssuance(
 	// came from.
 	grouped := make([][]MountedActivationCandidate, len(coordinates))
 	for branchOrdinal, coordinate := range coordinates {
-		relation := branchRead.Relation.Member
-		target, targetOK := projectedSemanticIdentity(branchOwner, relation, branch.Target.Member, coordinate)
-		endpoint, endpointOK := projectedSemanticIdentity(branchOwner, relation, branch.Endpoint.Member, coordinate)
-		module, moduleOK := projectedContentIdentity(branchOwner, relation, branch.Mount.Member, coordinate)
-		body, bodyOK := projectedContentIdentity(branchOwner, relation, branch.Body.Member, coordinate)
+		relation := branch.Branch.Member
+		target, targetOK := projectedSemanticIdentity(branchIdentities, relation, branch.Target.Member, coordinate)
+		endpoint, endpointOK := projectedSemanticIdentity(branchIdentities, relation, branch.Endpoint.Member, coordinate)
+		module, moduleOK := projectedContentIdentity(branchIdentities, relation, branch.Mount.Member, coordinate)
+		body, bodyOK := projectedContentIdentity(branchIdentities, relation, branch.Body.Member, coordinate)
 		if !targetOK || !endpointOK || !moduleOK || !bodyOK || target == endpoint {
 			return pendingRuleIssuance{}, false
 		}
@@ -1192,15 +1194,26 @@ func declareGeneratedActivationIssuance(
 	return issuance, true
 }
 
-// generatedMemberSetAt answers the coordinates this pass enumerated for one
-// declared join.
-func generatedMemberSetAt(memberSets []generatedMemberSet, join int) ([]uint32, bool) {
-	for _, set := range memberSets {
-		if set.join == join {
-			return set.coordinates, true
-		}
+// generatedBranchCoordinates enumerates one trigger's candidate branches: the
+// ordered member set the owner publishes under that trigger's candidate row.
+//
+// The ordinal a coordinate is returned at IS the branch's address - it is what
+// the relation's own Ordinal carrier names it by, and what an invocation
+// publishes when it settles that branch. Nothing here reads a Factor.
+func generatedBranchCoordinates(owner memberrelation.Owner, relation, parent uint32) ([]uint32, bool) {
+	count, countOK := owner.MemberCount(relation, parent)
+	if !countOK || count < 0 {
+		return nil, false
 	}
-	return nil, false
+	coordinates := make([]uint32, 0, count)
+	for ordinal := 0; ordinal < count; ordinal++ {
+		coordinate, coordinateOK := owner.MemberAt(relation, parent, ordinal)
+		if !coordinateOK {
+			return nil, false
+		}
+		coordinates = append(coordinates, coordinate)
+	}
+	return coordinates, true
 }
 
 // identityOwnerForGeneratedAxis resolves the owner surface that answers an

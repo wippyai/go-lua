@@ -20,11 +20,17 @@ import (
 // It returns no value because a structural publication writes no fact: its
 // whole result is the disposition, which is why a structural fold declares no
 // output carrier at all.
-type BranchReducer[V any] interface {
+//
+// It receives no cell either. A branch carries no fact any judgment consumes -
+// the trigger's own value and the branch's identity settle it - and a branch
+// has no coordinate of its own to be read at, so the ordinal is the whole of
+// what one invocation is handed about it. Everything else the fold needs is
+// the trigger's, sealed on the reducer.
+type BranchReducer interface {
 	// Reduce answers whether the branch at this ordinal is one the trigger
 	// names. Concrete activates it, NoSelection leaves it unsettled, and any
 	// other declared disposition ends the row.
-	Reduce(branch uint64, cell MemberCell[V]) structure.ReductionOutcome
+	Reduce(branch uint64) structure.ReductionOutcome
 	// Empty is the row's disposition when the trigger declares no branch at
 	// all. A trigger with no route to instantiate is a real answer, so the
 	// reducer states it rather than the form assuming one.
@@ -39,11 +45,15 @@ type BranchReducer[V any] interface {
 // is not the same statement as a trigger whose evaluation refused. That is why
 // an unnamed branch is skipped rather than propagated - the distinction the
 // hand lane spells as an empty locator batch.
-func FoldBranchSet[V any, R BranchReducer[V]](run *Run, ticket *Ticket, cells []MemberCell[V], reducer R) structure.ReductionOutcome {
-	if run == nil || ticket == nil || !ticket.Valid() || !run.Owns(*ticket) {
+// The branch COUNT is the census the issuance pass enumerated for this trigger
+// through the relation's own owner. Walking it costs nothing per branch beyond
+// the reducer's own answer: an activation over a program-wide body table is
+// therefore O(the targets a value names), not O(the bodies that exist.)
+func FoldBranchSet[R BranchReducer](run *Run, ticket *Ticket, branches int, reducer R) structure.ReductionOutcome {
+	if run == nil || ticket == nil || !ticket.Valid() || !run.Owns(*ticket) || branches < 0 {
 		return structure.Refuse
 	}
-	if len(cells) == 0 {
+	if branches == 0 {
 		// The empty answer may not claim to have settled branches: there were
 		// none to settle, so a Concrete here would be a publication with
 		// nothing behind it.
@@ -53,8 +63,8 @@ func FoldBranchSet[V any, R BranchReducer[V]](run *Run, ticket *Ticket, cells []
 		}
 		return outcome
 	}
-	for index, cell := range cells {
-		outcome := reducer.Reduce(uint64(index), cell)
+	for index := 0; index < branches; index++ {
+		outcome := reducer.Reduce(uint64(index))
 		if !outcome.Available() {
 			return structure.Refuse
 		}

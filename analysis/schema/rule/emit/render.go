@@ -524,13 +524,9 @@ func renderStructuralExecute(out *strings.Builder, built *plan) error {
 	imports := built.imports
 	execution := imports.use(executionPackagePath)
 	structure := imports.use(structurePackagePath)
-	branch := built.branch.join
 
 	invocation := map[string]string{}
 	for _, join := range built.joins {
-		if join == branch {
-			continue
-		}
 		switch join.read.Form {
 		case program.Exact:
 			invocation[fmt.Sprintf("input%d", join.position)] = fmt.Sprintf("input%d", join.position)
@@ -539,15 +535,14 @@ func renderStructuralExecute(out *strings.Builder, built *plan) error {
 		}
 	}
 
-	out.WriteString("// Execute settles one trigger's candidate branches: the prerequisite reads are\n")
-	out.WriteString("// taken, the cold branch set is delivered a member at a time, and each branch\n")
-	out.WriteString("// the trigger names is published by its own ordinal.\n")
+	out.WriteString("// Execute settles one trigger's candidate branches: the declared reads are\n")
+	out.WriteString("// taken, and every branch of the set the issuance pass enumerated for this row\n")
+	out.WriteString("// is settled in turn. A branch is addressed by its ordinal and read at no\n")
+	out.WriteString("// coordinate, so the census is the whole of what this worker is handed about\n")
+	out.WriteString("// the set.\n")
 	renderExecutePrologue(out, built)
 
 	for _, join := range built.joins {
-		if join == branch {
-			continue
-		}
 		switch join.read.Form {
 		case program.Exact:
 			fmt.Fprintf(out, "\tvar input%d %s\n", join.position, imports.typeName(join.axis.fact))
@@ -558,15 +553,17 @@ func renderStructuralExecute(out *strings.Builder, built *plan) error {
 		case program.Summary:
 			renderMemberVector(out, built, join)
 		default:
-			return unexpressible(built.target.Spec.Key, fmt.Sprintf("a %s prerequisite of a structural output", readFormName(join.read.Form)),
-				fmt.Sprintf("join %d is neither the branch set nor a prerequisite the emitted worker delivers", join.position))
+			return unexpressible(built.target.Spec.Key, fmt.Sprintf("a %s read beside a structural output", readFormName(join.read.Form)),
+				fmt.Sprintf("join %d is not a prerequisite the emitted worker delivers", join.position))
 		}
 	}
 
-	renderMemberVector(out, built, branch)
-	fmt.Fprintf(out, "\t_ = %sVector\n", branch.name)
-	fmt.Fprintf(out, "\toutcome := %s.FoldBranchSet[%s](lane.run, &ticket, %sCells, %s{%s})\n",
-		execution, imports.typeName(branch.axis.fact), branch.name, reducerType, strings.Join(reducerLiteralFields(built, invocation), ", "))
+	out.WriteString("\t// The census is the engine's own: it enumerated this trigger's branch set\n")
+	out.WriteString("\t// once, at issuance, through the relation's owner. Nothing here counts again.\n")
+	out.WriteString("\tbranches, branchesOK := row.Branches()\n")
+	fmt.Fprintf(out, "\tif !branchesOK {\n\t\treturn lane.settle(ticket, %s.Refuse)\n\t}\n", structure)
+	fmt.Fprintf(out, "\toutcome := %s.FoldBranchSet(lane.run, &ticket, branches, %s{%s})\n",
+		execution, reducerType, strings.Join(reducerLiteralFields(built, invocation), ", "))
 	fmt.Fprintf(out, "\tif !ticket.Submit(outcome) {\n\t\treturn %s.Result{}, false\n\t}\n", execution)
 	out.WriteString("\t// A structural row concludes no fact, so its Concrete disposition carries no\n")
 	out.WriteString("\t// value slot at all.\n")
@@ -575,9 +572,6 @@ func renderStructuralExecute(out *strings.Builder, built *plan) error {
 	for _, join := range built.joins {
 		switch join.read.Form {
 		case program.Exact:
-			if join == branch {
-				continue
-			}
 			if err := renderExactCell(out, built, join); err != nil {
 				return err
 			}

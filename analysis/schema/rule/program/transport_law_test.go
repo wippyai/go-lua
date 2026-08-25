@@ -11,8 +11,9 @@ func transportAxis(key string) AxisRef {
 }
 
 // transportProgram is the call-activation shape with a declared transport
-// vector: one exact candidate read, the cold branch set hanging off that same
-// candidate row, and one structural publication.
+// vector: one exact candidate read and one structural publication. The branch
+// set is named by the vocabulary and enumerated through its owner, so it is
+// not among the reads.
 //
 // The vector, the family and the branch vocabulary are one declaration, so a
 // specimen carrying rows carries all three; a specimen carrying none carries
@@ -22,12 +23,10 @@ func transportProgram(rows []TransportDecl) Program {
 		"call-activation",
 		[]JoinDecl{
 			seq5742Join("call-activation/call", []SourceRef{CandidateSource()}, Exact, false, false),
-			seq5742Join("call-activation/branch", []SourceRef{CandidateSource()}, Summary, false, true),
 		},
-		[]JoinRef{0, 1},
+		[]JoinRef{0},
 		[]OutputDecl{seq5742Output("call-activation/write", ModeStructural, 0)},
 	)
-	program.Joins[1].Parent = lawRelation("call-activation/candidate")
 	program.Transport = rows
 	if len(rows) != 0 {
 		program.ActivationRole = "semantic/activation-family/call-body"

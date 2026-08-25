@@ -74,29 +74,22 @@ func seq5742Specimens() map[string]Program {
 			[]OutputDecl{seq5742Output("heap-raw-get/write", ModeExact, 0)},
 		),
 
-		// Call activation reads the exact Call candidate, and reads the branch
-		// set hanging off that same candidate row as a whole vector.
+		// Call activation reads the exact Call candidate and nothing else.
 		//
-		// The branch read is a parent-declaring Summary, not a selection, and
-		// it is sourced from the CANDIDATE rather than from the Call fact.
-		// Which body routes a trigger has is a property of the trigger, fixed
-		// before any solve - the construct topology mounts one activation
-		// member per branch - and the fact only decides which of them
-		// activate. A selection would put the branch set inside the
-		// invocation, where nothing could have mounted it.
-		"call-activation": func() Program {
-			program := seq5742Program(
-				"call-activation",
-				[]JoinDecl{
-					seq5742Join("call-activation/call", []SourceRef{CandidateSource()}, Exact, false, false),
-					seq5742Join("call-activation/branch", []SourceRef{CandidateSource()}, Summary, false, true),
-				},
-				[]JoinRef{0, 1},
-				[]OutputDecl{seq5742Output("call-activation/write", ModeStructural, 0)},
-			)
-			program.Joins[1].Parent = lawRelation("call-activation/candidate")
-			return program
-		}(),
+		// Its candidate branches are named by the declaration's own branch
+		// vocabulary and enumerated through that relation's owner, never read.
+		// A branch carries no fact any judgment consumes - the trigger's value
+		// and the branch's identity settle it - and a branch has no coordinate
+		// of its own to be read at, so a read here would deliver the trigger's
+		// cell once per branch of a program-wide table.
+		"call-activation": seq5742Program(
+			"call-activation",
+			[]JoinDecl{
+				seq5742Join("call-activation/call", []SourceRef{CandidateSource()}, Exact, false, false),
+			},
+			[]JoinRef{0},
+			[]OutputDecl{seq5742Output("call-activation/write", ModeStructural, 0)},
+		),
 
 		// RawSet is the same uniform chain with its Heap route write: receiver
 		// exact -> key selected -> heap selected -> pack selected -> source
@@ -226,12 +219,12 @@ func TestProgramSeq5742HostileShapesUseAuditedIncidence(t *testing.T) {
 			slots:        []uint16{0},
 		},
 		"call-activation": {
-			sources:      [][]SourceRef{{CandidateSource()}, {CandidateSource()}},
-			forms:        []ReadForm{Exact, Summary},
-			predicates:   []bool{false, false},
-			parents:      []bool{false, true},
-			denominators: []bool{false, true},
-			inputs:       []JoinRef{0, 1},
+			sources:      [][]SourceRef{{CandidateSource()}},
+			forms:        []ReadForm{Exact},
+			predicates:   []bool{false},
+			parents:      []bool{false},
+			denominators: []bool{false},
+			inputs:       []JoinRef{0},
 			modes:        []OutputMode{ModeStructural},
 			slots:        []uint16{0},
 		},
@@ -277,11 +270,11 @@ func TestProgramSeq5742HostileShapesUseAuditedIncidence(t *testing.T) {
 // least one join is rooted at the candidate.
 //
 // Whether a specimen ALSO chains through a prior result is a property of the
-// geometry it models, not of being well-formed. call-activation reads its
-// trigger and its branch set from the same candidate row in parallel, because
-// which routes a trigger has is a property of the trigger rather than of the
-// fact read beside it. The inventory-wide coverage of the dependent shape is
-// asserted once, over the inventory, below.
+// geometry it models, not of being well-formed. call-activation reads only its
+// trigger: its candidate branches are named by its own branch vocabulary and
+// enumerated through that relation's owner, so they are not a read at all. The
+// inventory-wide coverage of the dependent shape is asserted once, over the
+// inventory, below.
 func assertSeq5742OrderedSources(t *testing.T, program Program) bool {
 	t.Helper()
 	seenCandidate, seenPrior := false, false
@@ -344,7 +337,7 @@ func TestProgramRejectsSeq5742NearestNegativeDeclarations(t *testing.T) {
 	// Selected, summary, and complete reads are closed only when their
 	// denominator is declared. An absent denominator is not an open-ended
 	// fallback.
-	missingDenominator := seq5742Specimens()["call-activation"]
+	missingDenominator := seq5742Specimens()["heap-closed-allocation"]
 	missingDenominator.Joins[1].Read.Contract.DenominatorRef = DenominatorRef{}
 	if problem, valid := missingDenominator.Check(); valid || problem.Kind != ProblemJoin || problem.Join != 1 {
 		t.Fatalf("missing denominator valid=%v problem=%+v", valid, problem)

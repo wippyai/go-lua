@@ -325,14 +325,16 @@ func DeclareGeneratedRuleSlot(
 	var activationBranch *ruleplan.Activation
 	if branch, branchOK := compiled.ActivationBranch(); branchOK {
 		normalized := branch
+		normalizedBranchAxis, branchAxisOK := generatedRuntimeAxis(factorDirectory, catalog, branch.Branch.Axis)
 		normalizedApplication, applicationOK := generatedRuntimeAxis(factorDirectory, catalog, branch.Application.Axis)
 		normalizedTarget, targetOK := generatedRuntimeAxis(factorDirectory, catalog, branch.Target.Axis)
 		normalizedEndpoint, endpointOK := generatedRuntimeAxis(factorDirectory, catalog, branch.Endpoint.Axis)
 		normalizedMount, mountOK := generatedRuntimeAxis(factorDirectory, catalog, branch.Mount.Axis)
 		normalizedBody, bodyOK := generatedRuntimeAxis(factorDirectory, catalog, branch.Body.Axis)
-		if !applicationOK || !targetOK || !endpointOK || !mountOK || !bodyOK {
+		if !branchAxisOK || !applicationOK || !targetOK || !endpointOK || !mountOK || !bodyOK {
 			return refuse()
 		}
+		normalized.Branch.Axis = normalizedBranchAxis
 		normalized.Application.Axis = normalizedApplication
 		normalized.Target.Axis = normalizedTarget
 		normalized.Endpoint.Axis = normalizedEndpoint

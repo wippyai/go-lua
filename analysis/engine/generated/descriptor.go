@@ -227,7 +227,7 @@ func NewPlanCompiledRule(spec CompiledRuleSpec) (CompiledRule, bool) {
 	if !validTransportVector(rule.transports, outputCopy[0].Mode, spec.AxisCount) {
 		return CompiledRule{}, false
 	}
-	if !validActivationBranch(rule.branch, rule.branchPresent, len(rule.transports) != 0, readCopy, spec.AxisCount) {
+	if !validActivationBranch(rule.branch, rule.branchPresent, len(rule.transports) != 0, spec.AxisCount) {
 		return CompiledRule{}, false
 	}
 	for _, read := range readCopy {
@@ -449,21 +449,18 @@ func validTransportVector(transports []ruleplan.Transport, mode ruleprogram.Outp
 // the other describes a mount nothing could address or an address nothing
 // mounts.
 //
-// The branch ordinal must name a read whose members are a cold member set. It
-// is the only kind of read whose rows the issuance pass can enumerate, and the
-// construct plane mounts one activation member per row before any solve.
-func validActivationBranch(branch ruleplan.Activation, present, transported bool, reads []ReadPlan, axisCount int) bool {
+// The branch relation is ENUMERATED and never read. Its members carry no fact
+// any judgment consumes and have no coordinate of their own to be read at, so
+// the descriptor names the relation and the issuance pass walks it through its
+// owner - which is also why a structural rule declares one read, not two.
+func validActivationBranch(branch ruleplan.Activation, present, transported bool, axisCount int) bool {
 	if present != transported {
 		return false
 	}
 	if !present {
 		return branch == ruleplan.Activation{}
 	}
-	if uint64(branch.Branch) >= uint64(len(reads)) {
-		return false
-	}
-	read := reads[branch.Branch]
-	if !read.ParentPresent || read.Form != ruleprogram.Summary {
+	if !validRelationAddr(branch.Branch) || uint64(branch.Branch.Axis) >= uint64(axisCount) {
 		return false
 	}
 	for _, address := range []ruleplan.ProjectionAddr{branch.Application, branch.Target, branch.Endpoint, branch.Mount, branch.Body} {
@@ -628,7 +625,7 @@ func (rule CompiledRule) Available() bool {
 	if !validTransportVector(rule.transports, output.Mode, int(rule.axisCount)) {
 		return false
 	}
-	if !validActivationBranch(rule.branch, rule.branchPresent, len(rule.transports) != 0, rule.reads, int(rule.axisCount)) {
+	if !validActivationBranch(rule.branch, rule.branchPresent, len(rule.transports) != 0, int(rule.axisCount)) {
 		return false
 	}
 	if rule.carry != nil {

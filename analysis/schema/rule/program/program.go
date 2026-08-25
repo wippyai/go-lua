@@ -87,11 +87,16 @@ func (transport TransportDecl) Available() bool { return transport.Axis.Availabl
 // which the issuance pass already holds; a rule's axis restating it would be a
 // second authority over the Link's relation.
 type ActivationDecl struct {
-	// Branch is the join whose members are the candidate branches. It is the
-	// parent-declaring vector read: the branches are cold, published by the
-	// owner under the trigger's own candidate row, so the construct plane can
-	// mount one member for each before any solve.
-	Branch JoinRef
+	// Branch is the relation whose members are the candidate branches: a
+	// nested member set hanging off the rule's own candidate row.
+	//
+	// It is ENUMERATED and never read. A branch's fact is not part of any
+	// judgment - the trigger's own value and the branch's identity settle it -
+	// and a branch has no coordinate of its own to be read at, so a read here
+	// would deliver the trigger's cell once per branch. The owner publishes
+	// this set through MemberCount/MemberAt, and the issuance pass walks it
+	// directly.
+	Branch member.RelationRef
 	// Application is the identity the trigger row is applied under, projected
 	// from the rule's own candidate row rather than from a branch: every
 	// branch of one trigger is an alternative of the same application.
@@ -111,7 +116,7 @@ type ActivationDecl struct {
 // resolved by is declared. The row is whole or absent: a branch missing any
 // one of them is a member the construct plane could not address.
 func (activation ActivationDecl) Available() bool {
-	return activation.Application.Available() && activation.Target.Available() &&
+	return activation.Branch.Available() && activation.Application.Available() && activation.Target.Available() &&
 		activation.Endpoint.Available() && activation.Mount.Available() && activation.Body.Available()
 }
 
@@ -126,7 +131,10 @@ func (activation ActivationDecl) projections() []member.ProjectionRef {
 }
 
 func (activation ActivationDecl) references() schema.EntryReferences {
-	references := make(schema.EntryReferences, 0, 5)
+	references := make(schema.EntryReferences, 0, 6)
+	if activation.Branch.Declared() {
+		references = append(references, activation.Branch.EntryReference())
+	}
 	for _, projection := range activation.projections() {
 		if projection.Declared() {
 			references = append(references, projection.EntryReference())
@@ -359,9 +367,11 @@ func (program Program) checkReachability() (Problem, bool) {
 // branch identities has not said what the construct plane would mount, and a
 // fact-writing rule that names them has declared a vocabulary nothing reads.
 //
-// The branch reference must name a join whose members are a COLD member set.
-// A parent-declaring read is the only kind whose rows the issuance pass can
-// enumerate before the solve, which is when the branches have to be mounted.
+// The branch relation is named directly rather than through a join, because
+// the set is enumerated and never read: the owner publishes it under the
+// trigger's candidate row and the issuance pass walks it there. Whether it is
+// a nested member set of this rule's own candidate is the catalog's answer,
+// checked where the catalog is in scope.
 func (program Program) checkActivation() bool {
 	if (program.Activation != nil) != (len(program.Transport) != 0) {
 		return false
@@ -369,14 +379,7 @@ func (program Program) checkActivation() bool {
 	if program.Activation == nil {
 		return true
 	}
-	activation := *program.Activation
-	if !activation.Available() {
-		return false
-	}
-	if uint64(activation.Branch) >= uint64(len(program.Joins)) {
-		return false
-	}
-	return program.Joins[uint64(activation.Branch)].Parent.Declared()
+	return program.Activation.Available()
 }
 
 // checkTransport seals the activation transport vector: every row names a
@@ -615,7 +618,7 @@ func (program Program) WriteContent(content *framing.Writer) error {
 		if err := content.Record(contentRecordActivation); err != nil {
 			return err
 		}
-		if err := content.Uint(uint64(program.Activation.Branch)); err != nil {
+		if err := writeMemberReference(content, program.Activation.Branch.Axis, program.Activation.Branch.Member); err != nil {
 			return err
 		}
 		for _, reference := range program.Activation.projections() {

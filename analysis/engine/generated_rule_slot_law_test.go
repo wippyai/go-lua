@@ -74,15 +74,14 @@ const (
 	generatedRuleLawSummary
 	generatedRuleLawComplete
 	generatedRuleLawStructural
-	// generatedRuleLawActivation is the well-formed A form: one exact read at
-	// the trigger coordinate, one vector read over the branch set hanging off
-	// that same trigger row, a structural publication, and the transport
+	// generatedRuleLawActivation is the well-formed A form: ONE exact read at
+	// the trigger coordinate, a structural publication, and the transport
 	// vector one candidate route instantiates when it crosses its transition.
 	//
-	// The branch read is a parent-declaring Summary and not a selection. The
-	// construct topology mounts one activation member per branch before any
-	// solve, so the branches have to be enumerable at issuance; a selection's
-	// members exist only per invocation and nothing could have mounted them.
+	// Its branch set is a nested member relation named by the declaration's own
+	// branch vocabulary and enumerated through that relation's owner. It is not
+	// a read: a branch carries no fact any judgment consumes and has no
+	// coordinate of its own to be read at.
 	generatedRuleLawActivation
 )
 
@@ -144,22 +143,6 @@ func newGeneratedRuleLawFixture(t testing.TB, variant generatedRuleLawVariant, r
 		Mode:      program.ModeExact,
 		ValueSlot: 0,
 	}
-	if variant == generatedRuleLawActivation {
-		branchRead := read
-		branchRead.Input = 1
-		branchRead.Form = program.Summary
-		branchRead.Contract.Multiplicity = program.MultiplicityMany
-		// The branch set hangs off the CANDIDATE row, not off the trigger's
-		// fact: which routes a trigger has is a property of the trigger, and
-		// the fact only decides which of them activate.
-		joins = append(joins, program.JoinDecl{
-			Sources:  []program.SourceRef{program.CandidateSource()},
-			Relation: member.RelationRef{Axis: axisReference, Member: generatedRuleLawBranchJoin},
-			Key:      member.ProjectionRef{Axis: axisReference, Member: generatedRuleLawBranchKey},
-			Parent:   member.RelationRef{Axis: axisReference, Member: generatedRuleLawCandidate},
-			Read:     branchRead,
-		})
-	}
 	if variant == generatedRuleLawSelected || variant == generatedRuleLawRouteOutput {
 		routeRead := read
 		routeRead.Input = 1
@@ -207,7 +190,7 @@ func newGeneratedRuleLawFixture(t testing.TB, variant generatedRuleLawVariant, r
 		},
 		Carry: &program.CarryDecl{Input: carryInput, Mode: program.CarryIdentity},
 	}
-	if variant == generatedRuleLawSelected || variant == generatedRuleLawRouteOutput || variant == generatedRuleLawActivation {
+	if variant == generatedRuleLawSelected || variant == generatedRuleLawRouteOutput {
 		declaration.Fold.Inputs = []program.JoinRef{0, 1}
 	}
 	if variant == generatedRuleLawActivation {
@@ -224,7 +207,7 @@ func newGeneratedRuleLawFixture(t testing.TB, variant generatedRuleLawVariant, r
 			return member.ProjectionRef{Axis: axisReference, Member: key}
 		}
 		declaration.Activation = &program.ActivationDecl{
-			Branch:      1,
+			Branch:      member.RelationRef{Axis: axisReference, Member: generatedRuleLawBranchJoin},
 			Application: branchProjection(generatedRuleLawApplication),
 			Target:      branchProjection(generatedRuleLawTarget),
 			Endpoint:    branchProjection(generatedRuleLawEndpoint),
@@ -304,11 +287,6 @@ func newGeneratedRuleLawFixture(t testing.TB, variant generatedRuleLawVariant, r
 	}
 	if variant == generatedRuleLawSelected || variant == generatedRuleLawRouteOutput {
 		inputs = append(inputs, member.ReducerInput{Axis: axisReference, Carrier: generatedRuleLawJoinFact, Form: member.ReadFormSelected, Multiplicity: member.MultiplicityOne, Tag: generatedRuleLawKeyCarrier})
-	}
-	if variant == generatedRuleLawActivation {
-		// The branch delivery is tagged by the ordinal its parent addresses it
-		// at, which is the only address a nested member set's rows have.
-		inputs = append(inputs, member.ReducerInput{Axis: axisReference, Carrier: generatedRuleLawJoinFact, Form: member.ReadFormSummary, Multiplicity: member.MultiplicityMany, Tag: generatedRuleLawBranchOrdinal})
 	}
 	reducers := []member.Reducer{{
 		Key:     generatedRuleLawReducer,

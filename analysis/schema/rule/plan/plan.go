@@ -169,9 +169,10 @@ type Carry struct {
 // projection in the member.Identity role, because each one names a subject the
 // analyzer did not mint and no dense coordinate carries.
 type Activation struct {
-	// Branch is the declaration ordinal of the join whose members are the
-	// branches - the parent-declaring vector read.
-	Branch uint32
+	// Branch is the relation whose members are the candidate branches: a
+	// nested member set of the rule's own candidate row, enumerated through
+	// its owner rather than read.
+	Branch RelationAddr
 	// Application is projected from the rule's own candidate row; the other
 	// four are projected from one branch row.
 	Application ProjectionAddr
@@ -1101,8 +1102,18 @@ func compileActivationBranch(axisView seal.View, template *rule.Template, declar
 		return Activation{}, malformed()
 	}
 	decl := *declaration.Activation
-	branchJoin, branchJoinOK := declaration.JoinAt(int(decl.Branch))
-	if !branchJoinOK || !branchJoin.Parent.Declared() {
+	// The branch relation is authenticated as a nested member set of THIS
+	// rule's candidate row. That is what makes its members enumerable before
+	// the solve, which is when the construct plane mounts one member for each.
+	branchAxis, branchCatalog, branchAxisOrdinal, branchFailure := resolveAxisMember(axisView, decl.Branch.Axis, decl.Branch.Member, memberRelation)
+	if branchFailure.Available() {
+		branchFailure.Entry = template.ID()
+		return Activation{}, branchFailure
+	}
+	branchRelation, branchRelationOK := branchCatalog.Relation(decl.Branch.Member)
+	if !branchRelationOK || !branchRelation.Nested() ||
+		branchRelation.Parent.Member != declaration.Candidate.AxisRelation.Member ||
+		branchAxis.Key() != declaration.Candidate.AxisRelation.Axis.Key {
 		return Activation{}, malformed()
 	}
 	identityColumn := func(reference member.ProjectionRef, relation schema.Key) (ProjectionAddr, schema.SealFailure) {
@@ -1118,29 +1129,23 @@ func compileActivationBranch(axisView seal.View, template *rule.Template, declar
 		}
 		return ProjectionAddr{Axis: axisOrdinal, Member: mustProjectionOrdinal(catalog, reference.Member)}, schema.SealFailure{}
 	}
-	if uint64(decl.Branch) > uint64(^uint32(0)) {
-		return Activation{}, malformed()
-	}
-	branch := Activation{Branch: uint32(decl.Branch)}
+	branch := Activation{Branch: RelationAddr{Axis: branchAxisOrdinal, Member: mustRelationOrdinal(branchCatalog, decl.Branch.Member)}}
 	for _, column := range []struct {
 		reference member.ProjectionRef
 		relation  schema.Key
 		address   *ProjectionAddr
 	}{
 		{decl.Application, declaration.Candidate.AxisRelation.Member, &branch.Application},
-		{decl.Target, branchJoin.Relation.Member, &branch.Target},
-		{decl.Endpoint, branchJoin.Relation.Member, &branch.Endpoint},
-		{decl.Mount, branchJoin.Relation.Member, &branch.Mount},
-		{decl.Body, branchJoin.Relation.Member, &branch.Body},
+		{decl.Target, decl.Branch.Member, &branch.Target},
+		{decl.Endpoint, decl.Branch.Member, &branch.Endpoint},
+		{decl.Mount, decl.Branch.Member, &branch.Mount},
+		{decl.Body, decl.Branch.Member, &branch.Body},
 	} {
 		address, failure := identityColumn(column.reference, column.relation)
 		if failure.Available() {
 			return Activation{}, failure
 		}
 		*column.address = address
-	}
-	if uint64(branch.Branch) >= uint64(len(compiled.joins)) {
-		return Activation{}, malformed()
 	}
 	return branch, schema.SealFailure{}
 }

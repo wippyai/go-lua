@@ -203,20 +203,18 @@ func TestAnUnsealedBranchIsNotAdmittedToATriggersBranchSet(t *testing.T) {
 }
 
 // activationFormLawSpec is the sealed call-activation shape: one exact read of
-// the trigger candidate, one vector read of the branch set hanging off that
-// same candidate row, and one structural output publishing a non-empty
-// transport vector.
+// the trigger candidate and one structural output publishing a non-empty
+// transport vector and the relation its branches are members of.
 //
-// The branch read is a parent-declaring Summary and not a selection. A branch
-// is COLD - the construct topology mounts one activation member per branch
-// before any solve, and execution only settles the disposition of branches
-// already mounted - while a selection's coordinates are, in this package's own
-// words, "the members of a relation that exists only per invocation". A
-// structural row drawn from one would publish branches nothing had mounted.
+// There is no branch READ. A branch is COLD - the construct topology mounts one
+// activation member per branch before any solve - and it carries no fact any
+// judgment consumes, so the set is enumerated through its relation's own owner.
+// A read here would deliver the trigger's own cell once per branch of a
+// program-wide table.
 func activationFormLawSpec() generated.CompiledRuleSpec {
 	return generated.CompiledRuleSpec{
 		AxisCount:  3,
-		InputCount: 2,
+		InputCount: 1,
 		Candidate:  ruleplan.RelationAddr{Axis: 0, Member: 0},
 		Reducer:    ruleplan.ReducerAddr{Axis: 0, Member: 0},
 		Reads: []generated.ReadPlan{
@@ -237,25 +235,6 @@ func activationFormLawSpec() generated.CompiledRuleSpec {
 				RowCapacity:  2,
 				CellCapacity: 3,
 			},
-			{
-				Input:      1, Factor: 0, Axis: 0,
-				Sources:    ruleplan.Span{Start: 1, Count: 2},
-				Relation:   ruleplan.RelationAddr{Axis: 0, Member: 7},
-				Key:        ruleplan.ProjectionAddr{Axis: 0, Member: 8},
-				Parent:     ruleplan.RelationAddr{Axis: 0, Member: 0}, ParentPresent: true,
-				Addressing: ruleplan.RelationAddr{Axis: 0, Member: 0}, AddressingPresent: true,
-				Form:       ruleprogram.Summary,
-				PointBound: ruleprogram.PointBound,
-				Contract: ruleplan.ReadContract{
-					Order:        ruleprogram.OrderCanonical,
-					Sparse:       ruleprogram.SparseExplicit,
-					OnOpaque:     ruleprogram.OnOpaquePropagateAuthenticated,
-					Multiplicity: ruleprogram.MultiplicityMany,
-				},
-				Denominator:  ruleplan.DenominatorAddr{Ordinal: 5, Present: true},
-				RowCapacity:  4,
-				CellCapacity: 8,
-			},
 		},
 		Outputs: []generated.OutputPlan{{
 			Factor:      0,
@@ -267,7 +246,7 @@ func activationFormLawSpec() generated.CompiledRuleSpec {
 		}},
 		Transports: []ruleplan.Transport{{Axis: 0, Exported: true}, {Axis: 2}},
 		Activation: &ruleplan.Activation{
-			Branch:      1,
+			Branch:      ruleplan.RelationAddr{Axis: 0, Member: 7},
 			Application: ruleplan.ProjectionAddr{Axis: 0, Member: 12},
 			Target:      ruleplan.ProjectionAddr{Axis: 0, Member: 13},
 			Endpoint:    ruleplan.ProjectionAddr{Axis: 0, Member: 14},
@@ -290,16 +269,19 @@ func activationFormLawDescriptor(t testing.TB) generated.CompiledRule {
 // derivation law: a structural publication transports axes across a transition
 // instead of writing a fact, and a descriptor carries that transport vector
 // exactly when its mode is structural. So the publication mode alone decides
-// this form, and the branch set its rows are drawn from names the port the row
-// is opened at. Nothing about read order or read count participates.
+// this form. The port the row opens at is its trigger read's, and the relation
+// it carries is the one its branches are members of.
 func TestActivationFormIsDerivedFromItsStructuralPublication(t *testing.T) {
 	descriptor := activationFormLawDescriptor(t)
 	row, derived := DeclaredForm(descriptor)
 	if !derived || row.Form != FormActivation {
 		t.Fatalf("derived as %q/%t, want activation", row.Form.Name(), derived)
 	}
-	if row.Input != 1 {
-		t.Fatalf("derived read port = %d, want the branch join", row.Input)
+	if row.Input != 0 {
+		t.Fatalf("derived read port = %d, want the trigger read", row.Input)
+	}
+	if row.Rule.ReadCount() != 1 {
+		t.Fatalf("the A form declares %d reads, want only its trigger read", row.Rule.ReadCount())
 	}
 	if row.Relation != 7 {
 		t.Fatalf("derived relation = %d, want the relation whose members are the branches", row.Relation)
@@ -309,69 +291,52 @@ func TestActivationFormIsDerivedFromItsStructuralPublication(t *testing.T) {
 	}
 }
 
-// TestAStructuralRowDrawsItsBranchesFromAColdMemberSet is the correction this
-// form's derivation rests on. The construct topology mounts one activation
-// member per branch before any solve; execution settles dispositions of
-// branches that are already mounted and can publish no others. A selection's
-// members are resolved per invocation by the reading family, so a structural
-// row whose branches came from one would name rows nothing had mounted.
+// TestAStructuralRowNamesTheRelationItsBranchesAreMembersOf is what the
+// derivation now rests on. The branch set is not a read, so nothing about read
+// forms or read counts can say what a trigger's branches are; the descriptor
+// names the RELATION, and a structural row that names none has not said what
+// it would mount.
 //
-// The refusal lands at the SEAL, not at the derivation: the descriptor carries
-// the branch vocabulary, and the vocabulary names which read the branches are
-// members of, so "that read is a per-invocation selection" is a disagreement
-// the descriptor can see in itself. The derivation is checked too, for the
-// case where a future seal admits a shape this one does not.
-func TestAStructuralRowDrawsItsBranchesFromAColdMemberSet(t *testing.T) {
+// The refusal lands at the SEAL, which is where the vocabulary lives: a
+// transport vector and a branch vocabulary are one declaration, so a
+// descriptor carrying one without the other disagrees with itself before any
+// derivation asks it anything.
+func TestAStructuralRowNamesTheRelationItsBranchesAreMembersOf(t *testing.T) {
+	descriptor := activationFormLawDescriptor(t)
+	branch, declared := descriptor.ActivationBranch()
+	if !declared || branch.Branch.Member != 7 {
+		t.Fatalf("branch relation = %+v declared=%t, want the relation its branches are members of", branch.Branch, declared)
+	}
+	row, derived := DeclaredForm(descriptor)
+	if !derived || row.Relation != branch.Branch.Member {
+		t.Fatalf("derived relation = %d, want the branch relation %d", row.Relation, branch.Branch.Member)
+	}
+
 	spec := activationFormLawSpec()
-	spec.Reads[1].Form = ruleprogram.Selected
-	spec.Reads[1].Parent, spec.Reads[1].ParentPresent = ruleplan.RelationAddr{}, false
-	spec.Reads[1].Addressing, spec.Reads[1].AddressingPresent = ruleplan.RelationAddr{}, false
-	spec.Reads[1].Predicate, spec.Reads[1].PredicatePresent = ruleplan.ProjectionAddr{Axis: 0, Member: 9}, true
-	spec.Reads[1].Contract.Order = ruleprogram.OrderByTag
-	descriptor, sealed := generated.NewPlanCompiledRule(spec)
-	if sealed {
+	spec.Activation = nil
+	if descriptor, sealed := generated.NewPlanCompiledRule(spec); sealed {
 		if row, derived := DeclaredForm(descriptor); derived {
-			t.Fatalf("a structural row over a per-invocation selection derived %q", row.Form.Name())
+			t.Fatalf("a structural row naming no branch relation derived %q", row.Form.Name())
 		}
-		t.Fatal("a structural descriptor whose branch read is a per-invocation selection sealed")
+		t.Fatal("a structural descriptor with a transport vector and no branch vocabulary sealed")
 	}
 }
 
-// TestAStructuralDescriptorWithNoBranchSetIsNoActivation covers the near
-// misses that the derivation itself settles. A structural publication whose
-// branches are drawn from no selection has no candidate set to transport, and
-// there is no port for the row to open at, so it derives no form at all.
+// TestAStructuralDescriptorWithNoTransportIsNoActivation covers the other half
+// of the same declaration. A structural publication with no vector transports
+// nothing across the transition its branches cross, so there is nothing for a
+// branch to instantiate and the descriptor does not seal.
 //
-// Read ORDER is deliberately not one of these. Which position the trigger
-// occupies is not what makes a descriptor an activation, and the form the
-// derivation answers has no generic builder: every row of it is authored by an
-// installed family that holds the descriptor to its own declared shape. A
-// refusal on position would have been the derivation guessing at a geometry it
-// does not implement.
-func TestAStructuralDescriptorWithNoBranchSetIsNoActivation(t *testing.T) {
-	for name, damage := range map[string]func(*generated.CompiledRuleSpec){
-		"single read": func(spec *generated.CompiledRuleSpec) {
-			spec.Reads = spec.Reads[:1]
-			spec.InputCount = 1
-		},
-		"both exact": func(spec *generated.CompiledRuleSpec) {
-			spec.Reads[1].Form = ruleprogram.Exact
-			spec.Reads[1].Parent, spec.Reads[1].ParentPresent = ruleplan.RelationAddr{}, false
-			spec.Reads[1].Denominator = ruleplan.DenominatorAddr{}
-		},
-	} {
-		t.Run(name, func(t *testing.T) {
-			spec := activationFormLawSpec()
-			damage(&spec)
-			descriptor, sealed := generated.NewPlanCompiledRule(spec)
-			if !sealed {
-				// The malformed shape never reached the derivation, which
-				// already refuses it.
-				return
-			}
-			if row, derived := DeclaredForm(descriptor); derived {
-				t.Fatalf("a %s structural descriptor derived %q", name, row.Form.Name())
-			}
-		})
+// Read ORDER and read COUNT are deliberately not among these. The A form
+// declares one read and what makes it an activation is its publication mode
+// and its vocabulary, not where its trigger read sits.
+func TestAStructuralDescriptorWithNoTransportIsNoActivation(t *testing.T) {
+	spec := activationFormLawSpec()
+	spec.Transports = nil
+	if descriptor, sealed := generated.NewPlanCompiledRule(spec); sealed {
+		if row, derived := DeclaredForm(descriptor); derived {
+			t.Fatalf("a structural row transporting nothing derived %q", row.Form.Name())
+		}
+		t.Fatal("a structural descriptor with no transport vector sealed")
 	}
 }

@@ -853,6 +853,16 @@ func bindGeneratedActivationBranches(topology *equation.Topology, member equatio
 	return branches, true
 }
 
+// branchCensus is how many candidate branches this row settles, and whether it
+// is a structural row at all. A fact-writing row has no branch set, which is a
+// different statement from a trigger whose set is empty.
+func (member *generatedMember) branchCensus() (int, bool) {
+	if member == nil || !member.structural {
+		return 0, false
+	}
+	return len(member.activations), true
+}
+
 // memberSetsOf is this member's nested member sets, in declaration join order.
 // They are the coordinates the engine enumerated at issuance; a family reads
 // them and enumerates nothing.

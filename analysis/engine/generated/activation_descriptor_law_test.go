@@ -8,23 +8,19 @@ import (
 )
 
 // activationPlanLawSpec is the sealed call-activation shape: one exact read of
-// the candidate, one vector read of the cold branch set hanging off that same
-// candidate row, one structural publication, the transport vector each branch
-// instantiates when it crosses its transition, and the identities the branch
-// is mounted by.
+// the candidate, one structural publication, the transport vector each branch
+// instantiates when it crosses its transition, and the relation plus
+// identities its branches are mounted by. The branch set is enumerated through
+// its owner and read nowhere.
 func activationPlanLawSpec() CompiledRuleSpec {
 	spec := heterogeneousPlanLawSpec()
 	spec.Carry = nil
-	spec.InputCount = 2
-	spec.Reads[1].Input = 1
-	spec.Reads[1].Form = ruleprogram.Summary
-	spec.Reads[1].Predicate, spec.Reads[1].PredicatePresent = ruleplan.ProjectionAddr{}, false
-	spec.Reads[1].Parent, spec.Reads[1].ParentPresent = ruleplan.RelationAddr{Axis: 0, Member: 0}, true
-	spec.Reads[1].Addressing, spec.Reads[1].AddressingPresent = ruleplan.RelationAddr{Axis: 0, Member: 0}, true
-	spec.Reads[1].Contract.Order = ruleprogram.OrderCanonical
-	spec.Reads[1].Contract.Multiplicity = ruleprogram.MultiplicityMany
+	spec.InputCount = 1
+	// One read: the trigger's. The branch set is named by the vocabulary and
+	// enumerated through its owner, so it is not among the reads.
+	spec.Reads = spec.Reads[:1]
 	spec.Activation = &ruleplan.Activation{
-		Branch:      1,
+		Branch:      ruleplan.RelationAddr{Axis: 0, Member: 7},
 		Application: ruleplan.ProjectionAddr{Axis: 0, Member: 12},
 		Target:      ruleplan.ProjectionAddr{Axis: 0, Member: 13},
 		Endpoint:    ruleplan.ProjectionAddr{Axis: 0, Member: 14},

@@ -49,16 +49,24 @@ func TestTheActivationFormReachesAColdStructuralRow(t *testing.T) {
 	if shape.ActivationCount != 1 || !shape.ActivationFamily.Available() {
 		t.Fatalf("activation capability = %d/%v", shape.ActivationCount, shape.ActivationFamily.Available())
 	}
-	// The exact read at the trigger coordinate and the selected read over the
-	// candidate relation are both cold rows. The selection is the A form's own
-	// join, not something a fold rediscovers from a private column.
-	if shape.ReadCount != 2 {
-		t.Fatalf("declared reads = %d, want the trigger read and the candidate selection", shape.ReadCount)
+	// The A form declares ONE read: the exact read at the trigger coordinate.
+	// Its branch set is a relation the declaration names and the issuance pass
+	// enumerates through that relation's owner - a branch carries no fact any
+	// judgment consumes and has no coordinate of its own to be read at, so a
+	// second read here would deliver the trigger's own cell once per branch.
+	if shape.ReadCount != 1 {
+		t.Fatalf("declared reads = %d, want only the trigger read", shape.ReadCount)
 	}
 	exact, exactOK := fixture.schema.ruleReadShapeAt(ordinal, 0)
-	selected, selectedOK := fixture.schema.ruleReadShapeAt(ordinal, 1)
-	if !exactOK || !selectedOK || exact.Kind != composition.ReadExact || selected.Kind != composition.ReadSelect {
-		t.Fatalf("read kinds = %d/%d", exact.Kind, selected.Kind)
+	if !exactOK || exact.Kind != composition.ReadExact {
+		t.Fatalf("read kind = %d, want the exact trigger read", exact.Kind)
+	}
+	descriptor, descriptorOK := fixture.schema.generatedProgramAt(0)
+	if !descriptorOK {
+		t.Fatal("the sealed structural descriptor")
+	}
+	if branch, declared := descriptor.ActivationBranch(); !declared || branch.Branch.Member == 0 {
+		t.Fatalf("branch relation = %+v declared=%t, want the relation its branches are members of", branch.Branch, declared)
 	}
 }
 

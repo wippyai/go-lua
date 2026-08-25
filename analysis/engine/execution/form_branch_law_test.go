@@ -16,7 +16,7 @@ type branchLawReducer struct {
 	seen     []uint64
 }
 
-func (reducer *branchLawReducer) Reduce(branch uint64, _ MemberCell[uint64]) structure.ReductionOutcome {
+func (reducer *branchLawReducer) Reduce(branch uint64) structure.ReductionOutcome {
 	reducer.seen = append(reducer.seen, branch)
 	if outcome, scripted := reducer.verdicts[branch]; scripted {
 		return outcome
@@ -25,14 +25,6 @@ func (reducer *branchLawReducer) Reduce(branch uint64, _ MemberCell[uint64]) str
 }
 
 func (reducer *branchLawReducer) Empty() structure.ReductionOutcome { return reducer.empty }
-
-func branchLawCells(count int) []MemberCell[uint64] {
-	cells := make([]MemberCell[uint64], count)
-	for index := range cells {
-		cells[index] = MemberCell[uint64]{Value: uint64(index), Present: true}
-	}
-	return cells
-}
 
 // TestOnlyTheBranchesTheTriggerNamesActivate is the cadence itself, and the
 // difference from FoldSelectedRoute: an unnamed branch is the ordinary case,
@@ -46,7 +38,7 @@ func TestOnlyTheBranchesTheTriggerNamesActivate(t *testing.T) {
 		1: structure.NoSelection,
 		2: structure.Concrete,
 	}}
-	outcome := FoldBranchSet[uint64](run, &ticket, branchLawCells(3), reducer)
+	outcome := FoldBranchSet(run, &ticket, 3, reducer)
 	if outcome != structure.Concrete {
 		t.Fatalf("a trigger that named two of three branches settled %v", outcome)
 	}
@@ -70,7 +62,7 @@ func TestATriggerThatNamesNoBranchStillConcludes(t *testing.T) {
 	run := NewRun(0, 0)
 	ticket := issueExecution(t, run, fixture)
 	reducer := &branchLawReducer{verdicts: map[uint64]structure.ReductionOutcome{}}
-	if outcome := FoldBranchSet[uint64](run, &ticket, branchLawCells(2), reducer); outcome != structure.Concrete {
+	if outcome := FoldBranchSet(run, &ticket, 2, reducer); outcome != structure.Concrete {
 		t.Fatalf("a trigger that named no branch settled %v, want the concluded row", outcome)
 	}
 	if !run.Submit(&ticket, structure.Concrete) {
@@ -93,7 +85,7 @@ func TestABranchThatRefusesEndsTheRow(t *testing.T) {
 			0: structure.Concrete,
 			1: verdict,
 		}}
-		if outcome := FoldBranchSet[uint64](run, &ticket, branchLawCells(3), reducer); outcome != verdict {
+		if outcome := FoldBranchSet(run, &ticket, 3, reducer); outcome != verdict {
 			t.Fatalf("a branch answering %v settled the row as %v", verdict, outcome)
 		}
 		if len(reducer.seen) != 2 {
@@ -116,7 +108,7 @@ func TestAnUndeclaredDispositionRefuses(t *testing.T) {
 	run := NewRun(0, 0)
 	ticket := issueExecution(t, run, fixture)
 	reducer := &branchLawReducer{verdicts: map[uint64]structure.ReductionOutcome{0: structure.ReductionOutcome(0)}}
-	if outcome := FoldBranchSet[uint64](run, &ticket, branchLawCells(1), reducer); outcome != structure.Refuse {
+	if outcome := FoldBranchSet(run, &ticket, 1, reducer); outcome != structure.Refuse {
 		t.Fatalf("an undeclared disposition settled %v", outcome)
 	}
 }
@@ -124,17 +116,22 @@ func TestAnUndeclaredDispositionRefuses(t *testing.T) {
 // TestATriggerWithNoBranchSetAsksItsReducer states who answers for a trigger
 // that declares no route at all - and that the answer may not claim to have
 // settled branches there were none of.
+//
+// A negative census is not an empty one: it is a count nothing enumerated.
 func TestATriggerWithNoBranchSetAsksItsReducer(t *testing.T) {
 	fixture := newExecutionFixture(t)
 	run := NewRun(0, 0)
 	ticket := issueExecution(t, run, fixture)
 	empty := &branchLawReducer{empty: structure.NoCandidate}
-	if outcome := FoldBranchSet[uint64](run, &ticket, nil, empty); outcome != structure.NoCandidate {
+	if outcome := FoldBranchSet(run, &ticket, 0, empty); outcome != structure.NoCandidate {
 		t.Fatalf("an empty branch set settled %v, want the reducer's own answer", outcome)
 	}
 	claiming := &branchLawReducer{empty: structure.Concrete}
-	if outcome := FoldBranchSet[uint64](run, &ticket, nil, claiming); outcome != structure.Refuse {
+	if outcome := FoldBranchSet(run, &ticket, 0, claiming); outcome != structure.Refuse {
 		t.Fatal("an empty branch set claimed to have settled a branch")
+	}
+	if outcome := FoldBranchSet(run, &ticket, -1, empty); outcome != structure.Refuse {
+		t.Fatal("a census nothing enumerated was folded over")
 	}
 }
 
@@ -146,11 +143,11 @@ func TestAForeignTicketSettlesNoBranch(t *testing.T) {
 	other := NewRun(0, 0)
 	ticket := issueExecution(t, run, fixture)
 	reducer := &branchLawReducer{verdicts: map[uint64]structure.ReductionOutcome{0: structure.Concrete}}
-	if outcome := FoldBranchSet[uint64](other, &ticket, branchLawCells(1), reducer); outcome != structure.Refuse {
+	if outcome := FoldBranchSet(other, &ticket, 1, reducer); outcome != structure.Refuse {
 		t.Fatalf("a foreign Run settled %v", outcome)
 	}
 	var absent Ticket
-	if outcome := FoldBranchSet[uint64](run, &absent, branchLawCells(1), reducer); outcome != structure.Refuse {
+	if outcome := FoldBranchSet(run, &absent, 1, reducer); outcome != structure.Refuse {
 		t.Fatalf("a zero ticket settled %v", outcome)
 	}
 }

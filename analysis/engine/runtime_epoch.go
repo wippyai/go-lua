@@ -314,6 +314,16 @@ func buildGeneratedExecutionProgram(program *runtimeProgram) (*generatedExecutio
 				return nil, refuseProgramSeal(topologyConstructionStepMemberRow), false
 			}
 		}
+		// A structural row's branch set is lowered as its census. The branches
+		// themselves were resolved to mounted members at this row's bind, so
+		// what the family needs is how many of them there are to settle.
+		if branches, structural := row.generated.branchCensus(); structural {
+			var bound bool
+			formRow, bound = formRow.BindBranches(branches)
+			if !bound {
+				return nil, refuseProgramSeal(topologyConstructionStepMemberRow), false
+			}
+		}
 		rowsByOwner[descriptor.OutputFactor()] = append(rowsByOwner[descriptor.OutputFactor()], formRow)
 		installed[memberIndex] = formRow
 	}

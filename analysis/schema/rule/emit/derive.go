@@ -166,10 +166,12 @@ type joinPlan struct {
 	name         string
 }
 
-// branchPlan is the declared branch set of a structural publication: the join
-// whose cold members are the candidate branches this row settles.
+// branchPlan is the declared branch set of a structural publication: the
+// nested member relation whose cold rows are the candidate branches this row
+// settles. It is enumerated through its owner, never read.
 type branchPlan struct {
-	join *joinPlan
+	relation definition.Relation
+	axis     *axisPlan
 }
 
 // carryPlan is the declared whole-output carry: the input port it names and
@@ -360,16 +362,6 @@ func deriveDelivery(built *plan) {
 				built.deliveredFact[position] = "cell.Value"
 				built.deliveredTag[position] = "cell.Tag"
 				built.deliveredRoute[position] = "routeCoordinate"
-			}
-		}
-	case shapeStructural:
-		// The branch is delivered one member at a time, tagged by the ordinal
-		// its parent addresses it at - the only address a cold member set's
-		// rows have.
-		for position, join := range built.fold.inputs {
-			if join == built.branch.join {
-				built.deliveredFact[position] = "cell"
-				built.deliveredTag[position] = "branch"
 			}
 		}
 	}
@@ -994,22 +986,29 @@ func deriveShape(built *plan, resolver *axisResolver, declaration program.Progra
 			return unexpressible(ruleKey, "a structural output with no branch vocabulary",
 				"a structural row mounts its branches as owner-issued identities, and a row that names none has not said what it mounts")
 		}
-		if uint64(declaration.Activation.Branch) >= uint64(len(built.joins)) {
-			return unexpressible(ruleKey, "a branch reference naming an undeclared join",
-				fmt.Sprintf("join %d", uint64(declaration.Activation.Branch)))
+		// The branch set is ENUMERATED, not read: a branch carries no fact any
+		// judgment consumes and has no coordinate of its own to be read at. So
+		// the declaration names the relation, the issuance pass walks it
+		// through its owner, and the emitted worker is handed the census.
+		branchAxis, branchAxisErr := resolver.axis(declaration.Activation.Branch.Axis.Key)
+		if branchAxisErr != nil {
+			return branchAxisErr
 		}
-		branch := built.joins[uint64(declaration.Activation.Branch)]
-		if branch.vectorSpan == nil || branch.read.Form != program.Summary {
-			return unexpressible(ruleKey, "a structural output over a branch set that is not a cold member set",
-				fmt.Sprintf("join %d is read as %s over a relation that declares no parent; the construct plane mounts one member per branch before any solve, so a per-invocation selection has no branches to mount",
-					branch.position, readFormName(branch.read.Form)))
+		relation, relationOK := findRelation(branchAxis.source, declaration.Activation.Branch.Member)
+		if !relationOK {
+			return unexpressible(ruleKey, "a branch relation its axis does not declare",
+				fmt.Sprintf("relation %q is not a member row of axis %q", string(declaration.Activation.Branch.Member), string(branchAxis.key)))
 		}
-		if branch.foreign {
+		if !relation.MemberParent.Available() {
+			return unexpressible(ruleKey, "a structural output over a branch set that is not a nested member set",
+				fmt.Sprintf("relation %q declares no parent, so its rows hang off no trigger and nothing could mount one member for each before the solve", relation.Name))
+		}
+		if branchAxis.key != built.candidate.axis.key {
 			return unexpressible(ruleKey, "a structural output over a foreign branch set",
-				"a row's branches hang off its own candidate row, so the branch join names the axis the rule is indexed by")
+				"a trigger's branches hang off its own candidate row, so the branch relation names the axis that candidate belongs to")
 		}
 		built.shape, built.form = shapeStructural, "FormActivation"
-		built.branch = &branchPlan{join: branch}
+		built.branch = &branchPlan{relation: relation, axis: branchAxis}
 		return nil
 	default:
 		return unexpressible(ruleKey, fmt.Sprintf("output mode %s", outputModeName(output.Mode)),

@@ -138,6 +138,38 @@ type FormRow struct {
 	RuleOrdinal uint32
 	exact       []carrier.Unit
 	members     [][]uint32
+	// branches is the census of one trigger's candidate branch set, enumerated
+	// by the issuance pass through the relation's own owner. It is a count and
+	// not a coordinate list because a branch is addressed by its ordinal and
+	// carries no fact to be read at one.
+	branches int
+	branchSet bool
+}
+
+// BindBranches attaches the census of one structural row's candidate branch
+// set. It is the A form's counterpart of BindMembers, and it is a COUNT for
+// the reason the branch set is enumerated rather than read: what an invocation
+// needs about a branch is its ordinal, and the mounted member that ordinal
+// stands for was resolved cold by the engine that mounted it.
+func (row FormRow) BindBranches(branches int) (FormRow, bool) {
+	if !row.Rule.Available() || branches < 0 || row.branchSet {
+		return FormRow{}, false
+	}
+	if _, declared := row.Rule.ActivationBranch(); !declared {
+		return FormRow{}, false
+	}
+	row.branches, row.branchSet = branches, true
+	return row, true
+}
+
+// Branches answers that census. A row that never bound one is not a row with
+// no branches: it is a row whose branch set nothing enumerated, so the two are
+// told apart rather than collapsed onto zero.
+func (row FormRow) Branches() (int, bool) {
+	if !row.branchSet {
+		return 0, false
+	}
+	return row.branches, true
 }
 
 // BindExact attaches the owner-issued Unit of one exact join to this sealed
@@ -786,14 +818,15 @@ func declaredFormRow(rule generated.CompiledRule, mode ruleprogram.OutputMode) (
 	case mode == ruleprogram.ModeStructural:
 		// A structural publication transports axes across a transition rather
 		// than writing a fact, and the descriptor carries that transport
-		// vector exactly when its mode is structural. The branch set its rows
-		// are drawn from names the input port the row is opened at, and the
-		// relation those branches are members of.
-		input, relation, inputOK := declaredBranchInput(rule)
-		if !inputOK || rule.TransportCount() == 0 {
+		// vector exactly when its mode is structural. Its branch set is named
+		// by the declared branch vocabulary and is ENUMERATED, not read, so
+		// the port this row opens at is its trigger read's.
+		branch, branchOK := rule.ActivationBranch()
+		input, inputOK := declaredFirstInput(rule)
+		if !branchOK || !inputOK || rule.TransportCount() == 0 {
 			return FormRow{}, false
 		}
-		return FormRow{Form: FormActivation, Input: input, Relation: relation}, true
+		return FormRow{Form: FormActivation, Input: input, Relation: branch.Branch.Member}, true
 	case mode == ruleprogram.ModeRoute:
 		// A routed publication publishes at the members of the join the output
 		// names, so that join's port and relation are the row's coordinates.
@@ -942,37 +975,6 @@ func declaredExactProduct(rule generated.CompiledRule) bool {
 		}
 	}
 	return true
-}
-
-// declaredBranchInput answers the port and relation of the read whose members
-// are one trigger's candidate branches.
-//
-// A branch is COLD. The construct topology mounts one activation member per
-// branch before any solve, and execution settles the disposition of branches
-// already mounted - it can publish no others. So the branch read is the one
-// whose relation declares a PARENT: an ordinal-addressed member set the owner
-// already published under the trigger's own candidate row, enumerable at
-// issuance.
-//
-// A selection is never that read. Its coordinates are, in this package's own
-// words, the members of a relation that exists only per invocation, resolved
-// by the reading family - so a structural row drawn from one would publish
-// branches nothing had mounted.
-func declaredBranchInput(rule generated.CompiledRule) (uint16, uint32, bool) {
-	for index := 0; index < rule.ReadCount(); index++ {
-		read, readOK := rule.ReadAt(index)
-		if !readOK {
-			return 0, 0, false
-		}
-		if !read.ParentPresent || read.Form != ruleprogram.Summary {
-			continue
-		}
-		if !declaredPort(rule, read.Input) {
-			return 0, 0, false
-		}
-		return uint16(read.Input), read.Relation.Member, true
-	}
-	return 0, 0, false
 }
 
 // declaredFirstInput answers the port of the descriptor's first declared read.

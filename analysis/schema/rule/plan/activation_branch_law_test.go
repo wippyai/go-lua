@@ -50,25 +50,19 @@ func newActivationBranchFixture(t *testing.T) *planFixture {
 		identity(branchMountKey, nestedMemberRelation),
 		identity(branchBodyKey, nestedMemberRelation),
 	)
-	fixture.declaration.Joins = nestedMemberSetJoins(planCandidateRelation)[:1]
-	fixture.declaration.Fold.Inputs = []program.JoinRef{0}
+	// The base fixture's one exact read is the trigger's, and it is the only
+	// read the A form declares: the branch set is named by the vocabulary and
+	// enumerated through the relation's own owner.
 	fixture.declaration.Fold.Outputs[0].Mode = program.ModeStructural
 	// A structural fold publishes no fact, so it declares no output carrier at
 	// all: its whole result is the disposition of the branch it was invoked
 	// for.
-	fixture.catalog.Reducers[0].Inputs = []member.ReducerInput{{
-		Axis:         mainAxis,
-		Carrier:      planFactCarrier,
-		Form:         member.ReadFormSummary,
-		Multiplicity: member.MultiplicityMany,
-		Tag:          nestedMemberOrdinal,
-	}}
 	fixture.catalog.Reducers[0].Outputs = nil
 	fixture.catalog.Reducers[0].Structural = true
 	fixture.declaration.Transport = []program.TransportDecl{{Axis: program.AxisRef(mainAxis)}}
 	fixture.declaration.ActivationRole = vocabulary.RoleKey("plan/activation-family")
 	fixture.declaration.Activation = &program.ActivationDecl{
-		Branch:      0,
+		Branch:      member.RelationRef{Axis: mainAxis, Member: nestedMemberRelation},
 		Application: member.ProjectionRef{Axis: mainAxis, Member: branchApplicationKey},
 		Target:      member.ProjectionRef{Axis: mainAxis, Member: branchTargetKey},
 		Endpoint:    member.ProjectionRef{Axis: mainAxis, Member: branchEndpointKey},
@@ -99,8 +93,8 @@ func TestTheBranchVocabularyCompilesToDenseIdentityAddresses(t *testing.T) {
 	if !present {
 		t.Fatal("a structural publication compiled no branch vocabulary")
 	}
-	if branch.Branch != 0 {
-		t.Fatalf("branch join = %d, want the vector read its members hang under", branch.Branch)
+	if branch.Branch.Axis != 0 || branch.Branch.Member == 0 {
+		t.Fatalf("branch relation = %+v, want the nested member set its rows hang under", branch.Branch)
 	}
 	addresses := map[string]ProjectionAddr{
 		"application": branch.Application, "target": branch.Target,
