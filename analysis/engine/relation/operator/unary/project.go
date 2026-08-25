@@ -100,7 +100,12 @@ type ProjectedCell struct {
 }
 
 func (cell ProjectedCell) Available() bool {
-	if !cell.target.Available() || !cell.typeID.Available() || !cell.presence.Available() || !cell.region.Valid() || !cell.lineage.Available() {
+	// Refused is an evaluation outcome, not a row-cell state.  Keeping it in
+	// this transient projection would turn a hard refusal into an apparently
+	// deliverable row because Refused has no value token.  The state column
+	// layer already rejects it; keep the unary boundary equally closed so a
+	// malformed/future source cannot weaken that contract.
+	if !cell.target.Available() || !cell.typeID.Available() || !cell.presence.Available() || cell.presence.Is(model.Refused) || !cell.region.Valid() || !cell.lineage.Available() {
 		return false
 	}
 	if cell.value.Available() {
@@ -318,7 +323,7 @@ func cellFor[T cellView](cells []T, column model.ColumnID) (T, bool) {
 }
 
 func cellAvailable[T cellView](cell T) bool {
-	if !cell.Column().Available() || !cell.Type().Available() || !cell.Presence().Available() || !cell.Region().Valid() || !cell.Lineage().Available() {
+	if !cell.Column().Available() || !cell.Type().Available() || !cell.Presence().Available() || cell.Presence().Is(model.Refused) || !cell.Region().Valid() || !cell.Lineage().Available() {
 		return false
 	}
 	return !cell.Value().Available() || cell.Value().Type() == cell.Type()
