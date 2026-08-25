@@ -180,7 +180,7 @@ func TestInspectRowsNamesTheConstructTopology(t *testing.T) {
 		"composite.Table.RuleCount=",
 		".Program.Candidate.Member=",
 		".Program.Fold.Outputs[0].OwnerFenceHeld=",
-		".Program.TransportCount=",
+		".Program.Activation.TransportCount=",
 	}
 	for _, fragment := range required {
 		if !strings.Contains(rendered, fragment) {

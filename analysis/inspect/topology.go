@@ -101,11 +101,11 @@ func formatRows(session *Session) string {
 		if declaration.Activation != nil {
 			transportCount = len(declaration.Activation.Transport)
 		}
-		writef(&b, "rule[%d].Program.TransportCount=%d", position, transportCount)
+		writef(&b, "rule[%d].Program.Activation.TransportCount=%d", position, transportCount)
 		if declaration.Activation != nil {
 			for transportIndex, transport := range declaration.Activation.Transport {
-				writef(&b, "rule[%d].Program.Transport[%d].Axis=%s", position, transportIndex, transport.Axis.EntryReference().Key)
-				writef(&b, "rule[%d].Program.Transport[%d].Exported=%t", position, transportIndex, transport.Exported)
+				writef(&b, "rule[%d].Program.Activation.Transport[%d].Axis=%s", position, transportIndex, transport.Axis.EntryReference().Key)
+				writef(&b, "rule[%d].Program.Activation.Transport[%d].Exported=%t", position, transportIndex, transport.Exported)
 			}
 		}
 	}
