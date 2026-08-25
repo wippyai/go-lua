@@ -4,76 +4,56 @@ import (
 	"strconv"
 	"testing"
 
+	"github.com/wippyai/go-lua/analysis/engine/execution"
 	"github.com/wippyai/go-lua/analysis/program/target/vocabulary"
+	"github.com/wippyai/go-lua/domain/materialization"
 	"github.com/wippyai/go-lua/domain/placement"
+	valuedomain "github.com/wippyai/go-lua/domain/value"
 )
 
 var (
 	formalSelectorRangeResult    formalSelectorRange
-	formalRouteBenchmarkResult   route
-	formalRouteBenchmarkOK       bool
 	formalDenseSealBenchmarkPlan routePlan
 	formalDenseSealBenchmarkOK   bool
 	formalPlannerBenchmarkPlan   routePlan
 	formalPlannerBenchmarkOK     bool
-	formalObservationBufferLen   int
-	formalObservationBufferOK    bool
 )
 
-func TestFormalObservationBufferSelection(t *testing.T) {
-	for _, test := range []struct {
-		name       string
-		count      int
-		inline     bool
-		wantOK     bool
-		wantLength int
-	}{
-		{name: "empty-inline", count: 0, inline: true, wantOK: true, wantLength: 0},
-		{name: "common-inline", count: 8, inline: true, wantOK: true, wantLength: 8},
-		{name: "wide-overflow", count: 9, inline: false, wantOK: true, wantLength: 9},
-		{name: "negative-rejected", count: -1, wantOK: false},
-	} {
-		t.Run(test.name, func(t *testing.T) {
-			var inline [formalObservationInlineWidth]actualObservation
-			observations, ok := formalObservationBuffer(test.count, inline[:])
-			if ok != test.wantOK || len(observations) != test.wantLength {
-				t.Fatalf("buffer(%d) = len %d/%t, want len %d/%t", test.count, len(observations), ok, test.wantLength, test.wantOK)
-			}
-			if !ok {
-				return
-			}
-			if test.inline && cap(observations) != formalObservationInlineWidth {
-				t.Fatalf("inline buffer capacity = %d, want %d", cap(observations), formalObservationInlineWidth)
-			}
-			if !test.inline && cap(observations) < test.count {
-				t.Fatalf("overflow buffer capacity = %d, want at least %d", cap(observations), test.count)
-			}
-			if test.count > 0 {
-				observations[0].valid = true
-				if test.inline && !inline[0].valid {
-					t.Fatal("inline buffer did not alias caller-owned storage")
-				}
-			}
-		})
+// TestFormalDeliveredVectorIsConsumedWithoutACopy states what the deleted
+// observation buffer used to: the derivation holds no per-invocation storage
+// for the call's actuals. A member vector is a view over cells the family
+// already owns, so reading every ordinal of one allocates nothing.
+func TestFormalDeliveredVectorIsConsumedWithoutACopy(t *testing.T) {
+	schema, values := formalSoundnessSchemas(t)
+	keys := routePlanAllocationKeys(t, schema)
+	if len(keys) == 0 {
+		t.Skip("soundness schema exposes no allocation root")
 	}
-}
-
-// BenchmarkFormalObservationBufferSelection isolates the bounded storage
-// decision. It does not require a constructible engine context: the staged
-// and frame consumers both use this same caller-owned buffer contract.
-func BenchmarkFormalObservationBufferSelection(b *testing.B) {
-	for _, width := range []int{1, 8, 9, 32} {
-		width := width
-		b.Run(strconv.Itoa(width), func(b *testing.B) {
-			b.ReportAllocs()
-			b.ResetTimer()
-			for index := 0; index < b.N; index++ {
-				var inline [formalObservationInlineWidth]actualObservation
-				observations, ok := formalObservationBuffer(width, inline[:])
-				formalObservationBufferLen = len(observations)
-				formalObservationBufferOK = ok
+	atom, atomOK := values.Allocation(keys[0], materialization.Recent)
+	fact, factOK := values.Singleton(atom)
+	if !atomOK || !factOK {
+		t.Fatal("allocation fact")
+	}
+	cells := make([]execution.MemberCell[valuedomain.Value], 16)
+	for index := range cells {
+		cells[index] = execution.MemberCell[valuedomain.Value]{Value: fact, Present: true}
+	}
+	actuals := formalActuals(t, cells)
+	allocations := testing.AllocsPerRun(100, func() {
+		var demands denseDemandScratch
+		for ordinal := 0; ordinal < actuals.Count(); ordinal++ {
+			unknown, demandOK := addFactDemandDense(schema, values, actuals, ordinal, placement.Retain, &demands)
+			if !demandOK || unknown {
+				t.Fatalf("ordinal %d demand = %t/%t", ordinal, demandOK, unknown)
 			}
-		})
+		}
+		formalDenseSealBenchmarkPlan, formalDenseSealBenchmarkOK = (&routePlan{}).seal(schema, &demands)
+	})
+	if !formalDenseSealBenchmarkOK || formalDenseSealBenchmarkPlan.routeCount() != 1 {
+		t.Fatalf("sealed plan = %t/%d, want the one root every ordinal names", formalDenseSealBenchmarkOK, formalDenseSealBenchmarkPlan.routeCount())
+	}
+	if allocations != 0 {
+		t.Fatalf("delivered-vector reduction allocations = %f, want 0", allocations)
 	}
 }
 
@@ -89,33 +69,6 @@ func BenchmarkFormalSelectorRange(b *testing.B) {
 			b.ResetTimer()
 			for index := 0; index < b.N; index++ {
 				formalSelectorRangeResult = resolveFormalSelectorRange(spec, width, true)
-			}
-		})
-	}
-}
-
-// BenchmarkFormalRouteLookup bounds the staged-route checker lookup. Sealed
-// plans are Heap-ordered, so routeForTag must remain logarithmic as widening
-// exposes more allocation roots.
-func BenchmarkFormalRouteLookup(b *testing.B) {
-	for _, width := range []int{1, 16, 128, 1024, 16384} {
-		width := width
-		b.Run(strconv.Itoa(width), func(b *testing.B) {
-			var plan routePlan
-			for index := 0; index < width; index++ {
-				if !plan.appendRoute(route{tag: routeTag(uint64(index+1)<<routeTagShift | 1)}) {
-					b.Fatalf("append route %d", index)
-				}
-			}
-			selected, selectedOK := plan.routeAt(width / 2)
-			if !selectedOK {
-				b.Fatal("lookup fixture route")
-			}
-			tag := selected.tag
-			b.ReportAllocs()
-			b.ResetTimer()
-			for index := 0; index < b.N; index++ {
-				formalRouteBenchmarkResult, formalRouteBenchmarkOK = routeForTag(plan, tag)
 			}
 		})
 	}
@@ -184,7 +137,7 @@ func BenchmarkFormalPlannerOpaqueDispatch(b *testing.B) {
 	for index := 0; index < b.N; index++ {
 		formalPlannerBenchmarkPlan, formalPlannerBenchmarkOK = planFor(
 			fixture.packs, fixture.calls, fixture.placement, fixture.values,
-			fixture.contract, fixture.mounted, callFact, fixture.observations)
+			fixture.contract, fixture.mounted, callFact, formalActuals(b, fixture.cells))
 	}
 	if !formalPlannerBenchmarkOK || formalPlannerBenchmarkPlan.routeCount() != 0 {
 		b.Fatalf("planner result = %t/%d", formalPlannerBenchmarkOK, formalPlannerBenchmarkPlan.routeCount())

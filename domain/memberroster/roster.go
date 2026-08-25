@@ -30,6 +30,7 @@ import (
 	heappublicationfreeze "github.com/wippyai/go-lua/domain/heap/publicationfreeze/memberdefinition"
 	packbase "github.com/wippyai/go-lua/domain/pack/memberdefinition"
 	packsource "github.com/wippyai/go-lua/domain/pack/source/memberdefinition"
+	placementformal "github.com/wippyai/go-lua/domain/placement/formal/memberdefinition"
 	placementbase "github.com/wippyai/go-lua/domain/placement/memberdefinition"
 	placementreturnescape "github.com/wippyai/go-lua/domain/placement/returnescape/memberdefinition"
 	placementstore "github.com/wippyai/go-lua/domain/placement/store/memberdefinition"
@@ -100,6 +101,7 @@ func Composition() (definition.Roster, bool) {
 				placementstore.Contribution(),
 				placementreturnescape.Contribution(),
 				placementtransfer.Contribution(),
+				placementformal.Contribution(),
 			},
 		},
 		definition.Source{

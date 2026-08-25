@@ -22,6 +22,7 @@ import (
 	heapempty "github.com/wippyai/go-lua/domain/heap/allocation/empty"
 	freezeprogram "github.com/wippyai/go-lua/domain/heap/formalfreeze/program"
 	publicationfreezeprogram "github.com/wippyai/go-lua/domain/heap/publicationfreeze/program"
+	formalprogram "github.com/wippyai/go-lua/domain/placement/formal/program"
 	returnprogram "github.com/wippyai/go-lua/domain/placement/returnescape/program"
 	storeprogram "github.com/wippyai/go-lua/domain/placement/store/program"
 	transferprogram "github.com/wippyai/go-lua/domain/placement/transfer/program"
@@ -107,6 +108,14 @@ func Families() []Family {
 				Spec:        transferprogram.RuleEntry(),
 			},
 			Directory: "domain/placement/transfer",
+		},
+		{
+			Target: emit.Target{
+				PackagePath: "github.com/wippyai/go-lua/domain/placement/formal",
+				PackageName: "formal",
+				Spec:        formalprogram.RuleEntry(),
+			},
+			Directory: "domain/placement/formal",
 		},
 		{
 			Target: emit.Target{
@@ -275,6 +284,16 @@ func Declarations() []Declaration {
 				Spec:        transferprogram.RuleEntry(),
 			},
 			Directory: "domain/placement/transfer/program",
+		},
+		{
+			Target: emitlaw.Target{
+				PackagePath: "github.com/wippyai/go-lua/domain/placement/formal/program",
+				PackageName: "program",
+				Declaration: "Formal",
+				Entry:       "RuleEntry",
+				Spec:        formalprogram.RuleEntry(),
+			},
+			Directory: "domain/placement/formal/program",
 		},
 		{
 			Target: emitlaw.Target{

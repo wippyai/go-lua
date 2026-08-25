@@ -37,6 +37,7 @@ import (
 	placementcapture "github.com/wippyai/go-lua/domain/placement/capture"
 	placementcontainment "github.com/wippyai/go-lua/domain/placement/containment"
 	placementformal "github.com/wippyai/go-lua/domain/placement/formal"
+	placementformalprogram "github.com/wippyai/go-lua/domain/placement/formal/program"
 	placementowner "github.com/wippyai/go-lua/domain/placement/owner"
 	placementpublicationescape "github.com/wippyai/go-lua/domain/placement/publicationescape"
 	placementreturnescape "github.com/wippyai/go-lua/domain/placement/returnescape"
@@ -174,7 +175,10 @@ func ruleTemplateWiring[P Principals, A Authorities]() ([]*rule.Template, []Rule
 	// rule's own family claimant, exactly as Store's.
 	add(WireGeneratedRuleWithFamily[P, A](placementreturnescapeprogram.RuleEntry(), placementreturnescape.InstallFamily[A]))
 	add(WireRule(placementcapture.RuleEntry[P, A](), placementcapture.DeclareRule[P], placementcapture.RegisterRule, nil, placementcapture.BindRule[A], placementcapture.FinalizeRule[A], nil, nil))
-	add(WireRule(placementformal.RuleEntry[P, A](), placementformal.DeclareRule[P], placementformal.RegisterRule, nil, placementformal.BindRule[A], placementformal.FinalizeRule[A], nil, nil))
+	// Formal ownership is the generated dependent Formal family. Its authored
+	// route relation is installed once through the rule's own family claimant,
+	// exactly as Transfer's.
+	add(WireGeneratedRuleWithFamily[P, A](placementformalprogram.RuleEntry(), placementformal.InstallFamily[A]))
 	// Containment is the singleton declarative rule expanded at every mounted point.
 	add(WireRule(placementcontainment.RuleEntry[P, A](), placementcontainment.DeclareRule[P], placementcontainment.RegisterRule, nil, placementcontainment.BindRule[A], placementcontainment.FinalizeRule[A], placementcontainment.OccurrenceCatalog, nil))
 	// Storage lifetime is the generated dependent Store family. Its authored

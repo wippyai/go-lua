@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"testing"
 
+	"github.com/wippyai/go-lua/analysis/engine/execution"
 	"github.com/wippyai/go-lua/analysis/identity"
 	"github.com/wippyai/go-lua/analysis/lua/lower"
 	programartifact "github.com/wippyai/go-lua/analysis/program/artifact"
@@ -19,6 +20,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/schema/programmount"
 	"github.com/wippyai/go-lua/analysis/schema/seal"
 	"github.com/wippyai/go-lua/analysis/schema/structure"
+	schematype "github.com/wippyai/go-lua/analysis/schema/typecontract"
 	"github.com/wippyai/go-lua/domain/call/calltest"
 	"github.com/wippyai/go-lua/domain/heap"
 	"github.com/wippyai/go-lua/domain/materialization"
@@ -29,57 +31,73 @@ import (
 	"github.com/wippyai/go-lua/internal/testfixture"
 )
 
-func TestFormalActualTagsAreCanonicalAndUnique(t *testing.T) {
-	for ordinal := 0; ordinal < 8; ordinal++ {
-		got, ok := canonicalActualTag(ordinal)
-		if !ok || got != actualTag(ordinal+1) {
-			t.Fatalf("actual ordinal %d tag = %d/%t, want %d/true", ordinal, got, ok, ordinal+1)
+// TestFormalActualsAreAddressedByTheirPositionInTheDeliveredVector states the
+// correlation the deleted tag machinery used to state. A member vector is
+// addressed by (parent, ordinal) and a cell's POSITION is the ordinal its
+// owner declared it at, so the derivation reads actual N at index N and needs
+// no tag beside the cell to agree with. A vector narrower than the ordinal a
+// formal selector names is not that call's member set, and it is refused
+// rather than completed.
+func TestFormalActualsAreAddressedByTheirPositionInTheDeliveredVector(t *testing.T) {
+	schema, values := formalSoundnessSchemas(t)
+	keys := routePlanAllocationKeys(t, schema)
+	if len(keys) < 2 {
+		t.Skip("soundness schema exposes fewer than two allocation roots")
+	}
+	cells := make([]execution.MemberCell[valuedomain.Value], len(keys))
+	for index, key := range keys {
+		atom, atomOK := values.Allocation(key, materialization.Recent)
+		fact, factOK := values.Singleton(atom)
+		if !atomOK || !factOK {
+			t.Fatalf("allocation fact at ordinal %d", index)
+		}
+		cells[index] = execution.MemberCell[valuedomain.Value]{Value: fact, Present: true}
+	}
+	actuals := formalActuals(t, cells)
+	for ordinal, key := range keys {
+		var demands denseDemandScratch
+		unknown, demandOK := addFactDemandDense(schema, values, actuals, ordinal, placement.Retain, &demands)
+		if !demandOK || unknown || demands.count != 1 {
+			t.Fatalf("ordinal %d demand = %t/%t/%d, want one exact demand", ordinal, demandOK, unknown, demands.count)
+		}
+		demand, demandAt := demands.at(0)
+		dense, denseOK := denseDemandKey(schema, key)
+		if !demandAt || !denseOK || demand.dense != dense {
+			t.Fatalf("ordinal %d resolved dense %d, want the root declared at that position (%d)", ordinal, demand.dense, dense)
 		}
 	}
-	if _, ok := canonicalActualTag(-1); ok {
-		t.Fatal("negative actual ordinal received a canonical tag")
+	var beyond denseDemandScratch
+	if _, beyondOK := addFactDemandDense(schema, values, actuals, len(keys), placement.Retain, &beyond); beyondOK {
+		t.Fatal("an ordinal past the delivered vector was completed")
 	}
-
-	// The staged evaluator and frame checker both consume selection rows in
-	// ordinal order. A duplicate or permutation must fail the same canonical
-	// tag check before it can be mapped to an authored actual.
-	for name, tags := range map[string][]actualTag{
-		"duplicate":    {actualTag(1), actualTag(1)},
-		"permuted":     {actualTag(2), actualTag(1)},
-		"zero":         {actualTag(0), actualTag(2)},
-		"out-of-range": {actualTag(1), actualTag(3)},
-	} {
-		t.Run(name, func(t *testing.T) {
-			canonical := true
-			for ordinal, tag := range tags {
-				expected, expectedOK := canonicalActualTag(ordinal)
-				if !expectedOK || tag != expected {
-					canonical = false
-					break
-				}
-			}
-			if canonical {
-				t.Fatalf("malformed tag sequence %v passed canonical ordinal checks", tags)
-			}
-		})
+	if _, negativeOK := addFactDemandDense(schema, values, actuals, -1, placement.Retain, &beyond); negativeOK {
+		t.Fatal("a negative ordinal was completed")
 	}
 }
 
 func TestUnknownOpenTailUnavailableActualRefuses(t *testing.T) {
 	schema, values := formalSoundnessSchemas(t)
-	for name, observation := range map[string]actualObservation{
-		"invalid":     {},
-		"unavailable": {valid: true, present: false},
-	} {
+	// Two shapes of missing evidence survive the move to a delivered vector:
+	// an ordinal the vector does not name at all, and a cell that claims
+	// absence while carrying a value the owner's Factor default is not.
+	absent := formalActuals(t, []execution.MemberCell[valuedomain.Value]{{Value: values.Top()}})
+	for name, ordinal := range map[string]int{"past-the-vector": 1, "negative": -1} {
 		t.Run(name, func(t *testing.T) {
 			var demands denseDemandScratch
-			if addUnknownOpenTailObservationDemandDense(schema, values, observation, &demands) {
-				t.Fatalf("missing unknown open-tail observation was accepted: %#v", demands)
+			if addUnknownOpenTailActualDemandDense(schema, values, absent, ordinal, &demands) {
+				t.Fatalf("ordinal %d outside the delivered vector was accepted: %#v", ordinal, demands)
 			}
 			if demands.count != 0 || demands.allUnknown {
-				t.Fatalf("rejected unknown open-tail observation mutated demands: %#v", demands)
+				t.Fatalf("rejected ordinal %d mutated demands: %#v", ordinal, demands)
 			}
 		})
+	}
+	var forged denseDemandScratch
+	if addUnknownOpenTailActualDemandDense(schema, values, absent, 0, &forged) {
+		t.Fatalf("an absent cell carrying a non-default value was accepted: %#v", forged)
+	}
+	if forged.count != 0 || forged.allUnknown {
+		t.Fatalf("rejected forged absence mutated demands: %#v", forged)
 	}
 
 	// An authenticated Value Top remains a lawful widening witness under an
@@ -87,7 +105,7 @@ func TestUnknownOpenTailUnavailableActualRefuses(t *testing.T) {
 	// owner-fenced Value fact, not the absence of a selected cell.
 	var demands denseDemandScratch
 	top := values.Top()
-	if !addUnknownOpenTailObservationDemandDense(schema, values, actualObservation{fact: top, present: true, valid: true}, &demands) {
+	if !addUnknownOpenTailActualDemandDense(schema, values, formalActuals(t, []execution.MemberCell[valuedomain.Value]{{Value: top, Present: true}}), 0, &demands) {
 		t.Fatal("authenticated Value Top was rejected under unknown open tail")
 	}
 	if !demands.allUnknown {
@@ -97,7 +115,7 @@ func TestUnknownOpenTailUnavailableActualRefuses(t *testing.T) {
 	// The owner-issued sparse Bottom is equally authenticated, but carries no
 	// allocation alternatives and therefore adds no demand.
 	demands = denseDemandScratch{}
-	if !addUnknownOpenTailObservationDemandDense(schema, values, actualObservation{fact: values.Bottom(), valid: true}, &demands) {
+	if !addUnknownOpenTailActualDemandDense(schema, values, formalActuals(t, []execution.MemberCell[valuedomain.Value]{{Value: values.Bottom()}}), 0, &demands) {
 		t.Fatal("owner-issued sparse Bottom was rejected under unknown open tail")
 	}
 	if demands.count != 0 || demands.allUnknown {
@@ -117,7 +135,7 @@ func TestDenseDemandExactAllocationUsesCanonicalHeapCoordinate(t *testing.T) {
 		t.Fatalf("allocation fact = %t/%t", atomOK, factOK)
 	}
 	var demands denseDemandScratch
-	unknown, demandOK := addFactDemandDense(schema, values, actualObservation{fact: fact, present: true, valid: true}, placement.Retain, &demands)
+	unknown, demandOK := addFactDemandDense(schema, values, formalActuals(t, []execution.MemberCell[valuedomain.Value]{{Value: fact, Present: true}}), 0, placement.Retain, &demands)
 	if unknown || !demandOK || demands.count != 1 {
 		t.Fatalf("exact dense demand = unknown:%t ok:%t count:%d", unknown, demandOK, demands.count)
 	}
@@ -131,6 +149,17 @@ func TestDenseDemandExactAllocationUsesCanonicalHeapCoordinate(t *testing.T) {
 	}
 }
 
+// formalSoundnessAnyType is the one portable result type the fixture's
+// require operation answers with.
+func formalSoundnessAnyType(t testing.TB) schematype.Type {
+	t.Helper()
+	value, ok := schematype.NewPrimitive(schematype.PrimitiveAny)
+	if !ok {
+		t.Fatal("portable any type")
+	}
+	return value
+}
+
 func formalSoundnessSchemas(t testing.TB) (placement.Schema, *valuedomain.Schema) {
 	t.Helper()
 	program, err := lower.Lower(lower.Source{Name: "formal-soundness.lua", Text: []byte("return {}")})
@@ -140,9 +169,13 @@ func formalSoundnessSchemas(t testing.TB) (placement.Schema, *valuedomain.Schema
 	target, err := compiler.Seal(&declaration.Spec{
 		Semantics: typecontract.NewSemantics(),
 		Operations: []vocabulary.OperationSpec{{
+			// Require is the module-load producer the Boundary names, so its
+			// normal outcome carries the one result value a module root is
+			// answered at. A require declaring no result answers no module,
+			// and Value refuses the whole schema for it.
 			Bindings: []vocabulary.BindingSpec{{Namespace: vocabulary.BindingBuiltin, Member: []string{"require"}}},
 			Input:    vocabulary.ValuesSpec{Tail: vocabulary.ValuesClosed},
-			Outcomes: []vocabulary.OutcomeSpec{{Kind: flowkind.OutcomeNormal, Values: vocabulary.ValuesSpec{Tail: vocabulary.ValuesClosed}}},
+			Outcomes: []vocabulary.OutcomeSpec{{Kind: flowkind.OutcomeNormal, Values: vocabulary.ValuesSpec{Fixed: []schematype.Type{formalSoundnessAnyType(t)}, Tail: vocabulary.ValuesClosed}}},
 			Effects:  vocabulary.RowSpec{Tail: vocabulary.RowClosed},
 		}},
 	})

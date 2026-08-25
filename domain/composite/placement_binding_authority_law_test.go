@@ -22,7 +22,6 @@ import (
 	placementdomain "github.com/wippyai/go-lua/domain/placement"
 	capture "github.com/wippyai/go-lua/domain/placement/capture"
 	containment "github.com/wippyai/go-lua/domain/placement/containment"
-	formal "github.com/wippyai/go-lua/domain/placement/formal"
 	placementowner "github.com/wippyai/go-lua/domain/placement/owner"
 	valuedomain "github.com/wippyai/go-lua/domain/value"
 	valueowner "github.com/wippyai/go-lua/domain/value/owner"
@@ -34,13 +33,15 @@ import (
 // The local and foreign owners intentionally use the same cold schema and
 // concrete domain schemas; only their private SchemaBinding identities differ.
 //
-// ReturnEscape carries no case here: it cut to a generated RuleFamily, whose
-// authority is the family-claim fence (ac0408205b) - engine.BindRuleFamily
-// types the claim against the Factor named at the family's own declaration,
-// so a family typed at a foreign coordinate is refused where it is bound,
-// not admitted and later caught by a schema-equality check on a separately
-// declared/bound Rule the way capture, containment, and formal - still on
-// that older protocol - are proven here.
+// ReturnEscape, Transfer and Formal carry no case here: each cut to a
+// generated RuleFamily, whose authority is the family-claim fence
+// (ac0408205b) - engine.BindRuleFamily types the claim against the Factor
+// named at the family's own declaration, so a family typed at a foreign
+// coordinate is refused where it is bound, not admitted and later caught by a
+// schema-equality check on a separately declared/bound Rule the way capture
+// and containment - still on that older protocol - are proven here. Each
+// generated family states that fence in its own package, beside the install
+// arm that answers it.
 func TestPlacementRuleBindersRejectEqualSchemaForeignAuthorities(t *testing.T) {
 	placementSchema, values, heapSchema, calls := placementBindingLawSchemas(t)
 	builder := engine.NewSchema()
@@ -50,10 +51,9 @@ func TestPlacementRuleBindersRejectEqualSchemaForeignAuthorities(t *testing.T) {
 	callFragment, callOK := callowner.DeclareSchema(builder, placementBindingLawSemantic(8))
 	captureFragment, captureOK := capture.DeclareSchema(builder, placementBindingLawSemantic(11), placementBindingLawSemantic(12), valueFragment, placementFragment)
 	containmentFragment, containmentOK := containment.DeclareSchema(builder, placementBindingLawSemantic(13), placementBindingLawSemantic(14), placementFragment, heapFragment)
-	formalFragment, formalOK := formal.DeclareSchema(builder, placementBindingLawSemantic(15), placementBindingLawSemantic(16), valueFragment, callFragment, placementFragment)
 	cold, coldOK := builder.Seal()
-	if !placementOK || !valueOK || !heapOK || !callOK || !captureOK || !containmentOK || !formalOK || !coldOK || cold == nil {
-		t.Fatalf("Placement binding-law declaration placement=%t value=%t heap=%t call=%t capture=%t containment=%t formal=%t cold=%t", placementOK, valueOK, heapOK, callOK, captureOK, containmentOK, formalOK, coldOK)
+	if !placementOK || !valueOK || !heapOK || !callOK || !captureOK || !containmentOK || !coldOK || cold == nil {
+		t.Fatalf("Placement binding-law declaration placement=%t value=%t heap=%t call=%t capture=%t containment=%t cold=%t", placementOK, valueOK, heapOK, callOK, captureOK, containmentOK, coldOK)
 	}
 	localBinding := engine.NewSchemaBinding(cold)
 	foreignBinding := engine.NewSchemaBinding(cold)
@@ -81,24 +81,12 @@ func TestPlacementRuleBindersRejectEqualSchemaForeignAuthorities(t *testing.T) {
 			_, ok := containment.BindHot(localBinding, containmentFragment, foreignPlacement, localHeap, placementSchema)
 			return ok
 		}},
-		{name: "formal placement", bind: func() bool {
-			_, ok := formal.BindHot(localBinding, formalFragment, foreignPlacement, localValues, localCalls, nil, nil)
-			return ok
-		}},
 		{name: "capture value", bind: func() bool {
 			_, ok := capture.BindHot(localBinding, captureFragment, localPlacement, foreignValues, values, placementSchema)
 			return ok
 		}},
 		{name: "containment heap", bind: func() bool {
 			_, ok := containment.BindHot(localBinding, containmentFragment, localPlacement, foreignHeap, placementSchema)
-			return ok
-		}},
-		{name: "formal value", bind: func() bool {
-			_, ok := formal.BindHot(localBinding, formalFragment, localPlacement, foreignValues, localCalls, nil, nil)
-			return ok
-		}},
-		{name: "formal call", bind: func() bool {
-			_, ok := formal.BindHot(localBinding, formalFragment, localPlacement, localValues, foreignCalls, nil, nil)
 			return ok
 		}},
 	}

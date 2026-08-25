@@ -3,6 +3,7 @@ package formal
 import (
 	"testing"
 
+	"github.com/wippyai/go-lua/analysis/engine/execution"
 	"github.com/wippyai/go-lua/analysis/identity"
 	"github.com/wippyai/go-lua/analysis/lua/lower"
 	programartifact "github.com/wippyai/go-lua/analysis/program/artifact"
@@ -26,14 +27,14 @@ import (
 )
 
 type opaqueDispatchLawFixture struct {
-	packs        *packdomain.Schema
-	calls        *calldomain.Algebra
-	placement    placementdomain.Schema
-	values       *valuedomain.Schema
-	contract     *targetcontract.Contract
-	mounted      calldomain.MountedCall
-	key          calldomain.Key
-	observations []actualObservation
+	packs     *packdomain.Schema
+	calls     *calldomain.Algebra
+	placement placementdomain.Schema
+	values    *valuedomain.Schema
+	contract  *targetcontract.Contract
+	mounted   calldomain.MountedCall
+	key       calldomain.Key
+	cells     []execution.MemberCell[valuedomain.Value]
 }
 
 var (
@@ -57,7 +58,7 @@ func TestOpaqueCallDispatchHasNoFormalTargetAuthority(t *testing.T) {
 	if !atomOK || !factOK {
 		t.Fatalf("opaque dispatch reachable allocation fact = %t/%t", atomOK, factOK)
 	}
-	fixture.observations[0].fact = fact
+	fixture.cells[0].Value = fact
 	allocationCount := 0
 	for dense := 0; dense < fixture.placement.DenseKeyCount(); dense++ {
 		key, keyOK := fixture.placement.KeyAt(dense)
@@ -82,7 +83,7 @@ func TestOpaqueCallDispatchHasNoFormalTargetAuthority(t *testing.T) {
 		{name: "top", fact: fixture.calls.Top()},
 	} {
 		t.Run(test.name, func(t *testing.T) {
-			plan, ok := planFor(fixture.packs, fixture.calls, fixture.placement, fixture.values, fixture.contract, fixture.mounted, test.fact, fixture.observations)
+			plan, ok := planFor(fixture.packs, fixture.calls, fixture.placement, fixture.values, fixture.contract, fixture.mounted, test.fact, formalActuals(t, fixture.cells))
 			if !ok {
 				t.Fatal("authenticated opaque Call dispatch was refused")
 			}
@@ -101,8 +102,8 @@ func TestOpaqueCallDispatchHasNoFormalTargetAuthority(t *testing.T) {
 	if !knownAndOpaqueOK || !knownAndOpaque.HasOpaqueAlternative() || knownAndOpaque.KnownTargetCount() != 1 {
 		t.Fatal("known-plus-opaque formal dispatch value")
 	}
-	exactPlan, exactPlanOK := planFor(fixture.packs, fixture.calls, fixture.placement, fixture.values, fixture.contract, fixture.mounted, exact, fixture.observations)
-	combinedPlan, combinedPlanOK := planFor(fixture.packs, fixture.calls, fixture.placement, fixture.values, fixture.contract, fixture.mounted, knownAndOpaque, fixture.observations)
+	exactPlan, exactPlanOK := planFor(fixture.packs, fixture.calls, fixture.placement, fixture.values, fixture.contract, fixture.mounted, exact, formalActuals(t, fixture.cells))
+	combinedPlan, combinedPlanOK := planFor(fixture.packs, fixture.calls, fixture.placement, fixture.values, fixture.contract, fixture.mounted, knownAndOpaque, formalActuals(t, fixture.cells))
 	if !exactPlanOK || exactPlan.routeCount() == 0 || !combinedPlanOK || combinedPlan.routeCount() != exactPlan.routeCount() {
 		t.Fatalf("known formal route changed by opaque arm: exact=%t/%d combined=%t/%d", exactPlanOK, exactPlan.routeCount(), combinedPlanOK, combinedPlan.routeCount())
 	}
@@ -113,8 +114,12 @@ func TestOpaqueCallDispatchHasNoFormalTargetAuthority(t *testing.T) {
 		}
 	}
 	callFact := open
+	// The vector is opened once, outside the probe: a member vector is a view
+	// over cells the family already owns, and opening one per invocation would
+	// measure the law's own scaffolding rather than the reduction.
+	actuals := formalActuals(t, fixture.cells)
 	allocations := testing.AllocsPerRun(100, func() {
-		opaqueDispatchPlanSink, opaqueDispatchPlanOK = planFor(fixture.packs, fixture.calls, fixture.placement, fixture.values, fixture.contract, fixture.mounted, callFact, fixture.observations)
+		opaqueDispatchPlanSink, opaqueDispatchPlanOK = planFor(fixture.packs, fixture.calls, fixture.placement, fixture.values, fixture.contract, fixture.mounted, callFact, actuals)
 	})
 	if allocations != 0 {
 		t.Fatalf("opaque no-route planner allocated %v times", allocations)
@@ -142,7 +147,7 @@ func findFormalTargetForOpaqueLaw(t testing.TB, fixture opaqueDispatchLawFixture
 			continue
 		}
 		var demands denseDemandScratch
-		if !addFormalOperationDemand(fixture.placement, fixture.values, fixture.contract, operation, actual.ActualCount(), runtimeTail, fixture.observations, &demands) {
+		if !addFormalOperationDemand(fixture.placement, fixture.values, fixture.contract, operation, actual.ActualCount(), runtimeTail, formalActuals(t, fixture.cells), &demands) {
 			continue
 		}
 		if demands.count == 0 && !demands.allUnknown {
@@ -164,26 +169,26 @@ func TestOpaqueCallDispatchRejectsForeignAndMalformedFacts(t *testing.T) {
 	open := mustOpenDispatchValue(t, local.calls, local.key)
 
 	tests := []struct {
-		name         string
-		calls        *calldomain.Algebra
-		fact         calldomain.Value
-		observations []actualObservation
+		name  string
+		calls *calldomain.Algebra
+		fact  calldomain.Value
+		cells []execution.MemberCell[valuedomain.Value]
 	}{
-		{name: "foreign-call-top", calls: local.calls, fact: foreign.calls.Top(), observations: local.observations},
-		{name: "zero-call-fact", calls: local.calls, fact: calldomain.Value{}, observations: local.observations},
-		{name: "missing-observation", calls: local.calls, fact: open, observations: append([]actualObservation(nil), local.observations...)},
-		{name: "foreign-value-observation", calls: local.calls, fact: open, observations: append([]actualObservation(nil), local.observations...)},
+		{name: "foreign-call-top", calls: local.calls, fact: foreign.calls.Top(), cells: local.cells},
+		{name: "zero-call-fact", calls: local.calls, fact: calldomain.Value{}, cells: local.cells},
+		{name: "missing-observation", calls: local.calls, fact: open, cells: append([]execution.MemberCell[valuedomain.Value](nil), local.cells...)},
+		{name: "foreign-value-observation", calls: local.calls, fact: open, cells: append([]execution.MemberCell[valuedomain.Value](nil), local.cells...)},
 	}
-	tests[2].observations[0].valid = false
-	if len(tests[3].observations) == 0 {
+	tests[2].cells = tests[2].cells[:0]
+	if len(tests[3].cells) == 0 {
 		t.Fatal("opaque dispatch fixture has no fixed actual for malformed observation law")
 	}
-	for index := range tests[3].observations {
-		tests[3].observations[index].fact = foreign.values.Bottom()
+	for index := range tests[3].cells {
+		tests[3].cells[index].Value = foreign.values.Bottom()
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
-			if _, ok := planFor(local.packs, local.calls, local.placement, local.values, local.contract, local.mounted, test.fact, test.observations); ok {
+			if _, ok := planFor(local.packs, local.calls, local.placement, local.values, local.contract, local.mounted, test.fact, formalActuals(t, test.cells)); ok {
 				t.Fatal("foreign or malformed opaque predecessor was widened instead of refused")
 			}
 		})
@@ -266,7 +271,7 @@ func newOpaqueDispatchLawFixture(t testing.TB, name string) opaqueDispatchLawFix
 	}
 	var mounted calldomain.MountedCall
 	var key calldomain.Key
-	var observations []actualObservation
+	var cells []execution.MemberCell[valuedomain.Value]
 	found := false
 	for index := 0; index < calls.MountedCallCount(); index++ {
 		candidate, candidateOK := calls.MountedCallAtHandle(index)
@@ -277,9 +282,9 @@ func newOpaqueDispatchLawFixture(t testing.TB, name string) opaqueDispatchLawFix
 			continue
 		}
 		mounted, key = candidate, candidateKey
-		observations = make([]actualObservation, actual.ActualCount())
-		for index := range observations {
-			observations[index] = actualObservation{fact: values.Bottom(), present: true, valid: true}
+		cells = make([]execution.MemberCell[valuedomain.Value], actual.ActualCount())
+		for index := range cells {
+			cells[index] = execution.MemberCell[valuedomain.Value]{Value: values.Bottom(), Present: true}
 		}
 		found = true
 		break
@@ -287,5 +292,17 @@ func newOpaqueDispatchLawFixture(t testing.TB, name string) opaqueDispatchLawFix
 	if !found {
 		t.Fatal("opaque dispatch fixture has no mounted call with a fixed actual")
 	}
-	return opaqueDispatchLawFixture{packs: packs, calls: calls, placement: placementSchema, values: values, contract: contract, mounted: mounted, key: key, observations: observations}
+	return opaqueDispatchLawFixture{packs: packs, calls: calls, placement: placementSchema, values: values, contract: contract, mounted: mounted, key: key, cells: cells}
+}
+
+// formalActuals views a fixture's own member cells as the whole vector the
+// declaration delivers. A vector is a view over caller-owned cells, so a law
+// that varies one cell copies the slice and views the copy.
+func formalActuals(t testing.TB, cells []execution.MemberCell[valuedomain.Value]) execution.SummaryVector[valuedomain.Value] {
+	t.Helper()
+	vector, ok := execution.NewMemberVector(cells)
+	if !ok {
+		t.Fatal("mounted actual member vector")
+	}
+	return vector
 }

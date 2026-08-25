@@ -10,9 +10,7 @@
 package formal
 
 import (
-	"crypto/sha256"
-
-	"github.com/wippyai/go-lua/analysis/identity"
+	"github.com/wippyai/go-lua/analysis/engine/execution"
 	"github.com/wippyai/go-lua/analysis/program/target/contract"
 	"github.com/wippyai/go-lua/analysis/program/target/vocabulary"
 	calldomain "github.com/wippyai/go-lua/domain/call"
@@ -22,75 +20,6 @@ import (
 	valuedomain "github.com/wippyai/go-lua/domain/value"
 )
 
-type operand struct {
-	packs   *packdomain.Schema
-	mounted calldomain.MountedCall
-	key     calldomain.Key
-	id      identity.ContentID
-}
-
-func mountedOperandID(module, occurrence, application, keyID identity.ContentID) identity.ContentID {
-	const prefix = "wippy.analysis.placement.formal.invocation.v1\x00"
-	hash := sha256.New()
-	_, _ = hash.Write([]byte(prefix))
-	_, _ = hash.Write(module[:])
-	_, _ = hash.Write(occurrence[:])
-	_, _ = hash.Write(application[:])
-	_, _ = hash.Write(keyID[:])
-	return identity.ContentID(hash.Sum(nil))
-}
-
-func mountedForOperand(packs *packdomain.Schema, algebra *calldomain.Algebra, candidate operand) (packdomain.MountedActualProjection, identity.ContentID, identity.ContentID, identity.ContentID, bool) {
-	if packs == nil || algebra == nil || !algebra.Valid() || candidate.packs != packs || !candidate.mounted.Valid() ||
-		!packs.LinkOwner().Available() || !packs.LinkOwner().Matches(algebra.LinkOwner()) {
-		return packdomain.MountedActualProjection{}, identity.ContentID{}, identity.ContentID{}, identity.ContentID{}, false
-	}
-	application, occurrence, module, _, _, identityOK := algebra.MountedCallIdentity(candidate.mounted)
-	key, keyOK := algebra.KeyForMountedCall(candidate.mounted)
-	keyID, keyIDOK := key.ContentID()
-	actual, actualOK := packs.MountedActualProjection(module, occurrence)
-	if !actualOK || !actual.Valid() || !actual.OwnedBy(packs) || !identityOK || !keyOK || !key.IsApplication() || !key.Valid() || !keyIDOK || !keyID.Available() || candidate.key != key {
-		return packdomain.MountedActualProjection{}, identity.ContentID{}, identity.ContentID{}, identity.ContentID{}, false
-	}
-	expected := mountedOperandID(module, occurrence, application, keyID)
-	if candidate.id != expected || !expected.Available() {
-		return packdomain.MountedActualProjection{}, identity.ContentID{}, identity.ContentID{}, identity.ContentID{}, false
-	}
-	return actual, module, occurrence, application, true
-}
-
-func operandContent(packs *packdomain.Schema, algebra *calldomain.Algebra, candidate operand) (operand, [32]byte, bool) {
-	_, _, _, _, ok := mountedForOperand(packs, algebra, candidate)
-	if !ok {
-		return operand{}, [32]byte{}, false
-	}
-	return candidate, [32]byte(candidate.id), true
-}
-
-func operandForOccurrence(packs *packdomain.Schema, algebra *calldomain.Algebra, module, occurrence identity.ContentID) (operand, bool) {
-	if packs == nil || algebra == nil || !algebra.Valid() || !packs.LinkOwner().Available() || !packs.LinkOwner().Matches(algebra.LinkOwner()) {
-		return operand{}, false
-	}
-	mounted, mountedOK := algebra.MountedCallForOccurrence(module, occurrence)
-	application, callID, moduleID, _, _, identityOK := algebra.MountedCallIdentity(mounted)
-	key, keyOK := algebra.KeyForMountedCall(mounted)
-	keyID, keyIDOK := key.ContentID()
-	if !mountedOK || !identityOK || callID != occurrence || moduleID != module || !keyOK || !key.IsApplication() || !key.Valid() || !keyIDOK || !keyID.Available() {
-		return operand{}, false
-	}
-	actual, actualOK := packs.MountedActualProjection(module, occurrence)
-	if !actualOK || !actual.Valid() || !actual.OwnedBy(packs) {
-		return operand{}, false
-	}
-	id := mountedOperandID(module, occurrence, application, keyID)
-	return operand{packs: packs, mounted: mounted, key: key, id: id}, id.Available()
-}
-
-// formalSelectorRange is the allocation-free representation used by the
-// solve-time reducer. A formal selector is always either empty, one fixed
-// index, or a contiguous suffix of the mounted actual prefix. Keeping the
-// half-open interval here lets planFor inspect the selector semantics without
-// materializing a selected-index slice.
 type formalSelectorRange struct {
 	start   int
 	end     int
@@ -207,12 +136,6 @@ func FormalEscape(kind vocabulary.FormalEffectKind) (placement.Escape, bool) {
 	}
 }
 
-type actualObservation struct {
-	fact    valuedomain.Value
-	present bool
-	valid   bool
-}
-
 type route struct {
 	key     heap.Key
 	escape  placement.Escape
@@ -223,8 +146,9 @@ type route struct {
 type routePlan struct {
 	// The common formal call has only a handful of allocation routes. Keep
 	// those routes in the plan value itself; wider exact plans spill only the
-	// suffix. The plan is returned by value and never retained by HotRule, so
-	// this is invocation-local storage rather than shared mutable state.
+	// suffix. The plan is the relation's derived state for one invocation and
+	// is never retained past it, so this is invocation-local storage rather
+	// than shared mutable state.
 	inline [formalRouteInlineWidth]route
 	extra  []route
 	count  int
@@ -253,9 +177,10 @@ func (plan routePlan) routeAt(index int) (route, bool) {
 		return route{}, false
 	}
 	if plan.allUnknown {
-		// All-root plans are normally consumed by the dense iteration in
-		// HotRule. Direct indexed access derives the same route from the owner
-		// schema without introducing a second allocation-root index.
+		// An all-root plan holds the widening as a mode rather than a
+		// materialized row per root. Indexed access derives the same route
+		// from the owner schema without introducing a second allocation-root
+		// index.
 		if !plan.schema.Valid() {
 			return route{}, false
 		}
@@ -399,7 +324,7 @@ type denseRouteDemand struct {
 	unknown bool
 }
 
-// denseDemandScratch is deliberately not stored on HotRule. locate and fold
+// denseDemandScratch is deliberately invocation-local. The derivation
 // can execute concurrently on the same immutable Rule, so every invocation
 // owns its own scratch value. Dense is Heap's canonical coordinate, not a
 // second key index.
@@ -544,11 +469,12 @@ func planAddDenseDemand(schema placement.Schema, key heap.Key, escape placement.
 	return demands.add(denseRouteDemand{dense: dense, escape: escape, unknown: unknown || demands.allUnknown})
 }
 
-func addFactDemandDense(schema placement.Schema, values *valuedomain.Schema, observation actualObservation, escape placement.Escape, demands *denseDemandScratch) (unknown bool, ok bool) {
+func addFactDemandDense(schema placement.Schema, values *valuedomain.Schema, actuals execution.SummaryVector[valuedomain.Value], ordinal int, escape placement.Escape, demands *denseDemandScratch) (unknown bool, ok bool) {
 	if demands == nil || values == nil {
 		return false, false
 	}
-	fact, factOK := values.AuthenticateFactorCell(observation.fact, observation.present, observation.valid)
+	value, present, cell := actuals.At(ordinal)
+	fact, factOK := values.AuthenticateFactorCell(value, present, cell)
 	if !factOK {
 		return false, false
 	}
@@ -591,11 +517,12 @@ func addOpenTailDemandDense(schema placement.Schema, values *valuedomain.Schema,
 	return true
 }
 
-func addUnknownOpenTailObservationDemandDense(schema placement.Schema, values *valuedomain.Schema, observation actualObservation, demands *denseDemandScratch) bool {
+func addUnknownOpenTailActualDemandDense(schema placement.Schema, values *valuedomain.Schema, actuals execution.SummaryVector[valuedomain.Value], ordinal int, demands *denseDemandScratch) bool {
 	if values == nil {
 		return false
 	}
-	fact, factOK := values.AuthenticateFactorCell(observation.fact, observation.present, observation.valid)
+	value, present, cell := actuals.At(ordinal)
+	fact, factOK := values.AuthenticateFactorCell(value, present, cell)
 	if !factOK {
 		return false
 	}
@@ -640,6 +567,22 @@ func (plan routePlan) seal(schema placement.Schema, demands *denseDemandScratch)
 	return sealed, true
 }
 
+// coordinateForActual is the Value coordinate Pack's mounted row declares one
+// authored actual at. The delivered vector is read at exactly these
+// coordinates, and the reduction still authenticates each cell against the one
+// it belongs to: a cell the owner would not admit at its own coordinate is
+// malformed evidence, not a weaker fact.
+func coordinateForActual(values *valuedomain.Schema, actual packdomain.MountedActualProjection, index int) (valuedomain.Coordinate, bool) {
+	if values == nil || !values.Valid() || index < 0 || index >= actual.ActualCount() {
+		return valuedomain.Coordinate{}, false
+	}
+	source, sourceOK := actual.ActualAt(index)
+	if !sourceOK {
+		return valuedomain.Coordinate{}, false
+	}
+	return values.CoordinateForMountedSemantic(source.Module(), source.ID())
+}
+
 // addFormalOperationDemand reduces one explicitly selected Target operation's
 // formal rows into the invocation-local demand set. Formal rows only describe
 // ownership of values supplied at the mounted call boundary: they do not issue
@@ -653,7 +596,7 @@ func addFormalOperationDemand(
 	operation vocabulary.Operation,
 	actualCount int,
 	runtimeTail bool,
-	observations []actualObservation,
+	actuals execution.SummaryVector[valuedomain.Value],
 	demands *denseDemandScratch,
 ) bool {
 	if !schema.Valid() || values == nil || !values.Valid() || targetContract == nil || operation == 0 || demands == nil {
@@ -689,12 +632,11 @@ func addFormalOperationDemand(
 			}
 		}
 		for actualIndex := selection.start; actualIndex < selection.end; actualIndex++ {
-			if actualIndex < 0 || actualIndex >= len(observations) {
+			if actualIndex < 0 || actualIndex >= actuals.Count() {
 				return false
 			}
-			observation := observations[actualIndex]
-			unknown, observationOK := addFactDemandDense(schema, values, observation, escape, demands)
-			if !observationOK {
+			unknown, actualOK := addFactDemandDense(schema, values, actuals, actualIndex, escape, demands)
+			if !actualOK {
 				return false
 			}
 			if unknown && !addUnknownAllDense(schema, demands) {
@@ -709,8 +651,8 @@ func addFormalOperationDemand(
 		if runtimeTail && !addUnknownAllDense(schema, demands) {
 			return false
 		}
-		for _, observation := range observations {
-			if !addUnknownOpenTailObservationDemandDense(schema, values, observation, demands) {
+		for ordinal := 0; ordinal < actuals.Count(); ordinal++ {
+			if !addUnknownOpenTailActualDemandDense(schema, values, actuals, ordinal, demands) {
 				return false
 			}
 		}
@@ -721,7 +663,7 @@ func addFormalOperationDemand(
 // planFor is the one formal-to-placement reduction used by both transfer and
 // derivation evidence. It accepts only already-selected Call/Value facts and
 // emits exact owner-fenced allocation keys or conservative all-root routes.
-func planFor(packs *packdomain.Schema, calls *calldomain.Algebra, schema placement.Schema, values *valuedomain.Schema, targetContract *contract.Contract, mounted calldomain.MountedCall, callFact calldomain.Value, observations []actualObservation) (routePlan, bool) {
+func planFor(packs *packdomain.Schema, calls *calldomain.Algebra, schema placement.Schema, values *valuedomain.Schema, targetContract *contract.Contract, mounted calldomain.MountedCall, callFact calldomain.Value, actuals execution.SummaryVector[valuedomain.Value]) (routePlan, bool) {
 	if packs == nil || calls == nil {
 		return routePlan{}, false
 	}
@@ -734,7 +676,7 @@ func planFor(packs *packdomain.Schema, calls *calldomain.Algebra, schema placeme
 		!actualOK || !actual.Valid() || !actual.OwnedBy(packs) || !keyOK ||
 		values == nil || !values.Valid() || targetContract == nil || !schema.Valid() || !values.OwnsHeapSchema(schema.Heap()) ||
 		!values.LinkOwner().Matches(calls.LinkOwner()) ||
-		!calls.OwnsTargetContract(targetContract) || len(observations) != actualCount || !calls.Admits(key, callFact) {
+		!calls.OwnsTargetContract(targetContract) || !actuals.Valid() || actuals.Count() != actualCount || !calls.Admits(key, callFact) {
 		return routePlan{}, false
 	}
 	var demands denseDemandScratch
@@ -749,8 +691,11 @@ func planFor(packs *packdomain.Schema, calls *calldomain.Algebra, schema placeme
 	// no-alternative default and contributes no route; it is not an unavailable
 	// planner input or a request to manufacture all-root Unknown. Authenticated
 	// open Pack tails are widened only by the explicit runtimeTail branch below.
-	for _, observation := range observations {
-		if _, observationOK := values.AuthenticateFactorCell(observation.fact, observation.present, observation.valid); !observationOK {
+	for ordinal := 0; ordinal < actuals.Count(); ordinal++ {
+		value, present, cell := actuals.At(ordinal)
+		fact, cellOK := values.AuthenticateFactorCell(value, present, cell)
+		coordinate, coordinateOK := coordinateForActual(values, actual, ordinal)
+		if !cellOK || !coordinateOK || !values.AdmitsCoordinate(coordinate, fact) {
 			return routePlan{}, false
 		}
 	}
@@ -765,53 +710,9 @@ func planFor(packs *packdomain.Schema, calls *calldomain.Algebra, schema placeme
 			// not carry formal ownership metadata.
 			continue
 		}
-		if !addFormalOperationDemand(schema, values, targetContract, operation, actualCount, runtimeTail, observations, &demands) {
+		if !addFormalOperationDemand(schema, values, targetContract, operation, actualCount, runtimeTail, actuals, &demands) {
 			return routePlan{}, false
 		}
 	}
 	return (&routePlan{}).seal(schema, &demands)
-}
-
-func routeForTag(plan routePlan, tag routeTag) (route, bool) {
-	if plan.allUnknown {
-		if !plan.schema.Valid() {
-			return route{}, false
-		}
-		raw := uint64(tag)
-		if raw == 0 || raw&routeTagMask != routeCodeUnknown {
-			return route{}, false
-		}
-		coordinate := raw >> routeTagShift
-		if coordinate == 0 || coordinate-1 > uint64(^uint(0)>>1) {
-			return route{}, false
-		}
-		dense := int(coordinate - 1)
-		key, keyOK := plan.schema.KeyAt(dense)
-		if !keyOK || key.Kind() != heap.RootAllocation {
-			return route{}, false
-		}
-		return route{key: key, unknown: true, tag: tag}, true
-	}
-	// routePlan sealing emits exact demands by Heap dense coordinate, so the
-	// route tags are sorted. Keep lookup allocation-free and logarithmic.
-	left, right := 0, plan.routeCount()
-	for left < right {
-		middle := left + (right-left)/2
-		candidate, candidateOK := plan.routeAt(middle)
-		if !candidateOK {
-			return route{}, false
-		}
-		if candidate.tag < tag {
-			left = middle + 1
-		} else {
-			right = middle
-		}
-	}
-	if left < plan.routeCount() {
-		candidate, candidateOK := plan.routeAt(left)
-		if candidateOK && candidate.tag == tag {
-			return candidate, true
-		}
-	}
-	return route{}, false
 }
