@@ -191,6 +191,38 @@ func buildSealedGraphRuleMaps(state *schemaBindingState) (map[composition.Key]se
 	return ordinary, activations, true
 }
 
+// graphMemberWriteArity states how many writes the graph members of one sealed
+// rule carry. It is the rule's declared publication disposition read once: a
+// fact publication addresses exactly one write cell, and a structural
+// publication - whose output is the activation row set its candidate branches
+// mount into the construct topology - addresses none, because there is no
+// Factor cell for a write to address. A disposition with no arm here is not a
+// graph member at all, so a later disposition cannot enter the catalog by
+// defaulting to the writing shape.
+func graphMemberWriteArity(rule sealedRuleGeometry) (int, bool) {
+	if rule == nil {
+		return 0, false
+	}
+	switch rule.directRuleWriteMode() {
+	case directRuleWriteExact, directRuleWriteRoute:
+		return 1, true
+	case directRuleWriteStructural:
+		return 0, true
+	default:
+		return 0, false
+	}
+}
+
+// structuralGraphMember reports whether this rule's members publish structurally.
+// A structural member reaches the same catalog walks as every other ordinary
+// member and contributes the same reads; what it never contributes is a write
+// surface or a carry, so the two carry passes and the write pass skip it by
+// this predicate rather than by the rule table it was found in.
+func structuralGraphMember(rule sealedRuleGeometry) bool {
+	writes, arityOK := graphMemberWriteArity(rule)
+	return arityOK && writes == 0
+}
+
 func validOrdinaryGraphMember(rule sealedRuleGeometry, member equation.RuleMember) bool {
 	if rule == nil || !member.Rule().Available() {
 		return false
@@ -198,8 +230,14 @@ func validOrdinaryGraphMember(rule sealedRuleGeometry, member equation.RuleMembe
 	if _, activation := member.ActivationMember(); activation {
 		return false
 	}
-	if member.Rule() != rule.directRuleSemantic() || member.OperandFamily() != rule.directRuleOperandFamily() || uint64(member.ReadCount()) != rule.directRuleReadCount() || member.WriteCount() != 1 {
+	writes, arityOK := graphMemberWriteArity(rule)
+	if !arityOK || member.Rule() != rule.directRuleSemantic() || member.OperandFamily() != rule.directRuleOperandFamily() || uint64(member.ReadCount()) != rule.directRuleReadCount() || member.WriteCount() != writes {
 		return false
+	}
+	if writes == 0 {
+		// A structural publication computes no fact, so it neither addresses a
+		// write cell nor carries one into the next point.
+		return !rule.directRuleCarryPresent()
 	}
 	surface, surfaceOK := member.WriteAt(0)
 	routeRead, routeOK := member.WriteRouteRead(0)
@@ -249,7 +287,7 @@ func buildGraphCarryClosures(state *schemaBindingState, graph *equation.Graph, r
 			if !ruleOK || !validOrdinaryGraphMember(rule, member) {
 				return nil, false
 			}
-			if !rule.directRuleCarryPresent() {
+			if structuralGraphMember(rule) || !rule.directRuleCarryPresent() {
 				continue
 			}
 			factor := rule.directRuleOutputFactor()
@@ -305,6 +343,9 @@ func buildGraphCarryClosures(state *schemaBindingState, graph *equation.Graph, r
 			rule, ruleOK := rules[member.Rule()]
 			if !ruleOK || !validOrdinaryGraphMember(rule, member) {
 				return nil, false
+			}
+			if structuralGraphMember(rule) {
+				continue
 			}
 			factor := rule.directRuleOutputFactor()
 			if _, carried := carriedFactors[factor]; !carried {
@@ -593,7 +634,7 @@ func buildGraphBindingCatalog(state *schemaBindingState, graph *equation.Graph) 
 				if !present || !validOrdinaryGraphMember(rule, member) {
 					return nil, false
 				}
-				if rule.directRuleCarryPresent() {
+				if !structuralGraphMember(rule) && rule.directRuleCarryPresent() {
 					input, inputOK := group.InputAt(int(rule.directRuleCarryInput()))
 					if !inputOK {
 						return nil, false
@@ -646,8 +687,9 @@ func buildGraphBindingCatalog(state *schemaBindingState, graph *equation.Graph) 
 					return nil, false
 				}
 			}
-			if !activationMember {
-				rule := ordinary[member.Rule()]
+			// A structural member publishes no fact, so the write table records
+			// nothing for it; the reads above are its whole contribution.
+			if rule := ordinary[member.Rule()]; !activationMember && !structuralGraphMember(rule) {
 				surface, surfaceOK := member.WriteAt(0)
 				routeRead, routeOK := member.WriteRouteRead(0)
 				if rule == nil || !surfaceOK || !routeOK || !surface.Available() {

@@ -142,7 +142,7 @@ type FormRow struct {
 	// by the issuance pass through the relation's own owner. It is a count and
 	// not a coordinate list because a branch is addressed by its ordinal and
 	// carries no fact to be read at one.
-	branches int
+	branches  int
 	branchSet bool
 }
 

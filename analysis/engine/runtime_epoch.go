@@ -7,6 +7,7 @@ import (
 	"sync/atomic"
 
 	"github.com/wippyai/go-lua/analysis/engine/execution"
+	"github.com/wippyai/go-lua/analysis/engine/generated"
 	"github.com/wippyai/go-lua/analysis/engine/internal/carrier"
 	"github.com/wippyai/go-lua/analysis/engine/internal/carrier/shape"
 	"github.com/wippyai/go-lua/analysis/engine/internal/composition"
@@ -232,6 +233,24 @@ type generatedFamilyAssignment struct {
 	local  uint32
 }
 
+// generatedRowOutputWidth states how many Factor patch slots one generated
+// row's invocation publishes through. The declared publication mode is the
+// whole answer: a fact publication opens the one slot its output addresses,
+// and a structural publication opens none, because its result is the branch
+// set it settles and no Factor column receives it. The catalog row and the
+// family's Run are sized from this one reading, so the two never disagree
+// about a row's width.
+func generatedRowOutputWidth(descriptor generated.CompiledRule) (uint16, bool) {
+	mode, modeOK := descriptor.OutputMode()
+	if !modeOK {
+		return 0, false
+	}
+	if mode == ruleprogram.ModeStructural {
+		return 0, true
+	}
+	return 1, true
+}
+
 // buildGeneratedExecutionProgram performs the one cold grouping step from
 // sealed member rows to typed families. Each row takes the execution form its
 // own descriptor declares; this pass only routes that row to its owning
@@ -358,7 +377,10 @@ func buildGeneratedExecutionProgram(program *runtimeProgram) (*generatedExecutio
 		}
 		familyBase := uint32(len(families))
 		for _, executor := range executors {
-			if executor == nil || executor.InputCapacity() < 0 || executor.OutputCapacity() <= 0 {
+			// A family's output capacity is the number of Factor columns its
+			// rows publish into. A structural family publishes none, so zero is
+			// a declared width rather than a missing one.
+			if executor == nil || executor.InputCapacity() < 0 || executor.OutputCapacity() < 0 {
 				return nil, refuseProgramSeal(topologyConstructionStepDirectory), false
 			}
 			families = append(families, executor)
@@ -388,8 +410,12 @@ func buildGeneratedExecutionProgram(program *runtimeProgram) (*generatedExecutio
 		if !descriptorOK || descriptor.InputCount() < 0 || descriptor.InputCount() > int(^uint16(0)) || descriptor.OutputCount() != 1 {
 			return nil, refuseProgramSeal(topologyConstructionStepMemberRow), false
 		}
+		outputs, widthOK := generatedRowOutputWidth(descriptor)
+		if !widthOK {
+			return nil, refuseProgramSeal(topologyConstructionStepMemberRow), false
+		}
 		assignment := assignments[memberIndex]
-		drafts = append(drafts, executioncatalog.Draft{Family: assignment.family, Local: assignment.local, Rule: row.generated.rule, Member: uint32(memberIndex), Candidate: row.generated.candidate, InputCount: uint16(descriptor.InputCount()), OutputCount: 1})
+		drafts = append(drafts, executioncatalog.Draft{Family: assignment.family, Local: assignment.local, Rule: row.generated.rule, Member: uint32(memberIndex), Candidate: row.generated.candidate, InputCount: uint16(descriptor.InputCount()), OutputCount: outputs})
 		draftMembers = append(draftMembers, memberIndex)
 	}
 	catalog, sealed := executioncatalog.Seal(drafts)
@@ -607,7 +633,7 @@ func newRuntimeEpoch(runtime *solverRuntime, relation equation.Relation, ctx con
 		generatedCatalog = executionProgram.catalog
 		generatedWorkers = make([]generatedExecutionWorker, len(executionProgram.families))
 		for index, family := range executionProgram.families {
-			if family == nil || family.InputCapacity() < 0 || family.OutputCapacity() <= 0 {
+			if family == nil || family.InputCapacity() < 0 || family.OutputCapacity() < 0 {
 				return nil, false
 			}
 			run := execution.NewRun(family.InputCapacity(), family.OutputCapacity())
