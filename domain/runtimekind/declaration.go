@@ -41,7 +41,7 @@ func BehaviorStructureSpecs() []structure.Spec {
 //
 // Neither ordinals nor spellings are invented here. A family's ordinal is its
 // Kind constant, which is also its bit position in Set, and Spelling is owned
-// beside that Kind. Registration is only the structural projection of that
+// beside that Kind. Declaration is only the structural projection of that
 // closed description.
 //
 // A row's key and its rendered spelling are both the string type(v) yields for

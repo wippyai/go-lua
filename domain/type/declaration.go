@@ -1,5 +1,5 @@
 // Package typedomain is the root of the analyzer's Lua type domain and the
-// domain's registration statement against the analyzer declaration table.
+// domain's declaration statement against the analyzer declaration table.
 //
 // The domain's subject matter lives in the packages below this one: the type
 // graph and its canonical codec, the kind vocabulary the graph dispatches on,
@@ -27,7 +27,7 @@
 //     an instantiation - dense from one, with a limit sentinel, a membership
 //     predicate, and a catalog function that is the one enumeration of them.
 //
-// # Registration
+// # Declaration
 //
 // The domain declares two rows: assignment and direct-call argument conformance.
 // whose value does not conform to the type its target declares. It is declared
@@ -170,7 +170,7 @@
 // reads is the closed runtime family vocabulary, which is scalar vocabulary and
 // set algebra with no dependency on any domain at all and therefore sits below
 // this one rather than beside it; the law beside this file states that position
-// rather than assuming it. The law states both directions, so a registration
+// rather than assuming it. The law states both directions, so a declaration
 // added here is added by a domain that is still below the composition that
 // would seal it.
 package typedomain

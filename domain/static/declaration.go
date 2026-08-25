@@ -23,7 +23,7 @@
 // Everything above is sealed once, before the mount phase opens, and is
 // immutable afterwards. The domain runs no fixpoint and holds no solver state.
 //
-// # Registration
+// # Declaration
 //
 // This domain declares no row on any surface of the analyzer declaration table.
 // The reason is one reason stated eight times, because a surface with nothing to
@@ -73,7 +73,7 @@
 //
 // The zero-row statement is executable. A surface of the declaration table is
 // reached by importing its package, so a domain that declares no row imports no
-// surface, and the registration law states exactly that. A row added here
+// surface, and the declaration law states exactly that. A row added here
 // therefore cannot be added without this file being rewritten in the same
 // change.
 //

@@ -12,7 +12,7 @@ import (
 )
 
 // TestTypestateJudgmentKernelDeclaresNoSurfaceRow is the executable form of
-// this package's registration statement. A surface of the declaration table is
+// this package's declaration statement. A surface of the declaration table is
 // reached by importing its package, and a peer domain is reached by importing
 // it, so a judgment kernel that declares no row and holds no inter-domain edge
 // imports no module package at all. The law is stated over the import set

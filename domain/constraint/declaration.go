@@ -1,5 +1,5 @@
 // Package constraint is the root of the analyzer's constraint domain and the
-// domain's registration statement against the analyzer declaration table.
+// domain's declaration statement against the analyzer declaration table.
 //
 // # What the domain owns
 //
@@ -19,7 +19,7 @@
 // consumers already import it for their own semantics, so the domain sits
 // below them and imports no peer domain of its own.
 //
-// # Registration
+// # Declaration
 //
 // The domain declares one row set, on the structural vocabulary surface, and
 // nothing on the other seven. The reason it declares nothing on those seven is

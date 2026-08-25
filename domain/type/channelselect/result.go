@@ -13,7 +13,7 @@ import (
 )
 
 // Role is the semantic-role spelling of the channel-select case fact family.
-// The structure row is declared from the type domain registration.
+// The structure row is declared from the type domain declaration.
 const Role = "fact/channel-select-case"
 
 // FamilyKey is the structural identity of the channel-select case fact

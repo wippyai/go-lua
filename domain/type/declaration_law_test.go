@@ -17,7 +17,7 @@ import (
 
 // surfacePackages is the closed set of declaration-surface packages. A row on
 // any surface of the analyzer declaration table is reached by importing the
-// surface's package, so this list is what the domain's registration statement
+// surface's package, so this list is what the domain's declaration statement
 // is checked against.
 //
 // The schema's type-contract package is deliberately absent: it is the neutral
@@ -33,31 +33,31 @@ var surfacePackages = []string{
 	"github.com/wippyai/go-lua/analysis/schema/query",
 }
 
-// registrationSource is the one file of this domain that names a declaration
-// surface. The domain's registration is a single statement, so it is made from
-// a single place and every other source beneath this directory is held to the
-// zero-row form the domain had before it.
-const registrationSource = "registration.go"
+// declarationSource is the one file of this domain that names a declaration
+// surface. The domain's statement is a single statement, so it is made from a
+// single place and every other source beneath this directory is held to the
+// zero-row form.
+const declarationSource = "declaration.go"
 
 // TestTypeDomainDeclaresItsRowFromOneSource is the executable form of this
-// domain's registration statement. The domain declares its diagnostic rows and
+// domain's declaration statement. The domain declares its diagnostic rows and
 // the channel-select case fact role here: a row reached from anywhere else
-// beneath this directory would be a second registration for a domain that has
+// beneath this directory would be a second declaration for a domain that has
 // one, and a row on any other surface would be a claim the domain's position
 // does not support.
 func TestTypeDomainDeclaresItsRowFromOneSource(t *testing.T) {
 	for _, path := range domainSources(t) {
-		registration := relative(t, path) == registrationSource
+		declares := relative(t, path) == declarationSource
 		for _, imported := range sourceImports(t, path) {
 			for _, surface := range surfacePackages {
 				if imported != surface && !strings.HasPrefix(imported, surface+"/") {
 					continue
 				}
-				if registration && (surface == "github.com/wippyai/go-lua/analysis/schema/diagnostic" ||
+				if declares && (surface == "github.com/wippyai/go-lua/analysis/schema/diagnostic" ||
 					surface == "github.com/wippyai/go-lua/analysis/schema/structure") {
 					continue
 				}
-				t.Errorf("type domain source %s imports declaration surface %s outside the domain's one registration", relative(t, path), imported)
+				t.Errorf("type domain source %s imports declaration surface %s outside the domain's one declaration", relative(t, path), imported)
 			}
 		}
 	}
@@ -227,10 +227,10 @@ func TestTypeDomainDiagnosticRowIsCollectedOnTheBranchLane(t *testing.T) {
 	}
 }
 
-// TestTypeDomainImportsNoPeerDomain states the position the registration rests
+// TestTypeDomainImportsNoPeerDomain states the position the declaration rests
 // on: this domain is the base of the domain layer, so it reads no peer domain
 // and every peer that reasons about types reads it. An edge in the other
-// direction would make the registration a statement about a cycle rather than
+// direction would make the declaration a statement about a cycle rather than
 // about a domain, and it would put the domain's declaration above a domain that
 // already declares rows of its own.
 //

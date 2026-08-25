@@ -34,7 +34,7 @@
 // The zero-row statement about this package is executable: a surface of the
 // declaration table is reached by importing its package, and a peer domain by
 // importing it, so a core that declares no row and holds no inter-domain edge
-// imports no module package at all. The registration law states exactly that,
+// imports no module package at all. The declaration law states exactly that,
 // over this package's own sources; a row added here cannot be added without
 // this file being rewritten in the same change, and a row that belongs to a
 // child cannot be smuggled in here at all.
