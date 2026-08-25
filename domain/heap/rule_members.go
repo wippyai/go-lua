@@ -22,6 +22,7 @@ const (
 	EmptyAllocationCoordinate      schemaapi.Key  = "heap/empty-allocation/coordinate"
 	EmptyAllocationPredecessorKey  schemaapi.Key  = "heap/empty-allocation/predecessor-key"
 	FormalFreezeRouteKey           schemaapi.Key  = "heap/formal-freeze/route-key"
+	FormalFreezeRouteTag           schemaapi.Key  = "heap/formal-freeze/route-tag"
 	FormalFreezeRouteDestination   schemaapi.Key  = "heap/formal-freeze/route-destination"
 	IngressReducer                 schemaapi.Key  = "heap/reducer/ingress"
 	BootReducer                    schemaapi.Key  = "heap/reducer/boot"
@@ -39,6 +40,7 @@ const (
 	CallCoordinateCarrier          member.Carrier = "carrier/call/mounted-call"
 	CallFactCarrier                member.Carrier = "carrier/call/fact"
 	FormalFreezeRouteCarrier       member.Carrier = "carrier/heap/formal-freeze-route"
+	FormalFreezeRouteTagCarrier    member.Carrier = "carrier/heap/formal-freeze-route-tag"
 )
 
 // AxisMemberCatalog is heap's declaration-only member vocabulary.
@@ -60,6 +62,7 @@ func AxisMemberCatalog() member.Catalog {
 			{Key: EmptyAllocationCoordinate, Relation: EmptyAllocations, Role: member.Destination, Result: HeapKeyCarrier, CandidateProvider: member.AxisRelationCandidate(member.RelationRef{Axis: schemaapi.EntryReference{Surface: schemaapi.SurfaceKind(2), Key: "heap"}, Member: "heap/empty-allocation/candidates"})},
 			{Key: EmptyAllocationPredecessorKey, Relation: EmptyAllocationPredecessors, Role: member.Key, Result: HeapKeyCarrier, CandidateProvider: member.AxisRelationCandidate(member.RelationRef{Axis: schemaapi.EntryReference{Surface: schemaapi.SurfaceKind(2), Key: "heap"}, Member: "heap/empty-allocation/candidates"})},
 			{Key: FormalFreezeRouteKey, Relation: FormalFreezeRoutes, Role: member.Key, Result: HeapKeyCarrier, CandidateProvider: member.AxisRelationCandidate(member.RelationRef{Axis: schemaapi.EntryReference{Surface: schemaapi.SurfaceKind(2), Key: "call"}, Member: "call/mounted-call/candidates"})},
+			{Key: FormalFreezeRouteTag, Relation: FormalFreezeRoutes, Role: member.Predicate, Result: FormalFreezeRouteTagCarrier, CandidateProvider: member.AxisRelationCandidate(member.RelationRef{Axis: schemaapi.EntryReference{Surface: schemaapi.SurfaceKind(2), Key: "call"}, Member: "call/mounted-call/candidates"})},
 			{Key: FormalFreezeRouteDestination, Relation: FormalFreezeRoutes, Role: member.Destination, Result: HeapKeyCarrier, CandidateProvider: member.AxisRelationCandidate(member.RelationRef{Axis: schemaapi.EntryReference{Surface: schemaapi.SurfaceKind(2), Key: "call"}, Member: "call/mounted-call/candidates"})},
 		},
 		[]member.Reducer{

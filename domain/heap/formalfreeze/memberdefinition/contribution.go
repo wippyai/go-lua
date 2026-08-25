@@ -72,6 +72,7 @@ func Contribution() definition.Contribution {
 			{Name: "CallCoordinateCarrier", Key: "carrier/call/mounted-call", Type: goType(callPackagePath, "CallCoordinate")},
 			{Name: "CallFactCarrier", Key: "carrier/call/fact", Type: goType(callPackagePath, "Value")},
 			{Name: "FormalFreezeRouteCarrier", Key: "carrier/heap/formal-freeze-route", Type: goType(recentPlanPackagePath, "Route")},
+			{Name: "FormalFreezeRouteTagCarrier", Key: "carrier/heap/formal-freeze-route-tag", Type: definition.GoType{Name: "uint64"}},
 		},
 		Relations: []definition.Relation{
 			{
@@ -112,6 +113,25 @@ func Contribution() definition.Contribution {
 				Role:              member.Key,
 				Result:            "HeapKeyCarrier",
 				Accessor:          method(recentPlanPackagePath, "Coordinates", recentPlanPackagePath, "Route", false, 0),
+			},
+			{
+				// The route coordinate a member is published at. A routed
+				// output publishes at the members a selection observed, so the
+				// emitted worker pairs a cell with its member by this tag; the
+				// tag is the one Heap already issued and this projection is
+				// where the route set states it.
+				Name:              "FormalFreezeRouteTag",
+				Key:               "heap/formal-freeze/route-tag",
+				Relation:          "FormalFreezeRoutes",
+				CandidateProvider: member.AxisRelationCandidate(mountedCallProvider()),
+				Role:              member.Predicate,
+				Result:            "FormalFreezeRouteTagCarrier",
+				Accessor: definition.GoSymbol{
+					PackagePath: recentPlanPackagePath,
+					Name:        "Predicate",
+					Receiver:    goType(recentPlanPackagePath, "Route"),
+					ResultIndex: -1,
+				},
 			},
 			{
 				// A freeze publishes back into the very root it read, so the
