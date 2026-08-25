@@ -140,12 +140,21 @@ type enumerationPlan struct {
 	count  definition.GoSymbol
 	at     definition.GoSymbol
 	schema bool
+	// order is the axis whose dense numbering this enumeration promises to
+	// yield in, empty when its owner promises nothing.
+	order schema.Key
 }
 
 // widenPlan is the lattice endpoint a derived set stops being enumerable at.
 type widenPlan struct {
 	predicate definition.GoSymbol
 	sources   []enumerationPlan
+	// lazy states that the widened answer is read WHERE IT LIES rather than
+	// placed member by member. It holds exactly when one enumeration yields
+	// the whole answer in the dense order this relation is ordered by: then
+	// the directory already IS the answer in the one admissible order, and
+	// copying a member per coordinate onto a solve path would buy nothing.
+	lazy bool
 }
 
 // vectorSpanPlan is the delivery of one Summary read over a self-provided
@@ -663,8 +672,11 @@ func derivedMemberAtName(position int) string {
 	return fmt.Sprintf("derived%dMemberAt", position)
 }
 func derivedInsertName(position int) string { return fmt.Sprintf("insertDerived%dRow", position) }
-func derivedWidthName(position int) string  { return fmt.Sprintf("derived%dInlineWidth", position) }
-func derivedSinkName(position int) string   { return fmt.Sprintf("derived%dRowsSink", position) }
+func derivedWidenedAtName(position int) string {
+	return fmt.Sprintf("derived%dWidenedAt", position)
+}
+func derivedWidthName(position int) string { return fmt.Sprintf("derived%dInlineWidth", position) }
+func derivedSinkName(position int) string  { return fmt.Sprintf("derived%dRowsSink", position) }
 
 // deriveDeclared resolves the declared operators into the construction this
 // emitter writes. Every refusal names the clause that leaves the generated
@@ -736,7 +748,26 @@ func deriveDeclared(built *plan, resolver *axisResolver, relation definition.Rel
 			return nil, unexpressible(ruleKey, "a derived member set widening to something that is not its owner's directory",
 				fmt.Sprintf("relation %q widens to an enumeration read out of a value, and a fact that reached a lattice endpoint named no value to read", relation.Name))
 		}
-		declared.widen = &widenPlan{predicate: declaration.Widen.Predicate, sources: widened}
+		// The widened answer is read out of an axis's own schema, and the
+		// generated Build is a free function - so that schema reaches it only
+		// as a static axis the derivation declared.
+		named := false
+		for _, static := range declaration.StaticAxes {
+			if static.Key == widened[0].axis.key {
+				named = true
+			}
+		}
+		if !named {
+			return nil, unexpressible(ruleKey, "a derived member set widening to an axis its derivation does not name",
+				fmt.Sprintf("relation %q widens to the directory of axis %q, which its declared static axes do not include", relation.Name, string(widened[0].axis.key)))
+		}
+		// Lazy or placed is decided by the source's own promise and by nothing
+		// this file infers: one enumeration yielding the whole answer in the
+		// dense order this relation is ordered by IS that answer already, while
+		// two numberings meeting - or a composed chain, whose nesting preserves
+		// no order at all - has to be placed member by member.
+		lazy := len(widened) == 1 && widened[0].order.Available() && widened[0].order == relationAxis.key
+		declared.widen = &widenPlan{predicate: declaration.Widen.Predicate, sources: widened, lazy: lazy}
 	}
 	return declared, nil
 }
@@ -780,6 +811,7 @@ func deriveEnumerations(built *plan, resolver *axisResolver, relation definition
 		plans = append(plans, enumerationPlan{
 			axis: axis, over: over, item: element,
 			count: enumeration.Count, at: enumeration.At, schema: enumeration.OverSchema(),
+			order: enumeration.Order.Key,
 		})
 		item = element
 	}

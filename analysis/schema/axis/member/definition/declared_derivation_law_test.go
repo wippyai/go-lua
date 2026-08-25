@@ -354,3 +354,43 @@ func TestADeclaredDerivationStatesTheWidthItHoldsByValue(t *testing.T) {
 		t.Fatal("a declared derivation stating a negative inline width was admitted")
 	}
 }
+
+// TestAnEnumerationStatesTheOrderItYieldsIn is the law the two-way widen
+// choice rests on.
+//
+// Whether a widened answer may be read where it lies, instead of being placed
+// member by member, depends on one thing: whether the directory hands its rows
+// back in the order the consuming relation is ordered by. That is a promise
+// about how the owner's own accessor is written, so the owner states it and
+// nothing infers it - and it is stated whole or not at all, because the one
+// thing a consumer may not do with a half-written promise is guess which axis
+// was meant.
+func TestAnEnumerationStatesTheOrderItYieldsIn(t *testing.T) {
+	directory := Enumeration{
+		Name: "Directory", Item: "SeedCarrier",
+		Count: declaredSpecimenSymbol("DirectoryCount"),
+		At:    declaredSpecimenSymbol("DirectoryAt"),
+	}
+	if !directory.complete() {
+		t.Fatal("an enumeration stating no order was refused; saying nothing is not the same as being disordered")
+	}
+	if directory.YieldsInOrderOf("specimen") {
+		t.Fatal("an enumeration stating no order promised one")
+	}
+	ordered := directory
+	ordered.Order = specimenAxis()
+	if !ordered.complete() {
+		t.Fatal("an enumeration stating the axis it yields in order of was refused")
+	}
+	if !ordered.YieldsInOrderOf("specimen") {
+		t.Fatal("an enumeration that yields in its own axis's order does not say so")
+	}
+	if ordered.YieldsInOrderOf("other") {
+		t.Fatal("an enumeration promised an order it never stated")
+	}
+	half := directory
+	half.Order = schema.EntryReference{Surface: schema.SurfaceKindAxis}
+	if half.complete() {
+		t.Fatal("an enumeration naming a surface but no axis was admitted; which axis it yields in order of is undecided")
+	}
+}

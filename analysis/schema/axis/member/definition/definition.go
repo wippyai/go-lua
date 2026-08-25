@@ -394,6 +394,25 @@ type Enumeration struct {
 	Item  string
 	Count GoSymbol
 	At    GoSymbol
+	// Order is the axis whose dense numbering this sequence yields in. It is
+	// the owner's statement about its own accessor and nothing infers it: a
+	// directory that hands back its rows in the order its axis numbers them is
+	// making a promise about how it is written, and one that does not is not
+	// disordered - it simply says nothing.
+	//
+	// What it decides is whether a consumer that widens to this sequence may
+	// read it WHERE IT LIES. A derived set whose ordering axis is this one is
+	// already in its own order when it comes out, so widening to it copies
+	// nothing; a derived set ordered by a different axis is two numberings and
+	// has to be placed member by member.
+	Order schema.EntryReference
+}
+
+// YieldsInOrderOf reports whether this enumeration promises to yield in the
+// dense order of the given axis.
+func (enumeration Enumeration) YieldsInOrderOf(axis schema.Key) bool {
+	return enumeration.Order.Surface == schema.SurfaceKindAxis &&
+		enumeration.Order.Key.Available() && enumeration.Order.Key == axis
 }
 
 // OverSchema reports that this enumeration reads its sequence out of the
@@ -401,8 +420,18 @@ type Enumeration struct {
 func (enumeration Enumeration) OverSchema() bool { return enumeration.Over == "" }
 
 func (enumeration Enumeration) complete() bool {
-	return identifierAvailable(enumeration.Name) && identifierAvailable(enumeration.Item) &&
-		enumeration.Count.Available() && enumeration.At.Available()
+	if !identifierAvailable(enumeration.Name) || !identifierAvailable(enumeration.Item) ||
+		!enumeration.Count.Available() || !enumeration.At.Available() {
+		return false
+	}
+	// An order is stated whole or not at all: a reference naming no axis is a
+	// half-written promise, and the one thing a consumer may not do with it is
+	// guess which axis was meant.
+	empty := schema.EntryReference{}
+	if enumeration.Order == empty {
+		return true
+	}
+	return enumeration.Order.Surface == schema.SurfaceKindAxis && enumeration.Order.Key.Available()
 }
 
 // DeclaredDerivation reports whether a relation states the declared form.

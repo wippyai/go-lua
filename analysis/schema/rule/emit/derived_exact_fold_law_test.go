@@ -840,3 +840,109 @@ func derivedRosterWithDerivation(t testing.TB, amend func(*definition.RelationDe
 	}
 	return roster
 }
+
+// derivedRosterWithEnumeration admits the site specimen with one of its
+// declared enumerations amended, so a law can state what the SOURCE's own
+// promises decide about the construction read out of it.
+func derivedRosterWithEnumeration(t testing.TB, name string, amend func(*definition.Enumeration)) definition.Roster {
+	t.Helper()
+	base := siteBase()
+	for index := range base.Enumerations {
+		if base.Enumerations[index].Name == name {
+			amend(&base.Enumerations[index])
+		}
+	}
+	for index := range base.Relations {
+		if base.Relations[index].Name == "BodyRoutes" {
+			base.Relations[index].Derivation = declaredSiteDerivation()
+		}
+	}
+	roster, rosterOK := definition.NewRoster(
+		definition.Source{Package: "site", Name: "site", Base: base, Contributions: []definition.Contribution{siteContribution(), consumerContribution(), selectionContribution()}},
+		definition.Source{Package: "wire", Name: "wire", Base: wireBase()},
+	)
+	if !rosterOK {
+		t.Fatal("the amended site roster is not admissible")
+	}
+	return roster
+}
+
+// renderDerivedSelectionWith renders the derived selection against an amended
+// roster.
+func renderDerivedSelectionWith(t testing.TB, roster definition.Roster) string {
+	t.Helper()
+	target := derivedTarget()
+	target.Spec = derivedSelectionSpec()
+	source, err := Render(target, roster)
+	if err != nil {
+		t.Fatalf("a declared derivation did not emit: %v", err)
+	}
+	return string(source)
+}
+
+// TestAWidenedSetIsReadWhereItLiesWhenItsDirectoryYieldsInTheSameOrder is the
+// widening half of the allocation bar.
+//
+// A set that reached its lattice endpoint is the owner's whole directory, and
+// materializing one member per coordinate of a whole directory on a solve path
+// is the copy the authored derivations were written to avoid: store's own
+// widened plan "deliberately does not retain a copied allocation-root
+// catalogue". When the directory hands its rows back in the order this
+// relation is ordered by, there is nothing to place - the answer IS the
+// directory - so the set records that it widened, keeps the inputs a member is
+// resolved from, and answers each one on demand.
+func TestAWidenedSetIsReadWhereItLiesWhenItsDirectoryYieldsInTheSameOrder(t *testing.T) {
+	source := renderDerivedSelectionWith(t, derivedRosterWithEnumeration(t, "Directory", func(enumeration *definition.Enumeration) {
+		enumeration.Order = siteAxis()
+	}))
+	build, found := functionBody(source, "deriveDerived1Rows")
+	if !found {
+		t.Fatalf("the emitted construction has no Build:\n%s", source)
+	}
+	if occurrences := strings.Count(build, "insertDerived1Row("); occurrences != 1 {
+		t.Fatalf("the Build places members %d times; the widened arm copies nothing:\n%s", occurrences, build)
+	}
+	if !strings.Contains(build, "built.widened = true") {
+		t.Fatalf("the widened arm does not record that it widened:\n%s", build)
+	}
+	if _, lazy := functionBody(source, "derived1WidenedAt"); !lazy {
+		t.Fatalf("the widened answer has no on-demand accessor:\n%s", source)
+	}
+}
+
+// TestALazilyWidenedSetIsHeldToTheOrderItsDirectoryPromises is what laziness
+// costs. Reading a directory where it lies moves the ordering guarantee out of
+// the construction and into the owner's promise, so the construction checks
+// the promise it is resting on: the coordinates the directory yields are
+// strictly ascending or the answer is refused. A directory that quietly stops
+// being ordered can then never be answered in the wrong order.
+func TestALazilyWidenedSetIsHeldToTheOrderItsDirectoryPromises(t *testing.T) {
+	source := renderDerivedSelectionWith(t, derivedRosterWithEnumeration(t, "Directory", func(enumeration *definition.Enumeration) {
+		enumeration.Order = siteAxis()
+	}))
+	build, _ := functionBody(source, "deriveDerived1Rows")
+	if !strings.Contains(build, ".KeyIndex(") {
+		t.Fatalf("the widened arm never normalizes a coordinate, so it cannot hold the directory to its order:\n%s", build)
+	}
+	if !strings.Contains(build, "dense <= widenPrevious") {
+		t.Fatalf("the widened arm admits a directory that yields out of order:\n%s", build)
+	}
+}
+
+// TestAWidenedSetIsPlacedWhenItsDirectoryIsNumberedByAnotherAxis is the other
+// side of the same choice, and the one the migrated relation takes: Call's
+// body directory yields in CALL's order while an Effect body route is ordered
+// by Effect's, so two numberings meet and the answer has to be placed member
+// by member exactly as the ordinary one is.
+func TestAWidenedSetIsPlacedWhenItsDirectoryIsNumberedByAnotherAxis(t *testing.T) {
+	source := renderDerivedSelectionWith(t, derivedRosterWithEnumeration(t, "Directory", func(enumeration *definition.Enumeration) {
+		enumeration.Order = wireAxis()
+	}))
+	build, _ := functionBody(source, "deriveDerived1Rows")
+	if occurrences := strings.Count(build, "insertDerived1Row("); occurrences != 2 {
+		t.Fatalf("the Build places members %d times; a directory in another axis's order is placed:\n%s", occurrences, build)
+	}
+	if strings.Contains(build, "built.widened = true") {
+		t.Fatalf("a directory in another axis's order was read where it lies:\n%s", build)
+	}
+}

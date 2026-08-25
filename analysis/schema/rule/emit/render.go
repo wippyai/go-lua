@@ -1309,7 +1309,11 @@ func renderDeclaredDerivation(out *strings.Builder, built *plan, join *joinPlan)
 	out.WriteString("// The ordinary answer is held BY VALUE in the bounded inline prefix and only a\n")
 	out.WriteString("// wider one reaches the explicit spill, so an invocation answering within the\n")
 	out.WriteString("// declared width allocates nothing at all.\n")
-	fmt.Fprintf(out, "type %s struct {\n\tinline [%s]%s\n\tspill  []%s\n\tcount  int\n}\n\n", state, width, entry, entry)
+	fmt.Fprintf(out, "type %s struct {\n\tinline [%s]%s\n\tspill  []%s\n\tcount  int\n", state, width, entry, entry)
+	if err := renderWidenedState(out, built, join); err != nil {
+		return err
+	}
+	out.WriteString("}\n\n")
 
 	fmt.Fprintf(out, "func %s(state %s) int { return state.count }\n\n", derivedCountName(declared.position), state)
 
@@ -1317,18 +1321,137 @@ func renderDeclaredDerivation(out *strings.Builder, built *plan, join *joinPlan)
 	out.WriteString("// is ordered at. The inline prefix holds the first members and the spill holds\n")
 	out.WriteString("// the rest, in one order across both.\n")
 	fmt.Fprintf(out, "func %s(state %s, index int) (%s, bool) {\n", derivedMemberAtName(declared.position), state, entry)
+	if lazyWiden(declared) {
+		out.WriteString("\t// A widened set placed nothing, so it holds no member here to answer with.\n")
+		fmt.Fprintf(out, "\tif state.widened {\n\t\treturn %s{}, false\n\t}\n", entry)
+	}
 	fmt.Fprintf(out, "\tif index < 0 || index >= state.count {\n\t\treturn %s{}, false\n\t}\n", entry)
 	out.WriteString("\tif index < len(state.inline) {\n\t\treturn state.inline[index], true\n\t}\n")
 	fmt.Fprintf(out, "\tspilled := index - len(state.inline)\n\tif spilled >= len(state.spill) {\n\t\treturn %s{}, false\n\t}\n", entry)
 	out.WriteString("\treturn state.spill[spilled], true\n}\n\n")
 
 	fmt.Fprintf(out, "func %s(state %s, index int) (%s, bool) {\n", derivedAtName(declared.position), state, subject)
+	if lazyWiden(declared) {
+		fmt.Fprintf(out, "\tif state.widened {\n\t\treturn %s(state, index)\n\t}\n", derivedWidenedAtName(declared.position))
+	}
 	fmt.Fprintf(out, "\tmember, memberOK := %s(state, index)\n", derivedMemberAtName(declared.position))
 	fmt.Fprintf(out, "\tif !memberOK {\n\t\tvar absent %s\n\t\treturn absent, false\n\t}\n", subject)
 	out.WriteString("\treturn member.row, true\n}\n\n")
 
 	renderDerivedInsert(out, built, declared)
+	if lazyWiden(declared) {
+		if err := renderDerivedWidenedAt(out, built, join); err != nil {
+			return err
+		}
+	}
 	return renderDerivedBuild(out, built, join)
+}
+
+// lazyWiden reports whether one derived set's widened answer is read where it
+// lies rather than placed member by member.
+func lazyWiden(declared *declaredPlan) bool {
+	return declared.widen != nil && declared.widen.lazy
+}
+
+// widenedStateFields is what a lazily widened set has to keep to answer a
+// member later: the axis schemas its judgment is resolved against and the
+// candidate that judgment is about. They are the Build's own arguments, held
+// by value, so keeping them copies nothing the invocation did not already have.
+func widenedStateFields(built *plan, join *joinPlan) ([]string, []string, error) {
+	derivation := join.derivation
+	names := make([]string, 0, len(derivation.staticAxes)+1)
+	types := make([]string, 0, len(derivation.staticAxes)+1)
+	for _, axis := range derivation.staticAxes {
+		names = append(names, prefixed("widen", axis.param))
+		types = append(types, built.imports.typeName(axis.schemaType))
+	}
+	candidate, err := derivationArgumentType(built, derivation.arguments[derivation.declared.candidateArgument])
+	if err != nil {
+		return nil, nil, err
+	}
+	names = append(names, "widenCandidate")
+	types = append(types, candidate)
+	return names, types, nil
+}
+
+// renderWidenedState writes the fields a lazily widened set keeps.
+func renderWidenedState(out *strings.Builder, built *plan, join *joinPlan) error {
+	declared := join.derivation.declared
+	if !lazyWiden(declared) {
+		return nil
+	}
+	names, types, err := widenedStateFields(built, join)
+	if err != nil {
+		return err
+	}
+	out.WriteString("\n\t// A widened answer is the owner's whole directory, which already lies in\n")
+	out.WriteString("\t// the order this relation is ordered by, so nothing above holds it: the set\n")
+	out.WriteString("\t// records that it widened, the census it took, and the inputs one member is\n")
+	out.WriteString("\t// resolved from, and answers each member on demand.\n")
+	out.WriteString("\twidened bool\n")
+	out.WriteString("\t// widenPrefix states that every member the directory yields contributes one\n")
+	out.WriteString("\t// row, so an ordinal IS a directory position and no scan is needed.\n")
+	out.WriteString("\twidenPrefix bool\n")
+	for index, name := range names {
+		fmt.Fprintf(out, "\t%s %s\n", name, types[index])
+	}
+	return nil
+}
+
+// renderDerivedWidenedAt writes the on-demand accessor of a widened set. It is
+// what keeps widening from copying: the directory is read where it lies, and
+// one member is resolved when it is asked for.
+func renderDerivedWidenedAt(out *strings.Builder, built *plan, join *joinPlan) error {
+	imports := built.imports
+	declared := join.derivation.declared
+	state := declared.state()
+	subject := imports.typeName(declared.subject)
+	source := declared.widen.sources[0]
+	names, _, err := widenedStateFields(built, join)
+	if err != nil {
+		return err
+	}
+	over := "state." + prefixed("widen", source.axis.param)
+	enumerate := func(symbol definition.GoSymbol, args ...string) string {
+		if symbol.Receiver.Name != "" {
+			return imports.call(symbol, over, args...)
+		}
+		return imports.call(symbol, "", append([]string{over}, args...)...)
+	}
+	resolveArguments := make([]string, 0, len(names)+1)
+	for _, name := range names {
+		resolveArguments = append(resolveArguments, "state."+name)
+	}
+	resolve := func(item string) string {
+		return imports.call(declared.resolve, "", append(append([]string{}, resolveArguments...), item)...)
+	}
+
+	fmt.Fprintf(out, "// %s answers one member of a widened set out of the directory it\n", derivedWidenedAtName(declared.position))
+	out.WriteString("// lies in. Nothing was copied when the set was built, so the member is\n")
+	out.WriteString("// resolved here, from the same inputs the census was taken over.\n")
+	fmt.Fprintf(out, "func %s(state %s, index int) (%s, bool) {\n", derivedWidenedAtName(declared.position), state, subject)
+	fmt.Fprintf(out, "\tvar absent %s\n", subject)
+	out.WriteString("\tif !state.widened || index < 0 || index >= state.count {\n\t\treturn absent, false\n\t}\n")
+	fmt.Fprintf(out, "\twidenCount := %s\n", enumerate(source.count))
+	out.WriteString("\tif state.widenPrefix {\n")
+	out.WriteString("\t\tif index >= widenCount {\n\t\t\treturn absent, false\n\t\t}\n")
+	fmt.Fprintf(out, "\t\twidenItem, widenItemOK := %s\n", enumerate(source.at, "index"))
+	out.WriteString("\t\tif !widenItemOK {\n\t\t\treturn absent, false\n\t\t}\n")
+	fmt.Fprintf(out, "\t\twidenRow, widenPresent, widenResolved := %s\n", resolve("widenItem"))
+	out.WriteString("\t\tif !widenResolved || !widenPresent {\n\t\t\treturn absent, false\n\t\t}\n")
+	out.WriteString("\t\treturn widenRow, true\n\t}\n")
+	out.WriteString("\t// The directory declines some of what it yields, so an ordinal is reached by\n")
+	out.WriteString("\t// counting the members that contribute.\n")
+	out.WriteString("\tordinal := 0\n")
+	out.WriteString("\tfor widenCursor := 0; widenCursor < widenCount; widenCursor++ {\n")
+	fmt.Fprintf(out, "\t\twidenItem, widenItemOK := %s\n", enumerate(source.at, "widenCursor"))
+	out.WriteString("\t\tif !widenItemOK {\n\t\t\treturn absent, false\n\t\t}\n")
+	fmt.Fprintf(out, "\t\twidenRow, widenPresent, widenResolved := %s\n", resolve("widenItem"))
+	out.WriteString("\t\tif !widenResolved {\n\t\t\treturn absent, false\n\t\t}\n")
+	out.WriteString("\t\tif !widenPresent {\n\t\t\tcontinue\n\t\t}\n")
+	out.WriteString("\t\tif ordinal == index {\n\t\t\treturn widenRow, true\n\t\t}\n\t\tordinal++\n\t}\n")
+	out.WriteString("\treturn absent, false\n}\n\n")
+	return nil
 }
 
 // renderDerivedInsert writes the one admissible order of a member set as the
@@ -1464,11 +1587,61 @@ func renderDerivedBuild(out *strings.Builder, built *plan, join *joinPlan) error
 		fmt.Fprintf(out, "\tif %s {\n", enumerate(declared.widen.predicate, arguments[declared.sourceArgument]))
 		// The widened answer is read out of the owner's own schema, so its
 		// outer level starts from that axis rather than from the value.
-		walk(declared.widen.sources, declared.widen.sources[0].axis.param, "widen", "\t\t")
+		if lazyWiden(declared) {
+			if err := renderLazyWiden(out, built, join, statics, arguments, enumerate); err != nil {
+				return err
+			}
+		} else {
+			walk(declared.widen.sources, declared.widen.sources[0].axis.param, "widen", "\t\t")
+		}
 		out.WriteString("\t\treturn built, true\n\t}\n")
 	}
 	walk(declared.sources, arguments[declared.sourceArgument], "", "\t")
 	out.WriteString("\treturn built, true\n}\n\n")
+	return nil
+}
+
+// renderLazyWiden writes the widened arm of a set that is read where it lies.
+//
+// Nothing is placed. The arm keeps what one member is resolved from, censuses
+// the directory once, and holds that directory to the promise the laziness
+// rests on: the coordinates it yields are strictly ascending, or the answer is
+// refused rather than answered in an order it never had.
+func renderLazyWiden(out *strings.Builder, built *plan, join *joinPlan, statics, arguments []string, enumerate func(definition.GoSymbol, string, ...string) string) error {
+	imports := built.imports
+	declared := join.derivation.declared
+	state := declared.state()
+	source := declared.widen.sources[0]
+	dense := imports.typeName(declared.order.normalized)
+	names, _, err := widenedStateFields(built, join)
+	if err != nil {
+		return err
+	}
+	kept := append(append([]string{}, statics...), arguments[declared.candidateArgument])
+	over := source.axis.param
+
+	out.WriteString("\t\tbuilt.widened = true\n\t\tbuilt.widenPrefix = true\n")
+	for index, name := range names {
+		fmt.Fprintf(out, "\t\tbuilt.%s = %s\n", name, kept[index])
+	}
+	fmt.Fprintf(out, "\t\tvar widenPrevious %s\n", dense)
+	out.WriteString("\t\tvar widenSeen bool\n\t\tvar widenGap bool\n")
+	fmt.Fprintf(out, "\t\twidenCount := %s\n", enumerate(source.count, over))
+	out.WriteString("\t\tfor widenCursor := 0; widenCursor < widenCount; widenCursor++ {\n")
+	fmt.Fprintf(out, "\t\t\twidenItem, widenItemOK := %s\n", enumerate(source.at, over, "widenCursor"))
+	fmt.Fprintf(out, "\t\t\tif !widenItemOK {\n\t\t\t\treturn %s{}, false\n\t\t\t}\n", state)
+	call := imports.call(declared.resolve, "", append(append([]string{}, kept...), "widenItem")...)
+	fmt.Fprintf(out, "\t\t\twidenRow, widenPresent, widenResolved := %s\n", call)
+	fmt.Fprintf(out, "\t\t\tif !widenResolved {\n\t\t\t\treturn %s{}, false\n\t\t\t}\n", state)
+	out.WriteString("\t\t\tif !widenPresent {\n\t\t\t\twidenGap = true\n\t\t\t\tcontinue\n\t\t\t}\n")
+	out.WriteString("\t\t\tif widenGap {\n\t\t\t\tbuilt.widenPrefix = false\n\t\t\t}\n")
+	fmt.Fprintf(out, "\t\t\tkey, keyOK := %s\n", imports.call(declared.key.Accessor, "widenRow"))
+	fmt.Fprintf(out, "\t\t\tif !keyOK {\n\t\t\t\treturn %s{}, false\n\t\t\t}\n", state)
+	fmt.Fprintf(out, "\t\t\tdense, denseOK := %s\n", imports.call(declared.order.normalizer, declared.order.param, "key"))
+	fmt.Fprintf(out, "\t\t\tif !denseOK {\n\t\t\t\treturn %s{}, false\n\t\t\t}\n", state)
+	fmt.Fprintf(out, "\t\t\tif widenSeen && dense <= widenPrevious {\n\t\t\t\treturn %s{}, false\n\t\t\t}\n", state)
+	out.WriteString("\t\t\twidenPrevious, widenSeen = dense, true\n")
+	out.WriteString("\t\t\tbuilt.count++\n\t\t}\n")
 	return nil
 }
 
