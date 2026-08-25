@@ -272,7 +272,6 @@ type freshResultCallOrigin struct {
 // Open or structural slots have no admitted Value coordinate and are omitted.
 func (schema *valueBuilder) sealFreshResultCalls() bool {
 	if schema == nil || schema.Schema == nil || schema.sealProject() == nil || schema.sealBoundary() == nil || schema.Schema.mountedCallResultSlots == nil || schema.freshResultCalls == nil || schema.freshResultCallOrdinals == nil || len(schema.freshResultCalls) != 0 || len(schema.freshResultCallKeys) != 0 || len(schema.freshResultCallOrdinals) != 0 || !schema.heap.Valid() {
-		println("ZZFRESH site 1")
 		return false
 	}
 
@@ -282,11 +281,9 @@ func (schema *valueBuilder) sealFreshResultCalls() bool {
 		application, applicationOK := applications.At(index)
 		applicationID, moduleID, callID, mountedOK := applications.MountedIdentity(application)
 		if !applicationOK || !mountedOK || !applicationID.Available() || !moduleID.Available() || !callID.Available() {
-			println("ZZFRESH site 2")
 			return false
 		}
 		if _, duplicate := origins[applicationID]; duplicate {
-			println("ZZFRESH site 3")
 			return false
 		}
 		origins[applicationID] = freshResultCallOrigin{application: application, module: moduleID, call: callID}
@@ -294,7 +291,6 @@ func (schema *valueBuilder) sealFreshResultCalls() bool {
 
 	target, targetOK := schema.sealBoundary().Target()
 	if !targetOK || target == nil {
-		println("ZZFRESH site 4")
 		return false
 	}
 	pending := make(map[mountedCallActualsKey][]FreshResultCall)
@@ -303,12 +299,10 @@ func (schema *valueBuilder) sealFreshResultCalls() bool {
 		keyContent, keyContentOK := key.ContentID()
 		applicationID, outcomeResultID, freshOrdinal, freshOK := key.FreshResultID()
 		if !keyOK || !content.Available() || !keyContentOK || keyContent != content || !freshOK || !applicationID.Available() || !outcomeResultID.Available() {
-			println("ZZFRESH site 5")
 			return false
 		}
 		operation, outcome, resultIndex, outcomeOK := target.FindOutcomeResultID(outcomeResultID)
 		if !outcomeOK || operation == 0 || outcome < 0 || uint64(outcome) > uint64(^uint32(0)) || resultIndex < 0 || uint64(resultIndex) > uint64(^uint32(0)) {
-			println("ZZFRESH site 6")
 			return false
 		}
 		origin, found := origins[applicationID]
@@ -324,7 +318,6 @@ func (schema *valueBuilder) sealFreshResultCalls() bool {
 		}
 		coordinate, coordinateOK := slot.Coordinate()
 		if !coordinateOK {
-			println("ZZFRESH site 7")
 			return false
 		}
 		row := FreshResultCall{
@@ -373,11 +366,9 @@ func (schema *valueBuilder) sealFreshResultCalls() bool {
 			rows[ordinal].memberOrdinal = uint32(ordinal)
 			row := rows[ordinal]
 			if !row.valid() {
-				println("ZZFRESH site 9")
 				return false
 			}
 			if _, duplicate := schema.freshResultCalls[row.key]; duplicate {
-				println("ZZFRESH site 10")
 				return false
 			}
 			schema.freshResultCalls[row.key] = row
@@ -385,7 +376,6 @@ func (schema *valueBuilder) sealFreshResultCalls() bool {
 			schema.freshResultCallKeys = append(schema.freshResultCallKeys, row.key)
 		}
 		if !schema.attachFreshResultMembers(parentKey, first, uint32(len(rows))) {
-			println("ZZFRESH site 11")
 			return false
 		}
 		installed += len(rows)
@@ -395,7 +385,6 @@ func (schema *valueBuilder) sealFreshResultCalls() bool {
 	// any parent. Refusing is the only honest answer: publishing it would leave
 	// a member the census cannot reach.
 	if len(pending) != 0 || installed != len(schema.freshResultCallKeys) {
-		println("ZZFRESH site 12")
 		return false
 	}
 	return len(schema.freshResultCalls) == len(schema.freshResultCallKeys) &&
