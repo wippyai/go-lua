@@ -17,7 +17,7 @@ import (
 //
 // The capability is the caller's own proof of admission - it is resolved
 // through the sealed rule table's CapabilityByKey, never recovered from a
-// retained *HotRule payload. calls and effects are the two owners the
+// rule payload a caller retained. calls and effects are the two owners the
 // mounted row joins; both must belong to the same sealed binding.
 func MountedSelectedCallEffectStage(binding *engine.SchemaBinding, calls *callowner.HotOwner, effects *effectowner.HotOwner, capability engine.RuleSlotCapability, committed *engine.CommittedProgram, mountID, occurrenceID identity.ContentID) (engine.ProgramCallStage, bool) {
 	if committed == nil || !mountID.Available() || !occurrenceID.Available() || !capability.Available() {
