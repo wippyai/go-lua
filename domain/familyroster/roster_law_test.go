@@ -9,6 +9,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/schema"
 	"github.com/wippyai/go-lua/analysis/schema/rule/emit"
 	"github.com/wippyai/go-lua/analysis/schema/rule/emitlaw"
+	"github.com/wippyai/go-lua/analysis/schema/rule/program"
 	"github.com/wippyai/go-lua/domain/familyroster"
 	"github.com/wippyai/go-lua/domain/memberroster"
 )
@@ -182,6 +183,34 @@ func TestARosteredDeclarationAuthorsNoSecondStructuralLaw(t *testing.T) {
 						declaration.Directory, name, restatement, familyroster.GeneratedLawFileName)
 				}
 			}
+		}
+	}
+}
+
+// TestAReadFreeExactRuleIsNeverRostered states where the Z form's execution
+// lives, by holding the roster to the one place it is not.
+//
+// A rule that declares no read publishes what its own axis already
+// materialized: the owner seals a typed source column at bind, and the whole
+// invocation is that column answered at the issued candidate ordinal. There is
+// no cell to reduce, so there is no fold to generate, so there is no family -
+// the engine's generic read-free builder is the complete execution and the
+// emitter refuses such a declaration outright rather than emitting a second,
+// worse path to it.
+//
+// The one read-free shape that IS emitted is the transformed carry, because a
+// carry applies an owner-issued transition that no materialized column holds.
+// So the law is not "a rostered declaration reads something"; it is that a
+// rostered declaration which reads nothing carries a transform.
+func TestAReadFreeExactRuleIsNeverRostered(t *testing.T) {
+	for _, family := range familyroster.Families() {
+		declaration := family.Target.Spec.Program
+		if declaration.JoinCount() != 0 {
+			continue
+		}
+		if declaration.Carry == nil || declaration.Carry.Mode != program.CarryTransform {
+			t.Errorf("%s is rostered while declaring no read and no transformed carry; a read-free exact rule is answered by its owner's materialized source column and emits no family",
+				string(family.Key()))
 		}
 	}
 }
