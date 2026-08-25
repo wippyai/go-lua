@@ -7,7 +7,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/schema/modulecomposition"
 	"github.com/wippyai/go-lua/analysis/schema/programmount"
 	"github.com/wippyai/go-lua/analysis/schema/structure"
-	callactivation "github.com/wippyai/go-lua/domain/call/activation"
+	callactivationprogram "github.com/wippyai/go-lua/domain/call/activation/program"
 	calldispatchprogram "github.com/wippyai/go-lua/domain/call/dispatch/program"
 	callowner "github.com/wippyai/go-lua/domain/call/owner"
 	callquery "github.com/wippyai/go-lua/domain/call/query"
@@ -203,7 +203,7 @@ func semanticRoleVocabulary() []structure.Spec {
 		callsitebodyprogram.StructureSpecs(),
 		callsiteselectedprogram.StructureSpecs(),
 		callsiteopaqueprogram.StructureSpecs(),
-		callactivation.StructureSpecs(),
+		callactivationprogram.StructureSpecs(),
 		valuebootstrap.StructureSpecs(),
 		heapbootstrap.StructureSpecs(),
 		valuetransfer.StructureSpecs(),

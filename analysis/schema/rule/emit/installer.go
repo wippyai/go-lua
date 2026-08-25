@@ -194,6 +194,13 @@ func renderInstaller(out *strings.Builder, built *plan) error {
 	fmt.Fprintf(out, "\t\tcandidate, candidateOK := %s\n",
 		imports.call(built.candidate.at, "install."+built.candidate.axis.param, "int(planRow.Candidate)"))
 	out.WriteString("\t\tif !candidateOK {\n\t\t\treturn nil, nil, false\n\t\t}\n")
+	if built.shape == shapeStructural {
+		// The branch census is the issuance pass's answer for THIS row. A row
+		// that never bound one is not a row with no branches, so the absence
+		// refuses rather than sealing zero.
+		out.WriteString("\t\tbranchCount, branchCountOK := planRow.Branches()\n")
+		out.WriteString("\t\tif !branchCountOK {\n\t\t\treturn nil, nil, false\n\t\t}\n")
+	}
 
 	sealedNames := make([]string, 0, len(built.joins)+1)
 	for _, join := range built.joins {
@@ -244,6 +251,8 @@ func renderInstaller(out *strings.Builder, built *plan) error {
 	}
 	if built.shape != shapeStructural {
 		sealedNames = append(sealedNames, "write: writeSealed")
+	} else {
+		sealedNames = append(sealedNames, "branches: branchCount")
 	}
 
 	fmt.Fprintf(out, "\t\taddresses = append(addresses, %s.FormAddress{Member: planRow.Member, Local: uint32(len(sealed.rows))})\n", execution)

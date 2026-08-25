@@ -386,6 +386,12 @@ func renderRow(out *strings.Builder, built *plan) error {
 				fmt.Sprintf("join %d has no sealed read primitive in the emitted vocabulary", join.position))
 		}
 	}
+	if built.shape == shapeStructural {
+		// The census the issuance pass enumerated for this row. It is sealed
+		// here, cold, because it is a property of the row and not of an
+		// invocation: nothing counts a trigger's branches twice.
+		out.WriteString("\tbranches int\n")
+	}
 	switch built.shape {
 	case shapeCarry:
 		fmt.Fprintf(out, "\twrite %s.CarryWrite[%s, %s]\n", execution,
@@ -616,10 +622,9 @@ func renderStructuralExecute(out *strings.Builder, built *plan) error {
 	}
 
 	out.WriteString("\t// The census is the engine's own: it enumerated this trigger's branch set\n")
-	out.WriteString("\t// once, at issuance, through the relation's owner. Nothing here counts again.\n")
-	out.WriteString("\tbranches, branchesOK := row.Branches()\n")
-	fmt.Fprintf(out, "\tif !branchesOK {\n\t\treturn lane.settle(ticket, %s.Refuse)\n\t}\n", structure)
-	fmt.Fprintf(out, "\toutcome := %s.FoldBranchSet(lane.run, &ticket, branches, %s{%s})\n",
+	out.WriteString("\t// once, at issuance, and the installer sealed it onto this row. Nothing\n")
+	out.WriteString("\t// here counts again.\n")
+	fmt.Fprintf(out, "\toutcome := %s.FoldBranchSet(lane.run, &ticket, row.branches, %s{%s})\n",
 		execution, reducerType, strings.Join(reducerLiteralFields(built, invocation), ", "))
 	fmt.Fprintf(out, "\tif !ticket.Submit(outcome) {\n\t\treturn %s.Result{}, false\n\t}\n", execution)
 	out.WriteString("\t// A structural row concludes no fact, so its Concrete disposition carries no\n")

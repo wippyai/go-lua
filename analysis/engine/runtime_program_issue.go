@@ -1166,7 +1166,15 @@ func declareGeneratedActivationIssuance(
 	if !applicationOK {
 		return pendingRuleIssuance{}, false
 	}
-	issuer, issuerOK := declaredGeneratedActivationIssuer(state, descriptor, semantic, family)
+	// The issuer's family is the ACTIVATION family the cold row declares, not
+	// the operand family every rule carries. declareActivationCandidates holds
+	// the two to each other, so an issuer built from the operand family names
+	// a family no branch is admitted under.
+	activationFamily, activationFamilyOK := declaredActivationFamily(state, semantic)
+	if !activationFamilyOK {
+		return pendingRuleIssuance{}, false
+	}
+	issuer, issuerOK := declaredGeneratedActivationIssuer(state, descriptor, semantic, activationFamily)
 	if !issuerOK {
 		return pendingRuleIssuance{}, false
 	}
@@ -1176,6 +1184,7 @@ func declareGeneratedActivationIssuance(
 	// from one walk, so they cannot disagree about which branch a candidate
 	// came from.
 	grouped := make([][]MountedActivationCandidate, len(coordinates))
+	located := make(map[activationLocatorKey]struct{}, len(coordinates))
 	for branchOrdinal, coordinate := range coordinates {
 		relation := branch.Branch.Member
 		target, targetOK := projectedSemanticIdentity(branchIdentities, relation, branch.Target.Member, coordinate)
@@ -1199,7 +1208,20 @@ func declareGeneratedActivationIssuance(
 				Target: target, Endpoint: endpoint, Mount: module, Body: body,
 				TransitionID: edge.ID(), FromContextID: edge.FromContextID(), ToContextID: edge.ToContextID(),
 			}
-			candidates = append(candidates, candidate)
+			// A branch's identity is its ROLE's, not its position in the body
+			// table, so two bodies issued under one role on one edge are ONE
+			// route. The construct plane is told about it once - a second row
+			// for one identity is two members the topology could not tell
+			// apart - while both branch ordinals keep pointing at it, because
+			// settling either settles that route.
+			seen := activationLocatorKey{
+				target: target, endpoint: endpoint,
+				transition: edge.ID(), from: edge.FromContextID(), to: edge.ToContextID(),
+			}
+			if _, duplicate := located[seen]; !duplicate {
+				located[seen] = struct{}{}
+				candidates = append(candidates, candidate)
+			}
 			grouped[branchOrdinal] = append(grouped[branchOrdinal], candidate)
 		}
 	}
@@ -1217,6 +1239,32 @@ func declareGeneratedActivationIssuance(
 		activationBranches: grouped, application: application,
 	}
 	return issuance, true
+}
+
+// activationLocatorKey is the identity one candidate branch is mounted under:
+// the two semantic axes its transition connects and the edge it runs on. The
+// module and body path are NOT part of it - they resolve the branch's transport
+// rows, and two bodies issued under one role reach the same route.
+type activationLocatorKey struct {
+	target, endpoint     identity.SemanticKey
+	transition, from, to identity.ContentID
+}
+
+// declaredActivationFamily is the activation family one structural rule's
+// branches are admitted under, read off the cold row that declares it.
+func declaredActivationFamily(state *schemaBindingState, semantic composition.Key) (composition.Key, bool) {
+	if state == nil || state.schema == nil {
+		return composition.Key{}, false
+	}
+	ordinal, found := state.schema.ruleOrdinalOf(semantic)
+	if !found {
+		return composition.Key{}, false
+	}
+	shape, shapeOK := state.schema.ruleShapeAt(ordinal)
+	if !shapeOK || shape.ActivationCount != 1 || !shape.ActivationFamily.Available() {
+		return composition.Key{}, false
+	}
+	return shape.ActivationFamily, true
 }
 
 // generatedBranchCoordinates enumerates one trigger's candidate branches: the

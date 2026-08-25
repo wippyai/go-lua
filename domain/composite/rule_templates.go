@@ -4,6 +4,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/program/target/contract"
 	"github.com/wippyai/go-lua/analysis/schema/rule"
 	callactivation "github.com/wippyai/go-lua/domain/call/activation"
+	callactivationprogram "github.com/wippyai/go-lua/domain/call/activation/program"
 	calldispatch "github.com/wippyai/go-lua/domain/call/dispatch"
 	calldispatchprogram "github.com/wippyai/go-lua/domain/call/dispatch/program"
 	callowner "github.com/wippyai/go-lua/domain/call/owner"
@@ -103,8 +104,6 @@ type Authorities interface {
 	TargetContract() *contract.Contract
 }
 
-func activationRule(hot *callactivation.HotRule) ActivationRule { return hot }
-
 // RuleTemplates is the single schema composition registration for executable
 // rules. It returns data-only catalog entries and the typed compose passes that
 // bind each entry exactly once to its domain implementation.
@@ -160,7 +159,7 @@ func ruleTemplateWiring[P Principals, A Authorities]() ([]*rule.Template, []Rule
 	add(WireGeneratedRuleWithFamily[P, A](callsiteselectedprogram.RuleEntry(), callsiteselected.InstallFamily[A]))
 	add(WireGeneratedRuleWithFamily[P, A](callsiteopaqueprogram.RuleEntry(), callsiteopaque.InstallFamily[A]))
 	add(WireGeneratedRuleWithFamily[P, A](callsitebodyprogram.RuleEntry(), callsitebody.InstallFamily[A]))
-	add(WireRule(callactivation.RuleEntry[P, A](), callactivation.DeclareRule[P], callactivation.RegisterRule, nil, callactivation.BindRule[A], nil, nil, activationRule))
+	add(WireGeneratedRuleWithFamily[P, A](callactivationprogram.RuleEntry(), callactivation.InstallFamily[A]))
 	add(WireGeneratedRuleWithFamily[P, A](valueruntimekindprogram.RuleEntry(), valueruntimekind.InstallFamily[A]))
 	add(WireGeneratedRule[P, A](valuebootstrap.RuleEntry()))
 	add(WireGeneratedRule[P, A](heapbootstrap.RuleEntry()))

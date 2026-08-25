@@ -13,6 +13,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/schema"
 	"github.com/wippyai/go-lua/analysis/schema/rule/emit"
 	"github.com/wippyai/go-lua/analysis/schema/rule/emitlaw"
+	callactivationprogram "github.com/wippyai/go-lua/domain/call/activation/program"
 	calldispatchprogram "github.com/wippyai/go-lua/domain/call/dispatch/program"
 	callsitebodyprogram "github.com/wippyai/go-lua/domain/effect/callsite/body/program"
 	callsiteopaqueprogram "github.com/wippyai/go-lua/domain/effect/callsite/opaque/program"
@@ -114,6 +115,14 @@ func Families() []Family {
 				Spec:        calldispatchprogram.RuleEntry(),
 			},
 			Directory: "domain/call/dispatch",
+		},
+		{
+			Target: emit.Target{
+				PackagePath: "github.com/wippyai/go-lua/domain/call/activation",
+				PackageName: "activation",
+				Spec:        callactivationprogram.RuleEntry(),
+			},
+			Directory: "domain/call/activation",
 		},
 		{
 			Target: emit.Target{
@@ -286,6 +295,16 @@ func Declarations() []Declaration {
 				Spec:        calldispatchprogram.RuleEntry(),
 			},
 			Directory: "domain/call/dispatch/program",
+		},
+		{
+			Target: emitlaw.Target{
+				PackagePath: "github.com/wippyai/go-lua/domain/call/activation/program",
+				PackageName: "program",
+				Declaration: "Activation",
+				Entry:       "RuleEntry",
+				Spec:        callactivationprogram.RuleEntry(),
+			},
+			Directory: "domain/call/activation/program",
 		},
 		{
 			Target: emitlaw.Target{

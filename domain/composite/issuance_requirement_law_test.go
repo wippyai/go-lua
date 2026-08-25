@@ -5,8 +5,6 @@ import (
 
 	"github.com/wippyai/go-lua/analysis/identity"
 	"github.com/wippyai/go-lua/analysis/schema"
-	"github.com/wippyai/go-lua/analysis/schema/rule"
-	callactivation "github.com/wippyai/go-lua/domain/call/activation"
 )
 
 // requirementCorpus is the call-geometry corpus the declared-admissibility law
@@ -56,10 +54,13 @@ func TestSealedPlacementSetEqualsOwnerOperandSet(t *testing.T) {
 				if key == runtimeKind {
 					runtimeKindPlacements++
 				}
+				// Every rule reaches this walk as a generated cell under a
+				// mounted capability, activation included. The exemption that
+				// stood here was for a HAND-WIRED activation cell, whose
+				// payload was a rule-owned callback rather than a slot and
+				// which therefore had no mounted capability to be sealed
+				// under. There is no such cell any more.
 				cell, cellOK := rules.cellByKey(key)
-				if _, activation := rule.Payload[*callactivation.HotRule](cell); cellOK && activation {
-					return true
-				}
 				capability, capabilityOK := rules.CapabilityByKey(key)
 				if !cellOK || !cell.Available() || !capabilityOK || !capability.Mounted() || capability.Activation() {
 					unsealed[key]++
