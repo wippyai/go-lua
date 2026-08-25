@@ -79,6 +79,15 @@ func (owner *RelationOwner) candidate(relationOrdinal uint32, mount, occurrence 
 			return 0, false
 		}
 		return owner.schema.CallCoordinateOrdinal(candidate)
+	case 3:
+		if !mount.Available() {
+			return 0, false
+		}
+		candidate, candidateOK := owner.schema.CallCoordinateForOccurrence(mount, occurrence)
+		if !candidateOK {
+			return 0, false
+		}
+		return owner.schema.CallCoordinateOrdinal(candidate)
 	default:
 		return 0, false
 	}
@@ -159,6 +168,22 @@ func (owner *RelationOwner) Project(relationOrdinal, projectionOrdinal, candidat
 	case 2:
 		switch projectionOrdinal {
 		case 2:
+			candidate, candidateOK := owner.schema.CallCoordinateAt(int(candidateOrdinal))
+			if !candidateOK {
+				return 0, false
+			}
+			first, projectionOK := candidate.Key()
+			if !projectionOK {
+				return 0, false
+			}
+			projected := first
+			return owner.schema.DenseKeyIndex(projected)
+		default:
+			return 0, false
+		}
+	case 3:
+		switch projectionOrdinal {
+		case 3:
 			candidate, candidateOK := owner.schema.CallCoordinateAt(int(candidateOrdinal))
 			if !candidateOK {
 				return 0, false

@@ -197,6 +197,15 @@ func (owner *RelationOwner) candidate(relationOrdinal uint32, mount, occurrence 
 			return 0, false
 		}
 		return owner.schema.MountedCallArgumentOrdinal(candidate)
+	case 21:
+		if !mount.Available() {
+			return 0, false
+		}
+		candidate, candidateOK := owner.schema.ModuleLoadCallForMountedOccurrence(mount, occurrence)
+		if !candidateOK {
+			return 0, false
+		}
+		return owner.schema.ModuleLoadCallOrdinal(candidate)
 	default:
 		return 0, false
 	}
@@ -712,6 +721,38 @@ func (owner *RelationOwner) Project(relationOrdinal, projectionOrdinal, candidat
 		default:
 			return 0, false
 		}
+	case 21:
+		switch projectionOrdinal {
+		case 24:
+			candidate, candidateOK := owner.schema.ModuleLoadCallAt(int(candidateOrdinal))
+			if !candidateOK {
+				return 0, false
+			}
+			first, projectionOK := candidate.Result()
+			if !projectionOK {
+				return 0, false
+			}
+			projected := first
+			return owner.schema.CoordinateIndex(projected)
+		default:
+			return 0, false
+		}
+	case 22:
+		switch projectionOrdinal {
+		case 23:
+			candidate, candidateOK := owner.schema.ModuleLoadCallAt(int(candidateOrdinal))
+			if !candidateOK {
+				return 0, false
+			}
+			first, projectionOK := candidate.Argument()
+			if !projectionOK {
+				return 0, false
+			}
+			projected := first
+			return owner.schema.CoordinateIndex(projected)
+		default:
+			return 0, false
+		}
 	default:
 		return 0, false
 	}
@@ -774,7 +815,7 @@ func (owner *RelationOwner) materializeSourceColumns() bool {
 // SourceFactColumn returns the immutable typed source fact column for one relation.
 // RelationCount is the sealed relation-ordinal extent. It preserves absent
 // materializations separately from a valid empty source column.
-func (*RelationOwner) RelationCount() int { return 21 }
+func (*RelationOwner) RelationCount() int { return 23 }
 
 func (owner *RelationOwner) SourceFactColumn(relationOrdinal uint32) (memberrelation.SourceColumn[Value], bool) {
 	if owner == nil || owner.schema == nil {

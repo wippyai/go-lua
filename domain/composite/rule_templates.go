@@ -52,6 +52,7 @@ import (
 	valueexactfold "github.com/wippyai/go-lua/domain/value/execution/exactfold"
 	valuefreshresult "github.com/wippyai/go-lua/domain/value/freshresult"
 	valuemoduleload "github.com/wippyai/go-lua/domain/value/moduleload"
+	valuemoduleloadprogram "github.com/wippyai/go-lua/domain/value/moduleload/program"
 	valueorderprogram "github.com/wippyai/go-lua/domain/value/order/program"
 	valueowner "github.com/wippyai/go-lua/domain/value/owner"
 	valuerefinementprogram "github.com/wippyai/go-lua/domain/value/refinement/program"
@@ -177,7 +178,7 @@ func ruleTemplateWiring[P Principals, A Authorities]() ([]*rule.Template, []Rule
 	add(WireRule(placementsuspension.EvidenceRuleEntry[P, A](), placementsuspension.DeclareEvidenceRule[P], placementsuspension.RegisterEvidenceRule, nil, placementsuspension.BindEvidenceRule[A], placementsuspension.FinalizeEvidenceRule[A], placementsuspension.EvidenceOccurrenceCatalog, nil))
 	// Module-load result projection has exact Call/Value reads and writes an
 	// existing mounted Program CallResultValue coordinate.
-	add(WireRule(valuemoduleload.RuleEntry[P, A](), valuemoduleload.DeclareRule[P], valuemoduleload.RegisterRule, nil, valuemoduleload.BindRule[A], nil, nil, nil))
+	add(WireGeneratedRuleWithFamily[P, A](valuemoduleloadprogram.RuleEntry(), valuemoduleload.InstallFamily[A]))
 	// Formal freeze is a terminal mounted Heap transition over the existing
 	// call-effect cut. Its authored route relation is installed once through
 	// the rule's own family claimant.

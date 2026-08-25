@@ -12,15 +12,18 @@ import (
 const (
 	MountedCallCandidates    schemaapi.Key  = "call/mounted-call/candidates"
 	MountedCallFacts         schemaapi.Key  = "call/mounted-call/facts"
+	ModuleLoadCallSites      schemaapi.Key  = "call/module-load/sites"
 	MountedEffectCallSites   schemaapi.Key  = "call/mounted-call/effect-sites"
 	MountedCallCoordinate    schemaapi.Key  = "call/mounted-call/coordinate"
 	MountedCallFactKey       schemaapi.Key  = "call/mounted-call/fact-key"
+	ModuleLoadCallSiteKey    schemaapi.Key  = "call/module-load/site-key"
 	MountedEffectCallSiteKey schemaapi.Key  = "call/mounted-call/effect-site-key"
 	DispatchReducer          schemaapi.Key  = "call/dispatch/reducer"
 	CallKeyCarrier           member.Carrier = "carrier/call/key"
 	CallFactCarrier          member.Carrier = "carrier/call/fact"
 	CallCoordinateCarrier    member.Carrier = "carrier/call/mounted-call"
 	ValueFactCarrier         member.Carrier = "carrier/value/fact"
+	ModuleLoadCallCarrier    member.Carrier = "carrier/value/module-load-call"
 	EffectMountedCallCarrier member.Carrier = "carrier/effect/mounted-call"
 )
 
@@ -31,11 +34,13 @@ func AxisMemberCatalog() member.Catalog {
 		[]member.Relation{
 			{Key: MountedCallCandidates, Subject: CallCoordinateCarrier, CandidateProvider: member.AxisRelationCandidate(member.RelationRef{Axis: schemaapi.EntryReference{Surface: schemaapi.SurfaceKind(2), Key: "call"}, Member: "call/mounted-call/candidates"})},
 			{Key: MountedCallFacts, Subject: CallFactCarrier, CandidateProvider: member.AxisRelationCandidate(member.RelationRef{Axis: schemaapi.EntryReference{Surface: schemaapi.SurfaceKind(2), Key: "call"}, Member: "call/mounted-call/candidates"}), Inputs: []member.Carrier{CallCoordinateCarrier}},
+			{Key: ModuleLoadCallSites, Subject: CallCoordinateCarrier, CandidateProvider: member.AxisRelationCandidate(member.RelationRef{Axis: schemaapi.EntryReference{Surface: schemaapi.SurfaceKind(2), Key: "call"}, Member: "call/module-load/sites"}), Inputs: []member.Carrier{ModuleLoadCallCarrier}, Correspondences: []member.RelationRef{member.RelationRef{Axis: schemaapi.EntryReference{Surface: schemaapi.SurfaceKind(2), Key: "value"}, Member: "value/module-load/candidates"}}},
 			{Key: MountedEffectCallSites, Subject: CallCoordinateCarrier, CandidateProvider: member.AxisRelationCandidate(member.RelationRef{Axis: schemaapi.EntryReference{Surface: schemaapi.SurfaceKind(2), Key: "call"}, Member: "call/mounted-call/effect-sites"}), Inputs: []member.Carrier{EffectMountedCallCarrier}, Correspondences: []member.RelationRef{member.RelationRef{Axis: schemaapi.EntryReference{Surface: schemaapi.SurfaceKind(2), Key: "effect"}, Member: "effect/mounted-call/candidates"}}},
 		},
 		[]member.Projection{
 			{Key: MountedCallCoordinate, Relation: MountedCallCandidates, Role: member.Destination, Result: CallKeyCarrier, CandidateProvider: member.AxisRelationCandidate(member.RelationRef{Axis: schemaapi.EntryReference{Surface: schemaapi.SurfaceKind(2), Key: "call"}, Member: "call/mounted-call/candidates"})},
 			{Key: MountedCallFactKey, Relation: MountedCallFacts, Role: member.Key, Result: CallKeyCarrier, CandidateProvider: member.AxisRelationCandidate(member.RelationRef{Axis: schemaapi.EntryReference{Surface: schemaapi.SurfaceKind(2), Key: "call"}, Member: "call/mounted-call/candidates"})},
+			{Key: ModuleLoadCallSiteKey, Relation: ModuleLoadCallSites, Role: member.Key, Result: CallKeyCarrier, CandidateProvider: member.AxisRelationCandidate(member.RelationRef{Axis: schemaapi.EntryReference{Surface: schemaapi.SurfaceKind(2), Key: "call"}, Member: "call/module-load/sites"})},
 			{Key: MountedEffectCallSiteKey, Relation: MountedEffectCallSites, Role: member.Key, Result: CallKeyCarrier, CandidateProvider: member.AxisRelationCandidate(member.RelationRef{Axis: schemaapi.EntryReference{Surface: schemaapi.SurfaceKind(2), Key: "call"}, Member: "call/mounted-call/effect-sites"})},
 		},
 		[]member.Reducer{

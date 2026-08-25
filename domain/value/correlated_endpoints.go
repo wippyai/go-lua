@@ -812,6 +812,92 @@ func (schema *Schema) PresenceRefinementAt(index int) (PresenceRefinement, bool)
 	return row, true
 }
 
+// EndpointOrdinal is the one dense candidate address ModuleLoadCall uses. It
+// is the ordinal in the Schema's shared endpoint table, not a module-load
+// family-local index, so the rule that folds these rows addresses them through
+// the directory every other endpoint family is already addressed by.
+func (row ModuleLoadCall) EndpointOrdinal() (uint32, bool) {
+	vector, ok := row.EndpointVector()
+	if !ok {
+		return 0, false
+	}
+	ordinal, ordinalOK := vector.Ordinal()
+	if !ordinalOK || uint64(ordinal) > uint64(^uint32(0)) {
+		return 0, false
+	}
+	return uint32(ordinal), true
+}
+
+// Ordinal is the owner-issued dense candidate address. It is an alias of
+// EndpointOrdinal: there is no second module-load candidate index.
+func (row ModuleLoadCall) Ordinal() (uint32, bool) {
+	return row.EndpointOrdinal()
+}
+
+// Result projects the owner-issued call-result coordinate this row publishes
+// at. The endpoint vector is the authority for the declaration, so a pre-seal
+// or foreign row refuses.
+func (row ModuleLoadCall) Result() (Coordinate, bool) {
+	vector, ok := row.EndpointVector()
+	if !ok {
+		return Coordinate{}, false
+	}
+	return vector.Coordinate(EndpointWrite)
+}
+
+// Argument projects the owner-issued coordinate of the single actual the
+// scoped loader is applied to.
+func (row ModuleLoadCall) Argument() (Coordinate, bool) {
+	vector, ok := row.EndpointVector()
+	if !ok {
+		return Coordinate{}, false
+	}
+	return vector.Coordinate(EndpointLeft)
+}
+
+// ModuleLoadCallForMountedOccurrence resolves the owner-issued module-load row
+// for one mounted Program call occurrence. Its candidate ordinal is
+// subsequently redeemed through ModuleLoadCallAt, which addresses the shared
+// endpoint table directly.
+func (schema *Schema) ModuleLoadCallForMountedOccurrence(module, occurrence identity.ContentID) (ModuleLoadCall, bool) {
+	if schema == nil || !module.Available() || !occurrence.Available() {
+		return ModuleLoadCall{}, false
+	}
+	row, ok := schema.ModuleLoadCall(module, occurrence)
+	if !ok || !schema.OwnsModuleLoadCall(row) {
+		return ModuleLoadCall{}, false
+	}
+	_, vectorOK := row.EndpointVector()
+	return row, vectorOK
+}
+
+// ModuleLoadCallOrdinal returns the shared endpoint-table ordinal of one
+// owner-issued module-load row.
+func (schema *Schema) ModuleLoadCallOrdinal(row ModuleLoadCall) (uint32, bool) {
+	if schema == nil || !schema.OwnsModuleLoadCall(row) {
+		return 0, false
+	}
+	return row.EndpointOrdinal()
+}
+
+// ModuleLoadCallAt redeems a dense module-load candidate by the ordinal of the
+// existing endpoint table. Endpoint rows belonging to another family refuse;
+// they remain part of the shared denominator and are never renumbered.
+func (schema *Schema) ModuleLoadCallAt(index int) (ModuleLoadCall, bool) {
+	if schema == nil || !schema.endpointsSealed() || index < 0 || index >= len(schema.endpoints) {
+		return ModuleLoadCall{}, false
+	}
+	endpoint := schema.endpoints[index]
+	if endpoint.family != endpointFamilyModuleLoad {
+		return ModuleLoadCall{}, false
+	}
+	row, ok := schema.moduleLoadCalls[endpoint.key]
+	if !ok || row.endpoints != uint32(index+1) || !schema.OwnsModuleLoadCall(row) {
+		return ModuleLoadCall{}, false
+	}
+	return row, true
+}
+
 func (row BinaryEquality) Endpoint(role EndpointRole) (uint64, bool) {
 	vector, ok := row.EndpointVector()
 	if !ok {

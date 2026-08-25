@@ -31,6 +31,8 @@ const (
 	BinaryEqualitySources              schemaapi.Key  = "value/binary-equality/sources"
 	PresenceRefinementSources          schemaapi.Key  = "value/presence-refinement/sources"
 	BinaryOrderSources                 schemaapi.Key  = "value/binary-order/sources"
+	ModuleLoadCallCandidates           schemaapi.Key  = "value/module-load/candidates"
+	ModuleLoadArguments                schemaapi.Key  = "value/module-load/arguments"
 	StorageTransferSourceKey           schemaapi.Key  = "value/storage-transfer/source-key"
 	StorageTransferTarget              schemaapi.Key  = "value/storage-transfer/target"
 	SourceCoordinate                   schemaapi.Key  = "value/source/coordinate"
@@ -54,6 +56,8 @@ const (
 	BinaryOrderLeft                    schemaapi.Key  = "value/binary-order/left"
 	BinaryOrderRight                   schemaapi.Key  = "value/binary-order/right"
 	BinaryOrderWrite                   schemaapi.Key  = "value/binary-order/write"
+	ModuleLoadArgumentKey              schemaapi.Key  = "value/module-load/argument-key"
+	ModuleLoadResultCoordinate         schemaapi.Key  = "value/module-load/coordinate"
 	IdentityReducer                    schemaapi.Key  = "value/reducer/identity"
 	SourceReducer                      schemaapi.Key  = "value/reducer/source"
 	GlobalBootstrapReducer             schemaapi.Key  = "value/reducer/global-bootstrap"
@@ -61,6 +65,7 @@ const (
 	BinaryEqualityReducer              schemaapi.Key  = "value/binary-equality/reducer"
 	PresenceRefinementReducer          schemaapi.Key  = "value/presence-refinement/reducer"
 	BinaryOrderReducer                 schemaapi.Key  = "value/binary-order/reducer"
+	ModuleLoadCallReducer              schemaapi.Key  = "value/module-load/reducer"
 	AllocationCarryTransform           schemaapi.Key  = "transform/value/allocation"
 	FreshResultCarryTransform          schemaapi.Key  = "transform/value/callresult-freshresult"
 	ValueCoordinateCarrier             member.Carrier = "carrier/value/coordinate"
@@ -82,6 +87,8 @@ const (
 	MountedCallActualTagCarrier        member.Carrier = "carrier/value/mounted-call-actual-tag"
 	FreshResultTagCarrier              member.Carrier = "carrier/value/fresh-result-tag"
 	CallCoordinateCarrier              member.Carrier = "carrier/call/mounted-call"
+	ModuleLoadCallCarrier              member.Carrier = "carrier/value/module-load-call"
+	CallFactCarrier                    member.Carrier = "carrier/call/fact"
 )
 
 // AxisMemberCatalog is value's declaration-only member vocabulary.
@@ -110,6 +117,8 @@ func AxisMemberCatalog() member.Catalog {
 			{Key: BinaryEqualitySources, Subject: ValueFactCarrier, CandidateProvider: member.AxisRelationCandidate(member.RelationRef{Axis: schemaapi.EntryReference{Surface: schemaapi.SurfaceKind(2), Key: "value"}, Member: "value/binary-equality/candidates"}), Inputs: []member.Carrier{BinaryEqualityCarrier}},
 			{Key: PresenceRefinementSources, Subject: ValueFactCarrier, CandidateProvider: member.AxisRelationCandidate(member.RelationRef{Axis: schemaapi.EntryReference{Surface: schemaapi.SurfaceKind(2), Key: "value"}, Member: "value/presence-refinement/candidates"}), Inputs: []member.Carrier{PresenceRefinementCarrier}},
 			{Key: BinaryOrderSources, Subject: ValueFactCarrier, CandidateProvider: member.AxisRelationCandidate(member.RelationRef{Axis: schemaapi.EntryReference{Surface: schemaapi.SurfaceKind(2), Key: "value"}, Member: "value/binary-order/candidates"}), Inputs: []member.Carrier{BinaryOrderCarrier}},
+			{Key: ModuleLoadCallCandidates, Subject: ModuleLoadCallCarrier, CandidateProvider: member.AxisRelationCandidate(member.RelationRef{Axis: schemaapi.EntryReference{Surface: schemaapi.SurfaceKind(2), Key: "value"}, Member: "value/module-load/candidates"})},
+			{Key: ModuleLoadArguments, Subject: ValueFactCarrier, CandidateProvider: member.AxisRelationCandidate(member.RelationRef{Axis: schemaapi.EntryReference{Surface: schemaapi.SurfaceKind(2), Key: "value"}, Member: "value/module-load/candidates"}), Inputs: []member.Carrier{ModuleLoadCallCarrier}},
 		},
 		[]member.Projection{
 			{Key: StorageTransferSourceKey, Relation: StorageTransferSources, Role: member.Key, Result: ValueCoordinateCarrier, CandidateProvider: member.AxisRelationCandidate(member.RelationRef{Axis: schemaapi.EntryReference{Surface: schemaapi.SurfaceKind(2), Key: "value"}, Member: "value/storage-transfer/candidates"})},
@@ -135,6 +144,8 @@ func AxisMemberCatalog() member.Catalog {
 			{Key: BinaryOrderLeft, Relation: BinaryOrderSources, Role: member.Key, Result: ValueCoordinateCarrier, CandidateProvider: member.AxisRelationCandidate(member.RelationRef{Axis: schemaapi.EntryReference{Surface: schemaapi.SurfaceKind(2), Key: "value"}, Member: "value/binary-order/candidates"})},
 			{Key: BinaryOrderRight, Relation: BinaryOrderSources, Role: member.Key, Result: ValueCoordinateCarrier, CandidateProvider: member.AxisRelationCandidate(member.RelationRef{Axis: schemaapi.EntryReference{Surface: schemaapi.SurfaceKind(2), Key: "value"}, Member: "value/binary-order/candidates"})},
 			{Key: BinaryOrderWrite, Relation: BinaryOrderCandidates, Role: member.Destination, Result: ValueCoordinateCarrier, CandidateProvider: member.AxisRelationCandidate(member.RelationRef{Axis: schemaapi.EntryReference{Surface: schemaapi.SurfaceKind(2), Key: "value"}, Member: "value/binary-order/candidates"})},
+			{Key: ModuleLoadArgumentKey, Relation: ModuleLoadArguments, Role: member.Key, Result: ValueCoordinateCarrier, CandidateProvider: member.AxisRelationCandidate(member.RelationRef{Axis: schemaapi.EntryReference{Surface: schemaapi.SurfaceKind(2), Key: "value"}, Member: "value/module-load/candidates"})},
+			{Key: ModuleLoadResultCoordinate, Relation: ModuleLoadCallCandidates, Role: member.Destination, Result: ValueCoordinateCarrier, CandidateProvider: member.AxisRelationCandidate(member.RelationRef{Axis: schemaapi.EntryReference{Surface: schemaapi.SurfaceKind(2), Key: "value"}, Member: "value/module-load/candidates"})},
 		},
 		[]member.Reducer{
 			{Key: IdentityReducer, Inputs: []member.ReducerInput{
@@ -168,6 +179,12 @@ func AxisMemberCatalog() member.Catalog {
 			{Key: BinaryOrderReducer, Inputs: []member.ReducerInput{
 				{Axis: valueAxis, Carrier: ValueFactCarrier, Form: member.ReadFormExact, Multiplicity: member.MultiplicityOne},
 				{Axis: valueAxis, Carrier: ValueFactCarrier, Form: member.ReadFormExact, Multiplicity: member.MultiplicityOne},
+			}, Outputs: []member.ReducerOutput{
+				{Axis: valueAxis, Carrier: ValueFactCarrier},
+			}},
+			{Key: ModuleLoadCallReducer, Inputs: []member.ReducerInput{
+				{Axis: valueAxis, Carrier: ValueFactCarrier, Form: member.ReadFormExact, Multiplicity: member.MultiplicityOne},
+				{Axis: schemaapi.EntryReference{Surface: schemaapi.SurfaceKindAxis, Key: "call"}, Carrier: CallFactCarrier, Form: member.ReadFormExact, Multiplicity: member.MultiplicityOne},
 			}, Outputs: []member.ReducerOutput{
 				{Axis: valueAxis, Carrier: ValueFactCarrier},
 			}},

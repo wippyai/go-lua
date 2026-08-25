@@ -20,6 +20,7 @@ import (
 	freezeprogram "github.com/wippyai/go-lua/domain/heap/formalfreeze/program"
 	returnprogram "github.com/wippyai/go-lua/domain/placement/returnescape/program"
 	storeprogram "github.com/wippyai/go-lua/domain/placement/store/program"
+	valuemoduleloadprogram "github.com/wippyai/go-lua/domain/value/moduleload/program"
 	refinementprogram "github.com/wippyai/go-lua/domain/value/refinement/program"
 )
 
@@ -89,6 +90,14 @@ func Families() []Family {
 				Spec:        callsiteopaqueprogram.RuleEntry(),
 			},
 			Directory: "domain/effect/callsite/opaque",
+		},
+		{
+			Target: emit.Target{
+				PackagePath: "github.com/wippyai/go-lua/domain/value/moduleload",
+				PackageName: "moduleload",
+				Spec:        valuemoduleloadprogram.RuleEntry(),
+			},
+			Directory: "domain/value/moduleload",
 		},
 	}
 }
@@ -189,6 +198,16 @@ func Declarations() []Declaration {
 				Spec:        callsiteopaqueprogram.RuleEntry(),
 			},
 			Directory: "domain/effect/callsite/opaque/program",
+		},
+		{
+			Target: emitlaw.Target{
+				PackagePath: "github.com/wippyai/go-lua/domain/value/moduleload/program",
+				PackageName: "program",
+				Declaration: "ModuleLoadCallResult",
+				Entry:       "RuleEntry",
+				Spec:        valuemoduleloadprogram.RuleEntry(),
+			},
+			Directory: "domain/value/moduleload/program",
 		},
 	}
 }
