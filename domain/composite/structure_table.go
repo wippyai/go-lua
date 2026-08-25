@@ -14,6 +14,7 @@ import (
 	"github.com/wippyai/go-lua/domain/constraint"
 	callsite "github.com/wippyai/go-lua/domain/effect/callsite"
 	effectowner "github.com/wippyai/go-lua/domain/effect/owner"
+	effectpublication "github.com/wippyai/go-lua/domain/effect/publication"
 	executionowner "github.com/wippyai/go-lua/domain/execution/owner"
 	heapclosed "github.com/wippyai/go-lua/domain/heap/allocation/closed"
 	heapempty "github.com/wippyai/go-lua/domain/heap/allocation/empty"
@@ -208,6 +209,7 @@ func semanticRoleVocabulary() []structure.Spec {
 		valuerefinementprogram.StructureSpecs(),
 		valueruntimekind.StructureSpecs(),
 		denominatorpublication.StructureSpecs(),
+		effectpublication.StructureSpecs(),
 		typedomain.ChannelSelectStructureSpecs(),
 		selectapply.StructureSpecs(),
 		programmount.StructureSpecs(),
@@ -252,6 +254,7 @@ func structureContributions() [][]structure.Spec {
 		diagnosticVocabulary(),
 		structure.NativePublicationSpecs(),
 		structure.PublicationPlaneSpecs(),
+		structure.PublicationEffectSpecs(),
 		structure.ReductionOutcomeSpecs(),
 		semanticRoleVocabulary(),
 		observationRoleVocabulary(),

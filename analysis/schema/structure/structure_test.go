@@ -167,6 +167,7 @@ func canonicalContributions() [][]Spec {
 		authored(CategoryConformanceVerdict, verdicts),
 		NativePublicationSpecs(),
 		PublicationPlaneSpecs(),
+		PublicationEffectSpecs(),
 		ReductionOutcomeSpecs(),
 	}
 }

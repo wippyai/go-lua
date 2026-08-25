@@ -193,6 +193,22 @@ const (
 	// fold that spelled a sixth would be encoding a disposition its consumers
 	// cannot read.
 	CategoryReductionOutcome
+	// The four publication descriptor vocabularies. They are what a Target
+	// authored about one effect occurrence - what it does, and what it does to
+	// escape, mutability and lifetime - and they are catalogs here rather than
+	// private bytes beside a codec for the same reason every other published
+	// vocabulary is: a consumer resolves a member by name against the seal's
+	// rank, so a producer cannot renumber a disposition without the layout
+	// digest refusing the payload it used to write.
+	//
+	// Each one's ordinals ARE its enum's own numbering. The enum's zero value
+	// is Invalid, which is the absence of a disposition rather than one of
+	// them, so it is not a member and never occupies a rank; the member column
+	// states absence with its own presence byte.
+	CategoryPublicationEffectKind
+	CategoryPublicationEscape
+	CategoryPublicationMutability
+	CategoryPublicationLifetime
 	categoryLimit
 )
 

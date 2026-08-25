@@ -12,6 +12,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/schema/vocabulary"
 	callowner "github.com/wippyai/go-lua/domain/call/owner"
 	effectowner "github.com/wippyai/go-lua/domain/effect/owner"
+	effectpublication "github.com/wippyai/go-lua/domain/effect/publication"
 	executionowner "github.com/wippyai/go-lua/domain/execution/owner"
 	allocationcatalog "github.com/wippyai/go-lua/domain/heap/allocation/catalog"
 	contextowner "github.com/wippyai/go-lua/domain/heap/context/owner"
@@ -138,6 +139,12 @@ func axisTemplates() ([]*axisTemplate, []axisContributor, bool) {
 	// separately: engine-published outputs lead that range, and the first
 	// engine axis is the compile-time ChannelSelect column so a select-only
 	// publication can seal the prefix.
+	//
+	// The composition publication is that range's leading run, and it is a
+	// run rather than a set: its builder seals a contiguous slot span, so a
+	// column the composition does not author must be declared after every
+	// column it does. An axis added in the wrong place leaves a slot the
+	// composition spans and never fills, and the whole publication refuses.
 	addPublishedSpec(selectapply.AxisEntry[LinkInputs]())
 	addPublishedSpec(programmount.AxisEntry[LinkInputs]())
 	addPublishedSpec(modulecomposition.ImportAxisEntry[LinkInputs]())
@@ -149,6 +156,7 @@ func axisTemplates() ([]*axisTemplate, []axisContributor, bool) {
 	addPublishedSpec(modulecomposition.TerminalAxisEntry[LinkInputs]())
 	addPublishedSpec(modulecomposition.ModuleExportCallableOriginAxisEntry[LinkInputs]())
 	addPublishedSpec(modulecomposition.ModuleExportCallableIngressAxisEntry[LinkInputs]())
+	addPublishedSpec(effectpublication.AxisEntry[LinkInputs]())
 	addPublishedSpec(executionowner.AxisEntry[LinkInputs]())
 	addPublishedSpec(denominatorpublication.AxisEntry[LinkInputs]())
 

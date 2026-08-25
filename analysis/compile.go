@@ -32,6 +32,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/schema/programmount"
 	"github.com/wippyai/go-lua/analysis/schema/structure"
 	"github.com/wippyai/go-lua/analysis/snapshot"
+	effectpublication "github.com/wippyai/go-lua/domain/effect/publication"
 )
 
 func diagnosticRuleForMountedRole(binding *composite.ProgramBinding, role engine.RuleSlotCapability) anadiag.AnalyzeDiagnosticRule {
@@ -268,6 +269,30 @@ func (state *compiledState) publishComposition(module *linkmodule.Component, con
 			return anadiag.AnalyzeDiagnosticCompositionFailureColumnGrant, grant.axis
 		}
 	}
+	// Effect's publication directory is the receipts it admitted on this Link,
+	// detached from the algebra that sealed them. It is published here because
+	// admission is complete at binding and no rule revises it.
+	effects := state.binding.EffectAuthority()
+	declaredVocabulary, vocabularyOK := state.compilation.Structure()
+	if effects == nil || !vocabularyOK {
+		return anadiag.AnalyzeDiagnosticCompositionFailureInput, effectpublication.AxisKey
+	}
+	publicationRows, publicationRowsOK := effectpublication.Rows(effects.Algebra())
+	if !publicationRowsOK {
+		return anadiag.AnalyzeDiagnosticCompositionFailureRows, effectpublication.AxisKey
+	}
+	publicationDenominator, publicationDenominatorOK := effectpublication.DenominatorID(state.sourceID, publicationRows)
+	if !publicationDenominatorOK {
+		return anadiag.AnalyzeDiagnosticCompositionFailureDenominator, effectpublication.AxisKey
+	}
+	publicationContent, publicationContentOK := effectpublication.Content(publicationRows, publicationDenominator, declaredVocabulary)
+	if !publicationContentOK {
+		return anadiag.AnalyzeDiagnosticCompositionFailureContent, effectpublication.AxisKey
+	}
+	publicationWrite, publicationMinted := engine.MintColumnWrite[identity.ContentID, effectpublication.Row](state.binding.SchemaBinding(), effectpublication.OutputKey, effectpublication.AxisKey)
+	if !publicationMinted || !publicationWrite.Available() {
+		return anadiag.AnalyzeDiagnosticCompositionFailureColumnGrant, effectpublication.AxisKey
+	}
 	builder := snapshot.NewBuilder(schemaID, store, identity.Generation(1))
 	if err := selectapply.Publish(write, &builder, apps); err != nil {
 		return anadiag.AnalyzeDiagnosticCompositionFailureWrite, selectapply.AxisKey
@@ -301,6 +326,9 @@ func (state *compiledState) publishComposition(module *linkmodule.Component, con
 	}
 	if err := engine.PublishColumn(ingressWrite, &builder, ingressContent); err != nil {
 		return anadiag.AnalyzeDiagnosticCompositionFailureWrite, modulecomposition.ModuleExportCallableIngressAxisKey
+	}
+	if err := engine.PublishColumn(publicationWrite, &builder, publicationContent); err != nil {
+		return anadiag.AnalyzeDiagnosticCompositionFailureWrite, effectpublication.AxisKey
 	}
 	sealed, err := builder.Seal()
 	if err != nil || !sealed.Published() {
