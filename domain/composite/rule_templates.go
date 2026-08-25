@@ -20,6 +20,7 @@ import (
 	heapclosed "github.com/wippyai/go-lua/domain/heap/allocation/closed"
 	heapclosedprogram "github.com/wippyai/go-lua/domain/heap/allocation/closed/program"
 	heapempty "github.com/wippyai/go-lua/domain/heap/allocation/empty"
+	heapemptyprogram "github.com/wippyai/go-lua/domain/heap/allocation/empty/program"
 	heapingress "github.com/wippyai/go-lua/domain/heap/allocation/ingress"
 	heapbootstrap "github.com/wippyai/go-lua/domain/heap/bootstrap"
 	contextowner "github.com/wippyai/go-lua/domain/heap/context/owner"
@@ -152,7 +153,7 @@ func ruleTemplateWiring[P Principals, A Authorities]() ([]*rule.Template, []Rule
 	add(WireGeneratedRuleWithFamily[P, A](valueallocationprogram.RuleEntry(), valueallocation.InstallFamily[A]))
 	// The empty constructor is a Program whose fold is a transformed carry, so
 	// it installs the family the engine has no generic builder for.
-	add(WireGeneratedRuleWithFamily[P, A](heapempty.RuleEntry(), heapempty.InstallFamily[A]))
+	add(WireGeneratedRuleWithFamily[P, A](heapemptyprogram.RuleEntry(), heapempty.InstallFamily[A]))
 	add(WireGeneratedRuleWithFamily[P, A](heapclosedprogram.RuleEntry(), heapclosed.InstallFamily[A]))
 	add(WireRule(heapindex.RawGetEntry[P, A](), heapindex.DeclareRawGet[P], heapindex.RegisterRawGet, nil, heapindex.BindRawGet[A], nil, nil, nil))
 	add(WireRule(heapindex.RawSetEntry[P, A](), heapindex.DeclareRawSet[P], heapindex.RegisterRawSet, nil, heapindex.BindRawSet[A], nil, nil, nil))

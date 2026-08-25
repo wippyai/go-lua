@@ -19,7 +19,7 @@ import (
 	callsiteopaqueprogram "github.com/wippyai/go-lua/domain/effect/callsite/opaque/program"
 	callsiteselectedprogram "github.com/wippyai/go-lua/domain/effect/callsite/selected/program"
 	heapclosedprogram "github.com/wippyai/go-lua/domain/heap/allocation/closed/program"
-	heapempty "github.com/wippyai/go-lua/domain/heap/allocation/empty"
+	heapemptyprogram "github.com/wippyai/go-lua/domain/heap/allocation/empty/program"
 	freezeprogram "github.com/wippyai/go-lua/domain/heap/formalfreeze/program"
 	publicationfreezeprogram "github.com/wippyai/go-lua/domain/heap/publicationfreeze/program"
 	formalprogram "github.com/wippyai/go-lua/domain/placement/formal/program"
@@ -65,7 +65,7 @@ func Families() []Family {
 			Target: emit.Target{
 				PackagePath: "github.com/wippyai/go-lua/domain/heap/allocation/empty",
 				PackageName: "empty",
-				Spec:        heapempty.RuleEntry(),
+				Spec:        heapemptyprogram.RuleEntry(),
 			},
 			Directory: "domain/heap/allocation/empty",
 		},
