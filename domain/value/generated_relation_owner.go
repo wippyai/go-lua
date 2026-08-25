@@ -197,7 +197,7 @@ func (owner *RelationOwner) candidate(relationOrdinal uint32, mount, occurrence 
 			return 0, false
 		}
 		return owner.schema.MountedCallArgumentOrdinal(candidate)
-	case 21:
+	case 22:
 		if !mount.Available() {
 			return 0, false
 		}
@@ -389,7 +389,7 @@ func (owner *RelationOwner) Project(relationOrdinal, projectionOrdinal, candidat
 		}
 	case 1:
 		switch projectionOrdinal {
-		case 14:
+		case 17:
 			candidate, candidateOK := owner.schema.BinaryArithmeticAt(int(candidateOrdinal))
 			if !candidateOK {
 				return 0, false
@@ -405,7 +405,7 @@ func (owner *RelationOwner) Project(relationOrdinal, projectionOrdinal, candidat
 		}
 	case 2:
 		switch projectionOrdinal {
-		case 17:
+		case 20:
 			candidate, candidateOK := owner.schema.BinaryEqualityAt(int(candidateOrdinal))
 			if !candidateOK {
 				return 0, false
@@ -421,7 +421,7 @@ func (owner *RelationOwner) Project(relationOrdinal, projectionOrdinal, candidat
 		}
 	case 3:
 		switch projectionOrdinal {
-		case 22:
+		case 25:
 			candidate, candidateOK := owner.schema.BinaryOrderAt(int(candidateOrdinal))
 			if !candidateOK {
 				return 0, false
@@ -437,7 +437,7 @@ func (owner *RelationOwner) Project(relationOrdinal, projectionOrdinal, candidat
 		}
 	case 4:
 		switch projectionOrdinal {
-		case 19:
+		case 22:
 			candidate, candidateOK := owner.schema.PresenceRefinementAt(int(candidateOrdinal))
 			if !candidateOK {
 				return 0, false
@@ -641,35 +641,13 @@ func (owner *RelationOwner) Project(relationOrdinal, projectionOrdinal, candidat
 		}
 	case 17:
 		switch projectionOrdinal {
-		case 12:
-			candidate, candidateOK := owner.schema.BinaryArithmeticAt(int(candidateOrdinal))
-			if !candidateOK {
-				return 0, false
-			}
-			first, projectionOK := candidate.Left()
-			if !projectionOK {
-				return 0, false
-			}
-			projected := first
-			return owner.schema.CoordinateIndex(projected)
-		case 13:
-			candidate, candidateOK := owner.schema.BinaryArithmeticAt(int(candidateOrdinal))
-			if !candidateOK {
-				return 0, false
-			}
-			first, projectionOK := candidate.Right()
-			if !projectionOK {
-				return 0, false
-			}
-			projected := first
-			return owner.schema.CoordinateIndex(projected)
 		default:
 			return 0, false
 		}
 	case 18:
 		switch projectionOrdinal {
 		case 15:
-			candidate, candidateOK := owner.schema.BinaryEqualityAt(int(candidateOrdinal))
+			candidate, candidateOK := owner.schema.BinaryArithmeticAt(int(candidateOrdinal))
 			if !candidateOK {
 				return 0, false
 			}
@@ -680,7 +658,7 @@ func (owner *RelationOwner) Project(relationOrdinal, projectionOrdinal, candidat
 			projected := first
 			return owner.schema.CoordinateIndex(projected)
 		case 16:
-			candidate, candidateOK := owner.schema.BinaryEqualityAt(int(candidateOrdinal))
+			candidate, candidateOK := owner.schema.BinaryArithmeticAt(int(candidateOrdinal))
 			if !candidateOK {
 				return 0, false
 			}
@@ -696,6 +674,33 @@ func (owner *RelationOwner) Project(relationOrdinal, projectionOrdinal, candidat
 	case 19:
 		switch projectionOrdinal {
 		case 18:
+			candidate, candidateOK := owner.schema.BinaryEqualityAt(int(candidateOrdinal))
+			if !candidateOK {
+				return 0, false
+			}
+			first, projectionOK := candidate.Left()
+			if !projectionOK {
+				return 0, false
+			}
+			projected := first
+			return owner.schema.CoordinateIndex(projected)
+		case 19:
+			candidate, candidateOK := owner.schema.BinaryEqualityAt(int(candidateOrdinal))
+			if !candidateOK {
+				return 0, false
+			}
+			first, projectionOK := candidate.Right()
+			if !projectionOK {
+				return 0, false
+			}
+			projected := first
+			return owner.schema.CoordinateIndex(projected)
+		default:
+			return 0, false
+		}
+	case 20:
+		switch projectionOrdinal {
+		case 21:
 			candidate, candidateOK := owner.schema.PresenceRefinementAt(int(candidateOrdinal))
 			if !candidateOK {
 				return 0, false
@@ -709,9 +714,9 @@ func (owner *RelationOwner) Project(relationOrdinal, projectionOrdinal, candidat
 		default:
 			return 0, false
 		}
-	case 20:
+	case 21:
 		switch projectionOrdinal {
-		case 20:
+		case 23:
 			candidate, candidateOK := owner.schema.BinaryOrderAt(int(candidateOrdinal))
 			if !candidateOK {
 				return 0, false
@@ -722,7 +727,7 @@ func (owner *RelationOwner) Project(relationOrdinal, projectionOrdinal, candidat
 			}
 			projected := first
 			return owner.schema.CoordinateIndex(projected)
-		case 21:
+		case 24:
 			candidate, candidateOK := owner.schema.BinaryOrderAt(int(candidateOrdinal))
 			if !candidateOK {
 				return 0, false
@@ -736,9 +741,9 @@ func (owner *RelationOwner) Project(relationOrdinal, projectionOrdinal, candidat
 		default:
 			return 0, false
 		}
-	case 21:
+	case 22:
 		switch projectionOrdinal {
-		case 24:
+		case 27:
 			candidate, candidateOK := owner.schema.ModuleLoadCallAt(int(candidateOrdinal))
 			if !candidateOK {
 				return 0, false
@@ -752,9 +757,9 @@ func (owner *RelationOwner) Project(relationOrdinal, projectionOrdinal, candidat
 		default:
 			return 0, false
 		}
-	case 22:
+	case 23:
 		switch projectionOrdinal {
-		case 23:
+		case 26:
 			candidate, candidateOK := owner.schema.ModuleLoadCallAt(int(candidateOrdinal))
 			if !candidateOK {
 				return 0, false
@@ -830,7 +835,7 @@ func (owner *RelationOwner) materializeSourceColumns() bool {
 // SourceFactColumn returns the immutable typed source fact column for one relation.
 // RelationCount is the sealed relation-ordinal extent. It preserves absent
 // materializations separately from a valid empty source column.
-func (*RelationOwner) RelationCount() int { return 23 }
+func (*RelationOwner) RelationCount() int { return 24 }
 
 func (owner *RelationOwner) SourceFactColumn(relationOrdinal uint32) (memberrelation.SourceColumn[Value], bool) {
 	if owner == nil || owner.schema == nil {

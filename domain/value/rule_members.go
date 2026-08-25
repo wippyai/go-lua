@@ -27,6 +27,7 @@ const (
 	ReturnBoundaryMembers              schemaapi.Key  = "value/return-boundary/members"
 	MountedCallParents                 schemaapi.Key  = "value/mounted-call/parents"
 	MountedCallActualMembers           schemaapi.Key  = "value/mounted-call/actual-members"
+	FreshResultRoutes                  schemaapi.Key  = "value/fresh-result/routes"
 	BinaryArithmeticSources            schemaapi.Key  = "value/binary-arithmetic/sources"
 	BinaryEqualitySources              schemaapi.Key  = "value/binary-equality/sources"
 	PresenceRefinementSources          schemaapi.Key  = "value/presence-refinement/sources"
@@ -45,6 +46,9 @@ const (
 	MountedCallCalleeKey               schemaapi.Key  = "value/mounted-call/callee-key"
 	MountedCallActualKey               schemaapi.Key  = "value/mounted-call/actual-key"
 	MountedCallActualTag               schemaapi.Key  = "value/mounted-call/actual-tag"
+	FreshResultRouteKey                schemaapi.Key  = "value/fresh-result/route-key"
+	FreshResultRouteDestination        schemaapi.Key  = "value/fresh-result/route-destination"
+	FreshResultRouteTag                schemaapi.Key  = "value/fresh-result/route-tag"
 	BinaryArithmeticLeft               schemaapi.Key  = "value/binary-arithmetic/left"
 	BinaryArithmeticRight              schemaapi.Key  = "value/binary-arithmetic/right"
 	BinaryArithmeticWrite              schemaapi.Key  = "value/binary-arithmetic/write"
@@ -61,13 +65,14 @@ const (
 	IdentityReducer                    schemaapi.Key  = "value/reducer/identity"
 	SourceReducer                      schemaapi.Key  = "value/reducer/source"
 	GlobalBootstrapReducer             schemaapi.Key  = "value/reducer/global-bootstrap"
+	FreshResultReducer                 schemaapi.Key  = "value/reducer/fresh-result"
 	BinaryArithmeticReducer            schemaapi.Key  = "value/binary-arithmetic/reducer"
 	BinaryEqualityReducer              schemaapi.Key  = "value/binary-equality/reducer"
 	PresenceRefinementReducer          schemaapi.Key  = "value/presence-refinement/reducer"
 	BinaryOrderReducer                 schemaapi.Key  = "value/binary-order/reducer"
 	ModuleLoadCallReducer              schemaapi.Key  = "value/module-load/reducer"
 	AllocationCarryTransform           schemaapi.Key  = "transform/value/allocation"
-	FreshResultCarryTransform          schemaapi.Key  = "transform/value/callresult-freshresult"
+	FreshResultRouteCarryTransform     schemaapi.Key  = "transform/value/fresh-result-route"
 	ValueCoordinateCarrier             member.Carrier = "carrier/value/coordinate"
 	ValueFactCarrier                   member.Carrier = "carrier/value/fact"
 	StorageTransferCarrier             member.Carrier = "carrier/value/storage-transfer"
@@ -86,9 +91,11 @@ const (
 	MountedCallActualsCarrier          member.Carrier = "carrier/value/mounted-call-actuals"
 	MountedCallActualTagCarrier        member.Carrier = "carrier/value/mounted-call-actual-tag"
 	FreshResultTagCarrier              member.Carrier = "carrier/value/fresh-result-tag"
+	FreshResultRouteCarrier            member.Carrier = "carrier/value/fresh-result-route"
 	CallCoordinateCarrier              member.Carrier = "carrier/call/mounted-call"
-	ModuleLoadCallCarrier              member.Carrier = "carrier/value/module-load-call"
 	CallFactCarrier                    member.Carrier = "carrier/call/fact"
+	FreshResultRouteTagCarrier         member.Carrier = "carrier/value/fresh-result-route-tag"
+	ModuleLoadCallCarrier              member.Carrier = "carrier/value/module-load-call"
 )
 
 // AxisMemberCatalog is value's declaration-only member vocabulary.
@@ -113,6 +120,7 @@ func AxisMemberCatalog() member.Catalog {
 			{Key: ReturnBoundaryMembers, Subject: ReturnBoundaryMemberCarrier, CandidateProvider: member.AxisRelationCandidate(member.RelationRef{Axis: schemaapi.EntryReference{Surface: schemaapi.SurfaceKind(2), Key: "value"}, Member: "value/return-boundary/members"}), Inputs: []member.Carrier{ReturnBoundaryCarrier}, Parent: member.RelationRef{Axis: schemaapi.EntryReference{Surface: schemaapi.SurfaceKind(2), Key: "value"}, Member: "value/return-boundary/candidates"}, Ordinal: ReturnBoundaryMemberOrdinalCarrier},
 			{Key: MountedCallParents, Subject: MountedCallActualsCarrier, CandidateProvider: member.AxisRelationCandidate(member.RelationRef{Axis: schemaapi.EntryReference{Surface: schemaapi.SurfaceKind(2), Key: "value"}, Member: "value/mounted-call/parents"}), Inputs: []member.Carrier{CallCoordinateCarrier}, Correspondences: []member.RelationRef{member.RelationRef{Axis: schemaapi.EntryReference{Surface: schemaapi.SurfaceKind(2), Key: "call"}, Member: "call/mounted-call/candidates"}}},
 			{Key: MountedCallActualMembers, Subject: MountedCallArgumentCarrier, CandidateProvider: member.AxisRelationCandidate(member.RelationRef{Axis: schemaapi.EntryReference{Surface: schemaapi.SurfaceKind(2), Key: "value"}, Member: "value/mounted-call/actual-members"}), Inputs: []member.Carrier{CallCoordinateCarrier}, Parent: member.RelationRef{Axis: schemaapi.EntryReference{Surface: schemaapi.SurfaceKind(2), Key: "value"}, Member: "value/mounted-call/parents"}, Ordinal: MountedCallActualTagCarrier},
+			{Key: FreshResultRoutes, Subject: FreshResultRouteCarrier, CandidateProvider: member.AxisRelationCandidate(member.RelationRef{Axis: schemaapi.EntryReference{Surface: schemaapi.SurfaceKind(2), Key: "call"}, Member: "call/mounted-call/candidates"}), Inputs: []member.Carrier{CallCoordinateCarrier, CallFactCarrier}},
 			{Key: BinaryArithmeticSources, Subject: ValueFactCarrier, CandidateProvider: member.AxisRelationCandidate(member.RelationRef{Axis: schemaapi.EntryReference{Surface: schemaapi.SurfaceKind(2), Key: "value"}, Member: "value/binary-arithmetic/candidates"}), Inputs: []member.Carrier{BinaryArithmeticCarrier}},
 			{Key: BinaryEqualitySources, Subject: ValueFactCarrier, CandidateProvider: member.AxisRelationCandidate(member.RelationRef{Axis: schemaapi.EntryReference{Surface: schemaapi.SurfaceKind(2), Key: "value"}, Member: "value/binary-equality/candidates"}), Inputs: []member.Carrier{BinaryEqualityCarrier}},
 			{Key: PresenceRefinementSources, Subject: ValueFactCarrier, CandidateProvider: member.AxisRelationCandidate(member.RelationRef{Axis: schemaapi.EntryReference{Surface: schemaapi.SurfaceKind(2), Key: "value"}, Member: "value/presence-refinement/candidates"}), Inputs: []member.Carrier{PresenceRefinementCarrier}},
@@ -133,6 +141,9 @@ func AxisMemberCatalog() member.Catalog {
 			{Key: MountedCallCalleeKey, Relation: MountedCallParents, Role: member.Key, Result: ValueCoordinateCarrier, CandidateProvider: member.AxisRelationCandidate(member.RelationRef{Axis: schemaapi.EntryReference{Surface: schemaapi.SurfaceKind(2), Key: "value"}, Member: "value/mounted-call/parents"})},
 			{Key: MountedCallActualKey, Relation: MountedCallActualMembers, Role: member.Key, Result: ValueCoordinateCarrier, CandidateProvider: member.AxisRelationCandidate(member.RelationRef{Axis: schemaapi.EntryReference{Surface: schemaapi.SurfaceKind(2), Key: "value"}, Member: "value/mounted-call/actual-members"})},
 			{Key: MountedCallActualTag, Relation: MountedCallActualMembers, Role: member.Predicate, Result: MountedCallActualTagCarrier, CandidateProvider: member.AxisRelationCandidate(member.RelationRef{Axis: schemaapi.EntryReference{Surface: schemaapi.SurfaceKind(2), Key: "value"}, Member: "value/mounted-call/actual-members"})},
+			{Key: FreshResultRouteKey, Relation: FreshResultRoutes, Role: member.Key, Result: ValueCoordinateCarrier, CandidateProvider: member.AxisRelationCandidate(member.RelationRef{Axis: schemaapi.EntryReference{Surface: schemaapi.SurfaceKind(2), Key: "call"}, Member: "call/mounted-call/candidates"})},
+			{Key: FreshResultRouteDestination, Relation: FreshResultRoutes, Role: member.Destination, Result: ValueCoordinateCarrier, CandidateProvider: member.AxisRelationCandidate(member.RelationRef{Axis: schemaapi.EntryReference{Surface: schemaapi.SurfaceKind(2), Key: "call"}, Member: "call/mounted-call/candidates"})},
+			{Key: FreshResultRouteTag, Relation: FreshResultRoutes, Role: member.Predicate, Result: FreshResultRouteTagCarrier, CandidateProvider: member.AxisRelationCandidate(member.RelationRef{Axis: schemaapi.EntryReference{Surface: schemaapi.SurfaceKind(2), Key: "call"}, Member: "call/mounted-call/candidates"})},
 			{Key: BinaryArithmeticLeft, Relation: BinaryArithmeticSources, Role: member.Key, Result: ValueCoordinateCarrier, CandidateProvider: member.AxisRelationCandidate(member.RelationRef{Axis: schemaapi.EntryReference{Surface: schemaapi.SurfaceKind(2), Key: "value"}, Member: "value/binary-arithmetic/candidates"})},
 			{Key: BinaryArithmeticRight, Relation: BinaryArithmeticSources, Role: member.Key, Result: ValueCoordinateCarrier, CandidateProvider: member.AxisRelationCandidate(member.RelationRef{Axis: schemaapi.EntryReference{Surface: schemaapi.SurfaceKind(2), Key: "value"}, Member: "value/binary-arithmetic/candidates"})},
 			{Key: BinaryArithmeticWrite, Relation: BinaryArithmeticCandidates, Role: member.Destination, Result: ValueCoordinateCarrier, CandidateProvider: member.AxisRelationCandidate(member.RelationRef{Axis: schemaapi.EntryReference{Surface: schemaapi.SurfaceKind(2), Key: "value"}, Member: "value/binary-arithmetic/candidates"})},
@@ -157,6 +168,12 @@ func AxisMemberCatalog() member.Catalog {
 				{Axis: valueAxis, Carrier: ValueFactCarrier},
 			}},
 			{Key: GlobalBootstrapReducer, Inputs: []member.ReducerInput{}, Outputs: []member.ReducerOutput{
+				{Axis: valueAxis, Carrier: ValueFactCarrier},
+			}},
+			{Key: FreshResultReducer, Inputs: []member.ReducerInput{
+				{Axis: schemaapi.EntryReference{Surface: schemaapi.SurfaceKindAxis, Key: "call"}, Carrier: CallFactCarrier, Form: member.ReadFormExact, Multiplicity: member.MultiplicityOne},
+				{Axis: valueAxis, Carrier: ValueFactCarrier, Form: member.ReadFormSelected, Multiplicity: member.MultiplicityOne, Tag: FreshResultRouteTagCarrier, Route: ValueCoordinateCarrier},
+			}, Outputs: []member.ReducerOutput{
 				{Axis: valueAxis, Carrier: ValueFactCarrier},
 			}},
 			{Key: BinaryArithmeticReducer, Inputs: []member.ReducerInput{
@@ -191,7 +208,7 @@ func AxisMemberCatalog() member.Catalog {
 		},
 		[]member.CarryTransform{
 			{Key: AllocationCarryTransform, Candidate: AllocationResultCarrier, Input: ValueFactCarrier, Output: ValueFactCarrier},
-			{Key: FreshResultCarryTransform, Candidate: FreshResultCallCarrier, Input: ValueFactCarrier, Output: ValueFactCarrier},
+			{Key: FreshResultRouteCarryTransform, Candidate: FreshResultRouteCarrier, Input: ValueFactCarrier, Output: ValueFactCarrier},
 		},
 	)
 	if !ok {

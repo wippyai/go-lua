@@ -13,6 +13,11 @@ import (
 
 const (
 	valuePackagePath = "github.com/wippyai/go-lua/domain/value"
+	// freshResultPackagePath names the fresh-result rule's own package. The
+	// route rows a routed carry is indexed by are that rule's, and the value
+	// axis declares the transition they issue because a carry transform is an
+	// axis-level row.
+	freshResultPackagePath = "github.com/wippyai/go-lua/domain/value/freshresult"
 	callPackagePath  = "github.com/wippyai/go-lua/domain/call"
 )
 
@@ -22,6 +27,10 @@ func valueGoType(name string) definition.GoType {
 
 func valueGoPointerType(name string) definition.GoType {
 	return definition.GoType{PackagePath: valuePackagePath, Name: name, Pointer: true}
+}
+
+func freshResultGoType(name string) definition.GoType {
+	return definition.GoType{PackagePath: freshResultPackagePath, Name: name}
 }
 
 func callGoType(name string) definition.GoType {
@@ -106,6 +115,10 @@ func StorageTransfer() definition.Definition {
 			{Name: "MountedCallActualTagCarrier", Key: "carrier/value/mounted-call-actual-tag", Type: builtinGoType("uint64")},
 			// The address a fresh result is reached by under its mounted call.
 			{Name: "FreshResultTagCarrier", Key: "carrier/value/fresh-result-tag", Type: builtinGoType("uint64")},
+			// One row of the fresh-result rule's derived route set: a Value
+			// coordinate one mounted call publishes at, and the roots admitted
+			// there. It is the row that rule's routed carry is indexed by.
+			{Name: "FreshResultRouteCarrier", Key: "carrier/value/fresh-result-route", Type: freshResultGoType("Route")},
 			// CallCoordinate is a foreign input coordinate, not a second Call
 			// vocabulary. Repeating its canonical carrier lets Value declare the
 			// correspondence between its parent rows and Call's candidate rows.
@@ -459,12 +472,17 @@ func StorageTransfer() definition.Definition {
 				Implementation: valueMethod("Age", "AllocationResult", true, 0),
 			},
 			{
-				Name:           "FreshResultCarryTransform",
-				Key:            "transform/value/callresult-freshresult",
-				Candidate:      "FreshResultCallCarrier",
+				// The transition one published fresh-result row carries the
+				// image at its own destination through. It is issued by the
+				// ROUTE row rather than by the call: a call that publishes at
+				// several destinations has one transition per destination, and
+				// asking which of them is the call's has no answer.
+				Name:           "FreshResultRouteCarryTransform",
+				Key:            "transform/value/fresh-result-route",
+				Candidate:      "FreshResultRouteCarrier",
 				Input:          "ValueFactCarrier",
 				Output:         "ValueFactCarrier",
-				Implementation: valueMethod("Age", "FreshResultCall", false, 0),
+				Implementation: definition.GoSymbol{PackagePath: freshResultPackagePath, Name: "Age", Receiver: freshResultGoType("Route"), ResultIndex: 0},
 			},
 		},
 	}

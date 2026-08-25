@@ -892,6 +892,11 @@ func compileProgram(ruleOrdinal uint32, template *rule.Template, declaration pro
 	compiled.reducer = ReducerAddr{Axis: reducerAxisOrdinal, Member: mustReducerOrdinal(reducerCatalog, declaration.Fold.Reducer.Member)}
 
 	var outputFact member.Carrier
+	// routeSubject is the derived relation's own row type when this rule
+	// publishes a routed output. It is the row a routed carry is indexed by,
+	// resolved once here where the route relation is already open.
+	var routeSubject member.Carrier
+	var routedOutput bool
 	for _, output := range declaration.Fold.Outputs {
 		if !output.Available() || uint64(output.ValueSlot) >= uint64(len(declaration.Fold.Outputs)) {
 			return Plan{}, compileFailure(template.ID(), rule.LawProgramOutput, schema.DispositionMalformed)
@@ -968,6 +973,7 @@ func compileProgram(ruleOrdinal uint32, template *rule.Template, declaration pro
 		}
 		if output.Mode == program.ModeRoute {
 			routeJoinDeclaration := declaration.Joins[routeJoin]
+			routedOutput = true
 			routeRelationAxis, routeRelationCatalog, routeRelationAxisOrdinal, routeRelationFailure := resolveAxisMember(axisView, routeJoinDeclaration.Relation.Axis, routeJoinDeclaration.Relation.Member, memberRelation)
 			if routeRelationFailure.Available() {
 				routeRelationFailure.Entry = template.ID()
@@ -981,6 +987,7 @@ func compileProgram(ruleOrdinal uint32, template *rule.Template, declaration pro
 			destinationRelation = routeRelation.Key
 			destinationOwnerOrdinal = routeRelationAxisOrdinal
 			destinationOwnerKey = routeRelationAxis.Key()
+			routeSubject = routeRelation.Subject
 		}
 		if destination.Role != member.Destination || destination.Result != outputSignature.Key {
 			return Plan{}, compileFailure(template.ID(), rule.LawProgramOutput, schema.DispositionMalformed)
@@ -1000,6 +1007,15 @@ func compileProgram(ruleOrdinal uint32, template *rule.Template, declaration pro
 	}
 
 	if declaration.Carry != nil {
+		// A carry is indexed by the row that publishes. An exact rule publishes
+		// at one coordinate under its candidate, so the transition is issued by
+		// the candidate carrier; a routed rule publishes at every destination
+		// its derived relation answered, so it is issued by that relation's own
+		// subject and the closure is taken per published row.
+		carryCandidate := candidateCarrier
+		if routedOutput {
+			carryCandidate = routeSubject
+		}
 		// Program.Check proves a contiguous union of read/carry ports. Keep the
 		// ordinal explicit at this boundary as well: a carry may not name a
 		// port outside the sealed prefix, and no zero/default port is inferred.
@@ -1017,7 +1033,7 @@ func compileProgram(ruleOrdinal uint32, template *rule.Template, declaration pro
 			transform, transformOK := transformCatalog.CarryTransform(declaration.Carry.Transform.Member)
 			transformOrdinal, transformOrdinalOK := transformCatalog.CarryTransformOrdinal(declaration.Carry.Transform.Member)
 			resolvedTransform, resolvedTransformOK := transformCatalog.CarryTransformAt(int(transformOrdinal))
-			if !transformOK || !transformOrdinalOK || !resolvedTransformOK || resolvedTransform.Key != declaration.Carry.Transform.Member || transformAxis.Key() != template.Writes() || transform.Candidate != candidateCarrier || transform.Input != outputFact || transform.Output != outputFact {
+			if !transformOK || !transformOrdinalOK || !resolvedTransformOK || resolvedTransform.Key != declaration.Carry.Transform.Member || transformAxis.Key() != template.Writes() || transform.Candidate != carryCandidate || transform.Input != outputFact || transform.Output != outputFact {
 				return Plan{}, compileFailure(template.ID(), rule.LawProgramShape, schema.DispositionMalformed)
 			}
 			compiled.carry.Transform = CarryTransformAddr{Axis: transformAxisOrdinal, Member: transformOrdinal}

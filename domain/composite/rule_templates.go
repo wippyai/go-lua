@@ -52,6 +52,7 @@ import (
 	valueequalityprogram "github.com/wippyai/go-lua/domain/value/equality/program"
 	valueexactfold "github.com/wippyai/go-lua/domain/value/execution/exactfold"
 	valuefreshresult "github.com/wippyai/go-lua/domain/value/freshresult"
+	valuefreshresultprogram "github.com/wippyai/go-lua/domain/value/freshresult/program"
 	valuemoduleload "github.com/wippyai/go-lua/domain/value/moduleload"
 	valuemoduleloadprogram "github.com/wippyai/go-lua/domain/value/moduleload/program"
 	valueorderprogram "github.com/wippyai/go-lua/domain/value/order/program"
@@ -199,7 +200,7 @@ func ruleTemplateWiring[P Principals, A Authorities]() ([]*rule.Template, []Rule
 	// that hands a mounted call result the Heap fresh root Value it allocates,
 	// enumerated from Value's own admitted fresh-result directory.
 	add(WireRule(valueresultalias.RuleEntry[P, A](), valueresultalias.DeclareRule[P], valueresultalias.RegisterRule, nil, valueresultalias.BindRule[A], valueresultalias.FinalizeRule[A], nil, nil))
-	add(WireRule(valuefreshresult.RuleEntry[P, A](), valuefreshresult.DeclareRule[P], valuefreshresult.RegisterRule, nil, valuefreshresult.BindRule[A], valuefreshresult.FinalizeRule[A], valuefreshresult.OccurrenceCatalog, nil))
+	add(WireGeneratedRuleWithFamily[P, A](valuefreshresultprogram.RuleEntry(), valuefreshresult.InstallFamily[A]))
 	// Body-result is the Value-owned executable-body counterpart to the two
 	// Target result consumers above. It consumes selected Call body targets and
 	// Value's sealed ReturnBoundary relation; no caller reconstructs Program

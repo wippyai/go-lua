@@ -601,6 +601,16 @@ func buildGraphBindingCatalog(state *schemaBindingState, graph *equation.Graph) 
 					factor := rule.directRuleOutputFactor()
 					closureKey := graphCarryClosureKey{factor: factor, point: input.Point().Key()}
 					closure, closureOK := catalog.carryClosures[closureKey]
+					// A member that publishes routed carries over coordinates its
+					// own routes select, which are not in the closure its
+					// predecessor point sealed: that closure is what reaches this
+					// point, and a route set is decided per invocation. The scope
+					// is the member's, so the claim is made on its own
+					// registration rather than on the shared predecessor node,
+					// where it would over-claim for every other member there.
+					if rule.directRuleWriteMode() == directRuleWriteRoute {
+						closure.route = true
+					}
 					if !factor.Available() || !closureOK || !appendGraphCarryTargets(catalog, factor, member.Key(), closure) {
 						return nil, false
 					}

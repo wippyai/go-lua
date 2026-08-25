@@ -371,11 +371,23 @@ func (cell *generatedRuleBindingCell) directRuleRouteRead() uint64 {
 	return cell.routeRead
 }
 
+// directRuleCarryPresent reports whether the GRAPH must close over this rule's
+// carry. An identity carry preserves the predecessor image at every coordinate
+// the row does not write, so the closure that reaches this point is what it
+// carries. A routed transformed carry needs the same closure and one thing
+// more - the route universe its own routes select - so it is closed over here
+// as well. An exact transformed carry takes its closure over the row's own
+// target inside the family, which is a coordinate the graph already knows the
+// row writes, so it needs no closure of its own.
 func (cell *generatedRuleBindingCell) directRuleCarryPresent() bool {
 	if cell == nil || cell.generated == nil {
 		return false
 	}
-	return cell.generated.program.CarryIdentity()
+	if cell.generated.program.CarryIdentity() {
+		return true
+	}
+	mode, present := cell.generated.program.CarryMode()
+	return present && mode == ruleprogram.CarryTransform && cell.directRuleWriteMode() == directRuleWriteRoute
 }
 
 func (cell *generatedRuleBindingCell) directRuleCarryInput() uint64 {

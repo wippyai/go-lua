@@ -18,13 +18,13 @@ const ExactFoldArity = 3
 // names this generated execution shape. Unknown ordinals fail construction.
 func SupportsExactFoldReducer(reducerOrdinal uint32) bool {
 	switch reducerOrdinal {
-	case 3:
-		return true
 	case 4:
 		return true
 	case 5:
 		return true
 	case 6:
+		return true
+	case 7:
 		return true
 	default:
 		return false
@@ -47,14 +47,14 @@ func (schema *Schema) ExactFoldMappingAt(reducerOrdinal uint32) (ExactFoldMappin
 		return ExactFoldMapping{}, false
 	}
 	switch reducerOrdinal {
-	case 3:
-		return ExactFoldMapping{ReducerOrdinal: 3, CandidateRelationMember: 1, ReadCount: 2, ReadRelationMember: [ExactFoldArity]uint32{17, 17}, ReadKeyMember: [ExactFoldArity]uint32{12, 13}, DestinationProjectionMember: 14}, true
 	case 4:
-		return ExactFoldMapping{ReducerOrdinal: 4, CandidateRelationMember: 2, ReadCount: 2, ReadRelationMember: [ExactFoldArity]uint32{18, 18}, ReadKeyMember: [ExactFoldArity]uint32{15, 16}, DestinationProjectionMember: 17}, true
+		return ExactFoldMapping{ReducerOrdinal: 4, CandidateRelationMember: 1, ReadCount: 2, ReadRelationMember: [ExactFoldArity]uint32{18, 18}, ReadKeyMember: [ExactFoldArity]uint32{15, 16}, DestinationProjectionMember: 17}, true
 	case 5:
-		return ExactFoldMapping{ReducerOrdinal: 5, CandidateRelationMember: 4, ReadCount: 1, ReadRelationMember: [ExactFoldArity]uint32{19}, ReadKeyMember: [ExactFoldArity]uint32{18}, DestinationProjectionMember: 19}, true
+		return ExactFoldMapping{ReducerOrdinal: 5, CandidateRelationMember: 2, ReadCount: 2, ReadRelationMember: [ExactFoldArity]uint32{19, 19}, ReadKeyMember: [ExactFoldArity]uint32{18, 19}, DestinationProjectionMember: 20}, true
 	case 6:
-		return ExactFoldMapping{ReducerOrdinal: 6, CandidateRelationMember: 3, ReadCount: 2, ReadRelationMember: [ExactFoldArity]uint32{20, 20}, ReadKeyMember: [ExactFoldArity]uint32{20, 21}, DestinationProjectionMember: 22}, true
+		return ExactFoldMapping{ReducerOrdinal: 6, CandidateRelationMember: 4, ReadCount: 1, ReadRelationMember: [ExactFoldArity]uint32{20}, ReadKeyMember: [ExactFoldArity]uint32{21}, DestinationProjectionMember: 22}, true
+	case 7:
+		return ExactFoldMapping{ReducerOrdinal: 7, CandidateRelationMember: 3, ReadCount: 2, ReadRelationMember: [ExactFoldArity]uint32{21, 21}, ReadKeyMember: [ExactFoldArity]uint32{23, 24}, DestinationProjectionMember: 25}, true
 	default:
 		return ExactFoldMapping{}, false
 	}
@@ -69,10 +69,10 @@ type ExactFoldPayload struct {
 	candidateOrdinal        uint32
 	readCount               uint32
 	available               bool
-	candidate3              BinaryArithmetic
-	candidate4              BinaryEquality
-	candidate5              PresenceRefinement
-	candidate6              BinaryOrder
+	candidate4              BinaryArithmetic
+	candidate5              BinaryEquality
+	candidate6              PresenceRefinement
+	candidate7              BinaryOrder
 }
 
 // ReducerOrdinal returns the sealed reducer identity of this payload.
@@ -114,7 +114,7 @@ func (schema *Schema) ExactFoldPayloadAt(reducerOrdinal, candidateRelationMember
 		return ExactFoldPayload{}, false
 	}
 	switch reducerOrdinal {
-	case 3:
+	case 4:
 		if candidateRelationMember != 1 {
 			return ExactFoldPayload{}, false
 		}
@@ -122,8 +122,8 @@ func (schema *Schema) ExactFoldPayloadAt(reducerOrdinal, candidateRelationMember
 		if !candidateOK {
 			return ExactFoldPayload{}, false
 		}
-		return ExactFoldPayload{owner: schema, reducerOrdinal: 3, candidateRelationMember: candidateRelationMember, candidateOrdinal: candidateOrdinal, readCount: 2, available: true, candidate3: candidate}, true
-	case 4:
+		return ExactFoldPayload{owner: schema, reducerOrdinal: 4, candidateRelationMember: candidateRelationMember, candidateOrdinal: candidateOrdinal, readCount: 2, available: true, candidate4: candidate}, true
+	case 5:
 		if candidateRelationMember != 2 {
 			return ExactFoldPayload{}, false
 		}
@@ -131,8 +131,8 @@ func (schema *Schema) ExactFoldPayloadAt(reducerOrdinal, candidateRelationMember
 		if !candidateOK {
 			return ExactFoldPayload{}, false
 		}
-		return ExactFoldPayload{owner: schema, reducerOrdinal: 4, candidateRelationMember: candidateRelationMember, candidateOrdinal: candidateOrdinal, readCount: 2, available: true, candidate4: candidate}, true
-	case 5:
+		return ExactFoldPayload{owner: schema, reducerOrdinal: 5, candidateRelationMember: candidateRelationMember, candidateOrdinal: candidateOrdinal, readCount: 2, available: true, candidate5: candidate}, true
+	case 6:
 		if candidateRelationMember != 4 {
 			return ExactFoldPayload{}, false
 		}
@@ -140,8 +140,8 @@ func (schema *Schema) ExactFoldPayloadAt(reducerOrdinal, candidateRelationMember
 		if !candidateOK {
 			return ExactFoldPayload{}, false
 		}
-		return ExactFoldPayload{owner: schema, reducerOrdinal: 5, candidateRelationMember: candidateRelationMember, candidateOrdinal: candidateOrdinal, readCount: 1, available: true, candidate5: candidate}, true
-	case 6:
+		return ExactFoldPayload{owner: schema, reducerOrdinal: 6, candidateRelationMember: candidateRelationMember, candidateOrdinal: candidateOrdinal, readCount: 1, available: true, candidate6: candidate}, true
+	case 7:
 		if candidateRelationMember != 3 {
 			return ExactFoldPayload{}, false
 		}
@@ -149,7 +149,7 @@ func (schema *Schema) ExactFoldPayloadAt(reducerOrdinal, candidateRelationMember
 		if !candidateOK {
 			return ExactFoldPayload{}, false
 		}
-		return ExactFoldPayload{owner: schema, reducerOrdinal: 6, candidateRelationMember: candidateRelationMember, candidateOrdinal: candidateOrdinal, readCount: 2, available: true, candidate6: candidate}, true
+		return ExactFoldPayload{owner: schema, reducerOrdinal: 7, candidateRelationMember: candidateRelationMember, candidateOrdinal: candidateOrdinal, readCount: 2, available: true, candidate7: candidate}, true
 	default:
 		return ExactFoldPayload{}, false
 	}
@@ -163,38 +163,38 @@ func (schema *Schema) ReduceExactFoldPayload(candidate ExactFoldPayload, reads [
 		return zero, structure.Refuse, false
 	}
 	switch candidate.reducerOrdinal {
-	case 3:
-		if candidate.readCount != 2 {
-			return zero, structure.Refuse, false
-		}
-		result, reduction := ArithmeticValue(candidate.candidate3, reads[0], reads[1])
-		if !reduction.Available() || reduction == structure.Refuse {
-			return zero, reduction, false
-		}
-		return result, reduction, true
 	case 4:
 		if candidate.readCount != 2 {
 			return zero, structure.Refuse, false
 		}
-		result, reduction := EqualityValue(candidate.candidate4, reads[0], reads[1])
+		result, reduction := ArithmeticValue(candidate.candidate4, reads[0], reads[1])
 		if !reduction.Available() || reduction == structure.Refuse {
 			return zero, reduction, false
 		}
 		return result, reduction, true
 	case 5:
-		if candidate.readCount != 1 {
+		if candidate.readCount != 2 {
 			return zero, structure.Refuse, false
 		}
-		result, reduction := PresenceRefinementValue(candidate.candidate5, reads[0])
+		result, reduction := EqualityValue(candidate.candidate5, reads[0], reads[1])
 		if !reduction.Available() || reduction == structure.Refuse {
 			return zero, reduction, false
 		}
 		return result, reduction, true
 	case 6:
+		if candidate.readCount != 1 {
+			return zero, structure.Refuse, false
+		}
+		result, reduction := PresenceRefinementValue(candidate.candidate6, reads[0])
+		if !reduction.Available() || reduction == structure.Refuse {
+			return zero, reduction, false
+		}
+		return result, reduction, true
+	case 7:
 		if candidate.readCount != 2 {
 			return zero, structure.Refuse, false
 		}
-		result, reduction := OrderValue(candidate.candidate6, reads[0], reads[1])
+		result, reduction := OrderValue(candidate.candidate7, reads[0], reads[1])
 		if !reduction.Available() || reduction == structure.Refuse {
 			return zero, reduction, false
 		}

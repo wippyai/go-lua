@@ -225,10 +225,19 @@ func TestResolveKeepsTypedRowsAlignedWithColdKinds(t *testing.T) {
 		// directories, ahead of the fact relations that consume them.
 		"value/mounted-call/parents",
 		"value/mounted-call/actual-members",
+		// The fresh-result rule's own derived route set: the coordinates one
+		// mounted call publishes a fresh result at. It is a dependent relation
+		// over the candidate and that call's fact, so it sits after the member
+		// sets it is derived beside and before the fact relations.
+		"value/fresh-result/routes",
 		"value/binary-arithmetic/sources",
 		"value/binary-equality/sources",
 		"value/presence-refinement/sources",
 		"value/binary-order/sources",
+		// The module-load rule's own candidate directory and its argument
+		// member set, appended by that cut.
+		"value/module-load/candidates",
+		"value/module-load/arguments",
 	}
 	if len(metadata.Relations) != len(wantRelations) {
 		t.Fatalf("relation inventory = %d, want %d", len(metadata.Relations), len(wantRelations))
@@ -254,6 +263,11 @@ func TestResolveKeepsTypedRowsAlignedWithColdKinds(t *testing.T) {
 		"value/mounted-call/callee-key",
 		"value/mounted-call/actual-key",
 		"value/mounted-call/actual-tag",
+		// The route set's three projections: the coordinate it is observed at,
+		// the one it publishes at, and the tag its cell is paired by.
+		"value/fresh-result/route-key",
+		"value/fresh-result/route-destination",
+		"value/fresh-result/route-tag",
 		"value/binary-arithmetic/left",
 		"value/binary-arithmetic/right",
 		"value/binary-arithmetic/write",
@@ -265,6 +279,8 @@ func TestResolveKeepsTypedRowsAlignedWithColdKinds(t *testing.T) {
 		"value/binary-order/left",
 		"value/binary-order/right",
 		"value/binary-order/write",
+		"value/module-load/argument-key",
+		"value/module-load/coordinate",
 	}
 	if len(metadata.Projections) != len(wantProjections) {
 		t.Fatalf("projection inventory = %d, want %d", len(metadata.Projections), len(wantProjections))
@@ -283,10 +299,14 @@ func TestResolveKeepsTypedRowsAlignedWithColdKinds(t *testing.T) {
 		"value/reducer/identity",
 		"value/reducer/source",
 		"value/reducer/global-bootstrap",
+		// The fresh-result rule's own fold, contributed by its package beside
+		// the route set it answers over.
+		"value/reducer/fresh-result",
 		"value/binary-arithmetic/reducer",
 		"value/binary-equality/reducer",
 		"value/presence-refinement/reducer",
 		"value/binary-order/reducer",
+		"value/module-load/reducer",
 	}
 	if len(metadata.Reducers) != len(wantReducers) {
 		t.Fatalf("reducer inventory = %d, want %d", len(metadata.Reducers), len(wantReducers))
@@ -305,7 +325,7 @@ func TestResolveKeepsTypedRowsAlignedWithColdKinds(t *testing.T) {
 	if !metadata.Reducers[1].CandidatePresent || metadata.Reducers[1].CandidateConstant || metadata.Reducers[1].Candidate.Name != "SourceSeed" {
 		t.Fatalf("source reducer candidate metadata = %#v", metadata.Reducers[1])
 	}
-	arithmetic := metadata.Reducers[3]
+	arithmetic := metadata.Reducers[4]
 	if !arithmetic.CandidatePresent || arithmetic.Candidate.Name != "BinaryArithmetic" || len(arithmetic.Inputs) != 2 || arithmetic.Inputs[0].Type.Name != "Value" || arithmetic.Inputs[1].Type.Name != "Value" || arithmetic.Implementation.Name != "ArithmeticValue" {
 		t.Fatalf("arithmetic reducer metadata = %#v", arithmetic)
 	}
@@ -384,10 +404,18 @@ func TestResolveKeepsCandidateIndexedCarryTransformTyped(t *testing.T) {
 // the fold in a package the heap axis cannot import, so no heap relation could
 // ever publish rows of them; heap therefore carries on the allocation
 // coordinate, which its candidate directories already subject. Value declares
-// AllocationResult and FreshResultCall itself, so it publishes those two
-// directories and carries on the receipts directly. Either way the candidate
-// is the subject of a relation of its own axis, which is what the plan's carry
+// AllocationResult itself, so it publishes that directory and carries on the
+// receipt directly, and it declares the fresh-result route row its own routed
+// rule publishes at, so it carries on that. Either way the candidate is the
+// subject of a relation of its own axis, which is what the plan's carry
 // admission binds against.
+//
+// The two are not the same shape of candidate, and the difference is the
+// arity of the publication. An exact row publishes at one coordinate and
+// carries one image through a transition indexed by its candidate; a routed
+// row publishes at every destination its derived relation answered, so the
+// transition is indexed by the ROW of that relation and there is one per
+// published row.
 func TestResolveRetainsExactlyTheFourInventoriedOwnerCarryMembers(t *testing.T) {
 	valueMetadata, err := Resolve(composedSource(t, "value"))
 	if err != nil {
@@ -405,7 +433,7 @@ func TestResolveRetainsExactlyTheFourInventoriedOwnerCarryMembers(t *testing.T) 
 		key, candidate, implementation string
 	}{
 		{"transform/value/allocation", "AllocationResult", "Age"},
-		{"transform/value/callresult-freshresult", "FreshResultCall", "Age"},
+		{"transform/value/fresh-result-route", "Route", "Age"},
 		{"transform/heap/allocation-empty", "Key", "Age"},
 		{"transform/heap/allocation-closed", "Key", "Age"},
 	}

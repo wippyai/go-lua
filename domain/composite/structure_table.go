@@ -48,7 +48,7 @@ import (
 	valuebodyresult "github.com/wippyai/go-lua/domain/value/bodyresult"
 	valuebootstrap "github.com/wippyai/go-lua/domain/value/bootstrap"
 	valueequalityprogram "github.com/wippyai/go-lua/domain/value/equality/program"
-	valuefreshresult "github.com/wippyai/go-lua/domain/value/freshresult"
+	valuefreshresult "github.com/wippyai/go-lua/domain/value/freshresult/program"
 	valuemoduleloadprogram "github.com/wippyai/go-lua/domain/value/moduleload/program"
 	valueorderprogram "github.com/wippyai/go-lua/domain/value/order/program"
 	valueowner "github.com/wippyai/go-lua/domain/value/owner"
