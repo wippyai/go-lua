@@ -1,0 +1,160 @@
+[
+  {
+    "family": "diagnostic/code-composed",
+    "plane": "diagnostic",
+    "rule": "diagnostic/code-composed",
+    "status": "COMPILES",
+    "sketch": "Select(Join(Input,Complete(Select(Input))))",
+    "reason": "a code is composed when a sealed lane installs its producer, so the composed half closes the code relation against the producer relation",
+    "expressions": 1,
+    "requires": [
+      "diagnostic/producer"
+    ]
+  },
+  {
+    "family": "diagnostic/code-declared",
+    "plane": "diagnostic",
+    "rule": "diagnostic/code-declared",
+    "status": "COMPILES",
+    "sketch": "Select(Join(Input,Select(Input)))",
+    "reason": "the declared-not-composed register carries the owing surface and the missing observation as columns of its own rows",
+    "expressions": 1,
+    "requires": [
+      "diagnostic/declared-register"
+    ]
+  },
+  {
+    "family": "observation/branch-condition",
+    "plane": "diagnostic",
+    "rule": "observation/branch-condition",
+    "status": "COMPILES",
+    "sketch": "Publish(Apply(Complete(Select(Join(Join(Join(Join(Join(Input,Select(Input)),Select(Input)),Select(Input)),Select(Input)),Select(Input)))))) | Publish(Select(Join(Input,Select(Input))))",
+    "reason": "population is the guarded routes; the guard, the two-armed branch and the scope-insensitive body are joins onto the facts that state them, and evidence points are a child relation; the four exits at analysis/program/artifact/compiler/internal/diagnostic/observation.go:65/68/71/74 are the absence of this population and closure",
+    "expressions": 2,
+    "requires": [
+      "observation/branch-condition",
+      "program/authored-branch",
+      "program/causal-final-route",
+      "program/containment-scope-insensitive-body",
+      "program/route-guard-proof"
+    ]
+  },
+  {
+    "family": "observation/call-callee-set",
+    "plane": "observation",
+    "rule": "call-callee-set",
+    "status": "COMPILES",
+    "sketch": "Apply(Complete(Select(Join(Input,Select(Input)))))",
+    "reason": "PopulationObservation: the plan is read-only, ends in the relation its consumer reads from the converged snapshot, and publishes no selected-point answer; its population is the hand dedup at domain/composite/call_callee_set_observation.go:60",
+    "expressions": 1,
+    "requires": [
+      "observation/call-callee-set-site"
+    ]
+  },
+  {
+    "family": "observation/type-conformance",
+    "plane": "diagnostic",
+    "rule": "observation/type-conformance",
+    "status": "COMPILES",
+    "sketch": "Publish(Apply(Select(Join(Join(Join(Input,Select(Input)),Select(Input)),Select(Input))))) | Publish(Apply(Select(Join(Join(Join(Input,Select(Input)),Select(Input)),Select(Input))))) | Publish(Apply(Select(Join(Join(Join(Join(Input,Select(Input)),Select(Input)),Select(Input)),Select(Input))))) | Publish(Apply(Select(Join(Join(Join(Join(Input,Select(Input)),Select(Input)),Select(Input)),Select(Input))))) | Publish(Complete(Select(Input))) | Publish(Select(Join(Input,Select(Input))))",
+    "reason": "one relation with four alternative derivations discriminated by the observation-site column; the structural arm is a positive recurrence, so the walker's visited set is SCC membership and the closure is separate from the arms",
+    "expressions": 6,
+    "requires": [
+      "observation/type-conformance",
+      "observation/type-conformance/evidence",
+      "program/declared-structural-target",
+      "program/declared-typed-position"
+    ]
+  },
+  {
+    "family": "observation/type-reference-unresolved",
+    "plane": "diagnostic",
+    "rule": "observation/type-reference-unresolved",
+    "status": "COMPILES",
+    "sketch": "Publish(Apply(Complete(Select(Join(Join(Join(Join(Input,Select(Input)),Select(Input)),Select(Input)),Select(Input)))))) | Publish(Select(Join(Input,Select(Input))))",
+    "reason": "population is the declared static types; an unresolved reference is a join onto the resolution relation, and the path components are a child relation",
+    "expressions": 2,
+    "requires": [
+      "observation/type-reference-unresolved",
+      "program/static-reference",
+      "program/static-reference-unresolved",
+      "program/static-type"
+    ]
+  },
+  {
+    "family": "observation/value-reference-unresolved",
+    "plane": "diagnostic",
+    "rule": "observation/value-reference-unresolved",
+    "status": "COMPILES",
+    "sketch": "Publish(Apply(Complete(Select(Join(Join(Join(Join(Join(Input,Select(Input)),Select(Input)),Select(Input)),Select(Input)),Select(Input))))))",
+    "reason": "population is the implicit reads; the undeclared global cell is a join onto the authored storage fact that states it",
+    "expressions": 1,
+    "requires": [
+      "observation/value-reference-unresolved",
+      "program/authored-storage-cell-global-undeclared",
+      "program/authored-storage-read",
+      "program/authored-storage-read-implicit"
+    ]
+  },
+  {
+    "family": "query/effect-exact",
+    "plane": "query",
+    "rule": "effect-exact",
+    "status": "COMPILES",
+    "sketch": "Publish(Apply(Complete(Select(Join(Join(Input,Select(Input)),Select(Input))))))",
+    "reason": "FoldGeneral admitting no split: scalar delivery and exactly-one cardinality in the sealed signature, in place of the runtime cell-count guard at domain/effect/owner/query.go:110-112",
+    "expressions": 1,
+    "requires": [
+      "query/effect-exact",
+      "query/query-site"
+    ]
+  },
+  {
+    "family": "query/placement-summary",
+    "plane": "query",
+    "rule": "placement-summary",
+    "status": "COMPILES",
+    "sketch": "Publish(Apply(Complete(Select(Join(Join(Input,Select(Input)),Complete(Select(Input))))))) | Publish(Apply(Complete(Select(Join(Join(Join(Join(Join(Join(Input,Select(Input)),Select(Input)),Complete(Select(Input))),Select(Input)),Select(Input)),Select(Input))))))",
+    "reason": "three subjects joined through two correspondence relations, with the complete heap vector as the heap read's own authenticated denominator; the bind-time schema equality at domain/placement/query/query.go:96 is the correspondence",
+    "expressions": 2,
+    "requires": [
+      "corr/placement-evidence",
+      "corr/placement-heap",
+      "placement/allocation-roots",
+      "query/placement-summary",
+      "query/query-site"
+    ]
+  },
+  {
+    "family": "query/query-site",
+    "plane": "query",
+    "rule": "query-site",
+    "status": "COMPILES",
+    "sketch": "Publish(Select(Join(Input,Select(Input)))) | Publish(Select(Join(Input,Select(Input)))) | Publish(Select(Join(Input,Select(Input)))) | Publish(Select(Join(Input,Select(Input)))) | Publish(Select(Join(Input,Select(Input)))) | Publish(Select(Join(Join(Input,Complete(Select(Input))),Complete(Select(Input))))) | Publish(Select(Join(Join(Input,Select(Input)),Select(Input))))",
+    "reason": "the selected-point denominator every family is keyed by; two positive recurrences and one product of two complete reads, in place of the hand-staged worklist fixpoint at domain/composite/query_sites.go:227-524",
+    "expressions": 7,
+    "requires": [
+      "composite/body-without-occurrence",
+      "composite/eligible-context",
+      "composite/non-callable-body",
+      "composite/observed-point",
+      "composite/selected-body",
+      "query/family",
+      "query/query-site"
+    ]
+  },
+  {
+    "family": "query/value-summary",
+    "plane": "query",
+    "rule": "value-summary",
+    "status": "COMPILES",
+    "sketch": "Publish(Apply(Complete(Select(Join(Join(Input,Select(Input)),Complete(Select(Input)))))))",
+    "reason": "FoldDistributive over one subject: the coordinatewise fold is a complete-span delivery keyed by the query site, closed against the value schema's coordinate plane",
+    "expressions": 1,
+    "requires": [
+      "query/query-site",
+      "query/value-summary",
+      "value/summary-coordinates"
+    ]
+  }
+]
