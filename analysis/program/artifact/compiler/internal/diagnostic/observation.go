@@ -58,22 +58,28 @@ func (compiler *compiler) copyDiagnosticObservationsFailure() programconstructio
 	return programconstruction.Fault{}
 }
 
-// admitDiagnosticBranchFailure copies one eligible Branch route. A guarded
-// route from another decision family, or a Branch whose arm rewrite is not
-// scope-preserving, intentionally emits no diagnostic row.
+// admitDiagnosticBranchFailure copies one eligible Branch route. The
+// population is the guarded routes: an unguarded route carries no decision and
+// states no branch condition, so it is outside this observation rather than a
+// dropped row. A guarded route from another decision family, or a Branch whose
+// arm rewrite is not scope-preserving, is likewise outside the population.
+// Every remaining route is either admitted as a row or refused under a named
+// construction issue.
 func (compiler *compiler) admitDiagnosticBranchFailure(route causal.FinalRoute, rowIndex int) programconstruction.Fault {
 	if !route.Available() {
+		return programconstruction.New(programcatalog.DiagnosticObservation(), programconstruction.IssueDiagnosticRouteUnavailable, rowIndex, -1)
+	}
+	if !route.Guarded() {
 		return programconstruction.Fault{}
 	}
-	if _, fromOK := route.From(); !fromOK {
-		return programconstruction.Fault{}
-	}
-	if _, toOK := route.To(); !toOK {
-		return programconstruction.Fault{}
+	_, fromOK := route.From()
+	_, toOK := route.To()
+	if !fromOK || !toOK {
+		return programconstruction.New(programcatalog.DiagnosticObservation(), programconstruction.IssueDiagnosticRouteUnavailable, rowIndex, -1)
 	}
 	guard, guardOK := route.GuardProof()
 	if !guardOK {
-		return programconstruction.Fault{}
+		return programconstruction.New(programcatalog.DiagnosticObservation(), programconstruction.IssueDiagnosticRouteGuard, rowIndex, -1)
 	}
 	identityValue, identityOK := route.Identity()
 	if !identityOK {
