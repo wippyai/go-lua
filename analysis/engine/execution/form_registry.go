@@ -758,13 +758,14 @@ func declaredFormRow(rule generated.CompiledRule, mode ruleprogram.OutputMode) (
 	case mode == ruleprogram.ModeStructural:
 		// A structural publication transports axes across a transition rather
 		// than writing a fact, and the descriptor carries that transport
-		// vector exactly when its mode is structural. The selection its
-		// branches are drawn from names the input port the row is opened at.
-		input, inputOK := declaredSelectedInput(rule)
+		// vector exactly when its mode is structural. The branch set its rows
+		// are drawn from names the input port the row is opened at, and the
+		// relation those branches are members of.
+		input, relation, inputOK := declaredBranchInput(rule)
 		if !inputOK || rule.TransportCount() == 0 {
 			return FormRow{}, false
 		}
-		return FormRow{Form: FormActivation, Input: input}, true
+		return FormRow{Form: FormActivation, Input: input, Relation: relation}, true
 	case mode == ruleprogram.ModeRoute:
 		// A routed publication publishes at the members of the join the output
 		// names, so that join's port and relation are the row's coordinates.
@@ -866,22 +867,35 @@ func declaredExactProduct(rule generated.CompiledRule) bool {
 	return true
 }
 
-// declaredSelectedInput answers the port of the first declared selected read.
-func declaredSelectedInput(rule generated.CompiledRule) (uint16, bool) {
+// declaredBranchInput answers the port and relation of the read whose members
+// are one trigger's candidate branches.
+//
+// A branch is COLD. The construct topology mounts one activation member per
+// branch before any solve, and execution settles the disposition of branches
+// already mounted - it can publish no others. So the branch read is the one
+// whose relation declares a PARENT: an ordinal-addressed member set the owner
+// already published under the trigger's own candidate row, enumerable at
+// issuance.
+//
+// A selection is never that read. Its coordinates are, in this package's own
+// words, the members of a relation that exists only per invocation, resolved
+// by the reading family - so a structural row drawn from one would publish
+// branches nothing had mounted.
+func declaredBranchInput(rule generated.CompiledRule) (uint16, uint32, bool) {
 	for index := 0; index < rule.ReadCount(); index++ {
 		read, readOK := rule.ReadAt(index)
 		if !readOK {
-			return 0, false
+			return 0, 0, false
 		}
-		if read.Form != ruleprogram.Selected {
+		if !read.ParentPresent || read.Form != ruleprogram.Summary {
 			continue
 		}
 		if !declaredPort(rule, read.Input) {
-			return 0, false
+			return 0, 0, false
 		}
-		return uint16(read.Input), true
+		return uint16(read.Input), read.Relation.Member, true
 	}
-	return 0, false
+	return 0, 0, false
 }
 
 // declaredFirstInput answers the port of the descriptor's first declared read.

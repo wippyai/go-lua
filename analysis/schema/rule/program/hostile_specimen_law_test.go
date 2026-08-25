@@ -74,17 +74,29 @@ func seq5742Specimens() map[string]Program {
 			[]OutputDecl{seq5742Output("heap-raw-get/write", ModeExact, 0)},
 		),
 
-		// Call activation first reads the exact Call candidate, then applies an
-		// owner-issued target-role selection/filter over that predecessor.
-		"call-activation": seq5742Program(
-			"call-activation",
-			[]JoinDecl{
-				seq5742Join("call-activation/call", []SourceRef{CandidateSource()}, Exact, false, false),
-				seq5742Join("call-activation/target-role", []SourceRef{PriorSource(0)}, Selected, true, true),
-			},
-			[]JoinRef{0, 1},
-			[]OutputDecl{seq5742Output("call-activation/write", ModeStructural, 0)},
-		),
+		// Call activation reads the exact Call candidate, and reads the branch
+		// set hanging off that same candidate row as a whole vector.
+		//
+		// The branch read is a parent-declaring Summary, not a selection, and
+		// it is sourced from the CANDIDATE rather than from the Call fact.
+		// Which body routes a trigger has is a property of the trigger, fixed
+		// before any solve - the construct topology mounts one activation
+		// member per branch - and the fact only decides which of them
+		// activate. A selection would put the branch set inside the
+		// invocation, where nothing could have mounted it.
+		"call-activation": func() Program {
+			program := seq5742Program(
+				"call-activation",
+				[]JoinDecl{
+					seq5742Join("call-activation/call", []SourceRef{CandidateSource()}, Exact, false, false),
+					seq5742Join("call-activation/branch", []SourceRef{CandidateSource()}, Summary, false, true),
+				},
+				[]JoinRef{0, 1},
+				[]OutputDecl{seq5742Output("call-activation/write", ModeStructural, 0)},
+			)
+			program.Joins[1].Parent = lawRelation("call-activation/candidate")
+			return program
+		}(),
 
 		// RawSet is the same uniform chain with its Heap route write: receiver
 		// exact -> key selected -> heap selected -> pack selected -> source
@@ -129,6 +141,7 @@ type seq5742Shape struct {
 	sources      [][]SourceRef
 	forms        []ReadForm
 	predicates   []bool
+	parents      []bool
 	denominators []bool
 	inputs       []JoinRef
 	modes        []OutputMode
@@ -138,7 +151,8 @@ type seq5742Shape struct {
 func assertSeq5742Shape(t *testing.T, name string, program Program, want seq5742Shape) {
 	t.Helper()
 	if len(program.Joins) != len(want.sources) || len(want.sources) != len(want.forms) ||
-		len(want.sources) != len(want.predicates) || len(want.sources) != len(want.denominators) {
+		len(want.sources) != len(want.predicates) || len(want.sources) != len(want.parents) ||
+		len(want.sources) != len(want.denominators) {
 		t.Fatalf("%s join shape metadata has inconsistent arity", name)
 	}
 	for position, join := range program.Joins {
@@ -155,6 +169,9 @@ func assertSeq5742Shape(t *testing.T, name string, program Program, want seq5742
 		}
 		if join.Predicate.Declared() != want.predicates[position] {
 			t.Fatalf("%s join %d predicate declared=%v, want %v", name, position, join.Predicate.Declared(), want.predicates[position])
+		}
+		if join.Parent.Declared() != want.parents[position] {
+			t.Fatalf("%s join %d parent declared=%v, want %v", name, position, join.Parent.Declared(), want.parents[position])
 		}
 		if join.Read.Contract.DenominatorRef.Declared() != want.denominators[position] {
 			t.Fatalf("%s join %d denominator declared=%v, want %v", name, position, join.Read.Contract.DenominatorRef.Declared(), want.denominators[position])
@@ -185,6 +202,7 @@ func TestProgramSeq5742HostileShapesUseAuditedIncidence(t *testing.T) {
 			sources:      [][]SourceRef{{CandidateSource()}},
 			forms:        []ReadForm{Exact},
 			predicates:   []bool{false},
+			parents:      []bool{false},
 			denominators: []bool{false},
 			inputs:       []JoinRef{0},
 			modes:        []OutputMode{ModeExact},
@@ -201,15 +219,17 @@ func TestProgramSeq5742HostileShapesUseAuditedIncidence(t *testing.T) {
 			},
 			forms:        []ReadForm{Exact, Selected, Selected, Selected, Selected, Selected},
 			predicates:   []bool{false, true, true, true, true, true},
+			parents:      []bool{false, false, false, false, false, false},
 			denominators: []bool{false, true, true, true, true, true},
 			inputs:       []JoinRef{0, 1, 2, 3, 4, 5},
 			modes:        []OutputMode{ModeExact},
 			slots:        []uint16{0},
 		},
 		"call-activation": {
-			sources:      [][]SourceRef{{CandidateSource()}, {PriorSource(0)}},
-			forms:        []ReadForm{Exact, Selected},
-			predicates:   []bool{false, true},
+			sources:      [][]SourceRef{{CandidateSource()}, {CandidateSource()}},
+			forms:        []ReadForm{Exact, Summary},
+			predicates:   []bool{false, false},
+			parents:      []bool{false, true},
 			denominators: []bool{false, true},
 			inputs:       []JoinRef{0, 1},
 			modes:        []OutputMode{ModeStructural},
@@ -225,6 +245,7 @@ func TestProgramSeq5742HostileShapesUseAuditedIncidence(t *testing.T) {
 			},
 			forms:        []ReadForm{Exact, Selected, Selected, Selected, Selected},
 			predicates:   []bool{false, true, true, true, true},
+			parents:      []bool{false, false, false, false, false},
 			denominators: []bool{false, true, true, true, true},
 			inputs:       []JoinRef{0, 1, 2, 3, 4},
 			modes:        []OutputMode{ModeRoute},
@@ -234,6 +255,7 @@ func TestProgramSeq5742HostileShapesUseAuditedIncidence(t *testing.T) {
 			sources:      [][]SourceRef{{CandidateSource()}, {PriorSource(0)}},
 			forms:        []ReadForm{Exact, Complete},
 			predicates:   []bool{false, false},
+			parents:      []bool{false, false},
 			denominators: []bool{false, true},
 			inputs:       []JoinRef{0, 1},
 			modes:        []OutputMode{ModeStructural, ModeStructural, ModeStructural},
@@ -250,7 +272,17 @@ func TestProgramSeq5742HostileShapesUseAuditedIncidence(t *testing.T) {
 	}
 }
 
-func assertSeq5742OrderedSources(t *testing.T, program Program) {
+// assertSeq5742OrderedSources states the rooting law every specimen obeys:
+// every source is either the candidate or a result declared before it, and at
+// least one join is rooted at the candidate.
+//
+// Whether a specimen ALSO chains through a prior result is a property of the
+// geometry it models, not of being well-formed. call-activation reads its
+// trigger and its branch set from the same candidate row in parallel, because
+// which routes a trigger has is a property of the trigger rather than of the
+// fact read beside it. The inventory-wide coverage of the dependent shape is
+// asserted once, over the inventory, below.
+func assertSeq5742OrderedSources(t *testing.T, program Program) bool {
 	t.Helper()
 	seenCandidate, seenPrior := false, false
 	for position, join := range program.Joins {
@@ -268,9 +300,7 @@ func assertSeq5742OrderedSources(t *testing.T, program Program) {
 	if !seenCandidate {
 		t.Fatal("specimen has no candidate-rooted source")
 	}
-	if len(program.Joins) > 1 && !seenPrior {
-		t.Fatal("dependent specimen has no prior-result source")
-	}
+	return seenPrior
 }
 
 func TestProgramExpressesSeq5742HostileSpecimens(t *testing.T) {
@@ -278,6 +308,7 @@ func TestProgramExpressesSeq5742HostileSpecimens(t *testing.T) {
 	if len(specimens) != 5 {
 		t.Fatalf("specimen count=%d, want five", len(specimens))
 	}
+	dependent := 0
 	for name, specimen := range specimens {
 		t.Run(name, func(t *testing.T) {
 			if problem, valid := specimen.Check(); !valid {
@@ -286,8 +317,15 @@ func TestProgramExpressesSeq5742HostileSpecimens(t *testing.T) {
 			if digest := specimen.Digest(); !digest.Available() {
 				t.Fatal("valid specimen has no canonical digest")
 			}
-			assertSeq5742OrderedSources(t, specimen)
+			if assertSeq5742OrderedSources(t, specimen) {
+				dependent++
+			}
 		})
+	}
+	// The inventory is hostile only if it still exercises the chained shape:
+	// a selector DAG whose every read names the results before it.
+	if dependent == 0 {
+		t.Fatal("no specimen chains through a prior result")
 	}
 }
 

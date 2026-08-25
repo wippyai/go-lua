@@ -23,6 +23,8 @@ const (
 	generatedRuleLawCandidate              schema.Key     = "relation/generated-rule-law-candidate"
 	generatedRuleLawJoin                   schema.Key     = "relation/generated-rule-law-join"
 	generatedRuleLawRouteJoin              schema.Key     = "relation/generated-rule-law-route-join"
+	generatedRuleLawBranchJoin             schema.Key     = "relation/generated-rule-law-branch-join"
+	generatedRuleLawBranchKey              schema.Key     = "projection/generated-rule-law-branch-key"
 	generatedRuleLawKey                    schema.Key     = "projection/generated-rule-law-key"
 	generatedRuleLawRouteKey               schema.Key     = "projection/generated-rule-law-route-key"
 	generatedRuleLawPredicate              schema.Key     = "projection/generated-rule-law-predicate"
@@ -43,6 +45,7 @@ const (
 	generatedRuleLawCandidateFact          member.Carrier = "carrier/generated-rule-law-candidate"
 	generatedRuleLawJoinFact               member.Carrier = "carrier/generated-rule-law-join"
 	generatedRuleLawKeyCarrier             member.Carrier = "carrier/generated-rule-law-key"
+	generatedRuleLawBranchOrdinal          member.Carrier = "carrier/generated-rule-law-branch-ordinal"
 )
 
 var (
@@ -66,9 +69,14 @@ const (
 	generatedRuleLawComplete
 	generatedRuleLawStructural
 	// generatedRuleLawActivation is the well-formed A form: one exact read at
-	// the trigger coordinate, one selected read over the candidate relation its
-	// branches are drawn from, a structural publication, and the transport
+	// the trigger coordinate, one vector read over the branch set hanging off
+	// that same trigger row, a structural publication, and the transport
 	// vector one candidate route instantiates when it crosses its transition.
+	//
+	// The branch read is a parent-declaring Summary and not a selection. The
+	// construct topology mounts one activation member per branch before any
+	// solve, so the branches have to be enumerable at issuance; a selection's
+	// members exist only per invocation and nothing could have mounted them.
 	generatedRuleLawActivation
 )
 
@@ -130,7 +138,23 @@ func newGeneratedRuleLawFixture(t testing.TB, variant generatedRuleLawVariant, r
 		Mode:      program.ModeExact,
 		ValueSlot: 0,
 	}
-	if variant == generatedRuleLawSelected || variant == generatedRuleLawRouteOutput || variant == generatedRuleLawActivation {
+	if variant == generatedRuleLawActivation {
+		branchRead := read
+		branchRead.Input = 1
+		branchRead.Form = program.Summary
+		branchRead.Contract.Multiplicity = program.MultiplicityMany
+		// The branch set hangs off the CANDIDATE row, not off the trigger's
+		// fact: which routes a trigger has is a property of the trigger, and
+		// the fact only decides which of them activate.
+		joins = append(joins, program.JoinDecl{
+			Sources:  []program.SourceRef{program.CandidateSource()},
+			Relation: member.RelationRef{Axis: axisReference, Member: generatedRuleLawBranchJoin},
+			Key:      member.ProjectionRef{Axis: axisReference, Member: generatedRuleLawBranchKey},
+			Parent:   member.RelationRef{Axis: axisReference, Member: generatedRuleLawCandidate},
+			Read:     branchRead,
+		})
+	}
+	if variant == generatedRuleLawSelected || variant == generatedRuleLawRouteOutput {
 		routeRead := read
 		routeRead.Input = 1
 		routeRead.Form = program.Selected
@@ -232,8 +256,20 @@ func newGeneratedRuleLawFixture(t testing.TB, variant generatedRuleLawVariant, r
 		{Key: generatedRuleLawCandidate, Subject: generatedRuleLawCandidateFact, CandidateProvider: member.AxisRelationCandidate(generatedRuleLawProvider(generatedRuleLawCandidate))},
 		{Key: generatedRuleLawJoin, Subject: generatedRuleLawJoinFact, Inputs: []member.Carrier{generatedRuleLawCandidateFact}, CandidateProvider: member.AxisRelationCandidate(generatedRuleLawProvider(generatedRuleLawCandidate))},
 	}
-	if variant == generatedRuleLawSelected || variant == generatedRuleLawRouteOutput || variant == generatedRuleLawActivation {
+	if variant == generatedRuleLawSelected || variant == generatedRuleLawRouteOutput {
 		relations = append(relations, member.Relation{Key: generatedRuleLawRouteJoin, Subject: generatedRuleLawJoinFact, Inputs: []member.Carrier{generatedRuleLawJoinFact}, CandidateProvider: member.AxisRelationCandidate(generatedRuleLawProvider(generatedRuleLawJoin))})
+	}
+	if variant == generatedRuleLawActivation {
+		// The branch set is addressed by (trigger candidate, ordinal): the
+		// owner already published these rows under the trigger's own row, and
+		// the parent it hangs off is the rule's candidate relation.
+		relations = append(relations, member.Relation{
+			Key: generatedRuleLawBranchJoin, Subject: generatedRuleLawJoinFact,
+			Inputs:            []member.Carrier{generatedRuleLawCandidateFact},
+			CandidateProvider: member.AxisRelationCandidate(generatedRuleLawProvider(generatedRuleLawCandidate)),
+			Parent:            generatedRuleLawProvider(generatedRuleLawCandidate),
+			Ordinal:           generatedRuleLawBranchOrdinal,
+		})
 	}
 	inputs := []member.ReducerInput{{
 		Axis: axisReference, Carrier: generatedRuleLawJoinFact,
@@ -246,8 +282,13 @@ func newGeneratedRuleLawFixture(t testing.TB, variant generatedRuleLawVariant, r
 	if variant == generatedRuleLawComplete {
 		inputs[0].Form = member.ReadFormComplete
 	}
-	if variant == generatedRuleLawSelected || variant == generatedRuleLawRouteOutput || variant == generatedRuleLawActivation {
+	if variant == generatedRuleLawSelected || variant == generatedRuleLawRouteOutput {
 		inputs = append(inputs, member.ReducerInput{Axis: axisReference, Carrier: generatedRuleLawJoinFact, Form: member.ReadFormSelected, Multiplicity: member.MultiplicityOne, Tag: generatedRuleLawKeyCarrier})
+	}
+	if variant == generatedRuleLawActivation {
+		// The branch delivery is tagged by the ordinal its parent addresses it
+		// at, which is the only address a nested member set's rows have.
+		inputs = append(inputs, member.ReducerInput{Axis: axisReference, Carrier: generatedRuleLawJoinFact, Form: member.ReadFormSummary, Multiplicity: member.MultiplicityMany, Tag: generatedRuleLawBranchOrdinal})
 	}
 	reducers := []member.Reducer{{
 		Key:     generatedRuleLawReducer,
@@ -269,7 +310,10 @@ func newGeneratedRuleLawFixture(t testing.TB, variant generatedRuleLawVariant, r
 		}}
 		factCarrier = generatedRuleLawCandidateFact
 	}
-	if variant == generatedRuleLawSelected || variant == generatedRuleLawRouteOutput || variant == generatedRuleLawActivation {
+	if variant == generatedRuleLawActivation {
+		projections = append(projections, member.Projection{Key: generatedRuleLawBranchKey, Relation: generatedRuleLawBranchJoin, Role: member.Key, Result: generatedRuleLawKeyCarrier, CandidateProvider: member.AxisRelationCandidate(generatedRuleLawProvider(generatedRuleLawCandidate))})
+	}
+	if variant == generatedRuleLawSelected || variant == generatedRuleLawRouteOutput {
 		projections = append(projections,
 			member.Projection{Key: generatedRuleLawRouteKey, Relation: generatedRuleLawRouteJoin, Role: member.Key, Result: generatedRuleLawKeyCarrier, CandidateProvider: member.AxisRelationCandidate(generatedRuleLawProvider(generatedRuleLawJoin))},
 			member.Projection{Key: generatedRuleLawRoutePredicate, Relation: generatedRuleLawRouteJoin, Role: member.Predicate, Result: generatedRuleLawKeyCarrier, CandidateProvider: member.AxisRelationCandidate(generatedRuleLawProvider(generatedRuleLawJoin))},

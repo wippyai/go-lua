@@ -202,10 +202,17 @@ func TestAnUnsealedBranchIsNotAdmittedToATriggersBranchSet(t *testing.T) {
 	}
 }
 
-// activationFormLawSpec is the sealed call-activation shape (FT-11, journal
-// 6165): one exact read of the trigger candidate, one selected read of its
-// branch relation, and one structural output publishing a non-empty
+// activationFormLawSpec is the sealed call-activation shape: one exact read of
+// the trigger candidate, one vector read of the branch set hanging off that
+// same candidate row, and one structural output publishing a non-empty
 // transport vector.
+//
+// The branch read is a parent-declaring Summary and not a selection. A branch
+// is COLD - the construct topology mounts one activation member per branch
+// before any solve, and execution only settles the disposition of branches
+// already mounted - while a selection's coordinates are, in this package's own
+// words, "the members of a relation that exists only per invocation". A
+// structural row drawn from one would publish branches nothing had mounted.
 func activationFormLawSpec() generated.CompiledRuleSpec {
 	return generated.CompiledRuleSpec{
 		AxisCount:  3,
@@ -231,16 +238,16 @@ func activationFormLawSpec() generated.CompiledRuleSpec {
 				CellCapacity: 3,
 			},
 			{
-				Input: 1, Factor: 0, Axis: 0,
-				Sources:          ruleplan.Span{Start: 1, Count: 2},
-				Relation:         ruleplan.RelationAddr{Axis: 0, Member: 7},
-				Key:              ruleplan.ProjectionAddr{Axis: 0, Member: 8},
-				Predicate:        ruleplan.ProjectionAddr{Axis: 0, Member: 9},
-				PredicatePresent: true,
-				Form:             ruleprogram.Selected,
-				PointBound:       ruleprogram.PointBound,
+				Input:      1, Factor: 0, Axis: 0,
+				Sources:    ruleplan.Span{Start: 1, Count: 2},
+				Relation:   ruleplan.RelationAddr{Axis: 0, Member: 7},
+				Key:        ruleplan.ProjectionAddr{Axis: 0, Member: 8},
+				Parent:     ruleplan.RelationAddr{Axis: 0, Member: 0}, ParentPresent: true,
+				Addressing: ruleplan.RelationAddr{Axis: 0, Member: 0}, AddressingPresent: true,
+				Form:       ruleprogram.Summary,
+				PointBound: ruleprogram.PointBound,
 				Contract: ruleplan.ReadContract{
-					Order:        ruleprogram.OrderByTag,
+					Order:        ruleprogram.OrderCanonical,
 					Sparse:       ruleprogram.SparseExplicit,
 					OnOpaque:     ruleprogram.OnOpaquePropagateAuthenticated,
 					Multiplicity: ruleprogram.MultiplicityMany,
@@ -275,8 +282,8 @@ func activationFormLawDescriptor(t testing.TB) generated.CompiledRule {
 // derivation law: a structural publication transports axes across a transition
 // instead of writing a fact, and a descriptor carries that transport vector
 // exactly when its mode is structural. So the publication mode alone decides
-// this form, and the selection its branches are drawn from names the port the
-// row is opened at. Nothing about read order or read count participates.
+// this form, and the branch set its rows are drawn from names the port the row
+// is opened at. Nothing about read order or read count participates.
 func TestActivationFormIsDerivedFromItsStructuralPublication(t *testing.T) {
 	descriptor := activationFormLawDescriptor(t)
 	row, derived := DeclaredForm(descriptor)
@@ -284,14 +291,41 @@ func TestActivationFormIsDerivedFromItsStructuralPublication(t *testing.T) {
 		t.Fatalf("derived as %q/%t, want activation", row.Form.Name(), derived)
 	}
 	if row.Input != 1 {
-		t.Fatalf("derived read port = %d, want the selected candidate join", row.Input)
+		t.Fatalf("derived read port = %d, want the branch join", row.Input)
+	}
+	if row.Relation != 7 {
+		t.Fatalf("derived relation = %d, want the relation whose members are the branches", row.Relation)
 	}
 	if row.Rule.TransportCount() == 0 {
 		t.Fatal("a structural publication derived the activation form with no transport vector")
 	}
 }
 
-// TestAStructuralDescriptorWithNoSelectionIsNoActivation covers the near
+// TestAStructuralRowDrawsItsBranchesFromAColdMemberSet is the correction this
+// form's derivation rests on. The construct topology mounts one activation
+// member per branch before any solve; execution settles dispositions of
+// branches that are already mounted and can publish no others. A selection's
+// members are resolved per invocation by the reading family, so a structural
+// row whose branches came from one would name rows nothing had mounted - and
+// the derivation refuses it rather than deriving a form whose branch set
+// cannot exist when the branches are needed.
+func TestAStructuralRowDrawsItsBranchesFromAColdMemberSet(t *testing.T) {
+	spec := activationFormLawSpec()
+	spec.Reads[1].Form = ruleprogram.Selected
+	spec.Reads[1].Parent, spec.Reads[1].ParentPresent = ruleplan.RelationAddr{}, false
+	spec.Reads[1].Addressing, spec.Reads[1].AddressingPresent = ruleplan.RelationAddr{}, false
+	spec.Reads[1].Predicate, spec.Reads[1].PredicatePresent = ruleplan.ProjectionAddr{Axis: 0, Member: 9}, true
+	spec.Reads[1].Contract.Order = ruleprogram.OrderByTag
+	descriptor, sealed := generated.NewPlanCompiledRule(spec)
+	if !sealed {
+		t.Fatal("the per-invocation selection specimen does not seal, so the derivation is not what refused it")
+	}
+	if row, derived := DeclaredForm(descriptor); derived {
+		t.Fatalf("a structural row over a per-invocation selection derived %q", row.Form.Name())
+	}
+}
+
+// TestAStructuralDescriptorWithNoBranchSetIsNoActivation covers the near
 // misses that the derivation itself settles. A structural publication whose
 // branches are drawn from no selection has no candidate set to transport, and
 // there is no port for the row to open at, so it derives no form at all.
@@ -302,7 +336,7 @@ func TestActivationFormIsDerivedFromItsStructuralPublication(t *testing.T) {
 // installed family that holds the descriptor to its own declared shape. A
 // refusal on position would have been the derivation guessing at a geometry it
 // does not implement.
-func TestAStructuralDescriptorWithNoSelectionIsNoActivation(t *testing.T) {
+func TestAStructuralDescriptorWithNoBranchSetIsNoActivation(t *testing.T) {
 	for name, damage := range map[string]func(*generated.CompiledRuleSpec){
 		"single read": func(spec *generated.CompiledRuleSpec) {
 			spec.Reads = spec.Reads[:1]
@@ -310,7 +344,7 @@ func TestAStructuralDescriptorWithNoSelectionIsNoActivation(t *testing.T) {
 		},
 		"both exact": func(spec *generated.CompiledRuleSpec) {
 			spec.Reads[1].Form = ruleprogram.Exact
-			spec.Reads[1].PredicatePresent = false
+			spec.Reads[1].Parent, spec.Reads[1].ParentPresent = ruleplan.RelationAddr{}, false
 			spec.Reads[1].Denominator = ruleplan.DenominatorAddr{}
 		},
 	} {
