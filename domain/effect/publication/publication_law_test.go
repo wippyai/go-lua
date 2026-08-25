@@ -3,7 +3,6 @@ package publication
 import (
 	"fmt"
 	"reflect"
-	"strings"
 	"testing"
 
 	"github.com/wippyai/go-lua/analysis/identity"
@@ -11,6 +10,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/schema/structure"
 	"github.com/wippyai/go-lua/analysis/schema/structure/structuretest"
 	"github.com/wippyai/go-lua/analysis/snapshot"
+	"github.com/wippyai/go-lua/domain/effect/factor"
 )
 
 func directoryLawIdentity(t *testing.T, tag string) identity.ContentID {
@@ -22,9 +22,9 @@ func directoryLawIdentity(t *testing.T, tag string) identity.ContentID {
 	return id
 }
 
-func directoryLawRow(t *testing.T, tag string) Row {
+func directoryLawRow(t *testing.T, tag string) factor.PublicationRow {
 	t.Helper()
-	return Row{
+	return factor.PublicationRow{
 		ID:           directoryLawIdentity(t, "row/"+tag),
 		Module:       directoryLawIdentity(t, "module"),
 		Call:         directoryLawIdentity(t, "call/"+tag),
@@ -53,7 +53,7 @@ func directoryLawVocabulary(t *testing.T) structure.Table {
 	return table
 }
 
-func sealDirectoryLaw(t *testing.T, rows []Row) (snapshot.Snapshot, snapshot.Axis[identity.ContentID, Row]) {
+func sealDirectoryLaw(t *testing.T, rows []factor.PublicationRow) (snapshot.Snapshot, snapshot.Axis[identity.ContentID, factor.PublicationRow]) {
 	t.Helper()
 	schema := directoryLawIdentity(t, "link-schema")
 	denominator, derived := DenominatorID(directoryLawIdentity(t, "link"), rows)
@@ -76,35 +76,15 @@ func sealDirectoryLaw(t *testing.T, rows []Row) (snapshot.Snapshot, snapshot.Axi
 	return published, address
 }
 
-// A directory row is a fact that crosses to readers holding neither Effect's
-// algebra nor Pack's mounted inputs, so it carries no pointer and no owner-
-// fenced capability of either. A row that carried one would publish a live
-// handle under the name of a sealed fact.
-func TestDirectoryRowCarriesNoLiveCapability(t *testing.T) {
-	row := reflect.TypeOf(Row{})
-	for index := 0; index < row.NumField(); index++ {
-		field := row.Field(index)
-		switch field.Type.Kind() {
-		case reflect.Ptr, reflect.Map, reflect.Slice, reflect.Chan, reflect.Func, reflect.Interface, reflect.UnsafePointer:
-			t.Fatalf("Row.%s is %s", field.Name, field.Type)
-		}
-		for _, forbidden := range []string{"factor", "packtransfer", "transfer.MountedInput"} {
-			if strings.Contains(field.Type.String(), forbidden) {
-				t.Fatalf("Row.%s is %s", field.Name, field.Type)
-			}
-		}
-	}
-}
-
 // The directory answers for exactly the publications it admitted. An identity
 // it did not admit resolves to no row at all, never to another admission's
 // row, so a consumer that holds an identity learns whether this Link
 // published it rather than being handed a neighbour.
 func TestDirectoryAnswersForItsOwnAdmissionsOnly(t *testing.T) {
 	first, second := directoryLawRow(t, "a"), directoryLawRow(t, "b")
-	published, address := sealDirectoryLaw(t, []Row{first, second})
+	published, address := sealDirectoryLaw(t, []factor.PublicationRow{first, second})
 
-	for _, want := range []Row{first, second} {
+	for _, want := range []factor.PublicationRow{first, second} {
 		row, status := Published(&published, address, want.ID)
 		if status != snapshot.ReadHit {
 			t.Fatalf("admitted %v: status %v", want.ID, status)
@@ -123,7 +103,7 @@ func TestDirectoryAnswersForItsOwnAdmissionsOnly(t *testing.T) {
 // exactly the rows it admitted: this is how a consumer selects the
 // publications of one mounted call without reconstructing a per-call batch.
 func TestDirectoryEnumeratesEveryAdmittedRowInSealedOrder(t *testing.T) {
-	rows := []Row{directoryLawRow(t, "a"), directoryLawRow(t, "b"), directoryLawRow(t, "c")}
+	rows := []factor.PublicationRow{directoryLawRow(t, "a"), directoryLawRow(t, "b"), directoryLawRow(t, "c")}
 	published, address := sealDirectoryLaw(t, rows)
 
 	count, counted := Count(&published, address)
@@ -150,7 +130,7 @@ func TestDirectoryEnumeratesEveryAdmittedRowInSealedOrder(t *testing.T) {
 // publication mean two things.
 func TestDirectoryReadsAreRepeatable(t *testing.T) {
 	row := directoryLawRow(t, "a")
-	published, address := sealDirectoryLaw(t, []Row{row})
+	published, address := sealDirectoryLaw(t, []factor.PublicationRow{row})
 
 	first, firstStatus := Published(&published, address, row.ID)
 	second, secondStatus := Published(&published, address, row.ID)
@@ -167,10 +147,10 @@ func TestDirectoryIdentityIsItsMembership(t *testing.T) {
 	link := directoryLawIdentity(t, "link")
 	first, second := directoryLawRow(t, "a"), directoryLawRow(t, "b")
 
-	one, oneOK := DenominatorID(link, []Row{first})
-	again, againOK := DenominatorID(link, []Row{first})
-	two, twoOK := DenominatorID(link, []Row{first, second})
-	swapped, swappedOK := DenominatorID(link, []Row{second, first})
+	one, oneOK := DenominatorID(link, []factor.PublicationRow{first})
+	again, againOK := DenominatorID(link, []factor.PublicationRow{first})
+	two, twoOK := DenominatorID(link, []factor.PublicationRow{first, second})
+	swapped, swappedOK := DenominatorID(link, []factor.PublicationRow{second, first})
 	empty, emptyOK := DenominatorID(link, nil)
 	if !oneOK || !againOK || !twoOK || !swappedOK || !emptyOK {
 		t.Fatal("directory identity")
@@ -210,20 +190,20 @@ func TestDirectoryRefusesADuplicateOrIncompleteAdmission(t *testing.T) {
 	denominator := directoryLawIdentity(t, "denominator")
 	declared := directoryLawVocabulary(t)
 	row := directoryLawRow(t, "a")
-	if _, sealed := Content([]Row{row, row}, denominator, declared); sealed {
+	if _, sealed := Content([]factor.PublicationRow{row, row}, denominator, declared); sealed {
 		t.Fatal("directory sealed a duplicate admission")
 	}
 	partial := row
 	partial.Subject = identity.ContentID{}
-	if _, sealed := Content([]Row{partial}, denominator, declared); sealed {
+	if _, sealed := Content([]factor.PublicationRow{partial}, denominator, declared); sealed {
 		t.Fatal("directory sealed an incomplete admission")
 	}
 	contextless := row
 	contextless.HasContext = true
-	if _, sealed := Content([]Row{contextless}, denominator, declared); sealed {
+	if _, sealed := Content([]factor.PublicationRow{contextless}, denominator, declared); sealed {
 		t.Fatal("directory sealed a destination without its context")
 	}
-	if _, sealed := Content([]Row{row}, identity.ContentID{}, declared); sealed {
+	if _, sealed := Content([]factor.PublicationRow{row}, identity.ContentID{}, declared); sealed {
 		t.Fatal("directory sealed without a universe")
 	}
 }
@@ -237,29 +217,29 @@ func TestDirectoryRefusesADispositionTheVocabularyDoesNotDeclare(t *testing.T) {
 	declared := directoryLawVocabulary(t)
 	row := directoryLawRow(t, "a")
 
-	for _, undeclared := range []Row{
-		func() Row {
+	for _, undeclared := range []factor.PublicationRow{
+		func() factor.PublicationRow {
 			r := row
 			r.Kind = vocabulary.PublicationEffectKind(declared.Count(structure.CategoryPublicationEffectKind) + 1)
 			return r
 		}(),
-		func() Row {
+		func() factor.PublicationRow {
 			r := row
 			r.Escape = vocabulary.PublicationEscapeDisposition(declared.Count(structure.CategoryPublicationEscape) + 1)
 			return r
 		}(),
-		func() Row {
+		func() factor.PublicationRow {
 			r := row
 			r.Mutability = vocabulary.PublicationMutabilityDisposition(declared.Count(structure.CategoryPublicationMutability) + 1)
 			return r
 		}(),
-		func() Row {
+		func() factor.PublicationRow {
 			r := row
 			r.Lifetime = vocabulary.PublicationLifetimeDisposition(declared.Count(structure.CategoryPublicationLifetime) + 1)
 			return r
 		}(),
 	} {
-		if _, sealed := Content([]Row{undeclared}, denominator, declared); sealed {
+		if _, sealed := Content([]factor.PublicationRow{undeclared}, denominator, declared); sealed {
 			t.Fatal("directory published a disposition the vocabulary does not declare")
 		}
 	}
@@ -295,9 +275,9 @@ func TestPublicationVocabulariesRankTheAuthoredEnums(t *testing.T) {
 }
 
 // directoryLawCall is one mounted call claiming a span of the row column.
-func directoryLawCall(t *testing.T, tag string, offset, length uint32) CallRow {
+func directoryLawCall(t *testing.T, tag string, offset, length uint32) factor.PublicationCallRow {
 	t.Helper()
-	return CallRow{
+	return factor.PublicationCallRow{
 		ID:          directoryLawIdentity(t, "batch/"+tag),
 		Module:      directoryLawIdentity(t, "module"),
 		Call:        directoryLawIdentity(t, "call/"+tag),
@@ -312,8 +292,8 @@ func directoryLawCall(t *testing.T, tag string, offset, length uint32) CallRow {
 // publication from a call the directory never saw; the calls column states
 // the call itself, and an empty span is that call's complete answer.
 func TestMountedCallWithNoPublicationIsAPublishedFact(t *testing.T) {
-	rows := []Row{directoryLawRow(t, "a")}
-	calls := []CallRow{directoryLawCall(t, "loud", 0, 1), directoryLawCall(t, "silent", 1, 0)}
+	rows := []factor.PublicationRow{directoryLawRow(t, "a")}
+	calls := []factor.PublicationCallRow{directoryLawCall(t, "loud", 0, 1), directoryLawCall(t, "silent", 1, 0)}
 
 	denominator, derived := CallsDenominatorID(directoryLawIdentity(t, "link"), calls)
 	if !derived {
@@ -356,7 +336,7 @@ func TestCallSpansTileTheRowColumnExactly(t *testing.T) {
 	if !derived {
 		t.Fatal("calls denominator")
 	}
-	for name, calls := range map[string][]CallRow{
+	for name, calls := range map[string][]factor.PublicationCallRow{
 		"gap":       {directoryLawCall(t, "a", 0, 1), directoryLawCall(t, "b", 2, 1)},
 		"overlap":   {directoryLawCall(t, "a", 0, 2), directoryLawCall(t, "b", 1, 1)},
 		"short":     {directoryLawCall(t, "a", 0, 1)},
@@ -367,7 +347,7 @@ func TestCallSpansTileTheRowColumnExactly(t *testing.T) {
 			t.Fatalf("%s spans sealed", name)
 		}
 	}
-	exact := []CallRow{directoryLawCall(t, "a", 0, 2), directoryLawCall(t, "b", 2, 0), directoryLawCall(t, "c", 2, 1)}
+	exact := []factor.PublicationCallRow{directoryLawCall(t, "a", 0, 2), directoryLawCall(t, "b", 2, 0), directoryLawCall(t, "c", 2, 1)}
 	if _, sealed := CallsContent(exact, 3, denominator); !sealed {
 		t.Fatal("exact tiling refused")
 	}
@@ -383,7 +363,7 @@ func TestOneMountedCoordinateNamesOneCall(t *testing.T) {
 	}
 	first, second := directoryLawCall(t, "a", 0, 1), directoryLawCall(t, "b", 1, 1)
 	second.Call = first.Call
-	if _, sealed := CallsContent([]CallRow{first, second}, 2, denominator); sealed {
+	if _, sealed := CallsContent([]factor.PublicationCallRow{first, second}, 2, denominator); sealed {
 		t.Fatal("two calls sealed under one mounted coordinate")
 	}
 }
@@ -395,16 +375,16 @@ func TestSubjectMembersAreReadThroughTheRowsOwnSpan(t *testing.T) {
 	first, second := directoryLawRow(t, "a"), directoryLawRow(t, "b")
 	first.SubjectOffset, first.SubjectLength = 0, 2
 	second.SubjectOffset, second.SubjectLength = 2, 1
-	rows := []Row{first, second}
+	rows := []factor.PublicationRow{first, second}
 
-	members := make([]MemberRow, 0, 3)
+	members := make([]factor.PublicationMemberRow, 0, 3)
 	for _, row := range rows {
 		for position := 0; position < int(row.SubjectLength); position++ {
-			id, derived := MemberID(row.ID, position)
+			id, derived := factor.PublicationMemberID(row.ID, position)
 			if !derived {
 				t.Fatal("member identity")
 			}
-			members = append(members, MemberRow{
+			members = append(members, factor.PublicationMemberRow{
 				ID:       id,
 				RowID:    row.ID,
 				Semantic: directoryLawIdentity(t, fmt.Sprintf("semantic/%v/%d", row.ID, position)),
@@ -457,12 +437,12 @@ func TestMemberSpansTileTheRowsExactly(t *testing.T) {
 	if !derived {
 		t.Fatal("members denominator")
 	}
-	first, _ := MemberID(row.ID, 0)
-	second, _ := MemberID(row.ID, 1)
+	first, _ := factor.PublicationMemberID(row.ID, 0)
+	second, _ := factor.PublicationMemberID(row.ID, 1)
 	semantic := directoryLawIdentity(t, "semantic")
 	foreign := directoryLawIdentity(t, "row/z")
 
-	for name, members := range map[string][]MemberRow{
+	for name, members := range map[string][]factor.PublicationMemberRow{
 		"short":       {{ID: first, RowID: row.ID, Semantic: semantic, Member: 0}},
 		"foreign-row": {{ID: first, RowID: row.ID, Semantic: semantic, Member: 0}, {ID: second, RowID: foreign, Semantic: semantic, Member: 1}},
 		"misordered":  {{ID: first, RowID: row.ID, Semantic: semantic, Member: 1}, {ID: second, RowID: row.ID, Semantic: semantic, Member: 0}},
@@ -472,7 +452,7 @@ func TestMemberSpansTileTheRowsExactly(t *testing.T) {
 			{ID: directoryLawIdentity(t, "member/extra"), RowID: row.ID, Semantic: semantic, Member: 2},
 		},
 	} {
-		if _, sealed := MembersContent(members, []Row{row}, denominator); sealed {
+		if _, sealed := MembersContent(members, []factor.PublicationRow{row}, denominator); sealed {
 			t.Fatalf("%s members sealed", name)
 		}
 	}

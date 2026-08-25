@@ -32,6 +32,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/schema/programmount"
 	"github.com/wippyai/go-lua/analysis/schema/structure"
 	"github.com/wippyai/go-lua/analysis/snapshot"
+	effectfactor "github.com/wippyai/go-lua/domain/effect/factor"
 	effectpublication "github.com/wippyai/go-lua/domain/effect/publication"
 )
 
@@ -277,7 +278,7 @@ func (state *compiledState) publishComposition(module *linkmodule.Component, con
 	if effects == nil || !vocabularyOK {
 		return anadiag.AnalyzeDiagnosticCompositionFailureInput, effectpublication.AxisKey
 	}
-	publicationDirectory, publicationDirectoryOK := effectpublication.Detach(effects.Algebra(), state.binding.ValueSchema())
+	publicationDirectory, publicationDirectoryOK := effectfactor.DetachPublications(effects.Algebra(), state.binding.ValueSchema())
 	if !publicationDirectoryOK {
 		return anadiag.AnalyzeDiagnosticCompositionFailureRows, effectpublication.AxisKey
 	}
@@ -293,9 +294,9 @@ func (state *compiledState) publishComposition(module *linkmodule.Component, con
 	if !publicationContentOK || !callsContentOK || !membersContentOK {
 		return anadiag.AnalyzeDiagnosticCompositionFailureContent, effectpublication.AxisKey
 	}
-	publicationWrite, publicationMinted := engine.MintColumnWrite[identity.ContentID, effectpublication.Row](state.binding.SchemaBinding(), effectpublication.OutputKey, effectpublication.AxisKey)
-	callsWrite, callsMinted := engine.MintColumnWrite[identity.ContentID, effectpublication.CallRow](state.binding.SchemaBinding(), effectpublication.CallsOutputKey, effectpublication.AxisKey)
-	membersWrite, membersMinted := engine.MintColumnWrite[identity.ContentID, effectpublication.MemberRow](state.binding.SchemaBinding(), effectpublication.MembersOutputKey, effectpublication.AxisKey)
+	publicationWrite, publicationMinted := engine.MintColumnWrite[identity.ContentID, effectfactor.PublicationRow](state.binding.SchemaBinding(), effectpublication.OutputKey, effectpublication.AxisKey)
+	callsWrite, callsMinted := engine.MintColumnWrite[identity.ContentID, effectfactor.PublicationCallRow](state.binding.SchemaBinding(), effectpublication.CallsOutputKey, effectpublication.AxisKey)
+	membersWrite, membersMinted := engine.MintColumnWrite[identity.ContentID, effectfactor.PublicationMemberRow](state.binding.SchemaBinding(), effectpublication.MembersOutputKey, effectpublication.AxisKey)
 	if !publicationMinted || !publicationWrite.Available() || !callsMinted || !callsWrite.Available() || !membersMinted || !membersWrite.Available() {
 		return anadiag.AnalyzeDiagnosticCompositionFailureColumnGrant, effectpublication.AxisKey
 	}

@@ -5,7 +5,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/identity"
 	calldomain "github.com/wippyai/go-lua/domain/call"
 	callowner "github.com/wippyai/go-lua/domain/call/owner"
-	effectpublication "github.com/wippyai/go-lua/domain/effect/publication"
+	effectfactor "github.com/wippyai/go-lua/domain/effect/factor"
 	heapdomain "github.com/wippyai/go-lua/domain/heap"
 	heapowner "github.com/wippyai/go-lua/domain/heap/owner"
 	valuedomain "github.com/wippyai/go-lua/domain/value"
@@ -17,7 +17,7 @@ import (
 // Heap routed read/write. Effect remains the owner of the published call
 // operand; it is intentionally not re-declared as a second Factor read.
 type SchemaFragment struct {
-	slot      *engine.RuleSlot[heapdomain.Value, effectpublication.CallRow]
+	slot      *engine.RuleSlot[heapdomain.Value, effectfactor.PublicationCallRow]
 	input     engine.SchemaInput
 	callRead  engine.SchemaReadSlot[calldomain.Value]
 	valueRead engine.SchemaReadSlot[valuedomain.Value]
@@ -28,7 +28,7 @@ type SchemaFragment struct {
 }
 
 // RuleSlot returns the exact cold Rule declaration for composition.
-func (fragment *SchemaFragment) RuleSlot() *engine.RuleSlot[heapdomain.Value, effectpublication.CallRow] {
+func (fragment *SchemaFragment) RuleSlot() *engine.RuleSlot[heapdomain.Value, effectfactor.PublicationCallRow] {
 	if fragment == nil {
 		return nil
 	}
@@ -47,7 +47,7 @@ func DeclareSchema(
 	if builder == nil || values == nil || calls == nil || heap == nil || !identity.DistinctKeys(semantic, operandFamily) {
 		return nil, false
 	}
-	slot, ok := engine.NewRuleSlot[heapdomain.Value, effectpublication.CallRow](builder, engine.SchemaRuleSpec[heapdomain.Value]{
+	slot, ok := engine.NewRuleSlot[heapdomain.Value, effectfactor.PublicationCallRow](builder, engine.SchemaRuleSpec[heapdomain.Value]{
 		Semantic: semantic, OperandFamily: operandFamily, Inputs: 1,
 		Output: heap.Ref(),
 	})

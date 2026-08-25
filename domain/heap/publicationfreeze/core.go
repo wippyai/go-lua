@@ -10,7 +10,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/identity"
 	"github.com/wippyai/go-lua/analysis/program/target/vocabulary"
 	calldomain "github.com/wippyai/go-lua/domain/call"
-	effectpublication "github.com/wippyai/go-lua/domain/effect/publication"
+	effectfactor "github.com/wippyai/go-lua/domain/effect/factor"
 	heapdomain "github.com/wippyai/go-lua/domain/heap"
 	"github.com/wippyai/go-lua/domain/heap/internal/recentplan"
 	"github.com/wippyai/go-lua/domain/materialization"
@@ -154,7 +154,7 @@ func sourceTagForMember(id identity.ContentID, member int) (sourceTag, bool) {
 // Effect publication directory and retains only valid FreezeSeal rows. The
 // Call key is cached here because module/occurrence provenance is static
 // after BindHot; hot selector and fold paths must not repeat that projection.
-func prepareCall(values *valuedomain.Schema, calls *calldomain.Algebra, directory effectpublication.Directory, call effectpublication.CallRow) (*preparedCall, bool) {
+func prepareCall(values *valuedomain.Schema, calls *calldomain.Algebra, directory effectfactor.PublicationDirectory, call effectfactor.PublicationCallRow) (*preparedCall, bool) {
 	if values == nil || !values.Valid() || calls == nil || !calls.Valid() || !call.Available() {
 		return nil, false
 	}
