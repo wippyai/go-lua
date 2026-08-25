@@ -78,14 +78,16 @@ func mutations(declaration program.Program) []mutation {
 		rows = append(rows, outputMutations(declaration, index)...)
 	}
 	rows = append(rows, carryMutations(declaration)...)
-	for index := range declaration.Transport {
-		position := index
-		rows = append(rows, mutation{
-			name:      fmt.Sprintf("transport row %d loses its axis", position),
-			statement: fmt.Sprintf("declaration.Transport[%d].Axis = %s.AxisRef{}", position, programPackage),
-			apply:     func(target *program.Program) { target.Transport[position].Axis = program.AxisRef{} },
-			mandatory: true,
-		})
+	if declaration.Activation != nil {
+		for index := range declaration.Activation.Transport {
+			position := index
+			rows = append(rows, mutation{
+				name:      fmt.Sprintf("transport row %d loses its axis", position),
+				statement: fmt.Sprintf("declaration.Activation.Transport[%d].Axis = %s.AxisRef{}", position, programPackage),
+				apply:     func(target *program.Program) { target.Activation.Transport[position].Axis = program.AxisRef{} },
+				mandatory: true,
+			})
+		}
 	}
 	return rows
 }

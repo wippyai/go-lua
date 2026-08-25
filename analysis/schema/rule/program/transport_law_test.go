@@ -39,10 +39,10 @@ func transportProgram(rows []TransportDecl) Program {
 		[]JoinRef{0},
 		[]OutputDecl{seq5742Output("call-activation/write", ModeStructural, 0)},
 	)
-	program.Transport = rows
 	if len(rows) != 0 {
 		program.ActivationRole = "semantic/activation-family/call-body"
 		branch := activationLawBranch()
+		branch.Transport = append([]TransportDecl(nil), rows...)
 		program.Activation = &branch
 	}
 	return program
@@ -94,13 +94,16 @@ func TestATransportVectorCannotExportAnAxisItDoesNotImport(t *testing.T) {
 	if problem, valid := program.Check(); !valid {
 		t.Fatalf("a declared transport vector is admissible: %#v", problem)
 	}
-	if program.TransportCount() != len(rows) {
-		t.Fatalf("transport census = %d, want %d", program.TransportCount(), len(rows))
+	transportCount := 0
+	if program.Activation != nil {
+		transportCount = len(program.Activation.Transport)
+	}
+	if transportCount != len(rows) {
+		t.Fatalf("transport census = %d, want %d", transportCount, len(rows))
 	}
 	exported := 0
-	for index := 0; index < program.TransportCount(); index++ {
-		row, ok := program.TransportAt(index)
-		if !ok || row != rows[index] {
+	for index, row := range program.Activation.Transport {
+		if row != rows[index] {
 			t.Fatalf("transport row %d = %#v", index, row)
 		}
 		if row.Exported {
@@ -173,11 +176,23 @@ func TestAProgramWithoutATransportVectorDigestsExactlyAsBefore(t *testing.T) {
 	if !held {
 		t.Fatal("the value-transfer specimen")
 	}
-	if transfer.TransportCount() != 0 {
+	if transfer.Activation != nil && len(transfer.Activation.Transport) != 0 {
 		t.Fatal("an ordinary rule declares no transport vector")
 	}
 	clone := transfer.Clone()
 	if clone.Digest() != transfer.Digest() {
 		t.Fatal("cloning a transport-free program changed its identity")
+	}
+}
+
+// TestATransportVectorDigestPreservesDeclarationOrder makes the ordering policy
+// explicit: transport order is canonical because the runtime import/export
+// slots redeem the vector in that order. Reordering the same unique axis set
+// therefore changes the sealed identity instead of being silently normalized.
+func TestATransportVectorDigestPreservesDeclarationOrder(t *testing.T) {
+	first := transportProgram([]TransportDecl{transportRow("value"), transportRow("heap")})
+	second := transportProgram([]TransportDecl{transportRow("heap"), transportRow("value")})
+	if first.Digest() == second.Digest() {
+		t.Fatal("transport declaration order was erased from the sealed identity")
 	}
 }

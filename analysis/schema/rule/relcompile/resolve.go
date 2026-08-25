@@ -442,12 +442,11 @@ func (resolver ruleResolver) operation(fold ruleprogram.FoldDecl) (signature.Ide
 }
 
 // structural resolves the branch and transport vocabulary of an activation
-// publication. A branch set is a nested member set of the rule's own candidate
-// row and a transported axis is the relation carried across the activation
-// edge, so both are ordinary relations joined by ordinary column vectors. The
-// declaration names the branch relation and the transported axes but not the
-// column a branch row is addressed by its parent through, nor the relation one
-// transported axis crosses the edge as, so each refuses at its own site.
+// publication. The branch set is the one nested relation the candidate owns;
+// the transport vector is not a relation at all, but an ordered list of axis
+// owners. Each axis is resolved through the canonical owner directory. No
+// relation is looked up or invented for an axis, because that would create a
+// second authority for the same activation edge.
 func (resolver ruleResolver) structural(program ruleprogram.Program) error {
 	if program.Activation != nil {
 		branch := NewName(program.Activation.Branch.Axis, program.Activation.Branch.Member)
@@ -460,31 +459,13 @@ func (resolver ruleResolver) structural(program ruleprogram.Program) error {
 		if _, err := resolver.registry.Addressed(resolver.site("program.activation.branch"), branch, CoordinateOrdinal); err != nil {
 			return err
 		}
-		// The vector crosses as one relation because what crosses is a branch.
-		// Each transported axis is a row of that vector, so the axes are
-		// resolved against the same crossing rather than against a relation
-		// each, which would be a second authority over one edge.
-		crossing := NewName(program.Activation.Transport.Axis, program.Activation.Transport.Member)
-		if _, err := resolver.registry.Relation(resolver.site("program.activation.transport"), crossing); err != nil {
-			return err
-		}
-		if _, err := resolver.registry.Addressed(resolver.site("program.activation.transport"), crossing, CoordinateAddress); err != nil {
-			return err
-		}
-		for index := 0; index < program.TransportCount(); index++ {
-			declaration, ok := program.TransportAt(index)
-			if !ok {
-				continue
-			}
-			site := resolver.site(fmt.Sprintf("program.transport[%d].axis", index))
+		for index, declaration := range program.Activation.Transport {
+			site := resolver.site(fmt.Sprintf("program.activation.transport[%d].axis", index))
 			if _, err := resolver.registry.Owner(site, schema.EntryReference(declaration.Axis)); err != nil {
 				return err
 			}
 		}
 		return nil
-	}
-	if program.TransportCount() != 0 {
-		return refuse(resolver.site("program.transport"), Name{Entry: resolver.entry}, KindRelation, ReasonUndeclared)
 	}
 	return nil
 }

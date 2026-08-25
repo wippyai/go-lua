@@ -110,26 +110,22 @@ func Activation() ruleprogram.Program {
 				ValueSlot:   0,
 			}},
 		},
-		Transport: []ruleprogram.TransportDecl{
-			{Axis: ruleprogram.AxisRef(axisReference("value")), Exported: true},
-			{Axis: ruleprogram.AxisRef(axisReference("call"))},
-			{Axis: ruleprogram.AxisRef(axisReference("heap")), Exported: true},
-			{Axis: ruleprogram.AxisRef(axisReference("pack")), Exported: true},
-			{Axis: ruleprogram.AxisRef(axisReference("effect")), Exported: true},
-			{Axis: ruleprogram.AxisRef(axisReference("placement")), Exported: true},
-		},
 		ActivationRole: vocabulary.RoleKey(ActivationRole),
 		Activation: &ruleprogram.ActivationDecl{
-			Branch:      member.RelationRef{Axis: callAxis, Member: ActivationBranches},
+			Branch: member.RelationRef{Axis: callAxis, Member: ActivationBranches},
+			Transport: []ruleprogram.TransportDecl{
+				{Axis: ruleprogram.AxisRef(axisReference("value")), Exported: true},
+				{Axis: ruleprogram.AxisRef(axisReference("call"))},
+				{Axis: ruleprogram.AxisRef(axisReference("heap")), Exported: true},
+				{Axis: ruleprogram.AxisRef(axisReference("pack")), Exported: true},
+				{Axis: ruleprogram.AxisRef(axisReference("effect")), Exported: true},
+				{Axis: ruleprogram.AxisRef(axisReference("placement")), Exported: true},
+			},
 			Application: projection(ActivationApplication),
 			Target:      projection(ActivationTarget),
 			Endpoint:    projection(ActivationEndpoint),
 			Mount:       projection(ActivationMount),
 			Body:        projection(ActivationBody),
-			// The vector crosses as the branch set itself: it is instantiated
-			// once per candidate branch, so the rows that cross the edge are
-			// those branches and not a relation invented per transported axis.
-			Transport: member.RelationRef{Axis: callAxis, Member: ActivationBranches},
 		},
 	}
 }

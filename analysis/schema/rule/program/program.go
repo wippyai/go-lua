@@ -97,6 +97,11 @@ type ActivationDecl struct {
 	// this set through MemberCount/MemberAt, and the issuance pass walks it
 	// directly.
 	Branch member.RelationRef
+	// Transport is the ordered vector of axes one activation branch carries
+	// across its edge. The vector belongs to the activation vocabulary because
+	// it is instantiated by each branch; keeping it here prevents a second
+	// Program-level authority from drifting away from the branch set.
+	Transport []TransportDecl
 	// Application is the identity the trigger row is applied under, projected
 	// from the rule's own candidate row rather than from a branch: every
 	// branch of one trigger is an alternative of the same application.
@@ -110,16 +115,6 @@ type ActivationDecl struct {
 	// constructed point plane.
 	Mount member.ProjectionRef
 	Body  member.ProjectionRef
-	// Transport is the relation the whole transport vector crosses the
-	// activation edge as.
-	//
-	// It is one relation and not one per transported axis. What crosses is a
-	// branch: the vector is instantiated once per candidate branch, so the
-	// rows that cross are the branch set's rows and naming a relation per axis
-	// would put a second authority beside the Link's own directory over the
-	// same crossing. The axes carried are the vector's rows; where they are
-	// carried is this one statement.
-	Transport member.RelationRef
 }
 
 // Available reports whether every identity the mounted branch is keyed or
@@ -127,8 +122,7 @@ type ActivationDecl struct {
 // one of them is a member the construct plane could not address.
 func (activation ActivationDecl) Available() bool {
 	return activation.Branch.Available() && activation.Application.Available() && activation.Target.Available() &&
-		activation.Endpoint.Available() && activation.Mount.Available() && activation.Body.Available() &&
-		activation.Transport.Available()
+		activation.Endpoint.Available() && activation.Mount.Available() && activation.Body.Available()
 }
 
 // projections is the branch vocabulary in declaration order. One order serves
@@ -142,12 +136,14 @@ func (activation ActivationDecl) projections() []member.ProjectionRef {
 }
 
 func (activation ActivationDecl) references() schema.EntryReferences {
-	references := make(schema.EntryReferences, 0, 7)
+	references := make(schema.EntryReferences, 0, 6+len(activation.Transport))
 	if activation.Branch.Declared() {
 		references = append(references, activation.Branch.EntryReference())
 	}
-	if activation.Transport.Declared() {
-		references = append(references, activation.Transport.EntryReference())
+	for _, transport := range activation.Transport {
+		if transport.Axis.Declared() {
+			references = append(references, transport.Axis.EntryReference())
+		}
 	}
 	for _, projection := range activation.projections() {
 		if projection.Declared() {
@@ -166,10 +162,6 @@ type Program struct {
 	Joins       []JoinDecl
 	Fold        FoldDecl
 	Carry       *CarryDecl
-	// Transport is the ordered vector of axes one activation candidate route
-	// instantiates when it crosses its transition. A rule that publishes no
-	// activation declares none.
-	Transport []TransportDecl
 	// ActivationRole is the semantic role of the activation family this rule's
 	// candidate branches are grouped under. It is the structural sibling of
 	// OperandRole: the declaration names a role, and the composition's role
@@ -186,23 +178,18 @@ type Program struct {
 	Activation *ActivationDecl
 }
 
-// TransportCount is the declared width of this rule's activation transport
-// vector.
-func (program Program) TransportCount() int { return len(program.Transport) }
-
-// TransportAt returns one declared transport row by its ordinal.
-func (program Program) TransportAt(index int) (TransportDecl, bool) {
-	if index < 0 || index >= len(program.Transport) {
-		return TransportDecl{}, false
-	}
-	return program.Transport[index], true
-}
-
 func (program Program) Available() bool {
 	return program.OperandRole.Available() || program.Candidate.Declared() || len(program.Joins) != 0 ||
 		program.Fold.Reducer.Declared() || len(program.Fold.Inputs) != 0 ||
-		len(program.Fold.Outputs) != 0 || program.Carry != nil || len(program.Transport) != 0 ||
+		len(program.Fold.Outputs) != 0 || program.Carry != nil || program.transportCount() != 0 ||
 		program.ActivationRole.Available() || program.Activation != nil
+}
+
+func (program Program) transportCount() int {
+	if program.Activation == nil {
+		return 0
+	}
+	return len(program.Activation.Transport)
 }
 
 func (program Program) JoinCount() int { return len(program.Joins) }
@@ -222,9 +209,9 @@ func (program Program) Clone() Program {
 		program.Joins[index] = cloneJoin(join)
 	}
 	program.Fold = cloneFold(program.Fold)
-	program.Transport = append([]TransportDecl(nil), program.Transport...)
 	if program.Activation != nil {
 		activation := *program.Activation
+		activation.Transport = append([]TransportDecl(nil), program.Activation.Transport...)
 		program.Activation = &activation
 	}
 	if program.Carry != nil {
@@ -387,7 +374,7 @@ func (program Program) checkReachability() (Problem, bool) {
 // a nested member set of this rule's own candidate is the catalog's answer,
 // checked where the catalog is in scope.
 func (program Program) checkActivation() bool {
-	if (program.Activation != nil) != (len(program.Transport) != 0) {
+	if (program.Activation != nil) != (program.transportCount() != 0) {
 		return false
 	}
 	if program.Activation == nil {
@@ -404,14 +391,14 @@ func (program Program) checkTransport() bool {
 	// The family and the vector are one declaration. A vector with no family
 	// names candidate branches nothing groups; a family with no vector groups
 	// branches that instantiate nothing.
-	if (len(program.Transport) != 0) != program.ActivationRole.Available() {
+	if (program.transportCount() != 0) != program.ActivationRole.Available() {
 		return false
 	}
-	if len(program.Transport) == 0 {
+	if program.transportCount() == 0 {
 		return true
 	}
-	seen := make(map[schema.EntryReference]struct{}, len(program.Transport))
-	for _, transport := range program.Transport {
+	seen := make(map[schema.EntryReference]struct{}, program.transportCount())
+	for _, transport := range program.Activation.Transport {
 		if !transport.Available() {
 			return false
 		}
@@ -479,11 +466,6 @@ func (program Program) References() schema.EntryReferences {
 	}
 	if program.Carry != nil {
 		references = append(references, program.Carry.References()...)
-	}
-	for _, transport := range program.Transport {
-		if transport.Axis.Declared() {
-			references = append(references, transport.Axis.EntryReference())
-		}
 	}
 	if program.Activation != nil {
 		references = append(references, program.Activation.references()...)
@@ -609,14 +591,14 @@ func (program Program) WriteContent(content *framing.Writer) error {
 			return err
 		}
 	}
-	if len(program.Transport) != 0 {
+	if program.transportCount() != 0 {
 		if err := content.Record(contentRecordTransport); err != nil {
 			return err
 		}
-		if err := content.Count(uint64(len(program.Transport))); err != nil {
+		if err := content.Count(uint64(program.transportCount())); err != nil {
 			return err
 		}
-		for _, transport := range program.Transport {
+		for _, transport := range program.Activation.Transport {
 			if err := writeReference(content, transport.Axis.EntryReference()); err != nil {
 				return err
 			}

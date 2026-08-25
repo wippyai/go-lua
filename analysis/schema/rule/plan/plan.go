@@ -1097,17 +1097,15 @@ func compileProgram(ruleOrdinal uint32, template *rule.Template, declaration pro
 		}
 	}
 
-	for transportIndex := 0; transportIndex < declaration.TransportCount(); transportIndex++ {
-		transport, transportOK := declaration.TransportAt(transportIndex)
-		if !transportOK {
-			return Plan{}, compileFailure(template.ID(), rule.LawProgramShape, schema.DispositionMalformed)
+	if declaration.Activation != nil {
+		for _, transport := range declaration.Activation.Transport {
+			_, transportAxisOrdinal, transportFailure := resolveAxis(axisView, transport.Axis.EntryReference())
+			if transportFailure.Available() {
+				transportFailure.Entry = template.ID()
+				return Plan{}, transportFailure
+			}
+			compiled.transports = append(compiled.transports, Transport{Axis: transportAxisOrdinal, Exported: transport.Exported})
 		}
-		_, transportAxisOrdinal, transportFailure := resolveAxis(axisView, transport.Axis.EntryReference())
-		if transportFailure.Available() {
-			transportFailure.Entry = template.ID()
-			return Plan{}, transportFailure
-		}
-		compiled.transports = append(compiled.transports, Transport{Axis: transportAxisOrdinal, Exported: transport.Exported})
 	}
 	if len(compiled.transports) != 0 {
 		// The family is resolved through the same role vocabulary as the rule
