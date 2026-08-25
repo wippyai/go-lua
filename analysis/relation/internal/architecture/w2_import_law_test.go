@@ -48,6 +48,56 @@ var w2MountLayers = []struct {
 	{prefix: "analysis/relation/mount/witness", rank: 2},
 }
 
+// State is not one undifferentiated engine package.  Each child owns one
+// authority and may consume only the lower, named seams below it.  Keeping
+// this allow-list explicit makes a new state package fail closed: adding a
+// broad analysis/engine/relation/state/** exception would let physical
+// mutation leak upward into the aggregate or transaction layers.
+var w2StateInputsByLayer = map[string][]string{
+	"analysis/engine/relation/state/geometry": {
+		"analysis/relation/mount/witness",
+		"analysis/relation/schema/model",
+		"analysis/relation/semantic/binding",
+	},
+	"analysis/engine/relation/state/recurrence": {
+		"analysis/relation/mount/witness",
+		"analysis/relation/schema/model",
+		"analysis/relation/semantic/binding",
+	},
+	"analysis/engine/relation/state/internal/column": {
+		"analysis/engine/relation/state/geometry",
+		"analysis/relation/schema/model",
+		"analysis/relation/semantic/binding",
+	},
+	"analysis/engine/relation/state/index": {
+		"analysis/engine/relation/state/geometry",
+		"analysis/engine/relation/state/internal/column",
+		"analysis/relation/schema/model",
+		"analysis/relation/semantic/binding",
+	},
+	"analysis/engine/relation/state/store": {
+		"analysis/engine/relation/state/geometry",
+		"analysis/engine/relation/state/internal/column",
+		"analysis/relation/mount/witness",
+		"analysis/relation/schema/model",
+		"analysis/relation/semantic/binding",
+	},
+	"analysis/engine/relation/state/bootstrap": {
+		"analysis/engine/relation/state/internal/column",
+		"analysis/engine/relation/state/store",
+		"analysis/relation/mount/witness",
+	},
+	"analysis/engine/relation/state/transaction": {
+		"analysis/engine/relation/state/geometry",
+		"analysis/engine/relation/state/internal/column",
+		"analysis/engine/relation/state/recurrence",
+		"analysis/engine/relation/state/store",
+		"analysis/relation/schema/model",
+		"analysis/relation/semantic/binding",
+		"analysis/relation/semantic/lineage",
+	},
+}
+
 func TestW2MountPackagesConsumeOnlySealedInputs(t *testing.T) {
 	root := repositoryRoot(t)
 	for _, layer := range w2MountLayers {
@@ -58,6 +108,21 @@ func TestW2MountPackagesConsumeOnlySealedInputs(t *testing.T) {
 		walkPackageImports(t, root, source, func(importPath string) {
 			if reason := w2MountImportViolation(layer.prefix, importPath); reason != "" {
 				t.Errorf("mount package %s imports %s: %s", layer.prefix, importPath, reason)
+			}
+		})
+	}
+}
+
+func TestW2StatePackagesConsumeOnlyTheirDeclaredLowerSeams(t *testing.T) {
+	root := repositoryRoot(t)
+	for prefix, inputs := range w2StateInputsByLayer {
+		source, ok := altitudeFor(prefix)
+		if !ok {
+			t.Fatalf("state package %s is not registered in the architecture inventory", prefix)
+		}
+		walkPackageImports(t, root, source, func(importPath string) {
+			if reason := w2StateImportViolation(prefix, inputs, importPath); reason != "" {
+				t.Errorf("state package %s imports %s: %s", prefix, importPath, reason)
 			}
 		})
 	}
@@ -107,6 +172,42 @@ func w2MountImportViolation(sourcePrefix, importPath string) string {
 		return ""
 	}
 	return "mount may consume only certificate, model, identity, semantic binding, and lower mount packages"
+}
+
+func w2StateImportViolation(sourcePrefix string, allowed []string, importPath string) string {
+	if !strings.HasPrefix(importPath, modulePath+"/") {
+		return ""
+	}
+	relative := strings.TrimPrefix(importPath, modulePath+"/")
+	if reason := w2ForbiddenGenericImport(relative); reason != "" {
+		return reason
+	}
+	if _, controlled := controlledImport(importPath); !controlled {
+		return ""
+	}
+	for _, input := range allowed {
+		if w2Within(relative, input) {
+			return ""
+		}
+	}
+	return "state may consume only its declared lower seams; add a reviewed edge rather than broad-allowing the state subtree"
+}
+
+func w2ForbiddenGenericImport(relative string) string {
+	switch {
+	case w2Within(relative, "domain"):
+		return "generic state cannot import domain implementations"
+	case w2Within(relative, "analysis/engine/execution"):
+		return "the old execution protocol is not a state dependency"
+	case w2Within(relative, "analysis/engine/internal/carrier"),
+		w2Within(relative, "analysis/engine/internal/factbinding"),
+		w2Within(relative, "analysis/engine/internal/demand"),
+		w2Within(relative, "analysis/engine/internal/equation"),
+		w2Within(relative, "analysis/engine/internal/linkexecutionplan"),
+		w2Within(relative, "analysis/engine/internal/executioncatalog"):
+		return "the old form protocol is not a state dependency"
+	}
+	return ""
 }
 
 func w2MountLayerPrefix(path string) string {

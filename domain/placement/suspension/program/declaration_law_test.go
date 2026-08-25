@@ -86,7 +86,7 @@ func assertSuspensionShape(t *testing.T, declaration ruleprogram.Program, output
 	if declaration.Carry == nil || declaration.Carry.Mode != ruleprogram.CarryIdentity || declaration.Carry.Input != 0 {
 		t.Fatalf("carry=%+v, want identity carry", declaration.Carry)
 	}
-	if declaration.TransportCount() != 0 {
+	if declaration.Activation != nil && len(declaration.Activation.Transport) != 0 {
 		t.Fatal("suspension Link rule declares no activation transport vector")
 	}
 }

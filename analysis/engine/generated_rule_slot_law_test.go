@@ -201,19 +201,18 @@ func newGeneratedRuleLawFixture(t testing.TB, variant generatedRuleLawVariant, r
 		// The axis is carried into the mounted body and its result is carried
 		// back out to the trigger, which is what makes the edge a call rather
 		// than a one-way hand-off.
-		declaration.Transport = []program.TransportDecl{{Axis: program.AxisRef(axisReference), Exported: true}}
 		declaration.ActivationRole = generatedRuleLawActivationRole
 		branchProjection := func(key schema.Key) member.ProjectionRef {
 			return member.ProjectionRef{Axis: axisReference, Member: key}
 		}
 		declaration.Activation = &program.ActivationDecl{
 			Branch:      member.RelationRef{Axis: axisReference, Member: generatedRuleLawBranchJoin},
+			Transport:   []program.TransportDecl{{Axis: program.AxisRef(axisReference), Exported: true}},
 			Application: branchProjection(generatedRuleLawApplication),
 			Target:      branchProjection(generatedRuleLawTarget),
 			Endpoint:    branchProjection(generatedRuleLawEndpoint),
 			Mount:       branchProjection(generatedRuleLawBranchMount),
 			Body:        branchProjection(generatedRuleLawBranchBody),
-			Transport:   member.RelationRef{Axis: axisReference, Member: generatedRuleLawBranchJoin},
 		}
 	}
 	if variant == generatedRuleLawSource {

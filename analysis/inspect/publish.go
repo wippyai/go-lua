@@ -131,15 +131,11 @@ func writeTransitions(b *strings.Builder, session *Session) {
 			continue
 		}
 		declaration := template.Program()
-		if !declaration.Available() || declaration.TransportCount() == 0 {
+		if !declaration.Available() || declaration.Activation == nil || len(declaration.Activation.Transport) == 0 {
 			continue
 		}
 		key := template.Key()
-		for index := 0; index < declaration.TransportCount(); index++ {
-			transport, transportOK := declaration.TransportAt(index)
-			if !transportOK {
-				continue
-			}
+		for index, transport := range declaration.Activation.Transport {
 			rows++
 			writef(b, "transition[%s].Transport[%d].Axis=%s", key, index, transport.Axis.EntryReference().Key)
 			writef(b, "transition[%s].Transport[%d].Exported=%t", key, index, transport.Exported)

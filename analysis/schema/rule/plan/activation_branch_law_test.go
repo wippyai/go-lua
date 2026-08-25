@@ -59,16 +59,15 @@ func newActivationBranchFixture(t *testing.T) *planFixture {
 	// for.
 	fixture.catalog.Reducers[0].Outputs = nil
 	fixture.catalog.Reducers[0].Structural = true
-	fixture.declaration.Transport = []program.TransportDecl{{Axis: program.AxisRef(mainAxis)}}
 	fixture.declaration.ActivationRole = vocabulary.RoleKey("plan/activation-family")
 	fixture.declaration.Activation = &program.ActivationDecl{
 		Branch:      member.RelationRef{Axis: mainAxis, Member: nestedMemberRelation},
+		Transport:   []program.TransportDecl{{Axis: program.AxisRef(mainAxis)}},
 		Application: member.ProjectionRef{Axis: mainAxis, Member: branchApplicationKey},
 		Target:      member.ProjectionRef{Axis: mainAxis, Member: branchTargetKey},
 		Endpoint:    member.ProjectionRef{Axis: mainAxis, Member: branchEndpointKey},
 		Mount:       member.ProjectionRef{Axis: mainAxis, Member: branchMountKey},
 		Body:        member.ProjectionRef{Axis: mainAxis, Member: branchBodyKey},
-		Transport:   member.RelationRef{Axis: mainAxis, Member: nestedMemberRelation},
 	}
 	return fixture
 }

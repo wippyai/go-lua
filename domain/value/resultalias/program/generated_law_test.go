@@ -101,8 +101,10 @@ func TestResultAliasCallResultIsHandedOutFresh(t *testing.T) {
 	if first.Carry != nil {
 		first.Carry.Mode = ruleprogram.CarryModeInvalid
 	}
-	for index := range first.Transport {
-		first.Transport[index].Exported = !first.Transport[index].Exported
+	if first.Activation != nil {
+		for index := range first.Activation.Transport {
+			first.Activation.Transport[index].Exported = !first.Activation.Transport[index].Exported
+		}
 	}
 	if got := emitlaw.Canonical(ResultAliasCallResult()); got != resultAliasCallResultGeometry {
 		t.Fatalf("a caller's edits reached the next declaration:\n%s", got)

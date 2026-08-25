@@ -39,15 +39,25 @@ var altitudes = []altitude{
 	{"analysis/relation/mount/address", 8, "mount"},
 	{"analysis/relation/mount/arrangement", 8, "mount"},
 	{"analysis/relation/mount/witness", 9, "mount"},
-	{"analysis/engine/relation/state/internal/column", 10, "state-column"},
-	{"analysis/engine/relation/state/index", 11, "state-index"},
-	{"analysis/engine/relation/state/transaction", 12, "state-transaction"},
-	{"analysis/engine/relation/operator", 13, "operator"},
-	{"analysis/engine/relation/publish", 13, "publish"},
-	{"analysis/engine/relation/solve/dependency", 13, "solve"},
-	{"analysis/engine/relation/apply", 14, "apply"},
-	{"analysis/engine/relation/solve/fixpoint", 15, "solve"},
-	{"analysis/engine/relation/runtime", 16, "runtime"},
+	// State is deliberately split by authority. Geometry and recurrence are
+	// mount-derived value layers; columns consume geometry; arrangements and
+	// aggregate versions consume columns; bootstrap and transaction consume
+	// those immutable roots. Do not replace this with one broad state altitude:
+	// that would allow a transaction or bootstrap package to import its own
+	// lower-level mutation substrate in the wrong direction unnoticed.
+	{"analysis/engine/relation/state/geometry", 10, "state-geometry"},
+	{"analysis/engine/relation/state/recurrence", 10, "state-recurrence"},
+	{"analysis/engine/relation/state/internal/column", 11, "state-column"},
+	{"analysis/engine/relation/state/index", 12, "state-index"},
+	{"analysis/engine/relation/state/store", 12, "state-store"},
+	{"analysis/engine/relation/state/bootstrap", 13, "state-bootstrap"},
+	{"analysis/engine/relation/state/transaction", 13, "state-transaction"},
+	{"analysis/engine/relation/operator", 14, "operator"},
+	{"analysis/engine/relation/publish", 14, "publish"},
+	{"analysis/engine/relation/solve/dependency", 14, "solve"},
+	{"analysis/engine/relation/apply", 15, "apply"},
+	{"analysis/engine/relation/solve/fixpoint", 16, "solve"},
+	{"analysis/engine/relation/runtime", 17, "runtime"},
 }
 
 var emptyAggregationRoots = []string{
