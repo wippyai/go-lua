@@ -240,8 +240,12 @@ func (install familyInstaller) InstallRuleFamily(plane execution.FormPlane[value
 		if !candidateOK {
 			return nil, nil, false
 		}
-		read0Sealed, read0SealedOK := plane.ExactRead(planRow.Unit, uint16(plan0.Input))
-		read0Policy, read0PolicyOK := plane.ReadCellPolicy(plan0.Contract)
+		foreign0, foreign0OK := plane.Foreign(plan0.Factor)
+		if !foreign0OK {
+			return nil, nil, false
+		}
+		read0Sealed, read0SealedOK := execution.ForeignRowExactRead[value.DenseCoordinate, value.Value](foreign0, planRow, 0)
+		read0Policy, read0PolicyOK := execution.ForeignReadCellPolicy[value.DenseCoordinate, value.Value](foreign0, plan0.Contract)
 		if !read0PolicyOK {
 			return nil, nil, false
 		}

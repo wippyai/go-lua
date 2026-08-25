@@ -1,6 +1,7 @@
 package emit
 
 import (
+	"fmt"
 	"strings"
 	"testing"
 
@@ -116,16 +117,33 @@ func exactProductRoster(t testing.TB, reads int) definition.Roster {
 			{Name: "SpecimenKeyCarrier", Key: "carrier/specimen/key", Type: specimenType("Key")},
 			{Name: "SpecimenFactCarrier", Key: "carrier/specimen/fact", Type: specimenType("Fact")},
 		},
-		Relations: []definition.Relation{{
-			Name: "Destinations", Key: "consumer/destinations", Subject: "SpecimenKeyCarrier",
-			CandidateProvider: member.AxisRelationCandidate(provider),
-		}},
-		Projections: []definition.Projection{{
-			Name: "Destination", Key: "consumer/destination", Relation: "Destinations",
-			CandidateProvider: member.AxisRelationCandidate(provider), Role: member.Destination,
-			Result:   "ConsumerKeyCarrier",
-			Accessor: consumerMethod("Destination", "Key", -1, specimenPackage),
-		}},
+		Relations: []definition.Relation{
+			{
+				Name: "Destinations", Key: "consumer/destinations", Subject: "SpecimenKeyCarrier",
+				CandidateProvider: member.AxisRelationCandidate(provider),
+			},
+			{
+				// A row of the axis this rule WRITES, so a read of it is an
+				// axis-local exact read rather than a foreign one.
+				Name: "Locals", Key: "consumer/locals", Subject: "ConsumerFactCarrier",
+				Inputs:            []definition.RelationInput{{Carrier: "ConsumerKeyCarrier"}},
+				CandidateProvider: member.AxisRelationCandidate(provider),
+			},
+		},
+		Projections: []definition.Projection{
+			{
+				Name: "Destination", Key: "consumer/destination", Relation: "Destinations",
+				CandidateProvider: member.AxisRelationCandidate(provider), Role: member.Destination,
+				Result:   "ConsumerKeyCarrier",
+				Accessor: consumerMethod("Destination", "Key", -1, specimenPackage),
+			},
+			{
+				Name: "LocalKey", Key: "consumer/local-key", Relation: "Locals",
+				CandidateProvider: member.AxisRelationCandidate(provider), Role: member.Key,
+				Result:   "ConsumerKeyCarrier",
+				Accessor: consumerMethod("Local", "Key", -1, consumerPackage),
+			},
+		},
 	}
 	contribution := definition.Contribution{
 		Axis: "consumer",
@@ -137,11 +155,24 @@ func exactProductRoster(t testing.TB, reads int) definition.Roster {
 			Implementation: definition.GoSymbol{PackagePath: consumerPackage, Name: "ExactFold", ResultIndex: 0},
 		}},
 	}
+	local := definition.Contribution{
+		Axis: "consumer",
+		Rule: "consumer-local",
+		Reducers: []definition.Reducer{{
+			Name: "LocalReducer", Key: "consumer/reducer/local", Candidate: "SpecimenKeyCarrier",
+			Inputs: []definition.ReducerInput{
+				{Axis: specimenAxis(), Carrier: "SpecimenFactCarrier", Form: member.ReadFormExact, Multiplicity: member.MultiplicityOne},
+				{Axis: consumerAxis(), Carrier: "ConsumerFactCarrier", Form: member.ReadFormExact, Multiplicity: member.MultiplicityOne},
+			},
+			Outputs:        []definition.ReducerOutput{{Axis: consumerAxis(), Carrier: "ConsumerFactCarrier"}},
+			Implementation: definition.GoSymbol{PackagePath: consumerPackage, Name: "LocalFold", ResultIndex: 0},
+		}},
+	}
 	roster, rosterOK := definition.NewRoster(
 		definition.Source{Package: "specimen", Name: "specimen", Base: specimen},
 		definition.Source{
 			Package: "consumer", Name: "consumer", Base: consumer,
-			Contributions: []definition.Contribution{contribution},
+			Contributions: []definition.Contribution{contribution, local},
 		},
 	)
 	if !rosterOK {
@@ -324,5 +355,56 @@ func TestAnExactFoldRefusesANonExactRead(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "an exact fold over a vector with no span") {
 		t.Fatalf("refusal does not name the clause: %v", err)
+	}
+}
+
+// axisLocalExactSpec reads one row of the axis it WRITES beside one row of a
+// foreign axis. It is the shape a rule takes when its own predecessor world at
+// another coordinate is part of what it concludes from.
+func axisLocalExactSpec() rule.Spec {
+	spec := exactProductSpec(1)
+	spec.Key = "consumer-local"
+	spec.Semantic = "semantic/rule/consumer-local"
+	local := exactRead("consumer/locals", "consumer/local-key")
+	local.Relation = member.RelationRef{Axis: consumerAxis(), Member: "consumer/locals"}
+	local.Key = member.ProjectionRef{Axis: consumerAxis(), Member: "consumer/local-key"}
+	local.Read.Axis = program.AxisRef(consumerAxis())
+	spec.Program.Joins = append(spec.Program.Joins, local)
+	spec.Program.Fold.Reducer = member.ReducerRef{Axis: consumerAxis(), Member: "consumer/reducer/local"}
+	spec.Program.Fold.Inputs = []program.JoinRef{0, 1}
+	return spec
+}
+
+// TestEveryExactReadIsSealedThroughItsOwnFactorHandle is the one arm law.
+//
+// A rule may read the axis it writes at a coordinate that is not its own
+// candidate's, and every exact read - foreign or axis-local, first or later -
+// is sealed the same way: through the read handle of the Factor the join
+// names, addressed by the Unit the plan row carries FOR THAT JOIN. The engine
+// binds one Unit per exact join and refuses a first one that is not the row's
+// own, so the row-bound address is the row's Unit for the first read and the
+// only address there is for every later one. Two spellings of one read would
+// be a difference with no semantic content, and the position of a join is not
+// a fact about how it is sealed.
+func TestEveryExactReadIsSealedThroughItsOwnFactorHandle(t *testing.T) {
+	rendered, err := Render(Target{
+		PackagePath: consumerPackage, PackageName: "consumer", Spec: axisLocalExactSpec(),
+	}, exactProductRoster(t, 1))
+	if err != nil {
+		t.Fatalf("a rule reading the axis it writes is not emitted: %v", err)
+	}
+	source := string(rendered)
+	for _, position := range []int{0, 1} {
+		sealed := fmt.Sprintf("read%dSealed, read%dSealedOK := execution.ForeignRowExactRead[", position, position)
+		if !strings.Contains(source, sealed) {
+			t.Fatalf("join %d is not sealed through its own factor handle:\n%s", position, source)
+		}
+		handle := fmt.Sprintf("foreign%d, foreign%dOK := plane.Foreign(plan%d.Factor)", position, position, position)
+		if !strings.Contains(source, handle) {
+			t.Fatalf("join %d resolves no read handle of its own Factor:\n%s", position, source)
+		}
+	}
+	if strings.Contains(source, "plane.ExactRead(") || strings.Contains(source, "plane.ReadCellPolicy(") {
+		t.Fatalf("an exact read is sealed by a second spelling:\n%s", source)
 	}
 }

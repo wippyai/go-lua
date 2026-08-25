@@ -169,13 +169,6 @@ func renderInstaller(out *strings.Builder, built *plan) error {
 		}
 	}
 
-	firstExact := -1
-	for _, join := range built.joins {
-		if join.read.Form == program.Exact {
-			firstExact = join.position
-			break
-		}
-	}
 	for _, join := range built.joins {
 		form, formOK := readFormExpression(join.read.Form)
 		if !formOK {
@@ -206,7 +199,7 @@ func renderInstaller(out *strings.Builder, built *plan) error {
 				fmt.Sprintf("%sPolicy: %sPolicy", join.name, join.name))
 			continue
 		}
-		expression, err := readExpression(built, join, firstExact)
+		expression, err := readExpression(built, join)
 		if err != nil {
 			return err
 		}
@@ -336,36 +329,30 @@ func pointBoundExpression(bound program.PointBoundDecl) string {
 // readExpression emits the one primitive that seals one declared read. Which
 // primitive it is follows from the read's own declaration: the axis it names
 // against the axis the rule writes, and its declared form.
-func readExpression(built *plan, join *joinPlan, firstExact int) (string, error) {
+func readExpression(built *plan, join *joinPlan) (string, error) {
 	imports := built.imports
 	execution := imports.use(executionPackagePath)
 	dense := imports.typeName(join.axis.dense)
 	fact := imports.typeName(join.axis.fact)
-	// An exact read of the written axis past the first is sealed through that
-	// axis's own read handle, addressed by the Unit the plan row carries for
-	// this join. Only the first exact join's Unit is the row's own; every later
-	// one is a coordinate of the same Factor at a different cell, which the
-	// Factor answers as a read of itself. The shared same-axis exact fold seals
-	// its whole read chain this way, so this is the vocabulary's own idiom
-	// rather than a second one.
-	rowBound := join.read.Form == program.Exact && !join.foreign && join.position != firstExact
 	var out strings.Builder
-	if join.foreign || rowBound {
+	if join.foreign || join.read.Form == program.Exact {
 		fmt.Fprintf(&out, "\t\tforeign%d, foreign%dOK := plane.Foreign(plan%d.Factor)\n", join.position, join.position, join.position)
 		fmt.Fprintf(&out, "\t\tif !foreign%dOK {\n\t\t\treturn nil, nil, false\n\t\t}\n", join.position)
 	}
 	switch {
-	case join.read.Form == program.Exact && (join.foreign || rowBound):
+	// EVERY exact read is sealed through the read handle of the Factor it
+	// names, addressed by the Unit the plan row carries FOR THAT JOIN. The
+	// engine binds one Unit per exact join and refuses a first one that is not
+	// the row's own, so the row-bound address answers the same cell the row's
+	// Unit does for the first read and the only cell there is for every later
+	// one. A rule reading the axis it writes is reading a Factor like any
+	// other, and the shared same-axis exact fold already sealed its whole
+	// chain this way: one arm, not two spellings of one.
+	case join.read.Form == program.Exact:
 		fmt.Fprintf(&out, "\t\t%sSealed, %sSealedOK := %s.ForeignRowExactRead[%s, %s](foreign%d, planRow, %d)\n",
 			join.name, join.name, execution, dense, fact, join.position, join.position)
 		fmt.Fprintf(&out, "\t\t%sPolicy, %sPolicyOK := %s.ForeignReadCellPolicy[%s, %s](foreign%d, plan%d.Contract)\n",
 			join.name, join.name, execution, dense, fact, join.position, join.position)
-		fmt.Fprintf(&out, "\t\tif !%sPolicyOK {\n\t\t\treturn nil, nil, false\n\t\t}\n", join.name)
-	case join.read.Form == program.Exact:
-		fmt.Fprintf(&out, "\t\t%sSealed, %sSealedOK := plane.ExactRead(planRow.Unit, uint16(plan%d.Input))\n",
-			join.name, join.name, join.position)
-		fmt.Fprintf(&out, "\t\t%sPolicy, %sPolicyOK := plane.ReadCellPolicy(plan%d.Contract)\n",
-			join.name, join.name, join.position)
 		fmt.Fprintf(&out, "\t\tif !%sPolicyOK {\n\t\t\treturn nil, nil, false\n\t\t}\n", join.name)
 	case join.read.Form == program.Selected:
 		policy, err := readCellPolicy(built, join)
