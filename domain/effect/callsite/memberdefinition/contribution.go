@@ -13,6 +13,7 @@ import (
 const (
 	callPackagePath         = "github.com/wippyai/go-lua/domain/call"
 	callsitePackagePath     = "github.com/wippyai/go-lua/domain/effect/callsite"
+	bodyRoutePackagePath    = "github.com/wippyai/go-lua/domain/effect/callsite/bodyroute"
 	effectFactorPackagePath = "github.com/wippyai/go-lua/domain/effect/factor"
 )
 
@@ -153,5 +154,109 @@ func OpaqueContribution() definition.Contribution {
 		Relations:   []definition.Relation{effectSites()},
 		Projections: []definition.Projection{effectSiteKey()},
 		Reducers:    []definition.Reducer{reducer("OpaqueCallEffectReducer", "effect/callsite-opaque/reducer", "DeriveOpaque")},
+	}
+}
+
+// bodyRouteCarriers are the member set the interprocedural rule selects over:
+// one body this call dispatches to, and the tag its root is correlated by.
+func bodyRouteCarriers() []definition.Carrier {
+	return []definition.Carrier{
+		{Name: "BodyRouteCarrier", Key: "carrier/effect/body-route", Type: definition.GoType{PackagePath: bodyRoutePackagePath, Name: "Route"}},
+		{Name: "BodyRouteTagCarrier", Key: "carrier/effect/body-route-tag", Type: definition.GoType{Name: "uint64"}},
+	}
+}
+
+func bodyRouteMethod(name string) definition.GoSymbol {
+	return definition.GoSymbol{
+		PackagePath: bodyRoutePackagePath, Name: name,
+		Receiver:    definition.GoType{PackagePath: bodyRoutePackagePath, Name: "Route"},
+		ResultIndex: -1,
+	}
+}
+
+func bodyRouteFunction(name string) definition.GoSymbol {
+	return definition.GoSymbol{PackagePath: bodyRoutePackagePath, Name: name, ResultIndex: 0}
+}
+
+func mountedCallProvider() member.CandidateRef {
+	return member.AxisRelationCandidate(member.RelationRef{
+		Axis: axisReference("effect"), Member: "effect/mounted-call/candidates",
+	})
+}
+
+// bodyRoutes is the bodies this call site reaches, derived once per invocation
+// from the site and the Call fact read at it. It is a relation rather than a
+// table sealed at bind because WHICH bodies a call reaches is a property of
+// that call's own dispatch, not of the binding.
+func bodyRoutes() definition.Relation {
+	return definition.Relation{
+		Name: "BodyRoutes", Key: "effect/callsite/body-routes",
+		Subject: "BodyRouteCarrier",
+		Inputs: []definition.RelationInput{
+			{Carrier: "EffectMountedCallCarrier"},
+			{Carrier: "CallFactCarrier"},
+		},
+		CandidateProvider: mountedCallProvider(),
+		Derivation: definition.RelationDerivation{
+			State:      definition.GoType{PackagePath: bodyRoutePackagePath, Name: "Plan"},
+			Build:      bodyRouteFunction("Derive"),
+			Count:      bodyRouteFunction("Count"),
+			At:         bodyRouteFunction("At"),
+			StaticAxes: []schema.EntryReference{axisReference("effect"), axisReference("call")},
+		},
+	}
+}
+
+// BodyContribution is the interprocedural reading's fold: the effect of every
+// executable body this call reaches, transported to the site and joined.
+func BodyContribution() definition.Contribution {
+	return definition.Contribution{
+		Axis:     "effect",
+		Rule:     "effect-body",
+		Carriers: append([]definition.Carrier{callFactCarrier(), mountedCallCarrier()}, bodyRouteCarriers()...),
+		Relations: []definition.Relation{
+			effectSites(),
+			bodyRoutes(),
+		},
+		Projections: []definition.Projection{
+			effectSiteKey(),
+			{
+				Name: "BodyRouteKey", Key: "effect/callsite/body-route-key",
+				Relation: "BodyRoutes", CandidateProvider: mountedCallProvider(),
+				Role: member.Key, Result: "EffectKeyCarrier", Accessor: bodyRouteMethod("Coordinate"),
+			},
+			{
+				Name: "BodyRouteTag", Key: "effect/callsite/body-route-tag",
+				Relation: "BodyRoutes", CandidateProvider: mountedCallProvider(),
+				Role: member.Predicate, Result: "BodyRouteTagCarrier", Accessor: bodyRouteMethod("Predicate"),
+			},
+		},
+		Reducers: []definition.Reducer{{
+			Name:      "BodyCallEffectReducer",
+			Key:       "effect/callsite-body/reducer",
+			Candidate: "EffectMountedCallCarrier",
+			Inputs: []definition.ReducerInput{{
+				Axis:    axisReference("effect"),
+				Carrier: "EffectFactCarrier",
+				Form:    member.ReadFormSelected,
+				// Many-valued: this fold is handed the whole selection and
+				// concludes once over it. The tag carrier is still named,
+				// because which carrier names a member is the joined axis's
+				// statement either way - a delivery this wide carries the tags
+				// inside its cells rather than as an argument beside them.
+				Multiplicity: member.MultiplicityMany,
+				Tag:          "BodyRouteTagCarrier",
+			}},
+			Outputs: []definition.ReducerOutput{{Axis: axisReference("effect"), Carrier: "EffectFactCarrier"}},
+			Derivation: definition.ReducerDerivation{
+				State:      judgmentType(),
+				Build:      definition.GoSymbol{PackagePath: callsitePackagePath, Name: "DeriveBody", ResultIndex: 0},
+				StaticAxes: []schema.EntryReference{axisReference("effect"), axisReference("call")},
+			},
+			Implementation: definition.GoSymbol{
+				PackagePath: callsitePackagePath, Name: "BodyEffect",
+				Receiver: judgmentType(), ResultIndex: 0,
+			},
+		}},
 	}
 }

@@ -11,13 +11,19 @@ import (
 
 const (
 	MountedEffectCallCandidates schemaapi.Key  = "effect/mounted-call/candidates"
+	BodyRoutes                  schemaapi.Key  = "effect/callsite/body-routes"
 	MountedEffectCallCoordinate schemaapi.Key  = "effect/mounted-call/coordinate"
+	BodyRouteKey                schemaapi.Key  = "effect/callsite/body-route-key"
+	BodyRouteTag                schemaapi.Key  = "effect/callsite/body-route-tag"
 	SelectedCallEffectReducer   schemaapi.Key  = "effect/callsite-selected/reducer"
 	OpaqueCallEffectReducer     schemaapi.Key  = "effect/callsite-opaque/reducer"
+	BodyCallEffectReducer       schemaapi.Key  = "effect/callsite-body/reducer"
 	EffectKeyCarrier            member.Carrier = "carrier/effect/key"
 	EffectFactCarrier           member.Carrier = "carrier/effect/fact"
 	EffectMountedCallCarrier    member.Carrier = "carrier/effect/mounted-call"
 	CallFactCarrier             member.Carrier = "carrier/call/fact"
+	BodyRouteCarrier            member.Carrier = "carrier/effect/body-route"
+	BodyRouteTagCarrier         member.Carrier = "carrier/effect/body-route-tag"
 )
 
 // AxisMemberCatalog is effect's declaration-only member vocabulary.
@@ -26,9 +32,12 @@ func AxisMemberCatalog() member.Catalog {
 	catalog, ok := member.NewCatalog(
 		[]member.Relation{
 			{Key: MountedEffectCallCandidates, Subject: EffectMountedCallCarrier, CandidateProvider: member.AxisRelationCandidate(member.RelationRef{Axis: schemaapi.EntryReference{Surface: schemaapi.SurfaceKind(2), Key: "effect"}, Member: "effect/mounted-call/candidates"})},
+			{Key: BodyRoutes, Subject: BodyRouteCarrier, CandidateProvider: member.AxisRelationCandidate(member.RelationRef{Axis: schemaapi.EntryReference{Surface: schemaapi.SurfaceKind(2), Key: "effect"}, Member: "effect/mounted-call/candidates"}), Inputs: []member.Carrier{EffectMountedCallCarrier, CallFactCarrier}},
 		},
 		[]member.Projection{
 			{Key: MountedEffectCallCoordinate, Relation: MountedEffectCallCandidates, Role: member.Destination, Result: EffectKeyCarrier, CandidateProvider: member.AxisRelationCandidate(member.RelationRef{Axis: schemaapi.EntryReference{Surface: schemaapi.SurfaceKind(2), Key: "effect"}, Member: "effect/mounted-call/candidates"})},
+			{Key: BodyRouteKey, Relation: BodyRoutes, Role: member.Key, Result: EffectKeyCarrier, CandidateProvider: member.AxisRelationCandidate(member.RelationRef{Axis: schemaapi.EntryReference{Surface: schemaapi.SurfaceKind(2), Key: "effect"}, Member: "effect/mounted-call/candidates"})},
+			{Key: BodyRouteTag, Relation: BodyRoutes, Role: member.Predicate, Result: BodyRouteTagCarrier, CandidateProvider: member.AxisRelationCandidate(member.RelationRef{Axis: schemaapi.EntryReference{Surface: schemaapi.SurfaceKind(2), Key: "effect"}, Member: "effect/mounted-call/candidates"})},
 		},
 		[]member.Reducer{
 			{Key: SelectedCallEffectReducer, Inputs: []member.ReducerInput{
@@ -38,6 +47,11 @@ func AxisMemberCatalog() member.Catalog {
 			}},
 			{Key: OpaqueCallEffectReducer, Inputs: []member.ReducerInput{
 				{Axis: schemaapi.EntryReference{Surface: schemaapi.SurfaceKindAxis, Key: "call"}, Carrier: CallFactCarrier, Form: member.ReadFormExact, Multiplicity: member.MultiplicityOne},
+			}, Outputs: []member.ReducerOutput{
+				{Axis: valueAxis, Carrier: EffectFactCarrier},
+			}},
+			{Key: BodyCallEffectReducer, Inputs: []member.ReducerInput{
+				{Axis: valueAxis, Carrier: EffectFactCarrier, Form: member.ReadFormSelected, Multiplicity: member.MultiplicityMany, Tag: BodyRouteTagCarrier},
 			}, Outputs: []member.ReducerOutput{
 				{Axis: valueAxis, Carrier: EffectFactCarrier},
 			}},

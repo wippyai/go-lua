@@ -115,6 +115,7 @@ func Composition() (definition.Roster, bool) {
 			Contributions: []definition.Contribution{
 				effectcallsite.SelectedContribution(),
 				effectcallsite.OpaqueContribution(),
+				effectcallsite.BodyContribution(),
 			},
 		},
 	)

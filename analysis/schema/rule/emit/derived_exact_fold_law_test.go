@@ -455,3 +455,78 @@ func TestADerivedExactFoldIsAFunctionOfItsDeclaration(t *testing.T) {
 		}
 	}
 }
+
+// selectionSpec is the derived exact fold with a second, SELECTED join added:
+// the shape of a conclusion over a selection. The relation it names carries no
+// derivation, which is one of the things the laws below refuse - a specimen
+// that declared one would need a scheduled-death row of its own, and what
+// these laws measure is the classification rather than the derivation.
+func selectionSpec() rule.Spec {
+	spec := derivedSpec()
+	spec.Program.Joins = append(spec.Program.Joins, program.JoinDecl{
+		Sources:  []program.SourceRef{program.CandidateSource(), program.PriorSource(0)},
+		Relation: member.RelationRef{Axis: siteAxis(), Member: "site/candidates"},
+		Key:      member.ProjectionRef{Axis: siteAxis(), Member: "site/coordinate"},
+		Read: program.ReadDecl{
+			PointBound: program.PointBound, Input: 0,
+			Axis: program.AxisRef(siteAxis()), Form: program.Selected,
+			Contract: program.ReadContract{
+				Order: program.OrderByTag, Sparse: program.SparseExplicit,
+				OnOpaque: program.OnOpaqueRefuse, Multiplicity: program.MultiplicityOne,
+				DenominatorRef: program.DenominatorRef{Surface: schema.SurfaceKindDenominator, Key: "coordinates/site"},
+			},
+		},
+	})
+	spec.Program.Fold.Inputs = []program.JoinRef{1}
+	return spec
+}
+
+// TestAnExactConclusionOverASelectionIsRefusedWhenItsMembersAreNotDerived
+// fences the classification of the new shape. Each refusal names the clause
+// that has no emitted form rather than falling back to the all-exact product,
+// which would silently drop the selection.
+func TestAnExactConclusionOverASelectionIsRefusedWhenItsMembersAreNotDerived(t *testing.T) {
+	for _, probe := range []struct {
+		name   string
+		mutate func(*rule.Spec)
+		clause string
+	}{
+		{
+			name:   "the members come from no declared relation derivation",
+			mutate: func(spec *rule.Spec) {},
+			clause: "an exact conclusion over a selection with no relation derivation",
+		},
+		{
+			name: "two selections have no declared correlation between them",
+			mutate: func(spec *rule.Spec) {
+				spec.Program.Joins = append(spec.Program.Joins, spec.Program.Joins[1])
+				spec.Program.Fold.Inputs = []program.JoinRef{1}
+			},
+			clause: "an exact conclusion over 1 exact and 2 selected reads",
+		},
+		{
+			name: "the selection observes a Factor the rule does not write",
+			mutate: func(spec *rule.Spec) {
+				spec.Program.Joins[1].Relation = member.RelationRef{Axis: wireAxis(), Member: "wire/facts"}
+				spec.Program.Joins[1].Key = member.ProjectionRef{Axis: wireAxis(), Member: "wire/fact-key"}
+				spec.Program.Joins[1].Read.Axis = program.AxisRef(wireAxis())
+			},
+			clause: "an exact conclusion over a foreign selection",
+		},
+	} {
+		t.Run(probe.name, func(t *testing.T) {
+			spec := selectionSpec()
+			probe.mutate(&spec)
+			target := derivedTarget()
+			target.Spec = spec
+			source, err := Render(target, derivedRoster(t))
+			if err == nil {
+				t.Fatalf("an unexpressible conclusion emitted a family:\n%s", source)
+			}
+			refusal, named := err.(Unexpressible)
+			if !named || !strings.Contains(refusal.Clause, probe.clause) {
+				t.Fatalf("refusal is %v, want it to name %q", err, probe.clause)
+			}
+		})
+	}
+}

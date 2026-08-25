@@ -7,7 +7,8 @@ import (
 	calldispatch "github.com/wippyai/go-lua/domain/call/dispatch"
 	calldispatchprogram "github.com/wippyai/go-lua/domain/call/dispatch/program"
 	callowner "github.com/wippyai/go-lua/domain/call/owner"
-	callsite "github.com/wippyai/go-lua/domain/effect/callsite"
+	callsitebody "github.com/wippyai/go-lua/domain/effect/callsite/body"
+	callsitebodyprogram "github.com/wippyai/go-lua/domain/effect/callsite/body/program"
 	callsiteopaque "github.com/wippyai/go-lua/domain/effect/callsite/opaque"
 	callsiteopaqueprogram "github.com/wippyai/go-lua/domain/effect/callsite/opaque/program"
 	callsiteselected "github.com/wippyai/go-lua/domain/effect/callsite/selected"
@@ -147,7 +148,7 @@ func ruleTemplateWiring[P Principals, A Authorities]() ([]*rule.Template, []Rule
 	add(WireGeneratedRuleWithFamily[P, A](calldispatchprogram.RuleEntry(), calldispatch.InstallFamily[A]))
 	add(WireGeneratedRuleWithFamily[P, A](callsiteselectedprogram.RuleEntry(), callsiteselected.InstallFamily[A]))
 	add(WireGeneratedRuleWithFamily[P, A](callsiteopaqueprogram.RuleEntry(), callsiteopaque.InstallFamily[A]))
-	add(WireRule(callsite.BodyEntry[P, A](), callsite.DeclareBody[P], callsite.RegisterBody, nil, callsite.BindBody[A], callsite.FinalizeBody[A], nil, nil))
+	add(WireGeneratedRuleWithFamily[P, A](callsitebodyprogram.RuleEntry(), callsitebody.InstallFamily[A]))
 	add(WireRule(callactivation.RuleEntry[P, A](), callactivation.DeclareRule[P], callactivation.RegisterRule, nil, callactivation.BindRule[A], nil, nil, activationRule))
 	add(WireRule(valueruntimekind.RuleEntry[P, A](), valueruntimekind.DeclareRule[P], valueruntimekind.RegisterRule, nil, valueruntimekind.BindRule[A], nil, nil, nil))
 	add(WireGeneratedRule[P, A](valuebootstrap.RuleEntry()))

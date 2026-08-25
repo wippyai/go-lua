@@ -131,11 +131,47 @@ func (fold FoldDecl) checkAgainst(joins []JoinDecl, reducer member.Reducer) fold
 		signature := reducer.Inputs[position]
 		if signature.Axis != join.Read.Axis.EntryReference() ||
 			signature.Form != join.Read.Form ||
-			signature.Multiplicity != join.Read.Contract.Multiplicity {
+			!multiplicityAgrees(join.Read.Form, fold.publishesThrough(input), join.Read.Contract.Multiplicity, signature.Multiplicity) {
 			return foldProblemInputs
 		}
 	}
 	return foldProblemNone
+}
+
+// publishesThrough reports whether this fold's output publishes AT the members
+// of the named join - that is, whether the join is the route the output is
+// addressed by. A fold that publishes through a join is a cadence over it.
+func (fold FoldDecl) publishesThrough(input JoinRef) bool {
+	for _, output := range fold.Outputs {
+		if output.Mode == ModeRoute && output.RouteJoinPresent && output.RouteJoin == input {
+			return true
+		}
+	}
+	return false
+}
+
+// multiplicityAgrees states the two multiplicities a declaration carries and
+// why they are not one number.
+//
+// A READ contract's multiplicity bounds the cells of ONE member: a selection
+// declares one because each member is observed at one exact coordinate, and
+// the number of members is bounded by the denominator instead. A REDUCER
+// input's multiplicity says whether the fold is handed one of those cells or
+// the whole delivery.
+//
+// They coincide everywhere except one shape. A selection the output PUBLISHES
+// THROUGH is folded once per member, so the fold takes one cell and the two
+// agree by equality - a many-valued fold there would be claiming to conclude
+// once over a delivery it is invoked across. A selection the output does not
+// publish through is concluded ONCE, so its fold takes every member as one
+// argument: many-valued over a read whose members are one cell each. Requiring
+// the two numbers to be equal there would force such a read to declare a
+// per-member bound its own primitive refuses.
+func multiplicityAgrees(form ReadForm, routed bool, read, fold Multiplicity) bool {
+	if form == Selected && !routed && read == MultiplicityOne {
+		return fold == MultiplicityOne || fold == MultiplicityMany
+	}
+	return read == fold
 }
 
 func (fold FoldDecl) check(joinCount int) foldProblem {

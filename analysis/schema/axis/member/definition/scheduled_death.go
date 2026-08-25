@@ -34,6 +34,15 @@ type ScheduledDeath struct {
 // being authored - never to quiet a refusal.
 var scheduledDeaths = []ScheduledDeath{
 	{
+		Axis:     "effect",
+		Relation: "effect/callsite/body-routes",
+		Build: GoSymbol{
+			PackagePath: "github.com/wippyai/go-lua/domain/effect/callsite/bodyroute",
+			Name:        "Derive",
+			ResultIndex: 0,
+		},
+	},
+	{
 		Axis:     "placement",
 		Relation: "placement/store/storage-routes",
 		Build: GoSymbol{
@@ -57,6 +66,24 @@ var scheduledDeaths = []ScheduledDeath{
 		Build: GoSymbol{
 			PackagePath: "github.com/wippyai/go-lua/domain/placement/returnescape",
 			Name:        "DeriveReturnRoutes",
+			ResultIndex: 0,
+		},
+	},
+	{
+		Axis:     "placement",
+		Relation: "placement/formal/routes",
+		Build: GoSymbol{
+			PackagePath: "github.com/wippyai/go-lua/domain/placement/formal",
+			Name:        "DeriveFormalRoutes",
+			ResultIndex: 0,
+		},
+	},
+	{
+		Axis:     "call",
+		Relation: "call/dispatch/routes",
+		Build: GoSymbol{
+			PackagePath: "github.com/wippyai/go-lua/domain/call/dispatch/route",
+			Name:        "Derive",
 			ResultIndex: 0,
 		},
 	},

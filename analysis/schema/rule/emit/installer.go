@@ -104,6 +104,14 @@ func renderInstaller(out *strings.Builder, built *plan) error {
 		out.WriteString("\tif width < 0 {\n\t\treturn nil, nil, false\n\t}\n")
 		out.WriteString("\tsealed.plane, sealed.width = plane, width\n")
 	}
+	if built.shape == shapeSelectedExact {
+		// The observation universe rather than the route geometry: this rule
+		// reads members and publishes at its own coordinate, so it has no
+		// destination table to be bounded by.
+		out.WriteString("\twidth := plane.SelectedWidth()\n")
+		out.WriteString("\tif width < 0 {\n\t\treturn nil, nil, false\n\t}\n")
+		out.WriteString("\tsealed.plane, sealed.width = plane, width\n")
+	}
 	for _, join := range memberSetJoins(built) {
 		// The cell buffer is sized once at the widest member set any row of
 		// this rule declares, so a warm invocation over any row allocates
@@ -119,7 +127,7 @@ func renderInstaller(out *strings.Builder, built *plan) error {
 	switch built.shape {
 	case shapeCarry:
 		fmt.Fprintf(out, " || output.Mode != %s.ModeExact || output.RouteJoinPresent", ruleprogram)
-	case shapeExactFold:
+	case shapeExactFold, shapeSelectedExact:
 		fmt.Fprintf(out, " || output.Mode != %s.ModeExact || output.RouteJoinPresent", ruleprogram)
 	case shapeSelectedRoute:
 		fmt.Fprintf(out, " || output.Mode != %s.ModeRoute || !output.RouteJoinPresent || output.RouteJoin != %d",
@@ -131,7 +139,7 @@ func renderInstaller(out *strings.Builder, built *plan) error {
 		fmt.Fprintf(out, "\t\tcarryMode, carryPresent := planRow.Rule.CarryMode()\n")
 		fmt.Fprintf(out, "\t\tif !carryPresent || carryMode != %s.CarryTransform {\n\t\t\treturn nil, nil, false\n\t\t}\n", ruleprogram)
 	}
-	if built.shape == shapeExactFold {
+	if built.shape == shapeExactFold || built.shape == shapeSelectedExact {
 		fmt.Fprintf(out, "\t\tcarryMode, carryPresent := planRow.Rule.CarryMode()\n")
 		if built.exact.carried {
 			fmt.Fprintf(out, "\t\tif !carryPresent || carryMode != %s.CarryIdentity {\n\t\t\treturn nil, nil, false\n\t\t}\n", ruleprogram)
@@ -206,7 +214,7 @@ func renderInstaller(out *strings.Builder, built *plan) error {
 	case shapeCarry:
 		fmt.Fprintf(out, "\t\twriteSealed, writeSealedOK := plane.RowCarry(planRow, %s)\n",
 			imports.methodValue(built.carry.transform.Implementation, "candidate"))
-	case shapeExactFold:
+	case shapeExactFold, shapeSelectedExact:
 		out.WriteString("\t\twriteSealed, writeSealedOK := plane.ExactWrite(planRow.Target, uint16(output.Slot))\n")
 	case shapeSelectedRoute:
 		out.WriteString("\t\twriteSealed, writeSealedOK := plane.RouteWrite(uint16(output.Slot))\n")

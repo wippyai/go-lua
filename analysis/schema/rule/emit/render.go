@@ -59,6 +59,16 @@ func render(built *plan) ([]byte, error) {
 	return []byte(out.String()), nil
 }
 
+// sliceView spells the slice marker a many-valued delivery carries when its
+// read established one cell per member. A whole-vector read delivers one
+// vector and carries none.
+func sliceView(argument definition.Argument) string {
+	if argument.Slice {
+		return "[]"
+	}
+	return ""
+}
+
 // reducerFields is the state one invocation seals into the emitted reducer:
 // the candidate carrier when the fold declares one, and every fold input the
 // reducer's own delivery does not carry.
@@ -101,8 +111,11 @@ func renderReducer(out *strings.Builder, built *plan) error {
 			continue
 		}
 		if argument.Role == definition.ArgumentVector {
-			fmt.Fprintf(out, "\tinput%d %s[%s]\n", built.fold.inputs[argument.Input].position,
-				imports.typeName(argument.Type), imports.typeName(argument.Element))
+			if _, delivered := built.deliveredFact[argument.Input]; delivered {
+				continue
+			}
+			fmt.Fprintf(out, "\tinput%d %s%s[%s]\n", built.fold.inputs[argument.Input].position,
+				sliceView(argument), imports.typeName(argument.Type), imports.typeName(argument.Element))
 			continue
 		}
 		if argument.Role != definition.ArgumentFact {
@@ -120,6 +133,8 @@ func renderReducer(out *strings.Builder, built *plan) error {
 		return renderCarryReduce(out, built)
 	case shapeExactFold:
 		return renderExactReduce(out, built)
+	case shapeSelectedExact:
+		return renderSelectedExactReduce(out, built)
 	case shapeSelectedRoute:
 		return renderRouteReduce(out, built)
 	default:
@@ -188,10 +203,15 @@ func foldCall(built *plan) (string, error) {
 			}
 			arguments = append(arguments, expression)
 		case definition.ArgumentVector:
-			// A many-valued input is one vector argument. The invocation fills
-			// the reducer's field with the vector it delivered, so the fold
-			// reads the same view every other consumer of that read does.
-			arguments = append(arguments, fmt.Sprintf("fold.input%d", built.fold.inputs[argument.Input].position))
+			// A many-valued input is one argument. An invocation that fills
+			// the reducer's field hands the fold that field; one that
+			// materializes the delivery in the worker hands it that, so the
+			// fold reads the same view either way and never a copy of it.
+			expression, present := built.deliveredFact[argument.Input]
+			if !present {
+				expression = fmt.Sprintf("fold.input%d", built.fold.inputs[argument.Input].position)
+			}
+			arguments = append(arguments, expression)
 		default:
 			return "", unexpressible(built.target.Spec.Key, "an unknown fold argument role", fmt.Sprintf("input %d", argument.Input))
 		}
@@ -310,7 +330,7 @@ func renderRow(out *strings.Builder, built *plan) error {
 	case shapeCarry:
 		fmt.Fprintf(out, "\twrite %s.CarryWrite[%s, %s]\n", execution,
 			imports.typeName(built.write.dense), imports.typeName(built.write.fact))
-	case shapeExactFold:
+	case shapeExactFold, shapeSelectedExact:
 		fmt.Fprintf(out, "\twrite %s.ExactWrite[%s, %s]\n", execution,
 			imports.typeName(built.write.dense), imports.typeName(built.write.fact))
 	case shapeSelectedRoute:
@@ -335,7 +355,7 @@ func renderFamily(out *strings.Builder, built *plan) {
 	for _, axis := range built.familyAxes {
 		fmt.Fprintf(out, "\t%s %s\n", axis.param, imports.typeName(axis.schemaType))
 	}
-	if built.shape == shapeSelectedRoute {
+	if built.shape == shapeSelectedRoute || built.shape == shapeSelectedExact {
 		fmt.Fprintf(out, "\tplane %s.FormPlane[%s, %s]\n", execution,
 			imports.typeName(built.write.dense), imports.typeName(built.write.fact))
 		out.WriteString("\twidth int\n")
@@ -350,7 +370,16 @@ func renderFamily(out *strings.Builder, built *plan) {
 	for _, join := range memberSetJoins(built) {
 		fmt.Fprintf(out, "\tif sealed.%sWidth < 0 {\n\t\treturn nil\n\t}\n", join.name)
 	}
-	if built.shape == shapeSelectedRoute {
+	if built.shape == shapeSelectedExact {
+		out.WriteString("\tif sealed.width < 0 {\n\t\treturn nil\n\t}\n")
+		out.WriteString("\t// Every buffer is sized once at the sealed width of the selection this rule\n")
+		out.WriteString("\t// spans, so an ordinary invocation allocates nothing.\n")
+		fmt.Fprintf(out, "\treturn &%s{\n", workerType)
+		out.WriteString("\t\tfamily:  sealed,\n\t\trun:     run,\n")
+		fmt.Fprintf(out, "\t\tmembers: make([]%s.RouteMember, sealed.width),\n", execution)
+		fmt.Fprintf(out, "\t\tcells:   make([]%s.SelectedCell[%s], sealed.width),\n", execution, imports.typeName(built.selection.axis.fact))
+		out.WriteString("\t}\n}\n\n")
+	} else if built.shape == shapeSelectedRoute {
 		out.WriteString("\tif sealed.width < 0 {\n\t\treturn nil\n\t}\n")
 		out.WriteString("\t// Every buffer is sized once at the sealed width of the selection this rule\n")
 		out.WriteString("\t// spans, so an ordinary invocation allocates nothing.\n")
@@ -417,6 +446,11 @@ func renderWorker(out *strings.Builder, built *plan) error {
 		}
 		fmt.Fprintf(out, "\twrite %s.Scratch[%s, %s]\n", execution,
 			imports.typeName(built.write.dense), imports.typeName(built.write.fact))
+	case shapeSelectedExact:
+		fmt.Fprintf(out, "\twrite %s.Scratch[%s, %s]\n", execution,
+			imports.typeName(built.write.dense), imports.typeName(built.write.fact))
+		fmt.Fprintf(out, "\tmembers []%s.RouteMember\n", execution)
+		fmt.Fprintf(out, "\tcells   []%s.SelectedCell[%s]\n", execution, imports.typeName(built.selection.axis.fact))
 	case shapeSelectedRoute:
 		fmt.Fprintf(out, "\twrite %s.RouteScratch[%s, %s]\n", execution,
 			imports.typeName(built.write.dense), imports.typeName(built.write.fact))
@@ -441,6 +475,8 @@ func renderWorker(out *strings.Builder, built *plan) error {
 		return renderCarryExecute(out, built)
 	case shapeExactFold:
 		return renderExactExecute(out, built)
+	case shapeSelectedExact:
+		return renderSelectedExactExecute(out, built)
 	case shapeSelectedRoute:
 		return renderRouteExecute(out, built)
 	}
@@ -907,4 +943,144 @@ func exactCellExpression(built *plan, join *joinPlan) string {
 		expression += ".Tail()"
 	}
 	return expression + ".Head()"
+}
+
+// renderSelectedExactReduce writes the fold of a conclusion over a selection.
+// The whole delivery is the one argument; every other declared read is sealed
+// into the reducer as a field, because this row is called once and has no
+// cadence to hand a prerequisite through.
+func renderSelectedExactReduce(out *strings.Builder, built *plan) error {
+	imports := built.imports
+	structure := imports.use(structurePackagePath)
+	if len(built.fold.results) != 2 {
+		return unexpressible(built.target.Spec.Key, fmt.Sprintf("an exact conclusion answering %d results", len(built.fold.results)),
+			"an exact conclusion publishes one fact and one disposition")
+	}
+	var delivery *definition.Argument
+	for index := range built.fold.arguments {
+		if built.fold.arguments[index].Role == definition.ArgumentVector {
+			delivery = &built.fold.arguments[index]
+		}
+	}
+	if delivery == nil || !delivery.Slice {
+		return unexpressible(built.target.Spec.Key, "an exact conclusion over a delivery that is not a selection",
+			"the fold of this form is handed the cells its selection observed, each paired with the tag it was correlated by")
+	}
+	call, err := foldCall(built)
+	if err != nil {
+		return err
+	}
+	out.WriteString("// Reduce is the one irreducible typed judgment of this family. It is called\n")
+	out.WriteString("// ONCE per candidate and handed every member its selection observed, because\n")
+	out.WriteString("// this row concludes one fact from all of them rather than one fact at each.\n")
+	fmt.Fprintf(out, "func (fold %s) Reduce(cells []%s[%s]) (%s, %s.ReductionOutcome) {\n",
+		reducerType, imports.typeName(delivery.Type), imports.typeName(delivery.Element),
+		imports.typeName(built.fold.results[0]), structure)
+	fmt.Fprintf(out, "\treturn %s\n}\n\n", call)
+	return nil
+}
+
+// renderSelectedExactExecute writes the invocation of a conclusion over a
+// selection: the exact prerequisite is taken, the declared relation derives
+// this candidate's member set once, the selection is observed at exactly those
+// members, and ONE fold concludes over the whole delivery.
+//
+// The prerequisite's read is inlined rather than taken through a helper
+// because its support region has to stay in scope: the published fact holds
+// over what the prerequisite AND every member proved, and the fold primitive
+// derives that from the regions this worker hands it.
+func renderSelectedExactExecute(out *strings.Builder, built *plan) error {
+	imports := built.imports
+	execution := imports.use(executionPackagePath)
+	structure := imports.use(structurePackagePath)
+	selection := built.selection
+	derivation := selection.derivation
+	prerequisite := built.joins[0]
+	if prerequisite == selection {
+		prerequisite = built.joins[1]
+	}
+	if prerequisite.read.Contract.Sparse != program.SparseExplicit {
+		return unexpressible(built.target.Spec.Key, fmt.Sprintf("an exact prerequisite with %s sparsity", sparseName(prerequisite.read.Contract.Sparse)),
+			"the conclusion preserves absence and never materializes a default")
+	}
+
+	invocation := map[string]string{fmt.Sprintf("input%d", prerequisite.position): fmt.Sprintf("input%d", prerequisite.position)}
+
+	renderExecutePrologue(out, built)
+	// The prerequisite's read is flat rather than a switch so its proved
+	// region stays in scope for the fold: the published fact holds over what
+	// this cell AND every observed member proved, and the emitted worker can
+	// only pass regions it was handed - the mask type is the engine's own and
+	// this file may not name it.
+	fmt.Fprintf(out, "\tstatus := row.%s.Read(ticket, &lane.%s)\n", prerequisite.name, prerequisite.name)
+	fmt.Fprintf(out, "\tif status == %s.ReadExhausted {\n", execution)
+	fmt.Fprintf(out, "\t\tif !row.%s.Close(ticket, &lane.%s) {\n\t\t\treturn lane.settle(ticket, %s.Refuse)\n\t\t}\n", prerequisite.name, prerequisite.name, structure)
+	fmt.Fprintf(out, "\t\treturn lane.settle(ticket, %s.NoCandidate)\n\t}\n", structure)
+	fmt.Fprintf(out, "\tif status != %s.ReadAvailable {\n\t\t_ = lane.%s.Discard(ticket)\n\t\treturn lane.settle(ticket, %s.Refuse)\n\t}\n",
+		execution, prerequisite.name, structure)
+	fmt.Fprintf(out, "\tcell, available := lane.%s.Value()\n", prerequisite.name)
+	fmt.Fprintf(out, "\tpresent := lane.%s.Present()\n", prerequisite.name)
+	fmt.Fprintf(out, "\tregion, regionOK := lane.%s.Region()\n", prerequisite.name)
+	fmt.Fprintf(out, "\tif !row.%s.Close(ticket, &lane.%s) {\n\t\t_ = lane.%s.Discard(ticket)\n\t\treturn lane.settle(ticket, %s.Refuse)\n\t}\n",
+		prerequisite.name, prerequisite.name, prerequisite.name, structure)
+	fmt.Fprintf(out, "\tif !available || !regionOK {\n\t\treturn lane.settle(ticket, %s.Refuse)\n\t}\n", structure)
+	fmt.Fprintf(out, "\tcell, present = row.%sPolicy.Cell(cell, present)\n", prerequisite.name)
+	fmt.Fprintf(out, "\tif !present {\n\t\treturn lane.settle(ticket, %s.NoCandidate)\n\t}\n", structure)
+	fmt.Fprintf(out, "\tinput%d := cell\n", prerequisite.position)
+
+	arguments := make([]string, 0, len(derivation.staticAxes)+len(derivation.arguments))
+	for _, axis := range derivation.staticAxes {
+		arguments = append(arguments, "lane.family."+axis.param)
+	}
+	for _, argument := range derivation.arguments {
+		switch {
+		case argument.candidate:
+			arguments = append(arguments, "row.candidate")
+		case argument.many:
+			return unexpressible(built.target.Spec.Key, "a member set derived over another many-valued delivery",
+				fmt.Sprintf("relation %q consumes the cells of join %d, which this form does not deliver to a derivation", selection.relation.Name, argument.join.position))
+		default:
+			arguments = append(arguments, fmt.Sprintf("input%d", argument.join.position))
+		}
+	}
+	out.WriteString("\t// The member set is the relation's own answer, derived once per invocation\n")
+	out.WriteString("\t// from the carriers its declaration names. Nothing below re-derives it.\n")
+	fmt.Fprintf(out, "\tderived, derivedOK := %s\n", imports.call(derivation.build, "", arguments...))
+	fmt.Fprintf(out, "\tif !derivedOK {\n\t\treturn lane.settle(ticket, %s.Refuse)\n\t}\n", structure)
+	fmt.Fprintf(out, "\tcount := %s\n", imports.call(derivation.count, "", "derived"))
+	fmt.Fprintf(out, "\tif count < 0 || count > len(lane.members) || count > len(lane.cells) {\n\t\treturn lane.settle(ticket, %s.Refuse)\n\t}\n", structure)
+	out.WriteString("\tmembers := lane.members[:count]\n\tcells := lane.cells[:count]\n")
+	out.WriteString("\tfor index := 0; index < count; index++ {\n")
+	fmt.Fprintf(out, "\t\tselected, selectedOK := %s\n", imports.call(derivation.at, "", "derived", "index"))
+	fmt.Fprintf(out, "\t\tif !selectedOK {\n\t\t\treturn lane.settle(ticket, %s.Refuse)\n\t\t}\n", structure)
+	keyExpression, err := projectionExpression(built, selection.key, "selected", "\t\t", out)
+	if err != nil {
+		return err
+	}
+	tagExpression, err := projectionExpression(built, selection.predicate, "selected", "\t\t", out)
+	if err != nil {
+		return err
+	}
+	if selection.key.Result != selection.axis.source.Binding.Key.Carrier {
+		return unexpressible(built.target.Spec.Key, "a selection key that is not the axis's own key carrier",
+			fmt.Sprintf("projection %q publishes %s", selection.key.Name, selection.key.Result))
+	}
+	fmt.Fprintf(out, "\t\tdense, denseOK := %s\n", imports.call(selection.axis.normalizer, "lane.family."+selection.axis.param, keyExpression))
+	fmt.Fprintf(out, "\t\tif !denseOK {\n\t\t\treturn lane.settle(ticket, %s.Refuse)\n\t\t}\n", structure)
+	out.WriteString("\t\t// The member is the observation side alone. This row publishes at its own\n")
+	out.WriteString("\t\t// candidate's coordinate, so no member of the selection is a destination.\n")
+	fmt.Fprintf(out, "\t\tmember, memberOK := lane.family.plane.SelectedMember(uint32(dense), uint64(%s))\n", tagExpression)
+	fmt.Fprintf(out, "\t\tif !memberOK {\n\t\t\treturn lane.settle(ticket, %s.Refuse)\n\t\t}\n", structure)
+	out.WriteString("\t\tmembers[index] = member\n")
+	out.WriteString("\t}\n")
+	out.WriteString("\t// An empty derived relation is a read that named nothing, which is exhausted\n")
+	out.WriteString("\t// rather than available; anything else is a selection that did not observe.\n")
+	fmt.Fprintf(out, "\tobserved := row.%s.Observe(ticket, &lane.%s, members, cells)\n", selection.name, selection.name)
+	out.WriteString("\tif count == 0 {\n")
+	fmt.Fprintf(out, "\t\tif observed != %s.ReadExhausted {\n\t\t\treturn lane.settle(ticket, %s.Refuse)\n\t\t}\n", execution, structure)
+	fmt.Fprintf(out, "\t} else if observed != %s.ReadAvailable {\n\t\treturn lane.settle(ticket, %s.Refuse)\n\t}\n", execution, structure)
+	fmt.Fprintf(out, "\toutcome := %s.FoldSelectedExact(ticket, row.write, &lane.write, region, cells, %s{%s})\n",
+		execution, reducerType, strings.Join(reducerLiteralFields(built, invocation), ", "))
+	renderExecuteEpilogue(out, built)
+	return nil
 }

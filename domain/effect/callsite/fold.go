@@ -1,6 +1,7 @@
 package callsite
 
 import (
+	"github.com/wippyai/go-lua/analysis/engine/execution"
 	"github.com/wippyai/go-lua/analysis/program/target/vocabulary"
 	"github.com/wippyai/go-lua/analysis/schema/structure"
 	calldomain "github.com/wippyai/go-lua/domain/call"
@@ -30,6 +31,13 @@ type Judgment struct {
 // Link: a mounted call joins a Call row to an Effect root, and two owners of
 // different Links have no such row in common.
 func DeriveSelected(effects *effectfactor.Algebra, calls *calldomain.Algebra) (Judgment, bool) {
+	return derive(effects, calls, false)
+}
+
+// DeriveBody seals the interprocedural reading against the same two algebras.
+// It is a third reading of one call site rather than a second state type: what
+// differs is which effects the site publishes, not which world answers them.
+func DeriveBody(effects *effectfactor.Algebra, calls *calldomain.Algebra) (Judgment, bool) {
 	return derive(effects, calls, false)
 }
 
@@ -174,4 +182,49 @@ func (judgment Judgment) operationAtoms(mounted effectfactor.MountedCall, root e
 		atoms = append(atoms, atom)
 	}
 	return atoms, true
+}
+
+// BodyEffect is the interprocedural judgment: the Effect fact one mounted call
+// site publishes, given the effect of every executable body it dispatches to.
+//
+// The members were named by the declared route relation and observed at their
+// own roots, so this fold reads what it was handed and nothing else - it does
+// not re-derive which bodies the call reaches. Each present part is
+// transported to THIS site's root, because a callee's effect is stated under
+// the callee's root and the site publishes under its own. A part that is
+// already Top makes the whole site Top, and an answer that reduces to Bottom
+// is no candidate rather than a published empty fact.
+func (judgment Judgment) BodyEffect(mounted effectfactor.MountedCall, cells []execution.SelectedCell[effectfactor.Value]) (effectfactor.Value, structure.ReductionOutcome) {
+	_, root, siteOK := judgment.site(mounted)
+	if !siteOK {
+		return effectfactor.Value{}, structure.Refuse
+	}
+	atoms := make([]effectfactor.Atom, 0)
+	for _, cell := range cells {
+		if !cell.Present {
+			continue
+		}
+		if judgment.effects.Equal(cell.Value, judgment.effects.Top()) {
+			return judgment.effects.Top(), structure.Concrete
+		}
+		transported, transportOK := judgment.effects.Transport(cell.Value, root)
+		if !transportOK {
+			return effectfactor.Value{}, structure.Refuse
+		}
+		for index := 0; ; index++ {
+			atom, exists := judgment.effects.AtomAt(transported, index)
+			if !exists {
+				break
+			}
+			atoms = append(atoms, atom)
+		}
+	}
+	result, resultOK := judgment.effects.FromAtoms(atoms)
+	if !resultOK {
+		return effectfactor.Value{}, structure.Refuse
+	}
+	if judgment.effects.Equal(result, judgment.effects.Bottom()) {
+		return effectfactor.Value{}, structure.NoCandidate
+	}
+	return result, structure.Concrete
 }

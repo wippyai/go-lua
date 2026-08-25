@@ -96,3 +96,36 @@ func TestAFoldArgumentMustArriveInTheFormItsOwnerDeclared(t *testing.T) {
 		})
 	}
 }
+
+// TestASelectionConcludedOnceIsFoldedOverEveryMember states the one place the
+// declaration carries two multiplicities that are not the same number.
+//
+// A read contract's multiplicity bounds the cells of ONE member; a reducer
+// input's says whether the fold is handed one cell or the whole delivery. A
+// selection the output publishes THROUGH is a cadence - one invocation per
+// member - so the two agree by equality. A selection the output does not
+// publish through is concluded once over every member, so the fold is
+// many-valued while each member is still one cell. Requiring equality there
+// would force the read to declare a per-member bound its own execution
+// primitive refuses outright.
+func TestASelectionConcludedOnceIsFoldedOverEveryMember(t *testing.T) {
+	routed := prerequisiteRouteProgram(t, []JoinRef{2})
+	cadence := routeCellReducer()
+	cadence.Inputs[0].Multiplicity = member.MultiplicityMany
+	if _, valid := routed.CheckAgainst(cadence); valid {
+		t.Fatal("a fold claiming the whole delivery was admitted over a selection its output publishes through")
+	}
+
+	concluded := prerequisiteRouteProgram(t, []JoinRef{2})
+	concluded.Fold.Outputs[0].Mode = ModeExact
+	concluded.Fold.Outputs[0].RouteJoinPresent = false
+	concluded.Fold.Outputs[0].RouteJoin = 0
+	whole := routeCellReducer()
+	whole.Inputs[0].Multiplicity = member.MultiplicityMany
+	if problem, valid := concluded.CheckAgainst(whole); !valid {
+		t.Fatalf("a fold over every member of a selection it does not publish through was refused: %+v", problem)
+	}
+	if problem, valid := concluded.CheckAgainst(routeCellReducer()); !valid {
+		t.Fatalf("a fold over one member of that same selection was refused: %+v", problem)
+	}
+}

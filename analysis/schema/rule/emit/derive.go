@@ -35,6 +35,13 @@ const (
 	// shapeSelectedRoute publishes one fact per selected route of a dependent
 	// relation the declaration derives.
 	shapeSelectedRoute
+	// shapeSelectedExact publishes ONE fact at the candidate's own coordinate,
+	// concluded over the whole of a dependent selection the declaration
+	// derives. It is the routed form's read half joined to the exact form's
+	// write half: the selection reaches the fold as one argument rather than
+	// as a cadence, because this row concludes one fact FROM every member
+	// instead of one fact AT each.
+	shapeSelectedExact
 )
 
 // axisPlan is one axis's emitted vocabulary: the Go types and owner symbols
@@ -173,16 +180,19 @@ type routePlan struct {
 
 // plan is one rule's complete emission plan.
 type plan struct {
-	target     Target
-	shape      shape
-	form       string
-	write      *axisPlan
-	candidate  candidatePlan
-	joins      []*joinPlan
-	fold       foldPlan
-	carry      *carryPlan
-	exact      *exactPlan
-	route      *routePlan
+	target    Target
+	shape     shape
+	form      string
+	write     *axisPlan
+	candidate candidatePlan
+	joins     []*joinPlan
+	fold      foldPlan
+	carry     *carryPlan
+	exact     *exactPlan
+	route     *routePlan
+	// selection is the dependent selected join an exact conclusion is folded
+	// over. It is nil for every other shape.
+	selection  *joinPlan
 	outputSlot uint16
 	inputPorts int
 	axes       []*axisPlan
@@ -276,6 +286,14 @@ func deriveDelivery(built *plan) {
 		// invocation and none of them is sealed into the reducer.
 		for position, join := range built.fold.inputs {
 			built.deliveredFact[position] = exactCellName(join)
+		}
+	case shapeSelectedExact:
+		// The selection is delivered whole; every other declared read is a
+		// prerequisite the worker takes into a local and seals into the fold.
+		for position, join := range built.fold.inputs {
+			if join == built.selection {
+				built.deliveredFact[position] = "cells"
+			}
 		}
 	case shapeSelectedRoute:
 		for position, join := range built.fold.inputs {
@@ -605,10 +623,18 @@ func deriveShape(built *plan, resolver *axisResolver, declaration program.Progra
 				return unexpressible(ruleKey, "an authored exact fold over no read",
 					"an exact fold reduces the cells its declared reads observe, and a rule that reads nothing writes its own source column instead")
 			}
+			exact, selected := 0, 0
+			var selection *joinPlan
 			for _, join := range built.joins {
-				if join.read.Form != program.Exact {
+				switch join.read.Form {
+				case program.Exact:
+					exact++
+				case program.Selected:
+					selected++
+					selection = join
+				default:
 					return unexpressible(ruleKey, fmt.Sprintf("an exact fold beside a %s read", readFormName(join.read.Form)),
-						fmt.Sprintf("join %d is not exact, and an exact product is the common refinement of exact cell partitions", join.position))
+						fmt.Sprintf("join %d is neither exact nor selected, and an exact conclusion is folded over cells its reads observed", join.position))
 				}
 			}
 			destination, destinationOK := findProjection(destinationAxis.source, output.Destination.Member)
@@ -623,8 +649,33 @@ func deriveShape(built *plan, resolver *axisResolver, declaration program.Progra
 				return unexpressible(ruleKey, "an exact destination that does not publish the output axis key",
 					fmt.Sprintf("projection %q publishes %s, output key is %s", destination.Name, destination.Result, built.write.source.Binding.Key.Carrier))
 			}
-			built.shape, built.form = shapeExactFold, "FormExact"
 			built.exact = &exactPlan{destination: destination, candidateOwned: candidateOwned, carried: declaration.Carry != nil}
+			if selected == 0 {
+				built.shape, built.form = shapeExactFold, "FormExact"
+				return nil
+			}
+			// A conclusion over a selection is one exact prerequisite and the
+			// selection it derives. Two selections would be two member sets
+			// with no declared correlation between them, and no prerequisite
+			// at all would leave the derivation nothing to derive FROM.
+			if exact != 1 || selected != 1 {
+				return unexpressible(ruleKey, fmt.Sprintf("an exact conclusion over %d exact and %d selected reads", exact, selected),
+					"a conclusion over a selection derives its members from exactly one exact prerequisite")
+			}
+			if selection.foreign {
+				return unexpressible(ruleKey, "an exact conclusion over a foreign selection",
+					"a rule observes members of the Factor it writes, so its selected join must name that axis")
+			}
+			if selection.derivation == nil {
+				return unexpressible(ruleKey, "an exact conclusion over a selection with no relation derivation",
+					fmt.Sprintf("relation %q declares no Build/Count/At, so the emitted worker has no member set to observe", selection.relation.Name))
+			}
+			if !selection.hasPredicate {
+				return unexpressible(ruleKey, "an exact conclusion over an untagged selection",
+					fmt.Sprintf("relation %q declares no predicate projection, so a member carries no tag to pair with its cell", selection.relation.Name))
+			}
+			built.shape, built.form = shapeSelectedExact, "FormSelectedExact"
+			built.selection = selection
 			return nil
 		}
 		transformAxis, err := resolver.axis(declaration.Carry.Transform.Axis.Key)

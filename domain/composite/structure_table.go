@@ -12,7 +12,7 @@ import (
 	callowner "github.com/wippyai/go-lua/domain/call/owner"
 	callquery "github.com/wippyai/go-lua/domain/call/query"
 	"github.com/wippyai/go-lua/domain/constraint"
-	callsite "github.com/wippyai/go-lua/domain/effect/callsite"
+	callsitebodyprogram "github.com/wippyai/go-lua/domain/effect/callsite/body/program"
 	callsiteopaqueprogram "github.com/wippyai/go-lua/domain/effect/callsite/opaque/program"
 	callsiteselectedprogram "github.com/wippyai/go-lua/domain/effect/callsite/selected/program"
 	effectowner "github.com/wippyai/go-lua/domain/effect/owner"
@@ -200,7 +200,7 @@ func semanticRoleVocabulary() []structure.Spec {
 		heapclosed.StructureSpecs(),
 		heapindex.StructureSpecs(),
 		calldispatchprogram.StructureSpecs(),
-		callsite.StructureSpecs(),
+		callsitebodyprogram.StructureSpecs(),
 		callsiteselectedprogram.StructureSpecs(),
 		callsiteopaqueprogram.StructureSpecs(),
 		callactivation.StructureSpecs(),
