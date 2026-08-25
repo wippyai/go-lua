@@ -2693,65 +2693,73 @@ func (schema Schema) Admits(key Key, value Value) bool {
 	if !schema.valid() || !key.valid() || key.owner != schema.owner || !schema.owns(value) {
 		return false
 	}
-	if value.top || value.IsBottom() {
+	// owns has just proved this Value, so top and bottom are read off it
+	// rather than re-proved: a valid Value with no World is bottom.
+	if value.top || len(value.worlds) == 0 {
 		return true
 	}
+	// schema.owns has proved this Value: every World it carries is valid and
+	// owner-bound, and so is every Object and Partition inside them. The
+	// coordinate fence below reads that proof instead of re-deriving it at
+	// each World, Object, kind, exception, and present.
 	for _, world := range value.worlds {
-		if !schema.admitsWorld(key, world) {
+		if !schema.admitsWorldAdmitted(key, world) {
 			return false
 		}
 	}
 	return true
 }
 
-func (schema Schema) admitsWorld(key Key, world World) bool {
-	if !world.valid() || world.owner != schema.owner {
-		return false
-	}
+// admitsWorldAdmitted is the admitted path for one World of a Value its
+// caller has already proved.
+func (schema Schema) admitsWorldAdmitted(key Key, world World) bool {
 	switch key.Kind() {
 	case RootAllocation:
 		switch world.kind {
 		case WorldZero:
 			return true
 		case WorldOne:
-			return schema.admitsObject(key, world.recent)
+			return schema.admitsObjectAdmitted(key, world.recent)
 		case WorldMany:
-			return schema.admitsObject(key, world.recent) && schema.admitsObject(key, world.summary)
+			return schema.admitsObjectAdmitted(key, world.recent) && schema.admitsObjectAdmitted(key, world.summary)
 		default:
 			return false
 		}
 	case RootBoot:
-		return world.kind == WorldExact && schema.admitsObject(key, world.exact)
+		return world.kind == WorldExact && schema.admitsObjectAdmitted(key, world.exact)
 	default:
 		return false
 	}
 }
 
-func (schema Schema) admitsObject(key Key, object Object) bool {
-	if !object.valid() || object.owner != schema.owner {
-		return false
-	}
+// admitsObjectAdmitted is the admitted path for one Object of a Value its
+// caller has already proved. The Object's validity carries its Partition's,
+// so the kind passes, the exception passes, and the slot incidence below all
+// read that one proof.
+func (schema Schema) admitsObjectAdmitted(key Key, object Object) bool {
 	for index := 0; index < legalKeyKindCount; index++ {
 		kind, _ := legalKeyKindAt(index)
-		if !schema.admitsPartitionState(key, object.partition, kind, nil, object.partition.rest[kind]) {
+		if !schema.admitsPartitionStateAdmitted(key, object.partition, kind, nil, object.partition.rest[kind]) {
 			return false
 		}
 	}
 	for _, exception := range object.partition.exceptions {
-		if !schema.admitsPartitionState(key, object.partition, runtimekind.Invalid, &exception.atom, exception.state) {
+		if !schema.admitsPartitionStateAdmitted(key, object.partition, runtimekind.Invalid, &exception.atom, exception.state) {
 			return false
 		}
 	}
 	return true
 }
 
-func (schema Schema) admitsPartitionState(key Key, partition Partition, kind runtimekind.Kind, atom *keyAtom, state CellState) bool {
-	if !partition.valid() || partition.owner != schema.owner || !state.valid() || state.owner != schema.owner || atom == nil && !legalKeyKind(kind) ||
+// admitsPartitionStateAdmitted is the admitted path for one coordinate of a
+// Partition its caller has already proved complete and owner-bound.
+func (schema Schema) admitsPartitionStateAdmitted(key Key, partition Partition, kind runtimekind.Kind, atom *keyAtom, state CellState) bool {
+	if !state.valid() || state.owner != schema.owner || atom == nil && !legalKeyKind(kind) ||
 		atom != nil && !validExactKeyAtom(schema.owner, *atom) {
 		return false
 	}
 	for _, present := range state.presents {
-		if !schema.admitsSlot(key.slot, present.slotID) || !schema.partitionAdmitsSlot(partition, kind, atom, present.slotID) ||
+		if !schema.admitsSlot(key.slot, present.slotID) || !schema.partitionAdmitsSlotAdmitted(partition, kind, atom, present.slotID) ||
 			!schema.admitsPayload(key.slot, present.slotID, present.payloadID) || !schema.admitsInitialPresent(key.slot, present) {
 			return false
 		}
@@ -2759,13 +2767,14 @@ func (schema Schema) admitsPartitionState(key Key, partition Partition, kind run
 	return true
 }
 
-// partitionAdmitsSlot verifies only cold source-to-semantic-key incidence. A
-// dynamic source proves no equality and may inhabit any complete partition
-// coordinate. An exact source must inhabit its exact exception or a residual
-// coordinate that still contains that atom; source occurrences never become a
-// partition identity.
-func (schema Schema) partitionAdmitsSlot(partition Partition, kind runtimekind.Kind, atom *keyAtom, slot uint32) bool {
-	if schema.owner == nil || !partition.valid() || partition.owner != schema.owner || slot == 0 || int(slot) > len(schema.owner.slots) {
+// partitionAdmitsSlotAdmitted verifies only cold source-to-semantic-key
+// incidence, on a Partition its caller has already proved complete and
+// owner-bound. A dynamic source proves no equality and may inhabit any
+// complete partition coordinate. An exact source must inhabit its exact
+// exception or a residual coordinate that still contains that atom; source
+// occurrences never become a partition identity.
+func (schema Schema) partitionAdmitsSlotAdmitted(partition Partition, kind runtimekind.Kind, atom *keyAtom, slot uint32) bool {
+	if schema.owner == nil || slot == 0 || int(slot) > len(schema.owner.slots) {
 		return false
 	}
 	row := schema.owner.slots[slot-1]

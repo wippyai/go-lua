@@ -245,6 +245,7 @@ func emptyPartition(owner *schema) Partition {
 }
 
 func (partition Partition) valid() bool {
+	dbgHeap.PartitionValidations++
 	if partition.owner == nil {
 		return false
 	}
@@ -294,6 +295,7 @@ func (partition Partition) defaultForAdmitted(atom keyAtom) (CellState, bool) {
 }
 
 func (partition Partition) defaultForKindsAdmitted(kinds runtimekind.Set) (CellState, bool) {
+	dbgHeap.DefaultDerivations++
 	if partition.owner == nil || kinds == 0 || kinds&^runtimekind.NonNil != 0 {
 		return CellState{}, false
 	}
