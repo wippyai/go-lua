@@ -84,10 +84,18 @@ func ResolveRoute(effects *effectfactor.Algebra, calls *calldomain.Algebra, moun
 // It is asked of the same things ResolveRoute is asked of, minus the target
 // there is not one of yet, because whether a set has a closed list can depend
 // on what the set is OF.
+//
+// Two values name no closed list and Call answers for both with one predicate:
+// a TOP value named no alternative at all, and an OPEN one named some and
+// admitted there are others it cannot name. Both reach bodies this site's
+// enumerated targets do not include. Asking only whether the value is Top
+// would walk an open call's written-down targets and answer as though they
+// were all of them - a member set claiming to be complete when its own source
+// says it is not.
 func BeyondTargets(effects *effectfactor.Algebra, calls *calldomain.Algebra, mounted effectfactor.MountedCall, fact calldomain.Value) (bool, bool) {
 	if effects == nil || !effects.Valid() || calls == nil || !calls.Valid() ||
 		!calls.LinkOwner().Matches(effects.LinkOwner()) || !mounted.Valid() {
 		return false, false
 	}
-	return fact.IsTop(), true
+	return fact.HasOpaqueAlternative(), true
 }
