@@ -125,10 +125,9 @@
     "family": "placement/containment",
     "plane": "family",
     "rule": "placement-containment",
-    "status": "COUPLING-FINDING",
-    "site": "program.joins[2].sources",
-    "missing": "operation",
-    "reason": "undeclared"
+    "status": "COMPILES",
+    "sketch": "Publish(Apply(Select(Join(Join(Input,Select(Input)),Select(Input))))) | Publish(Apply(Select(Join(Join(Join(Input,Complete(Select(Input))),Complete(Select(Input))),Select(Input)))))",
+    "expressions": 2
   },
   {
     "family": "placement/formal",
@@ -150,10 +149,9 @@
     "family": "placement/publicationescape",
     "plane": "family",
     "rule": "placement-publication-escape",
-    "status": "COUPLING-FINDING",
-    "site": "program.joins[1].predicate",
-    "missing": "operation",
-    "reason": "undeclared"
+    "status": "COMPILES",
+    "sketch": "Publish(Apply(Select(Join(Input,Select(Input))))) | Publish(Apply(Select(Join(Join(Input,Select(Input)),Select(Input))))) | Publish(Merge(Apply(Select(Join(Join(Join(Input,Select(Input)),Select(Input)),Select(Input)))),Select(Input)))",
+    "expressions": 3
   },
   {
     "family": "placement/returnescape",
@@ -175,19 +173,17 @@
     "family": "placement/suspension",
     "plane": "family",
     "rule": "placement-suspension",
-    "status": "COUPLING-FINDING",
-    "site": "program.joins[1].predicate",
-    "missing": "operation",
-    "reason": "undeclared"
+    "status": "COMPILES",
+    "sketch": "Publish(Apply(Select(Join(Input,Select(Input))))) | Publish(Apply(Select(Join(Join(Input,Select(Input)),Select(Input))))) | Publish(Merge(Apply(Select(Join(Join(Join(Input,Complete(Select(Input))),Complete(Select(Input))),Complete(Select(Input))))),Select(Input)))",
+    "expressions": 3
   },
   {
     "family": "placement/suspension-evidence",
     "plane": "family",
     "rule": "placement-suspension-evidence",
-    "status": "COUPLING-FINDING",
-    "site": "program.joins[1].predicate",
-    "missing": "operation",
-    "reason": "undeclared"
+    "status": "COMPILES",
+    "sketch": "Publish(Apply(Select(Join(Input,Select(Input))))) | Publish(Apply(Select(Join(Join(Input,Select(Input)),Select(Input))))) | Publish(Merge(Apply(Select(Join(Join(Join(Input,Complete(Select(Input))),Complete(Select(Input))),Complete(Select(Input))))),Select(Input)))",
+    "expressions": 3
   },
   {
     "family": "placement/transfer",

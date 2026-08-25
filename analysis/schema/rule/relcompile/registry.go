@@ -840,6 +840,20 @@ func (registry *Registry) Signature(site Site, name Name) (signature.Identity, e
 	return value.Identity(), nil
 }
 
+// PublicationKeyOf resolves the key one relation's rows are published under.
+func (registry *Registry) PublicationKeyOf(site Site, relation model.RelationID) (model.KeyID, error) {
+	for name, entry := range registry.relations {
+		if entry.id != relation {
+			continue
+		}
+		if !entry.publish.Available() {
+			return model.KeyID{}, refuse(site, name, KindPublicationKey, ReasonUndeclared)
+		}
+		return entry.publish, nil
+	}
+	return model.KeyID{}, refuse(site, Name{}, KindRelation, ReasonUnknown)
+}
+
 // PublicationKey resolves the key of the relation that owns one authored
 // destination column.
 func (registry *Registry) PublicationKey(site Site, column Name) (model.KeyID, error) {

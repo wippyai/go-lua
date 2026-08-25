@@ -49,13 +49,15 @@ const (
 	CallMountedFacts            schema.Key = "call/mounted-call/facts"
 	CallMountedFactKey          schema.Key = "call/mounted-call/fact-key"
 
-	PublicationSources   schema.Key = "effect/mounted-publication/sources"
-	PublicationSourceKey schema.Key = "effect/mounted-publication/source-value-coordinate"
-	PublicationSourceTag schema.Key = "effect/mounted-publication/source-tag"
-	PublicationRoutes    schema.Key = "placement/publication-escape/routes"
-	PublicationRouteKey  schema.Key = "placement/publication-escape/route-key"
-	PublicationRouteDest schema.Key = "placement/publication-escape/route-destination"
-	PublicationReducer   schema.Key = "placement/publication-escape/reducer"
+	PublicationSources         schema.Key = "effect/mounted-publication/sources"
+	PublicationSourceKey       schema.Key = "effect/mounted-publication/source-value-coordinate"
+	PublicationSourceTag       schema.Key = "effect/mounted-publication/source-tag"
+	PublicationSourceSelection schema.Key = "effect/publication-escape/source-selection"
+	PublicationRoutes          schema.Key = "placement/publication-escape/routes"
+	PublicationRouteKey        schema.Key = "placement/publication-escape/route-key"
+	PublicationRouteSelection  schema.Key = "placement/publication-escape/route-selection"
+	PublicationRouteDest       schema.Key = "placement/publication-escape/route-destination"
+	PublicationReducer         schema.Key = "placement/publication-escape/reducer"
 	// PublicationRouteDestination is the descriptive alias retained for
 	// callers that name the deferred destination by its full role.
 	PublicationRouteDestination schema.Key = PublicationRouteDest
@@ -162,6 +164,7 @@ func PublicationEscape() ruleprogram.Program {
 					Axis:   effectAxis,
 					Member: PublicationSourceTag,
 				},
+				Selection: member.SelectionRef{Axis: effectAxis, Member: PublicationSourceSelection},
 				Read: ruleprogram.ReadDecl{
 					Input:      0,
 					Axis:       ruleprogram.AxisRef(valueAxis),
@@ -192,6 +195,7 @@ func PublicationEscape() ruleprogram.Program {
 				},
 				// RouteMember supplies the paired tag and destination; a second
 				// route predicate would be a duplicate route plan.
+				Selection: member.SelectionRef{Axis: placementAxis, Member: PublicationRouteSelection},
 				Read: ruleprogram.ReadDecl{
 					Input:      0,
 					Axis:       ruleprogram.AxisRef(placementAxis),

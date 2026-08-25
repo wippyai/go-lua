@@ -27,15 +27,17 @@ const (
 	EvidenceOperandRole            = "operand/placement/suspension-evidence"
 
 	// Value's exact anchor and selected source vector.
-	suspensionAnchors   schema.Key = "value/suspension/anchors"
-	suspensionAnchorKey schema.Key = "value/suspension/anchor-key"
-	suspensionSources   schema.Key = "value/suspension/sources"
-	suspensionSourceKey schema.Key = "value/suspension/source-key"
-	suspensionSourceTag schema.Key = "value/suspension/source-tag"
+	suspensionAnchors         schema.Key = "value/suspension/anchors"
+	suspensionAnchorKey       schema.Key = "value/suspension/anchor-key"
+	suspensionSources         schema.Key = "value/suspension/sources"
+	suspensionSourceKey       schema.Key = "value/suspension/source-key"
+	suspensionSourceTag       schema.Key = "value/suspension/source-tag"
+	suspensionSourceSelection schema.Key = "value/suspension/source-selection"
 
 	// Placement's paired RouteMember vector and reducer.
 	suspensionRoutes           schema.Key = "placement/suspension/routes"
 	suspensionRouteKey         schema.Key = "placement/suspension/route-key"
+	suspensionRouteSelection   schema.Key = "placement/suspension/route-selection"
 	suspensionRouteTag         schema.Key = "placement/suspension/route-tag"
 	suspensionRouteDestination schema.Key = "placement/suspension/route-destination"
 	suspensionReducer          schema.Key = "placement/suspension/reducer"
@@ -140,7 +142,7 @@ func selectedPlacementRead() ruleprogram.ReadDecl {
 	}
 }
 
-func declaration(outputAxisKey schema.Key, candidate member.CandidateRef, anchor, anchorKey, sources, sourceKey, sourceTag, routes, routeKey, routeTag, routeDestination, reducer, outputColumn schema.Key) ruleprogram.Program {
+func declaration(outputAxisKey schema.Key, candidate member.CandidateRef, anchor, anchorKey, sources, sourceKey, sourceTag, sourceSelection, routes, routeKey, routeTag, routeSelection, routeDestination, reducer, outputColumn schema.Key) ruleprogram.Program {
 	value := valueAxis()
 	outputAxis := axisReference(outputAxisKey)
 	return ruleprogram.Program{
@@ -161,6 +163,7 @@ func declaration(outputAxisKey schema.Key, candidate member.CandidateRef, anchor
 				Relation:  member.RelationRef{Axis: value, Member: sources},
 				Key:       member.ProjectionRef{Axis: value, Member: sourceKey},
 				Predicate: member.ProjectionRef{Axis: value, Member: sourceTag},
+				Selection: member.SelectionRef{Axis: value, Member: sourceSelection},
 				Read:      selectedValueRead(),
 			},
 			{
@@ -169,9 +172,10 @@ func declaration(outputAxisKey schema.Key, candidate member.CandidateRef, anchor
 					ruleprogram.PriorSource(0),
 					ruleprogram.PriorSource(1),
 				},
-				Relation: member.RelationRef{Axis: outputAxis, Member: routes},
-				Key:      member.ProjectionRef{Axis: outputAxis, Member: routeKey},
-				Read:     selectedOutputRead(outputAxis),
+				Relation:  member.RelationRef{Axis: outputAxis, Member: routes},
+				Key:       member.ProjectionRef{Axis: outputAxis, Member: routeKey},
+				Selection: member.SelectionRef{Axis: outputAxis, Member: routeSelection},
+				Read:      selectedOutputRead(outputAxis),
 			},
 		},
 		Fold: ruleprogram.FoldDecl{
@@ -205,8 +209,8 @@ func Suspension() ruleprogram.Program {
 		placementAxisKey,
 		member.IssuedRowCandidate(programissuance.RelationOccurrenceSubjectLiveness),
 		suspensionAnchors, suspensionAnchorKey,
-		suspensionSources, suspensionSourceKey, suspensionSourceTag,
-		suspensionRoutes, suspensionRouteKey, suspensionRouteTag, suspensionRouteDestination,
+		suspensionSources, suspensionSourceKey, suspensionSourceTag, suspensionSourceSelection,
+		suspensionRoutes, suspensionRouteKey, suspensionRouteTag, suspensionRouteSelection, suspensionRouteDestination,
 		suspensionReducer, placementFactsColumn,
 	)
 }
@@ -223,9 +227,11 @@ func SuspensionEvidence() ruleprogram.Program {
 		evidenceSources          schema.Key = "value/suspension-evidence/sources"
 		evidenceSourceKey        schema.Key = "value/suspension-evidence/source-key"
 		evidenceSourceTag        schema.Key = "value/suspension-evidence/source-tag"
+		evidenceSourceSelection  schema.Key = "value/suspension-evidence/source-selection"
 		evidenceRoutes           schema.Key = "placement/suspension-evidence/routes"
 		evidenceRouteKey         schema.Key = "placement/suspension-evidence/route-key"
 		evidenceRouteTag         schema.Key = "placement/suspension-evidence/route-tag"
+		evidenceRouteSelection   schema.Key = "placement/suspension-evidence/route-selection"
 		evidenceRouteDestination schema.Key = "placement/suspension-evidence/route-destination"
 		evidenceAxisKey          schema.Key = "placement-suspension-evidence"
 		evidenceReducer          schema.Key = "placement-suspension-evidence/reducer"
@@ -235,8 +241,8 @@ func SuspensionEvidence() ruleprogram.Program {
 		evidenceAxisKey,
 		member.IssuedRowCandidate(programissuance.RelationOccurrenceSubjectLiveness),
 		evidenceAnchors, evidenceAnchorKey,
-		evidenceSources, evidenceSourceKey, evidenceSourceTag,
-		evidenceRoutes, evidenceRouteKey, evidenceRouteTag, evidenceRouteDestination,
+		evidenceSources, evidenceSourceKey, evidenceSourceTag, evidenceSourceSelection,
+		evidenceRoutes, evidenceRouteKey, evidenceRouteTag, evidenceRouteSelection, evidenceRouteDestination,
 		evidenceReducer, evidenceFactsColumn,
 	)
 	declaration.OperandRole = vocabulary.RoleKey(EvidenceOperandRole)

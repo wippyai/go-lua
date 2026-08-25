@@ -30,6 +30,7 @@ const (
 	ContainmentHeapKey          schema.Key = "heap/containment/heap-summary-coordinate"
 	ContainmentRoutes           schema.Key = "placement/containment/routes"
 	ContainmentRouteKey         schema.Key = "placement/containment/route-key"
+	ContainmentRouteSelection   schema.Key = "placement/containment/route-selection"
 	ContainmentRouteTag         schema.Key = "placement/containment/route-tag"
 	ContainmentRouteDestination schema.Key = "placement/containment/route-destination"
 	ContainmentReducer          schema.Key = "placement/containment/reducer"
@@ -99,8 +100,9 @@ func PlacementContainment() ruleprogram.Program {
 				Sources: []ruleprogram.SourceRef{
 					ruleprogram.CandidateSource(), ruleprogram.PriorSource(0), ruleprogram.PriorSource(1),
 				},
-				Relation: member.RelationRef{Axis: placementAxis, Member: ContainmentRoutes},
-				Key:      member.ProjectionRef{Axis: placementAxis, Member: ContainmentRouteKey},
+				Relation:  member.RelationRef{Axis: placementAxis, Member: ContainmentRoutes},
+				Key:       member.ProjectionRef{Axis: placementAxis, Member: ContainmentRouteKey},
+				Selection: member.SelectionRef{Axis: placementAxis, Member: ContainmentRouteSelection},
 				Read: ruleprogram.ReadDecl{
 					Input: 0, Axis: ruleprogram.AxisRef(placementAxis), Form: ruleprogram.Selected,
 					PointBound: ruleprogram.PointBound,
