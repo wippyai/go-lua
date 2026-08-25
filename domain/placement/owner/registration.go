@@ -91,19 +91,7 @@ func AlgebraAxis(owner *HotOwner) (axis.Algebra[placement.Fact], bool) {
 	if !ok {
 		return axis.Algebra[placement.Fact]{}, false
 	}
-	return adoptFactor(spec)
-}
-
-func adoptFactor(spec engine.HotFactorSpec[placement.DenseCoordinate, placement.Fact]) (axis.Algebra[placement.Fact], bool) {
-	return axis.Adopt(axis.CarrierAlgebra[placement.DenseCoordinate, placement.Fact]{
-		KeyEnd:      spec.KeyEnd,
-		Lattice:     spec.Lattice,
-		Default:     spec.Default,
-		AdmitAt:     spec.AdmitAt,
-		Fingerprint: spec.Fingerprint,
-		Widen:       axis.CarrierRank[placement.DenseCoordinate, placement.Fact]{Width: spec.WidenRank.Width, At: spec.WidenRank.At},
-		Narrow:      axis.CarrierRank[placement.DenseCoordinate, placement.Fact]{Width: spec.NarrowRank.Width, At: spec.NarrowRank.At},
-	})
+	return spec.AxisAlgebra()
 }
 
 // StructureSpecs contributes Placement's factor identity to the semantic

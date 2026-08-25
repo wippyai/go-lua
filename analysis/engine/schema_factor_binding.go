@@ -9,6 +9,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/engine/internal/equation"
 	"github.com/wippyai/go-lua/analysis/engine/internal/factbinding"
 	"github.com/wippyai/go-lua/analysis/lattice"
+	"github.com/wippyai/go-lua/analysis/schema/axis"
 	memberrelation "github.com/wippyai/go-lua/analysis/schema/axis/member/relation"
 )
 
@@ -22,6 +23,26 @@ type HotFactorSpec[K ~uint32 | ~uint64, V any] struct {
 	Fingerprint func(V) uint64
 	WidenRank   Measure[K, V]
 	NarrowRank  Measure[K, V]
+}
+
+// AxisAlgebra projects a bound Factor onto the algebra the axis surface
+// publishes it as. It lives here because the projection is a restatement of
+// this spec's own fields, and a restatement made once per axis is a restatement
+// that drifts: the measures are the field pair a copy silently drops.
+//
+// A measure the spec does not carry projects as the absent rank rather than as
+// a missing one. An axis that declares no narrowing has a narrow measure of
+// width zero, and that is the same value whether it is written out or left off.
+func (spec HotFactorSpec[K, V]) AxisAlgebra() (axis.Algebra[V], bool) {
+	return axis.Adopt(axis.CarrierAlgebra[K, V]{
+		KeyEnd:      spec.KeyEnd,
+		Lattice:     spec.Lattice,
+		Default:     spec.Default,
+		AdmitAt:     spec.AdmitAt,
+		Fingerprint: spec.Fingerprint,
+		Widen:       axis.CarrierRank[K, V]{Width: spec.WidenRank.Width, At: spec.WidenRank.At},
+		Narrow:      axis.CarrierRank[K, V]{Width: spec.NarrowRank.Width, At: spec.NarrowRank.At},
+	})
 }
 
 func factorRefOrdinal[V any](ref FactorRef[V], schema *Schema) (uint64, bool) {

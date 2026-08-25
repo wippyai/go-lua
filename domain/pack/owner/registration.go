@@ -134,19 +134,7 @@ func AlgebraAxis(owner *HotOwner) (axis.Algebra[pack.Value], bool) {
 	if !ok {
 		return axis.Algebra[pack.Value]{}, false
 	}
-	return adoptFactor(spec)
-}
-
-func adoptFactor(spec engine.HotFactorSpec[pack.DenseCoordinate, pack.Value]) (axis.Algebra[pack.Value], bool) {
-	return axis.Adopt(axis.CarrierAlgebra[pack.DenseCoordinate, pack.Value]{
-		KeyEnd:      spec.KeyEnd,
-		Lattice:     spec.Lattice,
-		Default:     spec.Default,
-		AdmitAt:     spec.AdmitAt,
-		Fingerprint: spec.Fingerprint,
-		Widen:       axis.CarrierRank[pack.DenseCoordinate, pack.Value]{Width: spec.WidenRank.Width, At: spec.WidenRank.At},
-		Narrow:      axis.CarrierRank[pack.DenseCoordinate, pack.Value]{Width: spec.NarrowRank.Width, At: spec.NarrowRank.At},
-	})
+	return spec.AxisAlgebra()
 }
 
 // StructureSpecs is this package's contribution to the analyzer's semantic

@@ -68,14 +68,7 @@ func AlgebraAxis(owner *HotOwner) (axis.Algebra[staticdomain.TypeFact], bool) {
 	if !ok {
 		return axis.Algebra[staticdomain.TypeFact]{}, false
 	}
-	return axis.Adopt(axis.CarrierAlgebra[staticdomain.DenseCoordinate, staticdomain.TypeFact]{
-		KeyEnd:      spec.KeyEnd,
-		Lattice:     spec.Lattice,
-		Default:     spec.Default,
-		AdmitAt:     spec.AdmitAt,
-		Fingerprint: spec.Fingerprint,
-		Widen:       axis.CarrierRank[staticdomain.DenseCoordinate, staticdomain.TypeFact]{Width: spec.WidenRank.Width, At: spec.WidenRank.At},
-	})
+	return spec.AxisAlgebra()
 }
 
 func StructureSpecs() []structure.Spec { return vocabulary.RoleSpecs(AxisRole) }

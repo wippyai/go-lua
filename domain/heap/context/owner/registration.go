@@ -43,22 +43,11 @@ func BindAxis[A axisInputs](binding *engine.SchemaBinding, context axis.Binding[
 }
 
 func AlgebraAxis(owner *HotOwner) (axis.Algebra[contextdomain.Value], bool) {
-	if owner == nil {
-		return axis.Algebra[contextdomain.Value]{}, false
-	}
 	spec, ok := owner.FactorSpec()
 	if !ok {
 		return axis.Algebra[contextdomain.Value]{}, false
 	}
-	return axis.Adopt(axis.CarrierAlgebra[coordinate, contextdomain.Value]{
-		KeyEnd:      spec.KeyEnd,
-		Lattice:     spec.Lattice,
-		Default:     spec.Default,
-		AdmitAt:     spec.AdmitAt,
-		Fingerprint: spec.Fingerprint,
-		Widen:       axis.CarrierRank[coordinate, contextdomain.Value]{Width: spec.WidenRank.Width, At: spec.WidenRank.At},
-		Narrow:      axis.CarrierRank[coordinate, contextdomain.Value]{Width: spec.NarrowRank.Width, At: spec.NarrowRank.At},
-	})
+	return spec.AxisAlgebra()
 }
 
 // StructureSpecs contributes Context's semantic identity to the composition
