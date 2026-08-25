@@ -151,7 +151,7 @@ func Specialize(cert certificate.Certificate, inventory Inventory, factory bindi
 		if relationAddress, relationOK := book.Relation(head.Relation().ID()); !relationOK || !relationAddress.ValidFor(fence) {
 			return Mounted{}, false
 		}
-		permit, permitOK := newWideningPermit(head)
+		permit, permitOK := newWideningPermit(head, runtime)
 		if !permitOK {
 			return Mounted{}, false
 		}
