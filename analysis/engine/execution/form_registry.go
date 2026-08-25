@@ -190,6 +190,21 @@ type RuleFamilyInstaller[K scalar.Key, V any] interface {
 	InstallRuleFamily(plane FormPlane[K, V], rule uint32, rows []FormRow) (Family, []FormAddress, bool)
 }
 
+// ExactDestinationProjector is the construction-only half of an authored
+// heterogeneous exact family.  Such a rule takes its candidate from one axis
+// but writes a key of another, so neither axis owner can project the row by
+// itself: the candidate owner cannot normalize the output key, and the output
+// owner does not own the candidate directory.  The generated installer is the
+// one sealed object that holds both typed schemas and the declared accessor.
+//
+// Program construction asks this surface once per candidate, before any solve
+// exists.  The returned local is then authenticated by the output Factor when
+// it mints the strong target.  It is deliberately separate from execution and
+// carries no Factor binding, target, callback, or runtime state.
+type ExactDestinationProjector interface {
+	ProjectExactDestination(candidate uint32) (uint64, bool)
+}
+
 // RuleFamilies is the sealed table of which installer authors which sealed
 // rule ordinal. Membership in the table IS authorship: there is no separate
 // predicate an installer could answer inconsistently with the table, and no

@@ -743,15 +743,29 @@ func declareGeneratedWriteSurface(state *schemaBindingState, declaration *genera
 	case directRuleWriteExact:
 		candidate := descriptor.CandidateRelation()
 		destination := descriptor.DestinationProjection()
-		candidateOwner, candidateOwnerOK := relationOwnerForGeneratedAxis(state, candidate.Axis)
-		if !candidateOwnerOK {
+		var destinationLocal uint64
+		var destinationOK bool
+		switch destination.Axis {
+		case candidate.Axis:
+			candidateOwner, candidateOwnerOK := relationOwnerForGeneratedAxis(state, candidate.Axis)
+			if !candidateOwnerOK {
+				return ruleWriteSurface{}, false
+			}
+			local, projected := candidateOwner.Project(candidate.Member, destination.Member, denseCandidate)
+			destinationLocal, destinationOK = uint64(local), projected
+		case uint32(outputFactorOrdinal):
+			projector, projectorOK := generatedExactDestinationProjector(state, declaration.ordinal, outputFactorOrdinal)
+			if !projectorOK {
+				return ruleWriteSurface{}, false
+			}
+			destinationLocal, destinationOK = projector.ProjectExactDestination(denseCandidate)
+		default:
 			return ruleWriteSurface{}, false
 		}
-		destinationLocal, destinationOK := candidateOwner.Project(candidate.Member, destination.Member, denseCandidate)
 		if !destinationOK {
 			return ruleWriteSurface{}, false
 		}
-		surface, surfaceOK := outputFactor.schemaFactorExactWrite(state, state.authority, uint64(destinationLocal))
+		surface, surfaceOK := outputFactor.schemaFactorExactWrite(state, state.authority, destinationLocal)
 		if !surfaceOK || !surface.value.Available() || surface.value.Factor != outputFactor.schemaFactorSemanticKey() {
 			return ruleWriteSurface{}, false
 		}
@@ -769,6 +783,27 @@ func declareGeneratedWriteSurface(state *schemaBindingState, declaration *genera
 	default:
 		return ruleWriteSurface{}, false
 	}
+}
+
+// generatedExactDestinationProjector resolves the construction-only projector
+// claimed by one authored heterogeneous exact rule.  The claim is selected by
+// the sealed rule ordinal and fenced to the exact output Factor; there is no
+// fallback to the candidate owner's ordinal space when the claim is absent.
+func generatedExactDestinationProjector(state *schemaBindingState, rule, factor uint64) (execution.ExactDestinationProjector, bool) {
+	if state == nil {
+		return nil, false
+	}
+	state.mu.Lock()
+	defer state.mu.Unlock()
+	if state.phase != schemaBindingSealed || state.authority == nil {
+		return nil, false
+	}
+	claim, claimed := state.ruleFamilies[rule]
+	if !claimed || claim.factor != factor || claim.installer == nil {
+		return nil, false
+	}
+	projector, typed := claim.installer.(execution.ExactDestinationProjector)
+	return projector, typed && projector != nil
 }
 
 // admitRuleSurfaceAnchor mints one issuance's Occurrence and Operand into the

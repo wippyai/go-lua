@@ -777,7 +777,32 @@ func verifyOutputs(byAxis map[uint32]membergenerator.Metadata, catalog ruleplan.
 			}
 		} else {
 			candidateAxisKey, candidateAxisOK := axisKeyAt(catalog, candidateAddress.Axis)
-			if !candidateAxisOK || destinationAxis != candidateAxisKey || destination.Relation != candidateRelation.Key || destination.CandidateProvider != candidateRelation.CandidateProvider {
+			if !candidateAxisOK {
+				return nil, nil, ProblemMember, false
+			}
+			switch {
+			case destinationAxis == candidateAxisKey:
+				if destination.Relation != candidateRelation.Key || destination.CandidateProvider != candidateRelation.CandidateProvider {
+					return nil, nil, ProblemMember, false
+				}
+			case compiledOutput.Mode == program.ModeExact && destinationAxis == outputAxis && destinationAxis != candidateAxisKey:
+				// Consumer-owned exact projection: the output axis declares a
+				// relation addressed by this exact foreign candidate.  The
+				// emitted installer applies its typed accessor and normalizes the
+				// result with the output schema; no candidate ordinal is copied
+				// into the consumer owner.
+				var destinationProvider member.CandidateRef
+				relationFound := false
+				for _, relation := range destinationMetadata.Relations {
+					if relation.Key == destination.Relation {
+						destinationProvider, relationFound = relation.CandidateProvider, true
+						break
+					}
+				}
+				if !relationFound || destinationProvider != candidateRelation.CandidateProvider || destination.CandidateProvider != candidateRelation.CandidateProvider {
+					return nil, nil, ProblemMember, false
+				}
+			default:
 				return nil, nil, ProblemMember, false
 			}
 		}

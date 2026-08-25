@@ -174,10 +174,16 @@ func DeclareGeneratedRuleSlot(
 		}
 	}
 	if output.Mode == ruleprogram.ModeExact || output.Mode == ruleprogram.ModeStructural {
-		// Both arms address the candidate relation's own coordinate space,
-		// which an issued Program row has none of. The plan refuses the
-		// pairing; the descriptor states the same law rather than inheriting it.
-		if issuedCandidate || output.RouteJoinPresent || output.RouteJoin != 0 || output.Destination.Axis != compiled.Candidate().Axis {
+		// A structural row is addressed only by its candidate.  An exact row
+		// has two sealed normal forms: the candidate owner's own projection, or
+		// a consumer projection declared by the output axis for that candidate.
+		// The latter is what lets a heterogeneous fold write its own key without
+		// copying the foreign candidate directory into the consumer.
+		destinationAxisOK := output.Destination.Axis == compiled.Candidate().Axis
+		if output.Mode == ruleprogram.ModeExact {
+			destinationAxisOK = destinationAxisOK || output.Destination.Axis == output.Address.Axis
+		}
+		if issuedCandidate || output.RouteJoinPresent || output.RouteJoin != 0 || !destinationAxisOK {
 			return refuse()
 		}
 	} else if !output.RouteJoinPresent || uint64(output.RouteJoin) >= uint64(len(joins)) || joins[output.RouteJoin].ReadForm != ruleprogram.Selected || output.Destination.Axis != joins[output.RouteJoin].Relation.Axis {

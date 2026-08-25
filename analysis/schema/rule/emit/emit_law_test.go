@@ -242,7 +242,7 @@ func TestAnUnexpressibleDeclarationIsRefusedByName(t *testing.T) {
 		{
 			name:   "an identity carry has no installer-authored form",
 			mutate: func(spec *rule.Spec) { spec.Program.Carry = nil },
-			clause: "an exact output with no transformed carry",
+			clause: "an authored exact output with no identity carry",
 		},
 		{
 			name: "a summary read has no sealed primitive",

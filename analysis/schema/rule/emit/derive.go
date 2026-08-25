@@ -23,6 +23,11 @@ const (
 	// moves every carried coordinate through the candidate's declared
 	// transition.
 	shapeCarry
+	// shapeExactFold reads one exact foreign fact, applies the declared typed
+	// reducer, and publishes at the consumer-owned exact destination projected
+	// from the candidate.  The installer also owns the construction-time
+	// projection because it is the only sealed object holding both schemas.
+	shapeExactFold
 	// shapeSelectedRoute publishes one fact per selected route of a dependent
 	// relation the declaration derives.
 	shapeSelectedRoute
@@ -105,6 +110,13 @@ type carryPlan struct {
 	transform definition.CarryTransform
 }
 
+// exactPlan is the consumer-owned destination of one heterogeneous exact
+// fold.  Its accessor is applied to the candidate row and its result is
+// normalized by the written axis; neither owner can perform both halves.
+type exactPlan struct {
+	destination definition.Projection
+}
+
 // foldPlan is the declared reducer and the call shape its declaration derives.
 type foldPlan struct {
 	reducer   definition.Reducer
@@ -115,8 +127,10 @@ type foldPlan struct {
 
 // routePlan is the selected join a routed output publishes through.
 type routePlan struct {
-	join *joinPlan
-	slot uint16
+	join            *joinPlan
+	slot            uint16
+	destination     definition.Projection
+	destinationType definition.GoType
 }
 
 // plan is one rule's complete emission plan.
@@ -129,6 +143,7 @@ type plan struct {
 	joins      []*joinPlan
 	fold       foldPlan
 	carry      *carryPlan
+	exact      *exactPlan
 	route      *routePlan
 	outputSlot uint16
 	inputPorts int
@@ -145,7 +160,11 @@ type plan struct {
 	// per row would be a second copy of the cell the fold already carries.
 	deliveredFact map[int]string
 	deliveredTag  map[int]string
-	imports       *importSet
+	// deliveredRoute is the owner-issued destination carrier delivered beside
+	// the selected cell. It is populated from the same relation member as the
+	// RouteMember and never reconstructed from a dense coordinate or tag.
+	deliveredRoute map[int]string
+	imports        *importSet
 }
 
 // derive resolves one rule declaration against the axis member roster into the
@@ -206,8 +225,13 @@ func derive(target Target, roster definition.Roster) (*plan, error) {
 func deriveDelivery(built *plan) {
 	built.deliveredFact = map[int]string{}
 	built.deliveredTag = map[int]string{}
+	built.deliveredRoute = map[int]string{}
 	switch built.shape {
 	case shapeCarry:
+		if len(built.fold.inputs) == 1 {
+			built.deliveredFact[0] = "cell"
+		}
+	case shapeExactFold:
 		if len(built.fold.inputs) == 1 {
 			built.deliveredFact[0] = "cell"
 		}
@@ -216,6 +240,7 @@ func deriveDelivery(built *plan) {
 			if join == built.route.join {
 				built.deliveredFact[position] = "cell.Value"
 				built.deliveredTag[position] = "cell.Tag"
+				built.deliveredRoute[position] = "routeCoordinate"
 			}
 		}
 	}
@@ -476,17 +501,69 @@ func deriveShape(built *plan, resolver *axisResolver, declaration program.Progra
 			return unexpressible(ruleKey, "a routed output over an untagged selection",
 				fmt.Sprintf("relation %q declares no predicate projection, so a member carries no tag to pair with its cell", route.relation.Name))
 		}
+		if output.Destination.Axis.Key != route.axis.key {
+			return unexpressible(ruleKey, "a routed output whose destination belongs to another axis",
+				fmt.Sprintf("destination axis %q, route axis %q", string(output.Destination.Axis.Key), string(route.axis.key)))
+		}
+		destination, destinationOK := findProjection(route.axis.source, output.Destination.Member)
+		if !destinationOK {
+			return unexpressible(ruleKey, "a routed output whose destination projection its axis does not declare",
+				string(output.Destination.Member))
+		}
+		if destination.Relation != route.relation.Name || destination.Role != member.Destination {
+			return unexpressible(ruleKey, "a routed output whose destination is not a projection of its route relation",
+				fmt.Sprintf("projection %q belongs to relation %q, route relation %q", destination.Name, destination.Relation, route.relation.Name))
+		}
+		destinationType, destinationCarrierOK := carrierType(route.axis.source, destination.Result)
+		if !destinationCarrierOK {
+			return unexpressible(ruleKey, "a routed output whose destination carrier is undeclared",
+				destination.Result)
+		}
+		keyType, keyCarrierOK := carrierType(route.axis.source, route.axis.source.Binding.Key.Carrier)
+		if !keyCarrierOK || !sameGoType(destinationType, keyType) {
+			return unexpressible(ruleKey, "a routed output whose destination carrier is not the routed axis key type",
+				fmt.Sprintf("destination %s, routed key %s", destinationType.Name, keyType.Name))
+		}
 		if declaration.Carry != nil {
 			return unexpressible(ruleKey, "a routed output beside a whole-output carry",
 				"a routed row publishes at derived members and has no single coordinate a carry closure could be taken over")
 		}
 		built.shape, built.form = shapeSelectedRoute, "FormSelectedRoute"
-		built.route = &routePlan{join: route, slot: output.ValueSlot}
+		built.route = &routePlan{join: route, slot: output.ValueSlot, destination: destination, destinationType: destinationType}
 		return nil
 	case program.ModeExact:
 		if declaration.Carry == nil || declaration.Carry.Mode != program.CarryTransform {
-			return unexpressible(ruleKey, "an exact output with no transformed carry",
-				"an exact publication with an identity carry is the engine's own generic form and is not installer-authored")
+			if declaration.Carry == nil || declaration.Carry.Mode != program.CarryIdentity {
+				return unexpressible(ruleKey, "an authored exact output with no identity carry",
+					"a heterogeneous exact fold retains the written Factor through its declared identity carry")
+			}
+			if len(built.joins) != 1 || built.joins[0].read.Form != program.Exact {
+				return unexpressible(ruleKey, fmt.Sprintf("an authored exact fold over %d non-scalar reads", len(built.joins)),
+					"the emitted E fold currently consumes exactly one exact cell")
+			}
+			destinationAxis, err := resolver.axis(output.Destination.Axis.Key)
+			if err != nil {
+				return err
+			}
+			if destinationAxis.key != built.write.key || destinationAxis.key == built.candidate.axis.key {
+				return unexpressible(ruleKey, "an authored exact destination outside the foreign consumer normal form",
+					"the destination must be declared by the written axis for a candidate owned by another axis")
+			}
+			destination, destinationOK := findProjection(destinationAxis.source, output.Destination.Member)
+			if !destinationOK {
+				return unexpressible(ruleKey, "an exact destination its output axis does not declare", string(output.Destination.Member))
+			}
+			if destination.CandidateProvider != declaration.Candidate || !sameGoType(destination.Accessor.Receiver, built.candidate.subject) {
+				return unexpressible(ruleKey, "an exact destination not projected from its declared candidate",
+					fmt.Sprintf("projection %q is not a typed projection of %q", destination.Name, built.candidate.relation.Name))
+			}
+			if destination.Result != built.write.source.Binding.Key.Carrier {
+				return unexpressible(ruleKey, "an exact destination that does not publish the output axis key",
+					fmt.Sprintf("projection %q publishes %s, output key is %s", destination.Name, destination.Result, built.write.source.Binding.Key.Carrier))
+			}
+			built.shape, built.form = shapeExactFold, "FormExact"
+			built.exact = &exactPlan{destination: destination}
+			return nil
 		}
 		transformAxis, err := resolver.axis(declaration.Carry.Transform.Axis.Key)
 		if err != nil {

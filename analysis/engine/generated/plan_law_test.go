@@ -43,6 +43,35 @@ func TestPlanExecutorTableRetainsHeterogeneousReadAndOutputFactors(t *testing.T)
 	}
 }
 
+// TestPlanExecutorTableRetainsAConsumerOwnedExactDestination closes the
+// Plan-to-runtime half migration.  The cold Plan already admits a consumer
+// projection of a foreign candidate; the executable descriptor must preserve
+// that output-axis address rather than narrowing every exact destination back
+// to the candidate axis.
+func TestPlanExecutorTableRetainsAConsumerOwnedExactDestination(t *testing.T) {
+	read := ReadPlan{
+		Input: 0, Factor: 1, Axis: 0,
+		Relation: ruleplan.RelationAddr{Axis: 0, Member: 0}, Key: ruleplan.ProjectionAddr{Axis: 0, Member: 0},
+		Addressing: ruleplan.RelationAddr{Axis: 0, Member: 0}, AddressingPresent: true,
+		Form: ruleprogram.Exact, PointBound: ruleprogram.PointBound,
+		Contract:    ruleplan.ReadContract{Order: ruleprogram.OrderCanonical, Sparse: ruleprogram.SparseExplicit, OnOpaque: ruleprogram.OnOpaqueRefuse, Multiplicity: ruleprogram.MultiplicityOne},
+		RowCapacity: 1, CellCapacity: 1,
+	}
+	spec := planLawSpec([]ReadPlan{read}, &CarryPlan{Input: 0, Factor: 2, Mode: ruleprogram.CarryIdentity, Identity: true}, 1)
+	spec.Outputs[0].Destination = ruleplan.ProjectionAddr{Axis: 2, Member: 4}
+	descriptor, ok := NewPlanCompiledRule(spec)
+	if !ok || !descriptor.Available() || descriptor.DestinationProjection() != spec.Outputs[0].Destination {
+		t.Fatalf("consumer exact destination = %+v/%t", descriptor.DestinationProjection(), ok)
+	}
+
+	stray := spec
+	stray.Outputs = append([]OutputPlan(nil), spec.Outputs...)
+	stray.Outputs[0].Destination.Axis = 1
+	if descriptor, admitted := NewPlanCompiledRule(stray); admitted || descriptor.Available() {
+		t.Fatal("an exact destination owned by neither candidate nor consumer was admitted")
+	}
+}
+
 func TestPlanExecutorTableRefusesHoleyInputPorts(t *testing.T) {
 	read := ReadPlan{
 		Input: 1, Factor: 1, Axis: 0,

@@ -219,7 +219,10 @@ func NewPlanCompiledRule(spec CompiledRuleSpec) (CompiledRule, bool) {
 	if !validOutputPlan(output, spec.InputCount, spec.AxisCount, spec.Candidate, spec.Reducer) {
 		return CompiledRule{}, false
 	}
-	if output.Mode != ruleprogram.ModeRoute && output.Destination.Axis != spec.Candidate.Axis {
+	if output.Mode == ruleprogram.ModeStructural && output.Destination.Axis != spec.Candidate.Axis {
+		return CompiledRule{}, false
+	}
+	if output.Mode == ruleprogram.ModeExact && output.Destination.Axis != spec.Candidate.Axis && output.Destination.Axis != output.Address.Axis {
 		return CompiledRule{}, false
 	}
 	if output.Mode == ruleprogram.ModeRoute && output.Destination.Axis != readCopy[output.RouteJoin].Relation.Axis {
@@ -474,7 +477,6 @@ func validOutputPlan(output OutputPlan, _ int, axisCount int, candidate ruleplan
 		addressAxesInRange(axisCount, output.Address, output.Destination)
 }
 
-
 func validRelationAddr(address ruleplan.RelationAddr) bool {
 	return address.Axis != ^uint32(0) && address.Member != ^uint32(0)
 }
@@ -532,7 +534,10 @@ func (rule CompiledRule) Available() bool {
 			return false
 		}
 	}
-	if output.Mode != ruleprogram.ModeRoute && output.Destination.Axis != rule.candidateRelation.Axis {
+	if output.Mode == ruleprogram.ModeStructural && output.Destination.Axis != rule.candidateRelation.Axis {
+		return false
+	}
+	if output.Mode == ruleprogram.ModeExact && output.Destination.Axis != rule.candidateRelation.Axis && output.Destination.Axis != output.Address.Axis {
 		return false
 	}
 	if output.Mode == ruleprogram.ModeRoute && output.Destination.Axis != rule.reads[output.RouteJoin].Relation.Axis {
@@ -548,7 +553,6 @@ func (rule CompiledRule) Available() bool {
 	}
 	return true
 }
-
 
 func (rule CompiledRule) InputCount() int {
 	if !rule.Available() {

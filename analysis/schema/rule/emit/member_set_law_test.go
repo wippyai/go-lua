@@ -173,7 +173,17 @@ func memberSetPlacementDefinition() definition.Definition {
 			{
 				Name: "RouteKey", Key: "placement/return-escape/route-key", Relation: "Routes",
 				Role: member.Key, Result: "PlacementKey",
-				Accessor:          specimenMethod("Coordinate", "Route", -1),
+				Accessor:          specimenMethod("Key", "Route", -1),
+				CandidateProvider: member.AxisRelationCandidate(provider),
+			},
+			{
+				// The join key and the routed output destination are
+				// different semantic roles even when they use the same
+				// owner-issued coordinate. Keeping both declarations makes
+				// the output's destination carrier explicit to the emitter.
+				Name: "RouteDestination", Key: "placement/return-escape/route-destination", Relation: "Routes",
+				Role: member.Destination, Result: "PlacementKey",
+				Accessor:          specimenMethod("Destination", "Route", -1),
 				CandidateProvider: member.AxisRelationCandidate(provider),
 			},
 			{
@@ -284,7 +294,7 @@ func memberSetSpec() rule.Spec {
 				Inputs:  []program.JoinRef{1},
 				Outputs: []program.OutputDecl{{
 					Column:      axis.OutputRef{Axis: placement, Key: "placement/facts"},
-					Destination: member.ProjectionRef{Axis: placement, Member: "placement/return-escape/route-key"},
+					Destination: member.ProjectionRef{Axis: placement, Member: "placement/return-escape/route-destination"},
 					Mode:        program.ModeRoute, ValueSlot: 0,
 					RouteJoin: 1, RouteJoinPresent: true,
 				}},
@@ -352,6 +362,15 @@ func TestMemberSetJoinDeliversOneVectorFromOrdinalSealedReads(t *testing.T) {
 	}
 	if !sawVector {
 		t.Fatalf("the derivation call %v does not carry the sealed member vector:\n%s", call, source)
+	}
+	if !strings.Contains(source, "Reduce(routeCoordinate ") {
+		t.Fatalf("the routed reducer does not receive the declared destination carrier:\n%s", source)
+	}
+	if !strings.Contains(source, "routeCoordinate specimen.PlacementKey") || strings.Contains(source, "routes []uint32") {
+		t.Fatalf("the emitted route carrier was collapsed into the engine dense type:\n%s", source)
+	}
+	if !strings.Contains(source, "destinationDense") || !strings.Contains(source, "RouteMember(uint32(dense), uint32(destinationDense)") || !strings.Contains(source, "routes[index] = ") || !strings.Contains(source, "cells, members, routes,") {
+		t.Fatalf("the route carrier is not paired with the observed member vector:\n%s", source)
 	}
 }
 

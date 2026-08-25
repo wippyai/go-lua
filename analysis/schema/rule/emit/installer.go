@@ -70,6 +70,12 @@ func renderInstaller(out *strings.Builder, built *plan) error {
 		fmt.Fprintf(out, "\treturn %s\n}\n\n", strings.Join(guards, " && "))
 	}
 
+	if built.shape == shapeExactFold {
+		if err := renderExactDestinationProjector(out, built); err != nil {
+			return err
+		}
+	}
+
 	fmt.Fprintf(out, "func (install %s) InstallRuleFamily(plane %s.FormPlane[%s, %s], _ uint32, rows []%s.FormRow) (%s.Family, []%s.FormAddress, bool) {\n",
 		installerType, execution, dense, fact, execution, execution, execution)
 	out.WriteString("\tif !install.available() || !plane.Valid() || len(rows) == 0 {\n\t\treturn nil, nil, false\n\t}\n")
@@ -98,6 +104,8 @@ func renderInstaller(out *strings.Builder, built *plan) error {
 	switch built.shape {
 	case shapeCarry:
 		fmt.Fprintf(out, " || output.Mode != %s.ModeExact || output.RouteJoinPresent", ruleprogram)
+	case shapeExactFold:
+		fmt.Fprintf(out, " || output.Mode != %s.ModeExact || output.RouteJoinPresent", ruleprogram)
 	case shapeSelectedRoute:
 		fmt.Fprintf(out, " || output.Mode != %s.ModeRoute || !output.RouteJoinPresent || output.RouteJoin != %d",
 			ruleprogram, built.route.join.position)
@@ -107,6 +115,10 @@ func renderInstaller(out *strings.Builder, built *plan) error {
 	if built.shape == shapeCarry {
 		fmt.Fprintf(out, "\t\tcarryMode, carryPresent := planRow.Rule.CarryMode()\n")
 		fmt.Fprintf(out, "\t\tif !carryPresent || carryMode != %s.CarryTransform {\n\t\t\treturn nil, nil, false\n\t\t}\n", ruleprogram)
+	}
+	if built.shape == shapeExactFold {
+		fmt.Fprintf(out, "\t\tcarryMode, carryPresent := planRow.Rule.CarryMode()\n")
+		fmt.Fprintf(out, "\t\tif !carryPresent || carryMode != %s.CarryIdentity {\n\t\t\treturn nil, nil, false\n\t\t}\n", ruleprogram)
 	}
 
 	firstExact := -1
@@ -160,6 +172,8 @@ func renderInstaller(out *strings.Builder, built *plan) error {
 	case shapeCarry:
 		fmt.Fprintf(out, "\t\twriteSealed, writeSealedOK := plane.RowCarry(planRow, %s)\n",
 			imports.methodValue(built.carry.transform.Implementation, "candidate"))
+	case shapeExactFold:
+		out.WriteString("\t\twriteSealed, writeSealedOK := plane.ExactWrite(planRow.Target, uint16(output.Slot))\n")
 	case shapeSelectedRoute:
 		out.WriteString("\t\twriteSealed, writeSealedOK := plane.RouteWrite(uint16(output.Slot))\n")
 	}
@@ -180,6 +194,31 @@ func renderInstaller(out *strings.Builder, built *plan) error {
 		fmt.Fprintf(out, "\tsealed.%sWidth = %sWidth\n", join.name, join.name)
 	}
 	out.WriteString("\treturn sealed, addresses, true\n}\n")
+	return nil
+}
+
+// renderExactDestinationProjector emits the construction-time bridge of a
+// heterogeneous exact rule: fetch the candidate from its owner, apply the
+// consumer-declared typed destination accessor, then normalize that key with
+// the written axis.  This method is the only place both schemas coexist.
+func renderExactDestinationProjector(out *strings.Builder, built *plan) error {
+	imports := built.imports
+	if built.exact == nil {
+		return unexpressible(built.target.Spec.Key, "an exact fold with no destination projection", "the installer cannot mint its construction target")
+	}
+	fmt.Fprintf(out, "func (install %s) ProjectExactDestination(ordinal uint32) (uint64, bool) {\n", installerType)
+	out.WriteString("\tif !install.available() {\n\t\treturn 0, false\n\t}\n")
+	fmt.Fprintf(out, "\tcandidate, candidateOK := %s\n",
+		imports.call(built.candidate.at, "install."+built.candidate.axis.param, "int(ordinal)"))
+	out.WriteString("\tif !candidateOK {\n\t\treturn 0, false\n\t}\n")
+	key, err := projectionExpressionRefusing(built, built.exact.destination, "candidate", "\t", "return 0, false", out)
+	if err != nil {
+		return err
+	}
+	fmt.Fprintf(out, "\tdense, denseOK := %s\n",
+		imports.call(built.write.normalizer, "install."+built.write.param, key))
+	out.WriteString("\tif !denseOK {\n\t\treturn 0, false\n\t}\n")
+	out.WriteString("\treturn uint64(dense), true\n}\n\n")
 	return nil
 }
 

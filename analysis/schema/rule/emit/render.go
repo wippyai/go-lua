@@ -106,11 +106,38 @@ func renderReducer(out *strings.Builder, built *plan) error {
 	switch built.shape {
 	case shapeCarry:
 		return renderCarryReduce(out, built)
+	case shapeExactFold:
+		return renderExactReduce(out, built)
 	case shapeSelectedRoute:
 		return renderRouteReduce(out, built)
 	default:
 		return unexpressible(built.target.Spec.Key, "an unclassified fold", "the declaration derives no emitted shape")
 	}
+}
+
+func renderExactReduce(out *strings.Builder, built *plan) error {
+	imports := built.imports
+	structure := imports.use(structurePackagePath)
+	read := built.joins[0]
+	if read.read.Contract.Sparse != program.SparseExplicit {
+		return unexpressible(built.target.Spec.Key, fmt.Sprintf("an exact fold read with %s sparsity", sparseName(read.read.Contract.Sparse)),
+			"the heterogeneous exact fold preserves absence and never materializes a default")
+	}
+	if len(built.fold.results) != 2 {
+		return unexpressible(built.target.Spec.Key, fmt.Sprintf("an exact fold answering %d results", len(built.fold.results)),
+			"an exact fold publishes one fact and one disposition")
+	}
+	call, err := foldCall(built)
+	if err != nil {
+		return err
+	}
+	out.WriteString("// Reduce is the one irreducible typed judgment of this exact family. The\n")
+	out.WriteString("// execution worker authenticates presence before calling it, so absence never\n")
+	out.WriteString("// becomes a default fact and the fold receives only declared carriers.\n")
+	fmt.Fprintf(out, "func (fold %s) Reduce(cell %s) (%s, %s.ReductionOutcome) {\n",
+		reducerType, imports.typeName(read.axis.fact), imports.typeName(built.fold.results[0]), structure)
+	fmt.Fprintf(out, "\treturn %s\n}\n\n", call)
+	return nil
 }
 
 // foldCall spells the one direct call to the declared reducer, with the
@@ -136,8 +163,12 @@ func foldCall(built *plan) (string, error) {
 			}
 			arguments = append(arguments, expression)
 		case definition.ArgumentRoute:
-			return "", unexpressible(built.target.Spec.Key, "a fold input that takes its own route coordinate",
-				fmt.Sprintf("input %d declares a route carrier, and the emitted fold delivers cells and tags only", argument.Input))
+			expression, present := built.deliveredRoute[argument.Input]
+			if !present {
+				return "", unexpressible(built.target.Spec.Key, "a routed fold input outside its own route selection",
+					fmt.Sprintf("input %d declares a route carrier, and only the selected relation member owns a destination coordinate", argument.Input))
+			}
+			arguments = append(arguments, expression)
 		case definition.ArgumentVector:
 			// A many-valued input is one vector argument. The invocation fills
 			// the reducer's field with the vector it delivered, so the fold
@@ -207,11 +238,11 @@ func renderRouteReduce(out *strings.Builder, built *plan) error {
 	if err != nil {
 		return err
 	}
-	out.WriteString("// Reduce answers one selected route. The cell and its tag are the two halves of\n")
-	out.WriteString("// the one member vector the read observed, so the fold never re-derives the\n")
-	out.WriteString("// correlation the selection already established.\n")
-	fmt.Fprintf(out, "func (fold %s) Reduce(cell %s.SelectedCell[%s]) (%s, %s.ReductionOutcome) {\n",
-		reducerType, execution, imports.typeName(route.axis.fact), imports.typeName(built.fold.results[0]), structure)
+	out.WriteString("// Reduce answers one selected route. The route coordinate, cell, and tag\n")
+	out.WriteString("// are the three owner-issued halves of the one member the read observed,\n")
+	out.WriteString("// so the fold never re-derives a destination or correlation.\n")
+	fmt.Fprintf(out, "func (fold %s) Reduce(routeCoordinate %s, cell %s.SelectedCell[%s]) (%s, %s.ReductionOutcome) {\n",
+		reducerType, imports.typeName(built.route.destinationType), execution, imports.typeName(route.axis.fact), imports.typeName(built.fold.results[0]), structure)
 	fmt.Fprintf(out, "\treturn %s\n}\n\n", call)
 
 	out.WriteString("// Empty settles the row whose derived relation selected no route at all. An\n")
@@ -257,6 +288,9 @@ func renderRow(out *strings.Builder, built *plan) error {
 	case shapeCarry:
 		fmt.Fprintf(out, "\twrite %s.CarryWrite[%s, %s]\n", execution,
 			imports.typeName(built.write.dense), imports.typeName(built.write.fact))
+	case shapeExactFold:
+		fmt.Fprintf(out, "\twrite %s.ExactWrite[%s, %s]\n", execution,
+			imports.typeName(built.write.dense), imports.typeName(built.write.fact))
 	case shapeSelectedRoute:
 		fmt.Fprintf(out, "\twrite %s.RouteWrite[%s, %s]\n", execution,
 			imports.typeName(built.write.dense), imports.typeName(built.write.fact))
@@ -299,6 +333,7 @@ func renderFamily(out *strings.Builder, built *plan) {
 		out.WriteString("\t\tfamily:  sealed,\n\t\trun:     run,\n")
 		fmt.Fprintf(out, "\t\tmembers: make([]%s.RouteMember, sealed.width),\n", execution)
 		fmt.Fprintf(out, "\t\tcells:   make([]%s.SelectedCell[%s], sealed.width),\n", execution, imports.typeName(built.write.fact))
+		fmt.Fprintf(out, "\t\troutes:  make([]%s, sealed.width),\n", imports.typeName(built.route.destinationType))
 		for _, join := range memberSetJoins(built) {
 			fmt.Fprintf(out, "\t\t%sCells: make([]%s.MemberCell[%s], sealed.%sWidth),\n",
 				join.name, execution, imports.typeName(join.axis.fact), join.name)
@@ -343,11 +378,15 @@ func renderWorker(out *strings.Builder, built *plan) error {
 	case shapeCarry:
 		fmt.Fprintf(out, "\twrite %s.Scratch[%s, %s]\n", execution,
 			imports.typeName(built.write.dense), imports.typeName(built.write.fact))
+	case shapeExactFold:
+		fmt.Fprintf(out, "\twrite %s.Scratch[%s, %s]\n", execution,
+			imports.typeName(built.write.dense), imports.typeName(built.write.fact))
 	case shapeSelectedRoute:
 		fmt.Fprintf(out, "\twrite %s.RouteScratch[%s, %s]\n", execution,
 			imports.typeName(built.write.dense), imports.typeName(built.write.fact))
 		fmt.Fprintf(out, "\tmembers []%s.RouteMember\n", execution)
 		fmt.Fprintf(out, "\tcells   []%s.SelectedCell[%s]\n", execution, imports.typeName(built.write.fact))
+		fmt.Fprintf(out, "\troutes  []%s\n", imports.typeName(built.route.destinationType))
 	}
 	out.WriteString("}\n\n")
 
@@ -361,9 +400,45 @@ func renderWorker(out *strings.Builder, built *plan) error {
 	switch built.shape {
 	case shapeCarry:
 		return renderCarryExecute(out, built)
+	case shapeExactFold:
+		return renderExactExecute(out, built)
 	case shapeSelectedRoute:
 		return renderRouteExecute(out, built)
 	}
+	return nil
+}
+
+func renderExactExecute(out *strings.Builder, built *plan) error {
+	imports := built.imports
+	execution := imports.use(executionPackagePath)
+	structure := imports.use(structurePackagePath)
+	read := built.joins[0]
+	out.WriteString("// Execute consumes the one exact existence fact, applies the typed fold, and\n")
+	out.WriteString("// publishes through the consumer-owned target sealed for this candidate.\n")
+	renderExecutePrologue(out, built)
+	fmt.Fprintf(out, "\tswitch row.%s.Read(ticket, &lane.%s) {\n", read.name, read.name)
+	fmt.Fprintf(out, "\tcase %s.ReadAvailable:\n", execution)
+	fmt.Fprintf(out, "\t\tcell, available := lane.%s.Value()\n", read.name)
+	fmt.Fprintf(out, "\t\tpresent := lane.%s.Present()\n", read.name)
+	fmt.Fprintf(out, "\t\tregion, regionOK := lane.%s.Region()\n", read.name)
+	fmt.Fprintf(out, "\t\tif !row.%s.Close(ticket, &lane.%s) {\n\t\t\t_ = lane.%s.Discard(ticket)\n\t\t\treturn lane.settle(ticket, %s.Refuse)\n\t\t}\n",
+		read.name, read.name, read.name, structure)
+	fmt.Fprintf(out, "\t\tif !available || !regionOK {\n\t\t\treturn lane.settle(ticket, %s.Refuse)\n\t\t}\n", structure)
+	fmt.Fprintf(out, "\t\tcell, present = row.%sPolicy.Cell(cell, present)\n", read.name)
+	fmt.Fprintf(out, "\t\tif !present {\n\t\t\treturn lane.settle(ticket, %s.NoCandidate)\n\t\t}\n", structure)
+	fmt.Fprintf(out, "\t\tvalue, outcome := (%s{%s}).Reduce(cell)\n",
+		reducerType, strings.Join(reducerLiteralFields(built, nil), ", "))
+	fmt.Fprintf(out, "\t\tif outcome != %s.Concrete {\n\t\t\treturn lane.settle(ticket, outcome)\n\t\t}\n", structure)
+	fmt.Fprintf(out, "\t\toutcome = %s.PublishExact(ticket, row.write, &lane.write, region, value)\n", execution)
+	fmt.Fprintf(out, "\t\tif !ticket.Submit(outcome) {\n\t\t\treturn %s.Result{}, false\n\t\t}\n", execution)
+	fmt.Fprintf(out, "\t\twritten := 0\n\t\tif outcome == %s.Concrete {\n\t\t\twritten = 1\n\t\t}\n", structure)
+	fmt.Fprintf(out, "\t\treturn %s.NewResult(outcome, written)\n", execution)
+	fmt.Fprintf(out, "\tcase %s.ReadExhausted:\n", execution)
+	fmt.Fprintf(out, "\t\tif !row.%s.Close(ticket, &lane.%s) {\n\t\t\treturn lane.settle(ticket, %s.Refuse)\n\t\t}\n", read.name, read.name, structure)
+	fmt.Fprintf(out, "\t\treturn lane.settle(ticket, %s.NoCandidate)\n", structure)
+	out.WriteString("\tdefault:\n")
+	fmt.Fprintf(out, "\t\t_ = lane.%s.Discard(ticket)\n\t\treturn lane.settle(ticket, %s.Refuse)\n", read.name, structure)
+	out.WriteString("\t}\n}\n\n")
 	return nil
 }
 
@@ -487,8 +562,8 @@ func renderRouteExecute(out *strings.Builder, built *plan) error {
 	fmt.Fprintf(out, "\tderived, derivedOK := %s\n", imports.call(derivation.build, "", arguments...))
 	fmt.Fprintf(out, "\tif !derivedOK {\n\t\treturn lane.settle(ticket, %s.Refuse)\n\t}\n", structure)
 	fmt.Fprintf(out, "\tcount := %s\n", imports.call(derivation.count, "", "derived"))
-	fmt.Fprintf(out, "\tif count < 0 || count > len(lane.members) || count > len(lane.cells) {\n\t\treturn lane.settle(ticket, %s.Refuse)\n\t}\n", structure)
-	out.WriteString("\tmembers := lane.members[:count]\n\tcells := lane.cells[:count]\n")
+	fmt.Fprintf(out, "\tif count < 0 || count > len(lane.members) || count > len(lane.cells) || count > len(lane.routes) {\n\t\treturn lane.settle(ticket, %s.Refuse)\n\t}\n", structure)
+	out.WriteString("\tmembers := lane.members[:count]\n\tcells := lane.cells[:count]\n\troutes := lane.routes[:count]\n")
 	out.WriteString("\tfor index := 0; index < count; index++ {\n")
 	fmt.Fprintf(out, "\t\tselected, selectedOK := %s\n", imports.call(derivation.at, "", "derived", "index"))
 	fmt.Fprintf(out, "\t\tif !selectedOK {\n\t\t\treturn lane.settle(ticket, %s.Refuse)\n\t\t}\n", structure)
@@ -500,15 +575,23 @@ func renderRouteExecute(out *strings.Builder, built *plan) error {
 	if err != nil {
 		return err
 	}
+	destinationExpression, err := projectionExpression(built, built.route.destination, "selected", "\t\t", out)
+	if err != nil {
+		return err
+	}
 	if route.key.Result != route.axis.source.Binding.Key.Carrier {
 		return unexpressible(built.target.Spec.Key, "a route key that is not the axis's own key carrier",
 			fmt.Sprintf("projection %q publishes %s", route.key.Name, route.key.Result))
 	}
 	fmt.Fprintf(out, "\t\tdense, denseOK := %s\n", imports.call(route.axis.normalizer, "lane.family."+route.axis.param, keyExpression))
 	fmt.Fprintf(out, "\t\tif !denseOK {\n\t\t\treturn lane.settle(ticket, %s.Refuse)\n\t\t}\n", structure)
-	fmt.Fprintf(out, "\t\tmember, memberOK := lane.family.plane.RouteMember(uint32(dense), uint64(%s))\n", tagExpression)
+	fmt.Fprintf(out, "\t\tdestinationDense, destinationDenseOK := %s\n", imports.call(route.axis.normalizer, "lane.family."+route.axis.param, destinationExpression))
+	fmt.Fprintf(out, "\t\tif !destinationDenseOK {\n\t\t\treturn lane.settle(ticket, %s.Refuse)\n\t\t}\n", structure)
+	fmt.Fprintf(out, "\t\tmember, memberOK := lane.family.plane.RouteMember(uint32(dense), uint32(destinationDense), uint64(%s))\n", tagExpression)
 	fmt.Fprintf(out, "\t\tif !memberOK {\n\t\t\treturn lane.settle(ticket, %s.Refuse)\n\t\t}\n", structure)
-	out.WriteString("\t\tmembers[index] = member\n\t}\n")
+	out.WriteString("\t\tmembers[index] = member\n")
+	fmt.Fprintf(out, "\t\troutes[index] = %s\n", destinationExpression)
+	out.WriteString("\t}\n")
 
 	out.WriteString("\t// An empty derived relation is a read that named nothing, which is exhausted\n")
 	out.WriteString("\t// rather than available; anything else is a selection that did not observe.\n")
@@ -516,7 +599,7 @@ func renderRouteExecute(out *strings.Builder, built *plan) error {
 	out.WriteString("\tif count == 0 {\n")
 	fmt.Fprintf(out, "\t\tif status != %s.ReadExhausted {\n\t\t\treturn lane.settle(ticket, %s.Refuse)\n\t\t}\n", execution, structure)
 	fmt.Fprintf(out, "\t} else if status != %s.ReadAvailable {\n\t\treturn lane.settle(ticket, %s.Refuse)\n\t}\n", execution, structure)
-	fmt.Fprintf(out, "\toutcome := %s.FoldSelectedRoute(ticket, row.write, &lane.write, cells, members, %s{%s})\n",
+	fmt.Fprintf(out, "\toutcome := %s.FoldSelectedRoute(ticket, row.write, &lane.write, cells, members, routes, %s{%s})\n",
 		execution, reducerType, strings.Join(reducerLiteralFields(built, invocation), ", "))
 	renderExecuteEpilogue(out, built)
 
