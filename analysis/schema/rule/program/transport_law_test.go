@@ -10,22 +10,29 @@ func transportAxis(key string) AxisRef {
 	return AxisRef(schema.EntryReference{Surface: schema.SurfaceKindAxis, Key: schema.Key(key)})
 }
 
-// transportProgram is the call-activation shape of seq 5742 with a declared
-// transport vector: one exact candidate read, one owner-issued target-role
-// selection over it, and one structural publication.
+// transportProgram is the call-activation shape with a declared transport
+// vector: one exact candidate read, the cold branch set hanging off that same
+// candidate row, and one structural publication.
+//
+// The vector, the family and the branch vocabulary are one declaration, so a
+// specimen carrying rows carries all three; a specimen carrying none carries
+// none of them, and that is the half every biconditional law below damages.
 func transportProgram(rows []TransportDecl) Program {
 	program := seq5742Program(
 		"call-activation",
 		[]JoinDecl{
 			seq5742Join("call-activation/call", []SourceRef{CandidateSource()}, Exact, false, false),
-			seq5742Join("call-activation/target-role", []SourceRef{PriorSource(0)}, Selected, true, true),
+			seq5742Join("call-activation/branch", []SourceRef{CandidateSource()}, Summary, false, true),
 		},
 		[]JoinRef{0, 1},
 		[]OutputDecl{seq5742Output("call-activation/write", ModeStructural, 0)},
 	)
+	program.Joins[1].Parent = lawRelation("call-activation/candidate")
 	program.Transport = rows
 	if len(rows) != 0 {
 		program.ActivationRole = "semantic/activation-family/call-body"
+		branch := activationLawBranch()
+		program.Activation = &branch
 	}
 	return program
 }

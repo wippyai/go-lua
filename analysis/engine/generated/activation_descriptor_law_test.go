@@ -8,14 +8,29 @@ import (
 )
 
 // activationPlanLawSpec is the sealed call-activation shape: one exact read of
-// the candidate, one owner-issued target-role selection over that predecessor,
-// one structural publication, and the transport vector the candidate route
-// instantiates when it crosses its transition.
+// the candidate, one vector read of the cold branch set hanging off that same
+// candidate row, one structural publication, the transport vector each branch
+// instantiates when it crosses its transition, and the identities the branch
+// is mounted by.
 func activationPlanLawSpec() CompiledRuleSpec {
 	spec := heterogeneousPlanLawSpec()
 	spec.Carry = nil
 	spec.InputCount = 2
 	spec.Reads[1].Input = 1
+	spec.Reads[1].Form = ruleprogram.Summary
+	spec.Reads[1].Predicate, spec.Reads[1].PredicatePresent = ruleplan.ProjectionAddr{}, false
+	spec.Reads[1].Parent, spec.Reads[1].ParentPresent = ruleplan.RelationAddr{Axis: 0, Member: 0}, true
+	spec.Reads[1].Addressing, spec.Reads[1].AddressingPresent = ruleplan.RelationAddr{Axis: 0, Member: 0}, true
+	spec.Reads[1].Contract.Order = ruleprogram.OrderCanonical
+	spec.Reads[1].Contract.Multiplicity = ruleprogram.MultiplicityMany
+	spec.Activation = &ruleplan.Activation{
+		Branch:      1,
+		Application: ruleplan.ProjectionAddr{Axis: 0, Member: 12},
+		Target:      ruleplan.ProjectionAddr{Axis: 0, Member: 13},
+		Endpoint:    ruleplan.ProjectionAddr{Axis: 0, Member: 14},
+		Mount:       ruleplan.ProjectionAddr{Axis: 0, Member: 15},
+		Body:        ruleplan.ProjectionAddr{Axis: 0, Member: 16},
+	}
 	spec.Outputs = []OutputPlan{{
 		Factor:      0,
 		Axis:        0,

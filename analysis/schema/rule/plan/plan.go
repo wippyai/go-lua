@@ -157,6 +157,23 @@ type Carry struct {
 	TransformKey  schema.Key
 }
 
+// Activation is one compiled branch vocabulary: the dense projection addresses
+// the construct plane mounts a candidate branch by. Every address is a
+// projection in the member.Identity role, because each one names a subject the
+// analyzer did not mint and no dense coordinate carries.
+type Activation struct {
+	// Branch is the declaration ordinal of the join whose members are the
+	// branches - the parent-declaring vector read.
+	Branch uint32
+	// Application is projected from the rule's own candidate row; the other
+	// four are projected from one branch row.
+	Application ProjectionAddr
+	Target      ProjectionAddr
+	Endpoint    ProjectionAddr
+	Mount       ProjectionAddr
+	Body        ProjectionAddr
+}
+
 // Transport is one compiled activation transport row: the dense ordinal of the
 // axis carried across the candidate's transition, and whether the mounted body
 // carries that axis back out to its trigger. One row is one axis, so the
@@ -238,6 +255,10 @@ type Plan struct {
 	// role vocabulary as semantic and operand. It is absent for a plan that
 	// declares no transport vector.
 	activation identity.SemanticKey
+	// branch is the compiled vocabulary one candidate branch is mounted by. It
+	// is present under the same biconditional the vector and the family are.
+	branch        Activation
+	branchPresent bool
 }
 
 // TransportCount is the declared width of this plan's activation transport
@@ -256,6 +277,12 @@ func (compiled Plan) TransportAt(index int) (Transport, bool) {
 // publication is admitted under. It is available exactly when the plan carries
 // a transport vector, which is the biconditional the Program declares.
 func (compiled Plan) ActivationFamily() identity.SemanticKey { return compiled.activation }
+
+// ActivationBranch is the compiled vocabulary one candidate branch is mounted
+// by, present under that same biconditional.
+func (compiled Plan) ActivationBranch() (Activation, bool) {
+	return compiled.branch, compiled.branchPresent
+}
 
 // Present reports whether this rule ordinal carried an authored Program.
 func (compiled Plan) Present() bool { return compiled.present }
@@ -980,6 +1007,11 @@ func compileProgram(ruleOrdinal uint32, template *rule.Template, declaration pro
 			return Plan{}, compileFailure(template.ID(), rule.LawProgramShape, schema.DispositionIncomplete)
 		}
 		compiled.activation = activationSemantic
+		branch, branchFailure := compileActivationBranch(axisView, template, declaration, compiled)
+		if branchFailure.Available() {
+			return Plan{}, branchFailure
+		}
+		compiled.branch, compiled.branchPresent = branch, true
 	}
 
 	if !fitsUint32(len(compiled.sources)) || !fitsUint32(len(compiled.joins)) || !fitsUint32(len(compiled.foldInputs)) || !fitsUint32(len(compiled.outputs)) || !fitsUint32(len(compiled.transports)) {
@@ -989,6 +1021,69 @@ func compileProgram(ruleOrdinal uint32, template *rule.Template, declaration pro
 		return Plan{}, compileFailure(template.ID(), rule.LawProgramShape, schema.DispositionMalformed)
 	}
 	return compiled, schema.SealFailure{}
+}
+
+// compileActivationBranch resolves the branch vocabulary of a structural
+// publication into dense projection addresses.
+//
+// Each projection is authenticated against the relation it must belong to, the
+// same way a Key or a Predicate is: the application is a column of the rule's
+// own candidate relation, because every branch of one trigger is an
+// alternative of the same application, and the other four are columns of the
+// branch relation, because they are what distinguishes one branch from
+// another. Every one of them must be declared in the member.Identity role - a
+// local projected here would be a dense coordinate standing in for a module or
+// a semantic axis.
+func compileActivationBranch(axisView seal.View, template *rule.Template, declaration program.Program, compiled Plan) (Activation, schema.SealFailure) {
+	malformed := func() schema.SealFailure {
+		return compileFailure(template.ID(), rule.LawProgramShape, schema.DispositionMalformed)
+	}
+	if declaration.Activation == nil {
+		return Activation{}, malformed()
+	}
+	decl := *declaration.Activation
+	branchJoin, branchJoinOK := declaration.JoinAt(int(decl.Branch))
+	if !branchJoinOK || !branchJoin.Parent.Declared() {
+		return Activation{}, malformed()
+	}
+	identityColumn := func(reference member.ProjectionRef, relation schema.Key) (ProjectionAddr, schema.SealFailure) {
+		axisRow, catalog, axisOrdinal, failure := resolveAxisMember(axisView, reference.Axis, reference.Member, memberProjection)
+		if failure.Available() {
+			failure.Entry = template.ID()
+			return ProjectionAddr{}, failure
+		}
+		projection, projectionOK := catalog.Projection(reference.Member)
+		if !projectionOK || projection.Role != member.Identity || projection.Relation != relation ||
+			axisRow.Key() != declaration.Candidate.AxisRelation.Axis.Key {
+			return ProjectionAddr{}, malformed()
+		}
+		return ProjectionAddr{Axis: axisOrdinal, Member: mustProjectionOrdinal(catalog, reference.Member)}, schema.SealFailure{}
+	}
+	if uint64(decl.Branch) > uint64(^uint32(0)) {
+		return Activation{}, malformed()
+	}
+	branch := Activation{Branch: uint32(decl.Branch)}
+	for _, column := range []struct {
+		reference member.ProjectionRef
+		relation  schema.Key
+		address   *ProjectionAddr
+	}{
+		{decl.Application, declaration.Candidate.AxisRelation.Member, &branch.Application},
+		{decl.Target, branchJoin.Relation.Member, &branch.Target},
+		{decl.Endpoint, branchJoin.Relation.Member, &branch.Endpoint},
+		{decl.Mount, branchJoin.Relation.Member, &branch.Mount},
+		{decl.Body, branchJoin.Relation.Member, &branch.Body},
+	} {
+		address, failure := identityColumn(column.reference, column.relation)
+		if failure.Available() {
+			return Activation{}, failure
+		}
+		*column.address = address
+	}
+	if uint64(branch.Branch) >= uint64(len(compiled.joins)) {
+		return Activation{}, malformed()
+	}
+	return branch, schema.SealFailure{}
 }
 
 // planAxesInRange is the final address fence between the dense compiler and

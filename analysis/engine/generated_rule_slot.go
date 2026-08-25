@@ -309,6 +309,28 @@ func DeclareGeneratedRuleSlot(
 		}
 		transports[transportIndex] = ruleplan.Transport{Axis: transportAxis, Exported: transport.Exported}
 	}
+	// The branch vocabulary rides beside the vector it stands with. Its
+	// projection addresses are already the owner's own member ordinals and are
+	// not normalized into the Factor directory: they address rows of an axis
+	// catalog, not Factor columns.
+	var activationBranch *ruleplan.Activation
+	if branch, branchOK := compiled.ActivationBranch(); branchOK {
+		normalized := branch
+		normalizedApplication, applicationOK := generatedRuntimeAxis(factorDirectory, catalog, branch.Application.Axis)
+		normalizedTarget, targetOK := generatedRuntimeAxis(factorDirectory, catalog, branch.Target.Axis)
+		normalizedEndpoint, endpointOK := generatedRuntimeAxis(factorDirectory, catalog, branch.Endpoint.Axis)
+		normalizedMount, mountOK := generatedRuntimeAxis(factorDirectory, catalog, branch.Mount.Axis)
+		normalizedBody, bodyOK := generatedRuntimeAxis(factorDirectory, catalog, branch.Body.Axis)
+		if !applicationOK || !targetOK || !endpointOK || !mountOK || !bodyOK {
+			return refuse()
+		}
+		normalized.Application.Axis = normalizedApplication
+		normalized.Target.Axis = normalizedTarget
+		normalized.Endpoint.Axis = normalizedEndpoint
+		normalized.Mount.Axis = normalizedMount
+		normalized.Body.Axis = normalizedBody
+		activationBranch = &normalized
+	}
 	if !builder.claim(semantic) {
 		return nil, false
 	}
@@ -406,6 +428,7 @@ func DeclareGeneratedRuleSlot(
 			Exact: output.Mode == ruleprogram.ModeExact, Strong: output.Mode == ruleprogram.ModeExact,
 		}},
 		Transports: transports,
+		Activation: activationBranch,
 		Carry: func() *generated.CarryPlan {
 			if !carryOK {
 				return nil

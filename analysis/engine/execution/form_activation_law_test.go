@@ -266,6 +266,14 @@ func activationFormLawSpec() generated.CompiledRuleSpec {
 			Slot:        0,
 		}},
 		Transports: []ruleplan.Transport{{Axis: 0, Exported: true}, {Axis: 2}},
+		Activation: &ruleplan.Activation{
+			Branch:      1,
+			Application: ruleplan.ProjectionAddr{Axis: 0, Member: 12},
+			Target:      ruleplan.ProjectionAddr{Axis: 0, Member: 13},
+			Endpoint:    ruleplan.ProjectionAddr{Axis: 0, Member: 14},
+			Mount:       ruleplan.ProjectionAddr{Axis: 0, Member: 15},
+			Body:        ruleplan.ProjectionAddr{Axis: 0, Member: 16},
+		},
 	}
 }
 
@@ -306,9 +314,13 @@ func TestActivationFormIsDerivedFromItsStructuralPublication(t *testing.T) {
 // member per branch before any solve; execution settles dispositions of
 // branches that are already mounted and can publish no others. A selection's
 // members are resolved per invocation by the reading family, so a structural
-// row whose branches came from one would name rows nothing had mounted - and
-// the derivation refuses it rather than deriving a form whose branch set
-// cannot exist when the branches are needed.
+// row whose branches came from one would name rows nothing had mounted.
+//
+// The refusal lands at the SEAL, not at the derivation: the descriptor carries
+// the branch vocabulary, and the vocabulary names which read the branches are
+// members of, so "that read is a per-invocation selection" is a disagreement
+// the descriptor can see in itself. The derivation is checked too, for the
+// case where a future seal admits a shape this one does not.
 func TestAStructuralRowDrawsItsBranchesFromAColdMemberSet(t *testing.T) {
 	spec := activationFormLawSpec()
 	spec.Reads[1].Form = ruleprogram.Selected
@@ -317,11 +329,11 @@ func TestAStructuralRowDrawsItsBranchesFromAColdMemberSet(t *testing.T) {
 	spec.Reads[1].Predicate, spec.Reads[1].PredicatePresent = ruleplan.ProjectionAddr{Axis: 0, Member: 9}, true
 	spec.Reads[1].Contract.Order = ruleprogram.OrderByTag
 	descriptor, sealed := generated.NewPlanCompiledRule(spec)
-	if !sealed {
-		t.Fatal("the per-invocation selection specimen does not seal, so the derivation is not what refused it")
-	}
-	if row, derived := DeclaredForm(descriptor); derived {
-		t.Fatalf("a structural row over a per-invocation selection derived %q", row.Form.Name())
+	if sealed {
+		if row, derived := DeclaredForm(descriptor); derived {
+			t.Fatalf("a structural row over a per-invocation selection derived %q", row.Form.Name())
+		}
+		t.Fatal("a structural descriptor whose branch read is a per-invocation selection sealed")
 	}
 }
 

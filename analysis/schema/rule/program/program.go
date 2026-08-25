@@ -52,6 +52,9 @@ const (
 	// stream it emitted before the vector existed, so adding it remints no
 	// program that does not use it.
 	contentRecordTransport uint64 = 12
+	// contentRecordActivation is written only by a Program that declares the
+	// branch identities of a structural publication.
+	contentRecordActivation uint64 = 13
 )
 
 // TransportDecl is one axis carried across an activation edge. The row's
@@ -69,6 +72,68 @@ type TransportDecl struct {
 }
 
 func (transport TransportDecl) Available() bool { return transport.Axis.Available() }
+
+// ActivationDecl is the branch vocabulary of a structural publication: the
+// owner-issued identities the construct plane mounts one activation member AS.
+//
+// They are declared and not derived because the analyzer minted none of them.
+// A module, a body path, the semantic axis a role is issued under - each names
+// a subject outside this analyzer, so no dense coordinate carries one and no
+// engine rule could reconstruct one from the row's address. Every field is
+// therefore an owner-issued projection in the member.Identity role.
+//
+// The execution CONTEXT a branch runs on is deliberately absent. Which
+// Contexts two modules are connected by is the Link's own sealed directory,
+// which the issuance pass already holds; a rule's axis restating it would be a
+// second authority over the Link's relation.
+type ActivationDecl struct {
+	// Branch is the join whose members are the candidate branches. It is the
+	// parent-declaring vector read: the branches are cold, published by the
+	// owner under the trigger's own candidate row, so the construct plane can
+	// mount one member for each before any solve.
+	Branch JoinRef
+	// Application is the identity the trigger row is applied under, projected
+	// from the rule's own candidate row rather than from a branch: every
+	// branch of one trigger is an alternative of the same application.
+	Application member.ProjectionRef
+	// Target and Endpoint are the two semantic axes the transition one branch
+	// runs on connects, projected from the branch row.
+	Target   member.ProjectionRef
+	Endpoint member.ProjectionRef
+	// Mount and Body name the module and the body path the branch lands in.
+	// They are what resolves the branch's entry and exit Points in the
+	// constructed point plane.
+	Mount member.ProjectionRef
+	Body  member.ProjectionRef
+}
+
+// Available reports whether every identity the mounted branch is keyed or
+// resolved by is declared. The row is whole or absent: a branch missing any
+// one of them is a member the construct plane could not address.
+func (activation ActivationDecl) Available() bool {
+	return activation.Application.Available() && activation.Target.Available() &&
+		activation.Endpoint.Available() && activation.Mount.Available() && activation.Body.Available()
+}
+
+// projections is the branch vocabulary in declaration order. One order serves
+// the digest and the reference list, so the two can never disagree about which
+// identities a branch carries.
+func (activation ActivationDecl) projections() []member.ProjectionRef {
+	return []member.ProjectionRef{
+		activation.Application, activation.Target,
+		activation.Endpoint, activation.Mount, activation.Body,
+	}
+}
+
+func (activation ActivationDecl) references() schema.EntryReferences {
+	references := make(schema.EntryReferences, 0, 5)
+	for _, projection := range activation.projections() {
+		if projection.Declared() {
+			references = append(references, projection.EntryReference())
+		}
+	}
+	return references
+}
 
 // Program is the complete Rule-owned cold declaration. The zero value is the
 // explicit migration ratchet for families that have not yet crossed from the
@@ -93,6 +158,10 @@ type Program struct {
 	// checked below, so a transport vector can never reach a cold row that has
 	// no family to be admitted under.
 	ActivationRole schema.Key
+	// Activation is the branch vocabulary a structural publication mounts its
+	// candidate branches as. It stands or falls with the transport vector and
+	// the family, under the same biconditional.
+	Activation *ActivationDecl
 }
 
 // TransportCount is the declared width of this rule's activation transport
@@ -111,7 +180,7 @@ func (program Program) Available() bool {
 	return program.OperandRole.Available() || program.Candidate.Declared() || len(program.Joins) != 0 ||
 		program.Fold.Reducer.Declared() || len(program.Fold.Inputs) != 0 ||
 		len(program.Fold.Outputs) != 0 || program.Carry != nil || len(program.Transport) != 0 ||
-		program.ActivationRole.Available()
+		program.ActivationRole.Available() || program.Activation != nil
 }
 
 func (program Program) JoinCount() int { return len(program.Joins) }
@@ -132,6 +201,10 @@ func (program Program) Clone() Program {
 	}
 	program.Fold = cloneFold(program.Fold)
 	program.Transport = append([]TransportDecl(nil), program.Transport...)
+	if program.Activation != nil {
+		activation := *program.Activation
+		program.Activation = &activation
+	}
 	if program.Carry != nil {
 		carry := *program.Carry
 		program.Carry = &carry
@@ -160,6 +233,7 @@ const (
 	ProblemFold
 	ProblemCarry
 	ProblemTransport
+	ProblemActivation
 )
 
 func (problem Problem) Available() bool { return problem.Kind != ProblemNone }
@@ -186,6 +260,9 @@ func (program Program) Check() (Problem, bool) {
 	}
 	if !program.checkTransport() {
 		return Problem{Kind: ProblemTransport}, false
+	}
+	if !program.checkActivation() {
+		return Problem{Kind: ProblemActivation}, false
 	}
 	if _, contiguous := program.inputCount(); !contiguous {
 		return Problem{Kind: ProblemInput}, false
@@ -272,6 +349,34 @@ func (program Program) checkReachability() (Problem, bool) {
 		}
 	}
 	return Problem{}, true
+}
+
+// checkActivation seals the branch vocabulary against the declaration that
+// needs it.
+//
+// The vocabulary and the transport vector are one statement, on the same
+// biconditional the family is held to: a structural publication that names no
+// branch identities has not said what the construct plane would mount, and a
+// fact-writing rule that names them has declared a vocabulary nothing reads.
+//
+// The branch reference must name a join whose members are a COLD member set.
+// A parent-declaring read is the only kind whose rows the issuance pass can
+// enumerate before the solve, which is when the branches have to be mounted.
+func (program Program) checkActivation() bool {
+	if (program.Activation != nil) != (len(program.Transport) != 0) {
+		return false
+	}
+	if program.Activation == nil {
+		return true
+	}
+	activation := *program.Activation
+	if !activation.Available() {
+		return false
+	}
+	if uint64(activation.Branch) >= uint64(len(program.Joins)) {
+		return false
+	}
+	return program.Joins[uint64(activation.Branch)].Parent.Declared()
 }
 
 // checkTransport seals the activation transport vector: every row names a
@@ -362,6 +467,9 @@ func (program Program) References() schema.EntryReferences {
 		if transport.Axis.Declared() {
 			references = append(references, transport.Axis.EntryReference())
 		}
+	}
+	if program.Activation != nil {
+		references = append(references, program.Activation.references()...)
 	}
 	return append(references, program.Fold.References()...)
 }
@@ -501,6 +609,19 @@ func (program Program) WriteContent(content *framing.Writer) error {
 		}
 		if err := content.String(string(program.ActivationRole)); err != nil {
 			return err
+		}
+	}
+	if program.Activation != nil {
+		if err := content.Record(contentRecordActivation); err != nil {
+			return err
+		}
+		if err := content.Uint(uint64(program.Activation.Branch)); err != nil {
+			return err
+		}
+		for _, reference := range program.Activation.projections() {
+			if err := writeMemberReference(content, reference.Axis, reference.Member); err != nil {
+				return err
+			}
 		}
 	}
 	if err := content.Record(contentRecordFold); err != nil {

@@ -25,6 +25,11 @@ const (
 	generatedRuleLawRouteJoin              schema.Key     = "relation/generated-rule-law-route-join"
 	generatedRuleLawBranchJoin             schema.Key     = "relation/generated-rule-law-branch-join"
 	generatedRuleLawBranchKey              schema.Key     = "projection/generated-rule-law-branch-key"
+	generatedRuleLawApplication            schema.Key     = "projection/generated-rule-law-application"
+	generatedRuleLawTarget                 schema.Key     = "projection/generated-rule-law-target"
+	generatedRuleLawEndpoint               schema.Key     = "projection/generated-rule-law-endpoint"
+	generatedRuleLawBranchMount            schema.Key     = "projection/generated-rule-law-branch-mount"
+	generatedRuleLawBranchBody             schema.Key     = "projection/generated-rule-law-branch-body"
 	generatedRuleLawKey                    schema.Key     = "projection/generated-rule-law-key"
 	generatedRuleLawRouteKey               schema.Key     = "projection/generated-rule-law-route-key"
 	generatedRuleLawPredicate              schema.Key     = "projection/generated-rule-law-predicate"
@@ -46,6 +51,7 @@ const (
 	generatedRuleLawJoinFact               member.Carrier = "carrier/generated-rule-law-join"
 	generatedRuleLawKeyCarrier             member.Carrier = "carrier/generated-rule-law-key"
 	generatedRuleLawBranchOrdinal          member.Carrier = "carrier/generated-rule-law-branch-ordinal"
+	generatedRuleLawIdentityCarrier        member.Carrier = "carrier/generated-rule-law-identity"
 )
 
 var (
@@ -211,6 +217,17 @@ func newGeneratedRuleLawFixture(t testing.TB, variant generatedRuleLawVariant, r
 		declaration.Carry = nil
 		declaration.Transport = []program.TransportDecl{{Axis: program.AxisRef(axisReference)}}
 		declaration.ActivationRole = generatedRuleLawActivationRole
+		branchProjection := func(key schema.Key) member.ProjectionRef {
+			return member.ProjectionRef{Axis: axisReference, Member: key}
+		}
+		declaration.Activation = &program.ActivationDecl{
+			Branch:      1,
+			Application: branchProjection(generatedRuleLawApplication),
+			Target:      branchProjection(generatedRuleLawTarget),
+			Endpoint:    branchProjection(generatedRuleLawEndpoint),
+			Mount:       branchProjection(generatedRuleLawBranchMount),
+			Body:        branchProjection(generatedRuleLawBranchBody),
+		}
 	}
 	if variant == generatedRuleLawSource {
 		declaration = program.Program{
@@ -311,7 +328,20 @@ func newGeneratedRuleLawFixture(t testing.TB, variant generatedRuleLawVariant, r
 		factCarrier = generatedRuleLawCandidateFact
 	}
 	if variant == generatedRuleLawActivation {
-		projections = append(projections, member.Projection{Key: generatedRuleLawBranchKey, Relation: generatedRuleLawBranchJoin, Role: member.Key, Result: generatedRuleLawKeyCarrier, CandidateProvider: member.AxisRelationCandidate(generatedRuleLawProvider(generatedRuleLawCandidate))})
+		candidateProvider := member.AxisRelationCandidate(generatedRuleLawProvider(generatedRuleLawCandidate))
+		branchIdentity := func(key schema.Key, relation schema.Key) member.Projection {
+			return member.Projection{Key: key, Relation: relation, Role: member.Identity, Result: generatedRuleLawIdentityCarrier, CandidateProvider: candidateProvider}
+		}
+		projections = append(projections,
+			member.Projection{Key: generatedRuleLawBranchKey, Relation: generatedRuleLawBranchJoin, Role: member.Key, Result: generatedRuleLawKeyCarrier, CandidateProvider: candidateProvider},
+			// The application is the trigger's own; the other four are the
+			// branch row's, which is what the construct plane mounts.
+			branchIdentity(generatedRuleLawApplication, generatedRuleLawCandidate),
+			branchIdentity(generatedRuleLawTarget, generatedRuleLawBranchJoin),
+			branchIdentity(generatedRuleLawEndpoint, generatedRuleLawBranchJoin),
+			branchIdentity(generatedRuleLawBranchMount, generatedRuleLawBranchJoin),
+			branchIdentity(generatedRuleLawBranchBody, generatedRuleLawBranchJoin),
+		)
 	}
 	if variant == generatedRuleLawSelected || variant == generatedRuleLawRouteOutput {
 		projections = append(projections,

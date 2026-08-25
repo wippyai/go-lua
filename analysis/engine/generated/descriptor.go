@@ -125,6 +125,12 @@ type CompiledRule struct {
 	// across its transition, each row carrying whether the mounted body carries
 	// that axis back out. A rule that publishes a fact declares none.
 	transports []ruleplan.Transport
+	// branch is the sealed vocabulary one candidate branch is mounted by: the
+	// owner-issued identities the construct plane keys and resolves an
+	// activation member with. It stands under the same biconditional as the
+	// vector above.
+	branch        ruleplan.Activation
+	branchPresent bool
 
 	// planGeometry is set only by the schema-owned constructor below. A generic
 	// invocation descriptor can omit Plan/member authority, but such a value
@@ -158,6 +164,7 @@ type CompiledRuleSpec struct {
 	Outputs         []OutputPlan
 	Carry           *CarryPlan
 	Transports      []ruleplan.Transport
+	Activation      *ruleplan.Activation
 }
 
 // NewPlanCompiledRule seals a generated descriptor from one already compiled
@@ -207,7 +214,13 @@ func NewPlanCompiledRule(spec CompiledRuleSpec) (CompiledRule, bool) {
 	if !validRelationAddr(spec.Candidate) || !validReducerAddr(spec.Reducer) || !addressAxesInRange(spec.AxisCount, spec.Candidate, spec.Reducer, outputCopy[0].Address, outputCopy[0].Destination) {
 		return CompiledRule{}, false
 	}
+	if spec.Activation != nil {
+		rule.branch, rule.branchPresent = *spec.Activation, true
+	}
 	if !validTransportVector(rule.transports, outputCopy[0].Mode, spec.AxisCount) {
+		return CompiledRule{}, false
+	}
+	if !validActivationBranch(rule.branch, rule.branchPresent, len(rule.transports) != 0, readCopy, spec.AxisCount) {
 		return CompiledRule{}, false
 	}
 	for _, read := range readCopy {
@@ -416,6 +429,46 @@ func validTransportVector(transports []ruleplan.Transport, mode ruleprogram.Outp
 	return true
 }
 
+// validActivationBranch states the branch vocabulary against the vector it
+// stands with. A transport vector says what one branch instantiates; the
+// vocabulary says what that branch IS, and a descriptor carrying one without
+// the other describes a mount nothing could address or an address nothing
+// mounts.
+//
+// The branch ordinal must name a read whose members are a cold member set. It
+// is the only kind of read whose rows the issuance pass can enumerate, and the
+// construct plane mounts one activation member per row before any solve.
+func validActivationBranch(branch ruleplan.Activation, present, transported bool, reads []ReadPlan, axisCount int) bool {
+	if present != transported {
+		return false
+	}
+	if !present {
+		return branch == ruleplan.Activation{}
+	}
+	if uint64(branch.Branch) >= uint64(len(reads)) {
+		return false
+	}
+	read := reads[branch.Branch]
+	if !read.ParentPresent || read.Form != ruleprogram.Summary {
+		return false
+	}
+	for _, address := range []ruleplan.ProjectionAddr{branch.Application, branch.Target, branch.Endpoint, branch.Mount, branch.Body} {
+		if !validProjectionAddr(address) || uint64(address.Axis) >= uint64(axisCount) {
+			return false
+		}
+	}
+	return true
+}
+
+// ActivationBranch is the sealed vocabulary one candidate branch is mounted
+// by, present exactly when this descriptor carries a transport vector.
+func (rule CompiledRule) ActivationBranch() (ruleplan.Activation, bool) {
+	if !rule.Available() {
+		return ruleplan.Activation{}, false
+	}
+	return rule.branch, rule.branchPresent
+}
+
 func normalizeCarryPlan(carry *CarryPlan, inputCount, axisCount int, outputFactor uint32) bool {
 	if carry == nil {
 		return false
@@ -559,6 +612,9 @@ func (rule CompiledRule) Available() bool {
 		return false
 	}
 	if !validTransportVector(rule.transports, output.Mode, int(rule.axisCount)) {
+		return false
+	}
+	if !validActivationBranch(rule.branch, rule.branchPresent, len(rule.transports) != 0, rule.reads, int(rule.axisCount)) {
 		return false
 	}
 	if rule.carry != nil {

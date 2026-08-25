@@ -242,8 +242,16 @@ func (fixture *planFixture) sealOrder(t *testing.T, reverseAxis bool) *seal.Sche
 		Writes:   planAxisKey,
 		Owner:    planAxisKey,
 		Semantic: vocabulary.RoleKey("plan/rule"),
-		Roles:    []schema.Key{vocabulary.RoleKey("plan/operand")},
-		Program:  fixture.declaration,
+		// The activation family is declared where every other role a Program
+		// names is: on the rule that names it.
+		Roles: func() []schema.Key {
+			roles := []schema.Key{vocabulary.RoleKey("plan/operand")}
+			if fixture.declaration.ActivationRole.Available() {
+				roles = append(roles, fixture.declaration.ActivationRole)
+			}
+			return roles
+		}(),
+		Program: fixture.declaration,
 	})
 	if !ok {
 		t.Fatal("program rule rejected")
@@ -266,6 +274,7 @@ func (fixture *planFixture) sealOrder(t *testing.T, reverseAxis bool) *seal.Sche
 		"plan/rule",
 		"plan/operand",
 		"plan/absent",
+		"plan/activation-family",
 	} {
 		entry, entryOK := structure.New(structure.Spec{
 			Key:      vocabulary.RoleKey(role),
