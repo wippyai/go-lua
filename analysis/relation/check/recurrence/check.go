@@ -137,10 +137,11 @@ type Component struct {
 // only logical projections needed by the independent certificate layer.  It
 // deliberately has no scheduler, physical ordinal, or WTO order.
 type Proof struct {
-	projections []Projection
-	edges       []plan.DependencyEdge
-	components  []Component
-	valid       bool
+	projections   []Projection
+	edges         []plan.DependencyEdge
+	components    []Component
+	wideningHeads []plan.WideningHead
+	valid         bool
 }
 
 // Available reports whether Check produced this proof.  An empty valid
@@ -176,6 +177,14 @@ func (proof Proof) Components() []Component {
 		}
 	}
 	return result
+}
+
+// WideningHeads returns the canonical set of recurrence heads that passed
+// SCC membership, positivity, uniqueness, and output-relation validation.
+// The returned slice is defensive; mount consumes this projection directly
+// and never correlates raw SCC declarations.
+func (proof Proof) WideningHeads() []plan.WideningHead {
+	return append([]plan.WideningHead(nil), proof.wideningHeads...)
 }
 
 // Check derives and verifies the complete logical recurrence projection.
@@ -229,14 +238,15 @@ func CheckView(indexed *checkregistry.View) (Proof, error) {
 	}
 
 	derivedEdges := deriveEdges(ids, derivedByID)
-	if err := validateComponents(indexed.SCCs(), ids, indexed, derivedByID, derivedEdges); err != nil {
-		return Proof{}, err
-	}
-	components, err := canonicalComponents(indexed.SCCs(), ids, derivedEdges)
+	wideningHeads, err := validateComponents(indexed.SCCs(), ids, indexed, derivedByID, derivedEdges)
 	if err != nil {
 		return Proof{}, err
 	}
-	return Proof{projections: projections, edges: derivedEdges, components: components, valid: true}, nil
+	components, componentErr := canonicalComponents(indexed.SCCs(), ids, derivedEdges)
+	if componentErr != nil {
+		return Proof{}, componentErr
+	}
+	return Proof{projections: projections, edges: derivedEdges, components: components, wideningHeads: wideningHeads, valid: true}, nil
 }
 
 func structuralRefusal(indexed *checkregistry.View) *Error {
@@ -552,41 +562,50 @@ func intersects(left, right relationSet) bool {
 	return false
 }
 
-func validateComponents(declared []plan.SCC, ids []model.DependencyID, registry *checkregistry.View, projections map[model.DependencyID]Projection, edges []plan.DependencyEdge) *Error {
+func validateComponents(declared []plan.SCC, ids []model.DependencyID, registry *checkregistry.View, projections map[model.DependencyID]Projection, edges []plan.DependencyEdge) ([]plan.WideningHead, *Error) {
 	expected := stronglyConnected(ids, edges)
 	seen := make(map[string]struct{}, len(declared))
 	ordered := append([]plan.SCC(nil), declared...)
 	sort.SliceStable(ordered, func(left, right int) bool {
 		return componentKey(ordered[left].Members()) < componentKey(ordered[right].Members())
 	})
+	wideningHeads := make([]plan.WideningHead, 0)
 	for _, component := range ordered {
 		key := componentKey(component.Members())
 		if _, duplicate := seen[key]; duplicate {
-			return refusal(CodeDuplicateComponent, "SCC member set occurs more than once")
+			return nil, refusal(CodeDuplicateComponent, "SCC member set occurs more than once")
 		}
 		seen[key] = struct{}{}
 		members, memberErr := validateMembers(component.Members(), registry)
 		if memberErr != nil {
-			return memberErr
+			return nil, memberErr
 		}
 		expectedComponent, ok := expected[key]
 		if !ok {
-			return refusal(CodeSpuriousComponent, "declared SCC is not a component of the derived dependency graph")
+			return nil, refusal(CodeSpuriousComponent, "declared SCC is not a component of the derived dependency graph")
 		}
 		if !sameDependencySet(members, expectedComponent.members) {
-			return refusal(CodeSpuriousComponent, "declared SCC membership differs from derived component")
+			return nil, refusal(CodeSpuriousComponent, "declared SCC membership differs from derived component")
 		}
 		if err := validateComponentEdges(component, members, expectedComponent.edges); err != nil {
-			return err
+			return nil, err
 		}
 		if err := validateRecurrence(component, members, expectedComponent.cyclic, projections); err != nil {
-			return err
+			return nil, err
 		}
+		wideningHeads = append(wideningHeads, component.Recurrence().Heads()...)
 	}
 	if len(seen) != len(expected) {
-		return refusal(CodeMissingComponent, "dependency graph has an undeclared SCC component")
+		return nil, refusal(CodeMissingComponent, "dependency graph has an undeclared SCC component")
 	}
-	return nil
+	sort.SliceStable(wideningHeads, func(left, right int) bool {
+		leftDigest, rightDigest := wideningHeads[left].Digest(), wideningHeads[right].Digest()
+		if comparison := bytes.Compare(leftDigest[:], rightDigest[:]); comparison != 0 {
+			return comparison < 0
+		}
+		return wideningHeadKey(wideningHeads[left]) < wideningHeadKey(wideningHeads[right])
+	})
+	return wideningHeads, nil
 }
 
 type derivedComponent struct {

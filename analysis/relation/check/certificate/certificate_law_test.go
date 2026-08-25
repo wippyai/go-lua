@@ -241,6 +241,21 @@ func TestCertificateAccessorsAreDefensive(t *testing.T) {
 	if certificateValue.MergeRequirements() != nil {
 		t.Fatal("empty merge requirements should remain nil")
 	}
+	algebraRequirements := certificateValue.AlgebraRequirements()
+	if len(algebraRequirements) != 1 || algebraRequirements[0] != value.typeID {
+		t.Fatalf("unexpected algebra requirements: %+v", algebraRequirements)
+	}
+	digest := certificateValue.Digest()
+	algebraRequirements[0] = model.TypeID{}
+	if certificateValue.AlgebraRequirements()[0] != value.typeID {
+		t.Fatal("certificate exposed mutable algebra requirements")
+	}
+	if certificateValue.Digest() != digest {
+		t.Fatal("algebra requirement accessor changed certificate digest")
+	}
+	if certificateValue.WideningHeads() != nil {
+		t.Fatal("acyclic certificate should expose no widening heads")
+	}
 }
 
 func TestCertificateHasNoMountOrPhysicalSurface(t *testing.T) {

@@ -111,10 +111,11 @@ func (refusal *Refusal) Error() string {
 // registry is the sole declaration source; the certificate deliberately does
 // not copy an ExecutionSchema or retain any physical/mount data.
 type Certificate struct {
-	registry          *checkregistry.View
-	mergeRequirements []checktyping.MergeRequirement
-	recurrenceProof   checkrecurrence.Proof
-	digest            identity.ContentID
+	registry            *checkregistry.View
+	mergeRequirements   []checktyping.MergeRequirement
+	algebraRequirements []model.TypeID
+	recurrenceProof     checkrecurrence.Proof
+	digest              identity.ContentID
 }
 
 // Check builds the shared declaration registry once, then runs all three
@@ -157,6 +158,7 @@ func Check(schema plan.ExecutionSchema) (Certificate, *Refusal) {
 
 	requirements := typingReport.MergeRequirements()
 	canonicalizeRequirements(requirements)
+	algebraRequirements := typingReport.AlgebraRequirements()
 	digest, ok := certificateDigest(schema.Digest())
 	if !ok {
 		// An unavailable schema is normally already represented by the shared
@@ -170,10 +172,11 @@ func Check(schema plan.ExecutionSchema) (Certificate, *Refusal) {
 		}})
 	}
 	return Certificate{
-		registry:          indexed,
-		mergeRequirements: requirements,
-		recurrenceProof:   recurrenceProof,
-		digest:            digest,
+		registry:            indexed,
+		mergeRequirements:   requirements,
+		algebraRequirements: algebraRequirements,
+		recurrenceProof:     recurrenceProof,
+		digest:              digest,
 	}, nil
 }
 
@@ -271,10 +274,22 @@ func (certificate Certificate) MergeRequirements() []checktyping.MergeRequiremen
 	return append([]checktyping.MergeRequirement(nil), certificate.mergeRequirements...)
 }
 
+// AlgebraRequirements returns the canonical semantic TypeIDs needed by mount
+// for committed relation values and validated operation frames/outputs.
+func (certificate Certificate) AlgebraRequirements() []model.TypeID {
+	return append([]model.TypeID(nil), certificate.algebraRequirements...)
+}
+
 // RecurrenceProof returns the immutable recurrence proof. Its own accessors
 // return defensive copies of nested projections.
 func (certificate Certificate) RecurrenceProof() checkrecurrence.Proof {
 	return certificate.recurrenceProof
+}
+
+// WideningHeads returns the validated recurrence-head projection. Mount uses
+// this proof output directly and does not inspect or correlate raw SCCs.
+func (certificate Certificate) WideningHeads() []plan.WideningHead {
+	return certificate.recurrenceProof.WideningHeads()
 }
 
 func structuralIssue(issue checkregistry.Issue) Issue {

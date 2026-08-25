@@ -50,26 +50,31 @@ func NewIssuer(fence Fence) (Issuer, bool) {
 func (issuer Issuer) Available() bool { return issuer.fence.Available() }
 func (issuer Issuer) Fence() Fence    { return issuer.fence }
 
-// ScopeToken is an invocation scope authenticated by the mounted runtime.
-// Scope representation and guard/mask data remain outside this ABI.
+// ScopeToken is an already-conjoined invocation formula authenticated by the
+// mounted runtime.  The logical scope declarations that contributed to the
+// formula are intentionally absent: a conjunction may span several declared
+// ScopeIDs and therefore has no single nominal scope identity here.  Mount
+// resolution owns the formula/proof construction; binding only carries its
+// opaque canonical identity and runtime fence.
 type ScopeToken struct {
 	fence  Fence
-	id     model.ScopeID
 	opaque identity.ContentID
 }
 
-func (issuer Issuer) IssueScope(id model.ScopeID, opaque identity.ContentID) (ScopeToken, bool) {
-	if !issuer.Available() || !id.Available() || !opaque.Available() {
+// IssueScope authenticates one canonical formula/proof identity for this
+// mounted runtime.  The identity is opaque to binding; scope algebra and
+// entailment remain mount responsibilities.
+func (issuer Issuer) IssueScope(opaque identity.ContentID) (ScopeToken, bool) {
+	if !issuer.Available() || !opaque.Available() {
 		return ScopeToken{}, false
 	}
-	return ScopeToken{fence: issuer.fence, id: id, opaque: opaque}, true
+	return ScopeToken{fence: issuer.fence, opaque: opaque}, true
 }
 
 func (scope ScopeToken) Available() bool {
-	return scope.fence.Available() && scope.id.Available() && scope.opaque.Available()
+	return scope.fence.Available() && scope.opaque.Available()
 }
 
-func (scope ScopeToken) ID() model.ScopeID { return scope.id }
 func (scope ScopeToken) ValidFor(fence Fence) bool {
 	return scope.Available() && scope.fence.validFor(fence)
 }

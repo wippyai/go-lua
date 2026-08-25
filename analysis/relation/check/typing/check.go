@@ -1,6 +1,7 @@
 package typing
 
 import (
+	"bytes"
 	"fmt"
 	"sort"
 
@@ -39,7 +40,55 @@ func CheckView(indexed *checkregistry.View) Report {
 	checker.checkSignatures()
 	checker.checkExpressions()
 	report.sort()
+	report.algebraRequirements = deriveAlgebraRequirements(indexed)
 	return report
+}
+
+// deriveAlgebraRequirements is the one typing-side projection consumed by
+// mount. Relation columns cover values that can enter committed state, while
+// signature inputs and outputs cover semantic frames and operation results.
+// The checker has already validated these declarations before this projection
+// is built; no Merge-specific collection is used as an authority here.
+func deriveAlgebraRequirements(indexed *checkregistry.View) []model.TypeID {
+	if indexed == nil {
+		return nil
+	}
+	seen := make(map[model.TypeID]struct{})
+	for _, column := range indexed.Columns() {
+		if column.Available() {
+			seen[column.Type()] = struct{}{}
+		}
+	}
+	for _, value := range indexed.Signatures() {
+		if !value.Available() {
+			continue
+		}
+		for _, input := range value.Inputs() {
+			if input.Available() {
+				seen[input.Type] = struct{}{}
+			}
+		}
+		for _, output := range value.Outputs() {
+			if output.Available() {
+				seen[output.Type] = struct{}{}
+			}
+		}
+	}
+	result := make([]model.TypeID, 0, len(seen))
+	for typeID := range seen {
+		result = append(result, typeID)
+	}
+	sort.Slice(result, func(left, right int) bool { return typeIDLess(result[left], result[right]) })
+	return result
+}
+
+func typeIDLess(left, right model.TypeID) bool {
+	leftOwner, rightOwner := left.Owner().Content(), right.Owner().Content()
+	if comparison := bytes.Compare(leftOwner[:], rightOwner[:]); comparison != 0 {
+		return comparison < 0
+	}
+	leftContent, rightContent := left.Content(), right.Content()
+	return bytes.Compare(leftContent[:], rightContent[:]) < 0
 }
 
 // Validate is a convenience adapter for callers that only need an error.
@@ -595,7 +644,11 @@ func (checker *checker) checkDenominator(value model.DenominatorRef, path string
 }
 
 func (report *Report) add(code Code, path, detail string) {
-	*report = Report{issues: append(report.issues, Issue{Code: code, Path: path, Detail: detail}), requirements: report.requirements}
+	*report = Report{
+		issues:              append(report.issues, Issue{Code: code, Path: path, Detail: detail}),
+		requirements:        report.requirements,
+		algebraRequirements: report.algebraRequirements,
+	}
 }
 
 func (report *Report) sort() {

@@ -1,6 +1,7 @@
 package recurrence_test
 
 import (
+	"bytes"
 	"testing"
 
 	"github.com/wippyai/go-lua/analysis/identity"
@@ -83,6 +84,23 @@ func TestCheckDerivesPositiveCycleAndCopiesProof(t *testing.T) {
 	}
 	if len(proof.Projections()) != 2 || len(proof.Edges()) != 2 || len(proof.Components()) != 1 {
 		t.Fatalf("unexpected proof shape: projections=%d edges=%d components=%d", len(proof.Projections()), len(proof.Edges()), len(proof.Components()))
+	}
+	heads := proof.WideningHeads()
+	if len(heads) != 2 {
+		t.Fatalf("unexpected widening-head shape: %d", len(heads))
+	}
+	if heads[0].Digest() == heads[1].Digest() || !heads[0].Available() || !heads[1].Available() {
+		t.Fatal("proof did not expose validated widening heads")
+	}
+	firstDigest, secondDigest := heads[0].Digest(), heads[1].Digest()
+	if bytes.Compare(firstDigest[:], secondDigest[:]) >= 0 {
+		t.Fatal("widening heads are not in canonical digest order")
+	}
+	firstHead := heads[0]
+	headDigest := firstHead.Digest()
+	heads[0] = plan.WideningHead{}
+	if proof.WideningHeads()[0].Digest() != headDigest {
+		t.Fatal("proof exposed mutable widening-head storage")
 	}
 	projections := proof.Projections()
 	projections[0].Reads[0] = plan.RelationRef{}

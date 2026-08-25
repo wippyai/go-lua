@@ -77,8 +77,9 @@ type MergeRequirement struct {
 // ExecutionSchema. It is intentionally not an execution capability; the
 // certificate package owns the opaque capability accepted by mount.
 type Report struct {
-	issues       []Issue
-	requirements []MergeRequirement
+	issues              []Issue
+	requirements        []MergeRequirement
+	algebraRequirements []model.TypeID
 }
 
 // Valid reports whether no logical typing obligation failed.
@@ -92,6 +93,15 @@ func (report Report) Issues() []Issue { return append([]Issue(nil), report.issue
 // are malformed, which makes the nearest failing rule visible to W1 tooling.
 func (report Report) MergeRequirements() []MergeRequirement {
 	return append([]MergeRequirement(nil), report.requirements...)
+}
+
+// AlgebraRequirements returns the distinct semantic TypeIDs whose values can
+// enter committed relation state or a validated semantic frame/output. The
+// list is canonical and defensive; callers must treat TypeID itself as the
+// sole algebra authority. MergeRequirements remains a diagnostic projection
+// for locating Merge obligations, not a second source for this list.
+func (report Report) AlgebraRequirements() []model.TypeID {
+	return append([]model.TypeID(nil), report.algebraRequirements...)
 }
 
 // Error returns nil for a valid report and a compact aggregate error for an

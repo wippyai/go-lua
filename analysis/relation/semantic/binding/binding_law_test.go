@@ -107,8 +107,6 @@ func newFixture(t *testing.T, cardinality model.Cardinality) fixture {
 		t.Fatalf("issue denominator")
 	}
 	schema := issueSchema(t, operationOwner, "schema")
-	inputScopeID := issueScope(t, operationOwner, "scope/input")
-	outputScopeID := issueScope(t, operationOwner, "scope/output")
 	operationID := issueOperation(t, operationOwner, "operation")
 	inputType := issueType(t, valueOwner, "type/input")
 	outputType := issueType(t, valueOwner, "type/output")
@@ -140,11 +138,11 @@ func newFixture(t *testing.T, cardinality model.Cardinality) fixture {
 	if !ok {
 		t.Fatalf("issue token authority")
 	}
-	inputScope, ok := issuer.IssueScope(inputScopeID, content(t, "scope-witness/input"))
+	inputScope, ok := issuer.IssueScope(content(t, "scope-formula/input"))
 	if !ok {
 		t.Fatalf("issue input scope")
 	}
-	outputScope, ok := issuer.IssueScope(outputScopeID, content(t, "scope-witness/output"))
+	outputScope, ok := issuer.IssueScope(content(t, "scope-formula/output"))
 	if !ok {
 		t.Fatalf("issue output scope")
 	}
@@ -203,14 +201,14 @@ func TestTokensRefuseStaleAndForeignRuntimeFences(t *testing.T) {
 	if !ok {
 		t.Fatalf("construct stale fence")
 	}
-	if value.inputToken.ValidFor(stale) || value.inputValue.ValidFor(stale) {
+	if value.inputScope.ValidFor(stale) || value.inputToken.ValidFor(stale) || value.inputValue.ValidFor(stale) {
 		t.Fatalf("stale generation token accepted")
 	}
 	foreign, ok := binding.NewFence(value.schema, identity.MountID{2}, value.runtime.Generation())
 	if !ok {
 		t.Fatalf("construct foreign mount fence")
 	}
-	if value.inputToken.ValidFor(foreign) {
+	if value.inputScope.ValidFor(foreign) || value.inputToken.ValidFor(foreign) {
 		t.Fatalf("foreign mount token accepted")
 	}
 	foreignSchema := issueSchema(t, value.operationOwner, "schema/foreign")
@@ -218,8 +216,45 @@ func TestTokensRefuseStaleAndForeignRuntimeFences(t *testing.T) {
 	if !ok {
 		t.Fatalf("construct foreign schema fence")
 	}
-	if value.inputToken.ValidFor(foreign) {
+	if value.inputScope.ValidFor(foreign) || value.inputToken.ValidFor(foreign) {
 		t.Fatalf("foreign schema token accepted")
+	}
+}
+
+func TestScopeTokenCarriesConjoinedFormulaWithoutNominalScopeID(t *testing.T) {
+	exact, _ := model.NewCardinality(model.ExactlyOne, 0)
+	value := newFixture(t, exact)
+	leftScope := issueScope(t, value.operationOwner, "scope/source-left")
+	foreignOwner := issueOwner(t, "owner/other-scope")
+	rightScope := issueScope(t, foreignOwner, "scope/source-right")
+	formula := content(t, "formula/source-left-and-source-right")
+	if formula == leftScope.Content() || formula == rightScope.Content() {
+		t.Fatalf("test formula accidentally reused a source scope identity")
+	}
+	conjoined, ok := value.issuer.IssueScope(formula)
+	if !ok || !conjoined.Available() || !value.issuer.AuthenticateScope(conjoined) {
+		t.Fatalf("canonical conjoined formula was not authenticated")
+	}
+	reissued, ok := value.issuer.IssueScope(formula)
+	if !ok || !conjoined.Same(reissued) {
+		t.Fatalf("canonical formula identity was not stable within its fence")
+	}
+	if conjoined.Same(value.inputScope) {
+		t.Fatalf("distinct canonical formula identities collapsed")
+	}
+	stale, ok := binding.NewFence(value.schema, value.runtime.Mount(), identity.Generation(2))
+	if !ok {
+		t.Fatalf("construct stale fence")
+	}
+	if conjoined.ValidFor(stale) {
+		t.Fatalf("conjoined formula survived stale generation fence")
+	}
+	foreign, ok := binding.NewFence(value.schema, identity.MountID{2}, value.runtime.Generation())
+	if !ok {
+		t.Fatalf("construct foreign mount fence")
+	}
+	if conjoined.ValidFor(foreign) {
+		t.Fatalf("conjoined formula survived foreign mount fence")
 	}
 }
 
@@ -468,8 +503,7 @@ func TestFrameUsesOneInvocationScopeAndAuthenticatesEmptyCompleteRange(t *testin
 	if !ok || !emptyFrame.Validate(completeSignature, value.runtime) {
 		t.Fatalf("empty authenticated complete range rejected")
 	}
-	foreignScopeID := issueScope(t, value.operationOwner, "scope/mixed")
-	foreignScope, _ := value.issuer.IssueScope(foreignScopeID, content(t, "scope-witness/mixed"))
+	foreignScope, _ := value.issuer.IssueScope(content(t, "scope-formula/mixed"))
 	foreignAddress, ok := value.issuer.IssueCell(value.inputWitness, foreignScope, value.input, value.inputRow)
 	if !ok {
 		t.Fatalf("issue mixed-scope address")
@@ -530,8 +564,7 @@ func TestProposalBufferIsOutputBoundAndAllOrNothing(t *testing.T) {
 	if !singleBuffer.Append(rowFirstProposal) || singleBuffer.Append(rowProposal) || singleBuffer.Len() != 0 {
 		t.Fatalf("ExactlyOne buffer admitted more than one destination row")
 	}
-	foreignScopeID := issueScope(t, value.operationOwner, "scope/foreign-output")
-	foreignScope, _ := value.issuer.IssueScope(foreignScopeID, content(t, "scope-witness/foreign-output"))
+	foreignScope, _ := value.issuer.IssueScope(content(t, "scope-formula/foreign-output"))
 	foreignToken, _ := value.issuer.IssueCell(value.outputWitness, foreignScope, value.output, value.outputRow)
 	foreignProposal, ok := binding.NewProposal(foreignToken, value.outputValue, present)
 	if !ok || buffer.Append(foreignProposal) || buffer.Len() != 0 {

@@ -1,6 +1,7 @@
 package typing_test
 
 import (
+	"bytes"
 	"testing"
 
 	"github.com/wippyai/go-lua/analysis/identity"
@@ -138,6 +139,61 @@ func TestValidClosedOperatorSpecIsAccepted(t *testing.T) {
 	}
 	if got := len(report.MergeRequirements()); got != 1 {
 		t.Fatalf("Merge did not expose one TypeID obligation per output column: got %d", got)
+	}
+	requirements := report.AlgebraRequirements()
+	if len(requirements) != 1 || requirements[0] != value.typeID {
+		t.Fatalf("unexpected canonical algebra requirements: %+v", requirements)
+	}
+	requirements[0] = model.TypeID{}
+	if got := report.AlgebraRequirements(); len(got) != 1 || got[0] != value.typeID {
+		t.Fatal("algebra requirements exposed mutable storage")
+	}
+}
+
+func TestAlgebraRequirementsAreDeduplicatedAndCanonical(t *testing.T) {
+	value := newFixture(t)
+	secondType := issueType(t, value.owner, "second-value")
+	base := schemaWith(t, value, nil, false)
+	builder := plan.NewBuilder(value.schema)
+	for _, relation := range base.Relations() {
+		if !builder.AddRelation(relation) {
+			t.Fatal("add relation")
+		}
+	}
+	for _, column := range base.Columns() {
+		if column.ID() == value.columnB {
+			column = model.DefineColumnSchema(column.ID(), secondType)
+		}
+		if !builder.AddColumn(column) {
+			t.Fatal("add column")
+		}
+	}
+	for _, key := range base.Keys() {
+		if !builder.AddKey(key) {
+			t.Fatal("add key")
+		}
+	}
+	for _, scope := range base.Scopes() {
+		if !builder.AddScope(scope) {
+			t.Fatal("add scope")
+		}
+	}
+	schema, ok := builder.Build()
+	if !ok {
+		t.Fatal("build schema")
+	}
+	report := typing.Check(schema)
+	if !report.Valid() {
+		t.Fatalf("distinct-type schema rejected: %v", report.Error())
+	}
+	requirements := report.AlgebraRequirements()
+	if len(requirements) != 2 {
+		t.Fatalf("expected one requirement per distinct TypeID: %+v", requirements)
+	}
+	leftOwner, rightOwner := requirements[0].Owner().Content(), requirements[1].Owner().Content()
+	leftContent, rightContent := requirements[0].Content(), requirements[1].Content()
+	if comparison := bytes.Compare(leftOwner[:], rightOwner[:]); comparison > 0 || (comparison == 0 && bytes.Compare(leftContent[:], rightContent[:]) > 0) {
+		t.Fatal("algebra requirements are not in canonical owner/content order")
 	}
 }
 
