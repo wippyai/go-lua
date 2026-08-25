@@ -223,16 +223,25 @@ func TestCertificateAccessorsAreDefensive(t *testing.T) {
 	keys := certificateValue.Keys()
 	scopes := certificateValue.Scopes()
 	expressions := certificateValue.Expressions()
+	expressionIDs := certificateValue.ExpressionIDs()
+	dependencyIDs := certificateValue.DependencyIDs()
 	if len(relations) != 1 || len(columns) != 1 || len(keys) != 1 || len(scopes) != 1 || len(expressions) != 1 {
 		t.Fatal("certificate did not expose expected declarations")
+	}
+	if len(expressionIDs) != 1 || expressionIDs[0] != expressionID || len(dependencyIDs) != 0 {
+		t.Fatalf("unexpected canonical ID projections: expressions=%+v dependencies=%+v", expressionIDs, dependencyIDs)
 	}
 	relations[0] = model.RelationSchema{}
 	columns[0] = model.ColumnSchema{}
 	keys[0] = model.KeySchema{}
 	scopes[0] = model.ScopeSchema{}
 	expressions[0] = plan.ExpressionRef{}
+	expressionIDs[0] = model.ExpressionID{}
 	if len(certificateValue.Relations()) != 1 || len(certificateValue.Columns()) != 1 || len(certificateValue.Keys()) != 1 || len(certificateValue.Scopes()) != 1 || len(certificateValue.Expressions()) != 1 {
 		t.Fatal("mutating declaration slices changed the certificate")
+	}
+	if certificateValue.ExpressionIDs()[0] != expressionID {
+		t.Fatal("mutating expression ID projection changed the certificate")
 	}
 	proof := certificateValue.RecurrenceProof()
 	if !proof.Available() {
