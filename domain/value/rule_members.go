@@ -44,6 +44,7 @@ const (
 	FreshResultFacts                   schemaapi.Key  = "value/fresh-result/facts"
 	CaptureSources                     schemaapi.Key  = "value/closure-capture/sources"
 	SuspensionSources                  schemaapi.Key  = "value/suspension/sources"
+	EvidenceSources                    schemaapi.Key  = "value/suspension-evidence/sources"
 	ClosedOperandParents               schemaapi.Key  = "value/closed-allocation/parents"
 	ClosedOperandCells                 schemaapi.Key  = "value/closed-allocation/operands"
 	StorageTransferSourceKey           schemaapi.Key  = "value/storage-transfer/source-key"
@@ -89,6 +90,8 @@ const (
 	CaptureSourceTag                   schemaapi.Key  = "value/closure-capture/source-tag"
 	SuspensionSourceKey                schemaapi.Key  = "value/suspension/source-key"
 	SuspensionSourceTag                schemaapi.Key  = "value/suspension/source-tag"
+	EvidenceSourceKey                  schemaapi.Key  = "value/suspension-evidence/source-key"
+	EvidenceSourceTag                  schemaapi.Key  = "value/suspension-evidence/source-tag"
 	ClosedOperandKey                   schemaapi.Key  = "value/closed-allocation/operand-key"
 	IdentityReducer                    schemaapi.Key  = "value/reducer/identity"
 	SourceReducer                      schemaapi.Key  = "value/reducer/source"
@@ -107,6 +110,7 @@ const (
 	FreshResultRouteCarryTransform     schemaapi.Key  = "transform/value/fresh-result-route"
 	CaptureSourceSelection             schemaapi.Key  = "value/closure-capture/source-selection"
 	SuspensionSourceSelection          schemaapi.Key  = "value/suspension/source-selection"
+	EvidenceSourceSelection            schemaapi.Key  = "value/suspension-evidence/source-selection"
 	ValueCoordinateCarrier             member.Carrier = "carrier/value/coordinate"
 	ValueFactCarrier                   member.Carrier = "carrier/value/fact"
 	ValueAtomCarrier                   member.Carrier = "carrier/value/atom"
@@ -144,6 +148,7 @@ const (
 	SuspensionSourceCarrier            member.Carrier = "carrier/value/suspension-source"
 	SubjectLivenessCarrier             member.Carrier = "carrier/program/subject-liveness"
 	SuspensionRouteTagCarrier          member.Carrier = "carrier/placement/suspension-route-tag"
+	SuspensionEvidenceRouteTagCarrier  member.Carrier = "carrier/placement/suspension-evidence-route-tag"
 	ClosedOperandsCarrier              member.Carrier = "carrier/value/closed-operands"
 	ClosedOperandCarrier               member.Carrier = "carrier/value/closed-operand"
 	HeapKeyCarrier                     member.Carrier = "carrier/heap/key"
@@ -188,6 +193,7 @@ func AxisMemberCatalog() member.Catalog {
 			{Key: FreshResultFacts, Subject: ValueFactCarrier, CandidateProvider: member.AxisRelationCandidate(member.RelationRef{Axis: schemaapi.EntryReference{Surface: schemaapi.SurfaceKind(2), Key: "value"}, Member: "value/fresh-result/candidates"}), Inputs: []member.Carrier{FreshResultCallCarrier}},
 			{Key: CaptureSources, Subject: CaptureSourceCarrier, CandidateProvider: member.IssuedRowCandidate("program-relation/occurrence-closure-proof"), Inputs: []member.Carrier{PlacementKeyCarrier}},
 			{Key: SuspensionSources, Subject: SuspensionSourceCarrier, CandidateProvider: member.IssuedRowCandidate("program-relation/occurrence-subject-liveness"), Inputs: []member.Carrier{SubjectLivenessCarrier}},
+			{Key: EvidenceSources, Subject: SuspensionSourceCarrier, CandidateProvider: member.IssuedRowCandidate("program-relation/occurrence-subject-liveness"), Inputs: []member.Carrier{SubjectLivenessCarrier}},
 			{Key: ClosedOperandParents, Subject: ClosedOperandsCarrier, CandidateProvider: member.AxisRelationCandidate(member.RelationRef{Axis: schemaapi.EntryReference{Surface: schemaapi.SurfaceKind(2), Key: "value"}, Member: "value/closed-allocation/parents"}), Correspondences: []member.RelationRef{member.RelationRef{Axis: schemaapi.EntryReference{Surface: schemaapi.SurfaceKind(2), Key: "heap"}, Member: "heap/closed-allocation/candidates"}}, PublishesKeyVector: true},
 			{Key: ClosedOperandCells, Subject: ClosedOperandCarrier, CandidateProvider: member.AxisRelationCandidate(member.RelationRef{Axis: schemaapi.EntryReference{Surface: schemaapi.SurfaceKind(2), Key: "heap"}, Member: "heap/closed-allocation/candidates"}), Inputs: []member.Carrier{HeapKeyCarrier}},
 		},
@@ -235,6 +241,8 @@ func AxisMemberCatalog() member.Catalog {
 			{Key: CaptureSourceTag, Relation: CaptureSources, Role: member.Predicate, Result: CaptureSourceTagCarrier, CandidateProvider: member.IssuedRowCandidate("program-relation/occurrence-closure-proof")},
 			{Key: SuspensionSourceKey, Relation: SuspensionSources, Role: member.Key, Result: ValueCoordinateCarrier, CandidateProvider: member.IssuedRowCandidate("program-relation/occurrence-subject-liveness")},
 			{Key: SuspensionSourceTag, Relation: SuspensionSources, Role: member.Predicate, Result: SuspensionRouteTagCarrier, CandidateProvider: member.IssuedRowCandidate("program-relation/occurrence-subject-liveness")},
+			{Key: EvidenceSourceKey, Relation: EvidenceSources, Role: member.Key, Result: ValueCoordinateCarrier, CandidateProvider: member.IssuedRowCandidate("program-relation/occurrence-subject-liveness")},
+			{Key: EvidenceSourceTag, Relation: EvidenceSources, Role: member.Predicate, Result: SuspensionEvidenceRouteTagCarrier, CandidateProvider: member.IssuedRowCandidate("program-relation/occurrence-subject-liveness")},
 			{Key: ClosedOperandKey, Relation: ClosedOperandCells, Role: member.Key, Result: ValueCoordinateCarrier, CandidateProvider: member.AxisRelationCandidate(member.RelationRef{Axis: schemaapi.EntryReference{Surface: schemaapi.SurfaceKind(2), Key: "heap"}, Member: "heap/closed-allocation/candidates"})},
 		},
 		[]member.Reducer{
@@ -318,6 +326,7 @@ func AxisMemberCatalog() member.Catalog {
 	catalog, ok = catalog.WithSelections([]member.Selection{
 		{Key: CaptureSourceSelection, Relation: CaptureSources, Tag: CaptureSourceTag},
 		{Key: SuspensionSourceSelection, Relation: SuspensionSources, Tag: SuspensionSourceTag},
+		{Key: EvidenceSourceSelection, Relation: EvidenceSources, Tag: EvidenceSourceTag},
 	})
 	if !ok {
 		panic("value: invalid axis selection catalog")

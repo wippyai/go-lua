@@ -259,6 +259,8 @@ func SuspensionEvidence() ruleprogram.Program {
 		evidenceRouteTag         schema.Key = "placement/suspension-evidence/route-tag"
 		evidenceRouteSelection   schema.Key = "placement/suspension-evidence/route-selection"
 		evidenceRouteDestination schema.Key = "placement/suspension-evidence/route-destination"
+		evidenceSourceSelection  schema.Key = "value/suspension-evidence/source-selection"
+		evidenceRouteSelection   schema.Key = "placement/suspension-evidence/route-selection"
 		evidenceAxisKey          schema.Key = "placement-suspension-evidence"
 		evidenceReducer          schema.Key = "placement-suspension-evidence/reducer"
 		evidenceFactsColumn      schema.Key = "placement/suspension-evidence/facts"
@@ -267,11 +269,8 @@ func SuspensionEvidence() ruleprogram.Program {
 		evidenceAxisKey,
 		member.IssuedRowCandidate(programissuance.RelationOccurrenceSubjectLiveness),
 		evidenceAnchors, evidenceAnchorKey,
-		// The evidence producer's rows land in an axis no member source
-		// registers yet, so the operations that publish them are declared with
-		// that axis and named here when it exists.
-		evidenceSources, evidenceSourceKey, evidenceSourceTag, "",
-		evidenceRoutes, evidenceRouteKey, evidenceRouteTag, "", evidenceRouteDestination,
+		evidenceSources, evidenceSourceKey, evidenceSourceTag, evidenceSourceSelection,
+		evidenceRoutes, evidenceRouteKey, evidenceRouteTag, evidenceRouteSelection, evidenceRouteDestination,
 		evidenceReducer, evidenceFactsColumn,
 	)
 	declaration.OperandRole = vocabulary.RoleKey(EvidenceOperandRole)

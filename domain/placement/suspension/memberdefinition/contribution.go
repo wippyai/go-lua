@@ -43,6 +43,8 @@ func contributionCarriers(includeEvidence bool) []definition.Carrier {
 		carriers = append(carriers,
 			definition.Carrier{Name: "EvidenceFactCarrier", Key: "carrier/placement/suspension-evidence/fact", Type: goType(suspensionPackagePath, "Evidence")},
 			definition.Carrier{Name: "SuspensionEvidenceRouteTagCarrier", Key: "carrier/placement/suspension-evidence-route-tag", Type: builtin("uint64")},
+			definition.Carrier{Name: "SuspensionSourceCarrier", Key: "carrier/value/suspension-source", Type: goType(suspensionPackagePath, "Source")},
+			definition.Carrier{Name: "SuspensionRouteCarrier", Key: "carrier/placement/suspension-route", Type: goType(suspensionPackagePath, "Route")},
 		)
 	} else {
 		carriers = append(carriers,
@@ -167,30 +169,6 @@ func Contribution() definition.Contribution {
 			},
 			Outputs:        []definition.ReducerOutput{{Axis: placementAxis, Carrier: "PlacementFactCarrier"}},
 			Implementation: definition.GoSymbol{PackagePath: suspensionPackagePath, Name: "SuspensionFold", ResultIndex: 0},
-		}},
-	}
-}
-
-// EvidenceContribution is the independent evidence reducer signature.  It
-// repeats the neutral E/J inputs but names a different output axis, carrier,
-// route tag, and implementation.  It never reads PlacementFactCarrier.
-func EvidenceContribution() definition.Contribution {
-	valueAxis := axisReference("value")
-	evidenceAxis := axisReference("placement-suspension-evidence")
-	return definition.Contribution{
-		Axis:     "placement-suspension-evidence",
-		Rule:     "placement-suspension-evidence",
-		Carriers: contributionCarriers(true),
-		Reducers: []definition.Reducer{{
-			Name:      "SuspensionEvidenceReducer",
-			Key:       "placement-suspension-evidence/reducer",
-			Candidate: "SubjectLivenessCarrier",
-			Inputs: []definition.ReducerInput{
-				{Axis: valueAxis, Carrier: "ValueFactCarrier", Form: member.ReadFormSummary, Multiplicity: member.MultiplicityMany, Tag: "SuspensionRouteTagCarrier"},
-				{Axis: evidenceAxis, Carrier: "EvidenceFactCarrier", Form: member.ReadFormSelected, Multiplicity: member.MultiplicityOne, Tag: "SuspensionEvidenceRouteTagCarrier", Route: "PlacementKeyCarrier"},
-			},
-			Outputs:        []definition.ReducerOutput{{Axis: evidenceAxis, Carrier: "EvidenceFactCarrier"}},
-			Implementation: definition.GoSymbol{PackagePath: suspensionPackagePath, Name: "SuspensionEvidenceFold", ResultIndex: 0},
 		}},
 	}
 }

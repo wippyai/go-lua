@@ -7,63 +7,48 @@ import (
 	"github.com/wippyai/go-lua/analysis/schema/axis/member"
 )
 
-func TestContributionsKeepClassAndEvidenceWritersDistinct(t *testing.T) {
-	class := Contribution()
-	evidence := EvidenceContribution()
-	if !class.Available() || !evidence.Available() {
-		t.Fatalf("suspension contributions unavailable: class=%t evidence=%t", class.Available(), evidence.Available())
+// The suspension consumer's contribution is one rule's statement: the two
+// vectors it reads, the operations that publish them, and the fold that draws
+// Placement class from them.
+func TestSuspensionContributionDeclaresItsVectorsAndOneFold(t *testing.T) {
+	contribution := Contribution()
+	if !contribution.Available() || contribution.Axis != "placement" || contribution.Rule != "placement-suspension" {
+		t.Fatalf("suspension contribution identity=%q/%q available=%t", contribution.Axis, contribution.Rule, contribution.Available())
 	}
-	if class.Axis == evidence.Axis || class.Rule == evidence.Rule {
-		t.Fatalf("class/evidence contributions share identity: class=%q/%q evidence=%q/%q", class.Axis, class.Rule, evidence.Axis, evidence.Rule)
+	if len(contribution.Relations) != 2 || len(contribution.Projections) != 5 || len(contribution.Selections) != 2 || len(contribution.Reducers) != 1 {
+		t.Fatalf("suspension contribution relations=%d projections=%d selections=%d reducers=%d",
+			len(contribution.Relations), len(contribution.Projections), len(contribution.Selections), len(contribution.Reducers))
 	}
-	classReducer := class.Reducers[0]
-	evidenceReducer := evidence.Reducers[0]
-	if classReducer.Implementation == evidenceReducer.Implementation {
-		t.Fatal("class and evidence contributions share a reducer symbol")
+	for _, relation := range contribution.Relations {
+		if !relation.CandidateProvider.Issued() {
+			t.Fatalf("relation %q does not hang off the issued Program row", relation.Name)
+		}
 	}
-	if classReducer.Outputs[0].Carrier != "PlacementFactCarrier" {
-		t.Fatalf("class output carrier=%q, want PlacementFactCarrier", classReducer.Outputs[0].Carrier)
+	for _, selection := range contribution.Selections {
+		if !selection.Implementation.Available() || !strings.HasPrefix(selection.Implementation.Name, "Derive") {
+			t.Fatalf("selection %q names no owner judgment: %+v", selection.Name, selection.Implementation)
+		}
 	}
-	if evidenceReducer.Outputs[0].Carrier != "EvidenceFactCarrier" {
-		t.Fatalf("evidence output carrier=%q, want EvidenceFactCarrier", evidenceReducer.Outputs[0].Carrier)
-	}
-	if evidenceReducer.Outputs[0].Carrier == classReducer.Outputs[0].Carrier {
-		t.Fatal("evidence contribution writes the Placement class carrier")
-	}
+
 	// Two inputs, not three: the anchor read states the denominator the source
 	// vector is complete against, and a denominator is not a fold input. What
-	// each fold takes is the vector and the routed cell it publishes into.
-	if len(classReducer.Inputs) != 2 || len(evidenceReducer.Inputs) != 2 {
-		t.Fatalf("class/evidence input counts=%d/%d, want the vector and the routed cell", len(classReducer.Inputs), len(evidenceReducer.Inputs))
+	// the fold takes is the vector and the routed cell it publishes into.
+	reducer := contribution.Reducers[0]
+	if reducer.Key != "placement/suspension/reducer" || reducer.Candidate != "SubjectLivenessCarrier" ||
+		len(reducer.Inputs) != 2 || len(reducer.Outputs) != 1 {
+		t.Fatalf("suspension reducer shape=%+v", reducer)
 	}
-	if classReducer.Inputs[0] != evidenceReducer.Inputs[0] {
-		t.Fatalf("neutral source vector differs between class and evidence: %#v != %#v", classReducer.Inputs[0], evidenceReducer.Inputs[0])
+	if reducer.Inputs[0].Form != member.ReadFormSummary || reducer.Inputs[0].Multiplicity != member.MultiplicityMany || reducer.Inputs[0].Tag == "" {
+		t.Fatalf("source vector input=%+v, want a tagged whole-vector delivery", reducer.Inputs[0])
 	}
-	if classReducer.Inputs[0].Form != member.ReadFormSummary || classReducer.Inputs[0].Multiplicity != member.MultiplicityMany ||
-		classReducer.Inputs[0].Tag == "" {
-		t.Fatalf("source vector input=%#v, want a tagged whole-vector delivery", classReducer.Inputs[0])
+	if reducer.Inputs[1].Form != member.ReadFormSelected || reducer.Inputs[1].Carrier != "PlacementFactCarrier" ||
+		reducer.Inputs[1].Route != "PlacementKeyCarrier" || reducer.Inputs[1].Tag == "" {
+		t.Fatalf("routed cell input=%+v, want the routed Placement cell", reducer.Inputs[1])
 	}
-	if classReducer.Inputs[1].Carrier != "PlacementFactCarrier" || evidenceReducer.Inputs[1].Carrier != "EvidenceFactCarrier" {
-		t.Fatalf("route input carriers=%q/%q, want distinct owner cells", classReducer.Inputs[1].Carrier, evidenceReducer.Inputs[1].Carrier)
+	if reducer.Outputs[0].Carrier != "PlacementFactCarrier" {
+		t.Fatalf("suspension output carrier=%q, want PlacementFactCarrier", reducer.Outputs[0].Carrier)
 	}
-	if classReducer.Inputs[1].Tag == evidenceReducer.Inputs[1].Tag {
-		t.Fatalf("route tag vocabulary was duplicated: class=%q evidence=%q", classReducer.Inputs[1].Tag, evidenceReducer.Inputs[1].Tag)
-	}
-	if classReducer.Inputs[1].Route != "PlacementKeyCarrier" || evidenceReducer.Inputs[1].Route != "PlacementKeyCarrier" {
-		t.Fatalf("route coordinate carriers=%q/%q, want shared canonical PlacementKeyCarrier", classReducer.Inputs[1].Route, evidenceReducer.Inputs[1].Route)
-	}
-}
-
-func TestContributionsDoNotDeclareUnknownFallbacks(t *testing.T) {
-	for name, contribution := range map[string]struct {
-		axis string
-		key  string
-	}{
-		"class":    {axis: string(Contribution().Axis), key: string(Contribution().Reducers[0].Key)},
-		"evidence": {axis: string(EvidenceContribution().Axis), key: string(EvidenceContribution().Reducers[0].Key)},
-	} {
-		if name == "" || contribution.axis == "" || contribution.key == "" || strings.Contains(contribution.key, "unknown") {
-			t.Fatalf("%s contribution has an invalid reducer identity: axis=%q key=%q", name, contribution.axis, contribution.key)
-		}
+	if reducer.Implementation.Name != "SuspensionFold" || strings.Contains(string(reducer.Key), "unknown") {
+		t.Fatalf("suspension reducer identity=%+v", reducer.Implementation)
 	}
 }

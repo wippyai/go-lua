@@ -39,6 +39,8 @@ import (
 	placementpublicationescape "github.com/wippyai/go-lua/domain/placement/publicationescape/memberdefinition"
 	placementreturnescape "github.com/wippyai/go-lua/domain/placement/returnescape/memberdefinition"
 	placementstore "github.com/wippyai/go-lua/domain/placement/store/memberdefinition"
+	placementsuspensionevidence "github.com/wippyai/go-lua/domain/placement/suspension/evidence/memberdefinition"
+	placementsuspensionevidencebase "github.com/wippyai/go-lua/domain/placement/suspension/evidencefactor/memberdefinition"
 	placementsuspension "github.com/wippyai/go-lua/domain/placement/suspension/memberdefinition"
 	placementtransfer "github.com/wippyai/go-lua/domain/placement/transfer/memberdefinition"
 	staticbase "github.com/wippyai/go-lua/domain/static/memberdefinition"
@@ -114,6 +116,18 @@ func Composition() (definition.Roster, bool) {
 				placementcontainment.Contribution(),
 				placementpublicationescape.Contribution(),
 				placementsuspension.Contribution(),
+			},
+		},
+		definition.Source{
+			// The suspension-evidence Factor is its own axis: it writes the
+			// evidence cell and never Placement class, so its vocabulary is
+			// composed apart from Placement's even though both are mounted
+			// over the one Placement schema.
+			Package: "suspension",
+			Name:    "placement-suspension-evidence",
+			Base:    placementsuspensionevidencebase.EvidenceSource(),
+			Contributions: []definition.Contribution{
+				placementsuspensionevidence.Contribution(),
 			},
 		},
 		definition.Source{

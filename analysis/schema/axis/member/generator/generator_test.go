@@ -503,6 +503,23 @@ func TestResolveRejectsUnknownReducerCandidateCarrier(t *testing.T) {
 	}
 }
 
+// axisDirectory is the directory one axis's catalog is generated into, taken
+// from the ImportPath the axis itself declares. Deriving it from the package
+// NAME instead held only while every axis sat one level under domain/: an axis
+// nested deeper carries a package name that names no such directory, and the
+// freshness law then reads a file that does not exist and passes or fails for
+// the wrong reason.
+func axisDirectory(t *testing.T, root, name string) string {
+	t.Helper()
+	composed := composedSource(t, name)
+	const module = "github.com/wippyai/go-lua/"
+	path := strings.TrimPrefix(composed.ImportPath, module)
+	if path == "" || path == composed.ImportPath {
+		t.Fatalf("axis %q names no package inside this module: %q", name, composed.ImportPath)
+	}
+	return filepath.Join(append([]string{root}, strings.Split(path, "/")...)...)
+}
+
 // TestCheckedInGeneratedOutputIsFreshAndCompiles is the freshness law over
 // every registered axis, not a hand-picked subset of them: it walks the
 // roster generically so a new axis is checked the moment it registers,
@@ -525,7 +542,7 @@ func TestCheckedInGeneratedOutputIsFreshAndCompiles(t *testing.T) {
 		source, _ := roster.At(index)
 		t.Run(source.Name, func(t *testing.T) {
 			composed := composedSource(t, source.Name)
-			coldPath := filepath.Join(root, "domain", source.Package, "rule_members.go")
+			coldPath := filepath.Join(axisDirectory(t, root, source.Name), "rule_members.go")
 			if err := Generate(source.Package, composed, coldPath, true); err != nil {
 				t.Fatal(err)
 			}
@@ -538,7 +555,7 @@ func TestCheckedInGeneratedOutputIsFreshAndCompiles(t *testing.T) {
 			if relationsRelative == "" {
 				relationsRelative = "generated_relation_owner.go"
 			}
-			relationPath := filepath.Join(root, "domain", source.Package, relationsRelative)
+			relationPath := filepath.Join(axisDirectory(t, root, source.Name), relationsRelative)
 			if err := GenerateRelations(relationsPackage, composed, relationPath, true); err != nil {
 				t.Fatal(err)
 			}
@@ -588,7 +605,7 @@ func TestCheckedInExactFoldTablesAreFresh(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			path := filepath.Join(root, "domain", source.Package, "generated_exact_fold.go")
+			path := filepath.Join(axisDirectory(t, root, source.Name), "generated_exact_fold.go")
 			if len(reducers) == 0 {
 				if _, err := os.Stat(path); err == nil {
 					t.Fatalf("%s declares no exact fold yet an emitted table is checked in at %s", source.Name, path)
