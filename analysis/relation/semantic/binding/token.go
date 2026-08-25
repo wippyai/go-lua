@@ -203,6 +203,26 @@ func (witness DenominatorWitness) Matches(ref model.DenominatorRef) bool {
 func (witness DenominatorWitness) Contains(row model.RowID) bool {
 	return witness.Available() && witness.membership.Contains(row)
 }
+
+// Index resolves one authenticated logical row to the stable position in the
+// witness-owned membership view. The view remains the sole row-order source;
+// callers cannot replace or reorder it through this projection.
+func (witness DenominatorWitness) Index(row model.RowID) (int, bool) {
+	if !witness.Available() {
+		return 0, false
+	}
+	return witness.membership.Index(row)
+}
+
+// Evidence returns the owner-issued identity that authenticated this
+// denominator membership snapshot.
+func (witness DenominatorWitness) Evidence() (identity.ContentID, bool) {
+	if !witness.Available() {
+		return identity.ContentID{}, false
+	}
+	return witness.opaque, true
+}
+
 func (witness DenominatorWitness) Same(other DenominatorWitness) bool {
 	return witness.Available() && other.Available() && witness.fence == other.fence && witness.relation == other.relation && witness.key == other.key && witness.opaque == other.opaque && witness.membership.Same(other.membership)
 }
