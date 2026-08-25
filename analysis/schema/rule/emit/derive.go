@@ -58,6 +58,12 @@ type axisPlan struct {
 	schemaType definition.GoType
 	fact       definition.GoType
 	dense      definition.GoType
+	// normalized is what this axis's declared key normalizer ANSWERS, which is
+	// not the same statement as dense: dense is the coordinate type the engine
+	// numbers this axis's plane by, and normalized is the value the owner hands
+	// back when it is asked where a key sits. A generated construction that
+	// keeps a normalized coordinate keeps it in the owner's own answer type.
+	normalized definition.GoType
 	normalizer definition.GoSymbol
 	param      string
 }
@@ -118,6 +124,11 @@ type declaredPlan struct {
 	order             *axisPlan
 	sourceArgument    int
 	candidateArgument int
+	// inlineWidth is how many members the generated set holds by value before
+	// it reaches its explicit spill. It is the relation's own statement of how
+	// many members it ordinarily answers, so the ordinary answer costs no
+	// allocation and only a wider one does.
+	inlineWidth int
 }
 
 // enumerationPlan is one level of a composed source: the axis that declares
@@ -643,11 +654,17 @@ func deriveRelation(built *plan, resolver *axisResolver, join program.JoinDecl, 
 	return derivation, nil
 }
 
-func derivedStateName(position int) string { return fmt.Sprintf("derived%dRows", position) }
-func derivedBuildName(position int) string { return fmt.Sprintf("deriveDerived%dRows", position) }
-func derivedCountName(position int) string { return fmt.Sprintf("derived%dCount", position) }
-func derivedAtName(position int) string    { return fmt.Sprintf("derived%dAt", position) }
-func derivedOrderName(position int) string { return fmt.Sprintf("orderDerived%dRows", position) }
+func derivedStateName(position int) string  { return fmt.Sprintf("derived%dRows", position) }
+func derivedBuildName(position int) string  { return fmt.Sprintf("deriveDerived%dRows", position) }
+func derivedCountName(position int) string  { return fmt.Sprintf("derived%dCount", position) }
+func derivedAtName(position int) string     { return fmt.Sprintf("derived%dAt", position) }
+func derivedMemberName(position int) string { return fmt.Sprintf("derived%dMember", position) }
+func derivedMemberAtName(position int) string {
+	return fmt.Sprintf("derived%dMemberAt", position)
+}
+func derivedInsertName(position int) string { return fmt.Sprintf("insertDerived%dRow", position) }
+func derivedWidthName(position int) string  { return fmt.Sprintf("derived%dInlineWidth", position) }
+func derivedSinkName(position int) string   { return fmt.Sprintf("derived%dRowsSink", position) }
 
 // deriveDeclared resolves the declared operators into the construction this
 // emitter writes. Every refusal names the clause that leaves the generated
@@ -695,6 +712,7 @@ func deriveDeclared(built *plan, resolver *axisResolver, relation definition.Rel
 		position: position, subject: subject, sources: sources,
 		resolve: declaration.Resolve, order: relationAxis, key: key,
 		sourceArgument: -1, candidateArgument: -1,
+		inlineWidth: declaration.InlineWidth,
 	}
 	for index, input := range relation.Inputs {
 		carrier, carrierOK := carrierType(relationAxis.source, input.Carrier)
@@ -1183,12 +1201,17 @@ func (resolver *axisResolver) axis(key schema.Key) (*axisPlan, error) {
 	if !denseOK {
 		return nil, unexpressible(resolver.rule, "an axis that publishes no dense coordinate", string(key))
 	}
+	normalized := source.Binding.Key.Dense
+	if !normalized.Available() {
+		return nil, unexpressible(resolver.rule, "an axis whose key normalizer answers no declared type", string(key))
+	}
 	resolved := &axisPlan{
 		key:        key,
 		source:     source,
 		schemaType: schemaType,
 		fact:       fact,
 		dense:      dense,
+		normalized: normalized,
 		normalizer: source.Binding.Key.Normalizer,
 		param:      param + "Schema",
 	}

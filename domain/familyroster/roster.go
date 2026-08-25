@@ -32,6 +32,13 @@ import (
 // identifiable without consulting this roster.
 const GeneratedFileName = "generated_family.go"
 
+// GeneratedConstructionLawFileName is the one name the laws of an emitted
+// construction are written under. They sit beside the family rather than
+// beside the declaration because what they hold - the order a derived member
+// set answers in, and that it costs no allocation to answer - is a property of
+// the generated code itself and is unreadable from the declaration package.
+const GeneratedConstructionLawFileName = "generated_construction_law_test.go"
+
 // Family is one emitted rule family: the declaration it is derived from and
 // the repository-relative directory it is generated into.
 type Family struct {

@@ -17,7 +17,6 @@ import (
 	"github.com/wippyai/go-lua/domain/effect/callsite/bodyroute"
 	"github.com/wippyai/go-lua/domain/effect/factor"
 	"github.com/wippyai/go-lua/domain/effect/owner"
-	"slices"
 )
 
 // familyReducer is the sealed semantic half of one invocation. It holds the
@@ -196,67 +195,113 @@ func (lane *familyWorker) Execute(frame execution.Frame, ticket execution.Ticket
 	return execution.NewResult(outcome, written)
 }
 
-// derived1Rows is the member set one invocation of join 1's declared relation
-// answers. It is sealed by the Build below and read by nothing else.
-type derived1Rows struct {
-	rows []bodyroute.Route
+// derived1InlineWidth is how many members join 1's set holds by value. It is the
+// width its relation declares, which is that relation's own statement of how
+// many members it ordinarily answers.
+const derived1InlineWidth = 4
+
+// derived1Member is one member and the coordinate its relation's declared key
+// normalizes to. The coordinate is taken once, where the member is resolved,
+// because it is what the set is ordered by and asking the owner for it again
+// per comparison would let two answers to one question disagree.
+type derived1Member struct {
+	dense uint32
+	row   bodyroute.Route
 }
 
-func derived1Count(state derived1Rows) int { return len(state.rows) }
+// derived1Rows is the member set one invocation of join 1's declared relation
+// answers. It is sealed by the Build below and read by nothing else.
+//
+// The ordinary answer is held BY VALUE in the bounded inline prefix and only a
+// wider one reaches the explicit spill, so an invocation answering within the
+// declared width allocates nothing at all.
+type derived1Rows struct {
+	inline [derived1InlineWidth]derived1Member
+	spill  []derived1Member
+	count  int
+}
+
+func derived1Count(state derived1Rows) int { return state.count }
+
+// derived1MemberAt answers one member of the set together with the coordinate it
+// is ordered at. The inline prefix holds the first members and the spill holds
+// the rest, in one order across both.
+func derived1MemberAt(state derived1Rows, index int) (derived1Member, bool) {
+	if index < 0 || index >= state.count {
+		return derived1Member{}, false
+	}
+	if index < len(state.inline) {
+		return state.inline[index], true
+	}
+	spilled := index - len(state.inline)
+	if spilled >= len(state.spill) {
+		return derived1Member{}, false
+	}
+	return state.spill[spilled], true
+}
 
 func derived1At(state derived1Rows, index int) (bodyroute.Route, bool) {
-	if index < 0 || index >= len(state.rows) {
+	member, memberOK := derived1MemberAt(state, index)
+	if !memberOK {
 		var absent bodyroute.Route
 		return absent, false
 	}
-	return state.rows[index], true
+	return member.row, true
 }
 
-// orderDerived1Rows fixes the canonical member order of one derived set.
-// It is ascending by the relation's own declared key, normalized through the
-// axis that numbers those coordinates, because that is the order the engine
-// canonicalizes a selection by. Two rows on one coordinate address one member
-// twice and are refused rather than observed twice.
-func orderDerived1Rows(effectSchema *factor.Algebra, built derived1Rows) (derived1Rows, bool) {
-	for _, row := range built.rows {
-		key, keyOK := row.Coordinate()
-		if !keyOK {
+// insertDerived1Row places one resolved member at its canonical position. The set
+// is ordered ascending by the coordinate its relation's declared key
+// normalizes to, because that is the order the engine canonicalizes a
+// selection by, and a member already on that coordinate is refused rather
+// than observed twice.
+func insertDerived1Row(built derived1Rows, dense uint32, row bodyroute.Route) (derived1Rows, bool) {
+	position := 0
+	for position < built.count {
+		current, currentOK := derived1MemberAt(built, position)
+		if !currentOK || current.dense == dense {
 			return derived1Rows{}, false
 		}
-		if _, denseOK := effectSchema.DenseKeyIndex(key); !denseOK {
-			return derived1Rows{}, false
+		if current.dense > dense {
+			break
 		}
+		position++
 	}
-	slices.SortFunc(built.rows, func(left, right bodyroute.Route) int {
-		leftKey, _ := left.Coordinate()
-		rightKey, _ := right.Coordinate()
-		leftDense, _ := effectSchema.DenseKeyIndex(leftKey)
-		rightDense, _ := effectSchema.DenseKeyIndex(rightKey)
-		switch {
-		case leftDense < rightDense:
-			return -1
-		case leftDense > rightDense:
-			return 1
-		default:
-			return 0
+	placed := derived1Member{dense: dense, row: row}
+	if built.count < len(built.inline) {
+		for index := built.count; index > position; index-- {
+			built.inline[index] = built.inline[index-1]
 		}
-	})
-	for index := 1; index < len(built.rows); index++ {
-		previousKey, _ := built.rows[index-1].Coordinate()
-		currentKey, _ := built.rows[index].Coordinate()
-		previousDense, _ := effectSchema.DenseKeyIndex(previousKey)
-		currentDense, _ := effectSchema.DenseKeyIndex(currentKey)
-		if currentDense <= previousDense {
-			return derived1Rows{}, false
-		}
+		built.inline[position] = placed
+		built.count++
+		return built, true
 	}
+	// The prefix is full. A member belonging inside it displaces the last one
+	// held there, and that one takes the first spilled position instead.
+	if position < len(built.inline) {
+		carried := built.inline[len(built.inline)-1]
+		for index := len(built.inline) - 1; index > position; index-- {
+			built.inline[index] = built.inline[index-1]
+		}
+		built.inline[position] = placed
+		placed = carried
+		position = len(built.inline)
+	}
+	spilled := position - len(built.inline)
+	if spilled > len(built.spill) {
+		return derived1Rows{}, false
+	}
+	built.spill = append(built.spill, derived1Member{})
+	copy(built.spill[spilled+1:], built.spill[spilled:len(built.spill)-1])
+	built.spill[spilled] = placed
+	built.count++
 	return built, true
 }
 
 // deriveDerived1Rows answers join 1's member set for one invocation.
 // A source that reached its lattice endpoint named no alternatives at all, so
 // the answer there is the owner's whole directory rather than the ones that
-// happen to be written down. Both answers leave through the same order.
+// happen to be written down. Both answers are placed the same way, so both
+// leave in the one order a selection is canonicalized by.
 func deriveDerived1Rows(effectSchema *factor.Algebra, callSchema *call.Algebra, given0 factor.MountedCall, given1 call.Value) (derived1Rows, bool) {
 	var built derived1Rows
 	if given1.IsTop() {
@@ -266,15 +311,27 @@ func deriveDerived1Rows(effectSchema *factor.Algebra, callSchema *call.Algebra, 
 			if !widenItem0OK {
 				return derived1Rows{}, false
 			}
-			widenRow, widenPresent, widenResolved := bodyroute.ResolveRoute(effectSchema, callSchema, given0, widenItem0)
-			if !widenResolved {
+			widenRow, present, resolved := bodyroute.ResolveRoute(effectSchema, callSchema, given0, widenItem0)
+			if !resolved {
 				return derived1Rows{}, false
 			}
-			if widenPresent {
-				built.rows = append(built.rows, widenRow)
+			if present {
+				key, keyOK := widenRow.Coordinate()
+				if !keyOK {
+					return derived1Rows{}, false
+				}
+				dense, denseOK := effectSchema.DenseKeyIndex(key)
+				if !denseOK {
+					return derived1Rows{}, false
+				}
+				var placed bool
+				built, placed = insertDerived1Row(built, dense, widenRow)
+				if !placed {
+					return derived1Rows{}, false
+				}
 			}
 		}
-		return orderDerived1Rows(effectSchema, built)
+		return built, true
 	}
 	count0 := given1.KnownTargetCount()
 	for cursor0 := 0; cursor0 < count0; cursor0++ {
@@ -287,10 +344,22 @@ func deriveDerived1Rows(effectSchema *factor.Algebra, callSchema *call.Algebra, 
 			return derived1Rows{}, false
 		}
 		if present {
-			built.rows = append(built.rows, row)
+			key, keyOK := row.Coordinate()
+			if !keyOK {
+				return derived1Rows{}, false
+			}
+			dense, denseOK := effectSchema.DenseKeyIndex(key)
+			if !denseOK {
+				return derived1Rows{}, false
+			}
+			var placed bool
+			built, placed = insertDerived1Row(built, dense, row)
+			if !placed {
+				return derived1Rows{}, false
+			}
 		}
 	}
-	return orderDerived1Rows(effectSchema, built)
+	return built, true
 }
 
 // familyInstaller authors this rule's execution family. The axis schemas it

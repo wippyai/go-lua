@@ -20,7 +20,8 @@ func declaredDerivation() RelationDerivation {
 		Source: []EnumerationRef{{
 			Axis: specimenAxis(), Name: "Alternatives",
 		}},
-		Resolve: declaredSpecimenSymbol("ResolveRow"),
+		Resolve:     declaredSpecimenSymbol("ResolveRow"),
+		InlineWidth: 4,
 		Widen: DerivationWiden{
 			Predicate: declaredSpecimenSymbol("IsTop"),
 			Source:    []EnumerationRef{{Axis: specimenAxis(), Name: "Directory"}},
@@ -191,7 +192,8 @@ func declaredSpecimenSource(t testing.TB) (Definition, Relation) {
 				{Axis: specimenAxis(), Name: "Alternatives"},
 				{Axis: specimenAxis(), Name: "Parts"},
 			},
-			Resolve: declaredSpecimenSymbol("ResolveRow"),
+			Resolve:     declaredSpecimenSymbol("ResolveRow"),
+			InlineWidth: 4,
 		},
 	}
 	source.Relations = append(source.Relations, relation)
@@ -325,5 +327,30 @@ func TestAWidenedAnswerIsReadOutOfTheOwnersSchema(t *testing.T) {
 	}
 	if shape.Widened[0].CountParams[0].Type != schemaType {
 		t.Fatalf("the widened answer is read out of %+v, want the axis's own schema %+v", shape.Widened[0].CountParams[0].Type, schemaType)
+	}
+}
+
+// TestADeclaredDerivationStatesTheWidthItHoldsByValue is the allocation law of
+// the declared form. The generated construction holds its rows in a bounded
+// inline prefix BY VALUE with an explicit spill beyond it, so an ordinary
+// answer costs no allocation at all. How wide that prefix is depends on how
+// many members the relation ordinarily answers, which is the owner's knowledge
+// and not a number this package may pick: a derivation that states none leaves
+// its generated set with no inline prefix, and then every answer reaches the
+// spill and every invocation allocates.
+func TestADeclaredDerivationStatesTheWidthItHoldsByValue(t *testing.T) {
+	declared := declaredDerivation()
+	if !declared.complete() {
+		t.Fatal("a whole declared derivation was refused")
+	}
+	widthless := declared
+	widthless.InlineWidth = 0
+	if widthless.complete() {
+		t.Fatal("a declared derivation stating no inline width was admitted; every answer of its generated set would allocate")
+	}
+	negative := declared
+	negative.InlineWidth = -1
+	if negative.complete() {
+		t.Fatal("a declared derivation stating a negative inline width was admitted")
 	}
 }

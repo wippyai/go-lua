@@ -1,6 +1,7 @@
 // Command rule-family generates one rule's execution family from its Program
-// declaration and the axis member roster, or checks that the checked-in file
-// is already the one that declaration derives.
+// declaration and the axis member roster, together with the laws that family's
+// generated construction owes, or checks that the checked-in files are already
+// the ones that declaration derives.
 package main
 
 import (
@@ -32,6 +33,10 @@ func main() {
 		matched++
 		path := filepath.Join(*root, family.Directory, familyroster.GeneratedFileName)
 		if err := emit.Generate(family.Target, roster, path, *check); err != nil {
+			fail(err.Error())
+		}
+		lawPath := filepath.Join(*root, family.Directory, familyroster.GeneratedConstructionLawFileName)
+		if err := emit.GenerateLaw(family.Target, roster, lawPath, *check); err != nil {
 			fail(err.Error())
 		}
 	}

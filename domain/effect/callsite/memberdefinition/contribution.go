@@ -206,6 +206,10 @@ func bodyRoutes() definition.Relation {
 			StaticAxes: []schema.EntryReference{axisReference("effect"), axisReference("call")},
 			Source:     []definition.EnumerationRef{{Axis: axisReference("call"), Name: "KnownTargets"}},
 			Resolve:    bodyRouteFunction("ResolveRoute"),
+			// A call site reaches one body when its target is known and a
+			// handful when its dispatch is over a closed set, so the ordinary
+			// answer is held by value and never allocates.
+			InlineWidth: 4,
 			Widen: definition.DerivationWiden{
 				// A call value that named no alternatives reaches every body
 				// there is, and only Call's own directory can say which those

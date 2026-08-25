@@ -591,9 +591,10 @@ func TestAnExactConclusionOverASelectionIsRefusedWhenItsMembersAreNotDerived(t *
 // whole directory.
 func declaredSiteDerivation() definition.RelationDerivation {
 	return definition.RelationDerivation{
-		StaticAxes: []schema.EntryReference{siteAxis(), wireAxis()},
-		Source:     []definition.EnumerationRef{{Axis: siteAxis(), Name: "Alternatives"}},
-		Resolve:    definition.GoSymbol{PackagePath: sitePackage, Name: "ResolveRoute", ResultIndex: 0},
+		StaticAxes:  []schema.EntryReference{siteAxis(), wireAxis()},
+		Source:      []definition.EnumerationRef{{Axis: siteAxis(), Name: "Alternatives"}},
+		Resolve:     definition.GoSymbol{PackagePath: sitePackage, Name: "ResolveRoute", ResultIndex: 0},
+		InlineWidth: 4,
 		Widen: definition.DerivationWiden{
 			Predicate: definition.GoSymbol{PackagePath: sitePackage, Name: "IsTop", ResultIndex: 0},
 			Source:    []definition.EnumerationRef{{Axis: siteAxis(), Name: "Directory"}},
@@ -632,33 +633,68 @@ func renderDerivedSelection(t testing.TB, spec rule.Spec) (string, error) {
 // generated one must write the same thing, and it must write it on BOTH paths
 // - the ordinary answer and the widened one - because a widened set that came
 // back in directory order would be just as wrong.
+//
+// The order is kept while the set is built. A member is normalized once, where
+// it is resolved, and placed where it belongs; there is no sort afterwards to
+// get wrong and no second normalization to disagree with the first.
 func TestAGeneratedMemberSetIsOrderedByTheKeyItsRelationDeclares(t *testing.T) {
 	source, err := renderDerivedSelection(t, derivedSelectionSpec())
 	if err != nil {
 		t.Fatalf("a declared derivation did not emit: %v", err)
 	}
-	order, found := functionBody(source, "orderDerived1Rows")
-	if !found {
-		t.Fatalf("the emitted construction has no ordering step:\n%s", source)
-	}
-	// The declared Key projection, and nothing else, decides the order.
-	if !strings.Contains(order, ".Coordinate()") {
-		t.Fatalf("the ordering step does not read the relation's declared Key projection:\n%s", order)
-	}
-	// Normalized through the axis that numbers the coordinates, so the order is
-	// the engine's own rather than whatever the carrier compares as.
-	if !strings.Contains(order, ".KeyIndex(") {
-		t.Fatalf("the ordering step does not normalize the key through its axis:\n%s", order)
-	}
-	if !strings.Contains(order, "SortFunc") {
-		t.Fatalf("the ordering step does not sort:\n%s", order)
-	}
 	build, buildFound := functionBody(source, "deriveDerived1Rows")
 	if !buildFound {
 		t.Fatalf("the emitted construction has no Build:\n%s", source)
 	}
-	if occurrences := strings.Count(build, "orderDerived1Rows("); occurrences != 2 {
-		t.Fatalf("the Build orders its answer %d times; both the ordinary and the widened path are ordered:\n%s", occurrences, build)
+	// The declared Key projection, and nothing else, decides the order.
+	if !strings.Contains(build, ".Coordinate()") {
+		t.Fatalf("the construction does not read the relation's declared Key projection:\n%s", build)
+	}
+	// Normalized through the axis that numbers the coordinates, so the order is
+	// the engine's own rather than whatever the carrier compares as.
+	if !strings.Contains(build, ".KeyIndex(") {
+		t.Fatalf("the construction does not normalize the key through its axis:\n%s", build)
+	}
+	if occurrences := strings.Count(build, "insertDerived1Row("); occurrences != 2 {
+		t.Fatalf("the Build places its members %d times; both the ordinary and the widened path are ordered:\n%s", occurrences, build)
+	}
+	if strings.Contains(source, "SortFunc") {
+		t.Fatalf("the construction sorts its answer; the order is kept while the set is built:\n%s", source)
+	}
+	insert, insertFound := functionBody(source, "insertDerived1Row")
+	if !insertFound {
+		t.Fatalf("the emitted construction has no canonical placement:\n%s", source)
+	}
+	if !strings.Contains(insert, "current.dense > dense") {
+		t.Fatalf("placement does not scan for the position the coordinate belongs at:\n%s", insert)
+	}
+}
+
+// TestAGeneratedMemberSetIsHeldByValue is the allocation law of the emitted
+// shape. A derived set is a bounded inline prefix held BY VALUE, an explicit
+// spill beyond it, and a count - the shape every authored Build converged on
+// independently - so the ordinary answer never allocates a slice just to be
+// returned, and the width past which it does is the one the relation declares.
+func TestAGeneratedMemberSetIsHeldByValue(t *testing.T) {
+	source, err := renderDerivedSelection(t, derivedSelectionSpec())
+	if err != nil {
+		t.Fatalf("a declared derivation did not emit: %v", err)
+	}
+	if !strings.Contains(source, "const derived1InlineWidth = 4") {
+		t.Fatalf("the emitted set does not hold the width its relation declares:\n%s", source)
+	}
+	if !strings.Contains(source, "inline [derived1InlineWidth]derived1Member") {
+		t.Fatalf("the emitted set has no inline prefix held by value:\n%s", source)
+	}
+	if !strings.Contains(source, "spill  []derived1Member") {
+		t.Fatalf("the emitted set has no explicit spill:\n%s", source)
+	}
+	build, _ := functionBody(source, "deriveDerived1Rows")
+	if strings.Contains(build, "rows []") {
+		t.Fatalf("the Build is handed a row buffer; the set is its own answer and is returned by value:\n%s", build)
+	}
+	if strings.Contains(source, "append(built.rows") || strings.Contains(source, "state.rows") {
+		t.Fatalf("the emitted set still answers through a slice of rows:\n%s", source)
 	}
 }
 
@@ -671,9 +707,53 @@ func TestAGeneratedMemberSetRefusesTwoRowsOnOneCoordinate(t *testing.T) {
 	if err != nil {
 		t.Fatalf("a declared derivation did not emit: %v", err)
 	}
-	order, _ := functionBody(source, "orderDerived1Rows")
-	if !strings.Contains(order, "index-1") && !strings.Contains(order, "index -1") {
-		t.Fatalf("the ordering step never compares a row with the one before it, so a repeat is admitted:\n%s", order)
+	insert, found := functionBody(source, "insertDerived1Row")
+	if !found {
+		t.Fatalf("the emitted construction has no canonical placement:\n%s", source)
+	}
+	if !strings.Contains(insert, "current.dense == dense") {
+		t.Fatalf("placement never compares a member with one already on its coordinate, so a repeat is admitted:\n%s", insert)
+	}
+}
+
+// TestAGeneratedMemberSetOwesTheLawsOfItsOwnConstruction states where the
+// runtime half of the two laws above lives. Ordering and allocation are
+// properties of the emitted code and of no fact any domain supplies, so the
+// generator that writes the construction writes their laws beside it rather
+// than leaving each migrated owner to restate them by hand.
+func TestAGeneratedMemberSetOwesTheLawsOfItsOwnConstruction(t *testing.T) {
+	target := derivedTarget()
+	target.Spec = derivedSelectionSpec()
+	source, err := RenderLaw(target, derivedRoster(t))
+	if err != nil {
+		t.Fatalf("a declared derivation emitted no law suite: %v", err)
+	}
+	suite := string(source)
+	for _, law := range []string{
+		"func TestDerived1RowsAnswersItsMembersInCoordinateOrder(",
+		"func TestDerived1RowsRefusesTwoMembersOnOneCoordinate(",
+		"func TestDerived1RowsFillsItsDeclaredWidthWithoutAllocating(",
+	} {
+		if !strings.Contains(suite, law) {
+			t.Fatalf("the emitted law suite is missing %q:\n%s", law, suite)
+		}
+	}
+	if !strings.Contains(suite, "testing.AllocsPerRun") {
+		t.Fatalf("the allocation law does not measure allocations:\n%s", suite)
+	}
+}
+
+// TestAFamilyWithNoDerivedMemberSetOwesNoLawSuite keeps the emitted suite to
+// what it can actually state. A family whose relations are authored has no
+// generated construction, so there is nothing here for a law to hold, and an
+// empty suite would be a file that only says the generator ran.
+func TestAFamilyWithNoDerivedMemberSetOwesNoLawSuite(t *testing.T) {
+	source, err := RenderLaw(derivedTarget(), derivedRoster(t))
+	if err != nil {
+		t.Fatalf("a family with no derived member set refused to answer: %v", err)
+	}
+	if source != nil {
+		t.Fatalf("a family with no generated construction was given a law suite:\n%s", source)
 	}
 }
 

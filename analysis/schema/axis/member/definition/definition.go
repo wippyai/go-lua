@@ -317,6 +317,13 @@ type RelationDerivation struct {
 	Source  []EnumerationRef
 	Resolve GoSymbol
 	Widen   DerivationWiden
+	// InlineWidth is how many rows the generated set holds BY VALUE before it
+	// reaches its explicit spill. The generated construction is the shape every
+	// authored one converged on independently - a bounded inline prefix, a
+	// spill suffix, a count - so the ordinary answer never allocates a slice
+	// just to be returned, and the width past which it does is the relation's
+	// own statement of how many members it ordinarily answers.
+	InlineWidth int
 }
 
 // EnumerationRef names one axis's declared enumeration.
@@ -412,11 +419,14 @@ func (derivation RelationDerivation) AuthoredDerivation() bool {
 }
 
 // declaredComplete states the row-local law of the declared form: at least one
-// source enumeration, the one authored judgment that resolves an item, a widen
-// endpoint stated whole or not at all, and at least one axis to resolve
-// against.
+// source enumeration, the one authored judgment that resolves an item, the
+// width the generated set holds by value, a widen endpoint stated whole or not
+// at all, and at least one axis to resolve against.
 func (derivation RelationDerivation) declaredComplete() bool {
 	if len(derivation.Source) == 0 || !derivation.Resolve.Available() || len(derivation.StaticAxes) == 0 {
+		return false
+	}
+	if derivation.InlineWidth <= 0 {
 		return false
 	}
 	for _, source := range derivation.Source {
