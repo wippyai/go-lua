@@ -249,3 +249,70 @@ func TestProgramRejectsUncorrelatedSummaryOverNestedMemberSet(t *testing.T) {
 		t.Fatalf("problem = %+v, want ProblemJoin at join 0", problem)
 	}
 }
+
+// TestANestedMemberSetIsFoldableAtItsOwnOrdinal states the tag law a nested
+// member set has always owed and never been asked for.
+//
+// A join's reducer tag names WHICH member of a many-valued delivery each cell
+// is. For a selection that is the Predicate projection. For a nested member
+// set there is no predicate and there never should be: the set is addressed by
+// (parent, ordinal), and member.Relation.Ordinal is by its own declaration
+// "the address a member is reached by under its parent ... what a CHILD
+// Program consumes". So the ordinal carrier IS the tag.
+//
+// Until this held, a nested Summary could be declared and compiled but could
+// never be a Fold input, because the compiler offered its reducer no tag to
+// agree with. The fixture above says so in as many words - its consumer join
+// exists "without requiring a reducer tag on the nested Summary read itself".
+// A rule whose whole judgment is over the member set - one disposition per
+// branch of one trigger - has no such second join to fold through.
+func TestANestedMemberSetIsFoldableAtItsOwnOrdinal(t *testing.T) {
+	fixture := newPlanFixture(t)
+	addNestedMemberSetCatalog(fixture)
+	// The nested Summary read is the fold's own input, not a materialization
+	// some later exact join consumes, so it is the only join there is.
+	fixture.declaration.Joins = nestedMemberSetJoins(planCandidateRelation)[:1]
+	fixture.declaration.Fold.Inputs = []program.JoinRef{0}
+	fixture.catalog.Reducers[0].Inputs = []member.ReducerInput{{
+		Axis:         schema.EntryReference{Surface: schema.SurfaceKindAxis, Key: planAxisKey},
+		Carrier:      planFactCarrier,
+		Form:         member.ReadFormSummary,
+		Multiplicity: member.MultiplicityMany,
+		Tag:          nestedMemberOrdinal,
+	}}
+	table := fixture.seal(t)
+	compiled, failure := Compile(table)
+	if failure.Available() {
+		t.Fatalf("a fold over a nested member set was rejected: contributor=%d law=%d disposition=%s", failure.Contributor, failure.Law, failure.Disposition)
+	}
+	plan, ok := compiled.At(0)
+	if !ok || !plan.Present() {
+		t.Fatal("compiled plan missing")
+	}
+	join, joinOK := plan.JoinAt(0)
+	if !joinOK || !join.ParentPresent || join.PredicatePresent {
+		t.Fatalf("nested join parent=%t predicate=%t, want a parent-addressed member set", join.ParentPresent, join.PredicatePresent)
+	}
+}
+
+// TestANestedMemberSetFoldRefusesAForeignTag keeps the tag exact. The ordinal
+// carrier the relation declares is the only address its members have; a
+// reducer naming any other carrier is agreeing with a delivery it will not be
+// handed.
+func TestANestedMemberSetFoldRefusesAForeignTag(t *testing.T) {
+	fixture := newPlanFixture(t)
+	addNestedMemberSetCatalog(fixture)
+	fixture.declaration.Joins = nestedMemberSetJoins(planCandidateRelation)[:1]
+	fixture.declaration.Fold.Inputs = []program.JoinRef{0}
+	fixture.catalog.Reducers[0].Inputs = []member.ReducerInput{{
+		Axis:         schema.EntryReference{Surface: schema.SurfaceKindAxis, Key: planAxisKey},
+		Carrier:      planFactCarrier,
+		Form:         member.ReadFormSummary,
+		Multiplicity: member.MultiplicityMany,
+		Tag:          planKeyCarrier,
+	}}
+	table := fixture.seal(t)
+	if _, failure := Compile(table); !failure.Available() {
+		t.Fatal("a fold over a nested member set accepted a tag the relation does not address its members by")
+	}
+}

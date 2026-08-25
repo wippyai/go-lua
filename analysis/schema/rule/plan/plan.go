@@ -782,10 +782,20 @@ func compileProgram(ruleOrdinal uint32, template *rule.Template, declaration pro
 		if !readSignature.Available() || key.Result != readSignature.Key {
 			return Plan{}, compileFailure(template.ID(), rule.LawProgramShape, schema.DispositionMalformed)
 		}
+		// The tag names WHICH member of a many-valued delivery each cell is.
+		// A selection is tagged by its Predicate projection. A nested member
+		// set has no predicate and needs none: it is addressed by (parent,
+		// ordinal), and the relation's own declared Ordinal carrier IS that
+		// address - "what a CHILD Program consumes", in the catalog's words.
+		// Deriving the tag from only the predicate left a member set foldable
+		// by nothing, because its reducer had no carrier to agree with.
 		var tag member.Carrier
-		if compiledJoin.PredicatePresent {
+		switch {
+		case compiledJoin.PredicatePresent:
 			predicate, _ := relationCatalog.Projection(join.Predicate.Member)
 			tag = predicate.Result
+		case compiledJoin.ParentPresent:
+			tag = relation.Ordinal
 		}
 		joinFacts = append(joinFacts, readSignature.Fact)
 		joinTags = append(joinTags, tag)
