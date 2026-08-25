@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -219,8 +220,12 @@ func TestShardsPartitionTheCorpus(t *testing.T) {
 // is compiled against one of them, so its import list holds no analyzer or
 // domain package.
 func TestHarnessLinksNoRuntime(t *testing.T) {
+	_, self, _, selfOK := runtime.Caller(0)
+	if !selfOK {
+		t.Fatal("the law cannot locate its own package directory")
+	}
 	fileSet := token.NewFileSet()
-	packages, err := parser.ParseDir(fileSet, ".", nil, parser.ImportsOnly)
+	packages, err := parser.ParseDir(fileSet, filepath.Dir(self), nil, parser.ImportsOnly)
 	if err != nil {
 		t.Fatal(err)
 	}
