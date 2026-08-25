@@ -1085,6 +1085,11 @@ const (
 	// no per-cell invocation for it to be handed. It is a derived role, not an
 	// authored one - which inputs are many-valued is the read's multiplicity,
 	// not an owner's choice of parameter.
+	//
+	// WHICH view it is delivered through is the read's Form, not the role: a
+	// whole-vector read establishes each cell's position and nothing else, and
+	// a selection establishes the tag it correlated each cell by.
+	// ManyValuedView is the one place that choice is made.
 	ArgumentVector
 )
 
@@ -1096,7 +1101,11 @@ type Argument struct {
 	// the call shape names a type argument, because the vector view is the one
 	// instantiated type in a signature; every other role leaves it zero.
 	Element GoType
-	Input   int
+	// Slice says the delivery is a slice of that view rather than one value of
+	// it. A selection hands over the cells it observed, which is a slice; a
+	// whole-vector read hands over one vector.
+	Slice bool
+	Input int
 }
 
 // ArgumentInput is one declared input reduced to the carrier types its
@@ -1114,7 +1123,40 @@ type ArgumentInput struct {
 	// it belongs to the execution layer's vocabulary, the same way the sealed
 	// disposition is.
 	Vector GoType
+	Slice  bool
 	Many   bool
+}
+
+// ManyValuedView answers the view one many-valued delivery is handed through,
+// and whether it arrives as a slice of that view.
+//
+// It is the ONE statement of that choice. A reducer folding a many-valued
+// input and a relation derived over the same one are handed the same delivery,
+// so both read this rather than each deciding for itself - which is how the
+// two came to disagree, a reducer seeing a bare vector where its derivation
+// saw tagged cells.
+//
+// The choice is the read's Form and nothing else. A SELECTION established a
+// tag per cell, and dropping it would ask the fold to recover a correlation
+// the read already proved; a WHOLE-VECTOR read over a closed denominator
+// established each cell's position and no tag at all, so there is none to
+// carry. Both views are named by the caller for the same reason the sealed
+// disposition is: they belong to the execution layer's vocabulary.
+func ManyValuedView(form member.ReadForm, cell, vector GoType) (view GoType, slice bool, ok bool) {
+	switch form {
+	case member.ReadFormSelected:
+		if !cell.Available() {
+			return GoType{}, false, false
+		}
+		return cell, true, true
+	case member.ReadFormSummary:
+		if !vector.Available() {
+			return GoType{}, false, false
+		}
+		return vector, false, true
+	default:
+		return GoType{}, false, false
+	}
 }
 
 // ComposeArguments is the one statement of a reducer's parameter order: the
@@ -1137,7 +1179,7 @@ func ComposeArguments(candidate GoType, candidatePresent bool, inputs []Argument
 	}
 	for index, input := range inputs {
 		if input.Many {
-			arguments = append(arguments, Argument{Role: ArgumentVector, Type: input.Vector, Element: input.Fact, Input: index})
+			arguments = append(arguments, Argument{Role: ArgumentVector, Type: input.Vector, Element: input.Fact, Slice: input.Slice, Input: index})
 			continue
 		}
 		if input.Routed {
@@ -1165,14 +1207,17 @@ func ComposeArguments(candidate GoType, candidatePresent bool, inputs []Argument
 // once when the owner installs it. That is what keeps a signature from growing
 // plumbing: its width is a function of the declared rows alone.
 //
-// vector is the view type a many-valued read delivers through. It is supplied
-// by the caller for the same reason outcome is: both belong to the execution
-// vocabulary, and this package states the shape without naming that package.
+// cell and vector are the two views a many-valued read delivers through, and
+// which of them one input takes is ManyValuedView's answer from that input's
+// declared Form - the same answer a relation derived over the input gets. They
+// are supplied by the caller for the same reason outcome is: all three belong
+// to the execution vocabulary, and this package states the shape without
+// naming that package.
 //
 // The results are the declared output carriers in row order followed by the one
 // sealed disposition, which a caller supplies as outcome so this package states
 // the shape without naming the vocabulary's package.
-func (definition Definition) ReducerSignature(reducer Reducer, outcome, vector GoType) ([]Argument, []GoType, bool) {
+func (definition Definition) ReducerSignature(reducer Reducer, outcome, cell, vector GoType) ([]Argument, []GoType, bool) {
 	carriers, _, carriersOK := definition.carrierIndex()
 	if !carriersOK {
 		return nil, nil, false
@@ -1193,10 +1238,11 @@ func (definition Definition) ReducerSignature(reducer Reducer, outcome, vector G
 		}
 		inputs[index] = ArgumentInput{Fact: fact.Type}
 		if input.Multiplicity == member.MultiplicityMany {
-			if !vector.Available() {
+			view, slice, viewOK := ManyValuedView(input.Form, cell, vector)
+			if !viewOK {
 				return nil, nil, false
 			}
-			inputs[index].Vector, inputs[index].Many = vector, true
+			inputs[index].Vector, inputs[index].Slice, inputs[index].Many = view, slice, true
 			continue
 		}
 		if input.Route != "" {

@@ -505,7 +505,7 @@ const (
 	ReducerArgumentVector    = memberdefinition.ArgumentVector
 )
 
-// ReducerVectorType is the view a whole-vector read delivers its cells
+// SummaryVectorType is the view a WHOLE-VECTOR read delivers its cells
 // through. It is a constant of this package for the same reason the outcome
 // type is: the execution layer already materialized those cells in the order
 // it sealed, and an owner that named a container of its own would be asking
@@ -514,19 +514,21 @@ const (
 //
 // It is what a Summary delivery is handed as, wherever it is consumed: the
 // fold of a whole denominator and the Build of a relation derived over one see
-// the same view, because a many-valued input is ONE vector argument.
-var ReducerVectorType = memberdefinition.GoType{
+// the same view, because a many-valued input is ONE argument. Which of the two
+// views one input takes is definition.ManyValuedView's answer.
+var SummaryVectorType = memberdefinition.GoType{
 	PackagePath: "github.com/wippyai/go-lua/analysis/engine/execution",
 	Name:        "SummaryVector",
 }
 
-// DerivationCellType is the view a SELECTED delivery is handed through: the
+// SelectionCellType is the view a SELECTED delivery is handed through: the
 // cells a selection answered, each paired with the owner-issued tag that
 // selection correlated it by. It is a distinct view from the vector above
 // because it carries a distinct fact - a selection establishes a tag per cell
-// and a whole-vector read establishes none, so a derivation over a selection
-// reads what its own read proved rather than a view that drops it.
-var DerivationCellType = memberdefinition.GoType{
+// and a whole-vector read establishes none, so a consumer of a selection reads
+// what its own read proved rather than a view that drops it. It is delivered
+// as a slice of this type, one entry per observed member.
+var SelectionCellType = memberdefinition.GoType{
 	PackagePath: "github.com/wippyai/go-lua/analysis/engine/execution",
 	Name:        "SelectedCell",
 }
@@ -555,7 +557,16 @@ func (call ReducerCall) Arguments() []ReducerArgument {
 	for index, input := range call.Inputs {
 		inputs[index] = memberdefinition.ArgumentInput{Route: input.Route, Routed: input.Routed, Tag: input.Tag, Tagged: input.Tagged, Fact: input.Type}
 		if input.Multiplicity == member.MultiplicityMany {
-			inputs[index].Vector, inputs[index].Many = ReducerVectorType, true
+			// Which view a many-valued delivery takes is the read's Form, and
+			// that choice has one statement. This derivation resolves carriers
+			// through plan addresses rather than by name, but it is the same
+			// call shape, so it asks the same question rather than answering
+			// it a second way.
+			view, slice, viewOK := memberdefinition.ManyValuedView(input.Form, SelectionCellType, SummaryVectorType)
+			if !viewOK {
+				return nil
+			}
+			inputs[index].Vector, inputs[index].Slice, inputs[index].Many = view, slice, true
 		}
 	}
 	return memberdefinition.ComposeArguments(call.Candidate, call.CandidatePresent, inputs)

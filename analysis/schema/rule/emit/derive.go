@@ -660,7 +660,7 @@ func deriveFold(built *plan, resolver *axisResolver, declaration program.Program
 	if !reducerOK {
 		return unexpressible(ruleKey, "a reducer its axis does not declare", string(declaration.Fold.Reducer.Member))
 	}
-	arguments, results, derived := axis.source.ReducerSignature(reducer, outcomeType(), vectorType())
+	arguments, results, derived := axis.source.ReducerSignature(reducer, outcomeType(), cellType(), vectorType())
 	if !derived {
 		return unexpressible(ruleKey, "a reducer whose declared rows name an undeclared carrier", reducer.Name)
 	}

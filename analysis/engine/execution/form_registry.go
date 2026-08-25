@@ -47,6 +47,19 @@ const (
 	// never a reduced value - so it has no generic builder: every rule this
 	// form classifies is authored through its own RuleFamilyInstaller.
 	FormActivation
+	// FormSelectedExact is the exact publication over a selection: one exact
+	// read joined to one or more dependent selected reads, folded ONCE over
+	// the whole delivery, published at the row's own exact coordinate.
+	//
+	// It is not FormSelectedRoute, which publishes one fact per observed
+	// member; a rule of this form concludes one fact FROM every member, so the
+	// selection reaches its fold as one argument rather than as a cadence. It
+	// is not FormExact either, whose reads are every one of them exact. Like
+	// FormActivation it has no generic builder: the members a selection is
+	// observed at come from a relation only the rule's own package derives, so
+	// every rule this form classifies is authored through its own
+	// RuleFamilyInstaller.
+	FormSelectedExact
 	// formCount is the exclusive upper bound of the declared ordinals. It is
 	// the last constant in the block; a new form is appended above it.
 	formCount
@@ -62,6 +75,7 @@ var formNames = [formCount]string{
 	FormCarry:         "carry",
 	FormSelectedRoute: "selected-route",
 	FormActivation:    "activation",
+	FormSelectedExact: "selected-exact",
 }
 
 // Declared reports whether form names a sealed ordinal of the table.
@@ -816,6 +830,16 @@ func declaredFormRow(rule generated.CompiledRule, mode ruleprogram.OutputMode) (
 			return FormRow{}, false
 		}
 		return FormRow{Form: FormSummary, Input: input}, true
+	case declaredSelectedProduct(rule):
+		// One exact prerequisite and the selection it derives, concluded once.
+		// The selection's own members are the relation's answer, so the port
+		// this row opens at is the first declared read's, exactly as it is for
+		// the all-exact product below.
+		input, inputOK := declaredFirstInput(rule)
+		if !inputOK {
+			return FormRow{}, false
+		}
+		return FormRow{Form: FormSelectedExact, Input: input}, true
 	case declaredExactProduct(rule):
 		input, inputOK := declaredFirstInput(rule)
 		if !inputOK {
@@ -854,6 +878,32 @@ func declaredVectorRead(rule generated.CompiledRule) bool {
 }
 
 // declaredExactProduct reports whether every declared read is exact.
+// declaredSelectedProduct reports whether the descriptor declares the exact
+// publication over a selection: at least one exact read, at least one selected
+// read, and nothing else. A rule with no selected read is the all-exact
+// product; one with any other read form is neither.
+func declaredSelectedProduct(rule generated.CompiledRule) bool {
+	if rule.ReadCount() < 2 {
+		return false
+	}
+	exact, selected := 0, 0
+	for index := 0; index < rule.ReadCount(); index++ {
+		form, formOK := rule.ReadFormAt(index)
+		if !formOK {
+			return false
+		}
+		switch form {
+		case ruleprogram.Exact:
+			exact++
+		case ruleprogram.Selected:
+			selected++
+		default:
+			return false
+		}
+	}
+	return exact > 0 && selected > 0
+}
+
 func declaredExactProduct(rule generated.CompiledRule) bool {
 	if rule.ReadCount() == 0 {
 		return false

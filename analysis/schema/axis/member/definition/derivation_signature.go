@@ -1,9 +1,6 @@
 package definition
 
-import (
-	"github.com/wippyai/go-lua/analysis/schema"
-	"github.com/wippyai/go-lua/analysis/schema/axis/member"
-)
+import "github.com/wippyai/go-lua/analysis/schema"
 
 // DerivationShape is the direct-call shape one authored relation derivation
 // must have. It is derived from the declaration and from nothing else, which
@@ -95,27 +92,14 @@ func (roster Roster) DerivationSignature(axis schema.Key, relation Relation, cel
 			continue
 		}
 		// A many-valued input arrives as the whole delivery its own read
-		// establishes, and the two reads establish different facts: a
-		// selection pairs every cell with the tag it correlated that cell by,
-		// while a whole-vector read over a closed denominator establishes the
-		// cell's position and nothing else. The input declares which read
-		// feeds it, so the view is derived rather than assumed, and both views
-		// are named by the caller for the same reason the reducer's is - this
-		// package states the shape without naming that package.
-		switch input.Form {
-		case member.ReadFormSelected:
-			if !cell.Available() {
-				return DerivationShape{}, false
-			}
-			params = append(params, DerivedParam{Type: cell, Element: carrier.Type, Slice: true})
-		case member.ReadFormSummary:
-			if !vector.Available() {
-				return DerivationShape{}, false
-			}
-			params = append(params, DerivedParam{Type: vector, Element: carrier.Type})
-		default:
+		// establishes, and which view that is comes from ManyValuedView - the
+		// same answer the fold over this input gets, so a derivation and the
+		// reducer beside it can never be handed different views of one read.
+		view, slice, viewOK := ManyValuedView(input.Form, cell, vector)
+		if !viewOK {
 			return DerivationShape{}, false
 		}
+		params = append(params, DerivedParam{Type: view, Element: carrier.Type, Slice: slice})
 	}
 	state := relation.Derivation.State
 	return DerivationShape{

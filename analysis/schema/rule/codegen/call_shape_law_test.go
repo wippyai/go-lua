@@ -56,7 +56,7 @@ func TestReducerArgumentsAreCarrierValuesOnly(t *testing.T) {
 				// A vector position's own type is the analyzer's view, which no
 				// owner declares. What it CARRIES is the declared carrier the
 				// view is instantiated at, and that is what the law is about.
-				if argument.Type != ReducerVectorType {
+				if argument.Type != SummaryVectorType {
 					t.Fatalf("argument %d is delivered through %v, not the sealed view", position, argument.Type)
 				}
 				carried = argument.Element
@@ -177,7 +177,7 @@ func TestAManyValuedInputIsOneVectorPositionOverItsOwnCarrier(t *testing.T) {
 	want := []ReducerArgument{
 		{Role: ReducerArgumentCandidate, Type: callShapeType("Candidate"), Input: -1},
 		{Role: ReducerArgumentFact, Type: callShapeType("Source"), Input: 0},
-		{Role: ReducerArgumentVector, Type: ReducerVectorType, Element: callShapeType("Cell"), Input: 1},
+		{Role: ReducerArgumentVector, Type: SummaryVectorType, Element: callShapeType("Cell"), Input: 1},
 	}
 	if len(arguments) != len(want) {
 		t.Fatalf("argument count = %d, want %d", len(arguments), len(want))

@@ -45,7 +45,7 @@ func TestEveryAuthoredDerivationHasTheDerivedCallShape(t *testing.T) {
 				continue
 			}
 			authored++
-			shape, derivedOK := roster.DerivationSignature(composed.Axis, relation, codegen.DerivationCellType, codegen.ReducerVectorType)
+			shape, derivedOK := roster.DerivationSignature(composed.Axis, relation, codegen.SelectionCellType, codegen.SummaryVectorType)
 			if !derivedOK {
 				drift = append(drift, fmt.Sprintf("%s: declared rows derive no call shape", relation.Key))
 				continue

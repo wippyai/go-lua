@@ -23,7 +23,8 @@ func TestReturnEscapeContributionNamesTheCanonicalReducer(t *testing.T) {
 	args, results, ok := carrierDefinition.ReducerSignature(
 		reducer,
 		memberdefinition.GoType{PackagePath: "github.com/wippyai/go-lua/analysis/schema/structure", Name: "ReductionOutcome"},
-		codegen.ReducerVectorType,
+		codegen.SelectionCellType,
+		codegen.SummaryVectorType,
 	)
 	if !ok || len(args) != 2 || args[0].Type.Name != "uint64" || args[1].Type.Name != "Fact" || len(results) != 2 || results[0].Name != "Fact" || results[1].Name != "ReductionOutcome" {
 		t.Fatalf("derived signature args=%+v results=%+v ok=%t", args, results, ok)

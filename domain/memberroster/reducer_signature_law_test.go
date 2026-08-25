@@ -23,7 +23,11 @@ func outcomeGoType() memberdefinition.GoType {
 // is: both are analyzer vocabulary a declaration derives against rather than
 // chooses.
 func vectorGoType() memberdefinition.GoType {
-	return codegen.ReducerVectorType
+	return codegen.SummaryVectorType
+}
+
+func cellGoType() memberdefinition.GoType {
+	return codegen.SelectionCellType
 }
 
 // TestEveryDeclaredFoldHasTheDerivedCallShape is the enforcement half of the
@@ -64,7 +68,7 @@ func TestEveryDeclaredFoldHasTheDerivedCallShape(t *testing.T) {
 			t.Fatalf("member definition source %q does not compose", source.Name)
 		}
 		for _, reducer := range composed.Reducers {
-			arguments, results, derivedOK := composed.ReducerSignature(reducer, outcomeGoType(), vectorGoType())
+			arguments, results, derivedOK := composed.ReducerSignature(reducer, outcomeGoType(), cellGoType(), vectorGoType())
 			if !derivedOK {
 				drift = append(drift, fmt.Sprintf("%s (rule %s): declared rows name a carrier the axis does not declare", reducer.Key, reducer.Rule))
 				continue
