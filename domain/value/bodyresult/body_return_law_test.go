@@ -1,12 +1,10 @@
 package bodyresult
 
 import (
-	"encoding/binary"
 	"fmt"
 	"sort"
 	"testing"
 
-	"github.com/wippyai/go-lua/analysis/engine"
 	"github.com/wippyai/go-lua/analysis/identity"
 	programartifact "github.com/wippyai/go-lua/analysis/program/artifact"
 	artifactcompiler "github.com/wippyai/go-lua/analysis/program/artifact/compiler"
@@ -19,11 +17,10 @@ import (
 	"github.com/wippyai/go-lua/analysis/schema/seal"
 	"github.com/wippyai/go-lua/analysis/schema/structure"
 	calldomain "github.com/wippyai/go-lua/domain/call"
-	callowner "github.com/wippyai/go-lua/domain/call/owner"
 	heapdomain "github.com/wippyai/go-lua/domain/heap"
 	"github.com/wippyai/go-lua/domain/runtimekind"
 	valuedomain "github.com/wippyai/go-lua/domain/value"
-	valueowner "github.com/wippyai/go-lua/domain/value/owner"
+	"github.com/wippyai/go-lua/domain/value/bodyresult/returnroute"
 	"github.com/wippyai/go-lua/internal/testfixture"
 )
 
@@ -58,10 +55,6 @@ type bodyResultLawFixture struct {
 // row rather than reconstructing a Program return relation downstream.
 func TestBodyResultPlanKeepsCanonicalBodyReturnBoundary(t *testing.T) {
 	fixture := newBodyResultLawFixture(t, "body_result_plan")
-	plan, planOK := sealBodyReturnPlan(fixture.values, fixture.calls)
-	if !planOK {
-		t.Fatal("body-result plan")
-	}
 	if len(fixture.bodies) != 2 {
 		t.Fatalf("selected body count = %d, want two", len(fixture.bodies))
 	}
@@ -69,12 +62,12 @@ func TestBodyResultPlanKeepsCanonicalBodyReturnBoundary(t *testing.T) {
 	module, moduleOK := selectedBody.ModuleKey()
 	body, bodyOK := selectedBody.BodyPath()
 	canonical, canonicalOK := fixture.values.ReturnBoundariesForBody(module, body)
-	entry, planned := plan[selectedBody]
-	if !moduleOK || !bodyOK || !canonicalOK || !planned || len(canonical) != 1 || len(entry.boundaries) != len(canonical) {
-		t.Fatalf("body-result return plan module=%t body=%t canonical=%d/%t planned=%t rows=%d", moduleOK, bodyOK, len(canonical), canonicalOK, planned, len(entry.boundaries))
+	entry, planned := returnroute.BodyBoundaries(fixture.values, selectedBody)
+	if !moduleOK || !bodyOK || !canonicalOK || !planned || len(canonical) != 1 || len(entry) != len(canonical) {
+		t.Fatalf("body-result return plan module=%t body=%t canonical=%d/%t planned=%t rows=%d", moduleOK, bodyOK, len(canonical), canonicalOK, planned, len(entry))
 	}
 	for index, boundary := range canonical {
-		if entry.boundaries[index] != boundary || !fixture.values.OwnsReturnBoundary(boundary) || boundary.MemberCount() < 2 {
+		if entry[index] != boundary || !fixture.values.OwnsReturnBoundary(boundary) || boundary.MemberCount() < 2 {
 			t.Fatalf("return boundary %d was not preserved as its canonical Value row", index)
 		}
 	}
@@ -86,10 +79,9 @@ func TestBodyResultPlanKeepsCanonicalBodyReturnBoundary(t *testing.T) {
 // become an output of this result-zero rule.
 func TestBodyResultRuleSelectsEveryReturnButOnlyResultZero(t *testing.T) {
 	fixture := newBodyResultLawFixture(t, "body_result_selection")
-	_, rule := bindBodyResultLawRule(t, fixture)
 
-	selection, selected := rule.selectedReturns(fixture.result0, fixture.fact)
-	if !selected || !selection.hasBody || selection.nilCase || selection.top || len(selection.tags) != 2 {
+	selection, selected := returnroute.Select(fixture.values, fixture.calls, fixture.result0, fixture.fact)
+	if !selected || !selection.HasBody() || selection.NilCase() || selection.Top() || len(selection.Tags()) != 2 {
 		t.Fatalf("result-zero selection = %#v/%t, want two concrete body returns", selection, selected)
 	}
 	want := make([]uint64, 0, len(fixture.bodies))
@@ -109,24 +101,23 @@ func TestBodyResultRuleSelectsEveryReturnButOnlyResultZero(t *testing.T) {
 		want = append(want, uint64(index)+1)
 	}
 	sort.Slice(want, func(left, right int) bool { return want[left] < want[right] })
-	if len(fixture.bodies) != 2 || !sameTags(selection.tags, want) {
-		t.Fatalf("selected return tags=%v, want canonical body tags=%v", selection.tags, want)
+	if len(fixture.bodies) != 2 || !sameTags(selection.Tags(), want) {
+		t.Fatalf("selected return tags=%v, want canonical body tags=%v", selection.Tags(), want)
 	}
 
-	resolved, resolvedOK := rule.resolveOperand(engine.OperandCoords{Mount: fixture.module, Occurrence: fixture.call})
+	resolved, resolvedOK := fixture.values.MountedCallResultSlotForMountedOccurrence(fixture.module, fixture.call)
 	ordinal, ordinalOK := resolved.Ordinal()
 	if !resolvedOK || !ordinalOK || ordinal != 0 || resolved != fixture.result0 {
-		t.Fatalf("body-result operand = ordinal %d/%t resolved=%t; want exact result slot zero", ordinal, ordinalOK, resolvedOK)
+		t.Fatalf("body-result candidate = ordinal %d/%t resolved=%t; want exact result slot zero", ordinal, ordinalOK, resolvedOK)
 	}
-	zeroOperand, _, contentOK := rule.operandContent(fixture.result0)
-	if !contentOK || zeroOperand != fixture.result0 {
-		t.Fatal("result-zero slot did not issue body-result content")
+	if _, contentOK := fixture.values.MountedCallResultSlotOrdinal(fixture.result0); !contentOK {
+		t.Fatal("result-zero slot did not issue a body-result candidate address")
 	}
-	if _, selected := rule.selectedReturns(fixture.result1, fixture.fact); selected {
+	if _, selected := returnroute.Select(fixture.values, fixture.calls, fixture.result1, fixture.fact); selected {
 		t.Fatal("result-one slot was admitted by the result-zero route")
 	}
-	if _, _, contentOK := rule.operandContent(fixture.result1); contentOK {
-		t.Fatal("result-one slot issued body-result content")
+	if _, contentOK := fixture.values.MountedCallResultSlotOrdinal(fixture.result1); contentOK {
+		t.Fatal("result-one slot issued a body-result candidate address")
 	}
 }
 
@@ -137,46 +128,12 @@ func TestBodyResultRuleSelectsEveryReturnButOnlyResultZero(t *testing.T) {
 func TestBodyResultHotBindRefusesForeignCallAuthority(t *testing.T) {
 	fixture := newBodyResultLawFixture(t, "body_result_foreign")
 	foreignCalls := foreignCallsForBodyResultFixture(t, fixture)
-	cold, valueFragment, callFragment, fragment := bodyResultLawColdSchema(t)
-	binding := engine.NewSchemaBinding(cold)
-	values, valuesOK := valueowner.BindHot(binding, valueFragment, fixture.values)
-	calls, callsOK := callowner.BindHot(binding, callFragment, foreignCalls)
-	if !valuesOK || !callsOK || values == nil || calls == nil {
-		t.Fatalf("mixed Value/Call owner bind values=%t calls=%t", valuesOK, callsOK)
+	if judgment, accepted := Derive(fixture.values, foreignCalls); accepted || judgment.Valid() {
+		t.Fatal("body-result judgment accepted a Call authority from a distinct Link owner")
 	}
-	if rule, accepted := BindHot(binding, fragment, values, calls); accepted || rule != nil {
-		t.Fatal("body-result rule accepted a Call authority from a distinct Link owner")
+	if judgment, accepted := Derive(fixture.values, fixture.calls); !accepted || !judgment.Valid() {
+		t.Fatal("body-result judgment refused the Call authority of its own Link")
 	}
-}
-
-func bindBodyResultLawRule(t testing.TB, fixture *bodyResultLawFixture) (*valueowner.HotOwner, *HotRule) {
-	t.Helper()
-	cold, valueFragment, callFragment, fragment := bodyResultLawColdSchema(t)
-	binding := engine.NewSchemaBinding(cold)
-	values, valuesOK := valueowner.BindHot(binding, valueFragment, fixture.values)
-	calls, callsOK := callowner.BindHot(binding, callFragment, fixture.calls)
-	rule, ruleOK := BindHot(binding, fragment, values, calls)
-	_, registered := engine.RegisterMountedSlot(binding, fragment.RuleSlot())
-	if !valuesOK || !callsOK || !ruleOK || !registered || values == nil || calls == nil || rule == nil || !binding.Seal() {
-		t.Fatalf("body-result bind values=%t calls=%t rule=%t registered=%t", valuesOK, callsOK, ruleOK, registered)
-	}
-	if implementation, implementationOK := rule.Implementation(); !implementationOK || implementation == nil {
-		t.Fatal("body-result sealed implementation")
-	}
-	return values, rule
-}
-
-func bodyResultLawColdSchema(t testing.TB) (*engine.Schema, *valueowner.SchemaFragment, *callowner.SchemaFragment, *SchemaFragment) {
-	t.Helper()
-	builder := engine.NewSchema()
-	values, valuesOK := valueowner.DeclareSchema(builder, bodyResultLawKey(91_001), bodyResultLawKey(91_002), bodyResultLawKey(91_003))
-	calls, callsOK := callowner.DeclareSchema(builder, bodyResultLawKey(91_004))
-	fragment, fragmentOK := DeclareSchema(builder, bodyResultLawKey(91_005), bodyResultLawKey(91_006), values, calls)
-	cold, sealed := builder.Seal()
-	if !valuesOK || !callsOK || !fragmentOK || !sealed || cold == nil {
-		t.Fatalf("body-result cold schema values=%t calls=%t rule=%t sealed=%t", valuesOK, callsOK, fragmentOK, sealed)
-	}
-	return cold, values, calls, fragment
 }
 
 func newBodyResultLawFixture(t testing.TB, name string) *bodyResultLawFixture {
@@ -308,16 +265,6 @@ func foreignCallsForBodyResultFixture(t testing.TB, fixture *bodyResultLawFixtur
 		t.Fatal("foreign Call owner")
 	}
 	return calls
-}
-
-func bodyResultLawKey(number uint64) identity.SemanticKey {
-	var digest [32]byte
-	binary.BigEndian.PutUint64(digest[24:], number)
-	key, ok := identity.NewSemanticKey(digest, 1)
-	if !ok {
-		panic("body-result semantic key")
-	}
-	return key
 }
 
 func sameTags(left, right []uint64) bool {

@@ -22,6 +22,7 @@ import (
 	returnprogram "github.com/wippyai/go-lua/domain/placement/returnescape/program"
 	storeprogram "github.com/wippyai/go-lua/domain/placement/store/program"
 	valueallocationprogram "github.com/wippyai/go-lua/domain/value/allocation/program"
+	valuebodyresultprogram "github.com/wippyai/go-lua/domain/value/bodyresult/program"
 	freshresultprogram "github.com/wippyai/go-lua/domain/value/freshresult/program"
 	valuemoduleloadprogram "github.com/wippyai/go-lua/domain/value/moduleload/program"
 	refinementprogram "github.com/wippyai/go-lua/domain/value/refinement/program"
@@ -134,6 +135,14 @@ func Families() []Family {
 				Spec:        valueresultaliasprogram.RuleEntry(),
 			},
 			Directory: "domain/value/resultalias",
+		},
+		{
+			Target: emit.Target{
+				PackagePath: "github.com/wippyai/go-lua/domain/value/bodyresult",
+				PackageName: "bodyresult",
+				Spec:        valuebodyresultprogram.RuleEntry(),
+			},
+			Directory: "domain/value/bodyresult",
 		},
 		{
 			Target: emit.Target{
@@ -310,6 +319,16 @@ func Declarations() []Declaration {
 				Spec:        valueresultaliasprogram.RuleEntry(),
 			},
 			Directory: "domain/value/resultalias/program",
+		},
+		{
+			Target: emitlaw.Target{
+				PackagePath: "github.com/wippyai/go-lua/domain/value/bodyresult/program",
+				PackageName: "program",
+				Declaration: "BodyCallResult",
+				Entry:       "RuleEntry",
+				Spec:        valuebodyresultprogram.RuleEntry(),
+			},
+			Directory: "domain/value/bodyresult/program",
 		},
 	}
 }

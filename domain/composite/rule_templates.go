@@ -49,6 +49,7 @@ import (
 	valueallocationprogram "github.com/wippyai/go-lua/domain/value/allocation/program"
 	valuearithmeticprogram "github.com/wippyai/go-lua/domain/value/arithmetic/program"
 	valuebodyresult "github.com/wippyai/go-lua/domain/value/bodyresult"
+	valuebodyresultprogram "github.com/wippyai/go-lua/domain/value/bodyresult/program"
 	valuebootstrap "github.com/wippyai/go-lua/domain/value/bootstrap"
 	valueequalityprogram "github.com/wippyai/go-lua/domain/value/equality/program"
 	valueexactfold "github.com/wippyai/go-lua/domain/value/execution/exactfold"
@@ -211,7 +212,7 @@ func ruleTemplateWiring[P Principals, A Authorities]() ([]*rule.Template, []Rule
 	// Target result consumers above. It consumes selected Call body targets and
 	// Value's sealed ReturnBoundary relation; no caller reconstructs Program
 	// return geometry.
-	add(WireRule(valuebodyresult.RuleEntry[P, A](), valuebodyresult.DeclareRule[P], valuebodyresult.RegisterRule, nil, valuebodyresult.BindRule[A], valuebodyresult.FinalizeRule[A], nil, nil))
+	add(WireGeneratedRuleWithFamily[P, A](valuebodyresultprogram.RuleEntry(), valuebodyresult.InstallFamily[A]))
 	// Static typed-fact transfer is the identity copy of TypeFact along
 	// Value's sealed StorageTransfer. It is appended so established rule
 	// ordinals stay fixed. The composition derives its generated slot from
