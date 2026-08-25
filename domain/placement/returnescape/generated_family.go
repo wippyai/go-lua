@@ -12,6 +12,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/engine/execution"
 	"github.com/wippyai/go-lua/analysis/schema/rule/program"
 	"github.com/wippyai/go-lua/analysis/schema/structure"
+	"github.com/wippyai/go-lua/domain/heap"
 	"github.com/wippyai/go-lua/domain/placement"
 	"github.com/wippyai/go-lua/domain/value"
 )
@@ -22,10 +23,10 @@ import (
 type familyReducer struct {
 }
 
-// Reduce answers one selected route. The cell and its tag are the two halves of
-// the one member vector the read observed, so the fold never re-derives the
-// correlation the selection already established.
-func (fold familyReducer) Reduce(cell execution.SelectedCell[placement.Fact]) (placement.Fact, structure.ReductionOutcome) {
+// Reduce answers one selected route. The route coordinate, cell, and tag
+// are the three owner-issued halves of the one member the read observed,
+// so the fold never re-derives a destination or correlation.
+func (fold familyReducer) Reduce(routeCoordinate heap.Key, cell execution.SelectedCell[placement.Fact]) (placement.Fact, structure.ReductionOutcome) {
 	return ReturnEscapeFold(cell.Tag, cell.Value)
 }
 
@@ -75,6 +76,7 @@ func (sealed *sealedFamily) NewExecutor(run *execution.Run) execution.Executor {
 		run:        run,
 		members:    make([]execution.RouteMember, sealed.width),
 		cells:      make([]execution.SelectedCell[placement.Fact], sealed.width),
+		routes:     make([]heap.Key, sealed.width),
 		read1Cells: make([]execution.MemberCell[value.Value], sealed.read1Width),
 	}
 }
@@ -95,6 +97,7 @@ type familyWorker struct {
 	write      execution.RouteScratch[placement.DenseCoordinate, placement.Fact]
 	members    []execution.RouteMember
 	cells      []execution.SelectedCell[placement.Fact]
+	routes     []heap.Key
 }
 
 // settle submits one non-publishing disposition. Every refusal path in this
@@ -146,11 +149,12 @@ func (lane *familyWorker) Execute(frame execution.Frame, ticket execution.Ticket
 		return lane.settle(ticket, structure.Refuse)
 	}
 	count := ReturnRouteCount(derived)
-	if count < 0 || count > len(lane.members) || count > len(lane.cells) {
+	if count < 0 || count > len(lane.members) || count > len(lane.cells) || count > len(lane.routes) {
 		return lane.settle(ticket, structure.Refuse)
 	}
 	members := lane.members[:count]
 	cells := lane.cells[:count]
+	routes := lane.routes[:count]
 	for index := 0; index < count; index++ {
 		selected, selectedOK := ReturnRouteAt(derived, index)
 		if !selectedOK {
@@ -165,15 +169,25 @@ func (lane *familyWorker) Execute(frame execution.Frame, ticket execution.Ticket
 		if !returnRouteTagOK {
 			return lane.settle(ticket, structure.Refuse)
 		}
+		returnRouteDestinationPaired, returnRouteDestination, returnRouteDestinationOK := selected.Coordinates()
+		_ = returnRouteDestinationPaired
+		if !returnRouteDestinationOK {
+			return lane.settle(ticket, structure.Refuse)
+		}
 		dense, denseOK := lane.family.placementSchema.KeyIndex(returnRouteKey)
 		if !denseOK {
 			return lane.settle(ticket, structure.Refuse)
 		}
-		member, memberOK := lane.family.plane.RouteMember(uint32(dense), uint64(returnRouteTag))
+		destinationDense, destinationDenseOK := lane.family.placementSchema.KeyIndex(returnRouteDestination)
+		if !destinationDenseOK {
+			return lane.settle(ticket, structure.Refuse)
+		}
+		member, memberOK := lane.family.plane.RouteMember(uint32(dense), uint32(destinationDense), uint64(returnRouteTag))
 		if !memberOK {
 			return lane.settle(ticket, structure.Refuse)
 		}
 		members[index] = member
+		routes[index] = returnRouteDestination
 	}
 	// An empty derived relation is a read that named nothing, which is exhausted
 	// rather than available; anything else is a selection that did not observe.
@@ -185,7 +199,7 @@ func (lane *familyWorker) Execute(frame execution.Frame, ticket execution.Ticket
 	} else if status != execution.ReadAvailable {
 		return lane.settle(ticket, structure.Refuse)
 	}
-	outcome := execution.FoldSelectedRoute(ticket, row.write, &lane.write, cells, members, familyReducer{})
+	outcome := execution.FoldSelectedRoute(ticket, row.write, &lane.write, cells, members, routes, familyReducer{})
 	if !ticket.Submit(outcome) {
 		return execution.Result{}, false
 	}

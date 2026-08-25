@@ -159,7 +159,7 @@ func TestRouteReducerAdmitsAuthenticatedSparsePlacementDefault(t *testing.T) {
 		t.Fatalf("authenticated route plan=%#v/%t route=%#v/%t", plan, planOK, route, routeOK)
 	}
 
-	got, outcome := (familyReducer{candidate: candidate, input0: source}).Reduce(execution.SelectedCell[placement.Fact]{
+	got, outcome := (familyReducer{candidate: candidate, input0: source}).Reduce(route.Key, execution.SelectedCell[placement.Fact]{
 		Value:   placement.DefaultFact(),
 		Present: false,
 		Tag:     route.Tag,
