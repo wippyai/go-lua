@@ -220,12 +220,15 @@ func TestResolveKeepsTypedRowsAlignedWithColdKinds(t *testing.T) {
 		"value/return-boundary/candidates",
 		"value/return-boundary/roots",
 		"value/return-boundary/members",
+		// The mounted-call actuals parent and the nested ordered member set it
+		// parents. The mounted-call owner states them on the candidate
+		// directories, ahead of the fact relations that consume them.
+		"value/mounted-call/parents",
+		"value/mounted-call/actual-members",
 		"value/binary-arithmetic/sources",
 		"value/binary-equality/sources",
 		"value/presence-refinement/sources",
 		"value/binary-order/sources",
-		"value/formal-freeze/call-actuals",
-		"value/formal-freeze/actual-members",
 	}
 	if len(metadata.Relations) != len(wantRelations) {
 		t.Fatalf("relation inventory = %d, want %d", len(metadata.Relations), len(wantRelations))
@@ -248,6 +251,9 @@ func TestResolveKeepsTypedRowsAlignedWithColdKinds(t *testing.T) {
 		"value/fresh-result/coordinate",
 		"value/return-boundary/root-key",
 		"value/return-boundary/member-key",
+		"value/mounted-call/callee-key",
+		"value/mounted-call/actual-key",
+		"value/mounted-call/actual-tag",
 		"value/binary-arithmetic/left",
 		"value/binary-arithmetic/right",
 		"value/binary-arithmetic/write",
@@ -259,8 +265,6 @@ func TestResolveKeepsTypedRowsAlignedWithColdKinds(t *testing.T) {
 		"value/binary-order/left",
 		"value/binary-order/right",
 		"value/binary-order/write",
-		"value/formal-freeze/actual-key",
-		"value/formal-freeze/actual-tag",
 	}
 	if len(metadata.Projections) != len(wantProjections) {
 		t.Fatalf("projection inventory = %d, want %d", len(metadata.Projections), len(wantProjections))
