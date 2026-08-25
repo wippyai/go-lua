@@ -10,10 +10,10 @@ package dispatch
 
 import (
 	"github.com/wippyai/go-lua/analysis/engine/execution"
+	"github.com/wippyai/go-lua/analysis/engine/execution/product"
 	"github.com/wippyai/go-lua/analysis/schema/rule/program"
 	"github.com/wippyai/go-lua/analysis/schema/structure"
 	"github.com/wippyai/go-lua/domain/call"
-	"github.com/wippyai/go-lua/domain/call/dispatch/route"
 	"github.com/wippyai/go-lua/domain/heap"
 	"github.com/wippyai/go-lua/domain/value"
 )
@@ -21,21 +21,22 @@ import (
 // familyReducer is the sealed semantic half of one invocation. It holds the
 // carriers this row's fold is indexed by, and its type is the family's, so the
 // call below is a static direct call rather than an interface dispatch.
+//
+// It also carries the state the declared judgment is issued by. That state is
+// the family's, sealed once from the axis schemas the declaration names, so a
+// fold resting on cold owner knowledge still takes only carriers as arguments.
 type familyReducer struct {
+	state     Judgment
 	candidate call.CallCoordinate
 }
 
-// Reduce answers one selected route. The route coordinate, cell, and tag
-// are the three owner-issued halves of the one member the read observed,
-// so the fold never re-derives a destination or correlation.
-func (fold familyReducer) Reduce(routeCoordinate call.Key, cell execution.SelectedCell[call.Value]) (call.Value, structure.ReductionOutcome) {
-	return route.Fold(fold.candidate, routeCoordinate, cell.Tag, cell.Value)
+// Reduce is the one irreducible typed judgment of this exact family. It is
+// called once per cell of the canonical product its declared reads refine, and
+// the worker authenticates presence before calling it, so absence never becomes
+// a default fact and the fold receives only declared carriers.
+func (fold familyReducer) Reduce(cell0 value.Value) (call.Value, structure.ReductionOutcome) {
+	return fold.state.Dispatch(fold.candidate, cell0)
 }
-
-// Empty settles the row whose derived relation selected no route at all. An
-// empty selection is not a refusal: it is the one disposition that says the
-// relation was read and named nothing.
-func (familyReducer) Empty() structure.ReductionOutcome { return structure.NoSelection }
 
 // familyRow is the sealed static half of one plan row: the candidate its fold
 // is indexed by and every primitive the installer sealed through the plane.
@@ -43,55 +44,43 @@ type familyRow struct {
 	candidate   call.CallCoordinate
 	read0       execution.ExactRead[value.DenseCoordinate, value.Value]
 	read0Policy execution.ReadCellPolicy[value.Value]
-	read1       execution.SelectedRead[call.DenseCoordinate, call.Value]
-	write       execution.RouteWrite[call.DenseCoordinate, call.Value]
+	write       execution.ExactWrite[call.DenseCoordinate, call.Value]
 }
 
 // sealedFamily is this rule's whole installed family: one row per plan row and
 // the sealed state every invocation reads. Nothing here is mutated after the
 // installer returns.
 type sealedFamily struct {
-	rows        []familyRow
-	callSchema  *call.Algebra
-	valueSchema *value.Schema
-	heapSchema  heap.Schema
-	plane       execution.FormPlane[call.DenseCoordinate, call.Value]
-	width       int
+	rows  []familyRow
+	state Judgment
 }
 
 func (sealed *sealedFamily) NewExecutor(run *execution.Run) execution.Executor {
 	if sealed == nil || run == nil {
 		return nil
 	}
-	if sealed.width < 0 {
-		return nil
-	}
-	// Every buffer is sized once at the sealed width of the selection this rule
-	// spans, so an ordinary invocation allocates nothing.
-	return &familyWorker{
-		family:  sealed,
-		run:     run,
-		members: make([]execution.RouteMember, sealed.width),
-		cells:   make([]execution.SelectedCell[call.Value], sealed.width),
-		routes:  make([]call.Key, sealed.width),
-	}
+	return &familyWorker{family: sealed, run: run}
 }
 
 func (*sealedFamily) InputCapacity() int  { return 1 }
 func (*sealedFamily) OutputCapacity() int { return 1 }
 
+// The typed product tuples this rule's read chain constructs. Each alias is
+// the tuple after one more declared read has been consed on, so the head is
+// always the newest read and the tail walks back to the first.
+type (
+	productTuple0 = product.Cons[product.Cell[value.Value], struct{}]
+)
+
 // familyWorker is one epoch's reusable invocation lane. Every scratch lives for
 // the worker's lifetime, so a warm invocation opens its cursors and its write
 // transaction without allocating.
 type familyWorker struct {
-	family  *sealedFamily
-	run     *execution.Run
-	read0   execution.Scratch[value.DenseCoordinate, value.Value]
-	read1   execution.SelectedScratch[call.DenseCoordinate, call.Value]
-	write   execution.RouteScratch[call.DenseCoordinate, call.Value]
-	members []execution.RouteMember
-	cells   []execution.SelectedCell[call.Value]
-	routes  []call.Key
+	family   *sealedFamily
+	run      *execution.Run
+	read0    execution.Scratch[value.DenseCoordinate, value.Value]
+	product0 product.Extender[value.DenseCoordinate, value.Value, struct{}]
+	write    execution.Scratch[call.DenseCoordinate, call.Value]
 }
 
 // settle submits one non-publishing disposition. Every refusal path in this
@@ -103,9 +92,11 @@ func (lane *familyWorker) settle(ticket execution.Ticket, outcome structure.Redu
 	return execution.NewResult(outcome, 0)
 }
 
-// Execute performs one routed invocation: the prerequisite reads are taken,
-// the declared relation derives this candidate's route set once, the selection
-// is observed at exactly those members, and one fold publishes at each.
+// Execute drains the canonical product its declared exact reads refine, applies
+// the typed fold once per cell, and stages every concrete result into the one
+// write transaction the row publishes through. A cell publishes under the
+// region the reads it was derived from reported, so nothing here claims support
+// the product did not prove.
 func (lane *familyWorker) Execute(frame execution.Frame, ticket execution.Ticket) (execution.Result, bool) {
 	if lane == nil || lane.family == nil || lane.run == nil || !frame.Valid(ticket) || !lane.run.Owns(ticket) {
 		return execution.Result{}, false
@@ -115,114 +106,62 @@ func (lane *familyWorker) Execute(frame execution.Frame, ticket execution.Ticket
 		return execution.Result{}, false
 	}
 	row := lane.family.rows[local]
-	var input0 value.Value
-	switch lane.read0Cell(row.read0, row.read0Policy, ticket, &input0) {
-	case structure.NoCandidate:
-		return lane.settle(ticket, structure.NoCandidate)
-	case structure.Refuse:
-		return lane.settle(ticket, structure.Refuse)
-	}
-	// The route set is the relation's own answer, derived once per invocation from
-	// the carriers its declaration names. Nothing below re-derives it.
-	derived, derivedOK := route.Derive(lane.family.callSchema, lane.family.valueSchema, lane.family.heapSchema, row.candidate, input0)
-	if !derivedOK {
-		return lane.settle(ticket, structure.Refuse)
-	}
-	count := route.Count(derived)
-	if count < 0 || count > len(lane.members) || count > len(lane.cells) || count > len(lane.routes) {
-		return lane.settle(ticket, structure.Refuse)
-	}
-	members := lane.members[:count]
-	cells := lane.cells[:count]
-	routes := lane.routes[:count]
-	for index := 0; index < count; index++ {
-		selected, selectedOK := route.At(derived, index)
-		if !selectedOK {
-			return lane.settle(ticket, structure.Refuse)
-		}
-		dispatchRouteKey, dispatchRouteKeyPaired, dispatchRouteKeyOK := selected.Coordinates()
-		_ = dispatchRouteKeyPaired
-		if !dispatchRouteKeyOK {
-			return lane.settle(ticket, structure.Refuse)
-		}
-		dispatchRouteTag, dispatchRouteTagOK := selected.Predicate()
-		if !dispatchRouteTagOK {
-			return lane.settle(ticket, structure.Refuse)
-		}
-		dispatchRouteDestinationPaired, dispatchRouteDestination, dispatchRouteDestinationOK := selected.Coordinates()
-		_ = dispatchRouteDestinationPaired
-		if !dispatchRouteDestinationOK {
-			return lane.settle(ticket, structure.Refuse)
-		}
-		dense, denseOK := lane.family.callSchema.DenseKeyIndex(dispatchRouteKey)
-		if !denseOK {
-			return lane.settle(ticket, structure.Refuse)
-		}
-		destinationDense, destinationDenseOK := lane.family.callSchema.DenseKeyIndex(dispatchRouteDestination)
-		if !destinationDenseOK {
-			return lane.settle(ticket, structure.Refuse)
-		}
-		member, memberOK := lane.family.plane.RouteMember(uint32(dense), uint32(destinationDense), uint64(dispatchRouteTag))
-		if !memberOK {
-			return lane.settle(ticket, structure.Refuse)
-		}
-		members[index] = member
-		routes[index] = dispatchRouteDestination
-	}
-	// An empty derived relation is a read that named nothing, which is exhausted
-	// rather than available; anything else is a selection that did not observe.
-	status := row.read1.Observe(ticket, &lane.read1, members, cells)
-	if count == 0 {
-		if status != execution.ReadExhausted {
-			return lane.settle(ticket, structure.Refuse)
-		}
-	} else if status != execution.ReadAvailable {
-		return lane.settle(ticket, structure.Refuse)
-	}
-	outcome := execution.FoldSelectedRoute(ticket, row.write, &lane.write, cells, members, routes, familyReducer{candidate: row.candidate})
-	if !ticket.Submit(outcome) {
+	seed, seedStatus, seedOK := product.NewSeed(ticket)
+	if !seedOK || seedStatus == product.RefineRefuse {
 		return execution.Result{}, false
 	}
-	written := 0
-	if outcome == structure.Concrete {
-		written = 1
+	// Empty support is an authenticated absent candidate, never a refusal.
+	if seedStatus == product.RefineEmpty {
+		return lane.settle(ticket, structure.NoCandidate)
 	}
-	return execution.NewResult(outcome, written)
-}
-
-// read0Cell takes one exact prerequisite cell. The cursor is closed before the
-// value is used, and the row's sealed policy settles what an unwritten
-// coordinate delivers.
-func (lane *familyWorker) read0Cell(read execution.ExactRead[value.DenseCoordinate, value.Value], policy execution.ReadCellPolicy[value.Value], ticket execution.Ticket, destination *value.Value) structure.ReductionOutcome {
-	if lane == nil || destination == nil || !read.Valid() {
-		return structure.Refuse
+	rows0, status0, status0OK := lane.product0.Extend(ticket, seed.Rows(), row.read0, &lane.read0)
+	if !status0OK || status0 != product.RefineAvailable {
+		return execution.Result{}, false
 	}
-	switch read.Read(ticket, &lane.read0) {
-	case execution.ReadAvailable:
-		cell, available := lane.read0.Value()
-		present := lane.read0.Present()
-		if !read.Close(ticket, &lane.read0) {
-			_ = lane.read0.Discard(ticket)
-			return structure.Refuse
+	staged := 0
+	for index := 0; index < rows0.Count(); index++ {
+		if !ticket.Checkpoint() {
+			_ = lane.write.Discard(ticket)
+			return execution.Result{}, false
 		}
-		if !available {
-			return structure.Refuse
+		region, tuple, tupleOK := rows0.At(index)
+		if !tupleOK || !region.Valid() {
+			_ = lane.write.Discard(ticket)
+			return execution.Result{}, false
 		}
-		cell, present = policy.Cell(cell, present)
-		if !present {
-			return structure.NoCandidate
+		cell0, present0 := row.read0Policy.Cell(tuple.Head().Value(), tuple.Head().Present())
+		// A cell whose declared reads are not all present is this rule's absent
+		// candidate over exactly that region, and contributes no patch.
+		if !present0 {
+			continue
 		}
-		*destination = cell
-		return structure.Concrete
-	case execution.ReadExhausted:
-		if !read.Close(ticket, &lane.read0) {
-			return structure.Refuse
+		value, outcome := (familyReducer{state: lane.family.state, candidate: row.candidate}).Reduce(cell0)
+		switch outcome {
+		case structure.Concrete:
+			if !row.write.Stage(ticket, &lane.write, region, value) {
+				_ = lane.write.Discard(ticket)
+				return execution.Result{}, false
+			}
+			staged++
+		case structure.NoCandidate:
+			// The declared absent successor publishes nothing for this cell.
+		default:
+			_ = lane.write.Discard(ticket)
+			return lane.settle(ticket, outcome)
 		}
-		return structure.NoCandidate
-	default:
-		_ = lane.read0.Discard(ticket)
-		return structure.Refuse
 	}
+	if staged == 0 {
+		return lane.settle(ticket, structure.NoCandidate)
+	}
+	if !row.write.Close(ticket, &lane.write) {
+		_ = lane.write.Discard(ticket)
+		return execution.Result{}, false
+	}
+	// One accepted patch is one concrete result, however many cells it holds.
+	if !ticket.Submit(structure.Concrete) {
+		return execution.Result{}, false
+	}
+	return execution.NewResult(structure.Concrete, 1)
 }
 
 // familyInstaller authors this rule's execution family. The axis schemas it
@@ -263,27 +202,26 @@ func (install familyInstaller) InstallRuleFamily(plane execution.FormPlane[call.
 	if !install.available() || !plane.Valid() || len(rows) == 0 {
 		return nil, nil, false
 	}
-	sealed := &sealedFamily{rows: make([]familyRow, 0, len(rows)), callSchema: install.callSchema, valueSchema: install.valueSchema, heapSchema: install.heapSchema}
-	width := plane.RouteWidth()
-	if width < 0 {
+	state, stateOK := Derive(install.callSchema, install.valueSchema, install.heapSchema)
+	if !stateOK {
 		return nil, nil, false
 	}
-	sealed.plane, sealed.width = plane, width
+	sealed := &sealedFamily{rows: make([]familyRow, 0, len(rows)), state: state}
 	addresses := make([]execution.FormAddress, 0, len(rows))
 	for _, planRow := range rows {
-		if planRow.Form != execution.FormSelectedRoute || !planRow.Rule.Available() || planRow.Rule.ReadCount() != 2 || planRow.Rule.OutputCount() != 1 {
+		if planRow.Form != execution.FormExact || !planRow.Rule.Available() || planRow.Rule.ReadCount() != 1 || planRow.Rule.OutputCount() != 1 {
 			return nil, nil, false
 		}
 		output, outputOK := planRow.Rule.OutputAt(0)
-		if !outputOK || output.Mode != program.ModeRoute || !output.RouteJoinPresent || output.RouteJoin != 1 || output.Slot != 0 {
+		if !outputOK || output.Mode != program.ModeExact || output.RouteJoinPresent || output.Slot != 0 {
+			return nil, nil, false
+		}
+		carryMode, carryPresent := planRow.Rule.CarryMode()
+		if carryPresent || carryMode != 0 {
 			return nil, nil, false
 		}
 		plan0, plan0OK := planRow.Rule.ReadAt(0)
 		if !plan0OK || plan0.Form != program.Exact || plan0.Input != 0 || plan0.PointBound != program.PointBound {
-			return nil, nil, false
-		}
-		plan1, plan1OK := planRow.Rule.ReadAt(1)
-		if !plan1OK || plan1.Form != program.Selected || plan1.Input != 0 || plan1.PointBound != program.PointBound || plan1.Factor != output.Factor {
 			return nil, nil, false
 		}
 		candidate, candidateOK := install.callSchema.CallCoordinateAt(int(planRow.Candidate))
@@ -299,13 +237,12 @@ func (install familyInstaller) InstallRuleFamily(plane execution.FormPlane[call.
 		if !read0PolicyOK {
 			return nil, nil, false
 		}
-		read1Sealed, read1SealedOK := plane.SelectedRead(uint16(plan1.Input), plan1.Contract, execution.ReadCellPolicy[call.Value]{})
-		writeSealed, writeSealedOK := plane.RouteWrite(uint16(output.Slot))
-		if !writeSealedOK || !read0SealedOK || !read1SealedOK {
+		writeSealed, writeSealedOK := plane.ExactWrite(planRow.Target, uint16(output.Slot))
+		if !writeSealedOK || !read0SealedOK {
 			return nil, nil, false
 		}
 		addresses = append(addresses, execution.FormAddress{Member: planRow.Member, Local: uint32(len(sealed.rows))})
-		sealed.rows = append(sealed.rows, familyRow{candidate: candidate, read0: read0Sealed, read0Policy: read0Policy, read1: read1Sealed, write: writeSealed})
+		sealed.rows = append(sealed.rows, familyRow{candidate: candidate, read0: read0Sealed, read0Policy: read0Policy, write: writeSealed})
 	}
 	return sealed, addresses, true
 }

@@ -29,17 +29,10 @@ join[0].predicate    -
 join[0].parent       -
 join[0].sources      candidate
 join[0].contract     order=canonical sparse=explicit on-opaque=refuse multiplicity=one denominator=-
-join[1].read         form=selected input=0 axis=axis/call point-bound=bound
-join[1].relation     axis/call:call/dispatch/routes
-join[1].key          axis/call:call/dispatch/route-key
-join[1].predicate    axis/call:call/dispatch/route-tag
-join[1].parent       -
-join[1].sources      candidate, join 0
-join[1].contract     order=by-tag sparse=explicit on-opaque=refuse multiplicity=one denominator=denominator/coordinates/call
 carry                none
 fold.reducer         axis/call:call/dispatch/reducer
-fold.inputs          join 1
-output[0]            mode=route value-slot=0 route=join 1 column=axis/call:call/facts destination=axis/call:call/dispatch/route-destination
+fold.inputs          join 0
+output[0]            mode=exact value-slot=0 route=- column=axis/call:call/facts destination=axis/call:call/mounted-call/coordinate
 transport            none
 `
 
@@ -183,47 +176,15 @@ func TestDispatchRefusesEveryStructuralMutation(t *testing.T) {
 			declaration.Joins[0].Sources = append(declaration.Joins[0].Sources, declaration.Joins[0].Sources[0])
 		}, kind: ruleprogram.ProblemJoin},
 		{mutation: "join 0 sources a result that is not yet produced", apply: func(declaration *ruleprogram.Program) { declaration.Joins[0].Sources[0] = ruleprogram.PriorSource(0) }, kind: ruleprogram.ProblemJoin},
-		{mutation: "join 1 loses its relation", apply: func(declaration *ruleprogram.Program) { declaration.Joins[1].Relation.Member = "" }, kind: ruleprogram.ProblemJoin, join: 1},
-		{mutation: "join 1 loses its key projection", apply: func(declaration *ruleprogram.Program) { declaration.Joins[1].Key.Member = "" }, kind: ruleprogram.ProblemJoin, join: 1},
-		{mutation: "join 1 loses its read axis", apply: func(declaration *ruleprogram.Program) { declaration.Joins[1].Read.Axis = ruleprogram.AxisRef{} }, kind: ruleprogram.ProblemJoin, join: 1},
-		{mutation: "join 1 loses its read form", apply: func(declaration *ruleprogram.Program) { declaration.Joins[1].Read.Form = ruleprogram.ReadFormInvalid }, kind: ruleprogram.ProblemJoin, join: 1},
-		{mutation: "join 1 loses its point-bound disposition", apply: func(declaration *ruleprogram.Program) {
-			declaration.Joins[1].Read.PointBound = ruleprogram.PointBoundInvalid
-		}, kind: ruleprogram.ProblemJoin, join: 1},
-		{mutation: "join 1 loses its declared cell order", apply: func(declaration *ruleprogram.Program) {
-			declaration.Joins[1].Read.Contract.Order = ruleprogram.OrderInvalid
-		}, kind: ruleprogram.ProblemJoin, join: 1},
-		{mutation: "join 1 loses its sparsity", apply: func(declaration *ruleprogram.Program) {
-			declaration.Joins[1].Read.Contract.Sparse = ruleprogram.SparseInvalid
-		}, kind: ruleprogram.ProblemJoin, join: 1},
-		{mutation: "join 1 loses its opaque-evidence disposition", apply: func(declaration *ruleprogram.Program) {
-			declaration.Joins[1].Read.Contract.OnOpaque = ruleprogram.OnOpaqueInvalid
-		}, kind: ruleprogram.ProblemJoin, join: 1},
-		{mutation: "join 1 loses its multiplicity", apply: func(declaration *ruleprogram.Program) {
-			declaration.Joins[1].Read.Contract.Multiplicity = ruleprogram.MultiplicityInvalid
-		}, kind: ruleprogram.ProblemJoin, join: 1},
-		{mutation: "join 1 repeats one of its sources", apply: func(declaration *ruleprogram.Program) {
-			declaration.Joins[1].Sources = append(declaration.Joins[1].Sources, declaration.Joins[1].Sources[0])
-		}, kind: ruleprogram.ProblemJoin, join: 1},
-		{mutation: "join 1 sources a result that is not yet produced", apply: func(declaration *ruleprogram.Program) { declaration.Joins[1].Sources[0] = ruleprogram.PriorSource(1) }, kind: ruleprogram.ProblemJoin, join: 1},
-		{mutation: "join 1 is unbounded", apply: func(declaration *ruleprogram.Program) {
-			declaration.Joins[1].Read.Contract.Multiplicity = ruleprogram.MultiplicityMany
-		}, kind: ruleprogram.ProblemJoin, join: 1},
-		{mutation: "join 1 loses the denominator its read form requires", apply: func(declaration *ruleprogram.Program) {
-			declaration.Joins[1].Read.Contract.DenominatorRef = ruleprogram.DenominatorRef{}
-		}, kind: ruleprogram.ProblemJoin, join: 1},
-		{mutation: "join 1 declares a predicate that resolves to nothing", apply: func(declaration *ruleprogram.Program) { declaration.Joins[1].Predicate.Member = "" }, kind: ruleprogram.ProblemJoin, join: 1},
 		{mutation: "the fold names no reducer", apply: func(declaration *ruleprogram.Program) { declaration.Fold.Reducer.Member = "" }, kind: ruleprogram.ProblemFold},
 		{mutation: "the fold consumes nothing", apply: func(declaration *ruleprogram.Program) { declaration.Fold.Inputs = nil }, kind: ruleprogram.ProblemInput},
 		{mutation: "the fold publishes nothing", apply: func(declaration *ruleprogram.Program) { declaration.Fold.Outputs = nil }, kind: ruleprogram.ProblemOutput},
-		{mutation: "the fold consumes a join the declaration does not carry", apply: func(declaration *ruleprogram.Program) { declaration.Fold.Inputs[0] = ruleprogram.JoinRef(2) }, kind: ruleprogram.ProblemInput},
+		{mutation: "the fold consumes a join the declaration does not carry", apply: func(declaration *ruleprogram.Program) { declaration.Fold.Inputs[0] = ruleprogram.JoinRef(1) }, kind: ruleprogram.ProblemInput},
 		{mutation: "output 0 loses its destination projection", apply: func(declaration *ruleprogram.Program) { declaration.Fold.Outputs[0].Destination.Member = "" }, kind: ruleprogram.ProblemOutput},
 		{mutation: "output 0 loses its declared column", apply: func(declaration *ruleprogram.Program) { declaration.Fold.Outputs[0].Column.Key = "" }, kind: ruleprogram.ProblemOutput},
 		{mutation: "output 0 loses its publication mode", apply: func(declaration *ruleprogram.Program) { declaration.Fold.Outputs[0].Mode = ruleprogram.ModeInvalid }, kind: ruleprogram.ProblemOutput},
 		{mutation: "output 0 publishes into a value slot the fold does not have", apply: func(declaration *ruleprogram.Program) { declaration.Fold.Outputs[0].ValueSlot = 1 }, kind: ruleprogram.ProblemOutput},
-		{mutation: "routed output 0 names no route join", apply: func(declaration *ruleprogram.Program) { declaration.Fold.Outputs[0].RouteJoinPresent = false }, kind: ruleprogram.ProblemOutput},
-		{mutation: "routed output 0 routes through a join the declaration does not carry", apply: func(declaration *ruleprogram.Program) { declaration.Fold.Outputs[0].RouteJoin = ruleprogram.JoinRef(2) }, kind: ruleprogram.ProblemOutput},
-		{mutation: "routed output 0 routes through the exact join at 0", apply: func(declaration *ruleprogram.Program) { declaration.Fold.Outputs[0].RouteJoin = ruleprogram.JoinRef(0) }, kind: ruleprogram.ProblemJoin},
+		{mutation: "output 0 claims a route it does not publish through", apply: func(declaration *ruleprogram.Program) { declaration.Fold.Outputs[0].RouteJoinPresent = true }, kind: ruleprogram.ProblemOutput},
 	} {
 		declaration := Dispatch().Clone()
 		law.apply(&declaration)

@@ -20,22 +20,15 @@ const (
 	RuleRole               = "rule/call/dispatch"
 	OperandRole            = "operand/call/dispatch"
 
-	MountedCallCandidates    schema.Key = calldomain.MountedCallCandidates
-	MountedCallParents       schema.Key = valuedomain.MountedCallParents
-	MountedCallCalleeKey     schema.Key = valuedomain.MountedCallCalleeKey
-	DispatchRoutes           schema.Key = calldomain.DispatchRoutes
-	DispatchRouteKey         schema.Key = calldomain.DispatchRouteKey
-	DispatchRouteTag         schema.Key = calldomain.DispatchRouteTag
-	DispatchRouteDestination schema.Key = calldomain.DispatchRouteDestination
-	DispatchReducer          schema.Key = calldomain.DispatchReducer
+	MountedCallCandidates schema.Key = calldomain.MountedCallCandidates
+	MountedCallCoordinate schema.Key = calldomain.MountedCallCoordinate
+	MountedCallParents    schema.Key = valuedomain.MountedCallParents
+	MountedCallCalleeKey  schema.Key = valuedomain.MountedCallCalleeKey
+	DispatchReducer       schema.Key = calldomain.DispatchReducer
 )
 
 func axisReference(key schema.Key) schema.EntryReference {
 	return schema.EntryReference{Surface: schema.SurfaceKindAxis, Key: key}
-}
-
-func denominatorReference(key schema.Key) ruleprogram.DenominatorRef {
-	return ruleprogram.DenominatorRef{Surface: schema.SurfaceKindDenominator, Key: key}
 }
 
 func RuleEntry() rule.Spec {
@@ -55,69 +48,52 @@ func StructureSpecs() []structure.Spec {
 	return vocabulary.RoleSpecs(RuleRole, OperandRole)
 }
 
-// Dispatch declares two joins. The first reads Value's owner-issued callee
-// coordinate. The second derives Call's bounded route relation from that fact
-// and selects Call's own destination cell. The fold receives only the route
-// selection and publishes one Call alternative; the lattice join combines
-// exact targets and the explicit opaque/top disposition.
+// Dispatch declares one join: Value's own image of the callee this mounted
+// application applies, read exactly at the coordinate Value's parent relation
+// addresses it by. The publication is exact at the candidate's own Call
+// coordinate, which is where a dispatch fact belongs - the rule refines the
+// cell of the application it is indexed by.
+//
+// The callee's alternatives are not declared here. A dispatch fact is the join
+// of every alternative the callee reaches, and that join is the fold's own
+// judgment over the authorities its state seals; declaring it as a selection
+// over the Call axis would make this rule read the axis it publishes into, and
+// a rule whose authored region is derived from its own output is not a
+// monotone operator - the fixpoint refuses its ascent rather than converging.
 func Dispatch() ruleprogram.Program {
 	callAxis := axisReference(AxisKey)
 	valueAxis := axisReference("value")
-	callDenominator := denominatorReference("coordinates/call")
 	return ruleprogram.Program{
 		OperandRole: vocabulary.RoleKey(OperandRole),
 		Candidate: member.AxisRelationCandidate(member.RelationRef{
 			Axis:   callAxis,
 			Member: MountedCallCandidates,
 		}),
-		Joins: []ruleprogram.JoinDecl{
-			{
-				Sources:  []ruleprogram.SourceRef{ruleprogram.CandidateSource()},
-				Relation: member.RelationRef{Axis: valueAxis, Member: MountedCallParents},
-				Key:      member.ProjectionRef{Axis: valueAxis, Member: MountedCallCalleeKey},
-				Read: ruleprogram.ReadDecl{
-					Input:      0,
-					Axis:       ruleprogram.AxisRef(valueAxis),
-					Form:       ruleprogram.Exact,
-					PointBound: ruleprogram.PointBound,
-					Contract: ruleprogram.ReadContract{
-						Order:        ruleprogram.OrderCanonical,
-						Sparse:       ruleprogram.SparseExplicit,
-						OnOpaque:     ruleprogram.OnOpaqueRefuse,
-						Multiplicity: ruleprogram.MultiplicityOne,
-					},
+		Joins: []ruleprogram.JoinDecl{{
+			Sources:  []ruleprogram.SourceRef{ruleprogram.CandidateSource()},
+			Relation: member.RelationRef{Axis: valueAxis, Member: MountedCallParents},
+			Key:      member.ProjectionRef{Axis: valueAxis, Member: MountedCallCalleeKey},
+			Read: ruleprogram.ReadDecl{
+				Input:      0,
+				Axis:       ruleprogram.AxisRef(valueAxis),
+				Form:       ruleprogram.Exact,
+				PointBound: ruleprogram.PointBound,
+				Contract: ruleprogram.ReadContract{
+					Order:        ruleprogram.OrderCanonical,
+					Sparse:       ruleprogram.SparseExplicit,
+					OnOpaque:     ruleprogram.OnOpaqueRefuse,
+					Multiplicity: ruleprogram.MultiplicityOne,
 				},
 			},
-			{
-				Sources:   []ruleprogram.SourceRef{ruleprogram.CandidateSource(), ruleprogram.PriorSource(0)},
-				Relation:  member.RelationRef{Axis: callAxis, Member: DispatchRoutes},
-				Key:       member.ProjectionRef{Axis: callAxis, Member: DispatchRouteKey},
-				Predicate: member.ProjectionRef{Axis: callAxis, Member: DispatchRouteTag},
-				Read: ruleprogram.ReadDecl{
-					Input:      0,
-					Axis:       ruleprogram.AxisRef(callAxis),
-					Form:       ruleprogram.Selected,
-					PointBound: ruleprogram.PointBound,
-					Contract: ruleprogram.ReadContract{
-						Order:          ruleprogram.OrderByTag,
-						Sparse:         ruleprogram.SparseExplicit,
-						OnOpaque:       ruleprogram.OnOpaqueRefuse,
-						Multiplicity:   ruleprogram.MultiplicityOne,
-						DenominatorRef: callDenominator,
-					},
-				},
-			},
-		},
+		}},
 		Fold: ruleprogram.FoldDecl{
 			Reducer: member.ReducerRef{Axis: callAxis, Member: DispatchReducer},
-			Inputs:  []ruleprogram.JoinRef{1},
+			Inputs:  []ruleprogram.JoinRef{0},
 			Outputs: []ruleprogram.OutputDecl{{
-				Column:           axis.OutputRef{Axis: callAxis, Key: OutputKey},
-				Destination:      member.ProjectionRef{Axis: callAxis, Member: DispatchRouteDestination},
-				Mode:             ruleprogram.ModeRoute,
-				ValueSlot:        0,
-				RouteJoin:        1,
-				RouteJoinPresent: true,
+				Column:      axis.OutputRef{Axis: callAxis, Key: OutputKey},
+				Destination: member.ProjectionRef{Axis: callAxis, Member: MountedCallCoordinate},
+				Mode:        ruleprogram.ModeExact,
+				ValueSlot:   0,
 			}},
 		},
 	}
