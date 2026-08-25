@@ -249,3 +249,21 @@ func (value Value) KnownTargetAt(index int) (Target, bool) {
 	}
 	return Target{owner: value.owner, selector: value.selectors[index]}, true
 }
+
+// BodyTargetCount is the executable body prefix of this Algebra's canonical
+// target order, counted as TARGETS rather than as body capabilities.
+//
+// It exists beside Bodies because a consumer enumerating what a call may reach
+// is asking about targets - the same rows Bodies answers, named as what a Call
+// value's alternatives are - and pairing it with BodyTargetAt lets that
+// enumeration be declared rather than walked through two vocabularies.
+func (algebra *Algebra) BodyTargetCount() int { return algebra.Bodies().Count() }
+
+// BodyTargetAt projects one body target in that same canonical order.
+func (algebra *Algebra) BodyTargetAt(index int) (Target, bool) {
+	bodies := algebra.Bodies()
+	if index < 0 || index >= bodies.Count() {
+		return Target{}, false
+	}
+	return bodies.owner.targetForSelector(selector(index + 1))
+}

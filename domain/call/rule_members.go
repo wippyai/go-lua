@@ -22,6 +22,7 @@ const (
 	CallKeyCarrier           member.Carrier = "carrier/call/key"
 	CallFactCarrier          member.Carrier = "carrier/call/fact"
 	CallCoordinateCarrier    member.Carrier = "carrier/call/mounted-call"
+	CallTargetCarrier        member.Carrier = "carrier/call/target"
 	ValueFactCarrier         member.Carrier = "carrier/value/fact"
 	ModuleLoadCallCarrier    member.Carrier = "carrier/value/module-load-call"
 	EffectMountedCallCarrier member.Carrier = "carrier/effect/mounted-call"

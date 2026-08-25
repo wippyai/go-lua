@@ -62,6 +62,25 @@ func MountedCall() definition.Definition {
 			{Name: "CallKeyCarrier", Key: "carrier/call/key", Type: key},
 			{Name: "CallFactCarrier", Key: "carrier/call/fact", Type: value},
 			{Name: "CallCoordinateCarrier", Key: "carrier/call/mounted-call", Type: coordinate},
+			{Name: "CallTargetCarrier", Key: "carrier/call/target", Type: callGoType("Target")},
+		},
+		// How a Call value decomposes is Call's own answer, so the two
+		// sequences a consumer reads out of one are declared here once rather
+		// than carried as a symbol pair by every rule that reads them.
+		Enumerations: []definition.Enumeration{
+			{
+				// The alternatives a call value names.
+				Name: "KnownTargets", Over: "CallFactCarrier", Item: "CallTargetCarrier",
+				Count: callMethod("KnownTargetCount", "Value", false, -1),
+				At:    callMethod("KnownTargetAt", "Value", false, 0),
+			},
+			{
+				// Over nothing: the whole executable body directory, which is
+				// what a value that named no alternatives widens to.
+				Name: "BodyTargets", Item: "CallTargetCarrier",
+				Count: callMethod("BodyTargetCount", "Algebra", true, -1),
+				At:    callMethod("BodyTargetAt", "Algebra", true, 0),
+			},
 		},
 		Relations: []definition.Relation{
 			{

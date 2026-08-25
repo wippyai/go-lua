@@ -1363,14 +1363,23 @@ func renderDerivedBuild(out *strings.Builder, built *plan, join *joinPlan, order
 		fmt.Fprintf(out, "%sif !resolved {\n%s\treturn %s{}, false\n%s}\n", indent, indent, state, indent)
 		fmt.Fprintf(out, "%sif present {\n%s\tbuilt.rows = append(built.rows, row)\n%s}\n", indent, indent, indent)
 	}
+	// An enumeration's census and accessor are spelled the way their owner
+	// declared them: a method reads the value it is a method ON, and a free
+	// function takes it as its first argument. Neither is this file's choice.
+	enumerate := func(symbol definition.GoSymbol, over string, args ...string) string {
+		if symbol.Receiver.Name != "" {
+			return imports.call(symbol, over, args...)
+		}
+		return imports.call(symbol, "", append([]string{over}, args...)...)
+	}
 	walk := func(sources []enumerationPlan, root string) {
 		over := root
 		indent := "\t"
 		for level, source := range sources {
-			fmt.Fprintf(out, "%scount%d := %s\n", indent, level, imports.call(source.count, "", over))
+			fmt.Fprintf(out, "%scount%d := %s\n", indent, level, enumerate(source.count, over))
 			fmt.Fprintf(out, "%sfor cursor%d := 0; cursor%d < count%d; cursor%d++ {\n", indent, level, level, level, level)
 			indent += "\t"
-			fmt.Fprintf(out, "%sitem%d, item%dOK := %s\n", indent, level, level, imports.call(source.at, "", over, fmt.Sprintf("cursor%d", level)))
+			fmt.Fprintf(out, "%sitem%d, item%dOK := %s\n", indent, level, level, enumerate(source.at, over, fmt.Sprintf("cursor%d", level)))
 			fmt.Fprintf(out, "%sif !item%dOK {\n%s\treturn %s{}, false\n%s}\n", indent, level, indent, state, indent)
 			over = fmt.Sprintf("item%d", level)
 		}
@@ -1382,10 +1391,10 @@ func renderDerivedBuild(out *strings.Builder, built *plan, join *joinPlan, order
 	}
 
 	if declared.widen != nil {
-		fmt.Fprintf(out, "\tif %s {\n", imports.call(declared.widen.predicate, "", arguments[declared.sourceArgument]))
+		fmt.Fprintf(out, "\tif %s {\n", enumerate(declared.widen.predicate, arguments[declared.sourceArgument]))
 		// The widened answer is read out of the owner's own schema, so its
 		// outer level starts from that axis rather than from the value.
-		walkWiden(out, built, declared, statics, arguments, state)
+		walkWiden(out, built, declared, statics, arguments, state, enumerate)
 		fmt.Fprintf(out, "\t\treturn %s(%s, built)\n\t}\n", derivedOrderName(declared.position), orderAxis)
 	}
 	walk(declared.sources, arguments[declared.sourceArgument])
@@ -1396,16 +1405,16 @@ func renderDerivedBuild(out *strings.Builder, built *plan, join *joinPlan, order
 // walkWiden writes the widened answer's enumeration. It starts from the axis
 // schema the outer level names, because a fact at a lattice endpoint has no
 // value left to be read out of.
-func walkWiden(out *strings.Builder, built *plan, declared *declaredPlan, statics, arguments []string, state string) {
+func walkWiden(out *strings.Builder, built *plan, declared *declaredPlan, statics, arguments []string, state string, enumerate func(definition.GoSymbol, string, ...string) string) {
 	imports := built.imports
 	sources := declared.widen.sources
 	over := sources[0].axis.param
 	indent := "\t\t"
 	for level, source := range sources {
-		fmt.Fprintf(out, "%swidenCount%d := %s\n", indent, level, imports.call(source.count, "", over))
+		fmt.Fprintf(out, "%swidenCount%d := %s\n", indent, level, enumerate(source.count, over))
 		fmt.Fprintf(out, "%sfor widenCursor%d := 0; widenCursor%d < widenCount%d; widenCursor%d++ {\n", indent, level, level, level, level)
 		indent += "\t"
-		fmt.Fprintf(out, "%swidenItem%d, widenItem%dOK := %s\n", indent, level, level, imports.call(source.at, "", over, fmt.Sprintf("widenCursor%d", level)))
+		fmt.Fprintf(out, "%swidenItem%d, widenItem%dOK := %s\n", indent, level, level, enumerate(source.at, over, fmt.Sprintf("widenCursor%d", level)))
 		fmt.Fprintf(out, "%sif !widenItem%dOK {\n%s\treturn %s{}, false\n%s}\n", indent, level, indent, state, indent)
 		over = fmt.Sprintf("widenItem%d", level)
 	}

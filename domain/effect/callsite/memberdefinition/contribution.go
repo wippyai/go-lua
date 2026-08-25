@@ -197,12 +197,25 @@ func bodyRoutes() definition.Relation {
 			{Carrier: "CallFactCarrier"},
 		},
 		CandidateProvider: mountedCallProvider(),
+		// Declared rather than authored: what to enumerate, how to union it,
+		// what to widen to when the call names no alternatives, and the order
+		// the members come back in are all stated here and written by the
+		// emitter. The one authored symbol left is the judgment that says what
+		// a single call target means to Effect.
 		Derivation: definition.RelationDerivation{
-			State:      definition.GoType{PackagePath: bodyRoutePackagePath, Name: "Plan"},
-			Build:      bodyRouteFunction("Derive"),
-			Count:      bodyRouteFunction("Count"),
-			At:         bodyRouteFunction("At"),
 			StaticAxes: []schema.EntryReference{axisReference("effect"), axisReference("call")},
+			Source:     []definition.EnumerationRef{{Axis: axisReference("call"), Name: "KnownTargets"}},
+			Resolve:    bodyRouteFunction("ResolveRoute"),
+			Widen: definition.DerivationWiden{
+				// A call value that named no alternatives reaches every body
+				// there is, and only Call's own directory can say which those
+				// are.
+				Predicate: definition.GoSymbol{
+					PackagePath: callPackagePath, Name: "IsTop",
+					Receiver: definition.GoType{PackagePath: callPackagePath, Name: "Value"}, ResultIndex: -1,
+				},
+				Source: []definition.EnumerationRef{{Axis: axisReference("call"), Name: "BodyTargets"}},
+			},
 		},
 	}
 }

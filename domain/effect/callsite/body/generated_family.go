@@ -17,6 +17,7 @@ import (
 	"github.com/wippyai/go-lua/domain/effect/callsite/bodyroute"
 	"github.com/wippyai/go-lua/domain/effect/factor"
 	"github.com/wippyai/go-lua/domain/effect/owner"
+	"slices"
 )
 
 // familyReducer is the sealed semantic half of one invocation. It holds the
@@ -139,18 +140,18 @@ func (lane *familyWorker) Execute(frame execution.Frame, ticket execution.Ticket
 	input0 := cell
 	// The member set is the relation's own answer, derived once per invocation
 	// from the carriers its declaration names. Nothing below re-derives it.
-	derived, derivedOK := bodyroute.Derive(lane.family.effectSchema, lane.family.callSchema, row.candidate, input0)
+	derived, derivedOK := deriveDerived1Rows(lane.family.effectSchema, lane.family.callSchema, row.candidate, input0)
 	if !derivedOK {
 		return lane.settle(ticket, structure.Refuse)
 	}
-	count := bodyroute.Count(derived)
+	count := derived1Count(derived)
 	if count < 0 || count > len(lane.members) || count > len(lane.cells) {
 		return lane.settle(ticket, structure.Refuse)
 	}
 	members := lane.members[:count]
 	cells := lane.cells[:count]
 	for index := 0; index < count; index++ {
-		selected, selectedOK := bodyroute.At(derived, index)
+		selected, selectedOK := derived1At(derived, index)
 		if !selectedOK {
 			return lane.settle(ticket, structure.Refuse)
 		}
@@ -193,6 +194,103 @@ func (lane *familyWorker) Execute(frame execution.Frame, ticket execution.Ticket
 		written = 1
 	}
 	return execution.NewResult(outcome, written)
+}
+
+// derived1Rows is the member set one invocation of join 1's declared relation
+// answers. It is sealed by the Build below and read by nothing else.
+type derived1Rows struct {
+	rows []bodyroute.Route
+}
+
+func derived1Count(state derived1Rows) int { return len(state.rows) }
+
+func derived1At(state derived1Rows, index int) (bodyroute.Route, bool) {
+	if index < 0 || index >= len(state.rows) {
+		var absent bodyroute.Route
+		return absent, false
+	}
+	return state.rows[index], true
+}
+
+// orderDerived1Rows fixes the canonical member order of one derived set.
+// It is ascending by the relation's own declared key, normalized through the
+// axis that numbers those coordinates, because that is the order the engine
+// canonicalizes a selection by. Two rows on one coordinate address one member
+// twice and are refused rather than observed twice.
+func orderDerived1Rows(effectSchema *factor.Algebra, built derived1Rows) (derived1Rows, bool) {
+	for _, row := range built.rows {
+		key, keyOK := row.Coordinate()
+		if !keyOK {
+			return derived1Rows{}, false
+		}
+		if _, denseOK := effectSchema.DenseKeyIndex(key); !denseOK {
+			return derived1Rows{}, false
+		}
+	}
+	slices.SortFunc(built.rows, func(left, right bodyroute.Route) int {
+		leftKey, _ := left.Coordinate()
+		rightKey, _ := right.Coordinate()
+		leftDense, _ := effectSchema.DenseKeyIndex(leftKey)
+		rightDense, _ := effectSchema.DenseKeyIndex(rightKey)
+		switch {
+		case leftDense < rightDense:
+			return -1
+		case leftDense > rightDense:
+			return 1
+		default:
+			return 0
+		}
+	})
+	for index := 1; index < len(built.rows); index++ {
+		previousKey, _ := built.rows[index-1].Coordinate()
+		currentKey, _ := built.rows[index].Coordinate()
+		previousDense, _ := effectSchema.DenseKeyIndex(previousKey)
+		currentDense, _ := effectSchema.DenseKeyIndex(currentKey)
+		if currentDense <= previousDense {
+			return derived1Rows{}, false
+		}
+	}
+	return built, true
+}
+
+// deriveDerived1Rows answers join 1's member set for one invocation.
+// A source that reached its lattice endpoint named no alternatives at all, so
+// the answer there is the owner's whole directory rather than the ones that
+// happen to be written down. Both answers leave through the same order.
+func deriveDerived1Rows(effectSchema *factor.Algebra, callSchema *call.Algebra, given0 factor.MountedCall, given1 call.Value) (derived1Rows, bool) {
+	var built derived1Rows
+	if given1.IsTop() {
+		widenCount0 := callSchema.BodyTargetCount()
+		for widenCursor0 := 0; widenCursor0 < widenCount0; widenCursor0++ {
+			widenItem0, widenItem0OK := callSchema.BodyTargetAt(widenCursor0)
+			if !widenItem0OK {
+				return derived1Rows{}, false
+			}
+			widenRow, widenPresent, widenResolved := bodyroute.ResolveRoute(effectSchema, callSchema, given0, widenItem0)
+			if !widenResolved {
+				return derived1Rows{}, false
+			}
+			if widenPresent {
+				built.rows = append(built.rows, widenRow)
+			}
+		}
+		return orderDerived1Rows(effectSchema, built)
+	}
+	count0 := given1.KnownTargetCount()
+	for cursor0 := 0; cursor0 < count0; cursor0++ {
+		item0, item0OK := given1.KnownTargetAt(cursor0)
+		if !item0OK {
+			return derived1Rows{}, false
+		}
+		row, present, resolved := bodyroute.ResolveRoute(effectSchema, callSchema, given0, item0)
+		if !resolved {
+			return derived1Rows{}, false
+		}
+		if present {
+			built.rows = append(built.rows, row)
+		}
+	}
+	return orderDerived1Rows(effectSchema, built)
 }
 
 // familyInstaller authors this rule's execution family. The axis schemas it
