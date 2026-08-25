@@ -8,32 +8,24 @@ import (
 	calldomain "github.com/wippyai/go-lua/domain/call"
 	callowner "github.com/wippyai/go-lua/domain/call/owner"
 	heapdomain "github.com/wippyai/go-lua/domain/heap"
-	"github.com/wippyai/go-lua/domain/heap/internal/recentplan"
 	heapowner "github.com/wippyai/go-lua/domain/heap/owner"
 	packdomain "github.com/wippyai/go-lua/domain/pack"
 	valuedomain "github.com/wippyai/go-lua/domain/value"
 	valueowner "github.com/wippyai/go-lua/domain/value/owner"
 )
 
-// routeReducer is the typed semantic half of one freeze invocation. The route
-// coordinate is recovered from the plan by the tag the read delivered - the
-// relation's own answer, looked up rather than recomputed - and the Heap world
-// at that route arrives as the cell.
-type routeReducer struct {
-	schema heapdomain.Schema
-	plan   recentplan.Plan
-}
+// routeReducer is the typed semantic half of one freeze invocation. The
+// destination this route publishes at arrives beside the cell, issued by the
+// same relation member the read observed, and the Heap world at that route
+// arrives as the cell.
+type routeReducer struct{}
 
-func (reducer routeReducer) Reduce(cell execution.SelectedCell[heapdomain.Value]) (heapdomain.Value, structure.ReductionOutcome) {
-	route, routeOK := recentplan.RouteForTag(reducer.plan, heapdomain.RawRouteTag(cell.Tag))
-	if !routeOK {
-		return heapdomain.Value{}, structure.Refuse
-	}
+func (routeReducer) Reduce(destination heapdomain.Key, cell execution.SelectedCell[heapdomain.Value]) (heapdomain.Value, structure.ReductionOutcome) {
 	// The read declares the Factor's default at an unwritten route, and the
 	// freeze judgment publishes the same empty normal image for a Bottom
 	// predecessor as for an absent one, so there is no presence distinction
 	// left for this fold to draw.
-	return heapdomain.FormalFreezeFact(route.Key, cell.Value)
+	return heapdomain.FormalFreezeFact(destination, cell.Value)
 }
 
 // Empty settles the row whose relation selected no route. A mounted call that
@@ -72,6 +64,7 @@ func (family *routeFamily) NewExecutor(run *execution.Run) execution.Executor {
 		run:           run,
 		members:       make([]execution.RouteMember, family.routeWidth),
 		cells:         make([]execution.SelectedCell[heapdomain.Value], family.routeWidth),
+		routes:        make([]heapdomain.Key, family.routeWidth),
 		actualMembers: make([]execution.RouteMember, family.actualWidth),
 		actualCells:   make([]execution.SelectedCell[valuedomain.Value], family.actualWidth),
 	}
@@ -89,6 +82,7 @@ type routeWorker struct {
 	write         execution.RouteScratch[heapdomain.DenseCoordinate, heapdomain.Value]
 	members       []execution.RouteMember
 	cells         []execution.SelectedCell[heapdomain.Value]
+	routes        []heapdomain.Key
 	actualMembers []execution.RouteMember
 	actualCells   []execution.SelectedCell[valuedomain.Value]
 }
@@ -121,11 +115,12 @@ func (worker *routeWorker) Execute(frame execution.Frame, ticket execution.Ticke
 		return worker.settle(ticket, structure.Refuse)
 	}
 	count := FreezeRouteCount(plan)
-	if count < 0 || count > len(worker.members) || count > len(worker.cells) {
+	if count < 0 || count > len(worker.members) || count > len(worker.cells) || count > len(worker.routes) {
 		return worker.settle(ticket, structure.Refuse)
 	}
 	members := worker.members[:count]
 	cells := worker.cells[:count]
+	routes := worker.routes[:count]
 	for index := 0; index < count; index++ {
 		route, routeOK := FreezeRouteAt(plan, index)
 		if !routeOK || route.Tag == 0 {
@@ -135,11 +130,16 @@ func (worker *routeWorker) Execute(frame execution.Frame, ticket execution.Ticke
 		if !denseOK {
 			return worker.settle(ticket, structure.Refuse)
 		}
-		member, memberOK := worker.family.plane.RouteMember(dense, uint64(route.Tag))
+		// This declaration publishes at the coordinate it observes, so one
+		// projection of the relation's member answers both halves. The
+		// destination is still stated as a destination: the member carries the
+		// read coordinate and the write coordinate separately.
+		member, memberOK := worker.family.plane.RouteMember(dense, dense, uint64(route.Tag))
 		if !memberOK {
 			return worker.settle(ticket, structure.Refuse)
 		}
 		members[index] = member
+		routes[index] = route.Key
 	}
 
 	status := row.selected.Observe(ticket, &worker.selected, members, cells)
@@ -151,7 +151,7 @@ func (worker *routeWorker) Execute(frame execution.Frame, ticket execution.Ticke
 		return worker.settle(ticket, structure.Refuse)
 	}
 
-	outcome := execution.FoldSelectedRoute(ticket, row.write, &worker.write, cells, members, routeReducer{schema: worker.family.heap, plan: plan})
+	outcome := execution.FoldSelectedRoute(ticket, row.write, &worker.write, cells, members, routes, routeReducer{})
 	if !ticket.Submit(outcome) {
 		return execution.Result{}, false
 	}
