@@ -239,20 +239,18 @@ func renderMemberSetSeal(out *strings.Builder, built *plan, join *joinPlan) erro
 	}
 	fmt.Fprintf(out, "\t\tforeign%d, foreign%dOK := plane.Foreign(plan%d.Factor)\n", join.position, join.position, join.position)
 	fmt.Fprintf(out, "\t\tif !foreign%dOK {\n\t\t\treturn nil, nil, false\n\t\t}\n", join.position)
-	fmt.Fprintf(out, "\t\t%sCount := %s\n", join.name, imports.call(join.memberSet.count, "candidate"))
-	fmt.Fprintf(out, "\t\tif %sCount < 0 {\n\t\t\treturn nil, nil, false\n\t\t}\n", join.name)
+	// The set is the plan row's own: the engine enumerated it at the row this
+	// read is ADDRESSED by and lowered every member's coordinate here. Walking
+	// the candidate's members again would be a second enumeration of one set,
+	// and it is only expressible at all when the set happens to live on the
+	// candidate's own axis.
+	fmt.Fprintf(out, "\t\t%sCount, %sCountOK := planRow.MemberCount(%d)\n", join.name, join.name, join.position)
+	fmt.Fprintf(out, "\t\tif !%sCountOK {\n\t\t\treturn nil, nil, false\n\t\t}\n", join.name)
 	fmt.Fprintf(out, "\t\t%sSealed := make([]%s.ExactRead[%s, %s], %sCount)\n", join.name, execution, dense, fact, join.name)
 	fmt.Fprintf(out, "\t\tfor index := 0; index < %sCount; index++ {\n", join.name)
-	fmt.Fprintf(out, "\t\t\tmemberRow, memberRowOK := %s\n", imports.call(join.memberSet.at, "candidate", "index"))
-	out.WriteString("\t\t\tif !memberRowOK {\n\t\t\t\treturn nil, nil, false\n\t\t\t}\n")
-	keyExpression, err := projectionExpressionRefusing(built, join.key, "memberRow", "\t\t\t", "return nil, nil, false", out)
-	if err != nil {
-		return err
-	}
-	fmt.Fprintf(out, "\t\t\tmemberDense, memberDenseOK := %s\n",
-		imports.call(join.axis.normalizer, "install."+join.axis.param, keyExpression))
+	fmt.Fprintf(out, "\t\t\tmemberDense, memberDenseOK := planRow.MemberAt(%d, index)\n", join.position)
 	out.WriteString("\t\t\tif !memberDenseOK {\n\t\t\t\treturn nil, nil, false\n\t\t\t}\n")
-	fmt.Fprintf(out, "\t\t\tmemberRead, memberReadOK := %s.ForeignMemberExactRead[%s, %s](foreign%d, uint32(memberDense), uint16(plan%d.Input))\n",
+	fmt.Fprintf(out, "\t\t\tmemberRead, memberReadOK := %s.ForeignMemberExactRead[%s, %s](foreign%d, memberDense, uint16(plan%d.Input))\n",
 		execution, dense, fact, join.position, join.position)
 	out.WriteString("\t\t\tif !memberReadOK {\n\t\t\t\treturn nil, nil, false\n\t\t\t}\n")
 	fmt.Fprintf(out, "\t\t\t%sSealed[index] = memberRead\n", join.name)

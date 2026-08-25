@@ -92,7 +92,7 @@ func TestAGeneratedVectorReadTakesItsKeysFromTheOwnerIssuedMemberSet(t *testing.
 		}
 	}
 
-	reads, readsOK := declareGeneratedReadSurfaces(fixture.binding.state, cell, descriptor,
+	reads, _, readsOK := declareGeneratedReadSurfaces(fixture.binding.state, cell, descriptor,
 		lawCanonicalRuleAnchor(t), generatedSummaryLawSemantic(t, cell), OperandCoords{Mount: fixture.mount, Occurrence: fixture.occurrence}, fixture.owner.candidate)
 	if !readsOK || len(reads) != 1 {
 		t.Fatal("a generated vector read did not issue")
@@ -125,7 +125,7 @@ func TestAGeneratedVectorReadRefusesAnOwnerThatPublishesNoMemberSet(t *testing.T
 	if _, keysOK := generatedSummaryKeys(fixture.binding.state, plan, fixture.owner.candidate); keysOK {
 		t.Fatal("an owner publishing no member set answered a key vector")
 	}
-	if _, readsOK := declareGeneratedReadSurfaces(fixture.binding.state, cell, descriptor,
+	if _, _, readsOK := declareGeneratedReadSurfaces(fixture.binding.state, cell, descriptor,
 		lawCanonicalRuleAnchor(t), generatedSummaryLawSemantic(t, cell), OperandCoords{Mount: fixture.mount, Occurrence: fixture.occurrence}, fixture.owner.candidate); readsOK {
 		t.Fatal("a vector read issued over an unstated denominator")
 	}
@@ -147,7 +147,7 @@ func TestAGeneratedVectorReadRefusesAnUnorderedMemberSet(t *testing.T) {
 	// the first: the owner's set is the same size and its order is not one.
 	fixture.owner.memberProjections[[3]uint32{plan.Relation.Member, plan.Key.Member, 7}] = 1
 	fixture.owner.memberProjections[[3]uint32{plan.Relation.Member, plan.Key.Member, 9}] = 0
-	if _, readsOK := declareGeneratedReadSurfaces(fixture.binding.state, cell, descriptor,
+	if _, _, readsOK := declareGeneratedReadSurfaces(fixture.binding.state, cell, descriptor,
 		lawCanonicalRuleAnchor(t), generatedSummaryLawSemantic(t, cell), OperandCoords{Mount: fixture.mount, Occurrence: fixture.occurrence}, fixture.owner.candidate); readsOK {
 		t.Fatal("a vector read issued over a member set that is not in coordinate order")
 	}

@@ -76,7 +76,7 @@ func generatedRouteLawSurfaces(t testing.TB, fixture generatedBindingLawFixture)
 	if !candidateOK {
 		t.Fatal("routed generated candidate")
 	}
-	reads, readsOK := declareGeneratedReadSurfaces(fixture.binding.state, cell, descriptor, anchor, ruleSemantic, OperandCoords{Mount: fixture.mount, Occurrence: fixture.occurrence}, candidate)
+	reads, _, readsOK := declareGeneratedReadSurfaces(fixture.binding.state, cell, descriptor, anchor, ruleSemantic, OperandCoords{Mount: fixture.mount, Occurrence: fixture.occurrence}, candidate)
 	if !readsOK {
 		t.Fatal("routed generated read surfaces")
 	}

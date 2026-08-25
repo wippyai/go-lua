@@ -46,7 +46,7 @@ const (
 	MountedCallFactKey           schema.Key = calldomain.MountedCallFactKey
 	MountedCallActualMembers     schema.Key = valuedomain.MountedCallActualMembers
 	MountedCallActualKey         schema.Key = valuedomain.MountedCallActualKey
-	MountedCallActualTag         schema.Key = valuedomain.MountedCallActualTag
+	MountedCallParents           schema.Key = valuedomain.MountedCallParents
 )
 
 func axisReference(key schema.Key) schema.EntryReference {
@@ -125,30 +125,43 @@ func FormalFreeze() ruleprogram.Program {
 				},
 			},
 			{
-				// One cell per authored actual, at Value's declared default
-				// where the actual's coordinate is unwritten: the freeze
-				// judgment reads a value at every actual, and an absent one is
-				// Value's default rather than a presence distinction this rule
-				// would have to draw.
-				Sources:   []ruleprogram.SourceRef{ruleprogram.CandidateSource()},
-				Relation:  member.RelationRef{Axis: valueAxis, Member: MountedCallActualMembers},
-				Key:       member.ProjectionRef{Axis: valueAxis, Member: MountedCallActualKey},
-				Predicate: member.ProjectionRef{Axis: valueAxis, Member: MountedCallActualTag},
+				// This call's ordered mounted actuals, delivered as the whole
+				// vector Value publishes for the call - one cell per authored
+				// actual, at Value's declared default where the actual's
+				// coordinate is unwritten.
+				//
+				// It is a WHOLE-VECTOR read, not a selection. Which actuals a
+				// call has is a membership Value already sealed: the members
+				// hang off one parent row by (parent, ordinal), so the vector
+				// is addressed by that parent and its ordinal position IS the
+				// correlation. A selection here would make this rule supply
+				// the members itself, which means resolving Value's parent row
+				// from the call's own identity - a coordinate the sealed
+				// directory already holds.
+				//
+				// The parent restatement is what the engine addresses the
+				// vector by: Value's parent order declares that it enumerates
+				// the same subjects as Call's mounted-call order, so the engine
+				// resolves the parent row in VALUE's directory at the
+				// occurrence both are addressed by, and enumerates its members
+				// from there.
+				Sources:  []ruleprogram.SourceRef{ruleprogram.CandidateSource()},
+				Relation: member.RelationRef{Axis: valueAxis, Member: MountedCallActualMembers},
+				Key:      member.ProjectionRef{Axis: valueAxis, Member: MountedCallActualKey},
+				Parent:   member.RelationRef{Axis: valueAxis, Member: MountedCallParents},
 				Read: ruleprogram.ReadDecl{
 					Input: 1,
 					Axis:  ruleprogram.AxisRef(valueAxis),
-					Form:  ruleprogram.Selected,
-					// The freeze judgment's own actual-member selection has
-					// no predecessor point: it resolves through Value's
-					// selected member set at this Input, not a transported
-					// occurrence. Input 1's slot shares the candidate's own
-					// point.
+					Form:  ruleprogram.Summary,
+					// The vector resolves through Value's own member set at
+					// this Input, not a transported occurrence, so Input 1's
+					// slot shares the candidate's own point.
 					PointBound: ruleprogram.PointBoundSelf,
 					Contract: ruleprogram.ReadContract{
-						Order:          ruleprogram.OrderByTag,
+						Order:          ruleprogram.OrderCanonical,
 						Sparse:         ruleprogram.SparseDefault,
 						OnOpaque:       ruleprogram.OnOpaqueRefuse,
-						Multiplicity:   ruleprogram.MultiplicityOne,
+						Multiplicity:   ruleprogram.MultiplicityMany,
 						DenominatorRef: valueDenominator,
 					},
 				},

@@ -402,20 +402,19 @@ func deriveMemberSet(built *plan, declaration program.Program, join program.Join
 		return nil, unexpressible(ruleKey, fmt.Sprintf("join %d whose parent restatement disagrees with its relation", position),
 			fmt.Sprintf("relation %q declares parent %q", relation.Name, string(relation.MemberParent.Member)))
 	}
-	if join.Parent != declaration.Candidate.AxisRelation {
-		return nil, unexpressible(ruleKey, fmt.Sprintf("join %d over a member set of a foreign candidate", position),
-			fmt.Sprintf("relation %q nests under %q, and the emitted installer enumerates a member set off the rule's own candidate row", relation.Name, string(join.Parent.Member)))
-	}
+	// The parent may be a FOREIGN candidate directory. The installer no longer
+	// enumerates the set - the engine does, at the row this read is addressed
+	// by, and lowers every member's coordinate onto the plan row - so a member
+	// set that hangs off another axis's row is sealed exactly like one that
+	// hangs off the rule's own. What still has to hold is that the two orders
+	// are declared to enumerate the same subjects, which is the plan's
+	// correspondence law and not this derivation's to restate.
 	if !relation.MemberCount.Available() || !relation.MemberAt.Available() {
 		return nil, unexpressible(ruleKey, fmt.Sprintf("join %d over a member set with no census", position),
-			fmt.Sprintf("relation %q declares no MemberCount/MemberAt, so the emitted installer has no ordinals to seal a read at", relation.Name))
+			fmt.Sprintf("relation %q declares no MemberCount/MemberAt, so its owner publishes no member set for the engine to enumerate", relation.Name))
 	}
 	if _, parentOK := findRelation(relationAxis.source, join.Parent.Member); !parentOK {
 		return nil, unexpressible(ruleKey, "a parent relation its axis does not declare", string(join.Parent.Member))
-	}
-	if !sameGoType(relation.MemberCount.Receiver, built.candidate.subject) || !sameGoType(relation.MemberAt.Receiver, built.candidate.subject) {
-		return nil, unexpressible(ruleKey, fmt.Sprintf("join %d whose member census is not issued by the candidate carrier", position),
-			fmt.Sprintf("relation %q enumerates through %s, the candidate carrier is %s", relation.Name, relation.MemberCount.Receiver.Name, built.candidate.subject.Name))
 	}
 	if !relationAxis.foreignTo(built.write) {
 		return nil, unexpressible(ruleKey, fmt.Sprintf("join %d over a member set of the written axis", position),

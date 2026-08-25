@@ -304,6 +304,16 @@ func buildGeneratedExecutionProgram(program *runtimeProgram) (*generatedExecutio
 		if exact != len(row.generated.initial) {
 			return nil, refuseProgramSeal(topologyConstructionStepMemberRow), false
 		}
+		// Every nested member set the rule's joins span is lowered onto the row
+		// at its own join ordinal, already enumerated at the parent the read is
+		// addressed by. The family reads it; nothing enumerates a second time.
+		for _, set := range row.generated.memberSetsOf() {
+			var bound bool
+			formRow, bound = formRow.BindMembers(set.join, set.coordinates)
+			if !bound {
+				return nil, refuseProgramSeal(topologyConstructionStepMemberRow), false
+			}
+		}
 		rowsByOwner[descriptor.OutputFactor()] = append(rowsByOwner[descriptor.OutputFactor()], formRow)
 		installed[memberIndex] = formRow
 	}

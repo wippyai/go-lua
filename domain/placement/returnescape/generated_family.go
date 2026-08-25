@@ -350,25 +350,17 @@ func (install familyInstaller) InstallRuleFamily(plane execution.FormPlane[place
 		if !foreign1OK {
 			return nil, nil, false
 		}
-		read1Count := candidate.MemberCount()
-		if read1Count < 0 {
+		read1Count, read1CountOK := planRow.MemberCount(1)
+		if !read1CountOK {
 			return nil, nil, false
 		}
 		read1Sealed := make([]execution.ExactRead[value.DenseCoordinate, value.Value], read1Count)
 		for index := 0; index < read1Count; index++ {
-			memberRow, memberRowOK := candidate.MemberAt(index)
-			if !memberRowOK {
-				return nil, nil, false
-			}
-			returnBoundaryMemberKey, returnBoundaryMemberKeyOK := memberRow.Coordinate()
-			if !returnBoundaryMemberKeyOK {
-				return nil, nil, false
-			}
-			memberDense, memberDenseOK := install.valueSchema.CoordinateIndex(returnBoundaryMemberKey)
+			memberDense, memberDenseOK := planRow.MemberAt(1, index)
 			if !memberDenseOK {
 				return nil, nil, false
 			}
-			memberRead, memberReadOK := execution.ForeignMemberExactRead[value.DenseCoordinate, value.Value](foreign1, uint32(memberDense), uint16(plan1.Input))
+			memberRead, memberReadOK := execution.ForeignMemberExactRead[value.DenseCoordinate, value.Value](foreign1, memberDense, uint16(plan1.Input))
 			if !memberReadOK {
 				return nil, nil, false
 			}

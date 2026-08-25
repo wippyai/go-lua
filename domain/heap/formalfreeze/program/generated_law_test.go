@@ -29,13 +29,13 @@ join[0].predicate    -
 join[0].parent       -
 join[0].sources      candidate
 join[0].contract     order=canonical sparse=explicit on-opaque=refuse multiplicity=one denominator=-
-join[1].read         form=selected input=1 axis=axis/value point-bound=self
+join[1].read         form=summary input=1 axis=axis/value point-bound=self
 join[1].relation     axis/value:value/mounted-call/actual-members
 join[1].key          axis/value:value/mounted-call/actual-key
-join[1].predicate    axis/value:value/mounted-call/actual-tag
-join[1].parent       -
+join[1].predicate    -
+join[1].parent       axis/value:value/mounted-call/parents
 join[1].sources      candidate
-join[1].contract     order=by-tag sparse=default on-opaque=refuse multiplicity=one denominator=denominator/coordinates/value
+join[1].contract     order=canonical sparse=default on-opaque=refuse multiplicity=many denominator=denominator/coordinates/value
 join[2].read         form=selected input=2 axis=axis/heap point-bound=self
 join[2].relation     axis/heap:heap/formal-freeze/routes
 join[2].key          axis/heap:heap/formal-freeze/route-key
@@ -216,7 +216,12 @@ func TestFormalFreezeRefusesEveryStructuralMutation(t *testing.T) {
 		{mutation: "join 1 loses the denominator its read form requires", apply: func(declaration *ruleprogram.Program) {
 			declaration.Joins[1].Read.Contract.DenominatorRef = ruleprogram.DenominatorRef{}
 		}, kind: ruleprogram.ProblemJoin, join: 1},
-		{mutation: "join 1 declares a predicate that resolves to nothing", apply: func(declaration *ruleprogram.Program) { declaration.Joins[1].Predicate.Member = "" }, kind: ruleprogram.ProblemJoin, join: 1},
+		{mutation: "join 1 declares a predicate that resolves to nothing", apply: func(declaration *ruleprogram.Program) {
+			declaration.Joins[1].Predicate = axismember.ProjectionRef{Axis: declaration.Joins[1].Relation.Axis}
+		}, kind: ruleprogram.ProblemJoin, join: 1},
+		{mutation: "join 1 loses the parent its vector is addressed by", apply: func(declaration *ruleprogram.Program) {
+			declaration.Joins[1].Parent.Member = ""
+		}, kind: ruleprogram.ProblemJoin, join: 1},
 		{mutation: "join 2 loses its relation", apply: func(declaration *ruleprogram.Program) { declaration.Joins[2].Relation.Member = "" }, kind: ruleprogram.ProblemJoin, join: 2},
 		{mutation: "join 2 loses its key projection", apply: func(declaration *ruleprogram.Program) { declaration.Joins[2].Key.Member = "" }, kind: ruleprogram.ProblemJoin, join: 2},
 		{mutation: "join 2 loses its read axis", apply: func(declaration *ruleprogram.Program) { declaration.Joins[2].Read.Axis = ruleprogram.AxisRef{} }, kind: ruleprogram.ProblemJoin, join: 2},

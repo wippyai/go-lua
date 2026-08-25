@@ -109,6 +109,7 @@ type FormRow struct {
 	// table's answer, not the row's.
 	RuleOrdinal uint32
 	exact       []carrier.Unit
+	members     [][]uint32
 }
 
 // BindExact attaches the owner-issued Unit of one exact join to this sealed
@@ -146,6 +147,63 @@ func (row FormRow) BindExact(join int, unit carrier.Unit) (FormRow, bool) {
 	}
 	row.exact[join] = unit
 	return row, true
+}
+
+// BindMembers attaches one join's ordered nested member set to this sealed
+// row: the axis-local coordinate of every member, in the owner's own member
+// order, as the engine enumerated it at the row the read is addressed by.
+//
+// It is called only by the engine while lowering an already-resolved read. A
+// rule package consumes the result and cannot mint one, which is the whole
+// point: the set is the owner's answer under one parent row, and a family that
+// could supply its own would be enumerating a directory it may not own.
+func (row FormRow) BindMembers(join int, coordinates []uint32) (FormRow, bool) {
+	if !row.Rule.Available() || join < 0 || join >= row.Rule.ReadCount() || coordinates == nil {
+		return FormRow{}, false
+	}
+	plan, ok := row.Rule.ReadAt(join)
+	if !ok || !plan.ParentPresent || plan.Form != ruleprogram.Summary && plan.Form != ruleprogram.Complete {
+		return FormRow{}, false
+	}
+	if row.members == nil {
+		row.members = make([][]uint32, row.Rule.ReadCount())
+	} else {
+		row.members = append([][]uint32(nil), row.members...)
+	}
+	if row.members[join] != nil {
+		return FormRow{}, false
+	}
+	// An EMPTY set is copied as an empty slice, never as nil: a parent row with
+	// no members is a set of width zero, and a join that spans no set at all
+	// has none. Collapsing the two would report "this rule declares no member
+	// set here" for a call that simply has no actuals.
+	set := make([]uint32, len(coordinates))
+	copy(set, coordinates)
+	row.members[join] = set
+	return row, true
+}
+
+// MemberCount is the sealed width of one join's nested member set. A join that
+// spans no member set has none, which is not a set of width zero: an empty set
+// is a parent row with no members, and both are distinguishable here.
+func (row FormRow) MemberCount(join int) (int, bool) {
+	if !row.Rule.Available() || join < 0 || join >= len(row.members) || row.members[join] == nil {
+		return 0, false
+	}
+	return len(row.members[join]), true
+}
+
+// MemberAt is one member's axis-local coordinate, at the ordinal its owner
+// declared it at.
+func (row FormRow) MemberAt(join, index int) (uint32, bool) {
+	if !row.Rule.Available() || join < 0 || join >= len(row.members) || row.members[join] == nil {
+		return 0, false
+	}
+	set := row.members[join]
+	if index < 0 || index >= len(set) {
+		return 0, false
+	}
+	return set[index], true
 }
 
 func (row FormRow) exactAt(join int) (generated.ReadPlan, carrier.Unit, bool) {

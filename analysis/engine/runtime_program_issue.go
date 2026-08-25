@@ -20,6 +20,7 @@ import (
 	memberrelation "github.com/wippyai/go-lua/analysis/schema/axis/member/relation"
 	"github.com/wippyai/go-lua/analysis/schema/executioncontext"
 	ruleplan "github.com/wippyai/go-lua/analysis/schema/rule/plan"
+	ruleprogram "github.com/wippyai/go-lua/analysis/schema/rule/program"
 )
 
 // pendingRuleIssuance is one issuance between source admission and row
@@ -479,7 +480,7 @@ func declareGeneratedIssuanceSurfaces(rowsWorkspace *programRows, state *schemaB
 	if !ruleSemanticOK {
 		return pendingRuleIssuance{}, false
 	}
-	reads, readsOK := declareGeneratedReadSurfaces(state, declaration, descriptor, anchor, ruleSemantic, coords, denseCandidate)
+	reads, memberSets, readsOK := declareGeneratedReadSurfaces(state, declaration, descriptor, anchor, ruleSemantic, coords, denseCandidate)
 	if !readsOK {
 		return pendingRuleIssuance{}, false
 	}
@@ -507,7 +508,7 @@ func declareGeneratedIssuanceSurfaces(rowsWorkspace *programRows, state *schemaB
 	issuance.semantic, issuance.family, issuance.anchor, issuance.surfaces = semantic, family, anchor, surfaces
 	issuance.generated = &generatedMemberDeclaration{
 		cell: cell, operand: anchor.operand, candidate: denseCandidate, source: programSource,
-		reads: reads, writeSurface: writeSurface,
+		reads: reads, memberSets: memberSets, writeSurface: writeSurface,
 	}
 	return issuance, true
 }
@@ -609,80 +610,98 @@ func generatedCarryCount(descriptor generated.CompiledRule) uint64 {
 // members of a relation that exists only per invocation, so what is sealed
 // here is the anchored identity of the read itself, and the members arrive
 // through the family the rule's own package installs.
-func declareGeneratedReadSurfaces(state *schemaBindingState, declaration *generatedRuleBindingCell, descriptor generated.CompiledRule, anchor ruleSurfaceAnchor, semantic identity.SemanticKey, coords OperandCoords, denseCandidate uint32) ([]RuleReadSurface, bool) {
+func declareGeneratedReadSurfaces(state *schemaBindingState, declaration *generatedRuleBindingCell, descriptor generated.CompiledRule, anchor ruleSurfaceAnchor, semantic identity.SemanticKey, coords OperandCoords, denseCandidate uint32) ([]RuleReadSurface, []generatedMemberSet, bool) {
 	count := descriptor.ReadCount()
 	if count == 0 {
-		return nil, true
+		return nil, nil, true
 	}
 	if len(declaration.reads) != count {
-		return nil, false
+		return nil, nil, false
 	}
 	candidate := descriptor.CandidateRelation()
 	reads := make([]RuleReadSurface, count)
+	var memberSets []generatedMemberSet
 	for index := 0; index < count; index++ {
 		plan, planOK := descriptor.ReadAt(index)
 		row := declaration.reads[index]
 		if !planOK || row == nil {
-			return nil, false
+			return nil, nil, false
 		}
 		if uint64(plan.Factor) >= uint64(len(state.factors)) {
-			return nil, false
+			return nil, nil, false
 		}
 		readFactor := state.factors[plan.Factor]
 		if readFactor == nil || readFactor.schemaFactorSemanticKey() != row.factor {
-			return nil, false
+			return nil, nil, false
 		}
 		switch row.kind {
 		case composition.ReadExact:
 			joinOwner, joinOwnerOK := relationOwnerForGeneratedAxis(state, plan.Relation.Axis)
 			if !joinOwnerOK {
-				return nil, false
+				return nil, nil, false
 			}
 			addressed, addressedOK := resolveGeneratedReadCandidate(state, candidate, plan, coords, denseCandidate)
 			if !addressedOK {
-				return nil, false
+				return nil, nil, false
 			}
 			local, localOK := joinOwner.Project(plan.Relation.Member, plan.Key.Member, addressed)
 			if !localOK {
-				return nil, false
+				return nil, nil, false
 			}
 			surface, surfaceOK := readFactor.schemaFactorExactRead(state, state.authority, uint64(local))
 			if !surfaceOK || !surface.value.Available() || surface.value.Factor != row.factor {
-				return nil, false
+				return nil, nil, false
 			}
 			reads[index] = surface
 		case composition.ReadSummary:
 			addressed, addressedOK := resolveGeneratedReadCandidate(state, candidate, plan, coords, denseCandidate)
 			if !addressedOK {
-				return nil, false
+				return nil, nil, false
 			}
 			keys, keysOK := generatedSummaryKeys(state, plan, addressed)
 			if !keysOK {
-				return nil, false
+				return nil, nil, false
 			}
 			surface, surfaceOK := summaryReadSurface(state, state.authority, row, keys)
 			if !surfaceOK || !surface.value.Available() || surface.value.Factor != row.factor {
-				return nil, false
+				return nil, nil, false
 			}
 			reads[index] = surface
 		case composition.ReadSelect:
 			dependencies := make([]RuleReadSurface, len(row.dependencies))
 			for position, dependency := range row.dependencies {
 				if dependency >= uint64(index) {
-					return nil, false
+					return nil, nil, false
 				}
 				dependencies[position] = reads[dependency]
 			}
 			surface, surfaceOK := anchoredSelectedReadSurface(state, state.authority, semantic, anchor, row, declaration.reads, dependencies, reads[:index])
 			if !surfaceOK || !surface.value.Available() {
-				return nil, false
+				return nil, nil, false
 			}
 			reads[index] = surface
+			// A nested member set is delivered through the selection surface -
+			// the cold row a parent-declaring vector read takes - but its
+			// members are NOT a per-invocation selection: they are the ordered
+			// rows the owner already published under one parent. Enumerate them
+			// here, at the row the read is addressed by, so the family that
+			// consumes them supplies nothing and resolves nothing.
+			if plan.ParentPresent && plan.Form == ruleprogram.Summary {
+				addressed, addressedOK := resolveGeneratedReadCandidate(state, candidate, plan, coords, denseCandidate)
+				if !addressedOK {
+					return nil, nil, false
+				}
+				coordinates, coordinatesOK := generatedMemberCoordinates(state, plan, addressed)
+				if !coordinatesOK {
+					return nil, nil, false
+				}
+				memberSets = append(memberSets, generatedMemberSet{join: index, coordinates: coordinates})
+			}
 		default:
-			return nil, false
+			return nil, nil, false
 		}
 	}
-	return reads, true
+	return reads, memberSets, true
 }
 
 // generatedSummaryKeys is the owner-issued key vector a generated rule's
@@ -699,27 +718,52 @@ func declareGeneratedReadSurfaces(state *schemaBindingState, declaration *genera
 // two members answering one coordinate, or members out of order, would silently
 // renumber every later cell.
 func generatedSummaryKeys(state *schemaBindingState, plan generated.ReadPlan, addressedCandidate uint32) (summaryKeyVector, bool) {
+	coordinates, coordinatesOK := generatedMemberCoordinates(state, plan, addressedCandidate)
+	if !coordinatesOK {
+		return summaryKeyVector{}, false
+	}
+	keys := make([]uint64, 0, len(coordinates))
+	for _, coordinate := range coordinates {
+		keys = append(keys, uint64(coordinate))
+	}
+	return newSummaryKeyVector(keys), true
+}
+
+// generatedMemberCoordinates enumerates one nested member set and projects
+// every member to its own axis-local coordinate.
+//
+// This is the ONE enumeration of a member set in the engine, and the one
+// authority for it anywhere: the relation the join names publishes the ordered
+// members one row carries, each is projected through the join's own key
+// projection, and the row it hangs off is the one the read is ADDRESSED by -
+// the rule's own candidate when the set is on its axis, and the corresponded
+// row resolved by occurrence when it is not.
+//
+// A family used to redo this from whatever identity it could reconstruct. It
+// cannot: the ordinal it would enumerate from lives in a directory it may not
+// own, and a set it enumerated itself agrees with this one only by luck.
+func generatedMemberCoordinates(state *schemaBindingState, plan generated.ReadPlan, addressedCandidate uint32) ([]uint32, bool) {
 	owner, ownerOK := relationOwnerForGeneratedAxis(state, plan.Relation.Axis)
 	if !ownerOK {
-		return summaryKeyVector{}, false
+		return nil, false
 	}
 	count, countOK := owner.MemberCount(plan.Relation.Member, addressedCandidate)
 	if !countOK || count < 0 {
-		return summaryKeyVector{}, false
+		return nil, false
 	}
-	keys := make([]uint64, 0, count)
+	coordinates := make([]uint32, 0, count)
 	for index := 0; index < count; index++ {
 		member, memberOK := owner.MemberAt(plan.Relation.Member, addressedCandidate, index)
 		if !memberOK {
-			return summaryKeyVector{}, false
+			return nil, false
 		}
 		local, localOK := owner.Project(plan.Relation.Member, plan.Key.Member, member)
 		if !localOK {
-			return summaryKeyVector{}, false
+			return nil, false
 		}
-		keys = append(keys, uint64(local))
+		coordinates = append(coordinates, local)
 	}
-	return newSummaryKeyVector(keys), true
+	return coordinates, true
 }
 
 // declareGeneratedWriteSurface mints this rule's one publication surface.

@@ -408,7 +408,7 @@ func TestAnIssuedReadOfACorrespondedDirectoryProjectsTheForeignOwnersOwnRow(t *t
 		t.Fatalf("resolved corresponded row = %d/%t, want the foreign owner's own 6", resolved, resolvedOK)
 	}
 
-	reads, readsOK := declareGeneratedReadSurfaces(fixture.binding.state, cell, descriptor,
+	reads, _, readsOK := declareGeneratedReadSurfaces(fixture.binding.state, cell, descriptor,
 		lawCanonicalRuleAnchor(t), generatedSummaryLawSemantic(t, cell), coords, 1)
 	if !readsOK || len(reads) != 1 {
 		t.Fatal("a read of a corresponded directory did not issue")
@@ -471,7 +471,7 @@ func TestACorrespondedReadRefusesWhenItsOwnDirectoryHasNoRow(t *testing.T) {
 	if resolved, ok := resolveGeneratedReadCandidate(fixture.binding.state, candidate, plan, coords, 1); ok {
 		t.Fatalf("a directory answering no row resolved %d", resolved)
 	}
-	if _, readsOK := declareGeneratedReadSurfaces(fixture.binding.state, cell, descriptor,
+	if _, _, readsOK := declareGeneratedReadSurfaces(fixture.binding.state, cell, descriptor,
 		lawCanonicalRuleAnchor(t), generatedSummaryLawSemantic(t, cell), coords, 1); readsOK {
 		t.Fatal("a read issued against a directory that named no row for this occurrence")
 	}

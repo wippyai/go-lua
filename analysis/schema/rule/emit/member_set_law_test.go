@@ -319,12 +319,17 @@ func renderMemberSetTarget(t testing.TB, target Target) string {
 // TestMemberSetJoinDeliversOneVectorFromOrdinalSealedReads is the acceptance
 // law for member-vector delivery. A routed output publishes through a
 // selected join whose relation derivation consumes a Summary join over a
-// self-provided nested member set, the join restating the relation's own
-// Parent. The emitted family's installer seals one exact read per declared
-// ordinal off the candidate row's own MemberCount/MemberAt through the
-// foreign handle, the worker views the filled cells as one
-// execution.MemberVector, and the derivation's Build call is handed that
-// vector rather than the underlying cell slice.
+// nested member set, the join restating the relation's own Parent. The
+// emitted family's installer seals one exact read per member AT THE
+// COORDINATE THE PLAN ROW CARRIES - the engine enumerated the set at the row
+// this read is addressed by and lowered every coordinate here - the worker
+// views the filled cells as one execution.MemberVector, and the derivation's
+// Build call is handed that vector rather than the underlying cell slice.
+//
+// The installer must not reach the owner's MemberCount/MemberAt at all. Those
+// are the sealed directory's own enumeration, the engine is what runs them,
+// and an installer running them again is a second enumeration of one set that
+// is only expressible when the set happens to hang off its own candidate.
 func TestMemberSetJoinDeliversOneVectorFromOrdinalSealedReads(t *testing.T) {
 	source := renderMemberSetTarget(t, memberSetTarget())
 
@@ -334,11 +339,14 @@ func TestMemberSetJoinDeliversOneVectorFromOrdinalSealedReads(t *testing.T) {
 	}
 	_ = installer
 
-	if !strings.Contains(source, "candidate.MemberCount()") {
-		t.Fatalf("the installer does not seal the member set's width off the relation's declared MemberCount:\n%s", source)
+	if !strings.Contains(source, "planRow.MemberCount(0)") {
+		t.Fatalf("the installer does not take the member set's width from the plan row the engine lowered it onto:\n%s", source)
 	}
-	if !strings.Contains(source, "candidate.MemberAt(index)") {
-		t.Fatalf("the installer does not read each ordinal off the relation's declared MemberAt:\n%s", source)
+	if !strings.Contains(source, "planRow.MemberAt(0, index)") {
+		t.Fatalf("the installer does not read each member coordinate off the plan row:\n%s", source)
+	}
+	if strings.Contains(source, "candidate.MemberCount()") || strings.Contains(source, "candidate.MemberAt(index)") {
+		t.Fatalf("the installer enumerates the member set a second time, off its own candidate:\n%s", source)
 	}
 	if !strings.Contains(source, "execution.ForeignMemberExactRead[") {
 		t.Fatalf("the installer seals no member read through the foreign handle's ForeignMemberExactRead:\n%s", source)
@@ -389,6 +397,37 @@ func TestMemberSetJoinDeliversOneVectorFromOrdinalSealedReads(t *testing.T) {
 // deriveMemberSet holding such a relation: the refusal happens one step
 // earlier, named "a member source that does not compose" - a different,
 // correctly-named refusal for a different fact, not this one.
+// TestAMemberSetJoinMayNestUnderAForeignCandidate is the clause that stopped
+// being a refusal.
+//
+// The installer used to enumerate the member set off the rule's OWN candidate
+// row, so a set nesting under another directory's row had no expression: there
+// was no candidate of the right type to enumerate with. The engine enumerates
+// it now - at the row the read is addressed by, which a correspondence lets it
+// resolve in a foreign directory - and lowers every member's coordinate onto
+// the plan row, so the emitted seal reads coordinates and never asks whose
+// candidate they hang off. That is the whole reason a rule may now fold a
+// member set of a call it did not issue.
+func TestAMemberSetJoinMayNestUnderAForeignCandidate(t *testing.T) {
+	spec := memberSetSpec()
+	spec.Program.Candidate = member.AxisRelationCandidate(member.RelationRef{
+		Axis: memberSetValueAxisRef(), Member: "value/alt/candidates",
+	})
+	target := memberSetTarget()
+	target.Spec = spec
+	source, err := Render(target, memberSetRoster(t))
+	if err != nil {
+		t.Fatalf("a member set nesting under a foreign candidate was refused: %v", err)
+	}
+	emitted := string(source)
+	if !strings.Contains(emitted, "planRow.MemberCount(0)") || !strings.Contains(emitted, "planRow.MemberAt(0, index)") {
+		t.Fatalf("the emitted seal does not read the lowered member coordinates:\n%s", emitted)
+	}
+	if strings.Contains(emitted, "candidate.MemberCount()") || strings.Contains(emitted, "candidate.MemberAt(") {
+		t.Fatalf("the emitted seal still enumerates the set from its own candidate:\n%s", emitted)
+	}
+}
+
 func TestAMemberSetJoinIsRefusedByName(t *testing.T) {
 	for _, probe := range []struct {
 		name   string
@@ -410,15 +449,6 @@ func TestAMemberSetJoinIsRefusedByName(t *testing.T) {
 				}
 			},
 			clause: "parent restatement disagrees with its relation",
-		},
-		{
-			name: "a member set nesting under something other than the rule's own candidate",
-			mutate: func(spec *rule.Spec) {
-				spec.Program.Candidate = member.AxisRelationCandidate(member.RelationRef{
-					Axis: memberSetValueAxisRef(), Member: "value/alt/candidates",
-				})
-			},
-			clause: "member set of a foreign candidate",
 		},
 		{
 			name: "a member set on the axis the rule writes",

@@ -32,7 +32,7 @@ func DeriveFreezeRoutes(
 	packs *packdomain.Schema,
 	candidate calldomain.CallCoordinate,
 	callFact calldomain.Value,
-	actuals []execution.SelectedCell[valuedomain.Value],
+	actuals execution.SummaryVector[valuedomain.Value],
 ) (recentplan.Plan, bool) {
 	if packs == nil || calls == nil || !calls.Valid() || !schema.Valid() || values == nil || !values.Valid() ||
 		!calls.OwnsCallCoordinate(candidate) || !values.OwnsHeapSchema(schema) ||
@@ -49,19 +49,15 @@ func DeriveFreezeRoutes(
 	actual, actualOK := packs.MountedActualProjection(module, callID)
 	key, keyOK := calls.KeyForMountedCall(mounted)
 	if !mountedOK || !identityOK || !actualOK || !actual.Valid() || !actual.OwnedBy(packs) ||
-		!keyOK || !key.Valid() || !key.IsApplication() || len(actuals) != actual.ActualCount() ||
+		!keyOK || !key.Valid() || !key.IsApplication() || !actuals.Valid() || actuals.Count() != actual.ActualCount() ||
 		!calls.Admits(key, callFact) {
 		return recentplan.Plan{}, false
 	}
-	// The cells are this call's own member set in its own ordinal order. The
-	// owner issues the one-based tag, so agreement is proved rather than
-	// searched for: a selection delivered under any other correspondence is
-	// not the actual list this derivation reads.
-	for index, cell := range actuals {
-		if cell.Tag != uint64(index)+1 {
-			return recentplan.Plan{}, false
-		}
-	}
+	// The vector is this call's own member set in its own ordinal order, and a
+	// cell's POSITION is the ordinal its owner declared it at. There is no tag
+	// to agree with: a correspondence proved by re-reading a tag beside every
+	// cell would be a second addressing authority for rows the owner already
+	// addressed by position.
 	_, runtimeTail := actual.TailID()
 	if !callFact.IsComplete() || callFact.IsEmpty() || callFact.KnownTargetCount() == 0 {
 		return recentplan.Plan{}, true
@@ -83,10 +79,10 @@ func DeriveFreezeRoutes(
 		var targetRoutes recentplan.Plan
 		for paramIndex := 0; paramIndex < params.count(); paramIndex++ {
 			param, paramOK := params.at(paramIndex)
-			if !paramOK || param < 0 || param >= len(actuals) {
+			if !paramOK || param < 0 || param >= actuals.Count() {
 				return recentplan.Plan{}, true
 			}
-			root, rootOK := exactRecentAllocation(values, actuals[param])
+			root, rootOK := exactRecentAllocation(values, actuals, param)
 			if !rootOK {
 				return recentplan.Plan{}, true
 			}

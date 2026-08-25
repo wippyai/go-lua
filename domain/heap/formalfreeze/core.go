@@ -27,11 +27,15 @@ const formalFreezeInlineWidth = recentplan.InlineWidth
 // read's declared sparsity substituted, so there is no second absence policy
 // here: an unwritten actual is Value's declared default and Bottom is refused
 // on its own merits.
-func exactRecentAllocation(values *valuedomain.Schema, cell execution.SelectedCell[valuedomain.Value]) (heap.Key, bool) {
+func exactRecentAllocation(values *valuedomain.Schema, actuals execution.SummaryVector[valuedomain.Value], ordinal int) (heap.Key, bool) {
 	if values == nil {
 		return heap.Key{}, false
 	}
-	return values.ExactRecentAllocation(cell.Value, true)
+	value, _, cellOK := actuals.At(ordinal)
+	if !cellOK {
+		return heap.Key{}, false
+	}
+	return values.ExactRecentAllocation(value, true)
 }
 
 // freezeParamSet is the allocation-free representation of one target's exact

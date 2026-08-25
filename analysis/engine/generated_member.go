@@ -24,6 +24,7 @@ type generatedMemberSpec struct {
 	factor       composition.Key
 	carries      []int
 	initial      []demand.Observation
+	memberSets   []generatedMemberSet
 	dynamic      []demand.DynamicRead
 	targets      []carrier.Target
 	carryTargets []carrier.Target
@@ -61,8 +62,19 @@ type generatedMemberDeclaration struct {
 	// reads are this rule's declared read surfaces in plan order. A rule with
 	// no join has none; every other rule has exactly the joins its Plan states,
 	// each already in the form its own row declares.
-	reads        []RuleReadSurface
+	reads []RuleReadSurface
+	// memberSets are the nested member sets this rule's joins span, enumerated
+	// once at issuance through the row each read is addressed by. A family
+	// consumes them; nothing re-enumerates.
+	memberSets   []generatedMemberSet
 	writeSurface ruleWriteSurface
+}
+
+// generatedMemberSet is one join's ordered nested member set, as axis-local
+// coordinates in the owner's own member order.
+type generatedMemberSet struct {
+	join        int
+	coordinates []uint32
 }
 
 // generatedMember is the generated execution arm of a sealed member row.
@@ -83,6 +95,7 @@ type generatedMember struct {
 	factor              composition.Key
 	carryInputs         []int
 	initial             []demand.Observation
+	memberSets          []generatedMemberSet
 	dynamic             []demand.DynamicRead
 	targetRows          []carrier.Target
 	carryTargetRows     []carrier.Target
@@ -198,6 +211,7 @@ func newGeneratedMember(spec generatedMemberSpec) (*generatedMember, bool) {
 		factor:              spec.factor,
 		carryInputs:         append([]int(nil), spec.carries...),
 		initial:             append([]demand.Observation(nil), spec.initial...),
+		memberSets:          append([]generatedMemberSet(nil), spec.memberSets...),
 		dynamic:             append([]demand.DynamicRead(nil), spec.dynamic...),
 		targetRows:          append([]carrier.Target(nil), spec.targets...),
 		carryTargetRows:     append([]carrier.Target(nil), spec.carryTargets...),
@@ -522,6 +536,7 @@ func bindGeneratedMember(plane *programPlane, topology *equation.Topology, membe
 		factorOrdinal: int32(descriptor.OutputFactor()),
 		rule:          ruleOrdinal,
 		candidate:     declaration.candidate, source: declaration.source, inputCount: inputCount, outputCount: descriptor.OutputCount(),
+		memberSets: declaration.memberSets,
 	}
 	slot, slotOK := writeFactor.runtimeSlot()
 	if !slotOK {
@@ -625,4 +640,14 @@ func bindGeneratedMember(plane *programPlane, topology *equation.Topology, membe
 		return nil, false
 	}
 	return newGeneratedMember(spec)
+}
+
+// memberSetsOf is this member's nested member sets, in declaration join order.
+// They are the coordinates the engine enumerated at issuance; a family reads
+// them and enumerates nothing.
+func (member *generatedMember) memberSetsOf() []generatedMemberSet {
+	if member == nil {
+		return nil
+	}
+	return member.memberSets
 }
