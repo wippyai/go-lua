@@ -220,7 +220,6 @@ func newGeneratedRuleLawFixture(t testing.TB, variant generatedRuleLawVariant, r
 			// carried back out to the trigger, which is what makes the edge a
 			// call rather than a one-way hand-off.
 			Transport: []program.TransportDecl{{Axis: program.AxisRef(axisReference), Exported: true}},
-			Crossing:  member.RelationRef{Axis: axisReference, Member: generatedRuleLawBranchJoin},
 		}
 	}
 	if variant == generatedRuleLawSource {

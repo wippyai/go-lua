@@ -34,7 +34,6 @@ func activationLawBranch() ActivationDecl {
 		Endpoint:    activationLawProjection("activation-law/endpoint"),
 		Mount:       activationLawProjection("activation-law/mount"),
 		Body:        activationLawProjection("activation-law/body"),
-		Crossing:    lawRelation("activation-law/branches"),
 	}
 }
 
@@ -156,13 +155,12 @@ func TestTheBranchIdentitiesAreResolvableReferences(t *testing.T) {
 	declared := activationLawProgram()
 	absent := activationLawProgram()
 	absent.ActivationRole, absent.Activation = "", nil
-	// One reference per identity projection, the branch relation itself, the
-	// one relation the whole vector crosses the edge as, and one owner
-	// reference per ordered transport axis.
-	want := len(absent.References()) + len(declared.Activation.projections()) + 2 + len(declared.Activation.Transport)
+	// One reference per identity projection, the branch relation, and one
+	// owner reference per ordered transport axis.
+	want := len(absent.References()) + len(declared.Activation.projections()) + 1 + len(declared.Activation.Transport)
 	if len(declared.References()) != want {
-		t.Fatalf("the branch vocabulary contributes %d references, want %d - one per projection, one for the branch relation, one for the crossing and one per transport axis",
-			len(declared.References())-len(absent.References()), len(declared.Activation.projections())+2+len(declared.Activation.Transport))
+		t.Fatalf("the branch vocabulary contributes %d references, want %d - one per projection, one for the branch relation and one per transport axis",
+			len(declared.References())-len(absent.References()), len(declared.Activation.projections())+1+len(declared.Activation.Transport))
 	}
 	for _, reference := range declared.Activation.references() {
 		if !reference.Declared() {

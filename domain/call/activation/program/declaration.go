@@ -126,10 +126,6 @@ func Activation() ruleprogram.Program {
 			Endpoint:    projection(ActivationEndpoint),
 			Mount:       projection(ActivationMount),
 			Body:        projection(ActivationBody),
-			// The vector crosses as the branch set itself: it is instantiated
-			// once per candidate branch, so the rows that cross the edge are
-			// those branches and not a relation invented per transported axis.
-			Crossing: member.RelationRef{Axis: callAxis, Member: ActivationBranches},
 		},
 	}
 }

@@ -464,17 +464,6 @@ func (resolver ruleResolver) structural(program ruleprogram.Program) error {
 		if _, err := resolver.registry.Addressed(resolver.site("program.activation.branch"), branch, CoordinateOrdinal); err != nil {
 			return err
 		}
-		// The vector crosses as one relation because what crosses is a branch.
-		// Each transported axis is a row of that vector, so the axes are
-		// resolved against the same crossing rather than against a relation
-		// each, which would be a second authority over one edge.
-		crossing := NewName(program.Activation.Crossing.Axis, program.Activation.Crossing.Member)
-		if _, err := resolver.registry.Relation(resolver.site("program.activation.crossing"), crossing); err != nil {
-			return err
-		}
-		if _, err := resolver.registry.Addressed(resolver.site("program.activation.crossing"), crossing, CoordinateAddress); err != nil {
-			return err
-		}
 		for index, declaration := range program.Activation.Transport {
 			site := resolver.site(fmt.Sprintf("program.activation.transport[%d].axis", index))
 			if _, err := resolver.registry.Owner(site, schema.EntryReference(declaration.Axis)); err != nil {
