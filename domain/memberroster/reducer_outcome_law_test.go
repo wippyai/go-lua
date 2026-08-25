@@ -22,13 +22,22 @@ const (
 // TestEveryDeclaredFoldReturnsTheSealedOutcome is the vocabulary law for G10,
 // stated over source rather than over a declaration: every fold the
 // composition declares - a rule's reducer and an owner's source materializer
-// alike - returns exactly (fact, structure.ReductionOutcome).
+// alike - answers with the sealed disposition and nothing standing in for it.
 //
 // It is a source law because the two ways a fold can encode a disposition in
 // its value are both invisible to the declaration: returning a bare fact makes
 // the fact's own bottom element mean "no candidate", and returning a boolean
 // makes a two-valued answer stand in for a five-valued one. Both are refused
 // here by name.
+//
+// A fold answers in one of two shapes, and which one is a property of what its
+// rule publishes. A fold that publishes a fact returns exactly (fact,
+// structure.ReductionOutcome). A structural fold publishes no fact at all - its
+// output is the activation set its branches mount, so its declaration carries
+// no output carrier and there is no fact for it to return - and it returns
+// exactly structure.ReductionOutcome. The second shape refuses the same two
+// encodings as the first: a bare fact has nowhere to go, and a bool is still a
+// two-valued answer where five are declared.
 func TestEveryDeclaredFoldReturnsTheSealedOutcome(t *testing.T) {
 	root := moduleRoot(t)
 	roster, rosterOK := memberroster.Composition()
@@ -50,6 +59,12 @@ func TestEveryDeclaredFoldReturnsTheSealedOutcome(t *testing.T) {
 			t.Fatalf("%s: fact carrier %q is not declared", source.Name, composed.Signature.Fact)
 		}
 		for _, reducer := range composed.Reducers {
+			if len(reducer.Outputs) == 0 {
+				if problem := checkStructuralFoldSignature(t, root, reducer.Implementation); problem != "" {
+					offenders = append(offenders, string(reducer.Key)+" (structural rule "+string(reducer.Rule)+"): "+problem)
+				}
+				continue
+			}
 			outputType, outputOK := carrierType(composed, reducer.Outputs[0].Carrier)
 			if !outputOK {
 				t.Fatalf("%s/%s: output carrier %q is not declared", source.Name, reducer.Key, reducer.Outputs[0].Carrier)
@@ -70,6 +85,27 @@ func TestEveryDeclaredFoldReturnsTheSealedOutcome(t *testing.T) {
 	if len(offenders) != 0 {
 		t.Fatalf("folds outside the sealed outcome vocabulary:\n\t%s", strings.Join(offenders, "\n\t"))
 	}
+}
+
+// checkStructuralFoldSignature returns the empty string when symbol's Go
+// declaration returns exactly structure.ReductionOutcome, and a named problem
+// otherwise. It is the shape a fold with no declared output carrier answers in:
+// the disposition alone, because the row it settles publishes no fact.
+func checkStructuralFoldSignature(t *testing.T, root string, symbol memberdefinition.GoSymbol) string {
+	t.Helper()
+	decl, file, declOK := findFunction(t, root, symbol)
+	if !declOK {
+		return "declaration " + symbol.PackagePath + "." + symbol.Name + " was not found"
+	}
+	results := decl.Type.Results
+	if results == nil || len(results.List) != 1 {
+		return "returns " + resultSpelling(results) + ", want (" + outcomeTypeName + ")"
+	}
+	outcomePkg, outcomeName := resolvedType(file, symbol.PackagePath, results.List[0].Type)
+	if outcomeName != outcomeTypeName || outcomePkg != outcomePackage {
+		return "result is " + outcomePkg + "." + outcomeName + ", want " + outcomePackage + "." + outcomeTypeName
+	}
+	return ""
 }
 
 // checkFoldSignature returns the empty string when symbol's Go declaration
