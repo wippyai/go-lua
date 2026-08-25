@@ -21,8 +21,8 @@ import (
 	freezeprogram "github.com/wippyai/go-lua/domain/heap/formalfreeze/program"
 	returnprogram "github.com/wippyai/go-lua/domain/placement/returnescape/program"
 	storeprogram "github.com/wippyai/go-lua/domain/placement/store/program"
-	freshresultprogram "github.com/wippyai/go-lua/domain/value/freshresult/program"
 	valueallocationprogram "github.com/wippyai/go-lua/domain/value/allocation/program"
+	freshresultprogram "github.com/wippyai/go-lua/domain/value/freshresult/program"
 	valuemoduleloadprogram "github.com/wippyai/go-lua/domain/value/moduleload/program"
 	refinementprogram "github.com/wippyai/go-lua/domain/value/refinement/program"
 )
@@ -248,7 +248,6 @@ func Declarations() []Declaration {
 		},
 		{
 			Target: emitlaw.Target{
-<<<<<<< HEAD
 				PackagePath: "github.com/wippyai/go-lua/domain/value/freshresult/program",
 				PackageName: "program",
 				Declaration: "FreshResult",
@@ -256,7 +255,9 @@ func Declarations() []Declaration {
 				Spec:        freshresultprogram.RuleEntry(),
 			},
 			Directory: "domain/value/freshresult/program",
-=======
+		},
+		{
+			Target: emitlaw.Target{
 				PackagePath: "github.com/wippyai/go-lua/domain/value/allocation/program",
 				PackageName: "program",
 				Declaration: "AllocationResult",
@@ -264,7 +265,6 @@ func Declarations() []Declaration {
 				Spec:        valueallocationprogram.RuleEntry(),
 			},
 			Directory: "domain/value/allocation/program",
->>>>>>> 4d40c92350 (law: a mutation states a term the declaration actually carries)
 		},
 	}
 }
