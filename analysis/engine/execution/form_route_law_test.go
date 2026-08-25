@@ -195,6 +195,50 @@ func readRouteValue(t testing.TB, fixture selectedFixture, state carrier.State, 
 	return value, valueOK && present
 }
 
+// TestARoutedRowPublishesUnderTheRegionItObservedAndNotTheRowsOwn pins which
+// support a routed publication is staged under, because there are two
+// plausible answers and only one of them is sound.
+//
+// A routed fact is justified by the cell the row observed at that member, so
+// its scope is that cell's own region - not the row's support, which is every
+// world the invocation ran in. Staging under the row's support would assert
+// the fact in guard worlds where the evidence was never observed; it is also
+// the shortcut that makes a non-monotone routed publication look convergent,
+// so the fixpoint would stop refusing a rule whose authored region shrinks
+// between ascent steps instead of the declaration being corrected.
+//
+// The law is stated where the difference is observable: a cell carrying no
+// usable region refuses the whole row. A fold that reached for the row's
+// support instead would publish it.
+func TestARoutedRowPublishesUnderTheRegionItObservedAndNotTheRowsOwn(t *testing.T) {
+	fixture := newSelectedFixture(t)
+	write, writeOK := NewRouteWrite(fixture.binding, 0)
+	if !writeOK {
+		t.Fatal("route write")
+	}
+	cells, members, routes := routeCells(fixture, 2)
+	cells[1].Region = support.Mask{}
+	run := NewRun(1, 1)
+	ticket := issueSelected(t, run, fixture, fixture.state)
+	var scratch RouteScratch[uint64, uint64]
+	if outcome := FoldSelectedRoute(ticket, write, &scratch, cells, members, routes,
+		routeLawReducer{empty: structure.NoSelection, failAt: -1}); outcome != structure.Refuse {
+		t.Fatalf("a route with no observed region settled %v, want refuse: the row's support is not the route's scope", outcome)
+	}
+	if run.hasOutput() {
+		t.Fatal("a refused routed row published an output")
+	}
+
+	observed := NewRun(1, 1)
+	observedTicket := issueSelected(t, observed, fixture, fixture.state)
+	var observedScratch RouteScratch[uint64, uint64]
+	observedCells, observedMembers, observedRoutes := routeCells(fixture, 2)
+	if outcome := FoldSelectedRoute(observedTicket, write, &observedScratch, observedCells, observedMembers, observedRoutes,
+		routeLawReducer{empty: structure.NoSelection, failAt: -1}); outcome != structure.Concrete {
+		t.Fatalf("a route observed under its own region settled %v, want concrete", outcome)
+	}
+}
+
 // TestRoutedFoldRefusesAnUnpairedDestinationVector states the route-carrier
 // fence. The destination projection, observed cell, and RouteMember are one
 // ordered relation row; a shorter or longer caller vector cannot be aligned
