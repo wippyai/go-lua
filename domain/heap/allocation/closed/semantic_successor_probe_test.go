@@ -4,6 +4,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/schema/structure"
 	heapdomain "github.com/wippyai/go-lua/domain/heap"
 	"github.com/wippyai/go-lua/domain/heap/allocation/internal/source"
+	"github.com/wippyai/go-lua/domain/heap/keymatch"
 	valuedomain "github.com/wippyai/go-lua/domain/value"
 )
 
@@ -12,10 +13,19 @@ import (
 // the exact successor without importing this package's grammar.
 //
 // It seals the SAME state the family binds - the judgment built from the two
-// axis schemas - so the law observes the production quotient rather than a
-// projection minted beside it.
+// axis schemas and the selector projection - so the law observes the
+// production quotient rather than one minted beside it.
+//
+// The projection is constructed here because these fixtures seal their two
+// schemas directly and have no mount phase to receive one from. This function
+// therefore stands in for that phase, which is why the seal law that admits
+// exactly one construction site walks non-test declarations only.
 func EvaluateClosedForTest(schema heapdomain.Schema, values *valuedomain.Schema, operand source.Closed, predecessor heapdomain.Value, inputs []valuedomain.Value) (heapdomain.Value, structure.ReductionOutcome) {
-	judgment, judgmentOK := NewJudgment(schema, values)
+	selectors, selectorsOK := keymatch.NewSelectorProjection(schema, values)
+	if !selectorsOK {
+		return heapdomain.Value{}, structure.Refuse
+	}
+	judgment, judgmentOK := NewJudgment(schema, values, selectors)
 	if !judgmentOK {
 		return heapdomain.Value{}, structure.Refuse
 	}

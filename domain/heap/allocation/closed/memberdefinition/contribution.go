@@ -10,9 +10,10 @@ import (
 )
 
 const (
-	closedPackagePath = "github.com/wippyai/go-lua/domain/heap/allocation/closed"
-	valuePackagePath  = "github.com/wippyai/go-lua/domain/value"
-	heapPackagePath   = "github.com/wippyai/go-lua/domain/heap"
+	closedPackagePath   = "github.com/wippyai/go-lua/domain/heap/allocation/closed"
+	keymatchPackagePath = "github.com/wippyai/go-lua/domain/heap/keymatch"
+	valuePackagePath    = "github.com/wippyai/go-lua/domain/value"
+	heapPackagePath     = "github.com/wippyai/go-lua/domain/heap"
 )
 
 func axisReference(key string) schema.EntryReference {
@@ -111,10 +112,10 @@ func Contribution() definition.Contribution {
 				// parent's published keys rather than by a directory of their
 				// own, because an operand IS a Value coordinate: giving each a
 				// row identity would number the same reads a second time.
-				Name:              "ClosedOperandCells",
-				Key:               "value/closed-allocation/operands",
-				Axis:              "value",
-				Subject:           "ClosedOperandCarrier",
+				Name:    "ClosedOperandCells",
+				Key:     "value/closed-allocation/operands",
+				Axis:    "value",
+				Subject: "ClosedOperandCarrier",
 				// The cells are derived from the constructor this read is
 				// joined from - the source the join names - and the span they
 				// sit in is published by the Value row that corresponds to it.
@@ -144,8 +145,8 @@ func Contribution() definition.Contribution {
 			},
 		},
 		Reducers: []definition.Reducer{{
-			Name:      "ClosedAllocationReducer",
-			Key:       "heap/reducer/closed",
+			Name: "ClosedAllocationReducer",
+			Key:  "heap/reducer/closed",
 			// The candidate a rule folds is the SUBJECT of the relation it
 			// draws candidates from, which for a constructor is the
 			// allocation coordinate. The structural descriptor it denotes is
@@ -162,8 +163,8 @@ func Contribution() definition.Contribution {
 					Multiplicity: member.MultiplicityOne,
 				},
 				{
-					Axis:         axisReference("value"),
-					Carrier:      "ValueFactCarrier",
+					Axis:    axisReference("value"),
+					Carrier: "ValueFactCarrier",
 					// The tag is the coordinate each cell sits at: the span
 					// the candidate published IS a list of them, so the
 					// correlation this read proved is named by the read
@@ -178,14 +179,25 @@ func Contribution() definition.Contribution {
 				Carrier: "HeapFactCarrier",
 			}},
 			// The fold rests on cold owner knowledge - the two schemas the
-			// constructor is fenced to and the selector projection derived
-			// from them - so that knowledge is SEALED as the rule's state
-			// from the axes named here, and the judgment is what the fold is
-			// a method on. Its arguments stay carriers.
+			// constructor is fenced to, and the selector projection that says
+			// which atoms select which slots - so that knowledge is SEALED as
+			// the rule's state, and the judgment is what the fold is a method
+			// on. Its arguments stay carriers.
+			//
+			// The projection is RECEIVED, not derived. It reads sealed
+			// authorities from Heap and Value at once, so no axis is
+			// answerable for it and the mount phase constructs it exactly
+			// once; a rule that built its own from the same two schemas would
+			// be a second authority over which atoms select which slots.
 			Derivation: definition.ReducerDerivation{
 				State:      definition.GoType{PackagePath: closedPackagePath, Name: "Judgment"},
 				Build:      definition.GoSymbol{PackagePath: closedPackagePath, Name: "NewJudgment", ResultIndex: 0},
 				StaticAxes: []schema.EntryReference{axisReference("heap"), axisReference("value")},
+				Composed: []definition.CompositionSeal{{
+					Key:  "composition/heap/selector-projection",
+					Name: "selectors",
+					Type: definition.GoType{PackagePath: keymatchPackagePath, Name: "SelectorProjection", Pointer: true},
+				}},
 			},
 			Implementation: definition.GoSymbol{
 				PackagePath: closedPackagePath,

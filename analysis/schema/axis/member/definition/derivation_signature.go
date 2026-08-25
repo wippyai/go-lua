@@ -152,6 +152,12 @@ func (roster Roster) ReducerDerivationSignature(derivation ReducerDerivation) ([
 		}
 		params = append(params, DerivedParam{Type: schemaType})
 	}
+	// The composition seals follow the axis schemas, in declaration order: a
+	// state that rests on a mount-phase derivation receives that seal rather
+	// than deriving a second one from the same schemas.
+	for _, seal := range derivation.Composed {
+		params = append(params, DerivedParam{Type: seal.Type})
+	}
 	return params, []DerivedParam{{Type: derivation.State}, {Type: GoType{Name: "bool"}}}, true
 }
 

@@ -607,6 +607,38 @@ type ReducerDerivation struct {
 	State      GoType
 	Build      GoSymbol
 	StaticAxes []schema.EntryReference
+	// Composed names the mount-phase derivations this state ALSO rests on, in
+	// the order Build takes them after the static axis schemas.
+	Composed []CompositionSeal
+}
+
+// CompositionSeal is one derivation of the mount phase a reducer's sealed
+// state rests on.
+//
+// A composition derivation is a JOIN: it reads sealed authorities from several
+// axes at once, so no single axis is answerable for it and the mount phase
+// constructs it exactly once. A rule that rests on one therefore RECEIVES that
+// seal. A rule deriving its own from the same schemas would be a second
+// authority over an answer the composition already settled - and that the two
+// would agree today is not the point, because which one a reader took would be
+// what decided it.
+//
+// It is not an axis and cannot be named as one. Being a join is precisely why
+// it is a composition derivation rather than something an owner publishes.
+type CompositionSeal struct {
+	// Key names the mount-phase derivation.
+	Key schema.Key
+	// Name is the identifier the emitted installer holds this seal under, and
+	// the one the authored bind arm supplies it by. It is stated rather than
+	// spelled from the key, because what a rule calls the thing it was handed
+	// is the rule package's own vocabulary.
+	Name string
+	// Type is the Go type the composition publishes the seal as.
+	Type GoType
+}
+
+func (seal CompositionSeal) complete() bool {
+	return seal.Key.Available() && identifierAvailable(seal.Name) && seal.Type.Available()
 }
 
 // Declared reports whether a reducer names a sealed state at all.
@@ -620,6 +652,21 @@ func (derivation ReducerDerivation) Declared() bool {
 func (derivation ReducerDerivation) complete() bool {
 	if !derivation.State.Available() || !derivation.Build.Available() || len(derivation.StaticAxes) == 0 {
 		return false
+	}
+	sealed := make(map[schema.Key]struct{}, len(derivation.Composed))
+	named := make(map[string]struct{}, len(derivation.Composed))
+	for _, seal := range derivation.Composed {
+		if !seal.complete() {
+			return false
+		}
+		if _, duplicate := sealed[seal.Key]; duplicate {
+			return false
+		}
+		if _, duplicate := named[seal.Name]; duplicate {
+			return false
+		}
+		sealed[seal.Key] = struct{}{}
+		named[seal.Name] = struct{}{}
 	}
 	seen := make(map[schema.Key]struct{}, len(derivation.StaticAxes))
 	for _, axis := range derivation.StaticAxes {

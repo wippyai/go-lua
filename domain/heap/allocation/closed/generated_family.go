@@ -14,6 +14,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/schema/rule/program"
 	"github.com/wippyai/go-lua/analysis/schema/structure"
 	"github.com/wippyai/go-lua/domain/heap"
+	"github.com/wippyai/go-lua/domain/heap/keymatch"
 	"github.com/wippyai/go-lua/domain/value"
 )
 
@@ -230,6 +231,11 @@ func (lane *familyWorker) read1Cell(read execution.ExactRead[value.DenseCoordina
 // dense candidates through, and every static axis a declared relation derives
 // against. It reaches no owner callback and no runtime capability.
 //
+// It also holds every mount-phase derivation the declaration says its sealed
+// judgment rests on. Those are joins of several axes, constructed once by the
+// composition, so this rule RECEIVES them; deriving one here from the same
+// schemas would be a second authority over an answer already settled.
+//
 // It holds NO rule ordinal. Which rule an installer authors is the claim it
 // was installed under, and the family table resolves an installer only for
 // that claim; a copy kept here would be a second answer to a question the
@@ -237,14 +243,16 @@ func (lane *familyWorker) read1Cell(read execution.ExactRead[value.DenseCoordina
 type familyInstaller struct {
 	heapSchema  heap.Schema
 	valueSchema *value.Schema
+	selectors   *keymatch.SelectorProjection
 }
 
 // NewFamilyInstaller seals this rule's family installer against the axis schemas
-// its declaration names. The bind arm that resolves those schemas from its
-// composition's authorities is the owner's own, because how an authority
-// record is reached is that composition's knowledge and not this rule's.
-func NewFamilyInstaller(heapSchema heap.Schema, valueSchema *value.Schema) (execution.RuleFamilyInstaller[heap.DenseCoordinate, heap.Value], bool) {
-	install := familyInstaller{heapSchema: heapSchema, valueSchema: valueSchema}
+// its declaration names, and against every mount-phase seal it says its
+// judgment rests on. The bind arm that resolves both from its composition's
+// authorities is the owner's own, because how an authority record is reached
+// is that composition's knowledge and not this rule's.
+func NewFamilyInstaller(heapSchema heap.Schema, valueSchema *value.Schema, selectors *keymatch.SelectorProjection) (execution.RuleFamilyInstaller[heap.DenseCoordinate, heap.Value], bool) {
+	install := familyInstaller{heapSchema: heapSchema, valueSchema: valueSchema, selectors: selectors}
 	if !install.available() {
 		return nil, false
 	}
@@ -255,14 +263,14 @@ func NewFamilyInstaller(heapSchema heap.Schema, valueSchema *value.Schema) (exec
 // Whether a supplied schema is itself admissible is that schema's own answer,
 // given below when a candidate or a projection is resolved through it.
 func (install familyInstaller) available() bool {
-	return install.valueSchema != nil
+	return install.valueSchema != nil && install.selectors != nil
 }
 
 func (install familyInstaller) InstallRuleFamily(plane execution.FormPlane[heap.DenseCoordinate, heap.Value], _ uint32, rows []execution.FormRow) (execution.Family, []execution.FormAddress, bool) {
 	if !install.available() || !plane.Valid() || len(rows) == 0 {
 		return nil, nil, false
 	}
-	state, stateOK := NewJudgment(install.heapSchema, install.valueSchema)
+	state, stateOK := NewJudgment(install.heapSchema, install.valueSchema, install.selectors)
 	if !stateOK {
 		return nil, nil, false
 	}

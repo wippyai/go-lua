@@ -3,6 +3,7 @@ package closed
 import (
 	"github.com/wippyai/go-lua/analysis/engine"
 	heapdomain "github.com/wippyai/go-lua/domain/heap"
+	"github.com/wippyai/go-lua/domain/heap/keymatch"
 	heapowner "github.com/wippyai/go-lua/domain/heap/owner"
 	valueowner "github.com/wippyai/go-lua/domain/value/owner"
 )
@@ -15,6 +16,10 @@ import (
 type familyAuthorities interface {
 	HeapAuthority() *heapowner.HotOwner
 	ValueAuthority() *valueowner.HotOwner
+	// The mount phase's sealed selector projection. It is a join of the two
+	// axes above, so the composition constructs it once and every reader -
+	// this rule and the index topology - receives that one seal.
+	KeySelection() *keymatch.SelectorProjection
 }
 
 // InstallFamily is the generated lane's bind arm for this rule. It resolves
@@ -27,10 +32,11 @@ type familyAuthorities interface {
 func InstallFamily[A familyAuthorities](binding *engine.SchemaBinding, slot *engine.GeneratedRuleSlot, authorities A) bool {
 	heaps := authorities.HeapAuthority()
 	values := authorities.ValueAuthority()
-	if heaps == nil || values == nil || !heaps.Schema().Valid() {
+	selectors := authorities.KeySelection()
+	if heaps == nil || values == nil || selectors == nil || !heaps.Schema().Valid() {
 		return false
 	}
-	installer, installerOK := NewFamilyInstaller(heaps.Schema(), values.Schema())
+	installer, installerOK := NewFamilyInstaller(heaps.Schema(), values.Schema(), selectors)
 	if !installerOK {
 		return false
 	}

@@ -287,6 +287,11 @@ type foldStatePlan struct {
 	state      definition.GoType
 	build      definition.GoSymbol
 	staticAxes []*axisPlan
+	// composed is the mount-phase derivations this state also rests on. They
+	// follow the axis schemas in the constructor's parameter vector and in
+	// Build's, because a rule that rests on a composition derivation receives
+	// that seal rather than deriving a second one from the same schemas.
+	composed []definition.CompositionSeal
 }
 
 // routePlan is the selected join a routed output publishes through.
@@ -1363,7 +1368,7 @@ func deriveFoldState(built *plan, resolver *axisResolver, reducer definition.Red
 		}
 		axes = append(axes, resolved)
 	}
-	return &foldStatePlan{state: derivation.State, build: derivation.Build, staticAxes: axes}, nil
+	return &foldStatePlan{state: derivation.State, build: derivation.Build, staticAxes: axes, composed: derivation.Composed}, nil
 }
 
 // axisResolver resolves each axis the declaration names exactly once and keeps

@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/wippyai/go-lua/analysis/schema/axis/member/definition"
 	"github.com/wippyai/go-lua/analysis/schema/rule/program"
 )
 
@@ -22,10 +23,18 @@ func renderInstaller(out *strings.Builder, built *plan) error {
 	dense := imports.typeName(built.write.dense)
 	fact := imports.typeName(built.write.fact)
 
+	seals := composedSeals(built)
 	out.WriteString("// " + installerType + " authors this rule's execution family. The axis schemas it\n")
 	out.WriteString("// holds are the ones the declaration names: the candidate directory it resolves\n")
 	out.WriteString("// dense candidates through, and every static axis a declared relation derives\n")
 	out.WriteString("// against. It reaches no owner callback and no runtime capability.\n")
+	if len(seals) != 0 {
+		out.WriteString("//\n")
+		out.WriteString("// It also holds every mount-phase derivation the declaration says its sealed\n")
+		out.WriteString("// judgment rests on. Those are joins of several axes, constructed once by the\n")
+		out.WriteString("// composition, so this rule RECEIVES them; deriving one here from the same\n")
+		out.WriteString("// schemas would be a second authority over an answer already settled.\n")
+	}
 	out.WriteString("//\n")
 	out.WriteString("// It holds NO rule ordinal. Which rule an installer authors is the claim it\n")
 	out.WriteString("// was installed under, and the family table resolves an installer only for\n")
@@ -35,19 +44,33 @@ func renderInstaller(out *strings.Builder, built *plan) error {
 	for _, axis := range built.axes {
 		fmt.Fprintf(out, "\t%s %s\n", axis.param, imports.typeName(axis.schemaType))
 	}
+	for _, seal := range seals {
+		fmt.Fprintf(out, "\t%s %s\n", seal.Name, imports.typeName(seal.Type))
+	}
 	out.WriteString("}\n\n")
 
-	parameters := make([]string, 0, len(built.axes))
-	assignments := make([]string, 0, len(built.axes))
+	parameters := make([]string, 0, len(built.axes)+len(seals))
+	assignments := make([]string, 0, len(built.axes)+len(seals))
 	for _, axis := range built.axes {
 		parameters = append(parameters, axis.param+" "+imports.typeName(axis.schemaType))
 		assignments = append(assignments, axis.param+": "+axis.param)
 	}
+	for _, seal := range seals {
+		parameters = append(parameters, seal.Name+" "+imports.typeName(seal.Type))
+		assignments = append(assignments, seal.Name+": "+seal.Name)
+	}
 
 	out.WriteString("// " + constructor + " seals this rule's family installer against the axis schemas\n")
-	out.WriteString("// its declaration names. The bind arm that resolves those schemas from its\n")
-	out.WriteString("// composition's authorities is the owner's own, because how an authority\n")
-	out.WriteString("// record is reached is that composition's knowledge and not this rule's.\n")
+	if len(seals) == 0 {
+		out.WriteString("// its declaration names. The bind arm that resolves those schemas from its\n")
+		out.WriteString("// composition's authorities is the owner's own, because how an authority\n")
+		out.WriteString("// record is reached is that composition's knowledge and not this rule's.\n")
+	} else {
+		out.WriteString("// its declaration names, and against every mount-phase seal it says its\n")
+		out.WriteString("// judgment rests on. The bind arm that resolves both from its composition's\n")
+		out.WriteString("// authorities is the owner's own, because how an authority record is reached\n")
+		out.WriteString("// is that composition's knowledge and not this rule's.\n")
+	}
 	fmt.Fprintf(out, "func %s(%s) (%s.RuleFamilyInstaller[%s, %s], bool) {\n",
 		constructor, strings.Join(parameters, ", "), execution, dense, fact)
 	fmt.Fprintf(out, "\tinstall := %s{%s}\n", installerType, strings.Join(assignments, ", "))
@@ -58,10 +81,15 @@ func renderInstaller(out *strings.Builder, built *plan) error {
 	out.WriteString("// Whether a supplied schema is itself admissible is that schema's own answer,\n")
 	out.WriteString("// given below when a candidate or a projection is resolved through it.\n")
 	fmt.Fprintf(out, "func (install %s) available() bool {\n", installerType)
-	guards := make([]string, 0, len(built.axes))
+	guards := make([]string, 0, len(built.axes)+len(seals))
 	for _, axis := range built.axes {
 		if axis.schemaType.Pointer {
 			guards = append(guards, "install."+axis.param+" != nil")
+		}
+	}
+	for _, seal := range seals {
+		if seal.Type.Pointer {
+			guards = append(guards, "install."+seal.Name+" != nil")
 		}
 	}
 	if len(guards) == 0 {
@@ -80,9 +108,12 @@ func renderInstaller(out *strings.Builder, built *plan) error {
 		installerType, execution, dense, fact, execution, execution, execution)
 	out.WriteString("\tif !install.available() || !plane.Valid() || len(rows) == 0 {\n\t\treturn nil, nil, false\n\t}\n")
 	if state := built.fold.state; state != nil {
-		arguments := make([]string, 0, len(state.staticAxes))
+		arguments := make([]string, 0, len(state.staticAxes)+len(state.composed))
 		for _, axis := range state.staticAxes {
 			arguments = append(arguments, "install."+axis.param)
+		}
+		for _, seal := range state.composed {
+			arguments = append(arguments, "install."+seal.Name)
 		}
 		// The judgment's state is sealed once, here, from schemas that are
 		// immutable for the life of this binding. Sealing it per row would be
@@ -344,6 +375,15 @@ func pointBoundExpression(bound program.PointBoundDecl) string {
 		return "PointBoundSelf"
 	}
 	return "PointBound"
+}
+
+// composedSeals answers the mount-phase derivations this rule's sealed
+// judgment rests on, in declaration order.
+func composedSeals(built *plan) []definition.CompositionSeal {
+	if built.fold.state == nil {
+		return nil
+	}
+	return built.fold.state.composed
 }
 
 // readExpression emits the one primitive that seals one declared read. Which
