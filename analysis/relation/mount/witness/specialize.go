@@ -118,7 +118,8 @@ func Specialize(cert certificate.Certificate, inventory Inventory, factory bindi
 	if !scopesOK {
 		return Mounted{}, false
 	}
-	scopeValues := make(map[model.ScopeID]Scope, len(scopeIDs))
+	scopeTokens := make(map[model.ScopeID]binding.ScopeToken, len(scopeIDs))
+	scopeArena := newScopeArena()
 	for _, scopeID := range scopeIDs {
 		formula, formulaOK := inventory.ScopeRegion(scopeID)
 		if !formulaOK || !regionAvailable(formula) {
@@ -132,11 +133,10 @@ func Specialize(cert certificate.Certificate, inventory Inventory, factory bindi
 		if !tokenOK || !token.Available() || !token.ValidFor(runtime) {
 			return Mounted{}, false
 		}
-		scopeValue, scopeOK := newScope(token, formula)
-		if !scopeOK {
+		if _, arenaOK := scopeArena.intern(token, formula); !arenaOK {
 			return Mounted{}, false
 		}
-		scopeValues[scopeID] = scopeValue
+		scopeTokens[scopeID] = token
 	}
 
 	heads := cert.WideningHeads()
@@ -158,7 +158,7 @@ func Specialize(cert certificate.Certificate, inventory Inventory, factory bindi
 		permits = append(permits, permit)
 	}
 
-	return newMounted(cert, book, arrangementPlan, runtime, issuer, lineageAuthority, lineageOwner, lineageIdentity, signatures, bindings, algebras, denominatorRefs, witnesses, scopeIDs, scopeValues, permits)
+	return newMounted(cert, book, arrangementPlan, runtime, issuer, lineageAuthority, lineageOwner, lineageIdentity, signatures, bindings, algebras, denominatorRefs, witnesses, scopeIDs, scopeTokens, scopeArena, permits)
 }
 
 // bindLineage admits exactly one immutable proof-sidecar authority for this

@@ -1,6 +1,7 @@
 package witness_test
 
 import (
+	"sync"
 	"testing"
 
 	"github.com/wippyai/go-lua/analysis/identity"
@@ -136,6 +137,39 @@ func TestMountedExactWideningLookupRefusesUnadmitted(t *testing.T) {
 	}
 	if _, ok := value.mounted.Widening(model.DependencyID{}, model.RelationID{}); ok {
 		t.Fatal("zero widening head accepted")
+	}
+}
+
+func TestMountedScopeArenaConjoinIsConcurrentAndCanonical(t *testing.T) {
+	value := newBasicMountFixture(t)
+	left, leftOK := value.mounted.Scope(value.scope)
+	right, rightOK := value.mounted.Scope(value.scope2)
+	if !leftOK || !rightOK {
+		t.Fatal("scope admission")
+	}
+	const workers = 32
+	results := make([]witness.Scope, workers)
+	var group sync.WaitGroup
+	group.Add(workers)
+	for index := range results {
+		go func(index int) {
+			defer group.Done()
+			if index%2 == 0 {
+				results[index], _ = value.mounted.ConjoinScopes(left, right)
+				return
+			}
+			results[index], _ = value.mounted.ConjoinScopes(right, left)
+		}(index)
+	}
+	group.Wait()
+	for index, result := range results {
+		if !result.Available() || !result.Same(results[0]) {
+			t.Fatalf("concurrent conjunction %d was not canonical", index)
+		}
+		region, ok := value.mounted.RegionForScope(result)
+		if !ok || region == nil {
+			t.Fatalf("concurrent conjunction %d lost its arena region", index)
+		}
 	}
 }
 

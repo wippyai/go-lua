@@ -37,10 +37,11 @@ func newMounted(
 	denominatorRefs []model.DenominatorRef,
 	witnesses map[model.DenominatorRef]binding.DenominatorWitness,
 	scopeIDs []model.ScopeID,
-	scopeValues map[model.ScopeID]Scope,
+	scopeTokens map[model.ScopeID]binding.ScopeToken,
+	scopeArena *scopeArena,
 	wideningPermits []WideningPermit,
 ) (Mounted, bool) {
-	if !certificateValue.Available() || !book.Available() || !arrangementPlan.Available() || !runtime.Available() || !issuer.Available() || lineageAuthority == nil || !lineageOwner.Available() || !lineageIdentity.Available() || book.Fence() != arrangementPlan.Fence() || book.Fence().SchemaID() != certificateValue.SchemaID() || book.Fence().CertificateDigest() != certificateValue.Digest() {
+	if !certificateValue.Available() || !book.Available() || !arrangementPlan.Available() || !runtime.Available() || !issuer.Available() || lineageAuthority == nil || !lineageOwner.Available() || !lineageIdentity.Available() || scopeArena == nil || !scopeArena.available() || book.Fence() != arrangementPlan.Fence() || book.Fence().SchemaID() != certificateValue.SchemaID() || book.Fence().CertificateDigest() != certificateValue.Digest() {
 		return Mounted{}, false
 	}
 	if len(signatures) != len(bindings) {
@@ -90,12 +91,12 @@ func newMounted(
 	}
 
 	scopeIDs = canonicalizeScopes(scopeIDs)
-	if len(scopeIDs) != len(scopeValues) {
+	if len(scopeIDs) != len(scopeTokens) {
 		return Mounted{}, false
 	}
 	for _, scopeID := range scopeIDs {
-		scope, scopeOK := scopeValues[scopeID]
-		if !scopeOK || !scope.validFor(runtime) {
+		token, scopeOK := scopeTokens[scopeID]
+		if !scopeOK || !token.ValidFor(runtime) || !scopeArena.contains(token) {
 			return Mounted{}, false
 		}
 	}
@@ -124,7 +125,8 @@ func newMounted(
 		denominators:    denominatorRefs,
 		witnesses:       cloneWitnesses(witnesses),
 		scopes:          scopeIDs,
-		scopeByID:       cloneScopes(scopeValues),
+		scopeByID:       cloneScopeTokens(scopeTokens),
+		scopeArena:      scopeArena,
 		wideningPermits: permits,
 	}
 	digest, ok := digestMounted(*data, certificateValue.Digest())
@@ -135,9 +137,9 @@ func newMounted(
 	return Mounted{data: data}, true
 }
 
-// mountedColumns takes the complete logical catalogue from the owner Book
-// and checks it against the certificate's column declarations once during
-// admission. Mounted accessors only return this immutable snapshot.
+// mountedColumns freezes the certificate's canonical column catalogue and
+// checks every declaration against the exact owner Book address/order once
+// during admission. Mounted accessors only return this immutable snapshot.
 func mountedColumns(certificateValue certificate.Certificate, book address.Book) ([]model.ColumnSchema, bool) {
 	if !certificateValue.Available() || !book.Available() {
 		return nil, false
@@ -155,42 +157,43 @@ func mountedColumns(certificateValue certificate.Certificate, book address.Book)
 		}
 		relations[id] = relation
 	}
-	byID := make(map[model.ColumnID]model.ColumnSchema, len(certificateColumns))
-	for _, column := range certificateColumns {
+	bookColumns := book.ColumnIDs()
+	if len(bookColumns) != len(certificateColumns) {
+		return nil, false
+	}
+	result := make([]model.ColumnSchema, len(certificateColumns))
+	seen := make(map[model.ColumnID]struct{}, len(certificateColumns))
+	for index, column := range certificateColumns {
 		id := column.ID()
 		if !column.Available() || !id.Available() {
 			return nil, false
 		}
-		if _, duplicate := byID[id]; duplicate {
+		if _, duplicate := seen[id]; duplicate {
 			return nil, false
 		}
+		seen[id] = struct{}{}
 		relation, relationOK := relations[column.Relation()]
 		if !relationOK || !relation.HasColumn(id) {
 			return nil, false
 		}
-		byID[id] = column
-	}
-	fromBook := book.ColumnIDs()
-	result := make([]model.ColumnSchema, len(fromBook))
-	bookColumns := make(map[model.ColumnID]struct{}, len(fromBook))
-	for index, id := range fromBook {
-		if !id.Available() {
+		if bookColumns[index] != id {
 			return nil, false
 		}
-		if _, duplicate := bookColumns[id]; duplicate {
-			return nil, false
-		}
-		bookColumns[id] = struct{}{}
-		if _, ok := book.Column(id); !ok {
-			return nil, false
-		}
-		column, columnOK := byID[id]
-		if !columnOK {
+		columnAddress, addressOK := book.Column(id)
+		if !addressOK || !columnAddress.ValidFor(book.Fence()) {
 			return nil, false
 		}
 		result[index] = column
 	}
-	if len(fromBook) != len(byID) {
+	for _, id := range bookColumns {
+		if !id.Available() {
+			return nil, false
+		}
+		if _, exists := seen[id]; !exists {
+			return nil, false
+		}
+	}
+	if len(bookColumns) != len(seen) {
 		return nil, false
 	}
 	return result, true
@@ -220,8 +223,8 @@ func cloneWitnesses(values map[model.DenominatorRef]binding.DenominatorWitness) 
 	return result
 }
 
-func cloneScopes(values map[model.ScopeID]Scope) map[model.ScopeID]Scope {
-	result := make(map[model.ScopeID]Scope, len(values))
+func cloneScopeTokens(values map[model.ScopeID]binding.ScopeToken) map[model.ScopeID]binding.ScopeToken {
+	result := make(map[model.ScopeID]binding.ScopeToken, len(values))
 	for key, value := range values {
 		result[key] = value
 	}
@@ -235,7 +238,7 @@ func digestMounted(value mountedData, certificateDigest identity.ContentID) (ide
 	parts = append(parts, contentBytes(fence.SchemaID().Owner().Content()), contentBytes(fence.SchemaID().Content()), contentBytes(fence.CertificateDigest()), contentBytes(identity.ContentID(fence.MountID())))
 	appendUint64(&parts, uint64(fence.StoreID()))
 	appendUint64(&parts, uint64(fence.Generation()))
-	if value.lineage == nil || !value.lineageOwner.Available() || !value.lineageIdentity.Available() {
+	if value.lineage == nil || !value.lineageOwner.Available() || !value.lineageIdentity.Available() || value.scopeArena == nil || !value.scopeArena.available() {
 		return identity.ContentID{}, false
 	}
 	parts = append(parts, contentBytes(value.lineageOwner.Content()), contentBytes(value.lineageIdentity))
@@ -272,11 +275,14 @@ func digestMounted(value mountedData, certificateDigest identity.ContentID) (ide
 		parts = append(parts, contentBytes(ref.Relation().Owner().Content()), contentBytes(ref.Relation().Content()), contentBytes(ref.Key().Relation().Owner().Content()), contentBytes(ref.Key().Content()), contentBytes(evidenceID))
 	}
 	for _, scopeID := range value.scopes {
-		scope, scopeOK := value.scopeByID[scopeID]
-		if !scopeOK {
+		token, tokenOK := value.scopeByID[scopeID]
+		if !tokenOK {
 			return identity.ContentID{}, false
 		}
-		regionIdentity, _ := scope.identity()
+		regionIdentity, regionOK := value.scopeArena.identity(token)
+		if !regionOK {
+			return identity.ContentID{}, false
+		}
 		parts = append(parts, contentBytes(scopeID.Owner().Content()), contentBytes(scopeID.Content()), contentBytes(regionIdentity))
 	}
 	for _, permit := range value.wideningPermits {

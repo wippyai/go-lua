@@ -249,6 +249,15 @@ func TestMountedCatalogueAndWideningPermitsAreCanonicalAndDefensive(t *testing.T
 		}
 	}
 	digest := mounted.Digest()
+	declarations := mounted.Columns()
+	if len(declarations) != 2 || declarations[0].ID() != columns[0] || declarations[1].ID() != columns[1] || !declarations[0].Available() || !declarations[1].Available() {
+		t.Fatalf("mounted column declarations = %#v", declarations)
+	}
+	declarations[0] = model.ColumnSchema{}
+	untouchedDeclarations := mounted.Columns()
+	if len(untouchedDeclarations) != 2 || !untouchedDeclarations[0].Available() || mounted.Digest() != digest {
+		t.Fatal("column declarations exposed mutable storage")
+	}
 	repeatedColumns := mounted.ColumnIDs()
 	if len(repeatedColumns) != len(columns) || repeatedColumns[0] != columns[0] || repeatedColumns[1] != columns[1] {
 		t.Fatal("mounted column catalogue was not deterministic")

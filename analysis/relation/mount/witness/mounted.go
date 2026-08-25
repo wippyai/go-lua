@@ -43,15 +43,16 @@ type mountedData struct {
 	denominators []model.DenominatorRef
 	witnesses    map[model.DenominatorRef]binding.DenominatorWitness
 
-	scopes    []model.ScopeID
-	scopeByID map[model.ScopeID]Scope
+	scopes     []model.ScopeID
+	scopeByID  map[model.ScopeID]binding.ScopeToken
+	scopeArena *scopeArena
 
 	wideningPermits []WideningPermit
 }
 
 // Available reports whether the mounted artifact is complete.
 func (mounted Mounted) Available() bool {
-	return mounted.data != nil && mounted.data.fence.Available() && mounted.data.runtime.Available() && mounted.data.issuer.Available() && mounted.data.lineage != nil && mounted.data.lineageOwner.Available() && mounted.data.lineageIdentity.Available() && mounted.data.book.Available() && mounted.data.arrangement.Available() && mounted.data.digest.Available()
+	return mounted.data != nil && mounted.data.fence.Available() && mounted.data.runtime.Available() && mounted.data.issuer.Available() && mounted.data.lineage != nil && mounted.data.lineageOwner.Available() && mounted.data.lineageIdentity.Available() && mounted.data.book.Available() && mounted.data.arrangement.Available() && mounted.data.scopeArena != nil && mounted.data.scopeArena.available() && mounted.data.digest.Available()
 }
 
 // Fence returns the exact address/runtime certificate fence captured at
@@ -211,6 +212,9 @@ func (mounted Mounted) IssueCell(ref model.DenominatorRef, scope Scope, column m
 	if !witnessOK {
 		return binding.CellToken{}, false
 	}
+	if !mounted.data.scopeArena.contains(scope.token) {
+		return binding.CellToken{}, false
+	}
 	return mounted.data.issuer.IssueCell(witness, scope.token, column, row)
 }
 
@@ -248,54 +252,77 @@ func (mounted Mounted) Scopes() []model.ScopeID {
 	return append([]model.ScopeID(nil), mounted.data.scopes...)
 }
 
-// Scope resolves an authenticated immutable formula by nominal scope
-// identity. The token and Region remain private inside Scope.
+// Scope resolves an authenticated token by nominal scope identity. The
+// token-to-Region association remains private inside the mounted arena.
 func (mounted Mounted) Scope(id model.ScopeID) (Scope, bool) {
 	if !mounted.Available() || !id.Available() {
 		return Scope{}, false
 	}
 	value, ok := mounted.data.scopeByID[id]
-	return value, ok && value.validFor(mounted.data.runtime)
+	if !ok || !value.ValidFor(mounted.data.runtime) || !mounted.data.scopeArena.contains(value) {
+		return Scope{}, false
+	}
+	return newScope(value)
 }
 
 // ScopeToken projects one already-authenticated scope to the narrow token
 // needed by state Geometry. It cannot mint a token or accept a raw formula.
 func (mounted Mounted) ScopeToken(scope Scope) (binding.ScopeToken, bool) {
-	if !mounted.Available() || !scope.validFor(mounted.data.runtime) {
+	if !mounted.Available() || !scope.validFor(mounted.data.runtime) || !mounted.data.scopeArena.contains(scope.token) {
 		return binding.ScopeToken{}, false
 	}
 	return scope.token, true
 }
 
-// RegionForScope recovers the exact neutral formula carried by an
-// authenticated scope without a nominal-scope registry scan.
+// RegionForToken resolves the exact neutral formula owned by one
+// authenticated token. No declared-scope scan or token digest reconstruction
+// is performed.
+func (mounted Mounted) RegionForToken(token binding.ScopeToken) (Region, bool) {
+	if !mounted.Available() || !token.ValidFor(mounted.data.runtime) {
+		return nil, false
+	}
+	return mounted.data.scopeArena.resolve(token)
+}
+
+// RegionForScope resolves the token carried by an authenticated scope through
+// the same mounted arena used by CellToken and Geometry.
 func (mounted Mounted) RegionForScope(scope Scope) (Region, bool) {
 	if !mounted.Available() || !scope.validFor(mounted.data.runtime) {
 		return nil, false
 	}
-	return scope.region, true
+	return mounted.RegionForToken(scope.token)
 }
 
 // ConjoinScopes canonically combines two authenticated formulas and issues a
-// fresh runtime-fenced token for the result. The returned Scope is immutable
-// and self-contained, so dynamic conjunctions remain recoverable without a
-// mutable mounted registry.
+// runtime-fenced token for the result. The token-to-Region pair is interned in
+// the append-only mounted arena, so repeated and concurrent conjunctions
+// recover one canonical entry without a mutable scope replacement.
 func (mounted Mounted) ConjoinScopes(left, right Scope) (Scope, bool) {
 	if !mounted.Available() || !left.validFor(mounted.data.runtime) || !right.validFor(mounted.data.runtime) {
+		return Scope{}, false
+	}
+	leftRegion, leftOK := mounted.RegionForToken(left.token)
+	rightRegion, rightOK := mounted.RegionForToken(right.token)
+	if !leftOK || !rightOK {
 		return Scope{}, false
 	}
 	if left.Same(right) {
 		return left, true
 	}
-	first, second := left, right
-	if second.less(first) {
+	first, second := leftRegion, rightRegion
+	firstID, firstIDOK := scopeRegionIdentity(first)
+	secondID, secondIDOK := scopeRegionIdentity(second)
+	if !firstIDOK || !secondIDOK {
+		return Scope{}, false
+	}
+	if bytes.Compare(secondID[:], firstID[:]) < 0 {
 		first, second = second, first
 	}
-	combined, combineOK := first.region.Conjoin(second.region)
+	combined, combineOK := first.Conjoin(second)
 	if !combineOK || !regionAvailable(combined) {
 		return Scope{}, false
 	}
-	combinedIdentity, identityOK := combined.Identity()
+	combinedIdentity, identityOK := scopeRegionIdentity(combined)
 	if !identityOK {
 		return Scope{}, false
 	}
@@ -303,7 +330,10 @@ func (mounted Mounted) ConjoinScopes(left, right Scope) (Scope, bool) {
 	if !tokenOK {
 		return Scope{}, false
 	}
-	return newScope(token, combined)
+	if _, internOK := mounted.data.scopeArena.intern(token, combined); !internOK {
+		return Scope{}, false
+	}
+	return newScope(token)
 }
 
 // EntailsScopes evaluates the neutral formula entailment law for two
@@ -312,7 +342,9 @@ func (mounted Mounted) EntailsScopes(left, right Scope) bool {
 	if !mounted.Available() || !left.validFor(mounted.data.runtime) || !right.validFor(mounted.data.runtime) {
 		return false
 	}
-	return left.region.Entails(right.region)
+	leftRegion, leftOK := mounted.RegionForToken(left.token)
+	rightRegion, rightOK := mounted.RegionForToken(right.token)
+	return leftOK && rightOK && leftRegion.Entails(rightRegion)
 }
 
 // WideningPermits returns the complete defensive set of opaque recurrence

@@ -274,6 +274,21 @@ func TestSpecializeAdmitsExactOperationAndRejectsWrongDenominatorRows(t *testing
 	if !ok || !cell.ValidFor(mounted.RuntimeFence()) {
 		t.Fatal("mounted cell issuance refused")
 	}
+	cellRegion, cellRegionOK := mounted.RegionForToken(cell.Scope())
+	var cellRegionID identity.ContentID
+	cellRegionIDOK := false
+	if cellRegionOK {
+		cellRegionID, cellRegionIDOK = cellRegion.Identity()
+	}
+	scopeRegion, scopeRegionOK := mounted.RegionForScope(scopeValue)
+	var scopeRegionID identity.ContentID
+	scopeRegionIDOK := false
+	if scopeRegionOK {
+		scopeRegionID, scopeRegionIDOK = scopeRegion.Identity()
+	}
+	if !cellRegionOK || !cellRegionIDOK || !scopeRegionOK || !scopeRegionIDOK || cellRegionID != scopeRegionID {
+		t.Fatal("cell scope token did not round-trip through the mounted arena")
+	}
 	valueToken, ok := mounted.IssueValue(value.typeID, content(t, "semantic-value"))
 	if !ok || !valueToken.ValidFor(mounted.RuntimeFence()) {
 		t.Fatal("mounted value issuance refused")
