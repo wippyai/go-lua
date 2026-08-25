@@ -104,6 +104,8 @@ func StorageTransfer() definition.Definition {
 			{Name: "ReturnBoundaryMemberOrdinalCarrier", Key: "carrier/value/return-boundary-member-ordinal", Type: builtinGoType("uint64")},
 			{Name: "MountedCallActualsCarrier", Key: "carrier/value/mounted-call-actuals", Type: mountedCallActuals},
 			{Name: "MountedCallActualTagCarrier", Key: "carrier/value/mounted-call-actual-tag", Type: builtinGoType("uint64")},
+			// The address a fresh result is reached by under its mounted call.
+			{Name: "FreshResultTagCarrier", Key: "carrier/value/fresh-result-tag", Type: builtinGoType("uint64")},
 			// CallCoordinate is a foreign input coordinate, not a second Call
 			// vocabulary. Repeating its canonical carrier lets Value declare the
 			// correspondence between its parent rows and Call's candidate rows.
@@ -237,15 +239,25 @@ func StorageTransfer() definition.Definition {
 				CandidateAt:       valueMethod("AllocationResultAt", "Schema", true, 0),
 			},
 			{
-				Name:                "FreshResultCalls",
-				Key:                 "value/fresh-result/candidates",
-				Subject:             "FreshResultCallCarrier",
-				CandidateProvider:   member.AxisRelationCandidate(member.RelationRef{Axis: axisReference("value"), Member: "value/fresh-result/candidates"}),
-				CandidateResolver:   valueMethod("FreshResultCallForID", "Schema", true, 0),
-				CandidateOrdinal:    valueMethod("FreshResultCallOrdinal", "Schema", true, 0),
-				CandidateAt:         valueMethod("FreshResultCallAt", "Schema", true, 0),
-				CandidateCount:      valueMethod("FreshResultCallCount", "Schema", true, 0),
-				CandidateIdentityAt: valueMethod("FreshResultCallIDAt", "Schema", true, 0),
+				// The fresh results one mounted call produces: Value's nested
+				// member set over the mounted-call parent, addressed by
+				// (parent, owner-issued tag). A call site whose callee is not
+				// resolved to a single Target operation produces one member per
+				// admitted (operation, outcome, result) arm, so the set is a
+				// membership Value seals rather than geometry a consumer
+				// rebuilds from Heap's fresh roots.
+				Name:              "FreshResultCalls",
+				Key:               "value/fresh-result/candidates",
+				Subject:           "FreshResultCallCarrier",
+				Inputs:            []definition.RelationInput{{Carrier: "CallCoordinateCarrier"}},
+				CandidateProvider: member.AxisRelationCandidate(member.RelationRef{Axis: axisReference("value"), Member: "value/fresh-result/candidates"}),
+				CandidateResolver: valueMethod("FreshResultCallForMountedOccurrence", "Schema", true, 0),
+				CandidateOrdinal:  valueMethod("FreshResultCallOrdinal", "Schema", true, 0),
+				CandidateAt:       valueMethod("FreshResultCallAt", "Schema", true, 0),
+				MemberParent:      member.RelationRef{Axis: axisReference("value"), Member: "value/mounted-call/parents"},
+				MemberOrdinal:     "FreshResultTagCarrier",
+				MemberCount:       valueMethod("FreshResultCount", "MountedCallActuals", false, 0),
+				MemberAt:          valueMethod("FreshResultAt", "MountedCallActuals", false, 0),
 			},
 			{
 				// The return-boundary directory. One row per mounted executable

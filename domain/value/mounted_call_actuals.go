@@ -42,13 +42,21 @@ type MountedCallActuals struct {
 	// admitted in per-call actual order by one pass of sealMountedCallArguments.
 	first uint32
 	count uint32
+	// freshFirst and freshCount are the same span shape over this Schema's
+	// fresh-result directory: the fresh results this call produces, addressed
+	// by their result ordinal. They are attached after the fresh directory is
+	// sealed, which is later than the actuals, so a call with no fresh result
+	// carries the empty span it has.
+	freshFirst uint32
+	freshCount uint32
 }
 
 func (row MountedCallActuals) valid() bool {
 	return row.schema != nil && row.schema.Valid() && row.key.module.Available() &&
 		row.key.call.Available() && row.content.Available() && row.coordinate.Valid() &&
 		row.callee.Valid() && row.callee.schema == row.schema &&
-		uint64(row.first)+uint64(row.count) <= uint64(len(row.schema.mountedCallArgumentOrder))
+		uint64(row.first)+uint64(row.count) <= uint64(len(row.schema.mountedCallArgumentOrder)) &&
+		uint64(row.freshFirst)+uint64(row.freshCount) <= uint64(len(row.schema.freshResultCallKeys))
 }
 
 // OwnsMountedCallActuals is the exact Schema owner fence for a detached parent
@@ -204,6 +212,50 @@ func (row MountedCallActuals) MemberAt(ordinal int) (MountedCallArgument, bool) 
 		return MountedCallArgument{}, false
 	}
 	return member, true
+}
+
+// FreshResultCount is the census of the fresh results this call produces.
+func (row MountedCallActuals) FreshResultCount() int {
+	if !row.valid() {
+		return 0
+	}
+	return int(row.freshCount)
+}
+
+// FreshResultAt addresses one fresh result of this call by its member ordinal,
+// which is the call result ordinal the fresh root fills.
+func (row MountedCallActuals) FreshResultAt(ordinal int) (FreshResultCall, bool) {
+	if !row.valid() || ordinal < 0 || uint64(ordinal) >= uint64(row.freshCount) {
+		return FreshResultCall{}, false
+	}
+	member, memberOK := row.schema.FreshResultCallAt(int(row.freshFirst) + ordinal)
+	if !memberOK {
+		return FreshResultCall{}, false
+	}
+	// A member of THIS parent is a fresh result of this call. The span is
+	// contiguous by construction; proving it here keeps a malformed directory
+	// from handing a consumer another call's result under this call's ordinal.
+	if member.module != row.key.module || member.call != row.key.call {
+		return FreshResultCall{}, false
+	}
+	return member, true
+}
+
+// attachFreshResultMembers records one parent's fresh-result span. It runs
+// after the fresh directory is sealed because the span is over that directory:
+// the parent groups rows it did not create, exactly as it does for actuals.
+func (builder *valueBuilder) attachFreshResultMembers(key mountedCallActualsKey, first int, count uint32) bool {
+	if builder == nil || builder.Schema == nil || builder.Schema.mountedCallActuals == nil || first < 0 ||
+		uint64(first)+uint64(count) > uint64(len(builder.Schema.freshResultCallKeys)) {
+		return false
+	}
+	row, found := builder.Schema.mountedCallActuals[key]
+	if !found || row.freshCount != 0 || row.freshFirst != 0 {
+		return false
+	}
+	row.freshFirst, row.freshCount = uint32(first), count
+	builder.Schema.mountedCallActuals[key] = row
+	return builder.Schema.OwnsMountedCallActuals(row)
 }
 
 // addMountedCallActuals admits one mounted call's parent row over the actual

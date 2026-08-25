@@ -153,10 +153,10 @@ func (owner *RelationOwner) candidate(relationOrdinal uint32, mount, occurrence 
 		}
 		return owner.schema.AllocationResultOrdinal(candidate)
 	case 11:
-		if mount.Available() {
+		if !mount.Available() {
 			return 0, false
 		}
-		candidate, candidateOK := owner.schema.FreshResultCallForID(occurrence)
+		candidate, candidateOK := owner.schema.FreshResultCallForMountedOccurrence(mount, occurrence)
 		if !candidateOK {
 			return 0, false
 		}
@@ -229,6 +229,16 @@ func (owner *RelationOwner) MemberCount(relationOrdinal, parentCandidateOrdinal 
 		return 0, false
 	}
 	switch relationOrdinal {
+	case 11:
+		parent, parentOK := owner.schema.MountedCallActualsAt(int(parentCandidateOrdinal))
+		if !parentOK {
+			return 0, false
+		}
+		count := parent.FreshResultCount()
+		if count < 0 {
+			return 0, false
+		}
+		return count, true
 	case 14:
 		parent, parentOK := owner.schema.ReturnBoundaryAt(int(parentCandidateOrdinal))
 		if !parentOK {
@@ -263,6 +273,16 @@ func (owner *RelationOwner) MemberAt(relationOrdinal, parentCandidateOrdinal uin
 		return 0, false
 	}
 	switch relationOrdinal {
+	case 11:
+		parent, parentOK := owner.schema.MountedCallActualsAt(int(parentCandidateOrdinal))
+		if !parentOK {
+			return 0, false
+		}
+		member, memberOK := parent.FreshResultAt(ordinal)
+		if !memberOK {
+			return 0, false
+		}
+		return owner.schema.FreshResultCallOrdinal(member)
 	case 14:
 		parent, parentOK := owner.schema.ReturnBoundaryAt(int(parentCandidateOrdinal))
 		if !parentOK {
@@ -301,12 +321,6 @@ func (owner *RelationOwner) OccurrenceCount(relationOrdinal uint32) (int, bool) 
 			return 0, false
 		}
 		return count, true
-	case 11:
-		count := owner.schema.FreshResultCallCount()
-		if count < 0 {
-			return 0, false
-		}
-		return count, true
 	default:
 		return 0, false
 	}
@@ -321,8 +335,6 @@ func (owner *RelationOwner) OccurrenceIDAt(relationOrdinal uint32, index int) (i
 	switch relationOrdinal {
 	case 7:
 		return owner.schema.GlobalBootstrapResultIDAt(index)
-	case 11:
-		return owner.schema.FreshResultCallIDAt(index)
 	default:
 		return identity.ContentID{}, false
 	}

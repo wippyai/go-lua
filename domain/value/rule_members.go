@@ -80,6 +80,7 @@ const (
 	ReturnBoundaryMemberOrdinalCarrier member.Carrier = "carrier/value/return-boundary-member-ordinal"
 	MountedCallActualsCarrier          member.Carrier = "carrier/value/mounted-call-actuals"
 	MountedCallActualTagCarrier        member.Carrier = "carrier/value/mounted-call-actual-tag"
+	FreshResultTagCarrier              member.Carrier = "carrier/value/fresh-result-tag"
 	CallCoordinateCarrier              member.Carrier = "carrier/call/mounted-call"
 )
 
@@ -99,7 +100,7 @@ func AxisMemberCatalog() member.Catalog {
 			{Key: MountedCallArgumentCandidates, Subject: MountedCallArgumentCarrier, CandidateProvider: member.AxisRelationCandidate(member.RelationRef{Axis: schemaapi.EntryReference{Surface: schemaapi.SurfaceKind(2), Key: "value"}, Member: "value/mounted-call/argument-candidates"})},
 			{Key: MountedCallArguments, Subject: ValueFactCarrier, CandidateProvider: member.AxisRelationCandidate(member.RelationRef{Axis: schemaapi.EntryReference{Surface: schemaapi.SurfaceKind(2), Key: "value"}, Member: "value/mounted-call/argument-candidates"}), Inputs: []member.Carrier{MountedCallArgumentCarrier}},
 			{Key: AllocationResults, Subject: AllocationResultCarrier, CandidateProvider: member.AxisRelationCandidate(member.RelationRef{Axis: schemaapi.EntryReference{Surface: schemaapi.SurfaceKind(2), Key: "value"}, Member: "value/allocation/candidates"})},
-			{Key: FreshResultCalls, Subject: FreshResultCallCarrier, CandidateProvider: member.AxisRelationCandidate(member.RelationRef{Axis: schemaapi.EntryReference{Surface: schemaapi.SurfaceKind(2), Key: "value"}, Member: "value/fresh-result/candidates"})},
+			{Key: FreshResultCalls, Subject: FreshResultCallCarrier, CandidateProvider: member.AxisRelationCandidate(member.RelationRef{Axis: schemaapi.EntryReference{Surface: schemaapi.SurfaceKind(2), Key: "value"}, Member: "value/fresh-result/candidates"}), Inputs: []member.Carrier{CallCoordinateCarrier}, Parent: member.RelationRef{Axis: schemaapi.EntryReference{Surface: schemaapi.SurfaceKind(2), Key: "value"}, Member: "value/mounted-call/parents"}, Ordinal: FreshResultTagCarrier},
 			{Key: ReturnBoundaryCandidates, Subject: ReturnBoundaryCarrier, CandidateProvider: member.AxisRelationCandidate(member.RelationRef{Axis: schemaapi.EntryReference{Surface: schemaapi.SurfaceKind(2), Key: "value"}, Member: "value/return-boundary/candidates"})},
 			{Key: ReturnBoundaryRoots, Subject: ValueFactCarrier, CandidateProvider: member.AxisRelationCandidate(member.RelationRef{Axis: schemaapi.EntryReference{Surface: schemaapi.SurfaceKind(2), Key: "value"}, Member: "value/return-boundary/candidates"}), Inputs: []member.Carrier{ReturnBoundaryCarrier}},
 			{Key: ReturnBoundaryMembers, Subject: ReturnBoundaryMemberCarrier, CandidateProvider: member.AxisRelationCandidate(member.RelationRef{Axis: schemaapi.EntryReference{Surface: schemaapi.SurfaceKind(2), Key: "value"}, Member: "value/return-boundary/members"}), Inputs: []member.Carrier{ReturnBoundaryCarrier}, Parent: member.RelationRef{Axis: schemaapi.EntryReference{Surface: schemaapi.SurfaceKind(2), Key: "value"}, Member: "value/return-boundary/candidates"}, Ordinal: ReturnBoundaryMemberOrdinalCarrier},
