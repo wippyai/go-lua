@@ -29,14 +29,14 @@ join[0].predicate    -
 join[0].parent       -
 join[0].sources      candidate
 join[0].contract     order=canonical sparse=explicit on-opaque=refuse multiplicity=one denominator=-
-join[1].read         form=summary input=1 axis=axis/value point-bound=self
+join[1].read         form=summary input=0 axis=axis/value point-bound=self
 join[1].relation     axis/value:value/mounted-call/actual-members
 join[1].key          axis/value:value/mounted-call/actual-key
 join[1].predicate    -
 join[1].parent       axis/value:value/mounted-call/parents
 join[1].sources      candidate
 join[1].contract     order=canonical sparse=default on-opaque=propagate-authenticated multiplicity=many denominator=denominator/coordinates/value
-join[2].read         form=selected input=2 axis=axis/placement point-bound=self
+join[2].read         form=selected input=0 axis=axis/placement point-bound=self
 join[2].relation     axis/placement:placement/transfer/routes
 join[2].key          axis/placement:placement/transfer/route-key
 join[2].predicate    axis/placement:placement/transfer/route-tag

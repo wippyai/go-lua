@@ -141,7 +141,14 @@ func Transfer() ruleprogram.Program {
 				Key:      member.ProjectionRef{Axis: value, Member: MountedCallActualKey},
 				Parent:   member.RelationRef{Axis: value, Member: MountedCallParents},
 				Read: ruleprogram.ReadDecl{
-					Input: 1,
+					// Every read of this rule is bound to the one input port
+					// the candidate arrives on. The port is what fixes the
+					// point a read observes, and all three of these observe
+					// the mounted call the candidate names: a Value read bound
+					// to a second port would observe a point at which the
+					// mounted actual's fact is not yet published, and answer
+					// the Factor default in place of it.
+					Input: 0,
 					Axis:  ruleprogram.AxisRef(value),
 					Form:  ruleprogram.Summary,
 					// The vector resolves through Value's own member set at
@@ -167,7 +174,7 @@ func Transfer() ruleprogram.Program {
 				Key:       member.ProjectionRef{Axis: placement, Member: TransferRouteKey},
 				Predicate: member.ProjectionRef{Axis: placement, Member: TransferRouteTag},
 				Read: ruleprogram.ReadDecl{
-					Input: 2,
+					Input: 0,
 					Axis:  ruleprogram.AxisRef(placement),
 					Form:  ruleprogram.Selected,
 					// Resolved through Placement's own route directory at this

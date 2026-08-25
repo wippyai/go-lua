@@ -85,7 +85,7 @@ func (sealed *sealedFamily) NewExecutor(run *execution.Run) execution.Executor {
 	}
 }
 
-func (*sealedFamily) InputCapacity() int  { return 3 }
+func (*sealedFamily) InputCapacity() int  { return 1 }
 func (*sealedFamily) OutputCapacity() int { return 1 }
 
 // familyWorker is one epoch's reusable invocation lane. Every scratch lives for
@@ -337,11 +337,11 @@ func (install familyInstaller) InstallRuleFamily(plane execution.FormPlane[place
 			return nil, nil, false
 		}
 		plan1, plan1OK := planRow.Rule.ReadAt(1)
-		if !plan1OK || plan1.Form != program.Summary || plan1.Input != 1 || plan1.PointBound != program.PointBoundSelf {
+		if !plan1OK || plan1.Form != program.Summary || plan1.Input != 0 || plan1.PointBound != program.PointBoundSelf {
 			return nil, nil, false
 		}
 		plan2, plan2OK := planRow.Rule.ReadAt(2)
-		if !plan2OK || plan2.Form != program.Selected || plan2.Input != 2 || plan2.PointBound != program.PointBoundSelf || plan2.Factor != output.Factor {
+		if !plan2OK || plan2.Form != program.Selected || plan2.Input != 0 || plan2.PointBound != program.PointBoundSelf || plan2.Factor != output.Factor {
 			return nil, nil, false
 		}
 		candidate, candidateOK := install.callSchema.CallCoordinateAt(int(planRow.Candidate))
