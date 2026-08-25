@@ -18,6 +18,7 @@ package rule
 
 import (
 	"crypto/sha256"
+	"fmt"
 
 	"github.com/wippyai/go-lua/analysis/identity"
 	"github.com/wippyai/go-lua/analysis/schema"
@@ -678,4 +679,38 @@ func sealIssuance(entry schema.EntryID, issuance Issuance, sealed seal.Sealed) s
 func Payload[T any](holder Cell) (T, bool) {
 	value, ok := holder.payload.(T)
 	return value, ok
+}
+
+// ProgramRefusal names why this template's program clauses would refuse it.
+//
+// It admits nothing and gates nothing: Seal stays the authority, and this
+// reads the same rows to say which clause it tripped over and for which rule.
+// A SealFailure deliberately renders no authored key, which is right for a
+// value that crosses surfaces - but it leaves a refused program identifiable
+// only by an entry identity, and the four clauses below are otherwise
+// indistinguishable from one another. An empty string means these clauses
+// refuse nothing.
+func (template *Template) ProgramRefusal() string {
+	if template == nil {
+		return "a rule template is absent"
+	}
+	if digest := template.contentDigest(); digest != template.digest {
+		if digest == (identity.ContentID{}) {
+			return fmt.Sprintf("rule %q: its declaration does not encode, so it has no content identity to be sealed under", string(template.key))
+		}
+		return fmt.Sprintf("rule %q: its content identity disagrees with the declaration it was admitted with", string(template.key))
+	}
+	if problem, valid := template.program.Check(); !valid {
+		return fmt.Sprintf("rule %q: its execution program is not well formed (problem kind %d, join %d, input %d, output %d)",
+			string(template.key), int(problem.Kind), int(problem.Join), int(problem.Input), int(problem.Output))
+	}
+	if template.program.Available() && !template.declaresRole(template.program.OperandRole) {
+		return fmt.Sprintf("rule %q: its program consumes operand role %q, which the rule does not declare",
+			string(template.key), string(template.program.OperandRole))
+	}
+	if template.program.ActivationRole.Available() && !template.declaresRole(template.program.ActivationRole) {
+		return fmt.Sprintf("rule %q: its program consumes activation role %q, which the rule does not declare",
+			string(template.key), string(template.program.ActivationRole))
+	}
+	return ""
 }

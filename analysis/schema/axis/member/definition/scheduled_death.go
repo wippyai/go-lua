@@ -35,6 +35,15 @@ type ScheduledDeath struct {
 var scheduledDeaths = []ScheduledDeath{
 	{
 		Axis:     "heap",
+		Relation: "heap/publication-freeze/routes",
+		Build: GoSymbol{
+			PackagePath: "github.com/wippyai/go-lua/domain/heap/publicationfreeze",
+			Name:        "DerivePublicationFreezeRoutes",
+			ResultIndex: 0,
+		},
+	},
+	{
+		Axis:     "heap",
 		Relation: "heap/formal-freeze/routes",
 		Build: GoSymbol{
 			PackagePath: "github.com/wippyai/go-lua/domain/heap/formalfreeze",

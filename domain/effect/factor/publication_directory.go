@@ -2,11 +2,10 @@ package factor
 
 import (
 	"encoding/binary"
+	packtransfer "github.com/wippyai/go-lua/domain/pack/transfer"
 
 	"github.com/wippyai/go-lua/analysis/identity"
 	"github.com/wippyai/go-lua/analysis/program/target/vocabulary"
-	packtransfer "github.com/wippyai/go-lua/domain/pack/transfer"
-	valuedomain "github.com/wippyai/go-lua/domain/value"
 )
 
 // PublicationMemberDomain separates the subject-member population from every
@@ -100,7 +99,7 @@ func (row PublicationRow) MountedAt(module, call identity.ContentID) bool {
 // actually occupy rather than an offset a second pass recomputed.
 type PublicationDirectory struct {
 	Rows    []PublicationRow
-	Calls   []PublicationCallRow
+	Calls   []PublicationCall
 	Members []PublicationSubject
 }
 
@@ -108,6 +107,15 @@ type PublicationDirectory struct {
 // what each member is, without the Value handle the algebra resolved for it.
 // It is the form the member column seals, so the column states published rows
 // and never holds a coordinate that cannot leave the schema that issued it.
+func (directory PublicationDirectory) CallRows() []PublicationCallRow {
+	rows := make([]PublicationCallRow, 0, len(directory.Calls))
+	for index := range directory.Calls {
+		rows = append(rows, directory.Calls[index].Row())
+	}
+	return rows
+}
+
+// MemberRows is the published projection of this directory's subject members.
 func (directory PublicationDirectory) MemberRows() []PublicationMemberRow {
 	rows := make([]PublicationMemberRow, 0, len(directory.Members))
 	for index := range directory.Members {
@@ -131,31 +139,19 @@ type PublicationMemberRow struct {
 }
 
 // PublicationSubject is one member of a publication's subject pack as the
-// algebra that sealed it holds one: the published row, and the Value
-// coordinate that member resolves to.
+// algebra that sealed it holds one.
 //
-// The coordinate is a handle Value's Schema issues and cannot leave it, which
-// is why the published row carries the member's identity instead. A rule that
-// reads Value at this member holds the schema as well as the algebra, so it
-// takes the coordinate from here rather than resolving it again per
-// invocation; a reader that holds neither still reads the published row.
+// It states the member and the tag a selection pairs its cell by, and nothing
+// about where that member's value lives: a Value coordinate is a handle
+// Value's Schema issues, and this algebra holds no Value schema. Which member
+// a publication names is Effect's statement; where that member is, is Value's,
+// answered by Value's own relation over these members.
 type PublicationSubject struct {
-	row        PublicationMemberRow
-	coordinate valuedomain.Coordinate
+	row PublicationMemberRow
 }
 
 // Row is the published member this subject stands for.
 func (subject PublicationSubject) Row() PublicationMemberRow { return subject.row }
-
-// Coordinate is the Value coordinate this member resolves to. It answers only
-// for a member whose row is complete and whose coordinate its schema still
-// issues, so a consumer never reads Value at a coordinate this Link retired.
-func (subject PublicationSubject) Coordinate() (valuedomain.Coordinate, bool) {
-	if !subject.row.Available() || !subject.coordinate.Valid() {
-		return valuedomain.Coordinate{}, false
-	}
-	return subject.coordinate, true
-}
 
 // Predicate is the tag a selection over these members pairs its cells by. It
 // folds the member's own identity, so it names exactly the member the
@@ -225,6 +221,31 @@ type PublicationCallRow struct {
 	RowLength uint32
 }
 
+// PublicationCall is one mounted call as the algebra that sealed it holds
+// one: the published row and the subject members its receipts name.
+//
+// The published row states a span; this states the members that span covers,
+// because a nested member set is enumerated through its parent and a published
+// row carries no slice to enumerate.
+type PublicationCall struct {
+	row      PublicationCallRow
+	subjects []PublicationSubject
+}
+
+// Row is the published call this stands for.
+func (call PublicationCall) Row() PublicationCallRow { return call.row }
+
+// MemberCount is the number of subject members this call's receipts name.
+func (call PublicationCall) MemberCount() int { return len(call.subjects) }
+
+// MemberAt is one subject member in the call's own sealed member order.
+func (call PublicationCall) MemberAt(index int) (PublicationSubject, bool) {
+	if index < 0 || index >= len(call.subjects) {
+		return PublicationSubject{}, false
+	}
+	return call.subjects[index], true
+}
+
 // Available reports whether this row states a complete mounted call. A zero
 // length is a complete statement; a lost identity is not.
 func (row PublicationCallRow) Available() bool {
@@ -243,16 +264,13 @@ func (row PublicationCallRow) Available() bool {
 //
 // A Link that admitted no publication yields an empty directory, which is
 // that statement rather than a failure.
-func DetachPublications(owner *Algebra, values *valuedomain.Schema) (PublicationDirectory, bool) {
-	if values == nil || !values.Valid() {
-		return PublicationDirectory{}, false
-	}
+func DetachPublications(owner *Algebra) (PublicationDirectory, bool) {
 	if owner == nil || !owner.Valid() {
 		return PublicationDirectory{}, false
 	}
 	count := owner.MountedCallCount()
 	directory := PublicationDirectory{
-		Rows: make([]PublicationRow, 0), Calls: make([]PublicationCallRow, 0, count),
+		Rows: make([]PublicationRow, 0), Calls: make([]PublicationCall, 0, count),
 		Members: make([]PublicationSubject, 0),
 	}
 	for ordinal := 0; ordinal < count; ordinal++ {
@@ -271,12 +289,13 @@ func DetachPublications(owner *Algebra, values *valuedomain.Schema) (Publication
 			return PublicationDirectory{}, false
 		}
 		offset := uint32(len(directory.Rows))
+		memberOffset := len(directory.Members)
 		for position := 0; position < batch.RowCount(); position++ {
 			receipt, receiptOK := batch.RowAt(position)
 			if !receiptOK {
 				return PublicationDirectory{}, false
 			}
-			row, members, rowOK := detach(receipt, values, uint32(len(directory.Members)))
+			row, members, rowOK := detach(receipt, uint32(len(directory.Members)))
 			if !rowOK || !row.MountedAt(module, call) {
 				return PublicationDirectory{}, false
 			}
@@ -290,7 +309,9 @@ func DetachPublications(owner *Algebra, values *valuedomain.Schema) (Publication
 		if !callRow.Available() {
 			return PublicationDirectory{}, false
 		}
-		directory.Calls = append(directory.Calls, callRow)
+		directory.Calls = append(directory.Calls, PublicationCall{
+			row: callRow, subjects: directory.Members[memberOffset:],
+		})
 	}
 	return directory, true
 }
@@ -298,7 +319,7 @@ func DetachPublications(owner *Algebra, values *valuedomain.Schema) (Publication
 // detach reads one sealed receipt into the published row. Every field is
 // taken from the receipt's own accessors, so a receipt that stopped
 // authenticating cannot reach the directory as a partially read row.
-func detach(receipt MountedPublication, values *valuedomain.Schema, memberOffset uint32) (PublicationRow, []PublicationSubject, bool) {
+func detach(receipt MountedPublication, memberOffset uint32) (PublicationRow, []PublicationSubject, bool) {
 	id, idOK := receipt.ContentID()
 	module, call, provenanceOK := receipt.CallProvenance()
 	application, applicationOK := receipt.ApplicationID()
@@ -318,10 +339,6 @@ func detach(receipt MountedPublication, values *valuedomain.Schema, memberOffset
 		if !semanticOK {
 			return PublicationRow{}, nil, false
 		}
-		coordinate, resolved := packtransfer.CoordinateForInputMember(values, subject, member)
-		if !resolved {
-			return PublicationRow{}, nil, false
-		}
 		memberID, memberIDOK := PublicationMemberID(id, member)
 		if !memberIDOK {
 			return PublicationRow{}, nil, false
@@ -330,7 +347,7 @@ func detach(receipt MountedPublication, values *valuedomain.Schema, memberOffset
 		if !memberRow.Available() {
 			return PublicationRow{}, nil, false
 		}
-		members = append(members, PublicationSubject{row: memberRow, coordinate: coordinate})
+		members = append(members, PublicationSubject{row: memberRow})
 	}
 	contextID := identity.ContentID{}
 	context, hasContext := receipt.ContextInput()
@@ -341,15 +358,10 @@ func detach(receipt MountedPublication, values *valuedomain.Schema, memberOffset
 			return PublicationRow{}, nil, false
 		}
 		// The context is an authenticated mounted input the descriptor
-		// authored a destination for. Its members are not published - no
-		// consumer reads them - but a context whose members do not resolve is
-		// a publication whose destination this Link cannot authenticate, and
-		// that is refused here rather than at each consumer that trusted it.
-		for member := 0; member < context.MemberCount(); member++ {
-			if _, resolved := packtransfer.CoordinateForInputMember(values, context, member); !resolved {
-				return PublicationRow{}, nil, false
-			}
-		}
+		// authored a destination for. That its members resolve to Value
+		// coordinates is proven where the Value schema is - Value's own
+		// relation over this publication's members - because this algebra
+		// holds no Value schema to ask.
 	}
 	effect := receipt.EffectIndex()
 	if effect < 0 {
@@ -366,4 +378,196 @@ func detach(receipt MountedPublication, values *valuedomain.Schema, memberOffset
 		SubjectOffset: memberOffset, SubjectLength: uint32(len(members)),
 	}
 	return row, members, row.Available()
+}
+
+// sealPublications derives this Link's publication directory once, at seal,
+// and indexes its calls by the mounted coordinate a rule resolves them from.
+func (a *Algebra) sealPublications() bool {
+	directory, ok := DetachPublications(a)
+	if !ok {
+		return false
+	}
+	index := make(map[mountedPublicationCallRef]uint32, len(directory.Calls))
+	for ordinal := range directory.Calls {
+		row := directory.Calls[ordinal].Row()
+		ref := mountedPublicationCallRef{module: row.Module, occurrence: row.Call}
+		if _, duplicate := index[ref]; duplicate {
+			return false
+		}
+		index[ref] = uint32(ordinal)
+	}
+	subjects := make(map[identity.ContentID]uint32, len(directory.Members))
+	for ordinal := range directory.Members {
+		member := directory.Members[ordinal].Row()
+		if !member.Available() {
+			return false
+		}
+		if _, duplicate := subjects[member.ID]; duplicate {
+			return false
+		}
+		subjects[member.ID] = uint32(ordinal)
+	}
+	receipts := make(map[identity.ContentID]MountedPublication, len(directory.Rows))
+	for ordinal := 0; ordinal < a.MountedCallCount(); ordinal++ {
+		mounted, mountedOK := a.MountedCallAt(ordinal)
+		if !mountedOK {
+			return false
+		}
+		batch, batchOK := a.PublicationBatchForMountedCall(mounted)
+		if !batchOK {
+			return false
+		}
+		for position := 0; position < batch.RowCount(); position++ {
+			receipt, receiptOK := batch.RowAt(position)
+			if !receiptOK {
+				return false
+			}
+			id, idOK := receipt.ContentID()
+			if !idOK {
+				return false
+			}
+			receipts[id] = receipt
+		}
+	}
+	a.publications = directory
+	a.publicationCallIndex = index
+	a.publicationSubjects = subjects
+	a.publicationReceipts = receipts
+	return true
+}
+
+// PublicationContextInput is the mounted context input one admitted receipt
+// authored a destination for.
+//
+// It is a live Pack input rather than a published row, which is why it is
+// reached through this algebra and never through the directory: a context is
+// the one part of a publication no consumer reads, and the only thing anyone
+// asks of it is whether its members resolve. That question belongs to Value,
+// which holds the schema; this hands it the input to ask about.
+func (a *Algebra) PublicationSubjectInput(receipt identity.ContentID) (packtransfer.MountedInput, bool) {
+	if !a.Valid() || !receipt.Available() {
+		return packtransfer.MountedInput{}, false
+	}
+	row, found := a.publicationReceipts[receipt]
+	if !found {
+		return packtransfer.MountedInput{}, false
+	}
+	return row.SubjectInput()
+}
+
+// PublicationContextInput is the mounted context input one admitted receipt
+// authored a destination for.
+func (a *Algebra) PublicationContextInput(receipt identity.ContentID) (packtransfer.MountedInput, bool) {
+	if !a.Valid() || !receipt.Available() {
+		return packtransfer.MountedInput{}, false
+	}
+	row, found := a.publicationReceipts[receipt]
+	if !found {
+		return packtransfer.MountedInput{}, false
+	}
+	return row.ContextInput()
+}
+
+// PublicationSubjectCount is the number of subject members this Link's
+// publications name, across every mounted call.
+func (a *Algebra) PublicationSubjectCount() int {
+	if !a.Valid() {
+		return 0
+	}
+	return len(a.publications.Members)
+}
+
+// PublicationSubjectAt is one subject member in this directory's sealed order.
+func (a *Algebra) PublicationSubjectAt(index int) (PublicationSubject, bool) {
+	if !a.Valid() || index < 0 || index >= len(a.publications.Members) {
+		return PublicationSubject{}, false
+	}
+	return a.publications.Members[index], true
+}
+
+// PublicationSubjectOrdinal is the position one subject member occupies in
+// this directory's sealed order. It answers only for a member this algebra
+// sealed, addressed by the identity it minted for it.
+func (a *Algebra) PublicationSubjectOrdinal(subject PublicationSubject) (uint32, bool) {
+	if !a.Valid() {
+		return 0, false
+	}
+	member := subject.Row()
+	if !member.Available() {
+		return 0, false
+	}
+	ordinal, found := a.publicationSubjects[member.ID]
+	if !found || int(ordinal) >= len(a.publications.Members) || a.publications.Members[ordinal].Row() != member {
+		return 0, false
+	}
+	return ordinal, true
+}
+
+// PublicationSubjectForOccurrence resolves the first subject member of the
+// publication call at one mounted coordinate. It is the inverse the member set
+// is entered by; the rest of the set is enumerated from its parent.
+func (a *Algebra) PublicationSubjectForOccurrence(module, occurrence identity.ContentID) (PublicationSubject, bool) {
+	call, found := a.PublicationCallForOccurrence(module, occurrence)
+	if !found {
+		return PublicationSubject{}, false
+	}
+	return call.MemberAt(0)
+}
+
+// Publications is this Link's sealed publication directory.
+func (a *Algebra) Publications() PublicationDirectory {
+	if !a.Valid() {
+		return PublicationDirectory{}
+	}
+	return a.publications
+}
+
+// PublicationCallCount is the number of mounted calls this Link admitted
+// publications on. A call that authored none is still one of them.
+func (a *Algebra) PublicationCallCount() int {
+	if !a.Valid() {
+		return 0
+	}
+	return len(a.publications.Calls)
+}
+
+// PublicationCallAt is one publication call in this directory's sealed order.
+func (a *Algebra) PublicationCallAt(index int) (PublicationCall, bool) {
+	if !a.Valid() || index < 0 || index >= len(a.publications.Calls) {
+		return PublicationCall{}, false
+	}
+	return a.publications.Calls[index], true
+}
+
+// PublicationCallOrdinal is the position one publication call occupies in this
+// directory's sealed order. It answers only for a call this algebra sealed, so
+// a row assembled elsewhere resolves to nothing rather than to a neighbour.
+func (a *Algebra) PublicationCallOrdinal(call PublicationCall) (uint32, bool) {
+	if !a.Valid() {
+		return 0, false
+	}
+	row := call.Row()
+	if !row.Available() {
+		return 0, false
+	}
+	ordinal, found := a.publicationCallIndex[mountedPublicationCallRef{module: row.Module, occurrence: row.Call}]
+	if !found || int(ordinal) >= len(a.publications.Calls) || a.publications.Calls[ordinal].Row() != row {
+		return 0, false
+	}
+	return ordinal, true
+}
+
+// PublicationCallForOccurrence resolves the publication call at one mounted
+// coordinate. It is the inverse a rule addresses its candidate by, and the
+// only one: a caller that walked the directory to find it would be a second
+// authority over which call an occurrence names.
+func (a *Algebra) PublicationCallForOccurrence(module, occurrence identity.ContentID) (PublicationCall, bool) {
+	if !a.Valid() || !module.Available() || !occurrence.Available() {
+		return PublicationCall{}, false
+	}
+	ordinal, found := a.publicationCallIndex[mountedPublicationCallRef{module: module, occurrence: occurrence}]
+	if !found || int(ordinal) >= len(a.publications.Calls) {
+		return PublicationCall{}, false
+	}
+	return a.publications.Calls[ordinal], true
 }

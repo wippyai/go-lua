@@ -28,6 +28,7 @@ import (
 	"github.com/wippyai/go-lua/domain/heap/keymatch"
 	heapowner "github.com/wippyai/go-lua/domain/heap/owner"
 	heappublicationfreeze "github.com/wippyai/go-lua/domain/heap/publicationfreeze"
+	heappublicationfreezeprogram "github.com/wippyai/go-lua/domain/heap/publicationfreeze/program"
 	packdomain "github.com/wippyai/go-lua/domain/pack"
 	packowner "github.com/wippyai/go-lua/domain/pack/owner"
 	packsource "github.com/wippyai/go-lua/domain/pack/source"
@@ -198,7 +199,7 @@ func ruleTemplateWiring[P Principals, A Authorities]() ([]*rule.Template, []Rule
 	add(WireRule(placementpublicationescape.RuleEntry[P, A](), placementpublicationescape.DeclareRule[P], placementpublicationescape.RegisterRule, nil, placementpublicationescape.BindRule[A], nil, nil, nil))
 	// Publication FreezeSeal is the terminal mounted Heap consumer and follows
 	// the Placement publication demand it witnesses.
-	add(WireRule(heappublicationfreeze.RuleEntry[P, A](), heappublicationfreeze.DeclareRule[P], heappublicationfreeze.RegisterRule, nil, heappublicationfreeze.BindRule[A], heappublicationfreeze.FinalizeRule[A], nil, nil))
+	add(WireGeneratedRuleWithFamily[P, A](heappublicationfreezeprogram.RuleEntry(), heappublicationfreeze.InstallFamily[A]))
 	// Target-transfer is appended to preserve established rule ordinals. It is
 	// a mounted invocation consumer: Call and Pack actuals are read, Target is
 	// joined through Link's exact Contract, and only Placement is written. Its

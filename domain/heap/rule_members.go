@@ -10,41 +10,48 @@ import (
 )
 
 const (
-	IngressSeeds                   schemaapi.Key  = "heap/ingress/candidates"
-	BootRoots                      schemaapi.Key  = "heap/boot/candidates"
-	ClosedAllocations              schemaapi.Key  = "heap/closed-allocation/candidates"
-	EmptyAllocations               schemaapi.Key  = "heap/empty-allocation/candidates"
-	ClosedAllocationPredecessors   schemaapi.Key  = "heap/closed-allocation/predecessors"
-	EmptyAllocationPredecessors    schemaapi.Key  = "heap/empty-allocation/predecessors"
-	FormalFreezeRoutes             schemaapi.Key  = "heap/formal-freeze/routes"
-	IngressCoordinate              schemaapi.Key  = "heap/ingress/coordinate"
-	BootCoordinate                 schemaapi.Key  = "heap/boot/coordinate"
-	ClosedAllocationCoordinate     schemaapi.Key  = "heap/closed-allocation/coordinate"
-	EmptyAllocationCoordinate      schemaapi.Key  = "heap/empty-allocation/coordinate"
-	ClosedAllocationPredecessorKey schemaapi.Key  = "heap/closed-allocation/predecessor-key"
-	EmptyAllocationPredecessorKey  schemaapi.Key  = "heap/empty-allocation/predecessor-key"
-	FormalFreezeRouteKey           schemaapi.Key  = "heap/formal-freeze/route-key"
-	FormalFreezeRouteTag           schemaapi.Key  = "heap/formal-freeze/route-tag"
-	FormalFreezeRouteDestination   schemaapi.Key  = "heap/formal-freeze/route-destination"
-	IngressReducer                 schemaapi.Key  = "heap/reducer/ingress"
-	BootReducer                    schemaapi.Key  = "heap/reducer/boot"
-	ClosedAllocationReducer        schemaapi.Key  = "heap/reducer/closed"
-	EmptyAllocationReducer         schemaapi.Key  = "heap/reducer/empty"
-	FormalFreezeReducer            schemaapi.Key  = "heap/reducer/formal-freeze"
-	EmptyAllocationCarryTransform  schemaapi.Key  = "transform/heap/allocation-empty"
-	ClosedAllocationCarryTransform schemaapi.Key  = "transform/heap/allocation-closed"
-	HeapKeyCarrier                 member.Carrier = "carrier/heap/key"
-	HeapFactCarrier                member.Carrier = "carrier/heap/fact"
-	EmptyAllocationCarrier         member.Carrier = "carrier/heap/allocation-empty"
-	ClosedAllocationCarrier        member.Carrier = "carrier/heap/allocation-closed"
-	ValueFactCarrier               member.Carrier = "carrier/value/fact"
-	ValueCoordinateCarrier         member.Carrier = "carrier/value/coordinate"
-	ClosedOperandsCarrier          member.Carrier = "carrier/value/closed-operands"
-	ClosedOperandCarrier           member.Carrier = "carrier/value/closed-operand"
-	CallCoordinateCarrier          member.Carrier = "carrier/call/mounted-call"
-	CallFactCarrier                member.Carrier = "carrier/call/fact"
-	FormalFreezeRouteCarrier       member.Carrier = "carrier/heap/formal-freeze-route"
-	FormalFreezeRouteTagCarrier    member.Carrier = "carrier/heap/formal-freeze-route-tag"
+	IngressSeeds                      schemaapi.Key  = "heap/ingress/candidates"
+	BootRoots                         schemaapi.Key  = "heap/boot/candidates"
+	ClosedAllocations                 schemaapi.Key  = "heap/closed-allocation/candidates"
+	EmptyAllocations                  schemaapi.Key  = "heap/empty-allocation/candidates"
+	ClosedAllocationPredecessors      schemaapi.Key  = "heap/closed-allocation/predecessors"
+	EmptyAllocationPredecessors       schemaapi.Key  = "heap/empty-allocation/predecessors"
+	FormalFreezeRoutes                schemaapi.Key  = "heap/formal-freeze/routes"
+	PublicationFreezeRoutes           schemaapi.Key  = "heap/publication-freeze/routes"
+	IngressCoordinate                 schemaapi.Key  = "heap/ingress/coordinate"
+	BootCoordinate                    schemaapi.Key  = "heap/boot/coordinate"
+	ClosedAllocationCoordinate        schemaapi.Key  = "heap/closed-allocation/coordinate"
+	EmptyAllocationCoordinate         schemaapi.Key  = "heap/empty-allocation/coordinate"
+	ClosedAllocationPredecessorKey    schemaapi.Key  = "heap/closed-allocation/predecessor-key"
+	EmptyAllocationPredecessorKey     schemaapi.Key  = "heap/empty-allocation/predecessor-key"
+	FormalFreezeRouteKey              schemaapi.Key  = "heap/formal-freeze/route-key"
+	FormalFreezeRouteTag              schemaapi.Key  = "heap/formal-freeze/route-tag"
+	FormalFreezeRouteDestination      schemaapi.Key  = "heap/formal-freeze/route-destination"
+	PublicationFreezeRouteKey         schemaapi.Key  = "heap/publication-freeze/route-key"
+	PublicationFreezeRouteTag         schemaapi.Key  = "heap/publication-freeze/route-tag"
+	PublicationFreezeRouteDestination schemaapi.Key  = "heap/publication-freeze/route-destination"
+	IngressReducer                    schemaapi.Key  = "heap/reducer/ingress"
+	BootReducer                       schemaapi.Key  = "heap/reducer/boot"
+	ClosedAllocationReducer           schemaapi.Key  = "heap/reducer/closed"
+	EmptyAllocationReducer            schemaapi.Key  = "heap/reducer/empty"
+	FormalFreezeReducer               schemaapi.Key  = "heap/reducer/formal-freeze"
+	PublicationFreezeReducer          schemaapi.Key  = "heap/reducer/publication-freeze"
+	EmptyAllocationCarryTransform     schemaapi.Key  = "transform/heap/allocation-empty"
+	ClosedAllocationCarryTransform    schemaapi.Key  = "transform/heap/allocation-closed"
+	HeapKeyCarrier                    member.Carrier = "carrier/heap/key"
+	HeapFactCarrier                   member.Carrier = "carrier/heap/fact"
+	EmptyAllocationCarrier            member.Carrier = "carrier/heap/allocation-empty"
+	ClosedAllocationCarrier           member.Carrier = "carrier/heap/allocation-closed"
+	ValueFactCarrier                  member.Carrier = "carrier/value/fact"
+	ValueCoordinateCarrier            member.Carrier = "carrier/value/coordinate"
+	ClosedOperandsCarrier             member.Carrier = "carrier/value/closed-operands"
+	ClosedOperandCarrier              member.Carrier = "carrier/value/closed-operand"
+	CallCoordinateCarrier             member.Carrier = "carrier/call/mounted-call"
+	CallFactCarrier                   member.Carrier = "carrier/call/fact"
+	FormalFreezeRouteCarrier          member.Carrier = "carrier/heap/formal-freeze-route"
+	FormalFreezeRouteTagCarrier       member.Carrier = "carrier/heap/formal-freeze-route-tag"
+	PublicationFreezeRouteCarrier     member.Carrier = "carrier/heap/publication-freeze-route"
+	PublicationFreezeRouteTagCarrier  member.Carrier = "carrier/heap/publication-freeze-route-tag"
 )
 
 // AxisMemberCatalog is heap's declaration-only member vocabulary.
@@ -59,6 +66,7 @@ func AxisMemberCatalog() member.Catalog {
 			{Key: ClosedAllocationPredecessors, Subject: HeapFactCarrier, CandidateProvider: member.AxisRelationCandidate(member.RelationRef{Axis: schemaapi.EntryReference{Surface: schemaapi.SurfaceKind(2), Key: "heap"}, Member: "heap/closed-allocation/candidates"}), Inputs: []member.Carrier{HeapKeyCarrier}},
 			{Key: EmptyAllocationPredecessors, Subject: HeapFactCarrier, CandidateProvider: member.AxisRelationCandidate(member.RelationRef{Axis: schemaapi.EntryReference{Surface: schemaapi.SurfaceKind(2), Key: "heap"}, Member: "heap/empty-allocation/candidates"}), Inputs: []member.Carrier{HeapKeyCarrier}},
 			{Key: FormalFreezeRoutes, Subject: FormalFreezeRouteCarrier, CandidateProvider: member.AxisRelationCandidate(member.RelationRef{Axis: schemaapi.EntryReference{Surface: schemaapi.SurfaceKind(2), Key: "call"}, Member: "call/mounted-call/candidates"}), Inputs: []member.Carrier{CallCoordinateCarrier, CallFactCarrier, ValueFactCarrier}},
+			{Key: PublicationFreezeRoutes, Subject: PublicationFreezeRouteCarrier, CandidateProvider: member.AxisRelationCandidate(member.RelationRef{Axis: schemaapi.EntryReference{Surface: schemaapi.SurfaceKind(2), Key: "call"}, Member: "call/mounted-call/candidates"}), Inputs: []member.Carrier{CallCoordinateCarrier, CallFactCarrier, ValueFactCarrier}},
 		},
 		[]member.Projection{
 			{Key: IngressCoordinate, Relation: IngressSeeds, Role: member.Destination, Result: HeapKeyCarrier, CandidateProvider: member.AxisRelationCandidate(member.RelationRef{Axis: schemaapi.EntryReference{Surface: schemaapi.SurfaceKind(2), Key: "heap"}, Member: "heap/ingress/candidates"})},
@@ -70,6 +78,9 @@ func AxisMemberCatalog() member.Catalog {
 			{Key: FormalFreezeRouteKey, Relation: FormalFreezeRoutes, Role: member.Key, Result: HeapKeyCarrier, CandidateProvider: member.AxisRelationCandidate(member.RelationRef{Axis: schemaapi.EntryReference{Surface: schemaapi.SurfaceKind(2), Key: "call"}, Member: "call/mounted-call/candidates"})},
 			{Key: FormalFreezeRouteTag, Relation: FormalFreezeRoutes, Role: member.Predicate, Result: FormalFreezeRouteTagCarrier, CandidateProvider: member.AxisRelationCandidate(member.RelationRef{Axis: schemaapi.EntryReference{Surface: schemaapi.SurfaceKind(2), Key: "call"}, Member: "call/mounted-call/candidates"})},
 			{Key: FormalFreezeRouteDestination, Relation: FormalFreezeRoutes, Role: member.Destination, Result: HeapKeyCarrier, CandidateProvider: member.AxisRelationCandidate(member.RelationRef{Axis: schemaapi.EntryReference{Surface: schemaapi.SurfaceKind(2), Key: "call"}, Member: "call/mounted-call/candidates"})},
+			{Key: PublicationFreezeRouteKey, Relation: PublicationFreezeRoutes, Role: member.Key, Result: HeapKeyCarrier, CandidateProvider: member.AxisRelationCandidate(member.RelationRef{Axis: schemaapi.EntryReference{Surface: schemaapi.SurfaceKind(2), Key: "call"}, Member: "call/mounted-call/candidates"})},
+			{Key: PublicationFreezeRouteTag, Relation: PublicationFreezeRoutes, Role: member.Predicate, Result: PublicationFreezeRouteTagCarrier, CandidateProvider: member.AxisRelationCandidate(member.RelationRef{Axis: schemaapi.EntryReference{Surface: schemaapi.SurfaceKind(2), Key: "call"}, Member: "call/mounted-call/candidates"})},
+			{Key: PublicationFreezeRouteDestination, Relation: PublicationFreezeRoutes, Role: member.Destination, Result: HeapKeyCarrier, CandidateProvider: member.AxisRelationCandidate(member.RelationRef{Axis: schemaapi.EntryReference{Surface: schemaapi.SurfaceKind(2), Key: "call"}, Member: "call/mounted-call/candidates"})},
 		},
 		[]member.Reducer{
 			{Key: IngressReducer, Inputs: []member.ReducerInput{}, Outputs: []member.ReducerOutput{
@@ -91,6 +102,11 @@ func AxisMemberCatalog() member.Catalog {
 			}},
 			{Key: FormalFreezeReducer, Inputs: []member.ReducerInput{
 				{Axis: valueAxis, Carrier: HeapFactCarrier, Form: member.ReadFormSelected, Multiplicity: member.MultiplicityOne, Route: HeapKeyCarrier},
+			}, Outputs: []member.ReducerOutput{
+				{Axis: valueAxis, Carrier: HeapFactCarrier},
+			}},
+			{Key: PublicationFreezeReducer, Inputs: []member.ReducerInput{
+				{Axis: valueAxis, Carrier: HeapFactCarrier, Form: member.ReadFormSelected, Multiplicity: member.MultiplicityOne, Tag: PublicationFreezeRouteTagCarrier},
 			}, Outputs: []member.ReducerOutput{
 				{Axis: valueAxis, Carrier: HeapFactCarrier},
 			}},

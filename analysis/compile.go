@@ -34,6 +34,8 @@ import (
 	"github.com/wippyai/go-lua/analysis/snapshot"
 	effectfactor "github.com/wippyai/go-lua/domain/effect/factor"
 	effectpublication "github.com/wippyai/go-lua/domain/effect/publication"
+	packtransfer "github.com/wippyai/go-lua/domain/pack/transfer"
+	valuedomain "github.com/wippyai/go-lua/domain/value"
 )
 
 func diagnosticRuleForMountedRole(binding *composite.ProgramBinding, role engine.RuleSlotCapability) anadiag.AnalyzeDiagnosticRule {
@@ -278,18 +280,18 @@ func (state *compiledState) publishComposition(module *linkmodule.Component, con
 	if effects == nil || !vocabularyOK {
 		return anadiag.AnalyzeDiagnosticCompositionFailureInput, effectpublication.AxisKey
 	}
-	publicationDirectory, publicationDirectoryOK := effectfactor.DetachPublications(effects.Algebra(), state.binding.ValueSchema())
-	if !publicationDirectoryOK {
+	publicationDirectory, publicationDirectoryOK := effectfactor.DetachPublications(effects.Algebra())
+	if !publicationDirectoryOK || !publicationContextsAuthenticate(effects.Algebra(), state.binding.ValueSchema(), publicationDirectory) {
 		return anadiag.AnalyzeDiagnosticCompositionFailureRows, effectpublication.AxisKey
 	}
 	publicationDenominator, publicationDenominatorOK := effectpublication.DenominatorID(state.sourceID, publicationDirectory.Rows)
-	callsDenominator, callsDenominatorOK := effectpublication.CallsDenominatorID(state.sourceID, publicationDirectory.Calls)
+	callsDenominator, callsDenominatorOK := effectpublication.CallsDenominatorID(state.sourceID, publicationDirectory.CallRows())
 	membersDenominator, membersDenominatorOK := effectpublication.MembersDenominatorID(state.sourceID, publicationDirectory.MemberRows())
 	if !publicationDenominatorOK || !callsDenominatorOK || !membersDenominatorOK {
 		return anadiag.AnalyzeDiagnosticCompositionFailureDenominator, effectpublication.AxisKey
 	}
 	publicationContent, publicationContentOK := effectpublication.Content(publicationDirectory.Rows, publicationDenominator, declaredVocabulary)
-	callsContent, callsContentOK := effectpublication.CallsContent(publicationDirectory.Calls, len(publicationDirectory.Rows), callsDenominator)
+	callsContent, callsContentOK := effectpublication.CallsContent(publicationDirectory.CallRows(), len(publicationDirectory.Rows), callsDenominator)
 	membersContent, membersContentOK := effectpublication.MembersContent(publicationDirectory.MemberRows(), publicationDirectory.Rows, membersDenominator)
 	if !publicationContentOK || !callsContentOK || !membersContentOK {
 		return anadiag.AnalyzeDiagnosticCompositionFailureContent, effectpublication.AxisKey
@@ -619,4 +621,46 @@ func linkQualifiedTypes(source *link.Link) ([]typeauthority.QualifiedType, bool)
 		qualified = append(qualified, typeauthority.QualifiedType{Name: name, Value: value})
 	}
 	return qualified, true
+}
+
+// publicationContextsAuthenticate proves that every subject and context member
+// of every admitted publication resolves to a Value coordinate.
+//
+// A publication this Link cannot resolve the members of is one it cannot
+// authenticate, and it must not be published as one: a consumer reading the
+// column would be handed a publication whose subject names nothing it can
+// address. No consumer reads the context members, but the same statement holds
+// of them, because a destination that does not resolve is not a destination.
+//
+// The proof lives here rather than in the directory because Effect's algebra
+// holds no Value schema, and this is the one place that holds both.
+func publicationContextsAuthenticate(effects *effectfactor.Algebra, values *valuedomain.Schema, directory effectfactor.PublicationDirectory) bool {
+	if effects == nil || values == nil {
+		return false
+	}
+	for index := range directory.Rows {
+		row := directory.Rows[index]
+		subject, subjectOK := effects.PublicationSubjectInput(row.ID)
+		if !subjectOK || !subject.Valid() {
+			return false
+		}
+		for member := 0; member < subject.MemberCount(); member++ {
+			if _, resolved := packtransfer.CoordinateForInputMember(values, subject, member); !resolved {
+				return false
+			}
+		}
+		if !row.HasContext {
+			continue
+		}
+		input, inputOK := effects.PublicationContextInput(row.ID)
+		if !inputOK || !input.Valid() {
+			return false
+		}
+		for member := 0; member < input.MemberCount(); member++ {
+			if _, resolved := packtransfer.CoordinateForInputMember(values, input, member); !resolved {
+				return false
+			}
+		}
+	}
+	return true
 }

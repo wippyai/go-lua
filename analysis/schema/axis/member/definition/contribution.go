@@ -274,10 +274,11 @@ func (source Source) Compose() (Definition, bool) {
 		}
 	}
 	base.Reducers = composed
-	if !base.Complete() {
-		return Definition{}, false
-	}
-	return base, true
+	// The composed rows are returned even when they are not complete, so a
+	// caller can ask them why. Admission is still the bool: an incomplete
+	// definition is refused by every caller that checks it, and CompleteRefusal
+	// reads the same rows rather than admitting any of them.
+	return base, base.Complete()
 }
 
 // Roster is the composition's ordered registry of axis member sources. It is
@@ -481,6 +482,21 @@ func (roster Roster) Definition(name string) (string, Definition, bool) {
 		return "", Definition{}, false
 	}
 	return source.Package, composed, true
+}
+
+// ComposeRefusal names why one source does not compose, for the refusals whose
+// symptom is otherwise a bare false. It reports nothing for a source that
+// composes.
+func (roster Roster) ComposeRefusal(name string) string {
+	source, sourceOK := roster.Source(name)
+	if !sourceOK {
+		return ""
+	}
+	composed, composedOK := source.Compose()
+	if composedOK {
+		return ""
+	}
+	return composed.CompleteRefusal()
 }
 
 // packagePathAvailable states the roster's own fence on a source's Go package

@@ -33,6 +33,10 @@ func main() {
 	}
 	packageName, source, sourceOK := roster.Definition(*sourceName)
 	if !sourceOK {
+		refusal := roster.ComposeRefusal(*sourceName)
+		if refusal != "" {
+			fail("member definition source does not compose: " + *sourceName + ": " + refusal)
+		}
 		fail("member definition source does not compose: " + *sourceName)
 	}
 	relationsPackageName := packageName

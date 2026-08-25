@@ -20,6 +20,7 @@ import (
 	heapclosedprogram "github.com/wippyai/go-lua/domain/heap/allocation/closed/program"
 	heapempty "github.com/wippyai/go-lua/domain/heap/allocation/empty"
 	freezeprogram "github.com/wippyai/go-lua/domain/heap/formalfreeze/program"
+	publicationfreezeprogram "github.com/wippyai/go-lua/domain/heap/publicationfreeze/program"
 	returnprogram "github.com/wippyai/go-lua/domain/placement/returnescape/program"
 	storeprogram "github.com/wippyai/go-lua/domain/placement/store/program"
 	transferprogram "github.com/wippyai/go-lua/domain/placement/transfer/program"
@@ -73,6 +74,14 @@ func Families() []Family {
 				Spec:        heapclosedprogram.RuleEntry(),
 			},
 			Directory: "domain/heap/allocation/closed",
+		},
+		{
+			Target: emit.Target{
+				PackagePath: "github.com/wippyai/go-lua/domain/heap/publicationfreeze",
+				PackageName: "publicationfreeze",
+				Spec:        publicationfreezeprogram.RuleEntry(),
+			},
+			Directory: "domain/heap/publicationfreeze",
 		},
 		{
 			Target: emit.Target{
@@ -217,6 +226,16 @@ func Declarations() []Declaration {
 				Spec:        storeprogram.RuleEntry(),
 			},
 			Directory: "domain/placement/store/program",
+		},
+		{
+			Target: emitlaw.Target{
+				PackagePath: "github.com/wippyai/go-lua/domain/heap/publicationfreeze/program",
+				PackageName: "program",
+				Declaration: "PublicationFreeze",
+				Entry:       "RuleEntry",
+				Spec:        publicationfreezeprogram.RuleEntry(),
+			},
+			Directory: "domain/heap/publicationfreeze/program",
 		},
 		{
 			Target: emitlaw.Target{

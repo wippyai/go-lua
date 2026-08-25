@@ -5,6 +5,7 @@
 package definition
 
 import (
+	"fmt"
 	"go/token"
 	"path"
 	"strings"
@@ -1565,4 +1566,39 @@ func (definition Definition) ReducerSignature(reducer Reducer, outcome, cell, ve
 		results = append(results, carrier.Type)
 	}
 	return arguments, append(results, outcome), true
+}
+
+// CompleteRefusal names why this definition is not Complete, for the two
+// refusals whose symptom is otherwise a bare false.
+//
+// It admits nothing and gates nothing: Complete stays the authority, and this
+// only reads the same rows to say which one it tripped over. Both refusals
+// below are silent by construction - a misrouted projection looks exactly like
+// a missing one, and an unregistered derivation looks exactly like a malformed
+// one - so a definition that refuses without a reason costs a bisect to
+// locate. An empty string means this reports nothing about the refusal.
+func (definition Definition) CompleteRefusal() string {
+	declared := make(map[string]struct{}, len(definition.Relations))
+	for _, relation := range definition.Relations {
+		declared[relation.Name] = struct{}{}
+	}
+	for _, projection := range definition.Projections {
+		if _, found := declared[projection.Relation]; found {
+			continue
+		}
+		return fmt.Sprintf(
+			"projection %q names relation %q, which axis %q does not declare: a projection is folded to the axis its own Axis field names, and an unset Axis leaves it on the contributing rule's axis",
+			projection.Name, projection.Relation, string(definition.Axis))
+	}
+	for _, relation := range definition.Relations {
+		if derivationOptional(relation.Derivation) {
+			continue
+		}
+		if !scheduledForDeath(definition.Axis, relation.Key, relation.Derivation.Build) {
+			return fmt.Sprintf(
+				"relation %q declares an authored derivation that the migration ledger does not register: an authored derivation is admitted only while analysis/schema/axis/member/definition/scheduled_death.go says it is scheduled to be emitted",
+				relation.Name)
+		}
+	}
+	return ""
 }

@@ -62,6 +62,17 @@ type Algebra struct {
 	applicationCount     uint64
 	mountedCalls         []mountedCallRow
 	mountedCallIndex     map[mountedCallRef]uint32
+	publications         PublicationDirectory
+	publicationCallIndex map[mountedPublicationCallRef]uint32
+	publicationSubjects  map[identity.ContentID]uint32
+	publicationReceipts  map[identity.ContentID]MountedPublication
+}
+
+// mountedPublicationCallRef addresses one publication call by the mounted
+// coordinate both this directory and Call's own directory are keyed by.
+type mountedPublicationCallRef struct {
+	module     identity.ContentID
+	occurrence identity.ContentID
 }
 
 type artifactCallRow struct {
@@ -143,6 +154,13 @@ func NewWithMountedArtifacts(source *link.Link, packs *pack.Schema, contract *co
 		return nil, false
 	}
 	a.content = a.contentID()
+	// The publication directory is sealed here because it is a function of the
+	// mounted calls this algebra just sealed and of nothing else. A relation
+	// owner binds this algebra alone, so a directory derived later would be
+	// derived per read from state that cannot change.
+	if !a.sealPublications() {
+		return nil, false
+	}
 	return a, a.Valid()
 }
 

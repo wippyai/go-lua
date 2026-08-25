@@ -331,6 +331,19 @@ func rawRouteTag(key Key, role materialization.Role) (RawRouteTag, bool) {
 	return tag, tag != 0
 }
 
+// RouteForTag admits one owner-issued route tag back as the coordinate and
+// role it was issued for. It is the inverse of RouteTag, and it exists because
+// a routed fold is handed the tag its cells were paired by rather than the
+// coordinate: without an inverse the tag is a presence bit, and a judgment
+// that must read or publish at the route would have no coordinate to name.
+//
+// It fences the tag to this Schema and re-encodes it canonically, so a tag
+// this Schema did not issue, or one whose numeric form is not the one it would
+// have written, is refused rather than decoded into a neighbouring slot.
+func (schema Schema) RouteForTag(route RawRouteTag) (Key, materialization.Role, bool) {
+	return schema.rawRoute(route)
+}
+
 // rawRoute decodes a compact route tag only after fencing it to this Schema.
 // The canonical re-encoding check rejects malformed numeric representations.
 func (schema Schema) rawRoute(route RawRouteTag) (Key, materialization.Role, bool) {

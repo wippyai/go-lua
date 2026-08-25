@@ -1,6 +1,7 @@
 package composite
 
 import (
+	"fmt"
 	"strconv"
 
 	analysiscatalog "github.com/wippyai/go-lua/analysis/catalog"
@@ -762,4 +763,63 @@ func SemanticRoles(compilation Compilation) (vocabulary.Roles, bool) {
 		return vocabulary.Roles{}, false
 	}
 	return state.roles, state.roles.Available()
+}
+
+// CatalogRefusal names the first rule whose program clauses refuse the
+// catalog, and which clause refused it.
+//
+// A SealFailure carries a law and an entry identity but no authored key, which
+// is right for a value that crosses surfaces and useless for locating the rule
+// that raised it. This reads the same templates the catalog is built from and
+// says which one, so a refused composition names itself instead of costing a
+// bisect. It admits nothing: newCatalog remains the authority.
+func CatalogRefusal() string {
+	return catalogRefusal(schema.SealFailure{})
+}
+
+// catalogRefusal names the rule a failure points at, and the program clause
+// that refuses it when one does. A Rule-surface failure carries an entry
+// identity, which is the only handle on WHICH rule refused; resolving it back
+// to the authored key is what makes the refusal readable.
+func catalogRefusal(failure schema.SealFailure) string {
+	templates, _, ok := RuleTemplates[principals, authorities]()
+	if !ok {
+		return "the rule templates do not wire"
+	}
+	named := ""
+	if failure.Contributor == schema.SurfaceKindRule && failure.Entry != (schema.EntryID{}) {
+		for _, template := range templates {
+			if template.ID() == failure.Entry {
+				named = fmt.Sprintf("rule %q", string(template.Key()))
+				if refusal := template.ProgramRefusal(); refusal != "" {
+					return refusal
+				}
+				break
+			}
+		}
+		if named == "" {
+			named = "an entry no wired rule declares"
+		}
+	}
+	for _, template := range templates {
+		if refusal := template.ProgramRefusal(); refusal != "" {
+			return refusal
+		}
+	}
+	return named
+}
+
+// BuildRefusal is the failure the catalog composition refuses with, beside the
+// named cause when one of the rule program clauses is what refused it.
+//
+// Build answers a bool because a caller either has a compilation or does not.
+// This answers the question that bool leaves open, and it is the surface a law
+// or a tool reports a refused composition through rather than re-deriving the
+// composition to guess at it.
+func BuildRefusal() (schema.SealFailure, string) {
+	state, failure := newCatalog()
+	if state != nil && state.failure.Available() {
+		failure = state.failure
+	}
+	return failure, catalogRefusal(failure)
 }

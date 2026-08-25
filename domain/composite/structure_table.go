@@ -26,7 +26,7 @@ import (
 	heapfreezeprogram "github.com/wippyai/go-lua/domain/heap/formalfreeze/program"
 	heapindex "github.com/wippyai/go-lua/domain/heap/index"
 	heapowner "github.com/wippyai/go-lua/domain/heap/owner"
-	heappublicationfreeze "github.com/wippyai/go-lua/domain/heap/publicationfreeze"
+	heappublicationfreezeprogram "github.com/wippyai/go-lua/domain/heap/publicationfreeze/program"
 	packowner "github.com/wippyai/go-lua/domain/pack/owner"
 	packsource "github.com/wippyai/go-lua/domain/pack/source"
 	placementcapture "github.com/wippyai/go-lua/domain/placement/capture"
@@ -227,7 +227,7 @@ func semanticRoleVocabulary() []structure.Spec {
 		valuemoduleloadprogram.StructureSpecs(),
 		heapfreezeprogram.StructureSpecs(),
 		placementpublicationescape.StructureSpecs(),
-		heappublicationfreeze.StructureSpecs(),
+		heappublicationfreezeprogram.StructureSpecs(),
 		placementtransferprogram.StructureSpecs(),
 		valueresultaliasprogram.StructureSpecs(),
 		valuefreshresult.StructureSpecs(),
