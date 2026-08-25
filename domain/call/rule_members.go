@@ -10,27 +10,46 @@ import (
 )
 
 const (
-	MountedCallCandidates schemaapi.Key  = "call/mounted-call/candidates"
-	MountedCallFacts      schemaapi.Key  = "call/mounted-call/facts"
-	MountedCallCoordinate schemaapi.Key  = "call/mounted-call/coordinate"
-	MountedCallFactKey    schemaapi.Key  = "call/mounted-call/fact-key"
-	CallKeyCarrier        member.Carrier = "carrier/call/key"
-	CallFactCarrier       member.Carrier = "carrier/call/fact"
-	CallCoordinateCarrier member.Carrier = "carrier/call/mounted-call"
+	MountedCallCandidates    schemaapi.Key  = "call/mounted-call/candidates"
+	MountedCallFacts         schemaapi.Key  = "call/mounted-call/facts"
+	DispatchRoutes           schemaapi.Key  = "call/dispatch/routes"
+	MountedCallCoordinate    schemaapi.Key  = "call/mounted-call/coordinate"
+	MountedCallFactKey       schemaapi.Key  = "call/mounted-call/fact-key"
+	DispatchRouteKey         schemaapi.Key  = "call/dispatch/route-key"
+	DispatchRouteTag         schemaapi.Key  = "call/dispatch/route-tag"
+	DispatchRouteDestination schemaapi.Key  = "call/dispatch/route-destination"
+	DispatchReducer          schemaapi.Key  = "call/dispatch/reducer"
+	CallKeyCarrier           member.Carrier = "carrier/call/key"
+	CallFactCarrier          member.Carrier = "carrier/call/fact"
+	CallCoordinateCarrier    member.Carrier = "carrier/call/mounted-call"
+	ValueFactCarrier         member.Carrier = "carrier/value/fact"
+	DispatchRouteCarrier     member.Carrier = "carrier/call/dispatch-route"
+	DispatchRouteTagCarrier  member.Carrier = "carrier/call/dispatch-route-tag"
 )
 
 // AxisMemberCatalog is call's declaration-only member vocabulary.
 func AxisMemberCatalog() member.Catalog {
+	valueAxis := schemaapi.EntryReference{Surface: schemaapi.SurfaceKindAxis, Key: "call"}
 	catalog, ok := member.NewCatalog(
 		[]member.Relation{
 			{Key: MountedCallCandidates, Subject: CallCoordinateCarrier, CandidateProvider: member.AxisRelationCandidate(member.RelationRef{Axis: schemaapi.EntryReference{Surface: schemaapi.SurfaceKind(2), Key: "call"}, Member: "call/mounted-call/candidates"})},
 			{Key: MountedCallFacts, Subject: CallFactCarrier, CandidateProvider: member.AxisRelationCandidate(member.RelationRef{Axis: schemaapi.EntryReference{Surface: schemaapi.SurfaceKind(2), Key: "call"}, Member: "call/mounted-call/candidates"}), Inputs: []member.Carrier{CallCoordinateCarrier}},
+			{Key: DispatchRoutes, Subject: DispatchRouteCarrier, CandidateProvider: member.AxisRelationCandidate(member.RelationRef{Axis: schemaapi.EntryReference{Surface: schemaapi.SurfaceKind(2), Key: "call"}, Member: "call/mounted-call/candidates"}), Inputs: []member.Carrier{CallCoordinateCarrier, ValueFactCarrier}},
 		},
 		[]member.Projection{
 			{Key: MountedCallCoordinate, Relation: MountedCallCandidates, Role: member.Destination, Result: CallKeyCarrier, CandidateProvider: member.AxisRelationCandidate(member.RelationRef{Axis: schemaapi.EntryReference{Surface: schemaapi.SurfaceKind(2), Key: "call"}, Member: "call/mounted-call/candidates"})},
 			{Key: MountedCallFactKey, Relation: MountedCallFacts, Role: member.Key, Result: CallKeyCarrier, CandidateProvider: member.AxisRelationCandidate(member.RelationRef{Axis: schemaapi.EntryReference{Surface: schemaapi.SurfaceKind(2), Key: "call"}, Member: "call/mounted-call/candidates"})},
+			{Key: DispatchRouteKey, Relation: DispatchRoutes, Role: member.Key, Result: CallKeyCarrier, CandidateProvider: member.AxisRelationCandidate(member.RelationRef{Axis: schemaapi.EntryReference{Surface: schemaapi.SurfaceKind(2), Key: "call"}, Member: "call/mounted-call/candidates"})},
+			{Key: DispatchRouteTag, Relation: DispatchRoutes, Role: member.Predicate, Result: DispatchRouteTagCarrier, CandidateProvider: member.AxisRelationCandidate(member.RelationRef{Axis: schemaapi.EntryReference{Surface: schemaapi.SurfaceKind(2), Key: "call"}, Member: "call/mounted-call/candidates"})},
+			{Key: DispatchRouteDestination, Relation: DispatchRoutes, Role: member.Destination, Result: CallKeyCarrier, CandidateProvider: member.AxisRelationCandidate(member.RelationRef{Axis: schemaapi.EntryReference{Surface: schemaapi.SurfaceKind(2), Key: "call"}, Member: "call/mounted-call/candidates"})},
 		},
-		[]member.Reducer{},
+		[]member.Reducer{
+			{Key: DispatchReducer, Inputs: []member.ReducerInput{
+				{Axis: valueAxis, Carrier: CallFactCarrier, Form: member.ReadFormSelected, Multiplicity: member.MultiplicityOne, Tag: DispatchRouteTagCarrier, Route: CallKeyCarrier},
+			}, Outputs: []member.ReducerOutput{
+				{Axis: valueAxis, Carrier: CallFactCarrier},
+			}},
+		},
 		[]member.CarryTransform{},
 	)
 	if !ok {

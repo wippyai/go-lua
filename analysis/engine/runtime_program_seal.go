@@ -219,7 +219,7 @@ func (committed *CommittedProgram) bindObservationRows(plane *programPlane, obse
 		if _, duplicate := admitted[declared.ID]; duplicate {
 			return nil, observationSealFailureDuplicate
 		}
-		row, ok := declared.admit.bindProgramObservation(plane, declared.ID, member.member, point, declared.Context)
+		row, ok := declared.admit.bindProgramObservation(plane, declared.ID, member.member, point, declared.Context, declared.exactSurface, declared.exactSurfaceOK)
 		if !ok || !row.valid() {
 			return nil, observationSealFailureFactor
 		}

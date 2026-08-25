@@ -39,7 +39,7 @@ func TestARouteMemberIsTheWholeRouteOrNothing(t *testing.T) {
 	fixture := newSelectedFixture(t)
 	plane := routedPlane(t, fixture)
 	for index := 0; index < selectedFixtureWidth; index++ {
-		member, resolved := plane.RouteMember(uint32(index), uint64(index)+1)
+		member, resolved := plane.RouteMember(uint32(index), uint32(index), uint64(index)+1)
 		if !resolved || !member.Valid() {
 			t.Fatalf("dense %d resolved no route member", index)
 		}
@@ -53,7 +53,7 @@ func TestARouteMemberIsTheWholeRouteOrNothing(t *testing.T) {
 			t.Fatalf("dense %d carries tag %d, want the one its relation issued", index, member.Tag())
 		}
 	}
-	if _, resolved := plane.RouteMember(selectedFixtureWidth, 1); resolved {
+	if _, resolved := plane.RouteMember(selectedFixtureWidth, selectedFixtureWidth, 1); resolved {
 		t.Fatal("a dense position outside the geometry resolved a route")
 	}
 }
@@ -73,7 +73,7 @@ func TestRouteGeometryIsOnlyVisibleToARuleThatDeclaredARoute(t *testing.T) {
 	if !planeOK {
 		t.Fatal("form plane")
 	}
-	if _, resolved := plane.RouteMember(0, 1); resolved {
+	if _, resolved := plane.RouteMember(0, 0, 1); resolved {
 		t.Fatal("an unnarrowed plane resolved a route member")
 	}
 	if width := plane.RouteWidth(); width != 0 {
@@ -83,7 +83,7 @@ func TestRouteGeometryIsOnlyVisibleToARuleThatDeclaredARoute(t *testing.T) {
 	if !exactOK {
 		t.Fatal("narrowed exact plane")
 	}
-	if _, resolved := exact.RouteMember(0, 1); resolved {
+	if _, resolved := exact.RouteMember(0, 0, 1); resolved {
 		t.Fatal("a rule that declares no route resolved a route member")
 	}
 	if width := exact.RouteWidth(); width != 0 {
@@ -115,24 +115,23 @@ func TestARouteMemberIsAuthenticatedAgainstItsOwnFactor(t *testing.T) {
 		t.Fatal("narrowed plane")
 	}
 	for index := 0; index < selectedFixtureWidth; index++ {
-		if _, resolved := narrowed.RouteMember(uint32(index), 1); resolved {
+		if _, resolved := narrowed.RouteMember(uint32(index), uint32(index), 1); resolved {
 			t.Fatalf("dense %d of a foreign geometry resolved as this Factor's route", index)
 		}
 	}
 }
 
-// TestRouteGeometryHasNoHalves states the pairing invariant at the seal. The
-// destination half is optional, but where it is present it is the SAME
-// universe: a destination set of another width would pair coordinates with
-// destinations that were never sealed against them, which is a route only one
-// half of a row could follow.
-func TestRouteGeometryHasNoHalves(t *testing.T) {
+// TestRouteGeometryKeepsReadAndDestinationExtentsIndependent states the
+// separate-coordinate invariant at the seal. The destination half is
+// optional, and its extent need not equal the read coordinate extent: the
+// plane authenticates each dense index when a route member is resolved.
+func TestRouteGeometryKeepsReadAndDestinationExtentsIndependent(t *testing.T) {
 	fixture := newSelectedFixture(t)
-	if _, sealed := NewRouteTable(fixture.units, fixture.targets[:2]); sealed {
-		t.Fatal("a geometry with fewer destinations than coordinates was sealed")
+	if table, sealed := NewRouteTable(fixture.units, fixture.targets[:2]); !sealed || !table.Routed() {
+		t.Fatal("a geometry with an independently sized destination space was refused")
 	}
-	if _, sealed := NewRouteTable(fixture.units[:2], fixture.targets); sealed {
-		t.Fatal("a geometry with fewer coordinates than destinations was sealed")
+	if table, sealed := NewRouteTable(fixture.units[:2], fixture.targets); !sealed || !table.Routed() {
+		t.Fatal("a geometry with an independently sized read space was refused")
 	}
 	empty, sealed := NewRouteTable(nil, nil)
 	if !sealed || empty.Width() != 0 {
@@ -148,13 +147,13 @@ func TestRouteGeometryHasNoHalves(t *testing.T) {
 func TestARouteMemberCarriesNoHandleOnTheGeometry(t *testing.T) {
 	fixture := newSelectedFixture(t)
 	plane := routedPlane(t, fixture)
-	member, resolved := plane.RouteMember(0, 1)
+	member, resolved := plane.RouteMember(0, 0, 1)
 	if !resolved {
 		t.Fatal("route member")
 	}
 	member.coordinate = SelectedCoordinate{Unit: fixture.units[1], Tag: 99}
 	member.target = fixture.targets[1]
-	again, resolvedAgain := plane.RouteMember(0, 1)
+	again, resolvedAgain := plane.RouteMember(0, 0, 1)
 	if !resolvedAgain {
 		t.Fatal("route member after mutation")
 	}
@@ -174,27 +173,27 @@ func TestARoutedRowPublishesTheRelationItObserved(t *testing.T) {
 	if !writeOK {
 		t.Fatal("route write")
 	}
-	cells, members := routeCells(fixture, 3)
+	cells, members, routes := routeCells(fixture, 3)
 
 	run := NewRun(1, 1)
 	ticket := issueSelected(t, run, fixture, fixture.state)
 	var scratch RouteScratch[uint64, uint64]
 	shifted := []RouteMember{members[1], members[2], members[0]}
-	if outcome := FoldSelectedRoute(ticket, write, &scratch, cells, shifted, routeLawReducer{empty: structure.NoSelection, failAt: -1}); outcome != structure.Refuse {
+	if outcome := FoldSelectedRoute(ticket, write, &scratch, cells, shifted, routes, routeLawReducer{empty: structure.NoSelection, failAt: -1}); outcome != structure.Refuse {
 		t.Fatalf("a row that published a second member set settled %v, want refuse", outcome)
 	}
 
 	narrow := NewRun(1, 1)
 	narrowTicket := issueSelected(t, narrow, fixture, fixture.state)
 	var narrowScratch RouteScratch[uint64, uint64]
-	if outcome := FoldSelectedRoute(narrowTicket, write, &narrowScratch, cells, members[:2], routeLawReducer{empty: structure.NoSelection, failAt: -1}); outcome != structure.Refuse {
+	if outcome := FoldSelectedRoute(narrowTicket, write, &narrowScratch, cells, members[:2], routes, routeLawReducer{empty: structure.NoSelection, failAt: -1}); outcome != structure.Refuse {
 		t.Fatalf("a row with fewer destinations than observations settled %v, want refuse", outcome)
 	}
 
 	whole := NewRun(1, 1)
 	wholeTicket := issueSelected(t, whole, fixture, fixture.state)
 	var wholeScratch RouteScratch[uint64, uint64]
-	if outcome := FoldSelectedRoute(wholeTicket, write, &wholeScratch, cells, members, routeLawReducer{empty: structure.NoSelection, failAt: -1}); outcome != structure.Concrete {
+	if outcome := FoldSelectedRoute(wholeTicket, write, &wholeScratch, cells, members, routes, routeLawReducer{empty: structure.NoSelection, failAt: -1}); outcome != structure.Concrete {
 		t.Fatalf("the observed relation settled %v, want concrete", outcome)
 	}
 }
@@ -221,13 +220,13 @@ func TestARouteMemberRefusesAWeakOrUnobservableCoordinate(t *testing.T) {
 	if !narrowedOK {
 		t.Fatal("narrowed plane")
 	}
-	if _, resolved := narrowed.RouteMember(1, 1); resolved {
+	if _, resolved := narrowed.RouteMember(1, 1, 1); resolved {
 		t.Fatal("a coordinate with no exact observation resolved a route")
 	}
-	if _, resolved := narrowed.RouteMember(2, 1); resolved {
+	if _, resolved := narrowed.RouteMember(2, 2, 1); resolved {
 		t.Fatal("a coordinate with no strong destination resolved a route")
 	}
-	if _, resolved := narrowed.RouteMember(0, 1); !resolved {
+	if _, resolved := narrowed.RouteMember(0, 0, 1); !resolved {
 		t.Fatal("a whole geometry row resolved no route")
 	}
 }
@@ -306,7 +305,7 @@ func TestADependentJoinResolvesCoordinatesAndNoDestinations(t *testing.T) {
 	if !member.Coordinate().Unit.Same(fixture.units[0]) || member.Tag() != 1 {
 		t.Fatal("the member does not name the coordinate its position holds")
 	}
-	if _, resolved := selected.RouteMember(0, 1); resolved {
+	if _, resolved := selected.RouteMember(0, 0, 1); resolved {
 		t.Fatal("a rule that publishes no route resolved a whole route")
 	}
 	if width := selected.SelectedWidth(); width != selectedFixtureWidth {
@@ -338,15 +337,15 @@ func TestAFactorWithNoDestinationsStillHasCoordinates(t *testing.T) {
 	if table.Routed() || table.Width() != selectedFixtureWidth {
 		t.Fatalf("geometry routed=%t width=%d", table.Routed(), table.Width())
 	}
-	if _, resolved := table.routeMember(0, 1); resolved {
+	if _, resolved := table.routeMember(0, 0, 1); resolved {
 		t.Fatal("a geometry with no destinations resolved a route")
 	}
 	member, resolved := table.selectedMember(0, 1)
 	if !resolved || !member.Valid() || member.Routed() {
 		t.Fatal("a geometry with no destinations resolved no observation")
 	}
-	if _, sealed := NewRouteTable(fixture.units, fixture.targets[:2]); sealed {
-		t.Fatal("a destination half of another width was sealed")
+	if table, sealed := NewRouteTable(fixture.units, fixture.targets[:2]); !sealed || !table.Routed() {
+		t.Fatal("an independently sized destination half was refused")
 	}
 }
 
@@ -359,13 +358,13 @@ func TestARoutedFoldRefusesAMemberItMayOnlyRead(t *testing.T) {
 	if !writeOK {
 		t.Fatal("route write")
 	}
-	cells, members := routeCells(fixture, 2)
+	cells, members, routes := routeCells(fixture, 2)
 	readOnly := append([]RouteMember(nil), members...)
 	readOnly[1] = RouteMember{coordinate: members[1].Coordinate()}
 	run := NewRun(1, 1)
 	ticket := issueSelected(t, run, fixture, fixture.state)
 	var scratch RouteScratch[uint64, uint64]
-	if outcome := FoldSelectedRoute(ticket, write, &scratch, cells, readOnly, routeLawReducer{empty: structure.NoSelection, failAt: -1}); outcome != structure.Refuse {
+	if outcome := FoldSelectedRoute(ticket, write, &scratch, cells, readOnly, routes, routeLawReducer{empty: structure.NoSelection, failAt: -1}); outcome != structure.Refuse {
 		t.Fatalf("a fold published through a member it may only read, settling %v", outcome)
 	}
 }

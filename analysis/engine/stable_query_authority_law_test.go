@@ -24,6 +24,7 @@ type receiptQueryMatrixFixture struct {
 	projectRuns          *int
 	freezeRuns           *int
 	binding              *SchemaBinding
+	factor               *FactorSlot[uint64]
 	graph                *CommittedProgram
 	addressed            []composition.Key
 	queryImplementations []*ExactQueryImplementation[uint64, uint64]
@@ -321,7 +322,7 @@ func buildReceiptQueryMatrixFixtureWithOptions(t testing.TB, count int, observed
 	for index := range implementations {
 		implementations[index] = queryImplementation
 	}
-	return receiptQueryMatrixFixture{solver: solver, queries: queries, expected: expected, schemaID: identity.ContentID(schema.ID().Digest()), topologyKey: program.topology.Key(), transferRuns: transferRuns, projectRuns: projectRuns, freezeRuns: freezeRuns, binding: binding, graph: program, addressed: addressed, queryImplementations: implementations, observations: observations, observationIDs: observationIDs}
+	return receiptQueryMatrixFixture{solver: solver, queries: queries, expected: expected, schemaID: identity.ContentID(schema.ID().Digest()), topologyKey: program.topology.Key(), transferRuns: transferRuns, projectRuns: projectRuns, freezeRuns: freezeRuns, binding: binding, factor: factor, graph: program, addressed: addressed, queryImplementations: implementations, observations: observations, observationIDs: observationIDs}
 }
 
 // newBorrowedQueryFixture is the current sealed-program replacement for the

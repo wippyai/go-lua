@@ -18,11 +18,20 @@ type LinkBootstrapPoint struct {
 type LinkBootstrapWitness struct {
 	owner               identity.ContentID
 	point               LinkBootstrapPoint
-	occurrences         []identity.ContentID
+	claims              []linkBootstrapClaim
 	byCapability        map[RuleSlotCapability]map[identity.ContentID]struct{}
 	catalogCapabilities []RuleSlotCapability
 
 	available bool
+}
+
+// linkBootstrapClaim is the canonical Link bootstrap address. An occurrence
+// identity is only meaningful in the namespace of the capability that issued
+// it; the same owner-issued occurrence may therefore be admitted by distinct
+// capabilities without either capability laundering the other one.
+type linkBootstrapClaim struct {
+	capability RuleSlotCapability
+	occurrence identity.ContentID
 }
 
 // Available reports whether this witness seals one owner-issued bootstrap
@@ -38,7 +47,10 @@ func (witness LinkBootstrapWitness) completeSeam() bool {
 // its occurrence catalog. Empty occurrence catalogs are valid and remain
 // explicit; an unavailable catalog is not silently synthesized.
 func NewLinkBootstrapWitness(owner identity.ContentID, point LinkBootstrapPoint, occurrences []identity.ContentID) (LinkBootstrapWitness, bool) {
-	if !owner.Available() || !point.Known || !point.PointID.Available() {
+	// A capability-less constructor can only seal the empty Link catalog. An
+	// occurrence without its issuing capability has no valid address and must
+	// not be retained as an unreachable side channel.
+	if !owner.Available() || !point.Known || !point.PointID.Available() || len(occurrences) != 0 {
 		return LinkBootstrapWitness{}, false
 	}
 	for _, decision := range point.DecisionID {
@@ -46,18 +58,8 @@ func NewLinkBootstrapWitness(owner identity.ContentID, point LinkBootstrapPoint,
 			return LinkBootstrapWitness{}, false
 		}
 	}
-	seen := make(map[identity.ContentID]struct{}, len(occurrences))
-	for _, id := range occurrences {
-		if !id.Available() {
-			return LinkBootstrapWitness{}, false
-		}
-		if _, duplicate := seen[id]; duplicate {
-			return LinkBootstrapWitness{}, false
-		}
-		seen[id] = struct{}{}
-	}
 	point.DecisionID = append([]identity.ContentID(nil), point.DecisionID...)
-	witness := LinkBootstrapWitness{owner: owner, point: point, occurrences: append([]identity.ContentID(nil), occurrences...), byCapability: make(map[RuleSlotCapability]map[identity.ContentID]struct{})}
+	witness := LinkBootstrapWitness{owner: owner, point: point, byCapability: make(map[RuleSlotCapability]map[identity.ContentID]struct{})}
 	witness.available = witness.completeSeam()
 	return witness, witness.available
 }
@@ -71,11 +73,11 @@ type LinkBootstrapCatalog struct {
 
 // NewLinkBootstrapWitnessByCapability seals Link-global occurrence namespaces
 // under parent-issued slot capabilities, retaining the caller's catalog order.
-// A combined catalog is insufficient: an occurrence admitted for one slot must
-// not be claimable by another slot, so each capability keeps a namespace of its
-// own and the namespaces stay disjoint. This inventory contains every Link
-// rule; the smaller bootstrap transport set is a separate sealed Binding
-// property and is never inferred from these catalogs.
+// The address is (capability, occurrence), not occurrence alone: an
+// owner-issued occurrence may be present in more than one capability
+// namespace, while a duplicate inside one namespace is refused. This
+// inventory contains every Link rule; the smaller bootstrap transport set is a
+// separate sealed Binding property and is never inferred from these catalogs.
 func NewLinkBootstrapWitnessByCapability(owner identity.ContentID, point LinkBootstrapPoint, catalogs ...LinkBootstrapCatalog) (LinkBootstrapWitness, bool) {
 	if !owner.Available() || !point.Known || !point.PointID.Available() || len(catalogs) == 0 {
 		return LinkBootstrapWitness{}, false
@@ -91,8 +93,7 @@ func NewLinkBootstrapWitnessByCapability(owner identity.ContentID, point LinkBoo
 	}
 	byCapability := make(map[RuleSlotCapability]map[identity.ContentID]struct{}, len(catalogs))
 	capabilities := make([]RuleSlotCapability, 0, len(catalogs))
-	combined := make([]identity.ContentID, 0, total)
-	claimed := make(map[identity.ContentID]struct{}, total)
+	claims := make([]linkBootstrapClaim, 0, total)
 	for _, catalog := range catalogs {
 		if !catalog.Capability.link() {
 			return LinkBootstrapWitness{}, false
@@ -105,18 +106,17 @@ func NewLinkBootstrapWitnessByCapability(owner identity.ContentID, point LinkBoo
 			if !id.Available() {
 				return LinkBootstrapWitness{}, false
 			}
-			if _, claimedElsewhere := claimed[id]; claimedElsewhere {
+			if _, duplicate := namespace[id]; duplicate {
 				return LinkBootstrapWitness{}, false
 			}
-			claimed[id] = struct{}{}
 			namespace[id] = struct{}{}
-			combined = append(combined, id)
+			claims = append(claims, linkBootstrapClaim{capability: catalog.Capability, occurrence: id})
 		}
 		byCapability[catalog.Capability] = namespace
 		capabilities = append(capabilities, catalog.Capability)
 	}
 	point.DecisionID = append([]identity.ContentID(nil), point.DecisionID...)
-	witness := LinkBootstrapWitness{owner: owner, point: point, occurrences: combined, byCapability: byCapability, catalogCapabilities: capabilities}
+	witness := LinkBootstrapWitness{owner: owner, point: point, claims: claims, byCapability: byCapability, catalogCapabilities: capabilities}
 	witness.available = witness.completeSeam()
 	return witness, witness.available
 }
@@ -136,24 +136,19 @@ func (witness LinkBootstrapWitness) catalogCapabilityAt(index int) (RuleSlotCapa
 	return capability, capability.link()
 }
 
-func (witness LinkBootstrapWitness) capabilityFor(occurrence identity.ContentID) (RuleSlotCapability, bool) {
-	if !witness.Available() || !occurrence.Available() {
-		return RuleSlotCapability{}, false
+// admits authenticates one exact capability+occurrence address. It never
+// searches other capability namespaces and therefore cannot turn an
+// occurrence-only identity into a cross-slot claim.
+func (witness LinkBootstrapWitness) admits(capability RuleSlotCapability, occurrence identity.ContentID) bool {
+	if !witness.Available() || !capability.link() || !occurrence.Available() {
+		return false
 	}
-	// Capability namespaces are disjoint: an occurrence admitted for one slot is
-	// never claimable by another. A cross-slot claim is a contract violation and
-	// is rejected here, never resolved by picking one of the claimants.
-	result, claimed := RuleSlotCapability{}, false
-	for capability, occurrences := range witness.byCapability {
-		if _, ok := occurrences[occurrence]; !ok {
-			continue
-		}
-		if claimed {
-			return RuleSlotCapability{}, false
-		}
-		result, claimed = capability, true
+	namespace, found := witness.byCapability[capability]
+	if !found {
+		return false
 	}
-	return result, claimed
+	_, found = namespace[occurrence]
+	return found
 }
 
 func (witness LinkBootstrapWitness) OwnerID() identity.ContentID {
@@ -172,16 +167,20 @@ func (witness LinkBootstrapWitness) Point() (LinkBootstrapPoint, bool) {
 	return point, true
 }
 
-func (witness LinkBootstrapWitness) OccurrenceCount() int {
+func (witness LinkBootstrapWitness) claimCount() int {
 	if !witness.Available() {
 		return 0
 	}
-	return len(witness.occurrences)
+	return len(witness.claims)
 }
 
-func (witness LinkBootstrapWitness) OccurrenceAt(index int) (identity.ContentID, bool) {
-	if !witness.Available() || index < 0 || index >= len(witness.occurrences) {
-		return identity.ContentID{}, false
+// claimAt returns the sealed address in catalog order. The capability is
+// returned with the occurrence so callers cannot accidentally discard the
+// namespace while iterating the inventory.
+func (witness LinkBootstrapWitness) claimAt(index int) (RuleSlotCapability, identity.ContentID, bool) {
+	if !witness.Available() || index < 0 || index >= len(witness.claims) {
+		return RuleSlotCapability{}, identity.ContentID{}, false
 	}
-	return witness.occurrences[index], true
+	claim := witness.claims[index]
+	return claim.capability, claim.occurrence, witness.admits(claim.capability, claim.occurrence)
 }

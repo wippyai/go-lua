@@ -144,24 +144,32 @@ func (scratch *RouteScratch[K, V]) finish() {
 	scratch.staged = 0
 }
 
-// RouteReducer is the typed semantic half of one J/WR family. It is consumed as
-// a type parameter and instantiated with the family's own concrete type, so
-// every call below is a static direct call: there is no interface value, no
-// closure and no function field per route, per cell, or per member.
+// RouteReducer is the typed semantic half of one J/WR family. K is the
+// destination carrier issued by the route relation; V is the fact carrier
+// observed at that route. Both are consumed as type parameters and
+// instantiated with the family's own concrete type, so every call below is a
+// static direct call: there is no interface value, no closure and no function
+// field per route, per cell, or per member.
 //
-// Reduce answers one selected route. Empty answers the row whose derived
-// relation produced no route at all - which is the one place a fold can settle
-// the explicitly empty selection, because it is the only place that knows the
-// selection is empty rather than unread.
-type RouteReducer[V any] interface {
-	Reduce(cell SelectedCell[V]) (V, structure.ReductionOutcome)
+// Reduce receives the exact owner-issued destination coordinate paired with
+// the selected cell that the same relation member produced. The coordinate is
+// supplied by the caller-owned route vector; it is never reconstructed from a
+// dense position, a tag, or RouteMember's opaque write target.
+//
+// Empty answers the row whose derived relation produced no route at all -
+// which is the one place a fold can settle the explicitly empty selection,
+// because it is the only place that knows the selection is empty rather than
+// unread.
+type RouteReducer[K any, V any] interface {
+	Reduce(route K, cell SelectedCell[V]) (V, structure.ReductionOutcome)
 	Empty() structure.ReductionOutcome
 }
 
 // FoldSelectedRoute is the J/WR fold: every selected member is reduced and
 // staged at its own route destination, and the row settles one of the five
-// declared dispositions. The cells and the members are the two halves of one
-// materialized relation - the same member vector the selected read observed -
+// declared dispositions. The routes, cells, and members are the three halves
+// of one materialized relation - the destination projection, observed cell,
+// and authenticated route member all come from the same ordered member row -
 // so a destination is never paired with a fact observed somewhere else.
 //
 // Concrete requires every route to be Concrete. A row cannot publish half a
@@ -169,15 +177,16 @@ type RouteReducer[V any] interface {
 // row and the staged patch is discarded. An empty derived relation never opens
 // a patch and settles whatever the reducer concludes about its own empty
 // selection, which must not be Concrete: there is no coordinate to publish at.
-func FoldSelectedRoute[K scalar.Key, V any, R RouteReducer[V]](
+func FoldSelectedRoute[D scalar.Key, K any, V any, R RouteReducer[K, V]](
 	ticket Ticket,
-	write RouteWrite[K, V],
-	scratch *RouteScratch[K, V],
+	write RouteWrite[D, V],
+	scratch *RouteScratch[D, V],
 	cells []SelectedCell[V],
 	members []RouteMember,
+	routes []K,
 	reducer R,
 ) structure.ReductionOutcome {
-	if scratch == nil || !write.Valid() || len(members) != len(cells) {
+	if scratch == nil || !write.Valid() || len(members) != len(cells) || len(routes) != len(cells) {
 		return structure.Refuse
 	}
 	if len(cells) == 0 {
@@ -197,7 +206,7 @@ func FoldSelectedRoute[K scalar.Key, V any, R RouteReducer[V]](
 			_ = write.Discard(scratch)
 			return structure.Refuse
 		}
-		value, outcome := reducer.Reduce(cell)
+		value, outcome := reducer.Reduce(routes[index], cell)
 		if !outcome.Available() {
 			_ = write.Discard(scratch)
 			return structure.Refuse

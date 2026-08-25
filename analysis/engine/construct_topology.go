@@ -434,10 +434,9 @@ func constructMountPlane(declaration topologyDeclaration, source constructedSour
 	if !validateSealedLinkBootstrapCatalog(source.state, declaration.bootstrap) {
 		return constructedMountPlane{}, refuseAdmission(topologyConstructionStepBootstrapRow, 0)
 	}
-	for index := 0; index < declaration.bootstrap.OccurrenceCount(); index++ {
-		occurrence, occurrenceOK := declaration.bootstrap.OccurrenceAt(index)
-		capability, capabilityOK := declaration.bootstrap.capabilityFor(occurrence)
-		if !occurrenceOK || !capabilityOK || !capability.link() || capability.state != source.state || capability.authority != source.authority {
+	for index := 0; index < declaration.bootstrap.claimCount(); index++ {
+		capability, occurrence, claimOK := declaration.bootstrap.claimAt(index)
+		if !claimOK || !capability.link() || capability.state != source.state || capability.authority != source.authority || !declaration.bootstrap.admits(capability, occurrence) {
 			return constructedMountPlane{}, refuseAdmission(topologyConstructionStepBootstrapRow, index)
 		}
 	}
@@ -1104,8 +1103,7 @@ func resolveMemberCoordinates(declaration topologyDeclaration, mounts constructe
 		if !declaration.mounted() || !member.Role.link() || !member.Occurrence.Available() {
 			return memberCoordinates{}, refuseAdmission(topologyConstructionStepMemberIssuance, ordinal)
 		}
-		assigned, found := mounts.bootstrap.capabilityFor(member.Occurrence)
-		if !found || assigned != member.Role {
+		if !mounts.bootstrap.admits(member.Role, member.Occurrence) {
 			return memberCoordinates{}, refuseAdmission(topologyConstructionStepMemberIssuance, ordinal)
 		}
 		id := linkRuleMemberID(member.Role, mounts.owner, mounts.point.PointID, member.Occurrence)
@@ -1188,8 +1186,7 @@ func constructMemberGroup(declaration topologyDeclaration, source constructedSou
 			// bootstrap-to-bootstrap boundary. Re-read the witness here rather
 			// than trusting a coordinate supplied by the declaration pass.
 			bootstrap, bootstrapOK := declaration.bootstrap.Point()
-			assigned, assignedOK := declaration.bootstrap.capabilityFor(member.Occurrence)
-			if !bootstrapOK || !assignedOK || assigned != member.Role || !member.Role.link() ||
+			if !bootstrapOK || !declaration.bootstrap.admits(member.Role, member.Occurrence) || !member.Role.link() ||
 				!declaration.sites.bootstrap.Available() || !bootstrap.PointID.Available() || !target.Available() || !target.Same(declaration.sites.bootstrap) {
 				return equation.Group{}, refuseAdmission(topologyConstructionStepMemberGroup, ordinal)
 			}

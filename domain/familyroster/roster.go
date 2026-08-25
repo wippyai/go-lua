@@ -13,6 +13,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/schema"
 	"github.com/wippyai/go-lua/analysis/schema/rule/emit"
 	"github.com/wippyai/go-lua/analysis/schema/rule/emitlaw"
+	calldispatchprogram "github.com/wippyai/go-lua/domain/call/dispatch/program"
 	heapempty "github.com/wippyai/go-lua/domain/heap/allocation/empty"
 	freezeprogram "github.com/wippyai/go-lua/domain/heap/formalfreeze/program"
 	returnprogram "github.com/wippyai/go-lua/domain/placement/returnescape/program"
@@ -62,6 +63,14 @@ func Families() []Family {
 				Spec:        returnprogram.RuleEntry(),
 			},
 			Directory: "domain/placement/returnescape",
+		},
+		{
+			Target: emit.Target{
+				PackagePath: "github.com/wippyai/go-lua/domain/call/dispatch",
+				PackageName: "dispatch",
+				Spec:        calldispatchprogram.RuleEntry(),
+			},
+			Directory: "domain/call/dispatch",
 		},
 	}
 }
@@ -132,6 +141,16 @@ func Declarations() []Declaration {
 				Spec:        refinementprogram.RuleEntry(),
 			},
 			Directory: "domain/value/refinement/program",
+		},
+		{
+			Target: emitlaw.Target{
+				PackagePath: "github.com/wippyai/go-lua/domain/call/dispatch/program",
+				PackageName: "program",
+				Declaration: "Dispatch",
+				Entry:       "RuleEntry",
+				Spec:        calldispatchprogram.RuleEntry(),
+			},
+			Directory: "domain/call/dispatch/program",
 		},
 	}
 }

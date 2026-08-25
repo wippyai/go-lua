@@ -108,7 +108,7 @@ func bindSummaryObservationRow[V, R any](plane *programPlane, implementation *Su
 	return bindObservationRow(plane, id, point, context, row.state, row.ordinal, row.factorOrdinal, surface, composition.QueryFactorSummary, row.projection.materialize)
 }
 
-func bindExactObservationRow[V, R any](plane *programPlane, implementation *ExactQueryImplementation[V, R], id identity.ContentID, member equation.RuleMember, point equation.Point, context executioncontext.Context) (observationRow, bool) {
+func bindExactObservationRow[V, R any](plane *programPlane, implementation *ExactQueryImplementation[V, R], id identity.ContentID, member equation.RuleMember, point equation.Point, context executioncontext.Context, explicit RuleReadSurface, explicitOK bool) (observationRow, bool) {
 	row, ok := implementation.sealedRow()
 	if !ok || plane == nil || plane.runtime == nil || !plane.runtime.graph.OwnsMember(member) {
 		return observationRow{}, false
@@ -117,9 +117,22 @@ func bindExactObservationRow[V, R any](plane *programPlane, implementation *Exac
 	if !ok || projection.Kind != composition.QueryFactorExact || projection.Normalizer.Available() {
 		return observationRow{}, false
 	}
-	surface, ok := exactObservationReadSurface(member, projection.Factor)
-	if !ok {
-		return observationRow{}, false
+	var surface equation.Surface
+	if explicitOK {
+		// A routed observation has no committed exact write to derive from. The
+		// only admissible alternative is the owner-issued coordinate carried by
+		// the admission. It must still belong to this sealed binding and name
+		// this query's Factor; equal content from another owner is refused.
+		if explicit.authority != row.state.authority || explicit.value.Factor != projection.Factor || explicit.value.Form != equation.SurfaceReadExact || explicit.value.Mode != equation.TargetModeNone || explicit.value.Local == 0 || explicit.value.Semantic.Available() || explicit.value.Normalizer.Available() || !validProgramQuerySurface(explicit.value, projection) {
+			return observationRow{}, false
+		}
+		surface = explicit.value
+	} else {
+		var surfaceOK bool
+		surface, surfaceOK = exactObservationReadSurface(member, projection.Factor)
+		if !surfaceOK {
+			return observationRow{}, false
+		}
 	}
 	return bindObservationRow(plane, id, point, context, row.state, row.ordinal, row.factorOrdinal, surface, composition.QueryFactorExact, row.projection.materialize)
 }

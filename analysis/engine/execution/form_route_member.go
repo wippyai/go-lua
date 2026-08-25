@@ -16,17 +16,16 @@ import (
 )
 
 // RouteTable is one Factor's sealed dense selection geometry: the exact Unit
-// each dense coordinate is observed at, and - for a Factor some rule publishes
-// routes into - the strong Target that coordinate is written to, paired by
-// position when the Factor binds. It is a value handoff of tables the Factor
-// already owns; nothing here mints a coordinate, and it publishes no slice of
-// its own, so the geometry has exactly one owner.
+// each read coordinate is observed at, and - for a Factor some rule publishes
+// routes into - the strong Targets addressed by the output coordinate. The
+// read and destination coordinates are separate dense spaces: a routed member
+// resolves units[readDense] and targets[targetDense], never a positional pair
+// chosen by the engine. Both tables are owner-issued and are authenticated by
+// the binding when a FormPlane resolves a member.
 //
 // The destination half is optional and the observation half is not. A Factor
 // a rule selects members OF but publishes no route INTO has coordinates and no
-// destinations, which is an ordinary dependent join. What is refused is a
-// destination half of a different width from the coordinates it claims to
-// pair with: that is a route only one half of a row could follow.
+// destinations, which is an ordinary dependent join.
 type RouteTable struct {
 	units   []carrier.Unit
 	targets []carrier.Target
@@ -35,9 +34,6 @@ type RouteTable struct {
 // NewRouteTable seals one Factor's dense selection geometry. targets may be
 // empty, which says this Factor publishes no route.
 func NewRouteTable(units []carrier.Unit, targets []carrier.Target) (RouteTable, bool) {
-	if len(targets) != 0 && len(units) != len(targets) {
-		return RouteTable{}, false
-	}
 	return RouteTable{units: units, targets: targets}, true
 }
 
@@ -53,10 +49,9 @@ func (table RouteTable) Routed() bool { return len(table.targets) != 0 }
 // member's reduced fact goes to.
 //
 // Its halves are unexported because neither is a coordinate a caller may
-// choose. Both are resolved from one dense position of one authenticated
-// Factor geometry, so a routed member is the whole route or nothing, and a
-// member of a dependent join that publishes nothing carries no destination to
-// take apart.
+// choose. Both are resolved from the authenticated Factor geometry, so a
+// routed member is the whole route or nothing, and a member of a dependent
+// join that publishes nothing carries no destination to take apart.
 type RouteMember struct {
 	coordinate SelectedCoordinate
 	target     carrier.Target
@@ -92,14 +87,18 @@ func (table RouteTable) selectedMember(dense uint32, tag uint64) (RouteMember, b
 	return RouteMember{coordinate: SelectedCoordinate{Unit: unit, Tag: tag}}, true
 }
 
-// routeMember resolves the same position's whole route, and refuses a write
-// side that is absent or not a strong publication.
-func (table RouteTable) routeMember(dense uint32, tag uint64) (RouteMember, bool) {
-	member, memberOK := table.selectedMember(dense, tag)
+// routeMember resolves one route's read and write coordinates independently.
+// It refuses either side when the owner did not seal that dense coordinate or
+// when the destination is absent or not a strong publication.
+func (table RouteTable) routeMember(readDense, targetDense uint32, tag uint64) (RouteMember, bool) {
+	member, memberOK := table.selectedMember(readDense, tag)
 	if !memberOK || !table.Routed() {
 		return RouteMember{}, false
 	}
-	target := table.targets[int(dense)]
+	if uint64(targetDense) >= uint64(len(table.targets)) {
+		return RouteMember{}, false
+	}
+	target := table.targets[int(targetDense)]
 	if target == (carrier.Target{}) || target.Mode() != carrier.StrongTarget {
 		return RouteMember{}, false
 	}
@@ -107,9 +106,10 @@ func (table RouteTable) routeMember(dense uint32, tag uint64) (RouteMember, bool
 	return member, true
 }
 
-// RouteMember resolves one dense coordinate of this plane's own Factor into
-// the read/write pair a routed row follows, and names it with the tag the
-// row's derived relation issued.
+// RouteMember resolves the read and write dense coordinates of this plane's
+// own Factor into the pair a routed row follows, and names it with the tag the
+// row's derived relation issued. The read coordinate supplies the support
+// unit; the destination coordinate supplies the strong write target.
 //
 // It is fenced twice. The plane must be the narrowed one an installer
 // receives, and that rule must actually declare a routed publication over a
@@ -117,11 +117,11 @@ func (table RouteTable) routeMember(dense uint32, tag uint64) (RouteMember, bool
 // see, which is the same fence the foreign table is narrowed under. Then both
 // halves are authenticated against this plane's own binding, so a coordinate
 // another Factor minted resolves to nothing here rather than to a route.
-func (plane FormPlane[K, V]) RouteMember(dense uint32, tag uint64) (RouteMember, bool) {
+func (plane FormPlane[K, V]) RouteMember(readDense, targetDense uint32, tag uint64) (RouteMember, bool) {
 	if !plane.Valid() || !plane.routed {
 		return RouteMember{}, false
 	}
-	member, memberOK := plane.routes.routeMember(dense, tag)
+	member, memberOK := plane.routes.routeMember(readDense, targetDense, tag)
 	if !memberOK {
 		return RouteMember{}, false
 	}
@@ -167,5 +167,5 @@ func (plane FormPlane[K, V]) RouteWidth() int {
 	if !plane.Valid() || !plane.routed {
 		return 0
 	}
-	return plane.routes.Width()
+	return len(plane.routes.targets)
 }

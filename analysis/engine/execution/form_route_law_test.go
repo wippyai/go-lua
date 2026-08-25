@@ -19,13 +19,22 @@ type routeLawReducer struct {
 	empty   structure.ReductionOutcome
 	failAt  int
 	seen    *int
+	routes  *[]routeLawCoordinate
 }
 
-func (reducer routeLawReducer) Reduce(cell SelectedCell[uint64]) (uint64, structure.ReductionOutcome) {
+// routeLawCoordinate is deliberately distinct from the write's uint64 dense
+// coordinate. A routed fold must carry the owner's destination value, not
+// silently reuse the engine's dense key type.
+type routeLawCoordinate struct{ index uint64 }
+
+func (reducer routeLawReducer) Reduce(route routeLawCoordinate, cell SelectedCell[uint64]) (uint64, structure.ReductionOutcome) {
 	index := 0
 	if reducer.seen != nil {
 		index = *reducer.seen
 		*reducer.seen++
+	}
+	if reducer.routes != nil {
+		*reducer.routes = append(*reducer.routes, route)
 	}
 	if reducer.failAt >= 0 && index == reducer.failAt {
 		return 0, reducer.outcome
@@ -35,9 +44,10 @@ func (reducer routeLawReducer) Reduce(cell SelectedCell[uint64]) (uint64, struct
 
 func (reducer routeLawReducer) Empty() structure.ReductionOutcome { return reducer.empty }
 
-func routeCells(fixture selectedFixture, width int) ([]SelectedCell[uint64], []RouteMember) {
+func routeCells(fixture selectedFixture, width int) ([]SelectedCell[uint64], []RouteMember, []routeLawCoordinate) {
 	cells := make([]SelectedCell[uint64], 0, width)
 	members := make([]RouteMember, 0, width)
+	routes := make([]routeLawCoordinate, 0, width)
 	for index := 0; index < width; index++ {
 		cells = append(cells, SelectedCell[uint64]{
 			Value:   uint64(index),
@@ -46,8 +56,9 @@ func routeCells(fixture selectedFixture, width int) ([]SelectedCell[uint64], []R
 			Region:  fixture.whole,
 		})
 		members = append(members, fixture.member(index, uint64(index)+1))
+		routes = append(routes, routeLawCoordinate{index: uint64(index) + 100})
 	}
-	return cells, members
+	return cells, members, routes
 }
 
 // TestRoutedPublicationIsOneOutputAcrossEveryRoute states the WR shape: a
@@ -63,15 +74,24 @@ func TestRoutedPublicationIsOneOutputAcrossEveryRoute(t *testing.T) {
 	}
 	run := NewRun(1, 1)
 	ticket := issueSelected(t, run, fixture, fixture.state)
-	cells, members := routeCells(fixture, 3)
+	cells, members, routes := routeCells(fixture, 3)
 	var scratch RouteScratch[uint64, uint64]
 	seen := 0
-	outcome := FoldSelectedRoute(ticket, write, &scratch, cells, members, routeLawReducer{empty: structure.NoSelection, failAt: -1, seen: &seen})
+	seenRoutes := make([]routeLawCoordinate, 0, len(routes))
+	outcome := FoldSelectedRoute(ticket, write, &scratch, cells, members, routes, routeLawReducer{empty: structure.NoSelection, failAt: -1, seen: &seen, routes: &seenRoutes})
 	if outcome != structure.Concrete {
 		t.Fatalf("routed outcome = %d, want Concrete", outcome)
 	}
 	if seen != 3 {
 		t.Fatalf("reducer saw %d routes, want one call per route", seen)
+	}
+	if len(seenRoutes) != len(routes) {
+		t.Fatalf("reducer received %d route coordinates, want %d", len(seenRoutes), len(routes))
+	}
+	for index := range routes {
+		if seenRoutes[index] != routes[index] {
+			t.Fatalf("reducer route %d = %#v, want %#v", index, seenRoutes[index], routes[index])
+		}
 	}
 	if !run.Submit(&ticket, outcome) {
 		t.Fatal("submit")
@@ -80,6 +100,117 @@ func TestRoutedPublicationIsOneOutputAcrossEveryRoute(t *testing.T) {
 	disposition, count, drained := run.Drain(patches)
 	if !drained || disposition != structure.Concrete || count != 1 {
 		t.Fatalf("drain = (%d,%d,%v), want one patch for the whole routed row", disposition, count, drained)
+	}
+}
+
+// TestRoutedDestinationDenseMovesThePatchWithoutMovingSupport is the
+// heterogeneous-coordinate law. The same selected member support (readDense
+// K) may publish to either of two owner-issued targets (targetDense D). A
+// route change in D must move the committed patch while the observed unit and
+// its support remain K; resolving one positional pair would write the wrong
+// target and this law would fail.
+func TestRoutedDestinationDenseMovesThePatchWithoutMovingSupport(t *testing.T) {
+	fixture := newSelectedFixture(t)
+	plane := routedPlane(t, fixture)
+	leftMember, leftOK := plane.RouteMember(0, 1, 1)
+	if !leftOK {
+		t.Fatal("left route member")
+	}
+	rightMember, rightOK := plane.RouteMember(0, 2, 1)
+	if !rightOK {
+		t.Fatal("right route member")
+	}
+	if !leftMember.Coordinate().Unit.Same(rightMember.Coordinate().Unit) {
+		t.Fatal("the two route cases changed the selected support coordinate")
+	}
+	if leftMember.target == rightMember.target {
+		t.Fatal("the two route cases did not change the destination target")
+	}
+
+	leftState := commitOneRoute(t, fixture, leftMember)
+	leftAtDestination, leftPresent := readRouteValue(t, fixture, leftState, fixture.units[1])
+	leftAtSupport, leftSupportPresent := readRouteValue(t, fixture, leftState, fixture.units[0])
+	fixture.state = leftState
+	rightState := commitOneRoute(t, fixture, rightMember)
+	rightAtDestination, rightPresent := readRouteValue(t, fixture, rightState, fixture.units[2])
+	rightAtSupport, rightSupportPresent := readRouteValue(t, fixture, rightState, fixture.units[0])
+	if !leftPresent || leftAtDestination != 101 || leftSupportPresent || leftAtSupport != 0 {
+		t.Fatalf("left route wrote value=%d/%t support=%d/%t, want destination 101/true and support 0/false", leftAtDestination, leftPresent, leftAtSupport, leftSupportPresent)
+	}
+	if !rightPresent || rightAtDestination != 101 || rightSupportPresent || rightAtSupport != 0 {
+		t.Fatalf("right route wrote value=%d/%t support=%d/%t, want destination 101/true and support 0/false", rightAtDestination, rightPresent, rightAtSupport, rightSupportPresent)
+	}
+}
+
+func commitOneRoute(t testing.TB, fixture selectedFixture, member RouteMember) carrier.State {
+	t.Helper()
+	run := NewRun(1, 1)
+	ticket := issueSelected(t, run, fixture, fixture.state)
+	write, writeOK := NewRouteWrite(fixture.binding, 0)
+	if !writeOK {
+		t.Fatal("route write")
+	}
+	cell := SelectedCell[uint64]{Value: 1, Present: true, Tag: member.Tag(), Region: fixture.whole}
+	var scratch RouteScratch[uint64, uint64]
+	outcome := FoldSelectedRoute(ticket, write, &scratch, []SelectedCell[uint64]{cell}, []RouteMember{member}, []routeLawCoordinate{{index: 100}}, routeLawReducer{empty: structure.NoSelection, failAt: -1})
+	if outcome != structure.Concrete || !run.Submit(&ticket, outcome) {
+		t.Fatalf("route commit settled %v", outcome)
+	}
+	patches := make([]carrier.Patch, 1)
+	disposition, count, drained := run.Drain(patches)
+	if !drained || disposition != structure.Concrete || count != 1 {
+		t.Fatalf("route drain = %d/%d/%t", disposition, count, drained)
+	}
+	next, _, committed := fixture.work.Commit(fixture.state, patches[:count])
+	if !committed {
+		t.Fatal("route commit")
+	}
+	return next
+}
+
+func readRouteValue(t testing.TB, fixture selectedFixture, state carrier.State, unit carrier.Unit) (uint64, bool) {
+	t.Helper()
+	run := NewRun(1, 0)
+	read, readOK := NewExactRead(fixture.binding, unit, 0)
+	if !readOK {
+		t.Fatal("route read")
+	}
+	ticket, issued := issueExecutionRow(run, fixture.work, state, fixture.whole, []carrier.State{state}, 0, 1, 17, 3)
+	if !issued {
+		t.Fatal("route read issue")
+	}
+	var scratch Scratch[uint64, uint64]
+	if status := read.Read(ticket, &scratch); status != ReadAvailable {
+		t.Fatalf("route read status = %d", status)
+	}
+	value, valueOK := scratch.Value()
+	present := scratch.Present()
+	if !read.Close(ticket, &scratch) {
+		t.Fatal("route read close")
+	}
+	if !run.Submit(&ticket, structure.NoCandidate) {
+		t.Fatal("route read settle")
+	}
+	_, _, _ = run.Consume()
+	return value, valueOK && present
+}
+
+// TestRoutedFoldRefusesAnUnpairedDestinationVector states the route-carrier
+// fence. The destination projection, observed cell, and RouteMember are one
+// ordered relation row; a shorter or longer caller vector cannot be aligned
+// with that row and is refused before any route is staged.
+func TestRoutedFoldRefusesAnUnpairedDestinationVector(t *testing.T) {
+	fixture := newSelectedFixture(t)
+	write, ok := NewRouteWrite(fixture.binding, 0)
+	if !ok {
+		t.Fatal("route write")
+	}
+	run := NewRun(1, 1)
+	ticket := issueSelected(t, run, fixture, fixture.state)
+	cells, members, routes := routeCells(fixture, 3)
+	var scratch RouteScratch[uint64, uint64]
+	if outcome := FoldSelectedRoute(ticket, write, &scratch, cells, members, routes[:2], routeLawReducer{empty: structure.NoSelection, failAt: -1}); outcome != structure.Refuse {
+		t.Fatalf("unpaired destination vector settled %v, want Refuse", outcome)
 	}
 }
 
@@ -98,7 +229,7 @@ func TestRoutedRowWithNoRouteSettlesTheEmptySelection(t *testing.T) {
 	run := NewRun(1, 1)
 	ticket := issueSelected(t, run, fixture, fixture.state)
 	var scratch RouteScratch[uint64, uint64]
-	outcome := FoldSelectedRoute(ticket, write, &scratch, nil, nil, routeLawReducer{empty: structure.NoSelection, failAt: -1})
+	outcome := FoldSelectedRoute(ticket, write, &scratch, nil, nil, nil, routeLawReducer{empty: structure.NoSelection, failAt: -1})
 	if outcome != structure.NoSelection {
 		t.Fatalf("empty routed outcome = %d, want NoSelection", outcome)
 	}
@@ -127,7 +258,7 @@ func TestRoutedEmptySelectionMayNotSettleConcrete(t *testing.T) {
 	run := NewRun(1, 1)
 	ticket := issueSelected(t, run, fixture, fixture.state)
 	var scratch RouteScratch[uint64, uint64]
-	if outcome := FoldSelectedRoute(ticket, write, &scratch, nil, nil, routeLawReducer{empty: structure.Concrete, failAt: -1}); outcome != structure.Refuse {
+	if outcome := FoldSelectedRoute(ticket, write, &scratch, nil, nil, nil, routeLawReducer{empty: structure.Concrete, failAt: -1}); outcome != structure.Refuse {
 		t.Fatalf("empty Concrete outcome = %d, want Refuse", outcome)
 	}
 }
@@ -146,10 +277,10 @@ func TestRoutedRowRefusesToPublishHalfAStrongWrite(t *testing.T) {
 		}
 		run := NewRun(1, 1)
 		ticket := issueSelected(t, run, fixture, fixture.state)
-		cells, members := routeCells(fixture, 3)
+		cells, members, routes := routeCells(fixture, 3)
 		var scratch RouteScratch[uint64, uint64]
 		seen := 0
-		outcome := FoldSelectedRoute(ticket, write, &scratch, cells, members, routeLawReducer{outcome: settled, empty: structure.NoSelection, failAt: 2, seen: &seen})
+		outcome := FoldSelectedRoute(ticket, write, &scratch, cells, members, routes, routeLawReducer{outcome: settled, empty: structure.NoSelection, failAt: 2, seen: &seen})
 		if outcome != settled {
 			t.Fatalf("routed outcome = %d, want the route's own %d", outcome, settled)
 		}

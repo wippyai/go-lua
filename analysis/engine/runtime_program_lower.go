@@ -51,10 +51,10 @@ type artifactMountedRuleSource struct {
 }
 
 type linkBootstrapRows struct {
-	owner identity.ContentID
-	point LinkBootstrapPoint
-	site  equation.Site
-	roles map[identity.ContentID]RuleSlotCapability
+	owner   identity.ContentID
+	point   LinkBootstrapPoint
+	site    equation.Site
+	witness LinkBootstrapWitness
 }
 
 type artifactMountedPoint struct {
@@ -485,30 +485,32 @@ func validateSealedLinkBootstrapCatalog(state *schemaBindingState, witness LinkB
 			return false
 		}
 	}
+	seenCapabilities := make(map[RuleSlotCapability]struct{}, witness.catalogCapabilityCount())
 	for index := 0; index < witness.catalogCapabilityCount(); index++ {
 		capability, capabilityOK := witness.catalogCapabilityAt(index)
 		if _, expectedCapability := expectedSet[capability]; !capabilityOK || !expectedCapability {
 			return false
 		}
+		if _, duplicate := seenCapabilities[capability]; duplicate {
+			return false
+		}
+		seenCapabilities[capability] = struct{}{}
 	}
-	seen := make(map[identity.ContentID]RuleSlotCapability, witness.OccurrenceCount())
-	for index := 0; index < witness.OccurrenceCount(); index++ {
-		occurrence, occurrenceOK := witness.OccurrenceAt(index)
-		if !occurrenceOK {
+	seenClaims := make(map[linkBootstrapClaim]struct{}, witness.claimCount())
+	for index := 0; index < witness.claimCount(); index++ {
+		capability, occurrence, claimOK := witness.claimAt(index)
+		if !claimOK || !capability.link() || !occurrence.Available() {
 			return false
 		}
-		if _, duplicate := seen[occurrence]; duplicate {
+		claim := linkBootstrapClaim{capability: capability, occurrence: occurrence}
+		if _, duplicate := seenClaims[claim]; duplicate {
 			return false
 		}
-		capability, capabilityOK := witness.capabilityFor(occurrence)
-		if !capabilityOK {
-			return false
-		}
-		seen[occurrence] = capability
+		seenClaims[claim] = struct{}{}
 	}
 	for capability, occurrences := range witness.byCapability {
 		for occurrence := range occurrences {
-			if claimed, present := seen[occurrence]; !present || claimed != capability {
+			if _, present := seenClaims[linkBootstrapClaim{capability: capability, occurrence: occurrence}]; !present {
 				return false
 			}
 		}
@@ -527,24 +529,11 @@ func buildMountedArtifactRows(mounts []sealedProgramMount, schemaID identity.Con
 	if !pointOK {
 		return nil, programAssemblyFailureSnapshotBootstrap
 	}
-	occurrences := make(map[identity.ContentID]struct{}, bootstrap.OccurrenceCount())
-	for index := 0; index < bootstrap.OccurrenceCount(); index++ {
-		id, idOK := bootstrap.OccurrenceAt(index)
-		if !idOK {
+	for index := 0; index < bootstrap.claimCount(); index++ {
+		capability, occurrence, claimOK := bootstrap.claimAt(index)
+		if !claimOK || !capability.link() || capability.state != bindingState || capability.authority != bindingState.authority || !occurrence.Available() {
 			return nil, programAssemblyFailureSnapshotBootstrap
 		}
-		if _, duplicate := occurrences[id]; duplicate {
-			return nil, programAssemblyFailureSnapshotBootstrap
-		}
-		occurrences[id] = struct{}{}
-	}
-	roles := make(map[identity.ContentID]RuleSlotCapability, len(occurrences))
-	for id := range occurrences {
-		capability, capabilityOK := bootstrap.capabilityFor(id)
-		if !capabilityOK || !capability.link() || capability.state != bindingState || capability.authority != bindingState.authority {
-			return nil, programAssemblyFailureSnapshotBootstrap
-		}
-		roles[id] = capability
 	}
 	authorizedTransports, transportsAuthorized := sealedLinkBootstrapTransports(bindingState)
 	seenTransportCapabilities := make(map[RuleSlotCapability]struct{}, len(authorizedTransports))
@@ -565,7 +554,7 @@ func buildMountedArtifactRows(mounts []sealedProgramMount, schemaID identity.Con
 			seenTransportFactors[factor] = struct{}{}
 		}
 	}
-	result := &mountedArtifactRows{pointMeta: make(map[identity.ContentID]artifactPointMetadata), sites: make(map[identity.ContentID]equation.Site), mounted: make(map[artifactMountedPoint]equation.Site), ruleSet: make(map[artifactMountedRule]artifactMountedRuleSource), bootstrap: &linkBootstrapRows{owner: bootstrap.OwnerID(), point: bootstrapPoint, roles: roles}}
+	result := &mountedArtifactRows{pointMeta: make(map[identity.ContentID]artifactPointMetadata), sites: make(map[identity.ContentID]equation.Site), mounted: make(map[artifactMountedPoint]equation.Site), ruleSet: make(map[artifactMountedRule]artifactMountedRuleSource), bootstrap: &linkBootstrapRows{owner: bootstrap.OwnerID(), point: bootstrapPoint, witness: bootstrap}}
 	seenMounts := make(map[identity.ContentID]struct{}, len(mounts))
 	for _, mount := range mounts {
 		if mount.template == nil || !mount.template.Available() || !mount.module.Available() || mount.template.SchemaID() != schemaID {

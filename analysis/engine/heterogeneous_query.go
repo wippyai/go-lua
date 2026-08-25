@@ -474,7 +474,7 @@ func bindHeterogeneousProgramQueryRow[R any](plane *programPlane, query equation
 	return row, row.valid()
 }
 
-func (implementation *HeterogeneousQueryImplementation[R]) bindProgramObservation(plane *programPlane, id identity.ContentID, member equation.RuleMember, point equation.Point, context executioncontext.Context) (observationRow, bool) {
+func (implementation *HeterogeneousQueryImplementation[R]) bindProgramObservation(plane *programPlane, id identity.ContentID, member equation.RuleMember, point equation.Point, context executioncontext.Context, _ RuleReadSurface, _ bool) (observationRow, bool) {
 	row, ok := implementation.sealedRow()
 	if !ok || plane == nil || plane.runtime == nil || !plane.runtime.graph.OwnsMember(member) {
 		return observationRow{}, false

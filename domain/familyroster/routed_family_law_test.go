@@ -48,7 +48,7 @@ func TestARoutedWorkerDerivesItsRouteSetFromTheDeclaredRelation(t *testing.T) {
 		"selected.Coordinates()",
 		"selected.Predicate()",
 		"lane.family.placementSchema.KeyIndex(storageRouteKey)",
-		"lane.family.plane.RouteMember(uint32(dense), uint64(storageRouteTag))",
+		"lane.family.plane.RouteMember(uint32(dense), uint32(destinationDense), uint64(storageRouteTag))",
 	} {
 		if !strings.Contains(source, required) {
 			t.Errorf("the routed worker does not derive its route set through %q", required)

@@ -110,7 +110,7 @@ func declareMountedProgram(rowsWorkspace *programRows, mounts []sealedProgramMou
 
 	pending := make([]pendingRuleIssuance, 0, len(admission.Link)+len(admission.Mounted)+len(admission.Activation))
 	anchored := make(map[equation.Surface]struct{})
-	claimedLink := make(map[identity.ContentID]RuleSlotCapability, len(admission.Link))
+	claimedLink := make(map[linkBootstrapClaim]struct{}, len(admission.Link))
 	for ordinal, row := range admission.Link {
 		issuance, ok := admitLinkRuleIssuance(rowsWorkspace, rows, state, row, claimedLink)
 		if !ok || !claimAnchoredSurfaces(anchored, issuance.surfaces) {
@@ -371,20 +371,20 @@ func admitMountedRuleIssuance(rowsWorkspace *programRows, rows *mountedArtifactR
 
 // admitLinkRuleIssuance mints one Link-global issuance from the sealed
 // bootstrap catalog. It has no mount and cannot address an arbitrary site or
-// occurrence: the witness assigned the role, and each occurrence is claimed
-// once.
-func admitLinkRuleIssuance(rowsWorkspace *programRows, rows *mountedArtifactRows, state *schemaBindingState, row LinkRuleAdmission, claimed map[identity.ContentID]RuleSlotCapability) (pendingRuleIssuance, bool) {
+// occurrence: the witness admits only the exact capability+occurrence address,
+// and each such address is claimed once.
+func admitLinkRuleIssuance(rowsWorkspace *programRows, rows *mountedArtifactRows, state *schemaBindingState, row LinkRuleAdmission, claimed map[linkBootstrapClaim]struct{}) (pendingRuleIssuance, bool) {
 	if !row.Capability.link() || !row.Occurrence.Available() {
 		return pendingRuleIssuance{}, false
 	}
-	assigned, found := rows.bootstrap.roles[row.Occurrence]
-	if !found || assigned != row.Capability {
+	if rows.bootstrap == nil || !rows.bootstrap.witness.admits(row.Capability, row.Occurrence) {
 		return pendingRuleIssuance{}, false
 	}
-	if _, duplicate := claimed[row.Occurrence]; duplicate {
+	claim := linkBootstrapClaim{capability: row.Capability, occurrence: row.Occurrence}
+	if _, duplicate := claimed[claim]; duplicate {
 		return pendingRuleIssuance{}, false
 	}
-	claimed[row.Occurrence] = row.Capability
+	claimed[claim] = struct{}{}
 	entity, entityOK := linkRuleOccurrenceKey(row.Capability, row.Occurrence)
 	member := linkRuleMemberID(row.Capability, rows.bootstrap.owner, rows.bootstrap.point.PointID, row.Occurrence)
 	if !entityOK || !member.Available() {
