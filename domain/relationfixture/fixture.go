@@ -18,6 +18,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/program/link"
 	linkproject "github.com/wippyai/go-lua/analysis/program/link/project"
 	"github.com/wippyai/go-lua/analysis/program/target/compiler"
+	targetcontract "github.com/wippyai/go-lua/analysis/program/target/contract"
 	"github.com/wippyai/go-lua/analysis/program/target/declaration"
 	"github.com/wippyai/go-lua/analysis/program/target/vocabulary"
 	programschema "github.com/wippyai/go-lua/analysis/schema/program"
@@ -35,6 +36,7 @@ import (
 	typeauthority "github.com/wippyai/go-lua/domain/type/authority"
 	domaincontract "github.com/wippyai/go-lua/domain/type/typecontract"
 	valuedomain "github.com/wippyai/go-lua/domain/value"
+	"github.com/wippyai/go-lua/internal/testfixture"
 )
 
 // Sealed is one mounted analysis world: the authorities the mount phase sealed
@@ -55,6 +57,26 @@ const fixtureSource = `local holder = {}
 holder.field = nil
 return holder.field`
 
+// callingSource makes a call and judges what it returns: the result flows into
+// the table whose field the program then reads, so the body call site is one
+// the effect fold answers over rather than one it merely sees.
+// governedSource calls the host operations the resource protocol governs,
+// including the one that declares an escape.
+const governedSource = "local resource = require(\"resource\")\n" +
+	"local connection = resource.connect()\n" +
+	"resource.query(connection)\n" +
+	"resource.close(connection)\n" +
+	"local handed = resource.connect()\n" +
+	"resource.detach(handed)\n"
+
+const callingSource = `local function build()
+  local made = {}
+  made.field = nil
+  return made
+end
+local holder = build()
+return holder.field`
+
 func portableAnyTypes(count int) []schematype.Type {
 	values := make([]schematype.Type, count)
 	for index := range values {
@@ -68,9 +90,32 @@ func portableAnyTypes(count int) []schematype.Type {
 }
 
 // New mounts the fixture world through the composition's own mount phase.
-func New(t testing.TB) Sealed {
+func New(t testing.TB) Sealed { return seal(t, "relbindgen_binding_law.lua", fixtureSource) }
+
+// NewCalling mounts a world whose program makes a real call and judges what
+// the call returns.
+//
+// It is a second program rather than a change to the first: a law that reads
+// what a call site answers needs one, and every law that does not must keep
+// reading exactly the world it was written against.
+func NewCalling(t testing.TB) Sealed {
+	return seal(t, "relbindgen_call_site_law.lua", callingSource)
+}
+
+// NewGoverned mounts a world whose program calls the host operations a
+// typestate protocol governs.
+//
+// It is a third program because the judgment it exists for only seals in one.
+// A protocol's transitions and escapes are sealed where the pack schema
+// resolves an input selector for the operation they are declared over, which
+// happens where a mounted program actually calls that operation - so a world
+// of local calls reaches a body call site and a world of host calls reaches a
+// governed obligation, and neither is the other.
+func NewGoverned(t testing.TB) Sealed { return sealGoverned(t, governedSource) }
+
+func seal(t testing.TB, name string, source string) Sealed {
 	t.Helper()
-	program, err := lower.Lower(lower.Source{Name: "relbindgen_binding_law.lua", Text: []byte(fixtureSource)})
+	program, err := lower.Lower(lower.Source{Name: name, Text: []byte(source)})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -87,6 +132,29 @@ func New(t testing.TB) Sealed {
 	if err != nil {
 		t.Fatal(err)
 	}
+	return mount(t, contract, linked, true)
+}
+
+// sealGoverned links one program against the standard library target, whose
+// resource host declares the typestate protocols an obligation is judged under.
+func sealGoverned(t testing.TB, source string) Sealed {
+	t.Helper()
+	contract, err := testfixture.StandardLibraryTarget()
+	if err != nil {
+		t.Fatal(err)
+	}
+	linked, err := testfixture.SealSource(contract, "relbindgen_obligation_law.lua", []byte(source))
+	if err != nil {
+		t.Fatal(err)
+	}
+	return mount(t, contract, linked, false)
+}
+
+// mount runs the composition's phase over one linked program. receiver says
+// whether this world is expected to allocate a Lua table root: the worlds whose
+// laws observe one require it, and a world of host calls allocates none.
+func mount(t testing.TB, contract *targetcontract.Contract, linked *link.Link, receiver bool) Sealed {
+	t.Helper()
 	compilation, compilationOK := composite.Build()
 	grammar := compilation.ExecutionSchemaID()
 	issuance, issuanceOK := composite.ArtifactIssuanceDirectory(compilation)
@@ -142,7 +210,9 @@ func New(t testing.TB) Sealed {
 		Effects:  record.EffectInput(),
 		Topology: record.IndexTopology(),
 	}
-	fixture.Root, fixture.Receiver = fixtureReceiver(t, fixture.Heap, fixture.Values)
+	if receiver {
+		fixture.Root, fixture.Receiver = fixtureReceiver(t, fixture.Heap, fixture.Values)
+	}
 	return fixture
 }
 

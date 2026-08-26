@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "pinned_ref": "2056438af0fdbbd729fe2822e6bf16940b226fe9",
+  "pinned_ref": "96881d9401c753bd64849c208018d896086ddb9c",
   "authority": [
     "docs/architecture/relation-engine.md \u00a711 Wave 5 and \u00a712",
     "journal 7305 (residue census and dependency layers)",
@@ -125,8 +125,8 @@
       "residue_layer": "L3",
       "authority": "\u00a712 delete: analysis/engine/execution form classification and workers",
       "measured": {
-        "files": 22,
-        "non_test_loc": 4922
+        "files": 20,
+        "non_test_loc": 4332
       },
       "blocked_by": [
         "S1-analyzer-constructor"
@@ -142,7 +142,7 @@
       ],
       "proof_obligation": "",
       "expect_present": true,
-      "note": ""
+      "note": "The executor package as a whole. S2-reducer-operand-abi already lifted the operand value types authored reducers take out of form_summary.go and form_selected.go into analysis/engine/operand, so nothing in this package is now owed to a reducer: the Form, Ticket, Scratch, cursor and registry machinery that remains all dies."
     },
     {
       "id": "S2-executioncatalog",
@@ -223,9 +223,10 @@
         "domain/heap/generated_relation_owner.go",
         "domain/pack/generated_relation_owner.go",
         "domain/placement/generated_relation_owner.go",
+        "domain/placement/suspension/generated_relation_owner.go",
         "domain/static/generated_relation_owner.go",
-        "domain/value/generated_relation_owner.go",
-        "domain/value/generated_exact_fold.go"
+        "domain/value/generated_exact_fold.go",
+        "domain/value/generated_relation_owner.go"
       ],
       "kind": "file-group",
       "disposition": "delete",
@@ -233,8 +234,8 @@
       "residue_layer": "L3",
       "authority": "\u00a712 delete: generated family executors and installer choreography",
       "measured": {
-        "files": 8,
-        "non_test_loc": 2676
+        "files": 9,
+        "non_test_loc": 2888
       },
       "blocked_by": [
         "S3-generated-family-workers"
@@ -243,7 +244,7 @@
       "laws_restated": [],
       "proof_obligation": "",
       "expect_present": true,
-      "note": ""
+      "note": "Nine generated owners. domain/placement/suspension carries its own since 274ca828c (placement: the suspension-evidence Factor composes its own member vocabulary); it imports analysis/engine/execution and does not compile once S2 lands."
     },
     {
       "id": "S3-generated-rule-members",
@@ -253,6 +254,7 @@
         "domain/heap/rule_members.go",
         "domain/pack/rule_members.go",
         "domain/placement/rule_members.go",
+        "domain/placement/suspension/rule_members.go",
         "domain/static/rule_members.go",
         "domain/value/rule_members.go"
       ],
@@ -262,8 +264,8 @@
       "residue_layer": "L3",
       "authority": "\u00a712 delete: duplicated family/member/rule registries derivable from declarations",
       "measured": {
-        "files": 7,
-        "non_test_loc": 760
+        "files": 8,
+        "non_test_loc": 1018
       },
       "blocked_by": [
         "S3-generated-family-workers"
@@ -272,7 +274,7 @@
       "laws_restated": [],
       "proof_obligation": "",
       "expect_present": true,
-      "note": ""
+      "note": "Eight cold member vocabularies. domain/placement/suspension gained one at 274ca828c and is emitted by the same generator."
     },
     {
       "id": "S3-engine-generated-descriptors",
@@ -339,7 +341,7 @@
       "authority": "\u00a712 delete: HotRule, HotOwner and BindHot protocol; journal 7305 Layer 1 (FT-77 placement families)",
       "measured": {
         "files": 5,
-        "non_test_loc": 1407
+        "non_test_loc": 1297
       },
       "blocked_by": [],
       "laws_die": [],
@@ -369,12 +371,14 @@
         "files": 8,
         "non_test_loc": 2111
       },
-      "blocked_by": [],
+      "blocked_by": [
+        "S3-family-bind-wiring"
+      ],
       "laws_die": [],
       "laws_restated": [],
       "proof_obligation": "",
       "expect_present": true,
-      "note": "Eight owner packages. Delete DeclareAxis / BindAxis / AlgebraAxis / BindHot; AxisEntry() and StructureSpecs() are the retained declaration surface."
+      "note": "FT-91 corrected the symbol attribution. hot_owner.go holds BindHot, the HotOwner type and the whole live rule-binding surface (RuleImplementation, BindSelectedRuleDirect, BindExactWriteRule, BindExactQuery, ResolveRuleImplementation and the rest); it does not hold DeclareAxis, BindAxis, AlgebraAxis, AxisEntry or StructureSpecs, all of which live in registration.go. BindHot itself has no production caller outside its own package. The file dies whole only once its two consumer groups go: the family and bind wiring in S3-family-bind-wiring, and the observation files in S6-domain-observation-restatement. Until both land, HotOwner is load-bearing across the domains. The observation group is not recorded as a blocker: S6-engine-runtime already depends on this entry through S4-engine-hot-binding, so naming it here would close a cycle. Wave 5 is one landing and the strata are a reading order, not a compile-at-each-step order."
     },
     {
       "id": "S4-placement-registrations",
@@ -414,7 +418,7 @@
         "domain/value/owner/registration.go"
       ],
       "kind": "file-group",
-      "disposition": "delete",
+      "disposition": "restate",
       "cut_step": 4,
       "residue_layer": "L2.2",
       "authority": "journal 7305 Layer 2.2: owner protocol arms, registration 8 -> 0",
@@ -426,10 +430,15 @@
         "S4-placement-registrations"
       ],
       "laws_die": [],
-      "laws_restated": [],
+      "laws_restated": [
+        {
+          "law": "Each axis owner states the structure specifications its domain contributes.",
+          "target": "the same eight registration.go files, reduced to StructureSpecs alone"
+        }
+      ],
       "proof_obligation": "",
       "expect_present": true,
-      "note": "Journal 7305/7328(4): AlgebraAxis stands in nine copies and is cuttable with no Layer-1 dependency."
+      "note": "FT-91 corrected the disposition from delete. All five axis symbols live here, not in hot_owner.go: AxisEntry, DeclareAxis, BindAxis, AlgebraAxis and StructureSpecs. The first four have exactly one production caller, domain/composite/axis_table.go, which S4-composite-wiring deletes, so they die. StructureSpecs does not: domain/composite/structure_table.go calls it on all eight owners at lines 184-193, imports no engine, and is in no entry - it survives the cut. Deleting these files whole would take the retained declaration surface with them."
     },
     {
       "id": "S4-schema-fragments",
@@ -496,14 +505,19 @@
       ],
       "proof_obligation": "",
       "expect_present": true,
-      "note": ""
+      "note": "FT-91 measured six surviving accessor sites, not ten: domain/call/query/query.go:78, domain/effect/owner/query.go:64, domain/value/owner/query.go:66 and domain/placement/query/query.go:59,61,63. The sixth reads placementsuspension.EvidenceFactorFragment, whose source file S4-schema-fragments deletes. domain/probe/declaration.go declares a local SchemaFragment of its own and reads no owner fragment; it is carried here as a fixture that mirrors the pattern, not as a consumer. No generic-factor replacement type exists in the tree yet, so this restatement has not begun."
     },
     {
       "id": "S4-heap-index-hot",
       "paths": [
         "domain/heap/index/raw_get_hot.go",
+        "domain/heap/index/raw_get_routes.go",
+        "domain/heap/index/raw_get_rule.go",
+        "domain/heap/index/raw_get_transfer.go",
         "domain/heap/index/raw_set_hot.go",
+        "domain/heap/index/raw_set_routes.go",
         "domain/heap/index/raw_set_rule.go",
+        "domain/heap/index/raw_set_transfer.go",
         "domain/heap/index/schema_fragment.go"
       ],
       "kind": "file-group",
@@ -512,8 +526,8 @@
       "residue_layer": "L1",
       "authority": "journal 7305 Layer 1 (CX-48, the S4 computed-coordinate shape); \u00a710 hostile corpus: RawGet and RawSet",
       "measured": {
-        "files": 4,
-        "non_test_loc": 628
+        "files": 9,
+        "non_test_loc": 1409
       },
       "blocked_by": [
         "S4-schema-fragments"
@@ -522,7 +536,7 @@
       "laws_restated": [],
       "proof_obligation": "",
       "expect_present": true,
-      "note": "Journal 7336(5): heap/index is the only rule pair with no declaration at all, so its plan is authored by relcompile before this deletes."
+      "note": "Journal 7336(5): heap/index is the only rule pair with no declaration at all, so its plan is authored by relcompile before this deletes. FT-91 corrected the boundary: ten of the fifteen non-test files in the package import analysis/engine and cannot outlive it, and the manifest named only five of them. RawSetRule is declared in raw_set_rule.go but carries methods in raw_set_routes.go and raw_set_transfer.go, so the old list orphaned 258 loc of methods on a deleted type; the RawGet half was cut the other way round, keeping the rule and its routes while deleting only the hot arm. The engine-importing files now go as one group. The five that import no engine - judgment.go, raw_get_index.go, raw_payload.go, route_name.go and topology.go, 2220 loc - are the owner semantics and stay."
     },
     {
       "id": "S4-engine-hot-binding",
@@ -566,7 +580,7 @@
       "authority": "journal 7305 Layer 2.1: composite wiring first - the cold principals record, the nine-method principals interface, the nine axisPayloadForKey extractions",
       "measured": {
         "files": 6,
-        "non_test_loc": 2146
+        "non_test_loc": 2155
       },
       "blocked_by": [
         "S4-schema-fragments"
@@ -649,7 +663,7 @@
       "authority": "journal 7318 carve-out: LAWS ARE NOT PROJECTIONS - the emitted law suites survive as the independent restatement and become the certificate checker of the sealed schema",
       "measured": {
         "files": 5,
-        "non_test_loc": 1393
+        "non_test_loc": 1406
       },
       "blocked_by": [
         "S5-emit-machinery"
@@ -663,7 +677,7 @@
       ],
       "proof_obligation": "",
       "expect_present": true,
-      "note": "This entry exists to refuse the reflex that the law renderer dies with the emitter. It does not."
+      "note": "This entry exists to refuse the reflex that the law renderer dies with the emitter. It does not. FT-91 verified the decoupling is already complete: go list -deps over the package returns no analysis/schema/rule/emit, no analysis/schema/rule/codegen and no analysis/engine, so the emitter's death costs this package nothing. It is live today - 25 domain generated_law_test.go files and domain/familyroster/roster.go consume emitlaw.Generate. The entry stays as the landmine it was written to be. Its named target, analysis/relation/check/certificate, is not wired to emitlaw and re-pointing the renderer at sealed plan rows is separate work this entry does not oblige."
     },
     {
       "id": "S6-engine-runtime",
@@ -720,7 +734,7 @@
       "authority": "\u00a712 delete: repeated runtime validation, topology reconstruction and address inference; \u00a711 Wave 5 step 6",
       "measured": {
         "files": 44,
-        "non_test_loc": 22547
+        "non_test_loc": 22615
       },
       "blocked_by": [
         "S4-engine-hot-binding",
@@ -860,7 +874,7 @@
       "authority": "\u00a712 delete: duplicated family/member/rule registries derivable from declarations",
       "measured": {
         "files": 5,
-        "non_test_loc": 1699
+        "non_test_loc": 1747
       },
       "blocked_by": [
         "S4-composite-wiring"
@@ -894,7 +908,7 @@
       "authority": "\u00a712 delete: query/diagnostic access paths that reconstruct relations outside the canonical snapshot - the engine-side half",
       "measured": {
         "files": 7,
-        "non_test_loc": 2032
+        "non_test_loc": 2033
       },
       "blocked_by": [
         "S6-engine-runtime"
@@ -914,7 +928,8 @@
       "id": "S6-engine-probes",
       "paths": [
         "analysis/engine/dbgprobe.go",
-        "analysis/engine/zzprobe_typprobe.go"
+        "analysis/engine/zzprobe_typprobe.go",
+        "domain/composite/zz_luna_probe.go"
       ],
       "kind": "file-group",
       "disposition": "delete",
@@ -922,8 +937,8 @@
       "residue_layer": "L3",
       "authority": "\u00a711 Wave 5 step 8: the final scan; probes are scrubbed last",
       "measured": {
-        "files": 2,
-        "non_test_loc": 212
+        "files": 3,
+        "non_test_loc": 287
       },
       "blocked_by": [
         "S6-engine-runtime"
@@ -932,7 +947,7 @@
       "laws_restated": [],
       "proof_obligation": "",
       "expect_present": true,
-      "note": "Deliberately last. A debug probe stays until the replacement engine fully works; scrubbing it early removes the instrument that would have named the defect."
+      "note": "Deliberately last. A debug probe stays until the replacement engine fully works; scrubbing it early removes the instrument that would have named the defect. FT-91 added domain/composite/zz_luna_probe.go: it imports analysis/engine and is a debug probe, so it belongs with the probes at step 8 rather than with the composite wiring it sits beside."
     },
     {
       "id": "S7-implementation-restatement-laws",
@@ -945,7 +960,7 @@
       "residue_layer": "",
       "authority": "\u00a711 Wave 5 step 7: replace implementation-restatement tests with logical, certificate, physical or external-parity laws",
       "measured": {
-        "files": 51,
+        "files": 50,
         "non_test_loc": 0
       },
       "blocked_by": [],
@@ -962,7 +977,7 @@
       ],
       "proof_obligation": "",
       "expect_present": true,
-      "note": "Measured, not enumerated: the set is defined by the import and by the symbol, so the W5 lane recomputes it at cut time rather than trusting a stale list. The path names the import that defines the set, not a deletion target; files=51 counts the test files importing analysis/engine at the pinned ref and the loc column is left at zero because test lines are not part of the delete-set measurement."
+      "note": "Measured, not enumerated: the set is defined by the import and by the symbol, so the W5 lane recomputes it at cut time rather than trusting a stale list. The path names the import that defines the set, not a deletion target; files=51 counts the test files importing analysis/engine at the pinned ref and the loc column is left at zero because test lines are not part of the delete-set measurement. FT-91 recount at 96881d940: 50 test files import the exact package (51 at the pinned ref, a drift of one, not a reduction), concentrated in domain/composite (20) and oracle (9). A further 18 test files outside the analysis/engine tree import its subpackages. The symbol half of the set is discharged: Selection.Implementation is gone repo-wide, zero references in test or non-test code, and the surviving .Implementation fields belong to Reducer and Transform, which are unrelated."
     },
     {
       "id": "S8-read-paths",
@@ -980,7 +995,7 @@
       "authority": "\u00a712 delete: query/diagnostic access paths that reconstruct relations outside the canonical snapshot; journal 7329: snapshot and result read relations directly, no engine on the read path",
       "measured": {
         "files": 35,
-        "non_test_loc": 9514
+        "non_test_loc": 9512
       },
       "blocked_by": [
         "S6-engine-runtime"
@@ -1273,6 +1288,199 @@
       "proof_obligation": "",
       "expect_present": true,
       "note": "heap/publication-freeze/routes, heap/formal-freeze/routes, value/fresh-result/routes, placement/formal/routes, placement/transfer/routes, value/result-alias/routes, value/body-result/routes. The deletion lane cannot empty a row itself."
+    },
+    {
+      "id": "S4-value-exact-fold-family",
+      "paths": [
+        "domain/value/execution/exactfold"
+      ],
+      "kind": "package",
+      "disposition": "delete",
+      "cut_step": 4,
+      "residue_layer": "L2.1",
+      "authority": "relation-engine.md \u00a711 Wave 5 step 4: a family that drives the execution executor dies with the executor.",
+      "measured": {
+        "files": 1,
+        "non_test_loc": 409
+      },
+      "blocked_by": [
+        "S4-composite-wiring"
+      ],
+      "laws_die": [],
+      "laws_restated": [],
+      "proof_obligation": "",
+      "expect_present": true,
+      "note": "Drives the full execution executor surface (Executor, Family, Frame, Ticket, Run, Result, Scratch). Its only non-test importer is domain/composite/rule_templates.go, which S4-composite-wiring deletes. Not named at first authoring; found by FT-91. It retires no law that outlives it: one executor ticket per sealed exact form is a property of the executor, and domain/value/generated_exact_fold.go and domain/composite/rule_templates.go - the rest of that path - are deleted by S3-generated-relation-owners and S4-composite-wiring in the same cut."
+    },
+    {
+      "id": "S5-member-generator",
+      "paths": [
+        "analysis/schema/axis/member/generator"
+      ],
+      "kind": "package-group",
+      "disposition": "delete",
+      "cut_step": 5,
+      "residue_layer": "L3",
+      "authority": "relation-engine.md \u00a711 Wave 5 step 5: the emitter of a deleted artifact dies with the artifact.",
+      "measured": {
+        "files": 2,
+        "non_test_loc": 1850
+      },
+      "blocked_by": [
+        "S5-codegen-model",
+        "S3-generated-family-workers",
+        "S3-generated-relation-owners",
+        "S3-generated-rule-members"
+      ],
+      "laws_die": [],
+      "laws_restated": [],
+      "proof_obligation": "",
+      "expect_present": true,
+      "note": "The axis member definition generator emits generated_family.go, rule_members.go and generated_relation_owner.go - every one of which S3 deletes. Its only non-test importer outside itself is analysis/schema/rule/codegen/verify.go, which S5-codegen-model deletes, so the package is reader-free the moment those two land. Not named at the manifest's first authoring; found by FT-91. It retires no law that outlives it: the property it carried - that a generated member vocabulary matches the definition it was emitted from - is vacuous once nothing is generated, and the definition surface it read from (analysis/schema/axis/member/definition) survives untouched."
+    },
+    {
+      "id": "S2-reducer-operand-abi",
+      "paths": [
+        "analysis/engine/execution/form_summary.go",
+        "analysis/engine/execution/form_selected.go"
+      ],
+      "kind": "file-group",
+      "disposition": "restate",
+      "cut_step": 2,
+      "residue_layer": "L3",
+      "authority": "relation-engine.md \u00a711 Wave 5 step 2, read against the scheduled-death ledger: a reducer is lattice judgment and stays authored forever, so the type its operands arrive in outlives the executor that used to fill them.",
+      "measured": {
+        "files": 2,
+        "non_test_loc": 590
+      },
+      "blocked_by": [],
+      "laws_die": [],
+      "laws_restated": [
+        {
+          "law": "A summary vector reports its own validity, width and member cells.",
+          "target": "analysis/engine/operand/vector_law_test.go"
+        },
+        {
+          "law": "A selected cell carries its value, its tag and its presence.",
+          "target": "analysis/engine/operand states the cell; the selection cursor that fills all three restates against analysis/engine/relation"
+        }
+      ],
+      "proof_obligation": "",
+      "expect_present": true,
+      "note": "This entry exists to refuse the reflex that the operand types die with the executor. SummaryVector, MemberCell and SelectedCell are the parameter types of permanently-authored reducers - SuspensionFold, SuspensionEvidenceFold, BeyondAllocations, resultClosed and the callsite/bodyresult/resultalias folds - none of which the ledger schedules for death. The surviving consumers use only SummaryVector.Valid/Count/At and SelectedCell.Value/Tag/Present: eight references across six files. The Form, Ticket and Scratch write machinery these two files also carry stays in S2 and dies. The restatement is the read-side value types alone, not the files as they stand. Fourteen non-test files depend on this restatement and on nothing else the cut deletes, so they are deliberately in no entry: effect/callsite/fold.go, heap/allocation/closed/rule.go, heap/formalfreeze/{core,routes}.go, heap/publicationfreeze/routes.go, placement/formal/{core,routes}.go, placement/returnescape/core.go, placement/suspension/{reducer,routes}.go, placement/transfer/{core,routes}.go, value/bodyresult/judgment.go and value/resultalias/judgment.go. Each needs one import rewritten, not a deletion. Seven of them carry the authored Builds the scheduled-death ledger still lists, so they shrink further as those rows empty. DONE before the cut: the read surface now lives in analysis/engine/operand. SummaryVector, MemberCell, NewMemberVector and SelectedCell were moved there under their own names - no alias stayed behind in execution - and every reference was rewritten, including the emitter, so a regenerated family names the operand package for its cells and the executor package for its cursors. The package sits under analysis/engine because both of the values it carries are the engine's own: a cell states the support.Mask it was observed over, and a Factor-backed vector is a view of Binding-owned observation storage. It descends no further while support is analysis/engine/internal; K-facts-support relocating it is what frees this package to sit beside the schema vocabulary. S2 still deletes both named files: what stays in them is the Form, Ticket, Scratch and cursor machinery, and Deliver now seals its vector through operand.NewObservationVector. The observation backing itself is not restated - it names factbinding, which S6-engine-internals deletes, so the surviving vector is the cell-backed one and the Factor backing retargets to the relation kernel's own storage there."
+    },
+    {
+      "id": "S3-family-bind-wiring",
+      "paths": [
+        "domain/call/activation/family.go",
+        "domain/call/dispatch/family.go",
+        "domain/effect/callsite/body/family.go",
+        "domain/effect/callsite/opaque/family.go",
+        "domain/effect/callsite/selected/family.go",
+        "domain/heap/allocation/closed/family_binding.go",
+        "domain/heap/allocation/empty/family_binding.go",
+        "domain/heap/formalfreeze/bind.go",
+        "domain/heap/publicationfreeze/family.go",
+        "domain/placement/formal/bind.go",
+        "domain/placement/returnescape/bind.go",
+        "domain/placement/store/bind.go",
+        "domain/placement/transfer/bind.go",
+        "domain/value/allocation/family.go",
+        "domain/value/bodyresult/family.go",
+        "domain/value/freshresult/bind.go",
+        "domain/value/moduleload/family.go",
+        "domain/value/resultalias/family.go",
+        "domain/value/runtimekind/family.go"
+      ],
+      "kind": "file-group",
+      "disposition": "delete",
+      "cut_step": 3,
+      "residue_layer": "L3",
+      "authority": "relation-engine.md \u00a711 Wave 5 step 3: the hand-written twin of a generated family worker dies with the worker.",
+      "measured": {
+        "files": 19,
+        "non_test_loc": 852
+      },
+      "blocked_by": [
+        "S3-generated-family-workers"
+      ],
+      "laws_die": [],
+      "laws_restated": [],
+      "proof_obligation": "",
+      "expect_present": true,
+      "note": "The authored half of the family wiring S3-generated-family-workers deletes: each file binds one family onto an axis HotOwner and imports analysis/engine to do it. Nineteen files, forty to seventy lines each, no owner semantics. Not named at first authoring; found by FT-91 as part of the forty-three non-test files that import the engine root and belong to no entry."
+    },
+    {
+      "id": "S4-composite-query-wiring",
+      "paths": [
+        "domain/composite/axis_wire.go",
+        "domain/composite/call_callee_set_observation.go",
+        "domain/composite/catalog.go",
+        "domain/composite/publication/branch_value_observation.go",
+        "domain/composite/queries.go",
+        "domain/composite/query_sites.go",
+        "domain/composite/query_table.go",
+        "domain/composite/query_wire.go",
+        "domain/composite/rule_admission.go",
+        "domain/composite/send_safety_collect.go",
+        "domain/composite/send_safety_observation.go"
+      ],
+      "kind": "file-group",
+      "disposition": "delete",
+      "cut_step": 4,
+      "residue_layer": "L2.1",
+      "authority": "relation-engine.md \u00a711 Wave 5 step 4: composite wiring against the old execution protocol dies with it.",
+      "measured": {
+        "files": 11,
+        "non_test_loc": 2231
+      },
+      "blocked_by": [
+        "S4-composite-wiring"
+      ],
+      "laws_die": [],
+      "laws_restated": [],
+      "proof_obligation": "",
+      "expect_present": true,
+      "note": "The rest of the composite wiring. S4-composite-wiring names six files; these eleven also import analysis/engine and wire queries, observations and rule admission against it. domain/composite/structure_table.go is deliberately not here: it imports no engine and carries the retained StructureSpecs roster."
+    },
+    {
+      "id": "S6-domain-observation-restatement",
+      "paths": [
+        "domain/effect/callsite/mounted_site.go",
+        "domain/effect/callsite/occurrence.go",
+        "domain/effect/callsite/publication_transition.go",
+        "domain/placement/capture/core.go",
+        "domain/placement/containment/routes.go",
+        "domain/placement/observation.go",
+        "domain/placement/publicationescape/core.go",
+        "domain/placement/static_containment_depth.go",
+        "domain/placement/suspension/evidence_observation.go",
+        "domain/placement/suspension/evidence_schema.go",
+        "domain/static/type_summary_observation.go",
+        "domain/value/summary_observation.go"
+      ],
+      "kind": "file-group",
+      "disposition": "restate",
+      "cut_step": 6,
+      "residue_layer": "L3",
+      "authority": "relation-engine.md \u00a711 Wave 5 step 6 read against \u00a712: a judgment is restated against the sealed artifacts, never deleted with the protocol it happened to read through.",
+      "measured": {
+        "files": 12,
+        "non_test_loc": 3868
+      },
+      "blocked_by": [
+        "S6-engine-runtime"
+      ],
+      "laws_die": [],
+      "laws_restated": [
+        {
+          "law": "Each domain observes its own subjects and publishes the vectors its axes declare.",
+          "target": "the same files, reading sealed relational artifacts instead of analysis/engine"
+        }
+      ],
+      "proof_obligation": "",
+      "expect_present": true,
+      "note": "Twelve files that import analysis/engine and carry owner semantics rather than protocol: the placement capture, containment, publication-escape and static-containment cores, the placement, static and value observations, the suspension evidence pair and the effect call-site trio. They are the reason S4-owner-hot-owners cannot land early. This entry exists so the cut does not read them as residue: none of them may be deleted, and each must be restated off the engine import. Found by FT-91."
     }
   ]
 }

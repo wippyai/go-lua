@@ -3,6 +3,8 @@ package execution
 import (
 	"testing"
 
+	"github.com/wippyai/go-lua/analysis/engine/operand"
+
 	"github.com/wippyai/go-lua/analysis/engine/internal/facts/support"
 	"github.com/wippyai/go-lua/analysis/engine/internal/guard"
 	"github.com/wippyai/go-lua/analysis/schema/structure"
@@ -18,7 +20,7 @@ type selectionLawReducer struct {
 	tags    *[]uint64
 }
 
-func (reducer selectionLawReducer) Reduce(cells []SelectedCell[uint64]) (uint64, structure.ReductionOutcome) {
+func (reducer selectionLawReducer) Reduce(cells []operand.SelectedCell[uint64]) (uint64, structure.ReductionOutcome) {
 	if reducer.calls != nil {
 		*reducer.calls++
 	}
@@ -40,10 +42,10 @@ func (reducer selectionLawReducer) Reduce(cells []SelectedCell[uint64]) (uint64,
 
 // selectionCells builds one observed selection, every member of which proved
 // the same support the exact prerequisite did.
-func selectionCells(fixture selectedFixture, width int) []SelectedCell[uint64] {
-	cells := make([]SelectedCell[uint64], 0, width)
+func selectionCells(fixture selectedFixture, width int) []operand.SelectedCell[uint64] {
+	cells := make([]operand.SelectedCell[uint64], 0, width)
 	for index := 0; index < width; index++ {
-		cells = append(cells, SelectedCell[uint64]{
+		cells = append(cells, operand.SelectedCell[uint64]{
 			Value:   uint64(index) + 1,
 			Present: true,
 			Tag:     uint64(index) + 1,
@@ -126,22 +128,22 @@ func TestASelectionFoldPublishesUnderTheSupportEveryReadProved(t *testing.T) {
 	for _, probe := range []struct {
 		name   string
 		region support.Mask
-		mutate func([]SelectedCell[uint64])
+		mutate func([]operand.SelectedCell[uint64])
 	}{
 		{
 			name:   "a member proved a support the prerequisite did not",
 			region: fixture.whole,
-			mutate: func(cells []SelectedCell[uint64]) { cells[1].Region = foreign },
+			mutate: func(cells []operand.SelectedCell[uint64]) { cells[1].Region = foreign },
 		},
 		{
 			name:   "the prerequisite proved a support the members did not",
 			region: foreign,
-			mutate: func(cells []SelectedCell[uint64]) {},
+			mutate: func(cells []operand.SelectedCell[uint64]) {},
 		},
 		{
 			name:   "a member carries no authenticated support at all",
 			region: fixture.whole,
-			mutate: func(cells []SelectedCell[uint64]) { cells[2].Region = support.Mask{} },
+			mutate: func(cells []operand.SelectedCell[uint64]) { cells[2].Region = support.Mask{} },
 		},
 	} {
 		t.Run(probe.name, func(t *testing.T) {

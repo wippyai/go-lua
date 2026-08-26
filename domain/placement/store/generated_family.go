@@ -10,6 +10,7 @@ package store
 
 import (
 	"github.com/wippyai/go-lua/analysis/engine/execution"
+	"github.com/wippyai/go-lua/analysis/engine/operand"
 	"github.com/wippyai/go-lua/analysis/schema/rule/program"
 	"github.com/wippyai/go-lua/analysis/schema/structure"
 	"github.com/wippyai/go-lua/domain/heap"
@@ -28,7 +29,7 @@ type familyReducer struct {
 // Reduce answers one selected route. The route coordinate, cell, and tag
 // are the three owner-issued halves of the one member the read observed,
 // so the fold never re-derives a destination or correlation.
-func (fold familyReducer) Reduce(routeCoordinate heap.Key, cell execution.SelectedCell[placement.Fact]) (placement.Fact, structure.ReductionOutcome) {
+func (fold familyReducer) Reduce(routeCoordinate heap.Key, cell operand.SelectedCell[placement.Fact]) (placement.Fact, structure.ReductionOutcome) {
 	return StorageFold(fold.candidate, fold.input0, cell.Tag, cell.Value)
 }
 
@@ -71,7 +72,7 @@ func (sealed *sealedFamily) NewExecutor(run *execution.Run) execution.Executor {
 		family:  sealed,
 		run:     run,
 		members: make([]execution.RouteMember, sealed.width),
-		cells:   make([]execution.SelectedCell[placement.Fact], sealed.width),
+		cells:   make([]operand.SelectedCell[placement.Fact], sealed.width),
 		routes:  make([]heap.Key, sealed.width),
 	}
 }
@@ -89,7 +90,7 @@ type familyWorker struct {
 	read1   execution.SelectedScratch[placement.DenseCoordinate, placement.Fact]
 	write   execution.RouteScratch[placement.DenseCoordinate, placement.Fact]
 	members []execution.RouteMember
-	cells   []execution.SelectedCell[placement.Fact]
+	cells   []operand.SelectedCell[placement.Fact]
 	routes  []heap.Key
 }
 

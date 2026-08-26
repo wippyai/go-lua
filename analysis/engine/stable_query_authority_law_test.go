@@ -317,7 +317,16 @@ func buildReceiptQueryMatrixFixtureWithOptions(t testing.TB, count int, observed
 	if !addressedOK {
 		t.Fatal("sealed matrix query table")
 	}
+	// Every query is admitted at the point whose member staged the write, so
+	// what it observes is that member's cell. The matrix rule stages one, so
+	// one is the answer each query publishes; a zero here would be the cell no
+	// member of that point wrote.
 	expected := make([]uint64, count)
+	if !failTransfer {
+		for index := range expected {
+			expected[index] = 1
+		}
+	}
 	implementations := make([]*ExactQueryImplementation[uint64, uint64], count)
 	for index := range implementations {
 		implementations[index] = queryImplementation

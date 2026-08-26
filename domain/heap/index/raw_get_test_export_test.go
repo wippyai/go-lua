@@ -50,13 +50,13 @@ func NewRawGetSemanticSourceLookupFixture(sources []pack.SemanticSource, coordin
 	return fixture, true
 }
 
-func (fixture *RawGetSemanticSourceLookupFixture) readSource(tag RawSourceTag) rawSelected[valuedomain.Value] {
+func (fixture *RawGetSemanticSourceLookupFixture) readSource(tag RawSourceTag) Selected[valuedomain.Value] {
 	index := int(tag) - 1
 	if fixture == nil || index < 0 || index >= len(fixture.facts) {
-		return rawSelected[valuedomain.Value]{}
+		return Selected[valuedomain.Value]{}
 	}
 	fixture.reads++
-	return rawSelected[valuedomain.Value]{value: fixture.facts[index], present: true, found: true, valid: true}
+	return Selected[valuedomain.Value]{value: fixture.facts[index], present: true, found: true, valid: true}
 }
 
 // Lookup runs one complete source frontier through RawGetRule.sourceValue and

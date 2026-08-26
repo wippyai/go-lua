@@ -3,7 +3,7 @@ package transfer
 import (
 	"testing"
 
-	"github.com/wippyai/go-lua/analysis/engine/execution"
+	"github.com/wippyai/go-lua/analysis/engine/operand"
 	valuedomain "github.com/wippyai/go-lua/domain/value"
 )
 
@@ -27,13 +27,13 @@ func TestTransferSparseActualBottomIsTheFactorDefault(t *testing.T) {
 	if payload < 0 {
 		t.Fatal("fixture has no rooted actual to sparsify")
 	}
-	sparse := append([]execution.MemberCell[valuedomain.Value](nil), fixture.cells...)
-	sparse[payload] = execution.MemberCell[valuedomain.Value]{Value: fixture.values.Bottom()}
+	sparse := append([]operand.MemberCell[valuedomain.Value](nil), fixture.cells...)
+	sparse[payload] = operand.MemberCell[valuedomain.Value]{Value: fixture.values.Bottom()}
 	plan, planOK := planFor(fixture.packs, fixture.calls, fixture.placement, fixture.values, fixture.contract, fixture.mounted, fixture.callFact, transferActuals(t, sparse))
 	if !planOK || plan.routeCount() != 0 {
 		t.Fatalf("owner-issued sparse Bottom transfer plan = %t/%d, want valid no-route", planOK, plan.routeCount())
 	}
-	forged := append([]execution.MemberCell[valuedomain.Value](nil), fixture.cells...)
+	forged := append([]operand.MemberCell[valuedomain.Value](nil), fixture.cells...)
 	forged[payload].Present = false
 	if _, forgedOK := planFor(fixture.packs, fixture.calls, fixture.placement, fixture.values, fixture.contract, fixture.mounted, fixture.callFact, transferActuals(t, forged)); forgedOK {
 		t.Fatal("sparse non-Bottom Value cell admitted as the Value Factor default")

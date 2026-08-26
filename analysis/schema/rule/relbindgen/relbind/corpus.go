@@ -5,14 +5,35 @@ import (
 	"github.com/wippyai/go-lua/analysis/relation/semantic/signature"
 )
 
-// The two reasons the remaining raw-access operations carry. Both are the same
-// finding: the owner publishes the judgment, and the authored plan's join list
-// does not deliver the frame that judgment reads. The remedy is a join the
-// plan states, never a lowering this layer invents or a frame it fills in, so
-// the rows are declared, named, and left unbound.
+// The reason the two remaining raw-access reductions carry.
+//
+// Nothing about the operands blocks them any longer: the owner publishes both
+// frames constructibly, the authored plan states every read the reductions
+// make, and a delivered span now says which row each position carries. What is
+// left is the decoder that maps each delivered row to the owner tag its
+// lookup is keyed by, and that is a binding to write rather than a statement
+// anyone owes. The rows stay declared and named until it is written, because a
+// row that claims a binding it does not have is worse than a named debt.
+const abiGapRawReduction = "w0-decoder-unwritten: every operand is reachable and the delivered spans carry their row identity, and the decoder that keys each selection by the owner tag its lookup takes is not written yet"
+
+// span is the delivery a read observes every row of. A key selection is one
+// such read: its length is the count the owner's enumeration is stated
+// against, and a candidate whose key is static reads no row at all.
+const span = signature.BoundedSpanDelivery
+
+// The four reasons the remaining census families carry. Each is a statement
+// the compiler makes about an operand, not one this layer asserts.
 const (
-	planGapRawPackRoutes = "w0-plan-incomplete: the authored pack expansion joins the route relation onto the heap facts alone, so the key selector its enumeration reads never reaches the frame"
-	planGapRawReduction  = "w0-plan-incomplete: the authored reduction joins three relations, and the owner reduction reads the call and heap fact selections the plan does not deliver"
+	// A judgment that reads the operand type of the protocol this engine
+	// replaces cannot be reached from a frame. A binding delivers owner values
+	// and spans; it cannot construct an execution selection, and the compiler
+	// says so: "cannot use cells (variable of struct type
+	// relbindgen.Span[value.Value]) as []execution.SelectedCell[value.Value]".
+	abiGapLegacyOperand = "w0-legacy-operand: the owner judgment reads execution.SelectedCell or execution.SummaryVector, the operand type of the protocol this engine replaces, and a binding delivers owner values and spans"
+	// An operation that publishes a disposition and no fact has no result type
+	// to instantiate the bounded emitter with, and the compiler says so:
+	// "cannot use nil as struct{} value in argument to relbindgen.Reduce".
+	abiGapDispositionOnly = "w0-disposition-only: the judgment answers with a disposition and publishes no fact, and the semantic ABI types its emitter and its output columns by the value a family produces"
 )
 
 // scalar is the delivery a single-cell input carries.
@@ -34,6 +55,8 @@ func axes() []Axis {
 		{Key: "call", Dir: "domain/call/relation", Package: "relation"},
 		{Key: "effect", Dir: "domain/effect/relation", Package: "relation"},
 		{Key: "static", Dir: "domain/static/relation", Package: "relation"},
+		{Key: "placement", Dir: "domain/placement/relation", Package: "relation"},
+		{Key: "typestate", Dir: "domain/typestate/relation", Package: "relation"},
 	}
 }
 
@@ -58,6 +81,7 @@ func payloads() []Payload {
 		{Key: "call", Axis: "call", Field: "Call", Type: "calldomain.Value", Alias: "calldomain", Path: "github.com/wippyai/go-lua/domain/call", Lattice: "CallLattice"},
 		{Key: "effect", Axis: "effect", Field: "Effect", Type: "effectfactor.Value", Alias: "effectfactor", Path: "github.com/wippyai/go-lua/domain/effect/factor", Lattice: "EffectLattice"},
 		{Key: "pack", Axis: "pack", Field: "Pack", Type: "packdomain.Value", Alias: "packdomain", Path: "github.com/wippyai/go-lua/domain/pack", Lattice: "PackLattice"},
+		{Key: "placement", Axis: "placement", Field: "Placement", Type: "placementdomain.Fact", Alias: "placementdomain", Path: "github.com/wippyai/go-lua/domain/placement", Lattice: "PlacementLattice"},
 		{Key: "static", Axis: "static", Field: "Static", Type: "staticdomain.TypeFact", Alias: "staticdomain", Path: "github.com/wippyai/go-lua/domain/static", Lattice: "StaticLattice"},
 
 		{Key: "arithmetic-candidate", Axis: "value", Field: "ArithmeticCandidate", Type: "valuedomain.BinaryArithmetic", Alias: "valuedomain", Path: "github.com/wippyai/go-lua/domain/value"},
@@ -78,6 +102,19 @@ func payloads() []Payload {
 		{Key: "heap-route", Axis: "heap", Field: "HeapRoute", Type: "HeapRouteFact"},
 		{Key: "heap-pack-route", Axis: "heap", Field: "PackRoute", Type: "PackRouteFact"},
 		{Key: "heap-source-route", Axis: "heap", Field: "SourceRoute", Type: "SourceRouteFact"},
+		{Key: "heap-route-tag", Axis: "heap", Field: "HeapRouteTag", Type: "uint64"},
+		{Key: "typestate", Axis: "typestate", Field: "Typestate", Type: "typestatedomain.Abstract", Alias: "typestatedomain", Path: "github.com/wippyai/go-lua/domain/typestate"},
+		{Key: "typestate-candidate", Axis: "typestate", Field: "CallArgumentCandidate", Type: "valuedomain.MountedCallArgument", Alias: "valuedomain", Path: "github.com/wippyai/go-lua/domain/value"},
+		{Key: "typestate-protocol-tag", Axis: "typestate", Field: "ProtocolTag", Type: "uint64"},
+		{Key: "lifecycle-liveness", Axis: "placement", Field: "SubjectLiveness", Type: "lifecycle.MountedSubjectLiveness", Alias: "lifecycle", Path: "github.com/wippyai/go-lua/analysis/schema/program/lifecycle"},
+		{Key: "suspension-evidence", Axis: "placement", Field: "SuspensionEvidence", Type: "suspensiondomain.Evidence", Alias: "suspensiondomain", Path: "github.com/wippyai/go-lua/domain/placement/suspension", Lattice: "EvidenceLattice"},
+		{Key: "placement-requirement", Axis: "placement", Field: "Requirement", Type: "placementdomain.Placement", Alias: "placementdomain", Path: "github.com/wippyai/go-lua/domain/placement"},
+		{Key: "placement-route-tag", Axis: "placement", Field: "PlacementRouteTag", Type: "uint64"},
+		{Key: "value-result-slot", Axis: "value", Field: "ResultSlotCandidate", Type: "valuedomain.MountedCallResultSlot", Alias: "valuedomain", Path: "github.com/wippyai/go-lua/domain/value"},
+		{Key: "value-fresh-result-call", Axis: "value", Field: "FreshResultCandidate", Type: "valuedomain.FreshResultCall", Alias: "valuedomain", Path: "github.com/wippyai/go-lua/domain/value"},
+		{Key: "value-storage-transfer", Axis: "value", Field: "StorageTransferCandidate", Type: "valuedomain.StorageTransfer", Alias: "valuedomain", Path: "github.com/wippyai/go-lua/domain/value"},
+		{Key: "value-coordinate", Axis: "value", Field: "ValueCoordinate", Type: "valuedomain.Coordinate", Alias: "valuedomain", Path: "github.com/wippyai/go-lua/domain/value"},
+		{Key: "value-route-tag", Axis: "value", Field: "ValueRouteTag", Type: "uint64"},
 		{Key: "heap-read-candidate", Axis: "heap", Field: "ReadCandidate", Type: "indexdomain.Index", Alias: "indexdomain", Path: "github.com/wippyai/go-lua/domain/heap/index"},
 		{Key: "heap-write-candidate", Axis: "heap", Field: "WriteCandidate", Type: "indexdomain.Index", Alias: "indexdomain", Path: "github.com/wippyai/go-lua/domain/heap/index"},
 		{Key: "effect-candidate", Axis: "effect", Field: "EffectCandidate", Type: "effectfactor.MountedCall", Alias: "effectfactor", Path: "github.com/wippyai/go-lua/domain/effect/factor"},
@@ -367,20 +404,265 @@ func families() []Family {
 			Cardinality: model.ExactlyOne, Address: 0,
 		},
 		{
+			Census: "heap/formalfreeze", Rule: "heap-formal-freeze", Stem: "HeapFormalFreeze", Axis: "heap",
+			Judgment: "HeapFormalFreezeOperation",
+			Inputs: []Slot{
+				{Field: "RouteTag", Payload: "heap-route-tag", Delivery: scalar},
+				{Field: "Predecessor", Payload: "heap", Delivery: scalar},
+			},
+			Result: "heap", Outputs: []Column{{Payload: "heap"}},
+			Cardinality: model.ExactlyOne, Address: 0,
+		},
+		{
+			Census: "heap/publicationfreeze", Rule: "heap-publication-freeze", Stem: "HeapPublicationFreeze", Axis: "heap",
+			Judgment: "HeapPublicationFreezeOperation",
+			Inputs: []Slot{
+				{Field: "RouteTag", Payload: "heap-route-tag", Delivery: scalar},
+				{Field: "Predecessor", Payload: "heap", Delivery: scalar},
+			},
+			Result: "heap", Outputs: []Column{{Payload: "heap"}},
+			Cardinality: model.ExactlyOne, Address: 0,
+		},
+		{
+			Census: "placement/publicationescape", Rule: "placement-publication-escape", Stem: "PlacementPublicationEscape", Axis: "placement",
+			Judgment: "PlacementPublicationEscapeOperation",
+			Inputs: []Slot{
+				{Field: "Requirement", Payload: "placement-requirement", Delivery: scalar},
+				{Field: "Current", Payload: "placement", Delivery: scalar},
+			},
+			Result: "placement", Outputs: []Column{{Payload: "placement"}},
+			Cardinality: model.ExactlyOne, Address: 1,
+		},
+		{
+			Census: "placement/returnescape", Rule: "placement-return-escape", Stem: "PlacementReturnEscape", Axis: "placement",
+			Judgment: "PlacementReturnEscapeOperation",
+			Inputs: []Slot{
+				{Field: "RouteTag", Payload: "placement-route-tag", Delivery: scalar},
+				{Field: "Current", Payload: "placement", Delivery: scalar},
+			},
+			Result: "placement", Outputs: []Column{{Payload: "placement"}},
+			Cardinality: model.ExactlyOne, Address: 1,
+		},
+		{
+			Census: "placement/transfer", Rule: "placement-transfer", Stem: "PlacementTransfer", Axis: "placement",
+			Judgment: "PlacementTransferOperation",
+			Inputs: []Slot{
+				{Field: "RouteTag", Payload: "placement-route-tag", Delivery: scalar},
+				{Field: "Selected", Payload: "placement", Delivery: scalar},
+			},
+			Result: "placement", Outputs: []Column{{Payload: "placement"}},
+			Cardinality: model.ExactlyOne, Address: 1,
+		},
+		{
+			Census: "value/freshresult", Rule: "value-callresult-freshresult", Stem: "ValueFreshResult", Axis: "value",
+			Judgment: "ValueFreshResultOperation",
+			Inputs: []Slot{
+				{Field: "Candidate", Payload: "call-candidate", Delivery: scalar},
+				{Field: "CallFact", Payload: "call", Delivery: scalar},
+				{Field: "Destination", Payload: "value-coordinate", Delivery: scalar},
+				{Field: "Tag", Payload: "value-route-tag", Delivery: scalar},
+				{Field: "Prior", Payload: "value", Delivery: scalar},
+			},
+			Result: "value", Outputs: []Column{{Payload: "value"}},
+			Cardinality: model.ExactlyOne, Address: 0,
+		},
+		{
+			Census: "placement/allocationbirth", Rule: "placement-allocation-birth", Stem: "PlacementAllocationBirth", Axis: "placement",
+			Judgment: "PlacementAllocationBirthOperation",
+			Inputs: []Slot{
+				{Field: "Candidate", Payload: "allocation-candidate", Delivery: scalar},
+				{Field: "Allocated", Payload: "value", Delivery: scalar},
+			},
+			Result: "placement", Outputs: []Column{{Payload: "placement"}},
+			Cardinality: model.ExactlyOne, Address: 0,
+		},
+		{
+			Census: "placement/freshbirth", Rule: "placement-fresh-birth", Stem: "PlacementFreshBirth", Axis: "placement",
+			Judgment: "PlacementFreshBirthOperation",
+			Inputs: []Slot{
+				{Field: "Candidate", Payload: "value-fresh-result-call", Delivery: scalar},
+				{Field: "Result", Payload: "value", Delivery: scalar},
+			},
+			Result: "placement", Outputs: []Column{{Payload: "placement"}},
+			Cardinality: model.ExactlyOne, Address: 0,
+		},
+		{
+			Census: "placement/formal", Rule: "placement-formal", Stem: "PlacementFormal", Axis: "placement",
+			Judgment: "PlacementFormalOperation",
+			Inputs: []Slot{
+				{Field: "RouteTag", Payload: "placement-route-tag", Delivery: scalar},
+				{Field: "Selected", Payload: "placement", Delivery: scalar},
+			},
+			Result: "placement", Outputs: []Column{{Payload: "placement"}},
+			Cardinality: model.ExactlyOne, Address: 1,
+		},
+		{
+			Census: "placement/store", Rule: "placement-storage", Stem: "PlacementStorage", Axis: "placement",
+			Judgment: "PlacementStorageOperation",
+			Inputs: []Slot{
+				{Field: "Candidate", Payload: "value-storage-transfer", Delivery: scalar},
+				{Field: "Source", Payload: "value", Delivery: scalar},
+				{Field: "RouteTag", Payload: "placement-route-tag", Delivery: scalar},
+				{Field: "Selected", Payload: "placement", Delivery: scalar},
+			},
+			Result: "placement", Outputs: []Column{{Payload: "placement"}},
+			Cardinality: model.ExactlyOne, Address: 0,
+		},
+		{
+			Census: "effect/callsite/body", Rule: "effect-body", Stem: "EffectBodyCallSite", Axis: "effect",
+			Judgment: "EffectBodyCallSiteOperation",
+			Inputs: []Slot{
+				{Field: "Mounted", Payload: "effect-candidate", Delivery: scalar},
+				{Field: "Cells", Payload: "effect", Delivery: span},
+			},
+			Result: "effect", Outputs: []Column{{Payload: "effect"}},
+			Cardinality: model.ExactlyOne, Address: 0,
+		},
+		{
+			Census: "value/bodyresult", Rule: "value-callresult-body", Stem: "ValueBodyResult", Axis: "value",
+			Judgment: "ValueBodyResultOperation",
+			Inputs: []Slot{
+				{Field: "Candidate", Payload: "value-result-slot", Delivery: scalar},
+				{Field: "Dispatched", Payload: "call", Delivery: scalar},
+				{Field: "Cells", Payload: "value", Delivery: span},
+			},
+			Result: "value", Outputs: []Column{{Payload: "value"}},
+			Cardinality: model.ExactlyOne, Address: 0,
+		},
+		{
+			Census: "value/resultalias", Rule: "value-callresult-resultalias", Stem: "ValueResultAlias", Axis: "value",
+			Judgment: "ValueResultAliasOperation",
+			Inputs: []Slot{
+				{Field: "Candidate", Payload: "value-result-slot", Delivery: scalar},
+				{Field: "Dispatched", Payload: "call", Delivery: scalar},
+				{Field: "Cells", Payload: "value", Delivery: span},
+			},
+			Result: "value", Outputs: []Column{{Payload: "value"}},
+			Cardinality: model.ExactlyOne, Address: 0,
+		},
+		{
+			Census: "placement/suspension", Rule: "placement-suspension", Stem: "PlacementSuspension", Axis: "placement",
+			Judgment: "PlacementSuspensionOperation",
+			Inputs: []Slot{
+				{Field: "Candidate", Payload: "lifecycle-liveness", Delivery: scalar},
+				{Field: "Sources", Payload: "value", Delivery: span},
+				{Field: "Route", Payload: "heap-candidate", Delivery: scalar},
+				{Field: "RouteTag", Payload: "placement-route-tag", Delivery: scalar},
+				{Field: "Selected", Payload: "placement", Delivery: scalar},
+			},
+			Result: "placement", Outputs: []Column{{Payload: "placement"}},
+			Cardinality: model.ExactlyOne, Address: 0,
+		},
+		{
+			Census: "placement/suspension-evidence", Rule: "placement-suspension-evidence", Stem: "PlacementSuspensionEvidence", Axis: "placement",
+			Judgment: "PlacementSuspensionEvidenceOperation",
+			Inputs: []Slot{
+				{Field: "Candidate", Payload: "lifecycle-liveness", Delivery: scalar},
+				{Field: "Sources", Payload: "value", Delivery: span},
+				{Field: "Route", Payload: "heap-candidate", Delivery: scalar},
+				{Field: "RouteTag", Payload: "placement-route-tag", Delivery: scalar},
+				{Field: "Selected", Payload: "suspension-evidence", Delivery: scalar},
+			},
+			Result: "suspension-evidence", Outputs: []Column{{Payload: "suspension-evidence"}},
+			Cardinality: model.ExactlyOne, Address: 0,
+		},
+		{
+			Census: "placement/capture", Rule: "placement-closure-capture", Stem: "PlacementClosureCapture", Axis: "placement",
+			Judgment: "PlacementClosureCaptureOperation",
+			Inputs: []Slot{
+				{Field: "Parent", Payload: "placement", Delivery: scalar},
+				{Field: "Route", Payload: "heap-candidate", Delivery: scalar},
+				{Field: "Tag", Payload: "placement-route-tag", Delivery: scalar},
+				{Field: "Current", Payload: "placement", Delivery: scalar},
+			},
+			Result: "placement", Outputs: []Column{{Payload: "placement"}},
+			Cardinality: model.ExactlyOne, Address: 3,
+		},
+		{
+			Census: "placement/containment", Rule: "placement-containment", Stem: "PlacementContainment", Axis: "placement",
+			Judgment: "PlacementContainmentOperation",
+			Inputs: []Slot{
+				{Field: "Placements", Payload: "placement", Delivery: span},
+				{Field: "Heaps", Payload: "heap", Delivery: span},
+				{Field: "Route", Payload: "heap-candidate", Delivery: scalar},
+				{Field: "Tag", Payload: "placement-route-tag", Delivery: scalar},
+				{Field: "Current", Payload: "placement", Delivery: scalar},
+			},
+			Result: "placement", Outputs: []Column{{Payload: "placement"}},
+			Cardinality: model.ExactlyOne, Address: 4,
+		},
+		{
+			Census: "call/activation", Rule: "call-activation", Stem: "CallActivation", Axis: "call",
+			Judgment: "CallActivationOperation",
+			Inputs: []Slot{
+				{Field: "Candidate", Payload: "call-candidate", Delivery: scalar},
+				{Field: "Trigger", Payload: "call", Delivery: scalar},
+			},
+			Cardinality: model.Optional, Address: NoDestination,
+		},
+		{
+			Census: "typestate", Rule: "typestate-obligation", Stem: "TypestateObligation", Axis: "typestate",
+			Judgment: "TypestateObligationOperation",
+			Inputs: []Slot{
+				{Field: "Candidate", Payload: "typestate-candidate", Delivery: scalar},
+				{Field: "Argument", Payload: "value", Delivery: scalar},
+				{Field: "Dispatched", Payload: "call", Delivery: scalar},
+				{Field: "Tag", Payload: "typestate-protocol-tag", Delivery: scalar},
+				{Field: "Current", Payload: "typestate", Delivery: scalar},
+			},
+			Result: "typestate", Outputs: []Column{{Payload: "typestate"}},
+			Cardinality: model.ExactlyOne, Address: 4,
+		},
+		{
 			Census: "heap/index", Rule: "raw-get", Stem: "RawGetPackRoutes", Axis: "heap",
-			Pending: planGapRawPackRoutes,
+			Judgment: "RawGetPackRoutesOperation",
+			Inputs: []Slot{
+				{Field: "Route", Payload: "heap-route", Delivery: scalar},
+				{Field: "Fact", Payload: "heap", Delivery: scalar},
+				{Field: "Candidate", Payload: "heap-read-candidate", Delivery: scalar},
+				{Field: "Key", Payload: "value", Delivery: span},
+			},
+			Result: "heap-pack-route", Outputs: []Column{{Payload: "heap-pack-route"}},
+			Cardinality: model.BoundedMany, Bound: rawAccessRouteBound, Address: KeyedDestination,
 		},
 		{
 			Census: "heap/index", Rule: "raw-set", Stem: "RawSetPackRoutes", Axis: "heap",
-			Pending: planGapRawPackRoutes,
+			Judgment: "RawSetPackRoutesOperation",
+			Inputs: []Slot{
+				{Field: "Route", Payload: "heap-route", Delivery: scalar},
+				{Field: "Fact", Payload: "heap", Delivery: scalar},
+				{Field: "Candidate", Payload: "heap-write-candidate", Delivery: scalar},
+				{Field: "Key", Payload: "value", Delivery: span},
+			},
+			Result: "heap-pack-route", Outputs: []Column{{Payload: "heap-pack-route"}},
+			Cardinality: model.BoundedMany, Bound: rawAccessRouteBound, Address: KeyedDestination,
 		},
 		{
 			Census: "heap/index", Rule: "raw-get", Stem: "RawGetResult", Axis: "heap",
-			Pending: planGapRawReduction,
+			Judgment: "RawGetResultOperation",
+			Inputs: []Slot{
+				{Field: "Candidate", Payload: "heap-read-candidate", Delivery: scalar},
+				{Field: "Values", Payload: "value", Delivery: span},
+				{Field: "Calls", Payload: "call", Delivery: span},
+				{Field: "Heaps", Payload: "heap", Delivery: span},
+				{Field: "Sources", Payload: "heap-source-route", Delivery: span},
+				{Field: "Packs", Payload: "pack", Delivery: span},
+			},
+			Result: "value", Outputs: []Column{{Payload: "value"}},
+			Cardinality: model.ExactlyOne, Address: 0,
 		},
 		{
 			Census: "heap/index", Rule: "raw-set", Stem: "RawSetCommit", Axis: "heap",
-			Pending: planGapRawReduction,
+			Judgment: "RawSetCommitOperation",
+			Inputs: []Slot{
+				{Field: "Candidate", Payload: "heap-write-candidate", Delivery: scalar},
+				{Field: "Values", Payload: "value", Delivery: span},
+				{Field: "Packs", Payload: "pack", Delivery: span},
+				{Field: "Sources", Payload: "heap-source-route", Delivery: span},
+				{Field: "Heaps", Payload: "heap", Delivery: span},
+			},
+			Result: "heap", Outputs: []Column{{Payload: "heap"}},
+			Cardinality: model.BoundedMany, Bound: rawAccessRouteBound, Address: KeyedDestination,
 		},
 	}
 }

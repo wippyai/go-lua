@@ -64,7 +64,8 @@ func BindRawGetHot(binding *engine.SchemaBinding, fragment *RawGetSchemaFragment
 	}
 	core := &RawGetRule{runtime: runtime}
 	core.scratch.New = func() any {
-		return &rawGetScratch{payload: make([]uint64, bitWords(len(topology.catalog.payloads)-1)), source: make([]uint64, bitWords(len(topology.catalog.sources)))}
+		scratch, _ := NewRawGetScratch(topology)
+		return scratch
 	}
 	core.scratch.Put(core.scratch.New())
 	rule := &RawGetHotRule{core: core, values: values}

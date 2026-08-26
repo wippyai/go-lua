@@ -56,6 +56,7 @@ func Resolve(registry *Registry, spec rule.Spec, placement Placement) ([]Rule, e
 	}
 
 	joins := make([]JoinSpec, 0, program.JoinCount())
+	reads := make([]model.ColumnID, 0, program.JoinCount())
 	relations := []Name{candidate}
 	for index := 0; index < program.JoinCount(); index++ {
 		declaration, ok := program.JoinAt(index)
@@ -67,6 +68,11 @@ func Resolve(registry *Registry, spec rule.Spec, placement Placement) ([]Rule, e
 			return nil, err
 		}
 		joins = append(joins, lowered...)
+		if len(lowered) != 0 && len(lowered[0].RightColumns) != 0 {
+			// The operand row has one column per read, fed by the column that
+			// read is taken at, not by every equijoin the read expands into.
+			reads = append(reads, lowered[0].RightColumns[0])
+		}
 		relations = append(relations, joined)
 	}
 
@@ -81,6 +87,14 @@ func Resolve(registry *Registry, spec rule.Spec, placement Placement) ([]Rule, e
 
 	if len(program.Fold.Outputs) == 0 {
 		return nil, refuse(resolver.site("program.fold.outputs"), Name{Entry: entry}, KindPublicationKey, ReasonUndeclared)
+	}
+	candidateID, err := registry.Relation(resolver.site("program.candidate"), candidate)
+	if err != nil {
+		return nil, err
+	}
+	operandRow, err := resolver.operand(NewName(program.Fold.Reducer.Axis, program.Fold.Reducer.Member), reads, candidateID)
+	if err != nil {
+		return nil, err
 	}
 	rules := make([]Rule, 0, len(program.Fold.Outputs)+len(producers))
 	rules = append(rules, producers...)
@@ -112,6 +126,7 @@ func Resolve(registry *Registry, spec rule.Spec, placement Placement) ([]Rule, e
 			Candidate:  candidateID,
 			Joins:      joins,
 			Scope:      scope,
+			Operand:    operandRow,
 			Apply:      operation,
 			Carry:      carry,
 			Publish:    &published,
@@ -179,7 +194,7 @@ func (resolver ruleResolver) join(index int, declaration ruleprogram.JoinDecl, r
 	if err != nil {
 		return nil, Name{}, err
 	}
-	completion, err := resolver.completion(path, declaration.Read.Contract)
+	completion, err := resolver.completion(path, declaration.Read.Contract, joined)
 	if err != nil {
 		return nil, Name{}, err
 	}
@@ -391,15 +406,69 @@ func (resolver ruleResolver) selection(index int, declaration ruleprogram.JoinDe
 	if err != nil {
 		return Rule{}, err
 	}
+	producerReads := make([]model.ColumnID, 0, len(joins))
+	for _, spec := range joins {
+		if len(spec.RightColumns) != 0 {
+			producerReads = append(producerReads, spec.RightColumns[0])
+		}
+	}
+	operandRow, err := resolver.operand(name, producerReads, candidate)
+	if err != nil {
+		return Rule{}, err
+	}
 	return Rule{
 		ID:         dependency,
 		Expression: expression,
 		Candidate:  candidate,
 		Joins:      joins,
 		Scope:      portScope,
+		Operand:    operandRow,
 		Apply:      operation,
 		Publish:    &Publication{Relation: joinedID, Key: key},
 	}, nil
+}
+
+// operand projects the joined row onto the relation the operation reads.
+//
+// The signature names that relation and the columns it takes, in order, and a
+// rule's reads are ordered too, so the column an operation reads at position i
+// is fed by the read at position i. Every column of the operand relation is
+// defined exactly once, which is what makes the projection a typed row
+// construction rather than a partial map.
+func (resolver ruleResolver) operand(reducer Name, reads []model.ColumnID, candidate model.RelationID) (*Operand, error) {
+	site := resolver.site("program.fold.reducer")
+	sealed, err := resolver.registry.SealedSignature(site, reducer)
+	if err != nil {
+		return nil, err
+	}
+	inputs := sealed.Inputs()
+	// A rule that reads nothing applies its operation to the candidate row,
+	// which is already a relation: there is no joined row to project.
+	if len(inputs) == 0 || len(reads) == 0 {
+		return nil, nil
+	}
+	relation := inputs[0].Relation
+	// An operation whose signature names the candidate relation reads the
+	// spine the joins preserve, so there is no separate row to build.
+	if relation == candidate {
+		return nil, nil
+	}
+	key, err := resolver.registry.RelationKeyOf(site, relation)
+	if err != nil {
+		return nil, err
+	}
+	targets, err := resolver.registry.RelationColumns(site, relation)
+	if err != nil {
+		return nil, err
+	}
+	if len(targets) != len(reads) {
+		return nil, refuse(site, Name{Entry: resolver.entry}, KindSignature, ReasonUndeclared)
+	}
+	mappings := make([]ColumnMapping, 0, len(targets))
+	for index, target := range targets {
+		mappings = append(mappings, ColumnMapping{Source: reads[index], Target: target})
+	}
+	return &Operand{Relation: relation, Key: key, Columns: mappings}, nil
 }
 
 func (resolver ruleResolver) sourceRelation(path string, source ruleprogram.SourceRef, relations []Name) (Name, error) {
@@ -424,15 +493,34 @@ func (resolver ruleResolver) portScope(path string, port ruleprogram.InputRef) (
 // completion maps the authored sparse disposition onto explicit completion.
 // An explicitly sparse read closes over nothing and therefore completes
 // nothing; a default or dense read closes over its authored denominator.
-func (resolver ruleResolver) completion(path string, contract ruleprogram.ReadContract) (*model.DenominatorRef, error) {
+// completion closes a read against the universe of the rows it reads.
+//
+// The authored contract names the coordinate space the read materializes an
+// absent coordinate through, and one such space denominates many relations, so
+// it is resolved to prove the space is declared and never used as the closure
+// itself. What a read closes over is the relation it reads: completing it
+// against another relation's rows would count a different universe.
+func (resolver ruleResolver) completion(path string, contract ruleprogram.ReadContract, joined Name) (*model.DenominatorRef, error) {
 	switch contract.Sparse {
 	case ruleprogram.SparseExplicit:
 		return nil, nil
 	case ruleprogram.SparseDefault, ruleprogram.SparseDense:
-		name := Name{Entry: schema.EntryReference(contract.DenominatorRef)}
-		reference, err := resolver.registry.Denominator(resolver.site(path+".read.contract.denominator"), name)
+		site := resolver.site(path + ".read.contract.denominator")
+		space := Name{Entry: schema.EntryReference(contract.DenominatorRef)}
+		if _, err := resolver.registry.Denominator(site, space); err != nil {
+			return nil, err
+		}
+		relation, err := resolver.registry.Relation(site, joined)
 		if err != nil {
 			return nil, err
+		}
+		key, err := resolver.registry.RelationPublicationKey(site, joined)
+		if err != nil {
+			return nil, err
+		}
+		reference, ok := model.NewDenominatorRef(relation, key)
+		if !ok {
+			return nil, refuse(site, joined, KindDenominator, ReasonForeign)
 		}
 		return &reference, nil
 	default:
@@ -513,14 +601,22 @@ func (resolver ruleResolver) publication(index int, output ruleprogram.OutputDec
 	if !output.Available() {
 		return Publication{}, refuse(resolver.site(path), Name{Entry: resolver.entry}, KindColumn, ReasonUndeclared)
 	}
-	destination := NewName(output.Destination.Axis, output.Destination.Member)
-	column, err := resolver.registry.Column(resolver.site(path+".destination"), destination)
+	// The published Factor is the axis output column the fold writes. The
+	// destination projection names the coordinate within that Factor a routed
+	// row lands at, and a routed coordinate is a column of the route relation
+	// that produced it, so it is not the relation the rows are published into.
+	published := NewName(output.Column.Axis, output.Column.Key)
+	relation, err := resolver.registry.Relation(resolver.site(path+".column"), published)
 	if err != nil {
 		return Publication{}, err
 	}
-	key, err := resolver.registry.PublicationKey(resolver.site(path+".destination"), destination)
+	if _, err := resolver.registry.Column(resolver.site(path+".destination"),
+		NewName(output.Destination.Axis, output.Destination.Member)); err != nil {
+		return Publication{}, err
+	}
+	key, err := resolver.registry.RelationPublicationKey(resolver.site(path+".column"), published)
 	if err != nil {
 		return Publication{}, err
 	}
-	return Publication{Relation: column.Relation(), Key: key}, nil
+	return Publication{Relation: relation, Key: key}, nil
 }

@@ -92,9 +92,11 @@ func TestDispatchAnswersUnderItsOwnVocabulary(t *testing.T) {
 func TestTheCallAlgebraResolvesByTypeAlone(t *testing.T) {
 	fixture := relationfixture.New(t)
 	place := harness.New(t, "row/call")
-	callType := place.TypeID(t, "type/call")
-	types := relation.PayloadTypes{Call: callType, CallCandidate: place.TypeID(t, "type/call-coordinate")}
-	tags := relation.PayloadTags{Call: harness.Content(t, "store/call"), CallCandidate: harness.Content(t, "store/call-coordinate")}
+	var types relation.PayloadTypes
+	var tags relation.PayloadTags
+	place.InstallTypes(t, &types)
+	place.InstallTags(t, &tags)
+	callType := types.Call
 	payloads, ok := relation.NewPayloads(types, tags, reserve)
 	if !ok {
 		t.Fatal("install the call columns")
@@ -138,5 +140,107 @@ func TestTheCallBoundaryDoesNotAllocate(t *testing.T) {
 		}
 	}); allocations != 0 {
 		t.Fatalf("the call boundary allocated %.0f times", allocations)
+	}
+}
+
+// TestActivationPublishesItsDispositionAndNoFact drives the outcome-only
+// signature form against the real branch selector.
+//
+// A structural rule answers whether its occurrence holds and stages nothing.
+// The ABI reads that off the contract: a signature that declares no output
+// column is an operation that publishes no fact, and the emitter it is handed
+// is opened at a capacity of none, so publishing is not merely something this
+// family does not do but something it cannot.
+func TestActivationPublishesItsDispositionAndNoFact(t *testing.T) {
+	fixture := relationfixture.New(t)
+	place := harness.New(t, "row/activation")
+	callType := place.TypeID(t, "type/call")
+	candidateType := place.TypeID(t, "type/call-coordinate")
+	callColumn := harness.NewColumn[calldomain.Value](t, callType, "store/call", reserve)
+	candidateColumn := harness.NewColumn[calldomain.CallCoordinate](t, candidateType, "store/call-coordinate", reserve)
+	columns, ok := relation.NewCallActivationColumns(callColumn, candidateColumn)
+	if !ok {
+		t.Fatal("activation columns")
+	}
+	candidateAddress := place.Column(t, "column/candidate")
+	triggerAddress := place.Column(t, "column/trigger")
+	optional, ok := model.NewCardinality(model.Optional, 0)
+	if !ok {
+		t.Fatal("cardinality")
+	}
+	operation := place.Seal(t, "operation/call-activation",
+		[]signature.Input{
+			harness.ScalarInput(t, place.Relation, candidateAddress, candidateType, place.Denominator),
+			harness.ScalarInput(t, place.Relation, triggerAddress, callType, place.Denominator),
+		},
+		nil,
+		optional, outcome.Produced, outcome.NoSelection, outcome.Refused)
+	judgment, ok := relation.NewCallActivationOperation(fixture.Calls)
+	if !ok {
+		t.Fatal("activation selector")
+	}
+	factory, ok := relation.BindCallActivation(operation, judgment, columns, place.Refusal)
+	if !ok {
+		t.Fatal("bind call activation")
+	}
+	worker := place.Worker(t, factory, operation)
+
+	candidateToken, ok := candidateColumn.Encode(place.Issuer, calldomain.CallCoordinate{})
+	if !ok {
+		t.Fatal("encode candidate")
+	}
+	triggerToken, ok := callColumn.Encode(place.Issuer, fixture.Calls.Top())
+	if !ok {
+		t.Fatal("encode trigger")
+	}
+	frame := place.Frame(t,
+		harness.ScalarSlot(t, place.Cell(t, candidateAddress, place.Rows[0], candidateType, candidateToken)),
+		harness.ScalarSlot(t, place.Cell(t, triggerAddress, place.Rows[0], callType, triggerToken)),
+	)
+	buffer := place.Buffer(t, operation)
+	result := worker.Evaluate(frame, buffer)
+	batch, sealed := buffer.Seal(result)
+	if !sealed || !operation.Allows(result.Code) {
+		t.Fatalf("the activation settled outside its own vocabulary: %v", result.Code)
+	}
+	if batch.Len() != 0 {
+		t.Fatalf("a family that publishes no fact published %d rows", batch.Len())
+	}
+}
+
+// TestAFamilyThatPublishesNoFactIsRefusedAnEncoder states the other half of the
+// form. The absence of a fact is read off the signature, so a spec that
+// declares no output column and still carries an encoder is contradicting
+// itself and is refused rather than quietly ignored.
+func TestAFamilyThatPublishesNoFactIsRefusedAnEncoder(t *testing.T) {
+	fixture := relationfixture.New(t)
+	place := harness.New(t, "row/activation")
+	callType := place.TypeID(t, "type/call")
+	candidateType := place.TypeID(t, "type/call-coordinate")
+	columns, ok := relation.NewCallActivationColumns(
+		harness.NewColumn[calldomain.Value](t, callType, "store/call", reserve),
+		harness.NewColumn[calldomain.CallCoordinate](t, candidateType, "store/call-coordinate", reserve))
+	if !ok {
+		t.Fatal("activation columns")
+	}
+	optional, ok := model.NewCardinality(model.Optional, 0)
+	if !ok {
+		t.Fatal("cardinality")
+	}
+	// One output column and the same judgment: the family now claims a fact it
+	// has no encoder for, and admission refuses.
+	published := place.Seal(t, "operation/call-activation-published",
+		[]signature.Input{
+			harness.ScalarInput(t, place.Relation, place.Column(t, "column/candidate"), candidateType, place.Denominator),
+			harness.ScalarInput(t, place.Relation, place.Column(t, "column/trigger"), callType, place.Denominator),
+		},
+		[]signature.Output{{Relation: place.Relation, Column: place.Column(t, "column/fact"), Type: callType, Presence: signature.ProducePresent}},
+		optional, outcome.Produced, outcome.Refused)
+	judgment, ok := relation.NewCallActivationOperation(fixture.Calls)
+	if !ok {
+		t.Fatal("activation selector")
+	}
+	if _, admitted := relation.BindCallActivation(published, judgment, columns, place.Refusal); admitted {
+		t.Fatal("a family that publishes no fact was admitted under a contract that declares one")
 	}
 }

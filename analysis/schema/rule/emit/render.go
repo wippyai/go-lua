@@ -320,7 +320,7 @@ func renderStructuralReduce(out *strings.Builder, built *plan) error {
 func renderRouteReduce(out *strings.Builder, built *plan) error {
 	imports := built.imports
 	structure := imports.use(structurePackagePath)
-	execution := imports.use(executionPackagePath)
+	operandPackage := imports.use(operandPackagePath)
 	route := built.route.join
 	position := -1
 	for index, join := range built.fold.inputs {
@@ -344,7 +344,7 @@ func renderRouteReduce(out *strings.Builder, built *plan) error {
 	out.WriteString("// are the three owner-issued halves of the one member the read observed,\n")
 	out.WriteString("// so the fold never re-derives a destination or correlation.\n")
 	fmt.Fprintf(out, "func (fold %s) Reduce(routeCoordinate %s, cell %s.SelectedCell[%s]) (%s, %s.ReductionOutcome) {\n",
-		reducerType, imports.typeName(built.route.destinationType), execution, imports.typeName(route.axis.fact), imports.typeName(built.fold.results[0]), structure)
+		reducerType, imports.typeName(built.route.destinationType), operandPackage, imports.typeName(route.axis.fact), imports.typeName(built.fold.results[0]), structure)
 	fmt.Fprintf(out, "\treturn %s\n}\n\n", call)
 
 	out.WriteString("// Empty settles the row whose derived relation selected no route at all. An\n")
@@ -448,7 +448,7 @@ func renderFamily(out *strings.Builder, built *plan) {
 		fmt.Fprintf(out, "\treturn &%s{\n", workerType)
 		out.WriteString("\t\tfamily:  sealed,\n\t\trun:     run,\n")
 		fmt.Fprintf(out, "\t\tmembers: make([]%s.RouteMember, sealed.width),\n", execution)
-		fmt.Fprintf(out, "\t\tcells:   make([]%s.SelectedCell[%s], sealed.width),\n", execution, imports.typeName(built.selection.axis.fact))
+		fmt.Fprintf(out, "\t\tcells:   make([]%s.SelectedCell[%s], sealed.width),\n", imports.use(operandPackagePath), imports.typeName(built.selection.axis.fact))
 		out.WriteString("\t}\n}\n\n")
 	} else if built.shape == shapeSelectedRoute {
 		out.WriteString("\tif sealed.width < 0 {\n\t\treturn nil\n\t}\n")
@@ -457,14 +457,14 @@ func renderFamily(out *strings.Builder, built *plan) {
 		fmt.Fprintf(out, "\treturn &%s{\n", workerType)
 		out.WriteString("\t\tfamily:  sealed,\n\t\trun:     run,\n")
 		fmt.Fprintf(out, "\t\tmembers: make([]%s.RouteMember, sealed.width),\n", execution)
-		fmt.Fprintf(out, "\t\tcells:   make([]%s.SelectedCell[%s], sealed.width),\n", execution, imports.typeName(built.write.fact))
+		fmt.Fprintf(out, "\t\tcells:   make([]%s.SelectedCell[%s], sealed.width),\n", imports.use(operandPackagePath), imports.typeName(built.write.fact))
 		fmt.Fprintf(out, "\t\troutes:  make([]%s, sealed.width),\n", imports.typeName(built.route.destinationType))
 		if built.route.carry != nil {
 			fmt.Fprintf(out, "\t\tcarries: make([]%s.RouteCarry[%s], sealed.width),\n", execution, imports.typeName(built.write.fact))
 		}
 		for _, join := range vectorSpanJoins(built) {
 			fmt.Fprintf(out, "\t\t%sCells: make([]%s.MemberCell[%s], sealed.%sWidth),\n",
-				join.name, execution, imports.typeName(join.axis.fact), join.name)
+				join.name, imports.use(operandPackagePath), imports.typeName(join.axis.fact), join.name)
 		}
 		out.WriteString("\t}\n}\n\n")
 	} else if sets := vectorSpanJoins(built); len(sets) != 0 {
@@ -475,7 +475,7 @@ func renderFamily(out *strings.Builder, built *plan) {
 		out.WriteString("\t\tfamily: sealed,\n\t\trun:    run,\n")
 		for _, join := range sets {
 			fmt.Fprintf(out, "\t\t%sCells: make([]%s.MemberCell[%s], sealed.%sWidth),\n",
-				join.name, execution, imports.typeName(join.axis.fact), join.name)
+				join.name, imports.use(operandPackagePath), imports.typeName(join.axis.fact), join.name)
 		}
 		out.WriteString("\t}\n}\n\n")
 	} else {
@@ -516,7 +516,7 @@ func renderWorker(out *strings.Builder, built *plan) error {
 			// member.
 			fmt.Fprintf(out, "\t%s %s.Scratch[%s, %s]\n", join.name, execution,
 				imports.typeName(join.axis.dense), imports.typeName(join.axis.fact))
-			fmt.Fprintf(out, "\t%sCells []%s.MemberCell[%s]\n", join.name, execution, imports.typeName(join.axis.fact))
+			fmt.Fprintf(out, "\t%sCells []%s.MemberCell[%s]\n", join.name, imports.use(operandPackagePath), imports.typeName(join.axis.fact))
 		}
 	}
 	switch built.shape {
@@ -538,12 +538,12 @@ func renderWorker(out *strings.Builder, built *plan) error {
 		fmt.Fprintf(out, "\twrite %s.Scratch[%s, %s]\n", execution,
 			imports.typeName(built.write.dense), imports.typeName(built.write.fact))
 		fmt.Fprintf(out, "\tmembers []%s.RouteMember\n", execution)
-		fmt.Fprintf(out, "\tcells   []%s.SelectedCell[%s]\n", execution, imports.typeName(built.selection.axis.fact))
+		fmt.Fprintf(out, "\tcells   []%s.SelectedCell[%s]\n", imports.use(operandPackagePath), imports.typeName(built.selection.axis.fact))
 	case shapeSelectedRoute:
 		fmt.Fprintf(out, "\twrite %s.RouteScratch[%s, %s]\n", execution,
 			imports.typeName(built.write.dense), imports.typeName(built.write.fact))
 		fmt.Fprintf(out, "\tmembers []%s.RouteMember\n", execution)
-		fmt.Fprintf(out, "\tcells   []%s.SelectedCell[%s]\n", execution, imports.typeName(built.write.fact))
+		fmt.Fprintf(out, "\tcells   []%s.SelectedCell[%s]\n", imports.use(operandPackagePath), imports.typeName(built.write.fact))
 		fmt.Fprintf(out, "\troutes  []%s\n", imports.typeName(built.route.destinationType))
 		if built.route.carry != nil {
 			fmt.Fprintf(out, "\tcarries []%s.RouteCarry[%s]\n", execution, imports.typeName(built.write.fact))
@@ -686,7 +686,7 @@ func renderExactExecute(out *strings.Builder, built *plan) error {
 		fmt.Fprintf(out, "\t\tif lane.%sCell(row.%s[index], row.%sPolicy, ticket, &%sCells[index]) != %s.Concrete {\n\t\t\treturn lane.settle(ticket, %s.Refuse)\n\t\t}\n",
 			join.name, join.name, join.name, join.name, structure, structure)
 		out.WriteString("\t}\n")
-		fmt.Fprintf(out, "\t%sVector, %sVectorOK := %s.NewMemberVector(%sCells)\n", join.name, join.name, execution, join.name)
+		fmt.Fprintf(out, "\t%sVector, %sVectorOK := %s.NewMemberVector(%sCells)\n", join.name, join.name, imports.use(operandPackagePath), join.name)
 		fmt.Fprintf(out, "\tif !%sVectorOK {\n\t\treturn lane.settle(ticket, %s.Refuse)\n\t}\n", join.name, structure)
 	}
 	input := "seed.Rows()"
@@ -1053,7 +1053,6 @@ func vectorSpanJoins(built *plan) []*joinPlan {
 // stays the cell its owner declared at that ordinal.
 func renderMemberVector(out *strings.Builder, built *plan, join *joinPlan) {
 	imports := built.imports
-	execution := imports.use(executionPackagePath)
 	structure := imports.use(structurePackagePath)
 	fmt.Fprintf(out, "\t%sCount := len(row.%s)\n", join.name, join.name)
 	fmt.Fprintf(out, "\tif %sCount > len(lane.%sCells) {\n\t\treturn lane.settle(ticket, %s.Refuse)\n\t}\n",
@@ -1063,7 +1062,7 @@ func renderMemberVector(out *strings.Builder, built *plan, join *joinPlan) {
 	fmt.Fprintf(out, "\t\tif lane.%sCell(row.%s[index], row.%sPolicy, ticket, &%sCells[index]) != %s.Concrete {\n\t\t\treturn lane.settle(ticket, %s.Refuse)\n\t\t}\n",
 		join.name, join.name, join.name, join.name, structure, structure)
 	out.WriteString("\t}\n")
-	fmt.Fprintf(out, "\t%sVector, %sVectorOK := %s.NewMemberVector(%sCells)\n", join.name, join.name, execution, join.name)
+	fmt.Fprintf(out, "\t%sVector, %sVectorOK := %s.NewMemberVector(%sCells)\n", join.name, join.name, imports.use(operandPackagePath), join.name)
 	fmt.Fprintf(out, "\tif !%sVectorOK {\n\t\treturn lane.settle(ticket, %s.Refuse)\n\t}\n", join.name, structure)
 }
 
@@ -1075,12 +1074,13 @@ func renderMemberVector(out *strings.Builder, built *plan, join *joinPlan) {
 func renderMemberCell(out *strings.Builder, built *plan, join *joinPlan) {
 	imports := built.imports
 	execution := imports.use(executionPackagePath)
+	operandPackage := imports.use(operandPackagePath)
 	structure := imports.use(structurePackagePath)
 	fmt.Fprintf(out, "// %sCell takes one member of a nested set at its own sealed coordinate.\n", join.name)
 	fmt.Fprintf(out, "func (lane *%s) %sCell(read %s.ExactRead[%s, %s], policy %s.ReadCellPolicy[%s], ticket %s.Ticket, destination *%s.MemberCell[%s]) %s.ReductionOutcome {\n",
 		workerType, join.name, execution, imports.typeName(join.axis.dense), imports.typeName(join.axis.fact),
 		execution, imports.typeName(join.axis.fact),
-		execution, execution, imports.typeName(join.axis.fact), structure)
+		execution, operandPackage, imports.typeName(join.axis.fact), structure)
 	fmt.Fprintf(out, "\tif lane == nil || destination == nil || !read.Valid() {\n\t\treturn %s.Refuse\n\t}\n", structure)
 	fmt.Fprintf(out, "\tif read.Read(ticket, &lane.%s) != %s.ReadAvailable {\n\t\t_ = lane.%s.Discard(ticket)\n\t\treturn %s.Refuse\n\t}\n",
 		join.name, execution, join.name, structure)
@@ -1096,7 +1096,7 @@ func renderMemberCell(out *strings.Builder, built *plan, join *joinPlan) {
 		join.name, join.name, join.name, structure)
 	fmt.Fprintf(out, "\tif !available || !regionOK {\n\t\treturn %s.Refuse\n\t}\n", structure)
 	out.WriteString("\tcell, present = policy.Cell(cell, present)\n")
-	fmt.Fprintf(out, "\t*destination = %s.MemberCell[%s]{Value: cell, Present: present, Region: region}\n", execution, imports.typeName(join.axis.fact))
+	fmt.Fprintf(out, "\t*destination = %s.MemberCell[%s]{Value: cell, Present: present, Region: region}\n", operandPackage, imports.typeName(join.axis.fact))
 	fmt.Fprintf(out, "\treturn %s.Concrete\n}\n\n", structure)
 }
 

@@ -66,15 +66,14 @@ func TestAllRootAtRetainsDefensiveNonPrefixScan(t *testing.T) {
 
 func TestAllRootRouteSetIsAllocationFree(t *testing.T) {
 	fixture := newPublicationEscapeFixture(t)
-	prepared := &preparedBatch{
+	prepared := &PreparedBatch{
 		rows:     []publicationRow{{id: identity.ContentID{3}, requirement: placement.SharedHeap, operation: 1, subjectOpen: true}},
 		byTag:    map[sourceTag]sourceSpec{},
 		prepared: true,
 	}
-	rule := fixture.rule()
 	gate := operationGateForTest(1)
 	allocations := testing.AllocsPerRun(100, func() {
-		routes, routesOK := rule.routeSet(fixture.placement, prepared, gate, factBuffer{})
+		routes, routesOK := routeSetFor(fixture.placement, fixture.values, prepared, gate, factBuffer{})
 		if routesOK {
 			lazyAllRootAllocationSink = routes.len()
 		}
@@ -127,7 +126,7 @@ func TestOperationGateExcludesUnselectedPublicationSources(t *testing.T) {
 	if !firstOK || !secondOK {
 		t.Fatal("source tag setup")
 	}
-	prepared := &preparedBatch{
+	prepared := &PreparedBatch{
 		sources: []sourceSpec{
 			{tag: firstTag, rowID: firstID, operation: vocabulary.Operation(1)},
 			{tag: secondTag, rowID: secondID, operation: vocabulary.Operation(2)},
@@ -150,7 +149,7 @@ func TestOpaqueCallGateLeavesNonKnownRowsWithoutPublicationAuthority(t *testing.
 	if !gate.admits(vocabulary.Operation(1)) || gate.admits(vocabulary.Operation(2)) || !gate.opaque {
 		t.Fatal("opaque Call gate did not preserve exact/unknown distinction")
 	}
-	prepared := &preparedBatch{sources: []sourceSpec{{operation: vocabulary.Operation(2)}}}
+	prepared := &PreparedBatch{sources: []sourceSpec{{operation: vocabulary.Operation(2)}}}
 	sources := prepared.sourcesForGate(gate)
 	if sources.len() != 0 {
 		t.Fatal("opaque non-known row incorrectly requested an exact publication Value read")

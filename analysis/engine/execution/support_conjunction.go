@@ -1,6 +1,9 @@
 package execution
 
-import "github.com/wippyai/go-lua/analysis/engine/internal/facts/support"
+import (
+	"github.com/wippyai/go-lua/analysis/engine/internal/facts/support"
+	"github.com/wippyai/go-lua/analysis/engine/operand"
+)
 
 // ConjoinSupport is the ONE statement of the support a conclusion holds over
 // when it consumed more than one observation.
@@ -40,7 +43,7 @@ func ConjoinSupport(running, next support.Mask) (support.Mask, bool) {
 // the order the span published them. The starting mask is the support the rest
 // of the invocation proved, so a vector cell can only narrow the conclusion,
 // never widen it past what its siblings held.
-func ConjoinCells[V any](running support.Mask, cells []MemberCell[V]) (support.Mask, bool) {
+func ConjoinCells[V any](running support.Mask, cells []operand.MemberCell[V]) (support.Mask, bool) {
 	region := running
 	for _, cell := range cells {
 		conjoined, ok := ConjoinSupport(region, cell.Region)

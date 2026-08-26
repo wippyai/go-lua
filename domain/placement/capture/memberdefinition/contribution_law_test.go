@@ -6,6 +6,7 @@ import (
 	memberdefinition "github.com/wippyai/go-lua/analysis/schema/axis/member/definition"
 	"github.com/wippyai/go-lua/analysis/schema/rule/codegen"
 	"github.com/wippyai/go-lua/analysis/schema/structure"
+	heapdomain "github.com/wippyai/go-lua/domain/heap"
 	placementdomain "github.com/wippyai/go-lua/domain/placement"
 	capture "github.com/wippyai/go-lua/domain/placement/capture"
 )
@@ -26,8 +27,13 @@ func TestCaptureContributionNamesTheCanonicalReducer(t *testing.T) {
 		codegen.SelectionCellType,
 		codegen.SummaryVectorType,
 	)
-	if !ok || len(args) != 3 || args[0].Type.Name != "Fact" || args[1].Type.Name != "uint64" || args[2].Type.Name != "Fact" || len(results) != 2 || results[0].Name != "Fact" || results[1].Name != "ReductionOutcome" {
+	// The routed input declares the coordinate it publishes at, so the derived
+	// call hands the fold that key before the tag it was correlated by: the
+	// parent cell, the route, its tag, and the routed cell.
+	if !ok || len(args) != 4 || args[0].Type.Name != "Fact" || args[1].Type.Name != "Key" ||
+		args[2].Type.Name != "uint64" || args[3].Type.Name != "Fact" ||
+		len(results) != 2 || results[0].Name != "Fact" || results[1].Name != "ReductionOutcome" {
 		t.Fatalf("derived signature args=%+v results=%+v ok=%t", args, results, ok)
 	}
-	var _ func(placementdomain.Fact, uint64, placementdomain.Fact) (placementdomain.Fact, structure.ReductionOutcome) = capture.CaptureFold
+	var _ func(placementdomain.Fact, heapdomain.Key, uint64, placementdomain.Fact) (placementdomain.Fact, structure.ReductionOutcome) = capture.CaptureFold
 }

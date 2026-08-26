@@ -36,10 +36,6 @@ func provider() member.CandidateRef {
 	return member.IssuedRowCandidate(programissuance.RelationOccurrenceSubjectLiveness)
 }
 
-func suspensionFunction(name string) definition.GoSymbol {
-	return definition.GoSymbol{PackagePath: suspensionPackagePath, Name: name, ResultIndex: 0}
-}
-
 func sourceMethod(name string, result int8) definition.GoSymbol {
 	return definition.GoSymbol{PackagePath: suspensionPackagePath, Name: name, Receiver: goType(suspensionPackagePath, "Source"), ResultIndex: result}
 }
@@ -121,12 +117,10 @@ func selections() []definition.Selection {
 		{
 			Name: "EvidenceSourceSelection", Key: "value/suspension-evidence/source-selection",
 			Relation: "EvidenceSources", Tag: "EvidenceSourceTag",
-			Implementation: suspensionFunction("DeriveSuspensionSources"),
 		},
 		{
 			Name: "EvidenceRouteSelection", Key: "placement/suspension-evidence/route-selection",
 			Relation: "EvidenceRoutes", Tag: "EvidenceRouteTag",
-			Implementation: suspensionFunction("DeriveSuspensionRoutes"),
 		},
 	}
 }

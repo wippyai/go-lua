@@ -15,6 +15,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/engine/internal/factbinding"
 	"github.com/wippyai/go-lua/analysis/engine/internal/facts/scalar"
 	"github.com/wippyai/go-lua/analysis/engine/internal/facts/support"
+	"github.com/wippyai/go-lua/analysis/engine/operand"
 	ruleplan "github.com/wippyai/go-lua/analysis/schema/rule/plan"
 	ruleprogram "github.com/wippyai/go-lua/analysis/schema/rule/program"
 )
@@ -26,17 +27,6 @@ import (
 type SelectedCoordinate struct {
 	Unit carrier.Unit
 	Tag  uint64
-}
-
-// SelectedCell is one delivered member of a Selection. Value has already been
-// through the read's sealed substitutions, so Present is false only under a
-// contract that genuinely reads evidence provenance. Region is the member's own
-// authenticated support row, which is what a routed write stages against.
-type SelectedCell[V any] struct {
-	Value   V
-	Present bool
-	Tag     uint64
-	Region  support.Mask
 }
 
 // SelectedRead is one immutable typed selected-read descriptor. It is sealed
@@ -212,7 +202,7 @@ func (read SelectedRead[K, V]) Observe(
 	ticket Ticket,
 	scratch *SelectedScratch[K, V],
 	members []RouteMember,
-	cells []SelectedCell[V],
+	cells []operand.SelectedCell[V],
 ) ReadStatus {
 	if !read.Valid() || scratch == nil || !ticket.Valid() {
 		return ReadRefuse
@@ -234,7 +224,7 @@ func (read SelectedRead[K, V]) Observe(
 			return ReadRefuse
 		}
 		delivered, deliveredPresent := read.policy.Cell(value, present)
-		cells[index] = SelectedCell[V]{Value: delivered, Present: deliveredPresent, Tag: member.coordinate.Tag, Region: region}
+		cells[index] = operand.SelectedCell[V]{Value: delivered, Present: deliveredPresent, Tag: member.coordinate.Tag, Region: region}
 	}
 	if !scratch.close() {
 		return ReadRefuse

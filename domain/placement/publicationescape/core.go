@@ -46,7 +46,7 @@ type publicationRow struct {
 	operation    vocabulary.Operation
 }
 
-type preparedBatch struct {
+type PreparedBatch struct {
 	batch   effectfactor.MountedPublicationBatch
 	id      identity.ContentID
 	module  identity.ContentID
@@ -734,12 +734,16 @@ func mergeRoute(prior, candidate plannedRoute) plannedRoute {
 	return prior
 }
 
-func (rule *HotRule) operationGateForBatch(batch *preparedBatch, value calldomain.Value) (operationGate, bool) {
-	if rule == nil || batch == nil || rule.calls == nil || rule.calls.Algebra() == nil {
+// operationGateFor is the set of publication operations one admitted Call
+// fact authorizes. It takes the Call algebra that sealed the fact rather than
+// reaching for a rule's retained authority, so the same statement answers for
+// a hot invocation and for the declared operation that publishes these rows.
+func operationGateFor(calls *calldomain.Algebra, batch *PreparedBatch, value calldomain.Value) (operationGate, bool) {
+	if batch == nil || calls == nil || !calls.Valid() {
 		return operationGate{}, false
 	}
-	key, keyOK := rule.callKeyForBatch(batch.batch)
-	if !keyOK || !rule.calls.Algebra().Admits(key, value) {
+	key, keyOK := callKeyForBatch(calls, batch.batch)
+	if !keyOK || !calls.Admits(key, value) {
 		return operationGate{}, false
 	}
 	gate := operationGate{}
@@ -752,7 +756,7 @@ func (rule *HotRule) operationGateForBatch(batch *preparedBatch, value calldomai
 		if !targetOK {
 			return operationGate{}, false
 		}
-		operation, operationKind := rule.calls.Algebra().ClassifyTargetOperation(target)
+		operation, operationKind := calls.ClassifyTargetOperation(target)
 		switch operationKind {
 		case calldomain.TargetOperationInvalid:
 			return operationGate{}, false
@@ -768,8 +772,16 @@ func (rule *HotRule) operationGateForBatch(batch *preparedBatch, value calldomai
 	return gate, true
 }
 
-func (rule *HotRule) prepareBatch(batch effectfactor.MountedPublicationBatch) (*preparedBatch, bool) {
-	if rule == nil || rule.values == nil || rule.values.Schema() == nil || !rule.values.Schema().Valid() || !batch.Valid() {
+// PrepareBatch is the sealed reading of one mounted publication batch: the
+// rows it authors, the escape requirement each carries, and the Value
+// coordinate of every member its subject names.
+//
+// It takes the Value schema the coordinates belong to and the batch itself,
+// which is everything the reading depends on. The hot rule retains one of
+// these per batch at bind so a solve does not repeat the walk; the operation
+// that publishes these rows performs the same walk from the same inputs.
+func PrepareBatch(values *valuedomain.Schema, batch effectfactor.MountedPublicationBatch) (*PreparedBatch, bool) {
+	if values == nil || !values.Valid() || !batch.Valid() {
 		return nil, false
 	}
 	id, idOK := batch.SealedContentID()
@@ -777,7 +789,7 @@ func (rule *HotRule) prepareBatch(batch effectfactor.MountedPublicationBatch) (*
 	if !idOK || !id.Available() || !provenanceOK || !module.Available() || !call.Available() {
 		return nil, false
 	}
-	prepared := &preparedBatch{batch: batch, id: id, module: module, call: call, byTag: make(map[sourceTag]sourceSpec)}
+	prepared := &PreparedBatch{batch: batch, id: id, module: module, call: call, byTag: make(map[sourceTag]sourceSpec)}
 	seen := make(map[identity.ContentID]struct{})
 	for _, publication := range batch.Rows() {
 		if !publication.Valid() {
@@ -829,7 +841,7 @@ func (rule *HotRule) prepareBatch(batch effectfactor.MountedPublicationBatch) (*
 			row.subjectEmpty = true
 		}
 		for member := 0; member < subject.MemberCount(); member++ {
-			coordinate, coordinateOK := packtransfer.CoordinateForInputMember(rule.values.Schema(), subject, member)
+			coordinate, coordinateOK := packtransfer.CoordinateForInputMember(values, subject, member)
 			tag, tagOK := sourceTagForMember(rowID, member)
 			if !coordinateOK || !tagOK {
 				return nil, false
@@ -843,7 +855,7 @@ func (rule *HotRule) prepareBatch(batch effectfactor.MountedPublicationBatch) (*
 		// requirement at its conservative escape disposition.
 		if hasContext {
 			for member := 0; member < context.MemberCount(); member++ {
-				if _, coordinateOK := packtransfer.CoordinateForInputMember(rule.values.Schema(), context, member); !coordinateOK {
+				if _, coordinateOK := packtransfer.CoordinateForInputMember(values, context, member); !coordinateOK {
 					return nil, false
 				}
 			}
@@ -860,7 +872,7 @@ func (rule *HotRule) prepareBatch(batch effectfactor.MountedPublicationBatch) (*
 	return prepared, true
 }
 
-func (prepared *preparedBatch) sourcesForGate(gate operationGate) sourceView {
+func (prepared *PreparedBatch) sourcesForGate(gate operationGate) sourceView {
 	if prepared == nil {
 		return sourceView{}
 	}
@@ -878,16 +890,15 @@ func (prepared *preparedBatch) sourcesForGate(gate operationGate) sourceView {
 	return sources
 }
 
-func (rule *HotRule) callKeyForBatch(batch effectfactor.MountedPublicationBatch) (calldomain.Key, bool) {
-	if rule == nil || rule.calls == nil || rule.calls.Algebra() == nil || !rule.calls.Algebra().Valid() {
+func callKeyForBatch(calls *calldomain.Algebra, batch effectfactor.MountedPublicationBatch) (calldomain.Key, bool) {
+	if calls == nil || !calls.Valid() {
 		return calldomain.Key{}, false
 	}
 	module, occurrence, ok := batch.CallProvenance()
 	if !ok {
 		return calldomain.Key{}, false
 	}
-	algebra := rule.calls.Algebra()
-	_, key, keyOK := algebra.MountedCallKeyForOccurrence(module, occurrence)
+	_, key, keyOK := calls.MountedCallKeyForOccurrence(module, occurrence)
 	return key, keyOK
 }
 
@@ -900,7 +911,7 @@ func (rule *HotRule) callValueSelector(context engine.SelectorContext, batch eff
 		return calldomain.Value{}, false, false
 	}
 	value, present, available := cells.At(0)
-	key, keyOK := rule.callKeyForBatch(batch)
+	key, keyOK := callKeyForBatch(rule.calls.Algebra(), batch)
 	if !available || !keyOK {
 		return calldomain.Value{}, false, false
 	}
@@ -916,7 +927,7 @@ func (rule *HotRule) callValueFrame(frame engine.Frame[placementdomain.Fact, eff
 		return calldomain.Value{}, false, false
 	}
 	value, present, available := cells.At(0)
-	key, keyOK := rule.callKeyForBatch(batch)
+	key, keyOK := callKeyForBatch(rule.calls.Algebra(), batch)
 	if !available || !keyOK {
 		return calldomain.Value{}, false, false
 	}
@@ -951,7 +962,7 @@ func (rule *HotRule) locateValues(context engine.SelectorContext, batch effectfa
 	if !present {
 		return true
 	}
-	gate, gateOK := rule.operationGateForBatch(prepared, value)
+	gate, gateOK := operationGateFor(rule.calls.Algebra(), prepared, value)
 	if !gateOK {
 		return false
 	}
@@ -968,62 +979,62 @@ func (rule *HotRule) locateValues(context engine.SelectorContext, batch effectfa
 	return true
 }
 
-func (rule *HotRule) collectFacts(context engine.SelectorContext, sources sourceView, selection engine.Selection[sourceTag, engine.OrderedCells[valuedomain.Value]]) (factBuffer, bool) {
-	if rule == nil || rule.values == nil || rule.values.Schema() == nil {
-		return factBuffer{}, false
+// collectFacts reads the selection the Value predecessor delivered and puts
+// each cell at the position of the source row it was selected for. The engine
+// exposes selection rows in physical order, so the tag is what recovers the
+// publication order; authenticating the cells is the plan's own statement and
+// is made once, in NewSourceFacts.
+func (rule *HotRule) collectFacts(context engine.SelectorContext, plan SourcePlan, selection engine.Selection[sourceTag, engine.OrderedCells[valuedomain.Value]]) (SourceFacts, bool) {
+	if rule == nil || rule.values == nil {
+		return SourceFacts{}, false
 	}
 	count, countOK := engine.SelectorSelectionCount(context, selection)
-	if !countOK || count != sources.len() {
-		return factBuffer{}, false
+	if !countOK || count != plan.Count() {
+		return SourceFacts{}, false
 	}
-	var facts factBuffer
+	cells := make([]SourceCell, count)
+	filled := make([]bool, count)
 	for index := 0; index < count; index++ {
-		tag, cells, selected := engine.SelectorSelectionAt(context, selection, index)
-		source, sourceOK := sources.find(tag)
-		if !selected || !sourceOK || cells.Count() != 1 {
-			return factBuffer{}, false
+		tag, row, selected := engine.SelectorSelectionAt(context, selection, index)
+		position, positionOK := plan.position(tag)
+		if !selected || !positionOK || filled[position] || row.Count() != 1 {
+			return SourceFacts{}, false
 		}
-		if !rule.values.Schema().AdmitsCoordinate(source.coordinate, rule.values.Schema().Bottom()) || source.tag == 0 || !source.rowID.Available() || source.operation == 0 || source.member < 0 {
-			return factBuffer{}, false
+		value, present, available := row.At(0)
+		if !available {
+			return SourceFacts{}, false
 		}
-		value, valuePresent, available := cells.At(0)
-		if !available || valuePresent && !rule.values.Schema().AdmitsCoordinate(source.coordinate, value) || !valuePresent && !rule.values.Schema().Equal(value, rule.values.Schema().Bottom()) {
-			return factBuffer{}, false
-		}
-		if !facts.merge(rule.values.Schema(), factEntry{rowID: source.rowID, value: value, present: valuePresent}) {
-			return factBuffer{}, false
-		}
+		cells[position] = SourceCell{Value: value, Present: present}
+		filled[position] = true
 	}
-	return facts, true
+	return NewSourceFacts(rule.values.Schema(), plan, cells)
 }
 
-func (rule *HotRule) collectFrameFacts(frame engine.Frame[placementdomain.Fact, effectfactor.MountedPublicationBatch], sources sourceView, selection engine.Selection[sourceTag, engine.OrderedCells[valuedomain.Value]]) (factBuffer, bool) {
-	if rule == nil || rule.values == nil || rule.values.Schema() == nil {
-		return factBuffer{}, false
+// collectFrameFacts is the fold-side reading of the same delivered selection.
+func (rule *HotRule) collectFrameFacts(frame engine.Frame[placementdomain.Fact, effectfactor.MountedPublicationBatch], plan SourcePlan, selection engine.Selection[sourceTag, engine.OrderedCells[valuedomain.Value]]) (SourceFacts, bool) {
+	if rule == nil || rule.values == nil {
+		return SourceFacts{}, false
 	}
 	count, countOK := engine.SelectionCount(frame, selection)
-	if !countOK || count != sources.len() {
-		return factBuffer{}, false
+	if !countOK || count != plan.Count() {
+		return SourceFacts{}, false
 	}
-	var facts factBuffer
+	cells := make([]SourceCell, count)
+	filled := make([]bool, count)
 	for index := 0; index < count; index++ {
-		tag, cells, selected := engine.SelectionAt(frame, selection, index)
-		source, sourceOK := sources.find(tag)
-		if !selected || !sourceOK || cells.Count() != 1 {
-			return factBuffer{}, false
+		tag, row, selected := engine.SelectionAt(frame, selection, index)
+		position, positionOK := plan.position(tag)
+		if !selected || !positionOK || filled[position] || row.Count() != 1 {
+			return SourceFacts{}, false
 		}
-		if !rule.values.Schema().AdmitsCoordinate(source.coordinate, rule.values.Schema().Bottom()) || source.tag == 0 || !source.rowID.Available() || source.operation == 0 || source.member < 0 {
-			return factBuffer{}, false
+		value, present, available := row.At(0)
+		if !available {
+			return SourceFacts{}, false
 		}
-		value, valuePresent, available := cells.At(0)
-		if !available || valuePresent && !rule.values.Schema().AdmitsCoordinate(source.coordinate, value) || !valuePresent && !rule.values.Schema().Equal(value, rule.values.Schema().Bottom()) {
-			return factBuffer{}, false
-		}
-		if !facts.merge(rule.values.Schema(), factEntry{rowID: source.rowID, value: value, present: valuePresent}) {
-			return factBuffer{}, false
-		}
+		cells[position] = SourceCell{Value: value, Present: present}
+		filled[position] = true
 	}
-	return facts, true
+	return NewSourceFacts(rule.values.Schema(), plan, cells)
 }
 
 // validPreparedRoutes is the final local integrity fence before a route can
@@ -1031,7 +1042,7 @@ func (rule *HotRule) collectFrameFacts(frame engine.Frame[placementdomain.Fact, 
 // is also exercised by allocation-free planning tests with hand-built plans.
 // Those plans must fail closed under the same rules; otherwise a malformed row
 // can reach the opaque branch and be converted into an all-root Unknown.
-func validPreparedRoutes(prepared *preparedBatch, values *valuedomain.Schema) bool {
+func validPreparedRoutes(prepared *PreparedBatch, values *valuedomain.Schema) bool {
 	if prepared == nil || values == nil || !values.Valid() {
 		return false
 	}
@@ -1098,11 +1109,16 @@ func preparedRowByID(rows []publicationRow, id identity.ContentID) (publicationR
 	return publicationRow{}, false
 }
 
-func (rule *HotRule) routeSet(schema placementdomain.Schema, prepared *preparedBatch, gate operationGate, facts factBuffer) (routeBuffer, bool) {
-	if rule == nil || prepared == nil || !schema.Valid() || rule.values == nil || rule.values.Schema() == nil {
+// routeSetFor is the route algebra of one admitted batch: which allocation
+// roots the publications it authors reach, and under which requirement. It
+// takes the two schemas and the delivered facts rather than a rule's retained
+// authorities, because the rows it returns are the ones the declared
+// publication-escape route operation publishes.
+func routeSetFor(schema placementdomain.Schema, values *valuedomain.Schema, prepared *PreparedBatch, gate operationGate, facts factBuffer) (routeBuffer, bool) {
+	if prepared == nil || !schema.Valid() || values == nil {
 		return routeBuffer{}, false
 	}
-	valuesSchema := rule.values.Schema()
+	valuesSchema := values
 	if !valuesSchema.Valid() || !valuesSchema.OwnsHeapSchema(schema.Heap()) {
 		return routeBuffer{}, false
 	}
@@ -1170,7 +1186,7 @@ func (rule *HotRule) routeSet(schema placementdomain.Schema, prepared *preparedB
 			// its exact schema Bottom as the Factor Default.  The exact equality
 			// check is repeated at the route boundary so a hand-built buffer cannot
 			// turn an arbitrary missing row into a no-route result.
-			if !rule.values.Schema().Equal(fact, rule.values.Schema().Bottom()) {
+			if !valuesSchema.Equal(fact, valuesSchema.Bottom()) {
 				return routeBuffer{}, false
 			}
 			continue

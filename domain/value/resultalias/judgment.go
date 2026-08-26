@@ -8,7 +8,7 @@ package resultalias
 import (
 	"sort"
 
-	"github.com/wippyai/go-lua/analysis/engine/execution"
+	"github.com/wippyai/go-lua/analysis/engine/operand"
 	"github.com/wippyai/go-lua/analysis/schema/structure"
 	calldomain "github.com/wippyai/go-lua/domain/call"
 	packdomain "github.com/wippyai/go-lua/domain/pack"
@@ -64,7 +64,7 @@ func (judgment Judgment) Valid() bool {
 func (judgment Judgment) Result(
 	candidate valuedomain.MountedCallResultSlot,
 	dispatched calldomain.Value,
-	cells []execution.SelectedCell[valuedomain.Value],
+	cells []operand.SelectedCell[valuedomain.Value],
 ) (valuedomain.Value, structure.ReductionOutcome) {
 	if !judgment.Valid() || !judgment.values.OwnsMountedCallResultSlot(candidate) {
 		return valuedomain.Value{}, structure.Refuse

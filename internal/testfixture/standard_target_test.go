@@ -286,8 +286,65 @@ func TestResourceHostManifestDeclaresBothLifecycles(t *testing.T) {
 			t.Fatalf("resource.%s requirements = %+v, want exactly %+v", member, law.Requirements, want)
 		}
 	}
+	declared, declaredOK := declaration.FunctionSignatures["detach"]
+	if !declaredOK {
+		t.Fatal("the resource manifest declares no detach")
+	}
+	handed := lifecycle.Escape{Target: effect.ParamRef{Index: 0}, Protocol: "connection"}
+	carried := false
+	for _, label := range declared.Effect.Labels {
+		if handed.Equals(effect.NormalizeLabel(label)) {
+			carried = true
+		}
+	}
+	if !carried {
+		t.Fatalf("resource.detach carries no %s", handed)
+	}
 	assertSealedResourceLifecycles(t)
 	assertSealedConnectionRequirements(t)
+	assertSealedConnectionEscape(t)
+}
+
+// assertSealedConnectionEscape reads the authored escape back out of the
+// sealed target. detach hands the connection out of the analysis, so the
+// connection machine carries an escape row of its own beside the one the
+// reader derives for every protocol's opaque operation, and that row names
+// detach's first parameter.
+func assertSealedConnectionEscape(t *testing.T) {
+	t.Helper()
+	sealed, err := StandardLibraryTarget()
+	if err != nil {
+		t.Fatal(err)
+	}
+	table := sealed.Protocols()
+	connection, _, found := protocolAcquiredBy(&table, resourceOperation(t, sealed, "connect"))
+	if !found {
+		t.Fatal("no sealed protocol is acquired by resource.connect")
+	}
+	detach := resourceOperation(t, sealed, "detach")
+	authored := 0
+	for index := 0; index < table.EscapeCount(connection); index++ {
+		operation, kind, ordinal, ok := table.EscapeAt(connection, index)
+		if !ok {
+			t.Fatalf("connection escape %d is unavailable", index)
+		}
+		if operation != detach {
+			continue
+		}
+		authored++
+		if kind != vocabulary.InputSourceValueFormal || ordinal != 0 {
+			t.Fatalf("resource.detach escapes %d/%d, want parameter 0", kind, ordinal)
+		}
+	}
+	if authored != 1 {
+		t.Fatalf("resource.detach owns %d sealed escape rows, want exactly one", authored)
+	}
+	for index := 0; index < table.TransitionCount(connection); index++ {
+		moved, _, _, _, transitionOK := table.TransitionAt(connection, index)
+		if transitionOK && moved == detach {
+			t.Fatal("resource.detach moves the connection; an escape states no arrival")
+		}
+	}
 }
 
 // assertSealedConnectionRequirements reads the read-only constraints back out

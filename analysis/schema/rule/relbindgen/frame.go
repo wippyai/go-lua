@@ -114,6 +114,29 @@ func (span Span[T]) At(index int) (T, bool, bool) {
 	return value, true, true
 }
 
+// RowKeyAt returns the owner-issued row content one delivered row is addressed
+// by.
+//
+// A span is delivered in the mounted order of its declared key, and an owner
+// fold that looks its rows up by its own identity needs to say which row each
+// position carries. This is how it says so: the identity comes from the cell's
+// own address, so a binding answers such a lookup from what it was delivered
+// and never by minting a key or reading a relation to find one.
+func (span Span[T]) RowKeyAt(index int) (identity.ContentID, bool) {
+	if span.column == nil {
+		return identity.ContentID{}, false
+	}
+	cell, ok := span.slot.At(index)
+	if !ok {
+		return identity.ContentID{}, false
+	}
+	row := cell.Address().Row()
+	if !row.Available() {
+		return identity.ContentID{}, false
+	}
+	return row.Content(), true
+}
+
 // SpanAt borrows one span slot through its owner column.
 func SpanAt[T any](inputs Inputs, slot int, column *Column[T]) (Span[T], bool) {
 	if !column.Available() {
@@ -124,4 +147,11 @@ func SpanAt[T any](inputs Inputs, slot int, column *Column[T]) (Span[T], bool) {
 		return Span[T]{}, false
 	}
 	return Span[T]{slot: view, column: column}, true
+}
+
+// SpanAtFrame borrows one span slot of an already-validated frame. It is how a
+// law reaches a delivered span without a binding around it; a decoder reaches
+// the same span through its Inputs.
+func SpanAtFrame[T any](frame binding.Frame, slot int, column *Column[T]) (Span[T], bool) {
+	return SpanAt(Inputs{frame: frame}, slot, column)
 }

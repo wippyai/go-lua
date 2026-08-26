@@ -10,7 +10,7 @@
 package returnescape
 
 import (
-	"github.com/wippyai/go-lua/analysis/engine/execution"
+	"github.com/wippyai/go-lua/analysis/engine/operand"
 	"github.com/wippyai/go-lua/analysis/schema/structure"
 	"github.com/wippyai/go-lua/domain/heap"
 	placementdomain "github.com/wippyai/go-lua/domain/placement"
@@ -66,7 +66,7 @@ func BeyondAllocations(
 	schema placementdomain.Schema,
 	values *valuedomain.Schema,
 	boundary valuedomain.ReturnBoundary,
-	members execution.SummaryVector[valuedomain.Value],
+	members operand.SummaryVector[valuedomain.Value],
 ) (bool, bool) {
 	if !authenticated(schema, values, boundary) || !members.Valid() {
 		return false, false

@@ -1,7 +1,7 @@
 package transfer
 
 import (
-	"github.com/wippyai/go-lua/analysis/engine/execution"
+	"github.com/wippyai/go-lua/analysis/engine/operand"
 	"github.com/wippyai/go-lua/analysis/program/target/contract"
 	"github.com/wippyai/go-lua/analysis/program/target/vocabulary"
 	calldomain "github.com/wippyai/go-lua/domain/call"
@@ -356,7 +356,7 @@ func transferMayDeliver(operations interface {
 // call, so its presence bit and the Factor default its declared sparsity
 // substituted are the only absence policy; an authenticated opaque reference
 // widens the identity to every Send root rather than naming one.
-func actualDemand(schema placement.Schema, values *valuedomain.Schema, actuals execution.SummaryVector[valuedomain.Value], ordinal int, scratch *demandScratch) (allSend bool, ok bool) {
+func actualDemand(schema placement.Schema, values *valuedomain.Schema, actuals operand.SummaryVector[valuedomain.Value], ordinal int, scratch *demandScratch) (allSend bool, ok bool) {
 	if values == nil || !schema.Valid() || scratch == nil {
 		return false, false
 	}
@@ -384,7 +384,7 @@ func actualDemand(schema placement.Schema, values *valuedomain.Schema, actuals e
 func addPayloadDemand(operations interface {
 	Input(vocabulary.Operation) (vocabulary.Values, bool)
 	ValuesTail(vocabulary.Values) (vocabulary.ValuesTail, vocabulary.ValuesVar, bool)
-}, target vocabulary.Operation, payload vocabulary.InputSource, packs *packdomain.Schema, actual packdomain.MountedActualProjection, actuals execution.SummaryVector[valuedomain.Value], schema placement.Schema, values *valuedomain.Schema, runtimeTail bool, scratch *demandScratch) (allSend bool, ok bool) {
+}, target vocabulary.Operation, payload vocabulary.InputSource, packs *packdomain.Schema, actual packdomain.MountedActualProjection, actuals operand.SummaryVector[valuedomain.Value], schema placement.Schema, values *valuedomain.Schema, runtimeTail bool, scratch *demandScratch) (allSend bool, ok bool) {
 	if operations == nil || target == 0 || packs == nil || values == nil || scratch == nil {
 		return false, false
 	}
@@ -441,7 +441,7 @@ func addPayloadDemand(operations interface {
 // its own ordinal order: a cell's POSITION is the ordinal its owner declared
 // it at, so the reduction addresses a member by that position and holds no
 // per-invocation copy of the delivery.
-func planFor(packs *packdomain.Schema, calls *calldomain.Algebra, schema placement.Schema, values *valuedomain.Schema, targetContract *contract.Contract, mounted calldomain.MountedCall, callFact calldomain.Value, actuals execution.SummaryVector[valuedomain.Value]) (routePlan, bool) {
+func planFor(packs *packdomain.Schema, calls *calldomain.Algebra, schema placement.Schema, values *valuedomain.Schema, targetContract *contract.Contract, mounted calldomain.MountedCall, callFact calldomain.Value, actuals operand.SummaryVector[valuedomain.Value]) (routePlan, bool) {
 	if packs == nil || calls == nil || !calls.Valid() || !schema.Valid() || values == nil || !values.Valid() || targetContract == nil ||
 		!calls.OwnsTargetContract(targetContract) || !values.OwnsHeapSchema(schema.Heap()) || !values.LinkOwner().Matches(calls.LinkOwner()) ||
 		!packs.LinkOwner().Available() || !packs.LinkOwner().Matches(calls.LinkOwner()) {
