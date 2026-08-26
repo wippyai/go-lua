@@ -75,8 +75,17 @@ func TestEvidenceEmptyHeapKeepsZeroWidthFactorAndSummary(t *testing.T) {
 	}
 
 	observation := placementdomain.BeginPlacementSummary(placementSchema)
-	observed, accumulated := suspension.AccumulatePlacementSummarySuspension(placementSchema, observation, engine.OrderedCells[suspension.Evidence]{})
+	observed, accumulated := suspension.AccumulatePlacementSummarySuspensionRows(placementSchema, observation, 0, absentEvidenceAt)
 	if !accumulated || !placementdomain.EqualPlacementSummary(placementSchema, observed, observation) {
 		t.Fatal("empty suspension evidence summary did not preserve the empty Placement observation")
 	}
+}
+
+// absentEvidenceAt is the row accessor of a delivery that answers no
+// coordinate. It stands for the vector a Factor of zero width delivers and for
+// the vector a missing predecessor delivers alike: both state a width, and
+// neither states a row.
+func absentEvidenceAt(int) (suspension.Evidence, bool, bool) {
+	var none suspension.Evidence
+	return none, false, false
 }

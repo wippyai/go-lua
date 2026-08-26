@@ -1,23 +1,17 @@
 package suspension
 
 import (
-	"github.com/wippyai/go-lua/analysis/engine"
 	heapdomain "github.com/wippyai/go-lua/domain/heap"
 	placementdomain "github.com/wippyai/go-lua/domain/placement"
 )
 
-// AccumulatePlacementSummarySuspension folds this vertical's independent
+// AccumulatePlacementSummarySuspensionRows folds this vertical's independent
 // evidence Factor into the public Placement summary. The evidence vector is
 // allocation-aligned and independently sealed; this fold never reads Placement's
 // class, so a class cannot manufacture a suspension proof.
-func AccumulatePlacementSummarySuspension(schema placementdomain.Schema, observation placementdomain.PlacementSummaryObservation, cells engine.OrderedCells[Evidence]) (placementdomain.PlacementSummaryObservation, bool) {
-	return AccumulatePlacementSummarySuspensionRows(schema, observation, cells.Count(), cells.At)
-}
-
-// AccumulatePlacementSummarySuspensionRows states the same fold over an
-// explicit dense vector. Keeping this form beside the OrderedCells form makes
-// package laws exercise the exact fold the engine invokes, exactly as
-// Placement's own summary fold does.
+//
+// The vector arrives as its width and its row accessor, exactly as Placement's
+// own summary fold receives one.
 func AccumulatePlacementSummarySuspensionRows(schema placementdomain.Schema, observation placementdomain.PlacementSummaryObservation, count int, at func(index int) (Evidence, bool, bool)) (placementdomain.PlacementSummaryObservation, bool) {
 	if at == nil || !placementdomain.EqualPlacementSummary(schema, observation, observation) {
 		return placementdomain.PlacementSummaryObservation{}, false

@@ -112,15 +112,15 @@ func TestSuspensionBindRejectsEqualSchemaForeignBinding(t *testing.T) {
 // TestSuspensionSummaryRefusesAbsentEvidence keeps a sparse/default Factor
 // cell from becoming an implicit "no suspension" answer. A non-empty Heap
 // summary must receive one authenticated Evidence cell per dense coordinate;
-// the empty OrderedCells value is a missing predecessor, not a result to
-// skip.
+// a delivery that answers no coordinate is a missing predecessor, not a
+// result to skip.
 func TestSuspensionSummaryRefusesAbsentEvidence(t *testing.T) {
 	placementSchema, _, _ := newSuspensionBindingLawSchemas(t)
 	if placementSchema.DenseKeyCount() == 0 {
 		t.Skip("fixture has no dense Heap coordinates")
 	}
 	observation := placementdomain.BeginPlacementSummary(placementSchema)
-	if _, ok := suspension.AccumulatePlacementSummarySuspension(placementSchema, observation, engine.OrderedCells[suspension.Evidence]{}); ok {
+	if _, ok := suspension.AccumulatePlacementSummarySuspensionRows(placementSchema, observation, 0, absentEvidenceAt); ok {
 		t.Fatal("suspension summary accepted absent Evidence predecessors")
 	}
 }
