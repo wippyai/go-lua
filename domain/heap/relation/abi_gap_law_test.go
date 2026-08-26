@@ -57,12 +57,12 @@ func rawAccess() []operation {
 		{plan: "raw-get/key-routes", stem: "RawGetKeyRoutes", entry: "index.Index.DynamicKey with (*index.Topology).CoordinateName", state: bound},
 		{plan: "raw-get/call-routes", stem: "RawGetCallRoutes", entry: "(*index.Topology).VisitReceiverCallDemand", state: bound},
 		{plan: "raw-get/heap-routes", stem: "HeapReceiverRoutes", entry: "(*index.Topology).VisitReceiver", state: bound},
-		{plan: "raw-get/pack-routes", stem: "RawGetPackRoutes", entry: "(*index.Topology).VisitRoutePayloads", state: operandUnreachable},
+		{plan: "raw-get/pack-routes", stem: "RawGetPackRoutes", entry: "(*index.Topology).VisitKeySelectors with (*index.Topology).VisitRoutePayloads", state: bound},
 		{plan: "raw-get/source-routes", stem: "RawGetSourceRoutes", entry: "(*index.Topology).VisitPayloadSources", state: bound},
 		{plan: "raw-get/result", stem: "RawGetResult", entry: "(*index.Topology).RawGetReduce", state: operandUnreachable},
 		{plan: "raw-set/key-routes", stem: "RawSetKeyRoutes", entry: "index.Index.DynamicKey with (*index.Topology).CoordinateName", state: bound},
 		{plan: "raw-set/heap-routes", stem: "HeapReceiverRoutes", entry: "(*index.Topology).VisitReceiver", state: bound},
-		{plan: "raw-set/pack-routes", stem: "RawSetPackRoutes", entry: "(*index.Topology).VisitRoutePayloads", state: operandUnreachable},
+		{plan: "raw-set/pack-routes", stem: "RawSetPackRoutes", entry: "(*index.Topology).VisitKeySelectors with (*index.Topology).VisitRoutePayloads", state: bound},
 		{plan: "raw-set/source-routes", stem: "RawSetSourceRoutes", entry: "(*index.Topology).VisitPayloadSources", state: bound},
 		{plan: "raw-set/commit", stem: "RawSetCommit", entry: "(*index.Topology).RawSetMutateRoute", state: operandUnreachable},
 	}
@@ -331,7 +331,7 @@ func TestEveryUnboundRawAccessOperationIsCarriedAsANamedDebt(t *testing.T) {
 			continue
 		}
 		pending[family.Stem] = true
-		if !strings.Contains(family.Pending, "w0-plan-operand") && !strings.Contains(family.Pending, "w0-span-identity") {
+		if !strings.Contains(family.Pending, "w0-span-identity") {
 			t.Errorf("family %s carries a debt that is not tagged with the operand that blocks it", family.Stem)
 		}
 		if strings.Contains(family.Pending, "unexported") {

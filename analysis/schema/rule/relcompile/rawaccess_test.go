@@ -273,9 +273,13 @@ func rawGetPlan(t *testing.T) *rawAccess {
 	callRoutes := access.step("raw-get/call-routes", keyRoutes, "heap/raw-get-call-routes", 64, values)
 	heapRoutes := access.step("raw-get/heap-routes", callRoutes, "heap/raw-get-heap-routes", 64, calls)
 	// The pack expansion enumerates the payloads one selected route carries
-	// under a key selector, so it reads the heap fact the route selected and
-	// the key route that states the selector. Both are joins the plan owes.
-	packRoutes := access.step("raw-get/pack-routes", heapRoutes, "heap/raw-get-pack-routes", 64, heaps, keyRoutes)
+	// under a key selector, and the selectors are the ones the read candidate
+	// resolves to under the value its key selected. So it reads the heap fact
+	// the route selected, the candidate whose key geometry decides whether the
+	// selection is read at all, and the key value the selectors project from.
+	// The key route states the coordinate and never the value at it, so it is
+	// not the relation this read observes.
+	packRoutes := access.step("raw-get/pack-routes", heapRoutes, "heap/raw-get-pack-routes", 64, heaps, candidates, values)
 	sourceRoutes := access.step("raw-get/source-routes", packRoutes, "heap/raw-get-source-routes", 64, packs)
 
 	reduction := relationName(heapAxis, "heap/raw-get-reduction")
@@ -318,10 +322,11 @@ func rawSetPlan(t *testing.T) *rawAccess {
 
 	keyRoutes := access.step("raw-set/key-routes", candidates, "heap/raw-set-key-routes", 64, values)
 	heapRoutes := access.step("raw-set/heap-routes", keyRoutes, "heap/raw-set-heap-routes", 64, values)
-	// The write side's pack expansion is the same enumeration, so it reads the
-	// same two facts: the heap fact the route selected and the key route that
-	// states the selector.
-	packRoutes := access.step("raw-set/pack-routes", heapRoutes, "heap/raw-set-pack-routes", 64, heaps, keyRoutes)
+	// The write side's pack expansion is the same enumeration over the same
+	// three reads: the heap fact the route selected, the write candidate whose
+	// key geometry decides whether the key selection is read, and the key value
+	// the selectors project from.
+	packRoutes := access.step("raw-set/pack-routes", heapRoutes, "heap/raw-set-pack-routes", 64, heaps, candidates, values)
 	sourceRoutes := access.step("raw-set/source-routes", packRoutes, "heap/raw-set-source-routes", 64, packs)
 
 	update := relationName(heapAxis, "heap/raw-set-cell-update")

@@ -5,16 +5,18 @@ import (
 	"github.com/wippyai/go-lua/analysis/relation/semantic/signature"
 )
 
-// The two reasons the remaining raw-access operations carry. Both are the same
-// finding: the authored plan states every read these operations make, and the
-// owner's entry point takes an operand no caller outside its own package can
-// spell. The remedy is a publication the owner makes, never a lowering this
-// layer invents or a frame it fills in, so the rows are declared, named, and
-// left unbound.
-const (
-	abiGapRawPackRoutes = "w0-plan-operand: the owner publishes VisitKeySelectors, which reads the key value and the read candidate, and the authored pack expansion joins the key route instead, whose fact carries the coordinate and not the value, and never joins the read candidates"
-	abiGapRawReduction  = "w0-span-identity: the owner publishes both frames constructibly, and their selection lookups are keyed by owner tags, while relbindgen.Span exposes only Len and At, so a binding cannot say which owner tag a delivered span row belongs to"
-)
+// The reason the two remaining raw-access reductions carry. The owner
+// publishes every operand its signatures name, and the authored plan states
+// every read the reductions make, so what is left is a property of the
+// delivery itself. The remedy is a statement the substrate makes, never a
+// lowering this layer invents or a frame it fills in, so the rows are
+// declared, named, and left unbound.
+const abiGapRawReduction = "w0-span-identity: the owner publishes both frames constructibly, and their selection lookups are keyed by owner tags, while relbindgen.Span exposes only Len and At, so a binding cannot say which owner tag a delivered span row belongs to"
+
+// span is the delivery a read observes every row of. A key selection is one
+// such read: its length is the count the owner's enumeration is stated
+// against, and a candidate whose key is static reads no row at all.
+const span = signature.BoundedSpanDelivery
 
 // scalar is the delivery a single-cell input carries.
 const scalar = signature.ScalarDelivery
@@ -369,11 +371,27 @@ func families() []Family {
 		},
 		{
 			Census: "heap/index", Rule: "raw-get", Stem: "RawGetPackRoutes", Axis: "heap",
-			Pending: abiGapRawPackRoutes,
+			Judgment: "RawGetPackRoutesOperation",
+			Inputs: []Slot{
+				{Field: "Route", Payload: "heap-route", Delivery: scalar},
+				{Field: "Fact", Payload: "heap", Delivery: scalar},
+				{Field: "Candidate", Payload: "heap-read-candidate", Delivery: scalar},
+				{Field: "Key", Payload: "value", Delivery: span},
+			},
+			Result: "heap-pack-route", Outputs: []Column{{Payload: "heap-pack-route"}},
+			Cardinality: model.BoundedMany, Bound: rawAccessRouteBound, Address: KeyedDestination,
 		},
 		{
 			Census: "heap/index", Rule: "raw-set", Stem: "RawSetPackRoutes", Axis: "heap",
-			Pending: abiGapRawPackRoutes,
+			Judgment: "RawSetPackRoutesOperation",
+			Inputs: []Slot{
+				{Field: "Route", Payload: "heap-route", Delivery: scalar},
+				{Field: "Fact", Payload: "heap", Delivery: scalar},
+				{Field: "Candidate", Payload: "heap-write-candidate", Delivery: scalar},
+				{Field: "Key", Payload: "value", Delivery: span},
+			},
+			Result: "heap-pack-route", Outputs: []Column{{Payload: "heap-pack-route"}},
+			Cardinality: model.BoundedMany, Bound: rawAccessRouteBound, Address: KeyedDestination,
 		},
 		{
 			Census: "heap/index", Rule: "raw-get", Stem: "RawGetResult", Axis: "heap",
