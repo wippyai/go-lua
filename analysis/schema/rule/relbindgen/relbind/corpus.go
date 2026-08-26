@@ -29,17 +29,7 @@ const (
 	// and spans; it cannot construct an execution selection, and the compiler
 	// says so: "cannot use cells (variable of struct type
 	// relbindgen.Span[value.Value]) as []execution.SelectedCell[value.Value]".
-	// The judgment exists and its binding is shape-correct. What is missing is
-	// a world to state it in: a protocol seals its transitions and escapes
-	// only where the pack schema resolves an input selector for the operation
-	// it governs, which happens only where a mounted, packed program actually
-	// calls that operation. No fixture in the analyzer reaches it - nothing
-	// anywhere calls obligation.Derive - so the population property this
-	// binding owes, that an unfollowable callee still occupies a row, cannot
-	// be asserted through it. Binding it would rest on an unstated soundness
-	// property, which is the one thing this row must not do.
-	abiGapUnreachedJudgment = "w0-unreached-judgment: the obligation judgment seals only in a world whose mounted program calls the contracted operation its protocol governs, and no fixture builds one, so the population property the binding owes cannot be stated"
-	abiGapLegacyOperand     = "w0-legacy-operand: the owner judgment reads execution.SelectedCell or execution.SummaryVector, the operand type of the protocol this engine replaces, and a binding delivers owner values and spans"
+	abiGapLegacyOperand = "w0-legacy-operand: the owner judgment reads execution.SelectedCell or execution.SummaryVector, the operand type of the protocol this engine replaces, and a binding delivers owner values and spans"
 	// An operation that publishes a disposition and no fact has no result type
 	// to instantiate the bounded emitter with, and the compiler says so:
 	// "cannot use nil as struct{} value in argument to relbindgen.Reduce".
@@ -610,7 +600,19 @@ func families() []Family {
 			},
 			Cardinality: model.Optional, Address: NoDestination,
 		},
-		{Census: "typestate", Rule: "typestate-obligation", Stem: "TypestateObligation", Axis: "typestate", Pending: abiGapUnreachedJudgment},
+		{
+			Census: "typestate", Rule: "typestate-obligation", Stem: "TypestateObligation", Axis: "typestate",
+			Judgment: "TypestateObligationOperation",
+			Inputs: []Slot{
+				{Field: "Candidate", Payload: "typestate-candidate", Delivery: scalar},
+				{Field: "Argument", Payload: "value", Delivery: scalar},
+				{Field: "Dispatched", Payload: "call", Delivery: scalar},
+				{Field: "Tag", Payload: "typestate-protocol-tag", Delivery: scalar},
+				{Field: "Current", Payload: "typestate", Delivery: scalar},
+			},
+			Result: "typestate", Outputs: []Column{{Payload: "typestate"}},
+			Cardinality: model.ExactlyOne, Address: 4,
+		},
 		{
 			Census: "heap/index", Rule: "raw-get", Stem: "RawGetPackRoutes", Axis: "heap",
 			Judgment: "RawGetPackRoutesOperation",

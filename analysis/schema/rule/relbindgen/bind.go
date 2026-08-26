@@ -83,6 +83,21 @@ func Bind[A, R any](spec Spec[A, R]) (binding.Factory, bool) {
 	return factory[A, R]{spec: spec, outputs: outputs, limit: int(limit)}, true
 }
 
+// publishes reports whether one settled disposition carries rows.
+//
+// Produced and Opaque both answer with a fact: an operation that proved its
+// answer publishes it present, and one that authenticated an answer it could
+// not follow publishes it opaque. The remaining dispositions answer that there
+// is no fact, so a row staged under one of them is a contradiction the
+// invocation refuses.
+//
+// An opaque answer is the one a soundness judgment leans on hardest. Dropping
+// its row would report the occurrence clean by omission, so the rule is stated
+// here once rather than left to a comparison against a single code.
+func publishes(code outcome.Code) bool {
+	return code == outcome.Produced || code == outcome.Opaque
+}
+
 func rowLimit(cardinality model.Cardinality) (uint32, bool) {
 	if !cardinality.Available() {
 		return 0, false
@@ -181,7 +196,7 @@ func (value *worker[A, R]) Evaluate(frame binding.Frame, buffer *binding.Proposa
 	if value.emitter.overflow || !operation.Allows(code) {
 		return value.refuse(nil)
 	}
-	if code != outcome.Produced {
+	if !publishes(code) {
 		if value.emitter.Len() != 0 {
 			return value.refuse(nil)
 		}
@@ -200,7 +215,7 @@ func (value *worker[A, R]) Evaluate(frame binding.Frame, buffer *binding.Proposa
 			return value.refuse(buffer)
 		}
 	}
-	return value.settle(outcome.Produced)
+	return value.settle(code)
 }
 
 // settle returns the operation's own closed disposition. The binding never
