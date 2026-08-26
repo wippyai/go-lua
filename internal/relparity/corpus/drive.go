@@ -230,6 +230,14 @@ func observe(ctx context.Context, probe Probe, fixture string) outcome {
 			Class: ClassProbeFailure, Old: "", New: err.Error(),
 		}}}
 	}
+	stdinPipe, err := command.StdinPipe()
+	if err != nil {
+		return outcome{fixture: fixture, elapsed: time.Since(started), divergences: []Divergence{{
+			Fixture: fixture, Family: Wildcard, Site: Wildcard,
+			Class: ClassProbeFailure, Old: "", New: err.Error(),
+		}}}
+	}
+	defer stdinPipe.Close()
 	var stdout, stderr bytes.Buffer
 	command.Stderr = &stderr
 	if err := command.Start(); err != nil {
@@ -281,6 +289,10 @@ func observe(ctx context.Context, probe Probe, fixture string) outcome {
 				solveStart = time.Now()
 				solveTimer = time.NewTimer(probe.Timeout)
 				solveDeadline = solveTimer.C
+				if _, permitErr := io.WriteString(stdinPipe, SolvePermit+"\n"); permitErr != nil {
+					cancelProcess()
+				}
+				_ = stdinPipe.Close()
 			}
 		case <-solveDeadline:
 			cancelProcess()
@@ -331,14 +343,6 @@ func observe(ctx context.Context, probe Probe, fixture string) outcome {
 	if readErr != nil {
 		return wholeOutcome(fixture, elapsed, ClassProbeFailure, readErr.Error())
 	}
-	if !readySeen {
-		// A solved envelope without the phase marker has no trustworthy start
-		// point for the analysis budget. Refuse it instead of silently treating
-		// an old/unphased probe as parity.
-		return wholeOutcome(fixture, elapsed, ClassProtocol,
-			"missing "+SolveReady+" phase marker")
-	}
-
 	whole := func(class Class, old, fresh string) outcome {
 		return outcome{
 			fixture: fixture,
@@ -358,6 +362,17 @@ func observe(ctx context.Context, probe Probe, fixture string) outcome {
 	}
 	if envelope.Fixture != fixture {
 		return whole(ClassProtocol, fixture, envelope.Fixture)
+	}
+	if !readySeen {
+		// Compile refusals are emitted before the phase boundary by design, so
+		// they remain valid unreached answers. Any answer that asked an engine
+		// to solve without the marker has no trustworthy start point for the
+		// analysis budget and is refused as an unphased protocol.
+		old, oldHeld := envelope.Side(SideOld)
+		fresh, newHeld := envelope.Side(SideNew)
+		if !oldHeld || !newHeld || old.Status != StatusUncompiled || fresh.Status != StatusUncompiled {
+			return whole(ClassProtocol, "", "missing "+SolveReady+" phase marker")
+		}
 	}
 	rows := 0
 	unreached := false

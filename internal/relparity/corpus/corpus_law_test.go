@@ -35,6 +35,7 @@ const delayMilliseconds = %d
 const failing = %t
 const compileDelayMilliseconds = %d
 const solveReady = %q
+const solvePermit = %q
 
 func main() {
 	if len(os.Args) != 2 {
@@ -46,6 +47,11 @@ func main() {
 	}
 	if solveReady != "" {
 		fmt.Println(solveReady)
+		var permit string
+		if _, err := fmt.Fscan(os.Stdin, &permit); err != nil || permit != solvePermit {
+			fmt.Fprintln(os.Stderr, "stub: solve phase was not permitted")
+			os.Exit(1)
+		}
 	}
 	if delayMilliseconds > 0 {
 		// The observation budget begins at the solve marker. This delay models
@@ -95,7 +101,7 @@ func buildStubWithPhase(t *testing.T, envelopes map[string]Envelope, delayMillis
 
 	directory := t.TempDir()
 	write(t, filepath.Join(directory, "main.go"),
-		fmt.Sprintf(stubSource, table.String(), delayMilliseconds, failing, compileDelayMilliseconds, solveReady))
+		fmt.Sprintf(stubSource, table.String(), delayMilliseconds, failing, compileDelayMilliseconds, solveReady, SolvePermit))
 	write(t, filepath.Join(directory, "go.mod"), "module corpusstub\n\ngo 1.21\n")
 
 	binary := filepath.Join(directory, "corpusstub")

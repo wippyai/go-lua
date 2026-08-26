@@ -32,6 +32,12 @@ const Protocol = "w5-corpus/v1"
 // watchdog, not by the per-fixture solve bound.
 const SolveReady = "corpus.Phase=solve"
 
+// SolvePermit is written by the driver after it has started the solve timer.
+// A probe waits for this acknowledgement before asking either engine to
+// solve, making the phase boundary a handshake rather than a best-effort
+// timestamp observed through a pipe.
+const SolvePermit = "corpus.PhaseAck=solve"
+
 // ErrMalformed refuses an envelope that does not read as this protocol.
 var ErrMalformed = errors.New("corpus probe: malformed envelope")
 

@@ -16,9 +16,11 @@
 package main
 
 import (
+	"bufio"
 	"context"
 	"fmt"
 	"os"
+	"strings"
 
 	"github.com/wippyai/go-lua/analysis"
 	"github.com/wippyai/go-lua/internal/relparity/corpus"
@@ -90,6 +92,10 @@ func observe(ctx context.Context, fixture string) (corpus.Envelope, error) {
 	// this line; the process watchdog still covers the compiler above it.
 	if _, err := fmt.Fprintln(os.Stdout, corpus.SolveReady); err != nil {
 		return corpus.Envelope{}, fmt.Errorf("corpusprobe: announce solve phase: %w", err)
+	}
+	permit, err := bufio.NewReader(os.Stdin).ReadString('\n')
+	if err != nil || strings.TrimSuffix(permit, "\n") != corpus.SolvePermit {
+		return corpus.Envelope{}, fmt.Errorf("corpusprobe: solve phase was not permitted")
 	}
 
 	return corpus.Seal(fixture, []corpus.Answer{
