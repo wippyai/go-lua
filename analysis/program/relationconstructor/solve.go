@@ -99,3 +99,4 @@ func (solved Solved) Projection() snapshot.Projection {
 	}
 	return solved.projection
 }
+

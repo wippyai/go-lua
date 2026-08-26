@@ -92,3 +92,4 @@ func TestAnAnswerIsRefusedRatherThanPartiallySealed(t *testing.T) {
 		t.Fatal("the zero answer carries an authority")
 	}
 }
+
