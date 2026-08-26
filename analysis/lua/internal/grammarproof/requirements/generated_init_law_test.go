@@ -2,6 +2,7 @@ package requirements_test
 
 import (
 	"go/ast"
+	"go/build"
 	"go/parser"
 	"go/token"
 	"io/fs"
@@ -10,6 +11,17 @@ import (
 	"strings"
 	"testing"
 )
+
+// The law this file states: no source that analysis compiles into a
+// production binary declares func init. Package-load registration hides an
+// authority behind an import edge, so every table analysis reads is
+// installed by a caller that can be pointed at.
+//
+// Production is the default build. A source excluded from it by a build
+// constraint -- a measurement probe compiled only under its own tag -- is
+// never loaded by a production binary and so declares nothing to it. The
+// walk asks the default build context which files it takes, and judges
+// exactly those.
 
 func TestAnalysisProductionSourcesHaveNoInit(t *testing.T) {
 	_, current, _, ok := runtime.Caller(0)
@@ -29,6 +41,13 @@ func TestAnalysisProductionSourcesHaveNoInit(t *testing.T) {
 			return nil
 		}
 		if !strings.HasSuffix(path, ".go") || strings.HasSuffix(path, "_test.go") {
+			return nil
+		}
+		production, matchErr := build.Default.MatchFile(filepath.Dir(path), entry.Name())
+		if matchErr != nil {
+			return matchErr
+		}
+		if !production {
 			return nil
 		}
 		parsed, err := parser.ParseFile(token.NewFileSet(), path, nil, 0)
