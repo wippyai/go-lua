@@ -121,6 +121,7 @@ var corpusDiagnosticNativeFamilies = [...]corpusDiagnosticNativeFamilyRegistrati
 		cases: []corpusDiagnosticNativeFamilyCase{
 			{project: "advice/always-true-guard", expect: 1},
 			{project: "advice/guard-route-separation", expect: 1},
+			{project: "advice/kind-guard-narrowing", expect: 1},
 		},
 	},
 	{
@@ -195,8 +196,8 @@ type corpusDiagnosticRegistrationCounts struct {
 // current declaration boundary. Installing a family changes its closed
 // registration and this one value; all census laws consume the same computed
 // counts. It is not a passing-evidence mark.
-// The two registered cases above the previous five are advice/guard-route-separation,
-// verified under both guard polarities. Its findings are registered rather than
+// The registered cases above the original five are advice/guard-route-separation,
+// verified under both guard polarities, and advice/kind-guard-narrowing. Its findings are registered rather than
 // pending because the runner proves them: they are capability the corpus now
 // checks, not capability it is still owed.
 //
@@ -205,7 +206,7 @@ type corpusDiagnosticRegistrationCounts struct {
 // set already measured 139 before it - and is restated here rather than left
 // as a standing mismatch that hides the next real change.
 var corpusDiagnosticFrozenRegistrationCensus = corpusDiagnosticRegistrationCounts{
-	registeredCases: 7, registeredFindings: 7,
+	registeredCases: 8, registeredFindings: 8,
 	whollyPendingCodes: 30, pendingFindings: 139, inlinePending: 731,
 }
 
