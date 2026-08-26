@@ -8,6 +8,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/schema"
 	"github.com/wippyai/go-lua/analysis/schema/axis/member"
 	"github.com/wippyai/go-lua/analysis/schema/axis/member/definition"
+	"github.com/wippyai/go-lua/analysis/schema/carrier"
 	programissuance "github.com/wippyai/go-lua/analysis/schema/program/issuance"
 )
 
@@ -53,16 +54,27 @@ func Contribution() definition.Contribution {
 		Axis: "placement",
 		Rule: "placement-closure-capture",
 		Carriers: []definition.Carrier{
-			{Name: "PlacementKeyCarrier", Key: "carrier/placement/key", Type: goType(heapPackagePath, "Key")},
-			{Name: "PlacementFactCarrier", Key: "carrier/placement/fact", Type: goType("github.com/wippyai/go-lua/domain/placement", "Fact")},
-			{Name: "ValueCoordinateCarrier", Key: "carrier/value/coordinate", Type: goType(valuePackagePath, "Coordinate")},
-			{Name: "ValueFactCarrier", Key: "carrier/value/fact", Type: goType(valuePackagePath, "Value")},
-			{Name: "CaptureSourceCarrier", Key: "carrier/value/closure-capture-source", Type: goType(capturePackagePath, "Source")},
-			{Name: "CaptureSourceTagCarrier", Key: "carrier/value/closure-capture-source-tag", Type: definition.GoType{Name: "uint64"}},
-			{Name: "CaptureRouteCarrier", Key: "carrier/placement/capture-route", Type: goType(capturePackagePath, "Route")},
-			{Name: "CaptureRouteTagCarrier", Key: "carrier/placement/capture-route-tag", Type: definition.GoType{Name: "uint64"}},
+			{Name: "PlacementKeyCarrier", Key: "carrier/placement/key", Type: goType(heapPackagePath, "Key"), Capability: carrier.Equatable},
+			{Name: "PlacementFactCarrier", Key: "carrier/placement/fact", Type: goType("github.com/wippyai/go-lua/domain/placement", "Fact"), Capability: carrier.Ascending},
+			{Name: "CaptureRouteCarrier", Key: "carrier/placement/capture-route", Type: goType(capturePackagePath, "Route"), Capability: carrier.DecodeOnly},
+			{Name: "CaptureRouteTagCarrier", Key: "carrier/placement/capture-route-tag", Type: definition.GoType{Name: "uint64"}, Capability: carrier.DecodeOnly},
+		},
+		CarrierRefs: []definition.CarrierReference{
+			{Name: "ValueCoordinateCarrier", Key: "carrier/value/coordinate", Ref: carrier.Ref{Owner: schema.EntryReference{Surface: schema.SurfaceKindAxis, Key: "value"}, Carrier: "carrier/value/coordinate"}, Type: goType(valuePackagePath, "Coordinate")},
+			{Name: "ValueFactCarrier", Key: "carrier/value/fact", Ref: carrier.Ref{Owner: schema.EntryReference{Surface: schema.SurfaceKindAxis, Key: "value"}, Carrier: "carrier/value/fact"}, Type: goType(valuePackagePath, "Value")},
+			{Name: "CaptureSourceCarrier", Key: "carrier/value/closure-capture-source", Ref: carrier.Ref{Owner: schema.EntryReference{Surface: schema.SurfaceKindAxis, Key: "value"}, Carrier: "carrier/value/closure-capture-source"}, Type: goType(capturePackagePath, "Source")},
+			{Name: "CaptureSourceTagCarrier", Key: "carrier/value/closure-capture-source-tag", Ref: carrier.Ref{Owner: schema.EntryReference{Surface: schema.SurfaceKindAxis, Key: "value"}, Carrier: "carrier/value/closure-capture-source-tag"}, Type: definition.GoType{Name: "uint64"}},
 		},
 		Relations: []definition.Relation{
+			{
+				// The parent vector is Placement-owned. Its address is issued by
+				// this declaration and is the exact coordinate the cold Program
+				// joins, rather than a key reconstructed by the consumer.
+				Name: "CaptureParents", Key: "placement/closure-capture/parents",
+				Subject: "CaptureRouteCarrier", Inputs: []definition.RelationInput{{Carrier: "PlacementKeyCarrier"}},
+				Addressing:        member.Addressing{Address: "placement/closure-capture/parent-key"},
+				CandidateProvider: provider(),
+			},
 			{
 				// One row per declared capture of the closure, carrying the
 				// Value coordinate of the cell it closes over.
@@ -85,6 +97,11 @@ func Contribution() definition.Contribution {
 			},
 		},
 		Projections: []definition.Projection{
+			{
+				Name: "CaptureParentKey", Key: "placement/closure-capture/parent-key",
+				Relation: "CaptureParents", Role: member.Key, Result: "PlacementKeyCarrier",
+				Accessor: routeMethod("Coordinates", 0), CandidateProvider: provider(),
+			},
 			{
 				Name: "CaptureSourceKey", Key: "value/closure-capture/source-key", Axis: "value",
 				Relation: "CaptureSources", Role: member.Key, Result: "ValueCoordinateCarrier",

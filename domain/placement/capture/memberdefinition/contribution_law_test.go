@@ -3,6 +3,7 @@ package memberdefinition
 import (
 	"testing"
 
+	"github.com/wippyai/go-lua/analysis/schema/axis/member"
 	memberdefinition "github.com/wippyai/go-lua/analysis/schema/axis/member/definition"
 	"github.com/wippyai/go-lua/analysis/schema/rule/codegen"
 	"github.com/wippyai/go-lua/analysis/schema/structure"
@@ -30,4 +31,17 @@ func TestCaptureContributionNamesTheCanonicalReducer(t *testing.T) {
 		t.Fatalf("derived signature args=%+v results=%+v ok=%t", args, results, ok)
 	}
 	var _ func(placementdomain.Fact, uint64, placementdomain.Fact) (placementdomain.Fact, structure.ReductionOutcome) = capture.CaptureFold
+}
+
+func TestCaptureContributionDeclaresTheParentJoinKey(t *testing.T) {
+	contribution := Contribution()
+	for _, projection := range contribution.Projections {
+		if projection.Key == "placement/closure-capture/parent-key" {
+			if projection.Relation != "CaptureParents" || projection.Role != member.Key {
+				t.Fatalf("parent key projection=%+v", projection)
+			}
+			return
+		}
+	}
+	t.Fatal("capture parent join key is not owner-declared")
 }
