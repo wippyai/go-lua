@@ -1,7 +1,6 @@
 package placement
 
 import (
-	"github.com/wippyai/go-lua/analysis/engine"
 	heapdomain "github.com/wippyai/go-lua/domain/heap"
 )
 
@@ -47,18 +46,15 @@ func BeginPlacementSummary(schema Schema) PlacementSummaryObservation {
 	}
 }
 
-// AccumulatePlacementSummary folds one engine-owned dense Placement vector.
+// AccumulatePlacementSummaryRows folds one dense Placement vector.
 // Sparse cells are admitted only when the Placement owner supplied its exact
 // Stack default. The default is projected as a present Stack row because every
 // coordinate already denotes an allocation site; displacement rules only move
 // it upward. Present cells are joined coordinatewise in the Placement lattice.
-func AccumulatePlacementSummary(schema Schema, result PlacementSummaryObservation, cells engine.OrderedCells[Fact]) (PlacementSummaryObservation, bool) {
-	return AccumulatePlacementSummaryRows(schema, result, cells.Count(), cells.At)
-}
-
-// AccumulatePlacementSummaryRows states the same fold over an explicit dense
-// vector. Keeping this form beside the OrderedCells form makes package laws and
-// sealed readers exercise the exact fold the engine invokes.
+//
+// The vector arrives as its width and its row accessor, which is the one shape
+// every delivery of a many-valued read already states a row in, so the fold a
+// solve runs is the fold a sealed reader runs.
 func AccumulatePlacementSummaryRows(schema Schema, result PlacementSummaryObservation, count int, at func(index int) (Fact, bool, bool)) (PlacementSummaryObservation, bool) {
 	if !summaryObservationShape(schema, result) || at == nil {
 		return PlacementSummaryObservation{}, false

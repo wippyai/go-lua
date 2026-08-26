@@ -121,7 +121,7 @@ func summaryQuerySpec(placementOwner *placementowner.HotOwner, heapOwner *heapow
 		engine.NewSummaryQueryProjection(placementOwner.FoldSummaryRead(), engine.QueryProjectionFold[placementdomain.Fact, placementdomain.PlacementSummaryObservation]{
 			BorrowIssued: true,
 			Accumulate: func(result placementdomain.PlacementSummaryObservation, cells engine.OrderedCells[placementdomain.Fact]) (placementdomain.PlacementSummaryObservation, bool) {
-				return placementdomain.AccumulatePlacementSummary(schema, result, cells)
+				return placementdomain.AccumulatePlacementSummaryRows(schema, result, cells.Count(), cells.At)
 			},
 		}),
 		engine.NewSummaryQueryProjection(heapOwner.SummaryRead(), engine.QueryProjectionFold[heapdomain.Value, placementdomain.PlacementSummaryObservation]{
@@ -133,7 +133,7 @@ func summaryQuerySpec(placementOwner *placementowner.HotOwner, heapOwner *heapow
 		engine.NewSummaryQueryProjection(evidenceOwner.SummaryRead(), engine.QueryProjectionFold[placementsuspension.Evidence, placementdomain.PlacementSummaryObservation]{
 			BorrowIssued: true,
 			Accumulate: func(result placementdomain.PlacementSummaryObservation, cells engine.OrderedCells[placementsuspension.Evidence]) (placementdomain.PlacementSummaryObservation, bool) {
-				return placementsuspension.AccumulatePlacementSummarySuspension(schema, result, cells)
+				return placementsuspension.AccumulatePlacementSummarySuspensionRows(schema, result, cells.Count(), cells.At)
 			},
 		}),
 	}
