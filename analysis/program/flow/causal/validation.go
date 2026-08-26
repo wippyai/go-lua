@@ -240,6 +240,22 @@ func (s *proofState) live(term keyspace.Term) bool {
 	return validPreTerm(term, s.counts) && s.exec.Contains(term)
 }
 
+// evaluates answers whether a live evaluation subject is evaluated. A Repeat
+// condition is reached only through its child Body's normal tail: when that
+// tail is unreachable the condition subtree keeps its typed witnesses and its
+// continuation scope, and it publishes no causal route.
+func (s *proofState) evaluates(term keyspace.Term) bool {
+	if !s.live(term) {
+		return false
+	}
+	for _, control := range s.unreachedRepeatControls {
+		if s.forest.Contains(control, term) {
+			return false
+		}
+	}
+	return true
+}
+
 func (s *proofState) static(term keyspace.Term) bool {
 	return term != 0 && validPreTerm(term, s.counts) && s.forest.Static(term)
 }

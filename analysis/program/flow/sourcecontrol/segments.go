@@ -316,7 +316,10 @@ func (r *Result) ResolveRouteEndpoint(sourceView source.View, outcomes *outcome.
 		}
 		return r.OutcomePhase(term)
 	default:
-		return r.CoordinatePhase(sourceView, term)
+		if sourcePhase {
+			return r.CoordinatePhase(sourceView, term)
+		}
+		return r.EntryPhase(sourceView, term)
 	}
 }
 

@@ -217,7 +217,10 @@ func (s *resetState) nodeRef(term keyspace.Term, sourcePhase bool) (sourcecontro
 			return sourcecontrol.NodeRef{}, false
 		}
 	default:
-		return s.graph.CoordinateRef(s.source, term)
+		if sourcePhase {
+			return s.graph.CoordinateRef(s.source, term)
+		}
+		return s.graph.EntryRef(s.source, term)
 	}
 }
 
