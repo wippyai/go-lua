@@ -81,6 +81,10 @@ func (factory declaredGeometryFactory) Bind(mounted witness.Mounted) (geometry.G
 		// A True-only declaration has no neutral atom. Keep a non-empty
 		// physical universe, while Lowering evaluates True directly.
 		physical = append(physical, guard.Atom(1))
+	} else {
+		for index := range physical {
+			physical[index] = guard.Atom(index + 1)
+		}
 	}
 	manager, err := guard.New(physical)
 	if err != nil {
