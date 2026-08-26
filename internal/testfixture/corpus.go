@@ -23,14 +23,14 @@ import (
 // The two qualified-host-type fixtures state CX-36 end to end: a name the
 // target's sealed qualified type index publishes resolves through it, and a
 // name it does not publish refuses under its exact authored spelling.
-const FrozenLuaFileCount = 1216
+const FrozenLuaFileCount = 1217
 
 // FrozenCorpusProjectCount is the exact checked-in fixture-project
 // denominator: the number of distinct project directories LoadCorpus groups
 // the frozen Lua files into. Every consumer that pins the fixture-project
 // count derives it from this one constant rather than hand-copying the
 // number, so the fixture census and its dependent counts change together.
-const FrozenCorpusProjectCount = 949
+const FrozenCorpusProjectCount = 950
 
 type corpusManifest struct {
 	Files []string `json:"files"`

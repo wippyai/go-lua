@@ -36,7 +36,7 @@ func RuleIssues() []rule.Issuance {
 	return []rule.Issuance{{
 		Occurrence:  "occurrence/binary-presence-refinement",
 		Requirement: "program-requirement/unrestricted",
-		Form:        "program-form/local-predecessor",
+		Form:        "program-form/route-predecessor",
 	}}
 }
 

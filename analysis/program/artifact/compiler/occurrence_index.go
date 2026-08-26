@@ -210,6 +210,28 @@ func (compiler *compiler) recordOccurrencePredecessor(kind programschema.Occurre
 	return false
 }
 
+// routeSourcePoint answers the point one declared route departs from. It is
+// the host half of the routed-input contract: the schedule states which stages
+// stand on a route, and this states where each route comes from. A route with
+// no environment edge, or an ambiguous one, has no answer and is refused - the
+// schedule must not fall back to the linear chain, because that fallback would
+// silently restore the very placement a routed stage exists to leave.
+func (compiler *compiler) routeSourcePoint(route identity.ContentID) (identity.ContentID, bool) {
+	if compiler == nil || !route.Available() {
+		return identity.ContentID{}, false
+	}
+	routeIndex, found := compiler.environmentByRoute[route]
+	edgeOrdinal, unique := routeIndex.uniqueAt(len(compiler.environment))
+	if !found || !unique {
+		return identity.ContentID{}, false
+	}
+	edge := compiler.environment[edgeOrdinal]
+	if !edge.Available() || edge.route != route || !edge.from.Available() {
+		return identity.ContentID{}, false
+	}
+	return edge.from, true
+}
+
 func canonicalPoints(points []identity.ContentID) []identity.ContentID {
 	if len(points) < 2 {
 		return points
