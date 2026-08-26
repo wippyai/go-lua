@@ -1,7 +1,7 @@
 package transfer
 
 import (
-	"github.com/wippyai/go-lua/analysis/engine/execution"
+	"github.com/wippyai/go-lua/analysis/engine/operand"
 	calldomain "github.com/wippyai/go-lua/domain/call"
 	"github.com/wippyai/go-lua/domain/heap"
 	packdomain "github.com/wippyai/go-lua/domain/pack"
@@ -68,7 +68,7 @@ func DeriveTransferRoutes(
 	packs *packdomain.Schema,
 	candidate calldomain.CallCoordinate,
 	callFact calldomain.Value,
-	actuals execution.SummaryVector[valuedomain.Value],
+	actuals operand.SummaryVector[valuedomain.Value],
 ) (RoutePlan, bool) {
 	if calls == nil || !calls.Valid() || !calls.OwnsCallCoordinate(candidate) {
 		return RoutePlan{}, false

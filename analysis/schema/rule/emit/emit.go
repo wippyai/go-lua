@@ -37,6 +37,7 @@ import (
 // every family is sealed through.
 const (
 	executionPackagePath = "github.com/wippyai/go-lua/analysis/engine/execution"
+	operandPackagePath   = "github.com/wippyai/go-lua/analysis/engine/operand"
 	structurePackagePath = "github.com/wippyai/go-lua/analysis/schema/structure"
 	programPackagePath   = "github.com/wippyai/go-lua/analysis/schema/rule/program"
 	productPackagePath   = "github.com/wippyai/go-lua/analysis/engine/execution/product"
@@ -57,13 +58,13 @@ func outcomeType() definition.GoType {
 // through, whether a fold or a relation derivation consumes it. Which of them
 // one input takes is definition.ManyValuedView's answer from that input's
 // declared read Form; this package only names the types, because they belong
-// to the execution vocabulary.
+// to the reducer operand vocabulary the executor delivers into.
 func vectorType() definition.GoType {
-	return definition.GoType{PackagePath: executionPackagePath, Name: "SummaryVector"}
+	return definition.GoType{PackagePath: operandPackagePath, Name: "SummaryVector"}
 }
 
 func cellType() definition.GoType {
-	return definition.GoType{PackagePath: executionPackagePath, Name: "SelectedCell"}
+	return definition.GoType{PackagePath: operandPackagePath, Name: "SelectedCell"}
 }
 
 // Unexpressible is the emitter's one refusal. It names the rule, the clause of

@@ -142,7 +142,7 @@
       ],
       "proof_obligation": "",
       "expect_present": true,
-      "note": "The executor package as a whole. Two files in it are not deleted: form_summary.go and form_selected.go carry the operand value types authored reducers still take, and S2-reducer-operand-abi restates them. Everything else here - the Form, Ticket, Scratch and registry machinery - dies."
+      "note": "The executor package as a whole. S2-reducer-operand-abi already lifted the operand value types authored reducers take out of form_summary.go and form_selected.go into analysis/engine/operand, so nothing in this package is now owed to a reducer: the Form, Ticket, Scratch, cursor and registry machinery that remains all dies."
     },
     {
       "id": "S2-executioncatalog",
@@ -1358,16 +1358,16 @@
       "laws_restated": [
         {
           "law": "A summary vector reports its own validity, width and member cells.",
-          "target": "a neutral operand package importable by an authored reducer and by analysis/engine/relation"
+          "target": "analysis/engine/operand/vector_law_test.go"
         },
         {
           "law": "A selected cell carries its value, its tag and its presence.",
-          "target": "a neutral operand package importable by an authored reducer and by analysis/engine/relation"
+          "target": "analysis/engine/operand states the cell; the selection cursor that fills all three restates against analysis/engine/relation"
         }
       ],
       "proof_obligation": "",
       "expect_present": true,
-      "note": "This entry exists to refuse the reflex that the operand types die with the executor. SummaryVector, MemberCell and SelectedCell are the parameter types of permanently-authored reducers - SuspensionFold, SuspensionEvidenceFold, BeyondAllocations, resultClosed and the callsite/bodyresult/resultalias folds - none of which the ledger schedules for death. The surviving consumers use only SummaryVector.Valid/Count/At and SelectedCell.Value/Tag/Present: eight references across six files. The Form, Ticket and Scratch write machinery these two files also carry stays in S2 and dies. The restatement is the read-side value types alone, not the files as they stand. Fourteen non-test files depend on this restatement and on nothing else the cut deletes, so they are deliberately in no entry: effect/callsite/fold.go, heap/allocation/closed/rule.go, heap/formalfreeze/{core,routes}.go, heap/publicationfreeze/routes.go, placement/formal/{core,routes}.go, placement/returnescape/core.go, placement/suspension/{reducer,routes}.go, placement/transfer/{core,routes}.go, value/bodyresult/judgment.go and value/resultalias/judgment.go. Each needs one import rewritten, not a deletion. Seven of them carry the authored Builds the scheduled-death ledger still lists, so they shrink further as those rows empty."
+      "note": "This entry exists to refuse the reflex that the operand types die with the executor. SummaryVector, MemberCell and SelectedCell are the parameter types of permanently-authored reducers - SuspensionFold, SuspensionEvidenceFold, BeyondAllocations, resultClosed and the callsite/bodyresult/resultalias folds - none of which the ledger schedules for death. The surviving consumers use only SummaryVector.Valid/Count/At and SelectedCell.Value/Tag/Present: eight references across six files. The Form, Ticket and Scratch write machinery these two files also carry stays in S2 and dies. The restatement is the read-side value types alone, not the files as they stand. Fourteen non-test files depend on this restatement and on nothing else the cut deletes, so they are deliberately in no entry: effect/callsite/fold.go, heap/allocation/closed/rule.go, heap/formalfreeze/{core,routes}.go, heap/publicationfreeze/routes.go, placement/formal/{core,routes}.go, placement/returnescape/core.go, placement/suspension/{reducer,routes}.go, placement/transfer/{core,routes}.go, value/bodyresult/judgment.go and value/resultalias/judgment.go. Each needs one import rewritten, not a deletion. Seven of them carry the authored Builds the scheduled-death ledger still lists, so they shrink further as those rows empty. DONE before the cut: the read surface now lives in analysis/engine/operand. SummaryVector, MemberCell, NewMemberVector and SelectedCell were moved there under their own names - no alias stayed behind in execution - and every reference was rewritten, including the emitter, so a regenerated family names the operand package for its cells and the executor package for its cursors. The package sits under analysis/engine because both of the values it carries are the engine's own: a cell states the support.Mask it was observed over, and a Factor-backed vector is a view of Binding-owned observation storage. It descends no further while support is analysis/engine/internal; K-facts-support relocating it is what frees this package to sit beside the schema vocabulary. S2 still deletes both named files: what stays in them is the Form, Ticket, Scratch and cursor machinery, and Deliver now seals its vector through operand.NewObservationVector. The observation backing itself is not restated - it names factbinding, which S6-engine-internals deletes, so the surviving vector is the cell-backed one and the Factor backing retargets to the relation kernel's own storage there."
     },
     {
       "id": "S3-family-bind-wiring",

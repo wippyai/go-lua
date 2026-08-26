@@ -1,9 +1,10 @@
 package execution
 
 import (
-	"github.com/wippyai/go-lua/analysis/schema/structure"
 	"sync"
 	"testing"
+
+	"github.com/wippyai/go-lua/analysis/schema/structure"
 
 	"github.com/wippyai/go-lua/analysis/engine/internal/carrier"
 	"github.com/wippyai/go-lua/analysis/engine/internal/executioncatalog"

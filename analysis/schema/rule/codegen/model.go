@@ -517,7 +517,7 @@ const (
 // the same view, because a many-valued input is ONE argument. Which of the two
 // views one input takes is definition.ManyValuedView's answer.
 var SummaryVectorType = memberdefinition.GoType{
-	PackagePath: "github.com/wippyai/go-lua/analysis/engine/execution",
+	PackagePath: "github.com/wippyai/go-lua/analysis/engine/operand",
 	Name:        "SummaryVector",
 }
 
@@ -529,7 +529,7 @@ var SummaryVectorType = memberdefinition.GoType{
 // what its own read proved rather than a view that drops it. It is delivered
 // as a slice of this type, one entry per observed member.
 var SelectionCellType = memberdefinition.GoType{
-	PackagePath: "github.com/wippyai/go-lua/analysis/engine/execution",
+	PackagePath: "github.com/wippyai/go-lua/analysis/engine/operand",
 	Name:        "SelectedCell",
 }
 

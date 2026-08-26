@@ -359,8 +359,8 @@ func TestMemberSetJoinDeliversOneVectorFromOrdinalSealedReads(t *testing.T) {
 	if !strings.Contains(source, "execution.ForeignMemberExactRead[") {
 		t.Fatalf("the installer seals no member read through the foreign handle's ForeignMemberExactRead:\n%s", source)
 	}
-	if !strings.Contains(source, "execution.NewMemberVector(read0Cells)") {
-		t.Fatalf("the worker does not view the filled cell buffer through execution.NewMemberVector:\n%s", source)
+	if !strings.Contains(source, "operand.NewMemberVector(read0Cells)") {
+		t.Fatalf("the worker does not view the filled cell buffer through operand.NewMemberVector:\n%s", source)
 	}
 
 	call, found := callArguments(source, "deriveDerived1Rows")

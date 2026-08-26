@@ -105,7 +105,7 @@ func TestAPublishedKeyVectorIsDeliveredAsOneVectorOverItsOwnCoordinates(t *testi
 	if !strings.Contains(source, "execution.ForeignMemberExactRead[") {
 		t.Fatalf("the installer seals no coordinate through the read axis's foreign handle:\n%s", source)
 	}
-	if !strings.Contains(source, "execution.NewMemberVector(read0Cells)") {
+	if !strings.Contains(source, "operand.NewMemberVector(read0Cells)") {
 		t.Fatalf("the worker does not view the filled cells as one vector:\n%s", source)
 	}
 	call, found := callArguments(source, "deriveDerived1Rows")

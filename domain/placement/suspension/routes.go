@@ -1,7 +1,7 @@
 package suspension
 
 import (
-	"github.com/wippyai/go-lua/analysis/engine/execution"
+	reduceroperand "github.com/wippyai/go-lua/analysis/engine/operand"
 	"github.com/wippyai/go-lua/analysis/schema/program/calltarget"
 	"github.com/wippyai/go-lua/analysis/schema/program/lifecycle"
 	calldomain "github.com/wippyai/go-lua/domain/call"
@@ -42,7 +42,7 @@ func DeriveSuspensionRoutes(
 	calls *calldomain.Algebra,
 	candidate lifecycle.MountedSubjectLiveness,
 	callFact calldomain.Value,
-	sources execution.SummaryVector[valuedomain.Value],
+	sources reduceroperand.SummaryVector[valuedomain.Value],
 ) (RoutePlan, bool) {
 	if !schema.Valid() || values == nil || !values.Valid() || !values.OwnsHeapSchema(schema.Heap()) ||
 		calls == nil || !calls.Valid() || !candidate.Available() || !sources.Valid() {
