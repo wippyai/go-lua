@@ -25,10 +25,6 @@ func goType(name string) definition.GoType {
 	return definition.GoType{PackagePath: containmentPackagePath, Name: name}
 }
 
-func containmentFunction(name string) definition.GoSymbol {
-	return definition.GoSymbol{PackagePath: containmentPackagePath, Name: name, ResultIndex: 0}
-}
-
 func routeMethod(name string, result int8) definition.GoSymbol {
 	return definition.GoSymbol{PackagePath: containmentPackagePath, Name: name, Receiver: goType("Route"), ResultIndex: result}
 }
@@ -89,7 +85,6 @@ func Contribution() definition.Contribution {
 			// so it does not exist until both vectors are known.
 			Name: "ContainmentRouteSelection", Key: "placement/containment/route-selection",
 			Relation: "ContainmentRoutes", Tag: "ContainmentRouteTag",
-			Implementation: containmentFunction("DeriveContainmentRoutes"),
 		}},
 		Reducers: []definition.Reducer{{
 			Name: "ContainmentReducer",

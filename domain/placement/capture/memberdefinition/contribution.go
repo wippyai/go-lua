@@ -25,10 +25,6 @@ func goType(path, name string) definition.GoType {
 	return definition.GoType{PackagePath: path, Name: name}
 }
 
-func captureFunction(name string) definition.GoSymbol {
-	return definition.GoSymbol{PackagePath: capturePackagePath, Name: name, ResultIndex: 0}
-}
-
 func sourceMethod(name string, result int8) definition.GoSymbol {
 	return definition.GoSymbol{PackagePath: capturePackagePath, Name: name, Receiver: goType(capturePackagePath, "Source"), ResultIndex: result}
 }
@@ -118,7 +114,6 @@ func Contribution() definition.Contribution {
 				// are published by this operation rather than enumerated.
 				Name: "CaptureSourceSelection", Key: "value/closure-capture/source-selection",
 				Relation: "CaptureSources", Tag: "CaptureSourceTag",
-				Implementation: captureFunction("DeriveCaptureSources"),
 			},
 			{
 				// The route set is the union of the allocations every captured
@@ -126,7 +121,6 @@ func Contribution() definition.Contribution {
 				// are known.
 				Name: "CaptureRouteSelection", Key: "placement/closure-capture/route-selection",
 				Relation: "CaptureRoutes", Tag: "CaptureRouteTag",
-				Implementation: captureFunction("DeriveCaptureRoutes"),
 			},
 		},
 		Reducers: []definition.Reducer{{

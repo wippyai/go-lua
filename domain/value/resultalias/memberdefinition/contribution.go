@@ -103,11 +103,10 @@ func Contribution() definition.Contribution {
 		// before them delivered, so they are published through this
 		// selection and stamped with the tag the reading rule joins on.
 		Selections: []definition.Selection{{
-			Name:           "ResultAliasRouteSelection",
-			Key:            "value/result-alias/route-selection",
-			Relation:       "ResultAliasRoutes",
-			Tag:            "ResultAliasRouteTag",
-			Implementation: aliasRouteFunction("Derive"),
+			Name:     "ResultAliasRouteSelection",
+			Key:      "value/result-alias/route-selection",
+			Relation: "ResultAliasRoutes",
+			Tag:      "ResultAliasRouteTag",
 		}},
 		Reducers: []definition.Reducer{{
 			Name:      "ResultAliasReducer",

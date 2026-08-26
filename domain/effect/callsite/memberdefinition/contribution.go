@@ -249,11 +249,10 @@ func BodyContribution() definition.Contribution {
 		// delivered, so they are published through this selection and stamped
 		// with the tag the reading rule joins on.
 		Selections: []definition.Selection{{
-			Name:           "BodyRouteSelection",
-			Key:            "effect/callsite/body-route-selection",
-			Relation:       "BodyRoutes",
-			Tag:            "BodyRouteTag",
-			Implementation: bodyRouteFunction("ResolveRoute"),
+			Name:     "BodyRouteSelection",
+			Key:      "effect/callsite/body-route-selection",
+			Relation: "BodyRoutes",
+			Tag:      "BodyRouteTag",
 		}},
 		Reducers: []definition.Reducer{{
 			Name:      "BodyCallEffectReducer",

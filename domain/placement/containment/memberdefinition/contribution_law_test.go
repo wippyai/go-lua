@@ -37,10 +37,23 @@ func TestContainmentContributionDeclaresItsRouteRowsAndTheIrreducibleFold(t *tes
 		roles[member.Destination] != "placement/containment/route-destination" {
 		t.Fatalf("containment route projections=%+v, want key, tag and destination", roles)
 	}
+	// The selection carries no symbol of its own: the operation that computes
+	// these rows is the derivation ContainmentRoutes declares. What the row
+	// states is which relation it publishes into and which tag it stamps, and
+	// both are rows this rule declares itself.
 	selection := contribution.Selections[0]
-	if selection.Key != "placement/containment/route-selection" || selection.Relation != "ContainmentRoutes" ||
-		selection.Tag != "ContainmentRouteTag" || selection.Implementation.Name != "DeriveContainmentRoutes" {
-		t.Fatalf("containment selection=%+v, want the declared route operation", selection)
+	if selection.Key != "placement/containment/route-selection" || selection.Relation != routes.Name ||
+		selection.Tag != "ContainmentRouteTag" {
+		t.Fatalf("containment selection=%+v, want the route vector published under its tag", selection)
+	}
+	stamped := false
+	for _, projection := range contribution.Projections {
+		if projection.Name == selection.Tag {
+			stamped = projection.Relation == selection.Relation && projection.Role == member.Predicate
+		}
+	}
+	if !stamped {
+		t.Fatalf("containment selection stamps %q, which is not the predicate projection of %q", selection.Tag, selection.Relation)
 	}
 
 	reducer := contribution.Reducers[0]
