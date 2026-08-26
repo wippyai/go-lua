@@ -12,8 +12,8 @@ import (
 // layer invents or a frame it fills in, so the rows are declared, named, and
 // left unbound.
 const (
-	abiGapRawPackRoutes = "w0-abi-incomplete: the authored pack expansion joins the heap facts and the key routes its enumeration reads, and VisitRoutePayloads takes a heapdomain.KeySelector the owner projects only through the unexported visitKeySelectors over its unexported selectors and heap schema"
-	abiGapRawReduction  = "w0-abi-incomplete: the authored reduction joins every fact selection its enumeration reads, and RawGetReduce and RawSetMutateRoute take frames whose every selection field is typed by the unexported rawSelected, so no caller outside domain/heap/index can construct one"
+	abiGapRawPackRoutes = "w0-plan-operand: the owner publishes VisitKeySelectors, which reads the key value and the read candidate, and the authored pack expansion joins the key route instead, whose fact carries the coordinate and not the value, and never joins the read candidates"
+	abiGapRawReduction  = "w0-span-identity: the owner publishes both frames constructibly, and their selection lookups are keyed by owner tags, while relbindgen.Span exposes only Len and At, so a binding cannot say which owner tag a delivered span row belongs to"
 )
 
 // scalar is the delivery a single-cell input carries.

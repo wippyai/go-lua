@@ -10,7 +10,9 @@ import (
 	calldomain "github.com/wippyai/go-lua/domain/call"
 	heapdomain "github.com/wippyai/go-lua/domain/heap"
 	indexdomain "github.com/wippyai/go-lua/domain/heap/index"
+	packdomain "github.com/wippyai/go-lua/domain/pack"
 	"github.com/wippyai/go-lua/domain/relationfixture"
+	valuedomain "github.com/wippyai/go-lua/domain/value"
 )
 
 // The raw-access specimen.
@@ -212,6 +214,67 @@ func deliversSelector(method reflect.Type, selector reflect.Type) bool {
 	return false
 }
 
+// TestAnOutsideCallerReallyBuildsBothFramesAndReachesTheSelectors is the
+// concrete form of the two laws above. Reflection proves the shapes admit an
+// outside caller; this builds them as one, against production authorities
+// sealed from a real program, so what the specimen calls reachable is what a
+// binding would actually write.
+func TestAnOutsideCallerReallyBuildsBothFramesAndReachesTheSelectors(t *testing.T) {
+	fixture := relationfixture.New(t)
+
+	scratch, scratchOK := indexdomain.NewRawGetScratch(fixture.Topology)
+	if !scratchOK || scratch == nil {
+		t.Fatal("an outside caller could not open the reduction's reuse storage")
+	}
+
+	// Every selection slot of both frames is written here, by this package,
+	// with values this package made. That is the whole property.
+	absentValue := indexdomain.NewSelected(fixture.Values.Bottom(), false)
+	get := indexdomain.RawGetFrame{
+		Scratch:  scratch,
+		Key:      absentValue,
+		KeyCount: 1,
+		Call: func(uint64) indexdomain.Selected[calldomain.Value] {
+			return indexdomain.NewMissingSelected[calldomain.Value]()
+		},
+		Heap: func(heapdomain.RawRouteTag, heapdomain.Key) indexdomain.Selected[heapdomain.Value] {
+			return indexdomain.NewMissingSelected[heapdomain.Value]()
+		},
+		Pack: func(heapdomain.RawPayloadTag) indexdomain.Selected[packdomain.Value] {
+			return indexdomain.NewRefusedSelected[packdomain.Value]()
+		},
+		Source: func(indexdomain.RawSourceTag) indexdomain.Selected[valuedomain.Value] { return absentValue },
+	}
+	set := indexdomain.RawSetFrame{
+		Key:      absentValue,
+		KeyCount: 1,
+		Pack: func(heapdomain.RawPayloadTag) indexdomain.Selected[packdomain.Value] {
+			return indexdomain.NewRefusedSelected[packdomain.Value]()
+		},
+		Source: func(indexdomain.RawSourceTag) indexdomain.Selected[valuedomain.Value] { return absentValue },
+	}
+	if get.Call == nil || get.Heap == nil || get.Pack == nil || get.Source == nil || set.Pack == nil || set.Source == nil {
+		t.Fatal("a frame this package wrote came back with an unwritten selection")
+	}
+	if !get.Key.Valid() || get.Key.Present() || !get.Key.Found() {
+		t.Fatal("a delivered selection did not read back the disposition it was written with")
+	}
+	if indexdomain.NewMissingSelected[valuedomain.Value]().Found() {
+		t.Fatal("a missing selection reported a row")
+	}
+	if indexdomain.NewRefusedSelected[valuedomain.Value]().Valid() {
+		t.Fatal("a refused selection reported that it was read")
+	}
+
+	// The selector enumeration answers a caller outside the owner. The
+	// fixture's candidates are not raw-access operands, so the enumeration
+	// refuses them rather than answering; what this proves is that the call
+	// is reachable and total, not that this fixture has a route to walk.
+	if fixture.Topology.VisitKeySelectors(indexdomain.Index{}, absentValue, 1, func(heapdomain.KeySelector) bool { return true }) {
+		t.Fatal("the selector enumeration answered for a candidate no topology issued")
+	}
+}
+
 // TestEveryRawAccessEnumerationIsReachable drives the enumerations that are
 // already published against production authorities sealed from a real program,
 // so what this specimen calls reachable is what the code does.
@@ -268,8 +331,11 @@ func TestEveryUnboundRawAccessOperationIsCarriedAsANamedDebt(t *testing.T) {
 			continue
 		}
 		pending[family.Stem] = true
-		if !strings.Contains(family.Pending, "w0-abi-incomplete") {
-			t.Errorf("family %s carries a debt that is not tagged with what blocks it", family.Stem)
+		if !strings.Contains(family.Pending, "w0-plan-operand") && !strings.Contains(family.Pending, "w0-span-identity") {
+			t.Errorf("family %s carries a debt that is not tagged with the operand that blocks it", family.Stem)
+		}
+		if strings.Contains(family.Pending, "unexported") {
+			t.Errorf("family %s still blames an unexported owner symbol, and the owner publishes every operand its signatures name", family.Stem)
 		}
 	}
 	if declared == 0 {

@@ -83,13 +83,13 @@ func (rule *RawGetRule) visitSelectedPayloads(context engine.SelectorContext, ac
 	})
 }
 
-func (rule *RawGetRule) takeScratch() *rawGetScratch {
-	value := rule.scratch.Get().(*rawGetScratch)
+func (rule *RawGetRule) takeScratch() *RawGetScratch {
+	value := rule.scratch.Get().(*RawGetScratch)
 	clear(value.payload)
 	clear(value.source)
 	return value
 }
-func (rule *RawGetRule) putScratch(value *rawGetScratch) {
+func (rule *RawGetRule) putScratch(value *RawGetScratch) {
 	if value != nil {
 		rule.scratch.Put(value)
 	}
