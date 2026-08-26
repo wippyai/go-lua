@@ -6,9 +6,8 @@ import (
 
 	"github.com/wippyai/go-lua/analysis/engine/internal/facts/support"
 	"github.com/wippyai/go-lua/analysis/engine/internal/guard"
-	"github.com/wippyai/go-lua/analysis/engine/relation/cofiber"
+	"github.com/wippyai/go-lua/analysis/engine/relation/cofiber/lower"
 	"github.com/wippyai/go-lua/analysis/engine/relation/state/database"
-	"github.com/wippyai/go-lua/analysis/engine/relation/state/geometry"
 	"github.com/wippyai/go-lua/analysis/identity"
 	"github.com/wippyai/go-lua/analysis/relation/check/certificate"
 	"github.com/wippyai/go-lua/analysis/relation/mount/address"
@@ -41,7 +40,7 @@ func Build(t Probe, spec Spec) World {
 	if refusal != nil || !cert.Available() {
 		t.Fatalf("target fixture certificate: %v", refusal)
 	}
-	book, manager, declared := newInventory(t, spec, cert)
+	book, lowering := newInventory(t, spec, cert)
 	storeID, ok := identity.IssueStore()
 	if !ok {
 		t.Fatal("target fixture store")
@@ -108,11 +107,11 @@ func Build(t Probe, spec Spec) World {
 	if !ok || !mounted.Available() {
 		t.Fatal("target fixture mount")
 	}
-	scopes, ok := cofiber.NewDeclared(mounted, manager, declared)
-	if !ok || !scopes.Available() {
-		t.Fatal("target fixture cofiber")
+	capability, ok := lower.NewFactory(mounted.RuntimeFence().Mount(), lowering)
+	if !ok {
+		t.Fatal("target fixture lowering factory")
 	}
-	view, ok := geometry.New(mounted, scopes)
+	view, ok := capability.Bind(mounted)
 	if !ok || !view.Available() {
 		t.Fatal("target fixture geometry")
 	}
@@ -256,7 +255,7 @@ func (value *inventory) ResolveExpand(contract model.ExpandContract) ([]expand.V
 	return value.resolveExpand(contract)
 }
 
-func newInventory(t Probe, spec Spec, cert certificate.Certificate) (*inventory, *guard.Manager, map[identity.ContentID]support.Mask) {
+func newInventory(t Probe, spec Spec, cert certificate.Certificate) (*inventory, lower.Lowering) {
 	t.Helper()
 	rows := make(map[model.DenominatorRef][]model.RowID, len(spec.Populations))
 	for index, population := range spec.Populations {
@@ -269,11 +268,11 @@ func newInventory(t Probe, spec Spec, cert certificate.Certificate) (*inventory,
 		copyOf := append([]model.RowID(nil), population.Rows...)
 		rows[population.Denominator] = copyOf
 	}
-	manager, declared := newRegions(t, cert, spec.Scopes)
-	return &inventory{certificate: cert, rows: rows, partitions: spec.PartitionInventory, resolveExpand: spec.ResolveExpand}, manager, declared
+	lowering := newRegions(t, cert, spec.Scopes)
+	return &inventory{certificate: cert, rows: rows, partitions: spec.PartitionInventory, resolveExpand: spec.ResolveExpand}, lowering
 }
 
-func newRegions(t Probe, cert certificate.Certificate, scopes []Scope) (*guard.Manager, map[identity.ContentID]support.Mask) {
+func newRegions(t Probe, cert certificate.Certificate, scopes []Scope) lower.Lowering {
 	t.Helper()
 	if !cert.Available() || len(scopes) == 0 {
 		t.Fatal("target fixture has no scopes")
@@ -326,20 +325,15 @@ func newRegions(t Probe, cert certificate.Certificate, scopes []Scope) (*guard.M
 	sort.Slice(atomIDs, func(left, right int) bool {
 		return bytes.Compare(atomIDs[left][:], atomIDs[right][:]) < 0
 	})
-	defaultScopeMask := len(atomIDs) == 0
 	atoms := make([]guard.Atom, len(atomIDs))
-	if defaultScopeMask {
+	if len(atomIDs) == 0 {
 		// A schema carrying only True has no logical atom from which to
 		// derive a physical guard universe. Keep the historical one-atom
-		// mounted scope so state still has a non-empty executable fiber;
-		// all such True formulas map to this same exact mask.
+		// mounted scope so state still has a non-empty executable fiber.
 		atoms = append(atoms, guard.Atom(1))
 	}
-	atomByID := make(map[identity.ContentID]guard.Atom, len(atomIDs))
-	for index, id := range atomIDs {
-		atom := guard.Atom(index + 1)
-		atoms[index] = atom
-		atomByID[id] = atom
+	for index := range atomIDs {
+		atoms[index] = guard.Atom(index + 1)
 	}
 	manager, err := guard.New(atoms)
 	if err != nil {
@@ -349,92 +343,20 @@ func newRegions(t Probe, cert certificate.Certificate, scopes []Scope) (*guard.M
 	if work == nil {
 		t.Fatal("target fixture support work")
 	}
-	formulas := make([]schemaregion.Region, 0, len(scopeSchemas))
-	masks := make([]support.Mask, 0, len(scopeSchemas))
-	for index, scopeSchema := range scopeSchemas {
-		formula := scopeSchema.Region()
-		mask, ok := supportMask(work, formula, atomByID, defaultScopeMask)
+	extents := make(map[identity.ContentID]support.Mask, len(atomIDs))
+	for index, id := range atomIDs {
+		mask, ok := work.Literal(guard.Atom(index+1), true)
 		if !ok {
-			t.Fatalf("target fixture scope mask %d", index)
+			t.Fatalf("target fixture atom extent %d", index)
 		}
-		formulas = append(formulas, formula)
-		masks = append(masks, mask)
+		extents[id] = mask
 	}
 	if !work.Seal() {
 		t.Fatal("target fixture support seal")
 	}
-	declared := make(map[identity.ContentID]support.Mask, len(formulas)*len(formulas)+len(formulas))
-	add := func(formula schemaregion.Region, mask support.Mask) {
-		id := formula.Identity()
-		if !formula.Available() || !id.Available() || !mask.Valid() {
-			t.Fatal("target fixture declared region")
-		}
-		if prior, exists := declared[id]; exists && !prior.Equal(mask) {
-			t.Fatal("target fixture divergent region")
-		}
-		declared[id] = mask
+	lowering, ok := lower.New(manager, extents)
+	if !ok {
+		t.Fatal("target fixture lowering")
 	}
-	for index, formula := range formulas {
-		add(formula, masks[index])
-	}
-	// cofiber validates every declared pair's conjunction during cold mount.
-	// Predeclare those exact schema formula identities with their exact BDD
-	// intersections; no physical mask or neutral adapter crosses the mount.
-	for leftIndex, left := range formulas {
-		for rightIndex, right := range formulas {
-			combined, formulaOK := schemaregion.Conjoin(left, right)
-			mask, maskOK := support.Intersect(masks[leftIndex], masks[rightIndex])
-			if !formulaOK || !maskOK {
-				t.Fatal("target fixture region conjunction")
-			}
-			add(combined, mask)
-		}
-	}
-	return manager, declared
-}
-
-func supportMask(work *support.Work, formula schemaregion.Region, atoms map[identity.ContentID]guard.Atom, defaultScopeMask bool) (support.Mask, bool) {
-	if work == nil || !formula.Available() {
-		return support.Mask{}, false
-	}
-	if formula.IsFalse() {
-		return work.False(), true
-	}
-	if formula.IsTrue() {
-		if defaultScopeMask {
-			return work.Literal(1, true)
-		}
-		return work.True(), true
-	}
-	nodes := formula.Nodes()
-	if len(nodes) == 0 {
-		return support.Mask{}, false
-	}
-	var visit func(uint32) (support.Mask, bool)
-	visit = func(reference uint32) (support.Mask, bool) {
-		switch reference {
-		case 0:
-			return work.False(), true
-		case 1:
-			return work.True(), true
-		}
-		if reference < 2 || int(reference-2) >= len(nodes) {
-			return support.Mask{}, false
-		}
-		node := nodes[reference-2]
-		atom, ok := atoms[node.Atom.ID()]
-		if !ok {
-			return support.Mask{}, false
-		}
-		low, ok := visit(node.Low)
-		if !ok {
-			return support.Mask{}, false
-		}
-		high, ok := visit(node.High)
-		if !ok {
-			return support.Mask{}, false
-		}
-		return work.Decision(atom, low, high)
-	}
-	return visit(uint32(len(nodes)) + 1)
+	return lowering
 }

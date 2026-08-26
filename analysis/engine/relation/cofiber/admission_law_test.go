@@ -4,9 +4,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/wippyai/go-lua/analysis/engine/internal/facts/support"
 	"github.com/wippyai/go-lua/analysis/engine/internal/guard"
-	"github.com/wippyai/go-lua/analysis/engine/relation/cofiber"
+	"github.com/wippyai/go-lua/analysis/engine/relation/cofiber/lower"
 	"github.com/wippyai/go-lua/analysis/engine/relation/runtime"
 	"github.com/wippyai/go-lua/analysis/engine/relation/state/database"
 	"github.com/wippyai/go-lua/analysis/engine/relation/state/geometry"
@@ -408,19 +407,39 @@ func (inventory *specimenInventory) ResolveExpand(model.ExpandContract) ([]expan
 type specimenGeometryFactory struct{ region identity.ContentID }
 
 func (factory specimenGeometryFactory) Bind(mounted witness.Mounted) (geometry.Geometry, bool) {
+	if !mounted.Available() || !factory.region.Available() {
+		return geometry.Geometry{}, false
+	}
+	found := false
+	for _, scopeID := range mounted.Scopes() {
+		scope, ok := mounted.Scope(scopeID)
+		if !ok {
+			return geometry.Geometry{}, false
+		}
+		value, ok := mounted.RegionForScope(scope)
+		if !ok || !value.Available() {
+			return geometry.Geometry{}, false
+		}
+		if value.Identity() == factory.region {
+			found = true
+		}
+	}
+	if !found {
+		return geometry.Geometry{}, false
+	}
 	manager, err := guard.New([]guard.Atom{1})
 	if err != nil {
 		return geometry.Geometry{}, false
 	}
-	all, allOK := support.True(manager)
-	if !allOK {
+	lowering, ok := lower.New(manager, nil)
+	if !ok {
 		return geometry.Geometry{}, false
 	}
-	authority, authorityOK := cofiber.NewDeclared(mounted, manager, map[identity.ContentID]support.Mask{factory.region: all})
-	if !authorityOK {
+	capability, ok := lower.NewFactory(mounted.RuntimeFence().Mount(), lowering)
+	if !ok {
 		return geometry.Geometry{}, false
 	}
-	return geometry.New(mounted, authority)
+	return capability.Bind(mounted)
 }
 
 type fixtureBinding struct {

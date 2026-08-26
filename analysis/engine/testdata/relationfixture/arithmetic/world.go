@@ -5,7 +5,7 @@ import (
 
 	"github.com/wippyai/go-lua/analysis/engine/internal/facts/support"
 	"github.com/wippyai/go-lua/analysis/engine/relation/apply"
-	"github.com/wippyai/go-lua/analysis/engine/relation/cofiber"
+	"github.com/wippyai/go-lua/analysis/engine/relation/cofiber/lower"
 	"github.com/wippyai/go-lua/analysis/engine/relation/publish"
 	"github.com/wippyai/go-lua/analysis/engine/relation/state/database"
 	"github.com/wippyai/go-lua/analysis/engine/relation/state/geometry"
@@ -70,12 +70,23 @@ func New(t testing.TB, mountBytes ...byte) Fixture {
 	if len(scopeSchemas) != 1 || scopeSchemas[0].ID() != declaration.IDs.Scope || !scopeSchemas[0].Region().Available() {
 		t.Fatal("arithmetic declared scope schema")
 	}
-	declared := map[identity.ContentID]support.Mask{scopeSchemas[0].Region().Identity(): mask}
-	scopes, ok := cofiber.NewDeclared(mounted, manager, declared)
-	if !ok || !scopes.Available() {
-		t.Fatal("arithmetic cofiber")
+	atoms := scopeSchemas[0].Region().Nodes()
+	extents := make(map[identity.ContentID]support.Mask, len(atoms))
+	for _, row := range atoms {
+		if !row.Atom.Available() {
+			t.Fatal("arithmetic scope atom")
+		}
+		extents[row.Atom.ID()] = mask
 	}
-	view, ok := geometry.New(mounted, scopes)
+	lowering, ok := lower.New(manager, extents)
+	if !ok || !lowering.Available() {
+		t.Fatal("arithmetic lowering")
+	}
+	geometryFactory, ok := lower.NewFactory(mounted.RuntimeFence().Mount(), lowering)
+	if !ok {
+		t.Fatal("arithmetic lowering factory")
+	}
+	view, ok := geometryFactory.Bind(mounted)
 	if !ok || !view.Available() {
 		t.Fatal("arithmetic geometry")
 	}

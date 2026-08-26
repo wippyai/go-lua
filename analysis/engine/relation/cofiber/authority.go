@@ -117,40 +117,6 @@ func New(mounted witness.Mounted, manager *guard.Manager, mapRegion func(schemar
 	return Authority{data: data}, true
 }
 
-// NewDeclared is the closed bootstrap form of New.  The declaration compiler
-// or a test-world builder supplies the already-sealed neutral-region identity
-// to physical-mask table; cofiber owns the only translation callback and
-// consumes that table during the one cold proof.  The table is copied before
-// New runs and is never retained, so this is not a second runtime scope
-// authority or a compatibility path.
-//
-// Entries must include the declared regions and every declared conjunction
-// that New's cold translation proof will visit.  Missing or foreign entries
-// refuse the whole authority.
-func NewDeclared(mounted witness.Mounted, manager *guard.Manager, declared map[identity.ContentID]support.Mask) (Authority, bool) {
-	if mounted.Available() == false || manager == nil || len(declared) == 0 {
-		return Authority{}, false
-	}
-	table := make(map[identity.ContentID]support.Mask, len(declared))
-	for id, mask := range declared {
-		if !id.Available() || !mask.Valid() || mask.Manager() != manager {
-			return Authority{}, false
-		}
-		table[id] = mask
-	}
-	return New(mounted, manager, func(value schemaregion.Region) (support.Mask, bool) {
-		if !value.Available() {
-			return support.Mask{}, false
-		}
-		id := value.Identity()
-		if !id.Available() {
-			return support.Mask{}, false
-		}
-		mask, exists := table[id]
-		return mask, exists && mask.Valid() && mask.Manager() == manager
-	})
-}
-
 // Available reports whether this authority still names one exact mounted
 // runtime, one exact guard manager, and its complete frozen translation.
 func (authority Authority) Available() bool {
