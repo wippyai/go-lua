@@ -73,7 +73,14 @@ type canonicalEncoder struct {
 	scoped          bool
 	formals         map[*TypeParam]uint64
 	formalScope     []*TypeParam
-	binders         map[*TypeParam]canonicalFormalBinder
+	// scopeMark stamps which nodes the current source-scope walk has reached.
+	// The receipt walks one scope per source, so a walk that allocated its own
+	// whole-graph visited set would allocate the square of the node count over
+	// the receipt. The stamp is the walk's own epoch, so clearing is free.
+	scopeMark  []uint32
+	scopeEpoch uint32
+	scopeStack []int
+	binders    map[*TypeParam]canonicalFormalBinder
 }
 
 // encodeFormals is the whole scoped encode over one caller-owned encoder. It
