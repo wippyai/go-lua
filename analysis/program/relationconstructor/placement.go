@@ -95,3 +95,4 @@ func portReads(program ruleprogram.Program) (map[int]schema.Key, bool) {
 	}
 	return reads, true
 }
+

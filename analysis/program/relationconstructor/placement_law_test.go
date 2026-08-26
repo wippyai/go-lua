@@ -151,3 +151,4 @@ func TestAMalformedPlacementRefuses(t *testing.T) {
 		t.Fatal("two joins claimed one port and the rule was still placed")
 	}
 }
+
