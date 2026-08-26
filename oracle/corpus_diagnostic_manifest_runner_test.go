@@ -201,16 +201,17 @@ type corpusDiagnosticRegistrationCounts struct {
 // pending because the runner proves them: they are capability the corpus now
 // checks, not capability it is still owed.
 //
-// pendingFindings reads 141. Two of those rows are advice/uncalled-body-kind-guard,
-// which is pending on purpose: it states a judgment this analysis does not yet
-// make, so it is capability the corpus is owed rather than capability it
-// checks, and it registers when the body that no call reaches is judged like
-// the one that is. The other two are corpus drift that predates this branch -
+// pendingFindings reads 142. Three of those rows are the open entry batch -
+// two in advice/uncalled-body-kind-guard and one in advice/entry-cell-admission,
+// pending on purpose: they state judgments this analysis does not yet make, so
+// they are capability the corpus is owed rather than capability it checks, and
+// they register when a body no call reaches is judged like one that is. The
+// other two are corpus drift that predates this branch -
 // the pending set already measured 139 before it - restated here rather than
 // left as a standing mismatch that hides the next real change.
 var corpusDiagnosticFrozenRegistrationCensus = corpusDiagnosticRegistrationCounts{
 	registeredCases: 8, registeredFindings: 8,
-	whollyPendingCodes: 30, pendingFindings: 141, inlinePending: 731,
+	whollyPendingCodes: 30, pendingFindings: 142, inlinePending: 731,
 }
 
 func (counts corpusDiagnosticRegistrationCounts) matches(want corpusDiagnosticRegistrationCounts) bool {

@@ -1,0 +1,50 @@
+{
+  "description": "What a body reads from a cell at an any-caller entry is the join over every write that cell can carry: a cell no code writes admits its initial binding, and a cell this program writes admits the join, never the initial value alone.",
+  "check": {
+    "diagnostic_rules": [
+      {
+        "code": "advice.always_true_guard",
+        "enabled": true,
+        "severity": "hint"
+      },
+      {
+        "code": "advice.always_false_guard",
+        "enabled": true,
+        "severity": "hint"
+      }
+    ],
+    "diagnostics": [
+      {
+        "file": "main.lua",
+        "line": 3,
+        "column": 8,
+        "severity": "hint",
+        "code": "advice.always_true_guard",
+        "message_contains": [
+          "condition is proven always true"
+        ],
+        "min_evidence": 1,
+        "evidence_contains": [
+          "condition is proven to be true on every reachable path"
+        ],
+        "render_contains": [
+          "hint[advice.always_true_guard]",
+          "condition is proven always true"
+        ],
+        "render_not_contains": [
+          "main.lua:11:6"
+        ],
+        "help_contains": [
+          "Remove the guard"
+        ],
+        "label_contains": [
+          "constant guard"
+        ],
+        "min_labels": 1
+      }
+    ]
+  },
+  "run": {
+    "skip": "diagnostic-only fixture"
+  }
+}
