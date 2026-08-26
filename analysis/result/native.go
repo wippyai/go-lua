@@ -9,6 +9,7 @@ import (
 	flowkind "github.com/wippyai/go-lua/analysis/program/flow/kind"
 	"github.com/wippyai/go-lua/analysis/program/keyspace"
 	programschema "github.com/wippyai/go-lua/analysis/schema/program"
+	"github.com/wippyai/go-lua/domain/sendsafety"
 	valuedomain "github.com/wippyai/go-lua/domain/value"
 )
 
@@ -20,16 +21,19 @@ type NativePublicationLane uint8
 const (
 	NativePublicationLaneInvalid NativePublicationLane = iota
 	NativePublicationLaneValues
+	NativePublicationLaneSend
 )
 
 func (lane NativePublicationLane) Valid() bool {
-	return lane == NativePublicationLaneValues
+	return lane == NativePublicationLaneValues || lane == NativePublicationLaneSend
 }
 
 func (lane NativePublicationLane) String() string {
 	switch lane {
 	case NativePublicationLaneValues:
 		return "values"
+	case NativePublicationLaneSend:
+		return "send"
 	default:
 		return ""
 	}
@@ -43,16 +47,19 @@ type NativePublicationKind uint8
 const (
 	NativePublicationKindInvalid NativePublicationKind = iota
 	NativePublicationKindValue
+	NativePublicationKindSendSafety
 )
 
 func (kind NativePublicationKind) Valid() bool {
-	return kind == NativePublicationKindValue
+	return kind == NativePublicationKindValue || kind == NativePublicationKindSendSafety
 }
 
 func (kind NativePublicationKind) String() string {
 	switch kind {
 	case NativePublicationKindValue:
 		return "value"
+	case NativePublicationKindSendSafety:
+		return "send_safety"
 	default:
 		return ""
 	}
@@ -370,6 +377,16 @@ func (row NativePublication) DeadArmReachable() (bool, bool) {
 	return value.content.deadArmReachable, true
 }
 
+// SendSafety is the proved allocation-level send strategy. It is present only
+// on a send-safety publication; other native rows leave this column absent.
+func (row NativePublication) SendSafety() (sendsafety.Verdict, bool) {
+	value, ok := row.resolve()
+	if !ok || !value.content.sendSafety.Available() {
+		return sendsafety.VerdictNone, false
+	}
+	return value.content.sendSafety, true
+}
+
 // Column resolves one vocabulary-valued column to its member ordinal in the
 // column's declared category. A renderer reads the declared spelling at that
 // ordinal; nothing here renders a name of its own.
@@ -485,6 +502,7 @@ const (
 	nativePublicationFamilyBranchPartition
 	nativePublicationFamilyScalarOperator
 	nativePublicationFamilyDivisorProperty
+	nativePublicationFamilySendSafety
 )
 
 func (family nativePublicationFamily) String() string {
@@ -501,6 +519,8 @@ func (family nativePublicationFamily) String() string {
 		return "scalar_operator"
 	case nativePublicationFamilyDivisorProperty:
 		return "divisor_property"
+	case nativePublicationFamilySendSafety:
+		return "send_safety"
 	default:
 		return ""
 	}
@@ -535,13 +555,26 @@ type nativePublicationRow struct {
 
 func (row nativePublicationRow) valid() bool {
 	semantic, semanticOK := row.family.semanticID()
-	if !row.id.Available() || !semanticOK || row.semantic != semantic || row.lane != NativePublicationLaneValues ||
-		row.kind != NativePublicationKindValue || !row.trust.Valid() || row.key == "" || row.module == "" ||
+	if !row.id.Available() || !semanticOK || row.semantic != semantic || !nativePublicationLaneKindValid(row.lane, row.kind, row.family) ||
+		!row.trust.Valid() || row.key == "" || row.module == "" ||
 		!row.content.valid(row.family) || !row.provenanceOK || !row.validityOK || !row.provenance.valid() || !row.validity.valid() {
 		return false
 	}
 	id, ok := nativePublicationRowID(row)
 	return ok && id == row.id
+}
+
+// nativePublicationLaneKindValid keeps the public partitions closed: value
+// families are on the values lane, while send safety owns its dedicated lane
+// and kind. A caller cannot authenticate one by pairing an otherwise valid
+// family with another row class.
+func nativePublicationLaneKindValid(lane NativePublicationLane, kind NativePublicationKind, family nativePublicationFamily) bool {
+	switch family {
+	case nativePublicationFamilySendSafety:
+		return lane == NativePublicationLaneSend && kind == NativePublicationKindSendSafety
+	default:
+		return lane == NativePublicationLaneValues && kind == NativePublicationKindValue
+	}
 }
 
 func (value NativePublicationProvenance) valid() bool {

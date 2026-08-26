@@ -101,7 +101,6 @@ var nativeFamiliesDeclared = []NativeFamilyDeclared{
 	{"recursive_type_identity", nativeFamilyOwnerNormalize, "no recursive-type fixpoint identity fact is issued"},
 	{"runtime-type-proof", nativeFamilyOwnerRuntimeKind, "no runtime-type proof fact is issued"},
 	{"sealed_table", nativeFamilyOwnerFormalFreeze, "no sealed-table fact is issued"},
-	{"send_safety", nativeFamilyOwnerSendSafety, "no send-payload fact is issued; the same population the send.isolation code awaits"},
 	{"shape_identity", nativeFamilyOwnerType, "no shape-identity fact is issued"},
 	{"shape_transition", nativeFamilyOwnerTransform, "no shape-transition fact is issued"},
 	{"table_construction_bound", nativeFamilyOwnerConstraint, "no table-construction bound fact is issued"},
@@ -116,7 +115,7 @@ var nativeFamiliesDeclared = []NativeFamilyDeclared{
 // nativeFamilyImplementedLast is the final member of the closed implemented
 // vocabulary. It is the one place the enum's extent is stated, so the read
 // model below cannot fall behind a new member.
-const nativeFamilyImplementedLast = nativePublicationFamilyDivisorProperty
+const nativeFamilyImplementedLast = nativePublicationFamilySendSafety
 
 // NativeFamiliesImplemented is the closed set of family spellings the analyzer
 // issues rows under, in the enum's own order. It is a live projection of the

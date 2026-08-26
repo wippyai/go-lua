@@ -9,6 +9,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/program/keyspace"
 	programschema "github.com/wippyai/go-lua/analysis/schema/program"
 	"github.com/wippyai/go-lua/analysis/schema/structure"
+	"github.com/wippyai/go-lua/domain/sendsafety"
 	valuedomain "github.com/wippyai/go-lua/domain/value"
 )
 
@@ -213,6 +214,9 @@ type nativePublicationContent struct {
 	partition        NativeBranchPartition
 	deadArm          NativeBranchArm
 	deadArmReachable bool
+	// sendSafety is the proved allocation-level transfer strategy. VerdictNone
+	// means the send-safety column is absent; no default verdict is invented.
+	sendSafety sendsafety.Verdict
 	// points is the evidence set the row was folded over, in ascending
 	// identity order. It is never a single representative of a larger set.
 	points []identity.ContentID
@@ -244,6 +248,12 @@ func (content nativePublicationContent) valid(family nativePublicationFamily) bo
 	if content.binary != 0 && content.unary != 0 {
 		return false
 	}
+	// Send safety is a column owned exclusively by its family. In particular,
+	// an unknown nonzero enum value must not become an absent column on another
+	// family merely because it is not currently in the verdict catalog.
+	if family != nativePublicationFamilySendSafety && content.sendSafety != sendsafety.VerdictNone {
+		return false
+	}
 	if content.scalar.Available() && content.representation != programschema.NumericRepresentationInvalid {
 		return false
 	}
@@ -272,6 +282,9 @@ func (content nativePublicationContent) valid(family nativePublicationFamily) bo
 	case nativePublicationFamilyBranchPartition:
 		return content.partition.Available() && content.truthiness == NativeTruthinessClassInvalid &&
 			content.scalarColumnsAbsent() && content.numericColumnsAbsent() && content.operatorColumnsAbsent()
+	case nativePublicationFamilySendSafety:
+		return content.sendSafety.Available() && content.exact == false && content.literal == (keyspace.LiteralValue{}) &&
+			content.scalarColumnsAbsent() && content.numericColumnsAbsent() && content.operatorColumnsAbsent() && content.branchColumnsAbsent()
 	default:
 		return false
 	}
@@ -334,6 +347,8 @@ func (content nativePublicationContent) column(column NativePublicationColumn) (
 		return content.partition.Ordinal(), content.partition.Available()
 	case NativePublicationColumnDeadArm:
 		return content.deadArm.Ordinal(), content.deadArm.Available()
+	case NativePublicationColumnSendSafety:
+		return content.sendSafety.Ordinal(), content.sendSafety.Available()
 	default:
 		return 0, false
 	}
@@ -343,7 +358,7 @@ func (content nativePublicationContent) column(column NativePublicationColumn) (
 // row's identity. Every column is its own frame, so two rows are the same row
 // exactly when their columns agree, independently of how any of them renders.
 func (content nativePublicationContent) contentParts() [][]byte {
-	var columns [16]byte
+	var columns [17]byte
 	columns[0] = boolByte(content.exact)
 	columns[1] = uint8(content.literal.Kind)
 	columns[2] = boolByte(content.literal.Bool)
@@ -360,6 +375,7 @@ func (content nativePublicationContent) contentParts() [][]byte {
 	columns[13] = uint8(content.partition)
 	columns[14] = uint8(content.deadArm)
 	columns[15] = boolByte(content.deadArmReachable)
+	columns[16] = uint8(content.sendSafety)
 	var payload [16]byte
 	binary.BigEndian.PutUint64(payload[0:8], uint64(content.literal.Integer))
 	binary.BigEndian.PutUint64(payload[8:16], content.literal.FloatBits)
@@ -422,6 +438,8 @@ func (column NativePublicationColumn) Category() structure.Category {
 		return structure.CategoryNativeBranchPartition
 	case NativePublicationColumnDeadArm:
 		return structure.CategoryNativeBranchArm
+	case NativePublicationColumnSendSafety:
+		return structure.CategoryNativeSendSafety
 	default:
 		return structure.CategoryInvalid
 	}
@@ -447,6 +465,7 @@ const (
 	NativePublicationColumnTruthiness
 	NativePublicationColumnPartition
 	NativePublicationColumnDeadArm
+	NativePublicationColumnSendSafety
 	nativePublicationColumnLimit
 )
 
