@@ -163,6 +163,21 @@ func (owner *RelationOwner) Project(relationOrdinal, projectionOrdinal, candidat
 		default:
 			return 0, false
 		}
+	case 9:
+		switch projectionOrdinal {
+		default:
+			return 0, false
+		}
+	case 10:
+		switch projectionOrdinal {
+		default:
+			return 0, false
+		}
+	case 11:
+		switch projectionOrdinal {
+		default:
+			return 0, false
+		}
 	default:
 		return 0, false
 	}

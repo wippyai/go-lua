@@ -111,6 +111,18 @@ type plannedRoute struct {
 	unknown  bool
 }
 
+// Coordinates exposes the route's read and write allocation identity to the
+// owner declaration. Publication Escape reads and publishes the same
+// Placement cell; the pair is carried by this one planned route and is never
+// reconstructed by the consumer.
+func (route plannedRoute) Coordinates() (heapdomain.Key, heapdomain.Key) {
+	return route.key, route.key
+}
+
+// Predicate exposes the owner-issued route tag used to correlate the selected
+// Placement cell with this route.
+func (route plannedRoute) Predicate() uint64 { return uint64(route.tag) }
+
 type sourceView struct {
 	inline   [inlineSourceCapacity]sourceSpec
 	count    int
