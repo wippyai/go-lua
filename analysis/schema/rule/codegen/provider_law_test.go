@@ -25,6 +25,7 @@ const (
 	providerRoutes        schema.Key = "placement/storage-transfer/routes"
 	providerRouteKey      schema.Key = "placement/storage-transfer/key"
 	providerPredicate     schema.Key = "placement/storage-transfer/predicate"
+	providerSelection     schema.Key = "placement/storage-transfer/selection"
 	providerDestination   schema.Key = "placement/storage-transfer/destination"
 	providerReducer       schema.Key = "placement/storage-transfer/reducer"
 	providerOutput        schema.Key = "placement/facts"
@@ -168,6 +169,12 @@ func providerCatalogsFor(t *testing.T, spareJoin bool) (member.Catalog, member.C
 	if !placementOK {
 		t.Fatal("placement consumer catalog rejected")
 	}
+	placementCatalog, placementOK = placementCatalog.WithSelections([]member.Selection{
+		{Key: providerSelection, Relation: providerRoutes, Tag: providerPredicate},
+	})
+	if !placementOK {
+		t.Fatal("placement selection catalog rejected")
+	}
 	return valueCatalog, placementCatalog
 }
 
@@ -182,6 +189,7 @@ func providerJoin() program.JoinDecl {
 		Relation:  member.RelationRef{Axis: placementAxis, Member: providerRoutes},
 		Key:       member.ProjectionRef{Axis: placementAxis, Member: providerRouteKey},
 		Predicate: member.ProjectionRef{Axis: placementAxis, Member: providerPredicate},
+		Selection: member.SelectionRef{Axis: placementAxis, Member: providerSelection},
 		Read: program.ReadDecl{
 			Input: 0, Axis: program.AxisRef(placementAxis), Form: program.Selected, PointBound: program.PointBound,
 			Contract: program.ReadContract{Order: program.OrderCanonical, Sparse: program.SparseExplicit, OnOpaque: program.OnOpaqueRefuse, Multiplicity: program.MultiplicityOne, DenominatorRef: program.DenominatorRef{Surface: schema.SurfaceKindDenominator, Key: providerDenominator}},
@@ -197,6 +205,7 @@ func providerDeclaration(spareJoin bool) program.Program {
 	if spareJoin {
 		spare := providerJoin()
 		spare.Predicate = member.ProjectionRef{}
+		spare.Selection = member.SelectionRef{}
 		spare.Read.Form = program.Exact
 		spare.Read.Contract.Multiplicity = program.MultiplicityOne
 		// The spare join reads at its own port. A port is where the fold
