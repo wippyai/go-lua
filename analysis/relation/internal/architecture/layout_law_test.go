@@ -34,10 +34,18 @@ var altitudes = []altitude{
 	{"analysis/relation/check/recurrence", 6, "check"},
 	{"analysis/schema/rule/relcompile", 6, "relcompile"},
 	{"analysis/schema/rule/relbindgen", 6, "relbindgen"},
+	// The relation input bundle publishes composition-supplied decision
+	// scopes against the dense rule catalog. It names model identities and
+	// nothing below the checker, so it sits with the other declaration-side
+	// owners rather than in mount.
+	{"analysis/schema/rule/relinput", 6, "relinput"},
 	{"internal/relationoracle", 6, "oracle"},
 	{"analysis/relation/check/certificate", 7, "check"},
 	{"analysis/relation/mount/address", 8, "mount"},
 	{"analysis/relation/mount/arrangement", 8, "mount"},
+	// The input-scope projection reads a sealed bundle and resolves no
+	// physical coordinate, so it consumes no other mount package.
+	{"analysis/relation/mount/inputscope", 8, "mount"},
 	{"analysis/relation/mount/witness", 9, "mount"},
 	// State is deliberately split by authority. Geometry and recurrence are
 	// mount-derived value layers; columns consume geometry; arrangements and
@@ -226,6 +234,7 @@ func controlledImport(importPath string) (string, bool) {
 		strings.HasPrefix(rel, "analysis/engine/relation/") ||
 		strings.HasPrefix(rel, "analysis/schema/rule/relcompile") ||
 		strings.HasPrefix(rel, "analysis/schema/rule/relbindgen") ||
+		strings.HasPrefix(rel, "analysis/schema/rule/relinput") ||
 		strings.HasPrefix(rel, "internal/relationoracle")
 }
 

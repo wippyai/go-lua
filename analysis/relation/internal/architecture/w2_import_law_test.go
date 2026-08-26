@@ -25,6 +25,14 @@ var w2MountInputsByLayer = map[string][]string{
 		"analysis/relation/schema/plan",
 		"analysis/relation/semantic/signature",
 	},
+	// The input-scope projection reads one owner-issued relation input
+	// bundle. It resolves no coordinate and issues no identity, so its whole
+	// input surface is the bundle and the model identities the bundle names.
+	"analysis/relation/mount/inputscope": {
+		"analysis/identity",
+		"analysis/relation/schema/model",
+		"analysis/schema/rule/relinput",
+	},
 	// Certificate currently exposes a few signature/plan value views for
 	// callers that need them. Witness may name those views, but may not reach
 	// any checker subpass or the declaration compiler behind the certificate.
@@ -43,6 +51,7 @@ var w2MountLayers = []struct {
 	prefix string
 	rank   int
 }{
+	{prefix: "analysis/relation/mount/inputscope", rank: 0},
 	{prefix: "analysis/relation/mount/address", rank: 0},
 	{prefix: "analysis/relation/mount/arrangement", rank: 1},
 	{prefix: "analysis/relation/mount/witness", rank: 2},
