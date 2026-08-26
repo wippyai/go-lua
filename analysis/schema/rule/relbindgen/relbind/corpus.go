@@ -37,6 +37,7 @@ func axes() []Axis {
 		{Key: "call", Dir: "domain/call/relation", Package: "relation"},
 		{Key: "effect", Dir: "domain/effect/relation", Package: "relation"},
 		{Key: "static", Dir: "domain/static/relation", Package: "relation"},
+		{Key: "placement", Dir: "domain/placement/relation", Package: "relation"},
 	}
 }
 
@@ -61,6 +62,7 @@ func payloads() []Payload {
 		{Key: "call", Axis: "call", Field: "Call", Type: "calldomain.Value", Alias: "calldomain", Path: "github.com/wippyai/go-lua/domain/call", Lattice: "CallLattice"},
 		{Key: "effect", Axis: "effect", Field: "Effect", Type: "effectfactor.Value", Alias: "effectfactor", Path: "github.com/wippyai/go-lua/domain/effect/factor", Lattice: "EffectLattice"},
 		{Key: "pack", Axis: "pack", Field: "Pack", Type: "packdomain.Value", Alias: "packdomain", Path: "github.com/wippyai/go-lua/domain/pack", Lattice: "PackLattice"},
+		{Key: "placement", Axis: "placement", Field: "Placement", Type: "placementdomain.Fact", Alias: "placementdomain", Path: "github.com/wippyai/go-lua/domain/placement", Lattice: "PlacementLattice"},
 		{Key: "static", Axis: "static", Field: "Static", Type: "staticdomain.TypeFact", Alias: "staticdomain", Path: "github.com/wippyai/go-lua/domain/static", Lattice: "StaticLattice"},
 
 		{Key: "arithmetic-candidate", Axis: "value", Field: "ArithmeticCandidate", Type: "valuedomain.BinaryArithmetic", Alias: "valuedomain", Path: "github.com/wippyai/go-lua/domain/value"},
