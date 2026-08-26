@@ -633,14 +633,6 @@ func build(t TB, mountByte byte) Fixture {
 	if !ok {
 		t.Fatal("right scope atom")
 	}
-	// Region's canonical BDD order is the owner-issued atom identity order,
-	// while the physical guard manager uses its fixed [1,2] order. Assign the
-	// fixture's semantic left/right atoms to those positions deterministically
-	// so the neutral Region reconstructed from a runtime partition remains a
-	// valid canonical Region without changing either Boolean meaning.
-	if bytes.Compare(leftScopeAtomID[:], rightScopeAtomID[:]) > 0 {
-		leftScopeAtom, rightScopeAtom = rightScopeAtom, leftScopeAtom
-	}
 	leftScopeRegion, ok := region.FromAtom(leftScopeAtom)
 	if !ok {
 		t.Fatal("left scope region")

@@ -9,21 +9,15 @@ import (
 	"github.com/wippyai/go-lua/analysis/schema/modulecomposition"
 	"github.com/wippyai/go-lua/analysis/schema/programmount"
 	"github.com/wippyai/go-lua/analysis/schema/query"
-	calldomain "github.com/wippyai/go-lua/domain/call"
 	callowner "github.com/wippyai/go-lua/domain/call/owner"
 	callsite "github.com/wippyai/go-lua/domain/effect/callsite"
-	effectfactor "github.com/wippyai/go-lua/domain/effect/factor"
 	effectowner "github.com/wippyai/go-lua/domain/effect/owner"
-	heapdomain "github.com/wippyai/go-lua/domain/heap"
 	allocationcatalog "github.com/wippyai/go-lua/domain/heap/allocation/catalog"
 	contextdomain "github.com/wippyai/go-lua/domain/heap/context"
 	contextowner "github.com/wippyai/go-lua/domain/heap/context/owner"
-	heapindex "github.com/wippyai/go-lua/domain/heap/index"
-	packdomain "github.com/wippyai/go-lua/domain/pack"
 	placementdomain "github.com/wippyai/go-lua/domain/placement"
 	placementquery "github.com/wippyai/go-lua/domain/placement/query"
 	"github.com/wippyai/go-lua/domain/sendsafety"
-	staticdomain "github.com/wippyai/go-lua/domain/static"
 	staticowner "github.com/wippyai/go-lua/domain/static/owner"
 	valuedomain "github.com/wippyai/go-lua/domain/value"
 	valueowner "github.com/wippyai/go-lua/domain/value/owner"
@@ -53,16 +47,6 @@ type ProgramBinding struct {
 	placement     placementdomain.Schema
 	contextSchema contextdomain.Schema
 	composition   modulecomposition.Composition
-
-	// The mount phase seals one authority per axis into the Link record this
-	// binding is built from. They are retained here so the axis a consumer
-	// needs is answered by the record that sealed it, and never sealed twice.
-	heapSchema      heapdomain.Schema
-	packSchema      *packdomain.Schema
-	effectAlgebra   *effectfactor.Algebra
-	callAlgebra     *calldomain.Algebra
-	staticAuthority *staticdomain.Authority
-	topology        *heapindex.Topology
 
 	value      *valueowner.HotOwner
 	staticType *staticowner.HotOwner
@@ -138,62 +122,6 @@ func (bound *ProgramBinding) ValueSchema() *valuedomain.Schema {
 		return nil
 	}
 	return bound.value.Schema()
-}
-
-// HeapSchema returns the sealed Heap authority the mount phase placed in this
-// binding's Link record. The second result separates a record whose Heap mount
-// refused from a valid schema.
-func (bound *ProgramBinding) HeapSchema() (heapdomain.Schema, bool) {
-	if bound == nil || !bound.heapSchema.Valid() {
-		return heapdomain.Schema{}, false
-	}
-	return bound.heapSchema, true
-}
-
-// PackSchema returns the sealed Pack authority carried by the same record.
-func (bound *ProgramBinding) PackSchema() *packdomain.Schema {
-	if bound == nil {
-		return nil
-	}
-	return bound.packSchema
-}
-
-// EffectAlgebra returns the sealed Effect factor algebra carried by the same
-// record. It is the ascent authority of the Effect axis; EffectAuthority
-// remains the owner-fenced hot surface over it.
-func (bound *ProgramBinding) EffectAlgebra() *effectfactor.Algebra {
-	if bound == nil || bound.effectAlgebra == nil || !bound.effectAlgebra.Valid() {
-		return nil
-	}
-	return bound.effectAlgebra
-}
-
-// CallAlgebra returns the sealed Call algebra carried by the same record. It
-// is the ascent authority of the Call axis; CallAuthority remains the
-// owner-fenced hot surface over it.
-func (bound *ProgramBinding) CallAlgebra() *calldomain.Algebra {
-	if bound == nil || bound.callAlgebra == nil || !bound.callAlgebra.Valid() {
-		return nil
-	}
-	return bound.callAlgebra
-}
-
-// StaticClasses returns the class set of the sealed static inventory the mount
-// phase admitted. The inventory itself stays inside the binding.
-func (bound *ProgramBinding) StaticClasses() *staticdomain.ClassSet {
-	if bound == nil || bound.staticAuthority == nil {
-		return nil
-	}
-	return bound.staticAuthority.Classes()
-}
-
-// IndexTopology returns the Heap index topology the mount phase derived once
-// every axis had sealed.
-func (bound *ProgramBinding) IndexTopology() *heapindex.Topology {
-	if bound == nil {
-		return nil
-	}
-	return bound.topology
 }
 
 // StaticTypeAuthority returns the one Static-owned typed factor bound over the
@@ -526,18 +454,11 @@ func BindProgram(compilation Compilation, inputs LinkInputs) (*ProgramBinding, B
 		placement:     inputs.PlacementSchema,
 		contextSchema: inputs.contextSchema,
 		composition:   inputs.composition,
-
-		heapSchema:      inputs.HeapSchema,
-		packSchema:      inputs.PackSchema,
-		effectAlgebra:   inputs.EffectAlgebra,
-		callAlgebra:     inputs.CallAlgebra,
-		staticAuthority: inputs.StaticAuthority,
-		topology:        inputs.topology,
-		value:           bound.value,
-		staticType:      bound.staticType,
-		context:         bound.context,
-		call:            bound.call,
-		effect:          bound.effect,
-		queries:         bound.queries,
+		value:         bound.value,
+		staticType:    bound.staticType,
+		context:       bound.context,
+		call:          bound.call,
+		effect:        bound.effect,
+		queries:       bound.queries,
 	}, BindFailure{}
 }
