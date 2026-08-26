@@ -122,6 +122,10 @@ type Relation struct {
 	// addressed by. A join onto this relation pairs against a column named
 	// here, so which column that is stays the relation's own statement.
 	Addressing Addressing
+	// Keys are the ordered column vectors this relation's rows are published
+	// under. A publication addresses a row by one of them, so which columns
+	// form a key, and in what order, stays the relation's own statement.
+	Keys []KeyVector
 }
 
 func (relation Relation) Available() bool {
@@ -141,6 +145,9 @@ func (relation Relation) Available() bool {
 		return false
 	}
 	if !relation.Addressing.consistent(relation.Parent.Declared()) {
+		return false
+	}
+	if !keyVectorsConsistent(relation.Keys) {
 		return false
 	}
 	for _, correspondence := range relation.Correspondences {
@@ -406,6 +413,7 @@ func cloneRelations(relations []Relation) []Relation {
 			PublishesKeyVector: relation.PublishesKeyVector,
 			Correspondences:    cloneCorrespondences(relation.Correspondences),
 			Addressing:         relation.Addressing,
+			Keys:               cloneKeyVectors(relation.Keys),
 		}
 	}
 	return clone
@@ -537,6 +545,22 @@ func (catalog Catalog) Complete() bool {
 			owner, declared := columns[column]
 			if !declared || owner != relation.Key {
 				return false
+			}
+		}
+		// A key vector addresses rows of the relation that declares it, so
+		// every column it names is a column of that same relation. A key over a
+		// foreign column would publish rows through an address their own
+		// relation does not hold.
+		for _, key := range relation.Keys {
+			if _, duplicate := keys[key.Name]; duplicate {
+				return false
+			}
+			keys[key.Name] = struct{}{}
+			for _, column := range key.Columns {
+				owner, declared := columns[column]
+				if !declared || owner != relation.Key {
+					return false
+				}
 			}
 		}
 	}
@@ -777,6 +801,12 @@ const (
 	// could be named.
 	contentRecordAddressing uint64 = 13
 
+	// contentRecordKeyVector carries one ordered column vector a relation states its
+	// rows are published under. It is a tagged trailing collection on the
+	// relation record: a relation that declares no key emits nothing, so its
+	// canonical stream is exactly the stream it had before keys could be named.
+	contentRecordKeyVector uint64 = 15
+
 	// contentRecordSelection carries one operation that publishes a relation's
 	// produced rows. It is a tagged trailing collection: an axis that publishes
 	// none emits nothing, so its canonical stream is exactly the stream it had
@@ -834,6 +864,19 @@ func (catalog Catalog) WriteContent(content *framing.Writer) error {
 				relation.Addressing.Ordinal, relation.Addressing.Tag,
 				relation.Addressing.Occurrence,
 			} {
+				if err := content.String(string(column)); err != nil {
+					return err
+				}
+			}
+		}
+		for _, key := range relation.Keys {
+			if err := content.Record(contentRecordKeyVector); err != nil {
+				return err
+			}
+			if err := content.String(string(key.Name)); err != nil {
+				return err
+			}
+			for _, column := range key.Columns {
 				if err := content.String(string(column)); err != nil {
 					return err
 				}
