@@ -73,7 +73,7 @@ func Contribution() definition.Contribution {
 				Build:      routeFunction("DerivePublicationRoutesFromComposition"),
 				Count:      routeFunction("PublicationRouteCount"),
 				At:         routeFunction("PublicationRouteAt"),
-				StaticAxes: []schema.EntryReference{axisReference("effect"), placementAxis(), axisReference("value"), axisReference("call")},
+				StaticAxes: []schema.EntryReference{placementAxis(), axisReference("value"), axisReference("effect"), axisReference("call")},
 			},
 		}},
 		Projections: []definition.Projection{

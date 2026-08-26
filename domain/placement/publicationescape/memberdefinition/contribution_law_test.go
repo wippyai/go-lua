@@ -30,8 +30,8 @@ func TestPublicationEscapeContributionDerivesTheOwnedFoldSignature(t *testing.T)
 	if relation.Inputs[0].Carrier != "EffectMountedCallCarrier" || relation.Inputs[1].Carrier != "CallFactCarrier" || relation.Inputs[2].Carrier != "ValueFactCarrier" || !relation.Inputs[2].Many || relation.Inputs[2].Form != member.ReadFormSelected {
 		t.Fatalf("publication escape route inputs=%+v, want mounted call, call fact, and selected Value vector", relation.Inputs)
 	}
-	if len(relation.Derivation.StaticAxes) != 4 || relation.Derivation.StaticAxes[0].Key != "effect" || relation.Derivation.StaticAxes[1].Key != "placement" || relation.Derivation.StaticAxes[2].Key != "value" || relation.Derivation.StaticAxes[3].Key != "call" {
-		t.Fatalf("publication escape static authorities=%+v, want effect, placement, value, call", relation.Derivation.StaticAxes)
+	if len(relation.Derivation.StaticAxes) != 4 || relation.Derivation.StaticAxes[0].Key != "placement" || relation.Derivation.StaticAxes[1].Key != "value" || relation.Derivation.StaticAxes[2].Key != "effect" || relation.Derivation.StaticAxes[3].Key != "call" {
+		t.Fatalf("publication escape static authorities=%+v, want placement, value, effect, call", relation.Derivation.StaticAxes)
 	}
 	if contribution.Projections[0].Role != member.Key || contribution.Projections[1].Role != member.Predicate || contribution.Projections[2].Role != member.Destination {
 		t.Fatalf("publication escape projections=%+v, want key/tag/destination", contribution.Projections)
