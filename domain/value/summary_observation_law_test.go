@@ -3,7 +3,6 @@ package value
 import (
 	"testing"
 
-	"github.com/wippyai/go-lua/analysis/engine"
 	"github.com/wippyai/go-lua/analysis/identity"
 )
 
@@ -60,12 +59,11 @@ func TestBeginValueSummaryWithoutCoordinatesIsTheZeroObservation(t *testing.T) {
 // must return the zero observation, never a partially folded one.
 func TestAccumulateValueSummaryRejectsMalformedFoldInput(t *testing.T) {
 	schema := &Schema{coordinateCount: 2}
-	// OrderedCells is an engine capability: a domain can name it but cannot
-	// construct one, so the reachable vector here is the empty observation.
-	var empty engine.OrderedCells[Value]
-	if empty.Count() != 0 {
-		t.Fatalf("unbound cell vector reports width %d, want 0", empty.Count())
-	}
+	// The fold reads a vector as its width and its row accessor, so the
+	// reachable malformed delivery is the zero-width one: a width no
+	// coordinate answers, whose accessor is therefore never reached.
+	emptyWidth := 0
+	emptyAt := func(int) (Value, bool, bool) { return Value{}, false, false }
 	for name, input := range map[string]struct {
 		schema *Schema
 		result ValueSummaryObservation
@@ -74,7 +72,7 @@ func TestAccumulateValueSummaryRejectsMalformedFoldInput(t *testing.T) {
 		"invalid running fold": {schema: schema, result: ValueSummaryObservation{Values: make([]Value, 2), Present: make([]bool, 2)}},
 		"no observed cells":    {schema: schema, result: BeginValueSummary(schema)},
 	} {
-		result, ok := AccumulateValueSummary(input.schema, input.result, empty)
+		result, ok := AccumulateValueSummaryRows(input.schema, input.result, emptyWidth, emptyAt)
 		if ok {
 			t.Fatalf("%s accumulated", name)
 		}

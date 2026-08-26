@@ -1,7 +1,6 @@
 package value
 
 import (
-	"github.com/wippyai/go-lua/analysis/engine"
 	"github.com/wippyai/go-lua/analysis/identity"
 	"github.com/wippyai/go-lua/domain/runtimekind"
 )
@@ -37,19 +36,18 @@ func BeginValueSummary(schema *Schema) ValueSummaryObservation {
 	}
 }
 
-// AccumulateValueSummary joins one observed coordinate vector into the
+// AccumulateValueSummaryRows joins one observed coordinate vector into the
 // detached result. The fold is coordinatewise: an absent cell leaves its
 // coordinate untouched, the first present cell writes it, and a later present
 // cell joins under the schema's own order.
-func AccumulateValueSummary(schema *Schema, result ValueSummaryObservation, cells engine.OrderedCells[Value]) (ValueSummaryObservation, bool) {
-	return AccumulateValueSummaryRows(schema, result, cells.Count(), cells.At)
-}
-
-// AccumulateValueSummaryRows is that fold stated over the coordinate vector
-// itself rather than over the engine's observation of it. A solve reaches the
-// fold through the cells it observed; a reader that holds the same vector as
-// published rows reaches it directly. One fold law serves both, so the answer a
-// published column folds to is the answer the solve folded.
+//
+// The vector arrives as its width and its row accessor rather than as one
+// delivery type, because every surface that delivers a many-valued read states
+// a row exactly this way: the engine observation, the operand vector a
+// permanently-authored reducer takes, and the span a relational binding
+// decodes all answer one row as (value, present, available). One fold law
+// therefore serves every caller, and the answer a published column folds to is
+// the answer the solve folded.
 func AccumulateValueSummaryRows(schema *Schema, result ValueSummaryObservation, count int, at func(index int) (Value, bool, bool)) (ValueSummaryObservation, bool) {
 	if schema == nil || result.owner != schema || !summaryObservationOwned(schema, result) || at == nil || count == 0 || count != schema.CoordinateCount() || len(result.Values) != count || len(result.Present) != count {
 		return ValueSummaryObservation{}, false

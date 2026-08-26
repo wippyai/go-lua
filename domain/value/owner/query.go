@@ -109,7 +109,7 @@ func summaryQuerySpec(schema *value.Schema, freezer identity.SemanticKey) engine
 			BorrowIssued:   true,
 			TransferResult: true,
 			Accumulate: func(result value.ValueSummaryObservation, cells engine.OrderedCells[value.Value]) (value.ValueSummaryObservation, bool) {
-				return value.AccumulateValueSummary(schema, result, cells)
+				return value.AccumulateValueSummaryRows(schema, result, cells.Count(), cells.At)
 			},
 		},
 		Result: engine.FrozenResult[value.ValueSummaryObservation]{
