@@ -185,7 +185,7 @@ func (rule *HotRule) fold(frame engine.Frame[placementdomain.Fact, operand]) eng
 	if !parentOK || !valuesOK || !placementOK {
 		return engine.RuleResult[placementdomain.Fact]{}
 	}
-	parent, parentPresent, parentAvailable := oneOrderedCell(parentCells)
+	parent, parentPresent, parentAvailable := oneDeliveredCell(parentCells.Count(), parentCells.At)
 	if !parentAvailable || !parentPresent {
 		return engine.NoCandidate(frame)
 	}

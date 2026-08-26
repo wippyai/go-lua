@@ -1,7 +1,6 @@
 package capture
 
 import (
-	"github.com/wippyai/go-lua/analysis/engine"
 	"github.com/wippyai/go-lua/analysis/identity"
 	"github.com/wippyai/go-lua/analysis/schema/program/calltarget"
 	"github.com/wippyai/go-lua/analysis/schema/program/heapallocation"
@@ -505,9 +504,12 @@ func RouteAtTag(plan RoutePlan, tag RouteTag) (Route, bool) {
 	return Route{}, false
 }
 
-func oneOrderedCell[T any](cells engine.OrderedCells[T]) (value T, present, available bool) {
-	if cells.Count() != 1 {
+// oneDeliveredCell reads the single coordinate an exact delivery carries. A
+// delivery of any other width answers no cell at all: a rule that reads one
+// coordinate has no fold to run over two.
+func oneDeliveredCell[T any](count int, at func(int) (T, bool, bool)) (value T, present, available bool) {
+	if at == nil || count != 1 {
 		return value, false, false
 	}
-	return cells.At(0)
+	return at(0)
 }
