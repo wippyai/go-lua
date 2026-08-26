@@ -55,6 +55,17 @@ const fixtureSource = `local holder = {}
 holder.field = nil
 return holder.field`
 
+// callingSource makes a call and judges what it returns: the result flows into
+// the table whose field the program then reads, so the body call site is one
+// the effect fold answers over rather than one it merely sees.
+const callingSource = `local function build()
+  local made = {}
+  made.field = nil
+  return made
+end
+local holder = build()
+return holder.field`
+
 func portableAnyTypes(count int) []schematype.Type {
 	values := make([]schematype.Type, count)
 	for index := range values {
@@ -68,9 +79,21 @@ func portableAnyTypes(count int) []schematype.Type {
 }
 
 // New mounts the fixture world through the composition's own mount phase.
-func New(t testing.TB) Sealed {
+func New(t testing.TB) Sealed { return seal(t, "relbindgen_binding_law.lua", fixtureSource) }
+
+// NewCalling mounts a world whose program makes a real call and judges what
+// the call returns.
+//
+// It is a second program rather than a change to the first: a law that reads
+// what a call site answers needs one, and every law that does not must keep
+// reading exactly the world it was written against.
+func NewCalling(t testing.TB) Sealed {
+	return seal(t, "relbindgen_call_site_law.lua", callingSource)
+}
+
+func seal(t testing.TB, name string, source string) Sealed {
 	t.Helper()
-	program, err := lower.Lower(lower.Source{Name: "relbindgen_binding_law.lua", Text: []byte(fixtureSource)})
+	program, err := lower.Lower(lower.Source{Name: name, Text: []byte(source)})
 	if err != nil {
 		t.Fatal(err)
 	}

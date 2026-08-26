@@ -29,20 +29,7 @@ const (
 	// and spans; it cannot construct an execution selection, and the compiler
 	// says so: "cannot use cells (variable of struct type
 	// relbindgen.Span[value.Value]) as []execution.SelectedCell[value.Value]".
-	// A fold that reads its cells by an owner tag needs the owner's own
-	// resolution of one. This fold reads presence and value and appears to read
-	// no tag, and appearing is not proving: the differential law that would
-	// state the independence - the same cells under two numberings, the same
-	// answer - cannot run, because the fixture program seals no call this fold
-	// answers concretely. A binding would have to choose a tag on an unproven
-	// reading, so the row waits for a program that reaches the fold.
-	abiGapUnprovenTag   = "w0-unproven-tag: the fold appears to read no cell tag and no fixture reaches its concrete arm, so the independence a binding would rest on cannot be stated"
 	abiGapLegacyOperand = "w0-legacy-operand: the owner judgment reads execution.SelectedCell or execution.SummaryVector, the operand type of the protocol this engine replaces, and a binding delivers owner values and spans"
-	// Two judgments answer one family and they are not the same function. The
-	// declared reducer is reached by nothing but its own laws while the rule
-	// the analyzer runs calls another with a different signature, so which one
-	// a binding carries is the owner's statement to make and not this layer's.
-	abiGapDivergentJudgment = "w0-divergent-judgment: the declared reducer is referenced only by its own laws and the executing rule calls a differently shaped function, so the family states two judgments and the owner has not said which one answers"
 	// An operation that publishes a disposition and no fact has no result type
 	// to instantiate the bounded emitter with, and the compiler says so:
 	// "cannot use nil as struct{} value in argument to relbindgen.Reduce".
@@ -520,7 +507,16 @@ func families() []Family {
 			Result: "placement", Outputs: []Column{{Payload: "placement"}},
 			Cardinality: model.ExactlyOne, Address: 0,
 		},
-		{Census: "effect/callsite/body", Rule: "effect-body", Stem: "EffectBodyCallSite", Axis: "effect", Pending: abiGapUnprovenTag},
+		{
+			Census: "effect/callsite/body", Rule: "effect-body", Stem: "EffectBodyCallSite", Axis: "effect",
+			Judgment: "EffectBodyCallSiteOperation",
+			Inputs: []Slot{
+				{Field: "Mounted", Payload: "effect-candidate", Delivery: scalar},
+				{Field: "Cells", Payload: "effect", Delivery: span},
+			},
+			Result: "effect", Outputs: []Column{{Payload: "effect"}},
+			Cardinality: model.ExactlyOne, Address: 0,
+		},
 		{
 			Census: "value/bodyresult", Rule: "value-callresult-body", Stem: "ValueBodyResult", Axis: "value",
 			Judgment: "ValueBodyResultOperation",
@@ -569,8 +565,31 @@ func families() []Family {
 			Result: "suspension-evidence", Outputs: []Column{{Payload: "suspension-evidence"}},
 			Cardinality: model.ExactlyOne, Address: 0,
 		},
-		{Census: "placement/capture", Rule: "placement-closure-capture", Stem: "PlacementClosureCapture", Axis: "placement", Pending: abiGapDivergentJudgment},
-		{Census: "placement/containment", Rule: "placement-containment", Stem: "PlacementContainment", Axis: "placement", Pending: abiGapDivergentJudgment},
+		{
+			Census: "placement/capture", Rule: "placement-closure-capture", Stem: "PlacementClosureCapture", Axis: "placement",
+			Judgment: "PlacementClosureCaptureOperation",
+			Inputs: []Slot{
+				{Field: "Parent", Payload: "placement", Delivery: scalar},
+				{Field: "Route", Payload: "heap-candidate", Delivery: scalar},
+				{Field: "Tag", Payload: "placement-route-tag", Delivery: scalar},
+				{Field: "Current", Payload: "placement", Delivery: scalar},
+			},
+			Result: "placement", Outputs: []Column{{Payload: "placement"}},
+			Cardinality: model.ExactlyOne, Address: 3,
+		},
+		{
+			Census: "placement/containment", Rule: "placement-containment", Stem: "PlacementContainment", Axis: "placement",
+			Judgment: "PlacementContainmentOperation",
+			Inputs: []Slot{
+				{Field: "Placements", Payload: "placement", Delivery: span},
+				{Field: "Heaps", Payload: "heap", Delivery: span},
+				{Field: "Route", Payload: "heap-candidate", Delivery: scalar},
+				{Field: "Tag", Payload: "placement-route-tag", Delivery: scalar},
+				{Field: "Current", Payload: "placement", Delivery: scalar},
+			},
+			Result: "placement", Outputs: []Column{{Payload: "placement"}},
+			Cardinality: model.ExactlyOne, Address: 4,
+		},
 		{
 			Census: "call/activation", Rule: "call-activation", Stem: "CallActivation", Axis: "call",
 			Judgment: "CallActivationOperation",

@@ -3,12 +3,15 @@ package relation_test
 import (
 	"testing"
 
+	"github.com/wippyai/go-lua/analysis/engine/operand"
 	"github.com/wippyai/go-lua/analysis/relation/schema/model"
 	"github.com/wippyai/go-lua/analysis/relation/semantic/binding"
 	"github.com/wippyai/go-lua/analysis/relation/semantic/outcome"
 	"github.com/wippyai/go-lua/analysis/relation/semantic/signature"
 	"github.com/wippyai/go-lua/analysis/schema/rule/relbindgen/harness"
+	"github.com/wippyai/go-lua/analysis/schema/structure"
 	calldomain "github.com/wippyai/go-lua/domain/call"
+	"github.com/wippyai/go-lua/domain/effect/callsite"
 	effectfactor "github.com/wippyai/go-lua/domain/effect/factor"
 	"github.com/wippyai/go-lua/domain/effect/relation"
 	"github.com/wippyai/go-lua/domain/relationfixture"
@@ -176,4 +179,69 @@ func TestTheEffectBoundaryDoesNotAllocate(t *testing.T) {
 	}); allocations != 0 {
 		t.Fatalf("the effect boundary allocated %.0f times", allocations)
 	}
+}
+
+// TestTheBodyFoldsAnswerDoesNotDependOnTheTagsItsCellsCarry is the
+// independence law.
+//
+// The binding materializes the delivered span into the operand vocabulary the
+// fold reads, and a materialized cell carries a tag. For a fold that keys its
+// cells by an owner tag, that tag has to be the owner's own resolution. This
+// one reads presence and value and never a tag, and the way to state that is
+// to ask the same question twice under two numberings and require one answer,
+// rather than to pick a numbering and assert it does not matter.
+//
+// It is asked where the fold actually folds: over the call site the calling
+// fixture's own program seals, across cell groups that reach its concrete arm
+// as well as ones that do not. A group that answers nothing would compare two
+// values neither algebra owns, which is what an earlier form of this law got
+// wrong before it was asked at a real call.
+func TestTheBodyFoldsAnswerDoesNotDependOnTheTagsItsCellsCarry(t *testing.T) {
+	fixture := relationfixture.NewCalling(t)
+	judgment, ok := callsite.DeriveBody(fixture.Effects, fixture.Calls)
+	if !ok {
+		t.Fatal("body call-site judgment")
+	}
+	if fixture.Effects.MountedCallCount() == 0 {
+		t.Fatal("the calling fixture sealed no mounted call")
+	}
+
+	groups := [][]effectfactor.Value{
+		{fixture.Effects.Bottom()},
+		{fixture.Effects.Top()},
+		{fixture.Effects.Bottom(), fixture.Effects.Top(), fixture.Effects.Bottom()},
+		{fixture.Effects.Top(), fixture.Effects.Bottom()},
+	}
+
+	concrete := 0
+	for groupIndex, values := range groups {
+		ascending := make([]operand.SelectedCell[effectfactor.Value], 0, len(values))
+		descending := make([]operand.SelectedCell[effectfactor.Value], 0, len(values))
+		for index, value := range values {
+			ascending = append(ascending, operand.SelectedCell[effectfactor.Value]{Value: value, Present: true, Tag: uint64(index) + 1})
+			descending = append(descending, operand.SelectedCell[effectfactor.Value]{Value: value, Present: true, Tag: uint64(len(values) - index)})
+		}
+		for ordinal := 0; ordinal < fixture.Effects.MountedCallCount(); ordinal++ {
+			mounted, mountedOK := fixture.Effects.MountedCallAt(ordinal)
+			if !mountedOK {
+				t.Fatalf("mounted call %d is not issued", ordinal)
+			}
+			first, firstOutcome := judgment.BodyEffect(mounted, ascending)
+			second, secondOutcome := judgment.BodyEffect(mounted, descending)
+			if firstOutcome != secondOutcome {
+				t.Fatalf("group %d at call %d settled as %v under one numbering and %v under another", groupIndex, ordinal, firstOutcome, secondOutcome)
+			}
+			if firstOutcome != structure.Concrete {
+				continue
+			}
+			concrete++
+			if !fixture.Effects.Equal(first, second) {
+				t.Fatalf("group %d at call %d answered differently under two numberings of the same cells, so its cells are keyed by their tags after all", groupIndex, ordinal)
+			}
+		}
+	}
+	if concrete == 0 {
+		t.Fatal("no cell group reached the fold's concrete arm, so the independence this law states was never exercised")
+	}
+	t.Logf("concrete answers compared under two numberings: %d", concrete)
 }

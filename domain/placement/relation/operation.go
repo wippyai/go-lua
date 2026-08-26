@@ -3,8 +3,11 @@ package relation
 import (
 	"github.com/wippyai/go-lua/analysis/relation/semantic/outcome"
 	"github.com/wippyai/go-lua/analysis/schema/rule/relbindgen"
+	heapdomain "github.com/wippyai/go-lua/domain/heap"
 	placementdomain "github.com/wippyai/go-lua/domain/placement"
 	"github.com/wippyai/go-lua/domain/placement/birth"
+	"github.com/wippyai/go-lua/domain/placement/capture"
+	"github.com/wippyai/go-lua/domain/placement/containment"
 	"github.com/wippyai/go-lua/domain/placement/formal"
 	"github.com/wippyai/go-lua/domain/placement/publicationescape"
 	"github.com/wippyai/go-lua/domain/placement/returnescape"
@@ -211,5 +214,71 @@ func (operation PlacementSuspensionEvidenceOperation) Evaluate(argument Placemen
 		return outcome.Refused
 	}
 	fact, reduction := suspension.SuspensionEvidenceFold(argument.Candidate, sources, argument.Route, argument.RouteTag, argument.Selected)
+	return relbindgen.Reduce(emitter, fact, reduction)
+}
+
+// PlacementClosureCaptureOperation is domain/placement/capture's own fold: the
+// placement a captured value takes from the closure that contains it.
+//
+// The route evidence is decided inside the judgment, so the binding delivers
+// what the reads declare and nothing else.
+type PlacementClosureCaptureOperation struct{}
+
+// Available reports whether the operation carries its owner mathematics. The
+// fold is a package function over facts that carry their own owner, so there
+// is no derived state to hold and nothing to be unavailable.
+func (PlacementClosureCaptureOperation) Available() bool { return true }
+
+// Evaluate answers one closure capture's placement.
+func (PlacementClosureCaptureOperation) Evaluate(argument PlacementClosureCaptureArgument, emitter *relbindgen.Emitter[placementdomain.Fact]) outcome.Code {
+	fact, reduction := capture.CaptureFold(argument.Parent, argument.Route, argument.Tag, argument.Current)
+	return relbindgen.Reduce(emitter, fact, reduction)
+}
+
+// PlacementContainmentOperation is domain/placement/containment's own fold: the
+// placement a contained value takes from the container the route selected.
+//
+// The fold reads its parent out of the two delivered vectors by the ordinal its
+// own tag names, so what the binding owes it is the vectors as delivered, in
+// the order their declared keys mount them.
+type PlacementContainmentOperation struct {
+	placements *relbindgen.Members[placementdomain.Fact]
+	heaps      *relbindgen.Members[heapdomain.Value]
+	reserve    int
+}
+
+// NewPlacementContainmentOperation reserves the vector materializations the
+// fold reads through.
+func NewPlacementContainmentOperation(reserve int) (PlacementContainmentOperation, bool) {
+	placements, placementsOK := relbindgen.NewMembers[placementdomain.Fact](reserve)
+	heaps, heapsOK := relbindgen.NewMembers[heapdomain.Value](reserve)
+	if !placementsOK || !heapsOK {
+		return PlacementContainmentOperation{}, false
+	}
+	return PlacementContainmentOperation{placements: placements, heaps: heaps, reserve: reserve}, true
+}
+
+// NewOperation gives one solve-local worker its own materialization storage.
+func (operation PlacementContainmentOperation) NewOperation() relbindgen.Operation[PlacementContainmentArgument, placementdomain.Fact] {
+	local, ok := NewPlacementContainmentOperation(operation.reserve)
+	if !ok {
+		return nil
+	}
+	return local
+}
+
+// Available reports whether the operation carries its materialization storage.
+func (operation PlacementContainmentOperation) Available() bool {
+	return operation.placements != nil && operation.heaps != nil
+}
+
+// Evaluate answers one containment's placement.
+func (operation PlacementContainmentOperation) Evaluate(argument PlacementContainmentArgument, emitter *relbindgen.Emitter[placementdomain.Fact]) outcome.Code {
+	placements, placementsOK := operation.placements.Fill(argument.Placements)
+	heaps, heapsOK := operation.heaps.Fill(argument.Heaps)
+	if !placementsOK || !heapsOK {
+		return outcome.Refused
+	}
+	fact, reduction := containment.ContainmentFold(placements, heaps, argument.Route, argument.Tag, argument.Current)
 	return relbindgen.Reduce(emitter, fact, reduction)
 }
