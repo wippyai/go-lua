@@ -40,11 +40,27 @@ func TestContainmentContributionDeclaresItsRouteRowsAndTheIrreducibleFold(t *tes
 	}
 	accessors := map[schema.Key]accessor{}
 	for _, projection := range contribution.Projections {
-		if projection.Relation != "ContainmentRoutes" || !projection.CandidateProvider.Issued() {
+		// The two vector-coordinate projections are declarations for the
+		// complete summary relations, not route-row projections. They share
+		// the issued candidate authority but must retain their own relation
+		// identity; the route checks below apply only to the four route
+		// columns.
+		if projection.Relation != "ContainmentRoutes" {
+			continue
+		}
+		if !projection.CandidateProvider.Issued() {
 			t.Fatalf("containment projection=%+v, want a route projection under the issued candidate", projection)
 		}
 		roles[projection.Role] = projection.Key
 		accessors[projection.Key] = accessor{name: projection.Accessor.Name, result: projection.Accessor.ResultIndex}
+	}
+	for _, projection := range contribution.Projections {
+		if projection.Relation == "ContainmentRoutes" {
+			continue
+		}
+		if !projection.CandidateProvider.Issued() {
+			t.Fatalf("containment summary projection=%+v, want the same issued candidate authority", projection)
+		}
 	}
 	if roles[member.Key] != "placement/containment/route-key" || roles[member.Predicate] != "placement/containment/route-tag" ||
 		roles[member.Destination] != "placement/containment/route-destination" || roles[member.Attribute] != "placement/containment/route-parent" {
