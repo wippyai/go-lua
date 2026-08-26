@@ -9,6 +9,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/relation/semantic/binding"
 	"github.com/wippyai/go-lua/analysis/relation/semantic/outcome"
 	"github.com/wippyai/go-lua/analysis/relation/semantic/signature"
+	"github.com/wippyai/go-lua/analysis/schema/rule/relbindgen"
 	"github.com/wippyai/go-lua/analysis/schema/rule/relbindgen/harness"
 	calldomain "github.com/wippyai/go-lua/domain/call"
 	"github.com/wippyai/go-lua/domain/relationfixture"
@@ -266,4 +267,102 @@ func TestAValueTokenIsNotAnotherOwnersToken(t *testing.T) {
 	if _, crossed := valueColumn.Decode(callToken); crossed {
 		t.Fatal("a call value token decoded as a correlated value")
 	}
+}
+
+// TestADeliveredSpanSaysWhichRowEachPositionCarries is the span identity law.
+// A span arrives in the mounted order of its declared key, and an owner fold
+// that looks its rows up by the owner's own identity has to be able to say
+// which row each delivered position is. Without that a binding can read the
+// values of a group and still not answer a lookup its owner keys by identity,
+// which is the whole of what a grouped owner judgment asks for.
+func TestADeliveredSpanSaysWhichRowEachPositionCarries(t *testing.T) {
+	fixture := relationfixture.New(t)
+	coordinates := fixture.Values.CoordinateCount()
+	if coordinates < 2 {
+		t.Fatalf("the fixture exposes %d coordinates", coordinates)
+	}
+	keys := make([]identity.ContentID, 0, coordinates)
+	for index := 0; index < coordinates; index++ {
+		keys = append(keys, harness.Content(t, fmt.Sprintf("row/coordinate-%d", index)))
+	}
+	place := harness.NewKeyed(t, keys)
+	valueType := place.TypeID(t, "type/value")
+	summaryType := place.TypeID(t, "type/value-summary")
+	valueColumn := harness.NewColumn[valuedomain.Value](t, valueType, "store/value", reserve)
+	summaryColumn := harness.NewColumn[valuedomain.ValueSummaryObservation](t, summaryType, "store/value-summary", reserve)
+	columns, ok := relation.NewValueSummaryColumns(valueColumn, summaryColumn)
+	if !ok {
+		t.Fatal("value summary columns")
+	}
+	cellAddress := place.Column(t, "column/cell")
+	groupAddress := place.Column(t, "column/group")
+	observationAddress := place.Column(t, "column/observation")
+	operation := place.Seal(t, "operation/value-summary",
+		[]signature.Input{
+			harness.CompleteInput(t, place.Relation, cellAddress, valueType, place.Denominator),
+			harness.ScalarInput(t, place.Relation, groupAddress, valueType, place.Denominator),
+		},
+		[]signature.Output{{Relation: place.Relation, Column: observationAddress, Type: summaryType, Presence: signature.ProducePresent}},
+		exactlyOne(t), outcome.Produced, outcome.NoSelection, outcome.Refused)
+
+	top := fixture.Values.Top()
+	cells := make([]binding.Cell, 0, coordinates)
+	for _, row := range place.Rows {
+		token, encodeOK := valueColumn.Encode(place.Issuer, top)
+		if !encodeOK {
+			t.Fatal("encode coordinate")
+		}
+		cells = append(cells, place.Cell(t, cellAddress, row, valueType, token))
+	}
+	groupToken, ok := valueColumn.Encode(place.Issuer, top)
+	if !ok {
+		t.Fatal("encode group address")
+	}
+	frame := place.Frame(t, harness.SpanSlot(t, cells), harness.ScalarSlot(t, place.Cell(t, groupAddress, place.Rows[0], valueType, groupToken)))
+
+	// The decoder is the only thing that can borrow the span, so the law asks
+	// the question through one: a judgment that reads every delivered row's
+	// identity and answers with what it read.
+	observed := make([]identity.ContentID, 0, coordinates)
+	judgment := spanIdentityJudgment{observed: &observed}
+	factory, ok := relation.BindValueSummary(operation, judgment, columns, place.Refusal)
+	if !ok {
+		t.Fatal("bind value summary")
+	}
+	worker := place.Worker(t, factory, operation)
+	buffer := place.Buffer(t, operation)
+	if result := worker.Evaluate(frame, buffer); result.Code != outcome.Produced {
+		t.Fatalf("the span identity judgment settled as %v", result.Code)
+	}
+	if len(observed) != coordinates {
+		t.Fatalf("the judgment read %d row identities from a span of %d rows", len(observed), coordinates)
+	}
+	for index, row := range place.Rows {
+		if observed[index] != row.Content() {
+			t.Fatalf("delivered row %d reports the identity of another row", index)
+		}
+	}
+}
+
+// spanIdentityJudgment reads every delivered row's owner identity and records
+// it. It is the smallest owner judgment that needs the span to say which row
+// each position carries.
+type spanIdentityJudgment struct {
+	observed *[]identity.ContentID
+}
+
+func (spanIdentityJudgment) Available() bool { return true }
+
+func (judgment spanIdentityJudgment) Evaluate(argument relation.ValueSummaryArgument, emitter *relbindgen.Emitter[valuedomain.ValueSummaryObservation]) outcome.Code {
+	for index := 0; index < argument.Cells.Len(); index++ {
+		key, ok := argument.Cells.RowKeyAt(index)
+		if !ok {
+			return outcome.Refused
+		}
+		*judgment.observed = append(*judgment.observed, key)
+	}
+	if !emitter.Put(valuedomain.ValueSummaryObservation{}) {
+		return outcome.Refused
+	}
+	return outcome.Produced
 }
