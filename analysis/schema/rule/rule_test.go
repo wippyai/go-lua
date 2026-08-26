@@ -194,20 +194,22 @@ func (lawStructureSurface) Seal(seal.View, seal.Sealed) schema.SealFailure {
 // lawSurfaceFor stands one sibling surface in. The axis surface carries the one
 // axis the law table's rules write, and the structural surface carries the
 // vocabulary their subscriptions name.
-func lawSurfaceFor(kind schema.SurfaceKind) seal.Surface {
+func lawSurfaceFor(t *testing.T, kind schema.SurfaceKind) seal.Surface {
+	t.Helper()
 	switch kind {
 	case schema.SurfaceKindStructure:
 		return lawStructureSurface{}
 	case schema.SurfaceKindAxis:
 		return lawSiblingSurface{kind: kind, keys: []schema.Key{lawAxisKey}}
 	case schema.SurfaceKindIssuance:
-		return issuanceschema.NewSurface(lawIssuanceEntries())
+		return issuanceschema.NewSurface(lawIssuanceEntries(t))
 	default:
 		return lawSiblingSurface{kind: kind, keys: []schema.Key{"law-sibling"}}
 	}
 }
 
-func lawIssuanceEntries() []*issuanceschema.Entry {
+func lawIssuanceEntries(t *testing.T) []*issuanceschema.Entry {
+	t.Helper()
 	specs := []issuanceschema.Spec{
 		{Key: issuanceschema.TypePoint, Kind: issuanceschema.KindType, Ordinal: 1},
 		{Key: issuanceschema.TypeEmission, Kind: issuanceschema.KindType, Ordinal: 2},
@@ -232,9 +234,10 @@ func lawIssuanceEntries() []*issuanceschema.Entry {
 		{Key: lawNarrowRequirementKey, Kind: issuanceschema.KindRequirement, Ordinal: 2, Space: "row/law-occurrence",
 			Program: issuanceschema.Program{{Op: issuanceschema.OpCurrent, Out: 1}, {Op: issuanceschema.OpLiteral, Out: 2, Type: issuanceschema.BoolType(), Literal: 1}}, Result: 2,
 			Outputs: []issuanceschema.OutputBinding{{Output: "output/law-occurrence", Register: 1, Proof: 2}}},
-		{Key: lawInputKey, Kind: issuanceschema.KindInput, Ordinal: 1, Input: issuanceschema.InputFinish, InputSource: issuanceschema.InputSourceRelation, Source: "relation/law-geometry"},
+		{Key: lawInputKey, Kind: issuanceschema.KindInput, Ordinal: 1, Input: issuanceschema.InputFinish, InputSource: issuanceschema.InputSourceRelation, Selection: issuanceschema.InputSelectionDriver, Source: "relation/law-geometry"},
 		{Key: lawStageKey, Kind: issuanceschema.KindStage, Ordinal: 1, Constructor: issuanceschema.StageConstructorPassthrough,
-			Parameters: []issuanceschema.DataType{{Value: issuanceschema.ValuePointRange, Name: issuanceschema.TypePoint, Cardinality: issuanceschema.CardinalityMany}}, Order: 1},
+			Parameters: []issuanceschema.DataType{{Value: issuanceschema.ValuePointRange, Name: issuanceschema.TypePoint, Cardinality: issuanceschema.CardinalityMany}},
+			Base:       1, Identity: []uint16{1}, Order: 1, InputCount: 1},
 		{Key: lawFormKey, Kind: issuanceschema.KindForm, Ordinal: 1, Empty: issuanceschema.EmptyRefuse, Subject: "output/law-occurrence", Requires: []schema.Key{"output/law-occurrence"},
 			Program: issuanceschema.Program{
 				{Op: issuanceschema.OpSelection, Out: 1, Ref: "output/law-occurrence"},
@@ -249,7 +252,7 @@ func lawIssuanceEntries() []*issuanceschema.Entry {
 	for _, spec := range specs {
 		entry, ok := issuanceschema.New(spec)
 		if !ok {
-			return nil
+			t.Fatalf("issuance spec %s is refused by its own surface", spec.Key)
 		}
 		entries = append(entries, entry)
 	}
@@ -281,21 +284,23 @@ func (lawSiblingSurface) Seal(seal.View, seal.Sealed) schema.SealFailure {
 // sealLawTable seals one rule inventory into a complete declaration table. The
 // catalog is walked rather than listed, so the surfaces the declaration root
 // settles on do not change what these laws assert.
-func sealLawTable(templates []*Template) schema.SealFailure {
-	_, failure := sealLawTableFor(templates)
+func sealLawTable(t *testing.T, templates []*Template) schema.SealFailure {
+	t.Helper()
+	_, failure := sealLawTableFor(t, templates)
 	return failure
 }
 
 // sealLawTableFor is the same seal, read for the table it produces rather than
 // for the verdict alone.
-func sealLawTableFor(templates []*Template) (*seal.Schema, schema.SealFailure) {
+func sealLawTableFor(t *testing.T, templates []*Template) (*seal.Schema, schema.SealFailure) {
+	t.Helper()
 	builder := seal.NewBuilder()
 	for kind := schema.SurfaceKind(1); kind.Available(); kind++ {
 		if kind == schema.SurfaceKindRule {
 			builder.Register(NewSurface(templates))
 			continue
 		}
-		builder.Register(lawSurfaceFor(kind))
+		builder.Register(lawSurfaceFor(t, kind))
 	}
 	return builder.Seal()
 }
@@ -305,7 +310,7 @@ func TestRuleSurfaceAdmitsTheCompleteRoleCatalog(t *testing.T) {
 	if len(templates) != lawRuleCount {
 		t.Fatalf("law table admitted %d rules, want the complete role catalog", len(templates))
 	}
-	if failure := sealLawTable(templates); failure.Available() {
+	if failure := sealLawTable(t, templates); failure.Available() {
 		t.Fatalf("complete role catalog rejected: contributor=%d law=%d disposition=%s", failure.Contributor, failure.Law, failure.Disposition)
 	}
 }
@@ -437,7 +442,7 @@ func TestRuleSurfaceRejectsADriftedTable(t *testing.T) {
 	}
 	for _, test := range cases {
 		t.Run(test.name, func(t *testing.T) {
-			failure := sealLawTable(lawTable(t, test.mutate))
+			failure := sealLawTable(t, lawTable(t, test.mutate))
 			if !failure.Available() {
 				t.Fatal("a drifted table sealed")
 			}
@@ -478,7 +483,7 @@ func TestRuleSurfaceRejectsAForeignRow(t *testing.T) {
 			builder.Register(lawForeignSurface{})
 			continue
 		}
-		builder.Register(lawSurfaceFor(kind))
+		builder.Register(lawSurfaceFor(t, kind))
 	}
 	sealed, failure := builder.Seal()
 	if sealed != nil {
@@ -497,7 +502,7 @@ func TestRuleSurfaceRejectsAForeignRow(t *testing.T) {
 // artifact is reached by the occurrence families it subscribes to, so one that
 // subscribes to none would sit on that lane unreachable.
 func TestRuleSurfaceRejectsAMountedRuleThatSubscribesToNothing(t *testing.T) {
-	failure := sealLawTable(lawTable(t, func(position int, spec *Spec) {
+	failure := sealLawTable(t, lawTable(t, func(position int, spec *Spec) {
 		if position == 12 {
 			spec.Issues = nil
 		}
@@ -567,7 +572,7 @@ func TestRuleTemplateHandsBackOnlyItsOwnCell(t *testing.T) {
 // lane decides which admission path an occurrence takes, so moving one moves
 // the digest.
 func TestTableDigestCoversDeclaredContent(t *testing.T) {
-	declared, failure := sealLawTableFor(lawTable(t, nil))
+	declared, failure := sealLawTableFor(t, lawTable(t, nil))
 	if failure.Available() {
 		t.Fatalf("complete role catalog rejected: law=%d disposition=%s", failure.Law, failure.Disposition)
 	}
@@ -576,7 +581,7 @@ func TestTableDigestCoversDeclaredContent(t *testing.T) {
 			spec.Lane = LaneMounted
 		}
 	})
-	shifted, failure := sealLawTableFor(templates)
+	shifted, failure := sealLawTableFor(t, templates)
 	if failure.Available() {
 		t.Fatalf("catalog with a shifted lane rejected: law=%d disposition=%s", failure.Law, failure.Disposition)
 	}
@@ -591,7 +596,7 @@ func TestTableDigestCoversDeclaredContent(t *testing.T) {
 // rules to the same families under different shapes place different programs
 // and are two tables.
 func TestTableDigestCoversDeclaredOperandShape(t *testing.T) {
-	declared, failure := sealLawTableFor(lawTable(t, nil))
+	declared, failure := sealLawTableFor(t, lawTable(t, nil))
 	if failure.Available() {
 		t.Fatalf("complete role catalog rejected: law=%d disposition=%s", failure.Law, failure.Disposition)
 	}
@@ -603,7 +608,7 @@ func TestTableDigestCoversDeclaredOperandShape(t *testing.T) {
 		issuance.Requirement = lawNarrowRequirementKey
 		spec.Issues = []Issuance{issuance}
 	})
-	shifted, failure := sealLawTableFor(templates)
+	shifted, failure := sealLawTableFor(t, templates)
 	if failure.Available() {
 		t.Fatalf("catalog with a narrowed operand shape rejected: law=%d disposition=%s", failure.Law, failure.Disposition)
 	}
@@ -619,7 +624,7 @@ func TestTableDigestCoversDeclaredOperandShape(t *testing.T) {
 // roles from the vocabulary are two tables. The two inventories below differ in
 // one selected role and in nothing else.
 func TestTableDigestCoversSemanticIdentity(t *testing.T) {
-	declared, failure := sealLawTableFor(lawTable(t, nil))
+	declared, failure := sealLawTableFor(t, lawTable(t, nil))
 	if failure.Available() {
 		t.Fatalf("complete role catalog rejected: law=%d disposition=%s", failure.Law, failure.Disposition)
 	}
@@ -628,7 +633,7 @@ func TestTableDigestCoversSemanticIdentity(t *testing.T) {
 			spec.Semantic = "semantic/operand/law/value-source"
 		}
 	})
-	shifted, failure := sealLawTableFor(templates)
+	shifted, failure := sealLawTableFor(t, templates)
 	if failure.Available() {
 		t.Fatalf("catalog with a shifted semantic role rejected: law=%d disposition=%s", failure.Law, failure.Disposition)
 	}

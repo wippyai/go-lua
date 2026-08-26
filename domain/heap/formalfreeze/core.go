@@ -8,7 +8,7 @@
 package formalfreeze
 
 import (
-	"github.com/wippyai/go-lua/analysis/engine/execution"
+	"github.com/wippyai/go-lua/analysis/engine/operand"
 	"github.com/wippyai/go-lua/analysis/program/target/contract"
 	"github.com/wippyai/go-lua/analysis/program/target/vocabulary"
 	calldomain "github.com/wippyai/go-lua/domain/call"
@@ -34,7 +34,7 @@ const formalFreezeInlineWidth = recentplan.InlineWidth
 // whether the cell was admissible at all. Opaque references,
 // Summary/Exact materializations, scalar alternatives and ambiguous unions all
 // name no root rather than widening a freeze route.
-func freezeActualRoot(values *valuedomain.Schema, actuals execution.SummaryVector[valuedomain.Value], ordinal int) (heap.Key, bool, bool) {
+func freezeActualRoot(values *valuedomain.Schema, actuals operand.SummaryVector[valuedomain.Value], ordinal int) (heap.Key, bool, bool) {
 	if values == nil {
 		return heap.Key{}, false, false
 	}

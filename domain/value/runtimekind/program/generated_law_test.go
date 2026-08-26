@@ -128,7 +128,7 @@ owner                value
 semantic             semantic/rule/value/runtime-kind-call
 role[0]              semantic/operand/value/runtime-kind-call
 issue[0]             occurrence=occurrence/call form=program-form/call-summary requirement=program-requirement/call-result
-issue[1]             occurrence=occurrence/operation-predicate-refinement form=program-form/local-predecessor requirement=program-requirement/unrestricted
+issue[1]             occurrence=occurrence/operation-predicate-refinement form=program-form/route-predecessor requirement=program-requirement/unrestricted
 `
 
 // TestRuntimeKindCallResultRuleEntryIsTheSealedDeclaration holds the rule entry to its identity, to

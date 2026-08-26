@@ -1,6 +1,8 @@
 package compiler
 
 import (
+	"sort"
+
 	"github.com/wippyai/go-lua/analysis/identity"
 	issuanceexecutor "github.com/wippyai/go-lua/analysis/program/artifact/compiler/internal/issuance"
 	"github.com/wippyai/go-lua/analysis/schema"
@@ -22,7 +24,15 @@ func (compiler *compiler) installLocalStagesFailure() CompileFailure {
 		}
 		byBase[node.Base()] = append(byBase[node.Base()], node)
 	}
+	// A routed stage does not stand in its base's linear chain: it stands on
+	// the route that reaches it. So the chain is built from the linear nodes
+	// alone, and the routed nodes are indexed by their route instead. Both
+	// still become points, join the base's region, and take a WTO event.
 	stageFor := make(map[identity.ContentID][]identity.ContentID, len(byBase))
+	linearFor := make(map[identity.ContentID][]identity.ContentID, len(byBase))
+	linearNodes := make(map[identity.ContentID][]issuanceexecutor.Node, len(byBase))
+	routeStage := make(map[identity.ContentID][]routedStagePlacement)
+	preStageFor := make(map[identity.ContentID][]identity.ContentID, len(byBase))
 	for base, nodes := range byBase {
 		geometry, baseOK := compiler.pointGeometry[base]
 		if !baseOK || !geometry.Available() {
@@ -36,13 +46,84 @@ func (compiler *compiler) installLocalStagesFailure() CompileFailure {
 				compiler.pointGeometry[node.Point()] = pointDraft{id: node.Point(), decisionScope: geometry.decisionScope}
 				stageFor[base] = append(stageFor[base], node.Point())
 			}
+			route, routed := routedStageRoute(node)
+			if !routed {
+				linearNodes[base] = append(linearNodes[base], node)
+				if node.Point() != base {
+					linearFor[base] = append(linearFor[base], node.Point())
+				}
+				continue
+			}
+			if !route.Available() {
+				return compileFailure(CompileStageOccurrences, CompileRowOccurrence, -1, nodeIndex, CompileReasonOccurrenceUnavailable)
+			}
+			routeStage[route] = append(routeStage[route], routedStagePlacement{order: node.Stage().Order(), point: node.Point()})
+			if node.Point() != base {
+				preStageFor[base] = append(preStageFor[base], node.Point())
+			}
+		}
+		if len(stageFor[base]) == 0 {
+			delete(stageFor, base)
+		}
+	}
+	// One route can carry a routed stage for more than one axis. They compose
+	// along the route in a stable order - each narrows its own axis, so the
+	// state a route delivers is every routed stage standing on it, applied
+	// once, and the route leaves from the last of them.
+	for route := range routeStage {
+		chain := routeStage[route]
+		sort.Slice(chain, func(left, right int) bool {
+			if chain[left].order != chain[right].order {
+				return chain[left].order < chain[right].order
+			}
+			return contentIDBefore(chain[left].point, chain[right].point)
+		})
+		for index := 1; index < len(chain); index++ {
+			if chain[index-1].point == chain[index].point {
+				return compileFailure(CompileStageOccurrences, CompileRowOccurrence, -1, index, CompileReasonOccurrenceUnavailable)
+			}
+		}
+		routeStage[route] = chain
+	}
+	// terminal answers where a base's own linear chain ends, which is what any
+	// transfer leaving that base departs from.
+	terminal := func(base identity.ContentID) identity.ContentID {
+		if chain := linearFor[base]; len(chain) != 0 {
+			return chain[len(chain)-1]
+		}
+		return base
+	}
+	for base, nodes := range byBase {
+		for _, node := range nodes {
+			route, routed := routedStageRoute(node)
 			for _, edge := range node.Stage().Edges() {
-				from, sourceOK := scheduleEdgeSource(edge, nodeIndex, base, nodes)
+				var from identity.ContentID
+				var sourceOK bool
+				if edge.Source == schemaissuance.StageEdgeSourceRoute {
+					if !routed {
+						return compileFailure(CompileStageOccurrences, CompileRowOccurrence, -1, -1, CompileReasonOccurrenceUnavailable)
+					}
+					source, resolved := compiler.routeSourcePoint(route)
+					predecessor, chained := routedStagePredecessor(routeStage[route], node.Point())
+					if !resolved || !source.Available() || !chained {
+						return compileFailure(CompileStageOccurrences, CompileRowOccurrence, -1, -1, CompileReasonOccurrenceUnavailable)
+					}
+					from, sourceOK = terminal(source), true
+					if predecessor.Available() {
+						from = predecessor
+					}
+				} else {
+					position := linearNodeIndex(linearNodes[base], node)
+					if position < 0 {
+						return compileFailure(CompileStageOccurrences, CompileRowOccurrence, -1, -1, CompileReasonOccurrenceUnavailable)
+					}
+					from, sourceOK = scheduleEdgeSource(edge, position, base, linearNodes[base])
+				}
 				full, writes, transportOK := compiler.scheduleTransport(
 					edge, node.Base(), node.Point(), compiler.issuanceSchedule,
 				)
-				if !sourceOK || !transportOK {
-					return compileFailure(CompileStageOccurrences, CompileRowOccurrence, -1, nodeIndex, CompileReasonOccurrenceUnavailable)
+				if !sourceOK || !transportOK || !from.Available() {
+					return compileFailure(CompileStageOccurrences, CompileRowOccurrence, -1, -1, CompileReasonOccurrenceUnavailable)
 				}
 				if !full && len(writes) == 0 {
 					continue
@@ -52,20 +133,16 @@ func (compiler *compiler) installLocalStagesFailure() CompileFailure {
 				}
 			}
 		}
-		if len(stageFor[base]) == 0 {
-			delete(stageFor, base)
-		}
 	}
 	for index := range compiler.environment {
 		edge := &compiler.environment[index]
 		if edge.from == edge.to && !edge.hasMu && !edge.hasReset {
 			continue
 		}
-		if stages := stageFor[edge.from]; len(stages) != 0 {
-			edge.from = stages[len(stages)-1]
-			if !edge.Available() {
-				return compileFailure(CompileStageOccurrences, CompileRowEnvironment, index, -1, CompileReasonEnvironmentUnavailable)
-			}
+		if staged, routed := routeStage[edge.route]; routed && len(staged) != 0 {
+			edge.departure = staged[len(staged)-1].point
+		} else if chain := linearFor[edge.from]; len(chain) != 0 {
+			edge.departure = chain[len(chain)-1]
 		}
 	}
 
@@ -76,19 +153,26 @@ func (compiler *compiler) installLocalStagesFailure() CompileFailure {
 	events := make([]wtoEventDraft, 0, len(compiler.events)+stageCount)
 	seenPost := make(map[identity.ContentID]struct{}, len(stageFor))
 	for _, event := range compiler.events {
+		if event.kind == wtoEventPoint {
+			// A routed stage feeds its base, so it is visited before it. The
+			// linear chain hangs off the base and is visited after, exactly as
+			// an unrouted point's stages always were.
+			for _, stage := range preStageFor[event.point] {
+				events = append(events, wtoEventDraft{kind: wtoEventPoint, point: stage})
+			}
+		}
 		events = append(events, event)
 		if event.kind != wtoEventPoint {
 			continue
 		}
-		stages, staged := stageFor[event.point]
-		if !staged {
+		if _, staged := stageFor[event.point]; !staged {
 			continue
 		}
 		if _, duplicate := seenPost[event.point]; duplicate {
 			return compileFailure(CompileStageOccurrences, CompileRowWTOEvent, -1, -1, CompileReasonEventPointRepeated)
 		}
 		seenPost[event.point] = struct{}{}
-		for _, stage := range stages {
+		for _, stage := range linearFor[event.point] {
 			events = append(events, wtoEventDraft{kind: wtoEventPoint, point: stage})
 		}
 	}
@@ -99,7 +183,7 @@ func (compiler *compiler) installLocalStagesFailure() CompileFailure {
 
 	regionMembership := make(map[identity.ContentID]int, len(stageFor))
 	for regionIndex := range compiler.regions {
-		rewritten, injected, ok := rewriteRegionMembers(compiler.regions[regionIndex].members, stageFor)
+		rewritten, injected, ok := rewriteRegionMembers(compiler.regions[regionIndex].members, preStageFor, linearFor)
 		if !ok {
 			return compileFailure(CompileStageOccurrences, CompileRowRegion, regionIndex, -1, CompileReasonRegionReference)
 		}
@@ -231,15 +315,18 @@ func orderedAxes(order []schema.Key, selected map[schema.Key]struct{}) []schema.
 	return result
 }
 
-func rewriteRegionMembers(members []identity.ContentID, stageFor map[identity.ContentID][]identity.ContentID) ([]identity.ContentID, []identity.ContentID, bool) {
+// rewriteRegionMembers injects a point's stages around it in the exact order
+// the schedule visits them: the stages that feed the point come before it, and
+// the stages that hang off it come after. A region's member order and its
+// event order are the same statement, so both are produced here from one walk.
+func rewriteRegionMembers(members []identity.ContentID, preStageFor, stageFor map[identity.ContentID][]identity.ContentID) ([]identity.ContentID, []identity.ContentID, bool) {
 	additional := 0
 	for _, member := range members {
-		if stages := stageFor[member]; len(stages) != 0 {
-			if len(stages) > int(^uint(0)>>1)-additional {
-				return nil, nil, false
-			}
-			additional += len(stages)
+		count := len(preStageFor[member]) + len(stageFor[member])
+		if count > int(^uint(0)>>1)-additional {
+			return nil, nil, false
 		}
+		additional += count
 	}
 	if additional > int(^uint(0)>>1)-len(members) {
 		return nil, nil, false
@@ -247,11 +334,86 @@ func rewriteRegionMembers(members []identity.ContentID, stageFor map[identity.Co
 	rewritten := make([]identity.ContentID, 0, len(members)+additional)
 	var injected []identity.ContentID
 	for _, member := range members {
+		pre, post := preStageFor[member], stageFor[member]
+		rewritten = append(rewritten, pre...)
 		rewritten = append(rewritten, member)
-		if stages := stageFor[member]; len(stages) != 0 {
-			rewritten = append(rewritten, stages...)
+		rewritten = append(rewritten, post...)
+		if len(pre) != 0 || len(post) != 0 {
 			injected = append(injected, member)
 		}
 	}
 	return rewritten, injected, true
+}
+
+// routedStageRoute answers the route a scheduled stage stands on, and whether
+// it stands on one at all. A routed stage is identified by its own declaration
+// - it carries a route in its identity - never by its key or its axis.
+func routedStageRoute(node issuanceexecutor.Node) (identity.ContentID, bool) {
+	stage := node.Stage()
+	if stage == nil {
+		return identity.ContentID{}, false
+	}
+	routed := false
+	for _, edge := range stage.Edges() {
+		if edge.Source == schemaissuance.StageEdgeSourceRoute {
+			routed = true
+			break
+		}
+	}
+	if !routed {
+		return identity.ContentID{}, false
+	}
+	return node.Route()
+}
+
+// linearNodeIndex is the node's position in its base's linear chain, which is
+// what a Previous edge counts against once routed stages have left the chain.
+func linearNodeIndex(nodes []issuanceexecutor.Node, node issuanceexecutor.Node) int {
+	for index := range nodes {
+		if nodes[index].Point() == node.Point() {
+			return index
+		}
+	}
+	return -1
+}
+
+// routedStagePlacement is one routed stage's position on its route.
+type routedStagePlacement struct {
+	order uint16
+	point identity.ContentID
+}
+
+// routedStagePredecessor answers the routed stage standing immediately before
+// this one on the same route. The first stage on a route has none, and takes
+// the route's source instead.
+func routedStagePredecessor(chain []routedStagePlacement, point identity.ContentID) (identity.ContentID, bool) {
+	for index := range chain {
+		if chain[index].point != point {
+			continue
+		}
+		if index == 0 {
+			return identity.ContentID{}, true
+		}
+		return chain[index-1].point, true
+	}
+	return identity.ContentID{}, false
+}
+
+// routeDeparture answers the point a route's transfer leaves from.
+//
+// A route whose destination carries routed stages leaves from the last of
+// them: those stages exist to prove something about this route in particular,
+// so the state it delivers is the state they proved, and a departure that
+// skipped them would carry the unproved state onto the destination while the
+// stages sat beside the transfer proving nothing anyone reads. Every other
+// route leaves from the end of its source's own chain, which is where that
+// point finished. A source with no chain departs from itself.
+func routeDeparture(route, source identity.ContentID, routeStage map[identity.ContentID][]routedStagePlacement, linearFor map[identity.ContentID][]identity.ContentID) identity.ContentID {
+	if staged := routeStage[route]; len(staged) != 0 {
+		return staged[len(staged)-1].point
+	}
+	if chain := linearFor[source]; len(chain) != 0 {
+		return chain[len(chain)-1]
+	}
+	return identity.ContentID{}
 }

@@ -73,8 +73,9 @@ func returnRoutes() definition.Relation {
 
 // Contribution is the body-result rule's whole share of the member
 // vocabulary: the return route set it selects over and the fold that answers
-// it, beside the shared call-result rows it is addressed and publishes
-// through.
+// it. The result-zero directory it is indexed by and the coordinate it
+// publishes at are the axis owner's, stated in the value base, because the
+// result-alias rule reads the same two.
 func Contribution() definition.Contribution {
 	value := axisReference("value")
 	call := axisReference("call")
@@ -82,9 +83,8 @@ func Contribution() definition.Contribution {
 		Axis:      "value",
 		Rule:      "value-callresult-body",
 		Carriers:  append([]definition.Carrier{valuebase.MountedCallResultSlotCarrier(), valuebase.CallFactCarrier()}, returnRouteCarriers()...),
-		Relations: []definition.Relation{valuebase.MountedCallResultSlotCandidates(), valuebase.CallResultSites(), returnRoutes()},
+		Relations: []definition.Relation{valuebase.CallResultSites(), returnRoutes()},
 		Projections: []definition.Projection{
-			valuebase.MountedCallResultSlotCoordinate(),
 			valuebase.CallResultSiteKey(),
 			{
 				Name: "BodyReturnRouteKey", Key: "value/body-result/route-key",
@@ -101,11 +101,10 @@ func Contribution() definition.Contribution {
 		// before them delivered, so they are published through this
 		// selection and stamped with the tag the reading rule joins on.
 		Selections: []definition.Selection{{
-			Name:           "BodyReturnRouteSelection",
-			Key:            "value/body-result/route-selection",
-			Relation:       "BodyReturnRoutes",
-			Tag:            "BodyReturnRouteTag",
-			Implementation: returnRouteFunction("Derive"),
+			Name:     "BodyReturnRouteSelection",
+			Key:      "value/body-result/route-selection",
+			Relation: "BodyReturnRoutes",
+			Tag:      "BodyReturnRouteTag",
 		}},
 		Reducers: []definition.Reducer{{
 			Name:      "BodyResultReducer",

@@ -11,7 +11,7 @@ import (
 )
 
 var Generated = Evidence{
-	Digest: "5f5c382e20bb9bdcf954113086bc2b28240a0c9bb69aee6c4d8fbdca8bd1f6a7",
+	Digest: "0ec3ce2101ea7bd197f32ba3b84cb5658cb0e838efe09835a1f46825ed8a8c3d",
 	ProgramLaws: []ProgramLawRow{
 		{Requirement: programlaw.Requirement{Site: programlaw.Site(1), Unary: flowkind.UnaryOp(1), Binary: flowkind.BinaryOp(0), Select: flowkind.SelectOp(0), Call: programlaw.CallMode(0), Values: programlaw.ValuesMode(0), Outcome: flowkind.OutcomeKind(0)}, Terminals: []schema.EntryID{schema.NewEntryID(schema.SurfaceKindDenominator, schema.Key("ProgramFlowOperators@ProgramFlowUnaryNumeric"))}},
 		{Requirement: programlaw.Requirement{Site: programlaw.Site(1), Unary: flowkind.UnaryOp(2), Binary: flowkind.BinaryOp(0), Select: flowkind.SelectOp(0), Call: programlaw.CallMode(0), Values: programlaw.ValuesMode(0), Outcome: flowkind.OutcomeKind(0)}, Terminals: []schema.EntryID{schema.NewEntryID(schema.SurfaceKindDenominator, schema.Key("ProgramFlowOperators@-"))}},
@@ -59,7 +59,7 @@ var Generated = Evidence{
 		{Family: staticlaw.Family(9), Terminals: []schema.EntryID{schema.NewEntryID(schema.SurfaceKindDenominator, schema.Key("ProgramStatic@-"))}},
 		{Family: staticlaw.Family(10), Terminals: []schema.EntryID{schema.NewEntryID(schema.SurfaceKindDenominator, schema.Key("ProgramStatic@-"))}},
 		{Family: staticlaw.Family(11), Terminals: []schema.EntryID{schema.NewEntryID(schema.SurfaceKindDenominator, schema.Key("ProgramStatic@-")), schema.NewEntryID(schema.SurfaceKindDenominator, schema.Key("ProgramStatic@ProgramStaticFunctionContract"))}},
-		{Family: staticlaw.Family(12), Terminals: []schema.EntryID{schema.NewEntryID(schema.SurfaceKindDenominator, schema.Key("ProgramStatic@ProgramStaticClaimTarget")), schema.NewEntryID(schema.SurfaceKindDenominator, schema.Key("ProgramStatic@-"))}},
+		{Family: staticlaw.Family(12), Terminals: []schema.EntryID{schema.NewEntryID(schema.SurfaceKindDenominator, schema.Key("ProgramStatic@-")), schema.NewEntryID(schema.SurfaceKindDenominator, schema.Key("ProgramStatic@ProgramStaticClaimTarget"))}},
 		{Family: staticlaw.Family(13), Terminals: []schema.EntryID{schema.NewEntryID(schema.SurfaceKindDenominator, schema.Key("ProgramStatic@ProgramStaticTypeof"))}},
 		{Family: staticlaw.Family(14), Terminals: []schema.EntryID{schema.NewEntryID(schema.SurfaceKindDenominator, schema.Key("ProgramStatic@-"))}},
 		{Family: staticlaw.Family(15), Terminals: []schema.EntryID{schema.NewEntryID(schema.SurfaceKindDenominator, schema.Key("ProgramStatic@-"))}},

@@ -1,3362 +1,2181 @@
 {
-  "schema_version": 1,
-  "pinned_ref": "c6e8def8b3b3fbecfe0c5afe9a501ddf3484ecaa",
-  "authority": [
-    "docs/architecture/relation-engine.md \u00a711 Wave 5 step 1 (analyzer constructor) and step 8 (read paths)",
-    "internal/relcut/manifest.json: the delete-set this map is the read side of",
-    "analysis/schema/rule/relbindgen/relbind/census_law_test.go: the binding corpus laws that name the gaps",
-    "analysis/schema/rule/relcompile/testdata/census.json and census2.json: the declaration census"
-  ],
-  "rule": "This map is read-only until the Wave 4 restatement. It states every non-test file outside the relation fence that names an old engine read surface, the symbols it names, and the declared surface that answers it after the cut. A consumer whose distinction no owner publishes carries a gap identity rather than an invented column; a gap is a finding to close in the owner, never in the consumer. Gaps are stated at the pinned ref.",
-  "fence": [
-    "analysis/relation/",
-    "analysis/engine/relation/",
-    "internal/relationoracle/"
-  ],
-  "surfaces": [
+ "schema_version": 1,
+ "pinned_ref": "0f14d2b94ca09242c5d5f230b98b465244dc031f",
+ "authority": [
+  "docs/architecture/relation-engine.md \u00a711 Wave 5 step 1 (analyzer constructor) and step 8 (read paths)",
+  "internal/relcut/manifest.json: the delete-set this map is the read side of, and the restatement target each entry declares",
+  "analysis/schema/rule/relbindgen/relbind/census_law_test.go: the binding corpus laws - fifty-two families bound, none unbound, none pending",
+  "analysis/schema/rule/relcompile/testdata/census.json and census2.json: the declaration census, whose plane field says which rows the corpus binds and which carry their operations on their own schema surfaces"
+ ],
+ "rule": "This map is read-only until the Wave 4 restatement. It states every non-test file outside the relation fence that still names a dying engine surface, the symbols it names, and the declared surface that answers it after the cut. Symbols are resolved from the syntax tree, not by text match, so a name that appears only in a string literal or a comment is not a read. A consumer reading only a surviving restatement target is not listed: it is already at its post-cut home. A consumer whose distinction no owner publishes carries a gap identity rather than an invented column; a gap is a finding to close in the owner, never in the consumer.",
+ "fence": [
+  "analysis/relation/",
+  "analysis/engine/relation/",
+  "internal/relationoracle/"
+ ],
+ "surfaces": [
+  {
+   "package": "github.com/wippyai/go-lua/analysis/engine",
+   "manifest_entry": "S6-engine-runtime",
+   "role": "the analyzer engine: query, observation, admission and schema-binding surfaces in one package"
+  },
+  {
+   "package": "github.com/wippyai/go-lua/analysis/engine/execution",
+   "manifest_entry": "S2-engine-execution",
+   "role": "the hot execution ABI a rule body runs against"
+  },
+  {
+   "package": "github.com/wippyai/go-lua/analysis/engine/operand",
+   "manifest_entry": "S2-reducer-operand-abi",
+   "role": "the read-side operand value types a permanently-authored reducer takes; the restatement target that already landed. Sixteen non-test files now read only these, two more than the fourteen the manifest entry enumerates: analysis/schema/rule/relbindgen/operand.go and domain/placement/containment/reducer.go joined the set after it was written"
+  },
+  {
+   "package": "github.com/wippyai/go-lua/analysis/engine/rows",
+   "manifest_entry": "K-engine-rows",
+   "role": "the scalar row templates, retained only while their generic obligation stands"
+  },
+  {
+   "package": "github.com/wippyai/go-lua/analysis/engine/rows/scalarlower",
+   "manifest_entry": "K-engine-rows",
+   "role": "the scalar lowering of a mount directory"
+  }
+ ],
+ "consumers": [
+  {
+   "path": "analysis/analyze.go",
+   "manifest_entry": "S1-analyzer-constructor",
+   "reads": [
     {
-      "package": "github.com/wippyai/go-lua/analysis/engine",
-      "manifest_entry": "S6-engine-runtime",
-      "role": "the analyzer engine: query, observation, admission and schema-binding surfaces in one package"
+     "package": "github.com/wippyai/go-lua/analysis/engine",
+     "symbol": "Answer",
+     "uses": 2,
+     "class": "query"
     },
     {
-      "package": "github.com/wippyai/go-lua/analysis/engine/execution",
-      "manifest_entry": "S2-engine-execution",
-      "role": "the hot execution ABI a rule body runs against"
+     "package": "github.com/wippyai/go-lua/analysis/engine",
+     "symbol": "CommittedProgram",
+     "uses": 2,
+     "class": "admission"
     },
     {
-      "package": "github.com/wippyai/go-lua/analysis/engine/execution/product",
-      "manifest_entry": "S2-engine-execution",
-      "role": "the product-space extender the folds build their rows in"
+     "package": "github.com/wippyai/go-lua/analysis/engine",
+     "symbol": "ConstructProgram",
+     "uses": 1,
+     "class": "admission"
     },
     {
-      "package": "github.com/wippyai/go-lua/analysis/engine/generated",
-      "manifest_entry": "S3-engine-generated-descriptors",
-      "role": "the generated rule descriptors the installer reads"
+     "package": "github.com/wippyai/go-lua/analysis/engine",
+     "symbol": "MountedProgramAdmission",
+     "uses": 1,
+     "class": "admission"
     },
     {
-      "package": "github.com/wippyai/go-lua/analysis/engine/rows",
-      "manifest_entry": "K-engine-rows",
-      "role": "the scalar row templates"
+     "package": "github.com/wippyai/go-lua/analysis/engine",
+     "symbol": "MountedProgramArtifact",
+     "uses": 2,
+     "class": "admission"
     },
     {
-      "package": "github.com/wippyai/go-lua/analysis/engine/rows/scalarlower",
-      "manifest_entry": "K-engine-rows",
-      "role": "the scalar lowering of a mount directory"
+     "package": "github.com/wippyai/go-lua/analysis/engine",
+     "symbol": "MountedProgramFactor",
+     "uses": 1,
+     "class": "admission"
     },
     {
-      "package": "github.com/wippyai/go-lua/analysis/engine/operand",
-      "manifest_entry": "S6-engine-runtime",
-      "role": "the analyzer engine: query, observation, admission and schema-binding surfaces in one package"
+     "package": "github.com/wippyai/go-lua/analysis/engine",
+     "symbol": "MountedProgramRole",
+     "uses": 1,
+     "class": "admission"
+    },
+    {
+     "package": "github.com/wippyai/go-lua/analysis/engine",
+     "symbol": "ObservationSealArguments",
+     "uses": 2,
+     "class": "admission"
+    },
+    {
+     "package": "github.com/wippyai/go-lua/analysis/engine",
+     "symbol": "ProgramAdmissionLink",
+     "uses": 1,
+     "class": "admission"
+    },
+    {
+     "package": "github.com/wippyai/go-lua/analysis/engine",
+     "symbol": "ProgramAdmissionMounted",
+     "uses": 1,
+     "class": "admission"
+    },
+    {
+     "package": "github.com/wippyai/go-lua/analysis/engine",
+     "symbol": "ProgramAdmissionQuery",
+     "uses": 1,
+     "class": "admission"
+    },
+    {
+     "package": "github.com/wippyai/go-lua/analysis/engine",
+     "symbol": "ProgramAdmissionSeal",
+     "uses": 1,
+     "class": "admission"
+    },
+    {
+     "package": "github.com/wippyai/go-lua/analysis/engine",
+     "symbol": "ProgramAssembleRefusal",
+     "uses": 23,
+     "class": "admission"
+    },
+    {
+     "package": "github.com/wippyai/go-lua/analysis/engine",
+     "symbol": "ProgramDeclaration",
+     "uses": 1,
+     "class": "admission"
+    },
+    {
+     "package": "github.com/wippyai/go-lua/analysis/engine",
+     "symbol": "ProgramPointTransitionAdmission",
+     "uses": 3,
+     "class": "admission"
+    },
+    {
+     "package": "github.com/wippyai/go-lua/analysis/engine",
+     "symbol": "ProgramSealFailure",
+     "uses": 1,
+     "class": "admission"
+    },
+    {
+     "package": "github.com/wippyai/go-lua/analysis/engine",
+     "symbol": "SolveCanceled",
+     "uses": 1,
+     "class": "result"
+    },
+    {
+     "package": "github.com/wippyai/go-lua/analysis/engine",
+     "symbol": "SolveComplete",
+     "uses": 1,
+     "class": "result"
+    },
+    {
+     "package": "github.com/wippyai/go-lua/analysis/engine",
+     "symbol": "SolveDiagnosticOptions",
+     "uses": 5,
+     "class": "result"
+    },
+    {
+     "package": "github.com/wippyai/go-lua/analysis/engine",
+     "symbol": "SolveFailure",
+     "uses": 4,
+     "class": "result"
+    },
+    {
+     "package": "github.com/wippyai/go-lua/analysis/engine",
+     "symbol": "SolveIncomplete",
+     "uses": 1,
+     "class": "result"
+    },
+    {
+     "package": "github.com/wippyai/go-lua/analysis/engine",
+     "symbol": "SolveInvalid",
+     "uses": 1,
+     "class": "result"
+    },
+    {
+     "package": "github.com/wippyai/go-lua/analysis/engine",
+     "symbol": "SolvePanicked",
+     "uses": 1,
+     "class": "result"
+    },
+    {
+     "package": "github.com/wippyai/go-lua/analysis/engine",
+     "symbol": "Solver",
+     "uses": 4,
+     "class": "result"
     }
-  ],
-  "consumers": [
-    {
-      "path": "analysis/analyze.go",
-      "manifest_entry": "S1-analyzer-constructor",
-      "reads": [
-        {
-          "package": "github.com/wippyai/go-lua/analysis/engine",
-          "symbol": "Answer",
-          "uses": 2,
-          "class": "query"
-        },
-        {
-          "package": "github.com/wippyai/go-lua/analysis/engine",
-          "symbol": "CommittedProgram",
-          "uses": 2,
-          "class": "admission"
-        },
-        {
-          "package": "github.com/wippyai/go-lua/analysis/engine",
-          "symbol": "ConstructProgram",
-          "uses": 1,
-          "class": "admission"
-        },
-        {
-          "package": "github.com/wippyai/go-lua/analysis/engine",
-          "symbol": "MountedProgramAdmission",
-          "uses": 1,
-          "class": "admission"
-        },
-        {
-          "package": "github.com/wippyai/go-lua/analysis/engine",
-          "symbol": "MountedProgramArtifact",
-          "uses": 2,
-          "class": "admission"
-        },
-        {
-          "package": "github.com/wippyai/go-lua/analysis/engine",
-          "symbol": "MountedProgramFactor",
-          "uses": 1,
-          "class": "admission"
-        },
-        {
-          "package": "github.com/wippyai/go-lua/analysis/engine",
-          "symbol": "MountedProgramRole",
-          "uses": 1,
-          "class": "admission"
-        },
-        {
-          "package": "github.com/wippyai/go-lua/analysis/engine",
-          "symbol": "ObservationSealArguments",
-          "uses": 2,
-          "class": "admission"
-        },
-        {
-          "package": "github.com/wippyai/go-lua/analysis/engine",
-          "symbol": "ProgramAdmissionLink",
-          "uses": 1,
-          "class": "admission"
-        },
-        {
-          "package": "github.com/wippyai/go-lua/analysis/engine",
-          "symbol": "ProgramAdmissionMounted",
-          "uses": 1,
-          "class": "admission"
-        },
-        {
-          "package": "github.com/wippyai/go-lua/analysis/engine",
-          "symbol": "ProgramAdmissionQuery",
-          "uses": 1,
-          "class": "admission"
-        },
-        {
-          "package": "github.com/wippyai/go-lua/analysis/engine",
-          "symbol": "ProgramAdmissionSeal",
-          "uses": 1,
-          "class": "admission"
-        },
-        {
-          "package": "github.com/wippyai/go-lua/analysis/engine",
-          "symbol": "ProgramAssembleRefusal",
-          "uses": 23,
-          "class": "admission"
-        },
-        {
-          "package": "github.com/wippyai/go-lua/analysis/engine",
-          "symbol": "ProgramDeclaration",
-          "uses": 1,
-          "class": "admission"
-        },
-        {
-          "package": "github.com/wippyai/go-lua/analysis/engine",
-          "symbol": "ProgramPointTransitionAdmission",
-          "uses": 3,
-          "class": "admission"
-        },
-        {
-          "package": "github.com/wippyai/go-lua/analysis/engine",
-          "symbol": "ProgramSealFailure",
-          "uses": 1,
-          "class": "admission"
-        },
-        {
-          "package": "github.com/wippyai/go-lua/analysis/engine",
-          "symbol": "SolveCanceled",
-          "uses": 1,
-          "class": "result"
-        },
-        {
-          "package": "github.com/wippyai/go-lua/analysis/engine",
-          "symbol": "SolveComplete",
-          "uses": 1,
-          "class": "result"
-        },
-        {
-          "package": "github.com/wippyai/go-lua/analysis/engine",
-          "symbol": "SolveDiagnosticOptions",
-          "uses": 5,
-          "class": "result"
-        },
-        {
-          "package": "github.com/wippyai/go-lua/analysis/engine",
-          "symbol": "SolveFailure",
-          "uses": 4,
-          "class": "result"
-        },
-        {
-          "package": "github.com/wippyai/go-lua/analysis/engine",
-          "symbol": "SolveIncomplete",
-          "uses": 1,
-          "class": "result"
-        },
-        {
-          "package": "github.com/wippyai/go-lua/analysis/engine",
-          "symbol": "SolveInvalid",
-          "uses": 1,
-          "class": "result"
-        },
-        {
-          "package": "github.com/wippyai/go-lua/analysis/engine",
-          "symbol": "SolvePanicked",
-          "uses": 1,
-          "class": "result"
-        },
-        {
-          "package": "github.com/wippyai/go-lua/analysis/engine",
-          "symbol": "Solver",
-          "uses": 4,
-          "class": "result"
-        }
-      ],
-      "target": {
-        "kind": "runtime-composition",
-        "package": "github.com/wippyai/go-lua/analysis/engine/relation/runtime",
-        "relation": "",
-        "column": "",
-        "note": "program assembly moves to the relational runtime"
-      },
-      "gap": ""
-    },
-    {
-      "path": "analysis/catalog/publication.go",
-      "manifest_entry": "S8-read-paths",
-      "reads": [
-        {
-          "package": "github.com/wippyai/go-lua/analysis/engine",
-          "symbol": "AdmitColumns",
-          "uses": 1,
-          "class": "declaration"
-        },
-        {
-          "package": "github.com/wippyai/go-lua/analysis/engine",
-          "symbol": "ColumnAdmission",
-          "uses": 6,
-          "class": "declaration"
-        },
-        {
-          "package": "github.com/wippyai/go-lua/analysis/engine",
-          "symbol": "SchemaBinding",
-          "uses": 1,
-          "class": "declaration"
-        }
-      ],
-      "target": {
-        "kind": "gap",
-        "package": "",
-        "relation": "query/query-site",
-        "column": "",
-        "note": "the query/observation plane carries no binding family and no law requiring one"
-      },
-      "gap": "G3-query-plane-unbound"
-    },
-    {
-      "path": "analysis/compile.go",
-      "manifest_entry": "S1-analyzer-constructor",
-      "reads": [
-        {
-          "package": "github.com/wippyai/go-lua/analysis/engine",
-          "symbol": "MintColumnWrite",
-          "uses": 14,
-          "class": "declaration"
-        },
-        {
-          "package": "github.com/wippyai/go-lua/analysis/engine",
-          "symbol": "MountedProgramFactor",
-          "uses": 3,
-          "class": "admission"
-        },
-        {
-          "package": "github.com/wippyai/go-lua/analysis/engine",
-          "symbol": "MountedProgramRole",
-          "uses": 3,
-          "class": "admission"
-        },
-        {
-          "package": "github.com/wippyai/go-lua/analysis/engine",
-          "symbol": "NewProgramBootstrap",
-          "uses": 1,
-          "class": "admission"
-        },
-        {
-          "package": "github.com/wippyai/go-lua/analysis/engine",
-          "symbol": "ProgramBootstrap",
-          "uses": 4,
-          "class": "admission"
-        },
-        {
-          "package": "github.com/wippyai/go-lua/analysis/engine",
-          "symbol": "PublishColumn",
-          "uses": 13,
-          "class": "declaration"
-        },
-        {
-          "package": "github.com/wippyai/go-lua/analysis/engine",
-          "symbol": "RuleSlotCapability",
-          "uses": 2,
-          "class": "declaration"
-        },
-        {
-          "package": "github.com/wippyai/go-lua/analysis/engine/rows/scalarlower",
-          "symbol": "MountDirectory",
-          "uses": 1,
-          "class": "row-abi"
-        }
-      ],
-      "target": {
-        "kind": "declared-surface",
-        "package": "github.com/wippyai/go-lua/analysis/schema/rule/relcompile",
-        "relation": "",
-        "column": "",
-        "note": "the declaration lowers into the canonical ExecutionSchema"
-      },
-      "gap": ""
-    },
-    {
-      "path": "analysis/diagnostic/attach.go",
-      "manifest_entry": "S8-read-paths",
-      "reads": [
-        {
-          "package": "github.com/wippyai/go-lua/analysis/engine",
-          "symbol": "CommittedProgram",
-          "uses": 1,
-          "class": "admission"
-        },
-        {
-          "package": "github.com/wippyai/go-lua/analysis/engine",
-          "symbol": "ObservationSealArguments",
-          "uses": 5,
-          "class": "admission"
-        },
-        {
-          "package": "github.com/wippyai/go-lua/analysis/engine",
-          "symbol": "ObservationSealPoint",
-          "uses": 3,
-          "class": "admission"
-        },
-        {
-          "package": "github.com/wippyai/go-lua/analysis/engine",
-          "symbol": "ProgramObservationAdmission",
-          "uses": 2,
-          "class": "admission"
-        },
-        {
-          "package": "github.com/wippyai/go-lua/analysis/engine",
-          "symbol": "SolveFailure",
-          "uses": 2,
-          "class": "result"
-        }
-      ],
-      "target": {
-        "kind": "gap",
-        "package": "",
-        "relation": "observation/type-conformance",
-        "column": "",
-        "note": "the query/observation plane carries no binding family and no law requiring one"
-      },
-      "gap": "G3-query-plane-unbound"
-    },
-    {
-      "path": "analysis/diagnostic/collect.go",
-      "manifest_entry": "S8-read-paths",
-      "reads": [
-        {
-          "package": "github.com/wippyai/go-lua/analysis/engine",
-          "symbol": "Answer",
-          "uses": 4,
-          "class": "query"
-        },
-        {
-          "package": "github.com/wippyai/go-lua/analysis/engine",
-          "symbol": "AnswerValue",
-          "uses": 1,
-          "class": "query"
-        }
-      ],
-      "target": {
-        "kind": "gap",
-        "package": "",
-        "relation": "observation/type-conformance",
-        "column": "",
-        "note": "the query/observation plane carries no binding family and no law requiring one"
-      },
-      "gap": "G3-query-plane-unbound"
-    },
-    {
-      "path": "analysis/diagnostic/collect_query.go",
-      "manifest_entry": "S8-read-paths",
-      "reads": [
-        {
-          "package": "github.com/wippyai/go-lua/analysis/engine",
-          "symbol": "Answer",
-          "uses": 2,
-          "class": "query"
-        }
-      ],
-      "target": {
-        "kind": "gap",
-        "package": "",
-        "relation": "observation/type-conformance",
-        "column": "",
-        "note": "the query/observation plane carries no binding family and no law requiring one"
-      },
-      "gap": "G3-query-plane-unbound"
-    },
-    {
-      "path": "analysis/diagnostic/status.go",
-      "manifest_entry": "S8-read-paths",
-      "reads": [
-        {
-          "package": "github.com/wippyai/go-lua/analysis/engine",
-          "symbol": "ProgramAdmissionLink",
-          "uses": 1,
-          "class": "admission"
-        },
-        {
-          "package": "github.com/wippyai/go-lua/analysis/engine",
-          "symbol": "ProgramAdmissionMounted",
-          "uses": 1,
-          "class": "admission"
-        },
-        {
-          "package": "github.com/wippyai/go-lua/analysis/engine",
-          "symbol": "ProgramAdmissionQuery",
-          "uses": 1,
-          "class": "admission"
-        },
-        {
-          "package": "github.com/wippyai/go-lua/analysis/engine",
-          "symbol": "ProgramAdmissionSeal",
-          "uses": 1,
-          "class": "admission"
-        },
-        {
-          "package": "github.com/wippyai/go-lua/analysis/engine",
-          "symbol": "ProgramAssembleRefusal",
-          "uses": 1,
-          "class": "admission"
-        },
-        {
-          "package": "github.com/wippyai/go-lua/analysis/engine",
-          "symbol": "ProgramSealStageOf",
-          "uses": 1,
-          "class": "admission"
-        },
-        {
-          "package": "github.com/wippyai/go-lua/analysis/engine",
-          "symbol": "SolveDiagnostics",
-          "uses": 1,
-          "class": "result"
-        },
-        {
-          "package": "github.com/wippyai/go-lua/analysis/engine",
-          "symbol": "SolveFailure",
-          "uses": 6,
-          "class": "result"
-        }
-      ],
-      "target": {
-        "kind": "gap",
-        "package": "",
-        "relation": "observation/type-conformance",
-        "column": "",
-        "note": "the query/observation plane carries no binding family and no law requiring one"
-      },
-      "gap": "G3-query-plane-unbound"
-    },
-    {
-      "path": "analysis/inspect/session.go",
-      "manifest_entry": "S8-read-paths",
-      "reads": [
-        {
-          "package": "github.com/wippyai/go-lua/analysis/engine",
-          "symbol": "SolveDiagnosticOptions",
-          "uses": 1,
-          "class": "result"
-        }
-      ],
-      "target": {
-        "kind": "gap",
-        "package": "",
-        "relation": "query/query-site",
-        "column": "",
-        "note": "the query/observation plane carries no binding family and no law requiring one"
-      },
-      "gap": "G3-query-plane-unbound"
-    },
-    {
-      "path": "analysis/internal/workspace/artifact_products.go",
-      "manifest_entry": "",
-      "reads": [
-        {
-          "package": "github.com/wippyai/go-lua/analysis/engine/rows",
-          "symbol": "ArtifactScalarTemplate",
-          "uses": 1,
-          "class": "row-abi"
-        },
-        {
-          "package": "github.com/wippyai/go-lua/analysis/engine/rows/scalarlower",
-          "symbol": "Lower",
-          "uses": 1,
-          "class": "row-abi"
-        },
-        {
-          "package": "github.com/wippyai/go-lua/analysis/engine/rows/scalarlower",
-          "symbol": "MountDirectory",
-          "uses": 1,
-          "class": "row-abi"
-        }
-      ],
-      "target": {
-        "kind": "gap",
-        "package": "",
-        "relation": "query/query-site",
-        "column": "",
-        "note": "the query/observation plane carries no binding family and no law requiring one"
-      },
-      "gap": "G3-query-plane-unbound"
-    },
-    {
-      "path": "analysis/lua/selectapply/publish.go",
-      "manifest_entry": "S8-read-paths",
-      "reads": [
-        {
-          "package": "github.com/wippyai/go-lua/analysis/engine",
-          "symbol": "ColumnWrite",
-          "uses": 1,
-          "class": "declaration"
-        },
-        {
-          "package": "github.com/wippyai/go-lua/analysis/engine",
-          "symbol": "PublishColumn",
-          "uses": 1,
-          "class": "declaration"
-        }
-      ],
-      "target": {
-        "kind": "gap",
-        "package": "",
-        "relation": "query/query-site",
-        "column": "",
-        "note": "the query/observation plane carries no binding family and no law requiring one"
-      },
-      "gap": "G3-query-plane-unbound"
-    },
-    {
-      "path": "analysis/result/native_branch.go",
-      "manifest_entry": "S8-read-paths",
-      "reads": [
-        {
-          "package": "github.com/wippyai/go-lua/analysis/engine",
-          "symbol": "Answer",
-          "uses": 1,
-          "class": "query"
-        }
-      ],
-      "target": {
-        "kind": "gap",
-        "package": "",
-        "relation": "query/query-site",
-        "column": "",
-        "note": "the query/observation plane carries no binding family and no law requiring one"
-      },
-      "gap": "G3-query-plane-unbound"
-    },
-    {
-      "path": "analysis/result/project.go",
-      "manifest_entry": "S8-read-paths",
-      "reads": [
-        {
-          "package": "github.com/wippyai/go-lua/analysis/engine",
-          "symbol": "Answer",
-          "uses": 4,
-          "class": "query"
-        },
-        {
-          "package": "github.com/wippyai/go-lua/analysis/engine",
-          "symbol": "AnswerValue",
-          "uses": 1,
-          "class": "query"
-        }
-      ],
-      "target": {
-        "kind": "gap",
-        "package": "",
-        "relation": "query/query-site",
-        "column": "",
-        "note": "the query/observation plane carries no binding family and no law requiring one"
-      },
-      "gap": "G3-query-plane-unbound"
-    },
-    {
-      "path": "analysis/result/query.go",
-      "manifest_entry": "S8-read-paths",
-      "reads": [
-        {
-          "package": "github.com/wippyai/go-lua/analysis/engine",
-          "symbol": "CanonicalResultCell",
-          "uses": 2,
-          "class": "result"
-        },
-        {
-          "package": "github.com/wippyai/go-lua/analysis/engine",
-          "symbol": "CanonicalResultContract",
-          "uses": 2,
-          "class": "result"
-        }
-      ],
-      "target": {
-        "kind": "gap",
-        "package": "",
-        "relation": "query/query-site",
-        "column": "",
-        "note": "the query/observation plane carries no binding family and no law requiring one"
-      },
-      "gap": "G3-query-plane-unbound"
-    },
-    {
-      "path": "domain/call/activation/family.go",
-      "manifest_entry": "",
-      "reads": [
-        {
-          "package": "github.com/wippyai/go-lua/analysis/engine",
-          "symbol": "BindRuleFamily",
-          "uses": 1,
-          "class": "declaration"
-        },
-        {
-          "package": "github.com/wippyai/go-lua/analysis/engine",
-          "symbol": "GeneratedRuleSlot",
-          "uses": 1,
-          "class": "declaration"
-        },
-        {
-          "package": "github.com/wippyai/go-lua/analysis/engine",
-          "symbol": "SchemaBinding",
-          "uses": 1,
-          "class": "declaration"
-        }
-      ],
-      "target": {
-        "kind": "gap",
-        "package": "",
-        "relation": "call/activation",
-        "column": "",
-        "note": "the compiling rule declaration carries no binding corpus family"
-      },
-      "gap": "G1-rule-family-unbound"
-    },
-    {
-      "path": "domain/call/dispatch/family.go",
-      "manifest_entry": "",
-      "reads": [
-        {
-          "package": "github.com/wippyai/go-lua/analysis/engine",
-          "symbol": "BindRuleFamily",
-          "uses": 1,
-          "class": "declaration"
-        },
-        {
-          "package": "github.com/wippyai/go-lua/analysis/engine",
-          "symbol": "GeneratedRuleSlot",
-          "uses": 1,
-          "class": "declaration"
-        },
-        {
-          "package": "github.com/wippyai/go-lua/analysis/engine",
-          "symbol": "SchemaBinding",
-          "uses": 1,
-          "class": "declaration"
-        }
-      ],
-      "target": {
-        "kind": "declared-surface",
-        "package": "github.com/wippyai/go-lua/analysis/schema/rule/relcompile",
-        "relation": "CallDispatch",
-        "column": "",
-        "note": "the declaration lowers into the canonical ExecutionSchema"
-      },
-      "gap": ""
-    },
-    {
-      "path": "domain/call/query/query.go",
-      "manifest_entry": "S4-fragment-consumers",
-      "reads": [
-        {
-          "package": "github.com/wippyai/go-lua/analysis/engine",
-          "symbol": "ExactQueryImplementation",
-          "uses": 1,
-          "class": "query"
-        },
-        {
-          "package": "github.com/wippyai/go-lua/analysis/engine",
-          "symbol": "ExactQueryImplementationAt",
-          "uses": 1,
-          "class": "query"
-        },
-        {
-          "package": "github.com/wippyai/go-lua/analysis/engine",
-          "symbol": "FrozenResult",
-          "uses": 1,
-          "class": "result"
-        },
-        {
-          "package": "github.com/wippyai/go-lua/analysis/engine",
-          "symbol": "HotExactQuerySpec",
-          "uses": 2,
-          "class": "query"
-        },
-        {
-          "package": "github.com/wippyai/go-lua/analysis/engine",
-          "symbol": "NewQuerySlot",
-          "uses": 1,
-          "class": "query"
-        },
-        {
-          "package": "github.com/wippyai/go-lua/analysis/engine",
-          "symbol": "OrderedCells",
-          "uses": 2,
-          "class": "query"
-        },
-        {
-          "package": "github.com/wippyai/go-lua/analysis/engine",
-          "symbol": "QueryFold",
-          "uses": 1,
-          "class": "query"
-        },
-        {
-          "package": "github.com/wippyai/go-lua/analysis/engine",
-          "symbol": "QuerySlot",
-          "uses": 1,
-          "class": "query"
-        },
-        {
-          "package": "github.com/wippyai/go-lua/analysis/engine",
-          "symbol": "SchemaBinding",
-          "uses": 2,
-          "class": "declaration"
-        },
-        {
-          "package": "github.com/wippyai/go-lua/analysis/engine",
-          "symbol": "SchemaBuilder",
-          "uses": 1,
-          "class": "declaration"
-        },
-        {
-          "package": "github.com/wippyai/go-lua/analysis/engine",
-          "symbol": "SchemaQueryRead",
-          "uses": 1,
-          "class": "query"
-        },
-        {
-          "package": "github.com/wippyai/go-lua/analysis/engine",
-          "symbol": "SchemaQuerySpec",
-          "uses": 1,
-          "class": "query"
-        },
-        {
-          "package": "github.com/wippyai/go-lua/analysis/engine",
-          "symbol": "SchemaReadForm",
-          "uses": 1,
-          "class": "query"
-        }
-      ],
-      "target": {
-        "kind": "gap",
-        "package": "",
-        "relation": "observation/call-callee-set",
-        "column": "",
-        "note": "the query/observation plane carries no binding family and no law requiring one"
-      },
-      "gap": "G3-query-plane-unbound"
-    },
-    {
-      "path": "domain/composite/axis_wire.go",
-      "manifest_entry": "",
-      "reads": [
-        {
-          "package": "github.com/wippyai/go-lua/analysis/engine",
-          "symbol": "SchemaBinding",
-          "uses": 3,
-          "class": "declaration"
-        },
-        {
-          "package": "github.com/wippyai/go-lua/analysis/engine",
-          "symbol": "SchemaBuilder",
-          "uses": 3,
-          "class": "declaration"
-        }
-      ],
-      "target": {
-        "kind": "gap",
-        "package": "",
-        "relation": "query/query-site",
-        "column": "",
-        "note": "the query/observation plane carries no binding family and no law requiring one"
-      },
-      "gap": "G3-query-plane-unbound"
-    },
-    {
-      "path": "domain/composite/call_callee_set_observation.go",
-      "manifest_entry": "",
-      "reads": [
-        {
-          "package": "github.com/wippyai/go-lua/analysis/engine",
-          "symbol": "CommittedProgram",
-          "uses": 2,
-          "class": "admission"
-        },
-        {
-          "package": "github.com/wippyai/go-lua/analysis/engine",
-          "symbol": "NewExactObservationAdmissionAt",
-          "uses": 1,
-          "class": "admission"
-        },
-        {
-          "package": "github.com/wippyai/go-lua/analysis/engine",
-          "symbol": "ProgramObservationAdmission",
-          "uses": 8,
-          "class": "admission"
-        },
-        {
-          "package": "github.com/wippyai/go-lua/analysis/engine",
-          "symbol": "RuleSlotCapability",
-          "uses": 1,
-          "class": "declaration"
-        }
-      ],
-      "target": {
-        "kind": "gap",
-        "package": "",
-        "relation": "query/query-site",
-        "column": "",
-        "note": "the query/observation plane carries no binding family and no law requiring one"
-      },
-      "gap": "G3-query-plane-unbound"
-    },
-    {
-      "path": "domain/composite/catalog.go",
-      "manifest_entry": "",
-      "reads": [
-        {
-          "package": "github.com/wippyai/go-lua/analysis/engine",
-          "symbol": "NewSchema",
-          "uses": 1,
-          "class": "declaration"
-        },
-        {
-          "package": "github.com/wippyai/go-lua/analysis/engine",
-          "symbol": "Schema",
-          "uses": 2,
-          "class": "declaration"
-        }
-      ],
-      "target": {
-        "kind": "gap",
-        "package": "",
-        "relation": "query/query-site",
-        "column": "",
-        "note": "the query/observation plane carries no binding family and no law requiring one"
-      },
-      "gap": "G3-query-plane-unbound"
-    },
-    {
-      "path": "domain/composite/publication/branch_value_observation.go",
-      "manifest_entry": "",
-      "reads": [
-        {
-          "package": "github.com/wippyai/go-lua/analysis/engine",
-          "symbol": "CommittedProgram",
-          "uses": 2,
-          "class": "admission"
-        },
-        {
-          "package": "github.com/wippyai/go-lua/analysis/engine",
-          "symbol": "NewSummaryObservationAdmission",
-          "uses": 1,
-          "class": "admission"
-        },
-        {
-          "package": "github.com/wippyai/go-lua/analysis/engine",
-          "symbol": "ObservationSealArguments",
-          "uses": 4,
-          "class": "admission"
-        },
-        {
-          "package": "github.com/wippyai/go-lua/analysis/engine",
-          "symbol": "ObservationSealPoint",
-          "uses": 1,
-          "class": "admission"
-        },
-        {
-          "package": "github.com/wippyai/go-lua/analysis/engine",
-          "symbol": "ProgramObservationAdmission",
-          "uses": 2,
-          "class": "admission"
-        },
-        {
-          "package": "github.com/wippyai/go-lua/analysis/engine",
-          "symbol": "RuleSlotCapability",
-          "uses": 2,
-          "class": "declaration"
-        },
-        {
-          "package": "github.com/wippyai/go-lua/analysis/engine",
-          "symbol": "SolveFailure",
-          "uses": 2,
-          "class": "result"
-        },
-        {
-          "package": "github.com/wippyai/go-lua/analysis/engine",
-          "symbol": "SummaryQueryImplementation",
-          "uses": 1,
-          "class": "query"
-        }
-      ],
-      "target": {
-        "kind": "gap",
-        "package": "",
-        "relation": "observation/branch-condition",
-        "column": "",
-        "note": "the query/observation plane carries no binding family and no law requiring one"
-      },
-      "gap": "G3-query-plane-unbound"
-    },
-    {
-      "path": "domain/composite/queries.go",
-      "manifest_entry": "",
-      "reads": [
-        {
-          "package": "github.com/wippyai/go-lua/analysis/engine",
-          "symbol": "SchemaBinding",
-          "uses": 1,
-          "class": "declaration"
-        },
-        {
-          "package": "github.com/wippyai/go-lua/analysis/engine",
-          "symbol": "SchemaBuilder",
-          "uses": 1,
-          "class": "declaration"
-        }
-      ],
-      "target": {
-        "kind": "gap",
-        "package": "",
-        "relation": "query/query-site",
-        "column": "",
-        "note": "the query/observation plane carries no binding family and no law requiring one"
-      },
-      "gap": "G3-query-plane-unbound"
-    },
-    {
-      "path": "domain/composite/query_sites.go",
-      "manifest_entry": "",
-      "reads": [
-        {
-          "package": "github.com/wippyai/go-lua/analysis/engine",
-          "symbol": "Answer",
-          "uses": 2,
-          "class": "query"
-        },
-        {
-          "package": "github.com/wippyai/go-lua/analysis/engine",
-          "symbol": "CanonicalResultCell",
-          "uses": 3,
-          "class": "result"
-        },
-        {
-          "package": "github.com/wippyai/go-lua/analysis/engine",
-          "symbol": "CanonicalResultContract",
-          "uses": 3,
-          "class": "result"
-        },
-        {
-          "package": "github.com/wippyai/go-lua/analysis/engine",
-          "symbol": "CommittedProgram",
-          "uses": 1,
-          "class": "admission"
-        },
-        {
-          "package": "github.com/wippyai/go-lua/analysis/engine",
-          "symbol": "NewCanonicalResultCell",
-          "uses": 1,
-          "class": "result"
-        },
-        {
-          "package": "github.com/wippyai/go-lua/analysis/engine",
-          "symbol": "ProgramQueryAdmission",
-          "uses": 2,
-          "class": "admission"
-        }
-      ],
-      "target": {
-        "kind": "gap",
-        "package": "",
-        "relation": "query/query-site",
-        "column": "",
-        "note": "the query/observation plane carries no binding family and no law requiring one"
-      },
-      "gap": "G3-query-plane-unbound"
-    },
-    {
-      "path": "domain/composite/query_table.go",
-      "manifest_entry": "",
-      "reads": [
-        {
-          "package": "github.com/wippyai/go-lua/analysis/engine",
-          "symbol": "NewExactQueryAdmission",
-          "uses": 1,
-          "class": "admission"
-        },
-        {
-          "package": "github.com/wippyai/go-lua/analysis/engine",
-          "symbol": "NewHeterogeneousQueryAdmission",
-          "uses": 1,
-          "class": "admission"
-        },
-        {
-          "package": "github.com/wippyai/go-lua/analysis/engine",
-          "symbol": "NewSummaryQueryAdmission",
-          "uses": 1,
-          "class": "admission"
-        }
-      ],
-      "target": {
-        "kind": "gap",
-        "package": "",
-        "relation": "query/query-site",
-        "column": "",
-        "note": "the query/observation plane carries no binding family and no law requiring one"
-      },
-      "gap": "G3-query-plane-unbound"
-    },
-    {
-      "path": "domain/composite/query_wire.go",
-      "manifest_entry": "",
-      "reads": [
-        {
-          "package": "github.com/wippyai/go-lua/analysis/engine",
-          "symbol": "Answer",
-          "uses": 8,
-          "class": "query"
-        },
-        {
-          "package": "github.com/wippyai/go-lua/analysis/engine",
-          "symbol": "AnswerValue",
-          "uses": 1,
-          "class": "query"
-        },
-        {
-          "package": "github.com/wippyai/go-lua/analysis/engine",
-          "symbol": "CanonicalResultContract",
-          "uses": 1,
-          "class": "result"
-        },
-        {
-          "package": "github.com/wippyai/go-lua/analysis/engine",
-          "symbol": "NewCanonicalResultContract",
-          "uses": 1,
-          "class": "result"
-        },
-        {
-          "package": "github.com/wippyai/go-lua/analysis/engine",
-          "symbol": "ProgramQueryAdmission",
-          "uses": 11,
-          "class": "admission"
-        },
-        {
-          "package": "github.com/wippyai/go-lua/analysis/engine",
-          "symbol": "SchemaBinding",
-          "uses": 18,
-          "class": "declaration"
-        },
-        {
-          "package": "github.com/wippyai/go-lua/analysis/engine",
-          "symbol": "SchemaBuilder",
-          "uses": 6,
-          "class": "declaration"
-        }
-      ],
-      "target": {
-        "kind": "gap",
-        "package": "",
-        "relation": "query/query-site",
-        "column": "",
-        "note": "the query/observation plane carries no binding family and no law requiring one"
-      },
-      "gap": "G3-query-plane-unbound"
-    },
-    {
-      "path": "domain/composite/rule_admission.go",
-      "manifest_entry": "",
-      "reads": [
-        {
-          "package": "github.com/wippyai/go-lua/analysis/engine",
-          "symbol": "LinkRuleAdmission",
-          "uses": 3,
-          "class": "admission"
-        },
-        {
-          "package": "github.com/wippyai/go-lua/analysis/engine",
-          "symbol": "MountedActivationAdmit",
-          "uses": 2,
-          "class": "admission"
-        },
-        {
-          "package": "github.com/wippyai/go-lua/analysis/engine",
-          "symbol": "MountedPointRuleAdmission",
-          "uses": 3,
-          "class": "admission"
-        },
-        {
-          "package": "github.com/wippyai/go-lua/analysis/engine",
-          "symbol": "MountedRuleAdmission",
-          "uses": 3,
-          "class": "admission"
-        },
-        {
-          "package": "github.com/wippyai/go-lua/analysis/engine",
-          "symbol": "ProgramBootstrapCatalog",
-          "uses": 3,
-          "class": "admission"
-        }
-      ],
-      "target": {
-        "kind": "gap",
-        "package": "",
-        "relation": "query/query-site",
-        "column": "",
-        "note": "the query/observation plane carries no binding family and no law requiring one"
-      },
-      "gap": "G3-query-plane-unbound"
-    },
-    {
-      "path": "domain/composite/send_safety_collect.go",
-      "manifest_entry": "",
-      "reads": [
-        {
-          "package": "github.com/wippyai/go-lua/analysis/engine",
-          "symbol": "Answer",
-          "uses": 2,
-          "class": "query"
-        },
-        {
-          "package": "github.com/wippyai/go-lua/analysis/engine",
-          "symbol": "AnswerValue",
-          "uses": 1,
-          "class": "query"
-        }
-      ],
-      "target": {
-        "kind": "gap",
-        "package": "",
-        "relation": "query/query-site",
-        "column": "",
-        "note": "the query/observation plane carries no binding family and no law requiring one"
-      },
-      "gap": "G3-query-plane-unbound"
-    },
-    {
-      "path": "domain/composite/send_safety_observation.go",
-      "manifest_entry": "",
-      "reads": [
-        {
-          "package": "github.com/wippyai/go-lua/analysis/engine",
-          "symbol": "ProgramObservationAdmission",
-          "uses": 5,
-          "class": "admission"
-        }
-      ],
-      "target": {
-        "kind": "gap",
-        "package": "",
-        "relation": "query/query-site",
-        "column": "",
-        "note": "the query/observation plane carries no binding family and no law requiring one"
-      },
-      "gap": "G3-query-plane-unbound"
-    },
-    {
-      "path": "domain/composite/zz_luna_probe.go",
-      "manifest_entry": "",
-      "reads": [
-        {
-          "package": "github.com/wippyai/go-lua/analysis/engine",
-          "symbol": "NewSchema",
-          "uses": 1,
-          "class": "declaration"
-        }
-      ],
-      "target": {
-        "kind": "gap",
-        "package": "",
-        "relation": "query/query-site",
-        "column": "",
-        "note": "the query/observation plane carries no binding family and no law requiring one"
-      },
-      "gap": "G3-query-plane-unbound"
-    },
-    {
-      "path": "domain/effect/callsite/body/family.go",
-      "manifest_entry": "",
-      "reads": [
-        {
-          "package": "github.com/wippyai/go-lua/analysis/engine",
-          "symbol": "BindRuleFamily",
-          "uses": 1,
-          "class": "declaration"
-        },
-        {
-          "package": "github.com/wippyai/go-lua/analysis/engine",
-          "symbol": "GeneratedRuleSlot",
-          "uses": 1,
-          "class": "declaration"
-        },
-        {
-          "package": "github.com/wippyai/go-lua/analysis/engine",
-          "symbol": "SchemaBinding",
-          "uses": 1,
-          "class": "declaration"
-        }
-      ],
-      "target": {
-        "kind": "gap",
-        "package": "",
-        "relation": "effect/callsite/body",
-        "column": "",
-        "note": "the compiling rule declaration carries no binding corpus family"
-      },
-      "gap": "G1-rule-family-unbound"
-    },
-    {
-      "path": "domain/effect/callsite/fold.go",
-      "manifest_entry": "",
-      "reads": [
-        {
-          "package": "github.com/wippyai/go-lua/analysis/engine/operand",
-          "symbol": "SelectedCell",
-          "uses": 1,
-          "class": "row-abi"
-        }
-      ],
-      "target": {
-        "kind": "gap",
-        "package": "",
-        "relation": "query/effect-exact",
-        "column": "",
-        "note": "the query/observation plane carries no binding family and no law requiring one"
-      },
-      "gap": "G3-query-plane-unbound"
-    },
-    {
-      "path": "domain/effect/callsite/mounted_site.go",
-      "manifest_entry": "",
-      "reads": [
-        {
-          "package": "github.com/wippyai/go-lua/analysis/engine",
-          "symbol": "SchemaBinding",
-          "uses": 3,
-          "class": "declaration"
-        }
-      ],
-      "target": {
-        "kind": "gap",
-        "package": "",
-        "relation": "query/effect-exact",
-        "column": "",
-        "note": "the query/observation plane carries no binding family and no law requiring one"
-      },
-      "gap": "G3-query-plane-unbound"
-    },
-    {
-      "path": "domain/effect/callsite/occurrence.go",
-      "manifest_entry": "",
-      "reads": [
-        {
-          "package": "github.com/wippyai/go-lua/analysis/engine",
-          "symbol": "CommittedProgram",
-          "uses": 2,
-          "class": "admission"
-        },
-        {
-          "package": "github.com/wippyai/go-lua/analysis/engine",
-          "symbol": "ProgramCallStage",
-          "uses": 6,
-          "class": "admission"
-        },
-        {
-          "package": "github.com/wippyai/go-lua/analysis/engine",
-          "symbol": "RuleSlotCapability",
-          "uses": 2,
-          "class": "declaration"
-        },
-        {
-          "package": "github.com/wippyai/go-lua/analysis/engine",
-          "symbol": "SchemaBinding",
-          "uses": 2,
-          "class": "declaration"
-        }
-      ],
-      "target": {
-        "kind": "gap",
-        "package": "",
-        "relation": "query/effect-exact",
-        "column": "",
-        "note": "the query/observation plane carries no binding family and no law requiring one"
-      },
-      "gap": "G3-query-plane-unbound"
-    },
-    {
-      "path": "domain/effect/callsite/opaque/family.go",
-      "manifest_entry": "",
-      "reads": [
-        {
-          "package": "github.com/wippyai/go-lua/analysis/engine",
-          "symbol": "BindRuleFamily",
-          "uses": 1,
-          "class": "declaration"
-        },
-        {
-          "package": "github.com/wippyai/go-lua/analysis/engine",
-          "symbol": "GeneratedRuleSlot",
-          "uses": 1,
-          "class": "declaration"
-        },
-        {
-          "package": "github.com/wippyai/go-lua/analysis/engine",
-          "symbol": "SchemaBinding",
-          "uses": 1,
-          "class": "declaration"
-        }
-      ],
-      "target": {
-        "kind": "declared-surface",
-        "package": "github.com/wippyai/go-lua/analysis/schema/rule/relcompile",
-        "relation": "EffectOpaqueCallSite",
-        "column": "",
-        "note": "the declaration lowers into the canonical ExecutionSchema"
-      },
-      "gap": ""
-    },
-    {
-      "path": "domain/effect/callsite/publication_transition.go",
-      "manifest_entry": "",
-      "reads": [
-        {
-          "package": "github.com/wippyai/go-lua/analysis/engine",
-          "symbol": "CommittedProgram",
-          "uses": 1,
-          "class": "admission"
-        },
-        {
-          "package": "github.com/wippyai/go-lua/analysis/engine",
-          "symbol": "ExactQueryImplementation",
-          "uses": 1,
-          "class": "query"
-        },
-        {
-          "package": "github.com/wippyai/go-lua/analysis/engine",
-          "symbol": "NewExactObservationAdmission",
-          "uses": 1,
-          "class": "admission"
-        },
-        {
-          "package": "github.com/wippyai/go-lua/analysis/engine",
-          "symbol": "ProgramObservationAdmission",
-          "uses": 5,
-          "class": "admission"
-        },
-        {
-          "package": "github.com/wippyai/go-lua/analysis/engine",
-          "symbol": "RuleSlotCapability",
-          "uses": 1,
-          "class": "declaration"
-        },
-        {
-          "package": "github.com/wippyai/go-lua/analysis/engine",
-          "symbol": "SchemaBinding",
-          "uses": 1,
-          "class": "declaration"
-        }
-      ],
-      "target": {
-        "kind": "gap",
-        "package": "",
-        "relation": "query/effect-exact",
-        "column": "",
-        "note": "the query/observation plane carries no binding family and no law requiring one"
-      },
-      "gap": "G3-query-plane-unbound"
-    },
-    {
-      "path": "domain/effect/callsite/selected/family.go",
-      "manifest_entry": "",
-      "reads": [
-        {
-          "package": "github.com/wippyai/go-lua/analysis/engine",
-          "symbol": "BindRuleFamily",
-          "uses": 1,
-          "class": "declaration"
-        },
-        {
-          "package": "github.com/wippyai/go-lua/analysis/engine",
-          "symbol": "GeneratedRuleSlot",
-          "uses": 1,
-          "class": "declaration"
-        },
-        {
-          "package": "github.com/wippyai/go-lua/analysis/engine",
-          "symbol": "SchemaBinding",
-          "uses": 1,
-          "class": "declaration"
-        }
-      ],
-      "target": {
-        "kind": "declared-surface",
-        "package": "github.com/wippyai/go-lua/analysis/schema/rule/relcompile",
-        "relation": "EffectSelectedCallSite",
-        "column": "",
-        "note": "the declaration lowers into the canonical ExecutionSchema"
-      },
-      "gap": ""
-    },
-    {
-      "path": "domain/effect/owner/query.go",
-      "manifest_entry": "S4-fragment-consumers",
-      "reads": [
-        {
-          "package": "github.com/wippyai/go-lua/analysis/engine",
-          "symbol": "ExactQueryImplementation",
-          "uses": 1,
-          "class": "query"
-        },
-        {
-          "package": "github.com/wippyai/go-lua/analysis/engine",
-          "symbol": "ExactQueryImplementationAt",
-          "uses": 1,
-          "class": "query"
-        },
-        {
-          "package": "github.com/wippyai/go-lua/analysis/engine",
-          "symbol": "FrozenResult",
-          "uses": 1,
-          "class": "result"
-        },
-        {
-          "package": "github.com/wippyai/go-lua/analysis/engine",
-          "symbol": "HotExactQuerySpec",
-          "uses": 2,
-          "class": "query"
-        },
-        {
-          "package": "github.com/wippyai/go-lua/analysis/engine",
-          "symbol": "NewQuerySlot",
-          "uses": 1,
-          "class": "query"
-        },
-        {
-          "package": "github.com/wippyai/go-lua/analysis/engine",
-          "symbol": "OrderedCells",
-          "uses": 2,
-          "class": "query"
-        },
-        {
-          "package": "github.com/wippyai/go-lua/analysis/engine",
-          "symbol": "QueryFold",
-          "uses": 1,
-          "class": "query"
-        },
-        {
-          "package": "github.com/wippyai/go-lua/analysis/engine",
-          "symbol": "QuerySlot",
-          "uses": 1,
-          "class": "query"
-        },
-        {
-          "package": "github.com/wippyai/go-lua/analysis/engine",
-          "symbol": "SchemaBinding",
-          "uses": 2,
-          "class": "declaration"
-        },
-        {
-          "package": "github.com/wippyai/go-lua/analysis/engine",
-          "symbol": "SchemaBuilder",
-          "uses": 1,
-          "class": "declaration"
-        },
-        {
-          "package": "github.com/wippyai/go-lua/analysis/engine",
-          "symbol": "SchemaQueryRead",
-          "uses": 1,
-          "class": "query"
-        },
-        {
-          "package": "github.com/wippyai/go-lua/analysis/engine",
-          "symbol": "SchemaQuerySpec",
-          "uses": 1,
-          "class": "query"
-        },
-        {
-          "package": "github.com/wippyai/go-lua/analysis/engine",
-          "symbol": "SchemaReadForm",
-          "uses": 1,
-          "class": "query"
-        }
-      ],
-      "target": {
-        "kind": "gap",
-        "package": "",
-        "relation": "query/effect-exact",
-        "column": "",
-        "note": "the query/observation plane carries no binding family and no law requiring one"
-      },
-      "gap": "G3-query-plane-unbound"
-    },
-    {
-      "path": "domain/heap/allocation/closed/family_binding.go",
-      "manifest_entry": "",
-      "reads": [
-        {
-          "package": "github.com/wippyai/go-lua/analysis/engine",
-          "symbol": "BindRuleFamily",
-          "uses": 1,
-          "class": "declaration"
-        },
-        {
-          "package": "github.com/wippyai/go-lua/analysis/engine",
-          "symbol": "GeneratedRuleSlot",
-          "uses": 1,
-          "class": "declaration"
-        },
-        {
-          "package": "github.com/wippyai/go-lua/analysis/engine",
-          "symbol": "SchemaBinding",
-          "uses": 1,
-          "class": "declaration"
-        }
-      ],
-      "target": {
-        "kind": "declared-surface",
-        "package": "github.com/wippyai/go-lua/analysis/schema/rule/relcompile",
-        "relation": "HeapAscent",
-        "column": "",
-        "note": "the declaration lowers into the canonical ExecutionSchema"
-      },
-      "gap": ""
-    },
-    {
-      "path": "domain/heap/allocation/closed/rule.go",
-      "manifest_entry": "",
-      "reads": [
-        {
-          "package": "github.com/wippyai/go-lua/analysis/engine/operand",
-          "symbol": "SummaryVector",
-          "uses": 1,
-          "class": "row-abi"
-        }
-      ],
-      "target": {
-        "kind": "row-abi",
-        "package": "github.com/wippyai/go-lua/analysis/schema/rule/relbindgen",
-        "relation": "HeapAscent",
-        "column": "",
-        "note": "the rule body runs against the emitted binding operation"
-      },
-      "gap": ""
-    },
-    {
-      "path": "domain/heap/allocation/empty/family_binding.go",
-      "manifest_entry": "",
-      "reads": [
-        {
-          "package": "github.com/wippyai/go-lua/analysis/engine",
-          "symbol": "BindRuleFamily",
-          "uses": 1,
-          "class": "declaration"
-        },
-        {
-          "package": "github.com/wippyai/go-lua/analysis/engine",
-          "symbol": "GeneratedRuleSlot",
-          "uses": 1,
-          "class": "declaration"
-        },
-        {
-          "package": "github.com/wippyai/go-lua/analysis/engine",
-          "symbol": "SchemaBinding",
-          "uses": 1,
-          "class": "declaration"
-        }
-      ],
-      "target": {
-        "kind": "declared-surface",
-        "package": "github.com/wippyai/go-lua/analysis/schema/rule/relcompile",
-        "relation": "HeapEmptyAllocation",
-        "column": "",
-        "note": "the declaration lowers into the canonical ExecutionSchema"
-      },
-      "gap": ""
-    },
-    {
-      "path": "domain/heap/formalfreeze/bind.go",
-      "manifest_entry": "",
-      "reads": [
-        {
-          "package": "github.com/wippyai/go-lua/analysis/engine",
-          "symbol": "BindRuleFamily",
-          "uses": 1,
-          "class": "declaration"
-        },
-        {
-          "package": "github.com/wippyai/go-lua/analysis/engine",
-          "symbol": "GeneratedRuleSlot",
-          "uses": 1,
-          "class": "declaration"
-        },
-        {
-          "package": "github.com/wippyai/go-lua/analysis/engine",
-          "symbol": "SchemaBinding",
-          "uses": 1,
-          "class": "declaration"
-        }
-      ],
-      "target": {
-        "kind": "gap",
-        "package": "",
-        "relation": "heap/formalfreeze",
-        "column": "",
-        "note": "the compiling rule declaration carries no binding corpus family"
-      },
-      "gap": "G1-rule-family-unbound"
-    },
-    {
-      "path": "domain/heap/formalfreeze/core.go",
-      "manifest_entry": "",
-      "reads": [
-        {
-          "package": "github.com/wippyai/go-lua/analysis/engine/operand",
-          "symbol": "SummaryVector",
-          "uses": 1,
-          "class": "row-abi"
-        }
-      ],
-      "target": {
-        "kind": "gap",
-        "package": "",
-        "relation": "heap/formalfreeze",
-        "column": "",
-        "note": "the compiling rule declaration carries no binding corpus family"
-      },
-      "gap": "G1-rule-family-unbound"
-    },
-    {
-      "path": "domain/heap/formalfreeze/routes.go",
-      "manifest_entry": "",
-      "reads": [
-        {
-          "package": "github.com/wippyai/go-lua/analysis/engine/operand",
-          "symbol": "SummaryVector",
-          "uses": 1,
-          "class": "row-abi"
-        }
-      ],
-      "target": {
-        "kind": "gap",
-        "package": "",
-        "relation": "heap/formalfreeze",
-        "column": "",
-        "note": "the compiling rule declaration carries no binding corpus family"
-      },
-      "gap": "G1-rule-family-unbound"
-    },
-    {
-      "path": "domain/heap/index/raw_get_routes.go",
-      "manifest_entry": "",
-      "reads": [
-        {
-          "package": "github.com/wippyai/go-lua/analysis/engine",
-          "symbol": "SelectorContext",
-          "uses": 4,
-          "class": "query"
-        },
-        {
-          "package": "github.com/wippyai/go-lua/analysis/engine",
-          "symbol": "SelectorRead",
-          "uses": 2,
-          "class": "query"
-        },
-        {
-          "package": "github.com/wippyai/go-lua/analysis/engine",
-          "symbol": "SelectorSelectionAt",
-          "uses": 2,
-          "class": "query"
-        },
-        {
-          "package": "github.com/wippyai/go-lua/analysis/engine",
-          "symbol": "SelectorSelectionCount",
-          "uses": 2,
-          "class": "query"
-        }
-      ],
-      "target": {
-        "kind": "gap",
-        "package": "",
-        "relation": "heap/index",
-        "column": "",
-        "note": "the raw-get/raw-set result and pack-route families are declared Pending"
-      },
-      "gap": "G2-binding-pending"
-    },
-    {
-      "path": "domain/heap/index/raw_get_rule.go",
-      "manifest_entry": "",
-      "reads": [
-        {
-          "package": "github.com/wippyai/go-lua/analysis/engine",
-          "symbol": "OrderedCells",
-          "uses": 8,
-          "class": "query"
-        },
-        {
-          "package": "github.com/wippyai/go-lua/analysis/engine",
-          "symbol": "Read",
-          "uses": 7,
-          "class": "query"
-        },
-        {
-          "package": "github.com/wippyai/go-lua/analysis/engine",
-          "symbol": "Selection",
-          "uses": 6,
-          "class": "query"
-        },
-        {
-          "package": "github.com/wippyai/go-lua/analysis/engine",
-          "symbol": "SelectorContext",
-          "uses": 11,
-          "class": "query"
-        },
-        {
-          "package": "github.com/wippyai/go-lua/analysis/engine",
-          "symbol": "SelectorRead",
-          "uses": 2,
-          "class": "query"
-        },
-        {
-          "package": "github.com/wippyai/go-lua/analysis/engine",
-          "symbol": "SelectorSelectionAt",
-          "uses": 2,
-          "class": "query"
-        },
-        {
-          "package": "github.com/wippyai/go-lua/analysis/engine",
-          "symbol": "SelectorSelectionCount",
-          "uses": 1,
-          "class": "query"
-        }
-      ],
-      "target": {
-        "kind": "gap",
-        "package": "",
-        "relation": "heap/index",
-        "column": "",
-        "note": "the raw-get/raw-set result and pack-route families are declared Pending"
-      },
-      "gap": "G2-binding-pending"
-    },
-    {
-      "path": "domain/heap/index/raw_get_transfer.go",
-      "manifest_entry": "",
-      "reads": [
-        {
-          "package": "github.com/wippyai/go-lua/analysis/engine",
-          "symbol": "Frame",
-          "uses": 5,
-          "class": "declaration"
-        },
-        {
-          "package": "github.com/wippyai/go-lua/analysis/engine",
-          "symbol": "NoCandidate",
-          "uses": 2,
-          "class": "query"
-        },
-        {
-          "package": "github.com/wippyai/go-lua/analysis/engine",
-          "symbol": "Operand",
-          "uses": 1,
-          "class": "declaration"
-        },
-        {
-          "package": "github.com/wippyai/go-lua/analysis/engine",
-          "symbol": "OrderedCells",
-          "uses": 12,
-          "class": "query"
-        },
-        {
-          "package": "github.com/wippyai/go-lua/analysis/engine",
-          "symbol": "ReadValue",
-          "uses": 6,
-          "class": "query"
-        },
-        {
-          "package": "github.com/wippyai/go-lua/analysis/engine",
-          "symbol": "RuleResult",
-          "uses": 7,
-          "class": "query"
-        },
-        {
-          "package": "github.com/wippyai/go-lua/analysis/engine",
-          "symbol": "Selection",
-          "uses": 12,
-          "class": "query"
-        },
-        {
-          "package": "github.com/wippyai/go-lua/analysis/engine",
-          "symbol": "SelectionAt",
-          "uses": 2,
-          "class": "query"
-        },
-        {
-          "package": "github.com/wippyai/go-lua/analysis/engine",
-          "symbol": "SelectionCount",
-          "uses": 11,
-          "class": "query"
-        },
-        {
-          "package": "github.com/wippyai/go-lua/analysis/engine",
-          "symbol": "Staged",
-          "uses": 1,
-          "class": "admission"
-        }
-      ],
-      "target": {
-        "kind": "gap",
-        "package": "",
-        "relation": "heap/index",
-        "column": "",
-        "note": "the raw-get/raw-set result and pack-route families are declared Pending"
-      },
-      "gap": "G2-binding-pending"
-    },
-    {
-      "path": "domain/heap/index/raw_set_routes.go",
-      "manifest_entry": "",
-      "reads": [
-        {
-          "package": "github.com/wippyai/go-lua/analysis/engine",
-          "symbol": "OrderedCells",
-          "uses": 1,
-          "class": "query"
-        },
-        {
-          "package": "github.com/wippyai/go-lua/analysis/engine",
-          "symbol": "Selection",
-          "uses": 1,
-          "class": "query"
-        },
-        {
-          "package": "github.com/wippyai/go-lua/analysis/engine",
-          "symbol": "SelectorContext",
-          "uses": 3,
-          "class": "query"
-        },
-        {
-          "package": "github.com/wippyai/go-lua/analysis/engine",
-          "symbol": "SelectorRead",
-          "uses": 2,
-          "class": "query"
-        },
-        {
-          "package": "github.com/wippyai/go-lua/analysis/engine",
-          "symbol": "SelectorSelectionAt",
-          "uses": 1,
-          "class": "query"
-        },
-        {
-          "package": "github.com/wippyai/go-lua/analysis/engine",
-          "symbol": "SelectorSelectionCount",
-          "uses": 2,
-          "class": "query"
-        }
-      ],
-      "target": {
-        "kind": "gap",
-        "package": "",
-        "relation": "heap/index",
-        "column": "",
-        "note": "the raw-get/raw-set result and pack-route families are declared Pending"
-      },
-      "gap": "G2-binding-pending"
-    },
-    {
-      "path": "domain/heap/index/raw_set_transfer.go",
-      "manifest_entry": "",
-      "reads": [
-        {
-          "package": "github.com/wippyai/go-lua/analysis/engine",
-          "symbol": "Frame",
-          "uses": 2,
-          "class": "declaration"
-        },
-        {
-          "package": "github.com/wippyai/go-lua/analysis/engine",
-          "symbol": "NoSelection",
-          "uses": 1,
-          "class": "query"
-        },
-        {
-          "package": "github.com/wippyai/go-lua/analysis/engine",
-          "symbol": "Operand",
-          "uses": 1,
-          "class": "declaration"
-        },
-        {
-          "package": "github.com/wippyai/go-lua/analysis/engine",
-          "symbol": "OrderedCells",
-          "uses": 5,
-          "class": "query"
-        },
-        {
-          "package": "github.com/wippyai/go-lua/analysis/engine",
-          "symbol": "ReadValue",
-          "uses": 5,
-          "class": "query"
-        },
-        {
-          "package": "github.com/wippyai/go-lua/analysis/engine",
-          "symbol": "Routed",
-          "uses": 1,
-          "class": "admission"
-        },
-        {
-          "package": "github.com/wippyai/go-lua/analysis/engine",
-          "symbol": "RuleResult",
-          "uses": 9,
-          "class": "query"
-        },
-        {
-          "package": "github.com/wippyai/go-lua/analysis/engine",
-          "symbol": "Selection",
-          "uses": 4,
-          "class": "query"
-        },
-        {
-          "package": "github.com/wippyai/go-lua/analysis/engine",
-          "symbol": "SelectionCount",
-          "uses": 4,
-          "class": "query"
-        }
-      ],
-      "target": {
-        "kind": "gap",
-        "package": "",
-        "relation": "heap/index",
-        "column": "",
-        "note": "the raw-get/raw-set result and pack-route families are declared Pending"
-      },
-      "gap": "G2-binding-pending"
-    },
-    {
-      "path": "domain/heap/publicationfreeze/family.go",
-      "manifest_entry": "",
-      "reads": [
-        {
-          "package": "github.com/wippyai/go-lua/analysis/engine",
-          "symbol": "BindRuleFamily",
-          "uses": 1,
-          "class": "declaration"
-        },
-        {
-          "package": "github.com/wippyai/go-lua/analysis/engine",
-          "symbol": "GeneratedRuleSlot",
-          "uses": 1,
-          "class": "declaration"
-        },
-        {
-          "package": "github.com/wippyai/go-lua/analysis/engine",
-          "symbol": "SchemaBinding",
-          "uses": 1,
-          "class": "declaration"
-        }
-      ],
-      "target": {
-        "kind": "gap",
-        "package": "",
-        "relation": "heap/publicationfreeze",
-        "column": "",
-        "note": "the compiling rule declaration carries no binding corpus family"
-      },
-      "gap": "G1-rule-family-unbound"
-    },
-    {
-      "path": "domain/heap/publicationfreeze/routes.go",
-      "manifest_entry": "",
-      "reads": [
-        {
-          "package": "github.com/wippyai/go-lua/analysis/engine/operand",
-          "symbol": "SummaryVector",
-          "uses": 2,
-          "class": "row-abi"
-        }
-      ],
-      "target": {
-        "kind": "gap",
-        "package": "",
-        "relation": "heap/publicationfreeze",
-        "column": "",
-        "note": "the compiling rule declaration carries no binding corpus family"
-      },
-      "gap": "G1-rule-family-unbound"
-    },
-    {
-      "path": "domain/placement/capture/core.go",
-      "manifest_entry": "",
-      "reads": [
-        {
-          "package": "github.com/wippyai/go-lua/analysis/engine",
-          "symbol": "OrderedCells",
-          "uses": 1,
-          "class": "query"
-        }
-      ],
-      "target": {
-        "kind": "gap",
-        "package": "",
-        "relation": "placement/capture",
-        "column": "",
-        "note": "the compiling rule declaration carries no binding corpus family"
-      },
-      "gap": "G1-rule-family-unbound"
-    },
-    {
-      "path": "domain/placement/containment/routes.go",
-      "manifest_entry": "",
-      "reads": [
-        {
-          "package": "github.com/wippyai/go-lua/analysis/engine",
-          "symbol": "OrderedCells",
-          "uses": 2,
-          "class": "query"
-        }
-      ],
-      "target": {
-        "kind": "gap",
-        "package": "",
-        "relation": "placement/containment",
-        "column": "",
-        "note": "the compiling rule declaration carries no binding corpus family"
-      },
-      "gap": "G1-rule-family-unbound"
-    },
-    {
-      "path": "domain/placement/formal/bind.go",
-      "manifest_entry": "",
-      "reads": [
-        {
-          "package": "github.com/wippyai/go-lua/analysis/engine",
-          "symbol": "BindRuleFamily",
-          "uses": 1,
-          "class": "declaration"
-        },
-        {
-          "package": "github.com/wippyai/go-lua/analysis/engine",
-          "symbol": "GeneratedRuleSlot",
-          "uses": 1,
-          "class": "declaration"
-        },
-        {
-          "package": "github.com/wippyai/go-lua/analysis/engine",
-          "symbol": "SchemaBinding",
-          "uses": 1,
-          "class": "declaration"
-        }
-      ],
-      "target": {
-        "kind": "gap",
-        "package": "",
-        "relation": "placement/formal",
-        "column": "",
-        "note": "the compiling rule declaration carries no binding corpus family"
-      },
-      "gap": "G1-rule-family-unbound"
-    },
-    {
-      "path": "domain/placement/formal/core.go",
-      "manifest_entry": "",
-      "reads": [
-        {
-          "package": "github.com/wippyai/go-lua/analysis/engine/operand",
-          "symbol": "SummaryVector",
-          "uses": 4,
-          "class": "row-abi"
-        }
-      ],
-      "target": {
-        "kind": "gap",
-        "package": "",
-        "relation": "placement/formal",
-        "column": "",
-        "note": "the compiling rule declaration carries no binding corpus family"
-      },
-      "gap": "G1-rule-family-unbound"
-    },
-    {
-      "path": "domain/placement/formal/routes.go",
-      "manifest_entry": "",
-      "reads": [
-        {
-          "package": "github.com/wippyai/go-lua/analysis/engine/operand",
-          "symbol": "SummaryVector",
-          "uses": 1,
-          "class": "row-abi"
-        }
-      ],
-      "target": {
-        "kind": "gap",
-        "package": "",
-        "relation": "placement/formal",
-        "column": "",
-        "note": "the compiling rule declaration carries no binding corpus family"
-      },
-      "gap": "G1-rule-family-unbound"
-    },
-    {
-      "path": "domain/placement/observation.go",
-      "manifest_entry": "",
-      "reads": [
-        {
-          "package": "github.com/wippyai/go-lua/analysis/engine",
-          "symbol": "OrderedCells",
-          "uses": 1,
-          "class": "query"
-        }
-      ],
-      "target": {
-        "kind": "gap",
-        "package": "",
-        "relation": "query/placement-summary",
-        "column": "",
-        "note": "the query/observation plane carries no binding family and no law requiring one"
-      },
-      "gap": "G3-query-plane-unbound"
-    },
-    {
-      "path": "domain/placement/publicationescape/core.go",
-      "manifest_entry": "",
-      "reads": [
-        {
-          "package": "github.com/wippyai/go-lua/analysis/engine",
-          "symbol": "Frame",
-          "uses": 2,
-          "class": "declaration"
-        },
-        {
-          "package": "github.com/wippyai/go-lua/analysis/engine",
-          "symbol": "OrderedCells",
-          "uses": 2,
-          "class": "query"
-        },
-        {
-          "package": "github.com/wippyai/go-lua/analysis/engine",
-          "symbol": "ReadValue",
-          "uses": 1,
-          "class": "query"
-        },
-        {
-          "package": "github.com/wippyai/go-lua/analysis/engine",
-          "symbol": "Selection",
-          "uses": 2,
-          "class": "query"
-        },
-        {
-          "package": "github.com/wippyai/go-lua/analysis/engine",
-          "symbol": "SelectionAt",
-          "uses": 1,
-          "class": "query"
-        },
-        {
-          "package": "github.com/wippyai/go-lua/analysis/engine",
-          "symbol": "SelectionCount",
-          "uses": 1,
-          "class": "query"
-        },
-        {
-          "package": "github.com/wippyai/go-lua/analysis/engine",
-          "symbol": "SelectorContext",
-          "uses": 3,
-          "class": "query"
-        },
-        {
-          "package": "github.com/wippyai/go-lua/analysis/engine",
-          "symbol": "SelectorRead",
-          "uses": 1,
-          "class": "query"
-        },
-        {
-          "package": "github.com/wippyai/go-lua/analysis/engine",
-          "symbol": "SelectorSelectionAt",
-          "uses": 1,
-          "class": "query"
-        },
-        {
-          "package": "github.com/wippyai/go-lua/analysis/engine",
-          "symbol": "SelectorSelectionCount",
-          "uses": 1,
-          "class": "query"
-        }
-      ],
-      "target": {
-        "kind": "gap",
-        "package": "",
-        "relation": "placement/publicationescape",
-        "column": "",
-        "note": "the compiling rule declaration carries no binding corpus family"
-      },
-      "gap": "G1-rule-family-unbound"
-    },
-    {
-      "path": "domain/placement/query/query.go",
-      "manifest_entry": "S4-fragment-consumers",
-      "reads": [
-        {
-          "package": "github.com/wippyai/go-lua/analysis/engine",
-          "symbol": "Answer",
-          "uses": 1,
-          "class": "query"
-        },
-        {
-          "package": "github.com/wippyai/go-lua/analysis/engine",
-          "symbol": "AnswerValue",
-          "uses": 1,
-          "class": "query"
-        },
-        {
-          "package": "github.com/wippyai/go-lua/analysis/engine",
-          "symbol": "BindHeterogeneousQuery",
-          "uses": 1,
-          "class": "query"
-        },
-        {
-          "package": "github.com/wippyai/go-lua/analysis/engine",
-          "symbol": "FrozenResult",
-          "uses": 1,
-          "class": "result"
-        },
-        {
-          "package": "github.com/wippyai/go-lua/analysis/engine",
-          "symbol": "HeterogeneousQueryImplementation",
-          "uses": 1,
-          "class": "query"
-        },
-        {
-          "package": "github.com/wippyai/go-lua/analysis/engine",
-          "symbol": "HeterogeneousQueryImplementationAt",
-          "uses": 1,
-          "class": "query"
-        },
-        {
-          "package": "github.com/wippyai/go-lua/analysis/engine",
-          "symbol": "HeterogeneousQuerySpec",
-          "uses": 2,
-          "class": "query"
-        },
-        {
-          "package": "github.com/wippyai/go-lua/analysis/engine",
-          "symbol": "NewQuerySlot",
-          "uses": 1,
-          "class": "query"
-        },
-        {
-          "package": "github.com/wippyai/go-lua/analysis/engine",
-          "symbol": "NewSummaryQueryProjection",
-          "uses": 3,
-          "class": "query"
-        },
-        {
-          "package": "github.com/wippyai/go-lua/analysis/engine",
-          "symbol": "OrderedCells",
-          "uses": 3,
-          "class": "query"
-        },
-        {
-          "package": "github.com/wippyai/go-lua/analysis/engine",
-          "symbol": "QueryProjectionFold",
-          "uses": 3,
-          "class": "query"
-        },
-        {
-          "package": "github.com/wippyai/go-lua/analysis/engine",
-          "symbol": "QueryProjectionSpec",
-          "uses": 1,
-          "class": "query"
-        },
-        {
-          "package": "github.com/wippyai/go-lua/analysis/engine",
-          "symbol": "QuerySlot",
-          "uses": 1,
-          "class": "query"
-        },
-        {
-          "package": "github.com/wippyai/go-lua/analysis/engine",
-          "symbol": "SchemaBinding",
-          "uses": 2,
-          "class": "declaration"
-        },
-        {
-          "package": "github.com/wippyai/go-lua/analysis/engine",
-          "symbol": "SchemaBuilder",
-          "uses": 1,
-          "class": "declaration"
-        },
-        {
-          "package": "github.com/wippyai/go-lua/analysis/engine",
-          "symbol": "SchemaQueryRead",
-          "uses": 3,
-          "class": "query"
-        },
-        {
-          "package": "github.com/wippyai/go-lua/analysis/engine",
-          "symbol": "SchemaQuerySpec",
-          "uses": 1,
-          "class": "query"
-        },
-        {
-          "package": "github.com/wippyai/go-lua/analysis/engine",
-          "symbol": "SchemaReadForm",
-          "uses": 3,
-          "class": "query"
-        }
-      ],
-      "target": {
-        "kind": "gap",
-        "package": "",
-        "relation": "query/placement-summary",
-        "column": "",
-        "note": "the query/observation plane carries no binding family and no law requiring one"
-      },
-      "gap": "G3-query-plane-unbound"
-    },
-    {
-      "path": "domain/placement/returnescape/bind.go",
-      "manifest_entry": "",
-      "reads": [
-        {
-          "package": "github.com/wippyai/go-lua/analysis/engine",
-          "symbol": "BindRuleFamily",
-          "uses": 1,
-          "class": "declaration"
-        },
-        {
-          "package": "github.com/wippyai/go-lua/analysis/engine",
-          "symbol": "GeneratedRuleSlot",
-          "uses": 1,
-          "class": "declaration"
-        },
-        {
-          "package": "github.com/wippyai/go-lua/analysis/engine",
-          "symbol": "SchemaBinding",
-          "uses": 1,
-          "class": "declaration"
-        }
-      ],
-      "target": {
-        "kind": "gap",
-        "package": "",
-        "relation": "placement/returnescape",
-        "column": "",
-        "note": "the compiling rule declaration carries no binding corpus family"
-      },
-      "gap": "G1-rule-family-unbound"
-    },
-    {
-      "path": "domain/placement/returnescape/core.go",
-      "manifest_entry": "",
-      "reads": [
-        {
-          "package": "github.com/wippyai/go-lua/analysis/engine/operand",
-          "symbol": "SummaryVector",
-          "uses": 1,
-          "class": "row-abi"
-        }
-      ],
-      "target": {
-        "kind": "gap",
-        "package": "",
-        "relation": "placement/returnescape",
-        "column": "",
-        "note": "the compiling rule declaration carries no binding corpus family"
-      },
-      "gap": "G1-rule-family-unbound"
-    },
-    {
-      "path": "domain/placement/static_containment_depth.go",
-      "manifest_entry": "",
-      "reads": [
-        {
-          "package": "github.com/wippyai/go-lua/analysis/engine",
-          "symbol": "OrderedCells",
-          "uses": 4,
-          "class": "query"
-        }
-      ],
-      "target": {
-        "kind": "gap",
-        "package": "",
-        "relation": "query/placement-summary",
-        "column": "",
-        "note": "the query/observation plane carries no binding family and no law requiring one"
-      },
-      "gap": "G3-query-plane-unbound"
-    },
-    {
-      "path": "domain/placement/store/bind.go",
-      "manifest_entry": "",
-      "reads": [
-        {
-          "package": "github.com/wippyai/go-lua/analysis/engine",
-          "symbol": "BindRuleFamily",
-          "uses": 1,
-          "class": "declaration"
-        },
-        {
-          "package": "github.com/wippyai/go-lua/analysis/engine",
-          "symbol": "GeneratedRuleSlot",
-          "uses": 1,
-          "class": "declaration"
-        },
-        {
-          "package": "github.com/wippyai/go-lua/analysis/engine",
-          "symbol": "SchemaBinding",
-          "uses": 1,
-          "class": "declaration"
-        }
-      ],
-      "target": {
-        "kind": "gap",
-        "package": "",
-        "relation": "placement/store",
-        "column": "",
-        "note": "the compiling rule declaration carries no binding corpus family"
-      },
-      "gap": "G1-rule-family-unbound"
-    },
-    {
-      "path": "domain/placement/suspension/evidence_observation.go",
-      "manifest_entry": "",
-      "reads": [
-        {
-          "package": "github.com/wippyai/go-lua/analysis/engine",
-          "symbol": "OrderedCells",
-          "uses": 1,
-          "class": "query"
-        }
-      ],
-      "target": {
-        "kind": "gap",
-        "package": "",
-        "relation": "placement/suspension-evidence",
-        "column": "",
-        "note": "the compiling rule declaration carries no binding corpus family"
-      },
-      "gap": "G1-rule-family-unbound"
-    },
-    {
-      "path": "domain/placement/suspension/evidence_schema.go",
-      "manifest_entry": "",
-      "reads": [
-        {
-          "package": "github.com/wippyai/go-lua/analysis/engine",
-          "symbol": "FactorRef",
-          "uses": 1,
-          "class": "declaration"
-        },
-        {
-          "package": "github.com/wippyai/go-lua/analysis/engine",
-          "symbol": "NewRuleSlot",
-          "uses": 1,
-          "class": "declaration"
-        },
-        {
-          "package": "github.com/wippyai/go-lua/analysis/engine",
-          "symbol": "RuleSlot",
-          "uses": 2,
-          "class": "declaration"
-        },
-        {
-          "package": "github.com/wippyai/go-lua/analysis/engine",
-          "symbol": "SchemaBuilder",
-          "uses": 1,
-          "class": "declaration"
-        },
-        {
-          "package": "github.com/wippyai/go-lua/analysis/engine",
-          "symbol": "SchemaCarryFrom",
-          "uses": 1,
-          "class": "declaration"
-        },
-        {
-          "package": "github.com/wippyai/go-lua/analysis/engine",
-          "symbol": "SchemaCarrySlot",
-          "uses": 1,
-          "class": "declaration"
-        },
-        {
-          "package": "github.com/wippyai/go-lua/analysis/engine",
-          "symbol": "SchemaInput",
-          "uses": 1,
-          "class": "declaration"
-        },
-        {
-          "package": "github.com/wippyai/go-lua/analysis/engine",
-          "symbol": "SchemaRead",
-          "uses": 1,
-          "class": "query"
-        },
-        {
-          "package": "github.com/wippyai/go-lua/analysis/engine",
-          "symbol": "SchemaReadSlot",
-          "uses": 3,
-          "class": "query"
-        },
-        {
-          "package": "github.com/wippyai/go-lua/analysis/engine",
-          "symbol": "SchemaRouteWrite",
-          "uses": 1,
-          "class": "declaration"
-        },
-        {
-          "package": "github.com/wippyai/go-lua/analysis/engine",
-          "symbol": "SchemaRuleSpec",
-          "uses": 1,
-          "class": "declaration"
-        },
-        {
-          "package": "github.com/wippyai/go-lua/analysis/engine",
-          "symbol": "SchemaSelectedRead",
-          "uses": 2,
-          "class": "query"
-        },
-        {
-          "package": "github.com/wippyai/go-lua/analysis/engine",
-          "symbol": "SchemaWriteSlot",
-          "uses": 1,
-          "class": "declaration"
-        }
-      ],
-      "target": {
-        "kind": "gap",
-        "package": "",
-        "relation": "placement/suspension-evidence",
-        "column": "",
-        "note": "the compiling rule declaration carries no binding corpus family"
-      },
-      "gap": "G1-rule-family-unbound"
-    },
-    {
-      "path": "domain/placement/suspension/generated_relation_owner.go",
-      "manifest_entry": "",
-      "reads": [
-        {
-          "package": "github.com/wippyai/go-lua/analysis/engine/execution",
-          "symbol": "ExactRead",
-          "uses": 1,
-          "class": "row-abi"
-        },
-        {
-          "package": "github.com/wippyai/go-lua/analysis/engine/execution",
-          "symbol": "ForeignExactRead",
-          "uses": 1,
-          "class": "row-abi"
-        },
-        {
-          "package": "github.com/wippyai/go-lua/analysis/engine/execution",
-          "symbol": "ForeignFactor",
-          "uses": 2,
-          "class": "row-abi"
-        },
-        {
-          "package": "github.com/wippyai/go-lua/analysis/engine/execution",
-          "symbol": "ForeignSelectedMember",
-          "uses": 1,
-          "class": "row-abi"
-        },
-        {
-          "package": "github.com/wippyai/go-lua/analysis/engine/execution",
-          "symbol": "RouteMember",
-          "uses": 1,
-          "class": "row-abi"
-        },
-        {
-          "package": "github.com/wippyai/go-lua/analysis/engine/execution",
-          "symbol": "SelectedCoordinate",
-          "uses": 1,
-          "class": "row-abi"
-        }
-      ],
-      "target": {
-        "kind": "gap",
-        "package": "",
-        "relation": "placement/suspension",
-        "column": "",
-        "note": "the compiling rule declaration carries no binding corpus family"
-      },
-      "gap": "G1-rule-family-unbound"
-    },
-    {
-      "path": "domain/placement/suspension/reducer.go",
-      "manifest_entry": "",
-      "reads": [
-        {
-          "package": "github.com/wippyai/go-lua/analysis/engine/operand",
-          "symbol": "SummaryVector",
-          "uses": 3,
-          "class": "row-abi"
-        }
-      ],
-      "target": {
-        "kind": "gap",
-        "package": "",
-        "relation": "placement/suspension",
-        "column": "",
-        "note": "the compiling rule declaration carries no binding corpus family"
-      },
-      "gap": "G1-rule-family-unbound"
-    },
-    {
-      "path": "domain/placement/suspension/routes.go",
-      "manifest_entry": "",
-      "reads": [
-        {
-          "package": "github.com/wippyai/go-lua/analysis/engine/operand",
-          "symbol": "SummaryVector",
-          "uses": 1,
-          "class": "row-abi"
-        }
-      ],
-      "target": {
-        "kind": "gap",
-        "package": "",
-        "relation": "placement/suspension",
-        "column": "",
-        "note": "the compiling rule declaration carries no binding corpus family"
-      },
-      "gap": "G1-rule-family-unbound"
-    },
-    {
-      "path": "domain/placement/transfer/bind.go",
-      "manifest_entry": "",
-      "reads": [
-        {
-          "package": "github.com/wippyai/go-lua/analysis/engine",
-          "symbol": "BindRuleFamily",
-          "uses": 1,
-          "class": "declaration"
-        },
-        {
-          "package": "github.com/wippyai/go-lua/analysis/engine",
-          "symbol": "GeneratedRuleSlot",
-          "uses": 1,
-          "class": "declaration"
-        },
-        {
-          "package": "github.com/wippyai/go-lua/analysis/engine",
-          "symbol": "SchemaBinding",
-          "uses": 1,
-          "class": "declaration"
-        }
-      ],
-      "target": {
-        "kind": "gap",
-        "package": "",
-        "relation": "placement/transfer",
-        "column": "",
-        "note": "the compiling rule declaration carries no binding corpus family"
-      },
-      "gap": "G1-rule-family-unbound"
-    },
-    {
-      "path": "domain/placement/transfer/core.go",
-      "manifest_entry": "",
-      "reads": [
-        {
-          "package": "github.com/wippyai/go-lua/analysis/engine/operand",
-          "symbol": "SummaryVector",
-          "uses": 3,
-          "class": "row-abi"
-        }
-      ],
-      "target": {
-        "kind": "gap",
-        "package": "",
-        "relation": "placement/transfer",
-        "column": "",
-        "note": "the compiling rule declaration carries no binding corpus family"
-      },
-      "gap": "G1-rule-family-unbound"
-    },
-    {
-      "path": "domain/placement/transfer/routes.go",
-      "manifest_entry": "",
-      "reads": [
-        {
-          "package": "github.com/wippyai/go-lua/analysis/engine/operand",
-          "symbol": "SummaryVector",
-          "uses": 1,
-          "class": "row-abi"
-        }
-      ],
-      "target": {
-        "kind": "gap",
-        "package": "",
-        "relation": "placement/transfer",
-        "column": "",
-        "note": "the compiling rule declaration carries no binding corpus family"
-      },
-      "gap": "G1-rule-family-unbound"
-    },
-    {
-      "path": "domain/static/type_summary_observation.go",
-      "manifest_entry": "",
-      "reads": [
-        {
-          "package": "github.com/wippyai/go-lua/analysis/engine",
-          "symbol": "OrderedCells",
-          "uses": 1,
-          "class": "query"
-        }
-      ],
-      "target": {
-        "kind": "gap",
-        "package": "",
-        "relation": "static-type-summary",
-        "column": "",
-        "note": "a live result family declared in neither census plane"
-      },
-      "gap": "G5-static-summary-undeclared"
-    },
-    {
-      "path": "domain/value/allocation/family.go",
-      "manifest_entry": "",
-      "reads": [
-        {
-          "package": "github.com/wippyai/go-lua/analysis/engine",
-          "symbol": "BindRuleFamily",
-          "uses": 1,
-          "class": "declaration"
-        },
-        {
-          "package": "github.com/wippyai/go-lua/analysis/engine",
-          "symbol": "GeneratedRuleSlot",
-          "uses": 1,
-          "class": "declaration"
-        },
-        {
-          "package": "github.com/wippyai/go-lua/analysis/engine",
-          "symbol": "SchemaBinding",
-          "uses": 1,
-          "class": "declaration"
-        }
-      ],
-      "target": {
-        "kind": "declared-surface",
-        "package": "github.com/wippyai/go-lua/analysis/schema/rule/relcompile",
-        "relation": "ValueAllocation",
-        "column": "",
-        "note": "the declaration lowers into the canonical ExecutionSchema"
-      },
-      "gap": ""
-    },
-    {
-      "path": "domain/value/bodyresult/family.go",
-      "manifest_entry": "",
-      "reads": [
-        {
-          "package": "github.com/wippyai/go-lua/analysis/engine",
-          "symbol": "BindRuleFamily",
-          "uses": 1,
-          "class": "declaration"
-        },
-        {
-          "package": "github.com/wippyai/go-lua/analysis/engine",
-          "symbol": "GeneratedRuleSlot",
-          "uses": 1,
-          "class": "declaration"
-        },
-        {
-          "package": "github.com/wippyai/go-lua/analysis/engine",
-          "symbol": "SchemaBinding",
-          "uses": 1,
-          "class": "declaration"
-        }
-      ],
-      "target": {
-        "kind": "gap",
-        "package": "",
-        "relation": "value/bodyresult",
-        "column": "",
-        "note": "the compiling rule declaration carries no binding corpus family"
-      },
-      "gap": "G1-rule-family-unbound"
-    },
-    {
-      "path": "domain/value/bodyresult/judgment.go",
-      "manifest_entry": "",
-      "reads": [
-        {
-          "package": "github.com/wippyai/go-lua/analysis/engine/operand",
-          "symbol": "SelectedCell",
-          "uses": 1,
-          "class": "row-abi"
-        }
-      ],
-      "target": {
-        "kind": "gap",
-        "package": "",
-        "relation": "value/bodyresult",
-        "column": "",
-        "note": "the compiling rule declaration carries no binding corpus family"
-      },
-      "gap": "G1-rule-family-unbound"
-    },
-    {
-      "path": "domain/value/execution/exactfold/family.go",
-      "manifest_entry": "",
-      "reads": [
-        {
-          "package": "github.com/wippyai/go-lua/analysis/engine",
-          "symbol": "BindRuleFamily",
-          "uses": 1,
-          "class": "declaration"
-        },
-        {
-          "package": "github.com/wippyai/go-lua/analysis/engine",
-          "symbol": "GeneratedRuleSlot",
-          "uses": 1,
-          "class": "declaration"
-        },
-        {
-          "package": "github.com/wippyai/go-lua/analysis/engine",
-          "symbol": "SchemaBinding",
-          "uses": 1,
-          "class": "declaration"
-        },
-        {
-          "package": "github.com/wippyai/go-lua/analysis/engine/execution",
-          "symbol": "ExactRead",
-          "uses": 1,
-          "class": "row-abi"
-        },
-        {
-          "package": "github.com/wippyai/go-lua/analysis/engine/execution",
-          "symbol": "ExactWrite",
-          "uses": 1,
-          "class": "row-abi"
-        },
-        {
-          "package": "github.com/wippyai/go-lua/analysis/engine/execution",
-          "symbol": "Executor",
-          "uses": 1,
-          "class": "row-abi"
-        },
-        {
-          "package": "github.com/wippyai/go-lua/analysis/engine/execution",
-          "symbol": "Family",
-          "uses": 1,
-          "class": "row-abi"
-        },
-        {
-          "package": "github.com/wippyai/go-lua/analysis/engine/execution",
-          "symbol": "ForeignRowExactRead",
-          "uses": 1,
-          "class": "row-abi"
-        },
-        {
-          "package": "github.com/wippyai/go-lua/analysis/engine/execution",
-          "symbol": "Form",
-          "uses": 1,
-          "class": "row-abi"
-        },
-        {
-          "package": "github.com/wippyai/go-lua/analysis/engine/execution",
-          "symbol": "FormAddress",
-          "uses": 3,
-          "class": "row-abi"
-        },
-        {
-          "package": "github.com/wippyai/go-lua/analysis/engine/execution",
-          "symbol": "FormExact",
-          "uses": 1,
-          "class": "row-abi"
-        },
-        {
-          "package": "github.com/wippyai/go-lua/analysis/engine/execution",
-          "symbol": "FormPlane",
-          "uses": 1,
-          "class": "row-abi"
-        },
-        {
-          "package": "github.com/wippyai/go-lua/analysis/engine/execution",
-          "symbol": "FormRow",
-          "uses": 1,
-          "class": "row-abi"
-        },
-        {
-          "package": "github.com/wippyai/go-lua/analysis/engine/execution",
-          "symbol": "Frame",
-          "uses": 1,
-          "class": "row-abi"
-        },
-        {
-          "package": "github.com/wippyai/go-lua/analysis/engine/execution",
-          "symbol": "NewResult",
-          "uses": 1,
-          "class": "row-abi"
-        },
-        {
-          "package": "github.com/wippyai/go-lua/analysis/engine/execution",
-          "symbol": "Result",
-          "uses": 15,
-          "class": "row-abi"
-        },
-        {
-          "package": "github.com/wippyai/go-lua/analysis/engine/execution",
-          "symbol": "Run",
-          "uses": 2,
-          "class": "row-abi"
-        },
-        {
-          "package": "github.com/wippyai/go-lua/analysis/engine/execution",
-          "symbol": "Scratch",
-          "uses": 1,
-          "class": "row-abi"
-        },
-        {
-          "package": "github.com/wippyai/go-lua/analysis/engine/execution",
-          "symbol": "Ticket",
-          "uses": 3,
-          "class": "row-abi"
-        },
-        {
-          "package": "github.com/wippyai/go-lua/analysis/engine/execution/product",
-          "symbol": "Cell",
-          "uses": 1,
-          "class": "row-abi"
-        },
-        {
-          "package": "github.com/wippyai/go-lua/analysis/engine/execution/product",
-          "symbol": "Cons",
-          "uses": 3,
-          "class": "row-abi"
-        },
-        {
-          "package": "github.com/wippyai/go-lua/analysis/engine/execution/product",
-          "symbol": "Extender",
-          "uses": 3,
-          "class": "row-abi"
-        },
-        {
-          "package": "github.com/wippyai/go-lua/analysis/engine/execution/product",
-          "symbol": "NewSeed",
-          "uses": 1,
-          "class": "row-abi"
-        },
-        {
-          "package": "github.com/wippyai/go-lua/analysis/engine/execution/product",
-          "symbol": "RefineAvailable",
-          "uses": 4,
-          "class": "row-abi"
-        },
-        {
-          "package": "github.com/wippyai/go-lua/analysis/engine/execution/product",
-          "symbol": "RefineEmpty",
-          "uses": 1,
-          "class": "row-abi"
-        },
-        {
-          "package": "github.com/wippyai/go-lua/analysis/engine/execution/product",
-          "symbol": "RefineRefuse",
-          "uses": 1,
-          "class": "row-abi"
-        },
-        {
-          "package": "github.com/wippyai/go-lua/analysis/engine/execution/product",
-          "symbol": "Rows",
-          "uses": 1,
-          "class": "row-abi"
-        },
-        {
-          "package": "github.com/wippyai/go-lua/analysis/engine/generated",
-          "symbol": "CompiledRule",
-          "uses": 2,
-          "class": "row-abi"
-        },
-        {
-          "package": "github.com/wippyai/go-lua/analysis/engine/generated",
-          "symbol": "ReadPlan",
-          "uses": 1,
-          "class": "row-abi"
-        }
-      ],
-      "target": {
-        "kind": "row-abi",
-        "package": "github.com/wippyai/go-lua/analysis/schema/rule/relbindgen",
-        "relation": "ValueArithmetic",
-        "column": "",
-        "note": "the rule body runs against the emitted binding operation"
-      },
-      "gap": ""
-    },
-    {
-      "path": "domain/value/freshresult/bind.go",
-      "manifest_entry": "",
-      "reads": [
-        {
-          "package": "github.com/wippyai/go-lua/analysis/engine",
-          "symbol": "BindRuleFamily",
-          "uses": 1,
-          "class": "declaration"
-        },
-        {
-          "package": "github.com/wippyai/go-lua/analysis/engine",
-          "symbol": "GeneratedRuleSlot",
-          "uses": 1,
-          "class": "declaration"
-        },
-        {
-          "package": "github.com/wippyai/go-lua/analysis/engine",
-          "symbol": "SchemaBinding",
-          "uses": 1,
-          "class": "declaration"
-        }
-      ],
-      "target": {
-        "kind": "gap",
-        "package": "",
-        "relation": "value/freshresult",
-        "column": "",
-        "note": "the compiling rule declaration carries no binding corpus family"
-      },
-      "gap": "G1-rule-family-unbound"
-    },
-    {
-      "path": "domain/value/moduleload/family.go",
-      "manifest_entry": "",
-      "reads": [
-        {
-          "package": "github.com/wippyai/go-lua/analysis/engine",
-          "symbol": "BindRuleFamily",
-          "uses": 1,
-          "class": "declaration"
-        },
-        {
-          "package": "github.com/wippyai/go-lua/analysis/engine",
-          "symbol": "GeneratedRuleSlot",
-          "uses": 1,
-          "class": "declaration"
-        },
-        {
-          "package": "github.com/wippyai/go-lua/analysis/engine",
-          "symbol": "SchemaBinding",
-          "uses": 1,
-          "class": "declaration"
-        }
-      ],
-      "target": {
-        "kind": "declared-surface",
-        "package": "github.com/wippyai/go-lua/analysis/schema/rule/relcompile",
-        "relation": "ValueModuleLoad",
-        "column": "",
-        "note": "the declaration lowers into the canonical ExecutionSchema"
-      },
-      "gap": ""
-    },
-    {
-      "path": "domain/value/owner/query.go",
-      "manifest_entry": "S4-fragment-consumers",
-      "reads": [
-        {
-          "package": "github.com/wippyai/go-lua/analysis/engine",
-          "symbol": "FrozenResult",
-          "uses": 1,
-          "class": "result"
-        },
-        {
-          "package": "github.com/wippyai/go-lua/analysis/engine",
-          "symbol": "HotSummaryQuerySpec",
-          "uses": 2,
-          "class": "query"
-        },
-        {
-          "package": "github.com/wippyai/go-lua/analysis/engine",
-          "symbol": "NewQuerySlot",
-          "uses": 1,
-          "class": "query"
-        },
-        {
-          "package": "github.com/wippyai/go-lua/analysis/engine",
-          "symbol": "OrderedCells",
-          "uses": 2,
-          "class": "query"
-        },
-        {
-          "package": "github.com/wippyai/go-lua/analysis/engine",
-          "symbol": "QueryFold",
-          "uses": 1,
-          "class": "query"
-        },
-        {
-          "package": "github.com/wippyai/go-lua/analysis/engine",
-          "symbol": "QuerySlot",
-          "uses": 1,
-          "class": "query"
-        },
-        {
-          "package": "github.com/wippyai/go-lua/analysis/engine",
-          "symbol": "SchemaBinding",
-          "uses": 2,
-          "class": "declaration"
-        },
-        {
-          "package": "github.com/wippyai/go-lua/analysis/engine",
-          "symbol": "SchemaBuilder",
-          "uses": 1,
-          "class": "declaration"
-        },
-        {
-          "package": "github.com/wippyai/go-lua/analysis/engine",
-          "symbol": "SchemaQueryRead",
-          "uses": 1,
-          "class": "query"
-        },
-        {
-          "package": "github.com/wippyai/go-lua/analysis/engine",
-          "symbol": "SchemaQuerySpec",
-          "uses": 1,
-          "class": "query"
-        },
-        {
-          "package": "github.com/wippyai/go-lua/analysis/engine",
-          "symbol": "SchemaReadForm",
-          "uses": 1,
-          "class": "query"
-        },
-        {
-          "package": "github.com/wippyai/go-lua/analysis/engine",
-          "symbol": "SummaryQueryImplementation",
-          "uses": 1,
-          "class": "query"
-        },
-        {
-          "package": "github.com/wippyai/go-lua/analysis/engine",
-          "symbol": "SummaryQueryImplementationAt",
-          "uses": 1,
-          "class": "query"
-        }
-      ],
-      "target": {
-        "kind": "gap",
-        "package": "",
-        "relation": "query/value-summary",
-        "column": "",
-        "note": "the query/observation plane carries no binding family and no law requiring one"
-      },
-      "gap": "G3-query-plane-unbound"
-    },
-    {
-      "path": "domain/value/resultalias/family.go",
-      "manifest_entry": "",
-      "reads": [
-        {
-          "package": "github.com/wippyai/go-lua/analysis/engine",
-          "symbol": "BindRuleFamily",
-          "uses": 1,
-          "class": "declaration"
-        },
-        {
-          "package": "github.com/wippyai/go-lua/analysis/engine",
-          "symbol": "GeneratedRuleSlot",
-          "uses": 1,
-          "class": "declaration"
-        },
-        {
-          "package": "github.com/wippyai/go-lua/analysis/engine",
-          "symbol": "SchemaBinding",
-          "uses": 1,
-          "class": "declaration"
-        }
-      ],
-      "target": {
-        "kind": "gap",
-        "package": "",
-        "relation": "value/resultalias",
-        "column": "",
-        "note": "the compiling rule declaration carries no binding corpus family"
-      },
-      "gap": "G1-rule-family-unbound"
-    },
-    {
-      "path": "domain/value/resultalias/judgment.go",
-      "manifest_entry": "",
-      "reads": [
-        {
-          "package": "github.com/wippyai/go-lua/analysis/engine/operand",
-          "symbol": "SelectedCell",
-          "uses": 1,
-          "class": "row-abi"
-        }
-      ],
-      "target": {
-        "kind": "gap",
-        "package": "",
-        "relation": "value/resultalias",
-        "column": "",
-        "note": "the compiling rule declaration carries no binding corpus family"
-      },
-      "gap": "G1-rule-family-unbound"
-    },
-    {
-      "path": "domain/value/runtimekind/family.go",
-      "manifest_entry": "",
-      "reads": [
-        {
-          "package": "github.com/wippyai/go-lua/analysis/engine",
-          "symbol": "BindRuleFamily",
-          "uses": 1,
-          "class": "declaration"
-        },
-        {
-          "package": "github.com/wippyai/go-lua/analysis/engine",
-          "symbol": "GeneratedRuleSlot",
-          "uses": 1,
-          "class": "declaration"
-        },
-        {
-          "package": "github.com/wippyai/go-lua/analysis/engine",
-          "symbol": "SchemaBinding",
-          "uses": 1,
-          "class": "declaration"
-        }
-      ],
-      "target": {
-        "kind": "declared-surface",
-        "package": "github.com/wippyai/go-lua/analysis/schema/rule/relcompile",
-        "relation": "ValueRuntimeKind",
-        "column": "",
-        "note": "the declaration lowers into the canonical ExecutionSchema"
-      },
-      "gap": ""
-    },
-    {
-      "path": "domain/value/summary_observation.go",
-      "manifest_entry": "",
-      "reads": [
-        {
-          "package": "github.com/wippyai/go-lua/analysis/engine",
-          "symbol": "OrderedCells",
-          "uses": 1,
-          "class": "query"
-        }
-      ],
-      "target": {
-        "kind": "gap",
-        "package": "",
-        "relation": "query/value-summary",
-        "column": "",
-        "note": "the query/observation plane carries no binding family and no law requiring one"
-      },
-      "gap": "G3-query-plane-unbound"
+   ],
+   "target": {
+    "kind": "runtime-composition",
+    "package": "github.com/wippyai/go-lua/analysis/engine/relation/runtime",
+    "relation": "",
+    "column": "",
+    "note": "program assembly moves to the relational runtime"
+   },
+   "gap": "",
+   "waits_on": "G6-relational-runtime-is-a-stub"
+  },
+  {
+   "path": "analysis/catalog/publication.go",
+   "manifest_entry": "S8-read-paths",
+   "reads": [
+    {
+     "package": "github.com/wippyai/go-lua/analysis/engine",
+     "symbol": "AdmitColumns",
+     "uses": 1,
+     "class": "declaration"
+    },
+    {
+     "package": "github.com/wippyai/go-lua/analysis/engine",
+     "symbol": "ColumnAdmission",
+     "uses": 6,
+     "class": "declaration"
+    },
+    {
+     "package": "github.com/wippyai/go-lua/analysis/engine",
+     "symbol": "SchemaBinding",
+     "uses": 1,
+     "class": "declaration"
     }
-  ],
-  "gaps": [
+   ],
+   "target": {
+    "kind": "declared-surface",
+    "package": "github.com/wippyai/go-lua/analysis/schema/rule/relcompile",
+    "relation": "",
+    "column": "",
+    "note": "the symbol appears only in a declaration, which lowers into the canonical ExecutionSchema"
+   },
+   "gap": "",
+   "waits_on": "G5-declared-surface-has-no-production-entry"
+  },
+  {
+   "path": "analysis/compile.go",
+   "manifest_entry": "S1-analyzer-constructor",
+   "reads": [
     {
-      "id": "G1-rule-family-unbound",
-      "distinction": "the judgment of nineteen compiling rule declarations",
-      "owner": "analysis/schema/rule/relbindgen/relbind corpus",
-      "detail": "TestEveryCompilingCensusRowIsDeclared refuses at the pinned ref: nineteen census.json rows compile and the binding corpus declares no family for them, so no owner column is emitted and every consumer of those families - reader and declarer alike - has no surface after the cut. Named rows: call/activation#call-activation, effect/callsite/body#effect-body, heap/formalfreeze#heap-formal-freeze, heap/publicationfreeze#heap-publication-freeze, placement/allocationbirth#placement-allocation-birth, placement/capture#placement-closure-capture, placement/containment#placement-containment, placement/formal#placement-formal, placement/freshbirth#placement-fresh-birth, placement/publicationescape#placement-publication-escape, placement/returnescape#placement-return-escape, placement/store#placement-storage, placement/suspension#placement-suspension, placement/suspension-evidence#placement-suspension-evidence, placement/transfer#placement-transfer, typestate#typestate-obligation, value/bodyresult#value-callresult-body, value/freshresult#value-callresult-freshresult, value/resultalias#value-callresult-resultalias. The whole Placement axis is inside this set and emits no binding at all.",
-      "consumers": [
-        "domain/call/activation/family.go",
-        "domain/effect/callsite/body/family.go",
-        "domain/heap/formalfreeze/bind.go",
-        "domain/heap/formalfreeze/core.go",
-        "domain/heap/formalfreeze/routes.go",
-        "domain/heap/publicationfreeze/family.go",
-        "domain/heap/publicationfreeze/routes.go",
-        "domain/placement/capture/core.go",
-        "domain/placement/containment/routes.go",
-        "domain/placement/formal/bind.go",
-        "domain/placement/formal/core.go",
-        "domain/placement/formal/routes.go",
-        "domain/placement/publicationescape/core.go",
-        "domain/placement/returnescape/bind.go",
-        "domain/placement/returnescape/core.go",
-        "domain/placement/store/bind.go",
-        "domain/placement/suspension/evidence_observation.go",
-        "domain/placement/suspension/evidence_schema.go",
-        "domain/placement/suspension/generated_relation_owner.go",
-        "domain/placement/suspension/reducer.go",
-        "domain/placement/suspension/routes.go",
-        "domain/placement/transfer/bind.go",
-        "domain/placement/transfer/core.go",
-        "domain/placement/transfer/routes.go",
-        "domain/value/bodyresult/family.go",
-        "domain/value/bodyresult/judgment.go",
-        "domain/value/freshresult/bind.go",
-        "domain/value/resultalias/family.go",
-        "domain/value/resultalias/judgment.go"
-      ]
+     "package": "github.com/wippyai/go-lua/analysis/engine",
+     "symbol": "MintColumnWrite",
+     "uses": 14,
+     "class": "declaration"
     },
     {
-      "id": "G2-binding-pending",
-      "distinction": "the answer of an indexed raw read and the commit of an indexed raw write",
-      "owner": "analysis/schema/rule/relbindgen/relbind corpus",
-      "detail": "Four corpus families carry no judgment and are declared Pending: RawGetPackRoutes, RawSetPackRoutes, RawGetResult, RawSetCommit. domain/heap/index additionally holds no memberdefinition package and no generated relation owner - its route relations are hand-declared callbacks in schema_fragment.go, which the manifest deletes under S4-schema-fragments. The rule reads Heap, Value, Call and Pack columns by selection tag and no declared relation carries those tags.",
-      "consumers": [
-        "domain/heap/index/raw_get_routes.go",
-        "domain/heap/index/raw_get_rule.go",
-        "domain/heap/index/raw_get_transfer.go",
-        "domain/heap/index/raw_set_routes.go",
-        "domain/heap/index/raw_set_transfer.go"
-      ]
+     "package": "github.com/wippyai/go-lua/analysis/engine",
+     "symbol": "MountedProgramFactor",
+     "uses": 3,
+     "class": "admission"
     },
     {
-      "id": "G3-query-plane-unbound",
-      "distinction": "every published query answer, attached observation and diagnostic row",
-      "owner": "analysis/schema/rule/relbindgen/relbind corpus",
-      "detail": "The eleven census2.json declarations compile in relcompile and have no binding corpus family, no emitted binding, and no law requiring one - census_law_test.go reads census.json alone. This is the plane the whole read side depends on: the query fragment consumers, the diagnostic collectors, the detached result projection and every observation admission answer from it. Rows: diagnostic/code-composed, diagnostic/code-declared, observation/branch-condition, observation/call-callee-set, observation/type-conformance, observation/type-reference-unresolved, observation/value-reference-unresolved, query/effect-exact, query/placement-summary, query/query-site, query/value-summary. Compounding it, no typed reader package exists on any axis at the pinned ref: Value, Heap, Pack, Call, Effect and Static carry emitted relbindgen.Column codecs, but nothing exposes a Read over a snapshot projection, so even a bound column has no consumer-facing surface. At the pinned ref no consumer read in this map is served by an emitted binding.",
-      "consumers": [
-        "analysis/catalog/publication.go",
-        "analysis/diagnostic/attach.go",
-        "analysis/diagnostic/collect.go",
-        "analysis/diagnostic/collect_query.go",
-        "analysis/diagnostic/status.go",
-        "analysis/inspect/session.go",
-        "analysis/internal/workspace/artifact_products.go",
-        "analysis/lua/selectapply/publish.go",
-        "analysis/result/native_branch.go",
-        "analysis/result/project.go",
-        "analysis/result/query.go",
-        "domain/call/query/query.go",
-        "domain/composite/axis_wire.go",
-        "domain/composite/call_callee_set_observation.go",
-        "domain/composite/catalog.go",
-        "domain/composite/publication/branch_value_observation.go",
-        "domain/composite/queries.go",
-        "domain/composite/query_sites.go",
-        "domain/composite/query_table.go",
-        "domain/composite/query_wire.go",
-        "domain/composite/rule_admission.go",
-        "domain/composite/send_safety_collect.go",
-        "domain/composite/send_safety_observation.go",
-        "domain/composite/zz_luna_probe.go",
-        "domain/effect/callsite/fold.go",
-        "domain/effect/callsite/mounted_site.go",
-        "domain/effect/callsite/occurrence.go",
-        "domain/effect/callsite/publication_transition.go",
-        "domain/effect/owner/query.go",
-        "domain/placement/observation.go",
-        "domain/placement/query/query.go",
-        "domain/placement/static_containment_depth.go",
-        "domain/value/owner/query.go",
-        "domain/value/summary_observation.go"
-      ]
+     "package": "github.com/wippyai/go-lua/analysis/engine",
+     "symbol": "MountedProgramRole",
+     "uses": 3,
+     "class": "admission"
     },
     {
-      "id": "G5-static-summary-undeclared",
-      "distinction": "the joined static type fact at each Value coordinate",
-      "owner": "domain/static",
-      "detail": "domain/static/type_summary_result_codec.go declares SummaryResultFamily = \"static-type-summary\" and domain/static/type_summary_observation.go folds it from engine.OrderedCells[TypeFact], and analysis/result/project.go encodes it into a canonical result cell. The family appears in neither census plane: census.json holds only static/transfer and census2.json holds no static row. A live result family is declared nowhere.",
-      "consumers": [
-        "domain/static/type_summary_observation.go"
-      ]
+     "package": "github.com/wippyai/go-lua/analysis/engine",
+     "symbol": "NewProgramBootstrap",
+     "uses": 1,
+     "class": "admission"
+    },
+    {
+     "package": "github.com/wippyai/go-lua/analysis/engine",
+     "symbol": "ProgramBootstrap",
+     "uses": 4,
+     "class": "admission"
+    },
+    {
+     "package": "github.com/wippyai/go-lua/analysis/engine",
+     "symbol": "PublishColumn",
+     "uses": 13,
+     "class": "declaration"
+    },
+    {
+     "package": "github.com/wippyai/go-lua/analysis/engine",
+     "symbol": "RuleSlotCapability",
+     "uses": 2,
+     "class": "declaration"
+    },
+    {
+     "package": "github.com/wippyai/go-lua/analysis/engine/rows/scalarlower",
+     "symbol": "MountDirectory",
+     "uses": 1,
+     "class": "row-abi"
     }
-  ]
+   ],
+   "target": {
+    "kind": "declared-surface",
+    "package": "github.com/wippyai/go-lua/analysis/schema/rule/relcompile",
+    "relation": "",
+    "column": "",
+    "note": "the declaration lowers into the canonical ExecutionSchema"
+   },
+   "gap": "",
+   "waits_on": "G5-declared-surface-has-no-production-entry"
+  },
+  {
+   "path": "analysis/diagnostic/attach.go",
+   "manifest_entry": "S8-read-paths",
+   "reads": [
+    {
+     "package": "github.com/wippyai/go-lua/analysis/engine",
+     "symbol": "CommittedProgram",
+     "uses": 1,
+     "class": "admission"
+    },
+    {
+     "package": "github.com/wippyai/go-lua/analysis/engine",
+     "symbol": "ObservationSealArguments",
+     "uses": 5,
+     "class": "admission"
+    },
+    {
+     "package": "github.com/wippyai/go-lua/analysis/engine",
+     "symbol": "ObservationSealPoint",
+     "uses": 3,
+     "class": "admission"
+    },
+    {
+     "package": "github.com/wippyai/go-lua/analysis/engine",
+     "symbol": "ProgramObservationAdmission",
+     "uses": 2,
+     "class": "admission"
+    },
+    {
+     "package": "github.com/wippyai/go-lua/analysis/engine",
+     "symbol": "SolveFailure",
+     "uses": 2,
+     "class": "result"
+    }
+   ],
+   "target": {
+    "kind": "runtime-composition",
+    "package": "github.com/wippyai/go-lua/analysis/engine/relation/runtime",
+    "relation": "",
+    "column": "",
+    "note": "program assembly moves to the relational runtime"
+   },
+   "gap": "",
+   "waits_on": "G6-relational-runtime-is-a-stub"
+  },
+  {
+   "path": "analysis/diagnostic/collect.go",
+   "manifest_entry": "S8-read-paths",
+   "reads": [
+    {
+     "package": "github.com/wippyai/go-lua/analysis/engine",
+     "symbol": "Answer",
+     "uses": 4,
+     "class": "query"
+    },
+    {
+     "package": "github.com/wippyai/go-lua/analysis/engine",
+     "symbol": "AnswerValue",
+     "uses": 1,
+     "class": "query"
+    }
+   ],
+   "target": {
+    "kind": "gap",
+    "package": "",
+    "relation": "",
+    "column": "",
+    "note": "it reads a sealed answer whose publication into the snapshot the cut deletes"
+   },
+   "gap": "G1-snapshot-publication-absent",
+   "waits_on": ""
+  },
+  {
+   "path": "analysis/diagnostic/collect_query.go",
+   "manifest_entry": "S8-read-paths",
+   "reads": [
+    {
+     "package": "github.com/wippyai/go-lua/analysis/engine",
+     "symbol": "Answer",
+     "uses": 2,
+     "class": "query"
+    }
+   ],
+   "target": {
+    "kind": "gap",
+    "package": "",
+    "relation": "",
+    "column": "",
+    "note": "it reads a sealed answer whose publication into the snapshot the cut deletes"
+   },
+   "gap": "G1-snapshot-publication-absent",
+   "waits_on": ""
+  },
+  {
+   "path": "analysis/diagnostic/status.go",
+   "manifest_entry": "S8-read-paths",
+   "reads": [
+    {
+     "package": "github.com/wippyai/go-lua/analysis/engine",
+     "symbol": "ProgramAdmissionLink",
+     "uses": 1,
+     "class": "admission"
+    },
+    {
+     "package": "github.com/wippyai/go-lua/analysis/engine",
+     "symbol": "ProgramAdmissionMounted",
+     "uses": 1,
+     "class": "admission"
+    },
+    {
+     "package": "github.com/wippyai/go-lua/analysis/engine",
+     "symbol": "ProgramAdmissionQuery",
+     "uses": 1,
+     "class": "admission"
+    },
+    {
+     "package": "github.com/wippyai/go-lua/analysis/engine",
+     "symbol": "ProgramAdmissionSeal",
+     "uses": 1,
+     "class": "admission"
+    },
+    {
+     "package": "github.com/wippyai/go-lua/analysis/engine",
+     "symbol": "ProgramAssembleRefusal",
+     "uses": 1,
+     "class": "admission"
+    },
+    {
+     "package": "github.com/wippyai/go-lua/analysis/engine",
+     "symbol": "ProgramSealStageOf",
+     "uses": 1,
+     "class": "admission"
+    },
+    {
+     "package": "github.com/wippyai/go-lua/analysis/engine",
+     "symbol": "SolveDiagnostics",
+     "uses": 1,
+     "class": "result"
+    },
+    {
+     "package": "github.com/wippyai/go-lua/analysis/engine",
+     "symbol": "SolveFailure",
+     "uses": 6,
+     "class": "result"
+    }
+   ],
+   "target": {
+    "kind": "declared-surface",
+    "package": "github.com/wippyai/go-lua/analysis/schema/rule/relcompile",
+    "relation": "",
+    "column": "",
+    "note": "the symbol appears only in a declaration, which lowers into the canonical ExecutionSchema"
+   },
+   "gap": "",
+   "waits_on": "G5-declared-surface-has-no-production-entry"
+  },
+  {
+   "path": "analysis/inspect/session.go",
+   "manifest_entry": "S8-read-paths",
+   "reads": [
+    {
+     "package": "github.com/wippyai/go-lua/analysis/engine",
+     "symbol": "SolveDiagnosticOptions",
+     "uses": 1,
+     "class": "result"
+    }
+   ],
+   "target": {
+    "kind": "declared-surface",
+    "package": "github.com/wippyai/go-lua/analysis/schema/rule/relcompile",
+    "relation": "",
+    "column": "",
+    "note": "the symbol appears only in a declaration, which lowers into the canonical ExecutionSchema"
+   },
+   "gap": "",
+   "waits_on": "G5-declared-surface-has-no-production-entry"
+  },
+  {
+   "path": "analysis/internal/workspace/artifact_products.go",
+   "manifest_entry": "",
+   "reads": [
+    {
+     "package": "github.com/wippyai/go-lua/analysis/engine/rows",
+     "symbol": "ArtifactScalarTemplate",
+     "uses": 1,
+     "class": "row-abi"
+    },
+    {
+     "package": "github.com/wippyai/go-lua/analysis/engine/rows/scalarlower",
+     "symbol": "Lower",
+     "uses": 1,
+     "class": "row-abi"
+    },
+    {
+     "package": "github.com/wippyai/go-lua/analysis/engine/rows/scalarlower",
+     "symbol": "MountDirectory",
+     "uses": 1,
+     "class": "row-abi"
+    }
+   ],
+   "target": {
+    "kind": "gap",
+    "package": "",
+    "relation": "",
+    "column": "",
+    "note": "the only consumer of a keep-if-generic surface whose proof obligation is undischarged"
+   },
+   "gap": "G3-rows-obligation-undischarged",
+   "waits_on": ""
+  },
+  {
+   "path": "analysis/lua/selectapply/publish.go",
+   "manifest_entry": "S8-read-paths",
+   "reads": [
+    {
+     "package": "github.com/wippyai/go-lua/analysis/engine",
+     "symbol": "ColumnWrite",
+     "uses": 1,
+     "class": "declaration"
+    },
+    {
+     "package": "github.com/wippyai/go-lua/analysis/engine",
+     "symbol": "PublishColumn",
+     "uses": 1,
+     "class": "declaration"
+    }
+   ],
+   "target": {
+    "kind": "declared-surface",
+    "package": "github.com/wippyai/go-lua/analysis/schema/rule/relcompile",
+    "relation": "",
+    "column": "",
+    "note": "the symbol appears only in a declaration, which lowers into the canonical ExecutionSchema"
+   },
+   "gap": "",
+   "waits_on": "G5-declared-surface-has-no-production-entry"
+  },
+  {
+   "path": "analysis/result/native_branch.go",
+   "manifest_entry": "S8-read-paths",
+   "reads": [
+    {
+     "package": "github.com/wippyai/go-lua/analysis/engine",
+     "symbol": "Answer",
+     "uses": 1,
+     "class": "query"
+    }
+   ],
+   "target": {
+    "kind": "gap",
+    "package": "",
+    "relation": "",
+    "column": "",
+    "note": "it reads a sealed answer whose publication into the snapshot the cut deletes"
+   },
+   "gap": "G1-snapshot-publication-absent",
+   "waits_on": ""
+  },
+  {
+   "path": "analysis/result/project.go",
+   "manifest_entry": "S8-read-paths",
+   "reads": [
+    {
+     "package": "github.com/wippyai/go-lua/analysis/engine",
+     "symbol": "Answer",
+     "uses": 4,
+     "class": "query"
+    },
+    {
+     "package": "github.com/wippyai/go-lua/analysis/engine",
+     "symbol": "AnswerValue",
+     "uses": 1,
+     "class": "query"
+    }
+   ],
+   "target": {
+    "kind": "gap",
+    "package": "",
+    "relation": "",
+    "column": "",
+    "note": "it reads a sealed answer whose publication into the snapshot the cut deletes"
+   },
+   "gap": "G1-snapshot-publication-absent",
+   "waits_on": ""
+  },
+  {
+   "path": "analysis/result/query.go",
+   "manifest_entry": "S8-read-paths",
+   "reads": [
+    {
+     "package": "github.com/wippyai/go-lua/analysis/engine",
+     "symbol": "CanonicalResultCell",
+     "uses": 2,
+     "class": "result"
+    },
+    {
+     "package": "github.com/wippyai/go-lua/analysis/engine",
+     "symbol": "CanonicalResultContract",
+     "uses": 2,
+     "class": "result"
+    }
+   ],
+   "target": {
+    "kind": "declared-surface",
+    "package": "github.com/wippyai/go-lua/analysis/schema/rule/relcompile",
+    "relation": "",
+    "column": "",
+    "note": "the symbol appears only in a declaration, which lowers into the canonical ExecutionSchema"
+   },
+   "gap": "",
+   "waits_on": "G5-declared-surface-has-no-production-entry"
+  },
+  {
+   "path": "analysis/schema/rule/relbindgen/operand.go",
+   "manifest_entry": "",
+   "reads": [
+    {
+     "package": "github.com/wippyai/go-lua/analysis/engine/operand",
+     "symbol": "MemberCell",
+     "uses": 3,
+     "class": "row-abi"
+    },
+    {
+     "package": "github.com/wippyai/go-lua/analysis/engine/operand",
+     "symbol": "NewMemberVector",
+     "uses": 1,
+     "class": "row-abi"
+    },
+    {
+     "package": "github.com/wippyai/go-lua/analysis/engine/operand",
+     "symbol": "SelectedCell",
+     "uses": 5,
+     "class": "row-abi"
+    },
+    {
+     "package": "github.com/wippyai/go-lua/analysis/engine/operand",
+     "symbol": "SummaryVector",
+     "uses": 3,
+     "class": "row-abi"
+    }
+   ],
+   "target": {
+    "kind": "row-abi",
+    "package": "github.com/wippyai/go-lua/analysis/engine/operand",
+    "relation": "",
+    "column": "",
+    "note": "reads only the surviving operand value types; the S2-reducer-operand-abi restatement already landed, so this consumer is at its post-cut home and the cut owes it nothing"
+   },
+   "gap": "",
+   "waits_on": ""
+  },
+  {
+   "path": "domain/call/owner/registration.go",
+   "manifest_entry": "S4-owner-registrations",
+   "reads": [
+    {
+     "package": "github.com/wippyai/go-lua/analysis/engine",
+     "symbol": "BindRelationOwner",
+     "uses": 1,
+     "class": "admission"
+    },
+    {
+     "package": "github.com/wippyai/go-lua/analysis/engine",
+     "symbol": "SchemaBinding",
+     "uses": 1,
+     "class": "declaration"
+    },
+    {
+     "package": "github.com/wippyai/go-lua/analysis/engine",
+     "symbol": "SchemaBuilder",
+     "uses": 1,
+     "class": "declaration"
+    }
+   ],
+   "target": {
+    "kind": "declared-surface",
+    "package": "github.com/wippyai/go-lua/analysis/schema/rule/relcompile",
+    "relation": "",
+    "column": "",
+    "note": "the declaration lowers into the canonical ExecutionSchema Every engine symbol this entry names sits in DeclareAxis or BindAxis, and domain/composite/axis_table.go is their only production caller: it passes both for all nine axis owners at lines 128-136. S4-composite-wiring deletes that file, and the manifest orders S4-composite-wiring after this entry through S4-schema-fragments, so this entry's restatement - the same file reduced to StructureSpecs alone - removes functions a caller the cut still holds names. The two land in one commit, or the caller comes out first."
+   },
+   "gap": "",
+   "waits_on": "G5-declared-surface-has-no-production-entry"
+  },
+  {
+   "path": "domain/call/query/query.go",
+   "manifest_entry": "S4-fragment-consumers",
+   "reads": [
+    {
+     "package": "github.com/wippyai/go-lua/analysis/engine",
+     "symbol": "ExactQueryImplementation",
+     "uses": 1,
+     "class": "query"
+    },
+    {
+     "package": "github.com/wippyai/go-lua/analysis/engine",
+     "symbol": "ExactQueryImplementationAt",
+     "uses": 1,
+     "class": "query"
+    },
+    {
+     "package": "github.com/wippyai/go-lua/analysis/engine",
+     "symbol": "FrozenResult",
+     "uses": 1,
+     "class": "result"
+    },
+    {
+     "package": "github.com/wippyai/go-lua/analysis/engine",
+     "symbol": "HotExactQuerySpec",
+     "uses": 2,
+     "class": "query"
+    },
+    {
+     "package": "github.com/wippyai/go-lua/analysis/engine",
+     "symbol": "NewQuerySlot",
+     "uses": 1,
+     "class": "query"
+    },
+    {
+     "package": "github.com/wippyai/go-lua/analysis/engine",
+     "symbol": "OrderedCells",
+     "uses": 2,
+     "class": "query"
+    },
+    {
+     "package": "github.com/wippyai/go-lua/analysis/engine",
+     "symbol": "QueryFold",
+     "uses": 1,
+     "class": "query"
+    },
+    {
+     "package": "github.com/wippyai/go-lua/analysis/engine",
+     "symbol": "QuerySlot",
+     "uses": 1,
+     "class": "query"
+    },
+    {
+     "package": "github.com/wippyai/go-lua/analysis/engine",
+     "symbol": "SchemaBinding",
+     "uses": 2,
+     "class": "declaration"
+    },
+    {
+     "package": "github.com/wippyai/go-lua/analysis/engine",
+     "symbol": "SchemaBuilder",
+     "uses": 1,
+     "class": "declaration"
+    },
+    {
+     "package": "github.com/wippyai/go-lua/analysis/engine",
+     "symbol": "SchemaQueryRead",
+     "uses": 1,
+     "class": "query"
+    },
+    {
+     "package": "github.com/wippyai/go-lua/analysis/engine",
+     "symbol": "SchemaQuerySpec",
+     "uses": 1,
+     "class": "query"
+    },
+    {
+     "package": "github.com/wippyai/go-lua/analysis/engine",
+     "symbol": "SchemaReadForm",
+     "uses": 1,
+     "class": "query"
+    }
+   ],
+   "target": {
+    "kind": "row-abi",
+    "package": "github.com/wippyai/go-lua/analysis/schema/rule/relbindgen",
+    "relation": "",
+    "column": "",
+    "note": "the values arrive as operands while the fold runs, so the emitted binding decoder answers it"
+   },
+   "gap": "",
+   "waits_on": "S4-schema-fragments"
+  },
+  {
+   "path": "domain/effect/callsite/fold.go",
+   "manifest_entry": "",
+   "reads": [
+    {
+     "package": "github.com/wippyai/go-lua/analysis/engine/operand",
+     "symbol": "SelectedCell",
+     "uses": 1,
+     "class": "row-abi"
+    }
+   ],
+   "target": {
+    "kind": "row-abi",
+    "package": "github.com/wippyai/go-lua/analysis/engine/operand",
+    "relation": "",
+    "column": "",
+    "note": "reads only the surviving operand value types; the S2-reducer-operand-abi restatement already landed, so this consumer is at its post-cut home and the cut owes it nothing"
+   },
+   "gap": "",
+   "waits_on": ""
+  },
+  {
+   "path": "domain/effect/callsite/mounted_site.go",
+   "manifest_entry": "S6-domain-observation-restatement",
+   "reads": [
+    {
+     "package": "github.com/wippyai/go-lua/analysis/engine",
+     "symbol": "SchemaBinding",
+     "uses": 3,
+     "class": "declaration"
+    }
+   ],
+   "target": {
+    "kind": "declared-surface",
+    "package": "github.com/wippyai/go-lua/analysis/schema/rule/relcompile",
+    "relation": "",
+    "column": "",
+    "note": "the declaration lowers into the canonical ExecutionSchema"
+   },
+   "gap": "",
+   "waits_on": "G5-declared-surface-has-no-production-entry"
+  },
+  {
+   "path": "domain/effect/callsite/occurrence.go",
+   "manifest_entry": "S6-domain-observation-restatement",
+   "reads": [
+    {
+     "package": "github.com/wippyai/go-lua/analysis/engine",
+     "symbol": "CommittedProgram",
+     "uses": 2,
+     "class": "admission"
+    },
+    {
+     "package": "github.com/wippyai/go-lua/analysis/engine",
+     "symbol": "ProgramCallStage",
+     "uses": 6,
+     "class": "admission"
+    },
+    {
+     "package": "github.com/wippyai/go-lua/analysis/engine",
+     "symbol": "RuleSlotCapability",
+     "uses": 2,
+     "class": "declaration"
+    },
+    {
+     "package": "github.com/wippyai/go-lua/analysis/engine",
+     "symbol": "SchemaBinding",
+     "uses": 2,
+     "class": "declaration"
+    }
+   ],
+   "target": {
+    "kind": "runtime-composition",
+    "package": "github.com/wippyai/go-lua/analysis/engine/relation/runtime",
+    "relation": "",
+    "column": "",
+    "note": "program assembly moves to the relational runtime"
+   },
+   "gap": "",
+   "waits_on": "G6-relational-runtime-is-a-stub"
+  },
+  {
+   "path": "domain/effect/callsite/publication_transition.go",
+   "manifest_entry": "S6-domain-observation-restatement",
+   "reads": [
+    {
+     "package": "github.com/wippyai/go-lua/analysis/engine",
+     "symbol": "CommittedProgram",
+     "uses": 1,
+     "class": "admission"
+    },
+    {
+     "package": "github.com/wippyai/go-lua/analysis/engine",
+     "symbol": "ExactQueryImplementation",
+     "uses": 1,
+     "class": "query"
+    },
+    {
+     "package": "github.com/wippyai/go-lua/analysis/engine",
+     "symbol": "NewExactObservationAdmission",
+     "uses": 1,
+     "class": "admission"
+    },
+    {
+     "package": "github.com/wippyai/go-lua/analysis/engine",
+     "symbol": "ProgramObservationAdmission",
+     "uses": 5,
+     "class": "admission"
+    },
+    {
+     "package": "github.com/wippyai/go-lua/analysis/engine",
+     "symbol": "RuleSlotCapability",
+     "uses": 1,
+     "class": "declaration"
+    },
+    {
+     "package": "github.com/wippyai/go-lua/analysis/engine",
+     "symbol": "SchemaBinding",
+     "uses": 1,
+     "class": "declaration"
+    }
+   ],
+   "target": {
+    "kind": "runtime-composition",
+    "package": "github.com/wippyai/go-lua/analysis/engine/relation/runtime",
+    "relation": "",
+    "column": "",
+    "note": "program assembly moves to the relational runtime"
+   },
+   "gap": "",
+   "waits_on": "G6-relational-runtime-is-a-stub"
+  },
+  {
+   "path": "domain/effect/owner/query.go",
+   "manifest_entry": "S4-fragment-consumers",
+   "reads": [
+    {
+     "package": "github.com/wippyai/go-lua/analysis/engine",
+     "symbol": "ExactQueryImplementation",
+     "uses": 1,
+     "class": "query"
+    },
+    {
+     "package": "github.com/wippyai/go-lua/analysis/engine",
+     "symbol": "ExactQueryImplementationAt",
+     "uses": 1,
+     "class": "query"
+    },
+    {
+     "package": "github.com/wippyai/go-lua/analysis/engine",
+     "symbol": "FrozenResult",
+     "uses": 1,
+     "class": "result"
+    },
+    {
+     "package": "github.com/wippyai/go-lua/analysis/engine",
+     "symbol": "HotExactQuerySpec",
+     "uses": 2,
+     "class": "query"
+    },
+    {
+     "package": "github.com/wippyai/go-lua/analysis/engine",
+     "symbol": "NewQuerySlot",
+     "uses": 1,
+     "class": "query"
+    },
+    {
+     "package": "github.com/wippyai/go-lua/analysis/engine",
+     "symbol": "OrderedCells",
+     "uses": 2,
+     "class": "query"
+    },
+    {
+     "package": "github.com/wippyai/go-lua/analysis/engine",
+     "symbol": "QueryFold",
+     "uses": 1,
+     "class": "query"
+    },
+    {
+     "package": "github.com/wippyai/go-lua/analysis/engine",
+     "symbol": "QuerySlot",
+     "uses": 1,
+     "class": "query"
+    },
+    {
+     "package": "github.com/wippyai/go-lua/analysis/engine",
+     "symbol": "SchemaBinding",
+     "uses": 2,
+     "class": "declaration"
+    },
+    {
+     "package": "github.com/wippyai/go-lua/analysis/engine",
+     "symbol": "SchemaBuilder",
+     "uses": 1,
+     "class": "declaration"
+    },
+    {
+     "package": "github.com/wippyai/go-lua/analysis/engine",
+     "symbol": "SchemaQueryRead",
+     "uses": 1,
+     "class": "query"
+    },
+    {
+     "package": "github.com/wippyai/go-lua/analysis/engine",
+     "symbol": "SchemaQuerySpec",
+     "uses": 1,
+     "class": "query"
+    },
+    {
+     "package": "github.com/wippyai/go-lua/analysis/engine",
+     "symbol": "SchemaReadForm",
+     "uses": 1,
+     "class": "query"
+    }
+   ],
+   "target": {
+    "kind": "row-abi",
+    "package": "github.com/wippyai/go-lua/analysis/schema/rule/relbindgen",
+    "relation": "",
+    "column": "",
+    "note": "the values arrive as operands while the fold runs, so the emitted binding decoder answers it"
+   },
+   "gap": "",
+   "waits_on": "S4-schema-fragments"
+  },
+  {
+   "path": "domain/effect/owner/registration.go",
+   "manifest_entry": "S4-owner-registrations",
+   "reads": [
+    {
+     "package": "github.com/wippyai/go-lua/analysis/engine",
+     "symbol": "BindRelationOwner",
+     "uses": 1,
+     "class": "admission"
+    },
+    {
+     "package": "github.com/wippyai/go-lua/analysis/engine",
+     "symbol": "SchemaBinding",
+     "uses": 1,
+     "class": "declaration"
+    },
+    {
+     "package": "github.com/wippyai/go-lua/analysis/engine",
+     "symbol": "SchemaBuilder",
+     "uses": 1,
+     "class": "declaration"
+    }
+   ],
+   "target": {
+    "kind": "declared-surface",
+    "package": "github.com/wippyai/go-lua/analysis/schema/rule/relcompile",
+    "relation": "",
+    "column": "",
+    "note": "the declaration lowers into the canonical ExecutionSchema Every engine symbol this entry names sits in DeclareAxis or BindAxis, and domain/composite/axis_table.go is their only production caller: it passes both for all nine axis owners at lines 128-136. S4-composite-wiring deletes that file, and the manifest orders S4-composite-wiring after this entry through S4-schema-fragments, so this entry's restatement - the same file reduced to StructureSpecs alone - removes functions a caller the cut still holds names. The two land in one commit, or the caller comes out first."
+   },
+   "gap": "",
+   "waits_on": "G5-declared-surface-has-no-production-entry"
+  },
+  {
+   "path": "domain/heap/allocation/closed/rule.go",
+   "manifest_entry": "",
+   "reads": [
+    {
+     "package": "github.com/wippyai/go-lua/analysis/engine/operand",
+     "symbol": "SummaryVector",
+     "uses": 1,
+     "class": "row-abi"
+    }
+   ],
+   "target": {
+    "kind": "row-abi",
+    "package": "github.com/wippyai/go-lua/analysis/engine/operand",
+    "relation": "",
+    "column": "",
+    "note": "reads only the surviving operand value types; the S2-reducer-operand-abi restatement already landed, so this consumer is at its post-cut home and the cut owes it nothing"
+   },
+   "gap": "",
+   "waits_on": ""
+  },
+  {
+   "path": "domain/heap/context/owner/registration.go",
+   "manifest_entry": "S4-owner-registrations",
+   "reads": [
+    {
+     "package": "github.com/wippyai/go-lua/analysis/engine",
+     "symbol": "SchemaBinding",
+     "uses": 1,
+     "class": "declaration"
+    },
+    {
+     "package": "github.com/wippyai/go-lua/analysis/engine",
+     "symbol": "SchemaBuilder",
+     "uses": 1,
+     "class": "declaration"
+    }
+   ],
+   "target": {
+    "kind": "declared-surface",
+    "package": "github.com/wippyai/go-lua/analysis/schema/rule/relcompile",
+    "relation": "",
+    "column": "",
+    "note": "the declaration lowers into the canonical ExecutionSchema Every engine symbol this entry names sits in DeclareAxis or BindAxis, and domain/composite/axis_table.go is their only production caller: it passes both for all nine axis owners at lines 128-136. S4-composite-wiring deletes that file, and the manifest orders S4-composite-wiring after this entry through S4-schema-fragments, so this entry's restatement - the same file reduced to StructureSpecs alone - removes functions a caller the cut still holds names. The two land in one commit, or the caller comes out first."
+   },
+   "gap": "",
+   "waits_on": "G5-declared-surface-has-no-production-entry"
+  },
+  {
+   "path": "domain/heap/formalfreeze/core.go",
+   "manifest_entry": "",
+   "reads": [
+    {
+     "package": "github.com/wippyai/go-lua/analysis/engine/operand",
+     "symbol": "SummaryVector",
+     "uses": 1,
+     "class": "row-abi"
+    }
+   ],
+   "target": {
+    "kind": "row-abi",
+    "package": "github.com/wippyai/go-lua/analysis/engine/operand",
+    "relation": "",
+    "column": "",
+    "note": "reads only the surviving operand value types; the S2-reducer-operand-abi restatement already landed, so this consumer is at its post-cut home and the cut owes it nothing"
+   },
+   "gap": "",
+   "waits_on": ""
+  },
+  {
+   "path": "domain/heap/formalfreeze/routes.go",
+   "manifest_entry": "",
+   "reads": [
+    {
+     "package": "github.com/wippyai/go-lua/analysis/engine/operand",
+     "symbol": "SummaryVector",
+     "uses": 1,
+     "class": "row-abi"
+    }
+   ],
+   "target": {
+    "kind": "row-abi",
+    "package": "github.com/wippyai/go-lua/analysis/engine/operand",
+    "relation": "",
+    "column": "",
+    "note": "reads only the surviving operand value types; the S2-reducer-operand-abi restatement already landed, so this consumer is at its post-cut home and the cut owes it nothing"
+   },
+   "gap": "",
+   "waits_on": ""
+  },
+  {
+   "path": "domain/heap/owner/registration.go",
+   "manifest_entry": "S4-owner-registrations",
+   "reads": [
+    {
+     "package": "github.com/wippyai/go-lua/analysis/engine",
+     "symbol": "BindRelationOwner",
+     "uses": 1,
+     "class": "admission"
+    },
+    {
+     "package": "github.com/wippyai/go-lua/analysis/engine",
+     "symbol": "SchemaBinding",
+     "uses": 1,
+     "class": "declaration"
+    },
+    {
+     "package": "github.com/wippyai/go-lua/analysis/engine",
+     "symbol": "SchemaBuilder",
+     "uses": 1,
+     "class": "declaration"
+    }
+   ],
+   "target": {
+    "kind": "declared-surface",
+    "package": "github.com/wippyai/go-lua/analysis/schema/rule/relcompile",
+    "relation": "",
+    "column": "",
+    "note": "the declaration lowers into the canonical ExecutionSchema Every engine symbol this entry names sits in DeclareAxis or BindAxis, and domain/composite/axis_table.go is their only production caller: it passes both for all nine axis owners at lines 128-136. S4-composite-wiring deletes that file, and the manifest orders S4-composite-wiring after this entry through S4-schema-fragments, so this entry's restatement - the same file reduced to StructureSpecs alone - removes functions a caller the cut still holds names. The two land in one commit, or the caller comes out first."
+   },
+   "gap": "",
+   "waits_on": "G5-declared-surface-has-no-production-entry"
+  },
+  {
+   "path": "domain/heap/publicationfreeze/routes.go",
+   "manifest_entry": "",
+   "reads": [
+    {
+     "package": "github.com/wippyai/go-lua/analysis/engine/operand",
+     "symbol": "SummaryVector",
+     "uses": 2,
+     "class": "row-abi"
+    }
+   ],
+   "target": {
+    "kind": "row-abi",
+    "package": "github.com/wippyai/go-lua/analysis/engine/operand",
+    "relation": "",
+    "column": "",
+    "note": "reads only the surviving operand value types; the S2-reducer-operand-abi restatement already landed, so this consumer is at its post-cut home and the cut owes it nothing"
+   },
+   "gap": "",
+   "waits_on": ""
+  },
+  {
+   "path": "domain/pack/owner/registration.go",
+   "manifest_entry": "S4-owner-registrations",
+   "reads": [
+    {
+     "package": "github.com/wippyai/go-lua/analysis/engine",
+     "symbol": "BindRelationOwner",
+     "uses": 1,
+     "class": "admission"
+    },
+    {
+     "package": "github.com/wippyai/go-lua/analysis/engine",
+     "symbol": "SchemaBinding",
+     "uses": 1,
+     "class": "declaration"
+    },
+    {
+     "package": "github.com/wippyai/go-lua/analysis/engine",
+     "symbol": "SchemaBuilder",
+     "uses": 1,
+     "class": "declaration"
+    }
+   ],
+   "target": {
+    "kind": "declared-surface",
+    "package": "github.com/wippyai/go-lua/analysis/schema/rule/relcompile",
+    "relation": "",
+    "column": "",
+    "note": "the declaration lowers into the canonical ExecutionSchema Every engine symbol this entry names sits in DeclareAxis or BindAxis, and domain/composite/axis_table.go is their only production caller: it passes both for all nine axis owners at lines 128-136. S4-composite-wiring deletes that file, and the manifest orders S4-composite-wiring after this entry through S4-schema-fragments, so this entry's restatement - the same file reduced to StructureSpecs alone - removes functions a caller the cut still holds names. The two land in one commit, or the caller comes out first."
+   },
+   "gap": "",
+   "waits_on": "G5-declared-surface-has-no-production-entry"
+  },
+  {
+   "path": "domain/placement/capture/core.go",
+   "manifest_entry": "S6-domain-observation-restatement",
+   "reads": [
+    {
+     "package": "github.com/wippyai/go-lua/analysis/engine",
+     "symbol": "OrderedCells",
+     "uses": 1,
+     "class": "query"
+    }
+   ],
+   "target": {
+    "kind": "row-abi",
+    "package": "github.com/wippyai/go-lua/analysis/schema/rule/relbindgen",
+    "relation": "",
+    "column": "",
+    "note": "the values arrive as operands while the fold runs, so the emitted binding decoder answers it"
+   },
+   "gap": "",
+   "waits_on": "S6-engine-runtime"
+  },
+  {
+   "path": "domain/placement/containment/reducer.go",
+   "manifest_entry": "",
+   "reads": [
+    {
+     "package": "github.com/wippyai/go-lua/analysis/engine/operand",
+     "symbol": "SummaryVector",
+     "uses": 2,
+     "class": "row-abi"
+    }
+   ],
+   "target": {
+    "kind": "row-abi",
+    "package": "github.com/wippyai/go-lua/analysis/engine/operand",
+    "relation": "",
+    "column": "",
+    "note": "reads only the surviving operand value types; the S2-reducer-operand-abi restatement already landed, so this consumer is at its post-cut home and the cut owes it nothing"
+   },
+   "gap": "",
+   "waits_on": ""
+  },
+  {
+   "path": "domain/placement/containment/routes.go",
+   "manifest_entry": "S6-domain-observation-restatement",
+   "reads": [
+    {
+     "package": "github.com/wippyai/go-lua/analysis/engine",
+     "symbol": "OrderedCells",
+     "uses": 2,
+     "class": "query"
+    }
+   ],
+   "target": {
+    "kind": "row-abi",
+    "package": "github.com/wippyai/go-lua/analysis/schema/rule/relbindgen",
+    "relation": "",
+    "column": "",
+    "note": "the values arrive as operands while the fold runs, so the emitted binding decoder answers it"
+   },
+   "gap": "",
+   "waits_on": "S6-engine-runtime"
+  },
+  {
+   "path": "domain/placement/formal/core.go",
+   "manifest_entry": "",
+   "reads": [
+    {
+     "package": "github.com/wippyai/go-lua/analysis/engine/operand",
+     "symbol": "SummaryVector",
+     "uses": 4,
+     "class": "row-abi"
+    }
+   ],
+   "target": {
+    "kind": "row-abi",
+    "package": "github.com/wippyai/go-lua/analysis/engine/operand",
+    "relation": "",
+    "column": "",
+    "note": "reads only the surviving operand value types; the S2-reducer-operand-abi restatement already landed, so this consumer is at its post-cut home and the cut owes it nothing"
+   },
+   "gap": "",
+   "waits_on": ""
+  },
+  {
+   "path": "domain/placement/formal/routes.go",
+   "manifest_entry": "",
+   "reads": [
+    {
+     "package": "github.com/wippyai/go-lua/analysis/engine/operand",
+     "symbol": "SummaryVector",
+     "uses": 1,
+     "class": "row-abi"
+    }
+   ],
+   "target": {
+    "kind": "row-abi",
+    "package": "github.com/wippyai/go-lua/analysis/engine/operand",
+    "relation": "",
+    "column": "",
+    "note": "reads only the surviving operand value types; the S2-reducer-operand-abi restatement already landed, so this consumer is at its post-cut home and the cut owes it nothing"
+   },
+   "gap": "",
+   "waits_on": ""
+  },
+  {
+   "path": "domain/placement/observation.go",
+   "manifest_entry": "S6-domain-observation-restatement",
+   "reads": [
+    {
+     "package": "github.com/wippyai/go-lua/analysis/engine",
+     "symbol": "OrderedCells",
+     "uses": 1,
+     "class": "query"
+    }
+   ],
+   "target": {
+    "kind": "row-abi",
+    "package": "github.com/wippyai/go-lua/analysis/schema/rule/relbindgen",
+    "relation": "",
+    "column": "",
+    "note": "the values arrive as operands while the fold runs, so the emitted binding decoder answers it"
+   },
+   "gap": "",
+   "waits_on": "S6-engine-runtime"
+  },
+  {
+   "path": "domain/placement/owner/registration.go",
+   "manifest_entry": "S4-owner-registrations",
+   "reads": [
+    {
+     "package": "github.com/wippyai/go-lua/analysis/engine",
+     "symbol": "BindRelationOwner",
+     "uses": 1,
+     "class": "admission"
+    },
+    {
+     "package": "github.com/wippyai/go-lua/analysis/engine",
+     "symbol": "SchemaBinding",
+     "uses": 1,
+     "class": "declaration"
+    },
+    {
+     "package": "github.com/wippyai/go-lua/analysis/engine",
+     "symbol": "SchemaBuilder",
+     "uses": 1,
+     "class": "declaration"
+    }
+   ],
+   "target": {
+    "kind": "declared-surface",
+    "package": "github.com/wippyai/go-lua/analysis/schema/rule/relcompile",
+    "relation": "",
+    "column": "",
+    "note": "the declaration lowers into the canonical ExecutionSchema Every engine symbol this entry names sits in DeclareAxis or BindAxis, and domain/composite/axis_table.go is their only production caller: it passes both for all nine axis owners at lines 128-136. S4-composite-wiring deletes that file, and the manifest orders S4-composite-wiring after this entry through S4-schema-fragments, so this entry's restatement - the same file reduced to StructureSpecs alone - removes functions a caller the cut still holds names. The two land in one commit, or the caller comes out first."
+   },
+   "gap": "",
+   "waits_on": "G5-declared-surface-has-no-production-entry"
+  },
+  {
+   "path": "domain/placement/publicationescape/core.go",
+   "manifest_entry": "S6-domain-observation-restatement",
+   "reads": [
+    {
+     "package": "github.com/wippyai/go-lua/analysis/engine",
+     "symbol": "Frame",
+     "uses": 2,
+     "class": "declaration"
+    },
+    {
+     "package": "github.com/wippyai/go-lua/analysis/engine",
+     "symbol": "OrderedCells",
+     "uses": 2,
+     "class": "query"
+    },
+    {
+     "package": "github.com/wippyai/go-lua/analysis/engine",
+     "symbol": "ReadValue",
+     "uses": 1,
+     "class": "query"
+    },
+    {
+     "package": "github.com/wippyai/go-lua/analysis/engine",
+     "symbol": "Selection",
+     "uses": 2,
+     "class": "query"
+    },
+    {
+     "package": "github.com/wippyai/go-lua/analysis/engine",
+     "symbol": "SelectionAt",
+     "uses": 1,
+     "class": "query"
+    },
+    {
+     "package": "github.com/wippyai/go-lua/analysis/engine",
+     "symbol": "SelectionCount",
+     "uses": 1,
+     "class": "query"
+    },
+    {
+     "package": "github.com/wippyai/go-lua/analysis/engine",
+     "symbol": "SelectorContext",
+     "uses": 3,
+     "class": "query"
+    },
+    {
+     "package": "github.com/wippyai/go-lua/analysis/engine",
+     "symbol": "SelectorRead",
+     "uses": 1,
+     "class": "query"
+    },
+    {
+     "package": "github.com/wippyai/go-lua/analysis/engine",
+     "symbol": "SelectorSelectionAt",
+     "uses": 1,
+     "class": "query"
+    },
+    {
+     "package": "github.com/wippyai/go-lua/analysis/engine",
+     "symbol": "SelectorSelectionCount",
+     "uses": 1,
+     "class": "query"
+    }
+   ],
+   "target": {
+    "kind": "row-abi",
+    "package": "github.com/wippyai/go-lua/analysis/schema/rule/relbindgen",
+    "relation": "",
+    "column": "",
+    "note": "the values arrive as operands while the fold runs, so the emitted binding decoder answers it"
+   },
+   "gap": "",
+   "waits_on": "S6-engine-runtime"
+  },
+  {
+   "path": "domain/placement/query/query.go",
+   "manifest_entry": "S4-fragment-consumers",
+   "reads": [
+    {
+     "package": "github.com/wippyai/go-lua/analysis/engine",
+     "symbol": "Answer",
+     "uses": 1,
+     "class": "query"
+    },
+    {
+     "package": "github.com/wippyai/go-lua/analysis/engine",
+     "symbol": "AnswerValue",
+     "uses": 1,
+     "class": "query"
+    },
+    {
+     "package": "github.com/wippyai/go-lua/analysis/engine",
+     "symbol": "BindHeterogeneousQuery",
+     "uses": 1,
+     "class": "query"
+    },
+    {
+     "package": "github.com/wippyai/go-lua/analysis/engine",
+     "symbol": "FrozenResult",
+     "uses": 1,
+     "class": "result"
+    },
+    {
+     "package": "github.com/wippyai/go-lua/analysis/engine",
+     "symbol": "HeterogeneousQueryImplementation",
+     "uses": 1,
+     "class": "query"
+    },
+    {
+     "package": "github.com/wippyai/go-lua/analysis/engine",
+     "symbol": "HeterogeneousQueryImplementationAt",
+     "uses": 1,
+     "class": "query"
+    },
+    {
+     "package": "github.com/wippyai/go-lua/analysis/engine",
+     "symbol": "HeterogeneousQuerySpec",
+     "uses": 2,
+     "class": "query"
+    },
+    {
+     "package": "github.com/wippyai/go-lua/analysis/engine",
+     "symbol": "NewQuerySlot",
+     "uses": 1,
+     "class": "query"
+    },
+    {
+     "package": "github.com/wippyai/go-lua/analysis/engine",
+     "symbol": "NewSummaryQueryProjection",
+     "uses": 3,
+     "class": "query"
+    },
+    {
+     "package": "github.com/wippyai/go-lua/analysis/engine",
+     "symbol": "OrderedCells",
+     "uses": 3,
+     "class": "query"
+    },
+    {
+     "package": "github.com/wippyai/go-lua/analysis/engine",
+     "symbol": "QueryProjectionFold",
+     "uses": 3,
+     "class": "query"
+    },
+    {
+     "package": "github.com/wippyai/go-lua/analysis/engine",
+     "symbol": "QueryProjectionSpec",
+     "uses": 1,
+     "class": "query"
+    },
+    {
+     "package": "github.com/wippyai/go-lua/analysis/engine",
+     "symbol": "QuerySlot",
+     "uses": 1,
+     "class": "query"
+    },
+    {
+     "package": "github.com/wippyai/go-lua/analysis/engine",
+     "symbol": "SchemaBinding",
+     "uses": 2,
+     "class": "declaration"
+    },
+    {
+     "package": "github.com/wippyai/go-lua/analysis/engine",
+     "symbol": "SchemaBuilder",
+     "uses": 1,
+     "class": "declaration"
+    },
+    {
+     "package": "github.com/wippyai/go-lua/analysis/engine",
+     "symbol": "SchemaQueryRead",
+     "uses": 3,
+     "class": "query"
+    },
+    {
+     "package": "github.com/wippyai/go-lua/analysis/engine",
+     "symbol": "SchemaQuerySpec",
+     "uses": 1,
+     "class": "query"
+    },
+    {
+     "package": "github.com/wippyai/go-lua/analysis/engine",
+     "symbol": "SchemaReadForm",
+     "uses": 3,
+     "class": "query"
+    }
+   ],
+   "target": {
+    "kind": "gap",
+    "package": "",
+    "relation": "",
+    "column": "",
+    "note": "it reads a sealed answer whose publication into the snapshot the cut deletes"
+   },
+   "gap": "G1-snapshot-publication-absent",
+   "waits_on": ""
+  },
+  {
+   "path": "domain/placement/returnescape/core.go",
+   "manifest_entry": "",
+   "reads": [
+    {
+     "package": "github.com/wippyai/go-lua/analysis/engine/operand",
+     "symbol": "SummaryVector",
+     "uses": 1,
+     "class": "row-abi"
+    }
+   ],
+   "target": {
+    "kind": "row-abi",
+    "package": "github.com/wippyai/go-lua/analysis/engine/operand",
+    "relation": "",
+    "column": "",
+    "note": "reads only the surviving operand value types; the S2-reducer-operand-abi restatement already landed, so this consumer is at its post-cut home and the cut owes it nothing"
+   },
+   "gap": "",
+   "waits_on": ""
+  },
+  {
+   "path": "domain/placement/static_containment_depth.go",
+   "manifest_entry": "S6-domain-observation-restatement",
+   "reads": [
+    {
+     "package": "github.com/wippyai/go-lua/analysis/engine",
+     "symbol": "OrderedCells",
+     "uses": 4,
+     "class": "query"
+    }
+   ],
+   "target": {
+    "kind": "row-abi",
+    "package": "github.com/wippyai/go-lua/analysis/schema/rule/relbindgen",
+    "relation": "",
+    "column": "",
+    "note": "the values arrive as operands while the fold runs, so the emitted binding decoder answers it"
+   },
+   "gap": "",
+   "waits_on": "S6-engine-runtime"
+  },
+  {
+   "path": "domain/placement/suspension/evidence_observation.go",
+   "manifest_entry": "S6-domain-observation-restatement",
+   "reads": [
+    {
+     "package": "github.com/wippyai/go-lua/analysis/engine",
+     "symbol": "OrderedCells",
+     "uses": 1,
+     "class": "query"
+    }
+   ],
+   "target": {
+    "kind": "row-abi",
+    "package": "github.com/wippyai/go-lua/analysis/schema/rule/relbindgen",
+    "relation": "",
+    "column": "",
+    "note": "the values arrive as operands while the fold runs, so the emitted binding decoder answers it"
+   },
+   "gap": "",
+   "waits_on": "S6-engine-runtime"
+  },
+  {
+   "path": "domain/placement/suspension/evidence_schema.go",
+   "manifest_entry": "S6-domain-observation-restatement",
+   "reads": [
+    {
+     "package": "github.com/wippyai/go-lua/analysis/engine",
+     "symbol": "FactorRef",
+     "uses": 1,
+     "class": "declaration"
+    },
+    {
+     "package": "github.com/wippyai/go-lua/analysis/engine",
+     "symbol": "NewRuleSlot",
+     "uses": 1,
+     "class": "declaration"
+    },
+    {
+     "package": "github.com/wippyai/go-lua/analysis/engine",
+     "symbol": "RuleSlot",
+     "uses": 2,
+     "class": "declaration"
+    },
+    {
+     "package": "github.com/wippyai/go-lua/analysis/engine",
+     "symbol": "SchemaBuilder",
+     "uses": 1,
+     "class": "declaration"
+    },
+    {
+     "package": "github.com/wippyai/go-lua/analysis/engine",
+     "symbol": "SchemaCarryFrom",
+     "uses": 1,
+     "class": "declaration"
+    },
+    {
+     "package": "github.com/wippyai/go-lua/analysis/engine",
+     "symbol": "SchemaCarrySlot",
+     "uses": 1,
+     "class": "declaration"
+    },
+    {
+     "package": "github.com/wippyai/go-lua/analysis/engine",
+     "symbol": "SchemaInput",
+     "uses": 1,
+     "class": "declaration"
+    },
+    {
+     "package": "github.com/wippyai/go-lua/analysis/engine",
+     "symbol": "SchemaRead",
+     "uses": 1,
+     "class": "query"
+    },
+    {
+     "package": "github.com/wippyai/go-lua/analysis/engine",
+     "symbol": "SchemaReadSlot",
+     "uses": 3,
+     "class": "query"
+    },
+    {
+     "package": "github.com/wippyai/go-lua/analysis/engine",
+     "symbol": "SchemaRouteWrite",
+     "uses": 1,
+     "class": "declaration"
+    },
+    {
+     "package": "github.com/wippyai/go-lua/analysis/engine",
+     "symbol": "SchemaRuleSpec",
+     "uses": 1,
+     "class": "declaration"
+    },
+    {
+     "package": "github.com/wippyai/go-lua/analysis/engine",
+     "symbol": "SchemaSelectedRead",
+     "uses": 2,
+     "class": "query"
+    },
+    {
+     "package": "github.com/wippyai/go-lua/analysis/engine",
+     "symbol": "SchemaWriteSlot",
+     "uses": 1,
+     "class": "declaration"
+    }
+   ],
+   "target": {
+    "kind": "declared-surface",
+    "package": "github.com/wippyai/go-lua/analysis/schema/rule/relcompile",
+    "relation": "",
+    "column": "",
+    "note": "the symbol appears only in a declaration, which lowers into the canonical ExecutionSchema"
+   },
+   "gap": "",
+   "waits_on": "G5-declared-surface-has-no-production-entry"
+  },
+  {
+   "path": "domain/placement/suspension/reducer.go",
+   "manifest_entry": "",
+   "reads": [
+    {
+     "package": "github.com/wippyai/go-lua/analysis/engine/operand",
+     "symbol": "SummaryVector",
+     "uses": 3,
+     "class": "row-abi"
+    }
+   ],
+   "target": {
+    "kind": "row-abi",
+    "package": "github.com/wippyai/go-lua/analysis/engine/operand",
+    "relation": "",
+    "column": "",
+    "note": "reads only the surviving operand value types; the S2-reducer-operand-abi restatement already landed, so this consumer is at its post-cut home and the cut owes it nothing"
+   },
+   "gap": "",
+   "waits_on": ""
+  },
+  {
+   "path": "domain/placement/suspension/routes.go",
+   "manifest_entry": "",
+   "reads": [
+    {
+     "package": "github.com/wippyai/go-lua/analysis/engine/operand",
+     "symbol": "SummaryVector",
+     "uses": 1,
+     "class": "row-abi"
+    }
+   ],
+   "target": {
+    "kind": "row-abi",
+    "package": "github.com/wippyai/go-lua/analysis/engine/operand",
+    "relation": "",
+    "column": "",
+    "note": "reads only the surviving operand value types; the S2-reducer-operand-abi restatement already landed, so this consumer is at its post-cut home and the cut owes it nothing"
+   },
+   "gap": "",
+   "waits_on": ""
+  },
+  {
+   "path": "domain/placement/transfer/core.go",
+   "manifest_entry": "",
+   "reads": [
+    {
+     "package": "github.com/wippyai/go-lua/analysis/engine/operand",
+     "symbol": "SummaryVector",
+     "uses": 3,
+     "class": "row-abi"
+    }
+   ],
+   "target": {
+    "kind": "row-abi",
+    "package": "github.com/wippyai/go-lua/analysis/engine/operand",
+    "relation": "",
+    "column": "",
+    "note": "reads only the surviving operand value types; the S2-reducer-operand-abi restatement already landed, so this consumer is at its post-cut home and the cut owes it nothing"
+   },
+   "gap": "",
+   "waits_on": ""
+  },
+  {
+   "path": "domain/placement/transfer/routes.go",
+   "manifest_entry": "",
+   "reads": [
+    {
+     "package": "github.com/wippyai/go-lua/analysis/engine/operand",
+     "symbol": "SummaryVector",
+     "uses": 1,
+     "class": "row-abi"
+    }
+   ],
+   "target": {
+    "kind": "row-abi",
+    "package": "github.com/wippyai/go-lua/analysis/engine/operand",
+    "relation": "",
+    "column": "",
+    "note": "reads only the surviving operand value types; the S2-reducer-operand-abi restatement already landed, so this consumer is at its post-cut home and the cut owes it nothing"
+   },
+   "gap": "",
+   "waits_on": ""
+  },
+  {
+   "path": "domain/static/owner/registration.go",
+   "manifest_entry": "S4-owner-registrations",
+   "reads": [
+    {
+     "package": "github.com/wippyai/go-lua/analysis/engine",
+     "symbol": "BindRelationOwner",
+     "uses": 1,
+     "class": "admission"
+    },
+    {
+     "package": "github.com/wippyai/go-lua/analysis/engine",
+     "symbol": "SchemaBinding",
+     "uses": 1,
+     "class": "declaration"
+    },
+    {
+     "package": "github.com/wippyai/go-lua/analysis/engine",
+     "symbol": "SchemaBuilder",
+     "uses": 1,
+     "class": "declaration"
+    }
+   ],
+   "target": {
+    "kind": "declared-surface",
+    "package": "github.com/wippyai/go-lua/analysis/schema/rule/relcompile",
+    "relation": "",
+    "column": "",
+    "note": "the declaration lowers into the canonical ExecutionSchema Every engine symbol this entry names sits in DeclareAxis or BindAxis, and domain/composite/axis_table.go is their only production caller: it passes both for all nine axis owners at lines 128-136. S4-composite-wiring deletes that file, and the manifest orders S4-composite-wiring after this entry through S4-schema-fragments, so this entry's restatement - the same file reduced to StructureSpecs alone - removes functions a caller the cut still holds names. The two land in one commit, or the caller comes out first."
+   },
+   "gap": "",
+   "waits_on": "G5-declared-surface-has-no-production-entry"
+  },
+  {
+   "path": "domain/static/type_summary_observation.go",
+   "manifest_entry": "S6-domain-observation-restatement",
+   "reads": [
+    {
+     "package": "github.com/wippyai/go-lua/analysis/engine",
+     "symbol": "OrderedCells",
+     "uses": 1,
+     "class": "query"
+    }
+   ],
+   "target": {
+    "kind": "gap",
+    "package": "",
+    "relation": "static-type-summary",
+    "column": "",
+    "note": "the engine-typed reducer has no caller; the relation-side operation already folds this family"
+   },
+   "gap": "G4-observation-reader-dead",
+   "waits_on": ""
+  },
+  {
+   "path": "domain/typestate/statecell/generated_relation_owner.go",
+   "manifest_entry": "",
+   "reads": [
+    {
+     "package": "github.com/wippyai/go-lua/analysis/engine/execution",
+     "symbol": "ExactRead",
+     "uses": 1,
+     "class": "row-abi"
+    },
+    {
+     "package": "github.com/wippyai/go-lua/analysis/engine/execution",
+     "symbol": "ForeignExactRead",
+     "uses": 1,
+     "class": "row-abi"
+    },
+    {
+     "package": "github.com/wippyai/go-lua/analysis/engine/execution",
+     "symbol": "ForeignFactor",
+     "uses": 2,
+     "class": "row-abi"
+    },
+    {
+     "package": "github.com/wippyai/go-lua/analysis/engine/execution",
+     "symbol": "ForeignSelectedMember",
+     "uses": 1,
+     "class": "row-abi"
+    },
+    {
+     "package": "github.com/wippyai/go-lua/analysis/engine/execution",
+     "symbol": "RouteMember",
+     "uses": 1,
+     "class": "row-abi"
+    },
+    {
+     "package": "github.com/wippyai/go-lua/analysis/engine/execution",
+     "symbol": "SelectedCoordinate",
+     "uses": 1,
+     "class": "row-abi"
+    }
+   ],
+   "target": {
+    "kind": "gap",
+    "package": "",
+    "relation": "typestate",
+    "column": "",
+    "note": "a generated relation owner in no manifest entry while its eight siblings are all in S3-generated-relation-owners"
+   },
+   "gap": "G2-typestate-owner-omitted",
+   "waits_on": ""
+  },
+  {
+   "path": "domain/value/bodyresult/judgment.go",
+   "manifest_entry": "",
+   "reads": [
+    {
+     "package": "github.com/wippyai/go-lua/analysis/engine/operand",
+     "symbol": "SelectedCell",
+     "uses": 1,
+     "class": "row-abi"
+    }
+   ],
+   "target": {
+    "kind": "row-abi",
+    "package": "github.com/wippyai/go-lua/analysis/engine/operand",
+    "relation": "",
+    "column": "",
+    "note": "reads only the surviving operand value types; the S2-reducer-operand-abi restatement already landed, so this consumer is at its post-cut home and the cut owes it nothing"
+   },
+   "gap": "",
+   "waits_on": ""
+  },
+  {
+   "path": "domain/value/owner/query.go",
+   "manifest_entry": "S4-fragment-consumers",
+   "reads": [
+    {
+     "package": "github.com/wippyai/go-lua/analysis/engine",
+     "symbol": "FrozenResult",
+     "uses": 1,
+     "class": "result"
+    },
+    {
+     "package": "github.com/wippyai/go-lua/analysis/engine",
+     "symbol": "HotSummaryQuerySpec",
+     "uses": 2,
+     "class": "query"
+    },
+    {
+     "package": "github.com/wippyai/go-lua/analysis/engine",
+     "symbol": "NewQuerySlot",
+     "uses": 1,
+     "class": "query"
+    },
+    {
+     "package": "github.com/wippyai/go-lua/analysis/engine",
+     "symbol": "OrderedCells",
+     "uses": 2,
+     "class": "query"
+    },
+    {
+     "package": "github.com/wippyai/go-lua/analysis/engine",
+     "symbol": "QueryFold",
+     "uses": 1,
+     "class": "query"
+    },
+    {
+     "package": "github.com/wippyai/go-lua/analysis/engine",
+     "symbol": "QuerySlot",
+     "uses": 1,
+     "class": "query"
+    },
+    {
+     "package": "github.com/wippyai/go-lua/analysis/engine",
+     "symbol": "SchemaBinding",
+     "uses": 2,
+     "class": "declaration"
+    },
+    {
+     "package": "github.com/wippyai/go-lua/analysis/engine",
+     "symbol": "SchemaBuilder",
+     "uses": 1,
+     "class": "declaration"
+    },
+    {
+     "package": "github.com/wippyai/go-lua/analysis/engine",
+     "symbol": "SchemaQueryRead",
+     "uses": 1,
+     "class": "query"
+    },
+    {
+     "package": "github.com/wippyai/go-lua/analysis/engine",
+     "symbol": "SchemaQuerySpec",
+     "uses": 1,
+     "class": "query"
+    },
+    {
+     "package": "github.com/wippyai/go-lua/analysis/engine",
+     "symbol": "SchemaReadForm",
+     "uses": 1,
+     "class": "query"
+    },
+    {
+     "package": "github.com/wippyai/go-lua/analysis/engine",
+     "symbol": "SummaryQueryImplementation",
+     "uses": 1,
+     "class": "query"
+    },
+    {
+     "package": "github.com/wippyai/go-lua/analysis/engine",
+     "symbol": "SummaryQueryImplementationAt",
+     "uses": 1,
+     "class": "query"
+    }
+   ],
+   "target": {
+    "kind": "row-abi",
+    "package": "github.com/wippyai/go-lua/analysis/schema/rule/relbindgen",
+    "relation": "",
+    "column": "",
+    "note": "the values arrive as operands while the fold runs, so the emitted binding decoder answers it"
+   },
+   "gap": "",
+   "waits_on": "S4-schema-fragments"
+  },
+  {
+   "path": "domain/value/owner/registration.go",
+   "manifest_entry": "S4-owner-registrations",
+   "reads": [
+    {
+     "package": "github.com/wippyai/go-lua/analysis/engine",
+     "symbol": "BindRelationOwner",
+     "uses": 1,
+     "class": "admission"
+    },
+    {
+     "package": "github.com/wippyai/go-lua/analysis/engine",
+     "symbol": "SchemaBinding",
+     "uses": 1,
+     "class": "declaration"
+    },
+    {
+     "package": "github.com/wippyai/go-lua/analysis/engine",
+     "symbol": "SchemaBuilder",
+     "uses": 1,
+     "class": "declaration"
+    }
+   ],
+   "target": {
+    "kind": "declared-surface",
+    "package": "github.com/wippyai/go-lua/analysis/schema/rule/relcompile",
+    "relation": "",
+    "column": "",
+    "note": "the declaration lowers into the canonical ExecutionSchema Every engine symbol this entry names sits in DeclareAxis or BindAxis, and domain/composite/axis_table.go is their only production caller: it passes both for all nine axis owners at lines 128-136. S4-composite-wiring deletes that file, and the manifest orders S4-composite-wiring after this entry through S4-schema-fragments, so this entry's restatement - the same file reduced to StructureSpecs alone - removes functions a caller the cut still holds names. The two land in one commit, or the caller comes out first."
+   },
+   "gap": "",
+   "waits_on": "G5-declared-surface-has-no-production-entry"
+  },
+  {
+   "path": "domain/value/resultalias/judgment.go",
+   "manifest_entry": "",
+   "reads": [
+    {
+     "package": "github.com/wippyai/go-lua/analysis/engine/operand",
+     "symbol": "SelectedCell",
+     "uses": 1,
+     "class": "row-abi"
+    }
+   ],
+   "target": {
+    "kind": "row-abi",
+    "package": "github.com/wippyai/go-lua/analysis/engine/operand",
+    "relation": "",
+    "column": "",
+    "note": "reads only the surviving operand value types; the S2-reducer-operand-abi restatement already landed, so this consumer is at its post-cut home and the cut owes it nothing"
+   },
+   "gap": "",
+   "waits_on": ""
+  },
+  {
+   "path": "domain/value/summary_observation.go",
+   "manifest_entry": "S6-domain-observation-restatement",
+   "reads": [
+    {
+     "package": "github.com/wippyai/go-lua/analysis/engine",
+     "symbol": "OrderedCells",
+     "uses": 1,
+     "class": "query"
+    }
+   ],
+   "target": {
+    "kind": "row-abi",
+    "package": "github.com/wippyai/go-lua/analysis/schema/rule/relbindgen",
+    "relation": "",
+    "column": "",
+    "note": "the values arrive as operands while the fold runs, so the emitted binding decoder answers it"
+   },
+   "gap": "",
+   "waits_on": "S6-engine-runtime"
+  }
+ ],
+ "gaps": [
+  {
+   "id": "G1-snapshot-publication-absent",
+   "distinction": "every published query answer, at the canonical snapshot the read paths already read",
+   "owner": "analysis/relation and analysis/engine/relation",
+   "detail": "The read side is already where the cut wants it: these consumers call analysis/snapshot.Query against a sealed snapshot and use the engine only to open the answer. What has no successor is the write side. The only non-test code that publishes into a canonical snapshot is analysis/engine/publication_column.go - PutColumn at line 271, DeclareQuery at 283, SetRow at 292 - and S6-engine-publication-reads deletes it. Nothing under analysis/relation, analysis/engine/relation or domain/*/relation imports analysis/snapshot at all. So S8-read-paths restates five packages onto \"analysis/snapshot read laws with no analysis/engine import\" and the snapshot they are to read has, after the cut, nobody to fill it. Relation rows are also not addressable from a sealed artifact by column identity: snapshot.Read is keyed by an Axis slot, not a model.ColumnID, and relbindgen addresses inputs by slot ordinal against a live frame. Publishing is the blocker; reading is not.",
+   "consumers": [
+    "analysis/diagnostic/collect.go",
+    "analysis/diagnostic/collect_query.go",
+    "analysis/result/native_branch.go",
+    "analysis/result/project.go",
+    "domain/placement/query/query.go"
+   ]
+  },
+  {
+   "id": "G4-observation-reader-dead",
+   "distinction": "none - the distinction is published, by the relation-side operation instead",
+   "owner": "domain/static",
+   "detail": "domain/static/type_summary_observation.go exports AccumulateTypeSummary over engine.OrderedCells[TypeFact] and nothing calls it. The live fold is domain/static/relation/operation.go, whose StaticTypeSummaryOperation.Evaluate calls AccumulateTypeSummaryRows with argument.Cells. The family is bound in the corpus as StaticTypeSummary with output column static-type-summary. This entry is therefore not work for W4 but a deletion the cut can take: it is recorded because S6-domain-observation-restatement lists the file for restatement, and restating a reducer nobody calls would be work spent on residue.",
+   "consumers": [
+    "domain/static/type_summary_observation.go"
+   ]
+  },
+  {
+   "id": "G2-typestate-owner-omitted",
+   "distinction": "the typestate axis relation owner",
+   "owner": "internal/relcut/manifest.json",
+   "detail": "domain/typestate/statecell/generated_relation_owner.go imports analysis/engine/execution, which S2-engine-execution deletes, and it belongs to no manifest entry. Its eight siblings are all named in S3-generated-relation-owners. The typestate family is bound in the corpus, so this is a hole in the delete-set rather than an unbound judgment: the cut as written would delete every generated relation owner except this one and leave it naming a package that is gone.",
+   "consumers": [
+    "domain/typestate/statecell/generated_relation_owner.go"
+   ]
+  },
+  {
+   "id": "G3-rows-obligation-undischarged",
+   "distinction": "the scalar row templates a workspace artifact product reads",
+   "owner": "K-engine-rows",
+   "detail": "analysis/internal/workspace/artifact_products.go is the only surviving non-test consumer of analysis/engine/rows and rows/scalarlower. Those packages are retained under K-engine-rows as keep-if-generic, and the manifest rule is that an undischarged obligation is a delete. The obligation is undischarged at this ref, so whether this consumer has a surface after the cut is not yet decided. It is recorded so the decision is made rather than defaulted.",
+   "consumers": [
+    "analysis/internal/workspace/artifact_products.go"
+   ]
+  },
+  {
+   "id": "G5-declared-surface-has-no-production-entry",
+   "distinction": "a production entry into the declared rule surface: the lowering from an authored declaration to the canonical ExecutionSchema that every declared-surface consumer is to read its answer out of after the cut",
+   "owner": "analysis/schema/rule/relcompile",
+   "consumers": [
+    "analysis/catalog/publication.go",
+    "analysis/compile.go",
+    "analysis/diagnostic/status.go",
+    "analysis/inspect/session.go",
+    "analysis/lua/selectapply/publish.go",
+    "analysis/result/query.go",
+    "domain/call/owner/registration.go",
+    "domain/effect/callsite/mounted_site.go",
+    "domain/effect/owner/registration.go",
+    "domain/heap/context/owner/registration.go",
+    "domain/heap/owner/registration.go",
+    "domain/pack/owner/registration.go",
+    "domain/placement/owner/registration.go",
+    "domain/placement/suspension/evidence_schema.go",
+    "domain/static/owner/registration.go",
+    "domain/value/owner/registration.go"
+   ],
+   "detail": "relcompile holds the grammar and the name registry - Declaration, Rule, JoinSpec, Operand, Publication, Registry and Compile - and lowers them to plan.ExecutionSchema. What it does not hold is a way in from production: no non-test file in the tree imports it, so the whole surface is reachable only from the census and law tests that pin it. Measured against the sixteen entries that name it as their target, it declares none of the thirty-seven symbols they read; every one of those symbols is declared in analysis/engine and nowhere else, so no partial move exists either. No manifest entry builds the entry point: S1-analyzer-constructor restates the constructor onto analysis/engine/relation/runtime, and the S4, S6 and S8 entries that own these consumers all restate onto surfaces of their own. Until an authored declaration can be compiled and read from production code, a consumer pointed here can only be bridged, which is why the map states the prerequisite instead of the move."
+  },
+  {
+   "id": "G6-relational-runtime-is-a-stub",
+   "distinction": "the composed and solved target the analyzer constructor and the runtime-composition readers are restated onto",
+   "owner": "analysis/engine/relation/runtime",
+   "consumers": [
+    "analysis/analyze.go",
+    "analysis/diagnostic/attach.go",
+    "domain/effect/callsite/occurrence.go",
+    "domain/effect/callsite/publication_transition.go"
+   ],
+   "detail": "analysis/engine/relation/runtime holds one file, doc.go. It declares no exported identity and no non-test file imports it. S1-analyzer-constructor is blocked_by nothing and is the entry the manifest says runs before every deletion, so the order the cut is planned in makes it first; it is unreachable all the same, because the surface it restates onto is a stub. The four consumers that name it read CommittedProgram and Answer, both declared in analysis/engine alone."
+  }
+ ]
 }

@@ -13,29 +13,32 @@ import (
 // PayloadTypes names the owner-issued TypeID each column of this axis
 // carries.
 type PayloadTypes struct {
-	Static model.TypeID
+	TypeSummary model.TypeID
+	Static      model.TypeID
 }
 
 // Available reports whether every column has an owner-issued type.
 func (types PayloadTypes) Available() bool {
-	return types.Static.Available()
+	return types.TypeSummary.Available() && types.Static.Available()
 }
 
 // PayloadTags names the store fence each column of this axis interns under.
 type PayloadTags struct {
-	Static identity.ContentID
+	TypeSummary identity.ContentID
+	Static      identity.ContentID
 }
 
 // Available reports whether every column has a store fence.
 func (tags PayloadTags) Available() bool {
-	return tags.Static.Available()
+	return tags.TypeSummary.Available() && tags.Static.Available()
 }
 
 // Payloads is this axis's thin typed owner-column publisher: one Column per
 // payload type the axis declares, each over its own solve-local store, and
 // the only place one of its domain values crosses into a value token.
 type Payloads struct {
-	Static *relbindgen.Column[staticdomain.TypeFact]
+	TypeSummary *relbindgen.Column[staticdomain.TypeSummaryObservation]
+	Static      *relbindgen.Column[staticdomain.TypeFact]
 }
 
 // NewPayloads installs one column per declared payload over a store fenced
@@ -47,6 +50,13 @@ func NewPayloads(types PayloadTypes, tags PayloadTags, reserve int) (Payloads, b
 		return Payloads{}, false
 	}
 	var payloads Payloads
+	typeSummaryStore, ok := relbindgen.NewStore[staticdomain.TypeSummaryObservation](tags.TypeSummary, reserve)
+	if !ok {
+		return Payloads{}, false
+	}
+	if payloads.TypeSummary, ok = relbindgen.NewColumn(types.TypeSummary, typeSummaryStore); !ok {
+		return Payloads{}, false
+	}
 	staticStore, ok := relbindgen.NewStore[staticdomain.TypeFact](tags.Static, reserve)
 	if !ok {
 		return Payloads{}, false
@@ -59,7 +69,7 @@ func NewPayloads(types PayloadTypes, tags PayloadTags, reserve int) (Payloads, b
 
 // Available reports whether every column carries live storage.
 func (payloads Payloads) Available() bool {
-	return payloads.Static.Available()
+	return payloads.TypeSummary.Available() && payloads.Static.Available()
 }
 
 // Lattices are this axis's ascent witnesses. Each names the owner's own

@@ -190,7 +190,7 @@ func coldEnvironmentPlanes(rows []environmentEdgeDraft) ([]programschema.Environ
 			resets = append(resets, converted)
 		}
 		edge, ok := programschema.NewEnvironmentEdge(
-			row.id, row.from, row.to, row.route, row.guard, row.decision, row.condition,
+			row.id, row.from, row.Departure(), row.to, row.route, row.guard, row.decision, row.condition,
 			row.reset, row.component, row.mu, offset, uint32(len(row.resets)), uint8(row.arm),
 			row.guarded, row.truth, row.hasReset, row.hasMu,
 		)

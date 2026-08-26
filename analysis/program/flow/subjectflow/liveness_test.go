@@ -64,3 +64,50 @@ return wrapped
 		t.Fatal("local used after coroutine.yield has no exact Live table-allocation judgment")
 	}
 }
+
+// A subject whose every definition lies after the yield does not exist at the
+// cut, so the boundary provably cannot observe it. That is a proof of the
+// negative answer, not an absence of evidence, and it must be published as
+// DiesBefore rather than widened to Unknown.
+func TestSubjectDefinedAfterTheYieldDiesBeforeIt(t *testing.T) {
+	program, err := lower.Lower(lower.Source{Name: "subject-liveness-born-after.lua", Text: []byte(`
+local function run()
+    coroutine.yield()
+    local born = { value = 1 }
+    return born.value
+end
+local wrapped = coroutine.wrap(run)
+wrapped()
+return wrapped
+`)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	projection := program.Flow().SubjectFlow()
+	if projection == nil || !projection.Available() || projection.LivenessCount() == 0 {
+		t.Fatal("coroutine fixture published no subject-liveness rows")
+	}
+	tables, unknownTables := 0, 0
+	for index := 0; index < projection.LivenessCount(); index++ {
+		row, rowOK := projection.LivenessAt(index)
+		if !rowOK {
+			t.Fatalf("subject-liveness row %d is unavailable", index)
+		}
+		if row.Subject.Kind != subjectflow.SubjectValue || keyspace.TermFamily(row.Subject.Term) != keyspace.FamilyTable {
+			continue
+		}
+		tables++
+		if row.State == subjectflow.LivenessLive {
+			t.Fatalf("table allocated after the yield is published Live at row %d", index)
+		}
+		if row.State == subjectflow.LivenessUnknown {
+			unknownTables++
+		}
+	}
+	if tables == 0 {
+		t.Fatal("fixture published no table-allocation liveness judgment")
+	}
+	if unknownTables != 0 {
+		t.Fatalf("table allocations born after the yield published Unknown = %d, want every one proven DiesBefore", unknownTables)
+	}
+}

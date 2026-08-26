@@ -20,6 +20,14 @@ type positionPin struct {
 
 // axisPositionPins is the agreement between the artifact's factor lane catalog
 // and the axis inventory's declaration positions.
+//
+// The pin count is what the inventory declares with factor storage: nine axes
+// carry axis.StorageFactor, and every one of them is declared ahead of the
+// fourteen engine-published rows, so nine is the length of the addressed
+// prefix rather than a number chosen to fit. Each ordinal is a lane a factor
+// binding is addressed by, so a pin added here states that a coordinate space
+// entered the addressed prefix, and the law below still rejects a member that
+// moved within it.
 func axisPositionPins() []positionPin {
 	return []positionPin{
 		{1, axisKeyValue},
@@ -29,6 +37,8 @@ func axisPositionPins() []positionPin {
 		{5, axisKeyEffect},
 		{6, axisKeyPlacement},
 		{7, axisKeyPlacementEvidence},
+		{8, axisKeyContext},
+		{9, axisKeyStaticType},
 	}
 }
 

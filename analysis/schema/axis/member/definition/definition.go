@@ -753,9 +753,8 @@ type CarryTransform struct {
 
 // Selection is a named owner-issued operation that publishes the rows of one
 // of this axis's relations. Relation and Tag refer to a relation and a
-// projection in this same definition; the implementation is kept as a
-// source-level Go symbol descriptor and never crosses into the runtime schema
-// as a callback.
+// projection in this same definition, and the operation itself is the
+// derivation that relation declares.
 //
 // It is how a produced read stops being a callback the declaration never
 // mentioned: the rows a selection returns depend on values earlier reads
@@ -768,11 +767,10 @@ type CarryTransform struct {
 // that those derived rows are SELECTED: they carry a tag a reading rule
 // correlates them by.
 type Selection struct {
-	Name           string
-	Key            schema.Key
-	Relation       string
-	Tag            string
-	Implementation GoSymbol
+	Name     string
+	Key      schema.Key
+	Relation string
+	Tag      string
 }
 
 // KeyNormalization is the one axis-level conversion from an owner key carrier
@@ -1094,7 +1092,7 @@ func (definition Definition) Catalog() (member.Catalog, bool) {
 	selections := make([]member.Selection, len(definition.Selections))
 	selectionKeys := make(map[schema.Key]struct{}, len(definition.Selections))
 	for index, selection := range definition.Selections {
-		if !identifierAvailable(selection.Name) || !selection.Key.Available() || !selection.Implementation.Available() {
+		if !identifierAvailable(selection.Name) || !selection.Key.Available() {
 			return member.Catalog{}, false
 		}
 		if _, duplicate := selectionKeys[selection.Key]; duplicate {
@@ -1472,11 +1470,7 @@ func (definition Definition) Clone() Definition {
 		clone.Reducers[index].Derivation.Build = cloneSymbol(reducer.Derivation.Build)
 		clone.Reducers[index].Derivation.StaticAxes = append([]schema.EntryReference(nil), reducer.Derivation.StaticAxes...)
 	}
-	clone.Selections = make([]Selection, len(definition.Selections))
-	for index, selection := range definition.Selections {
-		clone.Selections[index] = selection
-		clone.Selections[index].Implementation = cloneSymbol(selection.Implementation)
-	}
+	clone.Selections = append([]Selection(nil), definition.Selections...)
 	clone.CarryTransforms = make([]CarryTransform, len(definition.CarryTransforms))
 	for index, transform := range definition.CarryTransforms {
 		clone.CarryTransforms[index] = transform
@@ -1589,7 +1583,13 @@ func ManyValuedView(form member.ReadForm, cell, vector GoType) (view GoType, sli
 			return GoType{}, false, false
 		}
 		return cell, true, true
-	case member.ReadFormSummary:
+	case member.ReadFormSummary, member.ReadFormComplete:
+		// Both are whole-vector deliveries: a summary answers one row with
+		// every cell of its sealed denominator, and a complete read answers
+		// one row with every cell of a CLOSED denominator. Neither established
+		// a tag, so both are handed the vector and differ only in what closed
+		// the denominator - which is the read's own statement and not the
+		// view's.
 		if !vector.Available() {
 			return GoType{}, false, false
 		}

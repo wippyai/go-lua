@@ -48,7 +48,7 @@ func TestScheduleResolvesPreviousFromDeclaredStageOrder(t *testing.T) {
 			{typ: schemaissuance.IdentityType(schemaissuance.TypeAxisKey), present: true, key: "axis/write"},
 		}, inputs: []Input{{declaration: previousInput}}},
 	}
-	schedule, scheduled := BuildSchedule(41, plan, requests)
+	schedule, scheduled := BuildSchedule(41, plan, requests, nil)
 	if !scheduled || schedule.NodeCount() != 3 || schedule.EmissionCount() != 2 {
 		t.Fatalf("schedule refused: nodes=%d emissions=%d", schedule.NodeCount(), schedule.EmissionCount())
 	}
@@ -105,7 +105,7 @@ func TestScheduleEmissionIsTheIssuedRequest(t *testing.T) {
 		base:         base,
 		parameters:   []value{{typ: pointMany, present: true, points: []identity.ContentID{base}}},
 		input:        Input{declaration: previousInput},
-	}})
+	}}, nil)
 	if !scheduled {
 		t.Fatal("schedule refused a single issued request")
 	}
@@ -158,7 +158,7 @@ func TestScheduleEmissionCarriesSealedStageNativeBit(t *testing.T) {
 		parameters:   []value{{typ: pointMany, present: true, points: []identity.ContentID{base}}},
 		input:        Input{declaration: input},
 	}
-	schedule, scheduled := BuildSchedule(41, plan, []Request{request})
+	schedule, scheduled := BuildSchedule(41, plan, []Request{request}, nil)
 	emission, emissionOK := schedule.EmissionAt(0)
 	native, nativeOK := emission.Native()
 	inputPoint, inputOK := emission.InputPointAt(0)
@@ -195,7 +195,7 @@ func TestScheduleRefusesDeclaredComputationDependencyCycle(t *testing.T) {
 			input: Input{declaration: input},
 		}
 	}
-	if schedule, scheduled := BuildSchedule(41, plan, []Request{request(left, right), request(right, left)}); scheduled || schedule.NodeCount() != 0 || schedule.EmissionCount() != 0 {
+	if schedule, scheduled := BuildSchedule(41, plan, []Request{request(left, right), request(right, left)}, nil); scheduled || schedule.NodeCount() != 0 || schedule.EmissionCount() != 0 {
 		t.Fatal("cyclic computation dependency schedule was admitted")
 	}
 }

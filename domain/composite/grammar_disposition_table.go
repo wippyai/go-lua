@@ -30,7 +30,7 @@ import (
 // would still close over the same row set while accounting for an action that
 // no longer exists. Pinning the census digest makes every parser or AST change
 // reach an author, and the pin is raised by whoever re-reads the affected rows.
-const grammarCensusAuthority = "b64b62e921d0016d7f3473f92c92b43e0ddf9395a84e8d956493d97e221e696a"
+const grammarCensusAuthority = "2712e2c51728c517ae41cd2a5a9ac8c12bcd36da5019dc3055659a0ffdbed6ef"
 
 // GrammarRow is one parser census row key. The three prefixes are the three
 // grains the census publishes: "production:" for a parser.go.y alternative,
@@ -217,6 +217,11 @@ var grammarRoleGroups = [...]struct {
 	occurrence schema.Key
 }{
 	{roleCallOccurrence, "occurrence/call"},
+	// A subject-liveness span is issued at the boundary of the call it is
+	// anchored at, so the call form in the source is the grammar row that
+	// reaches its consumers too. It is deliberately the same role bit: the
+	// span has no source form of its own to attribute.
+	{roleCallOccurrence, "occurrence/subject-liveness"},
 	{roleAllocationOccurrence, "occurrence/allocation"},
 	{roleReturnBoundaryOccurrence, "occurrence/return-boundary"},
 	{roleStorageBindTransferOccurrence, "occurrence/storage-bind-transfer"},

@@ -11,6 +11,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/program/flow/containment"
 	"github.com/wippyai/go-lua/analysis/program/flow/evaluation"
 	"github.com/wippyai/go-lua/analysis/program/flow/executable"
+	"github.com/wippyai/go-lua/analysis/program/flow/kind"
 	"github.com/wippyai/go-lua/analysis/program/flow/outcome"
 	"github.com/wippyai/go-lua/analysis/program/flow/recurrence"
 	"github.com/wippyai/go-lua/analysis/program/flow/routeplan"
@@ -269,6 +270,9 @@ type proofState struct {
 
 	counts [keyspace.FamilyCount]uint32
 	entry  keyspace.Term
+	// unreachedRepeatControls are the Repeat conditions whose child Body tail
+	// is unreachable. They remain executable subjects and never evaluate.
+	unreachedRepeatControls []keyspace.Term
 	*typedScratch
 	*resultScratch
 }
@@ -439,6 +443,20 @@ func newSealState(
 		outcomes: outcomes, boundary: boundary, index: index, calls: calls, edges: edges, rows: rows, pub: pub}
 	if err := proof.loadCounts(); err != nil {
 		return nil, err
+	}
+	for ordinal := uint32(1); ordinal <= proof.counts[keyspace.FamilyLoop]; ordinal++ {
+		loop := keyspace.MakeTerm(keyspace.FamilyLoop, ordinal)
+		_, loopBody, loopKind, loopControl, loopOK := flow.Control().Loops().Get(loop)
+		if !loopOK || loopKind != kind.LoopRepeat || loopControl == 0 {
+			continue
+		}
+		tail, tailOK := control.Tail(loopBody)
+		if !tailOK {
+			return nil, errors.New("program/flow/causal: Repeat child tail is unavailable")
+		}
+		if !control.Reachable(tail) {
+			proof.unreachedRepeatControls = append(proof.unreachedRepeatControls, loopControl)
+		}
 	}
 	edges.writeCommitEdges = make([]uint32, proof.counts[keyspace.FamilyWrite]+1)
 	edges.writeCommitSet = make([]bool, proof.counts[keyspace.FamilyWrite]+1)

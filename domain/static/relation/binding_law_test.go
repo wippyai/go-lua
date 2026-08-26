@@ -68,11 +68,12 @@ func TestStaticTransferCarriesTheTypeFactItRead(t *testing.T) {
 func TestTheStaticAlgebraResolvesByTypeAlone(t *testing.T) {
 	fixture := relationfixture.New(t)
 	place := harness.New(t, "row/static")
-	staticType := place.TypeID(t, "type/static")
-	payloads, ok := relation.NewPayloads(
-		relation.PayloadTypes{Static: staticType},
-		relation.PayloadTags{Static: harness.Content(t, "store/static")},
-		reserve)
+	var types relation.PayloadTypes
+	var tags relation.PayloadTags
+	place.InstallTypes(t, &types)
+	place.InstallTags(t, &tags)
+	staticType := types.Static
+	payloads, ok := relation.NewPayloads(types, tags, reserve)
 	if !ok {
 		t.Fatal("install the static columns")
 	}

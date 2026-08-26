@@ -22,7 +22,7 @@ type HotRule struct {
 	calls         *callowner.HotOwner
 	effects       *effectowner.HotOwner
 	batchIndex    *effectfactor.MountedPublicationBatchIndex
-	preparedByID  map[identity.ContentID]*preparedBatch
+	preparedByID  map[identity.ContentID]*PreparedBatch
 	callRead      engine.Read[engine.OrderedCells[calldomain.Value]]
 	valueRead     engine.Read[engine.Selection[sourceTag, engine.OrderedCells[valuedomain.Value]]]
 	placementRead engine.Read[engine.Selection[routeTag, engine.OrderedCells[placementdomain.Fact]]]
@@ -60,14 +60,14 @@ func BindHot(
 		calls:        calls,
 		effects:      effects,
 		batchIndex:   batchIndex,
-		preparedByID: make(map[identity.ContentID]*preparedBatch, batchIndex.Count()),
+		preparedByID: make(map[identity.ContentID]*PreparedBatch, batchIndex.Count()),
 	}
 	for index := 0; index < batchIndex.Count(); index++ {
 		batch, batchOK := batchIndex.BatchAt(index)
 		if !batchOK {
 			return nil, false
 		}
-		prepared, preparedOK := rule.prepareBatch(batch)
+		prepared, preparedOK := PrepareBatch(rule.values.Schema(), batch)
 		if !preparedOK {
 			return nil, false
 		}
@@ -111,7 +111,7 @@ func (rule *HotRule) operandContent(batch effectfactor.MountedPublicationBatch) 
 	return batch, [32]byte(id), true
 }
 
-func (rule *HotRule) preparedFor(batch effectfactor.MountedPublicationBatch) *preparedBatch {
+func (rule *HotRule) preparedFor(batch effectfactor.MountedPublicationBatch) *PreparedBatch {
 	if rule == nil || rule.batchIndex == nil || rule.preparedByID == nil || !rule.batchIndex.Owns(batch) {
 		return nil
 	}
@@ -141,7 +141,7 @@ func (rule *HotRule) projectCall(batch effectfactor.MountedPublicationBatch) (ui
 	if rule == nil || rule.calls == nil || rule.calls.Algebra() == nil {
 		return 0, false
 	}
-	key, keyOK := rule.callKeyForBatch(batch)
+	key, keyOK := callKeyForBatch(rule.calls.Algebra(), batch)
 	if !keyOK {
 		return 0, false
 	}
@@ -161,29 +161,26 @@ func (rule *HotRule) locatePlacement(context engine.SelectorContext, batch effec
 	if !present {
 		return true
 	}
-	gate, gateOK := rule.operationGateForBatch(prepared, value)
-	if !gateOK {
+	plan, planOK := SourcePlanFor(prepared, rule.calls.Algebra(), value)
+	if !planOK {
 		return false
 	}
 	selection, selectionOK := engine.SelectorRead(context, rule.valueRead)
 	if !selectionOK {
 		return false
 	}
-	sources := prepared.sourcesForGate(gate)
-	facts, factsOK := rule.collectFacts(context, sources, selection)
+	facts, factsOK := rule.collectFacts(context, plan, selection)
 	if !factsOK {
 		return false
 	}
-	routes, routesOK := rule.routeSet(rule.owner.Schema(), prepared, gate, facts)
+	routes, routesOK := DerivePublicationRoutes(rule.owner.Schema(), rule.values.Schema(), plan, facts)
 	if !routesOK {
 		return false
 	}
-	for index := 0; index < routes.len(); index++ {
-		route, routeOK := routes.at(index)
-		if !routeOK {
-			return false
-		}
-		if !placementowner.SelectRouteTyped(rule.owner, context, route.key, route.tag) {
+	for index := 0; index < routes.RouteCount(); index++ {
+		route, routeOK := routes.RouteAt(index)
+		key, _ := route.Coordinates()
+		if !routeOK || !placementowner.SelectRouteTyped(rule.owner, context, key, routeTag(route.Predicate())) {
 			return false
 		}
 	}
@@ -211,32 +208,31 @@ func (rule *HotRule) fold(frame engine.Frame[placementdomain.Fact, effectfactor.
 	if prepared == nil {
 		return engine.RuleResult[placementdomain.Fact]{}
 	}
-	gate, gateOK := rule.operationGateForBatch(prepared, callValue)
-	if !gateOK {
+	plan, planOK := SourcePlanFor(prepared, rule.calls.Algebra(), callValue)
+	if !planOK {
 		return engine.RuleResult[placementdomain.Fact]{}
 	}
 	valueSelection, valueOK := engine.ReadValue(frame, rule.valueRead)
 	if !valueOK {
 		return engine.RuleResult[placementdomain.Fact]{}
 	}
-	sources := prepared.sourcesForGate(gate)
-	facts, factsOK := rule.collectFrameFacts(frame, sources, valueSelection)
+	facts, factsOK := rule.collectFrameFacts(frame, plan, valueSelection)
 	if !factsOK {
 		return engine.RuleResult[placementdomain.Fact]{}
 	}
-	routes, routesOK := rule.routeSet(rule.owner.Schema(), prepared, gate, facts)
+	routes, routesOK := DerivePublicationRoutes(rule.owner.Schema(), rule.values.Schema(), plan, facts)
 	if !routesOK {
 		return engine.RuleResult[placementdomain.Fact]{}
 	}
 	count, countOK := engine.SelectionCount(frame, placementSelection)
-	if !countOK || count != routes.len() {
+	if !countOK || count != routes.RouteCount() {
 		return engine.RuleResult[placementdomain.Fact]{}
 	}
 	if count == 0 {
 		return engine.NoSelection(frame, placementSelection)
 	}
 	return engine.Routed(frame, placementSelection, func(tag routeTag, cells engine.OrderedCells[placementdomain.Fact]) (placementdomain.Fact, bool) {
-		route, found := routes.find(tag)
+		route, found := routes.buffer.find(tag)
 		if !found || cells.Count() != 1 {
 			return placementdomain.BottomFact(), false
 		}

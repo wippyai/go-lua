@@ -3,6 +3,8 @@ package execution
 import (
 	"testing"
 
+	"github.com/wippyai/go-lua/analysis/engine/operand"
+
 	"github.com/wippyai/go-lua/analysis/engine/internal/carrier"
 	"github.com/wippyai/go-lua/analysis/engine/internal/factbinding"
 	"github.com/wippyai/go-lua/analysis/engine/internal/facts/support"
@@ -145,7 +147,7 @@ func TestSelectedReadDeliversOneCellPerDerivedMemberInDeclaredOrder(t *testing.T
 	run := NewRun(1, 1)
 	ticket := issueSelected(t, run, fixture, fixture.state)
 	coordinates := fixture.canonicalMembers(3)
-	cells := make([]SelectedCell[uint64], selectedFixtureWidth)
+	cells := make([]operand.SelectedCell[uint64], selectedFixtureWidth)
 	var scratch SelectedScratch[uint64, uint64]
 	if status := read.Observe(ticket, &scratch, coordinates, cells); status != ReadAvailable {
 		t.Fatalf("observe status = %d", status)
@@ -173,7 +175,7 @@ func TestSelectedReadRefusesADuplicateTagUnderByTagOrder(t *testing.T) {
 	run := NewRun(1, 1)
 	ticket := issueSelected(t, run, fixture, fixture.state)
 	coordinates := []RouteMember{fixture.member(0, 7), fixture.member(1, 7)}
-	cells := make([]SelectedCell[uint64], selectedFixtureWidth)
+	cells := make([]operand.SelectedCell[uint64], selectedFixtureWidth)
 	var scratch SelectedScratch[uint64, uint64]
 	if status := read.Observe(ticket, &scratch, coordinates, cells); status != ReadRefuse {
 		t.Fatalf("duplicate tag observe status = %d, want refuse", status)
@@ -193,7 +195,7 @@ func TestSelectedReadRefusesMembersOutsideTheDeclaredOrder(t *testing.T) {
 	run := NewRun(1, 1)
 	ticket := issueSelected(t, run, fixture, fixture.state)
 	descending := []RouteMember{fixture.member(0, 9), fixture.member(1, 4)}
-	cells := make([]SelectedCell[uint64], selectedFixtureWidth)
+	cells := make([]operand.SelectedCell[uint64], selectedFixtureWidth)
 	var scratch SelectedScratch[uint64, uint64]
 	if status := read.Observe(ticket, &scratch, descending, cells); status != ReadRefuse {
 		t.Fatalf("unordered observe status = %d, want refuse", status)
@@ -219,7 +221,7 @@ func TestSelectedReadDeliversTheFactorDefaultAtAnUnwrittenCoordinate(t *testing.
 	run := NewRun(1, 1)
 	ticket := issueSelected(t, run, fixture, fixture.state)
 	coordinates := fixture.canonicalMembers(2)
-	cells := make([]SelectedCell[uint64], selectedFixtureWidth)
+	cells := make([]operand.SelectedCell[uint64], selectedFixtureWidth)
 	var scratch SelectedScratch[uint64, uint64]
 	if status := read.Observe(ticket, &scratch, coordinates, cells); status != ReadAvailable {
 		t.Fatalf("observe status = %d", status)
@@ -256,7 +258,7 @@ func TestSelectedReadWidenedDeliversTopAtEveryMember(t *testing.T) {
 	run := NewRun(1, 1)
 	ticket := issueSelected(t, run, fixture, fixture.state)
 	coordinates := fixture.canonicalMembers(3)
-	cells := make([]SelectedCell[uint64], selectedFixtureWidth)
+	cells := make([]operand.SelectedCell[uint64], selectedFixtureWidth)
 	var scratch SelectedScratch[uint64, uint64]
 	if status := read.Observe(ticket, &scratch, coordinates, cells); status != ReadAvailable {
 		t.Fatalf("observe status = %d", status)
@@ -297,7 +299,7 @@ func TestSelectedReadPolicyIsTotalOverTheContractNotTheCaller(t *testing.T) {
 	run := NewRun(1, 1)
 	ticket := issueSelected(t, run, fixture, fixture.state)
 	coordinates := fixture.canonicalMembers(3)
-	cells := make([]SelectedCell[uint64], selectedFixtureWidth)
+	cells := make([]operand.SelectedCell[uint64], selectedFixtureWidth)
 	var scratch SelectedScratch[uint64, uint64]
 	if status := read.Observe(ticket, &scratch, coordinates, cells); status != ReadAvailable {
 		t.Fatalf("observe status = %d", status)
@@ -358,7 +360,7 @@ func TestSelectedReadRefusesAMemberSetWiderThanItsSealedStorage(t *testing.T) {
 	run := NewRun(1, 1)
 	ticket := issueSelected(t, run, fixture, fixture.state)
 	coordinates := fixture.canonicalMembers(3)
-	narrow := make([]SelectedCell[uint64], 2)
+	narrow := make([]operand.SelectedCell[uint64], 2)
 	var scratch SelectedScratch[uint64, uint64]
 	if status := read.Observe(ticket, &scratch, coordinates, narrow); status != ReadRefuse {
 		t.Fatalf("overwide observe status = %d, want refuse", status)

@@ -2,8 +2,8 @@
 // coordinate space the judgment is written into, the member vocabulary that
 // space is addressed by, and the Program that decides one call site.
 //
-// The judgment itself is domain/typestate's, the coordinate space is
-// domain/typestate/statecell's, and the obligation a callable declares is
+// The judgment itself is domain/typestate/obligation's, the coordinate space
+// is domain/typestate/statecell's, and the obligation a callable declares is
 // analysis/program/target/protocol's sealed callable-requirement authority.
 // This package names those three and adds no fourth authority: it contains no
 // engine slot, no runtime callback, and no state machine of its own.
@@ -18,6 +18,9 @@ import (
 	ruleprogram "github.com/wippyai/go-lua/analysis/schema/rule/program"
 	"github.com/wippyai/go-lua/analysis/schema/structure"
 	"github.com/wippyai/go-lua/analysis/schema/vocabulary"
+	calldomain "github.com/wippyai/go-lua/domain/call"
+	statecell "github.com/wippyai/go-lua/domain/typestate/statecell"
+	valuedomain "github.com/wippyai/go-lua/domain/value"
 )
 
 // The identities this family declares.
@@ -44,86 +47,59 @@ const (
 	OperandRole = "operand/typestate/obligation"
 )
 
-// The carriers this axis's members are typed in. Cell is statecell.Cell and
-// State is typestate.Abstract; they are nominal, so no domain value enters the
-// declaration stream by structural coincidence.
-const (
-	CellCarrier     member.Carrier = "carrier/typestate/cell"
-	StateCarrier    member.Carrier = "carrier/typestate/state"
-	ProtocolCarrier member.Carrier = "carrier/typestate/protocol"
-)
-
-// The Typestate-owned member keys.
+// The member vocabulary this Program names. Every row below is composed:
+// Typestate's own rows come from its axis source and this rule's contribution,
+// Value owns the actual the judgment is indexed by, and Call owns the site
+// relation the actual's own row addresses. Naming them through their owners is
+// what keeps one spelling of each key in the analyzer.
 const (
 	// StateCells is the relation this rule reads its own axis through: for one
 	// obligation occurrence and the receiver value fact that resolves its
 	// resource, the state cell that holds that resource's current state.
-	StateCells schema.Key = "typestate/state/cells"
+	StateCells schema.Key = statecell.StateCells
 	// StateCellKey is the resource the cell is read at. It consumes the
 	// receiver's solved Value fact, which is what makes this the computed-
 	// coordinate normal form rather than a second candidate relation.
-	StateCellKey schema.Key = "typestate/state/cell-key"
+	StateCellKey schema.Key = statecell.StateCellKey
 	// StateCellProtocol is the tag that selects which of the resource's cells
 	// the obligation is about. A resource governed by two protocols has two
 	// cells, and the obligation names one of them, so the read is a selected
 	// read over the resource's own run rather than a second keyed relation.
-	StateCellProtocol schema.Key = "typestate/state/cell-protocol"
+	StateCellProtocol schema.Key = statecell.StateCellProtocol
 	// StateCellDestination is the coordinate the successor state is published
 	// at. It is the same cell: an operation moves a resource's state, it does
 	// not move the resource.
-	StateCellDestination schema.Key = "typestate/state/cell-destination"
+	StateCellDestination schema.Key = statecell.StateCellDestination
 	// JudgmentReducer draws the verdict and the successor state from the
-	// receiver's Value fact and the cell's current state. Its implementation is
-	// typestate.JudgeRequirement, JudgeTransition, and JudgeExit selected by
-	// the obligation's declared kind; the reducer holds the sealed callable-
-	// requirement authority, so the kind is read from the owner rather than
-	// carried as a runtime callback.
-	JudgmentReducer schema.Key = "typestate/reducer/judgment"
+	// actual's Value fact, the site's Call fact and the cell's current state.
+	// Its implementation is the sealed judgment that holds the callable-
+	// requirement authority, so which of JudgeRequirement, JudgeTransition and
+	// JudgeExit answers one call is decided inside the judgment from the
+	// declaration, rather than carried to it as a runtime callback.
+	JudgmentReducer schema.Key = statecell.JudgmentReducer
 	// StateCellSelection is the operation this axis publishes the cell rows
 	// through. Which cell a mounted call reaches is computed from the receiver
 	// fact the read before it delivered, so the row does not exist until that
 	// cell is known and the read names the operation that publishes it.
-	StateCellSelection schema.Key = "typestate/state/cell-selection"
+	StateCellSelection schema.Key = statecell.StateCellSelection
+
+	// The Value-owned rows this judgment is indexed by: the mounted call
+	// actual directory, and the exact read of that actual's solved fact.
+	MountedCallArgumentCandidates schema.Key = valuedomain.MountedCallArgumentCandidates
+	MountedCallArguments          schema.Key = valuedomain.MountedCallArguments
+	MountedCallArgumentKey        schema.Key = valuedomain.MountedCallArgumentKey
+
+	// The Call-owned rows this judgment reads the dispatched operation
+	// through. The site is addressed from the actual's own row, because
+	// several actuals of one call are judged against the one call fact.
+	TypestateCallSites   schema.Key = calldomain.TypestateCallSites
+	TypestateCallSiteKey schema.Key = calldomain.TypestateCallSiteKey
 )
 
-// The Value carriers this axis's members are typed against. A carrier is a
-// nominal key rather than a Go type, so the cold catalog names Value's
-// spellings the same way Static's does instead of importing Value.
 const (
-	ValueCoordinateCarrier member.Carrier = "carrier/value/coordinate"
-	ValueFactCarrier       member.Carrier = "carrier/value/fact"
+	valueAxisKey schema.Key = "value"
+	callAxisKey  schema.Key = "call"
 )
-
-// The Value-owned columns this judgment requires.
-//
-// A typestate judgment is drawn at a call occurrence, about the argument that
-// carries the resource. Both halves of that are Value's to publish and neither
-// is published today:
-//
-//   - MountedCallArgumentCandidates is the candidate relation over
-//     (mounted call occurrence, fixed input ordinal). It cannot be minted here.
-//     A read of a foreign axis is declared by the axis being read, keyed by the
-//     candidate that axis's owner declared it for - which is exactly how
-//     Placement Store reads Value along Value's own storage-transfer candidate.
-//     A consumer that minted its own candidate could name no relation to read
-//     Value through.
-//   - MountedCallArguments and MountedCallArgumentKey are the exact read of
-//     that argument's solved Value fact. Value already owns the whole
-//     projection as ordinary Go API - pack.MountedActualProjection.ActualAt
-//     followed by value.Schema.CoordinateForMountedSemantic - so the column is
-//     unpublished, not underived.
-//
-// They are spelled here because this declaration is what states the
-// requirement: the day Value publishes them, this Program seals against the
-// real catalog with no change to the rows below.
-const (
-	MountedCallArgumentCandidates schema.Key     = "value/mounted-call/argument-candidates"
-	MountedCallArguments          schema.Key     = "value/mounted-call/arguments"
-	MountedCallArgumentKey        schema.Key     = "value/mounted-call/argument-key"
-	MountedCallArgumentCarrier    member.Carrier = "carrier/value/mounted-call-argument"
-)
-
-const valueAxisKey schema.Key = "value"
 
 func axisReference(key schema.Key) schema.EntryReference {
 	return schema.EntryReference{Surface: schema.SurfaceKindAxis, Key: key}
@@ -133,68 +109,36 @@ func valueCandidateProvider() member.RelationRef {
 	return member.RelationRef{Axis: axisReference(valueAxisKey), Member: MountedCallArgumentCandidates}
 }
 
-// AxisMemberCatalog is Typestate's declaration-only member vocabulary: the two
-// projections of its own coordinate space and the reducer that writes it.
-func AxisMemberCatalog() member.Catalog {
-	typestateAxis := axisReference(AxisKey)
-	valueAxis := axisReference(valueAxisKey)
-	provider := valueCandidateProvider()
-	catalog, ok := member.NewCatalog(
-		[]member.Relation{
-			{Key: StateCells, Subject: StateCarrier, Inputs: []member.Carrier{MountedCallArgumentCarrier, ValueFactCarrier}, CandidateProvider: member.AxisRelationCandidate(provider)},
-		},
-		[]member.Projection{
-			{Key: StateCellKey, Relation: StateCells, Role: member.Key, Result: CellCarrier, CandidateProvider: member.AxisRelationCandidate(provider)},
-			{Key: StateCellProtocol, Relation: StateCells, Role: member.Predicate, Result: ProtocolCarrier, CandidateProvider: member.AxisRelationCandidate(provider)},
-			{Key: StateCellDestination, Relation: StateCells, Role: member.Destination, Result: CellCarrier, CandidateProvider: member.AxisRelationCandidate(provider)},
-		},
-		[]member.Reducer{
-			{Key: JudgmentReducer, Inputs: []member.ReducerInput{
-				{Axis: valueAxis, Carrier: ValueFactCarrier, Form: member.ReadFormExact, Multiplicity: member.MultiplicityOne},
-				{Axis: typestateAxis, Carrier: StateCarrier, Form: member.ReadFormSelected, Multiplicity: member.MultiplicityOne, Tag: ProtocolCarrier},
-			}, Outputs: []member.ReducerOutput{
-				{Axis: typestateAxis, Carrier: StateCarrier},
-			}},
-		},
-		[]member.CarryTransform{},
-	)
-	if !ok {
-		panic("typestate: invalid axis member catalog")
-	}
-	// The cell rows are produced: which cell a mounted call reaches is
-	// computed from the receiver fact the read before it delivered, so the
-	// axis publishes them through this operation and stamps each with the
-	// protocol the reading rule joins on.
-	catalog, ok = catalog.WithSelections([]member.Selection{
-		{Key: StateCellSelection, Relation: StateCells, Tag: StateCellProtocol},
-	})
-	if !ok {
-		panic("typestate: invalid axis selection catalog")
-	}
-	return catalog
-}
-
 // Obligation returns the immutable Typestate rule declaration.
 //
-// The candidate is one mounted call argument that carries a declared
-// obligation. Join 0 is the exact read of that argument's solved Value fact:
-// it is what says which resource the call was handed. Join 1 is the dependent
-// selected read of this axis's own state cell - it consumes the same candidate
-// and Join 0's Value fact, which is the computed-coordinate normal form,
-// because the resource is a function of the Value fact, and it selects that
-// resource's cell by the obligation's protocol, because a resource governed by
-// two protocols has two cells and the obligation names one. The fold draws the
-// verdict and routes the successor state back to the cell it was read from: an
-// operation moves a resource's state, it does not move the resource.
+// The candidate is one mounted call actual. Join 0 is the exact read of that
+// actual's solved Value fact: it is what says which resource the call was
+// handed. Join 1 is the exact read of the site's own solved Call fact: it is
+// what says which operation the call reaches, and so which declaration the
+// actual is judged against - an obligation is a property of the operation
+// dispatched at the site, and no cold row of a call names it. Join 2 is the
+// dependent selected read of this axis's own state cell - it consumes the same
+// candidate and both facts before it, which is the computed-coordinate normal
+// form, because the resource is a function of the Value fact and which of its
+// cells the obligation is about is a function of the Call fact. The fold draws
+// the verdict and routes the successor state back to the cell it was read
+// from: an operation moves a resource's state, it does not move the resource.
 //
-// The Value read propagates authenticated opaque evidence rather than refusing
-// it. A receiver the analysis cannot follow is exactly the case the judgment
-// answers with an unproven verdict; refusing the read would drop the call from
-// the population and report nothing, which is the one answer a soundness
-// judgment may not give.
+// Every read propagates authenticated opaque evidence rather than refusing it,
+// and the population does not shrink when it arrives: the reads are
+// candidate-only, so the row set is the actual's own, and only the outcome of
+// a read varies. A receiver or a callee the analysis cannot follow is exactly
+// the case the judgment answers with an unproven verdict; refusing the read
+// would drop the call from the population and report nothing, which is the one
+// answer a soundness judgment may not give.
 func Obligation() ruleprogram.Program {
 	typestateAxis := axisReference(AxisKey)
 	valueAxis := axisReference(valueAxisKey)
+	callAxis := axisReference(callAxisKey)
+	exact := ruleprogram.ReadContract{
+		Order: ruleprogram.OrderCanonical, Sparse: ruleprogram.SparseExplicit,
+		OnOpaque: ruleprogram.OnOpaquePropagateAuthenticated, Multiplicity: ruleprogram.MultiplicityOne,
+	}
 	return ruleprogram.Program{
 		OperandRole: vocabulary.RoleKey(OperandRole),
 		Candidate:   member.AxisRelationCandidate(valueCandidateProvider()),
@@ -210,14 +154,25 @@ func Obligation() ruleprogram.Program {
 					// The argument read is taken against its own transported
 					// predecessor at this port.
 					PointBound: ruleprogram.PointBound,
-					Contract: ruleprogram.ReadContract{
-						Order: ruleprogram.OrderCanonical, Sparse: ruleprogram.SparseExplicit,
-						OnOpaque: ruleprogram.OnOpaquePropagateAuthenticated, Multiplicity: ruleprogram.MultiplicityOne,
-					},
+					Contract:   exact,
 				},
 			},
 			{
-				Sources:   []ruleprogram.SourceRef{ruleprogram.CandidateSource(), ruleprogram.PriorSource(0)},
+				Sources:  []ruleprogram.SourceRef{ruleprogram.CandidateSource()},
+				Relation: member.RelationRef{Axis: callAxis, Member: TypestateCallSites},
+				Key:      member.ProjectionRef{Axis: callAxis, Member: TypestateCallSiteKey},
+				Read: ruleprogram.ReadDecl{
+					Input: 0,
+					Axis:  ruleprogram.AxisRef(callAxis),
+					Form:  ruleprogram.Exact,
+					// The site's fact is taken against its own transported
+					// predecessor at this port, exactly as the actual's is.
+					PointBound: ruleprogram.PointBound,
+					Contract:   exact,
+				},
+			},
+			{
+				Sources:   []ruleprogram.SourceRef{ruleprogram.CandidateSource(), ruleprogram.PriorSource(0), ruleprogram.PriorSource(1)},
 				Relation:  member.RelationRef{Axis: typestateAxis, Member: StateCells},
 				Key:       member.ProjectionRef{Axis: typestateAxis, Member: StateCellKey},
 				Predicate: member.ProjectionRef{Axis: typestateAxis, Member: StateCellProtocol},
@@ -240,13 +195,13 @@ func Obligation() ruleprogram.Program {
 		},
 		Fold: ruleprogram.FoldDecl{
 			Reducer: member.ReducerRef{Axis: typestateAxis, Member: JudgmentReducer},
-			Inputs:  []ruleprogram.JoinRef{0, 1},
+			Inputs:  []ruleprogram.JoinRef{0, 1, 2},
 			Outputs: []ruleprogram.OutputDecl{{
 				Column:           axis.OutputRef{Axis: typestateAxis, Key: StateOutputKey},
 				Destination:      member.ProjectionRef{Axis: typestateAxis, Member: StateCellDestination},
 				Mode:             ruleprogram.ModeRoute,
 				ValueSlot:        0,
-				RouteJoin:        1,
+				RouteJoin:        2,
 				RouteJoinPresent: true,
 			}},
 		},
@@ -274,10 +229,10 @@ func AxisEntry[A axisInputs]() axis.Spec[A] {
 		Lifetime:     axis.LifetimeLink,
 		Mutability:   axis.MutabilitySolve,
 		Concurrency:  axis.ConcurrencySingleWriter,
-		Dependencies: []schema.Key{"heap", valueAxisKey},
+		Dependencies: []schema.Key{"heap", valueAxisKey, callAxisKey},
 		Frame:        axis.Frame{Outputs: []axis.Output{{Key: StateOutputKey, Writer: AxisKey}}},
-		Catalog:      AxisMemberCatalog(),
-		Signature:    axis.Signature{Key: CellCarrier, Fact: StateCarrier},
+		Catalog:      statecell.AxisMemberCatalog(),
+		Signature:    axis.Signature{Key: statecell.CellCarrier, Fact: statecell.StateCarrier},
 		Semantic:     vocabulary.RoleKey(FactorRole),
 	}
 }

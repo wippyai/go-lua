@@ -248,53 +248,38 @@ func capabilityKey(t *testing.T, compilation Compilation, rules *RuleBinding, ca
 }
 
 // TestBodylessCallActivationIsFullyAdmitted states the issuance half of the
-// declared-placement law for Call's activation lane. The artifact places one
-// call-activation occurrence per call site, statically, before any body
-// inventory exists; whether that trigger reaches an activatable body is the
-// content of its candidate set, not a condition on its issuance. A program
-// that declares no body therefore still admits the whole trigger - transport
-// vector and application identity included - for every placement it carries.
+// declared-placement law for the activation lane. The artifact places one
+// activation occurrence per call site, statically, before any body inventory
+// exists; whether that trigger reaches an activatable body is the content of
+// its candidate set, not a condition on its issuance. A program that declares
+// no body therefore still commits the whole trigger - mounted coordinates,
+// graph member and application identity included - for every placement it
+// carries.
 func TestBodylessCallActivationIsFullyAdmitted(t *testing.T) {
 	record := mountedRecord(t, "bodyless-call-activation", "local invoke: fun(): number = nil; local produced = invoke()")
 	bound := materializerBinding(t, record)
-	rules := bound.Rules()
-	if rules == nil {
-		t.Fatal("sealed rule binding")
-	}
-	_, activations, failed := rules.MountedAdmissions(record.Artifacts, record.Source.ContextDirectory())
-	if failed.Available() {
-		t.Fatalf("mounted admissions refused: %s", failed)
-	}
-	const callActivation = schema.Key("call-activation")
-	placed := 0
-	for _, mount := range record.Artifacts {
-		program := mount.Snapshot.Program()
-		count, published := program.RuleOccurrenceCount()
-		if !published {
-			t.Fatal("cold rule-occurrence family")
-		}
-		for index := 0; index < count; index++ {
-			row, rowOK := program.RuleOccurrenceAt(index)
-			if rowOK && row.Key() == callActivation {
-				placed++
-			}
-		}
-	}
+	declaring := activationDeclaringRuleKeys(t, bound.Compilation())
+	placed := activationPlacementCount(t, record, declaring)
 	if placed == 0 {
-		t.Fatal("fixture placed no call-activation occurrence")
+		t.Fatal("fixture placed no occurrence for an activation-declaring rule")
 	}
-	if len(activations) != placed {
-		t.Fatalf("call-activation placements=%d admissions=%d", placed, len(activations))
+	committed, _ := queryCanonicalProgram(t, record, bound)
+	if committed.ActivationCount() != placed {
+		t.Fatalf("activation-declaring placements=%d, committed triggers=%d", placed, committed.ActivationCount())
 	}
-	for index, row := range activations {
-		key := capabilityKey(t, bound.Compilation(), rules, row.Capability)
-		cell, cellOK := rules.cellByKey(key)
-		if row.Transport == nil || !row.Capability.Activation() || !cellOK || !cell.Available() || !row.Application.Available() {
-			t.Fatalf("activation %d admitted without its transport vector, activation capability, canonical cell, or application: transport=%t capability=%t cell=%t application=%t",
-				index, row.Transport != nil, row.Capability.Activation(), cellOK && cell.Available(), row.Application.Available())
+	for index := 0; index < committed.ActivationCount(); index++ {
+		activation, activationOK := committed.ActivationAt(index)
+		if !activationOK {
+			t.Fatalf("committed activation %d is not enumerable", index)
 		}
-		if len(row.Candidates) != 0 {
-			t.Fatalf("activation %d reached %d candidates in a program that declares no body", index, len(row.Candidates))
+		application, applicationOK := activation.Application()
+		_, memberOK := activation.Member()
+		if !memberOK || !applicationOK || !application.Available() || !activation.Occurrence().Available() {
+			t.Fatalf("activation %d committed without its graph member, application, or occurrence: member=%t application=%t occurrence=%t",
+				index, memberOK, applicationOK && application.Available(), activation.Occurrence().Available())
+		}
+		if activation.CandidateCount() != 0 {
+			t.Fatalf("activation %d reached %d candidates in a program that declares no body", index, activation.CandidateCount())
 		}
 	}
 }

@@ -79,10 +79,11 @@ func TestASelfReadingFamilyLowersToADeclaredComponent(t *testing.T) {
 	spec := selfReadingSpecimen()
 	placement := surfaces.install(spec)
 
-	rules, err := relcompile.Resolve(surfaces.registry, spec, placement)
+	resolution, err := relcompile.Resolve(surfaces.registry, spec, placement)
 	if err != nil {
 		t.Fatalf("resolve: %v", err)
 	}
+	rules := resolution.Rules
 	compiled := lower(t, surfaces, spec, rules)
 
 	components := compiled.SCCs()
@@ -122,10 +123,11 @@ func TestALoweredPlanRaisesNoRecurrenceRefusal(t *testing.T) {
 	spec := selfReadingSpecimen()
 	placement := surfaces.install(spec)
 
-	rules, err := relcompile.Resolve(surfaces.registry, spec, placement)
+	resolution, err := relcompile.Resolve(surfaces.registry, spec, placement)
 	if err != nil {
 		t.Fatalf("resolve: %v", err)
 	}
+	rules := resolution.Rules
 	compiled := lower(t, surfaces, spec, rules)
 
 	_, refusal := certificate.Check(compiled)

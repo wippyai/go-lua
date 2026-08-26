@@ -117,10 +117,10 @@ func transferRawSetView(
 	} else if view.KeyCount != 0 {
 		return RawSetFrame{}, false
 	}
-	view.Pack = func(tag heapdomain.RawPayloadTag) rawSelected[pack.Value] {
+	view.Pack = func(tag heapdomain.RawPayloadTag) Selected[pack.Value] {
 		return transferSelectionValue(frame, packs, &scratch.pack, tag)
 	}
-	view.Source = func(tag RawSourceTag) rawSelected[valuedomain.Value] {
+	view.Source = func(tag RawSourceTag) Selected[valuedomain.Value] {
 		return transferSelectionValue(frame, sources, &scratch.source, tag)
 	}
 	return view, true

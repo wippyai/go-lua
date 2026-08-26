@@ -36,7 +36,17 @@ func TestResolvePlacementStorageKeepsForeignCandidateOwner(t *testing.T) {
 	if relation.CandidateProvider.AxisRelation.Axis.Key != "value" || relation.CandidateProvider.AxisRelation.Member != "value/storage-transfer/candidates" || relation.CandidateProviderLocal || relation.HasCandidateRelation {
 		t.Fatalf("foreign route provider was localized: %+v", relation)
 	}
-	if relation.Derivation.State.Name != "RoutePlan" || relation.Derivation.Build.Name != "DeriveRoutes" || relation.Derivation.Count.Name != "RouteCount" || relation.Derivation.At.Name != "RouteAt" ||
+	// Store states the DECLARED derivation: the emitter writes the enumeration,
+	// the union, the widening and the order, and the only authored symbols left
+	// are the two judgments that say what one atom of a Value and one row of
+	// Placement's own directory mean. Resolution carries that statement whole -
+	// a metadata form that kept only part of it would answer an empty
+	// derivation for every relation that has migrated off the authored quartet.
+	if len(relation.Derivation.Source) != 1 || relation.Derivation.Source[0].Axis.Key != "value" || relation.Derivation.Source[0].Name != "Atoms" ||
+		relation.Derivation.Resolve.Name != "ResolveRoute" || relation.Derivation.InlineWidth != 8 ||
+		relation.Derivation.Widen.Predicate.Name != "BeyondAllocations" || relation.Derivation.Widen.Resolve.Name != "ResolveDirectoryRoute" ||
+		len(relation.Derivation.Widen.Source) != 1 || relation.Derivation.Widen.Source[0].Axis.Key != "placement" || relation.Derivation.Widen.Source[0].Name != "AllocationDirectory" ||
+		relation.Derivation.AuthoredDerivation() ||
 		len(relation.Derivation.StaticAxes) != 2 || relation.Derivation.StaticAxes[0].Key != "placement" || relation.Derivation.StaticAxes[1].Key != "value" {
 		t.Fatalf("Store relation derivation was not preserved: %+v", relation.Derivation)
 	}

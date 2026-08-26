@@ -40,33 +40,29 @@ func TestPlacementContainmentOwnsTheMountedPointLane(t *testing.T) {
 	if len(pointKeys) != 1 || pointKeys[0] != containmentKey {
 		t.Fatalf("mounted-point inventory = %v, want [%q]", pointKeys, containmentKey)
 	}
-	links := LinkKeys(compilation)
-	if len(links) < 2 {
-		t.Fatalf("Link inventory has %d entries, want the two-rule Placement tail", len(links))
-	}
-	// The evidence producer follows the class producer it witnesses, so the
-	// pair is consecutive in Link order. Their absolute table positions are
-	// pinned by the two slot checks below; a later Link rule appended after
-	// them changes neither relation.
-	wantPair := []schema.Key{suspensionKey, suspensionEvidenceKey}
-	pair := -1
-	for index := range links {
-		if links[index] == wantPair[0] {
-			pair = index
-			break
+	// The suspension pair is artifact-mounted, not Link-owned: its judgment is
+	// decided by the Call fact solved at the boundary the liveness span is
+	// anchored at, and a Link rule reads every Factor at the mount-neutral
+	// bootstrap point, where no mounted rule has written one. The evidence
+	// producer follows the class producer it witnesses, so the pair stays
+	// consecutive; their absolute table positions are pinned below.
+	for _, key := range []schema.Key{suspensionKey, suspensionEvidenceKey} {
+		entry, entryOK := templateForKey(state, key)
+		if !entryOK || entry == nil || entry.Lane() != rule.LaneMounted || !MountedRuleKey(compilation, key) {
+			t.Fatalf("suspension entry %q missing or not artifact-mounted: present=%t entry=%v mounted=%t", key, entryOK, entry, MountedRuleKey(compilation, key))
+		}
+		if entry.IssuanceCount() != 1 {
+			t.Fatalf("suspension entry %q issuances=%d, want one subject-liveness subscription", key, entry.IssuanceCount())
+		}
+		issuance, issuanceOK := entry.IssuanceAt(0)
+		if !issuanceOK || issuance.Occurrence != "occurrence/subject-liveness" {
+			t.Fatalf("suspension entry %q issuance=%+v, want the subject-liveness occurrence", key, issuance)
 		}
 	}
-	if pair < 0 || pair+len(wantPair) > len(links) {
-		t.Fatalf("Link inventory %v does not carry the Placement pair %v", links, wantPair)
-	}
-	for index, want := range wantPair {
-		if got := links[pair+index]; got != want {
-			t.Fatalf("Link pair slot %d = %q, want %q", index, got, want)
+	for _, key := range LinkKeys(compilation) {
+		if key == suspensionKey || key == suspensionEvidenceKey {
+			t.Fatalf("Link inventory still carries the mounted suspension key %q", key)
 		}
-	}
-	suspensionEntry, suspensionOK := templateForKey(state, suspensionKey)
-	if !suspensionOK || suspensionEntry == nil || suspensionEntry.Lane() != rule.LaneLink || MountedRuleKey(compilation, suspensionKey) {
-		t.Fatalf("suspension entry missing or not Link-owned: present=%t entry=%v mounted=%t", suspensionOK, suspensionEntry, MountedRuleKey(compilation, suspensionKey))
 	}
 	key, keyOK = RuleKeyAt(compilation, suspensionSlot-1)
 	if !keyOK || key != suspensionKey {

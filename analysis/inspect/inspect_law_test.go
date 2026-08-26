@@ -292,13 +292,24 @@ func TestInspectSolvedCellRowReadAllocatesNothing(t *testing.T) {
 	t.Logf("solve status=%v; zero-allocation row reads proved on %d published cells", session.SolveStatus(), read)
 }
 
-// readEveryColumn is one whole row read: the coordinate bisection, the row's
-// class, and every declared column under its carrier.
+// readEveryColumn is one whole row read: the addressing the plane declares -
+// the coordinate bisection on a keyed answer, the row's position on a
+// general-fold answer that publishes no coordinate - the row's class, and
+// every declared column under its carrier.
 func readEveryColumn(t *testing.T, layout *plane.Sealed, view plane.View, coordinate identity.ContentID) {
 	t.Helper()
 	row, ok := view.Lookup(coordinate)
 	if !ok {
-		t.Fatal("coordinate is not addressable")
+		if coordinate.Available() {
+			t.Fatal("coordinate is not addressable")
+		}
+		// A general fold answers its whole subject at one point whose identity
+		// is the query site's own, so its row carries no coordinate of its own
+		// and is addressed by position.
+		row, ok = view.At(0)
+		if !ok {
+			t.Fatal("the unkeyed answer's row is not addressable")
+		}
 	}
 	row.Class()
 	for column := 0; column < layout.ColumnCount(); column++ {

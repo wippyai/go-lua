@@ -125,6 +125,10 @@ func composeWalk(t *testing.T, spec diagnostic.Spec) (*seal.Schema, schema.SealF
 	rules = append(rules, probeRule)
 	diagnostics = append(diagnostics, probeDiagnostic)
 
+	issuances, issuancesOK := issuanceEntries()
+	if !issuancesOK {
+		t.Fatal("analyzer issuance inventory rejected at construction")
+	}
 	composites, compositesOK := compositeEntries()
 	denominators, denominatorsOK := denominatorEntries(axes, roles)
 	queries, _, queriesOK := queryRegistrations(roles)
@@ -136,6 +140,12 @@ func composeWalk(t *testing.T, spec diagnostic.Spec) (*seal.Schema, schema.SealF
 	builder := seal.NewBuilder()
 	builder.Register(structure.NewSurface(structures))
 	builder.Register(axis.NewSurface(axes))
+	// The issuance machine is the surface a rule's subscription is sealed
+	// against, so it is registered between the axes and the rules exactly as
+	// the production composition registers it. The walk composes the
+	// analyzer's own inventories; a table missing one of them would state a
+	// composition no analyzer performs.
+	builder.Register(issuanceschema.NewSurface(issuances))
 	builder.Register(rule.NewSurface(rules))
 	builder.Register(diagnostic.NewSurface(diagnostics))
 	builder.Register(schemacomposite.NewSurface(composites))

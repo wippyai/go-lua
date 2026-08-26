@@ -5,6 +5,7 @@ import (
 
 	programlower "github.com/wippyai/go-lua/analysis/lua/lower"
 	"github.com/wippyai/go-lua/analysis/program"
+	"github.com/wippyai/go-lua/analysis/program/flow/causal"
 	"github.com/wippyai/go-lua/analysis/program/keyspace"
 )
 
@@ -65,4 +66,36 @@ func functionCapture(t *testing.T, p *program.Program, function keyspace.Term, i
 		t.Fatalf("Function(%v) has no capture at %d", function, index)
 	}
 	return inner, outer
+}
+
+// unconditionalSuccessor returns the one continuation an authored occurrence
+// hands control to when its evaluation continues in exactly one place. A Call
+// resumes across its own boundary; every other such occurrence continues on
+// its local edge. The Throw, Yield, and Cancel arms carry the fault
+// dispositions and the SelectTrue/SelectFalse arms carry a decided one, so
+// none of them are folded in here: a conditional continuation fails the
+// uniqueness assertion rather than collapsing into a single answer.
+//
+// Evaluation order is a causal relation. Ports().Finish asks the dual
+// question - the final evaluation port one term owns - and answers the term
+// itself for every scalar occurrence, so it never states a successor.
+func unconditionalSuccessor(t *testing.T, p *program.Program, from keyspace.Term) keyspace.Term {
+	t.Helper()
+	successors := p.Flow().Causal().Successors()
+	var continuation keyspace.Term
+	count := 0
+	for index := 0; index < successors.Count(from); index++ {
+		successor, ok := successors.At(from, index)
+		if !ok {
+			t.Fatalf("Successor(%v, %d) is unreadable", from, index)
+		}
+		if successor.Arm != causal.BoundaryLocal && successor.Arm != causal.BoundaryResume {
+			continue
+		}
+		continuation, count = successor.To, count+1
+	}
+	if count != 1 {
+		t.Fatalf("%v has %d unconditional continuations, want exactly one", from, count)
+	}
+	return continuation
 }

@@ -38,11 +38,10 @@ func BenchmarkExactPublicationPlanning(b *testing.B) {
 		b.Fatal("Value coordinate")
 	}
 	rowID := identity.ContentID{1}
-	prepared := &preparedBatch{
+	prepared := &PreparedBatch{
 		rows:    []publicationRow{{id: rowID, requirement: placementdomain.SharedHeap, operation: vocabulary.Operation(1)}},
 		sources: []sourceSpec{{tag: sourceTag(1), rowID: rowID, operation: vocabulary.Operation(1), coordinate: coordinate}},
 	}
-	rule := fixture.rule()
 	b.ReportAllocs()
 	b.ResetTimer()
 	total := 0
@@ -57,7 +56,7 @@ func BenchmarkExactPublicationPlanning(b *testing.B) {
 				facts.set(factEntry{rowID: source.rowID, value: fact, present: true})
 			}
 		}
-		routes, routesOK := rule.routeSet(fixture.placement, prepared, gate, facts)
+		routes, routesOK := routeSetFor(fixture.placement, fixture.values, prepared, gate, facts)
 		if !routesOK {
 			b.Fatal("exact route planning rejected fixture fact")
 		}
@@ -72,18 +71,17 @@ func BenchmarkExactPublicationPlanning(b *testing.B) {
 // catalogue or spill slice is built inside the timed route planner.
 func BenchmarkAllRootPublicationPlanning(b *testing.B) {
 	fixture := newPublicationEscapeFixture(b)
-	prepared := &preparedBatch{
+	prepared := &PreparedBatch{
 		rows:     []publicationRow{{id: identity.ContentID{2}, requirement: placementdomain.SharedHeap, operation: vocabulary.Operation(1), subjectOpen: true}},
 		byTag:    map[sourceTag]sourceSpec{},
 		prepared: true,
 	}
-	rule := fixture.rule()
 	gate := operationGateForTest(vocabulary.Operation(1))
 	b.ReportAllocs()
 	b.ResetTimer()
 	total := 0
 	for index := 0; index < b.N; index++ {
-		routes, routesOK := rule.routeSet(fixture.placement, prepared, gate, factBuffer{})
+		routes, routesOK := routeSetFor(fixture.placement, fixture.values, prepared, gate, factBuffer{})
 		if !routesOK || !routes.allRoot {
 			b.Fatal("all-root route planning rejected fixture subject")
 		}
@@ -109,18 +107,17 @@ func BenchmarkAllRootPublicationPlanning1024(b *testing.B) {
 	if len(fixture.allocations) < wideRootCount {
 		b.Fatalf("wide fixture allocation roots=%d, want at least %d", len(fixture.allocations), wideRootCount)
 	}
-	prepared := &preparedBatch{
+	prepared := &PreparedBatch{
 		rows:     []publicationRow{{id: identity.ContentID{4}, requirement: placementdomain.SharedHeap, operation: vocabulary.Operation(1), subjectOpen: true}},
 		byTag:    map[sourceTag]sourceSpec{},
 		prepared: true,
 	}
-	rule := fixture.rule()
 	gate := operationGateForTest(vocabulary.Operation(1))
 	b.ReportAllocs()
 	b.ResetTimer()
 	total := 0
 	for index := 0; index < b.N; index++ {
-		routes, routesOK := rule.routeSet(fixture.placement, prepared, gate, factBuffer{})
+		routes, routesOK := routeSetFor(fixture.placement, fixture.values, prepared, gate, factBuffer{})
 		if !routesOK || !routes.allRoot || !routes.allRootPrefix || routes.len() != len(fixture.allocations) {
 			b.Fatal("wide all-root route planning did not use the validated prefix")
 		}

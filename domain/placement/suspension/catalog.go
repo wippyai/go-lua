@@ -29,6 +29,15 @@ type catalogRow struct {
 	operand operand
 }
 
+// occurrenceRef is the mounted address Program issues a subject-liveness row
+// at. One immutable Program may be mounted more than once in a Link, so the
+// mount qualifies the occurrence; the occurrence itself is the span identity
+// the artifact issued.
+type occurrenceRef struct {
+	mount      identity.ContentID
+	occurrence identity.ContentID
+}
+
 // valueAggregateEntry is the immutable Value-family geometry for one Values
 // aggregate. Seal-time indexing makes the ValuesFamily lookup
 // constant time while retaining the exact aggregate/member/tail order.
@@ -70,6 +79,10 @@ type Catalog struct {
 	values *valuedomain.Schema
 	ids    []identity.ContentID
 	rows   map[identity.ContentID]catalogRow
+	// issued is the inverse the mounted rule resolves an operand through: the
+	// engine hands a rule the mount and occurrence Program issued, never this
+	// catalog's private content identity.
+	issued map[occurrenceRef]identity.ContentID
 }
 
 // SealCatalog joins each mounted Program liveness row to Heap's existing
@@ -104,6 +117,7 @@ func sealCatalog(schema placementdomain.Schema, values *valuedomain.Schema, evid
 	catalog := &Catalog{
 		schema: schema, values: values,
 		ids: make([]identity.ContentID, 0), rows: make(map[identity.ContentID]catalogRow),
+		issued: make(map[occurrenceRef]identity.ContentID),
 	}
 	for _, mount := range mounts {
 		if !mount.Available() || mount.Snapshot == nil {
@@ -164,11 +178,19 @@ func sealCatalog(schema placementdomain.Schema, values *valuedomain.Schema, evid
 			if !candidateOK {
 				return nil, false
 			}
+			// The redeemed row travels with the projection: the rule reads the
+			// Call fact at the boundary this row names, and the boundary is
+			// Program's statement, not something a selector may rebuild.
+			liveness, livenessOK := lifecycle.RedeemSubjectLiveness(state, uint32(index), module, span.ID())
+			if !livenessOK {
+				return nil, false
+			}
 			id, idOK := occurrenceID(module, span.ID())
 			if !idOK {
 				return nil, false
 			}
 			candidate.id = id
+			candidate.liveness = liveness
 			canonical, candidateOK := operandForCatalog(schema, values, candidate)
 			if !candidateOK {
 				return nil, false
@@ -185,11 +207,16 @@ func sealCatalog(schema placementdomain.Schema, values *valuedomain.Schema, evid
 				canonical.id = evidenceID
 				id = evidenceID
 			}
+			issued := occurrenceRef{mount: module, occurrence: span.ID()}
 			if _, duplicate := catalog.rows[id]; duplicate {
+				return nil, false
+			}
+			if _, duplicate := catalog.issued[issued]; duplicate {
 				return nil, false
 			}
 			catalog.ids = append(catalog.ids, id)
 			catalog.rows[id] = catalogRow{operand: canonical}
+			catalog.issued[issued] = id
 		}
 	}
 	return catalog, catalog.FencedTo(schema, values)
@@ -438,7 +465,7 @@ func uniqueSubjectValueIDs(ids []identity.ContentID) ([]identity.ContentID, bool
 }
 
 func operandForCatalog(schema placementdomain.Schema, values *valuedomain.Schema, candidate operand) (operand, bool) {
-	if !schema.Valid() || values == nil || !values.Valid() || !values.OwnsHeapSchema(schema.Heap()) || !candidate.id.Available() || !candidate.state.Valid() {
+	if !schema.Valid() || values == nil || !values.Valid() || !values.OwnsHeapSchema(schema.Heap()) || !candidate.id.Available() || !candidate.state.Valid() || !candidate.liveness.Available() {
 		return operand{}, false
 	}
 	if candidate.key.Kind() == heapdomain.RootAllocation {
@@ -524,7 +551,7 @@ func keyForRow(schema placementdomain.Schema, issuer heapdomain.OccurrenceMount,
 
 func (catalog *Catalog) FencedTo(schema placementdomain.Schema, values *valuedomain.Schema) bool {
 	if catalog == nil || catalog.schema != schema || !schema.Valid() ||
-		len(catalog.rows) != len(catalog.ids) {
+		len(catalog.rows) != len(catalog.ids) || len(catalog.issued) != len(catalog.ids) {
 		return false
 	}
 	return catalog.values == values && values != nil && values.Valid() && values.OwnsHeapSchema(schema.Heap())
@@ -559,6 +586,20 @@ func (catalog *Catalog) operandForID(id identity.ContentID) (operand, bool) {
 	// rewriting the source slice on every hot lookup is both redundant and
 	// unsafe under concurrent reads.
 	return row.operand, true
+}
+
+// operandForOccurrence resolves the mounted address the engine issues an
+// operand at. Program owns that address; this catalog owns only the sealed
+// projection it points at.
+func (catalog *Catalog) operandForOccurrence(mount, occurrence identity.ContentID) (operand, bool) {
+	if catalog == nil || !catalog.FencedTo(catalog.schema, catalog.values) || !mount.Available() || !occurrence.Available() {
+		return operand{}, false
+	}
+	id, ok := catalog.issued[occurrenceRef{mount: mount, occurrence: occurrence}]
+	if !ok {
+		return operand{}, false
+	}
+	return catalog.operandForID(id)
 }
 
 func (catalog *Catalog) KeyForID(id identity.ContentID) (heapdomain.Key, bool) {

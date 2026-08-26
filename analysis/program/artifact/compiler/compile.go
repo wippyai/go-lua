@@ -108,7 +108,9 @@ func CompileDetailed(input *program.Program, executionSchema programartifact.Exe
 	if failure := transaction.deriveRuleOccurrencesFailure(); failure.Available() {
 		return nil, failure
 	}
-	transaction.environmentByRoute = nil
+	// The route index stays live through stage installation: a routed stage is
+	// placed on the route that reaches it, so placement asks where each route
+	// comes from. It is released once, below, when nothing reads it again.
 	if failure := transaction.installLocalStagesFailure(); failure.Available() {
 		return nil, failure
 	}

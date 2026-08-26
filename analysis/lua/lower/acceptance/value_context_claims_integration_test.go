@@ -120,8 +120,8 @@ local value = (1 :: Value)!
 	if !outerOK || outerKind != kind.ValueClaimNonNil || outerTargetOK || outerTarget != 0 || outerOperand != inner {
 		t.Fatalf("outer ValueClaim = operand %v target %v/%v kind %v ok %v, want NonNil(inner)", outerOperand, outerTarget, outerTargetOK, outerKind, outerOK)
 	}
-	if next, ok := flow.Ports().Finish(inner); !ok || next != outer {
-		t.Fatalf("inner ValueClaim successor = %v/%v, want outer %v", next, ok, outer)
+	if next := unconditionalSuccessor(t, p, inner); next != outer {
+		t.Fatalf("inner ValueClaim successor = %v, want outer %v", next, outer)
 	}
 }
 

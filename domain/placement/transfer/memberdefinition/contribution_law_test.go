@@ -3,7 +3,7 @@ package memberdefinition
 import (
 	"testing"
 
-	"github.com/wippyai/go-lua/analysis/engine/execution"
+	"github.com/wippyai/go-lua/analysis/engine/operand"
 	"github.com/wippyai/go-lua/analysis/schema/axis/member"
 	memberdefinition "github.com/wippyai/go-lua/analysis/schema/axis/member/definition"
 	"github.com/wippyai/go-lua/analysis/schema/rule/codegen"
@@ -110,7 +110,7 @@ func TestTransferContributionDerivesTheAuthoredSymbolSignatures(t *testing.T) {
 		t.Fatalf("derived fold signature args=%+v results=%+v ok=%t", args, results, ok)
 	}
 	var _ func(uint64, placementdomain.Fact) (placementdomain.Fact, structure.ReductionOutcome) = transfer.TransferFold
-	var _ func(placementdomain.Schema, *valuedomain.Schema, *calldomain.Algebra, *packdomain.Schema, calldomain.CallCoordinate, calldomain.Value, execution.SummaryVector[valuedomain.Value]) (transfer.RoutePlan, bool) = transfer.DeriveTransferRoutes
+	var _ func(placementdomain.Schema, *valuedomain.Schema, *calldomain.Algebra, *packdomain.Schema, calldomain.CallCoordinate, calldomain.Value, operand.SummaryVector[valuedomain.Value]) (transfer.RoutePlan, bool) = transfer.DeriveTransferRoutes
 	var _ func(transfer.RoutePlan) int = transfer.TransferRouteCount
 	var _ func(transfer.RoutePlan, int) (transfer.Route, bool) = transfer.TransferRouteAt
 }

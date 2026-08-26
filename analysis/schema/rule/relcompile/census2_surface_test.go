@@ -329,7 +329,7 @@ func (plane *census2Plane) sealOperation(name relcompile.Name, destination relco
 		plane.t.Fatalf("resolve destination %v: %v", destinationColumn, columnErr)
 	}
 	reference := plane.denominator(destination)
-	valueType, typeErr := plane.surfaces.registry.Type(site, relcompile.NewName(destinationColumn.Entry, destinationColumn.Member+"#type"))
+	valueType, typeErr := plane.surfaces.registry.ColumnType(site, destinationColumn)
 	if typeErr != nil {
 		plane.t.Fatalf("resolve destination type %v: %v", destinationColumn, typeErr)
 	}

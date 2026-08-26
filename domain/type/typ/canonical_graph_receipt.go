@@ -494,8 +494,17 @@ func (e *canonicalEncoder) graphSourceScope(sourceIndex int, identities, occurre
 	if sourceIndex < 0 || sourceIndex >= len(e.nodes) {
 		return false, CanonicalGraphScope{}, CanonicalGraphBinding{}, false, errors.New("typ: canonical source scope node")
 	}
-	visited := make([]bool, len(e.nodes))
-	stack := []int{sourceIndex}
+	if len(e.scopeMark) != len(e.nodes) {
+		e.scopeMark = make([]uint32, len(e.nodes))
+		e.scopeEpoch = 0
+	}
+	e.scopeEpoch++
+	if e.scopeEpoch == 0 {
+		clear(e.scopeMark)
+		e.scopeEpoch = 1
+	}
+	epoch := e.scopeEpoch
+	stack := append(e.scopeStack[:0], sourceIndex)
 	binders := make(map[Type]struct{})
 	formals := make([]canonicalGraphFormal, 0, 4)
 	seenFormals := make(map[*TypeParam]struct{})
@@ -505,10 +514,10 @@ func (e *canonicalEncoder) graphSourceScope(sourceIndex int, identities, occurre
 		}
 		current := stack[len(stack)-1]
 		stack = stack[:len(stack)-1]
-		if current < 0 || current >= len(e.nodes) || visited[current] {
+		if current < 0 || current >= len(e.nodes) || e.scopeMark[current] == epoch {
 			continue
 		}
-		visited[current] = true
+		e.scopeMark[current] = epoch
 		node := e.nodes[current]
 		if node.source == nil {
 			// nil is a valid bottom-level source and has no lexical children.
@@ -548,6 +557,7 @@ func (e *canonicalEncoder) graphSourceScope(sourceIndex int, identities, occurre
 			stack = append(stack, edge)
 		}
 	}
+	e.scopeStack = stack[:0]
 
 	free := make([]canonicalGraphFormal, 0, len(formals))
 	for _, formal := range formals {

@@ -38,6 +38,17 @@ func NewExactRead[K scalar.Key, V any](binding *factbinding.Binding[K, V], unit 
 	return ExactRead[K, V]{binding: binding, unit: unit, port: port}, true
 }
 
+// join forwards this read's Factor axis join, which is how the delivery
+// boundary answers what one coordinate holds over a region its cursor split
+// into blocks that disagree.
+func (axis ExactRead[K, V]) join(left, right V) (V, bool) {
+	if axis.binding == nil {
+		var zero V
+		return zero, false
+	}
+	return axis.binding.Join(left, right)
+}
+
 // Valid proves that the read surface still names a live declared exact Unit.
 func (axis ExactRead[K, V]) Valid() bool {
 	return axis.binding != nil && axis.binding.ValidUnit(axis.unit) && axis.unit.Kind() == carrier.ExactUnit

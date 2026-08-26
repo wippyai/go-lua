@@ -11,47 +11,46 @@ import (
 )
 
 // TestActivationAdmissionIsRoutedByTheDeclaredLane states which inventory a
-// sealed placement lands in: the one its capability's declared lane names. An
-// activation row is admitted because its rule declared the activation lane,
-// and an ordinary mounted row is admitted because its rule did not. Nothing
-// about a rule's spelling participates.
+// sealed placement lands in: the one its rule's declaration names. A committed
+// activation trigger exists because its rule declared an activation, and an
+// ordinary mounted placement commits none because its rule declared none.
+// Nothing about a rule's spelling participates.
 func TestActivationAdmissionIsRoutedByTheDeclaredLane(t *testing.T) {
 	record := mountedRecord(t, "activation-lane-routing", "local function identity(value) return value end; return identity(1)")
 	bound := materializerBinding(t, record)
-	rules := bound.Rules()
-	if rules == nil {
-		t.Fatal("sealed rule binding")
+	compilation := bound.Compilation()
+	declaring := activationDeclaringRuleKeys(t, compilation)
+	committed, _ := queryCanonicalProgram(t, record, bound)
+	if committed.ActivationCount() == 0 {
+		t.Fatal("the fixture committed no activation trigger")
 	}
-	mounted, activations, failed := rules.MountedAdmissions(record.Artifacts, record.Source.ContextDirectory())
-	if failed.Available() {
-		t.Fatalf("mounted admissions refused: %s", failed)
+	// The routing law is a count agreement in both directions: every placement
+	// of an activation-declaring rule commits one trigger, and no other
+	// placement commits one. A trigger routed off the declared lane would
+	// break one side or the other.
+	placed := activationPlacementCount(t, record, declaring)
+	if placed == 0 {
+		t.Fatal("the fixture placed no occurrence for an activation-declaring rule")
 	}
-	if len(activations) == 0 {
-		t.Fatal("the fixture placed no activation trigger")
+	if committed.ActivationCount() != placed {
+		t.Fatalf("activation-declaring placements=%d, committed triggers=%d", placed, committed.ActivationCount())
 	}
-	for index, row := range activations {
-		if !row.Capability.Activation() {
-			t.Fatalf("activation admission %d was routed without the activation lane", index)
+	// A trigger addresses the coordinates its placement was made at, and
+	// states the application it activates for, whether or not it reaches a
+	// body. Both are what routing on the declared lane delivers.
+	for index := 0; index < committed.ActivationCount(); index++ {
+		activation, activationOK := committed.ActivationAt(index)
+		if !activationOK {
+			t.Fatalf("committed activation %d is not enumerable", index)
 		}
-	}
-	for index, row := range mounted {
-		if row.Capability.Activation() || !row.Capability.Mounted() {
-			t.Fatalf("mounted admission %d carries the wrong lane", index)
+		application, applicationOK := activation.Application()
+		_, memberOK := activation.Member()
+		if !activation.Mount().Available() || !activation.Point().Available() || !activation.Occurrence().Available() ||
+			!applicationOK || !application.Available() || !memberOK {
+			t.Fatalf("activation %d was routed without its mounted coordinates, application, or graph member: mount=%t point=%t occurrence=%t application=%t member=%t",
+				index, activation.Mount().Available(), activation.Point().Available(), activation.Occurrence().Available(),
+				applicationOK && application.Available(), memberOK)
 		}
-	}
-	// The lane is a property of the declaration, so the inventory census must
-	// agree with what the catalog declares for each admitted key.
-	declared := 0
-	for _, row := range activations {
-		key := capabilityKey(t, bound.Compilation(), rules, row.Capability)
-		template, templateOK := templateForKey(rules.catalog, key)
-		if !templateOK || !template.Lane().Mounted() {
-			t.Fatalf("activation admission names key %q, which the catalog does not declare on a mounted lane", key)
-		}
-		declared++
-	}
-	if declared != len(activations) {
-		t.Fatalf("activation admissions=%d, catalog-declared=%d", len(activations), declared)
 	}
 }
 

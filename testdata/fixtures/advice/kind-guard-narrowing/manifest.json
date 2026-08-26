@@ -1,0 +1,45 @@
+{
+  "description": "A runtime-kind predicate proves a property of the value the subject's storage holds, so a dominated read of that storage observes the narrowing, and an intervening write to the same storage replaces it.",
+  "check": {
+    "diagnostic_rules": [
+      {
+        "code": "advice.always_true_guard",
+        "enabled": true,
+        "severity": "hint"
+      }
+    ],
+    "diagnostics": [
+      {
+        "file": "main.lua",
+        "line": 3,
+        "column": 8,
+        "severity": "hint",
+        "code": "advice.always_true_guard",
+        "message_contains": [
+          "condition is proven always true"
+        ],
+        "min_evidence": 1,
+        "evidence_contains": [
+          "condition is proven to be true on every reachable path"
+        ],
+        "render_contains": [
+          "hint[advice.always_true_guard]",
+          "condition is proven always true"
+        ],
+        "render_not_contains": [
+          "main.lua:13:8"
+        ],
+        "help_contains": [
+          "Remove the guard"
+        ],
+        "label_contains": [
+          "constant guard"
+        ],
+        "min_labels": 1
+      }
+    ]
+  },
+  "run": {
+    "skip": "diagnostic-only fixture"
+  }
+}

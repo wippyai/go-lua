@@ -1,7 +1,7 @@
 package publicationfreeze
 
 import (
-	"github.com/wippyai/go-lua/analysis/engine/execution"
+	"github.com/wippyai/go-lua/analysis/engine/operand"
 	"github.com/wippyai/go-lua/analysis/identity"
 	"github.com/wippyai/go-lua/analysis/program/target/vocabulary"
 	calldomain "github.com/wippyai/go-lua/domain/call"
@@ -97,7 +97,7 @@ func actualOrdinalFor(actual packdomain.MountedActualProjection, semantic identi
 // A subject that names no member is the caller's job to recognize before
 // calling this - it is the "no mounted semantic source" settlement in
 // planFor, not a fact this fold can manufacture.
-func joinSubjectFact(schema *valuedomain.Schema, publication effectfactor.PublicationCall, actual packdomain.MountedActualProjection, actuals execution.SummaryVector[valuedomain.Value], base, length int) (valuedomain.Value, bool, bool) {
+func joinSubjectFact(schema *valuedomain.Schema, publication effectfactor.PublicationCall, actual packdomain.MountedActualProjection, actuals operand.SummaryVector[valuedomain.Value], base, length int) (valuedomain.Value, bool, bool) {
 	if schema == nil || base < 0 || length <= 0 {
 		return valuedomain.Value{}, false, false
 	}
@@ -179,7 +179,7 @@ func DerivePublicationFreezeRoutes(
 	packs *packdomain.Schema,
 	candidate calldomain.CallCoordinate,
 	callFact calldomain.Value,
-	actuals execution.SummaryVector[valuedomain.Value],
+	actuals operand.SummaryVector[valuedomain.Value],
 ) (recentplan.Plan, bool) {
 	if calls == nil || !calls.Valid() || !schema.Valid() || values == nil || !values.Valid() ||
 		effects == nil || !effects.Valid() || !values.OwnsHeapSchema(schema) ||
