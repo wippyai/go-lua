@@ -20,7 +20,7 @@ import (
 
 	"github.com/wippyai/go-lua/analysis/engine/internal/facts/support"
 	"github.com/wippyai/go-lua/analysis/engine/internal/guard"
-	"github.com/wippyai/go-lua/analysis/engine/relation/cofiber"
+	"github.com/wippyai/go-lua/analysis/engine/relation/cofiber/lower"
 	"github.com/wippyai/go-lua/analysis/engine/relation/publish"
 	"github.com/wippyai/go-lua/analysis/engine/relation/state/database"
 	"github.com/wippyai/go-lua/analysis/engine/relation/state/geometry"
@@ -721,7 +721,7 @@ func build(t TB, mountByte byte) Fixture {
 	if err != nil {
 		t.Fatal(err)
 	}
-	leftMask, rightMask, disjointMask, disjointRightMask := buildMasks(t, manager)
+	leftMask, rightExtent, _, disjointMask, disjointRightMask := buildMasks(t, manager)
 	inv := &inventory{
 		fence:        fence,
 		relations:    map[model.RelationID]uint64{leftRelation: 1, rightRelation: 2, applyRelation: 3, emptyRelation: 4},
@@ -808,50 +808,22 @@ func build(t TB, mountByte byte) Fixture {
 	if !ok || !mounted.Available() {
 		t.Fatal("mounted")
 	}
-	declared := map[identity.ContentID]support.Mask{}
-	addDeclared := func(formula region.Region, mask support.Mask) {
-		id := formula.Identity()
-		if !formula.Available() || !id.Available() || !mask.Valid() {
-			t.Fatal("declared region")
-		}
-		if prior, exists := declared[id]; exists && !prior.Equal(mask) {
-			t.Fatal("divergent declared region")
-		}
-		declared[id] = mask
+	// Lowering owns only the physical extent of each owner-issued atom. The
+	// right relation's scope is the neutral union of both atoms, so its extent
+	// is deliberately the raw second literal here; lower evaluates the union
+	// rather than receiving a table of whole-region formulas.
+	lowering, ok := lower.New(manager, map[identity.ContentID]support.Mask{
+		leftScopeAtomID:  leftMask,
+		rightScopeAtomID: rightExtent,
+	})
+	if !ok || !lowering.Available() {
+		t.Fatal("cofiber lowering")
 	}
-	addDeclared(leftScopeRegion, leftMask)
-	addDeclared(rightScopeRegion, rightMask)
-	formulas := []struct {
-		formula region.Region
-		mask    support.Mask
-	}{
-		{formula: leftScopeRegion, mask: leftMask},
-		{formula: rightScopeRegion, mask: rightMask},
+	lowerFactory, ok := lower.NewFactory(mounted.RuntimeFence().Mount(), lowering)
+	if !ok || !lowerFactory.Available() {
+		t.Fatal("cofiber lowering factory")
 	}
-	for _, left := range formulas {
-		for _, right := range formulas {
-			combinedFormula, formulaOK := region.Conjoin(left.formula, right.formula)
-			combinedMask, maskOK := support.Intersect(left.mask, right.mask)
-			if !formulaOK || !maskOK {
-				t.Fatal("declared region conjunction")
-			}
-			addDeclared(combinedFormula, combinedMask)
-		}
-	}
-	// The fixture keeps the owner-issued neutral atoms alongside the schema
-	// regions so physical partitions can be normalized back through the same
-	// canonical Region/mount lookup used by production. NewDeclared is the
-	// closed declaration-only form and intentionally cannot admit a runtime
-	// complement such as disjointMask.
-	lookup, ok := cofiber.NewLookup(mounted, manager, []region.Atom{leftScopeAtom, rightScopeAtom})
-	if !ok || !lookup.Available() {
-		t.Fatal("cofiber lookup")
-	}
-	scopes, ok := cofiber.NewFromLookup(mounted, lookup)
-	if !ok || !scopes.Available() {
-		t.Fatal("cofiber")
-	}
-	view, ok := geometry.New(mounted, scopes)
+	view, ok := lowerFactory.Bind(mounted)
 	if !ok || !view.Available() {
 		t.Fatal("geometry")
 	}
