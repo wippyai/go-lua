@@ -127,7 +127,7 @@ func summaryQuerySpec(placementOwner *placementowner.HotOwner, heapOwner *heapow
 		engine.NewSummaryQueryProjection(heapOwner.SummaryRead(), engine.QueryProjectionFold[heapdomain.Value, placementdomain.PlacementSummaryObservation]{
 			BorrowIssued: true,
 			Accumulate: func(result placementdomain.PlacementSummaryObservation, cells engine.OrderedCells[heapdomain.Value]) (placementdomain.PlacementSummaryObservation, bool) {
-				return placementdomain.AccumulatePlacementSummaryContainmentCached(containmentCache, schema, result, cells)
+				return placementdomain.AccumulatePlacementSummaryContainmentCached(containmentCache, schema, result, cells.Count(), cells.At)
 			},
 		}),
 		engine.NewSummaryQueryProjection(evidenceOwner.SummaryRead(), engine.QueryProjectionFold[placementsuspension.Evidence, placementdomain.PlacementSummaryObservation]{

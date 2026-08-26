@@ -4,7 +4,6 @@ import (
 	"reflect"
 	"testing"
 
-	"github.com/wippyai/go-lua/analysis/engine"
 	"github.com/wippyai/go-lua/analysis/identity"
 	heapdomain "github.com/wippyai/go-lua/domain/heap"
 )
@@ -114,13 +113,13 @@ func TestFiniteContainmentDepthsRecursiveSCCIsConservative(t *testing.T) {
 }
 
 func TestStaticContainmentDepthEvidenceRejectsUnavailableSchemaAndMissingRootInput(t *testing.T) {
-	if graph, ok := buildStaticHeapGraph(Schema{}, engine.OrderedCells[heapdomain.Value]{}); ok || len(graph.evidence) != 0 {
+	if graph, ok := buildStaticHeapGraphRows(Schema{}, 0, absentHeapValueAt); ok || len(graph.evidence) != 0 {
 		t.Fatal("unavailable Placement schema produced a static Heap graph")
 	}
 
 	// Applying against an unavailable schema cannot manufacture a complete
 	// relation or turn a missing root into a negative fact.
-	if _, ok := AccumulatePlacementSummaryContainmentCached(nil, Schema{}, PlacementSummaryObservation{}, engine.OrderedCells[heapdomain.Value]{}); ok {
+	if _, ok := AccumulatePlacementSummaryContainmentCached(nil, Schema{}, PlacementSummaryObservation{}, 0, absentHeapValueAt); ok {
 		t.Fatal("unavailable schema accepted a depth application")
 	}
 	depths, known := finiteContainmentDepths([][]int{{1}, {99}})
@@ -196,4 +195,11 @@ func TestFiniteContainmentDepthsLongChainIsIterative(t *testing.T) {
 			t.Fatalf("long chain depth[%d] = %d/%v, want %d/true", index, depths[index], known[index], index)
 		}
 	}
+}
+
+// absentHeapValueAt is the row accessor of a delivery that answers no
+// coordinate: the vector a missing Heap predecessor delivers.
+func absentHeapValueAt(int) (heapdomain.Value, bool, bool) {
+	var none heapdomain.Value
+	return none, false, false
 }

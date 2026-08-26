@@ -4,13 +4,12 @@ import (
 	"sort"
 	"sync/atomic"
 
-	"github.com/wippyai/go-lua/analysis/engine"
 	heapdomain "github.com/wippyai/go-lua/domain/heap"
 	internalhash "github.com/wippyai/go-lua/internal/hash"
 )
 
 // StaticContainmentCache is the one-entry, owner-lifetime memo for the
-// authenticated Heap containment projection. It retains no OrderedCells or
+// authenticated Heap containment projection. It retains no delivered vector or
 // callback-generation capability: the entry owns only immutable Heap values
 // copied from a complete observation and the resulting immutable projection.
 //
@@ -82,19 +81,15 @@ type staticHeapGraph struct {
 	depthComplete       bool
 }
 
-// buildStaticHeapGraph authenticates every dense Heap root and visits each
+// buildStaticHeapGraphRows authenticates every dense Heap root and visits each
 // complete value's containment stream exactly once. It intentionally keeps
 // Boot roots in adjacency/local evidence so a mutable Boot descendant refutes
 // an allocation's DeepFrozen proof, while the allocation-only depth graph is
 // derived as a private projection afterward.
-func buildStaticHeapGraph(schema Schema, cells engine.OrderedCells[heapdomain.Value]) (staticHeapGraph, bool) {
-	return buildStaticHeapGraphRows(schema, cells.Count(), cells.At)
-}
-
-// buildStaticHeapGraphRows is the same authenticated builder over a detached
-// row accessor. The cache snapshots one complete OrderedCells vector first,
-// so graph construction cannot observe a different callback-generation row
-// than the key it authenticated.
+//
+// The vector arrives as its width and its row accessor. The cache snapshots
+// the delivered rows first, so graph construction cannot observe a different
+// generation's row than the key it authenticated.
 func buildStaticHeapGraphRows(schema Schema, cellCount int, at func(int) (heapdomain.Value, bool, bool)) (staticHeapGraph, bool) {
 	if !schema.Valid() || at == nil {
 		return staticHeapGraph{}, false
@@ -140,7 +135,7 @@ func buildStaticHeapGraphRows(schema Schema, cellCount int, at func(int) (heapdo
 			return staticHeapGraph{}, false
 		}
 		value, present, available := at(dense)
-		// OrderedCells is a borrowed, generation-fenced capability. Every
+		// A delivered vector is a borrowed, generation-fenced capability. Every
 		// coordinate must be readable, valid, and admitted by this exact Heap
 		// owner before any semantic extreme is inspected. The engine retains
 		// that owner's exact lattice Bottom on a sparse cell; it is the
@@ -276,12 +271,12 @@ func buildStaticHeapGraphRows(schema Schema, cellCount int, at func(int) (heapdo
 	return graph, true
 }
 
-func containmentCacheSnapshot(schema Schema, cells engine.OrderedCells[heapdomain.Value]) ([]heapdomain.Value, []bool, uint64, bool) {
-	if !schema.Valid() {
+func containmentCacheSnapshot(schema Schema, cellCount int, at func(int) (heapdomain.Value, bool, bool)) ([]heapdomain.Value, []bool, uint64, bool) {
+	if !schema.Valid() || at == nil {
 		return nil, nil, 0, false
 	}
 	denseCount := schema.Heap().KeyCount()
-	if cells.Count() != denseCount {
+	if cellCount != denseCount {
 		return nil, nil, 0, false
 	}
 	values := make([]heapdomain.Value, denseCount)
@@ -293,7 +288,7 @@ func containmentCacheSnapshot(schema Schema, cells engine.OrderedCells[heapdomai
 	hash = internalhash.MixHash(hash, uint64(denseCount))
 	heapSchema := schema.Heap()
 	for index := 0; index < denseCount; index++ {
-		value, isPresent, available := cells.At(index)
+		value, isPresent, available := at(index)
 		fingerprint, fingerprintOK := heapSchema.Fingerprint(value)
 		if !available || !fingerprintOK {
 			// A revoked or malformed row has no stable authenticated cache key.
@@ -368,13 +363,13 @@ func validStaticHeapGraph(graph staticHeapGraph) bool {
 }
 
 // projection resolves one complete, owner-authenticated Heap vector through
-// the one-entry memo. A miss snapshots the callback rows before graph work;
-// the cache never retains the borrowed OrderedCells capability itself.
-func (cache *StaticContainmentCache) projection(schema Schema, cells engine.OrderedCells[heapdomain.Value]) (staticContainmentProjection, bool) {
+// the one-entry memo. A miss snapshots the delivered rows before graph work;
+// the cache never retains the borrowed delivery capability itself.
+func (cache *StaticContainmentCache) projection(schema Schema, cellCount int, at func(int) (heapdomain.Value, bool, bool)) (staticContainmentProjection, bool) {
 	if cache == nil || cache.schema != schema {
 		return staticContainmentProjection{}, false
 	}
-	values, present, hash, snapshotOK := containmentCacheSnapshot(schema, cells)
+	values, present, hash, snapshotOK := containmentCacheSnapshot(schema, cellCount, at)
 	if !snapshotOK {
 		return staticContainmentProjection{}, false
 	}
@@ -442,11 +437,11 @@ func (graph staticHeapGraph) deepStatesWithScratch(scratch *containmentSCCScratc
 // separate testable seams; the query path requires the owner-issued cache
 // projection so an unavailable/revoked vector fails at the same boundary as
 // every other malformed relation.
-func AccumulatePlacementSummaryContainmentCached(cache *StaticContainmentCache, schema Schema, observation PlacementSummaryObservation, cells engine.OrderedCells[heapdomain.Value]) (PlacementSummaryObservation, bool) {
+func AccumulatePlacementSummaryContainmentCached(cache *StaticContainmentCache, schema Schema, observation PlacementSummaryObservation, cellCount int, at func(int) (heapdomain.Value, bool, bool)) (PlacementSummaryObservation, bool) {
 	if cache == nil || cache.schema != schema || !summaryObservationShape(schema, observation) {
 		return PlacementSummaryObservation{}, false
 	}
-	projection, projectionOK := cache.projection(schema, cells)
+	projection, projectionOK := cache.projection(schema, cellCount, at)
 	if !projectionOK {
 		return PlacementSummaryObservation{}, false
 	}
