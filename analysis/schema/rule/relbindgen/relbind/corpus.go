@@ -516,7 +516,15 @@ func families() []Family {
 		{Census: "placement/suspension-evidence", Rule: "placement-suspension-evidence", Stem: "PlacementSuspensionEvidence", Axis: "placement", Pending: abiGapLegacyOperand},
 		{Census: "placement/capture", Rule: "placement-closure-capture", Stem: "PlacementClosureCapture", Axis: "placement", Pending: abiGapDivergentJudgment},
 		{Census: "placement/containment", Rule: "placement-containment", Stem: "PlacementContainment", Axis: "placement", Pending: abiGapDivergentJudgment},
-		{Census: "call/activation", Rule: "call-activation", Stem: "CallActivation", Axis: "call", Pending: abiGapDispositionOnly},
+		{
+			Census: "call/activation", Rule: "call-activation", Stem: "CallActivation", Axis: "call",
+			Judgment: "CallActivationOperation",
+			Inputs: []Slot{
+				{Field: "Candidate", Payload: "call-candidate", Delivery: scalar},
+				{Field: "Trigger", Payload: "call", Delivery: scalar},
+			},
+			Cardinality: model.Optional, Address: NoDestination,
+		},
 		{Census: "typestate", Rule: "typestate-obligation", Stem: "TypestateObligation", Axis: "placement", Pending: abiGapAbsentJudgment},
 		{
 			Census: "heap/index", Rule: "raw-get", Stem: "RawGetPackRoutes", Axis: "heap",

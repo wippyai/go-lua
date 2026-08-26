@@ -13,6 +13,11 @@ import (
 // It is the address form a finite expansion uses.
 const KeyedDestination = -1
 
+// NoDestination is the address a family declares when it publishes no fact at
+// all. Its signature declares no output column, so there is no row for an
+// address to name.
+const NoDestination = -2
+
 // Spec is the declaration a generated binding hands this substrate.
 type Spec[A, R any] struct {
 	// Signature is the sealed operation contract this binding answers for.
@@ -32,7 +37,7 @@ type Spec[A, R any] struct {
 // the exact sealed signature it was constructed with, so binding.Admit refuses
 // a foreign or drifted contract without any runtime form inspection.
 func Bind[A, R any](spec Spec[A, R]) (binding.Factory, bool) {
-	if !spec.Signature.Available() || spec.Decoder == nil || spec.Encoder == nil || spec.Operation == nil || !spec.Refusal.Available() {
+	if !spec.Signature.Available() || spec.Decoder == nil || spec.Operation == nil || !spec.Refusal.Available() {
 		return nil, false
 	}
 	authority := spec.Signature.Authority()
@@ -41,7 +46,21 @@ func Bind[A, R any](spec Spec[A, R]) (binding.Factory, bool) {
 	}
 	outputs := spec.Signature.Outputs()
 	if len(outputs) == 0 {
-		return nil, false
+		// A signature that declares no output column is an operation that
+		// answers with its disposition and publishes no fact. The ABI already
+		// carries a closed outcome vocabulary on the output side, so this is a
+		// signature form and not a capability: it is read off the contract the
+		// same way scalar shape is read off delivery and expansion off
+		// cardinality.
+		//
+		// Nothing about it is permissive. There is no encoder because there is
+		// nothing to encode, no address because there is no row to address,
+		// and the emitter is opened at a capacity of none, so an operation
+		// that tries to publish refuses the whole invocation.
+		if spec.Encoder != nil || spec.Address != NoDestination {
+			return nil, false
+		}
+		return factory[A, R]{spec: spec, outputs: nil, limit: 0}, true
 	}
 	for _, declared := range outputs {
 		if !declared.Available() || declared.Relation != authority.Denominator.Relation() {
@@ -143,8 +162,10 @@ func (value *worker[A, R]) Evaluate(frame binding.Frame, buffer *binding.Proposa
 	}
 	inputs := Inputs{frame: frame}
 	var fallback identity.ContentID
+	// A family that publishes no fact resolves no destination. Its emitter is
+	// opened at a capacity of none, so it stays closed to a row either way.
 	keyed := value.factory.spec.Address == KeyedDestination
-	if !keyed {
+	if !keyed && value.factory.spec.Address != NoDestination {
 		key, ok := inputs.RowKeyAt(value.factory.spec.Address)
 		if !ok {
 			return value.refuse(nil)
