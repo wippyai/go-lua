@@ -40,54 +40,67 @@ func assertSuspensionShape(t *testing.T, declaration ruleprogram.Program, output
 	if !declaration.Candidate.Issued() || declaration.Candidate.IssuedRow != programissuance.RelationOccurrenceSubjectLiveness || declaration.Candidate.AxisRelation.Declared() {
 		t.Fatalf("candidate=%+v, want canonical issued subject-liveness row", declaration.Candidate)
 	}
-	if declaration.JoinCount() != 3 {
-		t.Fatalf("join count=%d, want anchor/source/route", declaration.JoinCount())
+	if declaration.JoinCount() != 4 {
+		t.Fatalf("join count=%d, want boundary/anchor/source/route", declaration.JoinCount())
+	}
+
+	// The boundary read is the yield gate. It is candidate-only and exact:
+	// one liveness row is anchored at one mounted call, and the fact solved
+	// there decides whether the row publishes a route at all.
+	gate, gateOK := declaration.JoinAt(0)
+	if !gateOK || gate.Read.Form != ruleprogram.Exact || gate.Read.Axis.EntryReference().Key != callAxisKey ||
+		gate.Relation.Member != boundaryCallFacts || gate.Key.Member != boundaryCallFactKey ||
+		len(gate.Sources) != 1 || gate.Sources[0] != ruleprogram.CandidateSource() || gate.Predicate.Declared() ||
+		gate.Read.Contract.Multiplicity != ruleprogram.MultiplicityOne || gate.Read.Contract.OnOpaque != ruleprogram.OnOpaqueRefuse {
+		t.Fatalf("boundary join=%+v, want the candidate-only exact Call gate", gate)
 	}
 
 	// The anchor read is the denominator the source vector is complete
 	// against, so it is a closed-denominator read and not an exact cell the
 	// fold could consume.
-	first, firstOK := declaration.JoinAt(0)
+	first, firstOK := declaration.JoinAt(1)
 	if !firstOK || first.Read.Form != ruleprogram.Complete || first.Read.Axis.EntryReference().Key != valueAxisKey ||
-		first.Relation.Member != anchor || first.Sources[0] != ruleprogram.CandidateSource() || first.Predicate.Declared() ||
+		first.Relation.Member != anchor || len(first.Sources) != 1 || first.Sources[0] != ruleprogram.CandidateSource() || first.Predicate.Declared() ||
 		first.Read.Contract.DenominatorRef.EntryReference().Key != valueCoordinateDenominator {
 		t.Fatalf("anchor join=%+v, want the candidate-only Value denominator read", first)
 	}
 
 	// The judgment folds the whole vector of the subject's cells, so the read
 	// delivers the span rather than one selected cell of it.
-	second, secondOK := declaration.JoinAt(1)
+	second, secondOK := declaration.JoinAt(2)
 	if !secondOK || second.Read.Form != ruleprogram.Summary || second.Relation.Member != sources ||
 		second.Key.Member != sourceKey || second.Predicate.Member != sourceTag ||
 		second.Read.Contract.Multiplicity != ruleprogram.MultiplicityMany ||
-		len(second.Sources) != 2 || !second.Sources[0].Candidate || second.Sources[1] != ruleprogram.PriorSource(0) {
-		t.Fatalf("source join=%+v, want candidate + anchor whole-vector Value read", second)
+		len(second.Sources) != 3 || !second.Sources[0].Candidate || second.Sources[1] != ruleprogram.PriorSource(0) || second.Sources[2] != ruleprogram.PriorSource(1) {
+		t.Fatalf("source join=%+v, want candidate + gate + anchor whole-vector Value read", second)
 	}
 
-	third, thirdOK := declaration.JoinAt(2)
+	third, thirdOK := declaration.JoinAt(3)
 	if !thirdOK || third.Read.Form != ruleprogram.Selected || third.Read.Axis.EntryReference().Key != outputAxisKey ||
 		third.Relation.Member != routes || third.Key.Member != routeKey || third.Predicate.Declared() ||
-		len(third.Sources) != 3 || !third.Sources[0].Candidate || third.Sources[1] != ruleprogram.PriorSource(0) || third.Sources[2] != ruleprogram.PriorSource(1) {
-		t.Fatalf("route join=%+v, want candidate + both Value reads selected owner RouteMember read", third)
+		len(third.Sources) != 4 || !third.Sources[0].Candidate || third.Sources[1] != ruleprogram.PriorSource(0) ||
+		third.Sources[2] != ruleprogram.PriorSource(1) || third.Sources[3] != ruleprogram.PriorSource(2) {
+		t.Fatalf("route join=%+v, want candidate + gate + both Value reads selected owner RouteMember read", third)
 	}
-	if first.Read.PointBound != ruleprogram.PointBound || second.Read.PointBound != ruleprogram.PointBound || third.Read.PointBound != ruleprogram.PointBound {
-		t.Fatalf("point bounds=%v/%v/%v, want the transported operand point", first.Read.PointBound, second.Read.PointBound, third.Read.PointBound)
+	if gate.Read.PointBound != ruleprogram.PointBound || first.Read.PointBound != ruleprogram.PointBound ||
+		second.Read.PointBound != ruleprogram.PointBound || third.Read.PointBound != ruleprogram.PointBound {
+		t.Fatalf("point bounds=%v/%v/%v/%v, want the transported operand point", gate.Read.PointBound, first.Read.PointBound, second.Read.PointBound, third.Read.PointBound)
 	}
 	if third.Read.Contract.DenominatorRef.EntryReference().Key != placementDenominator || third.Read.Contract.OnOpaque != ruleprogram.OnOpaqueRefuse {
 		t.Fatalf("route contract=%+v, want bounded Placement route delivery", third.Read.Contract)
 	}
 
-	// A denominator is not a fold input: the fold takes exactly what the
-	// judgment takes, the source vector and the routed cell.
+	// Neither the gate nor the denominator is a fold input: the fold takes
+	// exactly what the judgment takes, the source vector and the routed cell.
 	if declaration.Fold.Reducer.Member != reducer || len(declaration.Fold.Inputs) != 2 ||
-		declaration.Fold.Inputs[0] != 1 || declaration.Fold.Inputs[1] != 2 {
+		declaration.Fold.Inputs[0] != 2 || declaration.Fold.Inputs[1] != 3 {
 		t.Fatalf("fold=%+v, want the vector and the routed cell", declaration.Fold)
 	}
 	if len(declaration.Fold.Outputs) != 1 {
 		t.Fatalf("outputs=%d, want one routed receipt", len(declaration.Fold.Outputs))
 	}
 	output := declaration.Fold.Outputs[0]
-	if output.Mode != ruleprogram.ModeRoute || !output.RouteJoinPresent || output.RouteJoin != 2 || output.Column.Key != column || output.Destination.Member != destination {
+	if output.Mode != ruleprogram.ModeRoute || !output.RouteJoinPresent || output.RouteJoin != 3 || output.Column.Key != column || output.Destination.Member != destination {
 		t.Fatalf("output=%+v, want explicit RouteMember output", output)
 	}
 	if declaration.Fold.Reducer.Axis.Key != outputAxisKey || output.Column.Axis.Key != outputAxisKey || output.Destination.Axis.Key != outputAxisKey {
@@ -113,10 +126,10 @@ func TestSuspensionRulesIssueAtTheMountedCallSummary(t *testing.T) {
 	}
 }
 
-func TestSuspensionProgramRequiresTheThirdSelectedJoinAsRoute(t *testing.T) {
+func TestSuspensionProgramRequiresTheSelectedRouteJoinAsRoute(t *testing.T) {
 	declaration := Suspension()
 	declaration.Fold.Outputs[0].RouteJoin = 0
 	if problem, valid := declaration.Check(); valid || problem.Kind != ruleprogram.ProblemJoin {
-		t.Fatalf("exact anchor used as route valid=%v problem=%+v", valid, problem)
+		t.Fatalf("exact Call gate used as route valid=%v problem=%+v", valid, problem)
 	}
 }

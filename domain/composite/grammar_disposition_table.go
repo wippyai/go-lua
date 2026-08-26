@@ -217,6 +217,11 @@ var grammarRoleGroups = [...]struct {
 	occurrence schema.Key
 }{
 	{roleCallOccurrence, "occurrence/call"},
+	// A subject-liveness span is issued at the boundary of the call it is
+	// anchored at, so the call form in the source is the grammar row that
+	// reaches its consumers too. It is deliberately the same role bit: the
+	// span has no source form of its own to attribute.
+	{roleCallOccurrence, "occurrence/subject-liveness"},
 	{roleAllocationOccurrence, "occurrence/allocation"},
 	{roleReturnBoundaryOccurrence, "occurrence/return-boundary"},
 	{roleStorageBindTransferOccurrence, "occurrence/storage-bind-transfer"},

@@ -21,6 +21,7 @@ const (
 	SubjectLivenessCarrier            member.Carrier = "carrier/program/subject-liveness"
 	ValueCoordinateCarrier            member.Carrier = "carrier/value/coordinate"
 	ValueFactCarrier                  member.Carrier = "carrier/value/fact"
+	CallFactCarrier                   member.Carrier = "carrier/call/fact"
 	SuspensionEvidenceRouteTagCarrier member.Carrier = "carrier/placement/suspension-evidence-route-tag"
 	SuspensionSourceCarrier           member.Carrier = "carrier/value/suspension-source"
 	SuspensionRouteCarrier            member.Carrier = "carrier/placement/suspension-route"
@@ -31,7 +32,7 @@ func AxisMemberCatalog() member.Catalog {
 	valueAxis := schemaapi.EntryReference{Surface: schemaapi.SurfaceKindAxis, Key: "placement-suspension-evidence"}
 	catalog, ok := member.NewCatalog(
 		[]member.Relation{
-			{Key: EvidenceRoutes, Subject: SuspensionRouteCarrier, CandidateProvider: member.IssuedRowCandidate("program-relation/occurrence-subject-liveness"), Inputs: []member.Carrier{SubjectLivenessCarrier}},
+			{Key: EvidenceRoutes, Subject: SuspensionRouteCarrier, CandidateProvider: member.IssuedRowCandidate("program-relation/occurrence-subject-liveness"), Inputs: []member.Carrier{SubjectLivenessCarrier, CallFactCarrier}},
 		},
 		[]member.Projection{
 			{Key: EvidenceRouteKey, Relation: EvidenceRoutes, Role: member.Key, Result: PlacementKeyCarrier, CandidateProvider: member.IssuedRowCandidate("program-relation/occurrence-subject-liveness")},

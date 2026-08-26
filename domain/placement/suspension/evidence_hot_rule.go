@@ -2,7 +2,10 @@ package suspension
 
 import (
 	"github.com/wippyai/go-lua/analysis/engine"
+	reduceroperand "github.com/wippyai/go-lua/analysis/engine/operand"
 	"github.com/wippyai/go-lua/analysis/schema/program/lifecycle"
+	calldomain "github.com/wippyai/go-lua/domain/call"
+	callowner "github.com/wippyai/go-lua/domain/call/owner"
 	heapdomain "github.com/wippyai/go-lua/domain/heap"
 	placementdomain "github.com/wippyai/go-lua/domain/placement"
 	valuedomain "github.com/wippyai/go-lua/domain/value"
@@ -17,7 +20,9 @@ type EvidenceHotRule struct {
 	implementation *EvidenceRuleImplementation[operand]
 	owner          *EvidenceOwner
 	values         *valueowner.HotOwner
+	calls          *callowner.HotOwner
 	catalog        *Catalog
+	callRead       engine.Read[engine.OrderedCells[calldomain.Value]]
 	valueAnchor    engine.Read[engine.OrderedCells[valuedomain.Value]]
 	valueRead      engine.Read[engine.Selection[routeTag, engine.OrderedCells[valuedomain.Value]]]
 	evidenceRead   engine.Read[engine.Selection[routeTag, engine.OrderedCells[Evidence]]]
@@ -26,18 +31,23 @@ type EvidenceHotRule struct {
 // BindEvidenceHot binds the independent evidence producer to one shared hot
 // transaction. It shares the sealed Program/Value catalog with the class
 // consumer, but never admits an owner from an equal-schema foreign binding.
-func BindEvidenceHot(binding *engine.SchemaBinding, fragment *EvidenceSchemaFragment, owner *EvidenceOwner, values *valueowner.HotOwner, valueSchema *valuedomain.Schema, schema placementdomain.Schema) (*EvidenceHotRule, bool) {
+func BindEvidenceHot(binding *engine.SchemaBinding, fragment *EvidenceSchemaFragment, owner *EvidenceOwner, values *valueowner.HotOwner, calls *callowner.HotOwner, valueSchema *valuedomain.Schema, schema placementdomain.Schema) (*EvidenceHotRule, bool) {
 	if binding == nil || fragment == nil || fragment.slot == nil || !fragment.route || owner == nil || !owner.MatchesBinding(binding) ||
 		values == nil || !values.MatchesBinding(binding) || valueSchema == nil ||
+		calls == nil || !calls.MatchesBinding(binding) || calls.Algebra() == nil || !calls.Algebra().Valid() ||
 		!owner.Schema().Valid() || values.Schema() == nil || !values.Schema().Valid() || !valueSchema.Valid() || values.Schema() != valueSchema ||
 		owner.Schema() != schema || !valueSchema.OwnsHeapSchema(schema.Heap()) {
+		return nil, false
+	}
+	linkOwner := calls.Algebra().LinkOwner()
+	if !linkOwner.Available() || !valueSchema.LinkOwner().Matches(linkOwner) || !schema.Heap().LinkOwner().Matches(linkOwner) {
 		return nil, false
 	}
 	catalog, catalogOK := SealEvidenceCatalog(schema, valueSchema)
 	if !catalogOK {
 		return nil, false
 	}
-	rule := &EvidenceHotRule{owner: owner, values: values, catalog: catalog}
+	rule := &EvidenceHotRule{owner: owner, values: values, calls: calls, catalog: catalog}
 	implementation, implementationOK := BindSelectedEvidenceRouteRuleDirect(owner, fragment.slot, fragment.carry, fragment.write, engine.HotRuleSpec[Evidence, operand]{
 		OperandContent:  func(candidate operand) (operand, [32]byte, bool) { return rule.operandContent(candidate) },
 		OperandResolver: rule.resolveOperand,
@@ -47,6 +57,11 @@ func BindEvidenceHot(binding *engine.SchemaBinding, fragment *EvidenceSchemaFrag
 		return nil, false
 	}
 	rule.implementation = implementation
+	callRead, callOK := AddSelectedEvidenceRuleDirectExactRead(implementation, fragment.callRead, calls.FactorRef(), rule.boundaryCallCoordinate)
+	if !callOK {
+		return nil, false
+	}
+	rule.callRead = callRead
 	valueAnchor, anchorOK := AddSelectedEvidenceRuleDirectExactRead(implementation, fragment.valueAnchor, values.FactorRef(), rule.anchorCoordinate)
 	if !anchorOK {
 		return nil, false
@@ -108,7 +123,7 @@ func (rule *EvidenceHotRule) resolveOperand(coords engine.OperandCoords) (operan
 	if rule == nil || rule.catalog == nil {
 		return operand{}, false
 	}
-	return rule.catalog.operandForID(coords.Occurrence)
+	return rule.catalog.operandForOccurrence(coords.Mount, coords.Occurrence)
 }
 
 func (rule *EvidenceHotRule) Catalog() *Catalog {
@@ -145,48 +160,27 @@ func (rule *EvidenceHotRule) locateValues(context engine.SelectorContext, candid
 }
 
 func (rule *EvidenceHotRule) locateEvidence(context engine.SelectorContext, candidate operand) bool {
-	if rule == nil || rule.owner == nil || rule.values == nil || rule.catalog == nil || rule.catalog.values == nil {
+	if rule == nil || rule.owner == nil || rule.values == nil || rule.calls == nil || rule.catalog == nil || rule.catalog.values == nil {
 		return false
 	}
 	canonical, _, contentOK := rule.operandContent(candidate)
 	if !contentOK {
 		return false
 	}
-	if canonical.key.Kind() == heapdomain.RootAllocation {
-		index, indexOK := rule.owner.Schema().Heap().AllocationKeyIndex(canonical.key)
-		if !indexOK || index < 0 {
-			return false
-		}
-		return SelectRouteTyped(rule.owner, context, canonical.key, routeTag(uint64(index)+1))
-	}
-	selection, selectionOK := engine.SelectorRead(context, rule.valueRead)
-	if !selectionOK {
+	callFact, callOK := rule.boundaryCallSelector(context, canonical)
+	if !callOK {
 		return false
 	}
-	count, countOK := engine.SelectorSelectionCount(context, selection)
-	if !countOK {
+	var cellsInline [sourceCellInlineWidth]reduceroperand.MemberCell[valuedomain.Value]
+	sources, sourcesOK := selectorSourceVector(context, rule.valueRead, canonical, cellsInline[:])
+	if !sourcesOK {
 		return false
 	}
-	if count != len(canonical.sources) {
+	derived, derivedOK := DeriveSuspensionRoutes(rule.owner.Schema(), rule.values.Schema(), rule.calls.Algebra(), canonical.liveness, canonical.key, callFact, sources)
+	if !derivedOK {
 		return false
 	}
-	var factsInline [sourceFactInlineWidth]sourceFact
-	facts, factsOK := sourceFactBuffer(count, factsInline[:])
-	if !factsOK {
-		return false
-	}
-	for index := 0; index < count; index++ {
-		tag, cells, selectedOK := engine.SelectorSelectionAt(context, selection, index)
-		if !selectedOK || index >= len(canonical.sources) || tag != canonical.sources[index].tag || cells.Count() != 1 {
-			return false
-		}
-		fact, present, available := cells.At(0)
-		facts[index] = sourceFact{fact: fact, present: present, available: available}
-	}
-	plan, planOK := routePlanForFacts(rule.owner.Schema(), rule.values.Schema(), facts)
-	if !planOK {
-		return false
-	}
+	plan := derived.plan
 	for index := 0; index < plan.count(); index++ {
 		item, itemOK := plan.at(index)
 		if !itemOK || !SelectRouteTyped(rule.owner, context, item.key, item.tag) {
@@ -194,6 +188,31 @@ func (rule *EvidenceHotRule) locateEvidence(context engine.SelectorContext, cand
 		}
 	}
 	return true
+}
+
+// boundaryCallCoordinate mirrors the class consumer: the evidence producer
+// answers over the same boundary and therefore reads the same exact Call cell.
+func (rule *EvidenceHotRule) boundaryCallCoordinate(candidate operand) (uint64, bool) {
+	if rule == nil || rule.calls == nil {
+		return 0, false
+	}
+	return boundaryCallCoordinate(rule.calls.Algebra(), candidate)
+}
+
+func (rule *EvidenceHotRule) boundaryCallSelector(context engine.SelectorContext, canonical operand) (calldomain.Value, bool) {
+	cells, readable := engine.SelectorRead(context, rule.callRead)
+	if !readable {
+		return calldomain.Value{}, false
+	}
+	return admitBoundaryCall(rule.calls.Algebra(), canonical, cells)
+}
+
+func (rule *EvidenceHotRule) boundaryCallFrame(frame engine.Frame[Evidence, operand], canonical operand) (calldomain.Value, bool) {
+	cells, readable := engine.ReadValue(frame, rule.callRead)
+	if !readable {
+		return calldomain.Value{}, false
+	}
+	return admitBoundaryCall(rule.calls.Algebra(), canonical, cells)
 }
 
 func suspensionEvidenceForState(state lifecycle.SubjectLivenessState) (Evidence, bool) {
@@ -257,34 +276,18 @@ func (rule *EvidenceHotRule) fold(frame engine.Frame[Evidence, operand]) engine.
 }
 
 func (rule *EvidenceHotRule) transferPlan(frame engine.Frame[Evidence, operand], valueSelection engine.Selection[routeTag, engine.OrderedCells[valuedomain.Value]], canonical operand) (routePlan, bool) {
-	selectedCount, selectedOK := engine.SelectionCount(frame, valueSelection)
-	if !selectedOK {
+	callFact, callOK := rule.boundaryCallFrame(frame, canonical)
+	if !callOK {
 		return routePlan{}, false
 	}
-	if canonical.key.Kind() == heapdomain.RootAllocation {
-		index, indexOK := rule.owner.Schema().Heap().AllocationKeyIndex(canonical.key)
-		if !indexOK || index < 0 || selectedCount != 0 {
-			return routePlan{}, false
-		}
-		var plan routePlan
-		plan.class = routeExact
-		return plan, plan.add(route{key: canonical.key, tag: routeTag(uint64(index) + 1)})
-	}
-	if selectedCount != len(canonical.sources) {
+	var cellsInline [sourceCellInlineWidth]reduceroperand.MemberCell[valuedomain.Value]
+	sources, sourcesOK := frameSourceVector(frame, valueSelection, canonical, cellsInline[:])
+	if !sourcesOK {
 		return routePlan{}, false
 	}
-	var factsInline [sourceFactInlineWidth]sourceFact
-	facts, factsOK := sourceFactBuffer(selectedCount, factsInline[:])
-	if !factsOK {
+	derived, derivedOK := DeriveSuspensionRoutes(rule.owner.Schema(), rule.values.Schema(), rule.calls.Algebra(), canonical.liveness, canonical.key, callFact, sources)
+	if !derivedOK {
 		return routePlan{}, false
 	}
-	for index := 0; index < selectedCount; index++ {
-		tag, cells, selectedOK := engine.SelectionAt(frame, valueSelection, index)
-		if !selectedOK || index >= len(canonical.sources) || tag != canonical.sources[index].tag || cells.Count() != 1 {
-			return routePlan{}, false
-		}
-		fact, present, available := cells.At(0)
-		facts[index] = sourceFact{fact: fact, present: present, available: available}
-	}
-	return routePlanForFacts(rule.owner.Schema(), rule.values.Schema(), facts)
+	return derived.plan, true
 }

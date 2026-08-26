@@ -195,7 +195,7 @@
     "plane": "family",
     "rule": "placement-suspension",
     "status": "COMPILES",
-    "sketch": "Publish(Apply(Project(Select(Join(Input,Select(Input)))))) | Publish(Apply(Project(Select(Join(Join(Input,Select(Input)),Select(Input)))))) | Publish(Merge(Apply(Project(Select(Join(Join(Join(Input,Complete(Select(Input))),Complete(Select(Input))),Complete(Select(Input)))))),Select(Input)))",
+    "sketch": "Publish(Apply(Project(Select(Join(Join(Input,Select(Input)),Select(Input)))))) | Publish(Apply(Project(Select(Join(Join(Join(Input,Select(Input)),Select(Input)),Select(Input)))))) | Publish(Merge(Apply(Project(Select(Join(Join(Join(Join(Input,Select(Input)),Complete(Select(Input))),Complete(Select(Input))),Complete(Select(Input)))))),Select(Input)))",
     "certified": "authority[19]",
     "expressions": 3
   },
@@ -204,7 +204,7 @@
     "plane": "family",
     "rule": "placement-suspension-evidence",
     "status": "COMPILES",
-    "sketch": "Publish(Apply(Project(Select(Join(Input,Select(Input)))))) | Publish(Apply(Project(Select(Join(Join(Input,Select(Input)),Select(Input)))))) | Publish(Merge(Apply(Project(Select(Join(Join(Join(Input,Complete(Select(Input))),Complete(Select(Input))),Complete(Select(Input)))))),Select(Input)))",
+    "sketch": "Publish(Apply(Project(Select(Join(Join(Input,Select(Input)),Select(Input)))))) | Publish(Apply(Project(Select(Join(Join(Join(Input,Select(Input)),Select(Input)),Select(Input)))))) | Publish(Merge(Apply(Project(Select(Join(Join(Join(Join(Input,Select(Input)),Complete(Select(Input))),Complete(Select(Input))),Complete(Select(Input)))))),Select(Input)))",
     "certified": "authority[19]",
     "expressions": 3
   },

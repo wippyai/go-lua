@@ -187,11 +187,11 @@ func ruleTemplateWiring[P Principals, A Authorities]() ([]*rule.Template, []Rule
 	add(WireGeneratedRuleWithFamily[P, A](placementstoreprogram.RuleEntry(), placementstore.InstallFamily[A]))
 	// Suspension consumes neutral Program liveness rows through the
 	// owner-fenced Value/Placement bridge.
-	add(WireRule(placementsuspension.RuleEntry[P, A](), placementsuspension.DeclareRule[P], placementsuspension.RegisterRule, nil, placementsuspension.BindRule[A], placementsuspension.FinalizeRule[A], placementsuspension.OccurrenceCatalog, nil))
+	add(WireRule(placementsuspension.RuleEntry[P, A](), placementsuspension.DeclareRule[P], placementsuspension.RegisterRule, nil, placementsuspension.BindRule[A], placementsuspension.FinalizeRule[A], nil, nil))
 	// Suspension evidence is a separate Link producer with its own typed
 	// Heap-aligned Factor receipt. Keeping it adjacent to the class producer
 	// makes the ordered projection's source explicit.
-	add(WireRule(placementsuspension.EvidenceRuleEntry[P, A](), placementsuspension.DeclareEvidenceRule[P], placementsuspension.RegisterEvidenceRule, nil, placementsuspension.BindEvidenceRule[A], placementsuspension.FinalizeEvidenceRule[A], placementsuspension.EvidenceOccurrenceCatalog, nil))
+	add(WireRule(placementsuspension.EvidenceRuleEntry[P, A](), placementsuspension.DeclareEvidenceRule[P], placementsuspension.RegisterEvidenceRule, nil, placementsuspension.BindEvidenceRule[A], placementsuspension.FinalizeEvidenceRule[A], nil, nil))
 	// Module-load result projection has exact Call/Value reads and writes an
 	// existing mounted Program CallResultValue coordinate.
 	add(WireGeneratedRuleWithFamily[P, A](valuemoduleloadprogram.RuleEntry(), valuemoduleload.InstallFamily[A]))

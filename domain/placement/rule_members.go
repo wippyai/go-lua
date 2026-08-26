@@ -115,7 +115,7 @@ func AxisMemberCatalog() member.Catalog {
 			{Key: CaptureRoutes, Subject: CaptureRouteCarrier, CandidateProvider: member.IssuedRowCandidate("program-relation/occurrence-closure-proof"), Inputs: []member.Carrier{PlacementKeyCarrier, ValueFactCarrier}},
 			{Key: ContainmentRoutes, Subject: ContainmentRouteCarrier, CandidateProvider: member.IssuedRowCandidate("program-relation/occurrence-entry-geometry"), Inputs: []member.Carrier{PlacementFactCarrier, HeapFactCarrier}},
 			{Key: PublicationRoutes, Subject: PublicationRouteCarrier, CandidateProvider: member.AxisRelationCandidate(member.RelationRef{Axis: schemaapi.EntryReference{Surface: schemaapi.SurfaceKind(2), Key: "effect"}, Member: "effect/mounted-call/candidates"}), Inputs: []member.Carrier{EffectMountedCallCarrier, CallFactCarrier, ValueFactCarrier}},
-			{Key: SuspensionRoutes, Subject: SuspensionRouteCarrier, CandidateProvider: member.IssuedRowCandidate("program-relation/occurrence-subject-liveness"), Inputs: []member.Carrier{SubjectLivenessCarrier}},
+			{Key: SuspensionRoutes, Subject: SuspensionRouteCarrier, CandidateProvider: member.IssuedRowCandidate("program-relation/occurrence-subject-liveness"), Inputs: []member.Carrier{SubjectLivenessCarrier, CallFactCarrier}},
 		},
 		[]member.Projection{
 			{Key: StorageRouteKey, Relation: StorageRoutes, Role: member.Key, Result: PlacementKeyCarrier, CandidateProvider: member.AxisRelationCandidate(member.RelationRef{Axis: schemaapi.EntryReference{Surface: schemaapi.SurfaceKind(2), Key: "value"}, Member: "value/storage-transfer/candidates"})},

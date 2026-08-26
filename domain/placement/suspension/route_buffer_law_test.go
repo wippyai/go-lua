@@ -1,6 +1,11 @@
 package suspension
 
-import "testing"
+import (
+	"testing"
+
+	reduceroperand "github.com/wippyai/go-lua/analysis/engine/operand"
+	valuedomain "github.com/wippyai/go-lua/domain/value"
+)
 
 var (
 	suspensionRouteBufferLawLen  int
@@ -8,20 +13,20 @@ var (
 	suspensionRouteBufferLawPlan routePlan
 )
 
-func TestSuspensionSourceFactBufferUsesBoundedInlineStorage(t *testing.T) {
-	var inline [sourceFactInlineWidth]sourceFact
-	facts, ok := sourceFactBuffer(sourceFactInlineWidth, inline[:])
-	if !ok || len(facts) != sourceFactInlineWidth || cap(facts) != sourceFactInlineWidth {
-		t.Fatalf("inline source facts = len %d cap %d/%t, want %d/%d/true", len(facts), cap(facts), ok, sourceFactInlineWidth, sourceFactInlineWidth)
+func TestSuspensionSourceCellBufferUsesBoundedInlineStorage(t *testing.T) {
+	var inline [sourceCellInlineWidth]reduceroperand.MemberCell[valuedomain.Value]
+	cells, ok := sourceCellBuffer(sourceCellInlineWidth, inline[:])
+	if !ok || len(cells) != sourceCellInlineWidth || cap(cells) != sourceCellInlineWidth {
+		t.Fatalf("inline source cells = len %d cap %d/%t, want %d/%d/true", len(cells), cap(cells), ok, sourceCellInlineWidth, sourceCellInlineWidth)
 	}
-	facts[0].present = true
-	if !inline[0].present {
-		t.Fatal("inline source-fact buffer did not alias caller storage")
+	cells[0].Present = true
+	if !inline[0].Present {
+		t.Fatal("inline source-cell buffer did not alias caller storage")
 	}
 
-	wide, wideOK := sourceFactBuffer(sourceFactInlineWidth+1, inline[:])
-	if !wideOK || len(wide) != sourceFactInlineWidth+1 || cap(wide) < len(wide) {
-		t.Fatalf("wide source facts = len %d cap %d/%t, want len %d and invocation-local storage", len(wide), cap(wide), wideOK, sourceFactInlineWidth+1)
+	wide, wideOK := sourceCellBuffer(sourceCellInlineWidth+1, inline[:])
+	if !wideOK || len(wide) != sourceCellInlineWidth+1 || cap(wide) < len(wide) {
+		t.Fatalf("wide source cells = len %d cap %d/%t, want len %d and invocation-local storage", len(wide), cap(wide), wideOK, sourceCellInlineWidth+1)
 	}
 }
 
