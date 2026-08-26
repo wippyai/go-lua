@@ -392,3 +392,15 @@ func token(t *testing.T, label string) identity.ContentID {
 	}
 	return value
 }
+
+func TestARelationReadAtTwoCoordinatesJoinsWithItself(t *testing.T) {
+	value := newFixture(t)
+	left := algebra.NewInput(value.relationA)
+	right := algebra.NewInput(value.relationA)
+	selfJoin := algebra.NewJoin(left, right, algebra.NewJoinContract([]model.ColumnID{value.columnA}, []model.ColumnID{value.columnA}))
+	schema := validSchema(t, value, selfJoin)
+	report := typing.Check(schema)
+	if !report.Valid() {
+		t.Fatalf("a relation read at two coordinates cannot form a join result: %v", report.Error())
+	}
+}

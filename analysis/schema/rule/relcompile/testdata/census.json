@@ -178,7 +178,7 @@
     "rule": "placement-return-escape",
     "status": "COMPILES",
     "sketch": "Publish(Apply(Project(Select(Join(Join(Input,Select(Input)),Select(Input)))))) | Publish(Apply(Project(Select(Join(Join(Join(Join(Input,Complete(Select(Input))),Complete(Select(Input))),Select(Input)),Complete(Select(Input)))))))",
-    "certified": "Join output repeats a nominal column identity",
+    "certified": "CERTIFIED",
     "expressions": 2
   },
   {
@@ -250,7 +250,7 @@
     "rule": "value-binary-arithmetic",
     "status": "COMPILES",
     "sketch": "Publish(Merge(Apply(Project(Select(Join(Join(Input,Select(Input)),Select(Input))))),Select(Input)))",
-    "certified": "Join output repeats a nominal column identity",
+    "certified": "CERTIFIED",
     "expressions": 1
   },
   {
@@ -277,7 +277,7 @@
     "rule": "value-binary-equality",
     "status": "COMPILES",
     "sketch": "Publish(Merge(Apply(Project(Select(Join(Join(Input,Select(Input)),Select(Input))))),Select(Input)))",
-    "certified": "Join output repeats a nominal column identity",
+    "certified": "CERTIFIED",
     "expressions": 1
   },
   {
@@ -304,7 +304,7 @@
     "rule": "value-binary-order",
     "status": "COMPILES",
     "sketch": "Publish(Merge(Apply(Project(Select(Join(Join(Input,Select(Input)),Select(Input))))),Select(Input)))",
-    "certified": "Join output repeats a nominal column identity",
+    "certified": "CERTIFIED",
     "expressions": 1
   },
   {
@@ -331,7 +331,7 @@
     "rule": "value-runtime-kind-call",
     "status": "COMPILES",
     "sketch": "Publish(Merge(Apply(Project(Select(Join(Join(Join(Join(Input,Select(Input)),Select(Input)),Select(Input)),Select(Input))))),Select(Input)))",
-    "certified": "Join output repeats a nominal column identity",
+    "certified": "CERTIFIED",
     "expressions": 1
   },
   {

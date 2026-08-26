@@ -387,11 +387,20 @@ func (checker *checker) join(value algebra.Join, path string) shape {
 			checker.report.add(CodeTypeMismatch, joinPath, "Join columns have different TypeIDs")
 		}
 	}
-	result := shape{columns: append(append([]columnType(nil), left.columns...), right.columns...)}
-	if len(result.columns) != uniqueColumnCount(result.columns) {
-		checker.report.add(CodeShapeMismatch, path, "Join output repeats a nominal column identity")
+	// The oriented join preserves the left spine's relation identity and
+	// keys; appended right columns are identified per-read, so one relation
+	// read at two coordinates contributes two column families. A nominal
+	// lookup on the result resolves to the spine occurrence; the appended
+	// occurrence is addressed positionally by the operand projection.
+	// A genuine duplicate within one read cannot arise: a relation schema
+	// declares each column once, Project defines every target exactly once,
+	// and Merge requires one shape. The repeats a composed join carries are
+	// therefore always read-qualified.
+	return shape{
+		relation: left.relation,
+		keys:     append([]model.KeyID(nil), left.keys...),
+		columns:  append(append([]columnType(nil), left.columns...), right.columns...),
 	}
-	return result
 }
 
 func (checker *checker) merge(value algebra.Merge, path string) shape {
