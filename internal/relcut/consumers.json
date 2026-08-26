@@ -768,7 +768,7 @@
     "package": "github.com/wippyai/go-lua/analysis/schema/rule/relbindgen",
     "relation": "",
     "column": "",
-    "note": "the values arrive as operands while the fold runs, so the emitted binding decoder answers it"
+    "note": "engine.OrderedCells is not a value this file receives: it is the type argument of the engine's own QueryFold, beside the query slot, builder, binding and frozen-result surfaces this declaration is written against. relbindgen materializes a delivered span into the operand vocabulary a fold reads, so it answers the delivered vector - but the naming moves with the query declaration this fold is a clause of, and not before it. The two deliveries also differ at an unwritten coordinate; see G7-delivered-sparse-payload-is-not-the-owner-default."
    },
    "gap": "",
    "waits_on": "S4-schema-fragments"
@@ -993,7 +993,7 @@
     "package": "github.com/wippyai/go-lua/analysis/schema/rule/relbindgen",
     "relation": "",
     "column": "",
-    "note": "the values arrive as operands while the fold runs, so the emitted binding decoder answers it"
+    "note": "engine.OrderedCells is not a value this file receives: it is the type argument of the engine's own QueryFold, beside the query slot, builder, binding and frozen-result surfaces this declaration is written against. relbindgen materializes a delivered span into the operand vocabulary a fold reads, so it answers the delivered vector - but the naming moves with the query declaration this fold is a clause of, and not before it. The two deliveries also differ at an unwritten coordinate; see G7-delivered-sparse-payload-is-not-the-owner-default."
    },
    "gap": "",
    "waits_on": "S4-schema-fragments"
@@ -1209,27 +1209,6 @@
    "waits_on": "G5-declared-surface-has-no-production-entry"
   },
   {
-   "path": "domain/placement/capture/core.go",
-   "manifest_entry": "S6-domain-observation-restatement",
-   "reads": [
-    {
-     "package": "github.com/wippyai/go-lua/analysis/engine",
-     "symbol": "OrderedCells",
-     "uses": 1,
-     "class": "query"
-    }
-   ],
-   "target": {
-    "kind": "row-abi",
-    "package": "github.com/wippyai/go-lua/analysis/schema/rule/relbindgen",
-    "relation": "",
-    "column": "",
-    "note": "the values arrive as operands while the fold runs, so the emitted binding decoder answers it"
-   },
-   "gap": "",
-   "waits_on": "S6-engine-runtime"
-  },
-  {
    "path": "domain/placement/containment/reducer.go",
    "manifest_entry": "",
    "reads": [
@@ -1241,35 +1220,14 @@
     }
    ],
    "target": {
-    "kind": "row-abi",
-    "package": "github.com/wippyai/go-lua/analysis/engine/operand",
+    "kind": "gap",
+    "package": "",
     "relation": "",
     "column": "",
-    "note": "reads only the surviving operand value types; the S2-reducer-operand-abi restatement already landed, so this consumer is at its post-cut home and the cut owes it nothing"
+    "note": "it folds the operand vector a delivered span fills and authenticates that vector's absent cells against the owner's declared default, which the span does not carry"
    },
-   "gap": "",
+   "gap": "G7-delivered-sparse-payload-is-not-the-owner-default",
    "waits_on": ""
-  },
-  {
-   "path": "domain/placement/containment/routes.go",
-   "manifest_entry": "S6-domain-observation-restatement",
-   "reads": [
-    {
-     "package": "github.com/wippyai/go-lua/analysis/engine",
-     "symbol": "OrderedCells",
-     "uses": 2,
-     "class": "query"
-    }
-   ],
-   "target": {
-    "kind": "row-abi",
-    "package": "github.com/wippyai/go-lua/analysis/schema/rule/relbindgen",
-    "relation": "",
-    "column": "",
-    "note": "the values arrive as operands while the fold runs, so the emitted binding decoder answers it"
-   },
-   "gap": "",
-   "waits_on": "S6-engine-runtime"
   },
   {
    "path": "domain/placement/formal/core.go",
@@ -1312,27 +1270,6 @@
    },
    "gap": "",
    "waits_on": ""
-  },
-  {
-   "path": "domain/placement/observation.go",
-   "manifest_entry": "S6-domain-observation-restatement",
-   "reads": [
-    {
-     "package": "github.com/wippyai/go-lua/analysis/engine",
-     "symbol": "OrderedCells",
-     "uses": 1,
-     "class": "query"
-    }
-   ],
-   "target": {
-    "kind": "row-abi",
-    "package": "github.com/wippyai/go-lua/analysis/schema/rule/relbindgen",
-    "relation": "",
-    "column": "",
-    "note": "the values arrive as operands while the fold runs, so the emitted binding decoder answers it"
-   },
-   "gap": "",
-   "waits_on": "S6-engine-runtime"
   },
   {
    "path": "domain/placement/owner/registration.go",
@@ -1437,7 +1374,7 @@
     "package": "github.com/wippyai/go-lua/analysis/schema/rule/relbindgen",
     "relation": "",
     "column": "",
-    "note": "the values arrive as operands while the fold runs, so the emitted binding decoder answers it"
+    "note": "engine.OrderedCells appears only inside engine.Selection, the selector surface this hand rule locates through. It is a type argument of a read this file does not own, so it is not separable from the selector; it moves when the rule does."
    },
    "gap": "",
    "waits_on": "S6-engine-runtime"
@@ -1585,48 +1522,6 @@
    },
    "gap": "",
    "waits_on": ""
-  },
-  {
-   "path": "domain/placement/static_containment_depth.go",
-   "manifest_entry": "S6-domain-observation-restatement",
-   "reads": [
-    {
-     "package": "github.com/wippyai/go-lua/analysis/engine",
-     "symbol": "OrderedCells",
-     "uses": 4,
-     "class": "query"
-    }
-   ],
-   "target": {
-    "kind": "row-abi",
-    "package": "github.com/wippyai/go-lua/analysis/schema/rule/relbindgen",
-    "relation": "",
-    "column": "",
-    "note": "the values arrive as operands while the fold runs, so the emitted binding decoder answers it"
-   },
-   "gap": "",
-   "waits_on": "S6-engine-runtime"
-  },
-  {
-   "path": "domain/placement/suspension/evidence_observation.go",
-   "manifest_entry": "S6-domain-observation-restatement",
-   "reads": [
-    {
-     "package": "github.com/wippyai/go-lua/analysis/engine",
-     "symbol": "OrderedCells",
-     "uses": 1,
-     "class": "query"
-    }
-   ],
-   "target": {
-    "kind": "row-abi",
-    "package": "github.com/wippyai/go-lua/analysis/schema/rule/relbindgen",
-    "relation": "",
-    "column": "",
-    "note": "the values arrive as operands while the fold runs, so the emitted binding decoder answers it"
-   },
-   "gap": "",
-   "waits_on": "S6-engine-runtime"
   },
   {
    "path": "domain/placement/suspension/evidence_schema.go",
@@ -2019,7 +1914,7 @@
     "package": "github.com/wippyai/go-lua/analysis/schema/rule/relbindgen",
     "relation": "",
     "column": "",
-    "note": "the values arrive as operands while the fold runs, so the emitted binding decoder answers it"
+    "note": "engine.OrderedCells is not a value this file receives: it is the type argument of the engine's own QueryFold, beside the query slot, builder, binding and frozen-result surfaces this declaration is written against. relbindgen materializes a delivered span into the operand vocabulary a fold reads, so it answers the delivered vector - but the naming moves with the query declaration this fold is a clause of, and not before it. The two deliveries also differ at an unwritten coordinate; see G7-delivered-sparse-payload-is-not-the-owner-default."
    },
    "gap": "",
    "waits_on": "S4-schema-fragments"
@@ -2077,35 +1972,14 @@
    },
    "gap": "",
    "waits_on": ""
-  },
-  {
-   "path": "domain/value/summary_observation.go",
-   "manifest_entry": "S6-domain-observation-restatement",
-   "reads": [
-    {
-     "package": "github.com/wippyai/go-lua/analysis/engine",
-     "symbol": "OrderedCells",
-     "uses": 1,
-     "class": "query"
-    }
-   ],
-   "target": {
-    "kind": "row-abi",
-    "package": "github.com/wippyai/go-lua/analysis/schema/rule/relbindgen",
-    "relation": "",
-    "column": "",
-    "note": "the values arrive as operands while the fold runs, so the emitted binding decoder answers it"
-   },
-   "gap": "",
-   "waits_on": "S6-engine-runtime"
   }
  ],
  "gaps": [
   {
    "id": "G1-snapshot-publication-absent",
-   "distinction": "every published query answer, at the canonical snapshot the read paths already read",
+   "distinction": "the folded query answer a reader redeems, and the publication identity it redeems it at - not the relation cell, which is now published",
    "owner": "analysis/relation and analysis/engine/relation",
-   "detail": "The read side is already where the cut wants it: these consumers call analysis/snapshot.Query against a sealed snapshot and use the engine only to open the answer. What has no successor is the write side. The only non-test code that publishes into a canonical snapshot is analysis/engine/publication_column.go - PutColumn at line 271, DeclareQuery at 283, SetRow at 292 - and S6-engine-publication-reads deletes it. Nothing under analysis/relation, analysis/engine/relation or domain/*/relation imports analysis/snapshot at all. So S8-read-paths restates five packages onto \"analysis/snapshot read laws with no analysis/engine import\" and the snapshot they are to read has, after the cut, nobody to fill it. Relation rows are also not addressable from a sealed artifact by column identity: snapshot.Read is keyed by an Axis slot, not a model.ColumnID, and relbindgen addresses inputs by slot ordinal against a live frame. Publishing is the blocker; reading is not.",
+   "detail": "Re-measured against the current tree. Half of what this entry named is closed and half is not, so it states both. CLOSED: the write side exists. analysis/engine/relation/runtime/snapshot publishes a terminal relation root into the canonical analysis/snapshot store - Publish seals a Projection, Project seals one family's applications as an ObservationSnapshot - and analysis/snapshot gained ExtendQuery, which appends a sealed query column to a published snapshot without advancing its generation. Rows are addressable by column identity now: Projection.Read takes a model.ColumnID and a RowKey, which is exactly what this entry said they were not. A typed read path with no engine import landed with it and is the shape the cut wants: analysis/domain/placement/relation/query.Read redeems a Placement Fact column from a Projection, decoding each cell through the OWNER's own codec and refusing the whole read on any wrong type, foreign scope, or failed decode. STILL ABSENT, and the reason these five cannot be restated: what they redeem is not a relation cell but a FOLDED QUERY ANSWER at a publication identity. All four S8 readers have one shape - snapshot.QueryPlan[identity.ContentID, engine.Answer] plus engine.AnswerValue[R] - a type-erased redemption of a domain observation such as valuedomain.ValueSummaryObservation. A projected Cell carries an opaque binding.ValueToken and a TypeID and, by the package's own declaration, 'never decodes a domain value'; only an owner holding the matching codec recovers a typed one, and what it recovers is a Fact, not a folded answer. No folded-answer column exists, and the relation side records that itself rather than substituting one: analysis/domain/placement/relation/query/summary states the typed read-only summary projection profile stays reserved and undefined 'until the upstream declaration owners publish one sealed named-role contract', because a local substitute would create a second declaration authority. The address is unpublished too: a reader keys by an owner-derived identity.ContentID over mount, point, family and context, while a Projection keys by RowKey over RelationID, RowID and witness.Scope, and no correspondence between them is published. So the answer remains a published column, in the owner, and not a rediscovery in the reader.",
    "consumers": [
     "analysis/diagnostic/collect.go",
     "analysis/diagnostic/collect_query.go",
@@ -2143,7 +2017,7 @@
   },
   {
    "id": "G5-declared-surface-has-no-production-entry",
-   "distinction": "a production entry into the declared rule surface: the lowering from an authored declaration to the canonical ExecutionSchema that every declared-surface consumer is to read its answer out of after the cut",
+   "distinction": "the thirty-seven symbols sixteen consumers read on the declared rule surface - not the way in, which now exists",
    "owner": "analysis/schema/rule/relcompile",
    "consumers": [
     "analysis/catalog/publication.go",
@@ -2163,11 +2037,11 @@
     "domain/static/owner/registration.go",
     "domain/value/owner/registration.go"
    ],
-   "detail": "relcompile holds the grammar and the name registry - Declaration, Rule, JoinSpec, Operand, Publication, Registry and Compile - and lowers them to plan.ExecutionSchema. What it does not hold is a way in from production: no non-test file in the tree imports it, so the whole surface is reachable only from the census and law tests that pin it. Measured against the sixteen entries that name it as their target, it declares none of the thirty-seven symbols they read; every one of those symbols is declared in analysis/engine and nowhere else, so no partial move exists either. No manifest entry builds the entry point: S1-analyzer-constructor restates the constructor onto analysis/engine/relation/runtime, and the S4, S6 and S8 entries that own these consumers all restate onto surfaces of their own. Until an authored declaration can be compiled and read from production code, a consumer pointed here can only be bridged, which is why the map states the prerequisite instead of the move."
+   "detail": "Re-measured against the current tree; the premise this entry was written on is spent. relcompile is no longer reachable only from the census and the laws that pin it. analysis/program/relationadmission/admission.go imports it in non-test production code and binds a checked certificate to the owner-issued logical inventory that witness.Specialize consumes, and analysis/schema/rule/relcompile/authorityprojection/project.go imports it as well. That is the entry point this entry said no manifest entry built. What remains is the measurement that made this a gap in the first place, and it is unchanged: of the thirty-seven symbols the sixteen entries naming relcompile as their target read, relcompile declares none, and every one of them is declared in analysis/engine and nowhere else. So no partial move exists and the sixteen still wait - not on a way in, which landed, but on the declared surface publishing what they read."
   },
   {
    "id": "G6-relational-runtime-is-a-stub",
-   "distinction": "the composed and solved target the analyzer constructor and the runtime-composition readers are restated onto",
+   "distinction": "the four consumers' admission and answer symbols on the relational runtime - not the runtime, which now exists",
    "owner": "analysis/engine/relation/runtime",
    "consumers": [
     "analysis/analyze.go",
@@ -2175,7 +2049,19 @@
     "domain/effect/callsite/occurrence.go",
     "domain/effect/callsite/publication_transition.go"
    ],
-   "detail": "analysis/engine/relation/runtime holds one file, doc.go. It declares no exported identity and no non-test file imports it. S1-analyzer-constructor is blocked_by nothing and is the entry the manifest says runs before every deletion, so the order the cut is planned in makes it first; it is unreachable all the same, because the surface it restates onto is a stub. The four consumers that name it read CommittedProgram and Answer, both declared in analysis/engine alone."
+   "detail": "Re-measured against the current tree; the premise this entry was written on is spent. The runtime is no longer one doc.go. analysis/engine/relation/runtime declares Solve(mounted, base, view) returning a terminal.Result, and carries the snapshot and terminal subpackages beside it. It is reached from production, not only from laws: analysis/program/relationadmission/runtime/solve.go and cmd/relparity/corpusprobe/new.go both import it in non-test code. So S1-analyzer-constructor no longer restates onto a stub. What remains is narrower and is why the four entries still wait. The runtime declares none of the symbols they read - CommittedProgram and Answer are declared in analysis/engine and nowhere else - so the surface those consumers move onto is the runtime's published answer, which it does not yet expose under those identities. The gap is the missing declaration, no longer a missing package."
+  },
+  {
+   "id": "G7-delivered-sparse-payload-is-not-the-owner-default",
+   "distinction": "the payload an unwritten coordinate carries, and the read contract that decides it",
+   "owner": "analysis/schema/rule/relbindgen",
+   "detail": "Measured on real fixtures with both surfaces driven for real, not read off signatures. The engine observation and the relational binding's span deliver a row as the same three results - value, present, available - and they agree on a written coordinate and disagree on an unwritten one. Under ReadSparseExplicit an unwritten coordinate arrives from the engine as the owner's DECLARED DEFAULT with present=false: semantic.Domain.PartitionKey and JoinUnderKey stamp domain.ops.Default into the factbinding entry, and execution.ReadCellPolicy.Cell passes it through verbatim. relbindgen's Span.At returns the Go zero instead - frame.go answers (var zero T, false, true) for any presence that is neither Present nor AuthenticatedOpaque - and Members.Fill carries that zero into the operand vector a reducer takes. On every axis measured the two are different values: heap Value{} is neither Valid nor Bottom while the axis default is Bottom; placement Fact{} equals BottomFact() while the axis default is DefaultFact(){Stack,Refuted}; static TypeFact{} is not Valid while the axis default is TypeBottom. The consequence is live in this tree. PlacementContainmentOperation.Evaluate fills its placement vector through Members.Fill and folds it with containment.ContainmentFold, which authenticates the parent cell through placement.AuthenticateFactCell - and that admits an unwritten cell only as exactly DefaultFact(). A Go-zero absent cell is refused there, so the binding refuses a row the engine admits. placement.buildStaticHeapGraphRows refuses the same way, on !value.Valid() and again on (!present && !value.IsBottom()), its own comment stating that no sparse payload other than the owner's Bottom is admissible. domain/static's and domain/value's summary folds skip an absent cell without inspecting its payload and are therefore blind to the difference, which is why the corpus can certify while the distinction is unpublished. Two further clauses of the same contract have no delivered form at all: ReadSparseFactorDefault, under which the engine delivers an unwritten coordinate as the default and PRESENT so a fold has no absent branch to get wrong, and ReadOrderByTag with its refusal of duplicate tags. The answer is for the delivered span to publish the owner's sparse payload and its read contract. A fold re-deriving a default its owner already declared is the rediscovery this map exists to refuse.",
+   "consumers": [
+    "domain/placement/containment/reducer.go",
+    "domain/placement/relation/operation.go",
+    "domain/placement/static_containment_depth.go",
+    "domain/placement/containment/routes.go"
+   ]
   }
  ]
 }
