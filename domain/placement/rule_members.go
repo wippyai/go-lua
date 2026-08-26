@@ -46,6 +46,8 @@ const (
 	ContainmentRouteTag           schemaapi.Key = "placement/containment/route-tag"
 	ContainmentRouteDestination   schemaapi.Key = "placement/containment/route-destination"
 	ContainmentRouteParent        schemaapi.Key = "placement/containment/route-parent"
+	PublicationRouteKey           schemaapi.Key = "placement/publication-escape/route-key"
+	PublicationRouteTag           schemaapi.Key = "placement/publication-escape/route-tag"
 	PublicationRouteDestination   schemaapi.Key = "placement/publication-escape/route-destination"
 	SuspensionRouteKey            schemaapi.Key = "placement/suspension/route-key"
 	SuspensionRouteTag            schemaapi.Key = "placement/suspension/route-tag"
@@ -67,6 +69,7 @@ const (
 	FormalRouteSelection          schemaapi.Key = "placement/formal/route-selection"
 	CaptureRouteSelection         schemaapi.Key = "placement/closure-capture/route-selection"
 	ContainmentRouteSelection     schemaapi.Key = "placement/containment/route-selection"
+	PublicationRouteSelection     schemaapi.Key = "placement/publication-escape/route-selection"
 	SuspensionRouteSelection      schemaapi.Key = "placement/suspension/route-selection"
 	PlacementKeyCarrier           carrier.Key   = "carrier/placement/key"
 	PlacementFactCarrier          carrier.Key   = "carrier/placement/fact"
@@ -103,6 +106,7 @@ const (
 	CaptureSourceTagCarrier       carrier.Key   = "carrier/value/closure-capture-source-tag"
 	HeapFactCarrier               carrier.Key   = "carrier/heap/fact"
 	HeapKeyCarrier                carrier.Key   = "carrier/heap/key"
+	EffectMountedCallCarrier      carrier.Key   = "carrier/effect/mounted-call"
 	SubjectLivenessCarrier        carrier.Key   = "carrier/program/subject-liveness"
 )
 
@@ -148,6 +152,7 @@ func AxisMemberCatalog() member.Catalog {
 			{Use: CaptureSourceTagCarrier, Ref: carrier.Ref{Owner: schemaapi.EntryReference{Surface: schemaapi.SurfaceKind(2), Key: "value"}, Carrier: "carrier/value/closure-capture-source-tag"}},
 			{Use: HeapFactCarrier, Ref: carrier.Ref{Owner: schemaapi.EntryReference{Surface: schemaapi.SurfaceKind(2), Key: "heap"}, Carrier: "carrier/heap/fact"}},
 			{Use: HeapKeyCarrier, Ref: carrier.Ref{Owner: schemaapi.EntryReference{Surface: schemaapi.SurfaceKind(2), Key: "heap"}, Carrier: "carrier/heap/key"}},
+			{Use: EffectMountedCallCarrier, Ref: carrier.Ref{Owner: schemaapi.EntryReference{Surface: schemaapi.SurfaceKind(2), Key: "effect"}, Carrier: "carrier/effect/mounted-call"}},
 			{Use: SubjectLivenessCarrier, Ref: carrier.Ref{Owner: schemaapi.EntryReference{Surface: schemaapi.SurfaceKind(3), Key: "program-type/subject-liveness"}, Carrier: "carrier/program/subject-liveness"}},
 		},
 		[]member.Relation{
@@ -161,7 +166,7 @@ func AxisMemberCatalog() member.Catalog {
 			{Key: CaptureRoutes, Subject: CaptureRouteCarrier, CandidateProvider: member.IssuedRowCandidate("program-relation/occurrence-closure-proof"), Inputs: []carrier.Key{PlacementKeyCarrier, ValueFactCarrier}},
 			{Key: ContainmentPlacementSummary, Subject: ContainmentRouteCarrier, CandidateProvider: member.IssuedRowCandidate("program-relation/occurrence-entry-geometry"), Inputs: []carrier.Key{PlacementFactCarrier}, Addressing: member.Addressing{Address: "placement/containment/placement-summary-coordinate", Parent: "", Ordinal: "", Tag: "", Occurrence: ""}},
 			{Key: ContainmentRoutes, Subject: ContainmentRouteCarrier, CandidateProvider: member.IssuedRowCandidate("program-relation/occurrence-entry-geometry"), Inputs: []carrier.Key{PlacementFactCarrier, HeapFactCarrier}},
-			{Key: PublicationRoutes, Subject: PublicationRouteCarrier, CandidateProvider: member.AxisRelationCandidate(member.RelationRef{Axis: schemaapi.EntryReference{Surface: schemaapi.SurfaceKind(2), Key: "effect"}, Member: "effect/mounted-call/candidates"})},
+			{Key: PublicationRoutes, Subject: PublicationRouteCarrier, CandidateProvider: member.AxisRelationCandidate(member.RelationRef{Axis: schemaapi.EntryReference{Surface: schemaapi.SurfaceKind(2), Key: "effect"}, Member: "effect/mounted-call/candidates"}), Inputs: []carrier.Key{EffectMountedCallCarrier, CallFactCarrier, ValueFactCarrier}},
 			{Key: SuspensionRoutes, Subject: SuspensionRouteCarrier, CandidateProvider: member.IssuedRowCandidate("program-relation/occurrence-subject-liveness"), Inputs: []carrier.Key{SubjectLivenessCarrier, ValueFactCarrier}, Addressing: member.Addressing{Address: "placement/suspension/route-key", Parent: "", Ordinal: "", Tag: "placement/suspension/route-tag", Occurrence: ""}},
 		},
 		[]member.Projection{
@@ -188,6 +193,8 @@ func AxisMemberCatalog() member.Catalog {
 			{Key: ContainmentRouteTag, Relation: ContainmentRoutes, Role: member.Predicate, Result: ContainmentRouteTagCarrier, CandidateProvider: member.IssuedRowCandidate("program-relation/occurrence-entry-geometry")},
 			{Key: ContainmentRouteDestination, Relation: ContainmentRoutes, Role: member.Destination, Result: PlacementKeyCarrier, CandidateProvider: member.IssuedRowCandidate("program-relation/occurrence-entry-geometry")},
 			{Key: ContainmentRouteParent, Relation: ContainmentRoutes, Role: member.Attribute, Result: PlacementFactCarrier, CandidateProvider: member.IssuedRowCandidate("program-relation/occurrence-entry-geometry")},
+			{Key: PublicationRouteKey, Relation: PublicationRoutes, Role: member.Key, Result: PlacementKeyCarrier, CandidateProvider: member.AxisRelationCandidate(member.RelationRef{Axis: schemaapi.EntryReference{Surface: schemaapi.SurfaceKind(2), Key: "effect"}, Member: "effect/mounted-call/candidates"})},
+			{Key: PublicationRouteTag, Relation: PublicationRoutes, Role: member.Predicate, Result: PublicationRouteTagCarrier, CandidateProvider: member.AxisRelationCandidate(member.RelationRef{Axis: schemaapi.EntryReference{Surface: schemaapi.SurfaceKind(2), Key: "effect"}, Member: "effect/mounted-call/candidates"})},
 			{Key: PublicationRouteDestination, Relation: PublicationRoutes, Role: member.Destination, Result: PlacementKeyCarrier, CandidateProvider: member.AxisRelationCandidate(member.RelationRef{Axis: schemaapi.EntryReference{Surface: schemaapi.SurfaceKind(2), Key: "effect"}, Member: "effect/mounted-call/candidates"})},
 			{Key: SuspensionRouteKey, Relation: SuspensionRoutes, Role: member.Key, Result: PlacementKeyCarrier, CandidateProvider: member.IssuedRowCandidate("program-relation/occurrence-subject-liveness")},
 			{Key: SuspensionRouteTag, Relation: SuspensionRoutes, Role: member.Predicate, Result: SuspensionRouteTagCarrier, CandidateProvider: member.IssuedRowCandidate("program-relation/occurrence-subject-liveness")},
@@ -264,6 +271,7 @@ func AxisMemberCatalog() member.Catalog {
 		{Key: FormalRouteSelection, Relation: FormalRoutes, Tag: FormalRouteTag},
 		{Key: CaptureRouteSelection, Relation: CaptureRoutes, Tag: CaptureRouteTag},
 		{Key: ContainmentRouteSelection, Relation: ContainmentRoutes, Tag: ContainmentRouteTag},
+		{Key: PublicationRouteSelection, Relation: PublicationRoutes, Tag: PublicationRouteTag},
 		{Key: SuspensionRouteSelection, Relation: SuspensionRoutes, Tag: SuspensionRouteTag},
 	})
 	if !ok {
