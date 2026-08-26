@@ -574,12 +574,16 @@ func (builder *sealBuilder) liveness() error {
 		return err
 	}
 
-	keys := make([]livenessKey, 0, len(rows))
-	for key := range rows {
-		keys = append(keys, key)
+	// The accumulators are ordered directly. The comparison key is the
+	// accumulated row's own route and subject, so ordering the accumulators
+	// reads each one through its pointer; ordering their map keys instead
+	// would resolve the map twice per comparison and copy a row per read.
+	ordered := make([]*livenessAccumulator, 0, len(rows))
+	for _, entry := range rows {
+		ordered = append(ordered, entry)
 	}
-	sort.Slice(keys, func(left, right int) bool {
-		leftRow, rightRow := rows[keys[left]].row, rows[keys[right]].row
+	sort.Slice(ordered, func(left, right int) bool {
+		leftRow, rightRow := &ordered[left].row, &ordered[right].row
 		if leftRow.YieldRoute != rightRow.YieldRoute {
 			return bytes.Compare(leftRow.YieldRoute[:], rightRow.YieldRoute[:]) < 0
 		}
@@ -588,8 +592,7 @@ func (builder *sealBuilder) liveness() error {
 		}
 		return bytes.Compare(leftRow.Subject.ID[:], rightRow.Subject.ID[:]) < 0
 	})
-	for _, key := range keys {
-		entry := rows[key]
+	for _, entry := range ordered {
 		entry.row.State = AggregateLiveness(entry.states)
 		entry.row.ID = livenessID(entry.row.YieldRoute, entry.row.YieldFromPath, entry.row.YieldToPath, entry.row.Subject)
 		if !entry.row.ID.Available() {
