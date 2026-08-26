@@ -10,9 +10,11 @@ import (
 	"github.com/wippyai/go-lua/analysis/relation/semantic/outcome"
 	"github.com/wippyai/go-lua/analysis/relation/semantic/signature"
 	"github.com/wippyai/go-lua/analysis/schema"
+	"github.com/wippyai/go-lua/analysis/schema/axis/member"
 	"github.com/wippyai/go-lua/analysis/schema/rule"
 	ruleprogram "github.com/wippyai/go-lua/analysis/schema/rule/program"
 	"github.com/wippyai/go-lua/analysis/schema/rule/relcompile"
+	valuedomain "github.com/wippyai/go-lua/domain/value"
 )
 
 // surface is the declaration side of the demo: the owner statements the value
@@ -39,6 +41,7 @@ func newSurface(t *testing.T, axis schema.EntryReference) *surface {
 	t.Helper()
 	value := &surface{t: t, registry: relcompile.NewRegistry(), seen: map[string]bool{}}
 	value.owner(axis)
+	value.catalog(axis)
 	owner, err := value.registry.Owner(relcompile.Site{Path: "demo"}, axis)
 	if err != nil {
 		t.Fatalf("resolve demo owner: %v", err)
@@ -49,6 +52,12 @@ func newSurface(t *testing.T, axis schema.EntryReference) *surface {
 	}
 	value.schemaID = schemaID
 	value.lattice = value.valueType(relcompile.NewName(axis, "demo/lattice"))
+	// The axis publishes one value lattice, so its type carries lattice
+	// authority: a committed Present output ascends under it and a semantic
+	// key operator reads its owner order as the equality witness.
+	if err := value.registry.InstallTypeCapability(value.lattice, model.Ascending); err != nil {
+		t.Fatalf("install demo lattice capability: %v", err)
+	}
 	return value
 }
 
@@ -132,6 +141,74 @@ func (value *surface) relation(name relcompile.Name, scope relcompile.Name) {
 	}
 }
 
+// catalog installs the sealed member vocabulary of the axis under
+// demonstration. The destination projections a fold writes at, and the key
+// carrier its writer is addressed by, are owner statements read out of this
+// catalog rather than spellings this fixture mints.
+func (value *surface) catalog(axis schema.EntryReference) {
+	value.t.Helper()
+	switch axis.Key {
+	case "value":
+		if err := value.registry.InstallMemberCatalog(axis, valuedomain.AxisMemberCatalog()); err != nil {
+			value.t.Fatalf("install member catalog %v: %v", axis, err)
+		}
+	default:
+		value.t.Fatalf("no sealed member catalog for axis %q", axis.Key)
+	}
+}
+
+// output installs the writer binding one fold output publishes: the Factor
+// relation, the fact column its rows are written into, the key those rows are
+// published under, and the carrier the writer is addressed by. The carrier is
+// the one the output's own destination projection declares, because a write
+// and the coordinate it lands at are addressed by a single key carrier.
+func (value *surface) output(output ruleprogram.OutputDecl, scope relcompile.Name) {
+	value.t.Helper()
+	declared := value.declaredDestination(output.Destination)
+	relation := relcompile.NewName(output.Column.Axis, output.Column.Key)
+	value.relation(relation, scope)
+	value.column(relation, relation)
+	// Every family of the chain publishes into the one Factor its axis owns,
+	// so the writer binding is installed by the first family that names it and
+	// the rest resolve that same binding.
+	if value.once("output", relation) {
+		key := relcompile.NewName(relation.Entry, relation.Member+"#key")
+		if err := value.registry.InstallOutput(relation, relation, relation, key, declared.Result); err != nil {
+			value.t.Fatalf("install output %v: %v", relation, err)
+		}
+	}
+	value.destination(output.Destination, declared, scope)
+}
+
+// declaredDestination resolves the owner statement behind one authored
+// destination projection. The demo chain writes exact rows, so every output
+// names a destination; an output that names none has no key carrier to be
+// addressed by and the fixture says so at that output.
+func (value *surface) declaredDestination(projection member.ProjectionRef) member.Projection {
+	value.t.Helper()
+	name := relcompile.NewName(projection.Axis, projection.Member)
+	declared, err := value.registry.DeclaredProjection(relcompile.Site{Path: "demo.destination"}, name)
+	if err != nil {
+		value.t.Fatalf("declared projection %v: %v", name, err)
+	}
+	return declared
+}
+
+// destination installs the owner projection a fold output writes its row at.
+// Its relation, role, result carrier and candidate provider all come from the
+// sealed catalog: a destination is one owner statement, never a column that
+// happens to carry the authored spelling.
+func (value *surface) destination(projection member.ProjectionRef, declared member.Projection, scope relcompile.Name) {
+	value.t.Helper()
+	name := relcompile.NewName(projection.Axis, projection.Member)
+	relation := relcompile.NewName(projection.Axis, declared.Relation)
+	value.relation(relation, scope)
+	value.column(name, relation)
+	if err := value.registry.InstallProjection(name, relation, name, declared.Role, declared.Result, declared.CandidateProvider); err != nil {
+		value.t.Fatalf("install projection %v: %v", name, err)
+	}
+}
+
 func (value *surface) column(name relcompile.Name, relation relcompile.Name) {
 	value.t.Helper()
 	if !value.once("column", name) {
@@ -161,7 +238,7 @@ func (value *surface) expression(entry schema.EntryReference, member schema.Key)
 // and columns the lowered expression delivers to Apply; the outputs are every
 // column of the destination relation, because Publish admits only a child that
 // carries the destination row whole.
-func (value *surface) operation(name relcompile.Name, inputs []relcompile.Name, inputRelation relcompile.Name, destination relcompile.Name) {
+func (value *surface) operation(name relcompile.Name, frame []read, destination relcompile.Name) {
 	value.t.Helper()
 	value.owner(name.Entry)
 	if !value.once("operation", name) {
@@ -188,23 +265,26 @@ func (value *surface) operation(name relcompile.Name, inputs []relcompile.Name, 
 		value.t.Fatal("construct scalar delivery")
 	}
 
-	inputRelationID, err := value.registry.Relation(site, inputRelation)
-	if err != nil {
-		value.t.Fatalf("resolve input relation %v: %v", inputRelation, err)
-	}
-	inputDenominator, err := value.registry.Denominator(site, inputRelation)
-	if err != nil {
-		value.t.Fatalf("resolve input denominator %v: %v", inputRelation, err)
-	}
-	sealed := make([]signature.Input, 0, len(inputs))
-	for _, column := range inputs {
-		columnID, err := value.registry.Column(site, column)
+	// Each slot is sealed against the relation whose row delivers it. A read
+	// port carries its own relation's column, so naming the candidate relation
+	// for every slot would seal a column against a row it does not belong to.
+	sealed := make([]signature.Input, 0, len(frame))
+	for _, slot := range frame {
+		relationID, err := value.registry.Relation(site, slot.relation)
 		if err != nil {
-			value.t.Fatalf("resolve input column %v: %v", column, err)
+			value.t.Fatalf("resolve input relation %v: %v", slot.relation, err)
+		}
+		denominator, err := value.registry.Denominator(site, slot.relation)
+		if err != nil {
+			value.t.Fatalf("resolve input denominator %v: %v", slot.relation, err)
+		}
+		columnID, err := value.registry.Column(site, slot.key)
+		if err != nil {
+			value.t.Fatalf("resolve input column %v: %v", slot.key, err)
 		}
 		sealed = append(sealed, signature.Input{
-			Relation: inputRelationID, Column: columnID, Type: typeID,
-			Presence: signature.AllowMissing, Delivery: delivery, Denominator: inputDenominator,
+			Relation: relationID, Column: columnID, Type: typeID,
+			Presence: signature.AllowMissing, Delivery: delivery, Denominator: denominator,
 		})
 	}
 
@@ -287,9 +367,7 @@ func (value *surface) declare(spec rule.Spec) relcompile.Placement {
 		value.column(read.key, read.relation)
 	}
 	for _, output := range program.Fold.Outputs {
-		destination := relcompile.NewName(output.Column.Axis, output.Column.Key)
-		value.relation(destination, candidateScope)
-		value.column(relcompile.NewName(output.Destination.Axis, output.Destination.Member), destination)
+		value.output(output, candidateScope)
 		value.expression(ruleEntry, output.Column.Key)
 	}
 	return placement
@@ -305,15 +383,13 @@ func (value *surface) seal(spec rule.Spec) {
 
 	// The frame the reducer receives is the candidate row and the rows its
 	// declared reads delivered: one input slot each, in declaration order.
-	frame := []relcompile.Name{relcompile.NewName(candidate.Entry, candidate.Member+"#address")}
-	for _, read := range value.readsOf(spec) {
-		frame = append(frame, read.key)
-	}
+	frame := []read{{relation: candidate, key: relcompile.NewName(candidate.Entry, candidate.Member+"#address")}}
+	frame = append(frame, value.readsOf(spec)...)
 	for _, output := range program.Fold.Outputs {
 		destination := relcompile.NewName(output.Column.Axis, output.Column.Key)
-		value.operation(relcompile.NewName(program.Fold.Reducer.Axis, program.Fold.Reducer.Member), frame, candidate, destination)
+		value.operation(relcompile.NewName(program.Fold.Reducer.Axis, program.Fold.Reducer.Member), frame, destination)
 		if program.Carry != nil && program.Carry.Mode == ruleprogram.CarryTransform {
-			value.operation(relcompile.NewName(program.Carry.Transform.Axis, program.Carry.Transform.Member), frame, candidate, destination)
+			value.operation(relcompile.NewName(program.Carry.Transform.Axis, program.Carry.Transform.Member), frame, destination)
 		}
 	}
 }
