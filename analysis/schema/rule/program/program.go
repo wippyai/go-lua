@@ -28,7 +28,16 @@ const (
 	// Version 9 carries each join's declared Parent: the restated
 	// MemberParent/MemberOrdinal fact that licenses a Summary read over a
 	// self-provided nested member set to declare no Predicate.
-	contentVersion = 9
+	//
+	// Version 10 carries each join's declared KeyVector, AddressIdentity, and
+	// Selection references. These owner-issued identities are part of the
+	// canonical cold declaration even when they are optional on a join.
+	//
+	// Version 11 carries the authored algebra.OutputAddress of a transforming
+	// carry. The address is emitted only when present, preserving the old stream
+	// for identity carries while ensuring two valid transforming declarations
+	// with different destination cells cannot share one digest.
+	contentVersion = 11
 )
 
 const (
@@ -55,6 +64,9 @@ const (
 	// contentRecordActivation is written only by a Program that declares the
 	// branch identities of a structural publication.
 	contentRecordActivation uint64 = 13
+	// contentRecordCarryOutput is written only when a transforming CarryDecl
+	// carries its authored algebra.OutputAddress.
+	contentRecordCarryOutput uint64 = 14
 )
 
 // TransportDecl is one axis carried across an activation edge. The row's
@@ -570,6 +582,15 @@ func (program Program) WriteContent(content *framing.Writer) error {
 		if err := writeMemberReference(content, join.Parent.Axis, join.Parent.Member); err != nil {
 			return err
 		}
+		if err := writeMemberReference(content, join.KeyVector.Axis, join.KeyVector.Member); err != nil {
+			return err
+		}
+		if err := writeMemberReference(content, join.AddressIdentity.Axis, join.AddressIdentity.Member); err != nil {
+			return err
+		}
+		if err := writeMemberReference(content, join.Selection.Axis, join.Selection.Member); err != nil {
+			return err
+		}
 		if err := writeReadContent(content, join.Read); err != nil {
 			return err
 		}
@@ -589,6 +610,31 @@ func (program Program) WriteContent(content *framing.Writer) error {
 		}
 		if err := writeMemberReference(content, program.Carry.Transform.Axis, program.Carry.Transform.Member); err != nil {
 			return err
+		}
+		if program.Carry.Output.Available() {
+			if err := content.Record(contentRecordCarryOutput); err != nil {
+				return err
+			}
+			kind := uint64(0)
+			switch {
+			case program.Carry.Output.IsOwnerNamed():
+				kind = 1
+			case program.Carry.Output.IsScalarSource():
+				kind = 2
+			case program.Carry.Output.IsSpanSource():
+				kind = 3
+			}
+			if err := content.Uint(kind); err != nil {
+				return err
+			}
+			if source, ok := program.Carry.Output.Source(); ok {
+				if err := content.Uint(uint64(source.Child())); err != nil {
+					return err
+				}
+				if err := content.Uint(uint64(source.Cell())); err != nil {
+					return err
+				}
+			}
 		}
 	}
 	if program.transportCount() != 0 {

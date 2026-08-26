@@ -20,9 +20,10 @@ func seq5742Join(key string, sources []SourceRef, form ReadForm, predicate, deno
 	if predicate {
 		join.Predicate = lawProjection(key + "/predicate")
 	}
-	// A produced read names the operation that publishes its rows, so a
-	// specimen of one names it too.
-	if join.Produced() {
+	// Production is explicit authority, never inferred by JoinDecl. These
+	// hostile selected/tagged specimens are producers, so author Selection
+	// directly; exact prior-source consumers intentionally leave it absent.
+	if predicate {
 		join.Selection = lawSelection(key + "/selection")
 	}
 	return join

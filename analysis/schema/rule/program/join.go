@@ -102,28 +102,24 @@ func (join JoinDecl) Available() bool {
 	if join.Selection.Declared() && !join.Selection.Available() {
 		return false
 	}
-	// A selection and a produced read are one statement. A read whose rows are
-	// produced has no coordinate to pair against until the operation has run,
-	// so it names the operation; a read that enumerates a directory has rows
-	// already, so naming one would make a plain read look produced.
-	return join.Selection.Available() == join.Produced()
+	// Selection is the sole production authority. Predicate is a column role,
+	// not an instruction to rerun the relation's producer: a second Program may
+	// consume the same tagged relation without declaring that producer again.
+	if join.Produced() {
+		return join.Selection.Available()
+	}
+	// An unselected declaration is a consumer of rows an owner already
+	// materialized. Its ordered Sources remain real dependencies: they may
+	// include earlier join results, but never authorize rerunning a producer.
+	return true
 }
 
-// Produced reports whether this read's rows are published by an operation
-// rather than enumerated from a declared directory. A read that correlates its
-// rows by a tag was selected, and a read computed from an earlier result was
-// selected by the values that result delivered; either way there is no
-// coordinate to pair against until the operation has run.
+// Produced reports whether this declaration authorizes a producer dependency.
+// A predicate merely labels/correlates rows. It is deliberately not authority
+// to produce them, so another Program can read an already materialized tagged
+// relation without duplicating its owner operation.
 func (join JoinDecl) Produced() bool {
-	if join.Predicate.Declared() {
-		return true
-	}
-	for _, source := range join.Sources {
-		if !source.Candidate {
-			return true
-		}
-	}
-	return false
+	return join.Selection.Declared()
 }
 
 func (join JoinDecl) References() schema.EntryReferences {
@@ -139,6 +135,9 @@ func (join JoinDecl) References() schema.EntryReferences {
 	}
 	if join.Parent.Declared() {
 		references = append(references, join.Parent.EntryReference())
+	}
+	if join.KeyVector.Declared() {
+		references = append(references, join.KeyVector.EntryReference())
 	}
 	if join.AddressIdentity.Declared() {
 		references = append(references, join.AddressIdentity.EntryReference())
@@ -173,6 +172,12 @@ func (join JoinDecl) normalForm(position int) bool {
 		return false
 	}
 	if join.Parent.Declared() && !join.Parent.Available() {
+		return false
+	}
+	if join.KeyVector.Declared() && !join.KeyVector.Available() {
+		return false
+	}
+	if join.AddressIdentity.Declared() && !join.AddressIdentity.Available() {
 		return false
 	}
 	memberAddressed := join.Parent.Declared() || join.KeyVector.Declared()

@@ -1,6 +1,7 @@
 package program
 
 import (
+	"github.com/wippyai/go-lua/analysis/relation/schema/algebra"
 	"github.com/wippyai/go-lua/analysis/schema"
 	"github.com/wippyai/go-lua/analysis/schema/axis"
 	"github.com/wippyai/go-lua/analysis/schema/axis/member"
@@ -58,6 +59,13 @@ type CarryDecl struct {
 	Input     InputRef
 	Mode      CarryMode
 	Transform member.CarryTransformRef
+	// Output is the authored destination geometry of a transforming carry.
+	// It is the same sealed algebra vocabulary used by an ordinary Apply: a
+	// scalar/span source names one exact child cell and OwnerNamed delegates
+	// the row identity to the operation.  The relcompiler transports this
+	// value unchanged; it must not rediscover a destination by relation or
+	// ordinal.
+	Output algebra.OutputAddress
 }
 
 func (carry CarryDecl) Available() bool {
@@ -66,9 +74,14 @@ func (carry CarryDecl) Available() bool {
 	}
 	switch carry.Mode {
 	case CarryIdentity:
-		return !carry.Transform.Declared()
+		return !carry.Transform.Declared() && !carry.Output.Available()
 	case CarryTransform:
-		return carry.Transform.Available()
+		// A transforming carry is a complete declaration only when it carries
+		// both the owner-issued transform and its authenticated destination
+		// geometry. Resolve/Compile repeat the boundary check for independently
+		// assembled inputs, but Program.Check must fail closed at declaration
+		// seal rather than make a malformed program look valid.
+		return carry.Transform.Available() && carry.Output.Available()
 	default:
 		return false
 	}
@@ -86,6 +99,10 @@ func (carry CarryDecl) References() schema.EntryReferences {
 // cross this package boundary.
 type FoldDecl struct {
 	Reducer member.ReducerRef
+	// Inputs is the ordered semantic argument list. A JoinRef may occur more
+	// than once when one correlated read row supplies several reducer slots;
+	// its later cell addresses distinguish the slots. It is not a set of
+	// prerequisite joins.
 	Inputs  []JoinRef
 	Outputs []OutputDecl
 }
@@ -221,15 +238,10 @@ func (fold FoldDecl) check(joinCount int) foldProblem {
 	} else if len(fold.Inputs) == 0 {
 		return foldProblemInputs
 	}
-	seenInputs := make(map[JoinRef]struct{}, len(fold.Inputs))
 	for _, input := range fold.Inputs {
 		if uint64(input) >= uint64(joinCount) {
 			return foldProblemInputs
 		}
-		if _, duplicate := seenInputs[input]; duplicate {
-			return foldProblemInputs
-		}
-		seenInputs[input] = struct{}{}
 	}
 	if len(fold.Outputs) == 0 {
 		return foldProblemOutputs

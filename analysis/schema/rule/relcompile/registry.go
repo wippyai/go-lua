@@ -286,7 +286,12 @@ type Registry struct {
 	scopes       map[Name]model.ScopeID
 	scopeDims    map[Name][]model.ColumnID
 	scopeRegions map[Name]region.Region
-	scopeOrder   []Name
+	// scopeIssued keeps the token the scope's owner handed to InstallScope,
+	// addressed by the identity that token issued. A consumer that must state
+	// what a scope stands on references this issuance rather than deriving a
+	// second identity for the same scope.
+	scopeIssued map[model.ScopeID]identity.ContentID
+	scopeOrder  []Name
 
 	types               map[Name]model.TypeID
 	typeCapabilities    map[Name]model.TypeCapability
@@ -323,6 +328,7 @@ func NewRegistry() *Registry {
 		scopes:           map[Name]model.ScopeID{},
 		scopeDims:        map[Name][]model.ColumnID{},
 		scopeRegions:     map[Name]region.Region{},
+		scopeIssued:      map[model.ScopeID]identity.ContentID{},
 		types:            map[Name]model.TypeID{},
 		typeCapabilities: map[Name]model.TypeCapability{},
 		operations:       map[Name]model.OperationID{},
@@ -397,8 +403,24 @@ func (registry *Registry) InstallScope(name Name, issued identity.ContentID, for
 	}
 	registry.scopes[name] = scope
 	registry.scopeRegions[name] = formula
+	registry.scopeIssued[scope] = issued
 	registry.scopeOrder = append(registry.scopeOrder, name)
 	return nil
+}
+
+// ScopeEvidence returns the identity the scope's own owner issued when it
+// installed that scope. It is a reference to the owner's issuance and never a
+// second identity: a scope no owner installed here stands on nothing, and is
+// answered with none rather than with an empty one.
+func (registry *Registry) ScopeEvidence(scope model.ScopeID) (identity.ContentID, bool) {
+	if !scope.Available() {
+		return identity.ContentID{}, false
+	}
+	issued, held := registry.scopeIssued[scope]
+	if !held || !issued.Available() {
+		return identity.ContentID{}, false
+	}
+	return issued, true
 }
 
 // InstallType adopts the identity an owner issued for one semantic type.

@@ -3,6 +3,7 @@ package program
 import (
 	"testing"
 
+	"github.com/wippyai/go-lua/analysis/relation/schema/algebra"
 	"github.com/wippyai/go-lua/analysis/schema"
 	"github.com/wippyai/go-lua/analysis/schema/axis"
 	"github.com/wippyai/go-lua/analysis/schema/axis/member"
@@ -128,6 +129,31 @@ func TestProgramAllowsZeroJoinSeedWithUnitFold(t *testing.T) {
 	}
 	if problem, valid := seed.Check(); !valid {
 		t.Fatalf("zero-join seed rejected: %+v", problem)
+	}
+}
+
+// TestProgramAllowsOneReadOccurrenceToSupplyTwoPositionalFoldSlots keeps the
+// declaration surface aligned with ApplySlot: a reducer may consume two
+// distinct columns from one correlated read row. Fold.Inputs is an ordered
+// argument list, not a set of prerequisites, so the same JoinRef appears
+// twice and later lowers to two distinct tuple cell ordinals.
+func TestProgramAllowsOneReadOccurrenceToSupplyTwoPositionalFoldSlots(t *testing.T) {
+	program := lawProgram(t)
+	program.Fold.Inputs = []JoinRef{0, 0}
+	if problem, valid := program.Check(); !valid {
+		t.Fatalf("repeated positional fold read rejected: %+v", problem)
+	}
+	reducer := member.Reducer{
+		Key:     "fold/repeated-read-reducer",
+		Inputs:  foldLawInputsFor(program),
+		Outputs: []member.ReducerOutput{{Axis: lawMemberAxis(), Carrier: "carrier/fold/repeated-read"}},
+	}
+	if problem, valid := program.CheckAgainst(reducer); !valid {
+		t.Fatalf("repeated positional reducer inputs rejected: %+v", problem)
+	}
+	program.Fold.Inputs = []JoinRef{0, 1}
+	if problem, valid := program.Check(); valid || problem.Kind != ProblemInput {
+		t.Fatalf("out-of-range positional fold input valid=%v problem=%+v", valid, problem)
 	}
 }
 
@@ -405,6 +431,10 @@ func TestProgramRejectsInvalidCarryModeCombinations(t *testing.T) {
 	if _, valid := program.Check(); valid {
 		t.Fatal("transform carry without transform reference admitted")
 	}
+	program.Carry = &CarryDecl{Input: 0, Mode: CarryTransform, Transform: lawCarryTransform("missing-output")}
+	if _, valid := program.Check(); valid {
+		t.Fatal("transform carry without authored output address admitted")
+	}
 }
 
 func TestProgramCarryDigestTracksModeInputAndTransform(t *testing.T) {
@@ -421,6 +451,7 @@ func TestProgramCarryDigestTracksModeInputAndTransform(t *testing.T) {
 	program.Carry.Input = 0
 	program.Carry.Mode = CarryTransform
 	program.Carry.Transform = lawCarryTransform("carry-transform")
+	program.Carry.Output = algebra.ScalarSource(algebra.NewSlotSource(0, 0))
 	transformDigest := program.Digest()
 	if identityDigest == transformDigest || !transformDigest.Available() {
 		t.Fatal("carry mode/transform omitted from digest")

@@ -10,6 +10,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/schema/axis/member"
 	"github.com/wippyai/go-lua/analysis/schema/rule"
 	ruleprogram "github.com/wippyai/go-lua/analysis/schema/rule/program"
+	"github.com/wippyai/go-lua/analysis/schema/rule/relinput"
 )
 
 // Placement is the composition-supplied decision scope of one rule: the scope
@@ -21,6 +22,24 @@ type Placement struct {
 	Ports     []Name
 }
 
+// Resolution is one lowered rule declaration: the relational rules the
+// compiler consumes, and the placement those rules were lowered at.
+//
+// The pass that resolves a rule's reads is the pass that knows which decision
+// scope its candidate rows are decided at and which one each declared input
+// port observes, so the placement is published here rather than rediscovered
+// by a later pass.
+type Resolution struct {
+	Rules []Rule
+	// Placed is the rule's placement resolved to issued identities: the
+	// candidate scope, and one scope per declared input port in the rule's
+	// own port order.
+	Placed relinput.Placement
+}
+
+// Available reports whether the resolution carries a placed candidate scope.
+func (resolution Resolution) Available() bool { return resolution.Placed.Candidate.Available() }
+
 // Resolve lowers one authored rule declaration into the resolved relational
 // rules the compiler consumes. Every authored reference resolves through the
 // one canonical identity registry; a name no owner installed refuses with the
@@ -29,24 +48,24 @@ type Placement struct {
 // One publication is one dependency, so a fold that publishes several output
 // columns resolves to one rule per column, each named by the column key its
 // owner authored.
-func Resolve(registry *Registry, spec rule.Spec, placement Placement) ([]Rule, error) {
+func Resolve(registry *Registry, spec rule.Spec, placement Placement) (Resolution, error) {
 	if registry == nil {
-		return nil, refuse(Site{Path: "registry"}, Name{}, KindOwner, ReasonUnavailable)
+		return Resolution{}, refuse(Site{Path: "registry"}, Name{}, KindOwner, ReasonUnavailable)
 	}
 	entry := schema.EntryReference{Surface: schema.SurfaceKindRule, Key: spec.Key}
 	if !spec.Key.Available() {
-		return nil, refuse(Site{Path: "key"}, Name{Entry: entry}, KindDependency, ReasonUnavailable)
+		return Resolution{}, refuse(Site{Path: "key"}, Name{Entry: entry}, KindDependency, ReasonUnavailable)
 	}
 	program := spec.Program
 	if !program.Available() {
-		return nil, refuse(Site{Rule: spec.Key, Path: "program"}, Name{Entry: entry}, KindExpression, ReasonUndeclared)
+		return Resolution{}, refuse(Site{Rule: spec.Key, Path: "program"}, Name{Entry: entry}, KindExpression, ReasonUndeclared)
 	}
 	if program.InputCount() != len(placement.Ports) {
-		return nil, refuse(Site{Rule: spec.Key, Path: "program.inputs"}, Name{Entry: entry}, KindScope, ReasonUndeclared)
+		return Resolution{}, refuse(Site{Rule: spec.Key, Path: "program.inputs"}, Name{Entry: entry}, KindScope, ReasonUndeclared)
 	}
 
 	if len(program.Fold.Outputs) == 0 {
-		return nil, refuse(Site{Rule: spec.Key, Path: "program.fold.outputs"}, Name{Entry: entry}, KindPublicationKey, ReasonUndeclared)
+		return Resolution{}, refuse(Site{Rule: spec.Key, Path: "program.fold.outputs"}, Name{Entry: entry}, KindPublicationKey, ReasonUndeclared)
 	}
 	producers := make([]Rule, 0, program.JoinCount())
 	resolver := ruleResolver{registry: registry, rule: spec.Key, entry: entry, placement: placement, producers: &producers}
@@ -54,31 +73,44 @@ func Resolve(registry *Registry, spec rule.Spec, placement Placement) ([]Rule, e
 	for outputIndex, output := range program.Fold.Outputs {
 		published, err := resolver.publication(outputIndex, output)
 		if err != nil {
-			return nil, err
+			return Resolution{}, err
 		}
 		publications[outputIndex] = published
 		if output.Mode != ruleprogram.ModeRoute {
 			continue
 		}
 		if !output.RouteJoinPresent || uint64(output.RouteJoin) >= uint64(program.JoinCount()) {
-			return nil, refuse(resolver.site(fmt.Sprintf("program.fold.outputs[%d].routeJoin", outputIndex)), Name{Entry: entry}, KindRelation, ReasonUndeclared)
+			return Resolution{}, refuse(resolver.site(fmt.Sprintf("program.fold.outputs[%d].routeJoin", outputIndex)), Name{Entry: entry}, KindRelation, ReasonUndeclared)
 		}
 		if resolver.routes == nil {
 			resolver.routes = make(map[int]routedOutput)
 		}
 		routeIndex := int(output.RouteJoin)
 		if _, duplicate := resolver.routes[routeIndex]; duplicate {
-			return nil, refuse(resolver.site(fmt.Sprintf("program.fold.outputs[%d].routeJoin", outputIndex)), Name{Entry: entry}, KindRelation, ReasonDuplicateName)
+			return Resolution{}, refuse(resolver.site(fmt.Sprintf("program.fold.outputs[%d].routeJoin", outputIndex)), Name{Entry: entry}, KindRelation, ReasonDuplicateName)
 		}
 		resolver.routes[routeIndex] = routedOutput{output: output, publication: published, index: outputIndex}
 	}
 	candidate, err := resolver.candidateRelation(program.Candidate)
 	if err != nil {
-		return nil, err
+		return Resolution{}, err
 	}
 	scope, err := registry.Scope(resolver.site("scope"), placement.Candidate)
 	if err != nil {
-		return nil, err
+		return Resolution{}, err
+	}
+
+	// Lowering and placing are one act. Every declared input port is resolved
+	// here, in the rule's own port order, so the published placement is total
+	// over the ports the rule declared and a port naming a scope no owner
+	// installed refuses with that port named rather than being left unplaced.
+	placed := relinput.Placement{Candidate: scope, Ports: make([]model.ScopeID, 0, len(placement.Ports))}
+	for port := range placement.Ports {
+		observed, err := registry.Scope(resolver.site(fmt.Sprintf("program.inputs[%d]", port)), placement.Ports[port])
+		if err != nil {
+			return Resolution{}, err
+		}
+		placed.Ports = append(placed.Ports, observed)
 	}
 
 	joins := make([]JoinSpec, 0, program.JoinCount())
@@ -91,14 +123,14 @@ func Resolve(registry *Registry, spec rule.Spec, placement Placement) ([]Rule, e
 	for index := 0; index < program.JoinCount(); index++ {
 		declaration, ok := program.JoinAt(index)
 		if !ok {
-			return nil, refuse(resolver.site(fmt.Sprintf("program.joins[%d]", index)), Name{Entry: entry}, KindRelation, ReasonUndeclared)
+			return Resolution{}, refuse(resolver.site(fmt.Sprintf("program.joins[%d]", index)), Name{Entry: entry}, KindRelation, ReasonUndeclared)
 		}
 		lowered, joined, err := resolver.join(index, declaration, relations)
 		if err != nil {
-			return nil, err
+			return Resolution{}, err
 		}
 		if len(lowered) == 0 {
-			return nil, refuse(resolver.site(fmt.Sprintf("program.joins[%d]", index)), Name{Entry: entry}, KindRelation, ReasonUnlowered)
+			return Resolution{}, refuse(resolver.site(fmt.Sprintf("program.joins[%d]", index)), Name{Entry: entry}, KindRelation, ReasonUnlowered)
 		}
 		occurrences := make([]ReadOccurrence, len(lowered))
 		for loweredIndex := range lowered {
@@ -110,25 +142,25 @@ func Resolve(registry *Registry, spec rule.Spec, placement Placement) ([]Rule, e
 	}
 
 	if err := resolver.structural(program); err != nil {
-		return nil, err
+		return Resolution{}, err
 	}
 
 	operation, err := resolver.operation(program.Fold)
 	if err != nil {
-		return nil, err
+		return Resolution{}, err
 	}
 	operationName := NewName(program.Fold.Reducer.Axis, program.Fold.Reducer.Member)
 	semantic, err := registry.SealedSignature(resolver.site("program.fold.reducer"), operationName)
 	if err != nil {
-		return nil, err
+		return Resolution{}, err
 	}
 	candidateID, err := registry.Relation(resolver.site("program.candidate"), candidate)
 	if err != nil {
-		return nil, err
+		return Resolution{}, err
 	}
 	applySlots, err := resolver.foldSlots(program.Fold.Inputs, joinOccurrences, joins, semantic, candidateID)
 	if err != nil {
-		return nil, err
+		return Resolution{}, err
 	}
 	addresses := make([]algebra.OutputAddress, len(program.Fold.Outputs))
 	for index, output := range program.Fold.Outputs {
@@ -137,7 +169,7 @@ func Resolve(registry *Registry, spec rule.Spec, placement Placement) ([]Rule, e
 			output, publications[index], semantic, applySlots, joinOccurrences, program.Candidate, candidateID, joins,
 		)
 		if addressErr != nil {
-			return nil, addressErr
+			return Resolution{}, addressErr
 		}
 		addresses[index] = address
 	}
@@ -148,16 +180,16 @@ func Resolve(registry *Registry, spec rule.Spec, placement Placement) ([]Rule, e
 		published := publications[index]
 		carry, err := resolver.carry(program.Carry, published)
 		if err != nil {
-			return nil, err
+			return Resolution{}, err
 		}
 		name := NewName(entry, output.Column.Key)
 		dependency, err := registry.Dependency(resolver.site(fmt.Sprintf("program.fold.outputs[%d].column", index)), name)
 		if err != nil {
-			return nil, err
+			return Resolution{}, err
 		}
 		expression, err := registry.Expression(resolver.site(fmt.Sprintf("program.fold.outputs[%d].column", index)), name)
 		if err != nil {
-			return nil, err
+			return Resolution{}, err
 		}
 		rules = append(rules, Rule{
 			ID:         dependency,
@@ -172,7 +204,7 @@ func Resolve(registry *Registry, spec rule.Spec, placement Placement) ([]Rule, e
 			Publish:    &published,
 		})
 	}
-	return rules, nil
+	return Resolution{Rules: rules, Placed: placed}, nil
 }
 
 // ruleResolver carries the rule identity every refusal names.
