@@ -11,13 +11,17 @@ import (
 )
 
 // resourceSource calls the declared-lifecycle host surface: it acquires a
-// connection, reads it without moving it, and moves it to its final state.
-// Each of those is a member the manifest states an obligation for, so the
-// judgment below is exercised against real declared edges.
+// connection, reads it without moving it, and moves it to its final state,
+// then acquires a second one and hands it away. Each of those is a member the
+// manifest states an obligation for, so the judgment below is exercised
+// against a real declared requirement, a real declared transition and a real
+// declared escape.
 const resourceSource = "local resource = require(\"resource\")\n" +
 	"local connection = resource.connect()\n" +
 	"resource.query(connection)\n" +
-	"resource.close(connection)\n"
+	"resource.close(connection)\n" +
+	"local handed = resource.connect()\n" +
+	"resource.detach(handed)\n"
 
 // The arm a call is judged by is the arm its own declaration states.
 //
@@ -32,7 +36,7 @@ func TestDeclaredObligationDecidesTheArmTheJudgmentApplies(t *testing.T) {
 	if !ok {
 		t.Fatal("judgment not derived")
 	}
-	governed := 0
+	reached := map[obligationKind]int{}
 	for index := 0; index < fixture.values.MountedCallArgumentCount(); index++ {
 		candidate, candidateOK := fixture.values.MountedCallArgumentAt(index)
 		if !candidateOK {
@@ -72,13 +76,22 @@ func TestDeclaredObligationDecidesTheArmTheJudgmentApplies(t *testing.T) {
 				if !declaredOK {
 					continue
 				}
-				governed++
+				reached[declared.kind]++
 				assertDeclaredArm(t, judgment, definition, declared, protocol, candidate, fixture, dispatched)
 			}
 		}
 	}
-	if governed == 0 {
-		t.Fatal("no actual of the declared-lifecycle fixture carries an obligation, so this law proves nothing")
+	for _, arm := range []struct {
+		kind     obligationKind
+		spelling string
+	}{
+		{kind: obligationRequirement, spelling: "requirement"},
+		{kind: obligationTransition, spelling: "transition"},
+		{kind: obligationEscape, spelling: "escape"},
+	} {
+		if reached[arm.kind] == 0 {
+			t.Fatalf("no actual of the declared-lifecycle fixture reaches a declared %s, so this law leaves that arm unproven", arm.spelling)
+		}
 	}
 }
 
@@ -136,6 +149,5 @@ func assertDeclaredArm(
 		if !refuted.Reports() {
 			t.Fatalf("at %q the declaration is violated and the call drew %q", state, refuted.Spelling())
 		}
-		return
 	}
 }
