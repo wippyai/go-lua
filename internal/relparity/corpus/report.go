@@ -20,6 +20,7 @@ type Report struct {
 	Shards            int             `json:"shards"`
 	Workers           int             `json:"workers"`
 	FixtureTimeout    string          `json:"fixture_timeout"`
+	ProcessTimeout    string          `json:"process_timeout"`
 	Fixtures          []string        `json:"fixtures"`
 	FixtureListDigest string          `json:"fixture_list_digest"`
 	FixtureCount      int             `json:"fixture_count"`
@@ -70,9 +71,9 @@ func ParseReport(text []byte) (Report, error) {
 func (report Report) Summary() string {
 	var builder strings.Builder
 	fmt.Fprintf(&builder, "probe %s\n", report.Probe)
-	fmt.Fprintf(&builder, "shard %d/%d, %d fixtures, %d workers, bound %s, elapsed %s\n",
+	fmt.Fprintf(&builder, "shard %d/%d, %d fixtures, %d workers, solve bound %s, process watchdog %s, elapsed %s\n",
 		report.Shard, report.Shards, report.FixtureCount, report.Workers,
-		report.FixtureTimeout, report.Elapsed)
+		report.FixtureTimeout, report.ProcessTimeout, report.Elapsed)
 	fmt.Fprintf(&builder, "fixtures: %d at parity, %d diverged, %d never reached either engine\n",
 		report.FixturesAtParity, report.FixturesDiverged, report.FixturesUnreached)
 	fmt.Fprintf(&builder, "fixtures by leading class: %s\n", renderClasses(report.FixtureClasses))

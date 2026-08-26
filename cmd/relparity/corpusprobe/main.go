@@ -85,6 +85,12 @@ func observe(ctx context.Context, fixture string) (corpus.Envelope, error) {
 			{Side: corpus.SideNew, Status: corpus.StatusUncompiled, Detail: refusal},
 		})
 	}
+	// This marker is the explicit compile/solve phase boundary. The external
+	// corpus driver starts its five-second analysis budget only after it reads
+	// this line; the process watchdog still covers the compiler above it.
+	if _, err := fmt.Fprintln(os.Stdout, corpus.SolveReady); err != nil {
+		return corpus.Envelope{}, fmt.Errorf("corpusprobe: announce solve phase: %w", err)
+	}
 
 	return corpus.Seal(fixture, []corpus.Answer{
 		oldAnswer(ctx, plan),

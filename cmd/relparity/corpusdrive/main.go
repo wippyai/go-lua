@@ -53,7 +53,8 @@ func run(args []string, stdout, stderr io.Writer) int {
 	shard := flags.Int("shard", 0, "index of the corpus shard to walk")
 	shards := flags.Int("shards", 1, "number of shards the corpus is partitioned into")
 	workers := flags.Int("workers", corpus.MaximumWorkers, "concurrent observation processes, capped at the standing ceiling")
-	timeout := flags.Duration("timeout", corpus.DefaultFixtureTimeout, "bound on one fixture's observation")
+	timeout := flags.Duration("timeout", corpus.DefaultFixtureTimeout, "solve/publication bound after the probe's compile phase")
+	processTimeout := flags.Duration("process-timeout", corpus.DefaultProcessTimeout, "compile-inclusive watchdog for one observation process")
 	retained := flags.Int("retain", corpus.DefaultRetainedDivergences, "how many divergences the catalogue carries in full")
 	out := flags.String("out", "", "path the JSON catalogue is written to; default is stdout")
 	if err := flags.Parse(args); err != nil {
@@ -101,6 +102,7 @@ func run(args []string, stdout, stderr io.Writer) int {
 			Binary:           binary,
 			WorkingDirectory: checkout,
 			Timeout:          *timeout,
+			ProcessTimeout:   *processTimeout,
 		},
 		Fixtures:            selected,
 		Shard:               *shard,

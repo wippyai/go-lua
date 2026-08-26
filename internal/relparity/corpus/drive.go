@@ -1,10 +1,12 @@
 package corpus
 
 import (
+	"bufio"
 	"bytes"
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"os/exec"
 	"sort"
 	"strings"
@@ -21,10 +23,17 @@ const ClassParity Class = "parity"
 // is clamped rather than honoured.
 const MaximumWorkers = 4
 
-// DefaultFixtureTimeout bounds one fixture's observation. A fixture that
-// exceeds it is recorded as a timeout divergence and its process is killed;
-// the walk never waits on it.
-const DefaultFixtureTimeout = 30 * time.Second
+// DefaultFixtureTimeout bounds one fixture's solve and publication phase. A
+// fixture that exceeds it is recorded as a timeout divergence and its process
+// is killed; compilation happens before the SolveReady phase boundary and is
+// not charged to this budget.
+const DefaultFixtureTimeout = 5 * time.Second
+
+// DefaultProcessTimeout is the independent watchdog for one observation
+// process, including compilation. It is deliberately larger than the solve
+// budget so a cold compiler may finish, but finite so a compiler or probe
+// deadlock cannot hold a corpus walk forever.
+const DefaultProcessTimeout = 40 * time.Second
 
 // DefaultRetainedDivergences bounds the catalogue to a size a lane reads.
 // Every divergence is still counted and classified.
@@ -42,8 +51,12 @@ type Probe struct {
 	Binary string
 	// WorkingDirectory is the checkout both engines read the fixture from.
 	WorkingDirectory string
-	// Timeout bounds one fixture's observation process.
+	// Timeout bounds solving and publication after the observation process emits
+	// SolveReady. It does not include compilation.
 	Timeout time.Duration
+	// ProcessTimeout bounds the complete observation process, including
+	// compilation. It is a watchdog, not a convergence budget.
+	ProcessTimeout time.Duration
 	// Env is appended to every observation process's environment.
 	Env []string
 }
@@ -97,6 +110,9 @@ func Run(ctx context.Context, plan Plan) (Report, error) {
 	if probe.Timeout <= 0 {
 		probe.Timeout = DefaultFixtureTimeout
 	}
+	if probe.ProcessTimeout <= 0 {
+		probe.ProcessTimeout = DefaultProcessTimeout
+	}
 	workers := plan.Workers
 	if workers <= 0 || workers > MaximumWorkers {
 		workers = MaximumWorkers
@@ -137,6 +153,7 @@ func Run(ctx context.Context, plan Plan) (Report, error) {
 		Shards:            plan.Shards,
 		Workers:           workers,
 		FixtureTimeout:    probe.Timeout.String(),
+		ProcessTimeout:    probe.ProcessTimeout.String(),
 		Fixtures:          fixtures,
 		FixtureListDigest: Digest(fixtures),
 		FixtureCount:      len(fixtures),
@@ -200,17 +217,127 @@ func slowestTimings(outcomes []outcome, keep int) []FixtureTiming {
 // on which a fixture leaves no trace in the catalogue.
 func observe(ctx context.Context, probe Probe, fixture string) outcome {
 	started := time.Now()
-	bounded, cancel := context.WithTimeout(ctx, probe.Timeout)
-	defer cancel()
+	processCtx, cancelProcess := context.WithTimeout(ctx, probe.ProcessTimeout)
+	defer cancelProcess()
 
-	command := exec.CommandContext(bounded, probe.Binary, fixture)
+	command := exec.CommandContext(processCtx, probe.Binary, fixture)
 	command.Dir = probe.WorkingDirectory
 	command.Env = append(append(command.Environ(), ProcessEnvironment...), probe.Env...)
+	stdoutPipe, err := command.StdoutPipe()
+	if err != nil {
+		return outcome{fixture: fixture, elapsed: time.Since(started), divergences: []Divergence{{
+			Fixture: fixture, Family: Wildcard, Site: Wildcard,
+			Class: ClassProbeFailure, Old: "", New: err.Error(),
+		}}}
+	}
 	var stdout, stderr bytes.Buffer
-	command.Stdout = &stdout
 	command.Stderr = &stderr
-	err := command.Run()
-	elapsed := time.Since(started)
+	if err := command.Start(); err != nil {
+		return outcome{fixture: fixture, elapsed: time.Since(started), divergences: []Divergence{{
+			Fixture: fixture, Family: Wildcard, Site: Wildcard,
+			Class: ClassProbeFailure, Old: "", New: err.Error(),
+		}}}
+	}
+
+	// Reading stdout in its own goroutine lets the driver observe the phase
+	// marker while the process is running, without risking a pipe deadlock on a
+	// large envelope. The marker is consumed here; ParseText still receives
+	// exactly one ordinary envelope and no second answer path is introduced.
+	ready := make(chan struct{}, 1)
+	readDone := make(chan error, 1)
+	go func() {
+		scanner := bufio.NewScanner(stdoutPipe)
+		scanner.Buffer(make([]byte, 4096), 4<<20)
+		seenReady := false
+		for scanner.Scan() {
+			line := scanner.Text()
+			if !seenReady && line == SolveReady {
+				seenReady = true
+				ready <- struct{}{}
+				continue
+			}
+			_, _ = io.WriteString(&stdout, line+"\n")
+		}
+		readDone <- scanner.Err()
+	}()
+	waitDone := make(chan error, 1)
+	go func() { waitDone <- command.Wait() }()
+
+	var (
+		readySeen     bool
+		solveStart    time.Time
+		solveTimer    *time.Timer
+		solveDeadline <-chan time.Time
+		readErr       error
+		waitErr       error
+		readHeld      bool
+		waitHeld      bool
+	)
+	for !readHeld || !waitHeld {
+		select {
+		case <-ready:
+			if !readySeen {
+				readySeen = true
+				solveStart = time.Now()
+				solveTimer = time.NewTimer(probe.Timeout)
+				solveDeadline = solveTimer.C
+			}
+		case <-solveDeadline:
+			cancelProcess()
+			for !readHeld || !waitHeld {
+				select {
+				case readErr = <-readDone:
+					readHeld = true
+				case waitErr = <-waitDone:
+					waitHeld = true
+				}
+			}
+			return wholeOutcome(fixture, time.Since(solveStart), ClassTimeout,
+				"solve exceeded "+probe.Timeout.String())
+		case readErr = <-readDone:
+			readHeld = true
+		case waitErr = <-waitDone:
+			waitHeld = true
+		}
+	}
+	// A short-lived probe can finish both output and Wait before the scheduler
+	// selects the buffered phase event. Consume that event before deciding the
+	// marker was absent; otherwise a valid fast envelope becomes a false
+	// protocol failure.
+	if !readySeen {
+		select {
+		case <-ready:
+			readySeen = true
+			solveStart = time.Now()
+		default:
+		}
+	}
+	if solveTimer != nil {
+		if !solveTimer.Stop() {
+			select {
+			case <-solveTimer.C:
+			default:
+			}
+		}
+	}
+	elapsed := time.Duration(0)
+	if readySeen {
+		elapsed = time.Since(solveStart)
+	}
+	if errors.Is(processCtx.Err(), context.DeadlineExceeded) {
+		return wholeOutcome(fixture, elapsed, ClassProcessTimeout,
+			"process exceeded watchdog "+probe.ProcessTimeout.String())
+	}
+	if readErr != nil {
+		return wholeOutcome(fixture, elapsed, ClassProbeFailure, readErr.Error())
+	}
+	if !readySeen {
+		// A solved envelope without the phase marker has no trustworthy start
+		// point for the analysis budget. Refuse it instead of silently treating
+		// an old/unphased probe as parity.
+		return wholeOutcome(fixture, elapsed, ClassProtocol,
+			"missing "+SolveReady+" phase marker")
+	}
 
 	whole := func(class Class, old, fresh string) outcome {
 		return outcome{
@@ -222,12 +349,8 @@ func observe(ctx context.Context, probe Probe, fixture string) outcome {
 			}},
 		}
 	}
-	if errors.Is(bounded.Err(), context.DeadlineExceeded) {
-		return whole(ClassTimeout, "observed within "+probe.Timeout.String(),
-			"exhausted the "+probe.Timeout.String()+" bound")
-	}
-	if err != nil {
-		return whole(ClassProbeFailure, "", strings.TrimSpace(trimTo(stderr.String(), 2000))+" ("+err.Error()+")")
+	if waitErr != nil {
+		return whole(ClassProbeFailure, "", strings.TrimSpace(trimTo(stderr.String(), 2000))+" ("+waitErr.Error()+")")
 	}
 	envelope, parseErr := ParseText(stdout.String())
 	if parseErr != nil {
@@ -248,6 +371,16 @@ func observe(ctx context.Context, probe Probe, fixture string) outcome {
 		rows:        rows,
 		unreached:   unreached,
 		divergences: Compare(envelope),
+	}
+}
+
+func wholeOutcome(fixture string, elapsed time.Duration, class Class, detail string) outcome {
+	return outcome{
+		fixture: fixture, elapsed: elapsed,
+		divergences: []Divergence{{
+			Fixture: fixture, Family: Wildcard, Site: Wildcard,
+			Class: class, Old: "", New: detail,
+		}},
 	}
 }
 

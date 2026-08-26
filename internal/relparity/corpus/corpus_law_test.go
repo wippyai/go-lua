@@ -33,13 +33,23 @@ var answers = map[string]string{
 
 const delayMilliseconds = %d
 const failing = %t
+const compileDelayMilliseconds = %d
+const solveReady = %q
 
 func main() {
 	if len(os.Args) != 2 {
 		fmt.Fprintln(os.Stderr, "stub: usage: stub <fixture>")
 		os.Exit(2)
 	}
+	if compileDelayMilliseconds > 0 {
+		time.Sleep(time.Duration(compileDelayMilliseconds) * time.Millisecond)
+	}
+	if solveReady != "" {
+		fmt.Println(solveReady)
+	}
 	if delayMilliseconds > 0 {
+		// The observation budget begins at the solve marker. This delay models
+		// the solver and must therefore remain after the phase boundary.
 		time.Sleep(time.Duration(delayMilliseconds) * time.Millisecond)
 	}
 	if failing {
@@ -58,6 +68,16 @@ func main() {
 // buildStub writes and builds one stub observation binary answering the given
 // envelopes.
 func buildStub(t *testing.T, envelopes map[string]Envelope, delayMilliseconds int, failing bool) string {
+	return buildStubWithPhase(t, envelopes, delayMilliseconds, failing, 0, SolveReady)
+}
+
+// buildStubWithCompileDelay adds a delay before SolveReady, modelling a cold
+// compiler. It is used to prove that compilation is outside the solve budget.
+func buildStubWithCompileDelay(t *testing.T, envelopes map[string]Envelope, delayMilliseconds int, failing bool, compileDelayMilliseconds int) string {
+	return buildStubWithPhase(t, envelopes, delayMilliseconds, failing, compileDelayMilliseconds, SolveReady)
+}
+
+func buildStubWithPhase(t *testing.T, envelopes map[string]Envelope, delayMilliseconds int, failing bool, compileDelayMilliseconds int, solveReady string) string {
 	t.Helper()
 	var table strings.Builder
 	names := make([]string, 0, len(envelopes))
@@ -75,7 +95,7 @@ func buildStub(t *testing.T, envelopes map[string]Envelope, delayMilliseconds in
 
 	directory := t.TempDir()
 	write(t, filepath.Join(directory, "main.go"),
-		fmt.Sprintf(stubSource, table.String(), delayMilliseconds, failing))
+		fmt.Sprintf(stubSource, table.String(), delayMilliseconds, failing, compileDelayMilliseconds, solveReady))
 	write(t, filepath.Join(directory, "go.mod"), "module corpusstub\n\ngo 1.21\n")
 
 	binary := filepath.Join(directory, "corpusstub")
@@ -323,6 +343,62 @@ func TestExhaustedBoundIsRecordedAndNotWaitedOn(t *testing.T) {
 	}
 }
 
+// Compilation is before SolveReady, so a cold compiler may take longer than
+// the analysis budget without being misreported as a solver timeout.
+func TestCompilationIsOutsideSolveBound(t *testing.T) {
+	envelopes := map[string]Envelope{"basic/arithmetic": solvedEnvelope(t, "basic/arithmetic", "3", "3")}
+	binary := buildStubWithCompileDelay(t, envelopes, 0, false, 300)
+	plan := stubPlan(binary, []string{"basic/arithmetic"}, 50*time.Millisecond)
+	plan.Probe.ProcessTimeout = 2 * time.Second
+	report, err := Run(context.Background(), plan)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !report.Identical() {
+		t.Fatalf("compile delay was charged to solve budget: %s", report.Summary())
+	}
+	if got := report.SlowestFixtures[0].Seconds; got >= plan.Probe.Timeout.Seconds() {
+		t.Fatalf("solve timing includes compilation: %.3fs", got)
+	}
+}
+
+// The process watchdog remains independent: a probe stuck compiling before
+// it can announce SolveReady is terminated as a process timeout, not a solve
+// timeout.
+func TestCompilationWatchdogIsDistinctFromSolveBound(t *testing.T) {
+	envelopes := map[string]Envelope{"basic/arithmetic": solvedEnvelope(t, "basic/arithmetic", "3", "3")}
+	binary := buildStubWithCompileDelay(t, envelopes, 0, false, 5000)
+	plan := stubPlan(binary, []string{"basic/arithmetic"}, 20*time.Millisecond)
+	plan.Probe.ProcessTimeout = 100 * time.Millisecond
+	started := time.Now()
+	report, err := Run(context.Background(), plan)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if elapsed := time.Since(started); elapsed > 2*time.Second {
+		t.Fatalf("process watchdog did not terminate compile hang: %s", elapsed)
+	}
+	if report.Classes[ClassProcessTimeout] != 1 {
+		t.Fatalf("compile watchdog was classified as %v", report.Classes)
+	}
+}
+
+// A probe that emits a solved envelope without the phase boundary is not
+// accepted: without the marker the driver cannot prove that its solve budget
+// started after compilation.
+func TestSolvedEnvelopeRequiresSolvePhaseMarker(t *testing.T) {
+	envelopes := map[string]Envelope{"basic/arithmetic": solvedEnvelope(t, "basic/arithmetic", "3", "3")}
+	binary := buildStubWithPhase(t, envelopes, 0, false, 0, "")
+	plan := stubPlan(binary, []string{"basic/arithmetic"}, time.Second)
+	report, err := Run(context.Background(), plan)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if report.Classes[ClassProtocol] != 1 {
+		t.Fatalf("unphased envelope was accepted: %v", report.Classes)
+	}
+}
+
 // An observation process that fails leaves a named row in the catalogue rather
 // than a hole in it.
 func TestProbeFailureIsCatalogued(t *testing.T) {
@@ -543,8 +619,11 @@ func TestObservationProcessesAreBounded(t *testing.T) {
 	if MaximumWorkers != 4 {
 		t.Fatalf("the concurrency ceiling is %d", MaximumWorkers)
 	}
-	if DefaultFixtureTimeout != 30*time.Second {
+	if DefaultFixtureTimeout != 5*time.Second {
 		t.Fatalf("the per-fixture bound is %s", DefaultFixtureTimeout)
+	}
+	if DefaultProcessTimeout <= DefaultFixtureTimeout {
+		t.Fatalf("the process watchdog %s is not distinct from solve bound %s", DefaultProcessTimeout, DefaultFixtureTimeout)
 	}
 }
 

@@ -25,6 +25,13 @@ import (
 // Protocol identifies the envelope grammar one observation process writes.
 const Protocol = "w5-corpus/v1"
 
+// SolveReady is the phase boundary emitted by an observation process after
+// it has compiled and sealed its fixture, immediately before either engine is
+// asked to solve.  The corpus driver starts its analysis budget only after
+// seeing this line.  Compilation therefore remains governed by the process
+// watchdog, not by the per-fixture solve bound.
+const SolveReady = "corpus.Phase=solve"
+
 // ErrMalformed refuses an envelope that does not read as this protocol.
 var ErrMalformed = errors.New("corpus probe: malformed envelope")
 

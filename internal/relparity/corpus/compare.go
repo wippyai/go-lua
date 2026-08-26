@@ -33,6 +33,10 @@ const (
 	ClassUnreached Class = "unreached"
 	// ClassTimeout is a fixture whose observation exhausted its bound.
 	ClassTimeout Class = "timeout"
+	// ClassProcessTimeout is a fixture whose compile-inclusive process
+	// watchdog fired. It is distinct from ClassTimeout, which measures only
+	// the post-compilation solve phase.
+	ClassProcessTimeout Class = "process-timeout"
 	// ClassProbeFailure is an observation process that produced no envelope.
 	ClassProbeFailure Class = "probe-failure"
 	// ClassProtocol is an envelope the driver could not open.
