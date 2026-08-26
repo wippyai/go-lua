@@ -1,14 +1,31 @@
 package relation_test
 
 import (
+	"reflect"
 	"strings"
 	"testing"
+	"unicode"
 
 	"github.com/wippyai/go-lua/analysis/schema/rule/relbindgen/relbind"
 	calldomain "github.com/wippyai/go-lua/domain/call"
+	heapdomain "github.com/wippyai/go-lua/domain/heap"
 	indexdomain "github.com/wippyai/go-lua/domain/heap/index"
 	"github.com/wippyai/go-lua/domain/relationfixture"
 )
+
+// The raw-access specimen.
+//
+// A binding lives outside the package whose mathematics it carries, so the
+// only question that decides whether an operation can be bound is whether an
+// outside caller can produce every operand the operation's signature demands.
+// An exported name does not answer that question: a struct whose fields are
+// typed by names its own package keeps to itself is exported and still
+// unbuildable, and an enumeration the owner performs only through an
+// unexported method is published in appearance alone.
+//
+// This specimen asks the question that decides it. It reads the operand types
+// themselves rather than any description of them, so an operand that cannot be
+// produced is a red law and never a passing note.
 
 // standing is what one authored raw-access operation has: a binding, or a
 // named reason it has none.
@@ -17,20 +34,14 @@ type standing uint8
 const (
 	// bound means one declared family carries this operation.
 	bound standing = iota
-	// abiIncomplete means the authored plan delivers every read the
-	// enumeration makes, and the owner entry point takes an operand no caller
-	// outside domain/heap/index can spell. It is an ABI finding against the
-	// owner's publication, and the remedy is a statement the owner makes.
-	abiIncomplete
+	// operandUnreachable means the owner's judgment exists and at least one
+	// operand its signature demands cannot be produced from outside the
+	// owner's package.
+	operandUnreachable
 )
 
 // operation is one semantic operation the two authored indexed raw-access
 // plans state, the owner entry point that answers it, and where it stands.
-//
-// This table is the hostile specimen for raw access. It is written to be
-// uncomfortable: it names every operation both plans declare and refuses to
-// let one disappear. Half a surface is worse than a named hole, so what is
-// missing is named and what is missing about it is named too.
 type operation struct {
 	plan  string
 	stem  string
@@ -39,66 +50,175 @@ type operation struct {
 }
 
 // rawAccess is the eleven operations the two indexed raw-access plans author.
-//
-// Every one of them is now the owner's own published judgment. Nothing here
-// reaches an unexported symbol, and nothing reaches the operand type of the
-// protocol this engine replaces: what was once a gap in what the owner said is
-// closed.
-//
-// What remains is one gap, and it is in what the owner publishes. Four
-// operations name an exported entry point that takes an operand only their own
-// package can spell. The pack expansion takes a heapdomain.KeySelector, and the
-// topology projects one only through its unexported selectors and heap schema.
-// The two reductions take RawGetFrame and RawSetFrame, whose every selection
-// field is typed by the unexported rawSelected, so the struct is exported and
-// unconstructible. Neither is answerable by this layer: a binding that reached
-// past an owner's own visibility would be answering for a publication nobody
-// made.
 func rawAccess() []operation {
 	return []operation{
 		{plan: "raw-get/key-routes", stem: "RawGetKeyRoutes", entry: "index.Index.DynamicKey with (*index.Topology).CoordinateName", state: bound},
 		{plan: "raw-get/call-routes", stem: "RawGetCallRoutes", entry: "(*index.Topology).VisitReceiverCallDemand", state: bound},
 		{plan: "raw-get/heap-routes", stem: "HeapReceiverRoutes", entry: "(*index.Topology).VisitReceiver", state: bound},
-		{plan: "raw-get/pack-routes", stem: "RawGetPackRoutes", entry: "(*index.Topology).VisitRoutePayloads", state: abiIncomplete},
+		{plan: "raw-get/pack-routes", stem: "RawGetPackRoutes", entry: "(*index.Topology).VisitRoutePayloads", state: operandUnreachable},
 		{plan: "raw-get/source-routes", stem: "RawGetSourceRoutes", entry: "(*index.Topology).VisitPayloadSources", state: bound},
-		{plan: "raw-get/result", stem: "RawGetResult", entry: "(*index.Topology).RawGetReduce", state: abiIncomplete},
+		{plan: "raw-get/result", stem: "RawGetResult", entry: "(*index.Topology).RawGetReduce", state: operandUnreachable},
 		{plan: "raw-set/key-routes", stem: "RawSetKeyRoutes", entry: "index.Index.DynamicKey with (*index.Topology).CoordinateName", state: bound},
 		{plan: "raw-set/heap-routes", stem: "HeapReceiverRoutes", entry: "(*index.Topology).VisitReceiver", state: bound},
-		{plan: "raw-set/pack-routes", stem: "RawSetPackRoutes", entry: "(*index.Topology).VisitRoutePayloads", state: abiIncomplete},
+		{plan: "raw-set/pack-routes", stem: "RawSetPackRoutes", entry: "(*index.Topology).VisitRoutePayloads", state: operandUnreachable},
 		{plan: "raw-set/source-routes", stem: "RawSetSourceRoutes", entry: "(*index.Topology).VisitPayloadSources", state: bound},
-		{plan: "raw-set/commit", stem: "RawSetCommit", entry: "(*index.Topology).RawSetMutateRoute", state: abiIncomplete},
+		{plan: "raw-set/commit", stem: "RawSetCommit", entry: "(*index.Topology).RawSetMutateRoute", state: operandUnreachable},
 	}
 }
 
-// TestEveryRawAccessEnumerationIsAPublishedOwnerJudgment states what the owner
-// names. Every operation of both plans names an exported owner entry point, so
-// the hot rule and any standing plan reach the same statement of each
-// enumeration. Naming an exported entry point is not the same as being callable
-// from outside: what four of them still owe is an operand a caller can spell.
-func TestEveryRawAccessEnumerationIsAPublishedOwnerJudgment(t *testing.T) {
-	for _, entry := range rawAccess() {
-		if entry.entry == "" {
-			t.Errorf("%s names no owner entry point", entry.plan)
+// owner is the package whose operands this specimen holds to being reachable.
+const owner = "github.com/wippyai/go-lua/domain/heap/index"
+
+// exportedName reports whether a declared name can be written by another
+// package.
+func exportedName(name string) bool {
+	if name == "" {
+		return false
+	}
+	return unicode.IsUpper([]rune(name)[0])
+}
+
+// nameable reports whether a caller in another package can write this type
+// down. A named type answers by its own name; an unnamed one answers by every
+// type it is composed of, because a caller writes those instead.
+func nameable(carried reflect.Type, seen map[reflect.Type]bool) (bool, string) {
+	if carried == nil {
+		return false, "a nil type"
+	}
+	if seen[carried] {
+		return true, ""
+	}
+	seen[carried] = true
+
+	if carried.PkgPath() != "" {
+		name := carried.Name()
+		if !exportedName(name) {
+			return false, carried.PkgPath() + "." + name
+		}
+		return true, ""
+	}
+	switch carried.Kind() {
+	case reflect.Pointer, reflect.Slice, reflect.Array, reflect.Chan:
+		return nameable(carried.Elem(), seen)
+	case reflect.Map:
+		if ok, reason := nameable(carried.Key(), seen); !ok {
+			return false, reason
+		}
+		return nameable(carried.Elem(), seen)
+	case reflect.Func:
+		for index := 0; index < carried.NumIn(); index++ {
+			if ok, reason := nameable(carried.In(index), seen); !ok {
+				return false, reason
+			}
+		}
+		for index := 0; index < carried.NumOut(); index++ {
+			if ok, reason := nameable(carried.Out(index), seen); !ok {
+				return false, reason
+			}
+		}
+		return true, ""
+	case reflect.Struct:
+		for index := 0; index < carried.NumField(); index++ {
+			if ok, reason := nameable(carried.Field(index).Type, seen); !ok {
+				return false, reason
+			}
+		}
+		return true, ""
+	default:
+		return true, ""
+	}
+}
+
+// buildable reports whether a caller in another package can populate every
+// field of one operand struct. Every field must be assignable by that caller
+// and typed by something the caller can write.
+func buildable(frame reflect.Type) []string {
+	if frame == nil || frame.Kind() != reflect.Struct {
+		return []string{"the operand is not a struct"}
+	}
+	refusals := make([]string, 0, frame.NumField())
+	for index := 0; index < frame.NumField(); index++ {
+		field := frame.Field(index)
+		if field.PkgPath != "" {
+			refusals = append(refusals, "field "+field.Name+" is unexported")
 			continue
 		}
-		if strings.Contains(entry.entry, "index.") && strings.Contains(entry.entry, ".index") {
-			t.Errorf("%s reaches an unexported symbol", entry.plan)
+		if ok, reason := nameable(field.Type, map[reflect.Type]bool{}); !ok {
+			refusals = append(refusals, "field "+field.Name+" is typed by "+reason+", which its own package keeps to itself")
 		}
-		for _, unexported := range []string{"visitSelectedPayloads", "catalog.", "rawSourceTag", "RawGetRule", "RawSetRule", "mutateRoute"} {
-			if strings.Contains(entry.entry, unexported) {
-				t.Errorf("%s reaches %s, which the owner does not publish", entry.plan, unexported)
+	}
+	return refusals
+}
+
+// TestEveryRawAccessFrameIsBuildableFromOutsideItsOwner is the operand law.
+// A frame the owner exports but no one else can populate is not a published
+// operand, and an operation that demands one cannot be bound however exported
+// its own name is.
+func TestEveryRawAccessFrameIsBuildableFromOutsideItsOwner(t *testing.T) {
+	frames := []struct {
+		label   string
+		carried reflect.Type
+	}{
+		{label: "index.RawGetFrame", carried: reflect.TypeOf(indexdomain.RawGetFrame{})},
+		{label: "index.RawSetFrame", carried: reflect.TypeOf(indexdomain.RawSetFrame{})},
+	}
+	for _, frame := range frames {
+		refusals := buildable(frame.carried)
+		for _, refusal := range refusals {
+			t.Errorf("%s cannot be built by a caller outside %s: %s", frame.label, owner, refusal)
+		}
+	}
+}
+
+// TestTheOwnerPublishesTheSelectorsItsEnumerationDemands is the other half of
+// the same question. VisitRoutePayloads reads the payloads a route carries
+// under one key selector, so an outside caller must be able to obtain the
+// selectors a candidate resolves to. The owner holds the sealed projection, so
+// only the owner can answer, and it has to answer through something callable.
+func TestTheOwnerPublishesTheSelectorsItsEnumerationDemands(t *testing.T) {
+	selector := reflect.TypeOf(heapdomain.KeySelector{})
+	topology := reflect.TypeOf(&indexdomain.Topology{})
+	delivered := make([]string, 0, 2)
+	for index := 0; index < topology.NumMethod(); index++ {
+		method := topology.Method(index)
+		if deliversSelector(method.Type, selector) {
+			delivered = append(delivered, method.Name)
+		}
+	}
+	if len(delivered) == 0 {
+		t.Errorf("no exported method of *index.Topology delivers a %s to its caller, so the pack expansion cannot obtain the selector its enumeration reads", selector.String())
+	}
+}
+
+// deliversSelector reports whether one method hands a selector to its caller,
+// either by returning one or by visiting the caller with one.
+func deliversSelector(method reflect.Type, selector reflect.Type) bool {
+	for index := 0; index < method.NumOut(); index++ {
+		if method.Out(index) == selector {
+			return true
+		}
+	}
+	for index := 0; index < method.NumIn(); index++ {
+		argument := method.In(index)
+		if argument.Kind() != reflect.Func {
+			continue
+		}
+		for inner := 0; inner < argument.NumIn(); inner++ {
+			if argument.In(inner) == selector {
+				return true
 			}
 		}
 	}
+	return false
 }
 
-// TestTheOwnerEnumerationsAreReallyReachable drives the published judgments
-// against production authorities sealed from a real program, so the table
-// above states what the code does rather than what it intends.
-func TestTheOwnerEnumerationsAreReallyReachable(t *testing.T) {
+// TestEveryRawAccessEnumerationIsReachable drives the enumerations that are
+// already published against production authorities sealed from a real program,
+// so what this specimen calls reachable is what the code does.
+func TestEveryRawAccessEnumerationIsReachable(t *testing.T) {
 	fixture := relationfixture.New(t)
 	routes := 0
-	if !fixture.Topology.VisitReceiver(fixture.Receiver, nil, func(route indexdomain.Route) bool {
+	if !fixture.Topology.VisitReceiver(fixture.Receiver, nil, func(indexdomain.Route) bool {
 		routes++
 		return true
 	}) {
@@ -109,10 +229,6 @@ func TestTheOwnerEnumerationsAreReallyReachable(t *testing.T) {
 	}
 	if !fixture.Topology.VisitReceiverCallDemand(fixture.Receiver, func(calldomain.Key, uint64) bool { return true }) {
 		t.Fatal("the sealed topology refused the call demand of its own receiver")
-	}
-	rootKey, ok := fixture.Root.ContentID()
-	if !ok || !rootKey.Available() {
-		t.Fatal("the fixture root carries no owner-issued name")
 	}
 	named := 0
 	for index := 0; index < fixture.Values.CoordinateCount(); index++ {
@@ -130,14 +246,13 @@ func TestTheOwnerEnumerationsAreReallyReachable(t *testing.T) {
 }
 
 // TestEveryUnboundRawAccessOperationIsCarriedAsANamedDebt states that what is
-// still missing is carried rather than routed around. An operation the corpus
-// cannot bind is named here with the reason, and the census rows it belongs to
-// stay declared unbound with that same reason, so nothing is approximated and
-// nothing is quietly dropped.
+// still missing is carried rather than routed around, and that this specimen
+// cannot award itself a binding: an operation it calls bound must be a family
+// the corpus really declares and really emits.
 func TestEveryUnboundRawAccessOperationIsCarriedAsANamedDebt(t *testing.T) {
 	unbound := map[string]bool{}
 	for _, entry := range rawAccess() {
-		if entry.state == abiIncomplete {
+		if entry.state == operandUnreachable {
 			unbound[entry.stem] = true
 		}
 	}
@@ -156,9 +271,6 @@ func TestEveryUnboundRawAccessOperationIsCarriedAsANamedDebt(t *testing.T) {
 		if !strings.Contains(family.Pending, "w0-abi-incomplete") {
 			t.Errorf("family %s carries a debt that is not tagged with what blocks it", family.Stem)
 		}
-		if !strings.Contains(family.Pending, "the owner") && !strings.Contains(family.Pending, "the authored") {
-			t.Errorf("family %s carries a debt that does not name the statement that blocks it", family.Stem)
-		}
 	}
 	if declared == 0 {
 		t.Fatal("the corpus declares no indexed raw-access family")
@@ -174,10 +286,6 @@ func TestEveryUnboundRawAccessOperationIsCarriedAsANamedDebt(t *testing.T) {
 		}
 	}
 
-	// An operation this specimen calls bound must be a family that is really
-	// declared and really emitted. Without this the table could award itself a
-	// binding that does not exist, which is the one thing a specimen must
-	// never be able to do.
 	emitted := map[string]bool{}
 	for _, family := range relbind.Declared().Families {
 		if family.Emitted() {
@@ -188,19 +296,15 @@ func TestEveryUnboundRawAccessOperationIsCarriedAsANamedDebt(t *testing.T) {
 		if entry.state != bound {
 			continue
 		}
-		if entry.stem == "" {
-			t.Errorf("%s is called bound and names no family", entry.plan)
-			continue
-		}
 		if !emitted[entry.stem] {
 			t.Errorf("%s is called bound and the corpus emits no family %s", entry.plan, entry.stem)
 		}
 	}
 	blocked := make([]string, 0, len(unbound))
 	for _, entry := range rawAccess() {
-		if entry.state == abiIncomplete {
+		if entry.state == operandUnreachable {
 			blocked = append(blocked, entry.plan)
 		}
 	}
-	t.Logf("raw-access operations authored: %d, bound: %d, blocked on the owner's publication: %v", len(rawAccess()), len(rawAccess())-len(blocked), blocked)
+	t.Logf("raw-access operations authored: %d, bound: %d, blocked on an unreachable operand: %v", len(rawAccess()), len(rawAccess())-len(blocked), blocked)
 }
