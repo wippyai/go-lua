@@ -186,3 +186,4 @@ func TestADeclaredKeyVectorBecomesAKeyAndItsDenominator(t *testing.T) {
 		t.Fatal("the denominator does not pair the relation with its declared key")
 	}
 }
+

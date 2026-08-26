@@ -193,3 +193,4 @@ func authorityToken(owner authority.Owner, kind string, key schema.Key) (identit
 	}
 	return identity.DeriveContentID(authorityTokenDomain, owner.Token[:], []byte(kind), []byte(key))
 }
+
