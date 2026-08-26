@@ -1166,20 +1166,23 @@
         "analysis/engine/internal/carrier/product"
       ],
       "kind": "package-group",
-      "disposition": "keep-if-generic",
+      "disposition": "delete",
       "cut_step": 6,
       "residue_layer": "L3",
-      "authority": "\u00a712 tail: generic decision-diagram, terminal, support/guard, scheduling and fixpoint primitives that pass the new package boundary",
+      "authority": "\u00a712 delete: the \u00a712 tail keep is discharged as protocol by the FT-111 audit at dbe2f16a9; every consumer of every file lies inside a delete entry, and analysis/relation/internal/architecture names the package rejected old protocol",
       "measured": {
-        "files": 13,
-        "non_test_loc": 9512
+        "files": 11,
+        "non_test_loc": 8463
       },
-      "blocked_by": [],
+      "blocked_by": [
+        "S6-engine-runtime",
+        "S2-engine-execution"
+      ],
       "laws_die": [],
       "laws_restated": [],
-      "proof_obligation": "Relocate out of analysis/engine/internal and show the exported API names no old-protocol type and no rule form. Import evidence at the pinned ref: imports change, support, guard, carrier/shape and analysis/identity only. If relocation cannot be done without an engine type in a signature, the package is protocol and deletes with S6.",
+      "proof_obligation": "",
       "expect_present": true,
-      "note": ""
+      "note": "FT-111 audit at dbe2f16a9 discharges this keep as a delete. The import half of the obligation still holds - the package imports change, support, guard, carrier/shape and analysis/identity only - but the API half fails: the exported surface names old-protocol forms (RuleContribution, RuleContributionBase, PointState, PointRHS, PointFoldTerm, PointTransportBoundary, FactorOperation, FactorRegion, EpochRootStore, SlotOwner, SlotCoverage). No file under analysis/engine/relation, analysis/relation, domain relation or internal/relationoracle imports this package; analysis/engine/relation reaches only facts/support, guard, facts/terminal, facts/diagram and facts/scalar. The layout, w0_surface and w2_import law tests in analysis/relation/internal/architecture each name it rejected old protocol. carrier/shape carries no go-lua import and is the one generic unit in the group, but it has no post-cut consumer and dies with the group. Residue to expect at the cut: carrier/preview.go has no non-test reader, and Work.MergeTransportedPointContribution has no non-test caller."
     },
     {
       "id": "K-lifetime",
@@ -1208,20 +1211,23 @@
         "analysis/engine/internal/equation"
       ],
       "kind": "package",
-      "disposition": "keep-if-generic",
+      "disposition": "delete",
       "cut_step": 6,
       "residue_layer": "L3",
-      "authority": "\u00a712 tail: fixpoint primitives; \u00a78 physical execution keeps WTO and widening as physical policy",
+      "authority": "\u00a712 delete: the \u00a712 tail keep is discharged by its own closing clause - a keep that cannot be split is a delete - under the FT-111 audit at dbe2f16a9",
       "measured": {
         "files": 20,
         "non_test_loc": 10128
       },
-      "blocked_by": [],
+      "blocked_by": [
+        "S6-engine-runtime",
+        "S2-engine-execution"
+      ],
       "laws_die": [],
       "laws_restated": [],
-      "proof_obligation": "This is the weakest keep in the set: at the pinned ref it imports analysis/engine/internal/composition, analysis/schema and analysis/schema/population, so it is not generic as it stands. The obligation is to separate the fixpoint and WTO core from the composition-coupled part; the core moves to analysis/engine/relation/solve, the remainder deletes with S6-engine-internals. A keep that cannot be split is a delete.",
+      "proof_obligation": "",
       "expect_present": true,
-      "note": ""
+      "note": "FT-111 audit at dbe2f16a9 discharges this keep as a delete under the closing clause of its own obligation. The analysis/engine/internal/composition, analysis/schema and analysis/schema/population coupling the obligation names is unchanged at this ref, and the package additionally imports analysis/schema/query. The fixpoint core the obligation would relocate to analysis/engine/relation/solve already stands there as analysis/engine/relation/solve/fixpoint, which imports neither this package nor internal/schedule; WTO scheduling lives in analysis/engine/internal/schedule under K-schedule. The split the keep is conditioned on is therefore already done elsewhere and nothing remains to relocate. Residue to expect at the cut: TemplateInput, TargetGroup, TargetPoint and TargetFactorEdge appear in no file but their own."
     },
     {
       "id": "K-engine-rows",
