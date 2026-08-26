@@ -223,7 +223,7 @@ func (buffer *ProposalBuffer) Seal(result outcome.Result) (ProposalBatch, bool) 
 		return ProposalBatch{}, false
 	}
 	buffer.closed = true
-	if result.Code != outcome.Produced {
+	if !result.Code.Publishes() {
 		if len(buffer.staged) != 0 {
 			buffer.staged = buffer.staged[:0]
 			return ProposalBatch{}, false

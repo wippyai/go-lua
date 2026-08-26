@@ -115,7 +115,7 @@ func newFixture(t *testing.T, cardinality model.Cardinality) fixture {
 		t.Fatalf("construct scalar delivery")
 	}
 	logical := signature.Fence{Owner: operationOwner, Schema: schema}
-	outcomes, ok := outcome.NewSet(outcome.Produced, outcome.NoCandidate, outcome.NoSelection, outcome.Refused)
+	outcomes, ok := outcome.NewSet(outcome.Produced, outcome.NoCandidate, outcome.NoSelection, outcome.Opaque, outcome.Refused)
 	if !ok {
 		t.Fatalf("construct outcomes")
 	}
@@ -776,4 +776,22 @@ func mustPresence(t *testing.T, kind model.PresenceKind) model.Presence {
 		t.Fatalf("issue presence %s", kind)
 	}
 	return presence
+}
+
+func TestOpaqueSealCarriesItsStagedRows(t *testing.T) {
+	exact, _ := model.NewCardinality(model.ExactlyOne, 0)
+	value := newFixture(t, exact)
+	buffer, ok := binding.NewProposalBuffer(value.signature, value.runtime, value.outputWitness, value.outputScope)
+	if !ok {
+		t.Fatalf("construct proposal buffer")
+	}
+	present := mustPresence(t, model.Present)
+	proposal, ok := binding.NewProposal(value.outputToken, value.outputValue, present)
+	if !ok || !buffer.Append(proposal) {
+		t.Fatalf("valid proposal rejected")
+	}
+	batch, ok := buffer.Seal(outcome.Result{Code: outcome.Opaque})
+	if !ok || batch.Len() != 1 || batch.Outcome().Code != outcome.Opaque {
+		t.Fatalf("an authenticated-opaque seal dropped its staged row: ok=%v len=%d", ok, batch.Len())
+	}
 }

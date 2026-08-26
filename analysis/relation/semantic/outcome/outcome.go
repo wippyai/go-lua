@@ -16,6 +16,11 @@ const (
 
 func (code Code) Available() bool { return code >= Produced && code <= Refused }
 
+// Publishes reports whether the disposition carries a fact. Produced carries
+// the operation's answer; Opaque carries the authenticated-opaque fact the
+// population keeps. Every other disposition seals an empty batch.
+func (code Code) Publishes() bool { return code == Produced || code == Opaque }
+
 // Result is one closed terminal outcome. Only Refused carries a refusal
 // identity; every other code must leave RefusalID unavailable.
 type Result struct {
