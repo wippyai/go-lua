@@ -675,7 +675,7 @@
     "package": "github.com/wippyai/go-lua/analysis/schema/rule/relcompile",
     "relation": "",
     "column": "",
-    "note": "the declaration lowers into the canonical ExecutionSchema"
+    "note": "the declaration lowers into the canonical ExecutionSchema Every engine symbol this entry names sits in DeclareAxis or BindAxis, and domain/composite/axis_table.go is their only production caller: it passes both for all nine axis owners at lines 128-136. S4-composite-wiring deletes that file, and the manifest orders S4-composite-wiring after this entry through S4-schema-fragments, so this entry's restatement - the same file reduced to StructureSpecs alone - removes functions a caller the cut still holds names. The two land in one commit, or the caller comes out first."
    },
    "gap": "",
    "waits_on": "G5-declared-surface-has-no-production-entry"
@@ -1026,7 +1026,7 @@
     "package": "github.com/wippyai/go-lua/analysis/schema/rule/relcompile",
     "relation": "",
     "column": "",
-    "note": "the declaration lowers into the canonical ExecutionSchema"
+    "note": "the declaration lowers into the canonical ExecutionSchema Every engine symbol this entry names sits in DeclareAxis or BindAxis, and domain/composite/axis_table.go is their only production caller: it passes both for all nine axis owners at lines 128-136. S4-composite-wiring deletes that file, and the manifest orders S4-composite-wiring after this entry through S4-schema-fragments, so this entry's restatement - the same file reduced to StructureSpecs alone - removes functions a caller the cut still holds names. The two land in one commit, or the caller comes out first."
    },
    "gap": "",
    "waits_on": "G5-declared-surface-has-no-production-entry"
@@ -1074,7 +1074,7 @@
     "package": "github.com/wippyai/go-lua/analysis/schema/rule/relcompile",
     "relation": "",
     "column": "",
-    "note": "the declaration lowers into the canonical ExecutionSchema"
+    "note": "the declaration lowers into the canonical ExecutionSchema Every engine symbol this entry names sits in DeclareAxis or BindAxis, and domain/composite/axis_table.go is their only production caller: it passes both for all nine axis owners at lines 128-136. S4-composite-wiring deletes that file, and the manifest orders S4-composite-wiring after this entry through S4-schema-fragments, so this entry's restatement - the same file reduced to StructureSpecs alone - removes functions a caller the cut still holds names. The two land in one commit, or the caller comes out first."
    },
    "gap": "",
    "waits_on": "G5-declared-surface-has-no-production-entry"
@@ -1149,7 +1149,7 @@
     "package": "github.com/wippyai/go-lua/analysis/schema/rule/relcompile",
     "relation": "",
     "column": "",
-    "note": "the declaration lowers into the canonical ExecutionSchema"
+    "note": "the declaration lowers into the canonical ExecutionSchema Every engine symbol this entry names sits in DeclareAxis or BindAxis, and domain/composite/axis_table.go is their only production caller: it passes both for all nine axis owners at lines 128-136. S4-composite-wiring deletes that file, and the manifest orders S4-composite-wiring after this entry through S4-schema-fragments, so this entry's restatement - the same file reduced to StructureSpecs alone - removes functions a caller the cut still holds names. The two land in one commit, or the caller comes out first."
    },
    "gap": "",
    "waits_on": "G5-declared-surface-has-no-production-entry"
@@ -1203,7 +1203,7 @@
     "package": "github.com/wippyai/go-lua/analysis/schema/rule/relcompile",
     "relation": "",
     "column": "",
-    "note": "the declaration lowers into the canonical ExecutionSchema"
+    "note": "the declaration lowers into the canonical ExecutionSchema Every engine symbol this entry names sits in DeclareAxis or BindAxis, and domain/composite/axis_table.go is their only production caller: it passes both for all nine axis owners at lines 128-136. S4-composite-wiring deletes that file, and the manifest orders S4-composite-wiring after this entry through S4-schema-fragments, so this entry's restatement - the same file reduced to StructureSpecs alone - removes functions a caller the cut still holds names. The two land in one commit, or the caller comes out first."
    },
    "gap": "",
    "waits_on": "G5-declared-surface-has-no-production-entry"
@@ -1362,7 +1362,7 @@
     "package": "github.com/wippyai/go-lua/analysis/schema/rule/relcompile",
     "relation": "",
     "column": "",
-    "note": "the declaration lowers into the canonical ExecutionSchema"
+    "note": "the declaration lowers into the canonical ExecutionSchema Every engine symbol this entry names sits in DeclareAxis or BindAxis, and domain/composite/axis_table.go is their only production caller: it passes both for all nine axis owners at lines 128-136. S4-composite-wiring deletes that file, and the manifest orders S4-composite-wiring after this entry through S4-schema-fragments, so this entry's restatement - the same file reduced to StructureSpecs alone - removes functions a caller the cut still holds names. The two land in one commit, or the caller comes out first."
    },
    "gap": "",
    "waits_on": "G5-declared-surface-has-no-production-entry"
@@ -1833,7 +1833,7 @@
     "package": "github.com/wippyai/go-lua/analysis/schema/rule/relcompile",
     "relation": "",
     "column": "",
-    "note": "the declaration lowers into the canonical ExecutionSchema"
+    "note": "the declaration lowers into the canonical ExecutionSchema Every engine symbol this entry names sits in DeclareAxis or BindAxis, and domain/composite/axis_table.go is their only production caller: it passes both for all nine axis owners at lines 128-136. S4-composite-wiring deletes that file, and the manifest orders S4-composite-wiring after this entry through S4-schema-fragments, so this entry's restatement - the same file reduced to StructureSpecs alone - removes functions a caller the cut still holds names. The two land in one commit, or the caller comes out first."
    },
    "gap": "",
    "waits_on": "G5-declared-surface-has-no-production-entry"
@@ -2052,7 +2052,7 @@
     "package": "github.com/wippyai/go-lua/analysis/schema/rule/relcompile",
     "relation": "",
     "column": "",
-    "note": "the declaration lowers into the canonical ExecutionSchema"
+    "note": "the declaration lowers into the canonical ExecutionSchema Every engine symbol this entry names sits in DeclareAxis or BindAxis, and domain/composite/axis_table.go is their only production caller: it passes both for all nine axis owners at lines 128-136. S4-composite-wiring deletes that file, and the manifest orders S4-composite-wiring after this entry through S4-schema-fragments, so this entry's restatement - the same file reduced to StructureSpecs alone - removes functions a caller the cut still holds names. The two land in one commit, or the caller comes out first."
    },
    "gap": "",
    "waits_on": "G5-declared-surface-has-no-production-entry"
