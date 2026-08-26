@@ -40,7 +40,7 @@ func TestPublicationEscapeOperationGateDoesNotCrossApplyCandidates(t *testing.T)
 		send     targetvocabulary.Operation = 1
 		callback targetvocabulary.Operation = 2
 	)
-	prepared := &preparedBatch{
+	prepared := &PreparedBatch{
 		sources: []sourceSpec{
 			{tag: 11, rowID: contentID(1), operation: send},
 			{tag: 12, rowID: contentID(2), operation: callback},
@@ -63,13 +63,12 @@ func TestPublicationEscapeOperationGateDoesNotCrossApplyCandidates(t *testing.T)
 // all-root Unknown route.
 func TestPublicationEscapeOpaqueCallDoesNotInventPublicationRoutes(t *testing.T) {
 	fixture := newPublicationEscapeFixture(t)
-	rule := fixture.rule()
-	prepared := &preparedBatch{
+	prepared := &PreparedBatch{
 		rows: []publicationRow{{id: contentID(3), requirement: placementdomain.SharedHeap, operation: 1}},
 	}
 	gate := operationGateForTest()
 	gate.opaque = true
-	routes, ok := rule.routeSet(fixture.placement, prepared, gate, factBuffer{})
+	routes, ok := routeSetFor(fixture.placement, fixture.values, prepared, gate, factBuffer{})
 	if !ok {
 		t.Fatal("opaque Call route set was rejected")
 	}
@@ -98,7 +97,7 @@ func TestPublicationEscapeKnownPublicationSurvivesOpaqueSibling(t *testing.T) {
 	rowID := contentID(6)
 	gate := operationGateForTest(1)
 	gate.opaque = true
-	routes, ok := fixture.rule().routeSet(fixture.placement, &preparedBatch{
+	routes, ok := routeSetFor(fixture.placement, fixture.values, &PreparedBatch{
 		rows: []publicationRow{{id: rowID, requirement: placementdomain.SharedHeap, operation: 1}},
 	}, gate, factBufferForTest(
 		map[identity.ContentID]valuedomain.Value{rowID: fact},
@@ -120,10 +119,10 @@ func TestPublicationEscapeKnownPublicationSurvivesOpaqueSibling(t *testing.T) {
 func TestPublicationEscapeTopValueBroadcastsKnownRequirement(t *testing.T) {
 	fixture := newPublicationEscapeFixture(t)
 	rowID := contentID(4)
-	prepared := &preparedBatch{
+	prepared := &PreparedBatch{
 		rows: []publicationRow{{id: rowID, requirement: placementdomain.SharedHeap, operation: 1}},
 	}
-	routes, ok := fixture.rule().routeSet(fixture.placement, prepared, operationGateForTest(1), factBufferForTest(
+	routes, ok := routeSetFor(fixture.placement, fixture.values, prepared, operationGateForTest(1), factBufferForTest(
 		map[identity.ContentID]valuedomain.Value{rowID: fixture.values.Top()},
 		map[identity.ContentID]bool{rowID: true},
 	))
@@ -163,7 +162,7 @@ func TestPublicationEscapeOpaqueValueBroadcastsKnownRequirement(t *testing.T) {
 		t.Fatal("opaque Value singleton")
 	}
 	rowID := contentID(5)
-	routes, ok := fixture.rule().routeSet(fixture.placement, &preparedBatch{
+	routes, ok := routeSetFor(fixture.placement, fixture.values, &PreparedBatch{
 		rows: []publicationRow{{id: rowID, requirement: placementdomain.OwnedHeap, operation: 2}},
 	}, operationGateForTest(2), factBufferForTest(
 		map[identity.ContentID]valuedomain.Value{rowID: fact},
@@ -200,7 +199,7 @@ func TestPublicationEscapeLazyAllRootMergeKeepsExactOverridesMonotone(t *testing
 		t.Fatal("Value allocation singleton")
 	}
 	exactID, openID := contentID(61), contentID(62)
-	prepared := &preparedBatch{
+	prepared := &PreparedBatch{
 		rows: []publicationRow{
 			{id: exactID, requirement: placementdomain.OwnedHeap, operation: 2},
 			{id: openID, requirement: placementdomain.SharedHeap, operation: 1, subjectOpen: true},
@@ -208,7 +207,7 @@ func TestPublicationEscapeLazyAllRootMergeKeepsExactOverridesMonotone(t *testing
 		byTag:    map[sourceTag]sourceSpec{},
 		prepared: true,
 	}
-	routes, ok := fixture.rule().routeSet(fixture.placement, prepared, operationGateForTest(1, 2), factBufferForTest(
+	routes, ok := routeSetFor(fixture.placement, fixture.values, prepared, operationGateForTest(1, 2), factBufferForTest(
 		map[identity.ContentID]valuedomain.Value{exactID: fact},
 		map[identity.ContentID]bool{exactID: true},
 	))
@@ -228,7 +227,7 @@ func TestPublicationEscapeLazyAllRootMergeKeepsExactOverridesMonotone(t *testing
 		{id: openID, requirement: placementdomain.OwnedHeap, operation: 1, subjectOpen: true},
 		{id: exactID, requirement: placementdomain.SharedHeap, operation: 2},
 	}
-	routes, ok = fixture.rule().routeSet(fixture.placement, prepared, operationGateForTest(1, 2), factBufferForTest(
+	routes, ok = routeSetFor(fixture.placement, fixture.values, prepared, operationGateForTest(1, 2), factBufferForTest(
 		map[identity.ContentID]valuedomain.Value{exactID: fact},
 		map[identity.ContentID]bool{exactID: true},
 	))
@@ -290,7 +289,6 @@ func TestPublicationEscapeExactAllocationDispositionRoutes(t *testing.T) {
 	if !factOK {
 		t.Fatal("allocation handle singleton")
 	}
-	rule := fixture.rule()
 	for _, test := range []struct {
 		name        string
 		operation   targetvocabulary.Operation
@@ -302,8 +300,8 @@ func TestPublicationEscapeExactAllocationDispositionRoutes(t *testing.T) {
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			rowID := contentID(byte(test.operation + 10))
-			prepared := &preparedBatch{rows: []publicationRow{{id: rowID, requirement: test.requirement, operation: test.operation}}}
-			routes, ok := rule.routeSet(fixture.placement, prepared, operationGateForTest(test.operation), factBufferForTest(
+			prepared := &PreparedBatch{rows: []publicationRow{{id: rowID, requirement: test.requirement, operation: test.operation}}}
+			routes, ok := routeSetFor(fixture.placement, fixture.values, prepared, operationGateForTest(test.operation), factBufferForTest(
 				map[identity.ContentID]valuedomain.Value{rowID: fact}, map[identity.ContentID]bool{rowID: true},
 			))
 			if !ok || routes.len() != 1 {
@@ -331,8 +329,7 @@ func TestPublicationEscapeSameRootSendDominatesRetain(t *testing.T) {
 		t.Fatal("allocation handle singleton")
 	}
 	first, second := contentID(21), contentID(22)
-	rule := fixture.rule()
-	routes, ok := rule.routeSet(fixture.placement, &preparedBatch{rows: []publicationRow{
+	routes, ok := routeSetFor(fixture.placement, fixture.values, &PreparedBatch{rows: []publicationRow{
 		{id: first, requirement: placementdomain.OwnedHeap, operation: 2},
 		{id: second, requirement: placementdomain.SharedHeap, operation: 1},
 	}}, operationGateForTest(1, 2), factBufferForTest(map[identity.ContentID]valuedomain.Value{
