@@ -194,14 +194,26 @@ func emitBinding(corpus Corpus, axis Axis, family Family) ([]byte, error) {
 // per payload the axis declares, over its own solve-local store, and one
 // ascent authority per TypeID that states an order.
 func emitPayloads(axis Axis, owned []Payload) ([]byte, error) {
+	ascending := make([]Payload, 0, len(owned))
+	for _, payload := range owned {
+		if payload.Ascends() {
+			ascending = append(ascending, payload)
+		}
+	}
+
 	var body bytes.Buffer
 	fmt.Fprintf(&body, "package %s\n\n", axis.Package)
-	writeImports(&body, imports([]string{
+	base := []string{
 		`"github.com/wippyai/go-lua/analysis/identity"`,
 		`"github.com/wippyai/go-lua/analysis/relation/schema/model"`,
-		`"github.com/wippyai/go-lua/analysis/relation/semantic/binding"`,
 		`"github.com/wippyai/go-lua/analysis/schema/rule/relbindgen"`,
-	}, owned, axis))
+	}
+	// An axis whose columns state no order publishes no ascent authority, so
+	// it never names the surface one is published through.
+	if len(ascending) != 0 {
+		base = append(base, `"github.com/wippyai/go-lua/analysis/relation/semantic/binding"`)
+	}
+	writeImports(&body, imports(base, owned, axis))
 
 	body.WriteString("// PayloadTypes names the owner-issued TypeID each column of this axis\n// carries.\ntype PayloadTypes struct {\n")
 	for _, payload := range owned {
@@ -236,12 +248,6 @@ func emitPayloads(axis Axis, owned []Payload) ([]byte, error) {
 	writeConjunction(&body, owned, "payloads.%s.Available()")
 	body.WriteString("\n}\n\n")
 
-	ascending := make([]Payload, 0, len(owned))
-	for _, payload := range owned {
-		if payload.Ascends() {
-			ascending = append(ascending, payload)
-		}
-	}
 	if len(ascending) == 0 {
 		return render(body.Bytes())
 	}

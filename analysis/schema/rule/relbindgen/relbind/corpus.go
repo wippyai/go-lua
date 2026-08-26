@@ -29,14 +29,21 @@ const (
 	// and spans; it cannot construct an execution selection, and the compiler
 	// says so: "cannot use cells (variable of struct type
 	// relbindgen.Span[value.Value]) as []execution.SelectedCell[value.Value]".
-	abiGapLegacyOperand = "w0-legacy-operand: the owner judgment reads execution.SelectedCell or execution.SummaryVector, the operand type of the protocol this engine replaces, and a binding delivers owner values and spans"
+	// The judgment exists and its binding is shape-correct. What is missing is
+	// a world to state it in: a protocol seals its transitions and escapes
+	// only where the pack schema resolves an input selector for the operation
+	// it governs, which happens only where a mounted, packed program actually
+	// calls that operation. No fixture in the analyzer reaches it - nothing
+	// anywhere calls obligation.Derive - so the population property this
+	// binding owes, that an unfollowable callee still occupies a row, cannot
+	// be asserted through it. Binding it would rest on an unstated soundness
+	// property, which is the one thing this row must not do.
+	abiGapUnreachedJudgment = "w0-unreached-judgment: the obligation judgment seals only in a world whose mounted program calls the contracted operation its protocol governs, and no fixture builds one, so the population property the binding owes cannot be stated"
+	abiGapLegacyOperand     = "w0-legacy-operand: the owner judgment reads execution.SelectedCell or execution.SummaryVector, the operand type of the protocol this engine replaces, and a binding delivers owner values and spans"
 	// An operation that publishes a disposition and no fact has no result type
 	// to instantiate the bounded emitter with, and the compiler says so:
 	// "cannot use nil as struct{} value in argument to relbindgen.Reduce".
 	abiGapDispositionOnly = "w0-disposition-only: the judgment answers with a disposition and publishes no fact, and the semantic ABI types its emitter and its output columns by the value a family produces"
-	// A declared reducer slot with no bound implementation is a family whose
-	// mathematics has not been written yet.
-	abiGapAbsentJudgment = "w0-absent-judgment: the reducer slot carries no Go implementation and the package holds no fold-shaped judgment at all, so there is nothing for a binding to reach"
 )
 
 // scalar is the delivery a single-cell input carries.
@@ -59,6 +66,7 @@ func axes() []Axis {
 		{Key: "effect", Dir: "domain/effect/relation", Package: "relation"},
 		{Key: "static", Dir: "domain/static/relation", Package: "relation"},
 		{Key: "placement", Dir: "domain/placement/relation", Package: "relation"},
+		{Key: "typestate", Dir: "domain/typestate/relation", Package: "relation"},
 	}
 }
 
@@ -105,6 +113,9 @@ func payloads() []Payload {
 		{Key: "heap-pack-route", Axis: "heap", Field: "PackRoute", Type: "PackRouteFact"},
 		{Key: "heap-source-route", Axis: "heap", Field: "SourceRoute", Type: "SourceRouteFact"},
 		{Key: "heap-route-tag", Axis: "heap", Field: "HeapRouteTag", Type: "uint64"},
+		{Key: "typestate", Axis: "typestate", Field: "Typestate", Type: "typestatedomain.Abstract", Alias: "typestatedomain", Path: "github.com/wippyai/go-lua/domain/typestate"},
+		{Key: "typestate-candidate", Axis: "typestate", Field: "CallArgumentCandidate", Type: "valuedomain.MountedCallArgument", Alias: "valuedomain", Path: "github.com/wippyai/go-lua/domain/value"},
+		{Key: "typestate-protocol-tag", Axis: "typestate", Field: "ProtocolTag", Type: "uint64"},
 		{Key: "lifecycle-liveness", Axis: "placement", Field: "SubjectLiveness", Type: "lifecycle.MountedSubjectLiveness", Alias: "lifecycle", Path: "github.com/wippyai/go-lua/analysis/schema/program/lifecycle"},
 		{Key: "suspension-evidence", Axis: "placement", Field: "SuspensionEvidence", Type: "suspensiondomain.Evidence", Alias: "suspensiondomain", Path: "github.com/wippyai/go-lua/domain/placement/suspension", Lattice: "EvidenceLattice"},
 		{Key: "placement-requirement", Axis: "placement", Field: "Requirement", Type: "placementdomain.Placement", Alias: "placementdomain", Path: "github.com/wippyai/go-lua/domain/placement"},
@@ -599,7 +610,7 @@ func families() []Family {
 			},
 			Cardinality: model.Optional, Address: NoDestination,
 		},
-		{Census: "typestate", Rule: "typestate-obligation", Stem: "TypestateObligation", Axis: "placement", Pending: abiGapAbsentJudgment},
+		{Census: "typestate", Rule: "typestate-obligation", Stem: "TypestateObligation", Axis: "typestate", Pending: abiGapUnreachedJudgment},
 		{
 			Census: "heap/index", Rule: "raw-get", Stem: "RawGetPackRoutes", Axis: "heap",
 			Judgment: "RawGetPackRoutesOperation",
