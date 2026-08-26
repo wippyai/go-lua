@@ -5,13 +5,16 @@ import (
 	"github.com/wippyai/go-lua/analysis/relation/semantic/signature"
 )
 
-// The reason the two remaining raw-access reductions carry. The owner
-// publishes every operand its signatures name, and the authored plan states
-// every read the reductions make, so what is left is a property of the
-// delivery itself. The remedy is a statement the substrate makes, never a
-// lowering this layer invents or a frame it fills in, so the rows are
-// declared, named, and left unbound.
-const abiGapRawReduction = "w0-span-identity: the owner publishes both frames constructibly, and their selection lookups are keyed by owner tags, while relbindgen.Span exposes only Len and At, so a binding cannot say which owner tag a delivered span row belongs to"
+// The reason the two remaining raw-access reductions carry.
+//
+// Nothing about the operands blocks them any longer: the owner publishes both
+// frames constructibly, the authored plan states every read the reductions
+// make, and a delivered span now says which row each position carries. What is
+// left is the decoder that maps each delivered row to the owner tag its
+// lookup is keyed by, and that is a binding to write rather than a statement
+// anyone owes. The rows stay declared and named until it is written, because a
+// row that claims a binding it does not have is worse than a named debt.
+const abiGapRawReduction = "w0-decoder-unwritten: every operand is reachable and the delivered spans carry their row identity, and the decoder that keys each selection by the owner tag its lookup takes is not written yet"
 
 // span is the delivery a read observes every row of. A key selection is one
 // such read: its length is the count the owner's enumeration is stated

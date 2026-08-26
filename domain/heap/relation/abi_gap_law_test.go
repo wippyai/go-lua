@@ -331,8 +331,8 @@ func TestEveryUnboundRawAccessOperationIsCarriedAsANamedDebt(t *testing.T) {
 			continue
 		}
 		pending[family.Stem] = true
-		if !strings.Contains(family.Pending, "w0-span-identity") {
-			t.Errorf("family %s carries a debt that is not tagged with the operand that blocks it", family.Stem)
+		if !strings.Contains(family.Pending, "w0-decoder-unwritten") {
+			t.Errorf("family %s carries a debt that is not tagged with what is left to do", family.Stem)
 		}
 		if strings.Contains(family.Pending, "unexported") {
 			t.Errorf("family %s still blames an unexported owner symbol, and the owner publishes every operand its signatures name", family.Stem)
