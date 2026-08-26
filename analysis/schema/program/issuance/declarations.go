@@ -510,7 +510,7 @@ func stageDeclarations() []schemaissuance.Spec {
 			Constructor: schemaissuance.StageConstructorFramed, Parameters: []schemaissuance.DataType{pointMany}, Base: 1, Identity: []uint16{1},
 			Order: 8, Predecessors: []schema.Key{StageCallSummary},
 			Edges: []schemaissuance.StageEdge{
-				{Source: schemaissuance.StageEdgeSourceStage, Stage: StageCallSummary, Transport: exceptTarget, Framing: "analysis/program-artifact/call-summary-effect-transfer"},
+				{Source: schemaissuance.StageEdgeSourceStage, Stage: StageCallSummary, Transport: all, Framing: "analysis/program-artifact/call-summary-effect-transfer"},
 			},
 			Framing: "analysis/program-artifact/call-effect-stage", Native: true, InputCount: 1},
 	}
