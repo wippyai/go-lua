@@ -10,6 +10,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/relation/mount/witness"
 	"github.com/wippyai/go-lua/analysis/relation/schema/model"
 	"github.com/wippyai/go-lua/analysis/relation/schema/plan"
+	regionpkg "github.com/wippyai/go-lua/analysis/relation/schema/region"
 )
 
 type basicMountFixture struct {
@@ -40,8 +41,8 @@ func newBasicMountFixture(t *testing.T) basicMountFixture {
 	if !builder.AddRelation(model.DefineRelationSchema(relation, []model.ColumnID{column}, []model.KeyID{key}, scope)) ||
 		!builder.AddColumn(model.DefineColumnSchema(column, typeID)) ||
 		!builder.AddKey(model.DefineKeySchema(key, []model.ColumnID{column})) ||
-		!builder.AddScope(model.DefineScopeSchema(scope, nil)) ||
-		!builder.AddScope(model.DefineScopeSchema(scope2, nil)) {
+		!builder.AddScope(model.DefineScopeSchema(scope, nil, finite(t, "hostile/basic-region"))) ||
+		!builder.AddScope(model.DefineScopeSchema(scope2, nil, finite(t, "hostile/basic-region2"))) {
 		t.Fatal("basic declarations")
 	}
 	schema, ok := builder.Build()
@@ -63,7 +64,6 @@ func newBasicMountFixture(t *testing.T) basicMountFixture {
 	inventory := &mountInventory{
 		fence: fence, relation: relation, column: column, key: key,
 		scope: scope, scope2: scope2, typeID: typeID,
-		region: finite("hostile/basic-region"), region2: finite("hostile/basic-region2"),
 	}
 	mounted, ok := witness.Specialize(cert, inventory, nil, algebraRegistry{algebra: testAlgebra{typeID: typeID}}, newLineageFactory(t, owner))
 	if !ok || !mounted.Available() {
@@ -93,7 +93,7 @@ func TestMountedScopeConjunctionCanonicalAndFenceLaw(t *testing.T) {
 	}
 	joinedRegion, regionOK := value.mounted.RegionForScope(joined)
 	leftRegion, leftRegionOK := value.mounted.RegionForScope(left)
-	if !regionOK || !leftRegionOK || !joinedRegion.Entails(leftRegion) {
+	if !regionOK || !leftRegionOK || !regionpkg.Entails(joinedRegion, leftRegion) {
 		t.Fatal("dynamic conjunction was not recoverable")
 	}
 
@@ -167,7 +167,7 @@ func TestMountedScopeArenaConjoinIsConcurrentAndCanonical(t *testing.T) {
 			t.Fatalf("concurrent conjunction %d was not canonical", index)
 		}
 		region, ok := value.mounted.RegionForScope(result)
-		if !ok || region == nil {
+		if !ok || !region.Available() {
 			t.Fatalf("concurrent conjunction %d lost its arena region", index)
 		}
 	}
@@ -187,6 +187,10 @@ func TestDenominatorEvidenceRejectsNilDuplicateAndPreservesOrder(t *testing.T) {
 	evidenceID := content(t, "hostile/evidence-proof")
 	if _, ok := witness.NewDenominatorEvidence(nil, evidenceID); ok {
 		t.Fatal("nil row vector accepted")
+	}
+	emptyEvidence, ok := witness.NewDenominatorEvidence([]model.RowID{}, evidenceID)
+	if !ok || !emptyEvidence.Available() || emptyEvidence.Rows() == nil || len(emptyEvidence.Rows()) != 0 {
+		t.Fatal("authenticated empty row vector was not preserved")
 	}
 	if _, ok := witness.NewDenominatorEvidence([]model.RowID{first, first}, evidenceID); ok {
 		t.Fatal("duplicate row vector accepted")

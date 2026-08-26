@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"sort"
 
+	"github.com/wippyai/go-lua/analysis/identity"
 	checkregistry "github.com/wippyai/go-lua/analysis/relation/check/registry"
 	"github.com/wippyai/go-lua/analysis/relation/schema/algebra"
 	"github.com/wippyai/go-lua/analysis/relation/schema/model"
@@ -40,6 +41,21 @@ const (
 	CodeRecurrencePolicy
 	CodeInvalidWideningHead
 	CodeDuplicateWideningHead
+	// CodeCompleteStratification is returned when a Complete occurrence can
+	// observe a relation writer in its own SCC or in a component that is not a
+	// proved strict predecessor.  Complete is a closed-world read and cannot
+	// be solved against a same-component (or later) writer.
+	CodeCompleteStratification
+)
+
+// CodeCompleteSameComponent and CodeInvalidCompleteStratification are
+// compatibility aliases for callers that classify the more specific
+// Complete refusal.  The checker deliberately has one refusal code: both a
+// same-component writer and a non-predecessor writer violate the same strict
+// stratification law.
+const (
+	CodeCompleteSameComponent         = CodeCompleteStratification
+	CodeInvalidCompleteStratification = CodeCompleteStratification
 )
 
 // Error is the first canonical refusal in the checker ordering.  The checker
@@ -51,6 +67,7 @@ type Error struct {
 	Dependency model.DependencyID
 	Other      model.DependencyID
 	Relation   model.RelationID
+	Occurrence identity.ContentID
 	Detail     string
 }
 
@@ -109,9 +126,127 @@ func codeName(code Code) string {
 		return "invalid widening head"
 	case CodeDuplicateWideningHead:
 		return "duplicate widening head"
+	case CodeCompleteStratification:
+		return "invalid Complete stratification"
 	default:
 		return "invalid recurrence declaration"
 	}
+}
+
+// CompleteWriter is one immutable writer-side proof for a Complete use. The
+// component is the canonical topological SCC rank redeemed by the checker;
+// Earlier is retained as evidence rather than inferred by a physical
+// scheduler.  A writer is never emitted unless it writes the Complete child
+// relation.
+type CompleteWriter struct {
+	Dependency model.DependencyID
+	Component  uint32
+	Earlier    bool
+}
+
+// CompleteUse is the checker-owned evidence for one Complete occurrence.
+// Path and Occurrence identify the occurrence under the sealed expression
+// root; neither is a physical address.  Cold is true exactly when Writers is
+// empty, proving that the denominator has no solve writer.
+type CompleteUse struct {
+	Dependency  model.DependencyID
+	Expression  model.ExpressionID
+	Path        string
+	Occurrence  identity.ContentID
+	Child       model.RelationID
+	Denominator model.DenominatorRef
+	Writers     []CompleteWriter
+	Cold        bool
+}
+
+// Digest is a stable identity of the complete evidence, including the
+// writer/cold proof. It is intentionally derived here rather than from a
+// declaration ordinal so certificate and mount identities cannot omit this
+// semantic evidence.
+func (use CompleteUse) Digest() identity.ContentID {
+	if !use.Dependency.Available() || !use.Expression.Available() || !use.Occurrence.Available() || !use.Child.Available() || !use.Denominator.Available() {
+		return identity.ContentID{}
+	}
+	parts := [][]byte{
+		contentBytes(use.Dependency.Owner().Content()), contentBytes(use.Dependency.Content()),
+		contentBytes(use.Expression.Owner().Content()), contentBytes(use.Expression.Content()),
+		contentBytes(use.Occurrence), []byte(use.Path),
+		contentBytes(use.Child.Owner().Content()), contentBytes(use.Child.Content()),
+		contentBytes(use.Denominator.Relation().Owner().Content()), contentBytes(use.Denominator.Relation().Content()),
+		contentBytes(use.Denominator.Key().Owner().Content()), contentBytes(use.Denominator.Key().Content()),
+		[]byte{boolByte(use.Cold)},
+	}
+	for _, writer := range use.Writers {
+		if !writer.Dependency.Available() || !writer.Earlier {
+			return identity.ContentID{}
+		}
+		parts = append(parts,
+			contentBytes(writer.Dependency.Owner().Content()), contentBytes(writer.Dependency.Content()),
+			uint32Bytes(writer.Component), []byte{boolByte(writer.Earlier)})
+	}
+	return deriveContentID("analysis/relation/check/recurrence/complete-use/v1", parts...)
+}
+
+func contentBytes(value identity.ContentID) []byte { return append([]byte(nil), value[:]...) }
+
+func uint32Bytes(value uint32) []byte {
+	return []byte{byte(value >> 24), byte(value >> 16), byte(value >> 8), byte(value)}
+}
+
+func boolByte(value bool) byte {
+	if value {
+		return 1
+	}
+	return 0
+}
+
+func deriveContentID(domain string, parts ...[]byte) identity.ContentID {
+	value, ok := identity.DeriveContentID(domain, parts...)
+	if !ok {
+		return identity.ContentID{}
+	}
+	return value
+}
+
+// WriterIDs returns defensive writer identities in canonical dependency
+// order.  CompleteUse itself is copied by Proof.CompleteUses.
+func (use CompleteUse) WriterIDs() []model.DependencyID {
+	result := make([]model.DependencyID, len(use.Writers))
+	for index, writer := range use.Writers {
+		result[index] = writer.Dependency
+	}
+	return result
+}
+
+func (writer CompleteWriter) Available() bool {
+	return writer.Dependency.Available() && writer.Earlier
+}
+func (writer CompleteWriter) IsEarlier() bool { return writer.Earlier }
+
+func (use CompleteUse) ChildRelation() model.RelationID      { return use.Child }
+func (use CompleteUse) Relation() model.RelationID           { return use.Child }
+func (use CompleteUse) DenominatorRef() model.DenominatorRef { return use.Denominator }
+func (use CompleteUse) SolveCold() bool                      { return use.Cold }
+func (use CompleteUse) IsCold() bool                         { return use.Cold }
+func (use CompleteUse) WriterProof() []CompleteWriter {
+	return append([]CompleteWriter(nil), use.Writers...)
+}
+
+func (use CompleteUse) Available() bool {
+	if !use.Dependency.Available() || !use.Expression.Available() || use.Path == "" || !use.Occurrence.Available() || !use.Child.Available() || !use.Denominator.Available() || use.Denominator.Relation() != use.Child {
+		return false
+	}
+	seen := make(map[model.DependencyID]struct{}, len(use.Writers))
+	for _, writer := range use.Writers {
+		if !writer.Available() {
+			return false
+		}
+		if _, duplicate := seen[writer.Dependency]; duplicate {
+			return false
+		}
+		seen[writer.Dependency] = struct{}{}
+	}
+	return use.Cold == (len(use.Writers) == 0)
 }
 
 // Projection is the canonical relation dependency projection for one
@@ -119,9 +254,11 @@ func codeName(code Code) string {
 // slices because the checker and the later certificate both need stable
 // content-addressed order, not a runtime map.
 type Projection struct {
-	Dependency model.DependencyID
-	Reads      []plan.RelationRef
-	Writes     []plan.RelationRef
+	Dependency   model.DependencyID
+	Expression   model.ExpressionID
+	Reads        []plan.RelationRef
+	Writes       []plan.RelationRef
+	CompleteUses []CompleteUse
 }
 
 // Component is a proved SCC projection.  Members and Edges are canonical
@@ -141,6 +278,7 @@ type Proof struct {
 	edges         []plan.DependencyEdge
 	components    []Component
 	wideningHeads []plan.WideningHead
+	completeUses  []CompleteUse
 	valid         bool
 }
 
@@ -153,10 +291,31 @@ func (proof Proof) Projections() []Projection {
 	result := make([]Projection, len(proof.projections))
 	for index, value := range proof.projections {
 		result[index] = Projection{
-			Dependency: value.Dependency,
-			Reads:      append([]plan.RelationRef(nil), value.Reads...),
-			Writes:     append([]plan.RelationRef(nil), value.Writes...),
+			Dependency:   value.Dependency,
+			Expression:   value.Expression,
+			Reads:        append([]plan.RelationRef(nil), value.Reads...),
+			Writes:       append([]plan.RelationRef(nil), value.Writes...),
+			CompleteUses: cloneCompleteUses(value.CompleteUses),
 		}
+	}
+	return result
+}
+
+// CompleteUses returns defensive copies of every checked Complete occurrence
+// in canonical dependency/occurrence order.  The proof owns the original
+// evidence; callers cannot mutate its writer or cold proof.
+func (proof Proof) CompleteUses() []CompleteUse {
+	return cloneCompleteUses(proof.completeUses)
+}
+
+func cloneCompleteUses(values []CompleteUse) []CompleteUse {
+	if values == nil {
+		return nil
+	}
+	result := make([]CompleteUse, len(values))
+	for index, value := range values {
+		result[index] = value
+		result[index].Writers = append([]CompleteWriter(nil), value.Writers...)
 	}
 	return result
 }
@@ -224,12 +383,13 @@ func CheckView(indexed *checkregistry.View) (Proof, error) {
 		if !ok {
 			return Proof{}, refusalFor(CodeMissingExpression, id, "dependency expression is absent from the expression registry")
 		}
-		projection, walkErr := deriveExpression(entry.Expression(), indexed)
+		projection, walkErr := deriveExpression(entry.Expression(), dependency.Expression(), indexed)
 		if walkErr != nil {
 			walkErr.Dependency = id
 			return Proof{}, walkErr
 		}
 		projection.Dependency = id
+		projection.Expression = dependency.Expression()
 		if err := validateDeclaredProjection(dependency, projection); err != nil {
 			return Proof{}, err
 		}
@@ -246,7 +406,15 @@ func CheckView(indexed *checkregistry.View) (Proof, error) {
 	if componentErr != nil {
 		return Proof{}, componentErr
 	}
-	return Proof{projections: projections, edges: derivedEdges, components: components, wideningHeads: wideningHeads, valid: true}, nil
+	completeUses, completeErr := validateCompleteUses(ids, derivedByID, components, derivedEdges)
+	if completeErr != nil {
+		return Proof{}, completeErr
+	}
+	for index := range projections {
+		projections[index].CompleteUses = completeUsesForDependency(completeUses, projections[index].Dependency)
+		derivedByID[projections[index].Dependency] = projections[index]
+	}
+	return Proof{projections: projections, edges: derivedEdges, components: components, wideningHeads: wideningHeads, completeUses: completeUses, valid: true}, nil
 }
 
 func structuralRefusal(indexed *checkregistry.View) *Error {
@@ -304,15 +472,259 @@ func emptyProjection() expressionProjection {
 	return expressionProjection{reads: make(relationSet), writes: make(relationSet)}
 }
 
-func deriveExpression(expression algebra.Expression, indexed *checkregistry.View) (Projection, *Error) {
+// deriveCompleteUses performs the occurrence walk separately from the
+// read/write projection.  Keeping this identity walk independent means the
+// existing relation projection remains a set while Complete occurrences keep
+// their authored child path and denominator evidence.
+func deriveCompleteUses(expression algebra.Expression, root model.ExpressionID, indexed *checkregistry.View) ([]CompleteUse, *Error) {
+	if expression == nil {
+		return nil, refusal(CodeInvalidExpression, "nil expression child")
+	}
+	entryRoot := root
+	uses := make([]CompleteUse, 0)
+	var walk func(algebra.Expression, string) *Error
+	walk = func(node algebra.Expression, path string) *Error {
+		if node == nil {
+			return refusal(CodeInvalidExpression, "nil expression child")
+		}
+		switch value := node.(type) {
+		case algebra.Complete:
+			child, ok := expressionRelation(value.Child(), indexed)
+			if !ok {
+				return refusal(CodeInvalidRelation, "Complete child relation is unavailable")
+			}
+			denominator := value.Denominator()
+			if !denominator.Available() || !denominator.Relation().Available() || denominator.Relation() != child {
+				return refusal(CodeInvalidRelation, "Complete denominator does not identify its child relation")
+			}
+			uses = append(uses, CompleteUse{
+				Expression:  entryRoot,
+				Path:        path,
+				Occurrence:  occurrenceIdentity(entryRoot, path),
+				Child:       child,
+				Denominator: denominator,
+			})
+			return walk(value.Child(), path+".child")
+		case *algebra.Complete:
+			if value == nil {
+				return refusal(CodeInvalidExpression, "nil complete expression")
+			}
+			return walk(*value, path)
+		case algebra.Select:
+			return walk(value.Child(), path+".child")
+		case *algebra.Select:
+			if value == nil {
+				return refusal(CodeInvalidExpression, "nil select expression")
+			}
+			return walk(value.Child(), path+".child")
+		case algebra.Project:
+			return walk(value.Child(), path+".child")
+		case *algebra.Project:
+			if value == nil {
+				return refusal(CodeInvalidExpression, "nil project expression")
+			}
+			return walk(value.Child(), path+".child")
+		case algebra.ColumnProject:
+			return walk(value.Child(), path+".child")
+		case *algebra.ColumnProject:
+			if value == nil {
+				return refusal(CodeInvalidExpression, "nil column-project expression")
+			}
+			return walk(value.Child(), path+".child")
+		case algebra.Join:
+			if err := walk(value.Left(), path+".left"); err != nil {
+				return err
+			}
+			return walk(value.Right(), path+".right")
+		case *algebra.Join:
+			if value == nil {
+				return refusal(CodeInvalidExpression, "nil join expression")
+			}
+			return walk(*value, path)
+		case algebra.Expand:
+			return walk(value.Child(), path+".child")
+		case *algebra.Expand:
+			if value == nil {
+				return refusal(CodeInvalidExpression, "nil expand expression")
+			}
+			return walk(value.Child(), path+".child")
+		case algebra.Merge:
+			for index, childExpression := range value.Inputs() {
+				if err := walk(childExpression, fmt.Sprintf("%s.input[%d]", path, index)); err != nil {
+					return err
+				}
+			}
+			return nil
+		case *algebra.Merge:
+			if value == nil {
+				return refusal(CodeInvalidExpression, "nil merge expression")
+			}
+			return walk(*value, path)
+		case algebra.Group:
+			return walk(value.Child(), path+".child")
+		case *algebra.Group:
+			if value == nil {
+				return refusal(CodeInvalidExpression, "nil group expression")
+			}
+			return walk(value.Child(), path+".child")
+		case algebra.Apply:
+			for index, childExpression := range value.Inputs() {
+				if err := walk(childExpression, fmt.Sprintf("%s.child[%d]", path, index)); err != nil {
+					return err
+				}
+			}
+			return nil
+		case *algebra.Apply:
+			if value == nil {
+				return refusal(CodeInvalidExpression, "nil apply expression")
+			}
+			return walk(*value, path)
+		case algebra.Publish:
+			return walk(value.Child(), path+".child")
+		case *algebra.Publish:
+			if value == nil {
+				return refusal(CodeInvalidExpression, "nil publish expression")
+			}
+			return walk(*value, path)
+		case algebra.Input:
+			return nil
+		case *algebra.Input:
+			if value == nil {
+				return refusal(CodeInvalidExpression, "nil input expression")
+			}
+			return nil
+		default:
+			return refusal(CodeInvalidExpression, fmt.Sprintf("unrecognized logical expression kind %d", node.Kind()))
+		}
+	}
+	if err := walk(expression, "root"); err != nil {
+		return nil, err
+	}
+	return uses, nil
+}
+
+// expressionRelation is the checker-owned nominal output relation walk used
+// only for Complete's child relation. It mirrors the closed algebra shape:
+// Project/Publish/Apply establish their declared destination, Join keeps its
+// left relation, and row-preserving operators retain their child relation.
+func expressionRelation(expression algebra.Expression, indexed *checkregistry.View) (model.RelationID, bool) {
+	if expression == nil {
+		return model.RelationID{}, false
+	}
+	switch value := expression.(type) {
+	case algebra.Input:
+		return value.Relation(), value.Relation().Available()
+	case *algebra.Input:
+		if value == nil {
+			return model.RelationID{}, false
+		}
+		return value.Relation(), value.Relation().Available()
+	case algebra.Select:
+		return expressionRelation(value.Child(), indexed)
+	case *algebra.Select:
+		if value == nil {
+			return model.RelationID{}, false
+		}
+		return expressionRelation(value.Child(), indexed)
+	case algebra.Project:
+		return value.Contract().Target(), value.Contract().Target().Available()
+	case *algebra.Project:
+		if value == nil {
+			return model.RelationID{}, false
+		}
+		return value.Contract().Target(), value.Contract().Target().Available()
+	case algebra.ColumnProject:
+		return expressionRelation(value.Child(), indexed)
+	case *algebra.ColumnProject:
+		if value == nil {
+			return model.RelationID{}, false
+		}
+		return expressionRelation(value.Child(), indexed)
+	case algebra.Join:
+		return expressionRelation(value.Left(), indexed)
+	case *algebra.Join:
+		if value == nil {
+			return model.RelationID{}, false
+		}
+		return expressionRelation(value.Left(), indexed)
+	case algebra.Expand:
+		return expressionRelation(value.Child(), indexed)
+	case *algebra.Expand:
+		if value == nil {
+			return model.RelationID{}, false
+		}
+		return expressionRelation(value.Child(), indexed)
+	case algebra.Merge:
+		inputs := value.Inputs()
+		if len(inputs) == 0 {
+			return model.RelationID{}, false
+		}
+		return expressionRelation(inputs[0], indexed)
+	case *algebra.Merge:
+		if value == nil {
+			return model.RelationID{}, false
+		}
+		return expressionRelation(*value, indexed)
+	case algebra.Group:
+		return expressionRelation(value.Child(), indexed)
+	case *algebra.Group:
+		if value == nil {
+			return model.RelationID{}, false
+		}
+		return expressionRelation(value.Child(), indexed)
+	case algebra.Complete:
+		return expressionRelation(value.Child(), indexed)
+	case *algebra.Complete:
+		if value == nil {
+			return model.RelationID{}, false
+		}
+		return expressionRelation(value.Child(), indexed)
+	case algebra.Apply:
+		operation, ok := indexed.Signature(value.Contract().Operation())
+		if !ok || len(operation.Outputs()) == 0 {
+			return model.RelationID{}, false
+		}
+		return operation.Outputs()[0].Relation, operation.Outputs()[0].Relation.Available()
+	case *algebra.Apply:
+		if value == nil {
+			return model.RelationID{}, false
+		}
+		return expressionRelation(*value, indexed)
+	case algebra.Publish:
+		return value.Contract().Destination(), value.Contract().Destination().Available()
+	case *algebra.Publish:
+		if value == nil {
+			return model.RelationID{}, false
+		}
+		return value.Contract().Destination(), value.Contract().Destination().Available()
+	default:
+		return model.RelationID{}, false
+	}
+}
+
+func occurrenceIdentity(expression model.ExpressionID, path string) identity.ContentID {
+	if !expression.Available() || path == "" {
+		return identity.ContentID{}
+	}
+	return deriveContentID("analysis/relation/check/recurrence/complete-occurrence/v1",
+		contentBytes(expression.Owner().Content()), contentBytes(expression.Content()), []byte(path))
+}
+
+func deriveExpression(expression algebra.Expression, root model.ExpressionID, indexed *checkregistry.View) (Projection, *Error) {
 	projection, err := deriveNode(expression, indexed)
 	if err != nil {
 		return Projection{}, err
 	}
-	return Projection{
+	result := Projection{
 		Reads:  relationRefs(projection.reads),
 		Writes: relationRefs(projection.writes),
-	}, nil
+	}
+	uses, useErr := deriveCompleteUses(expression, root, indexed)
+	if useErr != nil {
+		return Projection{}, useErr
+	}
+	result.CompleteUses = uses
+	return result, nil
 }
 
 func deriveNode(expression algebra.Expression, indexed *checkregistry.View) (expressionProjection, *Error) {
@@ -348,11 +760,23 @@ func deriveNode(expression algebra.Expression, indexed *checkregistry.View) (exp
 		if !target.Available() {
 			return result, refusal(CodeInvalidRelation, "project target relation is unavailable")
 		}
-		result.writes[target] = struct{}{}
+		// Project reads the target relation's keyed destination to construct a
+		// row-shaped value; it does not publish state. Publish is the sole
+		// logical write boundary in this algebra.
+		result.reads[target] = struct{}{}
 		return result, nil
 	case *algebra.Project:
 		if value == nil {
 			return result, refusal(CodeInvalidExpression, "nil project expression")
+		}
+		return deriveNode(*value, indexed)
+	case algebra.ColumnProject:
+		// ColumnProject only retains cells from its child row. It establishes no
+		// new read or write relation; Publish remains the sole write boundary.
+		return deriveNode(value.Child(), indexed)
+	case *algebra.ColumnProject:
+		if value == nil {
+			return result, refusal(CodeInvalidExpression, "nil column-project expression")
 		}
 		return deriveNode(*value, indexed)
 	case algebra.Join:
@@ -360,6 +784,30 @@ func deriveNode(expression algebra.Expression, indexed *checkregistry.View) (exp
 	case *algebra.Join:
 		if value == nil {
 			return result, refusal(CodeInvalidExpression, "nil join expression")
+		}
+		return deriveNode(*value, indexed)
+	case algebra.Expand:
+		result, err := deriveNode(value.Child(), indexed)
+		if err != nil {
+			return result, err
+		}
+		contract := value.Contract()
+		if !contract.Available() {
+			return result, refusal(CodeInvalidRelation, "expand contract is unavailable")
+		}
+		// Expand's runtime footprint is the child candidate and the hot reader
+		// only.  Publisher is cold owner evidence authenticated by the mount
+		// catalogue; it must not become a recurrence edge or runtime wake.
+		for _, relation := range []model.RelationID{contract.Candidate(), contract.Reader()} {
+			if !relation.Available() {
+				return result, refusal(CodeInvalidRelation, "expand dependency relation is unavailable")
+			}
+			result.reads[relation] = struct{}{}
+		}
+		return result, nil
+	case *algebra.Expand:
+		if value == nil {
+			return result, refusal(CodeInvalidExpression, "nil expand expression")
 		}
 		return deriveNode(*value, indexed)
 	case algebra.Merge:
@@ -438,26 +886,16 @@ func deriveApply(children []algebra.Expression, operation signature.Identity, in
 	if err != nil {
 		return result, err
 	}
-	value, ok := indexed.Signature(operation)
+	_, ok := indexed.Signature(operation)
 	if !ok {
 		return result, refusal(CodeMissingSignature, "apply operation is absent from the signature registry")
 	}
-	for _, input := range value.Inputs() {
-		if !input.Relation.Available() || !input.Denominator.Available() || !input.Denominator.Relation().Available() {
-			return result, refusal(CodeInvalidRelation, "apply input relation or denominator is unavailable")
-		}
-		result.reads[input.Relation] = struct{}{}
-		result.reads[input.Denominator.Relation()] = struct{}{}
-	}
-	for _, output := range value.Outputs() {
-		if !output.Relation.Available() {
-			return result, refusal(CodeInvalidRelation, "apply output relation is unavailable")
-		}
-		result.writes[output.Relation] = struct{}{}
-	}
-	if authority := value.Authority().Denominator; authority.Available() && authority.Relation().Available() {
-		result.reads[authority.Relation()] = struct{}{}
-	}
+	// Apply is a semantic computation over its physical child expressions. The
+	// signature is checked for validity above, but its input/output relations
+	// are not additional state edges: child expressions are the only reads and
+	// Publish is the sole state-write boundary. Treating signature outputs or
+	// its publication authority as edges makes every publishing Apply appear
+	// self-dependent and forces needless recurrence work.
 	return result, nil
 }
 
@@ -836,6 +1274,153 @@ func canonicalComponents(declared []plan.SCC, ids []model.DependencyID, edges []
 		result = append(result, Component{Members: members, Edges: edges, Cyclic: cyclic})
 	}
 	return result, nil
+}
+
+// validateCompleteUses closes the Complete evidence over the derived
+// dependency graph.  Writers are computed from the checked write projection,
+// never from declarations supplied by a physical consumer.  The component
+// ranks are the same deterministic topological order used by mount's cold
+// schedule; independent components are ordered by their canonical member key.
+func validateCompleteUses(ids []model.DependencyID, projections map[model.DependencyID]Projection, components []Component, edges []plan.DependencyEdge) ([]CompleteUse, *Error) {
+	ranks, componentByDependency, ok := componentRanks(components, edges)
+	if !ok {
+		return nil, refusal(CodeRecurrencePolicy, "SCC condensation has no strict topological order")
+	}
+	result := make([]CompleteUse, 0)
+	for _, dependency := range ids {
+		projection, projectionOK := projections[dependency]
+		if !projectionOK {
+			return nil, refusalFor(CodeInvalidDependency, dependency, "Complete projection owner is absent")
+		}
+		ownerComponent, ownerOK := componentByDependency[dependency]
+		ownerRank, ownerRankOK := ranks[ownerComponent]
+		if !ownerOK || !ownerRankOK {
+			return nil, refusalFor(CodeInvalidDependency, dependency, "Complete projection owner has no SCC component")
+		}
+		for _, declared := range projection.CompleteUses {
+			use := declared
+			use.Dependency = dependency
+			if !use.Expression.Available() || use.Expression != projection.Expression {
+				return nil, refusalFor(CodeInvalidExpression, dependency, "Complete occurrence expression identity is unavailable")
+			}
+			if use.Path == "" || !use.Occurrence.Available() || !use.Child.Available() || !use.Denominator.Available() || use.Denominator.Relation() != use.Child {
+				return nil, refusalFor(CodeInvalidRelation, dependency, "Complete occurrence evidence is unavailable")
+			}
+			writers := make([]CompleteWriter, 0)
+			for _, writerID := range ids {
+				writerProjection := projections[writerID]
+				if !containsRelation(writerProjection.Writes, use.Child) {
+					continue
+				}
+				writerComponent, writerOK := componentByDependency[writerID]
+				writerRank, writerRankOK := ranks[writerComponent]
+				if !writerOK || !writerRankOK {
+					return nil, refusalFor(CodeInvalidDependency, dependency, "Complete writer has no SCC component")
+				}
+				earlier := writerRank < ownerRank
+				writers = append(writers, CompleteWriter{Dependency: writerID, Component: writerRank, Earlier: earlier})
+				if !earlier {
+					return nil, &Error{
+						Code:       CodeCompleteStratification,
+						Dependency: dependency,
+						Other:      writerID,
+						Relation:   use.Child,
+						Occurrence: use.Occurrence,
+						Detail:     "Complete writer is not in a strictly earlier SCC component",
+					}
+				}
+			}
+			sort.Slice(writers, func(left, right int) bool {
+				return dependencyIDLess(writers[left].Dependency, writers[right].Dependency)
+			})
+			use.Writers = writers
+			use.Cold = len(writers) == 0
+			if !use.Available() || !use.Digest().Available() {
+				return nil, refusalFor(CodeInvalidRelation, dependency, "Complete occurrence proof is not canonical")
+			}
+			result = append(result, use)
+		}
+	}
+	sort.Slice(result, func(left, right int) bool {
+		if result[left].Dependency != result[right].Dependency {
+			return dependencyIDLess(result[left].Dependency, result[right].Dependency)
+		}
+		if bytes.Compare(result[left].Occurrence[:], result[right].Occurrence[:]) != 0 {
+			return bytes.Compare(result[left].Occurrence[:], result[right].Occurrence[:]) < 0
+		}
+		return result[left].Path < result[right].Path
+	})
+	return result, nil
+}
+
+func completeUsesForDependency(values []CompleteUse, dependency model.DependencyID) []CompleteUse {
+	result := make([]CompleteUse, 0)
+	for _, value := range values {
+		if value.Dependency == dependency {
+			result = append(result, value)
+		}
+	}
+	return cloneCompleteUses(result)
+}
+
+func componentRanks(components []Component, edges []plan.DependencyEdge) (map[int]uint32, map[model.DependencyID]int, bool) {
+	componentByDependency := make(map[model.DependencyID]int)
+	keys := make([]string, len(components))
+	for index, component := range components {
+		members := component.Members
+		refs := append([]plan.DependencyRef(nil), members...)
+		keys[index] = componentKey(refs)
+		for _, member := range members {
+			if !member.Available() {
+				return nil, nil, false
+			}
+			if _, duplicate := componentByDependency[member.ID()]; duplicate {
+				return nil, nil, false
+			}
+			componentByDependency[member.ID()] = index
+		}
+	}
+	adjacency := make(map[int]map[int]struct{}, len(components))
+	indegree := make([]int, len(components))
+	for index := range components {
+		adjacency[index] = make(map[int]struct{})
+	}
+	for _, edge := range edges {
+		from, fromOK := componentByDependency[edge.From().ID()]
+		to, toOK := componentByDependency[edge.To().ID()]
+		if !fromOK || !toOK {
+			return nil, nil, false
+		}
+		if from == to {
+			continue
+		}
+		if _, duplicate := adjacency[from][to]; duplicate {
+			continue
+		}
+		adjacency[from][to] = struct{}{}
+		indegree[to]++
+	}
+	ready := make([]int, 0, len(components))
+	for index, degree := range indegree {
+		if degree == 0 {
+			ready = append(ready, index)
+		}
+	}
+	less := func(left, right int) bool { return keys[left] < keys[right] }
+	result := make(map[int]uint32, len(components))
+	for len(ready) != 0 {
+		sort.Slice(ready, func(left, right int) bool { return less(ready[left], ready[right]) })
+		current := ready[0]
+		ready = ready[1:]
+		result[current] = uint32(len(result))
+		for next := range adjacency[current] {
+			indegree[next]--
+			if indegree[next] == 0 {
+				ready = append(ready, next)
+			}
+		}
+	}
+	return result, componentByDependency, len(result) == len(components)
 }
 
 func sameDependencySet(left, right []plan.DependencyRef) bool {

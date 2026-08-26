@@ -4,7 +4,9 @@ import (
 	"encoding/binary"
 
 	"github.com/wippyai/go-lua/analysis/identity"
+	"github.com/wippyai/go-lua/analysis/relation/schema/algebra"
 	"github.com/wippyai/go-lua/analysis/relation/schema/model"
+	"github.com/wippyai/go-lua/analysis/relation/schema/semantic/output"
 	"github.com/wippyai/go-lua/analysis/relation/semantic/signature"
 )
 
@@ -19,6 +21,10 @@ func digestExecutionSchema(schema ExecutionSchema) identity.ContentID {
 		contentBytes(sectionIDs("dependencies", dependencyIDs(schema.dependencies))),
 		contentBytes(sectionIDs("sccs", sccIDs(schema.sccs))),
 		contentBytes(sectionIDs("signatures", signatureIDs(schema.signatures))),
+		contentBytes(sectionIDs("initials", initialIDs(schema.initials))),
+		contentBytes(sectionIDs("type-capabilities", typeCapabilityIDs(schema.capabilities))),
+		contentBytes(sectionIDs("observations", observationIDs(schema.observations))),
+		contentBytes(sectionIDs("contributions", contributionIDs(schema.contributions))),
 	}
 	return derive("relation/schema/plan/execution-schema/v1", sections...)
 }
@@ -96,6 +102,38 @@ func signatureIDs(values []signature.Signature) []identity.ContentID {
 	return ids
 }
 
+func initialIDs(values []Initial) []identity.ContentID {
+	ids := make([]identity.ContentID, 0, len(values))
+	for _, value := range values {
+		ids = append(ids, value.Digest())
+	}
+	return ids
+}
+
+func typeCapabilityIDs(values []model.TypeCapability) []identity.ContentID {
+	ids := make([]identity.ContentID, 0, len(values))
+	for _, value := range values {
+		ids = append(ids, value.Digest())
+	}
+	return ids
+}
+
+func observationIDs(values []algebra.ObservationContract) []identity.ContentID {
+	ids := make([]identity.ContentID, 0, len(values))
+	for _, value := range values {
+		ids = append(ids, value.Digest())
+	}
+	return ids
+}
+
+func contributionIDs(values []output.ContributionSpec) []identity.ContentID {
+	ids := make([]identity.ContentID, 0, len(values))
+	for _, value := range values {
+		ids = append(ids, value.Digest())
+	}
+	return ids
+}
+
 func digestDependency(value Dependency) identity.ContentID {
 	parts := [][]byte{dependencyIDBytes(value.id), expressionIDBytes(value.expression)}
 	for _, relation := range value.reads {
@@ -160,11 +198,16 @@ func digestKeySchema(value model.KeySchema) identity.ContentID {
 }
 
 func digestScopeSchema(value model.ScopeSchema) identity.ContentID {
-	parts := [][]byte{scopeBytes(value.ID())}
+	// The Boolean support formula is part of the scope's logical declaration,
+	// even though algebra contracts carry only the nominal ScopeID. Include its
+	// canonical identity here so two scopes with the same dimensions and
+	// nominal ID cannot share an execution-plan digest when their regions
+	// differ.
+	parts := [][]byte{scopeBytes(value.ID()), contentBytes(value.Region().Identity())}
 	for _, dimension := range value.Dimensions() {
 		parts = append(parts, columnBytes(dimension))
 	}
-	return derive("relation/schema/plan/scope/v1", parts...)
+	return derive("relation/schema/plan/scope/v2", parts...)
 }
 
 func relationBytes(ref RelationRef) []byte { return relationBytesOfID(ref.ID()) }
@@ -221,6 +264,13 @@ func keyBytes(value model.KeyID) []byte {
 
 func typeBytes(value model.TypeID) []byte {
 	return append(contentBytes(value.Owner().Content()), contentBytes(value.Content())...)
+}
+
+func typeIDLess(left, right model.TypeID) bool {
+	if contentLess(left.Owner().Content(), right.Owner().Content()) {
+		return true
+	}
+	return left.Owner() == right.Owner() && contentLess(left.Content(), right.Content())
 }
 
 func relationLess(left, right RelationRef) bool { return relationLessByID(left.ID(), right.ID()) }

@@ -7,10 +7,14 @@ import (
 	"github.com/wippyai/go-lua/analysis/relation/check/certificate"
 	"github.com/wippyai/go-lua/analysis/relation/mount/address"
 	"github.com/wippyai/go-lua/analysis/relation/mount/arrangement"
+	"github.com/wippyai/go-lua/analysis/relation/mount/arrangement/expand"
 	"github.com/wippyai/go-lua/analysis/relation/mount/witness"
 	"github.com/wippyai/go-lua/analysis/relation/schema/algebra"
 	"github.com/wippyai/go-lua/analysis/relation/schema/model"
 	"github.com/wippyai/go-lua/analysis/relation/schema/plan"
+	"github.com/wippyai/go-lua/analysis/relation/semantic/binding"
+	"github.com/wippyai/go-lua/analysis/relation/semantic/outcome"
+	"github.com/wippyai/go-lua/analysis/relation/semantic/signature"
 )
 
 type recurrenceFixture struct {
@@ -22,6 +26,8 @@ type recurrenceFixture struct {
 	columnB     model.ColumnID
 	keyA        model.KeyID
 	keyB        model.KeyID
+	rowA        model.RowID
+	rowB        model.RowID
 	scopeA      model.ScopeID
 	scopeB      model.ScopeID
 	typeID      model.TypeID
@@ -29,6 +35,8 @@ type recurrenceFixture struct {
 	dependencyB model.DependencyID
 	expressionA model.ExpressionID
 	expressionB model.ExpressionID
+	operationA  model.OperationID
+	operationB  model.OperationID
 }
 
 type recurrenceInventory struct {
@@ -39,8 +47,24 @@ type recurrenceInventory struct {
 	scopes       map[model.ScopeID]uint64
 	expressions  map[model.ExpressionID]uint64
 	dependencies map[model.DependencyID]uint64
-	regions      map[model.ScopeID]witness.Region
+	denominators map[model.DenominatorRef][]model.RowID
 	accesses     []arrangement.Access
+}
+
+type recurrenceFactory struct{}
+
+func (recurrenceFactory) Bind(value signature.Signature) (binding.Binding, bool) {
+	if !value.Available() {
+		return nil, false
+	}
+	return recurrenceBinding{value: value}, true
+}
+
+type recurrenceBinding struct{ value signature.Signature }
+
+func (value recurrenceBinding) Signature() signature.Signature { return value.value }
+func (value recurrenceBinding) NewWorker(binding.Fence) (binding.Worker, bool) {
+	return nil, false
 }
 
 func (inventory *recurrenceInventory) Fence() address.Fence { return inventory.fence }
@@ -77,12 +101,19 @@ func (inventory *recurrenceInventory) Resolve(access arrangement.Access) (arrang
 	inventory.accesses = append(inventory.accesses, access)
 	return arrangement.NewHandle(inventory.fence, uint64(len(inventory.accesses)))
 }
-func (inventory *recurrenceInventory) ScopeRegion(id model.ScopeID) (witness.Region, bool) {
-	value, ok := inventory.regions[id]
-	return value, ok
+func (inventory *recurrenceInventory) ResolveExpand(model.ExpandContract) ([]expand.Vector, bool) {
+	return nil, false
 }
-func (inventory *recurrenceInventory) ResolveDenominator(model.DenominatorRef) (witness.DenominatorEvidence, bool) {
-	return witness.DenominatorEvidence{}, false
+func (inventory *recurrenceInventory) ResolveDenominator(ref model.DenominatorRef) (witness.DenominatorEvidence, bool) {
+	rows, ok := inventory.denominators[ref]
+	if !ok {
+		return witness.DenominatorEvidence{}, false
+	}
+	evidence, ok := identity.DeriveContentID("relation/mount/witness/recurrence-law/v1", []byte("recurrence-denominator"))
+	if !ok {
+		return witness.DenominatorEvidence{}, false
+	}
+	return witness.NewDenominatorEvidence(rows, evidence)
 }
 
 func newRecurrenceFixture(t *testing.T) recurrenceFixture {
@@ -97,11 +128,15 @@ func newRecurrenceFixture(t *testing.T) recurrenceFixture {
 		dependencyB: issueDependency(t, owner, "recurrence-dependency-b"),
 		expressionA: issueExpression(t, owner, "recurrence-expression-a"),
 		expressionB: issueExpression(t, owner, "recurrence-expression-b"),
+		operationA:  issueOperation(t, owner, "recurrence-operation-a"),
+		operationB:  issueOperation(t, owner, "recurrence-operation-b"),
 	}
 	value.columnA = issueColumn(t, value.relationA, "recurrence-column-a")
 	value.columnB = issueColumn(t, value.relationB, "recurrence-column-b")
 	value.keyA = issueKey(t, value.relationA, "recurrence-key-a")
 	value.keyB = issueKey(t, value.relationB, "recurrence-key-b")
+	value.rowA = issueRow(t, value.relationA, "recurrence-row-a")
+	value.rowB = issueRow(t, value.relationB, "recurrence-row-b")
 	value.scopeA = issueScope(t, owner, "recurrence-scope-a")
 	value.scopeB = issueScope(t, owner, "recurrence-scope-b")
 	value.typeID = issueType(t, owner, "recurrence-type")
@@ -126,6 +161,24 @@ func issueExpression(t *testing.T, owner model.OwnerID, label string) model.Expr
 	return value
 }
 
+func issueOperation(t *testing.T, owner model.OwnerID, label string) model.OperationID {
+	t.Helper()
+	value, ok := model.IssueOperationID(owner, content(t, label))
+	if !ok {
+		t.Fatal("issue operation")
+	}
+	return value
+}
+
+func issueRow(t *testing.T, relation model.RelationID, label string) model.RowID {
+	t.Helper()
+	value, ok := model.IssueRowID(relation, content(t, label))
+	if !ok {
+		t.Fatal("issue row")
+	}
+	return value
+}
+
 func recurrenceSchema(t *testing.T, value recurrenceFixture, kind plan.RecurrenceKind) plan.ExecutionSchema {
 	t.Helper()
 	refA, ok := plan.NewRelationRef(value.relationA)
@@ -138,13 +191,57 @@ func recurrenceSchema(t *testing.T, value recurrenceFixture, kind plan.Recurrenc
 	}
 	dependencyRefA := plan.DefineDependencyRef(value.dependencyA)
 	dependencyRefB := plan.DefineDependencyRef(value.dependencyB)
-	expressionA := plan.DefineExpressionRef(value.expressionA, algebra.NewProject(
-		algebra.NewInput(value.relationB),
-		algebra.NewProjectContract(value.relationA, []algebra.ColumnMapping{algebra.NewColumnMapping(value.columnB, value.columnA)}, value.keyA),
+	delivery, ok := signature.NewScalarDelivery()
+	if !ok {
+		t.Fatal("scalar delivery")
+	}
+	outcomes, ok := outcome.NewSet(outcome.Produced, outcome.NoSelection, outcome.Refused)
+	if !ok {
+		t.Fatal("outcomes")
+	}
+	cardinality, ok := model.NewCardinality(model.ExactlyOne, 0)
+	if !ok {
+		t.Fatal("cardinality")
+	}
+	denominatorA, ok := model.NewDenominatorRef(value.relationB, value.keyB)
+	if !ok {
+		t.Fatal("input denominator A")
+	}
+	denominatorB, ok := model.NewDenominatorRef(value.relationA, value.keyA)
+	if !ok {
+		t.Fatal("input denominator B")
+	}
+	signatureA, ok := signature.Seal(signature.Spec{
+		Identity: signature.Identity{Operation: value.operationA, Version: 1},
+		Fence:    signature.Fence{Owner: value.owner, Schema: value.schema},
+		Inputs: []signature.Input{{Relation: value.relationB, Column: value.columnB, Type: value.typeID,
+			Presence: signature.RequirePresent, Delivery: delivery, Denominator: denominatorA}},
+		Outputs:     []signature.Output{{Relation: value.relationA, Column: value.columnA, Type: value.typeID, Presence: signature.ProducePresent, Denominator: mustDenominator(t, value.relationA, value.keyA)}},
+		Cardinality: cardinality, Outcomes: outcomes,
+	})
+	if !ok {
+		t.Fatal("signature A")
+	}
+	signatureB, ok := signature.Seal(signature.Spec{
+		Identity: signature.Identity{Operation: value.operationB, Version: 1},
+		Fence:    signature.Fence{Owner: value.owner, Schema: value.schema},
+		Inputs: []signature.Input{{Relation: value.relationA, Column: value.columnA, Type: value.typeID,
+			Presence: signature.RequirePresent, Delivery: delivery, Denominator: denominatorB}},
+		Outputs:     []signature.Output{{Relation: value.relationB, Column: value.columnB, Type: value.typeID, Presence: signature.ProducePresent, Denominator: mustDenominator(t, value.relationB, value.keyB)}},
+		Cardinality: cardinality, Outcomes: outcomes,
+	})
+	if !ok {
+		t.Fatal("signature B")
+	}
+	expressionA := plan.DefineExpressionRef(value.expressionA, algebra.NewPublish(
+		algebra.NewApply([]algebra.Expression{algebra.NewInput(value.relationB)}, algebra.NewApplyContract(
+			signatureA.Identity(), []algebra.SlotSource{algebra.NewSlotSource(0, 0)}, algebra.OwnerNamed())),
+		algebra.NewPublishContract(value.relationA, value.keyA),
 	))
-	expressionB := plan.DefineExpressionRef(value.expressionB, algebra.NewProject(
-		algebra.NewInput(value.relationA),
-		algebra.NewProjectContract(value.relationB, []algebra.ColumnMapping{algebra.NewColumnMapping(value.columnA, value.columnB)}, value.keyB),
+	expressionB := plan.DefineExpressionRef(value.expressionB, algebra.NewPublish(
+		algebra.NewApply([]algebra.Expression{algebra.NewInput(value.relationA)}, algebra.NewApplyContract(
+			signatureB.Identity(), []algebra.SlotSource{algebra.NewSlotSource(0, 0)}, algebra.OwnerNamed())),
+		algebra.NewPublishContract(value.relationB, value.keyB),
 	))
 	dependencyA := plan.DefineDependency(value.dependencyA, value.expressionA, []plan.RelationRef{refB}, []plan.RelationRef{refA}, "recurrence-a")
 	dependencyB := plan.DefineDependency(value.dependencyB, value.expressionB, []plan.RelationRef{refA}, []plan.RelationRef{refB}, "recurrence-b")
@@ -160,17 +257,31 @@ func recurrenceSchema(t *testing.T, value recurrenceFixture, kind plan.Recurrenc
 		!builder.AddColumn(model.DefineColumnSchema(value.columnB, value.typeID)) ||
 		!builder.AddKey(model.DefineKeySchema(value.keyA, []model.ColumnID{value.columnA})) ||
 		!builder.AddKey(model.DefineKeySchema(value.keyB, []model.ColumnID{value.columnB})) ||
-		!builder.AddScope(model.DefineScopeSchema(value.scopeA, nil)) ||
-		!builder.AddScope(model.DefineScopeSchema(value.scopeB, nil)) ||
+		!builder.AddScope(model.DefineScopeSchema(value.scopeA, nil, finite(t, "recurrence-region-a"))) ||
+		!builder.AddScope(model.DefineScopeSchema(value.scopeB, nil, finite(t, "recurrence-region-b"))) ||
 		!builder.AddExpression(expressionA) || !builder.AddExpression(expressionB) ||
+		!builder.AddSignature(signatureA) || !builder.AddSignature(signatureB) ||
 		!builder.AddDependency(dependencyA) || !builder.AddDependency(dependencyB) || !builder.AddSCC(component) {
 		t.Fatal("recurrence declarations")
+	}
+	capability, capabilityOK := model.NewAscendingCapability(value.typeID)
+	if !capabilityOK || !builder.AddTypeCapability(capability) {
+		t.Fatal("recurrence capability")
 	}
 	schema, ok := builder.Build()
 	if !ok {
 		t.Fatal("recurrence schema build")
 	}
 	return schema
+}
+
+func mustDenominator(t *testing.T, relation model.RelationID, key model.KeyID) model.DenominatorRef {
+	t.Helper()
+	value, ok := model.NewDenominatorRef(relation, key)
+	if !ok {
+		t.Fatal("denominator")
+	}
+	return value
 }
 
 func recurrenceMount(t *testing.T, value recurrenceFixture, cert certificate.Certificate) witness.Mounted {
@@ -191,11 +302,16 @@ func recurrenceMount(t *testing.T, value recurrenceFixture, cert certificate.Cer
 		scopes:       map[model.ScopeID]uint64{value.scopeA: 1, value.scopeB: 2},
 		expressions:  map[model.ExpressionID]uint64{value.expressionA: 1, value.expressionB: 2},
 		dependencies: map[model.DependencyID]uint64{value.dependencyA: 1, value.dependencyB: 2},
-		regions:      map[model.ScopeID]witness.Region{value.scopeA: finite("recurrence-region-a"), value.scopeB: finite("recurrence-region-b")},
+		denominators: map[model.DenominatorRef][]model.RowID{
+			mustDenominator(t, value.relationA, value.keyA): {value.rowA},
+			mustDenominator(t, value.relationB, value.keyB): {value.rowB},
+		},
 	}
-	mounted, ok := witness.Specialize(cert, inventory, nil, algebraRegistry{algebra: testAlgebra{typeID: value.typeID}}, newLineageFactory(t, value.owner))
+	mounted, ok := witness.Specialize(cert, inventory, recurrenceFactory{}, algebraRegistry{algebra: testAlgebra{typeID: value.typeID}}, newLineageFactory(t, value.owner))
 	if !ok || !mounted.Available() {
-		t.Fatal("positive recurrence mount refused")
+		book, bookOK := address.Bind(cert, inventory)
+		arrangementPlan, arrangementOK := arrangement.Derive(cert, book, inventory, expand.EmptyCatalog(), []binding.PartitionDirectory{})
+		t.Fatalf("positive recurrence mount refused: book=%v arrangement=%v valid=%v", bookOK, arrangementOK, arrangementPlan.ValidFor(book))
 	}
 	return mounted
 }

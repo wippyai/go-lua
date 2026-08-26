@@ -13,7 +13,7 @@ func TestLogicalNodesHaveOnlyDeclarativeFields(t *testing.T) {
 		typeValue reflect.Type
 		fields    []string
 	}{
-		{reflect.TypeOf(algebra.Input{}), []string{"relation"}},
+		{reflect.TypeOf(algebra.Input{}), []string{"relation", "projection", "columns"}},
 		{reflect.TypeOf(algebra.Select{}), []string{"child", "contract"}},
 		{reflect.TypeOf(algebra.Project{}), []string{"child", "contract"}},
 		{reflect.TypeOf(algebra.Join{}), []string{"left", "right", "contract"}},
@@ -22,6 +22,8 @@ func TestLogicalNodesHaveOnlyDeclarativeFields(t *testing.T) {
 		{reflect.TypeOf(algebra.Complete{}), []string{"child", "denominator"}},
 		{reflect.TypeOf(algebra.Apply{}), []string{"inputs", "contract"}},
 		{reflect.TypeOf(algebra.Publish{}), []string{"child", "contract"}},
+		{reflect.TypeOf(algebra.ColumnProject{}), []string{"child", "contract"}},
+		{reflect.TypeOf(algebra.Expand{}), []string{"child", "contract"}},
 	}
 	for _, testCase := range cases {
 		if testCase.typeValue.NumField() != len(testCase.fields) {
@@ -50,8 +52,9 @@ func TestContractsCarryOnlyLogicalRoles(t *testing.T) {
 		{reflect.TypeOf(algebra.JoinContract{}), []string{"leftColumns", "rightColumns"}},
 		{reflect.TypeOf(algebra.MergeContract{}), []string{"key"}},
 		{reflect.TypeOf(algebra.GroupContract{}), []string{"key", "cardinality"}},
-		{reflect.TypeOf(algebra.ApplyContract{}), []string{"operation"}},
-		{reflect.TypeOf(algebra.PublishContract{}), []string{"destination", "key"}},
+		{reflect.TypeOf(algebra.ApplyContract{}), []string{"operation", "slotSource", "correlation", "output"}},
+		{reflect.TypeOf(algebra.PublishContract{}), []string{"destination", "key", "columns"}},
+		{reflect.TypeOf(algebra.ColumnProjectContract{}), []string{"slots"}},
 	}
 	for _, testCase := range cases {
 		if testCase.typeValue.NumField() != len(testCase.fields) {

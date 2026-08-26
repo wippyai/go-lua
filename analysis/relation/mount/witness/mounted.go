@@ -8,7 +8,10 @@ import (
 	"github.com/wippyai/go-lua/analysis/identity"
 	"github.com/wippyai/go-lua/analysis/relation/mount/address"
 	"github.com/wippyai/go-lua/analysis/relation/mount/arrangement"
+	"github.com/wippyai/go-lua/analysis/relation/schema/algebra"
 	"github.com/wippyai/go-lua/analysis/relation/schema/model"
+	"github.com/wippyai/go-lua/analysis/relation/schema/plan"
+	"github.com/wippyai/go-lua/analysis/relation/schema/region"
 	"github.com/wippyai/go-lua/analysis/relation/semantic/binding"
 	"github.com/wippyai/go-lua/analysis/relation/semantic/lineage"
 	"github.com/wippyai/go-lua/analysis/relation/semantic/signature"
@@ -33,20 +36,35 @@ type mountedData struct {
 	arrangement     arrangement.Plan
 	digest          identity.ContentID
 	columns         []model.ColumnSchema
+	observations    []algebra.ObservationContract
 
 	bindings   map[signature.Identity]binding.Binding
 	identities []signature.Identity
+	initials   []plan.Initial
 
-	types    []model.TypeID
-	algebras map[model.TypeID]binding.ValueAlgebra
+	// codecTypes is the complete immutable typed-codec catalogue derived from
+	// checked columns and signatures. It authorizes opaque token issuance;
+	// types/algebras are the narrower subset that can semantically ascend.
+	codecTypes       []model.TypeID
+	capabilities     []model.TypeCapability
+	capabilityByType map[model.TypeID]model.TypeCapability
+	types            []model.TypeID
+	algebras         map[model.TypeID]binding.ValueAlgebra
+	equalityTypes    []model.TypeID
+	equalities       map[model.TypeID]binding.ValueEquality
 
 	denominators []model.DenominatorRef
 	witnesses    map[model.DenominatorRef]binding.DenominatorWitness
+	// denominatorLineage is the exact closed-world provenance atom for each
+	// admitted denominator. It is materialized once so an empty complete span
+	// has authenticated evidence without minting a zero/default lineage later.
+	denominatorLineage map[model.DenominatorRef]model.LineageRef
 	// rows is the sole relation-local row directory for this mounted
 	// runtime.  Denominators prove membership; they never assign the row's
 	// physical address.  The directory is the union of admitted memberships,
 	// sorted by owner-issued RowID identity.
-	rows map[model.RelationID][]model.RowID
+	rows       map[model.RelationID][]model.RowID
+	rowLineage map[model.RowID]model.LineageRef
 
 	scopes     []model.ScopeID
 	scopeByID  map[model.ScopeID]binding.ScopeToken
@@ -57,7 +75,7 @@ type mountedData struct {
 
 // Available reports whether the mounted artifact is complete.
 func (mounted Mounted) Available() bool {
-	return mounted.data != nil && mounted.data.fence.Available() && mounted.data.runtime.Available() && mounted.data.issuer.Available() && mounted.data.lineage != nil && mounted.data.lineageOwner.Available() && mounted.data.lineageIdentity.Available() && mounted.data.book.Available() && mounted.data.arrangement.Available() && mounted.data.rows != nil && mounted.data.scopeArena != nil && mounted.data.scopeArena.available() && mounted.data.digest.Available()
+	return mounted.data != nil && mounted.data.fence.Available() && mounted.data.runtime.Available() && mounted.data.issuer.Available() && mounted.data.lineage != nil && mounted.data.lineageOwner.Available() && mounted.data.lineageIdentity.Available() && mounted.data.book.Available() && mounted.data.arrangement.Available() && mounted.data.capabilityByType != nil && mounted.data.equalities != nil && mounted.data.rows != nil && mounted.data.rowLineage != nil && mounted.data.denominatorLineage != nil && mounted.data.scopeArena != nil && mounted.data.scopeArena.available() && mounted.data.digest.Available()
 }
 
 // Fence returns the exact address/runtime certificate fence captured at
@@ -156,6 +174,16 @@ func (mounted Mounted) SignatureIdentities() []signature.Identity {
 	return append([]signature.Identity(nil), mounted.data.identities...)
 }
 
+// Initials returns the exact schema-sealed zero-input invocation catalogue.
+// Runtime admission may execute these rows, but cannot add, remove, reorder,
+// or replace them through a side channel.
+func (mounted Mounted) Initials() []plan.Initial {
+	if !mounted.Available() {
+		return nil
+	}
+	return append([]plan.Initial(nil), mounted.data.initials...)
+}
+
 // Binding resolves the typed operation adapter admitted against one exact
 // signature. The adapter is opaque and cannot be replaced through Mounted.
 func (mounted Mounted) Binding(id signature.Identity) (binding.Binding, bool) {
@@ -164,6 +192,29 @@ func (mounted Mounted) Binding(id signature.Identity) (binding.Binding, bool) {
 	}
 	value, ok := mounted.data.bindings[id]
 	return value, ok && value != nil
+}
+
+// Observation resolves one exact schema-sealed terminal descriptor from the
+// mounted catalogue. The runtime accepts only this projection by digest; it
+// cannot inject a newly constructed descriptor after certificate admission.
+func (mounted Mounted) Observation(id identity.ContentID) (algebra.ObservationContract, bool) {
+	if !mounted.Available() || !id.Available() {
+		return algebra.ObservationContract{}, false
+	}
+	for _, value := range mounted.data.observations {
+		if value.Digest() == id {
+			return value, true
+		}
+	}
+	return algebra.ObservationContract{}, false
+}
+
+// Observations returns the defensive mounted descriptor catalogue.
+func (mounted Mounted) Observations() []algebra.ObservationContract {
+	if !mounted.Available() {
+		return nil
+	}
+	return append([]algebra.ObservationContract(nil), mounted.data.observations...)
 }
 
 // AlgebraRequirements returns all certificate TypeIDs whose value algebra
@@ -175,12 +226,55 @@ func (mounted Mounted) AlgebraRequirements() []model.TypeID {
 	return append([]model.TypeID(nil), mounted.data.types...)
 }
 
+// CodecTypes returns every checked TypeID for which this mount can issue an
+// authenticated opaque semantic token. Unlike AlgebraRequirements, this set
+// includes read-only and AuthenticatedOpaque types.
+func (mounted Mounted) CodecTypes() []model.TypeID {
+	if !mounted.Available() {
+		return nil
+	}
+	return append([]model.TypeID(nil), mounted.data.codecTypes...)
+}
+
+// TypeCapabilities returns the exact schema-sealed policies admitted by this
+// runtime. DecodeOnly values remain codec-only; only an explicit Ascending
+// policy can accompany a resolved ValueAlgebra.
+func (mounted Mounted) TypeCapabilities() []model.TypeCapability {
+	if !mounted.Available() {
+		return nil
+	}
+	return append([]model.TypeCapability(nil), mounted.data.capabilities...)
+}
+
+// TypeCapability resolves one exact schema-sealed policy without reopening
+// the unchecked schema. Physical Merge uses this distinction to select exact
+// token equality for DecodeOnly values and algebraic ascent for Ascending
+// values.
+func (mounted Mounted) TypeCapability(typeID model.TypeID) (model.TypeCapability, bool) {
+	if !mounted.Available() || !typeID.Available() {
+		return model.TypeCapability{}, false
+	}
+	value, ok := mounted.data.capabilityByType[typeID]
+	return value, ok && value.Available() && value.Type() == typeID
+}
+
 // Algebra resolves the typed value authority for one exact TypeID.
 func (mounted Mounted) Algebra(typeID model.TypeID) (binding.ValueAlgebra, bool) {
 	if !mounted.Available() || !typeID.Available() {
 		return nil, false
 	}
 	value, ok := mounted.data.algebras[typeID]
+	return value, ok && value != nil && value.Type() == typeID
+}
+
+// Equality resolves the owner semantic equality authority admitted for one
+// certified key TypeID. It is absent for DecodeOnly types; their physical
+// Merge branch compares exact authenticated tokens instead.
+func (mounted Mounted) Equality(typeID model.TypeID) (binding.ValueEquality, bool) {
+	if !mounted.Available() || !typeID.Available() {
+		return nil, false
+	}
+	value, ok := mounted.data.equalities[typeID]
 	return value, ok && value != nil && value.Type() == typeID
 }
 
@@ -202,34 +296,53 @@ func (mounted Mounted) Denominator(ref model.DenominatorRef) (binding.Denominato
 	return value, ok && value.ValidFor(mounted.data.runtime) && value.Matches(ref)
 }
 
-// IssueCell issues one authenticated cell only when ref is an admitted
-// denominator and scope is an authenticated scope owned by this runtime.
-// The issuer remains private to Mounted; callers receive no minting authority.
-func (mounted Mounted) IssueCell(ref model.DenominatorRef, scope Scope, column model.ColumnID, row model.RowID) (binding.CellToken, bool) {
-	if !mounted.Available() || !ref.Available() || !scope.validFor(mounted.data.runtime) {
+// DenominatorLineage resolves the exact provenance atom materialized for one
+// admitted denominator. This is the closed-world evidence lane used when a
+// complete range is empty and therefore has no member RowID from which to
+// recover lineage.
+func (mounted Mounted) DenominatorLineage(ref model.DenominatorRef) (model.LineageRef, bool) {
+	if !mounted.Available() || !ref.Available() {
+		return model.LineageRef{}, false
+	}
+	value, ok := mounted.data.denominatorLineage[ref]
+	return value, ok && value.Available()
+}
+
+// IssueCell issues one authenticated cell from an already redeemed
+// denominator witness and an authenticated scope owned by this runtime. The
+// caller must resolve the ordinary global witness once at its own boundary;
+// correlated replay passes the q-specific posting directly.
+func (mounted Mounted) IssueCell(denominator binding.DenominatorWitness, scope Scope, column model.ColumnID, row model.RowID) (binding.CellToken, bool) {
+	if !mounted.Available() || !denominator.ValidFor(mounted.data.runtime) || !scope.validFor(mounted.data.runtime) || !row.Available() || !denominator.Contains(row) {
 		return binding.CellToken{}, false
 	}
 	columnAddress, columnOK := mounted.data.book.Column(column)
 	if !columnOK || !columnAddress.ValidFor(mounted.data.fence) {
 		return binding.CellToken{}, false
 	}
-	witness, witnessOK := mounted.Denominator(ref)
-	if !witnessOK {
-		return binding.CellToken{}, false
-	}
 	if !mounted.data.scopeArena.contains(scope.token) {
 		return binding.CellToken{}, false
 	}
-	return mounted.data.issuer.IssueCell(witness, scope.token, column, row)
+	return mounted.data.issuer.IssueCell(denominator, scope.token, column, row)
 }
 
-// IssueValue issues one authenticated value only for an admitted algebra
-// TypeID. Opaque value bytes remain the caller's domain payload.
+// IssueValue issues one authenticated codec token for a TypeID in the
+// immutable catalogue certified by admitted columns and signatures. Codec
+// admission is deliberately independent of ValueAlgebra admission:
+// AuthenticatedOpaque cells must be able to carry an exact owner token even
+// when no Present value can ascend for that TypeID.
 func (mounted Mounted) IssueValue(typeID model.TypeID, opaque identity.ContentID) (binding.ValueToken, bool) {
 	if !mounted.Available() || !typeID.Available() {
 		return binding.ValueToken{}, false
 	}
-	if _, admitted := mounted.data.algebras[typeID]; !admitted {
+	certified := false
+	for _, candidate := range mounted.data.codecTypes {
+		if candidate == typeID {
+			certified = true
+			break
+		}
+	}
+	if !certified {
 		return binding.ValueToken{}, false
 	}
 	return mounted.data.issuer.IssueValue(typeID, opaque)
@@ -270,6 +383,18 @@ func (mounted Mounted) RowAt(relation model.RelationID, index int) (model.RowID,
 	return rows[index], true
 }
 
+// RowLineage resolves the exact canonical lineage atom materialized for one
+// admitted row-directory member.  The projection is sealed during
+// specialization, so lookup is a direct map access and never derives a
+// replacement identity or consults a downstream source.
+func (mounted Mounted) RowLineage(row model.RowID) (model.LineageRef, bool) {
+	if !mounted.Available() || !row.Available() {
+		return model.LineageRef{}, false
+	}
+	value, ok := mounted.data.rowLineage[row]
+	return value, ok && value.Available()
+}
+
 // Scopes returns all exact scope identities admitted by the certificate.
 func (mounted Mounted) Scopes() []model.ScopeID {
 	if !mounted.Available() {
@@ -300,21 +425,63 @@ func (mounted Mounted) ScopeToken(scope Scope) (binding.ScopeToken, bool) {
 	return scope.token, true
 }
 
+// ScopeForToken restores the narrow mounted Scope facade for one already
+// authenticated runtime token.  It is deliberately not a minting operation:
+// the token must be fenced to this exact mount and already have an immutable
+// Region entry in the mounted arena.  Physical state uses this only before it
+// normalizes the scope through its cofiber authority.
+func (mounted Mounted) ScopeForToken(token binding.ScopeToken) (Scope, bool) {
+	if !mounted.Available() || !token.ValidFor(mounted.data.runtime) || !mounted.data.scopeArena.contains(token) {
+		return Scope{}, false
+	}
+	return newScope(token)
+}
+
+// AdmitRuntimeRegion issues one runtime Scope for an immutable region created
+// by the physical cofiber boundary.  The mounted arena remains the sole
+// token-to-Region registry: this method cannot replace an existing entry;
+// repeated identity admission recovers the original arena Region rather than
+// accepting a replacement.  It is therefore a trusted runtime capability:
+// callers with Mounted may issue a cell from an admitted scope.  Production
+// import laws restrict this method to the cofiber boundary; cofiber
+// independently refuses regions it did not normalize.
+//
+// This is intentionally narrower than a general scope factory.  Declared
+// scopes still enter only through Specialize; runtime regions are append-only
+// consequences of those scopes after exact physical Boolean partitioning.
+func (mounted Mounted) AdmitRuntimeRegion(value region.Region) (Scope, bool) {
+	if !mounted.Available() || !value.Available() {
+		return Scope{}, false
+	}
+	regionID, identityOK := scopeRegionIdentity(value)
+	if !identityOK {
+		return Scope{}, false
+	}
+	token, tokenOK := mounted.data.issuer.IssueScope(regionID)
+	if !tokenOK || !token.ValidFor(mounted.data.runtime) {
+		return Scope{}, false
+	}
+	if _, internOK := mounted.data.scopeArena.intern(token, value); !internOK {
+		return Scope{}, false
+	}
+	return newScope(token)
+}
+
 // RegionForToken resolves the exact neutral formula owned by one
 // authenticated token. No declared-scope scan or token digest reconstruction
 // is performed.
-func (mounted Mounted) RegionForToken(token binding.ScopeToken) (Region, bool) {
+func (mounted Mounted) RegionForToken(token binding.ScopeToken) (region.Region, bool) {
 	if !mounted.Available() || !token.ValidFor(mounted.data.runtime) {
-		return nil, false
+		return region.Region{}, false
 	}
 	return mounted.data.scopeArena.resolve(token)
 }
 
 // RegionForScope resolves the token carried by an authenticated scope through
 // the same mounted arena used by CellToken and Geometry.
-func (mounted Mounted) RegionForScope(scope Scope) (Region, bool) {
+func (mounted Mounted) RegionForScope(scope Scope) (region.Region, bool) {
 	if !mounted.Available() || !scope.validFor(mounted.data.runtime) {
-		return nil, false
+		return region.Region{}, false
 	}
 	return mounted.RegionForToken(scope.token)
 }
@@ -335,31 +502,11 @@ func (mounted Mounted) ConjoinScopes(left, right Scope) (Scope, bool) {
 	if left.Same(right) {
 		return left, true
 	}
-	first, second := leftRegion, rightRegion
-	firstID, firstIDOK := scopeRegionIdentity(first)
-	secondID, secondIDOK := scopeRegionIdentity(second)
-	if !firstIDOK || !secondIDOK {
+	combined, combineOK := region.Conjoin(leftRegion, rightRegion)
+	if !combineOK || !combined.Available() {
 		return Scope{}, false
 	}
-	if bytes.Compare(secondID[:], firstID[:]) < 0 {
-		first, second = second, first
-	}
-	combined, combineOK := first.Conjoin(second)
-	if !combineOK || !regionAvailable(combined) {
-		return Scope{}, false
-	}
-	combinedIdentity, identityOK := scopeRegionIdentity(combined)
-	if !identityOK {
-		return Scope{}, false
-	}
-	token, tokenOK := mounted.data.issuer.IssueScope(combinedIdentity)
-	if !tokenOK {
-		return Scope{}, false
-	}
-	if _, internOK := mounted.data.scopeArena.intern(token, combined); !internOK {
-		return Scope{}, false
-	}
-	return newScope(token)
+	return mounted.AdmitRuntimeRegion(combined)
 }
 
 // EntailsScopes evaluates the neutral formula entailment law for two
@@ -370,7 +517,7 @@ func (mounted Mounted) EntailsScopes(left, right Scope) bool {
 	}
 	leftRegion, leftOK := mounted.RegionForToken(left.token)
 	rightRegion, rightOK := mounted.RegionForToken(right.token)
-	return leftOK && rightOK && leftRegion.Entails(rightRegion)
+	return leftOK && rightOK && region.Entails(leftRegion, rightRegion)
 }
 
 // WideningPermits returns the complete defensive set of opaque recurrence
@@ -400,6 +547,23 @@ func canonicalizeIdentities(values []signature.Identity) []signature.Identity {
 	result := append([]signature.Identity(nil), values...)
 	sort.Slice(result, func(left, right int) bool { return signatureIdentityLess(result[left], result[right]) })
 	return result
+}
+
+func canonicalizeInitials(values []plan.Initial) []plan.Initial {
+	result := append([]plan.Initial(nil), values...)
+	sort.Slice(result, func(left, right int) bool { return initialLess(result[left], result[right]) })
+	return result
+}
+
+func initialLess(left, right plan.Initial) bool {
+	leftOperation, rightOperation := left.Operation(), right.Operation()
+	if compared := compareNominal(leftOperation.Operation.Owner().Content(), leftOperation.Operation.Content(), rightOperation.Operation.Owner().Content(), rightOperation.Operation.Content()); compared != 0 {
+		return compared < 0
+	}
+	if leftOperation.Version != rightOperation.Version {
+		return leftOperation.Version < rightOperation.Version
+	}
+	return compareNominal(left.Scope().Owner().Content(), left.Scope().Content(), right.Scope().Owner().Content(), right.Scope().Content()) < 0
 }
 
 func signatureIdentityLess(left, right signature.Identity) bool {

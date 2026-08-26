@@ -6,6 +6,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/identity"
 	"github.com/wippyai/go-lua/analysis/relation/schema/model"
 	"github.com/wippyai/go-lua/analysis/relation/semantic/binding"
+	"github.com/wippyai/go-lua/analysis/relation/semantic/lineage"
 	"github.com/wippyai/go-lua/analysis/relation/semantic/outcome"
 	"github.com/wippyai/go-lua/analysis/relation/semantic/signature"
 )
@@ -30,6 +31,8 @@ type applyFixture struct {
 	scope       binding.ScopeToken
 	witness     binding.DenominatorWitness
 	rows        []model.RowID
+	lineage     model.LineageRef
+	lineageAuth lineage.Authority
 }
 
 type scriptedWorker struct {
@@ -113,8 +116,7 @@ func newApplyFixture(t *testing.T, cardinality model.Cardinality, inputPresence 
 			Relation: relation, Column: input, Type: typeID, Presence: inputPresence,
 			Delivery: delivery, Denominator: denominator,
 		}},
-		Outputs:     []signature.Output{{Relation: relation, Column: output, Type: typeID, Presence: outputPresence}},
-		Authority:   signature.OutputAuthority{Denominator: denominator},
+		Outputs:     []signature.Output{{Relation: relation, Column: output, Type: typeID, Presence: outputPresence, Denominator: denominator}},
 		Cardinality: cardinality,
 		Outcomes:    codes,
 	})
@@ -129,9 +131,17 @@ func newApplyFixture(t *testing.T, cardinality model.Cardinality, inputPresence 
 	if !ok {
 		t.Fatal("issuer")
 	}
-	scope, ok := issuer.IssueScope(testContent("scope/formula"))
+	lineageOwner, ok := model.IssueOwnerID(testContent("lineage-owner"))
 	if !ok {
-		t.Fatal("scope")
+		t.Fatal("lineage owner")
+	}
+	lineageFactory, ok := lineage.NewFactory(lineageOwner)
+	if !ok {
+		t.Fatal("lineage factory")
+	}
+	lineageAuth, ok := lineageFactory.Bind(runtime)
+	if !ok || lineageAuth == nil {
+		t.Fatal("lineage authority")
 	}
 	rowIDs := make([]model.RowID, rows)
 	for index := range rowIDs {
@@ -139,6 +149,18 @@ func newApplyFixture(t *testing.T, cardinality model.Cardinality, inputPresence 
 		if !ok {
 			t.Fatal("row")
 		}
+	}
+	// Source provenance mirrors the mounted RowLineage projection: the
+	// relation owner issues the row's content atom, and the dedicated lineage
+	// authority imports that foreign atom. Tests must not mint a same-owner
+	// authority reference that was never admitted into its arena.
+	lineageValue, ok := model.IssueLineageRef(owner, rowIDs[0].Content())
+	if !ok {
+		t.Fatal("lineage")
+	}
+	scope, ok := issuer.IssueScope(testContent("scope/formula"))
+	if !ok {
+		t.Fatal("scope")
 	}
 	membership, ok := binding.NewMembershipView(relation, rowIDs)
 	if !ok {
@@ -152,14 +174,15 @@ func newApplyFixture(t *testing.T, cardinality model.Cardinality, inputPresence 
 		owner: owner, relation: relation, input: input, output: output, typeID: typeID,
 		key: key, denominator: denominator, schema: schema, operation: operation,
 		refusal: refusal, runtime: runtime, issuer: issuer, scope: scope,
-		witness: witness, rows: rowIDs,
+		witness: witness, rows: rowIDs, lineage: lineageValue, lineageAuth: lineageAuth,
 	}
 }
 
 func executorFor(fixture applyFixture, worker binding.Worker) Executor {
 	return Executor{data: &executorData{
 		operation: fixture.operation, worker: worker, fence: fixture.runtime,
-		witness: fixture.witness, scope: fixture.scope,
+		destinations: []binding.DenominatorWitness{fixture.witness},
+		scope:        fixture.scope, lineage: fixture.lineageAuth,
 	}}
 }
 
@@ -217,7 +240,11 @@ func presentProposal(t *testing.T, fixture applyFixture, buffer *binding.Proposa
 	if !ok || row < 0 || row >= len(fixture.rows) {
 		return binding.Proposal{}, false
 	}
-	destination, ok := issuer.IssueCell(buffer.Witness(), buffer.Scope(), fixture.output, fixture.rows[row])
+	witness, ok := buffer.DestinationWitness(fixture.denominator)
+	if !ok {
+		return binding.Proposal{}, false
+	}
+	destination, ok := issuer.IssueCell(witness, buffer.Scope(), fixture.output, fixture.rows[row])
 	if !ok {
 		return binding.Proposal{}, false
 	}
@@ -250,8 +277,8 @@ func TestInvokeCallsWorkerExactlyOnceAndReturnsProducedBatch(t *testing.T) {
 		return result(outcome.Produced)
 	}
 	executor := executorFor(fixture, worker)
-	application, ok := executor.Invoke(frameFor(t, fixture, model.Present))
-	if !ok || !application.Available() || application.Outcome().Code != outcome.Produced || application.Len() != 1 {
+	application, ok := executor.Invoke(frameFor(t, fixture, model.Present), fixture.lineage, binding.NewOwnerNamedDestination(fixture.relation))
+	if !ok || !application.Available() || application.Outcome().Code != outcome.Produced || application.Len() != 1 || application.Lineage() != fixture.lineage {
 		t.Fatalf("produced application = %#v/%t", application, ok)
 	}
 	if worker.calls != 1 {
@@ -273,9 +300,28 @@ func TestInvokeRejectsBadFrameWithoutInvokingWorker(t *testing.T) {
 	worker := &scriptedWorker{action: func(_ binding.Frame, _ *binding.ProposalBuffer) outcome.Result {
 		return result(outcome.NoCandidate)
 	}}
-	application, ok := executorFor(fixture, worker).Invoke(binding.Frame{})
+	application, ok := executorFor(fixture, worker).Invoke(binding.Frame{}, fixture.lineage, binding.NewOwnerNamedDestination(fixture.relation))
 	if ok || application.Available() {
 		t.Fatal("invalid frame was accepted")
+	}
+	if worker.calls != 0 {
+		t.Fatalf("worker calls = %d, want 0", worker.calls)
+	}
+}
+
+func TestInvokeRejectsUnadmittedLineageBeforeWorker(t *testing.T) {
+	exact, _ := model.NewCardinality(model.ExactlyOne, 0)
+	fixture := newApplyFixture(t, exact, signature.RequirePresent, signature.ProducePresent, 1)
+	worker := &scriptedWorker{action: func(_ binding.Frame, _ *binding.ProposalBuffer) outcome.Result {
+		return result(outcome.NoCandidate)
+	}}
+	fabricated, ok := model.IssueLineageRef(fixture.lineageAuth.Owner(), testContent("fabricated-lineage"))
+	if !ok {
+		t.Fatal("fabricated lineage")
+	}
+	application, ok := executorFor(fixture, worker).Invoke(frameFor(t, fixture, model.Present), fabricated, binding.NewOwnerNamedDestination(fixture.relation))
+	if ok || application.Available() {
+		t.Fatal("unadmitted lineage was accepted")
 	}
 	if worker.calls != 0 {
 		t.Fatalf("worker calls = %d, want 0", worker.calls)
@@ -298,7 +344,7 @@ func TestBoundedOverflowReturnsAtomicRefusal(t *testing.T) {
 		}
 		return result(outcome.Produced)
 	}
-	application, ok := executorFor(fixture, worker).Invoke(frameFor(t, fixture, model.Present))
+	application, ok := executorFor(fixture, worker).Invoke(frameFor(t, fixture, model.Present), fixture.lineage, binding.NewOwnerNamedDestination(fixture.relation))
 	if !ok || !application.Available() || application.Outcome().Code != outcome.Refused {
 		t.Fatalf("overflow application = %#v/%t", application, ok)
 	}
@@ -337,7 +383,7 @@ func TestForeignOutputTokenRefusesWithoutPartialCells(t *testing.T) {
 		}
 		return refusal(fixture)
 	}
-	application, ok := executorFor(fixture, worker).Invoke(frameFor(t, fixture, model.Present))
+	application, ok := executorFor(fixture, worker).Invoke(frameFor(t, fixture, model.Present), fixture.lineage, binding.NewOwnerNamedDestination(fixture.relation))
 	if !ok || !application.Available() || application.Outcome().Code != outcome.Refused {
 		t.Fatalf("foreign output application = %#v/%t", application, ok)
 	}
@@ -355,7 +401,7 @@ func TestRefusalHasNoBatchAndAbsenceHasNoBottomValue(t *testing.T) {
 	worker := &scriptedWorker{action: func(_ binding.Frame, _ *binding.ProposalBuffer) outcome.Result {
 		return refusal(fixture)
 	}}
-	refused, ok := executorFor(fixture, worker).Invoke(frameFor(t, fixture, model.ProvenAbsent))
+	refused, ok := executorFor(fixture, worker).Invoke(frameFor(t, fixture, model.ProvenAbsent), fixture.lineage, binding.NewOwnerNamedDestination(fixture.relation))
 	if !ok || !refused.Available() || refused.Outcome().Code != outcome.Refused || !refused.Outcome().RefusalID.Available() {
 		t.Fatal("refusal outcome was not preserved")
 	}
@@ -376,7 +422,7 @@ func TestRefusalHasNoBatchAndAbsenceHasNoBottomValue(t *testing.T) {
 		}
 		return result(outcome.Produced)
 	}
-	absent, ok := executorFor(fixture, worker).Invoke(frameFor(t, fixture, model.ProvenAbsent))
+	absent, ok := executorFor(fixture, worker).Invoke(frameFor(t, fixture, model.ProvenAbsent), fixture.lineage, binding.NewOwnerNamedDestination(fixture.relation))
 	if !ok || !absent.Available() || absent.Outcome().Code != outcome.Produced || absent.Len() != 1 {
 		t.Fatal("proven absence was not published as a distinct status")
 	}
@@ -398,7 +444,7 @@ func TestNoCandidateNoSelectionAndOpaqueRemainDistinctEmptyBatches(t *testing.T)
 			worker := &scriptedWorker{action: func(_ binding.Frame, _ *binding.ProposalBuffer) outcome.Result {
 				return result(code)
 			}}
-			application, ok := executorFor(fixture, worker).Invoke(frameFor(t, fixture, model.Present))
+			application, ok := executorFor(fixture, worker).Invoke(frameFor(t, fixture, model.Present), fixture.lineage, binding.NewOwnerNamedDestination(fixture.relation))
 			if !ok || !application.Available() || application.Outcome().Code != code || application.Len() != 0 {
 				t.Fatalf("%s application = %#v/%t", codeName(code), application, ok)
 			}
@@ -422,7 +468,7 @@ func TestApplicationLeaseSurvivesLaterInvocationWithoutResetAlias(t *testing.T) 
 		return result(outcome.Produced)
 	}
 	executor := executorFor(fixture, worker)
-	first, ok := executor.Invoke(frameFor(t, fixture, model.Present))
+	first, ok := executor.Invoke(frameFor(t, fixture, model.Present), fixture.lineage, binding.NewOwnerNamedDestination(fixture.relation))
 	if !ok || !first.Available() {
 		t.Fatal("first invocation")
 	}
@@ -430,7 +476,7 @@ func TestApplicationLeaseSurvivesLaterInvocationWithoutResetAlias(t *testing.T) 
 	if !ok || !firstBatch.Available() {
 		t.Fatal("first batch")
 	}
-	second, ok := executor.Invoke(frameFor(t, fixture, model.Present))
+	second, ok := executor.Invoke(frameFor(t, fixture, model.Present), fixture.lineage, binding.NewOwnerNamedDestination(fixture.relation))
 	if !ok || !second.Available() {
 		t.Fatal("second invocation")
 	}

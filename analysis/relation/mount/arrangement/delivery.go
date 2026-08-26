@@ -31,10 +31,9 @@ func (requirement DeliveryRequirement) Index() uint32 { return requirement.index
 // Input returns the immutable generic input contract.
 func (requirement DeliveryRequirement) Input() signature.Input { return requirement.input }
 
-// Access returns the one physical logical access shared by this semantic
-// input. Delivery shape and denominator are intentionally not part of Access
-// identity, so scalar and span requirements over the same key/vector resolve
-// to one mounted handle.
+// Access returns the physical cell-source access for this semantic input.
+// Delivery range/order remain carrier authority, but a joined input's cell is
+// read through its separately declared source denominator.
 func (requirement DeliveryRequirement) Access() (Access, bool) {
 	if !requirement.Available() {
 		return Access{}, false
@@ -46,7 +45,11 @@ func deliveryAccess(input signature.Input) (Access, bool) {
 	if !input.Available() {
 		return Access{}, false
 	}
-	return newAccess(input.Relation, input.Denominator.Key(), []model.ColumnID{input.Column})
+	source, ok := input.SourceDenominator()
+	if !ok || !source.Available() {
+		return Access{}, false
+	}
+	return newAccess(input.Relation, source.Key(), []model.ColumnID{input.Column})
 }
 
 // Relation, Column, Type, Denominator, Delivery, and Presence are convenient
@@ -74,7 +77,7 @@ func (requirement DeliveryRequirement) equal(other DeliveryRequirement) bool {
 }
 
 func equalInput(left, right signature.Input) bool {
-	return left.Relation == right.Relation && left.Column == right.Column && left.Type == right.Type && left.Presence == right.Presence && left.Delivery == right.Delivery && left.Denominator == right.Denominator
+	return left.Same(right)
 }
 
 func deliveryRequirementLess(left, right DeliveryRequirement) bool {
@@ -100,6 +103,20 @@ func deliveryRequirementLess(left, right DeliveryRequirement) bool {
 		return false
 	}
 	if compared := compareDelivery(left.input.Delivery, right.input.Delivery); compared != 0 {
+		return compared < 0
+	}
+	if leftKind, rightKind := left.input.AuthorityKind(), right.input.AuthorityKind(); leftKind != rightKind {
+		return leftKind < rightKind
+	}
+	leftSource, leftSourceOK := left.input.SourceDenominator()
+	rightSource, rightSourceOK := right.input.SourceDenominator()
+	if !leftSourceOK || !rightSourceOK {
+		// Requirements are available before ordering. Keep a deterministic
+		// total order for defensive callers without interpreting a missing
+		// source as the carrier authority.
+		return !leftSourceOK && rightSourceOK
+	}
+	if compared := compareDenominator(leftSource, rightSource); compared != 0 {
 		return compared < 0
 	}
 	return compareDenominator(left.input.Denominator, right.input.Denominator) < 0
@@ -180,7 +197,7 @@ func deliveryRequirementDigest(value DeliveryRequirement) []byte {
 	appendID(value.input.Relation.Owner().Content(), value.input.Relation.Content())
 	appendID(value.input.Column.Relation().Owner().Content(), value.input.Column.Content())
 	appendID(value.input.Type.Owner().Content(), value.input.Type.Content())
-	parts = append(parts, byte(value.input.Presence), byte(value.input.Delivery.Kind))
+	parts = append(parts, byte(value.input.Presence), byte(value.input.Delivery.Kind), byte(value.input.AuthorityKind()))
 	var bound [4]byte
 	bound[0] = byte(value.input.Delivery.Bound >> 24)
 	bound[1] = byte(value.input.Delivery.Bound >> 16)
@@ -195,6 +212,18 @@ func deliveryRequirementDigest(value DeliveryRequirement) []byte {
 	if value.input.Denominator.Available() {
 		appendID(value.input.Denominator.Relation().Owner().Content(), value.input.Denominator.Relation().Content())
 		appendID(value.input.Denominator.Key().Relation().Owner().Content(), value.input.Denominator.Key().Content())
+	} else {
+		parts = append(parts, make([]byte, 128)...)
+	}
+	source, sourceOK := value.input.SourceDenominator()
+	if sourceOK && source.Available() {
+		appendID(source.Relation().Owner().Content(), source.Relation().Content())
+		appendID(source.Key().Relation().Owner().Content(), source.Key().Content())
+	} else {
+		// Do not treat absent source as carrier in a digest. A malformed
+		// requirement gets an unambiguous non-authority encoding and remains
+		// unavailable to all consumers.
+		parts = append(parts, make([]byte, 128)...)
 	}
 	return parts
 }

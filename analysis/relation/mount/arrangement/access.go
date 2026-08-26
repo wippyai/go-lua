@@ -18,6 +18,10 @@ type Access struct {
 	relation model.RelationID
 	key      model.KeyID
 	columns  []model.ColumnID
+	// sealed is the constructor's complete-proof verdict. The fields above
+	// are immutable after construction; callers can only observe columns
+	// through defensive projections, so availability need not re-walk them.
+	sealed bool
 }
 
 // newAccess constructs a logical access over relation, key, and an optional
@@ -41,7 +45,7 @@ func newAccess(relation model.RelationID, key model.KeyID, columns []model.Colum
 		}
 		seen[column] = struct{}{}
 	}
-	return Access{relation: relation, key: key, columns: columns}, true
+	return Access{relation: relation, key: key, columns: columns, sealed: true}, true
 }
 
 // NewRelationAccess constructs the relation-scan form of Access.
@@ -71,28 +75,17 @@ func (access Access) Key() model.KeyID { return access.key }
 
 // Columns returns a defensive copy of the authored logical vector.
 func (access Access) Columns() []model.ColumnID {
+	if !access.Available() {
+		return nil
+	}
 	return append([]model.ColumnID(nil), access.columns...)
 }
 
-// Available reports whether the logical requirement is complete.
+// Available reports the constructor's sealed verdict and scalar identity
+// header. Validation and the defensive vector copy happen once in newAccess;
+// a mounted evaluator must not rebuild a column set on every capability probe.
 func (access Access) Available() bool {
-	if !access.relation.Available() {
-		return false
-	}
-	if access.key.Available() && access.key.Relation() != access.relation {
-		return false
-	}
-	seen := make(map[model.ColumnID]struct{}, len(access.columns))
-	for _, column := range access.columns {
-		if !column.Available() || column.Relation() != access.relation {
-			return false
-		}
-		if _, exists := seen[column]; exists {
-			return false
-		}
-		seen[column] = struct{}{}
-	}
-	return true
+	return access.sealed && access.relation.Available() && (!access.key.Available() || access.key.Relation() == access.relation)
 }
 
 // Equal compares logical content, including the authored ordered vector.

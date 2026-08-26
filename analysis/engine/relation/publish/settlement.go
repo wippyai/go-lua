@@ -2,6 +2,7 @@ package publish
 
 import (
 	"github.com/wippyai/go-lua/analysis/engine/relation/apply"
+	applycontribution "github.com/wippyai/go-lua/analysis/engine/relation/apply/contribution"
 	"github.com/wippyai/go-lua/analysis/engine/relation/state/database"
 	"github.com/wippyai/go-lua/analysis/engine/relation/state/transaction"
 	"github.com/wippyai/go-lua/analysis/relation/mount/witness"
@@ -14,11 +15,11 @@ import (
 //
 // A result is not a cell.  In particular, NoCandidate, NoSelection, Opaque,
 // and Refused must remain distinguishable after publication.
-// request is the complete input to one publication attempt.  It keeps the
-// semantic application, its declared lineage sidecars, and the one optional
-// mount-issued widening permit together.  A caller cannot supply a separate
-// outcome, destination batch, or dependency pair and have the door reconcile
-// them later.
+// request is the complete input to one publication attempt. It keeps the
+// semantic application, which owns the exact input provenance, and the one
+// optional mount-issued widening permit together. A caller cannot supply a
+// separate outcome, destination batch, or lineage sidecar and have the door
+// reconcile them later.
 //
 // The permit is zero for ordinary writes.  A non-zero permit is valid only
 // when the mounted authority captured by the Door contains the exact same
@@ -26,37 +27,18 @@ import (
 // it must not infer widening from a bool or dependency argument.
 type request struct {
 	application apply.Application
-	sidecars    []transaction.Submission
 	widening    witness.WideningPermit
 }
 
-// newRequest validates the semantic/result relationship and copies the
-// sidecars.  The semantic object itself remains a live immutable lease (the
-// proposal buffer can be reset after publication); Publish revalidates it
-// immediately before redeeming the request.
-func newRequest(application apply.Application, sidecars []transaction.Submission, widening witness.WideningPermit) (request, bool) {
+// newRequest validates the semantic/result relationship. The semantic object
+// remains a live immutable lease (the proposal buffer can be reset after
+// publication); Publish revalidates it immediately before redeeming the
+// request.
+func newRequest(application apply.Application, widening witness.WideningPermit) (request, bool) {
 	input := request{application: application, widening: widening}
 	if !input.validApplication() {
 		return request{}, false
 	}
-	result := application.Outcome()
-	if result.Code == outcome.Refused {
-		if len(sidecars) != 0 {
-			return request{}, false
-		}
-	} else {
-		batch, ok := application.Proposals()
-		if !ok || !batch.Available() || batch.Outcome() != result {
-			return request{}, false
-		}
-		if result.Code != outcome.Produced && batch.Len() != 0 {
-			return request{}, false
-		}
-		if batch.Len() != len(sidecars) {
-			return request{}, false
-		}
-	}
-	input.sidecars = append([]transaction.Submission(nil), sidecars...)
 	return input, input.Available()
 }
 
@@ -85,24 +67,16 @@ func (request request) Available() bool {
 	}
 	result := request.application.Outcome()
 	if result.Code == outcome.Refused {
-		return len(request.sidecars) == 0
+		return true
 	}
 	batch, ok := request.application.Proposals()
-	if !ok || batch.Len() != len(request.sidecars) {
+	if !ok {
 		return false
 	}
-	if result.Code != outcome.Produced && batch.Len() != 0 {
+	if !result.Code.Publishes() && batch.Len() != 0 {
 		return false
 	}
 	return true
-}
-
-// Sidecars returns a defensive copy of the declared sidecars.
-func (request request) Sidecars() []transaction.Submission {
-	if !request.Available() {
-		return nil
-	}
-	return append([]transaction.Submission(nil), request.sidecars...)
 }
 
 // Widening returns the exact opaque permit, if this invocation is a certified
@@ -112,13 +86,24 @@ func (request request) Widening() witness.WideningPermit {
 	if !request.Available() {
 		return witness.WideningPermit{}
 	}
+	// A permit is a write capability, not part of the semantic outcome.
+	// ProposalBatch is the upstream write-intent authority.  Terminal
+	// outcomes (including Refused, which has no batch) and publishing outcomes
+	// with an empty batch must therefore erase an otherwise supplied permit
+	// before it can reach state/transaction. The evaluator cannot accidentally
+	// make a no-write outcome depend on recurrence admission.
+	proposals, ok := request.application.Proposals()
+	if !ok || proposals.Len() == 0 {
+		return witness.WideningPermit{}
+	}
 	return request.widening
 }
 
-// batch returns the application-owned proposal lease paired with the
-// declared sidecars.  It is the only place the publication layer constructs
-// the transaction input; callers cannot submit a second outcome/batch pair.
-func (request request) batch() (transaction.SubmissionBatch, bool) {
+// batch returns the application-owned proposal lease paired with its
+// application-owned provenance. It is the only place the publication layer
+// constructs the transaction input; callers cannot submit a second
+// outcome/batch/lineage tuple.
+func (request request) batch(mounted witness.Mounted) (transaction.SubmissionBatch, bool) {
 	if !request.Available() {
 		return transaction.SubmissionBatch{}, false
 	}
@@ -130,7 +115,16 @@ func (request request) batch() (transaction.SubmissionBatch, bool) {
 	if !hasBatch || !proposals.Available() || proposals.Outcome() != result {
 		return transaction.SubmissionBatch{}, false
 	}
-	return transaction.SubmissionBatch{Proposals: proposals, Sidecars: request.Sidecars(), Widening: request.Widening()}, true
+	// The mounted plan is the one declaration authority for the contribution
+	// subset. The publication door is the only place that classifies an
+	// Application into contribution transitions; callers cannot carry a
+	// parallel contribution sidecar.
+	contributions, ok := applycontribution.TransitionsForApplication(mounted, request.application)
+	if !ok {
+		return transaction.SubmissionBatch{}, false
+	}
+	batch, batchOK := transaction.NewSubmissionBatch(request.application, request.Widening(), contributions)
+	return batch, batchOK
 }
 
 // Settlement is the authenticated result of one publication attempt.  It
@@ -147,12 +141,20 @@ type Settlement struct {
 	next     database.Version
 	delta    database.Delta
 	hasDelta bool
+	sealed   bool
 }
 
 // Available authenticates the outcome/root relationship.  No-write
 // settlements require exact root sharing; committed settlements require a
 // valid database delta with matching predecessor/successor roots.
 func (settlement Settlement) Available() bool {
+	if settlement.sealed {
+		return true
+	}
+	return settlement.valid()
+}
+
+func (settlement Settlement) valid() bool {
 	if !settlement.result.Available() || !settlement.base.Available() || !settlement.next.Available() || !settlement.base.Fence().Same(settlement.next.Fence()) {
 		return false
 	}
@@ -160,6 +162,13 @@ func (settlement Settlement) Available() bool {
 		return settlement.delta.Available() && settlement.delta.Base().Same(settlement.base) && settlement.delta.Next().Same(settlement.next)
 	}
 	return settlement.base.Same(settlement.next)
+}
+
+func sealSettlement(settlement Settlement) Settlement {
+	if settlement.valid() {
+		settlement.sealed = true
+	}
+	return settlement
 }
 
 // Outcome returns the exact semantic disposition, including Refused and its
@@ -204,25 +213,25 @@ func (settlement Settlement) Changed() bool {
 }
 
 func noWrite(result outcome.Result, base database.Version) (Settlement, bool) {
-	if !result.Available() || result.Code == outcome.Produced || !base.Available() {
+	if !result.Available() || result.Code.Publishes() || !base.Available() {
 		return Settlement{}, false
 	}
-	settlement := Settlement{result: result, base: base, next: base}
+	settlement := sealSettlement(Settlement{result: result, base: base, next: base})
 	return settlement, settlement.Available()
 }
 
 func committed(result outcome.Result, base, next database.Version, delta database.Delta) (Settlement, bool) {
-	if !result.Available() || result.Code != outcome.Produced || !base.Available() || !next.Available() || !delta.Available() {
+	if !result.Available() || !result.Code.Publishes() || !base.Available() || !next.Available() || !delta.Available() {
 		return Settlement{}, false
 	}
-	settlement := Settlement{result: result, base: base, next: next, delta: delta, hasDelta: true}
+	settlement := sealSettlement(Settlement{result: result, base: base, next: next, delta: delta, hasDelta: true})
 	return settlement, settlement.Available()
 }
 
-func producedNoWrite(result outcome.Result, base database.Version) (Settlement, bool) {
-	if !result.Available() || result.Code != outcome.Produced || !base.Available() {
+func publishingNoWrite(result outcome.Result, base database.Version) (Settlement, bool) {
+	if !result.Available() || !result.Code.Publishes() || !base.Available() {
 		return Settlement{}, false
 	}
-	settlement := Settlement{result: result, base: base, next: base}
+	settlement := sealSettlement(Settlement{result: result, base: base, next: base})
 	return settlement, settlement.Available()
 }

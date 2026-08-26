@@ -5,6 +5,7 @@ import (
 
 	"github.com/wippyai/go-lua/analysis/identity"
 	"github.com/wippyai/go-lua/analysis/relation/schema/model"
+	"github.com/wippyai/go-lua/analysis/relation/schema/region"
 )
 
 func content(t *testing.T, label string) identity.ContentID {
@@ -48,6 +49,19 @@ func issueKey(t *testing.T, relation model.RelationID, label string) model.KeyID
 	value, ok := model.IssueKeyID(relation, content(t, "key/"+label))
 	if !ok {
 		t.Fatalf("issue key %q", label)
+	}
+	return value
+}
+
+func scopeRegion(t *testing.T, label string) region.Region {
+	t.Helper()
+	atom, ok := region.NewAtom(content(t, "scope-region/"+label))
+	if !ok {
+		t.Fatalf("issue scope region atom %q", label)
+	}
+	value, ok := region.FromAtom(atom)
+	if !ok {
+		t.Fatalf("construct scope region %q", label)
 	}
 	return value
 }
@@ -230,7 +244,7 @@ func TestDefinitionsAreImmutableCopies(t *testing.T) {
 	dimensions := []model.ColumnID{first, second}
 	columns := []model.ColumnID{first, second}
 	keys := []model.KeyID{key}
-	scope := model.DefineScopeSchema(scopeID, dimensions)
+	scope := model.DefineScopeSchema(scopeID, dimensions, scopeRegion(t, "immutable"))
 	relationSchema := model.DefineRelationSchema(relation, columns, keys, scope.ID())
 	keySchema := model.DefineKeySchema(key, dimensions)
 	columnSchema := model.DefineColumnSchema(first, typeID)
@@ -279,7 +293,7 @@ func TestMalformedDefinitionsRemainRepresentableForChecker(t *testing.T) {
 
 	// The model stores malformed references; the checker, not this package,
 	// rejects foreign ownership, zero IDs, and duplicate declarations.
-	foreignScope := model.DefineScopeSchema(foreignScopeID, []model.ColumnID{primaryColumn})
+	foreignScope := model.DefineScopeSchema(foreignScopeID, []model.ColumnID{primaryColumn}, scopeRegion(t, "foreign"))
 	foreignRelationSchema := model.DefineRelationSchema(primaryRelation, []model.ColumnID{foreignColumn, foreignColumn}, []model.KeyID{primaryKey, primaryKey}, foreignScope.ID())
 	zeroKeySchema := model.DefineKeySchema(model.KeyID{}, []model.ColumnID{primaryColumn})
 	zeroScopeRelation := model.DefineRelationSchema(primaryRelation, nil, nil, model.ScopeID{})
@@ -320,6 +334,16 @@ func TestCardinalityLineageAndDenominatorRemainIndependent(t *testing.T) {
 	bounded, ok := model.NewCardinality(model.BoundedMany, 3)
 	if !ok || !bounded.Available() {
 		t.Fatalf("bounded cardinality rejected")
+	}
+	complete, ok := model.NewCardinality(model.CompleteDenominator, 0)
+	if !ok || !complete.Available() || complete.Kind().String() != "CompleteDenominator" {
+		t.Fatalf("complete-denominator cardinality rejected")
+	}
+	if _, ok := complete.Bound(); ok {
+		t.Fatalf("complete-denominator cardinality exposed a numeric bound")
+	}
+	if _, ok := model.NewCardinality(model.CompleteDenominator, 1); ok {
+		t.Fatalf("complete-denominator cardinality accepted a numeric bound")
 	}
 	if _, ok := model.NewCardinality(model.BoundedMany, 0); ok {
 		t.Fatalf("zero bounded cardinality accepted")

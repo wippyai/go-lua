@@ -37,13 +37,15 @@ const (
 	CodeInvalidDelivery
 	CodeInvalidSignature
 	CodeDuplicateOutput
-	CodeInvalidOutputAuthority
+	CodeInvalidOutputDenominator
 	CodeUnknownOperation
 	CodeInvalidExpression
 	CodeInvalidScopeOrder
 	CodeInvalidPublication
 	CodeUndeclaredPublication
 	CodeInvalidDependencyProjection
+	CodeInvalidObservation
+	CodeInvalidCorrelation
 )
 
 func (code Code) String() string {
@@ -64,13 +66,15 @@ func (code Code) String() string {
 		"invalid-delivery",
 		"invalid-signature",
 		"duplicate-output",
-		"invalid-output-authority",
+		"invalid-output-denominator",
 		"unknown-operation",
 		"invalid-expression",
 		"invalid-scope-order",
 		"invalid-publication",
 		"undeclared-publication",
 		"invalid-dependency-projection",
+		"invalid-observation",
+		"invalid-correlation",
 	}
 	if int(code) < len(names) {
 		return names[code]
@@ -173,6 +177,7 @@ func (checker *checker) checkSchema() {
 	checker.checkKeys()
 	checker.checkSignatures()
 	checker.checkExpressions()
+	checker.checkObservations()
 }
 
 func appendRegistryIssues(report *Report, indexed *checkregistry.View) {
@@ -197,6 +202,8 @@ func appendRegistryIssues(report *Report, indexed *checkregistry.View) {
 			code = CodeInvalidDependencyProjection
 		case checkregistry.CodeSignatureUnavailable:
 			code = CodeInvalidSignature
+		case checkregistry.CodeObservationUnavailable, checkregistry.CodeObservationDuplicate:
+			code = CodeInvalidObservation
 		}
 		mapped := Issue{Code: code, Path: issue.Path}
 		if _, exists := seen[mapped]; exists {
@@ -353,6 +360,198 @@ func (checker *checker) checkSignatures() {
 	}
 }
 
+// checkObservations proves the closed shape consumed by runtime/snapshot.
+// The source population is the parent observation extent. Each output carries
+// its own sealed destination denominator, so a child relation may be emitted
+// without asking runtime to infer a parent-to-child route.
+func (checker *checker) checkObservations() {
+	for index, contract := range checker.registry.Observations() {
+		path := fmt.Sprintf("observations[%d]", index)
+		if !contract.Available() {
+			checker.add(CodeInvalidObservation, path)
+			continue
+		}
+		operation, operationOK := checker.registry.Signature(contract.Operation())
+		if !operationOK || !operation.Available() {
+			checker.add(CodeUnknownOperation, path+".operation")
+			continue
+		}
+		dependency, dependencyOK := checker.registry.Dependency(contract.Dependency())
+		if !dependencyOK || !dependency.Available() {
+			checker.add(CodeInvalidObservation, path+".dependency")
+			continue
+		}
+		// The dependency is an owner-issued execution declaration, not merely
+		// a convenient label. Its expression is the authority from which an
+		// observation may redeem an Apply result. Dependency and operation
+		// ownership remain independent: a composition may schedule a
+		// peer-owned operation, so pairing is proved by the sealed expression
+		// occurrence below rather than by an owner-equality shortcut.
+		entry, expressionOK := checker.registry.Expression(dependency.Expression())
+		if !expressionOK || !entry.Available() {
+			checker.add(CodeInvalidObservation, path+".dependency.expression")
+			continue
+		}
+		var applies []algebra.Apply
+		if !collectObservationApplies(entry.Expression(), contract.Operation(), &applies) || len(applies) != 1 {
+			// The dependency may contain Publish, Merge, or ColumnProject
+			// structure around its terminal computation. We accept that sealed
+			// algebra, but only when exactly one Apply occurrence carries the
+			// declared operation. This uniqueness is the occurrence proof: a
+			// second same-operation occurrence cannot be selected by copying the
+			// operation identity or by guessing a physical child ordinal.
+			checker.add(CodeInvalidObservation, path+".dependency.expression.apply")
+		}
+		applyInputs := 0
+		if len(applies) == 1 {
+			applyInputs = len(applies[0].Inputs())
+		}
+		population := contract.Population()
+		checker.checkDenominator(population, path+".population")
+		source := contract.Source()
+		// Source.Child addresses a physical Apply child, while operation
+		// inputs address semantic slots. Several slots may legally share one
+		// child, so InputAt(source.Child) is not the relation proof and would
+		// reject valid grouped scalar compositions. The schema can prove the
+		// conservative child bound from input arity and require that the
+		// population is one of the operation's consumed row authorities. The
+		// mounted invocation then proves the exact child/tuple/source row by
+		// membership; no reverse map is invented here.
+		if source.Child() >= uint32(operation.InputLen()) || applyInputs == 0 || source.Child() >= uint32(applyInputs) {
+			checker.add(CodeInvalidObservation, path+".source.child")
+		}
+		populationInput := false
+		allowsAnyTuple := false
+		maxTuple := uint32(0)
+		for _, input := range operation.Inputs() {
+			if !input.Available() || input.Denominator != population || input.Relation != population.Relation() {
+				continue
+			}
+			populationInput = true
+			switch {
+			case input.Delivery.IsComplete():
+				allowsAnyTuple = true
+			case input.Delivery.IsScalar():
+				// Scalar permits only tuple zero; retain the default bound.
+			default:
+				if limit, bounded := input.Delivery.Limit(); bounded && limit > maxTuple {
+					maxTuple = limit
+				}
+			}
+		}
+		if !populationInput {
+			checker.add(CodeInvalidObservation, path+".population.source")
+		}
+		if !allowsAnyTuple && source.Tuple() != 0 && source.Tuple() >= maxTuple {
+			checker.add(CodeInvalidObservation, path+".source.tuple")
+		}
+		for outputIndex, output := range contract.Outputs() {
+			outputPath := fmt.Sprintf("%s.outputs[%d]", path, outputIndex)
+			destination := output.Destination()
+			checker.checkDenominator(destination, outputPath+".destination")
+			// CompleteDenominator is a signature-owned operation contract. An
+			// observation output has no operation-output authority of its own;
+			// accepting this arm here would leave runtime with no sound way to
+			// prove complete coverage for the copied extent.
+			if output.Cardinality().Kind() == model.CompleteDenominator {
+				checker.add(CodeInvalidObservation, outputPath+".cardinality")
+			}
+			column, columnOK := checker.registry.Column(output.Column())
+			if !columnOK || !column.Available() {
+				checker.add(CodeUnknownColumn, outputPath+".column")
+				continue
+			}
+			if column.Relation() != destination.Relation() || column.Type() != output.Type() {
+				checker.add(CodeInvalidObservation, outputPath)
+			}
+			declared, declaredOK := operation.OutputFor(destination.Relation(), output.Column())
+			if !declaredOK || declared.Type != output.Type() {
+				checker.add(CodeInvalidObservation, outputPath+".operation")
+			}
+			// The corresponding sealed output owns this destination. This is the
+			// cross-relation seam: every destination is explicit on that output.
+			declaredDestination, destinationOK := operation.OutputDestination(destination.Relation(), output.Column())
+			if !destinationOK || declaredDestination != destination {
+				checker.add(CodeInvalidObservation, outputPath+".destination.operation")
+			}
+		}
+	}
+}
+
+// collectObservationApplies walks only sealed algebra child edges. It records
+// every Apply carrying operation so the caller can require one unique
+// occurrence without inventing a second path/occurrence vocabulary.
+func collectObservationApplies(expression algebra.Expression, operation signature.Identity, result *[]algebra.Apply) bool {
+	if expression == nil {
+		return false
+	}
+	visit := func(children []algebra.Expression) bool {
+		for _, child := range children {
+			if !collectObservationApplies(child, operation, result) {
+				return false
+			}
+		}
+		return true
+	}
+	switch value := expression.(type) {
+	case algebra.Input:
+		return true
+	case *algebra.Input:
+		return value != nil
+	case algebra.Select:
+		return collectObservationApplies(value.Child(), operation, result)
+	case *algebra.Select:
+		return value != nil && collectObservationApplies(value.Child(), operation, result)
+	case algebra.Project:
+		return collectObservationApplies(value.Child(), operation, result)
+	case *algebra.Project:
+		return value != nil && collectObservationApplies(value.Child(), operation, result)
+	case algebra.ColumnProject:
+		return collectObservationApplies(value.Child(), operation, result)
+	case *algebra.ColumnProject:
+		return value != nil && collectObservationApplies(value.Child(), operation, result)
+	case algebra.Join:
+		return collectObservationApplies(value.Left(), operation, result) && collectObservationApplies(value.Right(), operation, result)
+	case *algebra.Join:
+		return value != nil && collectObservationApplies(value.Left(), operation, result) && collectObservationApplies(value.Right(), operation, result)
+	case algebra.Expand:
+		return collectObservationApplies(value.Child(), operation, result)
+	case *algebra.Expand:
+		return value != nil && collectObservationApplies(value.Child(), operation, result)
+	case algebra.Merge:
+		return visit(value.Inputs())
+	case *algebra.Merge:
+		return value != nil && visit(value.Inputs())
+	case algebra.Group:
+		return collectObservationApplies(value.Child(), operation, result)
+	case *algebra.Group:
+		return value != nil && collectObservationApplies(value.Child(), operation, result)
+	case algebra.Complete:
+		return collectObservationApplies(value.Child(), operation, result)
+	case *algebra.Complete:
+		return value != nil && collectObservationApplies(value.Child(), operation, result)
+	case algebra.Apply:
+		if value.Contract().Operation() == operation {
+			*result = append(*result, value)
+		}
+		return visit(value.Inputs())
+	case *algebra.Apply:
+		if value == nil {
+			return false
+		}
+		if value.Contract().Operation() == operation {
+			*result = append(*result, *value)
+		}
+		return visit(value.Inputs())
+	case algebra.Publish:
+		return collectObservationApplies(value.Child(), operation, result)
+	case *algebra.Publish:
+		return value != nil && collectObservationApplies(value.Child(), operation, result)
+	default:
+		return false
+	}
+}
+
 func (checker *checker) checkSignature(value signature.Signature, path string) {
 	if !value.Available() {
 		return
@@ -389,21 +588,30 @@ func (checker *checker) checkSignature(value signature.Signature, path string) {
 		}
 		seenOutputs[key] = struct{}{}
 	}
-	authority := value.Authority().Denominator
+	if value.Cardinality().Kind() == model.CompleteDenominator {
+		checker.checkCompleteDenominator(outputs, path)
+	}
+}
+
+// checkCompleteDenominator proves the output-side authority for a
+// mount-dependent complete result. The mounted witness supplies cardinality;
+// the sealed operation supplies the exact denominator and its output columns.
+func (checker *checker) checkCompleteDenominator(outputs []signature.Output, path string) {
 	if len(outputs) == 0 {
-		if authority.Available() {
-			checker.add(CodeInvalidOutputAuthority, path+".authority")
+		checker.add(CodeInvalidSignature, path+".outputs")
+		return
+	}
+	var denominator model.DenominatorRef
+	for index, output := range outputs {
+		if !output.Available() || !output.Denominator.Available() {
+			continue
 		}
-	} else {
-		if !authority.Available() {
-			checker.add(CodeInvalidOutputAuthority, path+".authority")
-		} else {
-			checker.checkDenominator(authority, path+".authority.denominator")
-			for outputIndex, output := range outputs {
-				if output.Relation != authority.Relation() {
-					checker.add(CodeInvalidOutputAuthority, fmt.Sprintf("%s.outputs[%d].relation", path, outputIndex))
-				}
-			}
+		if !denominator.Available() {
+			denominator = output.Denominator
+			continue
+		}
+		if output.Denominator != denominator {
+			checker.add(CodeInvalidOutputDenominator, fmt.Sprintf("%s.outputs[%d].denominator", path, index))
 		}
 	}
 }
@@ -476,6 +684,10 @@ func (checker *checker) checkOutput(output signature.Output, path string) {
 		checker.add(CodeUnknownType, path+".type")
 	} else if columnOK && column.Type() != output.Type {
 		checker.add(CodeInvalidMembership, path+".type")
+	}
+	checker.checkDenominator(output.Denominator, path+".denominator")
+	if output.Denominator.Available() && output.Denominator.Relation() != output.Relation {
+		checker.add(CodeInvalidOutputDenominator, path+".denominator.relation")
 	}
 }
 
@@ -604,6 +816,26 @@ func (checker *checker) checkExpression(expression algebra.Expression, path stri
 				info.addProduced(target, mapping.Target())
 			}
 		}
+	case algebra.ColumnProject:
+		child := checker.checkExpression(value.Child(), path+".child", stack)
+		info = child
+		slots := value.Contract().Slots()
+		if len(slots) == 0 {
+			checker.add(CodeInvalidExpression, path+".slots")
+		}
+		seen := make(map[model.ColumnID]struct{}, len(slots))
+		for index, slot := range slots {
+			slotPath := fmt.Sprintf("%s.slots[%d]", path, index)
+			if _, duplicate := seen[slot.Column()]; duplicate {
+				checker.add(CodeInvalidMembership, slotPath)
+			}
+			seen[slot.Column()] = struct{}{}
+			if _, ok := checker.registry.Column(slot.Column()); !ok {
+				checker.add(CodeUnknownColumn, slotPath+".column")
+			} else if _, ok := child.columns[slot.Column()]; !ok {
+				checker.add(CodeInvalidMembership, slotPath+".column")
+			}
+		}
 	case algebra.Join:
 		left := checker.checkExpression(value.Left(), path+".left", stack)
 		right := checker.checkExpression(value.Right(), path+".right", stack)
@@ -620,16 +852,67 @@ func (checker *checker) checkExpression(expression algebra.Expression, path stri
 				checker.add(CodeInvalidMembership, fmt.Sprintf("%s.contract.right[%d]", path, index))
 			}
 		}
+	case algebra.Expand:
+		// Expand retains the child's C-left tuple and appends the sealed R
+		// tuple. P and correlation are logical dependencies of the contract,
+		// not extra output columns, so they are validated here without being
+		// smuggled into the downstream expression shape.
+		child := checker.checkExpression(value.Child(), path+".child", stack)
+		info = child
+		contract := value.Contract()
+		if !contract.Available() {
+			checker.add(CodeInvalidExpression, path+".contract")
+			break
+		}
+		candidate, candidateOK := checker.registry.Relation(contract.Candidate())
+		if !candidateOK || !candidate.Available() {
+			checker.add(CodeUnknownRelation, path+".candidate")
+		} else if _, present := child.relations[contract.Candidate()]; !present {
+			checker.add(CodeInvalidMembership, path+".candidate")
+		}
+		for relationID, relationPath := range map[model.RelationID]string{
+			contract.Publisher():   path + ".publisher",
+			contract.Correlation(): path + ".correlation",
+		} {
+			relation, ok := checker.registry.Relation(relationID)
+			if !ok || !relation.Available() {
+				checker.add(CodeUnknownRelation, relationPath)
+			}
+		}
+		reader, readerOK := checker.registry.Relation(contract.Reader())
+		if !readerOK || !reader.Available() {
+			checker.add(CodeUnknownRelation, path+".reader")
+			break
+		}
+		key, keyOK := checker.registry.Column(contract.Key())
+		if !keyOK || !key.Available() {
+			checker.add(CodeUnknownColumn, path+".key")
+		} else if key.Relation() != reader.ID() || !reader.HasColumn(contract.Key()) {
+			checker.add(CodeInvalidMembership, path+".key")
+		} else {
+			checker.checkExpandKeySchema(reader, contract.Key(), path)
+		}
+		if scope := contract.Scope(); !scope.Available() {
+			checker.add(CodeUnknownScope, path+".scope")
+		} else if _, ok := checker.registry.Scope(scope); !ok {
+			checker.add(CodeUnknownScope, path+".scope")
+		} else {
+			info.scoped = child.scoped
+		}
+		info.addRelation(reader.ID(), checker)
 	case algebra.Merge:
 		inputs := value.Inputs()
+		childInfos := make([]exprInfo, len(inputs))
 		if len(inputs) == 0 {
 			checker.add(CodeInvalidExpression, path+".inputs")
 		}
-		childInfos := make([]exprInfo, 0, len(inputs))
 		for index, childExpression := range inputs {
-			child := checker.checkExpression(childExpression, fmt.Sprintf("%s.inputs[%d]", path, index), stack)
-			childInfos = append(childInfos, child)
-			info = mergeInfo(info, child)
+			childInfos[index] = checker.checkExpression(childExpression, fmt.Sprintf("%s.inputs[%d]", path, index), stack)
+			if index == 0 {
+				info = childInfos[index]
+			} else {
+				info = mergeInfo(info, childInfos[index])
+			}
 		}
 		info.scoped = allScoped(childInfos)
 		if key := value.Contract().Key(); !checker.keyUsableByInfo(key, info) {
@@ -642,6 +925,8 @@ func (checker *checker) checkExpression(expression algebra.Expression, path stri
 			checker.add(CodeInvalidMembership, path+".key")
 		}
 		if !value.Contract().Cardinality().Available() {
+			checker.add(CodeInvalidExpression, path+".cardinality")
+		} else if value.Contract().Cardinality().Kind() == model.CompleteDenominator {
 			checker.add(CodeInvalidExpression, path+".cardinality")
 		}
 	case algebra.Complete:
@@ -658,7 +943,11 @@ func (checker *checker) checkExpression(expression algebra.Expression, path stri
 		childInfos := make([]exprInfo, len(value.Inputs()))
 		for index, childExpression := range value.Inputs() {
 			childInfos[index] = checker.checkExpression(childExpression, fmt.Sprintf("%s.inputs[%d]", path, index), stack)
-			info = mergeInfo(info, childInfos[index])
+			if index == 0 {
+				info = childInfos[index]
+			} else {
+				info = mergeInfo(info, childInfos[index])
+			}
 		}
 		operation := value.Contract().Operation()
 		sealed, ok := checker.registry.Signature(operation)
@@ -669,14 +958,22 @@ func (checker *checker) checkExpression(expression algebra.Expression, path stri
 		if !sealed.Available() {
 			return info
 		}
-		if len(childInfos) != sealed.InputLen() {
-			checker.add(CodeInvalidSignature, path+".inputs")
+		slotSource := value.Contract().SlotSource()
+		if len(slotSource) != sealed.InputLen() {
+			checker.add(CodeInvalidSignature, path+".slotSource")
 		}
+		seenChildren := make([]bool, len(childInfos))
 		for index, input := range sealed.Inputs() {
-			if index >= len(childInfos) {
+			if index >= len(slotSource) {
 				break
 			}
-			child := childInfos[index]
+			childOrdinal := int(slotSource[index].Child())
+			if childOrdinal >= len(childInfos) {
+				checker.add(CodeInvalidSignature, fmt.Sprintf("%s.slotSource[%d]", path, index))
+				continue
+			}
+			seenChildren[childOrdinal] = true
+			child := childInfos[childOrdinal]
 			if !child.scoped {
 				checker.add(CodeInvalidScopeOrder, fmt.Sprintf("%s.inputs[%d].scope", path, index))
 			}
@@ -687,6 +984,12 @@ func (checker *checker) checkExpression(expression algebra.Expression, path stri
 				checker.add(CodeInvalidMembership, fmt.Sprintf("%s.inputs[%d].column", path, index))
 			}
 		}
+		for childIndex, seen := range seenChildren {
+			if !seen {
+				checker.add(CodeInvalidSignature, fmt.Sprintf("%s.inputs[%d].slotSource", path, childIndex))
+			}
+		}
+		checker.checkApplyCorrelation(value.Contract().Correlation(), value.Inputs(), childInfos, sealed, value.Contract().SlotSource(), path)
 		info.scoped = allScoped(childInfos)
 		// Apply is the semantic publication boundary. Only its declared
 		// outputs are candidates for the next logical publication; child
@@ -696,12 +999,13 @@ func (checker *checker) checkExpression(expression algebra.Expression, path stri
 		for _, output := range sealed.Outputs() {
 			info.addRelation(output.Relation, checker)
 			info.addProduced(output.Relation, output.Column)
-		}
-		if denominator := sealed.Authority().Denominator; denominator.Available() {
-			info.outputKey[denominator.Relation()] = denominator.Key()
+			if output.Denominator.Available() {
+				info.outputKey[output.Denominator.Relation()] = output.Denominator.Key()
+			}
 		}
 	case algebra.Publish:
-		child := checker.checkExpression(value.Child(), path+".child", stack)
+		childExpression := value.Child()
+		child := checker.checkExpression(childExpression, path+".child", stack)
 		info = child
 		if !child.scoped {
 			checker.add(CodeInvalidScopeOrder, path+".scope")
@@ -718,11 +1022,26 @@ func (checker *checker) checkExpression(expression algebra.Expression, path stri
 		} else if keyValue.Relation() != destination || !relationOK || !relation.HasKey(key) {
 			checker.add(CodeInvalidPublication, path+".key")
 		}
-		if columns, ok := child.produced[destination]; !ok || len(columns) == 0 {
-			checker.add(CodeUndeclaredPublication, path+".destination")
+		columns := value.Contract().Columns()
+		if len(columns) == 0 {
+			columns = relation.Columns()
 		}
-		if expected, ok := child.outputKey[destination]; !ok || expected != key {
-			checker.add(CodeInvalidPublication, path+".key")
+		seen := make(map[model.ColumnID]struct{}, len(columns))
+		for index, column := range columns {
+			columnPath := fmt.Sprintf("%s.columns[%d]", path, index)
+			if _, duplicate := seen[column]; duplicate {
+				checker.add(CodeInvalidPublication, columnPath)
+				continue
+			}
+			seen[column] = struct{}{}
+			declared, declaredOK := checker.registry.Column(column)
+			if !declaredOK {
+				checker.add(CodeUnknownColumn, columnPath)
+				continue
+			}
+			if declared.Relation() != destination || !relation.HasColumn(column) {
+				checker.add(CodeInvalidPublication, columnPath)
+			}
 		}
 		info.published = true
 	default:
@@ -732,6 +1051,407 @@ func (checker *checker) checkExpression(expression algebra.Expression, path stri
 		checker.add(CodeInvalidExpression, path+".kind")
 	}
 	return info
+}
+
+// checkApplyCorrelation proves the schema half of a heterogeneous Apply.
+// Each child contributes one owner-issued ordered projection and one exact
+// Complete range authority from the semantic signature. The common
+// coordinate is only a typed declaration; no checker invents a relation,
+// denominator, cache, or value copy to make unrelated ranges agree.
+func (checker *checker) checkApplyCorrelation(correlation algebra.ApplyCorrelation, expressions []algebra.Expression, children []exprInfo, sealed signature.Signature, slots []algebra.SlotSource, path string) {
+	if !correlation.Specified() {
+		return
+	}
+	if !correlation.Available() {
+		checker.add(CodeInvalidCorrelation, path+".correlation")
+		return
+	}
+	// Population is an independent closed Q authority. Its key must be the
+	// singleton coordinate key: that is the existing schema fact that proves
+	// coordinate totality and uniqueness. Scope is deliberately not consulted
+	// here; it is a cofiber and never a key substitute.
+	population := correlation.Population()
+	checker.checkDenominator(population, path+".correlation.population")
+	populationRelation, populationRelationOK := checker.registry.Relation(population.Relation())
+	populationKey, populationKeyOK := checker.registry.Key(population.Key())
+	coordinate, coordinateOK := checker.registry.Column(correlation.Coordinate())
+	if !coordinateOK || !coordinate.Available() {
+		checker.add(CodeUnknownColumn, path+".correlation.coordinate")
+	} else if coordinate.Type() != correlation.Type() {
+		checker.add(CodeInvalidCorrelation, path+".correlation.type")
+	}
+	if coordinateOK && coordinate.Available() && populationRelationOK && populationRelation.Available() {
+		if coordinate.Relation() != population.Relation() || !populationRelation.HasColumn(correlation.Coordinate()) {
+			checker.add(CodeInvalidCorrelation, path+".correlation.population.coordinate")
+		}
+	}
+	if populationKeyOK && populationKey.Available() {
+		keyColumns := populationKey.Columns()
+		if len(keyColumns) != 1 || keyColumns[0] != correlation.Coordinate() {
+			checker.add(CodeInvalidCorrelation, path+".correlation.population.key")
+		}
+	}
+	if correlation.ProjectionCount() != len(children) {
+		checker.add(CodeInvalidCorrelation, path+".correlation.projections")
+		return
+	}
+	if len(slots) != sealed.InputLen() {
+		return
+	}
+	// The mixed population ABI has one direct population Input at child zero;
+	// unlike the historical all-complete form it owns no Complete denominator
+	// or posting directory.  Keep that child on the schema authority path only
+	// after checking its scalar source, then validate every remaining child by
+	// the same exact Complete range/projection rules below.
+	if scalarPopulationChildAuthority(expressions, children, sealed, slots, correlation) {
+		checker.checkScalarPopulationCorrelation(correlation, expressions, children, sealed, slots, path)
+		return
+	}
+	type rangeProof struct {
+		relation    model.RelationID
+		denominator model.DenominatorRef
+		delivery    signature.Delivery
+		set         bool
+	}
+	ranges := make([]rangeProof, len(children))
+	for index, input := range sealed.Inputs() {
+		childIndex := int(slots[index].Child())
+		if childIndex < 0 || childIndex >= len(children) || !input.Delivery.IsComplete() {
+			continue
+		}
+		proof := &ranges[childIndex]
+		if !proof.set {
+			proof.relation, proof.denominator, proof.delivery, proof.set = input.Relation, input.Denominator, input.Delivery, true
+			continue
+		}
+		if proof.relation != input.Relation || proof.denominator != input.Denominator || proof.delivery != input.Delivery {
+			checker.add(CodeInvalidCorrelation, fmt.Sprintf("%s.correlation.child[%d].range", path, childIndex))
+		}
+	}
+	for childIndex, child := range children {
+		projection, ok := correlation.ProjectionAt(childIndex)
+		if !ok || !ranges[childIndex].set {
+			checker.add(CodeInvalidCorrelation, fmt.Sprintf("%s.correlation.child[%d]", path, childIndex))
+			continue
+		}
+		if len(projection) == 0 {
+			checker.checkSharedCompleteCorrelationChild(correlation, expressions[childIndex], child, sealed, slots, childIndex, path)
+			continue
+		}
+		seen := make(map[model.ColumnID]struct{}, len(projection))
+		for columnIndex, columnID := range projection {
+			columnPath := fmt.Sprintf("%s.correlation.child[%d].columns[%d]", path, childIndex, columnIndex)
+			if _, duplicate := seen[columnID]; duplicate {
+				checker.add(CodeInvalidCorrelation, columnPath)
+				continue
+			}
+			seen[columnID] = struct{}{}
+			column, columnOK := checker.registry.Column(columnID)
+			if !columnOK || !column.Available() {
+				checker.add(CodeUnknownColumn, columnPath)
+				continue
+			}
+			if _, retained := child.columns[columnID]; !retained || column.Relation() != ranges[childIndex].relation {
+				checker.add(CodeInvalidMembership, columnPath)
+			}
+			if column.Type() != correlation.Type() {
+				checker.add(CodeInvalidCorrelation, columnPath+".type")
+			}
+		}
+	}
+}
+
+// scalarPopulationChildAuthority recognizes the same closed mixed ABI as the
+// typing pass: child zero is a direct Input and has one scalar delivery.  It
+// is intentionally structural, so malformed scalar declarations enter the
+// mixed checker and receive an explicit refusal instead of falling through to
+// the all-complete range proof.
+func scalarPopulationChildAuthority(expressions []algebra.Expression, children []exprInfo, sealed signature.Signature, slots []algebra.SlotSource, correlation algebra.ApplyCorrelation) bool {
+	if len(expressions) == 0 || len(children) == 0 || len(slots) != sealed.InputLen() || !correlation.Available() {
+		return false
+	}
+	if _, ok := directInputRelation(expressions[0]); !ok {
+		return false
+	}
+	for index, source := range slots {
+		if source.Child() != 0 {
+			continue
+		}
+		input, ok := sealed.InputAt(index)
+		if ok && input.Delivery.IsScalar() {
+			return true
+		}
+	}
+	return false
+}
+
+func (checker *checker) checkScalarPopulationCorrelation(correlation algebra.ApplyCorrelation, expressions []algebra.Expression, children []exprInfo, sealed signature.Signature, slots []algebra.SlotSource, path string) {
+	population := correlation.Population()
+	coordinate := correlation.Coordinate()
+	if len(children) < 2 {
+		checker.add(CodeInvalidCorrelation, path+".correlation.children")
+	}
+	directRelation, directOK := directInputRelation(expressions[0])
+	if !directOK || directRelation != population.Relation() {
+		checker.add(CodeInvalidCorrelation, path+".correlation.population.child")
+	}
+	if len(children) != 0 {
+		if _, present := children[0].relations[population.Relation()]; !present {
+			checker.add(CodeInvalidMembership, path+".correlation.population.child")
+		}
+	}
+
+	// The positional source is checked against the direct Input's authored
+	// relation vector.  This is the authority-side equivalent of the typing
+	// cell check and prevents an out-of-range or misaddressed scalar from being
+	// accepted merely because the relation contains the coordinate somewhere.
+	scalarSlots := make([]int, 0, 1)
+	for index, source := range slots {
+		if source.Child() != 0 {
+			continue
+		}
+		input, inputOK := sealed.InputAt(index)
+		if !inputOK {
+			continue
+		}
+		if !input.Delivery.IsScalar() {
+			checker.add(CodeInvalidCorrelation, fmt.Sprintf("%s.correlation.population.slot[%d]", path, index))
+			continue
+		}
+		scalarSlots = append(scalarSlots, index)
+	}
+	if len(scalarSlots) != 1 {
+		checker.add(CodeInvalidCorrelation, path+".correlation.population.source")
+	} else {
+		index := scalarSlots[0]
+		source := slots[index]
+		input, _ := sealed.InputAt(index)
+		valid := directOK && directRelation == population.Relation() && input.Relation == population.Relation() && input.Column == coordinate && input.Type == correlation.Type() && input.Denominator == population
+		if directOK {
+			relation, relationOK := checker.registry.Relation(directRelation)
+			if !relationOK || !relation.Available() {
+				valid = false
+			} else {
+				columns := relation.Columns()
+				cell := int(source.Cell())
+				if cell < 0 || cell >= len(columns) || columns[cell] != coordinate {
+					valid = false
+				}
+			}
+		}
+		if !valid {
+			checker.add(CodeInvalidCorrelation, fmt.Sprintf("%s.correlation.population.source", path))
+		}
+	}
+	projection, projectionOK := correlation.ProjectionAt(0)
+	if !projectionOK || len(projection) != 1 || projection[0] != coordinate {
+		checker.add(CodeInvalidCorrelation, path+".correlation.population.projection")
+	}
+
+	// Every remaining child keeps the historical Complete range authority.
+	type rangeProof struct {
+		relation    model.RelationID
+		denominator model.DenominatorRef
+		delivery    signature.Delivery
+		set         bool
+	}
+	ranges := make([]rangeProof, len(children))
+	for index, input := range sealed.Inputs() {
+		childIndex := int(slots[index].Child())
+		if childIndex <= 0 || childIndex >= len(children) || !input.Delivery.IsComplete() {
+			continue
+		}
+		proof := &ranges[childIndex]
+		if !proof.set {
+			proof.relation, proof.denominator, proof.delivery, proof.set = input.Relation, input.Denominator, input.Delivery, true
+			continue
+		}
+		if proof.relation != input.Relation || proof.denominator != input.Denominator || proof.delivery != input.Delivery {
+			checker.add(CodeInvalidCorrelation, fmt.Sprintf("%s.correlation.child[%d].range", path, childIndex))
+		}
+	}
+	for childIndex := 1; childIndex < len(children); childIndex++ {
+		child := children[childIndex]
+		projection, projectionOK := correlation.ProjectionAt(childIndex)
+		if !projectionOK {
+			checker.add(CodeInvalidCorrelation, fmt.Sprintf("%s.correlation.child[%d]", path, childIndex))
+			continue
+		}
+		if len(projection) == 0 {
+			checker.checkSharedCompleteCorrelationChild(correlation, expressions[childIndex], child, sealed, slots, childIndex, path)
+			continue
+		}
+		spanDenominator, spanRelation, exactSpan := exactCompleteSelectInputAuthority(expressions[childIndex])
+		if !exactSpan {
+			checker.add(CodeInvalidCorrelation, fmt.Sprintf("%s.correlation.child[%d].shape", path, childIndex))
+		}
+		if !ranges[childIndex].set {
+			checker.add(CodeInvalidCorrelation, fmt.Sprintf("%s.correlation.child[%d]", path, childIndex))
+			continue
+		}
+		if !exactSpan || spanRelation != ranges[childIndex].relation || spanDenominator != ranges[childIndex].denominator {
+			checker.add(CodeInvalidCorrelation, fmt.Sprintf("%s.correlation.child[%d].range", path, childIndex))
+		}
+		seen := make(map[model.ColumnID]struct{}, len(projection))
+		for columnIndex, columnID := range projection {
+			columnPath := fmt.Sprintf("%s.correlation.child[%d].columns[%d]", path, childIndex, columnIndex)
+			if _, duplicate := seen[columnID]; duplicate {
+				checker.add(CodeInvalidCorrelation, columnPath)
+				continue
+			}
+			seen[columnID] = struct{}{}
+			column, columnOK := checker.registry.Column(columnID)
+			if !columnOK || !column.Available() {
+				checker.add(CodeUnknownColumn, columnPath)
+				continue
+			}
+			if _, retained := child.columns[columnID]; !retained || column.Relation() != ranges[childIndex].relation {
+				checker.add(CodeInvalidMembership, columnPath)
+			}
+			if column.Type() != correlation.Type() {
+				checker.add(CodeInvalidCorrelation, columnPath+".type")
+			}
+		}
+		for slotIndex, source := range slots {
+			if int(source.Child()) != childIndex {
+				continue
+			}
+			input, inputOK := sealed.InputAt(slotIndex)
+			if !inputOK || !input.Delivery.IsComplete() || input.Relation != ranges[childIndex].relation || input.Denominator != ranges[childIndex].denominator {
+				checker.add(CodeInvalidCorrelation, fmt.Sprintf("%s.correlation.child[%d].slot[%d]", path, childIndex, slotIndex))
+				continue
+			}
+			if prior, priorOK := sealed.InputAt(firstSlotForAuthorityChild(slots, childIndex, slotIndex)); priorOK && (prior.Relation != input.Relation || prior.Denominator != input.Denominator || prior.Delivery != input.Delivery) {
+				checker.add(CodeInvalidCorrelation, fmt.Sprintf("%s.correlation.child[%d].range", path, childIndex))
+			}
+			if exactSpan {
+				relation, relationOK := checker.registry.Relation(spanRelation)
+				if !relationOK || !relation.Available() || int(source.Cell()) >= len(relation.Columns()) || relation.Columns()[source.Cell()] != input.Column {
+					checker.add(CodeInvalidCorrelation, fmt.Sprintf("%s.correlation.child[%d].slot[%d]", path, childIndex, slotIndex))
+				}
+			}
+		}
+	}
+}
+
+// checkSharedCompleteCorrelationChild proves the authority half of the
+// broadcast form. An empty projection is not a missing posting key: it is an
+// exact global Complete(Select(Input)) vector with no Q-row directory. The
+// vector cannot retain or deliver the population coordinate, and every slot
+// must name its exact global Complete range.
+//
+// Keep the source relation and Complete denominator equal here. Correlated
+// joins require a distinct source/carrier witness contract; accepting them by
+// relaxing this local proof would let a global cell masquerade as a carrier
+// row before mount has a way to authenticate both.
+func (checker *checker) checkSharedCompleteCorrelationChild(correlation algebra.ApplyCorrelation, expression algebra.Expression, child exprInfo, sealed signature.Signature, slots []algebra.SlotSource, childIndex int, path string) {
+	childPath := fmt.Sprintf("%s.correlation.child[%d]", path, childIndex)
+	denominator, relation, exact := exactCompleteSelectInputAuthority(expression)
+	if !exact {
+		checker.add(CodeInvalidCorrelation, childPath+".shape")
+	}
+	if _, retainsCoordinate := child.columns[correlation.Coordinate()]; retainsCoordinate {
+		checker.add(CodeInvalidCorrelation, childPath+".columns")
+	}
+
+	spanSet := false
+	var prior signature.Input
+	priorSet := false
+	for slotIndex, source := range slots {
+		if int(source.Child()) != childIndex {
+			continue
+		}
+		input, inputOK := sealed.InputAt(slotIndex)
+		if !inputOK {
+			continue
+		}
+		if !input.Delivery.IsComplete() {
+			checker.add(CodeInvalidCorrelation, fmt.Sprintf("%s.slot[%d]", childPath, slotIndex))
+			continue
+		}
+		spanSet = true
+		if input.Column == correlation.Coordinate() {
+			checker.add(CodeInvalidCorrelation, fmt.Sprintf("%s.slot[%d]", childPath, slotIndex))
+		}
+		if !exact || input.Relation != relation || input.Denominator != denominator {
+			checker.add(CodeInvalidCorrelation, childPath+".range")
+		}
+		if priorSet && (prior.Relation != input.Relation || prior.Denominator != input.Denominator || prior.Delivery != input.Delivery) {
+			checker.add(CodeInvalidCorrelation, childPath+".range")
+		}
+		if exact {
+			relationSchema, relationOK := checker.registry.Relation(relation)
+			if !relationOK || !relationSchema.Available() || int(source.Cell()) >= len(relationSchema.Columns()) || relationSchema.Columns()[source.Cell()] != input.Column {
+				checker.add(CodeInvalidCorrelation, fmt.Sprintf("%s.slot[%d]", childPath, slotIndex))
+			}
+		}
+		prior, priorSet = input, true
+	}
+	if !spanSet {
+		checker.add(CodeInvalidCorrelation, childPath)
+	}
+}
+
+// exactCompleteSelectInputAuthority is the authority-side shape proof for a
+// mixed Apply span. A range denominator alone is insufficient: Group, Merge,
+// or another range-producing tree would not have the mounted posting payload
+// required by the replay ABI.
+func exactCompleteSelectInputAuthority(expression algebra.Expression) (model.DenominatorRef, model.RelationID, bool) {
+	var complete algebra.Complete
+	switch value := expression.(type) {
+	case algebra.Complete:
+		complete = value
+	case *algebra.Complete:
+		if value == nil {
+			return model.DenominatorRef{}, model.RelationID{}, false
+		}
+		complete = *value
+	default:
+		return model.DenominatorRef{}, model.RelationID{}, false
+	}
+	if !complete.Denominator().Available() {
+		return model.DenominatorRef{}, model.RelationID{}, false
+	}
+	var selectExpression algebra.Select
+	switch value := complete.Child().(type) {
+	case algebra.Select:
+		selectExpression = value
+	case *algebra.Select:
+		if value == nil {
+			return model.DenominatorRef{}, model.RelationID{}, false
+		}
+		selectExpression = *value
+	default:
+		return model.DenominatorRef{}, model.RelationID{}, false
+	}
+	relation, ok := directInputRelation(selectExpression.Child())
+	if !ok || relation != complete.Denominator().Relation() {
+		return model.DenominatorRef{}, model.RelationID{}, false
+	}
+	return complete.Denominator(), relation, true
+}
+
+func firstSlotForAuthorityChild(slots []algebra.SlotSource, child, before int) int {
+	for index := 0; index < before; index++ {
+		if int(slots[index].Child()) == child {
+			return index
+		}
+	}
+	return before
+}
+
+func directInputRelation(expression algebra.Expression) (model.RelationID, bool) {
+	switch value := expression.(type) {
+	case algebra.Input:
+		return value.Relation(), value.Relation().Available()
+	case *algebra.Input:
+		if value == nil {
+			return model.RelationID{}, false
+		}
+		return value.Relation(), value.Relation().Available()
+	default:
+		return model.RelationID{}, false
+	}
 }
 
 func (checker *checker) relationScopeReady(relation model.RelationSchema) bool {

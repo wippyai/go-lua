@@ -11,7 +11,11 @@ import (
 	"github.com/wippyai/go-lua/analysis/relation/check/certificate"
 	"github.com/wippyai/go-lua/analysis/relation/schema/algebra"
 	"github.com/wippyai/go-lua/analysis/relation/schema/model"
+	"github.com/wippyai/go-lua/analysis/relation/schema/region"
 	"github.com/wippyai/go-lua/analysis/relation/schema/plan"
+	"github.com/wippyai/go-lua/analysis/relation/schema/semantic/output"
+	"github.com/wippyai/go-lua/analysis/relation/semantic/outcome"
+	"github.com/wippyai/go-lua/analysis/relation/semantic/signature"
 )
 
 type fixture struct {
@@ -64,7 +68,7 @@ func (value fixture) keySchema() model.KeySchema {
 }
 
 func (value fixture) scopeSchema() model.ScopeSchema {
-	return model.DefineScopeSchema(value.scope, nil)
+	return model.DefineScopeSchema(value.scope, nil, region.True())
 }
 
 func buildSchema(t *testing.T, value fixture, reverse bool, extras func(*plan.Builder)) plan.ExecutionSchema {
@@ -121,6 +125,35 @@ func TestDeclarationOrderDoesNotChangeCertificate(t *testing.T) {
 	}
 }
 
+func TestDuplicateInitialDeclarationRefusesAtCertificateBoundary(t *testing.T) {
+	value := newFixture(t)
+	operationID, ok := model.IssueOperationID(value.owner, token(t, "initial-operation"))
+	if !ok {
+		t.Fatal("initial operation identity unavailable")
+	}
+	semantic, ok := signature.Seal(signature.Spec{Identity: signature.Identity{Operation: operationID, Version: 1}})
+	if !ok {
+		t.Fatal("initial signature unavailable")
+	}
+	initial := plan.DefineInitial(semantic.Identity(), value.scope)
+	schema := buildSchema(t, value, false, func(builder *plan.Builder) {
+		builder.AddSignature(semantic)
+		builder.AddInitial(initial)
+		builder.AddInitial(initial)
+	})
+	certificateValue, refusal := certificate.Check(schema)
+	assertZeroCertificate(t, certificateValue, refusal, certificate.PassStructural)
+	found := false
+	for _, issue := range refusal.Issues() {
+		if issue.Path != "" && issue.Detail == "duplicate initial declaration" {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("duplicate initial declaration was not reported: %+v", refusal.Issues())
+	}
+}
+
 func TestLogicalMutationChangesCertificate(t *testing.T) {
 	value := newFixture(t)
 	baseline, refusal := certificate.Check(buildSchema(t, value, false, nil))
@@ -139,6 +172,115 @@ func TestLogicalMutationChangesCertificate(t *testing.T) {
 	}
 	if baseline.Digest() == mutated.Digest() {
 		t.Fatal("logical column type mutation did not change certificate digest")
+	}
+}
+
+func TestContributionIsRetainedAndChangesCertificateDigest(t *testing.T) {
+	value := newFixture(t)
+	baseline, refusal := certificate.Check(buildSchema(t, value, false, nil))
+	if refusal != nil || !baseline.Available() {
+		t.Fatalf("baseline certificate refused: %v", refusal)
+	}
+	operation, ok := model.IssueOperationID(value.owner, token(t, "contribution-operation"))
+	if !ok {
+		t.Fatal("operation identity unavailable")
+	}
+	denominator, ok := model.NewDenominatorRef(value.relation, value.key)
+	if !ok {
+		t.Fatal("denominator unavailable")
+	}
+	cardinality, ok := model.NewCardinality(model.ExactlyOne, 0)
+	if !ok {
+		t.Fatal("cardinality unavailable")
+	}
+	outcomes, ok := outcome.NewSet(outcome.Produced, outcome.NoSelection, outcome.Refused)
+	if !ok {
+		t.Fatal("outcomes unavailable")
+	}
+	semantic, ok := signature.Seal(signature.Spec{
+		Identity: signature.Identity{Operation: operation, Version: 1},
+		Fence:    signature.Fence{Owner: value.owner, Schema: value.schemaID},
+		Outputs: []signature.Output{{
+			Relation: value.relation, Column: value.column, Type: value.typeID,
+			Presence: signature.ProducePresent, Denominator: denominator,
+		}},
+		Cardinality: cardinality,
+		Outcomes:    outcomes,
+	})
+	if !ok {
+		t.Fatal("signature unavailable")
+	}
+	capability, ok := model.NewAscendingCapability(value.typeID)
+	if !ok {
+		t.Fatal("capability unavailable")
+	}
+	contribution, ok := output.Seal(output.Spec{
+		Signature: semantic,
+		Port:      output.OutputPort{Operation: semantic.Identity(), Column: value.column},
+		ValueType: value.typeID, Algebra: capability, Reducer: output.Contributions,
+	})
+	if !ok {
+		t.Fatal("contribution unavailable")
+	}
+	with, withRefusal := certificate.Check(buildSchema(t, value, false, func(builder *plan.Builder) {
+		builder.AddSignature(semantic)
+		builder.AddTypeCapability(capability)
+		builder.AddContribution(contribution)
+	}))
+	if withRefusal != nil || !with.Available() {
+		t.Fatalf("contribution certificate refused: %v", withRefusal)
+	}
+	if baseline.Digest() == with.Digest() {
+		t.Fatal("contribution did not change certificate digest")
+	}
+	resolved, ok := with.Contribution(contribution.Port())
+	if !ok || !resolved.Equal(contribution) {
+		t.Fatal("certificate lost exact contribution lookup")
+	}
+	values := with.Contributions()
+	if len(values) != 1 || !values[0].Equal(contribution) {
+		t.Fatalf("certificate contribution vector = %+v", values)
+	}
+	values[0] = output.ContributionSpec{}
+	if got := with.Contributions(); len(got) != 1 || !got[0].Equal(contribution) {
+		t.Fatal("certificate contribution accessor exposed mutable state")
+	}
+	negativeOutputs := semantic.Outputs()
+	negativeOutputs[0].Presence = signature.ProduceOptional
+	negativeSemantic, ok := signature.Seal(signature.Spec{
+		Identity:    semantic.Identity(),
+		Fence:       semantic.Fence(),
+		Outputs:     negativeOutputs,
+		Cardinality: semantic.Cardinality(),
+		Outcomes:    outcomes,
+	})
+	if !ok {
+		t.Fatal("optional signature unavailable")
+	}
+	negativeContribution, ok := output.Seal(output.Spec{
+		Signature: negativeSemantic,
+		Port:      contribution.Port(),
+		ValueType: value.typeID, Algebra: capability, Reducer: output.Contributions,
+	})
+	if !ok || negativeContribution.Presence() != signature.ProduceOptional {
+		t.Fatal("optional contribution presence was not retained")
+	}
+	negativeCertificate, negativeRefusal := certificate.Check(buildSchema(t, value, false, func(builder *plan.Builder) {
+		builder.AddSignature(negativeSemantic)
+		builder.AddTypeCapability(capability)
+		builder.AddContribution(negativeContribution)
+	}))
+	if negativeRefusal == nil || negativeCertificate.Available() {
+		t.Fatal("optional contribution was admitted without closed-world evidence")
+	}
+	foundGate := false
+	for _, issue := range negativeRefusal.Issues() {
+		if issue.Detail == "optional or absent contribution requires a closed-world producer denominator" {
+			foundGate = true
+		}
+	}
+	if !foundGate {
+		t.Fatalf("optional contribution refusal omitted explicit closed-world gate: %+v", negativeRefusal.Issues())
 	}
 }
 
@@ -179,7 +321,10 @@ func TestAuthorityMutationRefusesZeroCertificate(t *testing.T) {
 	value := newFixture(t)
 	expressionID := issueExpression(t, value.owner, "authority")
 	input := algebra.NewInput(value.relation)
-	publication := algebra.NewPublish(input, algebra.NewPublishContract(value.relation, value.key))
+	// A positional publication layout is authority, not syntax. Duplicate
+	// writable cells are therefore an authority mutation even though this
+	// child is a valid sealed relation expression.
+	publication := algebra.NewPublish(input, algebra.NewPublishContract(value.relation, value.key, value.column, value.column))
 	schema := buildSchema(t, value, false, func(builder *plan.Builder) {
 		builder.AddExpression(plan.DefineExpressionRef(expressionID, publication))
 	})
@@ -251,14 +396,10 @@ func TestCertificateAccessorsAreDefensive(t *testing.T) {
 		t.Fatal("empty merge requirements should remain nil")
 	}
 	algebraRequirements := certificateValue.AlgebraRequirements()
-	if len(algebraRequirements) != 1 || algebraRequirements[0] != value.typeID {
+	if algebraRequirements != nil {
 		t.Fatalf("unexpected algebra requirements: %+v", algebraRequirements)
 	}
 	digest := certificateValue.Digest()
-	algebraRequirements[0] = model.TypeID{}
-	if certificateValue.AlgebraRequirements()[0] != value.typeID {
-		t.Fatal("certificate exposed mutable algebra requirements")
-	}
 	if certificateValue.Digest() != digest {
 		t.Fatal("algebra requirement accessor changed certificate digest")
 	}

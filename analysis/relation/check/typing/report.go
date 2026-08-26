@@ -32,6 +32,8 @@ const (
 	CodeScopeMismatch
 	CodeKeyMismatch
 	CodeDependencyMismatch
+	CodeTypeCapabilityMismatch
+	CodeCorrelationMismatch
 )
 
 func (code Code) String() string {
@@ -41,6 +43,7 @@ func (code Code) String() string {
 		"TypeMismatch", "ShapeMismatch", "ExpressionDigest", "ExpressionCycle",
 		"OperatorContract", "SignatureMismatch", "DeliveryMismatch",
 		"DenominatorMismatch", "ScopeMismatch", "KeyMismatch", "DependencyMismatch",
+		"TypeCapabilityMismatch", "CorrelationMismatch",
 	}
 	if int(code) < 0 || int(code) >= len(names) {
 		return "Unknown"
@@ -73,13 +76,33 @@ type MergeRequirement struct {
 	Type   model.TypeID
 }
 
+// EqualityRequirement is the explicit semantic obligation for a key
+// operator. It is independent of MergeRequirement: a key may use the
+// Equatable capability without having any lattice Join/Widen authority.
+type EqualityRequirement struct {
+	Path   string
+	Column model.ColumnID
+	Type   model.TypeID
+}
+
+// PresentRequirement is emitted only at a Publish boundary. A signature may
+// describe a Present output that is never committed by any expression; that
+// declaration alone is not a lattice obligation.
+type PresentRequirement struct {
+	Path   string
+	Column model.ColumnID
+	Type   model.TypeID
+}
+
 // Report is the complete, deterministic result of checking one unchecked
 // ExecutionSchema. It is intentionally not an execution capability; the
 // certificate package owns the opaque capability accepted by mount.
 type Report struct {
-	issues              []Issue
-	requirements        []MergeRequirement
-	algebraRequirements []model.TypeID
+	issues               []Issue
+	requirements         []MergeRequirement
+	equalityRequirements []EqualityRequirement
+	presentRequirements  []PresentRequirement
+	algebraRequirements  []model.TypeID
 }
 
 // Valid reports whether no logical typing obligation failed.
@@ -95,11 +118,17 @@ func (report Report) MergeRequirements() []MergeRequirement {
 	return append([]MergeRequirement(nil), report.requirements...)
 }
 
-// AlgebraRequirements returns the distinct semantic TypeIDs whose values can
-// enter committed relation state or a validated semantic frame/output. The
-// list is canonical and defensive; callers must treat TypeID itself as the
-// sole algebra authority. MergeRequirements remains a diagnostic projection
-// for locating Merge obligations, not a second source for this list.
+// EqualityRequirements returns the key-equality obligations discovered by
+// Project, Join, Expand, Group, Merge, and Publish. It is a diagnostic
+// projection, not an equality implementation or a lattice registry.
+func (report Report) EqualityRequirements() []EqualityRequirement {
+	return append([]EqualityRequirement(nil), report.equalityRequirements...)
+}
+
+// AlgebraRequirements returns the distinct TypeIDs required at an actual
+// checked Merge or committed Present output. The projection retains malformed
+// obligations too; the checker refuses a missing/DecodeOnly/Equatable policy
+// rather than filtering the obligation into a false success.
 func (report Report) AlgebraRequirements() []model.TypeID {
 	return append([]model.TypeID(nil), report.algebraRequirements...)
 }

@@ -1,7 +1,9 @@
 package model
 
 // CardinalityKind is the closed delivery-size vocabulary for one semantic
-// output.  BoundedMany is always paired with a positive logical bound.
+// output. BoundedMany is always paired with a positive logical bound, while
+// CompleteDenominator obtains its row count from an authenticated mounted
+// denominator witness.
 type CardinalityKind uint8
 
 const (
@@ -13,6 +15,9 @@ const (
 	Optional
 	// BoundedMany allows at most Bound rows.
 	BoundedMany
+	// CompleteDenominator requires one output for every row in one exact
+	// mounted denominator. It has no static numeric bound.
+	CompleteDenominator
 )
 
 // String returns the canonical cardinality label.
@@ -24,6 +29,8 @@ func (kind CardinalityKind) String() string {
 		return "Optional"
 	case BoundedMany:
 		return "BoundedMany"
+	case CompleteDenominator:
+		return "CompleteDenominator"
 	default:
 		return "InvalidCardinality"
 	}
@@ -49,6 +56,11 @@ func NewCardinality(kind CardinalityKind, bound uint32) (Cardinality, bool) {
 			return Cardinality{}, false
 		}
 		return Cardinality{kind: kind, bound: bound}, true
+	case CompleteDenominator:
+		if bound != 0 {
+			return Cardinality{}, false
+		}
+		return Cardinality{kind: kind}, true
 	default:
 		return Cardinality{}, false
 	}
@@ -57,7 +69,8 @@ func NewCardinality(kind CardinalityKind, bound uint32) (Cardinality, bool) {
 // Kind returns the cardinality kind.
 func (cardinality Cardinality) Kind() CardinalityKind { return cardinality.kind }
 
-// Bound returns the positive bound for BoundedMany.
+// Bound returns the positive bound for BoundedMany. CompleteDenominator has
+// no numeric bound; its exact row count is supplied by a mounted witness.
 func (cardinality Cardinality) Bound() (uint32, bool) {
 	if !cardinality.Available() || cardinality.kind != BoundedMany {
 		return 0, false
@@ -72,6 +85,8 @@ func (cardinality Cardinality) Available() bool {
 		return cardinality.bound == 0
 	case BoundedMany:
 		return cardinality.bound != 0
+	case CompleteDenominator:
+		return cardinality.bound == 0
 	default:
 		return false
 	}

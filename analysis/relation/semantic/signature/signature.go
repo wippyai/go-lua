@@ -12,7 +12,6 @@ type Signature struct {
 	fence       Fence
 	inputs      []Input
 	outputs     []Output
-	authority   OutputAuthority
 	cardinality model.Cardinality
 	outcomes    outcome.Set
 	digest      identity.ContentID
@@ -22,10 +21,15 @@ type Signature struct {
 // malformed references and cross-contract compatibility, belongs to the
 // independent checker.
 func Seal(spec Spec) (Signature, bool) {
+	outputs := append([]Output(nil), spec.Outputs...)
+	for _, output := range outputs {
+		if !output.Available() {
+			return Signature{}, false
+		}
+	}
 	sealed := Signature{
 		identity: spec.Identity, fence: spec.Fence,
-		inputs: append([]Input(nil), spec.Inputs...), outputs: append([]Output(nil), spec.Outputs...),
-		authority:   OutputAuthority{Denominator: spec.Authority.Denominator},
+		inputs: append([]Input(nil), spec.Inputs...), outputs: outputs,
 		cardinality: spec.Cardinality,
 		outcomes:    copySet(spec.Outcomes),
 	}
@@ -74,8 +78,14 @@ func (signatureValue Signature) OutputFor(relation model.RelationID, column mode
 	return Output{}, false
 }
 
-func (signatureValue Signature) Authority() OutputAuthority {
-	return signatureValue.authority
+// OutputDestination returns the exact denominator owned by one declared
+// output.
+func (signatureValue Signature) OutputDestination(relation model.RelationID, column model.ColumnID) (model.DenominatorRef, bool) {
+	output, ok := signatureValue.OutputFor(relation, column)
+	if !ok || !output.Denominator.Available() {
+		return model.DenominatorRef{}, false
+	}
+	return output.Denominator, true
 }
 
 func (signatureValue Signature) Cardinality() model.Cardinality { return signatureValue.cardinality }

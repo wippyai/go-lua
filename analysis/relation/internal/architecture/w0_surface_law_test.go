@@ -2,9 +2,7 @@ package architecture_test
 
 import (
 	"go/ast"
-	"go/parser"
 	"go/token"
-	"io/fs"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -17,6 +15,7 @@ import (
 var w0GenericRoots = []string{
 	"analysis/relation",
 	"analysis/engine/relation",
+	"analysis/program/relationadmission",
 	"analysis/schema/rule/relcompile",
 	"analysis/schema/rule/relbindgen",
 	"internal/relationoracle",
@@ -228,35 +227,24 @@ func w0SourcesUnder(t *testing.T, root string) []w0Source {
 	if _, err := os.Stat(directory); err != nil {
 		t.Fatalf("W0 source root %s is unavailable: %v", root, err)
 	}
-	sources := make([]w0Source, 0, 16)
-	err := filepath.WalkDir(directory, func(path string, entry fs.DirEntry, walkErr error) error {
-		if walkErr != nil {
-			return walkErr
-		}
-		if entry.IsDir() {
-			if strings.HasPrefix(entry.Name(), ".") {
-				return filepath.SkipDir
-			}
-			return nil
-		}
-		if filepath.Ext(path) != ".go" {
-			return nil
-		}
-		parsed, err := parser.ParseFile(token.NewFileSet(), path, nil, 0)
-		if err != nil {
-			return err
-		}
-		relative, err := filepath.Rel(repository, path)
-		if err != nil {
-			return err
-		}
-		sources = append(sources, w0Source{path: filepath.ToSlash(relative), file: parsed})
-		return nil
-	})
+	sources, err := architectureSourcesUnderSkippingHidden(repository, root)
 	if err != nil {
 		t.Fatalf("walk W0 source root %s: %v", root, err)
 	}
 	return sources
+}
+
+func w0SourcePathHasHiddenDirectory(path string) bool {
+	parts := strings.Split(path, "/")
+	if len(parts) < 2 {
+		return false
+	}
+	for _, component := range parts[:len(parts)-1] {
+		if strings.HasPrefix(component, ".") {
+			return true
+		}
+	}
+	return false
 }
 
 func w0Imports(t *testing.T, source w0Source) []string {

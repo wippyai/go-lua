@@ -2,7 +2,6 @@ package address
 
 import (
 	"encoding/binary"
-	"sort"
 
 	"github.com/wippyai/go-lua/analysis/identity"
 	"github.com/wippyai/go-lua/analysis/relation/check/certificate"
@@ -51,13 +50,6 @@ func Bind(cert certificate.Certificate, inventory Inventory) (Book, bool) {
 	if !ok {
 		return Book{}, false
 	}
-
-	sort.Slice(relationIDs, func(left, right int) bool { return relationLess(relationIDs[left], relationIDs[right]) })
-	sort.Slice(columnIDs, func(left, right int) bool { return columnLess(columnIDs[left], columnIDs[right]) })
-	sort.Slice(keyIDs, func(left, right int) bool { return keyLess(keyIDs[left], keyIDs[right]) })
-	sort.Slice(scopeIDs, func(left, right int) bool { return scopeLess(scopeIDs[left], scopeIDs[right]) })
-	sort.Slice(expressionIDs, func(left, right int) bool { return expressionLess(expressionIDs[left], expressionIDs[right]) })
-	sort.Slice(dependencyIDs, func(left, right int) bool { return dependencyLess(dependencyIDs[left], dependencyIDs[right]) })
 
 	digest, ok := digestBook(cert.Digest(), fence,
 		relationIDs, relations,
@@ -325,54 +317,4 @@ func contentBytes(value identity.ContentID) []byte {
 	copyOf := make([]byte, len(value))
 	copy(copyOf, value[:])
 	return copyOf
-}
-
-func compareContent(left, right identity.ContentID) int {
-	for index := range left {
-		if left[index] < right[index] {
-			return -1
-		}
-		if left[index] > right[index] {
-			return 1
-		}
-	}
-	return 0
-}
-
-func relationLess(left, right model.RelationID) bool {
-	return nominalLess(left.Owner().Content(), left.Content(), right.Owner().Content(), right.Content())
-}
-func columnLess(left, right model.ColumnID) bool {
-	if less := nominalLess(left.Owner().Content(), left.Content(), right.Owner().Content(), right.Content()); less {
-		return true
-	}
-	if left.Owner().Content() != right.Owner().Content() || left.Content() != right.Content() {
-		return false
-	}
-	return nominalLess(left.Relation().Owner().Content(), left.Relation().Content(), right.Relation().Owner().Content(), right.Relation().Content())
-}
-func keyLess(left, right model.KeyID) bool {
-	if less := nominalLess(left.Owner().Content(), left.Content(), right.Owner().Content(), right.Content()); less {
-		return true
-	}
-	if left.Owner().Content() != right.Owner().Content() || left.Content() != right.Content() {
-		return false
-	}
-	return nominalLess(left.Relation().Owner().Content(), left.Relation().Content(), right.Relation().Owner().Content(), right.Relation().Content())
-}
-func scopeLess(left, right model.ScopeID) bool {
-	return nominalLess(left.Owner().Content(), left.Content(), right.Owner().Content(), right.Content())
-}
-func expressionLess(left, right model.ExpressionID) bool {
-	return nominalLess(left.Owner().Content(), left.Content(), right.Owner().Content(), right.Content())
-}
-func dependencyLess(left, right model.DependencyID) bool {
-	return nominalLess(left.Owner().Content(), left.Content(), right.Owner().Content(), right.Content())
-}
-
-func nominalLess(leftOwner, leftContent, rightOwner, rightContent identity.ContentID) bool {
-	if compared := compareContent(leftOwner, rightOwner); compared != 0 {
-		return compared < 0
-	}
-	return compareContent(leftContent, rightContent) < 0
 }

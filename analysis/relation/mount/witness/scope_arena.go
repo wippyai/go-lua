@@ -4,22 +4,22 @@ import (
 	"sync"
 
 	"github.com/wippyai/go-lua/analysis/identity"
+	"github.com/wippyai/go-lua/analysis/relation/schema/region"
 	"github.com/wippyai/go-lua/analysis/relation/semantic/binding"
 )
 
 // scopeArena is the mounted owner of the neutral formula associated with each
 // authenticated ScopeToken. It is append-only: a token can be inserted once,
 // and a later insertion must carry the same immutable formula identity. The
-// lock protects both the map and the consistency check against a mutable
-// Region implementation.
+// lock protects the map. Region is a sealed concrete value, so no mutable
+// implementation can be swapped underneath an entry.
 type scopeArena struct {
 	mu      sync.RWMutex
 	entries map[binding.ScopeToken]scopeEntry
 }
 
 type scopeEntry struct {
-	region   Region
-	identity identity.ContentID
+	region region.Region
 }
 
 func newScopeArena() *scopeArena {
@@ -32,47 +32,36 @@ func (arena *scopeArena) available() bool {
 
 // intern adopts one exact token/formula pair. Existing token identities are
 // never replaced, even when a caller presents a different Region value.
-func (arena *scopeArena) intern(token binding.ScopeToken, region Region) (Region, bool) {
-	if arena == nil || !token.Available() {
-		return nil, false
-	}
-	regionID, ok := scopeRegionIdentity(region)
-	if !ok {
-		return nil, false
+func (arena *scopeArena) intern(token binding.ScopeToken, value region.Region) (region.Region, bool) {
+	if arena == nil || !token.Available() || !value.Available() {
+		return region.Region{}, false
 	}
 	arena.mu.Lock()
 	defer arena.mu.Unlock()
 	if arena.entries == nil {
-		return nil, false
+		return region.Region{}, false
 	}
 	if existing, exists := arena.entries[token]; exists {
-		if existing.identity != regionID {
-			return nil, false
-		}
-		if currentID, currentOK := scopeRegionIdentity(existing.region); !currentOK || currentID != existing.identity {
-			return nil, false
-		}
 		return existing.region, true
 	}
-	arena.entries[token] = scopeEntry{region: region, identity: regionID}
-	return region, true
+	arena.entries[token] = scopeEntry{region: value}
+	return value, true
 }
 
 // resolve authenticates one token and returns the exact arena-owned Region.
 // It never scans declared scopes or reconstructs a formula from token bytes.
-func (arena *scopeArena) resolve(token binding.ScopeToken) (Region, bool) {
+func (arena *scopeArena) resolve(token binding.ScopeToken) (region.Region, bool) {
 	if arena == nil || !token.Available() {
-		return nil, false
+		return region.Region{}, false
 	}
 	arena.mu.RLock()
 	entry, ok := arena.entries[token]
 	arena.mu.RUnlock()
 	if !ok {
-		return nil, false
+		return region.Region{}, false
 	}
-	currentID, currentOK := scopeRegionIdentity(entry.region)
-	if !currentOK || currentID != entry.identity {
-		return nil, false
+	if !entry.region.Available() {
+		return region.Region{}, false
 	}
 	return entry.region, true
 }
@@ -92,17 +81,21 @@ func (arena *scopeArena) identity(token binding.ScopeToken) (identity.ContentID,
 	if !ok {
 		return identity.ContentID{}, false
 	}
-	currentID, currentOK := scopeRegionIdentity(entry.region)
-	if !currentOK || currentID != entry.identity {
+	if !entry.region.Available() {
 		return identity.ContentID{}, false
 	}
-	return entry.identity, true
+	value := entry.region.Identity()
+	return value, value.Available()
 }
 
-func scopeRegionIdentity(region Region) (identity.ContentID, bool) {
-	if region == nil {
+// scopeRegionIdentity extracts the token identity only after the concrete
+// sealed region has passed its availability check. The identity is used to
+// issue the runtime-fenced ScopeToken; it is not a substitute for retaining
+// or validating the Region itself.
+func scopeRegionIdentity(value region.Region) (identity.ContentID, bool) {
+	if !value.Available() {
 		return identity.ContentID{}, false
 	}
-	value, ok := region.Identity()
-	return value, ok && value.Available()
+	identityValue := value.Identity()
+	return identityValue, identityValue.Available()
 }

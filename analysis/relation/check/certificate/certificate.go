@@ -9,8 +9,10 @@ import (
 	checkrecurrence "github.com/wippyai/go-lua/analysis/relation/check/recurrence"
 	checkregistry "github.com/wippyai/go-lua/analysis/relation/check/registry"
 	checktyping "github.com/wippyai/go-lua/analysis/relation/check/typing"
+	"github.com/wippyai/go-lua/analysis/relation/schema/algebra"
 	"github.com/wippyai/go-lua/analysis/relation/schema/model"
 	"github.com/wippyai/go-lua/analysis/relation/schema/plan"
+	"github.com/wippyai/go-lua/analysis/relation/schema/semantic/output"
 	"github.com/wippyai/go-lua/analysis/relation/semantic/signature"
 )
 
@@ -111,11 +113,15 @@ func (refusal *Refusal) Error() string {
 // registry is the sole declaration source; the certificate deliberately does
 // not copy an ExecutionSchema or retain any physical/mount data.
 type Certificate struct {
-	registry            *checkregistry.View
-	mergeRequirements   []checktyping.MergeRequirement
-	algebraRequirements []model.TypeID
-	recurrenceProof     checkrecurrence.Proof
-	digest              identity.ContentID
+	registry             *checkregistry.View
+	mergeRequirements    []checktyping.MergeRequirement
+	equalityRequirements []model.TypeID
+	algebraRequirements  []model.TypeID
+	initials             []plan.Initial
+	contributions        []output.ContributionSpec
+	recurrenceProof      checkrecurrence.Proof
+	recurrence           RecurrenceData
+	digest               identity.ContentID
 }
 
 // Check builds the shared declaration registry once, then runs all three
@@ -158,8 +164,9 @@ func Check(schema plan.ExecutionSchema) (Certificate, *Refusal) {
 
 	requirements := typingReport.MergeRequirements()
 	canonicalizeRequirements(requirements)
+	equalityRequirements := canonicalizeEqualityRequirements(typingReport.EqualityRequirements())
 	algebraRequirements := typingReport.AlgebraRequirements()
-	digest, ok := certificateDigest(schema.Digest())
+	digest, ok := certificateDigest(schema.Digest(), recurrenceProof.CompleteUses())
 	if !ok {
 		// An unavailable schema is normally already represented by the shared
 		// registry. Keep this fallback typed and deterministic if a future
@@ -172,23 +179,38 @@ func Check(schema plan.ExecutionSchema) (Certificate, *Refusal) {
 		}})
 	}
 	return Certificate{
-		registry:            indexed,
-		mergeRequirements:   requirements,
-		algebraRequirements: algebraRequirements,
-		recurrenceProof:     recurrenceProof,
-		digest:              digest,
+		registry:             indexed,
+		mergeRequirements:    requirements,
+		equalityRequirements: equalityRequirements,
+		algebraRequirements:  algebraRequirements,
+		initials:             indexed.Initials(),
+		contributions:        indexed.Contributions(),
+		recurrenceProof:      recurrenceProof,
+		recurrence:           recurrenceData(recurrenceProof, indexed.Dependencies()),
+		digest:               digest,
 	}, nil
 }
 
 const certificateDigestDomain = "analysis/relation/check/certificate/v1"
 
-func certificateDigest(schemaDigest identity.ContentID) (identity.ContentID, bool) {
-	return identity.DeriveContentID(certificateDigestDomain, schemaDigest[:])
+func certificateDigest(schemaDigest identity.ContentID, completeUses []checkrecurrence.CompleteUse) (identity.ContentID, bool) {
+	if !schemaDigest.Available() {
+		return identity.ContentID{}, false
+	}
+	parts := [][]byte{append([]byte(nil), schemaDigest[:]...)}
+	for _, use := range completeUses {
+		digest := use.Digest()
+		if !digest.Available() {
+			return identity.ContentID{}, false
+		}
+		parts = append(parts, append([]byte(nil), digest[:]...))
+	}
+	return identity.DeriveContentID(certificateDigestDomain, parts...)
 }
 
 // Available reports whether this value is a complete checked certificate.
 func (certificate Certificate) Available() bool {
-	return certificate.registry != nil && certificate.digest.Available() && certificate.recurrenceProof.Available()
+	return certificate.registry != nil && certificate.digest.Available() && certificate.recurrence.Available()
 }
 
 // SchemaID returns the owner-issued identity of the checked logical schema.
@@ -199,8 +221,8 @@ func (certificate Certificate) SchemaID() model.SchemaID {
 	return certificate.registry.Schema().SchemaID()
 }
 
-// Digest returns the versioned certificate identity. It is derived solely
-// from the checked ExecutionSchema digest.
+// Digest returns the versioned certificate identity. It is derived from the
+// checked ExecutionSchema digest and the recurrence-owned Complete evidence.
 func (certificate Certificate) Digest() identity.ContentID { return certificate.digest }
 
 // Relations returns defensive copies of the canonical relation declarations.
@@ -278,6 +300,102 @@ func (certificate Certificate) Signatures() []signature.Signature {
 	return certificate.registry.Signatures()
 }
 
+// Contributions returns the exact checked schema-authored output declarations.
+// The vector is copied from the immutable registry and never reopened from
+// the unchecked plan by mount.
+func (certificate Certificate) Contributions() []output.ContributionSpec {
+	return append([]output.ContributionSpec(nil), certificate.contributions...)
+}
+
+// Contribution resolves one exact checked output port.
+func (certificate Certificate) Contribution(port output.OutputPort) (output.ContributionSpec, bool) {
+	if !certificate.Available() || !port.Available() {
+		return output.ContributionSpec{}, false
+	}
+	for _, value := range certificate.contributions {
+		if value.Port() == port {
+			return value, true
+		}
+	}
+	return output.ContributionSpec{}, false
+}
+
+// TypeCapabilities returns the explicit schema-sealed policy catalogue. The
+// certificate exposes it defensively so mount and diagnostics can inspect the
+// same capability authority without reopening the unchecked plan.
+func (certificate Certificate) TypeCapabilities() []model.TypeCapability {
+	if certificate.registry == nil {
+		return nil
+	}
+	return certificate.registry.TypeCapabilities()
+}
+
+// Observations returns the exact schema-sealed terminal observation
+// descriptors admitted by the certificate. Runtime mount projects this
+// catalogue once; callers cannot introduce a descriptor after seal.
+func (certificate Certificate) Observations() []algebra.ObservationContract {
+	if certificate.registry == nil {
+		return nil
+	}
+	return certificate.registry.Observations()
+}
+
+// ObservationDenominators returns every closed population reference consumed
+// by the certificate's observation descriptors, including each output's
+// destination universe. Mount consumes this narrow projection rather than
+// importing the schema algebra or reopening the unchecked declaration graph.
+func (certificate Certificate) ObservationDenominators() []model.DenominatorRef {
+	if certificate.registry == nil {
+		return nil
+	}
+	seen := make(map[model.DenominatorRef]struct{})
+	result := make([]model.DenominatorRef, 0)
+	for _, observation := range certificate.registry.Observations() {
+		if !observation.Available() {
+			return nil
+		}
+		values := []model.DenominatorRef{observation.Population()}
+		for _, output := range observation.Outputs() {
+			values = append(values, output.Destination())
+		}
+		for _, denominator := range values {
+			if !denominator.Available() {
+				return nil
+			}
+			if _, exists := seen[denominator]; exists {
+				continue
+			}
+			seen[denominator] = struct{}{}
+			result = append(result, denominator)
+		}
+	}
+	return result
+}
+
+// CompleteDenominators returns every exact denominator referenced by a
+// checked Complete occurrence. It is a certificate projection (not a scan of
+// the unchecked expression DAG), so mount can admit the required witness even
+// when no signature or observation mentions that denominator.
+func (certificate Certificate) CompleteDenominators() []model.DenominatorRef {
+	if !certificate.Available() {
+		return nil
+	}
+	seen := make(map[model.DenominatorRef]struct{})
+	result := make([]model.DenominatorRef, 0)
+	for _, use := range certificate.recurrence.CompleteUses() {
+		denominator := use.Denominator()
+		if !denominator.Available() {
+			return nil
+		}
+		if _, duplicate := seen[denominator]; duplicate {
+			continue
+		}
+		seen[denominator] = struct{}{}
+		result = append(result, denominator)
+	}
+	return result
+}
+
 // SCCs returns defensive copies of the canonical recurrence declarations.
 func (certificate Certificate) SCCs() []plan.SCC {
 	if certificate.registry == nil {
@@ -292,16 +410,126 @@ func (certificate Certificate) MergeRequirements() []checktyping.MergeRequiremen
 	return append([]checktyping.MergeRequirement(nil), certificate.mergeRequirements...)
 }
 
-// AlgebraRequirements returns the canonical semantic TypeIDs needed by mount
-// for committed relation values and validated operation frames/outputs.
+// EqualityRequirements returns the canonical TypeIDs whose checked key
+// operations need owner semantic equality at mount. DecodeOnly types never
+// enter this projection; they may only participate in the separate exact-token
+// Merge branch.
+func (certificate Certificate) EqualityRequirements() []model.TypeID {
+	return append([]model.TypeID(nil), certificate.equalityRequirements...)
+}
+
+// AlgebraRequirements returns the canonical TypeIDs needed by mount for
+// checked Merge outputs and Present-capable outputs committed by a checked
+// Publish subtree.
 func (certificate Certificate) AlgebraRequirements() []model.TypeID {
 	return append([]model.TypeID(nil), certificate.algebraRequirements...)
+}
+
+// Initials returns the exact checked zero-input invocation declarations. The
+// projection is copied once at certificate construction and defensively on
+// every access; mount never reopens the unchecked schema to discover seeds.
+func (certificate Certificate) Initials() []plan.Initial {
+	return append([]plan.Initial(nil), certificate.initials...)
 }
 
 // RecurrenceProof returns the immutable recurrence proof. Its own accessors
 // return defensive copies of nested projections.
 func (certificate Certificate) RecurrenceProof() checkrecurrence.Proof {
 	return certificate.recurrenceProof
+}
+
+// Recurrence returns the certificate-owned logical recurrence projection.
+// Its accessors expose only defensive identity copies; physical consumers do
+// not need to import the recurrence checker or reopen the declaration graph.
+func (certificate Certificate) Recurrence() RecurrenceData {
+	return certificate.recurrence
+}
+
+// recurrenceData copies the checker-owned proof into the certificate's
+// narrow identity projection. The conversion is performed once at admission;
+// no physical consumer needs to import or re-run check/recurrence.
+func recurrenceData(proof checkrecurrence.Proof, declarations []plan.Dependency) RecurrenceData {
+	if !proof.Available() {
+		return RecurrenceData{}
+	}
+	proofProjections := proof.Projections()
+	projections := make([]RecurrenceProjection, len(proofProjections))
+	for index, value := range proofProjections {
+		projections[index] = RecurrenceProjection{
+			dependency:   value.Dependency,
+			expression:   value.Expression,
+			reads:        relationIDs(value.Reads),
+			writes:       relationIDs(value.Writes),
+			completeUses: completeUseData(value.CompleteUses),
+		}
+	}
+	dependencies := make(map[model.DependencyID]model.ExpressionID, len(projections))
+	for _, dependency := range declarations {
+		dependencies[dependency.ID()] = dependency.Expression()
+	}
+	for index := range projections {
+		projections[index].expression = dependencies[projections[index].dependency]
+	}
+
+	proofEdges := proof.Edges()
+	edges := make([]RecurrenceEdge, len(proofEdges))
+	for index, value := range proofEdges {
+		edges[index] = RecurrenceEdge{from: value.From().ID(), to: value.To().ID()}
+	}
+	proofComponents := proof.Components()
+	components := make([]RecurrenceComponent, len(proofComponents))
+	for index, value := range proofComponents {
+		members := make([]model.DependencyID, len(value.Members))
+		for memberIndex, member := range value.Members {
+			members[memberIndex] = member.ID()
+		}
+		componentEdges := make([]RecurrenceEdge, len(value.Edges))
+		for edgeIndex, edge := range value.Edges {
+			componentEdges[edgeIndex] = RecurrenceEdge{from: edge.From().ID(), to: edge.To().ID()}
+		}
+		components[index] = RecurrenceComponent{members: members, edges: componentEdges, cyclic: value.Cyclic}
+	}
+	proofHeads := proof.WideningHeads()
+	heads := make([]RecurrenceHead, len(proofHeads))
+	for index, value := range proofHeads {
+		heads[index] = RecurrenceHead{dependency: value.Dependency().ID(), relation: value.Relation().ID()}
+	}
+	proofUses := proof.CompleteUses()
+	completeUses := completeUseData(proofUses)
+	return RecurrenceData{projections: projections, edges: edges, components: components, wideningHeads: heads, completeUses: completeUses, valid: true}
+}
+
+func completeUseData(values []checkrecurrence.CompleteUse) []CompleteUse {
+	if values == nil {
+		return nil
+	}
+	result := make([]CompleteUse, len(values))
+	for index, value := range values {
+		writers := value.Writers
+		converted := make([]CompleteWriter, len(writers))
+		for writerIndex, writer := range writers {
+			converted[writerIndex] = CompleteWriter{dependency: writer.Dependency, component: writer.Component, earlier: writer.Earlier}
+		}
+		result[index] = CompleteUse{
+			dependency:  value.Dependency,
+			expression:  value.Expression,
+			path:        value.Path,
+			occurrence:  value.Occurrence,
+			child:       value.Child,
+			denominator: value.Denominator,
+			writers:     converted,
+			cold:        value.Cold,
+		}
+	}
+	return result
+}
+
+func relationIDs(values []plan.RelationRef) []model.RelationID {
+	result := make([]model.RelationID, len(values))
+	for index, value := range values {
+		result[index] = value.ID()
+	}
+	return result
 }
 
 // WideningHeads returns the validated recurrence-head projection. Mount uses
@@ -369,6 +597,21 @@ func canonicalizeRequirements(values []checktyping.MergeRequirement) {
 		}
 		return typeKey(values[left].Type) < typeKey(values[right].Type)
 	})
+}
+
+func canonicalizeEqualityRequirements(values []checktyping.EqualityRequirement) []model.TypeID {
+	seen := make(map[model.TypeID]struct{}, len(values))
+	for _, value := range values {
+		if value.Type.Available() {
+			seen[value.Type] = struct{}{}
+		}
+	}
+	result := make([]model.TypeID, 0, len(seen))
+	for typeID := range seen {
+		result = append(result, typeID)
+	}
+	sort.Slice(result, func(left, right int) bool { return typeKey(result[left]) < typeKey(result[right]) })
+	return result
 }
 
 func compareColumn(left, right model.ColumnID) int {

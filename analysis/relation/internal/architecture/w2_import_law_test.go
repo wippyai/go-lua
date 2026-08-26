@@ -1,6 +1,7 @@
 package architecture_test
 
 import (
+	"go/ast"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -23,15 +24,8 @@ var w2MountInputsByLayer = map[string][]string{
 		"analysis/relation/schema/algebra",
 		"analysis/relation/schema/model",
 		"analysis/relation/schema/plan",
+		"analysis/relation/schema/semantic/output",
 		"analysis/relation/semantic/signature",
-	},
-	// The input-scope projection reads one owner-issued relation input
-	// bundle. It resolves no coordinate and issues no identity, so its whole
-	// input surface is the bundle and the model identities the bundle names.
-	"analysis/relation/mount/inputscope": {
-		"analysis/identity",
-		"analysis/relation/schema/model",
-		"analysis/schema/rule/relinput",
 	},
 	// Certificate currently exposes a few signature/plan value views for
 	// callers that need them. Witness may name those views, but may not reach
@@ -40,6 +34,7 @@ var w2MountInputsByLayer = map[string][]string{
 		"analysis/identity",
 		"analysis/relation/check/certificate",
 		"analysis/relation/schema/model",
+		"analysis/relation/schema/region",
 		"analysis/relation/schema/plan",
 		"analysis/relation/semantic/binding",
 		"analysis/relation/semantic/lineage",
@@ -51,7 +46,6 @@ var w2MountLayers = []struct {
 	prefix string
 	rank   int
 }{
-	{prefix: "analysis/relation/mount/inputscope", rank: 0},
 	{prefix: "analysis/relation/mount/address", rank: 0},
 	{prefix: "analysis/relation/mount/arrangement", rank: 1},
 	{prefix: "analysis/relation/mount/witness", rank: 2},
@@ -63,12 +57,14 @@ var w2MountLayers = []struct {
 // broad analysis/engine/relation/state/** exception would let physical
 // mutation leak upward into the aggregate or transaction layers.
 var w2StateInputsByLayer = map[string][]string{
-	"analysis/engine/relation/state/geometry": {
+	"analysis/engine/relation/cofiber": {
+		"analysis/identity",
 		"analysis/relation/mount/witness",
-		"analysis/relation/schema/model",
+		"analysis/relation/schema/region",
 		"analysis/relation/semantic/binding",
 	},
-	"analysis/engine/relation/state/recurrence": {
+	"analysis/engine/relation/state/geometry": {
+		"analysis/engine/relation/cofiber",
 		"analysis/relation/mount/witness",
 		"analysis/relation/schema/model",
 		"analysis/relation/semantic/binding",
@@ -81,6 +77,9 @@ var w2StateInputsByLayer = map[string][]string{
 	"analysis/engine/relation/state/index": {
 		"analysis/engine/relation/state/geometry",
 		"analysis/engine/relation/state/internal/column",
+		"analysis/engine/relation/state/store",
+		"analysis/relation/mount/arrangement",
+		"analysis/relation/mount/witness",
 		"analysis/relation/schema/model",
 		"analysis/relation/semantic/binding",
 	},
@@ -91,16 +90,33 @@ var w2StateInputsByLayer = map[string][]string{
 		"analysis/relation/schema/model",
 		"analysis/relation/semantic/binding",
 	},
-	"analysis/engine/relation/state/bootstrap": {
+	"analysis/engine/relation/state/database": {
+		"analysis/engine/relation/state/geometry",
+		"analysis/engine/relation/state/internal/column",
+		"analysis/engine/relation/state/index",
+		"analysis/engine/relation/state/store",
+		"analysis/relation/mount/arrangement",
+		"analysis/relation/mount/witness",
+		"analysis/relation/schema/model",
+		"analysis/relation/semantic/binding",
+	},
+	"analysis/engine/relation/state/read": {
+		"analysis/engine/relation/state/database",
+		"analysis/engine/relation/state/geometry",
+		"analysis/engine/relation/state/index",
+		"analysis/engine/relation/state/store",
+		"analysis/relation/mount/arrangement",
+		"analysis/relation/mount/witness",
+		"analysis/relation/schema/model",
+		"analysis/relation/semantic/binding",
+		"analysis/relation/semantic/lineage",
+	},
+	"analysis/engine/relation/state/transaction": {
+		"analysis/engine/relation/state/database",
+		"analysis/engine/relation/state/geometry",
 		"analysis/engine/relation/state/internal/column",
 		"analysis/engine/relation/state/store",
 		"analysis/relation/mount/witness",
-	},
-	"analysis/engine/relation/state/transaction": {
-		"analysis/engine/relation/state/geometry",
-		"analysis/engine/relation/state/internal/column",
-		"analysis/engine/relation/state/recurrence",
-		"analysis/engine/relation/state/store",
 		"analysis/relation/schema/model",
 		"analysis/relation/semantic/binding",
 		"analysis/relation/semantic/lineage",
@@ -149,6 +165,110 @@ func TestW2RelationEngineRejectsRawLogicalAndLegacyProtocol(t *testing.T) {
 			}
 		}
 	}
+}
+
+// AdmitRuntimeRegion is an executable, trusted capability—not an ordinary
+// conversion helper.  The mounted arena remains the only issuer, but only
+// cofiber may ask it to issue a physical Boolean-derived Region.  Keeping
+// the restriction structural prevents a later operator from minting a scope
+// from an ad-hoc mask or neutral formula.
+func TestW2CofiberIsTheOnlyProductionRuntimeScopeAdmissionBoundary(t *testing.T) {
+	for _, root := range []string{"analysis", "domain", "stdlib", "internal", "cmd"} {
+		for _, source := range w0SourcesUnder(t, root) {
+			if strings.HasSuffix(source.path, "_test.go") {
+				continue
+			}
+			packagePath := filepath.ToSlash(filepath.Dir(source.path))
+			ast.Inspect(source.file, func(node ast.Node) bool {
+				call, ok := node.(*ast.CallExpr)
+				if !ok {
+					return true
+				}
+				selector, ok := call.Fun.(*ast.SelectorExpr)
+				if !ok || selector.Sel == nil || selector.Sel.Name != "AdmitRuntimeRegion" {
+					return true
+				}
+				if packagePath != "analysis/engine/relation/cofiber" && packagePath != "analysis/relation/mount/witness" {
+					t.Errorf("%s calls Mounted.AdmitRuntimeRegion outside the cofiber boundary", source.path)
+				}
+				return true
+			})
+		}
+	}
+}
+
+// Declared Region algebra is intentionally not the runtime scope algebra:
+// it has conjunction but no Boolean difference/union closure.  Once state
+// has partitioned a diagram, operators must redeem cofiber through Reader,
+// never call these mount methods directly.
+func TestW2OperatorsCannotBypassCofiberThroughDeclaredScopeAlgebra(t *testing.T) {
+	for _, source := range w0SourcesUnder(t, "analysis/engine/relation") {
+		if strings.HasSuffix(source.path, "_test.go") {
+			continue
+		}
+		ast.Inspect(source.file, func(node ast.Node) bool {
+			call, ok := node.(*ast.CallExpr)
+			if !ok {
+				return true
+			}
+			selector, ok := call.Fun.(*ast.SelectorExpr)
+			if !ok || selector.Sel == nil || (selector.Sel.Name != "ConjoinScopes" && selector.Sel.Name != "EntailsScopes") {
+				return true
+			}
+			t.Errorf("%s bypasses the sealed cofiber scope authority through Mounted.%s", source.path, selector.Sel.Name)
+			return true
+		})
+	}
+}
+
+// The neutral-to-physical translator is a cold Bootstrap proof input. It may
+// not become a generic execution callback, so its exact function shape is
+// declared only by cofiber.New in production code.
+func TestW2CofiberIsTheOnlyProductionRegionTranslatorConsumer(t *testing.T) {
+	for _, root := range []string{"analysis", "domain", "stdlib", "internal", "cmd"} {
+		for _, source := range w0SourcesUnder(t, root) {
+			if strings.HasSuffix(source.path, "_test.go") {
+				continue
+			}
+			packagePath := filepath.ToSlash(filepath.Dir(source.path))
+			ast.Inspect(source.file, func(node ast.Node) bool {
+				function, ok := node.(*ast.FuncType)
+				if !ok || !isRegionTranslator(function) {
+					return true
+				}
+				if packagePath != "analysis/engine/relation/cofiber" {
+					t.Errorf("%s declares a schema/region.Region translator callback outside cofiber", source.path)
+				}
+				return true
+			})
+		}
+	}
+}
+
+func isRegionTranslator(function *ast.FuncType) bool {
+	if function == nil || function.Params == nil || len(function.Params.List) != 1 || function.Results == nil || len(function.Results.List) != 2 {
+		return false
+	}
+	parameterField := function.Params.List[0]
+	maskField := function.Results.List[0]
+	booleanField := function.Results.List[1]
+	if parameterField == nil || maskField == nil || booleanField == nil {
+		return false
+	}
+	parameter, parameterOK := parameterField.Type.(*ast.SelectorExpr)
+	if !parameterOK || parameter == nil || parameter.Sel == nil {
+		return false
+	}
+	parameterOwner, parameterOwnerOK := parameter.X.(*ast.Ident)
+	mask, maskOK := maskField.Type.(*ast.SelectorExpr)
+	if !maskOK || mask == nil || mask.Sel == nil {
+		return false
+	}
+	maskOwner, maskOwnerOK := mask.X.(*ast.Ident)
+	boolean, booleanOK := booleanField.Type.(*ast.Ident)
+	return parameterOK && parameterOwnerOK && parameterOwner.Name == "region" && parameter.Sel.Name == "Region" &&
+		maskOK && maskOwnerOK && maskOwner.Name == "support" && mask.Sel.Name == "Mask" &&
+		booleanOK && boolean.Name == "bool"
 }
 
 func TestW2ReferenceOracleCannotImportPhysicalOrDomainProtocol(t *testing.T) {

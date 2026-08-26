@@ -6,12 +6,13 @@ import (
 	"github.com/wippyai/go-lua/analysis/identity"
 	"github.com/wippyai/go-lua/analysis/relation/schema/algebra"
 	"github.com/wippyai/go-lua/analysis/relation/schema/model"
+	"github.com/wippyai/go-lua/analysis/relation/semantic/signature"
 )
 
 func TestKindVocabularyIsClosed(t *testing.T) {
 	kinds := algebra.Kinds()
-	if len(kinds) != algebra.KindCount || len(kinds) != 9 {
-		t.Fatalf("Kinds length = %d, want nine", len(kinds))
+	if len(kinds) != algebra.KindCount || len(kinds) != 11 {
+		t.Fatalf("Kinds length = %d, want eleven", len(kinds))
 	}
 	seen := make(map[algebra.Kind]bool, len(kinds))
 	for index, kind := range kinds {
@@ -154,5 +155,31 @@ func TestGroupDigestIncludesCanonicalCardinality(t *testing.T) {
 	many := algebra.NewGroup(child, algebra.NewGroupContract(model.KeyID{}, boundedMany))
 	if one.Digest() == many.Digest() {
 		t.Fatal("Group cardinality was omitted from structural digest")
+	}
+}
+
+func TestApplySlotSourceIsImmutableAndDigestRelevant(t *testing.T) {
+	child := algebra.NewInput(model.RelationID{})
+	sources := []algebra.SlotSource{algebra.NewSlotSource(0, 0)}
+	contract := algebra.NewApplyContract(signature.Identity{}, sources, algebra.OwnerNamed())
+	apply := algebra.NewApply([]algebra.Expression{child}, contract)
+	before := apply.Digest()
+
+	sources[0] = algebra.NewSlotSource(0, 1)
+	if apply.Digest() != before {
+		t.Fatal("mutating Apply constructor source changed immutable contract")
+	}
+	returned := apply.Contract().SlotSource()
+	returned[0] = algebra.NewSlotSource(0, 1)
+	if apply.Digest() != before {
+		t.Fatal("mutating Apply source accessor result changed immutable contract")
+	}
+
+	other := algebra.NewApply(
+		[]algebra.Expression{child},
+		algebra.NewApplyContract(signature.Identity{}, []algebra.SlotSource{algebra.NewSlotSource(0, 1)}, algebra.OwnerNamed()),
+	)
+	if other.Digest() == before {
+		t.Fatal("Apply slot cell ordinal was omitted from structural digest")
 	}
 }

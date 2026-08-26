@@ -1,8 +1,6 @@
 package architecture_test
 
 import (
-	"go/parser"
-	"go/token"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -21,11 +19,14 @@ type altitude struct {
 // These are altitude boundaries, not a frozen package inventory. Teams may add
 // child packages below an owned prefix; those children inherit its altitude.
 var altitudes = []altitude{
+	{"analysis/relation/schema/region", -1, "region"},
 	{"analysis/relation/schema/model", 0, "model"},
+	{"analysis/relation/schema/authority", 1, "authority"},
 	{"analysis/relation/semantic/outcome", 1, "semantic"},
 	{"analysis/relation/semantic/signature", 2, "semantic"},
 	{"analysis/relation/semantic/binding", 3, "semantic"},
 	{"analysis/relation/semantic/lineage", 4, "semantic"},
+	{"analysis/relation/schema/semantic/output", 3, "schema"},
 	{"analysis/relation/schema/algebra", 4, "schema"},
 	{"analysis/relation/schema/plan", 5, "schema"},
 	{"analysis/relation/check/registry", 6, "check"},
@@ -34,38 +35,46 @@ var altitudes = []altitude{
 	{"analysis/relation/check/recurrence", 6, "check"},
 	{"analysis/schema/rule/relcompile", 6, "relcompile"},
 	{"analysis/schema/rule/relbindgen", 6, "relbindgen"},
-	// The relation input bundle publishes composition-supplied decision
-	// scopes against the dense rule catalog. It names model identities and
-	// nothing below the checker, so it sits with the other declaration-side
-	// owners rather than in mount.
-	{"analysis/schema/rule/relinput", 6, "relinput"},
 	{"internal/relationoracle", 6, "oracle"},
 	{"analysis/relation/check/certificate", 7, "check"},
 	{"analysis/relation/mount/address", 8, "mount"},
 	{"analysis/relation/mount/arrangement", 8, "mount"},
-	// The input-scope projection reads a sealed bundle and resolves no
-	// physical coordinate, so it consumes no other mount package.
-	{"analysis/relation/mount/inputscope", 8, "mount"},
 	{"analysis/relation/mount/witness", 9, "mount"},
-	// State is deliberately split by authority. Geometry and recurrence are
-	// mount-derived value layers; columns consume geometry; arrangements and
-	// aggregate versions consume columns; bootstrap and transaction consume
-	// those immutable roots. Do not replace this with one broad state altitude:
-	// that would allow a transaction or bootstrap package to import its own
-	// lower-level mutation substrate in the wrong direction unnoticed.
-	{"analysis/engine/relation/state/geometry", 10, "state-geometry"},
-	{"analysis/engine/relation/state/recurrence", 10, "state-recurrence"},
-	{"analysis/engine/relation/state/internal/column", 11, "state-column"},
-	{"analysis/engine/relation/state/index", 12, "state-index"},
-	{"analysis/engine/relation/state/store", 12, "state-store"},
-	{"analysis/engine/relation/state/bootstrap", 13, "state-bootstrap"},
-	{"analysis/engine/relation/state/transaction", 13, "state-transaction"},
-	{"analysis/engine/relation/operator", 14, "operator"},
-	{"analysis/engine/relation/publish", 14, "publish"},
-	{"analysis/engine/relation/solve/dependency", 14, "solve"},
+	// State is deliberately split by authority.  Cofiber is the lower
+	// physical/logical scope bridge; Geometry consumes that sealed bridge;
+	// columns consume Geometry; arrangements and aggregate versions consume
+	// columns; database owns initial construction and transaction consumes the
+	// immutable roots.  Do not replace this with one broad state altitude: that
+	// would allow a transaction to import its own lower-level mutation substrate
+	// in the wrong direction unnoticed.
+	{"analysis/engine/relation/cofiber", 10, "cofiber"},
+	{"analysis/engine/relation/state/geometry", 11, "state-geometry"},
+	{"analysis/engine/relation/state/internal/column", 12, "state-storage"},
+	{"analysis/engine/relation/state/index", 13, "state-index"},
+	{"analysis/engine/relation/state/store", 12, "state-storage"},
+	{"analysis/engine/relation/state/database", 14, "state-composition"},
+	{"analysis/engine/relation/state/read", 14, "state-composition"},
+	{"analysis/engine/relation/state/transaction", 14, "state-composition"},
+	// Tuple is the one transient, sealed row/frame ABI. It consumes the
+	// cofiber-stable Reader and is redeemed by operators and Apply; it owns no
+	// domain policy, query planning, or mutable state.
+	{"analysis/engine/relation/tuple", 14, "state-composition"},
+	{"analysis/engine/relation/operator", 15, "operator"},
+	// Semantic application redeems the transient tuple ABI and is therefore
+	// one altitude above it. Publication consumes a sealed Application, so it
+	// remains one altitude above Apply rather than importing tuple directly.
 	{"analysis/engine/relation/apply", 15, "apply"},
-	{"analysis/engine/relation/solve/fixpoint", 16, "solve"},
-	{"analysis/engine/relation/runtime", 17, "runtime"},
+	{"analysis/engine/relation/publish", 16, "publish"},
+	{"analysis/engine/relation/solve/fixpoint", 17, "solve"},
+	// Evaluator redeems an already-sealed schedule entry and committed root.
+	// It is deliberately a sibling of the queue rather than importing it, so
+	// runtime can compose queue -> evaluator without a package cycle.
+	{"analysis/engine/relation/eval", 17, "evaluator"},
+	{"analysis/engine/relation/runtime", 18, "runtime"},
+	// Relation admission is the one high-altitude composition seam.  It may
+	// consume declaration compilation and sealed runtime/state authorities,
+	// but no lower layer may import it.
+	{"analysis/program/relationadmission", 19, "admission"},
 }
 
 var emptyAggregationRoots = []string{
@@ -77,6 +86,7 @@ var emptyAggregationRoots = []string{
 	"analysis/engine/relation",
 	"analysis/engine/relation/state",
 	"analysis/engine/relation/operator",
+	"analysis/engine/relation/eval",
 	"analysis/engine/relation/solve",
 }
 
@@ -196,32 +206,21 @@ func TestReferenceOracleCannotInheritProductionAssumptions(t *testing.T) {
 
 func walkPackageImports(t *testing.T, root string, source altitude, visit func(string)) {
 	t.Helper()
-	directory := filepath.Join(root, source.prefix)
-	err := filepath.WalkDir(directory, func(path string, entry os.DirEntry, err error) error {
-		if err != nil {
-			return err
-		}
-		if entry.IsDir() {
-			return nil
-		}
-		if !strings.HasSuffix(path, ".go") || strings.HasSuffix(path, "_test.go") {
-			return nil
-		}
-		file, parseErr := parser.ParseFile(token.NewFileSet(), path, nil, parser.ImportsOnly)
-		if parseErr != nil {
-			return parseErr
-		}
-		for _, spec := range file.Imports {
-			value, unquoteErr := strconv.Unquote(spec.Path.Value)
-			if unquoteErr != nil {
-				return unquoteErr
-			}
-			visit(value)
-		}
-		return nil
-	})
+	sources, err := architectureSourcesUnder(root, source.prefix)
 	if err != nil {
 		t.Fatalf("walk %s: %v", source.prefix, err)
+	}
+	for _, sourceFile := range sources {
+		if strings.HasSuffix(sourceFile.path, "_test.go") {
+			continue
+		}
+		for _, specification := range sourceFile.file.Imports {
+			importPath, unquoteErr := strconv.Unquote(specification.Path.Value)
+			if unquoteErr != nil {
+				t.Fatalf("walk %s: %v", source.prefix, unquoteErr)
+			}
+			visit(importPath)
+		}
 	}
 }
 
@@ -232,9 +231,9 @@ func controlledImport(importPath string) (string, bool) {
 	rel := strings.TrimPrefix(importPath, modulePath+"/")
 	return rel, strings.HasPrefix(rel, "analysis/relation/") ||
 		strings.HasPrefix(rel, "analysis/engine/relation/") ||
+		strings.HasPrefix(rel, "analysis/program/relationadmission") ||
 		strings.HasPrefix(rel, "analysis/schema/rule/relcompile") ||
 		strings.HasPrefix(rel, "analysis/schema/rule/relbindgen") ||
-		strings.HasPrefix(rel, "analysis/schema/rule/relinput") ||
 		strings.HasPrefix(rel, "internal/relationoracle")
 }
 

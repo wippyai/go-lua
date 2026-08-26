@@ -1,6 +1,8 @@
 package binding
 
 import (
+	"bytes"
+
 	"github.com/wippyai/go-lua/analysis/identity"
 	"github.com/wippyai/go-lua/analysis/relation/schema/model"
 )
@@ -81,16 +83,52 @@ func (scope ScopeToken) ValidFor(fence Fence) bool {
 func (scope ScopeToken) Same(other ScopeToken) bool {
 	return scope.Available() && other.Available() && scope == other
 }
+
+// CompareScope establishes a deterministic presentation order for two
+// already-issued opaque scope tokens. It compares only their owner/fence and
+// opaque bytes; it does not decode or derive a semantic identity. Invalid
+// values sort before valid values.
+func CompareScope(left, right ScopeToken) int {
+	if left.Available() != right.Available() {
+		if !left.Available() {
+			return -1
+		}
+		return 1
+	}
+	if !left.Available() {
+		return 0
+	}
+	if result := compareSchema(left.fence.schema, right.fence.schema); result != 0 {
+		return result
+	}
+	if result := bytes.Compare(left.fence.mount[:], right.fence.mount[:]); result != 0 {
+		return result
+	}
+	if left.fence.generation < right.fence.generation {
+		return -1
+	}
+	if left.fence.generation > right.fence.generation {
+		return 1
+	}
+	return bytes.Compare(left.opaque[:], right.opaque[:])
+}
+
+func compareSchema(left, right model.SchemaID) int {
+	leftContent, rightContent := left.Content(), right.Content()
+	return bytes.Compare(leftContent[:], rightContent[:])
+}
 func (issuer Issuer) AuthenticateScope(scope ScopeToken) bool {
 	return scope.ValidFor(issuer.fence)
 }
 
 // MembershipView is an immutable logical view of the rows in one denominator.
-// Construction copies the caller's row vector once; worker calls only borrow
-// this stable storage and perform logical RowID membership checks.
+// Construction copies the caller's row vector once and seals an inverse RowID
+// index alongside it; worker calls only borrow this stable storage.
 type MembershipView struct {
 	relation model.RelationID
 	rows     []model.RowID
+	rowIndex map[model.RowID]int
+	sealed   bool
 }
 
 func NewMembershipView(relation model.RelationID, rows []model.RowID) (MembershipView, bool) {
@@ -98,30 +136,22 @@ func NewMembershipView(relation model.RelationID, rows []model.RowID) (Membershi
 		return MembershipView{}, false
 	}
 	copyOf := make([]model.RowID, len(rows))
+	rowIndex := make(map[model.RowID]int, len(rows))
 	for index, row := range rows {
 		if !row.Available() || row.Relation() != relation {
 			return MembershipView{}, false
 		}
-		for _, prior := range copyOf[:index] {
-			if prior == row {
-				return MembershipView{}, false
-			}
+		if _, exists := rowIndex[row]; exists {
+			return MembershipView{}, false
 		}
 		copyOf[index] = row
+		rowIndex[row] = index
 	}
-	return MembershipView{relation: relation, rows: copyOf}, true
+	return MembershipView{relation: relation, rows: copyOf, rowIndex: rowIndex, sealed: true}, true
 }
 
 func (view MembershipView) Available() bool {
-	if !view.relation.Available() || view.rows == nil {
-		return false
-	}
-	for _, row := range view.rows {
-		if !row.Available() || row.Relation() != view.relation {
-			return false
-		}
-	}
-	return true
+	return view.sealed && view.relation.Available() && view.rows != nil && view.rowIndex != nil
 }
 
 func (view MembershipView) Relation() model.RelationID { return view.relation }
@@ -134,28 +164,17 @@ func (view MembershipView) At(index int) (model.RowID, bool) {
 	return view.rows[index], true
 }
 
-func (view MembershipView) Index(row model.RowID) (int, bool) {
-	if !view.Available() || !row.Available() {
+func (view MembershipView) index(row model.RowID) (int, bool) {
+	if !view.Available() || !row.Available() || row.Relation() != view.relation {
 		return 0, false
 	}
-	for index, candidate := range view.rows {
-		if candidate == row {
-			return index, true
-		}
-	}
-	return 0, false
+	index, ok := view.rowIndex[row]
+	return index, ok
 }
 
 func (view MembershipView) Contains(row model.RowID) bool {
-	if !view.Available() || !row.Available() {
-		return false
-	}
-	for _, candidate := range view.rows {
-		if candidate == row {
-			return true
-		}
-	}
-	return false
+	_, ok := view.index(row)
+	return ok
 }
 
 func (view MembershipView) Same(other MembershipView) bool {
@@ -204,14 +223,24 @@ func (witness DenominatorWitness) Contains(row model.RowID) bool {
 	return witness.Available() && witness.membership.Contains(row)
 }
 
-// Index resolves one authenticated logical row to the stable position in the
-// witness-owned membership view. The view remains the sole row-order source;
-// callers cannot replace or reorder it through this projection.
-func (witness DenominatorWitness) Index(row model.RowID) (int, bool) {
+// Len returns the exact mounted denominator cardinality.  It is a read-only
+// projection of the witness-owned membership and does not expose or replace
+// its row order.
+func (witness DenominatorWitness) Len() int {
 	if !witness.Available() {
-		return 0, false
+		return 0
 	}
-	return witness.membership.Index(row)
+	return witness.membership.Len()
+}
+
+// At resolves one stable denominator position to its logical RowID.  The
+// inverse of Index is needed by physical arrangement scans; the membership
+// witness remains the sole owner of row order.
+func (witness DenominatorWitness) At(index int) (model.RowID, bool) {
+	if !witness.Available() {
+		return model.RowID{}, false
+	}
+	return witness.membership.At(index)
 }
 
 // Evidence returns the owner-issued identity that authenticated this
@@ -385,14 +414,18 @@ const (
 	spanSlot
 )
 
-// Slot is a borrowed scalar or span view. It holds no ownership of the cell
-// vector, so constructing a frame does not copy or allocate invocation data.
+// Slot is a borrowed scalar or span view.  A span retains its source cells and
+// a parallel vector of carrier rows: those are identical for a homogeneous
+// input, but a joined Complete delivery may authenticate the cell through one
+// denominator while ordering/completeness is owned by another.  Constructing
+// a frame therefore never has to guess a range row from a source cell.
 type Slot struct {
 	kind         slotKind
 	single       Cell
 	cells        []Cell
 	span         Span
 	rangeWitness DenominatorWitness
+	rangeRows    []model.RowID
 }
 
 func NewScalarSlot(cell Cell) (Slot, bool) {
@@ -406,16 +439,49 @@ func NewSpanSlot(cells []Cell) (Slot, bool) {
 	if cells == nil || len(cells) == 0 {
 		return Slot{}, false
 	}
+	rangeRows := make([]model.RowID, len(cells))
+	for index, cell := range cells {
+		if !cell.Available() {
+			return Slot{}, false
+		}
+		rangeRows[index] = cell.Address().Row()
+	}
+	return newSpanSlot(cells, rangeRows, cells[0].Address().Witness())
+}
+
+// NewJoinedSpanSlot constructs the explicit dual-witness span form.  cells
+// retain their source-cell addresses; rangeRows are the exact matching carrier
+// occurrences from the sealed tuple stream, and rangeWitness authenticates
+// their range/order.  It deliberately does not infer either side by relation
+// lookup, and frame validation later proves the declared input variant.
+func NewJoinedSpanSlot(cells []Cell, rangeRows []model.RowID, rangeWitness DenominatorWitness) (Slot, bool) {
+	if cells == nil || len(cells) == 0 || rangeRows == nil || len(cells) != len(rangeRows) || !rangeWitness.Available() {
+		return Slot{}, false
+	}
+	return newSpanSlot(cells, rangeRows, rangeWitness)
+}
+
+func newSpanSlot(cells []Cell, rangeRows []model.RowID, rangeWitness DenominatorWitness) (Slot, bool) {
+	if cells == nil || rangeRows == nil || len(cells) == 0 || len(cells) != len(rangeRows) || !rangeWitness.Available() {
+		return Slot{}, false
+	}
 	span, ok := NewSpan(cells, 0, uint32(len(cells)))
 	if !ok {
 		return Slot{}, false
 	}
-	return Slot{kind: spanSlot, cells: cells, span: span, rangeWitness: cells[0].Address().Witness()}, true
+	for _, row := range rangeRows {
+		if !row.Available() || row.Relation() != rangeWitness.Relation() || !rangeWitness.Contains(row) {
+			return Slot{}, false
+		}
+	}
+	return Slot{kind: spanSlot, cells: cells, span: span, rangeWitness: rangeWitness, rangeRows: rangeRows}, true
 }
 
 // NewEmptySpanSlot carries an authenticated empty range. It is the only way
 // to represent an empty complete delivery: no cell exists from which a range
-// witness could otherwise be recovered.
+// witness could otherwise be recovered.  It also serves the joined form: an
+// empty carrier has no source cell and therefore cannot manufacture a source
+// witness merely to represent absence.
 func NewEmptySpanSlot(witness DenominatorWitness) (Slot, bool) {
 	if !witness.Available() {
 		return Slot{}, false
@@ -424,15 +490,25 @@ func NewEmptySpanSlot(witness DenominatorWitness) (Slot, bool) {
 	if !ok {
 		return Slot{}, false
 	}
-	return Slot{kind: spanSlot, cells: emptyCells, span: span, rangeWitness: witness}, true
+	return Slot{kind: spanSlot, cells: emptyCells, span: span, rangeWitness: witness, rangeRows: emptyRows}, true
 }
+
+var emptyRows = []model.RowID{}
 
 func (slot Slot) Available() bool {
 	switch slot.kind {
 	case scalarSlot:
 		return slot.single.Available()
 	case spanSlot:
-		return slot.cells != nil && slot.rangeWitness.Available() && slot.span.Available()
+		if slot.cells == nil || slot.rangeRows == nil || len(slot.rangeRows) != slot.span.Len() || !slot.rangeWitness.Available() || !slot.span.Available() {
+			return false
+		}
+		for _, row := range slot.rangeRows {
+			if !row.Available() || row.Relation() != slot.rangeWitness.Relation() || !slot.rangeWitness.Contains(row) {
+				return false
+			}
+		}
+		return true
 	default:
 		return false
 	}
@@ -477,9 +553,27 @@ func (slot Slot) Span() (Span, bool) {
 	return slot.span, true
 }
 
-func (slot Slot) Witness() DenominatorWitness {
+// RangeRowAt returns the authenticated carrier-row occurrence paired with a
+// span cell.  It is intentionally unavailable for scalar slots: a scalar has
+// no independently delivered range to anchor.
+func (slot Slot) RangeRowAt(index int) (model.RowID, bool) {
+	if slot.kind != spanSlot || !slot.Available() || index < 0 || index >= len(slot.rangeRows) {
+		return model.RowID{}, false
+	}
+	return slot.rangeRows[index], true
+}
+
+// RangeWitness returns the carrier witness governing a span's range and
+// order.  A cell's own Address().Witness() may differ for joined delivery.
+func (slot Slot) RangeWitness() DenominatorWitness {
 	if slot.kind != spanSlot {
 		return DenominatorWitness{}
 	}
 	return slot.rangeWitness
+}
+
+// Witness is retained as the historical span-range accessor.  New callers
+// should prefer RangeWitness to avoid conflating it with CellToken.Witness.
+func (slot Slot) Witness() DenominatorWitness {
+	return slot.RangeWitness()
 }

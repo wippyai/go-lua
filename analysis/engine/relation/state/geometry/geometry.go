@@ -4,65 +4,11 @@ import (
 	"github.com/wippyai/go-lua/analysis/engine/internal/facts/scalar"
 	"github.com/wippyai/go-lua/analysis/engine/internal/facts/support"
 	"github.com/wippyai/go-lua/analysis/engine/internal/guard"
+	"github.com/wippyai/go-lua/analysis/engine/relation/cofiber"
 	"github.com/wippyai/go-lua/analysis/relation/mount/witness"
 	"github.com/wippyai/go-lua/analysis/relation/schema/model"
 	"github.com/wippyai/go-lua/analysis/relation/semantic/binding"
 )
-
-// RegionMapper is the mount-authenticated seam between a neutral mount
-// formula and the engine's sole support representation.  The mapper is bound
-// to one exact mounted runtime at construction; Geometry never accepts a
-// caller-supplied manager that could disagree with that runtime.
-//
-// Mount cannot implement this without depending on engine guard state, so
-// the engine owner supplies the conversion callback once at the boundary.
-// Returning an unavailable or foreign Mask is a refusal; there is no
-// true/empty fallback.
-type RegionMapper struct {
-	fence   binding.Fence
-	manager *guard.Manager
-	mapFn   func(witness.Region) (support.Mask, bool)
-}
-
-// NewRegionMapper binds one neutral-region conversion to one exact mounted
-// runtime and guard universe.  The returned value is immutable; the callback
-// is only an adapter for the one neutral-to-engine conversion and cannot
-// replace mounted scope authentication.
-func NewRegionMapper(mounted witness.Mounted, manager *guard.Manager, mapFn func(witness.Region) (support.Mask, bool)) (RegionMapper, bool) {
-	if !mounted.Available() || manager == nil || !manager.Valid(manager.True()) || mapFn == nil {
-		return RegionMapper{}, false
-	}
-	fence := mounted.RuntimeFence()
-	if !fence.Available() {
-		return RegionMapper{}, false
-	}
-	return RegionMapper{fence: fence, manager: manager, mapFn: mapFn}, true
-}
-
-func (mapper RegionMapper) Available() bool {
-	return mapper.fence.Available() && mapper.manager != nil && mapper.manager.Valid(mapper.manager.True()) && mapper.mapFn != nil
-}
-
-func (mapper RegionMapper) Fence() binding.Fence {
-	if !mapper.Available() {
-		return binding.Fence{}
-	}
-	return mapper.fence
-}
-
-func (mapper RegionMapper) Manager() *guard.Manager {
-	if !mapper.Available() {
-		return nil
-	}
-	return mapper.manager
-}
-
-func (mapper RegionMapper) Map(region witness.Region) (support.Mask, bool) {
-	if !mapper.Available() || region == nil {
-		return support.Mask{}, false
-	}
-	return mapper.mapFn(region)
-}
 
 // Key is a dense physical slot used only inside one exact mounted column or
 // arrangement. It is not a logical row identity and must not cross the
@@ -75,33 +21,49 @@ func scalarKeyLaw[K scalar.Key]() {}
 var _ = scalarKeyLaw[Key]
 
 // Geometry is an immutable solve-local view over one exact mounted runtime.
-// It retains no row map or scope map: mounted answers are canonical, and the
-// mapper owns support conversion. The manager is the
-// exact guard universe captured with the mapper's support representation.
+// It retains no row map and no scope map: Mounted owns scope issuance, while
+// the cofiber authority owns the one sealed logical/physical translation and
+// normalizes every physical partition before it can cross to logical state.
 type Geometry struct {
 	mounted witness.Mounted
-	mapper  RegionMapper
+	scopes  cofiber.Authority
 	fence   binding.Fence
 }
 
-// New adopts one complete mounted witness and one mapper already bound to
-// that exact runtime. A zero mount, unstable/invalid fence, or foreign mapper
-// is rejected at construction.
-func New(mounted witness.Mounted, mapper RegionMapper) (Geometry, bool) {
-	if !mounted.Available() || !mapper.Available() {
+// New adopts one complete mounted witness and one cofiber authority already
+// bound to that exact runtime.  A zero mount, foreign authority, or a raw
+// translator callback is rejected here: translation must have been sealed by
+// cofiber.New during Bootstrap.
+func New(mounted witness.Mounted, scopes cofiber.Authority) (Geometry, bool) {
+	if !mounted.Available() || !scopes.ValidFor(mounted) {
 		return Geometry{}, false
 	}
 	fence := mounted.RuntimeFence()
-	if !fence.Available() || !mapper.Fence().Same(fence) {
+	if !fence.Available() || !scopes.Fence().Same(fence) {
 		return Geometry{}, false
 	}
-	return Geometry{mounted: mounted, mapper: mapper, fence: fence}, true
+	return Geometry{mounted: mounted, scopes: scopes, fence: fence}, true
 }
 
 // Available reports whether the geometry retains a complete mounted witness,
-// mapper, and runtime fence.
+// cofiber authority, and runtime fence.
 func (geometry Geometry) Available() bool {
-	return geometry.mounted.Available() && geometry.mapper.Available() && geometry.fence.Available() && geometry.mapper.Fence().Same(geometry.fence) && geometry.mounted.RuntimeFence().Same(geometry.fence)
+	return geometry.mounted.Available() && geometry.scopes.Available() && geometry.fence.Available() && geometry.scopes.Fence().Same(geometry.fence) && geometry.mounted.RuntimeFence().Same(geometry.fence)
+}
+
+// ValidFor reports whether this geometry redeems the exact mounted artifact
+// supplied by a consumer.  RuntimeFence only names the semantic token
+// namespace; sibling mounts can deliberately share it while carrying a
+// different address book or arrangement.  Geometry therefore compares the
+// complete mounted identity and its physical arrangement before a caller
+// crosses into state or an operator.
+func (geometry Geometry) ValidFor(mounted witness.Mounted) bool {
+	if !geometry.Available() || !mounted.Available() || !geometry.mounted.Same(mounted) || !geometry.scopes.ValidFor(mounted) {
+		return false
+	}
+	want := geometry.mounted.Arrangement()
+	got := mounted.Arrangement()
+	return want.Available() && got.Available() && want.Digest() == got.Digest()
 }
 
 // Fence returns the exact runtime authority captured at construction.
@@ -110,6 +72,28 @@ func (geometry Geometry) Fence() binding.Fence {
 		return binding.Fence{}
 	}
 	return geometry.fence
+}
+
+// Manager returns the exact guard universe owned by this geometry view. It
+// is the only way a sibling state owner obtains the support manager needed to
+// build a complete immutable aggregate; callers cannot replace the manager.
+func (geometry Geometry) Manager() *guard.Manager {
+	if !geometry.Available() {
+		return nil
+	}
+	return geometry.scopes.Manager()
+}
+
+// Universe returns the immutable unconstrained support region for this exact
+// geometry. Aggregate bootstrap uses it to materialize empty arrangement
+// roots; it is not a default semantic value and is never used for a missing
+// row or a failed scope lookup.
+func (geometry Geometry) Universe() (support.Mask, bool) {
+	manager := geometry.Manager()
+	if manager == nil {
+		return support.Mask{}, false
+	}
+	return support.True(manager)
 }
 
 // LogicalKey is the stable logical identity of one mounted row. It carries
@@ -149,11 +133,12 @@ type Coordinate struct {
 	logical LogicalKey
 	dense   Key
 	mask    support.Mask
+	scope   witness.Scope
 }
 
 // Available reports whether both geometry inputs are complete.
 func (coordinate Coordinate) Available() bool {
-	return coordinate.logical.Available() && coordinate.mask.Valid()
+	return coordinate.logical.Available() && coordinate.mask.Valid() && coordinate.scope.Available()
 }
 
 // Logical returns the stable, namespaced row identity.
@@ -165,6 +150,12 @@ func (coordinate Coordinate) Dense() Key { return coordinate.dense }
 
 // Mask returns the exact support partition for the authenticated scope.
 func (coordinate Coordinate) Mask() support.Mask { return coordinate.mask }
+
+// Scope returns the canonical runtime Scope for Coordinate.Mask.  It is not
+// necessarily the declaration token that originated the cell: Boolean diagram
+// partitioning may have produced an intersection, union, or difference whose
+// exact scope is owned by the cofiber normalization authority.
+func (coordinate Coordinate) Scope() witness.Scope { return coordinate.scope }
 
 // LogicalKey resolves one authenticated CellToken to its stable, namespaced
 // logical row identity. The denominator witness proves membership; no digest
@@ -188,23 +179,62 @@ func (geometry Geometry) LogicalKey(cell binding.CellToken) (LogicalKey, bool) {
 	return NewLogicalKey(cell.Relation(), cell.Row())
 }
 
-// Mask resolves one authenticated ScopeToken to the engine's sole support
-// representation. The mounted witness returns the formula authenticated by
-// the exact token; the mapper must convert that formula without introducing a
-// second mask language.
+// Mask resolves one authenticated ScopeToken through the sealed cofiber
+// authority.  Geometry never accepts or retains a raw Region mapper.
 func (geometry Geometry) Mask(scope binding.ScopeToken) (support.Mask, bool) {
 	if !geometry.Available() || !scope.ValidFor(geometry.fence) {
 		return support.Mask{}, false
 	}
-	region, ok := geometry.mounted.RegionForToken(scope)
-	if !ok || region == nil {
+	logical, logicalOK := geometry.mounted.ScopeForToken(scope)
+	if !logicalOK {
 		return support.Mask{}, false
 	}
-	mask, ok := geometry.mapper.Map(region)
-	if !ok || !mask.Valid() || mask.Manager() != geometry.mapper.Manager() {
-		return support.Mask{}, false
+	return geometry.scopes.Mask(logical)
+}
+
+// Normalize reifies one exact physical support partition as its canonical
+// mounted runtime Scope.  It is the only physical-to-logical scope crossing;
+// callers never derive a token from a mask identity themselves.
+func (geometry Geometry) Normalize(mask support.Mask) (witness.Scope, bool) {
+	if !geometry.Available() {
+		return witness.Scope{}, false
 	}
-	return mask, true
+	return geometry.scopes.Normalize(mask)
+}
+
+// Conjoin returns the one normalized runtime Scope for the exact physical
+// intersection of two authenticated fibers.  It is intentionally a logical
+// result-only surface: operators never receive the intermediate Mask.
+func (geometry Geometry) Conjoin(left, right witness.Scope) (witness.Scope, bool) {
+	if !geometry.Available() {
+		return witness.Scope{}, false
+	}
+	return geometry.scopes.Conjoin(left, right)
+}
+
+// Entails reports exact physical inclusion of two authenticated normalized
+// fibers.  Selection uses this instead of the declared-only witness Region
+// algebra, which cannot express arbitrary partition differences.
+func (geometry Geometry) Entails(premise, conclusion witness.Scope) bool {
+	return geometry.Available() && geometry.scopes.Entails(premise, conclusion)
+}
+
+// Scope resolves and normalizes an authenticated scope token.  Runtime
+// state must use this result rather than carrying an unnormalized declared
+// scope beside a diagram partition.
+func (geometry Geometry) Scope(token binding.ScopeToken) (witness.Scope, bool) {
+	if !geometry.Available() || !token.ValidFor(geometry.fence) {
+		return witness.Scope{}, false
+	}
+	logical, logicalOK := geometry.mounted.ScopeForToken(token)
+	if !logicalOK {
+		return witness.Scope{}, false
+	}
+	mask, maskOK := geometry.scopes.Mask(logical)
+	if !maskOK {
+		return witness.Scope{}, false
+	}
+	return geometry.scopes.Normalize(mask)
 }
 
 // Resolve returns the row key and full scope partition together. It never
@@ -223,9 +253,13 @@ func (geometry Geometry) Resolve(cell binding.CellToken) (Coordinate, bool) {
 	if !rowOK || row != logical.Row() {
 		return Coordinate{}, false
 	}
-	mask, maskOK := geometry.Mask(cell.Scope())
+	scope, scopeOK := geometry.Scope(cell.Scope())
+	if !scopeOK {
+		return Coordinate{}, false
+	}
+	mask, maskOK := geometry.scopes.Mask(scope)
 	if !maskOK {
 		return Coordinate{}, false
 	}
-	return Coordinate{logical: logical, dense: Key(index), mask: mask}, true
+	return Coordinate{logical: logical, dense: Key(index), mask: mask, scope: scope}, true
 }

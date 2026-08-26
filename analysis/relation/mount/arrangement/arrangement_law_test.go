@@ -1,15 +1,19 @@
 package arrangement_test
 
 import (
+	"reflect"
 	"testing"
 
 	"github.com/wippyai/go-lua/analysis/identity"
 	"github.com/wippyai/go-lua/analysis/relation/check/certificate"
 	"github.com/wippyai/go-lua/analysis/relation/mount/address"
 	"github.com/wippyai/go-lua/analysis/relation/mount/arrangement"
+	"github.com/wippyai/go-lua/analysis/relation/mount/arrangement/expand"
 	"github.com/wippyai/go-lua/analysis/relation/schema/algebra"
 	"github.com/wippyai/go-lua/analysis/relation/schema/model"
+	"github.com/wippyai/go-lua/analysis/relation/schema/region"
 	"github.com/wippyai/go-lua/analysis/relation/schema/plan"
+	"github.com/wippyai/go-lua/analysis/relation/semantic/binding"
 	"github.com/wippyai/go-lua/analysis/relation/semantic/outcome"
 	"github.com/wippyai/go-lua/analysis/relation/semantic/signature"
 )
@@ -21,15 +25,17 @@ type fixture struct {
 	key         model.KeyID
 	scope       model.ScopeID
 	expression  model.ExpressionID
+	dependency  model.DependencyID
 }
 
 type addressInventory struct {
-	fence       address.Fence
-	relations   map[model.RelationID]uint64
-	columns     map[model.ColumnID]uint64
-	keys        map[model.KeyID]uint64
-	scopes      map[model.ScopeID]uint64
-	expressions map[model.ExpressionID]uint64
+	fence        address.Fence
+	relations    map[model.RelationID]uint64
+	columns      map[model.ColumnID]uint64
+	keys         map[model.KeyID]uint64
+	scopes       map[model.ScopeID]uint64
+	expressions  map[model.ExpressionID]uint64
+	dependencies map[model.DependencyID]uint64
 }
 
 func (inventory *addressInventory) Fence() address.Fence { return inventory.fence }
@@ -54,7 +60,8 @@ func (inventory *addressInventory) ResolveExpression(id model.ExpressionID) (uin
 	return value, ok
 }
 func (inventory *addressInventory) ResolveDependency(id model.DependencyID) (uint64, bool) {
-	return 0, false
+	value, ok := inventory.dependencies[id]
+	return value, ok
 }
 
 type arrangementInventory struct {
@@ -79,6 +86,30 @@ func (inventory *arrangementInventory) Resolve(value arrangement.Access) (arrang
 	slot := inventory.slot + inventory.calls
 	inventory.calls++
 	return arrangement.NewHandle(inventory.fence, slot)
+}
+
+// vectorGateInventory makes the Input row-vector resolution failure explicit.
+// It leaves every other sealed physical access alone, so a rejected derive
+// proves that Input cannot quietly retain its relation scan or rebuild a
+// vector later at runtime.
+type vectorGateInventory struct {
+	base    *arrangementInventory
+	vector  arrangement.Access
+	foreign arrangement.Handle
+	missing bool
+}
+
+func (inventory *vectorGateInventory) Fence() address.Fence { return inventory.base.Fence() }
+func (inventory *vectorGateInventory) Resolve(value arrangement.Access) (arrangement.Handle, bool) {
+	if value.Equal(inventory.vector) {
+		if inventory.missing {
+			return arrangement.Handle{}, false
+		}
+		if inventory.foreign.Available() {
+			return inventory.foreign, true
+		}
+	}
+	return inventory.base.Resolve(value)
 }
 
 func newFixture(t *testing.T) fixture {
@@ -115,12 +146,23 @@ func newFixture(t *testing.T) fixture {
 	if !ok {
 		t.Fatal("expression")
 	}
+	dependency, ok := model.IssueDependencyID(owner, token(t, "dependency"))
+	if !ok {
+		t.Fatal("dependency")
+	}
+	relationRef, ok := plan.NewRelationRef(relation)
+	if !ok {
+		t.Fatal("relation ref")
+	}
+	dependencyRef := plan.DefineDependencyRef(dependency)
 	builder := plan.NewBuilder(schemaID)
 	builder.AddRelation(model.DefineRelationSchema(relation, []model.ColumnID{column}, []model.KeyID{key}, scope))
 	builder.AddColumn(model.DefineColumnSchema(column, typeID))
 	builder.AddKey(model.DefineKeySchema(key, []model.ColumnID{column}))
-	builder.AddScope(model.DefineScopeSchema(scope, nil))
+	builder.AddScope(model.DefineScopeSchema(scope, nil, region.True()))
 	builder.AddExpression(plan.DefineExpressionRef(expression, algebra.NewInput(relation)))
+	builder.AddDependency(plan.DefineDependency(dependency, expression, []plan.RelationRef{relationRef}, nil, "input"))
+	builder.AddSCC(plan.DefineSCC([]plan.DependencyRef{dependencyRef}, nil, plan.DefineRecurrence(plan.Acyclic, nil)))
 	schema, ok := builder.Build()
 	if !ok {
 		t.Fatal("schema")
@@ -129,7 +171,7 @@ func newFixture(t *testing.T) fixture {
 	if refusal != nil {
 		t.Fatalf("certificate: %v", refusal)
 	}
-	return fixture{certificate: checked, relation: relation, column: column, key: key, scope: scope, expression: expression}
+	return fixture{certificate: checked, relation: relation, column: column, key: key, scope: scope, expression: expression, dependency: dependency}
 }
 
 func (value fixture) addresses(t *testing.T) *addressInventory {
@@ -143,12 +185,13 @@ func (value fixture) addresses(t *testing.T) *addressInventory {
 		t.Fatal("fence")
 	}
 	return &addressInventory{
-		fence:       fence,
-		relations:   map[model.RelationID]uint64{value.relation: 1},
-		columns:     map[model.ColumnID]uint64{value.column: 2},
-		keys:        map[model.KeyID]uint64{value.key: 3},
-		scopes:      map[model.ScopeID]uint64{value.scope: 4},
-		expressions: map[model.ExpressionID]uint64{value.expression: 5},
+		fence:        fence,
+		relations:    map[model.RelationID]uint64{value.relation: 1},
+		columns:      map[model.ColumnID]uint64{value.column: 2},
+		keys:         map[model.KeyID]uint64{value.key: 3},
+		scopes:       map[model.ScopeID]uint64{value.scope: 4},
+		expressions:  map[model.ExpressionID]uint64{value.expression: 5},
+		dependencies: map[model.DependencyID]uint64{value.dependency: 6},
 	}
 }
 
@@ -160,18 +203,18 @@ func TestDeriveIsLogicalAcrossPhysicalReorder(t *testing.T) {
 		t.Fatal("address bind")
 	}
 	firstInventory := &arrangementInventory{fence: book.Fence(), slot: 11}
-	first, ok := arrangement.Derive(value.certificate, book, firstInventory)
+	first, ok := arrangement.Derive(value.certificate, book, firstInventory, expand.EmptyCatalog(), []binding.PartitionDirectory{})
 	if !ok || !first.Available() || !first.ValidFor(book) {
 		t.Fatal("first arrangement derive")
 	}
 	secondInventory := &arrangementInventory{fence: book.Fence(), slot: 12}
-	second, ok := arrangement.Derive(value.certificate, book, secondInventory)
+	second, ok := arrangement.Derive(value.certificate, book, secondInventory, expand.EmptyCatalog(), []binding.PartitionDirectory{})
 	if !ok || first.LogicalDigest() != second.LogicalDigest() || first.Digest() == second.Digest() {
 		t.Fatal("physical assignment leaked into logical identity or was not retained")
 	}
 	accesses := first.Accesses()
-	if len(accesses) != 1 {
-		t.Fatalf("access count = %d, want one", len(accesses))
+	if len(accesses) != 2 {
+		t.Fatalf("access count = %d, want scan plus authored vector", len(accesses))
 	}
 	firstLayout, ok := first.Resolve(accesses[0])
 	if !ok || !firstLayout.ValidFor(book.Fence()) || !firstLayout.Handle().ValidFor(book.Fence()) {
@@ -196,7 +239,7 @@ func TestDeriveIsLogicalAcrossPhysicalReorder(t *testing.T) {
 		t.Fatal("stale layout accepted")
 	}
 	accesses[0] = arrangement.Access{}
-	if len(first.Accesses()) != 1 || !first.HasAccess(first.Accesses()[0]) {
+	if len(first.Accesses()) != 2 || !first.HasAccess(first.Accesses()[0]) {
 		t.Fatal("access enumeration was not defensive")
 	}
 }
@@ -209,7 +252,7 @@ func TestDeriveRefusesMissingForeignAndDuplicateHandles(t *testing.T) {
 		t.Fatal("address bind")
 	}
 	missing := &arrangementInventory{fence: book.Fence(), miss: true}
-	if plan, ok := arrangement.Derive(value.certificate, book, missing); ok || plan.Available() {
+	if plan, ok := arrangement.Derive(value.certificate, book, missing, expand.EmptyCatalog(), []binding.PartitionDirectory{}); ok || plan.Available() {
 		t.Fatal("missing arrangement accepted")
 	}
 	foreignFence, ok := address.NewFence(value.certificate.SchemaID(), value.certificate.Digest(), addresses.fence.StoreID(), identity.MountID{0: 2}, addresses.fence.Generation())
@@ -224,11 +267,132 @@ func TestDeriveRefusesMissingForeignAndDuplicateHandles(t *testing.T) {
 	// Resolve's foreign result must be refused even when the inventory fence is
 	// otherwise correct.
 	foreign.handle = foreignHandle
-	if plan, ok := arrangement.Derive(value.certificate, book, foreign); ok || plan.Available() {
+	if plan, ok := arrangement.Derive(value.certificate, book, foreign, expand.EmptyCatalog(), []binding.PartitionDirectory{}); ok || plan.Available() {
 		t.Fatal("foreign arrangement handle accepted")
 	}
 	if _, ok := arrangement.NewHandle(book.Fence(), 0); ok {
 		t.Fatal("zero arrangement handle accepted")
+	}
+}
+
+func TestInputRefusesMissingOrForeignAuthoredVectorAtMount(t *testing.T) {
+	value := newFixture(t)
+	addresses := value.addresses(t)
+	book, ok := address.Bind(value.certificate, addresses)
+	if !ok {
+		t.Fatal("address bind")
+	}
+	vector, ok := arrangement.NewVectorAccess(value.relation, []model.ColumnID{value.column})
+	if !ok {
+		t.Fatal("Input row vector")
+	}
+	missing := &vectorGateInventory{
+		base:    &arrangementInventory{fence: book.Fence(), slot: 71},
+		vector:  vector,
+		missing: true,
+	}
+	if plan, derived := arrangement.Derive(value.certificate, book, missing, expand.EmptyCatalog(), []binding.PartitionDirectory{}); derived || plan.Available() {
+		t.Fatal("Input accepted a missing sealed row vector")
+	}
+	foreignFence, ok := address.NewFence(value.certificate.SchemaID(), value.certificate.Digest(), addresses.fence.StoreID(), identity.MountID{0: 2}, addresses.fence.Generation())
+	if !ok {
+		t.Fatal("foreign fence")
+	}
+	foreignHandle, ok := arrangement.NewHandle(foreignFence, 73)
+	if !ok {
+		t.Fatal("foreign vector handle")
+	}
+	foreign := &vectorGateInventory{
+		base:    &arrangementInventory{fence: book.Fence(), slot: 81},
+		vector:  vector,
+		foreign: foreignHandle,
+	}
+	if plan, derived := arrangement.Derive(value.certificate, book, foreign, expand.EmptyCatalog(), []binding.PartitionDirectory{}); derived || plan.Available() {
+		t.Fatal("Input accepted a foreign sealed row vector")
+	}
+}
+
+func TestInputAdmitsASealedZeroColumnRelation(t *testing.T) {
+	owner, ok := model.IssueOwnerID(token(t, "zero-input-owner"))
+	if !ok {
+		t.Fatal("owner")
+	}
+	schemaID, ok := model.IssueSchemaID(owner, token(t, "zero-input-schema"))
+	if !ok {
+		t.Fatal("schema")
+	}
+	relation, ok := model.IssueRelationID(owner, token(t, "zero-input-relation"))
+	if !ok {
+		t.Fatal("relation")
+	}
+	scope, ok := model.IssueScopeID(owner, token(t, "zero-input-scope"))
+	if !ok {
+		t.Fatal("scope")
+	}
+	expression, ok := model.IssueExpressionID(owner, token(t, "zero-input-expression"))
+	if !ok {
+		t.Fatal("expression")
+	}
+	dependency, ok := model.IssueDependencyID(owner, token(t, "zero-input-dependency"))
+	if !ok {
+		t.Fatal("dependency")
+	}
+	relationRef, ok := plan.NewRelationRef(relation)
+	if !ok {
+		t.Fatal("relation ref")
+	}
+	builder := plan.NewBuilder(schemaID)
+	if !builder.AddRelation(model.DefineRelationSchema(relation, nil, nil, scope)) ||
+		!builder.AddScope(model.DefineScopeSchema(scope, nil, region.True())) ||
+		!builder.AddExpression(plan.DefineExpressionRef(expression, algebra.NewInput(relation))) ||
+		!builder.AddDependency(plan.DefineDependency(dependency, expression, []plan.RelationRef{relationRef}, nil, "zero-input")) ||
+		!builder.AddSCC(plan.DefineSCC([]plan.DependencyRef{plan.DefineDependencyRef(dependency)}, nil, plan.DefineRecurrence(plan.Acyclic, nil))) {
+		t.Fatal("zero-column declarations")
+	}
+	schema, ok := builder.Build()
+	if !ok {
+		t.Fatal("schema build")
+	}
+	checked, refusal := certificate.Check(schema)
+	if refusal != nil || !checked.Available() {
+		t.Fatalf("zero-column certificate = %v", refusal)
+	}
+	store, ok := identity.IssueStore()
+	if !ok {
+		t.Fatal("store")
+	}
+	fence, ok := address.NewFence(schemaID, checked.Digest(), store, identity.MountID{0: 41}, identity.Generation(1))
+	if !ok {
+		t.Fatal("fence")
+	}
+	addresses := &addressInventory{
+		fence:        fence,
+		relations:    map[model.RelationID]uint64{relation: 1},
+		columns:      map[model.ColumnID]uint64{},
+		keys:         map[model.KeyID]uint64{},
+		scopes:       map[model.ScopeID]uint64{scope: 2},
+		expressions:  map[model.ExpressionID]uint64{expression: 3},
+		dependencies: map[model.DependencyID]uint64{dependency: 4},
+	}
+	book, ok := address.Bind(checked, addresses)
+	if !ok {
+		t.Fatal("address bind")
+	}
+	derived, ok := arrangement.Derive(checked, book, &arrangementInventory{fence: fence, slot: 91}, expand.EmptyCatalog(), []binding.PartitionDirectory{})
+	if !ok || !derived.Available() || len(derived.Accesses()) != 1 {
+		t.Fatal("zero-column Input did not seal its one scan/vector access")
+	}
+	node, ok := derived.Execution().Entry(expression)
+	if !ok {
+		t.Fatal("zero-column Input node")
+	}
+	binding, ok := node.Input()
+	if !ok || !binding.Available() || len(binding.Scan().Columns()) != 0 || len(binding.Values().Columns()) != 0 || !binding.Scan().Equal(binding.Values()) {
+		t.Fatal("zero-column Input did not retain the legal empty row vector")
+	}
+	rangeValue, ok := node.Range()
+	if !ok || !rangeValue.Layout().Equal(binding.Scan()) {
+		t.Fatal("zero-column Input range did not retain relation cofiber authority")
 	}
 }
 
@@ -326,8 +490,8 @@ func newCensusFixture(t *testing.T) censusFixture {
 		algebra.NewMerge([]algebra.Expression{inputA, inputA}, algebra.NewMergeContract(keyA)),
 		algebra.NewGroup(inputA, algebra.NewGroupContract(keyA, censusCardinality(t, model.ExactlyOne))),
 		algebra.NewComplete(inputA, denominatorA),
-		algebra.NewApply([]algebra.Expression{inputA}, algebra.NewApplyContract(operations[0])),
-		algebra.NewPublish(algebra.NewApply([]algebra.Expression{inputA}, algebra.NewApplyContract(operations[0])), algebra.NewPublishContract(relationB, keyB)),
+		algebra.NewApply([]algebra.Expression{inputA}, algebra.NewApplyContract(operations[0], []algebra.SlotSource{algebra.NewSlotSource(0, 0)}, algebra.OwnerNamed())),
+		algebra.NewPublish(algebra.NewApply([]algebra.Expression{inputA}, algebra.NewApplyContract(operations[0], []algebra.SlotSource{algebra.NewSlotSource(0, 0)}, algebra.OwnerNamed())), algebra.NewPublishContract(relationB, keyB)),
 	}
 	var expressions [9]model.ExpressionID
 	expressionLabels := []string{"input", "select", "project", "join", "merge", "group", "complete", "apply", "publish"}
@@ -357,8 +521,12 @@ func newCensusFixture(t *testing.T) censusFixture {
 			t.Fatal("add key")
 		}
 	}
-	if !builder.AddScope(model.DefineScopeSchema(scope, []model.ColumnID{columnA, columnB})) {
+	if !builder.AddScope(model.DefineScopeSchema(scope, []model.ColumnID{columnA, columnB}, region.True())) {
 		t.Fatal("add scope")
+	}
+	capability, capabilityOK := model.NewAscendingCapability(typeID)
+	if !capabilityOK || !builder.AddTypeCapability(capability) {
+		t.Fatal("add ascending type capability")
 	}
 	for index, expression := range expressionValues {
 		expressionID, issueOK := model.IssueExpressionID(owner, token(t, "census-expression-"+expressionLabels[index]))
@@ -394,8 +562,7 @@ func newCensusFixture(t *testing.T) censusFixture {
 			Identity:    operation,
 			Fence:       signature.Fence{Owner: owner, Schema: schema},
 			Inputs:      []signature.Input{inputs[index]},
-			Outputs:     []signature.Output{{Relation: relationB, Column: columnB, Type: typeID, Presence: signature.ProducePresent}},
-			Authority:   signature.OutputAuthority{Denominator: denominatorB},
+			Outputs:     []signature.Output{{Relation: relationB, Column: columnB, Type: typeID, Presence: signature.ProducePresent, Denominator: denominatorB}},
 			Cardinality: censusCardinality(t, model.ExactlyOne), Outcomes: accepted,
 		})
 		input, inputOK := value.InputAt(0)
@@ -455,7 +622,7 @@ func TestDeriveCensusCoversAllExpressionsAndDeliveryShapes(t *testing.T) {
 		t.Fatal("address bind")
 	}
 	mount := &arrangementInventory{fence: book.Fence(), slot: 101}
-	derived, ok := arrangement.Derive(value.certificate, book, mount)
+	derived, ok := arrangement.Derive(value.certificate, book, mount, expand.EmptyCatalog(), []binding.PartitionDirectory{})
 	if !ok || !derived.Available() || !derived.ValidFor(book) {
 		t.Fatal("census arrangement derive")
 	}
@@ -481,7 +648,11 @@ func TestDeriveCensusCoversAllExpressionsAndDeliveryShapes(t *testing.T) {
 	for _, vector := range []struct {
 		relation model.RelationID
 		columns  []model.ColumnID
-	}{{value.relationA, []model.ColumnID{value.columnA}}, {value.relationB, []model.ColumnID{value.columnB}}} {
+	}{
+		{value.relationA, []model.ColumnID{value.columnA, value.columnA2}},
+		{value.relationA, []model.ColumnID{value.columnA}},
+		{value.relationB, []model.ColumnID{value.columnB}},
+	} {
 		access, accessOK := arrangement.NewVectorAccess(vector.relation, vector.columns)
 		if !accessOK {
 			t.Fatal("vector access")
@@ -493,8 +664,21 @@ func TestDeriveCensusCoversAllExpressionsAndDeliveryShapes(t *testing.T) {
 			t.Fatalf("required access missing: relation=%v key=%v columns=%v", requirement.Relation(), requirement.Key(), requirement.Columns())
 		}
 	}
-	if got := len(derived.Accesses()); got != 8 || mount.calls != uint64(got) {
-		t.Fatalf("physical access census = %d (resolver calls %d), want 8 deduplicated accesses", got, mount.calls)
+	if mount.calls != 9 {
+		t.Fatalf("logical inventory resolves = %d, want 9", mount.calls)
+	}
+	classes := map[arrangement.CoordinateClass]int{}
+	for _, layout := range derived.Layouts() {
+		classes[layout.CoordinateClass()]++
+	}
+	wantClasses := map[arrangement.CoordinateClass]int{
+		arrangement.CoordinateClassNone:                 5,
+		arrangement.CoordinateClassDeclaredKey:          4,
+		arrangement.CoordinateClassStableCorrespondence: 2,
+		arrangement.CoordinateClassLookupOnly:           1,
+	}
+	if len(derived.Layouts()) != 12 || !reflect.DeepEqual(classes, wantClasses) {
+		t.Fatalf("physical coordinate census = %d/%v, want 12/%v", len(derived.Layouts()), classes, wantClasses)
 	}
 	keyAAccess, accessOK := arrangement.NewKeyAccess(value.keyA)
 	if !accessOK {
@@ -505,7 +689,7 @@ func TestDeriveCensusCoversAllExpressionsAndDeliveryShapes(t *testing.T) {
 		t.Fatal("composite key layout")
 	}
 	keyColumns := keyALayout.KeyColumns()
-	if len(keyColumns) != 2 || keyColumns[0] != value.columnA2 || keyColumns[1] != value.columnA || keyALayout.Columns() != nil || len(keyAAccess.Columns()) != 0 {
+	if keyALayout.CoordinateClass() != arrangement.CoordinateClassDeclaredKey || len(keyColumns) != 2 || keyColumns[0] != value.columnA2 || keyColumns[1] != value.columnA || keyALayout.Columns() != nil || len(keyAAccess.Columns()) != 0 {
 		t.Fatalf("composite key layout order/identity = %v/%v", keyColumns, keyAAccess.Columns())
 	}
 	keyBAccess, accessOK := arrangement.NewKeyAccess(value.keyB)
@@ -523,16 +707,57 @@ func TestDeriveCensusCoversAllExpressionsAndDeliveryShapes(t *testing.T) {
 	}
 	scanLayout, scanLayoutOK := derived.Resolve(scan)
 	emptyLayout, emptyLayoutOK := derived.Resolve(emptyVector)
-	if !scanLayoutOK || !emptyLayoutOK || !scanLayout.Equal(emptyLayout) || scanLayout.KeyColumns() != nil {
+	if !scanLayoutOK || !emptyLayoutOK || !scanLayout.Equal(emptyLayout) || scanLayout.CoordinateClass() != arrangement.CoordinateClassNone || scanLayout.KeyColumns() != nil {
 		t.Fatal("relation scan layout equivalence")
 	}
 	vectorAccess, vectorOK := arrangement.NewVectorAccess(value.relationA, []model.ColumnID{value.columnA})
 	if !vectorOK {
 		t.Fatal("vector access")
 	}
-	vectorLayout, vectorLayoutOK := derived.Resolve(vectorAccess)
-	if !vectorLayoutOK || vectorLayout.KeyColumns() != nil || len(vectorLayout.Columns()) != 1 || vectorLayout.Columns()[0] != value.columnA {
-		t.Fatal("unkeyed vector layout")
+	physicalLayout := func(access arrangement.Access, class arrangement.CoordinateClass, keyColumns []model.ColumnID) (arrangement.Layout, bool) {
+		var result arrangement.Layout
+		for _, candidate := range derived.Layouts() {
+			if !candidate.Access().Equal(access) || candidate.CoordinateClass() != class {
+				continue
+			}
+			gotKeys := candidate.KeyColumns()
+			if len(gotKeys) != len(keyColumns) {
+				continue
+			}
+			matches := true
+			for index := range keyColumns {
+				if gotKeys[index] != keyColumns[index] {
+					matches = false
+					break
+				}
+			}
+			if !matches {
+				continue
+			}
+			if result.Available() {
+				return arrangement.Layout{}, false
+			}
+			result = candidate
+		}
+		return result, result.Available()
+	}
+	vectorLayout, vectorLayoutOK := physicalLayout(vectorAccess, arrangement.CoordinateClassStableCorrespondence, []model.ColumnID{value.columnA})
+	if _, ambiguous := derived.Resolve(vectorAccess); ambiguous {
+		t.Fatal("ambiguous correspondence access was resolved by declaration order")
+	}
+	if !vectorLayoutOK || vectorLayout.CoordinateClass() != arrangement.CoordinateClassStableCorrespondence || len(vectorLayout.KeyColumns()) != 1 || vectorLayout.KeyColumns()[0] != value.columnA || len(vectorLayout.Columns()) != 1 || vectorLayout.Columns()[0] != value.columnA {
+		t.Fatal("correspondence vector layout")
+	}
+	mergeVectorAccess, mergeVectorOK := arrangement.NewVectorAccess(value.relationA, []model.ColumnID{value.columnA, value.columnA2})
+	if !mergeVectorOK {
+		t.Fatal("merge vector access")
+	}
+	mergeVectorLayout, mergeVectorLayoutOK := physicalLayout(mergeVectorAccess, arrangement.CoordinateClassLookupOnly, []model.ColumnID{value.columnA2, value.columnA})
+	if _, ambiguous := derived.Resolve(mergeVectorAccess); ambiguous {
+		t.Fatal("ambiguous lookup access was resolved by declaration order")
+	}
+	if !mergeVectorLayoutOK || mergeVectorLayout.CoordinateClass() != arrangement.CoordinateClassLookupOnly || len(mergeVectorLayout.KeyColumns()) != 2 || mergeVectorLayout.KeyColumns()[0] != value.columnA2 || mergeVectorLayout.KeyColumns()[1] != value.columnA {
+		t.Fatal("lookup-only Merge vector layout")
 	}
 	layouts := derived.Layouts()
 	planAccesses := derived.Accesses()
@@ -632,10 +857,23 @@ func TestDeriveCensusCoversAllExpressionsAndDeliveryShapes(t *testing.T) {
 	if !seenKinds[signature.ScalarDelivery] || !seenKinds[signature.BoundedSpanDelivery] || !seenKinds[signature.CompleteSpanDelivery] {
 		t.Fatalf("delivery shapes = %#v", seenKinds)
 	}
-	if len(expectedPhysical) != len(derived.Accesses()) {
-		t.Fatalf("exact physical access census = %d, want %d", len(derived.Accesses()), len(expectedPhysical))
-	}
+	logicalAccesses := make([]arrangement.Access, 0, len(derived.Accesses()))
 	for _, candidate := range derived.Accesses() {
+		seen := false
+		for _, prior := range logicalAccesses {
+			if prior.Equal(candidate) {
+				seen = true
+				break
+			}
+		}
+		if !seen {
+			logicalAccesses = append(logicalAccesses, candidate)
+		}
+	}
+	if len(expectedPhysical) != len(logicalAccesses) {
+		t.Fatalf("exact logical access census = %d, want %d (physical layouts=%d)", len(logicalAccesses), len(expectedPhysical), len(derived.Accesses()))
+	}
+	for _, candidate := range logicalAccesses {
 		found := false
 		for _, expected := range expectedPhysical {
 			if candidate.Equal(expected) {
@@ -665,7 +903,7 @@ func TestDeriveCensusCoversAllExpressionsAndDeliveryShapes(t *testing.T) {
 	if !fixedOK {
 		t.Fatal("fixed handle")
 	}
-	if plan, deriveOK := arrangement.Derive(value.certificate, book, &arrangementInventory{fence: book.Fence(), handle: fixed}); deriveOK || plan.Available() {
+	if plan, deriveOK := arrangement.Derive(value.certificate, book, &arrangementInventory{fence: book.Fence(), handle: fixed}, expand.EmptyCatalog(), []binding.PartitionDirectory{}); deriveOK || plan.Available() {
 		t.Fatal("duplicate physical handles accepted")
 	}
 }

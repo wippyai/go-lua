@@ -1,5 +1,7 @@
 package model
 
+import "github.com/wippyai/go-lua/analysis/relation/schema/region"
+
 // ColumnSchema is the immutable logical declaration for one nominal column.
 // The column's owner and relation fences remain part of ColumnID; this shape
 // carries its owner-issued semantic TypeID but no storage offset or physical
@@ -196,18 +198,23 @@ func (schema KeySchema) Equal(other KeySchema) bool {
 type ScopeSchema struct {
 	id         ScopeID
 	dimensions []ColumnID
+	region     region.Region
 }
 
 // DefineScopeSchema freezes one decision-scope definition. Dimensions retain
 // authored order and malformed foreign/duplicate references remain visible to
-// the independent checker.
-func DefineScopeSchema(id ScopeID, dimensions []ColumnID) ScopeSchema {
-	return ScopeSchema{id: id, dimensions: copyColumns(dimensions)}
+// the independent checker. Region is the owner-issued Boolean scope formula;
+// it is carried as a concrete sealed value and is never derived here from the
+// scope identity or its dimensions.
+func DefineScopeSchema(id ScopeID, dimensions []ColumnID, value region.Region) ScopeSchema {
+	return ScopeSchema{id: id, dimensions: copyColumns(dimensions), region: value}
 }
 
 // Available reports whether the declaration has a non-zero scope identity.
 // Semantic ownership, membership, and duplicate checks are independent.
-func (schema ScopeSchema) Available() bool { return schema.id.Available() }
+func (schema ScopeSchema) Available() bool {
+	return schema.id.Available() && schema.region.Available() && !schema.region.IsFalse()
+}
 
 // ID returns the scope schema's nominal identity.
 func (schema ScopeSchema) ID() ScopeID { return schema.id }
@@ -217,6 +224,9 @@ func (schema ScopeSchema) Owner() OwnerID { return schema.id.Owner() }
 
 // Dimensions returns a copy of canonical scope dimensions.
 func (schema ScopeSchema) Dimensions() []ColumnID { return copyColumns(schema.dimensions) }
+
+// Region returns the owner-declared Boolean scope formula.
+func (schema ScopeSchema) Region() region.Region { return schema.region }
 
 // HasDimension reports whether dimension belongs to this scope schema.
 func (schema ScopeSchema) HasDimension(dimension ColumnID) bool {
@@ -233,7 +243,7 @@ func (schema ScopeSchema) HasDimension(dimension ColumnID) bool {
 
 // Equal compares immutable scope schema content.
 func (schema ScopeSchema) Equal(other ScopeSchema) bool {
-	if schema.id != other.id {
+	if schema.id != other.id || schema.region.Identity() != other.region.Identity() {
 		return false
 	}
 	return equalColumns(schema.dimensions, other.dimensions)

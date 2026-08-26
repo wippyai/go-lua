@@ -18,6 +18,20 @@ func derive(tag string, parts ...[]byte) identity.ContentID {
 
 func appendUint8(dst []byte, value uint8) []byte { return append(dst, value) }
 
+func appendUint32s(dst []byte, values []uint32) []byte {
+	dst = appendLength(dst, len(values))
+	for _, value := range values {
+		dst = appendUint32(dst, value)
+	}
+	return dst
+}
+
+func appendUint32(dst []byte, value uint32) []byte {
+	var encoded [4]byte
+	binary.BigEndian.PutUint32(encoded[:], value)
+	return append(dst, encoded[:]...)
+}
+
 func appendLength(dst []byte, length int) []byte {
 	var encoded [8]byte
 	binary.BigEndian.PutUint64(encoded[:], uint64(length))
@@ -44,6 +58,11 @@ func appendRelation(dst []byte, value model.RelationID) []byte {
 
 func appendColumn(dst []byte, value model.ColumnID) []byte {
 	dst = appendRelation(dst, value.Relation())
+	return appendContent(dst, value.Content())
+}
+
+func appendType(dst []byte, value model.TypeID) []byte {
+	dst = appendOwner(dst, value.Owner())
 	return appendContent(dst, value.Content())
 }
 
@@ -126,6 +145,33 @@ func cloneColumns(source []model.ColumnID) []model.ColumnID {
 		return nil
 	}
 	copyOf := make([]model.ColumnID, len(source))
+	copy(copyOf, source)
+	return copyOf
+}
+
+func cloneUint32s(source []uint32) []uint32 {
+	if len(source) == 0 {
+		return nil
+	}
+	copyOf := make([]uint32, len(source))
+	copy(copyOf, source)
+	return copyOf
+}
+
+func cloneSlotSources(source []SlotSource) []SlotSource {
+	if len(source) == 0 {
+		return nil
+	}
+	copyOf := make([]SlotSource, len(source))
+	copy(copyOf, source)
+	return copyOf
+}
+
+func cloneColumnSlots(source []ColumnSlot) []ColumnSlot {
+	if len(source) == 0 {
+		return nil
+	}
+	copyOf := make([]ColumnSlot, len(source))
 	copy(copyOf, source)
 	return copyOf
 }

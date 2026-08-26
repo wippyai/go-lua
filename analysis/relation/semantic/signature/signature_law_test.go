@@ -106,13 +106,10 @@ func validSpec(t *testing.T, value fixture, inputs []signature.Input) signature.
 		t.Fatalf("construct exact cardinality")
 	}
 	return signature.Spec{
-		Identity: value.operation,
-		Fence:    value.fence,
-		Inputs:   inputs,
-		Outputs:  []signature.Output{{Relation: value.relation, Column: value.result, Type: value.resultType, Presence: signature.ProducePresent}},
-		Authority: signature.OutputAuthority{
-			Denominator: value.denominator,
-		},
+		Identity:    value.operation,
+		Fence:       value.fence,
+		Inputs:      inputs,
+		Outputs:     []signature.Output{{Relation: value.relation, Column: value.result, Type: value.resultType, Presence: signature.ProducePresent, Denominator: value.denominator}},
 		Cardinality: exact,
 		Outcomes:    accepted,
 	}
@@ -151,10 +148,10 @@ func TestSignatureSealFreezesMalformedCrossContractReferences(t *testing.T) {
 	value := newFixture(t)
 	input := []signature.Input{{Relation: value.relation, Column: value.left, Type: value.leftType, Presence: signature.RequirePresent, Delivery: scalarDelivery(t), Denominator: value.denominator}}
 	spec := validSpec(t, value, input)
-	spec.Authority.Denominator = model.DenominatorRef{}
+	spec.Outputs[0].Denominator = model.DenominatorRef{}
 	foreign, ok := signature.Seal(spec)
-	if !ok || !foreign.Available() {
-		t.Fatalf("foreign output authority was not frozen")
+	if ok || foreign.Available() {
+		t.Fatalf("missing output destination was accepted")
 	}
 	spec = validSpec(t, value, input)
 	bounded, ok := model.NewCardinality(model.BoundedMany, 2)
@@ -226,6 +223,44 @@ func TestSignaturePolicyAccessorsPreserveSealedSpec(t *testing.T) {
 	copyOf[0] = outcome.Invalid
 	if sealed.Outcomes().Contains(outcome.Invalid) {
 		t.Fatalf("outcome accessor exposed mutable signature storage")
+	}
+}
+
+func TestSignatureSealsHeterogeneousOutputDenominators(t *testing.T) {
+	value := newFixture(t)
+	secondRelation, ok := model.IssueRelationID(value.owner, content(t, "relation/child"))
+	if !ok {
+		t.Fatalf("issue child relation")
+	}
+	secondColumn, ok := model.IssueColumnID(secondRelation, content(t, "column/child-result"))
+	if !ok {
+		t.Fatalf("issue child column")
+	}
+	secondKey, ok := model.IssueKeyID(secondRelation, content(t, "key/child"))
+	if !ok {
+		t.Fatalf("issue child key")
+	}
+	secondDenominator, ok := model.NewDenominatorRef(secondRelation, secondKey)
+	if !ok {
+		t.Fatalf("issue child denominator")
+	}
+	spec := validSpec(t, value, nil)
+	spec.Outputs = []signature.Output{
+		{Relation: value.relation, Column: value.result, Type: value.resultType, Presence: signature.ProducePresent, Denominator: value.denominator},
+		{Relation: secondRelation, Column: secondColumn, Type: value.resultType, Presence: signature.ProducePresent, Denominator: secondDenominator},
+	}
+	sealed, ok := signature.Seal(spec)
+	if !ok || !sealed.Available() {
+		t.Fatalf("heterogeneous output signature was not sealed")
+	}
+	if got, ok := sealed.OutputDestination(value.relation, value.result); !ok || got != value.denominator {
+		t.Fatalf("parent output destination = %#v/%t", got, ok)
+	}
+	if got, ok := sealed.OutputDestination(secondRelation, secondColumn); !ok || got != secondDenominator {
+		t.Fatalf("child output destination = %#v/%t", got, ok)
+	}
+	if _, ok := sealed.OutputFor(secondRelation, secondColumn); !ok {
+		t.Fatalf("child output was erased by destination normalization")
 	}
 }
 

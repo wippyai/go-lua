@@ -93,6 +93,19 @@ func (registry testAlgebraRegistry) Resolve(model.TypeID) (binding.ValueAlgebra,
 	return registry.algebra, true
 }
 
+type testEquality struct{ typeID model.TypeID }
+
+func (equality testEquality) Type() model.TypeID { return equality.typeID }
+func (equality testEquality) Equal(left, right binding.ValueToken) bool {
+	return left.Same(right) && left.Type() == equality.typeID && right.Type() == equality.typeID
+}
+
+type testEqualityRegistry struct{ equality testEquality }
+
+func (registry testEqualityRegistry) ResolveEquality(typeID model.TypeID) (binding.ValueEquality, bool) {
+	return registry.equality, registry.equality.Type() == typeID
+}
+
 func newFixture(t *testing.T, cardinality model.Cardinality) fixture {
 	t.Helper()
 	operationOwner := issueOwner(t, "owner/operation")
@@ -115,15 +128,14 @@ func newFixture(t *testing.T, cardinality model.Cardinality) fixture {
 		t.Fatalf("construct scalar delivery")
 	}
 	logical := signature.Fence{Owner: operationOwner, Schema: schema}
-	outcomes, ok := outcome.NewSet(outcome.Produced, outcome.NoCandidate, outcome.NoSelection, outcome.Opaque, outcome.Refused)
+	outcomes, ok := outcome.NewSet(outcome.Produced, outcome.NoCandidate, outcome.NoSelection, outcome.Refused)
 	if !ok {
 		t.Fatalf("construct outcomes")
 	}
 	spec := signature.Spec{
 		Identity: signature.Identity{Operation: operationID, Version: 1}, Fence: logical,
 		Inputs:      []signature.Input{{Relation: relation, Column: input, Type: inputType, Presence: signature.RequirePresent, Delivery: delivery, Denominator: denominator}},
-		Outputs:     []signature.Output{{Relation: relation, Column: output, Type: outputType, Presence: signature.ProducePresent}},
-		Authority:   signature.OutputAuthority{Denominator: denominator},
+		Outputs:     []signature.Output{{Relation: relation, Column: output, Type: outputType, Presence: signature.ProducePresent, Denominator: denominator}},
 		Cardinality: cardinality, Outcomes: outcomes,
 	}
 	sealed, ok := signature.Seal(spec)
@@ -336,7 +348,7 @@ func TestCrossOwnerFrameCarriesDistinctDenominatorsAndScopes(t *testing.T) {
 			{Relation: value.relation, Column: value.input, Type: value.inputType, Presence: signature.RequirePresent, Delivery: scalarDelivery(t), Denominator: value.denominator},
 			secondInput,
 		},
-		Outputs: value.signature.Outputs(), Authority: value.signature.Authority(),
+		Outputs:     value.signature.Outputs(),
 		Cardinality: value.signature.Cardinality(), Outcomes: outcomesFor(),
 	}
 	twoInput, ok := signature.Seal(spec)
@@ -428,8 +440,8 @@ func TestFrameEnforcesBoundedAndCompleteSpanDelivery(t *testing.T) {
 	}
 	spanSpec := signature.Spec{
 		Identity: value.signature.Identity(), Fence: value.logical,
-		Inputs:  []signature.Input{{Relation: value.relation, Column: value.input, Type: value.inputType, Presence: signature.RequirePresent, Delivery: bounded, Denominator: value.denominator}},
-		Outputs: value.signature.Outputs(), Authority: value.signature.Authority(),
+		Inputs:      []signature.Input{{Relation: value.relation, Column: value.input, Type: value.inputType, Presence: signature.RequirePresent, Delivery: bounded, Denominator: value.denominator}},
+		Outputs:     value.signature.Outputs(),
 		Cardinality: value.signature.Cardinality(), Outcomes: outcomesFor(),
 	}
 	boundedSignature, ok := signature.Seal(spanSpec)
@@ -491,8 +503,8 @@ func TestFrameUsesOneInvocationScopeAndAuthenticatesEmptyCompleteRange(t *testin
 	}
 	spec := signature.Spec{
 		Identity: value.signature.Identity(), Fence: value.logical,
-		Inputs:  []signature.Input{{Relation: value.relation, Column: value.input, Type: value.inputType, Presence: signature.RequirePresent, Delivery: complete, Denominator: value.denominator}},
-		Outputs: value.signature.Outputs(), Authority: value.signature.Authority(),
+		Inputs:      []signature.Input{{Relation: value.relation, Column: value.input, Type: value.inputType, Presence: signature.RequirePresent, Delivery: complete, Denominator: value.denominator}},
+		Outputs:     value.signature.Outputs(),
 		Cardinality: value.signature.Cardinality(), Outcomes: outcomesFor(),
 	}
 	completeSignature, ok := signature.Seal(spec)
@@ -531,15 +543,31 @@ func TestAbsentCellsAndProposalsCarryNoValueHandle(t *testing.T) {
 	}
 }
 
+func TestRemovalProposalUsesOperationBitWithoutProvenAbsent(t *testing.T) {
+	exact, _ := model.NewCardinality(model.ExactlyOne, 0)
+	value := newFixture(t, exact)
+	proposal, ok := binding.NewRemovalProposal(value.outputToken)
+	if !ok || !proposal.Available() || !proposal.Removal() || proposal.Value().Available() || proposal.Presence().Available() {
+		t.Fatal("removal proposal was not a sparse operation bit")
+	}
+	buffer, ok := binding.NewProposalBuffer(value.signature, value.runtime, []binding.DenominatorWitness{value.outputWitness}, value.outputScope, binding.NewOwnerNamedDestination(value.outputWitness.Relation()))
+	if !ok || !buffer.Append(proposal) {
+		t.Fatal("owner-authorized removal proposal rejected")
+	}
+	if _, ok := buffer.Seal(outcome.Result{Code: outcome.Produced}); !ok {
+		t.Fatal("removal proposal could not seal")
+	}
+}
+
 func TestProposalBufferIsOutputBoundAndAllOrNothing(t *testing.T) {
 	exact, _ := model.NewCardinality(model.ExactlyOne, 0)
 	value := newFixture(t, exact)
-	buffer, ok := binding.NewProposalBuffer(value.signature, value.runtime, value.outputWitness, value.outputScope)
+	buffer, ok := binding.NewProposalBuffer(value.signature, value.runtime, []binding.DenominatorWitness{value.outputWitness}, value.outputScope, binding.NewOwnerNamedDestination(value.outputWitness.Relation()))
 	if !ok {
 		t.Fatalf("construct proposal buffer")
 	}
 	present, _ := model.NewPresence(model.Present)
-	wrongBuffer, ok := binding.NewProposalBuffer(value.signature, value.runtime, value.outputWitness, value.outputScope)
+	wrongBuffer, ok := binding.NewProposalBuffer(value.signature, value.runtime, []binding.DenominatorWitness{value.outputWitness}, value.outputScope, binding.NewOwnerNamedDestination(value.outputWitness.Relation()))
 	if !ok {
 		t.Fatalf("construct type-check buffer")
 	}
@@ -560,7 +588,7 @@ func TestProposalBufferIsOutputBoundAndAllOrNothing(t *testing.T) {
 	rowToken, _ := value.issuer.IssueCell(rowWitness, value.outputScope, value.output, rowTwo)
 	rowValue, _ := value.issuer.IssueValue(value.outputType, content(t, "value/exactly-one-2"))
 	rowProposal, _ := binding.NewProposal(rowToken, rowValue, present)
-	singleBuffer, _ := binding.NewProposalBuffer(value.signature, value.runtime, rowWitness, value.outputScope)
+	singleBuffer, _ := binding.NewProposalBuffer(value.signature, value.runtime, []binding.DenominatorWitness{rowWitness}, value.outputScope, binding.NewOwnerNamedDestination(rowWitness.Relation()))
 	if !singleBuffer.Append(rowFirstProposal) || singleBuffer.Append(rowProposal) || singleBuffer.Len() != 0 {
 		t.Fatalf("ExactlyOne buffer admitted more than one destination row")
 	}
@@ -572,6 +600,141 @@ func TestProposalBufferIsOutputBoundAndAllOrNothing(t *testing.T) {
 	}
 	if _, ok := buffer.Seal(outcome.Result{Code: outcome.Produced}); ok {
 		t.Fatalf("poisoned buffer yielded a partial batch")
+	}
+}
+
+func TestOpaqueSealCarriesItsStagedRowsAndRejectsAbsentOrRefused(t *testing.T) {
+	exact, _ := model.NewCardinality(model.ExactlyOne, 0)
+	value := newFixture(t, exact)
+	outputs := value.signature.Outputs()
+	outputs[0].Presence = signature.ProduceOpaque
+	outcomes, ok := outcome.NewSet(outcome.Produced, outcome.NoCandidate, outcome.NoSelection, outcome.Opaque, outcome.Refused)
+	if !ok {
+		t.Fatalf("construct opaque outcomes")
+	}
+	operation, ok := signature.Seal(signature.Spec{
+		Identity: value.signature.Identity(), Fence: value.signature.Fence(),
+		Inputs: value.signature.Inputs(), Outputs: outputs,
+		Cardinality: value.signature.Cardinality(), Outcomes: outcomes,
+	})
+	if !ok {
+		t.Fatalf("construct opaque operation")
+	}
+	opaque := mustPresence(t, model.AuthenticatedOpaque)
+	proposal, ok := binding.NewProposal(value.outputToken, value.outputValue, opaque)
+	if !ok {
+		t.Fatalf("construct opaque proposal")
+	}
+	newBuffer := func() binding.ProposalBuffer {
+		buffer, bufferOK := binding.NewProposalBuffer(operation, value.runtime, []binding.DenominatorWitness{value.outputWitness}, value.outputScope, binding.NewOwnerNamedDestination(value.outputWitness.Relation()))
+		if !bufferOK {
+			t.Fatalf("construct proposal buffer")
+		}
+		return buffer
+	}
+
+	t.Run("opaque retains exact row", func(t *testing.T) {
+		buffer := newBuffer()
+		if !buffer.Append(proposal) {
+			t.Fatalf("valid opaque proposal rejected")
+		}
+		batch, sealed := buffer.Seal(outcome.Result{Code: outcome.Opaque})
+		if !sealed || !batch.Available() || batch.Len() != 1 || batch.Outcome().Code != outcome.Opaque {
+			t.Fatalf("opaque seal dropped staged row: ok=%v len=%d", sealed, batch.Len())
+		}
+		got, gotOK := batch.At(0)
+		if !gotOK || !got.Destination().Same(proposal.Destination()) || !got.Value().Same(proposal.Value()) || got.Presence() != proposal.Presence() {
+			t.Fatalf("opaque seal changed staged row")
+		}
+	})
+
+	for _, testCase := range []struct {
+		name   string
+		result outcome.Result
+	}{
+		{name: "absent", result: outcome.Result{Code: outcome.NoCandidate}},
+		{name: "unselected", result: outcome.Result{Code: outcome.NoSelection}},
+		{name: "refused", result: func() outcome.Result {
+			reason, reasonOK := model.IssueRefusalID(value.operationOwner, content(t, "opaque-seal/refused"))
+			if !reasonOK {
+				t.Fatalf("construct refusal")
+			}
+			return outcome.Result{Code: outcome.Refused, RefusalID: reason}
+		}()},
+	} {
+		t.Run(testCase.name, func(t *testing.T) {
+			buffer := newBuffer()
+			if !buffer.Append(proposal) {
+				t.Fatalf("valid opaque proposal rejected")
+			}
+			batch, sealed := buffer.Seal(testCase.result)
+			if sealed || batch.Available() || buffer.Len() != 0 {
+				t.Fatalf("%s seal retained staged rows: ok=%v batch=%v len=%d", testCase.name, sealed, batch.Available(), buffer.Len())
+			}
+		})
+	}
+}
+
+func TestProposalBufferBindsTwoOutputDenominatorsWithoutRouting(t *testing.T) {
+	exact, _ := model.NewCardinality(model.BoundedMany, 2)
+	value := newFixture(t, exact)
+	childRelation := issueRelation(t, value.dataOwner, "relation/child-output")
+	childColumn := issueColumn(t, childRelation, "column/child-output")
+	childKey := issueKey(t, childRelation, "key/child-output")
+	childDenominator, ok := model.NewDenominatorRef(childRelation, childKey)
+	if !ok {
+		t.Fatalf("child denominator")
+	}
+	outputs := value.signature.Outputs()
+	outputs = append(outputs, signature.Output{
+		Relation: childRelation, Column: childColumn, Type: value.outputType,
+		Presence: signature.ProducePresent, Denominator: childDenominator,
+	})
+	operation, ok := signature.Seal(signature.Spec{
+		Identity: value.signature.Identity(), Fence: value.logical,
+		Inputs: value.signature.Inputs(), Outputs: outputs,
+		Cardinality: exact,
+		Outcomes:    value.signature.Outcomes(),
+	})
+	if !ok {
+		t.Fatalf("heterogeneous operation")
+	}
+	childRow := mustRow(t, childRelation, "row/child-output")
+	childMembership, ok := binding.NewMembershipView(childRelation, []model.RowID{childRow})
+	if !ok {
+		t.Fatalf("child membership")
+	}
+	childWitness, ok := value.issuer.IssueDenominator(childDenominator, childMembership, content(t, "witness/child-output"))
+	if !ok {
+		t.Fatalf("child witness")
+	}
+	if _, ok := binding.NewProposalBuffer(operation, value.runtime, []binding.DenominatorWitness{value.outputWitness}, value.outputScope, binding.NewOwnerNamedDestination(value.outputWitness.Relation())); ok {
+		t.Fatalf("buffer without the second destination witness was admitted")
+	}
+	buffer, ok := binding.NewProposalBuffer(operation, value.runtime, []binding.DenominatorWitness{value.outputWitness, childWitness}, value.outputScope, binding.NewOwnerNamedDestination(value.outputWitness.Relation()))
+	if !ok {
+		t.Fatalf("two-destination buffer")
+	}
+	present := mustPresence(t, model.Present)
+	parentProposal, ok := binding.NewProposal(value.outputToken, value.outputValue, present)
+	if !ok || !buffer.Append(parentProposal) {
+		t.Fatalf("parent destination proposal")
+	}
+	childToken, ok := value.issuer.IssueCell(childWitness, value.outputScope, childColumn, childRow)
+	if !ok {
+		t.Fatalf("child destination token")
+	}
+	childValue, ok := value.issuer.IssueValue(value.outputType, content(t, "value/child-output"))
+	if !ok {
+		t.Fatalf("child destination value")
+	}
+	childProposal, ok := binding.NewProposal(childToken, childValue, present)
+	if !ok || !buffer.Append(childProposal) {
+		t.Fatalf("child destination proposal")
+	}
+	batch, ok := buffer.Seal(outcome.Result{Code: outcome.Produced})
+	if !ok || batch.Len() != 2 {
+		t.Fatalf("two-destination batch = %d/%t", batch.Len(), ok)
 	}
 }
 
@@ -591,7 +754,7 @@ func TestBoundedManyAndReusableBatch(t *testing.T) {
 	present := mustPresence(t, model.Present)
 	first, _ := binding.NewProposal(firstToken, firstValue, present)
 	second, _ := binding.NewProposal(secondToken, secondValue, present)
-	buffer, ok := binding.NewProposalBuffer(value.signature, value.runtime, witness, value.outputScope)
+	buffer, ok := binding.NewProposalBuffer(value.signature, value.runtime, []binding.DenominatorWitness{witness}, value.outputScope, binding.NewOwnerNamedDestination(witness.Relation()))
 	if !ok || !buffer.Append(first) || !buffer.Append(second) {
 		t.Fatalf("bounded proposals rejected")
 	}
@@ -610,12 +773,100 @@ func TestBoundedManyAndReusableBatch(t *testing.T) {
 	}
 	optional, _ := model.NewCardinality(model.Optional, 0)
 	optionalValue := newFixture(t, optional)
-	empty, ok := binding.NewProposalBuffer(optionalValue.signature, optionalValue.runtime, optionalValue.outputWitness, optionalValue.outputScope)
+	empty, ok := binding.NewProposalBuffer(optionalValue.signature, optionalValue.runtime, []binding.DenominatorWitness{optionalValue.outputWitness}, optionalValue.outputScope, binding.NewOwnerNamedDestination(optionalValue.outputWitness.Relation()))
 	if !ok {
 		t.Fatalf("construct optional buffer")
 	}
 	if batch, ok := empty.Seal(outcome.Result{Code: outcome.Produced}); !ok || !batch.Available() || batch.Len() != 0 {
 		t.Fatalf("optional empty result rejected")
+	}
+}
+
+func TestCompleteDenominatorUsesWitnessCapacityAndExactCoverage(t *testing.T) {
+	complete, _ := model.NewCardinality(model.CompleteDenominator, 0)
+	value := newFixture(t, complete)
+	secondOutput := issueColumn(t, value.relation, "column/complete-output-2")
+	operation, ok := signature.Seal(signature.Spec{
+		Identity: value.signature.Identity(), Fence: value.logical,
+		Inputs: value.signature.Inputs(), Outputs: []signature.Output{
+			{Relation: value.relation, Column: value.output, Type: value.outputType, Presence: signature.ProducePresent, Denominator: value.denominator},
+			{Relation: value.relation, Column: secondOutput, Type: value.outputType, Presence: signature.ProducePresent, Denominator: value.denominator},
+		},
+		Cardinality: complete, Outcomes: value.signature.Outcomes(),
+	})
+	if !ok {
+		t.Fatalf("seal complete-denominator operation")
+	}
+	secondRow := mustRow(t, value.relation, "row/complete-2")
+	membership, ok := binding.NewMembershipView(value.relation, []model.RowID{value.outputRow, secondRow})
+	if !ok {
+		t.Fatalf("complete membership")
+	}
+	witness, ok := value.issuer.IssueDenominator(value.denominator, membership, content(t, "witness/complete"))
+	if !ok {
+		t.Fatalf("complete witness")
+	}
+	present := mustPresence(t, model.Present)
+	makeProposal := func(column model.ColumnID, row model.RowID, label string) binding.Proposal {
+		token, tokenOK := value.issuer.IssueCell(witness, value.outputScope, column, row)
+		if !tokenOK {
+			t.Fatalf("issue complete cell %s", label)
+		}
+		valueToken, valueOK := value.issuer.IssueValue(value.outputType, content(t, "value/complete/"+label))
+		if !valueOK {
+			t.Fatalf("issue complete value %s", label)
+		}
+		proposal, proposalOK := binding.NewProposal(token, valueToken, present)
+		if !proposalOK {
+			t.Fatalf("issue complete proposal %s", label)
+		}
+		return proposal
+	}
+	proposals := []binding.Proposal{
+		makeProposal(value.output, value.outputRow, "one"),
+		makeProposal(secondOutput, value.outputRow, "two"),
+		makeProposal(value.output, secondRow, "three"),
+		makeProposal(secondOutput, secondRow, "four"),
+	}
+	buffer, ok := binding.NewProposalBuffer(operation, value.runtime, []binding.DenominatorWitness{witness}, value.outputScope, binding.NewOwnerNamedDestination(value.relation))
+	if !ok {
+		t.Fatalf("complete buffer")
+	}
+	for _, proposal := range proposals[:len(proposals)-1] {
+		if !buffer.Append(proposal) {
+			t.Fatalf("complete partial proposal rejected")
+		}
+	}
+	if _, ok := buffer.Seal(outcome.Result{Code: outcome.Produced}); ok {
+		t.Fatalf("partial complete coverage sealed")
+	}
+	if !buffer.Reset() {
+		t.Fatalf("reset complete buffer")
+	}
+	for _, proposal := range proposals {
+		if !buffer.Append(proposal) {
+			t.Fatalf("complete proposal rejected")
+		}
+	}
+	batch, ok := buffer.Seal(outcome.Result{Code: outcome.Produced})
+	if !ok || batch.Len() != len(proposals) {
+		t.Fatalf("complete batch = %d/%t", batch.Len(), ok)
+	}
+	emptyMembership, ok := binding.NewMembershipView(value.relation, []model.RowID{})
+	if !ok {
+		t.Fatalf("empty complete membership")
+	}
+	emptyWitness, ok := value.issuer.IssueDenominator(value.denominator, emptyMembership, content(t, "witness/complete-empty"))
+	if !ok {
+		t.Fatalf("empty complete witness")
+	}
+	empty, ok := binding.NewProposalBuffer(operation, value.runtime, []binding.DenominatorWitness{emptyWitness}, value.outputScope, binding.NewOwnerNamedDestination(value.relation))
+	if !ok {
+		t.Fatalf("empty complete buffer")
+	}
+	emptyBatch, ok := empty.Seal(outcome.Result{Code: outcome.Produced})
+	if !ok || emptyBatch.Len() != 0 {
+		t.Fatalf("empty complete batch = %d/%t", emptyBatch.Len(), ok)
 	}
 }
 
@@ -627,7 +878,7 @@ func TestSealedBatchIsInvalidatedByIllegalBufferReuse(t *testing.T) {
 	if !ok {
 		t.Fatal("proposal")
 	}
-	buffer, ok := binding.NewProposalBuffer(value.signature, value.runtime, value.outputWitness, value.outputScope)
+	buffer, ok := binding.NewProposalBuffer(value.signature, value.runtime, []binding.DenominatorWitness{value.outputWitness}, value.outputScope, binding.NewOwnerNamedDestination(value.outputWitness.Relation()))
 	if !ok || !buffer.Append(proposal) {
 		t.Fatal("proposal buffer")
 	}
@@ -671,6 +922,23 @@ func TestAlgebraResolutionIsNominallyTypeBound(t *testing.T) {
 	}
 	if _, ok := binding.ResolveAlgebra(testAlgebraRegistry{algebra: algebra}, value.outputType); ok {
 		t.Fatalf("registry returned algebra for a foreign type")
+	}
+}
+
+func TestEqualityResolutionIsNominallyTypeBound(t *testing.T) {
+	exact, _ := model.NewCardinality(model.ExactlyOne, 0)
+	value := newFixture(t, exact)
+	equality := testEquality{typeID: value.inputType}
+	if got, ok := binding.ResolveEquality(testEqualityRegistry{equality: equality}, value.inputType); !ok || got.Type() != value.inputType || !got.Equal(value.inputValue, value.inputValue) {
+		t.Fatal("matching equality authority was refused")
+	}
+	if _, ok := binding.ResolveEquality(testEqualityRegistry{equality: equality}, value.outputType); ok {
+		t.Fatal("registry returned equality for a foreign type")
+	}
+	algebra := testAlgebra{typeID: value.inputType}
+	projected, ok := binding.EqualityFromAlgebra(algebra)
+	if !ok || projected.Type() != value.inputType || !projected.Equal(value.inputValue, value.inputValue) {
+		t.Fatal("ascending algebra did not project its equality relation")
 	}
 }
 
@@ -776,22 +1044,4 @@ func mustPresence(t *testing.T, kind model.PresenceKind) model.Presence {
 		t.Fatalf("issue presence %s", kind)
 	}
 	return presence
-}
-
-func TestOpaqueSealCarriesItsStagedRows(t *testing.T) {
-	exact, _ := model.NewCardinality(model.ExactlyOne, 0)
-	value := newFixture(t, exact)
-	buffer, ok := binding.NewProposalBuffer(value.signature, value.runtime, value.outputWitness, value.outputScope)
-	if !ok {
-		t.Fatalf("construct proposal buffer")
-	}
-	present := mustPresence(t, model.Present)
-	proposal, ok := binding.NewProposal(value.outputToken, value.outputValue, present)
-	if !ok || !buffer.Append(proposal) {
-		t.Fatalf("valid proposal rejected")
-	}
-	batch, ok := buffer.Seal(outcome.Result{Code: outcome.Opaque})
-	if !ok || batch.Len() != 1 || batch.Outcome().Code != outcome.Opaque {
-		t.Fatalf("an authenticated-opaque seal dropped its staged row: ok=%v len=%d", ok, batch.Len())
-	}
 }

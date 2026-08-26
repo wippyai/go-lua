@@ -5,6 +5,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/relation/check/certificate"
 	"github.com/wippyai/go-lua/analysis/relation/mount/address"
 	"github.com/wippyai/go-lua/analysis/relation/mount/arrangement"
+	"github.com/wippyai/go-lua/analysis/relation/mount/witness/expandcatalog"
 	"github.com/wippyai/go-lua/analysis/relation/schema/model"
 	"github.com/wippyai/go-lua/analysis/relation/semantic/binding"
 	"github.com/wippyai/go-lua/analysis/relation/semantic/lineage"
@@ -14,9 +15,9 @@ import (
 // Specialize admits one complete checked certificate into one exact mounted
 // inventory. Every certificate-facing obligation is consumed at this single
 // boundary: addresses and arrangements, one exact typed operation factory,
-// one exact algebra registry, one exact lineage authority, all algebra
-// requirements, denominator row/evidence witnesses, scope formulas, and the
-// validated recurrence-head projection.
+// one registry for optional algebra/equality authorities, one exact lineage
+// authority, all certified semantic requirements, denominator row/evidence
+// witnesses, scope formulas, and the validated recurrence-head projection.
 //
 // The returned Mounted owns only immutable snapshots. A false result always
 // returns the zero capability.
@@ -28,11 +29,6 @@ func Specialize(cert certificate.Certificate, inventory Inventory, factory bindi
 	if !ok || !book.Available() {
 		return Mounted{}, false
 	}
-	arrangementPlan, ok := arrangement.Derive(cert, book, inventory)
-	if !ok || !arrangementPlan.Available() || !arrangementPlan.ValidFor(book) {
-		return Mounted{}, false
-	}
-
 	fence := book.Fence()
 	runtime, ok := binding.NewFence(fence.SchemaID(), fence.MountID(), fence.Generation())
 	if !ok {
@@ -42,6 +38,11 @@ func Specialize(cert certificate.Certificate, inventory Inventory, factory bindi
 	if !ok {
 		return Mounted{}, false
 	}
+	expandCatalog, catalogOK := expandcatalog.Freeze(cert, inventory.ResolveExpand, issuer, runtime)
+	if !catalogOK {
+		return Mounted{}, false
+	}
+
 	lineageAuthority, lineageOwner, lineageIdentity, lineageOK := bindLineage(lineageFactory, runtime)
 	if !lineageOK {
 		return Mounted{}, false
@@ -79,7 +80,12 @@ func Specialize(cert certificate.Certificate, inventory Inventory, factory bindi
 		algebras[typeID] = algebra
 	}
 
-	denominatorRefs, denominatorsOK := certificateDenominators(signatures)
+	equalities, equalitiesOK := bindEqualities(cert, algebras, algebraRegistry)
+	if !equalitiesOK {
+		return Mounted{}, false
+	}
+
+	denominatorRefs, denominatorsOK := certificateDenominators(signatures, cert.ObservationDenominators(), cert.CorrelationDenominators(), cert.CorrelationPartitions(), cert.CompleteDenominators())
 	if !denominatorsOK {
 		return Mounted{}, false
 	}
@@ -114,19 +120,40 @@ func Specialize(cert certificate.Certificate, inventory Inventory, factory bindi
 		witnesses[ref] = witness
 	}
 
-	scopeIDs, scopesOK := certificateScopes(cert)
-	if !scopesOK {
+	// Correlated Apply partitions are admitted only after the global
+	// denominator witnesses exist. Inventory contributes raw child evidence;
+	// this mount fence issues the immutable runtime directories consumed by
+	// arrangement replay. There is no runtime inference fallback.
+	directories, directoriesOK := issuePartitionDirectories(cert, inventory, issuer, runtime, witnesses)
+	if !directoriesOK {
 		return Mounted{}, false
 	}
-	scopeTokens := make(map[model.ScopeID]binding.ScopeToken, len(scopeIDs))
+	arrangementPlan, ok := arrangement.Derive(cert, book, inventory, expandCatalog, directories)
+	if !ok || !arrangementPlan.Available() || !arrangementPlan.ValidFor(book) {
+		return Mounted{}, false
+	}
+
+	scopeSchemas := cert.Scopes()
+	scopeIDs := make([]model.ScopeID, 0, len(scopeSchemas))
+	seenScopes := make(map[model.ScopeID]struct{}, len(scopeSchemas))
+	scopeTokens := make(map[model.ScopeID]binding.ScopeToken, len(scopeSchemas))
 	scopeArena := newScopeArena()
-	for _, scopeID := range scopeIDs {
-		formula, formulaOK := inventory.ScopeRegion(scopeID)
-		if !formulaOK || !regionAvailable(formula) {
+	for _, scopeSchema := range scopeSchemas {
+		if !scopeSchema.Available() || !scopeSchema.ID().Available() {
 			return Mounted{}, false
 		}
-		formulaIdentity, identityOK := formula.Identity()
-		if !identityOK {
+		scopeID := scopeSchema.ID()
+		if _, duplicate := seenScopes[scopeID]; duplicate {
+			return Mounted{}, false
+		}
+		seenScopes[scopeID] = struct{}{}
+		scopeIDs = append(scopeIDs, scopeID)
+		formula := scopeSchema.Region()
+		if !formula.Available() {
+			return Mounted{}, false
+		}
+		formulaIdentity := formula.Identity()
+		if !formulaIdentity.Available() {
 			return Mounted{}, false
 		}
 		token, tokenOK := issuer.IssueScope(formulaIdentity)
@@ -138,6 +165,7 @@ func Specialize(cert certificate.Certificate, inventory Inventory, factory bindi
 		}
 		scopeTokens[scopeID] = token
 	}
+	scopeIDs = canonicalizeScopes(scopeIDs)
 
 	heads := cert.WideningHeads()
 	permits := make([]WideningPermit, 0, len(heads))
@@ -158,7 +186,77 @@ func Specialize(cert certificate.Certificate, inventory Inventory, factory bindi
 		permits = append(permits, permit)
 	}
 
-	return newMounted(cert, book, arrangementPlan, runtime, issuer, lineageAuthority, lineageOwner, lineageIdentity, signatures, bindings, algebras, denominatorRefs, witnesses, scopeIDs, scopeTokens, scopeArena, permits)
+	mounted, mountedOK := newMounted(cert, book, arrangementPlan, runtime, issuer, lineageAuthority, lineageOwner, lineageIdentity, signatures, bindings, algebras, equalities, denominatorRefs, witnesses, scopeIDs, scopeTokens, scopeArena, permits)
+	return mounted, mountedOK
+}
+
+// bindEqualities admits the sealed key-equality authorities certified by
+// typing. An Ascending type may project equality from its owner algebra
+// without admitting that algebra into mounted ascent state. An explicit
+// EqualityRegistry remains preferred when present. Every other equality
+// obligation is supplied directly by its owner.
+func bindEqualities(cert certificate.Certificate, algebras map[model.TypeID]binding.ValueAlgebra, registry binding.AlgebraRegistry) (map[model.TypeID]binding.ValueEquality, bool) {
+	types := cert.EqualityRequirements()
+	if len(types) == 0 {
+		return map[model.TypeID]binding.ValueEquality{}, true
+	}
+	capabilities := make(map[model.TypeID]model.TypeCapability, len(cert.TypeCapabilities()))
+	for _, capability := range cert.TypeCapabilities() {
+		if !capability.Available() || !capability.Type().Available() {
+			return nil, false
+		}
+		if _, duplicate := capabilities[capability.Type()]; duplicate {
+			return nil, false
+		}
+		capabilities[capability.Type()] = capability
+	}
+	equalityRegistry, _ := registry.(binding.EqualityRegistry)
+	equalities := make(map[model.TypeID]binding.ValueEquality, len(types))
+	for _, typeID := range types {
+		if !typeID.Available() {
+			return nil, false
+		}
+		capability, capabilityOK := capabilities[typeID]
+		if !capabilityOK || !capability.Equatable() {
+			return nil, false
+		}
+		var equality binding.ValueEquality
+		// Equality use never grants ascent authority. Prefer an explicit owner
+		// equality witness when one is registered. If the owner exposes only an
+		// AlgebraRegistry, resolve that algebra solely to project equality; do
+		// not add it to the mounted ascent map.
+		if capability.Ascending() {
+			if equalityRegistry != nil {
+				equality, _ = binding.ResolveEquality(equalityRegistry, typeID)
+			}
+			if equality == nil {
+				algebra, algebraOK := algebras[typeID]
+				if !algebraOK {
+					algebra, algebraOK = binding.ResolveAlgebra(registry, typeID)
+				}
+				if !algebraOK {
+					return nil, false
+				}
+				var projected bool
+				equality, projected = binding.EqualityFromAlgebra(algebra)
+				if !projected {
+					return nil, false
+				}
+			}
+		}
+		if equality == nil {
+			var equalityOK bool
+			equality, equalityOK = binding.ResolveEquality(equalityRegistry, typeID)
+			if !equalityOK {
+				return nil, false
+			}
+		}
+		if _, duplicate := equalities[typeID]; duplicate || equality.Type() != typeID {
+			return nil, false
+		}
+		equalities[typeID] = equality
+	}
+	return equalities, true
 }
 
 // bindLineage admits exactly one immutable proof-sidecar authority for this
@@ -184,20 +282,72 @@ func bindLineage(factory lineage.Factory, runtime binding.Fence) (lineage.Author
 	return authority, owner, identityValue, true
 }
 
-func certificateDenominators(signatures []signature.Signature) ([]model.DenominatorRef, bool) {
+func certificateDenominators(signatures []signature.Signature, observationDenominators, correlationDenominators []model.DenominatorRef, partitions []certificate.CorrelationPartition, completeDenominators []model.DenominatorRef) ([]model.DenominatorRef, bool) {
 	seen := make(map[model.DenominatorRef]struct{})
 	result := make([]model.DenominatorRef, 0)
 	for _, operation := range signatures {
 		for _, input := range operation.Inputs() {
-			if !input.Denominator.Available() {
+			if !input.Available() || !input.Denominator.Available() {
 				return nil, false
 			}
-			if _, exists := seen[input.Denominator]; !exists {
-				seen[input.Denominator] = struct{}{}
-				result = append(result, input.Denominator)
+			source, sourceOK := input.SourceDenominator()
+			if !sourceOK || !source.Available() {
+				return nil, false
+			}
+			// Carrier remains the delivery range authority, while a joined
+			// source authority authenticates the delivered cell. Both must be
+			// mounted: runtime deliberately resolves neither from the other.
+			for _, denominator := range []model.DenominatorRef{input.CarrierDenominator(), source} {
+				if _, exists := seen[denominator]; !exists {
+					seen[denominator] = struct{}{}
+					result = append(result, denominator)
+				}
 			}
 		}
-		denominator := operation.Authority().Denominator
+		for _, output := range operation.Outputs() {
+			denominator := output.Denominator
+			if !denominator.Available() {
+				return nil, false
+			}
+			if _, exists := seen[denominator]; !exists {
+				seen[denominator] = struct{}{}
+				result = append(result, denominator)
+			}
+		}
+	}
+	for _, denominator := range observationDenominators {
+		if !denominator.Available() {
+			return nil, false
+		}
+		if _, exists := seen[denominator]; !exists {
+			seen[denominator] = struct{}{}
+			result = append(result, denominator)
+		}
+	}
+	for _, denominator := range correlationDenominators {
+		if !denominator.Available() {
+			return nil, false
+		}
+		if _, exists := seen[denominator]; !exists {
+			seen[denominator] = struct{}{}
+			result = append(result, denominator)
+		}
+	}
+	for _, partition := range partitions {
+		if !partition.Available() {
+			return nil, false
+		}
+		for _, denominator := range []model.DenominatorRef{partition.Population(), partition.Child()} {
+			if !denominator.Available() {
+				return nil, false
+			}
+			if _, exists := seen[denominator]; !exists {
+				seen[denominator] = struct{}{}
+				result = append(result, denominator)
+			}
+		}
+	}
+	for _, denominator := range completeDenominators {
 		if !denominator.Available() {
 			return nil, false
 		}
@@ -207,21 +357,4 @@ func certificateDenominators(signatures []signature.Signature) ([]model.Denomina
 		}
 	}
 	return canonicalizeDenominators(result), true
-}
-
-func certificateScopes(cert certificate.Certificate) ([]model.ScopeID, bool) {
-	values := cert.Scopes()
-	result := make([]model.ScopeID, 0, len(values))
-	seen := make(map[model.ScopeID]struct{}, len(values))
-	for _, scope := range values {
-		if !scope.Available() || !scope.ID().Available() {
-			return nil, false
-		}
-		if _, exists := seen[scope.ID()]; exists {
-			continue
-		}
-		seen[scope.ID()] = struct{}{}
-		result = append(result, scope.ID())
-	}
-	return canonicalizeScopes(result), true
 }

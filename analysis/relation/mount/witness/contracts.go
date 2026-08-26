@@ -2,16 +2,19 @@ package witness
 
 import (
 	"github.com/wippyai/go-lua/analysis/identity"
+	"github.com/wippyai/go-lua/analysis/relation/check/certificate"
 	"github.com/wippyai/go-lua/analysis/relation/mount/address"
 	"github.com/wippyai/go-lua/analysis/relation/mount/arrangement"
+	"github.com/wippyai/go-lua/analysis/relation/mount/arrangement/expand"
 	"github.com/wippyai/go-lua/analysis/relation/schema/model"
 )
 
 // Inventory is the sole mutable-at-admission boundary consumed by
 // Specialize.  Address and arrangement coordinates are resolved through their
-// owning public APIs. Scope formulas and denominator evidence are supplied by
-// the same mount snapshot; semantic authorities are explicit Specialize
-// inputs and are never stored in Inventory.
+// owning public APIs. Denominator evidence is supplied by the same mount
+// snapshot; scope formulas are sealed in certificate ScopeSchemas. Semantic
+// authorities are explicit Specialize inputs and are never stored in
+// Inventory.
 //
 // Implementations must keep all answers stable for the duration of one
 // Specialize call.  Specialize snapshots every answer before returning.
@@ -19,8 +22,26 @@ type Inventory interface {
 	address.Inventory
 	arrangement.Inventory
 
-	ScopeRegion(model.ScopeID) (Region, bool)
 	ResolveDenominator(model.DenominatorRef) (DenominatorEvidence, bool)
+	// ResolveExpand supplies the complete owner-issued C→P vectors for each
+	// dependent expression. Specialize freezes them before arrangement sees
+	// the immutable evidence catalog; arrangement never calls this method.
+	ResolveExpand(model.ExpandContract) ([]expand.Vector, bool)
+}
+
+// PartitionInventory is the additional cold-mount evidence surface required
+// by a checked correlated Apply. It returns raw owner evidence, never a bound
+// runtime witness: Specialize validates the exact population keyset and
+// child subsets under its own fence before issuing binding.PartitionDirectory
+// values. The CorrelationPartition itself carries the child ordinal, so two
+// occurrences with equal denominators cannot share an inferred posting.
+//
+// Implementations must return a non-nil map for an authenticated empty
+// population and must keep the snapshot stable for the duration of one
+// Specialize call. Inventory remains intentionally unchanged so unrelated
+// mounts do not acquire a correlation-specific obligation.
+type PartitionInventory interface {
+	ResolvePartition(certificate.CorrelationPartition) (map[model.RowID]DenominatorEvidence, bool)
 }
 
 // DenominatorEvidence is the immutable logical row/evidence snapshot used to
@@ -39,7 +60,12 @@ func NewDenominatorEvidence(rows []model.RowID, evidence identity.ContentID) (De
 	if rows == nil || !evidence.Available() {
 		return DenominatorEvidence{}, false
 	}
-	copyOf := append([]model.RowID(nil), rows...)
+	// Preserve a non-nil empty slice. An authenticated empty denominator is a
+	// real closed-world membership, distinct from unavailable evidence; using
+	// append to a nil slice would erase that distinction and make the valid
+	// empty view fail admission downstream.
+	copyOf := make([]model.RowID, len(rows))
+	copy(copyOf, rows)
 	for index, row := range copyOf {
 		if !row.Available() {
 			return DenominatorEvidence{}, false

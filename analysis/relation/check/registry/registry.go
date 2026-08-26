@@ -4,8 +4,11 @@ import (
 	"fmt"
 	"sort"
 
+	"github.com/wippyai/go-lua/analysis/identity"
+	"github.com/wippyai/go-lua/analysis/relation/schema/algebra"
 	"github.com/wippyai/go-lua/analysis/relation/schema/model"
 	"github.com/wippyai/go-lua/analysis/relation/schema/plan"
+	"github.com/wippyai/go-lua/analysis/relation/schema/semantic/output"
 	"github.com/wippyai/go-lua/analysis/relation/semantic/signature"
 )
 
@@ -35,6 +38,17 @@ const (
 	CodeSignatureUnavailable
 	CodeSignatureDuplicate
 	CodeSCCUnavailable
+	CodeTypeCapabilityUnavailable
+	CodeTypeCapabilityDuplicate
+	CodeObservationUnavailable
+	CodeObservationDuplicate
+	CodeInitialUnavailable
+	CodeInitialDuplicate
+	CodeContributionUnavailable
+	CodeContributionDuplicate
+	CodeContributionPort
+	CodeContributionCapability
+	CodeContributionPresence
 )
 
 func (code Code) String() string {
@@ -45,7 +59,9 @@ func (code Code) String() string {
 		"ScopeDuplicate", "ExpressionUnavailable", "ExpressionDuplicate",
 		"ExpressionNil", "ExpressionDigest", "DependencyUnavailable",
 		"DependencyDuplicate", "SignatureUnavailable", "SignatureDuplicate",
-		"SCCUnavailable",
+		"SCCUnavailable", "TypeCapabilityUnavailable", "TypeCapabilityDuplicate",
+		"ObservationUnavailable", "ObservationDuplicate", "InitialUnavailable", "InitialDuplicate",
+		"ContributionUnavailable", "ContributionDuplicate", "ContributionPort", "ContributionCapability", "ContributionPresence",
 	}
 	if int(code) < len(names) {
 		return names[code]
@@ -65,16 +81,20 @@ type Issue struct {
 // are private and every accessor returns a value or a defensive copy, so all
 // checker passes observe the same declarations and canonical traversal.
 type View struct {
-	schema       plan.ExecutionSchema
-	relations    map[model.RelationID]model.RelationSchema
-	columns      map[model.ColumnID]model.ColumnSchema
-	keys         map[model.KeyID]model.KeySchema
-	scopes       map[model.ScopeID]model.ScopeSchema
-	expressions  map[model.ExpressionID]plan.ExpressionRef
-	dependencies map[model.DependencyID]plan.Dependency
-	signatures   map[signature.Identity]signature.Signature
-	sccs         []plan.SCC
-	issues       []Issue
+	schema        plan.ExecutionSchema
+	relations     map[model.RelationID]model.RelationSchema
+	columns       map[model.ColumnID]model.ColumnSchema
+	keys          map[model.KeyID]model.KeySchema
+	scopes        map[model.ScopeID]model.ScopeSchema
+	expressions   map[model.ExpressionID]plan.ExpressionRef
+	dependencies  map[model.DependencyID]plan.Dependency
+	signatures    map[signature.Identity]signature.Signature
+	capabilities  map[model.TypeID]model.TypeCapability
+	observations  map[identity.ContentID]algebra.ObservationContract
+	initials      map[plan.Initial]plan.Initial
+	contributions map[output.OutputPort]output.ContributionSpec
+	sccs          []plan.SCC
+	issues        []Issue
 }
 
 // Build indexes schema exactly once.  Invalid entries remain represented in
@@ -82,15 +102,19 @@ type View struct {
 // law, while the structural defect itself is emitted only here.
 func Build(schema plan.ExecutionSchema) *View {
 	view := &View{
-		schema:       schema,
-		relations:    make(map[model.RelationID]model.RelationSchema),
-		columns:      make(map[model.ColumnID]model.ColumnSchema),
-		keys:         make(map[model.KeyID]model.KeySchema),
-		scopes:       make(map[model.ScopeID]model.ScopeSchema),
-		expressions:  make(map[model.ExpressionID]plan.ExpressionRef),
-		dependencies: make(map[model.DependencyID]plan.Dependency),
-		signatures:   make(map[signature.Identity]signature.Signature),
-		sccs:         schema.SCCs(),
+		schema:        schema,
+		relations:     make(map[model.RelationID]model.RelationSchema),
+		columns:       make(map[model.ColumnID]model.ColumnSchema),
+		keys:          make(map[model.KeyID]model.KeySchema),
+		scopes:        make(map[model.ScopeID]model.ScopeSchema),
+		expressions:   make(map[model.ExpressionID]plan.ExpressionRef),
+		dependencies:  make(map[model.DependencyID]plan.Dependency),
+		signatures:    make(map[signature.Identity]signature.Signature),
+		capabilities:  make(map[model.TypeID]model.TypeCapability),
+		observations:  make(map[identity.ContentID]algebra.ObservationContract),
+		initials:      make(map[plan.Initial]plan.Initial),
+		contributions: make(map[output.OutputPort]output.ContributionSpec),
+		sccs:          schema.SCCs(),
 	}
 	if !schema.Available() {
 		view.add(CodeSchemaUnavailable, "schema", "execution schema digest is unavailable")
@@ -146,6 +170,69 @@ func Build(schema plan.ExecutionSchema) *View {
 			view.add(CodeSignatureDuplicate, path, "duplicate semantic signature identity")
 		} else {
 			view.signatures[value.Identity()] = value
+		}
+	}
+	for _, value := range schema.Initials() {
+		path := InitialPath(value)
+		if !value.Available() {
+			view.add(CodeInitialUnavailable, path, "initial declaration is unavailable")
+		}
+		if _, exists := view.initials[value]; exists {
+			view.add(CodeInitialDuplicate, path, "duplicate initial declaration")
+		} else {
+			view.initials[value] = value
+		}
+	}
+	for _, value := range schema.TypeCapabilities() {
+		path := TypeCapabilityPath(value.Type())
+		if !value.Available() {
+			view.add(CodeTypeCapabilityUnavailable, path, "type capability is unavailable")
+		}
+		if _, exists := view.capabilities[value.Type()]; exists {
+			view.add(CodeTypeCapabilityDuplicate, path, "duplicate type capability")
+		} else {
+			view.capabilities[value.Type()] = value
+		}
+	}
+	for _, value := range schema.Observations() {
+		path := ObservationPath(value.Digest())
+		if !value.Available() {
+			view.add(CodeObservationUnavailable, path, "observation descriptor is unavailable")
+		}
+		if _, exists := view.observations[value.Digest()]; exists {
+			view.add(CodeObservationDuplicate, path, "duplicate observation descriptor identity")
+		} else {
+			view.observations[value.Digest()] = value
+		}
+	}
+	for _, value := range schema.Contributions() {
+		path := ContributionPath(value.Port())
+		if !value.Available() {
+			view.add(CodeContributionUnavailable, path, "contribution declaration is unavailable")
+		}
+		if _, exists := view.contributions[value.Port()]; exists {
+			view.add(CodeContributionDuplicate, path, "duplicate contribution output port")
+		} else {
+			view.contributions[value.Port()] = value
+		}
+		if !value.Available() {
+			continue
+		}
+		signatureValue, signatureOK := view.signatures[value.Port().Operation]
+		if !signatureOK || !signatureValue.Available() {
+			view.add(CodeContributionPort, path, "contribution port is not declared by a sealed signature")
+			continue
+		}
+		declared, declaredOK := signatureValue.OutputFor(value.Port().Column.Relation(), value.Port().Column)
+		if !declaredOK || !declared.Available() || declared.Type != value.ValueType() || declared.Presence != value.Presence() {
+			view.add(CodeContributionPort, path, "contribution port, value type, or presence does not match its signature output")
+		}
+		if value.Presence() == signature.ProduceOptional || value.Presence() == signature.ProduceAbsent {
+			view.add(CodeContributionPresence, path, "optional or absent contribution requires a closed-world producer denominator")
+		}
+		capability, capabilityOK := view.capabilities[value.ValueType()]
+		if !capabilityOK || !capability.Available() || !capability.Equal(value.Algebra()) {
+			view.add(CodeContributionCapability, path, "contribution capability does not match the schema type capability")
 		}
 	}
 	for index, value := range view.sccs {
@@ -219,6 +306,22 @@ func (view *View) Key(id model.KeyID) (model.KeySchema, bool) {
 	return value, ok
 }
 
+// Denominator resolves one relation/key universe from the shared registry.
+// Keeping this lookup here makes every checker pass use the same declaration
+// index for source, operation, and observation destinations; no pass invents
+// a second denominator catalogue.
+func (view *View) Denominator(ref model.DenominatorRef) (model.RelationSchema, model.KeySchema, bool) {
+	if view == nil || !ref.Available() {
+		return model.RelationSchema{}, model.KeySchema{}, false
+	}
+	relation, relationOK := view.relations[ref.Relation()]
+	key, keyOK := view.keys[ref.Key()]
+	if !relationOK || !keyOK || !relation.Available() || !key.Available() || key.Relation() != ref.Relation() || !relation.HasKey(ref.Key()) {
+		return model.RelationSchema{}, model.KeySchema{}, false
+	}
+	return relation, key, true
+}
+
 func (view *View) Scope(id model.ScopeID) (model.ScopeSchema, bool) {
 	if view == nil {
 		return model.ScopeSchema{}, false
@@ -251,94 +354,128 @@ func (view *View) Signature(id signature.Identity) (signature.Signature, bool) {
 	return value, ok
 }
 
+// TypeCapability resolves the explicit sealed policy for one TypeID.
+func (view *View) TypeCapability(id model.TypeID) (model.TypeCapability, bool) {
+	if view == nil {
+		return model.TypeCapability{}, false
+	}
+	value, ok := view.capabilities[id]
+	return value, ok
+}
+
+// TypeCapabilities returns the canonical capability catalogue.
+func (view *View) TypeCapabilities() []model.TypeCapability {
+	if view == nil {
+		return nil
+	}
+	return view.schema.TypeCapabilities()
+}
+
+// Observation resolves one schema-sealed terminal descriptor by content
+// identity. Runtime callers must use this mount-projected catalogue rather
+// than supplying a fresh descriptor after seal.
+func (view *View) Observation(id identity.ContentID) (algebra.ObservationContract, bool) {
+	if view == nil || !id.Available() {
+		return algebra.ObservationContract{}, false
+	}
+	value, ok := view.observations[id]
+	return value, ok && value.Available() && value.Digest() == id
+}
+
+// Observations returns the canonical descriptor catalogue in digest order.
+func (view *View) Observations() []algebra.ObservationContract {
+	if view == nil {
+		return nil
+	}
+	return view.schema.Observations()
+}
+
+// Initial resolves one schema-sealed zero-input invocation declaration.
+func (view *View) Initial(value plan.Initial) (plan.Initial, bool) {
+	if view == nil || !value.Available() {
+		return plan.Initial{}, false
+	}
+	initial, ok := view.initials[value]
+	return initial, ok && initial.Available()
+}
+
+// Initials returns the canonical immutable initial-invocation catalogue.
+func (view *View) Initials() []plan.Initial {
+	if view == nil {
+		return nil
+	}
+	return view.schema.Initials()
+}
+
+// Contribution resolves one exact schema-authored output port.
+func (view *View) Contribution(port output.OutputPort) (output.ContributionSpec, bool) {
+	if view == nil || !port.Available() {
+		return output.ContributionSpec{}, false
+	}
+	value, ok := view.contributions[port]
+	return value, ok && value.Available()
+}
+
+// Contributions returns the canonical declaration vector retained by the
+// indexed schema.
+func (view *View) Contributions() []output.ContributionSpec {
+	if view == nil {
+		return nil
+	}
+	return view.schema.Contributions()
+}
+
 func (view *View) Relations() []model.RelationSchema {
 	if view == nil {
 		return nil
 	}
-	values := make([]model.RelationSchema, 0, len(view.relations))
-	for _, value := range view.relations {
-		values = append(values, value)
-	}
-	sort.Slice(values, func(left, right int) bool { return RelationPath(values[left].ID()) < RelationPath(values[right].ID()) })
-	return values
+	// ExecutionSchema.Build already sealed this catalogue in the canonical
+	// relation order. Preserve that order here; rebuilding it from the map via
+	// diagnostic paths would lose the owner/relation axes that plan sealing
+	// intentionally orders first.
+	return view.schema.Relations()
 }
 
 func (view *View) Columns() []model.ColumnSchema {
 	if view == nil {
 		return nil
 	}
-	values := make([]model.ColumnSchema, 0, len(view.columns))
-	for _, value := range view.columns {
-		values = append(values, value)
-	}
-	sort.Slice(values, func(left, right int) bool { return ColumnPath(values[left].ID()) < ColumnPath(values[right].ID()) })
-	return values
+	return view.schema.Columns()
 }
 
 func (view *View) Keys() []model.KeySchema {
 	if view == nil {
 		return nil
 	}
-	values := make([]model.KeySchema, 0, len(view.keys))
-	for _, value := range view.keys {
-		values = append(values, value)
-	}
-	sort.Slice(values, func(left, right int) bool { return KeyPath(values[left].ID()) < KeyPath(values[right].ID()) })
-	return values
+	return view.schema.Keys()
 }
 
 func (view *View) Scopes() []model.ScopeSchema {
 	if view == nil {
 		return nil
 	}
-	values := make([]model.ScopeSchema, 0, len(view.scopes))
-	for _, value := range view.scopes {
-		values = append(values, value)
-	}
-	sort.Slice(values, func(left, right int) bool { return ScopePath(values[left].ID()) < ScopePath(values[right].ID()) })
-	return values
+	return view.schema.Scopes()
 }
 
 func (view *View) Expressions() []plan.ExpressionRef {
 	if view == nil {
 		return nil
 	}
-	values := make([]plan.ExpressionRef, 0, len(view.expressions))
-	for _, value := range view.expressions {
-		values = append(values, value)
-	}
-	sort.Slice(values, func(left, right int) bool {
-		return ExpressionPath(values[left].ID()) < ExpressionPath(values[right].ID())
-	})
-	return values
+	return view.schema.Expressions()
 }
 
 func (view *View) Dependencies() []plan.Dependency {
 	if view == nil {
 		return nil
 	}
-	values := make([]plan.Dependency, 0, len(view.dependencies))
-	for _, value := range view.dependencies {
-		values = append(values, value)
-	}
-	sort.Slice(values, func(left, right int) bool {
-		return DependencyPath(values[left].ID()) < DependencyPath(values[right].ID())
-	})
-	return values
+	return view.schema.Dependencies()
 }
 
 func (view *View) Signatures() []signature.Signature {
 	if view == nil {
 		return nil
 	}
-	values := make([]signature.Signature, 0, len(view.signatures))
-	for _, value := range view.signatures {
-		values = append(values, value)
-	}
-	sort.Slice(values, func(left, right int) bool {
-		return SignaturePath(values[left].Identity()) < SignaturePath(values[right].Identity())
-	})
-	return values
+	return view.schema.Signatures()
 }
 
 func (view *View) SCCs() []plan.SCC {
@@ -408,4 +545,21 @@ func DependencyPath(id model.DependencyID) string {
 }
 func SignaturePath(value signature.Identity) string {
 	return fmt.Sprintf("signature[%x/%d]", value.Operation.Content(), value.Version)
+}
+
+func ContributionPath(value output.OutputPort) string {
+	return fmt.Sprintf("contribution[%x/%d@%x/%x]", value.Operation.Operation.Content(), value.Operation.Version, value.Column.Relation().Content(), value.Column.Content())
+}
+
+func InitialPath(value plan.Initial) string {
+	operation := value.Operation()
+	return fmt.Sprintf("initial[%x/%d@%x]", operation.Operation.Content(), operation.Version, value.Scope().Content())
+}
+
+func TypeCapabilityPath(value model.TypeID) string {
+	return fmt.Sprintf("type-capability[%x]", value.Content())
+}
+
+func ObservationPath(value identity.ContentID) string {
+	return fmt.Sprintf("observation[%x]", value)
 }

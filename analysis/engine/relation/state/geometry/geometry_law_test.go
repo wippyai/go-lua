@@ -5,53 +5,28 @@ import (
 
 	"github.com/wippyai/go-lua/analysis/engine/internal/facts/support"
 	"github.com/wippyai/go-lua/analysis/engine/internal/guard"
+	"github.com/wippyai/go-lua/analysis/engine/relation/cofiber"
 	"github.com/wippyai/go-lua/analysis/engine/relation/state/geometry"
 	"github.com/wippyai/go-lua/analysis/identity"
 	"github.com/wippyai/go-lua/analysis/relation/check/certificate"
 	"github.com/wippyai/go-lua/analysis/relation/mount/address"
 	"github.com/wippyai/go-lua/analysis/relation/mount/arrangement"
+	"github.com/wippyai/go-lua/analysis/relation/mount/arrangement/expand"
 	"github.com/wippyai/go-lua/analysis/relation/mount/witness"
 	"github.com/wippyai/go-lua/analysis/relation/schema/model"
 	"github.com/wippyai/go-lua/analysis/relation/schema/plan"
+	"github.com/wippyai/go-lua/analysis/relation/schema/region"
 	"github.com/wippyai/go-lua/analysis/relation/semantic/binding"
 	"github.com/wippyai/go-lua/analysis/relation/semantic/lineage"
 	"github.com/wippyai/go-lua/analysis/relation/semantic/outcome"
 	"github.com/wippyai/go-lua/analysis/relation/semantic/signature"
 )
 
-// lawRegion is deliberately neutral. Geometry does not inspect its
-// identity; the mounted scope arena authenticates the token-to-region pair,
-// and the injected mapper owns conversion to the engine guard universe.
-type lawRegion struct{ id identity.ContentID }
-
-func (region lawRegion) Identity() (identity.ContentID, bool) {
-	return region.id, region.id.Available()
-}
-
-func (region lawRegion) Conjoin(other witness.Region) (witness.Region, bool) {
-	if other == nil {
-		return nil, false
-	}
-	id, ok := other.Identity()
-	if !ok {
-		return nil, false
-	}
-	return lawRegion{id: id}, true
-}
-
-func (region lawRegion) Entails(other witness.Region) bool {
-	if other == nil {
-		return false
-	}
-	_, ok := other.Identity()
-	return ok
-}
-
-func lawMapper(t testing.TB, mounted witness.Mounted, manager *guard.Manager, fn func(witness.Region) (support.Mask, bool)) geometry.RegionMapper {
+func lawCofiber(t testing.TB, mounted witness.Mounted, manager *guard.Manager, fn func(region.Region) (support.Mask, bool)) cofiber.Authority {
 	t.Helper()
-	mapper, ok := geometry.NewRegionMapper(mounted, manager, fn)
+	mapper, ok := cofiber.New(mounted, manager, fn)
 	if !ok {
-		t.Fatal("region mapper")
+		t.Fatal("cofiber authority")
 	}
 	return mapper
 }
@@ -67,8 +42,6 @@ type mountInventory struct {
 	denominator model.DenominatorRef
 	rows        []model.RowID
 	evidence    identity.ContentID
-	region      witness.Region
-	second      witness.Region
 }
 
 func (inventory *mountInventory) Fence() address.Fence { return inventory.fence }
@@ -117,22 +90,14 @@ func (inventory *mountInventory) Resolve(access arrangement.Access) (arrangement
 	return arrangement.NewHandle(inventory.fence, slot)
 }
 
-func (inventory *mountInventory) ScopeRegion(id model.ScopeID) (witness.Region, bool) {
-	switch id {
-	case inventory.scope:
-		return inventory.region, inventory.region != nil
-	case inventory.secondScope:
-		return inventory.second, inventory.second != nil
-	default:
-		return nil, false
-	}
-}
-
 func (inventory *mountInventory) ResolveDenominator(ref model.DenominatorRef) (witness.DenominatorEvidence, bool) {
 	if ref != inventory.denominator {
 		return witness.DenominatorEvidence{}, false
 	}
 	return witness.NewDenominatorEvidence(inventory.rows, inventory.evidence)
+}
+func (inventory *mountInventory) ResolveExpand(model.ExpandContract) ([]expand.Vector, bool) {
+	return nil, false
 }
 
 type algebraRegistry struct{ algebra testAlgebra }
@@ -183,6 +148,9 @@ type geometryFixture struct {
 	foreignScope binding.ScopeToken
 	firstScope   binding.ScopeToken
 	manager      *guard.Manager
+	full         support.Mask
+	positive     support.Mask
+	secondRegion identity.ContentID
 }
 
 func content(t testing.TB, label string) identity.ContentID {
@@ -251,7 +219,22 @@ func issueType(t testing.TB, owner model.OwnerID, label string) model.TypeID {
 }
 
 func newLineageFactory(t testing.TB, owner model.OwnerID) lineage.Factory {
-	factory, ok := lineage.NewFactory(owner)
+	// Lineage is a dedicated proof-sidecar namespace. Source row and
+	// denominator atoms retain their owning relation namespace; using that
+	// same owner for the authority would make them authority-owned refs and
+	// correctly refuse them unless they had first entered its private arena.
+	// Derive the authority owner once, as the mounted witness contract
+	// requires, instead of weakening production admission.
+	ownerContent := owner.Content()
+	lineageContent, ok := identity.DeriveContentID("engine/relation/state/geometry/law/lineage-owner/v1", ownerContent[:])
+	if !ok {
+		t.Fatal("lineage owner content")
+	}
+	lineageOwner, ok := model.IssueOwnerID(lineageContent)
+	if !ok {
+		t.Fatal("lineage owner")
+	}
+	factory, ok := lineage.NewFactory(lineageOwner)
 	if !ok {
 		t.Fatal("lineage factory")
 	}
@@ -284,16 +267,26 @@ func newGeometryFixture(t testing.TB, generation identity.Generation) geometryFi
 	if !ok {
 		t.Fatal("cardinality")
 	}
+	secondRegionID := content(t, "region/second")
+	secondAtom, ok := region.NewAtom(secondRegionID)
+	if !ok {
+		t.Fatal("second region atom")
+	}
+	secondRegion, ok := region.FromAtom(secondAtom)
+	if !ok {
+		t.Fatal("second region")
+	}
+	secondRegionIdentity := secondRegion.Identity()
 	outcomes, ok := outcome.NewSet(outcome.Produced, outcome.NoSelection, outcome.Refused)
 	if !ok {
 		t.Fatal("outcomes")
 	}
 	operation, ok := signature.Seal(signature.Spec{
-		Identity:  signature.Identity{Operation: operationID, Version: 1},
-		Fence:     signature.Fence{Owner: owner, Schema: schemaID},
-		Inputs:    []signature.Input{{Relation: relation, Column: column, Type: typeID, Presence: signature.RequirePresent, Delivery: delivery, Denominator: denominator}},
-		Outputs:   []signature.Output{{Relation: relation, Column: column, Type: typeID, Presence: signature.ProducePresent}},
-		Authority: signature.OutputAuthority{Denominator: denominator}, Cardinality: cardinality, Outcomes: outcomes,
+		Identity:    signature.Identity{Operation: operationID, Version: 1},
+		Fence:       signature.Fence{Owner: owner, Schema: schemaID},
+		Inputs:      []signature.Input{{Relation: relation, Column: column, Type: typeID, Presence: signature.RequirePresent, Delivery: delivery, Denominator: denominator}},
+		Outputs:     []signature.Output{{Relation: relation, Column: column, Type: typeID, Presence: signature.ProducePresent, Denominator: denominator}},
+		Cardinality: cardinality, Outcomes: outcomes,
 	})
 	if !ok {
 		t.Fatal("seal operation")
@@ -302,8 +295,8 @@ func newGeometryFixture(t testing.TB, generation identity.Generation) geometryFi
 	if !builder.AddRelation(model.DefineRelationSchema(relation, []model.ColumnID{column}, []model.KeyID{key}, scope)) ||
 		!builder.AddColumn(model.DefineColumnSchema(column, typeID)) ||
 		!builder.AddKey(model.DefineKeySchema(key, []model.ColumnID{column})) ||
-		!builder.AddScope(model.DefineScopeSchema(scope, nil)) ||
-		!builder.AddScope(model.DefineScopeSchema(secondScope, nil)) ||
+		!builder.AddScope(model.DefineScopeSchema(scope, nil, region.True())) ||
+		!builder.AddScope(model.DefineScopeSchema(secondScope, nil, secondRegion)) ||
 		!builder.AddSignature(operation) {
 		t.Fatal("add schema declarations")
 	}
@@ -336,12 +329,14 @@ func newGeometryFixture(t testing.TB, generation identity.Generation) geometryFi
 		scope: scope, secondScope: secondScope, typeID: typeID,
 		denominator: denominator, rows: []model.RowID{row, secondRow},
 		evidence: content(t, "evidence"),
-		region:   lawRegion{id: content(t, "region/first")},
-		second:   lawRegion{id: content(t, "region/second")},
 	}
 	mounted, ok := witness.Specialize(cert, inventory, operationFactory{value: operation}, algebraRegistry{algebra: testAlgebra{typeID: typeID}}, newLineageFactory(t, owner))
 	if !ok || !mounted.Available() {
 		t.Fatal("valid mounted witness refused")
+	}
+	witnessValue, ok := mounted.Denominator(denominator)
+	if !ok {
+		t.Fatal("denominator witness")
 	}
 	firstScope, ok := mounted.Scope(scope)
 	if !ok {
@@ -359,19 +354,41 @@ func newGeometryFixture(t testing.TB, generation identity.Generation) geometryFi
 	if !ok {
 		t.Fatal("second scope token")
 	}
-	firstCell, ok := mounted.IssueCell(denominator, firstScope, column, row)
+	firstCell, ok := mounted.IssueCell(witnessValue, firstScope, column, row)
 	if !ok {
 		t.Fatal("first cell")
 	}
-	secondCell, ok := mounted.IssueCell(denominator, secondScopeValue, column, row)
+	secondCell, ok := mounted.IssueCell(witnessValue, secondScopeValue, column, row)
 	if !ok {
 		t.Fatal("second-scope cell")
 	}
-	manager, err := guard.New(nil)
+	manager, err := guard.New([]guard.Atom{1})
 	if err != nil {
 		t.Fatal("guard manager: ", err)
 	}
-	return geometryFixture{mounted: mounted, cell: firstCell, secondCell: secondCell, foreignScope: secondScopeToken, firstScope: firstScopeToken, manager: manager}
+	work := support.New(manager)
+	if work == nil {
+		t.Fatal("support work")
+	}
+	positive, positiveOK := work.Literal(1, true)
+	if !positiveOK || !work.Seal() {
+		t.Fatal("positive support mask")
+	}
+	full, fullOK := support.True(manager)
+	if !fullOK {
+		t.Fatal("full support mask")
+	}
+	return geometryFixture{mounted: mounted, cell: firstCell, secondCell: secondCell, foreignScope: secondScopeToken, firstScope: firstScopeToken, manager: manager, full: full, positive: positive, secondRegion: secondRegionIdentity}
+}
+
+func (fixture geometryFixture) translate(value region.Region) (support.Mask, bool) {
+	if value.IsTrue() {
+		return fixture.full, true
+	}
+	if value.Identity() == fixture.secondRegion {
+		return fixture.positive, true
+	}
+	return support.Mask{}, false
 }
 
 func trueMask(t testing.TB, manager *guard.Manager) support.Mask {
@@ -386,9 +403,7 @@ func trueMask(t testing.TB, manager *guard.Manager) support.Mask {
 func TestGeometryResolvesAuthenticatedCellToDeterministicScalarKey(t *testing.T) {
 	fixture := newGeometryFixture(t, 1)
 	mask := trueMask(t, fixture.manager)
-	value, ok := geometry.New(fixture.mounted, lawMapper(t, fixture.mounted, fixture.manager, func(witness.Region) (support.Mask, bool) {
-		return mask, true
-	}))
+	value, ok := geometry.New(fixture.mounted, lawCofiber(t, fixture.mounted, fixture.manager, fixture.translate))
 	if !ok {
 		t.Fatal("geometry")
 	}
@@ -403,18 +418,16 @@ func TestGeometryResolvesAuthenticatedCellToDeterministicScalarKey(t *testing.T)
 	resolved, ok := value.Resolve(fixture.cell)
 	index, indexOK := fixture.mounted.RowIndex(fixture.cell.Relation(), fixture.cell.Row())
 	row, rowOK := fixture.mounted.RowAt(fixture.cell.Relation(), index)
-	if !ok || !resolved.Available() || resolved.Logical() != first || !resolved.Mask().Equal(mask) || !indexOK || !rowOK || row != fixture.cell.Row() || resolved.Dense() != geometry.Key(index) {
-		t.Fatal("coordinate did not retain the authenticated logical key, dense slot, and full scope mask")
+	normalized, normalizedOK := value.Normalize(resolved.Mask())
+	if !ok || !resolved.Available() || resolved.Logical() != first || !resolved.Mask().Equal(mask) || !resolved.Scope().Available() || !normalizedOK || !normalized.Same(resolved.Scope()) || !indexOK || !rowOK || row != fixture.cell.Row() || resolved.Dense() != geometry.Key(index) {
+		t.Fatal("coordinate did not retain the authenticated logical key, dense slot, canonical scope, and full scope mask")
 	}
 }
 
 func TestGeometryRefusesStaleAndForeignCellOrScope(t *testing.T) {
 	fixture := newGeometryFixture(t, 1)
 	foreign := newGeometryFixture(t, 2)
-	mask := trueMask(t, fixture.manager)
-	value, ok := geometry.New(fixture.mounted, lawMapper(t, fixture.mounted, fixture.manager, func(witness.Region) (support.Mask, bool) {
-		return mask, true
-	}))
+	value, ok := geometry.New(fixture.mounted, lawCofiber(t, fixture.mounted, fixture.manager, fixture.translate))
 	if !ok {
 		t.Fatal("geometry")
 	}
@@ -429,16 +442,30 @@ func TestGeometryRefusesStaleAndForeignCellOrScope(t *testing.T) {
 	}
 }
 
-func TestGeometryRefusesUnavailableRegionConversion(t *testing.T) {
+func TestGeometryRedeemsOnlyItsExactMountedArtifact(t *testing.T) {
 	fixture := newGeometryFixture(t, 1)
-	value, ok := geometry.New(fixture.mounted, lawMapper(t, fixture.mounted, fixture.manager, func(witness.Region) (support.Mask, bool) {
-		return support.Mask{}, false
-	}))
+	foreign := newGeometryFixture(t, 2)
+	value, ok := geometry.New(fixture.mounted, lawCofiber(t, fixture.mounted, fixture.manager, fixture.translate))
 	if !ok {
 		t.Fatal("geometry")
 	}
-	if _, ok := value.Mask(fixture.firstScope); ok {
-		t.Fatal("unavailable region conversion was accepted")
+	if !value.ValidFor(fixture.mounted) {
+		t.Fatal("geometry rejected its exact mounted artifact")
+	}
+	if value.ValidFor(foreign.mounted) {
+		t.Fatal("geometry accepted a foreign mounted artifact")
+	}
+	if (geometry.Geometry{}).ValidFor(fixture.mounted) {
+		t.Fatal("unavailable geometry redeemed a mounted artifact")
+	}
+}
+
+func TestGeometryRefusesUnavailableRegionConversion(t *testing.T) {
+	fixture := newGeometryFixture(t, 1)
+	if value, ok := cofiber.New(fixture.mounted, fixture.manager, func(region.Region) (support.Mask, bool) {
+		return support.Mask{}, false
+	}); ok || value.Available() {
+		t.Fatal("unavailable region conversion was admitted at bootstrap")
 	}
 }
 
@@ -449,23 +476,16 @@ func TestGeometryRefusesMaskFromForeignGuardManager(t *testing.T) {
 		t.Fatal("foreign guard manager: ", err)
 	}
 	foreignMask := trueMask(t, foreignManager)
-	value, ok := geometry.New(fixture.mounted, lawMapper(t, fixture.mounted, fixture.manager, func(witness.Region) (support.Mask, bool) {
+	if value, ok := cofiber.New(fixture.mounted, fixture.manager, func(region.Region) (support.Mask, bool) {
 		return foreignMask, true
-	}))
-	if !ok {
-		t.Fatal("geometry")
-	}
-	if _, ok := value.Mask(fixture.firstScope); ok {
-		t.Fatal("mask from a foreign guard manager was accepted")
+	}); ok || value.Available() {
+		t.Fatal("mask from a foreign guard manager was admitted at bootstrap")
 	}
 }
 
 func TestGeometryDoesNotScopeQualifyTheRowKey(t *testing.T) {
 	fixture := newGeometryFixture(t, 1)
-	mask := trueMask(t, fixture.manager)
-	value, ok := geometry.New(fixture.mounted, lawMapper(t, fixture.mounted, fixture.manager, func(witness.Region) (support.Mask, bool) {
-		return mask, true
-	}))
+	value, ok := geometry.New(fixture.mounted, lawCofiber(t, fixture.mounted, fixture.manager, fixture.translate))
 	if !ok {
 		t.Fatal("geometry")
 	}

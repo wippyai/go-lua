@@ -6,6 +6,9 @@ import (
 	"github.com/wippyai/go-lua/analysis/identity"
 	"github.com/wippyai/go-lua/analysis/relation/mount/address"
 	"github.com/wippyai/go-lua/analysis/relation/schema/model"
+	"github.com/wippyai/go-lua/analysis/relation/schema/semantic/output"
+	"github.com/wippyai/go-lua/analysis/relation/semantic/binding"
+	"github.com/wippyai/go-lua/analysis/relation/semantic/signature"
 )
 
 // Plan is the immutable arrangement plan for one checked certificate and one
@@ -20,11 +23,13 @@ type planData struct {
 	logicalDigest identity.ContentID
 	layouts       []Layout
 	deliveries    []DeliveryRequirement
+	contributions contributionDirectory
+	execution     Execution
 }
 
 // Available reports whether Derive produced a complete plan.
 func (plan Plan) Available() bool {
-	return plan.data != nil && plan.data.fence.Available() && plan.data.digest.Available() && plan.data.logicalDigest.Available()
+	return plan.data != nil && plan.data.fence.Available() && plan.data.digest.Available() && plan.data.logicalDigest.Available() && plan.data.contributions.ValidFor(plan.data.fence) && plan.data.execution.Available() && plan.data.execution.Fence().Same(plan.data.fence)
 }
 
 // Digest is the deterministic mounted plan identity. It includes the
@@ -97,12 +102,26 @@ func (plan Plan) Resolve(required Access) (Layout, bool) {
 	if !plan.Available() || !required.Available() {
 		return Layout{}, false
 	}
+	var result Layout
+	found := false
 	for _, layout := range plan.data.layouts {
 		if layout.Access().Equal(required) {
-			return layout, layout.ValidFor(plan.data.fence)
+			if found {
+				// A logical Access may have multiple sealed physical
+				// coordinates.  Resolving by logical identity alone would
+				// choose one by declaration order and could redeem the wrong
+				// index.  Runtime operators use their exact sealed execution
+				// binding; this public convenience lookup refuses ambiguity.
+				return Layout{}, false
+			}
+			result = layout
+			found = true
 		}
 	}
-	return Layout{}, false
+	if !found || !result.ValidFor(plan.data.fence) {
+		return Layout{}, false
+	}
+	return result, true
 }
 
 // DeliveryRequirements returns canonical semantic delivery requirements.
@@ -113,11 +132,67 @@ func (plan Plan) DeliveryRequirements() []DeliveryRequirement {
 	return append([]DeliveryRequirement(nil), plan.data.deliveries...)
 }
 
+// ContributionCell redeems one exact mounted output-cell descriptor in O(1).
+// The caller supplies the authenticated operation identity and CellToken;
+// mount checks both against the sealed directory key and exact runtime fence.
+// No OutputPort is reconstructed from a proposal and no declaration slice is
+// scanned at this boundary.
+func (plan Plan) ContributionCell(operation signature.Identity, cell binding.CellToken) (ContributionCell, bool) {
+	if !plan.Available() || !operation.Available() {
+		return ContributionCell{}, false
+	}
+	return plan.data.contributions.Lookup(operation, cell)
+}
+
+// Contributions returns a defensive projection of the mounted descriptors'
+// schema declarations. It is for cold inspection only; classifiers redeem the
+// O(1) ContributionCell directory and never walk this projection.
+func (plan Plan) Contributions() []output.ContributionSpec {
+	if !plan.Available() {
+		return nil
+	}
+	result := make([]output.ContributionSpec, len(plan.data.contributions.entries))
+	for index, cell := range plan.data.contributions.entries {
+		result[index] = cell.Spec()
+	}
+	return result
+}
+
+// Contribution resolves one exact structural port through the same sealed
+// O(1) directory as ContributionCell. Callers with a CellToken should use
+// ContributionCell so mount also redeems the token's fence.
+func (plan Plan) Contribution(port output.OutputPort) (output.ContributionSpec, bool) {
+	if !plan.Available() {
+		return output.ContributionSpec{}, false
+	}
+	cell, ok := plan.data.contributions.LookupPort(port)
+	if !ok {
+		return output.ContributionSpec{}, false
+	}
+	return cell.Spec(), true
+}
+
+// Execution returns the immutable expression-id-to-physical-layout binding
+// created by Derive. Runtime redeems this table directly; it must never call
+// Resolve or reconstruct an Access from a logical expression.
+func (plan Plan) Execution() Execution {
+	if !plan.Available() || !plan.data.execution.Available() {
+		return Execution{}
+	}
+	return plan.data.execution
+}
+
 // ValidFor reports whether this plan and book share the exact mounted fence
 // and every logical requirement still resolves in that book.  The check is
 // deliberately exact: stale and foreign books are refused.
 func (plan Plan) ValidFor(book address.Book) bool {
 	if !plan.Available() || !book.Available() || !plan.data.fence.Same(book.Fence()) {
+		return false
+	}
+	if !plan.data.execution.Available() || !plan.data.execution.Fence().Same(plan.data.fence) {
+		return false
+	}
+	if !plan.data.contributions.ValidFor(plan.data.fence) {
 		return false
 	}
 	for _, layout := range plan.data.layouts {
@@ -210,6 +285,9 @@ func appendPlanDigestParts(parts *[][]byte, plan planData) {
 	}
 	for _, delivery := range plan.deliveries {
 		*parts = append(*parts, deliveryRequirementDigest(delivery))
+	}
+	for _, contribution := range plan.contributions.entries {
+		*parts = append(*parts, contentBytes(contribution.Spec().Digest()))
 	}
 }
 

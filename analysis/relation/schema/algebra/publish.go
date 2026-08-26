@@ -2,8 +2,13 @@ package algebra
 
 import "github.com/wippyai/go-lua/analysis/identity"
 
-// Publish proposes rows from one child to a declared logical destination.
-// Commit mechanics and publication storage are outside the logical node.
+// Publish commits the exact sealed writable row layout of one relational
+// child to a declared logical destination.  Its child may be Apply, Merge,
+// ColumnProject, or another checked relational expression; Apply proposal
+// authority, when present, remains attached to that child rather than being
+// inferred from this node's syntax.  The contract's positional writable
+// layout is the publication authority, while destination row/key authority
+// remains in the mounted relation geometry.
 type Publish struct {
 	child    Expression
 	contract PublishContract
@@ -27,7 +32,7 @@ func (publish Publish) Kind() Kind { return KindPublish }
 // Digest returns the deterministic structural identity.
 func (publish Publish) Digest() identity.ContentID {
 	parts := appendExpr(nil, publish.child)
-	return derive("analysis/relation/schema/algebra/publish/v1", append(parts, publish.contract.digestBytes()...))
+	return derive("analysis/relation/schema/algebra/publish/v3", append(parts, publish.contract.digestBytes()...))
 }
 
 func (publish Publish) expression() {}

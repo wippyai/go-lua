@@ -6,6 +6,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/identity"
 	"github.com/wippyai/go-lua/analysis/relation/schema/algebra"
 	"github.com/wippyai/go-lua/analysis/relation/schema/model"
+	"github.com/wippyai/go-lua/analysis/relation/schema/region"
 	"github.com/wippyai/go-lua/analysis/relation/semantic/signature"
 )
 
@@ -74,7 +75,7 @@ func newFixture(t *testing.T) fixture {
 	if !ok {
 		t.Fatal("scope identity unavailable")
 	}
-	scope := model.DefineScopeSchema(scopeID, []model.ColumnID{columnB, columnA})
+	scope := model.DefineScopeSchema(scopeID, []model.ColumnID{columnB, columnA}, region.True())
 	relationA := model.DefineRelationSchema(relationAID, []model.ColumnID{columnA}, []model.KeyID{keyIDA}, scope.ID())
 	relationB := model.DefineRelationSchema(relationBID, []model.ColumnID{columnB}, []model.KeyID{keyIDB}, scope.ID())
 	columnSchemaA := model.DefineColumnSchema(columnA, typeA)
@@ -169,6 +170,46 @@ func TestSchemaIDIsCanonicalArtifactIdentity(t *testing.T) {
 	other := buildFixtureWithSchemaID(t, value, false, otherID)
 	if baseline.Digest() == other.Digest() {
 		t.Fatal("schema identity did not affect execution schema digest")
+	}
+}
+
+func TestInitialDeclarationParticipatesInExecutionSchemaDigest(t *testing.T) {
+	value := newFixture(t)
+	baseline := buildFixture(t, value, false)
+	initial := DefineInitial(value.signatureA.Identity(), value.scope.ID())
+	builder := NewBuilder(value.schemaID)
+	for _, relation := range []model.RelationSchema{value.relationA, value.relationB} {
+		builder.AddRelation(relation)
+	}
+	for _, column := range []model.ColumnSchema{value.columnA, value.columnB} {
+		builder.AddColumn(column)
+	}
+	for _, key := range []model.KeySchema{value.keyA, value.keyB} {
+		builder.AddKey(key)
+	}
+	builder.AddScope(value.scope)
+	for _, expression := range []ExpressionRef{value.expressionA, value.expressionB} {
+		builder.AddExpression(expression)
+	}
+	for _, dependency := range []Dependency{value.dependencyA, value.dependencyB} {
+		builder.AddDependency(dependency)
+	}
+	builder.AddSCC(value.scc)
+	for _, semantic := range []signature.Signature{value.signatureA, value.signatureB} {
+		builder.AddSignature(semantic)
+	}
+	if !builder.AddInitial(initial) {
+		t.Fatal("initial declaration rejected")
+	}
+	seeded, ok := builder.Build()
+	if !ok {
+		t.Fatal("seeded schema build rejected")
+	}
+	if baseline.Digest() == seeded.Digest() {
+		t.Fatal("initial declaration did not participate in execution-schema digest")
+	}
+	if len(seeded.Initials()) != 1 || seeded.Initials()[0].Digest() != initial.Digest() {
+		t.Fatalf("sealed schema lost initial declaration: %+v", seeded.Initials())
 	}
 }
 

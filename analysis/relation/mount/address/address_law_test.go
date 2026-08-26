@@ -9,6 +9,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/relation/mount/address"
 	"github.com/wippyai/go-lua/analysis/relation/schema/algebra"
 	"github.com/wippyai/go-lua/analysis/relation/schema/model"
+	"github.com/wippyai/go-lua/analysis/relation/schema/region"
 	"github.com/wippyai/go-lua/analysis/relation/schema/plan"
 )
 
@@ -120,7 +121,7 @@ func newFixture(t *testing.T) fixture {
 			t.Fatal("add key")
 		}
 	}
-	for _, value := range []model.ScopeSchema{model.DefineScopeSchema(scopeA, nil), model.DefineScopeSchema(scopeB, nil)} {
+	for _, value := range []model.ScopeSchema{model.DefineScopeSchema(scopeA, nil, region.True()), model.DefineScopeSchema(scopeB, nil, region.True())} {
 		if !builder.AddScope(value) {
 			t.Fatal("add scope")
 		}

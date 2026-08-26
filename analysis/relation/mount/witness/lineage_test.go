@@ -11,11 +11,21 @@ import (
 )
 
 // newLineageFactory supplies the production lineage ABI to witness fixtures.
-// Its owner is deliberately explicit: mounted witness admission must not
-// infer or source lineage ownership from Inventory.
+// The lineage namespace is deliberately distinct from the relation/schema
+// owner: row and denominator atoms retain their source owner and therefore
+// must arrive at the mounted authority as foreign atoms.
 func newLineageFactory(t *testing.T, owner model.OwnerID) lineage.Factory {
 	t.Helper()
-	factory, ok := lineage.NewFactory(owner)
+	ownerContent := owner.Content()
+	lineageContent, ok := identity.DeriveContentID("witness/mount/lineage-owner/v1", ownerContent[:])
+	if !ok {
+		t.Fatal("lineage owner content")
+	}
+	lineageOwner, ok := model.IssueOwnerID(lineageContent)
+	if !ok {
+		t.Fatal("lineage owner")
+	}
+	factory, ok := lineage.NewFactory(lineageOwner)
 	if !ok {
 		t.Fatal("lineage factory")
 	}

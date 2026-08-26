@@ -1,3 +1,4 @@
-// Package arrangement derives physical access requirements and descriptions
-// from checked logical access patterns without changing logical identity.
+// Package arrangement seals fenced physical access requirements and execution
+// roots from checked logical plans. Per-root occurrence paths live in the
+// child derivation package and are redeemed by compiler-issued expression ID.
 package arrangement

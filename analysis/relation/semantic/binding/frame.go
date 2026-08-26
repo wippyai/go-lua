@@ -52,7 +52,11 @@ func (frame Frame) Validate(operation signature.Signature, fence Fence) bool {
 	}
 	for index, slot := range frame.slots {
 		input, ok := operation.InputAt(index)
-		if !ok || !input.Delivery.Available() || !input.Denominator.Available() || !slot.Available() {
+		if !ok || !input.Available() || !input.Delivery.Available() || !input.Denominator.Available() || !slot.Available() {
+			return false
+		}
+		sourceDenominator, sourceOK := input.SourceDenominator()
+		if !sourceOK || !sourceDenominator.Available() {
 			return false
 		}
 		delivery := input.Delivery
@@ -73,22 +77,32 @@ func (frame Frame) Validate(operation signature.Signature, fence Fence) bool {
 		var previousOrder int
 		if delivery.IsSpan() {
 			previousOrder = -1
-			rangeWitness := slot.Witness()
+			rangeWitness := slot.RangeWitness()
 			if !rangeWitness.ValidFor(fence) || !rangeWitness.Matches(input.Denominator) || rangeWitness.Key() != delivery.OrderKey() {
 				return false
 			}
 		}
 		for cellIndex := 0; cellIndex < slot.Len(); cellIndex++ {
 			cell, cellOK := slot.At(cellIndex)
-			if !cellOK || !cell.Available() || !cell.Address().ValidFor(fence) || !cell.Address().Scope().Same(frame.scope) || !cell.Address().Witness().Matches(input.Denominator) || cell.Address().Relation() != input.Relation || cell.Address().Column() != input.Column || cell.Type() != input.Type || (cell.Value().Available() && (!cell.Value().ValidFor(fence) || cell.Value().Type() != input.Type)) || !input.Presence.Allows(cell.Presence()) {
+			// The source cell remains authenticated by the source authority.  It
+			// may intentionally differ from the span's carrier witness below.
+			if !cellOK || !cell.Available() || !cell.Address().ValidFor(fence) || !cell.Address().Scope().Same(frame.scope) || !cell.Address().Witness().Matches(sourceDenominator) || cell.Address().Relation() != input.Relation || cell.Address().Column() != input.Column || cell.Type() != input.Type || (cell.Value().Available() && (!cell.Value().ValidFor(fence) || cell.Value().Type() != input.Type)) || !input.Presence.Allows(cell.Presence()) {
 				return false
 			}
 			if delivery.IsSpan() {
-				witness := cell.Address().Witness()
-				if !witness.Same(slot.Witness()) {
+				rangeRow, rangeRowOK := slot.RangeRowAt(cellIndex)
+				rangeWitness := slot.RangeWitness()
+				if !rangeRowOK || !rangeWitness.ValidFor(fence) || !rangeWitness.Contains(rangeRow) {
 					return false
 				}
-				order, orderOK := witness.membership.Index(cell.Address().Row())
+				// The homogeneous arm has one denominator and one exact row
+				// occurrence.  Joined delivery must instead retain its distinct
+				// row in Slot; accepting a coincidental source relation here would
+				// erase the ABI split.
+				if input.IsHomogeneous() && (!cell.Address().Witness().Same(rangeWitness) || cell.Address().Row() != rangeRow) {
+					return false
+				}
+				order, orderOK := rangeWitness.membership.index(rangeRow)
 				if !orderOK || order <= previousOrder {
 					return false
 				}
@@ -98,7 +112,7 @@ func (frame Frame) Validate(operation signature.Signature, fence Fence) bool {
 				}
 			}
 		}
-		if delivery.IsComplete() && (slot.Len() != slot.Witness().membership.Len() || (slot.Len() > 0 && previousOrder != slot.Len()-1)) {
+		if delivery.IsComplete() && (slot.Len() != slot.RangeWitness().membership.Len() || (slot.Len() > 0 && previousOrder != slot.Len()-1)) {
 			return false
 		}
 	}

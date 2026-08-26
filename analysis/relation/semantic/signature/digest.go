@@ -9,7 +9,7 @@ import (
 )
 
 func digest(value Signature) identity.ContentID {
-	parts := make([][]byte, 0, 20+len(value.inputs)*6+len(value.outputs)*4)
+	parts := make([][]byte, 0, 20+len(value.inputs)*8+len(value.outputs)*4)
 	parts = append(parts,
 		nominal(value.identity.Operation.Owner().Content(), value.identity.Operation.Content()),
 		uint64Bytes(value.identity.Version),
@@ -17,20 +17,27 @@ func digest(value Signature) identity.ContentID {
 		nominal(value.fence.Schema.Owner().Content(), value.fence.Schema.Content()),
 		uint64Bytes(uint64(len(value.inputs))))
 	for _, input := range value.inputs {
-		parts = append(parts, relationBytes(input.Relation), columnBytes(input.Column), typeBytes(input.Type), denominatorBytes(input.Denominator), []byte{byte(input.Presence), byte(input.Delivery.Kind)}, uint64Bytes(uint64(input.Delivery.Bound)), keyBytes(input.Delivery.Order))
+		parts = append(parts, relationBytes(input.Relation), columnBytes(input.Column), typeBytes(input.Type), denominatorBytes(input.Denominator), []byte{byte(input.Presence), byte(input.Delivery.Kind), byte(input.AuthorityKind())}, uint64Bytes(uint64(input.Delivery.Bound)), keyBytes(input.Delivery.Order))
+		if source, joined := input.SourceAuthority.Denominator(); joined {
+			parts = append(parts, denominatorBytes(source))
+		} else {
+			// The carrier denominator above already identifies the homogeneous
+			// source.  Keep a fixed arm marker so the closed authority sum is
+			// nevertheless part of the signature identity.
+			parts = append(parts, []byte{0})
+		}
 	}
 	parts = append(parts, uint64Bytes(uint64(len(value.outputs))))
 	for _, output := range value.outputs {
-		parts = append(parts, relationBytes(output.Relation), columnBytes(output.Column), typeBytes(output.Type), []byte{byte(output.Presence)})
+		parts = append(parts, relationBytes(output.Relation), columnBytes(output.Column), typeBytes(output.Type), denominatorBytes(output.Denominator), []byte{byte(output.Presence)})
 	}
 	bound := uint32(0)
 	if value, ok := value.cardinality.Bound(); ok {
 		bound = value
 	}
-	parts = append(parts, denominatorBytes(value.authority.Denominator),
-		[]byte{byte(value.cardinality.Kind())}, uint64Bytes(uint64(bound)),
+	parts = append(parts, []byte{byte(value.cardinality.Kind())}, uint64Bytes(uint64(bound)),
 		codeBytes(value.outcomes.Codes()))
-	result, ok := identity.DeriveContentID("relation/semantic/signature/v1", parts...)
+	result, ok := identity.DeriveContentID("relation/semantic/signature/v2", parts...)
 	if !ok {
 		return identity.ContentID{}
 	}
