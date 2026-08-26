@@ -82,6 +82,7 @@ func payloads() []Payload {
 		{Key: "effect", Axis: "effect", Field: "Effect", Type: "effectfactor.Value", Alias: "effectfactor", Path: "github.com/wippyai/go-lua/domain/effect/factor", Lattice: "EffectLattice"},
 		{Key: "pack", Axis: "pack", Field: "Pack", Type: "packdomain.Value", Alias: "packdomain", Path: "github.com/wippyai/go-lua/domain/pack", Lattice: "PackLattice"},
 		{Key: "placement", Axis: "placement", Field: "Placement", Type: "placementdomain.Fact", Alias: "placementdomain", Path: "github.com/wippyai/go-lua/domain/placement", Lattice: "PlacementLattice"},
+		{Key: "static-type-summary", Axis: "static", Field: "TypeSummary", Type: "staticdomain.TypeSummaryObservation", Alias: "staticdomain", Path: "github.com/wippyai/go-lua/domain/static"},
 		{Key: "static", Axis: "static", Field: "Static", Type: "staticdomain.TypeFact", Alias: "staticdomain", Path: "github.com/wippyai/go-lua/domain/static", Lattice: "StaticLattice"},
 
 		{Key: "arithmetic-candidate", Axis: "value", Field: "ArithmeticCandidate", Type: "valuedomain.BinaryArithmetic", Alias: "valuedomain", Path: "github.com/wippyai/go-lua/domain/value"},
@@ -325,6 +326,7 @@ func families() []Family {
 			Cardinality: model.ExactlyOne, Address: 0,
 		},
 		{
+			Census: "query/value-summary", Rule: "value-summary",
 			Arm: "grouped reduction over a complete span", Stem: "ValueSummary", Axis: "value",
 			Judgment: "ValueSummaryOperation",
 			Inputs: []Slot{
@@ -332,6 +334,16 @@ func families() []Family {
 				{Field: "Group", Payload: "value", Delivery: scalar},
 			},
 			Result: "value-summary", Outputs: []Column{{Payload: "value-summary"}},
+			Cardinality: model.ExactlyOne, Address: 1,
+		},
+		{
+			Arm: "grouped reduction over a complete span", Stem: "StaticTypeSummary", Axis: "static",
+			Judgment: "StaticTypeSummaryOperation",
+			Inputs: []Slot{
+				{Field: "Cells", Payload: "static", Delivery: signature.CompleteSpanDelivery},
+				{Field: "Group", Payload: "static", Delivery: scalar},
+			},
+			Result: "static-type-summary", Outputs: []Column{{Payload: "static-type-summary"}},
 			Cardinality: model.ExactlyOne, Address: 1,
 		},
 		{
