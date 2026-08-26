@@ -3,8 +3,10 @@ package relation
 import (
 	"github.com/wippyai/go-lua/analysis/relation/semantic/outcome"
 	"github.com/wippyai/go-lua/analysis/schema/rule/relbindgen"
+	calldomain "github.com/wippyai/go-lua/domain/call"
 	valuedomain "github.com/wippyai/go-lua/domain/value"
 	"github.com/wippyai/go-lua/domain/value/allocation"
+	"github.com/wippyai/go-lua/domain/value/freshresult"
 	"github.com/wippyai/go-lua/domain/value/moduleload"
 	"github.com/wippyai/go-lua/domain/value/runtimekind"
 )
@@ -219,4 +221,32 @@ func (operation ValueSummaryOperation) Evaluate(argument ValueSummaryArgument, e
 		return outcome.Refused
 	}
 	return outcome.Produced
+}
+
+// ValueFreshResultOperation is domain/value/freshresult's own judgment: the
+// fresh value a call result route publishes at the coordinate it names.
+type ValueFreshResultOperation struct {
+	judgment freshresult.Judgment
+	derived  bool
+}
+
+// NewValueFreshResultOperation derives the fresh-result judgment from the two
+// sealed algebras it reads through.
+func NewValueFreshResultOperation(values *valuedomain.Schema, calls *calldomain.Algebra) (ValueFreshResultOperation, bool) {
+	judgment, ok := freshresult.NewJudgment(values, calls)
+	if !ok {
+		return ValueFreshResultOperation{}, false
+	}
+	return ValueFreshResultOperation{judgment: judgment, derived: true}, true
+}
+
+// Available reports whether the operation carries a derived judgment. The
+// owner seals its judgment at derivation and publishes no second reading of
+// that seal, so the operation records the one its constructor obtained.
+func (operation ValueFreshResultOperation) Available() bool { return operation.derived }
+
+// Evaluate answers one fresh call result at the route it was selected on.
+func (operation ValueFreshResultOperation) Evaluate(argument ValueFreshResultArgument, emitter *relbindgen.Emitter[valuedomain.Value]) outcome.Code {
+	fact, reduction := operation.judgment.FreshResultFact(argument.Candidate, argument.CallFact, argument.Destination, argument.Tag, argument.Prior)
+	return relbindgen.Reduce(emitter, fact, reduction)
 }

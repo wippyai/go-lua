@@ -13,29 +13,35 @@ import (
 // PayloadTypes names the owner-issued TypeID each column of this axis
 // carries.
 type PayloadTypes struct {
-	Placement model.TypeID
+	Placement         model.TypeID
+	Requirement       model.TypeID
+	PlacementRouteTag model.TypeID
 }
 
 // Available reports whether every column has an owner-issued type.
 func (types PayloadTypes) Available() bool {
-	return types.Placement.Available()
+	return types.Placement.Available() && types.Requirement.Available() && types.PlacementRouteTag.Available()
 }
 
 // PayloadTags names the store fence each column of this axis interns under.
 type PayloadTags struct {
-	Placement identity.ContentID
+	Placement         identity.ContentID
+	Requirement       identity.ContentID
+	PlacementRouteTag identity.ContentID
 }
 
 // Available reports whether every column has a store fence.
 func (tags PayloadTags) Available() bool {
-	return tags.Placement.Available()
+	return tags.Placement.Available() && tags.Requirement.Available() && tags.PlacementRouteTag.Available()
 }
 
 // Payloads is this axis's thin typed owner-column publisher: one Column per
 // payload type the axis declares, each over its own solve-local store, and
 // the only place one of its domain values crosses into a value token.
 type Payloads struct {
-	Placement *relbindgen.Column[placementdomain.Fact]
+	Placement         *relbindgen.Column[placementdomain.Fact]
+	Requirement       *relbindgen.Column[placementdomain.Placement]
+	PlacementRouteTag *relbindgen.Column[uint64]
 }
 
 // NewPayloads installs one column per declared payload over a store fenced
@@ -54,12 +60,26 @@ func NewPayloads(types PayloadTypes, tags PayloadTags, reserve int) (Payloads, b
 	if payloads.Placement, ok = relbindgen.NewColumn(types.Placement, placementStore); !ok {
 		return Payloads{}, false
 	}
+	requirementStore, ok := relbindgen.NewStore[placementdomain.Placement](tags.Requirement, reserve)
+	if !ok {
+		return Payloads{}, false
+	}
+	if payloads.Requirement, ok = relbindgen.NewColumn(types.Requirement, requirementStore); !ok {
+		return Payloads{}, false
+	}
+	placementRouteTagStore, ok := relbindgen.NewStore[uint64](tags.PlacementRouteTag, reserve)
+	if !ok {
+		return Payloads{}, false
+	}
+	if payloads.PlacementRouteTag, ok = relbindgen.NewColumn(types.PlacementRouteTag, placementRouteTagStore); !ok {
+		return Payloads{}, false
+	}
 	return payloads, true
 }
 
 // Available reports whether every column carries live storage.
 func (payloads Payloads) Available() bool {
-	return payloads.Placement.Available()
+	return payloads.Placement.Available() && payloads.Requirement.Available() && payloads.PlacementRouteTag.Available()
 }
 
 // Lattices are this axis's ascent witnesses. Each names the owner's own

@@ -387,3 +387,30 @@ func packRoutes(
 	}
 	return outcome.Produced
 }
+
+// HeapFormalFreezeOperation is domain/heap's own formal freeze: the fact one
+// selected route's predecessor becomes when a call freezes its formals.
+type HeapFormalFreezeOperation struct{}
+
+// Available reports whether the operation carries its owner mathematics. The
+// freeze is a package function over values that carry their own owner, so
+// there is no derived state to hold and nothing to be unavailable.
+func (HeapFormalFreezeOperation) Available() bool { return true }
+
+// Evaluate answers one formal freeze at the route its tag names.
+func (HeapFormalFreezeOperation) Evaluate(argument HeapFormalFreezeArgument, emitter *relbindgen.Emitter[heapdomain.Value]) outcome.Code {
+	fact, reduction := heapdomain.FormalFreezeFact(argument.RouteTag, argument.Predecessor)
+	return relbindgen.Reduce(emitter, fact, reduction)
+}
+
+// HeapPublicationFreezeOperation is domain/heap's own publication freeze.
+type HeapPublicationFreezeOperation struct{}
+
+// Available reports whether the operation carries its owner mathematics.
+func (HeapPublicationFreezeOperation) Available() bool { return true }
+
+// Evaluate answers one publication freeze at the route its tag names.
+func (HeapPublicationFreezeOperation) Evaluate(argument HeapPublicationFreezeArgument, emitter *relbindgen.Emitter[heapdomain.Value]) outcome.Code {
+	fact, reduction := heapdomain.PublicationFreezeFact(argument.RouteTag, argument.Predecessor)
+	return relbindgen.Reduce(emitter, fact, reduction)
+}
