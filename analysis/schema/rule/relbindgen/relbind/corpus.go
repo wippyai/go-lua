@@ -607,7 +607,17 @@ func families() []Family {
 		},
 		{
 			Census: "heap/index", Rule: "raw-get", Stem: "RawGetResult", Axis: "heap",
-			Pending: abiGapRawReduction,
+			Judgment: "RawGetResultOperation",
+			Inputs: []Slot{
+				{Field: "Candidate", Payload: "heap-read-candidate", Delivery: scalar},
+				{Field: "Values", Payload: "value", Delivery: span},
+				{Field: "Calls", Payload: "call", Delivery: span},
+				{Field: "Heaps", Payload: "heap", Delivery: span},
+				{Field: "Sources", Payload: "heap-source-route", Delivery: span},
+				{Field: "Packs", Payload: "pack", Delivery: span},
+			},
+			Result: "value", Outputs: []Column{{Payload: "value"}},
+			Cardinality: model.ExactlyOne, Address: 0,
 		},
 		{
 			Census: "heap/index", Rule: "raw-set", Stem: "RawSetCommit", Axis: "heap",

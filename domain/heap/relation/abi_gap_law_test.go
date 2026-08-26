@@ -59,7 +59,7 @@ func rawAccess() []operation {
 		{plan: "raw-get/heap-routes", stem: "HeapReceiverRoutes", entry: "(*index.Topology).VisitReceiver", state: bound},
 		{plan: "raw-get/pack-routes", stem: "RawGetPackRoutes", entry: "(*index.Topology).VisitKeySelectors with (*index.Topology).VisitRoutePayloads", state: bound},
 		{plan: "raw-get/source-routes", stem: "RawGetSourceRoutes", entry: "(*index.Topology).VisitPayloadSources", state: bound},
-		{plan: "raw-get/result", stem: "RawGetResult", entry: "(*index.Topology).RawGetReduce", state: operandUnreachable},
+		{plan: "raw-get/result", stem: "RawGetResult", entry: "(*index.Topology).RawGetReduce", state: bound},
 		{plan: "raw-set/key-routes", stem: "RawSetKeyRoutes", entry: "index.Index.DynamicKey with (*index.Topology).CoordinateName", state: bound},
 		{plan: "raw-set/heap-routes", stem: "HeapReceiverRoutes", entry: "(*index.Topology).VisitReceiver", state: bound},
 		{plan: "raw-set/pack-routes", stem: "RawSetPackRoutes", entry: "(*index.Topology).VisitKeySelectors with (*index.Topology).VisitRoutePayloads", state: bound},
