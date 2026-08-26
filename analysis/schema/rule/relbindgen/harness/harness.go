@@ -334,3 +334,15 @@ func (place Place) fill(t testing.TB, target any, label string, issue func(strin
 		structure.Field(index).Set(value)
 	}
 }
+
+// BorrowSpan delivers one span slot as the borrowed view a decoder receives,
+// so a law can measure or read a span without standing up a whole binding.
+func BorrowSpan[T any](t testing.TB, place Place, cells []binding.Cell, column *relbindgen.Column[T]) relbindgen.Span[T] {
+	t.Helper()
+	frame := place.Frame(t, SpanSlot(t, cells))
+	span, ok := relbindgen.SpanAtFrame(frame, 0, column)
+	if !ok {
+		t.Fatal("borrow span")
+	}
+	return span
+}

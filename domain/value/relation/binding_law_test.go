@@ -366,3 +366,78 @@ func (judgment spanIdentityJudgment) Evaluate(argument relation.ValueSummaryArgu
 	}
 	return outcome.Produced
 }
+
+// TestMaterializingADeliveredSpanIsAllocationFreeWhenWarm is the measurement
+// the seam decision rests on.
+//
+// A span holds value tokens, so handing an owner fold the operand vocabulary
+// it reads decodes rather than views, and the question is not whether that
+// costs a copy - it does - but whether it costs an allocation per invocation.
+// Sized once at its width and refilled, it costs none.
+func TestMaterializingADeliveredSpanIsAllocationFreeWhenWarm(t *testing.T) {
+	fixture := relationfixture.New(t)
+	coordinates := fixture.Values.CoordinateCount()
+	keys := make([]identity.ContentID, 0, coordinates)
+	for index := 0; index < coordinates; index++ {
+		keys = append(keys, harness.Content(t, fmt.Sprintf("row/coordinate-%d", index)))
+	}
+	place := harness.NewKeyed(t, keys)
+	valueType := place.TypeID(t, "type/value")
+	valueColumn := harness.NewColumn[valuedomain.Value](t, valueType, "store/value", 1<<20)
+	cellAddress := place.Column(t, "column/cell")
+
+	top := fixture.Values.Top()
+	cells := make([]binding.Cell, 0, coordinates)
+	for _, row := range place.Rows {
+		token, encodeOK := valueColumn.Encode(place.Issuer, top)
+		if !encodeOK {
+			t.Fatal("encode coordinate")
+		}
+		cells = append(cells, place.Cell(t, cellAddress, row, valueType, token))
+	}
+	span := harness.BorrowSpan(t, place, cells, valueColumn)
+
+	members, ok := relbindgen.NewMembers[valuedomain.Value](coordinates)
+	if !ok {
+		t.Fatal("reserve member storage")
+	}
+	if vector, filled := members.Fill(span); !filled || vector.Count() != coordinates {
+		t.Fatalf("the vector materialized %t at width %d", filled, vector.Count())
+	}
+	if allocations := testing.AllocsPerRun(200, func() {
+		if _, filled := members.Fill(span); !filled {
+			t.Fatal("materialize the vector")
+		}
+	}); allocations != 0 {
+		t.Fatalf("materializing a summary vector allocated %.0f times per invocation", allocations)
+	}
+
+	rows, ok := relbindgen.NewCells[valuedomain.Value](coordinates)
+	if !ok {
+		t.Fatal("reserve cell storage")
+	}
+	ordinals := map[identity.ContentID]uint64{}
+	for index, row := range place.Rows {
+		ordinals[row.Content()] = uint64(index + 1)
+	}
+	tag := func(row identity.ContentID) (uint64, bool) {
+		owned, ok := ordinals[row]
+		return owned, ok
+	}
+	selected, filled := rows.Fill(span, tag)
+	if !filled || len(selected) != coordinates {
+		t.Fatalf("the selection materialized %t at width %d", filled, len(selected))
+	}
+	for index, cell := range selected {
+		if cell.Tag != uint64(index+1) {
+			t.Fatalf("cell %d carries tag %d, and the row it was delivered at names %d", index, cell.Tag, index+1)
+		}
+	}
+	if allocations := testing.AllocsPerRun(200, func() {
+		if _, filled := rows.Fill(span, tag); !filled {
+			t.Fatal("materialize the selection")
+		}
+	}); allocations != 0 {
+		t.Fatalf("materializing selected cells allocated %.0f times per invocation", allocations)
+	}
+}

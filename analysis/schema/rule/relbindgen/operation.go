@@ -33,6 +33,18 @@ type Operation[A, R any] interface {
 	Evaluate(A, *Emitter[R]) outcome.Code
 }
 
+// SolveLocal is an operation that carries per-invocation storage.
+//
+// Most operations hold only sealed owner state and are safe to share, so the
+// substrate shares one. An operation that materializes a delivered span into
+// the operand vocabulary a fold reads holds storage it refills, and sharing
+// that across solve-local workers would be a race. Such an operation says so
+// by answering with its own, and the substrate gives each worker one.
+type SolveLocal[A, R any] interface {
+	Operation[A, R]
+	NewOperation() Operation[A, R]
+}
+
 type emission[R any] struct {
 	key      identity.ContentID
 	value    R

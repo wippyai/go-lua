@@ -105,11 +105,19 @@ func (value bound[A, R]) NewWorker(fence binding.Fence) (binding.Worker, bool) {
 	if !ok {
 		return nil, false
 	}
+	operation := value.factory.spec.Operation
+	if local, ok := operation.(SolveLocal[A, R]); ok {
+		operation = local.NewOperation()
+		if operation == nil {
+			return nil, false
+		}
+	}
 	return &worker[A, R]{
-		factory: value.factory,
-		fence:   fence,
-		issuer:  issuer,
-		emitter: Emitter[R]{rows: make([]emission[R], 0, value.factory.limit), limit: value.factory.limit},
+		factory:   value.factory,
+		operation: operation,
+		fence:     fence,
+		issuer:    issuer,
+		emitter:   Emitter[R]{rows: make([]emission[R], 0, value.factory.limit), limit: value.factory.limit},
 	}, true
 }
 
@@ -117,9 +125,12 @@ func (value bound[A, R]) NewWorker(fence binding.Fence) (binding.Worker, bool) {
 // across invocations; nothing it holds can name a relation outside the frame.
 type worker[A, R any] struct {
 	factory factory[A, R]
-	fence   binding.Fence
-	issuer  binding.Issuer
-	emitter Emitter[R]
+	// operation is this worker's own when the family said it carries
+	// per-invocation storage, and the shared one otherwise.
+	operation Operation[A, R]
+	fence     binding.Fence
+	issuer    binding.Issuer
+	emitter   Emitter[R]
 }
 
 func (value *worker[A, R]) Evaluate(frame binding.Frame, buffer *binding.ProposalBuffer) outcome.Result {
@@ -145,7 +156,7 @@ func (value *worker[A, R]) Evaluate(frame binding.Frame, buffer *binding.Proposa
 	if !ok {
 		return value.refuse(nil)
 	}
-	code := value.factory.spec.Operation.Evaluate(argument, &value.emitter)
+	code := value.operation.Evaluate(argument, &value.emitter)
 	if value.emitter.overflow || !operation.Allows(code) {
 		return value.refuse(nil)
 	}

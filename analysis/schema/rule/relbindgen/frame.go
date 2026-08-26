@@ -148,3 +148,10 @@ func SpanAt[T any](inputs Inputs, slot int, column *Column[T]) (Span[T], bool) {
 	}
 	return Span[T]{slot: view, column: column}, true
 }
+
+// SpanAtFrame borrows one span slot of an already-validated frame. It is how a
+// law reaches a delivered span without a binding around it; a decoder reaches
+// the same span through its Inputs.
+func SpanAtFrame[T any](frame binding.Frame, slot int, column *Column[T]) (Span[T], bool) {
+	return SpanAt(Inputs{frame: frame}, slot, column)
+}
