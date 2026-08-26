@@ -225,6 +225,10 @@ func TestResolveKeepsTypedRowsAlignedWithColdKinds(t *testing.T) {
 		// directories, ahead of the fact relations that consume them.
 		"value/mounted-call/parents",
 		"value/mounted-call/actual-members",
+		// The result-zero directory both call-result rules are indexed by. It
+		// is a base row rather than either rule's, so it takes its ordinal
+		// with the owner's rows and not behind the contributions.
+		"value/mounted-call-result/candidates",
 		// The fresh-result rule's own derived route set: the coordinates one
 		// mounted call publishes a fresh result at. It is a dependent relation
 		// over the candidate and that call's fact, so it sits after the member
@@ -238,6 +242,28 @@ func TestResolveKeepsTypedRowsAlignedWithColdKinds(t *testing.T) {
 		// member set, appended by that cut.
 		"value/module-load/candidates",
 		"value/module-load/arguments",
+		// The runtime-kind rule's own three: the calls it answers, the
+		// subjects one call compares, and the comparisons it draws over them.
+		"value/runtime-kind/candidates",
+		"value/runtime-kind/subjects",
+		"value/runtime-kind/comparisons",
+		// The two call-result rules' own route sets, each derived over the
+		// shared directory above and owned by the one rule that folds it.
+		"value/result-alias/routes",
+		"value/body-result/routes",
+		// The Placement rows that name the value axis. A relation over Value
+		// coordinates is value-axis data whichever rule authored it, so the
+		// roster folds these here and they take their ordinals in roster
+		// order, after every rule this axis composes a fold from.
+		"value/allocation/facts",
+		"value/fresh-result/facts",
+		"value/closure-capture/sources",
+		"value/suspension/sources",
+		"value/suspension-evidence/sources",
+		// The closed-allocation rule's parent set and the operands it parents,
+		// folded here from Heap under the same law.
+		"value/closed-allocation/parents",
+		"value/closed-allocation/operands",
 	}
 	if len(metadata.Relations) != len(wantRelations) {
 		t.Fatalf("relation inventory = %d, want %d", len(metadata.Relations), len(wantRelations))
@@ -263,6 +289,9 @@ func TestResolveKeepsTypedRowsAlignedWithColdKinds(t *testing.T) {
 		"value/mounted-call/callee-key",
 		"value/mounted-call/actual-key",
 		"value/mounted-call/actual-tag",
+		// The coordinate both call-result rules publish at, projected from the
+		// base directory it belongs to.
+		"value/mounted-call-result/coordinate",
 		// The route set's three projections: the coordinate it is observed at,
 		// the one it publishes at, and the tag its cell is paired by.
 		"value/fresh-result/route-key",
@@ -281,6 +310,28 @@ func TestResolveKeepsTypedRowsAlignedWithColdKinds(t *testing.T) {
 		"value/binary-order/write",
 		"value/module-load/argument-key",
 		"value/module-load/coordinate",
+		// The runtime-kind rule's four: the subject and comparison it reads,
+		// the coordinate it writes, and the call occurrence it is addressed by.
+		"value/runtime-kind/subject-key",
+		"value/runtime-kind/comparison-key",
+		"value/runtime-kind/coordinate",
+		"value/runtime-kind/call-occurrence",
+		// Each call-result route set's key and the tag its cell is paired by.
+		"value/result-alias/route-key",
+		"value/result-alias/route-tag",
+		"value/body-result/route-key",
+		"value/body-result/route-tag",
+		// The projections over the folded-in Placement and Heap relations, in
+		// the same roster order their relations take above.
+		"value/allocation/fact-key",
+		"value/fresh-result/fact-key",
+		"value/closure-capture/source-key",
+		"value/closure-capture/source-tag",
+		"value/suspension/source-key",
+		"value/suspension/source-tag",
+		"value/suspension-evidence/source-key",
+		"value/suspension-evidence/source-tag",
+		"value/closed-allocation/operand-key",
 	}
 	if len(metadata.Projections) != len(wantProjections) {
 		t.Fatalf("projection inventory = %d, want %d", len(metadata.Projections), len(wantProjections))
@@ -307,6 +358,12 @@ func TestResolveKeepsTypedRowsAlignedWithColdKinds(t *testing.T) {
 		"value/presence-refinement/reducer",
 		"value/binary-order/reducer",
 		"value/module-load/reducer",
+		// The folds appended after the module-load cut, each contributed by
+		// the package that owns the judgment it states.
+		"value/runtime-kind/reducer",
+		"value/allocation/reducer",
+		"value/result-alias/reducer",
+		"value/body-result/reducer",
 	}
 	if len(metadata.Reducers) != len(wantReducers) {
 		t.Fatalf("reducer inventory = %d, want %d", len(metadata.Reducers), len(wantReducers))

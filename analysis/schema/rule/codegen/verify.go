@@ -275,7 +275,7 @@ func relationHasDerivation(relation membergenerator.RelationBinding) bool {
 		!symbolAbsent(derivation.Count) || !symbolAbsent(derivation.At) || len(derivation.StaticAxes) != 0
 }
 
-func relationDerivationComplete(derivation membergenerator.RelationDerivationBinding) bool {
+func relationDerivationComplete(derivation memberdefinition.RelationDerivation) bool {
 	if !derivation.State.Available() || !derivation.Build.Available() || !derivation.Count.Available() || !derivation.At.Available() || len(derivation.StaticAxes) == 0 {
 		return false
 	}
