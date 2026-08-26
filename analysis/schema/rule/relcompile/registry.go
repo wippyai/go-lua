@@ -236,6 +236,12 @@ type Registry struct {
 	scopes     map[Name]model.ScopeID
 	scopeDims  map[Name][]model.ColumnID
 	scopeOrder []Name
+	// scopeIssued keeps the token the scope's owner handed to InstallScope,
+	// addressed by the identity that install minted. It is what the owner
+	// issued for that scope and nothing this package derived, so a
+	// composition can state a scope's owner-issued evidence without any
+	// authority reaching back into the name it was installed under.
+	scopeIssued map[model.ScopeID]identity.ContentID
 
 	types        map[Name]model.TypeID
 	operations   map[Name]model.OperationID
@@ -262,6 +268,7 @@ func NewRegistry() *Registry {
 		keyColumns:   map[Name][]model.ColumnID{},
 		scopes:       map[Name]model.ScopeID{},
 		scopeDims:    map[Name][]model.ColumnID{},
+		scopeIssued:  map[model.ScopeID]identity.ContentID{},
 		types:        map[Name]model.TypeID{},
 		operations:   map[Name]model.OperationID{},
 		expressions:  map[Name]model.ExpressionID{},
@@ -327,6 +334,7 @@ func (registry *Registry) InstallScope(name Name, issued identity.ContentID) err
 		return refuse(site, name, KindScope, ReasonUnavailable)
 	}
 	registry.scopes[name] = scope
+	registry.scopeIssued[scope] = issued
 	registry.scopeOrder = append(registry.scopeOrder, name)
 	return nil
 }
@@ -822,6 +830,21 @@ func (registry *Registry) Scope(site Site, name Name) (model.ScopeID, error) {
 		return model.ScopeID{}, refuse(site, name, KindScope, ReasonUnknown)
 	}
 	return scope, nil
+}
+
+// ScopeEvidence returns the identity the scope's own owner issued when it
+// installed that scope. It is a reference to the owner's issuance and never a
+// second identity: a scope no owner installed here stands on nothing, and is
+// answered with none rather than with an empty one.
+func (registry *Registry) ScopeEvidence(scope model.ScopeID) (identity.ContentID, bool) {
+	if !scope.Available() {
+		return identity.ContentID{}, false
+	}
+	issued, held := registry.scopeIssued[scope]
+	if !held || !issued.Available() {
+		return identity.ContentID{}, false
+	}
+	return issued, true
 }
 
 // Type resolves one authored semantic type name.

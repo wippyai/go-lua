@@ -20,6 +20,7 @@ import (
 	effectcallsitebody "github.com/wippyai/go-lua/domain/effect/callsite/body/program"
 	effectcallsiteopaque "github.com/wippyai/go-lua/domain/effect/callsite/opaque/program"
 	effectcallsiteselected "github.com/wippyai/go-lua/domain/effect/callsite/selected/program"
+	heapallocationclosed "github.com/wippyai/go-lua/domain/heap/allocation/closed/program"
 	heapallocationempty "github.com/wippyai/go-lua/domain/heap/allocation/empty/program"
 	heapallocationingress "github.com/wippyai/go-lua/domain/heap/allocation/ingress"
 	heapbootstrap "github.com/wippyai/go-lua/domain/heap/bootstrap"
@@ -73,6 +74,7 @@ func declared() []specimen {
 		{Family: "effect/callsite/body", Plane: "family", Spec: effectcallsitebody.RuleEntry()},
 		{Family: "effect/callsite/opaque", Plane: "family", Spec: effectcallsiteopaque.RuleEntry()},
 		{Family: "effect/callsite/selected", Plane: "family", Spec: effectcallsiteselected.RuleEntry()},
+		{Family: "heap/allocation/closed", Plane: "family", Spec: heapallocationclosed.RuleEntry()},
 		{Family: "heap/allocation/empty", Plane: "family", Spec: heapallocationempty.RuleEntry()},
 		{Family: "heap/allocation/ingress", Plane: "seed", Spec: heapallocationingress.RuleEntry()},
 		{Family: "heap/bootstrap", Plane: "seed", Spec: heapbootstrap.RuleEntry()},
@@ -174,7 +176,7 @@ func survey(t *testing.T, row specimen) entry {
 	result := entry{Family: row.Family, Plane: row.Plane, Rule: string(row.Spec.Key)}
 	surfaces := newOwners(t)
 	placement := surfaces.install(row.Spec)
-	rules, err := relcompile.Resolve(surfaces.registry, row.Spec, placement)
+	resolution, err := relcompile.Resolve(surfaces.registry, row.Spec, placement)
 	if err != nil {
 		refusal := refusalOf(t, err)
 		result.Status = statusCoupling
@@ -183,7 +185,7 @@ func survey(t *testing.T, row specimen) entry {
 		result.Reason = refusal.Reason.String()
 		return result
 	}
-	compiled := lower(t, surfaces, row.Spec, rules)
+	compiled := lower(t, surfaces, row.Spec, resolution.Rules)
 	result.Status = statusCompiles
 	result.Expressions = len(compiled.Expressions())
 	result.Sketch = sketch(compiled)

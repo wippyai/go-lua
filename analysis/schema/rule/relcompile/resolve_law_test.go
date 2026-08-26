@@ -27,10 +27,11 @@ func TestAuthoredDeclarationResolvesAndLowers(t *testing.T) {
 	spec := arithmetic.RuleEntry()
 	placement := surfaces.install(spec)
 
-	rules, err := relcompile.Resolve(surfaces.registry, spec, placement)
+	resolution, err := relcompile.Resolve(surfaces.registry, spec, placement)
 	if err != nil {
 		t.Fatalf("resolve %s: %v", spec.Key, err)
 	}
+	rules := resolution.Rules
 	if len(rules) != 1 {
 		t.Fatalf("resolved rules = %d, want one per published column", len(rules))
 	}
@@ -70,10 +71,11 @@ func TestCarriedDerivationLowersToMerge(t *testing.T) {
 	surfaces := newOwners(t)
 	spec := arithmetic.RuleEntry()
 	placement := surfaces.install(spec)
-	rules, err := relcompile.Resolve(surfaces.registry, spec, placement)
+	resolution, err := relcompile.Resolve(surfaces.registry, spec, placement)
 	if err != nil {
 		t.Fatalf("resolve: %v", err)
 	}
+	rules := resolution.Rules
 	declaration := surfaces.registry.Declaration(surfaces.schema())
 	declaration.Rules = rules
 	compiled, err := relcompile.Compile(declaration)

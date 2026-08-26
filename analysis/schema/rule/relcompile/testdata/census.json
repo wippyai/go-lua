@@ -45,6 +45,15 @@
     "expressions": 1
   },
   {
+    "family": "heap/allocation/closed",
+    "plane": "family",
+    "rule": "heap-closed",
+    "status": "COMPILES",
+    "sketch": "Publish(Merge(Apply(Project(Select(Join(Join(Join(Input,Select(Input)),Select(Input)),Select(Input))))),Apply(Select(Input))))",
+    "certified": "CERTIFIED",
+    "expressions": 1
+  },
+  {
     "family": "heap/allocation/empty",
     "plane": "family",
     "rule": "heap-empty",

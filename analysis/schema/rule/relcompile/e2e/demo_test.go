@@ -140,7 +140,7 @@ func lowerFamilies(t *testing.T, families ...family) (plan.ExecutionSchema, *sur
 		if err != nil {
 			t.Fatalf("resolve %s: %v", row.Family, err)
 		}
-		rules = append(rules, lowered...)
+		rules = append(rules, lowered.Rules...)
 	}
 	declaration := surfaces.registry.Declaration(surfaces.schemaID)
 	declaration.Rules = rules

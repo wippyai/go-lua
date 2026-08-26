@@ -88,10 +88,11 @@ func TestAProducedReadLowersToOneApplyAndOneJoin(t *testing.T) {
 	spec := selectedSpecimen()
 	placement := surfaces.install(spec)
 
-	rules, err := relcompile.Resolve(surfaces.registry, spec, placement)
+	resolution, err := relcompile.Resolve(surfaces.registry, spec, placement)
 	if err != nil {
 		t.Fatalf("resolve: %v", err)
 	}
+	rules := resolution.Rules
 	if len(rules) != 2 {
 		t.Fatalf("resolved rules = %d, want the selection and the rule that reads it", len(rules))
 	}
