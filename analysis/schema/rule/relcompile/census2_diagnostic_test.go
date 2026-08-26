@@ -45,7 +45,7 @@ func census2BranchConditionPlan(t *testing.T) *census2Plane {
 	pointPath := plane.program("program/local-wto-point-path")
 	observation := plane.observation("observation/branch-condition")
 	evidence := plane.observation("observation/branch-condition/evidence")
-	admit := plane.exactOperation(plane.program("program/branch-condition-admit"), observation)
+	admit := plane.exactOperation(plane.program("program/branch-condition-admit"), observation, guarded)
 
 	plane.add(census2Step{
 		Key: "observation/branch-condition", Candidate: route,
@@ -57,7 +57,10 @@ func census2BranchConditionPlan(t *testing.T) *census2Plane {
 			plane.join(span, source)},
 		Complete: census2Ref(guarded),
 		Apply:    admit,
-		Publish:  observation,
+		ApplySlots: []relcompile.ReadOccurrence{
+			relcompile.JoinOccurrence(0), // guarded-route read
+		},
+		Publish: observation,
 	})
 	plane.add(census2Step{
 		Key: "observation/branch-condition-evidence", Candidate: observation,
@@ -83,7 +86,7 @@ func census2TypeReferenceUnresolvedPlan(t *testing.T) *census2Plane {
 	span := plane.program("program/source-span")
 	observation := plane.observation("observation/type-reference-unresolved")
 	path := plane.observation("observation/type-reference-unresolved/path")
-	admit := plane.exactOperation(plane.program("program/type-reference-admit"), observation)
+	admit := plane.exactOperation(plane.program("program/type-reference-admit"), observation, unresolved)
 
 	plane.add(census2Step{
 		Key: "observation/type-reference-unresolved", Candidate: reference,
@@ -94,7 +97,10 @@ func census2TypeReferenceUnresolvedPlan(t *testing.T) *census2Plane {
 			plane.join(reference, span)},
 		Complete: census2Ref(staticType),
 		Apply:    admit,
-		Publish:  observation,
+		ApplySlots: []relcompile.ReadOccurrence{
+			relcompile.JoinOccurrence(0), // unresolved-reference read
+		},
+		Publish: observation,
 	})
 	plane.add(census2Step{
 		Key: "observation/type-reference-unresolved-path", Candidate: observation,
@@ -119,7 +125,7 @@ func census2ValueReferenceUnresolvedPlan(t *testing.T) *census2Plane {
 	key := plane.program("program/source-key")
 	span := plane.program("program/source-span")
 	observation := plane.observation("observation/value-reference-unresolved")
-	admit := plane.exactOperation(plane.program("program/value-reference-admit"), observation)
+	admit := plane.exactOperation(plane.program("program/value-reference-admit"), observation, global)
 
 	plane.add(census2Step{
 		Key: "observation/value-reference-unresolved", Candidate: read,
@@ -131,7 +137,10 @@ func census2ValueReferenceUnresolvedPlan(t *testing.T) *census2Plane {
 			plane.join(read, span)},
 		Complete: census2Ref(implicit),
 		Apply:    admit,
-		Publish:  observation,
+		ApplySlots: []relcompile.ReadOccurrence{
+			relcompile.JoinOccurrence(2), // undeclared-global-cell read
+		},
+		Publish: observation,
 	})
 	return plane
 }
@@ -171,7 +180,10 @@ func census2TypeConformancePlan(t *testing.T) *census2Plane {
 	observation := plane.observation("observation/type-conformance")
 	evidence := plane.observation("observation/type-conformance/evidence")
 	closed := plane.observation("observation/type-conformance/closed")
-	measure := plane.exactOperation(plane.program("program/type-conformance-measure"), observation)
+	measureCall := plane.exactOperation(plane.program("program/type-conformance-measure-call"), observation, declaredType)
+	measureBind := plane.exactOperation(plane.program("program/type-conformance-measure-bind"), observation, declaredType)
+	measureWrite := plane.exactOperation(plane.program("program/type-conformance-measure-write"), observation, declaredType)
+	measureStructural := plane.exactOperation(plane.program("program/type-conformance-measure-structural"), observation, structuralTarget)
 
 	plane.add(census2Step{
 		Key: "observation/type-conformance-call-argument", Candidate: call,
@@ -180,7 +192,10 @@ func census2TypeConformancePlan(t *testing.T) *census2Plane {
 			plane.join(call, argumentSource),
 			plane.join(call, declaredType),
 			plane.join(call, pointPath)},
-		Apply:   measure,
+		Apply: measureCall,
+		ApplySlots: []relcompile.ReadOccurrence{
+			relcompile.JoinOccurrence(2), // declared type at the call argument
+		},
 		Publish: observation,
 	})
 	plane.add(census2Step{
@@ -189,7 +204,10 @@ func census2TypeConformancePlan(t *testing.T) *census2Plane {
 			plane.join(bind, member),
 			plane.join(bind, declaredType),
 			plane.join(bind, pointPath)},
-		Apply:   measure,
+		Apply: measureBind,
+		ApplySlots: []relcompile.ReadOccurrence{
+			relcompile.JoinOccurrence(1), // declared type at the binding
+		},
 		Publish: observation,
 	})
 	plane.add(census2Step{
@@ -199,7 +217,10 @@ func census2TypeConformancePlan(t *testing.T) *census2Plane {
 			plane.join(assign, member),
 			plane.join(assign, declaredType),
 			plane.join(assign, pointPath)},
-		Apply:   measure,
+		Apply: measureWrite,
+		ApplySlots: []relcompile.ReadOccurrence{
+			relcompile.JoinOccurrence(2), // declared type at the write
+		},
 		Publish: observation,
 	})
 	plane.add(census2Step{
@@ -208,7 +229,10 @@ func census2TypeConformancePlan(t *testing.T) *census2Plane {
 			plane.join(allocationField, structuralTarget),
 			plane.join(allocationField, member),
 			plane.join(allocationField, observation)},
-		Apply:   measure,
+		Apply: measureStructural,
+		ApplySlots: []relcompile.ReadOccurrence{
+			relcompile.JoinOccurrence(0), // structural target
+		},
 		Publish: observation,
 	})
 	plane.add(census2Step{

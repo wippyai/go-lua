@@ -9,15 +9,13 @@ import (
 	valuesource "github.com/wippyai/go-lua/domain/value/source"
 )
 
-// TestDependencyProjectionCarriesEverySemanticRead states that a lowered
-// dependency's read set is the whole set the expression reads. A semantic
-// operation reads the relation each declared input is delivered from, the
-// denominator that input is closed against, and the denominator its output
-// authority is proven under. None of those is named by a join, so a projection
-// built from joins alone is a read set the recurrence checker derives
-// differently - and a dependency graph two authorities disagree about is not
-// one graph.
-func TestDependencyProjectionCarriesEverySemanticRead(t *testing.T) {
+// TestDependencyProjectionCarriesOnlyCommittedExpressionReads proves that a
+// lowered dependency projection is exactly the relational expression's state
+// effect. Apply's signature is a transient typed computation over its child;
+// its input/authority relations are not extra database edges. Publish is the
+// sole write boundary, so adding those signature relations would fabricate a
+// recurrence edge the certificate correctly does not derive.
+func TestDependencyProjectionCarriesOnlyCommittedExpressionReads(t *testing.T) {
 	spec := valuesource.RuleEntry()
 	surfaces := newOwners(t)
 	placement := surfaces.install(spec)
@@ -31,24 +29,9 @@ func TestDependencyProjectionCarriesEverySemanticRead(t *testing.T) {
 	if len(dependencies) != 1 {
 		t.Fatalf("%s lowered to %d dependencies, want 1", spec.Key, len(dependencies))
 	}
-	operations := compiled.Signatures()
-	if len(operations) != 1 {
-		t.Fatalf("%s lowered to %d signatures, want 1", spec.Key, len(operations))
-	}
-	authority := operations[0].Authority().Denominator.Relation()
-	if !authority.Available() {
-		t.Fatal("the lowered signature carries no output authority denominator")
-	}
-	if !readsRelation(dependencies[0], authority) {
-		t.Fatalf("the dependency of %s does not read the denominator its output authority is proven under", spec.Key)
-	}
-	for index, input := range operations[0].Inputs() {
-		if !readsRelation(dependencies[0], input.Relation) {
-			t.Fatalf("the dependency of %s does not read the relation input[%d] is delivered from", spec.Key, index)
-		}
-		if !readsRelation(dependencies[0], input.Denominator.Relation()) {
-			t.Fatalf("the dependency of %s does not read the denominator input[%d] is closed against", spec.Key, index)
-		}
+	reads := dependencies[0].Reads()
+	if len(reads) != 1 || reads[0].ID() != rules[0].Candidate {
+		t.Fatalf("%s dependency reads = %d, want exactly its one expression input", spec.Key, len(reads))
 	}
 }
 

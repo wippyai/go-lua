@@ -5,8 +5,11 @@ import (
 
 	"github.com/wippyai/go-lua/analysis/identity"
 	"github.com/wippyai/go-lua/analysis/relation/schema/model"
+	"github.com/wippyai/go-lua/analysis/relation/schema/region"
 	"github.com/wippyai/go-lua/analysis/relation/semantic/signature"
 	"github.com/wippyai/go-lua/analysis/schema"
+	"github.com/wippyai/go-lua/analysis/schema/axis/member"
+	"github.com/wippyai/go-lua/analysis/schema/carrier"
 )
 
 // Name is the authored address of one declared entry: the surface entry that
@@ -144,6 +147,9 @@ const (
 	KindAddress
 	// KindPublicationKey is the key a relation's rows are published under.
 	KindPublicationKey
+	// KindExpand is the generic closed-plan operator that consumes an
+	// owner-sealed finite key vector through the model Expand contract.
+	KindExpand
 )
 
 // String returns the canonical entry-kind label.
@@ -175,6 +181,8 @@ func (kind EntryKind) String() string {
 		return "address"
 	case KindPublicationKey:
 		return "publication key"
+	case KindExpand:
+		return "expand"
 	default:
 		return "invalid"
 	}
@@ -210,6 +218,48 @@ type relationEntry struct {
 	keys        []model.KeyID
 }
 
+// FactorBinding is the owner-installed relation/key population read by one
+// axis under one denominator. The denominator entry alone says which universe
+// exists; this binding says which Factor relation that axis actually exposes
+// for it. Keeping both sides explicit prevents a Selected lowering from
+// guessing a writer relation from a domain name.
+type FactorBinding struct {
+	Relation model.RelationID
+	Key      model.KeyID
+	Columns  []model.ColumnID
+}
+
+// OutputBinding is the owner-installed writable fact column and publication
+// key for one OutputRef. Destination remains a route coordinate and is never
+// overloaded as this writer binding.
+type OutputBinding struct {
+	Relation model.RelationID
+	Key      model.KeyID
+	Column   model.ColumnID
+	// Result is the owner-axis signature key for this writer.  It is carried
+	// from the sealed axis declaration; relcompile never derives it from a
+	// column name or from the publication key.
+	Result carrier.Key
+}
+
+// ProjectionBinding is the sealed owner statement behind one Program
+// ProjectionRef. A column name alone is insufficient: role, result carrier,
+// relation and candidate provider are part of the projection authority and
+// are what distinguish a destination projection from an arbitrary column with
+// the same nominal spelling.
+type ProjectionBinding struct {
+	Relation          model.RelationID
+	Column            model.ColumnID
+	Role              member.Role
+	Result            carrier.Key
+	CandidateProvider member.CandidateRef
+}
+
+type factorName struct {
+	axis        schema.EntryReference
+	denominator Name
+}
+
 // Registry is the one canonical identity registry of the declaration
 // compiler. It resolves an authored name to the identity its owner issued and
 // never derives one: an identity enters only through an Install call that
@@ -233,16 +283,26 @@ type Registry struct {
 	keyColumns map[Name][]model.ColumnID
 	keyOrder   []Name
 
-	scopes     map[Name]model.ScopeID
-	scopeDims  map[Name][]model.ColumnID
-	scopeOrder []Name
+	scopes       map[Name]model.ScopeID
+	scopeDims    map[Name][]model.ColumnID
+	scopeRegions map[Name]region.Region
+	scopeOrder   []Name
 
-	types        map[Name]model.TypeID
-	operations   map[Name]model.OperationID
-	expressions  map[Name]model.ExpressionID
-	dependencies map[Name]model.DependencyID
+	types               map[Name]model.TypeID
+	typeCapabilities    map[Name]model.TypeCapability
+	typeCapabilityOrder []Name
+	operations          map[Name]model.OperationID
+	expressions         map[Name]model.ExpressionID
+	dependencies        map[Name]model.DependencyID
 
 	denominators map[Name]model.DenominatorRef
+	factors      map[factorName]FactorBinding
+	outputs      map[Name]OutputBinding
+	projections  map[Name]ProjectionBinding
+	// memberCatalogs is the sealed owner vocabulary the compiler consults to
+	// derive model-owned Expand contracts. The catalog is consumed only during
+	// cold lowering; no span, coordinate, or owner callback is retained.
+	memberCatalogs map[schema.EntryReference]member.Catalog
 
 	signatures     map[Name]signature.Signature
 	signatureOrder []Name
@@ -253,22 +313,28 @@ type Registry struct {
 // NewRegistry returns an empty canonical identity registry.
 func NewRegistry() *Registry {
 	return &Registry{
-		owners:       map[schema.EntryReference]model.OwnerID{},
-		relations:    map[Name]*relationEntry{},
-		columns:      map[Name]model.ColumnID{},
-		columnType:   map[Name]model.TypeID{},
-		columnOwner:  map[Name]Name{},
-		keys:         map[Name]model.KeyID{},
-		keyColumns:   map[Name][]model.ColumnID{},
-		scopes:       map[Name]model.ScopeID{},
-		scopeDims:    map[Name][]model.ColumnID{},
-		types:        map[Name]model.TypeID{},
-		operations:   map[Name]model.OperationID{},
-		expressions:  map[Name]model.ExpressionID{},
-		dependencies: map[Name]model.DependencyID{},
-		denominators: map[Name]model.DenominatorRef{},
-		signatures:   map[Name]signature.Signature{},
-		issued:       map[identity.ContentID]Name{},
+		owners:           map[schema.EntryReference]model.OwnerID{},
+		relations:        map[Name]*relationEntry{},
+		columns:          map[Name]model.ColumnID{},
+		columnType:       map[Name]model.TypeID{},
+		columnOwner:      map[Name]Name{},
+		keys:             map[Name]model.KeyID{},
+		keyColumns:       map[Name][]model.ColumnID{},
+		scopes:           map[Name]model.ScopeID{},
+		scopeDims:        map[Name][]model.ColumnID{},
+		scopeRegions:     map[Name]region.Region{},
+		types:            map[Name]model.TypeID{},
+		typeCapabilities: map[Name]model.TypeCapability{},
+		operations:       map[Name]model.OperationID{},
+		expressions:      map[Name]model.ExpressionID{},
+		dependencies:     map[Name]model.DependencyID{},
+		denominators:     map[Name]model.DenominatorRef{},
+		factors:          map[factorName]FactorBinding{},
+		outputs:          map[Name]OutputBinding{},
+		projections:      map[Name]ProjectionBinding{},
+		memberCatalogs:   map[schema.EntryReference]member.Catalog{},
+		signatures:       map[Name]signature.Signature{},
+		issued:           map[identity.ContentID]Name{},
 	}
 }
 
@@ -310,11 +376,14 @@ func (registry *Registry) InstallOwner(entry schema.EntryReference, issued ident
 
 // InstallScope adopts the identity an owner issued for one decision-scope
 // schema. Dimensions are declared separately, once their columns exist.
-func (registry *Registry) InstallScope(name Name, issued identity.ContentID) error {
+func (registry *Registry) InstallScope(name Name, issued identity.ContentID, formula region.Region) error {
 	site := Site{Path: "registry.scope"}
 	owner, ok := registry.owners[name.Entry]
 	if !ok {
 		return refuse(site, name.Owner(), KindOwner, ReasonUnknown)
+	}
+	if !formula.Available() {
+		return refuse(site, name, KindScope, ReasonUnavailable)
 	}
 	if _, exists := registry.scopes[name]; exists {
 		return refuse(site, name, KindScope, ReasonDuplicateName)
@@ -327,6 +396,7 @@ func (registry *Registry) InstallScope(name Name, issued identity.ContentID) err
 		return refuse(site, name, KindScope, ReasonUnavailable)
 	}
 	registry.scopes[name] = scope
+	registry.scopeRegions[name] = formula
 	registry.scopeOrder = append(registry.scopeOrder, name)
 	return nil
 }
@@ -349,6 +419,28 @@ func (registry *Registry) InstallType(name Name, issued identity.ContentID) erro
 		return refuse(site, name, KindType, ReasonUnavailable)
 	}
 	registry.types[name] = typeID
+	return nil
+}
+
+// InstallTypeCapability records the exact policy an owner declared for an
+// already-issued semantic type. The policy is intentionally a separate
+// statement from InstallType: neither a concrete Go representation nor a
+// signature Presence contract can silently grant ascent authority.
+func (registry *Registry) InstallTypeCapability(name Name, kind model.TypeCapabilityKind) error {
+	site := Site{Path: "registry.type-capability"}
+	typeID, ok := registry.types[name]
+	if !ok {
+		return refuse(site, name, KindType, ReasonUnknown)
+	}
+	if _, exists := registry.typeCapabilities[name]; exists {
+		return refuse(site, name, KindType, ReasonDuplicateName)
+	}
+	capability, capabilityOK := model.NewTypeCapability(typeID, kind)
+	if !capabilityOK {
+		return refuse(site, name, KindType, ReasonUnavailable)
+	}
+	registry.typeCapabilities[name] = capability
+	registry.typeCapabilityOrder = append(registry.typeCapabilityOrder, name)
 	return nil
 }
 
@@ -540,6 +632,156 @@ func (registry *Registry) InstallDenominator(name Name, relation Name, key Name)
 	return nil
 }
 
+// InstallFactor records the Factor relation an axis reads for one already
+// owner-installed denominator. The relation/key pair must be the denominator
+// pair itself; this method adds the axis-qualified consumption statement and
+// does not mint a second address or publication identity.
+func (registry *Registry) InstallFactor(axis schema.EntryReference, denominator Name, relation Name, key Name) error {
+	site := Site{Path: "registry.factor"}
+	if !axis.Available() {
+		return refuse(site, Name{Entry: axis}, KindOwner, ReasonUnavailable)
+	}
+	if _, ok := registry.owners[axis]; !ok {
+		return refuse(site, Name{Entry: axis}, KindOwner, ReasonUnknown)
+	}
+	// A Factor is the axis's own relation/key view of a denominator.  The
+	// denominator may be shared, but a different axis cannot bind somebody
+	// else's relation or key under its own factor entry merely because their
+	// nominal IDs happen to satisfy the denominator pair.
+	if relation.Entry != axis {
+		return refuse(site, relation, KindRelation, ReasonForeign)
+	}
+	if key.Entry != axis {
+		return refuse(site, key, KindKey, ReasonForeign)
+	}
+	reference, known := registry.denominators[denominator]
+	if !known {
+		return refuse(site, denominator, KindDenominator, ReasonUnknown)
+	}
+	relationEntry, relationKnown := registry.relations[relation]
+	if !relationKnown {
+		return refuse(site, relation, KindRelation, ReasonUnknown)
+	}
+	keyID, keyKnown := registry.keys[key]
+	if !keyKnown {
+		return refuse(site, key, KindKey, ReasonUnknown)
+	}
+	if reference.Relation() != relationEntry.id || reference.Key() != keyID {
+		return refuse(site, denominator, KindDenominator, ReasonForeign)
+	}
+	name := factorName{axis: axis, denominator: denominator}
+	if _, exists := registry.factors[name]; exists {
+		return refuse(site, denominator, KindDenominator, ReasonDuplicateName)
+	}
+	registry.factors[name] = FactorBinding{
+		Relation: relationEntry.id,
+		Key:      keyID,
+		Columns:  append([]model.ColumnID(nil), registry.keyColumns[key]...),
+	}
+	return nil
+}
+
+// InstallOutput records the writer fact column and publication key issued for
+// one OutputRef. It intentionally takes the fact column separately from a
+// routed Destination projection: those are different relations in the common
+// case and conflating them loses the route-to-factor correlation.
+func (registry *Registry) InstallOutput(output Name, relation Name, column Name, key Name, result carrier.Key) error {
+	site := Site{Path: "registry.output"}
+	if !output.Available() {
+		return refuse(site, output, KindColumn, ReasonUnavailable)
+	}
+	if !result.Available() {
+		return refuse(site, output, KindColumn, ReasonUnavailable)
+	}
+	if _, ok := registry.owners[output.Entry]; !ok {
+		return refuse(site, output.Owner(), KindOwner, ReasonUnknown)
+	}
+	// Output is one owner-issued writer binding.  A caller may choose distinct
+	// member names for the output, relation, column, and key, but they must all
+	// belong to the output's issuing entry; otherwise this registry would let
+	// one axis publish another axis's fact/key vocabulary.
+	if relation.Entry != output.Entry {
+		return refuse(site, relation, KindRelation, ReasonForeign)
+	}
+	if column.Entry != output.Entry {
+		return refuse(site, column, KindColumn, ReasonForeign)
+	}
+	if key.Entry != output.Entry {
+		return refuse(site, key, KindKey, ReasonForeign)
+	}
+	relationEntry, relationKnown := registry.relations[relation]
+	if !relationKnown {
+		return refuse(site, relation, KindRelation, ReasonUnknown)
+	}
+	columnID, columnKnown := registry.columns[column]
+	if !columnKnown {
+		return refuse(site, column, KindColumn, ReasonUnknown)
+	}
+	keyID, keyKnown := registry.keys[key]
+	if !keyKnown {
+		return refuse(site, key, KindKey, ReasonUnknown)
+	}
+	if columnID.Relation() != relationEntry.id || keyID.Relation() != relationEntry.id {
+		return refuse(site, column, KindColumn, ReasonForeign)
+	}
+	if _, exists := registry.outputs[output]; exists {
+		return refuse(site, output, KindColumn, ReasonDuplicateName)
+	}
+	registry.outputs[output] = OutputBinding{Relation: relationEntry.id, Key: keyID, Column: columnID, Result: result}
+	return nil
+}
+
+// InstallProjection records the complete owner declaration for one
+// ProjectionRef. A projection is not merely a column alias: its role,
+// result carrier and candidate-provider correspondence are sealed alongside
+// the relation and column it names. Consumers resolve this record rather than
+// treating a same-named column as a destination by convention.
+func (registry *Registry) InstallProjection(name Name, relation Name, column Name, role member.Role, result carrier.Key, provider member.CandidateRef) error {
+	site := Site{Path: "registry.projection"}
+	if !name.Available() {
+		return refuse(site, name, KindColumn, ReasonUnavailable)
+	}
+	if _, ok := registry.owners[name.Entry]; !ok {
+		return refuse(site, name.Owner(), KindOwner, ReasonUnknown)
+	}
+	entry, ok := registry.relations[relation]
+	if !ok {
+		return refuse(site, relation, KindRelation, ReasonUnknown)
+	}
+	columnID, ok := registry.columns[column]
+	if !ok {
+		return refuse(site, column, KindColumn, ReasonUnknown)
+	}
+	if columnID.Relation() != entry.id {
+		return refuse(site, column, KindColumn, ReasonForeign)
+	}
+	if !role.Available() || !result.Available() || !provider.Available() {
+		return refuse(site, name, KindColumn, ReasonUnavailable)
+	}
+	if _, exists := registry.projections[name]; exists {
+		return refuse(site, name, KindColumn, ReasonDuplicateName)
+	}
+	registry.projections[name] = ProjectionBinding{
+		Relation: entry.id, Column: columnID, Role: role, Result: result,
+		CandidateProvider: provider,
+	}
+	return nil
+}
+
+// Projection resolves the owner-sealed declaration for one projection
+// member. The returned binding is immutable value data; no relation or
+// candidate identity is reconstructed from the projection's spelling.
+func (registry *Registry) Projection(site Site, name Name) (ProjectionBinding, error) {
+	if !name.Available() {
+		return ProjectionBinding{}, refuse(site, name, KindColumn, ReasonUnavailable)
+	}
+	binding, ok := registry.projections[name]
+	if !ok {
+		return ProjectionBinding{}, refuse(site, name, KindColumn, ReasonUnknown)
+	}
+	return binding, nil
+}
+
 // InstallSignature adopts one sealed semantic signature under the operation
 // name its owner declared it for. The signature carries the operation identity
 // and version, so neither is minted here.
@@ -604,6 +846,10 @@ const (
 	// CoordinateTag is the column a selection correlates a returned row with
 	// the source row that selected it.
 	CoordinateTag
+	// CoordinateDestination is the route-owned coordinate at which a Selected
+	// read reaches its Factor. It is distinct from Address (candidate-to-route
+	// correlation) and from the writer fact column (publication).
+	CoordinateDestination
 	// CoordinateOccurrence is the column naming the occurrence family a row is
 	// enumerated under.
 	CoordinateOccurrence
@@ -620,6 +866,8 @@ func (coordinate Coordinate) String() string {
 		return "ordinal"
 	case CoordinateTag:
 		return "tag"
+	case CoordinateDestination:
+		return "destination"
 	case CoordinateOccurrence:
 		return "occurrence"
 	default:
@@ -779,6 +1027,20 @@ func (registry *Registry) Type(site Site, name Name) (model.TypeID, error) {
 	return typeID, nil
 }
 
+// TypeCapability resolves one owner-declared type policy. An undeclared
+// capability remains absent so the independent checker can refuse the exact
+// semantic use that requires it.
+func (registry *Registry) TypeCapability(site Site, name Name) (model.TypeCapability, error) {
+	if !name.Available() {
+		return model.TypeCapability{}, refuse(site, name, KindType, ReasonUnavailable)
+	}
+	capability, ok := registry.typeCapabilities[name]
+	if !ok {
+		return model.TypeCapability{}, refuse(site, name, KindType, ReasonUndeclared)
+	}
+	return capability, nil
+}
+
 // Operation resolves one authored semantic operation name.
 func (registry *Registry) Operation(site Site, name Name) (model.OperationID, error) {
 	if !name.Available() {
@@ -827,6 +1089,39 @@ func (registry *Registry) Denominator(site Site, name Name) (model.DenominatorRe
 	return reference, nil
 }
 
+// Factor resolves the axis-qualified Factor a Selected read consumes. A
+// denominator may be shared by several axes, so asking it without the read
+// axis would erase the owner statement that identifies the actual Factor.
+func (registry *Registry) Factor(site Site, axis schema.EntryReference, denominator Name) (FactorBinding, error) {
+	if !axis.Available() {
+		return FactorBinding{}, refuse(site, Name{Entry: axis}, KindOwner, ReasonUnavailable)
+	}
+	if !denominator.Available() {
+		return FactorBinding{}, refuse(site, denominator, KindDenominator, ReasonUnavailable)
+	}
+	binding, ok := registry.factors[factorName{axis: axis, denominator: denominator}]
+	if !ok {
+		return FactorBinding{}, refuse(site, denominator, KindDenominator, ReasonUndeclared)
+	}
+	binding.Columns = append([]model.ColumnID(nil), binding.Columns...)
+	return binding, nil
+}
+
+// Output resolves the writer fact/key pair an OutputDecl names. It is kept
+// separate from PublicationKey(column): the latter remains useful for a
+// column owner, while Output binds the axis's public output vocabulary to the
+// exact fact column a reducer writes.
+func (registry *Registry) Output(site Site, output Name) (OutputBinding, error) {
+	if !output.Available() {
+		return OutputBinding{}, refuse(site, output, KindColumn, ReasonUnavailable)
+	}
+	binding, ok := registry.outputs[output]
+	if !ok {
+		return OutputBinding{}, refuse(site, output, KindColumn, ReasonUnknown)
+	}
+	return binding, nil
+}
+
 // Signature resolves the sealed operation identity installed under one
 // authored reducer or operation name.
 func (registry *Registry) Signature(site Site, name Name) (signature.Identity, error) {
@@ -838,6 +1133,21 @@ func (registry *Registry) Signature(site Site, name Name) (signature.Identity, e
 		return signature.Identity{}, refuse(site, name, KindSignature, ReasonUnknown)
 	}
 	return value.Identity(), nil
+}
+
+// SealedSignature resolves the exact owner-issued semantic contract under an
+// authored operation name. Resolve uses it only to align a rule's declared
+// read occurrences with the operation's ordered input slots; it never
+// reconstructs a signature from a domain role or output destination.
+func (registry *Registry) SealedSignature(site Site, name Name) (signature.Signature, error) {
+	if !name.Available() {
+		return signature.Signature{}, refuse(site, name, KindSignature, ReasonUnavailable)
+	}
+	value, ok := registry.signatures[name]
+	if !ok {
+		return signature.Signature{}, refuse(site, name, KindSignature, ReasonUnknown)
+	}
+	return value, nil
 }
 
 // PublicationKeyOf resolves the key one relation's rows are published under.
@@ -903,13 +1213,16 @@ func (registry *Registry) Declaration(schemaID model.SchemaID) Declaration {
 		declaration.Columns = append(declaration.Columns,
 			model.DefineColumnSchema(registry.columns[name], registry.columnType[name]))
 	}
+	for _, name := range registry.typeCapabilityOrder {
+		declaration.TypeCapabilities = append(declaration.TypeCapabilities, registry.typeCapabilities[name])
+	}
 	for _, name := range registry.keyOrder {
 		declaration.Keys = append(declaration.Keys,
 			model.DefineKeySchema(registry.keys[name], registry.keyColumns[name]))
 	}
 	for _, name := range registry.scopeOrder {
 		declaration.Scopes = append(declaration.Scopes,
-			model.DefineScopeSchema(registry.scopes[name], registry.scopeDims[name]))
+			model.DefineScopeSchema(registry.scopes[name], registry.scopeDims[name], registry.scopeRegions[name]))
 	}
 	for _, name := range registry.signatureOrder {
 		declaration.Signatures = append(declaration.Signatures, registry.signatures[name])

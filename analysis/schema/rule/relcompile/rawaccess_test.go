@@ -3,6 +3,7 @@ package relcompile_test
 import (
 	"testing"
 
+	"github.com/wippyai/go-lua/analysis/relation/schema/algebra"
 	"github.com/wippyai/go-lua/analysis/relation/schema/model"
 	"github.com/wippyai/go-lua/analysis/relation/semantic/outcome"
 	"github.com/wippyai/go-lua/analysis/relation/semantic/signature"
@@ -87,14 +88,16 @@ func (access *rawAccess) step(rule schema.Key, candidate relcompile.Name, read r
 	access.t.Helper()
 	routeRelation := access.factRelation(heapAxis, route)
 	operation := relationName(heapAxis, route+"#expansion")
-	access.surfaces.expansion(operation, access.destinationColumn(routeRelation), bound)
+	access.surfaces.expansion(operation, access.destinationColumn(routeRelation), []relcompile.Name{candidate, read}, bound)
 	access.rules = append(access.rules, relcompile.Rule{
 		ID:         access.dependencyOf(rule),
 		Expression: access.expressionOf(rule),
 		Candidate:  access.relation(candidate),
 		Joins:      []relcompile.JoinSpec{access.join(candidate, read)},
+		ApplySlots: []relcompile.ReadOccurrence{relcompile.CandidateOccurrence(), relcompile.JoinOccurrence(0)},
 		Scope:      access.scopeID(),
 		Apply:      access.signature(operation),
+		Output:     algebra.OwnerNamed(),
 		Publish:    &relcompile.Publication{Relation: access.relation(routeRelation), Key: access.publicationKey(routeRelation)},
 	})
 	return routeRelation
@@ -229,7 +232,7 @@ func rawGetPlan(t *testing.T) *rawAccess {
 	sourceRoutes := access.step("raw-get/source-routes", packRoutes, packs, "heap/raw-get-source-routes", 64)
 
 	reduction := relationName(heapAxis, "heap/raw-get-reduction")
-	access.surfaces.operation(reduction, access.destinationColumn(values))
+	access.surfaces.operation(reduction, access.destinationColumn(values), []relcompile.Name{candidates, values, sourceRoutes, packs})
 	access.rules = append(access.rules, relcompile.Rule{
 		ID:         access.dependencyOf("raw-get/result"),
 		Expression: access.expressionOf("raw-get/result"),
@@ -239,10 +242,12 @@ func rawGetPlan(t *testing.T) *rawAccess {
 			access.join(candidates, sourceRoutes),
 			access.join(sourceRoutes, packs),
 		},
-		Scope:   access.scopeID(),
-		Apply:   access.signature(reduction),
-		Carry:   &relcompile.CarrySpec{Relation: access.relation(values), Scope: access.portScope()},
-		Publish: &relcompile.Publication{Relation: access.relation(values), Key: access.publicationKey(values)},
+		ApplySlots: []relcompile.ReadOccurrence{relcompile.CandidateOccurrence(), relcompile.JoinOccurrence(0), relcompile.JoinOccurrence(1), relcompile.JoinOccurrence(2)},
+		Scope:      access.scopeID(),
+		Apply:      access.signature(reduction),
+		Output:     algebra.OwnerNamed(),
+		Carry:      &relcompile.CarrySpec{Relation: access.relation(values), Scope: access.portScope()},
+		Publish:    &relcompile.Publication{Relation: access.relation(values), Key: access.publicationKey(values)},
 	})
 	return access
 }
@@ -265,7 +270,7 @@ func rawSetPlan(t *testing.T) *rawAccess {
 	sourceRoutes := access.step("raw-set/source-routes", packRoutes, packs, "heap/raw-set-source-routes", 64)
 
 	update := relationName(heapAxis, "heap/raw-set-cell-update")
-	access.surfaces.operation(update, access.destinationColumn(heaps))
+	access.surfaces.operation(update, access.destinationColumn(heaps), []relcompile.Name{candidates, values, sourceRoutes, heaps})
 	access.rules = append(access.rules, relcompile.Rule{
 		ID:         access.dependencyOf("raw-set/commit"),
 		Expression: access.expressionOf("raw-set/commit"),
@@ -275,10 +280,12 @@ func rawSetPlan(t *testing.T) *rawAccess {
 			access.join(candidates, sourceRoutes),
 			access.completed(access.join(sourceRoutes, heaps), heaps),
 		},
-		Scope:   access.scopeID(),
-		Apply:   access.signature(update),
-		Carry:   &relcompile.CarrySpec{Relation: access.relation(heaps), Scope: access.portScope()},
-		Publish: &relcompile.Publication{Relation: access.relation(heaps), Key: access.publicationKey(heaps)},
+		ApplySlots: []relcompile.ReadOccurrence{relcompile.CandidateOccurrence(), relcompile.JoinOccurrence(0), relcompile.JoinOccurrence(1), relcompile.JoinOccurrence(2)},
+		Scope:      access.scopeID(),
+		Apply:      access.signature(update),
+		Output:     algebra.OwnerNamed(),
+		Carry:      &relcompile.CarrySpec{Relation: access.relation(heaps), Scope: access.portScope()},
+		Publish:    &relcompile.Publication{Relation: access.relation(heaps), Key: access.publicationKey(heaps)},
 	})
 	return access
 }
@@ -299,6 +306,7 @@ func (access *rawAccess) compile(t *testing.T, label schema.Key) planResult {
 	if err != nil {
 		t.Fatalf("compile %s: %v", label, err)
 	}
+	assertApplySlotSources(t, compiled)
 	return planResult{count: len(compiled.Expressions()), sketch: sketch(compiled)}
 }
 
@@ -385,10 +393,52 @@ func TestRawSetChainEndsInAnAuthenticatedHeapPublication(t *testing.T) {
 	}
 }
 
+// TestRawAccessDeclaresEveryApplySourceOccurrence keeps the two hostile
+// value-dependent plans out of the old child-zero convention. Their route
+// expansions and terminal reductions all spell the candidate/join occurrence
+// for every semantic input before relcompile sees a tuple layout.
+func TestRawAccessDeclaresEveryApplySourceOccurrence(t *testing.T) {
+	for _, specimen := range []struct {
+		name  string
+		build func(*testing.T) *rawAccess
+	}{
+		{name: "raw-get", build: rawGetPlan},
+		{name: "raw-set", build: rawSetPlan},
+	} {
+		t.Run(specimen.name, func(t *testing.T) {
+			access := specimen.build(t)
+			for ruleIndex, declared := range access.rules {
+				if !declared.Apply.Available() || len(declared.ApplySlots) == 0 {
+					t.Fatalf("rule %d has no explicit Apply occurrence sources", ruleIndex)
+				}
+				for slot, occurrence := range declared.ApplySlots {
+					if occurrence.Candidate() {
+						continue
+					}
+					join, ok := occurrence.Join()
+					if !ok || int(join) >= len(declared.Joins) {
+						t.Fatalf("rule %d slot %d does not name a declared candidate/join occurrence", ruleIndex, slot)
+					}
+				}
+			}
+			terminal := access.rules[len(access.rules)-1].ApplySlots
+			if len(terminal) != 4 || !terminal[0].Candidate() {
+				t.Fatalf("terminal reduction slots = %#v, want candidate plus three joins", terminal)
+			}
+			for index := uint32(0); index < 3; index++ {
+				join, ok := terminal[index+1].Join()
+				if !ok || join != index {
+					t.Fatalf("terminal slot %d = join(%d)/%t, want join(%d)", index+1, join, ok, index)
+				}
+			}
+		})
+	}
+}
+
 // expansion installs one finite expansion signature: a bounded output span
 // over the destination's own denominator, which is what makes a value-
 // dependent route emission expressible without a callback.
-func (surfaces *owners) expansion(name relcompile.Name, destination relcompile.Name, bound uint32) {
+func (surfaces *owners) expansion(name relcompile.Name, destination relcompile.Name, inputs []relcompile.Name, bound uint32) {
 	surfaces.t.Helper()
 	surfaces.owner(name.Entry)
 	if !surfaces.once("operation", name) {
@@ -411,23 +461,22 @@ func (surfaces *owners) expansion(name relcompile.Name, destination relcompile.N
 	}
 	column, err := surfaces.registry.Column(relcompile.Site{Path: "census.expansion"}, destination)
 	if err != nil {
-		surfaces.t.Fatalf("resolve destination %v: %v", destination, err)
+		// A selection whose owner has not published its destination is an
+		// intentional census finding. Do not synthesize a column merely to let
+		// the relational fixture appear complete.
+		return
 	}
 	key, err := surfaces.registry.PublicationKey(relcompile.Site{Path: "census.expansion"}, destination)
 	if err != nil {
-		surfaces.t.Fatalf("resolve publication key of %v: %v", destination, err)
+		return
 	}
 	reference, ok := model.NewDenominatorRef(column.Relation(), key)
 	if !ok {
 		surfaces.t.Fatalf("construct denominator for %v", destination)
 	}
-	delivery, ok := signature.NewBoundedSpanDelivery(bound, key)
-	if !ok {
-		surfaces.t.Fatal("construct bounded span delivery")
-	}
 	valueType, err := surfaces.registry.Type(relcompile.Site{Path: "census.expansion"}, relcompile.NewName(destination.Entry, destination.Member+"#type"))
 	if err != nil {
-		surfaces.t.Fatalf("resolve destination type %v: %v", destination, err)
+		return
 	}
 	cardinality, ok := model.NewCardinality(model.BoundedMany, bound)
 	if !ok {
@@ -440,15 +489,11 @@ func (surfaces *owners) expansion(name relcompile.Name, destination relcompile.N
 	sealed, ok := signature.Seal(signature.Spec{
 		Identity: signature.Identity{Operation: operation, Version: 1},
 		Fence:    signature.Fence{Owner: owner, Schema: schemaID},
-		Inputs: []signature.Input{{
-			Relation: column.Relation(), Column: column, Type: valueType,
-			Presence: signature.AllowMissing, Delivery: delivery, Denominator: reference,
-		}},
+		Inputs:   surfaces.operationInputs(inputs),
 		Outputs: []signature.Output{{
 			Relation: column.Relation(), Column: column, Type: valueType,
-			Presence: signature.ProducePresent,
+			Presence: signature.ProducePresent, Denominator: reference,
 		}},
-		Authority:   signature.OutputAuthority{Denominator: reference},
 		Cardinality: cardinality,
 		Outcomes:    accepted,
 	})

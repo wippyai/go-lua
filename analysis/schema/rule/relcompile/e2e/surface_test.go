@@ -6,6 +6,7 @@ import (
 
 	"github.com/wippyai/go-lua/analysis/identity"
 	"github.com/wippyai/go-lua/analysis/relation/schema/model"
+	"github.com/wippyai/go-lua/analysis/relation/schema/region"
 	"github.com/wippyai/go-lua/analysis/relation/semantic/outcome"
 	"github.com/wippyai/go-lua/analysis/relation/semantic/signature"
 	"github.com/wippyai/go-lua/analysis/schema"
@@ -84,7 +85,7 @@ func (value *surface) scope(name relcompile.Name) relcompile.Name {
 	value.t.Helper()
 	value.owner(name.Entry)
 	if value.once("scope", name) {
-		if err := value.registry.InstallScope(name, value.token("scope", name)); err != nil {
+		if err := value.registry.InstallScope(name, value.token("scope", name), region.True()); err != nil {
 			value.t.Fatalf("install scope %v: %v", name, err)
 		}
 	}
@@ -219,7 +220,7 @@ func (value *surface) operation(name relcompile.Name, inputs []relcompile.Name, 
 	for _, column := range value.columnsOf(destinationID) {
 		produced = append(produced, signature.Output{
 			Relation: destinationID, Column: column, Type: typeID,
-			Presence: signature.ProduceOptional,
+			Presence: signature.ProduceOptional, Denominator: destinationDenominator,
 		})
 	}
 
@@ -236,7 +237,6 @@ func (value *surface) operation(name relcompile.Name, inputs []relcompile.Name, 
 		Fence:       signature.Fence{Owner: owner, Schema: value.schemaID},
 		Inputs:      sealed,
 		Outputs:     produced,
-		Authority:   signature.OutputAuthority{Denominator: destinationDenominator},
 		Cardinality: cardinality,
 		Outcomes:    accepted,
 	})

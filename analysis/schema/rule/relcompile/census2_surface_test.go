@@ -3,6 +3,7 @@ package relcompile_test
 import (
 	"testing"
 
+	"github.com/wippyai/go-lua/analysis/relation/schema/algebra"
 	"github.com/wippyai/go-lua/analysis/relation/schema/model"
 	"github.com/wippyai/go-lua/analysis/relation/schema/plan"
 	"github.com/wippyai/go-lua/analysis/relation/semantic/outcome"
@@ -237,13 +238,14 @@ func (plane *census2Plane) signature(operation relcompile.Name) signature.Identi
 // carries and the relation it publishes into. A read-only step publishes
 // nothing and ends in the relation its consumer reads from the snapshot.
 type census2Step struct {
-	Key       schema.Key
-	Candidate relcompile.Name
-	Joins     []relcompile.JoinSpec
-	Complete  *relcompile.Name
-	Apply     relcompile.Name
-	Carry     relcompile.Name
-	Publish   relcompile.Name
+	Key        schema.Key
+	Candidate  relcompile.Name
+	Joins      []relcompile.JoinSpec
+	Complete   *relcompile.Name
+	Apply      relcompile.Name
+	ApplySlots []relcompile.ReadOccurrence
+	Carry      relcompile.Name
+	Publish    relcompile.Name
 }
 
 func (plane *census2Plane) add(step census2Step) {
@@ -261,6 +263,8 @@ func (plane *census2Plane) add(step census2Step) {
 	}
 	if step.Apply.Available() {
 		authored.Apply = plane.signature(step.Apply)
+		authored.ApplySlots = append([]relcompile.ReadOccurrence(nil), step.ApplySlots...)
+		authored.Output = algebra.OwnerNamed()
 	}
 	if step.Publish.Available() {
 		authored.Publish = &relcompile.Publication{Relation: plane.id(step.Publish), Key: plane.publicationKey(step.Publish)}
@@ -287,6 +291,7 @@ func (plane *census2Plane) compile(label schema.Key) plan.ExecutionSchema {
 	if compileErr != nil {
 		plane.t.Fatalf("compile %s: %v", label, compileErr)
 	}
+	assertApplySlotSources(plane.t, compiled)
 	return compiled
 }
 
@@ -296,7 +301,7 @@ func (plane *census2Plane) compile(label schema.Key) plan.ExecutionSchema {
 // the whole set of rows one grouping key selects, so the grouping a family
 // folds under is a term of the sealed signature and never a shape the engine
 // infers from the plan.
-func (plane *census2Plane) sealOperation(name relcompile.Name, destination relcompile.Name, delivery signature.Delivery, cardinality model.Cardinality) relcompile.Name {
+func (plane *census2Plane) sealOperation(name relcompile.Name, destination relcompile.Name, inputs []relcompile.Name, delivery signature.Delivery, cardinality model.Cardinality) relcompile.Name {
 	plane.t.Helper()
 	site := relcompile.Site{Path: "census2.operation"}
 	plane.surfaces.owner(name.Entry)
@@ -332,18 +337,18 @@ func (plane *census2Plane) sealOperation(name relcompile.Name, destination relco
 	if !acceptedOK {
 		plane.t.Fatal("construct outcome set")
 	}
+	semanticInputs := plane.surfaces.operationInputs(inputs)
+	for index := range semanticInputs {
+		semanticInputs[index].Delivery = delivery
+	}
 	sealed, sealedOK := signature.Seal(signature.Spec{
 		Identity: signature.Identity{Operation: operation, Version: 1},
 		Fence:    signature.Fence{Owner: owner, Schema: schemaID},
-		Inputs: []signature.Input{{
-			Relation: column.Relation(), Column: column, Type: valueType,
-			Presence: signature.AllowMissing, Delivery: delivery, Denominator: reference,
-		}},
+		Inputs:   semanticInputs,
 		Outputs: []signature.Output{{
 			Relation: column.Relation(), Column: column, Type: valueType,
-			Presence: signature.ProducePresent,
+			Presence: signature.ProducePresent, Denominator: reference,
 		}},
-		Authority:   signature.OutputAuthority{Denominator: reference},
 		Cardinality: cardinality,
 		Outcomes:    accepted,
 	})
@@ -358,24 +363,24 @@ func (plane *census2Plane) sealOperation(name relcompile.Name, destination relco
 
 // foldOperation is a grouped reduction: the complete span of the rows one
 // grouping key selects, answered by exactly one row.
-func (plane *census2Plane) foldOperation(name relcompile.Name, destination relcompile.Name, grouping relcompile.Name) relcompile.Name {
+func (plane *census2Plane) foldOperation(name relcompile.Name, destination relcompile.Name, input relcompile.Name, grouping relcompile.Name) relcompile.Name {
 	plane.t.Helper()
 	delivery, ok := signature.NewCompleteSpanDelivery(plane.publicationKey(grouping))
 	if !ok {
 		plane.t.Fatal("construct complete span delivery")
 	}
-	return plane.sealOperation(name, destination, delivery, plane.exactlyOne())
+	return plane.sealOperation(name, destination, []relcompile.Name{input}, delivery, plane.exactlyOne())
 }
 
 // exactOperation is a scalar judgment answered by exactly one row: the shape of
 // an exact query family and of a diagnostic observation.
-func (plane *census2Plane) exactOperation(name relcompile.Name, destination relcompile.Name) relcompile.Name {
+func (plane *census2Plane) exactOperation(name relcompile.Name, destination relcompile.Name, input relcompile.Name) relcompile.Name {
 	plane.t.Helper()
 	delivery, ok := signature.NewScalarDelivery()
 	if !ok {
 		plane.t.Fatal("construct scalar delivery")
 	}
-	return plane.sealOperation(name, destination, delivery, plane.exactlyOne())
+	return plane.sealOperation(name, destination, []relcompile.Name{input}, delivery, plane.exactlyOne())
 }
 
 func (plane *census2Plane) exactlyOne() model.Cardinality {

@@ -6,6 +6,8 @@ import (
 
 	"github.com/wippyai/go-lua/analysis/identity"
 	"github.com/wippyai/go-lua/analysis/relation/schema/model"
+	"github.com/wippyai/go-lua/analysis/relation/schema/region"
+	"github.com/wippyai/go-lua/analysis/relation/semantic/signature"
 	"github.com/wippyai/go-lua/analysis/schema"
 )
 
@@ -46,7 +48,7 @@ func TestResolvedNameRoundTripsToTheOwnerIssuedIdentity(t *testing.T) {
 		t.Fatalf("install owner: %v", err)
 	}
 	scope := EntryName(schema.SurfaceKindAxis, "heap")
-	if err := registry.InstallScope(scope, issue(t, "scope/heap")); err != nil {
+	if err := registry.InstallScope(scope, issue(t, "scope/heap"), region.True()); err != nil {
 		t.Fatalf("install scope: %v", err)
 	}
 	if err := registry.InstallType(NewName(heap, "type/route"), issue(t, "type/route")); err != nil {
@@ -99,6 +101,54 @@ func TestResolvedNameRoundTripsToTheOwnerIssuedIdentity(t *testing.T) {
 	}
 }
 
+// TestTypeCapabilityIsAnExplicitOwnerStatement proves the registry carries a
+// type policy only when its owner declares one. Lowering transports the exact
+// sealed policy into ExecutionSchema; it never guesses from a column or a
+// signature contract.
+func TestTypeCapabilityIsAnExplicitOwnerStatement(t *testing.T) {
+	registry := NewRegistry()
+	heap := axisEntry("heap")
+	if err := registry.InstallOwner(heap, issue(t, "capability/axis/heap")); err != nil {
+		t.Fatalf("install owner: %v", err)
+	}
+	typeName := NewName(heap, "type/candidate")
+	if err := registry.InstallType(typeName, issue(t, "capability/type/candidate")); err != nil {
+		t.Fatalf("install type: %v", err)
+	}
+	if _, err := registry.TypeCapability(Site{Path: "test.capability"}, typeName); err == nil || refusalOf(t, err).Reason != ReasonUndeclared {
+		t.Fatalf("undeclared capability refusal = %v, want undeclared", err)
+	}
+	if err := registry.InstallTypeCapability(typeName, model.DecodeOnly); err != nil {
+		t.Fatalf("install decode-only capability: %v", err)
+	}
+	if err := registry.InstallTypeCapability(typeName, model.DecodeOnly); err == nil || refusalOf(t, err).Reason != ReasonDuplicateName {
+		t.Fatalf("duplicate capability refusal = %v, want duplicate name", err)
+	}
+	capability, err := registry.TypeCapability(Site{Path: "test.capability"}, typeName)
+	if err != nil || !capability.DecodeOnly() {
+		t.Fatalf("resolved capability = %v/%v, want DecodeOnly", capability, err)
+	}
+	owner, err := registry.Owner(Site{Path: "test.owner"}, heap)
+	if err != nil {
+		t.Fatalf("resolve owner: %v", err)
+	}
+	schemaID, ok := model.IssueSchemaID(owner, issue(t, "capability/schema"))
+	if !ok {
+		t.Fatal("issue schema")
+	}
+	declaration := registry.Declaration(schemaID)
+	if len(declaration.TypeCapabilities) != 1 || !declaration.TypeCapabilities[0].Equal(capability) {
+		t.Fatalf("declaration capabilities = %+v, want one exact policy", declaration.TypeCapabilities)
+	}
+	compiled, err := Compile(declaration)
+	if err != nil {
+		t.Fatalf("compile: %v", err)
+	}
+	if capabilities := compiled.TypeCapabilities(); len(capabilities) != 1 || !capabilities[0].Equal(capability) {
+		t.Fatalf("compiled capabilities = %+v, want one exact policy", capabilities)
+	}
+}
+
 // TestUnknownNameRefusesWithTheRuleAndSiteNamed states that a reference no
 // owner installed is refused where it is authored, not as an anonymous
 // compile failure and never by minting an identity for it.
@@ -127,6 +177,41 @@ func TestUnknownNameRefusesWithTheRuleAndSiteNamed(t *testing.T) {
 	}
 }
 
+// TestSignatureRefusesUntilOwnerInstallsOperation states that an otherwise
+// owner-issued semantic identity cannot enter the declaration merely because
+// a caller can construct it. The owner must publish the operation through the
+// one registry before its signature is accepted.
+func TestSignatureRefusesUntilOwnerInstallsOperation(t *testing.T) {
+	registry := NewRegistry()
+	heap := axisEntry("heap")
+	if err := registry.InstallOwner(heap, issue(t, "axis/heap")); err != nil {
+		t.Fatalf("install owner: %v", err)
+	}
+	owner, err := registry.Owner(Site{Path: "test.operation-owner"}, heap)
+	if err != nil {
+		t.Fatalf("resolve owner: %v", err)
+	}
+	operation, operationOK := model.IssueOperationID(owner, issue(t, "operation/uninstalled"))
+	if !operationOK {
+		t.Fatal("issue owner operation")
+	}
+	semantic, semanticOK := signature.Seal(signature.Spec{
+		Identity: signature.Identity{Operation: operation, Version: 1},
+	})
+	if !semanticOK {
+		t.Fatal("seal semantic signature")
+	}
+	name := NewName(heap, "operation/uninstalled")
+	err = registry.InstallSignature(name, semantic)
+	if err == nil {
+		t.Fatal("signature accepted without an installed owner operation")
+	}
+	refusal := refusalOf(t, err)
+	if refusal.Kind != KindOperation || refusal.Reason != ReasonUnknown || refusal.Name != name {
+		t.Fatalf("refusal = %+v, want unknown operation %v", refusal, name)
+	}
+}
+
 // TestTwoDeclarationsOfOneIdentityRefuse states the canonical registry is one
 // registry: a second name may not claim a token another entry already holds,
 // and one name may not be installed twice.
@@ -137,7 +222,7 @@ func TestTwoDeclarationsOfOneIdentityRefuse(t *testing.T) {
 		t.Fatalf("install owner: %v", err)
 	}
 	scope := EntryName(schema.SurfaceKindAxis, "heap")
-	if err := registry.InstallScope(scope, issue(t, "scope/heap")); err != nil {
+	if err := registry.InstallScope(scope, issue(t, "scope/heap"), region.True()); err != nil {
 		t.Fatalf("install scope: %v", err)
 	}
 	token := issue(t, "relation/heap/routes")
@@ -174,7 +259,7 @@ func TestAnIdentityMayNotBeSharedAcrossKinds(t *testing.T) {
 		t.Fatalf("install owner: %v", err)
 	}
 	scope := EntryName(schema.SurfaceKindAxis, "heap")
-	if err := registry.InstallScope(scope, issue(t, "scope/heap")); err != nil {
+	if err := registry.InstallScope(scope, issue(t, "scope/heap"), region.True()); err != nil {
 		t.Fatalf("install scope: %v", err)
 	}
 	if err := registry.InstallType(NewName(heap, "type/route"), issue(t, "type/route")); err != nil {
@@ -204,7 +289,7 @@ func TestAddressAndPublicationKeyAreOwnerStatements(t *testing.T) {
 		t.Fatalf("install owner: %v", err)
 	}
 	scope := EntryName(schema.SurfaceKindAxis, "heap")
-	if err := registry.InstallScope(scope, issue(t, "scope/heap")); err != nil {
+	if err := registry.InstallScope(scope, issue(t, "scope/heap"), region.True()); err != nil {
 		t.Fatalf("install scope: %v", err)
 	}
 	if err := registry.InstallType(NewName(heap, "type/route"), issue(t, "type/route")); err != nil {

@@ -136,7 +136,7 @@ func census2ValueSummaryPlan(t *testing.T) *census2Plane {
 	cells := plane.axis("value", "value/summary-cells")
 	coordinates := plane.axis("value", "value/summary-coordinates")
 	answer := plane.query("query/value-summary/answer")
-	fold := plane.foldOperation(plane.axis("value", "value/summary-coordinatewise"), answer, site)
+	fold := plane.foldOperation(plane.axis("value", "value/summary-coordinatewise"), answer, cells, cells)
 
 	plane.add(census2Step{
 		Key: "query/value-summary", Candidate: site,
@@ -145,7 +145,10 @@ func census2ValueSummaryPlan(t *testing.T) *census2Plane {
 			plane.completedJoin(site, cells)},
 		Complete: census2Ref(coordinates),
 		Apply:    fold,
-		Publish:  answer,
+		ApplySlots: []relcompile.ReadOccurrence{
+			relcompile.JoinOccurrence(1), // complete value-cell read
+		},
+		Publish: answer,
 	})
 	return plane
 }
@@ -164,7 +167,7 @@ func census2EffectExactPlan(t *testing.T) *census2Plane {
 	site, registration := census2QuerySiteOf(plane, "query/effect-exact")
 	cells := plane.axis("effect", "effect/cells")
 	answer := plane.query("query/effect-exact/answer")
-	accumulate := plane.exactOperation(plane.axis("effect", "effect/exact-accumulate"), answer)
+	accumulate := plane.exactOperation(plane.axis("effect", "effect/exact-accumulate"), answer, cells)
 
 	plane.add(census2Step{
 		Key: "query/effect-exact", Candidate: site,
@@ -173,7 +176,10 @@ func census2EffectExactPlan(t *testing.T) *census2Plane {
 			plane.join(site, cells)},
 		Complete: census2Ref(site),
 		Apply:    accumulate,
-		Publish:  answer,
+		ApplySlots: []relcompile.ReadOccurrence{
+			relcompile.JoinOccurrence(1), // effect-cell read
+		},
+		Publish: answer,
 	})
 	return plane
 }
@@ -203,8 +209,8 @@ func census2PlacementSummaryPlan(t *testing.T) *census2Plane {
 	allocationRoots := plane.axis("placement", "placement/allocation-roots")
 	child := plane.query("query/placement-summary/allocation")
 	parent := plane.query("query/placement-summary/answer")
-	containment := plane.foldOperation(plane.axis("placement", "placement/summary-containment"), child, heapCells)
-	summary := plane.exactOperation(plane.axis("placement", "placement/summary-parent"), parent)
+	containment := plane.foldOperation(plane.axis("placement", "placement/summary-containment"), child, heapCells, heapCells)
+	summary := plane.exactOperation(plane.axis("placement", "placement/summary-parent"), parent, child)
 
 	plane.add(census2Step{
 		Key: "query/placement-summary-allocation", Candidate: site,
@@ -217,7 +223,10 @@ func census2PlacementSummaryPlan(t *testing.T) *census2Plane {
 			plane.join(site, evidenceCells)},
 		Complete: census2Ref(allocationRoots),
 		Apply:    containment,
-		Publish:  child,
+		ApplySlots: []relcompile.ReadOccurrence{
+			relcompile.JoinOccurrence(2), // complete heap-cell read
+		},
+		Publish: child,
 	})
 	plane.add(census2Step{
 		Key: "query/placement-summary", Candidate: site,
@@ -226,7 +235,10 @@ func census2PlacementSummaryPlan(t *testing.T) *census2Plane {
 			plane.completedJoin(site, child)},
 		Complete: census2Ref(site),
 		Apply:    summary,
-		Publish:  parent,
+		ApplySlots: []relcompile.ReadOccurrence{
+			relcompile.JoinOccurrence(1), // allocation-summary child
+		},
+		Publish: parent,
 	})
 	return plane
 }
@@ -244,13 +256,16 @@ func census2CalleeSetPlan(t *testing.T) *census2Plane {
 	plane := newCensus2Plane(t)
 	site := plane.observation("observation/call-callee-set-site")
 	cells := plane.axis("call", "call/cells")
-	classify := plane.exactOperation(plane.axis("call", "call/dispatch-classify-callee-set"), site)
+	classify := plane.exactOperation(plane.axis("call", "call/dispatch-classify-callee-set"), site, cells)
 
 	plane.add(census2Step{
 		Key: "observation/call-callee-set", Candidate: site,
 		Joins:    []relcompile.JoinSpec{plane.join(site, cells)},
 		Complete: census2Ref(site),
 		Apply:    classify,
+		ApplySlots: []relcompile.ReadOccurrence{
+			relcompile.JoinOccurrence(0), // call-cell read
+		},
 	})
 	return plane
 }

@@ -11,6 +11,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/relation/schema/model"
 	"github.com/wippyai/go-lua/analysis/relation/schema/plan"
 	"github.com/wippyai/go-lua/analysis/schema"
+	"github.com/wippyai/go-lua/analysis/schema/axis/member"
 	"github.com/wippyai/go-lua/analysis/schema/rule"
 	"github.com/wippyai/go-lua/analysis/schema/rule/relcompile"
 
@@ -19,6 +20,7 @@ import (
 	effectcallsitebody "github.com/wippyai/go-lua/domain/effect/callsite/body/program"
 	effectcallsiteopaque "github.com/wippyai/go-lua/domain/effect/callsite/opaque/program"
 	effectcallsiteselected "github.com/wippyai/go-lua/domain/effect/callsite/selected/program"
+	heapallocationclosed "github.com/wippyai/go-lua/domain/heap/allocation/closed/program"
 	heapallocationempty "github.com/wippyai/go-lua/domain/heap/allocation/empty/program"
 	heapallocationingress "github.com/wippyai/go-lua/domain/heap/allocation/ingress"
 	heapbootstrap "github.com/wippyai/go-lua/domain/heap/bootstrap"
@@ -37,6 +39,7 @@ import (
 	placementtransfer "github.com/wippyai/go-lua/domain/placement/transfer/program"
 	statictransfer "github.com/wippyai/go-lua/domain/static/transfer"
 	typestate "github.com/wippyai/go-lua/domain/typestate/program"
+	valuedomain "github.com/wippyai/go-lua/domain/value"
 	valueallocation "github.com/wippyai/go-lua/domain/value/allocation/program"
 	valuearithmetic "github.com/wippyai/go-lua/domain/value/arithmetic/program"
 	valuebodyresult "github.com/wippyai/go-lua/domain/value/bodyresult/program"
@@ -72,6 +75,7 @@ func declared() []specimen {
 		{Family: "effect/callsite/body", Plane: "family", Spec: effectcallsitebody.RuleEntry()},
 		{Family: "effect/callsite/opaque", Plane: "family", Spec: effectcallsiteopaque.RuleEntry()},
 		{Family: "effect/callsite/selected", Plane: "family", Spec: effectcallsiteselected.RuleEntry()},
+		{Family: "heap/allocation/closed", Plane: "family", Spec: heapallocationclosed.RuleEntry()},
 		{Family: "heap/allocation/empty", Plane: "family", Spec: heapallocationempty.RuleEntry()},
 		{Family: "heap/allocation/ingress", Plane: "seed", Spec: heapallocationingress.RuleEntry()},
 		{Family: "heap/bootstrap", Plane: "seed", Spec: heapbootstrap.RuleEntry()},
@@ -145,6 +149,7 @@ func survey(t *testing.T, row specimen) entry {
 	result := entry{Family: row.Family, Plane: row.Plane, Rule: string(row.Spec.Key)}
 	surfaces := newOwners(t)
 	placement := surfaces.install(row.Spec)
+	installRealKeyVectorCatalogs(t, surfaces, row.Spec)
 	rules, err := relcompile.Resolve(surfaces.registry, row.Spec, placement)
 	if err != nil {
 		refusal := refusalOf(t, err)
@@ -159,6 +164,44 @@ func survey(t *testing.T, row specimen) entry {
 	result.Expressions = len(compiled.Expressions())
 	result.Sketch = sketch(compiled)
 	return result
+}
+
+// installRealKeyVectorCatalogs mirrors composition's catalog handoff for the
+// census. It intentionally installs the owner-generated catalog rather than
+// teaching the relation fixture a made-up span coordinate. Unknown owners are
+// left absent so the census records the missing catalog as a finding.
+func installRealKeyVectorCatalogs(t *testing.T, surfaces *owners, spec rule.Spec) {
+	t.Helper()
+	requested := map[schema.EntryReference]struct{}{}
+	for _, join := range spec.Program.Joins {
+		if !join.KeyVector.Available() {
+			continue
+		}
+		requested[join.Relation.Axis] = struct{}{}
+		requested[join.KeyVector.Axis] = struct{}{}
+	}
+	for axis := range requested {
+		if surfaces.catalogs[axis] {
+			continue
+		}
+		catalog, found := realMemberCatalog(axis)
+		if !found {
+			continue
+		}
+		if err := surfaces.registry.InstallMemberCatalog(axis, catalog); err != nil {
+			t.Fatalf("install sealed member catalog for %v: %v", axis, err)
+		}
+	}
+}
+
+// realMemberCatalog is deliberately a narrow census adapter, not a compiler
+// fallback. The only declared KeyVector family today is Value's closed
+// allocation span, and its owner-generated catalog is the canonical source.
+func realMemberCatalog(axis schema.EntryReference) (member.Catalog, bool) {
+	if axis == (schema.EntryReference{Surface: schema.SurfaceKindAxis, Key: "value"}) {
+		return valuedomain.AxisMemberCatalog(), true
+	}
+	return member.Catalog{}, false
 }
 
 func lower(t *testing.T, surfaces *owners, spec rule.Spec, rules []relcompile.Rule) plan.ExecutionSchema {
@@ -177,6 +220,7 @@ func lower(t *testing.T, surfaces *owners, spec rule.Spec, rules []relcompile.Ru
 	if err != nil {
 		t.Fatalf("compile %s: %v", spec.Key, err)
 	}
+	assertApplySlotSources(t, compiled)
 	return compiled
 }
 
@@ -211,10 +255,14 @@ func render(expression algebra.Expression) string {
 		return "Complete(" + render(value.Child()) + ")"
 	case algebra.Join:
 		return "Join(" + render(value.Left()) + "," + render(value.Right()) + ")"
+	case algebra.Expand:
+		return "Expand(" + render(value.Child()) + ")"
 	case algebra.Merge:
 		return "Merge(" + renderAll(value.Inputs()) + ")"
 	case algebra.Group:
 		return "Group(" + render(value.Child()) + ")"
+	case algebra.ColumnProject:
+		return "ColumnProject(" + render(value.Child()) + ")"
 	case algebra.Apply:
 		return "Apply(" + renderAll(value.Inputs()) + ")"
 	case algebra.Publish:
@@ -325,18 +373,19 @@ func TestEveryDeclaredFamilyHasOneCensusRow(t *testing.T) {
 	}
 }
 
-// TestEveryResidualIsAnUndeclaredOwnerStatement states the shape of what is
-// left. A row that does not lower is waiting on a statement its owner has not
-// made, never on a lowering this compiler has not written: no residual reports
-// an unlowered authored fact, so the remaining work is declaration work.
-func TestEveryResidualIsAnUndeclaredOwnerStatement(t *testing.T) {
+// TestEveryResidualNamesItsMissingOwnerStatement states the shape of what is
+// left. A declaration that is not yet lowerable must name the missing owner
+// statement; a complete KeyVector declaration is not allowed to remain an
+// operator gap now that the sealed Expand contract is part of the algebra.
+func TestEveryResidualNamesItsMissingOwnerStatement(t *testing.T) {
 	for _, row := range declared() {
 		result := survey(t, row)
 		if result.Status == statusCompiles {
 			continue
 		}
-		if result.Reason != "undeclared" {
-			t.Fatalf("%s reports residual %q; every residual is an undeclared owner statement", result.Family, result.Reason)
+		if result.Reason == "undeclared" {
+			continue
 		}
+		t.Fatalf("%s reports residual site=%q missing=%q reason=%q; want an undeclared owner statement", result.Family, result.Site, result.Missing, result.Reason)
 	}
 }

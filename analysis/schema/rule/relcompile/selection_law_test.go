@@ -4,6 +4,7 @@ import (
 	"testing"
 
 	"github.com/wippyai/go-lua/analysis/relation/schema/algebra"
+	"github.com/wippyai/go-lua/analysis/relation/schema/model"
 	"github.com/wippyai/go-lua/analysis/schema"
 	"github.com/wippyai/go-lua/analysis/schema/axis"
 	"github.com/wippyai/go-lua/analysis/schema/axis/member"
@@ -85,6 +86,7 @@ func selectedSpecimen() rule.Spec {
 // tag it stamps, so nothing about a selection is a form.
 func TestAProducedReadLowersToOneApplyAndOneJoin(t *testing.T) {
 	surfaces := newOwners(t)
+	installSyntheticHeapCatalog(t, surfaces)
 	spec := selectedSpecimen()
 	placement := surfaces.install(spec)
 
@@ -121,23 +123,59 @@ func TestAProducedReadLowersToOneApplyAndOneJoin(t *testing.T) {
 	}
 }
 
-// TestAProducedReadWithNoOperationRefuses states the other half: a read whose
-// rows are produced and that names no operation has nothing to pair against,
-// and says so at the site that named the tag.
-func TestAProducedReadWithNoOperationRefuses(t *testing.T) {
+// TestAnUnselectedReadConsumesEveryDeclaredSource states the consumer
+// boundary: Selection absence prevents a second producer dependency, not use
+// of ordered predecessor results. Dropping the prior source would turn a
+// two-input consumer into an accidental source-zero read.
+func TestAnUnselectedReadConsumesEveryDeclaredSource(t *testing.T) {
 	surfaces := newOwners(t)
+	installSyntheticHeapCatalog(t, surfaces)
 	spec := selectedSpecimen()
 	joins := spec.Program.Joins
 	joins[1].Selection = member.SelectionRef{}
+	spec.Program.Joins = joins
 	placement := surfaces.install(spec)
 
-	_, err := relcompile.Resolve(surfaces.registry, spec, placement)
-	if err == nil {
-		t.Fatal("a produced read resolved without the operation that publishes it")
+	rules, err := relcompile.Resolve(surfaces.registry, spec, placement)
+	if err != nil {
+		t.Fatalf("resolve selection-absent consumer: %v", err)
 	}
-	refusal := refusalOf(t, err)
-	if refusal.Kind != relcompile.KindOperation || refusal.Reason != relcompile.ReasonUndeclared {
-		t.Fatalf("refusal = %v %v, want an undeclared operation", refusal.Reason, refusal.Kind)
+	if len(rules) != 1 {
+		t.Fatalf("resolved rules=%d, want consumer only and no rerun producer", len(rules))
+	}
+	reader := rules[0]
+	if len(reader.Joins) != 3 {
+		t.Fatalf("consumer joins=%d, want first read plus candidate and prior correlations", len(reader.Joins))
+	}
+	candidate := relcompile.NewName(heapAxisRef(), "heap/candidates")
+	first := relcompile.NewName(heapAxisRef(), "heap/facts")
+	routes := relcompile.NewName(heapAxisRef(), "heap/routes")
+	site := relcompile.Site{Rule: spec.Key, Path: "law"}
+	candidateAddress, err := surfaces.registry.Addressed(site, candidate, relcompile.CoordinateAddress)
+	if err != nil {
+		t.Fatalf("candidate address: %v", err)
+	}
+	firstAddress, err := surfaces.registry.Addressed(site, first, relcompile.CoordinateAddress)
+	if err != nil {
+		t.Fatalf("prior address: %v", err)
+	}
+	routeKey, err := surfaces.registry.Column(site, relcompile.NewName(heapAxisRef(), "heap/route-key"))
+	if err != nil {
+		t.Fatalf("route key: %v", err)
+	}
+	for index, want := range []struct{ left model.ColumnID }{{candidateAddress}, {firstAddress}} {
+		join := reader.Joins[index+1]
+		if join.Relation != routeKey.Relation() || len(join.LeftColumns) != 1 || len(join.RightColumns) != 1 ||
+			join.LeftColumns[0] != want.left || join.RightColumns[0] != routeKey {
+			t.Fatalf("consumer correlation %d=%+v, want source address %v -> canonical route key %v", index, join, want.left, routeKey)
+		}
+	}
+	routeID, err := surfaces.registry.Relation(site, routes)
+	if err != nil {
+		t.Fatalf("route relation: %v", err)
+	}
+	if reader.Joins[1].LeftColumns[0] == reader.Joins[2].LeftColumns[0] || reader.Joins[1].Relation != reader.Joins[2].Relation || reader.Joins[1].Relation != routeID {
+		t.Fatalf("consumer did not retain distinct candidate/prior source correlations: %+v", reader.Joins[1:])
 	}
 }
 
@@ -156,6 +194,8 @@ func containsApply(expression algebra.Expression) bool {
 	case algebra.Select:
 		return containsApply(value.Child())
 	case algebra.Complete:
+		return containsApply(value.Child())
+	case algebra.Expand:
 		return containsApply(value.Child())
 	}
 	return false

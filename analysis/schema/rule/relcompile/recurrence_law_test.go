@@ -75,6 +75,7 @@ func selfReadingSpecimen() rule.Spec {
 // own producer, so its component carries a cycle and is declared positive.
 func TestASelfReadingFamilyLowersToADeclaredComponent(t *testing.T) {
 	surfaces := newOwners(t)
+	installSyntheticHeapCatalog(t, surfaces)
 	spec := selfReadingSpecimen()
 	placement := surfaces.install(spec)
 
@@ -117,6 +118,7 @@ func TestASelfReadingFamilyLowersToADeclaredComponent(t *testing.T) {
 // inputs, and their findings are reported there rather than folded in here.
 func TestALoweredPlanRaisesNoRecurrenceRefusal(t *testing.T) {
 	surfaces := newOwners(t)
+	installSyntheticHeapCatalog(t, surfaces)
 	spec := selfReadingSpecimen()
 	placement := surfaces.install(spec)
 

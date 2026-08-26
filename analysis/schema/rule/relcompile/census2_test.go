@@ -7,6 +7,7 @@ import (
 	"sort"
 	"testing"
 
+	"github.com/wippyai/go-lua/analysis/identity"
 	"github.com/wippyai/go-lua/analysis/relation/schema/model"
 	"github.com/wippyai/go-lua/analysis/relation/semantic/signature"
 	"github.com/wippyai/go-lua/analysis/schema"
@@ -21,6 +22,44 @@ import (
 	"github.com/wippyai/go-lua/domain/value"
 	valueowner "github.com/wippyai/go-lua/domain/value/owner"
 )
+
+// census2GeometryTypes resolves the canonical geometry authorities from the
+// structural declarations themselves. The external test package cannot use
+// composite's unexported structureEntries, so it collects the production
+// geometry specs directly; this preserves owner-issued TypeIDs without
+// creating a second registry or synthetic model identities.
+func census2GeometryTypes(t *testing.T) structure.GeometryTypes {
+	t.Helper()
+	entries, ok := structure.Collect(structure.RelationGeometrySpecs())
+	if !ok {
+		t.Fatal("canonical relation geometry entries unavailable")
+	}
+	types, ok := structure.RelationGeometryTypes(entries)
+	if !ok {
+		t.Fatal("canonical relation geometry types unavailable")
+	}
+	return types
+}
+
+func census2PlacementSummaryTypes(t *testing.T) placementquery.SummaryResultTypes {
+	t.Helper()
+	var ownerContent identity.ContentID
+	ownerContent[0] = 0xe1
+	owner, ownerOK := model.IssueOwnerID(ownerContent)
+	if !ownerOK {
+		t.Fatal("placement-summary census type owner")
+	}
+	issue := func(seed byte) model.TypeID {
+		var content identity.ContentID
+		content[0] = seed
+		value, ok := model.IssueTypeID(owner, content)
+		if !ok {
+			t.Fatalf("placement-summary census type %d", seed)
+		}
+		return value
+	}
+	return placementquery.SummaryResultTypes{AllocationID: issue(1), Fact: issue(2), Evidence: issue(3), SchemaID: issue(4)}
+}
 
 // census2 is the non-rule half of the coverage matrix: the four registered
 // query families and the denominator they are keyed by, the four canonical
@@ -213,9 +252,10 @@ func TestNonRuleDeclarationCensus(t *testing.T) {
 // over the query surface: the analyzer registers exactly four families and each
 // one is surveyed once, under the authored key its own domain spells it with.
 func TestEveryRegisteredQueryFamilyHasOneCensus2Row(t *testing.T) {
+	geometry := census2GeometryTypes(t)
 	registered := []queryschema.Spec{
-		valueowner.QuerySpec(), effectowner.QuerySpec(),
-		placementquery.QuerySpec(), callquery.QuerySpec(),
+		valueowner.QuerySpec(geometry), effectowner.QuerySpec(geometry),
+		placementquery.QuerySpec(geometry, census2PlacementSummaryTypes(t)), callquery.QuerySpec(geometry),
 	}
 	surveyed := map[string]int{}
 	for _, row := range census2Declared() {
@@ -233,6 +273,7 @@ func TestEveryRegisteredQueryFamilyHasOneCensus2Row(t *testing.T) {
 // proposes rows into its answer relation; an observation family is read-only
 // and its plan ends in the relation its consumer reads.
 func TestTheObservationFamilyPublishesNoAnswer(t *testing.T) {
+	geometry := census2GeometryTypes(t)
 	observation := census2CalleeSetPlan(t)
 	if len(observation.rules) != 1 {
 		t.Fatalf("callee-set derivations = %d, want one", len(observation.rules))
@@ -240,7 +281,7 @@ func TestTheObservationFamilyPublishesNoAnswer(t *testing.T) {
 	if observation.rules[0].Publish != nil {
 		t.Fatal("the callee-set observation proposes an answer; its declared population publishes none")
 	}
-	if callquery.QuerySpec().Population != queryschema.PopulationObservation {
+	if callquery.QuerySpec(geometry).Population != queryschema.PopulationObservation {
 		t.Fatal("the callee-set declaration is no longer an observation population")
 	}
 	for _, plan := range []*census2Plane{census2ValueSummaryPlan(t), census2EffectExactPlan(t), census2PlacementSummaryPlan(t)} {
@@ -259,7 +300,8 @@ func TestTheObservationFamilyPublishesNoAnswer(t *testing.T) {
 // it reduces under is the complete-span delivery key of its sealed signature.
 // An exact family declares no such split and its input is scalar.
 func TestTheDistributiveFamilyFoldsUnderADeclaredGrouping(t *testing.T) {
-	if valueowner.QuerySpec().Fold != queryschema.FoldDistributive {
+	geometry := census2GeometryTypes(t)
+	if valueowner.QuerySpec(geometry).Fold != queryschema.FoldDistributive {
 		t.Fatal("the value-summary declaration is no longer distributive")
 	}
 	summary := census2ValueSummaryPlan(t).compile("query/value-summary")
@@ -275,7 +317,7 @@ func TestTheDistributiveFamilyFoldsUnderADeclaredGrouping(t *testing.T) {
 		t.Fatalf("value-summary complete-span inputs = %d, want the one grouping its fold reduces under", grouped)
 	}
 
-	if effectowner.QuerySpec().Fold != queryschema.FoldGeneral {
+	if effectowner.QuerySpec(geometry).Fold != queryschema.FoldGeneral {
 		t.Fatal("the effect-exact declaration is no longer general")
 	}
 	exact := census2EffectExactPlan(t).compile("query/effect-exact")
@@ -310,7 +352,7 @@ func assertCensus2ExactlyOne(t *testing.T, sealed []signature.Signature) {
 // correspondence relations, and the complete heap vector its containment
 // evidence needs is the heap read's own authenticated denominator.
 func TestThePlacementFamilyJoinsItsSubjectsThroughCorrespondence(t *testing.T) {
-	spec := placementquery.QuerySpec()
+	spec := placementquery.QuerySpec(census2GeometryTypes(t), census2PlacementSummaryTypes(t))
 	if len(spec.Subjects) != 3 {
 		t.Fatalf("placement subjects = %d, want the placement class, the heap vector and suspension evidence", len(spec.Subjects))
 	}
