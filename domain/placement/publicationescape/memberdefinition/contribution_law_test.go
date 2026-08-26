@@ -33,15 +33,26 @@ func TestPublicationEscapeContributionDeclaresItsVectorsAndTheOwnedFold(t *testi
 		relations["PublicationRoutes"] != "placement/publication-escape/routes" {
 		t.Fatalf("publication escape relations=%v", relations)
 	}
+	// A selection names no operation of its own: it publishes into a relation
+	// this rule declares and stamps that relation's tag projection.
 	selections := map[string]string{}
 	for _, selection := range contribution.Selections {
-		if !selection.Implementation.Available() {
-			t.Fatalf("selection %q names no owner judgment", selection.Name)
+		if _, declared := relations[string(selection.Relation)]; !declared {
+			t.Fatalf("selection %q publishes into undeclared relation %q", selection.Name, selection.Relation)
 		}
-		selections[string(selection.Key)] = selection.Implementation.Name
+		stamped := false
+		for _, projection := range contribution.Projections {
+			if projection.Name == selection.Tag && projection.Relation == selection.Relation {
+				stamped = true
+			}
+		}
+		if !stamped {
+			t.Fatalf("selection %q stamps no declared tag projection %q", selection.Name, selection.Tag)
+		}
+		selections[string(selection.Key)] = string(selection.Relation)
 	}
-	if selections["effect/publication-escape/source-selection"] != "DerivePublicationSources" ||
-		selections["placement/publication-escape/route-selection"] != "DerivePublicationRoutes" {
+	if selections["effect/publication-escape/source-selection"] != "PublicationSources" ||
+		selections["placement/publication-escape/route-selection"] != "PublicationRoutes" {
 		t.Fatalf("publication escape selections=%v", selections)
 	}
 
