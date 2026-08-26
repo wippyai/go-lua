@@ -2,7 +2,9 @@
 // place a coordinate's whole observation becomes the single cell a fold
 // consumes. It sits beside read_cell.go, which owns what one observed cell
 // becomes under a read's declared substitutions, so between them a form never
-// restates either engine policy.
+// restates either engine policy. Both forms that deliver a single cell - the
+// direct exact read here and the selected read's per-member observation - fold
+// their blocks through the one accumulator below.
 
 package execution
 
@@ -19,6 +21,54 @@ type ExactCell[V any] struct {
 	Value   V
 	Present bool
 	Region  support.Mask
+}
+
+// exactCellFold accumulates the blocks of one coordinate's delivery into the
+// single cell they name. It is the whole of the law below, held apart from any
+// one cursor because both read forms that deliver a single cell - the direct
+// exact read and the selected read's per-member observation - step their own
+// cursor and must reach the same answer from it.
+type exactCellFold[V any] struct {
+	cell ExactCell[V]
+	// unwritten is the Factor's own reading of an unwritten block. An absence
+	// still delivers a value - the Factor's, not the language's zero - and
+	// that reading is the coordinate's, so which block it was taken from does
+	// not change what the delivered absence means.
+	unwritten V
+	absent    bool
+}
+
+// admit takes one block of the delivery. An unwritten block names no
+// alternative and cannot be the coordinate's answer, but its reading is kept
+// so an absence is still delivered as the Factor read it. A second written
+// block disagrees with the first by construction, since the cursor coalesces
+// equal ones, so the two name no single cell and the fold refuses.
+func (fold *exactCellFold[V]) admit(value V, present bool, region support.Mask) bool {
+	if !present {
+		if !fold.absent {
+			fold.unwritten, fold.absent = value, true
+		}
+		return true
+	}
+	if fold.cell.Present {
+		return false
+	}
+	fold.cell = ExactCell[V]{Value: value, Present: true, Region: region}
+	return true
+}
+
+// settle answers the delivered cell once every block has been admitted. A
+// coordinate no block wrote is absent over the whole read region, carrying the
+// Factor's reading of it, and the read's declared substitutions are applied
+// once, here: a sparse default stands for a coordinate nothing wrote, not for
+// a block that happened to be enumerated before the one that did.
+func (fold *exactCellFold[V]) settle(within support.Mask, policy ReadCellPolicy[V]) ExactCell[V] {
+	cell := fold.cell
+	if !cell.Present {
+		cell.Value, cell.Region = fold.unwritten, within
+	}
+	cell.Value, cell.Present = policy.Cell(cell.Value, cell.Present)
+	return cell
 }
 
 // DeliverExactCell consumes one exact coordinate's complete observation and
@@ -58,27 +108,18 @@ func DeliverExactCell[K scalar.Key, V any](
 	if !withinOK || !within.Valid() {
 		return ExactCell[V]{}, ReadRefuse
 	}
-	var delivered ExactCell[V]
+	var fold exactCellFold[V]
 	observed := false
 	for {
 		switch read.Read(ticket, scratch) {
 		case ReadAvailable:
 			observed = true
 			value, available := scratch.Value()
-			present := scratch.Present()
 			region, regionOK := scratch.Region()
-			if !available || !regionOK {
+			if !available || !regionOK || !fold.admit(value, scratch.Present(), region) {
 				_ = scratch.Discard(ticket)
 				return ExactCell[V]{}, ReadRefuse
 			}
-			if !present {
-				continue
-			}
-			if delivered.Present {
-				_ = scratch.Discard(ticket)
-				return ExactCell[V]{}, ReadRefuse
-			}
-			delivered = ExactCell[V]{Value: value, Present: true, Region: region}
 		case ReadExhausted:
 			if !read.Close(ticket, scratch) || !scratch.Reuse(ticket) {
 				_ = scratch.Discard(ticket)
@@ -87,15 +128,7 @@ func DeliverExactCell[K scalar.Key, V any](
 			if !observed {
 				return ExactCell[V]{}, ReadExhausted
 			}
-			if !delivered.Present {
-				delivered.Region = within
-			}
-			// The declared substitutions are applied to the coordinate's own
-			// answer, once, after the whole delivery has been read: a sparse
-			// default stands for a coordinate no block wrote, not for a block
-			// that happened to be enumerated before the one that did.
-			delivered.Value, delivered.Present = policy.Cell(delivered.Value, delivered.Present)
-			return delivered, ReadAvailable
+			return fold.settle(within, policy), ReadAvailable
 		default:
 			_ = scratch.Discard(ticket)
 			return ExactCell[V]{}, ReadRefuse

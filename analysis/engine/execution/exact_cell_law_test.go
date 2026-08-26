@@ -25,6 +25,15 @@ type exactCellFixture struct {
 	off     support.Mask
 }
 
+// exactCellBottom is the fixture Factor's own reading of an unwritten
+// coordinate, and exactCellWritten is a value above it, so a written block can
+// never be confused with the reading of an unwritten one under this fixture's
+// join.
+const (
+	exactCellBottom  uint64 = 99
+	exactCellWritten uint64 = 200
+)
+
 func newExactCellFixture(t testing.TB) exactCellFixture {
 	t.Helper()
 	manager, err := guard.New([]guard.Atom{1})
@@ -38,8 +47,11 @@ func newExactCellFixture(t testing.TB) exactCellFixture {
 	if !onOK || !offOK || !regions.Seal() {
 		t.Fatal("guard partition")
 	}
-	algebra, admitted := factbinding.Admit[uint64, uint64](1, 0, lattice.Lattice[uint64]{
-		Bottom: func() uint64 { return 0 }, Top: func() uint64 { return 0 },
+	// Bottom is deliberately not the language's zero: an unwritten coordinate
+	// is delivered as the FACTOR read it, and a fold that substituted a zero
+	// would be indistinguishable from a correct one under a zero Bottom.
+	algebra, admitted := factbinding.Admit[uint64, uint64](1, exactCellBottom, lattice.Lattice[uint64]{
+		Bottom: func() uint64 { return exactCellBottom }, Top: func() uint64 { return ^uint64(0) },
 		Equal:    func(left, right uint64) bool { return left == right },
 		Same:     func(left, right uint64) bool { return left == right },
 		LessOrEq: func(left, right uint64) bool { return left <= right },
@@ -153,13 +165,13 @@ func TestExactCellAnswersTheWrittenBlockAtEitherGuardOrder(t *testing.T) {
 		{name: "low-guard", region: fixture.off},
 	} {
 		t.Run(written.name, func(t *testing.T) {
-			state := fixture.publishRegions(t, 11, []support.Mask{written.region}, []uint64{7})
+			state := fixture.publishRegions(t, 11, []support.Mask{written.region}, []uint64{exactCellWritten})
 			cell, status := fixture.deliver(t, 12, state)
 			if status != ReadAvailable {
 				t.Fatalf("delivery status = %d", status)
 			}
-			if !cell.Present || cell.Value != 7 {
-				t.Fatalf("delivered cell = %d/%t, want the written 7", cell.Value, cell.Present)
+			if !cell.Present || cell.Value != exactCellWritten {
+				t.Fatalf("delivered cell = %d/%t, want the written value", cell.Value, cell.Present)
 			}
 			if !cell.Region.Equal(written.region) {
 				t.Fatal("delivered region is not the region the value was written over")
@@ -181,8 +193,35 @@ func TestExactCellDeliversAbsenceOverTheWholeReadRegion(t *testing.T) {
 	if cell.Present {
 		t.Fatal("unwritten coordinate delivered a value")
 	}
+	if cell.Value != exactCellBottom {
+		t.Fatalf("absent cell value = %d, want the Factor's own reading %d", cell.Value, exactCellBottom)
+	}
 	if !cell.Region.Equal(fixture.whole) {
 		t.Fatal("absence was not delivered over the whole read region")
+	}
+}
+
+// TestExactCellCarriesTheFactorReadingOfAnUnwrittenBlockPastAWrittenOne is the
+// same law where it is easiest to get wrong: a partitioned coordinate whose
+// blocks are all unwritten still delivers the Factor's reading, and a
+// delivery that dropped the unwritten blocks' value on the way to answering
+// would hand its caller a value the Factor never read. The caller's own
+// contract - here the bare policy that substitutes nothing - then sees exactly
+// what the coordinate holds.
+func TestExactCellCarriesTheFactorReadingOfAnUnwrittenBlockPastAWrittenOne(t *testing.T) {
+	fixture := newExactCellFixture(t)
+	// A published value on one region leaves the complement unwritten, so the
+	// delivery spans a written block and an unwritten one.
+	state := fixture.publishRegions(t, 41, []support.Mask{fixture.on}, []uint64{exactCellWritten})
+	cell, status := fixture.deliver(t, 42, state)
+	if status != ReadAvailable {
+		t.Fatalf("delivery status = %d", status)
+	}
+	if !cell.Present || cell.Value != exactCellWritten {
+		t.Fatalf("delivered cell = %d/%t, want the written value", cell.Value, cell.Present)
+	}
+	if !cell.Region.Equal(fixture.on) {
+		t.Fatal("delivered region is not the region the value was written over")
 	}
 }
 
@@ -193,7 +232,7 @@ func TestExactCellDeliversAbsenceOverTheWholeReadRegion(t *testing.T) {
 // instead of settling on whichever block the enumeration reached first.
 func TestExactCellRefusesTwoDisagreeingWrittenBlocks(t *testing.T) {
 	fixture := newExactCellFixture(t)
-	state := fixture.publishRegions(t, 31, []support.Mask{fixture.on, fixture.off}, []uint64{10, 20})
+	state := fixture.publishRegions(t, 31, []support.Mask{fixture.on, fixture.off}, []uint64{210, 220})
 	cell, status := fixture.deliver(t, 32, state)
 	if status != ReadRefuse {
 		t.Fatalf("disagreeing blocks delivered status %d as %d/%t", status, cell.Value, cell.Present)
