@@ -71,6 +71,10 @@ func TestAnInstalledAxisResolvesEveryDeclarationItStated(t *testing.T) {
 	if err != nil || !columnType.Available() {
 		t.Fatalf("the registry does not resolve a declared column's type: %v", err)
 	}
+	projection, err := registry.DeclaredProjection(lawSite(), relcompile.NewName(axisRef("heap"), "heap/route-key"))
+	if err != nil || projection.Key != "heap/route-key" || projection.Relation != "heap/routes" {
+		t.Fatalf("the registry does not retain the axis's declared member vocabulary: projection=%+v err=%v", projection, err)
+	}
 }
 
 // TestDecisionScopesInstallUnderTheEntryThatNamesThem states that a rule's
@@ -159,4 +163,3 @@ func TestAMalformedInstallationRefusesWholly(t *testing.T) {
 		t.Fatal("one axis installed twice")
 	}
 }
-

@@ -82,6 +82,9 @@ func Install(axes []Axis, placements []relcompile.Placement) (*relcompile.Regist
 		if err := registry.InstallOwner(axis.Entry, axis.Owner.Token); err != nil {
 			return nil, false
 		}
+		if err := registry.InstallMemberCatalog(axis.Entry, axis.Catalog); err != nil {
+			return nil, false
+		}
 		for _, declaration := range axis.Types {
 			name := relcompile.NewName(axis.Entry, declaration.Name)
 			if err := registry.InstallType(name, declaration.Token); err != nil {
@@ -177,4 +180,3 @@ func installScopes(registry *relcompile.Registry, placements []relcompile.Placem
 func scopeToken(kind string, name relcompile.Name) (identity.ContentID, bool) {
 	return identity.DeriveContentID(authorityTokenDomain, []byte(kind), []byte(name.String()))
 }
-
