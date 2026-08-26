@@ -5,6 +5,7 @@ import (
 
 	"github.com/wippyai/go-lua/analysis/schema"
 	"github.com/wippyai/go-lua/analysis/schema/axis/member"
+	definition "github.com/wippyai/go-lua/analysis/schema/axis/member/definition"
 	"github.com/wippyai/go-lua/analysis/schema/structure"
 	placementdomain "github.com/wippyai/go-lua/domain/placement"
 	containment "github.com/wippyai/go-lua/domain/placement/containment"
@@ -22,7 +23,13 @@ func TestContainmentContributionDeclaresItsRouteRowsAndTheIrreducibleFold(t *tes
 		t.Fatalf("containment contribution relations=%d projections=%d selections=%d reducers=%d",
 			len(contribution.Relations), len(contribution.Projections), len(contribution.Selections), len(contribution.Reducers))
 	}
-	routes := contribution.Relations[0]
+	var routes definition.Relation
+	for _, relation := range contribution.Relations {
+		if relation.Name == "ContainmentRoutes" {
+			routes = relation
+			break
+		}
+	}
 	if routes.Key != "placement/containment/routes" || routes.Subject != "ContainmentRouteCarrier" || !routes.CandidateProvider.Issued() {
 		t.Fatalf("containment route relation=%+v, want the issued-candidate route vector", routes)
 	}
