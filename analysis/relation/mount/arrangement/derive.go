@@ -477,12 +477,12 @@ func (state *deriveState) deriveExpression(expression algebra.Expression) bool {
 						}
 						if proposalMerge {
 							// The application result is the one keyed destination
-							// authority. A carried projection may omit the key cells
-							// from its semantic payload; relation/check has already
-							// proved the source Input retained the owner-issued key
-							// before ColumnProject narrowed the payload. There is no
-							// tuple lookup coordinate to derive here.
-							ok = true
+							// authority. A carried projection may omit payload cells
+							// from its semantic shape, but the destination row still
+							// needs one mutable lookup coordinate so every Merge fact
+							// is indexed by the owner-issued key.
+							destinationColumns, destinationOK := state.relationColumns(key.Relation())
+							ok = destinationOK && state.addMergeCorrespondence(destinationColumns, keySchema.Columns())
 						} else {
 							ok = state.addMergeCorrespondence(columns, keySchema.Columns())
 						}
@@ -515,7 +515,13 @@ func (state *deriveState) deriveExpression(expression algebra.Expression) bool {
 								break
 							}
 							if proposalMerge {
-								ok = true
+								// The application result is the one keyed destination
+								// authority. A carried projection may omit payload cells
+								// from its semantic shape, but the destination row still
+								// needs one mutable lookup coordinate so every Merge fact
+								// is indexed by the owner-issued key.
+								destinationColumns, destinationOK := state.relationColumns(key.Relation())
+								ok = destinationOK && state.addMergeCorrespondence(destinationColumns, keySchema.Columns())
 							} else {
 								ok = state.addMergeCorrespondence(columns, keySchema.Columns())
 							}
