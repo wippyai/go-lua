@@ -125,11 +125,6 @@ func (rule *HotRule) accepts(candidate Operand) bool {
 	return ok
 }
 
-func summaryCell[T any](cells engine.OrderedCells[T], index int, bottom T, equal func(T, T) bool) (T, bool) {
-	value, present, available := cells.At(index)
-	return value, available && (present || equal(value, bottom))
-}
-
 func (rule *HotRule) validSummaryShapes(placements engine.OrderedCells[placement.Fact], heaps engine.OrderedCells[heapdomain.Value]) bool {
 	if rule == nil || rule.owner == nil || rule.heap == nil {
 		return false
@@ -157,7 +152,7 @@ func (rule *HotRule) locate(context engine.SelectorContext, candidate Operand) b
 	if !placementsOK || !heapsOK || !rule.validSummaryShapes(placements, heaps) {
 		return false
 	}
-	plan, planOK := DeriveContainmentRoutes(rule.owner.Schema(), rule.heap.Schema(), placements, heaps)
+	plan, planOK := DeriveContainmentRoutes(rule.owner.Schema(), rule.heap.Schema(), placements.Count(), placements.At, heaps.At)
 	if !planOK {
 		return false
 	}
@@ -201,7 +196,7 @@ func (rule *HotRule) fold(frame engine.Frame[placement.Fact, Operand]) engine.Ru
 		}
 		parent, parentPresent, parentAvailable := placements.At(parentIndex)
 		parent, parentOK := placement.AuthenticateFactCell(parent, parentPresent, parentAvailable)
-		heapValue, heapOK := summaryCell(heaps, parentIndex, rule.heap.Schema().Bottom(), heapdomain.Equal)
+		heapValue, heapOK := summaryCell(heaps.At, parentIndex, rule.heap.Schema().Bottom(), heapdomain.Equal)
 		if !parentOK || !heapOK {
 			return placement.BottomFact(), false
 		}

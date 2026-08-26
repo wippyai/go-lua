@@ -1,7 +1,6 @@
 package containment
 
 import (
-	"github.com/wippyai/go-lua/analysis/engine"
 	heapdomain "github.com/wippyai/go-lua/domain/heap"
 	"github.com/wippyai/go-lua/domain/placement"
 )
@@ -49,17 +48,17 @@ func (plan RoutePlan) RouteAt(index int) (Route, bool) {
 // are produced rather than enumerated, and this takes those vectors as its
 // sealed inputs. It is the same walk the hand rule performed against the live
 // selector; the selector now receives the rows it returns.
-func DeriveContainmentRoutes(schema placement.Schema, heapSchema heapdomain.Schema, placements engine.OrderedCells[placement.Fact], heaps engine.OrderedCells[heapdomain.Value]) (RoutePlan, bool) {
-	if !schema.Valid() || !heapSchema.Valid() || schema.Heap() != heapSchema {
+func DeriveContainmentRoutes(schema placement.Schema, heapSchema heapdomain.Schema, placementCount int, placementAt func(int) (placement.Fact, bool, bool), heapAt func(int) (heapdomain.Value, bool, bool)) (RoutePlan, bool) {
+	if !schema.Valid() || !heapSchema.Valid() || schema.Heap() != heapSchema || placementAt == nil || heapAt == nil {
 		return RoutePlan{}, false
 	}
 	var plan RoutePlan
-	for parentIndex := 0; parentIndex < placements.Count(); parentIndex++ {
-		parent, parentPresent, parentAvailable := placements.At(parentIndex)
+	for parentIndex := 0; parentIndex < placementCount; parentIndex++ {
+		parent, parentPresent, parentAvailable := placementAt(parentIndex)
 		parent, parentOK := placement.AuthenticateFactCell(parent, parentPresent, parentAvailable)
 		parentKey, parentKeyOK := schema.KeyAt(parentIndex)
 		heapIndex, heapIndexOK := heapSchema.AllocationKeyIndex(parentKey)
-		heapValue, heapOK := summaryCell(heaps, heapIndex, heapSchema.Bottom(), heapdomain.Equal)
+		heapValue, heapOK := summaryCell(heapAt, heapIndex, heapSchema.Bottom(), heapdomain.Equal)
 		if !parentOK || !parentKeyOK || !heapIndexOK || !heapOK || !validPlacement(parent) || !heapValue.Valid() {
 			return RoutePlan{}, false
 		}
@@ -68,7 +67,7 @@ func DeriveContainmentRoutes(schema placement.Schema, heapSchema heapdomain.Sche
 		}
 		emit := func(child heapdomain.Key) bool {
 			childIndex, childOK := heapSchema.AllocationKeyIndex(child)
-			if !childOK || childIndex < 0 || childIndex >= placements.Count() || child.Kind() != heapdomain.RootAllocation {
+			if !childOK || childIndex < 0 || childIndex >= placementCount || child.Kind() != heapdomain.RootAllocation {
 				return false
 			}
 			tag, tagOK := routeTag(parentIndex, childIndex)
@@ -99,6 +98,19 @@ func DeriveContainmentRoutes(schema placement.Schema, heapSchema heapdomain.Sche
 		}
 	}
 	return plan, true
+}
+
+// summaryCell reads one delivered coordinate as the value the derivation is
+// entitled to act on. An unwritten coordinate is admitted only as the owner's
+// own Bottom, which is the authenticated empty relation; any other unwritten
+// payload is a delivery the derivation refuses.
+func summaryCell[T any](at func(int) (T, bool, bool), index int, bottom T, equal func(T, T) bool) (T, bool) {
+	var none T
+	if at == nil || equal == nil {
+		return none, false
+	}
+	value, present, available := at(index)
+	return value, available && (present || equal(value, bottom))
 }
 
 func walkAllRoots(schema placement.Schema, heapSchema heapdomain.Schema, emit func(heapdomain.Key) bool) bool {
