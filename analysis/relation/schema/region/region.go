@@ -72,6 +72,17 @@ func (region Region) IsTrue() bool {
 	return region.Available() && region.root == trueReference
 }
 
+// Root returns the owner-sealed transport reference of this Region. The
+// reference is meaningful only with Nodes' immutable postorder vector and is
+// exposed so a downstream physical bridge never has to infer a root from the
+// vector length.
+func (region Region) Root() (uint32, bool) {
+	if !region.Available() {
+		return 0, false
+	}
+	return region.root, true
+}
+
 // Identity returns the canonical Boolean-function identity.  Unavailable
 // Regions return the zero identity.
 func (region Region) Identity() identity.ContentID {

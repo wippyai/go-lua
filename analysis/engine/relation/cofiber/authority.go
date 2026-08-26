@@ -11,8 +11,6 @@ import (
 	"github.com/wippyai/go-lua/analysis/relation/semantic/binding"
 )
 
-const scopeIdentityDomain = "analysis/engine/relation/cofiber/scope/v1"
-
 // Authority is the one mount-fenced, solve-local cofiber authority.  It owns
 // no semantic state and no parallel scope registry: Mounted's append-only
 // arena remains the sole issuer of Scope tokens.  Its frozen declarations are
@@ -35,6 +33,27 @@ type authorityData struct {
 	byHandle  map[guard.Guard]witness.Scope
 	byFormula map[guard.FormulaID]witness.Scope
 	sealed    bool
+}
+
+// NewFromLookup seals one cofiber authority from an owner-issued neutral atom
+// lookup. The lookup is the only runtime bridge: it carries the exact mounted
+// generation and the existing guard manager, while this package performs the
+// one concrete Region-to-Mask lowering during the cold proof.
+func NewFromLookup(mounted witness.Mounted, lookup Lookup) (Authority, bool) {
+	if !lookup.Available() || !lookup.ValidFor(mounted) {
+		return Authority{}, false
+	}
+	physicalIndex, indexOK := lookup.physicalIndex()
+	if !indexOK {
+		return Authority{}, false
+	}
+	authority, ok := New(mounted, lookup.manager(), func(value schemaregion.Region) (support.Mask, bool) {
+		return lowerRegion(value, lookup, physicalIndex)
+	})
+	if !ok || authority.data == nil {
+		return Authority{}, false
+	}
+	return authority, true
 }
 
 type declaredScope struct {
@@ -202,9 +221,9 @@ func (authority Authority) Mask(scope witness.Scope) (support.Mask, bool) {
 }
 
 // Normalize reifies one exact physical support formula as the canonical
-// mounted runtime Scope for that formula.  The generated logical identity is
-// deliberately domain-separated from guard.FormulaID, so a physical formula
-// identity is never mistaken for a logical Region identity.
+// mounted runtime Scope for that formula. The physical formula identity is
+// used only as the cofiber memo key; it is never converted into a logical
+// Region identity.
 func (authority Authority) Normalize(mask support.Mask) (witness.Scope, bool) {
 	if !authority.Available() || !authority.data.owns(mask) || support.Empty(mask) {
 		return witness.Scope{}, false
@@ -306,11 +325,11 @@ func (data *authorityData) normalize(mask support.Mask) (witness.Scope, bool) {
 		data.byHandle[root] = scope
 		return scope, scope.ValidFor(data.fence)
 	}
-	region, regionOK := regionForMask(data, mask)
-	if !regionOK {
-		return witness.Scope{}, false
-	}
-	scope, scopeOK := data.mounted.AdmitRuntimeRegion(region)
+	// FormulaID and ContentID are the same owner-issued full-width identity
+	// representation. This explicit conversion crosses into Mounted's
+	// formula-only arena admission; it does not hash, derive, or create a
+	// neutral Region.
+	scope, scopeOK := data.mounted.AdmitRuntimeFormula(identity.ContentID(formula))
 	if !scopeOK || !scope.ValidFor(data.fence) {
 		return witness.Scope{}, false
 	}
@@ -347,33 +366,6 @@ func (data *authorityData) provesTranslation(declared []declaredScope, mapRegion
 		}
 	}
 	return true
-}
-
-// regionForMask is the sole physical-to-neutral representation step in
-// cofiber. The concrete Region is retained by Mounted; the physical mask is
-// retained in cofiber's mask table for execution and is never exposed as a
-// second neutral-region implementation.
-func regionForMask(authority *authorityData, mask support.Mask) (schemaregion.Region, bool) {
-	if authority == nil || !authority.owns(mask) || support.Empty(mask) {
-		return schemaregion.Region{}, false
-	}
-	formula, formulaOK := mask.Identity()
-	if !formulaOK {
-		return schemaregion.Region{}, false
-	}
-	mountedDigest := authority.mounted.Digest()
-	if !mountedDigest.Available() {
-		return schemaregion.Region{}, false
-	}
-	logical, logicalOK := identity.DeriveContentID(scopeIdentityDomain, mountedDigest[:], formula[:])
-	if !logicalOK {
-		return schemaregion.Region{}, false
-	}
-	atom, atomOK := schemaregion.NewAtom(logical)
-	if !atomOK {
-		return schemaregion.Region{}, false
-	}
-	return schemaregion.FromAtom(atom)
 }
 
 // nonEmpty is the central executable-scope boundary.  False is a valid

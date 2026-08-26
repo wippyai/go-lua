@@ -467,6 +467,26 @@ func (mounted Mounted) AdmitRuntimeRegion(value region.Region) (Scope, bool) {
 	return newScope(token)
 }
 
+// AdmitRuntimeFormula issues one runtime Scope for an already-canonical
+// physical formula identity produced by the cofiber boundary.  The formula
+// is admitted directly into Mounted's scope arena without inventing a neutral
+// Region for it.  Repeated admission of the same identity recovers the same
+// runtime token; a zero identity or a replacement of an existing arena entry
+// is refused.
+func (mounted Mounted) AdmitRuntimeFormula(formula identity.ContentID) (Scope, bool) {
+	if !mounted.Available() || !formula.Available() {
+		return Scope{}, false
+	}
+	token, tokenOK := mounted.data.issuer.IssueScope(formula)
+	if !tokenOK || !token.ValidFor(mounted.data.runtime) {
+		return Scope{}, false
+	}
+	if !mounted.data.scopeArena.internToken(token) {
+		return Scope{}, false
+	}
+	return newScope(token)
+}
+
 // RegionForToken resolves the exact neutral formula owned by one
 // authenticated token. No declared-scope scan or token digest reconstruction
 // is performed.

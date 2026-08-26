@@ -167,11 +167,11 @@ func TestW2RelationEngineRejectsRawLogicalAndLegacyProtocol(t *testing.T) {
 	}
 }
 
-// AdmitRuntimeRegion is an executable, trusted capability—not an ordinary
-// conversion helper.  The mounted arena remains the only issuer, but only
-// cofiber may ask it to issue a physical Boolean-derived Region.  Keeping
-// the restriction structural prevents a later operator from minting a scope
-// from an ad-hoc mask or neutral formula.
+// Runtime scope admission is an executable, trusted capability—not an
+// ordinary conversion helper. The mounted arena remains the only issuer, but
+// only cofiber may ask it to admit a physical Boolean formula. Keeping the
+// restriction structural prevents a later operator from minting a scope from
+// an ad-hoc mask, formula identity, or neutral Region.
 func TestW2CofiberIsTheOnlyProductionRuntimeScopeAdmissionBoundary(t *testing.T) {
 	for _, root := range []string{"analysis", "domain", "stdlib", "internal", "cmd"} {
 		for _, source := range w0SourcesUnder(t, root) {
@@ -185,11 +185,11 @@ func TestW2CofiberIsTheOnlyProductionRuntimeScopeAdmissionBoundary(t *testing.T)
 					return true
 				}
 				selector, ok := call.Fun.(*ast.SelectorExpr)
-				if !ok || selector.Sel == nil || selector.Sel.Name != "AdmitRuntimeRegion" {
+				if !ok || selector.Sel == nil || (selector.Sel.Name != "AdmitRuntimeRegion" && selector.Sel.Name != "AdmitRuntimeFormula") {
 					return true
 				}
 				if packagePath != "analysis/engine/relation/cofiber" && packagePath != "analysis/relation/mount/witness" {
-					t.Errorf("%s calls Mounted.AdmitRuntimeRegion outside the cofiber boundary", source.path)
+					t.Errorf("%s calls Mounted.%s outside the cofiber boundary", source.path, selector.Sel.Name)
 				}
 				return true
 			})

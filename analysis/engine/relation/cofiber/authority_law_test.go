@@ -311,6 +311,43 @@ func TestAuthorityNormalizesExactBooleanPartitionsCanonically(t *testing.T) {
 	}
 }
 
+func TestNewFromLookupNormalizesFormulaWithoutNeutralRegionReconstruction(t *testing.T) {
+	value := newFixture(t, 1)
+	declared, declaredOK := value.mounted.RegionForScope(value.first)
+	if !declaredOK || len(declared.Nodes()) != 1 {
+		t.Fatal("declared neutral region")
+	}
+	second := scopeRegion(t, "lookup/second")
+	secondNodes := second.Nodes()
+	if !second.Available() || len(secondNodes) != 1 {
+		t.Fatal("lookup neutral atom")
+	}
+	lookup, lookupOK := cofiber.NewLookup(value.mounted, value.manager, []region.Atom{declared.Nodes()[0].Atom, secondNodes[0].Atom})
+	if !lookupOK || !lookup.Available() {
+		t.Fatal("lookup")
+	}
+	authority, authorityOK := cofiber.NewFromLookup(value.mounted, lookup)
+	if !authorityOK || !authority.Available() {
+		t.Fatal("lookup authority")
+	}
+	work := support.New(value.manager)
+	if work == nil {
+		t.Fatal("support work")
+	}
+	mask, maskOK := work.Literal(2, true)
+	if !maskOK || !work.Seal() {
+		t.Fatal("physical formula")
+	}
+	scope, scopeOK := authority.Normalize(mask)
+	roundTrip, roundTripOK := authority.Mask(scope)
+	if !scopeOK || !roundTripOK || !roundTrip.Equal(mask) {
+		t.Fatal("formula normalization")
+	}
+	if neutral, neutralOK := value.mounted.RegionForScope(scope); neutralOK || neutral.Available() {
+		t.Fatal("physical formula acquired a fabricated neutral Region")
+	}
+}
+
 func TestAuthorityRejectsForeignAndBadTranslation(t *testing.T) {
 	value := newFixture(t, 1)
 	foreignManager, err := guard.New([]guard.Atom{1})

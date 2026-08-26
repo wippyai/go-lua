@@ -8,17 +8,21 @@ import (
 	"github.com/wippyai/go-lua/analysis/relation/semantic/binding"
 )
 
-// scopeArena is the mounted owner of the neutral formula associated with each
-// authenticated ScopeToken. It is append-only: a token can be inserted once,
-// and a later insertion must carry the same immutable formula identity. The
-// lock protects the map. Region is a sealed concrete value, so no mutable
-// implementation can be swapped underneath an entry.
+// scopeArena is the mounted owner of authenticated ScopeToken membership and
+// the neutral formula associated with Region-bearing entries. It is
+// append-only: a token can be inserted once, and a later insertion must carry
+// the same immutable formula identity. The lock protects the map. Region is a
+// sealed concrete value, so no mutable implementation can be swapped
+// underneath an entry.
 type scopeArena struct {
 	mu      sync.RWMutex
 	entries map[binding.ScopeToken]scopeEntry
 }
 
 type scopeEntry struct {
+	// A zero Region marks a formula-only entry.  The physical formula identity
+	// is already carried by the ScopeToken map key, so the arena does not keep a
+	// second copy of it.
 	region region.Region
 }
 
@@ -42,10 +46,38 @@ func (arena *scopeArena) intern(token binding.ScopeToken, value region.Region) (
 		return region.Region{}, false
 	}
 	if existing, exists := arena.entries[token]; exists {
+		// A formula-only entry is intentionally not upgraded to a Region. The
+		// caller cannot replace the arena's immutable membership with a neutral
+		// representation after physical admission.
+		if !existing.region.Available() {
+			return region.Region{}, false
+		}
 		return existing.region, true
 	}
 	arena.entries[token] = scopeEntry{region: value}
 	return value, true
+}
+
+// internToken adopts one already-issued physical formula token into the same
+// mounted arena used by neutral Regions.  It deliberately stores an empty
+// entry: the formula identity is already carried by token and a physical
+// formula may have no neutral Region representation.  Repeated admission of
+// the exact token is idempotent, while an existing entry is never replaced or
+// upgraded.
+func (arena *scopeArena) internToken(token binding.ScopeToken) bool {
+	if arena == nil || !token.Available() {
+		return false
+	}
+	arena.mu.Lock()
+	defer arena.mu.Unlock()
+	if arena.entries == nil {
+		return false
+	}
+	if _, exists := arena.entries[token]; exists {
+		return true
+	}
+	arena.entries[token] = scopeEntry{}
+	return true
 }
 
 // resolve authenticates one token and returns the exact arena-owned Region.
@@ -67,8 +99,19 @@ func (arena *scopeArena) resolve(token binding.ScopeToken) (region.Region, bool)
 }
 
 func (arena *scopeArena) contains(token binding.ScopeToken) bool {
-	_, ok := arena.resolve(token)
-	return ok
+	if arena == nil || !token.Available() {
+		return false
+	}
+	arena.mu.RLock()
+	_, ok := arena.entries[token]
+	arena.mu.RUnlock()
+	if !ok {
+		return false
+	}
+	// Membership is broader than Region resolution: physical formula-only
+	// entries are valid runtime scope identities but cannot be projected back
+	// into neutral schema algebra.
+	return true
 }
 
 func (arena *scopeArena) identity(token binding.ScopeToken) (identity.ContentID, bool) {
