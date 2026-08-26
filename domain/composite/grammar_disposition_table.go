@@ -30,7 +30,7 @@ import (
 // would still close over the same row set while accounting for an action that
 // no longer exists. Pinning the census digest makes every parser or AST change
 // reach an author, and the pin is raised by whoever re-reads the affected rows.
-const grammarCensusAuthority = "b64b62e921d0016d7f3473f92c92b43e0ddf9395a84e8d956493d97e221e696a"
+const grammarCensusAuthority = "2712e2c51728c517ae41cd2a5a9ac8c12bcd36da5019dc3055659a0ffdbed6ef"
 
 // GrammarRow is one parser census row key. The three prefixes are the three
 // grains the census publishes: "production:" for a parser.go.y alternative,
