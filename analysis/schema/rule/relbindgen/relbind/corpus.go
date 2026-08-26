@@ -18,6 +18,29 @@ const abiGapRawReduction = "w0-span-identity: the owner publishes both frames co
 // against, and a candidate whose key is static reads no row at all.
 const span = signature.BoundedSpanDelivery
 
+// The four reasons the remaining census families carry. Each is a statement
+// the compiler makes about an operand, not one this layer asserts.
+const (
+	// A judgment that reads the operand type of the protocol this engine
+	// replaces cannot be reached from a frame. A binding delivers owner values
+	// and spans; it cannot construct an execution selection, and the compiler
+	// says so: "cannot use cells (variable of struct type
+	// relbindgen.Span[value.Value]) as []execution.SelectedCell[value.Value]".
+	abiGapLegacyOperand = "w0-legacy-operand: the owner judgment reads execution.SelectedCell or execution.SummaryVector, the operand type of the protocol this engine replaces, and a binding delivers owner values and spans"
+	// Two judgments answer one family and they are not the same function. The
+	// declared reducer is reached by nothing but its own laws while the rule
+	// the analyzer runs calls another with a different signature, so which one
+	// a binding carries is the owner's statement to make and not this layer's.
+	abiGapDivergentJudgment = "w0-divergent-judgment: the declared reducer is referenced only by its own laws and the executing rule calls a differently shaped function, so the family states two judgments and the owner has not said which one answers"
+	// An operation that publishes a disposition and no fact has no result type
+	// to instantiate the bounded emitter with, and the compiler says so:
+	// "cannot use nil as struct{} value in argument to relbindgen.Reduce".
+	abiGapDispositionOnly = "w0-disposition-only: the judgment answers with a disposition and publishes no fact, and the semantic ABI types its emitter and its output columns by the value a family produces"
+	// A declared reducer slot with no bound implementation is a family whose
+	// mathematics has not been written yet.
+	abiGapAbsentJudgment = "w0-absent-judgment: the reducer slot carries no Go implementation and the package holds no fold-shaped judgment at all, so there is nothing for a binding to reach"
+)
+
 // scalar is the delivery a single-cell input carries.
 const scalar = signature.ScalarDelivery
 
@@ -483,6 +506,15 @@ func families() []Family {
 			Result: "placement", Outputs: []Column{{Payload: "placement"}},
 			Cardinality: model.ExactlyOne, Address: 0,
 		},
+		{Census: "effect/callsite/body", Rule: "effect-body", Stem: "EffectBodyCallSite", Axis: "effect", Pending: abiGapLegacyOperand},
+		{Census: "value/bodyresult", Rule: "value-callresult-body", Stem: "ValueBodyResult", Axis: "value", Pending: abiGapLegacyOperand},
+		{Census: "value/resultalias", Rule: "value-callresult-resultalias", Stem: "ValueResultAlias", Axis: "value", Pending: abiGapLegacyOperand},
+		{Census: "placement/suspension", Rule: "placement-suspension", Stem: "PlacementSuspension", Axis: "placement", Pending: abiGapLegacyOperand},
+		{Census: "placement/suspension-evidence", Rule: "placement-suspension-evidence", Stem: "PlacementSuspensionEvidence", Axis: "placement", Pending: abiGapLegacyOperand},
+		{Census: "placement/capture", Rule: "placement-closure-capture", Stem: "PlacementClosureCapture", Axis: "placement", Pending: abiGapDivergentJudgment},
+		{Census: "placement/containment", Rule: "placement-containment", Stem: "PlacementContainment", Axis: "placement", Pending: abiGapDivergentJudgment},
+		{Census: "call/activation", Rule: "call-activation", Stem: "CallActivation", Axis: "call", Pending: abiGapDispositionOnly},
+		{Census: "typestate", Rule: "typestate-obligation", Stem: "TypestateObligation", Axis: "placement", Pending: abiGapAbsentJudgment},
 		{
 			Census: "heap/index", Rule: "raw-get", Stem: "RawGetPackRoutes", Axis: "heap",
 			Judgment: "RawGetPackRoutesOperation",

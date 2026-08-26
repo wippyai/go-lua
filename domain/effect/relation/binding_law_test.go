@@ -127,9 +127,11 @@ func TestBothCallSiteReadingsAnswerUnderOneContract(t *testing.T) {
 func TestTheEffectAlgebraResolvesByTypeAlone(t *testing.T) {
 	fixture := relationfixture.New(t)
 	place := harness.New(t, "row/effect")
-	effectType := place.TypeID(t, "type/effect")
-	types := relation.PayloadTypes{Effect: effectType, EffectCandidate: place.TypeID(t, "type/effect-mounted-call")}
-	tags := relation.PayloadTags{Effect: harness.Content(t, "store/effect"), EffectCandidate: harness.Content(t, "store/effect-mounted-call")}
+	var types relation.PayloadTypes
+	var tags relation.PayloadTags
+	place.InstallTypes(t, &types)
+	place.InstallTags(t, &tags)
+	effectType := types.Effect
 	payloads, ok := relation.NewPayloads(types, tags, reserve)
 	if !ok {
 		t.Fatal("install the effect columns")

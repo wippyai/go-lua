@@ -7,6 +7,7 @@
 package harness
 
 import (
+	"reflect"
 	"testing"
 
 	"github.com/wippyai/go-lua/analysis/identity"
@@ -289,4 +290,47 @@ func NewColumn[T any](t testing.TB, typeID model.TypeID, label string, reserve i
 		t.Fatalf("column %q", label)
 	}
 	return column
+}
+
+// InstallTypes fills every field of one axis's emitted PayloadTypes with a
+// distinct owner-issued type, and InstallTags does the same for its store
+// fences.
+//
+// A law that restates an axis's column list breaks every time the corpus
+// declares another column, and what it was stating was never the list: it was
+// that every declared column installs. These say that instead, so the law
+// keeps holding as the axis grows.
+func (place Place) InstallTypes(t testing.TB, types any) {
+	t.Helper()
+	place.fill(t, types, "type/", func(name string) reflect.Value {
+		return reflect.ValueOf(place.TypeID(t, "type/"+name))
+	})
+}
+
+// InstallTags fills every field of one axis's emitted PayloadTags.
+func (place Place) InstallTags(t testing.TB, tags any) {
+	t.Helper()
+	place.fill(t, tags, "store/", func(name string) reflect.Value {
+		return reflect.ValueOf(Content(t, "store/"+name))
+	})
+}
+
+func (place Place) fill(t testing.TB, target any, label string, issue func(string) reflect.Value) {
+	t.Helper()
+	pointer := reflect.ValueOf(target)
+	if pointer.Kind() != reflect.Pointer || pointer.IsNil() || pointer.Elem().Kind() != reflect.Struct {
+		t.Fatalf("%s target is not a pointer to a payload structure", label)
+	}
+	structure := pointer.Elem()
+	if structure.NumField() == 0 {
+		t.Fatalf("%s target declares no column", label)
+	}
+	for index := 0; index < structure.NumField(); index++ {
+		field := structure.Type().Field(index)
+		value := issue(field.Name)
+		if !value.Type().AssignableTo(field.Type) {
+			t.Fatalf("%s cannot fill field %s", label, field.Name)
+		}
+		structure.Field(index).Set(value)
+	}
 }

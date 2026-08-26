@@ -92,9 +92,11 @@ func TestDispatchAnswersUnderItsOwnVocabulary(t *testing.T) {
 func TestTheCallAlgebraResolvesByTypeAlone(t *testing.T) {
 	fixture := relationfixture.New(t)
 	place := harness.New(t, "row/call")
-	callType := place.TypeID(t, "type/call")
-	types := relation.PayloadTypes{Call: callType, CallCandidate: place.TypeID(t, "type/call-coordinate")}
-	tags := relation.PayloadTags{Call: harness.Content(t, "store/call"), CallCandidate: harness.Content(t, "store/call-coordinate")}
+	var types relation.PayloadTypes
+	var tags relation.PayloadTags
+	place.InstallTypes(t, &types)
+	place.InstallTags(t, &tags)
+	callType := types.Call
 	payloads, ok := relation.NewPayloads(types, tags, reserve)
 	if !ok {
 		t.Fatal("install the call columns")
