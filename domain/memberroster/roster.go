@@ -18,7 +18,9 @@ import (
 	callactivation "github.com/wippyai/go-lua/domain/call/activation/memberdefinition"
 	calldispatch "github.com/wippyai/go-lua/domain/call/dispatch/memberdefinition"
 	callbase "github.com/wippyai/go-lua/domain/call/memberdefinition"
-	effectcallsite "github.com/wippyai/go-lua/domain/effect/callsite/memberdefinition"
+	effectcallsitebody "github.com/wippyai/go-lua/domain/effect/callsite/body/memberdefinition"
+	effectcallsiteopaque "github.com/wippyai/go-lua/domain/effect/callsite/opaque/memberdefinition"
+	effectcallsiteselected "github.com/wippyai/go-lua/domain/effect/callsite/selected/memberdefinition"
 	effectbase "github.com/wippyai/go-lua/domain/effect/memberdefinition"
 	heapbase "github.com/wippyai/go-lua/domain/heap/memberdefinition"
 
@@ -172,9 +174,9 @@ func Composition() (definition.Roster, bool) {
 			Name:    "effect",
 			Base:    effectbase.MountedCall(),
 			Contributions: []definition.Contribution{
-				effectcallsite.SelectedContribution(),
-				effectcallsite.OpaqueContribution(),
-				effectcallsite.BodyContribution(),
+				effectcallsiteselected.Contribution(),
+				effectcallsiteopaque.Contribution(),
+				effectcallsitebody.Contribution(),
 			},
 		},
 	)
