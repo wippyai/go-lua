@@ -145,10 +145,11 @@ func Contribution() definition.Contribution {
 		Selections: []definition.Selection{{
 			// The rows of FormalRoutes do not exist until the reads before this
 			// one have delivered their cells, so an operation publishes them
-			// and stamps each with FormalRouteTag. The operation is the
-			// derivation FormalRoutes declares, named there and nowhere else.
+			// and stamps each with FormalRouteTag. Its body is the owner judgment
+			// named here, never a second copy of it.
 			Name: "FormalRouteSelection", Key: "placement/formal/route-selection",
 			Relation: "FormalRoutes", Tag: "FormalRouteTag",
+			Implementation: formalFunction("DeriveFormalRoutes"),
 		}},
 		Reducers: []definition.Reducer{{
 			Name: "FormalReducer",

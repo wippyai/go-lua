@@ -6,7 +6,7 @@
 package bodyresult
 
 import (
-	"github.com/wippyai/go-lua/analysis/engine/operand"
+	"github.com/wippyai/go-lua/analysis/engine/execution"
 	"github.com/wippyai/go-lua/analysis/schema/structure"
 	calldomain "github.com/wippyai/go-lua/domain/call"
 	valuedomain "github.com/wippyai/go-lua/domain/value"
@@ -58,7 +58,7 @@ func (judgment Judgment) Valid() bool {
 func (judgment Judgment) Result(
 	candidate valuedomain.MountedCallResultSlot,
 	dispatched calldomain.Value,
-	cells []operand.SelectedCell[valuedomain.Value],
+	cells []execution.SelectedCell[valuedomain.Value],
 ) (valuedomain.Value, structure.ReductionOutcome) {
 	if !judgment.Valid() {
 		return valuedomain.Value{}, structure.Refuse

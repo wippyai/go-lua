@@ -29,34 +29,6 @@ func selectionContribution() Contribution {
 	return contribution
 }
 
-// TestASelectionResolvesItsOperationThroughItsRelation states the single
-// authority: a selection carries no symbol of its own, and the row naming only
-// the relation it publishes into and the tag it stamps is whole. The operation
-// that computes those rows is the derivation that relation declares, so a
-// second symbol beside it would be a second authority over one judgment and
-// there is nowhere on the row to write one.
-func TestASelectionResolvesItsOperationThroughItsRelation(t *testing.T) {
-	contribution := selectionContribution()
-	if !contribution.Available() {
-		t.Fatal("a selection naming its relation and tag is refused at its contribution")
-	}
-	composed, composeOK := specimenSource(contribution).Compose()
-	if !composeOK {
-		t.Fatal("a selection naming its relation and tag does not compose")
-	}
-	catalog, ok := composed.Catalog()
-	if !ok {
-		t.Fatal("a selection naming its relation and tag does not reach a sealed catalog")
-	}
-	if catalog.SelectionCount() != 1 {
-		t.Fatalf("sealed catalog holds %d selections, want the one declared", catalog.SelectionCount())
-	}
-	selection, found := catalog.SelectionAt(0)
-	if !found || selection.Key != "specimen/routes/selection" {
-		t.Fatalf("sealed selection=%+v, want the declared operation", selection)
-	}
-}
-
 // TestASelectionNamingRowsItsAxisDoesNotDeclareRefuses states that the
 // operation is resolved against the same definition its rows live in, so a
 // selection can never reach a sealed catalog naming a relation or a tag

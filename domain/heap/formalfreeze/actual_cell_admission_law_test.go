@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"testing"
 
-	"github.com/wippyai/go-lua/analysis/engine/operand"
+	"github.com/wippyai/go-lua/analysis/engine/execution"
 	"github.com/wippyai/go-lua/analysis/identity"
 	"github.com/wippyai/go-lua/analysis/lua/lower"
 	programartifact "github.com/wippyai/go-lua/analysis/program/artifact"
@@ -46,19 +46,19 @@ func TestFreezeReadsAnActualThroughTheOwnersCellAdmission(t *testing.T) {
 
 	tests := []struct {
 		name     string
-		cell     operand.MemberCell[valuedomain.Value]
+		cell     execution.MemberCell[valuedomain.Value]
 		admitted bool
 		rooted   bool
 	}{
-		{name: "a present exact Recent allocation is the root it names", cell: operand.MemberCell[valuedomain.Value]{Value: recent, Present: true}, admitted: true, rooted: true},
-		{name: "an absent cell is the owner's exact Bottom", cell: operand.MemberCell[valuedomain.Value]{Value: values.Bottom(), Present: false}, admitted: true},
-		{name: "an absent cell beside a rooted value is malformed", cell: operand.MemberCell[valuedomain.Value]{Value: recent, Present: false}},
-		{name: "a fact this owner never issued is malformed", cell: operand.MemberCell[valuedomain.Value]{Value: foreignRecent, Present: true}},
-		{name: "a present cell with no fact is malformed", cell: operand.MemberCell[valuedomain.Value]{Present: true}},
+		{name: "a present exact Recent allocation is the root it names", cell: execution.MemberCell[valuedomain.Value]{Value: recent, Present: true}, admitted: true, rooted: true},
+		{name: "an absent cell is the owner's exact Bottom", cell: execution.MemberCell[valuedomain.Value]{Value: values.Bottom(), Present: false}, admitted: true},
+		{name: "an absent cell beside a rooted value is malformed", cell: execution.MemberCell[valuedomain.Value]{Value: recent, Present: false}},
+		{name: "a fact this owner never issued is malformed", cell: execution.MemberCell[valuedomain.Value]{Value: foreignRecent, Present: true}},
+		{name: "a present cell with no fact is malformed", cell: execution.MemberCell[valuedomain.Value]{Present: true}},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
-			actuals, actualsOK := operand.NewMemberVector([]operand.MemberCell[valuedomain.Value]{test.cell})
+			actuals, actualsOK := execution.NewMemberVector([]execution.MemberCell[valuedomain.Value]{test.cell})
 			if !actualsOK {
 				t.Fatal("member vector")
 			}
@@ -78,7 +78,7 @@ func TestFreezeReadsAnActualThroughTheOwnersCellAdmission(t *testing.T) {
 		})
 	}
 
-	actuals, actualsOK := operand.NewMemberVector([]operand.MemberCell[valuedomain.Value]{{Value: recent, Present: true}})
+	actuals, actualsOK := execution.NewMemberVector([]execution.MemberCell[valuedomain.Value]{{Value: recent, Present: true}})
 	if !actualsOK {
 		t.Fatal("member vector")
 	}

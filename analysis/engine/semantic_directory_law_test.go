@@ -119,13 +119,9 @@ func TestSemanticDirectoryQuerySurfaceIsDetached(t *testing.T) {
 	if len(surfaces) != 1 {
 		t.Fatal("query surface cardinality")
 	}
-	// The committed coordinate is the one the query's point wrote, which the
-	// matrix rule declares at Local 2. What this law holds is that an edit of
-	// the caller's copy never becomes the committed row's.
-	committed := surfaces[0].Local
 	surfaces[0].Local = 99
 	again, resolved := locator.Resolve(fixture.graph.graph)
-	if !resolved || len(again.Surfaces()) != 1 || again.Surfaces()[0].Local != committed || committed != 2 {
+	if !resolved || len(again.Surfaces()) != 1 || again.Surfaces()[0].Local != 1 {
 		t.Fatal("query surface edit crossed the committed row")
 	}
 }

@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"testing"
 
-	"github.com/wippyai/go-lua/analysis/engine/operand"
+	"github.com/wippyai/go-lua/analysis/engine/execution"
 	"github.com/wippyai/go-lua/analysis/identity"
 	"github.com/wippyai/go-lua/analysis/lua/lower"
 	programartifact "github.com/wippyai/go-lua/analysis/program/artifact"
@@ -52,18 +52,18 @@ type returnPlanFixture struct {
 // there are and in what order.
 
 // returnCell is one present, owner-issued cell of a delivered member vector.
-func returnCell(fact valuedomain.Value) operand.MemberCell[valuedomain.Value] {
-	return operand.MemberCell[valuedomain.Value]{Value: fact, Present: true}
+func returnCell(fact valuedomain.Value) execution.MemberCell[valuedomain.Value] {
+	return execution.MemberCell[valuedomain.Value]{Value: fact, Present: true}
 }
 
 // returnRoutes derives one boundary's whole route set the way the emitted
 // family does, over a member vector built from the given cells.
-func returnRoutes(t testing.TB, fixture returnPlanFixture, cells ...operand.MemberCell[valuedomain.Value]) (derived2Rows, bool) {
+func returnRoutes(t testing.TB, fixture returnPlanFixture, cells ...execution.MemberCell[valuedomain.Value]) (derived2Rows, bool) {
 	t.Helper()
 	if cells == nil {
-		cells = []operand.MemberCell[valuedomain.Value]{}
+		cells = []execution.MemberCell[valuedomain.Value]{}
 	}
-	vector, vectorOK := operand.NewMemberVector(cells)
+	vector, vectorOK := execution.NewMemberVector(cells)
 	if !vectorOK {
 		t.Fatal("member vector")
 	}
@@ -187,13 +187,13 @@ func TestAReturnRouteSetWidensToEveryAllocationRootAtItsEndpoint(t *testing.T) {
 func TestAReturnRouteSetAdmitsOnlyTheCellsItsOwnerIssued(t *testing.T) {
 	fixture := newReturnPlanFixture(t)
 
-	if plan, ok := returnRoutes(t, fixture, operand.MemberCell[valuedomain.Value]{}); ok {
+	if plan, ok := returnRoutes(t, fixture, execution.MemberCell[valuedomain.Value]{}); ok {
 		t.Fatalf("absent selected return cell fabricated a route set: %#v", plan)
 	}
-	if plan, ok := returnRoutes(t, fixture, operand.MemberCell[valuedomain.Value]{Present: true}); ok {
+	if plan, ok := returnRoutes(t, fixture, execution.MemberCell[valuedomain.Value]{Present: true}); ok {
 		t.Fatalf("malformed Value cell fabricated a route set: %#v", plan)
 	}
-	sparseBottom, sparseOK := returnRoutes(t, fixture, operand.MemberCell[valuedomain.Value]{Value: fixture.values.Bottom()})
+	sparseBottom, sparseOK := returnRoutes(t, fixture, execution.MemberCell[valuedomain.Value]{Value: fixture.values.Bottom()})
 	if !sparseOK || sparseBottom.widened || derived2Count(sparseBottom) != 0 {
 		t.Fatalf("owner-authenticated sparse Bottom cell = %#v/%t, want a valid empty route set", sparseBottom, sparseOK)
 	}
@@ -216,9 +216,9 @@ func TestAReturnRouteSetAdmitsOnlyTheCellsItsOwnerIssued(t *testing.T) {
 
 // mustMemberVector builds an empty delivery, which is the one a forged
 // candidate must still be refused against.
-func mustMemberVector(t testing.TB) operand.SummaryVector[valuedomain.Value] {
+func mustMemberVector(t testing.TB) execution.SummaryVector[valuedomain.Value] {
 	t.Helper()
-	vector, vectorOK := operand.NewMemberVector([]operand.MemberCell[valuedomain.Value]{})
+	vector, vectorOK := execution.NewMemberVector([]execution.MemberCell[valuedomain.Value]{})
 	if !vectorOK {
 		t.Fatal("member vector")
 	}
@@ -416,8 +416,8 @@ func (surface emptySurface) Seal(seal.View, seal.Sealed) schema.SealFailure {
 // owner's directory where it lies and copies nothing.
 func BenchmarkReturnRouteSetWidened(b *testing.B) {
 	fixture := newReturnPlanFixture(b)
-	cells := []operand.MemberCell[valuedomain.Value]{returnCell(fixture.values.Top())}
-	vector, vectorOK := operand.NewMemberVector(cells)
+	cells := []execution.MemberCell[valuedomain.Value]{returnCell(fixture.values.Top())}
+	vector, vectorOK := execution.NewMemberVector(cells)
 	if !vectorOK {
 		b.Fatal("member vector")
 	}
@@ -443,7 +443,7 @@ func BenchmarkReturnRouteSetExact(b *testing.B) {
 	if !factOK {
 		b.Fatal("allocation value")
 	}
-	vector, vectorOK := operand.NewMemberVector([]operand.MemberCell[valuedomain.Value]{returnCell(fact)})
+	vector, vectorOK := execution.NewMemberVector([]execution.MemberCell[valuedomain.Value]{returnCell(fact)})
 	if !vectorOK {
 		b.Fatal("member vector")
 	}
@@ -473,7 +473,7 @@ func BenchmarkReturnRouteSetExactScaling(b *testing.B) {
 	if !factOK {
 		b.Fatal("alternate allocation value")
 	}
-	vector, vectorOK := operand.NewMemberVector([]operand.MemberCell[valuedomain.Value]{returnCell(fact)})
+	vector, vectorOK := execution.NewMemberVector([]execution.MemberCell[valuedomain.Value]{returnCell(fact)})
 	if !vectorOK {
 		b.Fatal("member vector")
 	}
@@ -492,7 +492,7 @@ func BenchmarkReturnRouteSetExactScaling(b *testing.B) {
 // owner's directory is actually walked.
 func BenchmarkReturnRouteSetWidenedSelectionScaling(b *testing.B) {
 	fixture := newReturnPlanFixture(b)
-	vector, vectorOK := operand.NewMemberVector([]operand.MemberCell[valuedomain.Value]{returnCell(fixture.values.Top())})
+	vector, vectorOK := execution.NewMemberVector([]execution.MemberCell[valuedomain.Value]{returnCell(fixture.values.Top())})
 	if !vectorOK {
 		b.Fatal("member vector")
 	}

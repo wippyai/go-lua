@@ -13,7 +13,6 @@ package execution
 import (
 	"github.com/wippyai/go-lua/analysis/engine/internal/facts/scalar"
 	"github.com/wippyai/go-lua/analysis/engine/internal/facts/support"
-	"github.com/wippyai/go-lua/analysis/engine/operand"
 	"github.com/wippyai/go-lua/analysis/schema/structure"
 )
 
@@ -27,7 +26,7 @@ import (
 // not the fold's - a fold that could name either would be able to publish
 // somewhere its declaration did not say, or over evidence it did not read.
 type SelectionReducer[V any, W any] interface {
-	Reduce(cells []operand.SelectedCell[V]) (W, structure.ReductionOutcome)
+	Reduce(cells []SelectedCell[V]) (W, structure.ReductionOutcome)
 }
 
 // FoldSelectedExact performs one invocation of the exact-over-selection form.
@@ -60,7 +59,7 @@ func FoldSelectedExact[K scalar.Key, V any, W any, R SelectionReducer[V, W]](
 	write ExactWrite[K, W],
 	scratch *Scratch[K, W],
 	prerequisite support.Mask,
-	cells []operand.SelectedCell[V],
+	cells []SelectedCell[V],
 	reducer R,
 ) structure.ReductionOutcome {
 	if scratch == nil || !write.Valid() || !prerequisite.Valid() {

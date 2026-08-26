@@ -10,7 +10,6 @@ package resultalias
 
 import (
 	"github.com/wippyai/go-lua/analysis/engine/execution"
-	"github.com/wippyai/go-lua/analysis/engine/operand"
 	"github.com/wippyai/go-lua/analysis/schema/rule/program"
 	"github.com/wippyai/go-lua/analysis/schema/structure"
 	"github.com/wippyai/go-lua/domain/call"
@@ -35,7 +34,7 @@ type familyReducer struct {
 // Reduce is the one irreducible typed judgment of this family. It is called
 // ONCE per candidate and handed every member its selection observed, because
 // this row concludes one fact from all of them rather than one fact at each.
-func (fold familyReducer) Reduce(cells []operand.SelectedCell[value.Value]) (value.Value, structure.ReductionOutcome) {
+func (fold familyReducer) Reduce(cells []execution.SelectedCell[value.Value]) (value.Value, structure.ReductionOutcome) {
 	return fold.state.Result(fold.candidate, fold.input0, cells)
 }
 
@@ -75,7 +74,7 @@ func (sealed *sealedFamily) NewExecutor(run *execution.Run) execution.Executor {
 		family:  sealed,
 		run:     run,
 		members: make([]execution.RouteMember, sealed.width),
-		cells:   make([]operand.SelectedCell[value.Value], sealed.width),
+		cells:   make([]execution.SelectedCell[value.Value], sealed.width),
 	}
 }
 
@@ -92,7 +91,7 @@ type familyWorker struct {
 	read1   execution.SelectedScratch[value.DenseCoordinate, value.Value]
 	write   execution.Scratch[value.DenseCoordinate, value.Value]
 	members []execution.RouteMember
-	cells   []operand.SelectedCell[value.Value]
+	cells   []execution.SelectedCell[value.Value]
 }
 
 // settle submits one non-publishing disposition. Every refusal path in this

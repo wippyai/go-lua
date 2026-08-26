@@ -1484,18 +1484,6 @@ func relationImportAliases(packageName string, source definition.Definition, met
 		aliases[path] = alias
 	}
 	add(source.Binding.Key.Normalizer.PackagePath)
-	// The axis's fact type is spelled in every read handle this file
-	// publishes, and the package that declares it is not necessarily the one
-	// the vocabulary is generated into: an axis whose judgment kernel declares
-	// no row generates its vocabulary into the package that owns its
-	// coordinates instead. The fact is therefore imported like any other
-	// foreign type rather than assumed local.
-	for _, carrier := range source.Carriers {
-		if carrier.Name == source.Signature.Fact {
-			add(carrier.Type.PackagePath)
-			break
-		}
-	}
 	for _, relation := range source.Relations {
 		add(relation.CandidateResolver.PackagePath)
 		add(relation.CandidateOrdinal.PackagePath)

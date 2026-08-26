@@ -62,30 +62,13 @@ func (rule *RawGetRule) bootInitialAt(route heapdomain.RawRouteTag, payload heap
 	return rule.runtime.topology.catalogBootInitial(route, payload)
 }
 
-// RawGetScratch is the solve-local reuse a raw-get reduction reads through.
-// It holds no fact and no route: it is the marking and index storage one
-// invocation reuses so a frontier is walked once, sized from the catalog it
-// will be walked against.
-type RawGetScratch struct {
+type rawGetScratch struct {
 	payload []uint64
 	source  []uint64
 	call    rawSelectionIndex
 	heap    rawSelectionIndex
 	pack    rawSelectionIndex
 	value   rawSelectionIndex
-}
-
-// NewRawGetScratch opens the reuse storage one caller's reductions share. It
-// is sized from the topology's own catalog, so a scratch is never sized
-// against a frontier other than the one it marks.
-func NewRawGetScratch(topology *Topology) (*RawGetScratch, bool) {
-	if topology == nil || !topology.valid() || topology.catalog == nil {
-		return nil, false
-	}
-	return &RawGetScratch{
-		payload: make([]uint64, bitWords(len(topology.catalog.payloads)-1)),
-		source:  make([]uint64, bitWords(len(topology.catalog.sources))),
-	}, true
 }
 
 func bitWords(count int) int {
@@ -222,20 +205,20 @@ func selectorSelectionValue[V any, Tag interface {
 	selection engine.Selection[Tag, engine.OrderedCells[V]],
 	index *rawSelectionIndex,
 	want Tag,
-) Selected[V] {
+) rawSelected[V] {
 	ordinal, ok := index.ordinal(uint64(want))
 	if !ok {
-		return Selected[V]{valid: true}
+		return rawSelected[V]{valid: true}
 	}
 	tag, cells, selected := engine.SelectorSelectionAt(context, selection, ordinal)
 	if !selected || tag != want || cells.Count() != 1 {
-		return Selected[V]{}
+		return rawSelected[V]{}
 	}
 	value, present, available := cells.At(0)
 	if !available {
-		return Selected[V]{}
+		return rawSelected[V]{}
 	}
-	return Selected[V]{value: value, present: present, found: true, valid: true}
+	return rawSelected[V]{value: value, present: present, found: true, valid: true}
 }
 
 func (rule *RawGetRule) keySelector(access Index) (heapdomain.KeySelector, bool) {

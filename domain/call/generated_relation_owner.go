@@ -108,7 +108,7 @@ func (owner *RelationOwner) candidate(relationOrdinal uint32, mount, occurrence 
 			return 0, false
 		}
 		return owner.schema.CallCoordinateOrdinal(candidate)
-	case 7:
+	case 6:
 		if !mount.Available() {
 			return 0, false
 		}
@@ -296,12 +296,7 @@ func (owner *RelationOwner) Project(relationOrdinal, projectionOrdinal, candidat
 		}
 	case 6:
 		switch projectionOrdinal {
-		default:
-			return 0, false
-		}
-	case 7:
-		switch projectionOrdinal {
-		case 11:
+		case 10:
 			candidate, candidateOK := owner.schema.CallCoordinateAt(int(candidateOrdinal))
 			if !candidateOK {
 				return 0, false

@@ -5,6 +5,8 @@ import (
 	"testing"
 
 	"github.com/wippyai/go-lua/analysis/relation/schema/algebra"
+	"github.com/wippyai/go-lua/analysis/relation/schema/model"
+	"github.com/wippyai/go-lua/analysis/schema"
 	"github.com/wippyai/go-lua/analysis/schema/rule/relcompile"
 	arithmetic "github.com/wippyai/go-lua/domain/value/arithmetic/program"
 )
@@ -74,7 +76,15 @@ func TestCarriedDerivationLowersToMerge(t *testing.T) {
 	if err != nil {
 		t.Fatalf("resolve: %v", err)
 	}
-	declaration := surfaces.registry.Declaration(surfaces.schema())
+	owner, err := surfaces.registry.Owner(relcompile.Site{Path: "test"}, schema.EntryReference{Surface: schema.SurfaceKindAxis, Key: spec.Writes})
+	if err != nil {
+		t.Fatalf("resolve owner: %v", err)
+	}
+	schemaID, ok := model.IssueSchemaID(owner, surfaces.token("schema", relcompile.EntryName(schema.SurfaceKindRule, spec.Key)))
+	if !ok {
+		t.Fatal("issue schema identity")
+	}
+	declaration := surfaces.registry.Declaration(schemaID)
 	declaration.Rules = rules
 	compiled, err := relcompile.Compile(declaration)
 	if err != nil {

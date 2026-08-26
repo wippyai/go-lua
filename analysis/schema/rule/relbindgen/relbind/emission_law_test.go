@@ -113,16 +113,6 @@ func TestEveryEmittedBindingMakesExactlyOneAdmission(t *testing.T) {
 // stronger form of the same fence: an artifact that cannot name an engine
 // package cannot reach one, whatever it is written to do.
 func TestEveryEmittedArtifactImportsOnlyTheSubstrateAndItsOwnTypes(t *testing.T) {
-	// The owner types a generated artifact may name are the ones the corpus
-	// declares its columns over, read from the corpus rather than guessed from
-	// a path prefix: an owner type is owned by whoever declares it, and some
-	// of them are the analyzer's own program vocabulary rather than a domain.
-	declaredPayloadPaths := map[string]bool{}
-	for _, payload := range relbind.Declared().Payloads {
-		if payload.Path != "" {
-			declaredPayloadPaths[payload.Path] = true
-		}
-	}
 	artifacts, err := relbind.Emit(relbind.Declared())
 	if err != nil {
 		t.Fatalf("emit: %v", err)
@@ -138,7 +128,7 @@ func TestEveryEmittedArtifactImportsOnlyTheSubstrateAndItsOwnTypes(t *testing.T)
 			if quoteErr != nil {
 				t.Fatalf("unquote %s: %v", artifact.Path(), quoteErr)
 			}
-			if admitted[imported] || declaredPayloadPaths[imported] {
+			if admitted[imported] || strings.HasPrefix(imported, "github.com/wippyai/go-lua/domain/") {
 				continue
 			}
 			t.Errorf("%s imports %s, which a generated artifact may not name", artifact.Path(), imported)

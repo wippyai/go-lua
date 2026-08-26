@@ -15,10 +15,6 @@ import (
 // importing the substrate it is emitted against.
 const KeyedDestination = -1
 
-// NoDestination is the address a family declares when it publishes no fact.
-// Its signature declares no output column, so there is no row to address.
-const NoDestination = -2
-
 // Axis is one owner's emission target. Produced artifacts live beside the
 // owner whose mathematics they carry, never inside the generic substrate, so
 // the substrate keeps no dependency on any domain and an owner keeps its own
@@ -164,11 +160,6 @@ func (family Family) Label() string {
 	return family.Arm
 }
 
-// Publishes reports whether this family publishes a fact. A family that
-// declares no output column answers with its disposition alone, which the ABI
-// reads off the sealed contract rather than off a label.
-func (family Family) Publishes() bool { return len(family.Outputs) != 0 }
-
 // Emitted reports whether this family's artifacts are emitted. A family that
 // owes an identity is carried by the corpus as a named row and nothing else.
 func (family Family) Emitted() bool { return family.Pending == "" }
@@ -290,12 +281,11 @@ func (corpus Corpus) validateFamily(family Family) error {
 			return fmt.Errorf("family %s input %d names undeclared payload %q", family.Stem, index, slot.Payload)
 		}
 	}
-	if family.Publishes() {
-		if _, ok := corpus.Payload(family.Result); !ok {
-			return fmt.Errorf("family %s produces undeclared payload %q", family.Stem, family.Result)
-		}
-	} else if family.Result != "" || len(family.Outputs) != 0 {
-		return fmt.Errorf("family %s publishes no fact and still names one", family.Stem)
+	if _, ok := corpus.Payload(family.Result); !ok {
+		return fmt.Errorf("family %s produces undeclared payload %q", family.Stem, family.Result)
+	}
+	if len(family.Outputs) == 0 {
+		return fmt.Errorf("family %s declares no output column", family.Stem)
 	}
 	for index, column := range family.Outputs {
 		if !column.Available() {
@@ -322,12 +312,6 @@ func (corpus Corpus) validateAddress(family Family) error {
 	single := cardinality.Kind() == model.ExactlyOne || cardinality.Kind() == model.Optional
 	if bound, bounded := cardinality.Bound(); bounded && bound == 1 {
 		single = true
-	}
-	if !family.Publishes() {
-		if family.Address != NoDestination {
-			return fmt.Errorf("family %s publishes no fact and still addresses a row", family.Stem)
-		}
-		return nil
 	}
 	if family.Address == KeyedDestination {
 		if single {

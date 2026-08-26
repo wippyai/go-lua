@@ -101,10 +101,11 @@ func Contribution() definition.Contribution {
 		// before them delivered, so they are published through this
 		// selection and stamped with the tag the reading rule joins on.
 		Selections: []definition.Selection{{
-			Name:     "BodyReturnRouteSelection",
-			Key:      "value/body-result/route-selection",
-			Relation: "BodyReturnRoutes",
-			Tag:      "BodyReturnRouteTag",
+			Name:           "BodyReturnRouteSelection",
+			Key:            "value/body-result/route-selection",
+			Relation:       "BodyReturnRoutes",
+			Tag:            "BodyReturnRouteTag",
+			Implementation: returnRouteFunction("Derive"),
 		}},
 		Reducers: []definition.Reducer{{
 			Name:      "BodyResultReducer",

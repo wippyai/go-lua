@@ -42,25 +42,3 @@ func Carried[R any](emitter *Emitter[R], fact R, held bool) outcome.Code {
 	}
 	return outcome.Produced
 }
-
-// Answer settles one owner disposition for a family that publishes no fact.
-//
-// It is the same total translation Reduce performs, less the publication: a
-// structural rule answers whether its occurrence holds and stages nothing, so
-// a concrete answer produces its disposition and no row. An owner that tried
-// to publish through such a family would find an emitter opened at a capacity
-// of none, so the absence of a fact is enforced and not merely intended.
-func Answer(reduction structure.ReductionOutcome) outcome.Code {
-	switch reduction {
-	case structure.Concrete:
-		return outcome.Produced
-	case structure.AuthenticatedOpaque:
-		return outcome.Opaque
-	case structure.NoCandidate:
-		return outcome.NoCandidate
-	case structure.NoSelection:
-		return outcome.NoSelection
-	default:
-		return outcome.Refused
-	}
-}

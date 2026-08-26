@@ -3,7 +3,7 @@ package suspension
 import (
 	"testing"
 
-	reduceroperand "github.com/wippyai/go-lua/analysis/engine/operand"
+	"github.com/wippyai/go-lua/analysis/engine/execution"
 	"github.com/wippyai/go-lua/analysis/identity"
 	programschema "github.com/wippyai/go-lua/analysis/schema/program"
 	programcatalog "github.com/wippyai/go-lua/analysis/schema/program/catalog"
@@ -22,8 +22,8 @@ import (
 // judgment that drifts from that shape is a fold the composition can no longer
 // invoke.
 var (
-	_ func(lifecycle.MountedSubjectLiveness, reduceroperand.SummaryVector[valuedomain.Value], heap.Key, uint64, placementdomain.Fact) (placementdomain.Fact, structure.ReductionOutcome) = SuspensionFold
-	_ func(lifecycle.MountedSubjectLiveness, reduceroperand.SummaryVector[valuedomain.Value], heap.Key, uint64, Evidence) (Evidence, structure.ReductionOutcome)                         = SuspensionEvidenceFold
+	_ func(lifecycle.MountedSubjectLiveness, execution.SummaryVector[valuedomain.Value], heap.Key, uint64, placementdomain.Fact) (placementdomain.Fact, structure.ReductionOutcome) = SuspensionFold
+	_ func(lifecycle.MountedSubjectLiveness, execution.SummaryVector[valuedomain.Value], heap.Key, uint64, Evidence) (Evidence, structure.ReductionOutcome)                         = SuspensionEvidenceFold
 )
 
 func suspensionReducerLawID(t testing.TB, name string) identity.ContentID {
@@ -79,13 +79,13 @@ func suspensionReducerLawCandidate(t testing.TB, state lifecycle.SubjectLiveness
 	return candidate
 }
 
-func suspensionReducerLawVector(t testing.TB, cells ...valuedomain.Value) reduceroperand.SummaryVector[valuedomain.Value] {
+func suspensionReducerLawVector(t testing.TB, cells ...valuedomain.Value) execution.SummaryVector[valuedomain.Value] {
 	t.Helper()
-	members := make([]reduceroperand.MemberCell[valuedomain.Value], 0, len(cells))
+	members := make([]execution.MemberCell[valuedomain.Value], 0, len(cells))
 	for _, cell := range cells {
-		members = append(members, reduceroperand.MemberCell[valuedomain.Value]{Value: cell, Present: true})
+		members = append(members, execution.MemberCell[valuedomain.Value]{Value: cell, Present: true})
 	}
-	vector, ok := reduceroperand.NewMemberVector(members)
+	vector, ok := execution.NewMemberVector(members)
 	if !ok {
 		t.Fatal("open source vector")
 	}
@@ -110,7 +110,7 @@ func TestSuspensionFoldsRefuseUnauthenticatedEvidence(t *testing.T) {
 	if got, outcome := SuspensionFold(lifecycle.MountedSubjectLiveness{}, sources, heap.Key{}, 1, placementdomain.DefaultFact()); outcome != structure.Refuse || got != placementdomain.BottomFact() {
 		t.Fatalf("unredeemed candidate fold=%v/%v, want Bottom/Refuse", got, outcome)
 	}
-	if got, outcome := SuspensionFold(candidate, reduceroperand.SummaryVector[valuedomain.Value]{}, heap.Key{}, 1, placementdomain.DefaultFact()); outcome != structure.Refuse || got != placementdomain.BottomFact() {
+	if got, outcome := SuspensionFold(candidate, execution.SummaryVector[valuedomain.Value]{}, heap.Key{}, 1, placementdomain.DefaultFact()); outcome != structure.Refuse || got != placementdomain.BottomFact() {
 		t.Fatalf("closed source vector fold=%v/%v, want Bottom/Refuse", got, outcome)
 	}
 
@@ -136,7 +136,7 @@ func TestSuspensionSourceVectorIsReadAsOneSpan(t *testing.T) {
 	if widen, ok := sourceVectorUnknown(known); !ok || widen {
 		t.Fatalf("known vector widen=%v/%v, want no widening", widen, ok)
 	}
-	if _, ok := sourceVectorUnknown(reduceroperand.SummaryVector[valuedomain.Value]{}); ok {
+	if _, ok := sourceVectorUnknown(execution.SummaryVector[valuedomain.Value]{}); ok {
 		t.Fatal("closed vector was read as a source vector")
 	}
 }

@@ -1,7 +1,7 @@
 package formalfreeze
 
 import (
-	"github.com/wippyai/go-lua/analysis/engine/operand"
+	"github.com/wippyai/go-lua/analysis/engine/execution"
 	calldomain "github.com/wippyai/go-lua/domain/call"
 	"github.com/wippyai/go-lua/domain/heap"
 	"github.com/wippyai/go-lua/domain/heap/internal/recentplan"
@@ -32,7 +32,7 @@ func DeriveFreezeRoutes(
 	packs *packdomain.Schema,
 	candidate calldomain.CallCoordinate,
 	callFact calldomain.Value,
-	actuals operand.SummaryVector[valuedomain.Value],
+	actuals execution.SummaryVector[valuedomain.Value],
 ) (recentplan.Plan, bool) {
 	if packs == nil || calls == nil || !calls.Valid() || !schema.Valid() || values == nil || !values.Valid() ||
 		!calls.OwnsCallCoordinate(candidate) || !values.OwnsHeapSchema(schema) ||

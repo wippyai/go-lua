@@ -20,13 +20,13 @@ func TestRouteSetRefusesInvalidInputsBeforeOpaqueWidening(t *testing.T) {
 	rowID := identity.ContentID{41}
 	cases := []struct {
 		name     string
-		prepared *PreparedBatch
+		prepared *preparedBatch
 		gate     operationGate
 		facts    factBuffer
 	}{
 		{
 			name: "missing coordinate",
-			prepared: &PreparedBatch{
+			prepared: &preparedBatch{
 				rows:    []publicationRow{{id: rowID, requirement: placementdomain.SharedHeap, operation: 1}},
 				sources: []sourceSpec{{tag: sourceTag(1), rowID: rowID, operation: 1, coordinate: valuedomain.Coordinate{}}},
 			},
@@ -34,14 +34,14 @@ func TestRouteSetRefusesInvalidInputsBeforeOpaqueWidening(t *testing.T) {
 		},
 		{
 			name: "malformed requirement",
-			prepared: &PreparedBatch{
+			prepared: &preparedBatch{
 				rows: []publicationRow{{id: rowID, requirement: placementdomain.Bottom, operation: 1}},
 			},
 			gate: func() operationGate { gate := operationGate{}; gate.opaque = true; return gate }(),
 		},
 		{
 			name: "incomplete value join",
-			prepared: &PreparedBatch{
+			prepared: &preparedBatch{
 				rows:    []publicationRow{{id: rowID, requirement: placementdomain.SharedHeap, operation: 1}},
 				sources: []sourceSpec{{tag: sourceTag(1), rowID: rowID, operation: 1, coordinate: coordinate}},
 			},
@@ -50,14 +50,14 @@ func TestRouteSetRefusesInvalidInputsBeforeOpaqueWidening(t *testing.T) {
 		},
 		{
 			name: "unauthenticated open bit",
-			prepared: &PreparedBatch{
+			prepared: &preparedBatch{
 				rows: []publicationRow{{id: rowID, requirement: placementdomain.SharedHeap, operation: 1, subjectOpen: true}},
 			},
 			gate: operationGateForTest(1),
 		},
 		{
 			name: "unauthenticated proven-nil bit",
-			prepared: &PreparedBatch{
+			prepared: &preparedBatch{
 				rows: []publicationRow{{id: rowID, requirement: placementdomain.SharedHeap, operation: 1, subjectNil: true}},
 			},
 			gate: operationGateForTest(1),
@@ -65,7 +65,7 @@ func TestRouteSetRefusesInvalidInputsBeforeOpaqueWidening(t *testing.T) {
 	}
 	for _, test := range cases {
 		t.Run(test.name, func(t *testing.T) {
-			routes, ok := routeSetFor(fixture.placement, fixture.values, test.prepared, test.gate, test.facts)
+			routes, ok := (&HotRule{values: fixture.valueOwner}).routeSet(fixture.placement, test.prepared, test.gate, test.facts)
 			if ok || routes.len() != 0 {
 				t.Fatalf("invalid route input produced routes=%d ok=%t", routes.len(), ok)
 			}
@@ -76,12 +76,12 @@ func TestRouteSetRefusesInvalidInputsBeforeOpaqueWidening(t *testing.T) {
 func TestRouteSetRefusesForeignPlacementSchemaBeforeBroadcast(t *testing.T) {
 	fixture := newPublicationEscapeFixture(t)
 	foreign := newPublicationEscapeFixture(t)
-	prepared := &PreparedBatch{
+	prepared := &preparedBatch{
 		rows:     []publicationRow{{id: identity.ContentID{45}, requirement: placementdomain.SharedHeap, operation: 1, subjectOpen: true}},
 		byTag:    map[sourceTag]sourceSpec{},
 		prepared: true,
 	}
-	routes, ok := routeSetFor(foreign.placement, fixture.values, prepared, operationGateForTest(1), factBuffer{})
+	routes, ok := fixture.rule().routeSet(foreign.placement, prepared, operationGateForTest(1), factBuffer{})
 	if ok || routes.len() != 0 {
 		t.Fatalf("foreign Placement schema produced routes=%d ok=%t", routes.len(), ok)
 	}
@@ -138,11 +138,11 @@ func TestFactBufferSparseBottomIsAuthenticatedAndNeutral(t *testing.T) {
 func TestRouteSetRefusesMissingValueRow(t *testing.T) {
 	fixture := newPublicationEscapeFixture(t)
 	rowID := identity.ContentID{44}
-	prepared := &PreparedBatch{
+	prepared := &preparedBatch{
 		rows:    []publicationRow{{id: rowID, requirement: placementdomain.SharedHeap, operation: 1}},
 		sources: []sourceSpec{{tag: sourceTag(1), rowID: rowID, operation: 1}},
 	}
-	routes, ok := routeSetFor(fixture.placement, fixture.values, prepared, operationGateForTest(1), factBuffer{})
+	routes, ok := fixture.rule().routeSet(fixture.placement, prepared, operationGateForTest(1), factBuffer{})
 	if ok || routes.len() != 0 {
 		t.Fatalf("missing admitted Value row produced routes=%d ok=%t", routes.len(), ok)
 	}
@@ -158,8 +158,8 @@ func TestRouteSetRequiresAuthenticatedSparseBottom(t *testing.T) {
 	if !facts.set(factEntry{rowID: rowID, value: fixture.values.Bottom(), present: false}) {
 		t.Fatal("seed sparse fact")
 	}
-	prepared := &PreparedBatch{rows: []publicationRow{{id: rowID, requirement: placementdomain.SharedHeap, operation: 1}}}
-	routes, ok := routeSetFor(fixture.placement, fixture.values, prepared, operationGateForTest(1), facts)
+	prepared := &preparedBatch{rows: []publicationRow{{id: rowID, requirement: placementdomain.SharedHeap, operation: 1}}}
+	routes, ok := (&HotRule{values: fixture.valueOwner}).routeSet(fixture.placement, prepared, operationGateForTest(1), facts)
 	if !ok || routes.len() != 0 {
 		t.Fatalf("authenticated sparse Bottom was rejected/routes=%d ok=%t", routes.len(), ok)
 	}
@@ -167,7 +167,7 @@ func TestRouteSetRequiresAuthenticatedSparseBottom(t *testing.T) {
 	if !facts.set(factEntry{rowID: rowID, present: false}) {
 		t.Fatal("seed malformed sparse fact")
 	}
-	routes, ok = routeSetFor(fixture.placement, fixture.values, prepared, operationGateForTest(1), facts)
+	routes, ok = (&HotRule{values: fixture.valueOwner}).routeSet(fixture.placement, prepared, operationGateForTest(1), facts)
 	if ok || routes.len() != 0 {
 		t.Fatalf("malformed sparse fact produced routes=%d ok=%t", routes.len(), ok)
 	}

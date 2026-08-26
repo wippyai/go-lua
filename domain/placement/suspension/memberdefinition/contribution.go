@@ -62,6 +62,10 @@ func provider() member.CandidateRef {
 	return member.IssuedRowCandidate(programissuance.RelationOccurrenceSubjectLiveness)
 }
 
+func suspensionFunction(name string) definition.GoSymbol {
+	return definition.GoSymbol{PackagePath: suspensionPackagePath, Name: name, ResultIndex: 0}
+}
+
 func sourceMethod(name string, result int8) definition.GoSymbol {
 	return definition.GoSymbol{PackagePath: suspensionPackagePath, Name: name, Receiver: goType(suspensionPackagePath, "Source"), ResultIndex: result}
 }
@@ -128,10 +132,12 @@ func producedSelections() []definition.Selection {
 		{
 			Name: "SuspensionSourceSelection", Key: "value/suspension/source-selection",
 			Relation: "SuspensionSources", Tag: "SuspensionSourceTag",
+			Implementation: suspensionFunction("DeriveSuspensionSources"),
 		},
 		{
 			Name: "SuspensionRouteSelection", Key: "placement/suspension/route-selection",
 			Relation: "SuspensionRoutes", Tag: "SuspensionRouteTag",
+			Implementation: suspensionFunction("DeriveSuspensionRoutes"),
 		},
 	}
 }

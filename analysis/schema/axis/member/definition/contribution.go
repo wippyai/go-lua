@@ -133,7 +133,8 @@ func (contribution Contribution) rowsAvailable() bool {
 	}
 	for _, selection := range contribution.Selections {
 		if !identifierAvailable(selection.Name) || !selection.Key.Available() ||
-			!identifierAvailable(selection.Relation) || !identifierAvailable(selection.Tag) {
+			!identifierAvailable(selection.Relation) || !identifierAvailable(selection.Tag) ||
+			!selection.Implementation.Available() {
 			return false
 		}
 	}

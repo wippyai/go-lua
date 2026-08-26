@@ -5,7 +5,7 @@
 package closed
 
 import (
-	"github.com/wippyai/go-lua/analysis/engine/operand"
+	"github.com/wippyai/go-lua/analysis/engine/execution"
 	"github.com/wippyai/go-lua/analysis/schema/structure"
 	heapdomain "github.com/wippyai/go-lua/domain/heap"
 	"github.com/wippyai/go-lua/domain/heap/allocation/internal/source"
@@ -19,7 +19,7 @@ import (
 // answer is a lattice value paired with the sealed outcome that value is
 // delivered under - it schedules nothing, locates nothing, and publishes
 // nothing.
-func (judgment Judgment) resultClosed(root heapdomain.Key, predecessor heapdomain.Value, cells operand.SummaryVector[valuedomain.Value]) (heapdomain.Value, structure.ReductionOutcome) {
+func (judgment Judgment) resultClosed(root heapdomain.Key, predecessor heapdomain.Value, cells execution.SummaryVector[valuedomain.Value]) (heapdomain.Value, structure.ReductionOutcome) {
 	if !judgment.Valid() {
 		return heapdomain.Value{}, structure.Refuse
 	}

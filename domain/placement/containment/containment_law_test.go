@@ -228,14 +228,14 @@ func TestContainmentUnknownChildIdentityRetainsKnownParentPlacement(t *testing.T
 			"opaque-edge": mustValue(t, fixture, fixture.roots[0], mustNone(t, fixture.heap), unknown, mustNone(t, fixture.heap)),
 			"top":         fixture.heap.Top(),
 		} {
-			got, ok := containmentValue(placementdomain.DefaultFact(), parent, child)
+			got, ok := routePlacement(placementdomain.DefaultFact(), parent, child, fixture.heap)
 			if !ok || got != parent {
 				t.Fatalf("%s child identity parent=%v route=%v/%t, want parent placement", name, parent, got, ok)
 			}
 		}
 	}
 	shared := placementdomain.Fact{Class: placementdomain.SharedHeap, RetainEscape: placementdomain.EvidenceProven}
-	if got, ok := containmentValue(placementdomain.DefaultFact(), shared, fixture.heap.Bottom()); ok || got != placementdomain.BottomFact() {
+	if got, ok := routePlacement(placementdomain.DefaultFact(), shared, fixture.heap.Bottom(), fixture.heap); ok || got != placementdomain.BottomFact() {
 		t.Fatalf("Bottom child evidence route=%v/%t, want refusal", got, ok)
 	}
 }

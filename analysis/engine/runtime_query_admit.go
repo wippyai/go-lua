@@ -11,12 +11,12 @@ import (
 // declareMountedQuery states one mounted query row. The row is addressed by
 // the mount and reusable artifact point ID; the dense point handle is resolved
 // only when runtimeProgram is built.
-func (implementation *SummaryQueryImplementation[V, R]) declareMountedQuery(state *schemaBindingState, authority *schemaBindingAuthority, context executioncontext.Context, id, mount, point identity.ContentID, writes exactQueryPointWrites) (declaredQueryRow, []*ruleSummaryMapping, bool) {
+func (implementation *SummaryQueryImplementation[V, R]) declareMountedQuery(state *schemaBindingState, authority *schemaBindingAuthority, context executioncontext.Context, id, mount, point identity.ContentID) (declaredQueryRow, []*ruleSummaryMapping, bool) {
 	row, ok := implementation.sealedRow()
 	if !ok || row.state != state || state.authority != authority || !context.Available() {
 		return declaredQueryRow{}, nil, false
 	}
-	declared, surface, ok := declareMountedQueryRow(state, row.ordinal, context, id, mount, point, composition.QueryFactorSummary, writes)
+	declared, surface, ok := declareMountedQueryRow(state, row.ordinal, context, id, mount, point, composition.QueryFactorSummary)
 	if !ok {
 		return declaredQueryRow{}, nil, false
 	}
@@ -31,16 +31,16 @@ func (implementation *SummaryQueryImplementation[V, R]) declareMountedQuery(stat
 	}}, true
 }
 
-func (implementation *ExactQueryImplementation[V, R]) declareMountedQuery(state *schemaBindingState, authority *schemaBindingAuthority, context executioncontext.Context, id, mount, point identity.ContentID, writes exactQueryPointWrites) (declaredQueryRow, []*ruleSummaryMapping, bool) {
+func (implementation *ExactQueryImplementation[V, R]) declareMountedQuery(state *schemaBindingState, authority *schemaBindingAuthority, context executioncontext.Context, id, mount, point identity.ContentID) (declaredQueryRow, []*ruleSummaryMapping, bool) {
 	row, ok := implementation.sealedRow()
 	if !ok || row.state != state || state.authority != authority || !context.Available() {
 		return declaredQueryRow{}, nil, false
 	}
-	declared, _, ok := declareMountedQueryRow(state, row.ordinal, context, id, mount, point, composition.QueryFactorExact, writes)
+	declared, _, ok := declareMountedQueryRow(state, row.ordinal, context, id, mount, point, composition.QueryFactorExact)
 	return declared, nil, ok
 }
 
-func declareMountedQueryRow(state *schemaBindingState, ordinal uint64, context executioncontext.Context, id, mount, reusable identity.ContentID, kind composition.QueryProjectionKind, writes exactQueryPointWrites) (declaredQueryRow, equation.Surface, bool) {
+func declareMountedQueryRow(state *schemaBindingState, ordinal uint64, context executioncontext.Context, id, mount, reusable identity.ContentID, kind composition.QueryProjectionKind) (declaredQueryRow, equation.Surface, bool) {
 	if state == nil || state.schema == nil || !context.Available() || !id.Available() || !mount.Available() || !reusable.Available() || ordinal >= state.schema.queryCount() {
 		return declaredQueryRow{}, equation.Surface{}, false
 	}
@@ -50,9 +50,11 @@ func declareMountedQueryRow(state *schemaBindingState, ordinal uint64, context e
 	if !ok || !shapeOK || shape.Population != population.SelectedPoint || !family.Available() || projection.Kind != kind || !projection.Factor.Available() {
 		return declaredQueryRow{}, equation.Surface{}, false
 	}
-	surface := equation.Surface{Factor: projection.Factor, Form: equation.SurfaceReadSummary, Local: declaredExactQueryLocal, Semantic: projection.Normalizer, Normalizer: projection.Normalizer}
-	if kind != composition.QueryFactorSummary {
-		surface = equation.Surface{Factor: projection.Factor, Form: equation.SurfaceReadExact, Local: writes.exactLocal(mount, reusable, projection.Factor)}
+	surface := equation.Surface{Factor: projection.Factor, Form: equation.SurfaceReadExact, Local: 1}
+	if kind == composition.QueryFactorSummary {
+		surface.Form = equation.SurfaceReadSummary
+		surface.Semantic = projection.Normalizer
+		surface.Normalizer = projection.Normalizer
 	}
 	if !surface.Available() {
 		return declaredQueryRow{}, equation.Surface{}, false
@@ -122,62 +124,4 @@ func validProgramQuerySurface(surface equation.Surface, projection composition.Q
 	default:
 		return false
 	}
-}
-
-// declaredExactQueryLocal is the coordinate an exact read names when the point
-// it is admitted at resolves none: the Factor's first cell. It is the standing
-// coordinate of a routed member, whose own cell exists only once its selection
-// has run and which therefore names none statically.
-const declaredExactQueryLocal = uint64(1)
-
-// exactQueryPointWrites is the declared member plane one mounted query
-// resolves its exact coordinate against.
-//
-// An exact query at a selected point observes the cell that point's member
-// wrote, exactly as an exact observation does: the observation recovers the
-// local coordinate from the selected member's own write rather than being
-// handed one, and a query admitted at that same point owes the same
-// derivation. A fixed coordinate makes every exact query read whichever cell
-// occupies that slot - the first one seeded, in a program whose seeds are
-// declared before its rules - rather than the cell its own point produced.
-type exactQueryPointWrites struct {
-	members []declaredMemberRow
-}
-
-// exactLocal is the local exact coordinate one Factor is written at, at the
-// mounted point a query is admitted for.
-//
-// Exactly one member of that point may name the cell. Two name no single cell,
-// so the read stays on the standing coordinate rather than choosing between
-// them, and the seal refuses the pair where their writes are declared. A
-// member that publishes through a route names none at all - its cell is the
-// one its selection resolves at solve time - and keeps the standing coordinate
-// too.
-func (writes exactQueryPointWrites) exactLocal(mount, point identity.ContentID, factor composition.Key) uint64 {
-	if !mount.Available() || !point.Available() || !factor.Available() {
-		return declaredExactQueryLocal
-	}
-	local := uint64(0)
-	matched := 0
-	for _, member := range writes.members {
-		if member.Mount != mount || member.Point != point {
-			continue
-		}
-		for _, write := range member.Row.Writes {
-			surface := write.Surface
-			if surface.Factor != factor || surface.Form != equation.SurfaceWriteExact {
-				continue
-			}
-			if write.Route != 0 || surface.Mode != equation.TargetModeStrong || surface.Local == 0 ||
-				surface.Semantic.Available() || surface.Normalizer.Available() {
-				continue
-			}
-			local = surface.Local
-			matched++
-		}
-	}
-	if matched != 1 {
-		return declaredExactQueryLocal
-	}
-	return local
 }

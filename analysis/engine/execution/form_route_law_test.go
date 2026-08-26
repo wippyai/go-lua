@@ -3,8 +3,6 @@ package execution
 import (
 	"testing"
 
-	"github.com/wippyai/go-lua/analysis/engine/operand"
-
 	"github.com/wippyai/go-lua/analysis/engine/generated"
 	"github.com/wippyai/go-lua/analysis/engine/internal/carrier"
 	"github.com/wippyai/go-lua/analysis/engine/internal/facts/support"
@@ -29,7 +27,7 @@ type routeLawReducer struct {
 // silently reuse the engine's dense key type.
 type routeLawCoordinate struct{ index uint64 }
 
-func (reducer routeLawReducer) Reduce(route routeLawCoordinate, cell operand.SelectedCell[uint64]) (uint64, structure.ReductionOutcome) {
+func (reducer routeLawReducer) Reduce(route routeLawCoordinate, cell SelectedCell[uint64]) (uint64, structure.ReductionOutcome) {
 	index := 0
 	if reducer.seen != nil {
 		index = *reducer.seen
@@ -46,12 +44,12 @@ func (reducer routeLawReducer) Reduce(route routeLawCoordinate, cell operand.Sel
 
 func (reducer routeLawReducer) Empty() structure.ReductionOutcome { return reducer.empty }
 
-func routeCells(fixture selectedFixture, width int) ([]operand.SelectedCell[uint64], []RouteMember, []routeLawCoordinate) {
-	cells := make([]operand.SelectedCell[uint64], 0, width)
+func routeCells(fixture selectedFixture, width int) ([]SelectedCell[uint64], []RouteMember, []routeLawCoordinate) {
+	cells := make([]SelectedCell[uint64], 0, width)
 	members := make([]RouteMember, 0, width)
 	routes := make([]routeLawCoordinate, 0, width)
 	for index := 0; index < width; index++ {
-		cells = append(cells, operand.SelectedCell[uint64]{
+		cells = append(cells, SelectedCell[uint64]{
 			Value:   uint64(index),
 			Present: true,
 			Tag:     uint64(index) + 1,
@@ -152,9 +150,9 @@ func commitOneRoute(t testing.TB, fixture selectedFixture, member RouteMember) c
 	if !writeOK {
 		t.Fatal("route write")
 	}
-	cell := operand.SelectedCell[uint64]{Value: 1, Present: true, Tag: member.Tag(), Region: fixture.whole}
+	cell := SelectedCell[uint64]{Value: 1, Present: true, Tag: member.Tag(), Region: fixture.whole}
 	var scratch RouteScratch[uint64, uint64]
-	outcome := FoldSelectedRoute(ticket, write, &scratch, []operand.SelectedCell[uint64]{cell}, []RouteMember{member}, []routeLawCoordinate{{index: 100}}, routeLawReducer{empty: structure.NoSelection, failAt: -1})
+	outcome := FoldSelectedRoute(ticket, write, &scratch, []SelectedCell[uint64]{cell}, []RouteMember{member}, []routeLawCoordinate{{index: 100}}, routeLawReducer{empty: structure.NoSelection, failAt: -1})
 	if outcome != structure.Concrete || !run.Submit(&ticket, outcome) {
 		t.Fatalf("route commit settled %v", outcome)
 	}

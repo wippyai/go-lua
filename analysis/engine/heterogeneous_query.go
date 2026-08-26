@@ -392,7 +392,7 @@ func materializeHeterogeneousQuery[R any](work *carrier.Work, state carrier.Stat
 	return &typedFrozenValue[R]{value: frozen, freeze: result}, boundaryNone, true
 }
 
-func (implementation *HeterogeneousQueryImplementation[R]) declareMountedQuery(state *schemaBindingState, authority *schemaBindingAuthority, context executioncontext.Context, id, mount, point identity.ContentID, writes exactQueryPointWrites) (declaredQueryRow, []*ruleSummaryMapping, bool) {
+func (implementation *HeterogeneousQueryImplementation[R]) declareMountedQuery(state *schemaBindingState, authority *schemaBindingAuthority, context executioncontext.Context, id, mount, point identity.ContentID) (declaredQueryRow, []*ruleSummaryMapping, bool) {
 	row, ok := implementation.sealedRow()
 	if !ok || row.state != state || state.authority != authority || !context.Available() || !id.Available() || !mount.Available() || !point.Available() {
 		return declaredQueryRow{}, nil, false
@@ -407,13 +407,12 @@ func (implementation *HeterogeneousQueryImplementation[R]) declareMountedQuery(s
 		if !projection.valid(state.schema) {
 			return declaredQueryRow{}, nil, false
 		}
-		surface := equation.Surface{Factor: projection.factor, Form: equation.SurfaceReadSummary, Local: declaredExactQueryLocal, Semantic: projection.normalizer, Normalizer: projection.normalizer}
+		surface := equation.Surface{Factor: projection.factor, Form: equation.SurfaceReadExact, Local: 1}
 		if projection.kind == composition.QueryFactorSummary {
+			surface.Form = equation.SurfaceReadSummary
+			surface.Semantic = projection.normalizer
+			surface.Normalizer = projection.normalizer
 			mappings = append(mappings, &ruleSummaryMapping{state: state, authority: authority, factor: projection.factor, normalizer: projection.normalizer, surface: surface, keys: newSummaryKeyVector(projection.summaryKeys)})
-		} else {
-			// Each exact projection reads the cell its own Factor was written
-			// at, at the point this query is admitted for.
-			surface = equation.Surface{Factor: projection.factor, Form: equation.SurfaceReadExact, Local: writes.exactLocal(mount, point, projection.factor)}
 		}
 		if !surface.Available() {
 			return declaredQueryRow{}, nil, false

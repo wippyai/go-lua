@@ -36,14 +36,9 @@ type Rule struct {
 	Joins      []JoinSpec
 	Scope      model.ScopeID
 	Complete   *model.DenominatorRef
-	// Operand is the typed row the semantic operation reads. A join yields a
-	// row of two relations' columns and no relation of its own, so the row an
-	// operation is applied to is projected onto the relation its signature
-	// names before it is applied. Absent when the rule applies no operation.
-	Operand *Operand
-	Apply   signature.Identity
-	Carry   *CarrySpec
-	Publish *Publication
+	Apply      signature.Identity
+	Carry      *CarrySpec
+	Publish    *Publication
 }
 
 // CarrySpec is the alternative derivation a rule publishes for the rows its
@@ -74,21 +69,6 @@ type JoinSpec struct {
 	// present exactly when the authored read materializes an absent coordinate
 	// through a denominator, and absent when the read stays sparse.
 	Complete *model.DenominatorRef
-}
-
-// Operand is the projection from a rule's joined row onto the relation its
-// semantic operation reads. Every column of that relation is defined exactly
-// once, by the read that produced it.
-type Operand struct {
-	Relation model.RelationID
-	Key      model.KeyID
-	Columns  []ColumnMapping
-}
-
-// ColumnMapping carries one column of the joined row into the operand row.
-type ColumnMapping struct {
-	Source model.ColumnID
-	Target model.ColumnID
 }
 
 // Publication names the sole logical write destination. The engine later

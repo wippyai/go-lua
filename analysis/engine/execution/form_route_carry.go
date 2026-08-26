@@ -16,7 +16,6 @@ import (
 	"github.com/wippyai/go-lua/analysis/engine/internal/carrier"
 	"github.com/wippyai/go-lua/analysis/engine/internal/facts/scalar"
 	"github.com/wippyai/go-lua/analysis/engine/internal/facts/support"
-	"github.com/wippyai/go-lua/analysis/engine/operand"
 	"github.com/wippyai/go-lua/analysis/schema/structure"
 )
 
@@ -95,7 +94,7 @@ func FoldSelectedRouteCarry[D scalar.Key, K any, V any, R RouteReducer[K, V]](
 	ticket Ticket,
 	write RouteWrite[D, V],
 	scratch *RouteScratch[D, V],
-	cells []operand.SelectedCell[V],
+	cells []SelectedCell[V],
 	members []RouteMember,
 	routes []K,
 	carries []RouteCarry[V],

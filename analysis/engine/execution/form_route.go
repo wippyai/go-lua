@@ -14,7 +14,6 @@ import (
 	"github.com/wippyai/go-lua/analysis/engine/internal/factbinding"
 	"github.com/wippyai/go-lua/analysis/engine/internal/facts/scalar"
 	"github.com/wippyai/go-lua/analysis/engine/internal/facts/support"
-	"github.com/wippyai/go-lua/analysis/engine/operand"
 	"github.com/wippyai/go-lua/analysis/schema/structure"
 )
 
@@ -162,7 +161,7 @@ func (scratch *RouteScratch[K, V]) finish() {
 // because it is the only place that knows the selection is empty rather than
 // unread.
 type RouteReducer[K any, V any] interface {
-	Reduce(route K, cell operand.SelectedCell[V]) (V, structure.ReductionOutcome)
+	Reduce(route K, cell SelectedCell[V]) (V, structure.ReductionOutcome)
 	Empty() structure.ReductionOutcome
 }
 
@@ -182,7 +181,7 @@ func FoldSelectedRoute[D scalar.Key, K any, V any, R RouteReducer[K, V]](
 	ticket Ticket,
 	write RouteWrite[D, V],
 	scratch *RouteScratch[D, V],
-	cells []operand.SelectedCell[V],
+	cells []SelectedCell[V],
 	members []RouteMember,
 	routes []K,
 	reducer R,

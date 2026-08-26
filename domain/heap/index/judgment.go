@@ -223,21 +223,21 @@ func (topology *Topology) VisitRoutePayloads(route heapdomain.RawRouteTag, fact 
 // already resolved to at most one value; RawGetReduce consumes nothing
 // beyond what is named here.
 type RawGetFrame struct {
-	Scratch     *RawGetScratch
-	Key         Selected[valuedomain.Value]
+	Scratch     *rawGetScratch
+	Key         rawSelected[valuedomain.Value]
 	KeyCount    int
 	CallCount   int
-	Call        func(uint64) Selected[calldomain.Value]
+	Call        func(uint64) rawSelected[calldomain.Value]
 	HeapCount   int
-	Heap        func(heapdomain.RawRouteTag, heapdomain.Key) Selected[heapdomain.Value]
+	Heap        func(heapdomain.RawRouteTag, heapdomain.Key) rawSelected[heapdomain.Value]
 	PackCount   int
-	Pack        func(heapdomain.RawPayloadTag) Selected[pack.Value]
+	Pack        func(heapdomain.RawPayloadTag) rawSelected[pack.Value]
 	SourceCount int
-	Source      func(RawSourceTag) Selected[valuedomain.Value]
+	Source      func(RawSourceTag) rawSelected[valuedomain.Value]
 }
 
 type rawGetCensus struct {
-	scratch *RawGetScratch
+	scratch *rawGetScratch
 	pack    int
 	source  int
 }
@@ -321,41 +321,29 @@ func (topology *Topology) RawGetReduce(access Index, receiver valuedomain.Value,
 	return result, any, true
 }
 
-// VisitKeySelectors enumerates the key selectors one raw-access candidate
-// resolves to. A static key resolves the one selector its own slot names; a
-// dynamic key resolves the selectors the sealed projection admits for the key
-// the frame delivered, and a key the frame proves absent resolves none.
-//
-// The projection is the owner's, so the owner is the only one that can answer,
-// and the pack expansion reads the payloads a route carries under exactly
-// these selectors.
-func (topology *Topology) VisitKeySelectors(candidate Index, key Selected[valuedomain.Value], keyCount int, visit func(heapdomain.KeySelector) bool) bool {
-	if topology == nil || !topology.valid() || !candidate.valid() || candidate.topology != topology || visit == nil {
+func (topology *Topology) visitKeySelectors(operand Index, view RawGetFrame, visit func(heapdomain.KeySelector) bool) bool {
+	if visit == nil {
 		return false
 	}
-	if _, dynamic := candidate.DynamicKey(); !dynamic {
-		if keyCount != 0 {
+	if _, dynamic := operand.DynamicKey(); !dynamic {
+		if view.KeyCount != 0 {
 			return false
 		}
-		slot, slotOK := candidate.Slot()
+		slot, slotOK := operand.Slot()
 		if !slotOK {
 			return false
 		}
 		selector, selectorOK := topology.heap.SelectorForSlot(slot)
 		return selectorOK && visit(selector)
 	}
-	if keyCount != 1 || !key.valid || !key.found {
+	if view.KeyCount != 1 || !view.Key.valid || !view.Key.found {
 		return false
 	}
-	if !key.present {
+	if !view.Key.present {
 		return true
 	}
 	selectors := topology.selectors
-	return selectors != nil && selectors.Visit(key.value, visit)
-}
-
-func (topology *Topology) visitKeySelectors(operand Index, view RawGetFrame, visit func(heapdomain.KeySelector) bool) bool {
-	return topology.VisitKeySelectors(operand, view.Key, view.KeyCount, visit)
+	return selectors != nil && selectors.Visit(view.Key.value, visit)
 }
 
 func (topology *Topology) applyHeap(tag heapdomain.RawRouteTag, fact heapdomain.Value, selector heapdomain.KeySelector, view RawGetFrame, census *rawGetCensus, result *valuedomain.Value, any *bool) bool {
@@ -468,16 +456,16 @@ func (topology *Topology) applyScalar(view RawGetFrame, payloadTag heapdomain.Ra
 	return kindsOK && valueOK && topology.reduceAndJoin(containment, value, result, any)
 }
 
-func (topology *Topology) sourceValue(view RawGetFrame, payloadTag heapdomain.RawPayloadTag, want pack.SemanticSource) Selected[valuedomain.Value] {
+func (topology *Topology) sourceValue(view RawGetFrame, payloadTag heapdomain.RawPayloadTag, want pack.SemanticSource) rawSelected[valuedomain.Value] {
 	if topology == nil || topology.catalog == nil {
-		return Selected[valuedomain.Value]{}
+		return rawSelected[valuedomain.Value]{}
 	}
 	tag, found := topology.catalog.sourceTag(payloadTag, want)
 	if !found {
-		return Selected[valuedomain.Value]{}
+		return rawSelected[valuedomain.Value]{}
 	}
 	if _, ok := topology.catalogSource(tag); !ok {
-		return Selected[valuedomain.Value]{}
+		return rawSelected[valuedomain.Value]{}
 	}
 	return view.Source(tag)
 }
@@ -569,13 +557,13 @@ func (topology *Topology) joinPresentTop(result *valuedomain.Value, any *bool) b
 // is stated over. Pack/Value facts remain owner-issued selections; the frame
 // carries no mutation authority beyond what is named here.
 type RawSetFrame struct {
-	Key         Selected[valuedomain.Value]
+	Key         rawSelected[valuedomain.Value]
 	KeyCount    int
 	HeapCount   int
 	PackCount   int
-	Pack        func(heapdomain.RawPayloadTag) Selected[pack.Value]
+	Pack        func(heapdomain.RawPayloadTag) rawSelected[pack.Value]
 	SourceCount int
-	Source      func(RawSourceTag) Selected[valuedomain.Value]
+	Source      func(RawSourceTag) rawSelected[valuedomain.Value]
 }
 
 // RawSetMutateRoute answers the write commit for one selected predecessor

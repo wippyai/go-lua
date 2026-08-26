@@ -88,10 +88,8 @@ func TestSchemaExactQueryFoldMaterializesThroughCommittedProgram(t *testing.T) {
 	for index, query := range fixture.queries {
 		key, keyed := query.PublicationKey()
 		value, readable := testSnapshotQueryValue[uint64](fixture.solver, state, key)
-		// The fold begins at its seed and accumulates the cell the query's own
-		// point wrote, which the matrix rule staged as one.
-		if !keyed || !readable || value != 38 {
-			t.Fatalf("fold query[%d] = %d/%t keyed=%t, want fold seed 37 over the staged cell", index, value, readable, keyed)
+		if !keyed || !readable || value != 37 {
+			t.Fatalf("fold query[%d] = %d/%t keyed=%t, want fold seed 37", index, value, readable, keyed)
 		}
 	}
 }

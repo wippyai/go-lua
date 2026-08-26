@@ -3,8 +3,6 @@ package capture
 import (
 	"testing"
 
-	"github.com/wippyai/go-lua/analysis/schema/structure"
-	heapdomain "github.com/wippyai/go-lua/domain/heap"
 	"github.com/wippyai/go-lua/domain/placement"
 )
 
@@ -26,42 +24,23 @@ func TestCapturePlacementIsTheLeastUpperBoundOfClosureAndSource(t *testing.T) {
 		{placement.Fact{Class: placement.SharedHeap, RetainEscape: placement.EvidenceProven}, placement.Fact{Class: placement.OwnedHeap, RetainEscape: placement.EvidenceRefuted}, placement.Fact{Class: placement.SharedHeap, RetainEscape: placement.EvidenceProven}},
 		{placement.UnknownFact(), placement.DefaultFact(), placement.UnknownFact()},
 	}
-	route := captureLawRoute(t)
 	for _, item := range cases {
-		got, outcome := CaptureFold(item.closure, route, 1, item.Source)
-		if outcome != structure.Concrete || got != item.want {
-			t.Fatalf("capture(%s,%s) = %s/%v, want %s/Concrete", item.closure, item.Source, got, outcome, item.want)
+		if got, ok := captureValue(item.closure, item.Source); !ok || got != item.want {
+			t.Fatalf("capture(%s,%s) = %s/%t, want %s/true", item.closure, item.Source, got, ok, item.want)
 		}
 	}
 }
 
 func TestCapturePlacementDoesNotSynthesizeAnAbsentSource(t *testing.T) {
-	// The fold is only reached after the selected source cell has been
+	// captureValue is only reached after the selected source cell has been
 	// authenticated. Its value-level contract therefore has no absent-source
 	// compensation branch; an absent cell is refused by route planning.
 	closure := placement.Fact{Class: placement.OwnedHeap, RetainEscape: placement.EvidenceProven}
 	Source := placement.Fact{Class: placement.SharedHeap, RetainEscape: placement.EvidenceRefuted}
 	want := placement.Fact{Class: placement.SharedHeap, RetainEscape: placement.EvidenceProven}
-	got, outcome := CaptureFold(closure, captureLawRoute(t), 1, Source)
-	if outcome != structure.Concrete || got != want {
-		t.Fatalf("authenticated Source capture = %s/%v, want SharedHeap/Concrete", got, outcome)
+	if got, ok := captureValue(closure, Source); !ok || got != want {
+		t.Fatalf("authenticated Source capture = %s/%t, want SharedHeap/true", got, ok)
 	}
-}
-
-// captureLawRoute is one owner-issued root allocation coordinate: the
-// destination a capture route publishes at. The fold authenticates the route
-// it is handed, so a law over the judgment states it with a real one.
-func captureLawRoute(t testing.TB) heapdomain.Key {
-	t.Helper()
-	fixture := newCaptureRoutePlanBenchmarkFixture(t)
-	for index := 0; index < fixture.placement.KeyCount(); index++ {
-		key, keyOK := fixture.placement.KeyAt(index)
-		if keyOK && key.Kind() == heapdomain.RootAllocation {
-			return key
-		}
-	}
-	t.Fatal("capture law fixture publishes no root allocation")
-	return heapdomain.Key{}
 }
 
 func TestCaptureExactRoutePlanKeepsDenseOrderAndDeduplicatesInline(t *testing.T) {

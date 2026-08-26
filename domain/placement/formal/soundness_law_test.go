@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"testing"
 
-	"github.com/wippyai/go-lua/analysis/engine/operand"
+	"github.com/wippyai/go-lua/analysis/engine/execution"
 	"github.com/wippyai/go-lua/analysis/identity"
 	"github.com/wippyai/go-lua/analysis/lua/lower"
 	programartifact "github.com/wippyai/go-lua/analysis/program/artifact"
@@ -44,14 +44,14 @@ func TestFormalActualsAreAddressedByTheirPositionInTheDeliveredVector(t *testing
 	if len(keys) < 2 {
 		t.Skip("soundness schema exposes fewer than two allocation roots")
 	}
-	cells := make([]operand.MemberCell[valuedomain.Value], len(keys))
+	cells := make([]execution.MemberCell[valuedomain.Value], len(keys))
 	for index, key := range keys {
 		atom, atomOK := values.Allocation(key, materialization.Recent)
 		fact, factOK := values.Singleton(atom)
 		if !atomOK || !factOK {
 			t.Fatalf("allocation fact at ordinal %d", index)
 		}
-		cells[index] = operand.MemberCell[valuedomain.Value]{Value: fact, Present: true}
+		cells[index] = execution.MemberCell[valuedomain.Value]{Value: fact, Present: true}
 	}
 	actuals := formalActuals(t, cells)
 	for ordinal, key := range keys {
@@ -80,7 +80,7 @@ func TestUnknownOpenTailUnavailableActualRefuses(t *testing.T) {
 	// Two shapes of missing evidence survive the move to a delivered vector:
 	// an ordinal the vector does not name at all, and a cell that claims
 	// absence while carrying a value the owner's Factor default is not.
-	absent := formalActuals(t, []operand.MemberCell[valuedomain.Value]{{Value: values.Top()}})
+	absent := formalActuals(t, []execution.MemberCell[valuedomain.Value]{{Value: values.Top()}})
 	for name, ordinal := range map[string]int{"past-the-vector": 1, "negative": -1} {
 		t.Run(name, func(t *testing.T) {
 			var demands denseDemandScratch
@@ -105,7 +105,7 @@ func TestUnknownOpenTailUnavailableActualRefuses(t *testing.T) {
 	// owner-fenced Value fact, not the absence of a selected cell.
 	var demands denseDemandScratch
 	top := values.Top()
-	if !addUnknownOpenTailActualDemandDense(schema, values, formalActuals(t, []operand.MemberCell[valuedomain.Value]{{Value: top, Present: true}}), 0, &demands) {
+	if !addUnknownOpenTailActualDemandDense(schema, values, formalActuals(t, []execution.MemberCell[valuedomain.Value]{{Value: top, Present: true}}), 0, &demands) {
 		t.Fatal("authenticated Value Top was rejected under unknown open tail")
 	}
 	if !demands.allUnknown {
@@ -115,7 +115,7 @@ func TestUnknownOpenTailUnavailableActualRefuses(t *testing.T) {
 	// The owner-issued sparse Bottom is equally authenticated, but carries no
 	// allocation alternatives and therefore adds no demand.
 	demands = denseDemandScratch{}
-	if !addUnknownOpenTailActualDemandDense(schema, values, formalActuals(t, []operand.MemberCell[valuedomain.Value]{{Value: values.Bottom()}}), 0, &demands) {
+	if !addUnknownOpenTailActualDemandDense(schema, values, formalActuals(t, []execution.MemberCell[valuedomain.Value]{{Value: values.Bottom()}}), 0, &demands) {
 		t.Fatal("owner-issued sparse Bottom was rejected under unknown open tail")
 	}
 	if demands.count != 0 || demands.allUnknown {
@@ -135,7 +135,7 @@ func TestDenseDemandExactAllocationUsesCanonicalHeapCoordinate(t *testing.T) {
 		t.Fatalf("allocation fact = %t/%t", atomOK, factOK)
 	}
 	var demands denseDemandScratch
-	unknown, demandOK := addFactDemandDense(schema, values, formalActuals(t, []operand.MemberCell[valuedomain.Value]{{Value: fact, Present: true}}), 0, placement.Retain, &demands)
+	unknown, demandOK := addFactDemandDense(schema, values, formalActuals(t, []execution.MemberCell[valuedomain.Value]{{Value: fact, Present: true}}), 0, placement.Retain, &demands)
 	if unknown || !demandOK || demands.count != 1 {
 		t.Fatalf("exact dense demand = unknown:%t ok:%t count:%d", unknown, demandOK, demands.count)
 	}

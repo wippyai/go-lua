@@ -21,14 +21,13 @@ type PayloadTypes struct {
 	HeapRoute      model.TypeID
 	PackRoute      model.TypeID
 	SourceRoute    model.TypeID
-	HeapRouteTag   model.TypeID
 	ReadCandidate  model.TypeID
 	WriteCandidate model.TypeID
 }
 
 // Available reports whether every column has an owner-issued type.
 func (types PayloadTypes) Available() bool {
-	return types.Heap.Available() && types.HeapCandidate.Available() && types.KeyRoute.Available() && types.CallRoute.Available() && types.HeapRoute.Available() && types.PackRoute.Available() && types.SourceRoute.Available() && types.HeapRouteTag.Available() && types.ReadCandidate.Available() && types.WriteCandidate.Available()
+	return types.Heap.Available() && types.HeapCandidate.Available() && types.KeyRoute.Available() && types.CallRoute.Available() && types.HeapRoute.Available() && types.PackRoute.Available() && types.SourceRoute.Available() && types.ReadCandidate.Available() && types.WriteCandidate.Available()
 }
 
 // PayloadTags names the store fence each column of this axis interns under.
@@ -40,14 +39,13 @@ type PayloadTags struct {
 	HeapRoute      identity.ContentID
 	PackRoute      identity.ContentID
 	SourceRoute    identity.ContentID
-	HeapRouteTag   identity.ContentID
 	ReadCandidate  identity.ContentID
 	WriteCandidate identity.ContentID
 }
 
 // Available reports whether every column has a store fence.
 func (tags PayloadTags) Available() bool {
-	return tags.Heap.Available() && tags.HeapCandidate.Available() && tags.KeyRoute.Available() && tags.CallRoute.Available() && tags.HeapRoute.Available() && tags.PackRoute.Available() && tags.SourceRoute.Available() && tags.HeapRouteTag.Available() && tags.ReadCandidate.Available() && tags.WriteCandidate.Available()
+	return tags.Heap.Available() && tags.HeapCandidate.Available() && tags.KeyRoute.Available() && tags.CallRoute.Available() && tags.HeapRoute.Available() && tags.PackRoute.Available() && tags.SourceRoute.Available() && tags.ReadCandidate.Available() && tags.WriteCandidate.Available()
 }
 
 // Payloads is this axis's thin typed owner-column publisher: one Column per
@@ -61,7 +59,6 @@ type Payloads struct {
 	HeapRoute      *relbindgen.Column[HeapRouteFact]
 	PackRoute      *relbindgen.Column[PackRouteFact]
 	SourceRoute    *relbindgen.Column[SourceRouteFact]
-	HeapRouteTag   *relbindgen.Column[uint64]
 	ReadCandidate  *relbindgen.Column[indexdomain.Index]
 	WriteCandidate *relbindgen.Column[indexdomain.Index]
 }
@@ -124,13 +121,6 @@ func NewPayloads(types PayloadTypes, tags PayloadTags, reserve int) (Payloads, b
 	if payloads.SourceRoute, ok = relbindgen.NewColumn(types.SourceRoute, sourceRouteStore); !ok {
 		return Payloads{}, false
 	}
-	heapRouteTagStore, ok := relbindgen.NewStore[uint64](tags.HeapRouteTag, reserve)
-	if !ok {
-		return Payloads{}, false
-	}
-	if payloads.HeapRouteTag, ok = relbindgen.NewColumn(types.HeapRouteTag, heapRouteTagStore); !ok {
-		return Payloads{}, false
-	}
 	readCandidateStore, ok := relbindgen.NewStore[indexdomain.Index](tags.ReadCandidate, reserve)
 	if !ok {
 		return Payloads{}, false
@@ -150,7 +140,7 @@ func NewPayloads(types PayloadTypes, tags PayloadTags, reserve int) (Payloads, b
 
 // Available reports whether every column carries live storage.
 func (payloads Payloads) Available() bool {
-	return payloads.Heap.Available() && payloads.HeapCandidate.Available() && payloads.KeyRoute.Available() && payloads.CallRoute.Available() && payloads.HeapRoute.Available() && payloads.PackRoute.Available() && payloads.SourceRoute.Available() && payloads.HeapRouteTag.Available() && payloads.ReadCandidate.Available() && payloads.WriteCandidate.Available()
+	return payloads.Heap.Available() && payloads.HeapCandidate.Available() && payloads.KeyRoute.Available() && payloads.CallRoute.Available() && payloads.HeapRoute.Available() && payloads.PackRoute.Available() && payloads.SourceRoute.Available() && payloads.ReadCandidate.Available() && payloads.WriteCandidate.Available()
 }
 
 // Lattices are this axis's ascent witnesses. Each names the owner's own

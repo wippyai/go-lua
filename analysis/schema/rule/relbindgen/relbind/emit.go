@@ -72,13 +72,6 @@ func emitBinding(corpus Corpus, axis Axis, family Family) ([]byte, error) {
 		return nil, err
 	}
 	result, _ := corpus.Payload(family.Result)
-	resultType := result.Type
-	if !family.Publishes() {
-		// A family that publishes no fact still instantiates the substrate's
-		// result parameter, and the type it instantiates it with is the one
-		// that can hold nothing.
-		resultType = "struct{}"
-	}
 
 	var body bytes.Buffer
 	fmt.Fprintf(&body, "package %s\n\n", axis.Package)
@@ -131,23 +124,16 @@ func emitBinding(corpus Corpus, axis Axis, family Family) ([]byte, error) {
 	}
 	body.WriteString("}\n\n")
 
-	fmt.Fprintf(&body, "// %sJudgment is the owner mathematics this binding carries. The axis\n// states it by hand: nothing in this file can name a relation, a cell, a\n// buffer or an engine value, so the mathematics stays where its owner wrote\n// it and this artifact stays free of it.\ntype %sJudgment interface {\n\trelbindgen.Operation[%sArgument, %s]\n\tAvailable() bool\n}\n\n", family.Stem, family.Stem, family.Stem, resultType)
+	fmt.Fprintf(&body, "// %sJudgment is the owner mathematics this binding carries. The axis\n// states it by hand: nothing in this file can name a relation, a cell, a\n// buffer or an engine value, so the mathematics stays where its owner wrote\n// it and this artifact stays free of it.\ntype %sJudgment interface {\n\trelbindgen.Operation[%sArgument, %s]\n\tAvailable() bool\n}\n\n", family.Stem, family.Stem, family.Stem, result.Type)
 
 	fmt.Fprintf(&body, "// The hand-authored judgment answers this family's own contract, and the\n// assertion is what makes the two halves one binding.\nvar _ %sJudgment = %s{}\n\n", family.Stem, family.Judgment)
 
 	address := fmt.Sprintf("%d", family.Address)
-	switch family.Address {
-	case KeyedDestination:
+	if family.Address == KeyedDestination {
 		address = "relbindgen.KeyedDestination"
-	case NoDestination:
-		address = "relbindgen.NoDestination"
 	}
-	encoder := fmt.Sprintf("\n\t\tEncoder:   %sEncoder{columns: columns},", lower(family.Stem))
-	if !family.Publishes() {
-		encoder = ""
-	}
-	fmt.Fprintf(&body, "// Bind%s admits the %s family\n// under its sealed signature.\nfunc Bind%s(operation signature.Signature, judgment %sJudgment, columns %sColumns, refusal model.RefusalID) (binding.Factory, bool) {\n\tif judgment == nil || !judgment.Available() || !columns.Available() {\n\t\treturn nil, false\n\t}\n\treturn relbindgen.Bind(relbindgen.Spec[%sArgument, %s]{\n\t\tSignature: operation,\n\t\tDecoder:   %sDecoder{columns: columns},%s\n\t\tOperation: judgment,\n\t\tAddress:   %s,\n\t\tRefusal:   refusal,\n\t})\n}\n\n",
-		family.Stem, family.Label(), family.Stem, family.Stem, family.Stem, family.Stem, resultType, lower(family.Stem), encoder, address)
+	fmt.Fprintf(&body, "// Bind%s admits the %s family\n// under its sealed signature.\nfunc Bind%s(operation signature.Signature, judgment %sJudgment, columns %sColumns, refusal model.RefusalID) (binding.Factory, bool) {\n\tif judgment == nil || !judgment.Available() || !columns.Available() {\n\t\treturn nil, false\n\t}\n\treturn relbindgen.Bind(relbindgen.Spec[%sArgument, %s]{\n\t\tSignature: operation,\n\t\tDecoder:   %sDecoder{columns: columns},\n\t\tEncoder:   %sEncoder{columns: columns},\n\t\tOperation: judgment,\n\t\tAddress:   %s,\n\t\tRefusal:   refusal,\n\t})\n}\n\n",
+		family.Stem, family.Label(), family.Stem, family.Stem, family.Stem, family.Stem, result.Type, lower(family.Stem), lower(family.Stem), address)
 
 	fmt.Fprintf(&body, "type %sDecoder struct {\n\tcolumns %sColumns\n}\n\n", lower(family.Stem), family.Stem)
 	fmt.Fprintf(&body, "func (decoder %sDecoder) Decode(inputs relbindgen.Inputs) (%sArgument, bool) {\n", lower(family.Stem), family.Stem)
@@ -168,11 +154,8 @@ func emitBinding(corpus Corpus, axis Axis, family Family) ([]byte, error) {
 	}
 	body.WriteString("}, true\n}\n\n")
 
-	if !family.Publishes() {
-		return render(body.Bytes())
-	}
 	fmt.Fprintf(&body, "type %sEncoder struct {\n\tcolumns %sColumns\n}\n\n", lower(family.Stem), family.Stem)
-	fmt.Fprintf(&body, "func (encoder %sEncoder) Encode(outputs relbindgen.Outputs, value %s) bool {\n", lower(family.Stem), resultType)
+	fmt.Fprintf(&body, "func (encoder %sEncoder) Encode(outputs relbindgen.Outputs, value %s) bool {\n", lower(family.Stem), result.Type)
 	for index, column := range family.Outputs {
 		payload, _ := corpus.Payload(column.Payload)
 		carried := "value"
@@ -194,26 +177,14 @@ func emitBinding(corpus Corpus, axis Axis, family Family) ([]byte, error) {
 // per payload the axis declares, over its own solve-local store, and one
 // ascent authority per TypeID that states an order.
 func emitPayloads(axis Axis, owned []Payload) ([]byte, error) {
-	ascending := make([]Payload, 0, len(owned))
-	for _, payload := range owned {
-		if payload.Ascends() {
-			ascending = append(ascending, payload)
-		}
-	}
-
 	var body bytes.Buffer
 	fmt.Fprintf(&body, "package %s\n\n", axis.Package)
-	base := []string{
+	writeImports(&body, imports([]string{
 		`"github.com/wippyai/go-lua/analysis/identity"`,
 		`"github.com/wippyai/go-lua/analysis/relation/schema/model"`,
+		`"github.com/wippyai/go-lua/analysis/relation/semantic/binding"`,
 		`"github.com/wippyai/go-lua/analysis/schema/rule/relbindgen"`,
-	}
-	// An axis whose columns state no order publishes no ascent authority, so
-	// it never names the surface one is published through.
-	if len(ascending) != 0 {
-		base = append(base, `"github.com/wippyai/go-lua/analysis/relation/semantic/binding"`)
-	}
-	writeImports(&body, imports(base, owned, axis))
+	}, owned, axis))
 
 	body.WriteString("// PayloadTypes names the owner-issued TypeID each column of this axis\n// carries.\ntype PayloadTypes struct {\n")
 	for _, payload := range owned {
@@ -248,6 +219,12 @@ func emitPayloads(axis Axis, owned []Payload) ([]byte, error) {
 	writeConjunction(&body, owned, "payloads.%s.Available()")
 	body.WriteString("\n}\n\n")
 
+	ascending := make([]Payload, 0, len(owned))
+	for _, payload := range owned {
+		if payload.Ascends() {
+			ascending = append(ascending, payload)
+		}
+	}
 	if len(ascending) == 0 {
 		return render(body.Bytes())
 	}
@@ -287,9 +264,7 @@ func familyPayloads(corpus Corpus, family Family) ([]Payload, error) {
 	for _, column := range family.Outputs {
 		named[column.Payload] = true
 	}
-	if family.Publishes() {
-		named[family.Result] = true
-	}
+	named[family.Result] = true
 	used := make([]Payload, 0, len(named))
 	for _, payload := range corpus.Payloads {
 		if named[payload.Key] {

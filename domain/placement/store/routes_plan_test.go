@@ -5,7 +5,7 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/wippyai/go-lua/analysis/engine/operand"
+	"github.com/wippyai/go-lua/analysis/engine/execution"
 	"github.com/wippyai/go-lua/analysis/identity"
 	"github.com/wippyai/go-lua/analysis/lua/lower"
 	programartifact "github.com/wippyai/go-lua/analysis/program/artifact"
@@ -191,7 +191,7 @@ func TestRouteReducerAdmitsAuthenticatedSparsePlacementDefault(t *testing.T) {
 		t.Fatalf("authenticated route set=%#v/%t route=%#v/%t", plan, planOK, route, routeOK)
 	}
 
-	got, outcome := (familyReducer{candidate: candidate, input0: source}).Reduce(route.Key, operand.SelectedCell[placement.Fact]{
+	got, outcome := (familyReducer{candidate: candidate, input0: source}).Reduce(route.Key, execution.SelectedCell[placement.Fact]{
 		Value:   placement.DefaultFact(),
 		Present: false,
 		Tag:     route.Tag,

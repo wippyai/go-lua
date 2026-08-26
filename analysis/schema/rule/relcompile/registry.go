@@ -743,63 +743,6 @@ func (registry *Registry) Column(site Site, name Name) (model.ColumnID, error) {
 	return column, nil
 }
 
-// ColumnType resolves the semantic type one column carries. A caller that
-// holds a column asks the registry what it is typed as rather than rebuilding
-// the type's name, which only the installing owner knows.
-func (registry *Registry) ColumnType(site Site, name Name) (model.TypeID, error) {
-	if !name.Available() {
-		return model.TypeID{}, refuse(site, name, KindColumn, ReasonUnavailable)
-	}
-	if _, known := registry.columns[name]; !known {
-		return model.TypeID{}, refuse(site, name, KindColumn, ReasonUnknown)
-	}
-	typeID, ok := registry.columnType[name]
-	if !ok {
-		return model.TypeID{}, refuse(site, name, KindType, ReasonUndeclared)
-	}
-	return typeID, nil
-}
-
-// SealedSignature resolves the whole sealed signature installed under one
-// operation name.
-func (registry *Registry) SealedSignature(site Site, name Name) (signature.Signature, error) {
-	if !name.Available() {
-		return signature.Signature{}, refuse(site, name, KindSignature, ReasonUnavailable)
-	}
-	value, ok := registry.signatures[name]
-	if !ok {
-		return signature.Signature{}, refuse(site, name, KindSignature, ReasonUnknown)
-	}
-	return value, nil
-}
-
-// RelationKeyOf resolves the key one relation's rows are published under, by
-// the relation identity rather than by the name it was installed under.
-func (registry *Registry) RelationKeyOf(site Site, relation model.RelationID) (model.KeyID, error) {
-	for name, entry := range registry.relations {
-		if entry.id != relation {
-			continue
-		}
-		if !entry.publish.Available() {
-			return model.KeyID{}, refuse(site, name, KindPublicationKey, ReasonUndeclared)
-		}
-		return entry.publish, nil
-	}
-	return model.KeyID{}, refuse(site, Name{}, KindRelation, ReasonUnknown)
-}
-
-// RelationColumns returns the columns one relation declares, in the order its
-// owner installed them.
-func (registry *Registry) RelationColumns(site Site, relation model.RelationID) ([]model.ColumnID, error) {
-	for _, entry := range registry.relations {
-		if entry.id != relation {
-			continue
-		}
-		return append([]model.ColumnID(nil), entry.columns...), nil
-	}
-	return nil, refuse(site, Name{}, KindRelation, ReasonUnknown)
-}
-
 // Key resolves one authored key name.
 func (registry *Registry) Key(site Site, name Name) (model.KeyID, error) {
 	if !name.Available() {

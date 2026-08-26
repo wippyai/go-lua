@@ -10,7 +10,7 @@
 package formal
 
 import (
-	"github.com/wippyai/go-lua/analysis/engine/operand"
+	"github.com/wippyai/go-lua/analysis/engine/execution"
 	"github.com/wippyai/go-lua/analysis/program/target/contract"
 	"github.com/wippyai/go-lua/analysis/program/target/vocabulary"
 	calldomain "github.com/wippyai/go-lua/domain/call"
@@ -469,7 +469,7 @@ func planAddDenseDemand(schema placement.Schema, key heap.Key, escape placement.
 	return demands.add(denseRouteDemand{dense: dense, escape: escape, unknown: unknown || demands.allUnknown})
 }
 
-func addFactDemandDense(schema placement.Schema, values *valuedomain.Schema, actuals operand.SummaryVector[valuedomain.Value], ordinal int, escape placement.Escape, demands *denseDemandScratch) (unknown bool, ok bool) {
+func addFactDemandDense(schema placement.Schema, values *valuedomain.Schema, actuals execution.SummaryVector[valuedomain.Value], ordinal int, escape placement.Escape, demands *denseDemandScratch) (unknown bool, ok bool) {
 	if demands == nil || values == nil {
 		return false, false
 	}
@@ -517,7 +517,7 @@ func addOpenTailDemandDense(schema placement.Schema, values *valuedomain.Schema,
 	return true
 }
 
-func addUnknownOpenTailActualDemandDense(schema placement.Schema, values *valuedomain.Schema, actuals operand.SummaryVector[valuedomain.Value], ordinal int, demands *denseDemandScratch) bool {
+func addUnknownOpenTailActualDemandDense(schema placement.Schema, values *valuedomain.Schema, actuals execution.SummaryVector[valuedomain.Value], ordinal int, demands *denseDemandScratch) bool {
 	if values == nil {
 		return false
 	}
@@ -596,7 +596,7 @@ func addFormalOperationDemand(
 	operation vocabulary.Operation,
 	actualCount int,
 	runtimeTail bool,
-	actuals operand.SummaryVector[valuedomain.Value],
+	actuals execution.SummaryVector[valuedomain.Value],
 	demands *denseDemandScratch,
 ) bool {
 	if !schema.Valid() || values == nil || !values.Valid() || targetContract == nil || operation == 0 || demands == nil {
@@ -663,7 +663,7 @@ func addFormalOperationDemand(
 // planFor is the one formal-to-placement reduction used by both transfer and
 // derivation evidence. It accepts only already-selected Call/Value facts and
 // emits exact owner-fenced allocation keys or conservative all-root routes.
-func planFor(packs *packdomain.Schema, calls *calldomain.Algebra, schema placement.Schema, values *valuedomain.Schema, targetContract *contract.Contract, mounted calldomain.MountedCall, callFact calldomain.Value, actuals operand.SummaryVector[valuedomain.Value]) (routePlan, bool) {
+func planFor(packs *packdomain.Schema, calls *calldomain.Algebra, schema placement.Schema, values *valuedomain.Schema, targetContract *contract.Contract, mounted calldomain.MountedCall, callFact calldomain.Value, actuals execution.SummaryVector[valuedomain.Value]) (routePlan, bool) {
 	if packs == nil || calls == nil {
 		return routePlan{}, false
 	}

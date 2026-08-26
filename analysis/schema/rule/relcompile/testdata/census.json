@@ -4,8 +4,7 @@
     "plane": "family",
     "rule": "call-activation",
     "status": "COMPILES",
-    "sketch": "Publish(Apply(Project(Select(Join(Input,Select(Input))))))",
-    "certified": "CERTIFIED",
+    "sketch": "Publish(Apply(Select(Join(Input,Select(Input)))))",
     "expressions": 1
   },
   {
@@ -13,8 +12,7 @@
     "plane": "family",
     "rule": "call-dispatch",
     "status": "COMPILES",
-    "sketch": "Publish(Apply(Project(Select(Join(Input,Select(Input))))))",
-    "certified": "CERTIFIED",
+    "sketch": "Publish(Apply(Select(Join(Input,Select(Input)))))",
     "expressions": 1
   },
   {
@@ -22,8 +20,7 @@
     "plane": "family",
     "rule": "effect-body",
     "status": "COMPILES",
-    "sketch": "Publish(Apply(Project(Select(Join(Input,Select(Input)))))) | Publish(Apply(Project(Select(Join(Join(Input,Select(Input)),Select(Input))))))",
-    "certified": "CERTIFIED",
+    "sketch": "Publish(Apply(Select(Join(Input,Select(Input))))) | Publish(Apply(Select(Join(Join(Input,Select(Input)),Select(Input)))))",
     "expressions": 2
   },
   {
@@ -31,8 +28,7 @@
     "plane": "family",
     "rule": "effect-opaque",
     "status": "COMPILES",
-    "sketch": "Publish(Apply(Project(Select(Join(Input,Select(Input))))))",
-    "certified": "CERTIFIED",
+    "sketch": "Publish(Apply(Select(Join(Input,Select(Input)))))",
     "expressions": 1
   },
   {
@@ -40,8 +36,7 @@
     "plane": "family",
     "rule": "effect-selected",
     "status": "COMPILES",
-    "sketch": "Publish(Apply(Project(Select(Join(Input,Select(Input))))))",
-    "certified": "CERTIFIED",
+    "sketch": "Publish(Apply(Select(Join(Input,Select(Input)))))",
     "expressions": 1
   },
   {
@@ -49,8 +44,7 @@
     "plane": "family",
     "rule": "heap-empty",
     "status": "COMPILES",
-    "sketch": "Publish(Merge(Apply(Project(Select(Join(Input,Select(Input))))),Apply(Select(Input))))",
-    "certified": "authority[19]",
+    "sketch": "Publish(Merge(Apply(Select(Join(Input,Select(Input)))),Apply(Select(Input))))",
     "expressions": 1
   },
   {
@@ -59,7 +53,6 @@
     "rule": "heap-ingress",
     "status": "COMPILES",
     "sketch": "Publish(Apply(Select(Input)))",
-    "certified": "CERTIFIED",
     "expressions": 1
   },
   {
@@ -68,7 +61,6 @@
     "rule": "heap-bootstrap",
     "status": "COMPILES",
     "sketch": "Publish(Apply(Select(Input)))",
-    "certified": "CERTIFIED",
     "expressions": 1
   },
   {
@@ -76,8 +68,7 @@
     "plane": "family",
     "rule": "heap-formal-freeze",
     "status": "COMPILES",
-    "sketch": "Publish(Apply(Project(Select(Join(Join(Input,Select(Input)),Select(Input)))))) | Publish(Merge(Apply(Project(Select(Join(Join(Join(Join(Input,Select(Input)),Complete(Select(Input))),Select(Input)),Complete(Select(Input)))))),Select(Input)))",
-    "certified": "authority[19]",
+    "sketch": "Publish(Apply(Select(Join(Join(Input,Select(Input)),Select(Input))))) | Publish(Merge(Apply(Select(Join(Join(Join(Join(Input,Select(Input)),Complete(Select(Input))),Select(Input)),Complete(Select(Input))))),Select(Input)))",
     "expressions": 2
   },
   {
@@ -85,8 +76,7 @@
     "plane": "family",
     "rule": "raw-get",
     "status": "COMPILES",
-    "sketch": "Publish(Apply(Project(Select(Join(Input,Select(Input)))))) | Publish(Apply(Project(Select(Join(Input,Select(Input)))))) | Publish(Apply(Project(Select(Join(Input,Select(Input)))))) | Publish(Apply(Project(Select(Join(Input,Select(Input)))))) | Publish(Apply(Project(Select(Join(Join(Join(Input,Select(Input)),Select(Input)),Select(Input)))))) | Publish(Merge(Apply(Project(Select(Join(Join(Join(Join(Join(Input,Select(Input)),Select(Input)),Select(Input)),Select(Input)),Select(Input))))),Select(Input)))",
-    "certified": "authority[19]",
+    "sketch": "Publish(Apply(Select(Join(Input,Select(Input))))) | Publish(Apply(Select(Join(Input,Select(Input))))) | Publish(Apply(Select(Join(Input,Select(Input))))) | Publish(Apply(Select(Join(Input,Select(Input))))) | Publish(Apply(Select(Join(Input,Select(Input))))) | Publish(Merge(Apply(Select(Join(Join(Join(Input,Select(Input)),Select(Input)),Select(Input)))),Select(Input)))",
     "reason": "plan authored from the read chain; the rule declaration carries no Program",
     "expressions": 6
   },
@@ -95,8 +85,7 @@
     "plane": "family",
     "rule": "raw-set",
     "status": "COMPILES",
-    "sketch": "Publish(Apply(Project(Select(Join(Input,Select(Input)))))) | Publish(Apply(Project(Select(Join(Input,Select(Input)))))) | Publish(Apply(Project(Select(Join(Input,Select(Input)))))) | Publish(Apply(Project(Select(Join(Join(Join(Input,Select(Input)),Select(Input)),Select(Input)))))) | Publish(Merge(Apply(Project(Select(Join(Join(Join(Join(Input,Select(Input)),Select(Input)),Select(Input)),Complete(Select(Input)))))),Select(Input)))",
-    "certified": "authority[19]",
+    "sketch": "Publish(Apply(Select(Join(Input,Select(Input))))) | Publish(Apply(Select(Join(Input,Select(Input))))) | Publish(Apply(Select(Join(Input,Select(Input))))) | Publish(Apply(Select(Join(Input,Select(Input))))) | Publish(Merge(Apply(Select(Join(Join(Join(Input,Select(Input)),Select(Input)),Complete(Select(Input))))),Select(Input)))",
     "reason": "plan authored from the read chain; the rule declaration carries no Program",
     "expressions": 5
   },
@@ -105,8 +94,7 @@
     "plane": "family",
     "rule": "heap-publication-freeze",
     "status": "COMPILES",
-    "sketch": "Publish(Apply(Project(Select(Join(Join(Input,Select(Input)),Select(Input)))))) | Publish(Merge(Apply(Project(Select(Join(Join(Join(Join(Input,Select(Input)),Complete(Select(Input))),Select(Input)),Complete(Select(Input)))))),Select(Input)))",
-    "certified": "authority[19]",
+    "sketch": "Publish(Apply(Select(Join(Join(Input,Select(Input)),Select(Input))))) | Publish(Merge(Apply(Select(Join(Join(Join(Join(Input,Select(Input)),Complete(Select(Input))),Select(Input)),Complete(Select(Input))))),Select(Input)))",
     "expressions": 2
   },
   {
@@ -115,7 +103,6 @@
     "rule": "pack-source",
     "status": "COMPILES",
     "sketch": "Publish(Apply(Select(Input)))",
-    "certified": "CERTIFIED",
     "expressions": 1
   },
   {
@@ -123,8 +110,7 @@
     "plane": "family",
     "rule": "placement-allocation-birth",
     "status": "COMPILES",
-    "sketch": "Publish(Merge(Apply(Project(Select(Join(Input,Select(Input))))),Select(Input)))",
-    "certified": "authority[19]",
+    "sketch": "Publish(Merge(Apply(Select(Join(Input,Select(Input)))),Select(Input)))",
     "expressions": 1
   },
   {
@@ -132,8 +118,7 @@
     "plane": "family",
     "rule": "placement-closure-capture",
     "status": "COMPILES",
-    "sketch": "Publish(Apply(Project(Select(Join(Input,Select(Input)))))) | Publish(Apply(Project(Select(Join(Join(Input,Select(Input)),Select(Input)))))) | Publish(Merge(Apply(Project(Select(Join(Join(Join(Input,Select(Input)),Select(Input)),Select(Input))))),Select(Input)))",
-    "certified": "authority[19]",
+    "sketch": "Publish(Apply(Select(Join(Input,Select(Input))))) | Publish(Apply(Select(Join(Join(Input,Select(Input)),Select(Input))))) | Publish(Merge(Apply(Select(Join(Join(Join(Input,Select(Input)),Select(Input)),Select(Input)))),Select(Input)))",
     "expressions": 3
   },
   {
@@ -141,8 +126,7 @@
     "plane": "family",
     "rule": "placement-containment",
     "status": "COMPILES",
-    "sketch": "Publish(Apply(Project(Select(Join(Join(Input,Select(Input)),Select(Input)))))) | Publish(Apply(Project(Select(Join(Join(Join(Input,Complete(Select(Input))),Complete(Select(Input))),Select(Input))))))",
-    "certified": "CERTIFIED",
+    "sketch": "Publish(Apply(Select(Join(Join(Input,Select(Input)),Select(Input))))) | Publish(Apply(Select(Join(Join(Join(Input,Complete(Select(Input))),Complete(Select(Input))),Select(Input)))))",
     "expressions": 2
   },
   {
@@ -150,8 +134,7 @@
     "plane": "family",
     "rule": "placement-formal",
     "status": "COMPILES",
-    "sketch": "Publish(Apply(Project(Select(Join(Join(Input,Select(Input)),Select(Input)))))) | Publish(Apply(Project(Select(Join(Join(Join(Join(Input,Select(Input)),Complete(Select(Input))),Select(Input)),Complete(Select(Input)))))))",
-    "certified": "CERTIFIED",
+    "sketch": "Publish(Apply(Select(Join(Join(Input,Select(Input)),Select(Input))))) | Publish(Apply(Select(Join(Join(Join(Join(Input,Select(Input)),Complete(Select(Input))),Select(Input)),Complete(Select(Input))))))",
     "expressions": 2
   },
   {
@@ -159,8 +142,7 @@
     "plane": "family",
     "rule": "placement-fresh-birth",
     "status": "COMPILES",
-    "sketch": "Publish(Merge(Apply(Project(Select(Join(Input,Select(Input))))),Select(Input)))",
-    "certified": "authority[19]",
+    "sketch": "Publish(Merge(Apply(Select(Join(Input,Select(Input)))),Select(Input)))",
     "expressions": 1
   },
   {
@@ -168,8 +150,7 @@
     "plane": "family",
     "rule": "placement-publication-escape",
     "status": "COMPILES",
-    "sketch": "Publish(Apply(Project(Select(Join(Input,Select(Input)))))) | Publish(Apply(Project(Select(Join(Join(Input,Select(Input)),Select(Input)))))) | Publish(Merge(Apply(Project(Select(Join(Join(Join(Input,Select(Input)),Select(Input)),Select(Input))))),Select(Input)))",
-    "certified": "authority[19]",
+    "sketch": "Publish(Apply(Select(Join(Input,Select(Input))))) | Publish(Apply(Select(Join(Join(Input,Select(Input)),Select(Input))))) | Publish(Merge(Apply(Select(Join(Join(Join(Input,Select(Input)),Select(Input)),Select(Input)))),Select(Input)))",
     "expressions": 3
   },
   {
@@ -177,8 +158,7 @@
     "plane": "family",
     "rule": "placement-return-escape",
     "status": "COMPILES",
-    "sketch": "Publish(Apply(Project(Select(Join(Join(Input,Select(Input)),Select(Input)))))) | Publish(Apply(Project(Select(Join(Join(Join(Join(Input,Complete(Select(Input))),Complete(Select(Input))),Select(Input)),Complete(Select(Input)))))))",
-    "certified": "Join output repeats a nominal column identity",
+    "sketch": "Publish(Apply(Select(Join(Join(Input,Select(Input)),Select(Input))))) | Publish(Apply(Select(Join(Join(Join(Join(Input,Complete(Select(Input))),Complete(Select(Input))),Select(Input)),Complete(Select(Input))))))",
     "expressions": 2
   },
   {
@@ -186,8 +166,7 @@
     "plane": "family",
     "rule": "placement-storage",
     "status": "COMPILES",
-    "sketch": "Publish(Apply(Project(Select(Join(Input,Select(Input)))))) | Publish(Apply(Project(Select(Join(Join(Input,Select(Input)),Select(Input))))))",
-    "certified": "CERTIFIED",
+    "sketch": "Publish(Apply(Select(Join(Input,Select(Input))))) | Publish(Apply(Select(Join(Join(Input,Select(Input)),Select(Input)))))",
     "expressions": 2
   },
   {
@@ -195,8 +174,7 @@
     "plane": "family",
     "rule": "placement-suspension",
     "status": "COMPILES",
-    "sketch": "Publish(Apply(Project(Select(Join(Input,Select(Input)))))) | Publish(Apply(Project(Select(Join(Join(Input,Select(Input)),Select(Input)))))) | Publish(Merge(Apply(Project(Select(Join(Join(Join(Input,Complete(Select(Input))),Complete(Select(Input))),Complete(Select(Input)))))),Select(Input)))",
-    "certified": "authority[19]",
+    "sketch": "Publish(Apply(Select(Join(Input,Select(Input))))) | Publish(Apply(Select(Join(Join(Input,Select(Input)),Select(Input))))) | Publish(Merge(Apply(Select(Join(Join(Join(Input,Complete(Select(Input))),Complete(Select(Input))),Complete(Select(Input))))),Select(Input)))",
     "expressions": 3
   },
   {
@@ -204,8 +182,7 @@
     "plane": "family",
     "rule": "placement-suspension-evidence",
     "status": "COMPILES",
-    "sketch": "Publish(Apply(Project(Select(Join(Input,Select(Input)))))) | Publish(Apply(Project(Select(Join(Join(Input,Select(Input)),Select(Input)))))) | Publish(Merge(Apply(Project(Select(Join(Join(Join(Input,Complete(Select(Input))),Complete(Select(Input))),Complete(Select(Input)))))),Select(Input)))",
-    "certified": "authority[19]",
+    "sketch": "Publish(Apply(Select(Join(Input,Select(Input))))) | Publish(Apply(Select(Join(Join(Input,Select(Input)),Select(Input))))) | Publish(Merge(Apply(Select(Join(Join(Join(Input,Complete(Select(Input))),Complete(Select(Input))),Complete(Select(Input))))),Select(Input)))",
     "expressions": 3
   },
   {
@@ -213,8 +190,7 @@
     "plane": "family",
     "rule": "placement-transfer",
     "status": "COMPILES",
-    "sketch": "Publish(Apply(Project(Select(Join(Join(Input,Select(Input)),Select(Input)))))) | Publish(Apply(Project(Select(Join(Join(Join(Join(Input,Select(Input)),Complete(Select(Input))),Select(Input)),Complete(Select(Input)))))))",
-    "certified": "CERTIFIED",
+    "sketch": "Publish(Apply(Select(Join(Join(Input,Select(Input)),Select(Input))))) | Publish(Apply(Select(Join(Join(Join(Join(Input,Select(Input)),Complete(Select(Input))),Select(Input)),Complete(Select(Input))))))",
     "expressions": 2
   },
   {
@@ -222,8 +198,7 @@
     "plane": "family",
     "rule": "static-transfer",
     "status": "COMPILES",
-    "sketch": "Publish(Merge(Apply(Project(Select(Join(Input,Select(Input))))),Select(Input)))",
-    "certified": "authority[19]",
+    "sketch": "Publish(Merge(Apply(Select(Join(Input,Select(Input)))),Select(Input)))",
     "expressions": 1
   },
   {
@@ -231,8 +206,7 @@
     "plane": "family",
     "rule": "typestate-obligation",
     "status": "COMPILES",
-    "sketch": "Publish(Apply(Project(Select(Join(Join(Input,Select(Input)),Select(Input)))))) | Publish(Merge(Apply(Project(Select(Join(Join(Join(Input,Select(Input)),Select(Input)),Complete(Select(Input)))))),Select(Input)))",
-    "certified": "authority[19]",
+    "sketch": "Publish(Apply(Select(Join(Input,Select(Input))))) | Publish(Merge(Apply(Select(Join(Join(Input,Select(Input)),Complete(Select(Input))))),Select(Input)))",
     "expressions": 2
   },
   {
@@ -241,7 +215,6 @@
     "rule": "value-allocation",
     "status": "COMPILES",
     "sketch": "Publish(Merge(Apply(Select(Input)),Apply(Select(Input))))",
-    "certified": "authority[19]",
     "expressions": 1
   },
   {
@@ -249,8 +222,7 @@
     "plane": "family",
     "rule": "value-binary-arithmetic",
     "status": "COMPILES",
-    "sketch": "Publish(Merge(Apply(Project(Select(Join(Join(Input,Select(Input)),Select(Input))))),Select(Input)))",
-    "certified": "Join output repeats a nominal column identity; authority[19]",
+    "sketch": "Publish(Merge(Apply(Select(Join(Join(Input,Select(Input)),Select(Input)))),Select(Input)))",
     "expressions": 1
   },
   {
@@ -258,8 +230,7 @@
     "plane": "family",
     "rule": "value-callresult-body",
     "status": "COMPILES",
-    "sketch": "Publish(Apply(Project(Select(Join(Input,Select(Input)))))) | Publish(Merge(Apply(Project(Select(Join(Join(Input,Select(Input)),Select(Input))))),Select(Input)))",
-    "certified": "authority[19]",
+    "sketch": "Publish(Apply(Select(Join(Input,Select(Input))))) | Publish(Merge(Apply(Select(Join(Join(Input,Select(Input)),Select(Input)))),Select(Input)))",
     "expressions": 2
   },
   {
@@ -268,7 +239,6 @@
     "rule": "value-bootstrap",
     "status": "COMPILES",
     "sketch": "Publish(Apply(Select(Input)))",
-    "certified": "CERTIFIED",
     "expressions": 1
   },
   {
@@ -276,8 +246,7 @@
     "plane": "family",
     "rule": "value-binary-equality",
     "status": "COMPILES",
-    "sketch": "Publish(Merge(Apply(Project(Select(Join(Join(Input,Select(Input)),Select(Input))))),Select(Input)))",
-    "certified": "Join output repeats a nominal column identity; authority[19]",
+    "sketch": "Publish(Merge(Apply(Select(Join(Join(Input,Select(Input)),Select(Input)))),Select(Input)))",
     "expressions": 1
   },
   {
@@ -285,8 +254,7 @@
     "plane": "family",
     "rule": "value-callresult-freshresult",
     "status": "COMPILES",
-    "sketch": "Publish(Apply(Project(Select(Join(Input,Select(Input)))))) | Publish(Merge(Apply(Project(Select(Join(Join(Input,Select(Input)),Complete(Select(Input)))))),Apply(Select(Input))))",
-    "certified": "authority[19]",
+    "sketch": "Publish(Apply(Select(Join(Input,Select(Input))))) | Publish(Merge(Apply(Select(Join(Join(Input,Select(Input)),Complete(Select(Input))))),Apply(Select(Input))))",
     "expressions": 2
   },
   {
@@ -294,8 +262,7 @@
     "plane": "family",
     "rule": "value-callresult-moduleload",
     "status": "COMPILES",
-    "sketch": "Publish(Merge(Apply(Project(Select(Join(Join(Input,Select(Input)),Select(Input))))),Select(Input)))",
-    "certified": "authority[19]",
+    "sketch": "Publish(Merge(Apply(Select(Join(Join(Input,Select(Input)),Select(Input)))),Select(Input)))",
     "expressions": 1
   },
   {
@@ -303,8 +270,7 @@
     "plane": "family",
     "rule": "value-binary-order",
     "status": "COMPILES",
-    "sketch": "Publish(Merge(Apply(Project(Select(Join(Join(Input,Select(Input)),Select(Input))))),Select(Input)))",
-    "certified": "Join output repeats a nominal column identity; authority[19]",
+    "sketch": "Publish(Merge(Apply(Select(Join(Join(Input,Select(Input)),Select(Input)))),Select(Input)))",
     "expressions": 1
   },
   {
@@ -312,8 +278,7 @@
     "plane": "family",
     "rule": "value-presence-refinement",
     "status": "COMPILES",
-    "sketch": "Publish(Merge(Apply(Project(Select(Join(Input,Select(Input))))),Select(Input)))",
-    "certified": "authority[19]",
+    "sketch": "Publish(Merge(Apply(Select(Join(Input,Select(Input)))),Select(Input)))",
     "expressions": 1
   },
   {
@@ -321,8 +286,7 @@
     "plane": "family",
     "rule": "value-callresult-resultalias",
     "status": "COMPILES",
-    "sketch": "Publish(Apply(Project(Select(Join(Input,Select(Input)))))) | Publish(Merge(Apply(Project(Select(Join(Join(Input,Select(Input)),Select(Input))))),Select(Input)))",
-    "certified": "authority[19]",
+    "sketch": "Publish(Apply(Select(Join(Input,Select(Input))))) | Publish(Merge(Apply(Select(Join(Join(Input,Select(Input)),Select(Input)))),Select(Input)))",
     "expressions": 2
   },
   {
@@ -330,8 +294,7 @@
     "plane": "family",
     "rule": "value-runtime-kind-call",
     "status": "COMPILES",
-    "sketch": "Publish(Merge(Apply(Project(Select(Join(Join(Join(Join(Input,Select(Input)),Select(Input)),Select(Input)),Select(Input))))),Select(Input)))",
-    "certified": "Join output repeats a nominal column identity; authority[19]",
+    "sketch": "Publish(Merge(Apply(Select(Join(Join(Join(Join(Input,Select(Input)),Select(Input)),Select(Input)),Select(Input)))),Select(Input)))",
     "expressions": 1
   },
   {
@@ -340,7 +303,6 @@
     "rule": "value-source",
     "status": "COMPILES",
     "sketch": "Publish(Apply(Select(Input)))",
-    "certified": "CERTIFIED",
     "expressions": 1
   },
   {
@@ -348,8 +310,7 @@
     "plane": "family",
     "rule": "value-transfer",
     "status": "COMPILES",
-    "sketch": "Publish(Merge(Apply(Project(Select(Join(Input,Select(Input))))),Select(Input)))",
-    "certified": "authority[19]",
+    "sketch": "Publish(Merge(Apply(Select(Join(Input,Select(Input)))),Select(Input)))",
     "expressions": 1
   }
 ]

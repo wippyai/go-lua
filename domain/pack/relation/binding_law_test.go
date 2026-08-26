@@ -76,11 +76,9 @@ func TestPackSourceSeedsTheSourceItWasGiven(t *testing.T) {
 func TestThePackAlgebraResolvesByTypeAlone(t *testing.T) {
 	fixture := relationfixture.New(t)
 	place := harness.New(t, "row/pack")
-	var types relation.PayloadTypes
-	var tags relation.PayloadTags
-	place.InstallTypes(t, &types)
-	place.InstallTags(t, &tags)
-	packType := types.Pack
+	packType := place.TypeID(t, "type/pack")
+	types := relation.PayloadTypes{Pack: packType, PackSourceCandidate: place.TypeID(t, "type/pack-source")}
+	tags := relation.PayloadTags{Pack: harness.Content(t, "store/pack"), PackSourceCandidate: harness.Content(t, "store/pack-source")}
 	payloads, ok := relation.NewPayloads(types, tags, reserve)
 	if !ok {
 		t.Fatal("install the pack columns")

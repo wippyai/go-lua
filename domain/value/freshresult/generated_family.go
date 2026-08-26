@@ -10,7 +10,6 @@ package freshresult
 
 import (
 	"github.com/wippyai/go-lua/analysis/engine/execution"
-	"github.com/wippyai/go-lua/analysis/engine/operand"
 	"github.com/wippyai/go-lua/analysis/schema/rule/program"
 	"github.com/wippyai/go-lua/analysis/schema/structure"
 	"github.com/wippyai/go-lua/domain/call"
@@ -33,7 +32,7 @@ type familyReducer struct {
 // Reduce answers one selected route. The route coordinate, cell, and tag
 // are the three owner-issued halves of the one member the read observed,
 // so the fold never re-derives a destination or correlation.
-func (fold familyReducer) Reduce(routeCoordinate value.Coordinate, cell operand.SelectedCell[value.Value]) (value.Value, structure.ReductionOutcome) {
+func (fold familyReducer) Reduce(routeCoordinate value.Coordinate, cell execution.SelectedCell[value.Value]) (value.Value, structure.ReductionOutcome) {
 	return fold.state.FreshResultFact(fold.candidate, fold.input0, routeCoordinate, cell.Tag, cell.Value)
 }
 
@@ -77,7 +76,7 @@ func (sealed *sealedFamily) NewExecutor(run *execution.Run) execution.Executor {
 		family:  sealed,
 		run:     run,
 		members: make([]execution.RouteMember, sealed.width),
-		cells:   make([]operand.SelectedCell[value.Value], sealed.width),
+		cells:   make([]execution.SelectedCell[value.Value], sealed.width),
 		routes:  make([]value.Coordinate, sealed.width),
 		carries: make([]execution.RouteCarry[value.Value], sealed.width),
 	}
@@ -96,7 +95,7 @@ type familyWorker struct {
 	read1   execution.SelectedScratch[value.DenseCoordinate, value.Value]
 	write   execution.RouteScratch[value.DenseCoordinate, value.Value]
 	members []execution.RouteMember
-	cells   []operand.SelectedCell[value.Value]
+	cells   []execution.SelectedCell[value.Value]
 	routes  []value.Coordinate
 	carries []execution.RouteCarry[value.Value]
 }
