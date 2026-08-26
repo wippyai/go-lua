@@ -118,6 +118,20 @@ func TestFreezeRefusesDuplicateCandidatesAndDuplicateKeys(t *testing.T) {
 	}
 }
 
+func TestNewVectorPreservesAuthenticatedEmptyKeys(t *testing.T) {
+	fixture := newFixture(t)
+	vector, ok := expand.NewVector(fixture.candidate, fixture.publisherA, []identity.ContentID{})
+	if !ok || !vector.Available() || vector.KeyCount() != 0 {
+		t.Fatal("authenticated empty vector was not preserved")
+	}
+	if _, ok := vector.KeyAt(0); ok {
+		t.Fatal("empty vector exposed a key")
+	}
+	if vector, ok := expand.NewVector(fixture.candidate, fixture.publisherA, nil); ok || vector.Available() {
+		t.Fatal("unavailable nil vector was admitted")
+	}
+}
+
 func TestFreezeRefusesMissingMountedScope(t *testing.T) {
 	fixture := newFixture(t)
 	withoutScope := model.DefineExpandContract(fixture.contract.Candidate(), fixture.contract.Publisher(), fixture.contract.Reader(), fixture.contract.Key(), fixture.contract.Correlation())

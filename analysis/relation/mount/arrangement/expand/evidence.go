@@ -35,7 +35,11 @@ func NewVector(candidate, publisher model.RowID, keys []identity.ContentID) (Vec
 	if !candidate.Available() || !publisher.Available() || keys == nil {
 		return Vector{}, false
 	}
-	copyOf := append([]identity.ContentID(nil), keys...)
+	// Allocate explicitly so an authenticated empty vector remains a non-nil
+	// slice.  append onto a nil slice would erase the distinction between a
+	// closed empty extent and an unavailable response.
+	copyOf := make([]identity.ContentID, len(keys))
+	copy(copyOf, keys)
 	for index, key := range copyOf {
 		if !key.Available() {
 			return Vector{}, false

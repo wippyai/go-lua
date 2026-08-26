@@ -85,7 +85,7 @@ func Specialize(cert certificate.Certificate, inventory Inventory, factory bindi
 		return Mounted{}, false
 	}
 
-	denominatorRefs, denominatorsOK := certificateDenominators(signatures, cert.ObservationDenominators(), cert.CorrelationDenominators(), cert.CorrelationPartitions(), cert.CompleteDenominators())
+	denominatorRefs, denominatorsOK := RequiredDenominators(cert)
 	if !denominatorsOK {
 		return Mounted{}, false
 	}
@@ -280,6 +280,17 @@ func bindLineage(factory lineage.Factory, runtime binding.Fence) (lineage.Author
 		return nil, model.OwnerID{}, identity.ContentID{}, false
 	}
 	return authority, owner, identityValue, true
+}
+
+// RequiredDenominators returns the exact denominator census consumed by
+// Specialize. Mount inventory constructors use this projection before
+// binding, so their owner population set is checked against the same sealed
+// certificate authorities and ordering as the mount itself.
+func RequiredDenominators(cert certificate.Certificate) ([]model.DenominatorRef, bool) {
+	if !cert.Available() {
+		return nil, false
+	}
+	return certificateDenominators(cert.Signatures(), cert.ObservationDenominators(), cert.CorrelationDenominators(), cert.CorrelationPartitions(), cert.CompleteDenominators())
 }
 
 func certificateDenominators(signatures []signature.Signature, observationDenominators, correlationDenominators []model.DenominatorRef, partitions []certificate.CorrelationPartition, completeDenominators []model.DenominatorRef) ([]model.DenominatorRef, bool) {
