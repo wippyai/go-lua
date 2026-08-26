@@ -17,11 +17,11 @@ type standing uint8
 const (
 	// bound means one declared family carries this operation.
 	bound standing = iota
-	// planIncomplete means the owner mathematics is published and reachable,
-	// and the authored plan does not deliver everything the enumeration reads.
-	// It is a declaration-surface finding against the plan, not an ABI gap,
-	// and the remedy is a join the plan does not yet state.
-	planIncomplete
+	// abiIncomplete means the authored plan delivers every read the
+	// enumeration makes, and the owner entry point takes an operand no caller
+	// outside domain/heap/index can spell. It is an ABI finding against the
+	// owner's publication, and the remedy is a statement the owner makes.
+	abiIncomplete
 )
 
 // operation is one semantic operation the two authored indexed raw-access
@@ -45,35 +45,36 @@ type operation struct {
 // protocol this engine replaces: what was once a gap in what the owner said is
 // closed.
 //
-// What remains is one gap, and it is in what the plan delivers. Four
-// operations read a frame the authored join list does not supply. A pack
-// expansion enumerates the payloads one selected route carries under a key
-// selector, and its step joins the route relation onto the heap facts alone. A
-// reduction re-enumerates the receiver's calls and rooted routes and looks up
-// the fact each one selected, and its rule joins three relations that include
-// neither the call facts nor the heap facts. Neither is answerable by this
-// layer: a binding that filled in a frame the plan did not deliver would be
-// answering for a plan nobody authored.
+// What remains is one gap, and it is in what the owner publishes. Four
+// operations name an exported entry point that takes an operand only their own
+// package can spell. The pack expansion takes a heapdomain.KeySelector, and the
+// topology projects one only through its unexported selectors and heap schema.
+// The two reductions take RawGetFrame and RawSetFrame, whose every selection
+// field is typed by the unexported rawSelected, so the struct is exported and
+// unconstructible. Neither is answerable by this layer: a binding that reached
+// past an owner's own visibility would be answering for a publication nobody
+// made.
 func rawAccess() []operation {
 	return []operation{
 		{plan: "raw-get/key-routes", stem: "RawGetKeyRoutes", entry: "index.Index.DynamicKey with (*index.Topology).CoordinateName", state: bound},
 		{plan: "raw-get/call-routes", stem: "RawGetCallRoutes", entry: "(*index.Topology).VisitReceiverCallDemand", state: bound},
 		{plan: "raw-get/heap-routes", stem: "HeapReceiverRoutes", entry: "(*index.Topology).VisitReceiver", state: bound},
-		{plan: "raw-get/pack-routes", stem: "RawGetPackRoutes", entry: "(*index.Topology).VisitRoutePayloads", state: planIncomplete},
+		{plan: "raw-get/pack-routes", stem: "RawGetPackRoutes", entry: "(*index.Topology).VisitRoutePayloads", state: abiIncomplete},
 		{plan: "raw-get/source-routes", stem: "RawGetSourceRoutes", entry: "(*index.Topology).VisitPayloadSources", state: bound},
-		{plan: "raw-get/result", stem: "RawGetResult", entry: "(*index.Topology).RawGetReduce", state: planIncomplete},
+		{plan: "raw-get/result", stem: "RawGetResult", entry: "(*index.Topology).RawGetReduce", state: abiIncomplete},
 		{plan: "raw-set/key-routes", stem: "RawSetKeyRoutes", entry: "index.Index.DynamicKey with (*index.Topology).CoordinateName", state: bound},
 		{plan: "raw-set/heap-routes", stem: "HeapReceiverRoutes", entry: "(*index.Topology).VisitReceiver", state: bound},
-		{plan: "raw-set/pack-routes", stem: "RawSetPackRoutes", entry: "(*index.Topology).VisitRoutePayloads", state: planIncomplete},
+		{plan: "raw-set/pack-routes", stem: "RawSetPackRoutes", entry: "(*index.Topology).VisitRoutePayloads", state: abiIncomplete},
 		{plan: "raw-set/source-routes", stem: "RawSetSourceRoutes", entry: "(*index.Topology).VisitPayloadSources", state: bound},
-		{plan: "raw-set/commit", stem: "RawSetCommit", entry: "(*index.Topology).RawSetMutateRoute", state: planIncomplete},
+		{plan: "raw-set/commit", stem: "RawSetCommit", entry: "(*index.Topology).RawSetMutateRoute", state: abiIncomplete},
 	}
 }
 
-// TestEveryRawAccessEnumerationIsAPublishedOwnerJudgment states the closure of
-// the original gap. Every operation of both plans names an exported owner
-// entry point, so no binding is waiting on the owner to say something, and the
-// hot rule and any standing plan reach the same statement of each enumeration.
+// TestEveryRawAccessEnumerationIsAPublishedOwnerJudgment states what the owner
+// names. Every operation of both plans names an exported owner entry point, so
+// the hot rule and any standing plan reach the same statement of each
+// enumeration. Naming an exported entry point is not the same as being callable
+// from outside: what four of them still owe is an operand a caller can spell.
 func TestEveryRawAccessEnumerationIsAPublishedOwnerJudgment(t *testing.T) {
 	for _, entry := range rawAccess() {
 		if entry.entry == "" {
@@ -136,7 +137,7 @@ func TestTheOwnerEnumerationsAreReallyReachable(t *testing.T) {
 func TestEveryUnboundRawAccessOperationIsCarriedAsANamedDebt(t *testing.T) {
 	unbound := map[string]bool{}
 	for _, entry := range rawAccess() {
-		if entry.state == planIncomplete {
+		if entry.state == abiIncomplete {
 			unbound[entry.stem] = true
 		}
 	}
@@ -152,11 +153,11 @@ func TestEveryUnboundRawAccessOperationIsCarriedAsANamedDebt(t *testing.T) {
 			continue
 		}
 		pending[family.Stem] = true
-		if !strings.Contains(family.Pending, "w0-plan-incomplete") {
+		if !strings.Contains(family.Pending, "w0-abi-incomplete") {
 			t.Errorf("family %s carries a debt that is not tagged with what blocks it", family.Stem)
 		}
-		if !strings.Contains(family.Pending, "the authored") {
-			t.Errorf("family %s carries a debt that does not name the authored statement that blocks it", family.Stem)
+		if !strings.Contains(family.Pending, "the owner") && !strings.Contains(family.Pending, "the authored") {
+			t.Errorf("family %s carries a debt that does not name the statement that blocks it", family.Stem)
 		}
 	}
 	if declared == 0 {
@@ -197,9 +198,9 @@ func TestEveryUnboundRawAccessOperationIsCarriedAsANamedDebt(t *testing.T) {
 	}
 	blocked := make([]string, 0, len(unbound))
 	for _, entry := range rawAccess() {
-		if entry.state == planIncomplete {
+		if entry.state == abiIncomplete {
 			blocked = append(blocked, entry.plan)
 		}
 	}
-	t.Logf("raw-access operations authored: %d, bound: %d, blocked on the plan: %v", len(rawAccess()), len(rawAccess())-len(blocked), blocked)
+	t.Logf("raw-access operations authored: %d, bound: %d, blocked on the owner's publication: %v", len(rawAccess()), len(rawAccess())-len(blocked), blocked)
 }

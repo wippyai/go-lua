@@ -85,8 +85,8 @@
     "plane": "family",
     "rule": "raw-get",
     "status": "COMPILES",
-    "sketch": "Publish(Apply(Select(Join(Input,Select(Input))))) | Publish(Apply(Select(Join(Input,Select(Input))))) | Publish(Apply(Select(Join(Input,Select(Input))))) | Publish(Apply(Select(Join(Input,Select(Input))))) | Publish(Apply(Select(Join(Input,Select(Input))))) | Publish(Merge(Apply(Select(Join(Join(Join(Input,Select(Input)),Select(Input)),Select(Input)))),Select(Input)))",
-    "certified": "Apply input column is not in child result; authority[11]; authority[19]",
+    "sketch": "Publish(Apply(Project(Select(Join(Input,Select(Input)))))) | Publish(Apply(Project(Select(Join(Input,Select(Input)))))) | Publish(Apply(Project(Select(Join(Input,Select(Input)))))) | Publish(Apply(Project(Select(Join(Input,Select(Input)))))) | Publish(Apply(Project(Select(Join(Join(Input,Select(Input)),Select(Input)))))) | Publish(Merge(Apply(Project(Select(Join(Join(Join(Join(Join(Input,Select(Input)),Select(Input)),Select(Input)),Select(Input)),Select(Input))))),Select(Input)))",
+    "certified": "authority[19]",
     "reason": "plan authored from the read chain; the rule declaration carries no Program",
     "expressions": 6
   },
@@ -95,8 +95,8 @@
     "plane": "family",
     "rule": "raw-set",
     "status": "COMPILES",
-    "sketch": "Publish(Apply(Select(Join(Input,Select(Input))))) | Publish(Apply(Select(Join(Input,Select(Input))))) | Publish(Apply(Select(Join(Input,Select(Input))))) | Publish(Apply(Select(Join(Input,Select(Input))))) | Publish(Merge(Apply(Select(Join(Join(Join(Input,Select(Input)),Select(Input)),Complete(Select(Input))))),Select(Input)))",
-    "certified": "Apply input column is not in child result; authority[11]; authority[19]",
+    "sketch": "Publish(Apply(Project(Select(Join(Input,Select(Input)))))) | Publish(Apply(Project(Select(Join(Input,Select(Input)))))) | Publish(Apply(Project(Select(Join(Input,Select(Input)))))) | Publish(Apply(Project(Select(Join(Join(Input,Select(Input)),Select(Input)))))) | Publish(Merge(Apply(Project(Select(Join(Join(Join(Join(Input,Select(Input)),Select(Input)),Select(Input)),Complete(Select(Input)))))),Select(Input)))",
+    "certified": "authority[19]",
     "reason": "plan authored from the read chain; the rule declaration carries no Program",
     "expressions": 5
   },

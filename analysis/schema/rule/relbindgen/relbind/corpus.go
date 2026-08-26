@@ -6,13 +6,14 @@ import (
 )
 
 // The two reasons the remaining raw-access operations carry. Both are the same
-// finding: the owner publishes the judgment, and the authored plan's join list
-// does not deliver the frame that judgment reads. The remedy is a join the
-// plan states, never a lowering this layer invents or a frame it fills in, so
-// the rows are declared, named, and left unbound.
+// finding: the authored plan states every read these operations make, and the
+// owner's entry point takes an operand no caller outside its own package can
+// spell. The remedy is a publication the owner makes, never a lowering this
+// layer invents or a frame it fills in, so the rows are declared, named, and
+// left unbound.
 const (
-	planGapRawPackRoutes = "w0-plan-incomplete: the authored pack expansion joins the route relation onto the heap facts alone, so the key selector its enumeration reads never reaches the frame"
-	planGapRawReduction  = "w0-plan-incomplete: the authored reduction joins three relations, and the owner reduction reads the call and heap fact selections the plan does not deliver"
+	abiGapRawPackRoutes = "w0-abi-incomplete: the authored pack expansion joins the heap facts and the key routes its enumeration reads, and VisitRoutePayloads takes a heapdomain.KeySelector the owner projects only through the unexported visitKeySelectors over its unexported selectors and heap schema"
+	abiGapRawReduction  = "w0-abi-incomplete: the authored reduction joins every fact selection its enumeration reads, and RawGetReduce and RawSetMutateRoute take frames whose every selection field is typed by the unexported rawSelected, so no caller outside domain/heap/index can construct one"
 )
 
 // scalar is the delivery a single-cell input carries.
@@ -368,19 +369,19 @@ func families() []Family {
 		},
 		{
 			Census: "heap/index", Rule: "raw-get", Stem: "RawGetPackRoutes", Axis: "heap",
-			Pending: planGapRawPackRoutes,
+			Pending: abiGapRawPackRoutes,
 		},
 		{
 			Census: "heap/index", Rule: "raw-set", Stem: "RawSetPackRoutes", Axis: "heap",
-			Pending: planGapRawPackRoutes,
+			Pending: abiGapRawPackRoutes,
 		},
 		{
 			Census: "heap/index", Rule: "raw-get", Stem: "RawGetResult", Axis: "heap",
-			Pending: planGapRawReduction,
+			Pending: abiGapRawReduction,
 		},
 		{
 			Census: "heap/index", Rule: "raw-set", Stem: "RawSetCommit", Axis: "heap",
-			Pending: planGapRawReduction,
+			Pending: abiGapRawReduction,
 		},
 	}
 }
