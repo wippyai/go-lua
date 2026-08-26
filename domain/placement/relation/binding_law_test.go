@@ -4,6 +4,7 @@ import (
 	"testing"
 
 	"github.com/wippyai/go-lua/analysis/relation/schema/model"
+	"github.com/wippyai/go-lua/analysis/relation/semantic/binding"
 	"github.com/wippyai/go-lua/analysis/relation/semantic/outcome"
 	"github.com/wippyai/go-lua/analysis/relation/semantic/signature"
 	"github.com/wippyai/go-lua/analysis/schema/rule/relbindgen/harness"
@@ -99,9 +100,24 @@ func TestThePlacementAlgebraResolvesByTypeAlone(t *testing.T) {
 	if !ok {
 		t.Fatal("placement lattice witness")
 	}
-	algebras, ok := payloads.Algebras(place.Issuer, relation.Lattices{Placement: witness})
-	if !ok || len(algebras) != 1 || algebras[0].Type() != types.Placement {
-		t.Fatal("the placement axis did not state one ascent authority for its own TypeID")
+	evidence, ok := relation.NewEvidenceLattice()
+	if !ok {
+		t.Fatal("evidence lattice witness")
+	}
+	algebras, ok := payloads.Algebras(place.Issuer, relation.Lattices{Placement: witness, SuspensionEvidence: evidence})
+	if !ok {
+		t.Fatal("the placement axis stated no ascent authority")
+	}
+	// The law asks that the axis's own fact resolves its authority, not how
+	// many columns the axis happens to declare an order for.
+	var resolved binding.ValueAlgebra
+	for _, algebra := range algebras {
+		if algebra.Type() == types.Placement {
+			resolved = algebra
+		}
+	}
+	if resolved == nil {
+		t.Fatal("the placement fact TypeID resolved no ascent authority")
 	}
 	bottom, ok := payloads.Placement.Encode(place.Issuer, placementdomain.BottomFact())
 	if !ok {
@@ -111,11 +127,11 @@ func TestThePlacementAlgebraResolvesByTypeAlone(t *testing.T) {
 	if !ok {
 		t.Fatal("encode placement top")
 	}
-	joined, ok := algebras[0].Join(bottom, top)
-	if !ok || !algebras[0].LessOrEqual(bottom, joined) || !algebras[0].LessOrEqual(top, joined) {
+	joined, ok := resolved.Join(bottom, top)
+	if !ok || !resolved.LessOrEqual(bottom, joined) || !resolved.LessOrEqual(top, joined) {
 		t.Fatal("the placement join was not an upper bound of both operands")
 	}
-	if algebras[0].LessOrEqual(joined, bottom) {
+	if resolved.LessOrEqual(joined, bottom) {
 		t.Fatal("the placement order collapsed top into bottom")
 	}
 }

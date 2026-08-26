@@ -106,3 +106,23 @@ func (cells *Cells[T]) Rows() []operand.SelectedCell[T] {
 	}
 	return cells.rows
 }
+
+// DeliveredOrder resolves a row to the one-based position the span delivered
+// it at.
+//
+// It is the tag for a fold that does not read one. A fold that keys its cells
+// by an owner tag needs the owner's own resolution, and this is not that: it
+// says only where a cell arrived, which is a fact about the delivery and not a
+// claim about the owner's numbering. A family uses it only where its own law
+// proves the fold's answer does not depend on the tag at all.
+func DeliveredOrder[T any](span Span[T]) func(identity.ContentID) (uint64, bool) {
+	return func(row identity.ContentID) (uint64, bool) {
+		for index := 0; index < span.Len(); index++ {
+			delivered, ok := span.RowKeyAt(index)
+			if ok && delivered == row {
+				return uint64(index) + 1, true
+			}
+		}
+		return 0, false
+	}
+}

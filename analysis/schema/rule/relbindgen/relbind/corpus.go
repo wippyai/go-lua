@@ -29,6 +29,14 @@ const (
 	// and spans; it cannot construct an execution selection, and the compiler
 	// says so: "cannot use cells (variable of struct type
 	// relbindgen.Span[value.Value]) as []execution.SelectedCell[value.Value]".
+	// A fold that reads its cells by an owner tag needs the owner's own
+	// resolution of one. This fold reads presence and value and appears to read
+	// no tag, and appearing is not proving: the differential law that would
+	// state the independence - the same cells under two numberings, the same
+	// answer - cannot run, because the fixture program seals no call this fold
+	// answers concretely. A binding would have to choose a tag on an unproven
+	// reading, so the row waits for a program that reaches the fold.
+	abiGapUnprovenTag   = "w0-unproven-tag: the fold appears to read no cell tag and no fixture reaches its concrete arm, so the independence a binding would rest on cannot be stated"
 	abiGapLegacyOperand = "w0-legacy-operand: the owner judgment reads execution.SelectedCell or execution.SummaryVector, the operand type of the protocol this engine replaces, and a binding delivers owner values and spans"
 	// Two judgments answer one family and they are not the same function. The
 	// declared reducer is reached by nothing but its own laws while the rule
@@ -110,6 +118,8 @@ func payloads() []Payload {
 		{Key: "heap-pack-route", Axis: "heap", Field: "PackRoute", Type: "PackRouteFact"},
 		{Key: "heap-source-route", Axis: "heap", Field: "SourceRoute", Type: "SourceRouteFact"},
 		{Key: "heap-route-tag", Axis: "heap", Field: "HeapRouteTag", Type: "uint64"},
+		{Key: "lifecycle-liveness", Axis: "placement", Field: "SubjectLiveness", Type: "lifecycle.MountedSubjectLiveness", Alias: "lifecycle", Path: "github.com/wippyai/go-lua/analysis/schema/program/lifecycle"},
+		{Key: "suspension-evidence", Axis: "placement", Field: "SuspensionEvidence", Type: "suspensiondomain.Evidence", Alias: "suspensiondomain", Path: "github.com/wippyai/go-lua/domain/placement/suspension", Lattice: "EvidenceLattice"},
 		{Key: "placement-requirement", Axis: "placement", Field: "Requirement", Type: "placementdomain.Placement", Alias: "placementdomain", Path: "github.com/wippyai/go-lua/domain/placement"},
 		{Key: "placement-route-tag", Axis: "placement", Field: "PlacementRouteTag", Type: "uint64"},
 		{Key: "value-result-slot", Axis: "value", Field: "ResultSlotCandidate", Type: "valuedomain.MountedCallResultSlot", Alias: "valuedomain", Path: "github.com/wippyai/go-lua/domain/value"},
@@ -510,7 +520,7 @@ func families() []Family {
 			Result: "placement", Outputs: []Column{{Payload: "placement"}},
 			Cardinality: model.ExactlyOne, Address: 0,
 		},
-		{Census: "effect/callsite/body", Rule: "effect-body", Stem: "EffectBodyCallSite", Axis: "effect", Pending: abiGapLegacyOperand},
+		{Census: "effect/callsite/body", Rule: "effect-body", Stem: "EffectBodyCallSite", Axis: "effect", Pending: abiGapUnprovenTag},
 		{
 			Census: "value/bodyresult", Rule: "value-callresult-body", Stem: "ValueBodyResult", Axis: "value",
 			Judgment: "ValueBodyResultOperation",
@@ -533,8 +543,32 @@ func families() []Family {
 			Result: "value", Outputs: []Column{{Payload: "value"}},
 			Cardinality: model.ExactlyOne, Address: 0,
 		},
-		{Census: "placement/suspension", Rule: "placement-suspension", Stem: "PlacementSuspension", Axis: "placement", Pending: abiGapLegacyOperand},
-		{Census: "placement/suspension-evidence", Rule: "placement-suspension-evidence", Stem: "PlacementSuspensionEvidence", Axis: "placement", Pending: abiGapLegacyOperand},
+		{
+			Census: "placement/suspension", Rule: "placement-suspension", Stem: "PlacementSuspension", Axis: "placement",
+			Judgment: "PlacementSuspensionOperation",
+			Inputs: []Slot{
+				{Field: "Candidate", Payload: "lifecycle-liveness", Delivery: scalar},
+				{Field: "Sources", Payload: "value", Delivery: span},
+				{Field: "Route", Payload: "heap-candidate", Delivery: scalar},
+				{Field: "RouteTag", Payload: "placement-route-tag", Delivery: scalar},
+				{Field: "Selected", Payload: "placement", Delivery: scalar},
+			},
+			Result: "placement", Outputs: []Column{{Payload: "placement"}},
+			Cardinality: model.ExactlyOne, Address: 0,
+		},
+		{
+			Census: "placement/suspension-evidence", Rule: "placement-suspension-evidence", Stem: "PlacementSuspensionEvidence", Axis: "placement",
+			Judgment: "PlacementSuspensionEvidenceOperation",
+			Inputs: []Slot{
+				{Field: "Candidate", Payload: "lifecycle-liveness", Delivery: scalar},
+				{Field: "Sources", Payload: "value", Delivery: span},
+				{Field: "Route", Payload: "heap-candidate", Delivery: scalar},
+				{Field: "RouteTag", Payload: "placement-route-tag", Delivery: scalar},
+				{Field: "Selected", Payload: "suspension-evidence", Delivery: scalar},
+			},
+			Result: "suspension-evidence", Outputs: []Column{{Payload: "suspension-evidence"}},
+			Cardinality: model.ExactlyOne, Address: 0,
+		},
 		{Census: "placement/capture", Rule: "placement-closure-capture", Stem: "PlacementClosureCapture", Axis: "placement", Pending: abiGapDivergentJudgment},
 		{Census: "placement/containment", Rule: "placement-containment", Stem: "PlacementContainment", Axis: "placement", Pending: abiGapDivergentJudgment},
 		{

@@ -6,42 +6,50 @@ import (
 	"github.com/wippyai/go-lua/analysis/identity"
 	"github.com/wippyai/go-lua/analysis/relation/schema/model"
 	"github.com/wippyai/go-lua/analysis/relation/semantic/binding"
+	lifecycle "github.com/wippyai/go-lua/analysis/schema/program/lifecycle"
 	"github.com/wippyai/go-lua/analysis/schema/rule/relbindgen"
 	placementdomain "github.com/wippyai/go-lua/domain/placement"
+	suspensiondomain "github.com/wippyai/go-lua/domain/placement/suspension"
 )
 
 // PayloadTypes names the owner-issued TypeID each column of this axis
 // carries.
 type PayloadTypes struct {
-	Placement         model.TypeID
-	Requirement       model.TypeID
-	PlacementRouteTag model.TypeID
+	Placement          model.TypeID
+	SubjectLiveness    model.TypeID
+	SuspensionEvidence model.TypeID
+	Requirement        model.TypeID
+	PlacementRouteTag  model.TypeID
 }
 
 // Available reports whether every column has an owner-issued type.
 func (types PayloadTypes) Available() bool {
-	return types.Placement.Available() && types.Requirement.Available() && types.PlacementRouteTag.Available()
+	return types.Placement.Available() && types.SubjectLiveness.Available() && types.SuspensionEvidence.Available() && types.Requirement.Available() && types.PlacementRouteTag.Available()
 }
 
 // PayloadTags names the store fence each column of this axis interns under.
 type PayloadTags struct {
-	Placement         identity.ContentID
-	Requirement       identity.ContentID
-	PlacementRouteTag identity.ContentID
+	Placement          identity.ContentID
+	SubjectLiveness    identity.ContentID
+	SuspensionEvidence identity.ContentID
+	Requirement        identity.ContentID
+	PlacementRouteTag  identity.ContentID
 }
 
 // Available reports whether every column has a store fence.
 func (tags PayloadTags) Available() bool {
-	return tags.Placement.Available() && tags.Requirement.Available() && tags.PlacementRouteTag.Available()
+	return tags.Placement.Available() && tags.SubjectLiveness.Available() && tags.SuspensionEvidence.Available() && tags.Requirement.Available() && tags.PlacementRouteTag.Available()
 }
 
 // Payloads is this axis's thin typed owner-column publisher: one Column per
 // payload type the axis declares, each over its own solve-local store, and
 // the only place one of its domain values crosses into a value token.
 type Payloads struct {
-	Placement         *relbindgen.Column[placementdomain.Fact]
-	Requirement       *relbindgen.Column[placementdomain.Placement]
-	PlacementRouteTag *relbindgen.Column[uint64]
+	Placement          *relbindgen.Column[placementdomain.Fact]
+	SubjectLiveness    *relbindgen.Column[lifecycle.MountedSubjectLiveness]
+	SuspensionEvidence *relbindgen.Column[suspensiondomain.Evidence]
+	Requirement        *relbindgen.Column[placementdomain.Placement]
+	PlacementRouteTag  *relbindgen.Column[uint64]
 }
 
 // NewPayloads installs one column per declared payload over a store fenced
@@ -58,6 +66,20 @@ func NewPayloads(types PayloadTypes, tags PayloadTags, reserve int) (Payloads, b
 		return Payloads{}, false
 	}
 	if payloads.Placement, ok = relbindgen.NewColumn(types.Placement, placementStore); !ok {
+		return Payloads{}, false
+	}
+	subjectLivenessStore, ok := relbindgen.NewStore[lifecycle.MountedSubjectLiveness](tags.SubjectLiveness, reserve)
+	if !ok {
+		return Payloads{}, false
+	}
+	if payloads.SubjectLiveness, ok = relbindgen.NewColumn(types.SubjectLiveness, subjectLivenessStore); !ok {
+		return Payloads{}, false
+	}
+	suspensionEvidenceStore, ok := relbindgen.NewStore[suspensiondomain.Evidence](tags.SuspensionEvidence, reserve)
+	if !ok {
+		return Payloads{}, false
+	}
+	if payloads.SuspensionEvidence, ok = relbindgen.NewColumn(types.SuspensionEvidence, suspensionEvidenceStore); !ok {
 		return Payloads{}, false
 	}
 	requirementStore, ok := relbindgen.NewStore[placementdomain.Placement](tags.Requirement, reserve)
@@ -79,14 +101,15 @@ func NewPayloads(types PayloadTypes, tags PayloadTags, reserve int) (Payloads, b
 
 // Available reports whether every column carries live storage.
 func (payloads Payloads) Available() bool {
-	return payloads.Placement.Available() && payloads.Requirement.Available() && payloads.PlacementRouteTag.Available()
+	return payloads.Placement.Available() && payloads.SubjectLiveness.Available() && payloads.SuspensionEvidence.Available() && payloads.Requirement.Available() && payloads.PlacementRouteTag.Available()
 }
 
 // Lattices are this axis's ascent witnesses. Each names the owner's own
 // API, so this layer never guesses a method name and never carries a
 // function value.
 type Lattices struct {
-	Placement PlacementLattice
+	Placement          PlacementLattice
+	SuspensionEvidence EvidenceLattice
 }
 
 // Algebras states one ascent authority per TypeID that declares an order.
@@ -96,11 +119,16 @@ func (payloads Payloads) Algebras(issuer binding.Issuer, lattices Lattices) ([]b
 	if !payloads.Available() || !issuer.Available() {
 		return nil, false
 	}
-	algebras := make([]binding.ValueAlgebra, 0, 1)
+	algebras := make([]binding.ValueAlgebra, 0, 2)
 	placementAlgebra, ok := relbindgen.NewAlgebra[placementdomain.Fact, PlacementLattice](payloads.Placement, issuer, lattices.Placement)
 	if !ok {
 		return nil, false
 	}
 	algebras = append(algebras, placementAlgebra)
+	suspensionEvidenceAlgebra, ok := relbindgen.NewAlgebra[suspensiondomain.Evidence, EvidenceLattice](payloads.SuspensionEvidence, issuer, lattices.SuspensionEvidence)
+	if !ok {
+		return nil, false
+	}
+	algebras = append(algebras, suspensionEvidenceAlgebra)
 	return algebras, true
 }

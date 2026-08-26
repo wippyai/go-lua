@@ -3,6 +3,7 @@ package relation
 import (
 	"github.com/wippyai/go-lua/analysis/lattice"
 	placementdomain "github.com/wippyai/go-lua/domain/placement"
+	suspensiondomain "github.com/wippyai/go-lua/domain/placement/suspension"
 )
 
 // PlacementLattice is domain/placement's ascent authority for its rule fact.
@@ -32,5 +33,33 @@ func (witness PlacementLattice) Widen(previous, next placementdomain.Fact) (plac
 }
 
 func (witness PlacementLattice) LessOrEq(left, right placementdomain.Fact) bool {
+	return witness.operators.LessOrEq(left, right)
+}
+
+// EvidenceLattice is domain/placement/suspension's ascent authority for its
+// evidence factor. The owner spells it as a struct of total operators and
+// states its own widening there, so the witness adopts that set.
+type EvidenceLattice struct {
+	operators lattice.Lattice[suspensiondomain.Evidence]
+}
+
+// NewEvidenceLattice adopts the sealed suspension evidence operator set.
+func NewEvidenceLattice() (EvidenceLattice, bool) {
+	operators := suspensiondomain.Lattice()
+	if operators.Join == nil || operators.Widen == nil || operators.LessOrEq == nil {
+		return EvidenceLattice{}, false
+	}
+	return EvidenceLattice{operators: operators}, true
+}
+
+func (witness EvidenceLattice) Join(left, right suspensiondomain.Evidence) (suspensiondomain.Evidence, bool) {
+	return witness.operators.Join(left, right), true
+}
+
+func (witness EvidenceLattice) Widen(previous, next suspensiondomain.Evidence) (suspensiondomain.Evidence, bool) {
+	return witness.operators.Widen(previous, next), true
+}
+
+func (witness EvidenceLattice) LessOrEq(left, right suspensiondomain.Evidence) bool {
 	return witness.operators.LessOrEq(left, right)
 }

@@ -9,7 +9,9 @@ import (
 	"github.com/wippyai/go-lua/domain/placement/publicationescape"
 	"github.com/wippyai/go-lua/domain/placement/returnescape"
 	"github.com/wippyai/go-lua/domain/placement/store"
+	"github.com/wippyai/go-lua/domain/placement/suspension"
 	"github.com/wippyai/go-lua/domain/placement/transfer"
+	valuedomain "github.com/wippyai/go-lua/domain/value"
 )
 
 // PlacementPublicationEscapeOperation is domain/placement/publicationescape's
@@ -102,5 +104,112 @@ func (PlacementStorageOperation) Available() bool { return true }
 // Evaluate answers one storage transfer's placement.
 func (PlacementStorageOperation) Evaluate(argument PlacementStorageArgument, emitter *relbindgen.Emitter[placementdomain.Fact]) outcome.Code {
 	fact, reduction := store.StorageFold(argument.Candidate, argument.Source, argument.RouteTag, argument.Selected)
+	return relbindgen.Reduce(emitter, fact, reduction)
+}
+
+// suspensionSources is the reusable materialization both suspension folds read
+// their delivered source vector through.
+type suspensionSources struct {
+	members *relbindgen.Members[valuedomain.Value]
+}
+
+func newSuspensionSources(reserve int) (suspensionSources, bool) {
+	members, ok := relbindgen.NewMembers[valuedomain.Value](reserve)
+	if !ok {
+		return suspensionSources{}, false
+	}
+	return suspensionSources{members: members}, true
+}
+
+// PlacementSuspensionOperation is domain/placement/suspension's own fold: the
+// placement a suspended subject's sources carry it to.
+type PlacementSuspensionOperation struct {
+	sources suspensionSources
+	reserve int
+}
+
+// NewPlacementSuspensionOperation reserves the source materialization one
+// caller's suspensions read through, at the width the sealed value schema
+// states.
+func NewPlacementSuspensionOperation(values *valuedomain.Schema) (PlacementSuspensionOperation, bool) {
+	if values == nil || !values.Valid() {
+		return PlacementSuspensionOperation{}, false
+	}
+	sources, ok := newSuspensionSources(values.CoordinateCount())
+	if !ok {
+		return PlacementSuspensionOperation{}, false
+	}
+	return PlacementSuspensionOperation{sources: sources, reserve: values.CoordinateCount()}, true
+}
+
+// NewOperation gives one solve-local worker its own materialization storage.
+func (operation PlacementSuspensionOperation) NewOperation() relbindgen.Operation[PlacementSuspensionArgument, placementdomain.Fact] {
+	sources, ok := newSuspensionSources(operation.reserve)
+	if !ok {
+		return nil
+	}
+	local := operation
+	local.sources = sources
+	return local
+}
+
+// Available reports whether the operation carries its materialization storage.
+func (operation PlacementSuspensionOperation) Available() bool {
+	return operation.sources.members != nil
+}
+
+// Evaluate answers one suspension's placement.
+func (operation PlacementSuspensionOperation) Evaluate(argument PlacementSuspensionArgument, emitter *relbindgen.Emitter[placementdomain.Fact]) outcome.Code {
+	sources, materialized := operation.sources.members.Fill(argument.Sources)
+	if !materialized {
+		return outcome.Refused
+	}
+	fact, reduction := suspension.SuspensionFold(argument.Candidate, sources, argument.Route, argument.RouteTag, argument.Selected)
+	return relbindgen.Reduce(emitter, fact, reduction)
+}
+
+// PlacementSuspensionEvidenceOperation is the same fold over the evidence
+// factor alone: it reads and writes evidence and never consumes placement
+// class.
+type PlacementSuspensionEvidenceOperation struct {
+	sources suspensionSources
+	reserve int
+}
+
+// NewPlacementSuspensionEvidenceOperation reserves the source materialization.
+func NewPlacementSuspensionEvidenceOperation(values *valuedomain.Schema) (PlacementSuspensionEvidenceOperation, bool) {
+	if values == nil || !values.Valid() {
+		return PlacementSuspensionEvidenceOperation{}, false
+	}
+	sources, ok := newSuspensionSources(values.CoordinateCount())
+	if !ok {
+		return PlacementSuspensionEvidenceOperation{}, false
+	}
+	return PlacementSuspensionEvidenceOperation{sources: sources, reserve: values.CoordinateCount()}, true
+}
+
+// NewOperation gives one solve-local worker its own materialization storage.
+func (operation PlacementSuspensionEvidenceOperation) NewOperation() relbindgen.Operation[PlacementSuspensionEvidenceArgument, suspension.Evidence] {
+	sources, ok := newSuspensionSources(operation.reserve)
+	if !ok {
+		return nil
+	}
+	local := operation
+	local.sources = sources
+	return local
+}
+
+// Available reports whether the operation carries its materialization storage.
+func (operation PlacementSuspensionEvidenceOperation) Available() bool {
+	return operation.sources.members != nil
+}
+
+// Evaluate answers one suspension's evidence.
+func (operation PlacementSuspensionEvidenceOperation) Evaluate(argument PlacementSuspensionEvidenceArgument, emitter *relbindgen.Emitter[suspension.Evidence]) outcome.Code {
+	sources, materialized := operation.sources.members.Fill(argument.Sources)
+	if !materialized {
+		return outcome.Refused
+	}
+	fact, reduction := suspension.SuspensionEvidenceFold(argument.Candidate, sources, argument.Route, argument.RouteTag, argument.Selected)
 	return relbindgen.Reduce(emitter, fact, reduction)
 }
