@@ -190,37 +190,24 @@ func (lane *familyWorker) Execute(frame execution.Frame, ticket execution.Ticket
 	return execution.NewResult(outcome, written)
 }
 
-// read0Cell takes one exact prerequisite cell. The cursor is closed before the
-// value is used, and the row's sealed policy settles what an unwritten
-// coordinate delivers.
+// read0Cell takes one exact prerequisite cell: the coordinate's whole delivery
+// answered as the one cell it names, with the row's sealed policy settling
+// what an unwritten coordinate delivers.
 func (lane *familyWorker) read0Cell(read execution.ExactRead[value.DenseCoordinate, value.Value], policy execution.ReadCellPolicy[value.Value], ticket execution.Ticket, destination *value.Value) structure.ReductionOutcome {
 	if lane == nil || destination == nil || !read.Valid() {
 		return structure.Refuse
 	}
-	switch read.Read(ticket, &lane.read0) {
+	cell, status := execution.DeliverExactCell(read, policy, ticket, &lane.read0)
+	switch status {
 	case execution.ReadAvailable:
-		cell, available := lane.read0.Value()
-		present := lane.read0.Present()
-		if !read.Close(ticket, &lane.read0) {
-			_ = lane.read0.Discard(ticket)
-			return structure.Refuse
-		}
-		if !available {
-			return structure.Refuse
-		}
-		cell, present = policy.Cell(cell, present)
-		if !present {
+		if !cell.Present {
 			return structure.NoCandidate
 		}
-		*destination = cell
+		*destination = cell.Value
 		return structure.Concrete
 	case execution.ReadExhausted:
-		if !read.Close(ticket, &lane.read0) {
-			return structure.Refuse
-		}
 		return structure.NoCandidate
 	default:
-		_ = lane.read0.Discard(ticket)
 		return structure.Refuse
 	}
 }

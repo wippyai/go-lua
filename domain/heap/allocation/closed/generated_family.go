@@ -208,22 +208,11 @@ func (lane *familyWorker) read1Cell(read execution.ExactRead[value.DenseCoordina
 	if lane == nil || destination == nil || !read.Valid() {
 		return structure.Refuse
 	}
-	if read.Read(ticket, &lane.read1) != execution.ReadAvailable {
-		_ = lane.read1.Discard(ticket)
+	cell, status := execution.DeliverExactCell(read, policy, ticket, &lane.read1)
+	if status != execution.ReadAvailable {
 		return structure.Refuse
 	}
-	cell, available := lane.read1.Value()
-	present := lane.read1.Present()
-	region, regionOK := lane.read1.Region()
-	if !read.Close(ticket, &lane.read1) || !lane.read1.Reuse(ticket) {
-		_ = lane.read1.Discard(ticket)
-		return structure.Refuse
-	}
-	if !available || !regionOK {
-		return structure.Refuse
-	}
-	cell, present = policy.Cell(cell, present)
-	*destination = operand.MemberCell[value.Value]{Value: cell, Present: present, Region: region}
+	*destination = operand.MemberCell[value.Value]{Value: cell.Value, Present: cell.Present, Region: cell.Region}
 	return structure.Concrete
 }
 
