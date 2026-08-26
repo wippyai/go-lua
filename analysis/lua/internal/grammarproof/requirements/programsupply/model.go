@@ -1,5 +1,7 @@
 // Package programsupply records the exact canonical Program relations supplied
 // by each closed Program, static, and binder law requirement.
+//
+//go:generate go run ./cmd/generate -out evidence_gen.go
 package programsupply
 
 import (

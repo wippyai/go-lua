@@ -1,3 +1,7 @@
+// Package outputowners generates the canonical Program output-owner
+// denominator: the sole component owner of every Program output relation.
+//
+//go:generate go run ./cmd/generate -out evidence_gen.go
 package outputowners
 
 import (

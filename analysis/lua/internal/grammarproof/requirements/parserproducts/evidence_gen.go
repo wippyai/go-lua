@@ -3,11 +3,11 @@
 package parserproducts
 
 var Generated = Evidence{
-	GrammarDigest:      "c3083c81ba3f275a125f8489df2bf3e73eecab8cb05274dda3a27b5e5bd19d63",
+	GrammarDigest:      "b57c681b5ab3c0cd615e594204bf6e846b0a25cc2e3ed3d4827d0cc41ebc1080",
 	ParserSourceDigest: "2040e60e0c4b729743658b0ca0dd70aeee17eafa1a4187a012e247f418163367",
 	SchemaDigest:       "7b7e4cf3bd735684904b527f81d5dd6e4decd6e21e1416d17ac5b4b63c59d9ea",
-	IngressDigest:      "0e8aad264b35e631bc5d2f7d416b327a3a4fb2b9d0bd1d30ec3f846ca70dbbec",
-	Digest:             "de3cf1534b1b09e336ddb4cc13cdb9bbf693728c2a30e081870230ae414c4c8c",
+	IngressDigest:      "00b73f8c45c2a6bbb3aa34df11d2c470038ca5be293767974d79e146b7b13c75",
+	Digest:             "fb1263b0d39496998191cdf44caaa0e7e98e2fc6e3620b69718449c0e98798a6",
 	Fields:             generatedFields(),
 	Products:           generatedProducts(),
 	ProductLaws:        generatedProductLaws(),
