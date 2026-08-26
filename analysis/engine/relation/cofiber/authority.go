@@ -35,27 +35,6 @@ type authorityData struct {
 	sealed    bool
 }
 
-// NewFromLookup seals one cofiber authority from an owner-issued neutral atom
-// lookup. The lookup is the only runtime bridge: it carries the exact mounted
-// generation and the existing guard manager, while this package performs the
-// one concrete Region-to-Mask lowering during the cold proof.
-func NewFromLookup(mounted witness.Mounted, lookup Lookup) (Authority, bool) {
-	if !lookup.Available() || !lookup.ValidFor(mounted) {
-		return Authority{}, false
-	}
-	physicalIndex, indexOK := lookup.physicalIndex()
-	if !indexOK {
-		return Authority{}, false
-	}
-	authority, ok := New(mounted, lookup.manager(), func(value schemaregion.Region) (support.Mask, bool) {
-		return lowerRegion(value, lookup, physicalIndex)
-	})
-	if !ok || authority.data == nil {
-		return Authority{}, false
-	}
-	return authority, true
-}
-
 type declaredScope struct {
 	scope  witness.Scope
 	region schemaregion.Region
