@@ -2,7 +2,7 @@ package capture
 
 import (
 	"github.com/wippyai/go-lua/analysis/engine"
-	heapdomain "github.com/wippyai/go-lua/domain/heap"
+	"github.com/wippyai/go-lua/analysis/schema/structure"
 	placementdomain "github.com/wippyai/go-lua/domain/placement"
 	placementowner "github.com/wippyai/go-lua/domain/placement/owner"
 	valuedomain "github.com/wippyai/go-lua/domain/value"
@@ -209,15 +209,17 @@ func (rule *HotRule) fold(frame engine.Frame[placementdomain.Fact, operand]) eng
 		if !routeOK || prior.Count() != 1 {
 			return placementdomain.BottomFact(), false
 		}
-		if expected.key.Kind() != heapdomain.RootAllocation {
-			return placementdomain.BottomFact(), false
-		}
 		current, currentPresent, currentAvailable := prior.At(0)
 		current, currentOK := placementdomain.AuthenticateFactCell(current, currentPresent, currentAvailable)
 		if !currentOK {
 			return placementdomain.BottomFact(), false
 		}
-		return captureValue(parent, current)
+		// The declared fold is the judgment: it is handed the destination this
+		// route publishes at and the tag it was correlated by, and it decides
+		// what the capture means from them.
+		key, _ := expected.Coordinates()
+		result, outcome := CaptureFold(parent, key, uint64(tag), current)
+		return result, outcome == structure.Concrete
 	})
 }
 

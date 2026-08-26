@@ -17,6 +17,10 @@ const (
 	heapPackagePath        = "github.com/wippyai/go-lua/domain/heap"
 )
 
+func heapAxis() schema.EntryReference {
+	return schema.EntryReference{Surface: schema.SurfaceKindAxis, Key: "heap"}
+}
+
 func placementAxis() schema.EntryReference {
 	return schema.EntryReference{Surface: schema.SurfaceKindAxis, Key: "placement"}
 }
@@ -89,9 +93,18 @@ func Contribution() definition.Contribution {
 		Reducers: []definition.Reducer{{
 			Name: "ContainmentReducer",
 			Key:  "placement/containment/reducer",
+			// The fold takes the reads its Program folds, in their order: the
+			// two complete vectors that closed the parent denominator, and the
+			// routed child cell it publishes at. Which parent a child was
+			// reached from is the route tag's own statement, so the fold
+			// addresses the vectors rather than being handed one cell of each.
 			Inputs: []definition.ReducerInput{
-				{Axis: placementAxis(), Carrier: "PlacementFactCarrier", Form: member.ReadFormSelected, Multiplicity: member.MultiplicityOne},
-				{Axis: placementAxis(), Carrier: "PlacementFactCarrier", Form: member.ReadFormExact, Multiplicity: member.MultiplicityOne},
+				{Axis: placementAxis(), Carrier: "PlacementFactCarrier", Form: member.ReadFormComplete, Multiplicity: member.MultiplicityMany},
+				{Axis: heapAxis(), Carrier: "HeapFactCarrier", Form: member.ReadFormComplete, Multiplicity: member.MultiplicityMany},
+				{
+					Axis: placementAxis(), Carrier: "PlacementFactCarrier", Form: member.ReadFormSelected,
+					Multiplicity: member.MultiplicityOne, Tag: "ContainmentRouteTagCarrier", Route: "PlacementKeyCarrier",
+				},
 			},
 			Outputs:        []definition.ReducerOutput{{Axis: placementAxis(), Carrier: "PlacementFactCarrier"}},
 			Implementation: definition.GoSymbol{PackagePath: containmentPackagePath, Name: "ContainmentFold", ResultIndex: 0},

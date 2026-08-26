@@ -179,13 +179,14 @@ func AxisMemberCatalog() member.Catalog {
 			}},
 			{Key: CaptureReducer, Inputs: []member.ReducerInput{
 				{Axis: valueAxis, Carrier: PlacementFactCarrier, Form: member.ReadFormExact, Multiplicity: member.MultiplicityOne},
-				{Axis: valueAxis, Carrier: PlacementFactCarrier, Form: member.ReadFormSelected, Multiplicity: member.MultiplicityOne, Tag: CaptureRouteTagCarrier},
+				{Axis: valueAxis, Carrier: PlacementFactCarrier, Form: member.ReadFormSelected, Multiplicity: member.MultiplicityOne, Tag: CaptureRouteTagCarrier, Route: PlacementKeyCarrier},
 			}, Outputs: []member.ReducerOutput{
 				{Axis: valueAxis, Carrier: PlacementFactCarrier},
 			}},
 			{Key: ContainmentReducer, Inputs: []member.ReducerInput{
-				{Axis: valueAxis, Carrier: PlacementFactCarrier, Form: member.ReadFormSelected, Multiplicity: member.MultiplicityOne},
-				{Axis: valueAxis, Carrier: PlacementFactCarrier, Form: member.ReadFormExact, Multiplicity: member.MultiplicityOne},
+				{Axis: valueAxis, Carrier: PlacementFactCarrier, Form: member.ReadFormComplete, Multiplicity: member.MultiplicityMany},
+				{Axis: schemaapi.EntryReference{Surface: schemaapi.SurfaceKindAxis, Key: "heap"}, Carrier: HeapFactCarrier, Form: member.ReadFormComplete, Multiplicity: member.MultiplicityMany},
+				{Axis: valueAxis, Carrier: PlacementFactCarrier, Form: member.ReadFormSelected, Multiplicity: member.MultiplicityOne, Tag: ContainmentRouteTagCarrier, Route: PlacementKeyCarrier},
 			}, Outputs: []member.ReducerOutput{
 				{Axis: valueAxis, Carrier: PlacementFactCarrier},
 			}},

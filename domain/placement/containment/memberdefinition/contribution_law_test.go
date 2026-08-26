@@ -3,9 +3,11 @@ package memberdefinition
 import (
 	"testing"
 
+	"github.com/wippyai/go-lua/analysis/engine/operand"
 	"github.com/wippyai/go-lua/analysis/schema"
 	"github.com/wippyai/go-lua/analysis/schema/axis/member"
 	"github.com/wippyai/go-lua/analysis/schema/structure"
+	heapdomain "github.com/wippyai/go-lua/domain/heap"
 	placementdomain "github.com/wippyai/go-lua/domain/placement"
 	containment "github.com/wippyai/go-lua/domain/placement/containment"
 )
@@ -56,17 +58,30 @@ func TestContainmentContributionDeclaresItsRouteRowsAndTheIrreducibleFold(t *tes
 		t.Fatalf("containment selection stamps %q, which is not the predicate projection of %q", selection.Tag, selection.Relation)
 	}
 
+	// The fold takes the reads its Program folds: the two complete vectors
+	// that closed the parent denominator, and the routed child cell it
+	// publishes at, which carries the coordinate and the tag it was
+	// correlated by.
 	reducer := contribution.Reducers[0]
-	if reducer.Key != "placement/containment/reducer" || reducer.Candidate != "" || len(reducer.Inputs) != 2 || len(reducer.Outputs) != 1 {
+	if reducer.Key != "placement/containment/reducer" || reducer.Candidate != "" || len(reducer.Inputs) != 3 || len(reducer.Outputs) != 1 {
 		t.Fatalf("containment reducer shape=%+v", reducer)
 	}
-	if reducer.Inputs[0].Form != member.ReadFormSelected || reducer.Inputs[0].Multiplicity != member.MultiplicityOne ||
-		reducer.Inputs[1].Form != member.ReadFormExact || reducer.Inputs[1].Multiplicity != member.MultiplicityOne {
-		t.Fatalf("containment inputs=%+v, want selected child then exact parent", reducer.Inputs)
+	if reducer.Inputs[0].Form != member.ReadFormComplete || reducer.Inputs[0].Multiplicity != member.MultiplicityMany ||
+		reducer.Inputs[0].Axis.Key != "placement" || reducer.Inputs[0].Carrier != "PlacementFactCarrier" {
+		t.Fatalf("containment parent vector=%+v, want the complete Placement denominator", reducer.Inputs[0])
 	}
-	for index, input := range reducer.Inputs {
-		if input.Axis.Key != "placement" || input.Carrier != "PlacementFactCarrier" || input.Tag != "" || input.Route != "" {
-			t.Fatalf("containment input %d=%+v, want owner-issued Placement fact without copied route vocabulary", index, input)
+	if reducer.Inputs[1].Form != member.ReadFormComplete || reducer.Inputs[1].Multiplicity != member.MultiplicityMany ||
+		reducer.Inputs[1].Axis.Key != "heap" || reducer.Inputs[1].Carrier != "HeapFactCarrier" {
+		t.Fatalf("containment heap vector=%+v, want the complete Heap denominator", reducer.Inputs[1])
+	}
+	if reducer.Inputs[2].Form != member.ReadFormSelected || reducer.Inputs[2].Multiplicity != member.MultiplicityOne ||
+		reducer.Inputs[2].Axis.Key != "placement" || reducer.Inputs[2].Carrier != "PlacementFactCarrier" ||
+		reducer.Inputs[2].Tag != "ContainmentRouteTagCarrier" || reducer.Inputs[2].Route != "PlacementKeyCarrier" {
+		t.Fatalf("containment routed cell=%+v, want the routed child with its coordinate and tag", reducer.Inputs[2])
+	}
+	for _, vector := range reducer.Inputs[:2] {
+		if vector.Tag != "" || vector.Route != "" {
+			t.Fatalf("containment vector=%+v, want a whole-vector delivery without route vocabulary", vector)
 		}
 	}
 	if output := reducer.Outputs[0]; output.Axis.Key != "placement" || output.Carrier != "PlacementFactCarrier" {
@@ -76,5 +91,5 @@ func TestContainmentContributionDeclaresItsRouteRowsAndTheIrreducibleFold(t *tes
 		t.Fatalf("containment implementation=%+v", reducer.Implementation)
 	}
 
-	var _ func(placementdomain.Fact, placementdomain.Fact) (placementdomain.Fact, structure.ReductionOutcome) = containment.ContainmentFold
+	var _ func(operand.SummaryVector[placementdomain.Fact], operand.SummaryVector[heapdomain.Value], heapdomain.Key, uint64, placementdomain.Fact) (placementdomain.Fact, structure.ReductionOutcome) = containment.ContainmentFold
 }

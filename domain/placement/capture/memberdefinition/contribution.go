@@ -128,7 +128,14 @@ func Contribution() definition.Contribution {
 			Key:  "placement/closure-capture/reducer",
 			Inputs: []definition.ReducerInput{
 				{Axis: placementAxis(), Carrier: "PlacementFactCarrier", Form: member.ReadFormExact, Multiplicity: member.MultiplicityOne},
-				{Axis: placementAxis(), Carrier: "PlacementFactCarrier", Form: member.ReadFormSelected, Multiplicity: member.MultiplicityOne, Tag: "CaptureRouteTagCarrier"},
+				{
+					// The routed input carries the destination it publishes at
+					// as well as the tag it was correlated by: the fold
+					// authenticates the coordinate a route names rather than
+					// taking it on trust from the selection.
+					Axis: placementAxis(), Carrier: "PlacementFactCarrier", Form: member.ReadFormSelected,
+					Multiplicity: member.MultiplicityOne, Tag: "CaptureRouteTagCarrier", Route: "PlacementKeyCarrier",
+				},
 			},
 			Outputs:        []definition.ReducerOutput{{Axis: placementAxis(), Carrier: "PlacementFactCarrier"}},
 			Implementation: definition.GoSymbol{PackagePath: capturePackagePath, Name: "CaptureFold", ResultIndex: 0},

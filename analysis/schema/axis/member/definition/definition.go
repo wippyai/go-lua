@@ -1583,7 +1583,13 @@ func ManyValuedView(form member.ReadForm, cell, vector GoType) (view GoType, sli
 			return GoType{}, false, false
 		}
 		return cell, true, true
-	case member.ReadFormSummary:
+	case member.ReadFormSummary, member.ReadFormComplete:
+		// Both are whole-vector deliveries: a summary answers one row with
+		// every cell of its sealed denominator, and a complete read answers
+		// one row with every cell of a CLOSED denominator. Neither established
+		// a tag, so both are handed the vector and differ only in what closed
+		// the denominator - which is the read's own statement and not the
+		// view's.
 		if !vector.Available() {
 			return GoType{}, false, false
 		}

@@ -48,6 +48,15 @@ func TestAManyValuedDeliveryIsTheViewItsReadFormEstablishes(t *testing.T) {
 	if !ok || view != vector || slice {
 		t.Fatalf("a whole-vector read is delivered as view=%+v slice=%t ok=%t; it establishes no tag, so it is one vector", view, slice, ok)
 	}
+	// A complete read is the same delivery over a CLOSED denominator. What
+	// closed the denominator is the read's own statement; the view it
+	// establishes is the vector either way, and naming one of the two forms
+	// and not the other left a fold over a closed denominator with no
+	// delivery at all.
+	view, slice, ok = ManyValuedView(member.ReadFormComplete, cell, vector)
+	if !ok || view != vector || slice {
+		t.Fatalf("a complete read is delivered as view=%+v slice=%t ok=%t; it establishes no tag either, so it is one vector", view, slice, ok)
+	}
 }
 
 // TestAManyValuedDeliveryRefusesAFormThatEstablishesNoDelivery states the
@@ -64,6 +73,9 @@ func TestAManyValuedDeliveryRefusesAFormThatEstablishesNoDelivery(t *testing.T) 
 	}
 	if _, _, ok := ManyValuedView(member.ReadFormSummary, cell, GoType{}); ok {
 		t.Fatal("a whole-vector read was delivered without the caller naming the vector view")
+	}
+	if _, _, ok := ManyValuedView(member.ReadFormComplete, cell, GoType{}); ok {
+		t.Fatal("a complete read was delivered without the caller naming the vector view")
 	}
 }
 
