@@ -2,7 +2,6 @@ package result
 
 import (
 	"testing"
-	"time"
 
 	"github.com/wippyai/go-lua/analysis/identity"
 	"github.com/wippyai/go-lua/analysis/program/keyspace"
@@ -14,11 +13,33 @@ import (
 	programschema "github.com/wippyai/go-lua/analysis/schema/program"
 )
 
+// The scale law this file states: the native summary join resolves an
+// occurrence through the directory it built once for the mount, never by
+// rescanning the occurrence family for each joining summary.
+//
+// Program publishes no inverse index -- OccurrenceForID is a documented cold
+// scan -- so a join that performs one such resolve per summary costs the
+// product of the occurrence family and the summary family. Both are
+// proportional to program size, which makes that product quadratic in program
+// size and puts a large single source file past every analysis budget.
+//
+// The quantity the law bounds is the Program row read: deriving the row's
+// catalog address and authenticating the row against its own identity. That
+// is a count of operations, not an elapsed time, so the law states the same
+// separation whatever else the machine is doing. The directory build reads
+// each published occurrence once, each published rule occurrence once, and
+// each rule's parent occurrence once; the summary join then reads nothing,
+// because the directory holds no Program and can address no row. A join that
+// resolved by rescanning would instead read the occurrence family once per
+// summary.
 const (
-	nativeOccurrenceScaleSmall          = 64
-	nativeOccurrenceScaleLarge          = 256
-	nativeOccurrenceScaleRounds         = 7
-	nativeOccurrenceScaleLinearHeadroom = 1.5
+	nativeOccurrenceScaleSmall = 64
+	nativeOccurrenceScaleLarge = 256
+	// nativeOccurrenceScaleBuildReadsPerOccurrence is how many Program rows
+	// the directory build reads for each published occurrence: the occurrence
+	// row, the rule occurrence row published against it, and that rule's
+	// parent occurrence row.
+	nativeOccurrenceScaleBuildReadsPerOccurrence = 3
 )
 
 func nativeOccurrenceScaleID(t *testing.T, tag string, ordinal int) identity.ContentID {
@@ -141,49 +162,132 @@ func TestNativeMountDirectoryAgreesWithOccurrenceForID(t *testing.T) {
 	}
 }
 
-func nativeArtifactSummaryJoinCost(t *testing.T, width int) time.Duration {
+// nativeArtifactSummaryJoinRowReads runs the native summary join over one
+// program of the requested width and returns the Program rows it read while
+// building the mount directory and the rows it read while joining the summary
+// family to it.
+func nativeArtifactSummaryJoinRowReads(t *testing.T, width int) (build, join uint64) {
 	t.Helper()
 	program := nativeOccurrenceScaleProgram(t, width)
 	count, published := program.ArithmeticSummaryCount()
 	if !published {
 		t.Fatal("arithmetic summaries")
 	}
-	best := time.Duration(0)
-	for round := 0; round < nativeOccurrenceScaleRounds; round++ {
-		started := time.Now()
-		directory, ok := newNativeMountDirectory(program)
-		if !ok {
-			t.Fatalf("directory width %d", width)
+	dbgNativeJoinRowReadReset()
+	directory, ok := newNativeMountDirectory(program)
+	if !ok {
+		t.Fatalf("directory width %d", width)
+	}
+	build = dbgNativeJoinRowReadCount()
+	for index := 0; index < count; index++ {
+		summary, summaryOK := program.ArithmeticSummaryAt(index)
+		occurrence, occurrenceOK := directory.occurrence(programschema.OccurrenceBinaryArithmetic, summary.OccurrenceID())
+		_, pointOK := directory.computationPoint(summary.OccurrenceID())
+		if !summaryOK || !occurrenceOK || !pointOK || summary.BodyPathID() == (identity.ContentID{}) {
+			t.Fatalf("summary join refused a well-formed program of width %d", width)
 		}
-		for index := 0; index < count; index++ {
-			summary, summaryOK := program.ArithmeticSummaryAt(index)
-			occurrence, occurrenceOK := directory.occurrence(programschema.OccurrenceBinaryArithmetic, summary.OccurrenceID())
-			_, pointOK := directory.computationPoint(summary.OccurrenceID())
-			if !summaryOK || !occurrenceOK || !pointOK || summary.BodyPathID() == (identity.ContentID{}) {
-				t.Fatalf("summary join refused a well-formed program of width %d", width)
-			}
-			if _, bodyOK := occurrence.BodyID(); !bodyOK {
-				t.Fatalf("summary join lost occurrence body at width %d", width)
-			}
-		}
-		if elapsed := time.Since(started); round == 0 || elapsed < best {
-			best = elapsed
+		if _, bodyOK := occurrence.BodyID(); !bodyOK {
+			t.Fatalf("summary join lost occurrence body at width %d", width)
 		}
 	}
-	return best
+	return build, dbgNativeJoinRowReadCount() - build
+}
+
+// nativeArtifactSummaryScanRowReads resolves the same summary family without a
+// directory, the way Program's own surface forces: walk the occurrence family
+// until the summary's occurrence answers. It returns the Program rows that
+// walk reads, which is the cost the directory exists to avoid.
+func nativeArtifactSummaryScanRowReads(t *testing.T, width int) uint64 {
+	t.Helper()
+	program := nativeOccurrenceScaleProgram(t, width)
+	summaryCount, published := program.ArithmeticSummaryCount()
+	occurrenceCount, occurrencesPublished := program.OccurrenceCount()
+	if !published || !occurrencesPublished {
+		t.Fatal("published families")
+	}
+	reads := uint64(0)
+	for index := 0; index < summaryCount; index++ {
+		summary, summaryOK := program.ArithmeticSummaryAt(index)
+		if !summaryOK {
+			t.Fatalf("arithmetic summary %d", index)
+		}
+		resolved := false
+		for ordinal := 0; ordinal < occurrenceCount && !resolved; ordinal++ {
+			reads++
+			row, rowOK := program.OccurrenceAt(ordinal)
+			resolved = rowOK && row.Kind() == programschema.OccurrenceBinaryArithmetic && row.ID() == summary.OccurrenceID()
+		}
+		if !resolved {
+			t.Fatalf("scan lost the occurrence of summary %d", index)
+		}
+	}
+	return reads
 }
 
 func TestNativeArtifactSummaryJoinCostDoesNotFollowOccurrenceWidth(t *testing.T) {
-	small := nativeArtifactSummaryJoinCost(t, nativeOccurrenceScaleSmall)
-	large := nativeArtifactSummaryJoinCost(t, nativeOccurrenceScaleLarge)
-	if small <= 0 {
-		t.Fatalf("summary join over width %d measured no cost", nativeOccurrenceScaleSmall)
+	smallBuild, smallJoin := nativeArtifactSummaryJoinRowReads(t, nativeOccurrenceScaleSmall)
+	largeBuild, largeJoin := nativeArtifactSummaryJoinRowReads(t, nativeOccurrenceScaleLarge)
+
+	// The directory is built by reading each published row once. Anything
+	// more is a scan nested inside the build.
+	for _, width := range []struct {
+		occurrences int
+		reads       uint64
+	}{
+		{nativeOccurrenceScaleSmall, smallBuild},
+		{nativeOccurrenceScaleLarge, largeBuild},
+	} {
+		want := uint64(nativeOccurrenceScaleBuildReadsPerOccurrence * width.occurrences)
+		if width.reads != want {
+			t.Fatalf(
+				"mount directory over %d occurrences read %d Program rows, want exactly %d",
+				width.occurrences, width.reads, want,
+			)
+		}
 	}
-	bound := nativeOccurrenceScaleLinearHeadroom * float64(nativeOccurrenceScaleLarge) / float64(nativeOccurrenceScaleSmall)
-	if grown := float64(large) / float64(small); grown > bound {
+
+	// Every summary is answered by the directory. A join that reaches back to
+	// the Program for even one summary is the quadratic join this law refuses.
+	if smallJoin != 0 || largeJoin != 0 {
 		t.Fatalf(
-			"summary-join cost grew faster than the occurrence family: width %d = %s, width %d = %s, growth %.2fx, linear bound %.2fx",
-			nativeOccurrenceScaleSmall, small, nativeOccurrenceScaleLarge, large, grown, bound,
+			"summary join read Program rows: width %d = %d rows, width %d = %d rows, want none",
+			nativeOccurrenceScaleSmall, smallJoin, nativeOccurrenceScaleLarge, largeJoin,
+		)
+	}
+
+	// The join's whole read volume therefore follows the occurrence family and
+	// nothing else: four times the occurrences, four times the rows.
+	small, large := smallBuild+smallJoin, largeBuild+largeJoin
+	if want := small * uint64(nativeOccurrenceScaleLarge/nativeOccurrenceScaleSmall); large != want {
+		t.Fatalf(
+			"summary-join reads grew faster than the occurrence family: width %d = %d rows, width %d = %d rows, want %d",
+			nativeOccurrenceScaleSmall, small, nativeOccurrenceScaleLarge, large, want,
+		)
+	}
+
+	// What the directory is worth, in the same unit. Resolving each summary by
+	// walking the occurrence family reads the two families' product; the law
+	// above is the separation between that and the linear count.
+	smallScan, largeScan := nativeArtifactSummaryScanRowReads(t, nativeOccurrenceScaleSmall), nativeArtifactSummaryScanRowReads(t, nativeOccurrenceScaleLarge)
+	for _, walked := range []struct {
+		occurrences int
+		reads       uint64
+	}{
+		{nativeOccurrenceScaleSmall, smallScan},
+		{nativeOccurrenceScaleLarge, largeScan},
+	} {
+		width := uint64(walked.occurrences)
+		if want := width * (width + 1) / 2; walked.reads != want {
+			t.Fatalf(
+				"scanning resolve over %d occurrences read %d Program rows, want the family product %d",
+				walked.occurrences, walked.reads, want,
+			)
+		}
+	}
+	if smallScan <= small || largeScan/smallScan <= largeBuild/smallBuild {
+		t.Fatalf(
+			"the directory bought no separation: join %d -> %d rows, scan %d -> %d rows",
+			small, large, smallScan, largeScan,
 		)
 	}
 }
