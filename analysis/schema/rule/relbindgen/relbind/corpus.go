@@ -621,7 +621,16 @@ func families() []Family {
 		},
 		{
 			Census: "heap/index", Rule: "raw-set", Stem: "RawSetCommit", Axis: "heap",
-			Pending: abiGapRawReduction,
+			Judgment: "RawSetCommitOperation",
+			Inputs: []Slot{
+				{Field: "Candidate", Payload: "heap-write-candidate", Delivery: scalar},
+				{Field: "Values", Payload: "value", Delivery: span},
+				{Field: "Packs", Payload: "pack", Delivery: span},
+				{Field: "Sources", Payload: "heap-source-route", Delivery: span},
+				{Field: "Heaps", Payload: "heap", Delivery: span},
+			},
+			Result: "heap", Outputs: []Column{{Payload: "heap"}},
+			Cardinality: model.BoundedMany, Bound: rawAccessRouteBound, Address: KeyedDestination,
 		},
 	}
 }

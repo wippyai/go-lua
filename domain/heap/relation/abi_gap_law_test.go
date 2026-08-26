@@ -64,7 +64,7 @@ func rawAccess() []operation {
 		{plan: "raw-set/heap-routes", stem: "HeapReceiverRoutes", entry: "(*index.Topology).VisitReceiver", state: bound},
 		{plan: "raw-set/pack-routes", stem: "RawSetPackRoutes", entry: "(*index.Topology).VisitKeySelectors with (*index.Topology).VisitRoutePayloads", state: bound},
 		{plan: "raw-set/source-routes", stem: "RawSetSourceRoutes", entry: "(*index.Topology).VisitPayloadSources", state: bound},
-		{plan: "raw-set/commit", stem: "RawSetCommit", entry: "(*index.Topology).RawSetMutateRoute", state: operandUnreachable},
+		{plan: "raw-set/commit", stem: "RawSetCommit", entry: "(*index.Topology).RawSetMutateRoute", state: bound},
 	}
 }
 

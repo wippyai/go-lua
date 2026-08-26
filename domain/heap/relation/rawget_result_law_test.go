@@ -7,6 +7,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/relation/semantic/binding"
 	"github.com/wippyai/go-lua/analysis/schema/rule/relbindgen/harness"
 	calldomain "github.com/wippyai/go-lua/domain/call"
+	heapdomain "github.com/wippyai/go-lua/domain/heap"
 	indexdomain "github.com/wippyai/go-lua/domain/heap/index"
 	"github.com/wippyai/go-lua/domain/relationfixture"
 	valuedomain "github.com/wippyai/go-lua/domain/value"
@@ -148,5 +149,48 @@ func TestTheRawGetDecoderReadsTheRowItWasDelivered(t *testing.T) {
 		if fixture.Values.LessOrEq(value, fixture.Values.Bottom()) != wantBottom {
 			t.Fatalf("delivered row %d carries the fact of another row", index)
 		}
+	}
+}
+
+// TestTheRawSetDecoderNamesEveryRouteByItsOwnKey is the write decoder's law.
+//
+// A write publishes one row per route it ascends, at the heap key that route
+// is rooted at. The correspondence it rests on is the read's in reverse: a
+// delivered heap row is addressed by its key's own identity, and the tag that
+// key answers under is the one the owner issues for it. Both directions have
+// to agree, or a write would ascend one route's cell and publish it at
+// another's row.
+func TestTheRawSetDecoderNamesEveryRouteByItsOwnKey(t *testing.T) {
+	fixture := relationfixture.New(t)
+	rooted := 0
+	seen := map[identity.ContentID]heapdomain.RawRouteTag{}
+	if !fixture.Topology.VisitReceiver(fixture.Receiver, nil, func(route indexdomain.Route) bool {
+		key, role, isRoot := route.Root()
+		if !isRoot {
+			return true
+		}
+		rooted++
+		tag, tagged := fixture.Topology.RawRouteTag(key, role)
+		row, named := key.ContentID()
+		if !tagged || !named {
+			t.Fatal("a rooted route carries no tag or no owner-issued row name")
+		}
+		if previous, repeat := seen[row]; repeat && previous != tag {
+			t.Fatalf("one route row answers under tags %d and %d", previous, tag)
+		}
+		seen[row] = tag
+
+		// The owner resolves the tag back to the same key and role, so the row
+		// a write publishes at is the row whose cell it ascended.
+		back, backRole, resolved := fixture.Heap.RouteForTag(tag)
+		if !resolved || back != key || backRole != role {
+			t.Fatalf("route tag %d does not resolve back to the route it names", tag)
+		}
+		return true
+	}) {
+		t.Fatal("the sealed topology refused the receiver its own program allocates")
+	}
+	if rooted == 0 {
+		t.Fatal("the fixture sealed no rooted route for a write to publish at")
 	}
 }
